@@ -1,0 +1,20 @@
+{
+  "rhs": "0",
+  "segments": [
+    {
+      "t0": 0.0,
+      "t1": 1.0,
+      "init": { "lo": 0.0, "hi": 0.0 },
+      "lowerWeights": "NN/Examples/Verification/ODE/zero_siren.json",
+      "upperWeights": "NN/Examples/Verification/ODE/zero_siren.json"
+    }
+  ],
+  "settings": {
+    "maxDepth": 4,
+    "minWidth": 0.2,
+    "slack": 0.0,
+    "verbose": false,
+    "modelBackend": "direct"
+  }
+}
+

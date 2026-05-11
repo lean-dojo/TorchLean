@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1448 814" role="img" aria-labelledby="title desc">
+  <title id="title">Bug Zoo case studies</title>
+  <desc id="desc">A compact visual card showing common neural-network bug families checked in TorchLean.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f8fbfb"/>
+      <stop offset="1" stop-color="#edf7f5"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#12333b" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+  <rect width="1448" height="814" rx="44" fill="url(#bg)"/>
+  <rect x="44" y="44" width="1360" height="726" rx="32" fill="#fff" stroke="#d8e6e3" filter="url(#shadow)"/>
+  <g transform="translate(92 88)">
+    <circle cx="44" cy="44" r="36" fill="#e7f4f2" stroke="#9ed4cd"/>
+    <path d="M44 19 65 31v25L44 68 23 56V31z" fill="none" stroke="#137d78" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M44 34v20M34 39l10-6 10 6" stroke="#137d78" stroke-width="5" stroke-linecap="round" fill="none"/>
+    <text x="104" y="36" font-family="Inter, ui-sans-serif, system-ui" font-size="54" font-weight="800" fill="#203040">Bug Zoo</text>
+    <text x="106" y="78" font-family="Inter, ui-sans-serif, system-ui" font-size="25" fill="#66807c">Small Lean case studies for bugs that usually hide inside model glue code</text>
+  </g>
+  <g font-family="Inter, ui-sans-serif, system-ui" font-size="27" fill="#203040">
+    <g transform="translate(100 230)">
+      <rect width="360" height="170" rx="24" fill="#f8fbfb" stroke="#d7e6e3"/>
+      <text x="26" y="54" font-weight="800">Attention masks</text>
+      <text x="26" y="94" fill="#6b7d88">polarity, causal layout,</text>
+      <text x="26" y="130" fill="#6b7d88">finite “minus infinity”</text>
+    </g>
+    <g transform="translate(544 230)">
+      <rect width="360" height="170" rx="24" fill="#f8fbfb" stroke="#d7e6e3"/>
+      <text x="26" y="54" font-weight="800">KV cache</text>
+      <text x="26" y="94" fill="#6b7d88">append behavior and</text>
+      <text x="26" y="130" fill="#6b7d88">position schedules</text>
+    </g>
+    <g transform="translate(988 230)">
+      <rect width="360" height="170" rx="24" fill="#f8fbfb" stroke="#d7e6e3"/>
+      <text x="26" y="54" font-weight="800">Tokenizers</text>
+      <text x="26" y="94" fill="#6b7d88">bounded token IDs and</text>
+      <text x="26" y="130" fill="#6b7d88">vocabulary mismatches</text>
+    </g>
+    <g transform="translate(100 462)">
+      <rect width="360" height="170" rx="24" fill="#f8fbfb" stroke="#d7e6e3"/>
+      <text x="26" y="54" font-weight="800">Normalization</text>
+      <text x="26" y="94" fill="#6b7d88">epsilon placement and</text>
+      <text x="26" y="130" fill="#6b7d88">train/eval state</text>
+    </g>
+    <g transform="translate(544 462)">
+      <rect width="360" height="170" rx="24" fill="#f8fbfb" stroke="#d7e6e3"/>
+      <text x="26" y="54" font-weight="800">Batch invariance</text>
+      <text x="26" y="94" fill="#6b7d88">serving one item alone</text>
+      <text x="26" y="130" fill="#6b7d88">vs. inside a batch</text>
+    </g>
+    <g transform="translate(988 462)">
+      <rect width="360" height="170" rx="24" fill="#f8fbfb" stroke="#d7e6e3"/>
+      <text x="26" y="54" font-weight="800">Float boundaries</text>
+      <text x="26" y="94" fill="#6b7d88">domains, rounding, and</text>
+      <text x="26" y="130" fill="#6b7d88">invalid backward paths</text>
+    </g>
+  </g>
+  <g transform="translate(100 690)" font-family="Inter, ui-sans-serif, system-ui" font-size="25" font-weight="800">
+    <rect width="118" height="44" rx="22" fill="#dff3f0"/>
+    <text x="28" y="30" fill="#137d78">bugs</text>
+    <rect x="138" width="152" height="44" rx="22" fill="#dff3f0"/>
+    <text x="166" y="30" fill="#137d78">case studies</text>
+    <rect x="310" width="118" height="44" rx="22" fill="#dff3f0"/>
+    <text x="338" y="30" fill="#137d78">Lean</text>
+  </g>
+</svg>

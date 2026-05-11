@@ -1,0 +1,43 @@
+# Optional dependencies for the WildDet3D monocular 3D detector exporter.
+#
+# This file is separate from requirements-realworld.txt because WildDet3D is a much heavier
+# path than the DETR+Depth Anything smoke demo.
+# The public WildDet3D Space pins numpy<2 for its Python 3.11 image.  TorchLean's local dev
+# environment may already run Python 3.13 with numpy 2.x, where numpy 1.x wheels are unavailable.
+# Keep this unpinned here so installing the optional demo does not try to build old numpy from
+# source. If you run WildDet3D in a fresh Python 3.11 env, the Space's original `<2.0` pin is fine.
+numpy
+opencv-python-headless
+pillow
+scipy
+einops
+timm>=0.6.0
+transformers
+huggingface_hub
+lightning
+jsonargparse[signatures]
+ml_collections==1.1.0
+pydantic>=2.0
+cloudpickle
+devtools
+termcolor
+terminaltables
+h5py
+tqdm
+ftfy
+regex
+iopath
+open_clip_torch
+pycocotools
+safetensors
+vis4d
+
+# The public Space also installs GLTF/Open3D visualization extras such as `trimesh`, `pygltflib`,
+# and `utils3d`'s full dependency chain.  The TorchLean exporter does not need the
+# visualization stack: it converts WildDet3D's predicted 10D box to camera-frame corners, emits
+# JSON, and lets Lean check the projection contract.  If `wilddet3d.inference` reports that
+# `utils3d` itself is missing, install only that package without its optional deps:
+#
+#   python3 -m pip install --no-deps utils3d
+#
+# Keeping the extras out avoids the `open3d` wheel conflict on newer local Python versions.

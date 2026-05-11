@@ -1,0 +1,23 @@
+{
+  "description": "Small COCO real-image smoke suite for TorchLean Geometry3D certificates.",
+  "cases": [
+    {
+      "name": "coco_cats_depth_box",
+      "image_url": "https://images.cocodataset.org/val2017/000000039769.jpg",
+      "label": "cat",
+      "det_threshold": 0.7
+    },
+    {
+      "name": "coco_person_depth_box",
+      "image_url": "https://images.cocodataset.org/val2017/000000000139.jpg",
+      "label": "person",
+      "det_threshold": 0.7
+    },
+    {
+      "name": "coco_skier_depth_box",
+      "image_url": "https://images.cocodataset.org/val2017/000000000785.jpg",
+      "label": "person",
+      "det_threshold": 0.7
+    }
+  ]
+}

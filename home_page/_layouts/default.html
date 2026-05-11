@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="{{ site.lang | default: 'en-US' }}">
+
+<head>
+  <meta charset="UTF-8">
+
+  {% seo %}
+  <link rel="preconnect" href="https://fonts.gstatic.com">
+  <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style"
+    type="text/css" crossorigin>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#157878">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="{{ '/assets/css/style.css?v=' | append: site.build_revision | relative_url }}">
+  {% include head-custom.html %}
+  {% include mathjax.html %}
+</head>
+
+<body>
+  <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+  <header class="page-header" role="banner">
+    <h1 class="project-name">
+      <a class="brand-link" href="{{ '/' | relative_url }}">
+        <img class="project-logo" src="{{ '/assets/media/brand/torchlean-logo.png' | relative_url }}" alt="TorchLean logo" />
+        <span class="brand-name">Formalizing Neural Networks in Lean</span>
+      </a>
+    </h1>
+    <nav class="site-nav" aria-label="Main navigation">
+      <a href="{{ '/' | relative_url }}" class="btn">Home</a>
+      <a href="{{ '/blueprint/' | relative_url }}" class="btn">Guide</a>
+      <a href="{{ '/examples/' | relative_url }}" class="btn">Examples</a>
+      <a href="{{ '/docs/' | relative_url }}" class="btn">API Docs</a>
+      <a href="{{ '/graphs/' | relative_url }}" class="btn">Graph</a>
+    </nav>
+  </header>
+
+  <main id="content" class="main-content" role="main">
+    {{ content }}
+
+    <footer class="site-footer">
+      <div class="site-footer-meta">
+        <span class="build-item">
+          <strong>Build</strong> {{ site.time | date: "%Y-%m-%d" }}
+        </span>
+        <span class="build-item">
+          <strong>Commit</strong>
+          {{ site.build_revision | default: "local" | slice: 0, 12 }}
+        </span>
+        <span class="build-item">
+          <strong>Lean</strong>
+          {{ site.data.build.lean | default: "v4.29.0" }}
+        </span>
+        <span class="build-item">
+          <strong>mathlib</strong>
+          {{ site.data.build.mathlib | default: "v4.29.0" }}
+        </span>
+        <span class="build-item">
+          <strong>Maintained by</strong>
+          Robert Joseph George
+          <a href="{{ site.repository_url }}">(@GitHub)</a>
+        </span>
+      </div>
+    </footer>
+  </main>
+</body>
+
+</html>

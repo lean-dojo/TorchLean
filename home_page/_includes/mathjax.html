@@ -1,0 +1,10 @@
+{% if page.usemathjax %}
+  <!-- MathJax v3 (for lightweight math on Jekyll landing pages; Verso pages use KaTeX). -->
+  <script>
+    window.MathJax = {
+      tex: { tags: "ams" }
+    };
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+{% endif %}
+

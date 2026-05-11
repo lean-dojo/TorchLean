@@ -1,0 +1,6 @@
+{
+  "meta": { "activation": "tanh" },
+  "layers.0.weight": [[0.0]],
+  "layers.0.bias": [0.0]
+}
+

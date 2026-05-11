@@ -1,0 +1,6 @@
+# Hide vendored dependencies from GitHub language stats / diffs.
+_external/** linguist-vendored
+Two-Stage_Neural_Controller_Training/** linguist-vendored
+
+# Lake build artifacts and dependencies are generated locally.
+.lake/** linguist-generated

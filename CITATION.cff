@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the TorchLean repository and the TorchLean paper."
+title: "TorchLean"
+url: "https://github.com/lean-dojo/TorchLean"
+repository-code: "https://github.com/lean-dojo/TorchLean"
+license: "MIT"
+preferred-citation:
+  type: article
+  title: "TorchLean: Formalizing Neural Networks in Lean"
+  authors:
+    - family-names: "George"
+      given-names: "Robert Joseph"
+      affiliation: "California Institute of Technology"
+    - family-names: "Adkisson"
+      given-names: "Will"
+      affiliation: "Washington University in St. Louis"
+    - family-names: "Anandkumar"
+      given-names: "Anima"
+      affiliation: "California Institute of Technology"
+  year: 2026
+  archive-prefix: "arXiv"
+  eprint: "2602.22631"
+  url: "https://arxiv.org/abs/2602.22631"

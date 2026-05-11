@@ -1,0 +1,10 @@
+# Local development overrides.
+#
+# GitHub Pages project sites are hosted at `/<repo>/` (so `baseurl: "/TorchLean"` is correct for
+# deployment), but that breaks local preview links unless you serve under that subpath.
+#
+# Use with:
+#   bundle exec jekyll serve --config _config.yml,_config_dev.yml
+
+baseurl: ""
+url: "http://127.0.0.1:4002"

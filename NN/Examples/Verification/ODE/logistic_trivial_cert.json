@@ -1,0 +1,20 @@
+{
+  "rhs": "u*(1-u)",
+  "segments": [
+    {
+      "t0": 0.0,
+      "t1": 5.0,
+      "init": { "lo": 0.1, "hi": 0.1 },
+      "lowerWeights": "NN/Examples/Verification/ODE/zero_mlp.json",
+      "upperWeights": "NN/Examples/Verification/ODE/one_mlp.json"
+    }
+  ],
+  "settings": {
+    "maxDepth": 10,
+    "minWidth": 0.05,
+    "slack": 0.0,
+    "verbose": false,
+    "modelBackend": "torchlean"
+  }
+}
+

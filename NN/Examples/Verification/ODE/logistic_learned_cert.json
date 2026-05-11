@@ -1,0 +1,20 @@
+{
+  "rhs": "u*(1-u)",
+  "segments": [
+    {
+      "t0": 0.0,
+      "t1": 1.0,
+      "init": { "lo": 0.1, "hi": 0.1 },
+      "lowerWeights": "NN/Examples/Verification/ODE/logistic_lower_learned.json",
+      "upperWeights": "NN/Examples/Verification/ODE/logistic_upper_learned.json"
+    }
+  ],
+  "settings": {
+    "maxDepth": 14,
+    "minWidth": 0.01,
+    "slack": 0.0,
+    "verbose": false,
+    "modelBackend": "torchlean"
+  }
+}
+

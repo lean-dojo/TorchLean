@@ -1,0 +1,67 @@
+name: CI (manual build + tests)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_slow_proofs:
+        description: Build the CI-only slow proof targets
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Case-insensitive path collision check
+        run: python3 scripts/checks/check_case_collisions.py
+
+      - name: Install elan
+        run: curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+
+      - name: Get Mathlib cache
+        run: ~/.elan/bin/lake exe cache get || true
+
+      - name: Repo lint (TorchLean policies)
+        run: ~/.elan/bin/lake lint
+
+      - name: Clean curated library build artifacts
+        run: ~/.elan/bin/lake clean
+
+      - name: Build curated library surface
+        run: ~/.elan/bin/lake build NN.Library
+
+      - name: Build broad CI import surface
+        run: ~/.elan/bin/lake build NN.CI.All
+
+      - name: Run curated test suite
+        run: ~/.elan/bin/lake test
+
+  slow_proofs:
+    name: CI (slow proofs)
+    runs-on: ubuntu-latest
+    if: ${{ inputs.run_slow_proofs }}
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install elan
+        run: curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+
+      - name: Get Mathlib cache
+        run: ~/.elan/bin/lake exe cache get || true
+
+      - name: Build CI-only slow proof targets
+        run: ~/.elan/bin/lake build NN.CI.SlowProofs

@@ -1,0 +1,158 @@
+name: Compile blueprint
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+# Cancel previous runs if a new commit is pushed to the same PR or branch
+concurrency:
+  group: ${{ github.ref }}  # Group runs by the ref (branch or PR)
+  cancel-in-progress: true  # Cancel any ongoing runs in the same group
+
+permissions:
+  contents: read
+
+jobs:
+  build_project:
+    runs-on: ubuntu-latest
+    name: Build project
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for all branches and tags
+
+      - name: Install elan
+        run: curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+
+      - name: Get Mathlib cache
+        run: ~/.elan/bin/lake exe cache get || true
+
+      - name: Repo lint (TorchLean policies)
+        run: ~/.elan/bin/lake lint
+
+      - name: Build curated library surface
+        run: ~/.elan/bin/lake build NN.Library
+
+      - name: Cache API docs
+        uses: actions/cache@v4
+        with:
+          path: |
+            .lake/build/doc/Aesop
+            .lake/build/doc/Batteries
+            .lake/build/doc/find
+            .lake/build/doc/Init
+            .lake/build/doc/Lake
+            .lake/build/doc/Lean
+            .lake/build/doc/Mathlib
+            .lake/build/doc/Std
+          key: Docs-${{ hashFiles('lake-manifest.json') }}
+
+      - name: Build project API documentation
+        run: |
+          rm -rf .lake/build/doc-data .lake/build/api-docs.db
+          DISABLE_EQUATIONS=1 ~/.elan/bin/lake -R -Kenv=dev build NN:docs
+      
+      - name: Check for `home_page` folder # this is meant to detect a Jekyll-based website
+        id: check_home_page
+        run: |
+          if [ -d home_page ]; then
+            echo "The 'home_page' folder exists in the repository."
+            echo "HOME_PAGE_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "The 'home_page' folder does not exist in the repository."
+            echo "HOME_PAGE_EXISTS=false" >> $GITHUB_ENV
+          fi
+
+      - name: Build Verso guide (blueprint package) and copy to `home_page/blueprint`
+        run: |
+          cd blueprint
+          ~/.elan/bin/lake exe cache get || true
+          ~/.elan/bin/lake exe blueprint-gen --output ../_out/blueprint
+          cd ..
+          if [ -d blueprint/TorchLeanBlueprint/Guide/Assets ]; then
+            mkdir -p _out/blueprint/html-multi/Guide/Assets
+            cp -r blueprint/TorchLeanBlueprint/Guide/Assets/* _out/blueprint/html-multi/Guide/Assets/
+          fi
+          python3 scripts/docs/polish_verso_guide.py --guide _out/blueprint/html-multi
+          rm -rf home_page/blueprint
+          mkdir -p home_page/blueprint
+          cp -r _out/blueprint/html-multi/* home_page/blueprint/
+
+      - name: Copy API documentation to `home_page/docs`
+        run: |
+          rm -rf home_page/docs
+          cp -r .lake/build/doc home_page/docs
+          python3 scripts/docs/polish_docgen.py --docs home_page/docs
+
+      - name: Remove unnecessary lake files from documentation in `home_page/docs`
+        run: |
+          find home_page/docs -name "*.trace" -delete
+          find home_page/docs -name "*.hash" -delete
+
+      - name: Remove any stale `home_page/manual` output
+        run: rm -rf home_page/manual
+
+      - name: Build dependency graph audit
+        run: |
+          python3 scripts/checks/dependency_audit.py \
+            --root "$PWD" \
+            --json home_page/graphs/dependency-audit.json \
+            --markdown home_page/graphs/dependency-audit.md \
+            --fail-on-error
+
+      - name: Build interactive import graph HTML
+        run: |
+          mkdir -p home_page/importgraph
+          ~/.elan/bin/lake exe graph --to NN.Library home_page/importgraph/index.html
+          python3 - <<'PY'
+          from pathlib import Path
+
+          page = Path("home_page/importgraph/index.html")
+          html = page.read_text(encoding="utf-8")
+          html = html.replace('  <link rel="stylesheet" href="style.css" />\n', "")
+          html = html.replace(
+              'var docs_url = params.get("docs_url") || "https://leanprover-community.github.io/mathlib4_docs/";',
+              'var docs_url = params.get("docs_url") || new URL("../docs/", window.location.href).href;',
+          )
+          page.write_text(html, encoding="utf-8")
+          PY
+
+      - name: Bundle dependencies
+        uses: ruby/setup-ruby@v1
+        with:
+          working-directory: home_page
+          ruby-version: "3.0"  # Specify Ruby version
+          bundler-cache: true  # Enable caching for bundler
+
+      - name: Build website using Jekyll
+        if: env.HOME_PAGE_EXISTS == 'true'
+        working-directory: home_page
+        env:
+          JEKYLL_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: JEKYLL_ENV=production bundle exec jekyll build  # Note this will also copy the blueprint and API doc into home_page/_site
+
+      - name: "Upload website (API documentation, blueprint and any home page)"
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ env.HOME_PAGE_EXISTS == 'true' && 'home_page/_site' || 'home_page/' }}
+
+  deploy_pages:
+    runs-on: ubuntu-latest
+    name: Deploy GitHub Pages
+    needs: build_project
+    if: github.event_name != 'pull_request'
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

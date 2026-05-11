@@ -1,0 +1,23 @@
+name = "torchlean-blueprint"
+defaultTargets = ["TorchLeanBlueprint", "blueprint-gen"]
+
+[[require]]
+name = "verso"
+git = "https://github.com/leanprover/verso"
+rev = "v4.29.0"
+
+[[require]]
+name = "VersoBlueprint"
+git = "https://github.com/leanprover/verso-blueprint"
+rev = "v4.29.0"
+
+[[require]]
+name = "TorchLean"
+path = ".."
+
+[[lean_lib]]
+name = "TorchLeanBlueprint"
+
+[[lean_exe]]
+name = "blueprint-gen"
+root = "TorchLeanBlueprintMain"

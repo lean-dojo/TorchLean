@@ -1,0 +1,15 @@
+{
+  "format": "abcrown_leaf_cert_v0_1",
+  "input_dim": 2,
+  "root": { "lo": [-1.0, -1.0], "hi": [1.0, 1.0] },
+  "leaves": [
+    {
+      "lo": [-1.0, -1.0],
+      "hi": [1.0, 1.0],
+      "lb": [1.0],
+      "threshold": [0.0],
+      "witness_idx": 0,
+      "witness_margin": 1.0
+    }
+  ]
+}

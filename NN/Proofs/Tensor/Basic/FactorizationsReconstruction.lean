@@ -12,37 +12,43 @@ public import Mathlib.Data.List.GetD
 public import Mathlib.Algebra.BigOperators.Fin
 
 /-!
-# Exact reconstruction of the finite Cholesky factorization
+# Exact reconstruction of the finite factorizations (Cholesky and QR)
 
-This file proves the *exact* algebraic reconstruction of the finite executable Cholesky
-factorization from [`NN.Spec.Core.Tensor.Factorizations`](../../../Spec/Core/Tensor/Factorizations.lean),
+This file proves the *exact* algebraic reconstruction of the finite executable Cholesky and QR
+factorizations from [`NN.Spec.Core.Tensor.Factorizations`](../../../Spec/Core/Tensor/Factorizations.lean),
 the increment promised in `NN.Proofs.Tensor.Basic.Factorizations`. Unlike the iterative Jacobi/SVD
-routines (whose reconstruction is only an a-posteriori residual certificate), Cholesky is a *finite*
-construction, so over `ℝ` it reconstructs its input on the nose under the success hypothesis.
+routines (whose reconstruction is only an a-posteriori residual certificate), Cholesky and Gram–Schmidt
+are *finite* constructions, so over `ℝ` they reconstruct their input on the nose under the success
+hypotheses.
 
-## Main result
+## Main results
 
-`isCholesky_of_pos`: for a symmetric `A : Fin n → Fin n → ℝ` whose executable Cholesky pivots are all
-positive (`0 < choleskyFn A j j`, the exact condition under which the algorithm succeeds over `ℝ`),
-the factor `L = choleskyFn A` satisfies the specification `Spec.Factorization.IsCholesky`:
-it is lower-triangular and `A = L · Lᵀ`. `choleskySpec_reconstruction` is the tensor-level corollary.
+* `isCholesky_of_pos`: for a symmetric `A : Fin n → Fin n → ℝ` whose executable Cholesky pivots are all
+  positive (`0 < choleskyFn A j j`, the exact condition under which the algorithm succeeds over `ℝ`),
+  the factor `L = choleskyFn A` satisfies the spec `Spec.Factorization.IsCholesky`: lower-triangular
+  and `A = L · Lᵀ`. `choleskySpec_reconstruction` is the tensor-level corollary.
+* `qr_mul_eq`: for `A : Fin m → Fin n → ℝ` whose executable Gram–Schmidt `R`-pivots are positive
+  (`0 < Rmat A j j`, full column rank), the factors `Q = gramSchmidtFn A` and `R` satisfy `A = Q · R`,
+  with `R` upper-triangular (`Rmat_upper_triangular`). `qrSpec_reconstruction` is the tensor-level
+  corollary.
 
 ## Method
 
-The executable factor is built by a `List.foldl` that snocs one column per index. The core technical
-device is `getD_foldl_snoc_read`, a general lemma reading the `j`-th element of such a fold as the
-step function applied to the length-`j` prefix. From it, `prefix_eq_map` identifies the prefix of
-columns with the first `j` columns of the final factor `L`, and `take_map_sum_eq` turns the code's
-`List.foldl` sums into masked `Finset` partial sums. The positive-pivot hypothesis discharges the two
-side conditions (`√` radicand `> 0` for the diagonal, divisor `≠ 0` for the below-diagonal entries).
+Each executable factor is built by a `List.foldl` that snocs one column per index. The core technical
+device is `getD_foldl_snoc_read`, a general lemma reading the `j`-th element of such a fold as the step
+function applied to the length-`j` prefix. From it, `prefix_eq_map`/`qsPrefix_eq_map` identify the
+prefix with the first `j` columns of the final factor, and `take_map_sum_eq` turns the code's
+`List.foldl` sums into masked `Finset` partial sums. The QR fold threads a `GSState` that snocs onto
+*both* the `Q`-list and the `R`-list at once; `gs_proj_qs` and `gs_fold_split`/`rTail_getD` recover the
+single-list read lemmas for each projection (the step depends only on the `Q`-history). The
+positive-pivot hypotheses discharge the `√`-radicand and divisor side conditions.
 
 ## Scope
 
-The QR factorization's exact reconstruction (`A = Q · R` from `gramSchmidtFn`, plus the orthonormality
-`Qᵀ Q = 1`) is the remaining finite-fold increment. It needs analogous read lemmas for the
-`GSState` *dual-list* structure-fold (the step writes both `qs` and `rcols`), and `Qᵀ Q = 1`
-additionally requires the Gram–Schmidt orthogonality invariant, which Mathlib only provides for its
-own `gramSchmidt`, not for this executable variant.
+The one piece *not* proved is the orthonormality of the QR factor, `Qᵀ Q = 1`. Unlike `A = Q · R`
+(which is a purely algebraic consequence of the orthogonalization step), it rests on the Gram–Schmidt
+orthogonality invariant, which Mathlib provides for its own `gramSchmidt` but not for this executable
+variant — so it stays the documented remaining increment, never a `sorry`.
 -/
 
 @[expose] public section
@@ -373,5 +379,319 @@ theorem choleskySpec_reconstruction (A : Spec.Tensor ℝ (.dim n (.dim n .scalar
   show Spec.toMatFn A i j = _
   refine (choleskyFn_dot (Spec.toMatFn A) (fun a b => hsymm a b) (fun b => ?_) i j).symm
   rw [← hg b b]; exact hpos b
+
+/-! ## QR (modified Gram–Schmidt): exact reconstruction `A = Q · R`
+
+`gramSchmidtFn` threads a `GSState` that snocs a column onto *both* the `Q`-list and the `R`-list at
+each index. Crucially the appended values depend only on the `Q`-history (`st.qs`), never on the
+`R`-history, so the `Q`-list is itself a single-list snoc-fold (`gs_proj_qs`) and the `R`-list is the
+`Q`-prefix-indexed tail `rTail`. -/
+
+section QR
+
+variable {m : Nat}
+
+open Spec (GSState)
+
+/-- Column `j` of `A` as a function of the row. -/
+noncomputable def gsA (A : Fin m → Fin n → ℝ) (j : Fin n) : Fin m → ℝ := fun i => A i j
+
+/-- The `R` off-diagonal entries `rₖⱼ = qₖ · a` for the columns `qs` built so far. -/
+noncomputable def gsRkjs (A : Fin m → Fin n → ℝ) (qs : List (Fin m → ℝ)) (j : Fin n) : List ℝ :=
+  qs.map (fun qk => Spec.dotFn qk (gsA A j))
+
+/-- The orthogonalized (not-yet-normalized) vector `v = a − Σ rₖⱼ qₖ`. -/
+noncomputable def gsV (A : Fin m → Fin n → ℝ) (qs : List (Fin m → ℝ)) (j : Fin n) : Fin m → ℝ :=
+  fun i => gsA A j i
+    - (List.zip qs (gsRkjs A qs j)).foldl (fun acc (qk, r) => acc + r * qk i) 0
+
+/-- The diagonal `R` entry `rⱼⱼ = ‖v‖`. -/
+noncomputable def gsRjj (A : Fin m → Fin n → ℝ) (qs : List (Fin m → ℝ)) (j : Fin n) : ℝ :=
+  Spec.normFn (gsV A qs j)
+
+/-- The `Q` column appended at index `j`: `v / rⱼⱼ` (or `0` when `rⱼⱼ = 0`). -/
+noncomputable def qStep (A : Fin m → Fin n → ℝ) (qs : List (Fin m → ℝ)) (j : Fin n) : Fin m → ℝ :=
+  fun i => if Context.gtBool (gsRjj A qs j) 0 then gsV A qs j i / gsRjj A qs j else 0
+
+/-- The `R` column appended at index `j`: `rₖⱼ` below the diagonal, `rⱼⱼ` on it, `0` above. -/
+noncomputable def rStep (A : Fin m → Fin n → ℝ) (qs : List (Fin m → ℝ)) (j : Fin n) : Fin n → ℝ :=
+  fun k => if k.val < j.val then (gsRkjs A qs j).getD k.val 0
+    else if k.val == j.val then gsRjj A qs j else 0
+
+/-- `gramSchmidtFn` as the dual-list snoc-fold appending `qStep`/`rStep`. -/
+theorem gramSchmidtFn_eq (A : Fin m → Fin n → ℝ) :
+    Spec.gramSchmidtFn A
+      = (List.finRange n).foldl
+          (fun st j => (⟨st.qs ++ [qStep A st.qs j], st.rcols ++ [rStep A st.qs j]⟩ : GSState m n ℝ))
+          ⟨[], []⟩ := rfl
+
+/-- The `Q`-list projection of the structure fold is the single-list `qStep` snoc-fold. -/
+theorem gs_proj_qs (A : Fin m → Fin n → ℝ) (l : List (Fin n)) (q0 : List (Fin m → ℝ))
+    (r0 : List (Fin n → ℝ)) :
+    (l.foldl (fun st j => (⟨st.qs ++ [qStep A st.qs j], st.rcols ++ [rStep A st.qs j]⟩ : GSState m n ℝ))
+        ⟨q0, r0⟩).qs
+      = l.foldl (fun qs j => qs ++ [qStep A qs j]) q0 := by
+  induction l generalizing q0 r0 with
+  | nil => rfl
+  | cons a t ih => simp only [List.foldl_cons]; exact ih _ _
+
+/-- The `Q` columns built before index `j`. -/
+noncomputable def qsPrefix (A : Fin m → Fin n → ℝ) (j : Fin n) : List (Fin m → ℝ) :=
+  ((List.finRange n).take j.val).foldl (fun qs k => qs ++ [qStep A qs k]) []
+
+/-- The `R`-list tail: the `R` columns produced from `Q`-prefix `q0` over the indices `l`. -/
+noncomputable def rTail (A : Fin m → Fin n → ℝ) (q0 : List (Fin m → ℝ)) : List (Fin n) →
+    List (Fin n → ℝ)
+  | [] => []
+  | j :: rest => rStep A q0 j :: rTail A (q0 ++ [qStep A q0 j]) rest
+
+/-- The structure fold splits into the `qStep` snoc-fold (`Q`-list) and the `rTail` (`R`-list). -/
+theorem gs_fold_split (A : Fin m → Fin n → ℝ) (l : List (Fin n)) (q0 : List (Fin m → ℝ))
+    (r0 : List (Fin n → ℝ)) :
+    (l.foldl (fun st j => (⟨st.qs ++ [qStep A st.qs j], st.rcols ++ [rStep A st.qs j]⟩ : GSState m n ℝ))
+        ⟨q0, r0⟩)
+      = ⟨l.foldl (fun qs j => qs ++ [qStep A qs j]) q0, r0 ++ rTail A q0 l⟩ := by
+  induction l generalizing q0 r0 with
+  | nil => simp [rTail]
+  | cons j rest ih =>
+      simp only [List.foldl_cons, rTail]
+      rw [ih]
+      simp [List.append_assoc]
+
+/-- Reading the `k`-th element of `rTail` recovers `rStep` applied to the length-`k` `Q`-prefix. -/
+theorem rTail_getD (A : Fin m → Fin n → ℝ) (q0 : List (Fin m → ℝ)) (l : List (Fin n)) (k : Nat)
+    (hk : k < l.length) (d : Fin n → ℝ) :
+    (rTail A q0 l).getD k d
+      = rStep A ((l.take k).foldl (fun qs j => qs ++ [qStep A qs j]) q0) (l[k]'hk) := by
+  induction l generalizing q0 k with
+  | nil => simp at hk
+  | cons j rest ih =>
+      cases k with
+      | zero => simp [rTail]
+      | succ k' =>
+          simp only [rTail, List.getD_cons_succ, List.take_succ_cons, List.foldl_cons,
+            List.getElem_cons_succ]
+          exact ih (q0 ++ [qStep A q0 j]) k' (by simpa using hk)
+
+/-- Semantics of the `Context` `>` test over `ℝ`. -/
+theorem gtBool_true_iff {x y : ℝ} : Context.gtBool x y = true ↔ y < x := by
+  unfold Context.gtBool; exact decide_eq_true_iff
+
+/-- A left fold `acc + h x` accumulates the mapped list sum. -/
+theorem foldl_addf_eq_sum {β : Type _} (h : β → ℝ) (l : List β) (a : ℝ) :
+    l.foldl (fun acc x => acc + h x) a = a + (l.map h).sum := by
+  induction l generalizing a with
+  | nil => simp
+  | cons x t ih => rw [List.foldl_cons, ih, List.map_cons, List.sum_cons]; ring
+
+/-! ### Entries of the executable `Q` and `R` factors -/
+
+/-- Entry `(i, k)` of the `Q` factor produced by `gramSchmidtFn`. -/
+noncomputable def Qmat (A : Fin m → Fin n → ℝ) (i : Fin m) (k : Fin n) : ℝ :=
+  (Spec.gramSchmidtFn A).qs.getD k.val (fun _ => 0) i
+
+/-- Entry `(k, j)` of the `R` factor produced by `gramSchmidtFn`. -/
+noncomputable def Rmat (A : Fin m → Fin n → ℝ) (k j : Fin n) : ℝ :=
+  (Spec.gramSchmidtFn A).rcols.getD j.val (fun _ => 0) k
+
+/-- Column `k` of `Q` as a function of the row. -/
+noncomputable def Qcol (A : Fin m → Fin n → ℝ) (k : Fin n) : Fin m → ℝ := fun r => Qmat A r k
+
+/-- Closed form of a `Q` entry: `qStep` evaluated on the `Q`-prefix. -/
+theorem Qmat_eq (A : Fin m → Fin n → ℝ) (i : Fin m) (k : Fin n) :
+    Qmat A i k = qStep A (qsPrefix A k) k i := by
+  have hqs : (Spec.gramSchmidtFn A).qs
+      = (List.finRange n).foldl (fun qs j => qs ++ [qStep A qs j]) [] := by
+    rw [gramSchmidtFn_eq]; exact gs_proj_qs A (List.finRange n) [] []
+  unfold Qmat
+  rw [hqs, getD_foldl_snoc_read (fun qs j => qStep A qs j) (fun _ => 0) (List.finRange n) k.val
+    (by rw [List.length_finRange]; exact k.isLt)]
+  have hk : (List.finRange n)[k.val]'(by rw [List.length_finRange]; exact k.isLt) = k := by
+    simp [List.getElem_finRange]
+  rw [hk]; rfl
+
+/-- Closed form of an `R` entry: `rStep` evaluated on the `Q`-prefix. -/
+theorem Rmat_eq (A : Fin m → Fin n → ℝ) (k j : Fin n) :
+    Rmat A k j = rStep A (qsPrefix A j) j k := by
+  have hrc : (Spec.gramSchmidtFn A).rcols = rTail A [] (List.finRange n) := by
+    rw [gramSchmidtFn_eq, gs_fold_split]; simp
+  unfold Rmat
+  rw [hrc, rTail_getD A [] (List.finRange n) j.val (by rw [List.length_finRange]; exact j.isLt)]
+  have hk : (List.finRange n)[j.val]'(by rw [List.length_finRange]; exact j.isLt) = j := by
+    simp [List.getElem_finRange]
+  rw [hk]; rfl
+
+/-- `R` is upper-triangular: entries strictly below the diagonal vanish. -/
+theorem rStep_above (A : Fin m → Fin n → ℝ) (qs : List (Fin m → ℝ)) {j k : Fin n}
+    (hjk : j.val < k.val) : rStep A qs j k = 0 := by
+  simp only [rStep]; rw [if_neg (by omega), if_neg (by rw [beq_iff_eq]; omega)]
+
+/-- The diagonal `R` entry is `rⱼⱼ`. -/
+theorem rStep_diag (A : Fin m → Fin n → ℝ) (qs : List (Fin m → ℝ)) (j : Fin n) :
+    rStep A qs j j = gsRjj A qs j := by
+  simp only [rStep]; rw [if_neg (lt_irrefl _), if_pos (beq_self_eq_true _)]
+
+/-- The `Q` column when the pivot is positive: `qⱼ = v / rⱼⱼ`. -/
+theorem qStep_pos (A : Fin m → Fin n → ℝ) (qs : List (Fin m → ℝ)) (j : Fin n)
+    (h : 0 < gsRjj A qs j) (i : Fin m) :
+    qStep A qs j i = gsV A qs j i / gsRjj A qs j := by
+  simp only [qStep]; rw [if_pos (gtBool_true_iff.mpr h)]
+
+/-! ### The orthogonalization sum as a `Finset` sum -/
+
+set_option linter.unusedSimpArgs false in
+/-- The zip-fold defining `v` collapses to a single map-fold over the `Q` columns. -/
+theorem cross_fold_eq (qs : List (Fin m → ℝ)) (g : (Fin m → ℝ) → ℝ) (i : Fin m) (a : ℝ) :
+    (List.zip qs (qs.map g)).foldl (fun acc (qk, r) => acc + r * qk i) a
+      = a + (qs.map (fun qk => g qk * qk i)).sum := by
+  induction qs generalizing a with
+  | nil => simp
+  | cons x xs ih =>
+      simp only [List.map_cons, List.zip_cons_cons, List.foldl_cons]
+      rw [ih]; simp only [List.map_cons, List.sum_cons]; ring
+
+/-- Closed form of `v i`: `A i j` minus the partial projection sum. -/
+theorem gsV_eq (A : Fin m → Fin n → ℝ) (qs : List (Fin m → ℝ)) (j : Fin n) (i : Fin m) :
+    gsV A qs j i = gsA A j i - (qs.map (fun qk => Spec.dotFn qk (gsA A j) * qk i)).sum := by
+  unfold gsV gsRkjs
+  rw [cross_fold_eq qs (fun qk => Spec.dotFn qk (gsA A j)) i 0, zero_add]
+
+/-- Length of the `Q`-prefix list. -/
+theorem qsPrefix_length (A : Fin m → Fin n → ℝ) (j : Fin n) : (qsPrefix A j).length = j.val := by
+  unfold qsPrefix
+  rw [length_foldl_snoc (fun qs k => qStep A qs k), List.length_nil, Nat.zero_add, List.length_take,
+    List.length_finRange, Nat.min_eq_left (le_of_lt j.isLt)]
+
+/-- The `Q`-prefix is exactly the first `j` columns of the final factor `Q`. -/
+theorem qsPrefix_eq_map (A : Fin m → Fin n → ℝ) (j : Fin n) :
+    qsPrefix A j = ((List.finRange n).take j.val).map (fun k => Qcol A k) := by
+  have hjval : ((List.finRange n).take j.val).length = j.val := by
+    rw [List.length_take, List.length_finRange, Nat.min_eq_left (le_of_lt j.isLt)]
+  apply List.ext_getElem
+  · unfold qsPrefix
+    rw [length_foldl_snoc (fun qs k => qStep A qs k), List.length_nil, Nat.zero_add,
+      List.length_map]
+  · intro p h1 h2
+    rw [List.length_map, hjval] at h2
+    have hpn : p < n := lt_trans h2 j.isLt
+    rw [List.getElem_map]
+    have hidx : ((List.finRange n).take j.val)[p]'(by rw [hjval]; exact h2) = (⟨p, hpn⟩ : Fin n) := by
+      rw [List.getElem_take, List.getElem_finRange]; exact Fin.ext rfl
+    rw [show (qsPrefix A j)[p]'h1 = (qsPrefix A j).getD p (fun _ => 0) from
+      (List.getD_eq_getElem _ _ h1).symm]
+    unfold qsPrefix
+    rw [getD_foldl_snoc_read (fun qs k => qStep A qs k) (fun _ => 0)
+      ((List.finRange n).take j.val) p (by rw [hjval]; exact h2)]
+    rw [List.take_take, Nat.min_eq_left (le_of_lt h2), hidx]
+    funext r
+    rw [show Qcol A (⟨p, hpn⟩ : Fin n) r = Qmat A r ⟨p, hpn⟩ from rfl, Qmat_eq]
+    rfl
+
+/-- `getD` commutes with `dotFn`-mapping when the index is in range. -/
+theorem getD_map_dotFn (qs : List (Fin m → ℝ)) (a : Fin m → ℝ) (k : Nat) (hk : k < qs.length) :
+    (qs.map (fun qk => Spec.dotFn qk a)).getD k 0 = Spec.dotFn (qs.getD k (fun _ => 0)) a := by
+  rw [List.getD_eq_getElem _ _ (by rw [List.length_map]; exact hk), List.getElem_map,
+    List.getD_eq_getElem _ _ hk]
+
+/-- A `Q`-prefix entry equals the final `Q` column at that index. -/
+theorem qsPrefix_getD (A : Fin m → Fin n → ℝ) {k j : Fin n} (hkj : k.val < j.val) :
+    (qsPrefix A j).getD k.val (fun _ => 0) = Qcol A k := by
+  rw [qsPrefix_eq_map,
+    List.getD_eq_getElem _ _ (by rw [List.length_map, List.length_take, List.length_finRange,
+      Nat.min_eq_left (le_of_lt j.isLt)]; exact hkj),
+    List.getElem_map]
+  congr 1
+  rw [List.getElem_take, List.getElem_finRange]; exact Fin.ext rfl
+
+/-- The below-diagonal `R` entry is the inner product of the corresponding `Q` column with column `j`. -/
+theorem R_below (A : Fin m → Fin n → ℝ) {k j : Fin n} (hkj : k.val < j.val) :
+    Rmat A k j = Spec.dotFn (Qcol A k) (gsA A j) := by
+  rw [Rmat_eq]; simp only [rStep]; rw [if_pos hkj]; unfold gsRkjs
+  rw [getD_map_dotFn (qsPrefix A j) (gsA A j) k.val (by rw [qsPrefix_length]; exact hkj),
+    qsPrefix_getD A hkj]
+
+/-- The projection sum equals the masked partial sum `Σ_{k<j} R[k,j]·Q[i,k]`. -/
+theorem cross_sum_qr (A : Fin m → Fin n → ℝ) (i : Fin m) (j : Fin n) :
+    ((qsPrefix A j).map (fun qk => Spec.dotFn qk (gsA A j) * qk i)).sum
+      = ∑ k, if k.val < j.val then Rmat A k j * Qmat A i k else 0 := by
+  rw [qsPrefix_eq_map]
+  rw [List.map_map]
+  rw [take_map_sum_eq]
+  apply Finset.sum_congr rfl
+  intro k _
+  by_cases hkj : k.val < j.val
+  · rw [if_pos hkj, if_pos hkj]
+    show Spec.dotFn (Qcol A k) (gsA A j) * Qmat A i k = Rmat A k j * Qmat A i k
+    rw [R_below A hkj]
+  · rw [if_neg hkj, if_neg hkj]
+
+/-! ### Exact reconstruction `A = Q · R` -/
+
+/-- `R` is upper-triangular: entries strictly below the diagonal vanish. -/
+theorem Rmat_upper_triangular (A : Fin m → Fin n → ℝ) {k j : Fin n} (hjk : j.val < k.val) :
+    Rmat A k j = 0 := by
+  rw [Rmat_eq]; exact rStep_above A (qsPrefix A j) hjk
+
+/-- **Per-entry QR reconstruction.** When every `R` pivot is positive (`0 < R[j,j]`, the full
+column-rank success condition), `A[i,j] = Σ_k Q[i,k]·R[k,j]`. -/
+theorem qr_reconstruction (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < Rmat A j j)
+    (i : Fin m) (j : Fin n) :
+    A i j = ∑ k, Qmat A i k * Rmat A k j := by
+  have key : ∀ k : Fin n, Qmat A i k * Rmat A k j
+      = (if k.val < j.val then Qmat A i k * Rmat A k j else 0)
+        + (if k = j then Qmat A i j * Rmat A j j else 0) := by
+    intro k
+    rcases lt_trichotomy k.val j.val with h | h | h
+    · have hne : k ≠ j := fun hk => by rw [hk] at h; exact lt_irrefl _ h
+      rw [if_pos h, if_neg hne, add_zero]
+    · have hkj : k = j := Fin.ext h
+      rw [if_neg (by omega), if_pos hkj, zero_add, hkj]
+    · have hne : k ≠ j := fun hk => by rw [hk] at h; exact lt_irrefl _ h
+      rw [if_neg (by omega), if_neg hne, add_zero, Rmat_upper_triangular A h, mul_zero]
+  rw [show (∑ k, Qmat A i k * Rmat A k j)
+      = ∑ k, ((if k.val < j.val then Qmat A i k * Rmat A k j else 0)
+        + (if k = j then Qmat A i j * Rmat A j j else 0))
+      from Finset.sum_congr rfl (fun k _ => key k),
+    Finset.sum_add_distrib, Finset.sum_ite_eq' Finset.univ j (fun _ => Qmat A i j * Rmat A j j)]
+  simp only [Finset.mem_univ, if_true]
+  have hρpos : 0 < gsRjj A (qsPrefix A j) j := by
+    have h := hrank j; rwa [Rmat_eq, rStep_diag] at h
+  have hdiag : Qmat A i j * Rmat A j j = gsV A (qsPrefix A j) j i := by
+    rw [Qmat_eq, qStep_pos A (qsPrefix A j) j hρpos,
+      show Rmat A j j = gsRjj A (qsPrefix A j) j from by rw [Rmat_eq]; exact rStep_diag _ _ j,
+      div_mul_eq_mul_div, mul_div_assoc, div_self (ne_of_gt hρpos), mul_one]
+  rw [hdiag, gsV_eq, cross_sum_qr,
+    show gsA A j i = A i j from rfl,
+    show (∑ k, if k.val < j.val then Qmat A i k * Rmat A k j else 0)
+      = (∑ k, if k.val < j.val then Rmat A k j * Qmat A i k else 0)
+      from Finset.sum_congr rfl (fun k _ => by
+        by_cases hkj : k.val < j.val
+        · rw [if_pos hkj, if_pos hkj, mul_comm]
+        · rw [if_neg hkj, if_neg hkj])]
+  ring
+
+/-- **Matrix-level QR reconstruction.** `A = Q · R` for the executable Gram–Schmidt factors,
+under positive `R` pivots (full column rank). -/
+theorem qr_mul_eq (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < Rmat A j j) :
+    Matrix.of A = Matrix.of (fun i k => Qmat A i k) * Matrix.of (fun k j => Rmat A k j) := by
+  ext i j
+  rw [Matrix.mul_apply]
+  simp only [Matrix.of_apply]
+  exact qr_reconstruction A hrank i j
+
+/-- **Tensor-level QR reconstruction.** For a tensor `A` whose `qrSpec` `R`-pivots are positive
+(full column rank), every entry of `A` is reconstructed by `Q · R`:
+`A[i,j] = Σ_k Q[i,k]·R[k,j]`, with `Q = qrQSpec A`, `R = qrRSpec A`. -/
+theorem qrSpec_reconstruction (A : Spec.Tensor ℝ (.dim m (.dim n .scalar)))
+    (hrank : ∀ j : Fin n, 0 < Spec.get2 (Spec.qrRSpec A) j j) (i : Fin m) (j : Fin n) :
+    Spec.get2 A i j
+      = ∑ k, Spec.get2 (Spec.qrQSpec A) i k * Spec.get2 (Spec.qrRSpec A) k j := by
+  have hQ : ∀ a b, Spec.get2 (Spec.qrQSpec A) a b = Qmat (Spec.toMatFn A) a b := fun _ _ => rfl
+  have hR : ∀ a b, Spec.get2 (Spec.qrRSpec A) a b = Rmat (Spec.toMatFn A) a b := fun _ _ => rfl
+  simp only [hQ, hR]
+  show Spec.toMatFn A i j = _
+  exact qr_reconstruction (Spec.toMatFn A) (fun b => by rw [← hR b b]; exact hrank b) i j
+
+end QR
 
 end Spec.Factorization.Reconstruction

@@ -128,14 +128,27 @@ zero-residual limit, `isSymEig_of_diagonal` shows the solver output `(diag Af, V
 `NN/Examples/Factorization` are concrete instances of this certificate: they bound the off-diagonal
 mass on specific matrices.
 
+# Exact QR reconstruction
+
+The QR factorization admits the same treatment. `qr_mul_eq` (in the same file) proves that for an
+`A` whose executable Gram–Schmidt `R`-pivots are all positive (`0 < R[j,j]`, the full-column-rank
+success condition) the factors satisfy
+
+$$`R \text{ upper-triangular} \quad\text{and}\quad A = Q\,R,`
+
+with `qrSpec_reconstruction` the tensor-level corollary. The new wrinkle is that `gramSchmidtFn`
+threads a `GSState` that snocs onto _two_ lists at once — the `Q` columns and the `R` columns. Because
+the appended values depend only on the `Q`-history, the `Q`-list is itself a single-list snoc-fold
+(`gs_proj_qs`, read by `getD_foldl_snoc_read` as for Cholesky), and the `R`-list is the `Q`-prefix
+tail `rTail`, read by `gs_fold_split` together with `rTail_getD`. The orthogonalization sum
+`v = a − Σ rₖⱼ qₖ`, a fold over `List.zip`, collapses to a single map-fold (`cross_fold_eq`) and then
+to a masked `Finset` partial sum, after which the positive-pivot hypothesis cancels the `v / rⱼⱼ`
+normalization exactly.
+
 # What remains
 
-With Cholesky's exact reconstruction in place, the remaining finite-fold increment is the QR
-factorization: `A = Q · R` from modified Gram–Schmidt under full column rank, and the orthonormality
-`Qᵀ Q = 1`. The `A = Q · R` part is within reach of the same machinery, but `gramSchmidtFn` threads a
-`GSState` that snocs onto _two_ lists at once (the `Q` columns and the `R` columns), so it needs read
-lemmas for that dual-list structure-fold rather than the single-list `getD_foldl_snoc_read` used for
-Cholesky. The orthonormality `Qᵀ Q = 1` is harder still: it rests on the Gram–Schmidt orthogonality
-invariant, which Mathlib provides for its own `gramSchmidt` but not for this executable variant. The
-specification-level facts the kernel methods rely on are independent of these steps, so the CHD
-foundation is already in place.
+The one finite-fold property still open is the orthonormality of the QR factor, `Qᵀ Q = 1`. Unlike
+`A = Q · R` — a purely algebraic consequence of the orthogonalization step, proved above — it rests on
+the Gram–Schmidt orthogonality invariant, which Mathlib provides for its own `gramSchmidt` but not for
+this executable variant. The specification-level facts the kernel methods rely on are independent of
+that step, so the CHD foundation is already in place.

@@ -83,6 +83,29 @@ For the finite Cholesky construction, `choleskyFn_lower_triangular` (and its ten
 vanish by construction. The proof reads the column produced at each position out of the `List.foldl`
 that builds the factor, via the reusable indexing lemma `getD_foldl_finRange`.
 
+# Exact Cholesky reconstruction
+
+Cholesky is a _finite_ construction, so unlike the iterative routines it admits an exact
+reconstruction theorem — no residual, no convergence caveat. In
+[`NN.Proofs.Tensor.Basic.FactorizationsReconstruction`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Tensor/Basic/FactorizationsReconstruction.lean),
+`isCholesky_of_pos` proves that for a symmetric `A` whose executable pivots are all positive
+(`0 < L[j,j]`, exactly the condition under which the algorithm succeeds over the reals) the factor
+`L = choleskyFn A` is a genuine Cholesky factor:
+
+$$`L \text{ lower-triangular} \quad\text{and}\quad A = L\,L^\top.`
+
+The tensor-level corollary `choleskySpec_reconstruction` states the same per entry:
+`A[i,j] = Σ_k L[i,k]·L[j,k]`.
+
+The proof turns the executable algorithm — a `List.foldl` that snocs one column per index — into
+per-entry algebra. The reusable lemma `getD_foldl_snoc_read` reads the `j`-th column as the step
+function applied to the length-`j` prefix; `prefix_eq_map` then identifies that prefix with the first
+`j` columns of the final `L`, and `take_map_sum_eq` rewrites the code's `List.foldl` sums as masked
+`Finset` partial sums. Lower-triangularity collapses the matrix product to a partial sum plus a single
+pivot term, and the positive-pivot hypothesis discharges the two side conditions: `√` of a positive
+radicand for the diagonal (`Real.mul_self_sqrt`) and a non-zero divisor for the below-diagonal
+entries. Symmetry of `A` extends the lower-triangular reconstruction to the whole matrix.
+
 # The a-posteriori residual certificate
 
 For the iterative routines, the replacement for an impossible a-priori convergence proof is an exact
@@ -107,9 +130,12 @@ mass on specific matrices.
 
 # What remains
 
-The exact algebraic reconstruction of the *finite* executable factorizations — `A = L · Lᵀ` for the
-Cholesky column fold under positive pivots, and `A = Q · R` with `Qᵀ Q = 1` for Gram–Schmidt under
-full column rank — is the natural next increment. It needs an induction relating the `List.foldl`
-prefix at step `j` to the first `j` produced columns (a strengthening of `getD_foldl_finRange`)
-together with the per-pivot positivity discharge from `Matrix.PosDef`. The specification-level facts
-the kernel methods rely on are independent of that step, so the CHD foundation is already in place.
+With Cholesky's exact reconstruction in place, the remaining finite-fold increment is the QR
+factorization: `A = Q · R` from modified Gram–Schmidt under full column rank, and the orthonormality
+`Qᵀ Q = 1`. The `A = Q · R` part is within reach of the same machinery, but `gramSchmidtFn` threads a
+`GSState` that snocs onto _two_ lists at once (the `Q` columns and the `R` columns), so it needs read
+lemmas for that dual-list structure-fold rather than the single-list `getD_foldl_snoc_read` used for
+Cholesky. The orthonormality `Qᵀ Q = 1` is harder still: it rests on the Gram–Schmidt orthogonality
+invariant, which Mathlib provides for its own `gramSchmidt` but not for this executable variant. The
+specification-level facts the kernel methods rely on are independent of these steps, so the CHD
+foundation is already in place.

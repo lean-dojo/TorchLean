@@ -146,3 +146,9 @@ models. These sections give readers a clear place to start when their question i
 
 The answer is the same pattern we use elsewhere: small certificate formats, explicit parsers,
 checked predicates, and theorem statements that say exactly which mathematical claim follows.
+
+Kernel and Gaussian-process methods bring their own version of this discipline through matrix
+factorizations rather than corridors or residuals. The next section, Matrix Factorizations for Kernel
+Methods, develops the eigendecomposition foundation that Computational Hypergraph Discovery relies on,
+including the same split between exact specification consequences and a-posteriori numeric
+certificates.

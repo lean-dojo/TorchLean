@@ -145,10 +145,29 @@ tail `rTail`, read by `gs_fold_split` together with `rTail_getD`. The orthogonal
 to a masked `Finset` partial sum, after which the positive-pivot hypothesis cancels the `v / rⱼⱼ`
 normalization exactly.
 
+# Orthonormality of the QR factor (`Qᵀ Q = 1`)
+
+The remaining finite-fold property — orthonormality of the `Q` factor, `Qᵀ Q = 1` — is proved in
+[`NN.Proofs.Tensor.Basic.FactorizationsOrthonormal`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Tensor/Basic/FactorizationsOrthonormal.lean)
+by *unifying the executable variant with Mathlib's `gramSchmidt`* rather than re-deriving the
+orthogonality induction by hand. Reading the columns of `A` as vectors of `EuclideanSpace ℝ (Fin m)`,
+`Qcol_bridge` proves by strong induction that the `j`-th executable `Q` column equals Mathlib's
+`gramSchmidtNormed ℝ` of the column map. The orthonormality then follows from Mathlib's
+`gramSchmidtNormed_orthonormal'`, giving `Q_orthonormal` (`qₐ · q_b = δₐᵦ`), the matrix-level
+`QT_mul_Q_eq_one`, and the full `IsQR` predicate `isQR_of_pos` (orthonormal `Q`, upper-triangular `R`,
+`A = Q · R`).
+
+The bridge rests on three small connectors over `ℝ`: the executable `dotFn`/`normFn` are the Euclidean
+inner product and norm (`dotFn_eq_inner`, `normFn_eq_norm`), and `proj_normalize` shows the
+un-normalized Gram–Schmidt projection term equals the normalized one (with no non-degeneracy
+hypothesis). The positive-pivot assumption (`0 < R[j,j]`, full column rank) supplies the non-vanishing
+of each `gramSchmidt` vector via `gn_ne_zero`. These connectors are stated generally enough to lift
+into a future Mathlib matrix-level QR contribution.
+
 # What remains
 
-The one finite-fold property still open is the orthonormality of the QR factor, `Qᵀ Q = 1`. Unlike
-`A = Q · R` — a purely algebraic consequence of the orthogonalization step, proved above — it rests on
-the Gram–Schmidt orthogonality invariant, which Mathlib provides for its own `gramSchmidt` but not for
-this executable variant. The specification-level facts the kernel methods rely on are independent of
-that step, so the CHD foundation is already in place.
+With Cholesky and QR fully reconstructed (`A = L · Lᵀ`, `A = Q · R`, `Qᵀ Q = 1`), the only properties
+not available as a-priori theorems are the *iterative* ones: full diagonalization for the cyclic Jacobi
+eigensolver and the SVD built on it. Mathlib v4.30.0 has no Jacobi convergence theory, so those remain
+captured by the exact a-posteriori residual certificate above, never by `sorry`. The specification-level
+facts the kernel methods rely on are independent of that step, so the CHD foundation is complete.

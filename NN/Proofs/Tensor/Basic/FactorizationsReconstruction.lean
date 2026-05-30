@@ -45,10 +45,11 @@ positive-pivot hypotheses discharge the `√`-radicand and divisor side conditio
 
 ## Scope
 
-The one piece *not* proved is the orthonormality of the QR factor, `Qᵀ Q = 1`. Unlike `A = Q · R`
-(which is a purely algebraic consequence of the orthogonalization step), it rests on the Gram–Schmidt
-orthogonality invariant, which Mathlib provides for its own `gramSchmidt` but not for this executable
-variant — so it stays the documented remaining increment, never a `sorry`.
+This file proves `A = L · Lᵀ` and `A = Q · R` purely algebraically. The remaining QR property —
+orthonormality of the `Q` factor, `Qᵀ Q = 1` — is proved in the companion file
+[`NN.Proofs.Tensor.Basic.FactorizationsOrthonormal`](FactorizationsOrthonormal.lean) by bridging the
+executable Gram–Schmidt to Mathlib's `gramSchmidt`, completing the full `Spec.Factorization.IsQR`
+predicate (`isQR_of_pos`).
 -/
 
 @[expose] public section

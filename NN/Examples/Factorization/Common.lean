@@ -50,15 +50,32 @@ def diagFromVec {n : Nat} (v : Spec.Tensor Float (.dim n .scalar)) :
     Spec.Tensor Float (.dim n (.dim n .scalar)) :=
   Spec.ofMatFn (fun i j => if i.val == j.val then Spec.Tensor.toScalar (Spec.get v i) else 0.0)
 
+/-- Extract the diagonal of a square matrix as a length-`n` vector. -/
+def diagOf {n : Nat} (M : Spec.Tensor Float (.dim n (.dim n .scalar))) :
+    Spec.Tensor Float (.dim n .scalar) :=
+  Spec.ofVecFn (fun i => Spec.get2 M i i)
+
 /-- Read a vector tensor back out as a `List Float` (for display). -/
 def vecToList {n : Nat} (v : Spec.Tensor Float (.dim n .scalar)) : List Float :=
   (List.finRange n).map (fun i => Spec.Tensor.toScalar (Spec.get v i))
+
+/-- Squared Frobenius distance `Σ_{i,j} (A_ij - B_ij)²` between two `m × n` matrices. -/
+def frobSqErr {m n : Nat} (A B : Spec.Tensor Float (.dim m (.dim n .scalar))) : Float :=
+  (List.finRange m).foldl (fun acc i =>
+    (List.finRange n).foldl
+      (fun a j => let d := Spec.get2 A i j - Spec.get2 B i j; a + d * d) acc) 0.0
+
+/-- Squared Frobenius off-diagonal mass `Σ_{i≠j} M_ij²` of a square matrix. -/
+def offDiagFrobSq {n : Nat} (M : Spec.Tensor Float (.dim n (.dim n .scalar))) : Float :=
+  (List.finRange n).foldl (fun acc i =>
+    (List.finRange n).foldl
+      (fun a j => if i.val == j.val then a else let x := Spec.get2 M i j; a + x * x) acc) 0.0
 
 /-- Shared tolerance for reconstruction-error assertions. -/
 def tol : Float := 1e-6
 
 /--
-Compiled assertion used by the examples: print `name: OK (err)` when `err < tol`, otherwise raise an
+Compiled **positive** assertion: print `name: OK (err)` when `err < tol`, otherwise raise an
 `IO` error so the build/`#eval` fails. Running this through `#eval` evaluates with the compiler
 (fast), unlike `#guard`, which forces slow kernel reduction of the whole factorization.
 -/
@@ -67,5 +84,41 @@ def assertLt (name : String) (err : Float) (tolerance : Float := tol) : IO Unit 
     IO.println s!"{name}: OK (err = {err})"
   else
     throw (IO.userError s!"{name}: FAIL (err = {err} ≥ tol = {tolerance})")
+
+/--
+Compiled **negative-control** assertion: succeeds only when `err ≥ threshold`, i.e. when a property
+that *should not* hold is correctly detected as violated. Gives the metric teeth — a reviewer can see
+the same `maxMatErr`/residual that reports `0` on a valid factorization reports a large value on an
+invalid one, so the positive checks are not vacuous.
+-/
+def assertGe (name : String) (err : Float) (threshold : Float := 0.5) : IO Unit :=
+  if err ≥ threshold then
+    IO.println s!"{name}: OK (correctly rejected, err = {err} ≥ {threshold})"
+  else
+    throw (IO.userError s!"{name}: FAIL (err = {err} < {threshold}; expected the property to fail)")
+
+/--
+Compiled **negative-control** assertion that a reconstruction *fails*: succeeds when the error is not
+below `tol` — including the `NaN` produced when a hypothesis is violated (e.g. Cholesky of a
+non-positive-definite matrix takes `√(negative)`). Documents that the success hypotheses (SPD pivots,
+full column rank) are genuinely necessary.
+-/
+def assertReconFails (name : String) (err : Float) (tolerance : Float := tol) : IO Unit :=
+  if err < tolerance then
+    throw (IO.userError s!"{name}: FAIL (unexpectedly reconstructed, err = {err} < {tolerance})")
+  else
+    IO.println s!"{name}: OK (correctly failed, err = {err})"
+
+/--
+Compiled assertion that two scalars agree to `tolerance`. Used to verify the *exact* residual
+identity numerically: the reconstruction error and the off-diagonal mass it equals are computed by
+independent routines and shown to match, so the identity `symEigJacobi_frobenius_residual` is not a
+tautology of the code.
+-/
+def assertApproxEq (name : String) (a b : Float) (tolerance : Float := tol) : IO Unit :=
+  if Float.abs (a - b) < tolerance then
+    IO.println s!"{name}: OK (lhs = {a}, rhs = {b}, |Δ| = {Float.abs (a - b)})"
+  else
+    throw (IO.userError s!"{name}: FAIL (lhs = {a}, rhs = {b}, |Δ| = {Float.abs (a - b)} ≥ {tolerance})")
 
 end NN.Examples.Factorization

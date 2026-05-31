@@ -41,10 +41,28 @@ def V : Spec.Tensor Float (.dim 3 (.dim 3 .scalar)) := svd.2.2
 
 /-- Reconstruction error `‖A - U·diag(σ)·Vᵀ‖_max`. -/
 def reconErr : Float := maxMatErr A (mm (mm U (diagFromVec σ)) (tr V))
+/-- Orthogonality error `‖Vᵀ·V - I‖_max` for the right singular vectors. -/
+def orthoErrV : Float := maxMatErr (mm (tr V) V) (Spec.identityTensorSpec 3)
 
 #eval vecToList σ
 
--- Compiled assertion (fails the build otherwise).
+-- Compiled assertions (fail the build otherwise).
 #eval assertLt "SVD A = U·diag(σ)·Vᵀ" reconErr
+-- `V` are the eigenvectors of `Aᵀ A` (see `IsSVD.gram_isSymEig`), hence orthogonal a-priori — the
+-- numeric witness of `jacobi_orthogonal` applied to the Gram matrix, even though `σ₃ = 0` (rank 2).
+#eval assertLt "SVD Vᵀ·V = I" orthoErrV
+
+/-! ## Negative control: a wrong factor is rejected
+
+Permuting the singular values (so they no longer pair with their vectors) must break the
+reconstruction — otherwise the `maxMatErr` reconstruction check would be vacuous. -/
+
+/-- A deliberately mismatched singular-value vector (permuted, and nonzero where the true `σ₃ = 0`). -/
+def σbad : Spec.Tensor Float (.dim 3 .scalar) :=
+  Spec.ofVecFn (fun i => ([3.0, 5.0, 1.0] : List Float).getD i.val 0.0)
+/-- Reconstruction with the mismatched `σ` (should be far from `A`). -/
+def reconErrBad : Float := maxMatErr A (mm (mm U (diagFromVec σbad)) (tr V))
+
+#eval assertGe "SVD with permuted σ correctly fails to reconstruct" reconErrBad
 
 end NN.Examples.Factorization.SVD

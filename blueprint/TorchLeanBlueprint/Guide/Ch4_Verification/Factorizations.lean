@@ -128,6 +128,36 @@ zero-residual limit, `isSymEig_of_diagonal` shows the solver output `(diag Af, V
 `NN/Examples/Factorization` are concrete instances of this certificate: they bound the off-diagonal
 mass on specific matrices.
 
+# Faithfulness of the Jacobi run: orthogonality and orthogonal similarity
+
+The three certificate theorems above are stated *conditionally* — they take the orthogonality
+`Vᵀ V = 1` and the orthogonal-similarity identity `A = V · Af · Vᵀ` as hypotheses. Both are
+*exact, finite, a-priori* facts about the executable `arrJacobiRun`, needing no convergence theory,
+and
+[`NN.Proofs.Tensor.Basic.FactorizationsJacobi`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Tensor/Basic/FactorizationsJacobi.lean)
+proves them, discharging the hypotheses for the real solver output.
+
+The development bridges the strict `Array (Array ℝ)` representation the loop runs over to Mathlib
+`Matrix` via `toM`, with `toM_matMul`/`toM_tr`/`toM_id` showing the array operations realise the
+matrix ones. The single genuinely-new ingredient is `givens_orthogonal`: each rotation
+`arrGivens n p q c s` with `c² + s² = 1` is an orthogonal matrix (`Jᵀ J = 1`), proved by reducing the
+column dot products to the `c² + s² = 1` identity (`givens_normSq`) for the diagonal blocks and to
+orthogonality of distinct standard basis vectors elsewhere. From it, the loop invariant
+`JacInv A₀ (A, V) := Vᵀ V = 1 ∧ A₀ = V · A · Vᵀ` is preserved by one rotation (`jacInv_rotate` — the
+no-op branch trivially, the rotating branch because conjugating by an orthogonal `J` cancels in
+`J Jᵀ = 1`), hence by a whole sweep (`jacInv_sweep`, a `List.foldlRecOn` over `jacobiPairs`) and the
+whole run (`jacInv_run`, starting from `(A, I)` where the invariant is immediate).
+
+Specialised to the `symEigJacobiSpec` output, this gives the two premises as theorems with no
+hypotheses: `jacobi_orthogonal` (`Vᵀ V = 1`) and `jacobi_similarity` (`A = V · Af · Vᵀ`).
+Feeding them into the certificate yields the *unconditional* restatements
+`symEigJacobi_reconstruction_residual`, `symEigJacobi_frobenius_residual`, and
+`symEigJacobi_isSymEig_of_diagonal`: the residual identity and the zero-residual-limit correctness now
+hold for the actual returned `(Λ, V)` outright. So the returned `V` is a genuine orthogonal matrix and
+`Af` a genuine orthogonal similarity of the input *regardless of how far the sweeps have converged* —
+the only thing the residual certificate still defers to runtime is the *size* of the off-diagonal
+mass, never the algebraic faithfulness of the decomposition.
+
 # Exact QR reconstruction
 
 The QR factorization admits the same treatment. `qr_mul_eq` (in the same file) proves that for an
@@ -166,8 +196,14 @@ into a future Mathlib matrix-level QR contribution.
 
 # What remains
 
-With Cholesky and QR fully reconstructed (`A = L · Lᵀ`, `A = Q · R`, `Qᵀ Q = 1`), the only properties
-not available as a-priori theorems are the *iterative* ones: full diagonalization for the cyclic Jacobi
-eigensolver and the SVD built on it. Mathlib v4.30.0 has no Jacobi convergence theory, so those remain
-captured by the exact a-posteriori residual certificate above, never by `sorry`. The specification-level
-facts the kernel methods rely on are independent of that step, so the CHD foundation is complete.
+With Cholesky and QR fully reconstructed (`A = L · Lᵀ`, `A = Q · R`, `Qᵀ Q = 1`), and the Jacobi run
+now proved faithful — `V` orthogonal and `A = V · Af · Vᵀ` exactly, so the residual certificate holds
+*unconditionally* for the real solver output — the single property still not available as an a-priori
+theorem is the *rate*: that finitely many cyclic-Jacobi sweeps drive `Af`'s off-diagonal mass to zero.
+That is the research-grade Forsythe–Henrici / Schönhage convergence result for cyclic (rather than
+classical, largest-pivot) Jacobi, and Mathlib v4.30.0 has no Jacobi convergence theory, so it remains
+captured by the exact a-posteriori residual certificate above — bounded numerically by the `assertLt`
+checks on concrete inputs — never by `sorry`. Everything else is exact: the algebraic faithfulness of
+the decomposition (orthogonality, orthogonal similarity, the residual identity, and correctness in the
+zero-residual limit) is proved, and the specification-level facts the kernel methods rely on are
+independent of the convergence step, so the CHD foundation is complete.

@@ -17,6 +17,7 @@ public import NN.Examples.Factorization.RidgeSolve
 public import NN.Examples.Factorization.Variational
 public import NN.Examples.Factorization.LinearKernel
 public import NN.Examples.Factorization.QuadraticKernel
+public import NN.Examples.Factorization.GaussianKernel
 
 /-!
 # Matrix factorization examples
@@ -74,6 +75,15 @@ factorization misbehaves.
   `K = Kᵀ`, matches the CHD `QuadraticMode` formula, all Jacobi eigenvalues `≥ 0` (masking preserved),
   PSD kernel feeds an exact ridge solve; **negative controls**: both `alpha < 0` and `scale < 0` make
   `K` indefinite, so both bounds are necessary.
+- `GaussianKernel` — CHD's *Gaussian* (fully-nonlinear) mode (`Modes/kernels.py`),
+  `K = scale·∏_dim (1 + w[dim]·exp(−(X[i,dim]−X[j,dim])²/2l²))`, proven symmetric positive-semidefinite
+  for `scale ≥ 0` and a nonnegative mask `w ≥ 0` (`gaussianKernelFn_posSemidef`) — *without*
+  Bochner/Schoenberg, via the entrywise-exponential Hadamard-power series (the PSD cone closed under
+  limits) and the **Schur product theorem** over features. Checks mirror the other modes: `K = Kᵀ`,
+  matches the CHD `GaussianMode` product formula, all Jacobi eigenvalues `≥ 0` (masking preserved), PSD
+  kernel feeds an exact ridge solve; **negative controls**: `scale < 0` and a *negative mask weight*
+  (`w = [−2,0]`, which drives the diagonal below zero) both make `K` indefinite. With the linear,
+  quadratic, and Gaussian modes all discharged, every CHD kernel build is now PSD-verified.
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

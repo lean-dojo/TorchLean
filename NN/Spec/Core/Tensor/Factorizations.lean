@@ -480,4 +480,29 @@ def quadraticKernelSpec {n d : Nat} (X : Tensor α (.dim n (.dim d .scalar)))
     (w : Tensor α (.dim d .scalar)) (scale alpha : α) : Tensor α (.dim n (.dim n .scalar)) :=
   ofMatFn (quadraticKernelFn (toMatFn X) (toVecFn w) scale alpha)
 
+/-- Gaussian-mode product kernel matrix
+`K[i,j] = scale · ∏_dim (1 + w[dim] · exp(−(X[i,dim]−X[j,dim])²/(2·l²)))` — the Gaussian contribution of
+CHD `GaussianMode` (`scale * jnp.prod(1 + which_dim * exps, axis=2)`, with
+`exps[i,j,dim] = exp(−(X[i,dim]−X[j,dim])²/(2·l²))`).
+
+Each feature factor `1 + w[dim]·k` (with `k` the per-feature Gaussian) is positive-semidefinite — `𝟙𝟙ᵀ`
+plus a nonnegative multiple of the Gaussian PSD matrix — and the product over features is PSD by the
+**Schur product theorem**, so `K` is PSD for `scale ≥ 0` and a nonnegative mask `w ≥ 0`
+(see `FactorizationsKernels`). The product is an explicit `foldl` and the squared difference a product, to
+stay polymorphic over the law-free `Context α`. -/
+def gaussianKernelFn {n d : Nat} (X : Fin n → Fin d → α) (w : Fin d → α) (scale l : α) :
+    Fin n → Fin n → α :=
+  fun i j => scale * (List.finRange d).foldl
+    (fun acc dim =>
+      acc * (1 + w dim *
+        MathFunctions.exp (-((X i dim - X j dim) * (X i dim - X j dim)) / ((1 + 1) * l * l)))) 1
+
+/-- Tensor-level Gaussian-mode product kernel from data `X`, selection mask `w`, `scale`, and length
+scale `l`.
+
+PyTorch analogue: `scale * torch.prod(1 + which_dim * torch.exp(-(dx**2)/(2*l**2)), dim=2)`. -/
+def gaussianKernelSpec {n d : Nat} (X : Tensor α (.dim n (.dim d .scalar)))
+    (w : Tensor α (.dim d .scalar)) (scale l : α) : Tensor α (.dim n (.dim n .scalar)) :=
+  ofMatFn (gaussianKernelFn (toMatFn X) (toVecFn w) scale l)
+
 end Spec

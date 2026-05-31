@@ -272,10 +272,47 @@ a Jacobi eigenvalue go negative. As with the linear mode, this discharges the st
 hypothesis, so `solveRidgeSpec (quadraticKernelSpec X w scale alpha) γ b` is an unconditional exact
 solve for `γ > 0`, and `quadraticKernelFn_symm` gives symmetry from `PosSemidef.isHermitian`.
 
-The remaining mode is the *Gaussian* (RBF) kernel `exp(-(xᵢ-xⱼ)²/2\ell²)`, PSD by Schoenberg's theorem
-— writing `exp(xy/\ell²)` as a power series whose terms are Hadamard powers of a rank-one Gram — but
-Mathlib v4.30.0 has no Bochner/Gaussian-kernel PSD theory, so it remains the honest research-grade
-item, parallel to the cyclic-Jacobi rate.
+# Building the kernel: the Gaussian mode is positive-semidefinite
+
+The third and last mode is the *Gaussian* (fully-nonlinear) kernel. CHD's `GaussianMode` builds, per
+feature, the Gaussian `exp(-(X_{i,d}-X_{j,d})^2/2\ell^2)` and takes their masked product:
+
+$$`K[i,j] = \texttt{scale}\cdot\prod_{d} \bigl(1 + w_d\,\exp(-(X_{i,d}-X_{j,d})^2/2\ell^2)\bigr).`
+
+Unlike the linear and quadratic modes, the Gaussian has *no finite algebraic PSD identity* — `exp` is a
+genuine limit. The textbook proof is Schoenberg/Bochner, which Mathlib v4.30.0 does not have. But there
+is an elementary route that reuses the *same* Schur product theorem, and
+`gaussianKernelFn_posSemidef` carries it out. It rests on one genuinely new, independently useful
+lemma and three assembly steps:
+
+- *The PSD cone is closed under entrywise limits* (`posSemidef_of_tendsto`): if real PSD matrices `A_k`
+  converge entrywise to `B`, then `B` is PSD. The quadratic form `x^\top M x` is a finite polynomial in
+  the entries, hence continuous, and `\{y \mid 0 \le y\}` is closed — so `0 \le x^\top A_k x` passes to
+  the limit. This is the only piece Mathlib lacked, and it belongs in Mathlib.
+- *The entrywise exponential of a PSD matrix is PSD* (`posSemidef_map_exp`): writing
+  `\exp\circ G = \sum_k G^{\odot k}/k!` (Hadamard powers), each `G^{\odot k}` is PSD by the Schur
+  product theorem, each partial sum is PSD (a finite sum of PSD matrices), and the partial sums converge
+  entrywise to `\exp\circ G` (the real exponential series) — so the limit is PSD by the lemma above.
+- *A single Gaussian matrix is PSD* (`posSemidef_gaussianCol`): for `c \ge 0`, the matrix
+  `\exp(-c\,(y_i-y_j)^2)` factors as the diagonal congruence
+  `D\,(\exp\circ(2c\,yy^\top))\,D^\top` with `D = \operatorname{diag}(\exp(-c\,y_i^2))`; the middle
+  factor is the entrywise exponential of the (PSD, rank-one) Gram `yy^\top`, and congruence preserves
+  PSD.
+- *Each feature factor and their product* (`gaussianKernelFn_posSemidef`): `\mathbf{1}\mathbf{1}^\top +
+  w_d\cdot\text{Gaussian}_d` is PSD for `w_d \ge 0`, and the product over features is a Hadamard product
+  of PSD matrices — PSD by the Schur product theorem again. Scaling by `\texttt{scale} \ge 0` finishes.
+
+So `K` is PSD whenever `scale ≥ 0` and the mask is nonnegative (`w ≥ 0`) — discharging the standing
+`PosSemidef` hypothesis for the Gaussian mode, and `gaussianKernelFn_symm` gives symmetry from
+`PosSemidef.isHermitian`. The `GaussianKernel` example confirms `K = Kᵀ`, the match with the CHD
+`GaussianMode` product formula, all-nonnegative Jacobi eigenvalues (with feature masking preserved),
+and the downstream exact ridge solve; its two *negative controls* take `scale = -1` and a *negative
+mask weight* `w = [-2,0]` (whose factor `1 - 2\exp(-\Delta^2/2\ell^2)` drives the diagonal below zero),
+each producing a negative eigenvalue — so `scale ≥ 0` and `w ≥ 0` are both necessary.
+
+With the linear, quadratic, and Gaussian modes all discharged, *every kernel CHD builds is now
+PSD-verified*: there is no `PosSemidef` hypothesis left to assume anywhere in the solve / `find_gamma` /
+`Z_test` development.
 
 # The a-posteriori residual certificate
 
@@ -462,6 +499,10 @@ Cholesky-based regularized solve are proved, and the specification-level facts t
 on are independent of the convergence step. The three concrete CHD routines built on them are now
 identified too: the eigendecomposition-form `solve_variationnal` equals `-(K + γI)⁻¹ ga` and agrees
 with the Cholesky route, and the `noise`/`find_gamma`-loss/`Z_test` statistic is a spectral ratio
-provably in `[0,1]` that depends on the kernel only through its spectrum. So the CHD foundation is
-complete, the one remaining open item being statistical, not algebraic — the `Z_test`'s Gaussian
-sampling and percentiles, exercised numerically rather than proved.
+provably in `[0,1]` that depends on the kernel only through its spectrum. And the kernel build itself
+is now PSD-verified for *all three* CHD modes — linear, quadratic, and Gaussian — so the standing
+`PosSemidef` hypothesis is discharged from data, not assumed, even for the fully-nonlinear kernel. So
+the CHD foundation is complete; the two remaining open items are the cyclic-Jacobi convergence *rate*
+(captured exactly by the a-posteriori residual certificate, never by `sorry`) and the `Z_test`'s
+Gaussian sampling and percentiles — one a proof-only gap on a quantity CHD does not need to *run*, the
+other statistical rather than algebraic and exercised numerically.

@@ -14,6 +14,7 @@ public import NN.Proofs.Tensor.Basic.FactorizationsReconstruction
 public import NN.Proofs.Tensor.Basic.FactorizationsOrthonormal
 public import NN.Proofs.Tensor.Basic.FactorizationsJacobi
 public import NN.Proofs.Tensor.Basic.FactorizationsJacobiDecrease
+public import NN.Proofs.Tensor.Basic.FactorizationsJacobiRate
 public import NN.Proofs.Tensor.Basic.BoundsNorms
 public import NN.Proofs.Tensor.Basic.Algebra
 

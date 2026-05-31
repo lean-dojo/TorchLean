@@ -12,6 +12,7 @@ public import NN.Examples.Factorization.QR
 public import NN.Examples.Factorization.SymEig
 public import NN.Examples.Factorization.SVD
 public import NN.Examples.Factorization.JacobiDecrease
+public import NN.Examples.Factorization.JacobiRate
 
 /-!
 # Matrix factorization examples
@@ -34,6 +35,10 @@ factorization misbehaves.
 - `JacobiDecrease` — the per-rotation progress identity `‖offDiag(Jᵀ A J)‖² = ‖offDiag A‖² − 2·A[p,q]²`
   (`jacobi_off_decrease`) and Frobenius-mass invariance; **negative controls**: a wrong-angle rotation
   misses the decrease, a non-orthogonal one breaks mass invariance.
+- `JacobiRate` — the *aggregate* linear-contraction rate of the classical largest-pivot strategy:
+  `‖offDiag(Jᵀ A J)‖² ≤ (1 − 2/(n²−n))·‖offDiag A‖²` (`jacobi_off_decrease_classical`); **negative
+  control**: annihilating a non-largest (tiny) pivot misses the guaranteed factor, so the rate is
+  specific to the largest-pivot choice.
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

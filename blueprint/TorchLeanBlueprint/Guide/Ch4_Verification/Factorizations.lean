@@ -186,6 +186,35 @@ confirm the identity numerically (one rotation takes the off-diagonal mass `6 �
 total mass conserved at `35`) and show its hypotheses biting: a wrong-angle rotation misses the
 decrease, a non-orthogonal one breaks mass invariance.
 
+# Aggregate rate: linear convergence of the classical strategy
+
+The per-rotation identity removes `2 · A[p,q]²` of off-diagonal mass per step. Turning that into an
+*aggregate* rate — a factor by which the mass falls each step, and hence a bound on how many steps are
+needed — requires a lower bound on the pivot. For the *classical* strategy, which always annihilates
+the *largest* off-diagonal entry, that bound is elementary, and
+[`NN.Proofs.Tensor.Basic.FactorizationsJacobiRate`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Tensor/Basic/FactorizationsJacobiRate.lean)
+proves it exactly over `ℝ`. There are `n² − n` off-diagonal positions, so the largest one carries at
+least the average share of the mass (`offSq_le_count_mul_max`):
+
+$$`A[p,q]^2 \;\ge\; \frac{\bigl\|\operatorname{offDiag} A\bigr\|_F^2}{n^2 - n}.`
+
+Substituting this into the per-rotation decrease gives a genuine *linear contraction*
+(`jacobi_off_decrease_classical`):
+
+$$`\bigl\|\operatorname{offDiag}(J^\top A J)\bigr\|_F^2 \;\le\; \Bigl(1 - \tfrac{2}{n^2 - n}\Bigr)\,\bigl\|\operatorname{offDiag} A\bigr\|_F^2,`
+
+a fixed factor strictly below `1`. A fixed-factor contraction iterates to a geometric bound
+(`geom_bound_of_contraction`: `aₖ ≤ ρᵏ · a₀`) and, since `offSq ≥ 0` (`offSq_nonneg`) and the factor
+is `< 1`, drives the off-diagonal mass to zero (`tendsto_zero_of_contraction`). So the classical
+Jacobi eigenvalue algorithm provably converges, with an a-priori geometric rate. The geometric
+machinery is stated for an *arbitrary* per-step factor `ρ`, so it is exactly the slot a future cyclic
+per-sweep bound would fill. The executable witnesses in
+[`NN.Examples.Factorization.JacobiRate`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Factorization/JacobiRate.lean)
+exhibit the contrast on a matrix with one dominant entry (`A[0,1] = 5`): annihilating the largest
+pivot collapses the off-diagonal mass `50.04 → 0.04`, far under the guaranteed `33.36`, while
+annihilating a tiny pivot `A[0,2] = 0.1` removes only `0.02` and stays *above* the guaranteed bound —
+the numerical teeth of the largest-pivot hypothesis.
+
 # Exact QR reconstruction
 
 The QR factorization admits the same treatment. `qr_mul_eq` (in the same file) proves that for an
@@ -226,16 +255,23 @@ into a future Mathlib matrix-level QR contribution.
 
 With Cholesky and QR fully reconstructed (`A = L · Lᵀ`, `A = Q · R`, `Qᵀ Q = 1`), the Jacobi run
 proved faithful — `V` orthogonal and `A = V · Af · Vᵀ` exactly, so the residual certificate holds
-*unconditionally* for the real solver output — and the *per-rotation* progress proved exactly (each
-annihilating rotation removes `2 · A[p,q]²` of off-diagonal mass), the single property still not
-available as an a-priori theorem is the *aggregate rate*: that a full *cyclic* sweep, choosing its
-pivots in fixed row-major order rather than always the largest, drives the off-diagonal mass to zero
-fast enough that finitely many sweeps suffice. Summing the per-rotation decrease over a sweep is exact;
-what is research-grade is bounding the *sum of the pivots* below in terms of the total off-diagonal
-mass when the pivots are visited cyclically — the Forsythe–Henrici / Schönhage convergence result.
-Mathlib v4.30.0 has no Jacobi convergence theory, so that aggregate rate remains captured by the exact
-a-posteriori residual certificate above — bounded numerically by the `assertLt` checks on concrete
-inputs — never by `sorry`. Everything else is exact: the algebraic faithfulness of the decomposition
-(orthogonality, orthogonal similarity, the residual identity, the per-rotation decrease, and
+*unconditionally* for the real solver output — the *per-rotation* progress proved exactly (each
+annihilating rotation removes `2 · A[p,q]²` of off-diagonal mass), and the *aggregate* rate of the
+*classical largest-pivot* strategy proved to be geometric (linear contraction by `1 − 2/(n²−n)`,
+iterating to convergence), the one property still not available as an a-priori theorem is the
+aggregate rate *for the cyclic ordering the solver actually uses*: that visiting pivots in fixed
+row-major order, rather than always the largest, still drives the off-diagonal mass to zero fast
+enough that finitely many sweeps suffice. The gap is precise. The classical bound rests on the
+largest pivot carrying at least the average share of the mass; a cyclically-chosen pivot need not, so
+its single-step decrease can fall arbitrarily short of `2·‖offDiag A‖²/(n²−n)` (and a later rotation
+in the same sweep can refill an entry an earlier one zeroed). Summing the per-rotation decrease over a
+sweep is exact; what is research-grade is bounding the *sum of the cyclic pivots* below in terms of
+the total off-diagonal mass — the Forsythe–Henrici / Schönhage convergence result. Mathlib v4.30.0 has
+no cyclic-Jacobi convergence theory, so that cyclic rate remains captured by the exact a-posteriori
+residual certificate above — bounded numerically by the `assertLt` checks on concrete inputs — never
+by `sorry`; and the geometric machinery (`geom_bound_of_contraction`, `tendsto_zero_of_contraction`)
+is stated for an arbitrary per-step factor, ready to consume such a bound the moment it exists.
+Everything else is exact: the algebraic faithfulness of the decomposition (orthogonality, orthogonal
+similarity, the residual identity, the per-rotation decrease, the classical-strategy linear rate, and
 correctness in the zero-residual limit) is proved, and the specification-level facts the kernel methods
 rely on are independent of the convergence step, so the CHD foundation is complete.

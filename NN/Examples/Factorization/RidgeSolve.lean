@@ -33,6 +33,16 @@ setting CHD targets — so it is *not* invertible on its own. The checks exhibit
 * **Negative — regularization is necessary.** With `γ = 0` the singular `K` has a zero Cholesky pivot:
   forward/back substitution divides by zero and the residual blows up (`NaN`/large). This is why CHD
   regularizes; it is also exactly the `γ > 0` hypothesis of `posDef_addScaledIdFn`.
+
+It then exercises the two capstone theorems that close the solve story:
+
+* `cholesky_posDef` — for the SPD `K + γ·I` the executable Cholesky reconstructs *exactly*
+  (`L · Lᵀ = K + γ·I`); an *indefinite* matrix instead gets a `√(negative) = NaN` pivot and fails, so
+  positive-definiteness is what the capstone needs.
+* `solveRidgeFn_eq_inv_mulVec` — `solveRidgeFn K γ b = (K + γ·I)⁻¹ b`, the closed form CHD
+  `solve_variationnal` specifies. Solving against each basis vector builds the columns of the inverse,
+  and the assembled matrix satisfies `(K + γ·I) · (K + γ·I)⁻¹ = I` — no inverse is ever formed by the
+  algorithm; every column is a verified Cholesky solve.
 -/
 
 @[expose] public section
@@ -125,5 +135,63 @@ def Kγ : Spec.Tensor Float (.dim 3 (.dim 3 .scalar)) := addGammaI K γ
 -- Negative — the singular kernel `K` (PSD but not PD) has a non-positive pivot, so PosDef is needed.
 #eval assertGe "singular K has a non-positive Cholesky pivot (PosDef necessary)"
   (numNonPosPivots K) 0.5
+
+/-! ## Capstone: the SPD Cholesky reconstructs exactly
+
+`Spec.Factorization.Reconstruction.cholesky_posDef` bundles the keystone with the reconstruction
+theorem: for the *positive-definite* `K + γ·I`, the executable Cholesky factor is a genuine factor —
+`L · Lᵀ = K + γ·I` exactly — with no pivot or symmetry hypothesis. The negative control is an
+*indefinite* symmetric matrix: there a radicand goes negative, the pivot is `√(negative) = NaN`, and
+reconstruction fails — so positive-definiteness (not mere symmetry) is what the capstone needs. (Note
+the singular `K` itself, being PSD, *does* reconstruct with a zero pivot; the zero pivot breaks only
+the *solve*, which is the dichotomy the keystone above isolates.) -/
+
+/-- An indefinite symmetric matrix (top-left block has eigenvalues `3, −1`): not PosDef, so its
+Cholesky hits `√(negative)`. -/
+def Aindef : Spec.Tensor Float (.dim 3 (.dim 3 .scalar)) :=
+  mkMat [[1, 2, 0],
+         [2, 1, 0],
+         [0, 0, 1]]
+
+-- Positive — the SPD `K + γ·I` Cholesky reconstructs exactly: `L · Lᵀ = K + γ·I` (`cholesky_posDef`).
+#eval assertLt "SPD Cholesky reconstructs: L·Lᵀ = K + γ·I (capstone)"
+  (frobSqErr (let L := Spec.choleskySpec Kγ; mm L (tr L)) Kγ)
+
+-- Negative — an indefinite matrix gets a `√(negative) = NaN` pivot, so it does not reconstruct.
+#eval assertReconFails "indefinite matrix Cholesky does not reconstruct (PosDef necessary)"
+  (frobSqErr (let L := Spec.choleskySpec Aindef; mm L (tr L)) Aindef)
+
+/-! ## Closing the loop: the ridge solve *is* the regularized inverse
+
+`Spec.Factorization.Reconstruction.solveRidgeFn_eq_inv_mulVec` proves `solveRidgeFn K γ b
+= (K + γ·I)⁻¹ b` — the closed form CHD `solve_variationnal` specifies. Solving against each standard
+basis vector `eⱼ` therefore produces column `j` of `(K + γ·I)⁻¹`; assembling the columns gives a
+genuine inverse, witnessed by `(K + γ·I) · (K + γ·I)⁻¹ = I`. No matrix inverse is formed by the
+algorithm — every column comes from the verified Cholesky solve. -/
+
+/-- The `j`-th standard basis vector. -/
+def unitVec {k : Nat} (j : Fin k) : Spec.Tensor Float (.dim k .scalar) :=
+  Spec.ofVecFn (fun i => if i = j then 1.0 else 0.0)
+
+/-- The `k × k` identity matrix. -/
+def idMat {k : Nat} : Spec.Tensor Float (.dim k (.dim k .scalar)) :=
+  Spec.ofMatFn (fun i j => if i = j then 1.0 else 0.0)
+
+/-- The regularized inverse `(K + γ·I)⁻¹`, built column-by-column by the verified ridge solve: column
+`j` is `solveRidgeSpec K γ eⱼ` (an instance of `solveRidgeFn_eq_inv_mulVec`). -/
+def ridgeInv {k : Nat} (K : Spec.Tensor Float (.dim k (.dim k .scalar))) (γ : Float) :
+    Spec.Tensor Float (.dim k (.dim k .scalar)) :=
+  Spec.ofMatFn (fun i j => Spec.Tensor.toScalar (Spec.get (Spec.solveRidgeSpec K γ (unitVec j)) i))
+
+#eval IO.println s!"(K+γI)⁻¹ diagonal (assembled from ridge solves): \
+  {vecToList (diagOf (ridgeInv K γ))}"
+
+-- Positive — the assembled inverse really inverts: `(K + γ·I) · (K + γ·I)⁻¹ = I`.
+#eval assertLt "ridge solve builds the regularized inverse: (K+γI)·(K+γI)⁻¹ = I"
+  (frobSqErr (mm Kγ (ridgeInv K γ)) idMat)
+
+-- Negative — with `γ = 0` the singular `K` has no inverse: the column solves diverge (NaN).
+#eval assertReconFails "unregularized singular K has no inverse (γ = 0 → solve diverges)"
+  (frobSqErr (mm K (ridgeInv K 0.0)) idMat)
 
 end NN.Examples.Factorization.RidgeSolve

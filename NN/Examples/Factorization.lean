@@ -46,7 +46,11 @@ factorization misbehaves.
   `K = G·Gᵀ` and `γ > 0`, `solveRidgeFn` reconstructs `b` to machine precision; **negative control**:
   with `γ = 0` the singular `K` has a zero Cholesky pivot and the solve diverges (`NaN`), so
   regularization is necessary. Also exhibits the **keystone** `choleskyFn_diag_pos_of_posDef`: the SPD
-  `K + γ·I` has all-positive Cholesky pivots, while the singular `K` has a zero pivot (PosDef needed).
+  `K + γ·I` has all-positive Cholesky pivots, while the singular `K` has a zero pivot (PosDef needed);
+  and the two **capstones** — `cholesky_posDef` (the SPD Cholesky reconstructs `L·Lᵀ = K + γ·I`
+  exactly, while an *indefinite* matrix fails with a `NaN` pivot) and `solveRidgeFn_eq_inv_mulVec` (the
+  solve *is* the regularized inverse: its columns assemble into `(K + γ·I)⁻¹` with
+  `(K + γ·I)·(K + γ·I)⁻¹ = I`).
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

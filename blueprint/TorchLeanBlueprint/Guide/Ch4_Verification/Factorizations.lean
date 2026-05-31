@@ -156,6 +156,27 @@ forces `zᵀ A z > 0`. The `RidgeSolve` example also exhibits the keystone direc
 all-positive pivots, while the singular `K` has a zero pivot — PosDef is necessary. Nothing here is an
 unproved axiom.
 
+Two capstones close the solve story. First, the keystone and the reconstruction theorem combine into
+`cholesky_posDef`: for *any* positive-definite `A`, the executable `choleskyFn` is — with no pivot,
+symmetry, or success hypothesis — a genuine Cholesky factor (`A = L · Lᵀ`, lower-triangular, strictly
+positive diagonal). This is the unconditional statement "`choleskyFn` computes the Cholesky
+factorization of an SPD matrix". The `RidgeSolve` example exhibits both directions: the SPD `K + γI`
+reconstructs to machine precision, while an *indefinite* matrix hits a `√(negative) = NaN` pivot and
+fails — positive-definiteness, not mere symmetry, is the hypothesis the capstone needs. (A singular
+PSD `K` still reconstructs, with a zero pivot; the zero pivot breaks only the *solve*, which is exactly
+the dichotomy the keystone isolates.)
+
+Second, `solveRidgeFn_eq_inv_mulVec` identifies the computed solve with the closed form CHD specifies:
+
+$$`\texttt{solveRidgeFn}\,K\,\gamma\,b \;=\; (K + \gamma I)^{-1} b.`
+
+The solve theorems prove `(K + γI)·x = b`; positive-definiteness makes `K + γI` invertible
+(`Matrix.PosDef.isUnit`), so that equation pins `x` down *uniquely* and forces equality with the
+inverse — closing the loop to `solve_variationnal`'s `(K + γI)⁻¹ b` *without the algorithm ever forming
+an inverse*. The `RidgeSolve` example makes this concrete: solving against each standard basis vector
+`eⱼ` produces column `j` of `(K + γI)⁻¹`, and the assembled matrix satisfies
+`(K + γI) · (K + γI)⁻¹ = I` to machine precision, every column coming from the verified Cholesky solve.
+
 # The a-posteriori residual certificate
 
 For the iterative routines, the replacement for an impossible a-priori convergence proof is an exact
@@ -329,7 +350,10 @@ and the positive-pivot success condition is now discharged from that SPD fact by
 `choleskyFn_diag_pos_of_posDef` (the radicand `A[j,j] − Σ_{k<j} L[j,k]² > 0`, proved via the explicit
 Schur-complement quadratic-form witness). Composing them, `solveRidgeFn_mulVec_of_posSemidef` makes the
 verified `solve_variationnal` *unconditional* for any positive-semidefinite kernel `K` and `γ > 0`, with
-no pivot hypothesis remaining.
+no pivot hypothesis remaining. The loop to the CHD specification is closed by
+`solveRidgeFn_eq_inv_mulVec`, which upgrades the solve identity `(K + γI)·x = b` to the closed form
+`x = (K + γI)⁻¹ b` (uniqueness from invertibility), and by `cholesky_posDef`, which states
+unconditionally that the executable Cholesky *is* the factorization of any SPD matrix.
 
 Everything else is exact: the algebraic faithfulness of the decomposition (orthogonality, orthogonal
 similarity, the residual identity, the per-rotation decrease, the classical-strategy linear rate, and

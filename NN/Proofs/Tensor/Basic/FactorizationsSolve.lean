@@ -611,6 +611,28 @@ theorem choleskyFn_diag_pos_of_posDef (A : Fin n → Fin n → ℝ) (hpd : (Matr
     rw [hqf_eq_rad] at hpos
     exact hpos
 
+/-! ## Capstone: the executable Cholesky *is* the factorization of any SPD matrix
+
+Combining the keystone with the reconstruction theorem proved in `FactorizationsReconstruction`, the
+executable `choleskyFn` is — with *no* hypothesis beyond positive-definiteness — a genuine Cholesky
+factor of any SPD matrix: lower-triangular, with `A = L · Lᵀ`, and strictly positive diagonal. This is
+the unconditional statement "`choleskyFn` computes the Cholesky factorization of an SPD matrix". -/
+
+/-- **The executable Cholesky factorization of an SPD matrix.** For a positive-definite `A`,
+`choleskyFn A` is a genuine Cholesky factor of `A` (lower-triangular, `A = L · Lᵀ`) with strictly
+positive diagonal — no pivot, symmetry, or success hypothesis. The positivity of the pivots is the
+keystone `choleskyFn_diag_pos_of_posDef`; the factorization identity is `isCholesky_of_pos` fed by it. -/
+theorem cholesky_posDef (A : Fin n → Fin n → ℝ) (hpd : (Matrix.of A).PosDef) :
+    Spec.Factorization.IsCholesky (Matrix.of A) (Matrix.of (Spec.choleskyFn A))
+      ∧ ∀ j, 0 < Spec.choleskyFn A j j := by
+  have hsymm : ∀ i j, A i j = A j i := by
+    intro i j
+    have h := hpd.1.apply i j
+    simp only [Matrix.of_apply, star_trivial] at h
+    exact h.symm
+  have hpos : ∀ j, 0 < Spec.choleskyFn A j j := fun j => choleskyFn_diag_pos_of_posDef A hpd j
+  exact ⟨isCholesky_of_pos A hsymm hpos, hpos⟩
+
 /-! ## The kernel-ridge solve, unconditional for SPD inputs -/
 
 /-- **Kernel-ridge solve, unconditional for an SPD regularized system.** For a positive-semidefinite
@@ -641,3 +663,41 @@ theorem solveRidgeSpec_mulVec_of_posSemidef (K : Spec.Tensor ℝ (.dim n (.dim n
     funext i; rfl
   rw [hround]
   exact solveRidgeFn_mulVec_of_posSemidef (Spec.toMatFn K) γ (Spec.toVecFn b) hK hγ
+
+/-! ## Closing the loop: the ridge solve *is* the regularized inverse
+
+CHD `solve_variationnal` is specified as `x = (K + γ·I)⁻¹ b`. The solve theorems above prove
+`(K + γ·I)·x = b`; positive-definiteness makes `K + γ·I` invertible, so that equation pins `x` down
+*uniquely* — and identifies the computed `solveRidgeFn` with the closed form `(K + γ·I)⁻¹ b`. This is
+the exact statement CHD consumes, with no inverse ever formed by the algorithm itself. -/
+
+/-- **The ridge solve equals the regularized inverse applied to `b`.** For a positive-semidefinite
+kernel `K` and `γ > 0`, the computed `solveRidgeFn K γ b` is exactly `(K + γ·I)⁻¹ b` — the closed form
+CHD `solve_variationnal` specifies. Invertibility comes from `posDef_addScaledIdFn` (PosDef ⟹ unit),
+and the solve identity `solveRidgeFn_mulVec_of_posSemidef` then forces equality with the inverse. -/
+theorem solveRidgeFn_eq_inv_mulVec (K : Fin n → Fin n → ℝ) (γ : ℝ) (b : Fin n → ℝ)
+    (hK : (Matrix.of K).PosSemidef) (hγ : 0 < γ) :
+    Spec.solveRidgeFn K γ b = (Matrix.of (Spec.addScaledIdFn K γ))⁻¹ *ᵥ b := by
+  set M := Matrix.of (Spec.addScaledIdFn K γ) with hM
+  have hpd : M.PosDef := posDef_addScaledIdFn hK hγ
+  have hdet : IsUnit M.det := (Matrix.isUnit_iff_isUnit_det (A := M)).mp hpd.isUnit
+  have hsolve : M *ᵥ (Spec.solveRidgeFn K γ b) = b :=
+    solveRidgeFn_mulVec_of_posSemidef K γ b hK hγ
+  calc Spec.solveRidgeFn K γ b
+      = (M⁻¹ * M) *ᵥ (Spec.solveRidgeFn K γ b) := by
+        rw [Matrix.nonsing_inv_mul M hdet, Matrix.one_mulVec]
+    _ = M⁻¹ *ᵥ (M *ᵥ (Spec.solveRidgeFn K γ b)) := by rw [Matrix.mulVec_mulVec]
+    _ = M⁻¹ *ᵥ b := by rw [hsolve]
+
+/-- **Tensor-level: the ridge solve equals the regularized inverse.** For a tensor kernel `K` whose
+matrix view is positive-semidefinite and `γ > 0`, `solveRidgeSpec K γ b` is the regularized inverse
+`(K + γ·I)⁻¹` applied to `b`. -/
+theorem solveRidgeSpec_eq_inv_mulVec (K : Spec.Tensor ℝ (.dim n (.dim n .scalar))) (γ : ℝ)
+    (b : Spec.Tensor ℝ (.dim n .scalar)) (hK : (Matrix.of (Spec.toMatFn K)).PosSemidef) (hγ : 0 < γ) :
+    Spec.toVecFn (Spec.solveRidgeSpec K γ b)
+      = (Matrix.of (Spec.addScaledIdFn (Spec.toMatFn K) γ))⁻¹ *ᵥ Spec.toVecFn b := by
+  have hround : Spec.toVecFn (Spec.solveRidgeSpec K γ b)
+      = Spec.solveRidgeFn (Spec.toMatFn K) γ (Spec.toVecFn b) := by
+    funext i; rfl
+  rw [hround]
+  exact solveRidgeFn_eq_inv_mulVec (Spec.toMatFn K) γ (Spec.toVecFn b) hK hγ

@@ -13,6 +13,7 @@ public import NN.Examples.Factorization.SymEig
 public import NN.Examples.Factorization.SVD
 public import NN.Examples.Factorization.JacobiDecrease
 public import NN.Examples.Factorization.JacobiRate
+public import NN.Examples.Factorization.RidgeSolve
 
 /-!
 # Matrix factorization examples
@@ -39,6 +40,13 @@ factorization misbehaves.
   `‖offDiag(Jᵀ A J)‖² ≤ (1 − 2/(n²−n))·‖offDiag A‖²` (`jacobi_off_decrease_classical`); **negative
   control**: annihilating a non-largest (tiny) pivot misses the guaranteed factor, so the rate is
   specific to the largest-pivot choice.
+- `RidgeSolve` — the kernel-ridge (Tikhonov) linear solve `(K + γ·I)·x = b` via Cholesky +
+  forward/back substitution (`solveRidgeFn_mulVec_of_posSemidef`, the verified core of CHD
+  `solve_variationnal`, now *unconditional* for PSD `K` and `γ > 0`): for a rank-deficient Gram kernel
+  `K = G·Gᵀ` and `γ > 0`, `solveRidgeFn` reconstructs `b` to machine precision; **negative control**:
+  with `γ = 0` the singular `K` has a zero Cholesky pivot and the solve diverges (`NaN`), so
+  regularization is necessary. Also exhibits the **keystone** `choleskyFn_diag_pos_of_posDef`: the SPD
+  `K + γ·I` has all-positive Cholesky pivots, while the singular `K` has a zero pivot (PosDef needed).
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

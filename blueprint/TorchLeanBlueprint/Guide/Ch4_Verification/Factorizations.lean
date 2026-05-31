@@ -106,6 +106,56 @@ pivot term, and the positive-pivot hypothesis discharges the two side conditions
 radicand for the diagonal (`Real.mul_self_sqrt`) and a non-zero divisor for the below-diagonal
 entries. Symmetry of `A` extends the lower-triangular reconstruction to the whole matrix.
 
+# Solving the regularized system: verified `solve_variationnal`
+
+The eigendecomposition route above gives `(K + γI)⁻¹` as an abstract identity. But CHD does not form
+inverses; it *solves* the regularized system `(K + γI)·x = b`, and the SPD structure makes the direct
+Cholesky route both faster and — crucially for verification — *exact*: because `K + γI` is symmetric
+positive-definite, its Cholesky factorization is finite, so the whole solve carries no asymptotic
+caveat. This is the second, complementary verified route to `solve_variationnal`, in
+[`NN.Proofs.Tensor.Basic.FactorizationsSolve`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Tensor/Basic/FactorizationsSolve.lean).
+
+The solve is two triangular substitutions. Forward substitution `triSolveLowerFn` and back
+substitution `triSolveUpperFn` are *exact*: for a lower- (resp. upper-) triangular matrix with nonzero
+diagonal,
+
+$$`(L\,y)_i = b_i \quad\text{and}\quad (U\,x)_i = c_i \qquad\text{for every } i.`
+
+The key observation is that *no induction on the solved values is needed*: the entry `yᵢ` is defined
+precisely to make row `i` balance, so unfolding it and using triangularity — the not-yet-visited and
+structurally-zero terms drop out of the row dot product — gives the identity directly
+(`triSolveLowerFn_mulVec`, `triSolveUpperFn_mulVec`). Each substitution is a `Function.update` fold
+over the index list (`finRange n` forward, its reverse for back-substitution); two generic lemmas,
+`foldl_update_read` and `foldl_update_stable`, capture the bookkeeping that the value written at index
+`i` is never overwritten and earlier values are already in place.
+
+Composing them through a Cholesky factor solves the SPD system exactly (`cholSolveFn_mulVec`):
+
+$$`(L\,L^\top)\,x = b, \qquad x = \texttt{backSolve}\,L^\top\,(\texttt{forwardSolve}\,L\,b).`
+
+Specializing `L` to the Cholesky factor of `K + γI` gives `solveRidgeFn_mulVec`: if the Cholesky
+pivots of `K + γI` are positive — the success condition — then `solveRidgeFn K γ b` solves
+`(K + γI)·x = b` *exactly*. The `RidgeSolve` example exercises this on a rank-deficient Gram kernel
+`K = G·Gᵀ`: with `γ = 0.5` the residual is zero to machine precision, while the *negative control*
+`γ = 0` hits a zero pivot on the singular `K` and diverges — regularization is what makes the solve
+well-posed.
+
+That success condition is now discharged, so the headline `solveRidgeFn_mulVec_of_posSemidef` is
+*unconditional*: for a positive-semidefinite kernel `K` and `γ > 0`, `solveRidgeFn K γ b` solves
+`(K + γI)·x = b` exactly with no pivot hypothesis. Two facts combine. First, `posDef_addScaledIdFn`
+proves `K + γI` is positive-definite (via `Matrix.PosDef.one`, `Matrix.PosDef.smul`,
+`Matrix.PosDef.posSemidef_add`) — genuinely SPD, exactly the regime where Cholesky succeeds. Second,
+the *keystone* `choleskyFn_diag_pos_of_posDef` proves that a positive-definite matrix has
+*strictly positive* executable Cholesky pivots (equivalently the radicand `A[j,j] − Σ_{k<j} L[j,k]² > 0` at each
+step). The proof is the leading-principal Schur-complement fact, formalized as an *explicit
+quadratic-form witness* so it needs no matrix inverse: by strong induction on `j`, the leading block
+reconstructs from the pivots below `j` (`choleskyFn_dot_eq_local`), and back-substitution — the
+`triSolveUpperFn` already proven correct here — produces a vector `z` with `z_j = 1` whose `A`-quadratic
+form `zᵀ A z` *equals* the radicand; positive-definiteness (`Matrix.PosDef.dotProduct_mulVec_pos`)
+forces `zᵀ A z > 0`. The `RidgeSolve` example also exhibits the keystone directly: the SPD `K + γI` has
+all-positive pivots, while the singular `K` has a zero pivot — PosDef is necessary. Nothing here is an
+unproved axiom.
+
 # The a-posteriori residual certificate
 
 For the iterative routines, the replacement for an impossible a-priori convergence proof is an exact
@@ -271,7 +321,18 @@ no cyclic-Jacobi convergence theory, so that cyclic rate remains captured by the
 residual certificate above — bounded numerically by the `assertLt` checks on concrete inputs — never
 by `sorry`; and the geometric machinery (`geom_bound_of_contraction`, `tendsto_zero_of_contraction`)
 is stated for an arbitrary per-step factor, ready to consume such a bound the moment it exists.
+
+On the *direct* solve route there is nothing left to do, because it avoids the eigensolver entirely.
+The kernel-ridge solve `(K + γI)·x = b` is proved correct *exactly* (via verified forward/back
+substitution and Cholesky), the regularized matrix is proved SPD for `γ > 0` (`posDef_addScaledIdFn`),
+and the positive-pivot success condition is now discharged from that SPD fact by the keystone
+`choleskyFn_diag_pos_of_posDef` (the radicand `A[j,j] − Σ_{k<j} L[j,k]² > 0`, proved via the explicit
+Schur-complement quadratic-form witness). Composing them, `solveRidgeFn_mulVec_of_posSemidef` makes the
+verified `solve_variationnal` *unconditional* for any positive-semidefinite kernel `K` and `γ > 0`, with
+no pivot hypothesis remaining.
+
 Everything else is exact: the algebraic faithfulness of the decomposition (orthogonality, orthogonal
 similarity, the residual identity, the per-rotation decrease, the classical-strategy linear rate, and
-correctness in the zero-residual limit) is proved, and the specification-level facts the kernel methods
-rely on are independent of the convergence step, so the CHD foundation is complete.
+correctness in the zero-residual limit), the finite Cholesky/QR reconstructions, and the
+Cholesky-based regularized solve are proved, and the specification-level facts the kernel methods rely
+on are independent of the convergence step, so the CHD foundation is complete.

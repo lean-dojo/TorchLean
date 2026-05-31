@@ -134,6 +134,53 @@ def choleskySpec {n : Nat} (A : Tensor α (.dim n (.dim n .scalar))) :
     Tensor α (.dim n (.dim n .scalar)) :=
   ofMatFn (choleskyFn (toMatFn A))
 
+/-! ## Triangular solves and the kernel-ridge (Tikhonov) linear solve
+
+Once `A` is factored as `A = L · Lᵀ` (Cholesky), the linear system `A · x = b` is solved by two
+triangular substitutions: forward-solve `L · z = b`, then back-solve `Lᵀ · x = z`. Each substitution
+visits the unknowns in an order such that, when row `i` is reached, every unknown it depends on has
+already been computed; the accumulator `acc` holds those values and `0` everywhere else, so the dot
+`dotFn (row i) acc` is exactly the required partial sum (the not-yet-solved and structurally-zero
+terms drop out). This is the linear solve at the heart of CHD `solve_variationnal`. -/
+
+/-- Forward substitution: solve `L · y = b` for a lower-triangular `L` with nonzero diagonal.
+Unknowns are visited `0, 1, …, n-1`; when row `i` is reached `acc` holds `y₀ … yᵢ₋₁` (and `0`
+elsewhere), so `dotFn (L i) acc = Σ_{k<i} L[i,k]·yₖ` by lower-triangularity. -/
+def triSolveLowerFn {n : Nat} (L : Fin n → Fin n → α) (b : Fin n → α) : Fin n → α :=
+  (List.finRange n).foldl
+    (fun acc i => Function.update acc i ((b i - dotFn (L i) acc) / L i i))
+    (fun _ => 0)
+
+/-- Back substitution: solve `U · x = y` for an upper-triangular `U` with nonzero diagonal.
+Unknowns are visited `n-1, …, 1, 0`; when row `i` is reached `acc` holds `xᵢ₊₁ … xₙ₋₁` (and `0`
+elsewhere), so `dotFn (U i) acc = Σ_{k>i} U[i,k]·xₖ` by upper-triangularity. -/
+def triSolveUpperFn {n : Nat} (U : Fin n → Fin n → α) (y : Fin n → α) : Fin n → α :=
+  (List.finRange n).reverse.foldl
+    (fun acc i => Function.update acc i ((y i - dotFn (U i) acc) / U i i))
+    (fun _ => 0)
+
+/-- Solve `A · x = b` given a Cholesky factor `L` of `A` (so `A = L · Lᵀ`): forward-solve
+`L · z = b`, then back-solve `Lᵀ · x = z`. -/
+def cholSolveFn {n : Nat} (L : Fin n → Fin n → α) (b : Fin n → α) : Fin n → α :=
+  triSolveUpperFn (fun i k => L k i) (triSolveLowerFn L b)
+
+/-- The regularized matrix `K + γ·I` as a function. For a symmetric PSD kernel `K` and `γ > 0`
+this is symmetric positive-definite, so its Cholesky factorization succeeds. -/
+def addScaledIdFn {n : Nat} (K : Fin n → Fin n → α) (γ : α) : Fin n → Fin n → α :=
+  fun i j => K i j + (if i = j then γ else 0)
+
+/-- The Tikhonov-regularized (kernel-ridge) solve `(K + γ·I)·x = b`, via the Cholesky factorization
+of `K + γ·I`. This is the linear solve at the core of CHD `solve_variationnal`. -/
+def solveRidgeFn {n : Nat} (K : Fin n → Fin n → α) (γ : α) (b : Fin n → α) : Fin n → α :=
+  cholSolveFn (choleskyFn (addScaledIdFn K γ)) b
+
+/-- Tensor-level kernel-ridge solve: `(K + γ·I)·x = b`.
+
+PyTorch analogue: `torch.linalg.solve(K + γ·I, b)` (specialized to the SPD Cholesky path). -/
+def solveRidgeSpec {n : Nat} (K : Tensor α (.dim n (.dim n .scalar))) (γ : α)
+    (b : Tensor α (.dim n .scalar)) : Tensor α (.dim n .scalar) :=
+  ofVecFn (solveRidgeFn (toMatFn K) γ (toVecFn b))
+
 /-! ## QR factorization (modified Gram–Schmidt)
 
 For `A : m × n`, produce `Q : m × n` with orthonormal columns and `R : n × n` upper-triangular

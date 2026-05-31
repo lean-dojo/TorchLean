@@ -9,6 +9,7 @@ module
 public import NN.Proofs.Tensor.Basic.Factorizations
 public import NN.Proofs.Tensor.Basic.FactorizationsOrthonormal
 public import Mathlib.Data.Real.StarOrdered
+public import Mathlib.Analysis.Matrix.Order
 
 /-!
 # CHD mode kernels are symmetric positive-semidefinite
@@ -30,8 +31,21 @@ a sum of the all-ones matrix (a rank-one Gram, PSD) and a scaled Gram matrix `Φ
 * `linearKernelFn_symm` — `K` is symmetric (a corollary, via `PosSemidef.isHermitian`).
 * `linearKernelSpec_posSemidef` — the tensor-level statement, the form the solve theorems consume.
 
-Quadratic mode (`PosSemidef.hadamard`, the Schur product theorem) and Gaussian mode (Bochner /
-Schoenberg, not in Mathlib v4.30.0) are the natural follow-ons.
+The **quadratic mode** is `K[i,j] = scale·(alpha + ⟨Φ i, Φ j⟩)² + (1 − alpha²·scale)`, which expands
+algebraically to
+
+`K = 𝟙𝟙ᵀ + (2·scale·alpha)·Φ·Φᵀ + scale·(Φ·Φᵀ ⊙ Φ·Φᵀ)`,
+
+a sum of: the all-ones Gram (PSD), a nonnegative multiple of the Gram `Φ·Φᵀ` (PSD), and a nonnegative
+multiple of the **Hadamard square** of that Gram — PSD by the **Schur product theorem**
+(`PosSemidef.hadamard`). So `K` is PSD whenever `scale ≥ 0` and `alpha ≥ 0`.
+
+* `quadraticKernelFn_posSemidef` — `(Matrix.of (quadraticKernelFn X w scale alpha)).PosSemidef` for
+  `0 ≤ scale` and `0 ≤ alpha`.
+* `quadraticKernelFn_symm` / `quadraticKernelSpec_posSemidef` — symmetry and the tensor-level form.
+
+Gaussian mode (Bochner / Schoenberg positive-definiteness, not in Mathlib v4.30.0) is the natural
+remaining follow-on.
 -/
 
 @[expose] public section
@@ -95,5 +109,50 @@ theorem linearKernelSpec_posSemidef (X : Spec.Tensor ℝ (.dim n (.dim d .scalar
     funext i j; rfl
   rw [hround]
   exact linearKernelFn_posSemidef _ _ hscale
+
+/-- **The quadratic-mode kernel is positive-semidefinite.** For data `X`, selection mask `w`, and
+`scale ≥ 0`, `alpha ≥ 0`, `K[i,j] = scale·(alpha + ⟨Φ i, Φ j⟩)² + (1 − alpha²·scale)` is PSD. The proof
+expands `K = 𝟙𝟙ᵀ + (2·scale·alpha)·Φ·Φᵀ + scale·(Φ·Φᵀ ⊙ Φ·Φᵀ)` and adds three PSD pieces, the last via
+the **Schur product theorem** `PosSemidef.hadamard`. -/
+theorem quadraticKernelFn_posSemidef (X : Fin n → Fin d → ℝ) (w : Fin d → ℝ) {scale alpha : ℝ}
+    (hscale : 0 ≤ scale) (halpha : 0 ≤ alpha) :
+    (Matrix.of (Spec.quadraticKernelFn X w scale alpha)).PosSemidef := by
+  -- the masked data as a matrix, the all-ones column, and the data Gram `M = Φ·Φᵀ`
+  set Φ : Matrix (Fin n) (Fin d) ℝ := Matrix.of (Spec.maskColsFn X w) with hΦ
+  set Ψ : Matrix (Fin n) (Fin 1) ℝ := Matrix.of (fun _ _ => 1) with hΨ
+  -- `K = Ψ·Ψᵀ + (2·scale·alpha)·(Φ·Φᵀ) + scale·((Φ·Φᵀ) ⊙ (Φ·Φᵀ))`
+  have hKeq : Matrix.of (Spec.quadraticKernelFn X w scale alpha)
+      = Ψ * Ψᵀ + (2 * scale * alpha) • (Φ * Φᵀ) + scale • ((Φ * Φᵀ) ⊙ (Φ * Φᵀ)) := by
+    ext i j
+    simp only [Matrix.of_apply, Matrix.add_apply, Matrix.smul_apply, smul_eq_mul,
+      Matrix.mul_apply, Matrix.transpose_apply, Matrix.hadamard_apply, Spec.quadraticKernelFn, hΦ, hΨ]
+    rw [dotFn_eq_sum, Fin.sum_univ_one]
+    simp only [Spec.maskColsFn]
+    ring
+  rw [hKeq]
+  have hM : (Φ * Φᵀ).PosSemidef := posSemidef_mul_transpose_self Φ
+  have hc : (0 : ℝ) ≤ 2 * scale * alpha := by positivity
+  exact ((posSemidef_mul_transpose_self Ψ).add (hM.smul hc)).add ((hM.hadamard hM).smul hscale)
+
+/-- The quadratic-mode kernel is symmetric: `K[i,j] = K[j,i]`. -/
+theorem quadraticKernelFn_symm (X : Fin n → Fin d → ℝ) (w : Fin d → ℝ) {scale alpha : ℝ}
+    (hscale : 0 ≤ scale) (halpha : 0 ≤ alpha) (i j : Fin n) :
+    Spec.quadraticKernelFn X w scale alpha i j = Spec.quadraticKernelFn X w scale alpha j i := by
+  have h := (quadraticKernelFn_posSemidef X w hscale halpha).isHermitian
+  have e : (Matrix.of (Spec.quadraticKernelFn X w scale alpha))ᴴ i j
+      = (Matrix.of (Spec.quadraticKernelFn X w scale alpha)) i j := by rw [h]
+  simpa [Matrix.conjTranspose_apply, Matrix.of_apply] using e.symm
+
+/-- **Tensor-level: the quadratic-mode kernel is positive-semidefinite.** The form the verified solve
+consumes, so e.g. `solveRidgeSpec (quadraticKernelSpec X w scale alpha) γ b` is the exact regularized
+solve for any `γ > 0` whenever `scale ≥ 0` and `alpha ≥ 0`. -/
+theorem quadraticKernelSpec_posSemidef (X : Spec.Tensor ℝ (.dim n (.dim d .scalar)))
+    (w : Spec.Tensor ℝ (.dim d .scalar)) {scale alpha : ℝ} (hscale : 0 ≤ scale) (halpha : 0 ≤ alpha) :
+    (Matrix.of (Spec.toMatFn (Spec.quadraticKernelSpec X w scale alpha))).PosSemidef := by
+  have hround : Spec.toMatFn (Spec.quadraticKernelSpec X w scale alpha)
+      = Spec.quadraticKernelFn (Spec.toMatFn X) (Spec.toVecFn w) scale alpha := by
+    funext i j; rfl
+  rw [hround]
+  exact quadraticKernelFn_posSemidef _ _ hscale halpha
 
 end Spec.Factorization

@@ -251,12 +251,31 @@ hypothesis left to assume. The `LinearKernel` example confirms `K = Kᵀ`, the m
 downstream exact ridge solve; its *negative control* takes `scale = -1`, where `𝟙𝟙ᵀ − Φ Φᵀ` is
 indefinite and a Jacobi eigenvalue goes negative — so `scale ≥ 0` is necessary.
 
-The other two modes are the natural follow-ons. The *quadratic* kernel is an entrywise square of a
-PSD matrix, so it is PSD by the *Schur product theorem* (`PosSemidef.hadamard`, available in
-Mathlib), under the hyperparameter sign conditions. The *Gaussian* (RBF) kernel
-`exp(-(xᵢ-xⱼ)²/2\ell²)` is PSD by Schoenberg's theorem — writing `exp(xy/\ell²)` as a power series whose
-terms are Hadamard powers of a rank-one Gram — but Mathlib v4.30.0 has no Bochner/Gaussian-kernel PSD
-theory, so it is the new honest research-grade item, parallel to the cyclic-Jacobi rate.
+# Building the kernel: the quadratic mode is positive-semidefinite
+
+The *quadratic* mode (`QuadraticMode.vectorized_kernel`) is the second kernel CHD builds:
+
+$$`K[i,j] = \texttt{scale}\cdot(\alpha + \langle \Phi_i, \Phi_j\rangle)^2 + (1 - \alpha^2\texttt{scale}).`
+
+Squaring and collecting terms makes the PSD structure explicit:
+
+$$`K = \mathbf{1}\mathbf{1}^\top + (2\,\texttt{scale}\,\alpha)\cdot \Phi\,\Phi^\top
+       + \texttt{scale}\cdot\bigl(\Phi\,\Phi^\top \odot \Phi\,\Phi^\top\bigr),`
+
+a sum of three PSD pieces: the all-ones Gram, a nonnegative multiple of the data Gram `Φ Φᵀ`, and a
+nonnegative multiple of its *Hadamard square* `Φ Φᵀ ⊙ Φ Φᵀ`. The last is PSD by the *Schur product
+theorem* `PosSemidef.hadamard` (the Hadamard product of PSD matrices is PSD), which Mathlib v4.30.0
+provides. `quadraticKernelFn_posSemidef` assembles the three with `PosSemidef.add`/`PosSemidef.smul`
+and proves `K` PSD whenever `scale ≥ 0` *and* `alpha ≥ 0` — both conditions are real: the
+`QuadraticKernel` example's two *negative controls* take `alpha = -1` and `scale = -1`, and each makes
+a Jacobi eigenvalue go negative. As with the linear mode, this discharges the standing `PosSemidef`
+hypothesis, so `solveRidgeSpec (quadraticKernelSpec X w scale alpha) γ b` is an unconditional exact
+solve for `γ > 0`, and `quadraticKernelFn_symm` gives symmetry from `PosSemidef.isHermitian`.
+
+The remaining mode is the *Gaussian* (RBF) kernel `exp(-(xᵢ-xⱼ)²/2\ell²)`, PSD by Schoenberg's theorem
+— writing `exp(xy/\ell²)` as a power series whose terms are Hadamard powers of a rank-one Gram — but
+Mathlib v4.30.0 has no Bochner/Gaussian-kernel PSD theory, so it remains the honest research-grade
+item, parallel to the cyclic-Jacobi rate.
 
 # The a-posteriori residual certificate
 

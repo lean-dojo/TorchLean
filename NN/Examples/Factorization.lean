@@ -16,6 +16,7 @@ public import NN.Examples.Factorization.JacobiRate
 public import NN.Examples.Factorization.RidgeSolve
 public import NN.Examples.Factorization.Variational
 public import NN.Examples.Factorization.LinearKernel
+public import NN.Examples.Factorization.QuadraticKernel
 
 /-!
 # Matrix factorization examples
@@ -66,6 +67,13 @@ factorization misbehaves.
   theorem assumes. Checks: `K = Kᵀ`, matches the CHD `LinearMode` formula, all Jacobi eigenvalues `≥ 0`
   (masking a feature preserved), and the PSD kernel feeds an exact ridge solve; **negative control**:
   `scale < 0` makes `K` indefinite (a negative eigenvalue appears).
+- `QuadraticKernel` — CHD's *quadratic* mode (`Modes/kernels.py`),
+  `K = scale·(alpha + Φ·Φᵀ)² + (1 − alpha²·scale) = 𝟙𝟙ᵀ + (2·scale·alpha)·Φ·Φᵀ + scale·(Φ·Φᵀ ⊙ Φ·Φᵀ)`,
+  proven symmetric positive-semidefinite for `scale ≥ 0` and `alpha ≥ 0` via the **Schur product
+  theorem** on the Hadamard square (`quadraticKernelFn_posSemidef`). Checks mirror the linear mode:
+  `K = Kᵀ`, matches the CHD `QuadraticMode` formula, all Jacobi eigenvalues `≥ 0` (masking preserved),
+  PSD kernel feeds an exact ridge solve; **negative controls**: both `alpha < 0` and `scale < 0` make
+  `K` indefinite, so both bounds are necessary.
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

@@ -462,4 +462,22 @@ def linearKernelSpec {n d : Nat} (X : Tensor α (.dim n (.dim d .scalar)))
     (w : Tensor α (.dim d .scalar)) (scale : α) : Tensor α (.dim n (.dim n .scalar)) :=
   ofMatFn (linearKernelFn (toMatFn X) (toVecFn w) scale)
 
+/-- Quadratic-mode kernel matrix `K[i,j] = scale · (alpha + ⟨Φ i, Φ j⟩)² + (1 − alpha²·scale)`,
+`Φ = maskColsFn X w` the masked data. This is exactly CHD `QuadraticMode.vectorized_kernel`. Algebraically
+it expands to `K = 𝟙𝟙ᵀ + (2·scale·alpha)·Φ·Φᵀ + scale·(Φ·Φᵀ ⊙ Φ·Φᵀ)` (the last a Hadamard square), so it
+is positive-semidefinite for `scale ≥ 0` and `alpha ≥ 0` by the Schur product theorem — see
+`FactorizationsKernels`. The square is written as a product to stay polymorphic over `Context α`. -/
+def quadraticKernelFn {n d : Nat} (X : Fin n → Fin d → α) (w : Fin d → α) (scale alpha : α) :
+    Fin n → Fin n → α :=
+  fun i j =>
+    let m := dotFn (maskColsFn X w i) (maskColsFn X w j)
+    scale * ((alpha + m) * (alpha + m)) + (1 - alpha * alpha * scale)
+
+/-- Tensor-level quadratic-mode kernel from data `X`, selection mask `w`, `scale`, and offset `alpha`.
+
+PyTorch analogue: `scale * (alpha + (X * which_dim).matmul(X.T))**2 + (1 - alpha**2 * scale)`. -/
+def quadraticKernelSpec {n d : Nat} (X : Tensor α (.dim n (.dim d .scalar)))
+    (w : Tensor α (.dim d .scalar)) (scale alpha : α) : Tensor α (.dim n (.dim n .scalar)) :=
+  ofMatFn (quadraticKernelFn (toMatFn X) (toVecFn w) scale alpha)
+
 end Spec

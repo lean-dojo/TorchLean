@@ -430,4 +430,36 @@ def varNoiseSpec {n : Nat} (evals : Tensor α (.dim n .scalar))
     (V : Tensor α (.dim n (.dim n .scalar))) (γ : α) (ga : Tensor α (.dim n .scalar)) : α :=
   varNoiseFn (toVecFn evals) γ (projFn (toMatFn V) (toVecFn ga))
 
+/-! ## CHD mode kernels (`Modes/kernels.py`)
+
+Everything above takes the kernel matrix `K` as input, assuming it is symmetric positive-semidefinite.
+CHD *builds* `K` from data: for each pair of samples, a mode kernel evaluates a feature inner product.
+The simplest is the **linear mode** (`LinearMode.vectorized_kernel`):
+
+`K[i,j] = 1 + scale · Σ_k (which_dim_k · X[i,k]) · X[j,k]`,
+
+a constant `1` plus a scaled Gram matrix of the (column-masked) data. For the binary selection mask
+`which_dim_k ∈ {0,1}` CHD uses, `which_dim_k · X[i,k] · X[j,k] = (which_dim_k X[i,k])·(which_dim_k X[j,k])`,
+so `K = 𝟙𝟙ᵀ + scale · Φ·Φᵀ` with `Φ` the masked data — manifestly symmetric positive-semidefinite for
+`scale ≥ 0`. That PSD fact (proved in `FactorizationsKernels`) discharges the standing `PosSemidef`
+hypothesis of the solve/`find_gamma` development for the real linear kernel. -/
+
+/-- Column-mask the data matrix by a per-feature weight `w` (CHD `which_dim`): zero out / scale
+feature `k` by `w k`. -/
+def maskColsFn {n d : Nat} (X : Fin n → Fin d → α) (w : Fin d → α) : Fin n → Fin d → α :=
+  fun i k => w k * X i k
+
+/-- Linear-mode kernel matrix `K[i,j] = 1 + scale · ⟨Φ i, Φ j⟩`, `Φ = maskColsFn X w` the masked data.
+For a binary selection mask this is exactly CHD `LinearMode.vectorized_kernel`. -/
+def linearKernelFn {n d : Nat} (X : Fin n → Fin d → α) (w : Fin d → α) (scale : α) :
+    Fin n → Fin n → α :=
+  fun i j => 1 + scale * dotFn (maskColsFn X w i) (maskColsFn X w j)
+
+/-- Tensor-level linear-mode kernel: `K = 𝟙𝟙ᵀ + scale · Φ·Φᵀ` from data `X` and selection mask `w`.
+
+PyTorch analogue: `1 + scale * (X * which_dim).matmul(X.T)`. -/
+def linearKernelSpec {n d : Nat} (X : Tensor α (.dim n (.dim d .scalar)))
+    (w : Tensor α (.dim d .scalar)) (scale : α) : Tensor α (.dim n (.dim n .scalar)) :=
+  ofMatFn (linearKernelFn (toMatFn X) (toVecFn w) scale)
+
 end Spec

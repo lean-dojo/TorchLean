@@ -15,6 +15,7 @@ public import NN.Examples.Factorization.JacobiDecrease
 public import NN.Examples.Factorization.JacobiRate
 public import NN.Examples.Factorization.RidgeSolve
 public import NN.Examples.Factorization.Variational
+public import NN.Examples.Factorization.LinearKernel
 
 /-!
 # Matrix factorization examples
@@ -59,6 +60,12 @@ factorization misbehaves.
   (`varNoiseFn_nonneg`, `varNoiseFn_le_one`), and `Z_test` spectral invariance
   (`varNoiseFn_projFn_mulVec`); **negative controls**: wrong eigenvectors break the solve, and `γ < 0`
   pushes the noise outside `[0,1]`.
+- `LinearKernel` — CHD *builds* the kernel from data (`Modes/kernels.py`); the linear mode is
+  `K = 𝟙𝟙ᵀ + scale·Φ·Φᵀ`, proven symmetric positive-semidefinite for `scale ≥ 0`
+  (`linearKernelFn_posSemidef`), which discharges the `PosSemidef` hypothesis every solve/`find_gamma`
+  theorem assumes. Checks: `K = Kᵀ`, matches the CHD `LinearMode` formula, all Jacobi eigenvalues `≥ 0`
+  (masking a feature preserved), and the PSD kernel feeds an exact ridge solve; **negative control**:
+  `scale < 0` makes `K` indefinite (a negative eigenvalue appears).
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

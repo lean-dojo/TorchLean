@@ -227,6 +227,37 @@ feeding the *wrong* eigenvectors (the identity in place of `V`) makes the solve 
 `γ < 0` pushes the `noise` outside `[0,1]` — so the true eigendecomposition and `γ > 0` are both
 necessary.
 
+# Building the kernel: the linear mode is positive-semidefinite
+
+Every result above takes the kernel `K` as input *under the hypothesis* that it is positive
+-semidefinite — the solve needs `K + γI` to be SPD, the noise bound needs `λᵢ ≥ 0`. But CHD does not
+receive `K`; it *builds* it from data (`Modes/kernels.py`). Discharging that standing `PosSemidef`
+hypothesis for the kernels CHD actually constructs is the same move as the positive-pivot keystone:
+turn an assumed precondition into a theorem.
+[`NN.Proofs.Tensor.Basic.FactorizationsKernels`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Tensor/Basic/FactorizationsKernels.lean)
+takes the first and simplest mode. The *linear* kernel is
+
+$$`K[i,j] = 1 + \texttt{scale}\cdot\langle \Phi_i, \Phi_j\rangle,
+\qquad K = \mathbf{1}\mathbf{1}^\top + \texttt{scale}\cdot \Phi\,\Phi^\top,`
+
+with `Φ` the column-masked data (`which_dim`). `linearKernelFn_posSemidef` proves this is symmetric
+positive-semidefinite whenever `scale ≥ 0`: the all-ones matrix `𝟙𝟙ᵀ` is a rank-one Gram (hence PSD),
+`Φ Φᵀ` is a Gram matrix (PSD by `posSemidef_self_mul_conjTranspose`), `scale ≥ 0` keeps the scaling
+PSD (`PosSemidef.smul`), and `PosSemidef.add` closes the sum. Symmetry (`linearKernelFn_symm`) is then
+a corollary of `PosSemidef.isHermitian`. Composed with the solve development, this makes
+`solveRidgeSpec (linearKernelSpec X w scale) γ b` an *unconditional* exact solve for `γ > 0` — no PSD
+hypothesis left to assume. The `LinearKernel` example confirms `K = Kᵀ`, the match with the CHD
+`LinearMode` formula, all-nonnegative Jacobi eigenvalues (with feature masking preserved), and the
+downstream exact ridge solve; its *negative control* takes `scale = -1`, where `𝟙𝟙ᵀ − Φ Φᵀ` is
+indefinite and a Jacobi eigenvalue goes negative — so `scale ≥ 0` is necessary.
+
+The other two modes are the natural follow-ons. The *quadratic* kernel is an entrywise square of a
+PSD matrix, so it is PSD by the *Schur product theorem* (`PosSemidef.hadamard`, available in
+Mathlib), under the hyperparameter sign conditions. The *Gaussian* (RBF) kernel
+`exp(-(xᵢ-xⱼ)²/2\ell²)` is PSD by Schoenberg's theorem — writing `exp(xy/\ell²)` as a power series whose
+terms are Hadamard powers of a rank-one Gram — but Mathlib v4.30.0 has no Bochner/Gaussian-kernel PSD
+theory, so it is the new honest research-grade item, parallel to the cyclic-Jacobi rate.
+
 # The a-posteriori residual certificate
 
 For the iterative routines, the replacement for an impossible a-priori convergence proof is an exact

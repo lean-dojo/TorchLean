@@ -314,6 +314,50 @@ With the linear, quadratic, and Gaussian modes all discharged, *every kernel CHD
 PSD-verified*: there is no `PosSemidef` hypothesis left to assume anywhere in the solve / `find_gamma` /
 `Z_test` development.
 
+# The discovery decision layer: turning `noise` into graph structure
+
+Everything above produces *numbers* — a kernel, its eigendecomposition, and the `noise` level
+(`varNoiseFn`, proven to be a fraction in `[0,1]`). CHD's outer *discovery loop*
+(`decision.py`, `_GraphDiscoveryMain.py`) turns those numbers into the actual hypergraph: which
+ancestors a node depends on, through which kernel mode.
+[`NN.Proofs.Tensor.Basic.FactorizationsDecision`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Tensor/Basic/FactorizationsDecision.lean)
+formalizes the four deterministic choices the loop makes and proves each one's selection guarantee. They
+are comparisons over finite data, so the specs (`Spec.argMinFn`, `Spec.kernelChooserFn`, …) mirror the
+Python verbatim and run over `Float`; the proofs are over `ℝ`, bridged from the `Context` order test
+(`gtBool`/`ltBool`) to the real `<` by `gtBool_eq_decide`.
+
+The backbone is a single generic fold-selection lemma (`foldl_select`): the running-best `List.foldl`
+that both `np.argmin` and `np.argmax` compile to returns a `le`-extremal index over the whole family, for
+*any* preorder `le` whose strict part the `Bool` test decides. Instantiating `le := (· ≤ ·)` and
+`(· ≥ ·)` gives the two endpoints:
+
+- *Prune the least-activated ancestor.* Each step of `helper_functions.step` drops the candidate of
+  smallest *activation* (`min_activation = np.argmin(activations)`); `argMinFn_le` proves the fold returns
+  a global minimizer, `argMaxFn_le` the dual.
+- *Choose the kernel mode that admits an edge.* `MinNoiseKernelChooser` calls a kernel *valid* when its
+  `noise` falls below its `Z_low`, and returns the valid kernel of least `noise`
+  (`argmin(np.where(valid, noises, 2))`), or "no ancestor" if none is valid. `kernelChooserFn_eq_some`
+  and `kernelChooserFn_eq_none` prove it *sound and complete*: it returns `some s` with `s` itself valid
+  and of least `noise` among *all* valid kernels exactly when some kernel is valid, and `none` otherwise.
+  The `2` sentinel that suppresses invalid kernels only works because `noise ≤ 1` — which is exactly the
+  verified `varNoiseFn_le_one`, threaded in as the hypothesis `hbound`. The bound proved two sections ago
+  is what makes the decision correct.
+- *Report the pruning iteration of largest `noise` jump.* `MaxIncrementModeChooser` takes the `argmax`
+  of the successive `noise` increments (with `1 − noise_last` appended); `modeChooserFn_ge` proves the
+  reported iteration has the maximal increment.
+- *Stop when every ancestor is pruned.* `allPrunedFn_iff` proves the stopping test
+  `np.all(active_modes == 0)` holds iff every entry is zero.
+
+So the loop's structural decisions are not heuristics layered on top of unverified arithmetic: each is a
+proved-correct selection over the `noise` statistic whose `[0,1]` range was itself proved. The
+`Discovery` example runs all four on concrete data — argmin picks the least-activated ancestor (and not
+the most-activated one), the chooser selects the unique valid kernel, takes least noise among two valid
+ones, and reports `none` when all are invalid, the mode chooser picks the largest-jump iteration, and the
+stopping rule fires only on the all-zero mask — and then closes the stack end-to-end: it builds an SPD
+kernel, eigendecomposes it, and runs a `find_gamma`-style sweep that feeds the verified `varNoiseSpec` at
+several `γ` straight into `argMinFn`, selecting the least-noise regularization (the smallest `γ`, every
+swept noise landing in `[0,1]` as proved).
+
 # The a-posteriori residual certificate
 
 For the iterative routines, the replacement for an impossible a-priori convergence proof is an exact
@@ -499,10 +543,17 @@ Cholesky-based regularized solve are proved, and the specification-level facts t
 on are independent of the convergence step. The three concrete CHD routines built on them are now
 identified too: the eigendecomposition-form `solve_variationnal` equals `-(K + γI)⁻¹ ga` and agrees
 with the Cholesky route, and the `noise`/`find_gamma`-loss/`Z_test` statistic is a spectral ratio
-provably in `[0,1]` that depends on the kernel only through its spectrum. And the kernel build itself
+provably in `[0,1]` that depends on the kernel only through its spectrum. The kernel build itself
 is now PSD-verified for *all three* CHD modes — linear, quadratic, and Gaussian — so the standing
-`PosSemidef` hypothesis is discharged from data, not assumed, even for the fully-nonlinear kernel. So
-the CHD foundation is complete; the two remaining open items are the cyclic-Jacobi convergence *rate*
-(captured exactly by the a-posteriori residual certificate, never by `sorry`) and the `Z_test`'s
-Gaussian sampling and percentiles — one a proof-only gap on a quantity CHD does not need to *run*, the
-other statistical rather than algebraic and exercised numerically.
+`PosSemidef` hypothesis is discharged from data, not assumed, even for the fully-nonlinear kernel. And
+the *discovery decision layer* on top — the kernel chooser, the activation prune step, the mode
+chooser, and the stopping rule — is now proved sound and complete, with the chooser's correctness
+resting directly on the verified `noise ≤ 1` bound, so the structural decisions are proved selections
+over a statistic whose range was itself proved.
+
+So the CHD foundation is complete, from the kernel build through the regularized solve and the noise
+statistic up to the graph-structure decisions. The two remaining open items are both narrow and
+deliberately scoped: the cyclic-Jacobi convergence *rate* (captured exactly by the a-posteriori
+residual certificate, never by `sorry`) and the `Z_test`'s Gaussian sampling and percentiles — one a
+proof-only gap on a quantity CHD does not need to *run*, the other statistical rather than algebraic
+and exercised numerically.

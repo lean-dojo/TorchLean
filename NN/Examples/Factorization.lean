@@ -18,6 +18,7 @@ public import NN.Examples.Factorization.Variational
 public import NN.Examples.Factorization.LinearKernel
 public import NN.Examples.Factorization.QuadraticKernel
 public import NN.Examples.Factorization.GaussianKernel
+public import NN.Examples.Factorization.Discovery
 
 /-!
 # Matrix factorization examples
@@ -84,6 +85,17 @@ factorization misbehaves.
   kernel feeds an exact ridge solve; **negative controls**: `scale < 0` and a *negative mask weight*
   (`w = [−2,0]`, which drives the diagonal below zero) both make `K` indefinite. With the linear,
   quadratic, and Gaussian modes all discharged, every CHD kernel build is now PSD-verified.
+- `Discovery` — CHD's *discovery decision layer* (`decision.py`, `_GraphDiscoveryMain.py`), which turns
+  the verified `noise` statistic into graph structure: the activation prune step (`argMinFn`, picks the
+  least-activated ancestor), the `MinNoiseKernelChooser` (`kernelChooserFn`, the least-noise valid kernel
+  with `noise < Z_low`, or `none`), the `MaxIncrementModeChooser` (`modeChooserFn`, the largest
+  `noise`-jump iteration), and the stopping rule (`allPrunedFn`), proved sound/complete in
+  `FactorizationsDecision`. Checks: argmin picks the least-activated ancestor (and not the most), the
+  chooser selects the unique valid kernel / least noise among valid / `none` when none valid, the mode
+  chooser picks the largest-increment iteration, and the stopping rule fires only on the all-zero mask;
+  an **end-to-end** block then feeds the verified `varNoiseSpec` at several `γ` into `argMinFn`, a
+  `find_gamma` sweep selecting the least-noise regularization (all noises in `[0,1]`); **negative
+  controls** confirm the most-activated ancestor and tiny-increment iterations are correctly rejected.
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

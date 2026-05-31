@@ -505,4 +505,60 @@ def gaussianKernelSpec {n d : Nat} (X : Tensor α (.dim n (.dim d .scalar)))
     (w : Tensor α (.dim d .scalar)) (scale l : α) : Tensor α (.dim n (.dim n .scalar)) :=
   ofMatFn (gaussianKernelFn (toMatFn X) (toVecFn w) scale l)
 
+/-! ## CHD discovery decision layer (`decision.py`, `_GraphDiscoveryMain.py`)
+
+Everything above turns a kernel `K` into a `noise` level (`varNoiseFn`, proven to lie in `[0,1]`) and a
+`Z_test` lower bound `Z_low`. CHD's outer *discovery loop* turns those numbers into graph-structure
+decisions. Four deterministic choices, each a comparison over finite data:
+
+* **which feature to prune next** — the least-*activated* ancestor (`min_activation = np.argmin(activations)`
+  in `helper_functions.step`);
+* **which kernel mode admits an edge** — `MinNoiseKernelChooser`: the valid kernel (`noise < Z_low`) of
+  least `noise`, or none if no kernel is valid (`decision.py`);
+* **which pruning iteration to report** — `MaxIncrementModeChooser`: the iteration of largest `noise`
+  increment (`decision.py`);
+* **when to stop** — `np.all(active_modes == 0)`, every ancestor pruned (`_GraphDiscoveryMain.py`).
+
+The definitions mirror the Python verbatim; their *selection guarantees* (the chosen index really is the
+least/greatest, the chooser is sound and complete against `noise < Z_low`) are proved over `ℝ` in
+[`NN.Proofs.Tensor.Basic.FactorizationsDecision`](../../../Proofs/Tensor/Basic/FactorizationsDecision.lean).
+Comparisons use the `Context` order test (`ltBool`/`gtBool`), so the same definitions run over `Float`. -/
+
+/-- Index of a least element of a nonempty finite family (first on ties), by a left fold — CHD's
+`np.argmin(activations)` for picking the least-activated ancestor to prune. -/
+def argMinFn {n : Nat} (a : Fin (n + 1) → α) : Fin (n + 1) :=
+  (List.finRange (n + 1)).foldl (fun best j => if ltBool (a j) (a best) then j else best)
+    (0 : Fin (n + 1))
+
+/-- Index of a greatest element of a nonempty finite family (first on ties), by a left fold — the
+`np.argmax` underlying the mode chooser. -/
+def argMaxFn {n : Nat} (a : Fin (n + 1) → α) : Fin (n + 1) :=
+  (List.finRange (n + 1)).foldl (fun best j => if Context.gtBool (a j) (a best) then j else best)
+    (0 : Fin (n + 1))
+
+/-- CHD `MinNoiseKernelChooser`. Among candidate kernels with per-kernel `noise` and `Z_low`, a kernel
+is *valid* (admits an edge) when `noise < Z_low`; return the valid kernel of least `noise`, or `none`
+if none is valid. Mirrors `valid = noises < Z_lows; argmin(np.where(valid, noises, 2))` — the `2`
+sentinel (any value above the `noise` ceiling `1`) written `1 + 1` to stay polymorphic. -/
+def kernelChooserFn {n : Nat} (noises Zlows : Fin (n + 1) → α) : Option (Fin (n + 1)) :=
+  let key := fun i => if ltBool (noises i) (Zlows i) then noises i else 1 + 1
+  let s := argMinFn key
+  if ltBool (noises s) (Zlows s) then some s else none
+
+/-- Per-iteration `noise` increments of CHD `MaxIncrementModeChooser`:
+`increments[i] = noises[i+1] − noises[i]` for an interior `i`, and `1 − noises[last]` at the end (the
+gap to the `noise` ceiling, `np.append(increments, 1 - list_of_noises[-1])`). -/
+def modeIncrementFn {n : Nat} (noises : Fin (n + 1) → α) : Fin (n + 1) → α :=
+  fun i => if h : i.val + 1 < n + 1 then noises ⟨i.val + 1, h⟩ - noises i else 1 - noises i
+
+/-- CHD `MaxIncrementModeChooser`: report the pruning iteration with the largest jump in `noise`
+(`np.argmax(increments)`). -/
+def modeChooserFn {n : Nat} (noises : Fin (n + 1) → α) : Fin (n + 1) :=
+  argMaxFn (modeIncrementFn noises)
+
+/-- CHD stopping rule `np.all(active_modes == 0)`: every ancestor has been pruned. An entry counts as
+zero exactly when it is neither positive nor negative in the `Context` order. -/
+def allPrunedFn {k : Nat} (m : Fin k → α) : Bool :=
+  (List.finRange k).all (fun i => !Context.gtBool (m i) 0 && !Context.gtBool 0 (m i))
+
 end Spec

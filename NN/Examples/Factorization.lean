@@ -14,6 +14,7 @@ public import NN.Examples.Factorization.SVD
 public import NN.Examples.Factorization.JacobiDecrease
 public import NN.Examples.Factorization.JacobiRate
 public import NN.Examples.Factorization.RidgeSolve
+public import NN.Examples.Factorization.Variational
 
 /-!
 # Matrix factorization examples
@@ -51,6 +52,13 @@ factorization misbehaves.
   exactly, while an *indefinite* matrix fails with a `NaN` pivot) and `solveRidgeFn_eq_inv_mulVec` (the
   solve *is* the regularized inverse: its columns assemble into `(K + γ·I)⁻¹` with
   `(K + γ·I)·(K + γ·I)⁻¹ = I`).
+- `Variational` — the *eigendecomposition* form of CHD `perform_regression_and_find_gamma`
+  (`interpolatory.py`): from `eigh(K)`, the variational solve `yb = -(K + γ·I)⁻¹·ga`, the agreement of
+  the eig and Cholesky routes (`variationalSolveFn_eq_neg_solveRidgeFn`), the
+  `noise`/`find_gamma`-loss/`Z_test` statistic as a spectral ratio bounded in `[0,1]`
+  (`varNoiseFn_nonneg`, `varNoiseFn_le_one`), and `Z_test` spectral invariance
+  (`varNoiseFn_projFn_mulVec`); **negative controls**: wrong eigenvectors break the solve, and `γ < 0`
+  pushes the noise outside `[0,1]`.
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

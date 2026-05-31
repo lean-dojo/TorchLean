@@ -376,4 +376,58 @@ def svdSpec {m n : Nat} (A : Tensor α (.dim m (.dim n .scalar))) (sweeps : Nat 
     else 0
   (ofMatFn U, ofVecFn σ, ofMatFn (fun i j => arrGet Vf i.val j.val))
 
+/-! ## CHD variational solve, noise, and γ-selection (eigendecomposition form)
+
+CHD's `perform_regression_and_find_gamma` does not use the Cholesky route above; it works through the
+*eigendecomposition* `K = V · diag(λ) · Vᵀ` returned by `eigh(K)` (`symEigJacobiSpec`). Three routines
+share one arithmetic core — the *projected data* `Pga = Vᵀ · ga` and the *shrinkage coefficients*
+`rᵢ = γ/(λᵢ + γ)`:
+
+* `solve_variationnal` returns the solution `yb = -V·(Pga/(λ+γ))` (`= -(K+γ·I)⁻¹·ga`) and a scalar
+  `noise` level;
+* `find_gamma` minimises that *same* `noise` functional over `γ`;
+* `Z_test` evaluates the `noise` functional on random Gaussian data to obtain a null distribution.
+
+The definitions below mirror `interpolatory.py` verbatim, taking the eigenpairs `(Λ, V)` the solver
+returns — exactly as CHD passes `eigh(K)` into them. Their algebraic identities (the solve is the
+regularized inverse; the noise is a spectral quadratic-form ratio in `[0,1]`) are proved in
+[`NN.Proofs.Tensor.Basic.FactorizationsVariational`](../../../Proofs/Tensor/Basic/FactorizationsVariational.lean).
+-/
+
+/-- Projected data `Pga = Vᵀ · ga`: component `i` is `⟨vᵢ, ga⟩`, the coordinate of `ga` along
+eigenvector `i` (column `i` of `V`). Mirrors `np.dot(eigenvectors.T, ga)`. -/
+def projFn {n : Nat} (V : Fin n → Fin n → α) (ga : Fin n → α) : Fin n → α :=
+  fun i => dotFn (fun k => V k i) ga
+
+/-- Shrinkage coefficient `rᵢ = γ/(λᵢ + γ)`. For a PSD spectrum (`λᵢ ≥ 0`) and `γ > 0` this lies in
+`(0, 1]`. Mirrors `coeffs = gamma / (eigenvalues + gamma)`. -/
+def ridgeCoeffFn {n : Nat} (Λ : Fin n → α) (γ : α) : Fin n → α :=
+  fun i => γ / (Λ i + γ)
+
+/-- The CHD variational solution `yb = -V·(Pga / (λ + γ))` in eigendecomposition form. Equal to
+`-(K + γ·I)⁻¹·ga`. Mirrors `yb = -np.dot(eigenvectors, Pga / (eigenvalues + gamma))`. -/
+def variationalSolveFn {n : Nat} (Λ : Fin n → α) (V : Fin n → Fin n → α) (γ : α) (ga : Fin n → α) :
+    Fin n → α :=
+  let Pga := projFn V ga
+  fun i => -dotFn (V i) (fun j => Pga j / (Λ j + γ))
+
+/-- The CHD `noise` level (also the `find_gamma` loss and the `Z_test` per-sample statistic):
+`Σᵢ (Pgaᵢ·rᵢ)² / Σᵢ (Pgaᵢ·rᵢ)·Pgaᵢ`, with `rᵢ = γ/(λᵢ + γ)`. Mirrors
+`noise = np.dot(Pgacoeff, Pgacoeff) / np.dot(Pgacoeff, Pga)` where `Pgacoeff = Pga * coeffs`. -/
+def varNoiseFn {n : Nat} (Λ : Fin n → α) (γ : α) (Pga : Fin n → α) : α :=
+  let pc := fun i => Pga i * ridgeCoeffFn Λ γ i
+  dotFn pc pc / dotFn pc Pga
+
+/-- Tensor-level CHD variational solve `yb = -(K + γ·I)⁻¹·ga`, from eigenpairs `(evals, V)`. -/
+def variationalSolveSpec {n : Nat} (evals : Tensor α (.dim n .scalar))
+    (V : Tensor α (.dim n (.dim n .scalar))) (γ : α) (ga : Tensor α (.dim n .scalar)) :
+    Tensor α (.dim n .scalar) :=
+  ofVecFn (variationalSolveFn (toVecFn evals) (toMatFn V) γ (toVecFn ga))
+
+/-- Tensor-level CHD `noise` / `find_gamma` loss, from eigenvalues, `γ` and the data `ga` (projected
+internally as `Pga = Vᵀ·ga`). -/
+def varNoiseSpec {n : Nat} (evals : Tensor α (.dim n .scalar))
+    (V : Tensor α (.dim n (.dim n .scalar))) (γ : α) (ga : Tensor α (.dim n .scalar)) : α :=
+  varNoiseFn (toVecFn evals) γ (projFn (toMatFn V) (toVecFn ga))
+
 end Spec

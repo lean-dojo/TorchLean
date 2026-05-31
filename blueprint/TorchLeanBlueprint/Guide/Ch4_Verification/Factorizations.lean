@@ -177,6 +177,56 @@ an inverse*. The `RidgeSolve` example makes this concrete: solving against each 
 `eⱼ` produces column `j` of `(K + γI)⁻¹`, and the assembled matrix satisfies
 `(K + γI) · (K + γI)⁻¹ = I` to machine precision, every column coming from the verified Cholesky solve.
 
+# The CHD routines: variational solve, `find_gamma`, and `Z_test`
+
+The two solve routes above invert `K + γI`. But CHD's `perform_regression_and_find_gamma`
+(`interpolatory.py`) does not stop there: it takes the *eigendecomposition* route — `eigh(K)` once, then
+three routines computed from the eigenpairs `(λ, V)`. They share one arithmetic core: the *projected
+data* `Pga = Vᵀ ga` and the *shrinkage coefficients* `rᵢ = γ/(λᵢ + γ)`.
+[`NN.Proofs.Tensor.Basic.FactorizationsVariational`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Tensor/Basic/FactorizationsVariational.lean)
+identifies what each computes; everything is exact over `ℝ`, proved from the *specification*
+`IsSymEig` (so it holds for whatever eigendecomposition the solver returns, asymptotic or not).
+
+The variational solution `solve_variationnal` returns, in eigendecomposition form,
+`yb = -V (Pga/(λ+γ))`. `variationalSolveFn_eq_neg_inv_mulVec` proves this *is* the regularized-inverse
+solve, directly from `add_smul_inv`:
+
+$$`\texttt{variationalSolveFn}\,\Lambda\,V\,\gamma\,ga \;=\; -\,(K + \gamma I)^{-1} ga.`
+
+So the eigendecomposition route and the Cholesky route compute the *same* `solve_variationnal`:
+`variationalSolveFn_eq_neg_solveRidgeFn` proves `variationalSolveFn = -\,\texttt{solveRidgeFn}` for a
+positive-semidefinite kernel `K` and `γ > 0` — two independent implementations agreeing on the one
+closed form `-(K + γI)⁻¹ ga`. The supporting fact `IsSymEig.eigenvalues_nonneg` (a PSD matrix's
+eigenvalues are `≥ 0`, via the congruence `Vᵀ A V` being positive-semidefinite) discharges the
+`λᵢ + γ ≠ 0` side condition from `γ > 0`.
+
+`find_gamma` and `Z_test` share a second quantity, the `noise` level. `varNoiseFn_eq_ratio` exhibits it
+as a spectral quadratic-form ratio:
+
+$$`\texttt{noise} \;=\; \frac{\sum_i (Pga_i\, r_i)^2}{\sum_i Pga_i^2\, r_i},
+\qquad r_i = \frac{\gamma}{\lambda_i + \gamma}.`
+
+`find_gamma` minimises this functional over `γ`; `Z_test` evaluates it on random Gaussian data. The
+load-bearing invariant is that the `noise` is a genuine *fraction*: for a PSD spectrum (`λᵢ ≥ 0`) and
+`γ > 0`, each coefficient satisfies `0 < rᵢ ≤ 1` (`ridgeCoeffFn_pos`, `ridgeCoeffFn_le_one`), so
+`rᵢ² ≤ rᵢ` makes the numerator dominated by the denominator, giving
+
+$$`0 \;\le\; \texttt{noise} \;\le\; 1`
+
+(`varNoiseFn_nonneg`, `varNoiseFn_le_one`). Finally, the `Z_test` statistic depends on the kernel only
+through its *spectrum*: replacing the data by `ga = V z` makes `V` cancel, `projFn V (V z) = z`
+(`projFn_mulVec_self`), so `varNoiseFn Λ γ (projFn V (V z)) = varNoiseFn Λ γ z`
+(`varNoiseFn_projFn_mulVec`). This is the deterministic content of "the `Z_test` null distribution
+depends only on the eigenvalues"; the *distributional* step — Gaussian sampling and the 5%/95%
+percentiles — is statistical rather than algebraic and is left to runtime, exercised numerically.
+
+The `Variational` example confirms all four on a concrete SPD kernel: `(K + γI)·yb = -ga` and
+`yb = -\texttt{solveRidgeSpec}` to machine precision, `noise ∈ [0,1]`, and the spectral invariance
+`noise(V z) = noise(z)` to machine precision. Its *negative controls* show the hypotheses biting:
+feeding the *wrong* eigenvectors (the identity in place of `V`) makes the solve residual large, and
+`γ < 0` pushes the `noise` outside `[0,1]` — so the true eigendecomposition and `γ > 0` are both
+necessary.
+
 # The a-posteriori residual certificate
 
 For the iterative routines, the replacement for an impossible a-priori convergence proof is an exact
@@ -359,4 +409,9 @@ Everything else is exact: the algebraic faithfulness of the decomposition (ortho
 similarity, the residual identity, the per-rotation decrease, the classical-strategy linear rate, and
 correctness in the zero-residual limit), the finite Cholesky/QR reconstructions, and the
 Cholesky-based regularized solve are proved, and the specification-level facts the kernel methods rely
-on are independent of the convergence step, so the CHD foundation is complete.
+on are independent of the convergence step. The three concrete CHD routines built on them are now
+identified too: the eigendecomposition-form `solve_variationnal` equals `-(K + γI)⁻¹ ga` and agrees
+with the Cholesky route, and the `noise`/`find_gamma`-loss/`Z_test` statistic is a spectral ratio
+provably in `[0,1]` that depends on the kernel only through its spectrum. So the CHD foundation is
+complete, the one remaining open item being statistical, not algebraic — the `Z_test`'s Gaussian
+sampling and percentiles, exercised numerically rather than proved.

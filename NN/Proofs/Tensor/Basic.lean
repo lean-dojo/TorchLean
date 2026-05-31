@@ -12,6 +12,7 @@ public import NN.Proofs.Tensor.Basic.LinearAlgebra
 public import NN.Proofs.Tensor.Basic.Factorizations
 public import NN.Proofs.Tensor.Basic.FactorizationsReconstruction
 public import NN.Proofs.Tensor.Basic.FactorizationsSolve
+public import NN.Proofs.Tensor.Basic.FactorizationsVariational
 public import NN.Proofs.Tensor.Basic.FactorizationsOrthonormal
 public import NN.Proofs.Tensor.Basic.FactorizationsJacobi
 public import NN.Proofs.Tensor.Basic.FactorizationsJacobiDecrease

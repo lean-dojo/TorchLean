@@ -158,6 +158,34 @@ hold for the actual returned `(Λ, V)` outright. So the returned `V` is a genuin
 the only thing the residual certificate still defers to runtime is the *size* of the off-diagonal
 mass, never the algebraic faithfulness of the decomposition.
 
+# Per-rotation progress: the off-diagonal mass decreases
+
+Faithfulness says the residual *equals* the off-diagonal mass of `Af`; it does not say that mass ever
+goes *down*. The classical Jacobi progress identity, proved in
+[`NN.Proofs.Tensor.Basic.FactorizationsJacobiDecrease`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Tensor/Basic/FactorizationsJacobiDecrease.lean),
+is exactly that statement at the level of a single rotation. For a symmetric `A`, conjugating by the
+Givens rotation that *annihilates* the pivot `(p, q)` decreases the squared off-diagonal mass by
+exactly `2 · A[p,q]²`:
+
+$$`\bigl\|\operatorname{offDiag}(J^\top A J)\bigr\|_F^2 = \bigl\|\operatorname{offDiag} A\bigr\|_F^2 - 2\,A[p,q]^2.`
+
+This is `jacobi_off_decrease`, and it rests on two exact facts. First, *orthogonal similarity
+preserves the total Frobenius mass* (`frobSq_orthogonal_conj`): `‖Jᵀ A J‖² = ‖A‖²`, since
+`trace((Jᵀ A J)ᵀ (Jᵀ A J)) = trace(Aᵀ A)` after the `J Jᵀ = 1` cancellation. Splitting that total as
+diagonal-plus-off-diagonal mass (`frobSq_eq_diagSq_add_offSq`) shows that driving the off-diagonal
+down is *the same thing* as driving the diagonal up. Second, the rotation only mixes rows and columns
+`p, q`, so the diagonal mass changes by `A'[p,p]² + A'[q,q]² − A[p,p]² − A[q,q]²`; the explicit
+conjugation entries (`givens_conj_pp`, `givens_conj_qq`, `givens_conj_pq`, computed from the Givens
+columns via the support lemmas) plus the `2×2` block-Frobenius identity — itself just
+`frobSq_orthogonal_conj` specialised to `Fin 2` — turn that, under `c² + s² = 1` and the annihilation
+`A'[p,q] = 0`, into precisely `2 · A[p,q]²`. The annihilation is the defining equation the
+Golub–Van Loan rotation angle solves, and `givens_conj_pq` exhibits the pivot entry whose vanishing
+it is. The executable witnesses in
+[`NN.Examples.Factorization.JacobiDecrease`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Factorization/JacobiDecrease.lean)
+confirm the identity numerically (one rotation takes the off-diagonal mass `6 → 4 = 6 − 2·1²` with
+total mass conserved at `35`) and show its hypotheses biting: a wrong-angle rotation misses the
+decrease, a non-orthogonal one breaks mass invariance.
+
 # Exact QR reconstruction
 
 The QR factorization admits the same treatment. `qr_mul_eq` (in the same file) proves that for an
@@ -196,14 +224,18 @@ into a future Mathlib matrix-level QR contribution.
 
 # What remains
 
-With Cholesky and QR fully reconstructed (`A = L · Lᵀ`, `A = Q · R`, `Qᵀ Q = 1`), and the Jacobi run
-now proved faithful — `V` orthogonal and `A = V · Af · Vᵀ` exactly, so the residual certificate holds
-*unconditionally* for the real solver output — the single property still not available as an a-priori
-theorem is the *rate*: that finitely many cyclic-Jacobi sweeps drive `Af`'s off-diagonal mass to zero.
-That is the research-grade Forsythe–Henrici / Schönhage convergence result for cyclic (rather than
-classical, largest-pivot) Jacobi, and Mathlib v4.30.0 has no Jacobi convergence theory, so it remains
-captured by the exact a-posteriori residual certificate above — bounded numerically by the `assertLt`
-checks on concrete inputs — never by `sorry`. Everything else is exact: the algebraic faithfulness of
-the decomposition (orthogonality, orthogonal similarity, the residual identity, and correctness in the
-zero-residual limit) is proved, and the specification-level facts the kernel methods rely on are
-independent of the convergence step, so the CHD foundation is complete.
+With Cholesky and QR fully reconstructed (`A = L · Lᵀ`, `A = Q · R`, `Qᵀ Q = 1`), the Jacobi run
+proved faithful — `V` orthogonal and `A = V · Af · Vᵀ` exactly, so the residual certificate holds
+*unconditionally* for the real solver output — and the *per-rotation* progress proved exactly (each
+annihilating rotation removes `2 · A[p,q]²` of off-diagonal mass), the single property still not
+available as an a-priori theorem is the *aggregate rate*: that a full *cyclic* sweep, choosing its
+pivots in fixed row-major order rather than always the largest, drives the off-diagonal mass to zero
+fast enough that finitely many sweeps suffice. Summing the per-rotation decrease over a sweep is exact;
+what is research-grade is bounding the *sum of the pivots* below in terms of the total off-diagonal
+mass when the pivots are visited cyclically — the Forsythe–Henrici / Schönhage convergence result.
+Mathlib v4.30.0 has no Jacobi convergence theory, so that aggregate rate remains captured by the exact
+a-posteriori residual certificate above — bounded numerically by the `assertLt` checks on concrete
+inputs — never by `sorry`. Everything else is exact: the algebraic faithfulness of the decomposition
+(orthogonality, orthogonal similarity, the residual identity, the per-rotation decrease, and
+correctness in the zero-residual limit) is proved, and the specification-level facts the kernel methods
+rely on are independent of the convergence step, so the CHD foundation is complete.

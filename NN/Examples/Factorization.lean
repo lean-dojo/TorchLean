@@ -11,6 +11,7 @@ public import NN.Examples.Factorization.Cholesky
 public import NN.Examples.Factorization.QR
 public import NN.Examples.Factorization.SymEig
 public import NN.Examples.Factorization.SVD
+public import NN.Examples.Factorization.JacobiDecrease
 
 /-!
 # Matrix factorization examples
@@ -30,6 +31,9 @@ factorization misbehaves.
   verified numerically.
 - `SVD`      — `A = U · diag(σ) · Vᵀ`, `Vᵀ V = I`; **negative control**: a permuted `σ` fails to
   reconstruct.
+- `JacobiDecrease` — the per-rotation progress identity `‖offDiag(Jᵀ A J)‖² = ‖offDiag A‖² − 2·A[p,q]²`
+  (`jacobi_off_decrease`) and Frobenius-mass invariance; **negative controls**: a wrong-angle rotation
+  misses the decrease, a non-orthogonal one breaks mass invariance.
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

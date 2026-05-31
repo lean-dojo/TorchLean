@@ -71,6 +71,34 @@ def offDiagFrobSq {n : Nat} (M : Spec.Tensor Float (.dim n (.dim n .scalar))) : 
     (List.finRange n).foldl
       (fun a j => if i.val == j.val then a else let x := Spec.get2 M i j; a + x * x) acc) 0.0
 
+/-- Total squared Frobenius mass `Σ_{i,j} M_ij²` of a square matrix (off-diagonal + diagonal mass). -/
+def totalFrobSq {n : Nat} (M : Spec.Tensor Float (.dim n (.dim n .scalar))) : Float :=
+  (List.finRange n).foldl (fun acc i =>
+    (List.finRange n).foldl
+      (fun a j => let x := Spec.get2 M i j; a + x * x) acc) 0.0
+
+/-- View a square `Float` matrix tensor as a strict array matrix (the representation the Jacobi
+iteration runs over). -/
+def arrOfMat {n : Nat} (A : Spec.Tensor Float (.dim n (.dim n .scalar))) : Array (Array Float) :=
+  Spec.matToArr (Spec.toMatFn A)
+
+/-- Read a strict array matrix back as a square `Float` matrix tensor. -/
+def matOfArr {n : Nat} (M : Array (Array Float)) : Spec.Tensor Float (.dim n (.dim n .scalar)) :=
+  Spec.ofMatFn (fun i j => Spec.arrGet M i.val j.val)
+
+/-- Apply the **annihilating** Jacobi rotation at pivot `(p, q)`: returns `A' = Jᵀ A J` for the
+Givens rotation whose angle zeroes `A'[p,q]` (the rotation the solver actually performs). -/
+def jacobiRotateAt {n : Nat} (A : Spec.Tensor Float (.dim n (.dim n .scalar))) (p q : Nat) :
+    Spec.Tensor Float (.dim n (.dim n .scalar)) :=
+  matOfArr (Spec.arrJacobiRotate n (arrOfMat A) (Spec.arrId n) p q).1
+
+/-- Apply an **arbitrary** Givens conjugation `A' = Jᵀ A J` with caller-chosen `(c, s)` at `(p, q)`
+(not necessarily the annihilating angle, nor even orthogonal). Used for negative controls. -/
+def givensConjAt {n : Nat} (A : Spec.Tensor Float (.dim n (.dim n .scalar))) (p q : Nat)
+    (c s : Float) : Spec.Tensor Float (.dim n (.dim n .scalar)) :=
+  let J := Spec.arrGivens n p q c s
+  matOfArr (Spec.arrMatMul n (Spec.arrTr n J) (Spec.arrMatMul n (arrOfMat A) J))
+
 /-- Shared tolerance for reconstruction-error assertions. -/
 def tol : Float := 1e-6
 

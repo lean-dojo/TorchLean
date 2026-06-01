@@ -100,7 +100,14 @@ factorization misbehaves.
   `Z_low`/`Z_high` (5th/95th percentiles of the per-sample `noise`) are well-posed
   (`0 ≤ Z_low ≤ Z_high ≤ 1`), data aligned with the dominant eigenvector clears the lower tail
   (`noise < Z_low`, **positive**), and a high noise / a noise at the upper tail are rejected
-  (**negative controls**) — feeding `MinNoiseKernelChooser` exactly as in CHD.
+  (**negative controls**) — feeding `MinNoiseKernelChooser` exactly as in CHD. A final
+  **distributional** sub-block checks the *finite-sample calibration* proved in
+  `FactorizationsZTest`: across the `N = 20` null draws, at most `⌊N/20⌋ ≈ 5%` fall below `Z_low`
+  (`zLow_null_exceedance_le`, here exactly `1/20`) and at most `≈ 5%` rise above `Z_high`
+  (`zHigh_null_exceedance_le`, here `0`); a **negative control** confirms the slack `Z_high`
+  threshold admits `≈ 95%` of the draws, so the `5%` calibration is specific to `Z_low`. (The
+  companion measure-theoretic fact — the i.i.d.-Gaussian null law is a probability measure on
+  `[0,1]`, `noiseLaw_Icc_eq_one` — is noncomputable and lives in the proofs.)
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

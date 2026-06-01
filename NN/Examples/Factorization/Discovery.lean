@@ -250,4 +250,47 @@ def obsSignal : Float := Spec.varNoiseFn (Spec.toVecFn evals) gammaZ (Spec.projF
 #eval assertTrue "non-significant kernel is rejected (chooser → none, code -1)"
   (chooserCode (Spec.kernelChooserFn (fun _ : Fin 1 => (0.50 : Float)) (fun _ : Fin 1 => 0.20)) == -1)
 
+/-! ### The distributional layer: finite-sample calibration of the thresholds
+
+The `noise` of each null draw, scored by the same functional as the data (`sampleNoisesFn`). The
+percentile thresholds carry a *non-asymptotic* false-positive guarantee, proved in
+`FactorizationsZTest`: at most `⌊N/20⌋ ≈ 5%` of the `N` draws fall below `Z_low`
+(`zLow_null_exceedance_le`) and at most `N-1-⌊19N/20⌋ ≈ 5%` fall above `Z_high`
+(`zHigh_null_exceedance_le`). On the measure side, modelling the draws as i.i.d. standard Gaussian
+makes the null law a probability measure on `[0,1]` (`noiseLaw_Icc_eq_one`); that part is
+noncomputable, so it is exercised by the proofs rather than `#eval`. -/
+
+/-- The per-draw `noise` levels of the `Z_test` null sample (`N = 20` draws). -/
+def zNullNoises : Fin 20 → Float :=
+  Spec.sampleNoisesFn (Spec.toVecFn evals) (Spec.toMatFn V) gammaZ zSamples
+
+/-- How many of the 20 null draws score strictly below a threshold (the empirical lower-tail count,
+using the very `ltBool` comparator the `Z_test` decision uses). -/
+def countBelow (thr : Float) : Nat :=
+  ((List.finRange 20).filter (fun j => Spec.ltBool (zNullNoises j) thr)).length
+
+/-- How many of the 20 null draws score strictly above a threshold (the empirical upper-tail count). -/
+def countAbove (thr : Float) : Nat :=
+  ((List.finRange 20).filter (fun j => Spec.ltBool thr (zNullNoises j))).length
+
+#eval IO.println s!"null-draw tail counts: below Z_low = {countBelow zLow} (≤ ⌊20/20⌋ = {Spec.zLowIdx 20}), \
+  above Z_high = {countAbove zHigh} (≤ 19 - {Spec.zHighIdx 20} = {20 - 1 - Spec.zHighIdx 20}), \
+  below Z_high = {countBelow zHigh}"
+
+-- Positive — `zLow_null_exceedance_le`: at most `⌊N/20⌋` (≈ 5%) of the null draws beat `Z_low`, i.e.
+-- the threshold's own empirical false-positive rate is bounded by the 5th-percentile rank.
+#eval assertTrue "≤ 5% of null draws fall below Z_low (zLow_null_exceedance_le)"
+  (decide (countBelow zLow ≤ Spec.zLowIdx 20))
+
+-- Positive — `zHigh_null_exceedance_le`: at most `N-1-⌊19N/20⌋` (≈ 5%) of the null draws exceed
+-- `Z_high`. With `N = 20`, `Z_high` is the top order statistic, so nothing strictly exceeds it.
+#eval assertTrue "≤ 5% of null draws rise above Z_high (zHigh_null_exceedance_le)"
+  (decide (countAbove zHigh ≤ 20 - 1 - Spec.zHighIdx 20))
+
+-- Negative control — the *slack* upper threshold `Z_high` admits far more than 5% of the null mass
+-- below it (≈ 95%), so the 5% lower-tail calibration is specific to `Z_low`, not an artifact of any
+-- threshold: a test against `Z_high` would over-reject the null.
+#eval assertTrue "Z_high is a slack threshold: > 5% of null draws fall below it (calibration is specific to Z_low)"
+  (decide (Spec.zLowIdx 20 < countBelow zHigh))
+
 end NN.Examples.Factorization.Discovery

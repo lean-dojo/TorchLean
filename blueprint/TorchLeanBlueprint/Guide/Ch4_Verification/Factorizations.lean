@@ -218,7 +218,9 @@ through its *spectrum*: replacing the data by `ga = V z` makes `V` cancel, `proj
 (`projFn_mulVec_self`), so `varNoiseFn Λ γ (projFn V (V z)) = varNoiseFn Λ γ z`
 (`varNoiseFn_projFn_mulVec`). This is the deterministic content of "the `Z_test` null distribution
 depends only on the eigenvalues"; the *distributional* step — Gaussian sampling and the 5%/95%
-percentiles — is statistical rather than algebraic and is left to runtime, exercised numerically.
+percentiles — is taken up later (*The `Z_test` distributional layer*), where the finite-sample
+false-positive rate is bounded and the i.i.d.-Gaussian null law is shown to be a probability measure
+on `[0,1]`, leaving only the asymptotic quantile-consistency to runtime.
 
 The `Variational` example confirms all four on a concrete SPD kernel: `(K + γI)·yb = -ga` and
 `yb = -\texttt{solveRidgeSpec}` to machine precision, `noise ∈ [0,1]`, and the spectral invariance
@@ -396,6 +398,41 @@ sections ago. The `Discovery` example exhibits the layer end-to-end: it builds t
 from a real eigendecomposition, checks `0 ≤ Z_low ≤ Z_high ≤ 1`, shows data aligned with the *dominant*
 eigenvector (smallest shrinkage noise) clears the lower tail and is flagged significant, and confirms a
 high noise — and a noise sitting at the upper tail — are both correctly rejected.
+
+# The `Z_test` distributional layer
+
+The section above proved the thresholds *well-posed*; what it deferred was the *distributional*
+question — what `Z_low` being "the 5th percentile" actually buys, and what it means that the draws
+are Gaussian. `FactorizationsZTest` closes that gap in two honestly-provable halves.
+
+*Finite-sample calibration (counting).* The operational promise of a 5th-percentile threshold is a
+bound on its *own* false-positive rate: of the `N` null draws, only a `5%` minority should beat it.
+That is exactly true, and exact (not asymptotic): in an ascending-sorted list at most `k` entries lie
+strictly below the `k`-th, so — since sorting is a permutation and `List.countP` is permutation-invariant
+— at most `⌊N/20⌋` of the null noises fall below `Z_low` (`zLow_null_exceedance_le`) and at most
+`N-1-⌊19N/20⌋` rise above `Z_high` (`zHigh_null_exceedance_le`). These rest on the same sortedness
+(`List.sortedLE_mergeSort`) that gave `Z_low ≤ Z_high`, now counted rather than compared. The `Discovery`
+example makes the numbers concrete: across `N = 20` draws exactly `1` (`= ⌊20/20⌋`) sits below `Z_low` and
+`0` above `Z_high`, while the slack `Z_high` admits `19` — a negative control showing the `5%` calibration
+is specific to `Z_low`, not an artifact of any threshold.
+
+*The Gaussian null law (measure theory).* CHD draws each null sample i.i.d. standard Gaussian. We model
+one draw as `nullGaussian n := Measure.pi (fun _ => gaussianReal 0 1)`, the product of `n` standard
+normals on `Fin n → ℝ` — a genuine probability measure. The per-draw statistic `noiseMap` (the same
+`varNoiseFn ∘ projFn` the data is scored by, identified with CHD's `sampleNoisesFn` by
+`sampleNoisesFn_eq_noiseMap`) is *measurable* (`measurable_noiseMap`: a ratio of finite sums of products
+of the draw coordinates), so its pushforward `noiseLaw` is a probability measure
+(`IsProbabilityMeasure`). And because every draw's noise lies in `[0,1]` — the verified
+`varNoiseFn_nonneg` / `varNoiseFn_le_one`, now lifted to the law — that law is *concentrated on `[0,1]`*:
+`noiseLaw_Icc_eq_one` shows it assigns full mass to `[0,1]`. So `Z_low`/`Z_high` are percentiles of a
+bona fide `[0,1]`-valued random variable, not of an unconstrained sample.
+
+*What is honestly left.* The remaining step is *asymptotic* calibration — that the empirical 5%/95%
+percentiles converge to the true quantiles of `noiseLaw` (Glivenko–Cantelli / DKW), and that under
+exchangeability of a fresh null draw with the sample the false-positive rate is exactly the rank level
+`k/(N+1)`. Both need an empirical-process theory Mathlib v4.30.0 does not carry, so they are stated as
+the open frontier, never stubbed with `sorry`. The finite-sample false-positive *bound* above is the
+exact, non-asymptotic statement the test actually guarantees.
 
 # The a-posteriori residual certificate
 
@@ -591,13 +628,20 @@ resting directly on the verified `noise ≤ 1` bound, so the structural decision
 over a statistic whose range was itself proved. The `Z_test` *significance thresholds* are now proved
 well-posed too: `Z_low` and `Z_high` are order statistics of the null `noise` distribution, each
 inheriting the `[0,1]` bound from the shared `varNoiseFn`, with `Z_low ≤ Z_high` by order-statistic
-monotonicity — and the verdict `noise < Z_low` is shown to feed `MinNoiseKernelChooser`.
+monotonicity — and the verdict `noise < Z_low` is shown to feed `MinNoiseKernelChooser`. The
+*distributional* layer of the `Z_test` is now partly proved too: the threshold's finite-sample
+false-positive rate is bounded exactly (`≤ 5%` of the null draws beat `Z_low`,
+`zLow_null_exceedance_le`; symmetrically for `Z_high`), and — modelling the draws as i.i.d. standard
+Gaussian — the null `noise` law is a genuine probability measure concentrated on `[0,1]`
+(`noiseLaw_Icc_eq_one`).
 
 So the CHD foundation is complete, from the kernel build through the regularized solve, the noise
-statistic, and the `Z_test` thresholds up to the graph-structure decisions. The two remaining open
-items are both narrow and deliberately scoped: the cyclic-Jacobi convergence *rate* (captured exactly
-by the a-posteriori residual certificate, never by `sorry`), and the *distributional* content of the
-`Z_test` — that the draws are Gaussian and the empirical percentile is a calibrated confidence level
-(a probability-theory statement needing `Mathlib.Probability`, distinct from the now-proved
-order-statistic well-posedness). One is a proof-only gap on a quantity CHD does not need to *run*; the
-other is statistical rather than algebraic and exercised numerically.
+statistic, and the `Z_test` thresholds up to the graph-structure decisions. The remaining open items
+are both narrow and deliberately scoped: the cyclic-Jacobi convergence *rate* (captured exactly by the
+a-posteriori residual certificate, never by `sorry`), and the *asymptotic* half of the `Z_test` — that
+the empirical 5%/95% percentiles converge to the true quantiles of the now-proved null law
+(Glivenko–Cantelli / DKW), and that an exchangeable fresh draw is rejected at exactly rank rate
+`k/(N+1)`. That needs an empirical-process theory `Mathlib.Probability` does not yet carry, distinct
+from the finite-sample false-positive bound and probability-measure facts already proved. One is a
+proof-only gap on a quantity CHD does not need to *run*; the other is the genuine statistical frontier,
+flagged rather than stubbed with `sorry`.

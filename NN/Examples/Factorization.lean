@@ -124,6 +124,17 @@ factorization misbehaves.
   (bounded summands), the limit value `cdf 1 = 1` is attained at every `N`, and a **negative control**
   confirms the estimate genuinely moves with `N` (an early prefix differs from the full sample), so
   the convergence is a real limit being approached rather than a vacuous constant.
+  A final **concentration** sub-block corroborates `empCDF_concentration` (step (c)): the
+  Dvoretzky–Kiefer–Wolfowitz inequality *at a single point*, `ℙ(|F̂_N(t) − cdf noiseLaw t| ≥ ε) ≤
+  2·exp(−2·N·ε²)` with the sharp Hoeffding exponent (the threshold indicators are `[0,1]`-bounded,
+  so sub-Gaussian with proxy `1/4`; the one-sided `empCDF_upper_tail`/`empCDF_lower_tail` give
+  `exp(−2Nε²)` each, the union the factor `2`). The probability is noncomputable, so the `#eval`s
+  exercise the bound's two computable shadows: the tail *function* `2·exp(−2Nε²)` (twice the
+  one-sided tail, decreasing in both `N` and `ε`, non-vacuous `< 1` once `2Nε² > ln 2`), and the
+  observed deviation it governs — every prefix of `≥ 3` draws keeps `F̂_N` within `ε = 0.3` of the
+  full-sample estimate uniformly over thresholds, with a **negative control** that the tiniest
+  prefixes (`N = 1, 2`) deviate by `0.5 > ε`, the honest weak-`N` regime where the `2·exp(−2Nε²)`
+  bound is still near `2`.
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

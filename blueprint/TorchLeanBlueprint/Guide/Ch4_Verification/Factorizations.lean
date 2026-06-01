@@ -442,7 +442,7 @@ standard-Gaussian draw, so every `nullNoise i` has the *same* law `noiseLaw` (`n
 `hident` — that the strong law of large numbers (`strong_law_ae_real`) and the Hoeffding tail consume.
 This scaffold is the only genuinely new measure-theory plumbing; the empirical-CDF consistency
 (Glivenko–Cantelli via the SLLN) and the per-`t` concentration rate `2 exp(-2 N ε²)` (Hoeffding) are
-applications of it.
+applications of it — both now proved.
 
 *Pointwise consistency of the empirical CDF (step b).* The first such application is now proved,
 `empCDF_tendsto_cdf`. Fix a threshold `t`. The threshold indicators
@@ -460,13 +460,31 @@ Glivenko–Cantelli theorem, sorry-free over Mathlib v4.30.0. The executable `Di
 exercise its computable shadow — the growing-prefix running mean `F̂_N(t)` settling toward the
 full-sample estimate of `cdf noiseLaw t`.
 
-*What is honestly left.* What stays genuinely research-grade is the *uniform* Glivenko–Cantelli
-(`sup_t |F̂_N - cdf| → 0`) and the full *DKW–Massart* inequality with its sharp constant `2` over
-the supremum — both need the bracketing / VC-class chaining Mathlib v4.30.0 lacks — and the
-*exchangeability rank rate* `k/(N+1)` for a fresh null draw, which needs a symmetric-group
-rank-distribution argument also absent. Those are stated as the open frontier, never stubbed with
-`sorry`. The finite-sample false-positive *bound* above is the exact, non-asymptotic statement the
-test actually guarantees, and the pointwise scaffold is the sorry-free bridge toward the asymptotic
+*Pointwise finite-sample concentration (step c).* Step (b)'s almost-sure limit gains a quantitative,
+finite-`N` companion: `empCDF_concentration`, the Dvoretzky–Kiefer–Wolfowitz inequality *at a single
+point*. The same threshold indicators are `[0,1]`-bounded, so — once centered at their mean
+`cdf (noiseLaw Λ V γ) t` — Hoeffding's lemma (`hasSubgaussianMGF_of_mem_Icc`) makes them sub-Gaussian
+with variance proxy `(1/2)² = 1/4` (`nullBelow_subgaussian`, and the mean-zero negated companion
+`nullBelow_neg_subgaussian` for the lower tail). Mathlib's Hoeffding bound for sums of independent
+sub-Gaussians (`HasSubgaussianMGF.measure_sum_ge_le_of_iIndepFun`), specialised through the
+normalized-average lemma `hoeffding_avg_ge` (where the substitution `ε ↦ N·ε` turns the proxy sum
+`N/4` into the sharp exponent), gives the one-sided tails `empCDF_upper_tail` / `empCDF_lower_tail`,
+`ℙ(±(F̂_N(t) - cdf noiseLaw t) ≥ ε) ≤ exp(-2 N ε²)`; a union bound (`measureReal_union_le`,
+`le_abs`) assembles the two-sided `ℙ(|F̂_N(t) - cdf noiseLaw t| ≥ ε) ≤ 2 exp(-2 N ε²)`. That is the
+DKW inequality at one point with the sharp Hoeffding exponent — sorry-free over Mathlib v4.30.0. The
+`Discovery` examples exercise the bound's two computable shadows: the tail *function* `2 exp(-2 N ε²)`
+(twice the one-sided tail, decreasing in `N` and `ε`, non-vacuous once `2 N ε² > ln 2`) and the
+observed prefix deviation it governs.
+
+*What is honestly left.* With the pointwise pair (b)–(c) proved, what stays genuinely research-grade
+is the *uniform* Glivenko–Cantelli (`sup_t |F̂_N - cdf| → 0`) and the full *DKW–Massart* inequality
+with its sharp constant `2` over the supremum — both need the bracketing / VC-class chaining Mathlib
+v4.30.0 lacks — together with the *quantile-transfer* step (d) (converting CDF concentration into
+convergence of the empirical 5%/95% percentiles to the true quantiles), and the *exchangeability rank
+rate* `k/(N+1)` for a fresh null draw, which needs a symmetric-group rank-distribution argument also
+absent. Those are stated as the open frontier, never stubbed with `sorry`. The finite-sample
+false-positive *bound* above is the exact, non-asymptotic statement the test actually guarantees, and
+the pointwise consistency-plus-concentration pair is the sorry-free bridge toward the asymptotic
 statement.
 
 # The a-posteriori residual certificate
@@ -682,9 +700,14 @@ identically-`noiseLaw`-distributed, `[0,1]`-valued, integrable sequence under
 `Measure.infinitePi nullGaussian`), `empCDF_tendsto_cdf` applies the strong law of large numbers to
 the bounded indicators `1{noiseᵢ ≤ t}` — whose mean is exactly `cdf noiseLaw t`
 (`integral_nullBelow_zero`) — to give almost-sure convergence `F̂_N(t) → cdf noiseLaw t` for every
-fixed `t`, the *pointwise* Glivenko–Cantelli theorem, sorry-free. What stays genuinely research-grade
+fixed `t`, the *pointwise* Glivenko–Cantelli theorem, sorry-free; and its finite-sample companion
+`empCDF_concentration` adds the per-`t` rate `ℙ(|F̂_N(t) - cdf noiseLaw t| ≥ ε) ≤ 2 exp(-2 N ε²)`,
+the DKW inequality at one point, from Hoeffding's lemma on the `[0,1]`-bounded indicators
+(`nullBelow_subgaussian`) and Mathlib's sub-Gaussian sum bound. What stays genuinely research-grade
 is the *uniform* Glivenko–Cantelli / DKW–Massart sharp
-constant (bracketing / VC chaining) and the exchangeability rank rate `k/(N+1)`
-(symmetric-group rank distribution) — both absent from `Mathlib.Probability` v4.30.0. One open item is
+constant over the supremum (bracketing / VC chaining), the *quantile-transfer* step that turns this
+CDF concentration into convergence of the empirical 5%/95% percentiles, and the exchangeability rank
+rate `k/(N+1)`
+(symmetric-group rank distribution) — all absent from `Mathlib.Probability` v4.30.0. One open item is
 a proof-only gap on a quantity CHD does not need to *run*; the other is the genuine statistical
 frontier, flagged rather than stubbed with `sorry`.

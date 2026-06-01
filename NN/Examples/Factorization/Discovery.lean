@@ -393,4 +393,78 @@ def empCdfPrefix (N : Nat) (t : Float) : Float :=
 #eval assertTrue "running empirical CDF is non-trivial: an early prefix differs from the full sample"
   ([0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, zLow].any (fun t => !(empCdfPrefix 5 t == empCdfPrefix 20 t)))
 
+/-! ### Pointwise finite-sample concentration (step c): the Hoeffding / DKW-at-a-point bound
+
+`empCDF_concentration` proves, for the i.i.d. null sequence, that at any fixed threshold `t`,
+
+  ℙ(|F̂_N(t) − cdf noiseLaw t| ≥ ε) ≤ 2·exp(−2·N·ε²),
+
+the Dvoretzky–Kiefer–Wolfowitz inequality at a single point, with the sharp Hoeffding exponent (the
+one-sided `empCDF_upper_tail`/`empCDF_lower_tail` give `exp(−2Nε²)` each; their union the factor `2`).
+The probability is noncomputable — a measure on the infinite product of draws — but two computable
+shadows make the statement concrete: the tail-bound *function* `2·exp(−2Nε²)`, and the *observed*
+deviation of the prefix empirical CDF from the full-sample estimate, which that bound governs. -/
+
+/-- The one-sided Hoeffding tail `exp(−2Nε²)` (`empCDF_upper_tail` / `empCDF_lower_tail`). -/
+def oneSidedBound (N : Nat) (ε : Float) : Float := Float.exp (-2.0 * N.toFloat * ε * ε)
+
+/-- The two-sided DKW-at-a-point bound `2·exp(−2Nε²)` (`empCDF_concentration`). -/
+def hoeffdingBound (N : Nat) (ε : Float) : Float := 2.0 * oneSidedBound N ε
+
+#eval IO.println s!"Hoeffding two-sided bound 2·exp(−2Nε²): (N=20,ε=0.3) = {hoeffdingBound 20 0.3}, \
+  (N=20,ε=0.15) = {hoeffdingBound 20 0.15}, (N=10,ε=0.3) = {hoeffdingBound 10 0.3}, \
+  trivial (ε=0) = {hoeffdingBound 20 0.0}"
+
+-- Positive — the two-sided bound is exactly twice the one-sided tail: the union bound assembling
+-- `empCDF_concentration` from `empCDF_upper_tail` + `empCDF_lower_tail`, each `exp(−2Nε²)`.
+#eval assertTrue "two-sided Hoeffding bound = 2 × one-sided tail (upper + lower)"
+  ([(5, 0.1), (10, 0.2), (20, 0.3)].all (fun p => hoeffdingBound p.1 p.2 == 2.0 * oneSidedBound p.1 p.2))
+
+-- Positive — the bound tightens with more samples: doubling `N` shrinks the tail (the `N`-dependence
+-- of the `−2Nε²` exponent, i.e. the finite-sample consistency rate).
+#eval assertTrue "Hoeffding bound decreases in N (more draws ⇒ sharper concentration)"
+  ([0.15, 0.2, 0.3].all (fun ε => Spec.leBool (hoeffdingBound 40 ε) (hoeffdingBound 20 ε)
+      && Spec.leBool (hoeffdingBound 20 ε) (hoeffdingBound 10 ε)))
+
+-- Positive — the bound tightens with a looser tolerance `ε` (the `ε²` in the exponent).
+#eval assertTrue "Hoeffding bound decreases in ε (larger tolerance ⇒ smaller exceedance probability)"
+  ([5, 10, 20].all (fun N => Spec.leBool (hoeffdingBound N 0.4) (hoeffdingBound N 0.2)))
+
+-- Positive — the bound is *non-vacuous* (a genuine probability bound `< 1`) once `2Nε² > ln 2`; at
+-- `N = 20`, `ε = 0.3` it is `≈ 0.055`, so the empirical CDF is within 0.3 of the truth w.p. ≥ 0.945.
+#eval assertTrue "Hoeffding bound is non-vacuous (< 1) at N = 20, ε = 0.3"
+  (Spec.ltBool (hoeffdingBound 20 0.3) 1.0)
+
+-- Negative control — at `ε = 0` the bound is exactly the trivial constant `2` (the vacuous `ℙ ≤ 2`):
+-- concentration says nothing without a positive tolerance, so the `ε²` in the exponent does the work.
+#eval assertTrue "at ε = 0 the Hoeffding bound is the trivial constant 2 (vacuous without tolerance)"
+  (hoeffdingBound 20 0.0 == 2.0)
+
+/-! The bound governs the *observed* fluctuation: as the prefix grows, the empirical CDF `F̂_N`
+concentrates around the full-sample estimate. With tolerance `ε = 0.3`, every prefix of `≥ 3` draws
+stays within `ε` of the full sample uniformly over the threshold grid, while the tiniest prefixes
+(`N = 1, 2`) deviate by `0.5` — exactly the weak-`N` regime where `2·exp(−2Nε²)` is still near `2`. -/
+
+/-- Threshold grid spanning the tight null-noise band `[0.048, 0.062]` plus the `[0,1]` tails. -/
+def devGrid : List Float := [-0.01, 0.0, 0.05, 0.055, 0.057, 0.06, 0.062, 0.2, 0.5, 1.0]
+
+/-- Sup-over-the-grid deviation of the prefix-`N` empirical CDF from the full-sample estimate — the
+quantity the two-sided bound controls (a computable proxy for `|F̂_N(t) − cdf noiseLaw t|`). -/
+def maxDev (N : Nat) : Float :=
+  (devGrid.map (fun t => Float.abs (empCdfPrefix N t - empCdf t))).foldl max 0.0
+
+#eval IO.println s!"max |F̂_N − F̂_20| over the grid: N=1 {maxDev 1}, N=2 {maxDev 2}, N=3 {maxDev 3}, \
+  N=5 {maxDev 5}, N=10 {maxDev 10}, N=20 {maxDev 20}"
+
+-- Positive — concentration: with enough draws the empirical CDF settles within `ε = 0.3` of the
+-- full-sample estimate, uniformly over thresholds (the deviation the two-sided bound governs).
+#eval assertTrue "empirical CDF concentrates: max deviation ≤ ε = 0.3 for every prefix of ≥ 3 draws"
+  ([3, 5, 10, 15, 20].all (fun N => Spec.leBool (maxDev N) 0.3))
+
+-- Negative control — at the tiniest prefixes (`N = 1, 2`) the empirical CDF still deviates by `0.5 > ε`,
+-- so concentration genuinely needs `N` to grow: this is the regime where `2·exp(−2Nε²)` is near `2`,
+-- i.e. the bound is honestly vacuous and the empirical CDF has not yet concentrated.
+#eval assertTrue "concentration needs N to grow: N = 1, 2 prefixes deviate by > ε = 0.3"
+  ([1, 2].all (fun N => Spec.ltBool 0.3 (maxDev N)))
+
 end NN.Examples.Factorization.Discovery

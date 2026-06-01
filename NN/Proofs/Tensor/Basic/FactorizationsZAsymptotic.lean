@@ -12,9 +12,10 @@ public import Mathlib.MeasureTheory.Integral.IntegrableOn
 public import Mathlib.Probability.StrongLaw
 public import Mathlib.Probability.CDF
 public import Mathlib.MeasureTheory.Integral.Bochner.Set
+public import Mathlib.Probability.Moments.SubGaussian
 
 /-!
-# CHD `Z_test`: the asymptotic-calibration scaffold and empirical-CDF consistency (steps a–b)
+# CHD `Z_test`: asymptotic calibration — i.i.d. scaffold, empirical-CDF consistency and pointwise concentration (steps a–c)
 
 [`FactorizationsZTest`](./FactorizationsZTest.lean) modelled a *single* `Z_test` null draw as
 `nullGaussian n` (the product of `n` standard normals on `Fin n → ℝ`) and proved the per-draw
@@ -55,6 +56,20 @@ inherit the i.i.d. structure (composition with the measurable indicator of `Iic 
 yields `empCDF_tendsto_cdf`: almost surely the empirical CDF `empCDF Λ V γ N t` converges to
 `cdf (noiseLaw Λ V γ) t` as `N → ∞` — the pointwise Glivenko–Cantelli theorem. The *uniform*
 (sup-norm over `t`) strengthening and the DKW rate are the remaining steps (c)–(d).
+
+**Step (c) — pointwise finite-sample concentration (DKW-at-a-point via Hoeffding)** quantifies the
+rate of that convergence at a fixed `t`. Each threshold indicator `nullBelow Λ V γ t i` is bounded in
+`[0,1]`, so — once centered at its mean `cdf (noiseLaw Λ V γ) t` — it has a sub-Gaussian moment
+generating function with variance proxy `1/4` (Hoeffding's lemma, `hasSubgaussianMGF_of_mem_Icc`).
+Mathlib's Hoeffding inequality for sums of independent sub-Gaussians
+(`HasSubgaussianMGF.measure_sum_ge_le_of_iIndepFun`) then gives, for every `N ≥ 1` and `ε ≥ 0`, the
+one-sided tails `empCDF_upper_tail` / `empCDF_lower_tail`
+`ℙ(±(empCDF Λ V γ N t − cdf (noiseLaw Λ V γ) t) ≥ ε) ≤ exp(−2·N·ε²)`, and their union the two-sided
+`empCDF_concentration` `ℙ(|empCDF Λ V γ N t − cdf (noiseLaw Λ V γ) t| ≥ ε) ≤ 2·exp(−2·N·ε²)` — the
+DKW inequality *at a single point* `t`, with the sharp Hoeffding exponent. This is the finite-sample
+companion of step (b)'s almost-sure limit. The *uniform-over-`t`* DKW–Massart bound with the global
+constant `2` (the genuine Dvoretzky–Kiefer–Wolfowitz theorem) is the research-grade strengthening
+still flagged out of scope, and the quantile-transfer step (d) remains.
 -/
 
 @[expose] public section
@@ -62,6 +77,8 @@ yields `empCDF_tendsto_cdf`: almost surely the empirical CDF `empCDF Λ V γ N t
 namespace Spec.Factorization
 
 open MeasureTheory ProbabilityTheory
+
+open scoped NNReal
 
 variable {n : Nat}
 
@@ -223,6 +240,176 @@ theorem empCDF_tendsto_cdf (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (�
     (fun i => nullBelow_identDistrib Λ V γ t i)
   rw [integral_nullBelow_zero] at hlaw
   exact hlaw
+
+/-! ## Step (c): pointwise finite-sample concentration (DKW-at-a-point via Hoeffding)
+
+Step (b) is an almost-sure *limit*; step (c) is its quantitative, finite-`N` companion. The threshold
+indicators `nullBelow Λ V γ t i` are bounded in `[0,1]`, hence — centered at their common mean
+`cdf (noiseLaw Λ V γ) t` — sub-Gaussian with variance proxy `(1/2)² = 1/4` (Hoeffding's lemma). Being
+i.i.d., their normalized sum (the empirical CDF) concentrates exponentially: Mathlib's sub-Gaussian
+Hoeffding inequality gives both one-sided tails with rate `exp(−2·N·ε²)` and, by a union bound, the
+two-sided `2·exp(−2·N·ε²)` — the Dvoretzky–Kiefer–Wolfowitz bound *at the single point* `t`. -/
+
+/-- The empirical CDF lies in `[0,1]` pointwise, so each threshold indicator does too. -/
+theorem nullBelow_mem_Icc (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ) (t : ℝ) (i : ℕ)
+    (ω : ℕ → Fin n → ℝ) : nullBelow Λ V γ t i ω ∈ Set.Icc (0 : ℝ) 1 := by
+  unfold nullBelow
+  rw [Set.indicator_apply]
+  split <;> simp [Set.mem_Icc]
+
+/-- **The threshold indicators are jointly independent** (not just pairwise): composing the i.i.d.
+`nullNoise` sequence with the measurable indicator of `Iic t` preserves joint independence. The shape
+the Hoeffding sum bound consumes. -/
+theorem nullBelow_iIndepFun (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ) (t : ℝ) :
+    iIndepFun (nullBelow Λ V γ t) (nullSeqGaussian n) :=
+  (nullNoise_iIndepFun Λ V γ).comp (fun _ => (Set.Iic t).indicator (1 : ℝ → ℝ))
+    (fun _ => measurable_const.indicator measurableSet_Iic)
+
+/-- The common mean of the threshold indicators is the null CDF at `t`, for *every* draw `i` (not just
+the `0`-th): identically distributed draws share their integral. -/
+theorem integral_nullBelow_eq (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ) (t : ℝ) (i : ℕ) :
+    (nullSeqGaussian n)[nullBelow Λ V γ t i] = cdf (noiseLaw Λ V γ) t := by
+  rw [(nullBelow_identDistrib Λ V γ t i).integral_eq, integral_nullBelow_zero]
+
+/-- **Hoeffding's lemma for one threshold indicator.** Centered at its mean `cdf (noiseLaw Λ V γ) t`,
+the `[0,1]`-valued indicator has a sub-Gaussian MGF with variance proxy `((1-0)/2)² = 1/4`. -/
+theorem nullBelow_subgaussian (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ) (t : ℝ) (i : ℕ) :
+    HasSubgaussianMGF (fun ω => nullBelow Λ V γ t i ω - cdf (noiseLaw Λ V γ) t)
+      (1 / 4 : ℝ≥0) (nullSeqGaussian n) := by
+  have hb : ∀ᵐ ω ∂(nullSeqGaussian n), nullBelow Λ V γ t i ω ∈ Set.Icc (0 : ℝ) 1 :=
+    ae_of_all _ (nullBelow_mem_Icc Λ V γ t i)
+  have h := hasSubgaussianMGF_of_mem_Icc (measurable_nullBelow Λ V γ t i).aemeasurable hb
+  rw [integral_nullBelow_eq] at h
+  rwa [show ((‖(1 : ℝ) - 0‖₊) / 2) ^ 2 = (1 / 4 : ℝ≥0) from by
+        rw [sub_zero, nnnorm_one]; norm_num] at h
+
+/-- The mean of the *negated*, recentred indicator `cdf (noiseLaw Λ V γ) t − nullBelow` is `0`. -/
+theorem integral_negBelow_eq (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ) (t : ℝ) (i : ℕ) :
+    (nullSeqGaussian n)[fun ω => cdf (noiseLaw Λ V γ) t - nullBelow Λ V γ t i ω] = 0 := by
+  rw [integral_sub (integrable_const _) (integrable_nullBelow Λ V γ t i), integral_const,
+    integral_nullBelow_eq]
+  simp
+
+/-- The negated indicator `cdf (noiseLaw Λ V γ) t − nullBelow` lies in `[cdf − 1, cdf]`. -/
+theorem nullBelow_neg_mem_Icc (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ) (t : ℝ) (i : ℕ)
+    (ω : ℕ → Fin n → ℝ) :
+    cdf (noiseLaw Λ V γ) t - nullBelow Λ V γ t i ω
+      ∈ Set.Icc (cdf (noiseLaw Λ V γ) t - 1) (cdf (noiseLaw Λ V γ) t) := by
+  have h := Set.mem_Icc.mp (nullBelow_mem_Icc Λ V γ t i ω)
+  rw [Set.mem_Icc]
+  constructor <;> linarith [h.1, h.2]
+
+/-- **Hoeffding's lemma for the negated indicator.** `cdf (noiseLaw Λ V γ) t − nullBelow` is
+`[cdf − 1, cdf]`-valued (length-`1` interval) and already mean-zero, so it is sub-Gaussian with the
+same variance proxy `1/4` — the lower-tail companion of `nullBelow_subgaussian`. -/
+theorem nullBelow_neg_subgaussian (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ) (t : ℝ) (i : ℕ) :
+    HasSubgaussianMGF (fun ω => cdf (noiseLaw Λ V γ) t - nullBelow Λ V γ t i ω)
+      (1 / 4 : ℝ≥0) (nullSeqGaussian n) := by
+  have hb : ∀ᵐ ω ∂(nullSeqGaussian n),
+      (fun ω => cdf (noiseLaw Λ V γ) t - nullBelow Λ V γ t i ω) ω
+        ∈ Set.Icc (cdf (noiseLaw Λ V γ) t - 1) (cdf (noiseLaw Λ V γ) t) :=
+    ae_of_all _ (nullBelow_neg_mem_Icc Λ V γ t i)
+  have hmeas : Measurable (fun ω => cdf (noiseLaw Λ V γ) t - nullBelow Λ V γ t i ω) :=
+    measurable_const.sub (measurable_nullBelow Λ V γ t i)
+  have h := hasSubgaussianMGF_of_mem_Icc hmeas.aemeasurable hb
+  rw [integral_negBelow_eq] at h
+  simp only [sub_zero] at h
+  rwa [show ((‖cdf (noiseLaw Λ V γ) t - (cdf (noiseLaw Λ V γ) t - 1)‖₊) / 2) ^ 2 = (1 / 4 : ℝ≥0)
+        from by rw [sub_sub_cancel, nnnorm_one]; norm_num] at h
+
+/-- **Hoeffding's inequality for a normalized i.i.d. proxy-`1/4` sub-Gaussian sum.** If `X` is a
+jointly independent sequence on the null-draw space, each centered draw sub-Gaussian with variance
+proxy `1/4`, then for `N ≥ 1` and `ε ≥ 0` the empirical average `(∑_{i<N} X i)/N` exceeds `ε` with
+probability at most `exp(−2·N·ε²)`. The engine under both `empCDF` tails — `ε ↦ N·ε` in Mathlib's
+sum bound turns the proxy sum `N/4` into the sharp exponent `−2Nε²`. -/
+theorem hoeffding_avg_ge {X : ℕ → (ℕ → Fin n → ℝ) → ℝ}
+    (hindep : iIndepFun X (nullSeqGaussian n))
+    (hsub : ∀ i, HasSubgaussianMGF (X i) (1 / 4 : ℝ≥0) (nullSeqGaussian n))
+    {N : ℕ} (hN : 1 ≤ N) {ε : ℝ} (hε : 0 ≤ ε) :
+    (nullSeqGaussian n).real {ω | ε ≤ (∑ i ∈ Finset.range N, X i ω) / (N : ℝ)}
+      ≤ Real.exp (-2 * (N : ℝ) * ε ^ 2) := by
+  have hNR : (0 : ℝ) < N := by exact_mod_cast hN
+  have hbase := HasSubgaussianMGF.measure_sum_ge_le_of_iIndepFun hindep
+    (c := fun _ => (1 / 4 : ℝ≥0)) (s := Finset.range N) (fun i _ => hsub i)
+    (ε := (N : ℝ) * ε) (by positivity)
+  have hset : {ω | (N : ℝ) * ε ≤ ∑ i ∈ Finset.range N, X i ω}
+      = {ω | ε ≤ (∑ i ∈ Finset.range N, X i ω) / (N : ℝ)} := by
+    ext ω
+    simp only [Set.mem_setOf_eq]
+    rw [le_div_iff₀ hNR, mul_comm]
+  rw [hset] at hbase
+  refine hbase.trans (le_of_eq ?_)
+  congr 1
+  simp only [Finset.sum_const, Finset.card_range, nsmul_eq_mul]
+  push_cast
+  field_simp
+  ring
+
+/-- **Upper-tail concentration of the empirical CDF (Hoeffding).** For `N ≥ 1`, `ε ≥ 0`, the empirical
+CDF overshoots the true null CDF at `t` by `ε` with probability `≤ exp(−2·N·ε²)`. -/
+theorem empCDF_upper_tail (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ) (t : ℝ) {N : ℕ}
+    (hN : 1 ≤ N) {ε : ℝ} (hε : 0 ≤ ε) :
+    (nullSeqGaussian n).real {ω | ε ≤ empCDF Λ V γ N t ω - cdf (noiseLaw Λ V γ) t}
+      ≤ Real.exp (-2 * (N : ℝ) * ε ^ 2) := by
+  have hNR : (0 : ℝ) < N := by exact_mod_cast hN
+  have hind : iIndepFun (fun i ω => nullBelow Λ V γ t i ω - cdf (noiseLaw Λ V γ) t)
+      (nullSeqGaussian n) :=
+    (nullBelow_iIndepFun Λ V γ t).comp (fun _ x => x - cdf (noiseLaw Λ V γ) t)
+      (fun _ => measurable_id.sub_const _)
+  have htail := hoeffding_avg_ge hind (fun i => nullBelow_subgaussian Λ V γ t i) hN hε
+  have hrw : ∀ ω,
+      (∑ i ∈ Finset.range N, (nullBelow Λ V γ t i ω - cdf (noiseLaw Λ V γ) t)) / (N : ℝ)
+        = empCDF Λ V γ N t ω - cdf (noiseLaw Λ V γ) t := by
+    intro ω
+    unfold empCDF
+    rw [Finset.sum_sub_distrib, Finset.sum_const, Finset.card_range, nsmul_eq_mul, sub_div,
+      mul_div_cancel_left₀ (cdf (noiseLaw Λ V γ) t) (ne_of_gt hNR)]
+  simp only [hrw] at htail
+  exact htail
+
+/-- **Lower-tail concentration of the empirical CDF (Hoeffding).** Symmetrically, the empirical CDF
+undershoots the true null CDF at `t` by `ε` with probability `≤ exp(−2·N·ε²)`. -/
+theorem empCDF_lower_tail (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ) (t : ℝ) {N : ℕ}
+    (hN : 1 ≤ N) {ε : ℝ} (hε : 0 ≤ ε) :
+    (nullSeqGaussian n).real {ω | ε ≤ cdf (noiseLaw Λ V γ) t - empCDF Λ V γ N t ω}
+      ≤ Real.exp (-2 * (N : ℝ) * ε ^ 2) := by
+  have hNR : (0 : ℝ) < N := by exact_mod_cast hN
+  have hind : iIndepFun (fun i ω => cdf (noiseLaw Λ V γ) t - nullBelow Λ V γ t i ω)
+      (nullSeqGaussian n) :=
+    (nullBelow_iIndepFun Λ V γ t).comp (fun _ x => cdf (noiseLaw Λ V γ) t - x)
+      (fun _ => measurable_const.sub measurable_id)
+  have htail := hoeffding_avg_ge hind (fun i => nullBelow_neg_subgaussian Λ V γ t i) hN hε
+  have hrw : ∀ ω,
+      (∑ i ∈ Finset.range N, (cdf (noiseLaw Λ V γ) t - nullBelow Λ V γ t i ω)) / (N : ℝ)
+        = cdf (noiseLaw Λ V γ) t - empCDF Λ V γ N t ω := by
+    intro ω
+    unfold empCDF
+    rw [Finset.sum_sub_distrib, Finset.sum_const, Finset.card_range, nsmul_eq_mul, sub_div,
+      mul_div_cancel_left₀ (cdf (noiseLaw Λ V γ) t) (ne_of_gt hNR)]
+  simp only [hrw] at htail
+  exact htail
+
+/-- **Pointwise finite-sample concentration of the empirical CDF (DKW-at-a-point, step (c)).** For
+each fixed threshold `t`, every `N ≥ 1` and tolerance `ε ≥ 0`, the empirical CDF of the i.i.d. null
+draws deviates from the true null CDF by more than `ε` with probability at most `2·exp(−2·N·ε²)`.
+This is the Dvoretzky–Kiefer–Wolfowitz inequality evaluated at a single point, with the sharp
+Hoeffding exponent — the finite-sample rate underneath step (b)'s almost-sure limit. The
+*uniform-over-`t`* DKW–Massart bound (global constant `2`) is the research-grade strengthening still
+flagged out of scope. -/
+theorem empCDF_concentration (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ) (t : ℝ) {N : ℕ}
+    (hN : 1 ≤ N) {ε : ℝ} (hε : 0 ≤ ε) :
+    (nullSeqGaussian n).real {ω | ε ≤ |empCDF Λ V γ N t ω - cdf (noiseLaw Λ V γ) t|}
+      ≤ 2 * Real.exp (-2 * (N : ℝ) * ε ^ 2) := by
+  have hsplit : {ω | ε ≤ |empCDF Λ V γ N t ω - cdf (noiseLaw Λ V γ) t|}
+      = {ω | ε ≤ empCDF Λ V γ N t ω - cdf (noiseLaw Λ V γ) t}
+        ∪ {ω | ε ≤ cdf (noiseLaw Λ V γ) t - empCDF Λ V γ N t ω} := by
+    ext ω
+    simp only [Set.mem_setOf_eq, Set.mem_union, le_abs, neg_sub]
+  rw [hsplit]
+  refine (measureReal_union_le _ _).trans ?_
+  have h1 := empCDF_upper_tail Λ V γ t hN hε
+  have h2 := empCDF_lower_tail Λ V γ t hN hε
+  linarith
 
 end
 

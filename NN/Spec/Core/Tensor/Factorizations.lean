@@ -101,10 +101,42 @@ The columns are computed left to right. Column `j` uses only columns `0 .. j-1`:
 -/
 
 /--
+Strict, array-backed runtime implementation of `choleskyColsFn` (registered via `@[implemented_by]`).
+Each column is *materialized* into an `Array α`, so a back-reference `L[i,k]` is an `O(1)` lookup
+rather than a closure that re-evaluates the whole prefix. The closure form below is mathematically
+clean (and is what the proofs reason about), but reading the full factor `L` from it re-evaluates
+columns exponentially — ruinous in the interpreter (`#eval`). This computes the *same* factor strictly;
+the numeric examples (`A = L·Lᵀ`, the ridge-solve residual ≈ 0) validate the two agree.
+-/
+def choleskyColsImpl {n : Nat} (A : Fin n → Fin n → α) : List (Fin n → α) :=
+  let cols : Array (Array α) := (List.finRange n).foldl (fun cols j =>
+    let jv := j.val
+    -- Σ_{k<j} L[j,k]²  (previous columns at row `j`, read from the materialized arrays).
+    let sumsq := (List.finRange n).foldl
+      (fun s k => if k.val < jv then s + (cols.getD k.val #[]).getD jv 0 * (cols.getD k.val #[]).getD jv 0
+        else s) 0
+    let Ljj := MathFunctions.sqrt (A j j - sumsq)
+    let colArr : Array α := Array.ofFn (fun i : Fin n =>
+      if i.val < jv then 0
+      else if i.val == jv then Ljj
+      else
+        -- Σ_{k<j} L[i,k]·L[j,k]
+        let s := (List.finRange n).foldl
+          (fun acc k => if k.val < jv then
+            acc + (cols.getD k.val #[]).getD i.val 0 * (cols.getD k.val #[]).getD jv 0 else acc) 0
+        (A i j - s) / Ljj)
+    cols.push colArr) #[]
+  (List.finRange n).map (fun j => fun i => (cols.getD j.val #[]).getD i.val 0)
+
+/--
 The list of columns of the Cholesky factor `L`, as length-`n` vectors, computed left to right.
 Element `j` of the result is column `j` of `L`. Built by a left fold so that when column `j` is
 formed, `cols` already holds columns `0 .. j-1`.
+
+The runtime implementation is `choleskyColsImpl` (strict arrays); the closure form here is the one the
+correctness proofs reason about. Both compute the same factor.
 -/
+@[implemented_by choleskyColsImpl]
 def choleskyColsFn {n : Nat} (A : Fin n → Fin n → α) : List (Fin n → α) :=
   (List.finRange n).foldl (fun cols j =>
     -- Σ_{k<j} L[j,k]²  (the already-computed columns evaluated at row `j`).
@@ -169,8 +201,52 @@ this is symmetric positive-definite, so its Cholesky factorization succeeds. -/
 def addScaledIdFn {n : Nat} (K : Fin n → Fin n → α) (γ : α) : Fin n → Fin n → α :=
   fun i j => K i j + (if i = j then γ else 0)
 
+/--
+Strict, array-backed runtime implementation of `solveRidgeFn` (registered via `@[implemented_by]`).
+It factors `K + γ·I = L·Lᵀ` and runs both triangular substitutions entirely over `Array`s, so no step
+materializes the deep `Fin n → α` closures the functional definition builds — those re-evaluate
+columns / the substitution accumulator exponentially, which is ruinous in the interpreter (`#eval`).
+Same linear solve; the numeric examples (residual `(K+γ·I)·x − b ≈ 0`) validate the two agree.
+-/
+def solveRidgeImpl {n : Nat} (K : Fin n → Fin n → α) (γ : α) (b : Fin n → α) : Fin n → α :=
+  let A : Fin n → Fin n → α := fun i j => K i j + (if i.val == j.val then γ else 0)
+  -- Cholesky columns, left to right: `cols[j][i] = L[i][j]` (strict arrays, `O(1)` back-reference).
+  let cols : Array (Array α) := (List.finRange n).foldl (fun cols j =>
+    let jv := j.val
+    let sumsq := (List.finRange n).foldl
+      (fun s k => if k.val < jv then let v := (cols.getD k.val #[]).getD jv 0; s + v * v else s) 0
+    let Ljj := MathFunctions.sqrt (A j j - sumsq)
+    cols.push (Array.ofFn (fun i : Fin n =>
+      if i.val < jv then 0
+      else if i.val == jv then Ljj
+      else
+        let s := (List.finRange n).foldl (fun acc k =>
+          if k.val < jv then
+            acc + (cols.getD k.val #[]).getD i.val 0 * (cols.getD k.val #[]).getD jv 0
+          else acc) 0
+        (A i j - s) / Ljj))) #[]
+  let Lent : Nat → Nat → α := fun i j => (cols.getD j #[]).getD i 0
+  -- Forward solve `L · z = b`: `z[i] = (b[i] − Σ_{k<i} L[i,k]·z[k]) / L[i,i]`.
+  let z : Array α := (List.finRange n).foldl (fun z i =>
+    let iv := i.val
+    let s := (List.finRange n).foldl
+      (fun acc k => if k.val < iv then acc + Lent iv k.val * z.getD k.val 0 else acc) 0
+    z.push ((b i - s) / Lent iv iv)) #[]
+  -- Back solve `Lᵀ · x = z`: `x[i] = (z[i] − Σ_{k>i} L[k,i]·x[k]) / L[i,i]`, `i = n−1 … 0`.
+  let x : Array α := (List.finRange n).reverse.foldl (fun xs i =>
+    let iv := i.val
+    let s := (List.finRange n).foldl
+      (fun acc k => if iv < k.val then acc + Lent k.val iv * xs.getD k.val 0 else acc) 0
+    xs.set! iv ((z.getD iv 0 - s) / Lent iv iv)) (Array.replicate n 0)
+  fun i => x.getD i.val 0
+
 /-- The Tikhonov-regularized (kernel-ridge) solve `(K + γ·I)·x = b`, via the Cholesky factorization
-of `K + γ·I`. This is the linear solve at the core of CHD `solve_variationnal`. -/
+of `K + γ·I`. This is the linear solve at the core of CHD `solve_variationnal`.
+
+The runtime implementation is `solveRidgeImpl` (strict arrays); the closure form here, built from the
+verified `choleskyFn` / `triSolve*` pieces, is what the correctness proofs reason about. Both compute
+the same solution. -/
+@[implemented_by solveRidgeImpl]
 def solveRidgeFn {n : Nat} (K : Fin n → Fin n → α) (γ : α) (b : Fin n → α) : Fin n → α :=
   cholSolveFn (choleskyFn (addScaledIdFn K γ)) b
 

@@ -442,7 +442,23 @@ standard-Gaussian draw, so every `nullNoise i` has the *same* law `noiseLaw` (`n
 `hident` — that the strong law of large numbers (`strong_law_ae_real`) and the Hoeffding tail consume.
 This scaffold is the only genuinely new measure-theory plumbing; the empirical-CDF consistency
 (Glivenko–Cantelli via the SLLN) and the per-`t` concentration rate `2 exp(-2 N ε²)` (Hoeffding) are
-applications of it, deferred as the next increment.
+applications of it.
+
+*Pointwise consistency of the empirical CDF (step b).* The first such application is now proved,
+`empCDF_tendsto_cdf`. Fix a threshold `t`. The threshold indicators
+`nullBelow Λ V γ t i ω := (Set.Iic t).indicator 1 (nullNoise Λ V γ i ω)` — the events `1{noiseᵢ ≤ t}`
+— inherit the scaffold's i.i.d. structure: composing each independent, identically-distributed draw
+with the measurable indicator of `Iic t` preserves both (`nullBelow_pairwise_indepFun`,
+`nullBelow_identDistrib`), and they are `[0,1]`-valued hence integrable (`integrable_nullBelow`).
+Their common mean is pinned by a short `HasLaw.integral_comp` computation that pushes the indicator
+through `noiseLaw`: `∫ ω, nullBelow Λ V γ t 0 ω = (noiseLaw Λ V γ).real (Iic t) = cdf (noiseLaw Λ V γ) t`
+(`integral_nullBelow_zero`) — so the empirical CDF is literally the Monte-Carlo estimator of the null
+CDF. Feeding the `hint`/`hindep`/`hident` triple to `strong_law_ae_real` then yields, almost surely,
+`empCDF Λ V γ N t ω → cdf (noiseLaw Λ V γ) t` as `N → ∞`, where
+`empCDF Λ V γ N t ω := (∑ i ∈ range N, nullBelow Λ V γ t i ω) / N`. That is the *pointwise*
+Glivenko–Cantelli theorem, sorry-free over Mathlib v4.30.0. The executable `Discovery` examples
+exercise its computable shadow — the growing-prefix running mean `F̂_N(t)` settling toward the
+full-sample estimate of `cdf noiseLaw t`.
 
 *What is honestly left.* What stays genuinely research-grade is the *uniform* Glivenko–Cantelli
 (`sup_t |F̂_N - cdf| → 0`) and the full *DKW–Massart* inequality with its sharp constant `2` over
@@ -660,12 +676,14 @@ are both narrow and deliberately scoped: the cyclic-Jacobi convergence *rate* (c
 a-posteriori residual certificate, never by `sorry`), and the *asymptotic* half of the `Z_test` — that
 the empirical 5%/95% percentiles converge to the true quantiles of the now-proved null law
 (Glivenko–Cantelli / DKW), and that an exchangeable fresh draw is rejected at exactly rank rate
-`k/(N+1)`. The *pointwise* part of that asymptotic step is no longer fully out of reach: its i.i.d.
-scaffold is now built and proved sorry-free (`FactorizationsZAsymptotic` — `nullNoise` an independent,
+`k/(N+1)`. The *pointwise* part of that asymptotic step is now proved, not merely scaffolded: on the
+i.i.d. sequence `FactorizationsZAsymptotic` builds (`nullNoise` an independent,
 identically-`noiseLaw`-distributed, `[0,1]`-valued, integrable sequence under
-`Measure.infinitePi nullGaussian`), exactly the hypotheses the strong law of large numbers and the
-Hoeffding tail take, so the empirical-CDF consistency and per-`t` rate are now applications rather than
-frontier. What stays genuinely research-grade is the *uniform* Glivenko–Cantelli / DKW–Massart sharp
+`Measure.infinitePi nullGaussian`), `empCDF_tendsto_cdf` applies the strong law of large numbers to
+the bounded indicators `1{noiseᵢ ≤ t}` — whose mean is exactly `cdf noiseLaw t`
+(`integral_nullBelow_zero`) — to give almost-sure convergence `F̂_N(t) → cdf noiseLaw t` for every
+fixed `t`, the *pointwise* Glivenko–Cantelli theorem, sorry-free. What stays genuinely research-grade
+is the *uniform* Glivenko–Cantelli / DKW–Massart sharp
 constant (bracketing / VC chaining) and the exchangeability rank rate `k/(N+1)`
 (symmetric-group rank distribution) — both absent from `Mathlib.Probability` v4.30.0. One open item is
 a proof-only gap on a quantity CHD does not need to *run*; the other is the genuine statistical

@@ -116,6 +116,14 @@ factorization misbehaves.
   monotone, saturating to `1` at the top of the `[0,1]` support, vanishing below `0`), with a
   **negative control** that it is non-degenerate (rises strictly from `0` to `1`, carrying the
   distributional content whose convergence to `cdf noiseLaw` is the next increment, step (b)).
+  A final **consistency** sub-block corroborates `empCDF_tendsto_cdf` (step (b)): the empirical CDF
+  is the SLLN *running mean* of the bounded i.i.d. indicators `1{noiseᵢ ≤ t}`, whose mean is exactly
+  `cdf noiseLaw t` (`integral_nullBelow_zero`), so almost surely `F̂_N(t) → cdf noiseLaw t` (pointwise
+  Glivenko–Cantelli). The limit needs `N → ∞`, so the `#eval`s watch the **growing-prefix running
+  mean** `F̂_N` settle toward the full-sample estimate: each prefix is a valid `[0,1]` CDF value
+  (bounded summands), the limit value `cdf 1 = 1` is attained at every `N`, and a **negative control**
+  confirms the estimate genuinely moves with `N` (an early prefix differs from the full sample), so
+  the convergence is a real limit being approached rather than a vacuous constant.
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

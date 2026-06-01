@@ -344,4 +344,53 @@ def empCdf (t : Float) : Float :=
 #eval assertTrue "empirical CDF is non-degenerate: F(below support) < F(1) (carries distribution info)"
   (Spec.ltBool (empCdf (-0.01)) (empCdf 1.0))
 
+/-! ### Pointwise consistency of the empirical CDF (step b): the SLLN running mean
+
+`FactorizationsZAsymptotic` now proves `empCDF_tendsto_cdf`: for each threshold `t`, the empirical
+CDF `empCDF Λ V γ N t` of the i.i.d. null draws converges *almost surely* to the true CDF
+`cdf noiseLaw t` as `N → ∞` — the pointwise Glivenko–Cantelli theorem, via the strong law of large
+numbers (`strong_law_ae_real`) applied to the bounded i.i.d. indicators `1{noiseᵢ ≤ t}`. The limit
+value is pinned by `integral_nullBelow_zero`: the *mean* of the indicator is exactly
+`cdf noiseLaw t`, so the empirical CDF is the Monte-Carlo estimator of the null CDF. Convergence
+needs `N → ∞`, so it is not directly `#eval`-able; the computable shadow is the **running mean**
+`F̂_N(t) = (1/N)·#{i < N : noiseᵢ ≤ t}` over growing prefixes `N` of the 20-draw sample, which we
+watch settle toward the full-sample estimate `empCdf t` of `cdf noiseLaw t`. -/
+
+/-- Running empirical CDF over the first `N ≤ 20` null draws at threshold `t`: the partial mean of the
+indicator sequence `1{noiseᵢ ≤ t}` that the strong law averages. As `N → ∞` this is precisely the
+quantity `empCDF_tendsto_cdf` sends to `cdf noiseLaw t`; here we watch its growing-`N` prefixes. -/
+def empCdfPrefix (N : Nat) (t : Float) : Float :=
+  (((List.finRange 20).filter
+      (fun j => decide (j.val < N) && Spec.leBool (zNullNoises j) t)).length).toFloat / N.toFloat
+
+#eval IO.println s!"running empirical CDF at t = 0.057 (mid-support) over growing prefixes: \
+  F̂_5 = {empCdfPrefix 5 0.057}, F̂_10 = {empCdfPrefix 10 0.057}, F̂_15 = {empCdfPrefix 15 0.057}, \
+  F̂_20 = {empCdfPrefix 20 0.057} (→ empCdf 0.057 = {empCdf 0.057}, the estimate of cdf noiseLaw 0.057)"
+
+-- Positive — the full prefix `N = 20` *is* the empirical CDF: `empCDF Λ V γ 20 t` evaluated on this
+-- sample. The running mean and the count-fraction `empCdf` coincide at `N = 20` (the shadow of the
+-- `empCDF` definition as a normalized indicator sum).
+#eval assertTrue "running mean at N = 20 equals the empirical CDF (empCDF is the normalized indicator sum)"
+  ([0.0, zLow, 0.5, zHigh, 1.0].all (fun t => empCdfPrefix 20 t == empCdf t))
+
+-- Positive — every running prefix is a valid CDF value in `[0,1]`: a mean of the `[0,1]`-valued
+-- indicators stays in `[0,1]` (the `integrable_nullBelow` / boundedness hypothesis feeding the SLLN).
+#eval assertTrue "every running prefix mean lies in [0,1] (bounded indicators ⇒ bounded average)"
+  ([1, 2, 5, 10, 15, 20].all (fun N =>
+    [0.0, zLow, 0.5, zHigh, 1.0].all (fun t =>
+      Spec.leBool 0.0 (empCdfPrefix N t) && Spec.leBool (empCdfPrefix N t) 1.0)))
+
+-- Positive — the limit value `cdf noiseLaw 1 = 1` is already attained at *every* finite `N`: all
+-- indicators `1{noiseᵢ ≤ 1}` are `1` (`nullNoise_mem_Icc`), so each running mean is exactly `1`. The
+-- empirical CDF converges to the saturation endpoint trivially there.
+#eval assertTrue "running mean saturates to cdf 1 = 1 at every prefix (all noises ≤ 1)"
+  ([1, 2, 5, 10, 15, 20].all (fun N => empCdfPrefix N 1.0 == 1.0))
+
+-- Negative control — consistency is *non-vacuous*: the running estimate genuinely changes with `N`
+-- (an early prefix differs from the full sample at some interior threshold), so the convergence
+-- `F̂_N → cdf noiseLaw t` is a real limit being approached, not a constant already equal to its limit
+-- at `N = 5`. A degenerate (point-mass) sample would make every prefix equal and the SLLN vacuous.
+#eval assertTrue "running empirical CDF is non-trivial: an early prefix differs from the full sample"
+  ([0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, zLow].any (fun t => !(empCdfPrefix 5 t == empCdfPrefix 20 t)))
+
 end NN.Examples.Factorization.Discovery

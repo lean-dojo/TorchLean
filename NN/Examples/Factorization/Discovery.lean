@@ -467,4 +467,78 @@ def maxDev (N : Nat) : Float :=
 #eval assertTrue "concentration needs N to grow: N = 1, 2 prefixes deviate by > ε = 0.3"
   ([1, 2].all (fun N => Spec.ltBool 0.3 (maxDev N)))
 
+/-! ### Quantile transfer (step d): consistency of the empirical percentiles
+
+`empQuantile_tendsto` inverts steps (b)–(c): wherever the true null CDF is continuous and strictly
+increasing through a level `p` at the quantile `q` (`StraddlesQuantile`), *any* lower empirical
+`p`-quantile (`IsLowerQuantile`: the CDF is `< p` to its left and `≥ p` to its right) converges almost
+surely to `q` as `N → ∞`. This is the honest consistency statement for the 5%/95% percentile
+thresholds the `Z_test` chooser uses. The limit `q` is noncomputable (a quantile of the law
+`noiseLaw`), so — exactly as for steps (b)/(c) — we exercise it through the **full-sample** quantile
+`q̂₂₀` standing in for `q`, and watch the prefix-`N` empirical quantile `q̂_N` settle toward it. -/
+
+/-- The first `N ≤ 20` null noises, as the candidate set for the prefix empirical quantile. -/
+def prefixNoises (N : Nat) : List Float :=
+  ((List.finRange 20).filter (fun j => decide (j.val < N))).map zNullNoises
+
+/-- The **lower empirical `p`-quantile** of the first `N` null draws: the smallest sampled noise `v`
+whose running empirical CDF `F̂_N(v)` reaches `p` (`min`-fold over the qualifying draws, falling back
+to `1`). This is the computable shadow of `IsLowerQuantile (empCDF … N) p` — `inf {t | p ≤ F̂_N t}`
+for the right-continuous step CDF — the object `empQuantile_tendsto` drives to the true quantile. -/
+def empQuantilePrefix (N : Nat) (p : Float) : Float :=
+  ((prefixNoises N).filter (fun v => Spec.leBool p (empCdfPrefix N v))).foldl min 1.0
+
+/-- The full-sample (`N = 20`) lower `p`-quantile — the computable stand-in for the true quantile `q`
+of `noiseLaw` that `empQuantile_tendsto` sends the prefix quantiles to. -/
+def empQuantile20 (p : Float) : Float := empQuantilePrefix 20 p
+
+/-- Deviation of the prefix-`N` lower `p`-quantile from the full-sample limit stand-in `q̂₂₀` — the
+computable proxy for `|q̂_N − q|` that `empQuantile_tendsto` drives to `0`. -/
+def quantileDev (N : Nat) (p : Float) : Float :=
+  Float.abs (empQuantilePrefix N p - empQuantile20 p)
+
+#eval IO.println s!"empirical median (p = 0.5) over growing prefixes: q̂_3 = {empQuantilePrefix 3 0.5}, \
+  q̂_5 = {empQuantilePrefix 5 0.5}, q̂_10 = {empQuantilePrefix 10 0.5}, q̂_15 = {empQuantilePrefix 15 0.5}, \
+  q̂_20 = {empQuantile20 0.5} (the limit stand-in q)"
+
+#eval IO.println s!"quantile triple at full sample (q̂₂₀): 5% = {empQuantile20 0.05}, 50% = {empQuantile20 0.5}, \
+  95% = {empQuantile20 0.95}; median dev at N=10 {quantileDev 10 0.5} vs 5%-tail dev at N=10 {quantileDev 10 0.05}"
+
+-- Positive — `IsLowerQuantile` right-property at the full sample: `p ≤ F̂₂₀(q̂₂₀)`. The lower
+-- `p`-quantile genuinely reaches level `p` (here with equality, `p ∈ {0.05, 0.5, 0.95}` being multiples
+-- of `1/20`) — the half of `IsLowerQuantile` feeding `empQuantile_tendsto`.
+#eval assertTrue "lower p-quantile reaches level p: p ≤ F̂₂₀(q̂₂₀) for p ∈ {0.05, 0.5, 0.95}"
+  ([0.05, 0.5, 0.95].all (fun p => Spec.leBool p (empCdf (empQuantile20 p))))
+
+-- Positive — the empirical quantile is monotone in the level `p` (order statistics are nondecreasing):
+-- `q̂₂₀(0.05) ≤ q̂₂₀(0.5) ≤ q̂₂₀(0.95)`, the quantile-function shadow of `monotone_cdf` inverted.
+#eval assertTrue "empirical quantile is monotone in p: q̂₂₀(5%) ≤ q̂₂₀(50%) ≤ q̂₂₀(95%)"
+  (Spec.leBool (empQuantile20 0.05) (empQuantile20 0.5)
+    && Spec.leBool (empQuantile20 0.5) (empQuantile20 0.95))
+
+-- Positive — every empirical quantile is a fraction in `[0,1]` (the percentiles live in the null
+-- support, `zLowFn_nonneg`/`_le_one` and friends).
+#eval assertTrue "empirical quantiles lie in [0,1] for p ∈ {0.05, 0.5, 0.95}"
+  ([0.05, 0.5, 0.95].all (fun p =>
+    Spec.leBool 0.0 (empQuantile20 p) && Spec.leBool (empQuantile20 p) 1.0))
+
+-- Positive — quantile transfer (consistency): the prefix-`N` empirical median settles toward the
+-- full-sample limit, within `0.02` for every prefix of `≥ 3` draws — the computable shadow of
+-- `empQuantile_tendsto` (almost-sure `q̂_N → q` at the strictly-straddled median).
+#eval assertTrue "empirical median converges: |q̂_N − q̂₂₀| ≤ 0.02 for every prefix of ≥ 3 draws"
+  ([3, 5, 10, 15, 20].all (fun N => Spec.leBool (quantileDev N 0.5) 0.02))
+
+-- Negative control — consistency is non-vacuous: the prefix median genuinely *moves* with `N` (some
+-- prefix differs from the full-sample limit), so `q̂_N → q̂₂₀` is a real limit being approached, not a
+-- value already constant at `N = 3`.
+#eval assertTrue "convergence is non-vacuous: some prefix median differs from the full-sample limit"
+  ([3, 5, 10, 15].any (fun N => !(empQuantilePrefix N 0.5 == empQuantile20 0.5)))
+
+-- Negative control — the convergence is hypothesis-sensitive: the lower `5%`-tail quantile (where the
+-- CDF is flatter and the straddle sparser, fewer draws to pin it) deviates *more* at `N = 10` than the
+-- median does — the empirical signature of `StraddlesQuantile` being a genuine, needed hypothesis, not
+-- automatic. A flat CDF region (no strict straddle) would defeat consistency entirely.
+#eval assertTrue "hypothesis-sensitive: the 5%-tail quantile deviates more at N=10 than the well-straddled median"
+  (Spec.ltBool (quantileDev 10 0.5) (quantileDev 10 0.05))
+
 end NN.Examples.Factorization.Discovery

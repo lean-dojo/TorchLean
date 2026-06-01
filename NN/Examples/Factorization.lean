@@ -135,6 +135,17 @@ factorization misbehaves.
   full-sample estimate uniformly over thresholds, with a **negative control** that the tiniest
   prefixes (`N = 1, 2`) deviate by `0.5 > ε`, the honest weak-`N` regime where the `2·exp(−2Nε²)`
   bound is still near `2`.
+  A final **quantile-transfer** sub-block corroborates `empQuantile_tendsto` (step (d)): inverting the
+  CDF convergence into convergence of the empirical *percentiles* the chooser thresholds against.
+  Wherever the true CDF strictly straddles a level `p` at its quantile `q` (`StraddlesQuantile`), any
+  lower empirical `p`-quantile (`IsLowerQuantile`) converges almost surely to `q`. The limit is
+  noncomputable, so the `#eval`s use the **full-sample** quantile `q̂₂₀` as the stand-in for `q` and
+  the prefix quantile `q̂_N` as its shadow: the lower `p`-quantile reaches level `p` (`p ≤ F̂₂₀(q̂₂₀)`),
+  is monotone in `p` and lands in `[0,1]`, and the empirical median converges (`|q̂_N − q̂₂₀| ≤ 0.02`
+  for every prefix of `≥ 3` draws). Two **negative controls** keep it honest: the prefix median
+  genuinely moves with `N` (non-vacuous limit), and the convergence is hypothesis-sensitive — the
+  `5%`-tail quantile (flatter CDF, sparser straddle) deviates more at `N = 10` than the well-straddled
+  median, the empirical signature of `StraddlesQuantile` being a needed hypothesis.
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

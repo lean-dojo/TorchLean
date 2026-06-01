@@ -15,7 +15,7 @@ public import Mathlib.MeasureTheory.Integral.Bochner.Set
 public import Mathlib.Probability.Moments.SubGaussian
 
 /-!
-# CHD `Z_test`: asymptotic calibration — i.i.d. scaffold, empirical-CDF consistency and pointwise concentration (steps a–c)
+# CHD `Z_test`: asymptotic calibration — i.i.d. scaffold, empirical-CDF consistency, pointwise concentration and quantile transfer (steps a–d)
 
 [`FactorizationsZTest`](./FactorizationsZTest.lean) modelled a *single* `Z_test` null draw as
 `nullGaussian n` (the product of `n` standard normals on `Fin n → ℝ`) and proved the per-draw
@@ -70,6 +70,18 @@ DKW inequality *at a single point* `t`, with the sharp Hoeffding exponent. This 
 companion of step (b)'s almost-sure limit. The *uniform-over-`t`* DKW–Massart bound with the global
 constant `2` (the genuine Dvoretzky–Kiefer–Wolfowitz theorem) is the research-grade strengthening
 still flagged out of scope, and the quantile-transfer step (d) remains.
+
+**Step (d) — quantile transfer (consistency of the empirical percentiles)** inverts steps (b)–(c):
+it carries CDF convergence over to convergence of the empirical *quantiles* — the 5%/95% percentiles
+the `Z_test` chooser thresholds against. Under the honest hypothesis that the true CDF is continuous
+and strictly increasing through the target level `p` at the quantile `q` (`StraddlesQuantile`), the
+classical sandwich — pointwise consistency (step (b)) at the two straddle points `q ∓ ε`
+(`empCDF_eventually_straddle`) pinning any lower empirical `p`-quantile (`IsLowerQuantile`) into
+`[q − ε, q + ε]`, intersected over `ε = 1/(m+1)` via `ae_all_iff` — gives `empQuantile_tendsto`:
+almost surely `empQ N → q` as `N → ∞`. This is stated for a generic lower empirical `p`-quantile; the
+concrete `zLowFn`/`zHighFn` order statistics instantiate it through the order-statistic count lemmas
+with the moving level `p_N = (⌊N/20⌋ + 1)/N → 1/20`, the remaining concrete (triangular-array) bridge.
+The *uniform* DKW–Massart sharp constant and the exchangeability rank rate stay research-grade.
 -/
 
 @[expose] public section
@@ -410,6 +422,108 @@ theorem empCDF_concentration (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) 
   have h1 := empCDF_upper_tail Λ V γ t hN hε
   have h2 := empCDF_lower_tail Λ V γ t hN hε
   linarith
+
+/-! ## Step (d): quantile transfer — consistency of the empirical percentiles
+
+Steps (b)–(c) control the empirical CDF at a *fixed* threshold. Step (d) *inverts* that: it transfers
+the convergence of `empCDF` to the convergence of the empirical *quantiles* — the 5%/95% percentiles
+`Z_low`/`Z_high` the `Z_test` chooser actually thresholds against. The honest hypothesis under which
+this works is that the true CDF is continuous and strictly increasing through the target level `p` at
+the quantile `q`, captured by `StraddlesQuantile`: the CDF sits strictly below `p` to the left of `q`
+and strictly above `p` to the right.
+
+The argument is the classical sandwich. For any tolerance `ε > 0`, the straddle gives
+`cdf (q − ε) < p < cdf (q + ε)`. Pointwise consistency (step (b)) at the two points `q ∓ ε` then says
+that almost surely, eventually `empCDF (q − ε) < p < empCDF (q + ε)`. Any *lower empirical
+`p`-quantile* `empQ` (CDF strictly below `p` to its left, at least `p` to its right —
+`IsLowerQuantile`) is therefore pinned into `[q − ε, q + ε]` once the sandwich holds. Letting `ε` run
+over `1/(m+1)` and intersecting the countably many almost-sure events (`ae_all_iff`) yields, almost
+surely, `empQ N → q` as `N → ∞`: **consistency of the empirical quantile**.
+
+This is stated for a *generic* lower empirical `p`-quantile `empQ`; the concrete percentile order
+statistics `zLowFn`/`zHighFn` instantiate it through the order-statistic count lemmas
+(`kthSmallestFn_strictBelow_count_le` / `kthSmallestFn_strictAbove_count_le`), with the index-driven
+level `p_N = (⌊N/20⌋ + 1)/N → 1/20` — a triangular-array (moving-level) refinement that is the
+remaining concrete bridge, while the *uniform* DKW–Massart sharp constant and the exchangeability rank
+rate stay research-grade and out of scope (flagged, never `sorry`'d). -/
+
+/-- **The empirical CDF is monotone in the threshold.** Raising `t` only enlarges `Iic t`, so each
+threshold indicator (hence their normalized sum) is nondecreasing — the empirical CDF behaves like a
+genuine distribution function in its argument. -/
+theorem empCDF_mono (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ) (N : ℕ) (ω : ℕ → Fin n → ℝ) :
+    Monotone (fun t => empCDF Λ V γ N t ω) := by
+  intro t t' htt'
+  have hsum : ∑ i ∈ Finset.range N, nullBelow Λ V γ t i ω
+      ≤ ∑ i ∈ Finset.range N, nullBelow Λ V γ t' i ω :=
+    Finset.sum_le_sum fun i _ =>
+      Set.indicator_le_indicator_of_subset (Set.Iic_subset_Iic.mpr htt')
+        (fun _ => zero_le_one) (nullNoise Λ V γ i ω)
+  simp only [empCDF]
+  exact div_le_div_of_nonneg_right hsum (by positivity)
+
+/-- **Population `p`-quantile (continuous, strictly-increasing-through-`p` sense).** `q` straddles
+level `p` for the CDF `F` when `F` sits strictly below `p` just left of `q` and strictly above just
+right. This holds whenever `F` is continuous and strictly monotone at `q` with `F q = p` — the honest
+hypothesis the empirical quantile is consistent under. -/
+def StraddlesQuantile (F : ℝ → ℝ) (p q : ℝ) : Prop :=
+  ∀ ε : ℝ, 0 < ε → F (q - ε) < p ∧ p < F (q + ε)
+
+/-- **Lower empirical `p`-quantile.** `q` is a lower `p`-quantile of the distribution function `F`
+when `F` is strictly below `p` to the left of `q` and at least `p` to the right — exactly
+`inf {t | p ≤ F t}` for a right-continuous step CDF. The defining property the order-statistic
+percentiles satisfy. -/
+def IsLowerQuantile (F : ℝ → ℝ) (p q : ℝ) : Prop :=
+  (∀ t, t < q → F t < p) ∧ (∀ t, q < t → p ≤ F t)
+
+/-- **Quantile sandwich (the transfer engine).** If the true null CDF straddles level `p` strictly
+across `t₁ < t₂` (`cdf t₁ < p < cdf t₂`), then — by pointwise consistency (step (b)) at the two
+points — almost surely the empirical CDF eventually straddles `p` the same way:
+`empCDF N t₁ < p < empCDF N t₂` for all large `N`. -/
+theorem empCDF_eventually_straddle (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ) {p t₁ t₂ : ℝ}
+    (h1 : cdf (noiseLaw Λ V γ) t₁ < p) (h2 : p < cdf (noiseLaw Λ V γ) t₂) :
+    ∀ᵐ ω ∂(nullSeqGaussian n), ∀ᶠ N in Filter.atTop,
+      empCDF Λ V γ N t₁ ω < p ∧ p < empCDF Λ V γ N t₂ ω := by
+  filter_upwards [empCDF_tendsto_cdf Λ V γ t₁, empCDF_tendsto_cdf Λ V γ t₂] with ω hω1 hω2
+  filter_upwards [hω1.eventually_lt_const h1, hω2.eventually_const_lt h2] with N hN1 hN2
+  exact ⟨hN1, hN2⟩
+
+/-- **Consistency of the empirical quantile (quantile transfer, step (d)).** Fix a target level `p`
+and a population quantile `q` straddled by the true null CDF. Then for *any* lower empirical
+`p`-quantile `empQ` of the empirical CDF (e.g. the percentile order statistics), almost surely
+`empQ N → q` as the number of null draws `N → ∞`. This is the honest consistency statement for the
+5%/95% thresholds the `Z_test` chooser uses, inverting steps (b)–(c)'s CDF convergence into quantile
+convergence wherever the CDF is continuous and strictly monotone at the quantile. -/
+theorem empQuantile_tendsto (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ) {p q : ℝ}
+    {empQ : ℕ → (ℕ → Fin n → ℝ) → ℝ}
+    (hstr : StraddlesQuantile (cdf (noiseLaw Λ V γ)) p q)
+    (hq : ∀ N ω, IsLowerQuantile (fun t => empCDF Λ V γ N t ω) p (empQ N ω)) :
+    ∀ᵐ ω ∂(nullSeqGaussian n),
+      Filter.Tendsto (fun N => empQ N ω) Filter.atTop (nhds q) := by
+  have key : ∀ m : ℕ, ∀ᵐ ω ∂(nullSeqGaussian n),
+      ∀ᶠ N in Filter.atTop, |empQ N ω - q| ≤ 1 / (m + 1 : ℝ) := by
+    intro m
+    have hε : (0 : ℝ) < 1 / (m + 1 : ℝ) := by positivity
+    obtain ⟨hlt, hgt⟩ := hstr _ hε
+    filter_upwards [empCDF_eventually_straddle Λ V γ hlt hgt] with ω hω
+    filter_upwards [hω] with N hN
+    obtain ⟨hN1, hN2⟩ := hN
+    obtain ⟨hqL, hqR⟩ := hq N ω
+    have hub : empQ N ω ≤ q + 1 / (m + 1 : ℝ) := by
+      by_contra hc
+      exact absurd (hqL _ (not_le.mp hc)) (not_lt.mpr hN2.le)
+    have hlb : q - 1 / (m + 1 : ℝ) ≤ empQ N ω := by
+      by_contra hc
+      exact absurd (hqR _ (not_le.mp hc)) (not_le.mpr hN1)
+    rw [abs_le]
+    constructor <;> linarith
+  filter_upwards [ae_all_iff.mpr key] with ω hω
+  rw [Metric.tendsto_atTop]
+  intro δ hδ
+  obtain ⟨m, hm⟩ := exists_nat_one_div_lt hδ
+  obtain ⟨N₀, hN₀⟩ := Filter.eventually_atTop.mp (hω m)
+  refine ⟨N₀, fun N hN => ?_⟩
+  rw [Real.dist_eq]
+  exact lt_of_le_of_lt (hN₀ N hN) hm
 
 end
 

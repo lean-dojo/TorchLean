@@ -441,8 +441,9 @@ standard-Gaussian draw, so every `nullNoise i` has the *same* law `noiseLaw` (`n
 (`integrable_nullNoise`). That is exactly the i.i.d.-bounded-integrable triple — `hint`, `hindep`,
 `hident` — that the strong law of large numbers (`strong_law_ae_real`) and the Hoeffding tail consume.
 This scaffold is the only genuinely new measure-theory plumbing; the empirical-CDF consistency
-(Glivenko–Cantelli via the SLLN) and the per-`t` concentration rate `2 exp(-2 N ε²)` (Hoeffding) are
-applications of it — both now proved.
+(Glivenko–Cantelli via the SLLN), the per-`t` concentration rate `2 exp(-2 N ε²)` (Hoeffding), and the
+quantile transfer (consistency of the empirical 5%/95% percentiles) are applications of it — all three
+now proved.
 
 *Pointwise consistency of the empirical CDF (step b).* The first such application is now proved,
 `empCDF_tendsto_cdf`. Fix a threshold `t`. The threshold indicators
@@ -476,16 +477,31 @@ DKW inequality at one point with the sharp Hoeffding exponent — sorry-free ove
 (twice the one-sided tail, decreasing in `N` and `ε`, non-vacuous once `2 N ε² > ln 2`) and the
 observed prefix deviation it governs.
 
-*What is honestly left.* With the pointwise pair (b)–(c) proved, what stays genuinely research-grade
-is the *uniform* Glivenko–Cantelli (`sup_t |F̂_N - cdf| → 0`) and the full *DKW–Massart* inequality
-with its sharp constant `2` over the supremum — both need the bracketing / VC-class chaining Mathlib
-v4.30.0 lacks — together with the *quantile-transfer* step (d) (converting CDF concentration into
-convergence of the empirical 5%/95% percentiles to the true quantiles), and the *exchangeability rank
-rate* `k/(N+1)` for a fresh null draw, which needs a symmetric-group rank-distribution argument also
-absent. Those are stated as the open frontier, never stubbed with `sorry`. The finite-sample
-false-positive *bound* above is the exact, non-asymptotic statement the test actually guarantees, and
-the pointwise consistency-plus-concentration pair is the sorry-free bridge toward the asymptotic
-statement.
+*Quantile transfer (step d).* Steps (b)–(c) control the empirical CDF at a fixed threshold;
+`empQuantile_tendsto` *inverts* that into convergence of the empirical *percentiles* the `Z_test`
+chooser thresholds against. The honest hypothesis is `StraddlesQuantile`: the true CDF sits strictly
+below the level `p` just left of the quantile `q` and strictly above just right — exactly continuity
+plus strict monotonicity through `p` at `q`. The argument is the classical sandwich: for any tolerance
+`ε`, the straddle gives `cdf (q - ε) < p < cdf (q + ε)`, and pointwise consistency (step b) at the two
+points `q ∓ ε` makes the empirical CDF eventually straddle `p` the same way
+(`empCDF_eventually_straddle`), which pins any lower empirical `p`-quantile (`IsLowerQuantile`, with
+the monotone `empCDF_mono` as the step CDF) into `[q - ε, q + ε]`. Intersecting the countably many
+almost-sure events over `ε = 1/(m+1)` (`ae_all_iff`) yields, almost surely, `empQ N → q` as `N → ∞` —
+consistency of the empirical quantile, sorry-free over Mathlib v4.30.0. It is stated for a generic
+lower empirical `p`-quantile; the `Discovery` examples corroborate it via the full-sample quantile as
+the limit stand-in (the empirical median converges within `0.02` for prefixes of `≥ 3` draws, the
+`5%`-tail quantile visibly slower — the empirical signature of the straddle hypothesis mattering).
+
+*What is honestly left.* With the pointwise pair (b)–(c) and the quantile transfer (d) proved, what
+stays genuinely research-grade is the *uniform* Glivenko–Cantelli (`sup_t |F̂_N - cdf| → 0`) and the
+full *DKW–Massart* inequality with its sharp constant `2` over the supremum — both need the bracketing
+/ VC-class chaining Mathlib v4.30.0 lacks — together with the concrete *triangular-array* bridge
+wiring the order-statistic percentiles `zLowFn`/`zHighFn` into `empQuantile_tendsto` at the moving
+level `p_N = (⌊N/20⌋ + 1)/N → 1/20`, and the *exchangeability rank rate* `k/(N+1)` for a fresh null
+draw, which needs a symmetric-group rank-distribution argument also absent. Those are stated as the
+open frontier, never stubbed with `sorry`. The finite-sample false-positive *bound* above is the
+exact, non-asymptotic statement the test actually guarantees, and the consistency-concentration-
+quantile chain (b)–(d) is the sorry-free bridge toward the asymptotic statement.
 
 # The a-posteriori residual certificate
 
@@ -700,14 +716,17 @@ identically-`noiseLaw`-distributed, `[0,1]`-valued, integrable sequence under
 `Measure.infinitePi nullGaussian`), `empCDF_tendsto_cdf` applies the strong law of large numbers to
 the bounded indicators `1{noiseᵢ ≤ t}` — whose mean is exactly `cdf noiseLaw t`
 (`integral_nullBelow_zero`) — to give almost-sure convergence `F̂_N(t) → cdf noiseLaw t` for every
-fixed `t`, the *pointwise* Glivenko–Cantelli theorem, sorry-free; and its finite-sample companion
+fixed `t`, the *pointwise* Glivenko–Cantelli theorem, sorry-free; its finite-sample companion
 `empCDF_concentration` adds the per-`t` rate `ℙ(|F̂_N(t) - cdf noiseLaw t| ≥ ε) ≤ 2 exp(-2 N ε²)`,
 the DKW inequality at one point, from Hoeffding's lemma on the `[0,1]`-bounded indicators
-(`nullBelow_subgaussian`) and Mathlib's sub-Gaussian sum bound. What stays genuinely research-grade
-is the *uniform* Glivenko–Cantelli / DKW–Massart sharp
-constant over the supremum (bracketing / VC chaining), the *quantile-transfer* step that turns this
-CDF concentration into convergence of the empirical 5%/95% percentiles, and the exchangeability rank
-rate `k/(N+1)`
+(`nullBelow_subgaussian`) and Mathlib's sub-Gaussian sum bound; and `empQuantile_tendsto` *inverts*
+both into the quantile statement itself — wherever the true CDF strictly straddles a level `p` at its
+quantile `q` (`StraddlesQuantile`), the sandwich at `q ∓ ε` (`empCDF_eventually_straddle`) drives any
+lower empirical `p`-quantile to `q` almost surely, the honest consistency of the 5%/95% percentiles.
+What stays genuinely research-grade is the *uniform* Glivenko–Cantelli / DKW–Massart sharp
+constant over the supremum (bracketing / VC chaining), the concrete *triangular-array* bridge wiring
+the `zLowFn`/`zHighFn` order statistics into `empQuantile_tendsto` at the moving level
+`p_N = (⌊N/20⌋ + 1)/N → 1/20`, and the exchangeability rank rate `k/(N+1)`
 (symmetric-group rank distribution) — all absent from `Mathlib.Probability` v4.30.0. One open item is
 a proof-only gap on a quantity CHD does not need to *run*; the other is the genuine statistical
 frontier, flagged rather than stubbed with `sorry`.

@@ -96,6 +96,11 @@ factorization misbehaves.
   an **end-to-end** block then feeds the verified `varNoiseSpec` at several `γ` into `argMinFn`, a
   `find_gamma` sweep selecting the least-noise regularization (all noises in `[0,1]`); **negative
   controls** confirm the most-activated ancestor and tiny-increment iterations are correctly rejected.
+  A closing **`Z_test`** block exercises the statistical layer: the null-distribution thresholds
+  `Z_low`/`Z_high` (5th/95th percentiles of the per-sample `noise`) are well-posed
+  (`0 ≤ Z_low ≤ Z_high ≤ 1`), data aligned with the dominant eigenvector clears the lower tail
+  (`noise < Z_low`, **positive**), and a high noise / a noise at the upper tail are rejected
+  (**negative controls**) — feeding `MinNoiseKernelChooser` exactly as in CHD.
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

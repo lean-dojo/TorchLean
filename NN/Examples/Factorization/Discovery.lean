@@ -25,10 +25,17 @@ deterministic choices the loop makes, each with a positive check and a negative 
   returns the `argmax` of the increments;
 * **stop when every ancestor is pruned** — `allPrunedFn` fires on the all-zero mask and not before.
 
-The final block closes the loop end-to-end: it builds an SPD kernel, eigendecomposes it, and runs a
-`find_gamma`-style sweep — feeding the *verified* `varNoiseSpec` at several `γ` straight into `argMinFn`
-to select the regularization with least noise. Every decision runs over `Float`, the executable runtime
-scalar.
+A `find_gamma`-style block then closes the loop end-to-end: it builds an SPD kernel, eigendecomposes
+it, and feeds the *verified* `varNoiseSpec` at several `γ` straight into `argMinFn` to select the
+regularization with least noise.
+
+A final **`Z_test`** block adds the statistical layer (`interpolatory.py`): the observed `noise` is
+judged against the null distribution of the *same* statistic under random data — `Z_low`/`Z_high` are
+the 5th/95th percentiles of the per-sample noises. We check the thresholds are well-posed
+(`0 ≤ Z_low ≤ Z_high ≤ 1`, each percentile inheriting the verified `noise ∈ [0,1]` bound) and that the
+verdict `noise < Z_low` flags a real edge — with a genuine positive (data aligned with the dominant
+eigenvector clears the lower tail) and negatives (a high noise, and a noise sitting at the upper tail,
+are both correctly rejected). Every decision runs over `Float`, the executable runtime scalar.
 -/
 
 @[expose] public section
@@ -170,5 +177,77 @@ def noiseAt : Fin 3 → Float := fun i => Spec.varNoiseSpec evals V (gammas i) g
 -- Positive — `find_gamma` (argmin of the verified noise) selects the least-regularized γ (index 0).
 #eval assertTrue "find_gamma selects least-noise γ via argMinFn (index 0)"
   ((Spec.argMinFn noiseAt).val == 0)
+
+/-! ## `Z_test`: the null-distribution significance thresholds
+
+CHD decides an edge is real by comparing the observed `noise` against the null distribution of the
+*same* statistic under random data: draw `N` samples, score each one's `noise`, sort, and read off the
+5th/95th percentiles as `Z_low`/`Z_high` (`Z_test` in `interpolatory.py`). An edge is significant when
+`noise < Z_low`. These checks corroborate `FactorizationsDecision`: the thresholds are well-posed
+(`0 ≤ Z_low ≤ Z_high ≤ 1`, each percentile inheriting the verified `noise ∈ [0,1]` bound) and the
+verdict drives `MinNoiseKernelChooser`. -/
+
+/-- An `N = 20` family of pseudo-random null draws `sⱼ ∈ ℝ³` (deterministic, standing in for CHD's
+`jax.random.normal` samples). With `N = 20` the percentile indices are `Z_low = ⌊0.05·20⌋ = 1` and
+`Z_high = ⌊0.95·20⌋ = 19`. -/
+def zSamples : Fin 20 → Fin 3 → Float :=
+  fun j i => (Float.ofNat ((j.val * 31 + i.val * 17 + 7) % 23) - 11.0) / 7.0
+
+/-- The regularization at which we run the `Z_test`. -/
+def gammaZ : Float := 0.1
+
+/-- `Z_low`: the 5th percentile of the null `noise` distribution from the verified eigendecomposition. -/
+def zLow : Float := Spec.zLowFn (Spec.toVecFn evals) (Spec.toMatFn V) gammaZ zSamples
+/-- `Z_high`: the 95th percentile of the null `noise` distribution. -/
+def zHigh : Float := Spec.zHighFn (Spec.toVecFn evals) (Spec.toMatFn V) gammaZ zSamples
+
+#eval IO.println s!"Z_test null thresholds: Z_low = {zLow}, Z_high = {zHigh}"
+
+-- Positive — the thresholds are ordered (`zLowFn_le_zHighFn`); `leBool` is the very key the sort uses.
+#eval assertTrue "Z_low ≤ Z_high (order-statistic monotonicity)" (Spec.leBool zLow zHigh)
+
+-- Positive — both thresholds are genuine fractions in [0,1] (`zLowFn_nonneg`/`_le_one`, `zHighFn_*`).
+#eval assertTrue "Z_low and Z_high both lie in [0,1]"
+  (Spec.leBool 0.0 zLow && Spec.leBool zLow 1.0 && Spec.leBool 0.0 zHigh && Spec.leBool zHigh 1.0)
+
+/-- The dominant eigen-direction (largest eigenvalue), found by the verified `argMaxFn`. -/
+def domIdx : Fin 3 := Spec.argMaxFn (Spec.toVecFn evals)
+/-- A "real signal": data aligned with the dominant eigenvector. Its `noise` is exactly the shrinkage
+`γ/(λ_dom+γ)` — the smallest shrinkage, so well below the null tail — the kind of edge CHD keeps. -/
+def signalGa : Fin 3 → Float := fun i => Spec.toMatFn V i domIdx
+/-- The observed `noise` of the signal-aligned data (the verified `varNoiseFn`). -/
+def obsSignal : Float := Spec.varNoiseFn (Spec.toVecFn evals) gammaZ (Spec.projFn (Spec.toMatFn V) signalGa)
+
+#eval IO.println s!"signal-aligned noise = {obsSignal}, significant (noise < Z_low)? \
+  {Spec.zSignificantFn obsSignal zLow}"
+
+-- Positive — the signal-aligned noise is itself a fraction in [0,1] (witness of `varNoiseFn_*`).
+#eval assertTrue "signal-aligned noise lies in [0,1]"
+  (Spec.leBool 0.0 obsSignal && Spec.leBool obsSignal 1.0)
+
+-- Positive — end-to-end: data aligned with the dominant eigenvector clears the null's lower tail, so
+-- the `Z_test` flags a real edge (`noise < Z_low`).
+#eval assertTrue "end-to-end: dominant-direction signal is significant (noise < Z_low)"
+  (Spec.zSignificantFn obsSignal zLow)
+
+-- Positive — a clearly-significant edge (noise 0.05 below threshold 0.20) is flagged (`zSignificantFn`).
+#eval assertTrue "significant edge: noise 0.05 < Z_low 0.20" (Spec.zSignificantFn 0.05 0.20)
+
+-- Negative — a noise *above* the threshold is correctly not significant.
+#eval assertFalse "non-significant: noise 0.50 ≥ Z_low 0.20" (Spec.zSignificantFn 0.50 0.20)
+
+-- Negative — the 95th-percentile value itself is never below the 5th (`zHigh ≥ zLow`), so feeding it as
+-- an "observed" noise is correctly judged non-significant — a faithful negative from the real null.
+#eval assertFalse "Z_high is not below Z_low (a noise at the upper tail is not significant)"
+  (Spec.zSignificantFn zHigh zLow)
+
+-- Positive — the `Z_test` verdict feeds `MinNoiseKernelChooser` (`zTest_admits_edge`): a significant
+-- single kernel is admitted as `some 0`.
+#eval assertTrue "significant kernel is admitted (chooser → some 0)"
+  (chooserCode (Spec.kernelChooserFn (fun _ : Fin 1 => (0.05 : Float)) (fun _ : Fin 1 => 0.20)) == 0)
+
+-- Negative — a non-significant single kernel is rejected (`none`, code -1).
+#eval assertTrue "non-significant kernel is rejected (chooser → none, code -1)"
+  (chooserCode (Spec.kernelChooserFn (fun _ : Fin 1 => (0.50 : Float)) (fun _ : Fin 1 => 0.20)) == -1)
 
 end NN.Examples.Factorization.Discovery

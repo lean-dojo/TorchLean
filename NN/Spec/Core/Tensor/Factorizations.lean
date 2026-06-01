@@ -506,6 +506,73 @@ def varNoiseSpec {n : Nat} (evals : Tensor α (.dim n .scalar))
     (V : Tensor α (.dim n (.dim n .scalar))) (γ : α) (ga : Tensor α (.dim n .scalar)) : α :=
   varNoiseFn (toVecFn evals) γ (projFn (toMatFn V) (toVecFn ga))
 
+/-! ## CHD `Z_test`: null-distribution significance thresholds (`interpolatory.py`)
+
+`varNoiseFn` gives the `noise` of the *observed* data. To decide whether that noise is small *enough*
+to signal a real edge, CHD compares it against the null distribution of the **same** statistic under
+random data (`Z_test`): draw `N` standard-Gaussian samples, score each one's `noise`, sort them, and
+take the 5th and 95th percentiles as `Z_low`/`Z_high`. An edge is significant when the observed
+`noise < Z_low` — strictly below the null's lower tail.
+
+The random draws enter the spec as an explicit family `samples : Fin N → Fin n → α` (row `j` a draw);
+the randomness itself is the caller's, exactly as CHD threads a `jax.random` key into `Z_test`. The
+selection guarantees (each threshold lies in `[0,1]`, and `Z_low ≤ Z_high`) are proved over `ℝ` in
+[`NN.Proofs.Tensor.Basic.FactorizationsDecision`](../../../Proofs/Tensor/Basic/FactorizationsDecision.lean),
+reusing the verified `noise ∈ [0,1]` bound for *every* null sample. -/
+
+/-- The `Z_test` null sample of per-draw `noise` levels: each random draw `samples j` is projected
+(`Pga = Vᵀ·sⱼ`) and scored by the **same** `varNoiseFn` as the data. Mirrors
+`noises = vecdot(Pgas_coeffs, Pgas_coeffs) / vecdot(Pgas_coeffs, Pgas)` in `Z_test`. -/
+def sampleNoisesFn {n N : Nat} (Λ : Fin n → α) (V : Fin n → Fin n → α) (γ : α)
+    (samples : Fin N → Fin n → α) : Fin N → α :=
+  fun j => varNoiseFn Λ γ (projFn V (samples j))
+
+/-- `x ≤ y` as a `Bool` via the `Context` order (`x ≤ y` is `¬ y < x`); the sort key for the order
+statistics below. -/
+def leBool (x y : α) : Bool := !ltBool y x
+
+/-- The `k`-th smallest of a finite family `a : Fin N → α`, by sorting the values (ascending, via the
+`Context` order) and indexing. The `getD … 0` fallback is total; for `k < N` it is a genuine order
+statistic (see `kthSmallestFn_mem`/`_mono` in `FactorizationsDecision`). -/
+def kthSmallestFn {N : Nat} (a : Fin N → α) (k : Nat) : α :=
+  (((List.finRange N).map a).mergeSort leBool).getD k 0
+
+/-- The 5th-percentile index of an `N`-sample null distribution (`int(0.05·N)`, i.e. `⌊N/20⌋`). -/
+def zLowIdx (N : Nat) : Nat := N / 20
+
+/-- The 95th-percentile index of an `N`-sample null distribution (`int(0.95·N)`, i.e. `⌊19·N/20⌋`). -/
+def zHighIdx (N : Nat) : Nat := 19 * N / 20
+
+/-- CHD `Z_low`: the 5th percentile of the null `noise` distribution — the significance threshold an
+observed `noise` must beat (`B_samples[int(0.05·N)]`). -/
+def zLowFn {n N : Nat} (Λ : Fin n → α) (V : Fin n → Fin n → α) (γ : α)
+    (samples : Fin N → Fin n → α) : α :=
+  kthSmallestFn (sampleNoisesFn Λ V γ samples) (zLowIdx N)
+
+/-- CHD `Z_high`: the 95th percentile of the null `noise` distribution (`B_samples[int(0.95·N)]`). -/
+def zHighFn {n N : Nat} (Λ : Fin n → α) (V : Fin n → Fin n → α) (γ : α)
+    (samples : Fin N → Fin n → α) : α :=
+  kthSmallestFn (sampleNoisesFn Λ V γ samples) (zHighIdx N)
+
+/-- CHD's per-kernel significance verdict: the observed `noise` beats the null's lower tail
+(`noise < Z_low`), i.e. the edge is real. This is exactly the validity test `MinNoiseKernelChooser`
+folds over (`noises < Z_lows`). -/
+def zSignificantFn (noise Zlow : α) : Bool := ltBool noise Zlow
+
+/-- Tensor-level `Z_low` threshold from eigenpairs `(evals, V)`, regularization `γ`, and a family of
+null draws (the rows of `S : Tensor (.dim N (.dim n .scalar))`). -/
+def zLowSpec {n N : Nat} (evals : Tensor α (.dim n .scalar))
+    (V : Tensor α (.dim n (.dim n .scalar))) (γ : α)
+    (S : Tensor α (.dim N (.dim n .scalar))) : α :=
+  zLowFn (toVecFn evals) (toMatFn V) γ (toMatFn S)
+
+/-- Tensor-level `Z_high` threshold from eigenpairs `(evals, V)`, regularization `γ`, and a family of
+null draws (the rows of `S`). -/
+def zHighSpec {n N : Nat} (evals : Tensor α (.dim n .scalar))
+    (V : Tensor α (.dim n (.dim n .scalar))) (γ : α)
+    (S : Tensor α (.dim N (.dim n .scalar))) : α :=
+  zHighFn (toVecFn evals) (toMatFn V) γ (toMatFn S)
+
 /-! ## CHD mode kernels (`Modes/kernels.py`)
 
 Everything above takes the kernel matrix `K` as input, assuming it is symmetric positive-semidefinite.

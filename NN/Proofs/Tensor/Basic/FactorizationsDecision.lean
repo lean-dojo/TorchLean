@@ -194,4 +194,171 @@ theorem allPrunedFn_iff {k : Nat} (m : Fin k → ℝ) :
   · intro h i; exact (key i).mp (h i (List.mem_finRange i))
   · intro h i _; exact (key i).mpr (h i)
 
+/-! ## CHD `Z_test`: the null-distribution significance thresholds
+
+`Z_test` (`interpolatory.py`) builds the null distribution of the `noise` statistic under random data,
+sorts the per-sample noises, and reports the 5th/95th percentiles as `Z_low`/`Z_high`. The numerical
+heart — the *value* of each sample's noise — is the **same** `varNoiseFn` whose `[0,1]` bound we already
+proved (`varNoiseFn_nonneg`/`_le_one`). So the percentiles inherit that bound, and `Z_low ≤ Z_high`
+because a 5th percentile never exceeds a 95th — pure order-statistic monotonicity over the sorted list.
+
+The order statistic `kthSmallestFn` sorts with the `Context` comparator `leBool`; over `ℝ` that is the
+real `≤` (`leBool_eq_le`), letting Mathlib's `sortedLE_mergeSort` supply sortedness. -/
+
+/-- Over `ℝ`, the `Context` comparator `leBool x y` is the decidable `x ≤ y`. -/
+theorem leBool_eq_decide (x y : ℝ) : Spec.leBool x y = decide (x ≤ y) := by
+  rw [Spec.leBool, ltBool_eq_decide, ← decide_not, decide_eq_decide]
+  exact not_lt
+
+/-- Over `ℝ`, the `leBool` sort key *is* the decided `(· ≤ ·)`, so `kthSmallestFn` sorts with the
+real order (matching Mathlib's `sortedLE_mergeSort`). -/
+private theorem leBool_eq_le : (Spec.leBool : ℝ → ℝ → Bool) = (fun x y => decide (x ≤ y)) := by
+  funext x y; exact leBool_eq_decide x y
+
+/-- `getD` at an in-range index is the corresponding `getElem` (the `0` fallback is unused). -/
+private theorem getD_zero_eq {L : List ℝ} {i : Nat} (h : i < L.length) : L.getD i 0 = L[i] := by
+  rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem h, Option.getD_some]
+
+/-- `kthSmallestFn` over `ℝ` is the `k`-th entry of the list sorted by the *real* order. -/
+theorem kthSmallestFn_eq_sorted_getD {N : Nat} (a : Fin N → ℝ) (k : Nat) :
+    Spec.kthSmallestFn a k = (((List.finRange N).map a).mergeSort (· ≤ ·)).getD k 0 := by
+  rw [Spec.kthSmallestFn, leBool_eq_le]
+
+/-! ### Order-statistic facts -/
+
+/-- **`kthSmallestFn` is one of the family's values** (for an in-range `k`): sorting permutes, so the
+selected entry came from `a`. -/
+theorem kthSmallestFn_mem {N : Nat} (a : Fin N → ℝ) {k : Nat} (hk : k < N) :
+    ∃ i, Spec.kthSmallestFn a k = a i := by
+  have hlen : (((List.finRange N).map a).mergeSort (· ≤ ·)).length = N := by
+    rw [List.length_mergeSort, List.length_map, List.length_finRange]
+  have hk' : k < (((List.finRange N).map a).mergeSort (· ≤ ·)).length := by rw [hlen]; exact hk
+  have hmem : Spec.kthSmallestFn a k ∈ ((List.finRange N).map a).mergeSort (· ≤ ·) := by
+    rw [kthSmallestFn_eq_sorted_getD, getD_zero_eq hk']
+    exact List.getElem_mem hk'
+  rw [List.mem_mergeSort, List.mem_map] at hmem
+  obtain ⟨i, _, hi⟩ := hmem
+  exact ⟨i, hi.symm⟩
+
+/-- **An in-range order statistic is `≥ 0`** when every value is. -/
+theorem kthSmallestFn_nonneg {N : Nat} (a : Fin N → ℝ) (hpos : ∀ i, 0 ≤ a i) {k : Nat}
+    (hk : k < N) : 0 ≤ Spec.kthSmallestFn a k := by
+  obtain ⟨i, hi⟩ := kthSmallestFn_mem a hk; rw [hi]; exact hpos i
+
+/-- **An in-range order statistic is `≤ 1`** when every value is. -/
+theorem kthSmallestFn_le_one {N : Nat} (a : Fin N → ℝ) (hle : ∀ i, a i ≤ 1) {k : Nat}
+    (hk : k < N) : Spec.kthSmallestFn a k ≤ 1 := by
+  obtain ⟨i, hi⟩ := kthSmallestFn_mem a hk; rw [hi]; exact hle i
+
+/-- **Order statistics are monotone in their rank** (`k ≤ k' → kₜₕ ≤ k'ₜₕ`): the underlying list is
+sorted ascending, so later indices hold larger values. This is exactly why `Z_low ≤ Z_high`. -/
+theorem kthSmallestFn_mono {N : Nat} (a : Fin N → ℝ) {k k' : Nat} (hkk : k ≤ k') (hk' : k' < N) :
+    Spec.kthSmallestFn a k ≤ Spec.kthSmallestFn a k' := by
+  have hlen : (((List.finRange N).map a).mergeSort (· ≤ ·)).length = N := by
+    rw [List.length_mergeSort, List.length_map, List.length_finRange]
+  have hkL : k < (((List.finRange N).map a).mergeSort (· ≤ ·)).length := by
+    rw [hlen]; exact lt_of_le_of_lt hkk hk'
+  have hk'L : k' < (((List.finRange N).map a).mergeSort (· ≤ ·)).length := by rw [hlen]; exact hk'
+  rw [kthSmallestFn_eq_sorted_getD, kthSmallestFn_eq_sorted_getD, getD_zero_eq hkL, getD_zero_eq hk'L]
+  exact List.sortedLE_mergeSort.getElem_le_getElem_of_le hkk
+
+/-! ### The percentile indices -/
+
+/-- The 5th-percentile index is in range for a nonempty sample. -/
+theorem zLowIdx_lt {N : Nat} (hN : 0 < N) : Spec.zLowIdx N < N := by
+  rw [Spec.zLowIdx]; exact Nat.div_lt_self hN (by norm_num)
+
+/-- The 95th-percentile index is in range for a nonempty sample. -/
+theorem zHighIdx_lt {N : Nat} (hN : 0 < N) : Spec.zHighIdx N < N := by
+  rw [Spec.zHighIdx, Nat.div_lt_iff_lt_mul (by norm_num : (0 : Nat) < 20)]
+  nlinarith [hN]
+
+/-- The 5th-percentile index never exceeds the 95th. -/
+theorem zLowIdx_le_zHighIdx (N : Nat) : Spec.zLowIdx N ≤ Spec.zHighIdx N := by
+  rw [Spec.zLowIdx, Spec.zHighIdx]
+  exact Nat.div_le_div_right (Nat.le_mul_of_pos_left N (by norm_num))
+
+/-! ### Each null sample's noise inherits the `[0,1]` bound -/
+
+/-- **Every `Z_test` null sample is a genuine fraction** (`0 ≤ noise`): it is `varNoiseFn` of the
+projected draw, and `varNoiseFn_nonneg` already bounds that. -/
+theorem sampleNoisesFn_nonneg {n N : Nat} {Λ : Fin n → ℝ} (hΛ : ∀ i, 0 ≤ Λ i) {γ : ℝ}
+    (hγ : 0 < γ) (V : Fin n → Fin n → ℝ) (samples : Fin N → Fin n → ℝ) (j : Fin N) :
+    0 ≤ Spec.sampleNoisesFn Λ V γ samples j := by
+  rw [Spec.sampleNoisesFn]; exact varNoiseFn_nonneg hΛ hγ _
+
+/-- **Every `Z_test` null sample is `≤ 1`** (`varNoiseFn_le_one`). -/
+theorem sampleNoisesFn_le_one {n N : Nat} {Λ : Fin n → ℝ} (hΛ : ∀ i, 0 ≤ Λ i) {γ : ℝ}
+    (hγ : 0 < γ) (V : Fin n → Fin n → ℝ) (samples : Fin N → Fin n → ℝ) (j : Fin N) :
+    Spec.sampleNoisesFn Λ V γ samples j ≤ 1 := by
+  rw [Spec.sampleNoisesFn]; exact varNoiseFn_le_one hΛ hγ _
+
+/-! ### `Z_low` / `Z_high` are well-posed thresholds -/
+
+/-- **`Z_low` is a genuine fraction in `[0,1]` (lower bound).** -/
+theorem zLowFn_nonneg {n N : Nat} {Λ : Fin n → ℝ} (hΛ : ∀ i, 0 ≤ Λ i) {γ : ℝ} (hγ : 0 < γ)
+    (V : Fin n → Fin n → ℝ) (samples : Fin N → Fin n → ℝ) (hN : 0 < N) :
+    0 ≤ Spec.zLowFn Λ V γ samples := by
+  rw [Spec.zLowFn]
+  exact kthSmallestFn_nonneg _ (fun j => sampleNoisesFn_nonneg hΛ hγ V samples j) (zLowIdx_lt hN)
+
+/-- **`Z_low ≤ 1`.** -/
+theorem zLowFn_le_one {n N : Nat} {Λ : Fin n → ℝ} (hΛ : ∀ i, 0 ≤ Λ i) {γ : ℝ} (hγ : 0 < γ)
+    (V : Fin n → Fin n → ℝ) (samples : Fin N → Fin n → ℝ) (hN : 0 < N) :
+    Spec.zLowFn Λ V γ samples ≤ 1 := by
+  rw [Spec.zLowFn]
+  exact kthSmallestFn_le_one _ (fun j => sampleNoisesFn_le_one hΛ hγ V samples j) (zLowIdx_lt hN)
+
+/-- **`Z_high` is a genuine fraction in `[0,1]` (lower bound).** -/
+theorem zHighFn_nonneg {n N : Nat} {Λ : Fin n → ℝ} (hΛ : ∀ i, 0 ≤ Λ i) {γ : ℝ} (hγ : 0 < γ)
+    (V : Fin n → Fin n → ℝ) (samples : Fin N → Fin n → ℝ) (hN : 0 < N) :
+    0 ≤ Spec.zHighFn Λ V γ samples := by
+  rw [Spec.zHighFn]
+  exact kthSmallestFn_nonneg _ (fun j => sampleNoisesFn_nonneg hΛ hγ V samples j) (zHighIdx_lt hN)
+
+/-- **`Z_high ≤ 1`.** -/
+theorem zHighFn_le_one {n N : Nat} {Λ : Fin n → ℝ} (hΛ : ∀ i, 0 ≤ Λ i) {γ : ℝ} (hγ : 0 < γ)
+    (V : Fin n → Fin n → ℝ) (samples : Fin N → Fin n → ℝ) (hN : 0 < N) :
+    Spec.zHighFn Λ V γ samples ≤ 1 := by
+  rw [Spec.zHighFn]
+  exact kthSmallestFn_le_one _ (fun j => sampleNoisesFn_le_one hΛ hγ V samples j) (zHighIdx_lt hN)
+
+/-- **`Z_low ≤ Z_high`.** The lower percentile of the null distribution never exceeds the upper one —
+the order-statistic monotonicity over the shared sorted noises. The test `Z_low ≤ noise ≤ Z_high` it
+implies (the "no anomaly" window of `_GraphDiscoveryMain.py`) is therefore non-degenerate. -/
+theorem zLowFn_le_zHighFn {n N : Nat} (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ)
+    (samples : Fin N → Fin n → ℝ) (hN : 0 < N) :
+    Spec.zLowFn Λ V γ samples ≤ Spec.zHighFn Λ V γ samples := by
+  rw [Spec.zLowFn, Spec.zHighFn]
+  exact kthSmallestFn_mono _ (zLowIdx_le_zHighIdx N) (zHighIdx_lt hN)
+
+/-! ### Tying the `Z_test` verdict back to the kernel chooser -/
+
+/-- **A significant edge is never anomalously noisy.** If the observed `noise` clears the lower tail
+(`noise < Z_low`), it also sits below the upper tail (`noise < Z_high`), because `Z_low ≤ Z_high`. -/
+theorem zSignificant_lt_zHighFn {n N : Nat} (Λ : Fin n → ℝ) (V : Fin n → Fin n → ℝ) (γ : ℝ)
+    (samples : Fin N → Fin n → ℝ) (hN : 0 < N) {obs : ℝ}
+    (hsig : obs < Spec.zLowFn Λ V γ samples) : obs < Spec.zHighFn Λ V γ samples :=
+  lt_of_lt_of_le hsig (zLowFn_le_zHighFn Λ V γ samples hN)
+
+/-- **The `Z_test` decision feeds the kernel chooser.** When the observed `noise` of the data clears the
+`Z_low` threshold (`zSignificantFn = true`), the single-kernel `MinNoiseKernelChooser` admits the edge —
+returns `some 0`. This connects the statistical layer (`Z_test`) to the discovery decision layer
+(`kernelChooserFn`, proved sound/complete above); the `noise ≤ 1` ceiling the chooser needs is the
+verified `varNoiseFn_le_one`. -/
+theorem zTest_admits_edge {n N : Nat} {Λ : Fin n → ℝ} (hΛ : ∀ i, 0 ≤ Λ i) {γ : ℝ} (hγ : 0 < γ)
+    (V : Fin n → Fin n → ℝ) (samples : Fin N → Fin n → ℝ) (ga : Fin n → ℝ)
+    (hsig : Spec.zSignificantFn (Spec.varNoiseFn Λ γ (Spec.projFn V ga))
+      (Spec.zLowFn Λ V γ samples) = true) :
+    Spec.kernelChooserFn (fun _ : Fin 1 => Spec.varNoiseFn Λ γ (Spec.projFn V ga))
+      (fun _ : Fin 1 => Spec.zLowFn Λ V γ samples) = some 0 := by
+  have hlt : Spec.varNoiseFn Λ γ (Spec.projFn V ga) < Spec.zLowFn Λ V γ samples := by
+    rw [Spec.zSignificantFn, ltBool_eq_decide] at hsig; exact of_decide_eq_true hsig
+  have hb : ∀ i : Fin 1, (fun _ : Fin 1 => Spec.varNoiseFn Λ γ (Spec.projFn V ga)) i ≤ 1 :=
+    fun _ => varNoiseFn_le_one hΛ hγ _
+  obtain ⟨s, hs, _, _⟩ := kernelChooserFn_eq_some
+    (noises := fun _ : Fin 1 => Spec.varNoiseFn Λ γ (Spec.projFn V ga))
+    (Zlows := fun _ : Fin 1 => Spec.zLowFn Λ V γ samples) hb (v := 0) hlt
+  rw [hs]; exact congrArg some (Fin.fin_one_eq_zero s)
+
 end Spec.Factorization

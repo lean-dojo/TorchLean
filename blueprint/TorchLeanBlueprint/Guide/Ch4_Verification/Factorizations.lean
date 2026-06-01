@@ -358,6 +358,45 @@ kernel, eigendecomposes it, and runs a `find_gamma`-style sweep that feeds the v
 several `γ` straight into `argMinFn`, selecting the least-noise regularization (the smallest `γ`, every
 swept noise landing in `[0,1]` as proved).
 
+# The `Z_test`: a null-distribution significance threshold
+
+The kernel chooser of the previous section asks whether the observed `noise` falls below a threshold
+`Z_low`. Where does `Z_low` come from? It is not a hand-set constant — it is the *5th percentile of the
+null distribution* of the very same `noise` statistic. CHD's `Z_test` (`interpolatory.py`) draws `N`
+standard-Gaussian samples, scores each one's `noise` with the same `varNoiseFn`, sorts the `N` values,
+and reads off the 5th and 95th percentiles as `Z_low` and `Z_high`. An edge is *significant* — a real
+dependency rather than fitting noise — when the observed `noise` falls below `Z_low`, i.e. strictly
+inside the lower tail of what random data would produce.
+
+[`NN.Proofs.Tensor.Basic.FactorizationsDecision`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Tensor/Basic/FactorizationsDecision.lean)
+formalizes this statistical layer. The spec `Spec.zLowFn` / `Spec.zHighFn` mirror `Z_test`: the random
+draws are an explicit family `samples : Fin N → Fin n → α` (the caller's randomness, exactly as CHD
+threads a PRNG key), each is scored by `Spec.sampleNoisesFn` (the *same* `varNoiseFn` again), and the
+percentiles are order statistics `Spec.kthSmallestFn` — the `k`-th entry of the list sorted by the
+`Context` order. Over `ℝ` that sort key is the real `≤` (`leBool_eq_le`), so Mathlib's
+`sortedLE_mergeSort` supplies sortedness and `mergeSort_perm` supplies membership.
+
+The payoff is that the threshold is *well-posed*, and provably so. The keystone is that the `[0,1]`
+bound governing the data noise governs *every null sample too* — it is the same `varNoiseFn`. So:
+
+- `sampleNoisesFn_nonneg` / `_le_one` — each of the `N` null noises is a genuine fraction in `[0,1]`,
+  directly from `varNoiseFn_nonneg` / `varNoiseFn_le_one`.
+- `zLowFn_nonneg` / `zLowFn_le_one` and the `zHighFn` pair — hence each percentile lies in `[0,1]`,
+  because an order statistic is one of the sampled values (`kthSmallestFn_mem`).
+- `zLowFn_le_zHighFn` — and `Z_low ≤ Z_high`, because a 5th percentile never exceeds a 95th. This is
+  *pure order-statistic monotonicity* (`kthSmallestFn_mono`): the underlying list is sorted ascending
+  and `⌊0.05 N⌋ ≤ ⌊0.95 N⌋`. The comparison window `Z_low ≤ noise ≤ Z_high` the loop uses (the
+  "no anomaly" band of `_GraphDiscoveryMain.py`) is therefore non-degenerate.
+
+Finally `zTest_admits_edge` ties the statistical verdict back to the decision layer: when the observed
+`noise` clears `Z_low` (`zSignificantFn = true`), the single-kernel `MinNoiseKernelChooser` admits the
+edge — returns `some 0`. The `noise ≤ 1` ceiling that proof needs is, once more, the verified
+`varNoiseFn_le_one`. The whole statistical decision thus rests on the one spectral bound proved three
+sections ago. The `Discovery` example exhibits the layer end-to-end: it builds the null distribution
+from a real eigendecomposition, checks `0 ≤ Z_low ≤ Z_high ≤ 1`, shows data aligned with the *dominant*
+eigenvector (smallest shrinkage noise) clears the lower tail and is flagged significant, and confirms a
+high noise — and a noise sitting at the upper tail — are both correctly rejected.
+
 # The a-posteriori residual certificate
 
 For the iterative routines, the replacement for an impossible a-priori convergence proof is an exact
@@ -549,11 +588,16 @@ is now PSD-verified for *all three* CHD modes — linear, quadratic, and Gaussia
 the *discovery decision layer* on top — the kernel chooser, the activation prune step, the mode
 chooser, and the stopping rule — is now proved sound and complete, with the chooser's correctness
 resting directly on the verified `noise ≤ 1` bound, so the structural decisions are proved selections
-over a statistic whose range was itself proved.
+over a statistic whose range was itself proved. The `Z_test` *significance thresholds* are now proved
+well-posed too: `Z_low` and `Z_high` are order statistics of the null `noise` distribution, each
+inheriting the `[0,1]` bound from the shared `varNoiseFn`, with `Z_low ≤ Z_high` by order-statistic
+monotonicity — and the verdict `noise < Z_low` is shown to feed `MinNoiseKernelChooser`.
 
-So the CHD foundation is complete, from the kernel build through the regularized solve and the noise
-statistic up to the graph-structure decisions. The two remaining open items are both narrow and
-deliberately scoped: the cyclic-Jacobi convergence *rate* (captured exactly by the a-posteriori
-residual certificate, never by `sorry`) and the `Z_test`'s Gaussian sampling and percentiles — one a
-proof-only gap on a quantity CHD does not need to *run*, the other statistical rather than algebraic
-and exercised numerically.
+So the CHD foundation is complete, from the kernel build through the regularized solve, the noise
+statistic, and the `Z_test` thresholds up to the graph-structure decisions. The two remaining open
+items are both narrow and deliberately scoped: the cyclic-Jacobi convergence *rate* (captured exactly
+by the a-posteriori residual certificate, never by `sorry`), and the *distributional* content of the
+`Z_test` — that the draws are Gaussian and the empirical percentile is a calibrated confidence level
+(a probability-theory statement needing `Mathlib.Probability`, distinct from the now-proved
+order-statistic well-posedness). One is a proof-only gap on a quantity CHD does not need to *run*; the
+other is statistical rather than algebraic and exercised numerically.

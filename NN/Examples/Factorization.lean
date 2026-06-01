@@ -107,7 +107,15 @@ factorization misbehaves.
   (`zHigh_null_exceedance_le`, here `0`); a **negative control** confirms the slack `Z_high`
   threshold admits `≈ 95%` of the draws, so the `5%` calibration is specific to `Z_low`. (The
   companion measure-theoretic fact — the i.i.d.-Gaussian null law is a probability measure on
-  `[0,1]`, `noiseLaw_Icc_eq_one` — is noncomputable and lives in the proofs.)
+  `[0,1]`, `noiseLaw_Icc_eq_one` — is noncomputable and lives in the proofs.) A closing
+  **asymptotic-scaffold** sub-block corroborates `FactorizationsZAsymptotic` (step (a) of the
+  asymptotic-calibration plan): the i.i.d. null *sequence* `nullNoise` is proven independent,
+  identically distributed with law `noiseLaw`, `[0,1]`-valued and integrable (the SLLN's
+  `hint`/`hindep`/`hident`) — noncomputable, so the `#eval`s exercise its **computable shadow**, the
+  empirical CDF `F̂_N(t) = #{i<N : noiseᵢ ≤ t}/N`: checks that it is a bona fide CDF (in `[0,1]`,
+  monotone, saturating to `1` at the top of the `[0,1]` support, vanishing below `0`), with a
+  **negative control** that it is non-degenerate (rises strictly from `0` to `1`, carrying the
+  distributional content whose convergence to `cdf noiseLaw` is the next increment, step (b)).
 
 Both **positive** checks (a valid factorization reconstructs to `err ≈ 0`) and **negative controls**
 (the same metric reports a large error / `NaN` when a hypothesis is violated) are included, so a

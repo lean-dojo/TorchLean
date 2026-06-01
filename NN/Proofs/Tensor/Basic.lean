@@ -15,6 +15,7 @@ public import NN.Proofs.Tensor.Basic.FactorizationsSolve
 public import NN.Proofs.Tensor.Basic.FactorizationsVariational
 public import NN.Proofs.Tensor.Basic.FactorizationsDecision
 public import NN.Proofs.Tensor.Basic.FactorizationsZTest
+public import NN.Proofs.Tensor.Basic.FactorizationsZAsymptotic
 public import NN.Proofs.Tensor.Basic.FactorizationsKernels
 public import NN.Proofs.Tensor.Basic.FactorizationsOrthonormal
 public import NN.Proofs.Tensor.Basic.FactorizationsJacobi

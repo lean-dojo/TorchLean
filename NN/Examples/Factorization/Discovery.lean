@@ -293,4 +293,55 @@ def countAbove (thr : Float) : Nat :=
 #eval assertTrue "Z_high is a slack threshold: > 5% of null draws fall below it (calibration is specific to Z_low)"
   (decide (Spec.zLowIdx 20 < countBelow zHigh))
 
+/-! ### The asymptotic-calibration scaffold (step a): the empirical CDF of the null sample
+
+`FactorizationsZAsymptotic` lifts the single null draw to the i.i.d. *sequence* `nullNoise` under the
+product measure `nullSeqGaussian`, proving it independent (`nullNoise_iIndepFun`), identically
+distributed with the common law `noiseLaw` (`nullNoise_hasLaw`, `nullNoise_identDistrib`),
+`[0,1]`-valued (`nullNoise_mem_Icc`) and integrable (`integrable_nullNoise`) — exactly the three
+hypotheses (`hint`/`hindep`/`hident`) the strong law of large numbers consumes. That scaffold is
+*noncomputable* (a statement about an infinite product measure), so it cannot be `#eval`'d; what we
+exercise here is its **computable shadow**, the empirical CDF of the finite null sample
+`F̂_N(t) = #{i < N : noiseᵢ ≤ t} / N`. This is the very object whose almost-sure convergence to
+`cdf noiseLaw` *is* the SLLN application (step b of the plan, not yet formalized). At step (a) the
+i.i.d. sample alone already gives that `F̂_N` is a bona fide CDF — monotone, valued in `[0,1]`,
+saturating to `1` above the support and vanishing below it — which is what we check. -/
+
+/-- Empirical CDF of the `N = 20` null noises at a threshold `t`: the fraction of draws scoring `≤ t`
+(using the `leBool` comparator the order statistics already use). The computable shadow of the
+noncomputable `empCDF` whose consistency is step (b). -/
+def empCdf (t : Float) : Float :=
+  (((List.finRange 20).filter (fun j => Spec.leBool (zNullNoises j) t)).length).toFloat / 20.0
+
+#eval IO.println s!"empirical CDF of the null sample: F(0) = {empCdf 0.0}, F(Z_low) = {empCdf zLow}, \
+  F(Z_high) = {empCdf zHigh}, F(1) = {empCdf 1.0}"
+
+-- Positive — `F̂` is valued in `[0,1]` at every threshold (it is a fraction of the 20 draws), the
+-- finite-sample image of `nullNoise_mem_Icc` / the law `noiseLaw` being a probability measure.
+#eval assertTrue "empirical CDF lies in [0,1] across thresholds"
+  ([0.0, zLow, zHigh, 0.5, 1.0].all
+    (fun t => Spec.leBool 0.0 (empCdf t) && Spec.leBool (empCdf t) 1.0))
+
+-- Positive — `F̂` is monotone nondecreasing: more of the sample falls below a larger threshold.
+-- Since `Z_low ≤ Z_high`, `F̂(Z_low) ≤ F̂(Z_high)` — the empirical shadow of `monotone_cdf`.
+#eval assertTrue "empirical CDF is monotone: Z_low ≤ Z_high ⇒ F(Z_low) ≤ F(Z_high)"
+  (Spec.leBool (empCdf zLow) (empCdf zHigh))
+
+-- Positive — `F̂` saturates to `1`: every null noise lies in `[0,1]` (`nullNoise_mem_Icc`), so all
+-- 20 draws score `≤ 1` and the empirical CDF reaches its full mass there.
+#eval assertTrue "empirical CDF reaches 1 at t = 1 (all null noises ≤ 1, nullNoise_mem_Icc)"
+  (empCdf 1.0 == 1.0)
+
+-- Positive — `F̂` vanishes below the support: no null noise is negative (`nullNoise_mem_Icc`), so
+-- none scores `≤` a negative `t`.
+#eval assertTrue "empirical CDF is 0 below the support (no null noise < 0)"
+  (empCdf (-0.01) == 0.0)
+
+-- Negative control — `F̂` is *not* the constant function: it genuinely rises from `0` to `1` across
+-- the support, so it carries the distributional content the i.i.d. scaffold formalizes. A degenerate
+-- (point-mass) sample would have a flat-then-jump CDF; a sample with no spread would not separate
+-- these thresholds. This is what makes the consistency target of step (b) non-vacuous.
+#eval assertTrue "empirical CDF is non-degenerate: F(below support) < F(1) (carries distribution info)"
+  (Spec.ltBool (empCdf (-0.01)) (empCdf 1.0))
+
 end NN.Examples.Factorization.Discovery

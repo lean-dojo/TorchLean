@@ -427,12 +427,31 @@ of the draw coordinates), so its pushforward `noiseLaw` is a probability measure
 `noiseLaw_Icc_eq_one` shows it assigns full mass to `[0,1]`. So `Z_low`/`Z_high` are percentiles of a
 bona fide `[0,1]`-valued random variable, not of an unconstrained sample.
 
-*What is honestly left.* The remaining step is *asymptotic* calibration — that the empirical 5%/95%
-percentiles converge to the true quantiles of `noiseLaw` (Glivenko–Cantelli / DKW), and that under
-exchangeability of a fresh null draw with the sample the false-positive rate is exactly the rank level
-`k/(N+1)`. Both need an empirical-process theory Mathlib v4.30.0 does not carry, so they are stated as
-the open frontier, never stubbed with `sorry`. The finite-sample false-positive *bound* above is the
-exact, non-asymptotic statement the test actually guarantees.
+*The i.i.d. scaffold for the asymptotic step.* `FactorizationsZAsymptotic` takes the first concrete
+step toward that asymptotic calibration — the *pointwise* half, which a survey of
+`Mathlib.Probability` v4.30.0 shows is in fact assemblable sorry-free (a re-scope from the earlier
+"absent from Mathlib" note). It lifts the single null draw to the i.i.d. *sequence*
+`nullSeqGaussian n := Measure.infinitePi (fun _ : ℕ => nullGaussian n)` on `ℕ → (Fin n → ℝ)`, and
+defines `nullNoise Λ V γ i ω := noiseMap Λ V γ (ω i)` — the same measurable `noiseMap`, read off the
+`i`-th coordinate. The coordinate projections are independent under the product measure
+(`iIndepFun_infinitePi`) and composing with `noiseMap` preserves it (`nullNoise_iIndepFun`, with the
+pairwise corollary `nullNoise_pairwise_indepFun`); each projection is measure-preservingly one
+standard-Gaussian draw, so every `nullNoise i` has the *same* law `noiseLaw` (`nullNoise_hasLaw`,
+`nullNoise_identDistrib`); and every draw lies in `[0,1]` (`nullNoise_mem_Icc`) hence is integrable
+(`integrable_nullNoise`). That is exactly the i.i.d.-bounded-integrable triple — `hint`, `hindep`,
+`hident` — that the strong law of large numbers (`strong_law_ae_real`) and the Hoeffding tail consume.
+This scaffold is the only genuinely new measure-theory plumbing; the empirical-CDF consistency
+(Glivenko–Cantelli via the SLLN) and the per-`t` concentration rate `2 exp(-2 N ε²)` (Hoeffding) are
+applications of it, deferred as the next increment.
+
+*What is honestly left.* What stays genuinely research-grade is the *uniform* Glivenko–Cantelli
+(`sup_t |F̂_N - cdf| → 0`) and the full *DKW–Massart* inequality with its sharp constant `2` over
+the supremum — both need the bracketing / VC-class chaining Mathlib v4.30.0 lacks — and the
+*exchangeability rank rate* `k/(N+1)` for a fresh null draw, which needs a symmetric-group
+rank-distribution argument also absent. Those are stated as the open frontier, never stubbed with
+`sorry`. The finite-sample false-positive *bound* above is the exact, non-asymptotic statement the
+test actually guarantees, and the pointwise scaffold is the sorry-free bridge toward the asymptotic
+statement.
 
 # The a-posteriori residual certificate
 
@@ -641,7 +660,13 @@ are both narrow and deliberately scoped: the cyclic-Jacobi convergence *rate* (c
 a-posteriori residual certificate, never by `sorry`), and the *asymptotic* half of the `Z_test` — that
 the empirical 5%/95% percentiles converge to the true quantiles of the now-proved null law
 (Glivenko–Cantelli / DKW), and that an exchangeable fresh draw is rejected at exactly rank rate
-`k/(N+1)`. That needs an empirical-process theory `Mathlib.Probability` does not yet carry, distinct
-from the finite-sample false-positive bound and probability-measure facts already proved. One is a
-proof-only gap on a quantity CHD does not need to *run*; the other is the genuine statistical frontier,
-flagged rather than stubbed with `sorry`.
+`k/(N+1)`. The *pointwise* part of that asymptotic step is no longer fully out of reach: its i.i.d.
+scaffold is now built and proved sorry-free (`FactorizationsZAsymptotic` — `nullNoise` an independent,
+identically-`noiseLaw`-distributed, `[0,1]`-valued, integrable sequence under
+`Measure.infinitePi nullGaussian`), exactly the hypotheses the strong law of large numbers and the
+Hoeffding tail take, so the empirical-CDF consistency and per-`t` rate are now applications rather than
+frontier. What stays genuinely research-grade is the *uniform* Glivenko–Cantelli / DKW–Massart sharp
+constant (bracketing / VC chaining) and the exchangeability rank rate `k/(N+1)`
+(symmetric-group rank distribution) — both absent from `Mathlib.Probability` v4.30.0. One open item is
+a proof-only gap on a quantity CHD does not need to *run*; the other is the genuine statistical
+frontier, flagged rather than stubbed with `sorry`.

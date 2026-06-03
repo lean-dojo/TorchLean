@@ -3,8 +3,28 @@ name: Compile blueprint
 on:
   push:
     branches: ["main"]
+    paths:
+      - ".github/workflows/blueprint.yml"
+      - "blueprint/**"
+      - "home_page/**"
+      - "scripts/docs/**"
+      - "scripts/checks/dependency_audit.py"
+      - "lakefile.lean"
+      - "lake-manifest.json"
+      - "lean-toolchain"
+      - "README.md"
   pull_request:
     branches: ["main"]
+    paths:
+      - ".github/workflows/blueprint.yml"
+      - "blueprint/**"
+      - "home_page/**"
+      - "scripts/docs/**"
+      - "scripts/checks/dependency_audit.py"
+      - "lakefile.lean"
+      - "lake-manifest.json"
+      - "lean-toolchain"
+      - "README.md"
   workflow_dispatch:
 
 concurrency:

@@ -39,12 +39,12 @@ private def nativeLinkArgs : Array String :=
       "-lstdc++",
       "-Wl,-rpath," ++ s!"{cudaHome}/lib64"
     ]
-  else if Platform.isWindows then
+  else if Platform.isWindows || Platform.isOSX then
+    -- Windows and macOS provide libm via the default C runtime
     #[]
   else
-    -- CPU stubs call functions from `math.h`; CUDA objects are C++ when a checkout switches
-    -- between CPU and CUDA builds without cleaning `.lake`, so Linux links both runtimes.
-    #["-lm", "-lstdc++"]
+    -- CPU stubs call functions from `math.h`; Linux keeps these in `libm`
+    #["-lm"]
 
 package TorchLean where
   version := v!"0.1.0"

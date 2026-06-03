@@ -43,8 +43,9 @@ private def nativeLinkArgs : Array String :=
     -- Windows and macOS provide libm via the default C runtime
     #[]
   else
-    -- CPU stubs call functions from `math.h`; Linux keeps these in `libm`
-    #["-lm"]
+    -- CPU stubs call functions from `math.h`; Linux keeps these in `libm`.
+    -- Keep libstdc++ for mixed native objects when switching between CPU and CUDA builds.
+    #["-lm", "-lstdc++"]
 
 package TorchLean where
   version := v!"0.1.0"

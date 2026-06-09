@@ -41,6 +41,7 @@ public import NN.API.Models.Gpt2
 public import NN.Runtime.Autograd.TorchLean.NN
 public import NN.API.Runtime
 public import NN.Examples.Models.Common.RealData
+public import LeanProfiler
 
 /-!
 GPT-2 style sequence model example.

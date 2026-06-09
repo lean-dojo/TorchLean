@@ -43,6 +43,7 @@ public import NN.API.Runtime
 public import NN.Examples.Models.Common.RealData
 public import LeanProfiler
 
+set_option profile_all true
 /-!
 GPT-2 style sequence model example.
 
@@ -506,25 +507,28 @@ def unitTrainStepsFloat (opts : Runtime.Autograd.Torch.Options) (input : String)
     let reportSample := mkSample (α := Float) (input := train.prompt)
     let modDef := nn.crossEntropyOneHotScalarModuleDef model (reduction := .mean)
     let m ← TorchLean.Module.instantiateWithOptions (α := Float) modDef id opts
-    match train.loadParams? with
-    | none => pure ()
-    | some path =>
-        TorchLean.ParamIO.loadModuleParamsBits (paramShapes := nn.paramShapes model) (inputShapes := [σ, τ])
-          m path
-    let logits0 ← nn.eval1 (α := Float) opts model
-      m.trainer.params
-      (NN.API.sample.x reportSample)
-    printPredictionReport "before" train.prompt logits0
-    let L0 ← meanLossOnSamples model m samples
-
+    profile "loadParams" do
+      match train.loadParams? with
+      | none => pure ()
+      | some path =>
+          TorchLean.ParamIO.loadModuleParamsBits (paramShapes := nn.paramShapes model) (inputShapes := [σ, τ])
+            m path
+    profile "evalBefore" do
+      let logits0 ← nn.eval1 (α := Float) opts model
+        m.trainer.params
+        (NN.API.sample.x reportSample)
+      printPredictionReport "before" train.prompt logits0
+    let L0 ← profile "loss0" do
+      meanLossOnSamples model m samples
     if train.steps = 0 then
       IO.println s!"  steps=0 loss0={L0}"
       if train.interactive then
         interactiveLoopFloat opts model m train
-      let generatedIds ← generateSampled opts model m.trainer.params train.prompt train.generate
-        train.temperature train.topK train.seed train.repeatWindow train.repeatPenalty train.asciiOnly
+      let generatedIds ← profile "generate" do
+        generateSampled opts model m.trainer.params train.prompt train.generate
+          train.temperature train.topK train.seed train.repeatWindow train.repeatPenalty train.asciiOnly
       let generated := text.escapeByteIdsForDisplay generatedIds
-      writeGpt2TrainLog opts train L0 L0 generated
+      writeTrainLog opts train L0 L0 generated
       saveParamsIfRequested model m train
       pure (L0, L0, generated)
     else
@@ -539,16 +543,19 @@ def unitTrainStepsFloat (opts : Runtime.Autograd.Torch.Options) (input : String)
       let mut memWatch? ← Common.reportCudaMemWatch opts cudaMemWatch train.steps 0 none
       for step in [0:train.steps] do
         let sample := samples.getD (step % Nat.max 1 samples.size) (firstSample samples)
-        optH.step sample
+        profile "optStep" do
+          optH.step sample
         memWatch? ← Common.reportCudaMemWatch opts cudaMemWatch train.steps (step + 1) memWatch?
-
-      let L1 ← meanLossOnSamples model m samples
-      let logits1 ← nn.eval1 (α := Float) opts model
-        m.trainer.params
-        (NN.API.sample.x reportSample)
-      printPredictionReport "after " train.prompt logits1
-      let generatedIds ← generateSampled opts model m.trainer.params train.prompt train.generate
-        train.temperature train.topK train.seed train.repeatWindow train.repeatPenalty train.asciiOnly
+      let L1 ← profile "loss1" do
+        meanLossOnSamples model m samples
+      profile "evalAfter" do
+        let logits1 ← nn.eval1 (α := Float) opts model
+          m.trainer.params
+          (NN.API.sample.x reportSample)
+        printPredictionReport "after " train.prompt logits1
+      let generatedIds ← profile "generate" do
+        generateSampled opts model m.trainer.params train.prompt train.generate
+          train.temperature train.topK train.seed train.repeatWindow train.repeatPenalty train.asciiOnly
       let generated := text.escapeByteIdsForDisplay generatedIds
       IO.println s!"  generated={generated}"
       IO.println s!"  corpus_bytes={input.toByteArray.size} windows={samples.size}"
@@ -557,7 +564,7 @@ def unitTrainStepsFloat (opts : Runtime.Autograd.Torch.Options) (input : String)
       IO.println s!"  repetition_penalty={train.repeatPenalty} repeat_window={train.repeatWindow}"
       if train.interactive then
         interactiveLoopFloat opts model m train
-      writeGpt2TrainLog opts train L0 L1 generated (some cudaMemWatch)
+      writeTrainLog opts train L0 L1 generated (some cudaMemWatch)
       saveParamsIfRequested model m train
       pure (L0, L1, generated)
 

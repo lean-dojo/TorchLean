@@ -315,11 +315,80 @@ def runMatmulStress : IO Unit := do
   Utils.assertTensorApprox (s := sY2) "matmul stress case2 fp32" yFp322 yRef2 (tol := 7e-3)
   Utils.assertTensorApprox (s := sY2) "matmul stress case2 fp64" yFp642 yRef2 (tol := 1e-9)
 
+/--
+One eager workload step for the leak-bound stress: allocate a short chain of device buffers, then
+free every one of them through the explicit `Buffer.release` discipline that long CUDA training
+loops use so they do not wait on Lean external-object finalizers.
+
+Returns the number of live allocations actually freed (the sum of the release return codes). Reading
+the codes back serves two purposes: it confirms each free found a live allocation, and it keeps Lean
+from eliminating the release calls as dead code (each call is otherwise a pure `UInt32`-valued op).
+-/
+def leakStep (n : UInt32) : IO Nat := do
+  let a := Buffer.full n 1.5
+  let b := Buffer.full n (-0.5)
+  let c := Buffer.add a b
+  let d := Buffer.mul c a
+  let s := Buffer.reduceSum d
+  let freed :=
+    Buffer.release a + Buffer.release b + Buffer.release c + Buffer.release d + Buffer.release s
+  return freed.toNat
+
+def runLeakBoundStress : IO Unit := do
+  IO.println "== allocator leak-bound stress =="
+
+  -- A small eager workload repeated in two equal-length blocks. The release discipline frees every
+  -- buffer each step, so a correct runtime keeps the working set flat regardless of step count; a
+  -- per-step leak instead grows the working set linearly and fails the cross-block checks below.
+  let n : UInt32 := 4096
+  let releasesPerStep : Nat := 5
+  let block : Nat := 128
+
+  let base ← Buffer.allocatorStats
+  IO.println s!"  baseline:        {base.format}"
+
+  let mut freed1 : Nat := 0
+  for _ in [0:block] do
+    freed1 := freed1 + (← leakStep n)
+  let afterK ← Buffer.allocatorStatsWithToken (UInt32.ofNat block)
+  IO.println s!"  after {block} steps:  {afterK.format}"
+
+  let mut freed2 : Nat := 0
+  for _ in [0:block] do
+    freed2 := freed2 + (← leakStep n)
+  let after2K ← Buffer.allocatorStatsWithToken (UInt32.ofNat (2 * block))
+  IO.println s!"  after {2 * block} steps:  {after2K.format}"
+
+  -- (1) The release discipline fired: each step freed exactly its `releasesPerStep` live
+  --     allocations (and Lean did not drop the frees as dead code).
+  let expectedFreed := releasesPerStep * block
+  if freed1 != expectedFreed then
+    throw <| IO.userError s!"leak-bound: first block freed {freed1}, expected {expectedFreed}"
+  if freed2 != expectedFreed then
+    throw <| IO.userError s!"leak-bound: second block freed {freed2}, expected {expectedFreed}"
+
+  -- (2) The working set does not grow with the number of steps: net live allocations and live bytes
+  --     after twice as many steps match the single-block snapshot. This is the leak-bound invariant.
+  let netK : UInt64 := afterK.allocCount - afterK.freeCount
+  let net2K : UInt64 := after2K.allocCount - after2K.freeCount
+  if net2K != netK then
+    throw <| IO.userError s!"leak-bound: net live allocations grew with step count ({netK} → {net2K})"
+  if after2K.liveBytes != afterK.liveBytes then
+    throw <| IO.userError
+      s!"leak-bound: live bytes grew with step count ({afterK.liveBytes} → {after2K.liveBytes})"
+
+  -- (3) With every buffer released, the loop returns to the baseline working set — no residual.
+  let netBase : UInt64 := base.allocCount - base.freeCount
+  if netK != netBase then
+    throw <| IO.userError
+      s!"leak-bound: live allocations did not return to baseline ({netBase} → {netK})"
+
 def run : IO Unit := do
   IO.println "=== CUDA runtime stress suite ==="
   runRngStress
   runReleaseStress
   runWrapperLifetimeStress
+  runLeakBoundStress
   runGradientAliasingStress
   runSparseLifetimeStress
   runLargeBufferStress

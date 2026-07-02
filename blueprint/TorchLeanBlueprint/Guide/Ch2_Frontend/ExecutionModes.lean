@@ -106,8 +106,7 @@ In TorchLean, the corresponding data remains explicit:
 - gradients are returned as tensors or parameter bundles,
 - widgets can inspect the recorded graph.
 
-Use eager mode when the goal is to understand one step, inspect a gradient, or explain what a small
-example is doing.
+Use eager mode to understand one step, inspect a gradient, or explain what a small example is doing.
 
 # Compiled Mode
 

@@ -13,18 +13,18 @@ fit a ridge regression model. The guarantee, however, usually lives in a predica
 robustness, stability, convergence, or a finite precision bridge from an ideal theorem to executable
 arithmetic.
 
-This page is not about checking one certificate. It is about naming the predicates that appear in
-learning theory papers and making them usable inside the same codebase as models, runtimes, and
+Learning-theory support is not a single certificate checker. It names the predicates that appear in
+learning theory papers and makes them usable inside the same codebase as models, runtimes, and
 verification artifacts.
 
 We formalized this layer so those predicates have names inside Lean. Runtime diagnostics still
 matter, but they are not silently upgraded into theorems. The recurring pattern is:
 
-- start with a mathematical predicate such as privacy, robustness, or stability;
+- state a mathematical predicate such as privacy, robustness, or stability;
 - compute a runtime diagnostic or artifact when that is useful evidence;
 - add a bridge theorem when the artifact is meant to support a formal claim.
 
-This is the same discipline used elsewhere in TorchLean. Specifications say what the claim means,
+The same discipline appears elsewhere in TorchLean. Specifications say what the claim means,
 runtime code computes evidence or artifacts, and proofs connect checked hypotheses to the theorem
 being cited.
 

@@ -143,7 +143,7 @@ and similarly for `outW`. This is derived from the sequential `Primitive.conv2d`
 -/
 def conv2d
     (inC outC kH kW stride padding inH inW : Nat)
-    {h_inC : inC ≠ 0} {h_kH : kH ≠ 0} {h_kW : kW ≠ 0} :
+    {h_inC : inC ≠ 0} {h_kH : kH ≠ 0} {h_kW : kW ≠ 0} {hStride : stride ≠ 0} :
     PrimOp
       [ Shape.OIHW outC inC kH kW, Shape.Vec outC, Shape.CHW inC inH inW ]
       (Shape.CHW outC ((inH + 2 * padding - kH) / stride + 1) ((inW + 2 * padding - kW) / stride +
@@ -151,7 +151,7 @@ def conv2d
   (LowerToDAG.Primitive.toDAGPrimOp
       (Primitive.conv2d (inC := inC) (outC := outC) (kH := kH) (kW := kW)
         (stride := stride) (padding := padding) (inH := inH) (inW := inW)
-        (h_inC := h_inC) (h_kH := h_kH) (h_kW := h_kW)) : PrimOp _ _)
+        (h_inC := h_inC) (h_kH := h_kH) (h_kW := h_kW) (hStride := hStride)) : PrimOp _ _)
 
 /--
 Max pooling in DAG form for channel-first `CHW` tensors.

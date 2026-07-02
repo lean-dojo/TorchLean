@@ -1,4 +1,4 @@
-"""Shared helpers for lightweight PINN training/export scripts."""
+"""Shared bits for the small PINN trainers."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from safe_expr import eval_expr
 
 
 class PinnDataset:
-    """JSON-backed sampled dataset for PINN trainers."""
+    """Keeps each JSON section as a tensor on the chosen torch device."""
 
     def __init__(self, device: torch.device):
         self.device = device
@@ -25,7 +25,6 @@ class PinnDataset:
 
     @staticmethod
     def _read_entries(entries, keys: Sequence[str], device: torch.device) -> Optional[torch.Tensor]:
-        """Read one JSON dataset section into a float tensor with selected keys."""
         if entries is None:
             return None
         if not isinstance(entries, list):
@@ -50,7 +49,6 @@ class PinnDataset:
         schema: Mapping[str, Sequence[str]],
         device: torch.device,
     ) -> "PinnDataset":
-        """Load selected JSON sections using a section-to-column schema."""
         payload = json.loads(Path(path).read_text())
         data = cls(device)
         for section, keys in schema.items():
@@ -58,7 +56,6 @@ class PinnDataset:
         return data
 
     def sample(self, section: str, count: int) -> Optional[torch.Tensor]:
-        """Sample rows with replacement from a named dataset section if present."""
         mat = self.sections.get(section)
         if mat is None:
             return None
@@ -68,7 +65,6 @@ class PinnDataset:
         return mat.index_select(0, idx)
 
     def sample_columns(self, section: str, count: int, columns: int) -> Optional[tuple[torch.Tensor, ...]]:
-        """Sample a section and split the first `columns` columns into single-column tensors."""
         samples = self.sample(section, count)
         if samples is None:
             return None
@@ -76,7 +72,6 @@ class PinnDataset:
 
 
 def _activation_factory(name: str) -> nn.Module:
-    """Build the requested activation module."""
     if name == "tanh":
         return nn.Tanh()
     if name == "relu":
@@ -85,7 +80,6 @@ def _activation_factory(name: str) -> nn.Module:
 
 
 def parse_hidden_widths(raw: str) -> List[int]:
-    """Convert a comma-separated width string into a validated list."""
     tokens = [tok.strip() for tok in raw.split(",")]
     widths: List[int] = []
     for tok in tokens:
@@ -104,7 +98,6 @@ def parse_hidden_widths(raw: str) -> List[int]:
 
 
 def build_model(in_dim: int, hidden_widths: Iterable[int], activation: str) -> nn.Sequential:
-    """Construct a Sequential network with user-defined widths and nonlinearity."""
     layers: List[nn.Module] = []
     prev = in_dim
     act = activation.lower()
@@ -123,7 +116,6 @@ def build_model(in_dim: int, hidden_widths: Iterable[int], activation: str) -> n
 
 
 def to_json_dict(model: nn.Sequential, *, meta: Dict[str, Any]) -> Dict[str, Any]:
-    """Serialize a sequential PINN model plus metadata into JSON."""
     exported: Dict[str, Any] = {}
     for name, tensor in model.state_dict().items():
         if name.endswith(".weight") or name.endswith(".bias"):
@@ -133,7 +125,6 @@ def to_json_dict(model: nn.Sequential, *, meta: Dict[str, Any]) -> Dict[str, Any
 
 
 def gradients(output: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
-    """Compute d(output)/d(inputs) with autograd."""
     return torch.autograd.grad(
         output,
         inputs,
@@ -144,7 +135,6 @@ def gradients(output: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
 
 
 def eval_pinn_expr(expr: str, **tensors):
-    """Evaluate one restricted PDE/data expression and attach context to errors."""
     try:
         value = eval_expr(expr, tensors)
     except Exception as exc:  # pragma: no cover - surfaced to caller
@@ -153,7 +143,6 @@ def eval_pinn_expr(expr: str, **tensors):
 
 
 def ensure_tensor(val, like: torch.Tensor) -> torch.Tensor:
-    """Broadcast scalar expression results to match a reference tensor."""
     if isinstance(val, torch.Tensor):
         return val.to(like)
     arr = torch.as_tensor(val, dtype=like.dtype, device=like.device)
@@ -163,7 +152,6 @@ def ensure_tensor(val, like: torch.Tensor) -> torch.Tensor:
 
 
 def parse_const_flags(items) -> Dict[str, float]:
-    """Parse repeated `--const name=value` flags into a numeric environment."""
     constants: Dict[str, float] = {}
     for raw in items:
         if "=" not in raw:
@@ -180,7 +168,6 @@ def parse_const_flags(items) -> Dict[str, float]:
 
 
 def export_model(model: nn.Sequential, *, out_ckpt: str, out_json: str, hidden_widths, activation: str) -> None:
-    """Write the PyTorch checkpoint and Lean-compatible JSON export."""
     ckpt_path = Path(out_ckpt)
     ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), str(ckpt_path))

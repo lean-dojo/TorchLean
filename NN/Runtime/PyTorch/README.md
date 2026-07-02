@@ -28,7 +28,7 @@ We use PyTorch for two practical reasons:
 
 Reading map:
 
-- Start with `Export/Core.lean` if you want the shared formatting helpers.
+- Use `Export/Core.lean` for shared formatting helpers.
 - Use `Export/StateDict.lean` when you already have PyTorch weights and need a model agnostic
   bridge into Lean readable JSON.
 - Use `Export/TorchExport.lean` when you already have a PyTorch `nn.Module` and want to capture
@@ -52,7 +52,7 @@ formats.
 
 Reading map:
 
-- Start with `Import/Core.lean` if you want the generic JSON parsing path.
+- Use `Import/Core.lean` for the generic JSON parsing path.
 - Use `Import/TorchExport.lean` when you have a captured PyTorch graph JSON artifact.
 - Use `Import/CrownParamstore.lean` when you already have typed tensors and need to assemble a `ParamStore`.
 

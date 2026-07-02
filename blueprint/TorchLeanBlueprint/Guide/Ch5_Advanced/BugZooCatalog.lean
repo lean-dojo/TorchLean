@@ -49,7 +49,7 @@ $$`\text{bug pattern}
 \;\leadsto\;
 \text{checked claim}`
 
-That is why the examples are short. The goal is not to recreate an entire framework bug; the goal is
+The examples stay short because the point is not to recreate an entire framework bug. The point is
 to isolate the semantic invariant that would have made the bug harder to miss.
 
 Some representative contract shapes:

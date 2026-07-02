@@ -9,16 +9,15 @@ module
 public import NN.Proofs.Autograd.Tape.Ops.Attention.ScaledDotProduct
 
 /-!
-# Masked Scaled-Dot-Product Attention
+# Additive-Bias Scaled-Dot-Product Attention
 
-This file proves the differentiable fixed-mask form used by GPT-style attention blocks:
+This file proves the differentiable fixed-score-bias form:
 
 `softmax(c · QKᵀ + bias) V`.
 
-The `bias` tensor is fixed data.  A causal mask can instantiate it with `0` on allowed entries and a
-large negative finite value on blocked entries, matching the finite-mask convention used by many
-runtimes.  This theorem is not the hard `-∞` masking limit; it is the exact reverse-mode theorem for
-the finite additive-mask computation.
+The `bias` tensor is fixed data. This is useful for relative-position biases or other intentional
+finite score shifts. It is not the boolean causal-mask semantics: boolean attention masks in the
+spec/runtime path use hard masking, where blocked entries contribute zero softmax numerator.
 -/
 
 @[expose] public section
@@ -220,4 +219,3 @@ end
 
 end Autograd
 end Proofs
-

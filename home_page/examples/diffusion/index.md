@@ -3,12 +3,11 @@ title: Diffusion Walkthrough
 usemathjax: true
 ---
 
-This page walks through the diffusion example in `NN.Examples.Models.Generative.Diffusion`. The
-model definition, training loop, sampler, and specification-level diffusion definitions are all
-written in Lean.
+The diffusion example in `NN.Examples.Models.Generative.Diffusion` keeps the model definition,
+training loop, sampler, and specification-level diffusion definitions in Lean.
 
-The page follows the example from data to image artifact: where the pixels come from, how noising
-is represented, what the denoiser predicts, and what gets saved after a run.
+The walkthrough runs from data to image artifact: where the pixels come from, how noising is
+represented, what the denoiser predicts, and what gets saved after a run.
 
 <div class="media-slab">
   <img src="{{ '/assets/media/examples/diffusion_imagenette64_real_vs_generated_plot.png' | relative_url }}" alt="Real, noisy, and generated diffusion images"/>
@@ -22,8 +21,8 @@ For a short runtime check, use the CUDA path with a tiny model:
 lake exe -K cuda=true torchlean diffusion --cuda --dataset cifar10 --n-total 1 --steps 1 --hidden-c 1 --T 2
 ```
 
-For a more useful local run, use CUDA if you have it. This writes a JSON loss log and a PPM image
-artifact so you can inspect both numbers and pixels:
+For a more useful local run, use CUDA if available. The command writes a JSON loss log and a PPM
+image artifact for inspecting both numbers and pixels:
 
 ```bash
 python3 scripts/datasets/download_example_data.py --cifar10
@@ -68,8 +67,8 @@ def toDiffusionRange (x01 : Tensor Float (x0Shape c h w)) :
 
 ## The Spec Layer: What We Mean By “Diffusion”
 
-TorchLean keeps diffusion vocabulary in `NN.Spec.Generative.Diffusion.*`. This is the layer that
-lets “training code”, “sampler code”, and “theorems” talk about the same objects.
+TorchLean keeps diffusion vocabulary in `NN.Spec.Generative.Diffusion.*`, so training code, sampler
+code, and theorem-facing modules talk about the same objects.
 
 The DDPM picture is simple enough to state before the formulas: add noise to an image at timestep
 `t`, train a model to predict the noise that was added, then run reverse steps that use the model’s
@@ -139,9 +138,9 @@ def appendTimeChannel {batch c h w : Nat}
     Spec.Tensor Float (NN.Tensor.Shape.NCHW batch (c + 1) h w) := ...
 ```
 
-The model is a same-resolution residual CNN sized to run as an example. This
-is a compressed excerpt of the real definition; the source file expands each convolution with the
-exact tensor shapes and seeded initializers:
+The model is a same-resolution residual CNN sized to run as an example. The excerpt below is
+compressed; the source file expands each convolution with the exact tensor shapes and seeded
+initializers:
 
 ```lean
 def epsResidualConvNet (cfg : EpsConvNetConfig) :
@@ -218,7 +217,7 @@ def ddimPrev
     Spec.Tensor.scaleSpec epsHat sqrtOneMinusAbPrev
 ```
 
-This is also where the example produces the “three pictures” view:
+The sampler also produces the “three pictures” view:
 
 - a reference image (real `x0`),
 - a noisy image at a chosen timestep,

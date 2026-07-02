@@ -96,12 +96,13 @@ PyTorch analogy: `torch.nn.functional.conv2d` on an NCHW tensor, specialized her
  -/
 def conv2d
     (inC outC kH kW stride padding inH inW : Nat)
-    {h_inC : inC ≠ 0} {h_kH : kH ≠ 0} {h_kW : kW ≠ 0} :
+    {h_inC : inC ≠ 0} {h_kH : kH ≠ 0} {h_kW : kW ≠ 0} {hStride : stride ≠ 0} :
     Primitive
       [ NN.Tensor.Shape.OIHW outC inC kH kW, NN.Tensor.Shape.Vec outC ]
       (NN.Tensor.Shape.CHW inC inH inW)
       (NN.Tensor.Shape.CHW outC ((inH + 2 * padding - kH) / stride + 1) ((inW + 2 * padding - kW) /
         stride + 1)) :=
+  let _ := hStride
   { name := s!"conv2d(inC={inC},outC={outC},k={kH}x{kW},s={stride},p={padding})"
     specFwd := fun {α} _ctx params x =>
       match params with
@@ -262,7 +263,7 @@ namespace Graph
 /-- Graph constructor for `Primitive.conv2d`. -/
 def conv2d
     (inC outC kH kW stride padding inH inW : Nat)
-    {h_inC : inC ≠ 0} {h_kH : kH ≠ 0} {h_kW : kW ≠ 0} :
+    {h_inC : inC ≠ 0} {h_kH : kH ≠ 0} {h_kW : kW ≠ 0} {hStride : stride ≠ 0} :
     Graph
       [ NN.Tensor.Shape.OIHW outC inC kH kW, NN.Tensor.Shape.Vec outC ]
       (NN.Tensor.Shape.CHW inC inH inW)
@@ -270,7 +271,8 @@ def conv2d
         stride + 1)) :=
   .prim (Primitive.conv2d (inC := inC) (outC := outC) (kH := kH) (kW := kW) (stride := stride)
     (padding := padding)
-    (inH := inH) (inW := inW) (h_inC := h_inC) (h_kH := h_kH) (h_kW := h_kW))
+    (inH := inH) (inW := inW) (h_inC := h_inC) (h_kH := h_kH) (h_kW := h_kW)
+    (hStride := hStride))
 
 /-- Graph constructor for `Primitive.max_pool2d`. -/
 def maxPool2d

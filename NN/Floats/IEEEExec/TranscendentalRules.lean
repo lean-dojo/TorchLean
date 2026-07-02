@@ -31,7 +31,7 @@ zeros (`+0` and `-0`), and sign checks behave. These are the facts we want in pr
 implementations.
 
 We do *not* claim that the finite-value approximations match any particular hardware `expf`/`logf`;
-the goal is reproducibility (and well-defined behavior) inside Lean.
+the Lean definitions prioritize reproducibility and well-defined behavior.
 -/
 
 @[expose] public section

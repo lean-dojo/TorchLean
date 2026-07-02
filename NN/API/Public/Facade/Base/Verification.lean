@@ -25,9 +25,9 @@ public import NN.Verification.TorchLean.Compile
 public import NN.API.Public.Facade.Base.Root
 
 /-!
-# TorchLean Verification Facade
+# TorchLean Verification Helpers
 
-Public verification APIs reachable from the `NN` umbrella.
+Convenience names for compiling TorchLean models into IBP/CROWN checks.
 -/
 
 @[expose] public section
@@ -57,8 +57,7 @@ abbrev FlatAffineBounds := NN.MLTheory.CROWN.Graph.FlatAffineBounds
 /--
 Compile a sequential TorchLean model into verifier IR with one distinguished input.
 
-This is the public bridge for the common “train a model, then run IBP/CROWN on its forward pass”
-workflow.
+This is the usual “train a model, then run IBP/CROWN on its forward pass” path.
 -/
 def compileForward1 {α : Type} [NN.API.Semantics.Scalar α] [DecidableEq Shape]
     {σ τ : Shape}
@@ -73,8 +72,8 @@ def compileForward1 {α : Type} [NN.API.Semantics.Scalar α] [DecidableEq Shape]
 /--
 Compile a custom TorchLean forward program into verifier IR with one distinguished input.
 
-Use this when the checked verification target is not a plain `nn.Sequential`, for example a
-hand-written TorchLean loss program or an attention fragment built directly from `TorchLean.Ops`.
+Use this when the target is not a plain `nn.Sequential`, for example a hand-written loss program or
+an attention fragment built directly from `TorchLean.Ops`.
 -/
 def compileProgram1 {α : Type} [NN.API.Semantics.Scalar α] [DecidableEq Shape]
     {paramShapes : List Shape} {σ τ : Shape}
@@ -87,20 +86,18 @@ def compileProgram1 {α : Type} [NN.API.Semantics.Scalar α] [DecidableEq Shape]
     program params
 
 /--
-Seed the distinguished verifier input with an explicit input box.
+Seed the verifier input with an explicit input box.
 
-This is the standard follow-up after `compileForward1`: insert the box at `compiled.inputId` and
-hand the returned store to IBP/CROWN passes.
+Call this after `compileForward1`, then hand the returned store to IBP/CROWN passes.
 -/
 def seedInputBox {α : Type} [NN.API.Semantics.Scalar α]
     (compiled : CompiledIR α) (xB : FlatBox α) : ParamStore α :=
   compiled.seedInputBox xB
 
 /--
-Flatten a center tensor and radius tensor into the verifier-side `FlatBox` expected by IBP/CROWN.
+Flatten a center tensor and radius tensor into the `FlatBox` expected by IBP/CROWN.
 
-This is the standard public API for turning a shaped TorchLean input plus a shaped perturbation
-radius into a verifier input box.
+Use this for a shaped TorchLean input with a shaped perturbation radius.
 -/
 def lInfBox {α : Type} [NN.API.Semantics.Scalar α] {s : Shape}
     (center radius : _root_.Spec.Tensor α s) : FlatBox α :=
@@ -109,8 +106,7 @@ def lInfBox {α : Type} [NN.API.Semantics.Scalar α] {s : Shape}
 /--
 Build a uniform `ℓ∞` box around a shaped TorchLean input tensor.
 
-This fills the input shape with the scalar radius `eps` and then flattens the result into the
-verifier-side `FlatBox`.
+This fills the input shape with the scalar radius `eps`, then flattens it into a verifier box.
 -/
 def lInfBall {α : Type} [NN.API.Semantics.Scalar α] {s : Shape}
     (center : _root_.Spec.Tensor α s) (eps : α) : FlatBox α :=
@@ -218,8 +214,7 @@ def backwardObjectiveBoxOrThrow {α : Type} [Context α] [NN.MLTheory.CROWN.Boun
 /--
 Compute the conservative two-class margin lower bound `lo[class0] - hi[class1]`.
 
-This is the usual public robustness check for binary logits: if the result is positive, class
-`class0` is certified against `class1` over the input box.
+If this is positive, class `class0` is certified against `class1` over the input box.
 -/
 def twoClassMarginLowerBound {α : Type} [Context α] {n : Nat}
     (lo hi : _root_.Spec.Tensor α (.dim n .scalar)) (class0 class1 : Fin n) : α :=

@@ -330,7 +330,7 @@ GraphSpec refines TorchLean's semantic model at the architecture boundary. In a 
 architecture authoring and execution are often bundled together. GraphSpec separates them just
 enough to make semantics and proofs easier, without abandoning runnable models.
 
-To inspect the implementation, start with the [GraphSpec README](https://github.com/lean-dojo/TorchLean/blob/main/NN/GraphSpec/README.md), then
+The implementation path runs through the [GraphSpec README](https://github.com/lean-dojo/TorchLean/blob/main/NN/GraphSpec/README.md), then
 move to the sequential and DAG cores, then to the model zoo. The
 [GraphSpec to TorchLean API](https://github.com/lean-dojo/TorchLean/blob/main/NN/GraphSpec/ToTorchLean.lean) gives the lowering path into
 TorchLean `Seq`, and the

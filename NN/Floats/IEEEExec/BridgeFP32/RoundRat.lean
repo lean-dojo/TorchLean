@@ -31,7 +31,7 @@ rationals `num / den`. The executable kernel rounds those rationals to float32 b
 - applying nearest-even,
 - and assembling the output bits.
 
-This section connects that algorithm to the `FP32` real rounding model.
+The lemmas below connect that algorithm to the `FP32` real rounding model.
 -/
 
 lemma neural_magnitude_signedRat (sign : Bool) (num den : Nat) (hnum : num ≠ 0) (hden : den
@@ -886,4 +886,3 @@ theorem toReal_roundRatToIEEE32_eq_fp32Round (sign : Bool) (num den : Nat) (hden
 end IEEE32Exec
 
 end TorchLean.Floats.IEEE754
-

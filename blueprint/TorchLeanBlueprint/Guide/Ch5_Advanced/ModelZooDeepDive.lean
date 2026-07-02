@@ -58,7 +58,7 @@ The zoo is organized by stressor:
 - *RL examples*: PPO and replay examples stress trajectories, environment boundaries, replay, and
   policy/value losses.
 
-There is no separate GRU command in the runner. We still discuss GRU in this section as
+There is no separate GRU command in the runner. GRU still appears here as
 part of the gated recurrent design space: TorchLean's present runnable recurrent coverage is RNN,
 LSTM, and LSTM forecasting; a future GRU example would stress the same typed recurrent state and
 runtime loop boundary with a smaller gate set.

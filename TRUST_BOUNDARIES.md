@@ -115,10 +115,11 @@ Important examples include:
   to verify CUDA machine code. References: FlashAttention (arXiv:2205.14135), FlashAttention-2
   (arXiv:2307.08691), FlashAttention-3 (arXiv:2407.08608), and the Dao-AILab `flash-attention`
   implementation.
-- Attention masks use TorchLean's finite big-negative mask-fill convention (`-1000`) in the spec and
-  CUDA fused kernels, rather than PyTorch SDPA's conceptual `-inf` masking. In float32 this normally
-  underflows masked probabilities to zero after max-subtraction, but it is a documented semantic
-  convention rather than a theorem of bit-identical PyTorch masking.
+- Boolean attention masks use hard masking throughout the spec-facing path: blocked entries
+  contribute zero softmax numerator, matching true `-inf` masking at the denotational level. The
+  CUDA attention kernels implement that same hard-mask convention. Separate finite additive-bias
+  attention lemmas still exist for models that intentionally add a fixed score bias, but those
+  lemmas are not the semantics of boolean causal masks.
 - Kernel launch synchronization is an implementation detail of the native runtime. Tensor/view
   kernels usually rely on default-stream ordering and later host copies to synchronize; conv/pool
   kernels explicitly synchronize after exported operations for clearer error attribution around

@@ -312,7 +312,7 @@ open NN.Verification.TorchLean
                 simp [evalNode, hx, Bind.bind, Except.bind] at hEq
                 cases hEq
                 simp
-        case conv2d inC outC kH kW stride padding inH inW hIn hKH hKW hHeight hWidth kernel bias x =>
+        case conv2d inC outC kH kW stride padding inH inW hIn hKH hKW hStride hHeight hWidth kernel bias x =>
             cases hx :
                 getVal (α := α) (inShape := inShape) (ss := ss)
                   (s := .dim inC (.dim inH (.dim inW .scalar))) vals x with

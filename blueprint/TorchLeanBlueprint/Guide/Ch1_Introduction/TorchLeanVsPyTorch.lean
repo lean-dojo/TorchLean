@@ -143,9 +143,8 @@ A robustness checker, for example, should not have to trust a training script. I
 graph, a parameter payload, an input region, and a certificate or bound propagation result whose
 meaning is defined in Lean.
 
-This is where TorchLean most clearly differs from an ordinary tensor runtime. The goal is not simply to run the
-same model syntax. The goal is to keep the runnable workflow connected to a semantic object that
-proofs and checkers can cite.
+TorchLean differs most clearly from an ordinary tensor runtime here: the runnable workflow stays
+connected to a semantic object that proofs and checkers can cite.
 
 # Import And Export
 

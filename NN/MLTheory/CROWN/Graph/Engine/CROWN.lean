@@ -1569,7 +1569,9 @@ def propagateCROWNNode
         match ps.conv2dCfg[id]? with
         | some cfg =>
           let convIn := cfg.inC * cfg.inH * cfg.inW
-          if hout : xin.outDim = convIn then
+          if _hs : cfg.stride = 0 then
+            bounds
+          else if hout : xin.outDim = convIn then
             let outH := (cfg.inH + 2 * cfg.padding - cfg.kH) / cfg.stride + 1
             let outW := (cfg.inW + 2 * cfg.padding - cfg.kW) / cfg.stride + 1
             let convAff := affOfConv2d (α:=α) cfg

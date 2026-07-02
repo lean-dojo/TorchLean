@@ -9,12 +9,8 @@
 #include <pthread.h>
 #include <stdlib.h>
 
-// Shared CUDA helpers (header-only).
-//
-// Native CUDA failures are treated as boundary failures, not as ordinary recoverable Lean values.
-// Backend bugs should fail loudly during tests. Host-side wrappers should perform deterministic
-// validation (shape, rank, index arrays) before launching kernels; `checkCuda` is only for CUDA
-// runtime/driver errors.
+// Shared CUDA runtime bits.
+// Wrappers validate shapes before launch; `checkCuda` is only for CUDA driver/runtime failures.
 
 static inline void checkCuda(cudaError_t e, const char* msg) {
   if (e != cudaSuccess) {

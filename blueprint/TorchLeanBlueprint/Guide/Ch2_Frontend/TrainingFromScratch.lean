@@ -18,8 +18,8 @@ The smallest workflow is:
 4. build or load a dataset,
 5. run training and inspect the report.
 
-The goal is not to prove a theorem yet. The goal is to make the objects that later become graph
-artifacts and verification targets feel like ordinary model code.
+No theorem is needed yet. The objects that later become graph artifacts and verification targets
+should still feel like ordinary model code.
 
 # A Minimal Complete Script
 

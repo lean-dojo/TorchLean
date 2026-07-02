@@ -563,16 +563,19 @@ private def backwardNode (dir : BackwardDir)
       | p1 :: _ =>
         match ps.conv2dCfg[id]? with
         | some cfg =>
-          let outH := (cfg.inH + 2 * cfg.padding - cfg.kH) / cfg.stride + 1
-          let outW := (cfg.inW + 2 * cfg.padding - cfg.kW) / cfg.stride + 1
-          let outDim := cfg.outC * outH * outW
-          let convAff := affOfConv2d (α:=α) cfg
-          match backwardLinear (α:=α) (m:=outDim) (n:=cfg.inC * cfg.inH * cfg.inW) aY convAff.A
-            convAff.c with
-          | some (aX, cadd) =>
-            let st' := addCoeff (α:=α) st p1 aX
-            { st' with cst := st'.cst + cadd }
-          | none => st
+          if _hs : cfg.stride = 0 then
+            st
+          else
+            let outH := (cfg.inH + 2 * cfg.padding - cfg.kH) / cfg.stride + 1
+            let outW := (cfg.inW + 2 * cfg.padding - cfg.kW) / cfg.stride + 1
+            let outDim := cfg.outC * outH * outW
+            let convAff := affOfConv2d (α:=α) cfg
+            match backwardLinear (α:=α) (m:=outDim) (n:=cfg.inC * cfg.inH * cfg.inW) aY convAff.A
+              convAff.c with
+            | some (aX, cadd) =>
+              let st' := addCoeff (α:=α) st p1 aX
+              { st' with cst := st'.cst + cadd }
+            | none => st
         | none => st
       | _ => st
     | .relu | .exp | .log | .inv | .sigmoid | .tanh | .softmax _ | .layernorm _ =>

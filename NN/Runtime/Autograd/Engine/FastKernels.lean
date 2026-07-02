@@ -10,6 +10,7 @@ public import NN.Runtime.Autograd.Engine.Core
 public import NN.Runtime.Autograd.Engine.Cuda.Convert
 public import NN.Runtime.Autograd.Engine.Cuda.DGemm
 public import NN.Runtime.Autograd.Engine.Cuda.Kernels
+public import NN.Spec.Layers.Loss
 
 /-!
 # FastKernels
@@ -196,7 +197,8 @@ def colMatAsVec {α : Type} {n : Nat} (x : Tensor α (.dim n (.dim 1 .scalar))) 
 /--
 Vector mean-squared error (MSE) with "mean" reduction:
 
-`mse(yhat, target) = (Σ_i (yhat_i - target_i)^2) / n`.
+`mse(yhat, target) = (Σ_i (yhat_i - target_i)^2) / N`, where `N = n` for
+nonempty vectors and `N = 1` for the totalized empty-vector case.
 
 This corresponds to `torch.nn.functional.mse_loss(..., reduction="mean")` for a 1D tensor.
 Ref: https://pytorch.org/docs/stable/generated/torch.nn.functional.mse_loss.html
@@ -212,14 +214,14 @@ def mseSpecVec {α : Type} [Inhabited α] [Add α] [Sub α] [Mul α] [Div α] [Z
         let d := yArr[i]! - tArr[i]!
         acc := acc + d * d
       return acc
-  sumSq / (n : α)
+  sumSq / (Spec.meanDenom (.dim n .scalar) : α)
 
 /--
 Gradient of `mseSpecVec` with respect to `yhat`.
 
-If `mse = (Σ_i (yhat_i - target_i)^2) / n`, then:
+If `mse = (Σ_i (yhat_i - target_i)^2) / N`, then:
 
-`∂mse/∂yhat_i = 2 * (yhat_i - target_i) / n`.
+`∂mse/∂yhat_i = 2 * (yhat_i - target_i) / N`.
 -/
 def mseDerivVec {α : Type} [Inhabited α] [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [Coe Nat
   α]
@@ -227,7 +229,7 @@ def mseDerivVec {α : Type} [Inhabited α] [Add α] [Sub α] [Mul α] [Div α] [
   let yArr := vecToArray (n := n) yhat
   let tArr := vecToArray (n := n) target
   let two : α := (1 : α) + 1
-  let c : α := two / (n : α)
+  let c : α := two / (Spec.meanDenom (.dim n .scalar) : α)
   let gArr : Array α :=
     Array.ofFn (fun i : Fin n => (yArr[i]! - tArr[i]!) * c)
   Tensor.dim (fun i : Fin n => Tensor.scalar (gArr[i]!))

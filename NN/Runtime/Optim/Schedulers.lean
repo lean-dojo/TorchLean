@@ -715,8 +715,8 @@ abbrev createLrFinder := @lrFinder
 /-!
 TorchLean already provides a set of small, pure schedulers above.
 
-This section adds *additional* schedulers whose formulas and step-count conventions are chosen to
-match PyTorch's `torch.optim.lr_scheduler.*` semantics more directly.
+The schedulers below use formulas and step-count conventions chosen to match PyTorch's
+`torch.optim.lr_scheduler.*` semantics more directly.
 
 Important convention note (PyTorch `last_epoch`):
 - In modern PyTorch, schedulers effectively start at `last_epoch = 0` right after construction

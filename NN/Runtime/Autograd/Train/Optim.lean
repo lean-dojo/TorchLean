@@ -53,7 +53,7 @@ open Tensor
 ## Parameter table
 -/
 /-!
-This section provides the parameter registry used by the training loop.
+The declarations below provide the parameter registry used by the training loop.
 
 Unlike PyTorch (where parameters are objects with identity), we use an explicit `Nat` id so that:
 - gradients can be stored in a `HashMap Nat _`,

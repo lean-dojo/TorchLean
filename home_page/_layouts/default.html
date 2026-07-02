@@ -21,9 +21,8 @@
 
   <header class="page-header" role="banner">
     <h1 class="project-name">
-      <a class="brand-link" href="{{ '/' | relative_url }}">
+      <a class="brand-link" href="{{ '/' | relative_url }}" aria-label="TorchLean home">
         <img class="project-logo" src="{{ '/assets/media/brand/torchlean-logo.png' | relative_url }}" alt="TorchLean logo" />
-        <span class="brand-name">Formalizing Neural Networks in Lean</span>
       </a>
     </h1>
     <nav class="site-nav" aria-label="Main navigation">
@@ -32,7 +31,29 @@
       <a href="{{ '/examples/' | relative_url }}" class="btn">Examples</a>
       <a href="{{ '/updates/' | relative_url }}" class="btn">Updates</a>
       <a href="{{ '/docs/' | relative_url }}" class="btn">API Docs</a>
-      <a href="{{ '/graphs/' | relative_url }}" class="btn">Graph</a>
+      <a href="{{ '/graphs/' | relative_url }}" class="btn">Graphs</a>
+      <button class="btn icon-btn search-open" type="button" data-search-open aria-label="Search">
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <circle cx="11" cy="11" r="7"></circle>
+          <path d="m16.5 16.5 4 4"></path>
+        </svg>
+      </button>
+      <button class="btn icon-btn theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark theme">
+        <svg class="theme-icon-sun" aria-hidden="true" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2"></path>
+          <path d="M12 20v2"></path>
+          <path d="m4.93 4.93 1.41 1.41"></path>
+          <path d="m17.66 17.66 1.41 1.41"></path>
+          <path d="M2 12h2"></path>
+          <path d="M20 12h2"></path>
+          <path d="m6.34 17.66-1.41 1.41"></path>
+          <path d="m19.07 4.93-1.41 1.41"></path>
+        </svg>
+        <svg class="theme-icon-moon" aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 7 7 0 1 0 20 14.5Z"></path>
+        </svg>
+      </button>
     </nav>
   </header>
 
@@ -64,6 +85,24 @@
       </div>
     </footer>
   </main>
+
+  <div class="search-overlay" data-search-overlay hidden>
+    <div class="search-dialog" role="dialog" aria-modal="true" aria-labelledby="search-title">
+      <div class="search-head">
+        <h2 id="search-title">Search TorchLean</h2>
+        <button class="search-close" type="button" data-search-close aria-label="Close search">Close</button>
+      </div>
+      <input
+        class="search-input"
+        type="search"
+        placeholder="Search guide, examples, API docs..."
+        autocomplete="off"
+        data-search-input />
+      <div class="search-results" data-search-results aria-live="polite"></div>
+    </div>
+  </div>
+
+  <script src="{{ '/assets/js/search.js?v=' | append: site.build_revision | relative_url }}" defer></script>
 </body>
 
 </html>

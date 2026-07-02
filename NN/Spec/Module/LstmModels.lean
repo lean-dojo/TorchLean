@@ -51,7 +51,7 @@ The LSTM model layer exposes first-class model objects with:
 - a standard training objective, and
 - an explicit reverse-mode / BPTT backward pass producing parameter gradients.
 
-This section provides those “full” APIs for the simple LSTM models in this file by reusing the
+The declarations below provide those “full” APIs for the simple LSTM models in this file by reusing the
 gate-aware BPTT implementation in `NN/Spec/Layers/Lstm.lean`.
 -/
 

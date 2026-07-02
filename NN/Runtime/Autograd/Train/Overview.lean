@@ -12,7 +12,7 @@ module
 This directory contains mostly-pure utilities for writing training loops on top of
 TorchLean's runtime autograd tape.
 
-The goal is familiarity (a recognizable workflow) while keeping the code:
+The utilities keep a recognizable workflow while remaining:
 - deterministic (pure shuffles; explicit seeds),
 - easy to audit,
 - and compatible with both eager and compiled backends (via the shared tape/`TorchLean.Session`).

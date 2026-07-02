@@ -329,18 +329,16 @@ def boundIbp {inDim hidDim outDim : Nat}
   IBP.linear net.W2 a1B b2B
 
 /--
-Construct the lower and upper affine forms used by `boundAffineCrown`.
+The lower and upper affine CROWN forms for this two-layer ReLU MLP.
 
-The pair is `(lower, upper)`: evaluating the first form on the input box supplies the returned
-lower endpoint, and evaluating the second supplies the returned upper endpoint.
+The returned pair is `(lower, upper)`. `boundAffineCrown` evaluates these forms on the input box and
+takes the lower and upper endpoints.
 -/
 def affineCrownForms {inDim hidDim outDim : Nat}
   (net : MLP2 α inDim hidDim outDim)
   (xB : Box α (.dim inDim .scalar)) : AffineVec α inDim outDim × AffineVec α inDim outDim :=
-  -- Basic CROWN for 2-layer MLP:
-  -- 1) Use IBP to get pre-activation bounds [l,u].
-  -- 2) Build ReLU upper and lower linear relaxations per hidden unit.
-  -- 3) Combine them with sign-splitting of W2 to obtain both an affine lower and upper form.
+  -- First get the ReLU intervals. Then W2's sign tells us which relaxation feeds the lower or
+  -- upper affine form.
   let b1B : Box α (.dim hidDim .scalar) := { lo := net.b1, hi := net.b1 }
   let z1B := IBP.linear (α:=α) net.W1 xB b1B
   let relaxU := ReLU.relaxVector (α:=α) (n:=hidDim) z1B.lo z1B.hi
@@ -386,13 +384,8 @@ def affineCrownForms {inDim hidDim outDim : Nat}
 /--
 Single-pass affine (CROWN/DeepPoly-style) bounds for the 2-layer ReLU MLP.
 
-This constructs upper and lower affine forms by combining:
-- pre-activation intervals from IBP,
-- per-neuron ReLU relaxations, and
-- sign-splitting of the second-layer weights.
-
-Note: this is the direct MLP-specialized implementation; the graph-level engine in
-`NN.MLTheory.CROWN.Graph` is the long-term home for fully-general CROWN.
+This path is only the direct two-layer MLP version. The graph-level code is still the general CROWN
+API.
 -/
 def boundAffineCrown {inDim hidDim outDim : Nat}
   (net : MLP2 α inDim hidDim outDim)
@@ -429,9 +422,7 @@ open NN.MLTheory.CROWN
 `boundAffineCrown` is exactly the input-box evaluation of the affine forms constructed by
 `affineCrownForms`.
 
-This theorem is intentionally structural: the full semantic soundness proof for those forms is
-separate from, and larger than, the definitional fact that this entrypoint is using the affine CROWN
-forms rather than delegating to IBP.
+This is a small sanity theorem for the wrapper; semantic soundness is proved separately.
 -/
 theorem bound_affine_crown_eq_affine_forms_eval {inDim hidDim outDim : Nat}
   (net : MLP2 ℝ inDim hidDim outDim)
@@ -1177,7 +1168,7 @@ theorem bound_ibp_sound {inDim hidDim outDim : Nat}
   simpa [boundIbp, forward]
 
 /--
-Soundness of the affine-bound entrypoint for a 2-layer MLP over `ℝ`.
+Soundness of the affine-bound wrapper for a 2-layer MLP over `ℝ`.
 
 In this module `bound_affine` delegates to the IBP implementation, so this theorem is a direct
 corollary of `bound_ibp_sound`.

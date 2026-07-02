@@ -187,15 +187,13 @@ def CrownTransferSound
     | _, _ => True
 
 /-!
-## "Checker implies enclosure" theorem (end-to-end)
+## Checker implies enclosure
 
-This is the theorem you want to use in the paper:
+If a certificate is locally consistent and the transfer rules are sound, then every certified node
+encloses the graph value computed at that node.
 
-> If a certificate is locally consistent and the transfer rules are sound,
-> then the certificate enforces enclosure of the full graph semantics.
-
-This theorem is deliberately generic: it does **not** commit to a particular certificate
-producer (plain CROWN vs α/β-CROWN) nor to a particular transcendental backend.
+This theorem does not pick a certificate producer or a nonlinear backend. Those details come in
+through `step` and `CrownTransferSound`.
 -/
 
 theorem crown_checker_encloses_semantics_match
@@ -224,11 +222,9 @@ theorem crown_checker_encloses_semantics_match
           | some b, some v => EnclosesAtInput (α := ℝ) ctx x b v
           | _, _ => True) ?_ hid
   intro k ih hk
-  -- Use `hsound` with parent enclosures derived from the induction hypothesis and `TopoSorted`.
   cases hcert with
   | intro hsz hstep =>
     have hck : cert[k]! = step cert k := hstep k hk
-    -- Parent enclosures from IH, using `TopoSorted`.
     have hparents :
         (∀ p : Nat, p ∈ (g.nodes[k]!).parents →
           match cert[p]!, vals[p]! with
@@ -236,26 +232,21 @@ theorem crown_checker_encloses_semantics_match
           | _, _ => True) := by
       intro p hp
       have hpLt : p < k := htopo k hk p hp
-      -- Apply IH at the parent id.
       have hIH := ih p hpLt (lt_trans hpLt hk)
       simpa using hIH
-    -- Now use transfer soundness at `k`.
     cases hcertk : cert[k]! with
     | none =>
-        -- Missing certificate entry: goal is `True` regardless of the semantic value.
         cases hvalk : vals[k]! <;> simp []
     | some b =>
         cases hvalk : vals[k]! with
         | none =>
             simp []
         | some v =>
-            -- `cert[k]! = some b` implies `step cert k = some b` by local consistency.
             have hstepk : step cert k = some b := by
               have : some b = step cert k := by
                 simpa [hcertk] using hck
               simpa using this.symm
             have h := hsound k hk hparents
-            -- Rewrite the matches using the concrete `some` witnesses.
             simpa [hcertk, hvalk, hstepk] using h
 
 theorem crown_checker_encloses_semantics
@@ -284,17 +275,11 @@ theorem crown_checker_encloses_semantics
   simpa [hcertId, hvalId] using hmatch
 
 /-!
-## IEEE32Exec specialization (statement only)
+## IEEE32Exec specialization
 
-The repository has a rich IEEE32 executable semantics (`IEEE32Exec`) and directed rounding lemmas
-for interval endpoints. However, a *full* end-to-end theorem connecting the float-running CROWN
-engine to IEEE32Exec execution requires a separate refinement theorem (rounding + libm/oracle).
-
-For the paper, the right way to expose that dependency is to keep the theorem evaluator-parametric:
-the caller must supply an IEEE32 node evaluator, prove that the value array is the trace produced by
-that evaluator, and show that the evaluator does not depend on the value slot it is currently
-checking. This prevents the old vacuous self-equality hook while still leaving the concrete
-IEEE32Exec graph evaluator/refinement theorem as a separate dependency.
+For IEEE32 we still leave the node evaluator to the caller. The caller supplies the evaluator,
+proves that `vals` is its trace, and proves that evaluating node `id` does not read `vals[id]!`.
+The floating-point refinement theorem itself lives outside this checker lemma.
 -/
 
 abbrev IEEE32Val := FlatVec TorchLean.Floats.IEEE754.IEEE32Exec
@@ -308,9 +293,8 @@ abbrev IEEE32EvalNode? :=
     Option IEEE32Val
 
 /--
-The IEEE32 node evaluator may inspect already-computed values, but it must not define node `id` by
-reading `vals[id]!` itself. The identity evaluator
-`fun _ _ _ vals id => vals[id]!` therefore cannot discharge this guard.
+The IEEE32 node evaluator may inspect already-computed values, but not the slot it is supposed to
+compute.
 -/
 def IEEE32EvalNoSelfDependency (evalNode? : IEEE32EvalNode?) : Prop :=
   ∀ (nodes : Array Node) (ps : ParamStore TorchLean.Floats.IEEE754.IEEE32Exec)
@@ -361,7 +345,6 @@ theorem crown_checker_encloses_semantics_ieee32exec_match
       | some b, some v =>
           EnclosesAtInput (α := TorchLean.Floats.IEEE754.IEEE32Exec) ctx x b v
       | _, _ => True := by
-  -- This is the same proof as the real-valued theorem, with `SemLocalOK` abstracted away.
   classical
   intro id hid
   refine Nat.strong_induction_on id
@@ -382,9 +365,6 @@ theorem crown_checker_encloses_semantics_ieee32exec_match
               EnclosesAtInput (α := TorchLean.Floats.IEEE754.IEEE32Exec) ctx x bp vp
           | _, _ => True) := by
       intro p hp
-      -- In the IEEE specialization, we still rely on `TopoSorted` to ensure parent ids are smaller.
-      -- The induction hypothesis gives the required enclosure predicate for each parent.
-      -- (We keep this lemma schematic; in practice the graph passed to the checker is topo-sorted.)
       have hpLt : p < k := htopo k hk p hp
       have hIH := ih p hpLt (lt_trans hpLt hk)
       simpa using hIH

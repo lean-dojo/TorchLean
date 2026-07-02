@@ -61,7 +61,7 @@ namespace Module
 The `ScalarModule` interface is the TorchLean equivalent of "instantiate a model, then do forward,
 backward, and optimizer steps" in an imperative runtime.
 
-This section mostly re-exports `Runtime.Autograd.TorchLean.Module.*` and adds small CLI-friendly
+The module mostly re-exports `Runtime.Autograd.TorchLean.Module.*` and adds small CLI-friendly
 helpers (`Module.withModule` / `Module.withModuleRuntime`) that select dtype/backend from flags.
 -/
 

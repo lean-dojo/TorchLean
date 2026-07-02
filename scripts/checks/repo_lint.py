@@ -472,6 +472,11 @@ def _has_nn_header(path: pathlib.Path, text: str) -> bool:
     return "Copyright (c) 2026 TorchLean" in head
 
 
+def _has_lean_module_docstring(text: str) -> bool:
+    """Return whether a Lean source contains a module docstring (`/-! ... -/`)."""
+    return "/-!" in text
+
+
 def _mask_lean_comments_and_strings(text: str) -> str:
     """
     Return a same-length string where Lean comments/docstrings and string literals are replaced
@@ -703,6 +708,17 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     1,
                     1,
                     "missing TorchLean header in the first ~10 lines (expected `Copyright (c) 2026 TorchLean`).",
+                )
+            )
+
+        if path.is_relative_to(REPO_ROOT / "NN") and not _has_lean_module_docstring(text):
+            findings.append(
+                Finding(
+                    "ERROR",
+                    path,
+                    1,
+                    1,
+                    "missing Lean module docstring (`/-! ... -/`); add purpose, main declarations, and import guidance.",
                 )
             )
 

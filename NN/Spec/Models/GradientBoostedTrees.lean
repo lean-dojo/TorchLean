@@ -219,7 +219,7 @@ Tree-based models here are intended as **baselines** and **reference points**. F
 models we implement reverse-mode explicitly; for trees we instead provide a classical (non-gradient)
 training routine.
 
-This section implements a small greedy CART-like procedure for *regression*:
+The code below implements a small greedy CART-like procedure for *regression*:
 
 - choose the split `(feature, threshold)` that minimizes
   `SSE(left) + SSE(right)` (sum of squared errors around each side’s mean)

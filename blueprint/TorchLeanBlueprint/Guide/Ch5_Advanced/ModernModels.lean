@@ -12,7 +12,7 @@ attention masks, scan state, stochastic schedules, spectral kernels, and environ
 two-layer MLP is enough to explain typed tensors and autograd. It is not enough to test whether the
 framework handles the shapes that modern ML actually uses.
 
-The examples in this section are best read as semantic stress tests. Each model family exercises a
+The examples below are best read as semantic stress tests. Each model family exercises a
 different part of the stack: KAN-style edge-basis expansion, residual branches, patch tokens, causal
 masks, scan state, diffusion schedules, spectral kernels, RL trajectories, and CUDA runtime paths.
 
@@ -41,7 +41,7 @@ whether the same ideas survive edge-basis models, residual sharing, attention ma
 recurrent state, stochastic sampling, spectral transforms, and external environments. That is what
 the model zoo is for.
 
-# Start With The Runner
+# Runner Entry Point
 
 Most model examples go through one command shape:
 

@@ -1,0 +1,113 @@
+---
+layout: null
+---
+[
+  {
+    "title": "Home",
+    "url": "{{ '/' | relative_url }}",
+    "section": "Overview",
+    "text": "TorchLean executable neural networks formal specifications graph semantics CUDA trust boundaries proof-checkable ML artifacts"
+  },
+  {
+    "title": "Guide",
+    "url": "{{ '/blueprint/' | relative_url }}",
+    "section": "Guide",
+    "text": "TorchLean guide introduction semantics graphs runtime autograd interop verification certificates floating point native boundaries"
+  },
+  {
+    "title": "Getting Started",
+    "url": "{{ '/blueprint/Introduction/' | relative_url }}",
+    "section": "Guide",
+    "text": "install start introduction Lean models tensors examples first workflow"
+  },
+  {
+    "title": "Graphs and IR",
+    "url": "{{ '/blueprint/Semantics-and-Graphs/Graphs-and-IR/' | relative_url }}",
+    "section": "Guide",
+    "text": "graph IR lowering shapes payloads semantics execution traces bounds"
+  },
+  {
+    "title": "Autograd Walkthrough",
+    "url": "{{ '/blueprint/Runtime___-Autograd___-and-Interop/Autograd-Walkthrough/' | relative_url }}",
+    "section": "Guide",
+    "text": "autograd reverse mode tape gradients VJP training runtime"
+  },
+  {
+    "title": "GPU and CUDA Boundaries",
+    "url": "{{ '/blueprint/Floating-Point-and-Native-Boundaries/GPU-and-CUDA-Boundaries/' | relative_url }}",
+    "section": "Guide",
+    "text": "CUDA GPU kernels native runtime trust boundary fast kernels memcheck device buffers"
+  },
+  {
+    "title": "Floating-Point Semantics",
+    "url": "{{ '/blueprint/Floating-Point-and-Native-Boundaries/Floating-Point-Semantics/' | relative_url }}",
+    "section": "Guide",
+    "text": "FP32 IEEE floating point real semantics rounding runtime approximation"
+  },
+  {
+    "title": "Examples",
+    "url": "{{ '/examples/' | relative_url }}",
+    "section": "Examples",
+    "text": "examples models training diffusion text verification bug zoo PyTorch round trip"
+  },
+  {
+    "title": "Bug Zoo",
+    "url": "{{ '/examples/bug-zoo/' | relative_url }}",
+    "section": "Examples",
+    "text": "bug zoo attention masks KV cache RoPE tokenizer normalization batch invariance stable loss Float32 boundaries"
+  },
+  {
+    "title": "Verification Examples",
+    "url": "{{ '/examples/verification/' | relative_url }}",
+    "section": "Examples",
+    "text": "verification IBP CROWN certificates interval bounds affine bounds model robustness"
+  },
+  {
+    "title": "Text Models",
+    "url": "{{ '/examples/text-models/' | relative_url }}",
+    "section": "Examples",
+    "text": "GPT Mamba transformer language model tokenization tiny shakespeare sequence models"
+  },
+  {
+    "title": "Scientific ML",
+    "url": "{{ '/examples/scientific-ml/' | relative_url }}",
+    "section": "Examples",
+    "text": "scientific machine learning FNO Fourier neural operator Burgers dataset PINN verification PDE"
+  },
+  {
+    "title": "Diffusion",
+    "url": "{{ '/examples/diffusion/' | relative_url }}",
+    "section": "Examples",
+    "text": "diffusion denoising DDIM sampling generated images real image training"
+  },
+  {
+    "title": "3D Vision Certificates",
+    "url": "{{ '/examples/3d-vision/' | relative_url }}",
+    "section": "Examples",
+    "text": "3D vision certificates camera boxes projection geometry detector Lean check"
+  },
+  {
+    "title": "CUDA Notes",
+    "url": "{{ '/cuda/' | relative_url }}",
+    "section": "Runtime",
+    "text": "CUDA build flags kernels fast kernels native backend tests sanitizer profiling"
+  },
+  {
+    "title": "API Docs",
+    "url": "{{ '/docs/' | relative_url }}",
+    "section": "Reference",
+    "text": "DocGen API modules namespaces definitions theorems Lean reference"
+  },
+  {
+    "title": "Dependency Graphs",
+    "url": "{{ '/graphs/' | relative_url }}",
+    "section": "Reference",
+    "text": "dependency graph import graph audit modules architecture"
+  },
+  {
+    "title": "Updates",
+    "url": "{{ '/updates/' | relative_url }}",
+    "section": "News",
+    "text": "updates release notes recent work roadmap status"
+  }
+]

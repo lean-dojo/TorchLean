@@ -16,9 +16,9 @@ set_option linter.unnecessarySimpa false
 
 Semantic-preservation lemmas for unary activation operators in the IR -> compiled runtime bridge.
 
-Each lemma mirrors the corresponding branch in `Correctness/SemanticEquivalence.lean` and gives
-that operator a stable theorem name. The main semantic equivalence proof can then focus on graph
-traversal instead of carrying every parent-list and typed-index detail inline.
+Each lemma mirrors the corresponding branch in the `Correctness.SemanticEquivalence` module and
+gives that operator a stable theorem name. The main semantic equivalence proof can then focus on
+graph traversal instead of carrying every parent-list and typed-index detail inline.
 
 Build note: these proofs can be slower than the operators look. The activation itself is simple;
 the proof cost comes from checking the singleton-parent contract, recovering a typed index from the

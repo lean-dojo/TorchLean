@@ -85,6 +85,8 @@ structure Conv2DParams (α : Type) [Context α] where
   hKH : kH ≠ 0
   /-- Proof that the kernel width is nonzero. -/
   hKW : kW ≠ 0
+  /-- Proof that the stride is nonzero. -/
+  hStride : stride ≠ 0
   /-- Spec-layer convolution package containing weights, bias, and convolution metadata. -/
   spec : Spec.Conv2DSpec inC outC kH kW stride padding α hIn hKH hKW
 

@@ -7,8 +7,8 @@ open Verso.Genre Manual
 tag := "fp32-soundness"
 %%%
 
-The previous floating-point pages named the numerical objects. This page explains how a claim moves
-from real arithmetic to Float32.
+After naming the numerical objects, the next question is how a claim moves from real arithmetic to
+Float32.
 
 The basic situation is common. A verifier or proof establishes a real-valued inequality with some
 margin. A floating-point analysis bounds how far the rounded computation can move from the real one.

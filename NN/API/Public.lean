@@ -25,8 +25,8 @@ import NN
 open TorchLean
 ```
 
-This module remains the lower-level subsystem surface used by the facade. The stable user names are
-exported by `NN.Entrypoint.API` and the `NN` umbrella through `NN.API.Public.Facade`:
+This module sits one level below the short public names. Those names come through
+`NN.Entrypoint.API` and the `NN` umbrella:
 
 - `TorchLean.nn` (model/layer builders)
 - `TorchLean.optim` (optimizer configs)
@@ -34,9 +34,8 @@ exported by `NN.Entrypoint.API` and the `NN` umbrella through `NN.API.Public.Fac
 - `TorchLean.Data` (datasets/loaders + CSV/NPY readers)
 - `TorchLean.Loss` and `TorchLean.Metrics`
 
-Advanced users can still import `NN.API.Public` directly when they are extending TorchLean itself
-or deliberately working below the `NN` umbrella. Import `NN.Entrypoint.API` when the focused
-`TorchLean.*` facade names should be available without the broader `NN` umbrella.
+Import `NN.API.Public` directly when extending TorchLean or working below the `NN` umbrella. Use
+`NN.Entrypoint.API` when you only want the focused `TorchLean.*` names.
 
 The callback-heavy training namespace lives in `NN.API.Public.Training`. It is deliberately not
 re-exported from this umbrella module: ordinary code should get training through `TorchLean.Trainer`,

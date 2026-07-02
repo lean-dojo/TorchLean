@@ -48,8 +48,8 @@ This module ties the per-op correctness lemmas together into the recursive prese
   a typed compiled context. Even simple operator branches can become expensive once shape equality,
   `Except` success/failure paths, and cast proof irrelevance all appear in the same goal.
 - Branch-local work belongs in `Correctness/Ops/*` files, with repeated simplification scripts
-  replaced by named lemmas. The goal is not to make the theorem clever; the goal is to make each
-  compiler branch small enough that adding a new IR op is routine.
+  replaced by named lemmas. Each compiler branch should stay small enough that adding a new IR op is
+  routine.
 
 ## Tags
 

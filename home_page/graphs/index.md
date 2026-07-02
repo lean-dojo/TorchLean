@@ -1,31 +1,63 @@
 ---
-title: Dependency Maps
+title: Graphs
 ---
 
-<p class="lede">
-  Explore how TorchLean is organized: which modules import each other, where the main hubs are, and
-  how the API, runtime, proof, and verification layers connect.
-</p>
-
-<div class="callout">
-  Looking for the interactive graph?
-  Open the <a href="{{ '/importgraph/' | relative_url }}">module import graph</a>.
-</div>
-
-<div class="callout">
-  This page starts from Lean imports. A module edge means one Lean file imports another; it does not
-  mean every theorem in the source file depends on every theorem in the target file.
+<div class="graph-actions">
+  <a class="primary-link" href="{{ '/importgraph/' | relative_url }}">Open interactive graph</a>
+  <a class="secondary-link" href="{{ '/graphs/dependency-audit.md' | relative_url }}">Read audit summary</a>
+  <a class="secondary-link" href="{{ '/graphs/dependency-audit.json' | relative_url }}">Download JSON</a>
 </div>
 
 <div class="dep-dashboard" id="dep-dashboard">
-  <section class="dep-panel dep-summary">
-    <h2>Repository Shape</h2>
-    <p class="dep-panel-intro">
-      The longest chain counts the longest path through direct imports in this build. It is an approximate
-      measure of layering depth, not a correctness result.
-    </p>
+  <section class="dep-panel dep-summary graph-overview">
+    <div>
+      <h2>Repository Shape</h2>
+      <p class="dep-panel-intro">
+        Import edges show file-level Lean dependencies. They are useful for architecture review;
+        theorem-level proof dependencies are a different measurement.
+      </p>
+    </div>
     <div class="dep-stat-grid" id="dep-summary-cards">
       <div class="dep-loading">Loading dependency audit…</div>
+    </div>
+  </section>
+
+  <section class="dep-panel graph-map-panel">
+    <div class="graph-map-head">
+      <div>
+        <h2>Layer Map</h2>
+        <p class="dep-panel-intro">
+          Use a layer below to filter the module explorer. The map is organized by the names that
+          appear in the Lean import tree.
+        </p>
+      </div>
+      <button class="secondary-link graph-layer-button" type="button" data-layer-filter="">Show all</button>
+    </div>
+    <div class="graph-layer-map" aria-label="TorchLean layer filters">
+      <button type="button" data-layer-filter="NN.API">
+        <strong>API</strong>
+        <span>Public facade and user-facing names</span>
+      </button>
+      <button type="button" data-layer-filter="NN.Spec">
+        <strong>Spec</strong>
+        <span>Tensor, layer, model, and shape contracts</span>
+      </button>
+      <button type="button" data-layer-filter="NN.Runtime">
+        <strong>Runtime</strong>
+        <span>Autograd, training, CUDA, and interop paths</span>
+      </button>
+      <button type="button" data-layer-filter="NN.Proofs">
+        <strong>Proofs</strong>
+        <span>Autograd, approximation, and semantic lemmas</span>
+      </button>
+      <button type="button" data-layer-filter="NN.Verification">
+        <strong>Verification</strong>
+        <span>Bounds, certificates, geometry, and checkers</span>
+      </button>
+      <button type="button" data-layer-filter="NN.Floats">
+        <strong>Floats</strong>
+        <span>IEEE-style executable and interval semantics</span>
+      </button>
     </div>
   </section>
 
@@ -59,8 +91,7 @@ title: Dependency Maps
       </label>
     </div>
     <div class="dep-mini-note">
-      Click a module to see its direct imports and direct importers. Edges are module imports, not
-      theorem-premise dependencies.
+      Click a module to see its direct imports and direct importers.
     </div>
     <div class="dep-two-col">
       <div>
@@ -74,24 +105,6 @@ title: Dependency Maps
     </div>
   </section>
 
-  <section class="dep-panel">
-    <h2>Layer Flow</h2>
-    <div id="dep-layer-flow" class="dep-layer-flow"></div>
-  </section>
-
-  <section class="dep-panel">
-    <h2>Import Hubs</h2>
-    <div class="dep-two-col">
-      <div>
-        <h3>Most Imported</h3>
-        <div id="dep-fan-in" class="dep-list compact"></div>
-      </div>
-      <div>
-        <h3>Most Importing</h3>
-        <div id="dep-fan-out" class="dep-list compact"></div>
-      </div>
-    </div>
-  </section>
 </div>
 
 <script>
@@ -125,7 +138,6 @@ title: Dependency Maps
     $("dep-summary-cards").innerHTML = [
       ["Modules", fmt(s.modules)],
       ["Import edges", fmt(s.import_edges)],
-      ["Internal edges", fmt(s.internal_import_edges)],
       ["Public imports", fmt(s.public_import_edges)],
       ["Longest chain", fmt(s.critical_path_import_edges)],
     ].map(([k, v]) => `
@@ -166,28 +178,6 @@ title: Dependency Maps
         <span class="dep-count">${esc(fmt(item.lines))} lines · ${esc(fmt(item.files))} files</span>
       </div>
     `).join("");
-  }
-
-  function renderBars(container, items, labelKey, valueKey, onClick) {
-    const max = Math.max(1, ...items.map(x => x[valueKey]));
-    container.innerHTML = items.map(item => {
-      const label = item[labelKey];
-      const value = item[valueKey];
-      return `
-        <button class="dep-row" type="button" data-module="${esc(label)}">
-          <span class="dep-row-main">
-            <span class="dep-row-label">${esc(label)}</span>
-            <span class="dep-bar"><span style="width:${(100 * value / max).toFixed(1)}%"></span></span>
-          </span>
-          <span class="dep-count">${esc(value)}</span>
-        </button>
-      `;
-    }).join("");
-    if (onClick) {
-      container.querySelectorAll("button[data-module]").forEach(btn => {
-        btn.addEventListener("click", () => onClick(btn.dataset.module));
-      });
-    }
   }
 
   function buildIndex(report) {
@@ -249,6 +239,17 @@ title: Dependency Maps
     });
   }
 
+  function setLayerFilter(layer) {
+    $("dep-src-layer").value = layer;
+    state.selected = null;
+    renderModuleList();
+    renderDetail();
+    document.querySelectorAll("[data-layer-filter]").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.layerFilter === layer);
+    });
+    document.getElementById("dep-dashboard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   function edgeList(title, edges, side) {
     if (!edges.length) return `<h4>${title}</h4><div class="muted">None.</div>`;
     return `
@@ -265,7 +266,13 @@ title: Dependency Maps
 
   function renderDetail() {
     const mod = state.selected;
-    if (!mod) return;
+    if (!mod) {
+      $("dep-detail-title").textContent = "Selected Module";
+      $("dep-module-detail").innerHTML = "Select a module on the left.";
+      $("dep-module-detail").classList.add("muted");
+      return;
+    }
+    $("dep-module-detail").classList.remove("muted");
     const idx = state.report._index;
     const out = (idx.imports.get(mod) || []).sort((a, b) => a.dst.localeCompare(b.dst));
     const inc = (idx.importers.get(mod) || []).sort((a, b) => a.src.localeCompare(b.src));
@@ -289,18 +296,6 @@ title: Dependency Maps
     });
   }
 
-  function renderLayerFlow(report) {
-    const items = report.layer_edges.slice(0, 32);
-    const max = Math.max(1, ...items.map(x => x.count));
-    $("dep-layer-flow").innerHTML = items.map(item => `
-      <div class="dep-layer-row">
-        <span class="dep-layer-label">${esc(item.src_layer)} → ${esc(item.dst_layer)}</span>
-        <span class="dep-layer-bar"><span style="width:${(100 * item.count / max).toFixed(1)}%"></span></span>
-        <span class="dep-count">${esc(item.count)}</span>
-      </div>
-    `).join("");
-  }
-
   fetch(dataUrl)
     .then(resp => {
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -314,16 +309,12 @@ title: Dependency Maps
       setOptions($("dep-dst-layer"), layers, "Any imported layer");
       renderSummary(report);
       renderCodeStats(report);
-      renderLayerFlow(report);
-      renderBars($("dep-fan-in"), report.top_fan_in, "module", "count", mod => {
-        state.selected = mod; $("dep-search").value = mod; renderModuleList(); renderDetail();
-      });
-      renderBars($("dep-fan-out"), report.top_fan_out, "module", "count", mod => {
-        state.selected = mod; $("dep-search").value = mod; renderModuleList(); renderDetail();
-      });
       $("dep-search").addEventListener("input", renderModuleList);
       $("dep-src-layer").addEventListener("change", renderModuleList);
       $("dep-dst-layer").addEventListener("change", renderModuleList);
+      document.querySelectorAll("[data-layer-filter]").forEach(btn => {
+        btn.addEventListener("click", () => setLayerFilter(btn.dataset.layerFilter));
+      });
       renderModuleList();
     })
     .catch(err => {

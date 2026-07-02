@@ -7,9 +7,9 @@ open Verso.Genre Manual
 tag := "uat-fp-literature"
 %%%
 
-This page is a citation map for numerical claims in TorchLean. Many papers use similar words:
-approximation, robustness, bounds, finite precision. The words are not enough. Before citing a
-theorem, we need to know whether it is about real-valued networks, rounded-real FP32 semantics,
+Numerical claims in TorchLean need citations at the right semantic level. Many papers use similar
+words: approximation, robustness, bounds, finite precision. The words are not enough. Before citing
+a theorem, the relevant semantics must be clear: real-valued networks, rounded-real FP32 semantics,
 executable IEEE-754 behavior, or an abstract verifier enclosure.
 
 The purpose is to avoid citing the right theorem for the wrong semantics. Citations next to a
@@ -54,9 +54,9 @@ behavior, or a verifier's overapproximation of outputs.
 
 ## Standards And Numerical Analysis
 
-Start with IEEE 754 / ISO 60559 for the machine arithmetic target. This is the source for binary
-formats, special values, rounding attributes, exceptions, and the claim that conforming operations
-have determined results under specified formats and rounding modes.
+IEEE 754 / ISO 60559 is the machine arithmetic target: binary formats, special values, rounding
+attributes, exceptions, and the claim that conforming operations have determined results under
+specified formats and rounding modes.
 
 Goldberg and Higham are the tutorial and numerical-analysis references to cite when explaining why
 floating-point operations are rounded operations, why evaluation order matters, and why forward

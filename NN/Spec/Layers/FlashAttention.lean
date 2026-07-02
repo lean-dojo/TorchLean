@@ -34,8 +34,8 @@ The theorems in this file are compact but important:
   equal to TorchLean's existing standard attention spec.
 - `flashAttentionBackward_eq_scaledDotProductAttentionBackward` proves the fused VJP contract is
   semantically equal to the existing standard attention backward spec.
-- `cudaLoopFlashAttention_eq_onlineSoftmaxTiledAttention` gives a Lean functional model of the
-  native kernel loops and proves that this loop model denotes the same online/tiled contract.
+- `cudaLoopFlashAttention_eq_onlineSoftmaxTiledAttention` gives a Lean denotational target for the
+  native kernel path and proves that target denotes the same online/tiled contract.
 
 These are definitional-equality theorems because the proof-facing contract spells out the same
 mathematical stages as standard attention. The native CUDA implementation is tested against this
@@ -103,7 +103,7 @@ contract rather than only at an opaque fused primitive:
 
 1. build scaled scores `QKᵀ / sqrt(d)`;
 2. apply the boolean mask with true hard-mask semantics (blocked numerator is zero);
-3. compute the same row-wise normalized weights that an online summary converges to;
+3. compute the same row-wise normalized weights that a correct online summary must produce;
 4. multiply by values.
 
 This is schedule-polymorphic: `cfg.blockQ` and `cfg.blockK` describe how a runtime may tile the
@@ -169,11 +169,11 @@ The native runtime kernel is intended to compute the same row program in a fused
 2. compute the stabilized softmax normalization for that row;
 3. accumulate `Σ_j softmax(score_j) * V_j` directly into the output.
 
-`cudaLoopFlashAttention` is a **denotational target**, written with tensor
-combinators rather than CUDA thread/block syntax. The equalities below are definitional
-checks: they say the named fused operator denotes standard SDPA in the spec. They do not verify the
-CUDA source code, the online-softmax recurrence, or the memory-IO schedule. Those remain explicit
-runtime/FFI contracts tested against this target.
+`cudaLoopFlashAttention` is a **denotational target**, written with tensor combinators rather than
+CUDA thread/block syntax. The equalities below are definitional checks: they say the named fused
+operator denotes standard SDPA in the spec. They do not verify the CUDA source code, the
+online-softmax recurrence, or the memory-IO schedule. Those remain explicit runtime/FFI contracts
+tested against this target.
 -/
 
 /-- Denotational target for the fused CUDA FlashAttention forward kernel. -/

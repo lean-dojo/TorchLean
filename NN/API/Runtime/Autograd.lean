@@ -40,7 +40,7 @@ namespace Autodiff
 namespace Model
 
 /-
-This section provides "model-shaped" autodiff helpers:
+The declarations below provide "model-shaped" autodiff helpers:
 - a `Seq σ τ` model,
 - an `OutputLoss τ υ` (loss built from model output + target),
 - and model-shaped entrypoints for VJP/Jacobian/HVP/JVP and gradient extraction.

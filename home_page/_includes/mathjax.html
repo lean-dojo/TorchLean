@@ -1,10 +1,21 @@
-{% if page.usemathjax %}
-  <!-- MathJax v3 (for lightweight math on Jekyll landing pages; Verso pages use KaTeX). -->
-  <script>
-    window.MathJax = {
-      tex: { tags: "ams" }
-    };
-  </script>
-  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
-{% endif %}
-
+<!-- MathJax v3 for site-wide inline and display math on Jekyll pages. -->
+<script>
+  window.MathJax = {
+    tex: {
+      inlineMath: [['\\(', '\\)'], ['$', '$']],
+      displayMath: [['\\[', '\\]'], ['$$', '$$']],
+      processEscapes: true,
+      tags: "ams"
+    },
+    chtml: { linebreaks: { automatic: true, width: 'container' } },
+    options: {
+      enableMenu: false,
+      renderActions: { addMenu: [] },
+      skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+    },
+    startup: {
+      pageReady: () => MathJax.startup.defaultPageReady().then(() => MathJax.typesetPromise())
+    }
+  };
+</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>

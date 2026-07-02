@@ -14,16 +14,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-// CUDA implementation of TorchLean float32 conv/pool kernels over `Cuda.Buffer`.
-//
-// The implementation keeps the fast 2D kernels and the generic N-D kernels side by side. Both paths
-// use row-major flattened CHW / N-D layouts matching the Lean tensor specs.
-//
-// Trust-boundary contract:
-// - host wrappers validate sizes, ranks, kernel sizes, stride, and padding-derived output shapes;
-// - max-pool padding is ignored (`-inf` for max), matching the TorchLean/PyTorch convention;
-// - atomic backward paths have deterministic alternatives controlled by the runtime flag;
-// - the CPU fallback in `torchlean_cuda_conv_pool_stub.c` must stay semantically aligned.
+// Conv/pool kernels for `Cuda.Buffer`.
+// The 2D fast paths and generic N-D paths use the same flat row-major layout. Wrappers check shape
+// data before launch; the runtime flag chooses deterministic backward paths.
 
 static constexpr int kBlock = 256;
 static constexpr int kMaxRank = TORCHLEAN_CUDA_CONV_POOL_MAX_RANK;
@@ -1645,7 +1638,7 @@ __global__ void smoothmaxpoolnd_bwd_det_kernel(const float* input, const float* 
 }
 
 // -------------------------
-// Lean FFI entrypoints
+// Exported Lean FFI functions
 // -------------------------
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_conv2d_fwd(
@@ -2145,7 +2138,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_avgpool2d_bwd(
 }
 
 // -------------------------
-// N-D Conv + Pooling entrypoints
+// N-D conv + pooling exported functions
 // -------------------------
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_conv_fwd(

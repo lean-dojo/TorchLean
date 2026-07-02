@@ -250,7 +250,7 @@ The `SpecChain` wiring above is convenient for model diagrams. For training/veri
 we also want an
 explicit reverse-mode spec that returns parameter gradients.
 
-This section provides a small CNN in the classic:
+The code below defines a small CNN in the classic:
 
 `Conv → ReLU → MaxPool → Conv → ReLU → MaxPool → Flatten → Linear`
 

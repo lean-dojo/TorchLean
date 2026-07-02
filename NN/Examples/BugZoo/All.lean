@@ -14,6 +14,8 @@ public import NN.Examples.BugZoo.AttentionMask
 public import NN.Examples.BugZoo.CompilerBoundary
 public import NN.Examples.BugZoo.FloatBoundary
 public import NN.Examples.BugZoo.NormalizationState
+public import NN.Examples.BugZoo.LayerNormDegenerateAxis
+public import NN.Examples.BugZoo.ConstantNormalizationSlice
 public import NN.Examples.BugZoo.BatchInvariance
 public import NN.Examples.BugZoo.KVCache
 public import NN.Examples.BugZoo.RoPEPosition

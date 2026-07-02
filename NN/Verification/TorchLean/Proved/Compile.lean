@@ -104,7 +104,7 @@ def compileNode
         { ps with
             linearWB := ps.linearWB.insert id { m := outDim, n := inDim, w := wT, b := bT } }
       (n, ps')
-  | .conv2d inC outC kH kW stride padding inH inW hIn hKH hKW _hHeight _hWidth kernel bias x =>
+  | .conv2d inC outC kH kW stride padding inH inW hIn hKH hKW hStride _hHeight _hWidth kernel bias x =>
       let kT := getParam (α := α) (paramShapes := paramShapes) params kernel
       let bT := getParam (α := α) (paramShapes := paramShapes) params bias
       let outShape : Shape :=
@@ -122,7 +122,7 @@ def compileNode
         { inC := inC, outC := outC, kH := kH, kW := kW
           stride := stride, padding := padding
           inH := inH, inW := inW
-          hIn := hIn, hKH := hKH, hKW := hKW
+          hIn := hIn, hKH := hKH, hKW := hKW, hStride := hStride,
           spec := spec }
       let ps' := { ps with conv2dCfg := ps.conv2dCfg.insert id cfg }
       (n, ps')

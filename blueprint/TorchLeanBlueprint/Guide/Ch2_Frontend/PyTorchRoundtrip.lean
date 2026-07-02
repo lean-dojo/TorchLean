@@ -193,8 +193,8 @@ This is useful for two reasons:
 
 # A Small Python View
 
-The Python half stays ordinary. The goal is not to replace the PyTorch workflow; the
-goal is to make the boundary between PyTorch and Lean explicit enough that it can be audited.
+The Python half stays ordinary. TorchLean does not replace the PyTorch workflow; it makes the
+boundary between PyTorch and Lean explicit enough to audit.
 
 ```
 import torch

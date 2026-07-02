@@ -41,6 +41,8 @@ variable {α : Type} [Context α]
 Configuration for 2D pooling.
 
 This matches the common `(kernel, stride, padding)` parameters used by deep-learning libraries.
+Kernel sizes and stride are required to be nonzero, matching the spec-layer pooling records and
+preventing empty windows or division by zero in average pooling.
 -/
 structure Pool2DConfig where
   /-- Kernel height. -/
@@ -51,10 +53,16 @@ structure Pool2DConfig where
   stride : Nat
   /-- Padding (used for all sides). -/
   padding : Nat
+  /-- Kernel height is nonzero. -/
+  hKH : kH ≠ 0
+  /-- Kernel width is nonzero. -/
+  hKW : kW ≠ 0
+  /-- Stride is nonzero. -/
+  hStride : stride ≠ 0
 
 /-- Compute output dimensions for pooling -/
-def poolOutputSize (inSize padding kSize stride : Nat) : Nat :=
-  if stride = 0 then 0 else (inSize + 2 * padding - kSize) / stride + 1
+def poolOutputSize (inSize padding kSize stride : Nat) (_hStride : stride ≠ 0) : Nat :=
+  (inSize + 2 * padding - kSize) / stride + 1
 
 /-!
 # Max Pooling IBP
@@ -63,8 +71,9 @@ For max pooling, the interval bounds are:
 - Lower bound: max of all lower bounds in the window
 - Upper bound: max of all upper bounds in the window
 
-We use `Numbers.neg_thousand` as a practical lower bound for initialization
-since the Context typeclass doesn't provide negative infinity.
+The max fold is seeded from the first real input cell in the window. Padded cells are ignored,
+matching the spec-layer treatment of PyTorch-style `-∞` padding without introducing a finite
+sentinel such as `-1000`.
 -/
 
 /-- Get element from 2D tensor with bounds checking, returns default if out of bounds -/
@@ -85,16 +94,14 @@ def get2D {h w : Nat} (t : Tensor α (.dim h (.dim w .scalar))) (i j : Nat) (def
 def ibpMaxpool2dChannel {inH inW : Nat}
     (cfg : Pool2DConfig)
     (xB : Box α (.dim inH (.dim inW .scalar))) :
-    Box α (.dim (poolOutputSize inH cfg.padding cfg.kH cfg.stride)
-              (.dim (poolOutputSize inW cfg.padding cfg.kW cfg.stride) .scalar)) :=
-  let outH := poolOutputSize inH cfg.padding cfg.kH cfg.stride
-  let outW := poolOutputSize inW cfg.padding cfg.kW cfg.stride
-  -- Use a very negative number as initial max value
-  let negInit : α := Numbers.neg_thousand
+    Box α (.dim (poolOutputSize inH cfg.padding cfg.kH cfg.stride cfg.hStride)
+              (.dim (poolOutputSize inW cfg.padding cfg.kW cfg.stride cfg.hStride) .scalar)) :=
+  let outH := poolOutputSize inH cfg.padding cfg.kH cfg.stride cfg.hStride
+  let outW := poolOutputSize inW cfg.padding cfg.kW cfg.stride cfg.hStride
   let outLo := Tensor.dim (fun i : Fin outH =>
     Tensor.dim (fun j : Fin outW =>
       -- Find max of lower bounds in window
-      let maxLo : α := (List.range cfg.kH).foldl (fun acc di =>
+      let maxLo? : Option α := (List.range cfg.kH).foldl (fun acc di =>
         (List.range cfg.kW).foldl (fun acc dj =>
           let pi := i.val * cfg.stride + di
           let pj := j.val * cfg.stride + dj
@@ -103,17 +110,19 @@ def ibpMaxpool2dChannel {inH inW : Nat}
             let ii := pi - cfg.padding
             let jj := pj - cfg.padding
             if ii < inH ∧ jj < inW then
-              let v := get2D xB.lo ii jj negInit
-              if v > acc then v else acc
+              let v := get2D xB.lo ii jj Numbers.zero
+              match acc with
+              | none => some v
+              | some best => some (if v > best then v else best)
             else acc
           else acc
         ) acc
-      ) negInit
-      Tensor.scalar maxLo))
+      ) none
+      Tensor.scalar (maxLo?.getD Numbers.zero)))
   let outHi := Tensor.dim (fun i : Fin outH =>
     Tensor.dim (fun j : Fin outW =>
       -- Find max of upper bounds in window
-      let maxHi : α := (List.range cfg.kH).foldl (fun acc di =>
+      let maxHi? : Option α := (List.range cfg.kH).foldl (fun acc di =>
         (List.range cfg.kW).foldl (fun acc dj =>
           let pi := i.val * cfg.stride + di
           let pj := j.val * cfg.stride + dj
@@ -121,13 +130,15 @@ def ibpMaxpool2dChannel {inH inW : Nat}
             let ii := pi - cfg.padding
             let jj := pj - cfg.padding
             if ii < inH ∧ jj < inW then
-              let v := get2D xB.hi ii jj negInit
-              if v > acc then v else acc
+              let v := get2D xB.hi ii jj Numbers.zero
+              match acc with
+              | none => some v
+              | some best => some (if v > best then v else best)
             else acc
           else acc
         ) acc
-      ) negInit
-      Tensor.scalar maxHi))
+      ) none
+      Tensor.scalar (maxHi?.getD Numbers.zero)))
   { lo := outLo, hi := outHi }
 
 /-!
@@ -142,10 +153,10 @@ For average pooling, the interval bounds are:
 def ibpAvgpool2dChannel {inH inW : Nat}
     (cfg : Pool2DConfig)
     (xB : Box α (.dim inH (.dim inW .scalar))) :
-    Box α (.dim (poolOutputSize inH cfg.padding cfg.kH cfg.stride)
-              (.dim (poolOutputSize inW cfg.padding cfg.kW cfg.stride) .scalar)) :=
-  let outH := poolOutputSize inH cfg.padding cfg.kH cfg.stride
-  let outW := poolOutputSize inW cfg.padding cfg.kW cfg.stride
+    Box α (.dim (poolOutputSize inH cfg.padding cfg.kH cfg.stride cfg.hStride)
+              (.dim (poolOutputSize inW cfg.padding cfg.kW cfg.stride cfg.hStride) .scalar)) :=
+  let outH := poolOutputSize inH cfg.padding cfg.kH cfg.stride cfg.hStride
+  let outW := poolOutputSize inW cfg.padding cfg.kW cfg.stride cfg.hStride
   let windowSize : α := (cfg.kH * cfg.kW : Nat)
   let outLo := Tensor.dim (fun i : Fin outH =>
     Tensor.dim (fun j : Fin outW =>
@@ -208,8 +219,9 @@ def get3D {c h w : Nat} (t : Tensor α (.dim c (.dim h (.dim w .scalar)))) (ch i
       else default
   else default
 
-/-- IBP for Global Average Pooling -/
-def ibpGlobalAvgpool {c h w : Nat} (xB : Box α (.dim c (.dim h (.dim w .scalar)))) :
+/-- IBP for Global Average Pooling. -/
+def ibpGlobalAvgpool {c h w : Nat} (_hH : h ≠ 0) (_hW : w ≠ 0)
+    (xB : Box α (.dim c (.dim h (.dim w .scalar)))) :
     Box α (.dim c .scalar) :=
   let spatialSize : α := (h * w : Nat)
   let outLo := Tensor.dim (fun ch : Fin c =>
@@ -233,23 +245,26 @@ def ibpGlobalAvgpool {c h w : Nat} (xB : Box α (.dim c (.dim h (.dim w .scalar)
 /-- IBP for Global Max Pooling -/
 def ibpGlobalMaxpool {c h w : Nat} (xB : Box α (.dim c (.dim h (.dim w .scalar)))) :
     Box α (.dim c .scalar) :=
-  let negInit : α := Numbers.neg_thousand
   let outLo := Tensor.dim (fun ch : Fin c =>
-    let maxLo := (List.range h).foldl (fun acc i =>
+    let maxLo? := (List.range h).foldl (fun acc i =>
       (List.range w).foldl (fun acc j =>
-        let v := get3D xB.lo ch.val i j negInit
-        if v > acc then v else acc
+        let v := get3D xB.lo ch.val i j Numbers.zero
+        match acc with
+        | none => some v
+        | some best => some (if v > best then v else best)
       ) acc
-    ) negInit
-    Tensor.scalar maxLo)
+    ) none
+    Tensor.scalar (maxLo?.getD Numbers.zero))
   let outHi := Tensor.dim (fun ch : Fin c =>
-    let maxHi := (List.range h).foldl (fun acc i =>
+    let maxHi? := (List.range h).foldl (fun acc i =>
       (List.range w).foldl (fun acc j =>
-        let v := get3D xB.hi ch.val i j negInit
-        if v > acc then v else acc
+        let v := get3D xB.hi ch.val i j Numbers.zero
+        match acc with
+        | none => some v
+        | some best => some (if v > best then v else best)
       ) acc
-    ) negInit
-    Tensor.scalar maxHi)
+    ) none
+    Tensor.scalar (maxHi?.getD Numbers.zero))
   { lo := outLo, hi := outHi }
 
 end NN.MLTheory.CROWN.Operators

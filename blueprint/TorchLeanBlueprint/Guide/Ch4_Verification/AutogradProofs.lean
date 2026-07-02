@@ -173,7 +173,7 @@ $$`D\,\log\operatorname{softmax}(x)[dx]_i
 dx_i-\sum_j \operatorname{softmax}(x)_j\,dx_j.`
 
 The theorem proves that the formula used by the reverse rule is the adjoint of the derivative of the
-forward function. This is where a framework bug or a mistake in a custom op can otherwise appear:
+forward function. Framework bugs and mistakes in custom ops often live at exactly that boundary:
 the program might execute successfully while returning a subtly wrong gradient.
 
 Their comments cite the PyTorch API docs for naming alignment, not as proof sources:
@@ -282,7 +282,7 @@ extensions can refine.
 
 For readers trying to audit an autograd claim, we recommend reading from the bottom up:
 
-1. Start with the [tape algebra soundness API](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Autograd/Tape/Algebra/Soundness.lean)
+1. Read the [tape algebra soundness API](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Autograd/Tape/Algebra/Soundness.lean)
    and find `Graph.backprop_correct`.
 2. Move to the [Fréchet derivative tape API](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Autograd/Tape/Core/FDeriv.lean) and find
    `Graph.backpropVec_eq_adjoint_fderiv`.

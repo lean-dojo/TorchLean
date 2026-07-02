@@ -16,10 +16,10 @@ This file provides **real**, shape-indexed reference implementations of the two 
 matrix factorizations that classical / scientific-ML models (Gaussian processes, kernel ridge
 regression, PCA, least squares) depend on, and which were previously missing from the spec layer:
 
-- `choleskySpec`   — Cholesky factorization `A = L · Lᵀ` (lower-triangular `L`), for matrices
-                     with positive executable Cholesky pivots.
-- `qrSpec`         — QR factorization `A = Q · R` via classical Gram–Schmidt
-                     (`Q` has orthonormal columns, `R` upper-triangular).
+- `choleskySpec`   — Cholesky factorization `A = L · Lᵀ` (lower-triangular `L`), proved for
+                     matrices with positive executable Cholesky pivots.
+- `qrSpec`         — QR factorization `A = Q · R` via classical Gram–Schmidt; under positive
+                     executable `R` pivots, `Q` has orthonormal columns and `R` is upper-triangular.
 
 It also provides the linear solves that ride on the Cholesky factor:
 
@@ -31,12 +31,13 @@ It also provides the linear solves that ride on the Cholesky factor:
 
 The **verified** contribution is the factorizations: `choleskySpec` / `qrSpec` come with
 reconstruction and structural theorems (`IsCholesky` / `IsQR`, lower- and upper-triangularity,
-orthonormality) in `NN.Proofs.Tensor.Basic.Factorizations*`. The triangular- and ridge-solve
-helpers above (`triSolveLowerFn`, `triSolveUpperFn`, `cholSolveFn`, `solveRidgeSpec`) are
-**executable APIs only**: this PR does *not* yet prove their correctness (no
-`triSolveLower · x = b` / `solveRidge` correctness theorem has landed). They are sound by
-construction over the readable function representation and exercised by `#eval` examples, but
-should not be read as carrying a verified-correctness guarantee.
+orthonormality) in `NN.Proofs.Tensor.Basic.Factorizations*`, under their stated positive-pivot
+success hypotheses. The triangular- and ridge-solve helpers above (`triSolveLowerFn`,
+`triSolveUpperFn`, `cholSolveFn`, `solveRidgeSpec`) are **executable APIs only**: this PR does *not*
+yet prove their correctness (no `triSolveLower · x = b` / `solveRidge` correctness theorem has
+landed). They follow the standard substitution formulas over the readable function representation
+and are exercised by `#eval` examples, but should not be read as carrying a verified-correctness
+guarantee.
 
 ## Intent / tradeoffs
 
@@ -90,7 +91,9 @@ def normFn {p : Nat} (v : Fin p → α) : α :=
 
 /-! ## Cholesky factorization
 
-For a symmetric positive-definite `A`, compute the lower-triangular `L` with `A = L · Lᵀ`.
+For an input whose executable Cholesky pivots are positive, compute the lower-triangular `L` with
+`A = L · Lᵀ`. Symmetric positive-definiteness is the standard sufficient condition, but the theorem
+in this file family is stated against the executable positive-pivot success condition.
 
 The columns are computed left to right. Column `j` uses only columns `0 .. j-1`:
 
@@ -173,8 +176,8 @@ def choleskyFn {n : Nat} (A : Fin n → Fin n → α) : Fin n → Fin n → α :
   fun i j => (cols.getD j.val (fun _ => 0)) i
 
 /--
-Cholesky factorization of a symmetric positive-definite matrix `A`, returning the
-lower-triangular factor `L` with `A = L · Lᵀ`.
+Cholesky factorization candidate for `A`, returning a lower-triangular factor. Over `ℝ`, the proved
+reconstruction theorem assumes symmetry and positive executable Cholesky pivots.
 
 PyTorch analogue: `torch.linalg.cholesky(A)`.
 -/
@@ -308,12 +311,12 @@ def solveRidgeSpec {n : Nat} (K : Tensor α (.dim n (.dim n .scalar))) (γ : α)
 
 /-! ## QR factorization (classical Gram–Schmidt)
 
-For `A : m × n`, produce `Q : m × n` with orthonormal columns and `R : n × n` upper-triangular
-such that `A = Q · R`. This uses **classical** Gram–Schmidt: each `r[k,j] = qₖ · aⱼ` is the inner
-product against the *original* column `aⱼ`, and all projections are subtracted in a single pass
-(modified Gram–Schmidt would instead dot each `qₖ` against the running residual). In exact real
-arithmetic the two coincide; the classical form is what the recurrence below implements and what
-the reconstruction proof matches.
+For `A : m × n`, compute classical Gram–Schmidt factors. Under positive executable `R` pivots, the
+proved real theorem gives `A = Q · R`, `Q` with orthonormal columns, and upper-triangular `R`. This
+uses **classical** Gram–Schmidt: each `r[k,j] = qₖ · aⱼ` is the inner product against the *original*
+column `aⱼ`, and all projections are subtracted in a single pass (modified Gram–Schmidt would instead
+dot each `qₖ` against the running residual). In exact real arithmetic the two coincide; the classical
+form is what the recurrence below implements and what the reconstruction proof matches.
 -/
 
 /-- Internal state for the Gram–Schmidt fold: computed `Q` columns and `R` columns so far. -/
@@ -343,7 +346,8 @@ def gramSchmidtFn {m n : Nat} (A : Fin m → Fin n → α) : GSState m n α :=
       else 0
     { qs := st.qs ++ [qj], rcols := st.rcols ++ [rcolj] }) { qs := [], rcols := [] }
 
-/-- The `Q` factor (orthonormal columns) of the QR factorization of `A`. -/
+/-- The `Q` factor candidate of the QR factorization of `A`. Its columns are proved orthonormal under
+positive executable `R` pivots. -/
 def qrQSpec {m n : Nat} (A : Tensor α (.dim m (.dim n .scalar))) :
     Tensor α (.dim m (.dim n .scalar)) :=
   let st := gramSchmidtFn (toMatFn A)
@@ -356,8 +360,9 @@ def qrRSpec {m n : Nat} (A : Tensor α (.dim m (.dim n .scalar))) :
   ofMatFn (fun k j => (st.rcols.getD j.val (fun _ => 0)) k)
 
 /--
-QR factorization of `A : m × n` via classical Gram–Schmidt, returning `(Q, R)` with
-`A = Q · R`, `Q` orthonormal columns, `R` upper-triangular.
+QR factorization candidate of `A : m × n` via classical Gram–Schmidt. Over `ℝ`, the full
+`A = Q · R`, orthonormal-column, and upper-triangular specification is proved under positive
+executable `R` pivots.
 
 PyTorch analogue: `torch.linalg.qr(A)`.
 -/

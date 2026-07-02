@@ -102,7 +102,7 @@ theorem crossEntropyLogitsDeriv_is_softmax_minus_target {s : Spec.Shape}
     Spec.crossEntropyLogitsDerivSpec logits target =
       Spec.Tensor.scaleSpec
         (Spec.Tensor.subSpec (Activation.softmaxSpec (α := α) (s := s) logits) target)
-        (1 / (Spec.Shape.size s : α)) := by
+        (1 / (Spec.meanDenom s : α)) := by
   rfl
 
 /--

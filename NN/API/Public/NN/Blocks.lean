@@ -143,7 +143,7 @@ These are small, *named-field* building blocks intended for public examples:
 - keep composition explicit (still `seq!` stacking),
 - provide canonical blocks users expect from PyTorch codebases.
 
-They are conservative by design: the goal is readability and stable typing, not maximum coverage.
+They are conservative by design, prioritizing readability and stable typing over maximum coverage.
 -/
 
 /--

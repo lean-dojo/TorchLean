@@ -12,7 +12,7 @@ autograd engine.
 
 ## How To Navigate
 
-- If you want a neural model: start with `mlp.lean`, `cnn.lean`, `transformer.lean`, `resnet.lean`,
+- Neural models: `mlp.lean`, `cnn.lean`, `transformer.lean`, `resnet.lean`,
   `vit.lean`, `seq2seq.lean`, or `unet.lean`.
 - If you want classical baselines: `linear_regression.lean`, `logistic_regression.lean`, `svm.lean`,
   `knn.lean`, `naive_bayes.lean`, `pca.lean`, `random_forest.lean`, `gradient_boosted_trees.lean`,

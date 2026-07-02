@@ -95,7 +95,7 @@ def firstRowAsArray : TensorArray.Tensor Float [3] :=
   toTensorArray firstRowSpec
 
 /-!
-Widget lane for this section.
+Widget lane for the row-extraction example.
 
 These `meta` declarations mirror the ordinary definitions above. They are not the
 recommended programming style; they simply make the bridge computation executable for ProofWidgets.
@@ -231,8 +231,8 @@ flat = torch.tensor([1., 2., 3., 4., 5., 6.])
 reshaped = flat.reshape(2, 3)
 ```
 
-This section spells out the row-major index arithmetic. Use library reshape helpers when available;
-the explicit calculation here fixes the layout convention.
+The calculation below spells out the row-major index arithmetic. Use library reshape helpers when
+available; the explicit calculation here fixes the layout convention.
 -/
 
 /-- A flat length-6 vector in `TensorArray`. -/
@@ -333,8 +333,9 @@ out = weight @ x
 grad_like = 2 * out
 ```
 
-This section focuses on shape-preserving tensor transformations that have the same shape discipline
-as gradient buffers. Autograd examples live under `NN/Examples/Quickstart/AutogradBasics.lean`.
+The examples below focus on shape-preserving tensor transformations that have the same shape
+discipline as gradient buffers. Autograd examples live under
+`NN/Examples/Quickstart/AutogradBasics.lean`.
 -/
 
 /-- A compact forward pass: `weights @ input`. -/

@@ -171,7 +171,7 @@ traversal of a well-formed graph computes the adjoint derivative of the whole gr
 Later proof chapters state the exact Lean theorems. Here the runtime fact to remember is simpler:
 the tape and compiled artifacts expose the structure those theorems need.
 
-For a proof tour, start with:
+For a proof tour, use:
 
 - [autograd proof overview](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Autograd/Overview.lean)
 - [tape algebra soundness API](https://github.com/lean-dojo/TorchLean/blob/main/NN/Proofs/Autograd/Tape/Algebra/Soundness.lean)
@@ -196,7 +196,7 @@ For runnable examples close to this runtime layer:
 - [SimpleMlpTrain](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Quickstart/SimpleMlpTrain.lean)
 - [MinibatchMlpTrain](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Quickstart/MinibatchMlpTrain.lean)
 
-To read the runtime layer in dependency order, start with eager tensors and tapes, then compiled
+To read the runtime layer in dependency order, begin with eager tensors and tapes, then compiled
 graph construction, then the IR execution bridge, and finally the curated model examples.
 
 # References

@@ -5,10 +5,10 @@ usage() {
   cat <<'EOF'
 Usage: scripts/checks/example_smoke.sh [options]
 
-Run a sequential smoke test over the public `lake exe torchlean ...` example surface.
+Run a sequential smoke test over the public `lake exe torchlean ...` commands.
 
 Default:
-  - verify the focused public API import exposes documented `TorchLean.*` facade names;
+  - check that `import NN.Entrypoint.API` exposes the usual `TorchLean.*` names;
   - verify every registered subcommand accepts `--help`;
   - run a compact CPU/tutorial/interop smoke set.
 

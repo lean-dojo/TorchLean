@@ -15,8 +15,8 @@ This file gives a small finite-index vocabulary for masked prediction objectives
 independent of any particular image or transformer implementation: a patch/token collection is just
 `Fin n → α`, and a mask is a Boolean predicate on `Fin n`.
 
-The goal is to make MAE/JEPA-style objectives precise enough to prove local invariants before we
-connect them to larger executable models.
+The definitions make MAE/JEPA-style objectives precise enough for local invariants before they are
+connected to larger executable models.
 -/
 
 @[expose] public section

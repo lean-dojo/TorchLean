@@ -167,6 +167,7 @@ inductive Node
       Node α paramShapes inShape ss (.dim outDim .scalar)
   | conv2d (inC outC kH kW stride padding inH inW : Nat)
       (hIn : inC ≠ 0) (hKH : kH ≠ 0) (hKW : kW ≠ 0)
+      (hStride : stride ≠ 0)
       (hHeight : OpContracts.checkWindowFits "conv2d" "height" inH kH padding = .ok ())
       (hWidth : OpContracts.checkWindowFits "conv2d" "width" inW kW padding = .ok ())
       (kernel : Idx paramShapes (.dim outC (.dim inC (.dim kH (.dim kW .scalar)))))
@@ -321,7 +322,7 @@ def evalNode
       let y := Tensor.addSpec (α := α)
         (Tensor.matVecMulSpec (α := α) (m := outDim) (n := inDim) wT xT) bT
       pure <| DVal.mk (α := α) (.dim outDim .scalar) y
-  | .conv2d inC outC kH kW stride padding inH inW hIn hKH hKW _hHeight _hWidth kernel bias x =>
+  | .conv2d inC outC kH kW stride padding inH inW hIn hKH hKW _hStride _hHeight _hWidth kernel bias x =>
       let kT := getParam (α := α) (paramShapes := paramShapes) params kernel
       let bT := getParam (α := α) (paramShapes := paramShapes) params bias
       let xT ← getVal (α := α) (inShape := inShape) (ss := ss)
@@ -346,7 +347,7 @@ def evalNode
         let diff := Tensor.subSpec (α := α) yT tT
         let sq := Tensor.mulSpec (α := α) diff diff
         let total : α := Tensor.sumSpec (α := α) sq
-        let mean : α := total / (↑(Shape.size s) : α)
+        let mean : α := total / (↑(NN.IR.Graph.meanDenom s) : α)
         pure <| DVal.mk (α := α) .scalar (Tensor.scalar mean)
       else
         throw

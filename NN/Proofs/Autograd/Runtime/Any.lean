@@ -121,7 +121,7 @@ attribute [grind =] toAnyList_cast toAnyArray_cast length_toAnyList size_toAnyAr
 /-!
 ### Shape-erasing conversions
 
-The lemmas in this section show that these conversions preserve length/order and interact well with
+The lemmas below show that these conversions preserve length/order and interact well with
 `TList.snoc` and `TList.get`. They’re used later to relate runtime node ids to positions in the
 typed proof context `Γ ++ ss`.
 -/

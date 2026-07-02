@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Tape.Nodes.Reductions
+public import NN.Spec.Layers.Loss
 
 @[expose] public section
 
@@ -32,9 +33,15 @@ Tape node and Fréchet derivative proof for scalar mean-squared error.
 -- Loss: scalar mean squared error
 -- ---------------------------------------------------------------------------
 
-/-- Mean-squared-error loss node: `c * ‖yhat - target‖^2`, with `c = 1 / size(s)`. -/
+/--
+Mean-squared-error loss node: `c * ‖yhat - target‖^2`, with
+`c = 1 / Spec.meanDenom s`.
+
+For nonempty shapes this is the usual `1 / Shape.size s`. For the empty shape case, the scalar loss
+API is totalized with denominator `1`, matching `Spec.mseSpec` and the IR evaluator.
+-/
 def mseLoss {Γ : List Shape} {s : Shape} (yhat target : Idx Γ s) : Node Γ Shape.scalar :=
-  let n : Nat := Shape.size s
+  let n : Nat := Spec.meanDenom s
   let c : ℝ := (1 : ℝ) / (n : ℝ)
   Node.ofVec (Γ := Γ) (τ := Shape.scalar)
     (f := fun xV =>
@@ -56,7 +63,7 @@ def mseLoss {Γ : List Shape} {s : Shape} (yhat target : Idx Γ s) : Node Γ Sha
     (correct_inner := by
       intro xV dxV δV
       classical
-      let n : Nat := Shape.size s
+      let n : Nat := Spec.meanDenom s
       let c : ℝ := (1 : ℝ) / (n : ℝ)
       let i0 : Fin (Shape.size Shape.scalar) := ⟨0, by simp [Shape.size]⟩
       let δ0 : ℝ := δV i0
@@ -115,7 +122,7 @@ def mseLoss {Γ : List Shape} {s : Shape} (yhat target : Idx Γ s) : Node Γ Sha
 def mseLossFderiv {Γ : List Shape} {s : Shape} (yhat target : Idx Γ s) :
     NodeFDerivCorrect (mseLoss (Γ := Γ) (s := s) yhat target) := by
   classical
-  let n : Nat := Shape.size s
+  let n : Nat := Spec.meanDenom s
   let c : ℝ := (1 : ℝ) / (n : ℝ)
   let diffDeriv : CtxVec Γ →L[ℝ] Vec (Shape.size s) :=
     (CtxVec.getCLM (Γ := Γ) (s := s) yhat) - (CtxVec.getCLM (Γ := Γ) (s := s) target)
@@ -192,7 +199,7 @@ def mseLossFderiv {Γ : List Shape} {s : Shape} (yhat target : Idx Γ s) :
         ((Node.forwardVec (Γ := Γ) (τ := Shape.scalar)
               (mseLoss (Γ := Γ) (s := s) yhat target)) x).ofLp ⟨0, by simp [Shape.size]⟩
             =
-          (↑(Shape.size s))⁻¹ *
+          (↑(Spec.meanDenom s))⁻¹ *
             ‖CtxVec.get (Γ := Γ) (s := s) yhat x -
               CtxVec.get (Γ := Γ) (s := s) target x‖ ^ 2 := by
             simp [mseLoss, Node.forwardVec_ofVec, Shape.size, div_eq_mul_inv]

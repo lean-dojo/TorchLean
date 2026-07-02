@@ -21,8 +21,8 @@ This module proves the key discounted Bellman facts for TorchLean's finite stoch
 - Bellman expectation is a contraction in the sup metric,
 - Bellman optimality is also a contraction in the sup metric.
 
-The setting is intentionally finite and concrete. The goal is not maximal generality; it is a
-clean, trustworthy formal base that mirrors the standard textbook RL theory for discounted MDPs.
+The setting is intentionally finite and concrete: a clean, trustworthy formal base that mirrors the
+standard textbook RL theory for discounted MDPs, rather than maximal generality.
 
 References:
 - Puterman, *Markov Decision Processes* (1994), discounted case:
@@ -366,7 +366,7 @@ theorem bellmanOptimality_contraction
 The earlier theorems show that (under `0 ≤ γ < 1`) the Bellman operators are `γ`-contractions in the
 sup metric (`valueSupDist`).
 
-This section packages the standard consequences used throughout discounted-RL theory:
+The theorems below package the standard consequences used throughout discounted-RL theory:
 
 - iterating a contraction shrinks distances geometrically (`γ^k`),
 - fixed points are unique,

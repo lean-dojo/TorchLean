@@ -95,6 +95,8 @@ Flatten a typed convolution into the affine map it denotes.
 
 The CROWN pass uses this when a convolution is linear in the selected input. Keeping the conversion
 here lets convolution share the same affine machinery as linear and matmul nodes.
+
+Precondition: `cfg.stride ≠ 0`. Engine call sites check this before calling the converter.
 -/
 def affOfConv2d (cfg : Conv2DParams α) :
   let outH := (cfg.inH + 2 * cfg.padding - cfg.kH) / cfg.stride + 1
@@ -346,7 +348,9 @@ def propagateAffineNode
       match getAff p1, ps.conv2dCfg[id]? with
       | some paff, some cfg =>
         let convIn := cfg.inC * cfg.inH * cfg.inW
-        if hdim : paff.outDim = convIn then
+        if _hs : cfg.stride = 0 then
+          affs
+        else if hdim : paff.outDim = convIn then
           let outH := (cfg.inH + 2 * cfg.padding - cfg.kH) / cfg.stride + 1
           let outW := (cfg.inW + 2 * cfg.padding - cfg.kW) / cfg.stride + 1
           let convAff0 := affOfConv2d (α:=α) cfg
@@ -545,7 +549,10 @@ def propagateAffineNode
             (ofFlatBox preB)
           let sum_lo := Spec.Tensor.sumSpec preB'.lo
           let sum_hi := Spec.Tensor.sumSpec preB'.hi
-          let nA : α := (n : Nat)
+          -- For `n = 0` the output vector is empty; use a nonzero dummy denominator so the
+          -- vacuous affine form does not evaluate `1 / 0`.
+          let nDen : Nat := if n = 0 then 1 else n
+          let nA : α := (nDen : Nat)
           let mu_lo := sum_lo / nA
           let mu_hi := sum_hi / nA
           let flo := getDimScalarFn (α:=α) preB'.lo

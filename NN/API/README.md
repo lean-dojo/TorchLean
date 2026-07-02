@@ -1,6 +1,6 @@
 # NN/API
 
-These modules back the public TorchLean API. Model and training code should usually start with:
+These modules back the public TorchLean API. Model and training code usually imports:
 
 ```lean
 import NN

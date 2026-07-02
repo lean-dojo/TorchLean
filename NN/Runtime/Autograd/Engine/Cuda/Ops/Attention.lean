@@ -33,9 +33,8 @@ Forward structure matches `Spec.MultiHeadAttention.forward`:
 4. combine heads, then output projection `@ Wo`
 
 Masking:
-- If `mask` is provided, we upload it as a float32 `{0,1}` matrix and apply the same semantics as
-  the spec: masked logits are replaced by `-1000.0` before softmax, and gradients through masked
-  entries are zeroed.
+- If `mask` is provided, we upload it as a float32 `{0,1}` matrix and apply hard-mask semantics:
+  blocked entries contribute zero softmax numerator, and their score gradients are zero.
 - This incurs a host-to-device copy for the mask (since the mask is a host `Tensor Bool`).
 -/
 
@@ -73,8 +72,7 @@ def multiHeadAttention
   let Kh := Buffer.swapAdjacentAtDepth K dimsView depth0  -- (numHeads,n,headDim)
   let Vh := Buffer.swapAdjacentAtDepth V dimsView depth0  -- (numHeads,n,headDim)
   let scale : Float := 1.0 / Float.sqrt (Float.ofNat headDim)
-  -- Optional mask: `mask[i,j]=true` means allowed; false positions are set to a large negative
-  -- constant before softmax.
+  -- Optional mask: `mask[i,j]=true` means allowed; false entries contribute zero numerator.
   let (maskB, hasMask) : Buffer × UInt32 :=
     match mask with
     | none => (Buffer.zeros 0, 0)
@@ -95,23 +93,13 @@ def multiHeadAttention
       let KhT := Buffer.swapAdjacentAtDepth Kh dimsHead depth1
       let scores := Buffer.bmm Qh KhT h32 n32 head32 n32
       let scaled0 := Buffer.scale scores scale
-      let (scaled, maskCleanup) ←
-        match mask with
-        | none => pure (scaled0, ([] : List Buffer))
-        | some _ => do
-            let total : Nat := numHeads * n * n
-            let total32 ← u32 total
-            let ones := Buffer.full total32 1.0
-            let invMask := Buffer.sub ones maskB
-            let fill := Buffer.full total32 (-1000.0)
-            let scaledMask := Buffer.mul scaled0 maskB
-            let fillMask := Buffer.mul fill invMask
-            let scaled := Buffer.add scaledMask fillMask
-            pure (scaled, [ones, invMask, fill, scaledMask, fillMask])
       let rowsFold32 ← u32 (numHeads * n)
-      let attnOwned := rowSoftmaxForward scaled rowsFold32 n32
+      let attnOwned :=
+        match mask with
+        | none => rowSoftmaxForward scaled0 rowsFold32 n32
+        | some _ => rowHardMaskedSoftmaxForward scaled0 maskB rowsFold32 n32
       let outHeads := Buffer.bmm attnOwned.value Vh h32 n32 n32 head32
-      pure (outHeads, [KhT, scores, scaled0, scaled, attnOwned.value] ++ maskCleanup ++
+      pure (outHeads, [KhT, scores, scaled0, attnOwned.value] ++
         attnOwned.workspace)
   -- combine heads: swap to (n,numHeads,headDim), then reshape to (n,projDim)
   let swapped := Buffer.swapAdjacentAtDepth outHeads dimsHead depth0  -- (n,numHeads,headDim)
@@ -151,22 +139,11 @@ def multiHeadAttention
             let KhT := Buffer.swapAdjacentAtDepth Kh dimsHead depth1
             let scores := Buffer.bmm Qh KhT h32 n32 head32 n32
             let scaled0 := Buffer.scale scores scale
-            let scaled ←
-              match mask with
-              | none => pure scaled0
-              | some _ => do
-                  let total : Nat := numHeads * n * n
-                  let total32 ← u32 total
-                  let ones := Buffer.full total32 1.0
-                  let invMask := Buffer.sub ones maskB
-                  let fill := Buffer.full total32 (-1000.0)
-                  let scaledMask := Buffer.mul scaled0 maskB
-                  let fillMask := Buffer.mul fill invMask
-                  pure <| Buffer.releaseThen ones <| Buffer.releaseThen invMask <|
-                    Buffer.releaseThen fill <| Buffer.releaseThen scaledMask <|
-                      Buffer.releaseThen fillMask <| Buffer.add scaledMask fillMask
             let rowsFold32 ← u32 (numHeads * n)
-            let attnOwned := rowSoftmaxForward scaled rowsFold32 n32
+            let attnOwned :=
+              match mask with
+              | none => rowSoftmaxForward scaled0 rowsFold32 n32
+              | some _ => rowHardMaskedSoftmaxForward scaled0 maskB rowsFold32 n32
             let VhT := Buffer.swapAdjacentAtDepth Vh dimsHead depth1
             let dAttn := Buffer.releaseThen VhT <|
               Buffer.bmm dOutHeads VhT h32 n32 head32 n32
@@ -176,19 +153,16 @@ def multiHeadAttention
                 Buffer.bmm attnT dOutHeads h32 n32 n32 head32
             let dScaled := rowSoftmaxBwd attnOwned.value dAttn rowsFold32 n32
             let dScoresMasked := Buffer.scale dScaled scale
-            let dScores :=
-              match mask with
-              | none => dScoresMasked
-              | some _ => Buffer.mul dScoresMasked maskB
+            let dScores := dScoresMasked
             let dQh := Buffer.bmm dScores Kh h32 n32 n32 head32
             let dScoresT := Buffer.swapAdjacentAtDepth dScores dimsAttn depth1
             let dKh := Buffer.releaseThen dScoresT <|
               Buffer.bmm dScoresT Qh h32 n32 n32 head32
             let dQh := Buffer.releaseThen KhT <| Buffer.releaseThen scores <|
-              Buffer.releaseThen scaled0 <| Buffer.releaseThen scaled <|
+              Buffer.releaseThen scaled0 <|
                 Buffer.releaseThen attnOwned.value <| Buffer.releaseThen dAttn <|
                   Buffer.releaseThen dScaled <| Buffer.releaseThen dScoresMasked <|
-                    Buffer.releaseThen dScores <| attnOwned.releaseWorkspaceThen dQh
+                    attnOwned.releaseWorkspaceThen dQh
             pure (dQh, dKh, dVh)
         -- Backprop split-head permutations: swap back to (n,numHeads,headDim), then view as (n,projDim).
         let dQ := Buffer.releaseThen dQh <| Buffer.swapAdjacentAtDepth dQh dimsHead depth0

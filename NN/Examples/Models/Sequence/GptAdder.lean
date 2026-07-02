@@ -64,8 +64,8 @@ def defaultLogJson : System.FilePath := ModelZoo.trainLogPath "gpt_adder"
 /--
 Number of input digits per operand.
 
-We start with the one-digit curriculum because it trains directly in the eager CUDA runtime while
-still including carry examples such as `8 + 7 = 15`.
+The one-digit curriculum trains directly in the eager CUDA runtime while still including carry
+examples such as `8 + 7 = 15`.
 -/
 def ndigit : Nat := 1
 

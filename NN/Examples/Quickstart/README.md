@@ -21,8 +21,8 @@ The quickstarts should not make you learn subsystem namespaces first. Use `Torch
 entrypoints.
 
 For larger architectures, use `NN/Examples/Models`. For datasets and loaders backed by files, use
-`NN/Examples/Data/Loaders`. For runnable verification examples and bundled certificate artifacts,
-start with `NN/Examples/Verification`; reusable checkers live under `NN/Verification`.
+`NN/Examples/Data/Loaders`. Runnable verification examples and bundled certificate artifacts live
+under `NN/Examples/Verification`; reusable checkers live under `NN/Verification`.
 
 ## Recommended Order
 

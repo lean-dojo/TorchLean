@@ -3,10 +3,9 @@ title: 3D Vision Projection Certificates
 usemathjax: true
 ---
 
-This example treats a 3D detector as an artifact producer. The detector/exporter emits a camera
-matrix, eight 3D box corners, image dimensions, and a claimed 2D box. TorchLean reloads that JSON,
-recomputes the projection in Lean, and checks whether the claimed box really encloses the projected
-corners.
+A 3D detector can act as an artifact producer. The detector/exporter emits a camera matrix, eight
+3D box corners, image dimensions, and a claimed 2D box. TorchLean reloads that JSON, recomputes the
+projection in Lean, and checks whether the claimed box really encloses the projected corners.
 
 The result is a small but useful certificate: not a proof that the detector is always correct, but
 a check that this exported geometry claim follows from the tensors in the artifact.
@@ -15,7 +14,7 @@ a check that this exported geometry claim follows from the tensors in the artifa
   <img src="{{ '/assets/media/examples/showcase/geometry3d-vision-certificates.png' | relative_url }}" alt="3D vision projection certificate workflow"/>
 </div>
 
-## What This Checks
+## Checked Geometry
 
 The checked claim is geometric:
 
@@ -58,8 +57,8 @@ def checkCert (cert : BoxCameraCert α) : Bool :=
     checkBBoxEnclosesProjection cert
 ```
 
-And the theorem connects the executable checker to the theorem-facing contract. The page omits the
-standard arithmetic/typeclass parameters; the full theorem is in the
+And the theorem connects the executable checker to the theorem-facing contract. The excerpt omits
+the standard arithmetic/typeclass parameters; the full theorem is in the
 [3D box verification API]({{ '/docs/NN/Verification/Geometry3D/Box3D.html' | relative_url }}):
 
 ```lean
@@ -68,13 +67,13 @@ theorem checkCert_sound
     Verified3DBox cert
 ```
 
-This is the key pattern: the detector and exporter produce data; the Lean checker recomputes the
+The key pattern is simple: the detector and exporter produce data; the Lean checker recomputes the
 geometric claim from that data.
 
 ## Run The Real Model Path
 
-The direct 3D detector route uses WildDet3D from Hugging Face. This path installs a real 3D
-detector stack, so it is best treated as an optional end-to-end example rather than a first runtime check.
+The direct 3D detector route uses WildDet3D from Hugging Face. The optional path installs a real 3D
+detector stack, so it is better as an end-to-end example than as a first runtime check.
 
 ```bash
 python3 -m pip install -r scripts/verification/geometry3d/requirements-wilddet3d.txt
@@ -157,8 +156,8 @@ theorem accepted_camera_box_certificate_is_verified
 
 There is also an interval robustness theorem for perspective division. If homogeneous projection
 numerator/depth intervals divide into a pixel interval contained in the bbox, every concrete camera
-choice represented by those intervals stays inside the same bbox. Again, this is the readable
-shape of the statement; the full theorem includes the interval hypotheses.
+choice represented by those intervals stays inside the same bbox. The displayed theorem keeps the
+readable shape of the statement; the full theorem includes the interval hypotheses.
 
 ```lean
 theorem homogeneous_projection_uncertainty_stays_inside_bbox :

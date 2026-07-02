@@ -125,6 +125,7 @@ def cnn2
       poolStride2 : Nat)
     {h_inC : inC ≠ 0} {h_c1 : c1 ≠ 0} {_h_c2 : c2 ≠ 0}
     {h_kH : kH ≠ 0} {h_kW : kW ≠ 0}
+    {h_stride1 : stride1 ≠ 0} {h_stride2 : stride2 ≠ 0}
     {h_poolKH : poolKH ≠ 0} {h_poolKW : poolKW ≠ 0}
     {h_poolStride1 : poolStride1 ≠ 0} {h_poolStride2 : poolStride2 ≠ 0} :
     Graph
@@ -137,6 +138,7 @@ def cnn2
   Graph.conv2d (inC := inC) (outC := c1) (kH := kH) (kW := kW) (stride := stride1) (padding :=
     padding1)
     (inH := inH) (inW := inW) (h_inC := h_inC) (h_kH := h_kH) (h_kW := h_kW)
+    (hStride := h_stride1)
   >>>
   Graph.relu
     (Shape.CHW c1
@@ -154,7 +156,7 @@ def cnn2
     (inC := c1) (outC := c2) (kH := kH) (kW := kW) (stride := stride2) (padding := padding2)
     (inH := poolH (outH inH kH stride1 padding1) poolKH poolStride1)
     (inW := poolW (outW inW kW stride1 padding1) poolKW poolStride1)
-    (h_inC := h_c1) (h_kH := h_kH) (h_kW := h_kW)
+    (h_inC := h_c1) (h_kH := h_kH) (h_kW := h_kW) (hStride := h_stride2)
   >>>
   Graph.relu
     (Shape.CHW c2
@@ -193,6 +195,7 @@ def cnn2DAGModelZeroInit
       poolStride2 : Nat)
     {h_inC : inC ≠ 0} {h_c1 : c1 ≠ 0} {h_c2 : c2 ≠ 0}
     {h_kH : kH ≠ 0} {h_kW : kW ≠ 0}
+    {h_stride1 : stride1 ≠ 0} {h_stride2 : stride2 ≠ 0}
     {h_poolKH : poolKH ≠ 0} {h_poolKW : poolKW ≠ 0}
     {h_poolStride1 : poolStride1 ≠ 0} {h_poolStride2 : poolStride2 ≠ 0} :
     DAG.Model
@@ -214,6 +217,7 @@ def cnn2DAGModelZeroInit
         poolStride2)
       (h_inC := h_inC) (h_c1 := h_c1) (_h_c2 := h_c2)
       (h_kH := h_kH) (h_kW := h_kW)
+      (h_stride1 := h_stride1) (h_stride2 := h_stride2)
       (h_poolKH := h_poolKH) (h_poolKW := h_poolKW)
       (h_poolStride1 := h_poolStride1) (h_poolStride2 := h_poolStride2)
 

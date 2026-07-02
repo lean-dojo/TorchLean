@@ -91,9 +91,9 @@ private theorem mse_scalar_self_zero (x : Tensor ℝ .scalar) :
     Spec.mseSpec (s := .scalar) x x = 0 := by
   cases x with
   | scalar a =>
-      simp [Spec.mseSpec, Tensor.subSpec, Tensor.mulSpec, Tensor.map2Spec,
-        Tensor.sumSpec, Tensor.tensorFoldlSpec, Spec.meanOver, Spec.toScalarSpec,
-        Shape.size]
+      simp [Spec.mseSpec, Spec.toScalarSpec, Tensor.subSpec, Tensor.mulSpec,
+        Tensor.map2Spec, Tensor.sumSpec, Tensor.tensorFoldlSpec, Spec.meanOver,
+        Spec.meanDenom, Shape.size]
 
 /-- Package the LSGAN generator objective as a two-term objective with no regularizer. -/
 noncomputable def generatorObjectiveTerms

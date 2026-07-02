@@ -7,8 +7,7 @@ open Verso.Genre Manual
 tag := "proof-systems-beyond-bounds"
 %%%
 
-This page is the bridge from "verification means bounds" to "verification means checked
-relationships between artifacts and semantics."
+Verification in TorchLean goes beyond bounds: checked relationships connect artifacts to semantics.
 
 IBP and CROWN are about enclosing outputs. Compiler correctness is about preserving graph meaning.
 Autograd correctness is about derivatives. Runtime approximation is about finite precision.

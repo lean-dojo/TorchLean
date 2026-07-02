@@ -67,29 +67,38 @@ def ibpReduceSum (xB : FlatBox α) : FlatBox α :=
   , lo := Tensor.dim (fun _ => Tensor.scalar sum_lo)
   , hi := Tensor.dim (fun _ => Tensor.scalar sum_hi) }
 
-/-- IBP for ReduceMean: mean of intervals.
-    [Σ lo_i / n, Σ hi_i / n]
+/-- IBP for ReduceMean on a nonempty vector: mean of intervals.
+    `[Σ lo_i / n, Σ hi_i / n]`.
+
+    The mathematical mean is undefined for `n = 0`; because this operator API returns a `FlatBox`
+    rather than an error, the empty case is an explicit zero fallback.
 -/
 def ibpReduceMean (xB : FlatBox α) : FlatBox α :=
-  let n : α := (xB.dim : Nat)
-  let sum_lo := tensorSum xB.lo
-  let sum_hi := tensorSum xB.hi
-  { dim := 1
-  , lo := Tensor.dim (fun _ => Tensor.scalar (sum_lo / n))
-  , hi := Tensor.dim (fun _ => Tensor.scalar (sum_hi / n)) }
+  if _h : xB.dim > 0 then
+    let n : α := (xB.dim : Nat)
+    let sum_lo := tensorSum xB.lo
+    let sum_hi := tensorSum xB.hi
+    { dim := 1
+    , lo := Tensor.dim (fun _ => Tensor.scalar (sum_lo / n))
+    , hi := Tensor.dim (fun _ => Tensor.scalar (sum_hi / n)) }
+  else
+    { dim := 1
+    , lo := Tensor.dim (fun _ => Tensor.scalar Numbers.zero)
+    , hi := Tensor.dim (fun _ => Tensor.scalar Numbers.zero) }
 
 /-- IBP for ReduceMax: max over intervals.
-    lo = max of individual lower bounds (conservative but sound)
+    lo = max of individual lower bounds
     hi = max of individual upper bounds
 
-    Note: This is conservative. The true lower bound on max(x) is
-    max(min_i x_i), but we use max(lo_i) which may be looser.
+    For an independent interval box, these are the exact interval endpoints for `max_i x_i`:
+    the lower endpoint is attained by setting every coordinate to its lower bound, and the upper
+    endpoint by setting a coordinate with maximal upper bound to that upper bound.
 -/
 def ibpReduceMax (xB : FlatBox α) : FlatBox α :=
   if h : xB.dim > 0 then
     let flo := getDimScalarFn xB.lo
     let fhi := getDimScalarFn xB.hi
-    -- Find max of lowers (conservative lower bound for max)
+    -- Find max of lowers (exact lower bound for max over an interval box)
     let init_lo := match flo ⟨0, h⟩ with | .scalar v => v
     let max_lo := (List.finRange xB.dim).foldl (fun acc i =>
       match flo i with
@@ -112,7 +121,7 @@ def ibpReduceMax (xB : FlatBox α) : FlatBox α :=
 
 /-- IBP for ReduceMin: min over intervals.
     lo = min of individual lower bounds (tight)
-    hi = min of individual upper bounds (conservative but sound)
+    hi = min of individual upper bounds (tight)
 -/
 def ibpReduceMin (xB : FlatBox α) : FlatBox α :=
   if h : xB.dim > 0 then
@@ -124,7 +133,7 @@ def ibpReduceMin (xB : FlatBox α) : FlatBox α :=
       match flo i with
       | .scalar v => if v < acc then v else acc
     ) init_lo
-    -- Find min of uppers (conservative upper bound for min)
+    -- Find min of uppers (exact upper bound for min over an interval box)
     let init_hi := match fhi ⟨0, h⟩ with | .scalar v => v
     let min_hi := (List.finRange xB.dim).foldl (fun acc i =>
       match fhi i with
@@ -210,22 +219,30 @@ def affReduceSum {inDim : Nat} (n : Nat)
       Tensor.dim (fun _ => Tensor.scalar sumBias)
     { A := A', c := c' }
 
-/-- Affine bounds for ReduceMean: y = (Σ x_i) / n = (1/n) * Σ x_i -/
+/-- Affine bounds for nonempty ReduceMean: `y = (Σ x_i) / n = (1/n) * Σ x_i`.
+
+For `n = 0`, the mean is undefined; this total API returns the zero affine form rather than
+dividing by zero.
+-/
 def affReduceMean {inDim : Nat} (n : Nat)
     (aff : AffineVec α inDim n) : AffineVec α inDim 1 :=
-  let sumAff := affReduceSum (inDim := inDim) n aff
-  let nA : α := (n : Nat)
-  match sumAff.A, sumAff.c with
-  | .dim rows, .dim cv =>
-    let A' := Tensor.dim (fun i =>
-      match rows i with
-      | .dim cols => Tensor.dim (fun j =>
-        match cols j with
-        | .scalar a => Tensor.scalar (a / nA)))
-    let c' := Tensor.dim (fun i =>
-      match cv i with
-      | .scalar c => Tensor.scalar (c / nA))
-    { A := A', c := c' }
+  if _h : n > 0 then
+    let sumAff := affReduceSum (inDim := inDim) n aff
+    let nA : α := (n : Nat)
+    match sumAff.A, sumAff.c with
+    | .dim rows, .dim cv =>
+      let A' := Tensor.dim (fun i =>
+        match rows i with
+        | .dim cols => Tensor.dim (fun j =>
+          match cols j with
+          | .scalar a => Tensor.scalar (a / nA)))
+      let c' := Tensor.dim (fun i =>
+        match cv i with
+        | .scalar c => Tensor.scalar (c / nA))
+      { A := A', c := c' }
+  else
+    { A := Tensor.dim (fun _ => Tensor.dim (fun _ => Tensor.scalar Numbers.zero))
+    , c := Tensor.dim (fun _ => Tensor.scalar Numbers.zero) }
 
 /-- Derivative bounds for ReduceSum: ∂(Σ x_i)/∂x_j = 1 for all j.
     If input derivatives are in [dlo, dhi], output derivative = Σ d_i.
@@ -233,15 +250,23 @@ def affReduceMean {inDim : Nat} (n : Nat)
 def derivReduceSum (dB : FlatBox α) : FlatBox α :=
   ibpReduceSum dB
 
-/-- Derivative bounds for ReduceMean: ∂(mean)/∂x_j = 1/n for all j. -/
+/-- Derivative bounds for nonempty ReduceMean: `∂(mean)/∂x_j = 1/n` for all `j`.
+
+For `n = 0`, this returns the same zero fallback as `ibpReduceMean`.
+-/
 def derivReduceMean (dB : FlatBox α) : FlatBox α :=
-  let sumD := ibpReduceSum dB
-  let n : α := (dB.dim : Nat)
-  match sumD.lo, sumD.hi with
-  | .dim lo, .dim hi =>
-    let outLo := Tensor.dim (fun i => match lo i with | .scalar v => Tensor.scalar (v / n))
-    let outHi := Tensor.dim (fun i => match hi i with | .scalar v => Tensor.scalar (v / n))
-    { dim := 1, lo := outLo, hi := outHi }
+  if _h : dB.dim > 0 then
+    let sumD := ibpReduceSum dB
+    let n : α := (dB.dim : Nat)
+    match sumD.lo, sumD.hi with
+    | .dim lo, .dim hi =>
+      let outLo := Tensor.dim (fun i => match lo i with | .scalar v => Tensor.scalar (v / n))
+      let outHi := Tensor.dim (fun i => match hi i with | .scalar v => Tensor.scalar (v / n))
+      { dim := 1, lo := outLo, hi := outHi }
+  else
+    { dim := 1
+    , lo := Tensor.dim (fun _ => Tensor.scalar Numbers.zero)
+    , hi := Tensor.dim (fun _ => Tensor.scalar Numbers.zero) }
 
 /-- Derivative bounds for ReduceMax: non-smooth, uses subgradient.
     ∂max/∂x_i = 1 if x_i is the max, 0 otherwise.
@@ -344,7 +369,10 @@ theorem ibp_reduce_sum_dim (xB : FlatBox α) :
 /-- ReduceMean output dimension is 1. -/
 theorem ibp_reduce_mean_dim (xB : FlatBox α) :
     (ibpReduceMean xB).dim = 1 := by
-  rfl
+  simp only [ibpReduceMean]
+  split
+  · rfl
+  · rfl
 
 /-- ReduceMax output dimension is 1. -/
 theorem ibp_reduce_max_dim (xB : FlatBox α) :

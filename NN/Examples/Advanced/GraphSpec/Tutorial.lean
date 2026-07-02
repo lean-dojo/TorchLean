@@ -103,6 +103,7 @@ def tutorialCnn :=
     (poolKH := 2) (poolKW := 2) (poolStride1 := 2) (poolStride2 := 2)
     (h_inC := by decide) (h_c1 := by decide) (_h_c2 := by decide)
     (h_kH := by decide) (h_kW := by decide)
+    (h_stride1 := by decide) (h_stride2 := by decide)
     (h_poolKH := by decide) (h_poolKW := by decide)
     (h_poolStride1 := by decide) (h_poolStride2 := by decide)
 

@@ -124,9 +124,9 @@ def gruLanguageModelSpec
 
 The `SpecChain` builders above are the most uniform way to assemble models in TorchLean.
 
-This section uses small record types with explicit forward functions. It is useful when you want
-to talk about a particular architecture directly (e.g. encoder-decoder), or when you need to carry
-extra per-model parameters (e.g. a dropout rate) without building a full module stack.
+The declarations below use small record types with explicit forward functions. This is useful when
+you want to talk about a particular architecture directly (e.g. encoder-decoder), or when you need
+to carry extra per-model parameters (e.g. a dropout rate) without building a full module stack.
 -/
 
 -- Basic GRU model with a single GRU cell + a linear output head.

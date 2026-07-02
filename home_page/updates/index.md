@@ -5,63 +5,74 @@ usemathjax: true
 
 # TorchLean Updates
 
-This is the release log for public releases, recent fixes, validation notes,
-and user-facing issues.
+<div class="updates-hero">
+  <p class="lede">
+    A project timeline for public releases, runtime fixes, proof-facing changes,
+    validation notes, and user-visible migration details.
+  </p>
+</div>
 
-For correctness assumptions and trusted boundaries, use
-[Trust Boundaries](https://github.com/lean-dojo/TorchLean/blob/main/TRUST_BOUNDARIES.md).
-For source-level provenance and third-party notes, use
-[Third-Party Notices](https://github.com/lean-dojo/TorchLean/blob/main/THIRD_PARTY_NOTICES.md).
+<nav class="timeline-nav" aria-label="TorchLean update timeline">
+  <a href="#june-2026-reliability">June 2026 reliability</a>
+  <a href="#june-2026-lean-431">Lean 4.31</a>
+  <a href="#may-2026-cleanup">Comment cleanup</a>
+  <a href="#may-2026-runtime-api">Runtime API</a>
+  <a href="#may-2026-cuda-stability">CUDA stability</a>
+  <a href="#may-2026-data-note">Data note</a>
+  <a href="#may-2026-release">Initial release</a>
+</nav>
 
-## Index
+<div class="updates-timeline">
 
-- [June 2026: CUDA, CROWN, and PINN Reliability Update](#june-2026-cuda-crown-and-pinn-reliability-update)
-- [June 2026: Lean 4.31 Migration](#june-2026-lean-431-migration)
-- [May 2026: Repository Modularization and Comment Cleanup](#may-2026-repository-modularization-and-comment-cleanup)
-- [May 2026: Runtime API Update](#may-2026-runtime-api-update)
-- [May 2026: CUDA Training Stability Update](#may-2026-cuda-training-stability-update)
-- [May 2026: Introductory Data Note](#may-2026-introductory-data-note)
-- [May 2026: TorchLean Released](#may-2026-torchlean-released)
+<article class="update-card" id="june-2026-reliability" markdown="1">
+  <div class="update-date">June 2026</div>
+  <div class="update-body" markdown="1">
 
-## June 2026: CUDA, CROWN, and PINN Reliability Update
+## CUDA, CROWN, and PINN Reliability
 
-This update tightens several runtime and proof-facing edges that matter for
-longer local validation runs and downstream users of the public API surface.
+<p class="update-kicker">Native runtime, certificates, scientific ML</p>
+<p class="update-summary">
+Runtime edges around CUDA are tighter, CROWN certificate statements are more concrete, and duplicated
+PINN training infrastructure is gone.
+</p>
 
-On the native side, CUDA and CPU-stub shape arithmetic now share checked size
-helpers for products, byte counts, and additions that are computed at the Lean
-FFI boundary. Rank-polymorphic broadcast, reduce, swap, gather/scatter, flash
-attention, convolution/pooling, tensor-copy, and spectral-convolution paths now
-reject impossible sizes before allocation or kernel launch. cuFFT and metadata
-upload failure paths also clean up scratch buffers and plans before reporting
-the boundary failure.
+<div class="update-grid">
+  <section>
+    <h3>Runtime checks</h3>
+    <p>
+      CUDA and CPU stubs now use shared checked size arithmetic for products,
+      byte counts, and additions at the Lean FFI boundary. Broadcast, reduce,
+      swap, gather/scatter, attention, convolution/pooling, tensor-copy, and
+      spectral-convolution paths reject impossible sizes before allocation or
+      kernel launch.
+    </p>
+  </section>
+  <section>
+    <h3>Proof surface</h3>
+    <p>
+      The graph CROWN certificate theorem now returns the enclosure for the
+      checked node. The IEEE32 version requires a no-self-dependency condition
+      on the evaluator trace, and the two-layer MLP CROWN code exposes the
+      affine forms used by <code>boundAffineCrown</code>.
+    </p>
+  </section>
+  <section>
+    <h3>PINNs</h3>
+    <p>
+      Python PINN trainers now share dataset loading, MLP construction,
+      expression evaluation, gradients, constant parsing, and export helpers
+      through <code>scripts/verification/pinn/pinn_common.py</code>.
+    </p>
+  </section>
+</div>
 
-The CUDA test suite now includes value-checking coverage for higher-rank
-`broadcastTo`, `reduceFromBroadcastTo`, `reduceSumAxis`, and
-`swapAdjacentAtDepth` cases. These tests exercise the rank-polymorphic native
-paths instead of only checking that output buffers have the expected length.
-
-On the proof side, the graph CROWN certificate theorem now exposes a concrete
-non-vacuous result: callers provide the actual certificate and semantic value
-entries for the node being enclosed. The IEEE32 statement remains
-evaluator-parametric, but it now requires a no-self-dependency side condition
-for the evaluator trace, so the old identity-evaluator hook cannot be used as a
-semantic bridge. The 2-layer MLP CROWN implementation also exposes the affine
-forms used by `boundAffineCrown`, making the structural relation between the
-forms and the returned box explicit.
-
-The Python PINN trainers were refactored to share dataset loading, MLP
-construction, expression evaluation, gradient, constant parsing, and export
-helpers through `scripts/verification/pinn/pinn_common.py`. The restricted
-expression evaluator no longer requires NumPy merely to import; NumPy aliases
-are enabled when NumPy is installed.
-
-The focused public API entrypoint now imports the facade namespaces directly, so
-`import NN.Entrypoint.API` exposes the documented `TorchLean.nn`,
+The focused API import now pulls in short `TorchLean.*` namespaces directly.
+That means `import NN.Entrypoint.API` exposes `TorchLean.nn`,
 `TorchLean.optim`, `TorchLean.Trainer`, `TorchLean.Data`, `TorchLean.Loss`, and
-`TorchLean.Metrics` names without requiring the broader `NN` umbrella import.
+`TorchLean.Metrics` without requiring the broader `NN` umbrella import.
 
-Validation for this update included:
+<div class="validation-list" markdown="1">
+  <h3>Validation</h3>
 
 - `lake test`
 - `lake build NN.CI.All`
@@ -71,93 +82,153 @@ Validation for this update included:
 - focused Lean checks for the CROWN MLP and graph CROWN certificate modules
 - PyTorch CUDA smoke tests for the PINN trainers on an A100 GPU
 
-CUDA sanitizer reported zero memcheck/initcheck/synccheck errors and zero
+CUDA sanitizer reported zero memcheck/initcheck/synccheck errors and no
 racecheck hazards on the exercised runtime suite.
+</div>
 
-## June 2026: Lean 4.31 Migration
+  </div>
+</article>
 
-TorchLean now builds with `leanprover/lean4:v4.31.0`. The root Lake manifest,
-Mathlib pin, documentation generator pin, Verso blueprint toolchain, website
-metadata, README, and formalization metadata were moved together so the public
-repository state agrees about the Lean version.
+<article class="update-card" id="june-2026-lean-431" markdown="1">
+  <div class="update-date">June 2026</div>
+  <div class="update-body" markdown="1">
+
+## Lean 4.31 Migration
+
+<p class="update-kicker">Toolchain alignment</p>
+<p class="update-summary">
+TorchLean now builds with <code>leanprover/lean4:v4.31.0</code>, with the root
+Lake manifest, Mathlib pin, documentation generator pin, Verso blueprint
+toolchain, website metadata, README, and formalization metadata moved together.
+</p>
 
 The migration fixed proof-term breakages in differentiability and autograd
 composition files where Lean 4.31 became stricter about composed functions and
 eventual equality. The full repository build was rerun on 4.31.
 
-## May 2026: Repository Modularization and Comment Cleanup
+  </div>
+</article>
 
-TorchLean has had a large repository cleanup pass. The goal was simple: make
-the public source tree easier to read, easier to review, and easier to extend
-without changing the intended behavior of the library.
+<article class="update-card" id="may-2026-cleanup" markdown="1">
+  <div class="update-date">May 2026</div>
+  <div class="update-body" markdown="1">
 
-This pass is a source-structure and documentation-quality update, not a change
-to TorchLean's mathematical or runtime semantics:
+## Repository Modularization and Comment Cleanup
 
-- large proof and runtime files were split along existing conceptual boundaries;
-- umbrella modules were kept only where they clarify the public import surface;
-- obsolete import shells and example names were removed;
-- comments were rewritten in a more mathlib-style voice, explaining definitions
-  and trust boundaries as part of the maintained source;
-- examples, API docs, the Verso guide, and website pages were rebuilt against the
-  new module layout.
+<p class="update-kicker">Source organization</p>
+<p class="update-summary">
+The public source tree is easier to read, easier to review, and easier to extend without changing
+TorchLean's intended behavior.
+</p>
 
-This pass does not change model semantics, verification claims, CUDA behavior,
-or trusted boundaries.
+<div class="update-grid">
+  <section>
+    <h3>Structure</h3>
+    <ul>
+      <li>Large proof and runtime files were split along conceptual boundaries.</li>
+      <li>Umbrella modules were kept only where they make imports clearer.</li>
+      <li>Obsolete import shells and example names were removed.</li>
+    </ul>
+  </section>
+  <section>
+    <h3>Documentation</h3>
+    <p>
+      Comments were rewritten in a more mathlib-style voice: definitions explain
+      mathematical intent, runtime boundaries name assumptions, and examples
+      avoid stale narration.
+    </p>
+  </section>
+  <section>
+    <h3>Scope</h3>
+    <p>
+      Model semantics, verification claims, CUDA behavior, and trusted boundaries are unchanged.
+    </p>
+  </section>
+</div>
 
-## May 2026: Runtime API Update
+Examples, API docs, the Verso guide, and website pages were rebuilt against the
+new module layout.
 
-This earlier update added runtime pieces that were needed for longer training
-runs and a cleaner public API. The current Lean toolchain is recorded in the
-repository root, the blueprint package, and the formalization metadata.
+  </div>
+</article>
 
-The runtime pieces added in that pass were:
+<article class="update-card" id="may-2026-runtime-api" markdown="1">
+  <div class="update-date">May 2026</div>
+  <div class="update-body" markdown="1">
 
-- runtime-side Float initializers for large CPU/CUDA modules;
-- shape-indexed initializer plans, so each parameter receives exactly one
-  initializer;
-- step-indexed training streams for batches produced by a rule, simulator,
-  replay buffer, or file-backed window source;
-- integer-token embedding and row-wise cross-entropy helpers for GPT-style
-  language-model training;
-- CUDA allocator diagnostics and explicit workspace-buffer ownership in the eager
-  runtime.
+## Runtime API Update
+
+<p class="update-kicker">Training loops, streams, initialization</p>
+<p class="update-summary">
+Runtime pieces needed for longer training runs now sit behind a cleaner public API.
+</p>
+
+<div class="update-grid">
+  <section>
+    <h3>Initialization</h3>
+    <p>
+      Runtime-side Float initializers and shape-indexed initializer plans make
+      sure each parameter receives exactly one initializer.
+    </p>
+  </section>
+  <section>
+    <h3>Streams</h3>
+    <p>
+      Step-indexed training streams support batches produced by a rule,
+      simulator, replay buffer, or file-backed window source.
+    </p>
+  </section>
+  <section>
+    <h3>Language models</h3>
+    <p>
+      Integer-token embedding and row-wise cross-entropy helpers support
+      GPT-style training examples.
+    </p>
+  </section>
+</div>
 
 The guide now has dedicated sections for step streams, runtime initialization,
 CUDA memory ownership, and integer-token GPT training.
 
-## May 2026: CUDA Training Stability Update
+  </div>
+</article>
 
-Longer CUDA training runs exposed a practical bug in the eager runtime. A
-GPT-style example could train normally for thousands of updates and then stop
-with a CUDA allocation failure. The surprising part was that the same kind of
-problem could show up even on compact examples if enough per-step CUDA objects
-were kept alive.
+<article class="update-card" id="may-2026-cuda-stability" markdown="1">
+  <div class="update-date">May 2026</div>
+  <div class="update-body" markdown="1">
 
-The issue was not that the model suddenly needed more parameters. It was that
-some intermediate values created during training -- tape entries, gradient buffers,
-and kernel workspace buffers -- could stay attached to the run longer than they
-needed to. Over many optimizer updates, that turns into allocator pressure. The
-fix was to make the training loop and CUDA eager backend more explicit about
-which values are returned to the caller and which intermediate buffers can be
-released after the step finishes.
+## CUDA Training Stability
 
-The CUDA training path used by the public model examples now does three things:
+<p class="update-kicker">Memory lifetime, allocator diagnostics</p>
+<p class="update-summary">
+Longer CUDA training runs exposed allocator pressure from intermediate values
+that could stay attached to a run longer than needed.
+</p>
 
-- loader-based model commands now treat `--steps` as optimizer updates;
-- CUDA eager/autograd releases ephemeral tape, gradient, and workspace buffers
-  after the values needed by the caller have been extracted;
-- longer CUDA example runs report allocator telemetry by default, with
-  `--cuda-mem-watch N` available when a user wants an exact sampling cadence.
+The issue was not that the model suddenly needed more parameters. Some
+intermediate values created during training -- tape entries, gradient buffers,
+and kernel workspace buffers -- could remain alive across many optimizer steps.
+The fix made the training loop and CUDA eager backend explicit about which
+values are returned to the caller and which buffers can be released after the
+step finishes.
 
-The allocator report is a runtime diagnostic. It prints live and peak allocator
-state while a run is still in progress, and it warns if the observed free-memory
-trend would run out before the requested training horizon. If a long run is
-going wrong, the terminal should show that early instead of leaving the user to
-discover it at the end. It does not change the Lean-side trust-boundary story;
-it makes the native runtime behavior easier to inspect.
+<div class="update-grid">
+  <section>
+    <h3>Step counts</h3>
+    <p>Loader-based model commands now treat <code>--steps</code> as optimizer updates.</p>
+  </section>
+  <section>
+    <h3>Buffer lifetime</h3>
+    <p>CUDA eager/autograd releases ephemeral tape, gradient, and workspace buffers after each step.</p>
+  </section>
+  <section>
+    <h3>Diagnostics</h3>
+    <p>Longer CUDA examples report allocator telemetry by default, with <code>--cuda-mem-watch N</code> for exact sampling.</p>
+  </section>
+</div>
 
-Validation for this update included:
+<div class="validation-list" markdown="1">
+  <h3>Validation</h3>
 
 - `lake build`
 - `lake build -K cuda=true`
@@ -168,16 +239,27 @@ Validation for this update included:
 - `lake exe -K cuda=true torchlean gpt2 --cuda --fast-kernels --steps 1200 --generate 0 --log false`
 - `lake exe -K cuda=true torchlean fno1d_burgers --cuda --fast-kernels --steps 50 --log false`
 
-The validation commands above checked two things: representative losses or MSE
-values went down, and the CUDA allocator stayed bounded on the exercised runs.
-CUDA execution remains an implementation path; the mathematical trust boundary
-is still documented separately.
+The validation checked representative losses or MSE values going down and the
+CUDA allocator staying bounded on the exercised runs.
+</div>
 
-## May 2026: Introductory Data Note
+  </div>
+</article>
 
-Some examples use real public datasets and do not download them during
-`lake build`. If a model reports a missing dataset, run the downloader it
-prints. For the README MLP example:
+<article class="update-card" id="may-2026-data-note" markdown="1">
+  <div class="update-date">May 2026</div>
+  <div class="update-body" markdown="1">
+
+## Introductory Data Note
+
+<p class="update-kicker">Reproducible builds</p>
+<p class="update-summary">
+Some examples use public datasets and do not download them during
+<code>lake build</code>. Keeping data downloads explicit makes ordinary builds
+deterministic and avoids silently committing large external data.
+</p>
+
+For the README MLP example:
 
 ```bash
 python3 scripts/datasets/download_example_data.py --auto-mpg
@@ -189,25 +271,51 @@ For the text and vision examples:
 python3 scripts/datasets/download_example_data.py --tiny-shakespeare --cifar10
 ```
 
-Keeping data downloads explicit makes ordinary builds deterministic and avoids
-silently committing large external data into the repository.
+  </div>
+</article>
 
-## May 2026: TorchLean Released
+<article class="update-card" id="may-2026-release" markdown="1">
+  <div class="update-date">May 2026</div>
+  <div class="update-body" markdown="1">
 
-TorchLean is public as a Lean 4 framework for writing, running, inspecting, and
-verifying neural-network programs. The initial release brings together the parts
-of the project that are meant to be used as one system:
+## TorchLean Released
 
-- typed tensors, layers, model APIs, loaders, training loops, and examples;
-- a shared graph IR for execution, inspection, verification, and import/export;
-- finite-precision semantics, including executable IEEE-style Float32 models and
-  explicit runtime agreement boundaries;
-- autograd and optimizer support for runnable examples;
-- verification examples including IBP/CROWN-style bounds, certificate checkers,
-  VNN-COMP-style bundles, Bug Zoo contracts, and 3D geometry certificates;
-- optional CUDA/native runtime paths with documented trust boundaries;
-- generated API docs, a guide, examples pages, third-party notices, and an AI
-  assistance disclosure.
+<p class="update-kicker">Initial public release</p>
+<p class="update-summary">
+TorchLean became public as a Lean 4 framework for writing, running, inspecting,
+and verifying neural-network programs.
+</p>
 
-Start with the README example, then use the Guide and Examples pages for the
-longer walkthroughs.
+<div class="update-grid">
+  <section>
+    <h3>Core system</h3>
+    <p>
+      Typed tensors, layers, model APIs, loaders, training loops, examples, and
+      a shared graph IR for execution, inspection, verification, and
+      import/export.
+    </p>
+  </section>
+  <section>
+    <h3>Semantics</h3>
+    <p>
+      Finite-precision semantics, executable IEEE-style Float32 models,
+      autograd, optimizer support, and explicit runtime agreement boundaries.
+    </p>
+  </section>
+  <section>
+    <h3>Verification</h3>
+    <p>
+      IBP/CROWN-style bounds, certificate checkers, VNN-COMP-style bundles, Bug
+      Zoo contracts, 3D geometry certificates, and optional CUDA/native runtime
+      paths with documented trust boundaries.
+    </p>
+  </section>
+</div>
+
+The README example is the quickest entry point; the Guide and Examples pages carry the longer
+walkthroughs.
+
+  </div>
+</article>
+
+</div>

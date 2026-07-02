@@ -3,19 +3,45 @@ title: Examples
 usemathjax: true
 ---
 
-The examples are the most direct way to see TorchLean as a working system. Each page starts from
-something concrete: a model run, a graph, a tensor artifact, a saved log, a verifier result, or a
-bug pattern. The goal is to show how runnable ML code becomes an object that Lean can inspect,
-lower, check, or relate to a theorem.
+Use the examples by workflow. Start with a small model if you want to run TorchLean, use the graph
+and autograd pages if you want to understand the core machinery, and use the verification or Bug Zoo
+pages if you want to see how runtime artifacts become checked Lean objects.
 
-Start with a small training run or the verification bounds page. For a systems-oriented view, read
-the text-model and diffusion walkthroughs. For the clearest motivation, read Bug Zoo.
+## Start Here
+
+<div class="workflow-list examples-start-list">
+  <a href="{{ '/docs/NN/Examples/Models.html' | relative_url }}">
+    <span>01</span>
+    <strong>Run a model</strong>
+    <em>MLP, CNN, text, diffusion, and RL examples with training loops and saved artifacts.</em>
+  </a>
+  <a href="{{ '/blueprint/Runtime___-Autograd___-and-Interop/Autograd-Walkthrough/' | relative_url }}">
+    <span>02</span>
+    <strong>Inspect autograd</strong>
+    <em>Small tensor programs where the tape, VJPs, and gradients are visible.</em>
+  </a>
+  <a href="{{ '/blueprint/Semantics-and-Graphs/Graphs-and-IR/' | relative_url }}">
+    <span>03</span>
+    <strong>Read the graph</strong>
+    <em>Lower models into TorchLean IR and check shapes, traces, and bound passes.</em>
+  </a>
+  <a href="{{ '/examples/verification/' | relative_url }}">
+    <span>04</span>
+    <strong>Check a certificate</strong>
+    <em>IBP, CROWN-style bounds, external verifier artifacts, and PINN example structure.</em>
+  </a>
+  <a href="{{ '/examples/bug-zoo/' | relative_url }}">
+    <span>05</span>
+    <strong>Study failure cases</strong>
+    <em>Masks, normalization, losses, KV caches, token ids, batching, and float boundaries.</em>
+  </a>
+</div>
 
 ## Featured Examples
 
 <div class="showcase-grid showcase-grid-featured">
   <a class="showcase-card showcase-image-card" href="{{ '/blueprint/Semantics-and-Graphs/Graphs-and-IR/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/ir-bounds.png' | relative_url }}" alt="TorchLean graph IR to interval bounds example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/graph-ir-bounds-new.png' | relative_url }}" alt="TorchLean graph IR to interval bounds example"/>
     <span class="showcase-body">
       <span class="showcase-title">Graph IR and Bounds</span>
       <span class="showcase-text">Follow a small model as it becomes an op-tagged graph, then use that graph for shape checks, execution traces, and interval bounds.</span>
@@ -24,7 +50,7 @@ the text-model and diffusion walkthroughs. For the clearest motivation, read Bug
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/blueprint/Runtime___-Autograd___-and-Interop/Autograd-Walkthrough/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/autograd-basics.png' | relative_url }}" alt="Autograd basics example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/autograd-basics-new.png' | relative_url }}" alt="Autograd basics example"/>
     <span class="showcase-body">
       <span class="showcase-title">Autograd Basics</span>
       <span class="showcase-text">Compute gradients for small tensor functions, then inspect the tape and VJP objects that make reverse mode explicit.</span>
@@ -33,7 +59,7 @@ the text-model and diffusion walkthroughs. For the clearest motivation, read Bug
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/docs/NN/Examples/Models.html' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/mlp-cnn-training.png' | relative_url }}" alt="MLP and CNN training example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/supervised-training-new.png' | relative_url }}" alt="MLP and CNN training example"/>
     <span class="showcase-body">
       <span class="showcase-title">Supervised Training</span>
       <span class="showcase-text">Instantiate supervised models, build loaders, fit for multiple epochs or fixed steps, and save loss curves from the same Lean runner.</span>
@@ -42,7 +68,7 @@ the text-model and diffusion walkthroughs. For the clearest motivation, read Bug
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/examples/diffusion/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/diffusion-real-images.png' | relative_url }}" alt="Diffusion on real images example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/diffusion-new.png' | relative_url }}" alt="Diffusion on real images example"/>
     <span class="showcase-body">
       <span class="showcase-title">Diffusion</span>
       <span class="showcase-text">Train a small denoiser, run deterministic DDIM sampling, and inspect both the generated images and the saved loss log.</span>
@@ -51,7 +77,7 @@ the text-model and diffusion walkthroughs. For the clearest motivation, read Bug
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/examples/text-models/#gpt-2' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/gpt2-text.png' | relative_url }}" alt="GPT-2 style text example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/gpt-text-new.png' | relative_url }}" alt="GPT-2 style text example"/>
     <span class="showcase-body">
       <span class="showcase-title">GPT-Style Text</span>
       <span class="showcase-text">Tokenize bytes, build next-token examples, train a small causal transformer, save parameters, and sample continuations.</span>
@@ -59,17 +85,17 @@ the text-model and diffusion walkthroughs. For the clearest motivation, read Bug
     </span>
   </a>
 
-  <a class="showcase-card showcase-image-card" href="{{ '/examples/text-models/#mamba' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/mamba-text.png' | relative_url }}" alt="Mamba text model example"/>
+  <a class="showcase-card showcase-image-card" href="{{ '/examples/scientific-ml/' | relative_url }}">
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/scientific-ml-new.png' | relative_url }}" alt="Scientific ML pipeline from Burgers data to FNO training and Lean checks"/>
     <span class="showcase-body">
-      <span class="showcase-title">Mamba Text Model</span>
-      <span class="showcase-text">Use the same corpus and logging path with a compact state-space sequence model instead of attention.</span>
-      <span class="showcase-link">Open text walkthrough</span>
+      <span class="showcase-title">Scientific ML</span>
+      <span class="showcase-text">Prepare the Burgers dataset, train a 1D Fourier neural operator, export prediction artifacts, and connect PINN-style checks to Lean.</span>
+      <span class="showcase-link">Open scientific ML pipeline</span>
     </span>
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/blueprint/Runtime___-Autograd___-and-Interop/PyTorch-Round-Trip/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/pytorch-roundtrip.png' | relative_url }}" alt="PyTorch round-trip example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/pytorch-roundtrip-new.png' | relative_url }}" alt="PyTorch round-trip example"/>
     <span class="showcase-body">
       <span class="showcase-title">PyTorch Round Trip</span>
       <span class="showcase-text">Move weights across the Python boundary while keeping tensor shapes, parameter packs, and import checks visible.</span>
@@ -78,7 +104,7 @@ the text-model and diffusion walkthroughs. For the clearest motivation, read Bug
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/blueprint/Floating-Point-and-Native-Boundaries/Floating-Point-Semantics/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/float32-ieee.png' | relative_url }}" alt="Float32 and IEEE-754 checks example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/float32-ieee-new.png' | relative_url }}" alt="Float32 and IEEE-754 checks example"/>
     <span class="showcase-body">
       <span class="showcase-title">Float32 and IEEE-754</span>
       <span class="showcase-text">Compare real specifications, rounded `FP32` models, executable IEEE bit semantics, and runtime `Float32` bridge assumptions.</span>
@@ -87,7 +113,7 @@ the text-model and diffusion walkthroughs. For the clearest motivation, read Bug
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/docs/NN/Examples/Models/RL.html' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/reinforcement-learning.png' | relative_url }}" alt="Reinforcement learning examples"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/reinforcement-learning-new.png' | relative_url }}" alt="Reinforcement learning examples"/>
     <span class="showcase-body">
       <span class="showcase-title">Reinforcement Learning</span>
       <span class="showcase-text">Run PPO on Lean-native and Gymnasium environments, then inspect the rollout, reward, and policy artifacts that enter training.</span>
@@ -96,7 +122,7 @@ the text-model and diffusion walkthroughs. For the clearest motivation, read Bug
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/examples/bug-zoo/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/bug-zoo.png' | relative_url }}" alt="Bug Zoo case studies"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/bug-zoo-new.png' | relative_url }}" alt="Bug Zoo case studies"/>
     <span class="showcase-body">
       <span class="showcase-title">Bug Zoo</span>
       <span class="showcase-text">See how common ML bugs become small Lean contracts: causal masks, KV caches, token ids, normalization state, batching, and Float32 behavior.</span>
@@ -105,7 +131,7 @@ the text-model and diffusion walkthroughs. For the clearest motivation, read Bug
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/examples/3d-vision/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/geometry3d-vision-certificates.png' | relative_url }}" alt="3D Vision Certificates example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/geometry3d-vision-new.png' | relative_url }}" alt="3D Vision Certificates example"/>
     <span class="showcase-body">
       <span class="showcase-title">3D Vision Certificates</span>
       <span class="showcase-text">Export camera and box tensors from a detector, recompute projection in Lean, and reject boxes that do not enclose projected corners.</span>
@@ -114,10 +140,10 @@ the text-model and diffusion walkthroughs. For the clearest motivation, read Bug
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/examples/verification/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/verification-bounds.png' | relative_url }}" alt="IBP and alpha-CROWN verification example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/verification-bounds-new.png' | relative_url }}" alt="IBP and alpha-CROWN verification example"/>
     <span class="showcase-body">
       <span class="showcase-title">IBP and CROWN Verification</span>
-      <span class="showcase-text">Attach input boxes to an IR graph, propagate interval or affine bounds, and check small external certificates through Lean.</span>
+      <span class="showcase-text">Attach input boxes to an IR graph, propagate interval or affine bounds, and check small external certificates through Lean. PINN examples use the same verification-facing artifact style.</span>
       <span class="showcase-link">Open verification tutorial</span>
     </span>
   </a>
@@ -128,7 +154,3 @@ CUDA is opt-in. The build flags, runtime path, and agreement assumptions are exp
 For long CUDA training runs, model commands also expose allocator telemetry through
 `--cuda-mem-watch N`; longer runs choose a small default cadence so device-memory behavior is visible
 while the example is running.
-
-The guide also covers the newer runtime-facing APIs used by larger examples: runtime-side Float
-initializers, typed step streams for generated or file-backed batches, and integer-token GPT helpers
-that avoid one-hot targets for language-model training.

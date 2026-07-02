@@ -52,6 +52,10 @@ find home_page/docs -name "*.hash" -delete
 Native CUDA/C source notes are documented by the Lean module
 `NN.Runtime.Autograd.Engine.Cuda.NativeSources`, so they are generated as part of `/docs/`.
 
+`scripts/docs/polish_docgen.py` keeps the generated docs focused on TorchLean's `NN` modules. It
+removes local copies of Lean, Std, Mathlib, and other dependency pages, then rewrites dependency
+links to the upstream generated documentation so declaration links do not become local 404s.
+
 `DISABLE_EQUATIONS=1` is intentional for public site builds. It keeps DocGen from trying to render
 equation lemmas for every imported Lean and Mathlib definition, which otherwise produces many
 non-fatal timeout warnings. Clear `.lake/build/doc-data` first when switching to this mode because

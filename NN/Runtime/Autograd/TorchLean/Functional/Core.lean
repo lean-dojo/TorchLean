@@ -236,10 +236,11 @@ PyTorch analogue: `torch.mean`.
 -/
 def mean {α : Type} [Context α] [DecidableEq Shape]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
-    {s : Shape} (x : RefTy (m := m) (α := α) s) : m (RefTy (m := m) (α := α) Shape.scalar) := do
+  {s : Shape} (x : RefTy (m := m) (α := α) s) : m (RefTy (m := m) (α := α) Shape.scalar) := do
   let total ← sum (m := m) (α := α) (s := s) x
   -- `sum` returns a scalar tensor; scale by `1 / numel` to get a mean.
-  scale (m := m) (α := α) (s := Shape.scalar) total (1 / (Shape.size s : α))
+  let denom : Nat := if Shape.size s = 0 then 1 else Shape.size s
+  scale (m := m) (α := α) (s := Shape.scalar) total (1 / (denom : α))
 
 /-! ## Seeded RNG helpers -/
 

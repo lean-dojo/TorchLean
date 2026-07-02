@@ -1,40 +1,40 @@
 {
   "code_stats": {
-    "blank_or_comment_lines": 102542,
-    "code_lines": 194713,
+    "blank_or_comment_lines": 103689,
+    "code_lines": 196307,
     "declaration_counts": {
-      "abbrev": 998,
+      "abbrev": 1004,
       "axiom": 2,
       "class": 25,
-      "def": 8025,
+      "def": 8128,
       "inductive": 92,
       "instance": 234,
       "lemma": 643,
       "opaque": 100,
-      "structure": 569,
-      "theorem": 1456
+      "structure": 570,
+      "theorem": 1528
     },
-    "declarations": 12144,
+    "declarations": 12326,
     "layer_sizes": [
       {
-        "files": 157,
+        "files": 160,
         "layer": "NN.Proofs",
-        "lines": 58465
+        "lines": 59560
       },
       {
         "files": 186,
         "layer": "NN.Runtime",
-        "lines": 50713
+        "lines": 50809
       },
       {
         "files": 128,
         "layer": "NN.MLTheory",
-        "lines": 41102
+        "lines": 41270
       },
       {
-        "files": 125,
+        "files": 126,
         "layer": "NN.Spec",
-        "lines": 31131
+        "lines": 31518
       },
       {
         "files": 77,
@@ -44,27 +44,27 @@
       {
         "files": 130,
         "layer": "NN.API",
-        "lines": 24665
+        "lines": 24690
       },
       {
         "files": 89,
         "layer": "NN.Verification",
-        "lines": 18061
+        "lines": 18138
       },
       {
-        "files": 98,
+        "files": 105,
         "layer": "NN.Examples",
-        "lines": 14443
+        "lines": 14993
       },
       {
-        "files": 49,
+        "files": 51,
         "layer": "blueprint",
-        "lines": 13310
+        "lines": 13475
       },
       {
-        "files": 39,
+        "files": 40,
         "layer": "NN.Tests",
-        "lines": 7003
+        "lines": 7156
       },
       {
         "files": 17,
@@ -74,12 +74,12 @@
       {
         "files": 21,
         "layer": "NN.GraphSpec",
-        "lines": 4282
+        "lines": 4288
       },
       {
         "files": 7,
         "layer": "NN.IR",
-        "lines": 2564
+        "lines": 2575
       },
       {
         "files": 1,
@@ -89,7 +89,7 @@
       {
         "files": 12,
         "layer": "NN.Entrypoint",
-        "lines": 525
+        "lines": 526
       },
       {
         "files": 3,
@@ -99,7 +99,7 @@
       {
         "files": 1,
         "layer": "lakefile",
-        "lines": 202
+        "lines": 209
       },
       {
         "files": 1,
@@ -117,16 +117,16 @@
         "lines": 29
       }
     ],
-    "lean_files": 1143,
-    "theorem_like_declarations": 2099,
+    "lean_files": 1157,
+    "theorem_like_declarations": 2171,
     "top_level_files": [
       {
         "directory": "NN",
-        "files": 1091
+        "files": 1103
       },
       {
         "directory": "blueprint",
-        "files": 49
+        "files": 51
       },
       {
         "directory": "NN.lean",
@@ -141,7 +141,7 @@
         "files": 1
       }
     ],
-    "total_lines": 297255
+    "total_lines": 299996
   },
   "edges": [
     {
@@ -768,92 +768,113 @@
       "src": "NN.API.Public.Autograd"
     },
     {
-      "dst": "NN.API.Public",
+      "dst": "NN.API.Public.NN",
       "line": 9,
       "path": "NN/API/Public/Facade/Base/CLI.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.CLI"
     },
     {
-      "dst": "NN.API.Data",
+      "dst": "NN.API.Public.TensorPack",
       "line": 10,
       "path": "NN/API/Public/Facade/Base/CLI.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.CLI"
     },
     {
-      "dst": "NN.API.Data.Transforms",
+      "dst": "NN.API.Public.Seeded",
       "line": 11,
       "path": "NN/API/Public/Facade/Base/CLI.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.CLI"
     },
     {
-      "dst": "NN.API.Runtime",
+      "dst": "NN.API.Public.Autograd",
       "line": 12,
       "path": "NN/API/Public/Facade/Base/CLI.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.CLI"
     },
     {
-      "dst": "NN.API.Models",
+      "dst": "NN.API.Data",
       "line": 13,
       "path": "NN/API/Public/Facade/Base/CLI.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.CLI"
     },
     {
-      "dst": "NN.API.Public.NN.Transformer",
+      "dst": "NN.API.Data.Transforms",
       "line": 14,
       "path": "NN/API/Public/Facade/Base/CLI.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.CLI"
     },
     {
-      "dst": "NN.API.RL",
+      "dst": "NN.API.Runtime",
       "line": 15,
       "path": "NN/API/Public/Facade/Base/CLI.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.CLI"
     },
     {
-      "dst": "NN.API.Rand",
+      "dst": "NN.API.Models",
       "line": 16,
       "path": "NN/API/Public/Facade/Base/CLI.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.CLI"
     },
     {
-      "dst": "NN.API.Samples.Bands",
+      "dst": "NN.API.Public.NN.Transformer",
       "line": 17,
       "path": "NN/API/Public/Facade/Base/CLI.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.CLI"
     },
     {
-      "dst": "NN.API.Text.Bpe",
+      "dst": "NN.API.RL",
       "line": 18,
       "path": "NN/API/Public/Facade/Base/CLI.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.CLI"
     },
     {
-      "dst": "NN.MLTheory.CROWN.Flatbox",
+      "dst": "NN.API.Rand",
       "line": 19,
       "path": "NN/API/Public/Facade/Base/CLI.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.CLI"
     },
     {
-      "dst": "NN.MLTheory.CROWN.Graph",
+      "dst": "NN.API.Samples.Bands",
       "line": 20,
       "path": "NN/API/Public/Facade/Base/CLI.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.CLI"
     },
     {
-      "dst": "NN.Verification.TorchLean.Compile",
+      "dst": "NN.API.Text.Bpe",
       "line": 21,
+      "path": "NN/API/Public/Facade/Base/CLI.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.CLI"
+    },
+    {
+      "dst": "NN.MLTheory.CROWN.Flatbox",
+      "line": 22,
+      "path": "NN/API/Public/Facade/Base/CLI.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.CLI"
+    },
+    {
+      "dst": "NN.MLTheory.CROWN.Graph",
+      "line": 23,
+      "path": "NN/API/Public/Facade/Base/CLI.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.CLI"
+    },
+    {
+      "dst": "NN.Verification.TorchLean.Compile",
+      "line": 24,
       "path": "NN/API/Public/Facade/Base/CLI.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.CLI"
@@ -915,484 +936,589 @@
       "src": "NN.API.Public.Facade.Base.Json"
     },
     {
-      "dst": "NN.API.Public",
+      "dst": "NN.API.Public.NN",
       "line": 9,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.API.Data",
+      "dst": "NN.API.Public.TensorPack",
       "line": 10,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.API.Data.Transforms",
+      "dst": "NN.API.Public.Seeded",
       "line": 11,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.API.Runtime",
+      "dst": "NN.API.Public.Autograd",
       "line": 12,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.API.Models",
+      "dst": "NN.API.Data",
       "line": 13,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.API.Public.NN.Transformer",
+      "dst": "NN.API.Data.Transforms",
       "line": 14,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.API.RL",
+      "dst": "NN.API.Runtime",
       "line": 15,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.API.Rand",
+      "dst": "NN.API.Models",
       "line": 16,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.API.Samples.Bands",
+      "dst": "NN.API.Public.NN.Transformer",
       "line": 17,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.API.Text.Bpe",
+      "dst": "NN.API.RL",
       "line": 18,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.MLTheory.CROWN.Flatbox",
+      "dst": "NN.API.Rand",
       "line": 19,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.MLTheory.CROWN.Graph",
+      "dst": "NN.API.Samples.Bands",
       "line": 20,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.Verification.TorchLean.Compile",
+      "dst": "NN.API.Text.Bpe",
       "line": 21,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.API.Public.Facade.Base.Root",
+      "dst": "NN.MLTheory.CROWN.Flatbox",
       "line": 22,
       "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
-      "dst": "NN.API.Public",
-      "line": 9,
-      "path": "NN/API/Public/Facade/Base/Root.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Root"
-    },
-    {
-      "dst": "NN.API.Data",
-      "line": 10,
-      "path": "NN/API/Public/Facade/Base/Root.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Root"
-    },
-    {
-      "dst": "NN.API.Data.Transforms",
-      "line": 11,
-      "path": "NN/API/Public/Facade/Base/Root.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Root"
-    },
-    {
-      "dst": "NN.API.Runtime",
-      "line": 12,
-      "path": "NN/API/Public/Facade/Base/Root.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Root"
-    },
-    {
-      "dst": "NN.API.Models",
-      "line": 13,
-      "path": "NN/API/Public/Facade/Base/Root.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Root"
-    },
-    {
-      "dst": "NN.API.Public.NN.Transformer",
-      "line": 14,
-      "path": "NN/API/Public/Facade/Base/Root.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Root"
-    },
-    {
-      "dst": "NN.API.RL",
-      "line": 15,
-      "path": "NN/API/Public/Facade/Base/Root.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Root"
-    },
-    {
-      "dst": "NN.API.Rand",
-      "line": 16,
-      "path": "NN/API/Public/Facade/Base/Root.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Root"
-    },
-    {
-      "dst": "NN.API.Samples.Bands",
-      "line": 17,
-      "path": "NN/API/Public/Facade/Base/Root.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Root"
-    },
-    {
-      "dst": "NN.API.Text.Bpe",
-      "line": 18,
-      "path": "NN/API/Public/Facade/Base/Root.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Root"
-    },
-    {
-      "dst": "NN.MLTheory.CROWN.Flatbox",
-      "line": 19,
-      "path": "NN/API/Public/Facade/Base/Root.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Root"
-    },
-    {
       "dst": "NN.MLTheory.CROWN.Graph",
-      "line": 20,
-      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "line": 23,
+      "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
-      "src": "NN.API.Public.Facade.Base.Root"
+      "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
       "dst": "NN.Verification.TorchLean.Compile",
-      "line": 21,
-      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "line": 24,
+      "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
       "public": true,
-      "src": "NN.API.Public.Facade.Base.Root"
-    },
-    {
-      "dst": "NN.API.Public",
-      "line": 9,
-      "path": "NN/API/Public/Facade/Base/Runtime.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Runtime"
-    },
-    {
-      "dst": "NN.API.Data",
-      "line": 10,
-      "path": "NN/API/Public/Facade/Base/Runtime.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Runtime"
-    },
-    {
-      "dst": "NN.API.Data.Transforms",
-      "line": 11,
-      "path": "NN/API/Public/Facade/Base/Runtime.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Runtime"
-    },
-    {
-      "dst": "NN.API.Runtime",
-      "line": 12,
-      "path": "NN/API/Public/Facade/Base/Runtime.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Runtime"
-    },
-    {
-      "dst": "NN.API.Models",
-      "line": 13,
-      "path": "NN/API/Public/Facade/Base/Runtime.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Runtime"
-    },
-    {
-      "dst": "NN.API.Public.NN.Transformer",
-      "line": 14,
-      "path": "NN/API/Public/Facade/Base/Runtime.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Runtime"
-    },
-    {
-      "dst": "NN.API.RL",
-      "line": 15,
-      "path": "NN/API/Public/Facade/Base/Runtime.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Runtime"
-    },
-    {
-      "dst": "NN.API.Rand",
-      "line": 16,
-      "path": "NN/API/Public/Facade/Base/Runtime.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Runtime"
-    },
-    {
-      "dst": "NN.API.Samples.Bands",
-      "line": 17,
-      "path": "NN/API/Public/Facade/Base/Runtime.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Runtime"
-    },
-    {
-      "dst": "NN.API.Text.Bpe",
-      "line": 18,
-      "path": "NN/API/Public/Facade/Base/Runtime.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Runtime"
-    },
-    {
-      "dst": "NN.MLTheory.CROWN.Flatbox",
-      "line": 19,
-      "path": "NN/API/Public/Facade/Base/Runtime.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Runtime"
-    },
-    {
-      "dst": "NN.MLTheory.CROWN.Graph",
-      "line": 20,
-      "path": "NN/API/Public/Facade/Base/Runtime.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Runtime"
-    },
-    {
-      "dst": "NN.Verification.TorchLean.Compile",
-      "line": 21,
-      "path": "NN/API/Public/Facade/Base/Runtime.lean",
-      "public": true,
-      "src": "NN.API.Public.Facade.Base.Runtime"
+      "src": "NN.API.Public.Facade.Base.ModelZoo"
     },
     {
       "dst": "NN.API.Public.Facade.Base.Root",
+      "line": 25,
+      "path": "NN/API/Public/Facade/Base/ModelZoo.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.ModelZoo"
+    },
+    {
+      "dst": "NN.API.Public.NN",
+      "line": 9,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.API.Public.TensorPack",
+      "line": 10,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.API.Public.Seeded",
+      "line": 11,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.API.Public.Autograd",
+      "line": 12,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.API.Data",
+      "line": 13,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.API.Data.Transforms",
+      "line": 14,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.API.Runtime",
+      "line": 15,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.API.Models",
+      "line": 16,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.API.Public.NN.Transformer",
+      "line": 17,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.API.RL",
+      "line": 18,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.API.Rand",
+      "line": 19,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.API.Samples.Bands",
+      "line": 20,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.API.Text.Bpe",
+      "line": 21,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.MLTheory.CROWN.Flatbox",
+      "line": 22,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.MLTheory.CROWN.Graph",
+      "line": 23,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.Verification.TorchLean.Compile",
+      "line": 24,
+      "path": "NN/API/Public/Facade/Base/Root.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "dst": "NN.API.Public.NN",
+      "line": 9,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.Public.TensorPack",
+      "line": 10,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.Public.Seeded",
+      "line": 11,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.Public.Autograd",
+      "line": 12,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.Data",
+      "line": 13,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.Data.Transforms",
+      "line": 14,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.Runtime",
+      "line": 15,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.Models",
+      "line": 16,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.Public.NN.Transformer",
+      "line": 17,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.RL",
+      "line": 18,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.Rand",
+      "line": 19,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.Samples.Bands",
+      "line": 20,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.Text.Bpe",
+      "line": 21,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.MLTheory.CROWN.Flatbox",
       "line": 22,
       "path": "NN/API/Public/Facade/Base/Runtime.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Runtime"
     },
     {
-      "dst": "NN.API.Public",
+      "dst": "NN.MLTheory.CROWN.Graph",
+      "line": 23,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.Verification.TorchLean.Compile",
+      "line": 24,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.Public.Facade.Base.Root",
+      "line": 25,
+      "path": "NN/API/Public/Facade/Base/Runtime.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "dst": "NN.API.Public.NN",
       "line": 9,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
-      "dst": "NN.API.Data",
+      "dst": "NN.API.Public.TensorPack",
       "line": 10,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
-      "dst": "NN.API.Data.Transforms",
+      "dst": "NN.API.Public.Seeded",
       "line": 11,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
-      "dst": "NN.API.Runtime",
+      "dst": "NN.API.Public.Autograd",
       "line": 12,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
-      "dst": "NN.API.Models",
+      "dst": "NN.API.Data",
       "line": 13,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
-      "dst": "NN.API.Public.NN.Transformer",
+      "dst": "NN.API.Data.Transforms",
       "line": 14,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
-      "dst": "NN.API.RL",
+      "dst": "NN.API.Runtime",
       "line": 15,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
-      "dst": "NN.API.Rand",
+      "dst": "NN.API.Models",
       "line": 16,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
-      "dst": "NN.API.Samples.Bands",
+      "dst": "NN.API.Public.NN.Transformer",
       "line": 17,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
-      "dst": "NN.API.Text.Bpe",
+      "dst": "NN.API.RL",
       "line": 18,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
-      "dst": "NN.MLTheory.CROWN.Flatbox",
+      "dst": "NN.API.Rand",
       "line": 19,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
-      "dst": "NN.MLTheory.CROWN.Graph",
+      "dst": "NN.API.Samples.Bands",
       "line": 20,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
-      "dst": "NN.Verification.TorchLean.Compile",
+      "dst": "NN.API.Text.Bpe",
       "line": 21,
+      "path": "NN/API/Public/Facade/Base/Tensor.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Tensor"
+    },
+    {
+      "dst": "NN.MLTheory.CROWN.Flatbox",
+      "line": 22,
+      "path": "NN/API/Public/Facade/Base/Tensor.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Tensor"
+    },
+    {
+      "dst": "NN.MLTheory.CROWN.Graph",
+      "line": 23,
+      "path": "NN/API/Public/Facade/Base/Tensor.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Tensor"
+    },
+    {
+      "dst": "NN.Verification.TorchLean.Compile",
+      "line": 24,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
       "dst": "NN.API.Public.Facade.Base.Runtime",
-      "line": 22,
+      "line": 25,
       "path": "NN/API/Public/Facade/Base/Tensor.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Tensor"
     },
     {
-      "dst": "NN.API.Public",
+      "dst": "NN.API.Public.NN",
       "line": 9,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
     },
     {
-      "dst": "NN.API.Data",
+      "dst": "NN.API.Public.TensorPack",
       "line": 10,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
     },
     {
-      "dst": "NN.API.Data.Transforms",
+      "dst": "NN.API.Public.Seeded",
       "line": 11,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
     },
     {
-      "dst": "NN.API.Runtime",
+      "dst": "NN.API.Public.Autograd",
       "line": 12,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
     },
     {
-      "dst": "NN.API.Models",
+      "dst": "NN.API.Data",
       "line": 13,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
     },
     {
-      "dst": "NN.API.Public.NN.Transformer",
+      "dst": "NN.API.Data.Transforms",
       "line": 14,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
     },
     {
-      "dst": "NN.API.RL",
+      "dst": "NN.API.Runtime",
       "line": 15,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
     },
     {
-      "dst": "NN.API.Rand",
+      "dst": "NN.API.Models",
       "line": 16,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
     },
     {
-      "dst": "NN.API.Samples.Bands",
+      "dst": "NN.API.Public.NN.Transformer",
       "line": 17,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
     },
     {
-      "dst": "NN.API.Text.Bpe",
+      "dst": "NN.API.RL",
       "line": 18,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
     },
     {
-      "dst": "NN.MLTheory.CROWN.Flatbox",
+      "dst": "NN.API.Rand",
       "line": 19,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
     },
     {
-      "dst": "NN.MLTheory.CROWN.Graph",
+      "dst": "NN.API.Samples.Bands",
       "line": 20,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
     },
     {
-      "dst": "NN.Verification.TorchLean.Compile",
+      "dst": "NN.API.Text.Bpe",
       "line": 21,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
     },
     {
-      "dst": "NN.API.Public.Facade.Base.Root",
+      "dst": "NN.MLTheory.CROWN.Flatbox",
       "line": 22,
+      "path": "NN/API/Public/Facade/Base/Verification.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Verification"
+    },
+    {
+      "dst": "NN.MLTheory.CROWN.Graph",
+      "line": 23,
+      "path": "NN/API/Public/Facade/Base/Verification.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Verification"
+    },
+    {
+      "dst": "NN.Verification.TorchLean.Compile",
+      "line": 24,
+      "path": "NN/API/Public/Facade/Base/Verification.lean",
+      "public": true,
+      "src": "NN.API.Public.Facade.Base.Verification"
+    },
+    {
+      "dst": "NN.API.Public.Facade.Base.Root",
+      "line": 25,
       "path": "NN/API/Public/Facade/Base/Verification.lean",
       "public": true,
       "src": "NN.API.Public.Facade.Base.Verification"
@@ -5773,22 +5899,29 @@
       "src": "NN.Entrypoint.API"
     },
     {
-      "dst": "NN.API.Adapters",
+      "dst": "NN.API.Public.Facade",
       "line": 10,
       "path": "NN/Entrypoint/API.lean",
       "public": true,
       "src": "NN.Entrypoint.API"
     },
     {
-      "dst": "NN.API.Models.Generative",
+      "dst": "NN.API.Adapters",
       "line": 11,
       "path": "NN/Entrypoint/API.lean",
       "public": true,
       "src": "NN.Entrypoint.API"
     },
     {
-      "dst": "NN.API.SelfSupervised",
+      "dst": "NN.API.Models.Generative",
       "line": 12,
+      "path": "NN/Entrypoint/API.lean",
+      "public": true,
+      "src": "NN.Entrypoint.API"
+    },
+    {
+      "dst": "NN.API.SelfSupervised",
+      "line": 13,
       "path": "NN/Entrypoint/API.lean",
       "public": true,
       "src": "NN.Entrypoint.API"
@@ -6942,36 +7075,50 @@
       "src": "NN.Examples.BugZoo.All"
     },
     {
-      "dst": "NN.Examples.BugZoo.BatchInvariance",
+      "dst": "NN.Examples.BugZoo.LayerNormDegenerateAxis",
       "line": 17,
       "path": "NN/Examples/BugZoo/All.lean",
       "public": true,
       "src": "NN.Examples.BugZoo.All"
     },
     {
-      "dst": "NN.Examples.BugZoo.KVCache",
+      "dst": "NN.Examples.BugZoo.ConstantNormalizationSlice",
       "line": 18,
       "path": "NN/Examples/BugZoo/All.lean",
       "public": true,
       "src": "NN.Examples.BugZoo.All"
     },
     {
-      "dst": "NN.Examples.BugZoo.RoPEPosition",
+      "dst": "NN.Examples.BugZoo.BatchInvariance",
       "line": 19,
       "path": "NN/Examples/BugZoo/All.lean",
       "public": true,
       "src": "NN.Examples.BugZoo.All"
     },
     {
-      "dst": "NN.Examples.BugZoo.TokenizerBoundary",
+      "dst": "NN.Examples.BugZoo.KVCache",
       "line": 20,
       "path": "NN/Examples/BugZoo/All.lean",
       "public": true,
       "src": "NN.Examples.BugZoo.All"
     },
     {
-      "dst": "NN.Examples.BugZoo.Geometry3DProjection",
+      "dst": "NN.Examples.BugZoo.RoPEPosition",
       "line": 21,
+      "path": "NN/Examples/BugZoo/All.lean",
+      "public": true,
+      "src": "NN.Examples.BugZoo.All"
+    },
+    {
+      "dst": "NN.Examples.BugZoo.TokenizerBoundary",
+      "line": 22,
+      "path": "NN/Examples/BugZoo/All.lean",
+      "public": true,
+      "src": "NN.Examples.BugZoo.All"
+    },
+    {
+      "dst": "NN.Examples.BugZoo.Geometry3DProjection",
+      "line": 23,
       "path": "NN/Examples/BugZoo/All.lean",
       "public": true,
       "src": "NN.Examples.BugZoo.All"
@@ -7012,6 +7159,13 @@
       "src": "NN.Examples.BugZoo.CompilerBoundary"
     },
     {
+      "dst": "NN.Spec.Layers.Normalization",
+      "line": 9,
+      "path": "NN/Examples/BugZoo/ConstantNormalizationSlice.lean",
+      "public": true,
+      "src": "NN.Examples.BugZoo.ConstantNormalizationSlice"
+    },
+    {
       "dst": "NN.Floats.IEEEExec.BridgeInitFloat32",
       "line": 9,
       "path": "NN/Examples/BugZoo/FloatBoundary.lean",
@@ -7038,6 +7192,13 @@
       "path": "NN/Examples/BugZoo/KVCache.lean",
       "public": true,
       "src": "NN.Examples.BugZoo.KVCache"
+    },
+    {
+      "dst": "NN.Spec.Layers.Normalization",
+      "line": 9,
+      "path": "NN/Examples/BugZoo/LayerNormDegenerateAxis.lean",
+      "public": true,
+      "src": "NN.Examples.BugZoo.LayerNormDegenerateAxis"
     },
     {
       "dst": "NN.Proofs.Analysis.Normalization",
@@ -7150,6 +7311,55 @@
       "path": "NN/Examples/Data/SamplePaths.lean",
       "public": true,
       "src": "NN.Examples.Data.SamplePaths"
+    },
+    {
+      "dst": "NN.Examples.Factorization.Common",
+      "line": 9,
+      "path": "NN/Examples/Factorization/Cholesky.lean",
+      "public": true,
+      "src": "NN.Examples.Factorization.Cholesky"
+    },
+    {
+      "dst": "NN.Spec.Core.Tensor.Factorizations",
+      "line": 9,
+      "path": "NN/Examples/Factorization/Common.lean",
+      "public": true,
+      "src": "NN.Examples.Factorization.Common"
+    },
+    {
+      "dst": "NN.Examples.Factorization.Common",
+      "line": 9,
+      "path": "NN/Examples/Factorization/QR.lean",
+      "public": true,
+      "src": "NN.Examples.Factorization.QR"
+    },
+    {
+      "dst": "NN.Examples.Factorization.Common",
+      "line": 9,
+      "path": "NN/Examples/Factorization.lean",
+      "public": true,
+      "src": "NN.Examples.Factorization"
+    },
+    {
+      "dst": "NN.Examples.Factorization.Cholesky",
+      "line": 10,
+      "path": "NN/Examples/Factorization.lean",
+      "public": true,
+      "src": "NN.Examples.Factorization"
+    },
+    {
+      "dst": "NN.Examples.Factorization.QR",
+      "line": 11,
+      "path": "NN/Examples/Factorization.lean",
+      "public": true,
+      "src": "NN.Examples.Factorization"
+    },
+    {
+      "dst": "NN",
+      "line": 9,
+      "path": "NN/Examples/Functional/Transcendentals.lean",
+      "public": true,
+      "src": "NN.Examples.Functional.Transcendentals"
     },
     {
       "dst": "NN.Runtime.PyTorch.Export.Core",
@@ -15132,6 +15342,13 @@
       "src": "NN.Proofs.Autograd.Tape.Nodes.Losses.MSE"
     },
     {
+      "dst": "NN.Spec.Layers.Loss",
+      "line": 10,
+      "path": "NN/Proofs/Autograd/Tape/Nodes/Losses/MSE.lean",
+      "public": true,
+      "src": "NN.Proofs.Autograd.Tape.Nodes.Losses.MSE"
+    },
+    {
       "dst": "NN.Proofs.Autograd.Tape.Nodes.Reductions",
       "line": 9,
       "path": "NN/Proofs/Autograd/Tape/Nodes/Losses/NLL.lean",
@@ -17260,6 +17477,76 @@
       "src": "NN.Proofs.Tensor.Basic.Core"
     },
     {
+      "dst": "NN.Spec.Core.Tensor.Factorizations",
+      "line": 9,
+      "path": "NN/Proofs/Tensor/Basic/Factorizations.lean",
+      "public": true,
+      "src": "NN.Proofs.Tensor.Basic.Factorizations"
+    },
+    {
+      "dst": "NN.Proofs.Tensor.Basic.LinearAlgebra",
+      "line": 10,
+      "path": "NN/Proofs/Tensor/Basic/Factorizations.lean",
+      "public": true,
+      "src": "NN.Proofs.Tensor.Basic.Factorizations"
+    },
+    {
+      "dst": "Mathlib.Data.List.GetD",
+      "line": 11,
+      "path": "NN/Proofs/Tensor/Basic/Factorizations.lean",
+      "public": true,
+      "src": "NN.Proofs.Tensor.Basic.Factorizations"
+    },
+    {
+      "dst": "NN.Proofs.Tensor.Basic.FactorizationsReconstruction",
+      "line": 9,
+      "path": "NN/Proofs/Tensor/Basic/FactorizationsOrthonormal.lean",
+      "public": true,
+      "src": "NN.Proofs.Tensor.Basic.FactorizationsOrthonormal"
+    },
+    {
+      "dst": "Mathlib.Analysis.InnerProductSpace.GramSchmidtOrtho",
+      "line": 10,
+      "path": "NN/Proofs/Tensor/Basic/FactorizationsOrthonormal.lean",
+      "public": true,
+      "src": "NN.Proofs.Tensor.Basic.FactorizationsOrthonormal"
+    },
+    {
+      "dst": "Mathlib.Analysis.InnerProductSpace.PiL2",
+      "line": 11,
+      "path": "NN/Proofs/Tensor/Basic/FactorizationsOrthonormal.lean",
+      "public": true,
+      "src": "NN.Proofs.Tensor.Basic.FactorizationsOrthonormal"
+    },
+    {
+      "dst": "NN.Spec.Core.Tensor.Factorizations",
+      "line": 9,
+      "path": "NN/Proofs/Tensor/Basic/FactorizationsReconstruction.lean",
+      "public": true,
+      "src": "NN.Proofs.Tensor.Basic.FactorizationsReconstruction"
+    },
+    {
+      "dst": "NN.Proofs.Tensor.Basic.Factorizations",
+      "line": 10,
+      "path": "NN/Proofs/Tensor/Basic/FactorizationsReconstruction.lean",
+      "public": true,
+      "src": "NN.Proofs.Tensor.Basic.FactorizationsReconstruction"
+    },
+    {
+      "dst": "Mathlib.Data.List.GetD",
+      "line": 11,
+      "path": "NN/Proofs/Tensor/Basic/FactorizationsReconstruction.lean",
+      "public": true,
+      "src": "NN.Proofs.Tensor.Basic.FactorizationsReconstruction"
+    },
+    {
+      "dst": "Mathlib.Algebra.BigOperators.Fin",
+      "line": 12,
+      "path": "NN/Proofs/Tensor/Basic/FactorizationsReconstruction.lean",
+      "public": true,
+      "src": "NN.Proofs.Tensor.Basic.FactorizationsReconstruction"
+    },
+    {
       "dst": "NN.Proofs.Tensor.Basic.Core",
       "line": 9,
       "path": "NN/Proofs/Tensor/Basic/Folds.lean",
@@ -17295,15 +17582,36 @@
       "src": "NN.Proofs.Tensor.Basic"
     },
     {
-      "dst": "NN.Proofs.Tensor.Basic.BoundsNorms",
+      "dst": "NN.Proofs.Tensor.Basic.Factorizations",
       "line": 12,
       "path": "NN/Proofs/Tensor/Basic.lean",
       "public": true,
       "src": "NN.Proofs.Tensor.Basic"
     },
     {
-      "dst": "NN.Proofs.Tensor.Basic.Algebra",
+      "dst": "NN.Proofs.Tensor.Basic.FactorizationsReconstruction",
       "line": 13,
+      "path": "NN/Proofs/Tensor/Basic.lean",
+      "public": true,
+      "src": "NN.Proofs.Tensor.Basic"
+    },
+    {
+      "dst": "NN.Proofs.Tensor.Basic.FactorizationsOrthonormal",
+      "line": 14,
+      "path": "NN/Proofs/Tensor/Basic.lean",
+      "public": true,
+      "src": "NN.Proofs.Tensor.Basic"
+    },
+    {
+      "dst": "NN.Proofs.Tensor.Basic.BoundsNorms",
+      "line": 15,
+      "path": "NN/Proofs/Tensor/Basic.lean",
+      "public": true,
+      "src": "NN.Proofs.Tensor.Basic"
+    },
+    {
+      "dst": "NN.Proofs.Tensor.Basic.Algebra",
+      "line": 16,
       "path": "NN/Proofs/Tensor/Basic.lean",
       "public": true,
       "src": "NN.Proofs.Tensor.Basic"
@@ -17890,6 +18198,13 @@
       "src": "NN.Runtime.Autograd.Engine.Core.ActivationsLoss"
     },
     {
+      "dst": "NN.Spec.Layers.Loss",
+      "line": 11,
+      "path": "NN/Runtime/Autograd/Engine/Core/ActivationsLoss.lean",
+      "public": true,
+      "src": "NN.Runtime.Autograd.Engine.Core.ActivationsLoss"
+    },
+    {
       "dst": "NN.Runtime.Autograd.Engine.Core.ActivationsLoss",
       "line": 10,
       "path": "NN/Runtime/Autograd/Engine/Core/Backward.lean",
@@ -18417,6 +18732,13 @@
     {
       "dst": "NN.Runtime.Autograd.Engine.Cuda.Kernels",
       "line": 12,
+      "path": "NN/Runtime/Autograd/Engine/FastKernels.lean",
+      "public": true,
+      "src": "NN.Runtime.Autograd.Engine.FastKernels"
+    },
+    {
+      "dst": "NN.Spec.Layers.Loss",
+      "line": 13,
       "path": "NN/Runtime/Autograd/Engine/FastKernels.lean",
       "public": true,
       "src": "NN.Runtime.Autograd.Engine.FastKernels"
@@ -20702,6 +21024,20 @@
       "path": "NN/Spec/Core/Tensor/Core.lean",
       "public": true,
       "src": "NN.Spec.Core.Tensor.Core"
+    },
+    {
+      "dst": "NN.Spec.Core.Tensor.Linalg",
+      "line": 9,
+      "path": "NN/Spec/Core/Tensor/Factorizations.lean",
+      "public": true,
+      "src": "NN.Spec.Core.Tensor.Factorizations"
+    },
+    {
+      "dst": "NN.Spec.Core.TensorReductionShape.LinearAlgebra",
+      "line": 10,
+      "path": "NN/Spec/Core/Tensor/Factorizations.lean",
+      "public": true,
+      "src": "NN.Spec.Core.Tensor.Factorizations"
     },
     {
       "dst": "NN.Spec.Core.Tensor.Core",
@@ -24183,6 +24519,20 @@
       "src": "NN.Tests.Runtime.Rationals.AutogradEngineTest"
     },
     {
+      "dst": "NN.Runtime.Autograd.Utils",
+      "line": 9,
+      "path": "NN/Tests/Runtime/Rationals/ElementwiseDivTest.lean",
+      "public": true,
+      "src": "NN.Tests.Runtime.Rationals.ElementwiseDivTest"
+    },
+    {
+      "dst": "NN.Entrypoint.Tensor",
+      "line": 10,
+      "path": "NN/Tests/Runtime/Rationals/ElementwiseDivTest.lean",
+      "public": true,
+      "src": "NN.Tests.Runtime.Rationals.ElementwiseDivTest"
+    },
+    {
       "dst": "NN.Spec.Core.Context",
       "line": 9,
       "path": "NN/Tests/Runtime/Rationals/MlpTest.lean",
@@ -24241,6 +24591,13 @@
     {
       "dst": "NN.Tests.Runtime.Rationals.MlpTest",
       "line": 10,
+      "path": "NN/Tests/Runtime/Rationals/Suite.lean",
+      "public": true,
+      "src": "NN.Tests.Runtime.Rationals.Suite"
+    },
+    {
+      "dst": "NN.Tests.Runtime.Rationals.ElementwiseDivTest",
+      "line": 11,
       "path": "NN/Tests/Runtime/Rationals/Suite.lean",
       "public": true,
       "src": "NN.Tests.Runtime.Rationals.Suite"
@@ -26208,6 +26565,13 @@
     {
       "dst": "VersoManual",
       "line": 1,
+      "path": "blueprint/TorchLeanBlueprint/Guide/Ch2_Frontend/ScientificForwardModels.lean",
+      "public": false,
+      "src": "blueprint.TorchLeanBlueprint.Guide.Ch2_Frontend.ScientificForwardModels"
+    },
+    {
+      "dst": "VersoManual",
+      "line": 1,
       "path": "blueprint/TorchLeanBlueprint/Guide/Ch2_Frontend/TensorsAndShapes.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide.Ch2_Frontend.TensorsAndShapes"
@@ -26684,6 +27048,13 @@
     {
       "dst": "VersoManual",
       "line": 1,
+      "path": "blueprint/TorchLeanBlueprint/Guide/Ch4_Verification/FactorizationsCholeskyQR.lean",
+      "public": false,
+      "src": "blueprint.TorchLeanBlueprint.Guide.Ch4_Verification.FactorizationsCholeskyQR"
+    },
+    {
+      "dst": "VersoManual",
+      "line": 1,
       "path": "blueprint/TorchLeanBlueprint/Guide/Ch4_Verification/LearningTheory.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide.Ch4_Verification.LearningTheory"
@@ -26997,225 +27368,239 @@
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch2_Frontend.RuntimeAndAutograd",
+      "dst": "TorchLeanBlueprint.Guide.Ch2_Frontend.ScientificForwardModels",
       "line": 16,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch2_Frontend.PyTorchRoundtrip",
+      "dst": "TorchLeanBlueprint.Guide.Ch2_Frontend.RuntimeAndAutograd",
       "line": 17,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.GraphsAndIR",
+      "dst": "TorchLeanBlueprint.Guide.Ch2_Frontend.PyTorchRoundtrip",
       "line": 18,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.SpecLayer",
+      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.GraphsAndIR",
       "line": 19,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.GraphSpec",
+      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.SpecLayer",
       "line": 20,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.Floats",
+      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.GraphSpec",
       "line": 21,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.FloatingPointLiterature",
+      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.Floats",
       "line": 22,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.GPUAndCUDA",
+      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.FloatingPointLiterature",
       "line": 23,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.ExternalToolsAndFFI",
+      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.GPUAndCUDA",
       "line": 24,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.Verification",
+      "dst": "TorchLeanBlueprint.Guide.Ch3_Backend.ExternalToolsAndFFI",
       "line": 25,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.ProofSystems",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.Verification",
       "line": 26,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.AutogradProofs",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.ProofSystems",
       "line": 27,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.RuntimeApproximation",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.AutogradProofs",
       "line": 28,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.LearningTheory",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.RuntimeApproximation",
       "line": 29,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.OptimizationTheory",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.LearningTheory",
       "line": 30,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.SelfSupervisedTheory",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.OptimizationTheory",
       "line": 31,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.ApproximationTheory",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.SelfSupervisedTheory",
       "line": 32,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.ClassicalMLProofs",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.ApproximationTheory",
       "line": 33,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.ProbabilityAndGradients",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.ClassicalMLProofs",
       "line": 34,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.ScientificMLVerification",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.ProbabilityAndGradients",
       "line": 35,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.Certificates",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.ScientificMLVerification",
       "line": 36,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.FP32Soundness",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.FactorizationsCholeskyQR",
       "line": 37,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.TwoStageWorkflows",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.Certificates",
       "line": 38,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.ModernModels",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.FP32Soundness",
       "line": 39,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.ModelZooDeepDive",
+      "dst": "TorchLeanBlueprint.Guide.Ch4_Verification.TwoStageWorkflows",
       "line": 40,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.GenerativeModels",
+      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.ModernModels",
       "line": 41,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.ReinforcementLearning",
+      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.ModelZooDeepDive",
       "line": 42,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.Widgets",
+      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.GenerativeModels",
       "line": 43,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.BugZooCatalog",
+      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.ReinforcementLearning",
       "line": 44,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.Examples",
+      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.Widgets",
       "line": 45,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.CLI",
+      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.BugZooCatalog",
       "line": 46,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
     },
     {
-      "dst": "TorchLeanBlueprint.Guide.Ch6_Conclusion.Conclusion",
+      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.Examples",
       "line": 47,
+      "path": "blueprint/TorchLeanBlueprint/Guide.lean",
+      "public": false,
+      "src": "blueprint.TorchLeanBlueprint.Guide"
+    },
+    {
+      "dst": "TorchLeanBlueprint.Guide.Ch5_Advanced.CLI",
+      "line": 48,
+      "path": "blueprint/TorchLeanBlueprint/Guide.lean",
+      "public": false,
+      "src": "blueprint.TorchLeanBlueprint.Guide"
+    },
+    {
+      "dst": "TorchLeanBlueprint.Guide.Ch6_Conclusion.Conclusion",
+      "line": 49,
       "path": "blueprint/TorchLeanBlueprint/Guide.lean",
       "public": false,
       "src": "blueprint.TorchLeanBlueprint.Guide"
@@ -27252,22 +27637,22 @@
   "findings": [],
   "layer_edges": [
     {
+      "count": 365,
+      "dst_layer": "NN.API",
+      "src_layer": "NN.API"
+    },
+    {
       "count": 348,
       "dst_layer": "NN.Runtime",
       "src_layer": "NN.Runtime"
     },
     {
-      "count": 347,
-      "dst_layer": "NN.API",
-      "src_layer": "NN.API"
-    },
-    {
-      "count": 313,
+      "count": 315,
       "dst_layer": "NN.Spec",
       "src_layer": "NN.Spec"
     },
     {
-      "count": 276,
+      "count": 282,
       "dst_layer": "NN.Proofs",
       "src_layer": "NN.Proofs"
     },
@@ -27287,7 +27672,7 @@
       "src_layer": "NN.Verification"
     },
     {
-      "count": 136,
+      "count": 143,
       "dst_layer": "NN.Examples",
       "src_layer": "NN.Examples"
     },
@@ -27307,29 +27692,29 @@
       "src_layer": "NN.CI"
     },
     {
-      "count": 60,
+      "count": 61,
       "dst_layer": "NN.Tests",
       "src_layer": "NN.Tests"
     },
     {
-      "count": 57,
+      "count": 60,
       "dst_layer": "NN.Spec",
       "src_layer": "NN.Proofs"
     },
     {
-      "count": 51,
+      "count": 52,
       "dst_layer": "NN.Runtime",
       "src_layer": "NN.Tests"
+    },
+    {
+      "count": 50,
+      "dst_layer": "NN",
+      "src_layer": "NN.Examples"
     },
     {
       "count": 49,
       "dst_layer": "NN.Floats",
       "src_layer": "NN.CI"
-    },
-    {
-      "count": 49,
-      "dst_layer": "NN",
-      "src_layer": "NN.Examples"
     },
     {
       "count": 42,
@@ -27342,7 +27727,7 @@
       "src_layer": "NN.API"
     },
     {
-      "count": 37,
+      "count": 39,
       "dst_layer": "NN.Spec",
       "src_layer": "NN.Runtime"
     },
@@ -27367,6 +27752,11 @@
       "src_layer": "NN.CI"
     },
     {
+      "count": 28,
+      "dst_layer": "NN.Spec",
+      "src_layer": "NN.Examples"
+    },
+    {
       "count": 26,
       "dst_layer": "NN.Verification",
       "src_layer": "NN.CI"
@@ -27374,11 +27764,6 @@
     {
       "count": 26,
       "dst_layer": "NN.Verification",
-      "src_layer": "NN.Examples"
-    },
-    {
-      "count": 25,
-      "dst_layer": "NN.Spec",
       "src_layer": "NN.Examples"
     },
     {
@@ -27398,13 +27783,13 @@
     },
     {
       "count": 20,
-      "dst_layer": "NN.MLTheory",
-      "src_layer": "NN.Verification"
-    },
-    {
-      "count": 19,
       "dst_layer": "NN.Entrypoint",
       "src_layer": "NN.Tests"
+    },
+    {
+      "count": 20,
+      "dst_layer": "NN.MLTheory",
+      "src_layer": "NN.Verification"
     },
     {
       "count": 19,
@@ -27563,6 +27948,11 @@
     },
     {
       "count": 5,
+      "dst_layer": "NN.API",
+      "src_layer": "NN.Entrypoint"
+    },
+    {
+      "count": 5,
       "dst_layer": "NN.IR",
       "src_layer": "NN.Examples"
     },
@@ -27585,11 +27975,6 @@
       "count": 5,
       "dst_layer": "NN.Entrypoint",
       "src_layer": "blueprint"
-    },
-    {
-      "count": 4,
-      "dst_layer": "NN.API",
-      "src_layer": "NN.Entrypoint"
     },
     {
       "count": 4,
@@ -28612,6 +28997,9 @@
     "NN.Examples.BugZoo.CompilerBoundary": [
       "NN.Examples.BugZoo.CompilerBoundary"
     ],
+    "NN.Examples.BugZoo.ConstantNormalizationSlice": [
+      "NN.Examples.BugZoo.ConstantNormalizationSlice"
+    ],
     "NN.Examples.BugZoo.FloatBoundary": [
       "NN.Examples.BugZoo.FloatBoundary"
     ],
@@ -28623,6 +29011,9 @@
     ],
     "NN.Examples.BugZoo.KVCache": [
       "NN.Examples.BugZoo.KVCache"
+    ],
+    "NN.Examples.BugZoo.LayerNormDegenerateAxis": [
+      "NN.Examples.BugZoo.LayerNormDegenerateAxis"
     ],
     "NN.Examples.BugZoo.NormalizationState": [
       "NN.Examples.BugZoo.NormalizationState"
@@ -28660,6 +29051,19 @@
       "Examples",
       "Data",
       "SamplePaths"
+    ],
+    "NN.Examples.Factorization": [],
+    "NN.Examples.Factorization.Cholesky": [
+      "NN.Examples.Factorization.Cholesky"
+    ],
+    "NN.Examples.Factorization.Common": [
+      "NN.Examples.Factorization"
+    ],
+    "NN.Examples.Factorization.QR": [
+      "NN.Examples.Factorization.QR"
+    ],
+    "NN.Examples.Functional.Transcendentals": [
+      "NN.Examples.Functional.Transcendentals"
     ],
     "NN.Examples.Interop.PyTorch": [],
     "NN.Examples.Interop.PyTorch.CNN.Export": [
@@ -30356,6 +30760,15 @@
     "NN.Proofs.Tensor.Basic.Core": [
       "Spec"
     ],
+    "NN.Proofs.Tensor.Basic.Factorizations": [
+      "Spec.Factorization"
+    ],
+    "NN.Proofs.Tensor.Basic.FactorizationsOrthonormal": [
+      "Spec.Factorization.Reconstruction"
+    ],
+    "NN.Proofs.Tensor.Basic.FactorizationsReconstruction": [
+      "Spec.Factorization.Reconstruction"
+    ],
     "NN.Proofs.Tensor.Basic.Folds": [
       "Spec"
     ],
@@ -31374,6 +31787,9 @@
       "Tensor",
       "Tensor"
     ],
+    "NN.Spec.Core.Tensor.Factorizations": [
+      "Spec"
+    ],
     "NN.Spec.Core.Tensor.Linalg": [
       "Spec"
     ],
@@ -31931,6 +32347,11 @@
       "Rationals",
       "AutogradEngine"
     ],
+    "NN.Tests.Runtime.Rationals.ElementwiseDivTest": [
+      "Tests",
+      "Rationals",
+      "ElementwiseDiv"
+    ],
     "NN.Tests.Runtime.Rationals.MlpTest": [
       "Tests",
       "Rationals"
@@ -32328,6 +32749,7 @@
     "blueprint.TorchLeanBlueprint.Guide.Ch2_Frontend.ExecutionModes": [],
     "blueprint.TorchLeanBlueprint.Guide.Ch2_Frontend.PyTorchRoundtrip": [],
     "blueprint.TorchLeanBlueprint.Guide.Ch2_Frontend.RuntimeAndAutograd": [],
+    "blueprint.TorchLeanBlueprint.Guide.Ch2_Frontend.ScientificForwardModels": [],
     "blueprint.TorchLeanBlueprint.Guide.Ch2_Frontend.TensorsAndShapes": [],
     "blueprint.TorchLeanBlueprint.Guide.Ch2_Frontend.TorchLeanAPI": [],
     "blueprint.TorchLeanBlueprint.Guide.Ch2_Frontend.TrainingFromScratch": [],
@@ -32357,6 +32779,7 @@
     "blueprint.TorchLeanBlueprint.Guide.Ch4_Verification.Certificates": [],
     "blueprint.TorchLeanBlueprint.Guide.Ch4_Verification.ClassicalMLProofs": [],
     "blueprint.TorchLeanBlueprint.Guide.Ch4_Verification.FP32Soundness": [],
+    "blueprint.TorchLeanBlueprint.Guide.Ch4_Verification.FactorizationsCholeskyQR": [],
     "blueprint.TorchLeanBlueprint.Guide.Ch4_Verification.LearningTheory": [],
     "blueprint.TorchLeanBlueprint.Guide.Ch4_Verification.OptimizationTheory": [],
     "blueprint.TorchLeanBlueprint.Guide.Ch4_Verification.ProbabilityAndGradients": [],
@@ -32399,8 +32822,8 @@
     "critical_path_import_edges": 121,
     "errors": 0,
     "findings": 0,
-    "import_edges": 3872,
-    "internal_import_edges": 3346,
+    "import_edges": 3927,
+    "internal_import_edges": 3392,
     "layers": [
       "Library",
       "NN",
@@ -32423,14 +32846,14 @@
       "lakefile",
       "scripts"
     ],
-    "modules": 1143,
-    "private_import_edges": 310,
-    "public_import_edges": 3562,
+    "modules": 1157,
+    "private_import_edges": 314,
+    "public_import_edges": 3613,
     "warnings": 0
   },
   "top_fan_in": [
     {
-      "count": 77,
+      "count": 78,
       "module": "NN"
     },
     {
@@ -32463,10 +32886,6 @@
     },
     {
       "count": 24,
-      "module": "NN.API.Public"
-    },
-    {
-      "count": 24,
       "module": "NN.Spec.Module.SpecModule"
     },
     {
@@ -32474,12 +32893,12 @@
       "module": "NN.MLTheory.CROWN.Core"
     },
     {
-      "count": 22,
-      "module": "NN.Verification.TorchLean.Compile"
+      "count": 23,
+      "module": "NN.Entrypoint.Tensor"
     },
     {
       "count": 22,
-      "module": "NN.Entrypoint.Tensor"
+      "module": "NN.Verification.TorchLean.Compile"
     },
     {
       "count": 21,
@@ -32488,6 +32907,14 @@
     {
       "count": 19,
       "module": "NN.Verification.Util.Json"
+    },
+    {
+      "count": 18,
+      "module": "NN.API.Public"
+    },
+    {
+      "count": 18,
+      "module": "NN.API.Public.TensorPack"
     },
     {
       "count": 18,
@@ -32503,11 +32930,7 @@
     },
     {
       "count": 16,
-      "module": "NN.Examples.Models.Common.RealData"
-    },
-    {
-      "count": 15,
-      "module": "NN.API.Rand"
+      "module": "NN.Spec.Layers.Loss"
     }
   ],
   "top_fan_out": [
@@ -32549,6 +32972,22 @@
     },
     {
       "count": 17,
+      "module": "NN.API.Public.Facade.Base.ModelZoo"
+    },
+    {
+      "count": 17,
+      "module": "NN.API.Public.Facade.Base.Runtime"
+    },
+    {
+      "count": 17,
+      "module": "NN.API.Public.Facade.Base.Tensor"
+    },
+    {
+      "count": 17,
+      "module": "NN.API.Public.Facade.Base.Verification"
+    },
+    {
+      "count": 17,
       "module": "NN.Entrypoint.Widgets"
     },
     {
@@ -32561,35 +33000,19 @@
     },
     {
       "count": 16,
+      "module": "NN.API.Public.Facade.Base.CLI"
+    },
+    {
+      "count": 16,
+      "module": "NN.API.Public.Facade.Base.Root"
+    },
+    {
+      "count": 16,
       "module": "NN.API.Runtime.Training"
     },
     {
       "count": 16,
       "module": "NN.Entrypoint.Runtime"
-    },
-    {
-      "count": 16,
-      "module": "NN.Tests.Runtime.Cuda.Suite"
-    },
-    {
-      "count": 15,
-      "module": "NN.API.Models"
-    },
-    {
-      "count": 15,
-      "module": "NN.API.Runtime.Module"
-    },
-    {
-      "count": 15,
-      "module": "NN.Tests.Runtime.Floats.Suite"
-    },
-    {
-      "count": 14,
-      "module": "NN.API.Public.Autograd.Core"
-    },
-    {
-      "count": 14,
-      "module": "NN.API.Public.Facade.Base.ModelZoo"
     }
   ]
 }

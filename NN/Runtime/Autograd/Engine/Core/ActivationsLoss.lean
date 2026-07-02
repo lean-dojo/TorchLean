@@ -8,6 +8,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Engine.Core.Neural
+public import NN.Spec.Layers.Loss
 
 /-!
 # Core Tape Activations and Losses
@@ -283,29 +284,31 @@ def sum {α : Type} [Add α] [Zero α] [DecidableEq Shape]
 /--
  Mean-squared error (MSE) scalar loss with `"mean"` reduction over all entries.
 
- `mse_spec_basic` is the scalar loss `(Σ_i (yhat_i - target_i)^2) / N` where `N = Shape.size s`.
+ `mse_spec_basic` is the scalar loss `(Σ_i (yhat_i - target_i)^2) / N`, where
+ `N = Spec.meanDenom s`.
  This matches the default reduction of `torch.nn.functional.mse_loss(..., reduction="mean")`.
 
- Note: the derivative is defined everywhere in this spec-level setting; we do not model NaNs/Infs.
+ For nonempty shapes, `Spec.meanDenom s = Shape.size s`. For empty shapes, TorchLean's totalized
+ spec uses denominator `1`; the empty sum and empty gradient then contribute zero.
  -/
 def mseSpecBasic {α : Type} [Add α] [Sub α] [Mul α] [Div α] [Zero α] [Coe Nat α]
   {s : Shape} (predicted target : Tensor α s) : α :=
   let diff := subSpec predicted target
   let squared := mulSpec diff diff
   let sum := sumSpec (α:=α) (s:=s) squared
-  sum / (Shape.size s : α)
+  sum / (Spec.meanDenom s : α)
 
 /--
  Gradient of `mse_spec_basic` with respect to `predicted` (same shape as the inputs).
 
- If `mse = (Σ_i (yhat_i - target_i)^2) / N`, then:
+ If `mse = (Σ_i (yhat_i - target_i)^2) / N`, with `N = Spec.meanDenom s`, then:
  `∂mse/∂yhat = (2/N) * (yhat - target)`.
  -/
 def mseDerivSpecBasic {α : Type} [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [Coe Nat α]
   {s : Shape} (predicted target : Tensor α s) : Tensor α s :=
   let diff := subSpec predicted target
   let two : α := (1 : α) + 1
-  scaleSpec (α:=α) (s:=s) diff (two / (Shape.size s : α))
+  scaleSpec (α:=α) (s:=s) diff (two / (Spec.meanDenom s : α))
 
 /--
  Tape node for MSE loss with `"mean"` reduction.

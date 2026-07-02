@@ -24,7 +24,7 @@ This module is the DocGen-facing home for TorchLean's native CUDA/C runtime note
 
 DocGen documents Lean modules, not C or CUDA translation units. Instead of publishing a separate
 Jekyll source browser, TorchLean keeps the native-source map here, beside the Lean FFI modules that
-call those symbols. The actual native source remains in `csrc/cuda`; this page tells readers which
+call those symbols. The actual native source remains in `csrc/cuda`; this module records which
 files form the trusted backend boundary and which Lean modules expose them.
 
 ## Trust boundary

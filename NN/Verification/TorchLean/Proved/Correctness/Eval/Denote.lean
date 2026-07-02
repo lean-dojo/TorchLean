@@ -1054,7 +1054,7 @@ theorem denoteAllFrom_compileFGraph_eq_evalFGraphVals
                   hGetNodeLinear hExpectIn hLinearStore
             simpa [evalNode, hGetVal, DVal.shape, DVal.tensor, DVal.mk, hxF, xT, wT, bT] using
               hEvalAt
-        | conv2d inC outC kH kW stride padding inH inW hIn hKH hKW hHeight hWidth kernel bias xIdx =>
+        | conv2d inC outC kH kW stride padding inH inW hIn hKH hKW hStride hHeight hWidth kernel bias xIdx =>
             let kT : Tensor α (.dim outC (.dim inC (.dim kH (.dim kW .scalar)))) :=
               getParam (α := α) (paramShapes := paramShapes) params kernel
             let bT : Tensor α (.dim outC .scalar) :=
@@ -1105,7 +1105,7 @@ theorem denoteAllFrom_compileFGraph_eq_evalFGraphVals
               { inC := inC, outC := outC, kH := kH, kW := kW
                 stride := stride, padding := padding
                 inH := inH, inW := inW
-                hIn := hIn, hKH := hKH, hKW := hKW
+                hIn := hIn, hKH := hKH, hKW := hKW, hStride := hStride,
                 spec := spec }
             have hConvStore :
                 cOut.ps.conv2dCfg.get? id = some cfg := by

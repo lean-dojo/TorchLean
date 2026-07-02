@@ -19,7 +19,7 @@ We compile TorchLean programs to the verifier IR (`NN.IR.Graph`), then run:
 - basic CROWN forward bounds (`runCROWN`)
 - objective-dependent backward/dual CROWN (`runCROWNBackwardObjective`)
 
-The goal is to provide compact, fast workflows that exercise the nonlinear ops added to CROWN:
+The workflow gives compact, fast coverage for nonlinear ops added to CROWN:
 - `softmax` (vector)
 - `mse_loss` (vector → scalar)
 

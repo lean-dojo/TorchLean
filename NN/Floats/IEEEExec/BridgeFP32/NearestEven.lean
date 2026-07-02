@@ -26,7 +26,7 @@ namespace IEEE32Exec
 `FP32` uses “round to nearest, ties to even” (IEEE 754's default). The executable kernel implements
 the same policy, but at the level of integer arithmetic on mantissas.
 
-In this section we establish basic algebraic properties of nearest-even rounding that we can reuse
+The lemmas below establish basic algebraic properties of nearest-even rounding that we can reuse
 later when relating the `IEEE32Exec` rounding code to `fp32Round`.
 -/
 

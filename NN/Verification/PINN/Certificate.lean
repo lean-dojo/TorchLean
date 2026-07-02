@@ -23,8 +23,8 @@ This module is the executable checker for the PINN certificate workflow:
 - recompute IBP + derivative bounds in Lean, and
 - compare the resulting residual intervals against the exported values.
 
-It is conservative by design: the goal is to validate the export/import path and the interval
-computations, not to be a fully featured PDE verifier.
+It is conservative by design: it validates the export/import path and interval computations, rather
+than trying to be a fully featured PDE verifier.
 
 References / context:
 - PINNs: Raissi et al. (2019), "Physics-informed neural networks" (JCP)

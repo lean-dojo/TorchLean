@@ -15,9 +15,9 @@ This file contains the smallest GraphSpec architecture example:
 
 `Linear(in,hid) → ReLU → Linear(hid,out)`.
 
-The goal is not to duplicate TorchLean's executable MLP helper. That constructor lives under
+This does not duplicate TorchLean's executable MLP helper. That constructor lives under
 `NN.GraphSpec.Models.TorchLean.Mlp` and is re-exported through `NN.Entrypoint.TorchLeanModels`.
-Here the point is narrower and proof-oriented:
+The point here is narrower and proof-oriented:
 
 - show the sequential `Graph` DSL in its simplest useful form;
 - make the parameter ABI visible in the type;

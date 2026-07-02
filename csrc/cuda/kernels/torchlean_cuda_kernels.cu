@@ -16,20 +16,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-// CUDA implementation of TorchLean's general float32 tensor kernels.
-//
-// This file covers kernels that sit above raw elementwise buffer ops and below model-specific
-// layers: reductions over axes, broadcasting, gathers/scatters, batched matmul, selective scan, and
-// the correctness-first fused attention path. Host `LEAN_EXPORT` wrappers validate Lean-provided
-// shape metadata before launching device kernels; device kernels assume that validation succeeded.
-//
-// Layout conventions:
-// - all tensor buffers are flat row-major arrays;
-// - rank-polymorphic kernels are capped at `kMaxRank` so stack coordinate arrays stay bounded;
-// - atomic accumulation has deterministic alternatives where reproducibility matters;
-// - cuBLAS calls use the row-major-as-transposed-column-major convention documented at call sites.
-// - cuFFT R2C/C2R kernels expose spectra as packed real/imag float32 buffers:
-//   `(batch, n/2+1, 2)`, last channel `[re, im]`.
+// CUDA kernels above the raw buffer ops: reductions, broadcasting, gather/scatter, batched matmul,
+// selective scan, FFT helpers, and the simple attention path.
+// Everything is flat row-major; wrappers check ranks and shapes before launch.
 
 static constexpr int kBlockSize = 256;
 static constexpr int kMaxRank = 8;
@@ -1657,18 +1646,15 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_selective_scan_diag_va
   return torchlean_cuda_buffer_box(out);
 }
 
-// Fused attention contract.
+// Simple attention kernel.
 //
-// These kernels compute the same mathematical operation as TorchLean's proof-facing
-// scaled-dot-product attention contract: scores = QK^T * scale, optional dense Boolean mask, stable
-// row softmax, then multiplication by V. The implementation favors a direct correctness-first
-// schedule: it recomputes row softmax statistics in backward rather than storing the full attention
-// matrix. It is not the production IO-tiled FlashAttention schedule; the website and trust docs
-// describe that distinction explicitly.
+// Match TorchLean's scaled-dot-product attention spec: scores = QK^T * scale, optional dense
+// Boolean mask, stable row softmax, then multiplication by V. This is deliberately direct. Backward
+// recomputes the row softmax statistics instead of storing the full attention matrix, so this is not
+// the production IO-tiled FlashAttention schedule.
 //
-// Mask convention: a zero mask entry is treated as disallowed and receives the same large-negative
-// score used by the Lean spec. Backward skips disallowed score entries to match the hard-mask runtime
-// contract used by the fused kernel tests.
+// Mask convention: zero means disallowed. Disallowed entries contribute literal zero softmax
+// numerator, matching TorchLean's hard-mask spec rather than a finite sentinel.
 __device__ inline bool flash_attention_allowed(const float* mask, uint32_t hasMask,
                                                uint32_t batchIdx, uint32_t i, uint32_t j,
                                                uint32_t n) {
@@ -1680,9 +1666,6 @@ __device__ inline bool flash_attention_allowed(const float* mask, uint32_t hasMa
 __device__ inline float flash_attention_score(const float* Q, const float* K, const float* mask,
                                               uint32_t hasMask, uint32_t batchIdx, uint32_t i,
                                               uint32_t j, uint32_t n, uint32_t d, float scale) {
-  if (!flash_attention_allowed(mask, hasMask, batchIdx, i, j, n)) {
-    return -1000.0f;
-  }
   float dot = 0.0f;
   const size_t qBase = ((size_t)batchIdx * (size_t)n + (size_t)i) * (size_t)d;
   const size_t kBase = ((size_t)batchIdx * (size_t)n + (size_t)j) * (size_t)d;
@@ -1699,12 +1682,14 @@ __device__ inline void flash_attention_row_stats(const float* Q, const float* K,
                                                  float* denom) {
   float m = -INFINITY;
   for (uint32_t j = 0; j < n; ++j) {
+    if (!flash_attention_allowed(mask, hasMask, batchIdx, i, j, n)) continue;
     float s = flash_attention_score(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
     if (s > m) m = s;
   }
 
   float z = 0.0f;
   for (uint32_t j = 0; j < n; ++j) {
+    if (!flash_attention_allowed(mask, hasMask, batchIdx, i, j, n)) continue;
     float s = flash_attention_score(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
     z += expf(s - m);
   }
@@ -1716,6 +1701,9 @@ __device__ inline float flash_attention_prob(const float* Q, const float* K, con
                                              uint32_t hasMask, uint32_t batchIdx, uint32_t i,
                                              uint32_t j, uint32_t n, uint32_t d, float scale,
                                              float rowMax, float denom) {
+  if (!flash_attention_allowed(mask, hasMask, batchIdx, i, j, n) || denom == 0.0f) {
+    return 0.0f;
+  }
   float s = flash_attention_score(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
   return expf(s - rowMax) / denom;
 }
@@ -2093,7 +2081,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_broadcast_to(b_lean_ob
     lean_internal_panic("torchlean_cuda_buffer_broadcast_to: input size mismatch");
   }
 
-  // Check broadcast shape agreement at the FFI boundary before launching the kernel.
+  // Check broadcast shape agreement before launch.
   for (size_t ax = 0; ax < rankOut; ++ax) {
     uint32_t mv = h.axisMap[ax];
     if (mv == 0) continue;
@@ -2218,7 +2206,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_from_broadcast(
     lean_internal_panic("torchlean_cuda_buffer_reduce_from_broadcast: dOut size mismatch");
   }
 
-  // Check the same broadcast contract used by the forward path.
+  // Use the same broadcast checks as the forward path.
   for (size_t ax = 0; ax < rankOut; ++ax) {
     uint32_t mv = h.axisMap[ax];
     if (mv == 0) continue;

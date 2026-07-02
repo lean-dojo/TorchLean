@@ -30,7 +30,7 @@ At a glance, the graph pipeline is:
 - `NN.IR.Graph` gives the op-tagged graph consumed by widgets, exporters, runtime bridges, and
   verification passes.
 
-We start with the verifier-facing graph because it is the object verifiers consume. The next two pages
+The verifier-facing graph comes first because it is the object verifiers consume. The next two pages
 move upward: the spec layer explains the mathematical meanings behind the operations, and GraphSpec
 explains how architectures can be authored before they are lowered to IR.
 

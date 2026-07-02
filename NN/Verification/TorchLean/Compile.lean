@@ -677,10 +677,14 @@ instance {α : Type} [Context α] [DecidableEq Shape] :
     let scaleT : Tensor α sScores := Spec.fill (α := α) invScale sScores
     let scaledScores ← emitBinary (α := α) (kind := .mul_elem) (a := scores) (b := .const scaleT)
 
-    -- Mask: `maskedScores[i,j] = scaledScores[i,j]` if mask[i,j] else `-1000`.
-    let maskedScores : Ref α sScores ←
+    -- Attention weights. Boolean masks use hard-mask semantics: blocked entries contribute
+    -- literal zero numerator, not a finite additive sentinel.
+    let attn : Ref α sScores ←
       match mask with
-      | none => pure scaledScores
+      | none =>
+          -- last-axis softmax (axis = 2 for rank-3 tensor)
+          emitUnary (α := α) (kind := .softmax (axis := 2)) (x := scaledScores) (t := sScores)
+            (outShape := sScores)
       | some m => do
           let rec to01 : {s : Shape} → Tensor Bool s → Tensor α s
             | .scalar, .scalar b => Tensor.scalar (if b then Numbers.one else Numbers.zero)
@@ -688,18 +692,25 @@ instance {α : Type} [Context α] [DecidableEq Shape] :
           let mask2D : Tensor α (.dim n (.dim n .scalar)) :=
             to01 (s := .dim n (.dim n .scalar)) m
           let mask3D : Tensor α sScores := Tensor.dim (fun _ => mask2D)
-          let oneT : Tensor α sScores := Spec.fill (α := α) Numbers.one sScores
-          let negT : Tensor α sScores := Spec.fill (α := α) Numbers.neg_thousand sScores
           let maskR : Ref α sScores := .const mask3D
-          let invMask ← emitBinary (α := α) (kind := .sub) (a := .const oneT) (b := maskR)
-          let kept ← emitBinary (α := α) (kind := .mul_elem) (a := scaledScores) (b := maskR)
-          let dropped ← emitBinary (α := α) (kind := .mul_elem) (a := .const negT) (b := invMask)
-          emitBinary (α := α) (kind := .add) (a := kept) (b := dropped)
-
-    -- last-axis softmax (axis = 2 for rank-3 tensor)
-    let attn : Ref α sScores ←
-      emitUnary (α := α) (kind := .softmax (axis := 2)) (x := maskedScores) (t := sScores) (outShape
-        := sScores)
+          let numeratorsRaw ←
+            emitUnary (α := α) (kind := .exp) (x := scaledScores) (t := sScores)
+              (outShape := sScores)
+          let numerators ← emitBinary (α := α) (kind := .mul_elem) (a := numeratorsRaw) (b := maskR)
+          let sDenom2D : Shape := .dim numHeads (.dim n .scalar)
+          let denom2D : Ref α sDenom2D ←
+            emitUnary (α := α) (kind := .reduceSum 2) (x := numerators) (t := sDenom2D)
+              (outShape := sDenom2D)
+          let sDenom3D : Shape := .dim numHeads (.dim n (.dim 1 .scalar))
+          let denom3D : Ref α sDenom3D ←
+            emitUnary (α := α) (kind := .reshape sDenom2D sDenom3D) (x := denom2D)
+              (t := sDenom3D) (outShape := sDenom3D)
+          let denomB : Ref α sScores ←
+            emitUnary (α := α) (kind := .broadcastTo sDenom3D sScores) (x := denom3D)
+              (t := sScores) (outShape := sScores)
+          let invDenom ← emitUnary (α := α) (kind := .inv) (x := denomB) (t := sScores)
+            (outShape := sScores)
+          emitBinary (α := α) (kind := .mul_elem) (a := numerators) (b := invDenom)
 
     -- apply attention weights to values: (numHeads,n,n) × (numHeads,n,headDim) →
     -- (numHeads,n,headDim)
@@ -751,57 +762,60 @@ instance {α : Type} [Context α] [DecidableEq Shape] :
 
         if hs : sH = sW then
           if hp : pH = pW then
-            requireContract (α := α) <|
-              NN.IR.OpContracts.inferConv2dCHWOutShape inC outC kH kW sH pH
-                (.dim inC (.dim inH (.dim inW .scalar)))
-            let kT ← getConst (α := α) (s := .dim outC (.dim inC (.dim kH (.dim kW .scalar)))) w4
-            let bT ← getConst (α := α) (s := .dim outC .scalar) b
-            let xId ← ensureNode (α := α) xCHW
-            let id ← freshId (α := α)
-            let outH : Nat := (inH + 2 * pH - kH) / sH + 1
-            let outW : Nat := (inW + 2 * pH - kW) / sH + 1
-            let outShape : Shape := .dim outC (.dim outH (.dim outW .scalar))
-            let node : Node :=
-              { id := id
-                parents := [xId]
-                kind := .conv2d inC outC kH kW sH pH
-                outShape := outShape }
-            have hkH : kH ≠ 0 := hKernel ⟨0, by decide⟩
-            have hkW : kW ≠ 0 := hKernel ⟨1, by decide⟩
-            let spec : Spec.Conv2DSpec inC outC kH kW sH pH α hInC hkH hkW := { kernel := kT, bias :=
-              bT }
-            let cfg : NN.MLTheory.CROWN.Graph.Conv2DParams α :=
-              { inC := inC, outC := outC, kH := kH, kW := kW
-                stride := sH, padding := pH
-                inH := inH, inW := inW
-                hIn := hInC, hKH := hkH, hKW := hkW
-                spec := spec }
-            modify fun st =>
-              { st with ps := { st.ps with conv2dCfg := st.ps.conv2dCfg.insert id cfg } }
-            pushNode (α := α) node
-            -- Cast to the generic output shape expected by `Ops.conv`.
-            have hout :
-                outShape =
-                  Shape.ofList (outC :: (Spec.convOutSpatial inSpatial kernel stride padding).toList)
-                := by
-              have houtList :
-                  (Spec.convOutSpatial inSpatial kernel stride padding).toList =
-                    [ (Spec.convOutSpatial inSpatial kernel stride padding).get ⟨0, by decide⟩
-                    , (Spec.convOutSpatial inSpatial kernel stride padding).get ⟨1, by decide⟩
-                    ] := vector2_toList (v := Spec.convOutSpatial inSpatial kernel stride padding)
-              rw [houtList]
-              simp [Shape.ofList]
-              simp [Spec.convOutSpatial, Spec.convOutDim, Vector.ofFn, Vector.get]
-              have hs' : stride[1] = stride[0] := by
-                change stride.get ⟨1, by decide⟩ = stride.get ⟨0, by decide⟩
-                exact hs.symm
-              have hp' : padding[1] = padding[0] := by
-                change padding.get ⟨1, by decide⟩ = padding.get ⟨0, by decide⟩
-                exact hp.symm
-              simp [hs', hp']
-              simp [outShape, outH, outW, inH, inW, kH, kW, sH, pH]
-              simp [Vector.get]
-            pure (Eq.mp (congrArg (fun sh => Ref α sh) hout) (.node id))
+            if hStride : sH = 0 then
+              fail (α := α) "TorchLean→IR: conv: stride must be nonzero"
+            else
+              requireContract (α := α) <|
+                NN.IR.OpContracts.inferConv2dCHWOutShape inC outC kH kW sH pH
+                  (.dim inC (.dim inH (.dim inW .scalar)))
+              let kT ← getConst (α := α) (s := .dim outC (.dim inC (.dim kH (.dim kW .scalar)))) w4
+              let bT ← getConst (α := α) (s := .dim outC .scalar) b
+              let xId ← ensureNode (α := α) xCHW
+              let id ← freshId (α := α)
+              let outH : Nat := (inH + 2 * pH - kH) / sH + 1
+              let outW : Nat := (inW + 2 * pH - kW) / sH + 1
+              let outShape : Shape := .dim outC (.dim outH (.dim outW .scalar))
+              let node : Node :=
+                { id := id
+                  parents := [xId]
+                  kind := .conv2d inC outC kH kW sH pH
+                  outShape := outShape }
+              have hkH : kH ≠ 0 := hKernel ⟨0, by decide⟩
+              have hkW : kW ≠ 0 := hKernel ⟨1, by decide⟩
+              let spec : Spec.Conv2DSpec inC outC kH kW sH pH α hInC hkH hkW :=
+                { kernel := kT, bias := bT }
+              let cfg : NN.MLTheory.CROWN.Graph.Conv2DParams α :=
+                { inC := inC, outC := outC, kH := kH, kW := kW
+                  stride := sH, padding := pH
+                  inH := inH, inW := inW
+                  hIn := hInC, hKH := hkH, hKW := hkW, hStride := hStride,
+                  spec := spec }
+              modify fun st =>
+                { st with ps := { st.ps with conv2dCfg := st.ps.conv2dCfg.insert id cfg } }
+              pushNode (α := α) node
+              -- Cast to the generic output shape expected by `Ops.conv`.
+              have hout :
+                  outShape =
+                    Shape.ofList (outC :: (Spec.convOutSpatial inSpatial kernel stride padding).toList)
+                  := by
+                have houtList :
+                    (Spec.convOutSpatial inSpatial kernel stride padding).toList =
+                      [ (Spec.convOutSpatial inSpatial kernel stride padding).get ⟨0, by decide⟩
+                      , (Spec.convOutSpatial inSpatial kernel stride padding).get ⟨1, by decide⟩
+                      ] := vector2_toList (v := Spec.convOutSpatial inSpatial kernel stride padding)
+                rw [houtList]
+                simp [Shape.ofList]
+                simp [Spec.convOutSpatial, Spec.convOutDim, Vector.ofFn, Vector.get]
+                have hs' : stride[1] = stride[0] := by
+                  change stride.get ⟨1, by decide⟩ = stride.get ⟨0, by decide⟩
+                  exact hs.symm
+                have hp' : padding[1] = padding[0] := by
+                  change padding.get ⟨1, by decide⟩ = padding.get ⟨0, by decide⟩
+                  exact hp.symm
+                simp [hs', hp']
+                simp [outShape, outH, outW, inH, inW, kH, kW, sH, pH]
+                simp [Vector.get]
+              pure (Eq.mp (congrArg (fun sh => Ref α sh) hout) (.node id))
           else
             fail (α := α) "TorchLean→IR: conv: verifier IR requires uniform padding"
         else
@@ -814,33 +828,36 @@ instance {α : Type} [Context α] [DecidableEq Shape] :
     fail (α := α) "TorchLean→IR: conv_transpose is outside the verifier IR fragment"
 
   conv2d := fun {inC outC kH kW stride padding inH inW} {h1} {h2} {h3} kernel bias input => do
-    requireContract (α := α) <|
-      NN.IR.OpContracts.inferConv2dCHWOutShape inC outC kH kW stride padding
-        (.dim inC (.dim inH (.dim inW .scalar)))
-    let kT ← getConst (α := α) (s := .dim outC (.dim inC (.dim kH (.dim kW .scalar)))) kernel
-    let bT ← getConst (α := α) (s := .dim outC .scalar) bias
-    let xId ← ensureNode (α := α) (s := .dim inC (.dim inH (.dim inW .scalar))) input
-    let id ← freshId (α := α)
-    let outH : Nat := (inH + 2 * padding - kH) / stride + 1
-    let outW : Nat := (inW + 2 * padding - kW) / stride + 1
-    let outShape : Shape := .dim outC (.dim outH (.dim outW .scalar))
-    let node : Node :=
-      { id := id
-        parents := [xId]
-        kind := .conv2d inC outC kH kW stride padding
-        outShape := outShape }
-    let spec : Spec.Conv2DSpec inC outC kH kW stride padding α h1 h2 h3 := { kernel := kT, bias :=
-      bT }
-    let cfg : NN.MLTheory.CROWN.Graph.Conv2DParams α :=
-      { inC := inC, outC := outC, kH := kH, kW := kW
-        stride := stride, padding := padding
-        inH := inH, inW := inW
-        hIn := h1, hKH := h2, hKW := h3
-        spec := spec }
-    modify fun st =>
-      { st with ps := { st.ps with conv2dCfg := st.ps.conv2dCfg.insert id cfg } }
-    pushNode (α := α) node
-    pure (.node id)
+    if hStride : stride = 0 then
+      fail (α := α) "TorchLean→IR: conv2d: stride must be nonzero"
+    else
+      requireContract (α := α) <|
+        NN.IR.OpContracts.inferConv2dCHWOutShape inC outC kH kW stride padding
+          (.dim inC (.dim inH (.dim inW .scalar)))
+      let kT ← getConst (α := α) (s := .dim outC (.dim inC (.dim kH (.dim kW .scalar)))) kernel
+      let bT ← getConst (α := α) (s := .dim outC .scalar) bias
+      let xId ← ensureNode (α := α) (s := .dim inC (.dim inH (.dim inW .scalar))) input
+      let id ← freshId (α := α)
+      let outH : Nat := (inH + 2 * padding - kH) / stride + 1
+      let outW : Nat := (inW + 2 * padding - kW) / stride + 1
+      let outShape : Shape := .dim outC (.dim outH (.dim outW .scalar))
+      let node : Node :=
+        { id := id
+          parents := [xId]
+          kind := .conv2d inC outC kH kW stride padding
+          outShape := outShape }
+      let spec : Spec.Conv2DSpec inC outC kH kW stride padding α h1 h2 h3 :=
+        { kernel := kT, bias := bT }
+      let cfg : NN.MLTheory.CROWN.Graph.Conv2DParams α :=
+        { inC := inC, outC := outC, kH := kH, kW := kW
+          stride := stride, padding := padding
+          inH := inH, inW := inW
+          hIn := h1, hKH := h2, hKW := h3, hStride := hStride,
+          spec := spec }
+      modify fun st =>
+        { st with ps := { st.ps with conv2dCfg := st.ps.conv2dCfg.insert id cfg } }
+      pushNode (α := α) node
+      pure (.node id)
 
   convTranspose2d := fun {_inC _outC _kH _kW _stride _padding _inH _inW} {_h1} {_h2} {_h3} _kernel _bias
       _input =>

@@ -1322,7 +1322,7 @@ def buildFrom
                       let sq := Tensor.mulSpec (α := α) diff diff
                       let total : α := Tensor.sumSpec (α := α) sq
                       let y0 : Tensor α Shape.scalar :=
-                        Tensor.scalar (total / (↑(Shape.size s) : α))
+                        Tensor.scalar (total / (↑(NN.IR.Graph.meanDenom s) : α))
                       Tensor.castShape y0 hOut
                     pure <| fwd forward
                   else

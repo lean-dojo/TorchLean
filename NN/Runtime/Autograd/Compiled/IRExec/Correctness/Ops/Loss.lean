@@ -164,7 +164,7 @@ theorem buildFrom_denoteAllFrom_mse_loss
                                       let sq := Tensor.mulSpec (α := α) diff diff
                                       let total : α := Tensor.sumSpec (α := α) sq
                                       let y0 : Tensor α Shape.scalar :=
-                                        Tensor.scalar (total / (↑(Shape.size s) : α))
+                                        Tensor.scalar (total / (↑(NN.IR.Graph.meanDenom s) : α))
                                       Tensor.castShape y0 hOut)
                                   let st1 : State α inShape :=
                                     ⟨ss ++ [nOutShape], .snoc (ss := ss) gd nodeData⟩
@@ -209,7 +209,7 @@ theorem buildFrom_denoteAllFrom_mse_loss
                                                     (getIdx (α := α) (xs := ctx) it)).mulSpec
                                                   ((getIdx (α := α) (xs := ctx) iy).subSpec
                                                     (getIdx (α := α) (xs := ctx) it))).sumSpec /
-                                                (↑(Shape.size s) : α)))) := by
+                                                (↑(NN.IR.Graph.meanDenom s) : α)))) := by
                                       rw [hGetY, hGetT]
                                       exact NN.IR.Graph.mseLossDVal_mk (α := α) i
                                         (getIdx (α := α) (xs := ctx) iy)

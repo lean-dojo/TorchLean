@@ -11,7 +11,7 @@ In TorchLean, "Float32" is not one object. It can mean an idealized rounded-real
 proofs, an executable IEEE-754 bit model inside Lean, a runtime `Float32` value, or a CUDA `float`
 produced by a native kernel. Those meanings are related, but they are not interchangeable.
 
-The purpose of this page is to name the numerical objects and the bridges between them.
+The numerical objects and their bridges need distinct names.
 
 # The Central Example
 
@@ -254,7 +254,7 @@ open Runtime.Autograd.Cuda.Float32Contract
 #check native_sqrt_abs_error_of_isFinite
 ```
 
-For the engineering details, read *GPU and CUDA Boundaries*. This page only fixes the scalar
+For the engineering details, read *GPU and CUDA Boundaries*. The scalar semantics here fix the
 meaning: native arithmetic is connected to proofs through explicit bit-agreement contracts, fixed
 reduction specifications, and finite-path hypotheses.
 

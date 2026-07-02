@@ -17,6 +17,7 @@ Everything is organized by purpose:
 - `verification/`: certificate producers and artifact-regeneration workflows.
 - `rl/`: optional reinforcement-learning bridge examples.
 - `sandbox/`: comparator/untrusted-Lean helper tooling.
+- `bug_zoo/`: small external-framework reproducers paired with checked BugZoo case studies.
 
 ### Build and Check Support
 
@@ -63,6 +64,8 @@ Use the subfolder paths directly, for example
 These scripts support documented workflows outside the core build path:
 
 - `datasets/download_wikitext.py`
+- `bug_zoo/constant_norm_slice_repro.py`
+- `bug_zoo/layernorm_dim1_repro.py`
 - `rl/gymnasium_server.py`
 - `rl/export_gymnasium_rollout.py`
 - `rl/train_ppo_cartpole_sb3.py`
@@ -109,7 +112,9 @@ Generated locally:
   performance reports.
 - `checks/check_case_collisions.py`: CI guard for case-insensitive filesystem name
   collisions.
-- `checks/repo_lint.py`: repository lint used by `lake lint`.
+- `checks/repo_lint.py`: repository lint used by `lake lint`. It checks source hygiene, public API
+  boundaries, trusted-axiom quarantine, public-example spellings, and module docstrings for `NN/`
+  Lean files.
 - `checks/dependency_audit.py`: repository-level module/import graph audit inspired by
   Li et al., "The Network Structure of Mathlib" (arXiv:2604.24797). It reports
   broad imports, layer-boundary smells, fan-in/fan-out hubs, and Markdown/JSON
@@ -155,7 +160,7 @@ python3 scripts/checks/check_case_collisions.py
 - `docs/build_site.sh`: rebuilds the generated API docs, the Verso guide (from the
   `blueprint/` package), dependency graph JSON, and homepage bundle.
 - `docs/polish_docgen.py`: post-processes DocGen HTML with the TorchLean landing page,
-  navigation links, declaration legends, and site styling.
+  navigation links, declaration legends, dependency-link rewrites, and site styling.
 - `docs/polish_verso_guide.py`: post-processes the Verso guide with responsive figures,
   copy buttons, theorem cards, and asset wiring.
 
@@ -175,6 +180,13 @@ the dependency graph JSON, and the Jekyll site. To refresh only the graph artifa
 - `rl/export_gymnasium_rollout.py`: collects a Gymnasium rollout into TorchLean's JSON format.
 - `rl/train_ppo_cartpole_sb3.py`: Stable-Baselines3 CartPole baseline for comparing against the
   TorchLean PPO path.
+
+## BugZoo Reproducers
+
+- `bug_zoo/constant_norm_slice_repro.py`: PyTorch repro for the constant-slice normalization
+  contract checked in `NN/Examples/BugZoo/ConstantNormalizationSlice.lean`.
+- `bug_zoo/layernorm_dim1_repro.py`: PyTorch repro for the one-feature LayerNorm contract checked in
+  `NN/Examples/BugZoo/LayerNormDegenerateAxis.lean`.
 
 ## Verification Producers
 

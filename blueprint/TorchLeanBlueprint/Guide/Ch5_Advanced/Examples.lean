@@ -7,9 +7,8 @@ open Verso.Genre Manual
 tag := "examples"
 %%%
 
-This page is a guided path through the examples. The repository has many examples, but the first pass
-should be short: one tensor file, one training run, one autograd run, one graph/checker run, and one
-BugZoo example.
+The examples are easiest to read through a short first pass: one tensor file, one training run, one
+autograd run, one graph/checker run, and one BugZoo example.
 
 Each example group has a teaching role: what it exercises, where data enters the system, what gets
 checked, and what a successful run establishes.
@@ -57,7 +56,7 @@ lake build NN.Examples.Zoo
 
 ## 1. A compact model trains
 
-Start with the MLP and CNN examples. They show the basic pattern:
+The MLP and CNN examples show the basic pattern:
 
 - the dataset is represented as tensors;
 - the model is built through the public `TorchLean.nn` API;
@@ -162,8 +161,8 @@ The examples are grouped so each subtree has a job:
   [model data helpers](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Models/Common/RealData.lean)
   Shared paths and loaders for prepared real datasets under `data/real`.
 
-That structure helps the examples read as one system: start with tensors, run models, lower graphs,
-then check properties.
+That structure helps the examples read as one system: tensors first, then runnable models, graph
+lowering, and checked properties.
 
 # A Good First Pass Through The Examples
 
@@ -186,8 +185,8 @@ For one short pass that touches the main layers, use this order:
 8. Small complete verification example:
    `lake exe verify -- torchlean-ibp`
 
-Read the output alongside this book: training-focused material starts with *Training From Scratch*
-and *Runtime and Autograd*; graph and verification artifacts start with *Graphs and IR*, then
+Read the output alongside this book: training-focused material begins with *Training From Scratch*
+and *Runtime and Autograd*; graph and verification artifacts begin with *Graphs and IR*, then
 *Verification*.
 
 # What Success Looks Like
@@ -465,8 +464,7 @@ The full widget family includes several views; the short list cited most often i
 - verification-state views,
 - autograd tape and gradient views.
 
-Start with the [widgets example API](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Advanced/Widgets.lean), then return here for
-a compact map of each widget family.
+The [widgets example API](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Advanced/Widgets.lean) pairs well with the compact map of widget families below.
 
 # Check Tests
 

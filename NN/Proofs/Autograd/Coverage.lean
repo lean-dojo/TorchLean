@@ -82,8 +82,8 @@ The larger block proofs are built by composing the tape-node theorems:
 * last-axis softmax/log-softmax;
 * dense/matmul/reduction/broadcast/shape nodes;
 * scaled dot-product attention;
-* fixed finite-mask scaled dot-product attention `softmax(c · QKᵀ + bias) V`;
-* fixed finite-mask multi-head attention core over split heads;
+* fixed additive-bias scaled dot-product attention `softmax(c · QKᵀ + bias) V`;
+* fixed additive-bias multi-head attention core over split heads;
 * unmasked multi-head self-attention;
 * residual multi-head self-attention sublayer `x + MHA(x)`;
 * residual Transformer feed-forward sublayers, both one-token/vector-shaped and sequence-shaped
@@ -97,7 +97,7 @@ The larger block proofs are built by composing the tape-node theorems:
 * a concrete full post-norm Transformer encoder-block SSA graph and VJP theorem, composing MHA,
   the first LayerNorm, sequence FFN, and the second LayerNorm with both LayerNorm domain hypotheses
   stated explicitly;
-* a concrete finite-mask GPT-style decoder-core SSA graph and VJP theorem, composing masked
+* a concrete additive-bias decoder-core SSA graph and VJP theorem, composing biased
   split-head attention, attention projection, the first LayerNorm, sequence FFN, and the second
   LayerNorm with both LayerNorm domain hypotheses stated explicitly;
 * a projection-to-residual bridge for GPT-style decoder attention, so differentiable Q/K/V front
@@ -122,7 +122,7 @@ work rather than already-proved claims:
 
 * one runtime-layout lowering theorem connecting the concrete encoder-block SSA graph here to each
   executable model-zoo Transformer wrapper;
-* a concrete SSA graph for a GPT decoder block. The block-level theorem and finite-mask attention
+* a concrete SSA graph for a GPT decoder block. The block-level theorem and additive-bias attention
   composition theorem are proved; the remaining lowering step is to instantiate the abstract
   `maskedAttentionPack` with the model-zoo decoder's projection/split/merge/residual graph;
 * full ViT/GPT encoder or decoder stacks, including embeddings and classifier/language-model heads;

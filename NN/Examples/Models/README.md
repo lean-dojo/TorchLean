@@ -4,7 +4,7 @@ This directory contains the maintained TorchLean model commands. The files are m
 ordinary training scripts: instantiate a model, prepare a dataset or token stream, train for several
 optimizer updates, and optionally write a training curve.
 
-For the narrative walkthrough, use the website guide. This page is the local command map.
+For the narrative walkthrough, use the website guide. This file is the local command map.
 
 ## Directory Map
 
@@ -53,11 +53,11 @@ not full passes over the dataset.
 Use CPU for the small tabular checks. Use CUDA for the image models: even compact CNN/ViT
 commands do real convolution/attention work and are not good CPU quickchecks.
 
-The goal is not to hide TorchLean's verification/runtime personality. When an example is about a
-normal supervised model, it should look like `Trainer.new ...; trainer.train ...`. When an
-example is about generated streams, PPO rollouts, CUDA/profiling, or certificate-style verification,
-it may use advanced runtime hooks. Those cases should be explicit in the file comments rather
-than leaking into the ordinary training path by accident.
+TorchLean's verification/runtime personality should stay visible where it matters. Normal
+supervised examples should look like `Trainer.new ...; trainer.train ...`. Generated streams, PPO
+rollouts, CUDA/profiling, and certificate-style verification examples may use advanced runtime
+hooks; those cases should be explicit in file comments rather than leaking into the ordinary
+training path by accident.
 
 ```bash
 lake exe -K cuda=true torchlean mlp --cuda --steps 100 --lr 0.003 \

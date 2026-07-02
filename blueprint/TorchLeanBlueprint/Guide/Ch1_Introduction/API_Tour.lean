@@ -73,7 +73,7 @@ def classifier : nn.M (nn.Sequential (Shape.vec 16) (Shape.vec 4)) :=
   ]
 ```
 
-For tensor constructors, literals, and model builders, start with the root
+Tensor constructors, literals, and model builders live under the root
 [`NN`](https://github.com/lean-dojo/TorchLean/blob/main/NN.lean) umbrella.
 
 # Building And Training

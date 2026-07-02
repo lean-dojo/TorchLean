@@ -102,7 +102,7 @@ theorem evalAt_mseLoss_eq
         (DVal.mk (α := α) .scalar
           (Tensor.scalar
             (((Tensor.subSpec (α := α) y target).mulSpec (Tensor.subSpec (α := α) y target)).sumSpec /
-              (↑(Shape.size s) : α)))) := by
+              (↑(NN.IR.Graph.meanDenom s) : α)))) := by
   simp [Graph.evalAt, binaryGraphOut, binaryNodeOut, Graph.getNode, Graph.getNode?,
     Graph.mseLossDVal, DVal.mk, Bind.bind, Except.bind, Pure.pure, Except.pure]
 

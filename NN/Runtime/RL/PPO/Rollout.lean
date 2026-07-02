@@ -19,9 +19,9 @@ This file defines:
 - a conversion to the minibatch format expected by the PPO autograd loss module
   (`Runtime.RL.PolicyGradient.Autograd.ppoActorCriticScalarModuleDef`).
 
-The goal is not to hide PPO’s math: the GAE/return definitions live in `NN.Spec.RL.Core` and the
-tensor-shaped analogues live in `NN.Runtime.RL.Core`. This file is the typed rollout layer for
-PPO training loops.
+PPO’s math remains explicit: the GAE/return definitions live in `NN.Spec.RL.Core`, and the
+tensor-shaped analogues live in `NN.Runtime.RL.Core`. This file supplies the typed rollout layer
+for PPO training loops.
 
 References:
 - Schulman et al., "Proximal Policy Optimization Algorithms" (2017): https://arxiv.org/abs/1707.06347

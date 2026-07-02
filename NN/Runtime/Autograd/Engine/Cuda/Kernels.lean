@@ -231,8 +231,8 @@ Inputs are row-major buffers with shapes:
 - `mask`: `(batch, n, n)` encoded as `0.0/1.0` when `hasMask != 0`; otherwise ignored.
 
 Output has shape `(batch, n, d)` and computes the same no-dropout masked attention semantics as:
-`softmax((Q Kᵀ) * scale + maskFill) V`, where blocked mask entries use TorchLean's
-`-1000.0` fill convention.
+`hardMaskedSoftmax((Q Kᵀ) * scale, mask) V`. Blocked mask entries contribute zero softmax
+numerator; no finite sentinel is inserted.
 
 This is a fused native runtime primitive, not a proof object. The proof-facing contract is
 `Spec.flashAttention` in `NN/Spec/Layers/FlashAttention.lean`.

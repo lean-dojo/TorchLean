@@ -7,12 +7,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Shared helpers for convolution and pooling FFI implementations.
-//
-// Both CUDA and CPU-stub files include this header so their shape arithmetic stays synchronized.
-// The formulas mirror TorchLean's Nat-style specs: subtractions truncate at zero instead of
-// becoming negative, and host wrappers reject invalid kernel/stride metadata before work reaches
-// the device.
+// Shape math shared by the CUDA conv/pool code and the CPU stub.
+// TorchLean shapes use Nat subtraction, so negative intermediate results clamp at zero.
 
 enum { TORCHLEAN_CUDA_CONV_POOL_MAX_RANK = 8 };
 

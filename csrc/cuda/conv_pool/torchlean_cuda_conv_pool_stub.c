@@ -11,12 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-// CPU fallback for conv/pool kernels over `Cuda.Buffer`.
-//
-// This stub exists so the Lean library builds and tests without a CUDA toolkit. It is also the
-// easiest place to audit intended semantics: row-major flattening, Nat-style output shapes,
-// ignored max-pool padding, count-include-pad average pooling, and deterministic fallback behavior.
-// Keep exported symbols and edge cases aligned with `torchlean_cuda_conv_pool.cu`.
+// CPU version of the conv/pool FFI symbols.
+// This keeps non-CUDA builds working and gives the tests a plain reference for edge cases.
 
 enum { K_MAX_RANK = TORCHLEAN_CUDA_CONV_POOL_MAX_RANK };
 
@@ -544,7 +540,7 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_maxpool2d_bwd(
 }
 
 // -------------------------
-// N-D Conv + Pooling entrypoints (CPU stub)
+// N-D conv + pooling exported functions (CPU stub)
 // -------------------------
 
 LEAN_EXPORT lean_obj_res torchlean_cuda_conv_fwd(

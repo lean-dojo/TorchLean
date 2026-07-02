@@ -388,7 +388,7 @@ noncomputable section
 Evaluate a reduction tree using the executable `IEEE32Exec.add`.
 
 This is the “concrete” semantics: it includes IEEE special values, finite rounding, etc.
-For error analysis we will separately define a real-valued interpretation (`evalRealIEEE`).
+Error analysis uses a separate real-valued interpretation (`evalRealIEEE`).
 -/
 def evalIEEE : SumTree IEEE32Exec → IEEE32Exec
   | .leaf x => x
@@ -509,7 +509,7 @@ theorem sumTreeResult_enclosure
 /-!
 ## Dot-product accumulation (sum of products)
 
-This section models the shape of computations like:
+The definitions below model computations such as:
 
 - dot products `Σᵢ xᵢ * yᵢ`, and
 - the inner accumulations that show up in `matmul` / conv / attention scores.

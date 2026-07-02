@@ -24,7 +24,7 @@ public import NN.MLTheory.CROWN.Graph
 public import NN.Verification.TorchLean.Compile
 
 /-!
-# TorchLean CLI Facade
+# TorchLean CLI Helpers
 
 Small command-line parsers used by examples and model-zoo commands.
 -/
@@ -36,9 +36,9 @@ namespace TorchLean
 namespace CLI
 
 /-!
-Small public command-line parsers for examples.
+Small public parsers for example commands.
 
-Use these when a runnable example needs the same compact flag convention as the model zoo.
+Use these when a runnable example wants the same compact flag style as the model zoo.
 -/
 
 /-- Drop Lake's `--` separator when present. -/
@@ -110,7 +110,7 @@ def epochBatch (exeName : String) (args : List String) (defaultEpochs defaultBat
     IO (NN.API.CLI.EpochBatch × List String) :=
   NN.API.Common.orThrow exeName <| NN.API.CLI.takeEpochBatch args defaultEpochs defaultBatch
 
-/-- Parser used by model-zoo commands that build an `Except` parser first. -/
+/-- Except-style parser for model-zoo commands. -/
 abbrev takeEpochBatch := NN.API.CLI.takeEpochBatch
 
 /-- Parser used by epoch-oriented tutorial commands that require positive `--epochs` and `--batch`. -/
@@ -124,38 +124,38 @@ def orThrow {α : Type} (exeName : String) (result : Except String α) : IO α :
 def requireNoArgs (exeName : String) (args : List String) : IO Unit :=
   NN.API.Common.orThrow exeName <| NN.API.CLI.requireNoArgs args
 
-/-- Parser used by model-zoo commands that build an `Except` parser first. -/
+/-- Except-style parser for `--seed`. -/
 def takeSeed (args : List String) (default : Nat := 0) : Except String (Nat × List String) :=
   NN.API.CLI.takeSeed args default
 
-/-- Parser used by model-zoo commands that build an `Except` parser first. -/
+/-- Except-style parser for an optional natural-number flag. -/
 abbrev takeNatFlagOnce := NN.API.CLI.takeNatFlagOnce
 
-/-- Parser used by model-zoo commands that want a natural-number flag with a default. -/
+/-- Except-style parser for a natural-number flag with a default. -/
 abbrev takeNatFlagDefault := NN.API.CLI.takeNatFlagDefault
 
-/-- Parser used by model-zoo commands that want a positive natural-number flag. -/
+/-- Except-style parser for a positive natural-number flag. -/
 abbrev takePositiveNatFlagDefault := NN.API.CLI.takePositiveNatFlagDefault
 
-/-- Low-level parser used by model-zoo commands that build an `Except` parser first. -/
+/-- Except-style parser for an optional float flag. -/
 abbrev takeFloatFlagOnce := NN.API.CLI.takeFloatFlagOnce
 
-/-- Low-level parser used by model-zoo commands that want a float flag with a default. -/
+/-- Except-style parser for a float flag with a default. -/
 abbrev takeFloatFlagDefault := NN.API.CLI.takeFloatFlagDefault
 
-/-- Low-level parser used by model-zoo commands that require a positive float flag. -/
+/-- Except-style parser for a positive float flag. -/
 abbrev takePositiveFloatFlagDefault := NN.API.CLI.takePositiveFloatFlagDefault
 
-/-- Low-level parser used by model-zoo commands that require a nonnegative float flag. -/
+/-- Except-style parser for a nonnegative float flag. -/
 abbrev takeNonnegativeFloatFlagDefault := NN.API.CLI.takeNonnegativeFloatFlagDefault
 
-/-- Low-level parser used by model-zoo commands that build an `Except` parser first. -/
+/-- Except-style parser for a flag that carries a value. -/
 abbrev takeFlagValueOnce := NN.API.CLI.takeFlagValueOnce
 
-/-- Low-level parser used by model-zoo commands that want a concrete string-valued flag. -/
+/-- Except-style parser for a string-valued flag with a default. -/
 abbrev takeFlagValueDefault := NN.API.CLI.takeFlagValueDefault
 
-/-- Low-level parser used by model-zoo commands whose string flag is decoded by a custom parser. -/
+/-- Except-style parser for a string flag decoded by a custom parser. -/
 def takeParsedFlagDefault {α : Type}
     (args : List String)
     (key : String)
@@ -164,13 +164,13 @@ def takeParsedFlagDefault {α : Type}
     Except String (α × List String) :=
   NN.API.CLI.takeParsedFlagDefault args key default parse
 
-/-- Low-level parser used by model-zoo commands that build an `Except` parser first. -/
+/-- Except-style parser for an optional path flag. -/
 abbrev takePathFlagOnce := NN.API.CLI.takePathFlagOnce
 
-/-- Low-level parser used by model-zoo commands that want a concrete path with a default. -/
+/-- Except-style parser for a path flag with a default. -/
 abbrev takePathFlagDefault := NN.API.CLI.takePathFlagDefault
 
-/-- Low-level parser used by model-zoo commands that require a path flag to be present. -/
+/-- Except-style parser for a required path flag. -/
 def takeRequiredPathFlag
     (args : List String)
     (key : String)
@@ -178,13 +178,13 @@ def takeRequiredPathFlag
     Except String (System.FilePath × List String) :=
   NN.API.CLI.takeRequiredPathFlag args key exeName
 
-/-- Low-level parser used by model-zoo commands whose two path flags must appear together. -/
+/-- Except-style parser for two path flags that must appear together. -/
 abbrev takePairedPathFlags := NN.API.CLI.takePairedPathFlags
 
-/-- Low-level parser used by model-zoo commands that build an `Except` parser first. -/
+/-- Except-style parser for an optional Boolean flag. -/
 abbrev takeBoolFlagOnce := NN.API.CLI.takeBoolFlagOnce
 
-/-- Low-level no-extra-arguments check for parsers that stay in `Except`. -/
+/-- No-extra-arguments check for parsers that stay in `Except`. -/
 abbrev checkNoArgs := NN.API.CLI.requireNoArgs
 
 /-- Check whether a flag appears with an attached value such as `--log out.json`. -/

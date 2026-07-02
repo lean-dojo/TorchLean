@@ -30,7 +30,7 @@ factor the refinement into two steps:
 2. apply float32 rounding.
 
 `addDyadic` is our exact step (it aligns exponents, adds signed mantissas, and normalizes), and the
-lemmas in this section show that its real interpretation is literally real addition.
+the lemmas below show that its real interpretation is literally real addition.
 -/
 
 noncomputable def signedMant (sign : Bool) (m : Nat) : Int :=
@@ -484,4 +484,3 @@ lemma neural_nearest_even_div_eq_roundQuotEven (num den : Nat) (hden : den ≠ 0
 end IEEE32Exec
 
 end TorchLean.Floats.IEEE754
-

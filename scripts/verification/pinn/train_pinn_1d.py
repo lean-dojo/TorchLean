@@ -58,7 +58,6 @@ from pinn_common import (
 
 
 def train(args):
-    """Train a 1D space-time PINN and export checkpoint/JSON weights."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     x_lo, x_hi = -1.0, 1.0
@@ -90,7 +89,6 @@ def train(args):
         print(f"Loaded dataset from {args.dataset_json}")
 
     def sample_collocation():
-        """Sample collocation points from JSON data or the default box."""
         if dataset:
             sampled = dataset.sample_columns("collocation", N_c, 2)
             if sampled is not None:
@@ -100,7 +98,6 @@ def train(args):
         return x, t
 
     def sample_initial():
-        """Sample initial-condition points from JSON data or `--ic-expr`."""
         if dataset:
             sampled = dataset.sample_columns("initial", N_i, 3)
             if sampled is not None:
@@ -111,7 +108,6 @@ def train(args):
         return x, t, u0
 
     def sample_boundary():
-        """Sample boundary-condition points from JSON data or `--bc-expr`."""
         if dataset:
             sampled = dataset.sample_columns("boundary", N_b, 3)
             if sampled is not None:
@@ -126,7 +122,6 @@ def train(args):
         return x, t, u_b
 
     def sample_data():
-        """Sample optional supervised data points."""
         if N_d <= 0:
             return None
         if not dataset:
@@ -229,7 +224,6 @@ def train(args):
 
 
 def main():
-    """CLI entry point for 1D PINN training/export."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", type=int, default=500, help="Training steps")
     ap.add_argument("--nu", type=float, default=0.01, help="Default constant 'nu'")

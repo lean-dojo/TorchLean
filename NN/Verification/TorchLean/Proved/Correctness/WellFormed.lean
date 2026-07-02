@@ -236,7 +236,7 @@ theorem wellFormed_push
       have hx : x.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) x
       have : x.id ≤ ss.length := Nat.lt_succ_iff.mp hx
       simpa [compileNode, NN.IR.Node.parentsBelow, List.all, hx] using this
-    | conv2d _inC _outC _kH _kW _stride _padding _inH _inW _hIn _hKH _hKW _hHeight _hWidth _kernel
+    | conv2d _inC _outC _kH _kW _stride _padding _inH _inW _hIn _hKH _hKW _hStride _hHeight _hWidth _kernel
         _bias x =>
       have hx : x.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) x
       have : x.id ≤ ss.length := Nat.lt_succ_iff.mp hx

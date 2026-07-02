@@ -92,9 +92,18 @@ def Loss.logCosh {α : Type} {n p : ℕ} : Loss α n p :=
 def toScalarSpec {s : Shape} : Tensor α s → α :=
   sumSpec
 
+/-- Denominator for totalized mean reductions over a shape.
+
+For nonempty shapes this is the real element count. For empty shapes the mathematical mean is
+undefined; TorchLean's scalar-polymorphic spec layer is total, so it uses denominator `1` and the
+empty sum contributes `0`.
+-/
+def meanDenom (s : Shape) : Nat :=
+  if Shape.size s = 0 then 1 else Shape.size s
+
 /-- Mean of a scalar that conceptually came from a tensor with shape `s`. -/
 def meanOver {s : Shape} (x : α) : α :=
-  x / (Shape.size s : α)
+  x / (meanDenom s : α)
 
 /-- Mean squared error: average of `(predicted - target)^2`. -/
 def mseSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : α :=
@@ -107,7 +116,7 @@ def mseDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : 
   let diff := subSpec predicted target
   -- PyTorch mental model: `MSELoss(reduction="mean")`.
   -- d/dpred ( (1/N) * Σᵢ (predᵢ - tgtᵢ)^2 ) = (2/N) * (pred - tgt)
-  let n : α := (Shape.size s : α)
+  let n : α := (meanDenom s : α)
   scaleSpec diff (Numbers.two / n)
 
 /-- Mean absolute error: average of `|predicted - target|`. -/
@@ -124,7 +133,7 @@ def maeDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : 
   let grad :=
     mapSpec (fun x => if x > (0 : α) then (1 : α) else if x < (0 : α) then -(1 : α) else (0 : α))
       diff
-  scaleSpec grad (1 / (Shape.size s : α))
+  scaleSpec grad (1 / (meanDenom s : α))
 
 /--
 Huber / SmoothL1 loss (PyTorch's `smooth_l1_loss`) with parameter `delta`.
@@ -158,7 +167,7 @@ def huberDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) 
       if ad < delta then d / delta else if d > (0 : α) then (1 : α) else if d < (0 : α) then -(1 :
         α) else (0 : α)
     ) diff
-  scaleSpec grad (1 / (Shape.size s : α))
+  scaleSpec grad (1 / (meanDenom s : α))
 
 /--
 Cross-entropy between distributions (probabilities).
@@ -194,7 +203,7 @@ def crossEntropyDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor
     if x < (1 : α) - epsilon then x else (1 : α) - epsilon
   let q := mapSpec clamp01 predicted
   let grad := divSpec (negSpec target) q
-  scaleSpec grad (1 / (Shape.size s : α))
+  scaleSpec grad (1 / (meanDenom s : α))
 
 /--
 Cross-entropy on logits (stable log-softmax form).
@@ -221,7 +230,7 @@ def crossEntropyLogitsDerivSpec {s : Shape} (logits : Tensor α s) (target : Ten
   -- followed by the global mean reduction.
   let probs := Activation.softmaxSpec (α := α) (s := s) logits
   let grad := subSpec probs target
-  scaleSpec grad (1 / (Shape.size s : α))
+  scaleSpec grad (1 / (meanDenom s : α))
 
 /--
 Hinge loss (binary margin loss), elementwise then mean-reduced:
@@ -245,7 +254,7 @@ def hingeDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) 
   -- Subgradient: if `1 - y*x > 0` then `d/dx = -y`, else 0. Then mean-reduce.
   let active := mapSpec (fun m => if (1 : α) - m > (0 : α) then (1 : α) else (0 : α)) margin
   let grad := mulSpec active (negSpec target)
-  scaleSpec grad (1 / (Shape.size s : α))
+  scaleSpec grad (1 / (meanDenom s : α))
 
 /--
 Poisson negative log-likelihood (log-input form), elementwise then mean-reduced:
@@ -268,7 +277,7 @@ def poissonDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s
   -- d/dpred [exp(pred) - target*pred] = exp(pred) - target, then mean-reduce.
   let exp_pred := mapSpec MathFunctions.exp predicted
   let grad := subSpec exp_pred target
-  scaleSpec grad (1 / (Shape.size s : α))
+  scaleSpec grad (1 / (meanDenom s : α))
 
 /-- Cosine similarity loss: `1 - cos(predicted, target)` (reduced-to-scalar). -/
 def cosineSimilaritySpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s)
@@ -318,7 +327,7 @@ def logCoshSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : �
 def logCoshDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : Tensor α s :=
   let diff := subSpec predicted target
   let grad := mapSpec MathFunctions.tanh diff
-  scaleSpec grad (1 / (Shape.size s : α))
+  scaleSpec grad (1 / (meanDenom s : α))
 
 /--
 Binary cross-entropy on scalars (probabilities), with clipping to avoid `log(0)`.
@@ -361,6 +370,6 @@ def binaryCrossEntropyTensorDerivSpec {s : Shape} (predicted : Tensor α s) (tar
   let grad := map2Spec (fun p y => binaryCrossEntropyDerivSpec (predicted := p) (target := y)
     (epsilon := epsilon))
       predicted target
-  scaleSpec grad (1 / (Shape.size s : α))
+  scaleSpec grad (1 / (meanDenom s : α))
 
 end Spec

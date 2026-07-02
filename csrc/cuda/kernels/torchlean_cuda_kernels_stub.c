@@ -9,11 +9,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// CPU fallback for TorchLean's general tensor-kernel FFI surface.
-//
-// This file mirrors `torchlean_cuda_kernels.cu` symbol-for-symbol so the Lean runtime can link on
-// machines without CUDA. Keep the shape checks and edge-case conventions in lockstep with the CUDA
-// file; these stubs are also useful as readable reference implementations for tests and audits.
+// CPU version of the general tensor-kernel FFI symbols.
+// Keep its shape checks and edge cases aligned with `torchlean_cuda_kernels.cu`.
 
 static const float kTorchLeanPiF = 3.14159265358979323846f;
 
@@ -676,7 +673,6 @@ static inline float flash_attention_score_stub(const torchlean_cuda_buffer* Q,
                                                const torchlean_cuda_buffer* mask,
                                                uint32_t hasMask, size_t batchIdx, size_t i,
                                                size_t j, size_t n, size_t d, float scale) {
-  if (!flash_attention_allowed_stub(mask, hasMask, batchIdx, i, j, n)) return -1000.0f;
   float dot = 0.0f;
   const size_t qBase = (batchIdx * n + i) * d;
   const size_t kBase = (batchIdx * n + j) * d;
@@ -692,11 +688,13 @@ static inline void flash_attention_row_stats_stub(const torchlean_cuda_buffer* Q
                                                   float* rowMax, float* denom) {
   float m = -INFINITY;
   for (size_t j = 0; j < n; ++j) {
+    if (!flash_attention_allowed_stub(mask, hasMask, batchIdx, i, j, n)) continue;
     float s = flash_attention_score_stub(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
     if (s > m) m = s;
   }
   float z = 0.0f;
   for (size_t j = 0; j < n; ++j) {
+    if (!flash_attention_allowed_stub(mask, hasMask, batchIdx, i, j, n)) continue;
     float s = flash_attention_score_stub(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
     z += expf(s - m);
   }
@@ -710,6 +708,9 @@ static inline float flash_attention_prob_stub(const torchlean_cuda_buffer* Q,
                                               uint32_t hasMask, size_t batchIdx, size_t i,
                                               size_t j, size_t n, size_t d, float scale,
                                               float rowMax, float denom) {
+  if (!flash_attention_allowed_stub(mask, hasMask, batchIdx, i, j, n) || denom == 0.0f) {
+    return 0.0f;
+  }
   float s = flash_attention_score_stub(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
   return expf(s - rowMax) / denom;
 }

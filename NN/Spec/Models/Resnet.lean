@@ -1039,7 +1039,7 @@ def ResNet18SpecWithProjections (α : Type) [Context α]
 /-!
 ## Bottleneck blocks (forward-only)
 
-This section defines the bottleneck block used in ResNet-50/101/152.
+The declarations below define the bottleneck block used in ResNet-50/101/152.
 
 This is a forward-only baseline. The `stride` field is included to match the usual API, but the
 convolution specs here all use stride `1`; wiring stride through the type-level conv shape

@@ -6,7 +6,7 @@ This folder collects interval and enclosure utilities that sit between:
 - executable bit-level kernels (`NN/Floats/IEEEExec`), and
 - external validated numerics backends (`NN/Floats/Arb`).
 
-The goal is to make bound propagation (IBP/CROWN style) and numerical soundness envelopes
+The interval layer supports bound propagation (IBP/CROWN style) and numerical soundness envelopes
 reusable across the codebase, while keeping the trust boundary explicit.
 
 ## Files

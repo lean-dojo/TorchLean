@@ -25,9 +25,9 @@ public import NN.Verification.TorchLean.Compile
 public import NN.API.Public.Facade.Base.Root
 
 /-!
-# TorchLean Model-Zoo Facade
+# TorchLean Model-Zoo Helpers
 
-Shared flags, logs, banners, paths, and runtime operations for built-in model-zoo examples.
+Shared flags, logs, banners, paths, and runtime helpers for the built-in model-zoo examples.
 -/
 
 @[expose] public section
@@ -37,10 +37,10 @@ namespace TorchLean
 namespace ModelZoo
 
 /-!
-Shared CLI and logging definitions for the built-in model-zoo examples.
+Shared CLI and logging names for the built-in model-zoo examples.
 
-These are public because examples should read like TorchLean programs. They stay under `ModelZoo`;
-ordinary library users should prefer `Trainer`, `Data`, and `optim` directly.
+These are public so examples can stay short and readable. They live under `ModelZoo`; ordinary
+library code should usually use `Trainer`, `Data`, and `optim` directly.
 -/
 
 @[inherit_doc NN.API.Common.ModelTrainFlags]
@@ -254,21 +254,20 @@ abbrev runGpuFloat := NN.API.Common.runGpuFloat
 @[inherit_doc NN.API.Common.runGpuEagerFloat]
 abbrev runGpuEagerFloat := NN.API.Common.runGpuEagerFloat
 
-/-- Runtime device label used by public example banners and notes. -/
+/-- Runtime device label used by example banners and notes. -/
 def deviceName (opts : Options) : String :=
   if opts.useGpu then "cuda" else "cpu"
 
-/-- Standard `device=...` note string used by public example logs. -/
+/-- `device=...` note string used by example logs. -/
 def deviceNote (opts : Options) : String :=
   s!"device={deviceName opts}"
 
-/-- Standard model-zoo banner shape: executable name, short description, and selected device. -/
+/-- Model-zoo banner with the executable name, a short description, and the selected device. -/
 def bannerWithDevice (exeName desc : String) (opts : Options) : String :=
   s!"{exeName}: {desc} (device={deviceName opts})"
 
 /--
-Standard two-line model-zoo banner: headline plus one indented detail/note line, both carrying the
-selected device on the headline.
+Two-line model-zoo banner: a headline with the selected device, then one detail line.
 -/
 def bannerWithDeviceDetails
     (exeName desc details : String) (opts : Options) : String :=
@@ -314,8 +313,8 @@ def writeCurveLog
 /--
 Write a single-curve training log with an explicit series color.
 
-Use this when a command already owns a `Training.Curve` and wants the richer
-`TrainLog` artifact shape rather than the default `"loss"` curve writer.
+Use this when a command already has a `Training.Curve` and wants a `TrainLog` instead of the default
+`"loss"` curve writer.
 -/
 def writeCurveTrainLog
     (dest : Training.LogDestination)
@@ -330,9 +329,8 @@ def writeCurveTrainLog
 /--
 Write a multi-series metric history as a TrainLog artifact.
 
-Use this when a command accumulates a `Training.MetricHistory` with explicit
-series names/colors and then want to publish the richer `TrainLog` form without rebuilding the
-same `toTrainLog` + `writeTrainLog` boundary in every example file.
+Use this when a command has a `Training.MetricHistory` with named, colored series and wants to write
+the usual `TrainLog` artifact without repeating the conversion code in every example.
 -/
 def writeMetricHistoryLog
     (dest : Training.LogDestination)

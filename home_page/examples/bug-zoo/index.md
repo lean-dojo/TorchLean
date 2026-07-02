@@ -71,8 +71,8 @@ named.
 
 Each case study should end in a precise statement.
 
-Here is the attention-mask claim in one line: strict-future keys get exactly zero attention weight
-under the stated causal mask semantics.
+Here is the attention-mask claim in one line: under the hard-mask semantics, strict-future keys get
+exactly zero attention weight.
 
 ```lean
 theorem trueInfinityMask_future_attention_weight_zero :

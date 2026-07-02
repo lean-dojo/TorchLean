@@ -29,6 +29,8 @@ They are semantic bugs: the code runs, but it is no longer the math people think
 | `IgnoredLabelLoss.lean` | PyTorch issue #75181 reported `CrossEntropyLoss(ignore_index=...)` returning `nan` for an all-ignored target case. | Ignored labels become explicit zero contributions, and the empty-reduction policy is named instead of hidden in a backend kernel. |
 | `AutogradDomain.lean` | PyTorch's autograd docs show that masking after `x / 0` can still leave `nan` gradients because the undefined division remains in the backward graph. | The safe domain graph records epsilon protected division before masking, so importers can distinguish it from "divide first, mask later." |
 | `FloatBoundary.lean` | Floating point verification attacks show that real valued proofs do not automatically imply deployed Float32 behavior. | Runtime Float32 operations are tied back to explicit IEEE style semantics rather than silently borrowing real number reasoning. |
+| `LayerNormDegenerateAxis.lean` | Backend LayerNorm kernels can mishandle the `normalized_shape=(1,)` case even though the math is a constant function. | The one-feature LayerNorm contract says the output is the bias, with zero input gradient and zero scale gradient; the repro script checks PyTorch against this contract. |
+| `ConstantNormalizationSlice.lean` | GroupNorm, InstanceNorm, and BatchNorm kernels can suffer cancellation on large constant slices even when their saved mean/rstd imply zero normalized activation. | The constant-slice normalization theorem says affine normalization returns the bias and has zero scale-gradient contribution. |
 | `Geometry3DProjection.lean` | 3D perception glue fails through camera convention mismatches, negative depth, swapped `xyxy`/axis layouts, malformed corner tensors, and projected 3D boxes that do not actually enclose their 2D claims. | The Geometry3D checker recomputes tensor native projection, checks positive depth and bbox enclosure, includes a theorem for homogeneous projection intervals, and renders accepted/rejected PNG overlays for human inspection. |
 
 ## Contract Shapes
@@ -43,6 +45,8 @@ They are semantic bugs: the code runs, but it is no longer the math people think
 | Compiler boundary | target graph output equals source graph output |
 | Float boundary | runtime Float32 agrees with the named IEEE-style model under stated assumptions |
 | Stable loss | logits loss uses the stable log-softmax path |
+| One-feature LayerNorm | output equals bias and gradients with respect to input/scale are zero |
+| Constant normalization slice | output equals bias and the scale-gradient contribution is zero |
 | Geometry3D projection | projected 3D corners have positive depth and enclose the claimed 2D box |
 
 Scope: this BugZoo pass does not verify distributed training

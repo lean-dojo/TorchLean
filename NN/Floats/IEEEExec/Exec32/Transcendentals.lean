@@ -263,7 +263,7 @@ We implement `sin`/`cos` purely inside Lean:
 3. scale back up using `m` applications of the double-angle formulas.
 
 This is **deterministic** and uses only the IEEE32Exec kernel ops (`roundRatToIEEE32`, `add/mul/sub`,
-etc.). We do not claim correctly-rounded libm behavior; the goal is reproducible execution.
+etc.). We do not claim correctly-rounded libm behavior; reproducible execution is the contract.
 -/
 
 @[inline] def mulDyadic (a b : Dyadic) : Dyadic :=

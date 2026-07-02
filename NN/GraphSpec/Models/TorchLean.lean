@@ -26,7 +26,7 @@ The split is intentional:
 - `NN.Runtime.Autograd.TorchLean.*` contains runtime machinery: tensors, ops, backends, sessions,
   losses, optimizers, and training loops.
 
-So users looking for models start from GraphSpec, while runtime internals stay focused on execution.
+Model authors work from GraphSpec, while runtime internals stay focused on execution.
 -/
 
 @[expose] public section

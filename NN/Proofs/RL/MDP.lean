@@ -22,8 +22,8 @@ This module proves the first foundational theorems for TorchLean's finite discou
 - Bellman optimality is itself monotone,
 - Bellman policy and Bellman optimality are contractions in the finite sup metric.
 
-The proofs start with deterministic finite MDPs. That gives us a trustworthy base before
-introducing stochastic transitions or richer measure-theoretic machinery.
+The proofs begin with deterministic finite MDPs, giving a trustworthy base before stochastic
+transitions or richer measure-theoretic machinery.
 
 References:
 - Puterman, *Markov Decision Processes* (1994), discounted dynamic programming chapter:

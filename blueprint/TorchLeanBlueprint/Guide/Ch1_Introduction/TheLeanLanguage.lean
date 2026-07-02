@@ -27,8 +27,8 @@ $$`\text{specification} : \text{mathematical denotation}`
 
 $$`\text{theorem} : \text{kernel-checked proof connecting the two}`
 
-The goal is not to pull all numerical computing into Lean. The goal is to put the semantic object in
-Lean, then make every handoff to Python, CUDA, Julia, Arb, or a verifier explicit enough to inspect.
+TorchLean does not pull all numerical computing into Lean. It puts the semantic object in Lean,
+then makes every handoff to Python, CUDA, Julia, Arb, or a verifier explicit enough to inspect.
 
 # Lean In Mathematics
 

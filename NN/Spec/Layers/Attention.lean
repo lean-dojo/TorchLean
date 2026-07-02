@@ -193,12 +193,17 @@ we compute:
 2. scaled scores `S' = S / √d`
 3. (optional) mask: for each `(i,j)`, if `mask[i,j] = false`, its softmax numerator is exactly zero
    (the finite-scalar encoding of true `-∞` masking)
-4. attention weights `A = softmax(S')` (softmax over the last axis, i.e. each query row sums to 1)
+4. attention weights `A` by row normalization over the last axis
 5. output `Out = A V` with shape `(nQ × d)`
 
 Mask convention:
 
 `mask[i,j] = true` means "this key position is allowed", and `false` means "mask it out".
+
+For unmasked attention, each attention row sums to `1`. For masked attention, the same
+normalization statement requires the usual well-formedness condition that every query row has at
+least one allowed key. If a mask row is entirely false, the hard-mask numerator and denominator are
+both zero in the total spec; such masks are outside the intended normalized-attention contract.
 
 PyTorch analogy: `torch.softmax(scores.masked_fill(~mask, -torch.inf), dim=-1)` row-wise, then a
 final matrix multiply by `V`.

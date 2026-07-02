@@ -10,17 +10,17 @@ public import NN.Proofs.Autograd.Tape.Ops.Attention.MultiHeadSelfAttention
 public import NN.Proofs.Autograd.Tape.Ops.Attention.MaskedScaledDotProduct
 
 /-!
-# Masked Multi-Head Attention Core
+# Additive-Bias Multi-Head Attention Core
 
-This module proves the head-wise finite-mask attention core used inside causal Transformer blocks.
-The surrounding projection/split/merge graph lives in `MultiHeadSelfAttention.lean`; the theorem here
-is the reusable masked replacement for the score/probability/value part of that graph:
+This module proves the head-wise fixed-score-bias attention core. The surrounding
+projection/split/merge graph lives in `MultiHeadSelfAttention.lean`; the theorem here is the
+reusable additive-bias replacement for the score/probability/value part of that graph:
 
 `softmax(c · QKᵀ + bias) V`.
 
-The mask is a fixed finite score bias with shape `(heads × seq × seq)`.  This covers the
-differentiable finite-mask convention used by GPT-style causal attention.  A true `-∞` hard mask is
-a separate semantic theorem, not the differentiable runtime computation proved here.
+The bias has shape `(heads × seq × seq)`. This is not the boolean causal-mask semantics: boolean
+attention masks in the spec/runtime path use hard masking, where blocked entries contribute zero
+softmax numerator. This file is for intentional finite additive score biases.
 -/
 
 @[expose] public section
@@ -218,11 +218,11 @@ theorem maskedCore_backpropVec_eq_adjoint_fderiv
     (dg := maskedCoreDGraph (n := n) (numHeads := numHeads) (headDim := headDim) c bias) xV seedV
 
 /--
-Composition theorem for the masked core after a projection/split stage.
+Composition theorem for the additive-bias core after a projection/split stage.
 
 `projectPack` is the mathematical interface exposed by a full MHA front half: it builds
 `[Q_heads, Kᵀ_heads, V_heads]` from an outer context.  The theorem composes that front half with the
-proved finite-mask attention core.
+proved additive-bias attention core.
 -/
 theorem maskedCoreAfterProjection_hasFDerivAt
     {E : Type u} [NormedAddCommGroup E] [NormedSpace ℝ E]

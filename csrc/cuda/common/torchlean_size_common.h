@@ -6,11 +6,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
-// Shared checked size arithmetic for CUDA kernels and CPU stubs.
-//
-// Native wrappers receive many dimensions from Lean as `uint32_t`/`size_t` and then multiply them
-// before allocating or validating flat buffers. Keep the overflow policy in one C-safe header so
-// CUDA and non-CUDA builds reject impossible sizes in the same way.
+// Size arithmetic used by both CUDA code and CPU stubs.
+// Keep it shared so impossible buffers fail the same way in both builds.
 
 static inline size_t checked_mul_size(size_t a, size_t b, const char* msg) {
   if (a != 0 && b > SIZE_MAX / a) {

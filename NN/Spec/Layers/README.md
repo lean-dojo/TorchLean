@@ -35,5 +35,4 @@ Files:
 - `SelectiveScan.lean`: affine scan primitives used by S4/Mamba style state space models.
 - `Utils.lean`: shared image/tensor utilities used by convolution and pooling layers.
 
-If you're looking for the underlying tensor primitives (maps, matmul, reshape, broadcasting),
-those live under `NN/Spec/Core/*`.
+The underlying tensor primitives (maps, matmul, reshape, broadcasting) live under `NN/Spec/Core/*`.

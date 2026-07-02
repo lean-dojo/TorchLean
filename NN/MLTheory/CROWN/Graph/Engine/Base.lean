@@ -647,22 +647,32 @@ interval passes.
 -/
 def layerNormVarianceUpper {n : Nat}
     (lo hi : Tensor α (.dim n .scalar)) (muLo muHi : α) : α :=
-  match lo, hi with
-  | .dim flo, .dim fhi =>
-      let sumAbsSq : α := (List.finRange n).foldl (fun acc (i : Fin n) =>
-        match flo i, fhi i with
-        | .scalar l, .scalar u =>
-          let dl := MathFunctions.abs (l - muHi)
-          let du := MathFunctions.abs (u - muLo)
-          let a := if dl > du then dl else du
-          acc + (a * a)) 0
-      sumAbsSq / (n : Nat)
+  if _h : n > 0 then
+    match lo, hi with
+    | .dim flo, .dim fhi =>
+        let sumAbsSq : α := (List.finRange n).foldl (fun acc (i : Fin n) =>
+          match flo i, fhi i with
+          | .scalar l, .scalar u =>
+            let dl := MathFunctions.abs (l - muHi)
+            let du := MathFunctions.abs (u - muLo)
+            let a := if dl > du then dl else du
+            acc + (a * a)) 0
+        sumAbsSq / (n : Nat)
+  else
+    Numbers.zero
 
-/-- Mean bounds for a vector whose coordinates are bounded by endpoint tensors. -/
+/-- Mean bounds for a nonempty vector whose coordinates are bounded by endpoint tensors.
+
+For `n = 0`, the mathematical mean is undefined; this total helper returns `(0,0)` so callers do
+not accidentally divide by zero while they reject or totalize the empty case.
+-/
 def layerNormMeanBounds {n : Nat}
     (lo hi : Tensor α (.dim n .scalar)) : α × α :=
-  let nA : α := (n : Nat)
-  (Spec.Tensor.sumSpec lo / nA, Spec.Tensor.sumSpec hi / nA)
+  if _h : n > 0 then
+    let nA : α := (n : Nat)
+    (Spec.Tensor.sumSpec lo / nA, Spec.Tensor.sumSpec hi / nA)
+  else
+    (Numbers.zero, Numbers.zero)
 
 /--
 Bounds for `x - μ` when `x` is bounded coordinatewise and `μ` is bounded by an interval.
@@ -843,7 +853,9 @@ def ibpConv2dNode (id : Nat) (ps : ParamStore α) (Xin : FlatBox α) : Option (F
   | none => none
   | some cfg =>
     let expected := cfg.inC * cfg.inH * cfg.inW
-    if hdim : Xin.dim = expected then
+    if _hs : cfg.stride = 0 then
+      none
+    else if hdim : Xin.dim = expected then
       let sFlat := Shape.dim Xin.dim Shape.scalar
       let sIn := Shape.dim cfg.inC (Shape.dim cfg.inH (Shape.dim cfg.inW Shape.scalar))
       have hsize : sFlat.size = sIn.size := by

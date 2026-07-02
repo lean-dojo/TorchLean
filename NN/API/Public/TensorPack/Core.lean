@@ -8,6 +8,20 @@ module
 
 public import NN.API.Runtime
 
+/-!
+# Public TensorPack Core
+
+Shape-indexed tensor packs and supervised-sample helpers used by the public API.
+
+Main declarations:
+- `NN.API.TensorPack`: the public typed tuple of tensors.
+- `NN.API.tensorpack.*`: fixed-arity constructors, projections, mapping, zipping, append, and split.
+- `NN.API.sample.*`: supervised `(x, y)` samples and minibatch wrappers.
+
+This file is part of the public API layer.  The operations here are small wrappers around the
+checked tensor-pack representation; they do not introduce a second semantics for tensors or samples.
+-/
+
 @[expose] public section
 
 namespace NN

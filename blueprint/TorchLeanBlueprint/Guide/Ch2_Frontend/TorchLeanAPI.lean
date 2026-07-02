@@ -7,7 +7,7 @@ open Verso.Genre Manual
 tag := "torchlean-api"
 %%%
 
-This page is a map of the public API. The short version is:
+The public API starts with two lines:
 
 ```
 import NN
@@ -222,8 +222,8 @@ the model.
 
 # When To Use A Lower Layer
 
-Start with `import NN`. Use a runtime layer when the runtime layer is exactly what
-you are explaining:
+Use `import NN` by default. Drop to a runtime layer only when the runtime layer is exactly what the
+example is explaining:
 
 1. `TorchLean` for ordinary examples.
 2. `NN.API.Runtime` or `NN.API.TorchLean` only when the runtime API is the topic.

@@ -13,13 +13,13 @@ public import NN.API.Models.Generative
 public import NN.API.SelfSupervised
 
 /-!
-# API entrypoint
+# API Import
 
-This entrypoint re-exports the focused user-facing API surface, including the `TorchLean.*`
-facade namespaces, beside the other curated `NN.Entrypoint.*` imports.
+This import collects the public names used by `NN.Entrypoint.*` callers, including the
+`TorchLean.*` namespaces.
 
-Ordinary model and training files should use `import NN`. Import this module when you want
-the same public API surface under the `NN.Entrypoint.*` tree, without the broader library umbrella.
+Most model and training files can just use `import NN`. Use this one when you want the same public
+names under the `NN.Entrypoint.*` tree without pulling in the broader umbrella.
 -/
 
 @[expose] public section

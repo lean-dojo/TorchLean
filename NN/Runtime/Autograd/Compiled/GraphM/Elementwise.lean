@@ -571,7 +571,8 @@ def mseLoss {α : Type}
         let diff := subSpec yhatv targetv
         let squared := mulSpec diff diff
         let total := sumSpec (α := α) (s := s) squared
-        Tensor.scalar (total / (Shape.size s : α))
+        let denom : Nat := if Shape.size s = 0 then 1 else Shape.size s
+        Tensor.scalar (total / (denom : α))
       jvp := fun ctx dctx _d =>
         let yhatv := getIdx (α := α) (xs := ctx) iyhat
         let targetv := getIdx (α := α) (xs := ctx) itarget
@@ -579,7 +580,8 @@ def mseLoss {α : Type}
         let dtarget := getIdx (α := α) (xs := dctx) itarget
         let diff := subSpec yhatv targetv
         let two : α := (1 : α) + 1
-        let baseGrad : Tensor α s := scaleSpec (α := α) (s := s) diff (two / (Shape.size s : α))
+        let denom : Nat := if Shape.size s = 0 then 1 else Shape.size s
+        let baseGrad : Tensor α s := scaleSpec (α := α) (s := s) diff (two / (denom : α))
         let ddiff := subSpec dyhat dtarget
         Tensor.scalar (sumSpec (α := α) (s := s) (mulSpec baseGrad ddiff))
       vjp := fun ctx _d dLdy =>
@@ -587,7 +589,8 @@ def mseLoss {α : Type}
         let targetv := getIdx (α := α) (xs := ctx) itarget
         let diff := subSpec yhatv targetv
         let two : α := (1 : α) + 1
-        let baseGrad : Tensor α s := scaleSpec (α := α) (s := s) diff (two / (Shape.size s : α))
+        let denom : Nat := if Shape.size s = 0 then 1 else Shape.size s
+        let baseGrad : Tensor α s := scaleSpec (α := α) (s := s) diff (two / (denom : α))
         let gscalar : α := Tensor.toScalar dLdy
         let dYhat : Tensor α s := scaleSpec (α := α) (s := s) baseGrad gscalar
         let dTarget : Tensor α s := subSpec (fill (0 : α) s) dYhat

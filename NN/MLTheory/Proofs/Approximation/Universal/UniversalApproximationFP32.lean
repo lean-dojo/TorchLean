@@ -252,7 +252,7 @@ end
 /-!
 ## FP32 (rounding-on-ℝ) error propagation for the hinge construction
 
-This section does *not* claim that FP32 is equivalent to hardware float32.
+The theorem below does *not* claim that FP32 is equivalent to hardware float32.
 It proves a pointwise bound for evaluating the same hinge network with rounded operations
 (`TorchLean.Floats.FP32`) versus exact real arithmetic on the rounded inputs/weights.
 -/

@@ -3,9 +3,9 @@ title: Text Models Walkthrough
 usemathjax: true
 ---
 
-This page follows the text-model examples from corpus to continuation. The models are small, but
-the workflow is complete: read a text file, build next-token training examples, run a training step,
-save parameters, reload them, and sample from the saved model.
+The text-model examples run from corpus to continuation. The models are small, but the workflow is
+complete: read a text file, build next-token training examples, run a training step, save
+parameters, reload them, and sample from the saved model.
 
 The useful part is visibility. Tokenization, sequence length, causal windows, parameter shapes,
 generation settings, and saved logs all appear as artifacts the reader can inspect.
@@ -35,7 +35,7 @@ and tiny (256). That choice is practical:
 - there is no “which tokenizer version did you mean?” ambiguity,
 - it makes boundary mistakes easy to spot (and easy to turn into case studies).
 
-In code, this shows up as:
+The code-level version is:
 
 ```lean
 def vocab : Nat := text.Tokenizer.byte.vocabSize
@@ -68,8 +68,8 @@ def mkSampleFromTokenIds (toks : List Nat) : SupervisedSample Float σ τ :=
   Data.causalLmOneHotSample (α := Float) batch seqLen vocab toks (padId := 32)
 ```
 
-This is why the example is useful as a tutorial: there is no hidden dataloader convention. A
-supervised example is literally a pair of typed tensors.
+The tutorial value is the absence of hidden dataloader convention: a supervised example is
+literally a pair of typed tensors.
 
 <a id="gpt-2"></a>
 
@@ -132,9 +132,9 @@ pack, and the save/load operations round-trip exact IEEE-754 bit patterns throug
 That is why `gpt2_saved` is a separate example: it loads a parameter pack, checks that the shapes
 match the model architecture, and runs sampling without touching an optimizer.
 
-The GPT-2 command exposes this through `--save-params`; the saved-parameter example reloads the
-same shape-indexed parameter pack before sampling. If the shape list no longer matches the model,
-loading fails before the weights are used.
+The GPT-2 command exposes parameter export through `--save-params`; the saved-parameter example
+reloads the same shape-indexed parameter pack before sampling. If the shape list no longer matches
+the model, loading fails before the weights are used.
 
 <a id="mamba"></a>
 

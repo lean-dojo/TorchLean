@@ -3,9 +3,8 @@ title: Verification Bounds
 usemathjax: true
 ---
 
-This page is the tutorial entry point for TorchLean’s verification examples. It explains what interval
-bound propagation computes, what CROWN-style affine bounds add, how a TorchLean model becomes a
-verification graph, and what it means to check an external certificate.
+TorchLean’s verification examples connect interval bound propagation, CROWN-style affine bounds,
+IR graphs, and external certificate checks.
 
 <div class="media-slab">
   <img src="{{ '/assets/media/examples/showcase/verification-bounds.png' | relative_url }}" alt="IBP and alpha-CROWN verification example"/>
@@ -13,9 +12,9 @@ verification graph, and what it means to check an external certificate.
 
 ## The Question
 
-Most neural-network verification examples start with a robustness question:
+Most neural-network verification examples begin with a robustness question:
 
-> For every input inside a small box around this example, can the model’s output still satisfy the
+> For every input inside a small box around the example point, can the model’s output still satisfy the
 > desired margin or safety condition?
 
 TorchLean represents that question with four concrete objects:
@@ -69,7 +68,7 @@ lower and upper tensors. If the output box satisfies a margin condition such as
 
 ## IBP: Propagate Boxes Through The Graph
 
-Interval bound propagation is the simplest sound bound engine in this part of TorchLean. Each node
+Interval bound propagation is the simplest sound bound engine in the verification stack. Each node
 gets a lower and upper bound. The transformer for each operation must enclose all possible outputs
 of that operation when its inputs range over their current boxes.
 
@@ -169,12 +168,11 @@ match runCROWNBackwardObjective
 | some objAff => IO.println s!"[CROWN-backward] objective dim = {objAff.outDim}"
 ```
 
-This is the reason the example is useful: the model, graph, bounds, and certificate checks all
-refer to the same node ids and tensor shapes.
+The model, graph, bounds, and certificate checks all refer to the same node ids and tensor shapes.
 
 ## What Each Command Shows
 
-Start with the small TorchLean-native examples:
+Run the small TorchLean-native examples first:
 
 ```bash
 lake exe verify -- torchlean-crown-ops --dtype float

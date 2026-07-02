@@ -13,14 +13,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// CPU fallback for TorchLean's buffer runtime.
-//
-// The stub is deliberately not a second API: it is the same FFI surface implemented with host
-// memory so `lake build` and most tests do not require CUDA. Keep behavior aligned with
-// `torchlean_cuda_tensor.cu`, including edge cases such as empty buffers and deterministic-reduction
-// mode. Performance is not the point here; parity and debuggability are.
+// Host-memory version of the buffer runtime symbols.
+// This keeps default builds CUDA-free while preserving the same edge-case behavior.
 
-// CPU stub keeps the deterministic-reductions flag for API parity; lazily init from env (C init constraints).
+// Keep the deterministic-reductions flag for API parity, and initialize it lazily from the
+// environment.
 static uint32_t g_torchlean_deterministic_reductions = 0u;
 static uint32_t g_torchlean_deterministic_reductions_inited = 0u;
 static uint64_t g_torchlean_cuda_live_bytes = 0u;

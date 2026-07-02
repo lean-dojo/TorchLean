@@ -25,9 +25,9 @@ public import NN.Verification.TorchLean.Compile
 public import NN.API.Public.Facade.Base.Root
 
 /-!
-# TorchLean Runtime Facade
+# TorchLean Runtime Names
 
-Runtime dtype, backend, device, and scalar-polymorphic entrypoints.
+Dtype, backend, device, and runtime-selection helpers.
 -/
 
 @[expose] public section
@@ -60,27 +60,27 @@ abbrev real : DType :=
 end DType
 
 /-!
-Runtime-facing scalar classes.
+Scalar classes used after a runtime backend has been selected.
 
-Most ordinary TorchLean code should let `Trainer` provide these instances implicitly.  A few
-advanced demos use `Runtime.withOptions` / `Runtime.withOptionsNoCast` to run the same code under a
-CLI-selected scalar backend.  The classes live under `TorchLean.Runtime` so the root namespace stays
-focused on the model/data/trainer surface rather than on backend evidence.
+Most TorchLean code should let `Trainer` provide these instances implicitly. A few demos use
+`Runtime.withOptions` / `Runtime.withOptionsNoCast` to run the same code under a CLI-selected scalar
+backend. These classes stay under `TorchLean.Runtime` so the root namespace can stay focused on
+models, data, and training.
 -/
 
 /--
-Runtime scalar support for executable TorchLean examples.
+Executable scalar support for TorchLean examples.
 
-Advanced examples use this when they choose a scalar backend or write runtime-polymorphic code
-over the selected execution mode.
+Use this when an example chooses a scalar backend or writes code that is polymorphic over the
+selected runtime.
 -/
 abbrev Scalar := NN.API.Runtime.Scalar
 
 /--
-Mathematical scalar operations used by TorchLean model and loss definitions.
+Scalar math used by TorchLean model and loss definitions.
 
-This is the semantic scalar class used by runtime-selected examples and advanced verification/demo
-entrypoints.
+Runtime-selected examples and verification demos use this when they need the same model code to run
+under more than one scalar backend.
 -/
 abbrev SemanticScalar := NN.API.Semantics.Scalar
 
@@ -124,12 +124,10 @@ def ofFloat {α : Type} [TorchLean.Runtime.Scalar α] (x : Float) : α :=
   NN.API.Runtime.ofFloat x
 
 /--
-Run a Float-only command with the standard TorchLean runtime flags.
+Parse the usual TorchLean runtime flags and run a `Float` callback.
 
-This is the public spelling for the common "parse `--cpu`/`--cuda`/`--backend`, then run a concrete
-`Float` callback" boundary.  Examples should use this or `ModelZoo.runFloat` instead of calling
-`TorchLean.Module.run` directly; the latter is the runtime dispatcher that backs this
-facade.
+Examples should use this or `ModelZoo.runFloat` instead of calling `TorchLean.Module.run` directly;
+that lower-level dispatcher is what backs this wrapper.
 -/
 def runFloat
     (exeName : String) (args : List String)
@@ -141,9 +139,9 @@ def runFloat
 /--
 Parse the standard TorchLean runtime flags and return the resulting `Options`.
 
-This is the non-polymorphic sibling of `Runtime.withOptions`: examples that always execute
-at `Float` but still need `--cpu`, `--cuda`, `--backend`, or `--dtype` can parse the usual runtime
-flags without exposing a polymorphic callback in user-facing code.
+This is the non-polymorphic sibling of `Runtime.withOptions`: examples that always run at `Float`
+can still parse `--cpu`, `--cuda`, `--backend`, and `--dtype` without exposing a polymorphic
+callback.
 -/
 def parseArgs (args : List String) (defaultDType : DType := .float) :
     Except String (Options × List String) := do
@@ -152,15 +150,14 @@ def parseArgs (args : List String) (defaultDType : DType := .float) :
   pure (NN.API.TorchLean.Module.ExecConfig.toOptions cfg, rest)
 
 /--
-Run an advanced scalar-polymorphic example under the dtype/backend selected by the usual TorchLean
-CLI flags.
+Run a scalar-polymorphic example under the dtype/backend selected by the usual TorchLean CLI flags.
 
 The callback receives:
 - `cast`, for turning Float literals into the selected executable scalar type,
 - `rest`, the arguments left after runtime flags are stripped.
 
-Prefer `Trainer` for model training. Use this only for demos that really need the selected scalar
-type in their own code, for example small autograd/runtime walkthroughs.
+Prefer `Trainer` for model training. Use this for demos that really need the selected scalar type in
+their own code, for example small autograd/runtime walkthroughs.
 -/
 def withSelected
     (args : List String)
@@ -172,8 +169,8 @@ def withSelected
     (fun {α} _ _ _ _ cast _opts rest => k (α := α) cast rest)
 
 /--
-Run an advanced scalar-polymorphic example under the selected runtime when the callback does not
-need a Float-cast function.
+Run a scalar-polymorphic example under the selected runtime when the callback does not need a
+Float-cast function.
 
 Prefer `Runtime.withOptionsNoCast` when the callback also needs parsed runtime options. This
 exists for the rare case where only the selected scalar/backend instances and remaining CLI
@@ -191,8 +188,8 @@ def withSelectedNoCast
 /--
 Run an example under the selected runtime and pass through the parsed runtime options.
 
-Use this when an advanced example needs to inspect `--backend`, `--cuda`, or similar flags after
-TorchLean has selected the scalar backend.
+Use this when an example needs to inspect `--backend`, `--cuda`, or similar flags after TorchLean
+has selected the scalar backend.
 -/
 def withOptions
     (args : List String)
@@ -204,8 +201,8 @@ def withOptions
     (fun {α} _ _ _ _ cast opts rest => k (α := α) cast opts rest)
 
 /--
-Run an advanced example under the selected runtime and pass through runtime options when the
-callback does not need an explicit Float-cast function.
+Run an example under the selected runtime and pass through runtime options when the callback does
+not need an explicit Float-cast function.
 -/
 def withOptionsNoCast
     (args : List String)
@@ -216,7 +213,7 @@ def withOptionsNoCast
   withOptions args (fun {α} _ _ _ _ _cast opts rest => k (α := α) opts rest)
 
 /--
-Run a verification/demo entrypoint under the selected runtime dtype.
+Run a verification or demo command under the selected runtime dtype.
 
 This is the banner-printing sibling of `withSelected`; it matches the convention used by
 `lake exe verify -- ...` commands.

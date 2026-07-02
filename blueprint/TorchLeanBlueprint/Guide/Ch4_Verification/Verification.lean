@@ -17,7 +17,7 @@ The first question is always:
 > What object is being verified?
 
 The usual object is an [NN.IR.Graph](https://github.com/lean-dojo/TorchLean/blob/main/NN/IR/Graph.lean)
-plus a parameter payload and an input region. Other pages in this section use tensor programs,
+plus a parameter payload and an input region. Other verification chapters use tensor programs,
 tapes, datasets, trajectories, residual functions, and imported JSON certificates. The object
 matters because the theorem can only talk about the artifact it names.
 
@@ -225,7 +225,7 @@ large model.
 # LiRPA Family (The Unifying Pattern)
 
 Most practical neural network verifiers in the IBP/CROWN family are instances of LiRPA
-(Linear Relaxation-based Perturbation Analysis). The pattern is familiar: start with an input
+(Linear Relaxation-based Perturbation Analysis). The pattern is familiar: choose an input
 uncertainty set, usually a box or an `l∞` ball; propagate an overapproximation of each node's
 value through the graph; and rely on induction over node order to turn local rules into a global
 guarantee.
@@ -234,8 +234,7 @@ TorchLean makes that pattern visible in the module structure. The shared object 
 the shared semantics is `NN.IR.Graph.denote` / `NN.IR.Graph.denoteAll`, and the verifier passes
 produce `PropState` artifacts such as IBP boxes and affine forms over that same IR.
 
-This section focuses on the implemented IBP and CROWN affine layer, plus the way the
-repository keeps `proved`, `checked`, and `assumed` distinct.
+The implemented IBP and CROWN affine layer keeps `proved`, `checked`, and `assumed` distinct.
 
 # IBP vs CROWN (What These Passes Actually Compute)
 
@@ -546,7 +545,7 @@ argument.
 
 # Pointers To Deeper Chapters
 
-The verification tree is broad, so this section names the areas that need their own careful reading
+The verification tree is broad, so the list below names areas that need their own careful reading
 path rather than being compressed into one verifier slogan:
 
 - `CROWN` as objective dependent backward reasoning, not only forward node by node affine bounds.
@@ -648,7 +647,7 @@ monolithic external script.
 
 # Core Data Structures (What The Verifier Actually Consumes)
 
-This section answers a simple question: what data do the verifier passes actually consume?
+The verifier passes consume a small set of explicit artifacts.
 
 ## `NN.IR.Graph` (Structure Only)
 
@@ -954,8 +953,8 @@ Two-Stage path.
 
 # Informal theorem shapes (for citations)
 
-This section stays informal. It records the main guarantee shapes that papers and talks often
-need, with pointers to the precise Lean theorems.
+The theorem shapes below stay informal, with pointers to the precise Lean theorems that papers and
+talks often need.
 
 ## Compiler-to-IR Alignment (Proved Fragment)
 

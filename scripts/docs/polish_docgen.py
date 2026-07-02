@@ -13,8 +13,10 @@ TorchLean website.
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 from pathlib import Path
+from urllib.parse import unquote
 
 
 # `append_style` is idempotent: it removes everything after this marker before
@@ -37,6 +39,10 @@ DOCGEN_DEPENDENCY_MODULES = {
     "Std",
 }
 
+UPSTREAM_DOCGEN_BASE = "https://leanprover-community.github.io/mathlib4_docs/"
+
+HREF_RE = re.compile(r'href="([^"]+)"')
+
 
 def prune_dependency_pages(docs: Path) -> None:
     """Keep the published API docs focused on TorchLean modules.
@@ -54,6 +60,59 @@ def prune_dependency_pages(docs: Path) -> None:
         page = docs / f"{name}.html"
         if page.exists():
             page.unlink()
+
+
+def rewrite_dependency_links(docs: Path) -> None:
+    """Rewrite links to pruned dependencies to the upstream Lean/mathlib docs.
+
+    The public TorchLean site publishes `NN` declaration pages, not a second
+    copy of Lean, Std, Mathlib, and other imported packages.  DocGen still emits
+    local links to those declarations.  After `prune_dependency_pages` removes
+    the dependency pages, those links would become local 404s unless we rewrite
+    them to the canonical upstream DocGen site.
+    """
+
+    for path in docs.rglob("*.html"):
+        text = path.read_text(encoding="utf-8")
+
+        def repl(match: re.Match[str]) -> str:
+            url = match.group(1)
+            if (
+                not url
+                or url.startswith(("#", "http://", "https://", "mailto:", "javascript:", "data:"))
+            ):
+                return match.group(0)
+
+            path_part, sep, suffix = url.partition("#")
+            query = ""
+            if "?" in path_part:
+                path_part, query_sep, query = path_part.partition("?")
+                suffix = query_sep + query + (sep + suffix if sep else "")
+            elif sep:
+                suffix = sep + suffix
+
+            if not path_part:
+                return match.group(0)
+
+            target = (path.parent / unquote(path_part)).resolve()
+            try:
+                rel = target.relative_to(docs)
+            except ValueError:
+                return match.group(0)
+
+            parts = rel.parts
+            if not parts:
+                return match.group(0)
+            first = parts[0].removesuffix(".html")
+            if first not in DOCGEN_DEPENDENCY_MODULES:
+                return match.group(0)
+
+            upstream = UPSTREAM_DOCGEN_BASE + rel.as_posix()
+            return f'href="{upstream}{suffix}"'
+
+        updated = HREF_RE.sub(repl, text)
+        if updated != text:
+            path.write_text(updated, encoding="utf-8")
 
 
 def write_index(docs: Path) -> None:
@@ -125,7 +184,7 @@ def write_index(docs: Path) -> None:
         <p>The broad umbrella import for ordinary downstream use.</p>
       </a>
       <a class="tl-api-card" href="./NN/API/Public.html">
-        <span>User facade</span>
+        <span>Public API</span>
         <strong>NN.API.Public</strong>
         <p>The PyTorch-shaped public surface for model code and examples.</p>
       </a>
@@ -1034,6 +1093,21 @@ def rename_docgen_header(docs: Path) -> None:
             "NN/Spec/Core/tensor/Core.html",
             "NN/Spec/Core/Tensor/Core.html",
         )
+        semantic_equivalence_source = (
+            "https://github.com/lean-dojo/TorchLean/blob/main/"
+            "NN/Runtime/Autograd/Compiled/IRExec/Correctness/SemanticEquivalence.lean"
+        )
+        updated = re.sub(
+            r'href="[^"]*Correctness/SemanticEquivalence\.html"',
+            f'href="{semantic_equivalence_source}"',
+            updated,
+        )
+        updated = re.sub(
+            r'href="[^"]*https://github\.com/lean-dojo/TorchLean/blob/main/'
+            r'NN/Runtime/Autograd/Compiled/IRExec/Correctness/SemanticEquivalence\.lean"',
+            f'href="{semantic_equivalence_source}"',
+            updated,
+        )
 
         # DocGen's global CSS treats every `nav` as a fixed sidebar, so normalize
         # this tiny cross-site link group to a plain div before adding links.
@@ -1076,6 +1150,7 @@ def main() -> None:
     if not docs.exists():
         raise SystemExit(f"DocGen output directory does not exist: {docs}")
     prune_dependency_pages(docs)
+    rewrite_dependency_links(docs)
     write_index(docs)
     append_style(docs)
     add_nav_hint(docs)

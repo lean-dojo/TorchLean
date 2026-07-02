@@ -14,7 +14,7 @@ public import NN.Tests.Runtime.Cuda.Utils
 /-!
 # CUDA Kernel Coverage: Views, Broadcast, Reduce
 
-Small forward/backward comparisons (CPU tape vs CUDA tape) for:
+Small CPU/CUDA tape comparisons for:
 - `reshape`, `transpose2d`, `swapAdjacentAtDepth`, 3D permutations
 - `broadcastTo`
 - `reduce_sum`, `reduce_mean`, low-level empty-axis `reduce_max` parity
@@ -33,7 +33,6 @@ open Runtime.Autograd
 def floatArrayOfList (xs : List Float) : FloatArray :=
   FloatArray.mk xs.toArray
 
-/-- Assert that a raw FloatArray has the expected size and contains only zeros. -/
 def assertFloatArrayAllZero (msg : String) (a : FloatArray) (expectedSize : Nat) : IO Unit := do
   if a.size != expectedSize then
     throw <| IO.userError s!"{msg}: size mismatch ({a.size} vs {expectedSize})"

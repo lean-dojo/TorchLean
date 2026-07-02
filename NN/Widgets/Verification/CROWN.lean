@@ -24,7 +24,7 @@ and teaching rather than proofs:
 - `#crown_view g, st` shows a per-node table for a `CROWN.graph.PropState`, including optional IBP
   boxes and optional affine forms.
 
-The goal is to make it easy to inspect:
+The panel makes it easy to inspect:
 - which nodes got bounds,
 - the shapes and flattened dimensions that the propagation engine believes it is operating on,
 - and small previews of the vectors/matrices involved.

@@ -154,11 +154,11 @@ The main proof trail starts here:
 
 Use the smallest API that matches the question.
 
-- For a gradient of `Tensor σ -> scalar`, start with `autograd.fn1.grad`.
-- For a value and gradient together, start with `autograd.fn1.valueAndGrad`.
-- For a vector output with a chosen cotangent, start with `autograd.fn1.vjp`.
-- For a model loss gradient with respect to parameters, start with `autograd.model.gradParams`.
-- For minibatch training, start with `Trainer.Config`, `Trainer.TrainOptions`, `trainer.train`, and the
+- For a gradient of `Tensor σ -> scalar`, use `autograd.fn1.grad`.
+- For a value and gradient together, use `autograd.fn1.valueAndGrad`.
+- For a vector output with a chosen cotangent, use `autograd.fn1.vjp`.
+- For a model loss gradient with respect to parameters, use `autograd.model.gradParams`.
+- For minibatch training, use `Trainer.Config`, `Trainer.TrainOptions`, `trainer.train`, and the
   quickstart examples.
 
 For a runnable tour, open

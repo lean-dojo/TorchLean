@@ -12,9 +12,9 @@ public import NN.Proofs.Autograd.Tape.Ops.Transformer.EncoderBlock
 /-!
 # GPT-Style Decoder Block
 
-This module packages the post-norm GPT decoder-block composition theorem.  The masked attention
-front half is supplied as a differentiable residual-pack map; the concrete finite-mask attention
-core and its projection/merge composition theorem live in
+This module packages the post-norm decoder-block composition theorem.  The attention front half is
+supplied as a differentiable residual-pack map; the concrete additive-bias attention core and its
+projection/merge composition theorem live in
 `NN.Proofs.Autograd.Tape.Ops.Attention.MaskedMultiHeadSelfAttention`.
 -/
 
@@ -386,7 +386,7 @@ def decoderNorm2Inputs {seqLen dModel numHeads headDim dFF : Nat} :
         [LayerNorm.MatShape seqLen dModel, LayerNorm.MatShape seqLen dModel,
           LayerNorm.MatShape seqLen dModel] ++ ssSeqFFNResidual seqLen dModel dFF) }
 
-/-- Concrete SSA graph for one finite-mask GPT-style decoder-core block. -/
+/-- Concrete SSA graph for one additive-bias decoder-core block. -/
 def decoderCoreGraph {seqLen dModel numHeads headDim dFF : Nat}
     (merge :
       Vec (Shape.size (MultiHeadAttention.HeadsShape seqLen numHeads headDim)) →L[ℝ]
@@ -643,7 +643,7 @@ def decoderCoreGraphFDerivCorrectAt {seqLen dModel numHeads headDim dFF : Nat}
       (seqLen := seqLen) (dModel := dModel) (numHeads := numHeads) (headDim := headDim)
       (dFF := dFF) merge mergeBias fc1 b1 fc2 b2 c ε₁ bias xV hNorm1, hNorm2⟩
 
-/-- End-to-end VJP theorem for the concrete finite-mask GPT-style decoder-core graph. -/
+/-- End-to-end VJP theorem for the concrete additive-bias decoder-core graph. -/
 theorem decoderCore_backpropVec_eq_adjoint_fderiv_at
     {seqLen dModel numHeads headDim dFF : Nat}
     (merge :

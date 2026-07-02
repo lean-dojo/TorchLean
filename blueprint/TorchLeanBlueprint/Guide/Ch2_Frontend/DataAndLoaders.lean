@@ -7,10 +7,10 @@ open Verso.Genre Manual
 tag := "datasets-loaders"
 %%%
 
-A model tutorial is only useful for a few minutes if it trains on one hard-coded tensor. This page
-explains how data enters TorchLean: as in-memory samples, file-backed tensors, deterministic
-loaders, and minibatches with shapes the model can see. The surface is close by design to
-`torch.utils.data`, but the samples carry Lean shapes.
+A model tutorial is only useful for a few minutes if it trains on one hard-coded tensor. Data enters
+TorchLean as in-memory samples, file-backed tensors, deterministic loaders, and minibatches with
+shapes the model can see. The surface is close by design to `torch.utils.data`, but the samples
+carry Lean shapes.
 
 The reader model is:
 

@@ -71,6 +71,18 @@ shared semantics path described below.
 The website combines generated API docs, the Verso guide, import/dependency graphs, and a small
 Jekyll site.
 
+TorchLean treats generated Lean docs as the primary documentation surface, in the same spirit as
+mathlib:
+
+- every `NN/` Lean file should have a module docstring (`/-! ... -/`);
+- module docstrings should say what the file defines, name the main declarations, and tell readers
+  which import to use;
+- public API declarations should have either a direct docstring or `@[inherit_doc ...]`;
+- trust/proof status belongs in the module docstring when a file crosses runtime, CUDA, Python,
+  certificate, or solver boundaries;
+- generated DocGen links should be real links. If dependency pages are pruned from the TorchLean
+  site, links to Lean/Std/Mathlib declarations should point to the upstream generated docs.
+
 Build API docs:
 
 ```bash
@@ -171,7 +183,7 @@ python3 scripts/checks/repo_lint.py
 Project conventions:
 
 - Prefer small modules with minimal imports.
-- Add docstrings for user-facing definitions, structures, and theorems.
+- Add module docstrings and docstrings for user-facing definitions, structures, and theorems.
 - Split expensive proofs into named lemmas instead of relying on huge `simp` or `aesop` calls.
 - Keep executable examples and proof code separate when they have different trust assumptions.
 - Avoid introducing axioms. If one is unavoidable, quarantine and document it.

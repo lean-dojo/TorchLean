@@ -17,20 +17,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// CUDA implementation of TorchLean's float32 buffer runtime.
-//
-// This file owns the lowest-level executable tensor backend used by Lean's `Cuda.Buffer` wrapper:
-// allocation/finalization, host/device copies, scalar elementwise kernels, whole-buffer reductions,
-// seeded random buffers, and manual release hooks used by long training loops.
-//
-// Important contract:
-// - every exported function receives already-shaped Lean metadata and must still validate sizes;
-// - returned buffers are boxed as Lean external objects with a CUDA finalizer;
-// - reductions may use a fast non-deterministic path unless deterministic reductions are enabled;
-// - the CPU fallback in `torchlean_cuda_tensor_stub.c` must expose the same exported symbols.
+// Float32 `Cuda.Buffer` runtime: allocation, copies, elementwise kernels, reductions, RNG, and
+// explicit release hooks.
+// We still check sizes at the FFI boundary, even when Lean has already tracked the shape.
 
-// Global (process-wide) toggle used to trade performance for bit-stable reproducibility in
-// atomic-accumulation kernels.
+// Process-wide switch for deterministic reductions.
 static std::atomic<uint32_t> g_torchlean_deterministic_reductions{0u};
 // 0 = uninitialized, 1 = initialized, 2 = another thread is initializing.
 static std::atomic<uint32_t> g_torchlean_deterministic_reductions_inited{0u};

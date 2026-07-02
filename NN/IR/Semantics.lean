@@ -210,6 +210,14 @@ def expectShape {α : Type} [Context α] [DecidableEq Shape]
   else
     throw s!"IR eval: shape mismatch: expected {repr expected}, got {repr v.shape}"
 
+/-- Denominator for totalized mean reductions over a dynamic IR shape.
+
+For nonempty shapes this is the real element count. For empty shapes, the mathematical mean is
+undefined; the IR is total, so it uses denominator `1` and the empty sum contributes `0`.
+-/
+def meanDenom (s : Shape) : Nat :=
+  if Shape.size s = 0 then 1 else Shape.size s
+
 /-- Evaluate MSE loss on two dynamic values, checking that their runtime shapes agree. -/
 def mseLossDVal {α : Type} [Context α] [DecidableEq Shape]
     (i : Nat) (yVal tVal : DVal α) : Except String (DVal α) := do
@@ -220,7 +228,7 @@ def mseLossDVal {α : Type} [Context α] [DecidableEq Shape]
     let diff := Tensor.subSpec (α := α) yT tT
     let sq := Tensor.mulSpec (α := α) diff diff
     let total : α := Tensor.sumSpec (α := α) sq
-    let mean : α := total / (↑(Shape.size s) : α)
+    let mean : α := total / (↑(meanDenom s) : α)
     pure (DVal.mk (α := α) Shape.scalar (Tensor.scalar mean))
   else
     throw <|
@@ -233,7 +241,7 @@ def mseLossDVal {α : Type} [Context α] [DecidableEq Shape]
       .ok (DVal.mk (α := α) Shape.scalar
         (Tensor.scalar
           (((Tensor.subSpec (α := α) y t).mulSpec (Tensor.subSpec (α := α) y t)).sumSpec /
-            (↑(Shape.size s) : α)))) := by
+            (↑(meanDenom s) : α)))) := by
   simp [mseLossDVal, DVal.shape, DVal.tensor, DVal.mk]
   rfl
 
@@ -298,10 +306,11 @@ def evalConv2D {α : Type} [Context α] [DecidableEq Shape]
   match payload.conv2d? id with
   | none => throw s!"IR eval: missing conv2d payload for node {id}"
   | some cfg =>
+      let _ ←
+        OpContracts.inferConv2dCHWOutShape cfg.inC cfg.outC cfg.kH cfg.kW cfg.stride cfg.padding
+          x.shape
       let xT ← expectShape (α := α)
         (expected := Shape.dim cfg.inC (Shape.dim cfg.inH (Shape.dim cfg.inW Shape.scalar))) x
-      OpContracts.checkWindowFits "conv2d" "height" cfg.inH cfg.kH cfg.padding
-      OpContracts.checkWindowFits "conv2d" "width" cfg.inW cfg.kW cfg.padding
       let y := Spec.conv2dSpec (α := α)
         (layer := cfg.spec)
         (input := xT)

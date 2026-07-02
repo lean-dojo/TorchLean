@@ -84,9 +84,9 @@ reader has context.
 
 # Introduction
 
-These chapters establish the working model for the rest of the guide. We start with the basic
-question TorchLean answers: how can one codebase support neural network programs that run, graph
-artifacts that tools can inspect, and mathematical claims that Lean can check?
+These chapters establish the working model for the rest of the guide around the basic question
+TorchLean answers: how can one codebase support neural network programs that run, graph artifacts
+that tools can inspect, and mathematical claims that Lean can check?
 
 The introduction is meant to be read linearly. It first explains the motivation, then compares the
 TorchLean style with familiar PyTorch workflows, and finally follows a compact classifier through the
@@ -109,9 +109,9 @@ main representations that appear later in the book.
 
 # Building Models
 
-These chapters start with the public surface: tensors, shapes, model builders, datasets, and small
-training loops. They are practical. They show how a TorchLean model is written and run
-before asking you to care about the IR or proof machinery underneath it.
+These chapters cover the public surface: tensors, shapes, model builders, datasets, and small
+training loops. They show how a TorchLean model is written and run before introducing the IR or
+proof machinery underneath it.
 
 {include 2 TorchLeanBlueprint.Guide.Ch2_Frontend.TensorsAndShapes}
 
@@ -144,7 +144,7 @@ verification.
 
 # Semantics and Graphs
 
-This section explains the objects that TorchLean claims are about.
+TorchLean's semantic objects live at several levels.
 
 The spec layer gives mathematical meanings to tensors, layers, losses, masks, modes, and scalar
 choices. GraphSpec gives a typed architecture language for models whose parameter layout and
@@ -175,8 +175,8 @@ executable binary32 behavior inside Lean, including special values. Native execu
 `Float32`, CUDA, cuBLAS, cuFFT, Python, Julia, Arb, or external verifiers enters through explicit
 producer/checker interfaces.
 
-The goal is not to avoid practical numerical tools. The goal is to know exactly how their outputs
-support the claim being made.
+Practical numerical tools remain part of the workflow; their outputs need explicit support for the
+claim being made.
 
 {include 2 TorchLeanBlueprint.Guide.Ch3_Backend.Floats}
 
@@ -201,17 +201,15 @@ parameter payload, a tensor program, a dataset, a trajectory, a residual, or an 
 certificate. The support may be a Lean theorem, a small checker, a replayed artifact, a runtime
 diagnostic, or an explicitly named external producer.
 
-This section has three kinds of pages. The first group explains verifier artifacts: IBP/CROWN
-bounds, certificates, two-stage workflows, ODE tubes, PINN residuals, and α,β-CROWN leaves. The
-second group explains proof infrastructure: compiler correctness, autograd soundness, runtime
-approximation, and reusable gradient/probability lemmas. The third group explains mathematical ML
-theory: differential privacy, stability, optimization, self-supervised objectives, universal
-approximation, Hopfield energy, and state-space causality.
+The verification chapter has three layers. Verifier artifacts cover IBP/CROWN bounds, certificates,
+two-stage workflows, ODE tubes, PINN residuals, and α,β-CROWN leaves. Proof infrastructure covers
+compiler correctness, autograd soundness, runtime approximation, and reusable gradient/probability
+lemmas. Mathematical ML theory covers differential privacy, stability, optimization, self-supervised
+objectives, universal approximation, Hopfield energy, and state-space causality.
 
-The goal is to make those levels readable. A run is evidence about execution. A certificate is a
-finite artifact with a stated checker. A real-valued theorem needs a numerical bridge before it
-becomes a Float32 claim. When the right bridges are present, TorchLean can turn concrete artifacts
-into precise mathematical statements.
+A run is evidence about execution. A certificate is a finite artifact with a stated checker. A
+real-valued theorem needs a numerical bridge before it becomes a Float32 claim. When the right
+bridges are present, TorchLean can turn concrete artifacts into precise mathematical statements.
 
 {include 2 TorchLeanBlueprint.Guide.Ch4_Verification.Verification}
 

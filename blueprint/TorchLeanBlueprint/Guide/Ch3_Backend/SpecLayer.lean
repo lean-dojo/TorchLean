@@ -23,11 +23,10 @@ prover. For broader language background, see the official Lean texts
 simple: write the mathematical object as an ordinary Lean definition, then make later layers show
 which definition they execute, differentiate, lower, or verify.
 
-The rest of this page assumes the tensor and model-building material from the earlier chapters and
-focuses on the semantic anchors that later runtime, autograd, graph, and verification statements
-cite.
+The discussion assumes the tensor and model-building material from the earlier chapters and focuses
+on the semantic anchors that later runtime, autograd, graph, and verification statements cite.
 
-# What This Page Adds
+# Semantic Anchors
 
 A spec page should answer one question: when a runtime, compiler, autograd rule, or verifier says it
 is handling a layer, which Lean definition is it referring to?
@@ -301,7 +300,7 @@ canonical op-tagged DAG. Read *GraphSpec* for architecture objects that have bot
 semantics and executable TorchLean programs. Read *Verification* for how bounds and certificates
 refer back to the same denotation.
 
-For concrete declarations, start with the [Context API](https://github.com/lean-dojo/TorchLean/blob/main/NN/Spec/Core/Context.lean), then the
+Concrete declarations begin with the [Context API](https://github.com/lean-dojo/TorchLean/blob/main/NN/Spec/Core/Context.lean), then the
 [layer semantics API](https://github.com/lean-dojo/TorchLean/tree/main/NN/Spec/Layers/), the [model spec API](https://github.com/lean-dojo/TorchLean/tree/main/NN/Spec/Models/), and the
 [autograd spec API](https://github.com/lean-dojo/TorchLean/tree/main/NN/Spec/Autograd/).
 

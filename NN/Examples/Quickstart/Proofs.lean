@@ -15,7 +15,7 @@ TorchLean examples are not only executable scripts. Many guarantees are ordinary
 shape round-trips, typed tensor construction, activation identities, and later full verification
 statements.
 
-Start with the boundary where TorchLean becomes more than an executable ML library:
+The boundary where TorchLean becomes more than an executable ML library is:
 
 - compile-time guarantees from shape-indexed tensor types, and
 - ordinary mathematical lemmas about the public API.

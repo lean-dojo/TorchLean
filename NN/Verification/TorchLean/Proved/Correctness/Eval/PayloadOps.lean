@@ -172,7 +172,18 @@ theorem evalConv2D_eq_spec
             (.dim ((cfg.inH + 2 * cfg.padding - cfg.kH) / cfg.stride + 1)
               (.dim ((cfg.inW + 2 * cfg.padding - cfg.kW) / cfg.stride + 1) .scalar)))
           (Spec.conv2dSpec (α := α) (layer := cfg.spec) (input := x))) := by
-  simp [Graph.evalConv2D, singletonConv2DPayload, Graph.expectShape, hHeight, hWidth,
+  have hInfer :
+      OpContracts.inferConv2dCHWOutShape cfg.inC cfg.outC cfg.kH cfg.kW cfg.stride
+          cfg.padding (.dim cfg.inC (.dim cfg.inH (.dim cfg.inW .scalar))) =
+        Except.ok
+          (.dim cfg.outC
+            (.dim ((cfg.inH + 2 * cfg.padding - cfg.kH) / cfg.stride + 1)
+              (.dim ((cfg.inW + 2 * cfg.padding - cfg.kW) / cfg.stride + 1) .scalar))) := by
+    simp [OpContracts.inferConv2dCHWOutShape, OpContracts.checkPositive,
+      OpContracts.conv2dCHWOutShape, OpContracts.slideOutPad, cfg.hIn, cfg.hKH,
+      cfg.hKW, cfg.hStride, hHeight, hWidth, Bind.bind, Except.bind, Pure.pure,
+      Except.pure]
+  simp [Graph.evalConv2D, singletonConv2DPayload, Graph.expectShape, hInfer,
     Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 /-- Local IR semantics for a payload-backed no-dilation `conv2d` node. -/
@@ -197,9 +208,20 @@ theorem evalAt_conv2d_eq_spec
       Except.ok
         (DVal.mk (α := α) outShape
           (Spec.conv2dSpec (α := α) (layer := cfg.spec) (input := x))) := by
+  have hInfer :
+      OpContracts.inferConv2dCHWOutShape cfg.inC cfg.outC cfg.kH cfg.kW cfg.stride
+          cfg.padding (.dim cfg.inC (.dim cfg.inH (.dim cfg.inW .scalar))) =
+        Except.ok
+          (.dim cfg.outC
+            (.dim ((cfg.inH + 2 * cfg.padding - cfg.kH) / cfg.stride + 1)
+              (.dim ((cfg.inW + 2 * cfg.padding - cfg.kW) / cfg.stride + 1) .scalar))) := by
+    simp [OpContracts.inferConv2dCHWOutShape, OpContracts.checkPositive,
+      OpContracts.conv2dCHWOutShape, OpContracts.slideOutPad, cfg.hIn, cfg.hKH,
+      cfg.hKW, cfg.hStride, hHeight, hWidth, Bind.bind, Except.bind, Pure.pure,
+      Except.pure]
   simp [Graph.evalAt, unaryGraphOut, unaryNodeOut, Graph.getNode, Graph.getNode?,
-    Graph.evalConv2D, singletonConv2DPayload, Graph.expectShape, hHeight, hWidth,
-    shapeBNe_refl, Bind.bind, Except.bind, Pure.pure, Except.pure]
+    Graph.evalConv2D, singletonConv2DPayload, Graph.expectShape, hInfer, shapeBNe_refl,
+    Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 /-- Missing convolution payloads are rejected before convolution is evaluated. -/
 theorem evalConv2D_missing_payload

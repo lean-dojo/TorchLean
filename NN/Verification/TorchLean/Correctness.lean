@@ -49,7 +49,8 @@ def payloadOfParamStore {α : Type} [Context α] (ps : NN.MLTheory.CROWN.Graph.P
       (ps.conv2dCfg.get? id).map (fun cfg =>
         { inC := cfg.inC, outC := cfg.outC, kH := cfg.kH, kW := cfg.kW
           stride := cfg.stride, padding := cfg.padding, inH := cfg.inH, inW := cfg.inW
-          hIn := cfg.hIn, hKH := cfg.hKH, hKW := cfg.hKW, spec := cfg.spec })
+          hIn := cfg.hIn, hKH := cfg.hKH, hKW := cfg.hKW, hStride := cfg.hStride,
+          spec := cfg.spec })
     batchNorm2dNchwEval? := fun id =>
       (ps.batchNorm2dNchwEval.get? id).map (fun p =>
         { c := p.c, gamma := p.gamma, beta := p.beta, mean := p.mean, var := p.var, eps := p.eps }) }

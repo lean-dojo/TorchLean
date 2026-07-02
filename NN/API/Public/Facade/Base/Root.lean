@@ -26,7 +26,7 @@ public import NN.Verification.TorchLean.Compile
 /-!
 # TorchLean Public Names
 
-Root public names and training-log types used by `import NN`.
+Short root names and training-log types used by `import NN`.
 -/
 
 @[expose] public section
@@ -36,13 +36,13 @@ namespace TorchLean
 @[inherit_doc Spec.Shape]
 abbrev Shape := Spec.Shape
 
-/-- Runtime options such as backend, dtype, and CUDA fast-kernel selection. -/
+/-- Runtime options such as backend, dtype, and CUDA fast-kernel settings. -/
 abbrev Options := NN.API.TorchLean.Options
 
 /-- One supervised training example with an input tensor and target tensor. -/
 abbrev SupervisedSample := NN.API.SupervisedSample
 
-/-- Shape-indexed sequential model. Most examples use the shorter `nn.Sequential` spelling. -/
+/-- Shape-indexed sequential model. Most examples use the shorter `nn.Sequential` name. -/
 abbrev SequentialModel := NN.API.nn.Sequential
 
 /-- Randomized model builder used by `nn.run` and built-in examples. -/
@@ -53,20 +53,17 @@ abbrev modelParamShapes {σ τ : Shape} (model : SequentialModel σ τ) : List S
   NN.API.nn.paramShapes model
 
 /--
-Shape-indexed tensor pack.
+TorchLean's typed tuple of tensors.
 
-This is the public name for TorchLean's typed tuple/argument-pack representation. A
-`TensorPack α [s₁, s₂, ...]` is a fixed tuple of tensors whose shapes are tracked by the type-level
+A `TensorPack α [s₁, s₂, ...]` is a fixed tuple whose tensor shapes are tracked by the type-level
 list.
 -/
 abbrev TensorPack (α : Type) (shapes : List Shape) :=
   NN.API.TensorPack α shapes
 
 /--
-Concrete parameter tensors for a model or model slice.
-
-This is the root public name for shape-indexed parameter tensors. The `nn.ParamTensors` spelling
-points back to this same type so model code can stay on the shorter name.
+Concrete parameter tensors for a model or model slice. The `nn.ParamTensors` spelling points back to
+this same type.
 -/
 abbrev ParamTensors (α : Type) (shapes : List Shape) :=
   TensorPack α shapes

@@ -60,7 +60,7 @@ theorem toEReal_neg_of_toDyadic?_some (x : IEEE32Exec) {d : Dyadic} (hx : toDyad
     _ = -toEReal x := by simp [hxE0]
 
 /-
-`IEEE32Exec.neg` flips only the sign bit. For our `EReal` semantics, we will often want to push
+`IEEE32Exec.neg` flips only the sign bit. For our `EReal` semantics, later proofs often push
 negation through `toEReal`. This is automatic in the finite/dyadic case
 (`toEReal_neg_of_toDyadic?_some`), but we also need a lemma for `±∞`.
 

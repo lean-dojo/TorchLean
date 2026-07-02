@@ -47,7 +47,6 @@ from pinn_common import (
 
 
 def train(args):
-    """Train a 2D PINN and export checkpoint/JSON weights."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     x_lo, x_hi = -1.0, 1.0
@@ -76,7 +75,6 @@ def train(args):
         print(f"Loaded dataset from {args.dataset_json}")
 
     def sample_collocation():
-        """Sample collocation points from JSON data or the default square."""
         if dataset:
             sampled = dataset.sample_columns("collocation", N_c, 2)
             if sampled is not None:
@@ -86,7 +84,6 @@ def train(args):
         return x, y
 
     def sample_boundary():
-        """Sample boundary points from JSON data or `--bc-expr`."""
         if dataset:
             sampled = dataset.sample_columns("boundary", N_b, 3)
             if sampled is not None:
@@ -112,7 +109,6 @@ def train(args):
         return x, y, u_b
 
     def sample_data():
-        """Sample optional supervised data points."""
         if dataset:
             sampled = dataset.sample_columns("data", N_d if N_d > 0 else 1, 3)
             if sampled is not None:
@@ -206,7 +202,6 @@ def train(args):
 
 
 def main():
-    """CLI entry point for 2D PINN training/export."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", type=int, default=500)
     ap.add_argument("--const", action="append", help="Additional constants name=value", default=[])

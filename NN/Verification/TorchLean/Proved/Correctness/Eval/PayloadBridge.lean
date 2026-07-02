@@ -45,7 +45,8 @@ def irConv2DOfGraphParams {α : Type} [Context α]
     (cfg : NN.MLTheory.CROWN.Graph.Conv2DParams α) : NN.IR.Conv2DParams α :=
   { inC := cfg.inC, outC := cfg.outC, kH := cfg.kH, kW := cfg.kW
     stride := cfg.stride, padding := cfg.padding, inH := cfg.inH, inW := cfg.inW
-    hIn := cfg.hIn, hKH := cfg.hKH, hKW := cfg.hKW, spec := cfg.spec }
+    hIn := cfg.hIn, hKH := cfg.hKH, hKW := cfg.hKW, hStride := cfg.hStride,
+    spec := cfg.spec }
 
 /-- Convert verifier BatchNorm parameters into the IR BatchNorm payload format. -/
 def irBatchNorm2DNchwEvalOfGraphParams {α : Type} [Context α]
@@ -321,9 +322,20 @@ theorem evalConv2D_from_paramStore
       Except.ok
         (DVal.mk (α := α) outShape
           (Spec.conv2dSpec (α := α) (layer := cfg.spec) (input := x))) := by
+  have hInfer :
+      OpContracts.inferConv2dCHWOutShape cfg.inC cfg.outC cfg.kH cfg.kW cfg.stride
+          cfg.padding (.dim cfg.inC (.dim cfg.inH (.dim cfg.inW .scalar))) =
+        Except.ok
+          (.dim cfg.outC
+            (.dim ((cfg.inH + 2 * cfg.padding - cfg.kH) / cfg.stride + 1)
+              (.dim ((cfg.inW + 2 * cfg.padding - cfg.kW) / cfg.stride + 1) .scalar))) := by
+    simp [OpContracts.inferConv2dCHWOutShape, OpContracts.checkPositive,
+      OpContracts.conv2dCHWOutShape, OpContracts.slideOutPad, cfg.hIn, cfg.hKH,
+      cfg.hKW, cfg.hStride, hHeight, hWidth, Bind.bind, Except.bind, Pure.pure,
+      Except.pure]
   simp [Graph.evalConv2D,
     payloadOfParamStore_conv2d?_some (ps := ps) (id := id) cfg hStore,
-    irConv2DOfGraphParams, Graph.expectShape, hHeight, hWidth,
+    irConv2DOfGraphParams, Graph.expectShape, hInfer,
     Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 /-- Missing `ParamStore.conv2dCfg` entries are rejected by `Graph.evalConv2D` at any node id. -/
@@ -531,9 +543,33 @@ theorem evalAt_conv2d_from_paramStore_of_getNode
       Except.ok
         (DVal.mk (α := α) outShape
           (Spec.conv2dSpec (α := α) (layer := cfg.spec) (input := x))) := by
+  have hParentShape :
+      vals[pId]!.shape = .dim cfg.inC (.dim cfg.inH (.dim cfg.inW .scalar)) := by
+    by_cases hEq : vals[pId]!.fst = .dim cfg.inC (.dim cfg.inH (.dim cfg.inW .scalar))
+    · simpa [DVal.shape] using hEq
+    · exfalso
+      simp [Graph.expectShape, DVal.shape, hEq] at hParent
+  have hInfer :
+      OpContracts.inferConv2dCHWOutShape cfg.inC cfg.outC cfg.kH cfg.kW cfg.stride
+          cfg.padding vals[pId]!.fst =
+        Except.ok
+          (.dim cfg.outC
+            (.dim ((cfg.inH + 2 * cfg.padding - cfg.kH) / cfg.stride + 1)
+              (.dim ((cfg.inW + 2 * cfg.padding - cfg.kW) / cfg.stride + 1) .scalar))) := by
+    change OpContracts.inferConv2dCHWOutShape cfg.inC cfg.outC cfg.kH cfg.kW cfg.stride
+        cfg.padding vals[pId]!.shape =
+      Except.ok
+        (.dim cfg.outC
+          (.dim ((cfg.inH + 2 * cfg.padding - cfg.kH) / cfg.stride + 1)
+            (.dim ((cfg.inW + 2 * cfg.padding - cfg.kW) / cfg.stride + 1) .scalar)))
+    rw [hParentShape]
+    simp [OpContracts.inferConv2dCHWOutShape, OpContracts.checkPositive,
+      OpContracts.conv2dCHWOutShape, OpContracts.slideOutPad, cfg.hIn, cfg.hKH,
+      cfg.hKW, cfg.hStride, hHeight, hWidth, Bind.bind, Except.bind, Pure.pure,
+      Except.pure]
   simp [Graph.evalAt, hNode, Graph.evalConv2D,
     payloadOfParamStore_conv2d?_some (ps := ps) (id := id) cfg hStore,
-    irConv2DOfGraphParams, hParent, hHeight, hWidth, shapeBNe_refl,
+    irConv2DOfGraphParams, hParent, hInfer, shapeBNe_refl,
     Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 /-- Missing `ParamStore.conv2dCfg` entries are rejected at any `conv2d` node id. -/

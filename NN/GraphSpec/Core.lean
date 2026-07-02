@@ -404,7 +404,7 @@ This lowering is still useful whenever you want to *embed* a sequential pipeline
 (e.g. to reuse DAG-only tooling, or to keep a single GraphSpec example surface that can export DAG
 models).
 
-This section provides a structural lowering:
+The declarations below provide a structural lowering:
 
 - `Graph.toDAGTerm` produces a `DAG.Term (ps ++ [σ]) τ`, i.e. a DAG term whose environment starts
   with the parameter list `ps` and ends with the (single) data input `σ`.
@@ -426,7 +426,7 @@ open Runtime.Autograd.Torch (TList)
 /-!
 ### Lowering internals
 
-The definitions in this section (`castTerm`, `toTerm`, …) are internal adapters for the structural
+The definitions below (`castTerm`, `toTerm`, …) are internal adapters for the structural
 lowering. The intended public API is `Graph.toDAGTerm` / `Graph.toDAGModelZeroInit`.
 -/
 

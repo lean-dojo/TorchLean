@@ -23,7 +23,7 @@ Performance note: use CUDA for this example. The pure Lean CPU path exists for d
 states, but Transformer workloads are too slow there for a useful run. The default command uses one
 training window so it finishes quickly; pass larger `--steps`, `--windows`, and `--generate` values
 when you want a real text experiment.
-The goal is to exercise masked self-attention, LayerNorm, and feed-forward blocks through the public
+The command exercises masked self-attention, LayerNorm, and feed-forward blocks through the public
 `TorchLean.nn` model constructors and `TorchLean.text` token tools.
 
 After a run that writes `--log <path>`, you can view the prompt and sampled continuation in the
@@ -51,9 +51,9 @@ the same public TorchLean model API that the command-line example uses.
 Runnable `torchlean gpt2` example. It builds a GPT-2-style causal transformer over
 byte-level tokens, with optional real text input from tiny-shakespeare or `--data-file PATH`.
 
-If you are looking for the simplest "Karpathy-style single text file" path, start with
-`torchlean chargpt` (character-level tokenizer). This `gpt2` command is byte-level and is meant to
-show the Transformer block wiring and save/reload loop.
+For the simplest "Karpathy-style single text file" path, use `torchlean chargpt`
+(character-level tokenizer). This `gpt2` command is byte-level and shows the Transformer block
+wiring and save/reload loop.
 
 ```bash
 python3 scripts/datasets/download_example_data.py --tiny-shakespeare

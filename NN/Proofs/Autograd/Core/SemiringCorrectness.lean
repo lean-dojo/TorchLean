@@ -228,7 +228,7 @@ variable {α : Type} [CommSemiring α] [Sub α] [Div α] [Coe Nat α]
 /--
 Basic mean-squared error (MSE) scalar value:
 
-`mse(predicted, target) = (∑ (predicted - target)^2) / size`.
+`mse(predicted, target) = (∑ (predicted - target)^2) / meanDenom`.
 
 This local definition is used only to define the loss `OpSpec`.
 -/
@@ -236,23 +236,23 @@ def mseSpecBasic {s : Shape} (predicted target : Tensor α s) : α :=
   let diff := subSpec (α := α) (s := s) predicted target
   let squared := mulSpec (α := α) (s := s) diff diff
   let sum := sumSpec (α := α) (s := s) squared
-  sum / (Shape.size s : α)
+  sum / (Spec.meanDenom s : α)
 
 /--
 Gradient of `mse_spec_basic` with respect to `predicted`, as a tensor of the same shape.
 
-Up to conventions, this is `2*(predicted-target)/size`.
+Up to conventions, this is `2*(predicted-target)/meanDenom`.
 -/
 def mseDerivSpecBasic {s : Shape} (predicted target : Tensor α s) : Tensor α s :=
   let diff := subSpec (α := α) (s := s) predicted target
   let two : α := (1 : α) + 1
-  scaleSpec (α := α) (s := s) diff (two / (Shape.size s : α))
+  scaleSpec (α := α) (s := s) diff (two / (Spec.meanDenom s : α))
 
 /--
 Correctness of mean-squared error loss (MSE) as an `OpSpecCorrect`.
 
-This section assumes extra operations (`Sub`, `Div`, and coercions from naturals) because the MSE
-definition uses subtraction and division by `Shape.size`.
+The MSE correctness declaration assumes extra operations (`Sub`, `Div`, and coercions from
+naturals) because the MSE definition uses subtraction and division by `Spec.meanDenom`.
 PyTorch analogue: `torch.nn.functional.mse_loss(reduction="mean")` (up to normalization
   conventions).
 -/

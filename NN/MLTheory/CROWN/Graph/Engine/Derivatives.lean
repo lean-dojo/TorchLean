@@ -348,7 +348,10 @@ def runDeriv1D (g : Graph) (ps : ParamStore α) (ibp : Array (Option (FlatBox α
           if hn : dXin.dim = n then
             -- Compute mean bounds of x and dx
             let muBounds := layerNormMeanBounds (α := α) Xin.lo Xin.hi
-            let nA : α := (n : Nat)
+            -- Empty vectors have no coordinates to certify; use a nonzero dummy denominator to
+            -- avoid evaluating `1 / 0` in the vacuous branch.
+            let nDen : Nat := if n = 0 then 1 else n
+            let nA : α := (nDen : Nat)
             let mu_lo := muBounds.1
             let mu_hi := muBounds.2
             -- u_j bounds = x_j - mean(x)
@@ -1316,7 +1319,10 @@ def runDeriv2D (g : Graph) (ps : ParamStore α)
           let n := Xin.dim
           if hn1 : dXin.dim = n then
             if hn2 : d2Xin.dim = n then
-              let nA : α := (n : Nat)
+              -- Empty vectors have no coordinates to certify; use a nonzero dummy denominator to
+              -- avoid evaluating `1 / 0` in the vacuous branch.
+              let nDen : Nat := if n = 0 then 1 else n
+              let nA : α := (nDen : Nat)
               let muBounds := layerNormMeanBounds (α := α) Xin.lo Xin.hi
               let mu_lo := muBounds.1
               let mu_hi := muBounds.2

@@ -120,6 +120,23 @@ def rowSoftmaxForward (x : Buffer) (rows cols : UInt32) : Buffer.WithWorkspace :
 private def rowSoftmaxFwd (x : Buffer) (rows cols : UInt32) : Buffer :=
   (rowSoftmaxForward x rows cols).value
 
+/--
+Row-wise hard-masked softmax.
+
+`mask` is a `{0,1}` buffer with the same `(rows, cols)` shape as `x`; blocked entries contribute
+literal zero numerator. This matches `Spec.hardMaskedSoftmaxSpec`, not a finite additive sentinel.
+-/
+def rowHardMaskedSoftmaxForward (x mask : Buffer) (rows cols : UInt32) : Buffer.WithWorkspace :=
+  let rowMax := Buffer.reduceMaxAxis1 x rows cols
+  let maxB := Buffer.broadcastVecToCols rowMax rows cols
+  let shifted := Buffer.sub x maxB
+  let ex := Buffer.exp shifted
+  let exMasked := Buffer.mul ex mask
+  let rowSum := Buffer.reduceSumAxis1 exMasked rows cols
+  let sumB := Buffer.broadcastVecToCols rowSum rows cols
+  let y := Buffer.div exMasked sumB
+  { value := y, workspace := [rowMax, maxB, shifted, ex, exMasked, rowSum, sumB] }
+
 /-- Row-wise softmax VJP: `dX = y * (dY - sum(dY*y, axis=1))`. -/
 def rowSoftmaxBwd (y dLdy : Buffer) (rows cols : UInt32) : Buffer :=
   -- JVP/VJP: dX = y * (dY - sum(dY*y, axis=1)).

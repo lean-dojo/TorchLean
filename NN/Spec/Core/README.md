@@ -18,5 +18,5 @@ The code is organized by theme:
 - `tensor_grad.lean`: gradient helpers, such as gradient clipping specs.
 - `utils.lean`: small glue utilities (casting maps, `*_like` constructors, list↔tensor helpers, pretty printing).
 
-If you are looking for model and layer APIs, those live under `NN/Spec/Layers` and `NN/Spec/Models`,
-and are typically built using the primitives in this directory.
+Model and layer APIs live under `NN/Spec/Layers` and `NN/Spec/Models`, and are typically built using
+the primitives in this directory.

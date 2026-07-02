@@ -25,7 +25,7 @@ public import NN.Verification.TorchLean.Compile
 public import NN.API.Public.Facade.Base.Runtime
 
 /-!
-# TorchLean Tensor Facade
+# TorchLean Tensor Names
 
 Ops, random, shape, tensor, and semantic names exposed by the `NN` umbrella.
 -/
@@ -37,7 +37,7 @@ namespace TorchLean
 namespace Ops
 
 /-!
-Executable program operations for verification and compiler-facing examples.
+Low-level executable ops for verification and compiler-facing examples.
 
 Most model code should use `nn.*` and `Trainer.*`. Use `Ops.*` when writing an explicit
 TorchLean executable program directly, for example before compiling a hand-built fragment to
@@ -175,9 +175,8 @@ def repeatBatch {α : Type} {s : Shape} (batch : Nat) (x : Tensor.T α s) :
 /--
 Convert a runtime tensor back to a `Float` tensor inside `IO`.
 
-This is the public bridge used by trainer prediction handles: examples can train under executable
-IEEE32 or other runtime scalar backends, but still receive ordinary `Float` tensors for inspection,
-printing, and follow-up scripting.
+Trainer prediction handles use this so examples can train under executable IEEE32 or another scalar
+backend, then inspect ordinary `Float` tensors afterward.
 -/
 def toFloatIO {α : Type} [Runtime.TensorScalar α]
     [_root_.Runtime.Autograd.Torch.Internal.CudaBridge.TensorConv α] :
@@ -209,9 +208,9 @@ end Semantics
 /-!
 ## Public Namespaces
 
-These namespaces are the user-facing spelling for model construction, tensor utilities, training,
-runtime selection, and verification-adjacent examples. The definitions below forward to the checked
-implementation; the semantics are not copied or forked.
+These are the names users usually type for model construction, tensor utilities, training, runtime
+selection, and verification examples. The definitions below forward to the checked implementation;
+the semantics are not copied or forked.
 -/
 
 end TorchLean

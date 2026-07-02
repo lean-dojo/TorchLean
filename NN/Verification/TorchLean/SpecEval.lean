@@ -91,6 +91,8 @@ instance {α : Type} [Context α] [DecidableEq Shape] : Runtime.Autograd.Torch.O
     "TorchLeanSpecEval: gather_vec_nat not supported in spec backend"
   gatherRowsNat := fun {_rows _cols _k} _x _idx => throw
     "TorchLeanSpecEval: gather_rows_nat not supported in spec backend"
+  floatVecToNatTensor := fun {_k} _x => throw
+    "TorchLeanSpecEval: float_vec_to_nat_tensor not supported in spec backend"
   scatterAddVec := fun {_n} _x _val _i => throw
     "TorchLeanSpecEval: scatter_add_vec not supported in spec backend"
   scatterAddRow := fun {_rows _cols} _x _row _i => throw

@@ -180,6 +180,75 @@ def causalTransformerTokenScalarModuleDef (cfg : CausalOneHotConfig)
   causalTransformerTokenScalarModuleDefWithMode .train cfg body tokens targets
     (reduction := reduction)
 
+abbrev causalTokenLmInputShape (cfg : CausalOneHotConfig) : Shape :=
+  .dim (cfg.batch * cfg.seqLen) .scalar
+
+/--
+Scalar loss for causal language modeling with per-step float-encoded token ids as inputs.
+
+`xTokens` and `yTokens` are flattened `(batch * seqLen)` float vectors holding integer token ids.
+This matches PyTorch `nn.Embedding` + `F.cross_entropy` training and avoids rebuilding the module
+each step (Adam state stays on one session).
+-/
+def causalTransformerTokenLmScalarModuleDefWithMode
+    (mode : _root_.Runtime.Autograd.TorchLean.NN.Mode)
+    (cfg : CausalOneHotConfig)
+    (body : nn.Sequential (causalEmbeddingShape cfg) (causalOneHotShape cfg))
+    (initParams : _root_.Runtime.Autograd.Torch.TList Float
+      ((.dim cfg.vocab (.dim cfg.dModel .scalar)) :: paramShapes body))
+    (reduction : TorchLean.Loss.Reduction := .mean) :
+    TorchLean.Module.ScalarModuleDef
+      ((.dim cfg.vocab (.dim cfg.dModel .scalar)) :: paramShapes body)
+      [causalTokenLmInputShape cfg, causalTokenLmInputShape cfg] :=
+  { initParams := initParams
+    initRequiresGrad :=
+      List.replicate (((.dim cfg.vocab (.dim cfg.dModel .scalar)) :: paramShapes body).length) true
+    loss := fun {α} => by
+      intro _ _
+      exact fun {m} _ _ =>
+        _root_.Runtime.Autograd.Torch.CurriedRef.curry
+          (Ref := _root_.Runtime.Autograd.TorchLean.NN.Seq.RefT (m := m) (α := α))
+          (ss := ((.dim cfg.vocab (.dim cfg.dModel .scalar)) :: paramShapes body) ++
+            [causalTokenLmInputShape cfg, causalTokenLmInputShape cfg])
+          (β := m (_root_.Runtime.Autograd.TorchLean.NN.Seq.RefT (m := m) (α := α)
+            Spec.Shape.scalar))
+          (fun args => do
+            let (ps, ins) :=
+              _root_.Runtime.Autograd.Torch.RefList.split
+                (Ref := _root_.Runtime.Autograd.TorchLean.NN.Seq.RefT (m := m) (α := α))
+                (ss₁ := (.dim cfg.vocab (.dim cfg.dModel .scalar)) :: paramShapes body)
+                (ss₂ := [causalTokenLmInputShape cfg, causalTokenLmInputShape cfg]) args
+            let .cons xFloat (.cons yFloat .nil) := ins
+            let .cons tokenEmbedding bodyParams := ps
+            let tokens ← _root_.Runtime.Autograd.TorchLean.F.floatVecToNatTensor (m := m) (α := α)
+              (k := cfg.batch * cfg.seqLen) xFloat
+            let targets ← _root_.Runtime.Autograd.TorchLean.F.floatVecToNatTensor (m := m) (α := α)
+              (k := cfg.batch * cfg.seqLen) yFloat
+            let x ← _root_.Runtime.Autograd.TorchLean.F.embeddingBatchSeqNat (m := m) (α := α)
+              (vocab := cfg.vocab) (dim := cfg.dModel) (batch := cfg.batch)
+              (seqLen := cfg.seqLen) tokenEmbedding tokens
+            let logits ← _root_.Runtime.Autograd.TorchLean.NN.Seq.evalParams
+              (model := body) (α := α) (m := m) mode bodyParams x
+            let logitsRows ← _root_.Runtime.Autograd.Torch.reshape (m := m) (α := α)
+              (s₁ := .dim cfg.batch (.dim cfg.seqLen (.dim cfg.vocab .scalar)))
+              (s₂ := .dim (cfg.batch * cfg.seqLen) (.dim cfg.vocab .scalar))
+              logits (by
+                simp [_root_.Spec.Shape.size, Nat.mul_assoc])
+            _root_.Runtime.Autograd.TorchLean.Loss.crossEntropyRowsNat (m := m) (α := α)
+              (rows := cfg.batch * cfg.seqLen) (classes := cfg.vocab)
+              logitsRows targets (reduction := reduction)) }
+
+/-- Training-mode wrapper for float-encoded token-id causal language modeling. -/
+def causalTransformerTokenLmScalarModuleDef (cfg : CausalOneHotConfig)
+    (body : nn.Sequential (causalEmbeddingShape cfg) (causalOneHotShape cfg))
+    (initParams : _root_.Runtime.Autograd.Torch.TList Float
+      ((.dim cfg.vocab (.dim cfg.dModel .scalar)) :: paramShapes body))
+    (reduction : TorchLean.Loss.Reduction := .mean) :
+    TorchLean.Module.ScalarModuleDef
+      ((.dim cfg.vocab (.dim cfg.dModel .scalar)) :: paramShapes body)
+      [causalTokenLmInputShape cfg, causalTokenLmInputShape cfg] :=
+  causalTransformerTokenLmScalarModuleDefWithMode .train cfg body initParams (reduction := reduction)
+
 end models
 end nn
 

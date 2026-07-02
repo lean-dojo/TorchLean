@@ -172,6 +172,7 @@ def programWithMode {σ τ : Shape} (mode : Mode) (model : Seq σ τ)
       [_root_.Runtime.Autograd.Torch.Internal.CudaBridge.TensorConv α]
       (params : _root_.Runtime.Autograd.Torch.ParamList α (paramShapes model))
       (x : Spec.Tensor α σ) : IO (Spec.Tensor α τ) := do
+    let opts := { opts with noGrad := true }
     let sess ← _root_.Runtime.Autograd.Torch.Internal.EagerSession.new (α := α) opts
     sess.resetTape
     let outRef ← (do

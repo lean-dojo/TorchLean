@@ -207,6 +207,14 @@ class Ops (m : Type → Type) (α : Type) [Context α] [DecidableEq Shape] where
   gatherRowsNat {rows cols k : Nat} :
     Ref (.dim rows (.dim cols .scalar)) → Tensor Nat (.dim k .scalar) → m (Ref (.dim k (.dim cols
       .scalar)))
+  /--
+  Read a float vector of integer-valued token ids and return a `Tensor Nat` index vector.
+
+  This is non-differentiable: gradients do not flow back into the float input.  Language-model
+  benchmarks pass token ids as float inputs so each step can supply a fresh window without
+  re-instantiating the module.
+  -/
+  floatVecToNatTensor {k : Nat} : Ref (.dim k .scalar) → m (Tensor Nat (.dim k .scalar))
   scatterAddVec {n : Nat} : Ref (.dim n .scalar) → Ref Shape.scalar → Fin n → m (Ref (.dim n
     .scalar))
   scatterAddRow {rows cols : Nat} :
@@ -457,6 +465,11 @@ def gatherRowsNat {rows cols k : Nat}
   (x : Ref (m := m) (α := α) (.dim rows (.dim cols .scalar))) (idx : Tensor Nat (.dim k .scalar)) :
   m (Ref (m := m) (α := α) (.dim k (.dim cols .scalar))) :=
   Ops.gatherRowsNat (m := m) (α := α) (rows := rows) (cols := cols) (k := k) x idx
+/-- Convert a float vector of integer token ids to `Tensor Nat` (non-differentiable). -/
+def floatVecToNatTensor {k : Nat}
+  (x : Ref (m := m) (α := α) (.dim k .scalar)) :
+  m (Tensor Nat (.dim k .scalar)) :=
+  Ops.floatVecToNatTensor (m := m) (α := α) (k := k) x
 /-- Re-export of `Ops.scatter_add_vec`. -/
 def scatterAddVec {n : Nat}
   (x : Ref (m := m) (α := α) (.dim n .scalar)) (v : Ref (m := m) (α := α) Shape.scalar) (i : Fin n)

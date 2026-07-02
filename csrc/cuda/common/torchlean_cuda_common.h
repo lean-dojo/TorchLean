@@ -22,6 +22,14 @@ static inline void checkCuda(cudaError_t e, const char* msg) {
   }
 }
 
+static inline void torchlean_cuda_clear_pending_error() {
+  (void)cudaGetLastError();
+}
+
+static inline void torchlean_cuda_check_launch(const char* msg) {
+  checkCuda(cudaGetLastError(), msg);
+}
+
 static inline void torchlean_cuda_free_checked(void** ptr, const char* msg) {
   if (ptr && *ptr) {
     checkCuda(cudaFree(*ptr), msg);

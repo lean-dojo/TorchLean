@@ -189,6 +189,8 @@ Default dtype policy:
 - If the user does not specify `--dtype` / `--float32-mode` and `--cuda` is present, default to
   `dtype=float` (CUDA eager supports `Float` upload/download).
 - Otherwise default to `dtype=float32` (executable IEEE-754 float32 semantics).
+
+When `--cuda` is selected, also enable the CUDA fast path (`--fast-kernels`) by default.
 -/
 def parseAndStripWithDefaultDType (args : List String) (defaultDType : DType) :
     Except String (ExecConfig × List String) := do
@@ -214,7 +216,7 @@ def parseAndStripWithDefaultDType (args : List String) (defaultDType : DType) :
     dtype := dtype,
     backend := backend,
     useGpu := useGpu,
-    fastKernels := fastKernels,
+    fastKernels := fastKernels || useGpu,
     fastGpuMatmulPrecision := fastGpuMatmulPrecision
   }, rest)
 

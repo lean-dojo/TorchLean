@@ -900,8 +900,9 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_to_float_array(b_lean_
     }                                                                                            \
     dim3 blocks = torchlean_blocks_for(b->size);                                                 \
     dim3 threads = dim3(kBlockSize);                                                             \
+    torchlean_cuda_clear_pending_error();                                                        \
     KERNEL<<<blocks, threads>>>(b->data, out->data, b->size, (float)c);                          \
-    checkCuda(cudaGetLastError(), "cuda " LABEL " kernel launch failed");                      \
+    torchlean_cuda_check_launch("cuda " LABEL " kernel launch failed");                          \
     return torchlean_cuda_buffer_box(out);                                                       \
   }
 
@@ -1123,13 +1124,15 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_mean(b_lean_obj
               "cudaMemcpy reduceMean init failed");
     dim3 blocks = torchlean_blocks_for(b->size);
     dim3 threads = dim3(kBlockSize);
+    torchlean_cuda_clear_pending_error();
     torchlean_reduce_sum_f32<<<blocks, threads>>>(b->data, out->data, b->size);
-    checkCuda(cudaGetLastError(), "cuda reduceMean reduce kernel launch failed");
+    torchlean_cuda_check_launch("cuda reduceMean reduce kernel launch failed");
   }
 
   float scale = 1.0f / (float)b->size;
+  torchlean_cuda_clear_pending_error();
   torchlean_scale1_f32<<<dim3(1), dim3(1)>>>(out->data, scale);
-  checkCuda(cudaGetLastError(), "cuda reduceMean scale kernel launch failed");
+  torchlean_cuda_check_launch("cuda reduceMean scale kernel launch failed");
 
   return torchlean_cuda_buffer_box(out);
 }

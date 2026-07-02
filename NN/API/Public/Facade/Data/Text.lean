@@ -86,6 +86,47 @@ def causalLmOneHotSampleRowsFromTokenArray
   causalLmOneHotSampleRows (α := α) batch seqLen vocab idsAt (padId := padId)
 
 /--
+Flatten one `(seqLen + 1)` token window into causal-LM `(x, y)` id lists.
+-/
+def causalLmTokenRows (seqLen : Nat) (window : List Nat) (padId : Nat := 0) :
+    List Nat × List Nat :=
+  let x := (List.range seqLen).map (fun i => window.getD i padId)
+  let y := (List.range seqLen).map (fun i => window.getD (i + 1) padId)
+  (x, y)
+
+/--
+Build a float tensor of integer token ids from a flat `List Nat` of length `batch * seqLen`.
+-/
+def causalLmTokenFloatVec {α : Type} [Runtime.SemanticScalar α] [Runtime.Scalar α]
+    (batch seqLen : Nat) (tokens : List Nat) :
+    Tensor.T α (.dim (batch * seqLen) .scalar) :=
+  let xF : _root_.Spec.Tensor Float (.dim (batch * seqLen) .scalar) :=
+    _root_.Spec.Tensor.dim (fun i : Fin (batch * seqLen) =>
+      _root_.Spec.Tensor.scalar (Float.ofNat (tokens.getD i.val 0)))
+  Tensor.castFloat Runtime.ofFloat xF
+
+/--
+Build a batched token-id causal-language-model sample from an array-backed corpus.
+
+Token ids are passed as float inputs so the training loop can swap windows each step without
+re-instantiating the scalar module.
+-/
+def causalLmTokenSampleRowsFromTokenArray
+    {α : Type} [Runtime.SemanticScalar α] [Runtime.Scalar α]
+    (batch seqLen : Nat) (tokens : Array Nat) (seed step : Nat) (padId : Nat := 0) :
+    SupervisedSample α (.dim (batch * seqLen) .scalar) (.dim (batch * seqLen) .scalar) :=
+  let idsAt :=
+    text.Corpus.randomBatchTokenWindows tokens batch seqLen seed step (padId := padId)
+  let (xList, yList) :=
+    (List.finRange batch).foldl (fun (acc : List Nat × List Nat) bi =>
+      let (xs, ys) := acc
+      let (xRow, yRow) := causalLmTokenRows seqLen (idsAt bi) (padId := padId)
+      (xs ++ xRow, ys ++ yRow)) ([], [])
+  NN.API.Sample.mk
+    (causalLmTokenFloatVec (α := α) batch seqLen xList)
+    (causalLmTokenFloatVec (α := α) batch seqLen yList)
+
+/--
 Build one unbatched one-hot causal-language-model sample directly from a token list.
 
 The token list represents a `seqLen + 1` window. Shorter lists are padded and longer lists are

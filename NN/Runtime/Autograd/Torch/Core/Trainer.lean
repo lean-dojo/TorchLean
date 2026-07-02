@@ -81,6 +81,8 @@ instance {α : Type} [Context α] [Internal.CudaBridge.TensorConv α] [Decidable
     Internal.EagerSession.gatherVecNat (α := α) sess (n := n) (k := k) x idx
   gatherRowsNat := fun {rows cols k} x idx => fun sess =>
     Internal.EagerSession.gatherRowsNat (α := α) sess (rows := rows) (cols := cols) (k := k) x idx
+  floatVecToNatTensor := fun {k} x => fun sess =>
+    Internal.EagerSession.floatVecToNatTensor (α := α) sess (k := k) x
   scatterAddVec := fun {n} x v i => fun sess =>
     Internal.EagerSession.scatterAddVec (α := α) sess (n := n) x v i
   scatterAddRow := fun {rows cols} x v i => fun sess =>
@@ -245,6 +247,8 @@ instance {α : Type} [Context α] [DecidableEq Shape] {Γ : List Shape} :
   gatherRowsNat := fun {rows cols k} x idx =>
     Runtime.Autograd.Compiled.GraphM.gatherRowsNat (α := α) (Γ := Γ) (rows := rows) (cols := cols)
       (k := k) x idx
+  floatVecToNatTensor := fun {_k} _x =>
+    throw "compiled GraphM: floatVecToNatTensor requires eager backend (dynamic token ids)"
   scatterAddVec := fun {n} x v i =>
     Runtime.Autograd.Compiled.GraphM.scatterAddVec (α := α) (Γ := Γ) (n := n) x v i
   scatterAddRow := fun {rows cols} x v i =>

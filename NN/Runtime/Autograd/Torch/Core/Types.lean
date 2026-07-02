@@ -109,6 +109,12 @@ structure Options where
   -/
   fastGpuMatmulPrecision : Runtime.Autograd.FastKernels.GpuMatmulPrecision := .fp32
   /--
+  Skip autograd during backward (inference-style evaluation).
+
+  Used by `eval1NoGrad` and similar helpers that run forward without recording gradients.
+  -/
+  noGrad : Bool := false
+  /--
   Eager execution on CUDA.
 
   When `true` and `backend = .eager`, the eager session uses the CUDA tape

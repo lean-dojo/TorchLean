@@ -20,13 +20,14 @@ lake exe torchlean mlp --steps 10 --dtype float --backend eager
 
 # Optional CUDA run, if the CUDA toolkit and an NVIDIA GPU are available:
 lake build -K cuda=true
-lake exe -K cuda=true torchlean mlp --cuda --fast-kernels --steps 1000
+lake exe -K cuda=true torchlean mlp --cuda --steps 1000
 ```
 
 The first MLP command uses the executable IEEE-style Float32 path. The second
 uses Lean's builtin `Float` runtime path. The CUDA command uses the native GPU
 runtime path and checks that the CUDA backend is available; it is not a trusted
-proof boundary.
+proof boundary. Handwritten fused CUDA kernels are opt-in performance paths via
+`--fast-kernels`; keep them off unless you are explicitly testing that backend.
 
 TorchLean is pinned by `lean-toolchain` and currently builds with
 `leanprover/lean4:v4.31.0`.

@@ -311,6 +311,8 @@ instance {α : Type} [Context α] [DecidableEq Shape] :
     fail (α := α) "TorchLean→IR: gather is outside the verifier IR fragment"
   gatherRowsNat := fun {_rows _cols _k} _x _idx =>
     fail (α := α) "TorchLean→IR: gather is outside the verifier IR fragment"
+  floatVecToNatTensor := fun {_k} _x =>
+    fail (α := α) "TorchLean→IR: float_vec_to_nat_tensor is outside the verifier IR fragment"
 
   scatterAddVec := fun {_n} _x _val _i =>
     fail (α := α) "TorchLean→IR: scatter is outside the verifier IR fragment"

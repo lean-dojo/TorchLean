@@ -231,8 +231,8 @@ Inputs are row-major buffers with shapes:
 - `mask`: `(batch, n, n)` encoded as `0.0/1.0` when `hasMask != 0`; otherwise ignored.
 
 Output has shape `(batch, n, d)` and computes the same no-dropout masked attention semantics as:
-`hardMaskedSoftmax((Q Kᵀ) * scale, mask) V`. Blocked mask entries contribute zero softmax
-numerator; no finite sentinel is inserted.
+`softmax((Q Kᵀ) * scale + maskFill) V`, where blocked mask entries use TorchLean's
+`-1000.0` fill convention.
 
 This is a fused native runtime primitive. The proof layer contract is `Spec.flashAttention` in
 `NN/Spec/Layers/FlashAttention.lean`; the native kernel is part of the CUDA runtime boundary.
@@ -241,20 +241,11 @@ This is a fused native runtime primitive. The proof layer contract is `Spec.flas
 opaque flashAttentionFwd
     (Q K V mask : Buffer) (hasMask batch n d : UInt32) (scale : Float) : Buffer
 
-/-- Fused VJP component `∂L/∂Q` for `flashAttentionFwd`. -/
-@[extern "torchlean_cuda_buffer_flash_attention_bwd_q"]
-opaque flashAttentionBwdQ
-    (Q K V mask dOut : Buffer) (hasMask batch n d : UInt32) (scale : Float) : Buffer
-
-/-- Fused VJP component `∂L/∂K` for `flashAttentionFwd`. -/
-@[extern "torchlean_cuda_buffer_flash_attention_bwd_k"]
-opaque flashAttentionBwdK
-    (Q K V mask dOut : Buffer) (hasMask batch n d : UInt32) (scale : Float) : Buffer
-
-/-- Fused VJP component `∂L/∂V` for `flashAttentionFwd`. -/
-@[extern "torchlean_cuda_buffer_flash_attention_bwd_v"]
-opaque flashAttentionBwdV
-    (Q K V mask dOut : Buffer) (hasMask batch n d : UInt32) (scale : Float) : Buffer
+/-- Fused VJP `(dQ, dK, dV)` for `flashAttentionFwd`. -/
+@[extern "torchlean_cuda_buffer_flash_attention_bwd"]
+opaque flashAttentionBwd
+    (Q K V mask dOut : Buffer) (hasMask batch n d : UInt32) (scale : Float) :
+    Buffer × Buffer × Buffer
 
 /--
 Row-major transpose of a 2D buffer.

@@ -126,6 +126,19 @@ LEAN_EXPORT uint64_t torchlean_cuda_allocator_free_count(uint32_t u);
 LEAN_EXPORT uint64_t torchlean_cuda_allocator_device_free_bytes(uint32_t u);
 LEAN_EXPORT uint64_t torchlean_cuda_allocator_device_total_bytes(uint32_t u);
 
+// Lean `Buffer × Buffer × Buffer` as nested pairs.
+static inline lean_object* torchlean_cuda_box_three_buffers(
+    torchlean_cuda_buffer* first, torchlean_cuda_buffer* second,
+    torchlean_cuda_buffer* third) {
+  lean_object* tail = lean_alloc_ctor(0, 2, 0);
+  lean_ctor_set(tail, 0, torchlean_cuda_buffer_box(second));
+  lean_ctor_set(tail, 1, torchlean_cuda_buffer_box(third));
+  lean_object* out = lean_alloc_ctor(0, 2, 0);
+  lean_ctor_set(out, 0, torchlean_cuda_buffer_box(first));
+  lean_ctor_set(out, 1, tail);
+  return out;
+}
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

@@ -9,8 +9,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// CPU version of the general tensor-kernel FFI symbols.
-// Keep its shape checks and edge cases aligned with `torchlean_cuda_kernels.cu`.
+// CPU fallback for TorchLean's general tensor-kernel FFI surface.
+//
+// This file mirrors `torchlean_cuda_kernels.cu` symbol-for-symbol so the Lean runtime can link on
+// machines without CUDA. Keep the shape checks and edge-case conventions in lockstep with the CUDA
+// file; these stubs are also useful as readable reference implementations for tests and audits.
 
 static const float kTorchLeanPiF = 3.14159265358979323846f;
 
@@ -673,6 +676,7 @@ static inline float flash_attention_score_stub(const torchlean_cuda_buffer* Q,
                                                const torchlean_cuda_buffer* mask,
                                                uint32_t hasMask, size_t batchIdx, size_t i,
                                                size_t j, size_t n, size_t d, float scale) {
+  if (!flash_attention_allowed_stub(mask, hasMask, batchIdx, i, j, n)) return -1000.0f;
   float dot = 0.0f;
   const size_t qBase = (batchIdx * n + i) * d;
   const size_t kBase = (batchIdx * n + j) * d;
@@ -688,13 +692,11 @@ static inline void flash_attention_row_stats_stub(const torchlean_cuda_buffer* Q
                                                   float* rowMax, float* denom) {
   float m = -INFINITY;
   for (size_t j = 0; j < n; ++j) {
-    if (!flash_attention_allowed_stub(mask, hasMask, batchIdx, i, j, n)) continue;
     float s = flash_attention_score_stub(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
     if (s > m) m = s;
   }
   float z = 0.0f;
   for (size_t j = 0; j < n; ++j) {
-    if (!flash_attention_allowed_stub(mask, hasMask, batchIdx, i, j, n)) continue;
     float s = flash_attention_score_stub(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
     z += expf(s - m);
   }
@@ -708,9 +710,6 @@ static inline float flash_attention_prob_stub(const torchlean_cuda_buffer* Q,
                                               uint32_t hasMask, size_t batchIdx, size_t i,
                                               size_t j, size_t n, size_t d, float scale,
                                               float rowMax, float denom) {
-  if (!flash_attention_allowed_stub(mask, hasMask, batchIdx, i, j, n) || denom == 0.0f) {
-    return 0.0f;
-  }
   float s = flash_attention_score_stub(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
   return expf(s - rowMax) / denom;
 }
@@ -781,7 +780,7 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_flash_attention_fwd(
   return torchlean_cuda_buffer_box(out);
 }
 
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_flash_attention_bwd_q(
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_flash_attention_bwd(
     b_lean_obj_arg QObj, b_lean_obj_arg KObj, b_lean_obj_arg VObj, b_lean_obj_arg MaskObj,
     b_lean_obj_arg DOutObj, uint32_t hasMask, uint32_t batch, uint32_t n, uint32_t d,
     double scaleHost) {
@@ -790,12 +789,14 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_flash_attention_bwd_q(
   torchlean_cuda_buffer* V = torchlean_cuda_buffer_unbox(VObj);
   torchlean_cuda_buffer* mask = torchlean_cuda_buffer_unbox(MaskObj);
   torchlean_cuda_buffer* dOut = torchlean_cuda_buffer_unbox(DOutObj);
-  flash_attention_check_stub("torchlean_cuda_buffer_flash_attention_bwd_q_stub: size mismatch",
+  flash_attention_check_stub("torchlean_cuda_buffer_flash_attention_bwd_stub: size mismatch",
                              Q, K, V, mask, dOut, hasMask, batch, n, d);
   const size_t qkvSz =
       checked_mul3_size((size_t)batch, (size_t)n, (size_t)d,
-                        "torchlean_cuda_buffer_flash_attention_bwd_k_stub: output size overflow");
+                        "torchlean_cuda_buffer_flash_attention_bwd_stub: output size overflow");
   torchlean_cuda_buffer* dQ = torchlean_cuda_buffer_alloc(qkvSz);
+  torchlean_cuda_buffer* dK = torchlean_cuda_buffer_alloc(qkvSz);
+  torchlean_cuda_buffer* dV = torchlean_cuda_buffer_alloc(qkvSz);
   const float scale = (float)scaleHost;
   for (size_t b = 0; b < batch; ++b) {
     for (size_t i = 0; i < n; ++i) {
@@ -820,25 +821,6 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_flash_attention_bwd_q(
       }
     }
   }
-  return torchlean_cuda_buffer_box(dQ);
-}
-
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_flash_attention_bwd_k(
-    b_lean_obj_arg QObj, b_lean_obj_arg KObj, b_lean_obj_arg VObj, b_lean_obj_arg MaskObj,
-    b_lean_obj_arg DOutObj, uint32_t hasMask, uint32_t batch, uint32_t n, uint32_t d,
-    double scaleHost) {
-  torchlean_cuda_buffer* Q = torchlean_cuda_buffer_unbox(QObj);
-  torchlean_cuda_buffer* K = torchlean_cuda_buffer_unbox(KObj);
-  torchlean_cuda_buffer* V = torchlean_cuda_buffer_unbox(VObj);
-  torchlean_cuda_buffer* mask = torchlean_cuda_buffer_unbox(MaskObj);
-  torchlean_cuda_buffer* dOut = torchlean_cuda_buffer_unbox(DOutObj);
-  flash_attention_check_stub("torchlean_cuda_buffer_flash_attention_bwd_k_stub: size mismatch",
-                             Q, K, V, mask, dOut, hasMask, batch, n, d);
-  const size_t qkvSz =
-      checked_mul3_size((size_t)batch, (size_t)n, (size_t)d,
-                        "torchlean_cuda_buffer_flash_attention_bwd_v_stub: output size overflow");
-  torchlean_cuda_buffer* dK = torchlean_cuda_buffer_alloc(qkvSz);
-  const float scale = (float)scaleHost;
   for (size_t b = 0; b < batch; ++b) {
     for (size_t j = 0; j < n; ++j) {
       for (size_t k = 0; k < d; ++k) {
@@ -862,25 +844,6 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_flash_attention_bwd_k(
       }
     }
   }
-  return torchlean_cuda_buffer_box(dK);
-}
-
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_flash_attention_bwd_v(
-    b_lean_obj_arg QObj, b_lean_obj_arg KObj, b_lean_obj_arg VObj, b_lean_obj_arg MaskObj,
-    b_lean_obj_arg DOutObj, uint32_t hasMask, uint32_t batch, uint32_t n, uint32_t d,
-    double scaleHost) {
-  torchlean_cuda_buffer* Q = torchlean_cuda_buffer_unbox(QObj);
-  torchlean_cuda_buffer* K = torchlean_cuda_buffer_unbox(KObj);
-  torchlean_cuda_buffer* V = torchlean_cuda_buffer_unbox(VObj);
-  torchlean_cuda_buffer* mask = torchlean_cuda_buffer_unbox(MaskObj);
-  torchlean_cuda_buffer* dOut = torchlean_cuda_buffer_unbox(DOutObj);
-  flash_attention_check_stub("torchlean_cuda_buffer_flash_attention_bwd_v_stub: size mismatch",
-                             Q, K, V, mask, dOut, hasMask, batch, n, d);
-  const size_t qkvSz =
-      checked_mul3_size((size_t)batch, (size_t)n, (size_t)d,
-                        "torchlean_cuda_buffer_flash_attention_bwd_v_stub: output size overflow");
-  torchlean_cuda_buffer* dV = torchlean_cuda_buffer_alloc(qkvSz);
-  const float scale = (float)scaleHost;
   for (size_t b = 0; b < batch; ++b) {
     for (size_t j = 0; j < n; ++j) {
       for (size_t dv = 0; dv < d; ++dv) {
@@ -896,7 +859,7 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_flash_attention_bwd_v(
       }
     }
   }
-  return torchlean_cuda_buffer_box(dV);
+  return torchlean_cuda_box_three_buffers(dQ, dK, dV);
 }
 
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_transpose2d(b_lean_obj_arg BObj, uint32_t rows,

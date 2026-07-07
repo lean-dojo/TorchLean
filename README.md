@@ -24,7 +24,9 @@ lake build
 lake exe torchlean quickstart_mlp --cpu --steps 10 --dtype float32 --backend eager
 lake exe torchlean quickstart_mlp --cpu --steps 10 --dtype float --backend eager
 
-# Optional CUDA run, if the CUDA toolkit and an NVIDIA GPU are available:
+# Optional CUDA run (requires CUDA toolkit, LibTorch, and an NVIDIA GPU):
+#   https://pytorch.org/get-started/locally/ → LibTorch → extract to ./libtorch
+#   or set TORCHLEAN_LIBTORCH_HOME=/path/to/libtorch
 lake build -K cuda=true
 lake exe -K cuda=true torchlean mlp --cuda --fast-kernels --steps 1000
 ```
@@ -34,6 +36,15 @@ second uses Lean's builtin `Float` runtime path. The CUDA command uses the
 native GPU runtime path and checks that the CUDA backend is available. Theorem
 statements that mention CUDA cite the native-runtime boundary in
 `TRUST_BOUNDARIES.md` instead of treating a kernel launch as Lean proof evidence.
+
+CUDA builds require [LibTorch](https://pytorch.org/get-started/locally/) in addition to the NVIDIA
+CUDA toolkit. Pick the **LibTorch** download (not Pip) with a CUDA version that matches your
+toolkit. Extract it to `./libtorch` at the repo root, or point the build at it with
+`TORCHLEAN_LIBTORCH_HOME` or `-K libtorch_home=/path/to/libtorch`.
+
+On `lake build -K cuda=true`, TorchLean looks for `include/torch/torch.h` under those locations.
+If LibTorch is missing, the build stops with download instructions. When found, the resolved path
+is written to `.lake/build/libtorch.path`.
 
 TorchLean is pinned by `lean-toolchain` and currently builds with
 `leanprover/lean4:v4.31.0`.

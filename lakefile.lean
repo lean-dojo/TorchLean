@@ -5,6 +5,7 @@ Authors: TorchLean Team
 -/
 
 import Lake
+import Lake.Util.Proc
 open Lake DSL
 open System
 
@@ -30,14 +31,22 @@ private def cudaHome : String :=
   | some p => cleanCudaHome p
   | none => "/usr/local/cuda"
 
+/-- Optional explicit LibTorch root from `-K libtorch_home=...`. -/
+private def libtorchHomeConfig : Option String :=
+  match get_config? libtorch_home with
+  | some p =>
+      let t := p.trimAscii.toString
+      if t.isEmpty then none else some t
+  | none => none
+
 /-- Native link flags selected by the `cuda` Lake option. -/
 private def nativeLinkArgs : Array String :=
   if cudaEnabled then
+    let lt := match libtorchHomeConfig with | some h => h | none => "libtorch"
+    -- LibTorch is linked into `torchlean_flash_attention_fwd` shared lib (g++), not here.
     #[
-      "-L", s!"{cudaHome}/lib64",
-      "-lcudart", "-lcublas", "-lcufft",
-      "-lstdc++",
-      "-Wl,-rpath," ++ s!"{cudaHome}/lib64"
+      "-L", s!"{cudaHome}/lib64", "-lcudart", "-lcublas", "-lcufft",
+      "-Wl,-rpath," ++ s!"{cudaHome}/lib64", "-Wl,-rpath," ++ s!"{lt}/lib"
     ]
   else if Platform.isWindows || Platform.isOSX then
     -- Windows and macOS provide libm via the default C runtime
@@ -64,24 +73,6 @@ package TorchLean where
     ⟨`backward.privateInPublic.warn, false⟩]
   moreLinkArgs := nativeLinkArgs
 
-@[default_target]
-lean_lib NN where
-  -- `NN:docs` should document the whole maintained Lean surface, including examples and CLI
-  -- dispatchers. Keep tests out of this library surface; they build through `nn_tests_suite`.
-  roots := #[
-    `NN,
-    `NN.Examples.Zoo,
-    `NN.CI.SlowProofs,
-    `NN.Examples.Models.Runner,
-    `NN.Verification.CLI
-  ]
-  globs := #[
-    .one `NN,
-    .one `NN.Library,
-    .submodules `NN.Examples,
-    .submodules `NN.Verification
-  ]
-
 /-!
 ## Native backend libraries
 
@@ -96,11 +87,91 @@ private structure NativeBackendLib where
   cudaSrc : String
   stubSrc : String
 
+/-- LibTorch root for `-I` / `-L` (must match `resolve_libtorch.sh`). -/
+private def libtorchHome (pkg : Package) : String :=
+  match libtorchHomeConfig with
+  | some h => h
+  | none => (pkg.dir / "libtorch").toString
+
+/-- g++ compile flags for LibTorch C++ sources. -/
+private def libtorchCppCompileArgs (pkg : Package) (lean : LeanInstall) (lt : String) : Array String :=
+  #[
+    "-I", lean.includeDir.toString,
+    "-I", s!"{pkg.dir}/csrc/cuda/common",
+    "-I", s!"{cudaHome}/include",
+    "-I", s!"{lt}/include",
+    "-I", s!"{lt}/include/torch/csrc/api/include",
+    "-c", "-O2", "-fPIC", "-std=c++17", "-D_GLIBCXX_USE_CXX11_ABI=1"
+  ]
+
+/-- g++ link flags for the LibTorch flash-attention forward shared library. -/
+private def libtorchFlashFwdLinkArgs (lt : String) : Array String :=
+  #[
+    "-L", s!"{lt}/lib",
+    "-Wl,--no-as-needed",
+    "-ltorch", "-ltorch_cpu", "-ltorch_cuda", "-lc10", "-lc10_cuda",
+    "-L", s!"{cudaHome}/lib64", "-lcudart",
+    "-lstdc++",
+    "-Wl,-rpath," ++ s!"{lt}/lib",
+    "-Wl,-rpath," ++ s!"{cudaHome}/lib64"
+  ]
+
 /-- Include paths shared by the CUDA implementations and the portable C stubs. -/
 private def nativeIncludeArgs (pkg : Package) : Array String :=
   #[
     "-I", (pkg.dir / "csrc/cuda/common").toString,
     "-I", (pkg.dir / "csrc/cuda/conv_pool").toString
+  ]
+
+/-- Resolve LibTorch; caches `.lake/build/libtorch.path`. -/
+private def libtorchResolveJob (pkg : Package) : SpawnM (Job FilePath) := do
+  let stamp := pkg.buildDir / "libtorch.path"
+  let resolver := pkg.dir / "scripts" / "setup" / "resolve_libtorch.sh"
+  let resolverJob ← inputFile resolver false
+  let args :=
+    match libtorchHomeConfig with
+    | some home => #[resolver.toString, home]
+    | none => #[resolver.toString]
+  buildFileAfterDep stamp resolverJob fun _ =>
+    proc { cmd := "bash", args := args, cwd := some pkg.dir }
+
+/-- LibTorch SDPA forward as a shared library (g++ links libstdc++ + LibTorch). -/
+private def buildLibtorchFlashAttentionFwdSo (pkg : Package) := do
+  let lean ← getLeanInstall
+  let _ ← libtorchResolveJob pkg
+  let lt := libtorchHome pkg
+  let cppJob ← inputFile (pkg.dir / "csrc/cuda/kernels/torchlean_flash_attention_fwd.cpp") false
+  let cppO := pkg.buildDir / "torchlean_flash_attention_fwd.o"
+  let cppOJob ← buildO cppO cppJob (libtorchCppCompileArgs pkg lean lt) #[] "c++"
+  let soFile := pkg.buildDir / nameToSharedLib "torchlean_flash_attention_fwd"
+  cppOJob.mapM fun o => do
+    let art ← buildArtifactUnlessUpToDate soFile (ext := sharedLibExt) (restore := true) do
+      compileSharedLib soFile (#[o.toString] ++ libtorchFlashFwdLinkArgs lt) "g++"
+    return art.path
+
+target torchlean_flash_attention_fwd_so pkg : FilePath :=
+  if cudaEnabled then
+    buildLibtorchFlashAttentionFwdSo pkg
+  else
+    pure (Job.pure (pkg.buildDir / "torchlean_flash_attention_fwd_skipped"))
+
+@[default_target]
+lean_lib NN where
+  moreLinkObjs := if cudaEnabled then #[torchlean_flash_attention_fwd_so] else #[]
+  -- `NN:docs` should document the whole maintained Lean surface, including examples and CLI
+  -- dispatchers. Keep tests out of this library surface; they build through `nn_tests_suite`.
+  roots := #[
+    `NN,
+    `NN.Examples.Zoo,
+    `NN.CI.SlowProofs,
+    `NN.Examples.Models.Runner,
+    `NN.Verification.CLI
+  ]
+  globs := #[
+    .one `NN,
+    .one `NN.Library,
+    .submodules `NN.Examples,
+    .submodules `NN.Verification
   ]
 
 /-- Build one native backend library for the current Lake configuration. -/

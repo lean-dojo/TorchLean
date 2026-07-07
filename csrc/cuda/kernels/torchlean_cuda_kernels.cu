@@ -16,9 +16,20 @@
 #include <stdlib.h>
 #include <string.h>
 
-// CUDA kernels above the raw buffer ops: reductions, broadcasting, gather/scatter, batched matmul,
-// selective scan, FFT helpers, and the simple attention path.
-// Everything is flat row-major; wrappers check ranks and shapes before launch.
+// CUDA implementation of TorchLean's general float32 tensor kernels.
+//
+// This file covers kernels that sit above raw elementwise buffer ops and below model-specific
+// layers: reductions over axes, broadcasting, gathers/scatters, batched matmul, selective scan, and
+// the correctness-first fused attention path. Host `LEAN_EXPORT` wrappers validate Lean-provided
+// shape metadata before launching device kernels; device kernels assume that validation succeeded.
+//
+// Layout conventions:
+// - all tensor buffers are flat row-major arrays;
+// - rank-polymorphic kernels are capped at `kMaxRank` so stack coordinate arrays stay bounded;
+// - atomic accumulation has deterministic alternatives where reproducibility matters;
+// - cuBLAS calls use the row-major-as-transposed-column-major convention documented at call sites.
+// - cuFFT R2C/C2R kernels expose spectra as packed real/imag float32 buffers:
+//   `(batch, n/2+1, 2)`, last channel `[re, im]`.
 
 static constexpr int kBlockSize = 256;
 static constexpr int kMaxRank = 8;
@@ -1646,271 +1657,6 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_selective_scan_diag_va
   return torchlean_cuda_buffer_box(out);
 }
 
-// Simple attention kernel.
-//
-// Match TorchLean's scaled-dot-product attention spec: scores = QK^T * scale, optional dense
-// Boolean mask, stable row softmax, then multiplication by V. This is deliberately direct. Backward
-// recomputes the row softmax statistics instead of storing the full attention matrix, so this is not
-// the production IO-tiled FlashAttention schedule.
-//
-// Mask convention: zero means disallowed. Disallowed entries contribute literal zero softmax
-// numerator, matching TorchLean's hard-mask spec rather than a finite sentinel.
-__device__ inline bool flash_attention_allowed(const float* mask, uint32_t hasMask,
-                                               uint32_t batchIdx, uint32_t i, uint32_t j,
-                                               uint32_t n) {
-  if (hasMask == 0) return true;
-  const size_t idx = ((size_t)batchIdx * (size_t)n + (size_t)i) * (size_t)n + (size_t)j;
-  return mask[idx] != 0.0f;
-}
-
-__device__ inline float flash_attention_score(const float* Q, const float* K, const float* mask,
-                                              uint32_t hasMask, uint32_t batchIdx, uint32_t i,
-                                              uint32_t j, uint32_t n, uint32_t d, float scale) {
-  float dot = 0.0f;
-  const size_t qBase = ((size_t)batchIdx * (size_t)n + (size_t)i) * (size_t)d;
-  const size_t kBase = ((size_t)batchIdx * (size_t)n + (size_t)j) * (size_t)d;
-  for (uint32_t k = 0; k < d; ++k) {
-    dot += Q[qBase + (size_t)k] * K[kBase + (size_t)k];
-  }
-  return dot * scale;
-}
-
-__device__ inline void flash_attention_row_stats(const float* Q, const float* K,
-                                                 const float* mask, uint32_t hasMask,
-                                                 uint32_t batchIdx, uint32_t i, uint32_t n,
-                                                 uint32_t d, float scale, float* rowMax,
-                                                 float* denom) {
-  float m = -INFINITY;
-  for (uint32_t j = 0; j < n; ++j) {
-    if (!flash_attention_allowed(mask, hasMask, batchIdx, i, j, n)) continue;
-    float s = flash_attention_score(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
-    if (s > m) m = s;
-  }
-
-  float z = 0.0f;
-  for (uint32_t j = 0; j < n; ++j) {
-    if (!flash_attention_allowed(mask, hasMask, batchIdx, i, j, n)) continue;
-    float s = flash_attention_score(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
-    z += expf(s - m);
-  }
-  *rowMax = m;
-  *denom = z;
-}
-
-__device__ inline float flash_attention_prob(const float* Q, const float* K, const float* mask,
-                                             uint32_t hasMask, uint32_t batchIdx, uint32_t i,
-                                             uint32_t j, uint32_t n, uint32_t d, float scale,
-                                             float rowMax, float denom) {
-  if (!flash_attention_allowed(mask, hasMask, batchIdx, i, j, n) || denom == 0.0f) {
-    return 0.0f;
-  }
-  float s = flash_attention_score(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
-  return expf(s - rowMax) / denom;
-}
-
-__device__ inline float flash_attention_d_attn(const float* V, const float* dOut,
-                                               uint32_t batchIdx, uint32_t i, uint32_t j,
-                                               uint32_t n, uint32_t d) {
-  float acc = 0.0f;
-  const size_t dOutBase = ((size_t)batchIdx * (size_t)n + (size_t)i) * (size_t)d;
-  const size_t vBase = ((size_t)batchIdx * (size_t)n + (size_t)j) * (size_t)d;
-  for (uint32_t k = 0; k < d; ++k) {
-    acc += dOut[dOutBase + (size_t)k] * V[vBase + (size_t)k];
-  }
-  return acc;
-}
-
-__global__ void flash_attention_fwd_f32(const float* Q, const float* K, const float* V,
-                                        const float* mask, uint32_t hasMask, uint32_t batch,
-                                        uint32_t n, uint32_t d, float scale, float* out) {
-  const size_t idx = (size_t)blockIdx.x * (size_t)blockDim.x + (size_t)threadIdx.x;
-  const size_t total = (size_t)batch * (size_t)n * (size_t)d;
-  if (idx >= total) return;
-
-  const uint32_t dv = (uint32_t)(idx % (size_t)d);
-  const uint32_t i = (uint32_t)((idx / (size_t)d) % (size_t)n);
-  const uint32_t b = (uint32_t)(idx / ((size_t)n * (size_t)d));
-
-  float rowMax = 0.0f;
-  float denom = 0.0f;
-  flash_attention_row_stats(Q, K, mask, hasMask, b, i, n, d, scale, &rowMax, &denom);
-
-  float acc = 0.0f;
-  for (uint32_t j = 0; j < n; ++j) {
-    const float p = flash_attention_prob(Q, K, mask, hasMask, b, i, j, n, d, scale, rowMax, denom);
-    const size_t vIdx = ((size_t)b * (size_t)n + (size_t)j) * (size_t)d + (size_t)dv;
-    acc += p * V[vIdx];
-  }
-  out[idx] = acc;
-}
-
-__global__ void flash_attention_bwd_q_f32(const float* Q, const float* K, const float* V,
-                                          const float* mask, const float* dOut, uint32_t hasMask,
-                                          uint32_t batch, uint32_t n, uint32_t d, float scale,
-                                          float* dQ) {
-  const size_t idx = (size_t)blockIdx.x * (size_t)blockDim.x + (size_t)threadIdx.x;
-  const size_t total = (size_t)batch * (size_t)n * (size_t)d;
-  if (idx >= total) return;
-
-  const uint32_t k = (uint32_t)(idx % (size_t)d);
-  const uint32_t i = (uint32_t)((idx / (size_t)d) % (size_t)n);
-  const uint32_t b = (uint32_t)(idx / ((size_t)n * (size_t)d));
-
-  float rowMax = 0.0f;
-  float denom = 0.0f;
-  flash_attention_row_stats(Q, K, mask, hasMask, b, i, n, d, scale, &rowMax, &denom);
-
-  float rowDot = 0.0f;
-  for (uint32_t j = 0; j < n; ++j) {
-    const float p = flash_attention_prob(Q, K, mask, hasMask, b, i, j, n, d, scale, rowMax, denom);
-    rowDot += p * flash_attention_d_attn(V, dOut, b, i, j, n, d);
-  }
-
-  float acc = 0.0f;
-  for (uint32_t j = 0; j < n; ++j) {
-    if (!flash_attention_allowed(mask, hasMask, b, i, j, n)) continue;
-    const float p = flash_attention_prob(Q, K, mask, hasMask, b, i, j, n, d, scale, rowMax, denom);
-    const float dAttn = flash_attention_d_attn(V, dOut, b, i, j, n, d);
-    const float dScore = p * (dAttn - rowDot) * scale;
-    const size_t kIdx = ((size_t)b * (size_t)n + (size_t)j) * (size_t)d + (size_t)k;
-    acc += dScore * K[kIdx];
-  }
-  dQ[idx] = acc;
-}
-
-__global__ void flash_attention_bwd_k_f32(const float* Q, const float* K, const float* V,
-                                          const float* mask, const float* dOut, uint32_t hasMask,
-                                          uint32_t batch, uint32_t n, uint32_t d, float scale,
-                                          float* dK) {
-  const size_t idx = (size_t)blockIdx.x * (size_t)blockDim.x + (size_t)threadIdx.x;
-  const size_t total = (size_t)batch * (size_t)n * (size_t)d;
-  if (idx >= total) return;
-
-  const uint32_t k = (uint32_t)(idx % (size_t)d);
-  const uint32_t j = (uint32_t)((idx / (size_t)d) % (size_t)n);
-  const uint32_t b = (uint32_t)(idx / ((size_t)n * (size_t)d));
-
-  float acc = 0.0f;
-  for (uint32_t i = 0; i < n; ++i) {
-    float rowMax = 0.0f;
-    float denom = 0.0f;
-    flash_attention_row_stats(Q, K, mask, hasMask, b, i, n, d, scale, &rowMax, &denom);
-
-    float rowDot = 0.0f;
-    for (uint32_t t = 0; t < n; ++t) {
-      const float p = flash_attention_prob(Q, K, mask, hasMask, b, i, t, n, d, scale, rowMax,
-                                           denom);
-      rowDot += p * flash_attention_d_attn(V, dOut, b, i, t, n, d);
-    }
-
-    if (!flash_attention_allowed(mask, hasMask, b, i, j, n)) continue;
-    const float p = flash_attention_prob(Q, K, mask, hasMask, b, i, j, n, d, scale, rowMax, denom);
-    const float dAttn = flash_attention_d_attn(V, dOut, b, i, j, n, d);
-    const float dScore = p * (dAttn - rowDot) * scale;
-    const size_t qIdx = ((size_t)b * (size_t)n + (size_t)i) * (size_t)d + (size_t)k;
-    acc += dScore * Q[qIdx];
-  }
-  dK[idx] = acc;
-}
-
-__global__ void flash_attention_bwd_v_f32(const float* Q, const float* K, const float* V,
-                                          const float* mask, const float* dOut, uint32_t hasMask,
-                                          uint32_t batch, uint32_t n, uint32_t d, float scale,
-                                          float* dV) {
-  const size_t idx = (size_t)blockIdx.x * (size_t)blockDim.x + (size_t)threadIdx.x;
-  const size_t total = (size_t)batch * (size_t)n * (size_t)d;
-  if (idx >= total) return;
-
-  const uint32_t dv = (uint32_t)(idx % (size_t)d);
-  const uint32_t j = (uint32_t)((idx / (size_t)d) % (size_t)n);
-  const uint32_t b = (uint32_t)(idx / ((size_t)n * (size_t)d));
-
-  float acc = 0.0f;
-  for (uint32_t i = 0; i < n; ++i) {
-    float rowMax = 0.0f;
-    float denom = 0.0f;
-    flash_attention_row_stats(Q, K, mask, hasMask, b, i, n, d, scale, &rowMax, &denom);
-    const float p = flash_attention_prob(Q, K, mask, hasMask, b, i, j, n, d, scale, rowMax, denom);
-    const size_t dOutIdx = ((size_t)b * (size_t)n + (size_t)i) * (size_t)d + (size_t)dv;
-    acc += p * dOut[dOutIdx];
-  }
-  dV[idx] = acc;
-}
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_flash_attention_fwd(
-    b_lean_obj_arg QObj, b_lean_obj_arg KObj, b_lean_obj_arg VObj, b_lean_obj_arg MaskObj,
-    uint32_t hasMask, uint32_t batch, uint32_t n, uint32_t d, double scaleHost) {
-  torchlean_cuda_buffer* Q = torchlean_cuda_buffer_unbox(QObj);
-  torchlean_cuda_buffer* K = torchlean_cuda_buffer_unbox(KObj);
-  torchlean_cuda_buffer* V = torchlean_cuda_buffer_unbox(VObj);
-  torchlean_cuda_buffer* mask = torchlean_cuda_buffer_unbox(MaskObj);
-  const size_t qkvSz =
-      checked_mul3_size((size_t)batch, (size_t)n, (size_t)d,
-                        "torchlean_cuda_buffer_flash_attention_fwd: Q/K/V size overflow");
-  const size_t maskSz =
-      checked_mul3_size((size_t)batch, (size_t)n, (size_t)n,
-                        "torchlean_cuda_buffer_flash_attention_fwd: mask size overflow");
-  if (Q->size != qkvSz || K->size != qkvSz || V->size != qkvSz) {
-    lean_internal_panic("torchlean_cuda_buffer_flash_attention_fwd: Q/K/V size mismatch");
-  }
-  if (hasMask != 0 && mask->size != maskSz) {
-    lean_internal_panic("torchlean_cuda_buffer_flash_attention_fwd: mask size mismatch");
-  }
-
-  torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(qkvSz);
-  if (qkvSz == 0) {
-    return torchlean_cuda_buffer_box(out);
-  }
-  dim3 blocks = blocks_for(qkvSz);
-  dim3 threads = dim3(kBlockSize);
-  flash_attention_fwd_f32<<<blocks, threads>>>(Q->data, K->data, V->data, mask->data, hasMask,
-                                               batch, n, d, (float)scaleHost, out->data);
-  checkCuda(cudaGetLastError(), "cuda flashAttention forward kernel launch failed");
-  return torchlean_cuda_buffer_box(out);
-}
-
-#define TORCHLEAN_FLASH_BWD_EXPORT(name, kernel, label)                                           \
-  extern "C" LEAN_EXPORT lean_obj_res name(                                                       \
-      b_lean_obj_arg QObj, b_lean_obj_arg KObj, b_lean_obj_arg VObj, b_lean_obj_arg MaskObj,       \
-      b_lean_obj_arg DOutObj, uint32_t hasMask, uint32_t batch, uint32_t n, uint32_t d,            \
-      double scaleHost) {                                                                          \
-    torchlean_cuda_buffer* Q = torchlean_cuda_buffer_unbox(QObj);                                  \
-    torchlean_cuda_buffer* K = torchlean_cuda_buffer_unbox(KObj);                                  \
-    torchlean_cuda_buffer* V = torchlean_cuda_buffer_unbox(VObj);                                  \
-    torchlean_cuda_buffer* mask = torchlean_cuda_buffer_unbox(MaskObj);                            \
-    torchlean_cuda_buffer* dOut = torchlean_cuda_buffer_unbox(DOutObj);                            \
-    const size_t qkvSz = checked_mul3_size((size_t)batch, (size_t)n, (size_t)d,                    \
-                                           label ": Q/K/V/dOut size overflow");                   \
-    const size_t maskSz = checked_mul3_size((size_t)batch, (size_t)n, (size_t)n,                   \
-                                           label ": mask size overflow");                         \
-    if (Q->size != qkvSz || K->size != qkvSz || V->size != qkvSz || dOut->size != qkvSz) {         \
-      lean_internal_panic(label ": Q/K/V/dOut size mismatch");                                    \
-    }                                                                                              \
-    if (hasMask != 0 && mask->size != maskSz) {                                                    \
-      lean_internal_panic(label ": mask size mismatch");                                          \
-    }                                                                                              \
-    torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(qkvSz);                               \
-    if (qkvSz == 0) return torchlean_cuda_buffer_box(out);                                         \
-    dim3 blocks = blocks_for(qkvSz);                                                               \
-    dim3 threads = dim3(kBlockSize);                                                               \
-    kernel<<<blocks, threads>>>(Q->data, K->data, V->data, mask->data, dOut->data, hasMask, batch, \
-                                n, d, (float)scaleHost, out->data);                                \
-    checkCuda(cudaGetLastError(), label " kernel launch failed");                                 \
-    return torchlean_cuda_buffer_box(out);                                                         \
-  }
-
-TORCHLEAN_FLASH_BWD_EXPORT(torchlean_cuda_buffer_flash_attention_bwd_q,
-                           flash_attention_bwd_q_f32,
-                           "cuda flashAttention backward Q")
-TORCHLEAN_FLASH_BWD_EXPORT(torchlean_cuda_buffer_flash_attention_bwd_k,
-                           flash_attention_bwd_k_f32,
-                           "cuda flashAttention backward K")
-TORCHLEAN_FLASH_BWD_EXPORT(torchlean_cuda_buffer_flash_attention_bwd_v,
-                           flash_attention_bwd_v_f32,
-                           "cuda flashAttention backward V")
-
-#undef TORCHLEAN_FLASH_BWD_EXPORT
-
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_transpose2d(b_lean_obj_arg BObj,
                                                                      uint32_t rows, uint32_t cols) {
   torchlean_cuda_buffer* b = torchlean_cuda_buffer_unbox(BObj);
@@ -2081,7 +1827,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_broadcast_to(b_lean_ob
     lean_internal_panic("torchlean_cuda_buffer_broadcast_to: input size mismatch");
   }
 
-  // Check broadcast shape agreement before launch.
+  // Check broadcast shape agreement at the FFI boundary before launching the kernel.
   for (size_t ax = 0; ax < rankOut; ++ax) {
     uint32_t mv = h.axisMap[ax];
     if (mv == 0) continue;
@@ -2206,7 +1952,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_from_broadcast(
     lean_internal_panic("torchlean_cuda_buffer_reduce_from_broadcast: dOut size mismatch");
   }
 
-  // Use the same broadcast checks as the forward path.
+  // Check the same broadcast contract used by the forward path.
   for (size_t ax = 0; ax < rankOut; ++ax) {
     uint32_t mv = h.axisMap[ax];
     if (mv == 0) continue;

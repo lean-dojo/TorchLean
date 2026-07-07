@@ -32,6 +32,9 @@ used by default so `lake build` works without a CUDA toolkit. Real CUDA builds a
 lake build -R -K cuda=true -K cuda_home=/usr/local/cuda
 ```
 
+CUDA builds also require LibTorch; see the root `README.md`. The path is resolved by
+`scripts/setup/resolve_libtorch.sh` before native backends compile.
+
 ## CUDA Graph Status
 
 TorchLean's current CUDA path is eager: each autograd step records a Lean runtime tape and dispatches

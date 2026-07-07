@@ -18,19 +18,6 @@ static inline void checkBufSize(torchlean_cuda_buffer* b, size_t elems, const ch
   }
 }
 
-static inline lean_object* torchlean_cuda_box_three_buffers(
-    torchlean_cuda_buffer* first,
-    torchlean_cuda_buffer* second,
-    torchlean_cuda_buffer* third) {
-  lean_object* tail = lean_alloc_ctor(0, 2, 0);
-  lean_ctor_set(tail, 0, torchlean_cuda_buffer_box(second));
-  lean_ctor_set(tail, 1, torchlean_cuda_buffer_box(third));
-  lean_object* out = lean_alloc_ctor(0, 2, 0);
-  lean_ctor_set(out, 0, torchlean_cuda_buffer_box(first));
-  lean_ctor_set(out, 1, tail);
-  return out;
-}
-
 static inline uint32_t outDim(uint32_t in, uint32_t k, uint32_t stride, uint32_t padding) {
   if (stride == 0) {
     lean_internal_panic("torchlean_cuda_conv_pool: stride must be > 0");

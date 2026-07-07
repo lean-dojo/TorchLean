@@ -16,6 +16,10 @@ NN/Examples/Data/*.npy
 _external/
 third_party/interval/
 
+# Local LibTorch unpack (CUDA prerequisite; see README)
+/libtorch/
+.lake/build/libtorch.path
+
 # Python caches and artifacts
 __pycache__/
 **/__pycache__/

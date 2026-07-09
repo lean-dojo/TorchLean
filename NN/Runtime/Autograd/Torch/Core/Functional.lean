@@ -673,19 +673,18 @@ This is defined using existing primitives (`tanh`, `mul`, `add`, `scale`), so it
 compiled, and verifier-IR backends without introducing a new opcode.
 -/
 def gelu {s : Shape} (x : Ref (m := m) (α := α) s) : m (Ref (m := m) (α := α) s) := do
-  let halfT : Tensor α s := Spec.fill (α := α) (Numbers.pointfive : α) s
-  let oneT : Tensor α s := Spec.fill (α := α) (Numbers.one : α) s
   let c0 : α := ((44715 : Nat) : α) / ((1000000 : Nat) : α)
   let c1 : α := MathFunctions.sqrt (Numbers.two / MathFunctions.pi)
   let x2 ← mul (m := m) (α := α) (s := s) x x
   let x3 ← mul (m := m) (α := α) (s := s) x2 x
   let inner ← add (m := m) (α := α) (s := s) x (← scale (m := m) (α := α) (s := s) x3 c0)
   let t ← tanh (m := m) (α := α) (s := s) (← scale (m := m) (α := α) (s := s) inner c1)
-  let oneRef ← const (m := m) (α := α) (s := s) oneT
-  let onePlus ← add (m := m) (α := α) (s := s) oneRef t
+  let oneScalar ← const (m := m) (α := α) (scalarTensor (Numbers.one : α))
+  let oneB ← broadcastTo (m := m) (α := α) (s₁ := Shape.scalar) (s₂ := s)
+    (Shape.CanBroadcastTo.scalar_to_any s) oneScalar
+  let onePlus ← add (m := m) (α := α) (s := s) t oneB
   let mid ← mul (m := m) (α := α) (s := s) x onePlus
-  let halfRef ← const (m := m) (α := α) (s := s) halfT
-  mul (m := m) (α := α) (s := s) halfRef mid
+  scale (m := m) (α := α) (s := s) mid (Numbers.pointfive : α)
 
 /--
 Global average pooling over the last two axes of a `C×H×W` tensor (channel-first).

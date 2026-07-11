@@ -10,6 +10,7 @@ public import NN.Runtime.Autograd.Engine.Cuda.Buffer
 public import NN.Runtime.Autograd.Engine.Cuda.Ops
 public import NN.Runtime.Autograd.Engine.FastKernels
 public import NN.Runtime.Autograd.TorchLean.Random
+public import NN.Runtime.Autograd.Torch.Core.Session
 public import NN.Entrypoint.Tensor
 public import NN.Tests.Runtime.Cuda.Utils
 
@@ -36,6 +37,7 @@ namespace Stress
 open Runtime.Autograd
 open Runtime.Autograd.Cuda
 open Runtime.Autograd.TorchLean
+open Runtime.Autograd.Torch.Internal (EagerSession)
 open Spec
 open Tensor
 
@@ -233,10 +235,132 @@ def runMatmulStress : IO Unit := do
   Utils.assertTensorApprox (s := sY2) "matmul stress case2 fp32" yFp322 yRef2 (tol := 7e-3)
   Utils.assertTensorApprox (s := sY2) "matmul stress case2 fp64" yFp642 yRef2 (tol := 1e-9)
 
+/--
+One eager Buffer workload step for the leak-bound stress: allocate a short chain of device buffers,
+then free every one through the explicit `Buffer.release` discipline that long CUDA loops use so they
+do not wait on external-object finalizers. Returns the number of live allocations freed (the sum of
+the release return codes), which also confirms each free found a live allocation and keeps Lean from
+eliminating the release calls as dead code.
+-/
+def leakStep (n : UInt32) : IO Nat := do
+  let a := Buffer.full n 1.5
+  let b := Buffer.full n (-0.5)
+  let c := Buffer.add a b
+  let d := Buffer.mul c a
+  let s := Buffer.reduceSum d
+  let freed :=
+    Buffer.release a + Buffer.release b + Buffer.release c + Buffer.release d + Buffer.release s
+  return freed.toNat
+
+/--
+Leak-bound allocator stress. Drives a small eager Buffer workload through the explicit `Buffer.release`
+discipline for two equal blocks of steps and asserts the device working set is bounded independent of
+step count, using the allocator telemetry (`Buffer.allocatorStats`):
+
+  - each step freed exactly its allocations (the release calls fired and were not dropped as dead
+    code);
+  - net live allocations and live bytes after 2× the steps match the 1× snapshot (the leak-bound
+    invariant);
+  - with every buffer released the loop returns to the baseline working set.
+
+Runs on the CPU stub through the shared allocator-counter parity.
+-/
+def runLeakBoundStress : IO Unit := do
+  IO.println "== allocator leak-bound stress =="
+  let n : UInt32 := 4096
+  let releasesPerStep : Nat := 5
+  let block : Nat := 128
+  let base ← Buffer.allocatorStats
+  IO.println s!"  baseline:        {base.format}"
+  let mut freed1 : Nat := 0
+  for _ in [0:block] do
+    freed1 := freed1 + (← leakStep n)
+  let afterK ← Buffer.allocatorStatsWithToken (UInt32.ofNat block)
+  IO.println s!"  after {block} steps:  {afterK.format}"
+  let mut freed2 : Nat := 0
+  for _ in [0:block] do
+    freed2 := freed2 + (← leakStep n)
+  let after2K ← Buffer.allocatorStatsWithToken (UInt32.ofNat (2 * block))
+  IO.println s!"  after {2 * block} steps:  {after2K.format}"
+  let expectedFreed := releasesPerStep * block
+  if freed1 != expectedFreed then
+    throw <| IO.userError s!"leak-bound: first block freed {freed1}, expected {expectedFreed}"
+  if freed2 != expectedFreed then
+    throw <| IO.userError s!"leak-bound: second block freed {freed2}, expected {expectedFreed}"
+  let netK : UInt64 := afterK.allocCount - afterK.freeCount
+  let net2K : UInt64 := after2K.allocCount - after2K.freeCount
+  if net2K != netK then
+    throw <| IO.userError s!"leak-bound: net live allocations grew with step count ({netK} → {net2K})"
+  if after2K.liveBytes != afterK.liveBytes then
+    throw <| IO.userError
+      s!"leak-bound: live bytes grew with step count ({afterK.liveBytes} → {after2K.liveBytes})"
+  let netBase : UInt64 := base.allocCount - base.freeCount
+  if netK != netBase then
+    throw <| IO.userError
+      s!"leak-bound: live allocations did not return to baseline ({netBase} → {netK})"
+
+/--
+Eager-session `withForward` scope stress — the safe, tape-scoped replacement for the rejected device
+arena.
+
+*Part 1* (every build, including the CPU stub): a functional check that `withForward` runs the body,
+copies the result off the tape via `getValue`, and returns it.
+
+*Part 2* (real CUDA only — a `.cuda` session is rejected on the CPU-stub build, so it is skipped
+there): run many forward scopes on a CUDA session, each allocating device buffers, and assert via the
+allocator telemetry that the device working set is flat across step count and returns to baseline.
+This is the arena's motivating case (a long eager loop that would otherwise accrete device memory),
+now bounded through *tape membership* — `withForward` frees only tape-owned temporaries and never a
+buffer the caller still holds.
+-/
+def runEagerScopeStress : IO Unit := do
+  IO.println "== eager-session withForward scope stress =="
+  let sh : Shape := shape![4]
+  let v : Tensor Float sh := tensorND! [4] [1.0, 2.0, 3.0, 4.0]
+  -- Part 1: functional check on a CPU session (runs everywhere).
+  let sessCpu ← EagerSession.new (α := Float) {}
+  let outCpu ← sessCpu.withForward
+    (transfer := fun r => EagerSession.getValue (α := Float) sessCpu (sh := sh) r)
+    (body := EagerSession.const (α := Float) sessCpu (sh := sh) v)
+  Utils.assertTensorApprox (s := sh) "withForward returns the transferred body result" outCpu v
+  IO.println "  cpu session: withForward runs body + transfer ✓"
+  -- Part 2: device-memory leak-bound loop on a real CUDA session.
+  match Buffer.runtimeStatus with
+  | .nativeAvailable =>
+      let sess ← EagerSession.new (α := Float) { requestedDevice := .cuda }
+      let block : Nat := 128
+      let stepScope : IO Unit := do
+        let _ ← sess.withForward
+          (transfer := fun r => EagerSession.getValue (α := Float) sess (sh := sh) r)
+          (body := EagerSession.const (α := Float) sess (sh := sh) v)
+        pure ()
+      let base ← Buffer.allocatorStats
+      for _ in [0:block] do stepScope
+      let afterK ← Buffer.allocatorStatsWithToken (UInt32.ofNat block)
+      for _ in [0:block] do stepScope
+      let after2K ← Buffer.allocatorStatsWithToken (UInt32.ofNat (2 * block))
+      let netBase : UInt64 := base.allocCount - base.freeCount
+      let netK : UInt64 := afterK.allocCount - afterK.freeCount
+      let net2K : UInt64 := after2K.allocCount - after2K.freeCount
+      if net2K != netK then
+        throw <| IO.userError
+          s!"withForward scope: live allocations grew with step count ({netK} → {net2K})"
+      if after2K.liveBytes != afterK.liveBytes then
+        throw <| IO.userError
+          s!"withForward scope: live bytes grew with step count ({afterK.liveBytes} → {after2K.liveBytes})"
+      if netK != netBase then
+        throw <| IO.userError
+          s!"withForward scope: working set did not return to baseline ({netBase} → {netK})"
+      IO.println "  cuda session: device working set flat across forward scopes ✓"
+  | _ =>
+      IO.println "  cuda leak-bound loop skipped (no native CUDA device on this build)"
+
 def run : IO Unit := do
   IO.println "=== CUDA runtime stress suite ==="
   runRngStress
   runReleaseStress
+  runLeakBoundStress
+  runEagerScopeStress
   runGradientAliasingStress
   runLargeBufferStress
   runMatmulStress

@@ -370,6 +370,84 @@ def resetTape {α : Type} (s : EagerSession α) : IO Unit := do
   s.nats.set #[]
 
 /--
+Retire the CUDA tape snapshot and side tables and ask the native allocator to return pages.
+
+The caller is responsible for having already released the tape's reclaimable device buffers (via
+`releaseCudaTapeAfterOptimizerStep` or `releaseCudaTapeNonParamValues`); this only drops the now-dead
+tape state so the next step starts clean.
+-/
+def retireCudaTapeState {α : Type} (s : EagerSession α) : IO Unit := do
+  s.cudaTape.set Runtime.Autograd.Cuda.Tape.empty
+  s.paramsByLeaf.set (Std.HashMap.emptyWithCapacity)
+  s.nats.set #[]
+  collectCudaAllocator
+
+/--
+Run one eager training step inside a device-memory scope.
+
+`resetTape` opens the scope; `body` builds the forward tape, runs backward, and applies the optimizer
+(which writes each trainable parameter to a *fresh* persistent mirror); on exit every tape-owned
+temporary is released and the tape snapshot retired, so the device working set stays flat across
+steps regardless of step count.
+
+This is the safe, tape-scoped replacement for a device arena: reclamation is keyed on **tape
+membership**, not allocation epoch. The only buffers it releases are tape node values and workspace
+(`cleanup`), which are runtime-private — callers hold `TensorRef`/`Param`, never a raw `Buffer` — so
+it can never free a buffer the caller still holds. Persistent parameter mirrors are preserved by the
+`paramsByLeaf` role check.
+
+Exception-safe: if `body` raises before the optimizer completes, the parameters may still be their
+live mirrors, so the scope falls back to `releaseCudaTapeNonParamValues` (which preserves *all*
+parameter values) before re-raising — it never frees a live mirror on the error path.
+-/
+def withStep {α : Type} (s : EagerSession α) (body : IO Unit) : IO Unit := do
+  s.resetTape
+  try
+    body
+    -- Success: the optimizer has re-materialized trainable parameters into fresh mirrors, so the
+    -- leaf buffers captured on the just-consumed tape are stale and can be reclaimed too.
+    if s.opts.usesCuda then
+      releaseCudaTapeAfterOptimizerStep s
+      retireCudaTapeState s
+  catch e =>
+    -- Failure: the optimizer may not have run, so trainable leaves may still be the live parameter
+    -- mirrors. Use the conservative release that preserves every parameter value.
+    if s.opts.usesCuda then
+      releaseCudaTapeNonParamValues s
+      retireCudaTapeState s
+    throw e
+
+/--
+Run one eager forward pass inside a device-memory scope.
+
+`resetTape` opens the scope; `body` builds the forward tape and returns a result (typically a
+`TensorRef`); `transfer` copies the survivors off-device — e.g. `EagerSession.getValue`, which
+downloads to a host `Tensor` — *before* the scope releases every forward temporary and retires the
+tape. Persistent parameter mirrors are preserved (`releaseCudaTapeNonParamValues`), so a session can
+run an unbounded sequence of forward passes with a flat device working set.
+
+This is the safe, tape-scoped replacement for `withCudaArena` on the inference/eval path. Because
+`transfer` runs first, the caller leaves the scope holding host tensors, not device `Buffer`s, so the
+release can never invalidate a buffer the caller still references. Exception-safe: the tape is
+reclaimed even if `body` or `transfer` raises.
+-/
+def withForward {α β γ : Type} (s : EagerSession α)
+    (transfer : β → IO γ) (body : IO β) : IO γ := do
+  s.resetTape
+  try
+    let b ← body
+    let out ← transfer b
+    if s.opts.usesCuda then
+      releaseCudaTapeNonParamValues s
+      retireCudaTapeState s
+    pure out
+  catch e =>
+    if s.opts.usesCuda then
+      releaseCudaTapeNonParamValues s
+      retireCudaTapeState s
+    throw e
+
+/--
 Create a mutable parameter object (not yet on the tape).
 
 To record this parameter on the session tape, call `use`, which reads the parameter and records it

@@ -11,6 +11,7 @@ public import NN.Proofs.Autograd.Runtime.Link.Invariants
 public import NN.Proofs.Autograd.Runtime.Link.Accumulation
 public import NN.Proofs.Autograd.Runtime.Link.BackwardGraph
 public import NN.Proofs.Autograd.Runtime.Link.BackwardGraphData
+public import NN.Proofs.Autograd.Runtime.Link.FDeriv
 
 /-!
 Runtime-to-tape autograd link proofs.

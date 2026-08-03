@@ -455,6 +455,156 @@ def squareFderiv {Γ : List Shape} {s : Shape} (idx : Idx Γ s) :
     NodeFDerivCorrect (square (Γ := Γ) (s := s) idx) :=
   mulFderiv (Γ := Γ) (s := s) idx idx
 
+/--
+Pointwise division of two same-shaped context entries.
+
+The forward pass is the coordinatewise quotient `a / b`; the reverse pass is the ordinary quotient
+rule `∂(a/b)/∂a = b⁻¹` and `∂(a/b)/∂b = -a · (b²)⁻¹`. This matches the runtime/CUDA `div` node
+(whose backward returns `dLdy / b` for the numerator and `-(dLdy · a / b²)` for the denominator).
+
+The `correct_inner` adjoint identity holds unconditionally under the totalized inverse (`0⁻¹ = 0`);
+the derivative in `divFderivAt`, by contrast, is the genuine Fréchet derivative only where the
+denominator is nonzero, which is the standard mathematical domain of the quotient rule.
+-/
+def div {Γ : List Shape} {s : Shape} (a b : Idx Γ s) : Node Γ s :=
+  let n : Nat := Spec.Shape.size s
+  Node.ofVec (Γ := Γ) (τ := s)
+    (f := fun x => vecOfFun (n := n) fun i =>
+      CtxVec.get (Γ := Γ) (s := s) a x i / CtxVec.get (Γ := Γ) (s := s) b x i)
+    (jvp := fun x dx => vecOfFun (n := n) fun i =>
+      CtxVec.get (Γ := Γ) (s := s) a dx i * (CtxVec.get (Γ := Γ) (s := s) b x i)⁻¹ -
+        CtxVec.get (Γ := Γ) (s := s) a x i * CtxVec.get (Γ := Γ) (s := s) b dx i *
+          ((CtxVec.get (Γ := Γ) (s := s) b x i) ^ 2)⁻¹)
+    (vjp := fun x δ =>
+      CtxVec.single (Γ := Γ) (s := s) a
+          (vecOfFun (n := n) fun i => δ i * (CtxVec.get (Γ := Γ) (s := s) b x i)⁻¹) +
+        CtxVec.single (Γ := Γ) (s := s) b
+          (vecOfFun (n := n) fun i =>
+            δ i * (-(CtxVec.get (Γ := Γ) (s := s) a x i) *
+              ((CtxVec.get (Γ := Γ) (s := s) b x i) ^ 2)⁻¹)))
+    (correct_inner := by
+      intro x dx δ
+      classical
+      rw [inner_add_right, CtxVec.inner_get_single, CtxVec.inner_get_single]
+      simp only [inner_eq_sum_mul, vecOfFun_apply]
+      rw [← Finset.sum_add_distrib]
+      refine Finset.sum_congr rfl (fun i _ => ?_)
+      ring)
+
+/--
+Pointwise `NodeFDerivCorrectAt` for `div` under the assumption that every denominator coordinate is
+nonzero. The coordinate derivative is assembled from the product rule applied to `a · b⁻¹`, using
+`hasDerivAt_inv` on the denominator projection.
+-/
+def divFderivAt {Γ : List Shape} {s : Shape} (a b : Idx Γ s) (xV : CtxVec Γ)
+    (hb : ∀ i : Fin (Spec.Shape.size s), CtxVec.get (Γ := Γ) (s := s) b xV i ≠ 0) :
+    NodeFDerivCorrectAt (div (Γ := Γ) (s := s) a b) xV := by
+  classical
+  let n : Nat := Spec.Shape.size s
+  refine
+    { deriv :=
+        (euclideanEquiv n).symm.toContinuousLinearMap.comp <|
+          ContinuousLinearMap.pi (fun i : Fin n =>
+            (CtxVec.get (Γ := Γ) (s := s) a xV i) •
+                (-(((CtxVec.get (Γ := Γ) (s := s) b xV i) ^ 2)⁻¹) •
+                  ((evalCLM (n := n) i).comp (CtxVec.getCLM (Γ := Γ) (s := s) b))) +
+              ((CtxVec.get (Γ := Γ) (s := s) b xV i)⁻¹) •
+                ((evalCLM (n := n) i).comp (CtxVec.getCLM (Γ := Γ) (s := s) a)))
+      hasFDerivAt := ?_
+      jvp_eq := ?_ }
+  · classical
+    let aFun : CtxVec Γ → Vec n := fun x => CtxVec.get (Γ := Γ) (s := s) a x
+    let bFun : CtxVec Γ → Vec n := fun x => CtxVec.get (Γ := Γ) (s := s) b x
+    have hcoord :
+        ∀ i : Fin n,
+          HasFDerivAt
+            ((fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) a x i) *
+              (fun x : CtxVec Γ => (CtxVec.get (Γ := Γ) (s := s) b x i)⁻¹))
+            ((aFun xV i) •
+                (-(((CtxVec.get (Γ := Γ) (s := s) b xV i) ^ 2)⁻¹) •
+                  ((evalCLM (n := n) i).comp (CtxVec.getCLM (Γ := Γ) (s := s) b))) +
+              ((CtxVec.get (Γ := Γ) (s := s) b xV i)⁻¹) •
+                ((evalCLM (n := n) i).comp (CtxVec.getCLM (Γ := Γ) (s := s) a))) xV := by
+      intro i
+      let aCLM : CtxVec Γ →L[ℝ] ℝ :=
+        (evalCLM (n := n) i).comp (CtxVec.getCLM (Γ := Γ) (s := s) a)
+      let bCLM : CtxVec Γ →L[ℝ] ℝ :=
+        (evalCLM (n := n) i).comp (CtxVec.getCLM (Γ := Γ) (s := s) b)
+      have ha : HasFDerivAt (fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) a x i) aCLM xV := by
+        have h0 : HasFDerivAt (fun x : CtxVec Γ => aCLM x) aCLM xV := aCLM.hasFDerivAt (x := xV)
+        have hEq :
+            (fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) a x i) = (fun x : CtxVec Γ => aCLM x) := by
+          funext x
+          simp [aCLM, ContinuousLinearMap.comp_apply, evalCLM_apply]
+          exact (congrArg (fun v : Vec n => v.ofLp i) (CtxVec.getCLM_apply (Γ := Γ) (s := s) a x)).symm
+        exact h0.congr_of_eventuallyEq hEq.eventuallyEq
+      have hbder : HasFDerivAt (fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) b x i) bCLM xV := by
+        have h0 : HasFDerivAt (fun x : CtxVec Γ => bCLM x) bCLM xV := bCLM.hasFDerivAt (x := xV)
+        have hEq :
+            (fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) b x i) = (fun x : CtxVec Γ => bCLM x) := by
+          funext x
+          simp [bCLM, ContinuousLinearMap.comp_apply, evalCLM_apply]
+          exact (congrArg (fun v : Vec n => v.ofLp i) (CtxVec.getCLM_apply (Γ := Γ) (s := s) b x)).symm
+        exact h0.congr_of_eventuallyEq hEq.eventuallyEq
+      have hinv :
+          HasFDerivAt (fun x : CtxVec Γ => (CtxVec.get (Γ := Γ) (s := s) b x i)⁻¹)
+            ((-((CtxVec.get (Γ := Γ) (s := s) b xV i) ^ 2)⁻¹) • bCLM) xV :=
+        (hasDerivAt_inv (hb i)).comp_hasFDerivAt xV hbder
+      have hmul := ha.mul hinv
+      simpa [aFun, aCLM, bCLM] using hmul
+    have hpi :
+        HasFDerivAt
+          (fun x : CtxVec Γ => fun i : Fin n =>
+            ((fun y : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) a y i) *
+              (fun y : CtxVec Γ => (CtxVec.get (Γ := Γ) (s := s) b y i)⁻¹)) x)
+          (ContinuousLinearMap.pi (fun i : Fin n =>
+            (aFun xV i) •
+                (-(((CtxVec.get (Γ := Γ) (s := s) b xV i) ^ 2)⁻¹) •
+                  ((evalCLM (n := n) i).comp (CtxVec.getCLM (Γ := Γ) (s := s) b))) +
+              ((CtxVec.get (Γ := Γ) (s := s) b xV i)⁻¹) •
+                ((evalCLM (n := n) i).comp (CtxVec.getCLM (Γ := Γ) (s := s) a)))) xV := by
+      refine (hasFDerivAt_pi (𝕜 := ℝ)
+        (φ := fun i : Fin n =>
+          (fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) a x i) *
+            (fun x : CtxVec Γ => (CtxVec.get (Γ := Γ) (s := s) b x i)⁻¹))
+        (φ' := fun i : Fin n =>
+          (aFun xV i) •
+              (-(((CtxVec.get (Γ := Γ) (s := s) b xV i) ^ 2)⁻¹) •
+                ((evalCLM (n := n) i).comp (CtxVec.getCLM (Γ := Γ) (s := s) b))) +
+            ((CtxVec.get (Γ := Γ) (s := s) b xV i)⁻¹) •
+              ((evalCLM (n := n) i).comp (CtxVec.getCLM (Γ := Γ) (s := s) a)))
+        (x := xV)).2 ?_
+      intro i
+      simpa using hcoord i
+    have he' :
+        HasFDerivAt (fun g : Fin n → ℝ => (euclideanEquiv n).symm g)
+          ((euclideanEquiv n).symm.toContinuousLinearMap)
+          (fun i : Fin n =>
+            ((fun y : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) a y i) *
+              (fun y : CtxVec Γ => (CtxVec.get (Γ := Γ) (s := s) b y i)⁻¹)) xV) :=
+      (ContinuousLinearMap.hasFDerivAt (euclideanEquiv n).symm.toContinuousLinearMap)
+    have hcomp := he'.comp xV hpi
+    have hEq :
+        (Node.forwardVec (Γ := Γ) (τ := s) (div (Γ := Γ) (s := s) a b))
+          = (fun x : CtxVec Γ =>
+              (euclideanEquiv n).symm (fun i : Fin n =>
+                ((fun y : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) a y i) *
+                  (fun y : CtxVec Γ => (CtxVec.get (Γ := Γ) (s := s) b y i)⁻¹)) x)) := by
+      funext x
+      ext i
+      simp [div, vecOfFun, Node.forwardVec_ofVec, div_eq_mul_inv, euclideanEquiv]
+    rw [hEq]
+    exact hcomp
+  · intro dxV
+    ext i
+    have hga : (CtxVec.getCLM (Γ := Γ) (s := s) a) dxV = CtxVec.get (Γ := Γ) (s := s) a dxV :=
+      CtxVec.getCLM_apply (Γ := Γ) (s := s) a dxV
+    have hgb : (CtxVec.getCLM (Γ := Γ) (s := s) b) dxV = CtxVec.get (Γ := Γ) (s := s) b dxV :=
+      CtxVec.getCLM_apply (Γ := Γ) (s := s) b dxV
+    simp [div, Node.jvpVec_ofVec, vecOfFun, ContinuousLinearMap.comp_apply, evalCLM_apply,
+      hga, hgb]
+    ring
+
 end TapeNodes
 
 end

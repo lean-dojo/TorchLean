@@ -14,9 +14,10 @@ public import NN.Proofs.Autograd.Tape.Core.FDeriv
 
 Two independent developments meet in this file.
 
-* The **runtime link** (`Runtime/Link/BackwardGraph.lean`) proves that the executable dense
-  reverse pass agrees with the algebraic model's full backpropagation `backpropAllCtx`, over any
-  commutative semiring carrier and an arbitrary non-differentiable environment `Δ`.
+* The **runtime link** (`Runtime/Link/BackwardGraph.lean`) proves that the tape engine's dense
+  reverse pass (`Tape.backwardDenseFrom`) agrees with the algebraic model's full backpropagation
+  `backpropAllCtx`, over any commutative semiring carrier and an arbitrary non-differentiable
+  environment `Δ`.
 * The **analytic tape model** (`Tape/Core/FDeriv.lean`) proves that reverse-mode accumulation
   computes the adjoint of the Fréchet derivative of the forward evaluation, over `ℝ`.
 
@@ -43,11 +44,17 @@ node for node — what has been missing is the formal connection. This file supp
   `backpropVec_flattenCtx`.
 * **The composed endpoints.** `backpropCtx_eq_adjoint_fderiv` upgrades the algebraic
   backpropagation at `ℝ` to the Fréchet-adjoint characterization, and
-  `backwardDenseFrom_compileAux_adjoint_fderiv` combines it with the runtime link: the
-  executable dense reverse pass on a compiled graph succeeds with the full backpropagation
-  context, whose input prefix is exactly `(fderiv ℝ eval x)† seed`. The `_at` variants assume
+  `backwardDenseFrom_compileAux_adjoint_fderiv` combines it with the runtime link: the tape
+  model's dense reverse pass on a compiled graph, instantiated at `α := ℝ`, succeeds with the
+  full backpropagation context, whose input prefix is exactly `(fderiv ℝ eval x)† seed`. The
+  `_at` variants assume
   differentiability only at the actual execution point (`GraphFDerivCorrectAt`), covering
   graphs with non-smooth primitives (`relu`, `abs`, `min`/`max`, `log`, `sqrt`, …).
+
+Throughout, "reverse pass" means the exact tape model: the `Tape.backwardDenseFrom` program of
+`Runtime/Autograd` instantiated at the exact carrier `α := ℝ`. Nothing in this file is a
+statement about the native `Float` evaluation or the CUDA execution path; relating those to the
+exact model is a separate (approximation) concern.
 
 A natural follow-up enabled by the round-trip lemmas would be to re-found the analytic model
 as an abbreviation of the algebraic one at `α := ℝ`, `Δ := Unit` (as already done for
@@ -422,8 +429,9 @@ variable {Γ : List Shape}
 /--
 The input (`Γ`-prefix) block of the full backpropagation is the inputs-only backpropagation.
 
-This identifies the runtime-facing `backpropAllCtx` (which retains a cotangent for every
-value, like the executable engine) with the proof-facing `backpropCtx` on the input block.
+This identifies the link-facing `backpropAllCtx` (which retains a cotangent for every
+value, mirroring the tape engine's dense reverse pass) with the proof-facing `backpropCtx`
+on the input block.
 -/
 theorem takeLeft_backpropAllCtx {ss : List Shape} (g : Graph (α := α) (Δ := Δ) (Γ := Γ) ss)
     (x : TList α Γ) (d : Δ) (seed : TList α (Γ ++ ss)) :
@@ -506,10 +514,11 @@ theorem toReal_evalVec {ss : List Shape} (g : Graph (α := ℝ) (Δ := Δ) (Γ :
   rw [_root_.Proofs.Autograd.Graph.evalVec_flattenCtx, toReal_eval]
 
 /--
-**Runtime reverse pass = adjoint of the Fréchet derivative.** Running the executable dense
-reverse pass on a compiled graph succeeds and returns the full backpropagation context, whose
-input (`Γ`-prefix) block is exactly the adjoint of the Fréchet derivative of the graph's
-forward evaluation applied to the seed.
+**Tape-model reverse pass = adjoint of the Fréchet derivative.** Running the tape engine's
+dense reverse pass (`Tape.backwardDenseFrom`) on a compiled graph — the exact tape model
+instantiated at `α := ℝ`, not the native `Float` or CUDA execution path — succeeds and returns
+the full backpropagation context, whose input (`Γ`-prefix) block is exactly the adjoint of the
+Fréchet derivative of the graph's forward evaluation applied to the seed.
 
 This composes the runtime link (`backwardDenseFrom_compileAux_eq_backpropAllCtx`) with the
 analytic upgrade above.

@@ -17,7 +17,7 @@ examples use:
 - NumPy format versions 1 and 2;
 - little-endian `float32` and `float64` payloads (`<f4`, `<f8`);
 - C-order arrays directly, and Fortran-order arrays converted to C-order at load time;
-- deterministic conversion to a flat `Array Float` in C order.
+- deterministic conversion to a flat `FloatArray` in C order.
 
 The loader stays narrow. It is a runtime bridge for trusted experiment artifacts, not
 a general NumPy parser and not part of the formal tensor semantics. Tensor construction happens in
@@ -50,8 +50,12 @@ structure NpyData where
   shape : Array Nat
   /-- Whether the returned flat payload is still Fortran-ordered. This loader returns `false`. -/
   fortran : Bool
-  /-- Flattened numeric payload, converted to Lean `Float` values. -/
-  values : Array Float
+  /-- Flattened numeric payload, converted to Lean `Float` values.
+
+  This is a `FloatArray` rather than an `Array Float` because the payload is bulk numeric
+  data: `FloatArray` stores the doubles unboxed, so a large file costs one machine word per
+  element instead of one word plus one heap cell. -/
+  values : FloatArray
 
 namespace Internal
 
@@ -88,17 +92,23 @@ def idxFortranOfCIdx (shape : Array Nat) (idxC : Nat) : Nat := Id.run do
     idx := idx / dim
   return result
 
-/-- Reorder a Fortran-ordered flat array into C-order, rejecting an inconsistent payload. -/
+/-- Reorder a Fortran-ordered flat array into C-order, rejecting an inconsistent payload.
+
+The payload is a `FloatArray` for the reason `NpyData.values` gives — the doubles stay unboxed —
+and an out-of-range index is an error rather than a `0.0` fill, so a malformed file is reported
+instead of silently reshaped. Both properties are load-bearing and neither implies the other. -/
 def reorderFortranToC
-    (tag : String) (shape : Array Nat) (raw : Array Float) : Except String (Array Float) := do
+    (tag : String) (shape : Array Nat) (raw : FloatArray) : Except String FloatArray := do
   let count := shape.foldl (fun acc n => acc * n) 1
-  let values ← (Array.range count).mapM fun i =>
+  let mut out := FloatArray.emptyWithCapacity count
+  for i in [0:count] do
     let idxF := idxFortranOfCIdx shape i
-    match raw[idxF]? with
-    | some value => pure value
-    | none => throw <| formatError tag <|
+    if idxF < raw.size then
+      out := out.push (raw.get! idxF)
+    else
+      throw <| formatError tag <|
         s!"Fortran-order index {idxF} is outside the {raw.size}-element payload"
-  pure values
+  pure out
 
 /-- Safe `ByteArray` indexing. -/
 def byteAt? (bs : ByteArray) (i : Nat) : Option UInt8 :=
@@ -249,6 +259,101 @@ def readNpyElement (tag descr : String) (bs : ByteArray) (off : Nat) : Except St
   else
     .error (formatError tag s!"unsupported dtype: {descr}")
 
+/-!
+### Payload decoding
+
+`byteAt?` and `readNpyElement` are the right shape at the file boundary, where a malformed
+file has to be reported rather than guessed at. Inside the payload loop they are the wrong
+shape: `Option` per byte and `Except` per element each cost a heap cell, so decoding an
+array pays about ten allocations per element and runs an order of magnitude below the rate
+at which the same loop can fill a `FloatArray`.
+
+The functions below decode a payload whose bounds and dtype the caller has already checked.
+The dtype is matched once per file rather than once per element, the bytes are read without
+an intermediate `Option`, and the result is unboxed.
+-/
+
+/-- Little-endian `UInt64` at byte offset `o`. Out-of-range bytes read as `0`; callers check
+the payload length first, so that fallback is unreachable for accepted files. -/
+@[inline] def uint64LE (bs : ByteArray) (o : Nat) : UInt64 :=
+  (bs.get! o).toUInt64
+    ||| ((bs.get! (o + 1)).toUInt64 <<< 8)
+    ||| ((bs.get! (o + 2)).toUInt64 <<< 16)
+    ||| ((bs.get! (o + 3)).toUInt64 <<< 24)
+    ||| ((bs.get! (o + 4)).toUInt64 <<< 32)
+    ||| ((bs.get! (o + 5)).toUInt64 <<< 40)
+    ||| ((bs.get! (o + 6)).toUInt64 <<< 48)
+    ||| ((bs.get! (o + 7)).toUInt64 <<< 56)
+
+/-- Little-endian `UInt32` at byte offset `o`, with the same precondition as `uint64LE`. -/
+@[inline] def uint32LE (bs : ByteArray) (o : Nat) : UInt32 :=
+  (bs.get! o).toUInt32
+    ||| ((bs.get! (o + 1)).toUInt32 <<< 8)
+    ||| ((bs.get! (o + 2)).toUInt32 <<< 16)
+    ||| ((bs.get! (o + 3)).toUInt32 <<< 24)
+
+/-- Decode the half-open element range `[lo, hi)` of a `<f8` payload. -/
+def decodeRangeF8 (bs : ByteArray) (dataStart lo hi : Nat) : FloatArray := Id.run do
+  let mut out := FloatArray.emptyWithCapacity (hi - lo)
+  for i in [lo:hi] do
+    out := out.push (Float.ofBits (uint64LE bs (dataStart + i * 8)))
+  pure out
+
+/-- Decode the half-open element range `[lo, hi)` of a `<f4` payload, widening to `Float`. -/
+def decodeRangeF4 (bs : ByteArray) (dataStart lo hi : Nat) : FloatArray := Id.run do
+  let mut out := FloatArray.emptyWithCapacity (hi - lo)
+  for i in [lo:hi] do
+    out := out.push (Float32.toFloat (Float32.ofBits (uint32LE bs (dataStart + i * 4))))
+  pure out
+
+/-- The range decoder for a supported dtype, selected once per file.
+
+Returning the decoder rather than the decoded payload is what keeps the dtype test out of
+the element loop, and it lets one selection serve many ranges. -/
+def rangeDecoder (tag descr : String) (bs : ByteArray) (dataStart : Nat) :
+    Except String (Nat → Nat → FloatArray) :=
+  if descr = "<f8" then
+    .ok (decodeRangeF8 bs dataStart)
+  else if descr = "<f4" then
+    .ok (decodeRangeF4 bs dataStart)
+  else
+    .error (formatError tag s!"unsupported dtype: {descr}")
+
+/-- Element count below which spreading a decode across tasks does not pay.
+
+A task costs a scheduling round trip that only a reasonably large slice earns back, so this
+bounds the task count from below by `totalElements / minElementsPerTask`. -/
+def minElementsPerTask : Nat := 1 <<< 16
+
+/-- How a leading-axis decode is spread across tasks. -/
+inductive Parallelism where
+  /-- Decode every block on the calling thread. -/
+  | sequential
+  /-- Spread the blocks across at most `n` tasks. -/
+  | tasks (n : Nat)
+  /-- Spread the blocks across the platform's hardware concurrency. -/
+  | auto
+  deriving Repr, BEq
+
+/-- Resolve a `Parallelism` request against a payload into an actual task count.
+
+Three bounds apply, and the smallest wins:
+
+- the caller's request, or the platform's hardware concurrency for `auto`;
+- the number of blocks. A block is the smallest piece this can hand back whole, so raising
+  the task count past `nBlocks` would mean cutting a block in half and copying the halves
+  back together afterwards — and that copy costs more than the extra task saves. The
+  leading dimension is therefore a hard ceiling on this decode's parallelism;
+- `totalElements / minElementsPerTask`, so small payloads stay on one thread.
+-/
+def resolveTaskCount (p : Parallelism) (nBlocks totalElements : Nat) : Nat :=
+  let requested :=
+    match p with
+    | .sequential => 1
+    | .tasks n => n
+    | .auto => (System.Platform.Internal.getHardwareConcurrency ()).toNat
+  max 1 (min (min (max 1 requested) nBlocks) (totalElements / minElementsPerTask))
+
 end Internal
 
 /--
@@ -266,10 +371,8 @@ def parseNpy (tag : String) (bs : ByteArray) : Except String NpyData := do
   if hdr.dataStart + dataBytes > bs.size then
     .error (formatError tag "NPY data truncated")
   else
-    let mut raw : Array Float := Array.mkEmpty count
-    for i in [0:count] do
-      let v ← readNpyElement tag hdr.descr bs (hdr.dataStart + i * bytesPer)
-      raw := raw.push v
+    let decode ← rangeDecoder tag hdr.descr bs hdr.dataStart
+    let raw := decode 0 count
     let values ← if hdr.fortran then reorderFortranToC tag hdr.shape raw else pure raw
     .ok { dtype := hdr.descr, shape := hdr.shape, fortran := false, values := values }
 
@@ -313,15 +416,100 @@ def parseNpyLeadingAxisPrefix
           else if hdr.dataStart + expectedCount * bytesPer > bs.size then
             .error (formatError tag "NPY prefix data truncated")
           else
-            let mut raw : Array Float := Array.mkEmpty expectedCount
-            for i in [0:expectedCount] do
-              let v ← readNpyElement tag hdr.descr bs (hdr.dataStart + i * bytesPer)
-              raw := raw.push v
-            .ok { dtype := hdr.descr, shape := expectedShape, fortran := false, values := raw }
+            let decode ← rangeDecoder tag hdr.descr bs hdr.dataStart
+            .ok { dtype := hdr.descr, shape := expectedShape, fortran := false,
+                  values := decode 0 expectedCount }
     | none, none =>
-        .ok { dtype := hdr.descr, shape := #[], fortran := false, values := #[] }
+        .ok { dtype := hdr.descr, shape := #[], fortran := false,
+              values := FloatArray.emptyWithCapacity 0 }
     | _, _ =>
         .error (formatError tag s!"shape mismatch: expected {expectedShape}, got {hdr.shape}")
+
+/--
+A `.npy` payload decoded as one `FloatArray` per index along the leading axis.
+
+`blocks.size` is the leading dimension and every block holds the product of the trailing
+dimensions, so `shape = #[d₀] ++ tail` gives `blocks.size = d₀` and
+`blocks[i]!.size = tail.foldl (· * ·) 1`.
+-/
+structure NpyBlocks where
+  /-- Dtype string as stored in the header, for example `"<f4"` or `"<f8"`. -/
+  dtype : String
+  /-- Logical array shape as stored in the header. -/
+  shape : Array Nat
+  /-- One decoded block per index along the leading axis, in order. -/
+  blocks : Array FloatArray
+
+/--
+Parse a C-order `.npy` file into one `FloatArray` per index along the leading axis.
+
+For a C-order array of shape `(d₀, d₁, …, dₖ)` each leading-axis block is physically
+contiguous, so the `d₀` blocks are independent and therefore support either sequential or
+concurrent decoding.
+
+`parallelism` chooses how many tasks that uses; see `resolveTaskCount` for the bounds that
+apply to the request. `d₀` is a ceiling on it, so a file with a small leading axis is decoded
+with at most that many tasks however many cores are free.
+
+Use this when the consumer wants the blocks apart anyway — one channel, one band, one batch
+element at a time.
+
+Use `parseNpy` when the consumer wants a single flat payload instead. That path decodes on
+one thread by design. Decoding it concurrently would mean filling several separate arrays
+and then copying all of them into one contiguous result, and that final copy walks every
+element a second time: it costs several times the concurrent decode it was supposed to
+speed up, and it holds the pieces and the result in memory simultaneously. Splitting the
+work is only worth it when the pieces are what the caller wanted.
+
+Fortran-order files are rejected. Their leading-axis blocks are interleaved across the
+payload rather than contiguous, so neither the independence nor the contiguity holds.
+-/
+def parseNpyLeadingAxisBlocks (tag : String) (bs : ByteArray)
+    (parallelism : Parallelism := .auto) : Except String NpyBlocks := do
+  let hdr <- parseNpyHeaderMeta tag bs
+  let bytesPer <- npyElementBytes tag hdr.descr
+  if hdr.fortran then
+    .error (formatError tag "leading-axis block loading requires C-order NPY arrays")
+  else
+    match hdr.shape[0]? with
+    | none => .error (formatError tag "leading-axis block loading requires a non-scalar array")
+    | some d0 =>
+        let tail := hdr.shape.extract 1 hdr.shape.size
+        let blockSize := tail.foldl (fun acc n => acc * n) 1
+        let count := d0 * blockSize
+        if hdr.dataStart + count * bytesPer > bs.size then
+          .error (formatError tag "NPY data truncated")
+        else
+          let decode <- rangeDecoder tag hdr.descr bs hdr.dataStart
+          let block : Nat -> FloatArray := fun b => decode (b * blockSize) ((b + 1) * blockSize)
+          let nTasks := resolveTaskCount parallelism d0 count
+          let blocks :=
+            if nTasks <= 1 then
+              (Array.range d0).map block
+            else
+              -- Blocks are grouped, not handed out one per task: the task count follows the
+              -- machine and the block count follows the file, and those are independent.
+              --
+              -- `Task.spawn` takes the work as a `Unit → α` closure, which is what keeps the
+              -- decode inside the task body. Handing a pure expression to an `IO`-level spawn
+              -- instead lets it be floated out onto the spawning thread, and the fan-out then
+              -- runs sequentially at exactly the single-threaded rate.
+              let perTask := (d0 + nTasks - 1) / nTasks
+              let groups : Array (Task (Array FloatArray)) :=
+                (Array.range nTasks).map fun t =>
+                  let lo := t * perTask
+                  let hi := min d0 (lo + perTask)
+                  Task.spawn (fun _ => (Array.range (hi - lo)).map (fun k => block (lo + k)))
+              -- Regrouping moves one pointer per block, not one double per element, so it
+              -- carries none of the cost that joining decoded payloads would.
+              groups.foldl (fun acc g => acc ++ g.get) (Array.emptyWithCapacity d0)
+          .ok { dtype := hdr.descr, shape := hdr.shape, blocks := blocks }
+
+/-- Read a `.npy` file from disk and parse it as `NpyBlocks`. -/
+def readNpyLeadingAxisBlocks (path : System.FilePath)
+    (parallelism : Parallelism := .auto) : IO (Except String NpyBlocks) := do
+  let bs <- IO.FS.readBinFile path
+  pure (parseNpyLeadingAxisBlocks (tag := "npy") bs parallelism)
 
 /-- Read a `.npy` file from disk and parse it as `NpyData`. -/
 def readNpy (path : System.FilePath) : IO (Except String NpyData) := do

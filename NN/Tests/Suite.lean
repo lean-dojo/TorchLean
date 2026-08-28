@@ -17,6 +17,7 @@ public import NN.Tests.IR.ShapeContracts
 public import NN.Tests.MLTheory.CROWNOperators
 public import NN.Tests.MLTheory.CROWNSoundnessGuardrails
 public import NN.Tests.MLTheory.Diagnostics
+public import NN.Tests.Data.IO.Npy
 public import NN.Tests.Runtime.Floats.Suite
 public import NN.Tests.Runtime.Rationals.Suite
 public import NN.Tests.Runtime.Cuda.Suite
@@ -65,6 +66,7 @@ def run : IO Unit := do
     NN.Tests.MLTheory.CROWNOperators.run
     NN.Tests.MLTheory.CROWNSoundnessGuardrails.run
     NN.Tests.MLTheory.Diagnostics.run
+    NN.Tests.Data.IO.Npy.run
     Tests.Floats.run
     Tests.Rationals.Suite.run
     match Runtime.Autograd.Cuda.Buffer.runtimeStatus with

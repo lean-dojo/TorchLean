@@ -78,6 +78,17 @@ private inductive TensorShapeMatch where
   | leadingPrefix
 deriving BEq, Repr
 
+/-- Box an unboxed NPY payload for the tensor constructors, which take an `Array Float`.
+
+`NpyData.values` is a `FloatArray` so that decoding a large file does not pay a heap cell per
+element. `Tensor.ofArray` takes an `Array α`, so the boxing happens once, here, at the point
+where a payload becomes a tensor — rather than throughout the decode. -/
+private def boxPayload (values : FloatArray) : Array Float := Id.run do
+  let mut out := Array.emptyWithCapacity values.size
+  for i in [0:values.size] do
+    out := out.push (values.get! i)
+  pure out
+
 /--
 Load an arbitrary-rank tensor from a `.npy` file under an explicit shape-matching policy.
 
@@ -97,12 +108,12 @@ private def readNpyTensor (path : System.FilePath) (dims : List Nat)
           if data.shape.toList != dims then
             pure (.error s!"npy: shape mismatch, expected {dims}, got {data.shape}")
           else
-            pure <| TorchLean.Tensor.ofArray (α := Float) dims data.values
+            pure <| TorchLean.Tensor.ofArray (α := Float) dims (boxPayload data.values)
   | .leadingPrefix =>
       let res ← readNpyLeadingAxisPrefix path dims.toArray
       match res with
       | .error e => pure (.error e)
-      | .ok data => pure <| TorchLean.Tensor.ofArray (α := Float) dims data.values
+      | .ok data => pure <| TorchLean.Tensor.ofArray (α := Float) dims (boxPayload data.values)
 
 /-- Parse a float-encoded class label as a `Nat` in `[0, classes)`. -/
 private def finLabelOfFloat (tag : String) (classes : Nat) (x : Float) : Except String (Fin classes) := do

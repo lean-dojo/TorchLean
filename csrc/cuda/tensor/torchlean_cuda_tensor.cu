@@ -956,6 +956,118 @@ extern "C" LEAN_EXPORT uint64_t torchlean_cuda_allocator_device_total_bytes(uint
   return err == cudaSuccess ? (uint64_t)totalBytes : 0u;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Device identity.
+//
+// `cudaGetDeviceProperties` is a comparatively expensive query and the answer cannot change for a
+// device index, so it is read once and cached. A failure caches the zeroed record: a host with no
+// reachable device answers "" / 0 exactly as the CPU stub does, which is what lets a caller print
+// one line either way instead of branching on the build flavour.
+static cudaDeviceProp g_torchlean_cuda_device_prop;
+static int g_torchlean_cuda_device_index = 0;
+static bool g_torchlean_cuda_device_prop_valid = false;
+static pthread_once_t g_torchlean_cuda_device_prop_once = PTHREAD_ONCE_INIT;
+
+static void torchlean_cuda_device_prop_init(void) {
+  memset(&g_torchlean_cuda_device_prop, 0, sizeof(g_torchlean_cuda_device_prop));
+  int dev = 0;
+  if (cudaGetDevice(&dev) != cudaSuccess) return;
+  if (cudaGetDeviceProperties(&g_torchlean_cuda_device_prop, dev) != cudaSuccess) return;
+  g_torchlean_cuda_device_index = dev;
+  g_torchlean_cuda_device_prop_valid = true;
+}
+
+static const cudaDeviceProp* torchlean_cuda_device_prop(void) {
+  pthread_once(&g_torchlean_cuda_device_prop_once, torchlean_cuda_device_prop_init);
+  return g_torchlean_cuda_device_prop_valid ? &g_torchlean_cuda_device_prop : nullptr;
+}
+
+// nvcc defines `__CUDA_ARCH_LIST__` in host compilation too, so the binary can state its own
+// compilation targets without the build system having to thread them through as a define.
+//
+// The stringify macros are VARIADIC, and that is the whole point rather than a stylistic choice:
+// a multi-architecture build expands `__CUDA_ARCH_LIST__` to a comma-separated list
+// (`750,860,890,900,1200`), which the preprocessor hands to the macro as five arguments, not one.
+// A single-parameter `#x` compiles fine for a one-architecture build and fails to compile for
+// every other — the exact case this reporting exists to describe. `#__VA_ARGS__` stringifies the
+// whole list, commas included, which is the format the Lean side splits on.
+#ifdef __CUDA_ARCH_LIST__
+#define TORCHLEAN_STRINGIFY_INNER(...) #__VA_ARGS__
+#define TORCHLEAN_STRINGIFY(...) TORCHLEAN_STRINGIFY_INNER(__VA_ARGS__)
+#define TORCHLEAN_CUDA_ARCH_LIST_STR TORCHLEAN_STRINGIFY(__CUDA_ARCH_LIST__)
+#else
+#define TORCHLEAN_CUDA_ARCH_LIST_STR ""
+#endif
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_compiled_arch_list(uint32_t u) {
+  (void)u;
+  return lean_mk_string(TORCHLEAN_CUDA_ARCH_LIST_STR);
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_device_name(uint32_t u) {
+  (void)u;
+  const cudaDeviceProp* p = torchlean_cuda_device_prop();
+  return lean_mk_string(p ? p->name : "");
+}
+
+extern "C" LEAN_EXPORT uint32_t torchlean_cuda_device_index(uint32_t u) {
+  (void)u;
+  return torchlean_cuda_device_prop() ? (uint32_t)g_torchlean_cuda_device_index : 0u;
+}
+
+extern "C" LEAN_EXPORT uint32_t torchlean_cuda_device_capability(uint32_t u) {
+  (void)u;
+  const cudaDeviceProp* p = torchlean_cuda_device_prop();
+  return p ? (uint32_t)(p->major * 10 + p->minor) : 0u;
+}
+
+extern "C" LEAN_EXPORT uint32_t torchlean_cuda_device_sm_count(uint32_t u) {
+  (void)u;
+  const cudaDeviceProp* p = torchlean_cuda_device_prop();
+  return p ? (uint32_t)p->multiProcessorCount : 0u;
+}
+
+// The clock and bus-width figures come from `cudaDeviceGetAttribute` rather than from
+// `cudaDeviceProp`, and that is a portability requirement rather than a preference: CUDA 13
+// REMOVED `clockRate` and `memoryClockRate` from the struct, so a build that reads the fields
+// compiles under 12.x and fails to compile under 13.x. The attribute enums are present in both,
+// which is the documented migration path. A device that declines to answer reports 0, the same
+// as the CPU stub.
+static uint32_t torchlean_cuda_device_attr(cudaDeviceAttr attr) {
+  int dev = 0;
+  if (cudaGetDevice(&dev) != cudaSuccess) return 0u;
+  int value = 0;
+  if (cudaDeviceGetAttribute(&value, attr, dev) != cudaSuccess) return 0u;
+  return (uint32_t)value;
+}
+
+extern "C" LEAN_EXPORT uint32_t torchlean_cuda_device_clock_khz(uint32_t u) {
+  (void)u;
+  return torchlean_cuda_device_attr(cudaDevAttrClockRate);
+}
+
+extern "C" LEAN_EXPORT uint32_t torchlean_cuda_device_mem_clock_khz(uint32_t u) {
+  (void)u;
+  return torchlean_cuda_device_attr(cudaDevAttrMemoryClockRate);
+}
+
+extern "C" LEAN_EXPORT uint32_t torchlean_cuda_device_mem_bus_width(uint32_t u) {
+  (void)u;
+  return torchlean_cuda_device_attr(cudaDevAttrGlobalMemoryBusWidth);
+}
+
+extern "C" LEAN_EXPORT uint32_t torchlean_cuda_driver_version(uint32_t u) {
+  (void)u;
+  int v = 0;
+  return cudaDriverGetVersion(&v) == cudaSuccess ? (uint32_t)v : 0u;
+}
+
+extern "C" LEAN_EXPORT uint32_t torchlean_cuda_runtime_version(uint32_t u) {
+  (void)u;
+  int v = 0;
+  return cudaRuntimeGetVersion(&v) == cudaSuccess ? (uint32_t)v : 0u;
+}
+
 extern "C" LEAN_EXPORT uint64_t torchlean_cuda_allocator_cache_bytes(uint32_t u) {
   (void)u;
   torchlean_cuda_lock(&g_torchlean_cuda_cache_mutex, "pthread_mutex_lock cache-bytes query failed");

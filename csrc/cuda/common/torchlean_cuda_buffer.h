@@ -131,6 +131,26 @@ LEAN_EXPORT uint64_t torchlean_cuda_wrapper_finalize_count(uint32_t u);
 LEAN_EXPORT uint64_t torchlean_cuda_allocator_device_free_bytes(uint32_t u);
 LEAN_EXPORT uint64_t torchlean_cuda_allocator_device_total_bytes(uint32_t u);
 
+// Device identity. A benchmark that cannot name the device it ran on produces a number nobody can
+// compare, so these expose what `cudaGetDeviceProperties` already knows about the current device.
+// The name is a fresh Lean string; every other field is a scalar, `0` when no device is reachable
+// and in the CPU stub. `capability` is `major * 10 + minor` (so `sm_86` reads `86`), matching the
+// `-arch=sm_XY` spelling a build is compiled for.
+LEAN_EXPORT lean_obj_res torchlean_cuda_device_name(uint32_t u);
+// The `sm_XY` targets this binary was actually compiled for, comma-separated in
+// `__CUDA_ARCH_LIST__` spelling (`"860"`, `"750,860"`), empty in the CPU stub. A binary whose list
+// omits the running device's capability reaches it through PTX JIT, which is a different thing to
+// have measured, so the pair of facts has to be reportable together.
+LEAN_EXPORT lean_obj_res torchlean_cuda_compiled_arch_list(uint32_t u);
+LEAN_EXPORT uint32_t torchlean_cuda_device_index(uint32_t u);
+LEAN_EXPORT uint32_t torchlean_cuda_device_capability(uint32_t u);
+LEAN_EXPORT uint32_t torchlean_cuda_device_sm_count(uint32_t u);
+LEAN_EXPORT uint32_t torchlean_cuda_device_clock_khz(uint32_t u);
+LEAN_EXPORT uint32_t torchlean_cuda_device_mem_clock_khz(uint32_t u);
+LEAN_EXPORT uint32_t torchlean_cuda_device_mem_bus_width(uint32_t u);
+LEAN_EXPORT uint32_t torchlean_cuda_driver_version(uint32_t u);
+LEAN_EXPORT uint32_t torchlean_cuda_runtime_version(uint32_t u);
+
 // Lean `Buffer × Buffer × Buffer` as nested pairs.
 static inline lean_object* torchlean_cuda_box_three_buffers(
     torchlean_cuda_buffer* first, torchlean_cuda_buffer* second,

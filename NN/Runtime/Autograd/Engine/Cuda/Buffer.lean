@@ -194,6 +194,128 @@ def allocatorStatsWithToken (token : UInt32) : IO AllocatorStats := do
 def allocatorStats : IO AllocatorStats :=
   allocatorStatsWithToken 0
 
+/-! ### Device identity
+
+A measurement is only comparable if it names the machine it was taken on. The allocator snapshot
+answers *how much* device memory there is; these answer *which device* — the fact a benchmark row
+needs in order to be filed beside another one. -/
+
+@[never_extract, extern "torchlean_cuda_device_name"]
+opaque deviceNameRaw (u : UInt32) : String
+
+@[never_extract, extern "torchlean_cuda_compiled_arch_list"]
+opaque compiledArchListRaw (u : UInt32) : String
+
+@[never_extract, extern "torchlean_cuda_device_index"]
+opaque deviceIndexRaw (u : UInt32) : UInt32
+
+@[never_extract, extern "torchlean_cuda_device_capability"]
+opaque deviceCapabilityRaw (u : UInt32) : UInt32
+
+@[never_extract, extern "torchlean_cuda_device_sm_count"]
+opaque deviceSmCountRaw (u : UInt32) : UInt32
+
+@[never_extract, extern "torchlean_cuda_device_clock_khz"]
+opaque deviceClockKhzRaw (u : UInt32) : UInt32
+
+@[never_extract, extern "torchlean_cuda_device_mem_clock_khz"]
+opaque deviceMemClockKhzRaw (u : UInt32) : UInt32
+
+@[never_extract, extern "torchlean_cuda_device_mem_bus_width"]
+opaque deviceMemBusWidthRaw (u : UInt32) : UInt32
+
+@[never_extract, extern "torchlean_cuda_driver_version"]
+opaque driverVersionRaw (u : UInt32) : UInt32
+
+@[never_extract, extern "torchlean_cuda_runtime_version"]
+opaque runtimeVersionRaw (u : UInt32) : UInt32
+
+/--
+Identity of the CUDA device this process is using.
+
+Every field is what `cudaGetDeviceProperties` reports for the current device, except the two
+version fields, which come from `cudaDriverGetVersion` / `cudaRuntimeGetVersion`. `capability` is
+`major * 10 + minor`, so it reads the way an `-arch=sm_XY` flag is spelled — which is the
+comparison that matters, because a binary compiled for a lower architecture still runs here
+through PTX JIT and would otherwise report a device that says nothing about the code that ran on
+it.
+
+In the CPU stub, and in a CUDA build on a host with no reachable device, `name` is empty and every
+scalar is `0`. `deviceInfo` returns `none` in that case rather than a record of zeroes.
+-/
+structure DeviceInfo where
+  name : String
+  index : UInt32
+  /-- `major * 10 + minor` — `86` is `sm_86`, `120` is `sm_120`. -/
+  capability : UInt32
+  smCount : UInt32
+  clockKhz : UInt32
+  memClockKhz : UInt32
+  memBusWidthBits : UInt32
+  totalBytes : UInt64
+  /-- `cudaDriverGetVersion`, e.g. `12060` for 12.6. -/
+  driverVersion : UInt32
+  /-- `cudaRuntimeGetVersion`, e.g. `12060` for 12.6. -/
+  runtimeVersion : UInt32
+deriving Repr
+
+/-- Read the current device's identity, or `none` when there is no device to name (the CPU stub, or
+a CUDA build on a host where no card answers). -/
+def deviceInfo : IO (Option DeviceInfo) := do
+  let name := deviceNameRaw 0
+  if name.isEmpty then return none
+  return some
+    { name
+      index := deviceIndexRaw 0
+      capability := deviceCapabilityRaw 0
+      smCount := deviceSmCountRaw 0
+      clockKhz := deviceClockKhzRaw 0
+      memClockKhz := deviceMemClockKhzRaw 0
+      memBusWidthBits := deviceMemBusWidthRaw 0
+      totalBytes := allocatorDeviceTotalBytesRaw 0
+      driverVersion := driverVersionRaw 0
+      runtimeVersion := runtimeVersionRaw 0 }
+
+/-- The `sm_XY` targets this binary was compiled for, as `__CUDA_ARCH_LIST__` spells them
+(`"860"`, `"750,860"`). Empty in the CPU stub, and empty in a CUDA build whose compiler did not
+define the macro. -/
+def compiledArchList : String := compiledArchListRaw 0
+
+/-- Whether this binary holds native code for the device it is running on.
+
+`false` here does not mean broken — PTX JIT will produce code for the device from the embedded
+intermediate representation, and it will run. It means the timings are of JIT-compiled code
+generated for an architecture the compiler was never told about, which is a different measurement
+from the one a reader will assume, and the only place that difference is visible is here.
+
+An empty compiled list is not evidence either way (no device build, or no macro), so it answers
+`true` rather than warning about a build it cannot see. -/
+def DeviceInfo.runsNatively (d : DeviceInfo) : Bool :=
+  compiledArchList.isEmpty ||
+    (compiledArchList.splitOn ",").any (fun a => a.trimAscii.toString == toString (d.capability.toNat * 10))
+
+/-- A CUDA version integer (`12060`) as it is written (`12.6`). -/
+def versionString (v : UInt32) : String :=
+  let n := v.toNat
+  s!"{n / 1000}.{(n % 1000) / 10}"
+
+/-- Peak theoretical memory bandwidth in GB/s, from the memory clock and bus width — the roofline
+denominator, so that a row reporting achieved GB/s can be read as a fraction without the reader
+having to look the card up. Double data rate is assumed (every device this runs on). -/
+def DeviceInfo.peakBandwidthGBs (d : DeviceInfo) : Float :=
+  (Float.ofNat d.memClockKhz.toNat) * 1.0e3 * 2.0 *
+    (Float.ofNat d.memBusWidthBits.toNat / 8.0) / 1.0e9
+
+/-- One-line device identity for a benchmark header. -/
+def DeviceInfo.format (d : DeviceInfo) : String :=
+  s!"{d.name} (device {d.index}, sm_{d.capability}, {d.smCount} SMs, " ++
+  s!"{(Float.ofNat d.totalBytes.toNat) / (1024.0 * 1024.0 * 1024.0)} GiB, " ++
+  s!"~{d.peakBandwidthGBs} GB/s peak, " ++
+  s!"driver {versionString d.driverVersion}, runtime {versionString d.runtimeVersion})" ++
+  (if compiledArchList.isEmpty then ""
+   else if d.runsNatively then s!" [compiled for {compiledArchList}]"
+   else s!" [WARNING: compiled for {compiledArchList}, NOT sm_{d.capability} — running via PTX JIT]")
+
 /-- Format a byte count as MiB for allocator progress messages. -/
 def mibString (bytes : UInt64) : String :=
   let mib := (Float.ofNat bytes.toNat) / (1024.0 * 1024.0)

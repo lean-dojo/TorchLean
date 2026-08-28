@@ -142,6 +142,91 @@ def runReleaseStress : IO Unit := do
   if Buffer.size b != 0 then
     throw <| IO.userError s!"release size reset: expected 0, got {Buffer.size b}"
 
+/--
+Build `k` distinct length-`n` buffers and force their allocation immediately.
+
+The fill value varies per `(salt, index)` for two reasons: within a call it stops the compiler from
+hoisting one shared `full` out of the inner loop, and across calls a distinct `salt` keeps the whole
+expression from being treated as loop-invariant (and hoisted out of the *caller's* loop) or CSE'd with
+another call site — either of which would allocate the buffers once, outside the arena under test. The
+returned element-count total is a forcing witness the caller checks.
+-/
+def buildArenaScratch (n : UInt32) (k : Nat) (salt : Nat) : Array Buffer × Nat :=
+  Id.run do
+    let mut held : Array Buffer := Array.mkEmpty k
+    for i in [0:k] do
+      held := held.push (Buffer.full n (1.0 + Float.ofNat (salt * k + i)))
+    let mut touched : Nat := 0
+    for b in held do
+      touched := touched + (Buffer.size b).toNat
+    return (held, touched)
+
+def runArenaStress : IO Unit := do
+  IO.println "== cuda arena scope stress =="
+
+  let n : UInt32 := 4096
+  let k : Nat := 64
+  let blocks : Nat := 4
+  let expectTouched := k * n.toNat
+  let base ← Buffer.allocatorStats
+  IO.println s!"  baseline:        {base.format}"
+
+  -- Reclaim path: `k` buffers are built and held live (never released) inside an arena, kept alive
+  -- across the scope exit, and reclaimed anyway. This is the case explicit `release` cannot reach: the
+  -- buffers stay GC-reachable for the whole scope, so only the arena can free them.
+  for blockIdx in [0:blocks] do
+    let before ← Buffer.allocatorStatsWithToken (UInt32.ofNat blockIdx)
+    Buffer.arenaEnter
+    let (held, touched) := buildArenaScratch n k blockIdx
+    if touched != expectTouched then
+      throw <| IO.userError s!"arena: scratch build under-allocated ({touched} vs {expectTouched})"
+    let inside ← Buffer.allocatorStatsWithToken (UInt32.ofNat (blockIdx + 100))
+    if inside.allocCount != before.allocCount + UInt64.ofNat k then
+      throw <| IO.userError
+        s!"arena: expected {k} in-scope allocations ({before.allocCount} → {inside.allocCount})"
+    if inside.freeCount != before.freeCount then
+      throw <| IO.userError
+        s!"arena: buffers freed before scope exit ({before.freeCount} → {inside.freeCount})"
+    -- Keep nothing: every in-scope buffer is reclaimed even though `held` still references them all.
+    Buffer.arenaExit #[]
+    -- Touch `held` *after* the exit so it stays live across it: this proves the ARENA did the freeing,
+    -- not reference-counted finalization (which cannot run while `held` is still referenced).
+    let heldGuard := held.size
+    let after ← Buffer.allocatorStatsWithToken (UInt32.ofNat (blockIdx + 200))
+    if heldGuard != k then
+      throw <| IO.userError s!"arena: held guard mismatch ({heldGuard} vs {k})"
+    if after.freeCount != before.freeCount + UInt64.ofNat k then
+      throw <| IO.userError
+        s!"arena: scope exit freed {after.freeCount - before.freeCount}, expected {k} live buffers"
+    if after.liveBytes != before.liveBytes then
+      throw <| IO.userError
+        s!"arena: live bytes not restored at scope exit ({before.liveBytes} → {after.liveBytes})"
+  IO.println s!"  reclaimed {k} live in-scope buffers across {blocks} arenas"
+
+  -- Promotion path: a kept buffer survives the scope and stays usable; the rest are reclaimed.
+  let before ← Buffer.allocatorStats
+  Buffer.arenaEnter
+  let keeper := Buffer.full n 2.0
+  -- Force `keeper`'s allocation inside the scope (so it is registered and then promoted on exit).
+  if Buffer.size keeper != n then
+    throw <| IO.userError "arena: keep-path keeper not allocated"
+  let (scratch, scratchTouched) := buildArenaScratch n k blocks
+  if scratchTouched != expectTouched then
+    throw <| IO.userError "arena: keep-path scratch build under-allocated"
+  Buffer.arenaExit #[keeper]
+  let scratchGuard := scratch.size
+  let after ← Buffer.allocatorStats
+  if scratchGuard != k then
+    throw <| IO.userError "arena: keep-path scratch guard mismatch"
+  if after.freeCount != before.freeCount + UInt64.ofNat k then
+    throw <| IO.userError
+      s!"arena keep: expected {k} frees, got {after.freeCount - before.freeCount}"
+  -- `keeper` was promoted out of the scope, so its data is intact: reducing it still sees `2.0`.
+  let keptSum := (Buffer.toFloatArray (Buffer.reduceSum keeper)).get! 0
+  let expectedSum := 2.0 * Float.ofNat n.toNat
+  Utils.assertApprox "arena kept-buffer survives scope" keptSum expectedSum (tol := 1e-1)
+  IO.println "  promoted buffer survived its arena"
+
 @[noinline] def runWrapperLifetimeIteration (i : Nat) : IO Unit := do
   let host := FloatArray.mk #[i.toFloat, 2.0, -3.0, 4.0]
   let a ← Buffer.ofFloatArrayIO host
@@ -555,10 +640,102 @@ def runCacheCapTest : IO Unit := do
       s!"block-cache cap: overflow-value child failed (exit {overflow.exitCode}); stderr:\n{overflow.stderr}"
   IO.println "  overflow: oversized cap rejected, cache stays unbounded ✓"
 
+/--
+Planted use-after-free, the subject of `runArenaDetectorDeathTest`. Allocates two buffers inside an
+arena, reclaims **both** at `arenaExit`, then uses them in an op — the same hazard as touching a
+`release`d buffer. Because reclaimed buffers have `size == 0`, the bare size check (`0 == 0`) lets this
+slip through to a launch on freed memory; only the detector (`TORCHLEAN_ARENA_DEBUG=1`) catches it,
+naming the epoch. Run only in a forked child (selected by `TORCHLEAN_ARENA_UAF_PROBE=uaf`): under the
+detector it `panic`s (which is why it must be forked, not asserted in-process); with the detector off it
+returns a silently-wrong size-0 result — exactly the silent corruption the detector closes. -/
+def runArenaUseAfterFreeProbe : IO Unit := do
+  IO.println "== cuda arena use-after-free probe =="
+  let n : UInt32 := 16
+  Buffer.arenaEnter
+  let a := Buffer.full n 3.0
+  let b := Buffer.full n 5.0
+  let forced := Buffer.size a + Buffer.size b          -- force both allocations inside the epoch
+  if forced != 2 * n then
+    throw <| IO.userError "uaf probe: operands not allocated"
+  Buffer.arenaExit #[]                                  -- reclaim BOTH (keep nothing)
+  -- `a` and `b` are now reclaimed (size 0). The detector asserts liveness before the size check and
+  -- panics here; with the detector off, `add` slips past `0 == 0` and yields a silently-empty buffer.
+  let bad := Buffer.add a b
+  IO.println s!"  detector OFF: use-after-free slipped through, result size = {Buffer.size bad} (expected 16)"
+
+/--
+Valid arena promotion, the negative-case subject of `runArenaDetectorDeathTest`. Promotes one buffer
+past the scope and reclaims another, then uses the *promoted* buffer in a **binary** op — which flows
+through the same `require_same_size2` choke point the detector guards. A promoted buffer is live
+(`arena_freed_depth == 0`), so the detector must not fire and the result must be correct. Selected in a
+forked child by `TORCHLEAN_ARENA_UAF_PROBE=valid`. -/
+def runArenaValidPromotionProbe : IO Unit := do
+  IO.println "== cuda arena valid-promotion probe =="
+  let n : UInt32 := 16
+  Buffer.arenaEnter
+  let keep := Buffer.full n 2.0
+  let scratch := Buffer.full n 7.0
+  let forced := Buffer.size keep + Buffer.size scratch  -- force both allocations inside the epoch
+  if forced != 2 * n then
+    throw <| IO.userError "valid-promotion probe: operands not allocated"
+  Buffer.arenaExit #[keep]                              -- promote `keep`; reclaim `scratch`
+  -- `keep` is promoted (live). A binary op on it exercises the detector's choke point and must pass.
+  let ok := Buffer.add keep keep
+  let s := (Buffer.toFloatArray (Buffer.reduceSum ok)).get! 0
+  if s != 4.0 * Float.ofNat n.toNat then
+    throw <| IO.userError s!"valid-promotion probe: wrong result {s} (expected {4.0 * Float.ofNat n.toNat})"
+  IO.println s!"  promoted buffer reused in a binary op, result sum = {s}"
+
+/--
+Positive + negative regression test for the arena use-after-free detector. A detected UAF must `panic`
+(it cannot be caught in-process), so the suite binary is forked in each configuration via
+`/proc/self/exe` and its outcome inspected:
+
+* **positive** — `TORCHLEAN_ARENA_DEBUG=1` + the planted UAF ⇒ the child aborts with a
+  `use-after-arena-free` panic;
+* **negative (no false positive)** — detector on + a *valid* arena promotion
+  (`runArenaValidPromotionProbe`, which reuses a promoted buffer in a binary op through the detector's
+  own choke point) ⇒ the child exits cleanly, so the detector never fires on a kept buffer;
+* **control** — detector off + the planted UAF ⇒ the child exits cleanly (the UAF slips through, the
+  silent corruption the detector closes).
+
+The forked children re-enter the suite with `TORCHLEAN_ARENA_UAF_PROBE` set (see `NN.Tests.run`) and so
+run only the relevant fragment. Linux-only (uses `/proc/self/exe`); skipped with a note elsewhere. -/
+def runArenaDetectorDeathTest : IO Unit := do
+  IO.println "== cuda arena use-after-free detector (fork death test) =="
+  let self : System.FilePath := "/proc/self/exe"
+  if !(← self.pathExists) then
+    IO.println "  skipped: no /proc/self/exe (fork death test is Linux-only)"
+    return
+  let contains (hay needle : String) : Bool := (hay.splitOn needle).length ≥ 2
+  let fork (debug : Bool) (mode : String) : IO IO.Process.Output := do
+    let env := #[("TORCHLEAN_ARENA_UAF_PROBE", some mode)]
+    let env := if debug then env.push ("TORCHLEAN_ARENA_DEBUG", some "1") else env
+    IO.Process.output { cmd := self.toString, args := #[], env := env }
+  -- positive: the detector aborts the planted use-after-free, naming the hazard.
+  let pos ← fork true "uaf"
+  if pos.exitCode == 0 then
+    throw <| IO.userError "arena UAF detector: detector ON did NOT abort the planted use-after-free"
+  if !(contains (pos.stderr ++ pos.stdout) "use-after-arena-free") then
+    throw <| IO.userError s!"arena UAF detector: detector ON aborted without the expected message; stderr:\n{pos.stderr}"
+  IO.println "  positive: detector ON aborts the planted use-after-free ✓"
+  -- negative: a valid promotion under the detector is left untouched (no false positive).
+  let neg ← fork true "valid"
+  if neg.exitCode != 0 then
+    throw <| IO.userError s!"arena UAF detector: false positive on a valid promotion (exit {neg.exitCode}); stderr:\n{neg.stderr}"
+  IO.println "  negative: detector ON leaves a valid arena promotion untouched ✓"
+  -- control: with the detector off the same use-after-free slips through and the child exits cleanly.
+  let off ← fork false "uaf"
+  if off.exitCode != 0 then
+    throw <| IO.userError s!"arena UAF detector: with the detector off the probe should exit cleanly (exit {off.exitCode})"
+  IO.println "  control: detector OFF leaves the use-after-free undetected, as designed ✓"
+
 def run : IO Unit := do
   IO.println "=== CUDA runtime stress suite ==="
   runRngStress
   runReleaseStress
+  runArenaStress
+  runArenaDetectorDeathTest
   runWrapperLifetimeStress
   runCacheCapTest
   runGradientAliasingStress

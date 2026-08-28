@@ -357,6 +357,49 @@ opaque collectAllocatorRaw (force : UInt32) : UInt32
 def collectAllocator (force : Bool := true) : UInt32 :=
   collectAllocatorRaw (if force then 1 else 0)
 
+/-!
+### Scoped device-memory arena (`withCudaArena`)
+
+A long *pure* eager loop — a `foldl` of `Buffer → Buffer` ops with no IO sequencing — keeps every
+intermediate `Buffer` GC-*reachable* until the final readback, so the finalizers that would free the
+device memory never run and the working set grows with the loop length. Explicit `release` cannot
+reach those buffers: a pure carrier has no IO point at which to call it.
+
+A scoped arena fixes this. `arenaEnter` opens an allocation epoch; every device buffer allocated while
+it is open is tracked. `arenaExit keep` frees the device data of *all* of them — reachable or not —
+except the `keep` results, which survive: promoted to an enclosing arena if there is one, or left to
+ordinary reference-counted finalization at the outermost level. This matches a training loop's natural
+phase boundary (one LM step / one fold).
+
+**Contract.** Every buffer that must outlive the scope MUST appear in `keep` (or be reachable only
+through a kept buffer). Touching any other in-scope buffer after `arenaExit` is a use-after-free, the
+same hazard as reading a buffer after `release`.
+-/
+
+@[never_extract, extern "torchlean_cuda_arena_enter"]
+opaque arenaEnter : IO Unit
+
+@[never_extract, extern "torchlean_cuda_arena_exit"]
+opaque arenaExit (keep : @& Array Buffer) : IO Unit
+
+/--
+Run `body` inside a fresh device-memory arena, then reclaim every buffer it allocated except those
+named by `keep result`.
+
+`keep` extracts the buffers that must survive the scope (typically the step's result parameters). If
+`body` raises, the arena is still closed and every in-scope buffer is reclaimed before the exception
+propagates.
+-/
+def withCudaArena {α : Type} (keep : α → Array Buffer) (body : IO α) : IO α := do
+  arenaEnter
+  try
+    let r ← body
+    arenaExit (keep r)
+    return r
+  catch e =>
+    arenaExit #[]
+    throw e
+
 /-- Allocate a length-`n` buffer filled with zeros. -/
 @[never_extract, extern "torchlean_cuda_buffer_zeros"]
 opaque zeros (n : UInt32) : Buffer

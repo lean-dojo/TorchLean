@@ -57,6 +57,14 @@ def run : IO Unit := do
   match ← IO.getEnv "TORCHLEAN_CUDA_CACHE_PROBE" with
   | some "cache-cap" => Tests.Cuda.Stress.runCacheCapProbe
   | _ =>
+  -- Death-test child modes for the arena use-after-free detector. A forked child (see
+  -- `Tests.Cuda.Stress.runArenaDetectorDeathTest`) re-enters here with `TORCHLEAN_ARENA_UAF_PROBE` set
+  -- and runs only the planted UAF (`uaf` — expected to panic under `TORCHLEAN_ARENA_DEBUG=1`) or a
+  -- valid promotion (`valid` — expected to be left alone), then exits, so the parent can inspect it.
+  match ← IO.getEnv "TORCHLEAN_ARENA_UAF_PROBE" with
+  | some "uaf" => Tests.Cuda.Stress.runArenaUseAfterFreeProbe
+  | some "valid" => Tests.Cuda.Stress.runArenaValidPromotionProbe
+  | _ =>
     IO.println "== TorchLean: curated tests =="
     NN.Tests.API.BuilderSeeds.run
     NN.Tests.API.SelfSupervised.BlockMask.run

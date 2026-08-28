@@ -1,6 +1,7 @@
 #include <lean/lean.h>
 #include <lean/mimalloc.h>
 
+#include "torchlean_cuda_arena.h"
 #include "torchlean_cuda_buffer.h"
 #include "torchlean_cuda_common.h"
 #include "torchlean_cuda_deterministic_reductions_env.h"
@@ -349,6 +350,7 @@ static void torchlean_cuda_buffer_finalize(void* ptr) {
   if (!b) {
     return;
   }
+  torchlean_arena_unlink(b);
   (void)torchlean_cuda_buffer_release_data(b);
   free(b);
   torchlean_cuda_note_wrapper_finalize();
@@ -388,6 +390,7 @@ extern "C" void torchlean_cuda_buffer_drop_unboxed(torchlean_cuda_buffer* b) {
   if (!b) {
     return;
   }
+  torchlean_arena_unlink(b);
   (void)torchlean_cuda_buffer_release_data(b);
   free(b);
 }
@@ -399,6 +402,8 @@ extern "C" torchlean_cuda_buffer* torchlean_cuda_buffer_alloc(size_t n) {
   }
   b->size = n;
   b->data = NULL;
+  b->arena_reg = NULL;
+  b->arena_freed_depth = 0;
   if (n > 0) {
     b->data = torchlean_cuda_take_cached_block(n);
   }
@@ -423,6 +428,7 @@ extern "C" torchlean_cuda_buffer* torchlean_cuda_buffer_alloc(size_t n) {
   }
   if (n > 0) {
     torchlean_cuda_note_alloc(n);
+    torchlean_arena_register(b);
   }
   return b;
 }
@@ -1016,6 +1022,31 @@ extern "C" LEAN_EXPORT uint32_t torchlean_runtime_collect_allocator(uint32_t for
   mi_heap_collect(mi_heap_get_default(), force_collect);
   mi_collect_reduce(0);
   return 1;
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_arena_enter(lean_obj_arg world) {
+  (void)world;
+  torchlean_arena_enter();
+  return lean_io_result_mk_ok(lean_box(0));
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_arena_exit(b_lean_obj_arg keep,
+                                                              lean_obj_arg world) {
+  (void)world;
+  size_t nkeep = lean_array_size((lean_object*)keep);
+  torchlean_cuda_buffer** ptrs = NULL;
+  if (nkeep > 0) {
+    ptrs = (torchlean_cuda_buffer**)malloc(nkeep * sizeof(torchlean_cuda_buffer*));
+    if (!ptrs) {
+      lean_internal_panic_out_of_memory();
+    }
+    for (size_t i = 0; i < nkeep; ++i) {
+      ptrs[i] = torchlean_cuda_buffer_unbox(lean_array_get_core((lean_object*)keep, i));
+    }
+  }
+  torchlean_arena_exit(ptrs, nkeep, torchlean_cuda_buffer_release_data);
+  free(ptrs);
+  return lean_io_result_mk_ok(lean_box(0));
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_zeros(uint32_t n) {

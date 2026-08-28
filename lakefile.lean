@@ -189,10 +189,29 @@ target torchlean_libtorch_sdpa_stub pkg : FilePath :=
   else
     pure (Job.pure (pkg.buildDir / "torchlean_libtorch_sdpa_stub_skipped"))
 
+/-- Compile the glibc ≥ 2.38 isoc23 link shim (`csrc/cuda/common/torchlean_isoc23_shim.c`).
+
+nvcc's host pass under `_GNU_SOURCE` references `__isoc23_strto*`, which an older link-time
+glibc (as bundled by the Lean toolchain) does not export, breaking the CUDA link. This tiny
+object *defines* those names as weak wrappers over the plain `strto*`; see the source header. -/
+private def buildIsoc23Shim (pkg : Package) := do
+  let srcJob ← inputFile (pkg.dir / "csrc/cuda/common/torchlean_isoc23_shim.c") false
+  let oFile := pkg.buildDir / "torchlean_isoc23_shim.o"
+  buildO oFile srcJob #["-O2", "-fPIC"] #[] "cc"
+
+/-- The isoc23 link shim as a linkable object; built and linked only for the CUDA build, so
+non-CUDA builds are byte-for-byte unchanged. Weak symbols make it inert where unneeded. -/
+target torchlean_isoc23_shim pkg : FilePath :=
+  if cudaEnabled then
+    buildIsoc23Shim pkg
+  else
+    pure (Job.pure (pkg.buildDir / "torchlean_isoc23_shim_skipped"))
+
 @[default_target]
 lean_lib NN where
   moreLinkObjs :=
-    if cudaEnabled && libtorchEnabled then #[torchlean_libtorch_sdpa_so]
+    if cudaEnabled && libtorchEnabled then #[torchlean_libtorch_sdpa_so, torchlean_isoc23_shim]
+    else if cudaEnabled then #[torchlean_libtorch_sdpa_stub, torchlean_isoc23_shim]
     else #[torchlean_libtorch_sdpa_stub]
   -- The reusable library follows its canonical umbrella. Examples, tests, CI-only modules,
   -- documentation, and executable roots have separate targets below.

@@ -62,6 +62,10 @@ Generated locally:
 - `checks/cuda_sanitize_tests.sh`: CUDA sanitizer runner for the CUDA runtime test suite.
 - `checks/cuda_profile_tests.sh`: optional Nsight Systems / Nsight Compute wrapper for CUDA
   performance reports.
+- `checks/cuda_arch_target.sh`: checks that the `cuda_arch` Lake option and the
+  `TORCHLEAN_CUDA_ARCH` environment fallback reach `nvcc` and that changing the target
+  recompiles the kernels. A recording stand-in for `nvcc` supplies the evidence, so neither a
+  CUDA toolkit nor a GPU is needed.
 - `checks/repo_lint.py`: repository lint used by `lake lint`. It checks source hygiene, public API
   boundaries, import-only aggregators, fixed-rank names in public tensor/model APIs,
   trusted-axiom quarantine, public-example spellings, DocGen/Verso math markup, module

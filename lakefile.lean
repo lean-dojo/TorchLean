@@ -31,6 +31,52 @@ private def cudaHome : String :=
   | some p => cleanCudaHome p
   | none => "/usr/local/cuda"
 
+/-- CUDA compilation target for the native kernels, from `-K cuda_arch=...`.
+
+Device code is compiled *for* an architecture. With no target, `nvcc` applies its own built-in
+default, which changes with the toolkit version (CUDA 13.0 emits `sm_75` SASS plus `compute_75`
+PTX). A binary then runs natively on that architecture only, reaching newer GPUs through forward
+PTX JIT and older ones not at all, so the default is a portability choice rather than a
+performance one.
+
+Accepted values:
+* a bare architecture, such as `sm_86`, `compute_86`, `native`, `all`, or `all-major`, passed as
+  `-arch=<value>` — `nvcc` shorthand for that architecture's SASS *and* its PTX;
+* a value starting with `-`, such as `-gencode arch=compute_86,code=[sm_86,compute_86]`, split on
+  spaces and passed verbatim, which is how a multi-architecture binary is requested.
+
+The `TORCHLEAN_CUDA_ARCH` environment variable supplies the same value when the Lake option is
+absent, so a container or CI job can select the target without rewriting its `lake` invocation.
+Prefer either spelling over `nvcc`'s own `NVCC_APPEND_FLAGS`: both reach `buildO`'s traced
+arguments below, whereas a variable Lake never reads leaves the existing objects looking current,
+and the build then links kernels compiled for the previous architecture. -/
+private def cudaArchConfig : Option String :=
+  match get_config? cuda_arch with
+  | some v =>
+      let t := v.trimAscii.toString
+      if t.isEmpty then none else some t
+  | none => none
+
+/-- Resolve the CUDA compilation target: the `cuda_arch` Lake option, else `TORCHLEAN_CUDA_ARCH`,
+else none (leaving `nvcc` on its built-in default). -/
+private def resolveCudaArch : SpawnM (Option String) := do
+  match cudaArchConfig with
+  | some spec => return some spec
+  | none =>
+      let env ← IO.getEnv "TORCHLEAN_CUDA_ARCH"
+      return env.bind fun v =>
+        let t := v.trimAscii.toString
+        if t.isEmpty then none else some t
+
+/-- `nvcc` flags for a resolved CUDA compilation target; empty when no target was requested. -/
+private def cudaArchArgs : Option String → Array String
+  | none => #[]
+  | some spec =>
+      if spec.startsWith "-" then
+        ((spec.splitOn " ").filter (!·.isEmpty)).toArray
+      else
+        #[s!"-arch={spec}"]
+
 /-- Optional explicit LibTorch root from `-K libtorch_home=...`. -/
 private def libtorchHomeConfig : Option String :=
   match get_config? libtorch_home with
@@ -226,22 +272,26 @@ private def buildNativeBackendLib (pkg : Package) (spec : NativeBackendLib) := d
   let headerDeps ← nativeHeaderDeps pkg
   let includeArgs := nativeIncludeArgs pkg
   let libFile := pkg.buildDir / nameToStaticLib spec.stem
+  -- Include paths stay in `weakArgs`, where a moved checkout does not invalidate every object.
+  -- The flags that change what the compiler emits belong in `traceArgs`: `buildO` hashes those,
+  -- so switching optimization level or CUDA compilation target rebuilds instead of silently
+  -- reusing objects built for the previous one.
   if cudaEnabled then
     let srcJob ← inputFile (pkg.dir / spec.cudaSrc) false
     let oFile := pkg.buildDir / s!"{spec.stem}.o"
+    let archArgs := cudaArchArgs (← resolveCudaArch)
     let oJob ← buildO oFile srcJob
-      (#[
-        "-I", lean.includeDir.toString,
-        "-I", s!"{cudaHome}/include",
-        "-c", "--std=c++17", "-O2", "-Xcompiler", "-fPIC"
-      ] ++ includeArgs) #[] "nvcc" (pure headerDeps.getTrace)
+      (weakArgs := #["-I", lean.includeDir.toString, "-I", s!"{cudaHome}/include"] ++ includeArgs)
+      (traceArgs := #["-c", "--std=c++17", "-O2", "-Xcompiler", "-fPIC"] ++ archArgs)
+      (compiler := "nvcc") (extraDepTrace := pure headerDeps.getTrace)
     buildStaticLib libFile #[oJob]
   else
     let srcJob ← inputFile (pkg.dir / spec.stubSrc) false
     let oFile := pkg.buildDir / s!"{spec.stem}_stub.o"
     let oJob ← buildO oFile srcJob
-      (#["-I", lean.includeDir.toString] ++ includeArgs ++ #["-O2", "-fPIC"])
-      #[] "cc" (pure headerDeps.getTrace)
+      (weakArgs := #["-I", lean.includeDir.toString] ++ includeArgs)
+      (traceArgs := #["-O2", "-fPIC"])
+      (compiler := "cc") (extraDepTrace := pure headerDeps.getTrace)
     buildStaticLib libFile #[oJob]
 
 /-- Native backend for `torchlean_dgemm_cuda`: CUDA+cuBLAS when `-K cuda=true`, else C stub. -/

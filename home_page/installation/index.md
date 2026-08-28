@@ -101,6 +101,10 @@ The two CUDA choices happen at different times. `-K cuda=true` tells Lake to com
 native CUDA implementation. `--device cuda` asks the executable to use it. A CPU-linked executable
 rejects `--device cuda` instead of silently moving the run back to the CPU.
 
+`nvcc` compiles the kernels for its own default architecture unless told otherwise. Add
+`-K cuda_arch=sm_86` (or `native`, or a verbatim `-gencode` list) to compile for the GPU you deploy
+on; the [CUDA guide]({{ '/cuda/' | relative_url }}) explains what the default costs you.
+
 Use `-R` whenever you switch between CPU and CUDA configurations; it forces Lake to recompute the
 build description. The CUDA regression suite is:
 

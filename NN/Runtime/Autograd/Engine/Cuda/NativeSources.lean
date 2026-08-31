@@ -99,6 +99,21 @@ agrees with CPU stubs and reference cases on the supported path.
 - `csrc/cuda/blas/torchlean_dgemm_cuda_stub.c`
   Portable CPU mirror of the DGEMM FFI symbol.
 
+- `csrc/cuda/common/torchlean_cuda_textable.h`
+  Boxed ABI for immutable layered 1-D lookup-table textures (float32) and their fetch/metadata
+  symbol declarations.
+  Lean side modules: `NN.Runtime.Autograd.Engine.Cuda.Trusted`,
+  `NN.Runtime.Autograd.Engine.Cuda.TexTable`.
+
+- `csrc/cuda/textures/torchlean_cuda_textable.cu`
+  Layered `cudaArray` + texture-object construction and the interpolated fetch kernel (point mode
+  with an explicit contraction-blocked lerp, or hardware linear filtering).
+  Lean side module: `NN.Runtime.Autograd.Engine.Cuda.TexTable`.
+
+- `csrc/cuda/textures/torchlean_cuda_textable_stub.c`
+  Portable CPU mirror of the lookup-table texture FFI surface; point mode is bit-identical to the
+  CUDA kernel, hardware mode emulates the 9-bit lerp weight.
+
 ## What to read next
 
 - `NN.Runtime.Autograd.Engine.Cuda.Float32Contract` states the float32 agreement assumptions.

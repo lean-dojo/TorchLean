@@ -276,6 +276,15 @@ extern_lib torchlean_cuda_tensor (pkg) :=
     stubSrc := "csrc/cuda/tensor/torchlean_cuda_tensor_stub.c"
   }
 
+/-- Native backend for `torchlean_cuda_textable`: texture-object lookup tables when `-K cuda=true`,
+else C stub. -/
+extern_lib torchlean_cuda_textable (pkg) :=
+  buildNativeBackendLib pkg {
+    stem := "torchlean_cuda_textable"
+    cudaSrc := "csrc/cuda/textures/torchlean_cuda_textable.cu"
+    stubSrc := "csrc/cuda/textures/torchlean_cuda_textable_stub.c"
+  }
+
 -- Unified verification CLI registry: `lake exe verify -- <tool> [args...]`
 lean_exe verify where
   root := `NN.Verification.Main

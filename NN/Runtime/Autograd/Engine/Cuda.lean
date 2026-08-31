@@ -18,6 +18,7 @@ public import NN.Runtime.Autograd.Engine.Cuda.NativeSources
 public import NN.Runtime.Autograd.Engine.Cuda.Ops
 public import NN.Runtime.Autograd.Engine.Cuda.Shape
 public import NN.Runtime.Autograd.Engine.Cuda.Tape
+public import NN.Runtime.Autograd.Engine.Cuda.TexTable
 public import NN.Runtime.Autograd.Engine.Cuda.Trusted
 
 /-!

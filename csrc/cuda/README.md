@@ -136,6 +136,7 @@ Current CUDA coverage:
 | `NN/Tests/Runtime/Cuda/Fft.lean` | Packed real FFT, inverse FFT, spectral convolution, and finite-difference gradient checks. |
 | `NN/Tests/Runtime/Cuda/ViewsBroadcastReduce.lean` | Reshape, transpose, rank-3 permutations, broadcast, reduce-sum/mean, and empty-axis behavior. |
 | `NN/Tests/Runtime/Cuda/LinearMseConcatSliceGather.lean` | Linear layer, MSE loss, vector concat/slice, scalar gather, row gather, and gradients. |
+| `NN/Tests/Runtime/Cuda/TexTable.lean` | Layered 1-D lookup-table textures: bit-exact point-mode lerp, tolerance-gated hardware filtering, integer-node texel-center probes, clamping and empty-buffer edges. |
 | `NN/Tests/Runtime/Cuda/Stress.lean` | RNG determinism, explicit buffer release, duplicate-parent gradient accumulation, large buffers, reductions, and cuBLAS rectangular matmul. |
 | `NN/Tests/Runtime/Cuda/Suite.lean` | The unified entrypoint imported by the repository-level test suite. |
 

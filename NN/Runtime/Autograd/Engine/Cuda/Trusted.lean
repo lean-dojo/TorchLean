@@ -51,6 +51,26 @@ def Buffer : Type := BufferImpl.val
 
 instance : Nonempty Buffer := BufferImpl.property
 
+/--
+Opaque handle to an immutable, layered 1-D lookup table of float32 samples (a CUDA texture object
+over a layered `cudaArray` when built with `-K cuda=true`, otherwise a CPU stub table).
+
+Implementation:
+- CUDA: `csrc/cuda/textures/torchlean_cuda_textable.cu`
+- CPU stub (default `lake build`): `csrc/cuda/textures/torchlean_cuda_textable_stub.c`
+-/
+opaque TexTableImpl : NonemptyType.{0}
+
+/--
+Runtime representation used for native lookup-table texture handles.
+
+As with `Buffer`, the `NonemptyType` wrapper only gives extern declarations a nonempty result
+type; values are created only by the native table constructor.
+-/
+def TexTable : Type := TexTableImpl.val
+
+instance : Nonempty TexTable := TexTableImpl.property
+
 end Cuda
 end Autograd
 end Runtime

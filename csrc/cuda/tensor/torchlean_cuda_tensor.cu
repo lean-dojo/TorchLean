@@ -519,6 +519,16 @@ __global__ void torchlean_mul_f32(const float* a, const float* b, float* out, si
   }
 }
 
+// Scaled product exponential `exp((c*a)*b)` fused into one kernel (one launch, one result
+// buffer) instead of the four elementwise ops of the composed form. Left-associated and in fp32
+// throughout, so it is bit-identical to `exp(mul(mul(full(c), a), b))`.
+__global__ void torchlean_scaled_prod_exp_f32(const float* a, const float* b, float* out, size_t n,
+                                              float c) {
+  TORCHLEAN_GRID_STRIDE_LOOP(i, n) {
+    out[i] = expf((c * a[i]) * b[i]);
+  }
+}
+
 __global__ void torchlean_scale_f32(const float* in, float* out, size_t n, float c) {
   TORCHLEAN_GRID_STRIDE_LOOP(i, n) {
     out[i] = in[i] * c;
@@ -1544,6 +1554,9 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_adam_step(
   return torchlean_cuda_box_three_buffers(
       updated_parameters, updated_first_moment, updated_second_moment);
 }
+
+TORCHLEAN_DEFINE_BINARY_SCALAR_BUFFER_EXPORT(torchlean_cuda_buffer_scaled_prod_exp,
+                                             torchlean_scaled_prod_exp_f32, "scaled_prod_exp")
 
 #undef TORCHLEAN_DEFINE_BINARY_SCALAR_BUFFER_EXPORT
 #undef TORCHLEAN_DEFINE_UNARY_SCALAR_BUFFER_EXPORT

@@ -811,6 +811,19 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_adam_step(
       updated_parameters, updated_first_moment, updated_second_moment);
 }
 
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_scaled_prod_exp(b_lean_obj_arg AObj,
+                                                              b_lean_obj_arg BObj, double c) {
+  torchlean_cuda_buffer* a = torchlean_cuda_buffer_unbox(AObj);
+  torchlean_cuda_buffer* b = torchlean_cuda_buffer_unbox(BObj);
+  torchlean_cuda_require_same_size2(a, b, "torchlean_cuda_buffer_scaled_prod_exp_stub");
+  torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(a->size);
+  float fc = (float)c;
+  for (size_t i = 0; i < a->size; ++i) {
+    out->data[i] = expf((fc * a->data[i]) * b->data[i]);
+  }
+  return torchlean_cuda_buffer_box(out);
+}
+
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_sum(b_lean_obj_arg BObj) {
   torchlean_cuda_buffer* b = torchlean_cuda_buffer_unbox(BObj);
   torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(1);

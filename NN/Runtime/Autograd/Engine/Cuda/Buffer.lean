@@ -540,6 +540,20 @@ opaque adamStep
     (decay updateScale : Float) :
     Buffer × Buffer × Buffer
 
+/--
+Scaled product exponential: `exp((c * x) * y)`, a single fused device kernel — one launch and one
+result buffer instead of the four elementwise ops (`full c`, two `mul`s, `exp`) of the composed form,
+and bit-identical to it (same left-association, same fp32 rounding). `c` is a host `Float` (cast to
+float32); `x` and `y` are equal-length buffers.
+
+Domain-neutral: a *scaled product exponential* recurs across the sciences — a Beer–Lambert /
+propagation two-way extinction `exp(-2 * κ * ℓ)` in computational electromagnetism and radar/optical
+remote sensing, or a Boltzmann-type weight `exp(-β * E * s)`. Fusing the exponential with its scaled
+product is the hot inner form in those forward models.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_scaled_prod_exp"]
+opaque scaledProdExp (x y : @& Buffer) (c : Float) : Buffer
+
 /-- Reductions (return a length-1 buffer). -/
 @[never_extract, extern "torchlean_cuda_buffer_reduce_sum"]
 opaque reduceSum (b : @& Buffer) : Buffer

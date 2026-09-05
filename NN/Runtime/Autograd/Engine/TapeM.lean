@@ -79,6 +79,26 @@ def setTape (t : Tape α) : TapeM α Unit :=
   set t
 
 /--
+The state reshuffle every op wrapper below is made of: read the tape, run the pure `Tape` op on
+it, write the new tape back, and return the fresh node id.
+
+Each wrapper in this namespace whose pure counterpart returns `Result (Tape α × Nat)` is
+*definitionally* `opM` applied to that counterpart — `TapeM.mul aId bId` is
+`opM fun t => Tape.mul (t := t) aId bId`, and so on for the rest. Writing the shared shape once
+gives the wrappers a single point to reason about: `NN.Proofs.Autograd.Tape.Builder` proves how a
+successful, failing, and inverted `run` of `opM g` relate to `g`, and every per-op run lemma there
+is that proof instantiated at the op's own `g`, with no unfolding.
+
+`leaf` is deliberately not in this family: it is total, so its pure counterpart returns a pair
+rather than a `Result`.
+-/
+def opM {γ : Type} (g : Tape α → Result (Tape α × γ)) : TapeM α γ := do
+  let t ← get
+  let (t', id) ← liftM (g t)
+  set t'
+  pure id
+
+/--
 Create a leaf node holding a concrete tensor value.
 
 A leaf is the "input tensor" analogue: it has no parents. Setting `requiresGrad := true`

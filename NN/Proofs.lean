@@ -18,6 +18,7 @@ public import NN.Proofs.Autograd.FDeriv.Params
 public import NN.Proofs.Autograd.Runtime.Link
 public import NN.Proofs.Autograd.Tape.Algebra.Nodes
 public import NN.Proofs.Autograd.Tape.Algebra.Soundness
+public import NN.Proofs.Autograd.Tape.Builder
 public import NN.Proofs.Autograd.Tape.Core.FDeriv
 public import NN.Proofs.Autograd.Tape.Core.Soundness
 public import NN.Proofs.Autograd.Tape.Nodes

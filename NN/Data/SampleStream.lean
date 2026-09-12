@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Batteries.Data.Array.Lemmas
-
 /-!
 # Finite Sample Streams
 
@@ -34,20 +32,44 @@ namespace SampleStream
 
 variable {α β : Type}
 
+/-- Named halves of a stream split. -/
+structure SplitResult (α : Type) where
+  /-- Samples before the split point. -/
+  selected : SampleStream α
+  /-- Samples at and after the split point. -/
+  remaining : SampleStream α
+
+/-- State and stream produced by deterministic shuffling. -/
+structure ShuffleResult (α : Type) where
+  /-- Seed to use for the next deterministic shuffle. -/
+  nextSeed : Nat
+  /-- Stream in shuffled index order. -/
+  stream : SampleStream α
+
+/-- State and named partitions produced by a shuffled split. -/
+structure RandomSplitResult (α : Type) where
+  /-- Seed to use for the next deterministic shuffle. -/
+  nextSeed : Nat
+  /-- Samples selected before the split point. -/
+  selected : SampleStream α
+  /-- Samples selected at and after the split point. -/
+  remaining : SampleStream α
+
 /-- Construct a finite stream from an index function. -/
-def ofFn (size : Nat) (get : Fin size → α) : SampleStream α :=
+def fromFunction (size : Nat) (get : Fin size → α) : SampleStream α :=
   { size, get }
 
 /-- Wrap an array as a finite stream without copying it. -/
-def ofArray (xs : Array α) : SampleStream α :=
-  ofFn xs.size fun i => xs[i]
+def fromArray (xs : Array α) : SampleStream α :=
+  fromFunction xs.size fun i => xs[i]
 
 /-- Materialize the samples in index order. -/
 def toArray (stream : SampleStream α) : Array α :=
   Array.ofFn stream.get
 
-@[simp] theorem size_ofArray (xs : Array α) :
-    (ofArray xs).size = xs.size := rfl
+/-- A stream built from an array reports that array's length. -/
+@[simp] theorem size_fromArray (xs : Array α) :
+    (fromArray xs).size = xs.size := rfl
 
 /-- Return `true` exactly when the stream contains no samples. -/
 def isEmpty (stream : SampleStream α) : Bool :=
@@ -59,11 +81,11 @@ def get? (stream : SampleStream α) (i : Nat) : Option α :=
 
 /-- Transform samples when they are requested. -/
 def map (f : α → β) (stream : SampleStream α) : SampleStream β :=
-  ofFn stream.size fun i => f (stream.get i)
+  fromFunction stream.size fun i => f (stream.get i)
 
 /-- Append two finite streams in index order. -/
 def append (xs ys : SampleStream α) : SampleStream α :=
-  ofFn (xs.size + ys.size) fun i =>
+  fromFunction (xs.size + ys.size) fun i =>
     if h : i.val < xs.size then
       xs.get ⟨i.val, h⟩
     else
@@ -73,15 +95,15 @@ def append (xs ys : SampleStream α) : SampleStream α :=
       ys.get ⟨i.val - xs.size, hlt⟩
 
 /-- Split a stream into its first `n` samples and the remaining suffix. -/
-def splitAt (n : Nat) (stream : SampleStream α) : SampleStream α × SampleStream α :=
+def splitAt (n : Nat) (stream : SampleStream α) : SplitResult α :=
   let prefixSize := min n stream.size
-  let headStream := ofFn prefixSize fun i =>
+  let selected := fromFunction prefixSize fun i =>
     stream.get ⟨i.val, Nat.lt_of_lt_of_le i.isLt (Nat.min_le_right _ _)⟩
-  let tailStream := ofFn (stream.size - prefixSize) fun i =>
+  let remaining := fromFunction (stream.size - prefixSize) fun i =>
     have hlt : prefixSize + i.val < stream.size := by
       simpa [Nat.add_comm] using Nat.add_lt_of_lt_sub i.isLt
     stream.get ⟨prefixSize + i.val, hlt⟩
-  (headStream, tailStream)
+  { selected, remaining }
 
 /--
 Shuffle the indices deterministically, returning the next seed and a stream with the new order.
@@ -89,24 +111,28 @@ Shuffle the indices deterministically, returning the next seed and a stream with
 Only the index permutation is stored; requesting a shuffled sample still evaluates the original
 stream at that index.
 -/
-def shuffle (seed : Nat) (stream : SampleStream α) : Nat × SampleStream α :=
+def shuffle (seed : Nat) (stream : SampleStream α) : ShuffleResult α :=
   let next (state : Nat) := (1103515245 * state + 12345) % 2147483648
   let sourceIndices : Array (Fin stream.size) := Array.ofFn id
   let (seed', keyedIndices) := sourceIndices.foldl (fun (state, acc) index =>
     let state' := next state
     (state', acc.push (state', index))) (seed, #[])
   let indices := (keyedIndices.qsort (fun x y => x.1 < y.1)).map Prod.snd
-  (seed', ofFn indices.size fun i => stream.get indices[i])
+  { nextSeed := seed'
+    stream := fromFunction indices.size fun i => stream.get indices[i] }
 
 /-- Deterministically shuffle a stream and discard the next pseudo-random seed. -/
 def shuffled (seed : Nat) (stream : SampleStream α) : SampleStream α :=
-  (shuffle seed stream).2
+  (shuffle seed stream).stream
 
 /-- Shuffle a stream once and split the result at `n`. -/
 def randomSplitAt (seed n : Nat) (stream : SampleStream α) :
-    Nat × (SampleStream α × SampleStream α) :=
-  let (seed', shuffled) := shuffle seed stream
-  (seed', splitAt n shuffled)
+    RandomSplitResult α :=
+  let shuffled := shuffle seed stream
+  let split := splitAt n shuffled.stream
+  { nextSeed := shuffled.nextSeed
+    selected := split.selected
+    remaining := split.remaining }
 
 /-- Split a nonempty stream into consecutive nonempty batches of size at most `batchSize`. -/
 def batches (name : String) (batchSize : Nat) (stream : SampleStream α) :
@@ -119,7 +145,7 @@ def batches (name : String) (batchSize : Nat) (stream : SampleStream α) :
     let count := (stream.size + batchSize - 1) / batchSize
     let samples := stream.toArray
     .ok <| (Array.range count).map fun i =>
-      (samples.drop (i * batchSize)).take batchSize
+      samples.extract (i * batchSize) (min ((i + 1) * batchSize) samples.size)
 
 /-- Cycle through a nonempty stream indefinitely. -/
 def cycle (stream : SampleStream α) (h : 0 < stream.size) (i : Nat) : α :=
@@ -145,37 +171,52 @@ structure EpochLoader (α : Type) where
   /-- Whether to discard a final batch shorter than `batchSize`. -/
   dropLast : Bool := false
 
+/-- Batches produced for one epoch together with the loader state for the next epoch. -/
+structure Epoch (Loader Batch : Type) where
+  /-- Loader state to use for the next epoch. -/
+  nextLoader : Loader
+  /-- Batches produced by this epoch. -/
+  batches : Array Batch
+
 namespace EpochLoader
 
 variable {α : Type}
 
 /-- Construct an epoch loader for a finite stream. -/
-def create (samples : SampleStream α) (batchSize : Nat)
-    (shuffle : Bool := false) (seed : Nat := 0) (dropLast : Bool := false) : EpochLoader α :=
+def fromStream (samples : SampleStream α) (batchSize : Nat)
+    (shuffle : Bool := false) (seed : Nat := 0)
+    (dropLast : Bool := false) : EpochLoader α :=
   { samples, batchSize, shuffle, seed, dropLast }
 
-/-- Produce one epoch of batches and the loader state for the next epoch. -/
-def epoch (name : String) (loader : EpochLoader α) :
-    Except String (EpochLoader α × Array (Array α)) := do
-  let (seed', samples) :=
+/-- Produce one epoch of batches and the loader state for the next epoch.
+Each shuffle applies the next seed to the original source. Keeping that source avoids retaining
+an additional permutation closure for every completed epoch. -/
+def nextEpoch (name : String) (loader : EpochLoader α) :
+    Except String (Epoch (EpochLoader α) (Array α)) := do
+  let shuffled :=
     if loader.shuffle then
       SampleStream.shuffle loader.seed loader.samples
     else
-      (loader.seed, loader.samples)
-  let batches ← SampleStream.batches name loader.batchSize samples
+      { nextSeed := loader.seed, stream := loader.samples }
+  let batches ← SampleStream.batches name loader.batchSize shuffled.stream
   let batches :=
     if loader.dropLast then
       batches.filter fun batch => batch.size = loader.batchSize
     else
       batches
-  pure ({ loader with seed := seed', samples }, batches)
+  pure
+    { nextLoader :=
+        { loader with seed := shuffled.nextSeed }
+      batches }
 
-/-- Produce one epoch and collate each raw batch. -/
-def epochCollate {β : Type} (name : String) (loader : EpochLoader α)
+/-- Produce one epoch and map each raw batch through `collate`. -/
+def mapNextEpoch {β : Type} (name : String) (loader : EpochLoader α)
     (collate : Array α → Except String β) :
-    Except String (EpochLoader α × Array β) := do
-  let (loader', batches) ← epoch name loader
-  pure (loader', ← batches.mapM collate)
+    Except String (Epoch (EpochLoader α) β) := do
+  let result ← nextEpoch name loader
+  pure
+    { nextLoader := result.nextLoader
+      batches := ← result.batches.mapM collate }
 
 end EpochLoader
 

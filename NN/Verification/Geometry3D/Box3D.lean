@@ -6,11 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Verification.Util.FloatApprox
 public import NN.Verification.Util.Json
 public import NN.Verification.Util.Tensor
-
-import Mathlib.Tactic.Linarith
+import Mathlib.Data.Rat.Cast.Order
+import Mathlib.Tactic.Linarith.Frontend
+import Mathlib.Tactic.NormNum.Abs
+import Mathlib.Tactic.NormNum.DivMod
+import Mathlib.Tactic.NormNum.OfScientific
 
 /-!
 # Tensor-native 3D box camera certificates
@@ -36,15 +38,14 @@ Why this shape?
 
 Real 3D perception systems already speak tensors: Cube R-CNN / Omni3D predictions, PyTorch3D
 utilities, and SAM-3D-style post-hoc metadata all move around matrices, points, boxes, and camera
-parameters. So this module uses `Spec.Tensor` throughout instead of introducing a detached `Vec3`
-island. The few abbrevs below are only names for tensor shapes.
+parameters. So this module uses `TorchLean.Tensor` throughout instead of introducing a detached
+`Vec3` island. The few abbrevs below are only names for tensor shapes.
 -/
 
 @[expose] public section
 
 namespace NN.Verification.Geometry3D.Box3D
 
-open scoped BigOperators
 open NN.Verification.Json
 
 /-! ## Small interval arithmetic layer -/
@@ -190,9 +191,10 @@ def pinholePixelIntervalNonnegative {α : Type} [Add α] [Mul α]
 /--
 Soundness of the one-axis pinhole interval formula.
 
-This is the camera-parameter uncertainty theorem used by the 3D geometry certificate workflow: if focal length,
-principal point, and normalized coordinate are each inside certified intervals, then the resulting
-pixel coordinate is inside the interval computed by `pinholePixelIntervalNonnegative`.
+This is the camera-parameter uncertainty theorem used by the 3D geometry certificate workflow: if
+focal length, principal point, and normalized coordinate are each inside certified intervals, then
+the resulting pixel coordinate is inside the interval computed by
+`pinholePixelIntervalNonnegative`.
 -/
 theorem pinholePixelIntervalNonnegative_sound
     {α : Type} [Field α] [LinearOrder α] [IsStrictOrderedRing α]
@@ -248,13 +250,13 @@ theorem list_all_true_of_mem {α : Type} {p : α → Bool} {xs : List α}
       · exact ht x hx
 
 /-- A 3D point as a tensor of shape `[3]`. -/
-abbrev Point3 (α : Type) := Spec.Tensor α [3]
+abbrev Point3 (α : Type) [TorchLean.Storage α] := TorchLean.Tensor α [3]
 
 /-- A 2D point as a tensor of shape `[2]`. -/
-abbrev Point2 (α : Type) := Spec.Tensor α [2]
+abbrev Point2 (α : Type) [TorchLean.Storage α] := TorchLean.Tensor α [2]
 
 /-- Eight cuboid corners, stored as a tensor of shape `[8, 3]`. -/
-abbrev BoxCorners (α : Type) := Spec.Tensor α [8, 3]
+abbrev BoxCorners (α : Type) [TorchLean.Storage α] := TorchLean.Tensor α [8, 3]
 
 /--
 A 3×4 camera projection matrix.
@@ -269,62 +271,45 @@ $$
 
 The projected pixel is $(u_{\mathrm{num}}/z,v_{\mathrm{num}}/z)$, checked only when $z>0$.
 -/
-abbrev CameraP (α : Type) := Spec.Tensor α [3, 4]
-
-/-- Projected eight-corner tensor of shape `[8, 2]`. -/
-abbrev ProjectedCorners (α : Type) := Spec.Tensor α [8, 2]
+abbrev CameraP (α : Type) [TorchLean.Storage α] := TorchLean.Tensor α [3, 4]
 
 /-- A 2D box `[xmin, ymin, xmax, ymax]`. -/
-abbrev Box2D (α : Type) := Spec.Tensor α [4]
+abbrev Box2D (α : Type) [TorchLean.Storage α] := TorchLean.Tensor α [4]
 
 /-- Matrix scalar accessor for tensor-shaped matrices. -/
-def matGet {α : Type} {rows cols : Nat}
-    (x : Spec.Tensor α [rows, cols]) (i : Fin rows) (j : Fin cols) : α :=
-  Spec.Tensor.item (Spec.get (Spec.get x i) j)
+def matGet {α : Type} [TorchLean.Storage α] {rows cols : Nat}
+    (x : TorchLean.Tensor α [rows, cols]) (i : Fin rows) (j : Fin cols) : α :=
+  TorchLean.Tensor.item (Spec.get (Spec.get x i) j)
 
 /-- Extract the `i`-th cuboid corner as a `[3]` tensor. -/
-def corner {α : Type} (corners : BoxCorners α) (i : Fin 8) : Point3 α :=
-  Spec.Tensor.dim (fun j => Spec.Tensor.scalar (matGet corners i j))
+def corner {α : Type} [TorchLean.Storage α] (corners : BoxCorners α) (i : Fin 8) : Point3 α :=
+  TorchLean.Tensor.dim (fun j => TorchLean.Tensor.scalar (matGet corners i j))
 
 /-- Raw homogeneous camera coordinate `P[row] · [X,Y,Z,1]`. -/
-def cameraCoord {α : Type} [OfNat α 1] [Add α] [Mul α]
+def cameraCoord {α : Type} [TorchLean.Storage α] [OfNat α 1] [Add α] [Mul α]
     (P : CameraP α) (x : Point3 α) (row : Fin 3) : α :=
-  matGet P row ⟨0, by decide⟩ * Spec.Tensor.getScalar x ⟨0, by decide⟩ +
-  matGet P row ⟨1, by decide⟩ * Spec.Tensor.getScalar x ⟨1, by decide⟩ +
-  matGet P row ⟨2, by decide⟩ * Spec.Tensor.getScalar x ⟨2, by decide⟩ +
+  matGet P row ⟨0, by decide⟩ * TorchLean.Tensor.getScalar x ⟨0, by decide⟩ +
+  matGet P row ⟨1, by decide⟩ * TorchLean.Tensor.getScalar x ⟨1, by decide⟩ +
+  matGet P row ⟨2, by decide⟩ * TorchLean.Tensor.getScalar x ⟨2, by decide⟩ +
   matGet P row ⟨3, by decide⟩ * (1 : α)
 
 /-- Positive-depth denominator used by pinhole projection. -/
-def projectZ {α : Type} [OfNat α 1] [Add α] [Mul α]
+def projectZ {α : Type} [TorchLean.Storage α] [OfNat α 1] [Add α] [Mul α]
     (P : CameraP α) (x : Point3 α) : α :=
   cameraCoord P x ⟨2, by decide⟩
 
 /-- Projected x/pixel coordinate. Meaningful when `projectZ P x ≠ 0`. -/
-def projectX {α : Type} [OfNat α 1] [Add α] [Mul α] [Div α]
+def projectX {α : Type} [TorchLean.Storage α] [OfNat α 1] [Add α] [Mul α] [Div α]
     (P : CameraP α) (x : Point3 α) : α :=
   cameraCoord P x ⟨0, by decide⟩ / projectZ P x
 
 /-- Projected y/pixel coordinate. Meaningful when `projectZ P x ≠ 0`. -/
-def projectY {α : Type} [OfNat α 1] [Add α] [Mul α] [Div α]
+def projectY {α : Type} [TorchLean.Storage α] [OfNat α 1] [Add α] [Mul α] [Div α]
     (P : CameraP α) (x : Point3 α) : α :=
   cameraCoord P x ⟨1, by decide⟩ / projectZ P x
 
-/-- Project one 3D point to a 2D tensor. -/
-def projectPoint {α : Type} [OfNat α 1] [Add α] [Mul α] [Div α]
-    (P : CameraP α) (x : Point3 α) : Point2 α :=
-  Spec.Tensor.ofFn (fun j : Fin 2 =>
-    if j.val = 0 then
-      projectX P x
-    else
-      projectY P x)
-
-/-- Project all eight cuboid corners. -/
-def projectBox {α : Type} [OfNat α 1] [Add α] [Mul α] [Div α]
-    (P : CameraP α) (corners : BoxCorners α) : ProjectedCorners α :=
-  Spec.Tensor.matrix (fun i j => Spec.Tensor.getScalar (projectPoint P (corner corners i)) j)
-
 /-- A compact exported 3D-box/camera certificate. -/
-structure BoxCameraCert (α : Type) where
+structure BoxCameraCert (α : Type) [TorchLean.Storage α] where
   /-- Image width in pixels. -/
   width : α
   /-- Image height in pixels. -/
@@ -339,16 +324,20 @@ structure BoxCameraCert (α : Type) where
   bbox : Box2D α
 
 /-- Left edge `xmin` of the claimed 2D bounding box. -/
-def xmin {α : Type} (cert : BoxCameraCert α) : α := Spec.Tensor.getScalar cert.bbox ⟨0, by decide⟩
+def xmin {α : Type} [TorchLean.Storage α] (cert : BoxCameraCert α) : α :=
+  TorchLean.Tensor.getScalar cert.bbox ⟨0, by decide⟩
 /-- Top edge `ymin` of the claimed 2D bounding box. -/
-def ymin {α : Type} (cert : BoxCameraCert α) : α := Spec.Tensor.getScalar cert.bbox ⟨1, by decide⟩
+def ymin {α : Type} [TorchLean.Storage α] (cert : BoxCameraCert α) : α :=
+  TorchLean.Tensor.getScalar cert.bbox ⟨1, by decide⟩
 /-- Right edge `xmax` of the claimed 2D bounding box. -/
-def xmax {α : Type} (cert : BoxCameraCert α) : α := Spec.Tensor.getScalar cert.bbox ⟨2, by decide⟩
+def xmax {α : Type} [TorchLean.Storage α] (cert : BoxCameraCert α) : α :=
+  TorchLean.Tensor.getScalar cert.bbox ⟨2, by decide⟩
 /-- Bottom edge `ymax` of the claimed 2D bounding box. -/
-def ymax {α : Type} (cert : BoxCameraCert α) : α := Spec.Tensor.getScalar cert.bbox ⟨3, by decide⟩
+def ymax {α : Type} [TorchLean.Storage α] (cert : BoxCameraCert α) : α :=
+  TorchLean.Tensor.getScalar cert.bbox ⟨3, by decide⟩
 
 /-- The pixel interval is contained in the claimed 2D box. -/
-def PixelIntervalInsideBBox {α : Type} [LE α]
+def PixelIntervalInsideBBox {α : Type} [TorchLean.Storage α] [LE α]
     (cert : BoxCameraCert α) (pix : PixelInterval2D α) : Prop :=
   xmin cert ≤ pix.x.lo ∧ pix.x.hi ≤ xmax cert ∧
     ymin cert ≤ pix.y.lo ∧ pix.y.hi ≤ ymax cert
@@ -358,7 +347,7 @@ If a pixel interval is contained in the claimed bbox, every concrete pixel insid
 also contained in the bbox.
 -/
 theorem pixel_inside_bbox_of_interval_inside
-    {α : Type} [Field α] [LinearOrder α] [IsStrictOrderedRing α]
+    {α : Type} [TorchLean.Storage α] [Field α] [LinearOrder α] [IsStrictOrderedRing α]
     {cert : BoxCameraCert α} {pix : PixelInterval2D α} {px py : α}
     (hinside : PixelIntervalInsideBBox cert pix)
     (hpix : PixelInInterval2D pix px py) :
@@ -390,7 +379,7 @@ a certified bbox-enclosure statement.  The theorem is phrased over normalized co
 can plug in whichever depth-interval or model-uncertainty method they use to bound `X/Z` and `Y/Z`.
 -/
 theorem pinhole_intrinsics_nonnegative_interval_inside_bbox_sound
-    {α : Type} [Field α] [LinearOrder α] [IsStrictOrderedRing α]
+    {α : Type} [TorchLean.Storage α] [Field α] [LinearOrder α] [IsStrictOrderedRing α]
     {cert : BoxCameraCert α}
     {fxI fyI xnI ynI cxI cyI : ScalarInterval α}
     {fx fy xn yn cx cy : α}
@@ -445,7 +434,7 @@ they may produce ranges for homogeneous coordinates, but Lean checks the perspec
 the final bbox containment.
 -/
 theorem homogeneous_projection_nonnegative_interval_inside_bbox_sound
-    {α : Type} [Field α] [LinearOrder α] [IsStrictOrderedRing α]
+    {α : Type} [TorchLean.Storage α] [Field α] [LinearOrder α] [IsStrictOrderedRing α]
     {cert : BoxCameraCert α}
     {uNumI vNumI zI : ScalarInterval α}
     {uNum vNum z : α}
@@ -475,50 +464,53 @@ theorem homogeneous_projection_nonnegative_interval_inside_bbox_sound
     ⟨hx, hy⟩
 
 /-- Projected x-coordinate of corner `i`. -/
-def certProjectX {α : Type} [OfNat α 1] [Add α] [Mul α] [Div α]
+def certProjectX {α : Type} [TorchLean.Storage α] [OfNat α 1] [Add α] [Mul α] [Div α]
     (cert : BoxCameraCert α) (i : Fin 8) : α :=
   projectX cert.camera (corner cert.corners i)
 
 /-- Projected y-coordinate of corner `i`. -/
-def certProjectY {α : Type} [OfNat α 1] [Add α] [Mul α] [Div α]
+def certProjectY {α : Type} [TorchLean.Storage α] [OfNat α 1] [Add α] [Mul α] [Div α]
     (cert : BoxCameraCert α) (i : Fin 8) : α :=
   projectY cert.camera (corner cert.corners i)
 
 /-- Camera depth of corner `i`. -/
-def certProjectZ {α : Type} [OfNat α 1] [Add α] [Mul α]
+def certProjectZ {α : Type} [TorchLean.Storage α] [OfNat α 1] [Add α] [Mul α]
     (cert : BoxCameraCert α) (i : Fin 8) : α :=
   projectZ cert.camera (corner cert.corners i)
 
 /-! ## Mathematical certificate predicates -/
 
 /-- Image dimensions must be positive. -/
-def PositiveImageSize {α : Type} [OfNat α 0] [LT α] (cert : BoxCameraCert α) : Prop :=
+def PositiveImageSize {α : Type} [TorchLean.Storage α] [OfNat α 0] [LT α] (cert : BoxCameraCert α) :
+    Prop :=
   0 < cert.width ∧ 0 < cert.height
 
 /-- Validate the reported 2D box and tolerance. -/
-def BBoxOrdered {α : Type} [OfNat α 0] [LE α] (cert : BoxCameraCert α) : Prop :=
+def BBoxOrdered {α : Type} [TorchLean.Storage α] [OfNat α 0] [LE α] (cert : BoxCameraCert α) :
+    Prop :=
   0 ≤ cert.tol ∧ xmin cert ≤ xmax cert ∧ ymin cert ≤ ymax cert
 
 /-- The reported 2D box itself should lie inside the image frame. -/
-def BBoxInsideImage {α : Type} [OfNat α 0] [LE α] (cert : BoxCameraCert α) : Prop :=
+def BBoxInsideImage {α : Type} [TorchLean.Storage α] [OfNat α 0] [LE α] (cert : BoxCameraCert α) :
+    Prop :=
   0 ≤ xmin cert ∧ xmax cert ≤ cert.width ∧
   0 ≤ ymin cert ∧ ymax cert ≤ cert.height
 
 /-- Every 3D corner lies in front of the camera. -/
-def PositiveDepths {α : Type} [OfNat α 0] [OfNat α 1] [Add α] [Mul α] [LT α]
+def PositiveDepths {α : Type} [TorchLean.Storage α] [OfNat α 0] [OfNat α 1] [Add α] [Mul α] [LT α]
     (cert : BoxCameraCert α) : Prop :=
   ∀ i : Fin 8, 0 < certProjectZ cert i
 
 /-- Every projected corner lies inside the image rectangle. -/
-def ProjectedInImage {α : Type} [OfNat α 0] [OfNat α 1] [Add α] [Mul α] [Div α] [LE α]
-    (cert : BoxCameraCert α) : Prop :=
+def ProjectedInImage {α : Type} [TorchLean.Storage α] [OfNat α 0] [OfNat α 1] [Add α] [Mul α]
+    [Div α] [LE α] (cert : BoxCameraCert α) : Prop :=
   ∀ i : Fin 8,
     0 ≤ certProjectX cert i ∧ certProjectX cert i ≤ cert.width ∧
     0 ≤ certProjectY cert i ∧ certProjectY cert i ≤ cert.height
 
 /-- The reported 2D box encloses all projected 3D corners, up to tolerance. -/
-def BBoxEnclosesProjection {α : Type} [OfNat α 1] [Add α] [Sub α] [Mul α] [Div α] [LE α]
-    (cert : BoxCameraCert α) : Prop :=
+def BBoxEnclosesProjection {α : Type} [TorchLean.Storage α] [OfNat α 1] [Add α] [Sub α] [Mul α]
+    [Div α] [LE α] (cert : BoxCameraCert α) : Prop :=
   ∀ i : Fin 8,
     xmin cert - cert.tol ≤ certProjectX cert i ∧
       certProjectX cert i ≤ xmax cert + cert.tol ∧
@@ -532,8 +524,9 @@ For real model outputs we also want robustness statements around that point.
 
 There are two complementary robustness layers in this file:
 
-* `homogeneous_projection_nonnegative_interval_inside_bbox_sound` starts from nonnegative intervals over homogeneous camera
-  outputs `(u_num, v_num, z)` and proves the perspective-divided pixels stay inside the claimed box.
+* `homogeneous_projection_nonnegative_interval_inside_bbox_sound` starts from nonnegative
+  intervals over homogeneous camera outputs `(u_num, v_num, z)` and proves the perspective-divided
+  pixels stay inside the claimed box.
 * `bbox_encloses_perturbed_of_margin` starts from a nominal projected pixel and proves that any
   bounded pixel-space perturbation stays inside the claimed box if there is enough slack.
 
@@ -549,8 +542,8 @@ $[x_{\min}+\mathrm{margin},x_{\max}-\mathrm{margin}]
 \times[y_{\min}+\mathrm{margin},y_{\max}-\mathrm{margin}]$.  The margin is what pays for
 future uncertainty.
 -/
-def BBoxEnclosesProjectionWithMargin {α : Type} [OfNat α 1] [Add α] [Sub α] [Mul α] [Div α]
-    [LE α] (cert : BoxCameraCert α) (margin : α) : Prop :=
+def BBoxEnclosesProjectionWithMargin {α : Type} [TorchLean.Storage α] [OfNat α 1] [Add α] [Sub α]
+    [Mul α] [Div α] [LE α] (cert : BoxCameraCert α) (margin : α) : Prop :=
   ∀ i : Fin 8,
     xmin cert + margin ≤ certProjectX cert i ∧
       certProjectX cert i ≤ xmax cert - margin ∧
@@ -564,8 +557,8 @@ For each corner `i`, `px i` and `py i` are some possible projected coordinates a
 renderer, rounding, or uncertainty perturbation.  This predicate says those coordinates are within
 `eps` pixels of the nominal projection recomputed from the certificate.
 -/
-def ProjectionPerturbationWithin {α : Type} [OfNat α 1] [Add α] [Sub α] [Mul α] [Div α]
-    [LE α] (cert : BoxCameraCert α) (eps : α) (px py : Fin 8 → α) : Prop :=
+def ProjectionPerturbationWithin {α : Type} [TorchLean.Storage α] [OfNat α 1] [Add α] [Sub α]
+    [Mul α] [Div α] [LE α] (cert : BoxCameraCert α) (eps : α) (px py : Fin 8 → α) : Prop :=
   ∀ i : Fin 8,
     certProjectX cert i - eps ≤ px i ∧
       px i ≤ certProjectX cert i + eps ∧
@@ -578,7 +571,7 @@ The claimed 2D box encloses every perturbed projected corner.
 This is the robust postcondition downstream consumers want: even after a bounded perturbation, the
 candidate 3D artifact still projects inside the detector's claimed 2D box.
 -/
-def BBoxEnclosesPerturbedProjection {α : Type} [LE α]
+def BBoxEnclosesPerturbedProjection {α : Type} [TorchLean.Storage α] [LE α]
     (cert : BoxCameraCert α) (px py : Fin 8 → α) : Prop :=
   ∀ i : Fin 8,
     xmin cert ≤ px i ∧ px i ≤ xmax cert ∧
@@ -597,7 +590,7 @@ rounding, a renderer approximation, a model uncertainty interval, or an external
 theorem is the certified geometry guard.
 -/
 theorem bbox_encloses_perturbed_of_margin
-    {α : Type} [Field α] [LinearOrder α] [IsStrictOrderedRing α]
+    {α : Type} [TorchLean.Storage α] [Field α] [LinearOrder α] [IsStrictOrderedRing α]
     {cert : BoxCameraCert α} {eps margin : α} {px py : Fin 8 → α}
     (hle : eps ≤ margin)
     (hmargin : BBoxEnclosesProjectionWithMargin cert margin)
@@ -621,8 +614,8 @@ This says the exported detector artifact is internally coherent under its stated
 positive image dimensions, ordered in-frame 2D box, positive camera depth, projected corners inside
 the image, and claimed 2D box enclosure.
 -/
-def Verified3DBox {α : Type} [OfNat α 0] [OfNat α 1] [Add α] [Sub α] [Mul α] [Div α]
-    [LE α] [LT α] (cert : BoxCameraCert α) : Prop :=
+def Verified3DBox {α : Type} [TorchLean.Storage α] [OfNat α 0] [OfNat α 1] [Add α] [Sub α] [Mul α]
+    [Div α] [LE α] [LT α] (cert : BoxCameraCert α) : Prop :=
   PositiveImageSize cert ∧
     BBoxOrdered cert ∧
     BBoxInsideImage cert ∧
@@ -633,17 +626,17 @@ def Verified3DBox {α : Type} [OfNat α 0] [OfNat α 1] [Add α] [Sub α] [Mul �
 /-! ## Boolean checker and soundness theorems -/
 
 /-- Boolean check for positive image dimensions. -/
-def checkPositiveImageSize {α : Type} [OfNat α 0] [LT α]
+def checkPositiveImageSize {α : Type} [TorchLean.Storage α] [OfNat α 0] [LT α]
     [DecidableRel (α := α) (· < ·)] (cert : BoxCameraCert α) : Bool :=
   decide (0 < cert.width) && decide (0 < cert.height)
 
 /-- Boolean check for `BBoxOrdered`. -/
-def checkBBoxOrdered {α : Type} [OfNat α 0] [LE α] [DecidableRel (α := α) (· ≤ ·)]
-    (cert : BoxCameraCert α) : Bool :=
+def checkBBoxOrdered {α : Type} [TorchLean.Storage α] [OfNat α 0] [LE α]
+    [DecidableRel (α := α) (· ≤ ·)] (cert : BoxCameraCert α) : Bool :=
   decide (0 ≤ cert.tol) && decide (xmin cert ≤ xmax cert) && decide (ymin cert ≤ ymax cert)
 
 /-- Boolean check for `BBoxInsideImage`. -/
-def checkBBoxInsideImage {α : Type} [OfNat α 0] [LE α]
+def checkBBoxInsideImage {α : Type} [TorchLean.Storage α] [OfNat α 0] [LE α]
     [DecidableRel (α := α) (· ≤ ·)] (cert : BoxCameraCert α) : Bool :=
   decide (0 ≤ xmin cert) &&
     decide (xmax cert ≤ cert.width) &&
@@ -651,21 +644,21 @@ def checkBBoxInsideImage {α : Type} [OfNat α 0] [LE α]
     decide (ymax cert ≤ cert.height)
 
 /-- Boolean check for `PositiveDepths`. -/
-def checkPositiveDepths {α : Type} [OfNat α 0] [OfNat α 1] [Add α] [Mul α] [LT α]
-    [DecidableRel (α := α) (· < ·)] (cert : BoxCameraCert α) : Bool :=
+def checkPositiveDepths {α : Type} [TorchLean.Storage α] [OfNat α 0] [OfNat α 1] [Add α] [Mul α]
+    [LT α] [DecidableRel (α := α) (· < ·)] (cert : BoxCameraCert α) : Bool :=
   (List.finRange 8).all (fun i => decide (0 < certProjectZ cert i))
 
 /-- Boolean check for `ProjectedInImage`. -/
-def checkProjectedInImage {α : Type} [OfNat α 0] [OfNat α 1] [Add α] [Mul α] [Div α] [LE α]
-    [DecidableRel (α := α) (· ≤ ·)] (cert : BoxCameraCert α) : Bool :=
+def checkProjectedInImage {α : Type} [TorchLean.Storage α] [OfNat α 0] [OfNat α 1] [Add α] [Mul α]
+    [Div α] [LE α] [DecidableRel (α := α) (· ≤ ·)] (cert : BoxCameraCert α) : Bool :=
   (List.finRange 8).all (fun i =>
     decide
       (0 ≤ certProjectX cert i ∧ certProjectX cert i ≤ cert.width ∧
        0 ≤ certProjectY cert i ∧ certProjectY cert i ≤ cert.height))
 
 /-- Boolean check for `BBoxEnclosesProjection`. -/
-def checkBBoxEnclosesProjection {α : Type} [OfNat α 1] [Add α] [Sub α] [Mul α] [Div α] [LE α]
-    [DecidableRel (α := α) (· ≤ ·)] (cert : BoxCameraCert α) : Bool :=
+def checkBBoxEnclosesProjection {α : Type} [TorchLean.Storage α] [OfNat α 1] [Add α] [Sub α] [Mul α]
+    [Div α] [LE α] [DecidableRel (α := α) (· ≤ ·)] (cert : BoxCameraCert α) : Bool :=
   (List.finRange 8).all (fun i =>
     decide
       (xmin cert - cert.tol ≤ certProjectX cert i ∧
@@ -674,8 +667,8 @@ def checkBBoxEnclosesProjection {α : Type} [OfNat α 1] [Add α] [Sub α] [Mul 
        certProjectY cert i ≤ ymax cert + cert.tol))
 
 /-- Full Boolean checker for one exported 3D-box/camera artifact. -/
-def checkCert {α : Type} [OfNat α 0] [OfNat α 1] [Add α] [Sub α] [Mul α] [Div α]
-    [LE α] [LT α] [DecidableRel (α := α) (· ≤ ·)] [DecidableRel (α := α) (· < ·)]
+def checkCert {α : Type} [TorchLean.Storage α] [OfNat α 0] [OfNat α 1] [Add α] [Sub α] [Mul α]
+    [Div α] [LE α] [LT α] [DecidableRel (α := α) (· ≤ ·)] [DecidableRel (α := α) (· < ·)]
     (cert : BoxCameraCert α) : Bool :=
   checkPositiveImageSize cert &&
     checkBBoxOrdered cert &&
@@ -685,7 +678,7 @@ def checkCert {α : Type} [OfNat α 0] [OfNat α 1] [Add α] [Sub α] [Mul α] [
     checkBBoxEnclosesProjection cert
 
 /-- Acceptance by the image-size check yields the corresponding positive-size proposition. -/
-theorem checkPositiveImageSize_sound {α : Type} [OfNat α 0] [LT α]
+theorem checkPositiveImageSize_sound {α : Type} [TorchLean.Storage α] [OfNat α 0] [LT α]
     [DecidableRel (α := α) (· < ·)] {cert : BoxCameraCert α}
     (h : checkPositiveImageSize cert = true) :
     PositiveImageSize cert := by
@@ -693,7 +686,7 @@ theorem checkPositiveImageSize_sound {α : Type} [OfNat α 0] [LT α]
   exact h
 
 /-- Acceptance by the box-order check yields ordered horizontal and vertical endpoints. -/
-theorem checkBBoxOrdered_sound {α : Type} [OfNat α 0] [LE α]
+theorem checkBBoxOrdered_sound {α : Type} [TorchLean.Storage α] [OfNat α 0] [LE α]
     [DecidableRel (α := α) (· ≤ ·)] {cert : BoxCameraCert α}
     (h : checkBBoxOrdered cert = true) :
     BBoxOrdered cert := by
@@ -701,16 +694,17 @@ theorem checkBBoxOrdered_sound {α : Type} [OfNat α 0] [LE α]
   exact ⟨h.1.1, h.1.2, h.2⟩
 
 /-- Acceptance by the containment check places every claimed box edge inside the image. -/
-theorem checkBBoxInsideImage_sound {α : Type} [OfNat α 0] [LE α]
+theorem checkBBoxInsideImage_sound {α : Type} [TorchLean.Storage α] [OfNat α 0] [LE α]
     [DecidableRel (α := α) (· ≤ ·)] {cert : BoxCameraCert α}
     (h : checkBBoxInsideImage cert = true) :
     BBoxInsideImage cert := by
   simp [checkBBoxInsideImage] at h
   exact ⟨h.1.1.1, h.1.1.2, h.1.2, h.2⟩
 
-/-- Acceptance by the depth check proves that all eight projected corners are in front of the camera. -/
-theorem checkPositiveDepths_sound {α : Type} [OfNat α 0] [OfNat α 1] [Add α] [Mul α] [LT α]
-    [DecidableRel (α := α) (· < ·)] {cert : BoxCameraCert α}
+/-- Acceptance by the depth check proves that all eight projected corners are in front of the
+camera. -/
+theorem checkPositiveDepths_sound {α : Type} [TorchLean.Storage α] [OfNat α 0] [OfNat α 1] [Add α]
+    [Mul α] [LT α] [DecidableRel (α := α) (· < ·)] {cert : BoxCameraCert α}
     (h : checkPositiveDepths cert = true) :
     PositiveDepths cert := by
   intro i
@@ -719,7 +713,7 @@ theorem checkPositiveDepths_sound {α : Type} [OfNat α 0] [OfNat α 1] [Add α]
   exact of_decide_eq_true hi
 
 /-- Acceptance by the projection check places every projected corner within the image rectangle. -/
-theorem checkProjectedInImage_sound {α : Type} [OfNat α 0] [OfNat α 1]
+theorem checkProjectedInImage_sound {α : Type} [TorchLean.Storage α] [OfNat α 0] [OfNat α 1]
     [Add α] [Mul α] [Div α] [LE α] [DecidableRel (α := α) (· ≤ ·)]
     {cert : BoxCameraCert α} (h : checkProjectedInImage cert = true) :
     ProjectedInImage cert := by
@@ -731,8 +725,9 @@ theorem checkProjectedInImage_sound {α : Type} [OfNat α 0] [OfNat α 1]
     list_all_true_of_mem h (by simp)
   exact of_decide_eq_true hi
 
-/-- Acceptance by the enclosure check places every projected corner inside the claimed box tolerance. -/
-theorem checkBBoxEnclosesProjection_sound {α : Type} [OfNat α 1]
+/-- Acceptance by the enclosure check places every projected corner inside the claimed box
+tolerance. -/
+theorem checkBBoxEnclosesProjection_sound {α : Type} [TorchLean.Storage α] [OfNat α 1]
     [Add α] [Sub α] [Mul α] [Div α] [LE α] [DecidableRel (α := α) (· ≤ ·)]
     {cert : BoxCameraCert α} (h : checkBBoxEnclosesProjection cert = true) :
     BBoxEnclosesProjection cert := by
@@ -752,8 +747,8 @@ Soundness of the executable checker.
 This is the main theorem for the implementation: if the Boolean checker accepts an artifact, the
 artifact satisfies the mathematical `Verified3DBox` predicate.
 -/
-theorem checkCert_sound {α : Type} [OfNat α 0] [OfNat α 1] [Add α] [Sub α] [Mul α] [Div α]
-    [LE α] [LT α] [DecidableRel (α := α) (· ≤ ·)] [DecidableRel (α := α) (· < ·)]
+theorem checkCert_sound {α : Type} [TorchLean.Storage α] [OfNat α 0] [OfNat α 1] [Add α] [Sub α]
+    [Mul α] [Div α] [LE α] [LT α] [DecidableRel (α := α) (· ≤ ·)] [DecidableRel (α := α) (· < ·)]
     {cert : BoxCameraCert α} (h : checkCert cert = true) :
     Verified3DBox cert := by
   simp [checkCert] at h
@@ -770,14 +765,14 @@ theorem checkCert_sound {α : Type} [OfNat α 0] [OfNat α 1] [Add α] [Sub α] 
 /-! ## Consequence theorems for verified artifacts -/
 
 /-- A verified artifact necessarily has positive image width and height. -/
-theorem Verified3DBox.positive_image_size {α : Type} [OfNat α 0] [OfNat α 1]
+theorem Verified3DBox.positive_image_size {α : Type} [TorchLean.Storage α] [OfNat α 0] [OfNat α 1]
     [Add α] [Sub α] [Mul α] [Div α] [LE α] [LT α]
     {cert : BoxCameraCert α} (h : Verified3DBox cert) :
     0 < cert.width ∧ 0 < cert.height :=
   h.1
 
 /-- The claimed 2D bounding box of a verified artifact lies within its image dimensions. -/
-theorem Verified3DBox.bbox_inside_image {α : Type} [OfNat α 0] [OfNat α 1]
+theorem Verified3DBox.bbox_inside_image {α : Type} [TorchLean.Storage α] [OfNat α 0] [OfNat α 1]
     [Add α] [Sub α] [Mul α] [Div α] [LE α] [LT α]
     {cert : BoxCameraCert α} (h : Verified3DBox cert) :
     0 ≤ xmin cert ∧ xmax cert ≤ cert.width ∧
@@ -785,23 +780,24 @@ theorem Verified3DBox.bbox_inside_image {α : Type} [OfNat α 0] [OfNat α 1]
   h.2.2.1
 
 /-- Every corner of a verified artifact has positive camera-space depth. -/
-theorem Verified3DBox.corner_positive_depth {α : Type} [OfNat α 0] [OfNat α 1]
+theorem Verified3DBox.corner_positive_depth {α : Type} [TorchLean.Storage α] [OfNat α 0] [OfNat α 1]
     [Add α] [Sub α] [Mul α] [Div α] [LE α] [LT α]
     {cert : BoxCameraCert α} (h : Verified3DBox cert) (i : Fin 8) :
     0 < certProjectZ cert i :=
   h.2.2.2.1 i
 
 /-- Every projected corner of a verified artifact lies within the image rectangle. -/
-theorem Verified3DBox.projected_corner_in_image {α : Type} [OfNat α 0] [OfNat α 1]
-    [Add α] [Sub α] [Mul α] [Div α] [LE α] [LT α]
+theorem Verified3DBox.projected_corner_in_image {α : Type} [TorchLean.Storage α] [OfNat α 0]
+    [OfNat α 1] [Add α] [Sub α] [Mul α] [Div α] [LE α] [LT α]
     {cert : BoxCameraCert α} (h : Verified3DBox cert) (i : Fin 8) :
     0 ≤ certProjectX cert i ∧ certProjectX cert i ≤ cert.width ∧
       0 ≤ certProjectY cert i ∧ certProjectY cert i ≤ cert.height :=
   h.2.2.2.2.1 i
 
-/-- Every projected corner lies within the verified artifact's claimed box, up to its tolerance. -/
-theorem Verified3DBox.projected_corner_in_claimed_bbox {α : Type} [OfNat α 0] [OfNat α 1]
-    [Add α] [Sub α] [Mul α] [Div α] [LE α] [LT α]
+/-- Every projected corner lies within the verified artifact's claimed box, up to its
+tolerance. -/
+theorem Verified3DBox.projected_corner_in_claimed_bbox {α : Type} [TorchLean.Storage α] [OfNat α 0]
+    [OfNat α 1] [Add α] [Sub α] [Mul α] [Div α] [LE α] [LT α]
     {cert : BoxCameraCert α} (h : Verified3DBox cert) (i : Fin 8) :
     xmin cert - cert.tol ≤ certProjectX cert i ∧
       certProjectX cert i ≤ xmax cert + cert.tol ∧
@@ -818,16 +814,17 @@ def formatString : String := "torchlean.camera.box3d.v1"
 def parseJsonCert (j : Lean.Json) : IO (BoxCameraCert Float) := do
   expectFormat j formatString
   let width ← expectFiniteFloat (← expectField j "image_width" "top-level") "top-level.image_width"
-  let height ← expectFiniteFloat (← expectField j "image_height" "top-level") "top-level.image_height"
+  let height ←
+    expectFiniteFloat (← expectField j "image_height" "top-level") "top-level.image_height"
   let tol ← expectFiniteFloat (← expectField j "tol" "top-level") "top-level.tol"
   let cameraFlat ← expectFieldFiniteFloatArray j "camera_P" "top-level"
   let cornersFlat ← expectFieldFiniteFloatArray j "corners3d" "top-level"
   let bboxFlat ← expectFieldFiniteFloatArray j "bbox2d" "top-level"
-  let camera ← NN.Verification.Util.Tensor.requireMatOfFlatArray
+  let camera : CameraP Float ← NN.Verification.Util.Tensor.requireMatOfFlatArray
     "top-level.camera_P" 3 4 cameraFlat
-  let corners ← NN.Verification.Util.Tensor.requireMatOfFlatArray
+  let corners : BoxCorners Float ← NN.Verification.Util.Tensor.requireMatOfFlatArray
     "top-level.corners3d" 8 3 cornersFlat
-  let bbox ← NN.Verification.Util.Tensor.requireVecOfArray
+  let bbox : Box2D Float ← NN.Verification.Util.Tensor.requireVecOfArray
     "top-level.bbox2d" 4 bboxFlat
   pure {
     width := width
@@ -847,7 +844,7 @@ projection and accepts only if the tensor artifact passes the checker.
 def checkFile (path : String) : IO Bool := do
   let j ← readJsonObjectFile path
   let cert ← parseJsonCert j
-  let ok := checkCert cert
+  let ok := checkCert (α := Float) cert
   if ok then
     IO.println s!"3D camera-box certificate verified: {path}"
   else

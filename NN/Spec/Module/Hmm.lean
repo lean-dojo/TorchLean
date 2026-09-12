@@ -24,9 +24,9 @@ provide that bridge and package the resulting behavior as `Spec.Module`s.
 
 namespace Spec.Module
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Decode a single observation vector into a discrete symbol by taking `argmax`. -/
 def decodeObservation
@@ -41,7 +41,7 @@ def decodeObservations
   {seqLen nObservations : Nat} (hObservations : nObservations > 0)
   (scores : Tensor α [seqLen, nObservations]) :
   Tensor (Fin nObservations) [seqLen] :=
-  Spec.Tensor.ofFn fun t => decodeObservation hObservations (get scores t)
+  TorchLean.Tensor.ofFn fun t => decodeObservation hObservations (get scores t)
 
 /-- A one-step HMM module: map an observation distribution to a filtered state distribution. -/
 def hmm {nStates nObservations : Nat}
@@ -106,8 +106,7 @@ def hmmStateProbabilities {seqLen nStates nObservations : Nat}
       let total := sumSpec message
       if total > 0 then
         Tensor.dim (fun s =>
-          match get message s with
-          | Tensor.scalar val => Tensor.scalar (val / total)
+          Tensor.scalar (message.getScalar s / total)
         )
       else
         Tensor.dim (fun _ => Tensor.scalar (1 / nStates))

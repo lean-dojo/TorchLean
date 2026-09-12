@@ -52,7 +52,9 @@ python3 NN/Examples/Data/plot_fno1d_burgers.py \
 ## Runtime and Verification Boundary
 
 On CUDA, this example uses a real-split FNO path with fused `spectralConv1dRfft` autograd support
-and cuFFT-backed kernels. The generic real-split FNO model supplies the dense mathematical reference.
+and cuFFT-backed kernels. The fused runtime owns tensor parameters, cached Adam moments, prediction,
+and tape disposal. Host updates retain their documented floating-point operation order. The generic
+real-split FNO model supplies the dense mathematical reference.
 Dataset metadata and prediction artifacts are visible in TorchLean; CUDA/cuFFT remain native runtime
 boundaries.
 

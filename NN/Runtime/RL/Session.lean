@@ -6,9 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.RL.Boundary.Core
 public import NN.Runtime.RL.Gymnasium.Session
-public import NN.Spec.RL.Environment
 
 /-!
 # Checked RL Sessions (Unified Runtime Interface)
@@ -18,8 +16,8 @@ TorchLean supports two “sources of experience”:
 1. **External samplers** like Python Gymnasium (via `NN.Runtime.RL.Gymnasium`), and
 2. **Lean-native environments** (`Spec.RL.Env`), useful for strongest end-to-end guarantees.
 
-To avoid duplicating rollout/data-collection infrastructure per example or per algorithm, this module
-defines a small **unified session interface**:
+To avoid duplicating rollout/data-collection infrastructure per example or per algorithm, this
+module defines a small **unified session interface**:
 
 - it is stateful (has a session state type `Sess`),
 - it exposes the current observation, and
@@ -44,8 +42,8 @@ namespace Runtime
 namespace RL
 namespace Session
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 /-!
 ## Checked session interface
@@ -88,7 +86,8 @@ def gymnasium {obsShape : Shape} {nActions : Nat}
     (resetOnDone : Bool := true) :
     CheckedSession obsShape nActions :=
   { Sess := Gymnasium.Session obsShape nActions
-    start := Gymnasium.Session.start (obsShape := obsShape) (nActions := nActions) gym (seed? := seed?)
+    start :=
+      Gymnasium.Session.start (obsShape := obsShape) (nActions := nActions) gym (seed? := seed?)
     observe := fun s => s.observation
     stepChecked := fun s a =>
       Gymnasium.Session.stepChecked (obsShape := obsShape) (nActions := nActions) s a

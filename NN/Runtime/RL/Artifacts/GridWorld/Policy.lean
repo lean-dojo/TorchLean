@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.RL.Artifacts.GridWorld.Position
+public import NN.Runtime.Training.Log
 
 /-!
 # GridWorld Policy-Difference Artifacts
@@ -109,7 +109,8 @@ def ofJsonE (j : Json) : Except String PolicyDiff := do
     | Except.ok xs => xs
     | Except.error _ => #[]
 
-  let p : PolicyDiff := { width := width, height := height, before := before, after := after, notes := notes }
+  let p : PolicyDiff :=
+    { width := width, height := height, before := before, after := after, notes := notes }
   validateE p
   pure p
 

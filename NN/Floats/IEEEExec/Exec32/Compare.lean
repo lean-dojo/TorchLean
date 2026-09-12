@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Exec32.Directed
+public import NN.Floats.IEEEExec.Exec32.Arithmetic
 
 /-!
 Comparisons for executable IEEE32 values.

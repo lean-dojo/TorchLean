@@ -6,8 +6,14 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.NeuralFloat.Rounding.Order
-public import NN.Proofs.RuntimeApprox.NF.Ops.Plumbing
+public import Mathlib.Analysis.SpecialFunctions.Log.Deriv
+public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
+public import NN.Floats.NeuralFloat.Scalar.NF
+public import NN.Proofs.RuntimeApprox.Rounding.RoundingApprox
+public import NN.Spec.Core.Context.Real
+public import NN.Spec.Core.Scalar
+public import NN.Floats.NeuralFloat.Rounding.Order -- shake: keep
+public import NN.Proofs.RuntimeApprox.NF.Ops.Plumbing -- shake: keep
 
 /-!
 # NF Scalar Primitive Bounds
@@ -21,8 +27,8 @@ that later tensor proofs lift pointwise across shapes.
 namespace Proofs
 namespace RuntimeApprox
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
 
 noncomputable section
@@ -46,7 +52,7 @@ This is the canonical bridge for rounded constants and casts. Keeping it next to
 repeating the implementation-level `NF.ofReal` unfolding in attention scales, optimizer
 hyperparameters, and quantization parameters.
 -/
-lemma approx_ofReal_nf (x : ℝ) :
+theorem approx_ofReal_nf (x : ℝ) :
     abs
       (toSpec (β := β) (fexp := fexp) (rnd := rnd)
           (TorchLean.Floats.NF.ofReal (β := β) (fexp := fexp) (rnd := rnd) x) - x) ≤
@@ -71,8 +77,8 @@ forward-approx proofs much easier to read.
 -/
 
 /-- Rounding `0` is `0` for any valid rounding mode. -/
-private lemma roundR_zero : Proofs.RuntimeRoundingApprox.roundR (β := β) (fexp := fexp) (rnd := rnd)
-  (0 : ℝ) = 0 := by
+private theorem roundR_zero :
+    Proofs.RuntimeRoundingApprox.roundR (β := β) (fexp := fexp) (rnd := rnd) (0 : ℝ) = 0 := by
   -- For `x = 0`, the scaled mantissa is `0`, so `rnd` returns `0` by `NeuralValidRnd.id`,
   -- and `neural_to_real` is `0` regardless of exponent.
   have hrnd0 : rnd (0 : ℝ) = 0 := by
@@ -82,15 +88,15 @@ private lemma roundR_zero : Proofs.RuntimeRoundingApprox.roundR (β := β) (fexp
     TorchLean.Floats.neuralScaledMantissa, TorchLean.Floats.neuralToReal, hrnd0]
 
 /-- The `NF.roundR` wrapper also rounds `0` to `0`. -/
-private lemma NF_roundR_zero : TorchLean.Floats.NF.roundR (β := β) (fexp := fexp) (rnd := rnd) (0 :
-  ℝ) = 0 := by
+private theorem NF_roundR_zero :
+    TorchLean.Floats.NF.roundR (β := β) (fexp := fexp) (rnd := rnd) (0 : ℝ) = 0 := by
   have hrnd0 : rnd (0 : ℝ) = 0 := by
     simpa using (NeuralValidRnd.id (rnd := rnd) (n := (0 : ℤ)))
   simp [TorchLean.Floats.NF.roundR, TorchLean.Floats.neuralRound,
     TorchLean.Floats.neuralScaledMantissa, TorchLean.Floats.neuralToReal, hrnd0]
 
 /-- `toSpec` of runtime `0` is the spec scalar `0`. -/
-@[simp] lemma toSpec_zero : toSpec (β := β) (fexp := fexp) (rnd := rnd) (0 : R) = (0 : ℝ) := by
+@[simp] theorem toSpec_zero : toSpec (β := β) (fexp := fexp) (rnd := rnd) (0 : R) = (0 : ℝ) := by
   -- `0 : R` is `NF.ofReal 0`, so `toSpec 0` is `NF.roundR 0`.
   change (TorchLean.Floats.NF.ofReal (β := β) (fexp := fexp) (rnd := rnd) (0 : ℝ)).val = (0 : ℝ)
   simpa [TorchLean.Floats.NF.ofReal] using
@@ -98,7 +104,7 @@ private lemma NF_roundR_zero : TorchLean.Floats.NF.roundR (β := β) (fexp := fe
 
 omit [NeuralValidExp fexp] [NeuralValidRndToNearest rnd] in
 /-- `max` on `NF` is a pure selection, so forgetting the format commutes with maximum exactly. -/
-lemma toSpec_max (x y : R) :
+theorem toSpec_max (x y : R) :
     toSpec (β := β) (fexp := fexp) (rnd := rnd) (max x y) =
       max (toSpec (β := β) (fexp := fexp) (rnd := rnd) x)
         (toSpec (β := β) (fexp := fexp) (rnd := rnd) y) := by
@@ -123,7 +129,7 @@ omit [NeuralValidRndToNearest rnd] in
 
 This is the defining `NF` semantics: compute in `ℝ` and then apply `roundR`.
 -/
-private lemma toSpec_add (x y : R) :
+private theorem toSpec_add (x y : R) :
     toSpec (β := β) (fexp := fexp) (rnd := rnd) (x + y) =
       roundedAdd (β := β) (fexp := fexp) (rnd := rnd)
         (toSpec (β := β) (fexp := fexp) (rnd := rnd) x)
@@ -132,7 +138,7 @@ private lemma toSpec_add (x y : R) :
 
 omit [NeuralValidRndToNearest rnd] in
 /-- `toSpec` respects runtime multiplication, up to an explicit rounding step. -/
-private lemma toSpec_mul (x y : R) :
+private theorem toSpec_mul (x y : R) :
     toSpec (β := β) (fexp := fexp) (rnd := rnd) (x * y) =
       roundedMul (β := β) (fexp := fexp) (rnd := rnd)
         (toSpec (β := β) (fexp := fexp) (rnd := rnd) x)
@@ -141,7 +147,7 @@ private lemma toSpec_mul (x y : R) :
 
 omit [NeuralValidRndToNearest rnd] in
 /-- `toSpec` respects runtime division, up to an explicit rounding step. -/
-private lemma toSpec_div (x y : R) :
+private theorem toSpec_div (x y : R) :
     toSpec (β := β) (fexp := fexp) (rnd := rnd) (x / y) =
       Proofs.RuntimeRoundingApprox.roundR (β := β) (fexp := fexp) (rnd := rnd)
         (toSpec (β := β) (fexp := fexp) (rnd := rnd) x /
@@ -150,7 +156,7 @@ private lemma toSpec_div (x y : R) :
 
 omit [NeuralValidRndToNearest rnd] in
 /-- `toSpec` respects runtime subtraction, up to an explicit rounding step. -/
-private lemma toSpec_sub (x y : R) :
+private theorem toSpec_sub (x y : R) :
     toSpec (β := β) (fexp := fexp) (rnd := rnd) (x - y) =
       Proofs.RuntimeRoundingApprox.roundR (β := β) (fexp := fexp) (rnd := rnd)
         (toSpec (β := β) (fexp := fexp) (rnd := rnd) x -
@@ -159,7 +165,7 @@ private lemma toSpec_sub (x y : R) :
 
 omit [NeuralValidRndToNearest rnd] in
 /-- `toSpec` respects runtime negation, up to an explicit rounding step. -/
-private lemma toSpec_neg (x : R) :
+private theorem toSpec_neg (x : R) :
     toSpec (β := β) (fexp := fexp) (rnd := rnd) (-x) =
       Proofs.RuntimeRoundingApprox.roundR (β := β) (fexp := fexp) (rnd := rnd)
         (-toSpec (β := β) (fexp := fexp) (rnd := rnd) x) := by
@@ -168,7 +174,7 @@ private lemma toSpec_neg (x : R) :
 
 omit [NeuralValidRndToNearest rnd] in
 /-- `toSpec` respects runtime `exp`, up to an explicit rounding step. -/
-lemma toSpec_exp (x : R) :
+theorem toSpec_exp (x : R) :
     toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.exp x) =
       Proofs.RuntimeRoundingApprox.roundR (β := β) (fexp := fexp) (rnd := rnd)
         (Real.exp (toSpec (β := β) (fexp := fexp) (rnd := rnd) x)) := by
@@ -178,7 +184,7 @@ lemma toSpec_exp (x : R) :
 
 omit [NeuralValidRndToNearest rnd] in
 /-- `toSpec` respects runtime `tanh`, up to an explicit rounding step. -/
-private lemma toSpec_tanh (x : R) :
+private theorem toSpec_tanh (x : R) :
     toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.tanh x) =
       Proofs.RuntimeRoundingApprox.roundR (β := β) (fexp := fexp) (rnd := rnd)
         (Real.tanh (toSpec (β := β) (fexp := fexp) (rnd := rnd) x)) := by
@@ -188,7 +194,7 @@ private lemma toSpec_tanh (x : R) :
 
 omit [NeuralValidRndToNearest rnd] in
 /-- `toSpec` respects runtime `sqrt`, up to an explicit rounding step. -/
-private lemma toSpec_sqrt (x : R) :
+private theorem toSpec_sqrt (x : R) :
     toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.sqrt x) =
       Proofs.RuntimeRoundingApprox.roundR (β := β) (fexp := fexp) (rnd := rnd)
         (Real.sqrt (toSpec (β := β) (fexp := fexp) (rnd := rnd) x)) := by
@@ -200,8 +206,8 @@ private lemma toSpec_sqrt (x : R) :
 -- Sqrt (clamped) approximation
 -- ---------------------------------------------------------------------------
 
-private lemma abs_sqrt_sub_sqrt_le_div_sqrt_of_le {a b η : ℝ} (ha : 0 ≤ a) (hη : 0 < η) (hb : η ≤ b)
-  :
+private theorem abs_sqrt_sub_sqrt_le_div_sqrt_of_le {a b η : ℝ} (ha : 0 ≤ a) (hη : 0 < η)
+    (hb : η ≤ b) :
     abs (Real.sqrt a - Real.sqrt b) ≤ abs (a - b) / Real.sqrt η := by
   have hb0 : 0 < b := lt_of_lt_of_le hη hb
   have hsb_pos : 0 < Real.sqrt b := Real.sqrt_pos.2 hb0
@@ -240,14 +246,15 @@ This is a *clamped* sqrt bound: we work with `sqrt (max x 0)` to avoid the `sqrt
 still require a *strict* lower bound `η > 0` on `max x 0` to control conditioning via
 `|√a - √b| ≤ |a-b| / √η`.
 -/
-lemma approx_sqrt_clamp_nf_of_lb {x : ℝ} {xR : R} {eps η : ℝ}
+theorem approx_sqrt_clamp_nf_of_lb {x : ℝ} {xR : R} {eps η : ℝ}
     (hη : 0 < η) (hdom : η ≤ max x 0)
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
     abs
         (toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.sqrt (max xR 0)) -
           Real.sqrt (max x 0)) ≤
       eps / Real.sqrt η +
-        neuralUlp β fexp (Real.sqrt (max (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) 0)) / 2 := by
+        neuralUlp β fexp
+          (Real.sqrt (max (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) 0)) / 2 := by
   set xhat : ℝ := toSpec (β := β) (fexp := fexp) (rnd := rnd) xR
   have hxhat : abs (xhat - x) ≤ eps := by
     simpa [xhat, abs_sub_comm] using hx
@@ -337,7 +344,7 @@ lemma approx_sqrt_clamp_nf_of_lb {x : ℝ} {xR : R} {eps η : ℝ}
             ring
   simpa [xhat, add_comm, add_left_comm, add_assoc] using this
 
-private lemma abs_tanh_le_one (x : ℝ) : abs (Real.tanh x) ≤ 1 := by
+private theorem abs_tanh_le_one (x : ℝ) : abs (Real.tanh x) ≤ 1 := by
   -- `tanh x = (exp x - exp (-x)) / (exp x + exp (-x))`, so `|tanh x| ≤ 1` by `|a-b| ≤ a+b`.
   have htanh :
       Real.tanh x =
@@ -371,7 +378,7 @@ Forward approximation bound for addition in `NF`.
 In words: if `xR` approximates `x` within `epsx` and `yR` approximates `y` within `epsy`,
 then `xR + yR` approximates `x + y` within `epsx + epsy + ulp(toSpec xR + toSpec yR)/2`.
 -/
-lemma approx_add_nf {x y : ℝ} {xR yR : R} {epsx epsy : ℝ}
+theorem approx_add_nf {x y : ℝ} {xR yR : R} {epsx epsy : ℝ}
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ epsx)
     (hy : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) yR - y) ≤ epsy) :
     abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR + yR) - (x + y)) ≤
@@ -397,7 +404,7 @@ Forward approximation bound for subtraction in `NF`.
 
 This is proved by reducing subtraction to addition with a negation and applying `approx_add_nf`.
 -/
-lemma approx_sub_nf {x y : ℝ} {xR yR : R} {epsx epsy : ℝ}
+theorem approx_sub_nf {x y : ℝ} {xR yR : R} {epsx epsy : ℝ}
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ epsx)
     (hy : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) yR - y) ≤ epsy) :
     abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR - yR) - (x - y)) ≤
@@ -448,7 +455,7 @@ lemma approx_sub_nf {x y : ℝ} {xR yR : R} {epsx epsy : ℝ}
   simpa [xhat, yhat, sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using this
 
 /-- Forward approximation bound for negation in `NF` (rounding error on `-toSpec xR`). -/
-lemma approx_neg_nf {x : ℝ} {xR : R} {eps : ℝ}
+theorem approx_neg_nf {x : ℝ} {xR : R} {eps : ℝ}
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
     abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (-xR) - (-x)) ≤
       eps +
@@ -490,7 +497,7 @@ lemma approx_neg_nf {x : ℝ} {xR : R} {eps : ℝ}
   simpa [xhat, add_assoc, add_left_comm, add_comm] using this
 
 /-- Forward approximation bound for absolute value in `NF` (`abs` is pure + a final rounding). -/
-lemma approx_abs_nf {x : ℝ} {xR : R} {eps : ℝ}
+theorem approx_abs_nf {x : ℝ} {xR : R} {eps : ℝ}
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
     abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.abs xR) - abs x) ≤
       eps +
@@ -542,7 +549,7 @@ Forward approximation bound for `exp` in `NF`.
 Uses the mean value theorem for `Real.exp` to bound the propagation of input error, then adds one
 rounding-ULP term for the final `NF` rounding.
 -/
-lemma approx_exp_nf {x : ℝ} {xR : R} {eps : ℝ}
+theorem approx_exp_nf {x : ℝ} {xR : R} {eps : ℝ}
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
     abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.exp xR) - Real.exp x) ≤
       expErrorBound (β := β) (fexp := fexp)
@@ -640,7 +647,7 @@ Forward approximation bound for `tanh` in `NF` (coarse but unconditional).
 Because `tanh` is bounded in `[-1, 1]`, we always have `|tanh(toSpec xR) - tanh(x)| ≤ 2`, and then
 we add one rounding-ULP term for the final `NF` rounding step.
 -/
-lemma approx_tanh_nf {x : ℝ} {xR : R} {eps : ℝ}
+theorem approx_tanh_nf {x : ℝ} {xR : R} {eps : ℝ}
     (_hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
     abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.tanh xR) - Real.tanh x) ≤
       2 +
@@ -722,7 +729,7 @@ def safeLogR (ε : ℝ) (xR : R) : R :=
   TorchLean.Floats.NF.ofReal (β := β) (fexp := fexp) (rnd := rnd)
     (safeLog (ε := ε) (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR))
 
-private lemma abs_log_sub_log_le_one_div_mul_abs_sub {ε u v : ℝ}
+private theorem abs_log_sub_log_le_one_div_mul_abs_sub {ε u v : ℝ}
     (hε : 0 < ε) (hu : ε ≤ u) (hv : ε ≤ v) :
     abs (Real.log u - Real.log v) ≤ (1 / ε) * abs (u - v) := by
   -- Mean value theorem on `s = Ici ε` (derivative bounded by `1/ε`).
@@ -758,14 +765,15 @@ Forward approximation bound for `safeLog` in `NF`.
 On the clamped domain `u,v ≥ ε > 0`, `log` is `(1/ε)`-Lipschitz. We use that to propagate the input
 error and then add one rounding-ULP term for the final `NF` rounding.
 -/
-lemma approx_safeLog_nf {x : ℝ} {xR : R} {eps ε : ℝ}
+theorem approx_safeLog_nf {x : ℝ} {xR : R} {eps ε : ℝ}
     (hε : 0 < ε)
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
     abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (safeLogR (β := β) (fexp := fexp) (rnd := rnd)
       ε xR) -
           safeLog (ε := ε) x) ≤
       (1 / ε) * eps +
-        neuralUlp β fexp (safeLog (ε := ε) (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR)) / 2 := by
+        neuralUlp β fexp
+          (safeLog (ε := ε) (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR)) / 2 := by
   set xhat : ℝ := toSpec (β := β) (fexp := fexp) (rnd := rnd) xR
   set yhat : ℝ := max xhat ε
   set y : ℝ := max x ε
@@ -842,7 +850,7 @@ so a real lower bound alone does not rule out an invalid rounded argument. Once 
 runtime inputs are nonnegative, the clamped theorem above reduces definitionally to ordinary
 square root.
 -/
-lemma approx_sqrt_nf_of_pos_lb {x : ℝ} {xR : R} {eps η : ℝ}
+theorem approx_sqrt_nf_of_pos_lb {x : ℝ} {xR : R} {eps η : ℝ}
     (hη : 0 < η) (hdom : η ≤ x)
     (hxR : 0 ≤ toSpec (β := β) (fexp := fexp) (rnd := rnd) xR)
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
@@ -873,7 +881,7 @@ lemma approx_sqrt_nf_of_pos_lb {x : ℝ} {xR : R} {eps η : ℝ}
 From `η ≤ x`, `|x̂-x| ≤ eps`, and `eps < η`, the rounded input satisfies `0 < x̂`; callers do not
 need a separate runtime-domain hypothesis. This is the form used by normalization certificates.
 -/
-lemma approx_sqrt_nf_of_pos_lb_of_error {x : ℝ} {xR : R} {eps η : ℝ}
+theorem approx_sqrt_nf_of_pos_lb_of_error {x : ℝ} {xR : R} {eps η : ℝ}
     (hη : 0 < η) (hdom : η ≤ x) (hbudget : eps < η)
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
     abs
@@ -901,7 +909,7 @@ terms proportional to `|toSpec xR| * epsy` and `|toSpec yR| * epsx`, plus an `ul
   final
 rounding. (For classical background, see Higham, *Accuracy and Stability of Numerical Algorithms*.)
 -/
-lemma approx_mul_nf {x y : ℝ} {xR yR : R} {epsx epsy : ℝ}
+theorem approx_mul_nf {x y : ℝ} {xR yR : R} {epsx epsy : ℝ}
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ epsx)
     (hy : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) yR - y) ≤ epsy) :
     abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR * yR) - (x * y)) ≤
@@ -922,200 +930,8 @@ lemma approx_mul_nf {x y : ℝ} {xR yR : R} {epsx epsy : ℝ}
   simpa [Proofs.RuntimeRoundingApprox.scalarApprox,
     toSpec_mul (β := β) (fexp := fexp) (rnd := rnd) xR yR] using h
 
-/--
-Forward approximation bound for division under a coarse denominator lower bound (`y ≥ 1`).
-
-Division is ill-conditioned near `0`, so we need a domain condition. This lemma is tailored for the
-simple case `y ≥ 1` to keep constants small.
--/
-lemma approx_div_nf_of_one_le {x y : ℝ} {xR yR : R} {epsx : ℝ}
-    (hy : (1 : ℝ) ≤ y)
-    (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ epsx) :
-    abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR / yR) - (x / y)) ≤
-      neuralUlp β fexp
-          (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR /
-            toSpec (β := β) (fexp := fexp) (rnd := rnd) yR) / 2
-        + abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) *
-            abs (1 / toSpec (β := β) (fexp := fexp) (rnd := rnd) yR)
-        + abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR)
-        + epsx := by
-  -- Notation for the embedded runtime values.
-  set xhat : ℝ := toSpec (β := β) (fexp := fexp) (rnd := rnd) xR
-  set yhat : ℝ := toSpec (β := β) (fexp := fexp) (rnd := rnd) yR
-  set qhat : ℝ := xhat / yhat
-
-  have hy_pos : 0 < y := lt_of_lt_of_le (by norm_num) hy
-
-  -- Bound `|x|` by the rounded magnitude plus epsilon.
-  have hx_abs : abs x ≤ abs xhat + epsx := by
-    have hx' : abs (x - xhat) ≤ epsx := by
-      -- `hx` is stated using `(xhat - x)`.
-      simpa [xhat, abs_sub_comm] using hx
-    calc
-      abs x = abs ((x - xhat) + xhat) := by
-        simp [sub_add_cancel]
-      _ ≤ abs (x - xhat) + abs xhat := by
-        simpa using abs_add_le (x - xhat) xhat
-      _ ≤ epsx + abs xhat := by
-        exact add_le_add_left hx' (abs xhat)
-      _ = abs xhat + epsx := by
-        simp [add_comm]
-
-  -- `|1/y| ≤ 1` since `y ≥ 1`.
-  have hy_inv_le_one : abs (1 / y) ≤ (1 : ℝ) := by
-    have h : (1 : ℝ) / y ≤ 1 / (1 : ℝ) := by
-      simpa using (one_div_le_one_div_of_le (by norm_num : (0 : ℝ) < (1 : ℝ)) hy)
-    have h' : (1 : ℝ) / y ≤ (1 : ℝ) := by simpa using h
-    have hy_div_pos : 0 < (1 : ℝ) / y := by
-      simpa [div_eq_mul_inv] using (div_pos (show (0 : ℝ) < (1 : ℝ) by norm_num) hy_pos)
-    calc
-      abs (1 / y) = (1 : ℝ) / y := abs_of_pos hy_div_pos
-      _ ≤ 1 := h'
-
-  -- Unrounded quotient error: `|q̂ - x/y| ≤ |q̂| + |x/y|`.
-  have hquot :
-      abs (qhat - x / y) ≤ abs xhat * abs (1 / yhat) + abs xhat + epsx := by
-    have hsub : abs (qhat - x / y) ≤ abs qhat + abs (x / y) := by
-      -- `|a-b| ≤ |a| + |b|`.
-      simpa using (abs_sub_le qhat 0 (x / y))
-    have hq : abs qhat = abs xhat * abs (1 / yhat) := by
-      simp [qhat, div_eq_mul_inv, abs_mul, abs_inv]
-    have hx_over : abs (x / y) ≤ abs xhat + epsx := by
-      have : abs (x / y) = abs x * abs (1 / y) := by
-        simp [div_eq_mul_inv, abs_mul, abs_inv]
-      calc
-        abs (x / y) = abs x * abs (1 / y) := this
-        _ ≤ abs x * 1 := by
-              exact mul_le_mul_of_nonneg_left hy_inv_le_one (abs_nonneg x)
-        _ = abs x := by simp
-        _ ≤ abs xhat + epsx := hx_abs
-    calc
-      abs (qhat - x / y) ≤ abs qhat + abs (x / y) := hsub
-      _ = abs xhat * abs (1 / yhat) + abs (x / y) := by simp [hq, add_comm]
-      _ ≤ abs xhat * abs (1 / yhat) + (abs xhat + epsx) := by
-            linarith [hx_over]
-      _ = abs xhat * abs (1 / yhat) + abs xhat + epsx := by simp [add_assoc]
-
-  -- Rounding error of the final division.
-  have hround :
-      abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR / yR) - qhat) ≤
-        neuralUlp β fexp qhat / 2 := by
-    have : toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR / yR) =
-        Proofs.RuntimeRoundingApprox.roundR (β := β) (fexp := fexp) (rnd := rnd) qhat := by
-      simpa [qhat, xhat, yhat] using (toSpec_div (β := β) (fexp := fexp) (rnd := rnd) xR yR)
-    simpa [this] using
-      (Proofs.RuntimeRoundingApprox.roundR_abs_error (β := β) (fexp := fexp) (rnd := rnd) qhat)
-
-  -- Combine rounding + perturbation.
-  have :=
-    calc
-      abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR / yR) - x / y)
-          ≤ abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR / yR) - qhat) +
-              abs (qhat - x / y) := by
-                simpa [sub_eq_add_neg, add_assoc] using
-                  abs_sub_le (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR / yR)) qhat (x / y)
-      _ ≤ neuralUlp β fexp qhat / 2 +
-            (abs xhat * abs (1 / yhat) + abs xhat + epsx) := by
-            exact add_le_add hround hquot
-      _ = neuralUlp β fexp qhat / 2 +
-            abs xhat * abs (1 / yhat) + abs xhat + epsx := by simp [add_assoc]
-  simpa [qhat, xhat, yhat, add_assoc, add_left_comm, add_comm] using this
-
-/--
-Forward approximation bound for division under a general positive lower bound (`η ≤ y` with `η >
-  0`).
-
-This is the more general variant of `approx_div_nf_of_one_le`, making the conditioning explicit via
-the factor `(1/η)`.
--/
-lemma approx_div_nf_of_lb {x y : ℝ} {xR yR : R} {epsx η : ℝ}
-    (hη : 0 < η) (hy : η ≤ y)
-    (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ epsx) :
-    abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR / yR) - (x / y)) ≤
-      neuralUlp β fexp
-          (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR /
-            toSpec (β := β) (fexp := fexp) (rnd := rnd) yR) / 2
-        + abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) *
-            abs (1 / toSpec (β := β) (fexp := fexp) (rnd := rnd) yR)
-        + (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) + epsx) * (1 / η) := by
-  -- Notation for the embedded runtime values.
-  set xhat : ℝ := toSpec (β := β) (fexp := fexp) (rnd := rnd) xR
-  set yhat : ℝ := toSpec (β := β) (fexp := fexp) (rnd := rnd) yR
-  set qhat : ℝ := xhat / yhat
-
-  have hy_pos : 0 < y := lt_of_lt_of_le hη hy
-  have hy_ne : y ≠ 0 := ne_of_gt hy_pos
-
-  -- Bound `|x|` by the rounded magnitude plus epsilon.
-  have hx_abs : abs x ≤ abs xhat + epsx := by
-    have hx' : abs (xhat - x) ≤ epsx := by
-      simpa [xhat, abs_sub_comm] using hx
-    have h0 : abs x ≤ abs (x - xhat) + abs xhat := by
-      simpa using (abs_sub_le x xhat 0)
-    have h1 : abs (x - xhat) = abs (xhat - x) := by simp [abs_sub_comm]
-    have := le_trans h0 (by
-      simpa [h1, add_assoc, add_left_comm, add_comm] using add_le_add_right hx' _)
-    simpa [add_assoc, add_left_comm, add_comm] using this
-
-  -- `|1/y| ≤ 1/η` since `η ≤ y` and `η > 0`.
-  have hy_inv_le : abs (1 / y) ≤ (1 / η) := by
-    have hdiv_pos : 0 < (1 : ℝ) / y := by
-      simpa [div_eq_mul_inv] using (div_pos (show (0 : ℝ) < (1 : ℝ) by norm_num) hy_pos)
-    have hdiv : (1 : ℝ) / y ≤ (1 : ℝ) / η := by
-      simpa using (one_div_le_one_div_of_le hη hy)
-    calc
-      abs (1 / y) = (1 : ℝ) / y := abs_of_pos hdiv_pos
-      _ ≤ (1 : ℝ) / η := hdiv
-
-  have hquot :
-      abs (qhat - x / y) ≤ abs xhat * abs (1 / yhat) + (abs xhat + epsx) * (1 / η) := by
-    have hsub : abs (qhat - x / y) ≤ abs qhat + abs (x / y) := by
-      simpa using (abs_sub_le qhat 0 (x / y))
-    have hq : abs qhat = abs xhat * abs (1 / yhat) := by
-      simp [qhat, div_eq_mul_inv, abs_mul, abs_inv]
-    have hepsx : 0 ≤ epsx := le_trans (abs_nonneg _) hx
-    have hx_over : abs (x / y) ≤ (abs xhat + epsx) * (1 / η) := by
-      have : abs (x / y) = abs x * abs (1 / y) := by
-        simp [div_eq_mul_inv, abs_mul, abs_inv]
-      calc
-        abs (x / y) = abs x * abs (1 / y) := this
-        _ ≤ (abs xhat + epsx) * abs (1 / y) := by
-              exact mul_le_mul_of_nonneg_right hx_abs (abs_nonneg _)
-        _ ≤ (abs xhat + epsx) * (1 / η) := by
-              exact mul_le_mul_of_nonneg_left hy_inv_le (add_nonneg (abs_nonneg _) hepsx)
-    calc
-      abs (qhat - x / y) ≤ abs qhat + abs (x / y) := hsub
-      _ = abs xhat * abs (1 / yhat) + abs (x / y) := by
-              simp [hq, add_comm]
-      _ ≤ abs xhat * abs (1 / yhat) + (abs xhat + epsx) * (1 / η) := by
-            linarith [hx_over]
-
-  -- Rounding error of the final division.
-  have hround :
-      abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR / yR) - qhat) ≤
-        neuralUlp β fexp qhat / 2 := by
-    have : toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR / yR) =
-        Proofs.RuntimeRoundingApprox.roundR (β := β) (fexp := fexp) (rnd := rnd) qhat := by
-      simpa [qhat, xhat, yhat] using (toSpec_div (β := β) (fexp := fexp) (rnd := rnd) xR yR)
-    simpa [this] using
-      (Proofs.RuntimeRoundingApprox.roundR_abs_error (β := β) (fexp := fexp) (rnd := rnd) qhat)
-
-  have :=
-    calc
-      abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR / yR) - x / y)
-          ≤ abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR / yR) - qhat) +
-              abs (qhat - x / y) := by
-                simpa [sub_eq_add_neg, add_assoc] using
-                  abs_sub_le (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR / yR)) qhat (x / y)
-      _ ≤ neuralUlp β fexp qhat / 2 +
-            (abs xhat * abs (1 / yhat) + (abs xhat + epsx) * (1 / η)) := by
-            exact add_le_add hround hquot
-      _ = neuralUlp β fexp qhat / 2 +
-            abs xhat * abs (1 / yhat) + (abs xhat + epsx) * (1 / η) := by simp [add_assoc]
-  simpa [qhat, xhat, yhat, add_assoc, add_left_comm, add_comm, mul_assoc] using this
-
 /-- Forward approximation bound for scaling (elementwise multiply by a runtime constant `c`). -/
-lemma approx_scale_nf {x : ℝ} {xR : R} {eps : ℝ} (c : R)
+theorem approx_scale_nf {x : ℝ} {xR : R} {eps : ℝ} (c : R)
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
     abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR * c) - (x * toSpec (β := β) (fexp := fexp)
       (rnd := rnd) c)) ≤

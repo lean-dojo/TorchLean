@@ -6,8 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.RL.Artifacts.GridWorld
 public meta import NN.Spec.RL.Envs.GridWorld
+public import Mathlib.Algebra.Order.AbsoluteValue.Basic
+public import Mathlib.Algebra.Order.Field.Basic
+public import Mathlib.Data.Finset.Attr
+import Mathlib.Tactic.SetLike
+public meta import NN.Runtime.RL.Artifacts.GridWorld.Path
+public meta import NN.Runtime.RL.Artifacts.GridWorld.Policy
 public meta import NN.Widgets.Core.UI
 public meta import ProofWidgets.Component.HtmlDisplay
 public meta import ProofWidgets.Demos.Macro
@@ -18,7 +23,8 @@ public meta import ProofWidgets.Demos.Macro
 This module provides small infoview widgets for TorchLean's Lean-native GridWorld environment
 (`NN.Spec.RL.Envs.GridWorld`):
 
-- `#gridworld_view gw, pos` renders the grid, highlighting `start`, `goal`, and the current position.
+- `#gridworld_view gw, pos` renders the grid, highlighting `start`, `goal`, and the current
+  position.
 - `#gridworld_policy_view gw, policy` renders a simple arrow policy overlay.
 - `#gridworld_path_view gw, path` renders a grid with a rollout path (first-visit indices).
 - `#gridworld_policy_file_view gw, path` renders a saved before/after greedy policy snapshot.
@@ -34,25 +40,6 @@ RL algorithms manipulate.
 - `gridworldPathHtml`: path renderer using first-visit indices.
 - `gridworldPolicyDiffHtml` / `gridworldPathDiffHtml`: before/after artifact comparison panels.
 - `#gridworld_*_view`: command entry points for interactive use.
-
-## Implementation notes
-
-- We keep the rendering kept simple (cells + badges), because this tends to stay
-  readable even on narrow infoview layouts.
-- We parse JSON artifacts inline in command macros so widget files remain self-contained and easy to
-  experiment with in Lean.
-- We use warnings instead of hard failure for mild schema mismatches; in practice this makes
-  debugging generated artifacts much friendlier.
-
-## References
-
-- Sutton and Barto, *Reinforcement Learning: An Introduction* (2nd ed.), Chapter 3 (GridWorld).
-- [ProofWidgets](https://github.com/leanprover-community/ProofWidgets4)
-- [Lean community documentation style](https://leanprover-community.github.io/contribute/doc.html)
-
-## Tags
-
-rl, gridworld, policy, rollout, artifacts, proofwidgets
 -/
 
 namespace NN.Widgets
@@ -61,7 +48,7 @@ public meta section
 
 open scoped ProofWidgets.Jsx
 
-open _root_.Spec
+open Spec TorchLean
 open Spec.RL
 open Spec.RL.Envs
 open UI
@@ -73,6 +60,7 @@ namespace GridWorld
 private def styleObj (xs : List (String × String)) : Lean.Json :=
   Lean.Json.mkObj (xs.map (fun (k, v) => (k, Lean.Json.str v)))
 
+/-- One grid square: a fixed-size rounded box carrying a single label. -/
 private def cell (label : String) (bg : String) : ProofWidgets.Html :=
   <div style={styleObj [
     ("width", "34px"),
@@ -84,15 +72,18 @@ private def cell (label : String) (bg : String) : ProofWidgets.Html :=
     ("border-radius", "8px"),
     ("background", bg),
     ("font-family",
-      "var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace)"),
+      "var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \
+      monospace)"),
     ("font-size", "13px"),
     ("font-weight", "600"),
     ("user-select", "none")
   ]}>{.text label}</div>
 
+/-- Format a grid position as `(row,col)` for the header pills. -/
 private def posString {width height : Nat} (p : GridWorld.State width height) : String :=
   s!"({p.1.val},{p.2.val})"
 
+/-- Lay cells out in a `width`-column CSS grid, which is what makes the rows line up. -/
 private def gridHtml {width : Nat}
     (cells : Array ProofWidgets.Html) : ProofWidgets.Html :=
   let cols : String := s!"repeat({width}, 34px)";
@@ -142,13 +133,15 @@ def gridworldHtml {width height : Nat}
       cell label bg)
   ;
   <div style={json% {"padding": "10px"}}>
-    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom": "10px"}}>
-      {pill s!"GridWorld {width}x{height}"} {pill s!"pos={posString pos}"} {pill s!"start={posString gw.start}"}
-      {pill s!"goal={posString gw.goal}"}
+    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap",
+        "margin-bottom": "10px"}}>
+      {pill s!"GridWorld {width}x{height}"} {pill s!"pos={posString pos}"}
+      {pill s!"start={posString gw.start}"} {pill s!"goal={posString gw.goal}"}
     </div>
     {gridHtml (width := width) cells}
   </div>
 
+/-- ASCII arrow for an action index, in the `up, down, left, right` order `GridWorld` uses. -/
 private def arrowOfAction {nActions : Nat} (a : Fin nActions) : String :=
   if a.1 = 0 then "^" else if a.1 = 1 then "v" else if a.1 = 2 then "<" else ">"
 
@@ -171,8 +164,10 @@ def gridworldPolicyHtml {width height : Nat}
       cell label bg)
   ;
   <div style={json% {"padding": "10px"}}>
-    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom": "10px"}}>
-      {pill s!"GridWorld policy {width}x{height}"} {pill s!"start={posString gw.start}"} {pill s!"goal={posString gw.goal}"}
+    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap",
+        "margin-bottom": "10px"}}>
+      {pill s!"GridWorld policy {width}x{height}"} {pill s!"start={posString gw.start}"}
+      {pill s!"goal={posString gw.goal}"}
     </div>
     {gridHtml (width := width) cells}
   </div>
@@ -185,6 +180,7 @@ The widget layer converts them back to a total Lean function `State → Action` 
 private def actionOfNat (n : Nat) : GridWorld.Action :=
   if h : n < 4 then ⟨n, h⟩ else GridWorld.Action.up
 
+/-- Read a saved row-major action array back as a total policy, defaulting outside its range. -/
 private def policyOfActionArray {width height : Nat}
     (actions : Array Nat) : GridWorld.State width height → GridWorld.Action :=
   fun pos =>
@@ -194,6 +190,7 @@ private def policyOfActionArray {width height : Nat}
     else
       GridWorld.Action.up
 
+/-- Build a grid position from untrusted row and column numbers, or fail when out of range. -/
 private def mkPos? {width height : Nat} (row col : Nat) : Option (GridWorld.State width height) :=
   if hRow : row < height then
     if hCol : col < width then
@@ -203,6 +200,7 @@ private def mkPos? {width height : Nat} (row col : Nat) : Option (GridWorld.Stat
   else
     none
 
+/-- Place two panels side by side, wrapping to one column when the panel gets narrow. -/
 private def twoUp (a b : ProofWidgets.Html) : ProofWidgets.Html :=
   <div style={styleObj [
     ("display", "grid"),
@@ -216,7 +214,7 @@ private def twoUp (a b : ProofWidgets.Html) : ProofWidgets.Html :=
 /-- Render a before/after policy snapshot (loaded from disk) as two GridWorld policy panels. -/
 def gridworldPolicyDiffHtml {width height : Nat}
     (gw : GridWorld width height)
-    (diff : _root_.Runtime.RL.Artifacts.GridWorld.PolicyDiff) :
+    (diff : Runtime.RL.Artifacts.GridWorld.PolicyDiff) :
     ProofWidgets.Html :=
   let expected : Nat := width * height
   let warns0 : Array String := #[]
@@ -255,7 +253,8 @@ def gridworldPolicyDiffHtml {width height : Nat}
   let afterPol := policyOfActionArray (width := width) (height := height) diff.after
   ;
   <div style={json% {"padding": "10px"}}>
-    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom": "10px"}}>
+    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap",
+        "margin-bottom": "10px"}}>
       {pill "GridWorld policy snapshot"} {pill s!"expected={expected}"} {... warns.map warnBadge}
     </div>
     {twoUp
@@ -265,7 +264,8 @@ def gridworldPolicyDiffHtml {width height : Nat}
 
 /-- Render a rollout path (first-visit indices) on GridWorld. -/
 def gridworldPathHtml {width height : Nat}
-    (gw : GridWorld width height) (path : Array (GridWorld.State width height)) : ProofWidgets.Html :=
+    (gw : GridWorld width height) (path : Array (GridWorld.State width height)) :
+    ProofWidgets.Html :=
   let rows : List (Fin height) := List.finRange height
   let cols : List (Fin width) := List.finRange width
   let positions : List (GridWorld.State width height) :=
@@ -286,8 +286,10 @@ def gridworldPathHtml {width height : Nat}
       cell label bg)
   ;
   <div style={json% {"padding": "10px"}}>
-    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom": "10px"}}>
-      {pill s!"GridWorld path {width}x{height}"} {pill s!"len={path.size}"} {pill s!"start={posString gw.start}"} {pill s!"goal={posString gw.goal}"}
+    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap",
+        "margin-bottom": "10px"}}>
+      {pill s!"GridWorld path {width}x{height}"} {pill s!"len={path.size}"}
+      {pill s!"start={posString gw.start}"} {pill s!"goal={posString gw.goal}"}
     </div>
     {gridHtml (width := width) cells}
   </div>
@@ -295,7 +297,7 @@ def gridworldPathHtml {width height : Nat}
 /-- Render a before/after episode path snapshot (loaded from disk) as two GridWorld path panels. -/
 def gridworldPathDiffHtml {width height : Nat}
     (gw : GridWorld width height)
-    (diff : _root_.Runtime.RL.Artifacts.GridWorld.PathDiff) :
+    (diff : Runtime.RL.Artifacts.GridWorld.PathDiff) :
     ProofWidgets.Html :=
   let warns0 : Array String := #[]
   let warns1 :=
@@ -324,7 +326,8 @@ def gridworldPathDiffHtml {width height : Nat}
       warns
   ;
   <div style={json% {"padding": "10px"}}>
-    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom": "10px"}}>
+    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap",
+        "margin-bottom": "10px"}}>
       {pill "GridWorld episode path"} {... warns.map warnBadge}
     </div>
     {twoUp
@@ -362,7 +365,8 @@ syntax (name := gridworldPathViewCmd) "#gridworld_path_view " term ", " term : c
 Read a saved GridWorld greedy-policy snapshot (`before` vs `after`) from JSON and render it.
 
 This is intended for executable examples or training jobs that write artifacts to disk, for example:
-`lake -R -K cuda=true exe torchlean ppo_gridworld --device cuda --updates 1 --eval-every 1 --eval-episodes 1 --eval-max-steps 8`.
+`lake -R -K cuda=true exe torchlean ppo_gridworld --device cuda --updates 1 --eval-every 1
+--eval-episodes 1 --eval-max-steps 8`.
 
 The JSON schema matches `Runtime.RL.Artifacts.GridWorld.PolicyDiff`.
 -/
@@ -372,7 +376,8 @@ syntax (name := gridworldPolicyFileViewCmd) "#gridworld_policy_file_view " term 
 Read a saved GridWorld episode path snapshot (`before` vs `after`) from JSON and render it.
 
 This is intended for executable examples or training jobs that write artifacts to disk, for example:
-`lake -R -K cuda=true exe torchlean ppo_gridworld --device cuda --updates 1 --eval-every 1 --eval-episodes 1 --eval-max-steps 8`.
+`lake -R -K cuda=true exe torchlean ppo_gridworld --device cuda --updates 1 --eval-every 1
+--eval-episodes 1 --eval-max-steps 8`.
 
 The JSON schema matches `Runtime.RL.Artifacts.GridWorld.PathDiff`.
 -/
@@ -391,70 +396,7 @@ macro "#gridworld_policy_file_view " gw:term ", " path:term : command =>
   Lean.TSyntax.mkInfoCanonical <$> `(#html (do
     let p : System.FilePath := $path
     try
-      let s ← IO.FS.readFile p
-      let j ←
-        match _root_.Lean.Json.parse s with
-        | Except.ok j => pure j
-        | Except.error e => throw <| IO.userError s!"GridWorld policy snapshot: JSON parse error: {e}"
-      let o ←
-        match _root_.Lean.Json.getObj? j with
-        | Except.ok o => pure o
-        | Except.error e => throw <| IO.userError s!"GridWorld policy snapshot: expected object: {e}"
-
-      let widthJ :=
-        match o.get? "width" with
-        | some v => v
-        | none => _root_.Lean.Json.null
-      let heightJ :=
-        match o.get? "height" with
-        | some v => v
-        | none => _root_.Lean.Json.null
-      let beforeJ :=
-        match o.get? "before" with
-        | some v => v
-        | none => _root_.Lean.Json.arr #[]
-      let afterJ :=
-        match o.get? "after" with
-        | some v => v
-        | none => _root_.Lean.Json.arr #[]
-      let notesJ := (o.get? "notes").getD (_root_.Lean.Json.arr #[])
-
-      let width ←
-        match _root_.Lean.Json.getNat? widthJ with
-        | Except.ok n => pure n
-        | Except.error _ => pure 0
-      let height ←
-        match _root_.Lean.Json.getNat? heightJ with
-        | Except.ok n => pure n
-        | Except.error _ => pure 0
-
-      let before ←
-        match _root_.Lean.Json.getArr? beforeJ with
-        | Except.error e => throw <| IO.userError s!"GridWorld policy snapshot: bad `before`: {e}"
-        | Except.ok xs =>
-            xs.mapM (fun v =>
-              match _root_.Lean.Json.getNat? v with
-              | Except.ok n => pure n
-              | Except.error e => throw <| IO.userError s!"GridWorld policy snapshot: bad action: {e}")
-      let after ←
-        match _root_.Lean.Json.getArr? afterJ with
-        | Except.error e => throw <| IO.userError s!"GridWorld policy snapshot: bad `after`: {e}"
-        | Except.ok xs =>
-            xs.mapM (fun v =>
-              match _root_.Lean.Json.getNat? v with
-              | Except.ok n => pure n
-              | Except.error e => throw <| IO.userError s!"GridWorld policy snapshot: bad action: {e}")
-      let notes :=
-        match _root_.Lean.Json.getArr? notesJ with
-        | Except.error _ => #[]
-        | Except.ok xs =>
-            xs.filterMap (fun v =>
-              match _root_.Lean.Json.getStr? v with
-              | Except.ok s => some s
-              | Except.error _ => none)
-
-      let diff : _root_.Runtime.RL.Artifacts.GridWorld.PolicyDiff :=
-        { width := width, height := height, before := before, after := after, notes := notes }
+      let diff ← Runtime.RL.Artifacts.GridWorld.PolicyDiff.readJson p
       pure (gridworldPolicyDiffHtml $gw diff)
     catch e =>
       pure <|
@@ -476,79 +418,7 @@ macro "#gridworld_path_file_view " gw:term ", " path:term : command =>
   Lean.TSyntax.mkInfoCanonical <$> `(#html (do
     let p : System.FilePath := $path
     try
-      let s ← IO.FS.readFile p
-      let j ←
-        match _root_.Lean.Json.parse s with
-        | Except.ok j => pure j
-        | Except.error e => throw <| IO.userError s!"GridWorld path snapshot: JSON parse error: {e}"
-      let o ←
-        match _root_.Lean.Json.getObj? j with
-        | Except.ok o => pure o
-        | Except.error e => throw <| IO.userError s!"GridWorld path snapshot: expected object: {e}"
-
-      let widthJ :=
-        match o.get? "width" with
-        | some v => v
-        | none => _root_.Lean.Json.null
-      let heightJ :=
-        match o.get? "height" with
-        | some v => v
-        | none => _root_.Lean.Json.null
-      let beforeJ :=
-        match o.get? "before" with
-        | some v => v
-        | none => _root_.Lean.Json.arr #[]
-      let afterJ :=
-        match o.get? "after" with
-        | some v => v
-        | none => _root_.Lean.Json.arr #[]
-      let notesJ := (o.get? "notes").getD (_root_.Lean.Json.arr #[])
-
-      let width ←
-        match _root_.Lean.Json.getNat? widthJ with
-        | Except.ok n => pure n
-        | Except.error _ => pure 0
-      let height ←
-        match _root_.Lean.Json.getNat? heightJ with
-        | Except.ok n => pure n
-        | Except.error _ => pure 0
-
-      let parsePos (v : _root_.Lean.Json) : IO (Nat × Nat) := do
-        let xs ←
-          match _root_.Lean.Json.getArr? v with
-          | Except.ok xs => pure xs
-          | Except.error e => throw <| IO.userError s!"GridWorld path snapshot: bad pos: {e}"
-        if xs.size != 2 then
-          throw <| IO.userError "GridWorld path snapshot: expected [row, col]."
-        let r ←
-          match _root_.Lean.Json.getNat? xs[0]! with
-          | Except.ok n => pure n
-          | Except.error e => throw <| IO.userError s!"GridWorld path snapshot: bad row: {e}"
-        let c ←
-          match _root_.Lean.Json.getNat? xs[1]! with
-          | Except.ok n => pure n
-          | Except.error e => throw <| IO.userError s!"GridWorld path snapshot: bad col: {e}"
-        pure (r, c)
-
-      let before ←
-        match _root_.Lean.Json.getArr? beforeJ with
-        | Except.error e => throw <| IO.userError s!"GridWorld path snapshot: bad `before`: {e}"
-        | Except.ok xs => xs.mapM parsePos
-      let after ←
-        match _root_.Lean.Json.getArr? afterJ with
-        | Except.error e => throw <| IO.userError s!"GridWorld path snapshot: bad `after`: {e}"
-        | Except.ok xs => xs.mapM parsePos
-      let notes :=
-        match _root_.Lean.Json.getArr? notesJ with
-        | Except.error _ => #[]
-        | Except.ok xs =>
-            xs.filterMap (fun v =>
-              match _root_.Lean.Json.getStr? v with
-              | Except.ok s => some s
-              | Except.error _ => none)
-
-      let diff : _root_.Runtime.RL.Artifacts.GridWorld.PathDiff :=
-        { width := width, height := height, before := before, after := after, notes := notes }
+      let diff ← Runtime.RL.Artifacts.GridWorld.PathDiff.readJson p
       pure (gridworldPathDiffHtml $gw diff)
     catch e =>
       pure <|

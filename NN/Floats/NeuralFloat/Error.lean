@@ -7,7 +7,12 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.NeuralFloat.Error.Addition
+public import NN.Floats.NeuralFloat.Error.Bounds
+public import NN.Floats.NeuralFloat.Error.Directed
 public import NN.Floats.NeuralFloat.Error.DivisionSqrt
+public import NN.Floats.NeuralFloat.Error.Exactness
+public import NN.Floats.NeuralFloat.Error.Multiplication
+public import NN.Floats.NeuralFloat.Error.Relative
 
 /-!
 # Rounded-Arithmetic Error Theory

@@ -6,6 +6,7 @@ Authors: TorchLean Team
 
 module
 
+public import NN.IR.Check
 public import NN.Runtime.Autograd.IRExec.Lowering
 
 /-!
@@ -20,8 +21,8 @@ namespace Runtime
 namespace Autograd
 namespace IRExec
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open Proofs.Autograd.Algebra
 open NN.IR
 
@@ -41,7 +42,7 @@ This is the main API consumed by runtime callers that want executable evaluation
 aligned with the shared `NN.IR.Graph` semantics.
 -/
 def lowerToForwardGraph
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) : Except String (ForwardGraph α) := do
   g.checkWellFormed
   let n0 ← g.getNode 0
@@ -54,3 +55,27 @@ def lowerToForwardGraph
       pure { inShape := inShape, ss := ss, body := gd }
   | _ =>
       throw s!"IRExec: node 0 is not `.input` (got {n0.kind.tag})"
+
+
+/-- Validate an IR graph and evaluate its selected output on a shape-checked input.
+
+Structural, declared-shape, payload, and lowering errors are returned to the caller. The input
+shape is checked against node zero before execution. This evaluates the forward graph; it does
+not compare floating-point results with a second semantics or assert numerical equivalence.
+-/
+def evaluate
+    {α : Type} [Storage α] [Context α] {σ : Shape}
+    (g : NN.IR.Graph) (payload : Payload α) (x : Tensor α σ)
+    (outputId : Fin g.nodes.size) : Except String (Spec.SomeTensor α) := do
+  let graph ← lowerToForwardGraph g payload
+  g.checkShapes
+  let input ←
+    if h : σ = graph.inShape then
+      pure (Tensor.castShape x h)
+    else
+      throw s!"IRExec: input shape mismatch: tensor={repr σ}, graph={repr graph.inShape}"
+  let values := graph.denoteAll input
+  if h : outputId.val < values.size then
+    pure (values[outputId.val]'h)
+  else
+    throw s!"IRExec: output index {outputId.val} exceeds value table size {values.size}"

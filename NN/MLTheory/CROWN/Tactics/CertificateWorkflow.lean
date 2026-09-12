@@ -102,7 +102,8 @@ def CrownCert.validate (cert : CrownCert) : Except String Unit := do
       cert.derivativeLower ≤ cert.derivativeUpper do
     throw s!"Invalid Vdot interval: [{cert.derivativeLower}, {cert.derivativeUpper}]"
   unless cert.gradLo.size = cert.gradHi.size do
-    throw s!"Gradient endpoint arrays have different lengths: {cert.gradLo.size} and {cert.gradHi.size}"
+    throw <| s!"Gradient endpoint arrays have different lengths: " ++
+      s!"{cert.gradLo.size} and {cert.gradHi.size}"
   if cert.gradLo.size != 0 && cert.gradLo.size != cert.inputDim then
     throw s!"Gradient interval has dimension {cert.gradLo.size}; expected {cert.inputDim}"
   for i in [0:cert.gradLo.size] do
@@ -123,7 +124,7 @@ def parseInputRegion (j : Json) : Except String NN.Verification.Json.BoxRegion :
     match j.getObjVal? "input" with
     | .ok input => .ok input
     | .error _ => j.getObjVal? "region"
-  expectBoxRegionE "input" inputLike
+  parseBoxRegion "input" inputLike
 
 /-- Parse a certificate from JSON, accepting supported closed-loop schemas. -/
 def parseCertificate (j : Json) : Except String CrownCert := do
@@ -137,8 +138,8 @@ def parseCertificate (j : Json) : Except String CrownCert := do
 
   -- Parse V bounds
   let vBounds ← j.getObjVal? "V_bounds"
-  let vLower ← vBounds.getObjVal? "lo" >>= expectFiniteFloatE "V_bounds.lo"
-  let vUpper ← vBounds.getObjVal? "hi" >>= expectFiniteFloatE "V_bounds.hi"
+  let vLower ← vBounds.getObjVal? "lo" >>= parseFiniteFloat "V_bounds.lo"
+  let vUpper ← vBounds.getObjVal? "hi" >>= parseFiniteFloat "V_bounds.hi"
   let vPositive ←
     parseBoolFieldOr vBounds "guaranteed_positive" (vLower > 0.0)
 
@@ -148,24 +149,24 @@ def parseCertificate (j : Json) : Except String CrownCert := do
     | .ok gradBounds =>
       let loJson ← gradBounds.getObjVal? "lo"
       let hiJson ← gradBounds.getObjVal? "hi"
-      let lo ← expectFiniteFloatArrayE "gradient_bounds.lo" loJson
-      let hi ← expectFiniteFloatArrayE "gradient_bounds.hi" hiJson
+      let lo ← parseFiniteFloatArray "gradient_bounds.lo" loJson
+      let hi ← parseFiniteFloatArray "gradient_bounds.hi" hiJson
       pure (lo, hi)
     | .error _ =>
       match j.getObjVal? "grad_bounds" with
       | .ok gradBounds =>
         let loJson ← gradBounds.getObjVal? "lo"
         let hiJson ← gradBounds.getObjVal? "hi"
-        let lo ← expectFiniteFloatArrayE "grad_bounds.lo" loJson
-        let hi ← expectFiniteFloatArrayE "grad_bounds.hi" hiJson
+        let lo ← parseFiniteFloatArray "grad_bounds.lo" loJson
+        let hi ← parseFiniteFloatArray "grad_bounds.hi" hiJson
         pure (lo, hi)
       | .error _ =>
         pure (#[], #[])
 
   -- Parse Vdot bounds
   let vdotBounds ← j.getObjVal? "Vdot_bounds"
-  let derivativeLower ← vdotBounds.getObjVal? "lo" >>= expectFiniteFloatE "Vdot_bounds.lo"
-  let derivativeUpper ← vdotBounds.getObjVal? "hi" >>= expectFiniteFloatE "Vdot_bounds.hi"
+  let derivativeLower ← vdotBounds.getObjVal? "lo" >>= parseFiniteFloat "Vdot_bounds.lo"
+  let derivativeUpper ← vdotBounds.getObjVal? "hi" >>= parseFiniteFloat "Vdot_bounds.hi"
   let derivativeNegative ←
     parseBoolFieldOr vdotBounds "guaranteed_negative" (derivativeUpper < 0.0)
 

@@ -6,12 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Generative.Diffusion
-public import NN.Spec.Dynamics.System
-public import NN.MLTheory.LearningTheory.Robustness.Spec
-public import NN.Proofs.Analysis.Lipschitz
-
-import Mathlib.Data.List.FinRange
+import Mathlib.Tactic.Positivity.Finset
+public import NN.Proofs.Analysis.Lipschitz.Norm
+public import NN.Spec.Generative.Diffusion.PFODE
+public import NN.Spec.Generative.Diffusion.ReverseDDIM
 
 /-!
 # Diffusion sampler theorems
@@ -26,8 +24,11 @@ can reuse directly:
 
 - schedule boundary values,
 - zero-step sampler behavior, and
-- the link between sampler adapters and `DynamicalSystem` transitions,
 - L2 stability of explicit Euler probability-flow updates.
+
+The link between the sampler adapters and `DynamicalSystem` transitions is proved next to the
+adapters themselves, in `NN.Spec.Generative.Diffusion.ReverseDDIM` and
+`NN.Spec.Generative.Diffusion.PFODE`, so those `rfl` facts stay with the definitions they unfold.
 
 References:
 - Ho, Jain, and Abbeel, "Denoising Diffusion Probabilistic Models", NeurIPS 2020.
@@ -41,11 +42,11 @@ References:
 
 namespace NN.MLTheory.Generative.Diffusion
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 open _root_.Generative.Diffusion
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {T : Nat} {s : Shape}
 
 /-- The VP schedule convention is $\bar{\alpha}_0 = 1$. -/
@@ -71,21 +72,6 @@ variable {T : Nat} {s : Shape}
     pfOdeSampleEuler (α := α) (s := s) sch model 0 x1 = x1 := by
   rfl
 
-/-- The DDIM system adapter is definitionally the corresponding DDIM step. -/
-@[simp] theorem ddimStepSystem_eq_step (sched : VPSchedule SpecScalar T)
-    (model : EpsModel SpecScalar s) (k : Fin T) (x : SpecTensor s) :
-    (ddimStepSystem (T := T) (s := s) sched model k).step x =
-      ddimStep (α := SpecScalar) (T := T) (s := s) sched model k x := by
-  rfl
-
-/-- The probability-flow Euler system adapter is definitionally the Euler update. -/
-@[simp] theorem pfOdeEulerSystem_eq_step (sch : VPLinearSchedule SpecScalar)
-    (model : EpsModel SpecScalar s) (t dt : SpecScalar) (x : SpecTensor s) :
-    (pfOdeEulerSystem (s := s) sch model t dt).step x =
-      eulerStep (α := SpecScalar) (s := s)
-        (pfOdeRhs (α := SpecScalar) (s := s) sch model) x t dt := by
-  rfl
-
 /-! ## Quantitative Euler stability for probability-flow samplers -/
 
 /--
@@ -103,31 +89,18 @@ it private because users should usually consume the norm and Lipschitz theorems 
 private theorem sub_add_scaled_eq {s : Shape} (x y fx fy : Tensor ℝ s) (dt : ℝ) :
     (x + scaleSpec fx dt).subSpec (y + scaleSpec fy dt) =
       addSpec (subSpec x y) (scaleSpec (subSpec fx fy) dt) := by
-  induction s with
-  | scalar =>
-      cases x with | scalar x0 =>
-      cases y with | scalar y0 =>
-      cases fx with | scalar fx0 =>
-      cases fy with | scalar fy0 =>
-      change Tensor.scalar ((x0 + fx0 * dt) - (y0 + fy0 * dt)) =
-        Tensor.scalar ((x0 - y0) + ((fx0 - fy0) * dt))
-      congr
-      ring
-  | dim n inner ih =>
-      cases x with | dim xs =>
-      cases y with | dim ys =>
-      cases fx with | dim fxs =>
-      cases fy with | dim fys =>
-      simp [subSpec, addSpec, scaleSpec, map2Spec, mapSpec]
-      apply congrArg Tensor.dim
-      funext i
-      exact ih (xs i) (ys i) (fxs i) (fys i)
+  change subSpec (addSpec x (scaleSpec fx dt)) (addSpec y (scaleSpec fy dt)) =
+    addSpec (subSpec x y) (scaleSpec (subSpec fx fy) dt)
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simp [subSpec, addSpec, scaleSpec, map2Spec, mapSpec, Tensor.map]
+  ring_nf
 
 /--
 One explicit Euler step is stable in L2 up to the current state separation plus the RHS separation.
 
-For an ODE $x'=f(x,t)$, the Euler update is $E(x)=x+\Delta t\,f(x,t)$. This theorem proves the standard
-numerical-analysis estimate
+For an ODE $x'=f(x,t)$, the Euler update is $E(x)=x+\Delta t\,f(x,t)$. This theorem proves the
+standard numerical-analysis estimate
 
 $$
 \lVert E(x)-E(y)\rVert_2
@@ -257,7 +230,7 @@ adapter is `L`-Lipschitz.
 
 For quantitative PF-ODE certification, this is the bridge from an ODE-step bound (for example via
 IBP/CROWN on the vector field) to the reusable `trajectory` and `iterate` definitions in
-`NN.Spec.Dynamics.System`.
+`Spec.Dynamics.System`.
 -/
 theorem pfOdeEulerSystem_lipschitz_of_step_lipschitz
     (sch : VPLinearSchedule SpecScalar) (model : EpsModel SpecScalar s) (t dt : SpecScalar)
@@ -275,8 +248,8 @@ theorem pfOdeEulerSystem_lipschitz_of_step_lipschitz
 A contractive DDIM update remains contractive after packaging it as a `DynamicalSystem`.
 
 This is the formal hook for fixed-point and stability arguments about deterministic diffusion
-samplers: once a concrete DDIM step bound is proved, the dynamics-level contraction predicate follows
-without re-opening the sampler definition.
+samplers: once a concrete DDIM step bound is proved, the dynamics-level contraction predicate
+follows without re-opening the sampler definition.
 -/
 theorem ddimStepSystem_contracts_of_step_contracts
     (sched : VPSchedule SpecScalar T) (model : EpsModel SpecScalar s) (k : Fin T)
@@ -284,12 +257,12 @@ theorem ddimStepSystem_contracts_of_step_contracts
     (h : NN.MLTheory.Robustness.Spec.isContractive (α := SpecScalar)
       (fun x : SpecTensor s => ddimStep (α := SpecScalar) (T := T) (s := s) sched model k x)
       norm factor) :
-    NN.Spec.Dynamics.isContractive (ddimStepSystem (T := T) (s := s) sched model k)
+    Spec.Dynamics.isContractive (ddimStepSystem (T := T) (s := s) sched model k)
       norm factor := by
   rcases h with ⟨hfactor, hstep⟩
   refine ⟨hfactor, ?_⟩
   intro x y
-  simpa [NN.Spec.Dynamics.distance, ddimStepSystem,
+  simpa [Spec.Dynamics.distance, ddimStepSystem,
     NN.MLTheory.Robustness.Spec.tensor_distance_eq_norm_sub_spec] using hstep x y
 
 /--
@@ -306,12 +279,12 @@ theorem pfOdeEulerSystem_contracts_of_step_contracts
         eulerStep (α := SpecScalar) (s := s)
           (pfOdeRhs (α := SpecScalar) (s := s) sch model) x t dt)
       norm factor) :
-    NN.Spec.Dynamics.isContractive (pfOdeEulerSystem (s := s) sch model t dt)
+    Spec.Dynamics.isContractive (pfOdeEulerSystem (s := s) sch model t dt)
       norm factor := by
   rcases h with ⟨hfactor, hstep⟩
   refine ⟨hfactor, ?_⟩
   intro x y
-  simpa [NN.Spec.Dynamics.distance, pfOdeEulerSystem,
+  simpa [Spec.Dynamics.distance, pfOdeEulerSystem,
     NN.MLTheory.Robustness.Spec.tensor_distance_eq_norm_sub_spec] using hstep x y
 
 end NN.MLTheory.Generative.Diffusion

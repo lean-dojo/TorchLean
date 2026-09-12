@@ -6,6 +6,11 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Binary
+public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Core
+public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.SafeDivSigmoid
+public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Softmax
+public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.SoftplusSafeLog
 public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Unary
 
 /-!

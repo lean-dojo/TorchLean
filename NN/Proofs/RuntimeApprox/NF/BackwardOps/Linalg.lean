@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.RuntimeApprox.NF.BackwardOps.Primitive
+public import NN.Proofs.RuntimeApprox.NF.BackwardOps.Backend
+public import NN.Proofs.RuntimeApprox.Graph.BackwardApprox
+public import NN.Proofs.RuntimeApprox.NF.Linalg
 
 /-!
 # Linear Algebra NF Reverse Nodes
@@ -18,8 +20,8 @@ Reverse-mode approximation nodes for matrix-vector and matrix-matrix multiplicat
 namespace Proofs
 namespace RuntimeApprox
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
 open Proofs.Autograd.Algebra
 
@@ -35,43 +37,38 @@ variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
 
 local notation "R" => TorchLean.Floats.NF β fexp rnd
 
-namespace Internal
+namespace Impl
 
 /-- Internal spelling of axis-one insertion used repeatedly in outer-product formulas. -/
-def unsqueezeAfterLeading {α : Type} {n : Nat} {s : Shape}
+def unsqueezeAfterLeading {α : Type} [TorchLean.Storage α] {n : Nat} {s : Shape}
     (tensor : Tensor α (.dim n s)) : Tensor α (.dim n (.dim 1 s)) :=
-  match tensor with
-  | .dim entries => .dim fun i => .dim fun _ => entries i
+  Tensor.dim fun i => Tensor.dim fun _ => tensor.unstack i
 
-end Internal
+end Impl
 
-open Internal
+open Impl
 
 omit [NeuralValidExp fexp] [NeuralValidRndToNearest rnd] in
 /-- The internal axis-one spelling is an exact shape operation. -/
-lemma approxTensor_unsqueezeAfterLeading {n : Nat} {s : Shape}
+theorem approxTensor_unsqueezeAfterLeading {n : Nat} {s : Shape}
     {xS : SpecTensor (.dim n s)} {xR : Tensor R (.dim n s)} {eps : ℝ}
     (hx : approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
       xS xR eps) :
     approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
       (unsqueezeAfterLeading xS) (unsqueezeAfterLeading xR) eps := by
   have heps : 0 ≤ eps := approxTensor_eps_nonneg hx
-  cases xS with
-  | dim xSf =>
-      cases xR with
-      | dim xRf =>
-          apply approxTensor_dim_of_forall heps
-          intro i
-          apply approxTensor_dim_of_forall heps
-          intro _
-          exact approxTensor_dim_get hx i
+  apply approxTensor_dim_of_forall heps
+  intro i
+  apply approxTensor_dim_of_forall heps
+  intro _
+  simpa [unsqueezeAfterLeading] using (approxTensor_dim_get hx i)
 
 -- ---------------------------------------------------------------------------
 -- Linear algebra reverse nodes (`mat_vec_mul_spec`, `mat_mul_spec`)
 -- ---------------------------------------------------------------------------
 
 /--
-Reverse node for matrix-vector multiplication (`mat_vec_mul_spec`).
+Reverse node for matrix-vector multiplication (`matVecMulSpec`).
 
 VJP uses the standard adjoint identities: `δW = δ ⊗ x` and `δx = Wᵀ δ` (expressed in tensor form),
 with NF error bounds layered over the primitive ops.
@@ -89,32 +86,32 @@ by
         let vcol := unsqueezeAfterLeading (α := SpecScalar) (n := n) (s := Shape.scalar) vS
         let dA :=
           Spec.matMulSpec (α := SpecScalar)
-            δcol (Spec.Tensor.swapAdjacentAxes (d := 0) vcol)
+            δcol (TorchLean.Tensor.swapAdjacentAxes (depth := 0) vcol)
         let dV :=
           Spec.matVecMulSpec (α := SpecScalar)
-            (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
               SpecScalar) ctx A))
             δ
-        SparseContext.set2Idx (α := SpecScalar) (Γ := Γ) (s₁ := (.dim m (.dim n .scalar))) (s₂ := (.dim n
-          .scalar)) A dA v dV
+        SparseContext.set2Idx (α := SpecScalar) (Γ := Γ) (s₁ := (.dim m (.dim n .scalar)))
+          (s₂ := (.dim n .scalar)) A dA v dV
       vjpRuntime := fun ctx δ =>
         let vR := getIdx (α := R) ctx v
         let δcol := unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δ
         let vcol := unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) vR
         let dA :=
           Spec.matMulSpec (α := R)
-            δcol (Spec.Tensor.swapAdjacentAxes (d := 0) vcol)
+            δcol (TorchLean.Tensor.swapAdjacentAxes (depth := 0) vcol)
         let dV :=
           Spec.matVecMulSpec (α := R)
-            (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctx A))
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctx A))
             δ
-        SparseContext.set2Idx (α := R) (Γ := Γ) (s₁ := (.dim m (.dim n .scalar))) (s₂ := (.dim n .scalar)) A
-          dA v dV
+        SparseContext.set2Idx (α := R) (Γ := Γ) (s₁ := (.dim m (.dim n .scalar)))
+          (s₂ := (.dim n .scalar)) A dA v dV
       vjpBound := fun epsCtx ctxR epsδ δR =>
         let vR := getIdx (α := R) ctxR v
         let δcolR := unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δR
         let vcolR := unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) vR
-        let vrowR := Spec.Tensor.swapAdjacentAxes (d := 0) vcolR
+        let vrowR := TorchLean.Tensor.swapAdjacentAxes (depth := 0) vcolR
         let epsV := getIdxEps (Γ := Γ) (s := (.dim n .scalar)) epsCtx v
         let epsA := getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) epsCtx A
         let dABound :=
@@ -122,7 +119,7 @@ by
             (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
               (m := m) (n := 1) (p := n)
               epsδ epsV δcolR vrowR)
-        let AT_R := Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R)
+        let AT_R := TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R)
           ctxR A)
         let dVBound :=
           linfNorm
@@ -158,10 +155,10 @@ by
 
   have hvrow :
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-        (Spec.Tensor.swapAdjacentAxes (d := 0)
+        (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
           (unsqueezeAfterLeading (α := SpecScalar) (n := n) (s := Shape.scalar) (getIdx (α
             := SpecScalar) ctxS v)))
-        (Spec.Tensor.swapAdjacentAxes (d := 0)
+        (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
           (unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) (getIdx (α := R)
             ctxR v)))
         (getIdxEps (Γ := Γ) (s := .dim n .scalar) epsCtx v) :=
@@ -172,12 +169,12 @@ by
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
         (Spec.matMulSpec (α := SpecScalar)
           (unsqueezeAfterLeading (α := SpecScalar) (n := m) (s := Shape.scalar) δS)
-          (Spec.Tensor.swapAdjacentAxes (d := 0)
+          (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
             (unsqueezeAfterLeading (α := SpecScalar) (n := n) (s := Shape.scalar) (getIdx
               (α := SpecScalar) ctxS v))))
         (Spec.matMulSpec (α := R)
           (unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δR)
-          (Spec.Tensor.swapAdjacentAxes (d := 0)
+          (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
             (unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) (getIdx (α := R)
               ctxR v))))
         (linfNorm
@@ -185,17 +182,17 @@ by
             (m := m) (n := 1) (p := n)
             epsδ (getIdxEps (Γ := Γ) (s := .dim n .scalar) epsCtx v)
             (unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δR)
-            (Spec.Tensor.swapAdjacentAxes (d := 0)
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
               (unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) (getIdx (α := R)
                 ctxR v))))) := by
     simpa using
       (approxTensor_mat_mul_spec (β := β) (fexp := fexp) (rnd := rnd) (m := m) (n := 1) (p := n)
         (AS := unsqueezeAfterLeading (α := SpecScalar) (n := m) (s := Shape.scalar) δS)
-        (BS := Spec.Tensor.swapAdjacentAxes (d := 0)
+        (BS := TorchLean.Tensor.swapAdjacentAxes (depth := 0)
           (unsqueezeAfterLeading (α := SpecScalar) (n := n) (s := Shape.scalar) (getIdx (α
             := SpecScalar) ctxS v)))
         (AR := unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δR)
-        (BR := Spec.Tensor.swapAdjacentAxes (d := 0)
+        (BR := TorchLean.Tensor.swapAdjacentAxes (depth := 0)
           (unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) (getIdx (α := R)
             ctxR v)))
         (epsA := epsδ) (epsB := getIdxEps (Γ := Γ) (s := .dim n .scalar) epsCtx v) hδcol hvrow)
@@ -203,9 +200,9 @@ by
   -- `dV = mat_vec_mul (transpose A) δ`.
   have hAT :
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-        (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+        (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
           SpecScalar) ctxS A))
-        (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR A))
+        (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR A))
         (getIdxEps (Γ := Γ) (s := .dim m (.dim n .scalar)) epsCtx A) :=
     approxTensor_swapAdjacentAxes (depth := 0) (β := β) (fexp := fexp) (rnd := rnd) (xS := _)
       (xR := _) (eps := getIdxEps (Γ := Γ) (s := .dim m (.dim n .scalar)) epsCtx A) hA
@@ -213,23 +210,23 @@ by
   have hdV :
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
         (Spec.matVecMulSpec (α := SpecScalar)
-          (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+          (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
             SpecScalar) ctxS A)) δS)
         (Spec.matVecMulSpec (α := R)
-          (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR A))
+          (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR A))
             δR)
         (linfNorm
           (matVecMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
             (m := n) (n := m)
             (getIdxEps (Γ := Γ) (s := .dim m (.dim n .scalar)) epsCtx A) epsδ
-            (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR A))
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR A))
               δR)) := by
     simpa using
       (approxTensor_mat_vec_mul_spec (β := β) (fexp := fexp) (rnd := rnd) (m := n) (n := m)
-        (AS := Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+        (AS := TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
           SpecScalar) ctxS A))
         (vS := δS)
-        (AR := Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+        (AR := TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
           A))
         (vR := δR)
         (epsA := getIdxEps (Γ := Γ) (s := .dim m (.dim n .scalar)) epsCtx A) (epsV := epsδ)
@@ -254,20 +251,20 @@ by
       (t₁S :=
         Spec.matMulSpec (α := SpecScalar)
           (unsqueezeAfterLeading (α := SpecScalar) (n := m) (s := Shape.scalar) δS)
-          (Spec.Tensor.swapAdjacentAxes (d := 0)
+          (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
             (unsqueezeAfterLeading (α := SpecScalar) (n := n) (s := Shape.scalar) (getIdx
               (α := SpecScalar) ctxS v))))
       (t₁R :=
         Spec.matMulSpec (α := R)
           (unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δR)
-          (Spec.Tensor.swapAdjacentAxes (d := 0)
+          (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
             (unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) (getIdx (α := R)
               ctxR v))))
       (eps₁ :=
         let vR := getIdx (α := R) ctxR v
         let δcolR := unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δR
         let vcolR := unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) vR
-        let vrowR := Spec.Tensor.swapAdjacentAxes (d := 0) vcolR
+        let vrowR := TorchLean.Tensor.swapAdjacentAxes (depth := 0) vcolR
         linfNorm
           (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
             (m := m) (n := 1) (p := n)
@@ -275,25 +272,25 @@ by
             δcolR vrowR))
       (t₂S :=
         Spec.matVecMulSpec (α := SpecScalar)
-          (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+          (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
             SpecScalar) ctxS A))
           δS)
       (t₂R :=
         Spec.matVecMulSpec (α := R)
-          (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR A))
+          (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR A))
           δR)
       (eps₂ :=
         linfNorm
           (matVecMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
             (m := n) (n := m)
             (getIdxEps (Γ := Γ) (s := .dim m (.dim n .scalar)) epsCtx A) epsδ
-            (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR A))
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR A))
               δR))
       hdA hdV hne
   simpa using hctx'
 
 /--
-Reverse node for matrix multiplication (`mat_mul_spec`).
+Reverse node for matrix multiplication (`matMulSpec`).
 
 VJP uses the standard identities `δA = δC * Bᵀ` and `δB = Aᵀ * δC` (in appropriate shapes),
 with NF error bounds layered over the primitive ops.
@@ -311,34 +308,41 @@ by
         if h : A.i = B.i then
           -- both contributions land in the same slot
           let A0 := getIdx (α := SpecScalar) ctx A
-          let δA := Spec.matMulSpec (α := SpecScalar) δ (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := SpecScalar) ctx B))
-          let δB := Spec.matMulSpec (α := SpecScalar) (Spec.Tensor.swapAdjacentAxes (d := 0) A0) δ
+          let δA := Spec.matMulSpec (α := SpecScalar) δ
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := SpecScalar) ctx B))
+          let δB := Spec.matMulSpec (α := SpecScalar)
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) A0) δ
           let δB' := tensorCastOfIdxEq (α := SpecScalar) (Γ := Γ) (a := A) (b := B) h δB
-          SparseContext.setIdx (α := SpecScalar) (Γ := Γ) (s := (.dim m (.dim n .scalar))) A (addSpec δA
-            δB')
+          SparseContext.setIdx (α := SpecScalar) (Γ := Γ) (s := (.dim m (.dim n .scalar))) A
+            (addSpec δA δB')
         else
-          let δA := Spec.matMulSpec (α := SpecScalar) δ (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := SpecScalar) ctx B))
-          let δB := Spec.matMulSpec (α := SpecScalar) (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := SpecScalar) ctx A)) δ
+          let δA := Spec.matMulSpec (α := SpecScalar) δ
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := SpecScalar) ctx B))
+          let δB := Spec.matMulSpec (α := SpecScalar)
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := SpecScalar) ctx A)) δ
           SparseContext.set2Idx (α := SpecScalar) (Γ := Γ)
             (s₁ := (.dim m (.dim n .scalar))) (s₂ := (.dim n (.dim p .scalar))) A δA B δB
       vjpRuntime := fun ctx δ =>
         if h : A.i = B.i then
           let A0 := getIdx (α := R) ctx A
-          let δA := Spec.matMulSpec (α := R) δ (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctx B))
-          let δB := Spec.matMulSpec (α := R) (Spec.Tensor.swapAdjacentAxes (d := 0) A0) δ
+          let δA := Spec.matMulSpec (α := R) δ
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctx B))
+          let δB := Spec.matMulSpec (α := R) (TorchLean.Tensor.swapAdjacentAxes (depth := 0) A0) δ
           let δB' := tensorCastOfIdxEq (α := R) (Γ := Γ) (a := A) (b := B) h δB
           SparseContext.setIdx (α := R) (Γ := Γ) (s := (.dim m (.dim n .scalar))) A (addSpec δA δB')
         else
-          let δA := Spec.matMulSpec (α := R) δ (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctx B))
-          let δB := Spec.matMulSpec (α := R) (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctx A)) δ
+          let δA := Spec.matMulSpec (α := R) δ
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctx B))
+          let δB := Spec.matMulSpec (α := R)
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctx A)) δ
           SparseContext.set2Idx (α := R) (Γ := Γ)
             (s₁ := (.dim m (.dim n .scalar))) (s₂ := (.dim n (.dim p .scalar))) A δA B δB
       vjpBound := fun epsCtx ctxR epsδ δR =>
         let epsA := getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) epsCtx A
         let epsB := getIdxEps (Γ := Γ) (s := (.dim n (.dim p .scalar))) epsCtx B
-        let BT_R := Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R)
+        let BT_R := TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R)
           ctxR B)
-        let AT_R := Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R)
+        let AT_R := TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R)
           ctxR A)
         let δA_R := Spec.matMulSpec (α := R) δR BT_R
         let δB_R := Spec.matMulSpec (α := R) AT_R δR
@@ -372,18 +376,18 @@ by
 
   have hBT :
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-        (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+        (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
           SpecScalar) ctxS B))
-        (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR B))
+        (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR B))
         (getIdxEps (Γ := Γ) (s := (.dim n (.dim p .scalar))) epsCtx B) :=
     approxTensor_swapAdjacentAxes (depth := 0) (β := β) (fexp := fexp) (rnd := rnd) (xS := _)
       (xR := _) (eps := getIdxEps (Γ := Γ) (s := (.dim n (.dim p .scalar))) epsCtx B) hB
 
   have hAT :
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-        (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+        (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
           SpecScalar) ctxS A))
-        (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR A))
+        (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR A))
         (getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) epsCtx A) :=
     approxTensor_swapAdjacentAxes (depth := 0) (β := β) (fexp := fexp) (rnd := rnd) (xS := _)
       (xR := _) (eps := getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) epsCtx A) hA
@@ -391,23 +395,23 @@ by
   have hdA :
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
         (Spec.matMulSpec (α := SpecScalar) δS
-          (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+          (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
             SpecScalar) ctxS B)))
         (Spec.matMulSpec (α := R) δR
-          (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR B)))
+          (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR B)))
         (linfNorm
           (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
             (m := m) (n := p) (p := n)
             epsδ (getIdxEps (Γ := Γ) (s := (.dim n (.dim p .scalar))) epsCtx B) δR
-            (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
               B)))) := by
     simpa using
       (approxTensor_mat_mul_spec (β := β) (fexp := fexp) (rnd := rnd) (m := m) (n := p) (p := n)
         (AS := δS)
-        (BS := Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+        (BS := TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
           SpecScalar) ctxS B))
         (AR := δR)
-        (BR := Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+        (BR := TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
           B))
         (epsA := epsδ) (epsB := getIdxEps (Γ := Γ) (s := (.dim n (.dim p .scalar))) epsCtx B) hδ
           hBT)
@@ -415,23 +419,23 @@ by
   have hdB :
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
         (Spec.matMulSpec (α := SpecScalar)
-          (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+          (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
             SpecScalar) ctxS A)) δS)
         (Spec.matMulSpec (α := R)
-          (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR A))
+          (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR A))
             δR)
         (linfNorm
           (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
             (m := n) (n := m) (p := p)
             (getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) epsCtx A) epsδ
-            (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR A))
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR A))
               δR)) := by
     simpa using
       (approxTensor_mat_mul_spec (β := β) (fexp := fexp) (rnd := rnd) (m := n) (n := m) (p := p)
-        (AS := Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+        (AS := TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
           SpecScalar) ctxS A))
         (BS := δS)
-        (AR := Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+        (AR := TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
           A))
         (BR := δR)
         (epsA := getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) epsCtx A) (epsB := epsδ) hAT
@@ -443,35 +447,35 @@ by
         approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
           (tensorCastOfIdxEq (α := SpecScalar) (Γ := Γ) (a := A) (b := B) hEq
             (Spec.matMulSpec (α := SpecScalar)
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
                 SpecScalar) ctxS A)) δS))
           (tensorCastOfIdxEq (α := R) (Γ := Γ) (a := A) (b := B) hEq
             (Spec.matMulSpec (α := R)
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                 A)) δR))
           (linfNorm
             (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
               (m := n) (n := m) (p := p)
               (getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) epsCtx A) epsδ
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                 A)) δR)) := by
       simpa [tensorCastOfIdxEq, idx_shape_eq_of_i_eq] using
         (approxTensor_tensor_cast (β := β) (fexp := fexp) (rnd := rnd)
           (h := (idx_shape_eq_of_i_eq (Γ := Γ) (a := A) (b := B) hEq).symm)
           (xS :=
             Spec.matMulSpec (α := SpecScalar)
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
                 SpecScalar) ctxS A)) δS)
           (xR :=
             Spec.matMulSpec (α := R)
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                 A)) δR)
           (eps :=
             linfNorm
               (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
                 (m := n) (n := m) (p := p)
                 (getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) epsCtx A) epsδ
-                (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+                (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                   A)) δR))
           hdB)
 
@@ -479,19 +483,19 @@ by
         approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
           (addSpec
             (Spec.matMulSpec (α := SpecScalar) δS
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
                 SpecScalar) ctxS B)))
             (tensorCastOfIdxEq (α := SpecScalar) (Γ := Γ) (a := A) (b := B) hEq
               (Spec.matMulSpec (α := SpecScalar)
-                (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+                (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
                   SpecScalar) ctxS A)) δS)))
           (addSpec
             (Spec.matMulSpec (α := R) δR
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                 B)))
             (tensorCastOfIdxEq (α := R) (Γ := Γ) (a := A) (b := B) hEq
               (Spec.matMulSpec (α := R)
-                (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+                (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                   A)) δR)))
           (linfNorm
             (addBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
@@ -500,55 +504,55 @@ by
                 (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
                   (m := m) (n := p) (p := n)
                   epsδ (getIdxEps (Γ := Γ) (s := (.dim n (.dim p .scalar))) epsCtx B) δR
-                  (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R)
+                  (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R)
                     ctxR B))))
               (linfNorm
                 (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
                   (m := n) (n := m) (p := p)
                   (getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) epsCtx A) epsδ
-                  (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R)
+                  (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R)
                     ctxR A)) δR))
               (Spec.matMulSpec (α := R) δR
-                (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+                (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                   B)))
               (tensorCastOfIdxEq (α := R) (Γ := Γ) (a := A) (b := B) hEq
                 (Spec.matMulSpec (α := R)
-                  (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R)
+                  (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R)
                     ctxR A)) δR)))) := by
       simpa using
         (approxTensor_add_spec (β := β) (fexp := fexp) (rnd := rnd)
           (s := (.dim m (.dim n .scalar)))
           (xS :=
             Spec.matMulSpec (α := SpecScalar) δS
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
                 SpecScalar) ctxS B)))
           (yS :=
             tensorCastOfIdxEq (α := SpecScalar) (Γ := Γ) (a := A) (b := B) hEq
               (Spec.matMulSpec (α := SpecScalar)
-                (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+                (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
                   SpecScalar) ctxS A)) δS))
           (xR :=
             Spec.matMulSpec (α := R) δR
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                 B)))
           (yR :=
             tensorCastOfIdxEq (α := R) (Γ := Γ) (a := A) (b := B) hEq
               (Spec.matMulSpec (α := R)
-                (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+                (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                   A)) δR))
           (epsx :=
             linfNorm
               (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
                 (m := m) (n := p) (p := n)
                 epsδ (getIdxEps (Γ := Γ) (s := (.dim n (.dim p .scalar))) epsCtx B) δR
-                (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+                (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                   B))))
           (epsy :=
             linfNorm
               (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
                 (m := n) (n := m) (p := p)
                 (getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) epsCtx A) epsδ
-                (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+                (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                   A)) δR))
           hdA hdB')
 
@@ -560,19 +564,19 @@ by
             (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
               (m := m) (n := p) (p := n)
               epsδ (getIdxEps (Γ := Γ) (s := (.dim n (.dim p .scalar))) epsCtx B) δR
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                 B))))
           (linfNorm
             (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
               (m := n) (n := m) (p := p)
               (getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) epsCtx A) epsδ
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                 A)) δR))
           (Spec.matMulSpec (α := R) δR
-            (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR B)))
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR B)))
           (tensorCastOfIdxEq (α := R) (Γ := Γ) (a := A) (b := B) hEq
             (Spec.matMulSpec (α := R)
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                 A)) δR)))
     have hctx' :=
       approxCtx_setIdx (β := β) (fexp := fexp) (rnd := rnd)
@@ -580,20 +584,20 @@ by
         (tS :=
           addSpec
             (Spec.matMulSpec (α := SpecScalar) δS
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
                 SpecScalar) ctxS B)))
             (tensorCastOfIdxEq (α := SpecScalar) (Γ := Γ) (a := A) (b := B) hEq
               (Spec.matMulSpec (α := SpecScalar)
-                (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+                (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
                   SpecScalar) ctxS A)) δS)))
         (tR :=
           addSpec
             (Spec.matMulSpec (α := R) δR
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                 B)))
             (tensorCastOfIdxEq (α := R) (Γ := Γ) (a := A) (b := B) hEq
               (Spec.matMulSpec (α := R)
-                (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+                (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                   A)) δR)))
         (eps := epsSum) (by simpa [epsSum] using hsum)
     simpa [hEq, epsSum, tensorCastOfIdxEq, idx_shape_eq_of_i_eq] using hctx'
@@ -603,32 +607,32 @@ by
         (Γ := Γ) (s₁ := (.dim m (.dim n .scalar))) (s₂ := (.dim n (.dim p .scalar))) A B
         (t₁S :=
           Spec.matMulSpec (α := SpecScalar) δS
-            (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
               SpecScalar) ctxS B)))
         (t₁R :=
           Spec.matMulSpec (α := R) δR
-            (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR B)))
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR B)))
         (eps₁ :=
           linfNorm
             (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
               (m := m) (n := p) (p := n)
               epsδ (getIdxEps (Γ := Γ) (s := (.dim n (.dim p .scalar))) epsCtx B) δR
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                 B))))
         (t₂S :=
           Spec.matMulSpec (α := SpecScalar)
-            (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α :=
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α :=
               SpecScalar) ctxS A)) δS)
         (t₂R :=
           Spec.matMulSpec (α := R)
-            (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR A))
+            (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR A))
               δR)
         (eps₂ :=
           linfNorm
             (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
               (m := n) (n := m) (p := p)
               (getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) epsCtx A) epsδ
-              (Spec.Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctxR
+              (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                 A)) δR))
         hdA hdB hEq
     simpa [hEq] using hctx'

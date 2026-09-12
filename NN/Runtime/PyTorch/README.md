@@ -33,22 +33,38 @@ execution provider described in the
   (`torch.save(model.state_dict(), ...)`, or common checkpoint wrappers) into TorchLean's
   shape checkable JSON format.
 - `Export/TorchExport.lean` emits a Python adapter that captures a PyTorch `nn.Module` with
-  `torch.export`/FX and writes TorchLean IR JSON for the supported op subset.
+  `torch.export`/FX and writes TorchLean IR JSON for the supported op subset. The script is
+  assembled from one Lean definition per Python section (imports, shape helpers, payload
+  helpers, `_lower_kind` rule groups, capture, entry point, `main`).
 
-Choose the exporter by artifact type:
+## Semantic operators and v1 wire strings
 
-- Use `Export/Core.lean` for shared formatting helpers.
-- Use `Export/StateDict.lean` when you already have PyTorch weights and need a model agnostic
-  bridge into Lean readable JSON.
-- Use `Export/TorchExport.lean` when you already have a PyTorch `nn.Module` and want to capture
-  its tensor program into a TorchLean graph artifact.
-- Use `Export/ONNX.lean` when you already have an ONNX graph and want a first-pass static graph
-  lowering into the checked TorchLean IR artifact.
-- Use `Export/IRPyTorch.lean` when you want a general `NN.IR.Graph` lowering path.
+`NN/IR/Operator.lean` defines `OpKind`, its static attributes, and the constructor identities in
+`NN.IR.OpTag`. For example, `(.softmax 1).opTag` is `.softmax`; its axis belongs to `OpKind`.
+`OpTag.metadata` gives the parent count and diagnostic name without constructing a dummy operator.
+`OpTag.toKind?` reconstructs operations whose tags supply all their static information.
 
-The exported Python code supports runtime comparison and debugging. Formal results begin with the
-Lean object produced after import: a parsed tensor bundle, validated IR graph, checked certificate,
-or theorem over the imported graph semantics.
+`Wire.lean` assigns each tag its fixed spelling in `torchlean.ir.v1`. Both Python-emitting adapters
+write through `Wire.opTag`, and `Import/TorchExport.lean` reads through `Wire.parseOpTag?`.
+The v1 strings have their own table, so changing a diagnostic name does not change existing files.
+The round trips are proved in Lean:
+
+```lean
+theorem Wire.parse_op_tag (tag : OpTag) :
+    Wire.parseOpTag? (Wire.opTag tag) = some tag
+theorem Wire.parse_op_kind (kind : OpKind) (h : kind.opTag.hasAttributes = false) :
+    Wire.parseOpKind? (Wire.opTag kind.opTag) = some kind
+```
+
+Operators with axes, shapes, or convolution geometry parse their tag first and then read those
+attributes. Tensor parameters, including the weights of `.linear`, come from the payload store.
+Value-graph markers (`tuple_getitem`, `multihead_attention`, the legacy `py_tuple`) and the format
+marker also live in `Wire`.
+
+The PyTorch adapter matches complete ATen overload names and explicit FX callables or methods.
+For example, `aten.log.default` lowers to `log`; `log1p`, `log2`, and `log_softmax` need their own
+lowerings and are rejected. Mutating overloads, dtype changes, and unsupported tuple producers are
+rejected before the adapter writes an artifact.
 
 ## Import
 
@@ -58,27 +74,23 @@ The bridge uses JSON because Python can write it directly and Lean can parse it 
 Python pickle formats.
 
 - `Import/Core.lean` defines `parseTensor`, which turns nested JSON arrays into a `Tensor Float s` when the JSON shape matches `s`.
-  It also provides small error reporting wrappers (`loadWeightsE`, `getTensorE`) for debugging missing keys and shape mismatches.
+  Lookups return `Option`, so a missing key or a shape that does not match is a `none` the caller has to
+  handle rather than a panic.
 - `Import/CrownParamstore.lean` bridges loaded tensors into the graph backend's `ParamStore` when a workflow needs node id keyed parameters.
 - `Import/TorchExport.lean` parses TorchLean IR JSON from the generated graph capture adapter and
-  accepts only graphs that pass the shared IR validators.
+  accepts only graphs that pass the shared IR validators. All array access is bounds checked and
+  reports an `Except` error naming the node; nothing panics on a malformed artifact.
 
-Choose the importer by artifact type:
+## Model-family adapters and examples
 
-- Use `Import/Core.lean` for the generic JSON parsing path.
-- Use `Import/TorchExport.lean` when you have a captured PyTorch graph JSON artifact.
-- Use `Import/CrownParamstore.lean` when you already have typed tensors and need to assemble a `ParamStore`.
+`Import/{MLP,CNN,Transformer}.lean` loads the supported state-dict conventions into typed parameter
+records. The corresponding `Export/` modules generate Python classes and embedded parameters.
+These reusable adapters are available as `Import.PyTorch.MLP`, `Export.PyTorch.MLP`, and the
+matching CNN/Transformer namespaces.
 
-The importers reject unsupported structure early. That is a feature, not a limitation to paper over:
-an unsupported PyTorch op should fail with a clear message instead of silently becoming an
-uninterpreted node in a verification workflow.
-
-## Examples live elsewhere
-
-Architecture specific loaders and example round trips live under
-`NN/Examples/Interop/PyTorch/{Export,Import}`. Runtime should not own model-family modules; it
-should own the reusable bridge that examples, verification tools, and downstream projects can
-share.
+Runnable examples and small reference artifacts live under `NN/Examples/Interop/PyTorch`.
+`NN/Tests/Interop/PyTorch.lean` contains graph-capture and numerical parity regressions, run with
+`lake exe pytorch_export_check`.
 
 ## What Users Can Do Today
 
@@ -97,15 +109,10 @@ share.
   well as at their helper evaluators. Arbitrary-rank pooling has the same local bridge to its spec
   operations. LayerNorm is covered through the IR evaluator's rank-independent matrix view, and graph-structural nodes
   such as input, detach, and scalar MSE are covered as well. The
-  `NN.Verification.TorchLean.Proved.Correctness.Eval` import collects the corresponding concrete
+  `NN.Verification.Builtin.Proved.Correctness.Eval` import collects the corresponding concrete
   theorem modules; those imported theorems are the current record of evaluator support.
-- Load supported verification model families such as PINNs/FNOs through the example interop loaders.
+- Load verification-owned PINN/FNO checkpoints through their `NN/Verification` adapters.
 - Emit readable PyTorch code from a TorchLean `NN.IR.Graph` and `ParamStore`.
-
-The trust boundary is explicit. PyTorch and CUDA kernels are external runtimes, and `.pt`/`.pth`
-pickle/zip checkpoints are loaded on the Python side. TorchLean's checked object is the JSON
-artifact it receives after export: tensor payloads with shapes, a supported graph structure, or a
-verification artifact that Lean can parse and replay.
 
 ## Reference (PyTorch)
 

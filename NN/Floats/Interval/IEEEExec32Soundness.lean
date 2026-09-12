@@ -6,10 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.Interval.IEEEExec32AddSoundness
-public import NN.Floats.Interval.IEEEExec32DivSoundness
-public import NN.Floats.Interval.IEEEExec32MinMaxSoundness
-public import NN.Floats.Interval.IEEEExec32MulSoundness
+public import Mathlib.Algebra.Order.AbsoluteValue.Basic
+public import Mathlib.Algebra.Order.Field.Basic
 
 /-!
 # `NN.Floats.Interval.IEEEExec32Soundness`

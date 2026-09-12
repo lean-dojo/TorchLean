@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.TensorOps
 public import NN.Spec.Layers.Loss
 
 /-!
@@ -32,10 +31,10 @@ References:
 
 namespace Generative.Latent
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Elementwise exponential, useful for log-variance parameterizations. -/
 def expTensor {s : Shape} (x : Tensor α s) : Tensor α s :=
@@ -43,7 +42,7 @@ def expTensor {s : Shape} (x : Tensor α s) : Tensor α s :=
 
 /-- Elementwise $\tfrac12x$, written as a tensor helper to make VAE equations readable. -/
 def halfTensor {s : Shape} (x : Tensor α s) : Tensor α s :=
-  scaleSpec x Numbers.half
+  scaleSpec x (1 / 2)
 
 /--
 Diagonal-Gaussian reparameterization:
@@ -77,12 +76,13 @@ def diagonalGaussianKlToStandard
     {latent : Shape} (mu logvar : Tensor α latent) : α :=
   let var := expTensor logvar
   let mu2 := mulSpec mu mu
-  let ones := fill (α := α) (1 : α) latent
+  let ones := Tensor.full (α := α) latent (1 : α)
   let per := var + mu2 - ones - logvar
-  Numbers.half * Spec.meanOver (s := latent) (Spec.toScalarSpec per)
+  (1 / 2) * Spec.meanOver (s := latent) (Spec.toScalarSpec per)
 
 /-- A finite codebook for vector-quantized latent models. -/
-structure Codebook (α : Type) (numCodes : Nat) (latent : Shape) [Context α] where
+structure Codebook (α : Type) (numCodes : Nat) (latent : Shape) [TorchLean.Storage α]
+    [Context α] where
   /-- Embedding vector for each code index. -/
   embedding : Fin numCodes → Tensor α latent
 

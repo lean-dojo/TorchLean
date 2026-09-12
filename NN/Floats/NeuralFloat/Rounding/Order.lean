@@ -6,8 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.NeuralFloat.Rounding.Generic
+public import NN.Floats.NeuralFloat.Rounding.Core
 public import NN.Floats.NeuralFloat.Rounding.Predicates
+public import NN.Floats.NeuralFloat.Rounding.Generic
 
 /-!
 # Order Theory for Generic Rounding

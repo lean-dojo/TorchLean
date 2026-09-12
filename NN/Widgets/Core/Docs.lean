@@ -6,10 +6,12 @@ Authors: TorchLean Team
 
 module
 
-public meta import Lean
+public import Lean.Exception
 public meta import NN.Widgets.Core.UI
 public meta import ProofWidgets.Component.HtmlDisplay
 public meta import ProofWidgets.Demos.Macro
+public meta import Std.Do.Triple.SpecLemmas
+public meta import Lean -- shake: keep
 
 /-!
 # Docs
@@ -31,24 +33,6 @@ hover it to see its type + docstring. InfoView hover tooltips can be toggled in 
 
 - `#tl_doc f`: print `f`'s type and docstring in a plain info message.
 - `#tl_doc_view f`: show the same information in a richer HTML panel.
-
-## Implementation notes
-
-- The command surface is small: in day-to-day work, one plain-text view and one richer panel mode
-  is usually enough.
-- We resolve terms to constants before lookup, because that keeps behavior predictable and avoids
-  surprising partial reductions.
-- We use ProofWidgets `#html` so this stays a Lean-native widget (no external JS pipeline).
-
-## References
-
-- [Lean metaprogramming book](https://leanprover-community.github.io/lean4-metaprogramming-book/)
-- [Lean community documentation style](https://leanprover-community.github.io/contribute/doc.html)
-- [ProofWidgets examples](https://github.com/leanprover-community/ProofWidgets4/tree/main/ProofWidgets/Demos)
-
-## Tags
-
-docs, infoview, proofwidgets, metaprogramming, developer-tools
 -/
 
 public meta section
@@ -61,15 +45,18 @@ namespace NN.Widgets
 namespace DocsInternal
 open UI
 
+/-- Monospaced block that wraps long lines instead of scrolling, for signatures and docstrings. -/
 def preWrap (s : String) : ProofWidgets.Html :=
   <pre style={json% {
     "margin": "0",
     "white-space": "pre-wrap",
     "word-break": "break-word",
     "font-family":
-      "var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace)"
+      "var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \
+      monospace)"
   }}>{.text s}</pre>
 
+/-- One declaration rendered as a card: name, type, and docstring, themed to the editor. -/
 def docPanel (declName typeStr docStr : String) : ProofWidgets.Html :=
   <div style={json% {
     "padding": "12px 12px 10px 12px",
@@ -77,7 +64,8 @@ def docPanel (declName typeStr docStr : String) : ProofWidgets.Html :=
     "border-radius": "10px",
     "background": "var(--vscode-editor-background, #fff)"
   }}>
-    <div style={json% {"display": "flex", "flex-wrap": "wrap", "gap": "8px", "align-items": "center"}}>
+    <div style={json% {"display": "flex", "flex-wrap": "wrap", "gap": "8px",
+        "align-items": "center"}}>
       {pill "TorchLean docs"} {monospace declName}
     </div>
     <div style={json% {"margin-top": "10px"}}>
@@ -94,9 +82,6 @@ def docPanel (declName typeStr docStr : String) : ProofWidgets.Html :=
     </div>
   </div>
 
-end DocsInternal
-
-namespace DocsInternal
 
 /-- Return the head constant name of an application, if one exists. -/
 def termConstName? (e : Expr) : Option Name :=
@@ -120,13 +105,13 @@ def ppConstType (n : Name) : CommandElabM String := do
 /-- Resolve an input term to a declaration name for doc lookup. -/
 def resolveConstFromTerm (t : Syntax) : CommandElabM Name := do
   let e ← liftTermElabM do
-    let e ← Term.elabTerm t none
-    whnf e
+    Term.elabTerm t none
   match termConstName? e with
   | some n => pure n
   | none =>
       throwErrorAt t
-        "expected a constant (e.g. `nn.linear`), but got an expression that does not resolve to a declaration"
+        "expected a constant (e.g. `nn.linear`), but got an expression that does not resolve to a \
+        declaration"
 
 end DocsInternal
 

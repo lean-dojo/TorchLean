@@ -6,12 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import Init.Data.Nat.Bitwise.Lemmas
-public import Mathlib.Data.Nat.Log
 public import NN.Floats.IEEEExec.Semantics.ERealSemantics
 public import NN.Floats.IEEEExec.Encoding.MkBitsToReal
-public import NN.Floats.IEEEExec.Encoding.Negation
-public import NN.Floats.IEEEExec.Rounding.NatLemmas
 
 /-!
 # Directed rounding soundness for `IEEE32Exec`
@@ -58,6 +54,7 @@ noncomputable section
 
 /-! ## Basic helpers -/
 
+/-- Local shorthand for the binary radix power `2^e`, which appears in nearly every bound below. -/
 abbrev bpow (e : Int) : ℝ :=
   neuralBpow binaryRadix e
 
@@ -87,6 +84,7 @@ lemma pow2_le_pow2_succ (k : Nat) : pow2 k ≤ pow2 (k + 1) := by
 lemma pow2_lt_pow2_succ (k : Nat) : pow2 k < pow2 (k + 1) := by
   simp [pow2, Nat.shiftLeft_succ]
 
+/-- Powers of two split over addition of exponents, in the `Nat` form the shift proofs use. -/
 lemma pow2_add (a b : Nat) : pow2 (a + b) = pow2 a * pow2 b := by
   -- `pow2 k = 2^k`, so this is `2^(a+b) = 2^a * 2^b`.
   simp [pow2_eq_two_pow, Nat.pow_add]

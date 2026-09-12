@@ -7,60 +7,62 @@ Authors: TorchLean Team
 module
 
 public import NN.Examples.Factorization.Common
-meta import NN.Examples.Factorization.Common
 
 /-!
-# Example: Cholesky factorization
+# Cholesky Factorization
 
-`choleskySpec A` returns the lower-triangular $L$ with $A=LL^\mathsf{T}$ for a symmetric
-positive-definite `A`. Here we factor a 3×3 SPD matrix and check the reconstruction error.
+`Tensor.cholesky A` returns a lower-triangular factor candidate. Here we factor a 3×3 symmetric
+positive-definite matrix and check that its `Float` reconstruction error is small.
 -/
 
 @[expose] public section
 
-
 namespace NN.Examples.Factorization.Cholesky
 
-/-- A symmetric positive-definite test matrix. -/
-def A : Spec.Tensor Float [3, 3] :=
-  mkMat #[#[4, 2, 2],
-          #[2, 5, 3],
-          #[2, 3, 6]]
+open TorchLean
+open TorchLean.Tensor
 
-/-- The Cholesky factor `L` (lower-triangular). -/
-def L : Spec.Tensor Float [3, 3] := Spec.choleskySpec A
+/-- Symmetric positive-definite matrix used for the positive Cholesky check. -/
+def positiveDefiniteMatrix : Tensor Float [3, 3] :=
+  [[4, 2, 2],
+   [2, 5, 3],
+   [2, 3, 6]]
+
+/-- Lower-triangular Cholesky factor. -/
+def lowerFactor := Tensor.cholesky positiveDefiniteMatrix
 
 /-- Reconstruction error $\lVert A-LL^\mathsf{T}\rVert_{\max}$. -/
-def reconErr : Float := maxMatErr A (matmul L (tr L))
+def reconstructionError : Float :=
+  Tensor.maxAbsDiff positiveDefiniteMatrix <|
+    einsum lowerFactor, lowerFactor "row contracted, column contracted -> row column"
 
--- Inspect the diagonal of the factor.
-#guard_msgs (drop info) in
-#eval vectorToArray (Spec.Tensor.ofFn (fun i : Fin 3 => Spec.get2 L i i))
+/-! ## Negative Control
 
--- Compiled assertion: the factorization reconstructs A (fails the build otherwise).
-#guard_msgs (drop info) in
-#eval assertLt "Cholesky A = L·Lᵀ" reconErr
-
-/-! ## Negative control: the positive-pivot hypothesis is necessary
-
-`isCholesky_of_pos` requires the executable pivots $L_{jj}$ to be positive
-(`0 < choleskyFn A j j`),
-which is exactly the success condition over the reals (SPD is the expected — but here unformalized —
-sufficient condition for it). The matrix below is symmetric but *not* positive-definite (eigenvalues
-`3` and `-1`), so a pivot is non-positive, the diagonal step takes `√(negative)`, and the reconstruction
-is `NaN` — never a small error. This documents that the hypothesis genuinely bites. -/
+Cholesky requires positive pivots. The matrix below is symmetric but not positive-definite
+(eigenvalues `3` and `-1`), so the `Float` computation reaches the square root of a negative value
+and the reconstruction error becomes `NaN`.
+-/
 
 /-- A symmetric but **indefinite** matrix (eigenvalues `{3, -1}`), outside Cholesky's domain. -/
-def Abad : Spec.Tensor Float [2, 2] :=
-  mkMat #[#[1, 2],
-          #[2, 1]]
+def indefiniteMatrix : Tensor Float [2, 2] :=
+  [[1, 2],
+   [2, 1]]
 
-def Lbad : Spec.Tensor Float [2, 2] := Spec.choleskySpec Abad
--- Use the *summed* Frobenius error here, not `maxMatErr`: IEEE `max` ignores `NaN`, whereas the sum
--- propagates the `NaN` produced by `√(negative)`, faithfully reporting that no factor exists.
-def reconErrBad : Float := frobSqErr Abad (matmul Lbad (tr Lbad))
+/--
+The negative pivot produces a `NaN` factor entry, making reconstruction fail.
+-/
+def indefiniteFactor := Tensor.cholesky indefiniteMatrix
 
-#guard_msgs (drop info) in
-#eval assertReconFails "Cholesky on indefinite A correctly fails (no SPD ⇒ no factor)" reconErrBad
+-- Squaring and summing also preserves the invalid square root as a NaN error.
+/-- Reconstruction error for the indefinite case, which should come out `NaN`. -/
+def indefiniteReconstructionError : Float :=
+  Tensor.sum <| Tensor.square <| indefiniteMatrix -
+    einsum indefiniteFactor, indefiniteFactor "row contracted, column contracted -> row column"
+
+/-- Run the positive reconstruction check and its indefinite-matrix negative control. -/
+def check : IO Unit := do
+  assertBelow "Cholesky A = L·Lᵀ" reconstructionError
+  assertNotBelow "Cholesky on indefinite A correctly fails (no SPD ⇒ no factor)"
+    indefiniteReconstructionError
 
 end NN.Examples.Factorization.Cholesky

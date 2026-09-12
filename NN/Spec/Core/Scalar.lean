@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Context
 public import NN.Spec.Core.Tensor.Core
+public import Mathlib.Analysis.SpecialFunctions.Pow.Real
 
 /-!
 # Scalar
@@ -16,6 +16,10 @@ Spec-only scalar conventions.
 
 The spec layer fixes its scalar to `ℝ` for mathematical reasoning. Runtime scalars
 remain `Float`/`NeuralFloat` and are handled separately.
+
+Because `SpecScalar` is `ℝ`, this is the module that brings in the real dictionary
+(`NN.Spec.Core.Context.Real`) and with it the real-analysis hierarchy. Anything that only needs
+`Float` or a general `[Context α]` should import `NN.Spec.Core.Context` instead and stay light.
 
 References / context:
 - TorchLean paper (overall scalar-polymorphic architecture and trust boundary discussion):
@@ -26,6 +30,8 @@ References / context:
 
 @[expose] public section
 
+
+open TorchLean
 
 namespace Spec
 

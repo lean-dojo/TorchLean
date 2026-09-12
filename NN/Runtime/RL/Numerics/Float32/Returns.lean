@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL.Numerics.Float32.Types
+public import NN.Spec.RL.Core
+public import NN.Tensor.Internal.Elab.TensorLiteral
 
 /-!
 # Checked Float32 Discounted Returns
@@ -26,8 +28,8 @@ namespace RL
 namespace Numerics
 namespace Float32
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Spec.RL
 
 open TorchLean.Floats
@@ -217,7 +219,8 @@ theorem discountedBackup_eq_ok
   -- If all checks passed, the routine returns the plain `discountedBackup` expression.
   have hout : out = out0 := by
     have : discountedBackupChecked reward gamma bootstrap done = .ok out0 := by
-      simp [discountedBackupChecked, checkedMul, checkedAdd, requireFinite, mask, t1, t2, out0, ht1, ht2, hout0]
+      simp [discountedBackupChecked, checkedMul, checkedAdd, requireFinite, mask, t1, t2, out0,
+        ht1, ht2, hout0]
     -- Both `h` and `this` identify the return value; compare them by constructor injection.
     have hok : (Except.ok out : Except String Float32Exec) = Except.ok out0 := by
       exact h.symm.trans this
@@ -242,23 +245,15 @@ theorem discountedBackup_eq_ok
 /--
 Checked fixed-horizon discounted returns (no `done` flags), specialized to `IEEE32Exec`.
 
-This is the checked/finite counterpart to `Runtime.RL.Core.discountedReturnsTensorFrom`.
+This is the checked/finite counterpart to `Runtime.RL.Core.discountedReturnsFrom`.
 -/
 def discountedReturnsChecked {n : Nat}
     (gamma : Float32Exec) (rewards : Tensor Float32Exec [n])
     (bootstrap : Float32Exec := (0 : Float32Exec)) :
     Except String (Tensor Float32Exec [n]) := do
-  let rArr : Array Float32Exec :=
-    Array.ofFn (fun i : Fin n => Tensor.item (get rewards i))
-
-  let mut out : Array Float32Exec := Array.replicate n (0 : Float32Exec)
-  let mut g : Float32Exec := bootstrap
-  for t in [0:n] do
-    let idx := n - 1 - t
-    g ← discountedBackupChecked (reward := rArr[idx]!) (gamma := gamma) (bootstrap := g) (done := false)
-    out := out.set! idx g
-
-  pure <| Tensor.dim (fun i : Fin n => Tensor.scalar (out[i.val]!))
+  Tensor.scanrM
+    (fun reward future => discountedBackupChecked reward gamma future false)
+    bootstrap rewards
 
 
 end Float32

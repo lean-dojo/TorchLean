@@ -28,8 +28,8 @@ namespace Tests
 namespace Cuda
 namespace LinearMseConcatSliceGather
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Runtime.Autograd
 
 /-- Run CUDA/CPU parity checks for linear, loss, concat, slice, and gather operators. -/
@@ -45,13 +45,13 @@ def run : IO Unit := do
   let sX : Shape := [inDim]
 
   let W : Tensor Float sW :=
-    tensorOfArray! [outDim, inDim] #[
+    (Tensor.from #[
       0.10, -0.20, 0.30,
       -0.05, 0.25, 0.15
-    ]
-  let b : Tensor Float sB := tensorOfArray! [outDim] #[0.01, -0.02]
-  let x : Tensor Float sX := tensorOfArray! [inDim] #[0.50, -0.40, 0.20]
-  let target : Tensor Float sB := tensorOfArray! [outDim] #[0.05, -0.10]
+    ]).reshape [outDim, inDim] (by dsimp; decide)
+  let b : Tensor Float sB := (Tensor.from #[0.01, -0.02]).reshape [outDim] (by dsimp; decide)
+  let x : Tensor Float sX := (Tensor.from #[0.50, -0.40, 0.20]).reshape [inDim] (by dsimp; decide)
+  let target : Tensor Float sB := (Tensor.from #[0.05, -0.10]).reshape [outDim] (by dsimp; decide)
 
   -- CPU tape
   let t0 : Tape Float := Tape.empty
@@ -81,9 +81,11 @@ def run : IO Unit := do
   let (t4c, yIdc) ← Utils.okOrThrow
     (Runtime.Autograd.Cuda.Tape.linear (t := t3c) (inDim := inDim) (outDim := outDim) wIdc bIdc
       xIdc)
-  let (t5c, targetIdc) := Runtime.Autograd.Cuda.Tape.leaf (t := t4c) (Utils.tensorToAnyBuffer target)
+  let (t5c, targetIdc) :=
+    Runtime.Autograd.Cuda.Tape.leaf (t := t4c) (Utils.tensorToAnyBuffer target)
     (name := some "target")
-  let (t6c, lossIdc) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.mseLoss (t := t5c) (s := sB) yIdc targetIdc)
+  let (t6c, lossIdc) ← Utils.okOrThrow
+    (Runtime.Autograd.Cuda.Tape.mseLoss (t := t5c) (s := sB) yIdc targetIdc)
 
   let lossCuda ← Utils.cudaValue (s := Shape.scalar) t6c lossIdc
   let seedCuda : Runtime.Autograd.Cuda.AnyBuffer :=
@@ -110,8 +112,8 @@ def run : IO Unit := do
   let len : Nat := 3
   have hSlice : start + len ≤ n + m := by decide
 
-  let a : Tensor Float sA := tensorOfArray! [n] #[0.20, -0.10]
-  let bV : Tensor Float sBv := tensorOfArray! [m] #[0.30, 0.05, -0.25]
+  let a : Tensor Float sA := (Tensor.from #[0.20, -0.10]).reshape [n] (by dsimp; decide)
+  let bV : Tensor Float sBv := (Tensor.from #[0.30, 0.05, -0.25]).reshape [m] (by dsimp; decide)
 
   -- CPU
   let t0s : Tape Float := Tape.empty
@@ -119,10 +121,14 @@ def run : IO Unit := do
   let (t2s, bId) := Tape.leaf (t := t1s) bV (name := some "b")
   let (t3s, catId) ← Utils.okOrThrow (Tape.concatLeadingAxis (α := Float) (t := t2s)
     (n := n) (m := m) (s := .scalar) aId bId)
-  let (t4s, ySliceId) ← Utils.okOrThrow (Tape.sliceLeadingAxisRange (α := Float) (t := t3s) (n := n + m) (s := Shape.scalar) catId start len hSlice)
+  let (t4s, ySliceId) ← Utils.okOrThrow
+    (Tape.sliceLeadingAxisRange (α := Float) (t := t3s) (n := n + m) (s := Shape.scalar) catId start
+      len hSlice)
   let yCpuSlice ← Utils.cpuValue (s := [len]) t4s ySliceId
-  let seedCpuSlice : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (fill (1.0 : Float) [len])
-  let gradsCpuSlice ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t4s) ySliceId seedCpuSlice)
+  let seedCpuSlice : Spec.SomeTensor Float :=
+    Spec.SomeTensor.ofTensor (Tensor.full [len] (1.0 : Float))
+  let gradsCpuSlice ← Utils.okOrThrow
+    (Tape.backwardDenseAll (α := Float) (t := t4s) ySliceId seedCpuSlice)
   let dA_cpu ← Utils.cpuGrad (s := sA) gradsCpuSlice aId
   let dB_cpu ← Utils.cpuGrad (s := sBv) gradsCpuSlice bId
 
@@ -135,7 +141,8 @@ def run : IO Unit := do
   let (t3sc, catIdc) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.concatLeadingAxis
     (t := t2sc) (n := n) (m := m) (s := .scalar) aIdc bIdc)
   let (t4sc, ySliceIdc) ← Utils.okOrThrow
-    (Runtime.Autograd.Cuda.Tape.sliceLeadingAxisRange (t := t3sc) (n := n + m) (s := Shape.scalar) catIdc start len hSlice)
+    (Runtime.Autograd.Cuda.Tape.sliceLeadingAxisRange (t := t3sc) (n := n + m) (s := Shape.scalar)
+      catIdc start len hSlice)
   let yCudaSlice ← Utils.cudaValue (s := [len]) t4sc ySliceIdc
   let seedCudaSlice : Runtime.Autograd.Cuda.AnyBuffer :=
     { s := [len]
@@ -153,7 +160,8 @@ def run : IO Unit := do
   IO.println "== select =="
   let nG : Nat := 5
   let sG : Shape := [nG]
-  let xG : Tensor Float sG := tensorOfArray! [nG] #[0.10, -0.20, 0.30, 0.05, -0.15]
+  let xG : Tensor Float sG :=
+    (Tensor.from #[0.10, -0.20, 0.30, 0.05, -0.15]).reshape [nG] (by dsimp; decide)
   let iG : Fin nG := ⟨3, by decide⟩
 
   -- CPU
@@ -187,11 +195,11 @@ def run : IO Unit := do
   let sRow : Shape := [2]
   let sM : Shape := [3, 2]
   let xM : Tensor Float sM :=
-    tensorOfArray! [3, 2] #[
+    (Tensor.from #[
       0.10, 0.20,
       -0.30, 0.40,
       0.50, -0.60
-    ]
+    ]).reshape [3, 2] (by dsimp; decide)
   let iRow : Fin (sM.axisSize 0) := ⟨1, by decide⟩
 
   -- CPU
@@ -200,7 +208,8 @@ def run : IO Unit := do
   let (t2r, yRowId) ← Utils.okOrThrow
     (Tape.select (α := Float) (s := sM) (t := t1r) xMid 0 iRow)
   let yCpuRow ← Utils.cpuValue (s := sRow) t2r yRowId
-  let seedCpuRow : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (fill (1.0 : Float) sRow)
+  let seedCpuRow : Spec.SomeTensor Float :=
+    Spec.SomeTensor.ofTensor (Tensor.full sRow (1.0 : Float))
   let gradsCpuRow ← Utils.okOrThrow
     (Tape.backwardDenseAll (α := Float) (t := t2r) yRowId seedCpuRow)
   let dxCpuRow ← Utils.cpuGrad (s := sM) gradsCpuRow xMid

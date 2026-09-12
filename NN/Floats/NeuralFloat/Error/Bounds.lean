@@ -9,7 +9,6 @@ module
 public import NN.Floats.NeuralFloat.Rounding.Core
 import Mathlib.Algebra.Order.Algebra
 import Mathlib.Analysis.SpecialFunctions.Pow.Real
-import Mathlib.Tactic.Attr.Register
 
 /-!
 # Floating-Point Error Bounds

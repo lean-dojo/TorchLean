@@ -6,12 +6,12 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Runtime.Autograd.TypedGraph.GraphM.Convolution
 public import NN.Runtime.Autograd.TypedGraph.GraphM.Core
 public import NN.Runtime.Autograd.TypedGraph.GraphM.Elementwise
+public import NN.Runtime.Autograd.TypedGraph.GraphM.Neural
 public import NN.Runtime.Autograd.TypedGraph.GraphM.Pooling
 public import NN.Runtime.Autograd.TypedGraph.GraphM.ShapeIndex
-public import NN.Runtime.Autograd.TypedGraph.GraphM.Neural
-public import NN.Runtime.Autograd.TypedGraph.GraphM.Convolution
 
 /-!
 # GraphM

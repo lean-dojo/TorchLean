@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Context
+public import NN.Tensor.Internal.Representation.Storage -- shake: keep
 
 /-!
 # BugZoo: ignored labels are a reduction contract
@@ -16,12 +17,12 @@ ignored target case:
 
 https://github.com/pytorch/pytorch/issues/75181
 
-The formal lesson is not "TorchLean has PyTorch's full label-indexed loss kernel." It is simpler:
-ignored labels should be represented as an explicit contribution mask, and the empty-active-label
-reduction policy should be stated in the spec rather than left as backend behavior.
+Represent ignored labels by explicit zero contributions and choose the empty-reduction policy.
 -/
 
 @[expose] public section
+
+open TorchLean
 
 namespace NN.Examples.BugZoo.IgnoredLabelLoss
 
@@ -42,17 +43,17 @@ def labelContribution {α : Type} [Zero α] (active : Bool) (loss : α) : α :=
 /--
 One explicit empty-reduction policy: divide by an epsilon-shifted active count.
 
-Real training code may choose a different policy, such as returning zero for an empty batch. The
-important thing is that the policy is named and checkable instead of hidden inside a backend loss
-kernel.
+The type of `activeCount` does not enforce a nonnegative integer count, and `Context` alone gives
+no positivity law for epsilon. Finiteness therefore depends on the chosen scalar instance and
+valid inputs; the theorem below only unfolds the chosen formula.
 -/
-def safeMaskedMean {α : Type} [Context α] (total activeCount : α) : α :=
-  total / (activeCount + Numbers.epsilon)
+def safeMaskedMean {α : Type} [Storage α] [Context α] (total activeCount : α) : α :=
+  total / (activeCount + Context.defaultEpsilon)
 
 /-- The denominator policy for `safeMaskedMean` is visible in the definition. -/
-theorem safeMaskedMean_uses_epsilon_denominator {α : Type} [Context α]
+theorem safeMaskedMean_uses_epsilon_denominator {α : Type} [Storage α] [Context α]
     (total activeCount : α) :
-    safeMaskedMean total activeCount = total / (activeCount + Numbers.epsilon) := by
+    safeMaskedMean total activeCount = total / (activeCount + Context.defaultEpsilon) := by
   rfl
 
 end NN.Examples.BugZoo.IgnoredLabelLoss

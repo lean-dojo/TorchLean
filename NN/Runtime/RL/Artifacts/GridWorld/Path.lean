@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL.Artifacts.GridWorld.Position
+public import NN.Runtime.Training.Log
 
 /-!
 # GridWorld Path-Difference Artifacts
@@ -103,7 +104,8 @@ def ofJsonE (j : Json) : Except String PathDiff := do
     | Except.ok xs => xs
     | Except.error _ => #[]
 
-  let p : PathDiff := { width := width, height := height, before := before, after := after, notes := notes }
+  let p : PathDiff :=
+    { width := width, height := height, before := before, after := after, notes := notes }
   validateE p
   pure p
 

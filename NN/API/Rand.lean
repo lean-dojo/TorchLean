@@ -4,13 +4,15 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+-- This module supplies public namespace exports used by downstream consumers. Import shaking
+-- cannot see those downstream lookups, so keep the marked imports.
+module -- shake: keep-downstream
 
 -- shake: keep-all
 
-public import NN.API.Scalar
-public import NN.Runtime.Autograd.TorchLean.Random
-public import NN.Tensor
+public import NN.API.Arithmetic -- shake: keep
+public import NN.Spec.Core.Random -- shake: keep
+public import NN.Tensor -- shake: keep
 
 /-!
 # Random Seeds
@@ -28,14 +30,14 @@ PyTorch mapping:
 
 namespace TorchLean.rand
 
-export _root_.Runtime.Autograd.TorchLean.Random (keyOf nextSeed uniform mask)
+export Spec.Random (keyOf nextSeed uniform mask)
 
 /-
 Seed management note:
 
-TorchLean’s core is pure/seed-threaded (JAX-style). For ergonomic model-building (more PyTorch-like),
-we provide a compact “seed stream” abstraction so you can pass *one* base seed and allocate per-layer
-seeds deterministically.
+TorchLean’s core is pure/seed-threaded (JAX-style). For ergonomic model-building (more
+PyTorch-like), we provide a compact “seed stream” abstraction so you can pass *one* base seed and
+allocate per-layer seeds deterministically.
 -/
 
 /--
@@ -47,7 +49,7 @@ PyTorch-like ergonomics but reproducible results.
 structure SeedStream where
   /-- Base seed (think `torch.manual_seed`). -/
   seed : Nat
-  /-- Monotone counter (ensures each draw is distinct). -/
+  /-- Monotone counter mixed with the base seed for each draw. -/
   counter : Nat := 0
 deriving Repr, DecidableEq, Inhabited
 
@@ -60,16 +62,11 @@ abbrev init (seed : Nat) : SeedStream :=
 /--
 Draw a fresh seed and advance the stream.
 
-Implementation: we reuse `TorchLean.Random.nextSeed` as a small deterministic mixing function.
+Implementation: we reuse `Spec.Random.nextSeed` as a small deterministic mixing function.
 -/
-def next (s : SeedStream) : Nat × SeedStream :=
-  let out := nextSeed s.seed s.counter
-  (out, { s with counter := s.counter + 1 })
-
-/-- Draw `n` fresh seeds. -/
-def nextN (n : Nat) (s : SeedStream) : Array Nat × SeedStream :=
-  let seeds := Array.ofFn fun i : Fin n => nextSeed s.seed (s.counter + i)
-  (seeds, { s with counter := s.counter + n })
+def next (stream : SeedStream) : Nat × SeedStream :=
+  let seed := nextSeed stream.seed stream.counter
+  (seed, { stream with counter := stream.counter + 1 })
 
 end SeedStream
 
@@ -81,8 +78,8 @@ State monad for deterministic seed allocation.
 Lean's `StateT/StateM` ties the state/result universes together, while TorchLean model definitions
 (e.g. `nn.Sequential`) live above `Type 0`.
 
-So we define this seed builder directly (as a pure state monad), and run it in `Type 2`, which is
-sufficient for the public API.
+This pure state-function representation preserves the result universe, including the higher
+universe used by model definitions.
 -/
 abbrev SeedM (α : Type u) : Type u :=
   SeedStream → (α × SeedStream)
@@ -90,10 +87,10 @@ abbrev SeedM (α : Type u) : Type u :=
 namespace SeedM
 
 instance : Monad SeedM where
-  pure x := fun st => (x, st)
-  bind x f := fun st =>
-    let (a, st') := x st
-    f a st'
+  pure value := fun stream => (value, stream)
+  bind computation continuation := fun stream =>
+    let (value, nextStream) := computation stream
+    continuation value nextStream
 
 end SeedM
 
@@ -120,11 +117,11 @@ Run a seeded builder using the global seed stream and advance it.
 This lets you build multiple models/layers in `IO` without explicitly threading seeds, while still
 remaining deterministic.
 -/
-def runGlobal {α : Type} (x : SeedM α) : IO α := do
-  let st ← globalSeedStream.get
-  let (a, st') := x st
-  globalSeedStream.set st'
-  pure a
+def runGlobal {α : Type} (computation : SeedM α) : IO α := do
+  let stream ← globalSeedStream.get
+  let (value, nextStream) := computation stream
+  globalSeedStream.set nextStream
+  pure value
 
 /-- Draw one fresh seed from the global seed stream. -/
 def nextSeedGlobal : IO Nat :=

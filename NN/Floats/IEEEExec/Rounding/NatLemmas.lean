@@ -6,8 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Nat.Bitwise
-public import NN.Floats.IEEEExec.Exec32
+public import Mathlib.Algebra.Group.Nat.Defs
+public import NN.Floats.IEEEExec.Exec32.Dyadic
+import Mathlib.Algebra.Order.Field.Basic
+import Mathlib.Tactic.Positivity.Finset
 
 /-!
 # Small `Nat` lemmas for the IEEE32Exec float kernel

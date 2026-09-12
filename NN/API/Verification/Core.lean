@@ -5,20 +5,16 @@ Authors: TorchLean Team
 -/
 
 module
-
-public import NN.API.Neural.Execution
 public import NN.Tensor
-public import NN.MLTheory.CROWN.Flatbox
-public import NN.MLTheory.CROWN.Graph
-public import NN.Verification.TorchLean.Lowering
+
 
 /-!
 # Verification
 
-This module lowers public TorchLean models into the verifier graph and runs the affine bound
-passes on that graph. `FlatBox`, `ParamStore`, and the affine result types below are the canonical
-CROWN values. They are re-exported here so applications can construct verification problems
-without importing the CROWN modules directly.
+The public vocabulary used by trained-model verification. Ordinary code calls
+`trained.verify center (radius := r) (norm := .inf)` and adds named choices only when needed.
+`Report` retains those choices with the returned bounds; explicit graph lowering is intentionally
+separate in `NN.API.Verification.Lowering`.
 -/
 
 @[expose] public section
@@ -27,81 +23,211 @@ namespace TorchLean
 
 namespace Verification
 
-export NN.Verification.TorchLean (LoweredIR)
-export NN.MLTheory.CROWN (FlatBox)
-export NN.MLTheory.CROWN.Graph (ParamStore AffineCtx FlatAffine FlatAffineBounds)
+/-- Bound-propagation algorithm used to construct a verification report. -/
+inductive Algorithm where
+  /-- Fast interval bound propagation. -/
+  | ibp
+  /-- Forward affine CROWN bounds. -/
+  | crown
+  /--
+  Fixed-relaxation Alpha-Beta-CROWN replay. Stable ReLU phases are inferred from IBP; this does
+  not run an external branch-and-bound optimizer.
+  -/
+  | alphaBetaCrown
+  deriving DecidableEq, Repr
+
+namespace Algorithm
+
+/-- Human-readable method name used in reports. -/
+def name : Algorithm → String
+  | .ibp => "IBP"
+  | .crown => "CROWN"
+  | .alphaBetaCrown => "Alpha-Beta-CROWN"
+
+instance : ToString Algorithm where
+  toString := name
+
+end Algorithm
 
 /--
-Lower a sequential TorchLean model into verifier IR with one distinguished input.
+Norm of the input region requested for verification.
 
-Usual "train a model, then run IBP/CROWN on its forward pass" path.
-
-This is the broad executable lowering. It checks the resulting graph but does not attach the
-source-evaluation theorem from `NN.Verification.TorchLean.Proved`.
+The current native CROWN path implements `.inf`; the other cases remain part of the request
+language so adding a non-box region does not require another public API.
 -/
-def lowerForwardToIR {α : Type} [_root_.Context α] [DecidableEq Shape]
-    {σ τ : Shape}
-    (model : TorchLean.nn.Sequential σ τ)
-    (params : _root_.TorchLean.TensorPack α (TorchLean.nn.stateShapes model)) :
-    Except String (LoweredIR α) :=
-  NN.Verification.TorchLean.lowerForwardToIR
-    (α := α) (paramShapes := TorchLean.nn.stateShapes model)
-    (inShape := σ) (outShape := τ)
-    (TorchLean.nn.forward model (α := α)) params
+inductive Norm where
+  /-- L1 input ball. -/
+  | one
+  /-- L2 input ball. -/
+  | two
+  /-- L-infinity input ball. -/
+  | inf
+  deriving DecidableEq, Repr
+
+namespace Norm
+
+/-- Human-readable norm name used in reports and diagnostics. -/
+def name : Norm → String
+  | .one => "L1"
+  | .two => "L2"
+  | .inf => "Linf"
+
+instance : ToString Norm where
+  toString := name
+
+end Norm
 
 /--
-Lower a custom TorchLean forward program into verifier IR with one distinguished input.
+Property evaluated from output bounds.
 
-Use this when the target is not a plain `TorchLean.nn.Sequential`, for example a hand-written loss
-program or an attention fragment built directly from `TorchLean.Runtime` operations.
-
-Successful lowering validates the produced IR. It is not an end-to-end proof that every accepted
-custom program agrees with IR denotation.
+`.bounds` returns the complete output enclosure. `.topLabel label` additionally asks whether one
+flattened output stays strictly above every competing output.
 -/
-def lowerProgramToIR {α : Type} [_root_.Context α] [DecidableEq Shape]
-    {paramShapes : List Shape} {σ τ : Shape}
-    (forwardProgram : _root_.Runtime.Autograd.TorchLean.Program α (paramShapes ++ [σ]) τ)
-    (params : _root_.TorchLean.TensorPack α paramShapes) :
-    Except String (LoweredIR α) :=
-  NN.Verification.TorchLean.lowerForwardToIR
-    (α := α) (paramShapes := paramShapes)
-    (inShape := σ) (outShape := τ)
-    forwardProgram params
+inductive Property where
+  /-- Return the output enclosure without an additional assertion. -/
+  | bounds
+  /-- Check that `label` remains the unique largest flattened output. -/
+  | topLabel (label : Nat)
+  deriving DecidableEq, Repr
 
-/-- Dimensions of the distinguished verifier input node. -/
-def inputShape? {α : Type} [Context α] (lowered : LoweredIR α) : Except String (List Nat) :=
-  return (← lowered.inputShape?).toList
+namespace Property
 
-/-- Run the forward affine pass after validating the lowered verifier input. -/
-def runAffine {α : Type} [Context α] [NN.MLTheory.CROWN.BoundOps α]
-    (lowered : LoweredIR α) (ps : ParamStore α) (ibp : Array (Option (FlatBox α))) :
-    Except String (Array (Option (FlatAffine α))) := do
-  let ctx ← lowered.affineCtx?
-  pure <| NN.MLTheory.CROWN.Graph.runAffine (α := α) lowered.graph ps ctx ibp
+/-- Human-readable property description used in reports. -/
+def name : Property → String
+  | .bounds => "output bounds"
+  | .topLabel label => s!"top label {label}"
 
-/-- Run CROWN after validating the lowered verifier input. -/
-def runCROWN {α : Type} [Context α] [NN.MLTheory.CROWN.BoundOps α]
-    [NN.MLTheory.CROWN.NonlinearBoundOps α]
-    (lowered : LoweredIR α) (ps : ParamStore α) (ibp : Array (Option (FlatBox α))) :
-    Except String (Array (Option (FlatAffineBounds α))) := do
-  let ctx ← lowered.affineCtx?
-  pure <| NN.MLTheory.CROWN.Graph.runCROWN (α := α) lowered.graph ps ctx ibp
+instance : ToString Property where
+  toString := name
 
-/--
-Compute the conservative two-class margin lower bound
-$\mathrm{lo}[\mathrm{class0}]-\mathrm{hi}[\mathrm{class1}]$.
+end Property
 
-If this is positive, class `class0` is certified against `class1` over the input box.
--/
-def twoClassMarginLowerBound {α : Type} [Context α] {n : Nat}
-    (lo hi : Tensor α [n]) (class0 class1 : Fin n) : α :=
-  Tensor.item (Tensor.get lo class0) - Tensor.item (Tensor.get hi class1)
+namespace Internal
 
-/-- Decide whether the two-class margin lower bound is strictly positive. -/
-def certifiesTwoClassMargin {α : Type} [Context α] {n : Nat}
-    (lo hi : Tensor α [n]) (class0 class1 : Fin n) : Bool :=
-  Context.gtBool
-    (twoClassMarginLowerBound (α := α) lo hi class0 class1) (0 : α)
+/-- Reject an invalid input-region radius before verification begins. -/
+def validateRadius (radius : Float) : Except String Unit := do
+  unless radius.isFinite && 0.0 ≤ radius do
+    throw s!"verification radius must be finite and nonnegative, got {radius}"
+
+end Internal
+
+/-- Componentwise lower and upper bounds for a flattened model output. -/
+structure Bounds where
+  /-- Shared number of flattened output components. -/
+  size : Nat
+  /-- Componentwise lower output bounds. -/
+  lower : Tensor Float [size]
+  /-- Componentwise upper output bounds. -/
+  upper : Tensor Float [size]
+  deriving Repr
+
+namespace Bounds
+
+/-- Check the basic consistency needed by public reporting helpers. -/
+def validate (bounds : Bounds) : Except String Unit := do
+  unless (List.finRange bounds.size).all fun index =>
+      bounds.lower[index].isFinite && bounds.upper[index].isFinite do
+    throw "verification returned a non-finite output bound"
+  unless (List.finRange bounds.size).all fun index =>
+      bounds.lower[index] ≤ bounds.upper[index] do
+    throw "verification returned an output interval with lower bound above upper bound"
+
+/-- Largest output value other than `label`. -/
+def maxOther? {n : Nat} (values : Tensor Float [n]) (label : Nat) : Option Float :=
+  (Tensor.foldl
+    (fun (state : Nat × Option Float) value =>
+      let best := if state.1 == label then state.2 else
+        match state.2 with
+        | none => some value
+        | some current => some (max current value)
+      (state.1 + 1, best))
+    (0, none) values).2
+
+end Bounds
+
+/-- Result of evaluating a requested output property from valid bounds. -/
+inductive Result where
+  /-- The report contains an output enclosure but no additional assertion. -/
+  | bounds
+  /-- A top-label assertion with its certified lower margin. -/
+  | topLabel (label : Nat) (margin : Float) (certified : Bool)
+  deriving Repr
+
+namespace Result
+
+/-- One-line rendering of a verification result. -/
+def summary : Result → String
+  | .bounds => "output bounds"
+  | .topLabel label margin certified =>
+      s!"label={label} margin={margin} certified={certified}"
+
+instance : ToString Result where
+  toString := summary
+
+/-- Evaluate a public property against componentwise output bounds. -/
+def fromBounds (property : Property) (bounds : Bounds) : Except String Result := do
+  bounds.validate
+  match property with
+  | .bounds => pure .bounds
+  | .topLabel label =>
+      let index : Fin bounds.size ←
+        if h : label < bounds.size then pure ⟨label, h⟩
+        else throw s!"class label {label} is out of bounds for {bounds.size} outputs"
+      let competitor ←
+        match Bounds.maxOther? bounds.upper label with
+        | some value => pure value
+        | none => throw "top-label verification requires at least two output classes"
+      let margin := bounds.lower[index] - competitor
+      pure (.topLabel label margin (margin > 0.0))
+
+end Result
+
+/-- Complete report returned by `trained.verify`. -/
+structure Report where
+  /-- Radius of the checked input region around the supplied center tensor. -/
+  radius : Float
+  /-- Norm used to define the checked input region. -/
+  norm : Norm
+  /-- Output property evaluated from the output enclosure. -/
+  property : Property
+  /-- Bound-propagation algorithm that produced the enclosure. -/
+  algorithm : Algorithm
+  /-- Output enclosure produced by the selected algorithm. -/
+  bounds : Bounds
+  /-- Chosen property evaluated from the output enclosure. -/
+  result : Result
+  deriving Repr
+
+namespace Report
+
+/-- Build a report from verified output bounds and named verification choices. -/
+def fromBounds (radius : Float) (bounds : Bounds)
+    (norm : Norm := .inf)
+    (property : Property := .bounds)
+    (algorithm : Algorithm := .alphaBetaCrown) :
+    Except String Report := do
+  Internal.validateRadius radius
+  let result ← Result.fromBounds property bounds
+  pure { radius, norm, property, algorithm, bounds, result }
+
+/-- One-line human-readable verification summary. -/
+def summary (report : Report) : String :=
+  let header :=
+    s!"{report.algorithm} norm={report.norm} radius={report.radius} " ++
+      s!"lower={reprStr report.bounds.lower} upper={reprStr report.bounds.upper}"
+  match report.result with
+  | .bounds => header
+  | .topLabel label margin certified =>
+      header ++ s!" label={label} margin={margin} certified={certified}"
+
+/-- Print the concise verification summary. -/
+def printSummary (report : Report) : IO Unit :=
+  IO.println report.summary
+
+instance : ToString Report where
+  toString := summary
+
+end Report
 
 end Verification
 

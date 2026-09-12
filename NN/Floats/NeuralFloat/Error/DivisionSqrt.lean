@@ -8,7 +8,6 @@ module
 
 public import NN.Floats.NeuralFloat.Error.Exactness
 public import NN.Floats.NeuralFloat.Error.Directed
-public import NN.Floats.NeuralFloat.Error.Multiplication
 
 /-!
 # Division and Square-Root Residuals

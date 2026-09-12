@@ -6,9 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.FP32.Core
-public import NN.Floats.IEEEExec.Exec32
 import Mathlib.Algebra.Order.Algebra
+public import Mathlib.Analysis.SpecialFunctions.Log.Basic
+public import Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic
+public import NN.Floats.IEEEExec.Exec32.Core
 
 /-!
 # Float32

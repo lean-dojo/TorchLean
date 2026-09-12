@@ -6,8 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Tensor.Basic
 public import NN.Spec.Autograd.Ops
+public import Mathlib.Algebra.Order.Algebra
+public import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
+public import Mathlib.Data.Sym.Sym2.Init
+import Mathlib.Tactic.NormNum.GCD
+public import NN.Proofs.Tensor.Basic.Algebra
+public import NN.Proofs.Tensor.Basic.BoundsNorms
 
 /-!
 # RealCorrectness
@@ -24,8 +29,12 @@ $$
 
 where $\langle\cdot,\cdot\rangle$ is the tensor dot product (sum of elementwise products).
 
-This is strong enough to justify the reverse-mode chain rule and to build a proved-correct layer
-on top of `Spec.OpSpec.compose`.
+This law is preserved by `Spec.OpSpec.compose`: composing local JVPs and VJPs preserves their
+adjointness. Analytic reverse-mode correctness also requires a proof that each local JVP
+differentiates its forward map at the relevant point. With those derivative facts and their domain
+hypotheses, the chain rule identifies the composed JVP with the derivative of the composed forward
+map, and adjointness identifies the composed VJP with its adjoint. The separate `HasFDerivAt` proofs
+provide this extra evidence for the operations and domains they cover.
 
 ## Why this file exists (and why there is a second “algebraic” file)
 
@@ -72,8 +81,8 @@ References (background):
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -90,11 +99,12 @@ An `OpSpec` together with a matching JVP and a proof of VJP/JVP adjointness.
 This is the “proved-correct local op” interface needed to build a sound reverse-mode tape.
 -/
 structure OpSpecCorrect (σ τ : Shape) where
-  /-- op. -/
+  /-- The underlying real-valued op (forward map and VJP). -/
   op : Spec.OpSpec ℝ σ τ
-  /-- jvp. -/
+  /-- The forward-mode derivative: `jvp x dx` is the directional derivative of `op.forward` at
+  `x` along `dx`. -/
   jvp : Tensor ℝ σ → Tensor ℝ σ → Tensor ℝ τ
-  /-- correct. -/
+  /-- Adjointness of `jvp` and `op.backward` under the tensor dot product. -/
   correct : VJPCorrect op.forward jvp op.backward
 
 namespace OpSpecCorrect
@@ -256,11 +266,11 @@ def geluCorrect {s : Shape} :
 }
 
 /--
-Correctness of `safe_log`’s backward rule (a log with an $\varepsilon$ safeguard).
+Correctness of `safeLog`’s backward rule (a log with an $\varepsilon$ safeguard).
 
 PyTorch analogue: typically implemented as `torch.log(torch.clamp(x, min=ε))` (or similar).
 -/
-def safeLogCorrect {s : Shape} (ε : ℝ := Numbers.epsilon) :
+def safeLogCorrect {s : Shape} (ε : ℝ := Context.defaultEpsilon) :
   OpSpecCorrect s s :=
 {
   op := Spec.safeLogOp (α:=ℝ) (s:=s) (ε := ε)
@@ -277,7 +287,7 @@ Correctness of a smooth absolute value’s backward rule (a differentiable appro
 
 PyTorch analogue: a custom smooth `abs` implemented via $\sqrt{x^2+\varepsilon^2}$ or similar.
 -/
-def smoothAbsCorrect {s : Shape} (ε : ℝ := Numbers.epsilon) :
+def smoothAbsCorrect {s : Shape} (ε : ℝ := Context.defaultEpsilon) :
   OpSpecCorrect s s :=
 {
   op := Spec.smoothAbsOp (α:=ℝ) (s:=s) (ε := ε)
@@ -314,11 +324,11 @@ def squareCorrect {s : Shape} :
   OpSpecCorrect s s :=
 {
   op := Spec.squareOp (α:=ℝ) (s:=s)
-  jvp := fun x dx => mulSpec dx (mulSpec (fill (Numbers.two : ℝ) s) x)
+  jvp := fun x dx => mulSpec dx (mulSpec (Tensor.full s (2 : ℝ)) x)
   correct := by
     intro x dx δ
     simpa [Spec.squareOp] using (dot_elemwise_adjoint (dx:=dx)
-      (df:=mulSpec (fill (Numbers.two : ℝ) s) x) (δ:=δ))
+      (df:=mulSpec (Tensor.full s (2 : ℝ)) x) (δ:=δ))
 }
 
 /--
@@ -431,42 +441,37 @@ def sumCorrect {s : Shape} : OpSpecCorrect s Shape.scalar :=
 {
   op :=
     { forward := fun x => Tensor.scalar (sumSpec (α:=ℝ) (s:=s) x)
-      backward := fun _x dLdy => replicate (α:=ℝ) (s:=s) dLdy }
+      backward := fun _x dLdy => replicate (α:=ℝ) (shape:=s) dLdy }
   jvp := fun _x dx => Tensor.scalar (sumSpec (α:=ℝ) (s:=s) dx)
   correct := by
     intro x dx δ
-    cases δ with
-    | scalar g =>
-      -- `replicate (scalar g)` is the "all-`g`" tensor, i.e. `g • fill 1`.
-      have hrep :
-          replicate (α:=ℝ) (s:=s) (Tensor.scalar g) =
-            scaleSpec (α:=ℝ) (s:=s) (fill (1 : ℝ) s) g := by
-        induction s with
-        | scalar =>
-          simp [replicate, fill, scaleSpec]
-        | dim n s ih =>
-          simp [replicate, fill, scaleSpec]
-          funext i
-          simpa [scaleSpec] using ih
-      -- Reduce both sides using `dot_scale_left` and the fact that `fill 1` is multiplicative
-      -- identity.
-      calc
-        dot (Tensor.scalar (sumSpec (α:=ℝ) (s:=s) dx)) (Tensor.scalar g)
-            = (sumSpec (α:=ℝ) (s:=s) dx) * g := by
-                simp [dot, sumSpec, mulSpec, tensorFoldlSpec, map2Spec]
-        _ = g * (sumSpec (α:=ℝ) (s:=s) dx) := by
-              ring
-        _ = g * dot dx (fill (1 : ℝ) s) := by
-              simp [dot, mul_spec_one_right]
-        _ = g * dot (fill (1 : ℝ) s) dx := by
-              simp [dot_comm]
-        _ = dot (scaleSpec (α:=ℝ) (s:=s) (fill (1 : ℝ) s) g) dx := by
-              symm
-              simpa using (dot_scale_left (a := fill (1 : ℝ) s) (b := dx) (k := g))
-        _ = dot dx (scaleSpec (α:=ℝ) (s:=s) (fill (1 : ℝ) s) g) := by
-              simpa using (dot_comm (a := scaleSpec (α:=ℝ) (s:=s) (fill (1 : ℝ) s) g) (b := dx))
-        _ = dot dx (replicate (α:=ℝ) (s:=s) (Tensor.scalar g)) := by
-              simp [hrep]
+    let g := δ.item
+    rw [← Tensor.scalar_item δ]
+      -- `replicate (scalar g)` is the all-`g` tensor, i.e. `g • Tensor.full s 1`.
+    have hrep :
+        replicate (α:=ℝ) (shape:=s) (Tensor.scalar g) =
+          scaleSpec (α:=ℝ) (s:=s) (Tensor.full s (1 : ℝ)) g := by
+      apply TorchLean.Tensor.Internal.Rep.ext
+      intro coordinate
+      simp [scaleSpec, mapSpec, Tensor.map]
+      -- Reduce both sides using `dot_scale_left` and the fact that the all-ones tensor is the
+      -- multiplicative identity.
+    calc
+      dot (Tensor.scalar (sumSpec (α:=ℝ) (s:=s) dx)) (Tensor.scalar g)
+          = (sumSpec (α:=ℝ) (s:=s) dx) * g := by
+              rw [dot, sum_spec_eq_coord_sum]
+              simp [mulSpec, map2Spec, Tensor.scalar, TorchLean.Tensor.Internal.Rep.get_ofFn]
+      _ = g * (sumSpec (α:=ℝ) (s:=s) dx) := by ring
+      _ = g * dot dx (Tensor.full s (1 : ℝ)) := by
+            simp [dot, mul_spec_one_right]
+      _ = g * dot (Tensor.full s (1 : ℝ)) dx := by simp [dot_comm]
+      _ = dot (scaleSpec (α:=ℝ) (s:=s) (Tensor.full s (1 : ℝ)) g) dx := by
+            symm
+            simpa using (dot_scale_left (a := Tensor.full s (1 : ℝ)) (b := dx) (k := g))
+      _ = dot dx (scaleSpec (α:=ℝ) (s:=s) (Tensor.full s (1 : ℝ)) g) := by
+            simpa using
+              (dot_comm (a := scaleSpec (α:=ℝ) (s:=s) (Tensor.full s (1 : ℝ)) g) (b := dx))
+      _ = dot dx (replicate (α:=ℝ) (shape:=s) (Tensor.scalar g)) := by rw [hrep]
 }
 
 end

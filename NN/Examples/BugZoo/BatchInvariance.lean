@@ -29,43 +29,26 @@ batched result is exactly the same as evaluating that row alone.
 
 namespace NN.Examples.BugZoo.BatchInvariance
 
-/--
-Lift a per-example model across a leading batch axis.
+open TorchLean
 
-This is the reference semantics for batched runtime behavior. It contains no
-cross-example communication, no dynamic batching heuristic, and no hidden state.
--/
-def mapBatch {α : Type} {batch : Nat} {sIn sOut : Spec.Shape}
-    (f : Spec.Tensor α sIn → Spec.Tensor α sOut)
-    (xs : Spec.Tensor α (sIn.prependDim batch)) :
-    Spec.Tensor α (sOut.prependDim batch) := by
-  simpa [Spec.Shape.insertAxis] using
-    (TorchLean.Tensor.stack 0 fun i => f (Spec.get xs i))
+/-- Two requests, each with three features. -/
+def requests : Tensor Float [2, 3] := [[1, 2, 3], [4, 5, 6]]
 
-/--
-Batch-invariance for the reference batched semantics.
+/-- Square each row independently using the public leading-axis map. -/
+def squaredRows : Tensor Float [2, 3] :=
+  Tensor.mapLeading [2] (fun row => Tensor.mul row row) requests
 
-This is the theorem a serving/runtime path should aim to preserve, modulo an explicit floating
-point tolerance if it changes by design reduction order.
--/
-theorem mapBatch_select_eq_single {α : Type} {batch : Nat} {sIn sOut : Spec.Shape}
-    (f : Spec.Tensor α sIn → Spec.Tensor α sOut)
-    (xs : Spec.Tensor α (sIn.prependDim batch))
-    (i : Fin batch) :
-    Spec.get (mapBatch f xs) i = f (Spec.get xs i) := by
-  simp [mapBatch, TorchLean.Tensor.stack, TorchLean.Tensor.Internal.stack, Spec.get]
+/-- The second request receives the same result when evaluated on its own. -/
+example : squaredRows.unstack 1 =
+    Tensor.mul (requests.unstack 1) (requests.unstack 1) := by
+  exact Tensor.unstack_mapLeading _ requests 1
 
-/--
-Composing two per-example stages before batching is the same as batching each stage in sequence.
-
-This is the clean semantic version of a common deployment expectation: batching is an execution
-strategy, not a change to the model.
--/
-theorem mapBatch_comp {α : Type} {batch : Nat} {s₁ s₂ s₃ : Spec.Shape}
-    (f : Spec.Tensor α s₁ → Spec.Tensor α s₂)
-    (g : Spec.Tensor α s₂ → Spec.Tensor α s₃)
-    (xs : Spec.Tensor α (s₁.prependDim batch)) :
-    mapBatch (fun x => g (f x)) xs = mapBatch g (mapBatch f xs) := by
-  simp [mapBatch, TorchLean.Tensor.stack, TorchLean.Tensor.Internal.stack, Spec.get]
+/-- Two stages can be mapped separately or composed before batching. -/
+example {α : Type} [Storage α] {batch : Nat} {s₁ s₂ s₃ : Spec.Shape}
+    (f : Tensor α s₁ → Tensor α s₂) (g : Tensor α s₂ → Tensor α s₃)
+    (xs : Tensor α (s₁.prependDim batch)) :
+    Tensor.mapLeading [batch] (fun x => g (f x)) xs =
+      Tensor.mapLeading [batch] g (Tensor.mapLeading [batch] f xs) :=
+  Tensor.mapLeading_comp [batch] f g xs
 
 end NN.Examples.BugZoo.BatchInvariance

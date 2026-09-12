@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.FP32.Sterbenz
+public import NN.Floats.IEEEExec.Bridge.FP32.Ulp
 public import NN.Floats.IEEEExec.Bridge.FP32Total
 public import NN.Floats.IEEEExec.DirectedRoundingSoundness
 public import NN.Floats.IEEEExec.Reductions
@@ -15,6 +16,7 @@ public import NN.Floats.NeuralFloat.Rounding
 public import NN.Spec.Quantization
 public import NN.Spec.Core.Tensor
 public import NN.Spec.Core.TensorOps
+public import NN.Floats.IEEEExec.Exec32.Instances -- shake: keep
 
 /-!
 # Effective Rounding in Tensor Semantics
@@ -27,52 +29,69 @@ same canonical mantissa and exponent.
 
 @[expose] public section
 
-namespace NN.Examples.DeepDives.Floats.EffectiveRounding
-
-open _root_.Spec
+open Spec TorchLean
 open TorchLean.Floats
 open TorchLean.Floats.IEEE754
 open TorchLean.Floats.IEEE754.IEEE32Exec
 open TorchLean.Floats.Quantization
 
+namespace NN.Examples.DeepDives.Floats.EffectiveRounding
+
+/--
+Vector length; four entries is enough to show the pointwise behaviour without a wall of output.
+-/
 def width : Nat := 4
+/-- The shape shared by every tensor in this example. -/
 abbrev vectorShape : Spec.Shape := [width]
 
 /-- Executable binary32 tensors used by the example. -/
-def runtimeOnes : Spec.Tensor IEEE32Exec vectorShape :=
-  Spec.fill posOne vectorShape
+def runtimeOnes : Tensor IEEE32Exec vectorShape :=
+  Tensor.full vectorShape posOne
 
-def runtimeTwos : Spec.Tensor IEEE32Exec vectorShape :=
-  Spec.fill (ofBits 0x40000000) vectorShape
+/-- The constant `2`, given by its bit pattern `0x40000000` so no decimal parsing is involved. -/
+def runtimeTwos : Tensor IEEE32Exec vectorShape :=
+  Tensor.full vectorShape (ofBits 0x40000000)
 
 /-- This addition executes pointwise in the bit-level IEEE32 model. -/
-def runtimeSum : Spec.Tensor IEEE32Exec vectorShape :=
-  Spec.Tensor.addSpec runtimeOnes runtimeTwos
+def runtimeSum : Tensor IEEE32Exec vectorShape :=
+  Tensor.addSpec runtimeOnes runtimeTwos
 
 /-- Proof-oriented tensors use the same tensor API with rounded-real FP32 scalars. -/
 noncomputable def specOne : FP32 :=
   NF.ofReal (β := binaryRadix) (fexp := fexp32) (rnd := rnd32) 1
 
+/-- The rounded-real counterpart of `2`. Exactly representable, so rounding is the identity here. -/
 noncomputable def specTwo : FP32 :=
   NF.ofReal (β := binaryRadix) (fexp := fexp32) (rnd := rnd32) 2
 
-noncomputable def specOnes : Spec.Tensor FP32 vectorShape :=
-  Spec.fill specOne vectorShape
+/-- A vector of ones in the proof-oriented model. -/
+noncomputable def specOnes : Tensor FP32 vectorShape :=
+  Tensor.full vectorShape specOne
 
-noncomputable def specTwos : Spec.Tensor FP32 vectorShape :=
-  Spec.fill specTwo vectorShape
+/-- A vector of twos in the proof-oriented model. -/
+noncomputable def specTwos : Tensor FP32 vectorShape :=
+  Tensor.full vectorShape specTwo
 
-noncomputable def specSum : Spec.Tensor FP32 vectorShape :=
-  Spec.Tensor.addSpec specOnes specTwos
+/--
+Their sum, computed by the same `addSpec` the executable tensors use. The two models share the
+tensor
+API and differ only in the scalar type, which is what makes the comparison below meaningful.
+-/
+noncomputable def specSum : Tensor FP32 vectorShape :=
+  Tensor.addSpec specOnes specTwos
 
 /-- Every proof-oriented tensor entry exposes the effective nearest-even representation. -/
 theorem specSum_entry_computed (i : Fin width) :
-    FP32.toReal (Spec.Tensor.item (Spec.get specSum i)) =
+    FP32.toReal specSum[i] =
       neuralToReal (β := binaryRadix) {
         mantissa := neuralNearestEvenMantissa
           (neuralScaledMantissa binaryRadix fexp32 (specOne.val + specTwo.val))
         exponent := neuralCexp binaryRadix fexp32 (specOne.val + specTwo.val) } := by
-  change FP32.toReal (specOne + specTwo) = _
+  have hitem : specSum[i] = specOne + specTwo := by
+    change specSum.getScalar i = specOne + specTwo
+    simp [specSum, specOnes, specTwos, Tensor.addSpec,
+      Tensor.map2Spec, Tensor.getScalar_eq_apply]
+  rw [hitem]
   exact FP32.add_toReal_eq_computed specOne specTwo
 
 /--
@@ -80,14 +99,19 @@ Every executable tensor entry reaches the same effective representation once fin
 The finiteness premise is discharged by computation for the concrete $1+2$ example.
 -/
 theorem runtimeSum_entry_computed (i : Fin width) :
-    toReal (Spec.Tensor.item (Spec.get runtimeSum i)) =
+    toReal runtimeSum[i] =
       neuralToReal (β := binaryRadix) {
         mantissa := neuralNearestEvenMantissa
           (neuralScaledMantissa binaryRadix fexp32
             (toReal posOne + toReal (ofBits 0x40000000)))
         exponent := neuralCexp binaryRadix fexp32
           (toReal posOne + toReal (ofBits 0x40000000)) } := by
-  change toReal (add posOne (ofBits 0x40000000)) = _
+  have hitem : runtimeSum[i] = add posOne (ofBits 0x40000000) := by
+    change runtimeSum.getScalar i = add posOne (ofBits 0x40000000)
+    simp [runtimeSum, runtimeOnes, runtimeTwos, Tensor.addSpec,
+      Tensor.map2Spec, Tensor.getScalar_eq_apply]
+    rfl
+  rw [hitem]
   exact toReal_add_eq_computed_of_isFinite posOne (ofBits 0x40000000) (by decide)
 
 /-! ## Exact subtraction, local spacing, and absorption -/
@@ -190,6 +214,7 @@ theorem fused_enclosure :
 def sqrtLower : IEEE32Exec :=
   sqrtDown (ofBits 0x40000000)
 
+/-- The upper endpoint, rounded away from zero, so the pair brackets the exact `sqrt 2`. -/
 def sqrtUpper : IEEE32Exec :=
   sqrtUp (ofBits 0x40000000)
 
@@ -234,8 +259,8 @@ theorem signedQuarterQuantizer_error (x : ℝ)
   all_goals norm_num [signedQuarterQuantizer]
 
 /-- Four valid codes, represented with the same shape-indexed tensor used by TorchLean models. -/
-def quarterCodes : Spec.Tensor ℤ vectorShape :=
-  Spec.Tensor.ofFn (fun i => i.val)
+def quarterCodes : Tensor ℤ vectorShape :=
+  Tensor.ofFn (fun i => i.val)
 
 /-- Pointwise tensor Q/DQ is exact on an in-range code tensor. -/
 theorem quarterCodes_roundtrip :
@@ -243,8 +268,11 @@ theorem quarterCodes_roundtrip :
       (signedQuarterQuantizer.dequantizeTensor quarterCodes) = quarterCodes := by
   apply signedQuarterQuantizer.quantizeTensor_dequantizeTensor
   intro i
-  change (-128 : ℤ) ≤ (i.val : ℤ) ∧ (i.val : ℤ) ≤ 127
+  change signedQuarterQuantizer.qmin ≤ quarterCodes.getScalar i ∧
+    quarterCodes.getScalar i ≤ signedQuarterQuantizer.qmax
+  simp only [quarterCodes, Tensor.getScalar_ofFn]
   have hi : i.val < 4 := i.isLt
+  norm_num [signedQuarterQuantizer]
   grind
 
 /-- Round-to-odd on a sufficiently fine binary grid prevents double rounding on the quarter grid. -/

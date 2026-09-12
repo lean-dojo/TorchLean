@@ -37,30 +37,30 @@ open TorchLean.Floats.IEEE754
 open TorchLean.Floats.IEEE754.Float32Bridge
 
 -- Classification agreement is unconditional.
-example (a : _root_.Float32) :
+example (a : Float32) :
     Float32.isFinite a = IEEE32Exec.isFinite (toIEEE32Exec a) :=
   float32_isFinite_eq_ieee32 a
 
 -- IEEE comparison, including unordered NaN cases and equality of signed zeros, agrees as well.
-example (a b : _root_.Float32) :
+example (a b : Float32) :
     Float32.lt a b =
       (IEEE32Exec.compare (toIEEE32Exec a) (toIEEE32Exec b) == some .lt) :=
   float32_lt_eq_ieee32 a b
 
 -- Addition agreement is proved for every canonical binary32 value.
-example (a b : _root_.Float32) :
+example (a b : Float32) :
     toIEEE32Exec (a + b) =
       canonicalize (IEEE32Exec.add (toIEEE32Exec a) (toIEEE32Exec b)) :=
   toIEEE32Exec_add a b
 
 -- Division agreement includes finite values, exceptional values, and NaN canonicalization.
-example (a b : _root_.Float32) :
+example (a b : Float32) :
     toIEEE32Exec (a / b) =
       canonicalize (IEEE32Exec.div (toIEEE32Exec a) (toIEEE32Exec b)) :=
   toIEEE32Exec_div a b
 
 -- Square root agreement also covers negative inputs, signed zeros, infinities, and NaNs.
-example (a : _root_.Float32) :
+example (a : Float32) :
     toIEEE32Exec (Float32.sqrt a) =
       canonicalize (IEEE32Exec.sqrt (toIEEE32Exec a)) :=
   toIEEE32Exec_sqrt a

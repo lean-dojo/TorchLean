@@ -32,25 +32,29 @@ Notes:
 Numerical note:
 PyTorch often uses `BCEWithLogitsLoss` for stability (it works directly on logits without forming
 `sigmoid` explicitly). Here we keep the math explicit.
+
+## Implementation status
+
+No API builder implements this model, and no theorem is proved about it. It is a reference
+definition only.
 -/
 
 @[expose] public section
 
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Activation
 open MathFunctions
-open Numbers
 
 /-- Parameters for logistic regression: a weight vector `w` and scalar intercept `b`.
 
 We store `intercept : α` separately rather than folding it into `weights`, but `fitLogistic`
 internally learns `(p + 1)` parameters by augmenting the input with a trailing column of ones.
 -/
-structure LogisticRegression (p n : ℕ) (α : Type) where
+structure LogisticRegression (p n : ℕ) (α : Type) [TorchLean.Storage α] where
   /-- `p`-dimensional weight vector `w`. -/
   weights : Tensor α [p]
   /-- Scalar intercept term `b`. -/
@@ -92,13 +96,13 @@ optimized solvers (LBFGS/Newton/IRLS); it is a small reference implementation th
 instantiated over different scalar backends.
 -/
 def fitLogistic {n p : ℕ} (X : Tensor α [n, p])
-  (y : Tensor α [n]) (learning_rate : α) (iterations : Nat) :
+  (y : Tensor α [n]) (learningRate : α) (iterations : Nat) :
   LogisticRegression p n α :=
   -- Augment X with a column of ones for the intercept term
   let X_aug := augmentWithOnes X
 
   -- Initialize weights with zeros
-  let initial_weights := fill (0 : α) (.dim (p + 1) .scalar)
+  let initialWeights := Tensor.full (.dim (p + 1) .scalar) (0 : α)
 
   -- Implement gradient descent (structural recursion for predictable runtime)
   let rec gradient_descent (iter : Nat) (weights : Tensor α [p + 1]) :
@@ -107,30 +111,30 @@ def fitLogistic {n p : ℕ} (X : Tensor α [n, p])
     | 0 => weights
     | Nat.succ k =>
         let gradient := computeLogGradient X_aug y weights
-        let scaled_gradient := scaleSpec gradient learning_rate
-        let new_weights := subSpec weights scaled_gradient
-        gradient_descent k new_weights
+        let scaledGradient := scaleSpec gradient learningRate
+        let newWeights := subSpec weights scaledGradient
+        gradient_descent k newWeights
 
   -- Run gradient descent
-  let final_weights := gradient_descent iterations initial_weights
+  let finalWeights := gradient_descent iterations initialWeights
 
   -- Extract weights and intercept
-  let weights := Tensor.dim (fun i => get final_weights ⟨i.val, Nat.lt_succ_of_lt i.isLt⟩)
-  let intercept := get final_weights ⟨p, Nat.lt_succ_self p⟩
+  let weights := Tensor.dim (fun i => get finalWeights ⟨i.val, Nat.lt_succ_of_lt i.isLt⟩)
+  let intercept := get finalWeights ⟨p, Nat.lt_succ_self p⟩
 
   { weights := weights, intercept := item intercept }
 
 /-- Predict probabilities `σ(Xw + b)` for each row in `X`. -/
 def predictProba {n p : ℕ} (model : LogisticRegression p n α)
   (X : Tensor α [n, p]) : Tensor α [n] :=
-  let linear_pred := matVecMulSpec X model.weights
-  let bias_term := fill model.intercept (.dim n .scalar)
-  let combined := addSpec linear_pred bias_term
+  let linearPred := matVecMulSpec X model.weights
+  let biasTerm := Tensor.full (.dim n .scalar) model.intercept
+  let combined := addSpec linearPred biasTerm
   sigmoidSpec combined
 
 /-- Convert probabilities to hard labels using a threshold (default `0.5`). -/
 def logPredict {n p : ℕ} (model : LogisticRegression p n α)
-  (X : Tensor α [n, p]) (threshold : α := (1 : α) / (Numbers.two : α)) :
+  (X : Tensor α [n, p]) (threshold : α := (1 : α) / (2 : α)) :
   Tensor α [n] :=
   let probabilities := predictProba model X
   mapSpec (fun prob => if prob > threshold then (1 : α) else (0 : α)) probabilities

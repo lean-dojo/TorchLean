@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Torch.Core.OptimizerCheckpoint.Schema
-public import NN.Runtime.Autograd.Torch.Core.Ops
+public import NN.Runtime.Autograd.Torch.Core.Session
 
 /-!
 # CUDA Adam Checkpoints
@@ -114,6 +114,10 @@ def ensureCudaAdamConfig
         throw <| IO.userError
           "torch: CUDA Adam state belongs to a different optimizer configuration"
 
+/-- Serialize the hyperparameters as a tag plus four raw bit patterns.
+
+Bits rather than decimal text: a checkpoint has to restore the same moments bit for bit, and a
+decimal round trip of a `Float` is exactly where that guarantee would be lost. -/
 def writeConfig (handle : IO.FS.Handle) (config : CudaAdamConfig) : IO Unit := do
   let kindTag := match config.kind with
     | .adam => 0
@@ -124,6 +128,8 @@ def writeConfig (handle : IO.FS.Handle) (config : CudaAdamConfig) : IO Unit := d
   CheckpointIO.writeNat64 checkpointName handle config.epsilon.toBits.toNat
   CheckpointIO.writeNat64 checkpointName handle config.weightDecay.toBits.toNat
 
+/-- Inverse of `writeConfig`. An unrecognized kind tag fails loudly rather than defaulting to Adam,
+since silently reading AdamW moments as Adam moments would corrupt training quietly. -/
 def readConfig (handle : IO.FS.Handle) : IO CudaAdamConfig := do
   let kind ← match ← CheckpointIO.readNat64 checkpointName handle with
     | 0 => pure CudaAdamKind.adam
@@ -187,6 +193,10 @@ def writeCudaAdamStateFloat32
       handle.write mBytes
       handle.write vBytes
 
+/-- Read a whole CUDA Adam checkpoint: header, config, then one moment pair per parameter.
+
+The state is built in a local map and only installed once every parameter has been read and checked
+against `schema`, so a truncated file leaves the live optimizer untouched. -/
 def readCheckpoint
     (handle : IO.FS.Handle) (schema : OptimizerCheckpoint.ParameterSchema) :
     IO (CudaAdamConfig × CudaAdamState) := do

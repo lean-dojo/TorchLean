@@ -8,7 +8,6 @@ module
 
 public import NN.Floats.NeuralFloat.Core
 import Mathlib.Analysis.SpecialFunctions.Pow.Real
-import Mathlib.Algebra.Order.Round
 
 /-!
 # Rounding modes and a half-ULP error bound
@@ -17,7 +16,7 @@ We use this file as the “rounding” half of the Flocq-style rounding-on-`ℝ`
 
 - rounding modes `rnd : ℝ → ℤ` (floor/ceil/trunc/nearest-even),
 - the validity typeclasses `NeuralValidRnd` and `NeuralValidRndToNearest`,
-- the core rounding operator `neural_round`,
+- the core rounding operator `neuralRound`,
 - the standard bound `abs(neural_round … x - x) ≤ ulp(x)/2` for round-to-nearest.
 
 These definitions are used by `NF` (the rounded scalar type), by the `FP32` model, and by the
@@ -101,13 +100,13 @@ noncomputable def neuralRoundAtScale (rnd : ℝ → ℤ) (step : ℝ) (_hstep : 
   (rnd (x / step) : ℝ) * step
 
 -- Instance for floor rounding
-/-- `neural_floor_round` is a valid rounding mode (monotone and fixes integers). -/
+/-- `neuralFloorRound` is a valid rounding mode (monotone and fixes integers). -/
 instance : NeuralValidRnd neuralFloorRound where
   monotone := fun _ _ h => Int.floor_mono h
   id := fun n => Int.floor_intCast n
 
 -- Instance for ceiling rounding
-/-- `neural_ceil_round` is a valid rounding mode (monotone and fixes integers). -/
+/-- `neuralCeilRound` is a valid rounding mode (monotone and fixes integers). -/
 instance : NeuralValidRnd neuralCeilRound where
   monotone := fun _ _ h => Int.ceil_mono h
   id := fun n => Int.ceil_intCast n
@@ -445,7 +444,7 @@ theorem neuralNearestEven_is_nearest_integer (x : ℝ) (n : ℤ) :
   rw [neuralNearestEven_abs_eq_round x, abs_sub_comm, abs_sub_comm (n : ℝ) x]
   exact round_le x n
 
-/-- `neural_nearest_even` satisfies the half-unit error bound `|rnd x - x| ≤ 1/2`. -/
+/-- `neuralNearestEven` satisfies the half-unit error bound `|rnd x - x| ≤ 1/2`. -/
 instance : NeuralValidRndToNearest neuralNearestEven where
   monotone := NeuralValidRnd.monotone (rnd := neuralNearestEven)
   id := NeuralValidRnd.id (rnd := neuralNearestEven)
@@ -508,7 +507,7 @@ theorem neural_scaled_mantissa_int_of_generic (x : ℝ) (hx : neuralGenericForma
 /--
 Rounding preserves exactly-representable numbers.
 
-In words: if `x` lies on the grid described by `(β,fexp)` (`neural_generic_format`), then
+In words: if `x` lies on the grid described by `(β,fexp)` (`neuralGenericFormat`), then
 rounding it with any valid `rnd` is a no-op.
 
 This is the Flocq-style “round_generic” lemma.
@@ -574,10 +573,10 @@ theorem neural_generic_format_iff_scaled_mantissa_int (x : ℝ) :
     exact neural_generic_format_of_scaled_mantissa_int (β := β) (fexp := fexp) x n hn
 
 /--
-Half-ULP error bound for `neural_round` under round-to-nearest.
+Half-ULP error bound for `neuralRound` under round-to-nearest.
 
 This is the basic “one-step” bound used by most error propagation arguments:
-`neural_round` deviates from `x` by at most half an ulp at the chosen exponent scale.
+`neuralRound` deviates from `x` by at most half an ulp at the chosen exponent scale.
 -/
 theorem neural_error_bound_ulp (rnd : ℝ → ℤ) [NeuralValidRndToNearest rnd] (x : ℝ) :
     abs (neuralRound (β := β) (fexp := fexp) rnd x - x) ≤ neuralUlp β fexp x / 2 := by

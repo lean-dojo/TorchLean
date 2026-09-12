@@ -6,54 +6,62 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Logic.Basic
+public import NN.Tensor.Internal.Representation.Shape
 
-import Init.Grind
-import Mathlib.Data.Nat.Init
 
 /-!
 # Shapes (`Spec.Shape`)
 
-`Shape` is the type-level “shape descriptor” for tensors in the spec layer.
+`Shape` is the type-level shape descriptor for tensors.
 
 TorchLean uses *shape-indexed tensors*:
 
 `Tensor α s`
 
-so `Shape` is how we encode the structure of `s` in a way Lean can use for both computation and
-proofs.
+so Lean checks shape compatibility before tensor code can run.
 
 ## Representation
 
-`Shape` is an inductive tree:
+A shape *is* a list of dimensions, outermost first, so model and application code writes one as
+ordinary bracket notation:
 
-- `.scalar`
-- `.dim n s`  (a length-`n` dimension whose entries have shape `s`)
+- `[]` for a scalar
+- `[n]` for a vector
+- `[m, n]` for a matrix
 
-This matches the tensor definition in `NN/Spec/Core/Tensor/Core.lean`.
+`Shape` is a reducible abbreviation for `Tensor.Internal.Shape`, which is `List Nat`, so the
+spec-level shape and the shape carried by a tensor buffer are the same type. There is no conversion
+between them and no cast to transport a tensor across the two views.
+
+Shape-recursive definitions and proofs are still written with the two names `Shape.scalar` and
+`Shape.dim`, which are `@[match_pattern]` abbreviations for `[]` and `·  :: ·`. They may be used in
+patterns exactly like constructors, and `induction`/`cases` on a shape offer the cases `scalar` and
+`dim` through the eliminators registered below.
 
 ## Common utilities
 
 - `Spec.Shape.size : Shape → Nat` is the total number of scalar elements (“numel”).
-- `Shape.toList : Shape → List Nat` is a convenient runtime view used by front-ends and bridges.
+- `Spec.Shape.rank : Shape → Nat` is the number of axes.
 
 PyTorch analogy:
 
-- `Shape.toList s` corresponds to `tensor.shape` (a tuple of dimensions).
+- a shape itself corresponds to `tensor.shape` (a tuple of dimensions).
 - `Spec.Shape.rank s` corresponds to `tensor.ndim`.
 - `Spec.Shape.size s` corresponds to `tensor.numel()`.
 
 ## Broadcasting and axes
 
-Broadcasting is encoded via `CanBroadcastTo` / `BroadcastTo`.
+Broadcasting is encoded by the decidable proposition `CanBroadcastTo` and its typeclass wrapper
+`BroadcastTo`. Because the relation is a proposition, tensor operations depend only on the two
+shapes and never on how the relation was proved.
 
 This is an intentionally *asymmetric* relation ("broadcast `s1` to `s2`"), because most tensor code
 is naturally written by choosing the output shape and requiring each input to broadcast to it.
 
 The typeclass wrapper `BroadcastTo` keeps higher-level specs readable: in many cases Lean can infer
-the broadcast evidence automatically, so call sites don’t have to manually thread proofs around.
+the broadcast evidence automatically, so call sites do not have to thread proofs around by hand.
 
-It also defines axis-validity helpers (`NonemptyAxis`) and a `well_formed` predicate for “all
+It also defines axis-validity helpers (`NonemptyAxis`) and a `wellFormed` predicate for “all
 dimensions are positive”, which is useful when you want to rule out degenerate cases in proofs.
 -/
 
@@ -62,25 +70,46 @@ dimensions are positive”, which is useful when you want to rule out degenerate
 
 namespace Spec
 
-/-!
-We represent shapes as an inductive tree instead of a bare `List Nat` because:
-
-- it matches the tensor representation (`Tensor α s`) structurally, so many definitions are simple
-  structural recursion,
-- it keeps "scalar vs dim" cases explicit (important for proofs),
-- it gives definitional equalities that are friendlier than lists in many places.
--/
 /--
-Tensor shape descriptor used to index spec-level tensors (`Spec.Tensor α s`).
+Tensor shape descriptor used to index spec-level tensors (`TorchLean.Tensor α s`).
 
-`Shape` is an outermost-first tree:
-- `.scalar` for a scalar,
-- `.dim n s` for a length-`n` dimension whose entries have shape `s`.
+Use outermost-first bracket notation: `[]`, `[n]`, `[m, n]`, and so on. This is the same type as
+the shape carried by a tensor buffer, `Tensor.Internal.Shape`, and therefore the same type as
+`List Nat`.
 -/
-inductive Shape where
-  | scalar : Shape
-  | dim : Nat → Shape → Shape
-deriving DecidableEq, Repr
+abbrev Shape := TorchLean.Tensor.Internal.Shape
+
+namespace Shape
+
+/-- The shape of a scalar: no axes. Usable in patterns, like a constructor. -/
+@[match_pattern] abbrev scalar : Shape := []
+
+/-- A shape with outermost axis of extent `n` over `s`. Usable in patterns, like a constructor. -/
+@[match_pattern] abbrev dim (n : Nat) (s : Shape) : Shape := n :: s
+
+universe u
+
+/--
+Recursion on a shape, one axis at a time.
+
+This is the eliminator `induction s` uses, so the cases are named `scalar` and `dim` and the tail
+of a `dim` is again a `Shape` rather than a `List Nat`. Ordinary list induction is unaffected: a
+hypothesis whose type is spelled `List Nat` still eliminates to `nil` and `cons`.
+-/
+@[elab_as_elim, induction_eliminator]
+protected def recAux {motive : Shape → Sort u} (scalar : motive .scalar)
+    (dim : (n : Nat) → (s : Shape) → motive s → motive (.dim n s)) : (s : Shape) → motive s
+  | .scalar => scalar
+  | .dim n s => dim n s (Shape.recAux scalar dim s)
+
+/-- Case analysis on a shape, with the cases named `scalar` and `dim`. -/
+@[elab_as_elim, cases_eliminator]
+protected def casesAux {motive : Shape → Sort u} (scalar : motive .scalar)
+    (dim : (n : Nat) → (s : Shape) → motive (.dim n s)) : (s : Shape) → motive s
+  | .scalar => scalar
+  | .dim n s => dim n s
+
+end Shape
 
 /-!
 Model code writes shapes as dimension lists. For example, `Tensor Float [4, 2]` is a four-by-two
@@ -100,8 +129,9 @@ Output length of a floor-mode sliding window with symmetric padding.
 
 For positive `kernel` and `stride` with
 $\mathtt{kernel}\le\mathtt{input}+2\mathtt{padding}$, this is
-$(\mathtt{input}+2\mathtt{padding}-\mathtt{kernel})/\mathtt{stride}+1$. Invalid geometry has length zero, so saturated
-natural-number subtraction and division by zero cannot create a phantom output element.
+$(\mathtt{input}+2\mathtt{padding}-\mathtt{kernel})/\mathtt{stride}+1$. Invalid geometry has
+length zero, so saturated natural-number subtraction and division by zero cannot create a phantom
+output element.
 -/
 def slidingWindowOutDim (input kernel stride padding : Nat) : Nat :=
   let padded := input + 2 * padding
@@ -110,33 +140,47 @@ def slidingWindowOutDim (input kernel stride padding : Nat) : Nat :=
   else
     (padded - kernel) / stride + 1
 
-/-- Build a shape from a list of dimensions (outermost first). -/
-abbrev ofList : List Nat → Shape
-  | [] => .scalar
-  | n :: ns => .dim n (ofList ns)
+/-- Effective extent of a dilated kernel along one axis. -/
+def dilatedKernelExtent (kernel dilation : Nat) : Nat :=
+  if kernel = 0 then 0 else dilation * (kernel - 1) + 1
+
+/-- Output length of a dilated sliding window with independent padding on each side.
+Invalid geometry has length zero, as in `slidingWindowOutDim`. -/
+def slidingWindowOutDimDilated
+    (input kernel stride dilation paddingBefore paddingAfter : Nat) : Nat :=
+  let effective := dilatedKernelExtent kernel dilation
+  let padded := input + paddingBefore + paddingAfter
+  if effective = 0 || stride = 0 || padded < effective then
+    0
+  else
+    (padded - effective) / stride + 1
+
+/--
+Read a dimension list as a shape.
+
+The two types are equal, so this is the identity. It is kept because a great deal of code names it
+explicitly at the boundary where dimensions arrive as a list.
+-/
+abbrev ofList (dims : List Nat) : Shape := dims
 
 /-- Build a shape from runtime dimensions stored outermost first. -/
 def ofArray (dims : Array Nat) : Shape :=
   dims.foldr (fun extent rest => .dim extent rest) .scalar
 
-/-- Display list-shaped dimensions with the same notation accepted by model code. -/
-@[app_unexpander Spec.Shape.ofList]
-meta def ofListUnexpander : Lean.PrettyPrinter.Unexpander
-  | `($_ $dims) => pure dims
-  | _ => throw ()
+/--
+View a shape as its dimension list.
 
-/-- Interpret a dimension list as a tensor shape. -/
-instance : Coe (List Nat) Shape where
-  coe := ofList
-
-/-- Convert to a list of dimensions, outermost first. -/
-def toList : Shape → List Nat
-  | .scalar => []
-  | .dim n rest => n :: toList rest
+The two types are equal, so this is the identity. It is kept because front ends and bridges name it
+explicitly where a list is the natural spelling.
+-/
+@[reducible] def toList (s : Shape) : List Nat := s
 
 /-- Print a shape using the same dimension-list convention as model code. -/
 def pretty (s : Shape) : String :=
   "[" ++ String.intercalate ", " (s.toList.map toString) ++ "]"
+
+-- `Repr` and `ToString` come from `List Nat` and already print `[2, 3]`; a second instance on the
+-- same type would shadow them for every list of naturals.
 
 /-- Swap two adjacent dimensions at a given depth (0‑based from the outermost). -/
 @[reducible] def swapAdjacentAtDepth (s : Shape) (depth : Nat) : Shape :=
@@ -145,8 +189,9 @@ def pretty (s : Shape) : String :=
   | d+1, .dim m rest => .dim m (swapAdjacentAtDepth rest d)
   | _, _ => s  -- invalid depth, return unchanged
 
+/-- At rank two, swapping at depth zero is the ordinary matrix transpose of the shape. -/
 @[simp] theorem swapAdjacentAtDepth_zero_rank_two (m n : Nat) :
-    ([m, n] : Shape).swapAdjacentAtDepth 0 = [n, m] := rfl
+    swapAdjacentAtDepth [m, n] 0 = [n, m] := rfl
 
 /-- Swapping adjacent dims at depth `depth` twice returns the original shape. -/
 @[simp] theorem swapAdjacentAtDepth_involutive (s : Shape) (depth : Nat) :
@@ -169,6 +214,10 @@ def applyAdjacentSwaps : Shape → List Nat → Shape
 def moveAxisToInnermostSwaps (rank axis : Nat) : List Nat :=
   (List.range (rank - (axis + 1))).map (axis + ·)
 
+/-- Applying a concatenated list of swaps is applying the two halves in order.
+
+Transposition permutations are built up as lists of adjacent swaps, so this is the lemma that lets a
+composite permutation be reasoned about one factor at a time. -/
 @[simp]
 theorem applyAdjacentSwaps_append (s : Shape) (xs ys : List Nat) :
     applyAdjacentSwaps s (xs ++ ys) = applyAdjacentSwaps (applyAdjacentSwaps s xs) ys := by
@@ -207,6 +256,23 @@ def concat : Shape → Shape → Shape
   | .scalar, suffix => suffix
   | .dim n rest, suffix => .dim n (concat rest suffix)
 
+/--
+Decide whether two shapes are equal.
+
+`Shape` is an abbreviation for `List Nat`, so equality is decidable by the usual list instance.
+Reach for this function rather than `if h : s = t` when either side is bound by a local `let`:
+instance search on such a binding can get stuck, while a direct call always elaborates.
+-/
+def decEq (s t : Shape) : Decidable (s = t) :=
+  inferInstanceAs (Decidable (s = t))
+
+/-- Concatenating the scalar shape leaves the leading shape unchanged. -/
+@[simp] theorem concat_scalar (shape : Shape) :
+    shape.concat .scalar = shape := by
+  induction shape with
+  | scalar => rfl
+  | dim n rest ih => simp only [concat, ih]
+
 /-- Shape concatenation is associative. -/
 @[simp] theorem concat_assoc (left middle right : Shape) :
     (left.concat middle).concat right = left.concat (middle.concat right) := by
@@ -214,19 +280,24 @@ def concat : Shape → Shape → Shape
   | scalar => rfl
   | dim n rest ih => simp only [concat, ih]
 
-/-- Converting an appended dimension list is shape concatenation. -/
-@[simp] theorem ofList_append (left right : List Nat) :
-    ofList (left ++ right) = (ofList left).concat (ofList right) := by
-  induction left with
-  | nil => rfl
-  | cons n left ih => simp [ofList, concat, ih]
-
-/-- The list view of concatenated shapes is the concatenation of their list views. -/
-@[simp] theorem toList_concat (left right : Shape) :
-    (left.concat right).toList = left.toList ++ right.toList := by
+/-- Shape concatenation is list append. -/
+theorem concat_eq_append (left right : Shape) : left.concat right = left ++ right := by
   induction left with
   | scalar => rfl
-      | dim n rest ih => simp [toList, ih]
+  | dim n rest ih => simp only [concat, ih, List.cons_append]
+
+/--
+Reversing a concatenation reverses each part and swaps them.
+
+Shape parsers read a shape back to front (innermost axis first), so this is the lemma that turns a
+`leading ++ [rows, cols]` layout into the `cols :: rows :: rest` pattern they match on. It is stated
+about `reverse` rather than `concat` so that a simp set naming it leaves the other occurrences of
+`concat` alone. It carries no `simp` attribute for the same reason: `concat` is the normal form for
+a composed shape, and rewriting every occurrence away would strand the lemmas stated about it.
+-/
+theorem reverse_concat (left right : Shape) :
+    (left.concat right).reverse = right.reverse ++ left.reverse := by
+  rw [concat_eq_append, List.reverse_append]
 
 /-- Appending one dimension is concatenation with a one-axis suffix. -/
 theorem appendDim_eq_concat (s : Shape) (n : Nat) :
@@ -256,21 +327,14 @@ def size : Shape → Nat
   | .scalar => 1
   | .dim n rest => n * size rest
 
-/-- The number of entries in a list-shaped tensor is the product of its dimensions. -/
-@[simp] theorem size_ofList (dims : List Nat) :
-    size (ofList dims) = dims.prod := by
-  induction dims with
-  | nil => rfl
-  | cons dim dims ih => simp [size, ih]
+/-- The number of entries is the product of the dimensions.
 
-/-- A shape consisting only of singleton axes contains one scalar. -/
-@[simp] theorem size_ofList_replicate_one (n : Nat) :
-    size (ofList (List.replicate n 1)) = 1 := by
-  induction n with
-  | zero => rfl
-  | succ n ih =>
-      rw [List.replicate_succ]
-      simp [size, ih]
+Not a `simp` lemma: `size` is the normal form for a shape's element count, and rewriting it to a
+list product would strand the many lemmas stated about `size`. -/
+theorem size_eq_prod (s : Shape) : size s = s.prod := by
+  induction s with
+  | scalar => rfl
+  | dim n rest ih => simp [size, ih]
 
 /--
 `appendDim` multiplies the number of scalar elements by the appended dimension.
@@ -287,6 +351,14 @@ theorem size_appendDim (s : Shape) (n : Nat) : size (appendDim s n) = size s * n
       -- `appendDim` recurses to the innermost dimension; `size` is multiplicative.
       simp [size, ih, Nat.mul_assoc]
 
+/--
+`prependDim` multiplies the number of scalar elements by the new outermost dimension.
+
+This is the counterpart of `size_appendDim` for the front of a shape, and unlike that lemma it holds
+by definition: `size` already recurses on the outermost axis.
+-/
+theorem size_prependDim (s : Shape) (n : Nat) : size (prependDim s n) = n * size s := rfl
+
 /-- The number of elements in a concatenated shape is the product of the two shape sizes. -/
 theorem size_concat (leading suffix : Shape) :
     size (concat leading suffix) = size leading * size suffix := by
@@ -294,41 +366,36 @@ theorem size_concat (leading suffix : Shape) :
   | scalar => simp [size]
   | dim n rest ih => simp [size, ih, Nat.mul_assoc]
 
-/-- `ofList` is a left inverse of `toList`. -/
-@[simp] theorem ofList_toList (s : Shape) : ofList (toList s) = s := by
-  induction s with
-  | scalar => rfl
-  | dim n s ih =>
-    simp [toList, ih]
-
-/-- `toList` is a right inverse of `ofList`. -/
-@[simp] theorem toList_ofList (xs : List Nat) : toList (ofList xs) = xs := by
-  induction xs with
-  | nil => rfl
-  | cons n ns ih =>
-    simp [toList, ih]
-
 -- Tell `grind` about the standard shape normalization lemmas.
-attribute [grind =] size_appendDim size_ofList ofList_toList toList_ofList
+attribute [grind =] size_appendDim
 
 /-- Convert to an array of dimensions (outermost first). -/
 def toArray (s : Shape) : Array Nat :=
   toList s |>.toArray
 
-/-- Boolean equality test for shapes (structural). -/
+/-- Boolean structural equality test for shapes.
+
+`BEq Shape` is the lawful instance on `List Nat`. This explicit recursive test is kept for code that
+wants to inspect the comparison directly. -/
 def areEqual : Shape → Shape → Bool
   | .scalar, .scalar => true
   | .dim n1 s1, .dim n2 s2 => n1 == n2 && areEqual s1 s2
   | _, _ => false
 
--- We keep `BEq` as an explicit structural test because it shows up in runtime checks and logs.
-/-- `BEq Shape` uses the explicit structural boolean test `Shape.areEqual`. -/
-instance : BEq Shape where
-  beq := areEqual
+/-- The structural test agrees with propositional equality. -/
+@[simp] theorem areEqual_eq_true_iff : ∀ {s t : Shape}, areEqual s t = true ↔ s = t
+  | .scalar, .scalar => by simp [areEqual]
+  | .scalar, .dim _ _ => by simp [areEqual]
+  | .dim _ _, .scalar => by simp [areEqual]
+  | .dim n1 s1, .dim n2 s2 => by
+      simp [areEqual, areEqual_eq_true_iff (s := s1) (t := s2)]
 
-/-- Default inhabitant for `Shape`, used only when Lean needs a canonical fallback value. -/
-instance : Inhabited Shape where
-  default := .scalar
+/-- The structural test is the derived boolean equality. -/
+theorem areEqual_eq_beq (s t : Shape) : areEqual s t = (s == t) := by
+  by_cases h : s = t
+  · subst h
+    exact (areEqual_eq_true_iff.mpr rfl).trans (beq_self_eq_true s).symm
+  · rw [Bool.eq_iff_iff, areEqual_eq_true_iff, beq_iff_eq]
 
 /-- Get dimension at index `i` (0‑based), or `none` if out of bounds. -/
 def getDim : Shape → Nat → Option Nat
@@ -358,7 +425,15 @@ PyTorch analogy:
 /-- Rank = number of dimensions (scalar has rank 0). -/
 def rank : Shape → Nat
   | Shape.scalar => 0
-  | Shape.dim _ rest => 1 + rank rest
+  | Shape.dim _ rest => rank rest + 1
+
+/-- The rank is the number of dimensions.
+
+Not a `simp` lemma: `rank` is the normal form for a shape's number of axes. -/
+public theorem rank_eq_length (s : Shape) : rank s = s.length := by
+  induction s with
+  | scalar => rfl
+  | dim _ rest ih => simp [rank, ih]
 
 /-- Insert a dimension at an axis, where axis `0` is outermost.
 
@@ -384,13 +459,11 @@ input rank. The out-of-bounds scalar case is therefore unreachable in typed tens
     rank (s.appendDim n) = rank s + 1 := by
   induction s with
   | scalar => rfl
-  | dim _ rest ih => simp only [rank, ih, Nat.add_assoc]
+  | dim _ rest ih => simp only [rank, ih]
 
-/-- The list view contains one entry for each tensor axis. -/
-@[simp] theorem length_toList (s : Shape) : s.toList.length = s.rank := by
-  induction s with
-  | scalar => rfl
-  | dim n rest ih => simp [toList, rank, ih, Nat.add_comm]
+/-- Prepending one dimension increases the rank by one. -/
+@[simp] theorem rank_prependDim (s : Shape) (n : Nat) :
+    rank (s.prependDim n) = rank s + 1 := rfl
 
 /-- A shape decomposed into a leading prefix and a suffix of a prescribed rank. -/
 structure SuffixSplit (shape : Shape) (suffixRank : Nat) where
@@ -407,7 +480,7 @@ structure SuffixSplit (shape : Shape) (suffixRank : Nat) where
 def splitSuffix (shape : Shape) (suffixRank : Nat) (h : suffixRank ≤ shape.rank) :
     SuffixSplit shape suffixRank := by
   let dims := shape.toList
-  have hdims : suffixRank ≤ dims.length := by simpa [dims] using h
+  have hdims : suffixRank ≤ dims.length := by simpa [dims, rank_eq_length] using h
   let split := dims.length - suffixRank
   let suffixDims := dims.drop split
   have hsuffix : suffixDims.length = suffixRank := by
@@ -417,7 +490,7 @@ def splitSuffix (shape : Shape) (suffixRank : Nat) (h : suffixRank ≤ shape.ran
       suffix := suffixDims
       suffix_length := hsuffix
       concat_eq := ?_ }
-  rw [← ofList_append]
+  rw [concat_eq_append]
   simp [split, suffixDims, dims]
 
 /-- Swap the first two axes after an arbitrary fixed leading shape. -/
@@ -428,16 +501,18 @@ theorem swapAdjacentAtDepth_concat_rank (leading suffix : Shape) (m n : Nat) :
   induction leading with
   | scalar => rfl
   | dim _ tail ih =>
-      simp only [concat, rank, Nat.one_add, swapAdjacentAtDepth, ih]
+      simp only [concat, rank, swapAdjacentAtDepth, ih]
 
 /-- Replace every dimension by one while preserving the rank of a shape. -/
 def singletonAxes : Shape → Shape
   | .scalar => .scalar
   | .dim _ rest => .dim 1 (singletonAxes rest)
 
+/-- Collapsing every axis to length one leaves the rank alone. -/
 @[simp] theorem rank_singletonAxes (s : Shape) : rank (singletonAxes s) = rank s := by
   induction s <;> simp [singletonAxes, rank, *]
 
+/-- A shape whose every axis has length one holds exactly one element. -/
 @[simp] theorem size_singletonAxes (s : Shape) : size (singletonAxes s) = 1 := by
   induction s <;> simp [singletonAxes, size, *]
 
@@ -448,58 +523,176 @@ class SameRank (s₁ s₂ : Shape) : Prop where
 
 instance : SameRank .scalar .scalar := ⟨rfl⟩
 
+/-- Every shape has the same rank as itself. -/
 instance sameRankRefl (s : Shape) : SameRank s s := ⟨rfl⟩
 
 instance {s₁ s₂ : Shape} {n₁ n₂ : Nat} [tail : SameRank s₁ s₂] :
     SameRank (.dim n₁ s₁) (.dim n₂ s₂) :=
-  ⟨by simpa [rank] using congrArg Nat.succ tail.rank_eq⟩
+  ⟨by simp [rank, tail.rank_eq]⟩
 
-/-- Evidence that shape `s₁` can be broadcast to shape `s₂` using right-aligned dimensions.
+/-!
+### The broadcast relation (`CanBroadcastTo`)
 
-The equal-dimension constructors require equal-rank tails. Consequently, every rank difference is
-resolved by `expand_dims` before dimensions are compared, matching NumPy and PyTorch rather than
-allowing a proof term to choose between left- and right-aligned interpretations. -/
-inductive CanBroadcastTo : Shape → Shape → Type where
-  /-- Scalar shapes agree. Higher-rank scalar broadcasts are built with `expand_dims`. -/
-  | scalar : CanBroadcastTo .scalar .scalar
-  /-- Matching outer dimensions preserve broadcasting of their tails. -/
-  | dim_eq {n : Nat} {s₁ s₂ : Shape} [SameRank s₁ s₂]
-      (tail : CanBroadcastTo s₁ s₂) :
-      CanBroadcastTo (.dim n s₁) (.dim n s₂)
-  /-- An outer dimension of length one can expand to any target length. -/
-  | dim_1_to_n {n : Nat} {s₁ s₂ : Shape} [SameRank s₁ s₂]
-      (tail : CanBroadcastTo s₁ s₂) :
-      CanBroadcastTo (.dim 1 s₁) (.dim n s₂)
-  /-- A new outer target dimension aligns a source of lower rank. -/
-  | expand_dims {n : Nat} {s₁ s₂ : Shape} (tail : CanBroadcastTo s₁ s₂) :
-      CanBroadcastTo s₁ (Shape.dim n s₂)
-deriving Repr
+`CanBroadcastTo source target` is a proposition on the two shapes, so every tensor operation that
+consumes it depends only on the shapes and never on how the relation was proved. It is defined by
+recursion on the target shape, which makes it decidable (`canBroadcastTo?`, `decide`), and the
+structural rules of NumPy and PyTorch are recovered as theorems: `CanBroadcastTo.scalar`,
+`CanBroadcastTo.dim_eq`, `CanBroadcastTo.dim_1_to_n`, and `CanBroadcastTo.expand_dims`.
+
+The equal-dimension rules require equal-rank tails, so every rank difference is resolved by
+`expand_dims` before extents are compared. The internal tensor layer states the same relation on
+dimension lists (`List.Forall₂` after padding the source with leading ones);
+`CanBroadcastTo.forall₂_toList` in the broadcasting module connects the two forms.
+-/
+
+/-- `CanBroadcastTo source target` holds when `source` broadcasts to `target` with right-aligned
+axes: after prepending singleton axes to reach the target rank, every source extent equals the
+target extent or is one. -/
+def CanBroadcastTo : Shape → Shape → Prop
+  | .scalar, .scalar => True
+  | .dim _ _, .scalar => False
+  | .scalar, .dim _ target => CanBroadcastTo .scalar target
+  | .dim m source, .dim n target =>
+      if source.rank = target.rank then
+        (m = n ∨ m = 1) ∧ CanBroadcastTo source target
+      else
+        CanBroadcastTo (.dim m source) target
+
+/-- A scalar broadcasts to a scalar. -/
+@[simp] theorem canBroadcastTo_scalar_scalar : CanBroadcastTo .scalar .scalar :=
+  trivial
+
+/-- Nothing with an axis broadcasts down to a scalar; broadcasting only ever adds extent. -/
+@[simp] theorem not_canBroadcastTo_dim_scalar {n : Nat} {s : Shape} :
+    ¬ CanBroadcastTo (.dim n s) .scalar :=
+  fun h => h
+
+/-- A scalar broadcasts across a new outer axis exactly when it broadcasts to the tail. -/
+@[simp] theorem canBroadcastTo_scalar_dim {n : Nat} {t : Shape} :
+    CanBroadcastTo .scalar (.dim n t) ↔ CanBroadcastTo .scalar t :=
+  Iff.rfl
+
+/-- Equal-rank tails compare the leading extents and recurse. -/
+theorem canBroadcastTo_dim_dim_of_rank_eq {m n : Nat} {s t : Shape} (hRank : s.rank = t.rank) :
+    CanBroadcastTo (.dim m s) (.dim n t) ↔ (m = n ∨ m = 1) ∧ CanBroadcastTo s t := by
+  show (if s.rank = t.rank then (m = n ∨ m = 1) ∧ CanBroadcastTo s t
+    else CanBroadcastTo (.dim m s) t) ↔ _
+  rw [if_pos hRank]
+
+/-- A target of larger rank absorbs its leading axis before the extents are compared. -/
+theorem canBroadcastTo_dim_dim_of_rank_ne {m n : Nat} {s t : Shape} (hRank : s.rank ≠ t.rank) :
+    CanBroadcastTo (.dim m s) (.dim n t) ↔ CanBroadcastTo (.dim m s) t := by
+  show (if s.rank = t.rank then (m = n ∨ m = 1) ∧ CanBroadcastTo s t
+    else CanBroadcastTo (.dim m s) t) ↔ _
+  rw [if_neg hRank]
+
+/-- The broadcast relation is decidable by the same recursion that defines it. -/
+instance instDecidableCanBroadcastTo : (s t : Shape) → Decidable (CanBroadcastTo s t)
+  | .scalar, .scalar => isTrue trivial
+  | .dim _ _, .scalar => isFalse not_canBroadcastTo_dim_scalar
+  | .scalar, .dim _ target =>
+      haveI := instDecidableCanBroadcastTo .scalar target
+      decidable_of_iff _ canBroadcastTo_scalar_dim.symm
+  | .dim m source, .dim _ target =>
+      if hRank : source.rank = target.rank then
+        haveI := instDecidableCanBroadcastTo source target
+        decidable_of_iff _ (canBroadcastTo_dim_dim_of_rank_eq hRank).symm
+      else
+        haveI := instDecidableCanBroadcastTo (.dim m source) target
+        decidable_of_iff _ (canBroadcastTo_dim_dim_of_rank_ne hRank).symm
+
+/-- Decide the broadcast relation at runtime, returning the proof when it holds.
+
+IR passes and dynamic lowerings that only know shapes at runtime use this instead of trusting that
+declared input and output shapes are compatible. -/
+def canBroadcastTo? (s t : Shape) : Option (PLift (CanBroadcastTo s t)) :=
+  if h : CanBroadcastTo s t then some ⟨h⟩ else none
+
+/-- `canBroadcastTo?` succeeds exactly when the relation holds. -/
+theorem canBroadcastTo?_isSome_iff {s t : Shape} :
+    (canBroadcastTo? s t).isSome ↔ CanBroadcastTo s t := by
+  unfold canBroadcastTo?
+  split <;> simp_all
+
+/-- Broadcasting never lowers the rank. -/
+theorem CanBroadcastTo.rank_le {s t : Shape} (h : CanBroadcastTo s t) : s.rank ≤ t.rank := by
+  induction t generalizing s with
+  | scalar =>
+      cases s with
+      | scalar => exact Nat.le_refl _
+      | dim _ _ => exact absurd h not_canBroadcastTo_dim_scalar
+  | dim n t ih =>
+      cases s with
+      | scalar => exact Nat.zero_le _
+      | dim m s =>
+          by_cases hRank : s.rank = t.rank
+          · simp [rank, hRank]
+          · have := ih ((canBroadcastTo_dim_dim_of_rank_ne hRank).mp h)
+            simp only [rank] at this ⊢
+            grind
+
+/-- Scalar shapes agree. Higher-rank scalar broadcasts are built with `expand_dims`. -/
+theorem CanBroadcastTo.scalar : CanBroadcastTo .scalar .scalar :=
+  trivial
+
+/-- Matching outer dimensions preserve broadcasting of equal-rank tails. -/
+theorem CanBroadcastTo.dim_eq {n : Nat} {s₁ s₂ : Shape} [same : SameRank s₁ s₂]
+    (tail : CanBroadcastTo s₁ s₂) : CanBroadcastTo (.dim n s₁) (.dim n s₂) :=
+  (canBroadcastTo_dim_dim_of_rank_eq same.rank_eq).mpr ⟨Or.inl rfl, tail⟩
+
+/-- An outer dimension of length one can expand to any target length. -/
+theorem CanBroadcastTo.dim_1_to_n {n : Nat} {s₁ s₂ : Shape} [same : SameRank s₁ s₂]
+    (tail : CanBroadcastTo s₁ s₂) : CanBroadcastTo (.dim 1 s₁) (.dim n s₂) :=
+  (canBroadcastTo_dim_dim_of_rank_eq same.rank_eq).mpr ⟨Or.inr rfl, tail⟩
+
+/-- A new outer target dimension aligns a source of lower rank. -/
+theorem CanBroadcastTo.expand_dims {n : Nat} {s₁ s₂ : Shape} (tail : CanBroadcastTo s₁ s₂) :
+    CanBroadcastTo s₁ (.dim n s₂) := by
+  cases s₁ with
+  | scalar => exact tail
+  | dim m s =>
+      have hRank : s.rank ≠ s₂.rank := by
+        have := tail.rank_le
+        simp only [rank] at this
+        grind
+      exact (canBroadcastTo_dim_dim_of_rank_ne hRank).mpr tail
+
+/-- Removing a target axis that only aligns ranks keeps the source broadcastable. -/
+theorem CanBroadcastTo.of_expand_dims {n : Nat} {s t : Shape} (hRank : s.rank ≤ t.rank)
+    (h : CanBroadcastTo s (.dim n t)) : CanBroadcastTo s t := by
+  cases s with
+  | scalar => exact h
+  | dim m s =>
+      refine (canBroadcastTo_dim_dim_of_rank_ne ?_).mp h
+      simp only [rank] at hRank
+      grind
 
 /-- Every shape broadcasts to itself without expanding an axis. -/
-def CanBroadcastTo.refl : (s : Shape) → CanBroadcastTo s s
-  | .scalar => .scalar
-  | .dim _ tail => .dim_eq (refl tail)
+theorem CanBroadcastTo.refl : (s : Shape) → CanBroadcastTo s s
+  | .scalar => trivial
+  | .dim _ tail => (canBroadcastTo_dim_dim_of_rank_eq rfl).mpr ⟨Or.inl rfl, refl tail⟩
 
-/-- The canonical witness that broadcasts a scalar by inserting every target dimension. -/
-def CanBroadcastTo.scalarTo : (s : Shape) → CanBroadcastTo .scalar s
-  | .scalar => .scalar
-  | .dim _ tail => .expand_dims (scalarTo tail)
+/-- A scalar broadcasts to any shape by inserting every target dimension. -/
+theorem CanBroadcastTo.scalarTo : (s : Shape) → CanBroadcastTo .scalar s
+  | .scalar => trivial
+  | .dim _ tail => scalarTo tail
 
-/-- Broadcast a shape of singleton axes to any shape of the same rank. -/
-def CanBroadcastTo.singletonAxes : (s : Shape) → CanBroadcastTo (Shape.singletonAxes s) s
-  | .scalar => .scalar
+/-- A shape of singleton axes broadcasts to any shape of the same rank. -/
+theorem CanBroadcastTo.singletonAxes : (s : Shape) → CanBroadcastTo (Shape.singletonAxes s) s
+  | .scalar => trivial
   | .dim _ tail =>
       letI : SameRank (Shape.singletonAxes tail) tail := ⟨rank_singletonAxes tail⟩
       .dim_1_to_n (singletonAxes tail)
 
-/-- Broadcast a suffix across an arbitrary collection of newly prepended target dimensions. -/
-def CanBroadcastTo.prependTarget : (leading suffix : Shape) →
+/-- A suffix broadcasts across an arbitrary collection of newly prepended target dimensions. -/
+theorem CanBroadcastTo.prependTarget : (leading suffix : Shape) →
     CanBroadcastTo suffix (Shape.concat leading suffix)
   | .scalar, suffix => refl suffix
   | .dim _ tail, suffix => .expand_dims (prependTarget tail suffix)
 
-/-- Typeclass wrapper for `CanBroadcastTo` so broadcast proofs can be inferred. -/
-class BroadcastTo (s₁ s₂ : Shape) where
+/-- Typeclass wrapper for `CanBroadcastTo` so broadcast proofs can be inferred for literal
+shapes. -/
+class BroadcastTo (s₁ s₂ : Shape) : Prop where
   proof : CanBroadcastTo s₁ s₂
 
 /-- Scalar shapes broadcast directly. Leading target dimensions are inferred by `expand_dims`. -/
@@ -520,7 +713,6 @@ instance broadcastToDim1ToN {n : Nat} {s₁ s₂ : Shape} [SameRank s₁ s₂]
 instance broadcastToExpandDims {n : Nat} {s₁ s₂ : Shape} [bc : BroadcastTo s₁ s₂] :
     BroadcastTo s₁ (Shape.dim n s₂) where
   proof := CanBroadcastTo.expand_dims bc.proof
-
 /-- Swap adjacent entries in an axis-ordering list, leaving invalid positions unchanged. -/
 def swapAdjacentAxes (axes : List Nat) (depth : Nat) : List Nat :=
   match axes, depth with
@@ -529,7 +721,9 @@ def swapAdjacentAxes (axes : List Nat) (depth : Nat) : List Nat :=
   | first :: second :: rest, 0 => second :: first :: rest
   | first :: rest, depth + 1 => first :: swapAdjacentAxes rest depth
 
-/-- Permute axes of a shape using a zero-based structural axis ordering. Returns `none` if invalid. -/
+/-- Permute axes of a shape using a zero-based structural axis ordering.
+
+Returns `none` if the permutation is invalid. -/
 def permute? (s : Shape) (perm : List Nat) : Option Shape :=
   let r := rank s
   if perm.length != r then
@@ -556,6 +750,51 @@ def replaceAxis : Shape → Nat → Nat → Shape
   | .scalar, _, _ => .scalar
   | .dim _ rest, 0, extent => .dim extent rest
   | .dim n rest, axis + 1, extent => .dim n (replaceAxis rest axis extent)
+
+/-- Replace the final axis extent. A scalar shape is left unchanged. -/
+@[reducible] def replaceLast : Shape → Nat → Shape
+  | .scalar, _ => .scalar
+  | .dim _ .scalar, extent => .dim extent .scalar
+  | .dim n (.dim m rest), extent => .dim n (replaceLast (.dim m rest) extent)
+
+/-- Structural evidence that a non-scalar shape ends in an axis with extent `extent`. -/
+inductive EndsWith.Proof (extent : Nat) : Shape → Type
+  | last : Proof extent (.dim extent .scalar)
+  | leading {n : Nat} {rest : Shape} :
+      Proof extent rest → Proof extent (.dim n rest)
+
+/-- Typeclass evidence that a shape's final axis has extent `extent`. -/
+class EndsWith (extent : Nat) (shape : Shape) where
+  /-- Structural evidence consumed by final-axis operations. -/
+  proof : EndsWith.Proof extent shape
+
+/-- Replace the final extent recorded by structural evidence. -/
+def EndsWith.Proof.replace {extent : Nat} {shape : Shape}
+    (evidence : EndsWith.Proof extent shape) (outputExtent : Nat) : Shape :=
+  match evidence with
+  | .last => .dim outputExtent .scalar
+  | .leading (n := n) inner => .dim n (inner.replace outputExtent)
+
+/-- Evidence-directed final-axis replacement agrees with ordinary shape replacement. -/
+theorem EndsWith.Proof.replace_eq_replaceLast {extent : Nat} {shape : Shape}
+    (evidence : EndsWith.Proof extent shape) (outputExtent : Nat) :
+    evidence.replace outputExtent = shape.replaceLast outputExtent := by
+  induction evidence with
+  | last => rfl
+  | @leading n rest inner ih =>
+      cases inner with
+      | last => rfl
+      | leading deeper =>
+          simpa [EndsWith.Proof.replace, replaceLast] using congrArg (Shape.dim n) ih
+
+/-- A one-dimensional shape ends in its only extent. -/
+instance endsWithLast (extent : Nat) : EndsWith extent (.dim extent .scalar) :=
+  ⟨.last⟩
+
+/-- Adding a leading axis preserves the final extent. -/
+instance endsWithLeading {extent n : Nat} {rest : Shape} [EndsWith extent rest] :
+    EndsWith extent (.dim n rest) :=
+  ⟨.leading (EndsWith.proof (extent := extent) (shape := rest))⟩
 
 /-- Erasing an in-bounds axis decreases the rank by one. -/
 theorem rank_eraseAxis {s : Shape} {axis : Nat} (h : axis < s.rank) :
@@ -603,6 +842,15 @@ class AxisInBounds (axis : Nat) (s : Shape) : Prop where
   /-- The axis is strictly smaller than the shape rank. -/
   proof : axis < rank s
 
+namespace AxisInBounds
+
+/-- Convert an ordinary rank proof into the evidence consumed by tensor operations. -/
+public theorem ofRank {axis : Nat} {shape : Shape} (valid : axis < shape.rank) :
+    AxisInBounds axis shape :=
+  ⟨valid⟩
+
+end AxisInBounds
+
 /-- Looking up an axis below the rank of a shape succeeds. -/
 theorem getDim_isSome_of_lt {s : Shape} {axis : Nat} (h : axis < rank s) :
     (getDim s axis).isSome = true := by
@@ -622,12 +870,12 @@ def axisSize (s : Shape) (axis : Nat) [h : AxisInBounds axis s] : Nat :=
 
 /-- The outermost dimension is axis zero, regardless of its extent. -/
 instance axisInBoundsZero {n s} : AxisInBounds 0 (.dim n s) :=
-  ⟨by simpa [rank, Nat.add_comm] using Nat.zero_lt_succ s.rank⟩
+  ⟨Nat.succ_pos s.rank⟩
 
 /-- An inner axis remains in bounds under an additional outer dimension. -/
 instance axisInBoundsSucc {n s axis} [h : AxisInBounds axis s] :
     AxisInBounds (axis + 1) (.dim n s) :=
-  ⟨by simpa [rank, Nat.add_comm] using Nat.add_lt_add_right h.proof 1⟩
+  ⟨Nat.add_lt_add_right h.proof 1⟩
 
 /-- The extent of the leading axis is its outer dimension. -/
 @[simp] theorem axisSize_zero (n : Nat) (s : Shape) : axisSize (.dim n s) 0 = n := by
@@ -664,9 +912,7 @@ theorem NonemptyAxis.toAxisInBounds {axis : Nat} {s : Shape} (h : NonemptyAxis a
     AxisInBounds axis s := by
   induction h with
   | zero => exact axisInBoundsZero
-  | succ inner ih =>
-      constructor
-      simpa [rank, Nat.add_comm] using Nat.add_lt_add_right ih.proof 1
+  | succ inner ih => exact ⟨Nat.add_lt_add_right ih.proof 1⟩
 
 /-- Axis zero is nonempty when the outer dimension is positive. -/
 @[simp] theorem nonemptyAxis_zero {n : Nat} {s : Shape} :
@@ -719,7 +965,7 @@ instance hasNonemptyAxisSucc {n s axis} [h : HasNonemptyAxis axis s] :
 
 
 /-!
-## Well-formedness (`well_formed`)
+## Well-formedness (`wellFormed`)
 
 `well_formed s` means "all dimensions are positive".
 
@@ -752,7 +998,7 @@ This is a small but useful bridge lemma: many reductions are only defined for no
 and `WellFormed` is our standard way of expressing that assumption.
 -/
 
-/-- If `s.well_formed`, then `Spec.Shape.size s > 0`. -/
+/-- If `s.wellFormed`, then `Spec.Shape.size s > 0`. -/
 theorem size_pos_of_well_formed : ∀ {s : Shape}, s.wellFormed → 0 < Spec.Shape.size s
   | .scalar, _ => by
       simp [Spec.Shape.size]
@@ -773,7 +1019,7 @@ theorem wellFormed_of_size_pos : ∀ {s : Shape}, 0 < Spec.Shape.size s → s.we
       exact ⟨Nat.pos_of_ne_zero hn, wellFormed_of_size_pos (Nat.pos_of_ne_zero hs)⟩
 
 /-- Every in-bounds axis of a well-formed shape has positive extent. -/
-theorem nonemptyAxisOfWellFormed {s : Shape} (hw : s.wellFormed) {axis : Nat}
+theorem nonemptyAxis_of_wellFormed {s : Shape} (hw : s.wellFormed) {axis : Nat}
     (hAxis : axis < s.rank) : NonemptyAxis axis s := by
   induction s generalizing axis with
   | scalar => simp [rank] at hAxis
@@ -790,14 +1036,14 @@ theorem nonemptyAxisOfWellFormed {s : Shape} (hw : s.wellFormed) {axis : Nat}
           grind
 
 /-- Package a valid axis of a well-formed shape as inferred reduction-axis evidence. -/
-theorem hasNonemptyAxisOfWellFormed {s : Shape} (hw : s.wellFormed) {axis : Nat}
+theorem hasNonemptyAxis_of_wellFormed {s : Shape} (hw : s.wellFormed) {axis : Nat}
     (hAxis : axis < s.rank) : HasNonemptyAxis axis s :=
-  ⟨nonemptyAxisOfWellFormed hw hAxis⟩
+  ⟨nonemptyAxis_of_wellFormed hw hAxis⟩
 
 /--
-Typeclass wrapper for `Shape.well_formed`.
+Typeclass wrapper for `Shape.wellFormed`.
 
-We use a typeclass (instead of passing a `well_formed` proof everywhere) because it mirrors how
+We use a typeclass (instead of passing a `wellFormed` proof everywhere) because it mirrors how
 other "side conditions" are handled in the library: call sites stay clean, and instances can be
 provided locally (e.g. `letI : Shape.WellFormed s := ...`) when needed.
 -/
@@ -816,7 +1062,7 @@ instance {n s} [Shape.WellFormed s] [NeZero n] : Shape.WellFormed (.dim n s) :=
 /-- Infer nonemptiness of any valid axis from `WellFormed s`. -/
 theorem inferNonemptyAxis {s : Shape} [hw : WellFormed s] {axis : Nat}
     (hAxis : axis < s.rank) : HasNonemptyAxis axis s :=
-  hasNonemptyAxisOfWellFormed hw.proof hAxis
+  hasNonemptyAxis_of_wellFormed hw.proof hAxis
 
 /-!
 `padLeft n s` prepends `n` singleton dimensions to a shape.
@@ -829,14 +1075,24 @@ def padLeft : Nat → Shape → Shape
 | 0, s => s
 | (n+1), s => dim 1 (padLeft n s)
 
--- Padding with leading `1`s increases rank by exactly `n`.
 /-- `padLeft n s` increases the rank by exactly `n`. -/
-theorem padLeft_rank : ∀ n s, (padLeft n s).rank = n + s.rank
-| 0, s => by simp [padLeft]
-| n+1, s => by
-  simp [padLeft, rank]
-  rw [padLeft_rank n]
-  grind
+@[simp] theorem rank_padLeft (n : Nat) (s : Shape) : (padLeft n s).rank = s.rank + n := by
+  induction n with
+  | zero => rfl
+  | succ n ih => simp only [padLeft, rank, ih, Nat.add_assoc]
+
+/-- Leading singleton axes do not change the number of scalar entries. -/
+@[simp] theorem size_padLeft (n : Nat) (s : Shape) : (padLeft n s).size = s.size := by
+  induction n with
+  | zero => rfl
+  | succ n ih => simp [padLeft, size, ih]
+
+/-- The list view of a padded shape prepends `n` ones. -/
+theorem padLeft_eq_replicate_append (n : Nat) (s : Shape) :
+    padLeft n s = List.replicate n 1 ++ s := by
+  induction n with
+  | zero => rfl
+  | succ n ih => simp [padLeft, ih, List.replicate_succ]
 
 end Shape
 end Spec

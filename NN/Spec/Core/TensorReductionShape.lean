@@ -6,11 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.TensorReductionShape.ShapeChange
 public import NN.Spec.Core.TensorReductionShape.Broadcasting
-public import NN.Spec.Core.TensorReductionShape.Reductions
-public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
 public import NN.Spec.Core.TensorReductionShape.ConcatSlice
+public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
+public import NN.Spec.Core.TensorReductionShape.Reductions
+public import NN.Spec.Core.TensorReductionShape.ShapeChange
 
 /-!
 # Tensor Reductions and Shape Helpers

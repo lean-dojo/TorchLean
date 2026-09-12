@@ -20,8 +20,8 @@ GraphSpec primitives are **operation adapters**, not models:
 
 The small always-available primitives (`linear`, `relu`, `softmax`) live in
 `NN.GraphSpec.Core` because they are part of the minimal sequential DSL examples and lowering
-interface. Larger domain-specific packs live under `NN.GraphSpec.Primitives/*` so the core language does
-not turn into a catalog of every layer TorchLean supports.
+interface. Larger domain-specific packs live under `NN.GraphSpec.Primitives/*` so the core
+language does not turn into a catalog of every layer TorchLean supports.
 
 Current extension pack:
 

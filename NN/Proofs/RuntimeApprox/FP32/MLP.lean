@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.FP32.Layers
+public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Unary
 
 /-!
 # FP32 MLP Approximation
@@ -17,6 +18,10 @@ for small MLP patterns that show up frequently in examples and verification pipe
 The theorems here are intentionally architecture-shaped rather than fully generic. They are the
 readable bridge lemmas that downstream verification examples can cite: “this whole FP32 MLP is
 within some explicit real error budget of the corresponding real-spec MLP.”
+
+The `_fp32` suffix refers to the rounded-real model `TorchLean.Floats.FP32 := NF binaryRadix fexp32
+rnd32`, not to Lean's `Float32` or to the bit-level `IEEE32Exec` model. The bridge from this model
+to bit-level binary32 arithmetic lives in `NN/Floats/IEEEExec/Bridge/FP32`.
 -/
 
 @[expose] public section
@@ -24,8 +29,8 @@ within some explicit real error budget of the corresponding real-spec MLP.”
 
 namespace NN.Proofs.RuntimeApprox.FP32
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 
 open _root_.Proofs
 open _root_.Proofs.RuntimeApprox
@@ -56,9 +61,9 @@ Compositional FP32 approximation theorem for a 3-layer tanh MLP:
 
 `Linear → tanh → Linear → tanh → Linear`.
 
-Each parameter/input hypothesis is an `approxTensor` statement comparing the real-spec tensor with the
-FP32 runtime tensor. The conclusion exposes the composed `tanhMlp3ErrorBudget`, built from the NF
-backend's matrix-vector, activation, and addition bounds.
+Each parameter/input hypothesis is an `approxTensor` statement comparing the real-spec tensor with
+the FP32 runtime tensor. The conclusion exposes the composed `tanhMlp3ErrorBudget`, built from the
+NF backend's matrix-vector, activation, and addition bounds.
 -/
 theorem approxTensor_tanhMlp3_fp32 {d0 d1 d2 d3 : Nat}
     {L0S : LinearSpec ℝ d0 d1} {L1S : LinearSpec ℝ d1 d2} {L2S : LinearSpec ℝ d2 d3}
@@ -191,7 +196,7 @@ Compositional FP32 approximation theorem for a 2-layer ReLU MLP:
 This is the network-level bound consumed by the CROWN/IBP integration in
 `NN.Proofs.RuntimeApprox.FP32.CROWN`.
 -/
-theorem approxTensor_reluTwoLayerMlp_float32 {d0 d1 d2 : Nat}
+theorem approxTensor_reluTwoLayerMlp_fp32 {d0 d1 d2 : Nat}
     {L0S : LinearSpec ℝ d0 d1} {L1S : LinearSpec ℝ d1 d2}
     {L0R : LinearSpec R d0 d1} {L1R : LinearSpec R d1 d2}
     {xS : SpecTensor [d0]} {xR : Tensor R [d0]}

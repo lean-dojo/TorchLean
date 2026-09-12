@@ -25,8 +25,8 @@ namespace Tests
 namespace Cuda
 namespace GatherScatter
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Runtime.Autograd
 
 def runGatherVec : IO Unit := do
@@ -37,7 +37,7 @@ def runGatherVec : IO Unit := do
   let sX : Shape := [n]
   let sY : Shape := [k]
   let x : Tensor Float sX :=
-    tensorOfArray! [n] #[0.10, -0.20, 0.30, 0.40, -0.50]
+    (Tensor.from #[0.10, -0.20, 0.30, 0.40, -0.50]).reshape [n] (by dsimp; decide)
   let indices : Fin k → Fin n :=
     ![⟨0, by decide⟩, ⟨2, by decide⟩, ⟨4, by decide⟩]
   let idx : Tensor (Fin n) [k] := Tensor.ofFn indices
@@ -48,7 +48,7 @@ def runGatherVec : IO Unit := do
   let (t2, yId) ← Utils.okOrThrow
     (Tape.indexSelect (α := Float) (s := sX) (t := t1) xId 0 k idx)
   let yCpu ← Utils.cpuValue (s := sY) t2 yId
-  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (fill (1.0 : Float) sY)
+  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (Tensor.full sY (1.0 : Float))
   let gradsCpu ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t2) yId seedCpu)
   let dxCpu ← Utils.cpuGrad (s := sX) gradsCpu xId
 
@@ -73,8 +73,8 @@ def runScatterVec : IO Unit := do
 
   let n : Nat := 5
   let sX : Shape := [n]
-  let x : Tensor Float sX := tensorOfArray! [n] #[1.0, 2.0, 3.0, 4.0, 5.0]
-  let v : Tensor Float [1] := tensorOfArray! [1] #[0.7]
+  let x : Tensor Float sX := (Tensor.from #[1.0, 2.0, 3.0, 4.0, 5.0]).reshape [n] (by dsimp; decide)
+  let v : Tensor Float [1] := (Tensor.from #[0.7]).reshape [1] (by dsimp; decide)
   let i : Fin n := ⟨2, by decide⟩
   let idx : Tensor (Fin n) [1] := Tensor.ofFn (fun _ => i)
 
@@ -85,7 +85,7 @@ def runScatterVec : IO Unit := do
   let (t3, yId) ← Utils.okOrThrow
     (Tape.scatterAdd (α := Float) (s := sX) (t := t2) xId vId 0 1 idx)
   let yCpu ← Utils.cpuValue (s := sX) t3 yId
-  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (fill (1.0 : Float) sX)
+  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (Tensor.full sX (1.0 : Float))
   let gradsCpu ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t3) yId seedCpu)
   let dxCpu ← Utils.cpuGrad (s := sX) gradsCpu xId
   let dvCpu ← Utils.cpuGrad (s := [1]) gradsCpu vId
@@ -119,11 +119,11 @@ def runGatherRows : IO Unit := do
   let sX : Shape := [rows, cols]
   let sY : Shape := [k, cols]
   let x : Tensor Float sX :=
-    tensorOfArray! [rows, cols] #[
+    (Tensor.from #[
       0.10, 0.20,
       -0.30, 0.40,
       0.50, -0.60
-    ]
+    ]).reshape [rows, cols] (by dsimp; decide)
   let indices : Fin k → Fin rows := ![⟨0, by decide⟩, ⟨2, by decide⟩]
   let idx : Tensor (Fin rows) [k] := Tensor.ofFn indices
 
@@ -133,7 +133,7 @@ def runGatherRows : IO Unit := do
   let (t2, yId) ← Utils.okOrThrow
     (Tape.indexSelect (α := Float) (s := sX) (t := t1) xId 0 k idx)
   let yCpu ← Utils.cpuValue (s := sY) t2 yId
-  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (fill (1.0 : Float) sY)
+  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (Tensor.full sY (1.0 : Float))
   let gradsCpu ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t2) yId seedCpu)
   let dxCpu ← Utils.cpuGrad (s := sX) gradsCpu xId
 
@@ -160,13 +160,13 @@ def runScatterRow : IO Unit := do
   let cols : Nat := 2
   let sX : Shape := [rows, cols]
   let x : Tensor Float sX :=
-    tensorOfArray! [rows, cols] #[
+    (Tensor.from #[
       1.0, 2.0,
       3.0, 4.0,
       5.0, 6.0
-    ]
+    ]).reshape [rows, cols] (by dsimp; decide)
   let v : Tensor Float [1, cols] :=
-    tensorOfArray! [1, cols] #[0.25, -0.50]
+    (Tensor.from #[0.25, -0.50]).reshape [1, cols] (by dsimp; decide)
   let i : Fin rows := ⟨1, by decide⟩
   let idx : Tensor (Fin rows) [1] := Tensor.ofFn (fun _ => i)
 
@@ -177,7 +177,7 @@ def runScatterRow : IO Unit := do
   let (t3, yId) ← Utils.okOrThrow
     (Tape.scatterAdd (α := Float) (s := sX) (t := t2) xId vId 0 1 idx)
   let yCpu ← Utils.cpuValue (s := sX) t3 yId
-  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (fill (1.0 : Float) sX)
+  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (Tensor.full sX (1.0 : Float))
   let gradsCpu ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t3) yId seedCpu)
   let dxCpu ← Utils.cpuGrad (s := sX) gradsCpu xId
   let dvCpu ← Utils.cpuGrad (s := [1, cols]) gradsCpu vId

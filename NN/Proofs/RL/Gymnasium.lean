@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.RL.Gymnasium
 public import NN.Proofs.RL.Boundary
+public import NN.Runtime.RL.Gymnasium.Session
 
 /-!
 # Gymnasium Trust-Boundary Wrappers (Proof Layer)
@@ -32,8 +32,8 @@ namespace Runtime
 namespace RL
 namespace Gymnasium
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Session
 
@@ -44,7 +44,8 @@ the client’s trust-boundary contract.
 def stepCheckedWithProof {obsShape : Shape} {nActions : Nat}
     (s : Session obsShape nActions) (action : Fin nActions) (resetOnDone : Bool := true) :
     IO ({t : Boundary.Transition obsShape nActions //
-          Boundary.ContractHolds (obsShape := obsShape) (nActions := nActions) s.client.contract t} ×
+          Boundary.ContractHolds (obsShape := obsShape) (nActions := nActions)
+            s.client.contract t} ×
         Session obsShape nActions) := do
   let obs := s.observation
   let (obs', reward, terminated, truncated) ← Client.Internal.step s.client action.1
@@ -53,7 +54,8 @@ def stepCheckedWithProof {obsShape : Shape} {nActions : Nat}
         obs obs' action reward terminated truncated with
   | .ok t =>
       have ht :
-          Boundary.ContractHolds (obsShape := obsShape) (nActions := nActions) s.client.contract t :=
+          Boundary.ContractHolds (obsShape := obsShape) (nActions := nActions)
+            s.client.contract t :=
         Proofs.RL.Boundary.contractHolds_of_checkTransitionFin_eq_ok (c := s.client.contract)
           (observation := obs) (nextObservation := obs') (action := action) (reward := reward)
           (terminated := terminated) (truncated := truncated) (t := t) h

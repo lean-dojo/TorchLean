@@ -14,7 +14,6 @@ public import NN.Widgets.IR.Graph
 public import NN.Widgets.IR.Rewrite
 public import NN.Widgets.IR.ShapeInference
 public import NN.Widgets.Interop.PyTorchTranslator
-public import NN.Widgets.Models.Sequence.Gpt2
 public import NN.Widgets.Numerics.Float32
 public import NN.Widgets.RL.GridWorld
 public import NN.Widgets.RL.Boundary

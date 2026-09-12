@@ -65,8 +65,8 @@ Helper: turn a plain absolute-error inequality into an `approxR` with an absolut
 Informally, if $|y-x|\le\varepsilon$ and $\varepsilon\ge 0$, then
 `x ≈[absOnly eps] y`.
 -/
-private lemma approxR_absOnly_of_abs_sub_le {x y eps : ℝ} (heps : 0 ≤ eps) (h : abs (y - x) ≤ eps) :
-    approxR x y (ApproxTol.absOnly eps) :=
+private theorem approxR_absOnly_of_abs_sub_le {x y eps : ℝ} (heps : 0 ≤ eps)
+    (h : abs (y - x) ≤ eps) : approxR x y (ApproxTol.absOnly eps) :=
   (approxR_absOnly_iff (x := x) (y := y) (eps := eps) heps).2 h
 
 /--
@@ -74,7 +74,7 @@ Nonnegativity of the FP32 half-ULP scale `eps32`.
 
 This is needed to use `approxR_absOnly_iff`, which requires $\varepsilon\ge 0$.
 -/
-private lemma eps32_nonneg (x : ℝ) : 0 ≤ eps32 x := by
+private theorem eps32_nonneg (x : ℝ) : 0 ≤ eps32 x := by
   -- Unfold to the underlying `neural_ulp` so we can reuse its nonnegativity lemma.
   unfold eps32 ulp32
   exact div_nonneg

@@ -6,8 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.RL.Numerics.Float32.Returns
 public import NN.Spec.Core.FloatInstances
+public import NN.Runtime.RL.Numerics.Float32.Returns
+public import NN.Spec.Core.Tensor.Numerics
 
 /-!
 # Checked Float32 TD Residuals, GAE, and Advantage Normalization
@@ -29,8 +30,8 @@ namespace RL
 namespace Numerics
 namespace Float32
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Spec.RL
 
 open TorchLean.Floats
@@ -39,9 +40,9 @@ open TorchLean.Floats.IEEE754
 /-!
 ## Checked value-learning and advantage-estimation building blocks (IEEE32Exec)
 
-These helpers are “PPO-shaped” but still live in `Runtime.RL.Numerics.Float32` because they are useful as
-general diagnostics/hardening tools whenever you want an explicit float32 execution semantics plus
-checked finiteness.
+These helpers are “PPO-shaped” but still live in `Runtime.RL.Numerics.Float32` because they are
+useful as general diagnostics/hardening tools whenever you want an explicit float32 execution
+semantics plus checked finiteness.
 -/
 
 /--
@@ -104,7 +105,8 @@ theorem tdResidual_eq_ok
         simp [tdResidualChecked, htarget] at h'
       exact this.elim
   | ok target =>
-      -- The `.ok` TD residual means the value finiteness check and subsequent checked subtraction succeeded.
+      -- The `.ok` TD residual means the value finiteness check and the subsequent checked
+      -- subtraction both succeeded.
       have hval : TorchLean.Floats.IEEE754.IEEE32Exec.isFinite value = true := by
         cases hf : TorchLean.Floats.IEEE754.IEEE32Exec.isFinite value with
         | true =>
@@ -122,8 +124,8 @@ theorem tdResidual_eq_ok
       -- Pull out the discounted-backup finiteness hypotheses and spec equality.
       obtain ⟨h₁, h₂, h₃, htargetEq⟩ :=
         discountedBackup_eq_ok
-          (reward := reward) (gamma := gamma) (bootstrap := nextValue) (done := done) (out := target)
-          htarget
+          (reward := reward) (gamma := gamma) (bootstrap := nextValue) (done := done)
+          (out := target) htarget
 
       -- Now handle the checked subtraction.
       set out0 : Float32Exec := TorchLean.Floats.IEEE754.IEEE32Exec.sub target value
@@ -160,7 +162,7 @@ theorem tdResidual_eq_ok
 Checked fixed-horizon Generalized Advantage Estimation ($\operatorname{GAE}(\lambda)$), specialized
 to `IEEE32Exec`.
 
-This is the checked/finite counterpart to `Runtime.RL.Core.generalizedAdvantageEstimationTensor`.
+This is the checked/finite counterpart to `Runtime.RL.Core.generalizedAdvantageEstimation`.
 
 Reference:
 - Schulman et al., "High-Dimensional Continuous Control Using Generalized Advantage Estimation"
@@ -171,35 +173,21 @@ def generalizedAdvantageEstimationChecked {n : Nat}
     (rewards values nextValues : Tensor Float32Exec [n])
     (dones : Tensor Bool [n]) :
     Except String (Tensor Float32Exec [n]) := do
-  let rArr : Array Float32Exec :=
-    Array.ofFn (fun i : Fin n => Tensor.item (get rewards i))
-  let vArr : Array Float32Exec :=
-    Array.ofFn (fun i : Fin n => Tensor.item (get values i))
-  let nvArr : Array Float32Exec :=
-    Array.ofFn (fun i : Fin n => Tensor.item (get nextValues i))
-  let dArr : Array Bool :=
-    Array.ofFn (fun i : Fin n => Tensor.item (get dones i))
-
-  let mut out : Array Float32Exec := Array.replicate n (0 : Float32Exec)
-  let mut advNext : Float32Exec := 0
-  for t in [0:n] do
-    let idx := n - 1 - t
-    let done := dArr[idx]!
+  let indices : Tensor (Fin n) [n] := Tensor.ofFn id
+  Tensor.scanrM (fun idx advNext => do
+    let done := dones[idx]
     let mask : Float32Exec := continueMask (α := Float32Exec) done
     -- delta = r + γ * mask * nextValue - value
     let t1 ← checkedMul "gae/mul(gamma,mask)" gamma mask
-    let t2 ← checkedMul "gae/mul(t1,nextValue)" t1 (nvArr[idx]!)
-    let t3 ← checkedAdd "gae/add(reward,t2)" (rArr[idx]!) t2
-    let delta ← checkedSub "gae/sub(t3,value)" t3 (vArr[idx]!)
+    let t2 ← checkedMul "gae/mul(t1,nextValue)" t1 nextValues[idx]
+    let t3 ← checkedAdd "gae/add(reward,t2)" rewards[idx] t2
+    let delta ← checkedSub "gae/sub(t3,value)" t3 values[idx]
     -- adv = delta + γ * λ * mask * advNext
     let u1 ← checkedMul "gae/mul(gamma,lam)" gamma lam
     let u2 ← checkedMul "gae/mul(u1,mask)" u1 mask
     let u3 ← checkedMul "gae/mul(u2,advNext)" u2 advNext
     let adv ← checkedAdd "gae/add(delta,u3)" delta u3
-    advNext := adv
-    out := out.set! idx adv
-
-  pure <| Tensor.dim (fun i : Fin n => Tensor.scalar (out[i.val]!))
+    pure adv) 0 indices
 
 /--
 Checked z-score normalization (mean-center then divide by standard deviation), specialized to
@@ -208,8 +196,8 @@ Checked z-score normalization (mean-center then divide by standard deviation), s
 This is used by PPO to normalize advantages.
 
 Implementation note:
-we reuse `Spec.normalize_zscore_spec` for the math, but additionally enforce that all outputs are
-finite. If the computed standard deviation is zero, `normalize_zscore_spec` returns the centered
+we reuse `Spec.normalizeZscoreSpec` for the math, but additionally enforce that all outputs are
+finite. If the computed standard deviation is zero, `normalizeZscoreSpec` returns the centered
 vector, which is still validated for finiteness here.
 -/
 def normalizeZScoreChecked {n : Nat}

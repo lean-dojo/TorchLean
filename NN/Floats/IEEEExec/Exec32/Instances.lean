@@ -6,8 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Exec32.Transcendentals
 public import NN.Core.Numeric
+public import NN.Floats.IEEEExec.Exec32.Transcendentals
+public import Mathlib.Order.Basic
 
 /-!
 # IEEE32 Executable Instances
@@ -268,23 +269,6 @@ instance : MathFunctions IEEE32Exec where
   cos x := IEEE32Exec.cos x
   sin x := IEEE32Exec.sin x
   sinh x := IEEE32Exec.sinh x
-
-/-- Numeric constants used by the spec library, instantiated at binary32. -/
-instance : Numbers IEEE32Exec where
-  negHalf := ofFloat (-0.5)
-  negOne := ofFloat (-1)
-  oneTenth := ofFloat 0.1
-  half := ofFloat 0.5
-  zero := posZero
-  one := ofBits 0x3F800000
-  two := ofFloat 2
-  three := ofFloat 3
-  four := ofFloat 4
-  five := ofFloat 5
-  ten := ofFloat 10
-  lnTen := ofFloat (Float.log 10)
-  lnTenThousand := ofFloat (Float.log 10000)
-  epsilon := ofFloat (1e-6)
 
 end IEEE32Exec
 

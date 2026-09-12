@@ -26,15 +26,15 @@ Activation Functions", NeurIPS 2018, arXiv:1811.00866.
 
 namespace NN.MLTheory.CROWN.Operators.Activations
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.MLTheory.CROWN
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Leaky ReLU with slope `negSlope` on the non-positive branch. -/
 def leakyRelu (negSlope : α) (x : α) : α :=
-  if x > Numbers.zero then x else negSlope * x
+  if x > 0 then x else negSlope * x
 
 /-- Minimum of two values using the executable scalar order. -/
 def min2 (x y : α) : α :=
@@ -48,24 +48,22 @@ def max2 (x y : α) : α :=
 def ibpLeakyReluScalar (negSlope : α) (lo hi : α) : α × α :=
   let flo := leakyRelu negSlope lo
   let fhi := leakyRelu negSlope hi
-  if negSlope > Numbers.zero then
+  if negSlope > 0 then
     (flo, fhi)
-  else if (!(lo > Numbers.zero)) && (!(hi < Numbers.zero)) then
-    (min2 (min2 flo fhi) Numbers.zero, max2 (max2 flo fhi) Numbers.zero)
+  else if (!(lo > 0)) && (!(hi < 0)) then
+    (min2 (min2 flo fhi) 0, max2 (max2 flo fhi) 0)
   else
     (min2 flo fhi, max2 flo fhi)
 
 /-- Apply `ibpLeakyReluScalar` coordinatewise to a vector box. -/
 def ibpLeakyRelu (n : Nat) (negSlope : α) (box : Box α (.dim n .scalar)) :
     Box α (.dim n .scalar) :=
-  match box.lo, box.hi with
-  | .dim lo, .dim hi =>
-    { lo := Tensor.dim fun i =>
-        match lo i, hi i with
-        | .scalar l, .scalar u => Tensor.scalar (ibpLeakyReluScalar negSlope l u).1
-      hi := Tensor.dim fun i =>
-        match lo i, hi i with
-        | .scalar l, .scalar u => Tensor.scalar (ibpLeakyReluScalar negSlope l u).2 }
+  { lo := Tensor.dim fun i =>
+      Tensor.scalar (ibpLeakyReluScalar negSlope
+        (box.lo.getScalar i) (box.hi.getScalar i)).1
+    hi := Tensor.dim fun i =>
+      Tensor.scalar (ibpLeakyReluScalar negSlope
+        (box.lo.getScalar i) (box.hi.getScalar i)).2 }
 
 /--
 Lower and upper affine forms for Leaky ReLU on `[lo, hi]`, returned as
@@ -75,28 +73,28 @@ For a crossing interval the function is convex when `negSlope ≤ 1` and concave
 `negSlope > 1`; the secant and branch support exchange roles accordingly.
 -/
 def affLeakyRelu (negSlope : α) (lo hi : α) : α × α × α × α :=
-  if lo > Numbers.zero then
-    (Numbers.one, Numbers.zero, Numbers.one, Numbers.zero)
-  else if hi < Numbers.zero then
-    (negSlope, Numbers.zero, negSlope, Numbers.zero)
+  if lo > 0 then
+    (1, 0, 1, 0)
+  else if hi < 0 then
+    (negSlope, 0, negSlope, 0)
   else if !(hi > lo) then
-    (Numbers.zero, Numbers.zero, Numbers.zero, Numbers.zero)
+    (0, 0, 0, 0)
   else
     let secantSlope := (hi - negSlope * lo) / (hi - lo)
-    let secantBias := hi * (Numbers.one - secantSlope)
-    if negSlope > Numbers.one then
-      (secantSlope, secantBias, negSlope, Numbers.zero)
+    let secantBias := hi * (1 - secantSlope)
+    if negSlope > 1 then
+      (secantSlope, secantBias, negSlope, 0)
     else
-      (negSlope, Numbers.zero, secantSlope, secantBias)
+      (negSlope, 0, secantSlope, secantBias)
 
 /-- Range of the two branch derivatives over an interval. -/
 def derivLeakyRelu (negSlope : α) (lo hi : α) : α × α :=
-  if lo > Numbers.zero then
-    (Numbers.one, Numbers.one)
-  else if hi < Numbers.zero then
+  if lo > 0 then
+    (1, 1)
+  else if hi < 0 then
     (negSlope, negSlope)
   else
-    (if negSlope < Numbers.one then negSlope else Numbers.one,
-     if negSlope > Numbers.one then negSlope else Numbers.one)
+    (if negSlope < 1 then negSlope else 1,
+     if negSlope > 1 then negSlope else 1)
 
 end NN.MLTheory.CROWN.Operators.Activations

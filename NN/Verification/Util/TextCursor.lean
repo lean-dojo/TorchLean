@@ -6,7 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.String.Basic
+public import Aesop.BuiltinRules
+import Mathlib.Tactic.Attr.Core
+import Mathlib.Tactic.Finiteness.Attr
+import Mathlib.Tactic.ToAdditive
+import Mathlib.Tactic.ToDual
 
 /-!
 # Text cursor primitives for verification parsers
@@ -45,7 +49,7 @@ structure Cursor where
 
 /-- ASCII whitespace accepted by the verification expression languages. -/
 def isWhitespace (char : Char) : Bool :=
-  char = ' ' || char = '\t' || char = '\n'
+  char.isWhitespace
 
 /-- Skip characters satisfying `predicate`, bounded by explicit recursion fuel. -/
 def skipWhileFuel (predicate : Char → Bool) : Nat → Cursor → Cursor
@@ -70,9 +74,9 @@ def takeWhileFuel (fuel : Nat) (predicate : Char → Bool) (accumulator : String
             (accumulator, cursor)
       | none => (accumulator, cursor)
 
-/-- Convert a nonempty string of decimal digits to a natural number. -/
+/-- Convert decimal digits to a natural number, rejecting empty or nondigit input. -/
 def decimalNat (text : String) : Except String Nat :=
-  if text = "" then
+  if text.isEmpty || !text.toList.all Char.isDigit then
     .error "expected natural number"
   else
     .ok <| text.toList.foldl
@@ -85,7 +89,7 @@ def parseNat (fuel : Nat) (cursor : Cursor) : Except String (Nat × Cursor) := d
   let value ← decimalNat text
   pure (value, cursor)
 
-/-- Parse a signed decimal `Float` without scientific notation. -/
+/-- Parse a finite signed decimal `Float` without scientific notation. -/
 def parseFloat (fuel : Nat) (cursor : Cursor) : Except String (Float × Cursor) := do
   let cursor := skipWhileFuel isWhitespace fuel cursor
   let (sign, cursor) :=
@@ -110,6 +114,9 @@ def parseFloat (fuel : Nat) (cursor : Cursor) : Except String (Float × Cursor) 
           let denominator := Nat.pow 10 fractionText.length
           (Float.ofNat numerator / Float.ofNat denominator, cursor)
     | _ => (0.0, cursor)
-  pure (sign * (integerValue + fractionValue), cursor)
+  let value := sign * (integerValue + fractionValue)
+  if !value.isFinite then
+    throw "number is outside the finite Float range"
+  pure (value, cursor)
 
 end NN.Verification.Util.TextCursor

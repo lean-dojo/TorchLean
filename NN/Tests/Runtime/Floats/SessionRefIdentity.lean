@@ -6,16 +6,17 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.TorchLean.Session.Autograd
+public import NN.Runtime.Autograd.Model.Session.Autograd
+public import NN.Runtime.Autograd.Model.Session.Ops
 
 /-! Regression checks for session-reference ownership and CUDA cache cleanup. -/
 
 @[expose] public section
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Runtime.Autograd
-open Runtime.Autograd.TorchLean
+open Runtime.Autograd.Model
 
 namespace Tests.Floats.SessionRefIdentity
 
@@ -26,11 +27,11 @@ def expectFailure {α : Type} (label : String) (action : IO α) : IO Unit := do
   catch _ =>
     pure true
   unless failed do
-    throw <| IO.userError s!"{label}: expected an ownership failure"
+    throw <| IO.userError s!"{label}: expected failure"
 
 def checkExecutionMode (execution : Torch.ExecutionMode) : IO Unit := do
-  let first ← Session.new (α := Float) (opts := { execution := execution })
-  let second ← Session.new (α := Float) (opts := { execution := execution })
+  let first ← Session.new (α := Float) (options := { execution := execution })
+  let second ← Session.new (α := Float) (options := { execution := execution })
   let firstRef ← Session.input first (Tensor.scalar 1.0)
   let secondRef ← Session.input second (Tensor.scalar 2.0)
   expectFailure "cross-session tensor op" <| Session.add second firstRef secondRef
@@ -60,5 +61,8 @@ def run : IO Unit := do
   checkExecutionMode .eager
   checkExecutionMode .typedGraph
   checkCudaCacheClear
+  for device in [NN.Backend.Device.cuda, .metal, .custom] do
+    expectFailure "typed graph unsupported device" <|
+      Session.new (α := Float) { execution := .typedGraph, device }
 
 end Tests.Floats.SessionRefIdentity

@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Rat.Floor
 public import NN.Floats.Arb.Oracle
 public import NN.Floats.IEEEExec.DirectedRoundingSoundness.Division
 public import NN.Floats.Interval.IEEEExec32

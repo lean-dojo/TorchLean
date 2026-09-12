@@ -21,9 +21,9 @@ shape-indexed `Spec.Module` for composition and source export.
 
 namespace Spec.Module
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Add α] [Mul α] [Zero α]
+variable {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
 /-- A linear layer as a mathematical module. -/
 def linear {inDim outDim : Nat}
   (m : Spec.LinearSpec α inDim outDim) :

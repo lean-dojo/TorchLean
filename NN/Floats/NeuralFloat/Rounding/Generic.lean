@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.NeuralFloat.Format.Generic
+public import NN.Floats.NeuralFloat.Rounding.Core
 public import NN.Floats.NeuralFloat.Rounding.Properties
 
 /-!
@@ -204,6 +205,8 @@ theorem neural_generic_format_round_pos (rnd : ℝ → ℤ) [NeuralValidRnd rnd]
 /-- Conjugate a rounding rule by negation. -/
 def neuralNegRound (rnd : ℝ → ℤ) : ℝ → ℤ := fun x => -rnd (-x)
 
+/-- Negation-conjugating a valid rounding rule leaves it valid, which is how the "down" and "up"
+directions are obtained from one another rather than proved twice. -/
 instance neuralNegRoundValid (rnd : ℝ → ℤ) [NeuralValidRnd rnd] :
     NeuralValidRnd (neuralNegRound rnd) where
   monotone := by

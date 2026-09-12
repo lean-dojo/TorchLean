@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.RL.Replay
 public import NN.Runtime.RL.Algorithms.ValueLearning
+public import NN.Tensor.Reductions
 
 /-!
 # DQN Minibatch Helpers
@@ -16,7 +16,7 @@ public import NN.Runtime.RL.Algorithms.ValueLearning
 adds the missing batch-facing layer used by replay-buffer training loops:
 
 - evaluate one transition with caller-provided online/target Q-functions;
-- average DQN or Double-DQN losses over an `Array` minibatch;
+- average DQN or Double-DQN losses as a tensor over a replay minibatch;
 - soft-update scalar parameters for target networks.
 
 The functions are intentionally higher-order: TorchLean examples can pass typed-graph/eager model
@@ -37,17 +37,10 @@ namespace Runtime
 namespace RL
 namespace DQN
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
-
-/-- Average an array of scalar losses, returning `0` for an empty minibatch. -/
-def meanArray (xs : Array α) : α :=
-  if xs.isEmpty then
-    0
-  else
-    xs.foldl (fun acc x => acc + x) 0 / (xs.size : α)
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- One-transition DQN squared TD loss from online and target Q-functions. -/
 def transitionMSELoss {obsShape : Shape} {nActions : Nat}
@@ -94,21 +87,24 @@ def minibatchMSELoss {obsShape : Shape} {nActions : Nat}
     (onlineQ targetQ : Tensor α obsShape → Tensor α [nActions])
     (gamma : α)
     (batch : Array (Core.Transition α obsShape nActions)) : α :=
-  meanArray (α := α) <| batch.map (transitionMSELoss (α := α) onlineQ targetQ gamma)
+  (Tensor.ofFn fun index : Fin batch.size =>
+    transitionMSELoss (α := α) onlineQ targetQ gamma batch[index]).mean
 
 /-- Mean DQN Huber TD loss over a replay minibatch. -/
 def minibatchHuberLoss {obsShape : Shape} {nActions : Nat}
     (onlineQ targetQ : Tensor α obsShape → Tensor α [nActions])
     (gamma : α) (delta : α := 1)
     (batch : Array (Core.Transition α obsShape nActions)) : α :=
-  meanArray (α := α) <| batch.map (transitionHuberLoss (α := α) onlineQ targetQ gamma delta)
+  (Tensor.ofFn fun index : Fin batch.size =>
+    transitionHuberLoss (α := α) onlineQ targetQ gamma delta batch[index]).mean
 
 /-- Mean Double-DQN Huber TD loss over a replay minibatch. -/
 def minibatchDoubleHuberLoss {obsShape : Shape} {nActions : Nat}
     (onlineQ targetQ : Tensor α obsShape → Tensor α [nActions])
     (gamma : α) (delta : α := 1)
     (batch : Array (Core.Transition α obsShape nActions)) : α :=
-  meanArray (α := α) <| batch.map (transitionDoubleHuberLoss (α := α) onlineQ targetQ gamma delta)
+  (Tensor.ofFn fun index : Fin batch.size =>
+    transitionDoubleHuberLoss (α := α) onlineQ targetQ gamma delta batch[index]).mean
 
 /--
 Soft target-network update for a single scalar:

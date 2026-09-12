@@ -6,15 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Group.Unbundled.Abs
-public import Mathlib.Analysis.Complex.Exponential
-public import Mathlib.Analysis.Complex.Trigonometric
-public import Mathlib.Analysis.Real.Sqrt
-public import Mathlib.Analysis.SpecialFunctions.Log.Basic
-public import Mathlib.Analysis.SpecialFunctions.Pow.Real
-public import Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic
-public import Mathlib.Data.Real.Basic
-
 /-!
 # Foundational Numeric Interfaces
 
@@ -22,9 +13,14 @@ This module contains the small scalar interfaces shared by TorchLean's floating-
 its tensor specifications. It deliberately knows nothing about tensors, models, runtimes, or
 verification.
 
-`MathFunctions` names the transcendental operations used by numerical code. `Numbers` collects the
-few non-integral constants needed by scalar-polymorphic model definitions. The broader neural-model
-interface, `Context`, lives in `NN.Spec.Core.Context` and extends these foundations.
+`MathFunctions` names the transcendental operations used by numerical code. Integer and rational
+constants use the standard numerical interfaces. The broader neural-model interface, `Context`,
+lives in `NN.Spec.Core.Context`.
+
+Nothing here depends on Mathlib. That is deliberate: most of the library is scalar-polymorphic or
+runs on `Float`, and only the specification layer ever needs the exact reals. The `ℝ` instances
+therefore live in `NN.Core.Numeric.Real`, so that modules which never mention `ℝ` do not pay for
+loading the real-analysis hierarchy.
 -/
 
 @[expose] public section
@@ -42,42 +38,17 @@ class MathFunctions (α : Type) where
   sin : α → α
   sinh : α → α
 
-/-- Common scalar constants used by scalar-polymorphic model definitions. -/
-class Numbers (α : Type) where
-  /-- Backend representation of `-0.5`. -/
-  negHalf : α
-  /-- Backend representation of `-1`. -/
-  negOne : α
-  /-- Backend representation of `0.1`. -/
-  oneTenth : α
-  /-- Backend representation of `0.5`. -/
-  half : α
-  one : α
-  zero : α
-  /-- Backend representation of `2`. -/
-  two : α
-  /-- Backend representation of `3`. -/
-  three : α
-  /-- Backend representation of `4`. -/
-  four : α
-  /-- Backend representation of `5`. -/
-  five : α
-  /-- Backend representation of `10`. -/
-  ten : α
-  /-- Backend representation of the natural logarithm of `10`. -/
-  lnTen : α
-  /-- Backend representation of the natural logarithm of `10000`. -/
-  lnTenThousand : α
-  /-- Backend-supplied tolerance for numerically guarded formulas. -/
-  epsilon : α
+namespace TorchLean
 
-namespace Numbers
+/-- Default normalization stabilizer, `1e-5`, evaluated in the selected scalar arithmetic.
 
-/-- The `1e-5` default used by PyTorch normalization layers. -/
-def normalizationEpsilon {α : Type} [Numbers α] [Mul α] [Div α] : α :=
-  one / (ten * ten * ten * ten * ten)
+The natural denominator is cast once, then division uses the backend. Arbitrary coarse grids need
+not agree with repeated multiplication by ten or with rounding the exact real value `1e-5` once.
+-/
+def normalizationEpsilon {α : Type} [One α] [NatCast α] [Div α] : α :=
+  1 / ((100000 : Nat) : α)
 
-end Numbers
+end TorchLean
 
 /-- Host implementations of the scalar transcendental interface. -/
 instance : MathFunctions Float where
@@ -105,82 +76,17 @@ instance : MathFunctions Float32 where
   sin := Float32.sin
   sinh := Float32.sinh
 
-/-- Exact-real interpretations of the scalar transcendental interface. -/
-noncomputable instance : MathFunctions ℝ where
-  exp := Real.exp
-  tanh := Real.tanh
-  cosh := Real.cosh
-  sinh := Real.sinh
-  sqrt := Real.sqrt
-  abs := fun x => |x|
-  log := Real.log
-  pi := Real.pi
-  cos := Real.cos
-  sin := Real.sin
+/-- Cast naturals into Lean's host `Float`. -/
+instance : NatCast Float where
+  natCast := Float.ofNat
 
-/-- Constants for Lean's host `Float`. -/
-instance : Numbers Float where
-  negHalf := -0.5
-  negOne := -1
-  oneTenth := 0.1
-  half := 0.5
-  zero := 0
-  one := 1
-  two := 2
-  three := 3
-  four := 4
-  five := 5
-  ten := 10
-  lnTen := Float.log 10
-  lnTenThousand := Float.log 10000
-  epsilon := 1e-6
+/-- Round naturals directly to binary32, without an intermediate binary64 rounding.
 
-/-- Constants rounded once to native binary32. -/
-instance : Numbers Float32 where
-  negHalf := (-0.5 : Float).toFloat32
-  negOne := (-1.0 : Float).toFloat32
-  oneTenth := (0.1 : Float).toFloat32
-  half := (0.5 : Float).toFloat32
-  zero := 0
-  one := 1
-  two := 2
-  three := 3
-  four := 4
-  five := 5
-  ten := 10
-  lnTen := Float32.log 10
-  lnTenThousand := Float32.log 10000
-  epsilon := (1e-6 : Float).toFloat32
-
-/-- Constants for exact-real specifications. -/
-noncomputable instance : Numbers ℝ where
-  negHalf := -0.5
-  negOne := -1
-  oneTenth := 0.1
-  half := 0.5
-  zero := 0
-  one := 1
-  two := 2
-  three := 3
-  four := 4
-  five := 5
-  ten := 10
-  lnTen := Real.log 10
-  lnTenThousand := Real.log 10000
-  epsilon := 1e-6
-
-/-- Coerce naturals into Lean's host `Float`. -/
-instance : Coe Nat Float where
-  coe := Float.ofNat
-
-/-- Coerce naturals into native binary32. -/
-instance : Coe Nat Float32 where
-  coe n := (Float.ofNat n).toFloat32
-
-/-- Coerce naturals into `ℝ`. -/
-instance : Coe Nat ℝ where
-  coe n := (n : ℕ)
-
-/-- Coerce naturals into `ℚ`. -/
-instance : Coe Nat ℚ where
-  coe n := (n : Nat)
+Machine-sized inputs use Lean's native integer conversion; larger naturals use its binary32 model.
+-/
+instance : NatCast Float32 where
+  natCast n :=
+    if n < UInt64.size then
+      (UInt64.ofNat n).toFloat32
+    else
+      Float32.ofModel (Float32.Model.ofNat n)

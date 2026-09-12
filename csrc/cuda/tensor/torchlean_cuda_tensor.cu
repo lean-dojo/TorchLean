@@ -452,13 +452,30 @@ __global__ void torchlean_abs_f32(const float* in, float* out, size_t n) {
 
 __global__ void torchlean_sqrt_f32(const float* in, float* out, size_t n) {
   TORCHLEAN_GRID_STRIDE_LOOP(i, n) {
-    out[i] = sqrtf(in[i]);
+    // Tensor.sqrtSpec takes the root of max(x, 0). Clamp before sqrtf so negative inputs
+    // return zero; the comparison also selects +0 for either signed zero and preserves NaNs.
+    const float v = in[i];
+    out[i] = sqrtf(v <= 0.0f ? 0.0f : v);
   }
 }
 
 __global__ void torchlean_exp_f32(const float* in, float* out, size_t n) {
   TORCHLEAN_GRID_STRIDE_LOOP(i, n) {
     out[i] = expf(in[i]);
+  }
+}
+
+// Angles are measured in radians. These are also the derivative factors used by the tape:
+// sine's VJP multiplies by cos(x), and cosine's VJP multiplies by -sin(x).
+__global__ void torchlean_sin_f32(const float* in, float* out, size_t n) {
+  TORCHLEAN_GRID_STRIDE_LOOP(i, n) {
+    out[i] = sinf(in[i]);
+  }
+}
+
+__global__ void torchlean_cos_f32(const float* in, float* out, size_t n) {
+  TORCHLEAN_GRID_STRIDE_LOOP(i, n) {
+    out[i] = cosf(in[i]);
   }
 }
 
@@ -583,6 +600,8 @@ __global__ void torchlean_abs_bwd_f32(const float* x, const float* dLdy, float* 
 __global__ void torchlean_sqrt_bwd_f32(const float* x, const float* dLdy, float* dLdx, size_t n) {
   TORCHLEAN_GRID_STRIDE_LOOP(i, n) {
     float v = x[i];
+    // The selected derivative is zero throughout the nonpositive branch, including the kink.
+    // Test the original input so we never divide by the clamped forward value at zero.
     if (v > 0.0f) {
       dLdx[i] = dLdy[i] * (1.0f / (2.0f * sqrtf(v)));
     } else {
@@ -783,9 +802,7 @@ __global__ void torchlean_bernoulli_mask_f32(float* out, size_t n, float keepPro
   TORCHLEAN_GRID_STRIDE_LOOP(i, n) {
     uint64_t z = torchlean_splitmix64(key + (uint64_t)i);
     uint32_t u = (uint32_t)z;
-    const double denom = 4294967296.0;
-    float u01 = (float)(((double)u) / denom);
-    out[i] = (keepProb > u01) ? 1.0f : 0.0f;
+    out[i] = torchlean_bernoulli_keep_f32(keepProb, u);
   }
 }
 
@@ -1350,6 +1367,10 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_sqrt_bwd(b_lean_obj_ar
 }
 
 TORCHLEAN_DEFINE_UNARY_BUFFER_EXPORT(torchlean_cuda_buffer_exp, torchlean_exp_f32, "exp")
+
+TORCHLEAN_DEFINE_UNARY_BUFFER_EXPORT(torchlean_cuda_buffer_sin, torchlean_sin_f32, "sin")
+
+TORCHLEAN_DEFINE_UNARY_BUFFER_EXPORT(torchlean_cuda_buffer_cos, torchlean_cos_f32, "cos")
 
 TORCHLEAN_DEFINE_UNARY_BUFFER_EXPORT(torchlean_cuda_buffer_log, torchlean_log_f32, "log")
 

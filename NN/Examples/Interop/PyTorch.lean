@@ -6,23 +6,16 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Examples.Interop.PyTorch.Export
-public import NN.Examples.Interop.PyTorch.Import
 public import NN.Examples.Interop.PyTorch.Roundtrip
-public import NN.Examples.Interop.PyTorch.TorchExportCheck
 
 /-!
 # PyTorch Interop Examples
 
-Curated umbrella for PyTorch interop examples.
+`Roundtrip` exports MLP, CNN, and transformer models or reads their JSON weights for a Lean
+forward pass. Companion Python scripts produce the reference weights.
 
-The folder has two paths:
-
-- `TorchExportCheck`: model-agnostic `nn.Module` graph capture into `torchlean.ir.v1`, followed by
-  Lean side parsing, value-graph handling, and tensor-IR shape validation.
-- `Roundtrip`: small MLP/CNN/Transformer state-dict examples that generate/read JSON weights.
-
-The reusable bridge lives under `NN.Runtime.PyTorch`; this module only collects examples.
+The reusable importers and exporters live under `NN.Runtime.PyTorch`. Graph-capture regression
+checks run separately with `lake exe pytorch_export_check`.
 -/
 
 @[expose] public section

@@ -6,15 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Matrix.Basic
 public import Mathlib.RingTheory.RootsOfUnity.Complex
-public import Mathlib.LinearAlgebra.Matrix.ConjTranspose
 import Mathlib.LinearAlgebra.Matrix.SemiringInverse
 
 /-!
 # Discrete Fourier Transform (DFT) theorems over mathlib `ℂ`
 
-TorchLean’s runtime FFT building blocks (`NN.Runtime.Autograd.TorchLean.Fft`) implement FFT/IFFT by
+TorchLean’s runtime FFT building blocks (`NN.Runtime.Autograd.Model.Fft`) implement FFT/IFFT by
 explicit DFT matrices. This file proves the corresponding *exact* math facts over mathlib’s complex
 numbers `ℂ`:
 
@@ -93,7 +91,7 @@ If $i=k$, the ratio is $1$ and the sum is $n$. If $i\ne k$, the ratio is a nontr
 $n$-th root of unity, so the geometric sum is $0$.
 -/
 
-private lemma zeta_ne_zero (n : Nat) : ζ n ≠ 0 := by
+private theorem zeta_ne_zero (n : Nat) : ζ n ≠ 0 := by
   -- `exp` is never zero in `ℂ`.
   simp [ζ]
 
@@ -101,7 +99,7 @@ private lemma zeta_ne_zero (n : Nat) : ζ n ≠ 0 := by
 Geometric-sum lemma (specialized): if $r^n=1$ and $r\ne1$, then
 $\sum_{j=0}^{n-1}r^j=0$.
 -/
-private lemma geom_sum_eq_zero_of_pow_eq_one {r : ℂ} {n : Nat} (hr : r ≠ 1) (hrn : r ^ n = 1) :
+private theorem geom_sum_eq_zero_of_pow_eq_one {r : ℂ} {n : Nat} (hr : r ≠ 1) (hrn : r ^ n = 1) :
     (∑ j ∈ Finset.range n, r ^ j) = 0 := by
   -- Use `(r - 1) * (∑ r^j) = r^n - 1`.
   have hmul : (r - 1) * (∑ j ∈ Finset.range n, r ^ j) = 0 := by
@@ -244,7 +242,7 @@ theorem idft_mul_dft (n : Nat) (hn : n ≠ 0) :
 
 /-! ## Orthogonality / unitary form -/
 
-private lemma star_zeta (n : Nat) : star (ζ n) = ω n := by
+private theorem star_zeta (n : Nat) : star (ζ n) = ω n := by
   -- Conjugation sends `exp z` to `exp (conj z)`, and `conj (2π I / n) = -(2π I / n)`.
   -- Then `exp (-z) = (exp z)⁻¹`.
   set x : ℂ := (2 * Real.pi * Complex.I) / n
@@ -260,7 +258,7 @@ private lemma star_zeta (n : Nat) : star (ζ n) = ω n := by
 
 /-- Conjugation sends the negative-frequency DFT root $\omega_n$ back to the positive root
 $\zeta_n$. -/
-private lemma star_omega (n : Nat) : star (ω n) = ζ n := by
+private theorem star_omega (n : Nat) : star (ω n) = ζ n := by
   -- `ω = ζ⁻¹` and `star` preserves inverses.
   simp [ω, star_zeta (n := n)]
 
@@ -331,8 +329,8 @@ theorem idft_dft (n : Nat) (hn : n ≠ 0) (x : Fin n → ℂ) :
     _ = x := by simp [Matrix.one_mulVec]
 
 /--
-Rank-one tensor inversion theorem (other direction): $\operatorname{dft}(\operatorname{idft}(x))=x$, for
-$n\ne0$.
+Rank-one tensor inversion theorem (other direction):
+$\operatorname{dft}(\operatorname{idft}(x))=x$, for $n\ne0$.
 -/
 theorem dft_idft (n : Nat) (hn : n ≠ 0) (x : Fin n → ℂ) :
     dft n (idft n x) = x := by

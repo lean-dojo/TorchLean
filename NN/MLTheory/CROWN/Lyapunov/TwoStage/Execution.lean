@@ -27,8 +27,8 @@ scalar semantics. The abstract CROWN theory does not depend on it.
 @[expose] public section
 
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace NN.MLTheory.CROWN.Lyapunov.TwoStage.Execution
 
@@ -69,6 +69,10 @@ We use the top 24 bits of the LCG state as a uniform integer in `[0, 2^24)`, the
 then to `[-rad, rad]`.
 -/
 
+/-- One step of Knuth's 64-bit linear congruential generator (MMIX constants).
+
+We carry our own generator so a sampling run is reproducible from its seed alone, independent of
+any platform RNG. -/
 def lcgStep (s : UInt64) : UInt64 :=
   6364136223846793005 * s + 1442695040888963407
 
@@ -84,7 +88,7 @@ def unitIntervalSample (u : Nat) : Scalar :=
 
 /-- Build a state vector for the two-dimensional Lyapunov example. -/
 def stateTensor (x1 x2 : Scalar) : Tensor Scalar Core.xShape :=
-  Tensor.dim (n := Core.xDim) (s := .scalar) (fun i =>
+  Tensor.dim (n := Core.xDim) (fun i =>
     Tensor.scalar <|
       match i.val with
       | 0 => x1

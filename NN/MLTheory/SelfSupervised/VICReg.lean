@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-import Mathlib.Init
-
 /-!
 # VICReg and Barlow-Twins style collapse guards
 
@@ -59,19 +57,23 @@ statistical estimator used to produce them.
 def vicregObjective (lambda mu nu invariance variance covariance : Nat) : Nat :=
   lambda * invariance + mu * variance + nu * covariance
 
+/-- A fully collapsed coordinate pays the whole floor `γ`, the worst case of the hinge. -/
 @[simp] theorem varianceFloorPenalty_zero (gamma : Nat) :
     varianceFloorPenalty gamma 0 = gamma := by
   simp [varianceFloorPenalty]
 
+/-- No coordinates, no variance penalty. -/
 @[simp] theorem varianceTerm_nil (gamma : Nat) :
     varianceTerm gamma #[] = 0 := by
   simp [varianceTerm]
 
+/-- Adding a coordinate adds its hinge penalty. -/
 @[simp] theorem varianceTerm_push (gamma v : Nat) (vs : Array Nat) :
     varianceTerm gamma (vs.push v) =
       varianceTerm gamma vs + varianceFloorPenalty gamma v := by
   simp [varianceTerm, Array.map_push]
 
+/-- The variance term is additive in the coordinates, since it is a sum of independent hinges. -/
 theorem varianceTerm_append (gamma : Nat) (xs ys : Array Nat) :
     varianceTerm gamma (xs ++ ys) =
       varianceTerm gamma xs + varianceTerm gamma ys := by
@@ -80,8 +82,7 @@ theorem varianceTerm_append (gamma : Nat) (xs ys : Array Nat) :
 /--
 Collapsed coordinates ($\mathrm{variance}=0$) pay exactly $d\gamma$.
 
-This is the direct anti-collapse fact: if every coordinate has zero variance, the variance floor
-does not silently accept it.
+The penalty is positive when both the number of coordinates and the floor are positive.
 -/
 theorem varianceTerm_replicate_zero (gamma d : Nat) :
     varianceTerm gamma (Array.replicate d 0) = d * gamma := by
@@ -96,10 +97,14 @@ theorem varianceTerm_collapsed_positive {gamma d : Nat} (hγ : 0 < gamma) :
   rw [varianceTerm_replicate_zero]
   exact Nat.mul_pos (Nat.succ_pos d) hγ
 
+/-- With all weights and all summaries zero, the objective is zero. -/
 @[simp] theorem vicregObjective_zero :
     vicregObjective 0 0 0 0 0 0 = 0 := by
   simp [vicregObjective]
 
+/-- A positive variance summary with a positive weight gives a positive variance-only objective.
+This does not exclude a collapsed minimizer: that conclusion also needs an attainable objective
+value below this penalty. -/
 theorem vicregObjective_variance_positive {μ variance : Nat}
     (hμ : 0 < μ) (hv : 0 < variance) :
     0 < vicregObjective 0 μ 0 0 variance 0 := by
@@ -133,10 +138,12 @@ def redundancyReductionObjective (lambda : Nat) (diag offDiag : Array Nat) : Nat
   (diag.map diagonalRedundancyPenalty).sum +
     lambda * (offDiag.map offDiagonalRedundancyPenalty).sum
 
+/-- The ideal diagonal entry `1` pays nothing. -/
 @[simp] theorem diagonalRedundancyPenalty_one :
     diagonalRedundancyPenalty 1 = 0 := by
   simp [diagonalRedundancyPenalty]
 
+/-- The ideal off-diagonal entry `0` pays nothing. -/
 @[simp] theorem offDiagonalRedundancyPenalty_zero :
     offDiagonalRedundancyPenalty 0 = 0 := by
   simp [offDiagonalRedundancyPenalty]
@@ -149,6 +156,7 @@ and all off-diagonal entries are $0$.
     redundancyReductionObjective lambda (Array.replicate d 1) (Array.replicate k 0) = 0 := by
   simp [redundancyReductionObjective]
 
+/-- A diagonal entry collapsed to `0` pays a positive penalty, which is what Barlow Twins is for. -/
 theorem diagonalRedundancyPenalty_zero_positive :
     0 < diagonalRedundancyPenalty 0 := by
   simp [diagonalRedundancyPenalty]

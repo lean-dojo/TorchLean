@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.GraphSpec.Core
+public import NN.GraphSpec.Chain.ToDAG.Core
 
 /-!
 # Primitive Embedding
@@ -32,9 +32,8 @@ namespace NN
 namespace GraphSpec
 namespace Primitive
 
-open _root_.Spec
-open Spec.Tensor
-open _root_.TorchLean.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /--
 `splitAppend` undoes `append` in the one-input case.
@@ -42,22 +41,17 @@ open _root_.TorchLean.Tensor
 This typed-list fact is used internally by `LowerToDAG.Primitive.toDAGPrimOp`.
 -/
 theorem splitAppend_appendSingleton
-    {α : Type} [Context α] :
+    {α : Type} [TorchLean.Storage α] [Context α] :
     {ps : List Shape} → {σ : Shape} →
-      (params : _root_.TorchLean.TensorPack α ps) → (x : Spec.Tensor α σ) →
+      (params : TorchLean.TensorPack α ps) → (x : TorchLean.Tensor α σ) →
         TorchLean.TensorPack.split (α := α)
             (ss₁ := ps) (ss₂ := [σ])
             (TorchLean.TensorPack.append (α := α)
               (ss₁ := ps) (ss₂ := [σ]) params (.cons x .nil))
           =
         (params, .cons x .nil)
-  | [], _σ, .nil, x => rfl
-  | _s :: ps, σ, .cons p params, x => by
+  | ps, σ, params, x => by
       simp
-        [ TorchLean.TensorPack.append
-        , TorchLean.TensorPack.split
-        , splitAppend_appendSingleton (α := α) (ps := ps) (σ := σ) params x
-        ]
 
 /--
 Embedding a sequential primitive into DAG form preserves its pure `specFwd` semantics.
@@ -66,10 +60,10 @@ This theorem states that “the DAG primitive is the sequential primitive with
 its parameters made explicit as ordinary inputs”.
 -/
 theorem toDAGPrimOp_specFwd_eq
-    {α : Type} [Context α]
+    {α : Type} [TorchLean.Storage α] [Context α]
     {ps : List Shape} {σ τ : Shape}
     (p : Primitive ps σ τ)
-    (params : _root_.TorchLean.TensorPack α ps) (x : Spec.Tensor α σ) :
+    (params : TorchLean.TensorPack α ps) (x : TorchLean.Tensor α σ) :
     (LowerToDAG.Primitive.toDAGPrimOp (ps := ps) (σ := σ) (τ := τ) p).specFwd (α := α)
         (TorchLean.TensorPack.append (α := α)
           (ss₁ := ps) (ss₂ := [σ]) params (.cons x .nil))

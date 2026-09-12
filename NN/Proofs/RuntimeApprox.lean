@@ -22,7 +22,7 @@ Umbrella import for TorchLean's executable-runtime-to-real-spec approximation th
 
 The runtime-approximation library is intentionally layered:
 - `Core`: tolerance objects and tensor/context approximation predicates;
-- `Rounding`: scalar `neural_round` error lemmas;
+- `Rounding`: scalar `neuralRound` error lemmas;
 - `Graph`: forward and reverse graph composition theorems;
 - `NF`: proof-relevant rounded tensor/operator backend;
 - `FP32`: convenient FP32-specialized layer/MLP/CROWN statements;

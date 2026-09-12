@@ -35,8 +35,8 @@ namespace NN.Verification.PINN.PdeAst
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph
 open NN.Verification.PINN.ResidualAffine
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /-- Coordinate axis used by the PDE residual language. -/
 inductive Axis where
@@ -64,15 +64,17 @@ inductive Expr where
 
 /-- Primitive interval bounds supplied to the PDE expression evaluator. -/
 structure Prims where
-  /-- u. -/
+  /-- Enclosure for the solution value `u` itself. -/
   u    : Option (Float × Float)
-  /-- du X. -/
+  /-- Enclosure for `∂u/∂x`. -/
   duX  : Option (Float × Float)
-  /-- du Y. -/
+  /-- Enclosure for `∂u/∂y`. -/
   duY  : Option (Float × Float)
-  /-- d 2 u X. -/
+  /-- Enclosure for `∂²u/∂x²`. -/
   d2uX : Option (Float × Float)
-  /-- d 2 u Y. -/
+  /-- Enclosure for `∂²u/∂y²`. Every field is optional because a residual only needs the
+  derivatives its own PDE mentions; a missing one makes evaluation fail loudly instead of
+  silently substituting a default. -/
   d2uY : Option (Float × Float)
 
 /-- Add two closed Float intervals endpointwise. -/
@@ -138,18 +140,5 @@ def evalWithFuel (fuel : Nat) (p : Prims) (e : Expr) : Option (Float × Float) :
 /-- Evaluate a PDE expression with the default recursion budget. -/
 def eval (p : Prims) (e : Expr) : Option (Float × Float) :=
   evalWithFuel 256 p e
-
-
-/-- Two-dimensional Allen–Cahn residual:
-$R=\varepsilon(u_{xx}+u_{yy})-(u^3-u)$. -/
-def allenCahn2D (ε : Float) : Expr :=
-  let lap := Expr.add (.d2u .X) (.d2u .Y)
-  let uu := Expr.u
-  let u3 := Expr.mul uu (Expr.mul uu uu)
-  Expr.add (Expr.scale ε lap) (Expr.neg (Expr.sub u3 uu))
-
-/-- Two-dimensional Poisson-like residual: $R=u_{xx}+u_{yy}+u$. -/
-def poissonPlusU : Expr :=
-  Expr.add (Expr.add (.d2u .X) (.d2u .Y)) Expr.u
 
 end NN.Verification.PINN.PdeAst

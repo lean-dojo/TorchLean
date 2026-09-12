@@ -8,9 +8,6 @@ module
 
 public import NN.Examples.Models.Generative.Autoencoder
 public import NN.Examples.Models.Generative.Mae
-public import NN.Examples.Models.Generative.Vae
-public import NN.Examples.Models.Generative.VqVae
-public import NN.Examples.Models.Generative.Gan
 public import NN.Examples.Models.Generative.Diffusion
 
 /-!

@@ -6,11 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public meta import NN.Floats.IEEEExec.Exec32
+public meta import NN.Floats.IEEEExec.Exec32.Compare
+public import NN.Floats.IEEEExec.Exec32.Dyadic
 public meta import NN.Widgets.Core.Tensor
-public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
+public meta import NN.Floats.IEEEExec.Exec32 -- shake: keep
+public meta import NN.Widgets.Core.UI -- shake: keep
+public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
+public meta import ProofWidgets.Demos.Macro -- shake: keep
 
 /-!
 # Float32
@@ -29,24 +31,6 @@ These widgets are meant for debugging/teaching, not for proof scripts.
 - `float32RoundHtml`: show `Float64 -> Float32` rounding behavior.
 - `float32CompareHtml`: side-by-side bit-level comparison.
 - `#float32_view`, `#float32_round_view`, `#float32_compare_view`: command entry points.
-
-## Implementation notes
-
-- Explicit sign/exp/frac bit pills are easier to read than one long bit
-  string when debugging rounding and special values.
-- We include both classification badges and raw field values: in practice users want both the
-  high-level class and exact bit-level evidence.
-- We keep this widget purely informational; no arithmetic semantics are changed here.
-
-## References
-
-- [IEEE 754 floating-point standard overview](https://en.wikipedia.org/wiki/IEEE_754)
-- [ProofWidgets](https://github.com/leanprover-community/ProofWidgets4)
-- [Lean community documentation style](https://leanprover-community.github.io/contribute/doc.html)
-
-## Tags
-
-float32, ieee754, rounding, bits, proofwidgets
 -/
 
 public meta section
@@ -60,12 +44,15 @@ open UI
 
 namespace Float32Internal
 
+/-- Compact rendering of a 32-bit word for the bit-pattern pills. -/
 def u32Hex (u : UInt32) : String :=
-  -- `UInt32`'s `repr` is a compact debugging view (hex-like when printed in Lean).
-  reprStr u
+  "0x" ++ u.toBitVec.toHex
 
+/--
+The 64-bit counterpart, used when a widget shows a binary64 input alongside its float32 result.
+-/
 def u64Hex (u : UInt64) : String :=
-  reprStr u
+  "0x" ++ u.toBitVec.toHex
 
 /-- Render exactly `width` low-order bits of `n` as a binary string. -/
 def bitsFixed (width : Nat) (n : Nat) : String :=
@@ -78,6 +65,11 @@ def bitsFixed (width : Nat) (n : Nat) : String :=
         go i (c :: acc)
   String.ofList (go width []).reverse
 
+/-- One labelled, colour-coded run of bits: the sign, exponent and fraction fields each get one.
+
+Colours are given as `rgba` overlays rather than solid fills so the widget stays readable against
+both
+light and dark editor themes. -/
 def bitPill (label bits : String) (bg : String) : ProofWidgets.Html :=
   let styleObj : Lean.Json :=
     Lean.Json.mkObj [
@@ -110,6 +102,11 @@ def classify (x : IEEE32Exec) : String :=
   else
     "normal"
 
+/-- Render a dyadic rational as `±mantissa * 2^exponent`.
+
+This is the exact value of a finite float, written the way Flocq and Coq's `Fappli_IEEE` write it,
+so
+what the widget shows can be compared directly against the proofs. -/
 def dyadicString (d : IEEE32Exec.Dyadic) : String :=
   let sign := if d.sign then "-" else "+"
   s!"{sign}{d.mant} * 2^{d.exp}"

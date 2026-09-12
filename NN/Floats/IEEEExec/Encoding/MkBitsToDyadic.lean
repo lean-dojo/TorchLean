@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import Mathlib.Data.Nat.Bitwise
-public import NN.Floats.IEEEExec.Exec32
+public import NN.Floats.IEEEExec.Exec32.Dyadic
 
 /-!
 # MkBitsToDyadic

@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.API
+public import NN.API.Data.Image
+public import NN.API.Models.Diffusion.Sampling
 public import NN.Examples.Models.Common.RealData
 
 /-!
@@ -25,11 +27,11 @@ Lean tracks image height and width in the tensor type.
 
 ## Why unconditional samples are still modest
 
-The default epsilon predictor is a compact same-resolution residual CNN with a broadcast time channel.
-That is enough to validate real image loading, CUDA training, logging, reconstruction diagnostics,
-and DDIM replay from Lean. High-fidelity unconditional samples require more machinery: a full U-Net
-with multiscale skips, richer timestep embeddings, EMA, more training, more timesteps, and runtime
-support that avoids eager-autograd buffer blow-up for wider models.
+The default epsilon predictor is a compact same-resolution residual CNN with a broadcast time
+channel. That is enough to validate real image loading, CUDA training, logging, reconstruction
+diagnostics, and DDIM replay from Lean. High-fidelity unconditional samples require more machinery:
+a full U-Net with multiscale skips, richer timestep embeddings, EMA, more training, more timesteps,
+and runtime support that avoids eager-autograd buffer blow-up for wider models.
 
 ## Examples
 
@@ -49,18 +51,19 @@ Train on ImageNet64 and save visual artifacts:
 lake -R -K cuda=true build
 CUDA_VISIBLE_DEVICES=0 lake -R -K cuda=true exe torchlean diffusion --device cuda \
   --dataset imagenet64 --n-total 800 --steps 1000 --hidden-c 8 --T 100 --beta-end 0.12 \
-  --log data/model_zoo/diffusion_trainlog.json \
-  --reference-ppm data/model_zoo/diffusion_reference.ppm \
-  --noisy-ppm data/model_zoo/diffusion_noisy.ppm \
-  --reconstruct-ppm data/model_zoo/diffusion_reconstruct.ppm \
-  --sample-ppm data/model_zoo/diffusion_sample.ppm
+  --log data/examples/diffusion_trainlog.json \
+  --reference-ppm data/examples/diffusion_reference.ppm \
+  --noisy-ppm data/examples/diffusion_noisy.ppm \
+  --reconstruct-ppm data/examples/diffusion_reconstruct.ppm \
+  --sample-ppm data/examples/diffusion_sample.ppm
 ```
 
 CIFAR run:
 
 ```bash
 python3 scripts/datasets/download_example_data.py --cifar10
-lake -R -K cuda=true exe torchlean diffusion --device cuda --dataset cifar10 --n-total 1 --steps 1 --hidden-c 1 --T 2
+lake -R -K cuda=true exe torchlean diffusion --device cuda --dataset cifar10 --n-total 1 \
+  --steps 1 --hidden-c 2 --T 2
 ```
 -/
 
@@ -71,217 +74,148 @@ open TorchLean
 namespace NN.Examples.Models.Generative.Diffusion
 
 /-- CLI subcommand name used in terminal banners and error messages. -/
-def exeName : String := "torchlean diffusion"
+def exeName : String := "diffusion"
 
 /-- Default JSON loss-curve path for this command. -/
-def defaultLogJson : System.FilePath := ModelZoo.trainLogPath "diffusion"
+def defaultLogPath : System.FilePath := Support.trainLogPath "diffusion"
 
 /-- Static minibatch size used by both CIFAR-10 and ImageNet64 typed branches. -/
-def batch : Nat := 1
-
-/-- Write the first RGB image in an NCHW batch as a dependency-free ASCII PPM artifact. -/
-def Internal.writeFirstRgbPpm {batch c h w : Nat}
-    (path : System.FilePath)
-    (x : Tensor Float [batch, c, h, w]) : IO Unit := do
-  if c < 3 then
-    throw <| IO.userError "diffusion PPM export requires at least 3 channels"
-  if let some parent := path.parent then
-    IO.FS.createDirAll parent
-  let clamp01 (v : Float) : Float :=
-    if v < 0.0 then 0.0 else if v > 1.0 then 1.0 else v
-  let toByte (v : Float) : Nat :=
-    let v01 := clamp01 ((v + 1.0) / 2.0)
-    Nat.min 255 ((v01 * 255.0).toUInt64.toNat)
-  let hOut ← IO.FS.Handle.mk path IO.FS.Mode.write
-  hOut.putStr s!"P3\n{w} {h}\n255\n"
-  let getPx (ci hi wi : Nat) : Float :=
-    (Spec.getSpec (α := Float) (s := [batch, c, h, w])
-      x [0, ci, hi, wi]).getD 0.0
-  for hi in [0:h] do
-    for wi in [0:w] do
-      hOut.putStr
-        s!"{toByte (getPx 0 hi wi)} {toByte (getPx 1 hi wi)} {toByte (getPx 2 hi wi)}\n"
+def batchSize : Nat := 1
 
 /-- Cropped CIFAR height for the compact runnable diffusion example. -/
-def cifarTinyH : Nat := 2
+def cifarCropHeight : Nat := 4
 
 /-- Cropped CIFAR width for the compact runnable diffusion example. -/
-def cifarTinyW : Nat := 2
+def cifarCropWidth : Nat := 4
 
-local instance : NeZero cifarTinyH := ⟨by decide⟩
-local instance : NeZero cifarTinyW := ⟨by decide⟩
+local instance : NeZero cifarCropHeight := ⟨by decide⟩
+local instance : NeZero cifarCropWidth := ⟨by decide⟩
 
 /-- Clean image batch dimensions $x_0$: NCHW with the fixed command batch size. -/
-abbrev cleanImageShape (c h w : Nat) : List Nat :=
-  [batch, c, h, w]
+abbrev output (c h w : Nat) : Shape :=
+  [batchSize, c, h, w]
 
 /-- Epsilon-model input dimensions: image channels plus one broadcast timestep channel. -/
-abbrev noisyInputShape (c h w : Nat) : List Nat :=
-  [batch, c + 1, h, w]
-
-/-- Shape-level configuration for the epsilon predictor. -/
-def cfgFor (c h w hiddenC : Nat) [NeZero h] [NeZero w] : nn.models.EpsConvNetConfig 2 :=
-  { dataChannels := c
-    spatial := tensor! [h, w]
-    spatialNonzero := by
-      intro i
-      fin_cases i
-      · change h ≠ 0
-        exact NeZero.ne h
-      · change w ≠ 0
-        exact NeZero.ne w
-    hiddenChannels := hiddenC
-    block := nn.ConvGeometry.samePadding tensor! [1, 1]
-    blockPreservesSpatial := by
-      simpa [nn.ConvGeometry.outSpatial] using
-        nn.ConvGeometry.outSpatial_samePadding tensor! [h, w] tensor! [1, 1]
-          (by
-            intro i
-            fin_cases i
-            · exact NeZero.ne h
-            · exact NeZero.ne w) }
+abbrev input (c h w : Nat) : Shape :=
+  [batchSize, c + 1, h, w]
 
 /--
-Build the default epsilon predictor for a specific typed image shape.
+Architecture of the epsilon predictor for a particular image size.
 
-We use the plain compact epsilon CNN from the public diffusion model API. The residual denoiser stays
-available in the API for larger opt-in experiments, but the runnable command should remain a quick
-CUDA quick check.
+A kernel radius of one means every convolution uses a `3 x 3` same-padding kernel.
 -/
-def mkModel (c h w hiddenC : Nat)
-    [NeZero c] [NeZero h] [NeZero w] (h_hiddenC : hiddenC ≠ 0) :
-    nn.Builder (nn.Sequential (noisyInputShape c h w) (cleanImageShape c h w)) :=
+def config (c h w hiddenChannels : Nat) :
+    nn.models.Diffusion.NoisePredictor.Config 2 :=
+  { dataChannels := c
+    spatial := [h, w]
+    hiddenChannels := hiddenChannels
+    kernelRadius := [1, 1] }
+
+/--
+Build the residual epsilon predictor for a specific typed image shape.
+
+Every `3×3` convolution preserves the spatial extent, and the residual blocks mix information
+between neighboring pixels while remaining small enough for the runnable CUDA check.
+-/
+def model (c h w hiddenChannels : Nat) :
+    nn.Builder (nn.Sequential (input c h w) (output c h w)) :=
   by
-    simpa [noisyInputShape, cleanImageShape, cfgFor,
-      nn.models.EpsConvNetConfig.inputShape, nn.models.EpsConvNetConfig.outputShape,
-      Spec.Shape.ofList, Spec.Shape.concat] using
-      nn.models.epsConvNet (cfgFor c h w hiddenC) [batch]
-        (h_dataC := NeZero.ne c)
-        (h_inC := by exact Nat.succ_ne_zero c)
-        (h_hiddenC := h_hiddenC)
+    let built :=
+      nn.models.Diffusion.NoisePredictor.residual
+        (config c h w hiddenChannels) (batchShape := [batchSize])
+    rw [nn.models.Diffusion.NoisePredictor.Config.input,
+      nn.models.Diffusion.NoisePredictor.Config.output] at built
+    simpa [input, output, config,
+      Shape.ofList, Shape.concat] using built
 
 /--
 Convert one typed CIFAR minibatch into diffusion-space clean images.
 
-The loader returns images in $[0,1]$; diffusion training uses $[-1,1]$, so this function performs the
-range conversion after Lean has established the CIFAR NCHW shape.
+The loader returns images in $[0,1]$; diffusion training uses $[-1,1]$, so this function performs
+the range conversion after Lean has established the CIFAR NCHW shape.
 -/
-def cifarCleanImageBatch
-    (batchSample : Sample.Batch Float batch RealData.CifarImage RealData.CifarTarget) :
-    Tensor Float (cleanImageShape RealData.cifarChannels cifarTinyH cifarTinyW) := by
-  let cropped := RealData.cropCifarBatch batch cifarTinyH cifarTinyW
-    (by decide) (by decide) batchSample
-  let unitImage : Tensor Float (cleanImageShape RealData.cifarChannels cifarTinyH cifarTinyW) := by
-    simpa [cleanImageShape] using (Sample.x cropped)
-  exact diffusion.unitToSignedUnit unitImage
+def cifarBatch
+    (batchSample : Sample.Batch Float batchSize RealData.CifarImage RealData.CifarTarget) :
+    Except String (Tensor Float
+      (output RealData.cifarChannels cifarCropHeight cifarCropWidth)) := do
+  let cropped ←
+    RealData.cropCifarBatch batchSize cifarCropHeight cifarCropWidth batchSample
+  let unitImage :
+      Tensor Float (output RealData.cifarChannels cifarCropHeight cifarCropWidth) := by
+    simpa [output] using cropped.input
+  pure (diffusion.unitToSignedUnit unitImage)
 
 /--
 Convert one typed ImageNet64 minibatch into diffusion-space clean images.
 
-This mirrors `cifarCleanImageBatch` but keeps the ImageNet64 height/width/channel constants in the type.
+This mirrors `cifarBatch` but keeps the ImageNet64 height/width/channel constants in the type.
 -/
-def imageNet64CleanImageBatch
-    (batchSample : Sample.Batch Float batch RealData.ImageNet64Image RealData.ImageNet64Target) :
-    Tensor Float (cleanImageShape RealData.imagenet64Channels RealData.imagenet64Height
+def imageNet64Batch
+    (batchSample :
+      Sample.Batch Float batchSize RealData.ImageNet64Image RealData.ImageNet64Target) :
+    Tensor Float (output RealData.imagenet64Channels RealData.imagenet64Height
       RealData.imagenet64Width) := by
-  let unitImage : Tensor Float (cleanImageShape RealData.imagenet64Channels RealData.imagenet64Height
+  let unitImage : Tensor Float (output RealData.imagenet64Channels RealData.imagenet64Height
       RealData.imagenet64Width) := by
-    simpa [cleanImageShape, RealData.ImageNet64Image] using
-      (Sample.x batchSample)
+    simpa [output, RealData.ImageNet64Image] using
+      batchSample.input
   exact diffusion.unitToSignedUnit unitImage
 
 /--
-Load CIFAR-10 batches as a finite array of clean diffusion images.
+Load CIFAR-10 batches as a tensor of clean diffusion minibatches.
 
-The function validates the `.npy` paths, builds a typed `Data.supervisedEpochs`, drops incomplete final
+The function validates the `.npy` paths, builds a typed `Data.Loader`, drops incomplete final
 batches, and returns NCHW tensors already mapped into $[-1,1]$.
 -/
-def loadCifarCleanImageBatches (xPath yPath : System.FilePath) (nRows seed : Nat) :
-    IO (Array (Tensor Float (cleanImageShape RealData.cifarChannels cifarTinyH cifarTinyW))) := do
-  let batches ← RealData.loadCifarBatches exeName batch nRows seed xPath yPath
-  pure (batches.map cifarCleanImageBatch)
+def loadCifar (xPath yPath : System.FilePath) (nRows seed : Nat) :
+    IO ((count : Nat) × Tensor Float
+      ((output RealData.cifarChannels cifarCropHeight cifarCropWidth).prependDim count)) := do
+  let batches ← RealData.loadCifarBatches exeName batchSize nRows seed xPath yPath
+  let images ← Tensor.stackLeadingM fun index : Fin batches.size =>
+    CLI.orThrow exeName (cifarBatch batches[index])
+  pure ⟨batches.size, images⟩
 
 /--
-Load ImageNet64-style batches as a finite array of clean diffusion images.
+Load ImageNet64-style batches as a tensor of clean diffusion minibatches.
 
 The converter accepts ImageNet/Imagenette/Tiny-ImageNet-style folders ahead of time; this Lean path
 only consumes the prepared `.npy` arrays and keeps the tensor shapes explicit.
 -/
-def loadImageNet64CleanImageBatches (xPath yPath : System.FilePath) (nRows seed : Nat) :
-    IO (Array (Tensor Float (cleanImageShape RealData.imagenet64Channels RealData.imagenet64Height
-      RealData.imagenet64Width))) := do
-  let batches ← RealData.loadImageNet64Batches exeName batch nRows seed xPath yPath
-  pure (batches.map imageNet64CleanImageBatch)
+def loadImageNet64 (xPath yPath : System.FilePath) (nRows seed : Nat) :
+    IO ((count : Nat) × Tensor Float
+      ((output RealData.imagenet64Channels RealData.imagenet64Height
+        RealData.imagenet64Width).prependDim count)) := do
+  let batches ← RealData.loadImageNet64Batches exeName batchSize nRows seed xPath yPath
+  pure ⟨batches.size, Tensor.stackLeading fun index => imageNet64Batch batches[index]⟩
 
-/--
-Run deterministic DDIM reverse steps from a starting noisy image.
-
-This is used for unconditional sample artifacts: start from Gaussian noise, repeatedly ask the model
-for $\hat{\varepsilon}$, and apply the DDIM previous-step formula.
--/
-def reverseDdim {c h w T : Nat} [NeZero T]
-    (predict : Tensor Float (noisyInputShape c h w) → IO (Tensor Float (cleanImageShape c h w)))
-    (alphaBars : Tensor Float [T]) (xStart : Tensor Float (cleanImageShape c h w)) :
-    IO (Tensor Float (cleanImageShape c h w)) := do
-  let mut x_t := xStart
-  for tIdx in (List.finRange T).reverse do
-    let ab : Float := alphaBars.getScalar tIdx
-    let abPrev : Float :=
-      if tIdx.val = 0 then 1.0
-      else alphaBars.getScalar ⟨tIdx.val - 1,
-        Nat.lt_of_le_of_lt (Nat.sub_le tIdx.val 1) tIdx.isLt⟩
-    let tNorm : Float :=
-      if T <= 1 then 0.0 else Float.ofNat tIdx.val / Float.ofNat (T - 1)
-    let modelInput : Tensor Float (noisyInputShape c h w) := by
-      simpa [noisyInputShape, cleanImageShape] using
-        diffusion.appendTimeChannel [batch] (tensor! [h, w] : Tensor Nat [2])
-          (by simpa [cleanImageShape] using x_t) tNorm
-    let epsHat ← predict modelInput
-    x_t := diffusion.ddimPrev abPrev ab x_t epsHat
-  pure x_t
-
-/--
-Reverse DDIM from a chosen timestep for reconstruction diagnostics.
-
-This reconstruction path is separate from unconditional sampling. It corrupts a real image to a
-moderate timestep, denoises from there, and checks whether reconstruction improves over the noisy
-input.
--/
-def reverseDdimFrom {c h w T : Nat} [NeZero T]
-    (predict : Tensor Float (noisyInputShape c h w) → IO (Tensor Float (cleanImageShape c h w)))
-    (alphaBars : Tensor Float [T]) (tStart : Fin T)
-    (xStart : Tensor Float (cleanImageShape c h w)) :
-    IO (Tensor Float (cleanImageShape c h w)) := do
-  let mut x_t := xStart
-  for tIdx in ((List.finRange T).take (tStart.val + 1)).reverse do
-    let ab : Float := alphaBars.getScalar tIdx
-    let abPrev : Float :=
-      if tIdx.val = 0 then 1.0
-      else alphaBars.getScalar ⟨tIdx.val - 1,
-        Nat.lt_of_le_of_lt (Nat.sub_le tIdx.val 1) tIdx.isLt⟩
-    let tNorm : Float :=
-      if T <= 1 then 0.0 else Float.ofNat tIdx.val / Float.ofNat (T - 1)
-    let modelInput : Tensor Float (noisyInputShape c h w) := by
-      simpa [noisyInputShape, cleanImageShape] using
-        diffusion.appendTimeChannel [batch] (tensor! [h, w] : Tensor Nat [2])
-          (by simpa [cleanImageShape] using x_t) tNorm
-    let epsHat ← predict modelInput
-    x_t := diffusion.ddimPrev abPrev ab x_t epsHat
-  pure x_t
+/-- Adapt image-and-time conditioning to the dataset-independent DDIM sampler. -/
+def conditionedPredictor {c h w T : Nat}
+    (predict : Tensor Float (input c h w) → IO (Tensor Float (output c h w)))
+    (index : Fin T) (sample : Tensor Float (output c h w)) :
+    IO (Tensor Float (output c h w)) :=
+  let time := if T <= 1 then 0.0 else Float.ofNat index.val / Float.ofNat (T - 1)
+  let conditioned : Tensor Float (input c h w) := by
+    simpa [input, output] using
+      diffusion.appendTimeChannel [batchSize] ([h, w] : Tensor Nat [2])
+        (by simpa [output] using sample) time
+  predict conditioned
 
 /--
 Diffusion command-line options after parsing.
 
-The inherited pieces make the CLI shape explicit: ordinary training flags come from `ModelZoo`,
-diffusion math lives in `ModelZoo.DiffusionScheduleFlags`, visual outputs live in
-`ModelZoo.ImageArtifactFlags`, and the epsilon-network width is the model-specific knob.
+The inherited pieces make the CLI shape explicit: ordinary training flags come from `Support`,
+diffusion math lives in `Support.DiffusionScheduleFlags`, visual outputs live in
+`Support.ImageArtifactFlags`, and the epsilon-network width is the model-specific knob.
 -/
-structure DiffusionOptions extends
-    CLI.Training.OptimizerOptions,
-    ModelZoo.DiffusionScheduleFlags,
-    ModelZoo.ImageArtifactFlags where
+structure Options where
+  /-- Optimizer, step, batching, and logging controls. -/
+  training : CLI.Training.OptimizerOptions
+  /-- Diffusion timestep and beta schedule. -/
+  schedule : Support.DiffusionScheduleFlags
+  /-- Optional generated and reconstructed image paths. -/
+  artifacts : Support.ImageArtifactFlags
   /-- Hidden channel width of the epsilon predictor. -/
-  hiddenC : Nat
+  hiddenChannels : Nat
 deriving Repr
 
 /--
@@ -294,93 +228,96 @@ The loop optimizes epsilon prediction and can emit four visual artifacts:
 - `reconstruct-ppm`: DDIM denoising from that timestep,
 - `sample-ppm`: unconditional DDIM sample from Gaussian noise.
 -/
-def Internal.trainCurveFloatWithNonemptySchedule
+def Training.run
     {c h w : Nat} [NeZero c] [NeZero h] [NeZero w]
-    (opts : Options)
-    (loadBatches : IO (Array (Tensor Float (cleanImageShape c h w))))
-    (cfg : DiffusionOptions) [NeZero cfg.T] (h_hiddenC : cfg.hiddenC ≠ 0) :
+    (runtime : Runtime.Config)
+    (loadBatches : IO ((count : Nat) × Tensor Float ((output c h w).prependDim count)))
+    (config : Options)
+    (schedule : diffusion.Schedule config.schedule.T) :
     IO Training.Curve := do
-  let batches ← loadBatches
-  let batchAt ← ModelZoo.orThrow exeName <|
-    (Data.SampleStream.ofArray batches).cycleOrError
-      s!"{exeName}: no training minibatches available"
+  let ⟨count, batches⟩ ← loadBatches
+  if empty : count = 0 then
+    throw (IO.userError s!"{exeName}: no training minibatches available")
+  else
+  let batchAt (step : Nat) := batches.get ⟨step % count, Nat.mod_lt _ (Nat.pos_of_ne_zero empty)⟩
   let evalX0 := batchAt 0
-  let alphaBars := diffusion.linearAlphaBars cfg.T cfg.betaStart cfg.betaEnd
-  let evalStep := cfg.T / 2
-  let evalSample : Sample.Supervised Float (noisyInputShape c h w) (cleanImageShape c h w) := by
-    simpa [noisyInputShape, cleanImageShape] using
-      diffusion.noisedSample [batch] (tensor! [h, w] : Tensor Nat [2])
-        alphaBars (by simpa [cleanImageShape] using evalX0) (seed := opts.seed)
+  let alphaBars := schedule.alphaBars
+  let evalStep := config.schedule.T / 2
+  let evalSample : Sample.Supervised Float (input c h w) (output c h w) := by
+    simpa [input, output] using
+      diffusion.noisedSample [batchSize] ([h, w] : Tensor Nat [2])
+        schedule (by simpa [output] using evalX0) (seed := runtime.seed)
         (step := evalStep)
   let trainer :=
-    Trainer.new (mkModel c h w cfg.hiddenC h_hiddenC) <|
-      Trainer.Config.fromRunConfig
-        (Trainer.RunConfig.ofRuntimeOptions opts { optimizer := optim.adam { lr := cfg.lr } })
-        .regression
-        (seed := opts.seed)
-  trainer.printInfo
-  let curveEvery : Nat := Nat.max 1 (cfg.steps / 50)
-  let trained ← trainer.trainStream opts
+    Trainer.new (model c h w config.hiddenChannels) <|
+      Trainer.RunConfig.forObjective
+        (Trainer.RunConfig.fromRuntime runtime
+          { optimizer := optim.adam { learningRate := config.training.learningRate } })
+        .meanSquaredError
+        (seed := runtime.seed)
+  trainer.printSummary
+  let curveEvery : Nat := Nat.max 1 (config.training.steps / 50)
+  let trained ← trainer.trainStream runtime
     (fun step =>
       let x0 := batchAt step
-      show Sample.Supervised Float (noisyInputShape c h w) (cleanImageShape c h w) from by
-        simpa [noisyInputShape, cleanImageShape] using
-          diffusion.noisedSample [batch] (tensor! [h, w] : Tensor Nat [2])
-            alphaBars (by simpa [cleanImageShape] using x0)
-            (seed := opts.seed) (step := step + 1))
+      show Sample.Supervised Float (input c h w) (output c h w) from by
+        simpa [input, output] using
+          diffusion.noisedSample [batchSize] ([h, w] : Tensor Nat [2])
+            schedule (by simpa [output] using x0)
+            (seed := runtime.seed) (step := step + 1))
     evalSample
-    { steps := cfg.steps, log := .disabled }
+    { steps := config.training.steps
+      cudaMemorySampleEvery := config.training.cudaMemorySampleEvery
+      logDestination := .disabled }
     (curveEvery := curveEvery)
-    (cudaMemWatch := cfg.cudaMemWatch)
   let curve := trained.curve
   trained.printSummary
-    match cfg.referencePpm? with
-    | none => pure ()
-    | some path => Internal.writeFirstRgbPpm path evalX0
-    match cfg.samplePpm? with
-    | none => pure ()
-    | some path => do
-        let x_T := diffusion.normalNoise (shape := cleanImageShape c h w)
-          (seed := opts.seed) (step := 999)
-        let x_t ← reverseDdim trained.predict alphaBars x_T
-        Internal.writeFirstRgbPpm path x_t
-    match cfg.reconstructPpm? with
-    | none => pure ()
-    | some path => do
-        let tIdxNat := Nat.min (cfg.reconstructStep?.getD (cfg.T / 4)) (cfg.T - 1)
-        have hTPos : 0 < cfg.T := Nat.pos_of_ne_zero (NeZero.ne cfg.T)
-        have hTIdx : tIdxNat < cfg.T :=
-          Nat.lt_of_le_of_lt (Nat.min_le_right _ _) (Nat.sub_lt hTPos (by decide))
-        let tIdx : Fin cfg.T := ⟨tIdxNat, hTIdx⟩
-        let ab : Float := alphaBars.getScalar tIdx
-        let sqrtAb : Float := MathFunctions.sqrt (Max.max ab 0.0)
-        let sqrtOneMinusAb : Float := MathFunctions.sqrt (Max.max (1.0 - ab) 0.0)
-        let eps := diffusion.normalNoise (shape := cleanImageShape c h w)
-          (seed := opts.seed) (step := 1001)
-        let noisyImage : Tensor Float (cleanImageShape c h w) :=
-          Spec.Tensor.addSpec
-            (Spec.Tensor.scaleSpec evalX0 sqrtAb)
-            (Spec.Tensor.scaleSpec eps sqrtOneMinusAb)
-        match cfg.noisyPpm? with
-        | none => pure ()
-        | some noisyPath => Internal.writeFirstRgbPpm noisyPath noisyImage
-        let x_t ← reverseDdimFrom trained.predict alphaBars tIdx noisyImage
-        Internal.writeFirstRgbPpm path x_t
+  match config.artifacts.referencePpm? with
+  | none => pure ()
+  | some path => Data.Image.writeFirstRgbPpm path (evalX0.map fun x => (x + 1.0) / 2.0)
+  match config.artifacts.samplePpm? with
+  | none => pure ()
+  | some path => do
+      let x_T := diffusion.normalNoise (shape := output c h w)
+        (seed := runtime.seed) (step := 999)
+      let x_t ← diffusion.reverseDdim (conditionedPredictor trained.predict) alphaBars x_T
+      Data.Image.writeFirstRgbPpm path (x_t.map fun x => (x + 1.0) / 2.0)
+  match config.artifacts.reconstructPpm? with
+  | none => pure ()
+  | some path => do
+      let tIdxNat :=
+        Nat.min
+          (config.artifacts.reconstructStep?.getD (config.schedule.T / 4))
+          (config.schedule.T - 1)
+      let tIdx := schedule.index tIdxNat
+      let ab : Float := alphaBars[tIdx]
+      let sqrtAb : Float := MathFunctions.sqrt (Max.max ab 0.0)
+      let sqrtOneMinusAb : Float := MathFunctions.sqrt (Max.max (1.0 - ab) 0.0)
+      let eps := diffusion.normalNoise (shape := output c h w)
+        (seed := runtime.seed) (step := 1001)
+      let noisyImage : Tensor Float (output c h w) :=
+        evalX0.scale sqrtAb + eps.scale sqrtOneMinusAb
+      match config.artifacts.noisyPpm? with
+      | none => pure ()
+      | some noisyPath =>
+          Data.Image.writeFirstRgbPpm noisyPath (noisyImage.map fun x => (x + 1.0) / 2.0)
+      let x_t ← diffusion.reverseDdimFrom
+        (conditionedPredictor trained.predict) alphaBars tIdx noisyImage
+      Data.Image.writeFirstRgbPpm path (x_t.map fun x => (x + 1.0) / 2.0)
   pure curve
 
 /-- Train the diffusion example after rejecting an empty timestep schedule. -/
-def trainCurveFloat {c h w : Nat} [NeZero c] [NeZero h] [NeZero w]
-    (opts : Options)
-    (loadBatches : IO (Array (Tensor Float (cleanImageShape c h w))))
-    (cfg : DiffusionOptions) (h_hiddenC : cfg.hiddenC ≠ 0) :
-    IO Training.Curve :=
-  if hT : cfg.T ≠ 0 then
-    letI : NeZero cfg.T := ⟨hT⟩
-    Internal.trainCurveFloatWithNonemptySchedule opts loadBatches cfg h_hiddenC
-  else
-    throw <| IO.userError s!"{exeName}: --T must be positive"
+def train {c h w : Nat} [NeZero c] [NeZero h] [NeZero w]
+    (runtime : Runtime.Config)
+    (loadBatches : IO ((count : Nat) × Tensor Float ((output c h w).prependDim count)))
+    (config : Options) :
+    IO Training.Curve := do
+  let schedule ← CLI.orThrow exeName <|
+    diffusion.Schedule.linear config.schedule.T
+      config.schedule.betaStart config.schedule.betaEnd
+  Training.run runtime loadBatches config schedule
 
-namespace DiffusionOptions
+namespace Options
 
 /--
 Parse diffusion-specific training flags after runtime/device flags and dataset flags.
@@ -389,124 +326,122 @@ The shared parser handles `--steps`, `--log`, and `--cuda-mem-watch`; this parse
 schedule parameters, model width, and optional PPM artifact paths.
 -/
 def parse (args : List String) :
-    Except String (DiffusionOptions × List String) := do
-  let (train, rest) ← CLI.Training.OptimizerOptions.parse exeName args defaultLogJson 50 1e-3
-  let (hiddenC, rest) ← CLI.takeNatFlagDefault rest "hidden-c" 16
-  let (schedule, rest) ← ModelZoo.DiffusionScheduleFlags.parse rest
-  let (artifacts, rest) ← ModelZoo.ImageArtifactFlags.parse rest
-  pure ({ toOptimizerOptions := train,
-          toDiffusionScheduleFlags := schedule,
-          toImageArtifactFlags := artifacts,
-          hiddenC := hiddenC },
+    Except String (Options × List String) := do
+  let (train, rest) ←
+    CLI.Training.OptimizerOptions.parse exeName args defaultLogPath
+      (defaultSteps := 50) (defaultLearningRate := 1e-3)
+  let (hiddenChannels, rest) ←
+    CLI.takePositiveNatFlag rest exeName "hidden-c" (default := 16)
+  let (schedule, rest) ← Support.DiffusionScheduleFlags.parse rest
+  let (artifacts, rest) ← Support.ImageArtifactFlags.parse rest
+  pure ({ training := train,
+          schedule,
+          artifacts,
+          hiddenChannels },
         rest)
-
-/-- Reject unsupported diffusion hyperparameters before shape-specialized execution begins. -/
-def ensureValid (cfg : DiffusionOptions) : IO Unit := do
-  if cfg.hiddenC = 0 then
-    throw <| IO.userError s!"{exeName}: --hidden-c must be > 0"
 
 /-- Dataset/source note fields shared by the CIFAR-10 and ImageNet64 branches. -/
 def sourceNotes
     (datasetName : String)
-    (data : ModelZoo.NpyDataFlags) : Array String :=
-  ModelZoo.NpyDataFlags.trainLogNotes data datasetName
+    (data : Support.NpyDataFlags) : Array String :=
+  Support.NpyDataFlags.trainLogNotes data datasetName
 
 /-- TrainLog note fields shared by all diffusion dataset branches. -/
 def logNotes
-    (cfg : DiffusionOptions)
+    (config : Options)
     (dataset : String)
-    (opts : Options)
+    (runtime : Runtime.Config)
     (sourceNotes : Array String := #[]) : Array String :=
   sourceNotes ++
     #[s!"dataset={dataset}",
-      ModelZoo.deviceNote opts,
-      s!"lr={cfg.lr}",
-      s!"hiddenC={cfg.hiddenC}"] ++
-    ModelZoo.DiffusionScheduleFlags.trainLogNotes cfg.toDiffusionScheduleFlags ++
-    ModelZoo.ImageArtifactFlags.trainLogNotes cfg.toImageArtifactFlags
+      Support.deviceNote runtime,
+      s!"lr={config.training.learningRate}",
+      s!"hiddenChannels={config.hiddenChannels}"] ++
+    Support.DiffusionScheduleFlags.trainLogNotes config.schedule ++
+    Support.ImageArtifactFlags.trainLogNotes config.artifacts
 
-end DiffusionOptions
+end Options
 
 /-- Write the diffusion loss curve plus dataset, schedule, model, and artifact metadata. -/
-def writeTrainingLog (log : Training.LogDestination) (dataset : String)
-    (sourceNotes : Array String) (cfg : DiffusionOptions) (opts : Options)
+def writeLog (log : Training.LogDestination) (dataset : String)
+    (sourceNotes : Array String) (config : Options) (runtime : Runtime.Config)
     (curve : Training.Curve) : IO Unit :=
-  ModelZoo.writeCurveTrainLog log "Diffusion training" curve "loss"
-    (notes := cfg.logNotes dataset opts sourceNotes)
+  Training.Curve.writeLog curve log "Diffusion training" "loss"
+    (notes := config.logNotes dataset runtime sourceNotes)
 
 /--
 Run one typed diffusion dataset branch.
 
 The CIFAR-10 and ImageNet64 commands differ in their shape-level loader and default `.npy` paths,
 but after parsing those inputs they follow the same command flow: parse training flags, reject
-unused args, require $\mathtt{hiddenC}>0$, train the epsilon predictor, then write the same curve
-log.
+unused args, require a positive hidden-channel count, train the epsilon predictor, then write the
+same curve log.
 -/
-def runTypedDataset {c h w : Nat} [NeZero c] [NeZero h] [NeZero w]
-    (opts : Options) (args : List String)
+def runDataset {c h w : Nat} [NeZero c] [NeZero h] [NeZero w]
+    (runtime : Runtime.Config) (args : List String)
     (datasetName : String)
-    (parseData : List String → Except String (ModelZoo.NpyDataFlags × List String))
+    (parseData : List String → Except String (Support.NpyDataFlags × List String))
     (loadBatches : System.FilePath → System.FilePath → Nat → Nat →
-      IO (Array (Tensor Float (cleanImageShape c h w)))) : IO Unit := do
-  let (data, args) ← ModelZoo.orThrow exeName <| parseData args
-  let (cfg, rest) ← ModelZoo.orThrow exeName <| DiffusionOptions.parse args
+      IO ((count : Nat) × Tensor Float ((output c h w).prependDim count))) : IO Unit := do
+  let (data, args) ← CLI.orThrow exeName <| parseData args
+  let data := { data with seed := runtime.seed }
+  let (config, rest) ← CLI.orThrow exeName <| Options.parse args
   CLI.requireNoArgs exeName rest
-  cfg.ensureValid
-  let sourceNotes := DiffusionOptions.sourceNotes datasetName data
+  let sourceNotes := Options.sourceNotes datasetName data
   let load := loadBatches data.xPath data.yPath data.nRows data.seed
-  match cfg.hiddenC with
-  | 0 => unreachable!
-  | hc + 1 =>
-      let cfg := { cfg with hiddenC := hc + 1 }
-      let curve ← trainCurveFloat opts load cfg (Nat.succ_ne_zero hc)
-      writeTrainingLog cfg.log datasetName sourceNotes cfg opts curve
+  let curve ← train runtime load config
+  writeLog
+    config.training.logDestination datasetName sourceNotes config runtime curve
 
 /-- Run the ImageNet64 branch with shape-specialized model construction. -/
-def runImageNet64 (opts : Options) (args : List String) : IO Unit :=
-  runTypedDataset
+def runImageNet64 (runtime : Runtime.Config) (args : List String) : IO Unit :=
+  runDataset
     (c := RealData.imagenet64Channels)
     (h := RealData.imagenet64Height)
     (w := RealData.imagenet64Width)
-    opts args "imagenet64"
+    runtime args "imagenet64"
     RealData.NpyDatasets.parseImageNet64
-    loadImageNet64CleanImageBatches
+    loadImageNet64
 
 /-- Run the CIFAR-10 branch with shape-specialized model construction. -/
-def runCifar10 (opts : Options) (args : List String) : IO Unit :=
-  runTypedDataset
+def runCifar10 (runtime : Runtime.Config) (args : List String) : IO Unit :=
+  runDataset
     (c := RealData.cifarChannels)
-    (h := cifarTinyH)
-    (w := cifarTinyW)
-    opts args "cifar10"
+    (h := cifarCropHeight)
+    (w := cifarCropWidth)
+    runtime args "cifar10"
     RealData.NpyDatasets.parseCifar
-    loadCifarCleanImageBatches
+    loadCifar
 
 /--
 Executable entrypoint for diffusion training.
 
-The runtime parser selects CPU/CUDA and eager/typed-graph settings first; the remaining arguments select
-the dataset branch and diffusion training configuration.
+The runtime parser selects CPU/CUDA and eager/typed-graph settings first; the remaining arguments
+select the dataset branch and diffusion training configuration.
 -/
 def main (args : List String) : IO UInt32 := do
-  Module.Command.runFloat32 exeName args
-    (banner := ModelZoo.bannerWithDevice exeName "diffusion trainer")
-    (usage? := some <| TrainCommand.optimizerUsage exeName #[
-      "  --dataset cifar10|imagenet64",
-      "  --x PATH           image NPY file",
-      "  --y PATH           label NPY file",
-      "  --n-total N        images to load",
-      "  --hidden-c N       denoiser channel width",
-      "  --T N              diffusion timesteps",
-      "  --beta-start X     initial noise variance",
-      "  --beta-end X       final noise variance",
-      "  --sample-ppm PATH --reference-ppm PATH",
-      "  --noisy-ppm PATH --reconstruct-ppm PATH",
-      "  --reconstruct-step N"
-    ])
-    (k := fun opts rest => do
-      let (choice, rest) ← ModelZoo.orThrow exeName <| ModelZoo.ImageDatasetChoice.parse rest
+  Module.Command.run
+    (config := {
+      banner? := some <| Support.bannerWithDevice exeName "diffusion trainer"
+      usage? := some <| TrainCommand.optimizerUsage exeName #[
+        "  --dataset cifar10|imagenet64",
+        "  --x PATH           image NPY file",
+        "  --y PATH           label NPY file",
+        "  --n-total N        images to load",
+        "  --hidden-c N       denoiser channel width",
+        "  --T N              diffusion timesteps",
+        "  --beta-start X     initial noise variance",
+        "  --beta-end X       final noise variance",
+        "  --sample-ppm PATH --reference-ppm PATH",
+        "  --noisy-ppm PATH --reconstruct-ppm PATH",
+        "  --reconstruct-step N"
+      ]
+      printSuccess := true })
+    exeName args
+    (.native fun runtime rest => do
+      let (choice, rest) ← CLI.orThrow exeName <| Support.ImageDatasetChoice.parse rest
       match choice with
-      | .imagenet64 => runImageNet64 opts rest
-      | .cifar10 => runCifar10 opts rest)
+      | .imagenet64 => runImageNet64 runtime rest
+      | .cifar10 => runCifar10 runtime rest)
 
 end NN.Examples.Models.Generative.Diffusion

@@ -13,6 +13,8 @@ import NN.API.Trainer.Scheduler
 import NN.GraphSpec
 import NN.IR
 import NN.Spec
+import NN.Tensor.Internal.Laws.DualNumberReduction
+import NN.Tensor.Internal.Laws.Matrix
 
 /-!
 # Additional Foundation Modules

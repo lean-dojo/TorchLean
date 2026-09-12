@@ -23,38 +23,38 @@ namespace Tests
 namespace Cuda
 namespace BatchNorm
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Runtime.Autograd
 
 abbrev channels : Nat := 2
 abbrev height : Nat := 2
 abbrev width : Nat := 2
 
-theorem hC : channels > 0 := by decide
-theorem hH : height > 0 := by decide
-theorem hW : width > 0 := by decide
+theorem channels_pos : channels > 0 := by decide
+theorem height_pos : height > 0 := by decide
+theorem width_pos : width > 0 := by decide
 
 abbrev spatial : Shape := [height, width]
 
-theorem hInput : (spatial.prependDim channels).wellFormed := by
-  exact ⟨hC, ⟨hH, ⟨hW, trivial⟩⟩⟩
+theorem input_wellFormed : (spatial.prependDim channels).wellFormed := by
+  exact ⟨channels_pos, ⟨height_pos, ⟨width_pos, trivial⟩⟩⟩
 
 def x : Tensor Float [channels, height, width] :=
-  tensorOfArray! [channels, height, width] #[
+  (Tensor.from #[
     -- channel 0
     1.0, 2.0,
     3.0, 4.0,
     -- channel 1
     -0.5, 0.5,
     1.5, -1.0
-  ]
+  ]).reshape [channels, height, width] (by dsimp; decide)
 
 def gamma : Tensor Float [channels] :=
-  tensorOfArray! [channels] #[1.0, 0.5]
+  (Tensor.from #[1.0, 0.5]).reshape [channels] (by dsimp; decide)
 
 def beta : Tensor Float [channels] :=
-  tensorOfArray! [channels] #[0.0, 0.1]
+  (Tensor.from #[0.0, 0.1]).reshape [channels] (by dsimp; decide)
 
 def run : IO Unit := do
   IO.println "=== CUDA kernel coverage: batch_norm ==="
@@ -68,9 +68,10 @@ def run : IO Unit := do
   let (t3, bId) := Tape.leaf (t := t2) beta (name := some "beta")
   let (t4, yId) ← Utils.okOrThrow
     (Tape.batchNorm (α := Float) (t := t3) (channels := channels) (sSpatial := spatial)
-      hInput xId gId bId)
+      input_wellFormed xId gId bId)
   let yCpu ← Utils.cpuValue (s := outShape) t4 yId
-  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (fill (1.0 : Float) outShape)
+  let seedCpu : Spec.SomeTensor Float :=
+    Spec.SomeTensor.ofTensor (Tensor.full outShape (1.0 : Float))
   let gradsCpu ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t4) yId seedCpu)
   let dxCpu ← Utils.cpuGrad (s := outShape) gradsCpu xId
   let dGammaCpu ← Utils.cpuGrad (s := [channels]) gradsCpu gId
@@ -86,10 +87,11 @@ def run : IO Unit := do
     (name := some "beta")
   let (t4c, yIdc) ← Utils.okOrThrow
     (Runtime.Autograd.Cuda.Tape.batchNorm (t := t3c) (channels := channels)
-      (spatial := spatial) hInput xIdc gIdc bIdc)
+      (spatial := spatial) input_wellFormed xIdc gIdc bIdc)
   let yCuda ← Utils.cudaValue (s := outShape) t4c yIdc
   let seedCuda : Runtime.Autograd.Cuda.AnyBuffer :=
-    { s := outShape, buf := Runtime.Autograd.Cuda.Buffer.full (UInt32.ofNat (Spec.Shape.size outShape)) 1.0 }
+    { s := outShape,
+      buf := Runtime.Autograd.Cuda.Buffer.full (UInt32.ofNat (Spec.Shape.size outShape)) 1.0 }
   let gradsCuda ← Utils.okOrThrow
     (Runtime.Autograd.Cuda.Tape.backwardDenseAll (t := t4c) yIdc seedCuda)
   let dxCuda ← Utils.cudaGrad (s := outShape) gradsCuda xIdc

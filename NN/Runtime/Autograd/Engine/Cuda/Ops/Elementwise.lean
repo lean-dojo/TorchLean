@@ -18,8 +18,8 @@ namespace Runtime
 namespace Autograd
 namespace Cuda
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Tape
 
@@ -117,6 +117,28 @@ def exp {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) :=
     (backward := fun x dLdy =>
       let ex := Buffer.exp x
       Buffer.releaseThen ex <| Buffer.mul dLdy ex)
+
+/--
+Elementwise sine with VJP `cos(x) * dLdy`.
+
+The cosine buffer belongs to this backward call and is released after multiplication. The input
+and upstream gradient remain owned by the tape.
+-/
+def sin {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) :=
+  unary (t := t) "sin" xId s s
+    (forward := Buffer.sin)
+    (backward := fun x dLdy =>
+      let derivative := Buffer.cos x
+      Buffer.releaseThen derivative <| Buffer.mul derivative dLdy)
+
+/-- Elementwise cosine with VJP `-sin(x) * dLdy`, releasing both temporary buffers. -/
+def cos {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) :=
+  unary (t := t) "cos" xId s s
+    (forward := Buffer.cos)
+    (backward := fun x dLdy =>
+      let sine := Buffer.sin x
+      let derivative := Buffer.scale sine (-1.0)
+      Buffer.releaseThen sine <| Buffer.releaseThen derivative <| Buffer.mul derivative dLdy)
 
 /-- Pointwise natural-log node; callers are responsible for the positive-domain convention. -/
 def log {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) :=

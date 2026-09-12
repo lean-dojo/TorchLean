@@ -6,21 +6,25 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Semantics
+public import Mathlib.Analysis.SpecialFunctions.Trigonometric.Arctan
+public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
+import Mathlib.Tactic.Measurability.Init
+public import NN.MLTheory.CROWN.BoundOps.Lawful
+public import NN.MLTheory.CROWN.Graph.Engine.Base
 
 /-!
 # IBP Certificate Step
 
-Safe, option-returning certificate-step semantics for the graph IBP checker.  This is the proof layer
-counterpart of the executable bound propagation step.
+Safe, option-returning certificate-step semantics for the graph IBP checker. This is the proof
+layer counterpart of the executable bound propagation step.
 -/
 
 @[expose] public section
 
 namespace NN.MLTheory.CROWN.Graph
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.MLTheory.CROWN
 
 namespace CertSoundness
@@ -38,6 +42,7 @@ topological order and that earlier boxes exist. Here we avoid partiality by retu
 whenever parents are missing.
 -/
 
+/-- Safe lookup of the interval box recorded for node id `pid`, `none` when out of range. -/
 def getBox? (cert : Array (Option (FlatBox ℝ))) (pid : Nat) : Option (FlatBox ℝ) :=
   if _h : pid < cert.size then cert[pid]! else none
 
@@ -84,7 +89,7 @@ def certStepNode? (nodes : Array Node) (ps : ParamStore ℝ) (cert : Array (Opti
                 none
           | _, _ => none
       | none => none
-  | .mul_elem =>
+  | .mulElem =>
       match NN.IR.binaryParents? node.parents with
       | some (p1, p2) =>
           match getBox? cert p1, getBox? cert p2 with
@@ -127,6 +132,20 @@ def certStepNode? (nodes : Array Node) (ps : ParamStore ℝ) (cert : Array (Opti
                 := ℝ) Xin)
               some (toFlatBox (α := ℝ) Xin.dim yB)
           | none => none
+      | none => none
+  | .softplus =>
+      match NN.IR.unaryParent? node.parents with
+      | some p1 =>
+          match getBox? cert p1 with
+          | some B => boxSoftplus? B
+          | none => none
+      | none => none
+  | .safeLog =>
+      match NN.IR.binaryParents? node.parents with
+      | some (p1, p2) =>
+          match getBox? cert p1, getBox? cert p2 with
+          | some B, some epsilon => boxSafeLog? B epsilon
+          | _, _ => none
       | none => none
   | .cos =>
       match NN.IR.unaryParent? node.parents with

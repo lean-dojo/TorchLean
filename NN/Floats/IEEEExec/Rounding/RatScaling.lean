@@ -6,25 +6,18 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Field.Basic
-public import Mathlib.Data.Nat.Bitwise
-public import NN.Floats.IEEEExec.Exec32
 public import NN.Floats.NeuralFloat.Core
-
+public import NN.Floats.IEEEExec.Exec32.Dyadic
 /-!
 # RatScaling
-
 Small algebraic helper lemmas about powers of two and `Nat.shiftLeft` used by the IEEE32Exec
 kernel.
-
 Several proofs (notably the bridge theorems and division soundness) need to normalize expressions
 of the form `dyadicToReal dx / dyadicToReal dy` into the same *signed rational* shape that the
 executable implementation uses:
-
 - align dyadic exponents by shifting either the numerator or denominator,
 - extract a sign bit via `Bool.xor`,
 - and express the quotient as `±(num/den)`.
-
 This module provides the shared normalization lemmas used by the bridge theorems without creating
 import cycles.
 -/

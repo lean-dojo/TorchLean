@@ -20,7 +20,12 @@ python3 -m pip install -r scripts/verification/geometry3d/requirements-realworld
 Run the real-image certificate suite:
 
 ```bash
-python3 scripts/verification/regenerate_assets.py --group geometry3d-real --run
+python3 scripts/verification/geometry3d/export_hf_depth_box3d_cert.py \
+  --batch-manifest scripts/verification/geometry3d/realworld_manifest.json \
+  --batch-out-dir _external/geometry3d/realworld --verify
+python3 scripts/verification/geometry3d/render_box3d_cert_overlay.py \
+  --glob '_external/geometry3d/realworld/*.json' \
+  --out-dir _external/geometry3d/overlays/realworld --contact-sheet
 ```
 
 This loads:
@@ -54,7 +59,10 @@ Run the heavier direct 3D detector path:
 ```bash
 python3 -m pip install -r scripts/verification/geometry3d/requirements-wilddet3d.txt
 python3 -m pip install --no-deps utils3d
-python3 scripts/verification/regenerate_assets.py --group geometry3d-wilddet3d --run
+python3 scripts/verification/geometry3d/export_wilddet3d_box3d_cert.py \
+  --text-prompt cat \
+  --out _external/geometry3d/wilddet3d/wilddet3d_cat_box3d_cert.json \
+  --verify --overlay
 ```
 
 This downloads the [`allenai/WildDet3D`](https://huggingface.co/allenai/WildDet3D) Hugging Face
@@ -72,13 +80,17 @@ and checks it with:
 lake exe verify -- camera-box3d-cert _external/geometry3d/wilddet3d/wilddet3d_cat_box3d_cert.json
 ```
 
-It also renders:
+The `--overlay` flag writes a PNG beside the exported JSON. To inspect the strict model-box
+claim and compare its intervals with the projected footprint:
 
-```text
-_external/geometry3d/wilddet3d/wilddet3d_cat_box3d_cert.png
-_external/geometry3d/wilddet3d/wilddet3d_cat_model2d_strict_box3d_cert.png
-_external/geometry3d/wilddet3d/wilddet3d_bbox_diagnostic.png
-_external/geometry3d/wilddet3d/geometry3d_contact_sheet.png
+```bash
+python3 scripts/verification/geometry3d/export_wilddet3d_box3d_cert.py \
+  --text-prompt cat --bbox-source model2d \
+  --out _external/geometry3d/wilddet3d/wilddet3d_cat_model2d_strict_box3d_cert.json \
+  --overlay
+python3 scripts/verification/geometry3d/plot_box3d_bbox_diagnostic.py \
+  --cert _external/geometry3d/wilddet3d/wilddet3d_cat_box3d_cert.json \
+  --out _external/geometry3d/wilddet3d/wilddet3d_bbox_diagnostic.png
 ```
 
 This is the direct 3D detector route. It is heavier because WildDet3D is about a 1.2B
@@ -109,24 +121,6 @@ python3 scripts/verification/geometry3d/export_omni3d_box3d_cert.py \
 
 That path expects an external detector to have already produced `K`, image size, a 2D bbox, and
 `bbox3D` corners. The model and exporter are untrusted; Lean checks the final tensor artifact.
-
-## Bad Case Visual Check
-
-Run:
-
-```bash
-python3 scripts/verification/regenerate_assets.py --group geometry3d-visual --run
-```
-
-This generates bad certificates motivated by real projection and camera layout issues, requires Lean to
-reject them, and renders a contact sheet:
-
-```text
-_external/geometry3d/overlays/bugzoo/geometry3d_contact_sheet.png
-```
-
-Green overlays are accepted by Lean. Red overlays are rejected by Lean. The images draw the claimed
-2D box, projected 3D corners, cuboid edges, and checker status so the geometry failure is visible.
 
 ## Theorem Checks
 

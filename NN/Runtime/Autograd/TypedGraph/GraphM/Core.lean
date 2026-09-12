@@ -7,8 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Tape.Algebra.Soundness
-public import NN.Runtime.Autograd.Engine.Core
-public import NN.Runtime.Autograd.TorchLean.Random
+public import NN.Runtime.Autograd.Engine.Core.Base
+public import NN.Spec.Core.Random
 
 /-!
 # GraphM Core
@@ -24,11 +24,13 @@ namespace Autograd
 namespace TypedGraph
 namespace GraphM
 
-open Spec
-open Tensor
-open _root_.TorchLean
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
+open TorchLean
 open Proofs.Autograd.Algebra
-open Runtime.Autograd.TorchLean
+-- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
+-- `Idx` and `getIdx` are defined.
+open Proofs (Idx getIdx)
 
 /--
 A typed handle to a value in the growing graph context.
@@ -81,31 +83,32 @@ It is a sigma pair of:
 - the list of intermediate shapes `ss` produced so far, and
 - the corresponding executable SSA graph payload `GraphData α Δ Γ ss`.
 -/
-abbrev StateWith (α : Type) (Δ : Type) (Γ : List Shape) : Type :=
+abbrev StateWith (α : Type) [TorchLean.Storage α] (Δ : Type) (Γ : List Shape) : Type :=
   Σ ss : List Shape, GraphData α Δ Γ ss
 
 /-- Default `GraphM` state with no extra environment (`Δ := Unit`). -/
-abbrev State (α : Type) (Γ : List Shape) : Type :=
+abbrev State (α : Type) [TorchLean.Storage α] (Γ : List Shape) : Type :=
   StateWith α Unit Γ
 
 /-- `StateT` builder monad for authoring a `GraphData` program, with explicit environment `Δ`. -/
-abbrev MWith (α : Type) (Δ : Type) (Γ : List Shape) : Type → Type :=
+abbrev MWith (α : Type) [TorchLean.Storage α] (Δ : Type) (Γ : List Shape) : Type → Type :=
   StateT (StateWith α Δ Γ) (Runtime.Autograd.Result)
 
 /-- Default `GraphM` builder monad with `Δ := Unit`. -/
-abbrev M (α : Type) (Γ : List Shape) : Type → Type :=
+abbrev M (α : Type) [TorchLean.Storage α] (Γ : List Shape) : Type → Type :=
   MWith α Unit Γ
 
 /-- Empty builder state (no intermediate nodes yet). -/
-def empty {α : Type} {Γ : List Shape} : State α Γ :=
+def empty {α : Type} [TorchLean.Storage α] {Γ : List Shape} : State α Γ :=
   ⟨[], .nil⟩
 
 /-- Empty builder state for an explicit environment type `Δ`. -/
-def emptyWith {α : Type} {Δ : Type} {Γ : List Shape} : StateWith α Δ Γ :=
+def emptyWith {α : Type} [TorchLean.Storage α]
+    {Δ : Type} {Γ : List Shape} : StateWith α Δ Γ :=
   ⟨[], .nil⟩
 
 /-- Run a `GraphM` program from an empty state. -/
-def run {α : Type} {Γ : List Shape} {β : Type} (m : M α Γ β) :
+def run {α : Type} [TorchLean.Storage α] {Γ : List Shape} {β : Type} (m : M α Γ β) :
     Runtime.Autograd.Result (β × State α Γ) :=
   StateT.run m empty
 
@@ -119,7 +122,7 @@ Convert a `Var s` into a dependent `Idx (Γ ++ ss) s`.
 This performs bounds checking and a runtime shape check, returning a structured error if the
 variable points outside the current context or has the wrong shape.
 -/
-def mkIdx {_α : Type} [DecidableEq Shape] {Γ : List Shape} (ss : List Shape) {s : Shape}
+def mkIdx {_α : Type} {Γ : List Shape} (ss : List Shape) {s : Shape}
     (v : Var s) : Runtime.Autograd.Result (Idx (Γ ++ ss) s) := by
   let n := v.id
   if h : n < ctxLen (Γ := Γ) ss then
@@ -139,7 +142,8 @@ Append a node to the graph state and return a fresh `Var` pointing to its output
 
 The returned variable id is `Γ.length + ss.length`, i.e. it points at the newly appended entry.
 -/
-def push {α : Type} {Δ : Type} {Γ : List Shape} {ss : List Shape} {s : Shape}
+def push {α : Type} [TorchLean.Storage α]
+    {Δ : Type} {Γ : List Shape} {ss : List Shape} {s : Shape}
     (g : GraphData α Δ Γ ss) (node : NodeData α Δ (Γ ++ ss) s) : MWith α Δ Γ (Var s) := do
   set (σ := StateWith α Δ Γ) ⟨ss ++ [s], .snoc g node⟩
   pure { id := Γ.length + ss.length }
@@ -152,7 +156,8 @@ shape at that position in `Γ`.
 
 PyTorch comparison: this is like naming a graph input tensor in a traced graph.
 -/
-def arg {α : Type} {Δ : Type} [DecidableEq Shape] {Γ : List Shape} (i : Nat) (s : Shape) :
+def arg {α : Type} [TorchLean.Storage α] {Δ : Type}
+    {Γ : List Shape} (i : Nat) (s : Shape) :
     MWith α Δ Γ (Var s) := do
   if h : i < Γ.length then
     let fin : Fin Γ.length := ⟨i, h⟩
@@ -168,6 +173,10 @@ def arg {α : Type} {Δ : Type} [DecidableEq Shape] {Γ : List Shape} (i : Nat) 
 
 namespace Internal
 
+/-- Worker for `args`: hand out consecutive ids starting at `i`.
+
+The ids match the positions the graph builder assigns to inputs, which is why this can produce a
+`VarList Γ` without consulting the graph state at all. -/
 def args : (Γ : List Shape) → Nat → VarList Γ
   | [], _i => .nil
   | _s :: ss, i => .cons { id := i } (args ss (i + 1))
@@ -179,7 +188,8 @@ Return one `Var` per entry of `Γ`, in order.
 
 This is the canonical argument environment for a graph with input context `Γ`.
 -/
-def args {α : Type} {Δ : Type} {Γ : List Shape} : MWith α Δ Γ (VarList Γ) := do
+def args {α : Type} [TorchLean.Storage α]
+    {Δ : Type} {Γ : List Shape} : MWith α Δ Γ (VarList Γ) := do
   pure (Internal.args Γ 0)
 
 /--
@@ -190,26 +200,27 @@ with respect to the graph inputs.
 
 PyTorch comparison: a constant literal captured into a traced/typed graph.
 -/
-def const {α : Type} {Δ : Type} [Zero α] {Γ : List Shape} {s : Shape} (t : Tensor α s) :
+def const {α : Type} [TorchLean.Storage α]
+    {Δ : Type} [Zero α] {Γ : List Shape} {s : Shape} (t : Tensor α s) :
     MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun _ctx _d => t
-      jvp := fun _ctx _dctx _d => fill (0 : α) s
-      vjp := fun _ctx _d _δ => _root_.TorchLean.TensorPack.zero (α := α) (ss := Γ ++ ss) }
+      jvp := fun _ctx _dctx _d => Tensor.full s (0 : α)
+      vjp := fun _ctx _d _δ => TorchLean.TensorPack.zero (α := α) (ss := Γ ++ ss) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /-- Deterministic `U[0,1)` tensor generator (seeded, pure). -/
-def randUniform {α : Type} [Context α] {Δ : Type} {Γ : List Shape} {s : Shape} (seed : Nat) :
-    MWith α Δ Γ (Var s) := do
+def randUniform {α : Type} [TorchLean.Storage α] [Context α] {Δ : Type} {Γ : List Shape} {s : Shape}
+    (seed : Nat) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let counter := ss.length
-  let key := TorchLean.Random.keyOf seed counter
-  let t : Tensor α s := TorchLean.Random.uniform (α := α) key (s := s)
+  let key := Spec.Random.keyOf seed counter
+  let t : Tensor α s := Spec.Random.uniform (α := α) key (s := s)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun _ctx _d => t
-      jvp := fun _ctx _dctx _d => fill (0 : α) s
-      vjp := fun _ctx _d _δ => _root_.TorchLean.TensorPack.zero (α := α) (ss := Γ ++ ss) }
+      jvp := fun _ctx _dctx _d => Tensor.full s (0 : α)
+      vjp := fun _ctx _d _δ => TorchLean.TensorPack.zero (α := α) (ss := Γ ++ ss) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /--
@@ -220,40 +231,38 @@ Note: for differentiation purposes, this node is treated as a **stop-gradient** 
 dropout where the probability is a hyperparameter (not differentiated), while keeping execution
 deterministic in `.typedGraph` execution.
 -/
-def bernoulliMask {α : Type} [Context α] [DecidableEq Shape]
+def bernoulliMask {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape}
     (keepProb : Var Shape.scalar) (seed : Nat) :
     MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let counter := ss.length
-  let key := TorchLean.Random.keyOf seed counter
+  let key := Spec.Random.keyOf seed counter
   let ikp ← liftM (mkIdx (_α := α) (Γ := Γ) ss keepProb)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
         let kpT := getIdx (α := α) (xs := ctx) ikp
-        let kp : α :=
-          match kpT with
-          | Tensor.scalar v => v
-        TorchLean.Random.mask (α := α) key kp (s := s)
-      jvp := fun _ctx _dctx _d => fill (0 : α) s
-      vjp := fun _ctx _d _δ => _root_.TorchLean.TensorPack.zero (α := α) (ss := Γ ++ ss) }
+        let kp : α := kpT.item
+        Spec.Random.mask (α := α) key kp (s := s)
+      jvp := fun _ctx _dctx _d => Tensor.full s (0 : α)
+      vjp := fun _ctx _d _δ => TorchLean.TensorPack.zero (α := α) (ss := Γ ++ ss) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /--
-Stop-gradient boundary.
+Keep the primal value and stop differentiation through this reference.
 
-Forward semantics: identity (`detach(x) = x`).
-Backward semantics: no gradient flows to `x` (treated as constant w.r.t. the graph inputs).
+Both graph JVP and VJP return zero. The forward value also clears scalar tangents when the graph
+runs over dual numbers, so a later reverse rule cannot recover a dependency from a detached value.
 -/
-def detach {α : Type} [Context α] [DecidableEq Shape]
+def detach {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape}
     (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
-    { forward := fun ctx _d => getIdx (α := α) (xs := ctx) ix
-      jvp := fun _ctx _dctx _d => fill (0 : α) s
-      vjp := fun _ctx _d _δ => _root_.TorchLean.TensorPack.zero (α := α) (ss := Γ ++ ss) }
+    { forward := fun ctx _d => Tensor.detachSpec (getIdx (α := α) (xs := ctx) ix)
+      jvp := fun _ctx _dctx _d => Tensor.full s (0 : α)
+      vjp := fun _ctx _d _δ => TorchLean.TensorPack.zero (α := α) (ss := Γ ++ ss) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 end GraphM

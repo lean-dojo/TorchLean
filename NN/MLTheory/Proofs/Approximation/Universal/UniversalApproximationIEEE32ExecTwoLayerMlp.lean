@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.Proofs.Approximation.Universal.IEEE32ExecCore
+public import NN.MLTheory.Proofs.ReLU.Bridge.ReLUMlpBridge
 
 /-!
 # IEEE32Exec two-layer ReLU approximation bound
@@ -19,8 +20,8 @@ The theorem separates the three mathematically different sources of error:
 - **real approximation**: the ideal real-valued ReLU MLP approximates the target,
 - **parameter quantization**: the real MLP is close to the real interpretation of the IEEE
   parameters, and
-- **IEEE execution**: the executable graph, interpreted back into $\mathbb{R}$, is close to the real graph
-  with those interpreted parameters.
+- **IEEE execution**: the executable graph, interpreted back into $\mathbb{R}$, is close to the
+  real graph with those interpreted parameters.
 
 This is the finite-dimensional analogue of the hinge-network executable bound in
 `UniversalApproximationIEEE32Exec`.  The decomposition follows the standard numerical-analysis
@@ -36,8 +37,8 @@ Pinkus.
 namespace NN.MLTheory.Proofs.UniversalApproximation
 namespace IEEE32ExecTwoLayerMLP
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 open NN.MLTheory.Proofs.ReLUMlpBridge
 open TorchLean.Floats.IEEE754
 open IEEE32ExecCore

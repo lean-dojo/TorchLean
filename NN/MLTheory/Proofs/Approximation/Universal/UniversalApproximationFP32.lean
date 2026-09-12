@@ -6,10 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.FP32
 public import NN.MLTheory.Proofs.Approximation.Universal.UniversalApproximation
-public import NN.Spec.Core.FloatInstances
-import Mathlib.Tactic.Linarith
+public import NN.Spec.Core.FloatInstances.NF
+public import NN.Floats.FP32.Error
 
 /-!
 # Exact ReLU interpolation and FP32 error lifting
@@ -33,9 +32,9 @@ numerical-analysis separation used in Goldberg and Higham.
 
 namespace NN.MLTheory.Proofs.UniversalApproximation
 
-open _root_.Spec
-open _root_.Spec.Tensor
-open Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
+open TorchLean.Tensor
 open Examples
 
 noncomputable section
@@ -44,8 +43,8 @@ noncomputable section
 Exact interpolation on a uniform grid by a two-layer ReLU MLP over $\mathbb{R}$ semantics.
 
 Given arbitrary target values $y_0,\ldots,y_N$ at the uniform grid points
-$\operatorname{grid}(k)=a+k(b-a)/N$, this constructs a width-$N$ hinge network that matches them at the
-grid points.
+$\operatorname{grid}(k)=a+k(b-a)/N$, this constructs a width-$N$ hinge network that matches them
+at the grid points.
 -/
 theorem relu_mlp_exact_on_uniform_grid {a b : ℝ} (h_ab : a < b) :
     ∀ {N : ℕ}, 0 < N → ∀ y : Fin (N + 1) → ℝ,
@@ -72,10 +71,6 @@ theorem relu_mlp_exact_on_uniform_grid {a b : ℝ} (h_ab : a < b) :
     | 0 => mNat 0
     | k + 1 => mNat (k + 1) - mNat k
   let g : ℝ → ℝ := fun x => yAt 0 + ∑ i ∈ Finset.range N, cNat i * relu (x - grid i)
-
-  have yAt_0 : yAt 0 = y 0 := by
-    -- `0 ≤ N` always holds.
-    simp [yAt]
 
   have prefix_sum_cNat_eq_mNat : ∀ k : ℕ, (∑ i ∈ Finset.range (k + 1), cNat i) = mNat k := by
     intro k
@@ -112,9 +107,9 @@ theorem relu_mlp_exact_on_uniform_grid {a b : ℝ} (h_ab : a < b) :
           refine Finset.sum_eq_zero ?_
           intro i hi
           have : a ≤ grid i := ha_le i hi
-          simp [relu_sub_eq_zero_of_le (x := a) (t := grid i) this]
+          simp only [relu_sub_eq_zero_of_le (x := a) (t := grid i) this, mul_zero]
         have hgrid0 : grid 0 = a := by simp [grid]
-        simp [g, hgrid0, hsum, yAt_0]
+        simp only [g, hgrid0, hsum, add_zero]
     | succ k ih =>
         have hk_le : k ≤ N := le_trans (Nat.le_succ k) hk
         have hsub : g (grid (k + 1)) - g (grid k) =
@@ -169,8 +164,8 @@ theorem relu_mlp_exact_on_uniform_grid {a b : ℝ} (h_ab : a < b) :
           have hgi0 : grid k ≤ grid i := by
             have : k ≤ i := le_trans (Nat.le_succ k) hik'
             exact grid_mono this
-          simp [F, relu_sub_eq_zero_of_le (x := grid (k + 1)) (t := grid i) hgi1,
-            relu_sub_eq_zero_of_le (x := grid k) (t := grid i) hgi0]
+          simp only [F, relu_sub_eq_zero_of_le (x := grid (k + 1)) (t := grid i) hgi1,
+            relu_sub_eq_zero_of_le (x := grid k) (t := grid i) hgi0, sub_self, mul_zero]
         have sumF :
             (∑ i ∈ Finset.range N, F i) = (∑ i ∈ Finset.range (k + 1), F i) := by
           symm
@@ -193,18 +188,18 @@ theorem relu_mlp_exact_on_uniform_grid {a b : ℝ} (h_ab : a < b) :
           have hdiff : relu (grid (k + 1) - grid i) - relu (grid k - grid i) = δ := by
             calc
               relu (grid (k + 1) - grid i) - relu (grid k - grid i)
-                  = (grid (k + 1) - grid i) - (grid k - grid i) := by simp [hrelu1, hrelu0]
+                  = (grid (k + 1) - grid i) - (grid k - grid i) := by rw [hrelu1, hrelu0]
               _ = grid (k + 1) - grid k := by ring
               _ = δ := hstep
-          simp [F, hdiff]
+          simp only [F, hdiff]
         have sumF' :
             (∑ i ∈ Finset.range (k + 1), F i) = (∑ i ∈ Finset.range (k + 1), cNat i * δ) := by
           exact Finset.sum_congr rfl hFconst
         have hdiff : g (grid (k + 1)) - g (grid k) = mNat k * δ := by
           calc
             g (grid (k + 1)) - g (grid k)
-                = ∑ i ∈ Finset.range N, F i := by simpa [F] using hsub
-            _ = ∑ i ∈ Finset.range (k + 1), F i := by simp [sumF]
+                = ∑ i ∈ Finset.range N, F i := hsub
+            _ = ∑ i ∈ Finset.range (k + 1), F i := sumF
             _ = ∑ i ∈ Finset.range (k + 1), cNat i * δ := sumF'
             _ = (∑ i ∈ Finset.range (k + 1), cNat i) * δ := by
                   simpa using
@@ -264,18 +259,20 @@ open TorchLean.Floats
 
 /-- Extract scalar from a length-1 tensor (FP32). -/
 def extractScalarOutputFp32 (t : Tensor FP32 [1]) : FP32 :=
-  match t with
-  | .dim f => item (f ⟨0, by norm_num⟩)
+  t.getScalar ⟨0, by norm_num⟩
 
 /-- Evaluate a 2-layer ReLU MLP on a scalar FP32 input (returns an FP32 scalar). -/
 noncomputable def mlpEvalScalarFP32 (hidDim : ℕ)
     (l1 : LinearSpec FP32 1 hidDim) (l2 : LinearSpec FP32 hidDim 1) (x : FP32) : FP32 :=
   extractScalarOutputFp32 (Examples.mlpForward l1 l2 (Tensor.singleton x))
 
-/-- Scalar ReLU on `FP32`. No rounding occurs: it is $\max(x,0)$ at the `FP32` level. -/
+/-- Scalar ReLU on the rounded-real `FP32` model.
+
+The zero branch returns scalar zero; otherwise the maximum selects the input or scalar zero.
+Neither branch performs an additional rounding operation. -/
 @[inline] def reluFp32 (x : FP32) : FP32 := Activation.Math.reluSpec x
 
-@[simp] lemma fp32_zero_val : (0 : FP32).val = 0 := by
+@[simp] theorem fp32_zero_val : (0 : FP32).val = 0 := by
   -- `0 : FP32` is `NF.ofReal 0`, i.e. rounding `0`.
   have hne : TorchLean.Floats.neuralNearestEven (0 : ℝ) = 0 := by
     simp [TorchLean.Floats.neuralNearestEven]
@@ -289,24 +286,24 @@ noncomputable def mlpEvalScalarFP32 (hidDim : ℕ)
       TorchLean.Floats.neuralCexp,
     TorchLean.Floats.neuralMagnitude, TorchLean.Floats.rnd32, hne]
 
-@[simp] lemma relu_fp32_val (x : FP32) : (reluFp32 x).val = relu x.val := by
-  -- `reluFp32` is `max x 0` at the `FP32` level, and order is via `.val`.
-  by_cases hx0 : 0 ≤ x.val
-  · have hx0' : (0 : FP32) ≤ x := by
-      change (0 : FP32).val ≤ x.val
-      simpa [fp32_zero_val] using hx0
-    -- Reduce to `x.val = x.val ⊔ 0`.
-    simp [reluFp32, relu, Activation.Math.reluSpec, Max.max, hx0']
-    change x.val = x.val ⊔ 0
-    exact (sup_of_le_left (a := x.val) (b := (0 : ℝ)) hx0).symm
-  · have hx0' : ¬(0 : FP32) ≤ x := by
-      change ¬((0 : FP32).val ≤ x.val)
-      simpa [fp32_zero_val] using hx0
-    have hxle : x.val ≤ 0 := le_of_lt (lt_of_not_ge hx0)
-    -- Reduce to `0 = x.val ⊔ 0`.
-    simp [reluFp32, relu, Activation.Math.reluSpec, Max.max, hx0', fp32_zero_val]
-    change (0 : ℝ) = x.val ⊔ 0
-    exact (sup_of_le_right (a := x.val) (b := (0 : ℝ)) hxle).symm
+/-- The `FP32` ReLU agrees with the real ReLU on the underlying value.
+
+The Boolean zero test compares real values. A zero-valued input therefore returns a scalar whose
+value is zero, and the remaining branch selects the input or zero according to the same real order.
+Both cases give $\max(x.\mathrm{val},0)$ exactly, with no rounding error. -/
+@[simp] theorem relu_fp32_val (x : FP32) : (reluFp32 x).val = relu x.val := by
+  rw [relu, Activation.Math.reluSpec_eq_max]
+  -- Expose the value comparisons in the zero test and the maximum before splitting into cases.
+  change
+    (if decide (x.val = (0 : FP32).val) then (0 : FP32)
+      else if (0 : FP32).val ≤ x.val then x else 0).val = max x.val 0
+  simp only [fp32_zero_val, decide_eq_true_eq]
+  by_cases hz : x.val = 0
+  · rw [if_pos hz, fp32_zero_val, hz, max_self]
+  · rw [if_neg hz]
+    by_cases hx : 0 ≤ x.val
+    · rw [if_pos hx, max_eq_left hx]
+    · rw [if_neg hx, fp32_zero_val, max_eq_right (le_of_not_ge hx)]
 
 /--
 Real ReLU is 1-Lipschitz.
@@ -314,28 +311,8 @@ Real ReLU is 1-Lipschitz.
 This elementary analytic fact is what lets the FP32 error analysis pass a subtraction-rounding
 error through the ReLU nonlinearity without amplifying it.
 -/
-lemma relu_lipschitz (u v : ℝ) : |relu u - relu v| ≤ |u - v| := by
-  by_cases hu : 0 ≤ u <;> by_cases hv : 0 ≤ v
-  · -- u ≥ 0, v ≥ 0
-    simp [relu, Activation.Math.reluSpec, max_eq_left hu, max_eq_left hv]
-  · -- u ≥ 0, v < 0
-    have hv' : v ≤ 0 := le_of_not_ge hv
-    have huv : 0 ≤ u - v := by linarith
-    have hu_le : u ≤ u - v := by linarith
-    -- `relu u = u`, `relu v = 0`, and `|u - v| = u - v`.
-    simp [relu, Activation.Math.reluSpec, max_eq_left hu, max_eq_right hv',
-      abs_of_nonneg hu, abs_of_nonneg huv, hu_le]
-  · -- u < 0, v ≥ 0
-    have hu' : u ≤ 0 := le_of_not_ge hu
-    have huv : u - v ≤ 0 := by linarith
-    have hvu : v ≤ v - u := by linarith
-    -- `relu u = 0`, `relu v = v`, and `|u - v| = v - u`.
-    simp [relu, Activation.Math.reluSpec, max_eq_right hu', max_eq_left hv,
-      abs_of_nonneg hv, abs_of_nonpos huv, hvu]
-  · -- u < 0, v < 0
-    have hu' : u ≤ 0 := le_of_not_ge hu
-    have hv' : v ≤ 0 := le_of_not_ge hv
-    simp [relu, Activation.Math.reluSpec, max_eq_right hu', max_eq_right hv']
+theorem relu_lipschitz (u v : ℝ) : |relu u - relu v| ≤ |u - v| := by
+  simpa only [relu, Activation.Math.reluSpec_eq_max] using abs_max_sub_max_le_abs u v 0
 
 /-! ### FP32 hinge layers and a pointwise error bound -/
 
@@ -363,7 +340,7 @@ Per-neuron FP32 hinge-term error bound.
 The bound has two pieces: one half-ulp term for the final multiplication and one subtraction
 rounding term propagated through the $1$-Lipschitz ReLU and scaled by $|c_i|$.
 -/
-  lemma hinge_term_abs_error {n : ℕ} (c t : Fin n → FP32) (x : FP32) (i : Fin n) :
+  theorem hinge_term_abs_error {n : ℕ} (c t : Fin n → FP32) (x : FP32) (i : Fin n) :
     let term32 := hingeTermFp32 c t x i
     let termR := hingeTermReal c t x i
     |term32.val - termR| ≤
@@ -397,7 +374,7 @@ rounding term propagated through the $1$-Lipschitz ReLU and scaled by $|c_i|$.
     have hfactor :
         (c i).val * r32.val - (c i).val * relu (x.val - (t i).val) =
           (c i).val * (r32.val - relu (x.val - (t i).val)) := by ring
-    simp [hfactor, abs_mul]
+    rw [hfactor, abs_mul]
   calc
     |term32.val - termR|
         ≤ |term32.val - ((c i).val * r32.val)| +
@@ -411,7 +388,7 @@ rounding term propagated through the $1$-Lipschitz ReLU and scaled by $|c_i|$.
           have hmul' := hmul
           have hlin' : |(c i).val * r32.val - (c i).val * relu (x.val - (t i).val)| ≤
               |(c i).val| * |r32.val - relu (x.val - (t i).val)| := by
-            simp [hlin]
+            exact le_of_eq hlin
           exact add_le_add hmul' hlin'
     _ ≤ neuralUlp binaryRadix fexp32 ((c i).val * r32.val) / 2 +
           (|(c i).val| * |u32.val - (x.val - (t i).val)|) := by
@@ -433,7 +410,7 @@ noncomputable def hingeTermErrorBound {n : ℕ} (c t : Fin n → FP32) (x : FP32
       (neuralUlp binaryRadix fexp32 (x.val - (t i).val) / 2)
 
 /-- Named version of `hinge_term_abs_error` using `hingeTermErrorBound`. -/
-  @[simp] lemma hinge_term_abs_error' {n : ℕ} (c t : Fin n → FP32) (x : FP32) (i : Fin n) :
+  @[simp] theorem hinge_term_abs_error' {n : ℕ} (c t : Fin n → FP32) (x : FP32) (i : Fin n) :
     |(hingeTermFp32 c t x i).val - hingeTermReal c t x i| ≤ hingeTermErrorBound c t x i := by
   simpa [hingeTermErrorBound] using (hinge_term_abs_error (c := c) (t := t) (x := x) (i := i))
 
@@ -480,7 +457,7 @@ At every prefix of the fold, the rounded accumulator is within the tracked error
 real accumulator.  The proof is deliberately order-sensitive because floating-point addition is
 not associative.
 -/
-  lemma hinge_sum_state_invariant_aux {n : ℕ} (c t : Fin n → FP32) (x : FP32) :
+  theorem hinge_sum_state_invariant_aux {n : ℕ} (c t : Fin n → FP32) (x : FP32) :
     ∀ (xs : List (Fin n)) (acc32 : FP32) (accR err : ℝ),
       |acc32.val - accR| ≤ err →
       let st := xs.foldl (hingeSumStateStep c t x) (acc32, accR, err)
@@ -536,7 +513,7 @@ not associative.
       simpa [List.foldl, hingeSumStateStep, term32, termR, termErr, addErr] using this
 
 /-- Certified absolute-error bound for the whole FP32 hinge-term sum. -/
-  lemma hinge_sum_abs_error {n : ℕ} (c t : Fin n → FP32) (x : FP32) :
+  theorem hinge_sum_abs_error {n : ℕ} (c t : Fin n → FP32) (x : FP32) :
     |(hingeSumFp32 c t x).val - hingeSumReal c t x| ≤ hingeSumErrorBound c t x := by
   -- Instantiate the generic invariant with `xs = finRange` and the zero initial state.
   have h0 : |(0 : FP32).val - (0 : ℝ)| ≤ (0 : ℝ) := by simp
@@ -549,7 +526,8 @@ not associative.
 noncomputable def hingeFunFp32 {n : ℕ} (t c : Fin n → FP32) (b x : FP32) : FP32 :=
   hingeSumFp32 c t x + b
 
-/-- Real reference for `hinge_fun_fp32`: evaluate over $\mathbb{R}$ on the `.val` parameters and inputs. -/
+/-- Real reference for `hingeFunFp32`: evaluate over $\mathbb{R}$ on the `.val` parameters and
+inputs. -/
 noncomputable def hingeFunReal {n : ℕ} (t c : Fin n → FP32) (b : FP32) (x : FP32) : ℝ :=
   hingeSumReal c t x + b.val
 
@@ -564,7 +542,7 @@ Certified absolute-error bound for the complete FP32 hinge network.
 This composes the fold invariant with the final rounded `+ b`, giving the main FP32 rounding term
 used by the executable approximation theorems.
 -/
-  lemma hinge_fun_abs_error {n : ℕ} (t c : Fin n → FP32) (b x : FP32) :
+  theorem hinge_fun_abs_error {n : ℕ} (t c : Fin n → FP32) (b x : FP32) :
     |(hingeFunFp32 t c b x).val - hingeFunReal t c b x| ≤ hingeFunErrorBound t c b x := by
   -- First use the hinge-sum bound, then account for the final rounded `+ b`.
   have hsum : |(hingeSumFp32 c t x).val - hingeSumReal c t x| ≤ hingeSumErrorBound c t x :=
@@ -604,7 +582,7 @@ The theorem is pointwise. Given a real hinge network close to `f`, it bounds the
 network by the real approximation error plus the certified rounding budget; it does not construct
 the hinge parameters.
 -/
-  lemma hinge_fun_total_abs_error_le {n : ℕ} (f : ℝ → ℝ) (t c : Fin n → FP32) (b x : FP32) :
+  theorem hinge_fun_total_abs_error_le {n : ℕ} (f : ℝ → ℝ) (t c : Fin n → FP32) (b x : FP32) :
     |f x.val - (hingeFunFp32 t c b x).val| ≤
       |f x.val - hingeFunReal t c b x| + hingeFunErrorBound t c b x := by
   have hround : |hingeFunReal t c b x - (hingeFunFp32 t c b x).val| ≤ hingeFunErrorBound t c
@@ -620,7 +598,7 @@ the hinge parameters.
   exact le_trans htri (add_le_add_right hround _)
 
 /-- Strict version of `hinge_fun_total_abs_error_le` for use with `< ε` approximation statements. -/
-  lemma hinge_fun_total_abs_error_lt {n : ℕ} (f : ℝ → ℝ) (t c : Fin n → FP32) (b x : FP32)
+  theorem hinge_fun_total_abs_error_lt {n : ℕ} (f : ℝ → ℝ) (t c : Fin n → FP32) (b x : FP32)
     {ε : ℝ} (hε : |f x.val - hingeFunReal t c b x| < ε) :
     |f x.val - (hingeFunFp32 t c b x).val| < ε + hingeFunErrorBound t c b x := by
   have hle :=
@@ -631,7 +609,7 @@ the hinge parameters.
   exact lt_of_le_of_lt hle hlt
 
 /-- The real reference accumulator is the ordinary finite sum of real hinge terms. -/
-  lemma hinge_sum_real_eq_sum {n : ℕ} (c t : Fin n → FP32) (x : FP32) :
+  theorem hinge_sum_real_eq_sum {n : ℕ} (c t : Fin n → FP32) (x : FP32) :
     hingeSumReal c t x = ∑ i : Fin n, hingeTermReal c t x i := by
   classical
   -- First, show `hinge_sum_real` is the plain `foldl` sum of `hinge_term_real`.
@@ -667,7 +645,7 @@ This combines:
 - the FP32 hinge-network rounding bound (`hinge_fun_total_abs_error_lt`).
 
 The output network is evaluated on the `FP32` model (`NF` rounding-on-`ℝ`); the additional
-rounding error is given by `hinge_fun_error_bound`.
+rounding error is given by `hingeFunErrorBound`.
 -/
 theorem relu_universal_approximation_Icc_fp32 {f : ℝ → ℝ} {a b L : ℝ}
     (h_ab : a < b) (hL : 0 < L)

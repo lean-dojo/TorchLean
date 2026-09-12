@@ -6,11 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public import NN
 public import NN.IR.Semantics
 public import NN.Tests.Runtime.Floats.Utils
-public import NN.Verification.TorchLean.ExecutableLowering
+public import NN.Verification.Builtin.ExecutableLowering
 public import Std
+public import NN.API.Seeded
+public import NN.Runtime.Autograd.Model.Layers.Seq
+public import NN.MLTheory.CROWN.Graph.Engine.Derivatives -- shake: keep
 
 /-!
 # TorchLeanIRExecEquivCheck
@@ -24,8 +26,9 @@ We lower a small TorchLean model to `NN.IR.Graph` with its payload, then lower t
 @[expose] public section
 
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
+open Tests.Utils
 open Tests.Floats.Utils
 
 namespace Tests
@@ -34,10 +37,10 @@ namespace TorchLeanIRExecEquivCheck
 
 /-- Hard-mask IBP keeps blocked entries exact and avoids uncertified transcendental rounding. -/
 def checkHardMaskedSoftmaxIbpBoundary : IO Unit := do
-  let logitsLo : Tensor Float [3] := tensor! [-2.0, 0.0, 1.0]
-  let logitsHi : Tensor Float [3] := tensor! [3.0, 4.0, 5.0]
-  let mixedMask : Tensor Bool [3] := tensor! [true, false, true]
-  let singletonMask : Tensor Bool [3] := tensor! [false, true, false]
+  let logitsLo : Tensor Float [3] := [-2.0, 0.0, 1.0]
+  let logitsHi : Tensor Float [3] := [3.0, 4.0, 5.0]
+  let mixedMask : Tensor Bool [3] := [true, false, true]
+  let singletonMask : Tensor Bool [3] := [false, true, false]
   let (mixedLo, mixedHi) :=
     NN.MLTheory.CROWN.Graph.ibpHardMaskedSoftmaxLastTensor logitsLo logitsHi mixedMask
   let (singletonLo, singletonHi) :=
@@ -45,10 +48,13 @@ def checkHardMaskedSoftmaxIbpBoundary : IO Unit := do
   let checkTensor (label : String) (actual expected : Tensor Float [3]) : IO Unit :=
     for i in List.finRange 3 do
       assertApprox s!"{label}[{i.val}]" (vecVal actual i) (vecVal expected i) 0.0
-  checkTensor "mixed hard-mask lower" mixedLo (tensor! [0.0, 0.0, 0.0])
-  checkTensor "mixed hard-mask upper" mixedHi (tensor! [1.0, 0.0, 1.0])
-  checkTensor "singleton hard-mask lower" singletonLo (tensor! [0.0, 1.0, 0.0])
-  checkTensor "singleton hard-mask upper" singletonHi (tensor! [0.0, 1.0, 0.0])
+  let mixedExpectedLo : Tensor Float [3] := [0.0, 0.0, 0.0]
+  let mixedExpectedHi : Tensor Float [3] := [1.0, 0.0, 1.0]
+  let singletonExpected : Tensor Float [3] := [0.0, 1.0, 0.0]
+  checkTensor "mixed hard-mask lower" mixedLo mixedExpectedLo
+  checkTensor "mixed hard-mask upper" mixedHi mixedExpectedHi
+  checkTensor "singleton hard-mask lower" singletonLo singletonExpected
+  checkTensor "singleton hard-mask upper" singletonHi singletonExpected
 
 /-- Higher-rank softmax values are bounded row-wise, but its derivative pass is vector-only. -/
 def checkSoftmaxDerivativeShapeGuard : IO Unit := do
@@ -58,7 +64,7 @@ def checkSoftmaxDerivativeShapeGuard : IO Unit := do
         { id := 0, parents := #[], kind := .input, outShape := matrixShape },
         { id := 1, parents := #[0], kind := .softmax 1, outShape := matrixShape }
       ] }
-  let flat : Tensor Float [4] := tensor! [0.0, 0.0, 0.0, 0.0]
+  let flat : Tensor Float [4] := [0.0, 0.0, 0.0, 0.0]
   let inputBox : NN.MLTheory.CROWN.FlatBox Float := { dim := 4, lo := flat, hi := flat }
   let params : NN.MLTheory.CROWN.Graph.ParamStore Float :=
     { inputBoxes := Std.HashMap.emptyWithCapacity.insert 0 inputBox }
@@ -76,7 +82,7 @@ def checkSoftmaxDerivativeShapeGuard : IO Unit := do
 def checkNonlinearBoundCapabilities : IO Unit := do
   let shape : Shape := [2]
   let inputBox : NN.MLTheory.CROWN.FlatBox Float :=
-    { dim := 2, lo := tensor! [1.0, 4.0], hi := tensor! [2.0, 9.0] }
+    { dim := 2, lo := [1.0, 4.0], hi := [2.0, 9.0] }
   let params : NN.MLTheory.CROWN.Graph.ParamStore Float :=
     { inputBoxes := Std.HashMap.emptyWithCapacity.insert 0 inputBox }
   let unaryGraph (kind : NN.IR.OpKind) : NN.IR.Graph :=
@@ -130,13 +136,13 @@ def checkDirectedBackwardLinear : IO Unit := do
         { id := 1, parents := #[0], kind := .linear, outShape := shape }
       ] }
   let inputBox : NN.MLTheory.CROWN.FlatBox Float :=
-    { dim := 1, lo := tensor! [-1.0], hi := tensor! [1.0] }
+    { dim := 1, lo := [-1.0], hi := [1.0] }
   let params : NN.MLTheory.CROWN.Graph.ParamStore Float :=
     { inputBoxes := Std.HashMap.emptyWithCapacity.insert 0 inputBox
       linearWB := Std.HashMap.emptyWithCapacity.insert 1
-        { m := 1, n := 1, w := tensor! [[2.0]], b := tensor! [0.0] } }
+        { m := 1, n := 1, w := [[2.0]], b := [0.0] } }
   let ibp := NN.MLTheory.CROWN.Graph.runIBP graph params
-  let objective : NN.MLTheory.CROWN.Graph.FlatTensor Float := { n := 1, v := tensor! [1.0] }
+  let objective : NN.MLTheory.CROWN.Graph.FlatTensor Float := { n := 1, v := [1.0] }
   let ctx : NN.MLTheory.CROWN.Graph.AffineCtx := { inputId := 0, inputDim := 1 }
   let some bounds :=
       NN.MLTheory.CROWN.Graph.runCROWNBackwardObjective graph params ctx ibp 1 objective
@@ -201,7 +207,7 @@ def checkBatchedAttentionLowering : IO Unit := do
       (label : String)
       (mask : Option (Tensor Bool [n, n]) := none) : IO Unit := do
     let prog :
-        Runtime.Autograd.TorchLean.Program Float (paramShapes ++ [inputShape]) inputShape :=
+        Runtime.Autograd.Model.Program Float (paramShapes ++ [inputShape]) inputShape :=
       fun {m} _ _ wqR wkR wvR woR xR =>
         Runtime.Autograd.Torch.batchedMultiHeadAttention
           (m := m) (α := Float) (batch := batch) (n := n)
@@ -209,14 +215,14 @@ def checkBatchedAttentionLowering : IO Unit := do
           hBatch hSeq wqR wkR wvR woR xR mask
 
     let lowered ←
-      match NN.Verification.TorchLean.lowerForwardToIR
+      match NN.Verification.Builtin.lowerForwardToIR
           (α := Float) (paramShapes := paramShapes) (inShape := inputShape)
           (outShape := inputShape) prog params with
       | .error e =>
           throw <| IO.userError s!"{label} attention lowering failed: {e}"
       | .ok c => pure c
     let payload : NN.IR.Payload Float :=
-      NN.Verification.TorchLean.payloadOfParamStore (α := Float) lowered.ps
+      NN.Verification.Builtin.payloadOfParamStore (α := Float) lowered.ps
     if mask.isSome then
       let hasHardMask := lowered.graph.nodes.any fun node =>
         match node.kind with
@@ -249,7 +255,7 @@ def checkBatchedAttentionLowering : IO Unit := do
 
     -- An exact input box must remain evaluable by IBP.  In particular, a fully blocked mask may
     -- not leave an inverse whose interval contains zero.
-    let inputBox := NN.Verification.TorchLean.lInfBall (α := Float) x 0.0
+    let inputBox := NN.Verification.Builtin.lInfBall (α := Float) x 0.0
     let boxes := lowered.runIBP (lowered.seedInputBox inputBox)
     let _ ← lowered.outputBoxOrThrow boxes
 
@@ -263,21 +269,19 @@ def run : IO Unit := do
   checkNonlinearBoundCapabilities
   checkDirectedBackwardLinear
 
-  let inDim : Nat := 2
-  let hidDim : Nat := 3
-  let outDim : Nat := 1
-  let xShape : Shape := [inDim]
-  let yShape : Shape := [outDim]
+  let inputWidth : Nat := 2
+  let hiddenWidth : Nat := 3
+  let outputWidth : Nat := 1
+  let xShape : Shape := [inputWidth]
+  let yShape : Shape := [outputWidth]
 
-  -- A small deterministic TorchLean MLP (weights initialized by explicit seeds).
-  let model :=
-    NN.GraphSpec.Models.TorchLean.mlp
-      (inDim := inDim) (hidDim := hidDim) (outDim := outDim)
-      (seedW1 := 0) (seedB1 := 1) (seedW2 := 2) (seedB2 := 3)
+  -- A small deterministic TorchLean MLP built through the public model API.
+  let model := nn.build 0 <|
+    nn.mlp inputWidth outputWidth { hiddenWidths := [hiddenWidth] }
 
-  let paramShapes := Runtime.Autograd.TorchLean.NN.Seq.stateShapes model
+  let paramShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes model
   let params : TorchLean.TensorPack Float paramShapes :=
-    Runtime.Autograd.TorchLean.NN.Seq.initState (m := model)
+    Runtime.Autograd.Model.Layers.Seq.initState (m := model)
 
   -- One input vector.
   let x : Tensor Float xShape :=
@@ -285,19 +289,19 @@ def run : IO Unit := do
 
   -- TorchLean forward computation for the model.
   let prog :
-      Runtime.Autograd.TorchLean.Program Float (paramShapes ++ [xShape]) yShape :=
-    Runtime.Autograd.TorchLean.NN.Seq.forward model (α := Float)
+      Runtime.Autograd.Model.Program Float (paramShapes ++ [xShape]) yShape :=
+    Runtime.Autograd.Model.Layers.Seq.forward model (α := Float)
 
   -- Lower to IR and executable typed graph data.
   let (c, exec) ←
-    match NN.Verification.TorchLean.lowerForwardExecutable
+    match NN.Verification.Builtin.lowerForwardExecutable
         (α := Float) (paramShapes := paramShapes) (inShape := xShape) (outShape := yShape) prog
           params with
     | .error e => throw <| IO.userError s!"torchlean_ir_exec_equiv_check: lowering failed: {e}"
     | .ok r => pure r
 
   let payload : NN.IR.Payload Float :=
-    NN.Verification.TorchLean.payloadOfParamStore (α := Float) c.ps
+    NN.Verification.Builtin.payloadOfParamStore (α := Float) c.ps
 
   -- Cast the test input into the executable graph's expected input shape.
   let xExec : Tensor Float exec.inShape ←
@@ -335,7 +339,7 @@ def run : IO Unit := do
         | .error e =>
             throw <| IO.userError s!"torchlean_ir_exec_equiv_check: exec output shape mismatch: {e}"
 
-  for i in List.finRange outDim do
+  for i in List.finRange outputWidth do
     assertApprox s!"ir/exec forward[{i.val}]" (vecVal yIR i) (vecVal yExec i) 1e-6
 
   checkBatchedAttentionLowering

@@ -6,8 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Module.Activation
-public import NN.Spec.Module.Linear
+public import Lean.Data.Json
+public import NN.Spec.Module.Core
+public import NN.Spec.Module.Activation -- shake: keep
+public import NN.Spec.Module.Linear -- shake: keep
+public import NN.Spec.Core.Tensor.Core -- shake: keep
 
 /-!
 # Export Core
@@ -15,9 +18,8 @@ public import NN.Spec.Module.Linear
 PyTorch code generation helpers.
 
 This module defines shared string-building utilities used by the PyTorch bridge and round-trip
-examples. It emits readable Python `nn.Module` code (optionally with weights embedded) and centralizes
-the common prelude used by the example MLP/CNN/Transformer exporters under
-`NN.Examples.Interop.PyTorch.{MLP,CNN,Transformer}.Export`.
+examples. It emits readable Python `nn.Module` code (optionally with weights embedded) and
+centralizes the common prelude used by `NN.Runtime.PyTorch.Export.{MLP,CNN,Transformer}`.
 
 Design note (PyTorch export APIs, for context only):
 
@@ -31,7 +33,6 @@ The public helpers are organized as follows:
 - `generatePyTorchImports` / `generatePyTorchSupportDefinitions` provide the shared Python prelude.
 - `generateBasePyTorchModule` is the reusable class skeleton for the example exporters.
 - `generatePyTorchModule` is the simplest end-to-end exporter for a `Spec.Module.Chain`.
-- `generateCompletePyTorchExport` combines the codegen pieces into a single script.
 - `NN.Runtime.PyTorch.Export.StateDict` is the general checkpoint-to-JSON adapter for users who
   already have PyTorch weights.
 
@@ -47,33 +48,10 @@ The public helpers are organized as follows:
 namespace Export
 namespace PyTorch
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Spec.Module
 open Spec.Module.Chain
-
-/--
-Metadata for a generated PyTorch model snippet.
-
-Most exporters in `NN/Runtime/PyTorch/Export/*` produce a Python string as their final artifact. We keep a
-small structured record alongside that string so examples can report shapes/layer counts and decide
-whether weights were embedded.
--/
-structure PyTorchExportMetadata (α : Type) (s t : Shape) where
-  /-- Human-friendly class/model name used in the emitted Python. -/
-  modelName : String
-  /-- Expected input shape (TorchLean spec `Shape`). -/
-  inputShape : Shape
-  /-- Expected output shape (TorchLean spec `Shape`). -/
-  outputShape : Shape
-  /-- Count of primitive layers/ops in the model (exporter-specific). -/
-  layerCount : Nat
-  /-- Operation names used for summary reporting in examples. -/
-  operationTypes : Array String
-  /-- Whether the exporter embedded a `state_dict` literal in the emitted Python. -/
-  hasWeights : Bool
-  /-- The emitted Python source (usually a full script or class definition). -/
-  pytorchCode : String
 
 /-- Join an array of lines with newline separators. -/
 def joinLines (xs : Array String) : String := String.intercalate "\n" xs.toList
@@ -145,22 +123,50 @@ def countLayers {α : Type} {s t : Shape} : Spec.Module.Chain α s t → Nat
 | .single _ => 1
 | .comp a b => countLayers a + countLayers b
 
+/-- Render a Python float expression preserving every finite binary64 value and signed zero.
+
+Short decimal strings are retained only when they parse back to the original bits. Otherwise the
+expression uses Python's built-in `float.fromhex` with the exact integer significand and binary
+exponent. Infinities and NaN use explicit Python constructors; NaN payload bits are not serialized.
+-/
+def floatToPyString (value : Float) : String :=
+  let bits := value.toBits
+  let negative := bits >>> 63 != 0
+  if value.isNaN then
+    "float('nan')"
+  else if value.isInf then
+    if negative then "float('-inf')" else "float('inf')"
+  else if value == 0 then
+    if negative then "-0.0" else "0.0"
+  else
+    let decimal := toString value
+    let parsed := (Lean.Json.parse decimal).bind Lean.Json.getNum?
+    if decimal.length ≤ 24 &&
+        (match parsed with
+        | .ok number => number.toFloat.toBits == bits
+        | .error _ => false) then
+      decimal
+    else
+      let fraction := (bits &&& 0x000fffffffffffff).toNat
+      let biasedExponent := ((bits >>> 52) &&& 0x7ff).toNat
+      let significand := if biasedExponent = 0 then fraction else 2^52 + fraction
+      let exponent : Int := if biasedExponent = 0 then -1074 else (biasedExponent : Int) - 1075
+      let hex := String.ofList (Nat.toDigits 16 significand)
+      let sign := if negative then "-" else ""
+      s!"float.fromhex('{sign}0x{hex}p{exponent}')"
+
 /--
-Best-effort conversion of a float tensor to a Python list literal.
+Convert a float tensor to a Python list literal without rounding its binary64 elements.
 
 This is a simple recursive printer used for examples and small regression tests; it is not intended
 to be fast.
 -/
 def tensorToPyString {s : Shape} (t : Tensor Float s) : String :=
   match s with
-  | .scalar => toString (item t)
-  | .dim n s' =>
-    match t with
-    | .dim f =>
+  | .scalar => floatToPyString (item t)
+  | .dim n _ =>
       let elems := (List.finRange n).map (fun i =>
-        match f i with
-        | .scalar x => toString x
-        | .dim _ => tensorToPyString (f i))
+        tensorToPyString (Tensor.unstack t i))
       s!"[" ++ String.intercalate ", " elems ++ "]"
 
 /--
@@ -173,14 +179,9 @@ transposed orientation expected by PyTorch.
 -/
 def transposedMatrixTensorToPy {rows cols : Nat} (t : Tensor Float [rows, cols]) : String :=
   let colToStr (j : Fin cols) : String :=
-    match t with
-    | .dim f =>
-      let elems := (List.finRange rows).map (fun i =>
-        match f i with
-        | .dim g =>
-          match g j with
-          | .scalar x => toString x)
-      s!"[" ++ String.intercalate ", " elems ++ "]"
+    let elems := (List.finRange rows).map (fun i =>
+      floatToPyString (TorchLean.Tensor.get2 t i j))
+    s!"[" ++ String.intercalate ", " elems ++ "]"
   let colsStr := (List.finRange cols).map colToStr
   s!"[" ++ String.intercalate ", " colsStr ++ "]"
 
@@ -209,7 +210,8 @@ def generatePyTorchSupportDefinitions : String :=
     indentFour "return x[:, -1, :]",
     "",
     "class SelectLeading(nn.Module):",
-    indentTwo "\"\"\"Select one position from the leading model dimension after the batch axis.\"\"\"",
+    indentTwo ("\"\"\"Select one position from the leading model dimension after the batch axis."
+      ++ "\"\"\""),
     indentTwo "def __init__(self, index: int):",
     indentFour "super().__init__()",
     indentFour "self.index = index",
@@ -511,41 +513,6 @@ def generatePyTorchModule {α : Type} {s t : Shape}
     , indentFour ""
     ] ++
       generateGetModelInfoMethodLines className
-
-/-- Like `generateBasePyTorchModule`, but also include shared weight/testing helpers. -/
-def generateCompletePyTorchExport (className : String) (docstring : String) : String :=
-  joinLines #[
-    generatePyTorchImports,
-    "",
-    generateBasePyTorchModule className docstring,
-    "",
-    generateWeightLoadingUtils,
-    "",
-    generateTestingUtils,
-    "",
-    "# Usage example:",
-    "# model = YourModelClass()",
-    "# test_model_forward(model, input_shape=(your_input_dims))",
-    "# print_model_summary(model)"
-  ]
-
-/--
-Export a `Spec.Module.Chain` to PyTorch and bundle the result in a metadata record.
-
-This is the "one call" entrypoint used by some examples.
--/
-def exportChain {α : Type} {s t : Shape}
-    (chain : Spec.Module.Chain α s t) (className : String := "TorchLeanModel") :
-    PyTorchExportMetadata α s t :=
-  {
-    modelName := className,
-    inputShape := s,
-    outputShape := t,
-    layerCount := countLayers chain,
-    operationTypes := (Spec.Module.Chain.layerInfo chain).map (fun (op, _) => op),
-    hasWeights := false,
-    pytorchCode := generatePyTorchModule chain className
-  }
 
 end PyTorch
 end Export

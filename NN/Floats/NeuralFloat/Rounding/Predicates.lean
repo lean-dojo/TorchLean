@@ -38,22 +38,6 @@ def NeuralRoundTowardZeroPoint (F : ℝ → Prop) (x f : ℝ) : Prop :=
 def NeuralRoundNearestPoint (F : ℝ → Prop) (x f : ℝ) : Prop :=
   F f ∧ ∀ g, F g → abs (f - x) ≤ abs (g - x)
 
-/-- A rounding function rounds downward with respect to `F` at every input. -/
-def NeuralRoundDown (F : ℝ → Prop) (round : ℝ → ℝ) : Prop :=
-  ∀ x, NeuralRoundDownPoint F x (round x)
-
-/-- A rounding function rounds upward with respect to `F` at every input. -/
-def NeuralRoundUp (F : ℝ → Prop) (round : ℝ → ℝ) : Prop :=
-  ∀ x, NeuralRoundUpPoint F x (round x)
-
-/-- A rounding function rounds toward zero with respect to `F` at every input. -/
-def NeuralRoundTowardZero (F : ℝ → Prop) (round : ℝ → ℝ) : Prop :=
-  ∀ x, NeuralRoundTowardZeroPoint F x (round x)
-
-/-- A rounding function rounds to a nearest `F`-value at every input. -/
-def NeuralRoundNearest (F : ℝ → Prop) (round : ℝ → ℝ) : Prop :=
-  ∀ x, NeuralRoundNearestPoint F x (round x)
-
 /-- A downward rounding point is unique. -/
 theorem neuralRoundDownPoint_unique {F : ℝ → Prop} {x f g : ℝ}
     (hf : NeuralRoundDownPoint F x f) (hg : NeuralRoundDownPoint F x g) : f = g := by

@@ -14,7 +14,7 @@ toolchain:
   lean: "leanprover/lean4:v4.33.0"
   package_manager: Lake
   primary_package_file: lakefile.lean
-  documentation_package: blueprint/lakefile.toml
+  documentation_package: home_page/blueprint/lakefile.toml
 
 paper:
   title: "TorchLean: Formalizing Neural Networks in Lean"
@@ -41,7 +41,7 @@ scope:
   excludes:
     - A proof of CUDA, cuBLAS, cuFFT, compiler, driver, or GPU hardware correctness.
     - A proof that external Python, Julia, PyTorch, Arb, or CROWN producers are correct.
-    - A claim that every runnable model-zoo command is fully verified end to end.
+    - A claim that every runnable model command is fully verified end to end.
 
 status:
   formalization_stage: active
@@ -50,7 +50,7 @@ status:
   notes:
     - The repository currently has no Lean `sorry` or `admit` declarations outside dependencies.
     - Native runtime and oracle boundaries are documented explicitly rather than hidden behind proof names.
-    - Public claims should be read together with TRUST_BOUNDARIES.md.
+    - Public claims should be read together with docs/TRUST_BOUNDARIES.md.
 
 build_and_validation:
   standard_build:
@@ -65,7 +65,7 @@ build_and_validation:
   non_cuda_build:
     command: "lake build -R -K cuda=false"
   documentation_build:
-    working_directory: blueprint
+    working_directory: home_page/blueprint
     command: "lake build"
   repository_checks:
     - "python3 scripts/checks/repo_lint.py"
@@ -108,15 +108,15 @@ main_components:
     files:
       - NN/Examples
     description: >
-      Quickstarts, model-zoo commands, interoperability demos, and verification examples.
+      Quickstarts, model commands, interoperability demos, and verification examples.
   manual:
     files:
-      - blueprint/TorchLeanBlueprint/Guide
+      - home_page/blueprint/TorchLeanBlueprint/Guide
     description: >
       Lean-native Verso guide for the public documentation site.
 
 trust_boundaries:
-  source_of_truth: TRUST_BOUNDARIES.md
+  source_of_truth: docs/TRUST_BOUNDARIES.md
   lean_axioms:
     - name: Runtime.Autograd.Cuda.instNonemptyBuffer
       purpose: >
@@ -127,7 +127,7 @@ trust_boundaries:
     description: >
       CUDA buffers, kernel entrypoints, external oracles, and selected executable
       wrappers are opaque Lean declarations. They are treated as trust boundaries
-      and audited through TRUST_BOUNDARIES.md and scripts/checks/repo_lint.py.
+      and audited through docs/TRUST_BOUNDARIES.md and scripts/checks/repo_lint.py.
   external_producers:
     - PyTorch import/export and training scripts
     - Julia spline or PINN certificate producers
@@ -146,7 +146,7 @@ references:
     - "https://lean-dojo.github.io/TorchLean/docs/"
   source_files:
     - README.md
-    - TRUST_BOUNDARIES.md
-    - AI_USAGE.md
-    - THIRD_PARTY_NOTICES.md
-    - CONTRIBUTING.md
+    - docs/TRUST_BOUNDARIES.md
+    - docs/AI_USAGE.md
+    - docs/THIRD_PARTY_NOTICES.md
+    - docs/CONTRIBUTING.md

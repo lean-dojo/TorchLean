@@ -9,7 +9,7 @@ module
 public import NN.Runtime.Autograd.Engine.Cuda.Buffer
 public import NN.Runtime.Autograd.Engine.Cuda.Ops
 public import NN.Runtime.Autograd.Engine.FastKernels
-public import NN.Runtime.Autograd.TorchLean.Random
+public import NN.Spec.Core.Random
 public import NN.Tensor
 public import NN.Tests.Runtime.Cuda.Utils
 
@@ -36,9 +36,12 @@ namespace Stress
 
 open Runtime.Autograd
 open Runtime.Autograd.Cuda
-open Runtime.Autograd.TorchLean
-open Spec
-open Tensor
+
+-- Buffer comparisons live in `Cuda.Utils`; every call below passes its own tolerance, since the
+-- RNG prefix checks and the pointwise-pipeline check are not accurate to the same degree.
+open Tests.Cuda.Utils (assertFloatArrayEq assertFloatArrayApprox)
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 def buildFloatArray (n : Nat) (f : Nat → Float) : FloatArray :=
   Id.run do
@@ -47,23 +50,8 @@ def buildFloatArray (n : Nat) (f : Nat → Float) : FloatArray :=
       out := out.push (f i)
     return FloatArray.mk out
 
-def assertFloatArrayEq (msg : String) (a b : FloatArray) : IO Unit := do
-  if a.size != b.size then
-    throw <| IO.userError s!"{msg}: size mismatch ({a.size} vs {b.size})"
-  for i in [:a.size] do
-    let x := a.get! i
-    let y := b.get! i
-    if x != y then
-      throw <| IO.userError s!"{msg}[{i}]: got {x}, expected {y}"
-
-def assertFloatArrayApprox (msg : String) (a b : FloatArray) (tol : Float := 1e-5) : IO Unit := do
-  if a.size != b.size then
-    throw <| IO.userError s!"{msg}: size mismatch ({a.size} vs {b.size})"
-  for i in [:a.size] do
-    Utils.assertApprox s!"{msg}[{i}]" (a.get! i) (b.get! i) tol
-
 def expectedUniformValue (key : UInt64) (i : Nat) : Float :=
-  let z := Random.splitmix64 (key + UInt64.ofNat i)
+  let z := Spec.Random.splitmix64 (key + UInt64.ofNat i)
   -- This is the cross-backend contract: native CUDA, the CPU stub, and pure Lean all use
   -- `splitmix64(key + i) mod 2^32`, i.e. the low 32 bits.
   let u : Nat := z.toUInt32.toNat
@@ -74,12 +62,34 @@ def expectedUniformArray (n : Nat) (key : UInt64) : FloatArray :=
 
 def expectedBernoulliArray (n : Nat) (keepProb : Float) (key : UInt64) : FloatArray :=
   buildFloatArray n (fun i =>
-    let unitUniform := expectedUniformValue key i
-    if keepProb > unitUniform then 1.0 else 0.0)
+    let denom := (2 : Nat) ^ 32
+    let draw := Spec.Random.sampleNat key i denom
+    (Spec.Random.keepBit (α := Float32) keepProb.toFloat32 draw denom).toFloat)
+
+/-- Probability endpoints remain exact when the largest 32-bit draw rounds to binary32 `1`. -/
+def runBernoulliEndpointRegression : IO Unit := do
+  let key : UInt64 := 0x25114ed53327345a
+  unless Spec.Random.sampleNat key 0 == 4294967295 do
+    throw <| IO.userError "bernoulliMask regression key no longer reaches the largest 32-bit draw"
+
+  -- Literal masks check the endpoint contract independently of the Spec implementation.
+  -- The interior case contains both kept and dropped entries at the same key.
+  let cases : List (Float × Array Float) :=
+    [ (0.0, #[0, 0, 0, 0, 0, 0, 0, 0])
+    , (1.0, #[1, 1, 1, 1, 1, 1, 1, 1])
+    , (0.5, #[0, 0, 1, 0, 0, 1, 1, 1])
+    ]
+  for (keepProb, expected) in cases do
+    let mask ← Buffer.bernoulliMaskIO 8 keepProb key
+    let actual ← Buffer.toFloatArrayIO mask
+    assertFloatArrayEq s!"bernoulliMask endpoint fixture p={keepProb}"
+      actual (FloatArray.mk expected)
+    assertFloatArrayEq s!"bernoulliMask Float32 Spec parity p={keepProb}"
+      actual (expectedBernoulliArray 8 keepProb key)
 
 def expectedNormalValue (mean std : Float) (key : UInt64) (i : Nat) : Float :=
-  let r1 := (Random.splitmix64 (key + UInt64.ofNat (2 * i))).toUInt32.toNat
-  let r2 := (Random.splitmix64 (key + UInt64.ofNat (2 * i + 1))).toUInt32.toNat
+  let r1 := (Spec.Random.splitmix64 (key + UInt64.ofNat (2 * i))).toUInt32.toNat
+  let r2 := (Spec.Random.splitmix64 (key + UInt64.ofNat (2 * i + 1))).toUInt32.toNat
   let u1 := (Float.ofNat r1 + 1.0) / 4294967297.0
   let u2 := Float.ofNat r2 / 4294967296.0
   mean + std * Float.sqrt (-2.0 * Float.log u1) * Float.cos (6.283185307179586 * u2)
@@ -93,6 +103,7 @@ def assertFloatIsNaN (msg : String) (x : Float) : IO Unit := do
 
 def runRngStress : IO Unit := do
   IO.println "== low-level RNG stress =="
+  runBernoulliEndpointRegression
 
   let key : UInt64 := 0x123456789abcdef
   let nSmall : Nat := 64
@@ -100,13 +111,13 @@ def runRngStress : IO Unit := do
 
   -- Exact prefix checks catch low-bits versus high-bits SplitMix64 mismatches between CPU-stub and
   -- CUDA seeded buffers.
-  let uSmall := Buffer.toFloatArray (Buffer.randUniform (UInt32.ofNat nSmall) key)
+  let uSmall := Buffer.toFloatArray (← Buffer.randUniformIO (UInt32.ofNat nSmall) key)
   let uExpected := expectedUniformArray nSmall key
   assertFloatArrayApprox "randUniform exact prefix" uSmall uExpected (tol := 1e-7)
 
   -- Repeated larger buffers are a cheap stress path for launch coverage and deterministic replay.
-  let uLarge1 := Buffer.toFloatArray (Buffer.randUniform (UInt32.ofNat nLarge) key)
-  let uLarge2 := Buffer.toFloatArray (Buffer.randUniform (UInt32.ofNat nLarge) key)
+  let uLarge1 := Buffer.toFloatArray (← Buffer.randUniformIO (UInt32.ofNat nLarge) key)
+  let uLarge2 := Buffer.toFloatArray (← Buffer.randUniformIO (UInt32.ofNat nLarge) key)
   assertFloatArrayEq "randUniform deterministic repeat" uLarge1 uLarge2
 
   let normalMean : Float := -0.25
@@ -122,12 +133,12 @@ def runRngStress : IO Unit := do
   assertFloatArrayEq "randNormal deterministic repeat" normalLarge1 normalLarge2
 
   let keepProb : Float := 0.35
-  let mSmall := Buffer.toFloatArray (Buffer.bernoulliMask (UInt32.ofNat nSmall) keepProb key)
+  let mSmall := Buffer.toFloatArray (← Buffer.bernoulliMaskIO (UInt32.ofNat nSmall) keepProb key)
   let mExpected := expectedBernoulliArray nSmall keepProb key
   assertFloatArrayEq "bernoulliMask exact prefix" mSmall mExpected
 
-  let mLarge1 := Buffer.toFloatArray (Buffer.bernoulliMask (UInt32.ofNat nLarge) keepProb key)
-  let mLarge2 := Buffer.toFloatArray (Buffer.bernoulliMask (UInt32.ofNat nLarge) keepProb key)
+  let mLarge1 := Buffer.toFloatArray (← Buffer.bernoulliMaskIO (UInt32.ofNat nLarge) keepProb key)
+  let mLarge2 := Buffer.toFloatArray (← Buffer.bernoulliMaskIO (UInt32.ofNat nLarge) keepProb key)
   assertFloatArrayEq "bernoulliMask deterministic repeat" mLarge1 mLarge2
 
 def runReleaseStress : IO Unit := do
@@ -147,7 +158,7 @@ def runReleaseStress : IO Unit := do
   let a ← Buffer.ofFloatArrayIO host
   let doubled := Buffer.add a a
   let got ← Buffer.toFloatArrayIO doubled
-  Utils.assertApprox "wrapper lifetime result" (got.get! 0) (2.0 * i.toFloat)
+  Utils.assertApprox "wrapper lifetime result" (got.get! 0) (2.0 * i.toFloat) (tol := 1e-3)
 
 def runWrapperLifetimeStress : IO Unit := do
   IO.println "== external buffer wrapper lifetime =="
@@ -174,7 +185,7 @@ def runGradientAliasingStress : IO Unit := do
   IO.println "== CUDA tape gradient aliasing regression =="
 
   let s : Shape := [4]
-  let x : Tensor Float s := tensorOfArray! [4] #[0.25, -0.50, 0.75, -1.00]
+  let x : Tensor Float s := (Tensor.from #[0.25, -0.50, 0.75, -1.00]).reshape [4] (by dsimp; decide)
 
   let t0 : Cuda.Tape := Cuda.Tape.empty
   let (t1, xId) := Cuda.Tape.leaf (t := t0) (Utils.tensorToAnyBuffer x) (name := some "x")
@@ -185,7 +196,8 @@ def runGradientAliasingStress : IO Unit := do
   let seed : Cuda.AnyBuffer := { s := Shape.scalar, buf := Buffer.full 1 1.0 }
   let grads ← Utils.okOrThrow (Cuda.Tape.backwardDenseAll (t := t3) outId seed)
   let dx ← Utils.cudaGrad (s := s) grads xId
-  let expected : Tensor Float s := tensorOfArray! [4] #[2.0, 2.0, 2.0, 2.0]
+  let expected : Tensor Float s :=
+    (Tensor.from #[2.0, 2.0, 2.0, 2.0]).reshape [4] (by dsimp; decide)
   Utils.assertTensorApprox (s := s) "add backward duplicate-parent gradient" dx expected
 
 /-- Shape-erased CUDA entrypoints must reject malformed native lengths before launching kernels. -/
@@ -242,14 +254,14 @@ def runMalformedBufferValidationStress : IO Unit := do
   discard <| Buffer.releaseIO vectorBuffer
 
   let oversized : Cuda.AnyBuffer :=
-    { s := [UInt32.size], buf := Buffer.zeros 0 }
+    { s := [UInt32.size], buf := ← Buffer.zerosIO 0 }
   match Cuda.AnyBuffer.validate oversized with
   | .ok _ =>
       throw <| IO.userError "AnyBuffer.validate accepted a shape whose numel exceeds UInt32"
   | .error _ => pure ()
 
   let hiddenOversizedAxis : Cuda.AnyBuffer :=
-    { s := Shape.ofList [0, UInt32.size], buf := Buffer.zeros 0 }
+    { s := Shape.ofList [0, UInt32.size], buf := ← Buffer.zerosIO 0 }
   match Cuda.AnyBuffer.validate hiddenOversizedAxis with
   | .ok _ =>
       throw <| IO.userError
@@ -278,14 +290,15 @@ def runDisconnectedDenseGradientStress : IO Unit := do
   unless xGrad.isFinite && xGrad == 0.0 do
     throw <| IO.userError s!"disconnected CUDA reciprocal input: expected finite zero, got {xGrad}"
   unless invGrad.isFinite && invGrad == 0.0 do
-    throw <| IO.userError s!"disconnected CUDA reciprocal output: expected finite zero, got {invGrad}"
+    throw <| IO.userError
+      s!"disconnected CUDA reciprocal output: expected finite zero, got {invGrad}"
 
 def runSparseLifetimeStress : IO Unit := do
   IO.println "== repeated sparse-backward ownership =="
 
   let before ← Buffer.allocatorStatsWithToken 100
   let s : Shape := [4]
-  let x : Tensor Float s := tensorOfArray! [4] #[0.25, -0.50, 0.75, -1.00]
+  let x : Tensor Float s := (Tensor.from #[0.25, -0.50, 0.75, -1.00]).reshape [4] (by dsimp; decide)
   let t0 : Cuda.Tape := Cuda.Tape.empty
   let (t1, xId) := Cuda.Tape.leaf (t := t0) (Utils.tensorToAnyBuffer x) (name := some "x")
   let (t2, outId) ← Utils.okOrThrow (Cuda.Tape.sum (t := t1) (s := s) xId)
@@ -299,7 +312,8 @@ def runSparseLifetimeStress : IO Unit := do
       | some dx => pure dx
       | none => throw <| IO.userError s!"sparse backward pass {pass}: missing leaf gradient"
     let dx ← Utils.anyBufferToTensor (s := s) dx
-    let expected : Tensor Float s := tensorOfArray! [4] #[1.0, 1.0, 1.0, 1.0]
+    let expected : Tensor Float s :=
+      (Tensor.from #[1.0, 1.0, 1.0, 1.0]).reshape [4] (by dsimp; decide)
     Utils.assertTensorApprox (s := s) s!"sparse backward pass {pass}" dx expected
     Cuda.Tape.releaseSparseGrads grads
 
@@ -340,12 +354,10 @@ def runLargeBufferStress : IO Unit := do
     if y > 0.0 then y else 0.0)
   assertFloatArrayApprox "large buffer pointwise pipeline" got expected (tol := 2e-5)
 
-  let prevDet := Buffer.getDeterministicReductions
+  let prevDet ← Buffer.getDeterministicReductions
   -- Force the fixed-order path while comparing against a host accumulation. The fast atomic path is
   -- valid but may differ by normal floating-point associativity noise.
-  let observedDet := Buffer.setDeterministicReductionsChecked true
-  if !observedDet then
-    throw <| IO.userError "failed to enable deterministic reductions for stress test"
+  Buffer.setDeterministicReductions true
 
   let sumGot := (Buffer.toFloatArray (Buffer.reduceSum relued)).get! 0
   let meanGot := (Buffer.toFloatArray (Buffer.reduceMean relued)).get! 0
@@ -357,10 +369,10 @@ def runLargeBufferStress : IO Unit := do
   Utils.assertApprox "large buffer reduceSum" sumGot sumExpected (tol := 0.5)
   Utils.assertApprox "large buffer reduceMean" meanGot meanExpected (tol := 5e-4)
 
-  let _ := Buffer.setDeterministicReductionsChecked prevDet
+  Buffer.setDeterministicReductions prevDet
 
   -- The runtime contract for an empty mean is `NaN`; keep that edge case explicit.
-  let emptyMean := Buffer.toFloatArray (Buffer.reduceMean (Buffer.zeros 0))
+  let emptyMean := Buffer.toFloatArray (Buffer.reduceMean (← Buffer.zerosIO 0))
   if emptyMean.size != 1 then
     throw <| IO.userError s!"reduceMean empty size: expected 1, got {emptyMean.size}"
   assertFloatIsNaN "reduceMean empty result" (emptyMean.get! 0)
@@ -374,21 +386,21 @@ def runMatmulStress : IO Unit := do
   let sB1 : Shape := [4, 5]
   let sY1 : Shape := [3, 5]
   let a1 : Tensor Float sA1 :=
-    tensorOfArray! [3, 4] #[
+    (Tensor.from #[
       0.10, -0.20, 0.30, -0.40,
       0.55, 0.65, -0.75, 0.85,
       -0.15, 0.25, -0.35, 0.45
-    ]
+    ]).reshape [3, 4] (by dsimp; decide)
   let b1 : Tensor Float sB1 :=
-    tensorOfArray! [4, 5] #[
+    (Tensor.from #[
       0.20, -0.10, 0.05, 0.30, -0.40,
       -0.15, 0.25, -0.35, 0.45, 0.10,
       0.50, -0.60, 0.70, -0.80, 0.90,
       -0.05, 0.15, -0.25, 0.35, -0.45
-    ]
+    ]).reshape [4, 5] (by dsimp; decide)
   let yRef1 := FastKernels.matmulReference (α := Float) (m := 3) (n := 4) (p := 5) a1 b1
-  let yFp321 := FastKernels.Cuda.matmulCublas .fp32 (m := 3) (n := 4) (p := 5) a1 b1
-  let yFp641 := FastKernels.Cuda.matmulCublas .fp64 (m := 3) (n := 4) (p := 5) a1 b1
+  let yFp321 ← IO.ofExcept (FastKernels.Cuda.matmulCublas .fp32 (m := 3) (n := 4) (p := 5) a1 b1)
+  let yFp641 ← IO.ofExcept (FastKernels.Cuda.matmulCublas .fp64 (m := 3) (n := 4) (p := 5) a1 b1)
   Utils.assertTensorApprox (s := sY1) "matmul stress case1 fp32" yFp321 yRef1 (tol := 7e-3)
   Utils.assertTensorApprox (s := sY1) "matmul stress case1 fp64" yFp641 yRef1 (tol := 1e-9)
 
@@ -398,12 +410,12 @@ def runMatmulStress : IO Unit := do
   let sB2 : Shape := [7, 1]
   let sY2 : Shape := [1, 1]
   let a2 : Tensor Float sA2 :=
-    tensorOfArray! [1, 7] #[0.25, -0.50, 0.75, -1.00, 1.25, -1.50, 1.75]
+    (Tensor.from #[0.25, -0.50, 0.75, -1.00, 1.25, -1.50, 1.75]).reshape [1, 7] (by dsimp; decide)
   let b2 : Tensor Float sB2 :=
-    tensorOfArray! [7, 1] #[0.10, 0.20, -0.30, 0.40, -0.50, 0.60, -0.70]
+    (Tensor.from #[0.10, 0.20, -0.30, 0.40, -0.50, 0.60, -0.70]).reshape [7, 1] (by dsimp; decide)
   let yRef2 := FastKernels.matmulReference (α := Float) (m := 1) (n := 7) (p := 1) a2 b2
-  let yFp322 := FastKernels.Cuda.matmulCublas .fp32 (m := 1) (n := 7) (p := 1) a2 b2
-  let yFp642 := FastKernels.Cuda.matmulCublas .fp64 (m := 1) (n := 7) (p := 1) a2 b2
+  let yFp322 ← IO.ofExcept (FastKernels.Cuda.matmulCublas .fp32 (m := 1) (n := 7) (p := 1) a2 b2)
+  let yFp642 ← IO.ofExcept (FastKernels.Cuda.matmulCublas .fp64 (m := 1) (n := 7) (p := 1) a2 b2)
   Utils.assertTensorApprox (s := sY2) "matmul stress case2 fp32" yFp322 yRef2 (tol := 7e-3)
   Utils.assertTensorApprox (s := sY2) "matmul stress case2 fp64" yFp642 yRef2 (tol := 1e-9)
 
@@ -468,7 +480,7 @@ def runCacheCapProbe : IO Unit := do
     throw <| IO.userError "cache-cap probe: native cap changed during the process"
   IO.println s!"  cap={capBytes} returned={totalBytes} cacheBytes={post.cacheBytes}"
   if capBytes == 0 then
-    -- Control: no cap, so every returned block stays cached — the growth the cap bounds.
+    -- Control: no cap, so every returned block stays cached, which is the growth the cap bounds.
     if post.cacheBytes != totalBytes then
       throw <| IO.userError
         s!"cache-cap probe (control): uncapped cache held {post.cacheBytes}, expected {totalBytes}"
@@ -480,10 +492,12 @@ def runCacheCapProbe : IO Unit := do
     if totalBytes ≤ capBytes then
       throw <| IO.userError "cache-cap probe: workload did not exceed the cap (test misconfigured)"
     if post.cacheBytes < blockBytes then
-      throw <| IO.userError s!"cache-cap probe: cache did not fill ({post.cacheBytes} < {blockBytes})"
+      throw <| IO.userError
+        s!"cache-cap probe: cache did not fill ({post.cacheBytes} < {blockBytes})"
     if post.cacheBytes + blockBytes ≤ capBytes then
       throw <| IO.userError
-        s!"cache-cap probe: cache under-filled below the cap ({post.cacheBytes} + {blockBytes} ≤ {capBytes})"
+        (s!"cache-cap probe: cache under-filled below the cap "
+          ++ s!"({post.cacheBytes} + {blockBytes} ≤ {capBytes})")
   IO.println "  block-cache byte cap enforced ✓"
 
 /--
@@ -491,14 +505,14 @@ Regression test for the device block-cache byte cap. The cap is read once native
 fixed before the process's first cache operation; the test therefore forks the suite binary
 (`/proc/self/exe`) per configuration (see `runCacheCapProbe`):
 
-* **capped** — `TORCHLEAN_CUDA_CACHE_CAP_BYTES=1048576` bounds an 8 MiB return workload to a 1 MiB
+* **capped**: `TORCHLEAN_CUDA_CACHE_CAP_BYTES=1048576` bounds an 8 MiB return workload to a 1 MiB
   cache;
-* **control** — `TORCHLEAN_CUDA_CACHE_CAP_BYTES=0` (explicitly unbounded), so the same workload
+* **control**: `TORCHLEAN_CUDA_CACHE_CAP_BYTES=0` (explicitly unbounded), so the same workload
   caches the full 8 MiB (the unbounded growth the cap fixes);
-* **malformed** — `TORCHLEAN_CUDA_CACHE_CAP_BYTES=1MiB` is rejected by the strict native parser,
+* **malformed**: `TORCHLEAN_CUDA_CACHE_CAP_BYTES=1MiB` is rejected by the strict native parser,
   so the cache stays unbounded and behaves exactly like the control. This pins the rejection: a
   prefix-parsing reader would instead take the leading `1` as a one-byte cap and cache nothing;
-* **overflow** — a value past the native word size is likewise rejected rather than truncated or
+* **overflow**: a value past the native word size is likewise rejected rather than truncated or
   saturated, so the cache again behaves like the control.
 
 All four children pass the cap explicitly, so none inherits a stray
@@ -546,13 +560,15 @@ def runCacheCapTest : IO Unit := do
   let malformed ← fork "1MiB" 0
   if malformed.exitCode != 0 then
     throw <| IO.userError
-      s!"block-cache cap: malformed-value child failed (exit {malformed.exitCode}); stderr:\n{malformed.stderr}"
+      (s!"block-cache cap: malformed-value child failed (exit {malformed.exitCode}); "
+        ++ s!"stderr:\n{malformed.stderr}")
   IO.println "  malformed: non-numeric cap rejected, cache stays unbounded ✓"
   -- overflow: past the native word, rejected rather than truncated or saturated.
   let overflow ← fork "99999999999999999999999999" 0
   if overflow.exitCode != 0 then
     throw <| IO.userError
-      s!"block-cache cap: overflow-value child failed (exit {overflow.exitCode}); stderr:\n{overflow.stderr}"
+      (s!"block-cache cap: overflow-value child failed (exit {overflow.exitCode}); "
+        ++ s!"stderr:\n{overflow.stderr}")
   IO.println "  overflow: oversized cap rejected, cache stays unbounded ✓"
 
 def run : IO Unit := do

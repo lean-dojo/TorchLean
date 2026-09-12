@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Backend.Registry
 public import NN.IR.Graph
+public import NN.Backend.Planner
 
 /-!
 # Kernel Selection for IR Graphs
@@ -39,7 +39,7 @@ def op? : NN.IR.OpKind → Option BackendOp
   | .bernoulliMask .. => some .bernoulliMask
   | .add => some .add
   | .sub => some .sub
-  | .mul_elem => some .mul
+  | .mulElem => some .mul
   | .abs => some .abs
   | .sqrt => some .sqrt
   | .inv => some .inv
@@ -48,6 +48,8 @@ def op? : NN.IR.OpKind → Option BackendOp
   | .relu => some .relu
   | .tanh => some .tanh
   | .sigmoid => some .sigmoid
+  | .softplus => some .softplus
+  | .safeLog => some .safeLog
   | .exp => some .exp
   | .log => some .log
   | .sin => some .sin

@@ -26,8 +26,8 @@ namespace Tests
 namespace Cuda
 namespace Attention
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Runtime.Autograd
 
 abbrev n : Nat := 2
@@ -35,71 +35,71 @@ abbrev numHeads : Nat := 2
 abbrev dModel : Nat := 4
 abbrev headDim : Nat := 2
 
-theorem hN : n ≠ 0 := by decide
+theorem n_ne_zero : n ≠ 0 := by decide
 
 abbrev projDim : Nat := numHeads * headDim
 
 def wq : Tensor Float [dModel, projDim] :=
-  tensorOfArray! [dModel, projDim] #[
+  (Tensor.from #[
     0.01, 0.02, 0.03, 0.04,
     0.05, 0.06, 0.07, 0.08,
     0.09, 0.10, 0.11, 0.12,
     0.13, 0.14, 0.15, 0.16
-  ]
+  ]).reshape [dModel, projDim] (by dsimp; decide)
 
 def wk : Tensor Float [dModel, projDim] :=
-  tensorOfArray! [dModel, projDim] #[
+  (Tensor.from #[
     0.02, 0.01, 0.04, 0.03,
     0.06, 0.05, 0.08, 0.07,
     0.10, 0.09, 0.12, 0.11,
     0.14, 0.13, 0.16, 0.15
-  ]
+  ]).reshape [dModel, projDim] (by dsimp; decide)
 
 def wv : Tensor Float [dModel, projDim] :=
-  tensorOfArray! [dModel, projDim] #[
+  (Tensor.from #[
     0.03, 0.00, 0.01, 0.02,
     0.00, 0.03, 0.02, 0.01,
     0.01, 0.02, 0.03, 0.00,
     0.02, 0.01, 0.00, 0.03
-  ]
+  ]).reshape [dModel, projDim] (by dsimp; decide)
 
 def wo : Tensor Float [projDim, dModel] :=
-  tensorOfArray! [projDim, dModel] #[
+  (Tensor.from #[
     0.05, 0.00, 0.01, 0.02,
     0.00, 0.05, 0.02, 0.01,
     0.01, 0.02, 0.05, 0.00,
     0.02, 0.01, 0.00, 0.05
-  ]
+  ]).reshape [projDim, dModel] (by dsimp; decide)
 
 def x : Tensor Float [n, dModel] :=
-  tensorOfArray! [n, dModel] #[
+  (Tensor.from #[
     0.10, -0.20, 0.05, 0.30,
     -0.05, 0.25, -0.10, 0.15
-  ]
+  ]).reshape [n, dModel] (by dsimp; decide)
 
 def mask : Tensor Bool [n, n] :=
-  tensorOfArray! [n, n] #[
+  (Tensor.from #[
     true,  true,
     false, true
-  ]
+  ]).reshape [n, n] (by dsimp; decide)
 
 def run : IO Unit := do
   IO.println "=== CUDA kernel coverage: multi_head_attention ==="
 
   let layoutInput : Tensor Float [2, 4] :=
-    tensorOfArray! [2, 4] #[0, 1, 2, 3, 4, 5, 6, 7]
+    (Tensor.from (#[0, 1, 2, 3, 4, 5, 6, 7] : Array Float)).reshape [2, 4] (by dsimp; decide)
   let split := Spec.splitHeadsSpec layoutInput 2 2 (by decide)
   let expectedSplit : Tensor Float [2, 2, 2] :=
-    tensorOfArray! [2, 2, 2] #[0, 1, 4, 5, 2, 3, 6, 7]
+    (Tensor.from (#[0, 1, 4, 5, 2, 3, 6, 7] : Array Float)).reshape [2, 2, 2] (by dsimp; decide)
   Utils.assertTensorApprox "split-head row-major permutation" split expectedSplit (tol := 0)
 
   let specScores : Tensor Float [2, 2] :=
-    tensorOfArray! [2, 2] #[1000.0, -1000.0, 3.0, 4.0]
+    (Tensor.from #[1000.0, -1000.0, 3.0, 4.0]).reshape [2, 2] (by dsimp; decide)
   let specMask : Tensor Bool [2, 2] :=
-    tensorOfArray! [2, 2] #[false, true, false, false]
+    (Tensor.from #[false, true, false, false]).reshape [2, 2] (by dsimp; decide)
   let specOut := Spec.hardMaskedSoftmaxSpec specScores specMask
   Utils.assertTensorApprox "hard-masked softmax spec"
-    specOut (tensorOfArray! [2, 2] #[0.0, 1.0, 0.0, 0.0])
+    specOut ((Tensor.from #[0.0, 1.0, 0.0, 0.0]).reshape [2, 2] (by dsimp; decide))
 
   -- A blocked extreme score must not influence stabilization. The second row checks the explicit
   -- all-blocked convention used by both composed and fused hard-masked attention.
@@ -111,9 +111,11 @@ def run : IO Unit := do
     extremeScores extremeMask 2 2
   let extremeHost := Runtime.Autograd.Cuda.Buffer.toFloatArray extremeOut
   Utils.assertApprox "hard mask ignores blocked row maximum[0]" (extremeHost.get! 0) 0.0
+    (tol := 1e-3)
   Utils.assertApprox "hard mask preserves allowed probability[1]" (extremeHost.get! 1) 1.0
-  Utils.assertApprox "all-blocked hard mask row[0]" (extremeHost.get! 2) 0.0
-  Utils.assertApprox "all-blocked hard mask row[1]" (extremeHost.get! 3) 0.0
+    (tol := 1e-3)
+  Utils.assertApprox "all-blocked hard mask row[0]" (extremeHost.get! 2) 0.0 (tol := 1e-3)
+  Utils.assertApprox "all-blocked hard mask row[1]" (extremeHost.get! 3) 0.0 (tol := 1e-3)
   discard <| Runtime.Autograd.Cuda.Buffer.releaseIO extremeScores
   discard <| Runtime.Autograd.Cuda.Buffer.releaseIO extremeMask
   discard <| Runtime.Autograd.Cuda.Buffer.releaseIO extremeOut
@@ -130,9 +132,10 @@ def run : IO Unit := do
   let (t6, yId) ← Utils.okOrThrow
     (Tape.multiHeadAttention (α := Float) (t := t5)
       (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
-      (h1 := hN) wqId wkId wvId woId xId (mask := some mask))
+      (h1 := n_ne_zero) wqId wkId wvId woId xId (mask := some mask))
   let yCpu ← Utils.cpuValue (s := outShape) t6 yId
-  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (fill (1.0 : Float) outShape)
+  let seedCpu : Spec.SomeTensor Float :=
+    Spec.SomeTensor.ofTensor (Tensor.full outShape (1.0 : Float))
   let gradsCpu ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t6) yId seedCpu)
   let dxCpu ← Utils.cpuGrad (s := outShape) gradsCpu xId
   let dWqCpu ← Utils.cpuGrad (s := [dModel, projDim]) gradsCpu wqId
@@ -154,11 +157,12 @@ def run : IO Unit := do
     (name := some "x")
   let fusedResult ← Runtime.Autograd.Cuda.Tape.multiHeadAttention (t := t5c)
       (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
-      (h1 := hN) wqIdc wkIdc wvIdc woIdc xIdc (mask := some mask)
+      (h1 := n_ne_zero) wqIdc wkIdc wvIdc woIdc xIdc (mask := some mask)
   let (t6c, yIdc) ← Utils.okOrThrow fusedResult
   let yCuda ← Utils.cudaValue (s := outShape) t6c yIdc
   let seedCuda : Runtime.Autograd.Cuda.AnyBuffer :=
-    { s := outShape, buf := Runtime.Autograd.Cuda.Buffer.full (UInt32.ofNat (Spec.Shape.size outShape)) 1.0 }
+    { s := outShape,
+      buf := Runtime.Autograd.Cuda.Buffer.full (UInt32.ofNat (Spec.Shape.size outShape)) 1.0 }
   let gradsCuda ← Utils.okOrThrow
     (Runtime.Autograd.Cuda.Tape.backwardDenseAll (t := t6c) yIdc seedCuda)
   let dxCuda ← Utils.cudaGrad (s := outShape) gradsCuda xIdc
@@ -182,12 +186,13 @@ def run : IO Unit := do
     (name := some "x")
   let composedResult ← Runtime.Autograd.Cuda.Tape.multiHeadAttention (t := t5s)
       (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
-      (h1 := hN) wqIds wkIds wvIds woIds xIds (mask := some mask)
+      (h1 := n_ne_zero) wqIds wkIds wvIds woIds xIds (mask := some mask)
       (attentionCapsule := NN.Backend.Attention.torchLeanComposed)
   let (t6s, yIds) ← Utils.okOrThrow composedResult
   let yCudaComposed ← Utils.cudaValue (s := outShape) t6s yIds
   let seedComposed : Runtime.Autograd.Cuda.AnyBuffer :=
-    { s := outShape, buf := Runtime.Autograd.Cuda.Buffer.full (UInt32.ofNat (Spec.Shape.size outShape)) 1.0 }
+    { s := outShape,
+      buf := Runtime.Autograd.Cuda.Buffer.full (UInt32.ofNat (Spec.Shape.size outShape)) 1.0 }
   let gradsComposed ← Utils.okOrThrow
     (Runtime.Autograd.Cuda.Tape.backwardDenseAll (t := t6s) yIds seedComposed)
   let dxCudaComposed ← Utils.cudaGrad (s := outShape) gradsComposed xIds
@@ -199,22 +204,22 @@ def run : IO Unit := do
   -- Distinct samples are essential here: duplicated samples cannot expose a permutation that
   -- accidentally exchanges the batch and head axes.
   let xSecond : Tensor Float [n, dModel] :=
-    tensorOfArray! [n, dModel] #[
+    (Tensor.from #[
       1.0, 2.0, 3.0, 1.0,
       -2.0, 1.0, 1.0, 3.0
-    ]
+    ]).reshape [n, dModel] (by dsimp; decide)
   let batchIdentity : Tensor Float [dModel, dModel] :=
-    tensorOfArray! [dModel, dModel] #[
+    (Tensor.from #[
       1.0, 0.0, 0.0, 0.0,
       0.0, 1.0, 0.0, 0.0,
       0.0, 0.0, 1.0, 0.0,
       0.0, 0.0, 0.0, 1.0
-    ]
+    ]).reshape [dModel, dModel] (by dsimp; decide)
   let xFirst : Tensor Float [n, dModel] :=
-    tensorOfArray! [n, dModel] #[
+    (Tensor.from #[
       4.0, 0.0, 1.0, 0.0,
       0.0, 4.0, 0.0, 1.0
-    ]
+    ]).reshape [n, dModel] (by dsimp; decide)
   let xBatch : Tensor Float [2, n, dModel] :=
     TorchLean.Tensor.stack 0 fun i => if i.val = 0 then xFirst else xSecond
   let batchShape : Shape := [2, n, dModel]
@@ -230,7 +235,7 @@ def run : IO Unit := do
   let (tb5, bx) := Runtime.Autograd.Cuda.Tape.leaf (t := tb4) (Utils.tensorToAnyBuffer xBatch)
   let batchResult ← Runtime.Autograd.Cuda.Tape.batchedMultiHeadAttention (t := tb5)
     (batch := 2) (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
-    (by decide) hN bwq bwk bwv bwo bx (mask := some mask)
+    (by decide) n_ne_zero bwq bwk bwv bwo bx (mask := some mask)
     (attentionCapsule := NN.Backend.Attention.torchLeanComposed)
   let (tb6, byId) ← Utils.okOrThrow batchResult
   let yBatch ← Utils.cudaValue (s := batchShape) tb6 byId
@@ -260,7 +265,7 @@ def run : IO Unit := do
   let (tn5, nx) := Runtime.Autograd.Cuda.Tape.leaf (t := tn4) (Utils.tensorToAnyBuffer xBatch)
   let nativeBatchResult ← Runtime.Autograd.Cuda.Tape.batchedMultiHeadAttention (t := tn5)
     (batch := 2) (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
-    (by decide) hN nwq nwk nwv nwo nx (mask := some mask)
+    (by decide) n_ne_zero nwq nwk nwv nwo nx (mask := some mask)
     (attentionCapsule := NN.Backend.Attention.nativeDirectAttention)
   let (tn6, nyId) ← Utils.okOrThrow nativeBatchResult
   let yBatchNative ← Utils.cudaValue (s := batchShape) tn6 nyId

@@ -6,11 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.GroupWithZero.Basic
-public import Mathlib.Data.List.Permutation
-public import NN.Floats.IEEEExec.Bridge.FP32Total
-import Mathlib.Tactic.Linarith
-import Mathlib.Tactic.Ring
+public import NN.Floats.IEEEExec.Bridge.FP32Total.Effective
 
 /-!
 # Reductions

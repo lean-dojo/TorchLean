@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.NeuralFloat.Core
+public import Mathlib.Analysis.SpecialFunctions.Log.Basic
 
 /-!
 # Bracketing a Real Value

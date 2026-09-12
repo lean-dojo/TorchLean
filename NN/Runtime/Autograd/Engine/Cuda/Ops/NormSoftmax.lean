@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Engine.Cuda.Ops.ConvPool
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Core
+public import NN.Spec.Core.Context
+public import NN.Core.Numeric
 
 /-!
 # CUDA Tape Operations: Normalization and Row Softmax
@@ -18,8 +20,8 @@ namespace Runtime
 namespace Autograd
 namespace Cuda
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Tape
 
@@ -33,9 +35,13 @@ LayerNorm over the last dimension for `(seqLen, embedDim)` buffers.
 The tape records one normalization operation and keeps TorchLean's usual VJP. A fused buffer
 primitive evaluates the forward formula and that VJP without materializing each reduction,
 broadcast, and pointwise intermediate as a separate device buffer.
+
+`epsilon` is added to the variance before taking the square root. Backward reuses the normalized
+input and inverse standard deviation saved by forward, so both passes use the caller's value.
 -/
 def layerNorm {seqLen embedDim : Nat} (h_seq_pos : seqLen > 0) (h_embed_pos : embedDim > 0)
-  (t : Tape) (xId gammaId betaId : Nat) : Result (Tape × Nat) := do
+  (t : Tape) (xId gammaId betaId : Nat)
+  (epsilon : Float := TorchLean.normalizationEpsilon) : Result (Tape × Nat) := do
   have _ := h_seq_pos
   have _ := h_embed_pos
   let rows32 ← AnyBuffer.natToU32Checked seqLen
@@ -44,9 +50,8 @@ def layerNorm {seqLen embedDim : Nat} (h_seq_pos : seqLen > 0) (h_embed_pos : em
   let gamma ← requireValue (t := t) gammaId (.dim embedDim .scalar)
   let beta ← requireValue (t := t) betaId (.dim embedDim .scalar)
   let invCols : Float := 1.0 / Float.ofNat embedDim
-  let eps : Float := Numbers.epsilon
   let (y, xHat, invStd) :=
-    Buffer.layerNormFwd x gamma beta rows32 cols32 invCols eps
+    Buffer.layerNormFwd x gamma beta rows32 cols32 invCols epsilon
   let outShape : Shape := .dim seqLen (.dim embedDim .scalar)
   let node : Node :=
     { name := some "layer_norm"
@@ -74,7 +79,8 @@ the storage layout, not a rank-specific implementation.
 -/
 def batchNorm {channels : Nat} {spatial : Shape}
     (hWellFormed : (Shape.dim channels spatial).wellFormed)
-    (t : Tape) (xId gammaId betaId : Nat) : Result (Tape × Nat) := do
+    (t : Tape) (xId gammaId betaId : Nat)
+    (epsilon : Float := TorchLean.normalizationEpsilon) : Result (Tape × Nat) := do
   have _hChannels : channels > 0 := hWellFormed.1
   have _hSpatial : Shape.size spatial > 0 :=
     Shape.size_pos_of_well_formed hWellFormed.2
@@ -94,8 +100,7 @@ def batchNorm {channels : Nat} {spatial : Shape}
   let centered2 := Buffer.mul centered centered
   let varSum := Buffer.reduceSumByRow centered2 rows32 cols32
   let var := Buffer.scale varSum invCols
-  let eps : Float := Numbers.epsilon
-  let epsVec := Buffer.full rows32 eps
+  let epsVec := Buffer.full rows32 epsilon
   let varEps := Buffer.add var epsVec
   let std := Buffer.sqrt varEps
   let stdB := Buffer.broadcastVecToCols std rows32 cols32
@@ -158,6 +163,7 @@ This covers:
 - 3D batched softmax (`(batch, rows, cols)`) by folding `batch*rows` into `rows`.
 -/
 
+/-- Record a last-axis softmax on the tape, returning the extended tape and the new node id. -/
 def softmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   match s with
   | .scalar =>

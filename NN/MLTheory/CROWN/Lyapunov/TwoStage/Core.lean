@@ -7,7 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec
-public import NN.Runtime.Autograd.TorchLean.Functional
+public import NN.Runtime.Autograd.Model.Functional.Core
+public import NN.Runtime.Autograd.Model.Functional.Einsum
+public import NN.Runtime.Autograd.Model.Functional.ShapeOps
 public import NN.Tensor
 
 /-!
@@ -37,8 +39,8 @@ Key point: the *same* TorchLean program is used in two roles:
 @[expose] public section
 
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open Runtime
 open Runtime.Autograd
 
@@ -50,18 +52,18 @@ abbrev xDim : Nat := 2
 abbrev uDim : Nat := 1
 
 /-- Tensor shape for the state vector `x`. -/
-def xShape : Shape := .dim xDim .scalar
+def xShape : Shape := [xDim]
 /-- Tensor shape for the control vector `u`. -/
-def uShape : Shape := .dim uDim .scalar
+def uShape : Shape := [uDim]
 
 /-- Parameter shapes for the two-stage controller and Lyapunov network, as a flat list. -/
 def paramShapes (width : Nat) : List Shape :=
-  [ .dim uDim (.dim xDim .scalar)      -- Wc
-  , .dim uDim .scalar                  -- bc
-  , .dim width (.dim xDim .scalar)     -- W1
-  , .dim width .scalar                 -- b1
-  , .dim 1 (.dim width .scalar)        -- W2
-  , .dim 1 .scalar                     -- b2
+  [ [uDim, xDim] -- Wc
+  , [uDim]       -- bc
+  , [width, xDim] -- W1
+  , [width]       -- b1
+  , [1, width]    -- W2
+  , [1]           -- b2
   ]
 
 /-!
@@ -95,123 +97,127 @@ one-hidden-layer tanh network followed by a square, so training needs only first
 
 /-- Evaluate the controller and return its scalar control output. -/
 @[noinline, nospecialize]
-def controllerOutput
-    {β : Type} [Context β] [DecidableEq Shape]
+def Internal.controllerOutput
+    {β : Type} [TorchLean.Storage β] [Context β]
     {m : Type → Type} [Monad m]
-    [_root_.Runtime.Autograd.Torch.Ops (m := m) (α := β)]
-    (wC : TorchLean.RefTy (m := m) (α := β) [uDim, xDim])
-    (bC : TorchLean.RefTy (m := m) (α := β) [uDim])
-    (x : TorchLean.RefTy (m := m) (α := β) xShape)
-    (scaleU : β) : m (TorchLean.RefTy (m := m) (α := β) Shape.scalar) := do
-  let uPre ← _root_.Runtime.Autograd.Torch.linear
+    [Runtime.Autograd.Torch.Ops (m := m) (α := β)]
+    (wC : Runtime.Autograd.Model.RefTy (m := m) (α := β) [uDim, xDim])
+    (bC : Runtime.Autograd.Model.RefTy (m := m) (α := β) [uDim])
+    (x : Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape)
+    (scaleU : β) : m (Runtime.Autograd.Model.RefTy (m := m) (α := β) []) := do
+  let uPre ← Runtime.Autograd.Torch.linear
     (m := m) (α := β) (inDim := xDim) (outDim := uDim) wC bC x
-  let uT ← TorchLean.tanh (m := m) (α := β) (s := uShape) uPre
-  let uVec ← TorchLean.scale (m := m) (α := β) (s := uShape) uT (c := scaleU)
-  TorchLean.select (m := m) (α := β) (s := [uDim]) 0 uVec ⟨0, by decide⟩
+  let uT ← Runtime.Autograd.Model.tanh (m := m) (α := β) (s := uShape) uPre
+  let uVec ← Runtime.Autograd.Model.scale (m := m) (α := β) (s := uShape) uT (c := scaleU)
+  Runtime.Autograd.Model.select (m := m) (α := β) (s := [uDim]) 0 uVec ⟨0, by decide⟩
 
 /-- Evaluate the Lyapunov network together with its analytic gradient in the state coordinates. -/
 @[noinline, nospecialize]
-def lyapunovValueAndGradient
-    {β : Type} [Context β] [DecidableEq Shape]
+def Internal.lyapunovValueAndGradient
+    {β : Type} [TorchLean.Storage β] [Context β]
     {m : Type → Type} [Monad m]
-    [_root_.Runtime.Autograd.Torch.Ops (m := m) (α := β)]
+    [Runtime.Autograd.Torch.Ops (m := m) (α := β)]
     (width : Nat)
-    (w1 : TorchLean.RefTy (m := m) (α := β) [width, xDim])
-    (b1 : TorchLean.RefTy (m := m) (α := β) [width])
-    (w2 : TorchLean.RefTy (m := m) (α := β) [1, width])
-    (b2 : TorchLean.RefTy (m := m) (α := β) [1])
-    (x : TorchLean.RefTy (m := m) (α := β) xShape)
-    (oneS : TorchLean.RefTy (m := m) (α := β) Shape.scalar)
+    (w1 : Runtime.Autograd.Model.RefTy (m := m) (α := β) [width, xDim])
+    (b1 : Runtime.Autograd.Model.RefTy (m := m) (α := β) [width])
+    (w2 : Runtime.Autograd.Model.RefTy (m := m) (α := β) [1, width])
+    (b2 : Runtime.Autograd.Model.RefTy (m := m) (α := β) [1])
+    (x : Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape)
+    (oneS : Runtime.Autograd.Model.RefTy (m := m) (α := β) [])
     (two : β) :
-    m (TorchLean.RefTy (m := m) (α := β) Shape.scalar ×
-      TorchLean.RefTy (m := m) (α := β) xShape) := do
-  let z1 ← _root_.Runtime.Autograd.Torch.linear
+    m (Runtime.Autograd.Model.RefTy (m := m) (α := β) [] ×
+      Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape) := do
+  let z1 ← Runtime.Autograd.Torch.linear
     (m := m) (α := β) (inDim := xDim) (outDim := width) w1 b1 x
-  let h1 ← TorchLean.tanh (m := m) (α := β) (s := [width]) z1
-  let sVec ← _root_.Runtime.Autograd.Torch.linear
+  let h1 ← Runtime.Autograd.Model.tanh (m := m) (α := β) (s := [width]) z1
+  let sVec ← Runtime.Autograd.Torch.linear
     (m := m) (α := β) (inDim := width) (outDim := 1) w2 b2 h1
-  let s0 : TorchLean.RefTy (m := m) (α := β) Shape.scalar ←
-    TorchLean.reshape (m := m) (α := β) (s₁ := [1]) (s₂ := Shape.scalar) sVec (by
-      simp [_root_.Spec.Shape.size])
-  let V ← TorchLean.mul (m := m) (α := β) (s := Shape.scalar) s0 s0
+  let s0 : Runtime.Autograd.Model.RefTy (m := m) (α := β) [] ←
+    Runtime.Autograd.Model.reshape (m := m) (α := β) (s₁ := [1]) (s₂ := []) sVec (by
+      simp [Spec.Shape.size])
+  let V ← Runtime.Autograd.Model.mul (m := m) (α := β) (s := []) s0 s0
 
-  let w2Row : TorchLean.RefTy (m := m) (α := β) [width] ←
-    TorchLean.reshape (m := m) (α := β) (s₁ := [1, width]) (s₂ := [width]) w2 (by
-      simp [_root_.Spec.Shape.size])
-  let h1Sq ← TorchLean.mul (m := m) (α := β) (s := [width]) h1 h1
-  let oneW ← TorchLean.broadcastTo (m := m) (α := β) (s₁ := Shape.scalar)
+  let w2Row : Runtime.Autograd.Model.RefTy (m := m) (α := β) [width] ←
+    Runtime.Autograd.Model.reshape (m := m) (α := β) (s₁ := [1, width]) (s₂ := [width]) w2 (by
+      simp [Spec.Shape.size])
+  let h1Sq ← Runtime.Autograd.Model.mul (m := m) (α := β) (s := [width]) h1 h1
+  let oneW ← Runtime.Autograd.Model.broadcastTo (m := m) (α := β) (s₁ := [])
     (s₂ := [width]) (Shape.CanBroadcastTo.scalarTo [width]) oneS
-  let dh ← TorchLean.sub (m := m) (α := β) (s := [width]) oneW h1Sq
-  let gHidden ← TorchLean.mul (m := m) (α := β) (s := [width]) w2Row dh
-  let gHiddenM ← TorchLean.reshape (m := m) (α := β)
+  let dh ← Runtime.Autograd.Model.sub (m := m) (α := β) (s := [width]) oneW h1Sq
+  let gHidden ← Runtime.Autograd.Model.mul (m := m) (α := β) (s := [width]) w2Row dh
+  let gHiddenM ← Runtime.Autograd.Model.reshape (m := m) (α := β)
     (s₁ := [width]) (s₂ := [width, 1]) gHidden (by
-      simp [_root_.Spec.Shape.size])
-  let w1T ← TorchLean.swapAdjacentAtDepth (m := m) (α := β)
+      simp [Spec.Shape.size])
+  let w1T ← Runtime.Autograd.Model.swapAdjacentAtDepth (m := m) (α := β)
     (s := [width, xDim]) 0 w1
-  let dsM ← TorchLean.matmul (m := m) (α := β)
-    (batchA := .scalar) (batchB := .scalar) (batch := .scalar)
+  let dsM ← Runtime.Autograd.Model.matmul (m := m) (α := β)
+    (batchA := []) (batchB := []) (batch := [])
     (mDim := xDim) (nDim := width) (pDim := 1) w1T gHiddenM
-  let ds ← TorchLean.reshape (m := m) (α := β)
+  let ds ← Runtime.Autograd.Model.reshape (m := m) (α := β)
     (s₁ := [xDim, 1]) (s₂ := xShape) dsM (by
-      simp [xShape, _root_.Spec.Shape.size])
-  let k : TorchLean.RefTy (m := m) (α := β) Shape.scalar ←
-    TorchLean.scale (m := m) (α := β) (s := Shape.scalar) s0 (c := two)
-  let kV ← TorchLean.broadcastTo (m := m) (α := β) (s₁ := Shape.scalar) (s₂ := xShape)
+      simp [xShape, Spec.Shape.size])
+  let k : Runtime.Autograd.Model.RefTy (m := m) (α := β) [] ←
+    Runtime.Autograd.Model.scale (m := m) (α := β) (s := []) s0 (c := two)
+  let kV ← Runtime.Autograd.Model.broadcastTo (m := m) (α := β) (s₁ := []) (s₂ := xShape)
     (Shape.CanBroadcastTo.scalarTo xShape) k
-  let gradV ← TorchLean.mul (m := m) (α := β) (s := xShape) kV ds
+  let gradV ← Runtime.Autograd.Model.mul (m := m) (α := β) (s := xShape) kV ds
   pure (V, gradV)
 
 /-- Evaluate the closed-loop van der Pol-like dynamics at `x`. -/
 @[noinline, nospecialize]
-def closedLoopDynamics
-    {β : Type} [Context β] [DecidableEq Shape]
+def Internal.closedLoopDynamics
+    {β : Type} [TorchLean.Storage β] [Context β]
     {m : Type → Type} [Monad m]
-    [_root_.Runtime.Autograd.Torch.Ops (m := m) (α := β)]
-    (x : TorchLean.RefTy (m := m) (α := β) xShape)
-    (u0 oneS : TorchLean.RefTy (m := m) (α := β) Shape.scalar)
-    (mu one : β) : m (TorchLean.RefTy (m := m) (α := β) xShape) := do
-  let x1 ← TorchLean.select (m := m) (α := β) (s := [xDim]) 0 x ⟨0, by decide⟩
-  let x2 ← TorchLean.select (m := m) (α := β) (s := [xDim]) 0 x ⟨1, by decide⟩
-  let x1Sq0 ← TorchLean.mul (m := m) (α := β) (s := Shape.scalar) x1 x1
-  let oneMinus ← TorchLean.sub (m := m) (α := β) (s := Shape.scalar) oneS x1Sq0
-  let term0 ← TorchLean.mul (m := m) (α := β) (s := Shape.scalar) oneMinus x2
-  let term ← TorchLean.scale (m := m) (α := β) (s := Shape.scalar) term0 (c := mu)
-  let negx1 ← TorchLean.scale (m := m) (α := β) (s := Shape.scalar) x1 (c := (-one))
-  let dx2pre ← TorchLean.add (m := m) (α := β) (s := Shape.scalar) negx1 term
-  let dx2 ← TorchLean.add (m := m) (α := β) (s := Shape.scalar) dx2pre u0
-  let x2V ← TorchLean.reshape (m := m) (α := β) (s₁ := Shape.scalar)
-    (s₂ := .dim 1 .scalar) x2 (by simp [_root_.Spec.Shape.size])
-  let dx2V ← TorchLean.reshape (m := m) (α := β) (s₁ := Shape.scalar)
-    (s₂ := .dim 1 .scalar) dx2 (by simp [_root_.Spec.Shape.size])
-  TorchLean.concatLeadingAxis (m := m) (α := β) (s := .scalar)
+    [Runtime.Autograd.Torch.Ops (m := m) (α := β)]
+    (x : Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape)
+    (u0 oneS : Runtime.Autograd.Model.RefTy (m := m) (α := β) [])
+    (mu one : β) : m (Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape) := do
+  let x1 ← Runtime.Autograd.Model.select (m := m) (α := β) (s := [xDim]) 0 x ⟨0, by decide⟩
+  let x2 ← Runtime.Autograd.Model.select (m := m) (α := β) (s := [xDim]) 0 x ⟨1, by decide⟩
+  let x1Sq0 ← Runtime.Autograd.Model.mul (m := m) (α := β) (s := []) x1 x1
+  let oneMinus ← Runtime.Autograd.Model.sub (m := m) (α := β) (s := []) oneS x1Sq0
+  let term0 ← Runtime.Autograd.Model.mul (m := m) (α := β) (s := []) oneMinus x2
+  let term ← Runtime.Autograd.Model.scale (m := m) (α := β) (s := []) term0 (c := mu)
+  let negx1 ← Runtime.Autograd.Model.scale (m := m) (α := β) (s := []) x1 (c := (-one))
+  let dx2pre ← Runtime.Autograd.Model.add (m := m) (α := β) (s := []) negx1 term
+  let dx2 ← Runtime.Autograd.Model.add (m := m) (α := β) (s := []) dx2pre u0
+  let x2V ← Runtime.Autograd.Model.reshape (m := m) (α := β) (s₁ := [])
+    (s₂ := [1]) x2 (by simp [Spec.Shape.size])
+  let dx2V ← Runtime.Autograd.Model.reshape (m := m) (α := β) (s₁ := [])
+    (s₂ := [1]) dx2 (by simp [Spec.Shape.size])
+  Runtime.Autograd.Model.concatLeadingAxis (m := m) (α := β) (s := [])
     (nDim := 1) (mDim := 1) x2V dx2V
 
 /-- Form the positivity and decrease penalties from `V`, `∇V`, and the closed-loop dynamics. -/
 @[noinline, nospecialize]
-def lossFromDynamics
-    {β : Type} [Context β] [DecidableEq Shape]
+def Internal.lossFromDynamics
+    {β : Type} [TorchLean.Storage β] [Context β]
     {m : Type → Type} [Monad m]
-    [_root_.Runtime.Autograd.Torch.Ops (m := m) (α := β)]
-    (x : TorchLean.RefTy (m := m) (α := β) xShape)
-    (V : TorchLean.RefTy (m := m) (α := β) Shape.scalar)
-    (gradV dynamics : TorchLean.RefTy (m := m) (α := β) xShape)
-    (cV cD : β) : m (TorchLean.RefTy (m := m) (α := β) Shape.scalar) := do
-  let prod ← TorchLean.mul (m := m) (α := β) (s := xShape) gradV dynamics
-  let Vdot ← TorchLean.sum (m := m) (α := β) (s := xShape) prod
-  let xSqV ← TorchLean.mul (m := m) (α := β) (s := xShape) x x
-  let xSq ← TorchLean.sum (m := m) (α := β) (s := xShape) xSqV
-  let posScaled ← TorchLean.scale (m := m) (α := β) (s := Shape.scalar) xSq (c := cV)
-  let posExpr ← TorchLean.sub (m := m) (α := β) (s := Shape.scalar) posScaled V
-  let posPenalty ← TorchLean.relu (m := m) (α := β) (s := Shape.scalar) posExpr
-  let decScaled ← TorchLean.scale (m := m) (α := β) (s := Shape.scalar) V (c := cD)
-  let decExpr ← TorchLean.add (m := m) (α := β) (s := Shape.scalar) Vdot decScaled
-  let decPenalty ← TorchLean.relu (m := m) (α := β) (s := Shape.scalar) decExpr
-  TorchLean.add (m := m) (α := β) (s := Shape.scalar) posPenalty decPenalty
+    [Runtime.Autograd.Torch.Ops (m := m) (α := β)]
+    (x : Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape)
+    (V : Runtime.Autograd.Model.RefTy (m := m) (α := β) [])
+    (gradV dynamics : Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape)
+    (cV cD : β) : m (Runtime.Autograd.Model.RefTy (m := m) (α := β) []) := do
+  let prod ← Runtime.Autograd.Model.mul (m := m) (α := β) (s := xShape) gradV dynamics
+  let Vdot ← Runtime.Autograd.Model.sum (m := m) (α := β) (s := xShape) prod
+  let xSqV ← Runtime.Autograd.Model.mul (m := m) (α := β) (s := xShape) x x
+  let xSq ← Runtime.Autograd.Model.sum (m := m) (α := β) (s := xShape) xSqV
+  let posScaled ← Runtime.Autograd.Model.scale (m := m) (α := β) (s := []) xSq (c := cV)
+  let posExpr ← Runtime.Autograd.Model.sub (m := m) (α := β) (s := []) posScaled V
+  let posPenalty ← Runtime.Autograd.Model.relu (m := m) (α := β) (s := []) posExpr
+  let decScaled ← Runtime.Autograd.Model.scale (m := m) (α := β) (s := []) V (c := cD)
+  let decExpr ← Runtime.Autograd.Model.add (m := m) (α := β) (s := []) Vdot decScaled
+  let decPenalty ← Runtime.Autograd.Model.relu (m := m) (α := β) (s := []) decExpr
+  Runtime.Autograd.Model.add (m := m) (α := β) (s := []) posPenalty decPenalty
 
+/-- The full stage-1 loss as a graph program: MSE-style fit plus the two Lyapunov penalties.
+
+Marked `noinline`/`nospecialize` on purpose. The program is built once and then run many times, so
+specializing it per storage type costs compile time without buying anything at run time. -/
 @[noinline, nospecialize]
 def lossProgram (width : Nat) :
-    ∀ {β : Type}, [Context β] → [DecidableEq Shape] →
-      TorchLean.Program β (paramShapes width ++ [xShape]) Shape.scalar :=
+    ∀ {β : Type}, [TorchLean.Storage β] → [Context β] →
+      Runtime.Autograd.Model.Program β (paramShapes width ++ [xShape]) [] :=
   fun {β} _ _ =>
     fun {m} _ _ =>
       fun wC bC w1 b1 w2 b2 x =>
@@ -223,11 +229,12 @@ def lossProgram (width : Nat) :
           let one : β := ((1 : Nat) : β)
           let two : β := ((2 : Nat) : β)
 
-          let oneS ← TorchLean.const (m := m) (α := β) (s := Shape.scalar) (Tensor.scalar one)
-          let u0 ← controllerOutput (m := m) wC bC x scaleU
-          let (V, gradV) ← lyapunovValueAndGradient (m := m) width w1 b1 w2 b2 x oneS two
-          let dynamics ← closedLoopDynamics (m := m) x u0 oneS mu one
-          lossFromDynamics (m := m) x V gradV dynamics cV cD
-          : m (TorchLean.RefTy (m := m) (α := β) Shape.scalar))
+          let oneS ← Runtime.Autograd.Model.const (m := m) (α := β) (s := []) (Tensor.full [] one)
+          let u0 ← Internal.controllerOutput (m := m) wC bC x scaleU
+          let (V, gradV) ←
+            Internal.lyapunovValueAndGradient (m := m) width w1 b1 w2 b2 x oneS two
+          let dynamics ← Internal.closedLoopDynamics (m := m) x u0 oneS mu one
+          Internal.lossFromDynamics (m := m) x V gradV dynamics cV cD
+          : m (Runtime.Autograd.Model.RefTy (m := m) (α := β) []))
 
 end NN.MLTheory.CROWN.Lyapunov.TwoStage.Core

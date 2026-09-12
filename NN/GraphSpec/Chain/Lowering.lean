@@ -21,7 +21,7 @@ the pure interpreter.
 namespace NN
 namespace GraphSpec
 
-open _root_.Spec
+open Spec TorchLean
 
 namespace Chain
 
@@ -29,19 +29,10 @@ namespace Chain
 def toProgram
     {ps : List Shape} {σ τ : Shape}
     (g : Chain ps σ τ)
-    {α : Type 0} [Context α] [DecidableEq Shape] :
-    Runtime.Autograd.TorchLean.Program α (ps ++ [σ]) τ :=
+    {α : Type 0} [TorchLean.Storage α] [Context α] :
+    Runtime.Autograd.Model.Program α (ps ++ [σ]) τ :=
   fun {m} _instM _instOps =>
     let Ref := fun s => Runtime.Autograd.Torch.Ops.Ref (m := m) (α := α) s
-
-    let rec splitParamsRef :
-        {ps₁ ps₂ : List Shape} →
-          Runtime.Autograd.Torch.RefList Ref (ps₁ ++ ps₂) →
-            Runtime.Autograd.Torch.RefList Ref ps₁ × Runtime.Autograd.Torch.RefList Ref ps₂
-      | [], _ps₂, xs => (.nil, xs)
-      | _s :: ps₁, ps₂, .cons x xs =>
-          let (l, r) := splitParamsRef (ps₁ := ps₁) (ps₂ := ps₂) xs
-          (.cons x l, r)
 
     let rec lowerRefList
         {ps : List Shape} {σ τ : Shape}
@@ -58,7 +49,9 @@ def toProgram
       | .seq (ps₁ := ps₁) (ps₂ := ps₂) (τ := τm) g₁ g₂ => do
           let (params12, x) :=
             Runtime.Autograd.Torch.RefList.splitLast (Ref := Ref) (ss := ps₁ ++ ps₂) (τ := σ) rs
-          let (params₁, params₂) := splitParamsRef (ps₁ := ps₁) (ps₂ := ps₂) params12
+          let (params₁, params₂) :=
+            Runtime.Autograd.Torch.RefList.split
+              (Ref := Ref) (ss₁ := ps₁) (ss₂ := ps₂) params12
           let rs₁ :=
             Runtime.Autograd.Torch.RefList.append (Ref := Ref) (ss₁ := ps₁) (ss₂ := [σ])
               params₁ (.cons x .nil)

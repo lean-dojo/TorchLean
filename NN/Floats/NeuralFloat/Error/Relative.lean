@@ -7,7 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.NeuralFloat.Error.Bounds
-public import NN.Floats.NeuralFloat.Analysis.StandardUlp
+public import NN.Floats.NeuralFloat.Format.Formats
+public import NN.Floats.NeuralFloat.Format.Magnitude
 
 /-!
 # Relative Error in the FLX Format

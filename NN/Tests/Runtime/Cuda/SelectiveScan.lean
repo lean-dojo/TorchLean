@@ -8,6 +8,7 @@ module
 
 public import NN.Runtime.Autograd.Engine.Cuda.Buffer
 public import NN.Runtime.Autograd.Engine.Cuda.Kernels
+public import NN.Tests.Runtime.Cuda.Utils
 
 /-!
 # CUDA kernel coverage: diagonal selective scan
@@ -24,18 +25,14 @@ namespace SelectiveScan
 
 open Runtime.Autograd.Cuda
 
-def floatArray (xs : Array Float) : FloatArray :=
-  FloatArray.mk xs
-
-def assertFloatArrayApprox (msg : String) (a b : FloatArray) (tol : Float := 1e-5) : IO Unit := do
-  if a.size != b.size then
-    throw <| IO.userError s!"{msg}: size mismatch ({a.size} vs {b.size})"
-  for i in [:a.size] do
-    let x := a.get! i
-    let y := b.get! i
-    let d := if x > y then x - y else y - x
-    if d > tol then
-      throw <| IO.userError s!"{msg}[{i}]: got {x}, expected {y}, |diff|={d}"
+/-!
+The float-buffer assertions and the `floatArray` literal wrapper come from `Cuda.Utils`, where the
+rest of this directory already gets them. This file used to define its own `assertFloatArrayApprox`
+that open-coded the absolute difference. The shared one goes through `Utils.assertApprox`, so these
+checks now also reject `NaN` and infinities: with `d := NaN` the old `d > tol` test was false, which
+means a kernel returning `NaN` used to pass this suite silently.
+-/
+open Tests.Cuda.Utils (floatArray assertFloatArrayApprox)
 
 def run : IO Unit := do
   IO.println "== CUDA selective_scan_diag_fwd =="
@@ -55,7 +52,7 @@ def run : IO Unit := do
     5.25, -3.5625,
     2.625, 5.109375
   ]
-  assertFloatArrayApprox "selectiveScanDiagFwd" (Buffer.toFloatArray out) expected
+  assertFloatArrayApprox "selectiveScanDiagFwd" (Buffer.toFloatArray out) expected (tol := 1e-5)
 
   let dY := Buffer.ofFloatArray (floatArray #[
     1.0, 1.0,
@@ -64,27 +61,29 @@ def run : IO Unit := do
   ])
   let (dA, dB, dX, dH0) := Buffer.selectiveScanDiagBwd A B X h0 out dY 3 2
   assertFloatArrayApprox "selectiveScanDiagBwd.dA" (Buffer.toFloatArray dA)
-    (floatArray #[10.75, -2.6875])
+    (floatArray #[10.75, -2.6875]) (tol := 1e-5)
   assertFloatArrayApprox "selectiveScanDiagBwd.dB" (Buffer.toFloatArray dB)
-    (floatArray #[9.5, 1.8125])
+    (floatArray #[9.5, 1.8125]) (tol := 1e-5)
   assertFloatArrayApprox "selectiveScanDiagBwd.dX" (Buffer.toFloatArray dX)
     (floatArray #[
       1.75, 2.625,
       1.5, 2.5,
       1.0, 2.0
-    ])
+    ]) (tol := 1e-5)
   assertFloatArrayApprox "selectiveScanDiagBwd.dH0" (Buffer.toFloatArray dH0)
-    (floatArray #[0.875, 0.328125])
+    (floatArray #[0.875, 0.328125]) (tol := 1e-5)
 
   let emptyX := Buffer.ofFloatArray (floatArray #[])
   let emptyOut := Buffer.selectiveScanDiagFwd A B emptyX h0 0 2
   if Buffer.size emptyOut != 0 then
-    throw <| IO.userError s!"selectiveScanDiagFwd empty seq: got size {Buffer.size emptyOut}, expected 0"
+    throw <| IO.userError
+      s!"selectiveScanDiagFwd empty seq: got size {Buffer.size emptyOut}, expected 0"
 
   let emptyParam := Buffer.ofFloatArray (floatArray #[])
   let zeroStateOut := Buffer.selectiveScanDiagFwd emptyParam emptyParam emptyX emptyParam 3 0
   if Buffer.size zeroStateOut != 0 then
-    throw <| IO.userError s!"selectiveScanDiagFwd zero state: got size {Buffer.size zeroStateOut}, expected 0"
+    throw <| IO.userError
+      s!"selectiveScanDiagFwd zero state: got size {Buffer.size zeroStateOut}, expected 0"
 
   let Avar := Buffer.ofFloatArray (floatArray #[
     0.5, 0.25,
@@ -108,6 +107,7 @@ def run : IO Unit := do
     -2.25, 2.1625
   ]
   assertFloatArrayApprox "selectiveScanDiagVarFwd" (Buffer.toFloatArray outVar) expectedVar
+    (tol := 1e-5)
 
   IO.println "== CUDA selective_scan_diag_fwd: OK =="
 

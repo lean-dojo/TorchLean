@@ -41,21 +41,29 @@ References (background, not required to read the code):
   https://www.jstor.org/stable/2984875
 - Bishop (2006), "Pattern Recognition and Machine Learning", Chapter 9 (Mixture Models and EM):
   https://www.microsoft.com/en-us/research/people/cmbishop/prml-book/
+
+## Implementation status
+
+No API builder implements this model. It is exercised numerically in
+`NN/Tests/Runtime/Floats/TorchLeanOpsCheck.lean`; no theorem is proved about it.
 -/
 
 public section
 
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-! ## Parameters -/
 
 /-- Parameters of a Gaussian mixture model (GMM). -/
-structure GMMSpec (α : Type) (nComponents nFeatures : Nat) where
+structure GMMSpec (α : Type) [TorchLean.Storage α]
+    (nComponents nFeatures : Nat) where
   /-- Mixing weights $\pi_k$ (typically nonnegative and summing to $1$). -/
   weights : Tensor α [nComponents]
   /-- Component means $\mu_k$. -/
@@ -96,11 +104,7 @@ def covariancePositiveDefiniteSpec {n : Nat}
 /-- Positive, normalized mixture weights. -/
 def mixtureWeightsValidSpec {n : Nat} (weights : Tensor α [n]) : Bool :=
   let positive :=
-    match weights with
-    | Tensor.dim f =>
-        (List.finRange n).all (fun i =>
-          match f i with
-          | Tensor.scalar w => Context.gtBool w 0)
+    (List.finRange n).all (fun i => Context.gtBool (weights.getScalar i) 0)
   positive && (sumSpec weights == 1)
 
 /-- Whether all parameter-domain conditions required by the GMM density hold. -/
@@ -108,10 +112,8 @@ def gmmParametersValidSpec {nComponents nFeatures : Nat}
     (m : GMMSpec α nComponents nFeatures) : Bool :=
   nComponents != 0 && nFeatures != 0 &&
     mixtureWeightsValidSpec m.weights &&
-    match m.covariances with
-    | Tensor.dim covariances =>
-        (List.finRange nComponents).all (fun k =>
-          covariancePositiveDefiniteSpec (covariances k))
+    (List.finRange nComponents).all (fun k =>
+      covariancePositiveDefiniteSpec (Tensor.unstack m.covariances k))
 
 /-- Per-component log-probabilities for a single input.
 
@@ -127,7 +129,7 @@ $$
 This is the natural "logit vector" for responsibilities.  If you want posterior probabilities
 $P(z=k\mid x)$, apply `gmmExpectationSpec` (a last-axis softmax).
 
-PyTorch analogy: the returned vector is like per-component `log_prob` values before the final
+PyTorch analogy: the returned vector is like per-component `logProb` values before the final
 mixture `logsumexp`.
 -/
 def gmmForwardSpec {nComponents nFeatures : Nat}
@@ -135,23 +137,20 @@ def gmmForwardSpec {nComponents nFeatures : Nat}
   (input : Tensor α [nFeatures]) :
   Option (Tensor α [nComponents]) :=
   if gmmParametersValidSpec m then
-    match m.weights, m.means, m.covariances with
-    | Tensor.dim weights, Tensor.dim means, Tensor.dim covariances =>
-      sequenceFin (fun k => do
-        let weight := weights k
-        let mean := means k
-        let covariance := covariances k
-        let diff := subSpec input mean
-        let covInv ← inverseSpec? covariance
-        let det := Tensor.item (determinantSpec covariance)
-        let w := Tensor.item weight
-        let quadraticForm := dotSpec diff (matVecMulSpec covInv diff)
-        let log2pi := MathFunctions.log (Numbers.two * MathFunctions.pi)
-        let normalization : α :=
-          (nFeatures : α) / Numbers.two * log2pi +
-            Numbers.half * MathFunctions.log det
-        some (Tensor.scalar
-          (MathFunctions.log w + Numbers.negHalf * quadraticForm - normalization)))
+    sequenceFin (fun k => do
+      let mean := Tensor.unstack m.means k
+      let covariance := Tensor.unstack m.covariances k
+      let diff := subSpec input mean
+      let covInv ← inverseSpec? covariance
+      let det := Tensor.item (determinantSpec covariance)
+      let w := m.weights.getScalar k
+      let quadraticForm := dotSpec diff (matVecMulSpec covInv diff)
+      let log2pi := MathFunctions.log (2 * MathFunctions.pi)
+      let normalization : α :=
+        (nFeatures : α) / 2 * log2pi +
+          (1 / 2) * MathFunctions.log det
+      some (Tensor.scalar
+        (MathFunctions.log w + (-1 / 2) * quadraticForm - normalization)))
   else
     none
 
@@ -183,9 +182,7 @@ def gmmBatchedForwardSpec {batch nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
   (input : Tensor α [batch, nFeatures]) :
   Option (Tensor α [batch, nComponents]) :=
-  match input with
-  | Tensor.dim batch_fn =>
-    sequenceFin (fun i => gmmForwardSpec m (batch_fn i))
+  sequenceFin (fun i => gmmForwardSpec m (Tensor.unstack input i))
 
 /-!
 ## Backward/VJP (for `gmmForwardSpec`)
@@ -209,14 +206,12 @@ For $y_k=\log\pi_k+\cdots$, we have $\partial y_k/\partial\pi_k=1/\pi_k$.
 -/
 def gmmWeightsDerivSpec {nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
-  (grad_output : Tensor α [nComponents])
+  (gradOutput : Tensor α [nComponents])
   (_h : nComponents ≠ 0) :
   Option (Tensor α [nComponents]) :=
   if gmmParametersValidSpec m then
     sequenceFin (fun k =>
-      match get m.weights k, get grad_output k with
-      | Tensor.scalar π_k, Tensor.scalar g =>
-        some (Tensor.scalar (g / π_k)))
+      some (Tensor.scalar (gradOutput.getScalar k / m.weights.getScalar k)))
   else
     none
 
@@ -234,23 +229,21 @@ For a valid symmetric covariance this reduces to the familiar $\Sigma^{-1}(x-\mu
 def gmmMeansDerivSpec {nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
   (input : Tensor α [nFeatures])
-  (grad_output : Tensor α [nComponents])
+  (gradOutput : Tensor α [nComponents])
   (_h : nComponents ≠ 0) :
   Option (Tensor α [nComponents, nFeatures]) :=
   if gmmParametersValidSpec m then
     sequenceFin (fun k => do
       let mean_k := get m.means k
       let covariance_k := get m.covariances k
-      let grad_k := get grad_output k
+      let grad_k := get gradOutput k
       let diff := subSpec input mean_k
       let covInv ← inverseSpec? covariance_k
       let covInvT := swapAdjacentAxes covInv 0
       let weightedDiff := scaleSpec
         (addSpec (matVecMulSpec covInv diff) (matVecMulSpec covInvT diff))
-        Numbers.half
-      match grad_k with
-      | Tensor.scalar g =>
-        pure (scaleSpec weightedDiff g))
+        (1 / 2)
+      pure (scaleSpec weightedDiff grad_k.item))
   else
     none
 
@@ -268,7 +261,7 @@ We sum the contributions from all components, weighted by the upstream gradient 
 def gmmInputDerivSpec {nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
   (input : Tensor α [nFeatures])
-  (grad_output : Tensor α [nComponents])
+  (gradOutput : Tensor α [nComponents])
   (h : nComponents ≠ 0) :
   Option (Tensor α [nFeatures]) :=
   if gmmParametersValidSpec m then do
@@ -277,16 +270,14 @@ def gmmInputDerivSpec {nComponents nFeatures : Nat}
     let perComponent ← sequenceFin (fun k => do
         let mean_k := get m.means k
         let covariance_k := get m.covariances k
-        let gk := get grad_output k
+        let gk := get gradOutput k
         let diff := subSpec input mean_k
         let covInv ← inverseSpec? covariance_k
         let covInvT := swapAdjacentAxes covInv 0
         let v := scaleSpec
           (addSpec (matVecMulSpec covInv diff) (matVecMulSpec covInvT diff))
-          Numbers.half
-        match gk with
-        | Tensor.scalar g =>
-            pure (scaleSpec v (Numbers.negOne * g)))
+          (1 / 2)
+        pure (scaleSpec v ((-1) * gk.item)))
     pure (reduceSum 0 perComponent inst.proof)
   else
     none
@@ -306,14 +297,14 @@ $$
 def gmmCovariancesDerivSpec {nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
   (input : Tensor α [nFeatures])
-  (grad_output : Tensor α [nComponents])
+  (gradOutput : Tensor α [nComponents])
   (_h : nComponents ≠ 0) :
   Option (Tensor α [nComponents, nFeatures, nFeatures]) :=
   if gmmParametersValidSpec m then
     sequenceFin (fun k => do
       let mean_k := get m.means k
       let covariance_k := get m.covariances k
-      let grad_k := get grad_output k
+      let grad_k := get gradOutput k
       let diff := subSpec input mean_k
       let outerProduct := outerProductSpec diff diff
       let covInv ← inverseSpec? covariance_k
@@ -321,30 +312,41 @@ def gmmCovariancesDerivSpec {nComponents nFeatures : Nat}
       let temp1 := matMulSpec covInvT outerProduct
       let temp2 := matMulSpec temp1 covInvT
       let gradSigma := subSpec temp2 covInvT
-      match grad_k with
-      | Tensor.scalar g =>
-          pure (scaleSpec gradSigma (Numbers.half * g)))
+      pure (scaleSpec gradSigma ((1 / 2) * grad_k.item)))
   else
     none
 
+/-- Gradients for a `GMMSpec`, one field per differentiable component. -/
+structure GMMGradients (α : Type) [TorchLean.Storage α] (nComponents nFeatures : Nat) where
+  /-- Gradient with respect to the mixture weights. -/
+  weightsGradient : Tensor α [nComponents]
+  /-- Gradient with respect to the component means. -/
+  meansGradient : Tensor α [nComponents, nFeatures]
+  /-- Gradient with respect to the component covariance matrices. -/
+  covariancesGradient : Tensor α [nComponents, nFeatures, nFeatures]
+  /-- Gradient with respect to the observed point. -/
+  inputGradient : Tensor α [nFeatures]
+
 /-- Backward/VJP for `gmmForwardSpec`.
 
-Returns gradients with respect to `(weights, means, covariances, input)`.
+Every component gradient needs a covariance inverse, so the whole record is optional: a singular
+covariance makes the derivative undefined rather than zero.
 -/
 def gmmBackwardSpec {nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
   (input : Tensor α [nFeatures])
-  (grad_output : Tensor α [nComponents])
+  (gradOutput : Tensor α [nComponents])
   (h : nComponents ≠ 0) :
-  Option (Tensor α [nComponents] ×
-   Tensor α [nComponents, nFeatures] ×
-   Tensor α [nComponents, nFeatures, nFeatures] ×
-   Tensor α [nFeatures]) := do
-  let dWeights ← gmmWeightsDerivSpec m grad_output h
-  let dMeans ← gmmMeansDerivSpec m input grad_output h
-  let dCovariances ← gmmCovariancesDerivSpec m input grad_output h
-  let dInput ← gmmInputDerivSpec m input grad_output h
-  pure (dWeights, dMeans, dCovariances, dInput)
+  Option (GMMGradients α nComponents nFeatures) := do
+  let dWeights ← gmmWeightsDerivSpec m gradOutput h
+  let dMeans ← gmmMeansDerivSpec m input gradOutput h
+  let dCovariances ← gmmCovariancesDerivSpec m input gradOutput h
+  let dInput ← gmmInputDerivSpec m input gradOutput h
+  pure
+    { weightsGradient := dWeights
+      meansGradient := dMeans
+      covariancesGradient := dCovariances
+      inputGradient := dInput }
 
 /-- Uniform mixture weights (all components have probability $1/\mathtt{nComponents}$). -/
 private def uniformWeights {nComponents : Nat} : Tensor α [nComponents] :=
@@ -381,26 +383,23 @@ $\log\!\left(\sum_i \exp(\mathtt{log\_probs}[i])\right)$.
 This is the standard
 $m+\log\!\left(\sum_i\exp(x_i-m)\right)$ trick, where $m=\max_i x_i$.
 -/
-def logSumExpReduce {n : Nat} (log_probs : Tensor α [n]) (h : n ≠ 0) : α :=
+def logSumExpReduce {n : Nat} (logProbs : Tensor α [n]) (h : n ≠ 0) : α :=
   -- Step 1: Find maximum for numerical stability
   have inst : Shape.HasNonemptyAxis 0 (Shape.dim n .scalar) := by
     apply Shape.hasNonemptyAxisZeroOfNe h
-  let max_log_prob := reduceMax 0 log_probs inst.proof
+  let maxLogProb := reduceMax 0 logProbs inst.proof
   have h_shape : shapeAfterSum (Shape.dim n Shape.scalar) 0 = Shape.scalar := by
     simp [shapeAfterSum]
-  let max_log_prob' := item (tensorCast (Shape.scalar) h_shape.symm max_log_prob)
+  let max_log_prob' := item (tensorCast (Shape.scalar) h_shape.symm maxLogProb)
 
-  -- Step 2: Compute sum of exp(log_prob - max_log_prob)
-  let shifted_probs := Tensor.dim (fun k =>
-    match get log_probs k with
-    | Tensor.scalar log_prob =>
-      Tensor.scalar (MathFunctions.exp (log_prob - max_log_prob'))
-  )
-  let sum_shifted := sumSpec shifted_probs
+  -- Step 2: Compute sum of exp(logProb - maxLogProb)
+  let shiftedProbs := mapSpec
+    (fun logProb => MathFunctions.exp (logProb - max_log_prob')) logProbs
+  let sumShifted := sumSpec shiftedProbs
 
-  -- Step 3: Compute log(sum_shifted) + max_log_prob
-  if sum_shifted > 0 then
-    MathFunctions.log sum_shifted + max_log_prob'
+  -- Step 3: Compute log(sumShifted) + maxLogProb
+  if sumShifted > 0 then
+    MathFunctions.log sumShifted + max_log_prob'
   else
     max_log_prob'  -- Fallback if sum is zero
 
@@ -436,7 +435,8 @@ below lift that to a batched dataset and implement a deterministic EM update ste
 Numerical notes:
 - If a component gets (near) zero total responsibility ($N_k\approx 0$), we keep that component’s
   parameters unchanged (otherwise we’d divide by zero).
-- We add a small diagonal “jitter,” $\mathtt{Numbers.epsilon}\,I$, to covariances to keep them
+- We add a small diagonal “jitter,” $\mathtt{Context.defaultEpsilon}\,I$,
+  to covariances to keep them
   well-behaved.
 -/
 
@@ -446,16 +446,13 @@ def gmmResponsibilitiesBatchedSpec {nSamples nComponents nFeatures : Nat}
   (data : Tensor α [nSamples, nFeatures])
   (hK : nComponents ≠ 0) :
   Option (Tensor α [nSamples, nComponents]) :=
-  match data with
-  | Tensor.dim f =>
-      sequenceFin (fun i => gmmExpectationSpec (α := α) (nComponents := nComponents) (nFeatures :=
-        nFeatures) m (f i) hK)
+  sequenceFin (fun i => gmmExpectationSpec (α := α) (nComponents := nComponents) (nFeatures :=
+    nFeatures) m (Tensor.unstack data i) hK)
 
 /-- Scalar extraction helper for matrices: `t[i,j]` as an `α`. -/
 private def getMatrix {n m : Nat} (t : Tensor α [n, m]) (i : Fin n) (j : Fin m) : α
   :=
-  match get (get t i) j with
-  | Tensor.scalar v => v
+  (Tensor.unstack t i).getScalar j
 
 /-- Build a vector tensor from a function `Fin n -> α`. -/
 private def vecFromFn {n : Nat} (f : Fin n → α) : Tensor α [n] :=
@@ -487,60 +484,48 @@ def gmmEmStepSpec {nSamples nComponents nFeatures : Nat}
     -- π_k = N_k / N
     let weights : Tensor α [nComponents] :=
       let wRaw : Tensor α [nComponents] :=
-        match Nk, m.weights with
-        | Tensor.dim f, Tensor.dim wOld =>
-          Tensor.dim (fun k =>
-            match f k, wOld k with
-            | Tensor.scalar nk, Tensor.scalar w =>
-              if nk > 0 then Tensor.scalar (nk / (nSamples : α)) else Tensor.scalar w)
-        | _, _ => uniformWeights (α := α) (nComponents := nComponents)
+        Tensor.dim (fun k =>
+          let nk := Nk.getScalar k
+          let w := m.weights.getScalar k
+          if nk > 0 then Tensor.scalar (nk / (nSamples : α)) else Tensor.scalar w)
       let s := sumSpec wRaw
       if s > 0 then scaleSpec wRaw (1 / s) else uniformWeights (α := α) (nComponents :=
         nComponents)
 
     -- μ_k = (1/N_k) Σ_i r_{ik} x_i
     let means : Tensor α [nComponents, nFeatures] :=
-      match Nk, m.means with
-      | Tensor.dim NkF, Tensor.dim muOld =>
-        Tensor.dim (fun k =>
-          match NkF k with
-          | Tensor.scalar nk =>
-            if nk > 0 then
-              Tensor.dim (fun f =>
-                Tensor.scalar (
-                  (List.finRange nSamples).foldl (fun acc i =>
-                    let rik := getMatrix (n := nSamples) (m := nComponents) resp i k
-                    let xi := get data i
-                    acc + rik * Tensor.getScalar xi f
-                  ) 0 / nk))
-            else
-              muOld k)
-      | _, _ => m.means
+      Tensor.dim (fun k =>
+        let nk := Nk.getScalar k
+        if nk > 0 then
+          Tensor.dim (fun f =>
+            Tensor.scalar (
+              (List.finRange nSamples).foldl (fun acc i =>
+                let rik := getMatrix (n := nSamples) (m := nComponents) resp i k
+                let xi := Tensor.unstack data i
+                acc + rik * Tensor.getScalar xi f
+              ) 0 / nk))
+        else
+          Tensor.unstack m.means k)
 
     -- Σ_k = (1/N_k) Σ_i r_{ik} (x_i-μ_k)(x_i-μ_k)ᵀ + εI
     let covariances : Tensor α [nComponents, nFeatures, nFeatures] :=
-      match Nk, means with
-      | Tensor.dim NkF, Tensor.dim muF =>
-        Tensor.dim (fun k =>
-          match NkF k, muF k with
-          | Tensor.scalar nk, Tensor.dim muVec =>
-            if nk > 0 then
-              let μ : Tensor α [nFeatures] := Tensor.dim muVec
-              let base :=
-                matFromFn (n := nFeatures) (m := nFeatures) (fun a b =>
-                  (List.finRange nSamples).foldl (fun acc i =>
-                    let rik := getMatrix (n := nSamples) (m := nComponents) resp i k
-                    let xi := get data i
-                    let da := Tensor.getScalar xi a - Tensor.getScalar μ a
-                    let db := Tensor.getScalar xi b - Tensor.getScalar μ b
-                    acc + rik * da * db
-                  ) 0 / nk)
-              let jitter := scaleSpec (identityTensorSpec nFeatures) Numbers.epsilon
-              addSpec base jitter
-            else
-              get m.covariances k
-          | _, _ => get m.covariances k)
-      | _, _ => m.covariances
+      Tensor.dim (fun k =>
+        let nk := Nk.getScalar k
+        let μ := Tensor.unstack means k
+        if nk > 0 then
+          let base :=
+            matFromFn (n := nFeatures) (m := nFeatures) (fun a b =>
+              (List.finRange nSamples).foldl (fun acc i =>
+                let rik := getMatrix (n := nSamples) (m := nComponents) resp i k
+                let xi := Tensor.unstack data i
+                let da := Tensor.getScalar xi a - Tensor.getScalar μ a
+                let db := Tensor.getScalar xi b - Tensor.getScalar μ b
+                acc + rik * da * db
+              ) 0 / nk)
+          let jitter := scaleSpec (identityTensorSpec nFeatures) Context.defaultEpsilon
+          addSpec base jitter
+        else
+          Tensor.unstack m.covariances k)
 
     pure { weights := weights, means := means, covariances := covariances }
 

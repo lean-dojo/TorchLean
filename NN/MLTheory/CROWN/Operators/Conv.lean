@@ -6,8 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Runtime.Ops
 public import NN.Spec.Layers.Conv
+public import NN.Tensor.Conversion
+public import NN.MLTheory.CROWN.Core
+public import NN.Spec.Core.TensorReductionShape.ShapeChange
 
 /-!
 # Convolution Bounds
@@ -26,10 +28,10 @@ Design notes:
 
 namespace NN.MLTheory.CROWN
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Flatten a `Box` to a rank-one box by flattening both endpoints. -/
 def flattenBox {s : Shape} (B : Box α s) : Box α (.dim (Spec.Shape.size s) .scalar) :=
@@ -45,19 +47,21 @@ def decodeFlatIndex : List Nat → Nat → List Nat
 
 /-- Interval propagation for an arbitrary-dimensional convolution. -/
 def ibpConv
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (layer : Spec.ConvSpec d inC outC kernel stride padding α)
-    (xB : Box α (Shape.ofList (inC :: inSpatial.toList))) :
+    (xB : Box α (Shape.ofList (inC :: Tensor.to inSpatial (List Nat)))) :
     Box α (Shape.ofList (outC ::
-      (Spec.convOutSpatial inSpatial kernel stride padding).toList)) :=
+      Tensor.to (Spec.convOutSpatial inSpatial kernel stride padding) (List Nat))) :=
   let outSpatial := Spec.convOutSpatial inSpatial kernel stride padding
   let endpoint := fun (lower : Bool) =>
     Tensor.dim (fun outChannel =>
-      Spec.Tensor.generate outSpatial.toList (fun outIdx =>
+      TorchLean.Tensor.generate (Tensor.to outSpatial (List Nat)) (fun outIdx =>
         let total :=
           (List.finRange inC).foldl (fun acc inChannel =>
-            Spec.Conv.Internal.foldlIndices kernel.toList acc (fun acc kernelIdx =>
-              match Spec.Conv.Internal.mkInputIdx? outIdx kernelIdx stride.toList padding.toList with
+            Spec.Conv.Internal.foldlIndices (Tensor.to kernel (List Nat)) acc
+              (fun acc kernelIdx =>
+              match Spec.Conv.Internal.mkInputIdx? outIdx kernelIdx
+                  (Tensor.to stride (List Nat)) (Tensor.to padding (List Nat)) with
               | none => acc
               | some inputIdx =>
                   let lo := getAtOrZero xB.lo (inChannel.val :: inputIdx)
@@ -76,15 +80,15 @@ def ibpConv
 
 /-- Explicit flattened linear operator for an arbitrary-dimensional convolution. -/
 def convLinearMatrix
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (layer : Spec.ConvSpec d inC outC kernel stride padding α) :
-    let inShape := Shape.ofList (inC :: inSpatial.toList)
+    let inShape := Shape.ofList (inC :: Tensor.to inSpatial (List Nat))
     let outShape := Shape.ofList (outC ::
-      (Spec.convOutSpatial inSpatial kernel stride padding).toList)
+      Tensor.to (Spec.convOutSpatial inSpatial kernel stride padding) (List Nat))
     Tensor α [outShape.size, inShape.size] :=
-  let inDims := inC :: inSpatial.toList
+  let inDims := inC :: Tensor.to inSpatial (List Nat)
   let outSpatial := Spec.convOutSpatial inSpatial kernel stride padding
-  let outDims := outC :: outSpatial.toList
+  let outDims := outC :: Tensor.to outSpatial (List Nat)
   Tensor.dim (fun row =>
     let outCoordinates := decodeFlatIndex outDims row.val
     let outChannel := outCoordinates.headD 0
@@ -94,8 +98,9 @@ def convLinearMatrix
       let inChannel := inCoordinates.headD 0
       let inputIdx := inCoordinates.drop 1
       let coefficient :=
-        Spec.Conv.Internal.foldlIndices kernel.toList 0 (fun acc kernelIdx =>
-          if Spec.Conv.Internal.matchesInputPos outIdx kernelIdx stride.toList padding.toList
+        Spec.Conv.Internal.foldlIndices (Tensor.to kernel (List Nat)) 0 (fun acc kernelIdx =>
+          if Spec.Conv.Internal.matchesInputPos outIdx kernelIdx
+              (Tensor.to stride (List Nat)) (Tensor.to padding (List Nat))
               inputIdx then
             acc + getAtOrZero layer.kernel (outChannel :: inChannel :: kernelIdx)
           else
@@ -104,11 +109,11 @@ def convLinearMatrix
 
 /-- Flattened broadcast of a convolution bias over every output spatial position. -/
 def convBiasBroadcast
-    {d outC : Nat} {outSpatial : Spec.Tensor Nat [d]}
+    {d outC : Nat} {outSpatial : TorchLean.Tensor Nat [d]}
     (bias : Tensor α [outC]) :
-    let outShape := Shape.ofList (outC :: outSpatial.toList)
+    let outShape := Shape.ofList (outC :: Tensor.to outSpatial (List Nat))
     Tensor α [outShape.size] :=
-  let outDims := outC :: outSpatial.toList
+  let outDims := outC :: Tensor.to outSpatial (List Nat)
   Tensor.dim (fun row =>
     let outChannel := (decodeFlatIndex outDims row.val).headD 0
     Tensor.scalar (getAtOrZero bias [outChannel]))

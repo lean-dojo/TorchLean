@@ -6,7 +6,10 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Floats.IEEEExec.Bridge.FP32.Ops
+public import NN.Floats.IEEEExec.Bridge.FP32.Sqrt
 public import NN.Floats.IEEEExec.Bridge.FP32Total.Core
+public import NN.Floats.IEEEExec.Rules.SpecialRules
 
 /-!
 # Total FP32 Bridge: Arithmetic

@@ -6,7 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.GraphSpec.DAG.Model
+public import Mathlib.Algebra.Order.Field.Basic
+import Mathlib.Tactic.NormNum.Inv
+import Mathlib.Tactic.NormNum.Pow
+import Mathlib.Tactic.Positivity.Finset
 
 /-!
 # Canonical GraphSpec DAG

@@ -4,14 +4,7 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 module
-public import NN.Floats.IEEEExec.DirectedRoundingSoundness
-public import NN.Floats.IEEEExec.Exec32
-public import NN.Floats.IEEEExec.Encoding.MkBitsToReal
-public import NN.Floats.IEEEExec.Rounding.NatLemmas
-public import NN.Floats.IEEEExec.Rounding.RoundShiftRightEven
-public import Mathlib.Data.EReal.Basic
-public import Mathlib.Data.Nat.Log
-public import Mathlib.Data.Real.Basic
+public import NN.Floats.IEEEExec.DirectedRoundingSoundness.SignedOps
 /-!
 # `roundDyadicToIEEE32` is sandwiched by directed rounding (the “full IEEE” bridge)
 Our codebase has **two** floating-point execution models for binary32:

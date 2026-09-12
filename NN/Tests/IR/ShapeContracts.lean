@@ -21,22 +21,22 @@ namespace NN.Tests.IR.ShapeContracts
 
 open NN
 open NN.IR
-open _root_.Spec
+open Spec TorchLean
 
 private def smallSpatialInput : Spec.Shape := .dim 1 (.dim 2 (.dim 2 .scalar))
 
 private def squareWindowConfig (kernel stride padding : Nat) : WindowConfig :=
   { spatialRank := 2
-    kernel := Spec.Tensor.ofFn fun _ => kernel
-    stride := Spec.Tensor.ofFn fun _ => stride
-    padding := Spec.Tensor.ofFn fun _ => padding }
+    kernel := TorchLean.Tensor.ofFn fun _ => kernel
+    stride := TorchLean.Tensor.ofFn fun _ => stride
+    padding := TorchLean.Tensor.ofFn fun _ => padding }
 
 private def squareConvConfig
     (inChannels outChannels kernel stride padding : Nat) : ConvConfig :=
   { spatialRank := 2
-    kernel := Spec.Tensor.ofFn fun _ => kernel
-    stride := Spec.Tensor.ofFn fun _ => stride
-    padding := Spec.Tensor.ofFn fun _ => padding
+    kernel := TorchLean.Tensor.ofFn fun _ => kernel
+    stride := TorchLean.Tensor.ofFn fun _ => stride
+    padding := TorchLean.Tensor.ofFn fun _ => padding
     channelAxis := 0
     inChannels := inChannels
     outChannels := outChannels }
@@ -51,33 +51,33 @@ private def rejects (x : Except String Spec.Shape) : Bool :=
 
 example :
     rejects
-        (Infer.inferNodeOutShape
+        (Infer.nodeOutShape
           (node (.conv (squareConvConfig 1 1 3 1 0)) smallSpatialInput)
           #[smallSpatialInput]) = true := by
   decide
 
 example :
-    rejects (Infer.inferNodeOutShape
+    rejects (Infer.nodeOutShape
       (node (.maxPool (squareWindowConfig 3 1 0)) smallSpatialInput) #[smallSpatialInput]) =
       false := by
   decide
 
 example :
     rejects
-      (Infer.inferNodeOutShape
+      (Infer.nodeOutShape
         (node (.broadcastTo (.dim 2 .scalar) (.dim 3 .scalar)) (.dim 3 .scalar))
         #[.dim 2 .scalar]) = true := by
   decide
 
 example :
-    Infer.inferNodeOutShape
+    Infer.nodeOutShape
         (node (.broadcastTo .scalar (.dim 3 .scalar)) (.dim 3 .scalar))
         #[.scalar] =
       .ok (.dim 3 .scalar) := by
   decide
 
 example :
-    rejects (Infer.inferNodeOutShape (node (.layernorm 1) (.dim 0 .scalar)) #[.dim 0 .scalar]) =
+    rejects (Infer.nodeOutShape (node (.layernorm 1) (.dim 0 .scalar)) #[.dim 0 .scalar]) =
       true := by
   decide
 

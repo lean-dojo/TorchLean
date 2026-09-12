@@ -19,14 +19,12 @@ starts after that input node. If `buildFrom` ever encounters another `.input` no
 the tail, successful lowering is impossible. We keep that fact as a named theorem so the
 top-level semantic-equivalence proof can dispatch to it directly.
 
-This file also contains the correctness lemma for `.detach`. Although `.detach` appears in the IR
-as a node, it does not change the tensor value at the spec layer, and lowering simply
-the identity function with a shape check.
-
-Build note: structural nodes look simple, but they sit on the boundary between graph control flow
-and tensor semantics. The `.input` case is an impossible-success proof, while `.detach` is a value
-identity proof wrapped in parent and shape checks. These boundary cases should stay
-small and separate from numeric operator proofs.
+The `.detach` case checks the parent shape and applies `Tensor.detachSpec`, which preserves primal
+values and removes scalar differentiation metadata. This matters when the scalar carrier is a dual
+number: retaining its tangent would let later operations differentiate through the detached value.
+Lowering applies detachment before transporting the result to the declared shape; IR evaluation
+checks that shape first. The proof accounts for this transport while preserving the same scalar
+operation on both sides.
 -/
 
 @[expose] public section
@@ -35,15 +33,17 @@ namespace Runtime
 namespace Autograd
 namespace IRExec
 
-open Spec
-open Tensor
+open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
+-- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
+-- `Idx` and `getIdx` are defined.
+open Proofs (Idx getIdx)
 
 /-- The recursive lowering pass cannot successfully lower an `.input` node in the graph tail. -/
 theorem buildFrom_denoteAllFrom_input_impossible
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) {inShape : Shape} {ss : List Shape}
     (gd : ForwardData α [inShape] ss) (i : Nat) (st' : State α inShape)
     (x : Tensor α inShape) (n : NN.IR.Node)
@@ -57,12 +57,12 @@ theorem buildFrom_denoteAllFrom_input_impossible
       .ok (denoteAllState (α := α) inShape st' x) := by
   have : False := by
     unfold buildFrom at hBuild
-    simp [hi, hN, hk, throw_eq_error] at hBuild
+    simp [hi, hN, hk, lowerInput, throw_eq_error] at hBuild
   cases this
 
 /-- Semantic-preservation lemma for `.detach` lowering. -/
 theorem buildFrom_denoteAllFrom_detach
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) {inShape : Shape} {ss : List Shape}
     (gd : ForwardData α [inShape] ss) (i : Nat) (st' : State α inShape)
     (x : Tensor α inShape) (n : NN.IR.Node)
@@ -84,13 +84,13 @@ theorem buildFrom_denoteAllFrom_detach
       .ok (denoteAllState (α := α) inShape st' x) := by
   let vals0 : Array (Spec.SomeTensor α) :=
     denoteAllState (α := α) inShape (st := (⟨ss, gd⟩ : State α inShape)) x
-  let ctx : _root_.TorchLean.TensorPack α ([inShape] ++ ss) :=
+  let ctx : TorchLean.TensorPack α ([inShape] ++ ss) :=
     ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil)
   let input : Spec.SomeTensor α := Spec.SomeTensor.mk (α := α) inShape x
 
   unfold buildFrom at hBuild
   simp [hi, hN] at hBuild
-  simp (config := { failIfUnchanged := false }) [hk] at hBuild
+  simp (config := { failIfUnchanged := false }) [hk, lowerDetach] at hBuild
   cases hp : unaryParent? n.parents with
   | none =>
       simp [hp] at hBuild
@@ -112,7 +112,7 @@ theorem buildFrom_denoteAllFrom_detach
                   · simp [hOut] at hBuild
                     let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                       mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                        hOut ▸ (getIdx (α := α) (xs := ctx) ip))
+                        hOut ▸ Tensor.detachSpec (getIdx (α := α) (xs := ctx) ip))
                     let st1 : State α inShape :=
                       ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                     have hRec :
@@ -131,6 +131,13 @@ theorem buildFrom_denoteAllFrom_detach
                         NN.IR.Graph.evalAt (α := α) (g := g) (payload := payload)
                             (input := input) (vals := vals0) (i := i) =
                           .ok (Spec.SomeTensor.mk (α := α) n.outShape (nodeData.eval ctx)) := by
+                      -- Shape transport leaves the scalar operation unchanged. This reconciles
+                      -- detachment before the cast in lowering with detachment after it in the IR.
+                      have hDetachCast {source target : Shape} (h : source = target)
+                          (value : Tensor α source) :
+                          Tensor.detachSpec (h ▸ value) = h ▸ Tensor.detachSpec value := by
+                        subst target
+                        rfl
                       have hExpect :
                           NN.IR.Graph.expectShape (α := α) (expected := n.outShape)
                               (Spec.SomeTensor.mk (α := α) pNode.outShape
@@ -161,8 +168,8 @@ theorem buildFrom_denoteAllFrom_detach
                         · cases (hEq hOut)
                       simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode,
                         NN.IR.Graph.normalizeNodeOutput, hN, hk, hp, hGet, hExpect,
-                        nodeData, mkForwardNode,
-                        throw_eq_error]
+                        nodeData, mkForwardNode, hDetachCast, throw_eq_error,
+                        Pure.pure, Except.pure]
 
                     have hTail := ih st1 hRec
                     have hEvalForTail :

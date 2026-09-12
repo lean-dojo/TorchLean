@@ -3,15 +3,15 @@
 This folder contains runnable sequence-model examples: recurrent networks, Transformer blocks,
 causal language models, a Mamba-style model, and a small arithmetic curriculum. These examples are
 where tokenization, sequence length, causal masking, recurrent state, cache-like behavior, and
-generation options enter the model zoo.
+generation options enter the model examples.
 
 ## Main Entry Points
 
 - `Rnn.lean` (`lake exe torchlean rnn ...`): a small recurrent text-window example.
 - `Lstm.lean` (`lake exe torchlean lstm ...`): LSTM text-window training with a time-distributed
   head.
-- `Transformer.lean` (`lake exe torchlean transformer ...`): a compact transformer encoder block
-  over a real text window.
+- `Transformer.lean` (`lake exe torchlean transformer ...`): a compact causal Transformer trained
+  on shifted, bucketed byte windows.
 - `CharGpt.lean` (`lake exe torchlean chargpt ...`): character-level GPT training with a two-update
   smoke preset and a full Tiny Shakespeare lecture preset.
 - `Gpt2.lean` (`lake exe torchlean gpt2 ...`): a compact byte-level GPT-2-style causal Transformer
@@ -49,18 +49,34 @@ make these objects visible:
 - generation settings such as temperature, top-k, repeat penalty, and seed;
 - saved parameter paths for reloadable runs.
 
-The byte-token examples keep the vocabulary fixed at 256 so the boundary is small. BPE examples use
-explicit `vocab.json` and `merges.txt` files under `data/real/gpt2/`. Saved-parameter examples
-reload a shape-indexed parameter pack and fail before sampling if the saved shapes no longer match
-the model architecture.
+The generating byte models (`gpt2`, `text_gpt2`, and `mamba`) retain all 256 UTF-8 byte ids.
+The BPE path reads explicit `vocab.json` and `merges.txt` files, then uses the shared
+`text.VocabularyProjection` to retain the first observed ids in its 512-entry output vocabulary.
+Local id zero is the unknown-token slot. Saved parameters are shape checked before sampling;
+checkpoints from the former smaller byte vocabulary require retraining.
 
-The causal-transformer training command uses `CausalTransformer.Indexed`. Its batches contain
+`chargpt` uses `CausalTransformer.Indexed`. Its batches contain
 bounded `Tensor (Fin vocab) [batch, seqLen]` token IDs. Tokenizers may first produce
 `Tensor Nat [batch, seqLen]`; `Tensor.checkIndices` validates that boundary before the model runs.
 The embedding layer gathers table rows directly, and
 repeated IDs scatter-add into the same weight-gradient row without allocating one-hot token
-vectors. The separate `oneHot` constructor remains available for proofs and small examples whose
-inputs are already one-hot tensors.
+vectors. The `transformer`, `gpt2`, `text_gpt2`, and `gpt_adder` commands use the separate `oneHot`
+constructor with floating-point one-hot inputs.
+
+The training-only bucketed demonstrations and generating models use these conventions:
+
+| Command | Context length | Byte-token convention |
+| --- | --- | --- |
+| `rnn`, `lstm` | 4 | byte modulo 8 |
+| `transformer` | 4 | byte modulo 4 |
+| `gpt2`, `text_gpt2` byte mode | 4 | all 256 byte ids |
+| `mamba` | 4 | all 256 byte ids |
+
+The RNN/LSTM/Transformer buckets demonstrate training on shifted windows. Character GPT derives
+its alphabet from the corpus. Generating examples use the same tensor sampling loop for context
+cropping, padding, repetition penalties, and token selection; tokenizer arrays occur only at the
+text serialization boundary. Corpus schedules are indexed streams, so training does not allocate
+one-hot tensors for every future update in advance.
 
 Useful commands:
 

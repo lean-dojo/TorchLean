@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Tape.Nodes.Context
+public import Mathlib.Analysis.Calculus.Deriv.Abs
+public import NN.Proofs.Autograd.FDeriv.Elementwise
 
 /-!
 # Elementwise tape nodes
@@ -20,8 +22,8 @@ common activations such as ReLU, sigmoid, tanh, SiLU, GELU, ELU, and safe differ
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -32,21 +34,22 @@ namespace TapeNodes
 
 /-- `CtxVec.get` specialized to vector shapes. -/
 def getVec {Γ : List Shape} {n : Nat} (idx : Idx Γ (.dim n .scalar)) (x : CtxVec Γ) : Vec n :=
-  castVec (by
-    simp [Spec.Shape.size] : Spec.Shape.size (.dim n .scalar) = n) (CtxVec.get (Γ := Γ) (s := .dim n .scalar)
-      idx x)
+  castVec (by simp [Spec.Shape.size] : Spec.Shape.size (.dim n .scalar) = n)
+    (CtxVec.get (Γ := Γ) (s := .dim n .scalar) idx x)
 
 /-- `CtxVec.getCLM` specialized to vector shapes `.dim n .scalar`. -/
 def getVecCLM {Γ : List Shape} {n : Nat} (idx : Idx Γ (.dim n .scalar)) : CtxVec Γ →L[ℝ] Vec n :=
   (Graph.castCLM (h := (by simp [Spec.Shape.size] : Spec.Shape.size (.dim n .scalar) = n))).comp
     (CtxVec.getCLM (Γ := Γ) (s := .dim n .scalar) idx)
 
-@[simp] lemma getVecCLM_apply {Γ : List Shape} {n : Nat} (idx : Idx Γ (.dim n .scalar)) (x : CtxVec
-  Γ) :
+/-- The vector-shaped context lookup agrees with `getVec`, size cast included. -/
+@[simp] theorem getVecCLM_apply {Γ : List Shape} {n : Nat} (idx : Idx Γ (.dim n .scalar))
+    (x : CtxVec Γ) :
     getVecCLM (Γ := Γ) (n := n) idx x = getVec (Γ := Γ) (n := n) idx x := by
   simp [getVecCLM, getVec, CtxVec.getCLM_apply, Graph.castCLM]
 
-@[simp] lemma getCLM_apply_ofLp {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (x : CtxVec Γ)
+/-- Coordinate form of the general context lookup. -/
+@[simp] theorem getCLM_apply_ofLp {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (x : CtxVec Γ)
     (i : Fin (Spec.Shape.size s)) :
     ((CtxVec.getCLM (Γ := Γ) (s := s) idx) x).ofLp i = (CtxVec.get (Γ := Γ) (s := s) idx x).ofLp i
       := by
@@ -57,7 +60,13 @@ def singleVec {Γ : List Shape} {n : Nat} (idx : Idx Γ (.dim n .scalar)) (v : V
   CtxVec.single (Γ := Γ) (s := .dim n .scalar) idx
     (castVec (by simp [Spec.Shape.size] : Spec.Shape.size (.dim n .scalar) = n).symm v)
 
-@[simp] lemma inner_getVec_singleVec {Γ : List Shape} {n : Nat} (idx : Idx Γ (.dim n .scalar))
+/-- Reading a context slot is adjoint to writing that slot: `⟪x, single idx v⟫ = ⟪get idx x, v⟫`.
+
+This is the adjointness fact behind every elementwise node's VJP. A node reads one slot and writes
+one
+slot, so its reverse pass is the transpose of its forward projection, and that is exactly what this
+equation says. -/
+@[simp] theorem inner_getVec_singleVec {Γ : List Shape} {n : Nat} (idx : Idx Γ (.dim n .scalar))
     (x : CtxVec Γ) (v : Vec n) :
     inner ℝ x (singleVec (Γ := Γ) (n := n) idx v) = inner ℝ (getVec (Γ := Γ) (n := n) idx x) v := by
   classical
@@ -144,7 +153,8 @@ by
     have hforward :
         (elemwiseVec (n := n) f ∘ fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) idx x)
           =
-        (fun xV : CtxVec Γ => vecOfFun fun i => f ((CtxVec.get (Γ := Γ) (s := s) idx xV).ofLp i)) := by
+        (fun xV : CtxVec Γ =>
+          vecOfFun fun i => f ((CtxVec.get (Γ := Γ) (s := s) idx xV).ofLp i)) := by
       funext x
       ext i
       simp [elemwiseVec, vecOfFun]
@@ -194,7 +204,8 @@ by
     have hforward :
         (elemwiseVec (n := n) f ∘ fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) idx x)
           =
-        (fun xV : CtxVec Γ => vecOfFun fun i => f ((CtxVec.get (Γ := Γ) (s := s) idx xV).ofLp i)) := by
+        (fun xV : CtxVec Γ =>
+          vecOfFun fun i => f ((CtxVec.get (Γ := Γ) (s := s) idx xV).ofLp i)) := by
       funext x
       ext i
       simp [elemwiseVec, vecOfFun]
@@ -253,7 +264,7 @@ def invFderivAt {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (xV : CtxVec Γ)
     (fun i => by simpa using (hasDerivAt_inv (hx i)))
 
 /-- Derivative of the scalar function `y ↦ sqrt (max y 0)` at positive points. -/
-lemma hasDerivAt_sqrt_clamp_of_pos {x : ℝ} (hx : 0 < x) :
+theorem hasDerivAt_sqrt_clamp_of_pos {x : ℝ} (hx : 0 < x) :
     HasDerivAt (fun y : ℝ => Real.sqrt (max y 0)) (1 / (2 * Real.sqrt x)) x := by
   have hpos : ∀ᶠ y in nhds x, 0 < y := by
     -- `Ioi 0` is an open neighborhood of any positive `x`.
@@ -273,7 +284,7 @@ lemma hasDerivAt_sqrt_clamp_of_pos {x : ℝ} (hx : 0 < x) :
 def sqrtClamp {Γ : List Shape} {s : Shape} (idx : Idx Γ s) : Node Γ s :=
   elemwise (Γ := Γ) (s := s) idx (fun x => Real.sqrt (max x 0)) (fun x => 1 / (2 * Real.sqrt x))
 
-/-- Pointwise `NodeFDerivCorrectAt` for `sqrt_clamp` under the assumption that inputs are strictly
+/-- Pointwise `NodeFDerivCorrectAt` for `sqrtClamp` under the assumption that inputs are strictly
   positive. -/
 def sqrtClampFderivAt {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (xV : CtxVec Γ)
     (hx : ∀ i : Fin (Spec.Shape.size s), 0 < CtxVec.get (Γ := Γ) (s := s) idx xV i) :
@@ -362,13 +373,13 @@ def geluFderiv {Γ : List Shape} {s : Shape} (idx : Idx Γ s) :
     Activation.Math.geluSpec Activation.Math.geluDerivSpec
     (fun z => Proofs.gelu_deriv_correct (x := z))
 
-/-- Runtime `safe_log` node (elementwise, always-defined log surrogate). -/
+/-- Runtime `safeLog` node (elementwise, always-defined log surrogate). -/
 def safeLog {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (ε : ℝ) : Node Γ s :=
   elemwise (Γ := Γ) (s := s) idx
     (fun x => Activation.Math.safeLogSpec (α := ℝ) x ε)
     (fun x => Activation.Math.safeLogDerivSpec (α := ℝ) x ε)
 
-/-- Global `NodeFDerivCorrect` for `safe_log` (requires `0 < ε`). -/
+/-- Global `NodeFDerivCorrect` for `safeLog` (requires `0 < ε`). -/
 def safeLogFderiv {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (ε : ℝ) (hε : 0 < ε) :
     NodeFDerivCorrect (safeLog (Γ := Γ) (s := s) idx ε) :=
   elemwiseFderiv (Γ := Γ) (s := s) idx
@@ -376,13 +387,13 @@ def safeLogFderiv {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (ε : ℝ) (hε
     (fun x => Activation.Math.safeLogDerivSpec (α := ℝ) x ε)
     (fun z => Proofs.safe_log_deriv_correct (x := z) (ε := ε) hε)
 
-/-- Runtime `smooth_abs` node (elementwise, smooth abs surrogate). -/
+/-- Runtime `smoothAbs` node (elementwise, smooth abs surrogate). -/
 def smoothAbs {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (ε : ℝ) : Node Γ s :=
   elemwise (Γ := Γ) (s := s) idx
     (fun x => Activation.Math.smoothAbsSpec (α := ℝ) x ε)
     (fun x => Activation.Math.smoothAbsDerivSpec (α := ℝ) x ε)
 
-/-- Global `NodeFDerivCorrect` for `smooth_abs` (requires `0 < ε`). -/
+/-- Global `NodeFDerivCorrect` for `smoothAbs` (requires `0 < ε`). -/
 def smoothAbsFderiv {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (ε : ℝ) (hε : 0 < ε) :
     NodeFDerivCorrect (smoothAbs (Γ := Γ) (s := s) idx ε) :=
   elemwiseFderiv (Γ := Γ) (s := s) idx
@@ -458,8 +469,8 @@ def unaryOp {Γ : List Shape} {inDim outDim : Nat}
     (vjp := fun ctxV δV =>
       let δV' : Vec outDim := castVec hOut δV
       singleVec (Γ := Γ) (n := inDim) idx
-        (getScalarE (C.correct.op.backward (ofFnE ((getVecCLM (Γ := Γ) (n := inDim) idx) ctxV)) (ofFnE
-          δV'))))
+        (getScalarE (C.correct.op.backward (ofFnE ((getVecCLM (Γ := Γ) (n := inDim) idx) ctxV))
+          (ofFnE δV'))))
     (correct_inner := by
       intro ctxV dctxV δV
       let δV' : Vec outDim := castVec hOut δV

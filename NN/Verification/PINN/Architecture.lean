@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph
+public import NN.MLTheory.CROWN.Graph.Core
 
 /-!
 # Sequential PINN Architecture
@@ -81,8 +81,7 @@ def activationOpKind : HiddenActivation → OpKind
 /--
 Internal: worker for `buildGraph`.
 
-Implementation note: TorchLean enables the `backward.privateInPublic` check, so exported
-definitions should not depend on `private` helpers.
+Implementation note: exported definitions must not depend on private helpers.
 -/
 def buildNodes
     (activation : HiddenActivation)
@@ -117,8 +116,8 @@ end Internal
 def buildGraph (arch : SequentialPINNArch) : Graph :=
   let nodes : Array Node :=
     Internal.buildNodes arch.activation arch.linearDims 0 1
-      #[{ id := 0, parents := #[], kind := NN.IR.OpKind.input, outShape := .dim arch.inputDim .scalar
-        }]
+      #[{ id := 0, parents := #[], kind := NN.IR.OpKind.input,
+          outShape := .dim arch.inputDim .scalar }]
   { nodes := nodes }
 
 /-- Output node id for an arbitrary graph, assuming the last node is the network output. -/

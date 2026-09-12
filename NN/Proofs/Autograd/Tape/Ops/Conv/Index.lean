@@ -6,10 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import Lean.Elab.Tactic.Omega
 public import NN.Proofs.Tensor.Algebra
-public import NN.Proofs.Utils.List
 public import NN.Spec.Layers.Conv
+public import Mathlib.Data.Fintype.BigOperators
 
 /-!
 # Convolution Index Arithmetic
@@ -23,6 +22,7 @@ geometric hypothesis is the standard one that every stride is positive.
 
 namespace Spec.Conv.Internal
 
+open TorchLean TorchLean.Tensor
 open scoped BigOperators
 
 /-! ## Finite spatial indices -/
@@ -45,41 +45,43 @@ instance (dims : List Nat) : DecidableEq (MultiIndex dims) := by
 /-- Convert a bounded spatial coordinate to the runtime list representation. -/
 def MultiIndex.toList : {dims : List Nat} → MultiIndex dims → List Nat
   | [], _ => []
-  | _ :: _, i => i.1.val :: i.2.toList
+  | _ :: _, index => index.1.val :: index.2.toList
 
 /-- Read a tensor at a bounded spatial coordinate. -/
-def MultiIndex.get {α : Type} : {dims : List Nat} →
+def MultiIndex.get {α : Type} [TorchLean.Storage α] : {dims : List Nat} →
     Tensor α (Shape.ofList dims) → MultiIndex dims → α
-  | [], .scalar value, _ => value
-  | _ :: _, .dim values, i => i.2.get (values i.1)
+  | [], tensor, _ => tensor.item
+  | _ :: _, tensor, index => index.2.get (tensor.unstack index.1)
 
+/-- Reading a `dim` tensor peels the leading coordinate and recurses into that slice. -/
 @[simp]
-theorem MultiIndex.get_dim {α : Type} (n : Nat) (dims : List Nat)
+theorem MultiIndex.get_dim {α : Type} [TorchLean.Storage α] (n : Nat) (dims : List Nat)
     (values : Fin n → Tensor α (Shape.ofList dims))
     (head : Fin n) (tail : MultiIndex dims) :
     MultiIndex.get (dims := n :: dims) (Tensor.dim values) (head, tail) =
       MultiIndex.get (values head) tail := by
-  rfl
+  simp [MultiIndex.get]
 
 /-- Reading the sole scalar coordinate below a vector index agrees with the vector view. -/
 @[simp]
-theorem MultiIndex.get_vector_eq_getScalar {α : Type} {n : Nat}
+theorem MultiIndex.get_vector_eq_getScalar {α : Type} [TorchLean.Storage α] {n : Nat}
     (values : Tensor α [n]) (i : Fin n) :
-    MultiIndex.get (dims := [n]) values (i, PUnit.unit) = Spec.Tensor.getScalar values i := by
-  cases values with
-  | dim entries =>
-      change MultiIndex.get (dims := []) (entries i) PUnit.unit =
-        (match entries i with | .scalar value => value)
-      cases h : entries i with
-      | scalar value => simp [MultiIndex.get]
+    MultiIndex.get (dims := [n]) values (i, PUnit.unit) = TorchLean.Tensor.getScalar values i := by
+  rfl
 
+/-- An index that runs out too early reads zero. -/
 @[simp]
-theorem getAtOrZero_dim_nil {α : Type} [Zero α] (n : Nat) (dims : List Nat)
+theorem getAtOrZero_dim_nil {α : Type} [TorchLean.Storage α] [Zero α]
+    (n : Nat) (dims : List Nat)
     (values : Fin n → Tensor α (Shape.ofList dims)) :
     getAtOrZero (Tensor.dim values) [] = 0 := by
   simp
 
-theorem getAtOrZero_dim_cons {α : Type} [Zero α] (n : Nat) (dims : List Nat)
+/-- Otherwise the leading coordinate is bounds-checked and the lookup recurses, reading zero when it
+falls outside. This total lookup is what lets padding be expressed without a separate case split at
+every use site: an out-of-range index simply contributes nothing. -/
+theorem getAtOrZero_dim_cons {α : Type} [TorchLean.Storage α] [Zero α]
+    (n : Nat) (dims : List Nat)
     (values : Fin n → Tensor α (Shape.ofList dims)) (j : Nat) (js : List Nat) :
     getAtOrZero (Tensor.dim values) (j :: js) =
       if h : j < n then getAtOrZero (values ⟨j, h⟩) js else 0 := by
@@ -93,93 +95,106 @@ theorem MultiIndex.sum_cons {α : Type} [AddCommMonoid α] (n : Nat) (dims : Lis
   simpa only [MultiIndex] using
     (Fintype.sum_prod_type (f := f))
 
+/-- Reading a generated tensor applies the generating function to the index's coordinate list. -/
 @[simp]
-theorem MultiIndex.get_generate {α : Type} (dims : List Nat)
+theorem MultiIndex.get_generate {α : Type} [TorchLean.Storage α] (dims : List Nat)
     (f : List Nat → α) (i : MultiIndex dims) :
-    i.get (Spec.Tensor.generate dims f) = f i.toList := by
+    i.get (TorchLean.Tensor.generate dims f) = f i.toList := by
   induction dims generalizing f with
-  | nil => rfl
-  | cons n ns ih =>
-      exact ih (fun is => f (i.1.val :: is)) i.2
+  | nil =>
+      cases i
+      simp [MultiIndex.get, MultiIndex.toList, TorchLean.Tensor.generate, Tensor.item]
+      change f [] = f []
+      rfl
+  | cons n ns inductionHypothesis =>
+      rcases i with ⟨head, tail⟩
+      have hSlice :
+          (TorchLean.Tensor.generate (n :: ns) f).unstack head =
+            TorchLean.Tensor.generate ns (fun indices => f (head.val :: indices)) := by
+        apply TorchLean.Tensor.Internal.Rep.ext
+        intro coordinate
+        simp [TorchLean.Tensor.generate, Tensor.unstack, Shape.Coord.toList]
+      simp only [MultiIndex.get, MultiIndex.toList, hSlice]
+      exact inductionHypothesis (fun indices => f (head.val :: indices)) tail
 
 /-- Bounded-coordinate lookup commutes with pointwise tensor addition. -/
-theorem MultiIndex.get_addSpec {α : Type} [Context α] {dims : List Nat}
+theorem MultiIndex.get_addSpec {α : Type} [TorchLean.Storage α] [Context α] {dims : List Nat}
     (x y : Tensor α (Shape.ofList dims)) (i : MultiIndex dims) :
-    i.get (Spec.Tensor.addSpec x y) = i.get x + i.get y := by
+    i.get (TorchLean.Tensor.addSpec x y) = i.get x + i.get y := by
   induction dims with
-  | nil => cases x; cases y; rfl
+  | nil =>
+      simp [MultiIndex.get, TorchLean.Tensor.addSpec, TorchLean.Tensor.map2Spec, Tensor.item]
   | cons n dims ih =>
-      cases x with
-      | dim xv =>
-          cases y with
-          | dim yv =>
-              rcases i with ⟨head, tail⟩
-              exact ih (xv head) (yv head) tail
+      rcases i with ⟨head, tail⟩
+      change tail.get ((TorchLean.Tensor.addSpec x y).unstack head) =
+        tail.get (x.unstack head) + tail.get (y.unstack head)
+      rw [show (TorchLean.Tensor.addSpec x y).unstack head =
+          TorchLean.Tensor.addSpec (x.unstack head) (y.unstack head) by
+        exact
+          (TorchLean.Tensor.Internal.Rep.zipWith_unstack (· + ·) x y head).symm]
+      exact ih (x.unstack head) (y.unstack head) tail
 
+/-- On an in-range index the total lookup agrees with the bounded one.
+
+This is the lemma that connects the two indexing styles in the file: implementations use unbounded
+`List Nat` coordinates, specifications use `MultiIndex`, and inside the bounds they coincide. -/
 @[simp]
-theorem getAtOrZero_toList {α : Type} [Zero α] (dims : List Nat)
+theorem getAtOrZero_toList {α : Type} [TorchLean.Storage α] [Zero α] (dims : List Nat)
     (x : Tensor α (Shape.ofList dims)) (i : MultiIndex dims) :
     getAtOrZero x i.toList = i.get x := by
   induction dims with
   | nil =>
-      cases x
-      rfl
+      cases i
+      rw [← Tensor.scalar_item x]
+      simp [MultiIndex.toList, MultiIndex.get]
   | cons n ns ih =>
-      cases x with
-      | dim values =>
-          rcases i with ⟨head, tail⟩
-          change getAtOrZero (Tensor.dim values) (head.val :: tail.toList) =
-            tail.get (values head)
-          simp [ih]
+      rcases i with ⟨head, tail⟩
+      rw [← Tensor.dim_unstack x]
+      simp [MultiIndex.toList, MultiIndex.get, head.isLt, ih]
 
 /--
 A total lookup is the finite coordinate sum selected by equality of index lists.
 
 This formulation handles valid indices, padding, and malformed or out-of-range lists uniformly.
 -/
-theorem getAtOrZero_eq_sum_indicator {α : Type} [AddCommMonoid α]
+theorem getAtOrZero_eq_sum_indicator {α : Type} [TorchLean.Storage α] [AddCommMonoid α]
     (dims : List Nat) (x : Tensor α (Shape.ofList dims)) (indices : List Nat) :
     getAtOrZero x indices =
       ∑ i : MultiIndex dims, if indices = i.toList then i.get x else 0 := by
   induction dims generalizing indices with
   | nil =>
-      cases x with
-      | scalar value =>
-          cases indices <;> simp [getAtOrZero, MultiIndex.toList, MultiIndex.get]
+      rw [← Tensor.scalar_item x]
+      cases indices <;> simp [MultiIndex.toList, MultiIndex.get, one_nsmul]
   | cons n ns ih =>
-      cases x with
-      | dim values =>
-          rw [Fintype.sum_prod_type]
-          cases indices with
-          | nil =>
-              rw [getAtOrZero_dim_nil]
-              simp [MultiIndex.toList]
-          | cons j js =>
-              by_cases hj : j < n
-              · rw [getAtOrZero_dim_cons]
-                simp only [hj, ↓reduceDIte]
-                rw [ih (values ⟨j, hj⟩) js]
-                symm
-                rw [Finset.sum_eq_single ⟨j, hj⟩]
-                · simp [MultiIndex.toList]
-                · intro head _ hne
-                  have hjne : j ≠ head.val := by
-                    intro hval
-                    apply hne
-                    apply Fin.ext
-                    simpa using hval.symm
-                  simp [MultiIndex.toList, hjne]
-                · simp
-              · rw [getAtOrZero_dim_cons]
-                simp only [hj, ↓reduceDIte]
-                symm
-                apply Finset.sum_eq_zero
-                intro head _
-                have hjne : j ≠ head.val := by
-                  intro hval
-                  apply hj
-                  simp [hval, head.isLt]
-                simp [MultiIndex.toList, hjne]
+      rw [← Tensor.dim_unstack x]
+      rw [Fintype.sum_prod_type]
+      cases indices with
+      | nil =>
+          simp [MultiIndex.toList]
+      | cons j js =>
+          by_cases hj : j < n
+          · simp only [get_at_or_zero_dim_cons, hj, ↓reduceDIte, Tensor.unstack_dim]
+            rw [ih (x.unstack ⟨j, hj⟩) js]
+            symm
+            rw [Finset.sum_eq_single ⟨j, hj⟩]
+            · simp [MultiIndex.toList, MultiIndex.get]
+            · intro head _ hne
+              have hjne : j ≠ head.val := by
+                intro hval
+                apply hne
+                apply Fin.ext
+                simpa using hval.symm
+              simp [MultiIndex.toList, hjne]
+            · simp
+          · simp only [get_at_or_zero_dim_cons, hj, ↓reduceDIte]
+            symm
+            apply Finset.sum_eq_zero
+            intro head _
+            have hjne : j ≠ head.val := by
+              intro hval
+              apply hj
+              simp [hval, head.isLt]
+            simp [MultiIndex.toList, hjne]
 
 /-- The executable nested index fold is the finite sum over bounded coordinates. -/
 theorem foldlIndices_add {α : Type} [AddCommMonoid α] (dims : List Nat)
@@ -197,31 +212,24 @@ theorem foldlIndices_add {α : Type} [AddCommMonoid α] (dims : List Nat)
       simp [MultiIndex, MultiIndex.toList, Fintype.sum_prod_type]
 
 /-- Recursive tensor dot product as a finite sum over bounded multi-indices. -/
-theorem dot_eq_sum_get {α : Type} [CommSemiring α] (dims : List Nat)
+theorem dot_eq_sum_get {α : Type} [TorchLean.Storage α] [CommSemiring α] (dims : List Nat)
     (x y : Tensor α (Shape.ofList dims)) :
     Proofs.TensorAlgebra.dot x y = ∑ i : MultiIndex dims, i.get x * i.get y := by
   induction dims with
   | nil =>
-      cases x with
-      | scalar xv =>
-          cases y with
-          | scalar yv =>
-              change xv * yv = ∑ _i : PUnit, xv * yv
-              rw [Fintype.sum_unique]
+      change x.item * y.item = ∑ _i : PUnit, x.item * y.item
+      rw [Fintype.sum_unique]
   | cons n ns ih =>
-      cases x with
-      | dim xv =>
-          cases y with
-          | dim yv =>
-              change
-                (List.finRange n).foldl
-                    (fun acc i => acc + Proofs.TensorAlgebra.dot (xv i) (yv i)) 0 =
-                  ∑ p : Fin n × MultiIndex ns, p.2.get (xv p.1) * p.2.get (yv p.1)
-              rw [List.finRange_foldl_add_eq_finset_sum]
-              rw [Fintype.sum_prod_type]
-              apply Finset.sum_congr rfl
-              intro i _
-              exact ih (xv i) (yv i)
+      change
+        (List.finRange n).foldl
+            (fun acc i => acc + Proofs.TensorAlgebra.dot (x.unstack i) (y.unstack i)) 0 =
+          ∑ p : Fin n × MultiIndex ns,
+            p.2.get (x.unstack p.1) * p.2.get (y.unstack p.1)
+      rw [List.finRange_foldl_add_eq_finset_sum]
+      rw [Fintype.sum_prod_type]
+      apply Finset.sum_congr rfl
+      intro i _
+      exact ih (x.unstack i) (y.unstack i)
 
 /-- Every stride in a runtime list is positive. -/
 def PositiveStrides (stride : List Nat) : Prop :=

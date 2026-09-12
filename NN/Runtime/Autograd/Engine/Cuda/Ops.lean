@@ -7,6 +7,13 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Engine.Cuda.Ops.Attention
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.ConvPool
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Core
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Elementwise
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Indexing
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Linear
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.NormSoftmax
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Shape
 
 /-!
 CUDA operation dispatch surface.

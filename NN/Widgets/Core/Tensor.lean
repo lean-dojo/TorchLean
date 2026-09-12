@@ -7,10 +7,13 @@ Authors: TorchLean Team
 module
 
 public meta import NN.Spec.Core.Tensor.SomeTensor
-public meta import NN.Spec.Core.Tensor
+public meta import NN.Tensor.Conversion
+import Mathlib.Tactic.Bound.Init
+public import NN.Spec.Core.Tensor.Core
 public meta import NN.Widgets.Core.UI
 public meta import ProofWidgets.Component.HtmlDisplay
 public meta import ProofWidgets.Demos.Macro
+public meta import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Tensor
@@ -37,23 +40,6 @@ introducing any custom JavaScript or external build step.
 - `packedTensorHtml`: the same renderer for shape-erased tensors.
 - `tensorStatsHtml`: compact scalar summary (min/max/mean/norms).
 - `#tensor_view`, `#anytensor_view`, `#tensor_stats_view`: command entry points.
-
-## Implementation notes
-
-- Table rendering for small tensors plus clipped previews for large ones balances
-  readability/performance tradeoff in infoview.
-- Element rendering is class-based (`TensorElemView`) so backends can customize display without
-  forking widget logic.
-- We cap recursion depth for higher-rank tensors to avoid overwhelming nested expansions.
-
-## References
-
-- [ProofWidgets](https://github.com/leanprover-community/ProofWidgets4)
-- [Lean community documentation style](https://leanprover-community.github.io/contribute/doc.html)
-
-## Tags
-
-tensor, visualization, stats, proofwidgets, inspection
 -/
 
 public meta section
@@ -62,8 +48,8 @@ open scoped ProofWidgets.Jsx
 
 namespace NN.Widgets
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 open UI
 
 /--
@@ -82,29 +68,18 @@ instance {α : Type} [ToString α] : TensorElemView α :=
 
 namespace TensorInternal
 
-/-- Join strings with a separator. -/
-def join (sep : String) (xs : List String) : String :=
-  String.intercalate sep xs
-
-/-- Join an array of strings without introducing a list-backed numerical intermediate. -/
-def joinArray (sep : String) (xs : Array String) : String :=
-  xs.foldl (fun acc x => if acc.isEmpty then x else acc ++ sep ++ x) ""
-
-/-- Render shape dimensions as a bracketed list string. -/
-def dimsString (s : Shape) : String :=
-  match Shape.toList s with
-  | [] => "[]"
-  | ds => "[" ++ join ", " (ds.map toString) ++ "]"
-
-def fmtMaybe (x : Option String) : ProofWidgets.Html :=
-  match x with
-  | none => <span style={json% {"opacity": 0.7}}>(none)</span>
-  | some s => monospace s
+/-- Read only the requested prefix, without converting the full backing buffer. -/
+def prefixEntries {α : Type} [Storage α] {s : Shape}
+    (tensor : Tensor α s) (limit : Nat) : Array α :=
+  Array.ofFn (fun i : Fin (min (Spec.Shape.size s) limit) =>
+    tensor.getFlat ⟨i.val, by
+      simpa only [Spec.Shape.size_eq_prod, TorchLean.Tensor.Internal.Shape.size_eq_prod] using
+        Nat.lt_of_lt_of_le i.isLt (Nat.min_le_left (Spec.Shape.size s) limit)⟩)
 
 /-- Render a 1D tensor as a clipped single-row table. -/
-def renderVector {α : Type} [TensorElemView α] (maxCols : Nat) {n : Nat}
+def renderVector {α : Type} [TorchLean.Storage α] [TensorElemView α] (maxCols : Nat) {n : Nat}
     (t : Tensor α [n]) : ProofWidgets.Html :=
-  let xs := (toArray (s := .dim n .scalar) t).extract 0 maxCols;
+  let xs := prefixEntries t maxCols;
   let clipped : Bool := decide (n > maxCols);
   <div>
     <div style={json% {"margin-bottom": "6px"}}>
@@ -132,12 +107,14 @@ def renderVector {α : Type} [TensorElemView α] (maxCols : Nat) {n : Nat}
   </div>
 
 /-- Render a 2D tensor as a clipped grid table. -/
-def renderMatrix {α : Type} [TensorElemView α] (maxRows maxCols : Nat) {n m : Nat}
+def renderMatrix {α : Type} [TorchLean.Storage α] [TensorElemView α]
+    (maxRows maxCols : Nat) {n m : Nat}
     (t : Tensor α [n, m]) : ProofWidgets.Html :=
   let rows :=
-    (Array.finRange n).extract 0 maxRows |>.map (fun i =>
+    (Array.finRange (min n maxRows)).map (fun i =>
+      (⟨i.val, Nat.lt_of_lt_of_le i.isLt (Nat.min_le_left _ _)⟩ : Fin n)) |>.map (fun i =>
       let row : Tensor α [m] := get t i
-      (toArray (s := .dim m .scalar) row).extract 0 maxCols);
+      prefixEntries row maxCols);
   let clippedRows : Bool := decide (n > maxRows);
   let clippedCols : Bool := decide (m > maxCols);
   <div>
@@ -174,16 +151,20 @@ def renderMatrix {α : Type} [TensorElemView α] (maxRows maxCols : Nat) {n m : 
     </div>
   </div>
 
-def renderFlatPreview {α : Type} [ToString α] (maxElems : Nat) {s : Shape}
+/-- First `maxElems` entries of a tensor in row-major order, with a marker when there are more.
+
+Truncating matters here: a widget that tried to print a full tensor would hang the editor on
+anything of realistic size. -/
+def renderFlatPreview {α : Type} [TorchLean.Storage α] [ToString α] (maxElems : Nat) {s : Shape}
     (t : Tensor α s) : ProofWidgets.Html :=
-  let xs := toArray (s := s) t;
-  let head := xs.extract 0 maxElems;
-  let clipped : Bool := decide (xs.size > maxElems);
+  let head := prefixEntries t maxElems;
+  let clipped : Bool := decide (Spec.Shape.size s > maxElems);
   let preview :=
     if head.isEmpty then
-      "(empty?)"
+      "[]"
     else
-      "[" ++ joinArray ", " (head.map toString) ++ (if clipped then ", ..." else "") ++ "]";
+      "[" ++ String.intercalate ", " (head.toList.map toString) ++
+        (if clipped then ", ..." else "") ++ "]";
   <details style={json% {"margin-top": "10px"}}>
     <summary>{.text s!"Flat preview (first {maxElems})"}</summary>
     <div style={json% {"margin-top": "6px"}}>
@@ -199,48 +180,40 @@ Render a tensor as HTML.
 For small vectors/matrices, we render an actual table; otherwise we show a compact pretty string
 plus a flat preview.
 -/
-def tensorHtml {α : Type} [ToString α] {s : Shape} (t : Tensor α s)
+def tensorHtml {α : Type} [TorchLean.Storage α] [ToString α] [TensorElemView α]
+    {s : Shape} (t : Tensor α s)
     (maxRows : Nat := 16) (maxCols : Nat := 16) (maxElems : Nat := 64) : ProofWidgets.Html :=
   -- Core renderer: only depends on a depth budget, so it can recurse on higher-rank tensors without
   -- dumping an enormous nested pretty-printer view by default.
   let rec tensorHtmlRec {s : Shape} (t : Tensor α s)
       (depth : Nat) : ProofWidgets.Html :=
     match depth with
-    | 0 =>
-        <div>
-          <details «open»={false}>
-            <summary>{.text "Pretty (nested)"}</summary>
-            <pre style={json% {"white-space": "pre-wrap", "margin-top": "6px"}}>
-              {.text (Spec.pretty (α := α) (s := s) t)}
-            </pre>
-          </details>
-          {TensorInternal.renderFlatPreview (α := α) (s := s) maxElems t}
-        </div>
+    | 0 => TensorInternal.renderFlatPreview (α := α) (s := s) maxElems t
     | depth + 1 =>
-        match s, t with
-        | .scalar, Tensor.scalar x =>
+        match s with
+        | .scalar =>
             <div>
-              {pill "scalar"} {TensorElemView.render x}
+              {pill "scalar"} {TensorElemView.render (Tensor.item t)}
             </div>
-        | .dim n .scalar, Tensor.dim f =>
-            TensorInternal.renderVector (α := α) (n := n) maxCols (t := Tensor.dim f)
-        | .dim n (.dim m .scalar), Tensor.dim f =>
-            TensorInternal.renderMatrix (α := α) (n := n) (m := m) maxRows maxCols (t := Tensor.dim
-              f)
-        | .dim n s', Tensor.dim f =>
+        | .dim n .scalar =>
+            TensorInternal.renderVector (α := α) (n := n) maxCols t
+        | .dim n (.dim m .scalar) =>
+            TensorInternal.renderMatrix (α := α) (n := n) (m := m) maxRows maxCols t
+        | .dim n s' =>
             -- Higher rank: show a few slices along the outer dimension, recursively.
             let maxSlices : Nat := 6;
-            let idxs := (List.finRange n).take maxSlices;
+            let idxs := (Array.finRange (min n maxSlices)).map (fun i =>
+              (⟨i.val, Nat.lt_of_lt_of_le i.isLt (Nat.min_le_left _ _)⟩ : Fin n));
             let clipped : Bool := decide (n > maxSlices);
             <div>
               <details «open»={true}>
                 <summary>
-                      {pill s!"leading slices={idxs.length}"} {pill s!"clipped={clipped}"} {pill
-                        s!"sliceShape={TensorInternal.dimsString s'}"}
+                      {pill s!"leading slices={idxs.size}"} {pill s!"clipped={clipped}"} {pill
+                        s!"sliceShape={Shape.pretty s'}"}
                     </summary>
                 <div style={json% {"margin-top": "8px"}}>
-                  {... idxs.toArray.map (fun i =>
-                    let slice : Tensor α s' := get (Tensor.dim f) i;
+                  {... idxs.map (fun i =>
+                    let slice : Tensor α s' := Tensor.unstack t i;
                     <details style={json% {"margin": "8px 0"}}>
                       <summary>{.text s!"[{i.1}]"}</summary>
                       <div style={json% {"margin-top": "6px", "padding-left": "8px"}}>
@@ -253,24 +226,13 @@ def tensorHtml {α : Type} [ToString α] {s : Shape} (t : Tensor α s)
                     ProofWidgets.Html.text ""}
                 </div>
               </details>
-              {TensorInternal.renderFlatPreview (α := α) (s := .dim n s') maxElems (Tensor.dim f)}
-            </div>
-        | _, _ =>
-            -- Should be unreachable (shape index mismatch), but keep a robust fallback.
-            <div>
-              <details «open»={false}>
-                <summary>{.text "Pretty (nested)"}</summary>
-                <pre style={json% {"white-space": "pre-wrap", "margin-top": "6px"}}>
-                  {.text (Spec.pretty (α := α) (s := s) t)}
-                </pre>
-              </details>
-              {TensorInternal.renderFlatPreview (α := α) (s := s) maxElems t}
+              {TensorInternal.renderFlatPreview (α := α) (s := .dim n s') maxElems t}
             </div>
 
   let header :=
     <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom":
       "8px"}}>
-      {pill s!"shape={TensorInternal.dimsString s}"} {pill s!"rank={Spec.Shape.rank s}"} {pill
+      {pill s!"shape={Shape.pretty s}"} {pill s!"rank={Spec.Shape.rank s}"} {pill
         s!"size={Spec.Shape.size s}"}
     </div>;
   -- Default to `ToString` element rendering, but allow specialized renderers via
@@ -292,7 +254,8 @@ def tensorHtml {α : Type} [ToString α] {s : Shape} (t : Tensor α s)
 -/
 
 /-- Render a `Spec.SomeTensor` with the same UI as `tensorHtml`. -/
-def packedTensorHtml {α : Type} [ToString α] (v : Spec.SomeTensor α)
+def packedTensorHtml {α : Type} [TorchLean.Storage α] [ToString α] [TensorElemView α]
+    (v : Spec.SomeTensor α)
     (maxRows : Nat := 16) (maxCols : Nat := 16) (maxElems : Nat := 64) : ProofWidgets.Html :=
   tensorHtml (α := α) (s := v.shape) v.tensor (maxRows := maxRows) (maxCols := maxCols) (maxElems :=
     maxElems)
@@ -309,19 +272,14 @@ Main command:
 
 namespace TensorInternal
 
-def abs' {α : Type} [Context α] (x : α) : α :=
-  MathFunctions.abs (α := α) x
-
-def sqrt' {α : Type} [Context α] (x : α) : α :=
-  MathFunctions.sqrt (α := α) x
-
-def tensorStatsHtml {α : Type} [Context α] [ToString α] {s : Shape} (t : Tensor α s) :
-  ProofWidgets.Html :=
-  let xs : Array α := Spec.Tensor.toArray (α := α) (s := s) t
+/-- Numeric summary panel: shape, size, extrema, mean, and the three usual norms. -/
+def tensorStatsHtml {α : Type} [TorchLean.Storage α] [Context α] [ToString α] {s : Shape}
+    (t : Tensor α s) : ProofWidgets.Html :=
+  let xs : Array α := Tensor.to t (Array α)
   match xs[0]? with
   | none =>
       <div style={json% {"padding": "10px"}}>
-        {pill "Tensor stats"} {pill "empty tensor"} {pill s!"shape={dimsString s}"}
+        {pill "Tensor stats"} {pill "empty tensor"} {pill s!"shape={Shape.pretty s}"}
       </div>
   | some x =>
       let rest := xs.extract 1 xs.size
@@ -330,10 +288,11 @@ def tensorStatsHtml {α : Type} [Context α] [ToString α] {s : Shape} (t : Tens
       let mx := rest.foldl (fun acc y => max acc y) x
       let sum := rest.foldl (fun acc y => acc + y) x
       let mean := sum / (↑n : α)
-      let absmax := rest.foldl (fun acc y => max acc (abs' (α := α) y)) (abs' (α := α) x)
-      let l1 := rest.foldl (fun acc y => acc + abs' (α := α) y) (abs' (α := α) x)
+      let magnitude : α → α := MathFunctions.abs (α := α)
+      let absmax := rest.foldl (fun acc y => max acc (magnitude y)) (magnitude x)
+      let l1 := rest.foldl (fun acc y => acc + magnitude y) (magnitude x)
       let sqsum := rest.foldl (fun acc y => acc + (y * y)) (x * x)
-      let l2 := sqrt' (α := α) sqsum
+      let l2 := MathFunctions.sqrt (α := α) sqsum
       ;
       <div style={json% {
         "padding": "10px",
@@ -344,7 +303,8 @@ def tensorStatsHtml {α : Type} [Context α] [ToString α] {s : Shape} (t : Tens
       }}>
         <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom":
           "10px"}}>
-          {pill "Tensor stats"} {pill s!"shape={dimsString s}"} {pill s!"size={Spec.Shape.size s}"}
+          {pill "Tensor stats"} {pill s!"shape={Shape.pretty s}"}
+          {pill s!"size={Spec.Shape.size s}"}
         </div>
         <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap"}}>
           {pill s!"min={toString mn}"}
@@ -359,8 +319,8 @@ def tensorStatsHtml {α : Type} [Context α] [ToString α] {s : Shape} (t : Tens
 end TensorInternal
 
 /-- Render simple scalar summary statistics (min/max/mean/norms) for a tensor as HTML. -/
-def tensorStatsHtml {α : Type} [Context α] [ToString α] {s : Shape} (t : Tensor α s) :
-  ProofWidgets.Html :=
+def tensorStatsHtml {α : Type} [TorchLean.Storage α] [Context α] [ToString α] {s : Shape}
+    (t : Tensor α s) : ProofWidgets.Html :=
   TensorInternal.tensorStatsHtml (α := α) (s := s) t
 
 /-!

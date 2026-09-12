@@ -84,17 +84,17 @@ require a real CUDA installation.
 
 For performance work, pair the correctness suite with NVIDIA Nsight Systems for end-to-end runtime
 traces and Nsight Compute for individual kernel profiles. Those tools are not pass/fail tests, so
-they stay outside the default CI gate. The helper below writes reports under `data/profiles/cuda/`,
-which is treated as local output:
+they stay outside the default CI gate. Invoke them directly on the executable being investigated:
 
 ```bash
-scripts/checks/cuda_profile_tests.sh
-scripts/checks/cuda_profile_tests.sh --both
-scripts/checks/cuda_profile_tests.sh --compute
+scripts/lake.sh -R -K cuda=true build nn_tests_suite
+scripts/lake.sh -R -K cuda=true env nsys profile -t cuda,nvtx,osrt \
+  -o /tmp/torchlean-cuda .lake/build/bin/nn_tests_suite
+scripts/lake.sh -R -K cuda=true env ncu --section SpeedOfLight \
+  --section LaunchStats .lake/build/bin/nn_tests_suite
 ```
 
-Nsight Compute can be slow on the full suite because it profiles kernels in detail. For focused
-kernel work, pass a smaller executable with `--target` or forward test arguments after `--`.
+Nsight Compute can be slow on the full suite; use a focused executable for kernel-level work.
 
 ## CUDA Test Matrix
 

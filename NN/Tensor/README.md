@@ -1,96 +1,243 @@
 # `NN.Tensor`
 
-This folder is the small, user-facing tensor API for TorchLean. It is the layer you reach for when
-you want to write a tensor literal, build a compact example, or pass shaped data into a model without
-opening the lower-level spec and runtime internals.
-
-The design is intentionally modest. TorchLean tensors should feel close enough to ordinary ML code
-that examples are readable, but they should still carry the information Lean needs: the scalar type,
-the shape, and enough construction evidence to avoid silent shape mistakes.
-
-For public use, prefer the curated library import or the tensor entrypoint:
+This folder is TorchLean's user-facing tensor API. Import it directly for tensor-only code:
 
 ```lean
-import NN
--- or, if you only want this subsystem:
 import NN.Tensor
 ```
 
-`NN.Tensor` is the canonical import for this layer.
+Ordinary model code should usually `import NN.API`.
 
-Use `import NN` for ordinary model code. Use `NN.Tensor` only when the file is explicitly
-about tensor construction, indexing, shape operations, printing, or literal syntax.
+## One Tensor Type
 
-## What This Layer Owns
+`Tensor α shape` is the single shape-indexed representation used for proofs and CPU execution.
+Every value owns one contiguous row-major buffer whose length is certified by its static shape.
+The proof is erased by code generation.
 
-The key invariant is that semantics and proofs stay in the spec layer (`NN/Spec/*`), while this
-layer stays focused on ergonomics:
+`Storage α` selects the physical buffer:
 
-- DTypes are Lean types: you write `Tensor Float s`, `Tensor ℚ s`, and other scalar backends used
-  by the project.
-- Shapes live in the type when the program asks for a static tensor: `tensor!` and
-  `Spec.Tensor.ofFn` construct vectors and higher-rank values without introducing parallel
-  container types.
-- If you see `Tensor Float _`, the `_` asks Lean to infer the shape from the right hand side.
-- When dimensions arrive at runtime, use `ofArray dims.toList values`. Lean may use the runtime
-  dimension value in the result type, so this still returns an ordinary `Tensor`.
-- For constants, `tensorOfArray!` and `tensorF!` trade a bit of macro expansion for cleaner literal code.
-- `tensor!` accepts nested bracket syntax and flattens in row-major order, which is handy for
-  handwritten examples.
+- `Float` uses `FloatArray`.
+- `UInt8` uses `ByteArray`.
+- Arbitrary element types, including proof-oriented types, use `Array α`.
 
-TorchLean does not expose a second fixed-shape vector or array-backed tensor type. Vectors
-are tensors such as `Tensor Float [128]`. Runtime numerical storage uses `Array`; a checked boundary
-converts it with `Tensor.ofArray` or `Tensor.ofFlatArrayExact`. List syntax remains available for
-shapes and tensor literals, but lists are not a public numerical storage format. Use
-`Tensor.toArray` when storage must leave the typed tensor layer again.
+The tensor also acts as a total coordinate function in statements and proofs. This observation view
+does not allocate a second recursive tensor.
 
-A tensor literal can appear in a training example, an executable regression check, or a theorem
-statement. The mathematical meanings of matrix multiplication, convolution, softmax, and reductions
-are defined in `NN.Spec`; this directory provides their convenient tensor syntax.
+## Construction And Conversion
 
-## Static And Dynamic Shapes
+Ordinary nested brackets construct a tensor whenever a tensor type is expected:
 
-Prefer statically shaped tensors when the shape is part of the claim you are making. For example, a
-small MLP theorem should expose the input and output dimensions in the type so the layer composition
-is checked by Lean before any runtime code is involved.
+```lean
+def threshold : Tensor Float [] := 0.5
 
-Runtime dimensions occur in file-backed batches, loaded NumPy arrays, and exported artifacts. They
-do not require another public tensor type: `ofArray dims values` returns `Tensor α dims` after
-checking the flat payload length. Users still receive an ordinary `Tensor`; shape erasure begins
-only inside runtime components that must place differently shaped values in one collection.
+def matrix : Tensor Float [2, 2] :=
+  [[1.0, 2.0], [3.0, 4.0]]
+```
+
+`[]` is the public rank-zero shape, and an ordinary numeric literal constructs its single value.
+There is no separate scalar-tensor syntax to learn. Positive-rank tensors use brackets; the
+elaborator rejects ragged literals and shape mismatches.
+
+## Inspection And Display
+
+Tensors define their own shape-aware `Repr` instance, which is what Lean's
+`#eval` command uses:
+
+```lean
+def left : Tensor Nat [2, 2] := [[1, 2], [3, 4]]
+def right : Tensor Nat [2, 2] := [[10, 20], [30, 40]]
+
+#eval left
+-- [[1, 2], [3, 4]]
+
+#eval left + right
+-- [[11, 22], [33, 44]]
+```
+
+There is no need to convert a tensor to inspect it. Use `#eval tensor` at the
+command line or `IO.println (reprStr tensor)` inside an `IO` program.
+`Tensor.to` is only for serialization, interoperability, and APIs that
+explicitly require another container.
+
+Use the general conversion boundary for existing in-memory values:
+
+```lean
+def vector := Tensor.from (#[1.0, 2.0, 3.0, 4.0] : Array Float)
+
+def matrix' : Tensor Float [2, 2] :=
+  vector.reshape [2, 2]
+
+def narrow : Tensor Float32 [2, 2] :=
+  matrix'.cast Float32
+
+def values : Array Float :=
+  Tensor.to matrix' (Array Float)
+
+def asList : List Float :=
+  Tensor.to (matrix' + matrix') (List Float)
+
+def asVector : Vector Float (Spec.Shape.size [2, 2]) :=
+  Tensor.to matrix' (Vector Float (Spec.Shape.size [2, 2]))
+```
+
+- `Tensor.from source` is total and preserves the source element type.
+- `tensor.reshape target` changes only the static shape and does not copy. Lean
+  solves concrete equal-size shapes automatically; symbolic shapes may require
+  an explicit size proof.
+- `tensor.cast TargetElement` explicitly changes the element type.
+- `Tensor.to tensor TargetType` converts to a requested in-memory representation.
+
+External files and runtime metadata remain checked boundaries. Their loaders validate claimed
+dimensions and payload lengths before constructing an ordinary `Tensor`.
+
+## Mixed Element Types
+
+Each tensor is homogeneous, but equally shaped tensors with different element types can interact:
+
+```lean
+def bytes : Tensor UInt8 [3] := [1, 2, 3]
+def offsets : Tensor Float [3] := [0.5, 1.5, 2.5]
+def shifted : Tensor Float [3] := bytes + offsets
+```
+
+`+`, `-`, `*`, `/`, and the corresponding named operations select a registered
+common type and fuse both input conversions with output construction. Built-in promotion follows
+`UInt8 < Nat < Int < Rat < Float32 < Float`. Custom scalar families extend the same API with
+`ElementCast` and `ElementPromotion` instances.
+
+## Indexing And Immutable Updates
+
+Static indices and coordinates carry their bounds in their types:
+
+```lean
+def matrix : Tensor Nat [2, 2] := [[1, 2], [3, 4]]
+
+def row : Fin 2 := ⟨1, by decide⟩
+def column : Fin 2 := ⟨0, by decide⟩
+
+#eval matrix[row][column]
+-- 3
+```
+
+Use `tensor.at coordinate`, `tensor.set coordinate value`, and
+`tensor.modify coordinate f` when a complete typed coordinate is convenient.
+Updates are immutable copy-on-write operations. `Float` and `UInt8` stay in
+their packed buffers; generic element types use the ordinary array fallback.
+The simplifier knows that reading the updated coordinate returns the new value.
+
+Runtime coordinate arrays use the checked `at?`, `set?`, and `modify?`
+boundaries and return `none` for the wrong rank or an out-of-bounds index.
+
+## Shape Pattern Operations
+
+Importing `NN.Tensor` or `NN` exposes every checked shape-pattern operation on
+the ordinary `Tensor` type. The pattern keywords are scoped syntax, so a file
+activates them with `open TorchLean.Tensor`:
+
+```lean
+open TorchLean.Tensor
+
+def matrix : Tensor Float [2, 3] :=
+  [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+
+def right : Tensor Float [3, 4] :=
+  [[1.0, 0.0, 0.0, 1.0],
+   [0.0, 1.0, 0.0, 1.0],
+   [0.0, 0.0, 1.0, 1.0]]
+
+def transposed : Tensor Float [3, 2] :=
+  rearrange matrix "row column -> column row"
+
+def tiled : Tensor Float [3, 2, 3] :=
+  expand matrix "row column -> batch row column" with batch := 3
+
+def rowSums : Tensor Float [2] :=
+  reduce matrix "row column -> row" by sum
+
+def product : Tensor Float [2, 4] :=
+  einsum matrix, right
+    "row contracted, contracted column -> row column"
+
+def packed :=
+  pack rowSums, matrix "*"
+
+def restored :=
+  unpack packed "*"
+
+def restoredRowSums : Tensor Float [2] :=
+  restored ⟨0, by decide⟩
+
+def restoredMatrix : Tensor Float [2, 3] :=
+  restored ⟨1, by decide⟩
+
+def dimensions : List (String × Nat) :=
+  parse_shape matrix "row column"
+```
+
+`rearrange`, `expand`, `reduce`, `einsum`, `pack`, `unpack`, and
+`parse_shape` check literal patterns and static shapes while Lean elaborates
+the definition. `expand` is the einops `repeat` operation; the keyword differs
+so that it does not collide with Lean's own `repeat`. The output names in a pattern select and order dimensions from
+the inputs, so the result type records the output shape. A conflicting type
+annotation is rejected before the program runs. Multi-input `einsum` and
+`pack` use the same automatic scalar promotion as ordinary tensor arithmetic.
+`pack` metadata feeds directly into `unpack`; write integer metadata manually
+only when using the optional `-1` dimension inference. `parse_shape` returns
+ordinary named dimension data, here `[("row", 2), ("column", 3)]`.
+
+## Reductions And Linear Algebra
+
+Scalar reductions and matrix factorizations stay on the ordinary tensor type:
+
+```lean
+def matrix : Tensor Float [3, 2] :=
+  [[1, 2], [3, 4], [5, 7]]
+
+def factors := Tensor.qr matrix
+def reconstructed : Tensor Float [3, 2] :=
+  einsum factors.q, factors.r
+    "row contracted, contracted column -> row column"
+
+def positiveDefinite : Tensor Float [2, 2] :=
+  [[4, 2], [2, 3]]
+
+def lower := Tensor.cholesky positiveDefinite
+def loss := Tensor.meanSquaredError reconstructed matrix
+```
+
+`Tensor.qr` computes both factors once and returns named `.q` and `.r` fields. For an
+`m × n` input, their reduced shapes are `m × min m n` and `min m n × n`. Tall and square inputs use
+the theorem-backed reference factorization. The wide path retains independent basis columns, so an
+early dependent source column does not prevent a later independent column from entering the basis.
+`Tensor.cholesky` returns the lower-triangular factor candidate, while
+`Tensor.solveRidge` solves a regularized symmetric system through the same
+Cholesky path. These are executable, generic reference algorithms shared with
+the proof layer. They are not replacements for blocked, vectorized LAPACK or
+backend kernels on large matrices.
 
 ## Runtime Relationship
 
-There is one user-facing tensor type. The two dependent containers below solve narrower internal
-problems; neither replaces `Tensor` in model code:
+There is no second host tensor class. Specifications, proofs, and native CPU operations use the
+same certified buffer representation.
 
-- `Tensor α shape` is the shape-indexed value used by specifications, proofs, and the CPU reference
-  runtime. It is executable whenever `α` is executable.
-- `TensorPack α shapes` is a statically heterogeneous tuple. Its type records the shape of every
-  tensor, so model state can contain a weight matrix, bias vector, and normalization parameters
-  without shape erasure.
-- `SomeTensor α` is internal runtime shape erasure. It pairs one tensor with its runtime shape so
-  tapes and graph interpreters can keep differently shaped values in one array.
-- Runtime value references identify values owned by an eager session or typed graph. They are
-  handles, not another tensor representation; the public generic spelling is `Runtime.ValueRef`.
-- CUDA execution stores flat device memory in `AnyBuffer`, together with the runtime shape needed to
-  validate uploads, downloads, and kernel results.
-
-Thus the CPU path does not translate a proof tensor into a second host tensor class: it evaluates the
-same `Tensor` definition. CUDA necessarily uses native device storage, and the upload/download and
-kernel-contract layers state where that representation leaves the logical model. The graph and
-runtime correctness modules prove correspondence for supported operations; they do not silently
-assert that arbitrary external machine code is correct.
+- `TensorPack α shapes` is a statically heterogeneous collection used for model state.
+- `SomeTensor α` is internal runtime shape erasure for tapes and graph interpreters.
+- Runtime value references are handles owned by an eager session or typed graph.
+- CUDA uses session-owned device buffers. Upload and download are explicit `IO`
+  boundaries that validate shape and buffer length. Those checks preserve
+  dtype, shape, and bounds safety; numerical kernel correctness remains an
+  explicit backend contract rather than a consequence of the tensor type.
 
 ## Files
 
-- `../Tensor.lean`: import-only umbrella for the complete public tensor surface.
-- `Constructors.lean`: the `TorchLean.Tensor` type and shape exports, static constructors, checked
-  array conversion, one-hot encoding, and scalar conversion helpers.
-- `Operations.lean`: coordinate lookup, stacking, arbitrary-axis `take`, prefix mapping,
-  `flattenAfter`, and `flattenThenTake`.
-- `Syntax.lean`: checked tensor literal and bounded-index macros.
-- `Printing.lean`: dtype labels and printing, including explicit refusal for proof-level scalar
-  backends such as `ℝ`.
-- `Pack.lean`: the statically heterogeneous tuple used for model state and typed contexts.
-- `ShapeErasure.lean`: checked conversion between typed packs and runtime shape-erased arrays.
+- `../Tensor.lean`: public umbrella import.
+- `Storage.lean`: physical-storage selection.
+- `Conversion.lean`: total `from`, `to`, and zero-copy `reshape`.
+- `Constructors.lean`: constants, flat generation, and bounded-index constructors.
+- `Operations.lean`: indexing, stacking, scalar `cast`, mixed-dtype arithmetic, shape helpers, and
+  standard `Repr` output.
+- `Reductions.lean`: scalar `sum`, `mean`, and `meanSquaredError`.
+- `LinearAlgebra.lean`: identity, QR, Cholesky, and ridge solve.
+- `Pack.lean`: statically heterogeneous model state.
+- `ShapeErasure.lean`: checked conversion to internal runtime shape erasure.
+- `Internal/Elab/TensorLiteral.lean`: ordinary bracket elaboration for tensor expected types.

@@ -6,8 +6,15 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Exec32
 public import NN.Floats.IEEEExec.Rounding.NatLemmas
+public import Mathlib.Algebra.GroupWithZero.Nat
+public import Mathlib.Algebra.NeZero
+public import Mathlib.Data.Nat.Basic
+public import Mathlib.Order.Basic
+import Mathlib.Tactic.Attr.Core
+import Mathlib.Tactic.Push
+import Mathlib.Tactic.Set
+public import NN.Floats.IEEEExec.Exec32.Directed
 
 /-!
 # Basic order bounds for `roundShiftRightEven`

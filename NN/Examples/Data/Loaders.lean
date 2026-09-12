@@ -15,8 +15,8 @@ public import NN.Examples.Data.Loaders.Cifar10Images
 
 This umbrella collects the Lean side data tutorials:
 
-- `Csv`: numeric CSV rows, transforms, minibatching, and a step LR scheduler;
-- `Npy`: NumPy/PyTorch `.npy` arrays, metadata inspection, transforms, and minibatching;
+- `Csv`: numeric CSV rows and minibatched regression training;
+- `Npy`: NumPy/PyTorch `.npy` arrays, metadata inspection, and minibatched regression training;
 - `Cifar10Images`: image-shaped NPY arrays, one-hot labels, train/test split, and CNN training.
 
 The reusable library code is available through `TorchLean.Data`; these files are concrete tutorial

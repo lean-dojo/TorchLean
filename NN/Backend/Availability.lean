@@ -11,11 +11,13 @@ public import NN.Backend.Capsule
 /-!
 # Backend Availability
 
-Machine- and build-dependent availability for backend capsules.
+Build-dependent availability for backend capsules.
 
-`KernelPolicy` says which capsules selection may use. `Availability` says what this checkout or
-machine can provide. CPU-only, CUDA, and optional LibTorch builds therefore share one semantic
-registry while exposing different capsule subsets to the planner.
+`KernelPolicy` says which capsules selection may use. `Availability` says which devices and
+providers a build declares. CPU-only, CUDA, and optional LibTorch builds therefore share one
+semantic registry while exposing different capsule subsets to the planner. An availability
+declaration is not runtime discovery; executable paths still probe the linked runtime before
+launching work.
 -/
 
 @[expose] public section
@@ -23,7 +25,7 @@ registry while exposing different capsule subsets to the planner.
 namespace NN
 namespace Backend
 
-/-- Runtime/build capabilities visible to backend planning. -/
+/-- Devices and providers declared available to backend planning. -/
 structure Availability where
   devices : Array Device := #[.cpu]
   providers : Array Provider := #[.reference, .torchLean]
@@ -31,36 +33,22 @@ structure Availability where
 
 namespace Availability
 
-/-- Whether a device is available on this machine/build. -/
-def hasDevice (a : Availability) (d : Device) : Bool :=
-  a.devices.contains d
-
-/-- Whether a provider is available. -/
-def hasProvider (a : Availability) (p : Provider) : Bool :=
-  a.providers.contains p
-
-/-- Whether a capsule can even be considered on this machine/build. -/
+/-- Whether a capsule can even be considered on this build. -/
 def admitsCapsule (a : Availability) (c : KernelCapsule) : Bool :=
-  a.hasDevice c.device && a.hasProvider c.provider
+  a.devices.contains c.device && a.providers.contains c.provider
 
-/-- Keep only capsules available on this machine/build. -/
+/-- Keep only capsules available on this build. -/
 def filterCapsules (a : Availability) (capsules : Array KernelCapsule) : Array KernelCapsule :=
   capsules.filter fun c => a.admitsCapsule c
 
 /-- CPU/reference-only availability. -/
-def cpu : Availability :=
-  { devices := #[.cpu]
-    providers := #[.reference, .torchLean] }
+def cpu : Availability := {}
 
-/-- CUDA availability without optional external providers. -/
-def cudaNative : Availability :=
+/-- CUDA availability with the native provider and, optionally, LibTorch. -/
+def cuda (withLibTorch : Bool := false) : Availability :=
   { devices := #[.cpu, .cuda]
-    providers := #[.reference, .torchLean, .nativeCuda, .cuBLAS, .cuFFT] }
-
-/-- CUDA availability with optional LibTorch enabled and installed. -/
-def cudaWithLibTorch : Availability :=
-  { devices := #[.cpu, .cuda]
-    providers := #[.reference, .torchLean, .nativeCuda, .cuBLAS, .cuFFT, .libTorch] }
+    providers :=
+      #[.reference, .torchLean, .nativeCuda] ++ (if withLibTorch then #[.libTorch] else #[]) }
 
 end Availability
 

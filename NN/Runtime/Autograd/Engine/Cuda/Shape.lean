@@ -28,12 +28,13 @@ namespace Runtime
 namespace Autograd
 namespace Cuda
 
-open Spec
+open Spec TorchLean
 
 namespace Broadcast
 
 /-! ### `axisMap` generation -/
 
+/-- Shift every nonzero entry of a partial axis map up by one, making room for a leading axis. -/
 def shiftInputAxes (m : Array Nat) : Array Nat :=
   m.map (fun v => if v == 0 then 0 else v + 1)
 
@@ -45,20 +46,15 @@ def axisMap {s₁ s₂ : Shape} (_cb : Shape.CanBroadcastTo s₁ s₂) : Array N
   Array.replicate (Shape.rank s₂ - Shape.rank s₁) 0 ++
     (Array.range (Shape.rank s₁)).map (fun i => i + 1)
 
-/-- Convenience bundle for CUDA broadcast kernels: `(inDims, outDims, axisMap)`. -/
-def broadcastArgs {s₁ s₂ : Shape} (cb : Shape.CanBroadcastTo s₁ s₂) :
-    Array Nat × Array Nat × Array Nat :=
-  (Shape.toArray s₁, Shape.toArray s₂, axisMap cb)
-
 /-- CUDA axis map that restores the axis removed by `shapeAfterSum`. -/
 def afterSumAxisMap : (s : Shape) → (axis : Nat) → Array Nat
   | .scalar, _ => #[]
   | .dim _ inner, 0 => #[0] ++ (Array.range (Shape.rank inner)).map (fun i => i + 1)
   | .dim _ inner, Nat.succ axis => #[1] ++ shiftInputAxes (afterSumAxisMap inner axis)
 
-/-- CUDA metadata for `Spec.Tensor.broadcastAfterSum`. -/
+/-- CUDA metadata for `TorchLean.Tensor.broadcastAfterSum`. -/
 def afterSumArgs (s : Shape) (axis : Nat) : Array Nat × Array Nat × Array Nat :=
-  (Shape.toArray (Spec.Tensor.shapeAfterSum s axis), Shape.toArray s, afterSumAxisMap s axis)
+  (Shape.toArray (TorchLean.Tensor.shapeAfterSum s axis), Shape.toArray s, afterSumAxisMap s axis)
 
 end Broadcast
 

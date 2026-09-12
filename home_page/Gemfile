@@ -1,7 +1,10 @@
 source "https://rubygems.org"
 
+ruby ">= 3.2", "< 4"
+
 # To upgrade, run `bundle update github-pages`.
 gem "github-pages", group: :jekyll_plugins
+gem "faraday-retry", "~> 2.0"
 # If you have any plugins, put them here!
 group :jekyll_plugins do
   #gem "jekyll-feed", "~> 0.12"
@@ -22,4 +25,4 @@ gem "wdm", "~> 0.1.1", :platforms => [:mingw, :x64_mingw, :mswin]
 gem "http_parser.rb", "~> 0.6.0", :platforms => [:jruby]
 
 # Used for locally serving the website.
-gem "webrick", "~> 1.7"
+gem "webrick", "~> 1.8"

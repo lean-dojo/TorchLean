@@ -11,7 +11,7 @@ public import NN.Spec.Core.Tensor.Core
 /-!
 # Linear algebra primitives (spec layer)
 
-This file defines the basic matrix/vector operations used across the model zoo:
+This file defines the basic matrix/vector operations used across model specifications:
 
 - `matMulSpec` (matrix × matrix)
 - `matVecMulSpec` (matrix × vector)
@@ -36,6 +36,8 @@ PyTorch analogies:
 @[expose] public section
 
 
+open TorchLean
+
 namespace Spec
 
 /--
@@ -46,13 +48,10 @@ Notes:
 - We use `i.val == j.val` rather than `DecidableEq (Fin n)` to keep the definition directly
   executable across backends.
 -/
-def identityTensorSpec {α : Type} [Zero α] [One α] : ∀ (n : Nat), Tensor α [n, n]
-  | 0 => Tensor.dim (fun _ => Tensor.dim (fun _ => Tensor.scalar 0))
-  -- Empty identity tensor for 0 dimensions
-  | Nat.succ _ =>
-    Tensor.dim (fun i =>
-      Tensor.dim (fun j =>
-        Tensor.scalar (if i.val == j.val then 1 else 0)))
+def identityTensorSpec {α : Type} [TorchLean.Storage α] [Zero α] [One α]
+    (n : Nat) : Tensor α [n, n] :=
+  TorchLean.Tensor.Internal.Rep.ofFn fun coordinate =>
+    if coordinate.1.val == coordinate.2.1.val then 1 else 0
 
 /--
 Matrix multiplication (m x n) @ (n x p) = (m x p).
@@ -60,69 +59,46 @@ Matrix multiplication (m x n) @ (n x p) = (m x p).
 This is the simplest definitional version: sum over the shared `n` dimension.
 For performance-oriented runtime code, use the runtime layer; this spec is about clarity and proofs.
 -/
-def matMulSpec {α : Type} [Add α] [Mul α] [Zero α] {m n p : Nat} (A : Tensor α [m, n])
-    (B : Tensor α [n, p]) : Tensor α [m, p] :=
-  match A, B with
-  | Tensor.dim rowsA, Tensor.dim rowsB =>
-    Tensor.dim (fun i =>
-      Tensor.dim (fun j =>
-        Tensor.scalar (
-          (List.finRange n).foldl (fun sum k =>
-            match rowsA i, rowsB k with
-            | Tensor.dim colsA, Tensor.dim colsB =>
-              match colsA k, colsB j with
-              | Tensor.scalar a, Tensor.scalar b => sum + a * b) 0)))
+def matMulSpec {α : Type} [TorchLean.Storage α]
+    [Add α] [Mul α] [Zero α] {m n p : Nat}
+    (A : Tensor α [m, n]) (B : Tensor α [n, p]) : Tensor α [m, p] :=
+  TorchLean.Tensor.Internal.Rep.ofFn fun coordinate =>
+    (List.finRange n).foldl
+      (fun sum k => sum + get2 A coordinate.1 k * get2 B k coordinate.2.1)
+      0
 
 /-- Matrix-vector multiplication (m x n) @ (n) = (m). -/
-def matVecMulSpec {α : Type} [Add α] [Mul α] [Zero α] {m n : Nat} (A : Tensor α [m, n])
-    (v : Tensor α [n]) : Tensor α [m] :=
-  match A, v with
-  | Tensor.dim rowsA, Tensor.dim valuesV =>
-    Tensor.dim fun i =>
-      match rowsA i with
-      | Tensor.dim colsA =>
-        (List.finRange n).foldl
-          (fun (acc : Tensor α .scalar) (k : Fin n) =>
-            match acc, colsA k, valuesV k with
-            | Tensor.scalar s, Tensor.scalar ak, Tensor.scalar vk =>
-              Tensor.scalar (s + ak * vk))
-          (Tensor.scalar 0)
+def matVecMulSpec {α : Type} [TorchLean.Storage α]
+    [Add α] [Mul α] [Zero α] {m n : Nat}
+    (A : Tensor α [m, n]) (v : Tensor α [n]) : Tensor α [m] :=
+  TorchLean.Tensor.Internal.Rep.ofFn fun coordinate =>
+    (List.finRange n).foldl
+      (fun sum k => sum + get2 A coordinate.1 k * v.getScalar k)
+      0
 
 /-- Rank-one tensor by matrix multiplication: `(m) @ (m x n) = (n)`. -/
-def vecMatMulSpec {α : Type} [Add α] [Mul α] [Zero α] {m n : Nat} (v : Tensor α [m])
-    (A : Tensor α [m, n]) : Tensor α [n] :=
-  match v, A with
-  | Tensor.dim valuesV, Tensor.dim rowsA =>
-    Tensor.dim (fun j =>
-      Tensor.scalar (
-        (List.finRange m).foldl (fun sum i =>
-          match valuesV i, rowsA i with
-          | Tensor.scalar vi, Tensor.dim colsA =>
-            match colsA j with
-            | Tensor.scalar aij => sum + vi * aij) 0))
+def vecMatMulSpec {α : Type} [TorchLean.Storage α]
+    [Add α] [Mul α] [Zero α] {m n : Nat}
+    (v : Tensor α [m]) (A : Tensor α [m, n]) : Tensor α [n] :=
+  TorchLean.Tensor.Internal.Rep.ofFn fun coordinate =>
+    (List.finRange m).foldl
+      (fun sum i => sum + v.getScalar i * get2 A i coordinate.1)
+      0
 
 /-- Outer product (m) otimes (n) = (m x n). -/
-def outerProductSpec {α : Type} [Mul α] {m n : Nat} (a : Tensor α [m]) (b : Tensor α
-  [n]) :
+def outerProductSpec {α : Type} [TorchLean.Storage α] [Mul α]
+    {m n : Nat} (a : Tensor α [m]) (b : Tensor α [n]) :
     Tensor α [m, n] :=
-  match a, b with
-  | Tensor.dim f1, Tensor.dim f2 =>
-    Tensor.dim (fun i =>
-      Tensor.dim (fun j =>
-        match f1 i, f2 j with
-        | Tensor.scalar x, Tensor.scalar y => Tensor.scalar (x * y)))
+  TorchLean.Tensor.Internal.Rep.ofFn fun coordinate =>
+    a.getScalar coordinate.1 * b.getScalar coordinate.2.1
 
 /-- A coordinate of an outer product is the product of the corresponding vector entries. -/
-@[simp] theorem get2_outerProductSpec {α : Type} [Mul α] {m n : Nat}
+@[simp] theorem get2_outerProductSpec {α : Type} [TorchLean.Storage α]
+    [Mul α] {m n : Nat}
     (left : Tensor α [m]) (right : Tensor α [n])
     (i : Fin m) (j : Fin n) :
-    get2 (outerProductSpec left right) i j = Tensor.getScalar left i * Tensor.getScalar right j := by
-  cases left with
-  | dim leftValues =>
-      cases right with
-      | dim rightValues =>
-          cases hLeft : leftValues i
-          cases hRight : rightValues j
-          simp [outerProductSpec, get2, Tensor.getScalar, get, hLeft, hRight]
+    get2 (outerProductSpec left right) i j =
+      Tensor.getScalar left i * Tensor.getScalar right j := by
+  simp [outerProductSpec, get2, Tensor.getScalar, get, Tensor.unstack, Tensor.item]
 
 end Spec

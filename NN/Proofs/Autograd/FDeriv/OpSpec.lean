@@ -8,7 +8,6 @@ module
 
 public import NN.Proofs.Autograd.FDeriv.Core
 
-public import Mathlib.Analysis.InnerProductSpace.Calculus
 
 /-!
 # OpSpec
@@ -33,8 +32,8 @@ composition gets the theorem:
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec _root_.TorchLean
+open _root_.TorchLean _root_.TorchLean.Tensor
 
 open scoped BigOperators
 open scoped _root_.Autograd
@@ -45,11 +44,11 @@ noncomputable section
 ## Basic tensor/vector roundtrip
 
 Most analytic statements here are written in Euclidean space (`Vec n`) because Mathlib’s `fderiv`
-and adjoint API lives there. The following lemma just re-exports the `ofFnE/getScalarE` roundtrip in a
-form that is convenient for rewriting.
+and adjoint API lives there. The following lemma just re-exports the `ofFnE/getScalarE` roundtrip
+in a form that is convenient for rewriting.
 -/
 
-@[simp] lemma ofFnE_getScalar {n : Nat} (t : Tensor ℝ [n]) :
+@[simp] theorem ofFnE_getScalar {n : Nat} (t : Tensor ℝ [n]) :
     ofFnE (n := n) (getScalarE t) = t := by
   simp
 
@@ -63,17 +62,17 @@ PyTorch analogy: this corresponds to saying “the local backward rule is the tr
 the true derivative” for a primitive op, so that composing ops yields correct global backward.
 -/
 structure OpSpecFDerivCorrect (inDim outDim : Nat) where
-  /-- correct. -/
+  /-- The op together with its JVP and the VJP/JVP adjointness proof. -/
   correct : OpSpecCorrect (.dim inDim .scalar) (.dim outDim .scalar)
-  /-- deriv. -/
+  /-- The Frechet derivative of the forward map at each point, as a continuous linear map. -/
   deriv : Vec inDim → Vec inDim →L[ℝ] Vec outDim
-  /-- has FDeriv At. -/
+  /-- The forward map on `Vec inDim` is differentiable everywhere with derivative `deriv`. -/
   hasFDerivAt :
       ∀ xV : Vec inDim,
         HasFDerivAt
           (fun xV : Vec inDim => getScalarE (correct.op.forward (ofFnE xV)))
           (deriv xV) xV
-  /-- jvp eq. -/
+  /-- The JVP of the op agrees with `deriv` applied to the tangent vector. -/
   jvp_eq :
       ∀ xV dxV : Vec inDim,
         getScalarE (correct.jvp (ofFnE xV) (ofFnE dxV)) = (deriv xV) dxV
@@ -144,7 +143,8 @@ theorem backward_eq_adjoint_fderiv {inDim outDim : Nat} (C : OpSpecFDerivCorrect
                 simpa [u] using (hinner (dxV := dxV)).symm
         _ = inner ℝ dxV (A.adjoint (getScalarE δ)) := by
               simpa [A] using
-                (ContinuousLinearMap.adjoint_inner_right (A := A) (x := dxV) (y := getScalarE δ)).symm
+                (ContinuousLinearMap.adjoint_inner_right (A := A) (x := dxV)
+                  (y := getScalarE δ)).symm
         _ = inner ℝ dxV v := by simp [v]
 
     have h0 : inner ℝ (u - v) (u - v) = 0 := by

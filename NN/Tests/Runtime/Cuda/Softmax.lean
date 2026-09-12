@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.TorchLean.Session
+public import NN.Runtime.Autograd.Model.Session
 public import NN.Tensor
 public import NN.Tests.Runtime.Cuda.Utils
 
@@ -23,23 +23,24 @@ namespace Tests
 namespace Cuda
 namespace Softmax
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Runtime.Autograd
 
 /-- Exercise arbitrary-axis softmax through the public CUDA session, including its VJP. -/
 def checkInteriorAxisSession : IO Unit := do
   let s : Shape := [2, 2, 2]
-  let x : Tensor Float s := tensorOfArray! [2, 2, 2] #[0, 2, 1, 4, 3, 8, 7, 9]
+  let x : Tensor Float s :=
+    (Tensor.from (#[0, 2, 1, 4, 3, 8, 7, 9] : Array Float)).reshape [2, 2, 2] (by dsimp; decide)
   let upstream : Tensor Float s :=
-    tensorOfArray! [2, 2, 2] #[1.0, -2.0, 3.0, 4.0, -1.0, 2.0, 5.0, -3.0]
-  let sess ← Runtime.Autograd.TorchLean.Session.new (α := Float)
+    (Tensor.from #[1.0, -2.0, 3.0, 4.0, -1.0, 2.0, 5.0, -3.0]).reshape [2, 2, 2] (by dsimp; decide)
+  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
     { execution := .eager, device := .cuda }
-  let xRef ← Runtime.Autograd.TorchLean.Session.input sess x
+  let xRef ← Runtime.Autograd.Model.Session.input sess x
     (name := some "interior_axis_input") (requiresGrad := true)
-  let yRef ← Runtime.Autograd.TorchLean.Session.softmax sess 1 xRef
-  let actual ← Runtime.Autograd.TorchLean.Session.getValue sess yRef
-  let gradient ← Runtime.Autograd.TorchLean.Session.vjp sess yRef upstream xRef
+  let yRef ← Runtime.Autograd.Model.Session.softmax sess 1 xRef
+  let actual ← Runtime.Autograd.Model.Session.getValue sess yRef
+  let gradient ← Runtime.Autograd.Model.Session.vjp sess yRef upstream xRef
   let expected := Activation.softmaxSpec (α := Float) 1 x
   let expectedGradient := Activation.softmaxBackwardSpec (α := Float) 1 x upstream
   Utils.assertTensorApprox (s := s) "softmax interior-axis forward" actual expected (tol := 2e-3)
@@ -48,25 +49,25 @@ def checkInteriorAxisSession : IO Unit := do
 
 def evalSoftmax (device : NN.Backend.Device) (x upstream : Tensor Float [2, 3]) :
     IO (Tensor Float [2, 3] × Tensor Float [2, 3]) := do
-  let sess ← Runtime.Autograd.TorchLean.Session.new (α := Float)
+  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
     { execution := .eager, device := device }
-  let xRef ← Runtime.Autograd.TorchLean.Session.input sess x
+  let xRef ← Runtime.Autograd.Model.Session.input sess x
     (name := some "softmax_input") (requiresGrad := true)
-  let yRef ← Runtime.Autograd.TorchLean.Session.softmax sess 1 xRef
-  let y ← Runtime.Autograd.TorchLean.Session.getValue sess yRef
-  let gradient ← Runtime.Autograd.TorchLean.Session.vjp sess yRef upstream xRef
+  let yRef ← Runtime.Autograd.Model.Session.softmax sess 1 xRef
+  let y ← Runtime.Autograd.Model.Session.getValue sess yRef
+  let gradient ← Runtime.Autograd.Model.Session.vjp sess yRef upstream xRef
   pure (y, gradient)
 
 def evalLogSoftmax (device : NN.Backend.Device)
     (x upstream : Tensor Float [2, 3]) :
     IO (Tensor Float [2, 3] × Tensor Float [2, 3]) := do
-  let sess ← Runtime.Autograd.TorchLean.Session.new (α := Float)
+  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
     { execution := .eager, device := device }
-  let xRef ← Runtime.Autograd.TorchLean.Session.input sess x
+  let xRef ← Runtime.Autograd.Model.Session.input sess x
     (name := some "log_softmax_input") (requiresGrad := true)
-  let yRef ← Runtime.Autograd.TorchLean.Session.logSoftmax sess 1 xRef
-  let y ← Runtime.Autograd.TorchLean.Session.getValue sess yRef
-  let gradient ← Runtime.Autograd.TorchLean.Session.vjp sess yRef upstream xRef
+  let yRef ← Runtime.Autograd.Model.Session.logSoftmax sess 1 xRef
+  let y ← Runtime.Autograd.Model.Session.getValue sess yRef
+  let gradient ← Runtime.Autograd.Model.Session.vjp sess yRef upstream xRef
   pure (y, gradient)
 
 def run : IO Unit := do
@@ -74,11 +75,11 @@ def run : IO Unit := do
 
   let s : Shape := [2, 3]
   let x : Tensor Float s :=
-    tensorOfArray! [2, 3] #[
+    (Tensor.from #[
       0.10, -0.20, 0.30,
       0.05,  0.25, -0.15
-    ]
-  let upstream : Tensor Float s := fill 1.0 s
+    ]).reshape [2, 3] (by dsimp; decide)
+  let upstream : Tensor Float s := Tensor.full s 1.0
   let (yCpu, dxCpu) ← evalSoftmax .cpu x upstream
   let (yCuda, dxCuda) ← evalSoftmax .cuda x upstream
 

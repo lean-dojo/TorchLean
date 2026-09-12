@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Analysis.SpecialFunctions.Pow.Real
-public import NN.Floats.NeuralFloat.Core
 public import NN.MLTheory.Proofs.Approximation.FloatInterval.Semantics
 
 /-!
@@ -62,19 +60,29 @@ local notation "F" => IEEE32Exec
 
 -- Spacing at 1, often called machine epsilon: ε = 2^{-23}. The nearest-rounding unit roundoff is
 -- half of this, 2^{-24}.
+/-- Machine epsilon `2⁻²³`, the spacing of binary32 just above `1`. The unit roundoff for
+round-to-nearest is half of this. -/
 noncomputable def ε : ℝ := neuralBpow binaryRadix (-23)
 
 -- Smallest positive float ω = 2^{-149} (as a real number).
+/-- Smallest positive subnormal `2⁻¹⁴⁹`, as a real number. -/
 noncomputable def ω : ℝ := neuralBpow binaryRadix (-149)
 
+/-- Real power of two, abbreviated because the error bounds below are dense with them. -/
 noncomputable def pow2 (k : Int) : ℝ := neuralBpow binaryRadix k
 
 /-! ### Basic helpers -/
 
+/-- Propositional form of finiteness, so hypotheses read `finite x` rather than `_ = true`. -/
 def finite (x : F) : Prop := IEEE32Exec.isFinite x = true
 
+/-- Real absolute value of a float, used in the magnitude side conditions. -/
 noncomputable def rabs (x : F) : ℝ := |IEEE32Exec.toReal x|
 
+/-- `x` lies between `a` and `b`, in either order.
+
+Order-agnostic on purpose: the interval endpoints coming out of the abstract operations are not
+sorted, and `minimum`/`maximum` also give the IEEE 754 treatment of signed zeros for free. -/
 noncomputable def between (a b x : F) : Prop :=
   let lo := IEEE32Exec.minimum a b
   let hi := IEEE32Exec.maximum a b
@@ -82,6 +90,10 @@ noncomputable def between (a b x : F) : Prop :=
 
 /-! ### Separating activation condition -/
 
+/-- Two finite inputs at which `σ` separates: one pinned to zero, one to a nonzero value.
+
+This is the executable form of the separating condition; `CorrectlyRounded` plus real hypotheses is
+how the theorems below actually produce one. -/
 structure Witness (σ : F → F) where
   /-- First finite input witnessing the zero anchor in the separating condition. -/
   c1 : F
@@ -92,7 +104,7 @@ structure Witness (σ : F → F) where
   /-- The second witness input is finite. -/
   c2_finite : finite c2
   /-- The activation sends the first witness to zero. -/
-  sigma_c1_eq_zero : σ c1 = Numbers.zero
+  sigma_c1_eq_zero : σ c1 = 0
   /-- The activation value at the second witness is finite. -/
   sigma_c2_finite : finite (σ c2)
   /-- The second activation value has the magnitude required by the binary32 separation bound. -/
@@ -146,11 +158,13 @@ structure Witness (σ : F → F) where
 
 /-! ### Correctly-rounded activations and real sufficient conditions -/
 
+/-- `σ` is the correctly-rounded binary32 implementation of the real function `ρ`. -/
 structure CorrectlyRounded (ρ : ℝ → ℝ) (σ : F → F) : Prop where
-  /-- Finite executable inputs evaluate to finite executable outputs with the declared rounding law. -/
+  /-- Finite executable inputs evaluate to finite executable outputs with the declared rounding
+  law. -/
   finite_input_implies :
-    ∀ x : F, finite x → finite (σ x) ∧ IEEE32Exec.toReal (σ x) = IEEE32Exec.fp32Round (ρ
-      (IEEE32Exec.toReal x))
+    ∀ x : F, finite x →
+      finite (σ x) ∧ IEEE32Exec.toReal (σ x) = IEEE32Exec.fp32Round (ρ (IEEE32Exec.toReal x))
 
  /--
 Real-valued sufficient conditions used to prove that a correctly-rounded activation satisfies the
@@ -225,9 +239,9 @@ namespace SigmaNet
 
 /-- Parameters of an affine layer `din → dout` over `IEEE32Exec` scalars. -/
 structure Affine (din dout : Nat) where
-  /-- W. -/
+  /-- Weight matrix, indexed row (output) then column (input). -/
   W : Fin dout → Fin din → F
-  /-- b. -/
+  /-- Bias vector, one entry per output. -/
   b : Fin dout → F
 
 /-- Apply an affine layer to an input vector using IEEE32Exec primitives. -/
@@ -236,7 +250,7 @@ def aff {din dout : Nat} (A : Affine din dout) (x : Fin din → F) : Fin dout �
     let s :=
       (List.finRange din).foldl
         (fun acc j => IEEE32Exec.add acc (IEEE32Exec.mul (A.W i j) (x j)))
-        (Numbers.zero : F)
+        (0 : F)
     IEEE32Exec.add s (A.b i)
 
 /-- A feedforward σ-network: affine layers with σ between them, no σ after the final affine. -/
@@ -255,6 +269,10 @@ def evalScalar {din : Nat} (σ : F → F) (n : Net din 1) (x : Fin din → F) : 
 
 /-! ## Interval semantics using `OpsExact` -/
 
+/-- Interval semantics of the activation: the hull of its exact image on the interval.
+
+Taking the image over the finite set of representable points in `J` is what makes this the exact
+direct image rather than a relaxation, and it is only affordable because `J` is a float interval. -/
 def sigmaSharp (σ : F → F) (J : I) : I :=
   OpsExact.hull <| (OpsExact.γFinsetI J).image σ
 
@@ -279,6 +297,7 @@ end SigmaNet
 
 /-! ## Bounded interval domains and direct-image hulls -/
 
+/-- Every point of `J` lies in `[a, b]`. -/
 def IntervalIn (a b : F) (J : I) : Prop :=
   ∀ ⦃x : F⦄, x ∈ J → a ≤ x ∧ x ≤ b
 
@@ -288,7 +307,7 @@ def BoxIn {d : Nat} (a b : F) (B : I.Box d) : Prop :=
 
 /-- The canonical cube domain `[-1,1]^d`. -/
 def CubeBox {d : Nat} (B : I.Box d) : Prop :=
-  BoxIn (a := Numbers.negOne) (b := Numbers.one) B
+  BoxIn (a := (-1)) (b := 1) B
 
 /-- Ideal abstraction `h♯(B)`: interval hull of the direct image `h(γ(B))` (computed over the finite
   concretization). -/
@@ -302,23 +321,23 @@ namespace Indicators
 /-- Indicator of a set `S ⊆ F^d`, returning `1`/`0` in `F`. -/
 noncomputable def ι {d : Nat} (S : Set (Fin d → F)) : (Fin d → F) → F := by
   classical
-  exact fun x => if x ∈ S then (Numbers.one : F) else (Numbers.zero : F)
+  exact fun x => if x ∈ S then (1 : F) else (0 : F)
 
 /-- Strict-threshold indicator `ι_{>a}` on `F`. -/
 noncomputable def ιGt (a : F) : F → F :=
-  fun x => if a < x then (Numbers.one : F) else (Numbers.zero : F)
+  fun x => if a < x then (1 : F) else (0 : F)
 
 /-- Non-strict threshold indicator `ι_{≥a}` on `F`. -/
 noncomputable def ιGe (a : F) : F → F :=
-  fun x => if a ≤ x then (Numbers.one : F) else (Numbers.zero : F)
+  fun x => if a ≤ x then (1 : F) else (0 : F)
 
 /-- Strict-threshold indicator `ι_{<a}` on `F`. -/
 noncomputable def ιLt (a : F) : F → F :=
-  fun x => if x < a then (Numbers.one : F) else (Numbers.zero : F)
+  fun x => if x < a then (1 : F) else (0 : F)
 
 /-- Non-strict threshold indicator `ι_{≤a}` on `F`. -/
 noncomputable def ιLe (a : F) : F → F :=
-  fun x => if x ≤ a then (Numbers.one : F) else (Numbers.zero : F)
+  fun x => if x ≤ a then (1 : F) else (0 : F)
 
 /-- Scaled (by `K`) indicator: `K ⊗ ι`. -/
 noncomputable def scale (K : F) (g : F → F) : F → F :=
@@ -335,6 +354,7 @@ We model “there exists a σ-network implementing a scaled threshold-indicator 
 semantics on `I[a,b]`” using our `SigmaNet.Net` interval interpreter `evalSharpScalar`.
 -/
 
+/-- The intervals contained in `[a, b]`, the domain the separability statements quantify over. -/
 def IntervalDomain (a b : F) : Set I :=
   {J | IntervalIn (a := a) (b := b) J}
 
@@ -516,24 +536,24 @@ abbrev SeparatingActivation (σ : F → F) : Prop := Condition1.Holds σ
 Premise: the separating activation condition yields exact threshold-indicator networks on
 `[-1,1]`.
 -/
-def separatingActivationYieldsThresholdNetworksOnCube (σ : F → F) : Prop :=
+def SeparatingActivationYieldsThresholdNetworksOnCube (σ : F → F) : Prop :=
   ∀ w : Condition1.Witness σ,
-    Separability.SeparableOn σ (a := Numbers.negOne) (b := Numbers.one) w.η (σ w.c2)
+    Separability.SeparableOn σ (a := (-1)) (b := 1) w.η (σ w.c2)
 
 /--
 Premise: separability yields a σ-network whose interval semantics equals the direct-image hull.
 -/
-def thresholdNetworksYieldExactIntervalSemantics (σ : F → F) : Prop :=
+def ThresholdNetworksYieldExactIntervalSemantics (σ : F → F) : Prop :=
   ∀ {a b η K : F},
     Separability.SeparableOn σ (a := a) (b := b) η K →
       ∀ {d : Nat} (h : (Fin d → F) → F),
         (∀ x, IEEE32Exec.isNaN (h x) = false) →
         ∃ n : SigmaNet.Net d 1,
-          ∀ B, BoxIn (d := d) (a := a) (b := b) B → SigmaNet.evalSharpScalar σ n B = idealSharp (d := d)
-            h B
+          ∀ B, BoxIn (d := d) (a := a) (b := b) B →
+            SigmaNet.evalSharpScalar σ n B = idealSharp (d := d) h B
 
 /-- For any NaN-free rounded target `h`, there exists a σ-network with exact interval semantics. -/
-def exactIntervalSemanticsUniversalOnCube (σ : F → F) : Prop :=
+def ExactIntervalSemanticsUniversalOnCube (σ : F → F) : Prop :=
   ∀ {d : Nat} (h : (Fin d → F) → F),
     (∀ x, IEEE32Exec.isNaN (h x) = false) →
     ∃ n : SigmaNet.Net d 1,
@@ -542,14 +562,14 @@ def exactIntervalSemanticsUniversalOnCube (σ : F → F) : Prop :=
 /-- Separating activations and threshold-network composition imply exact interval semantics. -/
 theorem exactIntervalSemantics_universalOnCube_of_condition1_and_separableOn (σ : F → F) :
     SeparatingActivation σ →
-      separatingActivationYieldsThresholdNetworksOnCube σ →
-        thresholdNetworksYieldExactIntervalSemantics σ →
-          exactIntervalSemanticsUniversalOnCube σ := by
+      SeparatingActivationYieldsThresholdNetworksOnCube σ →
+        ThresholdNetworksYieldExactIntervalSemantics σ →
+          ExactIntervalSemanticsUniversalOnCube σ := by
   intro hcond hL2 hL3 d h hnan
   rcases hcond with ⟨w⟩
-  have hsep : Separability.SeparableOn σ (a := Numbers.negOne) (b := Numbers.one) w.η (σ w.c2) :=
+  have hsep : Separability.SeparableOn σ (a := (-1)) (b := 1) w.η (σ w.c2) :=
     hL2 w
-  rcases hL3 (a := Numbers.negOne) (b := Numbers.one) (η := w.η) (K := σ w.c2) hsep (d := d) (h :=
+  rcases hL3 (a := (-1)) (b := 1) (η := w.η) (K := σ w.c2) hsep (d := d) (h :=
     h) hnan with
     ⟨n, hn⟩
   refine ⟨n, ?_⟩
@@ -562,7 +582,7 @@ Exact interval-image theorem for rounded targets: for every NaN-free rounded tar
 a σ-network whose interval semantics is exactly the min/max hull of `fHat '' γ(B)` on every cube
 box.
 -/
-def roundedTargetExactIntervalImage (σ : F → F) : Prop :=
+def RoundedTargetExactIntervalImage (σ : F → F) : Prop :=
   ∀ {d : Nat} (fHat : (Fin d → F) → F),
     (∀ x, IEEE32Exec.isNaN (fHat x) = false) →
     ∃ n : SigmaNet.Net d 1,
@@ -572,9 +592,10 @@ def roundedTargetExactIntervalImage (σ : F → F) : Prop :=
           IsMaxOn fHat (I.γ (d := d) B) M ∧
           I.γI (SigmaNet.evalSharpScalar σ n B) = Icc m M
 
-/-- Derive exact interval images from exact interval semantics by choosing finite min/max witnesses. -/
+/-- Derive exact interval images from exact interval semantics by choosing finite min/max
+witnesses. -/
 theorem roundedTargetExactIntervalImage_of_exactIntervalSemantics (σ : F → F) :
-    exactIntervalSemanticsUniversalOnCube σ → roundedTargetExactIntervalImage σ := by
+    ExactIntervalSemanticsUniversalOnCube σ → RoundedTargetExactIntervalImage σ := by
   intro hL3 d fHat hfHat
   rcases hL3 (d := d) (h := fHat) hfHat with ⟨n, hn⟩
   refine ⟨n, ?_⟩
@@ -599,14 +620,14 @@ theorem roundedTargetExactIntervalImage_of_correctRounding
     (hRound : Condition1.correctRoundingSatisfiesSeparatingActivation ρ σ)
     (hCR : Condition1.CorrectlyRounded ρ σ)
     (hReal : Condition1.RealSufficientConditions ρ)
-    (hThresholds : separatingActivationYieldsThresholdNetworksOnCube σ)
-    (hExactConstruction : thresholdNetworksYieldExactIntervalSemantics σ) :
-    roundedTargetExactIntervalImage σ := by
+    (hThresholds : SeparatingActivationYieldsThresholdNetworksOnCube σ)
+    (hExactConstruction : ThresholdNetworksYieldExactIntervalSemantics σ) :
+    RoundedTargetExactIntervalImage σ := by
   have hCond1 : SeparatingActivation σ := hRound hCR hReal
-  have hExact : exactIntervalSemanticsUniversalOnCube σ :=
+  have hExact : ExactIntervalSemanticsUniversalOnCube σ :=
     exactIntervalSemantics_universalOnCube_of_condition1_and_separableOn (σ := σ) hCond1
       hThresholds hExactConstruction
-  show roundedTargetExactIntervalImage σ
+  show RoundedTargetExactIntervalImage σ
   exact roundedTargetExactIntervalImage_of_exactIntervalSemantics (σ := σ) hExact
 
 end ExactImageFromSeparability

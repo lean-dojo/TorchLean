@@ -7,18 +7,12 @@ Authors: TorchLean Team
 module
 
 public import Mathlib.Analysis.InnerProductSpace.Basic
-public import Mathlib.Topology.MetricSpace.Lipschitz
 
-import Mathlib.Tactic.Linarith
-import Mathlib.Tactic.Ring
-import Mathlib.Logic.Function.Iterate
 
 /-!
 # Gradient Descent: Linear Convergence from Strong Monotonicity + Lipschitz Gradient
 
-This file is a small, “real” optimization-theory module:
-
-It proves a linear convergence bound for the iteration
+This module proves a linear convergence bound for the iteration
 
 $$
 x_{k+1}=x_k-\eta g(x_k)
@@ -53,8 +47,6 @@ variable {E : Type} [NormedAddCommGroup E] [InnerProductSpace ℝ E]
 
 /-- Strong monotonicity of an operator in a real inner product space. -/
 def StrongMonotone (μ : ℝ) (g : E → E) : Prop :=
-  -- Note: in this codebase, the inner product notation is `⟪x, y⟫` (no explicit scalar subscript).
-  -- Older Lean/mathlib variants sometimes used `⟪x, y⟫_ℝ`; that spelling is a parse error here.
   ∀ x y, μ * ‖x - y‖ ^ 2 ≤ ⟪x - y, g x - g y⟫
 
 /-- One gradient-descent-like step for an operator `g`. -/

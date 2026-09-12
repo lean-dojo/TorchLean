@@ -6,9 +6,16 @@ Authors: TorchLean Team
 
 module
 
-public import NN
 public import NN.Tests.Runtime.Floats.Utils
 public import Std
+public import NN.API.Module.Execution
+public import NN.API.Neural.Builders
+public import NN.API.Seeded
+public import NN.Runtime.Autograd.Model.Module.Objective
+public import NN.Runtime.Autograd.Model.Session.Autograd
+public import NN.Runtime.Autograd.Model.Session.ShapeIndex
+public import NN.Runtime.Autograd.Model.Session.Types
+public import NN.Runtime.Autograd.Torch.Core.Types
 
 /-!
 # TorchLeanIndexShapeCheck
@@ -21,8 +28,9 @@ refactoring tensor APIs.
 
 @[expose] public section
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
+open Tests.Utils
 open Tests.Floats.Utils
 
 namespace Tests
@@ -32,9 +40,9 @@ namespace TorchLeanIndexShapeCheck
 /-- A task head preserves every leading axis rather than treating only axis zero as a batch. -/
 def multiLeadingClassifier :
     TorchLean.nn.Sequential [2, 3, 4, 5] [2, 3, 7] :=
-  by
-    simpa [Spec.Shape.ofList, Spec.Shape.concat, Spec.Shape.appendDim] using
-      (TorchLean.nn.heads.classifier (leading := [2, 3]) (shape := [4, 5]) 7)
+  TorchLean.nn.build 0 <|
+    TorchLean.nn.heads.classifier
+      (batchShape := [2, 3]) (featureShape := [4, 5]) 7
 
 /-- Check that prefix flattening preserves every leading slice and row-major suffix order. -/
 def checkFlattenThenTake : IO Unit := do
@@ -51,168 +59,172 @@ def checkFlattenThenTake : IO Unit := do
         assertApprox s!"flattenThenTake[{i.val},{j.val},{k.val}]"
           (vecVal row k) (Float.ofNat (100 * i.val + 10 * j.val + k.val))
 
-def gradSelect (execution : _root_.Runtime.Autograd.Torch.ExecutionMode) :
+def gradSelect (execution : Runtime.Autograd.Torch.ExecutionMode) :
     IO (Tensor Float [3]) := do
-  let sess ← _root_.Runtime.Autograd.TorchLean.Session.new (α := Float)
-    (opts := { execution := execution })
-  let xVal : Tensor Float [3] := tensor! (ty := Float) [1.0, 2.0, 3.0]
-  let x : _root_.Runtime.Autograd.Torch.TensorRef Float [3] ←
-    _root_.Runtime.Autograd.TorchLean.Session.input sess xVal
+  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
+    (options := { execution := execution })
+  let xVal : Tensor Float [3] := [1.0, 2.0, 3.0]
+  let x : Runtime.Autograd.Torch.TensorRef Float [3] ←
+    Runtime.Autograd.Model.Session.input sess xVal
       (name := some "x") (requiresGrad := true)
-  let y : _root_.Runtime.Autograd.Torch.TensorRef Float Shape.scalar ←
-    _root_.Runtime.Autograd.TorchLean.Session.select
+  let y : Runtime.Autograd.Torch.TensorRef Float Shape.scalar ←
+    Runtime.Autograd.Model.Session.select
       (α := Float) (shape := Shape.ofList [3]) sess 0 x ⟨1, by decide⟩
-  let grads ← _root_.Runtime.Autograd.TorchLean.Session.backwardScalarDenseAll sess y
-  _root_.Runtime.Autograd.TorchLean.Session.grad sess grads x
+  let grads ← Runtime.Autograd.Model.Session.backwardScalarDenseAll sess y
+  Runtime.Autograd.Model.Session.grad sess grads x
 
-def gradIndexSelectVector (execution : _root_.Runtime.Autograd.Torch.ExecutionMode) :
+def gradIndexSelectVector (execution : Runtime.Autograd.Torch.ExecutionMode) :
     IO (Tensor Float [3]) := do
-  let sess ← _root_.Runtime.Autograd.TorchLean.Session.new (α := Float)
-    (opts := { execution := execution })
-  let xVal : Tensor Float [3] := tensor! (ty := Float) [1.0, 2.0, 3.0]
+  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
+    (options := { execution := execution })
+  let xVal : Tensor Float [3] := [1.0, 2.0, 3.0]
   let indices : Fin 3 → Fin 3 :=
     ![⟨2, by decide⟩, ⟨0, by decide⟩, ⟨2, by decide⟩]
   let idx : Tensor (Fin 3) [3] := Tensor.ofFn indices
-  let x : _root_.Runtime.Autograd.Torch.TensorRef Float [3] ←
-    _root_.Runtime.Autograd.TorchLean.Session.input sess xVal
+  let x : Runtime.Autograd.Torch.TensorRef Float [3] ←
+    Runtime.Autograd.Model.Session.input sess xVal
       (name := some "x") (requiresGrad := true)
-  let y ← _root_.Runtime.Autograd.TorchLean.Session.indexSelect
+  let y ← Runtime.Autograd.Model.Session.indexSelect
     (α := Float) (shape := Shape.ofList [3]) sess 0 3 x idx
-  let total ← _root_.Runtime.Autograd.TorchLean.Session.sum sess (sh := [3]) y
-  let grads ← _root_.Runtime.Autograd.TorchLean.Session.backwardScalarDenseAll sess total
-  _root_.Runtime.Autograd.TorchLean.Session.grad sess grads x
+  let total ← Runtime.Autograd.Model.Session.sum sess (sh := [3]) y
+  let grads ← Runtime.Autograd.Model.Session.backwardScalarDenseAll sess total
+  Runtime.Autograd.Model.Session.grad sess grads x
 
-def gradIndexSelectRows (execution : _root_.Runtime.Autograd.Torch.ExecutionMode) :
+def gradIndexSelectRows (execution : Runtime.Autograd.Torch.ExecutionMode) :
     IO (Tensor Float [3, 2]) :=
   do
-  let sess ← _root_.Runtime.Autograd.TorchLean.Session.new (α := Float)
-    (opts := { execution := execution })
+  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
+    (options := { execution := execution })
   let xVal : Tensor Float [3, 2] :=
     Tensor.generate [3, 2] fun coordinate =>
       Float.ofNat (coordinate.getD 0 0 * 10 + coordinate.getD 1 0 + 1)
   let idx : Tensor (Fin 3) [2] :=
     Tensor.ofFn (fun _ => ⟨2, by decide⟩)
-  let x : _root_.Runtime.Autograd.Torch.TensorRef Float [3, 2] ←
-    _root_.Runtime.Autograd.TorchLean.Session.input sess xVal
+  let x : Runtime.Autograd.Torch.TensorRef Float [3, 2] ←
+    Runtime.Autograd.Model.Session.input sess xVal
       (name := some "x") (requiresGrad := true)
-  let y ← _root_.Runtime.Autograd.TorchLean.Session.indexSelect
+  let y ← Runtime.Autograd.Model.Session.indexSelect
     (α := Float) (shape := Shape.ofList [3, 2]) sess 0 2 x idx
-  let total ← _root_.Runtime.Autograd.TorchLean.Session.sum sess (sh := [2, 2]) y
-  let grads ← _root_.Runtime.Autograd.TorchLean.Session.backwardScalarDenseAll sess total
-  _root_.Runtime.Autograd.TorchLean.Session.grad sess grads x
+  let total ← Runtime.Autograd.Model.Session.sum sess (sh := [2, 2]) y
+  let grads ← Runtime.Autograd.Model.Session.backwardScalarDenseAll sess total
+  Runtime.Autograd.Model.Session.grad sess grads x
 
-def gradBroadcastScalar (execution : _root_.Runtime.Autograd.Torch.ExecutionMode) : IO Float := do
-  let sess ← _root_.Runtime.Autograd.TorchLean.Session.new (α := Float)
-    (opts := { execution := execution })
+def gradBroadcastScalar (execution : Runtime.Autograd.Torch.ExecutionMode) : IO Float := do
+  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
+    (options := { execution := execution })
   let sVal : Tensor Float Shape.scalar := Tensor.scalar 2.0
-  let sRef ← _root_.Runtime.Autograd.TorchLean.Session.input sess sVal (name := some "s") (requiresGrad := true)
+  let sRef ←
+    Runtime.Autograd.Model.Session.input sess sVal (name := some "s") (requiresGrad := true)
   let cb : Shape.CanBroadcastTo Shape.scalar [4] :=
     Shape.CanBroadcastTo.scalarTo [4]
-  let v ← _root_.Runtime.Autograd.TorchLean.Session.broadcastTo sess
+  let v ← Runtime.Autograd.Model.Session.broadcastTo sess
     (sh1 := Shape.scalar) (sh2 := [4]) cb sRef
-  let total ← _root_.Runtime.Autograd.TorchLean.Session.sum sess (sh := [4]) v
-  let grads ← _root_.Runtime.Autograd.TorchLean.Session.backwardScalarDenseAll sess total
-  let dsT : Tensor Float Shape.scalar ← _root_.Runtime.Autograd.TorchLean.Session.grad
+  let total ← Runtime.Autograd.Model.Session.sum sess (sh := [4]) v
+  let grads ← Runtime.Autograd.Model.Session.backwardScalarDenseAll sess total
+  let dsT : Tensor Float Shape.scalar ← Runtime.Autograd.Model.Session.grad
     sess (sh := Shape.scalar) grads sRef
   pure (scalarVal dsT)
 
-def gradReshapeMat (execution : _root_.Runtime.Autograd.Torch.ExecutionMode) :
+def gradReshapeMat (execution : Runtime.Autograd.Torch.ExecutionMode) :
     IO (Tensor Float [2, 3]) := do
-  let sess ← _root_.Runtime.Autograd.TorchLean.Session.new (α := Float)
-    (opts := { execution := execution })
+  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
+    (options := { execution := execution })
   let xVal : Tensor Float [2, 3] :=
     Tensor.generate [2, 3] fun coordinate =>
       Float.ofNat (coordinate.getD 0 0 * 10 + coordinate.getD 1 0)
-  let x : _root_.Runtime.Autograd.Torch.TensorRef Float [2, 3] ←
-    _root_.Runtime.Autograd.TorchLean.Session.input sess xVal
+  let x : Runtime.Autograd.Torch.TensorRef Float [2, 3] ←
+    Runtime.Autograd.Model.Session.input sess xVal
       (name := some "x") (requiresGrad := true)
   let h : Spec.Shape.size [2, 3] = Spec.Shape.size [6] := by decide
-  let y ← _root_.Runtime.Autograd.TorchLean.Session.reshape sess
+  let y ← Runtime.Autograd.Model.Session.reshape sess
     (sh1 := [2, 3]) (sh2 := [6]) x
     h
-  let total ← _root_.Runtime.Autograd.TorchLean.Session.sum sess (sh := [6]) y
-  let grads ← _root_.Runtime.Autograd.TorchLean.Session.backwardScalarDenseAll sess total
-  _root_.Runtime.Autograd.TorchLean.Session.grad sess grads x
+  let total ← Runtime.Autograd.Model.Session.sum sess (sh := [6]) y
+  let grads ← Runtime.Autograd.Model.Session.backwardScalarDenseAll sess total
+  Runtime.Autograd.Model.Session.grad sess grads x
 
-def gradTransposeMat (execution : _root_.Runtime.Autograd.Torch.ExecutionMode) :
+def gradTransposeMat (execution : Runtime.Autograd.Torch.ExecutionMode) :
     IO (Tensor Float [2, 3]) :=
   do
-  let sess ← _root_.Runtime.Autograd.TorchLean.Session.new (α := Float)
-    (opts := { execution := execution })
+  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
+    (options := { execution := execution })
   let xVal : Tensor Float [2, 3] :=
     Tensor.generate [2, 3] fun coordinate =>
       Float.ofNat (coordinate.getD 0 0 + coordinate.getD 1 0 + 1)
-  let x : _root_.Runtime.Autograd.Torch.TensorRef Float [2, 3] ←
-    _root_.Runtime.Autograd.TorchLean.Session.input sess xVal
+  let x : Runtime.Autograd.Torch.TensorRef Float [2, 3] ←
+    Runtime.Autograd.Model.Session.input sess xVal
       (name := some "x") (requiresGrad := true)
-  let xt ← _root_.Runtime.Autograd.TorchLean.Session.swapAdjacentAtDepth sess 0 x
-  let total ← _root_.Runtime.Autograd.TorchLean.Session.sum sess (sh := [3, 2]) xt
-  let grads ← _root_.Runtime.Autograd.TorchLean.Session.backwardScalarDenseAll sess total
-  _root_.Runtime.Autograd.TorchLean.Session.grad sess grads x
+  let xt ← Runtime.Autograd.Model.Session.swapAdjacentAtDepth sess 0 x
+  let total ← Runtime.Autograd.Model.Session.sum sess (sh := [3, 2]) xt
+  let grads ← Runtime.Autograd.Model.Session.backwardScalarDenseAll sess total
+  Runtime.Autograd.Model.Session.grad sess grads x
 
-def gradReduceMeanVec (execution : _root_.Runtime.Autograd.Torch.ExecutionMode) :
+def gradReduceMeanVec (execution : Runtime.Autograd.Torch.ExecutionMode) :
     IO (Tensor Float [3]) := do
-  let sess ← _root_.Runtime.Autograd.TorchLean.Session.new (α := Float)
-    (opts := { execution := execution })
-  let xVal : Tensor Float [3] := tensor! (ty := Float) [1.0, 2.0, 3.0]
-  let x : _root_.Runtime.Autograd.Torch.TensorRef Float [3] ←
-    _root_.Runtime.Autograd.TorchLean.Session.input sess xVal
+  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
+    (options := { execution := execution })
+  let xVal : Tensor Float [3] := [1.0, 2.0, 3.0]
+  let x : Runtime.Autograd.Torch.TensorRef Float [3] ←
+    Runtime.Autograd.Model.Session.input sess xVal
       (name := some "x") (requiresGrad := true)
-  let m : _root_.Runtime.Autograd.Torch.TensorRef Float Shape.scalar ←
-    _root_.Runtime.Autograd.TorchLean.Session.reduceMean
+  let m : Runtime.Autograd.Torch.TensorRef Float Shape.scalar ←
+    Runtime.Autograd.Model.Session.reduceMean
       (α := Float) (sh := Shape.ofList [3]) sess 0 x
-  let grads ← _root_.Runtime.Autograd.TorchLean.Session.backwardScalarDenseAll sess m
-  _root_.Runtime.Autograd.TorchLean.Session.grad sess grads x
+  let grads ← Runtime.Autograd.Model.Session.backwardScalarDenseAll sess m
+  Runtime.Autograd.Model.Session.grad sess grads x
 
-def gradScatterAddVec (execution : _root_.Runtime.Autograd.Torch.ExecutionMode) :
+def gradScatterAddVec (execution : Runtime.Autograd.Torch.ExecutionMode) :
     IO (Tensor Float [3] × Float) :=
   do
-  let sess ← _root_.Runtime.Autograd.TorchLean.Session.new (α := Float)
-    (opts := { execution := execution })
-  let xVal : Tensor Float [3] := tensor! (ty := Float) [1.0, 2.0, 3.0]
-  let vVal : Tensor Float [1] := tensor! (ty := Float) [5.0]
+  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
+    (options := { execution := execution })
+  let xVal : Tensor Float [3] := [1.0, 2.0, 3.0]
+  let vVal : Tensor Float [1] := [5.0]
   let idx : Tensor (Fin 3) [1] := Tensor.ofFn (fun _ => ⟨2, by decide⟩)
-  let x : _root_.Runtime.Autograd.Torch.TensorRef Float [3] ←
-    _root_.Runtime.Autograd.TorchLean.Session.input sess xVal
+  let x : Runtime.Autograd.Torch.TensorRef Float [3] ←
+    Runtime.Autograd.Model.Session.input sess xVal
       (name := some "x") (requiresGrad := true)
-  let v : _root_.Runtime.Autograd.Torch.TensorRef Float [1] ←
-    _root_.Runtime.Autograd.TorchLean.Session.input sess vVal
+  let v : Runtime.Autograd.Torch.TensorRef Float [1] ←
+    Runtime.Autograd.Model.Session.input sess vVal
       (name := some "v") (requiresGrad := true)
-  let y ← _root_.Runtime.Autograd.TorchLean.Session.scatterAdd
+  let y ← Runtime.Autograd.Model.Session.scatterAdd
     (α := Float) (shape := Shape.ofList [3]) sess 0 1 x v idx
-  let total ← _root_.Runtime.Autograd.TorchLean.Session.sum sess (sh := [3]) y
-  let grads ← _root_.Runtime.Autograd.TorchLean.Session.backwardScalarDenseAll sess total
-  let dx ← _root_.Runtime.Autograd.TorchLean.Session.grad sess grads x
-  let dvT : Tensor Float [1] ← _root_.Runtime.Autograd.TorchLean.Session.grad
+  let total ← Runtime.Autograd.Model.Session.sum sess (sh := [3]) y
+  let grads ← Runtime.Autograd.Model.Session.backwardScalarDenseAll sess total
+  let dx ← Runtime.Autograd.Model.Session.grad sess grads x
+  let dvT : Tensor Float [1] ← Runtime.Autograd.Model.Session.grad
     sess (sh := [1]) grads v
   pure (dx, vecVal dvT ⟨0, by decide⟩)
 
 /-- A scalar objective whose labels are bounded by the class count in their element type. -/
 def boundedLabelObjective :
-    _root_.Runtime.Autograd.TorchLean.Module.ObjectiveDef (Fin 3) [[2, 3]] [] [[2]] where
-  initState := .cons (Spec.fill 0.0 [2, 3]) .nil
+    Runtime.Autograd.Model.Module.ObjectiveDef (Fin 3) [[2, 3]] [] [[2]] where
+  initState := .cons (Tensor.full [2, 3] 0.0) .nil
   loss := fun {α} => by
     intro _ _
     exact fun {m} _ _ =>
       fun logits => fun labels =>
-        let logitsIndexed : Runtime.Autograd.TorchLean.RefTy m α
-            (([2] : Shape).concat [3]) := by simpa using logits
+        let logitsIndexed : Runtime.Autograd.Model.RefTy m α
+            (Shape.concat [2] [3]) := by simpa using logits
         let labelsIndexed : Runtime.Autograd.Torch.DataRef (m := m) (α := α) (Fin 3)
-            (([2] : Shape).concat Shape.scalar) := by simpa using labels
+            (Shape.concat [2] []) := by simpa using labels
         TorchLean.Loss.crossEntropy (m := m) (α := α)
           1 rfl logitsIndexed labelsIndexed
 
 /-- Check that bounded labels pass through eager and typed-graph scalar objectives unchanged. -/
-def boundedLabelLoss (execution : _root_.Runtime.Autograd.Torch.ExecutionMode) : IO Float := do
-  let module ← _root_.Runtime.Autograd.TorchLean.Module.ObjectiveDef.instantiateFloat64
-    boundedLabelObjective { execution := execution }
+def boundedLabelLoss (execution : Runtime.Autograd.Torch.ExecutionMode) : IO Float := do
+  let module ← TorchLean.Module.instantiate
+    boundedLabelObjective { execution := execution } (α := Float)
   let logits : Tensor Float [2, 3] :=
     Tensor.generate [2, 3] fun coordinate =>
       if coordinate.getD 0 0 = coordinate.getD 1 0 then 2.0 else 0.0
-  module.loadState (.cons logits .nil)
+  TorchLean.Module.Objective.setState module <|
+    TorchLean.nn.State.empty.push logits
   let labels : Tensor (Fin 3) [2] :=
     Tensor.ofFn fun row => if row = 0 then ⟨0, by decide⟩ else ⟨2, by decide⟩
-  let loss ← module.loss .nil (.cons labels .nil)
+  let loss ← TorchLean.Module.Objective.loss module
+    TorchLean.Arguments.empty
+    (TorchLean.Arguments.empty.push labels)
   pure loss.item
 
 /-- Check generic non-differentiable inputs under both execution modes. -/
@@ -221,8 +233,24 @@ def checkBoundedLabelObjective : IO Unit := do
   let graphLoss ← boundedLabelLoss .typedGraph
   assertApprox "bounded-label loss eager/typed-graph" eagerLoss graphLoss
 
+/-- Two invalid axes must not silently become an identity permutation. -/
+def checkTransposeAxes : IO Unit := do
+  let session ← Runtime.Autograd.Torch.Internal.EagerSession.new (α := Float)
+  let input ← session.input ([1.0, 2.0] : Tensor Float [2])
+  for (first, second) in [(1, 1), (9, 10), (0, 9)] do
+    let result ← Runtime.Autograd.Model.F.transpose (α := Float) (s := [2])
+      (m := Runtime.Autograd.Torch.Internal.EagerM Float)
+      (sOut := [2]) first second input session
+    unless result.isNone do
+      throw <| IO.userError "functional transpose accepted an out-of-range axis"
+  let valid ← Runtime.Autograd.Model.F.transpose (α := Float) (s := [2])
+    (m := Runtime.Autograd.Torch.Internal.EagerM Float) (sOut := [2]) 0 0 input session
+  unless valid.isSome do
+    throw <| IO.userError "functional transpose rejected the same valid axis"
+
 def run : IO Unit := do
   IO.println "torchlean_index_shape_check: begin"
+  checkTransposeAxes
 
   let gE ← gradSelect .eager
   let gC ← gradSelect .typedGraph
@@ -260,15 +288,16 @@ def run : IO Unit := do
   let rC ← gradReshapeMat .typedGraph
   for i in List.finRange 2 do
     for j in List.finRange 3 do
-      assertApprox s!"reshape grad[{i.val},{j.val}] eager/typed-graph" (matVal rE i j) (matVal rC i j)
+      assertApprox s!"reshape grad[{i.val},{j.val}] eager/typed-graph" (matVal rE i j)
+        (matVal rC i j)
       assertApprox s!"reshape grad[{i.val},{j.val}] expected" (matVal rE i j) 1.0
 
   let tE ← gradTransposeMat .eager
   let tC ← gradTransposeMat .typedGraph
   for i in List.finRange 2 do
     for j in List.finRange 3 do
-      assertApprox s!"transpose grad[{i.val},{j.val}] eager/typed-graph" (matVal tE i j) (matVal tC i
-        j)
+      assertApprox s!"transpose grad[{i.val},{j.val}] eager/typed-graph" (matVal tE i j)
+        (matVal tC i j)
       assertApprox s!"transpose grad[{i.val},{j.val}] expected" (matVal tE i j) 1.0
 
   let mE ← gradReduceMeanVec .eager

@@ -7,10 +7,12 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.IRExec.Lowering.Basic
-public import NN.Runtime.Autograd.IRExec.Lowering.Elementwise
-public import NN.Runtime.Autograd.IRExec.Lowering.Reductions
-public import NN.Runtime.Autograd.IRExec.Lowering.LinearAlgebra
+public import NN.Runtime.Autograd.IRExec.Lowering.Common
 public import NN.Runtime.Autograd.IRExec.Lowering.ConvolutionNormalization
+public import NN.Runtime.Autograd.IRExec.Lowering.Elementwise
+public import NN.Runtime.Autograd.IRExec.Lowering.LinearAlgebra
+public import NN.Runtime.Autograd.IRExec.Lowering.Primitives
+public import NN.Runtime.Autograd.IRExec.Lowering.Reductions
 public import NN.Runtime.Autograd.IRExec.Lowering.Shape
 
 /-!
@@ -26,10 +28,13 @@ namespace Runtime
 namespace Autograd
 namespace IRExec
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Proofs.Autograd.Algebra
 open NN.IR
+-- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
+-- `Idx` and `getIdx` are defined.
+open Proofs (Idx getIdx)
 
 namespace Internal
 
@@ -41,14 +46,15 @@ This is the main lowering loop:
 - lowers node `i` into a `ForwardNode` closure (rejecting unsupported ops/shapes), and
 - appends the resulting node to the accumulating `ForwardData`.
 
-The public entrypoint `lowerToForwardGraph` handles node 0 and calls `buildFrom` starting at `i = 1`.
+The public entrypoint `lowerToForwardGraph` handles node 0 and calls `buildFrom` starting at
+`i = 1`.
 
 Operationally, `buildFrom` is a checked lowering pass:
 - success means every visited node had well-typed parents and a supported lowering case,
 - failure returns a concrete error explaining the first unsupported/malformed node.
 -/
 def buildFrom
-    {α : Type} [Context α] [shapeDecidable : DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) (inShape : Shape)
     (i : Nat) (st : State α inShape) : Except String (State α inShape) := do
   let ⟨ss, gd⟩ := st
@@ -72,7 +78,7 @@ def buildFrom
       | .bernoulliMask seed => lowerBasic lowering (.bernoulliMask seed)
       | .add => lowerElementwise lowering (.add)
       | .sub => lowerElementwise lowering (.sub)
-      | .mul_elem => lowerElementwise lowering (.mul_elem)
+      | .mulElem => lowerElementwise lowering (.mulElem)
       | .abs => lowerElementwise lowering (.abs)
       | .sqrt => lowerElementwise lowering (.sqrt)
       | .inv => lowerElementwise lowering (.inv)
@@ -81,6 +87,8 @@ def buildFrom
       | .relu => lowerElementwise lowering (.relu)
       | .tanh => lowerElementwise lowering (.tanh)
       | .sigmoid => lowerElementwise lowering (.sigmoid)
+      | .softplus => lowerElementwise lowering (.softplus)
+      | .safeLog => lowerElementwise lowering (.safeLog)
       | .exp => lowerElementwise lowering (.exp)
       | .log => lowerElementwise lowering (.log)
       | .sin => lowerElementwise lowering (.sin)
@@ -97,7 +105,8 @@ def buildFrom
       | .maxPool config => lowerConvolutionNormalization lowering (.maxPool config)
       | .avgPool config => lowerConvolutionNormalization lowering (.avgPool config)
       | .conv config => lowerConvolutionNormalization lowering (.conv config)
-      | .batchNormEval channelAxis channels => lowerConvolutionNormalization lowering (.batchNormEval channelAxis channels)
+      | .batchNormEval channelAxis channels =>
+          lowerConvolutionNormalization lowering (.batchNormEval channelAxis channels)
       | .layernorm axis => lowerConvolutionNormalization lowering (.layernorm axis)
       | .permute perm => lowerShape lowering (.permute perm)
       | .reshape inS outS => lowerShape lowering (.reshape inS outS)

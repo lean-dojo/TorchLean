@@ -11,8 +11,8 @@ public import NN.Spec.Core.TensorOps
 /-!
 # Positional encodings (spec layer)
 
-This file provides the simplest positional encoding definition: a **learnable** per-position embedding
-that is added to token embeddings.
+This file provides the simplest positional encoding definition: a **learnable** per-position
+embedding that is added to token embeddings.
 
 PyTorch analogy:
 
@@ -28,7 +28,7 @@ Why learnable positional encodings show up a lot in practice:
 
 If you want sinusoidal encodings (Transformer) or RoPE/rotary encodings, those can be defined as
 pure functions that produce a tensor of shape `(seqLen, embedDim)` and then reused with the same
-`add_positional_encoding_spec` below.
+`addPositionalEncodingSpec` below.
 
 Reference (sinusoidal): "Attention Is All You Need" (Vaswani et al., 2017):
   https://arxiv.org/abs/1706.03762
@@ -37,11 +37,13 @@ Reference (sinusoidal): "Attention Is All You Need" (Vaswani et al., 2017):
 @[expose] public section
 
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /--
 Learnable positional encoding parameters for a fixed `(seqLen, embedDim)`.
@@ -49,8 +51,8 @@ Learnable positional encoding parameters for a fixed `(seqLen, embedDim)`.
 This record stores the trainable positional table. Higher-level models decide how to initialize it
 and whether to share or resize it across different sequence lengths.
 -/
-structure PositionalEncodingSpec (seqLen embedDim : Nat) (α : Type) where
-  /-- pos. -/
+structure PositionalEncodingSpec (seqLen embedDim : Nat) (α : Type) [TorchLean.Storage α] where
+  /-- The learnable positional table, one `embedDim` vector per position. -/
   pos : Tensor α [seqLen, embedDim]
 
 /--
@@ -79,13 +81,13 @@ This is trivial, but having it as a named spec makes higher-level models (e.g. V
 wire up without re-deriving the same one-liner everywhere.
 -/
 
-/-- Backward/VJP for `add_positional_encoding_spec`. -/
+/-- Backward/VJP for `addPositionalEncodingSpec`. -/
 def addPositionalEncodingBackwardSpec {seqLen embedDim : Nat}
     (_pe : PositionalEncodingSpec seqLen embedDim α)
-    (grad_output : Tensor α [seqLen, embedDim]) :
+    (gradOutput : Tensor α [seqLen, embedDim]) :
     (Tensor α [seqLen, embedDim] ×  -- ∂L/∂pos
      Tensor α [seqLen, embedDim]) := -- ∂L/∂x
-  (grad_output, grad_output)
+  (gradOutput, gradOutput)
 
 /-!
 ## Sinusoidal positional encodings (pure functions)
@@ -106,9 +108,12 @@ Frequency denominator used by both sinusoidal PE and RoPE:
 implemented as:
 
 `exp(log(10000) * (2*i / d))`
+
+Each operation uses the selected scalar backend. On a grid that cannot represent `10000`, the
+logarithm receives the rounded base; this is not a single rounding of the exact real logarithm.
 -/
 def posencFreqDenomSpec (i d : Nat) : α :=
-  MathFunctions.exp (Numbers.lnTenThousand * ((Numbers.two * (i : α)) / (d : α)))
+  MathFunctions.exp ((MathFunctions.log 10000) * ((2 * (i : α)) / (d : α)))
 
 /--
 Common angle used by sinusoidal PE and RoPE:
@@ -197,19 +202,34 @@ def ropeRotatePairsSpec {headDim : Nat}
         Nat.lt_of_le_of_lt (Nat.sub_le idx 1) j.isLt
       Tensor.scalar (Tensor.getScalar x ⟨idx - 1, hPrev⟩))
 
-/-- Broadcast RoPE `cos(θ)` factors to a full `(headDim)` vector for one position. -/
+/--
+Broadcast RoPE `cos(θ)` factors to a full `(headDim)` vector for one position.
+
+For an odd width, the final unpaired coordinate receives cosine factor `1`.
+-/
 def ropeCosVectorSpec (pos headDim : Nat) : Tensor α [headDim] :=
   Tensor.dim (fun (j : Fin headDim) =>
-    let iNat : Nat := j.val / 2
-    let θ : α := posencAngleSpec (α := α) pos iNat headDim
-    Tensor.scalar (MathFunctions.cos θ))
+    if j.val % 2 = 0 ∧ j.val + 1 = headDim then
+      Tensor.scalar 1
+    else
+      let iNat : Nat := j.val / 2
+      let θ : α := posencAngleSpec (α := α) pos iNat headDim
+      Tensor.scalar (MathFunctions.cos θ))
 
-/-- Broadcast RoPE `sin(θ)` factors to a full `(headDim)` vector for one position. -/
+/--
+Broadcast RoPE `sin(θ)` factors to a full `(headDim)` vector for one position.
+
+For an odd width, the final unpaired coordinate receives sine factor `0`, so applying RoPE leaves
+that coordinate unchanged.
+-/
 def ropeSinVectorSpec (pos headDim : Nat) : Tensor α [headDim] :=
   Tensor.dim (fun (j : Fin headDim) =>
-    let iNat : Nat := j.val / 2
-    let θ : α := posencAngleSpec (α := α) pos iNat headDim
-    Tensor.scalar (MathFunctions.sin θ))
+    if j.val % 2 = 0 ∧ j.val + 1 = headDim then
+      Tensor.scalar 0
+    else
+      let iNat : Nat := j.val / 2
+      let θ : α := posencAngleSpec (α := α) pos iNat headDim
+      Tensor.scalar (MathFunctions.sin θ))
 
 /--
 Apply RoPE to a single head matrix `x : (seqLen, headDim)`.
@@ -221,6 +241,7 @@ Implementation matches the standard identity:
 where `cos` and `sin` are position-dependent vectors broadcast across the last dimension.
 
 `startPos` is an absolute-position offset (useful for KV-cache decoding).
+When `headDim` is odd, the final unpaired coordinate is preserved.
 -/
 def ropeApplySpec {seqLen headDim : Nat}
     (x : Tensor α [seqLen, headDim])
@@ -228,17 +249,20 @@ def ropeApplySpec {seqLen headDim : Nat}
     Tensor α [seqLen, headDim] :=
   Tensor.dim (fun (pos : Fin seqLen) =>
     let posNat : Nat := startPos + pos.val
-    let row : Tensor α [headDim] := x[pos]
+    let row : Tensor α [headDim] := Tensor.unstack x pos
     let c : Tensor α [headDim] := ropeCosVectorSpec (α := α) posNat headDim
     let s : Tensor α [headDim] := ropeSinVectorSpec (α := α) posNat headDim
     Tensor.addSpec (Tensor.mulSpec row c)
       (Tensor.mulSpec (ropeRotatePairsSpec (α := α) (headDim := headDim) row) s))
 
-/-- Apply RoPE to `(numHeads, seqLen, headDim)` by applying `rope_apply_spec` independently per head. -/
+/-- Apply RoPE to `(numHeads, seqLen, headDim)` by applying `ropeApplySpec` independently per head.
+-/
 def ropeApplyHeadsSpec {numHeads seqLen headDim : Nat}
     (x : Tensor α [numHeads, seqLen, headDim])
     (startPos : Nat := 0) :
     Tensor α [numHeads, seqLen, headDim] :=
-  Tensor.dim (fun h => ropeApplySpec (α := α) (seqLen := seqLen) (headDim := headDim) x[h] startPos)
+  Tensor.dim (fun h =>
+    ropeApplySpec (α := α) (seqLen := seqLen) (headDim := headDim)
+      (Tensor.unstack x h) startPos)
 
 end Spec

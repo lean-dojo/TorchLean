@@ -6,9 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.EReal.Basic
-public import NN.Floats.IEEEExec.Bridge.FP32Total
 public import NN.Floats.IEEEExec.Semantics.ERealSemantics
+public import NN.Floats.IEEEExec.Bridge.FP32Total.Effective
 
 /-!
 # `minimum`/`maximum` in `EReal` semantics (IEEE32Exec)

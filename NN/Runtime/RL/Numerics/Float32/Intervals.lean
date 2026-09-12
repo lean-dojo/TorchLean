@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.RL.Numerics.Float32.PPO
+public import NN.Runtime.RL.Numerics.Float32.Types
+public import NN.Spec.RL.Core
+public import NN.Tensor.Internal.Elab.TensorLiteral
 
 /-!
 # Float32 Interval Diagnostics for RL
@@ -27,8 +29,8 @@ namespace RL
 namespace Numerics
 namespace Float32
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Spec.RL
 
 open TorchLean.Floats
@@ -85,7 +87,8 @@ This is a **conservative hull enclosure**: it encloses both of the candidate pro
 still provides a useful non-finite/divergence detector for the PPO objective.
 
 Reference:
-- Schulman et al., "Proximal Policy Optimization Algorithms" (2017): https://arxiv.org/abs/1707.06347
+- Schulman et al., "Proximal Policy Optimization Algorithms" (2017):
+  https://arxiv.org/abs/1707.06347
 -/
 def ppoClippedObjectiveFromRatioInterval
     (ratio advantage clipEps : Float32Exec) : Interval32 :=
@@ -95,7 +98,8 @@ def ppoClippedObjectiveFromRatioInterval
   let lo : Float32Exec := TorchLean.Floats.IEEE754.IEEE32Exec.sub one clipEps
   let hi : Float32Exec := TorchLean.Floats.IEEE754.IEEE32Exec.add one clipEps
   let clippedRatio : Float32Exec :=
-    TorchLean.Floats.IEEE754.IEEE32Exec.minimum hi (TorchLean.Floats.IEEE754.IEEE32Exec.maximum lo ratio)
+    TorchLean.Floats.IEEE754.IEEE32Exec.minimum hi
+      (TorchLean.Floats.IEEE754.IEEE32Exec.maximum lo ratio)
   let unclipped : Interval32 :=
     TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul
       (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point ratio)
@@ -122,23 +126,12 @@ def discountedReturnsIntervals {n : Nat}
     (gamma : Float32Exec) (rewards : Tensor Float32Exec [n])
     (bootstrap : Float32Exec := (0 : Float32Exec)) :
     Tensor Interval32 [n] :=
-  let rArr : Array Float32Exec :=
-    Array.ofFn (fun i : Fin n => Tensor.item (get rewards i))
-  let out : Array Interval32 :=
-    Id.run do
-      let mut out : Array Interval32 :=
-        Array.replicate n (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point 0)
-      let mut g : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point bootstrap
-      let γ : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point gamma
-      for t in [0:n] do
-        let idx := n - 1 - t
-        let r : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point (rArr[idx]!)
-        g :=
-          TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.add r
-            (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul γ g)
-        out := out.set! idx g
-      return out
-  Tensor.dim (fun i : Fin n => Tensor.scalar (out[i.val]!))
+  let gammaInterval := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point gamma
+  Tensor.scanr (fun reward future =>
+    TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.add
+      (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point reward)
+      (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul gammaInterval future))
+    (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point bootstrap) rewards
 
 /--
 Outward-rounded interval enclosure for fixed-horizon $\operatorname{GAE}(\lambda)$.
@@ -155,46 +148,29 @@ def generalizedAdvantageEstimationIntervals {n : Nat}
     (rewards values nextValues : Tensor Float32Exec [n])
     (dones : Tensor Bool [n]) :
     Tensor Interval32 [n] :=
-  let rArr : Array Float32Exec :=
-    Array.ofFn (fun i : Fin n => Tensor.item (get rewards i))
-  let vArr : Array Float32Exec :=
-    Array.ofFn (fun i : Fin n => Tensor.item (get values i))
-  let nvArr : Array Float32Exec :=
-    Array.ofFn (fun i : Fin n => Tensor.item (get nextValues i))
-  let dArr : Array Bool :=
-    Array.ofFn (fun i : Fin n => Tensor.item (get dones i))
+  let indices : Tensor (Fin n) [n] := Tensor.ofFn id
+  let γ := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point gamma
+  let lamI := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point lam
+  Tensor.scanr (fun idx advNext =>
+    let done := dones[idx]
+    let mask : Interval32 :=
+      TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point
+        (continueMask (α := Float32Exec) done)
+    let r : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point rewards[idx]
+    let v : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point values[idx]
+    let nv : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point nextValues[idx]
 
-  let out : Array Interval32 :=
-    Id.run do
-      let mut out : Array Interval32 :=
-        Array.replicate n (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point 0)
-      let mut advNext : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point 0
-      let γ : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point gamma
-      let lamI : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point lam
-      for t in [0:n] do
-        let idx := n - 1 - t
-        let done := dArr[idx]!
-        let mask : Interval32 :=
-          TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point (continueMask (α := Float32Exec) done)
-        let r : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point (rArr[idx]!)
-        let v : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point (vArr[idx]!)
-        let nv : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point (nvArr[idx]!)
-
-        -- delta = r + γ*mask*nv - v
-        let t1 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul γ mask
-        let t2 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul t1 nv
-        let t3 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.add r t2
-        let delta := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.sub t3 v
-        -- adv = delta + γ*λ*mask*advNext
-        let u1 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul γ lamI
-        let u2 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul u1 mask
-        let u3 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul u2 advNext
-        let adv := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.add delta u3
-        advNext := adv
-        out := out.set! idx adv
-      return out
-
-  Tensor.dim (fun i : Fin n => Tensor.scalar (out[i.val]!))
+    -- delta = r + γ*mask*nv - v
+    let t1 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul γ mask
+    let t2 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul t1 nv
+    let t3 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.add r t2
+    let delta := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.sub t3 v
+    -- adv = delta + γ*λ*mask*advNext
+    let u1 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul γ lamI
+    let u2 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul u1 mask
+    let u3 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul u2 advNext
+    let adv := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.add delta u3
+    adv) (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point 0) indices
 
 /--
 Executable check: every `returns[i]` lies inside `intervals[i]` in the `IEEE32Exec.le` order.
@@ -205,8 +181,7 @@ This is an executable regression check for examples and tests; formal enclosure 
 def returnsWithinIntervals {n : Nat}
     (returns : Tensor Float32Exec [n])
     (intervals : Tensor Interval32 [n]) : Bool :=
-  let idxs : Array (Fin n) := Array.ofFn (fun i => i)
-  idxs.all fun i =>
+  (List.finRange n).all fun i =>
     let x : Float32Exec := Tensor.item (get returns i)
     let I : Interval32 := Tensor.item (get intervals i)
     TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.leB I.lo x &&

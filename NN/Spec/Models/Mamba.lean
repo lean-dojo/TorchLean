@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Tensor.Linalg
 public import NN.Spec.Dynamics.StateSpace
 public import NN.Spec.Layers.Activation
 
@@ -32,6 +31,39 @@ top of the same affine-scan idea.
 - a gated state readout,
 - tokenwise input/output projections.
 
+## Implementation status
+
+`nn.mamba` uses the trainable selective block in `NN/Runtime/Autograd/Model/Layers/Mamba.lean`.
+The recurrence in `NN/Runtime/Autograd/Model/Mamba.lean` follows the
+`SelectiveMambaBlockSpec` dataflow through generic differentiable operations: causal depthwise
+convolution and SiLU produce the feature used for softplus time steps and token-dependent `B`/`C`,
+then the diagonal state update feeds the skip connection, SiLU gate, and output projection.
+The runtime stores `logA`, so this Spec's rate tensor corresponds to `exp(logA)`. It uses the
+dense time-step projection described below and does not call a fused variable-coefficient scan.
+
+The layer has eleven trainable parameter tensors. Its expanded channel count is
+`innerWidth = expansion * hiddenWidth`, where `hiddenWidth` is the output feature width.
+Expansion, state width, and convolution width determine the saved tensor shapes. Checkpoints from
+the former gated recurrence use a different parameter layout and cannot be loaded into this layer
+unchanged. Each layer call starts with zero recurrent state and empty convolution history;
+`Runtime.Autograd.Model.Mamba.runArray` accepts and returns both a state tensor of shape
+`[innerWidth, stateWidth]` and newest-first projected-token history for continuation across chunks.
+
+The causality (prefix-preservation) theorems in
+`NN/MLTheory/Proofs/StateSpace/MambaCausality.lean` concern `MambaBlockSpec.runArray`,
+`SelectiveMambaBlockSpec.runArray`, and `SelectiveMambaBlockSpec.runArrayWithHistory`, built on
+the scan algebra in `NN/MLTheory/Proofs/StateSpace/Scan.lean`. They do not establish equivalence
+between the generic differentiable runtime and these Spec runners or prove its gradients.
+
+## PyTorch import caveats
+
+- `convKernel` is indexed `(tap, channel)` with taps newest-first; PyTorch's depthwise `conv1d`
+  weight is `(channel, 1, tap)` with taps oldest-first, so import needs a transpose and a reversal.
+- `dtProj` is one square `innerDim × innerDim` map; the reference model's `dt_rank` factorization
+  (`x_proj` then `dt_proj`) is not represented and must be multiplied out before loading.
+- `bProj` and `cProj` are stored as separate `innerDim × stateDim` matrices; the reference model
+  packs `B`, `C`, and the `dt` input into one `x_proj` output.
+
 References:
 - Gu, Dao. "Mamba: Linear-Time Sequence Modeling with Selective State Spaces", COLM 2024.
 - Dao, Gu. "Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured
@@ -42,12 +74,13 @@ References:
 
 namespace Models
 
-open Spec
-open Tensor
-open NN.Spec.Dynamics
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
+open Spec.Dynamics
 
 /-- Parameters for a compact diagonal Mamba-style block. -/
-structure MambaBlockSpec (α : Type) (inputDim stateDim outputDim : Nat) where
+structure MambaBlockSpec (α : Type) [TorchLean.Storage α]
+    (inputDim stateDim outputDim : Nat) where
   /-- Input projection into SSM state channels. -/
   inProj : Tensor α [inputDim, stateDim]
   /-- Gate projection. The gate is `sigmoid(x @ gateProj)`. -/
@@ -59,7 +92,7 @@ structure MambaBlockSpec (α : Type) (inputDim stateDim outputDim : Nat) where
 
 namespace MambaBlockSpec
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {inputDim stateDim outputDim : Nat}
 
 /-- Input-to-state projection. -/
@@ -80,7 +113,7 @@ def step (m : MambaBlockSpec α inputDim stateDim outputDim)
   let xState := m.projectInput x
   let h' := m.ssm.step h xState
   let yState := m.ssm.readout h' xState
-  let gated := yState * m.gate x
+  let gated := Tensor.mulSpec yState (m.gate x)
   (h', vecMatMulSpec gated m.outProj)
 
 /-- Run an array of tokens through the recurrent block. -/
@@ -90,6 +123,7 @@ def runArray (m : MambaBlockSpec α inputDim stateDim outputDim)
     Tensor α [stateDim] × Array (Tensor α [outputDim]) :=
   Spec.scanArray m.step h0 xs
 
+/-- An empty token sequence leaves the hidden state untouched and emits nothing. -/
 @[simp] theorem runArray_empty (m : MambaBlockSpec α inputDim stateDim outputDim)
     (h0 : Tensor α [stateDim]) :
     m.runArray h0 #[] = (h0, #[]) := by
@@ -117,16 +151,25 @@ The recurrence state has shape `[innerDim, stateDim]`.  This mirrors the common 
 view of Mamba where each expanded channel carries a small diagonal state vector.
 -/
 structure SelectiveMambaBlockSpec
-    (α : Type) (inputDim innerDim stateDim outputDim convWidth : Nat) where
+    (α : Type) [TorchLean.Storage α]
+    (inputDim innerDim stateDim outputDim convWidth : Nat) where
   /-- Content/input projection `x -> x_path`. -/
   xProj : Tensor α [inputDim, innerDim]
   /-- Gate projection `x -> z_path`. -/
   zProj : Tensor α [inputDim, innerDim]
-  /-- Causal depthwise-convolution kernel, indexed by `(tap, channel)`. -/
+  /-- Causal depthwise-convolution kernel, indexed by `(tap, channel)` with tap `0` applied to the
+  current token and tap `t` to the token `t` steps back. PyTorch's `conv1d` weight of shape
+  `(innerDim, 1, convWidth)` stores taps oldest-first along its last axis, so importing a checkpoint
+  requires transposing to `(tap, channel)` and reversing the tap axis. -/
   convKernel : Tensor α [convWidth, innerDim]
   /-- Causal depthwise-convolution bias. -/
   convBias : Tensor α [innerDim]
-  /-- Projection from activated convolution features to per-channel time steps `Delta`. -/
+  /-- Projection from activated convolution features to per-channel time steps `Delta`.
+
+  This is a single square map. The reference implementation factors it through a low-rank
+  bottleneck as `x_proj` (`innerDim -> dt_rank`) followed by `dt_proj` (`dt_rank -> innerDim`);
+  the product of those two matrices can be loaded here, but the factorization itself is not
+  modelled. -/
   dtProj : Tensor α [innerDim, innerDim]
   /-- Bias before the `softplus` time-step nonlinearity. -/
   dtBias : Tensor α [innerDim]
@@ -143,7 +186,7 @@ structure SelectiveMambaBlockSpec
 
 namespace SelectiveMambaBlockSpec
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {inputDim innerDim stateDim outputDim convWidth : Nat}
 
 /-- Projection feeding the content path before convolution and selective state updates. -/
@@ -244,10 +287,14 @@ def stepWithHistory
   let u := siluVec (m.causalDepthwiseConv history)
   let h' := m.selectiveStateStep h u
   let y := m.stateReadout h' u
-  let gated := y * siluVec z
+  let gated := Tensor.mulSpec y (siluVec z)
   (h', vecMatMulSpec gated m.outProj)
 
-/-- One recurrent step while carrying the newest-first convolution history. -/
+/-- One recurrent step while carrying the newest-first convolution history.
+
+The carried history is truncated to the `convWidth` most recent projected tokens. Older entries
+can never be read by `causalDepthwiseConv`, so dropping them changes no output while keeping the
+state size bounded over arbitrarily long sequences. -/
 def stepWithConvolutionHistory
     (m : SelectiveMambaBlockSpec α inputDim innerDim stateDim outputDim convWidth)
     (state : Tensor α [innerDim, stateDim] ×
@@ -258,7 +305,7 @@ def stepWithConvolutionHistory
       Tensor α [outputDim] :=
   let xPath := m.projectX x
   let zPath := m.projectZ x
-  let history := #[xPath] ++ state.2
+  let history := (#[xPath] ++ state.2).take convWidth
   let (nextHidden, output) := m.stepWithHistory state.1 history zPath
   ((nextHidden, history), output)
 
@@ -282,6 +329,7 @@ def runArray
       Array (Tensor α [outputDim]) :=
   m.runArrayWithHistory h0 #[] xs
 
+/-- With no tokens the convolution history is never consulted and the state is returned as is. -/
 @[simp] theorem runArrayWithHistory_empty
     (m : SelectiveMambaBlockSpec α inputDim innerDim stateDim outputDim convWidth)
     (h0 : Tensor α [innerDim, stateDim])
@@ -289,6 +337,7 @@ def runArray
     m.runArrayWithHistory h0 history #[] = (h0, #[]) := by
   rfl
 
+/-- Same for the selective block: no tokens in, no tokens out. -/
 @[simp] theorem runArray_empty
     (m : SelectiveMambaBlockSpec α inputDim innerDim stateDim outputDim convWidth)
     (h0 : Tensor α [innerDim, stateDim]) :

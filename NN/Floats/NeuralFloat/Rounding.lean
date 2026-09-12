@@ -7,9 +7,14 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.NeuralFloat.Rounding.Away
+public import NN.Floats.NeuralFloat.Rounding.Core
 public import NN.Floats.NeuralFloat.Rounding.Double
+public import NN.Floats.NeuralFloat.Rounding.Generic
 public import NN.Floats.NeuralFloat.Rounding.Nearest
 public import NN.Floats.NeuralFloat.Rounding.Odd
+public import NN.Floats.NeuralFloat.Rounding.Order
+public import NN.Floats.NeuralFloat.Rounding.Predicates
+public import NN.Floats.NeuralFloat.Rounding.Properties
 
 /-!
 # Rounding Semantics

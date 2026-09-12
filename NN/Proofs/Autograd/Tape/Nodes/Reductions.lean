@@ -6,14 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Tape.Nodes.Softmax
 public import NN.Proofs.Autograd.Tape.Nodes.Shape
 
 /-!
 # Reduction and shape tape nodes
 
-Scalar sums, broadcast-to, reduce-sum, reduce-mean, concatenation, and the linear shape adapters used
-by larger graph proofs.
+Scalar sums, broadcast-to, reduce-sum, reduce-mean, concatenation, and the linear shape adapters
+used by larger graph proofs.
 -/
 
 @[expose] public section
@@ -21,8 +20,8 @@ by larger graph proofs.
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -44,10 +43,12 @@ def vecScalarCLM : ℝ →L[ℝ] Vec (Spec.Shape.size Shape.scalar) := by
   refine ⟨fLin, ?_⟩
   exact LinearMap.continuous_of_finiteDimensional (f := fLin)
 
-@[simp] lemma vecScalarCLM_apply (a : ℝ) (i : Fin (Spec.Shape.size Shape.scalar)) :
+/-- The one coordinate of a scalar vector is the scalar. -/
+@[simp] theorem vecScalarCLM_apply (a : ℝ) (i : Fin (Spec.Shape.size Shape.scalar)) :
     vecScalarCLM a i = a := rfl
 
-@[simp] lemma vecScalarCLM_ofLp (a : ℝ) (i : Fin (Spec.Shape.size Shape.scalar)) :
+/-- Same through the `WithLp` wrapper. -/
+@[simp] theorem vecScalarCLM_ofLp (a : ℝ) (i : Fin (Spec.Shape.size Shape.scalar)) :
     (vecScalarCLM a).ofLp i = a := rfl
 
 /-- Continuous linear map summing the entries of a vector: `x ↦ ∑ i, x i`. -/
@@ -65,7 +66,7 @@ def sumCLM (n : Nat) : Vec n →L[ℝ] ℝ := by
   exact LinearMap.continuous_of_finiteDimensional (f := fLin)
 
 /-- Evaluation lemma for `sumCLM`. -/
-lemma sumCLM_apply {n : Nat} (x : Vec n) :
+theorem sumCLM_apply {n : Nat} (x : Vec n) :
     sumCLM (n := n) x = ∑ i : Fin n, x i := rfl
 
 /-- Sum all entries of a context tensor into a scalar tensor. -/
@@ -79,27 +80,28 @@ def sum {Γ : List Shape} {s : Shape} (idx : Idx Γ s) : Node Γ Shape.scalar :=
         (sumCLM (n := Spec.Shape.size s)) (CtxVec.get (Γ := Γ) (s := s) idx dx))
     (vjp := fun _x δ =>
       let i0 : Fin (Spec.Shape.size Shape.scalar) := ⟨0, by simp [Spec.Shape.size]⟩
-      CtxVec.single (Γ := Γ) (s := s) idx (vecOfFun (n := Spec.Shape.size s) fun _ : Fin (Spec.Shape.size s)
-        => δ i0))
+      CtxVec.single (Γ := Γ) (s := s) idx
+        (vecOfFun (n := Spec.Shape.size s) fun _ : Fin (Spec.Shape.size s) => δ i0))
     (correct_inner := by
       intro _x dx δ
       classical
       let i0 : Fin (Spec.Shape.size Shape.scalar) := ⟨0, by simp [Spec.Shape.size]⟩
       let δ0 : ℝ := δ i0
       have hctx :
-          inner ℝ dx (CtxVec.single (Γ := Γ) (s := s) idx (vecOfFun (n := Spec.Shape.size s) fun _ =>
-            δ0)) =
-            inner ℝ (CtxVec.get (Γ := Γ) (s := s) idx dx) (vecOfFun (n := Spec.Shape.size s) fun _ => δ0)
-              := by
+          inner ℝ dx (CtxVec.single (Γ := Γ) (s := s) idx
+              (vecOfFun (n := Spec.Shape.size s) fun _ => δ0)) =
+            inner ℝ (CtxVec.get (Γ := Γ) (s := s) idx dx)
+              (vecOfFun (n := Spec.Shape.size s) fun _ => δ0) := by
         simpa using
-          (CtxVec.inner_get_single (Γ := Γ) (s := s) idx dx (vecOfFun (n := Spec.Shape.size s) fun _ =>
-            δ0))
+          (CtxVec.inner_get_single (Γ := Γ) (s := s) idx dx
+            (vecOfFun (n := Spec.Shape.size s) fun _ => δ0))
       -- expand both inner products into coordinate sums
       -- LHS (Vec 1): a single coordinate
       have hL :
           inner ℝ
-              (vecOfFun (n := Spec.Shape.size Shape.scalar) fun _ : Fin (Spec.Shape.size Shape.scalar) =>
-                (sumCLM (n := Spec.Shape.size s)) (CtxVec.get (Γ := Γ) (s := s) idx dx))
+              (vecOfFun (n := Spec.Shape.size Shape.scalar)
+                fun _ : Fin (Spec.Shape.size Shape.scalar) =>
+                  (sumCLM (n := Spec.Shape.size s)) (CtxVec.get (Γ := Γ) (s := s) idx dx))
               δ
             =
           (sumCLM (n := Spec.Shape.size s)) (CtxVec.get (Γ := Γ) (s := s) idx dx) * δ0 := by
@@ -108,7 +110,8 @@ def sum {Γ : List Shape} {s : Shape} (idx : Idx Γ s) : Node Γ Shape.scalar :=
             (a := (sumCLM (n := Spec.Shape.size s)) (CtxVec.get (Γ := Γ) (s := s) idx dx))
             (δ := δ) using 1
       have hR :
-          inner ℝ (CtxVec.get (Γ := Γ) (s := s) idx dx) (vecOfFun (n := Spec.Shape.size s) fun _ => δ0)
+          inner ℝ (CtxVec.get (Γ := Γ) (s := s) idx dx)
+              (vecOfFun (n := Spec.Shape.size s) fun _ => δ0)
             =
           (sumCLM (n := Spec.Shape.size s)) (CtxVec.get (Γ := Γ) (s := s) idx dx) * δ0 := by
         classical
@@ -126,7 +129,8 @@ def sum {Γ : List Shape} {s : Shape} (idx : Idx Γ s) : Node Γ Shape.scalar :=
                 CtxVec.get (Γ := Γ) (s := s) idx dx j) (a := δ0)).symm
         -- rewrite the LHS via `inner_eq_sum_mul` then apply `hsum` and `sumCLM_apply`
         calc
-          inner ℝ (CtxVec.get (Γ := Γ) (s := s) idx dx) (vecOfFun (n := Spec.Shape.size s) fun _ => δ0)
+          inner ℝ (CtxVec.get (Γ := Γ) (s := s) idx dx)
+              (vecOfFun (n := Spec.Shape.size s) fun _ => δ0)
               = ∑ j : Fin (Spec.Shape.size s), CtxVec.get (Γ := Γ) (s := s) idx dx j * δ0 := by
                   simp [inner_eq_sum_mul]
           _ = (∑ j : Fin (Spec.Shape.size s), CtxVec.get (Γ := Γ) (s := s) idx dx j) * δ0 := hsum
@@ -135,15 +139,16 @@ def sum {Γ : List Shape} {s : Shape} (idx : Idx Γ s) : Node Γ Shape.scalar :=
       -- combine
       calc
         inner ℝ
-            (vecOfFun (n := Spec.Shape.size Shape.scalar) fun _ : Fin (Spec.Shape.size Shape.scalar) =>
-              (sumCLM (n := Spec.Shape.size s)) (CtxVec.get (Γ := Γ) (s := s) idx dx))
+            (vecOfFun (n := Spec.Shape.size Shape.scalar)
+              fun _ : Fin (Spec.Shape.size Shape.scalar) =>
+                (sumCLM (n := Spec.Shape.size s)) (CtxVec.get (Γ := Γ) (s := s) idx dx))
             δ
             = (sumCLM (n := Spec.Shape.size s)) (CtxVec.get (Γ := Γ) (s := s) idx dx) * δ0 := hL
-        _ = inner ℝ (CtxVec.get (Γ := Γ) (s := s) idx dx) (vecOfFun (n := Spec.Shape.size s) fun _ => δ0)
-          := by
+        _ = inner ℝ (CtxVec.get (Γ := Γ) (s := s) idx dx)
+              (vecOfFun (n := Spec.Shape.size s) fun _ => δ0) := by
               simpa using hR.symm
-        _ = inner ℝ dx (CtxVec.single (Γ := Γ) (s := s) idx (vecOfFun (n := Spec.Shape.size s) fun _ =>
-          δ0)) := by
+        _ = inner ℝ dx (CtxVec.single (Γ := Γ) (s := s) idx
+              (vecOfFun (n := Spec.Shape.size s) fun _ => δ0)) := by
               simpa using hctx.symm )
 
 /-- `NodeFDerivCorrect` for `sum`: derivative is the composite of context projection and coordinate
@@ -151,11 +156,13 @@ def sum {Γ : List Shape} {s : Shape} (idx : Idx Γ s) : Node Γ Shape.scalar :=
 def sumFderiv {Γ : List Shape} {s : Shape} (idx : Idx Γ s) :
     NodeFDerivCorrect (sum (Γ := Γ) (s := s) idx) :=
 { deriv := fun _ =>
-    vecScalarCLM.comp ((sumCLM (n := Spec.Shape.size s)).comp (CtxVec.getCLM (Γ := Γ) (s := s) idx))
+    vecScalarCLM.comp
+      ((sumCLM (n := Spec.Shape.size s)).comp (CtxVec.getCLM (Γ := Γ) (s := s) idx))
   hasFDerivAt := by
     intro xV
     let D :=
-      vecScalarCLM.comp ((sumCLM (n := Spec.Shape.size s)).comp (CtxVec.getCLM (Γ := Γ) (s := s) idx))
+      vecScalarCLM.comp
+        ((sumCLM (n := Spec.Shape.size s)).comp (CtxVec.getCLM (Γ := Γ) (s := s) idx))
     have hD : HasFDerivAt (fun x : CtxVec Γ => D x) D xV :=
       D.hasFDerivAt (x := xV)
     -- rewrite the forward function of the `sum` node to this CLM (pointwise)
@@ -185,21 +192,31 @@ namespace Broadcast
 open scoped BigOperators
 
 /-- Compute the source index in `s₁` that corresponds to a target index in `s₂` under broadcasting.
-  -/
+
+The recursion is on the shapes. The broadcast relation only rules out the impossible cases and
+shows that a source extent differing from the target extent is one. -/
 def broadcastToIndex :
-    {s₁ s₂ : Shape} → Shape.CanBroadcastTo s₁ s₂ → Fin (Spec.Shape.size s₂) → Fin (Spec.Shape.size s₁)
-  | .scalar, .scalar, Shape.CanBroadcastTo.scalar, _ => ⟨0, by simp [Spec.Shape.size]⟩
-  | .dim n s₁, .dim _ s₂, Shape.CanBroadcastTo.dim_eq tail, j =>
-      let jOuter : Fin n := j.divNat (m := n) (n := Spec.Shape.size s₂)
-      let jInner : Fin (Spec.Shape.size s₂) := j.modNat (m := n) (n := Spec.Shape.size s₂)
-      finProdFinEquiv (jOuter, broadcastToIndex (s₁ := s₁) (s₂ := s₂) tail jInner)
-  | .dim 1 s₁, .dim n s₂, Shape.CanBroadcastTo.dim_1_to_n tail, j =>
-      let jInner : Fin (Spec.Shape.size s₂) := j.modNat (m := n) (n := Spec.Shape.size s₂)
-      let z : Fin 1 := ⟨0, by simp⟩
-      finProdFinEquiv (z, broadcastToIndex (s₁ := s₁) (s₂ := s₂) tail jInner)
-  | s₁, .dim n s₂, Shape.CanBroadcastTo.expand_dims tail, j =>
-      let jInner : Fin (Spec.Shape.size s₂) := j.modNat (m := n) (n := Spec.Shape.size s₂)
-      broadcastToIndex (s₁ := s₁) (s₂ := s₂) tail jInner
+    {s₁ s₂ : Shape} → Shape.CanBroadcastTo s₁ s₂ →
+      Fin (Spec.Shape.size s₂) → Fin (Spec.Shape.size s₁)
+  | .scalar, .scalar, _, _ => ⟨0, by simp [Spec.Shape.size]⟩
+  | .dim _ _, .scalar, h, _ => absurd h Shape.not_canBroadcastTo_dim_scalar
+  | .scalar, .dim n s₂, h, j =>
+      broadcastToIndex (Shape.canBroadcastTo_scalar_dim.mp h)
+        (j.modNat (m := n) (n := Spec.Shape.size s₂))
+  | .dim m s₁, .dim n s₂, h, j =>
+      if hRank : s₁.rank = s₂.rank then
+        have hHead := ((Shape.canBroadcastTo_dim_dim_of_rank_eq hRank).mp h).1
+        have tail := ((Shape.canBroadcastTo_dim_dim_of_rank_eq hRank).mp h).2
+        let jInner : Fin (Spec.Shape.size s₂) := j.modNat (m := n) (n := Spec.Shape.size s₂)
+        let iOuter : Fin m :=
+          if hExtent : m = n then
+            Fin.cast hExtent.symm (j.divNat (m := n) (n := Spec.Shape.size s₂))
+          else
+            Fin.cast (hHead.resolve_left hExtent).symm (0 : Fin 1)
+        finProdFinEquiv (iOuter, broadcastToIndex (s₁ := s₁) (s₂ := s₂) tail jInner)
+      else
+        broadcastToIndex ((Shape.canBroadcastTo_dim_dim_of_rank_ne hRank).mp h)
+          (j.modNat (m := n) (n := Spec.Shape.size s₂))
 
 /-- Broadcast a vector `Vec (size s₁)` into `Vec (size s₂)` using the `CanBroadcastTo` index map. -/
 def broadcastToVec {s₁ s₂ : Shape} (cb : Shape.CanBroadcastTo s₁ s₂) :
@@ -225,7 +242,10 @@ def broadcastToCLM {s₁ s₂ : Shape} (cb : Shape.CanBroadcastTo s₁ s₂) :
   refine ⟨fLin, ?_⟩
   exact LinearMap.continuous_of_finiteDimensional (f := fLin)
 
-@[simp] lemma broadcastToCLM_apply {s₁ s₂ : Shape} (cb : Shape.CanBroadcastTo s₁ s₂) (v : Vec
+/-- The bundled broadcast map computes `broadcastToVec`. Broadcasting is linear, so nothing about
+the
+shape relation `cb` needs to reappear in the derivative. -/
+@[simp] theorem broadcastToCLM_apply {s₁ s₂ : Shape} (cb : Shape.CanBroadcastTo s₁ s₂) (v : Vec
   (Spec.Shape.size s₁)) :
     broadcastToCLM (s₁ := s₁) (s₂ := s₂) cb v = broadcastToVec (s₁ := s₁) (s₂ := s₂) cb v := rfl
 
@@ -262,7 +282,12 @@ def afterSumCLM (s : Shape) (axis : Nat) :
   refine ⟨fLin, ?_⟩
   exact LinearMap.continuous_of_finiteDimensional (f := fLin)
 
-@[simp] lemma afterSumCLM_apply (s : Shape) (axis : Nat)
+/-- The bundled repeat-along-the-summed-axis map computes `afterSumVec`.
+
+This map is the adjoint of summation over `axis`, which is why the backward pass for a reduction is
+a
+broadcast: each output coordinate contributed to exactly one sum. -/
+@[simp] theorem afterSumCLM_apply (s : Shape) (axis : Nat)
     (v : Vec (Spec.Shape.size (shapeAfterSum s axis))) :
     afterSumCLM s axis v = afterSumVec s axis v := rfl
 
@@ -350,7 +375,7 @@ def reduceSum {Γ : List Shape} {s : Shape} (axis : Nat)
               (x := CtxVec.get (Γ := Γ) (s := s) idx dxV) (y := δV)).symm
       exact hadj.trans hctx.symm)
 
-/-- `NodeFDerivCorrect` for `reduce_sum`. -/
+/-- `NodeFDerivCorrect` for `reduceSum`. -/
 def reduceSumFderiv {Γ : List Shape} {s : Shape} (axis : Nat) [valid : Shape.HasNonemptyAxis axis
   s] [wf : Shape.WellFormed s]
     (idx : Idx Γ s) :
@@ -410,7 +435,7 @@ def reduceMean {Γ : List Shape} {s : Shape} (axis : Nat)
         simp [inner_smul_left, inner_smul_right, h0]
       exact hadj.trans hctx.symm)
 
-/-- `NodeFDerivCorrect` for `reduce_mean`. -/
+/-- `NodeFDerivCorrect` for `reduceMean`. -/
 def reduceMeanFderiv {Γ : List Shape} {s : Shape} (axis : Nat) [valid : Shape.HasNonemptyAxis axis
   s] [wf : Shape.WellFormed s]
     (idx : Idx Γ s) :
@@ -454,7 +479,7 @@ def takeRightVec {m n : Nat} (v : Vec (m + n)) : Vec n :=
 
 /-- Splitting then appending recovers the original vector: `append (takeLeft v) (takeRight v) = v`.
   -/
-private lemma append_takeLeft_takeRight {m n : Nat} (v : Vec (m + n)) :
+private theorem append_takeLeft_takeRight {m n : Nat} (v : Vec (m + n)) :
     appendVec (m := m) (n := n) (takeLeftVec (m := m) (n := n) v) (takeRightVec (m := m) (n := n) v)
       = v := by
   classical
@@ -467,7 +492,8 @@ def concatLeadingAxis {Γ : List Shape} {n m : Nat} {s : Shape}
     (a : Idx Γ (.dim n s)) (b : Idx Γ (.dim m s)) :
     Node Γ (.dim (n + m) s) :=
   let hsz :
-      Spec.Shape.size (.dim n s) + Spec.Shape.size (.dim m s) = Spec.Shape.size (.dim (n + m) s) := by
+      Spec.Shape.size (.dim n s) + Spec.Shape.size (.dim m s) =
+        Spec.Shape.size (.dim (n + m) s) := by
         simp [Spec.Shape.size, Nat.add_mul]
   Node.ofFn (Γ := Γ) (τ := .dim (n + m) s)
     (f := fun xV =>
@@ -480,28 +506,34 @@ def concatLeadingAxis {Γ : List Shape} {n m : Nat} {s : Shape}
         (CtxVec.get (Γ := Γ) (s := .dim m s) b dxV)))
     (vjp := fun _xV δV =>
       let δ' : Vec (Spec.Shape.size (.dim n s) + Spec.Shape.size (.dim m s)) := castVec hsz.symm δV
-      let δL : Vec (Spec.Shape.size (.dim n s)) := takeLeftVec (m := Spec.Shape.size (.dim n s)) (n :=
-        Spec.Shape.size (.dim m s)) δ'
-      let δR : Vec (Spec.Shape.size (.dim m s)) := takeRightVec (m := Spec.Shape.size (.dim n s)) (n :=
-        Spec.Shape.size (.dim m s)) δ'
+      let δL : Vec (Spec.Shape.size (.dim n s)) :=
+        takeLeftVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) δ'
+      let δR : Vec (Spec.Shape.size (.dim m s)) :=
+        takeRightVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) δ'
       CtxVec.single (Γ := Γ) (s := .dim n s) a δL + CtxVec.single (Γ := Γ) (s := .dim m s) b δR)
     (correct_inner := by
       intro _xV dxV δV
       classical
       let hsz :
-          Spec.Shape.size (.dim n s) + Spec.Shape.size (.dim m s) = Spec.Shape.size (.dim (n + m) s) := by
+          Spec.Shape.size (.dim n s) + Spec.Shape.size (.dim m s) =
+            Spec.Shape.size (.dim (n + m) s) := by
             simp [Spec.Shape.size, Nat.add_mul]
       let da : Vec (Spec.Shape.size (.dim n s)) := CtxVec.get (Γ := Γ) (s := .dim n s) a dxV
       let db : Vec (Spec.Shape.size (.dim m s)) := CtxVec.get (Γ := Γ) (s := .dim m s) b dxV
       let δ' : Vec (Spec.Shape.size (.dim n s) + Spec.Shape.size (.dim m s)) := castVec hsz.symm δV
-      let δL : Vec (Spec.Shape.size (.dim n s)) := takeLeftVec (m := Spec.Shape.size (.dim n s)) (n :=
-        Spec.Shape.size (.dim m s)) δ'
-      let δR : Vec (Spec.Shape.size (.dim m s)) := takeRightVec (m := Spec.Shape.size (.dim n s)) (n :=
-        Spec.Shape.size (.dim m s)) δ'
-      have hδ' : appendVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) δL δR = δ' :=
-        append_takeLeft_takeRight (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) δ'
+      let δL : Vec (Spec.Shape.size (.dim n s)) :=
+        takeLeftVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) δ'
+      let δR : Vec (Spec.Shape.size (.dim m s)) :=
+        takeRightVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) δ'
+      have hδ' :
+          appendVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) δL δR
+            = δ' :=
+        append_takeLeft_takeRight
+          (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) δ'
       have hadd :
-          inner ℝ (appendVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) da db) δ'
+          inner ℝ
+              (appendVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) da db)
+              δ'
             =
           inner ℝ da δL + inner ℝ db δR := by
         simpa [hδ'] using
@@ -510,22 +542,31 @@ def concatLeadingAxis {Γ : List Shape} {n m : Nat} {s : Shape}
       have hadjA := (CtxVec.inner_get_single (Γ := Γ) (s := .dim n s) a dxV δL).symm
       have hadjB := (CtxVec.inner_get_single (Γ := Γ) (s := .dim m s) b dxV δR).symm
       have hcast :
-          inner ℝ (castVec hsz (appendVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s))
-            da db)) δV
+          inner ℝ
+              (castVec hsz
+                (appendVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s))
+                  da db))
+              δV
             =
-          inner ℝ (appendVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) da db) δ' :=
-            by
+          inner ℝ
+              (appendVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) da db)
+              δ' := by
         -- move the cast to the right argument
         simpa [δ'] using
-          (inner_castVec_castVec (h := hsz) (x := appendVec (m := Spec.Shape.size (.dim n s)) (n :=
-            Spec.Shape.size (.dim m s)) da db)
+          (inner_castVec_castVec (h := hsz)
+            (x := appendVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s))
+              da db)
             (y := δ'))
       calc
-        inner ℝ (castVec hsz (appendVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) da
-          db)) δV
+        inner ℝ
+            (castVec hsz
+              (appendVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s))
+                da db))
+            δV
             =
-          inner ℝ (appendVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) da db) δ' :=
-            hcast
+          inner ℝ
+              (appendVec (m := Spec.Shape.size (.dim n s)) (n := Spec.Shape.size (.dim m s)) da db)
+              δ' := hcast
         _ = inner ℝ da δL + inner ℝ db δR := hadd
         _ = inner ℝ dxV (CtxVec.single (Γ := Γ) (s := .dim n s) a δL) +
               inner ℝ dxV (CtxVec.single (Γ := Γ) (s := .dim m s) b δR) := by
@@ -543,7 +584,7 @@ def concatLeadingAxis {Γ : List Shape} {n m : Nat} {s : Shape}
               simp [inner_add_right]
     )
 
-/-- `NodeFDerivCorrect` for `concat_leading_axis` (concat is linear). -/
+/-- `NodeFDerivCorrect` for `concatLeadingAxis` (concat is linear). -/
 def concatLeadingAxisFderiv {Γ : List Shape} {n m : Nat} {s : Shape}
     (a : Idx Γ (.dim n s)) (b : Idx Γ (.dim m s)) :
     NodeFDerivCorrect (concatLeadingAxis (Γ := Γ) (n := n) (m := m) (s := s) a b) := by
@@ -552,7 +593,8 @@ def concatLeadingAxisFderiv {Γ : List Shape} {n m : Nat} {s : Shape}
   let szB : Nat := Spec.Shape.size (.dim m s)
   let hsz : szA + szB = Spec.Shape.size (.dim (n + m) s) := by
     simp [szA, szB, Spec.Shape.size, Nat.add_mul]
-  let Dcast : Vec (szA + szB) →L[ℝ] Vec (Spec.Shape.size (.dim (n + m) s)) := Graph.castCLM (h := hsz)
+  let Dcast : Vec (szA + szB) →L[ℝ] Vec (Spec.Shape.size (.dim (n + m) s)) :=
+    Graph.castCLM (h := hsz)
   let Dapp : (Vec szA × Vec szB) →L[ℝ] Vec (szA + szB) := by
     classical
     let fLin : (Vec szA × Vec szB) →ₗ[ℝ] Vec (szA + szB) :=
@@ -579,8 +621,8 @@ def concatLeadingAxisFderiv {Γ : List Shape} {n m : Nat} {s : Shape}
   · intro xV
     have hD : HasFDerivAt (fun x : CtxVec Γ => D x) D xV := D.hasFDerivAt (x := xV)
     have hEq :
-        (Node.forwardVec (Γ := Γ) (τ := .dim (n + m) s) (concatLeadingAxis (Γ := Γ) (n := n) (m := m) (s
-          := s) a b))
+        (Node.forwardVec (Γ := Γ) (τ := .dim (n + m) s)
+          (concatLeadingAxis (Γ := Γ) (n := n) (m := m) (s := s) a b))
           =
         fun x : CtxVec Γ => D x := by
       funext x

@@ -28,16 +28,12 @@ namespace Cuda
 namespace Fft
 
 open Runtime.Autograd.Cuda
-open Spec
+open Spec TorchLean
 
-def floatArray (xs : Array Float) : FloatArray :=
-  FloatArray.mk xs
-
-def assertFloatArrayApprox (msg : String) (a b : FloatArray) (tol : Float := 1e-4) : IO Unit := do
-  if a.size != b.size then
-    throw <| IO.userError s!"{msg}: size mismatch ({a.size} vs {b.size})"
-  for i in [:a.size] do
-    Utils.assertApprox s!"{msg}[{i}]" (a.get! i) (b.get! i) tol
+-- Buffer comparisons and the `floatArray` literal wrapper come from `Cuda.Utils`. The tolerances
+-- here are loose by the standards of the other CUDA suites because a packed real FFT accumulates
+-- float32 rounding across every butterfly stage.
+open Tests.Cuda.Utils (floatArray assertFloatArrayApprox)
 
 def dotFloatArray (a b : FloatArray) : Float := Id.run do
   let mut acc := 0.0
@@ -174,8 +170,8 @@ def runSpectralConvFiniteDiff : IO Unit := do
 def runSpectralConvTapeNode : IO Unit := do
   IO.println "== spectralConv1dRfft CUDA tape node =="
 
-  -- This is the autograd-facing runtime check: the tape node should return the same forward value and
-  -- parent cotangents as the direct low-level fused VJP primitives.
+  -- This is the autograd-facing runtime check: the tape node should return the same forward value
+  -- and parent cotangents as the direct low-level fused VJP primitives.
   let xShape : Shape := [4, 1]
   let wShape : Shape := [3, 1, 1]
   let xA := floatArray #[0.20, -0.40, 0.70, 1.10]
@@ -205,15 +201,15 @@ def runSpectralConvTapeNode : IO Unit := do
   let dWRe ← Utils.cudaGrad (s := wShape) grads wReId
   let dWIm ← Utils.cudaGrad (s := wShape) grads wImId
   assertFloatArrayApprox "spectralConv1dRfft tape dX"
-    (_root_.Runtime.Autograd.Cuda.Convert.flattenFloat (s := xShape) dX)
+    (Runtime.Autograd.Cuda.Convert.flattenFloat (s := xShape) dX)
     (Buffer.toFloatArray (Buffer.spectralConv1dRfftBwdX xB wReB wImB dYB 4 1 3))
     (tol := 2e-4)
   assertFloatArrayApprox "spectralConv1dRfft tape dWRe"
-    (_root_.Runtime.Autograd.Cuda.Convert.flattenFloat (s := wShape) dWRe)
+    (Runtime.Autograd.Cuda.Convert.flattenFloat (s := wShape) dWRe)
     (Buffer.toFloatArray (Buffer.spectralConv1dRfftBwdWRe xB wReB wImB dYB 4 1 3))
     (tol := 2e-4)
   assertFloatArrayApprox "spectralConv1dRfft tape dWIm"
-    (_root_.Runtime.Autograd.Cuda.Convert.flattenFloat (s := wShape) dWIm)
+    (Runtime.Autograd.Cuda.Convert.flattenFloat (s := wShape) dWIm)
     (Buffer.toFloatArray (Buffer.spectralConv1dRfftBwdWIm xB wReB wImB dYB 4 1 3))
     (tol := 2e-4)
 

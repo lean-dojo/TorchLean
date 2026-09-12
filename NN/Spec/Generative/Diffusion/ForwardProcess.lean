@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Spec.Generative.Diffusion.Core
 public import NN.Spec.Generative.Diffusion.Schedule
+public import NN.Spec.Core.TensorOps
 
 /-!
 # Forward noising process (spec layer)
@@ -17,18 +19,18 @@ $$
 x_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t}\,\varepsilon
 $$
 
-where $\varepsilon$ is intended to be standard normal noise (in runtime usage), but at the spec level is
-treated as an explicit input tensor.
+where $\varepsilon$ is intended to be standard normal noise (in runtime usage), but at the spec
+level is treated as an explicit input tensor.
 -/
 
 @[expose] public section
 
 namespace Generative.Diffusion
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {T : Nat} {s : Shape}
 
 /--

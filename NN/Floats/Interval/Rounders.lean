@@ -98,13 +98,13 @@ Monotonicity of `down`/`up` is not required: enclosure proofs use only
 $\operatorname{down}(x)\le x\le\operatorname{up}(x)$.
 -/
 structure Rounder where
-  /-- down. -/
+  /-- Rounds a real down to a representable value. -/
   down : ℝ → ℝ
-  /-- up. -/
+  /-- Rounds a real up to a representable value. -/
   up : ℝ → ℝ
-  /-- down le. -/
+  /-- `down` never overshoots. This is the only property the enclosure proofs need from it. -/
   down_le : ∀ x, down x ≤ x
-  /-- le up. -/
+  /-- `up` never undershoots. -/
   le_up : ∀ x, x ≤ up x
 
 /-- Canonical rounder for the $(\beta,\mathtt{fexp})$ format via `roundDown`/`roundUp`. -/

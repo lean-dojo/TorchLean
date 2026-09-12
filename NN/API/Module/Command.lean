@@ -13,7 +13,7 @@ public import NN.API.Module.Execution
 /-!
 # Executable Module Commands
 
-Command-line support for executable TorchLean programs, including scalar and device selection,
+Command-line support for executable TorchLean programs, including arithmetic and device selection,
 help output, seed parsing, banners, and exit codes.
 -/
 
@@ -23,9 +23,9 @@ namespace TorchLean
 namespace Module
 
 /-- Runtime choices parsed from the shared command-line flags. -/
-structure ExecConfig where
-  /-- Scalar semantics for this execution. -/
-  scalar : _root_.TorchLean.Runtime.ScalarMode := .float32
+structure RuntimeSelection where
+  /-- Arithmetic semantics for this execution. -/
+  arithmetic : TorchLean.Runtime.Arithmetic := .native
   /-- Immediate or typed-graph execution. -/
   execution : Runtime.ExecutionMode := .eager
   /-- Requested execution device. -/
@@ -34,30 +34,31 @@ structure ExecConfig where
   showBackend : Bool := false
   deriving Repr, DecidableEq
 
-namespace ExecConfig
+namespace RuntimeSelection
 
 /--
-Parse the shared scalar, execution, device, and backend-reporting flags.
+Parse the shared arithmetic, execution, device, and backend-reporting flags.
 
 Named devices without an installed runtime remain parseable so diagnostics can report the intended
-target. `Options.validateForExecution` rejects such a configuration before execution.
+target. `Runtime.Config.validateForExecution` rejects such a configuration before execution.
 -/
-def parseWithScalar
-    (args : List String) (defaultScalar : _root_.TorchLean.Runtime.ScalarMode) :
-    Except String (ExecConfig × List String) := do
-  let (scalar, args) ←
-    _root_.TorchLean.Runtime.ScalarMode.parseAndStripWithDefault args defaultScalar
-  let (execution, args) ←
-    _root_.TorchLean.CLI.takeParsedFlagDefault args "execution" "eager"
+def parse
+    (arguments : List String) (defaultArithmetic : TorchLean.Runtime.Arithmetic := .native) :
+    Except String (RuntimeSelection × List String) := do
+  let (arithmetic, arguments) ←
+    TorchLean.Runtime.Arithmetic.parseAndStrip arguments (default := defaultArithmetic)
+  let (execution, arguments) ←
+    TorchLean.CLI.takeParsedFlag arguments "execution" (default := "eager")
       TorchLean.Runtime.ExecutionMode.parse
   let rec go (device : NN.Backend.Device) (showBackend : Bool) (acc : List String) :
       List String → Except String (NN.Backend.Device × Bool × List String)
-    | [] => pure (device, showBackend, acc.reverse)
-    | "--device" :: value :: rest => do
+    | .nil => pure (device, showBackend, acc.reverse)
+    | .cons "--device" (.cons value rest) => do
         go (← TorchLean.Runtime.Device.parse value) showBackend acc rest
-    | ["--device"] =>
-        throw "missing value after --device (supported: auto | cpu | cuda | rocm | metal | wasm | tpu | trainium | custom | external)"
-    | arg :: rest =>
+    | .cons "--device" .nil =>
+        throw ("missing value after --device (supported: auto | cpu | cuda | rocm | metal | wasm | "
+          ++ "tpu | trainium | custom | external)")
+    | .cons arg rest =>
         if arg.startsWith "--device=" then do
           let device ← TorchLean.Runtime.Device.parse ((arg.drop "--device=".length).toString)
           go device showBackend acc rest
@@ -65,135 +66,145 @@ def parseWithScalar
           go device true acc rest
         else
           go device showBackend (arg :: acc) rest
-  let (device, showBackend, rest) ← go .cpu false [] args
-  pure ({ scalar, execution, device, showBackend }, rest)
+  let (device, showBackend, remainingArguments) ← go .cpu false [] arguments
+  pure ({ arithmetic, execution, device, showBackend }, remainingArguments)
 
-/-- Convert parsed command-line choices to explicit runtime options. -/
-def toOptions (cfg : ExecConfig) (seed : Nat := 0) : Except String Options := do
-  if (NN.Backend.BackendProfile.maintainedForDevice? cfg.device).isNone then
-    throw s!"device `{cfg.device.cliName}` has no maintained runtime profile; use a programmatic backend profile"
+/-- Convert parsed command-line choices to an explicit runtime configuration. -/
+def toConfig (selection : RuntimeSelection) (seed : Nat := 0) :
+    Except String Runtime.Config := do
+  if (NN.Backend.BackendProfile.maintainedForDevice? selection.device).isNone then
+    throw (s!"device `{selection.device.cliName}` has no maintained runtime profile; "
+      ++ "use a programmatic backend profile")
   pure
-    { execution := cfg.execution
-      device := cfg.device
+    { execution := selection.execution
+      device := selection.device
       seed
       backendProfile? := none
-      showBackend := cfg.showBackend }
+      showBackend := selection.showBackend }
 
-/-- Parse the shared runtime flags with native binary32 as the default scalar. -/
-def parseAndStrip (args : List String) : Except String (ExecConfig × List String) :=
-  parseWithScalar args .float32
+/-- Print the selected arithmetic, execution strategy, and device. -/
+def log (selection : RuntimeSelection) : IO Unit := do
+  TorchLean.Runtime.Arithmetic.log selection.arithmetic
+  IO.println
+    s!"[TorchLean] execution: {TorchLean.Runtime.ExecutionMode.cliName selection.execution}"
+  IO.println s!"[TorchLean] device: {selection.device.cliName}"
 
-/-- Print the selected scalar, execution strategy, and device. -/
-def log (cfg : ExecConfig) : IO Unit := do
-  _root_.TorchLean.Runtime.ScalarMode.log cfg.scalar
-  IO.println s!"[TorchLean] execution: {reprStr cfg.execution}"
-  IO.println s!"[TorchLean] device: {cfg.device.cliName}"
-
-end ExecConfig
+end RuntimeSelection
 
 /--
-Parse the shared runtime flags, select an executable scalar, and call `k` with the corresponding
-literal conversion and explicit runtime options.
+Parse the shared runtime flags, select executable arithmetic, and call `continuation` with the
+corresponding literal conversion and explicit runtime options.
 -/
-def withRuntime
-    (args : List String)
-    (k :
-      ∀ {α : Type}, [_root_.Context α] → [DecidableEq Spec.Shape] → [ToString α] →
-        [_root_.TorchLean.Runtime.FromFloat α] →
-        (cast : Float → α) → (opts : Options) → (rest : List String) → IO Unit) :
+def withSelectedRuntime
+    (arguments : List String)
+    (continuation :
+      ∀ {α : Type}, [TorchLean.Storage α] → [Context α] →
+        [ToString α] →
+        [TorchLean.Runtime.FromFloat α] →
+        (cast : Float → α) → (runtime : Runtime.Config) →
+        (remainingArguments : List String) → IO Unit) :
     IO Unit := do
-  let (cfg, rest) ← match ExecConfig.parseAndStrip args with
+  let (selection, remainingArguments) ← match RuntimeSelection.parse arguments with
     | .ok result => pure result
     | .error message => throw <| IO.userError message
-  ExecConfig.log cfg
-  let opts ← match ExecConfig.toOptions cfg with
+  RuntimeSelection.log selection
+  let runtime ← match RuntimeSelection.toConfig selection with
     | .ok result => pure result
     | .error message => throw <| IO.userError message
-  opts.validateForExecution
-  match (← _root_.TorchLean.Runtime.ScalarMode.withRuntime cfg.scalar (fun {α} _ _ _ _ =>
-      k (α := α) (_root_.TorchLean.Runtime.ofFloat (α := α)) opts rest)) with
-  | .ok () => pure ()
-  | .error message => throw <| IO.userError message
-
-/--
-Parse the shared runtime flags, instantiate `defn`, and pass the resulting scalar module to `k`.
--/
-def withModule
-    {stateShapes inputShapes : List Spec.Shape}
-    (defn : ObjectiveDef Unit stateShapes inputShapes [])
-    (args : List String)
-    (k :
-      ∀ {α : Type}, [_root_.Context α] → [DecidableEq Spec.Shape] → [ToString α] →
-        [_root_.TorchLean.Runtime.FromFloat α] →
-        (cast : Float → α) → Objective α Unit stateShapes inputShapes [] →
-        (rest : List String) → IO Unit) :
-    IO Unit := do
-  let (cfg, rest) ← match ExecConfig.parseAndStrip args with
-    | .ok result => pure result
-    | .error message => throw <| IO.userError message
-  ExecConfig.log cfg
-  let opts ← match ExecConfig.toOptions cfg with
-    | .ok result => pure result
-    | .error message => throw <| IO.userError message
-  opts.validateForExecution
-  match cfg.scalar with
-  | .float32 =>
-      let module ← _root_.Runtime.Autograd.TorchLean.Module.ObjectiveDef.instantiateWith
-        (α := Float32) (β := Unit) (stateShapes := stateShapes) (inputShapes := inputShapes)
-        (dataInputShapes := []) defn Float.toFloat32 opts
-      k (α := Float32) Float.toFloat32 module rest
-  | _ =>
-      if cfg.device == .cuda then
-        throw <| IO.userError "torch: CUDA module execution currently requires --scalar float32"
-      match (← _root_.TorchLean.Runtime.ScalarMode.withRuntime cfg.scalar (fun {α} _ _ _ _ => do
-          let cast := _root_.TorchLean.Runtime.ofFloat (α := α)
-          let module ← _root_.Runtime.Autograd.TorchLean.Module.ObjectiveDef.instantiateWith
-            (α := α) (β := Unit) (stateShapes := stateShapes) (inputShapes := inputShapes)
-            (dataInputShapes := []) defn cast opts
-          k (α := α) cast module rest)) with
-      | .ok () => pure ()
-      | .error message => throw <| IO.userError message
+  runtime.validateForExecution
+  TorchLean.Runtime.Arithmetic.withRuntime selection.arithmetic (fun {α} _ _ _ =>
+    continuation (α := α) (TorchLean.Runtime.ofFloat (α := α))
+      runtime remainingArguments)
 
 end Module
 end TorchLean
 
 namespace TorchLean.Module.Command
 
+/-- Runtime properties required by an executable command. -/
+structure RuntimeRequirements where
+  /-- Required execution device, or no device restriction. -/
+  device? : Option NN.Backend.Device := none
+  /-- Required execution strategy, or no execution-strategy restriction. -/
+  execution? : Option Runtime.ExecutionMode := none
+  deriving Inhabited
+
+namespace RuntimeRequirements
+
+/-- Supply required runtime flags only when the caller did not choose them explicitly. -/
+def applyDefaults (requirements : RuntimeRequirements) (arguments : List String) : List String :=
+  let arguments :=
+    match requirements.device? with
+    | none => arguments
+    | some device =>
+        if TorchLean.CLI.hasFlagValue arguments "device" then arguments
+        else "--device" :: device.cliName :: arguments
+  match requirements.execution? with
+  | none => arguments
+  | some execution =>
+      if TorchLean.CLI.hasFlagValue arguments "execution" then arguments
+      else "--execution" :: TorchLean.Runtime.ExecutionMode.cliName execution :: arguments
+
+/-- Reject a parsed runtime selection that conflicts with the command's requirements. -/
+def validate (requirements : RuntimeRequirements) (runtime : Runtime.Config) :
+    Except String Unit := do
+  match requirements.device? with
+  | none => pure ()
+  | some required =>
+      unless runtime.device == required do
+        throw (s!"this command requires --device {required.cliName}, "
+          ++ s!"not --device {runtime.device.cliName}")
+  match requirements.execution? with
+  | none => pure ()
+  | some required =>
+      unless runtime.execution == required do
+        throw (s!"this command requires --execution "
+          ++ s!"{TorchLean.Runtime.ExecutionMode.cliName required}, not --execution "
+          ++ s!"{TorchLean.Runtime.ExecutionMode.cliName runtime.execution}")
+
+end RuntimeRequirements
+
 /-- Banner, success-message, and flushing configuration for an executable command. -/
 structure Config where
   /-- Optional banner to print before executing the program. -/
-  banner? : Option (Options → String) := none
+  banner? : Option (Runtime.Config → String) := none
   /-- Command-specific help text; the generic runtime help is used when absent. -/
   usage? : Option String := none
   /-- Flush stdout after printing the banner, when present. -/
   flush : Bool := true
-  /-- Print `"{exeName}: ok"` on success. -/
-  printOk : Bool := false
+  /-- Print `"{exeName}: ok"` after successful execution. -/
+  printSuccess : Bool := false
+  /-- Device or execution-mode requirements imposed by this command. -/
+  runtime : RuntimeRequirements := {}
 deriving Inhabited
 
 namespace Config
 
 /-- Print the configured executable banner, if one was supplied. -/
-def printBanner (config : Config) (opts : Options) : IO Unit := do
+def printBanner (config : Config) (runtime : Runtime.Config) : IO Unit := do
   match config.banner? with
   | none => pure ()
   | some banner =>
-      IO.println (banner opts)
+      IO.println (banner runtime)
       if config.flush then
         (← IO.getStdout).flush
 
 end Config
 
-/-- How an executable command chooses its scalar semantics. -/
+/-- How an executable command chooses its arithmetic semantics. -/
 inductive Action where
-  /-- Allow scalar selection; the continuation must work for every executable scalar backend. -/
-  | selectedScalar
-      (k :
-        ∀ {α : Type}, [_root_.Context α] → [DecidableEq Spec.Shape] → [ToString α] →
-          [_root_.TorchLean.Runtime.FromFloat α] →
-          (cast : Float → α) → (opts : Options) → (rest : List String) → IO Unit)
-  /-- Run a command fixed to native binary32 rather than exposing scalar selection. -/
-  | float32 (k : (opts : Options) → (rest : List String) → IO Unit)
+  /-- Allow arithmetic selection; the continuation must work for every executable backend. -/
+  | selectedArithmetic
+      (continuation :
+        ∀ {α : Type}, [TorchLean.Storage α] → [Context α] →
+          [ToString α] →
+          [TorchLean.Runtime.FromFloat α] →
+          (cast : Float → α) → (runtime : Runtime.Config) →
+          (remainingArguments : List String) → IO Unit)
+  /-- Run a command fixed to native arithmetic rather than exposing arithmetic selection. -/
+  | native
+      (continuation :
+        (runtime : Runtime.Config) → (remainingArguments : List String) → IO Unit)
 
 /-- Generic help text for executables built on `TorchLean.Module.Command.run`. -/
 def usage (exeName : String) : String :=
@@ -209,8 +220,8 @@ def usage (exeName : String) : String :=
     , "  --device auto|cpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external"
     , "      cpu and cuda are implemented by the current eager runtime;"
     , "      other names are planning targets and fail until a runtime is registered."
-    , "  --scalar float32"
-    , "      this command runs on the native binary32 module path."
+    , "  --arithmetic native|ieee|complex"
+    , "      native is the default; ieee runs TorchLean's bit-level binary32 reference."
     , "  --execution eager|typed-graph"
     , "      eager executes immediately; typed-graph records and reuses a shape-indexed SSA graph."
     , "  --seed N"
@@ -221,7 +232,6 @@ def usage (exeName : String) : String :=
     , "  lake exe verify -- list"
     , "  lake exe verify -- margin-report"
     , "  lake exe verify -- abcrown-leaf"
-    , "  lake exe verify -- torchlean-robustness"
     , "  lake exe verify -- torchlean-mlp-workflow"
     , ""
     , "Use `lake exe torchlean --help` for the full example list."
@@ -230,109 +240,62 @@ def usage (exeName : String) : String :=
 /--
 Run a TorchLean executable after parsing the shared seed and runtime flags.
 
-The selected seed initializes TorchLean's global random stream and is also stored in `Options`, so
+The selected seed initializes TorchLean's global random stream and is also stored in
+`Runtime.Config`, so
 model initialization and either execution mode observe the same seed.
 -/
 def run
     (exeName : String)
-    (args : List String)
+    (arguments : List String)
     (action : Action)
     (config : Config := {}) :
     IO UInt32 := do
-  let args := TorchLean.CLI.dropDashDash args
-  if args.contains "--help" || args.contains "-h" then
+  let arguments := TorchLean.CLI.dropDashDash arguments
+  if arguments.contains "--help" || arguments.contains "-h" then
     IO.println (config.usage?.getD (usage exeName))
     return 0
-  let (seed, args) ←
-    match TorchLean.CLI.takeSeed args 0 with
-    | .ok v => pure v
-    | .error msg => throw <| IO.userError s!"{exeName}: {msg}"
+  let (seed, arguments) ←
+    match TorchLean.CLI.takeSeed arguments (default := 0) with
+    | .ok result => pure result
+    | .error message => throw <| IO.userError s!"{exeName}: {message}"
+  let arguments := config.runtime.applyDefaults arguments
 
-  _root_.TorchLean.rand.manualSeed seed
+  TorchLean.rand.manualSeed seed
 
-  let printOk : IO Unit := do
-    if config.printOk then
+  let printSuccess : IO Unit := do
+    if config.printSuccess then
       IO.println s!"{exeName}: ok"
 
   match action with
-  | .selectedScalar k =>
-      withRuntime args (fun {α} _ _ _ _ cast opts rest => do
-        let opts : Options := { opts with seed := seed }
-        config.printBanner opts
-        k (α := α) cast opts rest
-        printOk)
+  | .selectedArithmetic continuation =>
+      withSelectedRuntime arguments
+        (fun {α} _ _ _ _ cast runtime remainingArguments => do
+        let runtime : Runtime.Config := { runtime with seed := seed }
+        match config.runtime.validate runtime with
+        | .ok () => pure ()
+        | .error message => throw <| IO.userError s!"{exeName}: {message}"
+        config.printBanner runtime
+        continuation (α := α) cast runtime remainingArguments
+        printSuccess)
       pure 0
-  | .float32 k =>
-      let (cfg, rest) ←
-        match ExecConfig.parseWithScalar args .float32 with
-        | .ok v => pure v
-        | .error msg => throw <| IO.userError msg
-      if cfg.scalar != .float32 then
-        throw <| IO.userError s!"{exeName}: this program only supports `--scalar float32`"
-      ExecConfig.log cfg
-      let opts ← match ExecConfig.toOptions cfg seed with
-        | .ok opts => pure opts
-        | .error msg => throw <| IO.userError msg
-      opts.validateForExecution
-      config.printBanner opts
-      k opts rest
-      printOk
+  | .native continuation =>
+      let (selection, remainingArguments) ←
+        match RuntimeSelection.parse arguments with
+        | .ok result => pure result
+        | .error message => throw <| IO.userError message
+      if selection.arithmetic != .native then
+        throw <| IO.userError s!"{exeName}: this program only supports `--arithmetic native`"
+      RuntimeSelection.log selection
+      let runtime ← match RuntimeSelection.toConfig selection seed with
+        | .ok runtime => pure runtime
+        | .error message => throw <| IO.userError message
+      runtime.validateForExecution
+      match config.runtime.validate runtime with
+      | .ok () => pure ()
+      | .error message => throw <| IO.userError s!"{exeName}: {message}"
+      config.printBanner runtime
+      continuation runtime remainingArguments
+      printSuccess
       pure 0
-
-/--
-Run a command fixed to TorchLean's native `Float32` runtime.
-
-The callback may still author datasets or reports with host `Float` values; trainer and module
-construction convert those values to native binary32 before execution.
--/
-def runFloat32
-    (exeName : String) (args : List String)
-    (banner : Options → String)
-    (k : (opts : Options) → (rest : List String) → IO Unit)
-    (printOk : Bool := true)
-    (usage? : Option String := none) : IO UInt32 :=
-  run exeName args (.float32 k)
-    { banner? := some banner, usage?, printOk := printOk }
-
-/-- Run a native-`Float32` command on CUDA, adding `--device cuda` when needed. -/
-def runCudaFloat32
-    (exeName : String)
-    (args : List String)
-    (banner : Options → String)
-    (k : (opts : Options) → (rest : List String) → IO Unit)
-    (printOk : Bool := true)
-    (usage? : Option String := none) : IO UInt32 := do
-  let hasDeviceFlag :=
-    args.any fun arg => arg == "--device" || arg.startsWith "--device="
-  let cudaArgs : Except String (List String) := do
-    if hasDeviceFlag then
-      let (cfg, _) ← ExecConfig.parseWithScalar args .float32
-      unless cfg.device == .cuda do
-        throw s!"this command requires --device cuda, not --device {cfg.device.cliName}"
-      pure args
-    else
-      pure ("--device" :: "cuda" :: args)
-  let args ← match cudaArgs with
-    | .ok parsed => pure parsed
-    | .error msg =>
-        IO.eprintln s!"{exeName}: {msg}"
-        return 1
-  runFloat32 exeName args banner k printOk usage?
-
-/-- Run a native-`Float32` command on the eager CUDA runtime. -/
-def runCudaEagerFloat32
-    (exeName : String)
-    (args : List String)
-    (banner : Options → String)
-    (k : (opts : Options) → (rest : List String) → IO Unit)
-    (printOk : Bool := true)
-    (usage? : Option String := none) : IO UInt32 :=
-  runCudaFloat32 exeName args banner
-    (fun opts rest => do
-      unless opts.execution == .eager do
-        throw <| IO.userError <|
-          s!"{exeName}: --execution eager is required for CUDA execution"
-      k opts rest)
-    printOk usage?
 
 end TorchLean.Module.Command

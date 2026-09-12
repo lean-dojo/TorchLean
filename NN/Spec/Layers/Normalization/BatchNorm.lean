@@ -18,19 +18,20 @@ Training-time statistics and inference-time running statistics remain separate o
 
 @[expose] public section
 
-namespace Spec
-open Tensor
-open Numbers
+open TorchLean
 
-variable {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+namespace Spec
+open TorchLean TorchLean.Tensor
+
+variable {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
 
 /-- Repeat a channel vector over every position of a spatial shape. -/
 def broadcastChannel {channels : Nat} (sSpatial : Shape)
-    (x : Tensor α [channels]) : Tensor α (([channels] : Shape).concat sSpatial) :=
+    (x : Tensor α [channels]) : Tensor α (Shape.concat [channels] sSpatial) :=
   let spatialSize := Spec.Shape.size sSpatial
   let sFlat : Shape := [channels, spatialSize]
   let expanded : Tensor α sFlat := broadcastAfterSum sFlat 1 x
-  have hSize : Spec.Shape.size sFlat = Spec.Shape.size (([channels] : Shape).concat sSpatial) := by
+  have hSize : Spec.Shape.size sFlat = Spec.Shape.size (Shape.concat [channels] sSpatial) := by
     simp [sFlat, spatialSize, Spec.Shape.size]
   reshapeSpec expanded hSize
 
@@ -89,7 +90,7 @@ end BatchNorm
 
   - `batchNorm`: "training-mode" normalization using statistics computed from the current input
     (TorchLean does not model the running-statistics update),
-  - `batchNorm_inference`: inference-time normalization using fixed running mean/variance.
+  - `batchNormInference`: inference-time normalization using fixed running mean/variance.
 -/
 
 /--
@@ -100,22 +101,26 @@ This computes per-channel mean/variance over the `sSpatial` axes and applies:
 `y = ((x - mean) / sqrt(var + eps)) * gamma + beta`.
 
 PyTorch analogy: `torch.nn.BatchNorm{1,2,3}d` in training mode on an input with batch size `N=1`.
-TorchLean does **not** model the running-statistics update here.
+TorchLean does **not** model the running-statistics update here. A singleton spatial domain is
+accepted and has zero variance; PyTorch training BatchNorm requires more than one value per channel.
+The usual normalization interpretation assumes positive `epsilon`, which this raw spec does not
+validate.
 -/
 def batchNorm
   {channels : Nat} {sSpatial : Shape}
-  (x : Tensor α (([channels] : Shape).concat sSpatial))
+  (x : Tensor α (Shape.concat [channels] sSpatial))
   (gamma : Tensor α [channels])
   (beta : Tensor α [channels])
-  (epsilon : α := Numbers.normalizationEpsilon)
-  [Shape.WellFormed (([channels] : Shape).concat sSpatial)] :
-  Tensor α (([channels] : Shape).concat sSpatial) :=
+  (epsilon : α := TorchLean.normalizationEpsilon)
+  [Shape.WellFormed (Shape.concat [channels] sSpatial)] :
+  Tensor α (Shape.concat [channels] sSpatial) :=
   let spatialSize : Nat := Spec.Shape.size sSpatial
   let s_flat : Shape := [channels, spatialSize]
-  have h_reshape : Spec.Shape.size (([channels] : Shape).concat sSpatial) = Spec.Shape.size s_flat := by
+  have h_reshape :
+      Spec.Shape.size (Shape.concat [channels] sSpatial) = Spec.Shape.size s_flat := by
     simp [s_flat, spatialSize, Spec.Shape.size]
   let x2 : Tensor α s_flat := reshapeSpec x h_reshape
-  have hwf_x : (([channels] : Shape).concat sSpatial).wellFormed := Shape.WellFormed.proof
+  have hwf_x : (Shape.concat [channels] sSpatial).wellFormed := Shape.WellFormed.proof
   have h_channels : channels > 0 := hwf_x.1
   have h_spatial_wf : sSpatial.wellFormed := hwf_x.2
   have h_spatialSize : spatialSize > 0 := by
@@ -129,13 +134,13 @@ def batchNorm
   let centered_sq := mulSpec centered centered
   let varianceRaw : Tensor α [channels] :=
     reduceMean (Shape.rank s_flat - 1) centered_sq h_valid.proof
-  let variance := maxSpec varianceRaw (fill 0 ([channels]))
+  let variance := maxSpec varianceRaw (Tensor.full ([channels]) 0)
   let meanB := broadcastChannel sSpatial mean
   let varianceB := broadcastChannel sSpatial variance
   let gammaB := broadcastChannel sSpatial gamma
   let betaB := broadcastChannel sSpatial beta
   let centered := subSpec x meanB
-  let std := sqrtSpec (addSpec varianceB (fill epsilon (([channels] : Shape).concat sSpatial)))
+  let std := sqrtSpec (addSpec varianceB (Tensor.full (Shape.concat [channels] sSpatial) epsilon))
   addSpec (mulSpec (divSpec centered std) gammaB) betaB
 
 /--
@@ -151,17 +156,18 @@ Affine tangents contribute `xhat * dgamma + dbeta` channel-wise.
 -/
 def batchNormJvp
   {channels : Nat} {sSpatial : Shape}
-  (x tangent : Tensor α (([channels] : Shape).concat sSpatial))
+  (x tangent : Tensor α (Shape.concat [channels] sSpatial))
   (gamma dgamma _beta dbeta : Tensor α [channels])
-  (epsilon : α := Numbers.normalizationEpsilon)
-  [Shape.WellFormed (([channels] : Shape).concat sSpatial)] : Tensor α (([channels] : Shape).concat sSpatial) :=
+  (epsilon : α := TorchLean.normalizationEpsilon)
+  [Shape.WellFormed (Shape.concat [channels] sSpatial)] :
+  Tensor α (Shape.concat [channels] sSpatial) :=
   let spatialSize := Shape.size sSpatial
   let sFlat : Shape := [channels, spatialSize]
-  have hReshape : Shape.size (([channels] : Shape).concat sSpatial) = Shape.size sFlat := by
+  have hReshape : Shape.size (Shape.concat [channels] sSpatial) = Shape.size sFlat := by
     simp [sFlat, spatialSize, Shape.size]
   let xFlat : Tensor α sFlat := reshapeSpec x hReshape
   let tangentFlat : Tensor α sFlat := reshapeSpec tangent hReshape
-  have hWellFormed : (([channels] : Shape).concat sSpatial).wellFormed := Shape.WellFormed.proof
+  have hWellFormed : (Shape.concat [channels] sSpatial).wellFormed := Shape.WellFormed.proof
   have hChannels : channels > 0 := hWellFormed.1
   have hSpatial : spatialSize > 0 := by
     simpa [spatialSize] using Shape.size_pos_of_well_formed hWellFormed.2
@@ -173,9 +179,9 @@ def batchNormJvp
   let centered := subSpec xFlat meanB
   let varianceRaw : Tensor α [channels] :=
     reduceMean (Shape.rank sFlat - 1) (mulSpec centered centered) hAxis.proof
-  let variance := maxSpec varianceRaw (fill 0 ([channels]))
-  let invStd := divSpec (fill 1 ([channels]))
-    (sqrtSpec (addSpec variance (fill epsilon ([channels]))))
+  let variance := maxSpec varianceRaw (Tensor.full ([channels]) 0)
+  let invStd := divSpec (Tensor.full ([channels]) 1)
+    (sqrtSpec (addSpec variance (Tensor.full ([channels]) epsilon)))
   let invStdB := broadcastAfterSum sFlat 1 invStd
   let xHat := mulSpec centered invStdB
   let yFlat := BatchNorm.normalizedJvp hSpatial tangentFlat xHat invStd gamma dgamma dbeta
@@ -184,25 +190,24 @@ def batchNormJvp
 /--
 Backward/VJP for `batchNorm`.
 
-Returns `(dx, dGamma, dBeta)`. Statistics and affine-parameter gradients are reduced over every
-spatial axis, independently for each channel.
+Statistics and affine-parameter gradients are reduced over every spatial axis, independently for
+each channel.
 -/
 def batchNormBackward
   {channels : Nat} {sSpatial : Shape}
-  (x : Tensor α (([channels] : Shape).concat sSpatial))
+  (x : Tensor α (Shape.concat [channels] sSpatial))
   (gamma : Tensor α [channels])
-  (gradOutput : Tensor α (([channels] : Shape).concat sSpatial))
-  (epsilon : α := Numbers.normalizationEpsilon)
-  [Shape.WellFormed (([channels] : Shape).concat sSpatial)] :
-  Tensor α (([channels] : Shape).concat sSpatial) ×
-    Tensor α [channels] × Tensor α [channels] :=
+  (gradOutput : Tensor α (Shape.concat [channels] sSpatial))
+  (epsilon : α := TorchLean.normalizationEpsilon)
+  [Shape.WellFormed (Shape.concat [channels] sSpatial)] :
+  NormalizationGradients α (Shape.concat [channels] sSpatial) [channels] :=
   let spatialSize := Shape.size sSpatial
   let sFlat : Shape := [channels, spatialSize]
-  have hReshape : Shape.size (([channels] : Shape).concat sSpatial) = Shape.size sFlat := by
+  have hReshape : Shape.size (Shape.concat [channels] sSpatial) = Shape.size sFlat := by
     simp [sFlat, spatialSize, Shape.size]
   let xFlat : Tensor α sFlat := reshapeSpec x hReshape
   let gradFlat : Tensor α sFlat := reshapeSpec gradOutput hReshape
-  have hWellFormed : (([channels] : Shape).concat sSpatial).wellFormed := Shape.WellFormed.proof
+  have hWellFormed : (Shape.concat [channels] sSpatial).wellFormed := Shape.WellFormed.proof
   have hChannels : channels > 0 := hWellFormed.1
   have hSpatial : spatialSize > 0 := by
     simpa [spatialSize] using Shape.size_pos_of_well_formed hWellFormed.2
@@ -213,13 +218,16 @@ def batchNormBackward
   let centered := subSpec xFlat (broadcastAfterSum sFlat 1 mean)
   let varianceRaw : Tensor α [channels] :=
     reduceMean (Shape.rank sFlat - 1) (mulSpec centered centered) hAxis.proof
-  let variance := maxSpec varianceRaw (fill 0 ([channels]))
-  let invStd := divSpec (fill 1 ([channels]))
-    (sqrtSpec (addSpec variance (fill epsilon ([channels]))))
+  let variance := maxSpec varianceRaw (Tensor.full ([channels]) 0)
+  let invStd := divSpec (Tensor.full ([channels]) 1)
+    (sqrtSpec (addSpec variance (Tensor.full ([channels]) epsilon)))
   let invStdB := broadcastAfterSum sFlat 1 invStd
   let xHat := mulSpec centered invStdB
-  let backward := BatchNorm.normalizedBackward hSpatial gradFlat xHat invStd gamma
-  (reshapeSpec backward.1 hReshape.symm, backward.2.1, backward.2.2)
+  let (flatInputGradient, scaleGradient, biasGradient) :=
+    BatchNorm.normalizedBackward hSpatial gradFlat xHat invStd gamma
+  { inputGradient := reshapeSpec flatInputGradient hReshape.symm
+    scaleGradient
+    biasGradient }
 
 /-!
 ## BatchNorm (inference-time, running statistics)
@@ -244,26 +252,27 @@ Formula (per channel `c`):
 This matches the standard evaluation-time behavior of `torch.nn.BatchNorm{1,2,3}d` (no
 batch-statistics computation, no running-statistics update).
 
-At inference time, `(μ, σ², γ, β)` are constants, so this is an **affine** map in `x`. See
-`NN.Proofs.Analysis.Normalization.batchNorm_inference_eq_mul_add`.
+Over real arithmetic, `(μ, σ², γ, β)` are constants, so this is an **affine** map in `x`.
+Floating-point evaluation still rounds the individual operations. See
+`Proofs.Normalization.batchNorm_inference_eq_mul_add`.
 -/
 def batchNormInference
   {channels : Nat} {sSpatial : Shape}
-  (x : Tensor α (([channels] : Shape).concat sSpatial))
+  (x : Tensor α (Shape.concat [channels] sSpatial))
   (runningMean : Tensor α [channels])
   (runningVar : Tensor α [channels])
   (gamma : Tensor α [channels])
   (beta : Tensor α [channels])
-  (epsilon : α := Numbers.normalizationEpsilon) :
-  Tensor α (([channels] : Shape).concat sSpatial) :=
+  (epsilon : α := TorchLean.normalizationEpsilon) :
+  Tensor α (Shape.concat [channels] sSpatial) :=
   -- Clamp the variance to stay nonnegative in approximate numeric backends.
-  let runningVar := maxSpec runningVar (fill 0 ([channels]))
+  let runningVar := maxSpec runningVar (Tensor.full ([channels]) 0)
   let meanB := broadcastChannel sSpatial runningMean
   let varianceB := broadcastChannel sSpatial runningVar
   let gammaB := broadcastChannel sSpatial gamma
   let betaB := broadcastChannel sSpatial beta
   let centered := subSpec x meanB
-  let std := sqrtSpec (addSpec varianceB (fill epsilon (([channels] : Shape).concat sSpatial)))
+  let std := sqrtSpec (addSpec varianceB (Tensor.full (Shape.concat [channels] sSpatial) epsilon))
   addSpec (mulSpec (divSpec centered std) gammaB) betaB
 
 end Spec

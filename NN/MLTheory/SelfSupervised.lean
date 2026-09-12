@@ -25,8 +25,9 @@ The chapter contains:
 - VICReg/Barlow-Twins-style finite collapse guards.
 
 This layer is kept modest: these files formalize the objective-level contracts that model
-code should preserve, rather than claiming full optimization or population generalization guarantees.
-That keeps the statements reusable across ViT, convolutional, Mamba, or custom backbones.
+code should preserve, rather than claiming full optimization or population generalization
+guarantees. That keeps the statements reusable across ViT, convolutional, Mamba, or custom
+backbones.
 -/
 
 @[expose] public section

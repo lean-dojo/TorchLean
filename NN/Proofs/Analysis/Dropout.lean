@@ -7,8 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Layers.Dropout
-public import NN.Spec.Core.Tensor.SomeTensor
-public import NN.Proofs.Tensor.Basic.LinearAlgebra
+public import Mathlib.Data.Real.Basic
 
 /-!
 # Dropout analysis properties
@@ -29,8 +28,8 @@ Overfitting”.
 
 namespace Proofs
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 noncomputable section
 

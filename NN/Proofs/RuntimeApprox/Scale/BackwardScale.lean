@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.NNReal.Defs
 public import NN.Proofs.RuntimeApprox.Graph.BackwardApprox
 public import NN.Proofs.RuntimeApprox.Scale.ForwardScale
 
@@ -16,7 +15,7 @@ public import NN.Proofs.RuntimeApprox.Scale.ForwardScale
 Backward (reverse-mode) scale propagation.
 
 This optional module mirrors `NN.Proofs.RuntimeApprox.Graph.BackwardApprox`, but for *scale bounds*
-(nonnegative bounds on `linf_norm`) rather than eps error bounds.
+(nonnegative bounds on `linfNorm`) rather than eps error bounds.
 
 Use it alongside the backward approximation graph when you want to derive abs+rel tolerances for
 gradients/cotangents from both an eps error bound and a propagated magnitude bound.
@@ -28,7 +27,7 @@ gradients/cotangents from both an eps error bound and a propagated magnitude bou
 namespace Proofs
 namespace RuntimeApprox
 
-open Spec
+open Spec TorchLean
 open NN.MLTheory.Robustness.Spec
 open Proofs.Autograd.Algebra
 open scoped NNReal
@@ -39,29 +38,30 @@ variable {α : Type}
 
 /-- Soundness condition for accumulating scale bounds under addition in a context. -/
 def AddScaleSound (toSpec : α → SpecScalar) [Add α]
-    (addBound : {Δ : List Shape} → BList Δ → BList Δ → _root_.TorchLean.TensorPack α Δ → _root_.TorchLean.TensorPack α Δ → BList Δ) : Prop :=
+    (addBound : {Δ : List Shape} → BList Δ → BList Δ →
+      TorchLean.TensorPack α Δ → TorchLean.TensorPack α Δ → BList Δ) : Prop :=
   ∀ {Δ : List Shape},
-    ∀ xS yS : _root_.TorchLean.TensorPack SpecScalar Δ,
-    ∀ xR yR : _root_.TorchLean.TensorPack α Δ,
+    ∀ xS yS : TorchLean.TensorPack SpecScalar Δ,
+    ∀ xR yR : TorchLean.TensorPack α Δ,
     ∀ bX bY : BList Δ,
       scaleCtx (α := α) toSpec xS xR bX →
       scaleCtx (α := α) toSpec yS yR bY →
-        scaleCtx (α := α) toSpec (_root_.TorchLean.TensorPack.add (α := SpecScalar) xS yS) (_root_.TorchLean.TensorPack.add (α := α) xR yR)
-          (addBound bX bY xR yR)
+        scaleCtx (α := α) toSpec (TorchLean.TensorPack.add (α := SpecScalar) xS yS)
+          (TorchLean.TensorPack.add (α := α) xR yR) (addBound bX bY xR yR)
 
 /-- A reverse node augmented with forward+VJP scale bounds. -/
 structure RevNodeScale (toSpec : α → SpecScalar) (Γ : List Shape) (τ : Shape) extends
     RevNode (α := α) toSpec Γ τ where
-  fwdScaleBound : BList Γ → _root_.TorchLean.TensorPack α Γ → ℝ≥0
-  fwdScaleSound : ∀ (ctxS : _root_.TorchLean.TensorPack SpecScalar Γ) (ctxR : _root_.TorchLean.TensorPack α Γ) (epsCtx : EList Γ) (bCtx : BList
-    Γ),
+  fwdScaleBound : BList Γ → TorchLean.TensorPack α Γ → ℝ≥0
+  fwdScaleSound : ∀ (ctxS : TorchLean.TensorPack SpecScalar Γ) (ctxR : TorchLean.TensorPack α Γ)
+      (epsCtx : EList Γ) (bCtx : BList Γ),
       approxCtx (α := α) toSpec ctxS ctxR epsCtx →
       scaleCtx (α := α) toSpec ctxS ctxR bCtx →
-        scaleTensor (α := α) (toSpec := toSpec) (forwardSpec ctxS) (forwardRuntime ctxR) (fwdScaleBound
-          bCtx ctxR)
-  vjpScaleBound : BList Γ → _root_.TorchLean.TensorPack α Γ → ℝ≥0 → Tensor α τ → BList Γ
-  vjpScaleSound : ∀ (ctxS : _root_.TorchLean.TensorPack SpecScalar Γ) (ctxR : _root_.TorchLean.TensorPack α Γ) (epsCtx : EList Γ) (bCtx : BList
-    Γ)
+        scaleTensor (α := α) (toSpec := toSpec) (forwardSpec ctxS) (forwardRuntime ctxR)
+          (fwdScaleBound bCtx ctxR)
+  vjpScaleBound : BList Γ → TorchLean.TensorPack α Γ → ℝ≥0 → Tensor α τ → BList Γ
+  vjpScaleSound : ∀ (ctxS : TorchLean.TensorPack SpecScalar Γ) (ctxR : TorchLean.TensorPack α Γ)
+      (epsCtx : EList Γ) (bCtx : BList Γ)
       (δS : SpecTensor τ) (δR : Tensor α τ) (bδ : ℝ≥0),
       approxCtx (α := α) toSpec ctxS ctxR epsCtx →
       scaleCtx (α := α) toSpec ctxS ctxR bCtx →
@@ -97,6 +97,10 @@ def toFwdGraphScale {Γ : List Shape} {ss : List Shape} :
           scaleBound := node.fwdScaleBound
           scaleSound := node.fwdScaleSound }
 
+/-- Forgetting the scale annotations commutes with forgetting the reverse-mode structure.
+
+Both directions of the square end at the same plain forward graph, which is why the scale-annotated
+development can reuse the unannotated evaluation lemmas instead of repeating them. -/
 theorem toFwdGraph_toFwdGraphScale_eq {Γ : List Shape} {ss : List Shape}
     (g : RevGraphScale (α := α) toSpec Γ ss) :
     FwdGraphScale.toFwdGraph (toFwdGraphScale (α := α) (toSpec := toSpec) g) =
@@ -107,21 +111,22 @@ theorem toFwdGraph_toFwdGraphScale_eq {Γ : List Shape} {ss : List Shape}
       simp [toFwdGraphScale, toRevGraph, FwdGraphScale.toFwdGraph, RevGraph.toFwdGraph, ih]
 
 /-- Evaluate the forward pass on spec values, returning the extended context `Γ ++ ss`. -/
-def evalSpec {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α := α) toSpec Γ ss) (x : _root_.TorchLean.TensorPack
-  SpecScalar Γ) :
-    _root_.TorchLean.TensorPack SpecScalar (Γ ++ ss) :=
+def evalSpec {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α := α) toSpec Γ ss)
+    (x : TorchLean.TensorPack SpecScalar Γ) :
+    TorchLean.TensorPack SpecScalar (Γ ++ ss) :=
   FwdGraphScale.evalSpec (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) (toFwdGraphScale (α := α)
     g) x
 
 /-- Evaluate the forward pass on runtime values, returning the extended context `Γ ++ ss`. -/
 def evalRuntime {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α := α) toSpec Γ ss) (x :
-  _root_.TorchLean.TensorPack α Γ) :
-    _root_.TorchLean.TensorPack α (Γ ++ ss) :=
+  TorchLean.TensorPack α Γ) :
+    TorchLean.TensorPack α (Γ ++ ss) :=
   FwdGraphScale.evalRuntime (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) (toFwdGraphScale (α :=
     α) g) x
 
+/-- Spec evaluation of a scale-annotated reverse graph agrees with the unannotated one. -/
 @[simp] theorem evalSpec_eq_rev {Γ : List Shape} {ss : List Shape}
-    (g : RevGraphScale (α := α) toSpec Γ ss) (x : _root_.TorchLean.TensorPack SpecScalar Γ) :
+    (g : RevGraphScale (α := α) toSpec Γ ss) (x : TorchLean.TensorPack SpecScalar Γ) :
     evalSpec (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) g x =
       RevGraph.evalSpec (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) (toRevGraph (α := α) g) x :=
         by
@@ -130,8 +135,10 @@ def evalRuntime {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α := α
     (fun fg => FwdGraph.evalSpec (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) fg x)
     (toFwdGraph_toFwdGraphScale_eq (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) g)
 
+/-- And so does runtime evaluation. The annotations carry bounds only; they never change what is
+computed, which is exactly what these two lemmas record. -/
 @[simp] theorem evalRuntime_eq_rev {Γ : List Shape} {ss : List Shape}
-    (g : RevGraphScale (α := α) toSpec Γ ss) (x : _root_.TorchLean.TensorPack α Γ) :
+    (g : RevGraphScale (α := α) toSpec Γ ss) (x : TorchLean.TensorPack α Γ) :
     evalRuntime (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) g x =
       RevGraph.evalRuntime (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) (toRevGraph (α := α) g) x
         := by
@@ -141,18 +148,21 @@ def evalRuntime {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α := α
 
 /-- Forward-pass error bounds for all intermediate nodes, computed from input bounds `epsIn`. -/
 def evalBounds {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α := α) toSpec Γ ss)
-    (epsIn : EList Γ) (xR : _root_.TorchLean.TensorPack α Γ) : EList (Γ ++ ss) :=
+    (epsIn : EList Γ) (xR : TorchLean.TensorPack α Γ) : EList (Γ ++ ss) :=
   RevGraph.evalBounds (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) (toRevGraph (α := α) g) epsIn
     xR
 
 /-- Forward-pass scale bounds for all intermediate nodes, computed from input bounds `bIn`. -/
 def evalScales {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α := α) toSpec Γ ss)
-    (bIn : BList Γ) (xR : _root_.TorchLean.TensorPack α Γ) : BList (Γ ++ ss) :=
+    (bIn : BList Γ) (xR : TorchLean.TensorPack α Γ) : BList (Γ ++ ss) :=
   FwdGraphScale.evalScales (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) (toFwdGraphScale (α := α)
     g) bIn xR
 
+/-- Forward evaluation respects the scale bounds: if the inputs are within their bounds, every
+intermediate node is within the bound `evalScales` computes for it. -/
 theorem eval_scale {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α := α) toSpec Γ ss) :
-    ∀ (xS : _root_.TorchLean.TensorPack SpecScalar Γ) (xR : _root_.TorchLean.TensorPack α Γ) (epsIn : EList Γ) (bIn : BList Γ),
+    ∀ (xS : TorchLean.TensorPack SpecScalar Γ) (xR : TorchLean.TensorPack α Γ) (epsIn : EList Γ)
+      (bIn : BList Γ),
       approxCtx (α := α) toSpec xS xR epsIn →
       scaleCtx (α := α) toSpec xS xR bIn →
         scaleCtx (α := α) toSpec
@@ -170,37 +180,49 @@ theorem eval_scale {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α :=
   -/
 def backpropScales {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α := α) toSpec Γ ss)
     [Add α]
-    (bIn : BList Γ) (xR : _root_.TorchLean.TensorPack α Γ) (bSeed : BList (Γ ++ ss)) (seedR : _root_.TorchLean.TensorPack α (Γ ++ ss))
-    (addBound : {Δ : List Shape} → BList Δ → BList Δ → _root_.TorchLean.TensorPack α Δ → _root_.TorchLean.TensorPack α Δ → BList Δ) : BList Γ :=
+    (bIn : BList Γ) (xR : TorchLean.TensorPack α Γ) (bSeed : BList (Γ ++ ss))
+    (seedR : TorchLean.TensorPack α (Γ ++ ss))
+    (addBound : {Δ : List Shape} → BList Δ → BList Δ →
+      TorchLean.TensorPack α Δ → TorchLean.TensorPack α Δ → BList Δ) : BList Γ :=
   match g with
   | .nil =>
       BList.cast (ss₁ := Γ ++ []) (ss₂ := Γ) (List.append_nil Γ) bSeed
   | .snoc (ss := ssPrev) (τ := τ) g node =>
       let assoc : (Γ ++ ssPrev) ++ [τ] = Γ ++ (ssPrev ++ [τ]) := List.append_assoc Γ ssPrev [τ]
-      let seed' : _root_.TorchLean.TensorPack α ((Γ ++ ssPrev) ++ [τ]) :=
-        _root_.TorchLean.TensorPack.cast (α := α) (ss₁ := Γ ++ (ssPrev ++ [τ])) (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm
-          seedR
+      let seed' : TorchLean.TensorPack α ((Γ ++ ssPrev) ++ [τ]) :=
+        TorchLean.TensorPack.cast (α := α) (ss₁ := Γ ++ (ssPrev ++ [τ]))
+          (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm seedR
       let bSeed' : BList ((Γ ++ ssPrev) ++ [τ]) :=
         BList.cast (ss₁ := Γ ++ (ssPrev ++ [τ])) (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm bSeed
       let bSeedPrev : BList (Γ ++ ssPrev) := (BList.unsnoc (ss := Γ ++ ssPrev) (τ := τ) bSeed').1
       let bSeedOut : ℝ≥0 := (BList.unsnoc (ss := Γ ++ ssPrev) (τ := τ) bSeed').2
-      let seedPrev : _root_.TorchLean.TensorPack α (Γ ++ ssPrev) := (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ)
-        seed').1
-      let seedOut : Tensor α τ := (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seed').2
+      let seedPrev : TorchLean.TensorPack α (Γ ++ ssPrev) :=
+        (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seed').1
+      let seedOut : Tensor α τ :=
+        (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seed').2
       let ctxR := evalRuntime (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ssPrev) g xR
       let bCtx := evalScales (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ssPrev) g bIn xR
       let contrib := node.vjpRuntime ctxR seedOut
       let bContrib := node.vjpScaleBound bCtx ctxR bSeedOut seedOut
-      let seedPrev' := _root_.TorchLean.TensorPack.add (α := α) seedPrev contrib
+      let seedPrev' := TorchLean.TensorPack.add (α := α) seedPrev contrib
       let bSeedPrev' := addBound (Δ := Γ ++ ssPrev) bSeedPrev bContrib seedPrev contrib
       backpropScales g bIn xR bSeedPrev' seedPrev' addBound
 
+/-- The same statement for the backward pass: propagated cotangents stay within the backpropagated
+scale bounds.
+
+The `addBound` combiner is a parameter rather than a fixed choice, because how two accumulated
+gradients' bounds combine depends on the carrier: adding bounds is always sound, but a carrier with
+a
+sharper triangle inequality can do better. `addSound` is what pins down the requirement. -/
 theorem backprop_scale {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α := α) toSpec Γ ss)
     [Add α]
-    (addBound : {Δ : List Shape} → BList Δ → BList Δ → _root_.TorchLean.TensorPack α Δ → _root_.TorchLean.TensorPack α Δ → BList Δ)
+    (addBound : {Δ : List Shape} → BList Δ → BList Δ →
+      TorchLean.TensorPack α Δ → TorchLean.TensorPack α Δ → BList Δ)
     (addSound : AddScaleSound (α := α) toSpec addBound) :
-    ∀ (xS : _root_.TorchLean.TensorPack SpecScalar Γ) (xR : _root_.TorchLean.TensorPack α Γ) (epsIn : EList Γ) (bIn : BList Γ)
-      (seedS : _root_.TorchLean.TensorPack SpecScalar (Γ ++ ss)) (seedR : _root_.TorchLean.TensorPack α (Γ ++ ss)) (bSeed : BList (Γ ++ ss)),
+    ∀ (xS : TorchLean.TensorPack SpecScalar Γ) (xR : TorchLean.TensorPack α Γ) (epsIn : EList Γ)
+      (bIn : BList Γ) (seedS : TorchLean.TensorPack SpecScalar (Γ ++ ss))
+      (seedR : TorchLean.TensorPack α (Γ ++ ss)) (bSeed : BList (Γ ++ ss)),
       approxCtx (α := α) toSpec xS xR epsIn →
       scaleCtx (α := α) toSpec xS xR bIn →
       scaleCtx (α := α) toSpec seedS seedR bSeed →
@@ -246,12 +268,12 @@ theorem backprop_scale {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (�
 
       -- Cast seed to `(Γ ++ ssPrev) ++ [τ]`, then split.
       let assoc : (Γ ++ ssPrev) ++ [τ] = Γ ++ (ssPrev ++ [τ]) := List.append_assoc Γ ssPrev [τ]
-      let seedS' : _root_.TorchLean.TensorPack SpecScalar ((Γ ++ ssPrev) ++ [τ]) :=
-        _root_.TorchLean.TensorPack.cast (α := SpecScalar) (ss₁ := Γ ++ (ssPrev ++ [τ])) (ss₂ := (Γ ++ ssPrev) ++ [τ])
-          assoc.symm seedS
-      let seedR' : _root_.TorchLean.TensorPack α ((Γ ++ ssPrev) ++ [τ]) :=
-        _root_.TorchLean.TensorPack.cast (α := α) (ss₁ := Γ ++ (ssPrev ++ [τ])) (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm
-          seedR
+      let seedS' : TorchLean.TensorPack SpecScalar ((Γ ++ ssPrev) ++ [τ]) :=
+        TorchLean.TensorPack.cast (α := SpecScalar) (ss₁ := Γ ++ (ssPrev ++ [τ]))
+          (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm seedS
+      let seedR' : TorchLean.TensorPack α ((Γ ++ ssPrev) ++ [τ]) :=
+        TorchLean.TensorPack.cast (α := α) (ss₁ := Γ ++ (ssPrev ++ [τ]))
+          (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm seedR
       let bSeed' : BList ((Γ ++ ssPrev) ++ [τ]) :=
         BList.cast (ss₁ := Γ ++ (ssPrev ++ [τ])) (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm bSeed
 
@@ -259,14 +281,14 @@ theorem backprop_scale {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (�
         simpa [seedS', seedR', bSeed'] using
           (scaleCtx_cast (α := α) (toSpec := toSpec) (h := assoc.symm) hinSeed)
 
-      let seedPrevS : _root_.TorchLean.TensorPack SpecScalar (Γ ++ ssPrev) :=
-        (_root_.TorchLean.TensorPack.unsnoc (α := SpecScalar) (ss := Γ ++ ssPrev) (τ := τ) seedS').1
+      let seedPrevS : TorchLean.TensorPack SpecScalar (Γ ++ ssPrev) :=
+        (TorchLean.TensorPack.unsnoc (α := SpecScalar) (ss := Γ ++ ssPrev) (τ := τ) seedS').1
       let seedOutS : SpecTensor τ :=
-        (_root_.TorchLean.TensorPack.unsnoc (α := SpecScalar) (ss := Γ ++ ssPrev) (τ := τ) seedS').2
-      let seedPrevR : _root_.TorchLean.TensorPack α (Γ ++ ssPrev) :=
-        (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seedR').1
+        (TorchLean.TensorPack.unsnoc (α := SpecScalar) (ss := Γ ++ ssPrev) (τ := τ) seedS').2
+      let seedPrevR : TorchLean.TensorPack α (Γ ++ ssPrev) :=
+        (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seedR').1
       let seedOutR : Tensor α τ :=
-        (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seedR').2
+        (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seedR').2
       let bSeedPrev : BList (Γ ++ ssPrev) :=
         (BList.unsnoc (ss := Γ ++ ssPrev) (τ := τ) bSeed').1
       let bSeedOut : ℝ≥0 :=
@@ -280,7 +302,8 @@ theorem backprop_scale {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (�
             (xS := seedS') (xR := seedR') (bs := bSeed') hseed')
 
       have hseedPrev : scaleCtx (α := α) toSpec seedPrevS seedPrevR bSeedPrev := hseedSplit.1
-      have hseedOut : scaleTensor (α := α) (toSpec := toSpec) seedOutS seedOutR bSeedOut := hseedSplit.2
+      have hseedOut : scaleTensor (α := α) (toSpec := toSpec) seedOutS seedOutR bSeedOut :=
+        hseedSplit.2
 
       let ctxS := evalSpec (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ssPrev) g xS
       let ctxR := evalRuntime (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ssPrev) g xR
@@ -299,8 +322,9 @@ theorem backprop_scale {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (�
           (by simpa [seedOutS, seedOutR, bSeedOut] using hseedOut)
 
       -- Add the contribution into the previous seed, and update the scale bound via `addSound`.
-      let seedPrevS' := _root_.TorchLean.TensorPack.add (α := SpecScalar) seedPrevS (node.vjpSpec ctxS seedOutS)
-      let seedPrevR' := _root_.TorchLean.TensorPack.add (α := α) seedPrevR (node.vjpRuntime ctxR seedOutR)
+      let seedPrevS' :=
+        TorchLean.TensorPack.add (α := SpecScalar) seedPrevS (node.vjpSpec ctxS seedOutS)
+      let seedPrevR' := TorchLean.TensorPack.add (α := α) seedPrevR (node.vjpRuntime ctxR seedOutR)
       let bSeedPrev' := addBound bSeedPrev (node.vjpScaleBound bCtx ctxR bSeedOut seedOutR)
         seedPrevR (node.vjpRuntime ctxR seedOutR)
 
@@ -314,7 +338,7 @@ theorem backprop_scale {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (�
         backpropScales,
         assoc, ctxS, ctxR, epsCtx, bCtx, seedS', seedR', bSeed', seedPrevS, seedPrevR, bSeedPrev,
         seedOutS, seedOutR, bSeedOut, seedPrevS', seedPrevR', bSeedPrev', evalBounds, evalScales,
-          _root_.TorchLean.TensorPack.add] using this
+          TorchLean.TensorPack.add] using this
 
 end RevGraphScale
 

@@ -5,12 +5,10 @@ Authors: TorchLean Team
 -/
 module
 
-public import Mathlib.Analysis.Calculus.Deriv.MeanValue
-public import Mathlib.Analysis.SpecialFunctions.Pow.Real
 public import Mathlib.Analysis.SpecialFunctions.Sigmoid
 public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 public import NN.Floats.Interval.RealBounds
-public import NN.MLTheory.CROWN.BoundOps
+public import NN.MLTheory.CROWN.BoundOps.Lawful
 
 /-!
 # Interval arithmetic lemmas (ℝ)
@@ -75,9 +73,12 @@ theorem monotone_real_tanh : Monotone Real.tanh :=
 /-- A value is in an interval [lo, hi] -/
 def inInterval (x lo hi : ℝ) : Prop := lo ≤ x ∧ x ≤ hi
 
+/-- Every value lies in the degenerate interval `[x, x]`. -/
 theorem inInterval_refl (x : ℝ) : inInterval x x x :=
   ⟨le_refl x, le_refl x⟩
 
+/-- Introduction rule: two inequalities give membership. Having this as a named lemma keeps the
+downstream proofs from unfolding `inInterval` just to build an `And`. -/
 theorem inInterval_of_bounds {x lo hi : ℝ}
     (hlo : lo ≤ x) (hhi : x ≤ hi) : inInterval x lo hi := ⟨hlo, hhi⟩
 
@@ -222,7 +223,7 @@ theorem interval_abs_sound {x l u : ℝ} (h : inInterval x l u) :
 
 section Directed
 
-variable {α : Type} [Context α] [BoundOps α] [LawfulBoundOps α]
+variable {α : Type} [TorchLean.Storage α] [Context α] [BoundOps α] [LawfulBoundOps α]
 
 /-- Exact real meaning of an endpoint supplied by its lawful directed-arithmetic instance. -/
 abbrev semanticValue (x : α) : ℝ := LawfulBoundOps.toReal x

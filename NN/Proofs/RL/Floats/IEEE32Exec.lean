@@ -7,8 +7,10 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.RL.Core
-public import NN.Floats.IEEEExec.Bridge.FP32Total
 public import NN.Proofs.RL.Tactics
+public import NN.Floats.IEEEExec.Bridge.FP32Total.Arithmetic
+public import NN.Floats.IEEEExec.Exec32.Instances
+public import NN.Floats.IEEEExec.Bridge.FP32Total -- shake: keep
 
 /-!
 # RL Float32 Semantics (IEEE32Exec)
@@ -22,8 +24,8 @@ The IEEE32Exec bridge files prove that, on the **finite path**, executable float
 refines the standard mathematical model: compute the real operation and round to float32 at each
 primitive operation.
 
-This module packages that theorem pattern for one of the most common RL formulas: the one-step discounted
-backup and TD residual used by TD learning, value iteration, and advantage estimation.
+This module packages that theorem pattern for one of the most common RL formulas: the one-step
+discounted backup and TD residual used by TD learning, value iteration, and advantage estimation.
 
 Practical takeaway:
 
@@ -35,8 +37,8 @@ References:
 - IEEE 754-2019 (binary32 arithmetic): https://doi.org/10.1109/IEEESTD.2019.8766229
 - Goldberg, “What Every Computer Scientist Should Know About Floating-Point Arithmetic” (1991):
   https://doi.org/10.1145/103162.103163
-- Sutton and Barto, *Reinforcement Learning: An Introduction* (2nd ed., discounted backups/TD learning):
-  http://incompleteideas.net/book/the-book-2nd.html
+- Sutton and Barto, *Reinforcement Learning: An Introduction* (2nd ed., discounted backups and
+  TD learning): http://incompleteideas.net/book/the-book-2nd.html
 -/
 
 @[expose] public section
@@ -66,12 +68,16 @@ theorem toReal_discountedBackup_eq_fp32Round_chain_of_isFinite
     (h₁ : isFinite (mul gamma (continueMask (α := IEEE32Exec) done)) = true)
     (h₂ : isFinite (mul (mul gamma (continueMask (α := IEEE32Exec) done)) bootstrap) = true)
     (h₃ :
-      isFinite (add reward (mul (mul gamma (continueMask (α := IEEE32Exec) done)) bootstrap)) = true) :
+      isFinite (add reward (mul (mul gamma (continueMask (α := IEEE32Exec) done)) bootstrap))
+        = true) :
     toReal (discountedBackup (α := IEEE32Exec) reward gamma bootstrap done) =
       fp32Round
         (toReal reward +
-          fp32Round (fp32Round (toReal gamma * toReal (continueMask (α := IEEE32Exec) done)) * toReal bootstrap)) := by
-  -- Unfold the RL definition and apply the per-op bridge lemmas (`*_of_isFinite`) from BridgeFP32Total.
+          fp32Round
+            (fp32Round (toReal gamma * toReal (continueMask (α := IEEE32Exec) done)) *
+              toReal bootstrap)) := by
+  -- Unfold the RL definition and apply the per-op bridge lemmas (`*_of_isFinite`) from
+  -- BridgeFP32Total.
   simp_rl
   set mask : IEEE32Exec := continueMask (α := IEEE32Exec) done
   have ht1 :
@@ -104,10 +110,12 @@ theorem toReal_tdResidual_eq_fp32Round_chain_of_isFinite
     (h₁ : isFinite (mul gamma (continueMask (α := IEEE32Exec) done)) = true)
     (h₂ : isFinite (mul (mul gamma (continueMask (α := IEEE32Exec) done)) nextValue) = true)
     (h₃ :
-      isFinite (add reward (mul (mul gamma (continueMask (α := IEEE32Exec) done)) nextValue)) = true)
+      isFinite (add reward (mul (mul gamma (continueMask (α := IEEE32Exec) done)) nextValue))
+        = true)
     (hval : isFinite value = true)
     (hsub :
-      isFinite (sub (discountedBackup (α := IEEE32Exec) reward gamma nextValue done) value) = true) :
+      isFinite (sub (discountedBackup (α := IEEE32Exec) reward gamma nextValue done) value)
+        = true) :
     toReal (tdResidual (α := IEEE32Exec) value reward gamma nextValue done) =
       fp32Round
         (fp32Round
@@ -136,7 +144,8 @@ theorem toReal_tdResidual_eq_fp32Round_chain_of_isFinite
   have hsubReal :
       toReal (sub (discountedBackup (α := IEEE32Exec) reward gamma nextValue done) value) =
         fp32Round
-          (toReal (discountedBackup (α := IEEE32Exec) reward gamma nextValue done) - toReal value) :=
+          (toReal (discountedBackup (α := IEEE32Exec) reward gamma nextValue done) -
+            toReal value) :=
     toReal_sub_eq_fp32Round_of_isFinite
       (x := discountedBackup (α := IEEE32Exec) reward gamma nextValue done) (y := value)
       hbackupFin hval hsub

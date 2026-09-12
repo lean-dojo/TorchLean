@@ -6,8 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Bridge.FP32
-public import NN.Floats.IEEEExec.Rules.SpecialRules
+public import Mathlib.Algebra.Order.Algebra
+public import Mathlib.Analysis.SpecialFunctions.Pow.Real
+import Mathlib.Tactic.Positivity.Finset
+public import NN.Floats.IEEEExec.Semantics.RealSemantics
 
 /-!
 # Total FP32 Bridge: Finite and Special Values

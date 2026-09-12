@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Torch.Core.OptimizerCheckpoint
+public import NN.Runtime.Autograd.Torch.Core.OptimizerCheckpoint.CudaAdam
+public import NN.Runtime.Autograd.Engine.Core.Backward
 
 /-!
 # Backward Passes and Optimizers
@@ -22,9 +23,7 @@ namespace Runtime
 namespace Autograd
 namespace Torch
 
-open Spec
-open Tensor
-open Proofs.Autograd.Algebra
+open Spec TorchLean TorchLean.Tensor
 
 namespace Internal
 
@@ -36,123 +35,84 @@ Run reverse-mode backprop on the CUDA tape, returning device gradients for all t
 This is the CUDA analogue of `backwardDenseAll`, but it does *not* download gradients back to the
 host. This is primarily useful for implementing GPU-native optimizer steps.
 -/
-def backwardDenseAllCuda {α : Type} [TensorTransfer α] (s : EagerSession α) [Add α] [Zero α]
-  [DecidableEq Shape]
+def backwardDenseAllCuda {α : Type} [TorchLean.Storage α] [TensorTransfer α]
+    (s : EagerSession α) [Add α] [Zero α]
   {sh : Shape} (out : TensorRef α sh) (seed : Tensor α sh) :
   IO (Array Runtime.Autograd.Cuda.AnyBuffer) := do
-  if Options.device s.opts != .cuda then
+  if Config.device s.options != .cuda then
     throw <| IO.userError "torch: backwardDenseAllCuda called on non-CUDA eager session"
   let t ← s.cudaTape.get
   let seedAny ← CudaBridge.toAnyBuffer (α := α) (s := sh) seed
   okOrThrow <|
     Runtime.Autograd.Cuda.Tape.backwardDenseAll (t := t) (outId := out.id) (seed := seedAny)
 
-/-- Run CUDA backward from a scalar loss with seed `1`, returning device gradient buffers. -/
-def backwardScalarDenseAllCuda {α : Type} [TensorTransfer α] (s : EagerSession α) [Add α]
-  [Zero α] [One α] [DecidableEq Shape]
-  (loss : TensorRef α Shape.scalar) : IO (Array Runtime.Autograd.Cuda.AnyBuffer) := do
-  backwardDenseAllCuda (α := α) s (sh := Shape.scalar) loss (Tensor.scalar (1 : α))
-
 /--
 Run scalar-loss CUDA backprop and return gradients only for trainable parameter leaves.
 
-The tape walk uses an array indexed by node id rather than a persistent hash map. Only trainable
-parameter gradients are packed into the returned map, so optimizer updates stay on device without
-paying hash-table costs at every intermediate node.
+`seed` scales the loss cotangent. Batch training uses `1 / batch.size` so it can accumulate the
+mean directly, without first forming a larger unnormalized sum.
+
+The traversal is the engine's sparse CUDA sweep `Cuda.Tape.backwardSparse`, which walks node
+ids in reverse, runs a node's VJP only when that node has received a cotangent, retires every
+activation cotangent as soon as it has been propagated, and keeps owned device buffers only for
+the ids selected by `retain`. Here `retain` selects exactly the trainable parameter leaves, so the
+returned map has one entry per trainable parameter and optimizer updates stay on device without
+paying hash-table costs at every intermediate node. A trainable parameter that receives no
+gradient is an error, as before.
 -/
-def backwardScalarParamGradsCuda {α : Type} [TensorTransfer α] (s : EagerSession α)
-    [One α] [DecidableEq Shape]
-    (loss : TensorRef α Shape.scalar) : IO CudaGradMap := do
-  if Options.device s.opts != .cuda then
+def backwardScalarParamGradsCuda {α : Type} [TorchLean.Storage α] [TensorTransfer α]
+    (s : EagerSession α)
+    [One α]
+    (loss : TensorRef α Shape.scalar) (seed : α := 1) : IO CudaGradMap := do
+  if Config.device s.options != .cuda then
     throw <| IO.userError "torch: backwardScalarParamGradsCuda called on non-CUDA eager session"
   let t ← s.cudaTape.get
   let params ← s.paramsByLeaf.get
-  let seedAny ← CudaBridge.toAnyBuffer (α := α) (s := Shape.scalar)
-    (Tensor.scalar (1 : α))
+  let seedAny ← CudaBridge.toAnyBuffer (α := α) (s := Shape.scalar) (Tensor.scalar seed)
   checkCudaAnyBufferSize "scalar CUDA backward seed" seedAny
-  let n := t.nodes.size
-  if loss.id ≥ n then
+  if loss.id ≥ t.nodes.size then
     releaseCudaAnyBuffer seedAny
     throw <| IO.userError "torch: scalar CUDA backward seed id out of bounds"
-  let mut initial : Array (Option Runtime.Autograd.Cuda.AnyBuffer) := Array.replicate n none
-  initial := initial.set! loss.id (some seedAny)
-  let gradsRef ← IO.mkRef initial
-  let addGrad (id : Nat) (g : Runtime.Autograd.Cuda.AnyBuffer) : IO Unit := do
-    let node ← match t.getNode? id with
-      | some node => pure node
-      | none =>
-          releaseCudaAnyBuffer g
-          throw <| IO.userError "torch: invalid parent id during CUDA backward"
-    if !node.requiresGrad then
-      checkCudaAnyBufferSize s!"discarded gradient for node {id}" g
-      releaseCudaAnyBuffer g
-    else if _h : g.s = node.value.s then
-      let g' : Runtime.Autograd.Cuda.AnyBuffer := { s := node.value.s, buf := g.buf }
-      checkCudaAnyBufferSize s!"gradient contribution for node {id} ({node.name})" g'
-      let grads ← gradsRef.get
-      match grads[id]? with
-      | none =>
-          releaseCudaAnyBuffer g'
-          throw <| IO.userError "torch: CUDA gradient table out of bounds"
-      | some none =>
-          let owned ← ownedCudaAnyBuffer s!"owned gradient for node {id} ({node.name})" g'
-          releaseCudaAnyBuffer g'
-          gradsRef.set (grads.set! id (some owned))
-      | some (some old) =>
-          if _hold : old.s = node.value.s then
-            let old' : Runtime.Autograd.Cuda.AnyBuffer := { s := node.value.s, buf := old.buf }
-            checkCudaAnyBufferSize s!"accumulated gradient for node {id} ({node.name})" old'
-            let summed ← okOrThrow <| Runtime.Autograd.Cuda.AnyBuffer.add old' g'
-            releaseCudaAnyBuffer old'
-            releaseCudaAnyBuffer g'
-            gradsRef.set (grads.set! id (some summed))
-          else
-            releaseCudaAnyBuffer g'
-            throw <| IO.userError "torch: CUDA gradient table has wrong shape for node"
-    else
-      releaseCudaAnyBuffer g
-      throw <| IO.userError "torch: CUDA gradient contribution has wrong shape for parent"
-  for off in [0:n] do
-    let id := n - 1 - off
-    let grads ← gradsRef.get
-    match grads[id]? with
-    | some (some dLdy) =>
-        let node ← match t.getNode? id with
-          | some n => pure n
-          | none => throw <| IO.userError "torch: internal CUDA tape node missing"
-        if node.requiresGrad then
-          checkCudaAnyBufferSize s!"upstream gradient for node {id} ({node.name})" dLdy
-          let contribs ← okOrThrow <| node.backward dLdy
-          for (pid, pg) in contribs do
-            addGrad pid pg
-        if params.contains id then
-          pure ()
-        else
-          let gradsNow ← gradsRef.get
-          match gradsNow[id]? with
-          | some (some stale) =>
-              releaseCudaAnyBuffer stale
-              gradsRef.set (gradsNow.set! id none)
-          | _ => pure ()
-    | _ => pure ()
-  let final ← gradsRef.get
-  let mut out : CudaGradMap := Std.HashMap.emptyWithCapacity
+  let retain (id : Nat) : Bool :=
+    match params.get? id with
+    | some p => p.requiresGrad
+    | none => false
+  let grads ← Runtime.Autograd.Cuda.Tape.backwardSparse (t := t) loss.id seedAny retain
   for (id, _p) in params.toList.filter (fun entry => entry.2.requiresGrad) do
-    match final[id]? with
-    | some (some g) => out := out.insert id g
-    | _ => throw <| IO.userError s!"torch: missing CUDA gradient for parameter leaf {id}"
-  pure out
+    unless grads.contains id do
+      Runtime.Autograd.Cuda.Tape.releaseSparseGrads grads
+      throw <| IO.userError s!"torch: missing CUDA gradient for parameter leaf {id}"
+  pure grads
+
+/--
+Add borrowed sample gradients into an owned accumulator without downloading them.
+
+The accumulator owns every inserted buffer. Its caller must release it on success and failure.
+Parameter leaf ids are stable across recordings by `scalarTrainer`.
+-/
+def accumulateCudaGradMap (accumulator : IO.Ref CudaGradMap)
+    (sample : CudaGradMap) : IO Unit := do
+  for (id, gradient) in sample.toList do
+    let current ← accumulator.get
+    let summed ← match current.get? id with
+      | none =>
+          pure { gradient with buf := Runtime.Autograd.Cuda.Buffer.copy gradient.buf }
+      | some old =>
+          okOrThrow (Runtime.Autograd.Cuda.AnyBuffer.add old gradient)
+    accumulator.set (current.insert id summed)
+    if let some old := current.get? id then
+      releaseCudaAnyBuffer old
 
 /--
 Run reverse-mode backprop and return a dense gradient array for all tape entries.
 
 `seed` is the upstream gradient for `out` (like PyTorch's `backward(gradient=...)`).
 -/
-def backwardDenseAll {α : Type} [TensorTransfer α] (s : EagerSession α) [Add α] [Zero α]
-  [DecidableEq Shape]
+def backwardDenseAll {α : Type} [TorchLean.Storage α] [TensorTransfer α]
+    (s : EagerSession α) [Add α] [Zero α]
   {sh : Shape} (out : TensorRef α sh) (seed : Tensor α sh) :
   IO (Array (Spec.SomeTensor α)) := do
-  if Options.device s.opts == .cuda then
+  if Config.device s.options == .cuda then
     let gradsDev ← backwardDenseAllCuda (α := α) s (sh := sh) out seed
     gradsDev.mapM (fun g => CudaBridge.ofAnyBuffer (α := α) g)
   else
@@ -165,15 +125,16 @@ Run backward from a scalar loss with seed `1`.
 
 PyTorch comparison: `loss.backward()` for a scalar loss.
 -/
-def backwardScalarDenseAll {α : Type} [TensorTransfer α] (s : EagerSession α) [Add α]
-  [Zero α] [One α] [DecidableEq Shape]
+def backwardScalarDenseAll {α : Type} [TorchLean.Storage α] [TensorTransfer α]
+    (s : EagerSession α) [Add α]
+  [Zero α] [One α]
   (loss : TensorRef α Shape.scalar) : IO (Array (Spec.SomeTensor α)) := do
   backwardDenseAll (α := α) s (sh := Shape.scalar) loss (Tensor.scalar (1 : α))
 
 /--
 Extract the gradient for a particular `TensorRef` from a dense gradient array.
 -/
-def grad {α : Type} {sh : Shape} [DecidableEq Shape]
+def grad {α : Type} [TorchLean.Storage α] {sh : Shape}
   (grads : Array (Spec.SomeTensor α)) (x : TensorRef α sh) : IO (Tensor α sh) := do
   let gAny ← match grads[x.id]? with
     | some g => pure g
@@ -189,10 +150,10 @@ Apply an SGD update to all parameters recorded via `use`.
 
 PyTorch comparison: `for p in params: p.data -= lr * p.grad`.
 -/
-def sgdStepAll {α : Type} [TensorTransfer α] (s : EagerSession α)
-  [Sub α] [Mul α] [Add α] [Zero α] [DecidableEq Shape]
+def sgdStepAll {α : Type} [TorchLean.Storage α] [TensorTransfer α] (s : EagerSession α)
+  [Sub α] [Mul α] [Add α] [Zero α]
   (lr : α) (grads : Array (Spec.SomeTensor α)) : IO Unit := do
-  if Options.device s.opts == .cuda then
+  if Config.device s.options == .cuda then
     let lrF ← TensorTransfer.toFloat (α := α) lr
     let t0 ← s.cudaTape.get
     let m ← s.paramsByLeaf.get
@@ -225,7 +186,7 @@ def sgdStepAll {α : Type} [TensorTransfer α] (s : EagerSession α)
           let pvT : Tensor α p.s := pv.cast hp
           let gT : Tensor α p.s := gAny.cast hs
           let updated : Tensor α p.s :=
-            Tensor.materialize <| subSpec pvT (scaleSpec (α := α) (s := p.s) gT lr)
+            subSpec pvT (scaleSpec (α := α) (s := p.s) gT lr)
           p.set (Spec.SomeTensor.ofTensor updated)
         else
           throw <| IO.userError "torch: internal param shape mismatch"
@@ -233,37 +194,11 @@ def sgdStepAll {α : Type} [TensorTransfer α] (s : EagerSession α)
         throw <| IO.userError "torch: internal grad shape mismatch during SGD"
 
 /--
-Apply an SGD update to all parameters recorded via `use`, using CUDA device gradients.
-
-This avoids downloading the full dense gradient array and keeps updated parameters in each
-`Param`'s CUDA mirror. Host tensors are synchronized later by explicit parameter readback.
--/
-def sgdStepAllCuda {α : Type} [TensorTransfer α] (s : EagerSession α) [DecidableEq Shape]
-  (lr : α) (grads : Array Runtime.Autograd.Cuda.AnyBuffer) : IO Unit := do
-  if Options.device s.opts != .cuda then
-    throw <| IO.userError "torch: sgdStepAllCuda called on non-CUDA eager session"
-  let lrF ← TensorTransfer.toFloat (α := α) lr
-  let t0 ← s.cudaTape.get
-  let m ← s.paramsByLeaf.get
-  for (id, p) in m.toList.filter (fun entry => entry.2.requiresGrad) do
-    let gAny ← match grads[id]? with
-      | some g => pure g
-      | none => throw <| IO.userError "torch: gradient array out of bounds during SGD"
-    if _hs : gAny.s = p.s then
-      let pBuf ← okOrThrow <|
-        Runtime.Autograd.Cuda.Tape.requireValue (t := t0) (id := id) (s := p.s)
-      let updatedDev : Runtime.Autograd.Cuda.AnyBuffer :=
-        { s := p.s, buf := Runtime.Autograd.Cuda.Buffer.axpy pBuf gAny.buf (-lrF) }
-      p.setCuda updatedDev
-    else
-      throw <| IO.userError "torch: internal grad shape mismatch during SGD"
-
-/--
 Check every trainable parameter, gradient, tape value, and optional Adam state before an optimizer
 changes a parameter. This prevents a malformed gradient map or checkpoint state from producing a
 partially applied update.
 -/
-def checkCudaOptimizerInputs {α : Type} (operation : String)
+def checkCudaOptimizerInputs {α : Type} [TorchLean.Storage α] (operation : String)
     (tape : Runtime.Autograd.Cuda.Tape) (params : Std.HashMap Nat (AnyParam α))
     (grads : CudaGradMap) (state : Option CudaAdamState := none) : IO Unit := do
   for (id, param) in params.toList.filter (fun entry => entry.2.requiresGrad) do
@@ -300,9 +235,10 @@ Apply SGD from a sparse CUDA gradient map.
 This is the path used by the CUDA trainer.  It updates only parameter leaves and avoids allocating
 zero gradients for every forward activation in the tape.
 -/
-def sgdStepAllCudaMap {α : Type} [TensorTransfer α] (s : EagerSession α) [DecidableEq Shape]
+def sgdStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
+    (s : EagerSession α)
     (lr : α) (grads : CudaGradMap) : IO Unit := do
-  if Options.device s.opts != .cuda then
+  if Config.device s.options != .cuda then
     throw <| IO.userError "torch: sgdStepAllCudaMap called on non-CUDA eager session"
   let lrF ← TensorTransfer.toFloat (α := α) lr
   checkCudaLearningRate "CUDA SGD" lrF
@@ -323,11 +259,12 @@ def sgdStepAllCudaMap {α : Type} [TensorTransfer α] (s : EagerSession α) [Dec
       throw <| IO.userError "torch: internal grad shape mismatch during CUDA SGD"
 
 /-- Apply Adam using an already-computed sparse CUDA gradient map. -/
-def adamStepAllCudaMap {α : Type} [TensorTransfer α] (s : EagerSession α) [DecidableEq Shape]
+def adamStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
+    (s : EagerSession α)
     (configRef : IO.Ref (Option CudaAdamConfig)) (stateRef : IO.Ref CudaAdamState)
     (lr beta1 beta2 epsilon : α)
     (grads : CudaGradMap) : IO Unit := do
-  if Options.device s.opts != .cuda then
+  if Config.device s.options != .cuda then
     throw <| IO.userError "torch: adamStepAllCudaMap called on non-CUDA eager session"
   let lrF ← TensorTransfer.toFloat (α := α) lr
   let beta1F ← TensorTransfer.toFloat (α := α) beta1
@@ -391,12 +328,12 @@ Apply AdamW from a sparse CUDA gradient map.
 Normal training uses this sparse map so activation gradients can be released as soon as their
 contributions have been propagated.
 -/
-def adamWStepAllCudaMap {α : Type} [TensorTransfer α] (s : EagerSession α)
-    [DecidableEq Shape]
+def adamWStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
+    (s : EagerSession α)
     (configRef : IO.Ref (Option CudaAdamConfig)) (stateRef : IO.Ref CudaAdamState)
     (lr weightDecay beta1 beta2 epsilon : α)
     (grads : CudaGradMap) : IO Unit := do
-  if Options.device s.opts != .cuda then
+  if Config.device s.options != .cuda then
     throw <| IO.userError "torch: adamWStepAllCudaMap called on non-CUDA eager session"
   let lrF ← TensorTransfer.toFloat (α := α) lr
   let wdF ← TensorTransfer.toFloat (α := α) weightDecay

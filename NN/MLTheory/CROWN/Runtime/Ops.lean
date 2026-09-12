@@ -35,11 +35,11 @@ References (bound propagation background):
 
 namespace NN.MLTheory.CROWN.Runtime.Ops
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.MLTheory.CROWN
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Parameters of a per-neuron affine relaxation `y = slope * x + bias` used in CROWN/DeepPoly. -/
 structure ReLURelax (α : Type) where
@@ -83,7 +83,7 @@ def relaxScalarLower (l u : α) : ReLURelax α :=
     else
       -- crossing: choose either y ≥ 0 or y ≥ x
       let slope :=
-        if u > (-l) then Numbers.one else Numbers.zero
+        if u > (-l) then 1 else 0
       { slope := slope, bias := 0 }
   else
     { slope := 0, bias := 0 }
@@ -91,18 +91,14 @@ def relaxScalarLower (l u : α) : ReLURelax α :=
 /-- Apply `relaxScalar` componentwise to vector lower and upper bound tensors. -/
 def relaxVector {n : Nat} (lo hi : Tensor α [n]) :
     Tensor (ReLURelax α) [n] :=
-  match lo, hi with
-  | Tensor.dim l, Tensor.dim u =>
-    Tensor.dim (fun i => match l i, u i with
-      | Tensor.scalar li, Tensor.scalar ui => Tensor.scalar (relaxScalar li ui))
+  Tensor.dim (fun i =>
+    Tensor.scalar (relaxScalar (lo.getScalar i) (hi.getScalar i)))
 
 /-- Apply `relaxScalarLower` componentwise to vector lower and upper bound tensors. -/
 def relaxVectorLower {n : Nat} (lo hi : Tensor α [n]) :
     Tensor (ReLURelax α) [n] :=
-  match lo, hi with
-  | Tensor.dim l, Tensor.dim u =>
-    Tensor.dim (fun i => match l i, u i with
-      | Tensor.scalar li, Tensor.scalar ui => Tensor.scalar (relaxScalarLower li ui))
+  Tensor.dim (fun i =>
+    Tensor.scalar (relaxScalarLower (lo.getScalar i) (hi.getScalar i)))
 
 /--
 Propagate an affine form through ReLU using a per-neuron relaxation.
@@ -113,18 +109,13 @@ Given `y ≈ A*x + c` and per-output relaxations `(slopeᵢ, biasᵢ)`, produces
 def propagateAffine {inDim hidDim : Nat}
   (relax : Tensor (ReLURelax α) [hidDim])
   (aff : AffineVec α inDim hidDim) : AffineVec α inDim hidDim :=
-  match relax, aff.A, aff.c with
-  | Tensor.dim r, Tensor.dim rows, Tensor.dim bias =>
-    let A' := Tensor.dim (fun i =>
-      match rows i, r i with
-      | Tensor.dim cols, Tensor.scalar rp =>
-        Tensor.dim (fun j =>
-          match cols j with
-          | Tensor.scalar aij => Tensor.scalar (aij * rp.slope)))
-    let c' := Tensor.dim (fun i =>
-      match bias i, r i with
-      | Tensor.scalar ci, Tensor.scalar rp => Tensor.scalar (rp.slope * ci + rp.bias))
-    { A := A', c := c' }
+  let A' := Tensor.dim (fun i =>
+    let rp := relax.getScalar i
+    Tensor.dim (fun j => Tensor.scalar (get2 aff.A i j * rp.slope)))
+  let c' := Tensor.dim (fun i =>
+    let rp := relax.getScalar i
+    Tensor.scalar (rp.slope * aff.c.getScalar i + rp.bias))
+  { A := A', c := c' }
 
 end ReLU
 
@@ -132,19 +123,15 @@ namespace IBP
 
 /-- Generic elementwise bound propagation for monotone activations (min/max of endpoints). -/
 def mapMinmax {n : Nat} (f : α → α) (xB : Box α (.dim n .scalar)) : Box α (.dim n .scalar) :=
-  match xB.lo, xB.hi with
-  | Tensor.dim lo, Tensor.dim hi =>
-    let outLo := Tensor.dim (fun i =>
-      match lo i, hi i with
-      | Tensor.scalar l, Tensor.scalar u =>
-        let fl := f l; let fu := f u
-        Tensor.scalar (if fl > fu then fu else fl))
-    let outHi := Tensor.dim (fun i =>
-      match lo i, hi i with
-      | Tensor.scalar l, Tensor.scalar u =>
-        let fl := f l; let fu := f u
-        Tensor.scalar (if fl > fu then fl else fu))
-    { lo := outLo, hi := outHi }
+  let outLo := Tensor.dim (fun i =>
+    let fl := f (xB.lo.getScalar i)
+    let fu := f (xB.hi.getScalar i)
+    Tensor.scalar (if fl > fu then fu else fl))
+  let outHi := Tensor.dim (fun i =>
+    let fl := f (xB.lo.getScalar i)
+    let fu := f (xB.hi.getScalar i)
+    Tensor.scalar (if fl > fu then fl else fu))
+  { lo := outLo, hi := outHi }
 
 /-- Interval bound propagation for `sigmoid` (monotone, so min/max of endpoints). -/
 def sigmoid {n : Nat} (xB : Box α (.dim n .scalar)) : Box α (.dim n .scalar) :=
@@ -165,47 +152,39 @@ $$
 This avoids periodic case splits (no `floor/ceil` in `Context α`) while remaining sound.
 -/
 def sin {n : Nat} (xB : Box α (.dim n .scalar)) : Box α (.dim n .scalar) :=
-  match xB.lo, xB.hi with
-  | Tensor.dim lo, Tensor.dim hi =>
-    let outLo := Tensor.dim (fun i =>
-      match lo i, hi i with
-      | Tensor.scalar l, Tensor.scalar u =>
-        let m := (l + u) / Numbers.two
-        let r := (u - l) / Numbers.two
-        let base := MathFunctions.sin m
-        let rawLo := base - r
-        Tensor.scalar (max Numbers.negOne rawLo))
-    let outHi := Tensor.dim (fun i =>
-      match lo i, hi i with
-      | Tensor.scalar l, Tensor.scalar u =>
-        let m := (l + u) / Numbers.two
-        let r := (u - l) / Numbers.two
-        let base := MathFunctions.sin m
-        let rawHi := base + r
-        Tensor.scalar (min Numbers.one rawHi))
-    { lo := outLo, hi := outHi }
+  let outLo := Tensor.dim (fun i =>
+    let l := xB.lo.getScalar i
+    let u := xB.hi.getScalar i
+    let m := (l + u) / 2
+    let r := (u - l) / 2
+    let base := MathFunctions.sin m
+    Tensor.scalar (max (-1) (base - r)))
+  let outHi := Tensor.dim (fun i =>
+    let l := xB.lo.getScalar i
+    let u := xB.hi.getScalar i
+    let m := (l + u) / 2
+    let r := (u - l) / 2
+    let base := MathFunctions.sin m
+    Tensor.scalar (min 1 (base + r)))
+  { lo := outLo, hi := outHi }
 
 /-- Same 1-Lipschitz enclosure as `IBP.sin`, but for `cos`. -/
 def cos {n : Nat} (xB : Box α (.dim n .scalar)) : Box α (.dim n .scalar) :=
-  match xB.lo, xB.hi with
-  | Tensor.dim lo, Tensor.dim hi =>
-    let outLo := Tensor.dim (fun i =>
-      match lo i, hi i with
-      | Tensor.scalar l, Tensor.scalar u =>
-        let m := (l + u) / Numbers.two
-        let r := (u - l) / Numbers.two
-        let base := MathFunctions.cos m
-        let rawLo := base - r
-        Tensor.scalar (max Numbers.negOne rawLo))
-    let outHi := Tensor.dim (fun i =>
-      match lo i, hi i with
-      | Tensor.scalar l, Tensor.scalar u =>
-        let m := (l + u) / Numbers.two
-        let r := (u - l) / Numbers.two
-        let base := MathFunctions.cos m
-        let rawHi := base + r
-        Tensor.scalar (min Numbers.one rawHi))
-    { lo := outLo, hi := outHi }
+  let outLo := Tensor.dim (fun i =>
+    let l := xB.lo.getScalar i
+    let u := xB.hi.getScalar i
+    let m := (l + u) / 2
+    let r := (u - l) / 2
+    let base := MathFunctions.cos m
+    Tensor.scalar (max (-1) (base - r)))
+  let outHi := Tensor.dim (fun i =>
+    let l := xB.lo.getScalar i
+    let u := xB.hi.getScalar i
+    let m := (l + u) / 2
+    let r := (u - l) / 2
+    let base := MathFunctions.cos m
+    Tensor.scalar (min 1 (base + r)))
+  { lo := outLo, hi := outHi }
 
 end IBP
 

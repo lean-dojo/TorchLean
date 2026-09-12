@@ -3,6 +3,7 @@ title: Updates
 ---
 
 <nav class="timeline-nav" aria-label="TorchLean update timeline">
+  <a href="#september-2026-proof-refactor">Proof refactor</a>
   <a href="#august-2026-tensor-overhaul">Tensor overhaul</a>
   <a href="#august-2026-lean-433">Lean 4.33</a>
   <a href="#august-2026-autograd-cuda">August 2026</a>
@@ -17,6 +18,123 @@ title: Updates
 </nav>
 
 <div class="updates-timeline">
+
+<article class="update-card" id="september-2026-proof-refactor" markdown="1">
+  <div class="update-date">September 2026</div>
+  <div class="update-body" markdown="1">
+
+## Derivative Theorems for the Executed Backward Sweep
+
+This round of work was about closing gaps between what the runtime executes and what the theorems
+talk about, and about cutting code that no longer earned its place.
+
+### Proofs about the code that runs
+
+The eager runtime's dense backward sweep now has a Frechet-derivative theorem. Lowering a graph to
+a tape and running `backwardDenseAll` over it computes the adjoint of the derivative of the graph's
+real semantics (`backwardDenseAll_lowerGraphToTape_adjoint_fderiv`), with supporting results that
+the sweep agrees with `backpropAllCtx` and that lowering preserves zero seeds. Before, the
+statements were about an abstract backpropagation function and the executed sweep had to be
+trusted to match it.
+
+IR shape inference is proved sound against the semantics. `checkShapes_sound` and
+`denoteAll_shape` say that when the shape checker accepts a graph, every value produced by
+denotation has the inferred shape. The lowering theorem `denoteAll_eq_of_lowerToForwardGraph` now
+needs only a `NoRawLog` hypothesis; the `NoMSELoss` and `NoConcat` side conditions are gone
+because lowering covers concatenation, rank four and higher matrix multiplication, and batched
+linear layers. `expectResultShape` and every `panic!` were removed from the IR executor.
+
+The real-valued CROWN transfer proofs now compose with IBP soundness. The transfer theorems used to
+assume `IBPEnclosesVals`, that the IBP boxes enclose the semantic values. `EndToEnd.lean` derives
+that premise from the IBP soundness theorem. `alphaCrown_cert_encloses_semantics` and the alpha-beta
+variant retain the graph support, topological ordering, input, local replay, and relaxation
+parameter hypotheses. Their conclusions concern nodes with both a certificate entry and a semantic
+value; the all-node variants require coverage. `runIBP_encloses_evalGraphRec` gives the corresponding
+result for the runtime IBP algorithm over real scalars, under its engine-core and coverage
+hypotheses. These results do not establish soundness of the rounded CLI passes.
+
+Softmax, attention, LayerNorm, and BatchNorm derivative proofs are now stated about the `Spec`
+definitions rather than about auxiliary functions that happened to agree with them.
+`hasFDerivAt_softmaxSpec_vec` and `softmaxBackwardSpec_eq_vjp` cover softmax and log-softmax;
+`backpropVec_eq_adjoint_fderiv_scaledDotProductAttention` connects the attention tape rule to the
+derivative of the spec; `hasFDerivAt_batchNorm`, `fderiv_batchNorm_eq_batchNormJvp`, and
+`layerNormJvp_layerNormBackward_adjoint` do the same for normalization. The LayerNorm theorems
+take `0 < ε` explicitly.
+
+Two division bounds in the rounded-real approximation library were vacuous: their hypotheses could
+not be met at the same time, so the theorems proved nothing about any real run. They were deleted,
+and the sigmoid, logistic, and mean bounds were rebuilt on `divPosErrorBound`, with small
+regression theorems (`reciprocal_sigmoid_bound_scalar_le_one`, `mean_row_bound_of_exact`) so the
+same mistake would be caught again. The strongly convex gradient descent bound now keeps its
+`q^k` factor.
+
+The native LayerNorm kernel now keeps its mean and centered variance in binary64 before storing
+binary32 normalized values. This fixes large-offset rows whose small differences were lost by
+rounding the mean too early. Its input, scale, and bias gradients were checked against the Float
+specification using the saved forward values.
+
+LayerNorm derivative certification now returns an unsupported result. The old flattened interval
+rule could understate a derivative bound; the real-valued row theorems do not justify that rule.
+The complete transfer proof for the directed row payload is still needed before this certificate
+path can be enabled.
+
+### Smaller pieces
+
+Several monolithic proofs were split into files that can be read one case at a time.
+`alphaCrown_transfer_sound` went from 1,857 lines to a 44-line dispatch over per-operation files,
+`cert_encloses_semantics` from 1,283 lines to 10, and the two dense backward lowering proofs from
+about 800 lines each to 64 over shared leaf and snoc lemmas.
+
+Fully qualified `_root_` escapes dropped from about 4,400 to a few hundred. Most were proofs
+reaching around their own namespace for names that a proper `open` or a local `abbrev` supplies.
+The `lemma` keyword is replaced by `theorem` outside `NN/Floats`.
+
+The backend capsule layer was cut to what the runtime uses. `ProofCarryingKernel`,
+`VerifiedPlannedKernel`, `Target`, `Gate`, `Recheck`, and the `TrustLevel.verified` and `fuzzed`
+labels are gone; none of the maintained capsules carried a refinement theorem, so the vocabulary
+promised more than the code delivered. What remains is `KernelCapsule` with `bind`,
+`checkContracts` producing a `ContractCheck`, and a numerical policy with one field, `reduction`,
+which the numerical certificate registry reads. The
+[installation page]({{ '/installation/#from-a-model-to-a-kernel' | relative_url }}) describes the
+current selection path.
+
+The generated `UnicodeData.lean` table went from 5,767 lines of per-character entries to a
+376-line interval table with the same lookups.
+
+### API names
+
+`TrainOptions.batchSize` is now `samplesPerStep`, and `steps` is required rather than defaulted.
+The `seq!` macro is gone: `nn.compose![...]` composes built layers and `nn.Sequential![...]` is the
+monadic builder, both scoped so files need `open TorchLean`. The einops term syntax is scoped under
+`TorchLean.Tensor`, and `repeat` is renamed `expand`. `Runtime.Autograd.TorchLean` is
+`Runtime.Autograd.Model`, and `NN.Verification.TorchLean` is `NN.Verification.Builtin`.
+`Trainer.Result` exposes `state`, `save`, and `stateShapes`, `Trainer.load` restores a saved
+result, and `nn.buildIO` instantiates a builder outside a trainer.
+
+Then we went looking for names that existed only so that older call sites would keep working, and
+deleted them. `Spec.fill`, `Spec.zeros`, and `Spec.ones` were thin wrappers whose own docstrings
+described them as older spellings of `Tensor.full`, `Tensor.zeros`, and `Tensor.ones`, so the
+canonical names are now the only ones, and the value argument follows the shape the way
+`torch.full(shape, value)` reads. The `Runtime.Autograd.Model.Random` module was the same idea at
+module scale, fourteen wrappers around `Spec.Random`; it is gone, and the RNG helpers now come from
+`NN/Spec/Core/Random.lean` as `Spec.Random.splitmix64` and friends. Trainer runtime flag parsing
+now lives in `NN.API.CLI.Trainer`: use `TorchLean.CLI.Trainer.parse`, `parseCommandLine`, and
+`cliArguments`. The older trainer helpers and `NN.Examples.Support.TrainerFlags` are gone.
+
+Smaller renames from the same pass: `Tensor.tensorFoldlSpec` lost its stuttering prefix and is
+`Tensor.foldlSpec`, the ONNX helpers dropped their `onnx` prefix now that they live in
+`namespace ONNX`, `Opts` is spelled `Options` in the verification command lines,
+`inferNodeOutShape` is `nodeOutShape`, and `TextCorpusOptions` is `CorpusFileOptions`. Two naming
+rules came out of this and are written down in `docs/CONTRIBUTING.md` so the next reader does not have to
+guess: the smart constructor of a sealed structure is `create` inside that structure's own
+`Internal` namespace, and a batched variant is the unbatched name with a `batch` prefix, which is
+why `logitScoresAt` has `batchLogitScoresAt` beside it.
+
+The repository lint now enforces 100-column lines and prose without em-dashes outside
+`NN/Floats`, and `omega` is allowed again.
+
+  </div>
+</article>
 
 <article class="update-card" id="august-2026-tensor-overhaul" markdown="1">
   <div class="update-date">August 2026</div>
@@ -194,7 +312,7 @@ enough to expose bugs that the small examples never reached.
 
 Most model code starts with `import NN.API`. The old `NN.Library` and `NN.Entrypoint.*` forwarding
 modules are gone. Focused imports such as `NN.Spec`, `NN.Runtime`, `NN.Floats`, and
-`NN.Verification` still lead directly to their declarations. The model zoo remains part of
+`NN.Verification` still lead directly to their declarations. The model examples remain part of
 TorchLean.
 
 We also broke up several files that had become difficult to navigate. Training, data handling,
@@ -237,9 +355,10 @@ execution and CUDA Adam serialization.
   </section>
 </div>
 
-The trainer treats `batchSize` as the number of dataset items per optimizer update. For
-an ordinary dataset those items are samples. For `Data.batchDataset`, each item is already a typed
-tensor minibatch, so `batchSize := 1` keeps one vectorized pass per update. Larger values accumulate
+The trainer treats `samplesPerStep` (called `batchSize` at the time of this note) as the number
+of dataset items per optimizer update. For an ordinary dataset those items are samples. For
+`Data.batch`, each item is already a typed tensor minibatch, so `samplesPerStep := 1` keeps one
+vectorized pass per update. Larger values accumulate
 gradients across several items. Logged pre-update loss comes from the same forward tapes as the
 gradients; training no longer runs a second forward pass just for logging.
 
@@ -325,9 +444,9 @@ lowering. Before propagation, a coverage pass lists
 the exact nodes whose primitives lack a range contract. Custom registries are named and the name is
 stored in the certificate, so an artifact cannot be replayed under a different set of rules.
 
-The same certificate contains the kernel-selection audit. Rounding mode, subnormal behavior,
-FMA/contraction, and reduction order are recorded by each kernel capsule. Portable accumulations
-use the fixed left fold from the tensor semantics. CUDA and LibTorch accumulations are marked
+The same certificate contains the kernel-selection audit. Each kernel capsule records its
+reduction order in its numerical policy. Portable accumulations use the fixed left fold from the
+tensor semantics. CUDA and LibTorch accumulations are marked
 implementation-dependent, so their matrix products, convolutions, normalizations, FFT/FNO paths,
 scans, and attention kernels cannot accidentally inherit a proof for a different reduction order.
 
@@ -373,8 +492,8 @@ rather than separate image-specific APIs.
 
 Backend planning now records device, provider, operation, contracts, and evidence separately, then
 binds each accepted capsule to a matching runtime handler. Unavailable providers fail explicitly,
-and proof-carrying implementations retain their refinement theorem instead of relying on a trust
-label. The [backend chapter]({{ '/blueprint/Runtime___-Autograd___-and-Interop/Inside-The-Backend-Planner/' | relative_url }})
+and the contract check accepts a capsule's evidence only when the profile's assurance policy admits
+it, rather than relying on a trust label. The [backend chapter]({{ '/blueprint/Runtime___-Autograd___-and-Interop/Inside-The-Backend-Planner/' | relative_url }})
 contains the maintained profiles and full contract model; the
 [GPU chapter]({{ '/blueprint/Floating-Point-and-Native-Boundaries/From-A-Tensor-Operation-To-A-GPU-Kernel/' | relative_url }})
 covers native execution and platform boundaries.
@@ -565,8 +684,7 @@ KaTeX.
 - `lake build NN NN.CI.All`
 - `lake exe nn_tests_suite`
 - `lake -R -K cuda=true exe nn_tests_suite`
-- `scripts/checks/example_regression.sh` across all registered commands and examples
-- `scripts/checks/example_regression.sh --cuda --extended-cuda --skip-help --skip-default`
+- temporary audits across registered commands and selected CPU/CUDA examples
 - sustained 20-update CPU runs across 21 model workflows
 - sustained 100-update CUDA runs across 24 model workflows
 - repeated sparse-backward ownership and allocator-drift regression
@@ -580,7 +698,7 @@ KaTeX.
 
 All of these checks passed on the Linux machine used for the release. That gives us evidence for the
 paths we exercised, but it does not turn CUDA machine code or LibTorch into Lean proofs. Their trust
-levels remain explicit in the backend contracts and in `TRUST_BOUNDARIES.md`.
+levels remain explicit in the backend contracts and in `docs/TRUST_BOUNDARIES.md`.
 </div>
 
   </div>

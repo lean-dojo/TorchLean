@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.IRExec.Core
+public import NN.Proofs.Autograd.Tape.Algebra.Soundness
+public import NN.Spec.Core.TensorReductionShape.ConcatSlice
 
 /-!
 # IR Lowering Primitives
@@ -21,9 +23,12 @@ namespace Runtime
 namespace Autograd
 namespace IRExec
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Proofs.Autograd.Algebra
+-- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
+-- `Idx` and `getIdx` are defined.
+open Proofs (Idx getIdx)
 open NN.IR
 
 namespace Internal
@@ -35,7 +40,7 @@ It is a dependent pair of:
 - `ss`: shapes of already-lowered IR nodes,
 - `ForwardData α [inShape] ss`: forward closures for exactly that shape list.
 -/
-abbrev State (α : Type) (inShape : Shape) : Type :=
+abbrev State (α : Type) [TorchLean.Storage α] (inShape : Shape) : Type :=
   Σ ss : List Shape, ForwardData α [inShape] ss
 
 /--
@@ -48,7 +53,7 @@ input-plus-node representation. `mkIdx` checks that:
 
 On failure, this returns a descriptive error string used directly by `buildFrom`.
 -/
-def mkIdx [DecidableEq Shape]
+def mkIdx
     (inShape : Shape) (ss : List Shape) (id : Nat) (s : Shape) :
     Except String (Idx ([inShape] ++ ss) s) := by
   let ctxShapes : List Shape := [inShape] ++ ss
@@ -63,26 +68,16 @@ def mkIdx [DecidableEq Shape]
   else
     exact .error s!"IRExec: invalid id={id} for ctxLen={ctxShapes.length}"
 
-/--
-Read a tensor from the single-input IR execution context using a checked parent index.
-
-Keeping the context spelling `[inShape] ++ ss` explicit prevents dependent elaboration from
-normalizing the singleton append differently at lowering pass and correctness-proof call sites.
--/
-def getIRValue {α : Type} {inShape : Shape} {ss : List Shape} {s : Shape}
-    (ctx : _root_.TorchLean.TensorPack α ([inShape] ++ ss)) (idx : Idx ([inShape] ++ ss) s) : Tensor α s :=
-  getIdx (α := α) (xs := ctx) idx
-
 /-- Package a typed forward closure as one node of the executable IR graph. -/
-def mkForwardNode {α : Type} {Γ : List Shape} {τ : Shape}
-    (forward : _root_.TorchLean.TensorPack α Γ → Tensor α τ) : ForwardNode α Γ τ :=
+def mkForwardNode {α : Type} [TorchLean.Storage α] {Γ : List Shape} {τ : Shape}
+    (forward : TorchLean.TensorPack α Γ → Tensor α τ) : ForwardNode α Γ τ :=
   ⟨forward⟩
 
 /--
 Evaluation projection for `mkForwardNode`.
 -/
-@[simp] theorem mkForwardNode_eval {α : Type} {Γ : List Shape} {τ : Shape}
-    (f : _root_.TorchLean.TensorPack α Γ → Tensor α τ) (ctx : _root_.TorchLean.TensorPack α Γ) :
+@[simp] theorem mkForwardNode_eval {α : Type} [TorchLean.Storage α] {Γ : List Shape} {τ : Shape}
+    (f : TorchLean.TensorPack α Γ → Tensor α τ) (ctx : TorchLean.TensorPack α Γ) :
     (mkForwardNode (α := α) (Γ := Γ) (τ := τ) f).eval ctx = f ctx := by
   rfl
 
@@ -96,7 +91,7 @@ def swapShapeBySwaps (s : Shape) (swaps : Array Nat) : Shape :=
   swapShapeBySwapsList s swaps.toList
 
 /-- Internal dependent recursion underlying `applySwapsTensor`. -/
-def applySwapsTensorList {α : Type} [Context α] :
+def applySwapsTensorList {α : Type} [TorchLean.Storage α] [Context α] :
     {s : Shape} → (swaps : List Nat) → Tensor α s → Tensor α (swapShapeBySwapsList s swaps)
   | _s, [], t => t
   | s, d :: ds, t =>
@@ -104,79 +99,80 @@ def applySwapsTensorList {α : Type} [Context α] :
       applySwapsTensorList (s := s.swapAdjacentAtDepth d) (swaps := ds) t'
 
 /-- Apply the same adjacent-swap sequence as `swapShapeBySwaps` to a tensor value. -/
-def applySwapsTensor {α : Type} [Context α] {s : Shape} (swaps : Array Nat)
+def applySwapsTensor {α : Type} [TorchLean.Storage α] [Context α] {s : Shape} (swaps : Array Nat)
     (tensor : Tensor α s) : Tensor α (swapShapeBySwaps s swaps) :=
   applySwapsTensorList swaps.toList tensor
 
-def concatLeadingAxisFromInfosList
-    {α : Type} [Context α] {Γ : List Shape} {rest : Shape} (ctx : _root_.TorchLean.TensorPack α Γ) :
-    (infos : List (Sigma fun nP => Idx Γ (.dim nP rest))) →
-      Sigma fun nSum => Tensor α (.dim nSum rest)
-  | [] =>
-      ⟨0, Spec.fill (α := α) 0 (.dim 0 rest)⟩
-  | info :: infos =>
-      let s0 : Sigma fun n => Tensor α (.dim n rest) :=
-        ⟨info.1, getIdx (α := α) (xs := ctx) info.2⟩
-      infos.foldl
-        (fun acc nxt =>
-          match acc, nxt with
-  | ⟨n1, t1⟩, ⟨n2, idx2⟩ =>
-              let t2 := getIdx (α := α) (xs := ctx) idx2
-              ⟨n1 + n2, Tensor.concatAxisSpec .scalar (α := α) (n := n1) (m := n2)
-                (suffix := rest) t1 t2⟩)
-        s0
-
-/-- Concatenate tensors selected by typed indices along their leading axis. -/
-def concatLeadingAxisFromInfos
-    {α : Type} [Context α] {Γ : List Shape} {rest : Shape} (ctx : _root_.TorchLean.TensorPack α Γ)
-    (infos : Array (Sigma fun nP => Idx Γ (.dim nP rest))) :
-    Sigma fun nSum => Tensor α (.dim nSum rest) :=
-  concatLeadingAxisFromInfosList ctx infos.toList
+/--
+One typed concat input: a leading extent together with a closure that reads the tensor with that
+extent from the runtime context. Inputs for a nonzero concat axis permute the parent before
+returning it, so the closure is the common shape for every concat branch.
+-/
+abbrev ConcatInput (α : Type) [TorchLean.Storage α] (Γ : List Shape) (rest : Shape) : Type :=
+  Sigma fun nP => TorchLean.TensorPack α Γ → Tensor α (.dim nP rest)
 
 /--
-The concatenated size reported by `concatLeadingAxisFromInfos` is the sum of the input sizes.
+Concatenate typed tensors along their leading axis, folding from the first tensor.
 
-This theorem is used to justify the output-shape side conditions in concat lowering branches.
+The empty list yields the empty tensor with leading extent `0`. This is the same fold shape as
+the IR evaluator's `NN.IR.Graph.evalConcatLeadingAxisFold`.
 -/
-theorem concatLeadingAxisFromInfos_size_eq_sum
-    {α : Type} [Context α] {Γ : List Shape} {rest : Shape}
-    (ctx : _root_.TorchLean.TensorPack α Γ) (infos : Array (Sigma fun nP => Idx Γ (.dim nP rest))) :
-    (concatLeadingAxisFromInfos (α := α) (Γ := Γ) (rest := rest) ctx infos).1 =
-      infos.foldl (fun acc info => acc + info.1) 0 := by
-  rw [← Array.foldl_toList]
-  change
-    (concatLeadingAxisFromInfosList (α := α) (Γ := Γ) (rest := rest) ctx infos.toList).1 =
-      infos.toList.foldl (fun acc info => acc + info.1) 0
-  cases hInfos : infos.toList with
-  | nil =>
-      simp [concatLeadingAxisFromInfosList]
-  | cons info infosTail =>
-      clear hInfos infos
-      -- `concatLeadingAxisFromInfos` is a foldl over `infosTail` starting from a sigma whose `.1` is
-      -- `info.1`.
-      -- Its `.1` component is therefore the `Nat` foldl over the same list of `nP`s.
-      let f :
-          (Sigma fun n => Tensor α (.dim n rest)) →
-            (Sigma fun nP => Idx Γ (.dim nP rest)) →
-              (Sigma fun n => Tensor α (.dim n rest)) :=
-        fun acc nxt =>
-          match acc, nxt with
-          | ⟨n1, t1⟩, ⟨n2, idx2⟩ =>
-              let t2 := getIdx (α := α) (xs := ctx) idx2
-              ⟨n1 + n2, Tensor.concatAxisSpec .scalar (α := α) (n := n1) (m := n2)
-                (suffix := rest) t1 t2⟩
+def concatLeadingAxisList {α : Type} [TorchLean.Storage α] [Context α] {rest : Shape} :
+    List (Sigma fun n => Tensor α (.dim n rest)) → Sigma fun nSum => Tensor α (.dim nSum rest)
+  | [] => ⟨0, Tensor.full (α := α) (.dim 0 rest) 0⟩
+  | first :: others =>
+      others.foldl
+        (fun acc nxt =>
+          ⟨acc.1 + nxt.1, Tensor.concatAxisSpec .scalar (α := α) (n := acc.1) (m := nxt.1)
+            (suffix := rest) acc.2 nxt.2⟩)
+        first
+
+/-- The leading extent of the fold in `concatLeadingAxisList` is a plain sum of extents. -/
+theorem concatLeadingAxisList_fst {α : Type} [TorchLean.Storage α] [Context α] {rest : Shape}
+    (tensors : List (Sigma fun n => Tensor α (.dim n rest))) :
+    (concatLeadingAxisList (α := α) (rest := rest) tensors).1 =
+      tensors.foldl (fun acc t => acc + t.1) 0 := by
+  cases tensors with
+  | nil => simp [concatLeadingAxisList]
+  | cons first others =>
       have hfold :
           ∀ acc0 : Sigma fun n => Tensor α (.dim n rest),
-            (infosTail.foldl f acc0).1 = infosTail.foldl (fun acc nxt => acc + nxt.1) acc0.1 := by
+            (others.foldl
+                (fun acc nxt =>
+                  (⟨acc.1 + nxt.1, Tensor.concatAxisSpec .scalar (α := α) (n := acc.1)
+                    (m := nxt.1) (suffix := rest) acc.2 nxt.2⟩ :
+                    Sigma fun n => Tensor α (.dim n rest)))
+                acc0).1 =
+              others.foldl (fun acc nxt => acc + nxt.1) acc0.1 := by
         intro acc0
-        induction infosTail generalizing acc0 with
-        | nil =>
-            simp
-        | cons nxt infos ih =>
-            simp [List.foldl, f, ih]
-      -- Now rewrite the outer fold (starting at 0) and finish.
-      simpa [concatLeadingAxisFromInfosList, List.foldl] using
-        (hfold ⟨info.1, getIdx (α := α) (xs := ctx) info.2⟩)
+        induction others generalizing acc0 with
+        | nil => rfl
+        | cons nxt others ih => simp [List.foldl, ih]
+      simpa [concatLeadingAxisList, List.foldl] using hfold first
+
+/-- Concatenate the tensors produced by concat inputs along their leading axis. -/
+def concatLeadingAxisFromInputs
+    {α : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape} {rest : Shape}
+    (ctx : TorchLean.TensorPack α Γ) (inputs : Array (ConcatInput α Γ rest)) :
+    Sigma fun nSum => Tensor α (.dim nSum rest) :=
+  concatLeadingAxisList (inputs.toList.map fun input => ⟨input.1, input.2 ctx⟩)
+
+/--
+The concatenated size reported by `concatLeadingAxisFromInputs` is the sum of the input extents.
+
+This theorem justifies the output-shape cast in the concat lowering branches.
+-/
+theorem concatLeadingAxisFromInputs_size_eq_sum
+    {α : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape} {rest : Shape}
+    (ctx : TorchLean.TensorPack α Γ) (inputs : Array (ConcatInput α Γ rest)) :
+    (concatLeadingAxisFromInputs (α := α) (Γ := Γ) (rest := rest) ctx inputs).1 =
+      inputs.foldl (fun acc input => acc + input.1) 0 := by
+  rw [← Array.foldl_toList]
+  unfold concatLeadingAxisFromInputs
+  rw [concatLeadingAxisList_fst]
+  induction inputs.toList using List.reverseRecOn with
+  | nil => rfl
+  | append_singleton xs x ih => simp [List.foldl_append, ih]
 
 end Internal
 end IRExec

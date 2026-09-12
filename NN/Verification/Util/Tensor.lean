@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Core
+public import NN.Tensor.Conversion
+public import NN.Tensor.Reductions
+public import NN.MLTheory.CROWN.Flatbox
 
 /-!
 # Tensor helpers for verification artifacts
@@ -20,8 +22,28 @@ inside each checker.
 
 namespace NN.Verification.Util.Tensor
 
-open _root_.Spec
+open Spec TorchLean
 open NN.MLTheory.CROWN
+
+/-- Pointwise ordering of equally shaped bounds. NaN comparisons fail. -/
+def boundsOrdered {n : Nat} (lo hi : TorchLean.Tensor Float [n]) : Bool :=
+  TorchLean.Tensor.allSpec id (TorchLean.Tensor.map2Spec (fun x y => decide (x ≤ y)) lo hi)
+
+/-- Check ordered leaf bounds contained in an equally shaped root box. -/
+def boxWithin {n : Nat} (rootLo rootHi lo hi : TorchLean.Tensor Float [n]) : Bool :=
+  boundsOrdered rootLo lo && boundsOrdered lo hi && boundsOrdered hi rootHi
+
+/-- A strict lower-bound witness refutes its corresponding threshold. -/
+def refutesThreshold {n : Nat} (lowerBound threshold : TorchLean.Tensor Float [n]) : Bool :=
+  TorchLean.Tensor.foldl (· || ·) false
+    (TorchLean.Tensor.map2Spec (fun lb thr => decide (thr < lb)) lowerBound threshold)
+
+/-- Check the supplied coordinate; out-of-range witnesses and NaN comparisons fail. -/
+def refutesThresholdAt {n : Nat} (lowerBound threshold : TorchLean.Tensor Float [n])
+    (witnessIdx : Nat) : Bool :=
+  if h : witnessIdx < n then
+    decide (threshold.getScalar ⟨witnessIdx, h⟩ < lowerBound.getScalar ⟨witnessIdx, h⟩)
+  else false
 
 /-- Convert a float array into a length-`n` vector tensor, returning `none` on length mismatch. -/
 def vecOfArray (n : Nat) (xs : Array Float) : Option (Tensor Float [n]) :=
@@ -79,25 +101,9 @@ def matOfArray (rows cols : Nat) (xs : Array (Array Float)) :
     none
 
 /-- Convert a vector tensor to a float array. -/
-def vecToArray {n : Nat} (x : Tensor Float [n]) : Array Float :=
-  match x with
-  | .dim xs =>
-      (List.finRange n).map (fun i =>
-        match xs i with
-        | .scalar v => v) |>.toArray
-
-/-- Convert lower/upper vector tensors into arrays for artifact checkers. -/
-def boundsToArrays {n : Nat} (lo hi : Tensor Float [n]) :
-    Array Float × Array Float :=
-  (vecToArray lo, vecToArray hi)
-
-/-- Convert a `FlatBox Float` into lower/upper arrays. -/
-def flatBoxBoundsToArrays (B : FlatBox Float) : Array Float × Array Float :=
-  boundsToArrays B.lo B.hi
-
-/-- Convert a shape-indexed vector `Box Float` into lower/upper arrays. -/
-def boxBoundsToArrays {n : Nat} (B : Box Float (.dim n .scalar)) : Array Float × Array Float :=
-  boundsToArrays B.lo B.hi
+def vecToArray {n : Nat} {storage : TorchLean.Storage Float}
+    (x : @Tensor Float [n] storage) : Array Float :=
+  Tensor.to x (Array Float)
 
 /-- Load a length-checked vector tensor from a JSON float array, or raise a schema error. -/
 def requireVecOfArray (ctx : String) (n : Nat) (xs : Array Float) :

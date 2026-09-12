@@ -15,12 +15,14 @@ public import NN.Runtime.Autograd.IRExec.Correctness.Ops
 
 Correctness for the IR → executable SSA graph bridge.
 
-This file collects per-op forward-correctness lemmas for `Runtime.Autograd.IRExec.lowerToForwardGraph`.
-It is split out from `NN.Runtime.Autograd.IRExec` so that routine builds of
-TorchLean's runtime do not have to import proof internals one file at a time.
+This file collects per-op forward-correctness lemmas for
+`Runtime.Autograd.IRExec.lowerToForwardGraph`. It is split out from `NN.Runtime.Autograd.IRExec`
+so that routine builds of TorchLean's runtime do not have to import proof internals one file at
+a time.
 
 Reusable helper lemmas live in `NN.Runtime.Autograd.IRExec.Correctness.Common`.
 Operator-step lemmas live under `...Correctness.Ops`, grouped by role:
+- `...Correctness.Ops.Concat`
 - `...Correctness.Ops.LinearAlgebra`
 - `...Correctness.Ops.Loss`
 - `...Correctness.Ops.Normalization`
@@ -32,18 +34,16 @@ imported here.
 
 ## Main definitions
 
-- `NoMSELoss`: side condition used by the semantic equivalence theorem to state its exact fragment.
 - `NoRawLog`: side condition for the current theorem fragment, until raw-log positivity is carried
   through the end-to-end lowering proof.
-- `NoConcat`: side condition for the current theorem fragment, until concat lowering is connected
-  to the semantic-preservation proof.
 - Per-operator lowering-step lemmas from `...Correctness.Ops`.
 
 ## Implementation notes
 
 - Separating reusable infrastructure (`Common`) from op-specific steps keeps large correctness
   proofs maintainable.
-- Import `...Correctness.SemanticEquivalence` explicitly when you want the recursive end-to-end theorem.
+- Import `...Correctness.SemanticEquivalence` explicitly when you want the recursive end-to-end
+  theorem.
 
 ## References
 
@@ -61,8 +61,8 @@ namespace Runtime
 namespace Autograd
 namespace IRExec
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal

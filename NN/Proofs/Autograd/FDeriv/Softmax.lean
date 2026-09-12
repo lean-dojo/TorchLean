@@ -8,12 +8,6 @@ module
 
 public import NN.Proofs.Autograd.FDeriv.Elementwise
 
-public import Mathlib.Analysis.Calculus.Deriv.Inv
-public import Mathlib.Analysis.Calculus.FDeriv.Add
-public import Mathlib.Analysis.Calculus.FDeriv.Bilinear
-public import Mathlib.Analysis.Calculus.FDeriv.Comp
-public import Mathlib.Analysis.InnerProductSpace.Calculus
-
 /-!
 # Softmax
 
@@ -47,7 +41,8 @@ This is just `(EuclideanSpace.equiv …).symm`, but it is convenient to name in 
 def softmaxVecOfFun {n : Nat} (f : Fin n → ℝ) : Vec n :=
   (EuclideanSpace.equiv (𝕜 := ℝ) (ι := Fin n)).symm f
 
-@[simp] lemma softmaxVecOfFun_apply {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
+/-- Coordinates of `softmaxVecOfFun f` are the values of `f`. -/
+@[simp] theorem softmaxVecOfFun_apply {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
     softmaxVecOfFun (n := n) f i = f i := by
   simp [softmaxVecOfFun]
 
@@ -79,7 +74,8 @@ This is used to express the softmax Jacobian in a clean coordinate-free way.
 def dotCLM {n : Nat} (y : Vec n) : Vec n →L[ℝ] ℝ :=
   ∑ j : Fin n, (evalCLM (n := n) j).smulRight (y j)
 
-@[simp] lemma dotCLM_apply {n : Nat} (y x : Vec n) :
+/-- The dot functional evaluates to the expected sum of products. -/
+@[simp] theorem dotCLM_apply {n : Nat} (y x : Vec n) :
     dotCLM (n := n) y x = ∑ j : Fin n, y j * x j := by
   classical
   simp [dotCLM, evalCLM_apply, ContinuousLinearMap.smulRight_apply, mul_comm]
@@ -99,7 +95,12 @@ def softmaxDerivCLM {n : Nat} (x : Vec n) : Vec n →L[ℝ] Vec n :=
   (euclideanEquiv n).symm.toContinuousLinearMap.comp <|
     ContinuousLinearMap.pi (fun i : Fin n => softmaxDerivCoord (n := n) x i)
 
-@[simp] lemma pi_apply_vec {n : Nat} (f : Fin n → Vec n →L[ℝ] ℝ) (x : Vec n) (i : Fin n) :
+/-- Coordinate `i` of a map assembled by `ContinuousLinearMap.pi` is its `i`th component.
+
+Needed because the softmax derivative is built coordinate by coordinate and then bundled; without
+this
+the Jacobian could not be read entrywise. -/
+@[simp] theorem pi_apply_vec {n : Nat} (f : Fin n → Vec n →L[ℝ] ℝ) (x : Vec n) (i : Fin n) :
     (ContinuousLinearMap.pi f x) i = f i x := by
   rfl
 

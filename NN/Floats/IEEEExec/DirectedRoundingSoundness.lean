@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.IEEEExec.DirectedRoundingSoundness.Division
+public import NN.Floats.IEEEExec.DirectedRoundingSoundness.Positive
+public import NN.Floats.IEEEExec.DirectedRoundingSoundness.SignedOps
 
 /-!
 Directed-rounding soundness entry point.

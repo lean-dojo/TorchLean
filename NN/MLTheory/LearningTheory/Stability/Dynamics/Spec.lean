@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.LearningTheory.Robustness.Spec
+public import NN.Spec.Core.Context.Real
 
 /-!
 # `NN.MLTheory.Stability.Spec`
@@ -17,7 +18,7 @@ $x_{t+1}=f(x_t)$ over shape-indexed tensors.
 
 @[expose] public section
 
-open Spec
+open Spec TorchLean
 
 namespace NN.MLTheory.Stability.Spec
 
@@ -31,10 +32,11 @@ phrased over TorchLean's shape-indexed tensors:
 - global stability, and
 - input-to-state stability (ISS).
 
-The definitions are polymorphic in the scalar type `α` via `[Context α]`; for noncomputable
-quantities (e.g. the supremum defining a stability margin on `ℝ`), we expose the notion via a type
-class `StabilityMarginComputable`. TorchLean installs the real supremum instance globally and keeps
-the conservative `0` lower-bound instance behind an explicit opt-in scope for examples and tests.
+The definitions are polymorphic in the scalar type `α` via `[TorchLean.Storage α] [Context α]`; for
+noncomputable quantities (e.g. the supremum defining a stability margin on `ℝ`), we expose the
+notion via a type class `StabilityMarginComputable`. TorchLean installs the real supremum instance
+globally and keeps the conservative `0` lower-bound instance behind an explicit opt-in scope for
+examples and tests.
 
 ## References
 
@@ -47,21 +49,22 @@ These are standard definitions in control theory / dynamical systems. Useful ent
 open NN.MLTheory.Robustness.Spec
 
 /-- Iterate `f` for $n$ steps: $\operatorname{iterate}(f,n,x)=f^{[n]}(x)$. -/
-abbrev iterate {α : Type} {s : Shape} (f : Tensor α s → Tensor α s) (n : Nat) (x : Tensor α s) :
-  Tensor α s :=
+abbrev iterate {α : Type} [TorchLean.Storage α] {s : Shape}
+    (f : Tensor α s → Tensor α s) (n : Nat) (x : Tensor α s) : Tensor α s :=
   Nat.iterate f n x
 
 /--
-A computable notion of stability margin, matching the "largest invariant ball" intuition:
-the largest $r\geq 0$ such that the closed ball
-$\{x\mid \operatorname{dist}(\mathrm{eq},x)\leq r\}$ is forward-invariant.
+An interface for a scalar stability-margin calculation. The `ℝ` instance takes the supremum of
+nonnegative forward-invariant closed-ball radii. It is not necessarily an attained largest radius;
+the real supremum requires a nonempty, bounded-above radius set for its usual interpretation.
+The class itself contains no correctness law for other instances.
 
 TorchLean only installs a real supremum-based instance globally for `ℝ`. Other scalar backends can
-opt into the conservative lower-bound instance below explicitly; this avoids silently reporting `0` as a
-semantic stability margin for arbitrary scalar types.
+opt into the conservative lower-bound instance below explicitly; this avoids silently reporting `0`
+as a semantic stability margin for arbitrary scalar types.
 -/
-class StabilityMarginComputable (α : Type) [Context α] where
-  compute_stability_margin :
+class StabilityMarginComputable (α : Type) [TorchLean.Storage α] [Context α] where
+  computeStabilityMargin :
       ∀ {s : Shape},
         (Tensor α s → Tensor α s) →
         (∀ {s : Shape}, Tensor α s → α) →
@@ -73,32 +76,33 @@ namespace StabilityMarginComputable
 /-!
 Named opt-in scope for the conservative stability-margin lower bound.
 
-Use `open scoped NN.MLTheory.Stability.ConservativeMargin` only in examples/tests that deliberately want
-a total fallback. Production theorem statements should either use the `ℝ` instance or require an
-explicit `StabilityMarginComputable α` hypothesis.
+Use
+`open scoped NN.MLTheory.Stability.Spec.StabilityMarginComputable.ConservativeMargin`
+only in examples/tests that deliberately want a total fallback. Production theorem statements
+should either use the `ℝ` instance or require an explicit `StabilityMarginComputable α` hypothesis.
 -/
 namespace ConservativeMargin
 
-scoped instance (α : Type) [Context α] : StabilityMarginComputable α where
-  compute_stability_margin := fun _ _ _ => 0
+scoped instance (α : Type) [TorchLean.Storage α] [Context α] : StabilityMarginComputable α where
+  computeStabilityMargin := fun _ _ _ => 0
 
 end ConservativeMargin
 end StabilityMarginComputable
 
 noncomputable instance : StabilityMarginComputable ℝ where
-  compute_stability_margin := fun {s} f norm equilibrium =>
+  computeStabilityMargin := fun {s} f norm equilibrium =>
     sSup {r : ℝ | 0 ≤ r ∧ ∀ x₀ : Tensor ℝ s,
       tensorDistance norm equilibrium x₀ ≤ r →
         ∀ n : Nat, tensorDistance norm equilibrium (iterate f n x₀) ≤ r}
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /--
 Lyapunov stability of `equilibrium` for the discrete-time system $x_{t+1}=f(x_t)$.
 
 This is the usual $\varepsilon$/$\delta$ definition using the distance induced by `norm`.
 -/
-def isLyapunovStable {s : Shape}
+def IsLyapunovStable {s : Shape}
     (f : Tensor α s → Tensor α s)
     (norm : ∀ {s : Shape}, Tensor α s → α)
     (equilibrium : Tensor α s) : Prop :=
@@ -110,38 +114,42 @@ def isLyapunovStable {s : Shape}
 Asymptotic stability: Lyapunov stability plus convergence to `equilibrium` for nearby initial
 conditions.
 -/
-def isAsymptoticallyStable {s : Shape}
+def IsAsymptoticallyStable {s : Shape}
     (f : Tensor α s → Tensor α s)
     (norm : ∀ {s : Shape}, Tensor α s → α)
     (equilibrium : Tensor α s) : Prop :=
-  isLyapunovStable f norm equilibrium ∧
+  IsLyapunovStable f norm equilibrium ∧
   ∃ δ > 0, ∀ x₀ : Tensor α s,
     tensorDistance norm equilibrium x₀ < δ →
     ∀ ε > 0, ∃ N : Nat, ∀ n ≥ N,
       tensorDistance norm equilibrium (iterate f n x₀) < ε
 
 /--
-Exponential stability with decay parameters `decay_rate` and `M`.
+Exponential stability with decay parameters `decayRate` and `M`.
 
-This is a quantitative strengthening of asymptotic stability.
+Over real scalars with the usual norm and exponential laws, this expresses quantitative decay.
+The generic predicate alone does not supply those laws.
 -/
-def isExponentiallyStable {s : Shape}
+def IsExponentiallyStable {s : Shape}
     (f : Tensor α s → Tensor α s)
     (norm : ∀ {s : Shape}, Tensor α s → α)
     (equilibrium : Tensor α s)
-    (decay_rate : α) (M : α) : Prop :=
-  decay_rate > 0 ∧ M > 0 ∧
+    (decayRate : α) (M : α) : Prop :=
+  decayRate > 0 ∧ M > 0 ∧
   ∃ δ > 0, ∀ x₀ : Tensor α s,
     tensorDistance norm equilibrium x₀ < δ →
     ∀ n : Nat, tensorDistance norm equilibrium (iterate f n x₀) ≤
-      M * (MathFunctions.exp (-decay_rate * n)) * tensorDistance norm equilibrium x₀
+      M * (MathFunctions.exp (-decayRate * n)) * tensorDistance norm equilibrium x₀
 
 /--
-Global stability: every initial condition converges to `equilibrium`.
+Global attraction: every initial condition converges to `equilibrium`.
+
+The established name `IsGloballyStable` denotes convergence only; it does not also require the
+Lyapunov-stability predicate.
 
 This is stated as convergence in the distance induced by `norm`.
 -/
-def isGloballyStable {s : Shape}
+def IsGloballyStable {s : Shape}
     (f : Tensor α s → Tensor α s)
     (norm : ∀ {s : Shape}, Tensor α s → α)
     (equilibrium : Tensor α s) : Prop :=
@@ -156,30 +164,33 @@ This is the standard bound
 $$
 \lVert x_t\rVert
 \leq \beta(\lVert x_0\rVert,t)
-  +\gamma\!\left(\sup_{k\leq t}\lVert u_k\rVert\right)
+  +\gamma\!\left(\max_{k<t}\lVert u_k\rVert\right)
 $$
 
-packaged as a `Prop`.
+packaged as a `Prop`. The maximum includes an initial zero and inputs at indices `k < t`,
+which are the inputs used to reach state `t`. This predicate does not require the usual class-KL
+conditions on `β` or class-K conditions on `γ`; those must be supplied separately for standard ISS.
 -/
-def isInputToStateStable {s₁ s₂ : Shape}
+def IsInputToStateStable {s₁ s₂ : Shape}
     (f : Tensor α s₁ → Tensor α s₂ → Tensor α s₁)
     (norm : ∀ {s : Shape}, Tensor α s → α)
     (β : α → α → α) (γ : α → α) : Prop :=
-  ∀ x₀ : Tensor α s₁, ∀ input_seq : Nat → Tensor α s₂,
-    ∀ t : Nat, norm (iterateWithInput f input_seq t x₀) ≤
-      β (norm x₀) (↑t) + γ (sup_norm_over_time input_seq t)
+  ∀ x₀ : Tensor α s₁, ∀ inputSeq : Nat → Tensor α s₂,
+    ∀ t : Nat, norm (iterateWithInput f inputSeq t x₀) ≤
+      β (norm x₀) (↑t) + γ (supNormOverTime inputSeq t)
 where
   iterateWithInput (f : Tensor α s₁ → Tensor α s₂ → Tensor α s₁)
-      (input_seq : Nat → Tensor α s₂) : Nat → Tensor α s₁ → Tensor α s₁
+      (inputSeq : Nat → Tensor α s₂) : Nat → Tensor α s₁ → Tensor α s₁
     | 0, x => x
-    | n + 1, x => f (iterateWithInput f input_seq n x) (input_seq n)
-  sup_norm_over_time (input_seq : Nat → Tensor α s₂) (t : Nat) : α :=
-    (List.finRange t).foldl (fun acc i => max acc (norm (input_seq i))) 0
+    | n + 1, x => f (iterateWithInput f inputSeq n x) (inputSeq n)
+  supNormOverTime (inputSeq : Nat → Tensor α s₂) (t : Nat) : α :=
+    (List.finRange t).foldl (fun acc i => max acc (norm (inputSeq i))) 0
 
 /--
-Bounded-input bounded-output (BIBO) stability with respect to `norm₁` and `norm₂`.
+A fixed-bound input/output implication: inputs of norm at most `bound` have outputs of norm
+at most the same `bound`. This is not the general BIBO quantification over input and output bounds.
 -/
-def isBiboStable {s₁ s₂ : Shape}
+def IsBiboStable {s₁ s₂ : Shape}
     (f : Tensor α s₁ → Tensor α s₂)
     (norm₁ : ∀ {s : Shape}, Tensor α s → α)
     (norm₂ : ∀ {s : Shape}, Tensor α s → α)
@@ -187,59 +198,61 @@ def isBiboStable {s₁ s₂ : Shape}
   ∀ x : Tensor α s₁, norm₁ x ≤ bound → norm₂ (f x) ≤ bound
 
 /--
-Incremental stability: distances between trajectories contract by `contraction_factor`.
+Incremental stability: distances between trajectories contract by `contractionFactor`.
 
-This is a discrete-time contraction condition phrased using `tensor_distance`.
+This is a discrete-time contraction condition phrased using `tensorDistance`.
 -/
-def isIncrementallyStable {s : Shape}
+def IsIncrementallyStable {s : Shape}
     (f : Tensor α s → Tensor α s)
     (norm : ∀ {s : Shape}, Tensor α s → α)
-    (contraction_factor : α) : Prop :=
-  contraction_factor < 1 ∧
+    (contractionFactor : α) : Prop :=
+  contractionFactor < 1 ∧
   ∀ x₁ x₂ : Tensor α s,
-    tensorDistance norm (f x₁) (f x₂) ≤ contraction_factor * tensorDistance norm x₁ x₂
+    tensorDistance norm (f x₁) (f x₂) ≤ contractionFactor * tensorDistance norm x₁ x₂
 
 /--
-Stability margin: the largest forward-invariant ball radius around `equilibrium` (when computable).
+Return the configured stability-margin value. The real instance uses a supremum, which need not
+be attained and requires boundedness for its usual interpretation; custom instances have no
+correctness law in this interface.
 -/
 def stabilityMargin {s : Shape} [StabilityMarginComputable α]
     (f : Tensor α s → Tensor α s)
     (norm : ∀ {s : Shape}, Tensor α s → α)
     (equilibrium : Tensor α s) : α :=
-  StabilityMarginComputable.compute_stability_margin (α := α) f norm equilibrium
+  StabilityMarginComputable.computeStabilityMargin (α := α) f norm equilibrium
 
 /--
 Finite-time stability: trajectories reach `equilibrium` exactly within a fixed step budget.
 -/
-def isFiniteTimeStable {s : Shape}
+def IsFiniteTimeStable {s : Shape}
     (f : Tensor α s → Tensor α s)
     (_norm : ∀ {s : Shape}, Tensor α s → α)
     (equilibrium : Tensor α s)
-    (settling_time_steps : Nat) : Prop :=
-  ∀ x₀ : Tensor α s, ∃ T ≤ settling_time_steps, ∀ t ≥ T,
+    (settlingTimeSteps : Nat) : Prop :=
+  ∀ x₀ : Tensor α s, ∃ T ≤ settlingTimeSteps, ∀ t ≥ T,
     iterate f t x₀ = equilibrium
 
 /--
-Practical stability: trajectories eventually enter and remain in a fixed `ultimate_bound` ball.
+Practical stability: trajectories eventually enter and remain in a fixed `ultimateBound` ball.
 -/
-def isPracticallyStable {s : Shape}
+def IsPracticallyStable {s : Shape}
     (f : Tensor α s → Tensor α s)
     (norm : ∀ {s : Shape}, Tensor α s → α)
     (equilibrium : Tensor α s)
-    (ultimate_bound : α) : Prop :=
+    (ultimateBound : α) : Prop :=
   ∀ x₀ : Tensor α s, ∃ T : Nat, ∀ t ≥ T,
-    tensorDistance norm equilibrium (iterate f t x₀) ≤ ultimate_bound
+    tensorDistance norm equilibrium (iterate f t x₀) ≤ ultimateBound
 
 /--
 One-step monotonicity of a training loss under an update rule.
 
 This is the “training stability” predicate used as a spec for decreasing-loss update rules.
 -/
-def isTrainingStable {s : Shape}
-    (update_rule : Tensor α s → Tensor α s)
+def IsTrainingStable {s : Shape}
+    (updateRule : Tensor α s → Tensor α s)
     (loss : Tensor α s → α)
     (parameters : Tensor α s) : Prop :=
-  loss (update_rule parameters) ≤ loss parameters
+  loss (updateRule parameters) ≤ loss parameters
 
 /--
 Generalization stability of a learning algorithm: small dataset changes produce small prediction
@@ -248,24 +261,24 @@ changes.
 This is a generic stability-style specification; concrete instances typically choose a specific
 dataset metric and output norm.
 -/
-def isGeneralizationStable {s₁ s₂ : Shape}
-    (training_algorithm : Array (Tensor α s₁ × Tensor α s₂) → (Tensor α s₁ → Tensor α s₂))
+def IsGeneralizationStable {s₁ s₂ : Shape}
+    (trainingAlgorithm : Array (Tensor α s₁ × Tensor α s₂) → (Tensor α s₁ → Tensor α s₂))
     (norm₁ : ∀ {s : Shape}, Tensor α s → α)
     (norm₂ : ∀ {s : Shape}, Tensor α s → α)
-    (stability_constant : α) : Prop :=
+    (stabilityConstant : α) : Prop :=
   ∀ dataset₁ dataset₂ : Array (Tensor α s₁ × Tensor α s₂),
-    let model₁ := training_algorithm dataset₁
-    let model₂ := training_algorithm dataset₂
+    let model₁ := trainingAlgorithm dataset₁
+    let model₂ := trainingAlgorithm dataset₂
     ∀ x : Tensor α s₁,
       tensorDistance norm₂ (model₁ x) (model₂ x) ≤
-      stability_constant * dataset_distance dataset₁ dataset₂
+      stabilityConstant * datasetDistance dataset₁ dataset₂
 where
-  dataset_distance (d₁ d₂ : Array (Tensor α s₁ × Tensor α s₂)) : α :=
-    let sample_distance : (Tensor α s₁ × Tensor α s₂) → (Tensor α s₁ × Tensor α s₂) → α :=
+  datasetDistance (d₁ d₂ : Array (Tensor α s₁ × Tensor α s₂)) : α :=
+    let sampleDistance : (Tensor α s₁ × Tensor α s₂) → (Tensor α s₁ × Tensor α s₂) → α :=
       fun p q => tensorDistance norm₁ p.1 q.1 + tensorDistance norm₂ p.2 q.2
-    let aligned_distance :=
-      (d₁.zip d₂).foldl (fun acc pq => acc + sample_distance pq.1 pq.2) 0
-    let len_penalty := MathFunctions.abs ((d₁.size : α) - (d₂.size : α))
-    aligned_distance + len_penalty
+    let alignedDistance :=
+      (d₁.zip d₂).foldl (fun acc pq => acc + sampleDistance pq.1 pq.2) 0
+    let lenPenalty := MathFunctions.abs ((d₁.size : α) - (d₂.size : α))
+    alignedDistance + lenPenalty
 
 end NN.MLTheory.Stability.Spec

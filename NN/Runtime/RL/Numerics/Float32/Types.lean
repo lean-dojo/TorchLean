@@ -6,10 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.RL.Core
 public import NN.Runtime.RL.Boundary.Core
-public import NN.Spec.Core.Tensor.Numerics
 public import NN.Floats.Interval.IEEEExec32
+public import NN.Floats.IEEEExec.Exec32.Instances
+public import NN.Runtime.RL.Core -- shake: keep
 
 /-!
 # RL Float32 Types and Boundary Casts
@@ -30,8 +30,8 @@ namespace RL
 namespace Numerics
 namespace Float32
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Spec.RL
 
 open TorchLean.Floats
@@ -43,11 +43,7 @@ abbrev Float32Exec : Type := TorchLean.Floats.IEEE754.IEEE32Exec
 /-- Outward-rounded interval type built on `IEEE32Exec` endpoints. -/
 abbrev Interval32 : Type := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32
 
-/--
-Default inhabitant for `Interval32`.
-
-`Array.get!` requires an `Inhabited` default; we use the degenerate interval `[0,0]`.
--/
+/-- The degenerate interval `[0,0]` is the default interval value. -/
 instance : Inhabited Interval32 where
   default := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point 0
 
@@ -73,8 +69,10 @@ non-finite.
 -/
 def castTensorChecked {s : Shape} (t : Tensor Float s) :
     Except String (Tensor Float32Exec s) :=
-  let t32 : Tensor Float32Exec s := Spec.Tensor.map (TorchLean.Floats.IEEE754.IEEE32Exec.ofFloat) t
-  if Boundary.tensorAll (α := Float32Exec) (s := s) (fun x => TorchLean.Floats.IEEE754.IEEE32Exec.isFinite x) t32 then
+  let t32 : Tensor Float32Exec s :=
+    TorchLean.Tensor.map (TorchLean.Floats.IEEE754.IEEE32Exec.ofFloat) t
+  if Boundary.tensorAll (α := Float32Exec) (s := s)
+      (fun x => TorchLean.Floats.IEEE754.IEEE32Exec.isFinite x) t32 then
     .ok t32
   else
     .error "RL float32: Float→IEEE32Exec tensor cast produced a non-finite entry."
@@ -85,7 +83,8 @@ becomes non-finite.
 -/
 def castTransitionChecked {obsShape : Shape} {nActions : Nat}
     (t : Boundary.Transition obsShape nActions) :
-    Except String (Spec.RL.ObservedTransition (Tensor Float32Exec obsShape) (Fin nActions) Float32Exec) := do
+    Except String
+      (Spec.RL.ObservedTransition (Tensor Float32Exec obsShape) (Fin nActions) Float32Exec) := do
   let obs ← castTensorChecked (s := obsShape) t.observation
   let nextObs ← castTensorChecked (s := obsShape) t.nextObservation
   let r ← ofFloatChecked t.reward

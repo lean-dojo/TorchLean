@@ -6,6 +6,10 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Floats.NeuralFloat.Error.Bounds
+public import NN.Floats.NeuralFloat.Analysis.Ulp
+public import NN.Floats.NeuralFloat.Format.Formats
+public import NN.Floats.NeuralFloat.Rounding.Generic
 public import NN.Floats.NeuralFloat.Error.Relative
 
 /-!

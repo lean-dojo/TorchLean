@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Tensor.Constructors
-public import NN.Spec.Generative.Diffusion.Core
+public import NN.Spec.Core.Context
 
 /-!
 # VP diffusion schedules (spec layer)
@@ -44,15 +44,15 @@ References (informal pointers):
 
 namespace Generative.Diffusion
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Discrete VP schedule with `T` diffusion steps. -/
-structure VPSchedule (α : Type) (T : Nat) [Context α] where
+structure VPSchedule (α : Type) (T : Nat) [TorchLean.Storage α] [Context α] where
   /-- Per-step variances $\beta_t$ for $t=0,\ldots,T-1$. -/
-  betas : Spec.Tensor α [T]
+  betas : TorchLean.Tensor α [T]
 
 namespace VPSchedule
 
@@ -85,8 +85,8 @@ def alphaBar (sched : VPSchedule α T) (t : Fin (T + 1)) : α :=
   go t.1 t.2
 
 /-- The $T+1$ accumulated coefficients as a vector. -/
-def alphaBarTensor (sched : VPSchedule α T) : Spec.Tensor α [T + 1] :=
-  Spec.Tensor.ofFn (fun t => sched.alphaBar t)
+def alphaBarTensor (sched : VPSchedule α T) : TorchLean.Tensor α [T + 1] :=
+  TorchLean.Tensor.ofFn (fun t => sched.alphaBar t)
 
 /--
 Convert a discrete time index `t : Fin (T+1)` into a scalar time $t/T\in[0,1]$ (when $T>0$).
@@ -114,18 +114,18 @@ Note: this is a small spec helper. Popular schedules in the diffusion literature
 variants such as cosine schedules or continuous VP schedules; add those as separate named specs
 when a model or theorem needs them.
 -/
-def linearBetas (T : Nat) (β_start β_end : α) : Spec.Tensor α [T] :=
+def linearBetas (T : Nat) (β_start β_end : α) : TorchLean.Tensor α [T] :=
   match T with
-  | 0 => Spec.Tensor.ofFn (fun i : Fin 0 => (False.elim (by simpa using i.2)))
+  | 0 => TorchLean.Tensor.ofFn (fun i : Fin 0 => (False.elim (by simpa using i.2)))
   | Nat.succ T' =>
       match T' with
       | 0 =>
           -- `T = 1`: by convention, return the endpoint.
-          Spec.Tensor.ofFn (fun _i : Fin 1 => β_end)
+          TorchLean.Tensor.ofFn (fun _i : Fin 1 => β_end)
       | Nat.succ T'' =>
           -- `T = T'' + 2`: interpolate using denominator `(T-1) = T'' + 1`, so the last beta is
           -- exactly `β_end`.
-          Spec.Tensor.ofFn (fun i : Fin (Nat.succ (Nat.succ T'')) =>
+          TorchLean.Tensor.ofFn (fun i : Fin (Nat.succ (Nat.succ T'')) =>
             let denom : α := (Nat.succ T'' : α) -- = T - 1
             let frac : α := (i.1 : α) / denom
             β_start + frac * (β_end - β_start))

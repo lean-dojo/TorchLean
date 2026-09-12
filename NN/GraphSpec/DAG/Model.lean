@@ -22,9 +22,8 @@ namespace NN
 namespace GraphSpec
 namespace DAG
 
-open _root_.Spec
-open Spec.Tensor
-open _root_.TorchLean.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /-! ## Model wrapper -/
 
@@ -41,9 +40,11 @@ The model body is a `Term (ps ++ ins) τ`, i.e. it expects an environment that s
 parameters and then contains the actual inputs.
  -/
 structure Model (ps ins : List Shape) (τ : Shape) where
-  /-- init Params. -/
+  /-- Initial parameter values, one tensor per shape in `ps`. Shipping the initialization with the
+  model means a `Model` is runnable on its own, with no separate setup step. -/
   initParams : TorchLean.TensorPack Float ps
-  /-- body. -/
+  /-- The computation itself, as a term over the environment `ps ++ ins`: parameters first, then
+  data inputs. That fixed ordering is what lets `initParams` be typed by `ps` alone. -/
   body : Term (ps ++ ins) τ
 
 namespace Model
@@ -66,15 +67,15 @@ We build the full environment `Γ = ps ++ ins` by appending the parameter list a
 then evaluate the body using `Term.eval`.
  -/
 def specFwd {ps ins : List Shape} {τ : Shape} (m : Model ps ins τ)
-    {α : Type 0} [Context α]
-    (params : _root_.TorchLean.TensorPack α ps) (xs : _root_.TorchLean.TensorPack α ins) : Spec.Tensor α τ :=
+    {α : Type 0} [TorchLean.Storage α] [Context α]
+    (params : TorchLean.TensorPack α ps) (xs : TorchLean.TensorPack α ins) : TorchLean.Tensor α τ :=
   let env := TorchLean.TensorPack.append (α := α) (ss₁ := ps) (ss₂ := ins) params xs
   Term.eval (Γ := ps ++ ins) (α := α) env m.body
 
 /-- Inlining a model into a larger DAG preserves the model's pure forward semantics. -/
 theorem eval_inline {Γ ps ins : List Shape} {τ : Shape}
-    (model : Model ps ins τ) {α : Type 0} [Context α]
-    (env : _root_.TorchLean.TensorPack α Γ) (params : Args Γ ps) (inputs : Args Γ ins) :
+    (model : Model ps ins τ) {α : Type 0} [TorchLean.Storage α] [Context α]
+    (env : TorchLean.TensorPack α Γ) (params : Args Γ ps) (inputs : Args Γ ins) :
     Term.eval env (model.inline params inputs) =
       model.specFwd (Term.evalArgs env params) (Term.evalArgs env inputs) := by
   rw [inline, Term.eval_instantiate, Term.evalArgs_append]
@@ -87,13 +88,13 @@ The resulting program expects arguments in the order `ps ++ ins` (parameters fir
 matching the environment discipline used by `specFwd`.
  -/
 def toProgram {ps ins : List Shape} {τ : Shape} (m : Model ps ins τ)
-    {α : Type 0} [Context α] [DecidableEq Shape] :
-    Runtime.Autograd.TorchLean.Program α (ps ++ ins) τ :=
+    {α : Type 0} [TorchLean.Storage α] [Context α] :
+    Runtime.Autograd.Model.Program α (ps ++ ins) τ :=
   fun {μ} _ _ =>
     Runtime.Autograd.Torch.CurriedRef.curry
-      (Ref := _root_.Runtime.Autograd.TorchLean.RefTy (m := μ) (α := α))
+      (Ref := Runtime.Autograd.Model.RefTy (m := μ) (α := α))
       (ss := ps ++ ins)
-      (β := μ (_root_.Runtime.Autograd.TorchLean.RefTy (m := μ) (α := α) τ))
+      (β := μ (Runtime.Autograd.Model.RefTy (m := μ) (α := α) τ))
       (fun args => Term.lower (Γ := ps ++ ins) (α := α) (m := μ) args m.body)
 
 end Model
@@ -128,7 +129,8 @@ def inline {Γ ps ins outs : List Shape} (model : MultiModel ps ins outs)
 
 /-- Pure reference semantics of a multi-output DAG model. -/
 def specFwd {ps ins outs : List Shape} (m : MultiModel ps ins outs)
-    {α : Type 0} [Context α] (params : _root_.TorchLean.TensorPack α ps) (xs : _root_.TorchLean.TensorPack α ins) : _root_.TorchLean.TensorPack α outs :=
+    {α : Type 0} [TorchLean.Storage α] [Context α] (params : TorchLean.TensorPack α ps)
+    (xs : TorchLean.TensorPack α ins) : TorchLean.TensorPack α outs :=
   let env := TorchLean.TensorPack.append
     (α := α) (ss₁ := ps) (ss₂ := ins) params xs
   Block.eval (Γ := ps ++ ins) (α := α) env m.body
@@ -136,7 +138,7 @@ def specFwd {ps ins outs : List Shape} (m : MultiModel ps ins outs)
 /-- Inlining a multi-output model preserves every output and every shared intermediate in its
 pure reference semantics. -/
 theorem eval_inline {Γ ps ins outs : List Shape} (model : MultiModel ps ins outs)
-    {α : Type 0} [Context α] (env : _root_.TorchLean.TensorPack α Γ)
+    {α : Type 0} [TorchLean.Storage α] [Context α] (env : TorchLean.TensorPack α Γ)
     (params : Args Γ ps) (inputs : Args Γ ins) :
     Block.eval env (model.inline params inputs) =
       model.specFwd (Term.evalArgs env params) (Term.evalArgs env inputs) := by
@@ -144,20 +146,20 @@ theorem eval_inline {Γ ps ins outs : List Shape} (model : MultiModel ps ins out
   rfl
 
 /-- An execution-polymorphic program returning several shape-indexed tensor references. -/
-abbrev MultiOutputProgram (α : Type 0) [Context α] [DecidableEq Shape]
+abbrev MultiOutputProgram (α : Type 0) [TorchLean.Storage α] [Context α]
     (ins outs : List Shape) : Type 1 :=
   ∀ {μ : Type → Type}, [Monad μ] → [Runtime.Autograd.Torch.Ops (m := μ) (α := α)] →
-    CurriedRef (fun s => _root_.Runtime.Autograd.TorchLean.RefTy (m := μ) (α := α) s) ins
-      (μ (RefList (_root_.Runtime.Autograd.TorchLean.RefTy (m := μ) (α := α)) outs))
+    CurriedRef (fun s => Runtime.Autograd.Model.RefTy (m := μ) (α := α) s) ins
+      (μ (RefList (Runtime.Autograd.Model.RefTy (m := μ) (α := α)) outs))
 
 /-- Lower every result of a multi-output model for the selected TorchLean execution target. -/
 def toProgram {ps ins outs : List Shape} (m : MultiModel ps ins outs)
-    {α : Type 0} [Context α] [DecidableEq Shape] : MultiOutputProgram α (ps ++ ins) outs :=
+    {α : Type 0} [TorchLean.Storage α] [Context α] : MultiOutputProgram α (ps ++ ins) outs :=
   fun {μ} _ _ =>
     CurriedRef.curry
-      (Ref := _root_.Runtime.Autograd.TorchLean.RefTy (m := μ) (α := α))
+      (Ref := Runtime.Autograd.Model.RefTy (m := μ) (α := α))
       (ss := ps ++ ins)
-      (β := μ (RefList (_root_.Runtime.Autograd.TorchLean.RefTy (m := μ) (α := α)) outs))
+      (β := μ (RefList (Runtime.Autograd.Model.RefTy (m := μ) (α := α)) outs))
       (fun args => Block.lower (Γ := ps ++ ins) (α := α) (μ := μ) args m.body)
 
 end MultiModel

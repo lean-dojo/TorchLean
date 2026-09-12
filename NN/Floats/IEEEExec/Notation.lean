@@ -6,9 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Bridge.FP32
 public import NN.Floats.IEEEExec.Semantics.ERealSemantics
-public import NN.Floats.IEEEExec.Exec32
 
 /-!
 # Notation for executable float32 semantics (`IEEE32Exec`)

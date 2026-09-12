@@ -7,31 +7,26 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Neural.Layers
-public import NN.API.Runtime
-public import NN.API.Sample
+public import NN.API.Macros
+public import NN.API.Neural.Layers.Convolution
+public import NN.API.Neural.Layers.Pooling
+public import NN.API.Neural.Builders
+public import NN.Runtime.Autograd.Model.Layers.Activations
+public import NN.API.Runtime -- shake: keep
+public import NN.API.Neural.Layers.Attention -- shake: keep
+public import NN.API.Sample -- shake: keep
 
 /-!
 # Reusable Neural-Network Blocks
 
-Residual, convolutional, branching, and MLP compositions built from the checked layer API.
+Configuration records for MLP and convolution blocks, plus residual and branching combinators over
+already-built sequential models. The seeded block constructors live in `NN.API.Seeded`.
 -/
 
 @[expose] public section
 
 namespace TorchLean
 namespace nn
-namespace Internal
-namespace blocks
-
-
-/-- Interpret an activation kind as a TorchLean layer. -/
-def activation {s : Spec.Shape} : _root_.Activation.Kind → Sequential s s
-  | .relu => relu (s := s)
-  | .gelu => gelu (s := s)
-  | .silu => silu (s := s)
-  | .tanh => tanh (s := s)
-  | .sigmoid => sigmoid (s := s)
 
 /--
 MLP (multi-layer perceptron) configuration.
@@ -40,133 +35,148 @@ This builder produces a sequential stack of linear layers with activations and o
 
 PyTorch analogue: a hand-written `nn.Sequential(Linear(...), ReLU(), ..., Linear(...))`.
 -/
-structure MlpConfig where
+structure MLP.Config where
   /-- Hidden layer widths (each entry creates a `Linear -> Activation` stage). -/
-  hidden : List Nat := []
+  hiddenWidths : List Nat := []
   /-- Activation used after each hidden linear layer. -/
-  activation : _root_.Activation.Kind := .relu
+  activation : Activation.Kind := .relu
   /-- Optional dropout probability after each activation. -/
   dropout? : Option Float := none
 
-/-- Build the hidden stages of an MLP while assigning a distinct seed to each stateful layer. -/
-def mlpStages (leading : List Nat) (act : _root_.Activation.Kind)
-    (dropout? : Option Float) :
-    (inDim : Nat) → (hidden : List Nat) → (outDim : Nat) → (seed : Nat) →
-      Sequential (leading ++ [inDim]) (leading ++ [outDim])
-  | inDim, [], outDim, seed =>
-      linear inDim outDim seed (seed + 1) leading
-  | inDim, h :: hs, outDim, seed =>
-      let hiddenShape : Spec.Shape := leading ++ [h]
-      let lin : Sequential (leading ++ [inDim]) hiddenShape :=
-        linear inDim h seed (seed + 1) leading
-      let seed' := seed + 2
-      let actLayer : Sequential hiddenShape hiddenShape :=
-        activation (s := hiddenShape) act
-      let mid : Sequential hiddenShape hiddenShape × Nat :=
-        match dropout? with
-        | none => (actLayer, seed')
-        | some p =>
-            ((seq! actLayer, dropout (s := hiddenShape) p (seed := seed')), seed' + 1)
-      let rest :=
-        mlpStages leading act dropout? h hs outDim mid.snd
-      seq! lin, mid.fst, rest
-
-/-- Assemble an MLP from an explicit base seed for the public seeded builder. -/
-def mlpWithSeed (inDim outDim seed : Nat) (cfg : MlpConfig := {})
-    (leading : List Nat := []) :
-    Sequential (leading ++ [inDim]) (leading ++ [outDim]) :=
-  mlpStages leading cfg.activation cfg.dropout? inDim cfg.hidden outDim seed
-
-/-- Convolution followed by an activation and optional dropout. -/
-structure ConvAct (d : Nat) where
-  conv : Conv d
-  activation : _root_.Activation.Kind := .relu
-  dropout? : Option Float := none
-  seedDropout : Nat := 0
-
-/-- Build a rank-polymorphic convolution/activation block. -/
-def convAct (leading : List Nat := []) {d inChannels : Nat}
-    (spatial : Tensor Nat [d]) (cfg : ConvAct d) [NeZero inChannels] :
-    Sequential
-      (leading ++ inChannels :: spatial.toList)
-      (leading ++ cfg.conv.outChannels ::
-        (Spec.convOutSpatial spatial cfg.conv.kernel cfg.conv.stride cfg.conv.padding).toList) := by
-  let outShape := leading ++ cfg.conv.outChannels ::
-    (Spec.convOutSpatial spatial cfg.conv.kernel cfg.conv.stride cfg.conv.padding).toList
-  let actLayer : Sequential outShape outShape :=
-    activation (s := Spec.Shape.ofList outShape) cfg.activation
-  let core : Sequential (leading ++ inChannels :: spatial.toList) outShape := seq!
-    conv leading spatial cfg.conv,
-    actLayer
-  exact match cfg.dropout? with
-  | none => core
-  | some p =>
-      let dropoutLayer : Sequential outShape outShape :=
-        dropout (s := Spec.Shape.ofList outShape) p (seed := cfg.seedDropout)
-      seq! core, dropoutLayer
-
-/-- Convolution/activation followed by max pooling. -/
-structure ConvActPool (d : Nat) where
-  block : ConvAct d
-  pool : Pool d
-
-/-- Build a rank-polymorphic convolution/activation/max-pooling block. -/
-def convActPool (leading : List Nat := []) {d inChannels : Nat}
-    (spatial : Tensor Nat [d]) (cfg : ConvActPool d) [NeZero inChannels] :
-    Sequential
-      (leading ++ inChannels :: spatial.toList)
-      (leading ++ cfg.block.conv.outChannels ::
-        (Spec.poolOutSpatialPad
-          (Spec.convOutSpatial spatial cfg.block.conv.kernel cfg.block.conv.stride
-            cfg.block.conv.padding)
-          cfg.pool.kernel cfg.pool.stride cfg.pool.padding).toList) :=
-  let afterConv := Spec.convOutSpatial spatial cfg.block.conv.kernel cfg.block.conv.stride
-    cfg.block.conv.padding
-  seq!
-    convAct leading spatial cfg.block,
-    maxPool leading afterConv cfg.pool
+namespace MLP.Config
 
 /--
-Residual/skip-connection layer as a single `Layer`.
-
-Given `inner : Seq s s`, this builds a layer that computes
-$x \mapsto \operatorname{inner}(x) + x$.
-
-PyTorch analogue: $x + f(x)$ blocks used throughout ResNets and Transformers.
+Validate the input, output, hidden widths, and optional dropout probability before allocating
+parameter seeds.
 -/
-def residualLayer {s : Spec.Shape} (inner : Sequential s s) : Layer s s :=
-  let ps := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes inner
+def validate (config : MLP.Config) (inputWidth outputWidth : Nat) : Except String Unit := do
+  if inputWidth = 0 then
+    throw "MLP: input width must be positive"
+  if outputWidth = 0 then
+    throw "MLP: output width must be positive"
+  if config.hiddenWidths.any (· = 0) then
+    throw "MLP: hidden widths must be positive"
+  match config.dropout? with
+  | none => pure ()
+  | some probability =>
+      unless probability.isFinite && 0.0 <= probability && probability <= 1.0 do
+        throw s!"MLP: dropout probability must be finite and in [0, 1], got {probability}"
+
+end MLP.Config
+
+/-- Convolution followed by an activation and optional dropout. -/
+structure ConvBlock.Config (d : Nat) where
+  /-- Convolution configuration. -/
+  convolution : Convolution.Config d
+  /-- Activation applied after convolution. -/
+  activation : Activation.Kind := .relu
+  /-- Optional dropout probability applied after activation. -/
+  dropout? : Option Float := none
+
+namespace ConvBlock.Config
+
+/-- Validate convolution and dropout settings before allocating any parameter seeds. -/
+def validate {d : Nat} (config : ConvBlock.Config d)
+    (inputChannels : Nat) (input : Tensor Nat [d])
+    (kind : String := "ConvBlock") : Except String Unit := do
+  config.convolution.validate inputChannels input (kind := kind)
+  match config.dropout? with
+  | none => pure ()
+  | some probability =>
+      unless probability.isFinite && 0.0 <= probability && probability <= 1.0 do
+        throw s!"{kind}: dropout probability must be finite and in [0, 1], got {probability}"
+
+end ConvBlock.Config
+
+/-- Convolution/activation followed by max pooling. -/
+structure ConvPoolBlock.Config (d : Nat) where
+  /-- Convolution and activation stage. -/
+  block : ConvBlock.Config d
+  /-- Pooling stage. -/
+  pooling : Pooling.Config d
+
+namespace ConvPoolBlock.Config
+
+/-- Validate the convolution/dropout stage and the following pooling geometry. -/
+def validate {d : Nat} (config : ConvPoolBlock.Config d)
+    (inputChannels : Nat) (input : Tensor Nat [d])
+    (kind : String := "ConvPoolBlock") : Except String Unit := do
+  config.block.validate inputChannels input (kind := kind)
+  config.pooling.validate config.block.convolution.outChannels
+    (config.block.convolution.output input) (kind := kind)
+
+end ConvPoolBlock.Config
+
+/-- Interpret an activation kind as an elementwise sequential model. -/
+def activation {s : Spec.Shape} : Activation.Kind → Sequential s s
+  | .relu => Sequential.fromLayer <| Runtime.Autograd.Model.Layers.relu (s := s)
+  | .gelu => Sequential.fromLayer <| Runtime.Autograd.Model.Layers.gelu (s := s)
+  | .silu => Sequential.fromLayer <| Runtime.Autograd.Model.Layers.silu (s := s)
+  | .tanh => Sequential.fromLayer <| Runtime.Autograd.Model.Layers.tanh (s := s)
+  | .sigmoid => Sequential.fromLayer <| Runtime.Autograd.Model.Layers.sigmoid (s := s)
+
+/--
+Residual (skip) connection as a single `Layer`.
+
+Given `inner : Seq s s` this computes $x \mapsto \operatorname{inner}(x) + x$, the shape that
+appears in ResNet (He et al., *Deep Residual Learning for Image Recognition*, CVPR 2016) and in
+every Transformer sublayer since Vaswani et al., *Attention Is All You Need* (NeurIPS 2017).
+
+The `Layer` namespace holds the raw single-layer constructors; the same name without the namespace
+returns a `Sequential`. That split is why there is no `residualLayer`: the return type belongs in
+the namespace, not in the identifier.
+-/
+def Layer.residual {s : Spec.Shape} (inner : Sequential s s) : Layer s s :=
+  let stateShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes inner
   { kind := "Residual"
-    stateShapes := ps
-    initState := _root_.Runtime.Autograd.TorchLean.NN.Seq.initState inner
-    runtimeInit := _root_.Runtime.Autograd.TorchLean.NN.Seq.runtimeInit? inner
-    requiresGrad := _root_.Runtime.Autograd.TorchLean.NN.Seq.requiresGrad inner
-    updateBuffers := some (fun mode {α} _ _ ps x =>
-      _root_.Runtime.Autograd.TorchLean.NN.Seq.updateBuffers (α := α) (model := inner) mode ps x)
+    stateShapes
+    initState := Runtime.Autograd.Model.Layers.Seq.initState inner
+    runtimeInit := Runtime.Autograd.Model.Layers.Seq.runtimeInit? inner
+    requiresGrad := Runtime.Autograd.Model.Layers.Seq.requiresGrad inner
+    validateConfig := Runtime.Autograd.Model.Layers.Seq.validate inner
+    updateBuffers :=
+      if Runtime.Autograd.Model.Layers.Seq.hasBufferUpdates inner then
+        some (fun mode {α} _ _ state input =>
+          Runtime.Autograd.Model.Layers.Seq.updateBuffers
+            (α := α) (model := inner) mode state input)
+      else
+        none
     forward := fun mode {α} _ _ =>
       fun {m} _ _ =>
-        _root_.Runtime.Autograd.Torch.CurriedRef.curry
-          (Ref := fun sh => _root_.TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
-          (ss := ps ++ [s])
-          (β := m (_root_.TorchLean.Runtime.ValueRef (m := m) (α := α) s))
-          (fun args => do
-            let (_psRefs, xRef) :=
-              _root_.Runtime.Autograd.Torch.RefList.splitLast
-                (Ref := fun sh => _root_.TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
-                (ss := ps) (τ := s) args
-            let y ←
-              _root_.Runtime.Autograd.Torch.CurriedRef.uncurry
-                (Ref := fun sh => _root_.TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
-                (ss := ps ++ [s])
-                (β := m (_root_.TorchLean.Runtime.ValueRef (m := m) (α := α) s))
-                (_root_.Runtime.Autograd.TorchLean.NN.Seq.forward inner (mode := mode) (α := α))
-                args
-            _root_.Runtime.Autograd.Torch.add (m := m) (α := α) (s := s) y xRef)
+        Runtime.Autograd.Torch.CurriedRef.curry
+          (Ref := fun sh => TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
+          (ss := stateShapes ++ [s])
+          (β := m (TorchLean.Runtime.ValueRef (m := m) (α := α) s))
+          (fun arguments => do
+            let (_state, input) :=
+              Runtime.Autograd.Torch.RefList.splitLast
+                (Ref := fun sh => TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
+                (ss := stateShapes) (τ := s) arguments
+            let output ←
+              Runtime.Autograd.Torch.CurriedRef.uncurry
+                (Ref := fun sh => TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
+                (ss := stateShapes ++ [s])
+                (β := m (TorchLean.Runtime.ValueRef (m := m) (α := α) s))
+                (Runtime.Autograd.Model.Layers.Seq.forward inner (mode := mode) (α := α))
+                arguments
+            Runtime.Autograd.Torch.add (m := m) (α := α) (s := s) output input)
   }
 
-/-- Lift `residualLayer` into a sequential model. -/
+/--
+The same residual connection, wrapped as a one-element `Sequential` model.
+
+Example:
+```lean
+def inner : nn.Builder (nn.Sequential [64] [64]) :=
+  nn.Sequential![nn.linear 64 64, nn.relu]
+
+-- `x + inner x`, the connection that made deep stacks trainable.
+def model : nn.Builder (nn.Sequential [64] [64]) := do
+  pure (nn.residual (← inner))
+```
+-/
 def residual {s : Spec.Shape} (inner : Sequential s s) : Sequential s s :=
-  nn.of (residualLayer inner)
+  nn.Sequential.fromLayer (Layer.residual inner)
 
 /-!
 ## Branching (skip connections)
@@ -182,69 +192,88 @@ Run two sequential branches on the same input and combine their outputs.
 Parameters and persistent buffers are stored as `state(f) ++ state(g)`. The combining operation is
 polymorphic in the runtime, so eager execution and graph lowering share the same branch structure.
 -/
-def combineBranchesLayer {σ τ₁ τ₂ υ : Spec.Shape} (kind : String)
+def Layer.combineBranches {σ τ₁ τ₂ υ : Spec.Shape} (kind : String)
     (f : Sequential σ τ₁) (g : Sequential σ τ₂)
-    (combine : ∀ {α : Type}, [_root_.Context α] → [DecidableEq Spec.Shape] →
+    (combine : ∀ {α : Type}, [TorchLean.Storage α] → [Context α] →
       ∀ {m : Type → Type}, [Monad m] →
-        [_root_.Runtime.Autograd.Torch.Ops (m := m) (α := α)] →
-        _root_.TorchLean.Runtime.ValueRef (m := m) (α := α) τ₁ →
-        _root_.TorchLean.Runtime.ValueRef (m := m) (α := α) τ₂ →
-        m (_root_.TorchLean.Runtime.ValueRef (m := m) (α := α) υ)) : Layer σ υ :=
-  let psF := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes f
-  let psG := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes g
+        [Runtime.Autograd.Torch.Ops (m := m) (α := α)] →
+        TorchLean.Runtime.ValueRef (m := m) (α := α) τ₁ →
+        TorchLean.Runtime.ValueRef (m := m) (α := α) τ₂ →
+        m (TorchLean.Runtime.ValueRef (m := m) (α := α) υ)) : Layer σ υ :=
+  let firstStateShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes f
+  let secondStateShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes g
   { kind := kind
-    stateShapes := psF ++ psG
+    stateShapes := firstStateShapes ++ secondStateShapes
     initState :=
-      _root_.TorchLean.TensorPack.append (α := Float) (ss₁ := psF) (ss₂ := psG)
-        (_root_.Runtime.Autograd.TorchLean.NN.Seq.initState f) (_root_.Runtime.Autograd.TorchLean.NN.Seq.initState g)
+      TorchLean.TensorPack.append
+        (α := Float) (ss₁ := firstStateShapes) (ss₂ := secondStateShapes)
+        (Runtime.Autograd.Model.Layers.Seq.initState f)
+        (Runtime.Autograd.Model.Layers.Seq.initState g)
     runtimeInit :=
-      match _root_.Runtime.Autograd.TorchLean.NN.Seq.runtimeInit? f, _root_.Runtime.Autograd.TorchLean.NN.Seq.runtimeInit? g with
+      match Runtime.Autograd.Model.Layers.Seq.runtimeInit? f,
+          Runtime.Autograd.Model.Layers.Seq.runtimeInit? g with
       | some fPlan, some gPlan => some (fPlan.append gPlan)
       | _, _ => none
-    requiresGrad := _root_.Runtime.Autograd.TorchLean.NN.Seq.requiresGrad f ++ _root_.Runtime.Autograd.TorchLean.NN.Seq.requiresGrad
-      g
-    updateBuffers := some (fun mode {α} _ _ ps x => do
-      let (psFv, psGv) := _root_.TorchLean.TensorPack.split (α := α) (ss₁ := psF) (ss₂ := psG) ps
-      let psFv' ← _root_.Runtime.Autograd.TorchLean.NN.Seq.updateBuffers (α := α) (model := f) mode psFv x
-      let psGv' ← _root_.Runtime.Autograd.TorchLean.NN.Seq.updateBuffers (α := α) (model := g) mode psGv x
-      pure <| _root_.TorchLean.TensorPack.append (α := α) (ss₁ := psF) (ss₂ := psG) psFv' psGv'
-    )
+    requiresGrad :=
+      Runtime.Autograd.Model.Layers.Seq.requiresGrad f ++
+        Runtime.Autograd.Model.Layers.Seq.requiresGrad g
+    validateConfig := do
+      Runtime.Autograd.Model.Layers.Seq.validate f
+      Runtime.Autograd.Model.Layers.Seq.validate g
+    updateBuffers :=
+      if Runtime.Autograd.Model.Layers.Seq.hasBufferUpdates f ||
+          Runtime.Autograd.Model.Layers.Seq.hasBufferUpdates g then
+        some (fun mode {α} _ _ state input => do
+          let (firstState, secondState) :=
+            TorchLean.TensorPack.split
+              (α := α) (ss₁ := firstStateShapes) (ss₂ := secondStateShapes) state
+          let nextFirstState ←
+            Runtime.Autograd.Model.Layers.Seq.updateBuffers
+              (α := α) (model := f) mode firstState input
+          let nextSecondState ←
+            Runtime.Autograd.Model.Layers.Seq.updateBuffers
+              (α := α) (model := g) mode secondState input
+          pure <| TorchLean.TensorPack.append
+            (α := α) (ss₁ := firstStateShapes) (ss₂ := secondStateShapes)
+            nextFirstState nextSecondState)
+      else
+        none
     forward := fun mode {α} _ _ =>
       fun {m} _ _ =>
-        _root_.Runtime.Autograd.Torch.CurriedRef.curry
-          (Ref := fun sh => _root_.TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
-          (ss := psF ++ psG ++ [σ])
-          (β := m (_root_.TorchLean.Runtime.ValueRef (m := m) (α := α) υ))
-          (fun args => do
-            let (psAll, xRef) :=
-              _root_.Runtime.Autograd.Torch.RefList.splitLast
-                (Ref := fun sh => _root_.TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
-                (ss := psF ++ psG) (τ := σ) args
-            let (psFrefs, psGrefs) :=
-              _root_.Runtime.Autograd.Torch.RefList.split
-                (Ref := fun sh => _root_.TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
-                (ss₁ := psF) (ss₂ := psG) psAll
-            let yF ←
-              _root_.Runtime.Autograd.Torch.CurriedRef.uncurry
-                (Ref := fun sh => _root_.TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
-                (ss := psF ++ [σ])
-                (β := m (_root_.TorchLean.Runtime.ValueRef (m := m) (α := α) τ₁))
-                (_root_.Runtime.Autograd.TorchLean.NN.Seq.forward f (mode := mode) (α := α))
-                (_root_.Runtime.Autograd.Torch.RefList.append psFrefs (.cons xRef .nil))
-            let yG ←
-              _root_.Runtime.Autograd.Torch.CurriedRef.uncurry
-                (Ref := fun sh => _root_.TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
-                (ss := psG ++ [σ])
-                (β := m (_root_.TorchLean.Runtime.ValueRef (m := m) (α := α) τ₂))
-                (_root_.Runtime.Autograd.TorchLean.NN.Seq.forward g (mode := mode) (α := α))
-                (_root_.Runtime.Autograd.Torch.RefList.append psGrefs (.cons xRef .nil))
-            combine yF yG)
+        Runtime.Autograd.Torch.CurriedRef.curry
+          (Ref := fun sh => TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
+          (ss := firstStateShapes ++ secondStateShapes ++ [σ])
+          (β := m (TorchLean.Runtime.ValueRef (m := m) (α := α) υ))
+          (fun arguments => do
+            let (state, input) :=
+              Runtime.Autograd.Torch.RefList.splitLast
+                (Ref := fun sh => TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
+                (ss := firstStateShapes ++ secondStateShapes) (τ := σ) arguments
+            let (firstState, secondState) :=
+              Runtime.Autograd.Torch.RefList.split
+                (Ref := fun sh => TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
+                (ss₁ := firstStateShapes) (ss₂ := secondStateShapes) state
+            let firstOutput ←
+              Runtime.Autograd.Torch.CurriedRef.uncurry
+                (Ref := fun sh => TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
+                (ss := firstStateShapes ++ [σ])
+                (β := m (TorchLean.Runtime.ValueRef (m := m) (α := α) τ₁))
+                (Runtime.Autograd.Model.Layers.Seq.forward f (mode := mode) (α := α))
+                (Runtime.Autograd.Torch.RefList.append firstState (.cons input .nil))
+            let secondOutput ←
+              Runtime.Autograd.Torch.CurriedRef.uncurry
+                (Ref := fun sh => TorchLean.Runtime.ValueRef (m := m) (α := α) sh)
+                (ss := secondStateShapes ++ [σ])
+                (β := m (TorchLean.Runtime.ValueRef (m := m) (α := α) τ₂))
+                (Runtime.Autograd.Model.Layers.Seq.forward g (mode := mode) (α := α))
+                (Runtime.Autograd.Torch.RefList.append secondState (.cons input .nil))
+            combine firstOutput secondOutput)
   }
 
-/-- Combine two sequential branches into a single layer that adds their outputs. -/
-def addBranchesLayer {σ τ : Spec.Shape} (f g : Sequential σ τ) : Layer σ τ :=
-  combineBranchesLayer "AddBranches" f g fun {α} _ _ {m} _ _ yF yG =>
-    _root_.Runtime.Autograd.Torch.add (m := m) (α := α) (s := τ) yF yG
+/-- Two branches over one input, outputs added. The `Sequential` form is `nn.addBranches`. -/
+def Layer.addBranches {σ τ : Spec.Shape} (f g : Sequential σ τ) : Layer σ τ :=
+  Layer.combineBranches "AddBranches" f g fun {α} _ _ {m} _ _ yF yG =>
+    Runtime.Autograd.Torch.add (m := m) (α := α) (s := τ) yF yG
 
 /--
 Combine two models with the same input/output shapes by summing their outputs.
@@ -252,33 +281,52 @@ Combine two models with the same input/output shapes by summing their outputs.
 This is a typed residual-add block: `addBranches f g` represents the model
 $x \mapsto f(x) + g(x)$,
 and its parameter list is the concatenation of the two branches’ parameter lists.
+
+Example:
+```lean
+-- Two branches over the same input, outputs summed. Parameters are stored as the first branch's
+-- list followed by the second's.
+def model : nn.Builder (nn.Sequential [32] [8]) := do
+  let wide ← nn.Sequential![nn.linear 32 8, nn.relu]
+  let shortcut ← nn.linear 32 8
+  pure (nn.addBranches wide shortcut)
+```
 -/
 def addBranches {σ τ : Spec.Shape} (f g : Sequential σ τ) : Sequential σ τ :=
-  nn.of (addBranchesLayer f g)
+  nn.Sequential.fromLayer (Layer.addBranches f g)
 
 /--
-Concatenate two branch outputs along their leading axis.
+Concatenate two branch outputs along their first axis.
 
-Both branches consume the same input. Their outputs must agree below the leading dimension, and
-the result records the sum of their leading extents in its type. This is the general typed skip
+Both branches consume the same input. Their outputs must agree on every remaining dimension, and
+the result records the sum of their first-axis extents in its type. This is the general typed skip
 connection needed by encoder-decoder models; arbitrary outer batch axes can be added with
-`mapEach`.
+`mapLeading`.
 -/
-def concatBranchesLayer {σ s : Spec.Shape} {n m : Nat}
+def Layer.concatBranches {σ s : Spec.Shape} {n m : Nat}
     (f : Sequential σ (s.prependDim n)) (g : Sequential σ (s.prependDim m)) :
     Layer σ (s.prependDim (n + m)) :=
-  combineBranchesLayer "ConcatBranches" f g fun {α} _ _ {mRuntime} _ _ yF yG =>
-    _root_.Runtime.Autograd.Torch.concatLeadingAxis
+  Layer.combineBranches "ConcatBranches" f g fun {α} _ _ {mRuntime} _ _ yF yG =>
+    Runtime.Autograd.Torch.concatLeadingAxis
       (m := mRuntime) (α := α) (nDim := n) (mDim := m) (s := s) yF yG
 
-/-- Concatenate two typed branches along their leading output axis. -/
+/--
+Concatenate two typed branches along their first output axis.
+
+Example:
+```lean
+-- Concatenation along the first output axis: `[4, 8]` next to `[6, 8]` gives `[10, 8]`, and the
+-- addition happens in the type rather than in a runtime shape check.
+def model : nn.Builder (nn.Sequential [16] [10, 8]) := do
+  let left ← nn.Sequential![nn.linear 16 (4 * 8), nn.reshape [4 * 8] [4, 8]]
+  let right ← nn.Sequential![nn.linear 16 (6 * 8), nn.reshape [6 * 8] [6, 8]]
+  pure (nn.concatBranches left right)
+```
+-/
 def concatBranches {σ s : Spec.Shape} {n m : Nat}
     (f : Sequential σ (s.prependDim n)) (g : Sequential σ (s.prependDim m)) :
     Sequential σ (s.prependDim (n + m)) :=
-  nn.of (concatBranchesLayer f g)
+  nn.Sequential.fromLayer (Layer.concatBranches f g)
 
-/-- Apply an activation after adding two branches with the same output shape. -/
-def residualBlock {input output : Spec.Shape}
-    (main skip : Sequential input output) (act : _root_.Activation.Kind := .relu) :
-    Sequential input output :=
-  seq! addBranches main skip, activation (s := output) act
+end nn
+end TorchLean

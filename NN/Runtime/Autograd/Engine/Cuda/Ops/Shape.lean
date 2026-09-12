@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Engine.Cuda.Ops.Elementwise
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Core
+public import NN.Runtime.Autograd.Engine.Cuda.Shape
 
 /-!
 # CUDA Tape Operations: Shape and Reduction Nodes
@@ -18,8 +19,8 @@ namespace Runtime
 namespace Autograd
 namespace Cuda
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Tape
 
@@ -47,6 +48,7 @@ def flatten {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) :=
   unary (t := t) "flatten" xId s (.dim (Spec.Shape.size s) .scalar)
     (forward := fun x => x)
     (backward := fun _x dLdy => Buffer.copy dLdy)
+    (ownsValue := false)
 
 /--
 Reshape a buffer while preserving number of elements.
@@ -58,6 +60,7 @@ def reshape {s₁ s₂ : Shape} (t : Tape) (xId : Nat) (_h : Spec.Shape.size s�
   unary (t := t) "reshape" xId s₁ s₂
     (forward := fun x => x)
     (backward := fun _x dLdy => Buffer.copy dLdy)
+    (ownsValue := false)
 
 /--
 Swap adjacent axes at a given depth in an N-D buffer.

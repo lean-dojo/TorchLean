@@ -6,8 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public import NN.IR.Semantics
-public import NN.Proofs.Autograd.Runtime.Link
+public import Mathlib.Algebra.Order.Algebra
+public import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
+public import Mathlib.Data.Sym.Sym2.Init
+import Mathlib.Tactic.NormNum.GCD
+public import NN.Tensor.ShapeErasure
+public import NN.IR.Semantics -- shake: keep
+public import NN.Proofs.Autograd.Runtime.Link -- shake: keep
 
 /-!
 # Forward IR Execution
@@ -40,10 +45,13 @@ namespace Runtime
 namespace Autograd
 namespace IRExec
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Proofs.Autograd.Algebra
 open NN.IR
+-- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
+-- `Idx` and `getIdx` are defined.
+open Proofs (Idx getIdx)
 
 /--
 `simp` rule for `Except`-`do` chains: binding an `.ok` value is just function application.
@@ -63,9 +71,9 @@ Used heavily when discharging impossible branches in lowering correctness proofs
 
 
 /-- One forward-only SSA node over the typed context `Γ`. -/
-structure ForwardNode (α : Type) (Γ : List Shape) (τ : Shape) where
+structure ForwardNode (α : Type) [TorchLean.Storage α] (Γ : List Shape) (τ : Shape) where
   /-- Evaluate the node from the graph input and all preceding node values. -/
-  eval : _root_.TorchLean.TensorPack α Γ → Tensor α τ
+  eval : TorchLean.TensorPack α Γ → Tensor α τ
 
 /--
 A shape-indexed forward SSA graph.
@@ -73,7 +81,7 @@ A shape-indexed forward SSA graph.
 Unlike autograd `GraphData`, this representation has no JVP or VJP fields. It is therefore
 impossible to request derivatives from an artifact produced by the forward IR lowering pass.
 -/
-inductive ForwardData (α : Type) (Γ : List Shape) : List Shape → Type where
+inductive ForwardData (α : Type) [TorchLean.Storage α] (Γ : List Shape) : List Shape → Type where
   /-- A graph with no computed nodes. -/
   | nil : ForwardData α Γ []
   /-- Append a node that may read the graph input and every preceding result. -/
@@ -83,15 +91,15 @@ inductive ForwardData (α : Type) (Γ : List Shape) : List Shape → Type where
 namespace ForwardData
 
 /-- Evaluate every node and return the input followed by all intermediate values. -/
-def eval {α : Type} {Γ ss : List Shape}
-    (g : ForwardData α Γ ss) (x : _root_.TorchLean.TensorPack α Γ) : _root_.TorchLean.TensorPack α (Γ ++ ss) :=
+def eval {α : Type} [TorchLean.Storage α] {Γ ss : List Shape}
+    (g : ForwardData α Γ ss) (x : TorchLean.TensorPack α Γ) : TorchLean.TensorPack α (Γ ++ ss) :=
   match g with
-  | .nil => _root_.TorchLean.TensorPack.cast (α := α) (h := (List.append_nil Γ).symm) x
+  | .nil => TorchLean.TensorPack.cast (α := α) (h := (List.append_nil Γ).symm) x
   | .snoc (ss := ss) (τ := τ) g node =>
       let ctx := eval g x
-      let y := Tensor.materialize (node.eval ctx)
-      _root_.TorchLean.TensorPack.cast (α := α) (h := List.append_assoc Γ ss [τ])
-        (_root_.TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ := τ) ctx y)
+      let y := node.eval ctx
+      TorchLean.TensorPack.cast (α := α) (h := List.append_assoc Γ ss [τ])
+        (TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ := τ) ctx y)
 
 end ForwardData
 
@@ -103,7 +111,7 @@ The lowered graph stores:
 - one shape per lowered node (`ss`, corresponding to IR node ids `1..n-1`),
 - and forward-only node closures (`body`) consumed by `ForwardData.eval`.
 -/
-structure ForwardGraph (α : Type) where
+structure ForwardGraph (α : Type) [TorchLean.Storage α] where
   /-- The distinguished IR input node’s shape (node id 0). -/
   inShape : Shape
   /-- Shapes of the IR nodes 1..(n-1) (one per executable SSA node). -/
@@ -113,7 +121,7 @@ structure ForwardGraph (α : Type) where
 
 namespace ForwardGraph
 
-variable {α : Type}
+variable {α : Type} [TorchLean.Storage α]
 
 /--
 Evaluate the lowered forward graph on a concrete input tensor.
@@ -121,7 +129,8 @@ Evaluate the lowered forward graph on a concrete input tensor.
 The result is the full typed runtime context `[inShape] ++ ss`, i.e. input followed by every
 lowered node value in topological order.
 -/
-def eval (e : ForwardGraph α) (x : Tensor α e.inShape) : _root_.TorchLean.TensorPack α ([e.inShape] ++ e.ss) :=
+def eval (e : ForwardGraph α) (x : Tensor α e.inShape) :
+    TorchLean.TensorPack α ([e.inShape] ++ e.ss) :=
   ForwardData.eval (α := α) (Γ := [e.inShape]) (ss := e.ss) e.body (.cons x .nil)
 
 end ForwardGraph
@@ -129,7 +138,7 @@ end ForwardGraph
 /-!
 ## Denotation Table Helper
 
-`ForwardGraph.eval` produces a typed runtime context `_root_.TorchLean.TensorPack α ([inShape] ++ ss)`.
+`ForwardGraph.eval` produces a typed runtime context `TorchLean.TensorPack α ([inShape] ++ ss)`.
 
 For debugging and for the forward-correctness development in
 `NN.Runtime.Autograd.IRExec.Correctness`,
@@ -140,12 +149,13 @@ into an IR-style value table `Array (Spec.SomeTensor α)` in node-id order.
 namespace Internal
 
 /--
-Convert a typed runtime context `_root_.TorchLean.TensorPack α ss` into an IR-style value table.
+Convert a typed runtime context `TorchLean.TensorPack α ss` into an IR-style value table.
 
-This is phrased in terms of `Array (Spec.SomeTensor α)` because the IR denotation functions (`denoteAll*`)
-are array-based, while forward-graph execution evaluates into a typed context (`_root_.TorchLean.TensorPack`).
+This is phrased in terms of `Array (Spec.SomeTensor α)` because the IR denotation functions
+(`denoteAll*`) are array-based, while forward-graph execution evaluates into a typed context
+(`TorchLean.TensorPack`).
 -/
-def packedTensorsOfContext {α : Type} {ss : List Shape}
+def packedTensorsOfContext {α : Type} [TorchLean.Storage α] {ss : List Shape}
     (ctx : TorchLean.TensorPack α ss) : Array (Spec.SomeTensor α) :=
   TorchLean.TensorPack.toShapeErasedArray (α := α) (ss := ss) ctx
 
@@ -153,7 +163,7 @@ end Internal
 
 namespace ForwardGraph
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /--
 Convert the full evaluated context into an IR-style value table (one `Spec.SomeTensor` per node id).

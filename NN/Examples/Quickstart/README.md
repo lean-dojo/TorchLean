@@ -1,98 +1,92 @@
 # Quickstart
 
-This folder is the starting path for TorchLean. It focuses on the moves people copy first:
-
-- build typed tensors,
-- inspect values with editor widgets,
-- use autograd APIs,
-- train small MLP and CNN models,
-- and see how ordinary Lean proofs fit into the workflow.
-
-New code should start from the root API:
+The quickstart is one short path through the public TorchLean API:
 
 ```lean
 import NN.API
 open TorchLean
 ```
 
-The quickstarts should not make you learn subsystem namespaces first. Use `TorchLean.nn`,
-`TorchLean.Tensor`, `TorchLean.autograd`, `TorchLean.Trainer`, and `TorchLean.Data` here. Drop into
-`NN.*` when you are extending TorchLean itself, proving runtime facts, or working with subsystem
-entrypoints.
+## Files
 
-For larger architectures, use `NN/Examples/Models`. For datasets and loaders backed by files, use
-`NN/Examples/Data/Loaders`. Runnable verification examples and bundled certificate artifacts live
-under `NN/Examples/Verification`; reusable checkers live under `NN/Verification`.
+| File | Role |
+| --- | --- |
+| `TensorBasics.lean` | Literals, shapes, element types, conversion, reshape. |
+| `AutogradBasics.lean` | `autograd.grad` for tensor functions, `autograd.model.grad` for models. |
+| `SimpleMlpTrain.lean` | Model, dataset, `Trainer.new`, `trainer.train`, prediction. |
+| `Proofs.lean` | Compile-time shape guarantees and small mathematical lemmas. |
+| `Widgets.lean` | Optional editor panels for tensors and training logs. |
+| `Common.lean` | Training quickstart flag parsing; not part of the API. |
 
-## Recommended Order
+The first three are commands. They run on CPU with in-memory data:
 
-1. `TensorBasics.lean`
-   Command: `lake exe torchlean quickstart_tensors`
-   Start here if you are new to the syntax. The file shows how TorchLean writes shaped literals,
-   how inferred shapes appear in ordinary code, and how tensor printing stays separate from the
-   proof-level scalar models.
+```bash
+scripts/lake.sh exe torchlean quickstart_tensors
+scripts/lake.sh exe torchlean quickstart_autograd
+scripts/lake.sh exe torchlean quickstart_mlp --steps 20
+```
 
-2. `StarterWorkflow.lean`
-   Build check: `lake build NN.Examples.Quickstart.StarterWorkflow`
-   This is the API shape we want people to copy first: `import NN.API`, `nn.Sequential![...]`,
-   `Data.tensorDataset xs ys`, `Trainer.new model { task := .regression, optimizer := ... }`,
-   `trainer.predict x`, `trainer.train data { steps := ..., batchSize := ..., logEvery := ... }`,
-   and then one trained-model prediction plus one $\ell_\infty$ IBP verification call. The task field chooses
-   the loss kind: regression means MSE, classification means one-hot cross entropy.
-   The example is small enough to read in one sitting and already has the ownership pattern used by
-   the larger examples: the trainer owns parameters, optimizer state, backend selection, and
-   trained-result methods.
+The wrapper uses the pinned Lean toolchain and keeps CPU/CUDA build profiles separate.
+`Proofs.lean` builds with `scripts/lake.sh build NN.Examples.Quickstart.Proofs`;
+`Widgets.lean` is meant to be opened in the editor.
 
-3. `Widgets.lean`
-   Editor-only: open the file and put the cursor on the `#tensor_view`, `#ir_view`, or
-   `#train_log_view` commands.
-   Widgets are inspection tools. They make tensors, graphs, and logs easier to read, but they do not
-   change the proof status of an object.
+Read them in the order of the table.
 
-4. `AutogradBasics.lean`
-   Command: `lake exe torchlean quickstart_autograd`
-   This uses `TorchLean.autograd` directly, so the example shows VJP/Jacobian/HVP without exposing
-   the runtime callback machinery.
-   Use it to understand the executable differentiation API before reading the autograd proof files
-   under `NN/Proofs`.
+## Train an MLP
 
-5. `SimpleMlpTrain.lean`
-   Command: `lake exe torchlean quickstart_mlp --steps 200 --scalar ieee32-exec --execution typed-graph`
-   Alternate trusted-runtime run: `lake exe torchlean quickstart_mlp --steps 200 --scalar float32 --execution typed-graph`
-   This is the smallest training loop with command-line scalar/backend choices. It is the right
-   place to check that the public trainer path still feels like one model rather than many backend
-   functions.
+`SimpleMlpTrain.lean` trains a two-layer network:
 
-6. `MinibatchMlpTrain.lean`
-   Command: `lake exe torchlean quickstart_minibatch_mlp --steps 30 --batch 5 --scalar float32 --execution eager`
-   This adds deterministic minibatching and a training result for batched follow-up predictions.
+```lean
+let trainer := Trainer.new model
+  { objective := .meanSquaredError
+    optimizer := optim.adam { learningRate := 0.03 }
+    seed := 0 }
+let trained ← trainer.train data { steps := 200, logEvery := 25 }
+trained.printSummary
+```
 
-7. `SimpleCnnTrain.lean`
-   Command: `lake exe torchlean quickstart_cnn --steps 5 --batch 2 --scalar float32 --execution eager`
-   This moves from vector inputs to image-shaped tensors and convolutional layers without changing
-   the public trainer pattern.
+The training quickstart accepts `--steps N`, `--seed S`, and the runtime flags
+`--arithmetic native|ieee`, `--execution eager|typed-graph`, `--device cpu|cuda`, and
+`--show-backend`. Training runs in binary32
+(`Float32` or `IEEE32Exec`) even though the tensors in the signatures are `Tensor Float`;
+the summary line prints which scalar ran. The defaults require neither a GPU nor downloads.
 
-8. `Proofs.lean`
-   Build check: `lake build NN.Examples.Quickstart.Proofs`
-   This is the first quickstart that is about Lean propositions rather than runtime output. It keeps
-   the proof examples small so the connection between a model-shaped object and a theorem statement
-   is visible.
+## Autograd Mental Model
 
-## Shared Conventions
+Use direct autograd when a derivative is the answer. Use `Trainer` when updated model parameters
+are the answer.
 
-The quickstarts use the same public conventions:
+Top-level `autograd` transforms have no model parameters:
 
-- user code starts with `import NN.API` and `open TorchLean`;
-- tensors carry enough shape information to make common mistakes visible;
-- training code goes through `Trainer.new`, `trainer.train`, and training results;
-- execution mode and scalar choices are configuration, not separate public forward functions;
-- runtime checks and proofs are both useful, but they answer different questions.
+```lean
+let (gradient, value) ← autograd.grad loss x (value := true)
+```
 
-Once those moves are familiar, the model zoo and verification examples add scale, file-backed data,
-external artifacts, CUDA runs, and theorem-backed checkers.
+`autograd.model` differentiates through a model:
 
-## Where The Bigger Examples Live
+```lean
+let state := autograd.model.initialState model
+let (gradient, lossValue) ←
+  autograd.model.grad model lossFn state x target (value := true)
+IO.println s!"loss = {lossValue}"
+IO.println s!"gradient = {reprStr gradient}"
+```
 
-The quickstarts use `NN.API` and keep ordinary training behind `Trainer` and
-`Data`. Larger architectures, real datasets, PyTorch interop, RL, and verification examples live in
-their specialized folders under `NN/Examples`.
+`Trainer` uses this machinery internally and adds parameter updates, optimizer state, gradient
+accumulation, device selection, logging, and checkpoints. Application training code normally uses
+`Trainer`; direct autograd calls are for custom differentiation and analysis. Use
+`autograd.model.vjp` when an explicit output gradient should also be pulled back to the model input.
+
+Advanced transforms are isolated in `NN/Examples/DeepDives/AutogradTransforms.lean`.
+The public operation map is in `NN/API/Autograd/README.md`.
+
+## Continue From Here
+
+| Goal | Command or directory |
+| --- | --- |
+| CSV and NPY data | `scripts/lake.sh exe torchlean data_csv --help`, `NN/Examples/Data/` |
+| CNN training | `scripts/lake.sh exe torchlean cnn --help`, `NN/Examples/Models/Vision/` |
+| Larger models | `NN/Examples/Models/` |
+| Verification | `scripts/lake.sh exe verify -- list`, `NN/Examples/Verification/` |
+| PyTorch exchange | `NN/Examples/Interop/PyTorch/` |
+| Runtime internals | `NN/Examples/DeepDives/` |

@@ -39,10 +39,7 @@ def formatError (context message : String) : String :=
 
 /-- ASCII digit test used by the numeric parser. -/
 def isDigit (c : Char) : Bool :=
-  let n := c.toNat
-  let n0 := ('0' : Char).toNat
-  let n9 := ('9' : Char).toNat
-  n0 <= n && n <= n9
+  c.isDigit
 
 /-- Convert a digit character to its numeric value, or return `none` if not a digit. -/
 def digitVal? (c : Char) : Option Nat :=
@@ -78,7 +75,7 @@ def parseSign (cs : List Char) : Bool × List Char :=
 def parseNatValue (s : String) : Option Nat :=
   let s := (s.trimAscii).toString
   let cs := s.toList
-  if cs.isEmpty then
+  if cs.isEmpty || s.length > maxNumericCellChars then
     none
   else
     let (digits, rest) := takeDigits cs
@@ -106,27 +103,33 @@ def takeUntilChar (stop : Char) : List Char -> List Char × List Char
         let (xs, rem) := takeUntilChar stop rest
         (c :: xs, rem)
 
-/-- Parse a quoted value `'...'` or `\"...\"` from a header fragment (best-effort). -/
+/-- End of one field value in a NumPy header dictionary or standalone parser input. -/
+def isHeaderValueEnd (rest : List Char) : Bool :=
+  match rest.dropWhile Char.isWhitespace with
+  | [] | ',' :: _ | '}' :: _ => true
+  | _ => false
+
+/-- Parse a closed quoted value from a header fragment. Escaped strings are unsupported. -/
 def parseQuotedValue (s : String) : Option String :=
-  let cs := (s.trimAsciiStart).toString.toList
-  match cs with
+  match (s.trimAsciiStart).toString.toList with
   | quote :: rest =>
       if quote = '\'' || quote = '"' then
-        let (valChars, _) := takeUntilChar quote rest
-        some (String.ofList valChars)
+        let (value, remaining) := rest.span (fun c => c != quote)
+        match remaining with
+        | _ :: tail => if isHeaderValueEnd tail then some (String.ofList value) else none
+        | [] => none
       else
         none
   | [] => none
 
-/-- Parse a boolean header value (expects `True` or `False`). -/
+/-- Parse a complete boolean header atom (`True` or `False`). -/
 def parseBoolValue (s : String) : Option Bool :=
-  let s := (s.trimAsciiStart).toString
-  if s.startsWith "True" then
-    some true
-  else if s.startsWith "False" then
-    some false
-  else
-    none
+  match (s.trimAsciiStart).toString.toList with
+  | 'T' :: 'r' :: 'u' :: 'e' :: rest =>
+      if isHeaderValueEnd rest then some true else none
+  | 'F' :: 'a' :: 'l' :: 's' :: 'e' :: rest =>
+      if isHeaderValueEnd rest then some false else none
+  | _ => none
 
 /-- Find the substring after `key` in a header string, if present. -/
 def fieldAfter (hdr key : String) : Option String :=

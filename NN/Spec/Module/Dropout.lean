@@ -32,9 +32,9 @@ Two variants are provided:
 
 namespace Spec.Module
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Evaluation-mode dropout wrapper. The configured training probability is retained as module
 metadata, while the forward map is the identity. -/

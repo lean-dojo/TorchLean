@@ -20,12 +20,12 @@ boundary.
 
 @[expose] public section
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace TorchLean.TensorPack
 
-variable {α : Type}
+variable {α : Type} [Storage α]
 
 /-- Erase the individual tensor shapes in a typed pack into a runtime array. -/
 def toShapeErasedArray : {ss : List Shape} →
@@ -49,7 +49,7 @@ Recover a statically shape-indexed pack from a prefix of a shape-erased runtime 
 fails if the array is too short or an entry has the wrong shape. Entries after the requested pack
 are intentionally ignored, which supports recovering a typed prefix of a larger runtime context.
 -/
-def ofShapeErasedArray [DecidableEq Shape] (values : Array (Spec.SomeTensor α))
+def ofShapeErasedArray (values : Array (Spec.SomeTensor α))
     (start : Nat := 0) : {shapes : List Shape} → Except String (TensorPack α shapes)
   | [] => pure .nil
   | shape :: shapes => do

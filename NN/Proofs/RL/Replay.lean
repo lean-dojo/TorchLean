@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL.Replay
-public import Batteries.Data.Array.Lemmas
-public import Mathlib.Init
 
 /-!
 # Replay-Buffer Proofs
@@ -29,14 +27,15 @@ namespace Proofs
 namespace RL
 namespace Replay
 
-open Spec
+open Spec TorchLean
 open Runtime.RL.Replay
 
 variable {α : Type} {obsShape : Shape} {nActions : Nat}
 
 /-- Empty replay buffers contain no stored transitions. -/
 @[simp] theorem empty_items_size (capacity : Nat) :
-    ((Buffer.empty (α := α) (obsShape := obsShape) (nActions := nActions) capacity).items.size) = 0 := by
+    ((Buffer.empty (α := α) (obsShape := obsShape) (nActions := nActions) capacity).items.size)
+      = 0 := by
   simp [Buffer.empty]
 
 /-- Empty replay buffers report size zero through the public `size` helper. -/
@@ -58,8 +57,7 @@ theorem push_size_of_room
     (b.push t).items.size = b.items.size + 1 := by
   have hcap : b.capacity ≠ 0 := by
     exact Nat.ne_of_gt (lt_of_lt_of_le (Nat.succ_pos b.items.size) hroom)
-  have hlt : b.items.size < b.capacity := Nat.lt_of_succ_le hroom
-  simp [Buffer.push, hcap, hlt, Array.size_push]
+  simp [Buffer.push, hcap, hroom, Array.size_push]
 
 /--
 If the buffer is exactly full and has positive capacity, `push` preserves size by evicting one old

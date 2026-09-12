@@ -6,9 +6,14 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Tensor
-
 import Mathlib.Algebra.Order.Algebra
+public import Mathlib.Algebra.Order.Field.Basic
+import Mathlib.Tactic.NormNum.Inv
+import Mathlib.Tactic.NormNum.Pow
+import Mathlib.Tactic.Positivity.Finset
+public import NN.Tensor.Internal.Elab.TensorLiteral
+public import NN.Tensor.Operations
+public import NN.Tensor -- shake: keep
 
 /-!
 # Synthetic Data
@@ -23,29 +28,31 @@ datasets and sample packing belong in their respective data modules.
 namespace TorchLean.Data
 namespace Synthetic
 
-open Spec
+open Spec TorchLean
 
 /-! ## Tabular grids -/
 
 /--
 Cartesian product of two vectors (batched tensor of points).
 
-`cartesianGrid xs ys` produces a tensor `X : (m*n, 2)` containing all pairs `(x, y)` with:
-- `x` taken from `xs : (m,)`
-- `y` taken from `ys : (n,)`
+`cartesianGrid xCoordinates yCoordinates` produces a tensor `X : (m*n, 2)` containing all pairs
+`(x, y)` with:
+- `x` taken from `xCoordinates : (m,)`
+- `y` taken from `yCoordinates : (n,)`
 
-Ordering is row-major: for each `x` in `xs` (outer loop), we sweep all `y` in `ys` (inner loop).
+Ordering is row-major: for each `x` in `xCoordinates` (outer loop), we sweep all `y` in
+`yCoordinates` (inner loop).
 
-PyTorch analogue: `torch.cartesian_prod(xs, ys)` (up to shape).
+PyTorch analogue: `torch.cartesian_prod(xCoordinates, yCoordinates)` (up to shape).
 -/
-def cartesianGrid {α : Type} [Zero α] {m n : Nat}
-    (xs : Tensor α [m]) (ys : Tensor α [n]) :
+def cartesianGrid {α : Type} [TorchLean.Storage α] [Zero α] {m n : Nat}
+    (xCoordinates : Tensor α [m]) (yCoordinates : Tensor α [n]) :
     Tensor α [m * n, 2] :=
   Tensor.stack 0 (fun ij =>
     let i : Fin m := ij.divNat (m := m) (n := n)
     let j : Fin n := ij.modNat (m := m) (n := n)
-    let x : α := Tensor.item (Tensor.get xs i)
-    let y : α := Tensor.item (Tensor.get ys j)
+    let x : α := xCoordinates[i]
+    let y : α := yCoordinates[j]
     Tensor.stack 0 (fun k =>
       Tensor.full [] <|
         match k.val with
@@ -63,23 +70,25 @@ Linearly spaced points including endpoints.
 
 PyTorch analogue: `torch.linspace`.
 -/
-def linspace {α : Type} [Context α] (lo hi : α) (count : Nat) :
+def linspace {α : Type} [TorchLean.Storage α] [Context α]
+    (lower upper : α) (count : Nat) :
     Tensor α [count] :=
   match count with
   | 0 => by
       simpa [Shape.insertAxis] using
-        Tensor.stack (α := α) (count := 0) (shape := Spec.Shape.scalar) 0 Fin.elim0
-  | 1 => Tensor.repeatAxis 0 1 (Tensor.full [] lo)
+        Tensor.stack (α := α) (count := 0) (shape := []) 0 Fin.elim0
+  | 1 => Tensor.repeatAxis 0 1 (Tensor.full [] lower)
   | n + 2 =>
       let denom : α := (n + 1 : Nat)
       Tensor.stack 0 (fun i =>
-        let t : α := (i.1 : Nat) / denom
-        Tensor.full [] (lo + t * (hi - lo)))
+        let t : α := i.val / denom
+        Tensor.full [] (lower + t * (upper - lower)))
 
-/-- Square grid over `[lo, hi] x [lo, hi]`. -/
-def squareGrid {α : Type} [Context α] (lo hi : α) (count : Nat) :
+/-- Square grid over `[lower, upper] x [lower, upper]`. -/
+def squareGrid {α : Type} [TorchLean.Storage α] [Context α]
+    (lower upper : α) (count : Nat) :
     Tensor α [count * count, 2] :=
-  let axis := linspace lo hi count
+  let axis := linspace lower upper count
   cartesianGrid axis axis
 
 end Synthetic

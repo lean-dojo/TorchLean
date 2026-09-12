@@ -13,9 +13,9 @@ public import NN.Backend.Capsule
 
 Capsule metadata for TorchLean's native CUDA runtime provider.
 
-These capsules describe kernels that currently live under `csrc/cuda/**` and are exposed
-to Lean through `NN.Runtime.Autograd.Engine.Cuda.*`. The C/CUDA source still owns the implementation;
-this module gives the planner a typed, inspectable contract layer for those implementation choices.
+These capsules describe kernels that currently live under `csrc/cuda/**` and are exposed to Lean
+through `NN.Runtime.Autograd.Engine.Cuda.*`. The C/CUDA source still owns the implementation; this
+module gives the planner a typed, inspectable contract layer for those implementation choices.
 -/
 
 @[expose] public section
@@ -52,12 +52,7 @@ def nativeCapsule
       | .none => ContractDescriptor.vjpUnavailable op vjpSummary
       | mode => ContractDescriptor.tested
           (.vjpRefinement op mode) vjpSummary "NN.Tests.Runtime.Cuda.Suite"
-    numericalPolicy :=
-      { rounding := .nearestEven
-        subnormals := .implementationDefined
-        contraction := .implementationDefined
-        reduction := .notApplicable }
-    notes := "Native CUDA code is an FFI boundary; the capsule records the contract TorchLean checks." }
+    numericalPolicy := { reduction := .notApplicable } }
 
 /-- Build the standard native-CUDA capsule for a pointwise operation. -/
 def nativePointwiseCapsule (op : BackendOp) : KernelCapsule :=
@@ -167,6 +162,10 @@ def tanh : KernelCapsule := nativePointwiseCapsule .tanh
 def softplus : KernelCapsule := nativePointwiseCapsule .softplus
 /-- Native-CUDA pointwise exponential. -/
 def exp : KernelCapsule := nativePointwiseCapsule .exp
+/-- Native CUDA sine, with angles measured in radians. -/
+def sin : KernelCapsule := nativePointwiseCapsule .sin
+/-- Native CUDA cosine, with angles measured in radians. -/
+def cos : KernelCapsule := nativePointwiseCapsule .cos
 /-- Native-CUDA pointwise natural logarithm. -/
 def log : KernelCapsule := nativePointwiseCapsule .log
 /-- Native-CUDA pointwise reciprocal. -/
@@ -217,7 +216,12 @@ def slice : KernelCapsule := nativeViewCapsule .slice
 /-- Native-CUDA indexed gather. -/
 def gather : KernelCapsule := nativeViewCapsule .gather
 /-- Native-CUDA indexed scatter-add. -/
-def scatterAdd : KernelCapsule := nativeViewCapsule .scatterAdd
+def scatterAdd : KernelCapsule :=
+  nativeAccumulationCapsule
+    "native_cuda.scatter_add"
+    .scatterAdd
+    "Indexed source values accumulate into the base tensor, including repeated indices."
+    "The VJP gathers output gradients at the source indices and preserves the base gradient."
 
 /-- Native-CUDA seeded uniform-random tensor generation. -/
 def randUniform : KernelCapsule :=
@@ -305,16 +309,17 @@ def fftFno : KernelCapsule :=
     "native_cuda.fft_fno"
     .fftFno
     "Packed rFFT/irFFT and spectral convolution follow the documented half-spectrum contract."
-    "Spectral-convolution VJPs are checked against finite differences."
+    ("Packed transforms use the real-linear half-spectrum adjoints; spectral convolution " ++
+      "propagates gradients to its input and both weight components.")
 
 /-- Native CUDA selective scan kernels. -/
 def selectiveScan : KernelCapsule :=
   nativeAccumulationCapsule
     "native_cuda.selective_scan"
     .selectiveScan
-    "Selective scan forward follows the diagonal recurrence contract."
-    "No generic VJP capsule is registered yet."
-    .none
+    "Shared and token-dependent coefficients follow the diagonal recurrence contract."
+    ("Reverse recurrence differentiates coefficients, inputs, and the initial state; shared " ++
+      "coefficient cotangents are accumulated across time.")
 
 /-- Native CUDA capsules, excluding attention which has a dedicated semantic split. -/
 def capsules : Array KernelCapsule :=
@@ -336,6 +341,8 @@ def capsules : Array KernelCapsule :=
   , tanh
   , softplus
   , exp
+  , sin
+  , cos
   , log
   , inv
   , safeLog

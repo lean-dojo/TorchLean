@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Contracts
+public import NN.Backend.Profile
+public import NN.IR.Semantics
 
 /-!
 # Backend-linked graph numerical certificates
@@ -24,7 +26,7 @@ namespace NumericalCertificate
 open NN
 open NN.Backend
 open NN.IR
-open Spec
+open Spec TorchLean
 open TorchLean.Floats.IEEE754
 
 /-! ## Backend-linked graph certificates -/
@@ -83,7 +85,8 @@ structure RangeCheckedExecution where
 /-- Convert an accepted kernel plan and checked range trace into raw certificate data. -/
 def ofCheckedTrace (profile : BackendProfile) (registry : GraphRangeRegistry)
     (sources : Array SourceRange)
-    (ranges : Array CheckedNodeRange) (plan : AcceptedGraphKernelPlan) : GraphNumericalCertificate :=
+    (ranges : Array CheckedNodeRange) (plan : AcceptedGraphKernelPlan) :
+    GraphNumericalCertificate :=
   { profileName := profile.name
     registryName := registry.name
     sources
@@ -91,11 +94,13 @@ def ofCheckedTrace (profile : BackendProfile) (registry : GraphRangeRegistry)
     audit := plan.audit }
 
 /-- Obtain an accepted kernel plan or report the acceptance-gate failures. -/
-def acceptedPlan (profile : BackendProfile) (graph : Graph) : Except String AcceptedGraphKernelPlan := do
+def acceptedPlan (profile : BackendProfile) (graph : Graph) :
+    Except String AcceptedGraphKernelPlan := do
   match <- profile.acceptGraph graph with
   | .accepted plan => pure plan
   | .rejected _ failures =>
-      throw s!"numerical certificate: backend profile {profile.name} rejected the graph: {repr failures}"
+      throw (s!"numerical certificate: backend profile {profile.name} rejected the graph: " ++
+        s!"{repr failures}")
 
 /-- Generate a canonical certificate using an explicit numerical operation registry. -/
 def generateWith (registry : GraphRangeRegistry) (profile : BackendProfile)
@@ -117,9 +122,11 @@ def checkWith (registry : GraphRangeRegistry) (profile : BackendProfile)
     (graph : Graph) (raw : GraphNumericalCertificate) :
     Except String RegistryCheckedCertificate := do
   if raw.profileName != profile.name then
-    throw s!"numerical certificate: profile mismatch; artifact names {raw.profileName}, checker uses {profile.name}"
+    throw (s!"numerical certificate: profile mismatch; artifact names {raw.profileName}, " ++
+      s!"checker uses {profile.name}")
   if raw.registryName != registry.name then
-    throw s!"numerical certificate: registry mismatch; artifact names {raw.registryName}, checker uses {registry.name}"
+    throw (s!"numerical certificate: registry mismatch; artifact names {raw.registryName}, " ++
+      s!"checker uses {registry.name}")
   let sources <- checkSources raw.sources
   let plan <- acceptedPlan profile graph
   let ranges <- buildRangeTraceWith registry graph sources plan
@@ -194,7 +201,7 @@ namespace RangeCheckedExecution
 
 /-- Pair a checked IEEE replay with a proved real enclosure trace to obtain a graph-wide,
 pointwise error trace. Each node's error budget is the width of its checked outward interval. -/
-theorem errorTrace (execution : RangeCheckedExecution)
+theorem error_trace (execution : RangeCheckedExecution)
     (exact : ProvedRealEnclosure execution.certificate) :
     ExecutionErrorTrace execution.certificate.ranges exact.values execution.values :=
   execution_error_trace_of_check exact.enclosed execution.withinRanges

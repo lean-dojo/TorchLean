@@ -22,8 +22,8 @@ the top-level theorem should read as a dispatcher over named semantic cases, not
 that re-proves every operator branch inline.
 
 Build note: `.const` is semantically straightforward but proof-intensive because the value arrives
-through the payload table and must be reconstructed as a shape-indexed forward node. Named payload lookup
-facts keep this proof focused instead of turning it into a long `simp` script.
+through the payload table and must be reconstructed as a shape-indexed forward node. Named payload
+lookup facts keep this proof focused instead of turning it into a long `simp` script.
 
 ## Main definitions
 
@@ -36,15 +36,14 @@ namespace Runtime
 namespace Autograd
 namespace IRExec
 
-open Spec
-open Tensor
+open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
 
 /-- Semantic-preservation lemma for `.const s` lowering. -/
 theorem buildFrom_denoteAllFrom_const
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) {inShape : Shape} {ss : List Shape}
     (gd : ForwardData α [inShape] ss) (i : Nat) (st' : State α inShape)
     (x : Tensor α inShape) (n : NN.IR.Node)
@@ -67,13 +66,13 @@ theorem buildFrom_denoteAllFrom_const
       .ok (denoteAllState (α := α) inShape st' x) := by
   let vals0 : Array (Spec.SomeTensor α) :=
     denoteAllState (α := α) inShape (st := (⟨ss, gd⟩ : State α inShape)) x
-  let ctx : _root_.TorchLean.TensorPack α ([inShape] ++ ss) :=
+  let ctx : TorchLean.TensorPack α ([inShape] ++ ss) :=
     ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil)
   let input : Spec.SomeTensor α := Spec.SomeTensor.mk (α := α) inShape x
 
   unfold buildFrom at hBuild
   simp [hi, hN] at hBuild
-  simp (config := { failIfUnchanged := false }) [hk] at hBuild
+  simp (config := { failIfUnchanged := false }) [hk, lowerConst] at hBuild
   cases hT : NN.IR.Graph.evalConst (α := α) (payload := payload) (id := n.id) (s := s) with
   | error msg =>
       simp [hT] at hBuild
@@ -93,8 +92,8 @@ theorem buildFrom_denoteAllFrom_const
                 (input := input) (vals := vals0) (i := i) =
               .ok (Spec.SomeTensor.mk (α := α) n.outShape (nodeData.eval ctx)) := by
           cases hOut
-          simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, NN.IR.Graph.normalizeNodeOutput, hN, hk, hT, input, throw, throwThe,
-            MonadExceptOf.throw, nodeData]
+          simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, NN.IR.Graph.normalizeNodeOutput, hN, hk,
+            hT, input, throw, throwThe, MonadExceptOf.throw, nodeData]
           try rfl
         have hStep :
             denoteAllState (α := α) inShape st1 x =

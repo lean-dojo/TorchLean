@@ -7,9 +7,27 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.SoftplusSafeLog
+public import NN.Spec.Core.FloatInstances.NF
 
 /-!
 # NF Elementwise Bounds: Safe Division and Sigmoid
+
+Forward error bounds for clamped division `safeDiv`, ordinary division on a certified positive
+denominator domain (`divPosErrorBound`), and the elementwise sigmoid.
+
+The division budget `divPosErrorBound η epsx epsy xhat yhat` requires `|ŷ - y| ≤ epsy` and a
+positive lower bound `η ≤ y`. Its conditioning factor is `1 / (η - epsy)`.
+
+Sigmoid chooses between `1 / (1 + exp (-x))` and `exp x / (1 + exp x)`. Each sequence has its own
+numerator and denominator budget, assembled from the operations it actually evaluates. The branch
+is selected by the rounded input, while both real expressions equal the same logistic function.
+The input approximation may therefore cross zero without requiring a separate sign hypothesis.
+When a denominator budget is below `1`, the division certificate applies; otherwise the bound is
+`|σ̂| + 1`, using the range of the exact sigmoid.
+
+The `reciprocalSigmoid` declarations retain the first sequence and its half-margin regressions.
+They describe that sequence even on negative inputs. `sigmoidBoundScalar` and
+`approxTensor_sigmoid_spec` describe the branch-selected public operation.
 -/
 
 @[expose] public section
@@ -17,8 +35,8 @@ public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.SoftplusSafeLog
 namespace Proofs
 namespace RuntimeApprox
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
 
 noncomputable section
@@ -55,7 +73,7 @@ Forward approximation bound for `safeDiv` in `NF`.
 unconditional bound with explicit `(1/ε)` and `(1/ε^2)` sensitivity terms plus one rounding-ULP
   term.
 -/
-lemma approx_safeDiv_nf {x y : ℝ} {xR yR : R} {epsx epsy ε : ℝ}
+theorem approx_safeDiv_nf {x y : ℝ} {xR yR : R} {epsx epsy ε : ℝ}
     (hε : 0 < ε)
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ epsx)
     (hy : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) yR - y) ≤ epsy) :
@@ -249,7 +267,7 @@ that neither the exact nor rounded denominator activates the clamp. This is the 
 stable softmax and normalization, where a mathematical lower bound on a reduction must survive
 rounding before division is allowed.
 -/
-lemma approx_div_nf_of_pos_lb {x y : ℝ} {xR yR : R} {epsx epsy η : ℝ}
+theorem approx_div_nf_of_pos_lb {x y : ℝ} {xR yR : R} {epsx epsy η : ℝ}
     (hyLower : η ≤ y) (hbudget : epsy < η)
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ epsx)
     (hy : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) yR - y) ≤ epsy) :
@@ -291,6 +309,36 @@ lemma approx_div_nf_of_pos_lb {x y : ℝ} {xR yR : R} {epsx epsy η : ℝ}
       (epsx := epsx) (epsy := epsy) (ε := margin) hmargin hx hy
   rw [hruntime, hspec] at hsafe
   simpa [safeDiv, hmaxHat, margin, divPosErrorBound] using hsafe
+
+/-- Under the half-margin certificate `epsy ≤ η / 2`, the division budget is controlled by the
+numerator error, the denominator error, and one output rounding, with constants that do not depend
+on the format. This is the shared regression lemma for sigmoid, logistic, and mean bounds. -/
+theorem divPosErrorBound_le_of_epsy_le_half {η epsx epsy xhat yhat : ℝ}
+    (hη : 0 < η) (hepsx : 0 ≤ epsx) (hepsy : 0 ≤ epsy) (hhalf : epsy ≤ η / 2) :
+    divPosErrorBound (β := β) (fexp := fexp) η epsx epsy xhat yhat ≤
+      (2 / η) * epsx + (abs xhat + epsx) * (4 * epsy / (η * η)) +
+        neuralUlp β fexp (xhat / yhat) / 2 := by
+  have hmargin : η / 2 ≤ η - epsy := by linarith
+  have hhalfpos : 0 < η / 2 := by positivity
+  have hinv : 1 / (η - epsy) ≤ 2 / η := by
+    calc
+      1 / (η - epsy) ≤ 1 / (η / 2) := one_div_le_one_div_of_le hhalfpos hmargin
+      _ = 2 / η := by field_simp
+  have hsq : epsy / ((η - epsy) * (η - epsy)) ≤ 4 * epsy / (η * η) := by
+    have hmm : (η / 2) * (η / 2) ≤ (η - epsy) * (η - epsy) :=
+      mul_le_mul hmargin hmargin hhalfpos.le (by linarith)
+    calc
+      epsy / ((η - epsy) * (η - epsy)) ≤ epsy / ((η / 2) * (η / 2)) :=
+        div_le_div_of_nonneg_left hepsy (by positivity) hmm
+      _ = 4 * epsy / (η * η) := by field_simp; ring
+  have h1 : (1 / (η - epsy)) * epsx ≤ (2 / η) * epsx :=
+    mul_le_mul_of_nonneg_right hinv hepsx
+  have h2 :
+      (abs xhat + epsx) * (epsy / ((η - epsy) * (η - epsy))) ≤
+        (abs xhat + epsx) * (4 * epsy / (η * η)) :=
+    mul_le_mul_of_nonneg_left hsq (add_nonneg (abs_nonneg _) hepsx)
+  unfold divPosErrorBound
+  linarith
 
 /--
 Per-entry bound tensor for `safeDiv`.
@@ -338,77 +386,59 @@ theorem approxTensor_div_spec_of_pos_lb {s : Shape} (η : ℝ) :
   induction s with
   | scalar =>
       intro xS yS xR yR epsx epsy hx hy hdom hmargin
-      cases xS with
-      | scalar x =>
-          cases yS with
-          | scalar y =>
-              cases xR with
-              | scalar xR =>
-                  cases yR with
-                  | scalar yR =>
-                      have hx' := (approxTensor_scalar_iff (α := R)
-                        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).mp hx
-                      have hy' := (approxTensor_scalar_iff (α := R)
-                        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).mp hy
-                      have hdiv := approx_div_nf_of_pos_lb
-                        (β := β) (fexp := fexp) (rnd := rnd)
-                        (by simpa using hdom) hmargin hx' hy'
-                      apply (approxTensor_scalar_iff (α := R)
-                        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).mpr
-                      change
-                        abs
-                            (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR / yR) -
-                              x / y) ≤
-                          abs
-                            (divPosErrorBound (β := β) (fexp := fexp) η epsx epsy
-                              (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR)
-                              (toSpec (β := β) (fexp := fexp) (rnd := rnd) yR))
-                      exact le_trans hdiv (le_abs_self _)
+      rw [← Tensor.scalar_item xS, ← Tensor.scalar_item xR] at hx
+      rw [← Tensor.scalar_item yS, ← Tensor.scalar_item yR] at hy
+      rw [← Tensor.scalar_item yS] at hdom
+      rw [← Tensor.scalar_item xS, ← Tensor.scalar_item yS,
+        ← Tensor.scalar_item xR, ← Tensor.scalar_item yR]
+      have hx' := (approxTensor_scalar_iff (α := R)
+        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).mp hx
+      have hy' := (approxTensor_scalar_iff (α := R)
+        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).mp hy
+      have hdiv := approx_div_nf_of_pos_lb
+        (β := β) (fexp := fexp) (rnd := rnd)
+        (by simpa [Tensor.Forall] using hdom) hmargin hx' hy'
+      apply (approxTensor_scalar_iff (α := R)
+        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).mpr
+      change
+        abs
+            (toSpec (β := β) (fexp := fexp) (rnd := rnd) (xR.item / yR.item) -
+              xS.item / yS.item) ≤
+          abs
+            (divPosErrorBound (β := β) (fexp := fexp) η epsx epsy
+              (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR.item)
+              (toSpec (β := β) (fexp := fexp) (rnd := rnd) yR.item))
+      exact le_trans hdiv (le_abs_self _)
   | dim n inner ih =>
       intro xS yS xR yR epsx epsy hx hy hdom hmargin
-      cases xS with
-      | dim valuesXS =>
-          cases yS with
-          | dim valuesYS =>
-              cases xR with
-              | dim valuesXR =>
-                  cases yR with
-                  | dim valuesYR =>
-                      let bound := linfNorm
-                        (divPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                          (s := .dim n inner) η epsx epsy
-                          (Tensor.dim valuesXR) (Tensor.dim valuesYR))
-                      have hbound : 0 ≤ bound := by
-                        simpa [bound] using
-                          (linf_norm_nonneg
-                            (t := divPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                              (s := .dim n inner) η epsx epsy
-                              (Tensor.dim valuesXR) (Tensor.dim valuesYR)))
-                      refine approxTensor_dim_of_forall
-                        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                        (xS := divSpec (Tensor.dim valuesXS) (Tensor.dim valuesYS))
-                        (xR := divSpec (Tensor.dim valuesXR) (Tensor.dim valuesYR))
-                        (eps := bound) hbound ?_
-                      intro i
-                      have hxI := approxTensor_dim_get (α := R)
-                        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hx i
-                      have hyI := approxTensor_dim_get (α := R)
-                        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hy i
-                      have hlocal := ih hxI hyI (by simpa using hdom i) hmargin
-                      have hle :
-                          linfNorm
-                              (divPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                                (s := inner) η epsx epsy (valuesXR i) (valuesYR i)) ≤ bound := by
-                        have h := linf_norm_le_get_dim
-                          (t := divPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                            (s := .dim n inner) η epsx epsy
-                            (Tensor.dim valuesXR) (Tensor.dim valuesYR)) i
-                        change
-                          linfNorm
-                              (divPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                                (s := inner) η epsx epsy (valuesXR i) (valuesYR i)) ≤ bound at h
-                        exact h
-                      exact approxTensor_mono hlocal hle
+      let bound := linfNorm
+        (divPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
+          (s := .dim n inner) η epsx epsy xR yR)
+      have hbound : 0 ≤ bound := linf_norm_nonneg _
+      refine approxTensor_dim_of_forall
+        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
+        (xS := divSpec xS yS) (xR := divSpec xR yR)
+        (eps := bound) hbound ?_
+      intro i
+      have hxI := approxTensor_dim_get (α := R)
+        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hx i
+      have hyI := approxTensor_dim_get (α := R)
+        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hy i
+      have hlocal := ih hxI hyI (by simpa using hdom i) hmargin
+      have hle :
+          linfNorm
+              (divPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
+                (s := inner) η epsx epsy (xR.unstack i) (yR.unstack i)) ≤ bound := by
+        have h := linf_norm_le_get_dim
+          (t := divPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
+            (s := .dim n inner) η epsx epsy xR yR) i
+        simpa [bound, divPosBoundTensor, tensorToSpec, map2Spec, mapSpec,
+          TorchLean.Tensor.map, TorchLean.Tensor.unstack,
+          TorchLean.Tensor.Internal.Rep.map_unstack,
+          TorchLean.Tensor.Internal.Rep.zipWith_unstack] using h
+      have hmono := approxTensor_mono hlocal hle
+      simpa [divSpec, map2Spec, TorchLean.Tensor.unstack,
+        TorchLean.Tensor.Internal.Rep.zipWith_unstack] using hmono
 
 /--
 `approxTensor` bound for `safeDiv` lifted to arbitrary tensor shapes.
@@ -427,8 +457,8 @@ theorem approxTensor_safeDiv_spec {s : Shape} (ε : ℝ) (hε : 0 < ε) :
             xR yR)) := by
   intro xS yS xR yR epsx epsy hx hy
   have h :=
-    approxTensor_map2_spec_of_scalar_bound (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-      rnd))
+    approxTensor_map2_spec_of_scalar_bound (α := R)
+      (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
       (s := s)
       (fS := safeDiv (ε := ε))
       (fR := safeDivR (β := β) (fexp := fexp) (rnd := rnd) ε)
@@ -444,178 +474,367 @@ theorem approxTensor_safeDiv_spec {s : Shape} (ε : ℝ) (hε : 0 < ε) :
               hy))
   simpa [safeDivBoundTensor] using h
 
--- Sigmoid / Softmax (elementwise logistic) bounds.
+-- Sigmoid (elementwise logistic) bounds.
+
+/-- The rounded constant `1 : NF` is within `oneEps` of the real `1`. -/
+theorem abs_toSpec_one_sub_one_le :
+    abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) - (1 : ℝ)) ≤
+      oneEps (β := β) (fexp := fexp) := by
+  change
+    abs ((TorchLean.Floats.NF.ofReal (β := β) (fexp := fexp) (rnd := rnd)
+      (1 : ℝ)).val - (1 : ℝ)) ≤ oneEps (β := β) (fexp := fexp)
+  simpa [oneEps, NFBackend.toSpec, TorchLean.Floats.NF.toReal,
+    Proofs.RuntimeRoundingApprox.roundR, TorchLean.Floats.NF.roundR,
+    TorchLean.Floats.NF.ofReal] using
+    (Proofs.RuntimeRoundingApprox.roundR_abs_error
+      (β := β) (fexp := fexp) (rnd := rnd) (1 : ℝ))
+
+/-- `oneEps` is a half ulp, hence nonnegative. -/
+theorem oneEps_nonneg : 0 ≤ oneEps (β := β) (fexp := fexp) := by
+  unfold oneEps
+  have := neuralUlp.nonneg β fexp (1 : ℝ)
+  linarith
+
+/-- `expErrorBound` is nonnegative whenever the propagated input error is. -/
+theorem expErrorBound_nonneg (a : ℝ) {eps : ℝ} (heps : 0 ≤ eps) :
+    0 ≤ expErrorBound (β := β) (fexp := fexp) a eps := by
+  unfold expErrorBound
+  have h1 : 0 ≤ Real.exp (a + eps) * eps := mul_nonneg (Real.exp_pos _).le heps
+  have h2 := neuralUlp.nonneg β fexp (Real.exp a)
+  linarith
+
+/-- Sigmoid evaluated as `1 / (1 + exp (-x))` for every input.
+
+This sequence is retained for its NF rounding certificate. The public sigmoid chooses another
+sequence on nonpositive inputs, so the two rounded results need not agree. Both approximate the
+same real logistic function. -/
+def reciprocalSigmoidR (xR : R) : R :=
+  (1 : R) / (1 + MathFunctions.exp (-xR))
+
+/-- Rounded denominator of `reciprocalSigmoidR`. -/
+def reciprocalSigmoidDenomR (xR : R) : R :=
+  (1 : R) + MathFunctions.exp (-xR)
+
+/-- Error budget of the rounded sigmoid denominator `1 + exp(-x)` given input error `eps`.
+
+The summands pay for the rounded constant `1`, the rounded exponential of the rounded negation
+(whose input error is `eps` plus one negation rounding), and the final addition rounding. -/
+def reciprocalSigmoidDenomError (eps : ℝ) (xR : R) : ℝ :=
+  oneEps (β := β) (fexp := fexp) +
+    expErrorBound (β := β) (fexp := fexp)
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (-xR))
+      (eps + neuralUlp β fexp (-toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) / 2) +
+    neuralUlp β fexp
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) +
+        toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.exp (-xR))) / 2
+
+omit [NeuralValidRndToNearest rnd] in
+/-- `reciprocalSigmoidDenomError` is nonnegative for nonnegative input error. -/
+theorem reciprocalSigmoidDenomError_nonneg {eps : ℝ} (xR : R) (heps : 0 ≤ eps) :
+    0 ≤ reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR := by
+  unfold reciprocalSigmoidDenomError
+  have h1 := oneEps_nonneg (β := β) (fexp := fexp)
+  have hulp0 : 0 ≤ neuralUlp β fexp (-toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) / 2 := by
+    have := neuralUlp.nonneg β fexp (-toSpec (β := β) (fexp := fexp) (rnd := rnd) xR)
+    linarith
+  have h2 := expErrorBound_nonneg (β := β) (fexp := fexp)
+    (toSpec (β := β) (fexp := fexp) (rnd := rnd) (-xR)) (add_nonneg heps hulp0)
+  have h3 := neuralUlp.nonneg β fexp
+    (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) +
+      toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.exp (-xR)))
+  linarith
 
 /--
-Scalar forward bound for `sigmoid` in `NF`.
+Scalar forward bound for `reciprocalSigmoidR` at input error `eps`.
 
-`sigmoid(x) = 1 / (1 + exp(-x))` is implemented using the existing bounds for `exp`, `+`, and
-division (with the denominator lower-bounded by 1).
+`sigmoid(x) = 1 / (1 + exp(-x))` has exact denominator at least `1`. When the rounded denominator
+budget `reciprocalSigmoidDenomError eps xR` is below `1`, the rounded denominator stays positive.
+The bound then uses `divPosErrorBound` with margin `1 - reciprocalSigmoidDenomError`.
+Otherwise the certificate fails and the bound falls back to `|σ̂| + 1`, which is always valid
+because the exact sigmoid lies in `(0, 1]`.
 -/
-def sigmoidBoundScalar (xR : R) : ℝ :=
-  let oneR : R := (1 : R)
-  let denomR : R := oneR + MathFunctions.exp (-xR)
-  let oneHat : ℝ := toSpec (β := β) (fexp := fexp) (rnd := rnd) oneR
-  let denomHat : ℝ := toSpec (β := β) (fexp := fexp) (rnd := rnd) denomR
-  let qhat : ℝ := oneHat / denomHat
-  neuralUlp β fexp qhat / 2 +
-    abs oneHat * abs (1 / denomHat) + abs oneHat + oneEps (β := β) (fexp := fexp)
+def reciprocalSigmoidBoundScalar (eps : ℝ) (xR : R) : ℝ :=
+  if reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR < 1 then
+    divPosErrorBound (β := β) (fexp := fexp) 1 (oneEps (β := β) (fexp := fexp))
+      (reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR)
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R))
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (reciprocalSigmoidDenomR xR))
+  else
+    abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
+      (reciprocalSigmoidR (β := β) (fexp := fexp) (rnd := rnd) xR)) + 1
 
-/-- Per-entry bound tensor for `sigmoid`. -/
-def sigmoidBoundTensor {s : Shape} (_eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
-  Spec.Tensor.map (sigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd)) xR
+/-- Per-entry bound tensor for `reciprocalSigmoidR`; `eps` is the per-entry input error. -/
+def reciprocalSigmoidBoundTensor {s : Shape} (eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
+  TorchLean.Tensor.map (reciprocalSigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps) xR
+
+/-- The reciprocal sequence's denominator approximates `1 + exp(-x)` within its composed budget. -/
+theorem approx_reciprocal_sigmoid_denom_nf {x : ℝ} {xR : R} {eps : ℝ}
+    (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
+    abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (reciprocalSigmoidDenomR xR) -
+        (1 + Real.exp (-x))) ≤
+      reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR := by
+  have hneg := approx_neg_nf (β := β) (fexp := fexp) (rnd := rnd) hx
+  have hexp := approx_exp_nf (β := β) (fexp := fexp) (rnd := rnd) hneg
+  have hone := abs_toSpec_one_sub_one_le (β := β) (fexp := fexp) (rnd := rnd)
+  have hadd := approx_add_nf (β := β) (fexp := fexp) (rnd := rnd) hone hexp
+  simpa only [reciprocalSigmoidDenomR, reciprocalSigmoidDenomError] using hadd
+
+/-- Scalar certificate for the reciprocal sequence and its shape-generic lifting theorem. -/
+private theorem approx_reciprocal_sigmoid_nf {x : ℝ} {xR : R} {eps : ℝ}
+    (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
+    abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
+          (reciprocalSigmoidR (β := β) (fexp := fexp) (rnd := rnd) xR) -
+        Activation.Math.sigmoidSpec (α := ℝ) x) ≤
+      reciprocalSigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps xR := by
+  have hden := approx_reciprocal_sigmoid_denom_nf (β := β) (fexp := fexp) (rnd := rnd) hx
+  have hone := abs_toSpec_one_sub_one_le (β := β) (fexp := fexp) (rnd := rnd)
+  have hy : (1 : ℝ) ≤ 1 + Real.exp (-x) := by linarith [Real.exp_pos (-x)]
+  have hspecR :
+      reciprocalSigmoidR (β := β) (fexp := fexp) (rnd := rnd) xR =
+        (1 : R) / reciprocalSigmoidDenomR xR := rfl
+  have hspec : Activation.Math.sigmoidSpec (α := ℝ) x = 1 / (1 + Real.exp (-x)) := by
+    rw [Proofs.sigmoid_eq_inv_exp, one_div]
+  unfold reciprocalSigmoidBoundScalar
+  split_ifs with hcert
+  · rw [hspecR, hspec]
+    exact approx_div_nf_of_pos_lb (β := β) (fexp := fexp) (rnd := rnd) (η := 1) hy hcert hone hden
+  · have hpos : 0 < Activation.Math.sigmoidSpec (α := ℝ) x := by
+      rw [hspec]
+      positivity
+    have hle : Activation.Math.sigmoidSpec (α := ℝ) x ≤ 1 := by
+      rw [hspec]
+      exact div_le_one_of_le₀ hy (by positivity)
+    calc
+      abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
+            (reciprocalSigmoidR (β := β) (fexp := fexp) (rnd := rnd) xR) -
+          Activation.Math.sigmoidSpec (α := ℝ) x)
+          ≤ abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
+              (reciprocalSigmoidR (β := β) (fexp := fexp) (rnd := rnd) xR)) +
+            abs (Activation.Math.sigmoidSpec (α := ℝ) x) := abs_sub _ _
+      _ ≤ abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
+              (reciprocalSigmoidR (β := β) (fexp := fexp) (rnd := rnd) xR)) + 1 := by
+            rw [abs_of_pos hpos]
+            linarith
+
+omit [NeuralValidRndToNearest rnd] in
+/-- With denominator error at most `1/2`, the reciprocal sequence's bound is linear in the
+rounding budget of the constant `1`, the denominator error, and one output rounding.
+In particular it tends to the output half ulp as the format is refined. -/
+theorem reciprocal_sigmoid_bound_scalar_le_of_denom_le_half {eps : ℝ} (xR : R) (heps : 0 ≤ eps)
+    (hden : reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR ≤ 1 / 2) :
+    reciprocalSigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps xR ≤
+      2 * oneEps (β := β) (fexp := fexp) +
+        (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R)) +
+            oneEps (β := β) (fexp := fexp)) *
+          (4 * reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR) +
+        neuralUlp β fexp
+          (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) /
+            toSpec (β := β) (fexp := fexp) (rnd := rnd) (reciprocalSigmoidDenomR xR)) / 2 := by
+  have hden0 := reciprocalSigmoidDenomError_nonneg (β := β) (fexp := fexp) (rnd := rnd) xR heps
+  have hlt : reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR < 1 := by
+    linarith
+  unfold reciprocalSigmoidBoundScalar
+  rw [if_pos hlt]
+  have h := divPosErrorBound_le_of_epsy_le_half (β := β) (fexp := fexp) (η := 1)
+    (xhat := toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R))
+    (yhat := toSpec (β := β) (fexp := fexp) (rnd := rnd) (reciprocalSigmoidDenomR xR))
+    one_pos (oneEps_nonneg (β := β) (fexp := fexp)) hden0 (by linarith)
+  exact h.trans (le_of_eq (by ring))
+
+/-- For a format whose half ulp at `1` is at most `1/16`, whose output half ulp is at most `1/4`,
+and whose rounded denominator error is at most `1/16`, the reciprocal sequence's bound is at
+most `1`. -/
+theorem reciprocal_sigmoid_bound_scalar_le_one {eps : ℝ} (xR : R) (heps : 0 ≤ eps)
+    (hone : oneEps (β := β) (fexp := fexp) ≤ 1 / 16)
+    (hden : reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR ≤ 1 / 16)
+    (hulp : neuralUlp β fexp
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) /
+        toSpec (β := β) (fexp := fexp) (rnd := rnd) (reciprocalSigmoidDenomR xR)) ≤ 1 / 2) :
+    reciprocalSigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps xR ≤ 1 := by
+  have h := reciprocal_sigmoid_bound_scalar_le_of_denom_le_half (β := β) (fexp := fexp) (rnd := rnd)
+    xR heps (by linarith)
+  have hden0 := reciprocalSigmoidDenomError_nonneg (β := β) (fexp := fexp) (rnd := rnd) xR heps
+  have hone0 := oneEps_nonneg (β := β) (fexp := fexp)
+  have habs : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R)) ≤
+      1 + oneEps (β := β) (fexp := fexp) := by
+    have h1 := abs_toSpec_one_sub_one_le (β := β) (fexp := fexp) (rnd := rnd)
+    calc
+      abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R))
+          = abs ((toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) - 1) + 1) := by ring_nf
+      _ ≤ abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) - 1) + abs (1 : ℝ) :=
+          abs_add_le _ _
+      _ ≤ 1 + oneEps (β := β) (fexp := fexp) := by
+          rw [abs_one]
+          linarith
+  have hprod :
+      (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R)) +
+          oneEps (β := β) (fexp := fexp)) *
+        (4 * reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR) ≤
+      (1 + 1 / 16 + 1 / 16) * (4 * (1 / 16)) :=
+    mul_le_mul (by linarith) (by linarith) (by positivity) (by norm_num)
+  linarith
 
 /--
-`approxTensor` bound for `sigmoid` lifted to arbitrary tensor shapes.
+`approxTensor` bound for the reciprocal sigmoid sequence at arbitrary tensor shapes.
 
-This is the tensor-level wrapper around `sigmoid_bound_scalar` (scalar case) and the usual
-componentwise `linf_norm` lifting (dimension case).
+The scalar certificate for `reciprocalSigmoidBoundScalar` lifts componentwise through `linfNorm`.
+There is no side condition: the per-entry bound already switches to its fallback branch when the
+denominator certificate fails.
 -/
+theorem approxTensor_reciprocal_sigmoid_spec {s : Shape} :
+    ∀ {xS : SpecTensor s} {xR : Tensor R s} {eps : ℝ},
+      approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR eps →
+        approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
+          (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := ℝ)) xS)
+          (mapSpec (s := s) (reciprocalSigmoidR (β := β) (fexp := fexp) (rnd := rnd)) xR)
+          (linfNorm (reciprocalSigmoidBoundTensor
+            (β := β) (fexp := fexp) (rnd := rnd) (s := s) eps xR)) :=
+    by
+  intro xS xR eps hx
+  have h :=
+    approxTensor_map_spec_of_runtime_scalar_bound
+      (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
+      (s := s)
+      (fS := Activation.Math.sigmoidSpec (α := ℝ))
+      (fR := reciprocalSigmoidR (β := β) (fexp := fexp) (rnd := rnd))
+      (bnd := fun xR inputError =>
+        reciprocalSigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) inputError xR)
+      (xS := xS) (xR := xR) (eps := eps) hx (by
+        intro x xR hxScalar
+        exact approx_reciprocal_sigmoid_nf (β := β) (fexp := fexp) (rnd := rnd) hxScalar)
+  simpa [reciprocalSigmoidBoundTensor] using h
+
+/-- The negative-input sigmoid sequence, with a shared rounded exponential in the numerator
+and denominator. It is defined for every NF input so its certificate can be stated independently
+of the comparison that selects the public sigmoid branch. -/
+def expRatioSigmoidR (xR : R) : R :=
+  let z := MathFunctions.exp xR
+  z / (1 + z)
+
+/-- Rounded denominator of `expRatioSigmoidR`. -/
+def expRatioSigmoidDenomR (xR : R) : R :=
+  (1 : R) + MathFunctions.exp xR
+
+/-- Error in the negative-input sequence's denominator. The exponential has input error `eps`;
+the other two terms account for representing `1` and adding it to that exponential. -/
+def expRatioSigmoidDenomError (eps : ℝ) (xR : R) : ℝ :=
+  oneEps (β := β) (fexp := fexp) +
+    expErrorBound (β := β) (fexp := fexp)
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) eps +
+    neuralUlp β fexp
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) +
+        toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.exp xR)) / 2
+
+/-- Forward-error budget for the exponential-ratio sequence. Both occurrences of `exp x` share
+the same rounded value, but the division estimate only needs separate numerator and denominator
+error bounds. The exact denominator is at least `1`. -/
+def expRatioSigmoidBoundScalar (eps : ℝ) (xR : R) : ℝ :=
+  if expRatioSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR < 1 then
+    divPosErrorBound (β := β) (fexp := fexp) 1
+      (expErrorBound (β := β) (fexp := fexp)
+        (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) eps)
+      (expRatioSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR)
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.exp xR))
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (expRatioSigmoidDenomR xR))
+  else
+    abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
+      (expRatioSigmoidR xR)) + 1
+
+/-- The exponential-ratio denominator approximates `1 + exp x` within its composed budget. -/
+theorem approx_exp_ratio_sigmoid_denom_nf {x : ℝ} {xR : R} {eps : ℝ}
+    (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
+    abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (expRatioSigmoidDenomR xR) -
+        (1 + Real.exp x)) ≤
+      expRatioSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR := by
+  have hexp := approx_exp_nf (β := β) (fexp := fexp) (rnd := rnd) hx
+  have hone := abs_toSpec_one_sub_one_le (β := β) (fexp := fexp) (rnd := rnd)
+  have hadd := approx_add_nf (β := β) (fexp := fexp) (rnd := rnd) hone hexp
+  simpa only [expRatioSigmoidDenomR, expRatioSigmoidDenomError] using hadd
+
+/-- The exponential-ratio sequence approximates the real sigmoid, with no sign or format
+restriction beyond the NF rounding model. -/
+theorem approx_exp_ratio_sigmoid_nf {x : ℝ} {xR : R} {eps : ℝ}
+    (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
+    abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (expRatioSigmoidR xR) -
+        Activation.Math.sigmoidSpec (α := ℝ) x) ≤
+      expRatioSigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps xR := by
+  have hnum := approx_exp_nf (β := β) (fexp := fexp) (rnd := rnd) hx
+  have hden := approx_exp_ratio_sigmoid_denom_nf (β := β) (fexp := fexp) (rnd := rnd) hx
+  have hy : (1 : ℝ) ≤ 1 + Real.exp x := by linarith [Real.exp_pos x]
+  unfold expRatioSigmoidBoundScalar
+  split_ifs with hcert
+  · rw [Proofs.sigmoid_eq_exp_div]
+    exact approx_div_nf_of_pos_lb (β := β) (fexp := fexp) (rnd := rnd)
+      (η := 1) hy hcert hnum hden
+  · have hpos : 0 < Activation.Math.sigmoidSpec (α := ℝ) x := by
+      rw [Proofs.sigmoid_eq_exp_div]
+      positivity
+    have hle : Activation.Math.sigmoidSpec (α := ℝ) x ≤ 1 := by
+      rw [Proofs.sigmoid_eq_exp_div]
+      exact div_le_one_of_le₀ (by linarith) (by positivity)
+    calc
+      abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (expRatioSigmoidR xR) -
+          Activation.Math.sigmoidSpec (α := ℝ) x)
+          ≤ abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (expRatioSigmoidR xR)) +
+            abs (Activation.Math.sigmoidSpec (α := ℝ) x) := abs_sub _ _
+      _ ≤ abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (expRatioSigmoidR xR)) + 1 := by
+          rw [abs_of_pos hpos]
+          exact add_le_add le_rfl hle
+
+/-- NF error budget for the public sigmoid, selecting the certificate for its actual evaluation
+branch. The comparison is made on `xR`, exactly as it is in `Activation.Math.sigmoidSpec`. -/
+def sigmoidBoundScalar (eps : ℝ) (xR : R) : ℝ :=
+  if xR > 0 then
+    reciprocalSigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps xR
+  else
+    expRatioSigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps xR
+
+/-- Per-entry forward-error budgets for the public sigmoid. -/
+def sigmoidBoundTensor {s : Shape} (eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
+  TorchLean.Tensor.map (sigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps) xR
+
+/-- Scalar approximation certificate for the branch-stable sigmoid.
+
+Either rounded branch approximates the same real function, so the proof does not assume that
+the approximate input and the exact input have the same sign. -/
+theorem approx_sigmoid_nf {x : ℝ} {xR : R} {eps : ℝ}
+    (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ eps) :
+    abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
+          (Activation.Math.sigmoidSpec (α := R) xR) -
+        Activation.Math.sigmoidSpec (α := ℝ) x) ≤
+      sigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps xR := by
+  by_cases hpos : xR > 0
+  · simpa only [Activation.Math.sigmoidSpec, if_pos hpos, sigmoidBoundScalar,
+      reciprocalSigmoidR] using
+      (approx_reciprocal_sigmoid_nf (β := β) (fexp := fexp) (rnd := rnd) hx)
+  · simpa only [Activation.Math.sigmoidSpec, if_neg hpos, sigmoidBoundScalar,
+      expRatioSigmoidR] using
+      (approx_exp_ratio_sigmoid_nf (β := β) (fexp := fexp) (rnd := rnd) hx)
+
+/-- Shape-generic approximation certificate for the public sigmoid. Its per-entry budgets cover
+both selected evaluation branches and use the range fallback only if the corresponding
+denominator certificate fails. -/
 theorem approxTensor_sigmoid_spec {s : Shape} :
     ∀ {xS : SpecTensor s} {xR : Tensor R s} {eps : ℝ},
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR eps →
         approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
           (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := ℝ)) xS)
           (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := R)) xR)
-          (linfNorm (sigmoidBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (s := s) eps xR)) :=
-            by
+          (linfNorm (sigmoidBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (s := s) eps xR)) := by
   intro xS xR eps hx
-  induction s with
-  | scalar =>
-      cases xS with
-      | scalar x =>
-          cases xR with
-          | scalar xR =>
-              -- `sigmoid` is just a division `1 / (1 + exp (-x))`.
-              let oneR : R := (1 : R)
-              let denomR : R := oneR + MathFunctions.exp (-xR)
-              let y : ℝ := (1 : ℝ) + Real.exp (-x)
-              have hy : (1 : ℝ) ≤ y := by
-                have : 0 ≤ Real.exp (-x) := by simpa using (Real.exp_nonneg (-x))
-                linarith
-              have hone :
-                  abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) oneR - (1 : ℝ)) ≤
-                    oneEps (β := β) (fexp := fexp) := by
-                change
-                  abs ((TorchLean.Floats.NF.ofReal (β := β) (fexp := fexp) (rnd := rnd)
-                    (1 : ℝ)).val - (1 : ℝ)) ≤ oneEps (β := β) (fexp := fexp)
-                simpa [oneEps, NFBackend.toSpec, TorchLean.Floats.NF.toReal,
-                  Proofs.RuntimeRoundingApprox.roundR, TorchLean.Floats.NF.roundR,
-                  TorchLean.Floats.NF.ofReal] using
-                  (Proofs.RuntimeRoundingApprox.roundR_abs_error (β := β) (fexp := fexp) (rnd :=
-                    rnd) (1 : ℝ))
-              have hdiv :=
-                approx_div_nf_of_one_le (β := β) (fexp := fexp) (rnd := rnd)
-                  (x := (1 : ℝ)) (y := y) (xR := oneR) (yR := denomR)
-                  (epsx := oneEps (β := β) (fexp := fexp)) hy hone
-              have hb :
-                  abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                          (Activation.Math.sigmoidSpec (α := R) xR) -
-                        Activation.Math.sigmoidSpec (α := ℝ) x) ≤
-                    sigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) xR := by
-                simpa [Activation.Math.sigmoidSpec, sigmoidBoundScalar, oneEps, oneR, denomR, y,
-                  MathFunctions.exp]
-                  using hdiv
-              have hle :
-                  abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                          (Activation.Math.sigmoidSpec (α := R) xR) -
-                        Activation.Math.sigmoidSpec (α := ℝ) x) ≤
-                    linfNorm (sigmoidBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                      (s := Shape.scalar) eps (Tensor.scalar xR)) := by
-                refine le_trans hb ?_
-                -- `linf_norm` of a scalar tensor is `abs` of its entry.
-                simpa [sigmoidBoundTensor, Spec.Tensor.map, linfNorm, RuntimeApprox.linfNorm,
-                  tensorLinfNorm, MathFunctions.abs] using
-                  (le_abs_self (sigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) xR))
-              exact
-                (approxTensor_scalar_iff (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                  (x := Activation.Math.sigmoidSpec (α := ℝ) x)
-                  (xR := Activation.Math.sigmoidSpec (α := R) xR)
-                  (eps := linfNorm (sigmoidBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                    (s := Shape.scalar) eps (Tensor.scalar xR)))).2 (by
-                      simpa using hle)
-  | dim n s ih =>
-      cases xS with
-      | dim xSf =>
-          cases xR with
-          | dim xRf =>
-              let B : ℝ :=
-                linfNorm (sigmoidBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                  (s := Shape.dim n s) eps (Tensor.dim xRf))
-              have hB_nonneg : 0 ≤ B := by
-                simpa [B] using (linf_norm_nonneg
-                  (t := sigmoidBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                    (s := Shape.dim n s) eps (Tensor.dim xRf)))
-              have hcomp :
-                  ∀ i : Fin n,
-                    tensorDistance (α := SpecScalar) linfNorm
-                        (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := ℝ)) (xSf i))
-                        (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                          rnd))
-                          (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := R)) (xRf i)))
-                      ≤ B := by
-                intro i
-                have hx_i :=
-                  approxTensor_dim_get (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                    (xS := Tensor.dim xSf) (xR := Tensor.dim xRf) (eps := eps) hx i
-                have hih := ih (xS := xSf i) (xR := xRf i) hx_i
-                have hB_ge :
-                    linfNorm (sigmoidBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                        (s := s) eps (xRf i)) ≤ B := by
-                  simpa [B, sigmoidBoundTensor, Spec.Tensor.map] using
-                    (linf_norm_le_get_dim
-                      (t := sigmoidBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                        (s := Shape.dim n s) eps (Tensor.dim xRf)) i)
-                have hdist :
-                    tensorDistance (α := SpecScalar) linfNorm
-                        (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := ℝ)) (xSf i))
-                        (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                          rnd))
-                          (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := R)) (xRf i)))
-                      ≤ linfNorm (sigmoidBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                        (s := s) eps (xRf i)) := by
-                  simpa [approxTensor, approxWith] using hih
-                exact le_trans hdist hB_ge
-              have hf :
-                  ∀ i ∈ List.finRange n,
-                    tensorDistance (α := SpecScalar) linfNorm
-                        (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := ℝ)) (xSf i))
-                        (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                          rnd))
-                          (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := R)) (xRf i)))
-                      ≤ B := by
-                intro i _hi
-                exact hcomp i
-              have hfold :=
-                List.foldl_max_le_of_le (List.finRange n)
-                  (fun i =>
-                    tensorDistance (α := SpecScalar) linfNorm
-                      (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := ℝ)) (xSf i))
-                      (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                        rnd))
-                        (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := R)) (xRf i))))
-                  (acc := (0 : ℝ)) (eps := B) hB_nonneg hf
-              have :
-                  tensorDistance (α := SpecScalar) linfNorm
-                      (mapSpec (s := Shape.dim n s) (Activation.Math.sigmoidSpec (α := ℝ))
-                        (Tensor.dim xSf))
-                      (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                        rnd))
-                        (mapSpec (s := Shape.dim n s) (Activation.Math.sigmoidSpec (α := R))
-                          (Tensor.dim xRf)))
-                    ≤ B := by
-                change
-                  List.foldl
-                    (fun a i =>
-                      max a
-                        (tensorDistance (α := SpecScalar) linfNorm
-                          (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := ℝ)) (xSf i))
-                          (tensorToSpec (α := R)
-                            (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                            (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := R)) (xRf i)))))
-                    0 (List.finRange n) ≤ B
-                exact hfold
-              simpa [approxTensor, approxWith, B] using this
+  have h :=
+    approxTensor_map_spec_of_runtime_scalar_bound
+      (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
+      (s := s)
+      (fS := Activation.Math.sigmoidSpec (α := ℝ))
+      (fR := Activation.Math.sigmoidSpec (α := R))
+      (bnd := fun xR inputError =>
+        sigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) inputError xR)
+      (xS := xS) (xR := xR) (eps := eps) hx (by
+        intro x xR hxScalar
+        exact approx_sigmoid_nf (β := β) (fexp := fexp) (rnd := rnd) hxScalar)
+  simpa [sigmoidBoundTensor] using h
+
 end NFBackend
 
 end

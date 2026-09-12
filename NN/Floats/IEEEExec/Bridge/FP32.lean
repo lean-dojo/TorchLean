@@ -7,6 +7,14 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.IEEEExec.Bridge.FP32.Compare
+public import NN.Floats.IEEEExec.Bridge.FP32.Core
+public import NN.Floats.IEEEExec.Bridge.FP32.DyadicRounding
+public import NN.Floats.IEEEExec.Bridge.FP32.NearestEven
+public import NN.Floats.IEEEExec.Bridge.FP32.Ops
+public import NN.Floats.IEEEExec.Bridge.FP32.Sqrt
+public import NN.Floats.IEEEExec.Bridge.FP32.RatBounds
+public import NN.Floats.IEEEExec.Bridge.FP32.RoundDyadic
+public import NN.Floats.IEEEExec.Bridge.FP32.RoundRat
 public import NN.Floats.IEEEExec.Bridge.FP32.Ulp
 
 /-!

@@ -93,4 +93,4 @@ Practical checklist:
 - Output shapes follow the same arithmetic formulas as PyTorch layer definitions. If a conv should
   preserve `H×W`, add the corresponding equality proof that rewrites the type.
 - Avoid duplicating derivative logic in two places. Prefer one authoritative backward/VJP and call
-  it from training wrappers (as in `svm.lean`).
+  it from training wrappers (as in `Svm.lean`).

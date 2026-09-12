@@ -14,8 +14,9 @@ public import NN.Backend.Planner
 Inspection data for contract-carrying kernel plans.
 
 The planner chooses capsules. The audit layer records what that choice means for trust boundaries:
-which provider was selected, which device it targets, how its value and VJP obligations are
-supported, and whether the plan crosses a trusted-external boundary.
+which provider was selected, which device it targets, how its shape, layout, value, and VJP
+obligations are supported, and whether the plan crosses a trusted-external boundary. Audits are
+stored inside numerical certificates and compared on replay, so they must have decidable equality.
 -/
 
 @[expose] public section
@@ -66,6 +67,11 @@ def ofPlannedKernel (k : PlannedKernel) : KernelAudit :=
 def isTrustedExternal (a : KernelAudit) : Bool :=
   a.trustLevel == .trustedExternal
 
+/-- The four contract descriptors of the selected kernel, paired with the field each one fills. -/
+def contracts (a : KernelAudit) : Array (ContractObligation × ContractDescriptor) :=
+  #[(.shape, a.shapeContract), (.layout, a.layoutContract),
+    (.value, a.valueContract), (.vjp, a.vjpContract)]
+
 end KernelAudit
 
 /-- Audit view of selected kernel capsules. -/
@@ -74,10 +80,6 @@ structure KernelPlanAudit where
   deriving DecidableEq, Repr
 
 namespace KernelPlanAudit
-
-/-- Trust levels selected by the plan, in plan order. -/
-def trustLevels (a : KernelPlanAudit) : Array TrustLevel :=
-  a.kernels.map (·.trustLevel)
 
 /-- Capsule names selected by the plan, in plan order. -/
 def capsuleNames (a : KernelPlanAudit) : Array String :=

@@ -22,15 +22,66 @@ smallest `NN.IR.*` dependency they need.
 
 ## Directory Layout
 
-- `Graph.lean`: graph syntax, node ids, op tags, arity conventions, and topological well formedness.
+- `Operator.lean`: `OpKind`, its static attributes, and `OpTag` constructor identities with parent
+  counts and diagnostic names. This module has no graph, runtime, or artifact-format dependency.
+- `Graph.lean`: nodes, dependency edges, declared shapes, and topological well formedness.
 - `OpContracts.lean`: shared shape arithmetic for ops such as concat, matmul, pooling, conv, and
   axis-moving utilities. Concat and matmul use list-indexed arbitrary-rank contracts.
-- `Infer.lean`: canonical declared-output-shape validation.
+- `Infer.lean`: canonical declared-output-shape validation. `Graph.inferShapesFrom` walks the node
+  array once, structurally recursive on the remaining node count, and `Graph.checkShapes` wraps it.
 - `Check.lean`: public validation wrappers and proposition-level `WellFormed` / `WellShaped` names.
 - `Semantics.lean`: denotational evaluator into spec-layer tensor operations with explicit payloads,
   including arbitrary-leading linear and matrix multiplication, checked arbitrary-axis concat, and
-  the scoped `IR` notation for graph denotation.
+  the scoped `IR` notation for graph denotation. `Graph.evalNodeRaw` is the operator dispatch and
+  `Graph.evalNode` adds the declared-shape normalization.
+- `Payload.lean`: the external payload stores (constants, weights, input boxes) keyed by node id.
+- `HardMask.lean`: conversions between typed Boolean tensors and the row-major masks stored in
+  `OpKind`, shared by graph builders, evaluators, and verifier passes.
+- `ShapeSoundness.lean`: the theorems relating `Infer` and `Semantics` (see below).
 - `Pretty.lean`: readable text and GraphViz renderers for debugging.
+
+## One Shape Rule Per Operation
+
+`Infer.nodeOutShape` and `Graph.evalNodeRaw` are both matches over `OpKind`, but they do not
+contain two copies of the shape arithmetic. Every operation whose output shape is not simply a
+parent shape or a shape written in the operation goes through a single rule in `OpContracts`, and
+both passes call it on the same inputs:
+
+| Operation | Shared rule |
+| --- | --- |
+| `matmul` | `OpContracts.matmulDims` (operand decomposition); inference reads `MatmulDims.outShape`, the evaluator recovers the typed operands from `leftShape` / `rightShape` |
+| `maxPool`, `avgPool` | `OpContracts.planPool` via `inferWindowOutShape`; the plan's `outShape` is the type of the evaluator's result |
+| `reduceSum`, `reduceMean` | `OpContracts.checkReductionAxis` (a nonempty axis, as the typed reductions require) and `Tensor.shapeAfterSum` |
+| `flatten` | `ShapeUtil.flattenOutShape` |
+| `concat` | `OpContracts.inferConcatOutShape`, recomputed by the evaluator on the parent values |
+| `conv`, `batchNormEval`, `broadcastTo`, `layernorm`, `transpose` | `inferConvConfigOutShape`, `inferBatchNormEvalOutShape`, the decidable `Spec.Shape.CanBroadcastTo`, `layerNormMatrixDims`, `transposePerm` |
+
+The permute rule is `Spec.Shape.permute?`; the evaluator realizes the permutation by adjacent
+swaps (`Graph.swapDepthsForPerm`) and checks the realized shape against the declared one.
+
+## Shape Soundness
+
+`NN/IR/ShapeSoundness.lean` proves that the two passes agree, organized as one lemma per operator
+family (`Graph.evalNodeRaw_shape_*`) plus a lockstep induction over the node array:
+
+- `Graph.evalNodeRaw_shape_of_infer`: if inference assigns the declared shape to a node and the
+  node's parents carry the shapes inference saw (`Graph.ParentShapesOf`), then the raw evaluator
+  value already has the declared shape.
+- `Graph.denoteAllRaw_eq_denoteAll`: on a graph accepted by `checkShapes`, evaluating without the
+  per-node declared-shape normalization (`Graph.denoteAllRaw`) gives the same result as
+  `denoteAll`. The normalization is defense in depth, not a second shape rule.
+- `Graph.checkShapes_sound` / `Graph.denoteAll_shape`: every value produced by `denoteAll` has the
+  declared shape of its node. The `checkShapes` hypothesis is not needed for this conclusion
+  because `evalNode` normalizes; the previous theorem is where it does work.
+
+For `permute`, `transpose`, and `conv` the evaluator compares the shape it realizes with the
+declared shape, so soundness holds through that comparison; proving that the adjacent-swap
+lowering realizes `Shape.permute?`, and that the convolution contract's list arithmetic equals
+`Spec.convOutSpatialDilated`, are separate lemmas not attempted here.
+
+Note on partiality: `denoteAll` is not total on well-shaped graphs. `.log` rejects nonpositive
+input data, and payload-backed nodes reject inconsistent payloads. See the header of
+`Semantics.lean`.
 
 ## Relationship To `NN.GraphSpec`
 
@@ -111,5 +162,5 @@ ceremonial than embedding everything in the node, but it is much easier to audit
 - Parents always point backward: every parent id is smaller than the child id.
 - Parameter tensors are not embedded in `Graph`; `const`, `linear`, and `conv` use external
   payload stores keyed by node id.
-- Shape checking is centralized through `Infer.inferNodeOutShape`; `Graph.checkShapes` delegates to
+- Shape checking is centralized through `Infer.nodeOutShape`; `Graph.checkShapes` delegates to
   that implementation to avoid duplicate op-contract logic.

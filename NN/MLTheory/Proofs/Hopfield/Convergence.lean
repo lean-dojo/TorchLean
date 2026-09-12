@@ -6,10 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Fintype.Card
+public import Mathlib.Data.Fintype.BigOperators
 public import Mathlib.Data.Fintype.Pigeonhole
-public import Mathlib.Logic.Function.Iterate
-public import Mathlib.Order.Monotone.Basic
 public import NN.MLTheory.Proofs.Hopfield.Progress
 
 /-!
@@ -32,13 +30,13 @@ We keep the statement at the “sweep level” (one full pass over coordinates).
 namespace NN.MLTheory.Proofs.Hopfield
 
 open scoped BigOperators
-open _root_.Spec
+open Spec TorchLean
 
 open Spec.Hopfield
 
 variable {n : Nat}
 
-private lemma pluses_le_dim (s : State n) : pluses (n := n) s ≤ n := by
+private theorem pluses_le_dim (s : State n) : pluses (n := n) s ≤ n := by
   classical
   -- `pluses` is the cardinality of a filtered subset of `Finset.univ`.
   unfold Spec.Hopfield.pluses
@@ -53,7 +51,7 @@ variable (p : Params ℝ n)
 /-- The full-sweep update map whose iterates define Hopfield cyclic dynamics. -/
 noncomputable def f : State n → State n := cycleUpdate (n := n) p
 
-private lemma energy_iterate_le
+private theorem energy_iterate_le
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     (k : Nat) (s : State n) :
     energy (α := ℝ) p ((f (n := n) p)^[k] s) ≤ energy (α := ℝ) p s := by
@@ -69,7 +67,7 @@ private lemma energy_iterate_le
         energy_cycleUpdate_le (n := n) (p := p) hsym hdiag ((f (n := n) p)^[k] s)
       simpa [Function.iterate_succ_apply'] using le_trans hstep IH
 
-private lemma energy_iterate_antitone
+private theorem energy_iterate_antitone
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     {i j : Nat} (hij : i ≤ j) (s : State n) :
     energy (α := ℝ) p ((f (n := n) p)^[j] s) ≤ energy (α := ℝ) p ((f (n := n) p)^[i] s) := by
@@ -95,7 +93,7 @@ private lemma energy_iterate_antitone
   -- Commute the addition in the iterate index.
   simpa [Nat.add_comm] using h1
 
-private lemma energy_iterate_eq_of_iterate_eq
+private theorem energy_iterate_eq_of_iterate_eq
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     {k i : Nat} (hi : i ≤ k) {s : State n}
     (hcyc : (f (n := n) p)^[k] s = s) :
@@ -109,7 +107,7 @@ private lemma energy_iterate_eq_of_iterate_eq
     simpa [hcyc] using hk_le
   exact le_antisymm hle hle'
 
-private lemma pluses_cycleUpdate_ge_of_energy_eq
+private theorem pluses_cycleUpdate_ge_of_energy_eq
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     (s : State n)
     (hE : energy (α := ℝ) p ((f (n := n) p) s) = energy (α := ℝ) p s) :
@@ -122,7 +120,7 @@ private lemma pluses_cycleUpdate_ge_of_energy_eq
     · exact False.elim (hlt.ne hE)
     · exact le_of_lt hpl
 
-private lemma pluses_iterate_step_mono_of_iterate_eq
+private theorem pluses_iterate_step_mono_of_iterate_eq
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     {k i : Nat} (hi : i < k) {s : State n}
     (hcyc : (f (n := n) p)^[k] s = s) :
@@ -147,6 +145,11 @@ private lemma pluses_iterate_step_mono_of_iterate_eq
     pluses_cycleUpdate_ge_of_energy_eq (n := n) (p := p) hsym hdiag ((f (n := n) p)^[i] s) hE_step
   simpa [Function.iterate_succ_apply'] using hpl
 
+/-- With symmetric weights and zero diagonal, a periodic orbit of the sweep is a fixed point.
+
+This is the heart of the Hopfield convergence argument: energy never increases along a sweep, so on
+a cycle it must be constant, and then the active-unit count would have to strictly increase around
+the cycle and return to its starting value, which is impossible. -/
 theorem cycleUpdate_no_nontrivial_cycles
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     {k : Nat} (hk : 0 < k) (s : State n)
@@ -206,6 +209,10 @@ theorem cycleUpdate_no_nontrivial_cycles
     exact hlt
   exact (lt_irrefl _ this)
 
+/-- A fixed point is reached within `Fintype.card (State n)` sweeps.
+
+Finitely many states plus no nontrivial cycles gives termination; the bound is the crude pigeonhole
+one, not a claim about how fast the network actually settles. -/
 theorem cycleUpdate_exists_fixedpoint_le_card
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     (s0 : State n) :
@@ -281,6 +288,7 @@ theorem cycleUpdate_exists_fixedpoint_le_card
       simpa [t, Function.iterate_succ_apply'] using hfix
     exact this
 
+/-- The same bound written as `2 ^ n`, since a state is one bit per unit. -/
 theorem cycleUpdate_exists_fixedpoint_le_pow
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     (s0 : State n) :

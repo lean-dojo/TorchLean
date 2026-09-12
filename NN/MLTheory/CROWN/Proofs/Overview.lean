@@ -6,13 +6,15 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Proofs.AlphaBetaReLUScalarSoundness
-public import NN.MLTheory.CROWN.Proofs.Distillation
-public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness
-public import NN.MLTheory.CROWN.Proofs.GraphCrownCertSoundness
+public import Mathlib.Analysis.SpecialFunctions.Pow.Real
+public import Mathlib.Analysis.SpecialFunctions.Trigonometric.Arctan
+public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
+import Mathlib.Tactic.Measurability.Init
+-- These two are discussed in the overview rather than used by it, which is exactly the shape
+-- `lake shake` reads as dead. They stay: the overview is the only route by which they get
+-- typechecked.
 public import NN.MLTheory.CROWN.Proofs.GraphIBPBasicTheorems
-public import NN.MLTheory.CROWN.Proofs.GraphRunibpEndToEnd
-public import NN.MLTheory.CROWN.Proofs.SoundnessProofs
+public import NN.MLTheory.CROWN.Proofs.GraphRuntimeBridge
 
 /-!
 # CROWN/LiRPA soundness proofs (overview)
@@ -28,6 +30,9 @@ The core pattern repeated throughout the development is:
    certificate entry from parent certificate entries.
 3. Prove a *transfer-rule soundness* lemma for the step function.
 4. Use a topological-order induction to obtain an end-to-end “checker implies enclosure” theorem.
+5. Connect the proof-side objects to the executable ones: `GraphRunibpEndToEnd` identifies the
+   engine's `runIBP` with the proof-side pass, and `GraphRuntimeBridge` shows that the runtime
+   evaluator `NN.IR.Graph.evalNode` at `ℝ` is reproduced by the proof-side value semantics.
 
 ## Relation to existing implementations
 
@@ -48,8 +53,8 @@ and any external solver can be treated as an untrusted certificate producer.
 
 `NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness` contains the (large) op-by-op
 transfer proofs for the concrete α-CROWN / α/β-CROWN step functions. It is not imported
-by this umbrella module so that the overview remains a fast orientation point; import it directly when
-you are working on those transfer proofs.
+by this umbrella module so that the overview remains a fast orientation point; import it directly
+when you are working on those transfer proofs.
 
 ## References (code)
 

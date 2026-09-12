@@ -39,52 +39,57 @@ References:
 
 open TorchLean
 
-namespace NN.Examples.Models.RL.DQNReplay
+namespace NN.Examples.Models.RL.DqnReplay
 
-def exeName : String := "torchlean dqn_replay"
+/-- Subcommand name. -/
+def exeName : String := "dqn_replay"
 
-abbrev ObsShape : List Nat := [2]
-abbrev NActions : Nat := 3
+/--
+Two observation features, small enough that the replay buffer's contents can be printed in full.
+-/
+abbrev observation : Shape := [2]
+/-- Three discrete actions. -/
+abbrev actionCount : Nat := 3
 
 /-- A compact two-feature observation. -/
-def obsA : Tensor Float ObsShape := tensor! [0.0, 1.0]
+def obsA : Tensor Float observation := [0.0, 1.0]
 
 /-- A second observation used as the next state. -/
-def obsB : Tensor Float ObsShape := tensor! [1.0, 0.0]
+def obsB : Tensor Float observation := [1.0, 0.0]
 
 /-- One typed transition inserted into the replay buffer. -/
-def transitionA : rl.core.Transition Float ObsShape NActions :=
+def transitionA : rl.core.Transition Float observation actionCount :=
   { state := obsA
-    action := ⟨1, by decide⟩
+    action := 1
     reward := 1.0
     nextState := obsB
     done := false }
 
 /-- A second transition, marked terminal, so the sample contains both bootstrap modes. -/
-def transitionB : rl.core.Transition Float ObsShape NActions :=
+def transitionB : rl.core.Transition Float observation actionCount :=
   { state := obsB
-    action := ⟨0, by decide⟩
+    action := 0
     reward := 0.5
     nextState := obsA
     done := true }
 
 /-- Compact online Q-function used by the example. -/
-def onlineQ (obs : Tensor Float ObsShape) : Tensor Float [NActions] :=
-  let x0 := Tensor.item (Tensor.get obs ⟨0, by decide⟩)
-  let x1 := Tensor.item (Tensor.get obs ⟨1, by decide⟩)
-  tensor! [x0 + 0.2, x1 + 1.0, 0.5]
+def onlineQ (obs : Tensor Float observation) : Tensor Float [actionCount] :=
+  let x0 := obs[0]
+  let x1 := obs[1]
+  [x0 + 0.2, x1 + 1.0, 0.5]
 
 /-- Compact target Q-function used by the example. -/
-def targetQ (obs : Tensor Float ObsShape) : Tensor Float [NActions] :=
-  let x0 := Tensor.item (Tensor.get obs ⟨0, by decide⟩)
-  let x1 := Tensor.item (Tensor.get obs ⟨1, by decide⟩)
-  tensor! [0.1 + x1, 1.4 + x0, 0.3]
+def targetQ (obs : Tensor Float observation) : Tensor Float [actionCount] :=
+  let x0 := obs[0]
+  let x1 := obs[1]
+  [0.1 + x1, 1.4 + x0, 0.3]
 
 /-- Build a replay buffer, sample a minibatch, and compute DQN losses. -/
 def run : IO Unit := do
   IO.println "dqn_replay: begin"
 
-  let buffer0 : rl.replay.Buffer Float ObsShape NActions :=
+  let buffer0 : rl.replay.Buffer Float observation actionCount :=
     rl.replay.empty 8
   let buffer :=
     rl.replay.pushMany buffer0 #[transitionA, transitionB]
@@ -113,7 +118,8 @@ def usage : String :=
     [ "Usage:"
     , "  lake exe torchlean dqn_replay"
     , ""
-    , "Runs a fixed replay-buffer and DQN-loss executable check. This command has no training flags."
+    , "Runs a fixed replay-buffer and DQN-loss executable check. "
+        ++ "This command has no training flags."
     ]
 
 /-- Runner entrypoint used by `lake exe torchlean dqn_replay`. -/
@@ -125,4 +131,4 @@ def main (args : List String) : IO UInt32 := do
     run
   pure 0
 
-end NN.Examples.Models.RL.DQNReplay
+end NN.Examples.Models.RL.DqnReplay

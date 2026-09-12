@@ -49,15 +49,15 @@ lake exe verify --help
 
 That CPU build is the common starting point on every platform. From there, TorchLean can build
 its native CUDA runtime or link an external provider without changing the Lean model being run.
-The table below separates paths that work today from targets that are represented in the backend
-architecture but still need platform-specific runtime work.
+The table below separates paths that work today from platforms that still need platform-specific
+runtime work.
 
 | Platform | CPU | NVIDIA GPU | LibTorch provider | Current status |
 | --- | --- | --- | --- | --- |
 | Linux | &#10003; | &#10003; Native CUDA | SDPA forward with TorchLean backward | Supported |
 | macOS, Intel or Apple silicon | &#10003; | Not applicable | Not yet | CPU supported; Metal is planned |
 | Windows with WSL2 | &#10003; Linux path | &#10003; CUDA on WSL2 | Linux path | Recommended Windows setup |
-| Native Windows | Bring-up target | Not validated | Not wired | Backend target exists; native toolchain work remains |
+| Native Windows | Not yet | Not validated | Not wired | Native toolchain work remains; use WSL2 |
 
 Here, "LibTorch provider" means the current scaled-dot-product-attention bridge, not a requirement
 for ordinary TorchLean models and not a claim that every operation is delegated to PyTorch. The
@@ -167,9 +167,8 @@ inside WSL.
 
 ### Native Windows
 
-Native Windows is represented in the backend target vocabulary, but it is still a bring-up target
-rather than a regularly tested release path. Install Git, the Visual Studio C++ build tools, and the
-Windows SDK. Then install Elan from PowerShell:
+Native Windows is not a tested release path yet. Install Git, the Visual Studio C++ build tools,
+and the Windows SDK. Then install Elan from PowerShell:
 
 ```powershell
 curl -O --location https://elan.lean-lang.org/elan-init.ps1
@@ -235,9 +234,27 @@ require TorchLean from "../TorchLean"
 
 ## From A Model To A Kernel
 
-Installation chooses a device or a complete backend profile; the model API stays the same. The
-planner then selects an implementation per operation and rejects unavailable providers instead of
-quietly changing the request.
+Installation chooses a device or a complete backend profile; the model API stays the same. Each
+operation an eager session executes is first matched to a `KernelCapsule`: a record naming the
+operation, provider, device, trust level (`checked` or `trustedExternal`), VJP mode, and four
+contract descriptors (shape, layout, value, VJP) with their evidence. Its `numericalPolicy` has one
+field, `reduction`, which says whether the kernel accumulates in the fixed left-fold order of the
+tensor semantics or in an implementation-defined order. The numerical certificate registry reads
+that field, so a CUDA or LibTorch capsule cannot inherit a fixed-left reduction certificate.
+
+Selection has three steps. The planner picks the first capsule whose device, provider preference,
+VJP mode, and trust level fit the profile. `checkContracts` then produces a `ContractCheck` that
+rejects any selected descriptor whose evidence the profile's assurance policy does not admit. The
+session finally calls `KernelCapsule.bind` to pair the capsule with a handler for the same
+operation, provider, and device before running it. Unavailable providers fail at that point instead
+of quietly changing the request. `--show-backend` prints each selected capsule the first time a
+session uses it.
+
+The attention provider is the one place where the profile changes which implementation runs.
+`checked_cuda` prefers TorchLean's composed attention (CUDA batched matrix multiplication with
+TorchLean's hard-masked softmax). `libtorch_forward_cuda` prefers the LibTorch SDPA forward
+capsule. Both keep `vjpMode := .torchLeanTape`, so TorchLean records the tape node and owns the
+backward pass in either case.
 
 Read [Inside the Backend Planner]({{ '/blueprint/Runtime___-Autograd___-and-Interop/Inside-The-Backend-Planner/' | relative_url }})
 for capsules, provider preference, VJP ownership, assurance policies, and backend reports. Read
@@ -260,7 +277,7 @@ For CUDA, rebuild and run the suite with `-R -K cuda=true`.
 
 For a complete account of Lean axioms, executable checkers, CUDA and FFI code, external artifact
 producers, and floating-point assumptions, read
-[`TRUST_BOUNDARIES.md`](https://github.com/lean-dojo/TorchLean/blob/main/TRUST_BOUNDARIES.md).
+[`docs/TRUST_BOUNDARIES.md`](https://github.com/lean-dojo/TorchLean/blob/main/docs/TRUST_BOUNDARIES.md).
 
 ## References
 
@@ -270,6 +287,5 @@ producers, and floating-point assumptions, read
 - [NVIDIA CUDA on WSL User Guide](https://docs.nvidia.com/cuda/wsl-user-guide/index.html).
 - [Installing LibTorch](https://docs.pytorch.org/cppdocs/installing.html).
 - George C. Necula, ["Proof-Carrying Code"](https://doi.org/10.1145/263699.263712), POPL 1997.
-  Ordinary kernel capsules are contract and provenance records, not proof-carrying binaries.
-  TorchLean's separate typed `ProofCarryingKernel` interface retains a Lean refinement theorem with
-  an implementation when such a proof is available.
+  Kernel capsules are contract and provenance records, not proof-carrying binaries; none of the
+  maintained capsules carries a Lean refinement theorem for its implementation.

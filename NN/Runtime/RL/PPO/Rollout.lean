@@ -7,8 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL.Core
-public import NN.Runtime.Autograd.TorchLean.NN
 public import NN.Spec.Core.Tensor.Numerics
+public import NN.Tensor.Constructors
+public import NN.Tensor.Pack
 
 /-!
 # PPO Rollouts (Discrete Actions)
@@ -19,14 +20,14 @@ This file defines:
 - a conversion to the minibatch format expected by the PPO autograd objective
   (`Runtime.RL.PolicyGradient.Autograd.ppoActorCriticObjectiveDef`).
 
-PPO’s math remains explicit: the GAE/return definitions live in `NN.Spec.RL.Core`, and the
-tensor-shaped analogues live in `NN.Runtime.RL.Core`. This file supplies the typed rollout layer
-for PPO training loops.
+The shared tensor GAE/return definitions live in `NN.Spec.RL.Core` and are re-exported by
+`NN.Runtime.RL.Core`. This file supplies the typed rollout layer for PPO training loops.
 
 References:
-- Schulman et al., "Proximal Policy Optimization Algorithms" (2017): https://arxiv.org/abs/1707.06347
-- Schulman et al., "High-Dimensional Continuous Control Using Generalized Advantage Estimation" (2015):
-  https://arxiv.org/abs/1506.02438
+- Schulman et al., "Proximal Policy Optimization Algorithms" (2017):
+  https://arxiv.org/abs/1707.06347
+- Schulman et al., "High-Dimensional Continuous Control Using Generalized Advantage Estimation"
+  (2015): https://arxiv.org/abs/1506.02438
 -/
 
 @[expose] public section
@@ -35,10 +36,10 @@ namespace Runtime
 namespace RL
 namespace PPO
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
-variable {α : Type} [Context α] [DecidableEq Shape]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-!
 ## Shapes
@@ -54,19 +55,19 @@ For a fixed horizon `T`, PPO minibatches are typically stored in "PyTorch-shaped
 
 /-- Batch shape for a fixed-horizon sequence of observations: `horizon × obsShape`. -/
 abbrev StateBatchShape (horizon : Nat) (obsShape : Shape) : Shape :=
-  .dim horizon obsShape
+  obsShape.prependDim horizon
 
 /-- Batch shape for a fixed-horizon sequence of action logits: `horizon × nActions`. -/
 abbrev LogitsBatchShape (horizon nActions : Nat) : Shape :=
-  .dim horizon (.dim nActions .scalar)
+  [horizon, nActions]
 
 /-- Batch shape for a fixed-horizon sequence of scalars: `horizon`. -/
 abbrev ScalarBatchShape (horizon : Nat) : Shape :=
-  .dim horizon .scalar
+  [horizon]
 
 /-- Batch shape for a fixed-horizon sequence of scalar values stored as a column: `horizon × 1`. -/
 abbrev ValueBatchShape (horizon : Nat) : Shape :=
-  .dim horizon (.dim 1 .scalar)
+  [horizon, 1]
 
 /-!
 ## Rollouts
@@ -78,7 +79,7 @@ One fixed-horizon PPO step record.
 This is the “typed parallel arrays” data layout commonly used in PPO implementations, but kept as
 a single record so downstream code cannot accidentally desynchronize fields.
 -/
-structure Step (α : Type) (obsShape : Shape) (nActions : Nat) where
+structure Step (α : Type) [TorchLean.Storage α] (obsShape : Shape) (nActions : Nat) where
   /-- Observation `s_t` (already cast into the training scalar backend). -/
   state : Tensor α obsShape
   /-- Sampled action `a_t`. -/
@@ -100,10 +101,44 @@ Fixed-horizon rollout buffer for PPO.
 The `steps_size_eq_horizon` field records the invariant that the buffer has exactly `horizon`
 steps; this lets downstream tensor conversion be total without runtime bounds checks.
 -/
-structure Rollout (α : Type) (obsShape : Shape) (nActions horizon : Nat) where
+structure Rollout (α : Type) [TorchLean.Storage α] (obsShape : Shape) (nActions horizon : Nat) where
   steps : Array (Step α obsShape nActions)
   /-- Invariant: fixed-horizon rollouts always have exactly `horizon` steps. -/
   steps_size_eq_horizon : steps.size = horizon
+
+/-- Named tensors consumed by one PPO actor-critic update. -/
+structure TrainingBatch (α : Type) [TorchLean.Storage α]
+    (obsShape : Shape) (nActions horizon : Nat) where
+  /-- Observations for each rollout step. -/
+  states : Tensor α (StateBatchShape horizon obsShape)
+  /-- Sampled actions encoded against the action-logit axis. -/
+  actionsOneHot : Tensor α (LogitsBatchShape horizon nActions)
+  /-- Behavior-policy log-probability for each sampled action. -/
+  oldLogProb : Tensor α (ScalarBatchShape horizon)
+  /-- Normalized generalized advantages used by the policy objective. -/
+  advantages : Tensor α (ScalarBatchShape horizon)
+  /-- Lambda-return targets used by the value objective. -/
+  valueTargets : Tensor α (ValueBatchShape horizon)
+
+namespace TrainingBatch.Internal
+
+/-- Pack a named PPO batch for the low-level autograd objective. -/
+def arguments {α : Type} [TorchLean.Storage α]
+    {obsShape : Shape} {nActions horizon : Nat}
+    (batch : TrainingBatch α obsShape nActions horizon) :
+    TorchLean.TensorPack α
+      [StateBatchShape horizon obsShape,
+       LogitsBatchShape horizon nActions,
+       ScalarBatchShape horizon,
+       ScalarBatchShape horizon,
+       ValueBatchShape horizon] :=
+  .cons batch.states <|
+    .cons batch.actionsOneHot <|
+      .cons batch.oldLogProb <|
+        .cons batch.advantages <|
+          .cons batch.valueTargets .nil
+
+end TrainingBatch.Internal
 
 namespace Rollout
 
@@ -117,91 +152,35 @@ Notes:
   variance-reduction practice.
   Value targets (lambda-returns) are computed from the *unnormalized* advantages.
 -/
-def toActorCriticSample {obsShape : Shape} {nActions horizon : Nat}
+def trainingBatch {obsShape : Shape} {nActions horizon : Nat}
     [NeZero horizon] [NeZero nActions]
     (gamma lam : α)
     (r : Rollout α obsShape nActions horizon) :
-    IO (TorchLean.TensorPack α
-      [StateBatchShape horizon obsShape,
-       LogitsBatchShape horizon nActions,
-       ScalarBatchShape horizon,
-       ScalarBatchShape horizon,
-       ValueBatchShape horizon]) := do
-  let steps := r.steps
-
-  let statesArr : Array (Tensor α obsShape) :=
-    steps.map (fun st => st.state)
-  let hStates : horizon = statesArr.size := by
-    have : statesArr.size = horizon := by
-      simpa [statesArr, Array.size_map] using r.steps_size_eq_horizon
-    simpa using this.symm
+    IO (TrainingBatch α obsShape nActions horizon) := do
+  let stepAt (index : Fin horizon) :=
+    r.steps[index.val]'(by simp [r.steps_size_eq_horizon])
   let states : Tensor α (StateBatchShape horizon obsShape) :=
-    Tensor.ofArray statesArr hStates
-
-  let actionsOneHotArr : Array (Tensor α [nActions]) :=
-    steps.map (fun st => TorchLean.Tensor.oneHot (α := α) nActions st.action)
-  let hActHot : horizon = actionsOneHotArr.size := by
-    have : actionsOneHotArr.size = horizon := by
-      simpa [actionsOneHotArr, Array.size_map] using r.steps_size_eq_horizon
-    simpa using this.symm
+    Tensor.stackLeading (fun index => (stepAt index).state)
   let actionsOneHot : Tensor α (LogitsBatchShape horizon nActions) :=
-    Tensor.ofArray actionsOneHotArr hActHot
-
-  let oldLogProbArr : Array α := steps.map (fun st => st.oldLogProb)
-  let hOldLP : horizon = oldLogProbArr.size := by
-    have : oldLogProbArr.size = horizon := by
-      simpa [oldLogProbArr, Array.size_map] using r.steps_size_eq_horizon
-    simpa using this.symm
+    Tensor.stackLeading (fun index => Tensor.oneHot (α := α) nActions (stepAt index).action)
   let oldLogProb : Tensor α (ScalarBatchShape horizon) :=
-    Tensor.ofArray (oldLogProbArr.map Tensor.scalar) (by simpa using hOldLP)
-
-  let rewardsArr : Array α := steps.map (fun st => st.reward)
-  let donesArr : Array Bool := steps.map (fun st => st.done)
-  let valuesArr : Array α := steps.map (fun st => st.value)
-  let nextValuesArr : Array α := steps.map (fun st => st.nextValue)
-
-  let hRewards : horizon = rewardsArr.size := by
-    have : rewardsArr.size = horizon := by
-      simpa [rewardsArr, Array.size_map] using r.steps_size_eq_horizon
-    simpa using this.symm
-  let hDones : horizon = donesArr.size := by
-    have : donesArr.size = horizon := by
-      simpa [donesArr, Array.size_map] using r.steps_size_eq_horizon
-    simpa using this.symm
-  let hValues : horizon = valuesArr.size := by
-    have : valuesArr.size = horizon := by
-      simpa [valuesArr, Array.size_map] using r.steps_size_eq_horizon
-    simpa using this.symm
-  let hNextValues : horizon = nextValuesArr.size := by
-    have : nextValuesArr.size = horizon := by
-      simpa [nextValuesArr, Array.size_map] using r.steps_size_eq_horizon
-    simpa using this.symm
-
-  let rewards : Tensor α [horizon] :=
-    Tensor.ofArray (rewardsArr.map Tensor.scalar) (by simpa using hRewards)
-  let dones : Tensor Bool [horizon] :=
-    Tensor.ofArray (donesArr.map Tensor.scalar) (by simpa using hDones)
-  let values : Tensor α [horizon] :=
-    Tensor.ofArray (valuesArr.map Tensor.scalar) (by simpa using hValues)
-  let nextValues : Tensor α [horizon] :=
-    Tensor.ofArray (nextValuesArr.map Tensor.scalar) (by simpa using hNextValues)
+    Tensor.ofFn (fun index => (stepAt index).oldLogProb)
+  let rewards : Tensor α [horizon] := Tensor.ofFn (fun index => (stepAt index).reward)
+  let dones : Tensor Bool [horizon] := Tensor.ofFn (fun index => (stepAt index).done)
+  let values : Tensor α [horizon] := Tensor.ofFn (fun index => (stepAt index).value)
+  let nextValues : Tensor α [horizon] := Tensor.ofFn (fun index => (stepAt index).nextValue)
 
   let advRaw :=
-    Core.generalizedAdvantageEstimationTensor (α := α) (n := horizon)
+    Core.generalizedAdvantageEstimation (α := α) (n := horizon)
       gamma lam rewards values nextValues dones
-  let returns := Core.returnsFromAdvantagesTensor (α := α) (n := horizon) advRaw values
-  let advantages := Spec.normalizeZscoreSpec (α := α) (n := horizon) advRaw
+  let returns := Core.returnsFromAdvantages (α := α) (n := horizon) advRaw values
+  let normalizedAdvantages := Spec.normalizeZscoreSpec (α := α) (n := horizon) advRaw
 
-  let valueTarget : Tensor α (ValueBatchShape horizon) :=
+  let valueTargets : Tensor α (ValueBatchShape horizon) :=
     Tensor.reshapeSpec returns (by simp [Shape.size])
-  let advantagesT : Tensor α (ScalarBatchShape horizon) := advantages
+  let advantages : Tensor α (ScalarBatchShape horizon) := normalizedAdvantages
 
-  pure <|
-    .cons states <|
-      .cons actionsOneHot <|
-        .cons oldLogProb <|
-          .cons advantagesT <|
-            .cons valueTarget .nil
+  pure { states, actionsOneHot, oldLogProb, advantages, valueTargets }
 
 end Rollout
 

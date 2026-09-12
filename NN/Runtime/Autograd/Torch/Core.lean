@@ -6,13 +6,20 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Torch.Core.Types
-public import NN.Runtime.Autograd.Torch.Core.Session
-public import NN.Runtime.Autograd.Torch.Core.Ops
 public import NN.Runtime.Autograd.Torch.Core.BackwardOptim
-public import NN.Runtime.Autograd.Torch.Core.TypedGraph
+public import NN.Runtime.Autograd.Torch.Core.CheckpointIO
+public import NN.Runtime.Autograd.Torch.Core.CudaBridge
 public import NN.Runtime.Autograd.Torch.Core.Functional
+public import NN.Runtime.Autograd.Torch.Core.Ops
+public import NN.Runtime.Autograd.Torch.Core.OptimizerCheckpoint
+public import NN.Runtime.Autograd.Torch.Core.Session
+public import NN.Runtime.Autograd.Torch.Core.TensorTransfer
 public import NN.Runtime.Autograd.Torch.Core.Trainer
+public import NN.Runtime.Autograd.Torch.Core.Trainer.EagerOps
+public import NN.Runtime.Autograd.Torch.Core.Trainer.GraphOps
+public import NN.Runtime.Autograd.Torch.Core.Trainer.Recording
+public import NN.Runtime.Autograd.Torch.Core.TypedGraph
+public import NN.Runtime.Autograd.Torch.Core.Types
 
 /-!
 # Torch Core
@@ -25,7 +32,11 @@ Torch-style runtime front-end for eager execution, typed graphs, and training he
 - `Core.BackwardOptim`: eager backward passes and optimizers.
 - `Core.TypedGraph`: reusable shape-indexed graph wrappers.
 - `Core.Functional`: operation-generic `Ops` interface and curried syntax.
-- `Core.Trainer`: `Ops` instances, parameter packs, and scalar trainer construction.
+- `Core.Trainer.Types`: scalar trainer contracts without backend construction.
+- `Core.Trainer`: construct eager or graph trainers.
+- `Core.Trainer.EagerOps` / `GraphOps`: backend instances for `Ops`.
 
-Most callers can import this module directly to bring the Torch runtime API into scope.
+This facade re-exports the complete runtime. Library code should import the part it uses:
+`Functional.Ops` for generic operators, `Trainer.Types` for trainer consumers, and the relevant
+`Session` submodule for eager internals.
 -/

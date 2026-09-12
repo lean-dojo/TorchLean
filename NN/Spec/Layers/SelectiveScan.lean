@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Tensor
 public import NN.Spec.Core.TensorOps
+public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Selective scan specs
@@ -35,6 +35,8 @@ References:
 
 @[expose] public section
 
+open TorchLean
+
 namespace Spec
 
 /--
@@ -58,6 +60,7 @@ def scanArray {State Input Output : Type}
     State × Array Output :=
   scanArrayFrom step initial #[] xs
 
+/-- Scanning an empty array returns the initial state and no outputs. -/
 @[simp] theorem scanArray_empty {State Input Output : Type}
     (step : State → Input → State × Output) (initial : State) :
     scanArray step initial (#[] : Array Input) = (initial, (#[] : Array Output)) := by
@@ -145,7 +148,7 @@ def scalarAffineScan {α : Type} [Mul α] [Add α] (h0 : α) :
   exact scanArray_outputs_size _ h0 transitions
 
 /-- A diagonal vector affine transition `h ↦ a ⊙ h + b`. -/
-structure DiagonalTransition (α : Type) (stateDim : Nat) where
+structure DiagonalTransition (α : Type) [TorchLean.Storage α] (stateDim : Nat) where
   /-- Elementwise recurrent multiplier. -/
   a : Tensor α [stateDim]
   /-- Elementwise additive token contribution. -/
@@ -153,12 +156,12 @@ structure DiagonalTransition (α : Type) (stateDim : Nat) where
 
 namespace DiagonalTransition
 
-variable {α : Type} [Add α] [Mul α] {stateDim : Nat}
+variable {α : Type} [TorchLean.Storage α] [Add α] [Mul α] {stateDim : Nat}
 
 /-- Apply one diagonal affine state update. -/
 def apply (tr : DiagonalTransition α stateDim)
     (h : Tensor α [stateDim]) : Tensor α [stateDim] :=
-  tr.a * h + tr.b
+  Tensor.addSpec (Tensor.mulSpec tr.a h) tr.b
 
 /--
 Compose diagonal affine transitions channelwise.
@@ -166,13 +169,14 @@ Compose diagonal affine transitions channelwise.
 The order is the same as `ScalarAffineTransition.compose`: `compose t₂ t₁` is first `t₁`, then `t₂`.
 -/
 def compose (t₂ t₁ : DiagonalTransition α stateDim) : DiagonalTransition α stateDim :=
-  { a := t₂.a * t₁.a
-    b := t₂.a * t₁.b + t₂.b }
+  { a := Tensor.mulSpec t₂.a t₁.a
+    b := Tensor.addSpec (Tensor.mulSpec t₂.a t₁.b) t₂.b }
 
 end DiagonalTransition
 
 /-- Sequentially run diagonal transitions and return the final state. -/
-def runDiagonalTransitions {α : Type} [Add α] [Mul α] {stateDim : Nat}
+def runDiagonalTransitions {α : Type} [TorchLean.Storage α]
+    [Add α] [Mul α] {stateDim : Nat}
     (h0 : Tensor α [stateDim])
     (transitions : Array (DiagonalTransition α stateDim)) :
     Tensor α [stateDim] :=
@@ -181,7 +185,8 @@ def runDiagonalTransitions {α : Type} [Add α] [Mul α] {stateDim : Nat}
     (nextState, nextState)) h0 transitions).1
 
 /-- Return every hidden state from a diagonal selective scan. -/
-def diagonalSelectiveScan {α : Type} [Add α] [Mul α] {stateDim : Nat}
+def diagonalSelectiveScan {α : Type} [TorchLean.Storage α]
+    [Add α] [Mul α] {stateDim : Nat}
     (h0 : Tensor α [stateDim]) :
     Array (DiagonalTransition α stateDim) → Array (Tensor α [stateDim]) :=
   fun transitions => (scanArray (fun state transition =>
@@ -189,7 +194,8 @@ def diagonalSelectiveScan {α : Type} [Add α] [Mul α] {stateDim : Nat}
     (nextState, nextState)) h0 transitions).2
 
 /-- The diagonal selective scan has one state per transition. -/
-@[simp] theorem diagonalSelectiveScan_size {α : Type} [Add α] [Mul α] {stateDim : Nat}
+@[simp] theorem diagonalSelectiveScan_size {α : Type} [TorchLean.Storage α]
+    [Add α] [Mul α] {stateDim : Nat}
     (h0 : Tensor α [stateDim])
     (transitions : Array (DiagonalTransition α stateDim)) :
     (diagonalSelectiveScan h0 transitions).size = transitions.size := by

@@ -6,7 +6,12 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.TorchLean
+public import Mathlib.Algebra.Order.Field.Basic
+import Mathlib.Tactic.NormNum.Inv
+import Mathlib.Tactic.NormNum.Pow
+import Mathlib.Tactic.Positivity.Finset
+public import NN.Runtime.Autograd.Torch.Core.Types
+public import NN.Runtime.Autograd.Model -- shake: keep
 
 /-!
 # Training Memory Monitoring
@@ -18,8 +23,7 @@ CUDA allocator sampling and drift warnings shared by TorchLean training loops.
 
 namespace TorchLean
 namespace Trainer
-namespace Manual
-namespace CUDAMemory
+namespace Memory
 
 /-- State carried by the CUDA-memory drift detector used by sustained training runs. -/
 structure State where
@@ -29,11 +33,11 @@ structure State where
 deriving Repr
 
 /-- Resolve an explicit CUDA-memory cadence, or enable periodic sampling for very long runs. -/
-def cadence (opts : _root_.Runtime.Autograd.Torch.Options)
+def cadence (options : Runtime.Autograd.Torch.Config)
     (steps requested : Nat) : Nat :=
   if requested != 0 then
     requested
-  else if opts.usesCuda && steps >= 1000 then
+  else if options.usesCuda && steps >= 1000 then
     Nat.max 1 (steps / 10)
   else
     0
@@ -42,12 +46,12 @@ def cadence (opts : _root_.Runtime.Autograd.Torch.Options)
 Sample the CUDA allocator and warn when sustained free-memory loss projects exhaustion before the
 requested run completes.
 -/
-def sample (opts : _root_.Runtime.Autograd.Torch.Options)
+def sample (options : Runtime.Autograd.Torch.Config)
     (watchEvery totalSteps done : Nat) (state? : Option State) : IO (Option State) := do
-  if !opts.usesCuda || watchEvery = 0 || (done != 0 && done % watchEvery != 0) then
+  if !options.usesCuda || watchEvery = 0 || (done != 0 && done % watchEvery != 0) then
     pure state?
   else
-    let stats ← _root_.Runtime.Autograd.Cuda.Buffer.allocatorStatsWithToken (UInt32.ofNat done)
+    let stats ← Runtime.Autograd.Cuda.Buffer.allocatorStatsWithToken (UInt32.ofNat done)
     IO.println s!"  cuda_mem step={done}: {stats.format}"
     let freeNow := stats.deviceFreeBytes.toNat
     match state? with
@@ -73,7 +77,6 @@ def sample (opts : _root_.Runtime.Autograd.Torch.Options)
             else
               pure (some st)
 
-end CUDAMemory
-end Manual
+end Memory
 end Trainer
 end TorchLean

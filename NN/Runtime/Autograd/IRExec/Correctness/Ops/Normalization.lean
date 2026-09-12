@@ -45,6 +45,8 @@ References:
   maintainable as layernorm contracts evolve.
 - Branches that fail preconditions are discharged as contradictions close to where they arise,
   keeping the successful path readable.
+- The BatchNorm closure applies `Spec.batchNormInference` under `Tensor.mapLeading` directly, so
+  the proof compares that term with the one computed by `NN.IR.Graph.evalBatchNorm`.
 - LayerNorm carries axis constraints through both the shape discipline and the tensor computation.
   Keep axis-validity and shape-cast facts in small helper lemmas so the semantic theorem stays
   focused on agreement between the lowered node and the evaluator.
@@ -60,15 +62,17 @@ namespace Runtime
 namespace Autograd
 namespace IRExec
 
-open Spec
-open Tensor
+open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
+-- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
+-- `Idx` and `getIdx` are defined.
+open Proofs (Idx getIdx)
 
 /-- Correctness lemma for the `.layernorm` node lowering pass. -/
 theorem buildFrom_denoteAllFrom_layernorm
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) {inShape : Shape} {ss : List Shape}
     (gd : ForwardData α [inShape] ss) (i : Nat) (st' : State α inShape)
     (x : Tensor α inShape) (n : NN.IR.Node)
@@ -91,14 +95,14 @@ theorem buildFrom_denoteAllFrom_layernorm
       .ok (denoteAllState (α := α) inShape st' x) := by
   let vals0 : Array (Spec.SomeTensor α) :=
     denoteAllState (α := α) inShape (st := (⟨ss, gd⟩ : State α inShape)) x
-  let ctx : _root_.TorchLean.TensorPack α ([inShape] ++ ss) :=
+  let ctx : TorchLean.TensorPack α ([inShape] ++ ss) :=
     ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil)
   let input : Spec.SomeTensor α := Spec.SomeTensor.mk (α := α) inShape x
 
   -- Unfold the lowering pass step and specialize to the `.layernorm axis` branch.
   unfold buildFrom at hBuild
   simp [hi, hN] at hBuild
-  simp (config := { failIfUnchanged := false }) [hk] at hBuild
+  simp (config := { failIfUnchanged := false }) [hk, lowerLayernorm] at hBuild
 
   -- `layernorm` is unary.
   cases hp : unaryParent? n.parents with
@@ -142,17 +146,18 @@ theorem buildFrom_denoteAllFrom_layernorm
                         let beta : Tensor α [embedDim] := affine.beta
                         let epsilon : α := affine.epsilon
                         let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
-                          mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
+                          mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
+                            (fun ctx =>
                             let x : Tensor α n.outShape := getIdx (α := α) (xs := ctx) ip
                             let x2d : Tensor α view2d :=
-                              Tensor.reshapeSpec (α := α) (s₁ := n.outShape) (s₂ := view2d) x
-                                hNumel
+                              Tensor.reshapeSpec (α := α) (source := n.outShape)
+                                (target := view2d) x hNumel
                             let y2d : Tensor α view2d :=
                               Spec.layerNorm (α := α) (seqLen := seqLen) (embedDim := embedDim)
                                 (x := x2d) (gamma := gamma) (beta := beta)
                                 (h_seq_pos := hSeq) (h_embed_pos := hEmb) (epsilon := epsilon)
-                            Tensor.reshapeSpec (α := α) (s₁ := view2d) (s₂ := n.outShape) y2d
-                              hNumel.symm)
+                            Tensor.reshapeSpec (α := α) (source := view2d)
+                              (target := n.outShape) y2d hNumel.symm)
                         let st1 : State α inShape :=
                           ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
 
@@ -170,13 +175,13 @@ theorem buildFrom_denoteAllFrom_layernorm
 
                         have hLN :
                             NN.IR.Graph.layerNormMatrix (α := α) seqLen embedDim
-                                (Tensor.reshapeSpec (α := α) (s₁ := n.outShape) (s₂ := view2d)
-                                  (getIdx (α := α) (xs := ctx) ip) hNumel)
+                                (Tensor.reshapeSpec (α := α) (source := n.outShape)
+                                  (target := view2d) (getIdx (α := α) (xs := ctx) ip) hNumel)
                                 gamma beta epsilon =
                               .ok
                                 (Spec.layerNorm (α := α) (seqLen := seqLen) (embedDim := embedDim)
-                                  (x := Tensor.reshapeSpec (α := α) (s₁ := n.outShape) (s₂ :=
-                                    view2d)
+                                  (x := Tensor.reshapeSpec (α := α) (source := n.outShape)
+                                    (target := view2d)
                                     (getIdx (α := α) (xs := ctx) ip) hNumel)
                                   (gamma := gamma) (beta := beta)
                                   (h_seq_pos := hSeq) (h_embed_pos := hEmb)
@@ -201,8 +206,8 @@ theorem buildFrom_denoteAllFrom_layernorm
                               (fun e =>
                                 (fun a : Tensor α view2d =>
                                   Spec.SomeTensor.mk (α := α) n.outShape
-                                    (Tensor.reshapeSpec (α := α) (s₁ := view2d) (s₂ := n.outShape)
-                                      a hNumel.symm)) <$> e)
+                                    (Tensor.reshapeSpec (α := α) (source := view2d)
+                                      (target := n.outShape) a hNumel.symm)) <$> e)
                               hLN
 
                         have hStep :
@@ -228,7 +233,7 @@ theorem buildFrom_denoteAllFrom_layernorm
 
 /-- Correctness lemma for fixed-statistics BatchNorm lowering along an arbitrary channel axis. -/
 theorem buildFrom_denoteAllFrom_batchNormEval
-    {α : Type} [Context α] [shapeDecidable : DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) {inShape : Shape} {ss : List Shape}
     (gd : ForwardData α [inShape] ss) (i : Nat) (st' : State α inShape)
     (x : Tensor α inShape) (n : NN.IR.Node) (channelAxis channels : Nat)
@@ -252,14 +257,14 @@ theorem buildFrom_denoteAllFrom_batchNormEval
       .ok (denoteAllState (α := α) inShape st' x) := by
   let vals0 : Array (Spec.SomeTensor α) :=
     denoteAllState (α := α) inShape (st := (⟨ss, gd⟩ : State α inShape)) x
-  let ctx : _root_.TorchLean.TensorPack α ([inShape] ++ ss) :=
+  let ctx : TorchLean.TensorPack α ([inShape] ++ ss) :=
     ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil)
   let input : Spec.SomeTensor α := Spec.SomeTensor.mk (α := α) inShape x
 
   classical
   unfold buildFrom at hBuild
   simp [hi, hN] at hBuild
-  simp (config := { failIfUnchanged := false }) [hk] at hBuild
+  simp (config := { failIfUnchanged := false }) [hk, lowerBatchNormEval] at hBuild
   cases hp : unaryParent? n.parents with
   | none =>
       exact False.elim <| throw_bind_ne_ok (by simpa [hp] using hBuild)
@@ -288,7 +293,7 @@ theorem buildFrom_denoteAllFrom_batchNormEval
                             let leading : Shape := Shape.ofList (dims.take channelAxis)
                             let spatial : Shape := Shape.ofList (dims.drop (channelAxis + 1))
                             let payloadShape : Shape := leading.concat (.dim params.c spatial)
-                            cases hDecision : shapeDecidable expectedIn payloadShape with
+                            cases hDecision : decEq expectedIn payloadShape with
                             | isTrue hInput =>
                               by_cases hOut : expectedIn = n.outShape
                               · have hOut' : parentNode.outShape = n.outShape := by
@@ -303,61 +308,64 @@ theorem buildFrom_denoteAllFrom_batchNormEval
                                 let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                                   mkForwardNode (α := α) (Γ := [inShape] ++ ss)
                                     (τ := n.outShape) (fun ctx =>
-                                      let parent : Tensor α expectedIn :=
-                                        getIRValue (α := α) (ctx := ctx) ip
-                                      packedResultOrPanic (α := α) n.outShape <|
-                                        NN.IR.Graph.evalBatchNorm payload n.id channelAxis channels
-                                          (Spec.SomeTensor.ofTensor parent))
+                                      let input : Tensor α payloadShape :=
+                                        Tensor.castShape (getIdx (α := α) (xs := ctx) ip) hInput
+                                      let output : Tensor α payloadShape :=
+                                        Tensor.mapLeading leading
+                                          (fun sample => Spec.batchNormInference sample
+                                            params.mean params.var params.gamma params.beta
+                                            params.eps)
+                                          input
+                                      Tensor.castShape output (hInput.symm.trans hOut))
                                 let st1 : State α inShape :=
                                   ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                                 have hRec :
                                     buildFrom (α := α) (g := g) (payload := payload)
                                       (inShape := inShape) (i := i + 1) st1 = .ok st' := by
-                                  simpa [st1, nodeData, expectedIn, getIRValue] using hBuild
+                                  simpa [st1, nodeData, expectedIn, dims, leading, spatial,
+                                    payloadShape] using hBuild
                                 have hGet :
                                     vals0[pId]? = some
                                       (Spec.SomeTensor.mk (α := α) expectedIn
                                         (getIdx (α := α) (xs := ctx) ip)) := by
-                                  simpa [vals0, ctx, expectedIn, getIRValue] using
+                                  simpa [vals0, ctx, expectedIn] using
                                     (denoteAllState_get_mkIdx? (inShape := inShape) (ss := ss)
                                       (gd := gd) (x := x) (pid := pId) (s := expectedIn)
                                       (idx := ip) hIdx)
-                                let parent : Tensor α expectedIn :=
-                                  getIdx (α := α) (xs := ctx) ip
-                                have hBatchExists :
-                                    ∃ normalized : Tensor α payloadShape,
-                                      NN.IR.Graph.evalBatchNorm (α := α) payload n.id channelAxis
-                                          channels
-                                          (Spec.SomeTensor.mk (α := α) expectedIn parent) =
-                                        .ok (Spec.SomeTensor.mk (α := α) payloadShape
-                                          normalized) := by
+                                let inputT : Tensor α payloadShape :=
+                                  Tensor.castShape (getIdx (α := α) (xs := ctx) ip) hInput
+                                let output : Tensor α payloadShape :=
+                                  Tensor.mapLeading leading
+                                    (fun sample => Spec.batchNormInference sample params.mean
+                                      params.var params.gamma params.beta params.eps)
+                                    inputT
+                                have hBatch :
+                                    NN.IR.Graph.evalBatchNorm (α := α) payload n.id channelAxis
+                                        channels (Spec.SomeTensor.mk (α := α) expectedIn
+                                          (getIdx (α := α) (xs := ctx) ip)) =
+                                      .ok (Spec.SomeTensor.mk (α := α) payloadShape output) := by
                                   unfold NN.IR.Graph.evalBatchNorm
                                   simp [hInfer, hCfg, hChannels]
                                   split <;> rename_i hShape
                                   · rename_i _ hInput'
-                                    refine ⟨Tensor.mapEach leading
-                                      (fun sample => Spec.batchNormInference sample params.mean
-                                        params.var params.gamma params.beta params.eps)
-                                      (hInput' ▸ parent), ?_⟩
+                                    simp only [output, inputT, Pure.pure, Except.pure,
+                                      Tensor.eqRec_eq_cast_shape]
                                     rfl
                                   · rename_i _ hInput'
-                                    apply False.elim
-                                    apply hInput'
-                                    simpa [payloadShape, leading, spatial, dims] using hInput
-                                obtain ⟨normalized, hBatch⟩ := hBatchExists
+                                    exact False.elim (hInput'
+                                      (by simpa [payloadShape, leading, spatial, dims] using
+                                        hInput))
+                                have hResult : payloadShape = n.outShape :=
+                                  hInput.symm.trans hOut
+                                have hNorm :=
+                                  normalizeNodeOutput_mk_of_eq (α := α) i n output hResult
                                 have hEval :
                                     NN.IR.Graph.evalAt (α := α) (g := g) (payload := payload)
                                         (input := input) (vals := vals0) (i := i) =
                                       .ok (Spec.SomeTensor.mk (α := α) n.outShape
                                         (nodeData.eval ctx)) := by
-                                  have hResult : payloadShape = n.outShape :=
-                                    hInput.symm.trans hOut
-                                  simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode,
-                                    NN.IR.Graph.normalizeNodeOutput, hN, hk, hp, hGet, hBatch,
-                                    hResult, nodeData, parent, getIRValue,
-                                    packedResultOrPanic]
-                                  rw [shape_bne_refl]
-                                  change Except.ok _ = Except.ok _
+                                  simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, hN, hk, hp,
+                                    hGet, hBatch, hResult, hNorm]
                                   rfl
                                 have hStep :
                                     denoteAllState (α := α) inShape st1 x =

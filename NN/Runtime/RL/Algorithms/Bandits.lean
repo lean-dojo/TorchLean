@@ -6,9 +6,14 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.RL.Core
-public import NN.Runtime.Autograd.TorchLean.Metrics
+public import NN.Runtime.Autograd.Model.Metrics
 public import NN.Spec.Layers.Activation
+public import Mathlib.Algebra.Order.Field.Basic
+import Mathlib.Tactic.NormNum.Inv
+import Mathlib.Tactic.NormNum.Pow
+import Mathlib.Tactic.Positivity.Finset
+public import NN.Tensor.Internal.Elab.TensorLiteral
+public import NN.Runtime.RL.Core -- shake: keep
 
 /-!
 # Bandit Algorithms
@@ -36,20 +41,20 @@ namespace Runtime
 namespace RL
 namespace Bandits
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Value-estimation state for finite-armed bandits. -/
-structure ValueState (α : Type) (nActions : Nat) where
+structure ValueState (α : Type) [TorchLean.Storage α] (nActions : Nat) where
   /-- Per-action pull counts. -/
   counts : Tensor α [nActions]
   /-- Per-action estimated values. -/
   values : Tensor α [nActions]
 
 /-- Preference / policy-gradient state for gradient bandits. -/
-structure PreferenceState (α : Type) (nActions : Nat) where
+structure PreferenceState (α : Type) [TorchLean.Storage α] (nActions : Nat) where
   /-- Number of observed rewards so far (tracked as the ambient scalar type). -/
   steps : α
   /-- Preference logits over actions. -/
@@ -59,18 +64,18 @@ structure PreferenceState (α : Type) (nActions : Nat) where
 
 /-- Zero-initialized action-value state. -/
 def ValueState.init {nActions : Nat} : ValueState α nActions :=
-  { counts := fill 0 (.dim nActions .scalar)
-    values := fill 0 (.dim nActions .scalar) }
+  { counts := Tensor.full (.dim nActions .scalar) 0
+    values := Tensor.full (.dim nActions .scalar) 0 }
 
 /-- Zero-initialized preference state. -/
 def PreferenceState.init {nActions : Nat} : PreferenceState α nActions :=
   { steps := 0
-    preferences := fill 0 (.dim nActions .scalar)
+    preferences := Tensor.full (.dim nActions .scalar) 0
     averageReward := 0 }
 
 /-- Greedy action under the current estimates, if the action space is nonempty. -/
 def greedyAction? {nActions : Nat} (state : ValueState α nActions) : Option (Fin nActions) :=
-  (_root_.TorchLean.Metrics.argmax? (α := α) state.values).map
+  (TorchLean.Metrics.argmax? (α := α) state.values).map
     (Fin.cast (by simp [Shape.size]))
 
 /-- Epsilon-greedy action selection with explicit exploration draw and fallback action.
@@ -107,11 +112,11 @@ We use `max(pulls, epsilon)` in the denominator so the helper stays total while 
 very large bonuses to unseen or nearly-unseen actions.
 -/
 def ucb1Bonus (exploration totalPulls actionPulls : α) : α :=
-  let pullsSafe := Max.max actionPulls Numbers.epsilon
+  let pullsSafe := Max.max actionPulls Context.defaultEpsilon
   exploration * MathFunctions.sqrt (MathFunctions.log (totalPulls + 1) / pullsSafe)
 
 /-- Per-action UCB1 scores. -/
-def ucb1Scores {nActions : Nat} (state : ValueState α nActions) (exploration : α := Numbers.two) :
+def ucb1Scores {nActions : Nat} (state : ValueState α nActions) (exploration : α := 2) :
     Tensor α [nActions] :=
   let total := totalPulls (α := α) state
   Tensor.dim (fun i =>
@@ -120,9 +125,9 @@ def ucb1Scores {nActions : Nat} (state : ValueState α nActions) (exploration : 
     Tensor.scalar (value + ucb1Bonus (α := α) exploration total pulls))
 
 /-- Best action under UCB1 scores, if the action space is nonempty. -/
-def ucb1Action? {nActions : Nat} (state : ValueState α nActions) (exploration : α := Numbers.two) :
+def ucb1Action? {nActions : Nat} (state : ValueState α nActions) (exploration : α := 2) :
     Option (Fin nActions) :=
-  (_root_.TorchLean.Metrics.argmax? (α := α)
+  (TorchLean.Metrics.argmax? (α := α)
     (ucb1Scores (α := α) state exploration)).map (Fin.cast (by simp [Shape.size]))
 
 /-- Softmax policy used by the gradient-bandit algorithm. -/

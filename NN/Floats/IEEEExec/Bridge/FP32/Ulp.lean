@@ -6,6 +6,7 @@ Authors: Nicolas Rouquette, TorchLean Team
 
 module
 
+public import NN.Floats.FP32.Notation
 public import NN.Floats.IEEEExec.Bridge.FP32.Ops
 
 /-!

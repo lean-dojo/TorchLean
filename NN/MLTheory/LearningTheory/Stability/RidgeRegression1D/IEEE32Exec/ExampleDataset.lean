@@ -31,8 +31,8 @@ open TorchLean.Floats.IEEE754
 namespace ExampleDataset
 
 /-- Pack a scalar `x` into a length-1 vector tensor (shape `XShape`). -/
-def mkVec1 (x : IEEE32Exec) : Spec.Tensor IEEE32Exec XShape :=
-  Spec.Tensor.dim (fun _ : Fin 1 => Spec.Tensor.scalar x)
+def mkVec1 (x : IEEE32Exec) : TorchLean.Tensor IEEE32Exec XShape :=
+  TorchLean.Tensor.dim (fun _ : Fin 1 => TorchLean.Tensor.scalar x)
 
 /-- A concrete dataset with $N=2$ examples (so $n=1$ in the $N=n+1$ convention). -/
 def S : Dataset 2 ExampleIEEE32Vec1 :=

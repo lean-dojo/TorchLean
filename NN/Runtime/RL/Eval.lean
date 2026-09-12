@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL.Session
-public import NN.Runtime.Autograd.TorchLean.Metrics
+public import NN.Runtime.Autograd.Model.Metrics
 
 /-!
 # RL Evaluation Helpers (Executable Runtime)
@@ -40,8 +40,8 @@ namespace Runtime
 namespace RL
 namespace Eval
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 /-!
 ## Greedy action selection
@@ -54,10 +54,11 @@ If `nActions = 0` then `Fin nActions` is uninhabited, so we require `[NeZero nAc
 When `nActions > 0`, `Metrics.argmax?` never returns `none`; the `none` branch returns `0` only as
 an unreachable totality fallback.
  -/
-def greedyActionFromLogits {α : Type} [LT α] [DecidableRel ((· > ·) : α → α → Prop)]
+def greedyActionFromLogits {α : Type} [TorchLean.Storage α]
+    [LT α] [DecidableRel ((· > ·) : α → α → Prop)]
     {nActions : Nat} [NeZero nActions]
     (logits : Tensor α [nActions]) : Fin nActions :=
-  match _root_.TorchLean.Metrics.argmax? (α := α) logits with
+  match TorchLean.Metrics.argmax? (α := α) logits with
   | some a => Fin.cast (by simp [Shape.size]) a
   | none =>
       -- This branch is unreachable when `nActions > 0`, but it keeps the API total.

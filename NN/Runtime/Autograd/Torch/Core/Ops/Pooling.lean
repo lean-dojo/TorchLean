@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Torch.Core.Ops.Dispatch
+public import NN.Runtime.Autograd.Engine.Core.ConvPool
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.ConvPool
 
 /-!
 # Eager Tensor Operations
@@ -22,9 +24,7 @@ namespace Runtime
 namespace Autograd
 namespace Torch
 
-open Spec
-open Tensor
-open Proofs.Autograd.Algebra
+open Spec TorchLean TorchLean.Tensor
 
 namespace Internal
 
@@ -38,26 +38,24 @@ N-D max pooling for channels-first tensors `(C, spatial...)` (no batch axis).
 PyTorch comparison: `torch.nn.functional.max_pool1d` / `max_pool2d` / `max_pool3d` depending on the
 spatial rank `d`.
 -/
-def maxPool {α : Type} (s : EagerSession α) [Context α] [DecidableEq Shape]
-  {d C : Nat} {inSpatial kernel stride padding : Spec.Tensor Nat [d]}
-  {hKernel : ∀ i : Fin d, kernel.getScalar i ≠ 0}
-  (x : TensorRef α (Shape.ofList (C :: inSpatial.toList))) :
+def maxPool {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
+  {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
+  (x : TensorRef α (Shape.ofList (C :: Tensor.to inSpatial (List Nat)))) :
   IO (TensorRef α
-    (Shape.ofList (C :: (Spec.poolOutSpatialPad inSpatial kernel stride padding).toList))) := do
+    (Shape.ofList (C ::
+      Tensor.to (Spec.poolOutSpatialPad inSpatial kernel stride padding) (List Nat)))) := do
   let cpu := do
     let t0 ← s.tape.get
     let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.maxPool (t := t0)
       (d := d) (C := C)
-      (inSpatial := inSpatial) (kernel := kernel) (stride := stride) (padding := padding)
-      (hKernel := hKernel) x.id)
+      (inSpatial := inSpatial) (kernel := kernel) (stride := stride) (padding := padding) x.id)
     s.tape.set t1
     pure { id := id }
   let cuda := do
     let t0 ← s.cudaTape.get
     let (t1, id) ← okOrThrow (Runtime.Autograd.Cuda.Tape.maxPool (t := t0)
       (d := d) (C := C)
-      (inSpatial := inSpatial) (kernel := kernel) (stride := stride) (padding := padding)
-      (hKernel := hKernel) x.id)
+      (inSpatial := inSpatial) (kernel := kernel) (stride := stride) (padding := padding) x.id)
     s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .maxPool #[x.identity?] cpu cuda
@@ -68,26 +66,24 @@ N-D average pooling for channels-first tensors `(C, spatial...)` (no batch axis)
 PyTorch comparison: `torch.nn.functional.avg_pool1d` / `avg_pool2d` / `avg_pool3d` depending on the
 spatial rank `d`.
 -/
-def avgPool {α : Type} (s : EagerSession α) [Context α] [DecidableEq Shape]
-  {d C : Nat} {inSpatial kernel stride padding : Spec.Tensor Nat [d]}
-  (hKernel : ∀ i : Fin d, kernel.getScalar i ≠ 0)
-  (x : TensorRef α (Shape.ofList (C :: inSpatial.toList))) :
+def avgPool {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
+  {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
+  (x : TensorRef α (Shape.ofList (C :: Tensor.to inSpatial (List Nat)))) :
   IO (TensorRef α
-    (Shape.ofList (C :: (Spec.poolOutSpatialPad inSpatial kernel stride padding).toList))) := do
+    (Shape.ofList (C ::
+      Tensor.to (Spec.poolOutSpatialPad inSpatial kernel stride padding) (List Nat)))) := do
   let cpu := do
     let t0 ← s.tape.get
     let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.avgPool (t := t0)
       (d := d) (C := C)
-      (inSpatial := inSpatial) (kernel := kernel) (stride := stride) (padding := padding)
-      hKernel x.id)
+      (inSpatial := inSpatial) (kernel := kernel) (stride := stride) (padding := padding) x.id)
     s.tape.set t1
     pure { id := id }
   let cuda := do
     let t0 ← s.cudaTape.get
     let (t1, id) ← okOrThrow (Runtime.Autograd.Cuda.Tape.avgPool (t := t0)
       (d := d) (C := C)
-      (inSpatial := inSpatial) (kernel := kernel) (stride := stride) (padding := padding)
-      hKernel x.id)
+      (inSpatial := inSpatial) (kernel := kernel) (stride := stride) (padding := padding) x.id)
     s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .avgPool #[x.identity?] cpu cuda
@@ -100,19 +96,19 @@ primitive, but it can be emulated with `logsumexp` over local windows. Executabl
 at least one spatial dimension and a finite, nonzero `beta`; evaluation uses an input-space
 max/min shift so the exponential weights remain stable for large finite values.
 -/
-def smoothMaxPool {α : Type} [TensorTransfer α] (s : EagerSession α) [Context α]
-  [DecidableEq α] [DecidableEq Shape]
-  {d C : Nat} {inSpatial kernel stride padding : Spec.Tensor Nat [d]}
-  {hKernel : ∀ i : Fin d, kernel.getScalar i ≠ 0}
-  (x : TensorRef α (Shape.ofList (C :: inSpatial.toList))) (beta : α) :
+def smoothMaxPool {α : Type} [TorchLean.Storage α] [TensorTransfer α] (s : EagerSession α)
+  [Context α]
+  [DecidableEq α]
+  {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
+  (x : TensorRef α (Shape.ofList (C :: Tensor.to inSpatial (List Nat)))) (beta : α) :
   IO (TensorRef α
-    (Shape.ofList (C :: (Spec.poolOutSpatialPad inSpatial kernel stride padding).toList))) := do
+    (Shape.ofList (C ::
+      Tensor.to (Spec.poolOutSpatialPad inSpatial kernel stride padding) (List Nat)))) := do
   let cpu := do
     let t0 ← s.tape.get
     let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.smoothMaxPool (t := t0)
       (d := d) (C := C)
-      (inSpatial := inSpatial) (kernel := kernel) (stride := stride) (padding := padding)
-      (hKernel := hKernel) x.id beta)
+      (inSpatial := inSpatial) (kernel := kernel) (stride := stride) (padding := padding) x.id beta)
     s.tape.set t1
     pure { id := id }
   let cuda := do
@@ -121,7 +117,7 @@ def smoothMaxPool {α : Type} [TensorTransfer α] (s : EagerSession α) [Context
     let (t1, id) ← okOrThrow (Runtime.Autograd.Cuda.Tape.smoothMaxPool (t := t0)
       (d := d) (C := C)
       (inSpatial := inSpatial) (kernel := kernel) (stride := stride) (padding := padding)
-      (hKernel := hKernel) x.id betaF)
+      x.id betaF)
     s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .smoothMaxPool #[x.identity?] cpu cuda

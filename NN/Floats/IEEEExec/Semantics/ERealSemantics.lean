@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.EReal.Basic
 public import NN.Floats.IEEEExec.Bridge.ERealTotal
 
 /-!

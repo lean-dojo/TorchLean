@@ -11,10 +11,9 @@ public import NN.Backend.Profile
 /-!
 # Kernel Selection Reports
 
-Small human-readable reports for contract-carrying kernel plans.
-
-The planner data is intentionally precise; these helpers are the user-facing explanation layer. They
-are useful in examples, command-line choosers, docs, and debugging output.
+Human-readable reports for contract-carrying kernel plans. The eager runtime prints the detailed
+lines for each capsule the first time it is used when `showBackend` is set, and the runtime API
+exposes `BackendProfile.planReport` for command-line inspection.
 -/
 
 @[expose] public section
@@ -47,9 +46,7 @@ namespace TrustLevel
 
 /-- Short stable spelling for a capsule trust level. -/
 def label : TrustLevel → String
-  | .verified => "verified"
   | .checked => "checked"
-  | .fuzzed => "fuzzed"
   | .trustedExternal => "trusted-external"
 
 end TrustLevel
@@ -58,10 +55,7 @@ namespace AssurancePolicy
 
 /-- Short stable spelling for a profile assurance policy. -/
 def label (policy : AssurancePolicy) : String :=
-  if policy == .verified then "verified"
-  else if policy == .checked then "checked"
-  else if policy == .external then "external"
-  else "custom"
+  if policy.allowTrustedExternal then "external" else "checked"
 
 end AssurancePolicy
 
@@ -85,6 +79,17 @@ def label : TensorLayout → String
 
 end TensorLayout
 
+namespace ContractObligation
+
+/-- Field name of a capsule contract, as shown in reports. -/
+def label : ContractObligation → String
+  | .shape => "shape"
+  | .layout => "layout"
+  | .value => "value"
+  | .vjp => "vjp"
+
+end ContractObligation
+
 namespace ContractClaim
 
 /-- Human-readable statement of a structured backend obligation. -/
@@ -105,18 +110,40 @@ namespace ContractEvidence
 def label : ContractEvidence → String
   | .runtimeGuard name => s!"guarded at runtime by {name}"
   | .testSuite name => s!"covered by test suite {name}"
-  | .fuzzOracle name => s!"compared by fuzz oracle {name}"
   | .trustedBoundary reason => s!"trusted boundary: {reason}"
   | .notApplicable => "not applicable"
-  | .notProvided => "no evidence recorded"
 
 end ContractEvidence
+
+namespace AcceptanceFailure
+
+/-- Human-readable explanation of why a planned kernel failed the execution-boundary check. -/
+def message : AcceptanceFailure → String
+  | .operationMismatch planned capsule =>
+      s!"planned operation {planned.name} does not match capsule operation {capsule.name}"
+  | .forwardUnsupported op capsuleName =>
+      s!"{capsuleName} has no forward implementation for {op.name}"
+  | .contractsMisaligned op capsuleName =>
+      s!"{capsuleName} has misaligned contract claims for {op.name}"
+  | .trustRejected op capsuleName trust =>
+      s!"{capsuleName} uses rejected trust level {trust.label} for {op.name}"
+  | .providerRejected op capsuleName provider =>
+      s!"{capsuleName} uses rejected provider {provider.label} for {op.name}"
+  | .deviceMismatch op capsuleName requested actual =>
+      s!"{capsuleName} targets {actual.cliName}, not requested {requested.cliName}, for {op.name}"
+  | .vjpMismatch op capsuleName requested actual =>
+      s!"{capsuleName} offers {actual.label}, not requested {requested.label}, for {op.name}"
+  | .evidenceRejected report =>
+      s!"{report.capsuleName} has rejected {report.obligation.label} evidence for " ++
+        s!"{report.op.name}: {report.evidence.label}"
+
+end AcceptanceFailure
 
 namespace ContractDescriptor
 
 /-- One report line for a named contract field. -/
-def reportLine (field : String) (d : ContractDescriptor) : String :=
-  s!"    {field}: {d.claim.label}; {d.evidence.label}"
+def reportLine (field : ContractObligation) (d : ContractDescriptor) : String :=
+  s!"    {field.label}: {d.claim.label}; {d.evidence.label}"
 
 end ContractDescriptor
 
@@ -126,24 +153,15 @@ namespace KernelAudit
 def reportLine (a : KernelAudit) : String :=
   s!"  {a.op.name}: {a.capsuleName} " ++
   s!"provider={a.provider.label} trust={a.trustLevel.label} vjp={a.vjpMode.label} " ++
-  s!"numeric=[{a.numericalPolicy.reportLabel}]"
+  s!"reduction={a.numericalPolicy.reduction.label}"
 
 /-- Full contract report for a selected backend capsule. -/
 def detailedReportLines (a : KernelAudit) : Array String :=
-  #[ a.reportLine
-  , a.shapeContract.reportLine "shape"
-  , a.layoutContract.reportLine "layout"
-  , a.valueContract.reportLine "value"
-  , a.vjpContract.reportLine "vjp"
-  , s!"    numerical: {a.numericalPolicy.reportLabel}" ]
+  #[a.reportLine] ++ a.contracts.map fun (field, descriptor) => descriptor.reportLine field
 
 end KernelAudit
 
 namespace KernelPlanAudit
-
-/-- Human-readable lines for all selected capsules. -/
-def reportLines (a : KernelPlanAudit) : Array String :=
-  a.kernels.map KernelAudit.reportLine
 
 /-- Human-readable contract details for all selected capsules. -/
 def detailedReportLines (a : KernelPlanAudit) : Array String :=
@@ -152,10 +170,6 @@ def detailedReportLines (a : KernelPlanAudit) : Array String :=
 end KernelPlanAudit
 
 namespace KernelPlan
-
-/-- Human-readable lines for a selected kernel plan. -/
-def reportLines (p : KernelPlan) : Array String :=
-  p.audit.reportLines
 
 /-- Human-readable contract details for a selected kernel plan. -/
 def detailedReportLines (p : KernelPlan) : Array String :=

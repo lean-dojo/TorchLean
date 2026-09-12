@@ -30,22 +30,32 @@ theorem isRepresentable_ofReal (x : ℝ) :
     IsRepresentable (ofReal (β := β) (fexp := fexp) (rnd := rnd) x) := by
   exact neural_generic_format_round rnd x
 
+/-- The negation of representable values is representable, since the operation rounds back into
+the format. -/
 @[simp] theorem isRepresentable_neg (a : NF β fexp rnd) : IsRepresentable (-a) := by
   change IsRepresentable (ofReal (β := β) (fexp := fexp) (rnd := rnd) (-a.val))
   exact isRepresentable_ofReal _
 
+/-- The sum of representable values is representable, since the operation rounds back into
+the format. -/
 @[simp] theorem isRepresentable_add (a b : NF β fexp rnd) : IsRepresentable (a + b) := by
   change IsRepresentable (ofReal (β := β) (fexp := fexp) (rnd := rnd) (a.val + b.val))
   exact isRepresentable_ofReal _
 
+/-- The difference of representable values is representable, since the operation rounds back into
+the format. -/
 @[simp] theorem isRepresentable_sub (a b : NF β fexp rnd) : IsRepresentable (a - b) := by
   change IsRepresentable (ofReal (β := β) (fexp := fexp) (rnd := rnd) (a.val - b.val))
   exact isRepresentable_ofReal _
 
+/-- The product of representable values is representable, since the operation rounds back into
+the format. -/
 @[simp] theorem isRepresentable_mul (a b : NF β fexp rnd) : IsRepresentable (a * b) := by
   change IsRepresentable (ofReal (β := β) (fexp := fexp) (rnd := rnd) (a.val * b.val))
   exact isRepresentable_ofReal _
 
+/-- The quotient of representable values is representable, since the operation rounds back into
+the format. -/
 @[simp] theorem isRepresentable_div (a b : NF β fexp rnd) : IsRepresentable (a / b) := by
   change IsRepresentable (ofReal (β := β) (fexp := fexp) (rnd := rnd) (a.val / b.val))
   exact isRepresentable_ofReal _

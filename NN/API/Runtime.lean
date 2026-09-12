@@ -4,33 +4,40 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+-- This module supplies public namespace exports used by downstream consumers. Import shaking
+-- cannot see those downstream lookups, so keep the marked imports.
+module -- shake: keep-downstream
 
-public import NN.Backend.Report
-public import NN.API.Scalar
-public import NN.Runtime.Autograd.Torch.Core.TensorTransfer
-public import NN.Runtime.Autograd.TorchLean.Functional.ShapeOps
+public import NN.Backend.Report -- shake: keep
+public import NN.Runtime.Autograd.Model.Program -- shake: keep
+public import NN.Runtime.Autograd.Torch.Core.Types -- shake: keep
+public import NN.Runtime.Autograd.Model.Functional.ShapeOps -- shake: keep
+public import NN.API.Arithmetic -- shake: keep
+public import NN.Runtime.Autograd.Torch.Core.TensorTransfer -- shake: keep
 
 /-!
 # Runtime Selection
 
-Scalar semantics, execution mode, device, and backend-contract inspection.
+Arithmetic semantics, execution mode, device, and backend-contract inspection.
 -/
 
 @[expose] public section
 
-namespace TorchLean
+/-- Arithmetic semantics, execution mode, and device for a run. The record is defined with the
+Torch runtime; this is the name the public API uses, so user code never spells
+`Runtime.Autograd.Torch` to configure a run. -/
+abbrev TorchLean.Runtime.Config := Runtime.Autograd.Torch.Config
 
-export _root_.Runtime.Autograd.Torch (Options)
+namespace TorchLean
 
 namespace Runtime
 
-export _root_.Runtime.Autograd.Torch (Ops)
-export _root_.Runtime.Autograd.TorchLean (Program)
-export _root_.Runtime.Autograd.Torch (TensorTransfer)
-export _root_.Runtime.Autograd.Torch.TensorTransfer (readFloatTensor toFloatTensor)
+export Runtime.Autograd.Torch (Ops)
+export Runtime.Autograd.Model (Program)
+export Runtime.Autograd.Torch (TensorTransfer)
+export Runtime.Autograd.Torch.TensorTransfer (readFloatTensor toFloatTensor)
 
-open _root_.Spec
+open Spec TorchLean
 
 /--
 A shape-indexed handle to a value owned by a runtime program.
@@ -39,25 +46,23 @@ Unlike `Tensor`, a `ValueRef` does not contain tensor elements. It names an inte
 an eager session or typed graph and is valid only in the program that created it.
 -/
 abbrev ValueRef (m : Type → Type) (α : Type)
-    [Context α] [DecidableEq Shape] [Monad m] [Ops (m := m) (α := α)]
+    [TorchLean.Storage α] [Context α] [Monad m] [Ops (m := m) (α := α)]
     (shape : Shape) :=
-  _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) shape
+  Runtime.Autograd.Model.RefTy (m := m) (α := α) shape
 
-/-- Apply an affine map to the final axis, independently over every index in `leading`. -/
-def linear {α : Type} [Context α] [DecidableEq Shape]
+/-- Apply an affine map to the final axis, independently over every index in `batchShape`. -/
+def linear {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
-    (leading : List Nat := []) {inDim outDim : Nat}
-    (weight : ValueRef (m := m) (α := α) [outDim, inDim])
-    (bias : ValueRef (m := m) (α := α) [outDim])
-    (input : ValueRef (m := m) (α := α) (leading ++ [inDim])) :
-    m (ValueRef (m := m) (α := α) (leading ++ [outDim])) :=
-  by
-    let input' : ValueRef (m := m) (α := α)
-        ((Shape.ofList leading).concat [inDim]) := by
-      simpa only [Shape.ofList_append] using input
-    simpa only [Shape.ofList_append] using
-      (_root_.Runtime.Autograd.TorchLean.linearEach
-        (m := m) (α := α) (leadingShape := Shape.ofList leading) weight bias input')
+    (batchShape : Shape := []) {inputWidth outputWidth : Nat}
+    (weight : ValueRef (m := m) (α := α) [outputWidth, inputWidth])
+    (bias : ValueRef (m := m) (α := α) [outputWidth])
+    (input : ValueRef (m := m) (α := α) (batchShape.appendDim inputWidth)) :
+    m (ValueRef (m := m) (α := α) (batchShape.appendDim outputWidth)) := by
+  let input' : ValueRef (m := m) (α := α) (batchShape.concat [inputWidth]) := by
+    simpa only [Shape.appendDim_eq_concat] using input
+  simpa only [Shape.appendDim_eq_concat] using
+    Runtime.Autograd.Model.linearEach
+      (m := m) (α := α) (leadingShape := batchShape) weight bias input'
 
 /-!
 ## Operation-Polymorphic Programs
@@ -68,22 +73,27 @@ Ordinary models should use `nn` and `Trainer`; this lower-level surface is usefu
 verification programs, and graph-lowering tools.
 -/
 
-export _root_.Runtime.Autograd.Torch
+export Runtime.Autograd.Torch
   (const add sub mul scale abs sqrt clamp max min
    broadcastTo reshape reduceSum reduceMean select indexSelect scatterAdd
    matmul
-   relu silu gelu sigmoid tanh softplus exp log inv safeLog
+   relu silu gelu sigmoid tanh softplus exp sin cos log inv safeLog
    sum flatten mseLoss)
-export _root_.Runtime.Autograd.TorchLean
-  (mapEach maxPool avgPool smoothMaxPool layerNorm multiHeadAttention
+export Runtime.Autograd.Model
+  (mapLeading maxPool avgPool smoothMaxPool layerNorm multiHeadAttention
    multiHeadAttentionOutputBias conv convTranspose)
-export _root_.Runtime.Autograd.TorchLean.F (permute softmax logSoftmax)
+export Runtime.Autograd.Model.F (permute softmax logSoftmax)
 
-export _root_.Runtime.Autograd.Torch (ExecutionMode)
+export Runtime.Autograd.Torch (ExecutionMode)
 
 namespace ExecutionMode
 
-export _root_.Runtime.Autograd.Torch.ExecutionMode (eager typedGraph)
+export Runtime.Autograd.Torch.ExecutionMode (eager typedGraph)
+
+/-- Stable command-line spelling of an execution mode. -/
+def cliName : ExecutionMode → String
+  | .eager => "eager"
+  | .typedGraph => "typed-graph"
 
 /-- Parse the stable command-line spelling of an execution mode. -/
 def parse (value : String) : Except String ExecutionMode :=
@@ -112,15 +122,9 @@ end Device
 namespace BackendContracts
 
 /-- Plan operations under the runtime-selected backend-contract profile. -/
-def planReport (opts : Options) (ops : Array NN.Backend.BackendOp) : Except String String := do
-  let profile ← opts.effectiveBackendProfile
+def planReport (config : Config) (ops : Array NN.Backend.BackendOp) : Except String String := do
+  let profile ← config.effectiveBackendProfile
   profile.planReport ops
-
-/-- Print the selected backend capsules for operations. -/
-def printPlan (opts : Options) (ops : Array NN.Backend.BackendOp) : IO Unit := do
-  match planReport opts ops with
-  | .ok report => IO.println report
-  | .error msg => IO.println s!"kernel plan unavailable: {msg}"
 
 end BackendContracts
 

@@ -24,8 +24,8 @@ well-formedness assumption that each row admits at least one key.
 
 namespace NN.Proofs.Models.Attention
 
-open _root_.Spec
-open Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open scoped BigOperators
 
 noncomputable section
@@ -43,7 +43,7 @@ theorem scaledDotProductAttention_unmasked_weights_row_sum_one
     let scores := matMulSpec ctx.Q (swapAdjacentAxes ctx.K 0)
     let scaledScores := scaleSpec scores (1 / scale)
     let attentionWeights := Activation.softmaxSpec (α := ℝ) 1 scaledScores
-    Spec.Tensor.sumSpec (Spec.get attentionWeights i) = 1 := by
+    TorchLean.Tensor.sumSpec (Spec.get attentionWeights i) = 1 := by
   intro scale scores scaledScores attentionWeights
   simpa [attentionWeights] using
     (Proofs.sum_spec_softmax_spec_row (nQ := nQ) (nK := nK) (hK := hK)

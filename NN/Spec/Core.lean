@@ -12,7 +12,6 @@ public import NN.Spec.Core.Scalar
 public import NN.Spec.Core.Sequence
 public import NN.Spec.Core.Shape
 public import NN.Spec.Core.Tensor
-public import NN.Spec.Core.TensorGrad
 public import NN.Spec.Core.TensorOps
 public import NN.Spec.Core.TensorReductionShape
 public import NN.Spec.Core.Tensor.SomeTensor

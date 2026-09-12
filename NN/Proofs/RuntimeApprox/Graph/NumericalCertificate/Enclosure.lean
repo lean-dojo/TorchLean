@@ -6,13 +6,22 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Backend.Profile
-public import NN.Floats.Interval.IEEEExec32Soundness
 public import NN.IR.Graph
-public import NN.IR.Semantics
 public import NN.Proofs.Analysis.Softmax
-public import NN.Spec.Core.FloatInstances
-public import NN.Spec.Core.TensorOps
+public import NN.Floats.IEEEExec.Semantics.ERealSemantics
+public import NN.Floats.Interval.IEEEExec32AddSoundness
+public import NN.Floats.Interval.IEEEExec32DivSoundness
+public import NN.Floats.Interval.IEEEExec32MulSoundness
+public import NN.Backend.Profile -- shake: keep
+public import NN.Floats.Interval.IEEEExec32Soundness -- shake: keep
+public import NN.IR.Semantics -- shake: keep
+public import NN.Spec.Core.FloatInstances -- shake: keep
+public import NN.Spec.Core.TensorOps -- shake: keep
+public import NN.Floats.IEEEExec.Bridge.FP32.Compare -- shake: keep
+public import NN.Floats.IEEEExec.Bridge.FP32.Core -- shake: keep
+public import NN.Floats.IEEEExec.Bridge.FP32Total.Order -- shake: keep
+public import NN.Floats.IEEEExec.DirectedRoundingSoundness.SignedOps -- shake: keep
+public import NN.Floats.IEEEExec.Semantics.RealSemantics -- shake: keep
 
 /-!
 # Numerical certificate enclosures
@@ -31,7 +40,7 @@ namespace NumericalCertificate
 open NN
 open NN.Backend
 open NN.IR
-open Spec
+open Spec TorchLean
 open TorchLean.Floats.IEEE754
 
 /-! ## Raw and checked source assumptions -/
@@ -170,8 +179,8 @@ theorem inv_realEncloses {a : IEEE32Exec.Interval32} {x : Real}
 /-- Every scalar entry of a shape-indexed real tensor lies in one interval. -/
 def TensorEnclosed (interval : IEEE32Exec.Interval32) :
     {shape : Shape} -> Tensor Real shape -> Prop
-  | .scalar, .scalar value => RealEncloses interval value
-  | .dim _ _, .dim values => ∀ i, TensorEnclosed interval (values i)
+  | .scalar, tensor => RealEncloses interval tensor.item
+  | .dim _ _, tensor => ∀ i, TensorEnclosed interval (tensor.unstack i)
 
 /-- The exact executable interval `[0,1]`. -/
 def unitInterval : IEEE32Exec.Interval32 :=
@@ -190,15 +199,10 @@ def nonnegativeEndpoint (x : IEEE32Exec) : Bool :=
 theorem softmaxVec_tensor_enclosed {n : Nat}
     (input : Tensor Real [Nat.succ n]) :
     TensorEnclosed unitInterval (Activation.softmaxVecSpec input) := by
-  cases hsoft : Activation.softmaxVecSpec input with
-  | dim values =>
-      intro i
-      cases hvalue : values i with
-      | scalar value =>
-          have h := Proofs.softmax_vec_spec_mem_unitInterval input i
-          rw [hsoft] at h
-          simpa [TensorEnclosed, RealEncloses, unitInterval, Spec.Tensor.getScalar, hvalue,
-            IEEE32Exec.Interval32.toReal_posOne] using h
+  intro i
+  have h := Proofs.softmax_vec_spec_mem_unitInterval input i
+  simpa [TensorEnclosed, RealEncloses, unitInterval, Spec.get, TorchLean.Tensor.getScalar,
+    IEEE32Exec.Interval32.toReal_posOne] using h
 
 /-- Sound real enclosure for the canonical ReLU interval transfer. -/
 theorem relu_realEncloses {a : IEEE32Exec.Interval32} {x : Real}
@@ -310,14 +314,12 @@ theorem tensor_map_enclosed
   induction shape with
   | scalar =>
       intro x hx
-      cases x with
-      | scalar value => exact sound hx
+      exact sound hx
   | dim n shape ih =>
-      intro x hx
-      cases x with
-      | dim values =>
-          intro i
-          exact ih (x := values i) (hx i)
+      intro x hx i
+      rw [show (Tensor.mapSpec op x).unstack i = Tensor.mapSpec op (x.unstack i) by
+        exact (TorchLean.Tensor.Internal.Rep.map_unstack op x i).symm]
+      exact ih (x := x.unstack i) (hx i)
 
 /-- Tensor-level soundness of the ReLU interval transfer. -/
 theorem tensor_relu_enclosed {shape : Shape} {x : Tensor Real shape}
@@ -352,18 +354,13 @@ theorem tensor_map2_enclosed
   induction shape with
   | scalar =>
       intro x y hx hy
-      cases x with
-      | scalar value =>
-          cases y with
-          | scalar other => exact sound hx hy
+      exact sound hx hy
   | dim n shape ih =>
-      intro x y hx hy
-      cases x with
-      | dim values =>
-          cases y with
-          | dim others =>
-              intro i
-              exact ih (x := values i) (y := others i) (hx i) (hy i)
+      intro x y hx hy i
+      rw [show (Tensor.map2Spec op x y).unstack i =
+          Tensor.map2Spec op (x.unstack i) (y.unstack i) by
+        exact (TorchLean.Tensor.Internal.Rep.zipWith_unstack op x y i).symm]
+      exact ih (x := x.unstack i) (y := y.unstack i) (hx i) (hy i)
 
 /-- Tensor-level soundness of outward-rounded interval addition. -/
 theorem tensor_add_enclosed {shape : Shape} {x y : Tensor Real shape}
@@ -397,20 +394,20 @@ theorem tensor_mul_enclosed {shape : Shape} {x y : Tensor Real shape}
 /-- Executable check that every binary32 tensor entry lies in an interval. -/
 def tensorWithinRange (interval : IEEE32Exec.Interval32) :
     {shape : Shape} -> Tensor IEEE32Exec shape -> Bool
-  | .scalar, .scalar value =>
-      IEEE32Exec.isFinite value &&
-        (IEEE32Exec.Interval32.leB interval.lo value &&
-          IEEE32Exec.Interval32.leB value interval.hi)
-  | .dim n _, .dim values =>
-      (List.finRange n).all (fun i => tensorWithinRange interval (values i))
+  | .scalar, tensor =>
+      IEEE32Exec.isFinite tensor.item &&
+        (IEEE32Exec.Interval32.leB interval.lo tensor.item &&
+          IEEE32Exec.Interval32.leB tensor.item interval.hi)
+  | .dim n _, tensor =>
+      (List.finRange n).all (fun i => tensorWithinRange interval (tensor.unstack i))
 
 /-- Proposition expressed by `tensorWithinRange`. -/
 def IEEETensorEnclosed (interval : IEEE32Exec.Interval32) :
     {shape : Shape} -> Tensor IEEE32Exec shape -> Prop
-  | .scalar, .scalar value =>
-      IEEE32Exec.isFinite value = true ∧
-        IEEE32Exec.le interval.lo value ∧ IEEE32Exec.le value interval.hi
-  | .dim _ _, .dim values => ∀ i, IEEETensorEnclosed interval (values i)
+  | .scalar, tensor =>
+      IEEE32Exec.isFinite tensor.item = true ∧
+        IEEE32Exec.le interval.lo tensor.item ∧ IEEE32Exec.le tensor.item interval.hi
+  | .dim _ _, tensor => ∀ i, IEEETensorEnclosed interval (tensor.unstack i)
 
 /-- The executable tensor range check is exact for the IEEE comparison semantics. -/
 theorem tensorWithinRange_eq_true_iff (interval : IEEE32Exec.Interval32)
@@ -418,13 +415,9 @@ theorem tensorWithinRange_eq_true_iff (interval : IEEE32Exec.Interval32)
     tensorWithinRange interval tensor = true <-> IEEETensorEnclosed interval tensor := by
   induction shape with
   | scalar =>
-      cases tensor with
-      | scalar value =>
-          simp [tensorWithinRange, IEEETensorEnclosed, leB_eq_true_iff]
+      simp [tensorWithinRange, IEEETensorEnclosed, leB_eq_true_iff]
   | dim n shape ih =>
-      cases tensor with
-      | dim values =>
-          simp [tensorWithinRange, IEEETensorEnclosed, List.all_eq_true, ih]
+      simp [tensorWithinRange, IEEETensorEnclosed, List.all_eq_true, ih]
 
 /-! ## From checked ranges to explicit error bounds -/
 
@@ -433,8 +426,8 @@ interval. Unlike `IEEETensorEnclosed`, this predicate talks directly about the r
 the approximation layer. -/
 def DecodedTensorEnclosed (interval : IEEE32Exec.Interval32) :
     {shape : Shape} -> Tensor IEEE32Exec shape -> Prop
-  | .scalar, .scalar value => RealEncloses interval (IEEE32Exec.toReal value)
-  | .dim _ _, .dim values => ∀ i, DecodedTensorEnclosed interval (values i)
+  | .scalar, tensor => RealEncloses interval (IEEE32Exec.toReal tensor.item)
+  | .dim _ _, tensor => ∀ i, DecodedTensorEnclosed interval (tensor.unstack i)
 
 /-- A successful IEEE range check decodes to an ordinary real enclosure. Finiteness is an explicit
 part of `IEEETensorEnclosed`, so this theorem never assigns a real meaning to NaN or infinity. -/
@@ -446,25 +439,20 @@ theorem decodedTensorEnclosed_of_ieee {interval : IEEE32Exec.Interval32}
   induction shape with
   | scalar =>
       intro tensor htensor
-      cases tensor with
-      | scalar value =>
-          exact ⟨toReal_le_toReal_of_le valid.1 htensor.1 htensor.2.1,
-            toReal_le_toReal_of_le htensor.1 valid.2.1 htensor.2.2⟩
+      exact ⟨toReal_le_toReal_of_le valid.1 htensor.1 htensor.2.1,
+        toReal_le_toReal_of_le htensor.1 valid.2.1 htensor.2.2⟩
   | dim n shape ih =>
-      intro tensor htensor
-      cases tensor with
-      | dim values =>
-          intro i
-          exact ih (htensor i)
+      intro tensor htensor i
+      exact ih (htensor i)
 
 /-- Pointwise absolute error between a real specification tensor and an executable binary32
 tensor. The shape index is shared, so no runtime shape cast is hidden in the relation. -/
 def TensorErrorLe (eps : Real) :
     {shape : Shape} -> Tensor Real shape -> Tensor IEEE32Exec shape -> Prop
-  | .scalar, .scalar exact, .scalar computed =>
-      |IEEE32Exec.toReal computed - exact| <= eps
-  | .dim _ _, .dim exact, .dim computed =>
-      ∀ i, TensorErrorLe eps (exact i) (computed i)
+  | .scalar, exact, computed =>
+      |IEEE32Exec.toReal computed.item - exact.item| <= eps
+  | .dim _ _, exact, computed =>
+      ∀ i, TensorErrorLe eps (exact.unstack i) (computed.unstack i)
 
 /-- Width of a finite executable interval, interpreted in the reals. -/
 noncomputable def intervalWidth (interval : IEEE32Exec.Interval32) : Real :=
@@ -491,21 +479,12 @@ theorem tensor_error_le_width_of_enclosed {interval : IEEE32Exec.Interval32} :
   induction shape with
   | scalar =>
       intro exact computed hexact hcomputed
-      cases exact with
-      | scalar x =>
-          cases computed with
-          | scalar y =>
-              simp only [TensorErrorLe, intervalWidth]
-              apply (abs_le).2
-              constructor <;> linarith [hexact.1, hexact.2, hcomputed.1, hcomputed.2]
+      simp only [TensorErrorLe, intervalWidth]
+      apply (abs_le).2
+      constructor <;> linarith [hexact.1, hexact.2, hcomputed.1, hcomputed.2]
   | dim n shape ih =>
-      intro exact computed hexact hcomputed
-      cases exact with
-      | dim exactValues =>
-          cases computed with
-          | dim computedValues =>
-              intro i
-              exact ih (hexact i) (hcomputed i)
+      intro exact computed hexact hcomputed i
+      exact ih (hexact i) (hcomputed i)
 
 /-- A successful executable range check and a real enclosure proof yield a concrete pointwise
 error bound. This theorem is the tensor-level core used by graph-wide numerical certificates. -/
@@ -531,7 +510,8 @@ def checkSources (sources : Array SourceRange) : Except String (Array CheckedSou
         { source with valid := (validInterval_eq_true_iff source.enclosure).mp h }
       seen := seen.push source.nodeId
     else
-      throw s!"numerical certificate: source range for node {source.nodeId} is not finite and ordered"
+      throw (s!"numerical certificate: source range for node {source.nodeId} is not finite " ++
+        "and ordered")
   pure checked
 
 /-- Find the checked assumption for a source node. -/
@@ -553,7 +533,8 @@ an exporter may have attached a valid range to the wrong node id without noticin
 row to be consumed gives source arrays one canonical interpretation and catches that error before
 range propagation begins.
 -/
-def checkSourceOwnership (graph : Graph) (sources : Array CheckedSourceRange) : Except String Unit :=
+def checkSourceOwnership (graph : Graph) (sources : Array CheckedSourceRange) :
+    Except String Unit :=
   for source in sources do
     match graph.nodes[source.nodeId]? with
     | none =>
@@ -562,7 +543,8 @@ def checkSourceOwnership (graph : Graph) (sources : Array CheckedSourceRange) : 
         if opUsesSourceRange node.kind then
           pure ()
         else
-          throw s!"numerical certificate: node {source.nodeId} ({node.kind.describe}) does not consume a source range"
+          throw (s!"numerical certificate: node {source.nodeId} ({node.kind.describe}) does not " ++
+            "consume a source range")
 
 end NumericalCertificate
 end RuntimeApprox

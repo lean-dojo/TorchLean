@@ -10,11 +10,12 @@ public import NN.Examples.Models.RL.PPOCartPole
 public import NN.Examples.Models.RL.PPOGridWorld
 public import NN.Examples.Models.RL.PPOPongRam
 public import NN.Examples.Models.RL.DQNReplay
+public import NN.Examples.Models.RL.Views
 
 /-!
 # RL Model Examples
 
-Executable RL trainers. Viewer/artifact companions live under `NN.Examples.RL`.
+Executable RL trainers and their editor-side artifact views.
 -/
 
 @[expose] public section

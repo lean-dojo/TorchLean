@@ -21,7 +21,7 @@ their SSA/DAG representation.
 namespace NN
 namespace GraphSpec
 
-open _root_.Spec
+open Spec TorchLean
 
 namespace Interp
 
@@ -29,8 +29,8 @@ namespace Interp
 def spec
     {ps : List Shape} {σ τ : Shape}
     (g : Chain ps σ τ)
-    {α : Type 0} [Context α] :
-    TorchLean.TensorPack α ps → Spec.Tensor α σ → Spec.Tensor α τ :=
+    {α : Type 0} [TorchLean.Storage α] [Context α] :
+    TorchLean.TensorPack α ps → TorchLean.Tensor α σ → TorchLean.Tensor α τ :=
   fun params x =>
     match g with
     | .id _ => x

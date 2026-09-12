@@ -6,15 +6,17 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Data.Synthetic
 public import NN.API.Trainer.Core
-public import NN.API.Trainer.Dataset
-public import NN.API.CLI
+public import NN.API.Trainer.Scheduler
+public import NN.Runtime.Training.Log
+public import NN.API.Trainer.Dataset -- shake: keep
 
 /-!
-# Training Options
+# Training Configuration
 
-Datasets, probes, runtime flag parsing, and per-training options for the trainer API.
+Probes, run-configuration helpers, and per-training options for the trainer API. Command-line
+parsing is available separately from `NN.API.CLI.Trainer`, keeping process flags out of these
+configuration records.
 -/
 
 @[expose] public section
@@ -23,47 +25,50 @@ namespace TorchLean
 
 namespace Trainer
 
-/-- A small input probe printed before and after training. -/
-structure Probe (inputShape : List Nat) where
+/-- A small input probe evaluated at the start and end of training. -/
+structure Probe (σ : Shape) where
   /-- Human-facing probe name. -/
   name : String
   /-- Human-facing input description. -/
   inputText : String := ""
-  /-- Runtime-polymorphic input tensor. -/
-  input : {α : Type} → [_root_.Context α] → [Runtime.FromFloat α] → Tensor α inputShape
+  /-- Concrete input converted to the selected runtime arithmetic when the probe runs. -/
+  input : Tensor Float σ
   /-- Optional expected value shown beside the prediction. -/
   expected : Option String := none
 
 namespace Probe
 
-/-- Probe built from a concrete `Float` tensor. -/
-def ofFloatTensor {inputShape : List Nat} (name : String) (x : Tensor Float inputShape)
+/--
+Build a named prediction probe from a tensor.
+
+Example:
+```lean
+-- Probes print a named prediction before and after the run, so training shows its movement
+-- without a separate evaluation script.
+def probes : Array (Trainer.Probe [2]) :=
+  #[Trainer.Probe.tensor "heldout" [0.25, -0.75] (inputText := "x = (0.25, -0.75)")]
+```
+-/
+def tensor {σ : Shape} (name : String) (input : Tensor Float σ)
     (inputText : String := "") (expected : Option String := none) :
-    Probe inputShape :=
+    Probe σ :=
   { name := name
     inputText := inputText
-    input := fun {α} _ _ =>
-      TorchLean.Tensor.map (_root_.TorchLean.Runtime.ofFloat (α := α)) x
+    input := input
     expected := expected }
 
 end Probe
 
 namespace RunConfig
 
-/-- Override the scalar semantics for this run configuration. -/
-def withScalar (run : RunConfig) (scalar : Runtime.ScalarMode) : RunConfig :=
-  { run with scalar := scalar }
-
-/-- Override the execution mode for this run configuration. -/
-def withExecution (run : RunConfig) (execution : Runtime.ExecutionMode) : RunConfig :=
-  { run with execution := execution }
-
 /-- Override the execution device using a maintained backend profile. -/
 def withDevice (run : RunConfig) (device : Runtime.Device) : Except String RunConfig := do
-  match _root_.NN.Backend.BackendProfile.maintainedForDevice? device with
+  match NN.Backend.BackendProfile.maintainedForDevice? device with
   | some _ => pure { run with device := device, backendProfile? := none }
   | none =>
-      throw s!"device `{device.cliName}` has no maintained runtime profile; provide an explicit backend profile"
+      throw <|
+        s!"device `{device.cliName}` has no maintained runtime profile; " ++
+          "provide an explicit backend profile"
 
 /--
 Select a complete backend contract profile.
@@ -72,287 +77,91 @@ The profile carries the device, provider preference, assurance policy, VJP owner
 registry together. It can select, for example, LibTorch forward execution with a TorchLean-owned
 backward pass.
 -/
-def withBackendProfile (run : RunConfig) (profile : _root_.NN.Backend.BackendProfile) : RunConfig :=
+def withBackendProfile (run : RunConfig) (profile : NN.Backend.BackendProfile) : RunConfig :=
   { run with device := profile.policy.device, backendProfile? := some profile }
 
 /-- Enable or disable first-use backend capsule reporting. -/
 def withBackendReport (run : RunConfig) (enabled : Bool := true) : RunConfig :=
   { run with showBackend := enabled }
 
-/-- Execute operations eagerly while building a dynamic tape. -/
-def eager (run : RunConfig) : RunConfig :=
-  run.withExecution .eager
-
-/-- Record once and reuse the shape-indexed typed SSA graph. -/
-def typedGraph (run : RunConfig) : RunConfig :=
-  run.withExecution .typedGraph
-
-/-- Run on CPU. -/
-def cpu (run : RunConfig) : RunConfig :=
-  { run with device := .cpu, backendProfile? := none }
-
-/-- Run on CUDA. -/
-def cuda (run : RunConfig) : RunConfig :=
-  { run with device := .cuda, backendProfile? := none }
-
-/-- Apply parsed runtime/device options to a persistent trainer run configuration. -/
-def withRuntimeOptions (run : RunConfig) (opts : Options) : RunConfig :=
+/-- Apply runtime execution settings to a persistent trainer run configuration. -/
+def withRuntime (run : RunConfig) (runtime : Runtime.Config) : RunConfig :=
   { run with
-      execution := opts.execution
-      device := opts.device
-      backendProfile? := opts.backendProfile?
-      showBackend := opts.showBackend }
+      execution := runtime.execution
+      device := runtime.device
+      backendProfile? := runtime.backendProfile?
+      showBackend := runtime.showBackend }
 
-/-- Build a run configuration from parsed runtime flags and trainer choices. -/
-def ofRuntimeOptions (opts : Options) (base : RunConfig := {}) : RunConfig :=
-  base.withRuntimeOptions opts
+/-- Build a trainer run configuration from a runtime configuration and trainer choices. -/
+def fromRuntime (runtime : Runtime.Config) (base : RunConfig := {}) : RunConfig :=
+  base.withRuntime runtime
 
-/-- Convert a run configuration to the runtime `Options` record. -/
-def toRuntimeOptions (run : RunConfig) : Options :=
+/-- Execution settings carried by this trainer configuration. -/
+def executionSettings (run : RunConfig) : Runtime.Config :=
   { execution := run.execution
     device := run.device
     backendProfile? := run.backendProfile?
     showBackend := run.showBackend }
 
-/-- CLI arguments that reproduce a scalar-semantics choice. -/
-def scalarArgs : Runtime.ScalarMode → List String
-  | .float32 => ["--scalar", "float32"]
-  | .ieee32Exec => ["--scalar", "ieee32-exec"]
-  | .complex64 => ["--scalar", "complex64"]
-
-/-- CLI arguments that reproduce an execution-mode choice. -/
-def executionArgs : Runtime.ExecutionMode → List String
-  | .eager => ["--execution", "eager"]
-  | .typedGraph => ["--execution", "typed-graph"]
-
-/-- CLI arguments that reproduce a device choice. -/
-def deviceArgs : Runtime.Device → List String
-  | .cpu => ["--device", "cpu"]
-  | .cuda => ["--device", "cuda"]
-  | .rocm => ["--device", "rocm"]
-  | .metal => ["--device", "metal"]
-  | .wasm => ["--device", "wasm"]
-  | .tpu => ["--device", "tpu"]
-  | .trainium => ["--device", "trainium"]
-  | .custom => ["--device", "custom"]
-  | .external => ["--device", "external"]
-
-/-- Parse CLI runtime flags into persistent trainer run settings. -/
-def parseRuntimeArgs (args : List String) (base : RunConfig := {}) :
-    Except String (RunConfig × List String) := do
-  let (exec, rest) ←
-    TorchLean.Module.ExecConfig.parseWithScalar args base.scalar
-  if exec.scalar == .complex64 then
-    throw <|
-      "TorchLean.Trainer: supervised training supports --scalar float32 or ieee32-exec; " ++
-        "complex64 requires an explicit complex-valued training API"
-  let _ ← match _root_.NN.Backend.BackendProfile.maintainedForDevice? exec.device with
-    | some profile => pure profile
-    | none =>
-        throw s!"device `{exec.device.cliName}` has no maintained runtime profile; use a programmatic backend profile"
-  pure
-    ({ base with
-        scalar := exec.scalar
-        execution := exec.execution
-        device := exec.device
-        backendProfile? := none
-        showBackend := exec.showBackend },
-      rest)
-
-/-- Resolve runtime flags into a `Trainer.RunConfig` and reject unused trailing arguments. -/
-def parseRuntimeArgsOrThrow
-    (exeName : String) (args : List String) (base : RunConfig := {}) :
-    IO RunConfig := do
-  let (cfg, rest) ←
-    match parseRuntimeArgs args base with
-    | .ok out => pure out
-    | .error msg => throw <| IO.userError msg
-  CLI.requireNoArgs exeName rest
-  pure cfg
-
-/-- Render this persistent run configuration as standard runtime CLI flags. -/
-def toArgs (run : RunConfig) : List String :=
-  scalarArgs run.scalar ++
-  executionArgs run.execution ++
-  deviceArgs run.device ++
-  (if run.showBackend then ["--show-backend"] else [])
+/-- Attach a training objective and initialization seed to these run settings. -/
+def forObjective {σ τ : Shape}
+    (run : RunConfig)
+    (objective : Objective τ := .meanSquaredError)
+    (seed : Nat := 0) :
+    Config σ τ :=
+  { run with objective := objective, seed := seed }
 
 end RunConfig
 
-namespace Config
-
-/-- Build trainer options from an already parsed runtime configuration. -/
-def fromRunConfig {inputShape outputShape : List Nat}
-    (run : RunConfig) (task : Task outputShape := .regression) (seed : Nat := 0) :
-    Config inputShape outputShape :=
-  { task := task
-    seed := seed
-    optimizer := run.optimizer
-    scalar := run.scalar
-    execution := run.execution
-    device := run.device
-    backendProfile? := run.backendProfile?
-    showBackend := run.showBackend }
-
-end Config
-
-namespace Internal
-
-namespace SelectedTask
-
-/-- Run a selected supervised task under either public real scalar backend. -/
-def withRunnerFor {inputShape outputShape : List Nat} {β : Type}
-    (selected : SelectedTask inputShape outputShape) (run : RunConfig)
-    (float32 : TorchLean.Trainer.Manual.Runner Float32 selected.task → IO β)
-    (ieee32Exec :
-      TorchLean.Trainer.Manual.Runner TorchLean.Floats.IEEE32Exec selected.task → IO β) :
-    IO β := do
-  let opts := run.toRuntimeOptions
-  if opts.usesCuda && run.scalar != .float32 then
-    throw <| IO.userError
-      "TorchLean.Trainer: CUDA execution currently requires --scalar float32"
-  match run.scalar with
-  | .float32 =>
-      let runner ← Manual.Runner.instantiate
-        (task := selected.task) (α := Float32) (opts := opts)
-      float32 runner
-  | .ieee32Exec =>
-      let runner ← Manual.Runner.instantiate
-        (task := selected.task) (α := TorchLean.Floats.IEEE32Exec) (opts := opts)
-      ieee32Exec runner
-  | .complex64 =>
-      throw <| IO.userError <|
-        "TorchLean.Trainer: supervised training supports real scalar backends; " ++
-          "complex64 requires an explicit complex-valued training API"
-
-/-- Run a selected task with the scalar capabilities shared by trainer implementations. -/
-def withRunner {inputShape outputShape : List Nat} {β : Type}
-    (selected : SelectedTask inputShape outputShape) (run : RunConfig)
-    (k : {α : Type} → [_root_.Context α] → [DecidableEq Shape] → [ToString α] →
-      [Runtime.FromFloat α] → [Runtime.TensorTransfer α] →
-      Manual.Runner α selected.task → IO β) : IO β :=
-  withRunnerFor selected run
-    (fun runner => k (α := Float32) runner)
-    (fun runner => k (α := TorchLean.Floats.IEEE32Exec) runner)
-
-end SelectedTask
-
 /--
-Run a callback under runtime scalar semantics that can also be read back to host `Float` tensors.
+Per-training-call options for the trainer API.
 
-Trainer methods return ordinary `Float` predictions for display and downstream scripts, even
-when the model itself runs under an executable scalar such as `IEEE32Exec`. This dispatcher carries
-the extra scalar-readback evidence that `ScalarMode.withRuntime` intentionally does not require.
+`steps` has no default so that `trainer.train data {}` cannot silently perform a single update.
+
+Example:
+```lean
+-- `steps` has no default on purpose: how long to train is not a library's decision.
+def options : Trainer.TrainOptions :=
+  { steps := 200
+    logEvery := 25
+    saveCheckpoint? := some "checkpoints/mlp.state" }
+```
 -/
-def withReadableRuntime {β : Type}
-    (scalar : Runtime.ScalarMode)
-    (k : ∀ {α : Type}, [_root_.Context α] → [DecidableEq Shape] → [ToString α] →
-      [Runtime.FromFloat α] →
-      [Runtime.TensorTransfer α] → IO β) :
-    IO (Except String β) := do
-  match scalar with
-  | .float32 =>
-      let out ← k (α := Float32)
-      pure (.ok out)
-  | .ieee32Exec =>
-      let out ← k (α := TorchLean.Floats.IEEE32Exec)
-      pure (.ok out)
-  | .complex64 =>
-      pure (.error
-        "complex64 is not supported by the real-valued Trainer result API")
-
-end Internal
-
-/-- Per-training-call options for the trainer API. -/
 structure TrainOptions where
   /-- Number of optimizer updates. -/
-  steps : Nat := 1
+  steps : Nat
   /--
-  Number of dataset items included in one optimizer update.
+  Number of dataset items whose gradients are accumulated into one optimizer update.
 
-  For an ordinary sample dataset, each item is one example. A dataset made by `Data.batchDataset`
-  already stores fixed-size tensor minibatches as its items; the usual vectorized path therefore
-  keeps this option at `1`. Values above one accumulate gradients from several such items before
-  updating.
+  The items are processed one after another and their gradients are averaged at the same
+  parameter point; this is gradient accumulation, not a vectorized minibatch. To run a vectorized
+  minibatch, give the model an explicit batch axis and build the dataset with `Data.batch`, whose
+  items are already fixed-size tensor minibatches, then keep this option at `1`.
   -/
-  batchSize : Nat := 1
+  samplesPerStep : Nat := 1
   /-- Optional learning-rate schedule, indexed by completed optimizer updates. -/
-  scheduler : Option _root_.TorchLean.Trainer.Scheduler.Config := none
+  scheduler : Option TorchLean.Trainer.Scheduler.Config := none
   /-- Print step losses every `logEvery` updates; `0` disables stdout step logging. -/
   logEvery : Nat := 0
   /-- Sample CUDA allocator state every this many completed updates; `0` disables sampling. -/
-  cudaMemWatch : Nat := 0
+  cudaMemorySampleEvery : Nat := 0
   /-- Optional TrainLog artifact destination. Use `.disabled` for stdout-only runs. -/
-  log : Training.LogDestination := .disabled
+  logDestination : Training.LogDestination := .disabled
   /-- Title used when writing a TrainLog artifact. -/
-  title : String := "Training"
+  logTitle : String := "Training"
   /-- Free-form notes attached to the TrainLog artifact. -/
-  notes : Array String := #[]
-  /-- Optional model-state checkpoint loaded before training. -/
+  logNotes : Array String := #[]
+  /-- Optional model-state checkpoint loaded before training; optimizer and schedule start fresh. -/
   loadCheckpoint? : Option System.FilePath := none
   /-- Optional model-state checkpoint written after training. -/
   saveCheckpoint? : Option System.FilePath := none
 
 namespace TrainOptions
 
-/-- Start training options with a fixed number of optimizer steps. -/
-def forSteps (count : Nat) : TrainOptions :=
-  { steps := count }
-
-/-- Override stdout step logging cadence. -/
-def withLogEvery (opts : TrainOptions) (logEvery : Nat) : TrainOptions :=
-  { opts with logEvery := logEvery }
-
-/-- Override the CUDA allocator sampling cadence. -/
-def withCudaMemWatch (opts : TrainOptions) (cudaMemWatch : Nat) : TrainOptions :=
-  { opts with cudaMemWatch := cudaMemWatch }
-
-/-- Override the requested minibatch size. -/
-def withBatchSize (opts : TrainOptions) (batchSize : Nat) : TrainOptions :=
-  { opts with batchSize := batchSize }
-
-/-- Apply a learning-rate schedule during this training call. -/
-def withScheduler
-    (opts : TrainOptions) (scheduler : _root_.TorchLean.Trainer.Scheduler.Config) : TrainOptions :=
-  { opts with scheduler := some scheduler }
-
-/-- Run with the optimizer's fixed learning rate. -/
-def withoutScheduler (opts : TrainOptions) : TrainOptions :=
-  { opts with scheduler := none }
-
-/-- Override the training-log destination. -/
-def withLog (opts : TrainOptions) (log : Training.LogDestination) : TrainOptions :=
-  { opts with log := log }
-
-/-- Disable TrainLog artifact writing for a training call that will write a richer custom artifact later. -/
-def disableLog (opts : TrainOptions) : TrainOptions :=
-  { opts with log := .disabled }
-
-/-- Override the training-log title. -/
-def withTitle (opts : TrainOptions) (title : String) : TrainOptions :=
-  { opts with title := title }
-
-/-- Override the training-log notes. -/
-def withNotes (opts : TrainOptions) (notes : Array String) : TrainOptions :=
-  { opts with notes := notes }
-
-/-- Load a model-state checkpoint before training. -/
-def withLoadCheckpoint (opts : TrainOptions) (path : System.FilePath) : TrainOptions :=
-  { opts with loadCheckpoint? := some path }
-
-/-- Save a model-state checkpoint after training. -/
-def withSaveCheckpoint (opts : TrainOptions) (path : System.FilePath) : TrainOptions :=
-  { opts with saveCheckpoint? := some path }
-
-/-- Lower the public training options to the manual runtime training config. -/
-def toTrainConfig (opts : TrainOptions) (optimizer : optim.Optimizer) :
-    TorchLean.Trainer.Manual.TrainConfig :=
-  { steps := opts.steps
-    batchSize := opts.batchSize
-    optimizer := optimizer
-    scheduler := opts.scheduler
-    logEvery := opts.logEvery
-    cudaMemWatch := opts.cudaMemWatch }
+/-- Reject option combinations that cannot describe a training run. -/
+def validate (options : TrainOptions) : Except String Unit := do
+  unless options.samplesPerStep > 0 do
+    throw "training: samplesPerStep must be positive"
 
 end TrainOptions
 

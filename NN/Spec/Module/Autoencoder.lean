@@ -21,9 +21,9 @@ This file adds the `Spec.Module` wrapper so it can be composed with other module
 
 namespace Spec.Module
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Autoencoder module specification following `Spec.Module`. -/
 def autoencoder {inputDim hiddenDim : Nat} (m : AutoencoderSpec α inputDim hiddenDim) :

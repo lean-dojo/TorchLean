@@ -24,17 +24,25 @@ separate structured-kernel layer.
 
 Reference: Gu, Goel, Ré. "Efficiently Modeling Long Sequences with Structured State Spaces",
 ICLR 2022.
+
+## Implementation status
+
+No API builder implements this layer; the `nn.*` builders have no S4 layer. The relating theorem is
+`diagonalS4_runArray_append_outputs_prefix` in `NN/MLTheory/Proofs/StateSpace/MambaCausality.lean`,
+which proves that extending the input stream preserves earlier outputs; it rests on the scan
+algebra in `NN/MLTheory/Proofs/StateSpace/Scan.lean`.
 -/
 
 @[expose] public section
 
 namespace Models
 
-open Spec
-open NN.Spec.Dynamics
+open Spec TorchLean
+open Spec.Dynamics
 
 /-- Parameters for a diagonal S4-style sequence layer. -/
-structure DiagonalS4Spec (α : Type) (inputDim stateDim outputDim : Nat) where
+structure DiagonalS4Spec (α : Type) [TorchLean.Storage α]
+    (inputDim stateDim outputDim : Nat) where
   /-- Input projection from token/features into SSM state channels. -/
   inProj : Tensor α [inputDim, stateDim]
   /-- Output projection from SSM channels to token/features. -/
@@ -44,7 +52,7 @@ structure DiagonalS4Spec (α : Type) (inputDim stateDim outputDim : Nat) where
 
 namespace DiagonalS4Spec
 
-variable {α : Type} [Add α] [Mul α] [Zero α]
+variable {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
 variable {inputDim stateDim outputDim : Nat}
 
 /-- Project an input token into state channels. -/
@@ -73,6 +81,7 @@ def runArray (m : DiagonalS4Spec α inputDim stateDim outputDim)
     Tensor α [stateDim] × Array (Tensor α [outputDim]) :=
   Spec.scanArray m.step h0 xs
 
+/-- An empty token sequence leaves the S4 hidden state untouched and emits nothing. -/
 @[simp] theorem runArray_empty (m : DiagonalS4Spec α inputDim stateDim outputDim)
     (h0 : Tensor α [stateDim]) :
     m.runArray h0 #[] = (h0, #[]) := by

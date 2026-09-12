@@ -6,10 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.MeasureTheory.Measure.Prod
-public import Mathlib.MeasureTheory.Measure.Typeclasses.Probability
 public import Mathlib.Probability.Distributions.Gaussian.Multivariate
-public import Mathlib.Probability.Kernel.Composition.Prod
+-- Fernique's theorem (`IsGaussian.integrable_id`) is only needed inside the proof of
+-- `integral_id_forwardNoising`, so it stays a private import: none of our statements mention it.
+import Mathlib.Probability.Distributions.Gaussian.Fernique
 
 /-!
 # Diffusion forward process: Gaussian noising
@@ -27,6 +27,14 @@ Main definitions:
 Main facts:
 * `forwardNoising` is Gaussian (`ProbabilityTheory.IsGaussian`), hence a probability measure.
 * `forwardKernel` is a Markov kernel (`ProbabilityTheory.IsMarkovKernel`).
+* the step has mean `a • x` (`integral_id_forwardNoising`) and isotropic noise of scale `b`
+  (`variance_dual_forwardNoising`).
+
+A note on why the moments get their own theorems: `IsGaussian` says the law is Gaussian, not *which*
+Gaussian it is. Anything that reasons about a DDPM noise schedule needs the parameters, so we record
+the first moment and the dual form of the covariance here instead of asking every caller to redo the
+same pushforward computation. Reference for the schedule these parameters feed:
+Ho, Jain, and Abbeel, *Denoising Diffusion Probabilistic Models*, NeurIPS 2020.
 -/
 
 @[expose] public section
@@ -57,11 +65,12 @@ def forwardNoising (a b : ℝ) (x : E) : Measure E :=
 /--
 The two-step definition of `forwardNoising` is equal to one direct affine pushforward.
 
-The definition is written in stages so typeclass inference can see a Gaussian pushforward through a
-linear map followed by translation; this lemma is the cleaner formula downstream proofs usually want.
+The definition is written in stages so typeclass inference can see a Gaussian pushforward through
+a linear map followed by translation; this lemma is the cleaner formula downstream proofs usually
+want.
 -/
 @[simp]
-lemma forwardNoising_eq_map (a b : ℝ) (x : E) :
+theorem forwardNoising_eq_map (a b : ℝ) (x : E) :
     forwardNoising (E := E) a b x =
       (ProbabilityTheory.stdGaussian E).map (fun z ↦ a • x + b • z) := by
   unfold forwardNoising
@@ -84,8 +93,52 @@ instance (a b : ℝ) (x : E) : IsProbabilityMeasure (forwardNoising (E := E) a b
 
 /-- The explicit total-mass theorem for the forward-noising measure. -/
 @[simp]
-lemma forwardNoising_univ (a b : ℝ) (x : E) : forwardNoising (E := E) a b x Set.univ = 1 := by
+theorem forwardNoising_univ (a b : ℝ) (x : E) : forwardNoising (E := E) a b x Set.univ = 1 := by
   simpa using (measure_univ : forwardNoising (E := E) a b x Set.univ = 1)
+
+/--
+The mean of one forward-noising step is the scaled clean state:
+
+`E[x'] = a • x`.
+
+The noise term contributes nothing because the standard Gaussian is centred
+(`ProbabilityTheory.integral_id_stdGaussian`), so all that survives the pushforward is the constant
+`a • x`. Integrability of the identity under a Gaussian measure comes from Fernique's theorem, which
+Mathlib exposes as `ProbabilityTheory.IsGaussian.integrable_id`; we need it to split the integral of
+the sum.
+-/
+theorem integral_id_forwardNoising (a b : ℝ) (x : E) :
+    ∫ y, y ∂(forwardNoising (E := E) a b x) = a • x := by
+  have hNoiseIntegrable : Integrable (fun z : E => b • z) (ProbabilityTheory.stdGaussian E) :=
+    (ProbabilityTheory.IsGaussian.integrable_id
+      (μ := ProbabilityTheory.stdGaussian E)).smul b
+  have hNoiseMean : ∫ z : E, b • z ∂(ProbabilityTheory.stdGaussian E) = 0 := by
+    rw [integral_smul, ProbabilityTheory.integral_id_stdGaussian, smul_zero]
+  rw [forwardNoising_eq_map, integral_map (by fun_prop) (by fun_prop),
+    integral_add (integrable_const _) hNoiseIntegrable, hNoiseMean, add_zero]
+  simp
+
+/--
+Every continuous linear functional of a forward-noising step has variance `b ^ 2 * ‖L‖ ^ 2`.
+
+This is the dual form of "the covariance operator is `b ^ 2` times the identity". We state it
+against `StrongDual` rather than as a covariance matrix for two reasons: it is the form Mathlib's
+multivariate Gaussian API is built on (`ProbabilityTheory.variance_dual_stdGaussian`), and it is
+what a proof about a single coordinate of the noised state actually consumes. Taking `L` to be the
+inner product with a unit vector gives variance `b ^ 2` along that direction, and the absence of any
+dependence on the direction is exactly the isotropy claim.
+
+Note that `a` and `x` do not appear on the right: scaling and translating by a constant shifts the
+mean and leaves the spread alone.
+-/
+theorem variance_dual_forwardNoising (a b : ℝ) (x : E) (L : StrongDual ℝ E) :
+    Var[L; forwardNoising (E := E) a b x] = b ^ 2 * ‖L‖ ^ 2 := by
+  rw [forwardNoising_eq_map,
+    variance_map L.continuous.aemeasurable (Measurable.aemeasurable (by fun_prop))]
+  have hAffine : L ∘ (fun z : E => a • x + b • z) = fun z : E => L (a • x) + b * L z := by
+    ext z; simp
+  rw [hAffine, variance_const_add (by fun_prop), variance_const_mul,
+    ProbabilityTheory.variance_dual_stdGaussian]
 
 /-- Forward noising kernel for a diffusion step, as a Markov kernel. -/
 noncomputable
@@ -111,7 +164,7 @@ Applying the kernel at state `x` recovers exactly the forward-noising measure at
 The kernel is built from `id × const stdGaussian` so it fits Mathlib kernel
 composition; this theorem reconnects that construction to the simpler noising formula.
 -/
-lemma forwardKernel_apply (a b : ℝ) (x : E) :
+theorem forwardKernel_apply (a b : ℝ) (x : E) :
     forwardKernel (E := E) a b x = forwardNoising (E := E) a b x := by
   classical
   have hg : Measurable (fun p : E × E ↦ a • p.1 + b • p.2) := by fun_prop
@@ -140,10 +193,22 @@ lemma forwardKernel_apply (a b : ℝ) (x : E) :
       (Measure.map_map hh hf').symm
 
 /-- Each transition distribution of the forward kernel is Gaussian. -/
-lemma isGaussian_forwardKernel (a b : ℝ) (x : E) :
+theorem isGaussian_forwardKernel (a b : ℝ) (x : E) :
     ProbabilityTheory.IsGaussian (forwardKernel (E := E) a b x) := by
   simpa [forwardKernel_apply (E := E) a b x] using
     (inferInstance : ProbabilityTheory.IsGaussian (forwardNoising (E := E) a b x))
+
+/-- The transition at `x` has mean `a • x`, read off the kernel rather than the measure. -/
+theorem integral_id_forwardKernel (a b : ℝ) (x : E) :
+    ∫ y, y ∂(forwardKernel (E := E) a b x) = a • x := by
+  rw [forwardKernel_apply]
+  exact integral_id_forwardNoising a b x
+
+/-- The transition at `x` is isotropic with noise scale `b`, read off the kernel. -/
+theorem variance_dual_forwardKernel (a b : ℝ) (x : E) (L : StrongDual ℝ E) :
+    Var[L; forwardKernel (E := E) a b x] = b ^ 2 * ‖L‖ ^ 2 := by
+  rw [forwardKernel_apply]
+  exact variance_dual_forwardNoising a b x L
 
 end
 

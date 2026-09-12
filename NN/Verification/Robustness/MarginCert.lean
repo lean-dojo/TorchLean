@@ -6,10 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.CLI
 public import NN.Verification.Robustness.TopLabel
-public import NN.Verification.Util.Array
+public import NN.Verification.Util.Tensor
 public import NN.Verification.Util.Json
+public import NN.API.CLI.Parser
 
 /-!
 # Logit-Bound Report Checker
@@ -63,15 +63,17 @@ end Counters
 
 /-- Check one report entry and return `(nominalOk, positiveMargin)`. -/
 def checkOneExample (numClasses : Nat) (ex : Json) : IO (Bool × Bool) := do
-  let exObj ← expectObj ex "example"
+  let exObj ← expectObject ex "example"
   let label ← expectFieldNat exObj "label" "example"
   let lo ← expectFieldFiniteFloatArray exObj "logits_lo" "example"
   let hi ← expectFieldFiniteFloatArray exObj "logits_hi" "example"
   if lo.size ≠ numClasses || hi.size ≠ numClasses then
     throw <| IO.userError s!"example logits length mismatch (expected {numClasses})"
-  if !allPairwise lo hi NN.Verification.Util.Array.floatLe then
+  let lo ← NN.Verification.Util.Tensor.requireVecOfArray "logits_lo" numClasses lo
+  let hi ← NN.Verification.Util.Tensor.requireVecOfArray "logits_hi" numClasses hi
+  if !NN.Verification.Util.Tensor.boundsOrdered lo hi then
     throw <| IO.userError "example has invalid bounds (lo ≤ hi violated)"
-  let cert := TopLabel.certifiesLabelFromArrayBounds lo hi label
+  let cert := TopLabel.certifiesLabelFromTensorBounds lo hi label
 
   match ← optionalFieldBool? exObj "certified" "example" with
   | some b =>
@@ -132,7 +134,7 @@ def checkWithTiming (path : String) (timing : Bool) (timingEvery : Nat) : IO Uni
   match ← optionalField? topObj "summary" "top-level" with
   | none => pure ()
   | some summaryJ =>
-      let summaryObj ← expectObj summaryJ "summary"
+      let summaryObj ← expectObject summaryJ "summary"
       let checkNatField (k : String) (v : Nat) : IO Unit := do
         match ← optionalFieldNat? summaryObj k "summary" with
         | none => pure ()
@@ -159,9 +161,9 @@ structure RunArgs where
 /-- Parse shared margin-report CLI flags. -/
 def parseRunArgs (defaultPath : String) (args : List String) : Except String RunArgs := do
   let args := TorchLean.CLI.dropDashDash args
-  let (timing, args) ← TorchLean.CLI.takeBoolFlagOnce args "timing"
-  let (timingEvery, args) ← TorchLean.CLI.takeNatFlagDefault args "timing-every" 0
-  let (path, args) ← TorchLean.CLI.takePositionalDefault args defaultPath
+  let (timing, args) ← TorchLean.CLI.takeBoolFlag args "timing"
+  let (timingEvery, args) ← TorchLean.CLI.takeNatFlag args "timing-every" (default := 0)
+  let (path, args) ← TorchLean.CLI.takePositional args (default := defaultPath)
   TorchLean.CLI.checkNoArgs args
   pure { path := path, timing := timing, timingEvery := timingEvery }
 

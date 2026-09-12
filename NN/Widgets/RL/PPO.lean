@@ -8,14 +8,17 @@ module
 
 public import NN.Runtime.RL.PPO.Rollout
 public import NN.Runtime.Training.Log
-
+public import NN.Tensor.Conversion
 -- We compute GAE/returns in a widget (meta) context, so the RL core must be available to meta code.
-public meta import NN.Runtime.RL.Core
-public meta import NN.Floats.IEEEExec.Exec32
-
+public meta import NN.Floats.IEEEExec.Exec32.Compare
+public import NN.Floats.IEEEExec.Exec32.Compare
+public meta import NN.Runtime.RL.PPO.Rollout
+public meta import NN.Tensor.Conversion
 public meta import NN.Widgets.Runtime.Training
-public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
+public meta import NN.Runtime.RL.Core -- shake: keep
+public meta import NN.Floats.IEEEExec.Exec32 -- shake: keep
+public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
+public meta import ProofWidgets.Demos.Macro -- shake: keep
 
 /-!
 # PPO Rollout Viewer
@@ -41,23 +44,6 @@ References:
 - `ppoRolloutTrainLog`: converts rollout tensors into `TrainLog` series.
 - `ppoRolloutHtml`: delegates to the generic training viewer.
 - `#ppo_rollout_view`: command form for inspecting rollout summaries.
-
-## Implementation notes
-
-- Reusing `trainLogHtml` keeps one plotting surface for many
-  widget frontends.
-- We keep backend conversion explicit (`ToVizFloat`) so adding a new scalar type is obvious and
-  local.
-- We use the exact RL-core GAE/return routines so visualized values match training semantics.
-
-## References
-
-- [ProofWidgets](https://github.com/leanprover-community/ProofWidgets4)
-- [Lean community documentation style](https://leanprover-community.github.io/contribute/doc.html)
-
-## Tags
-
-ppo, gae, rollout, reinforcement-learning, visualization
 -/
 
 namespace NN.Widgets
@@ -66,10 +52,10 @@ public meta section
 
 open scoped ProofWidgets.Jsx
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
-open _root_.Runtime.Training
+open Runtime.Training
 
 namespace RL
 namespace PPO
@@ -90,65 +76,32 @@ instance : ToVizFloat TorchLean.Floats.IEEE754.IEEE32Exec :=
 /--
 Convert a length-`n` scalar tensor to an `Array Float` for plotting.
 
-We pattern-match on the tensor representation to avoid runtime indexing overhead.
+Each entry is converted with the plotting scalar interface.
 -/
-private def tensorToFloatArray {α : Type} [ToVizFloat α] {n : Nat} :
-    Tensor α [n] → Array Float
-  | .dim f =>
-      Array.ofFn (fun i : Fin n =>
-        match f i with
-        | .scalar x => ToVizFloat.toVizFloat x)
+private def tensorToFloatArray {α : Type} [TorchLean.Storage α] [ToVizFloat α] {n : Nat}
+    (tensor : Tensor α [n]) : Array Float :=
+  Array.ofFn fun i : Fin n => ToVizFloat.toVizFloat (tensor.getScalar i)
 
 /-- Build a `TrainLog` containing reward/return/advantage curves for a fixed-horizon PPO rollout. -/
-def ppoRolloutTrainLog {α : Type} [Context α] [ToVizFloat α] [DecidableEq Shape]
+def ppoRolloutTrainLog {α : Type} [TorchLean.Storage α] [Context α] [ToVizFloat α]
     {obsShape : Shape} {nActions horizon : Nat}
     (gamma lam : α)
-    (r : _root_.Runtime.RL.PPO.Rollout α obsShape nActions horizon) :
+    (r : Runtime.RL.PPO.Rollout α obsShape nActions horizon) :
     TrainLog :=
-  let steps := r.steps
-
-  let rewardsArr : Array α := steps.map (fun st => st.reward)
-  let donesArr : Array Bool := steps.map (fun st => st.done)
-  let valuesArr : Array α := steps.map (fun st => st.value)
-  let nextValuesArr : Array α := steps.map (fun st => st.nextValue)
-
-  let hRewards : horizon = rewardsArr.size := by
-    have : rewardsArr.size = horizon := by
-      simpa [rewardsArr, Array.size_map] using r.steps_size_eq_horizon
-    simpa using this.symm
-  let hDones : horizon = donesArr.size := by
-    have : donesArr.size = horizon := by
-      simpa [donesArr, Array.size_map] using r.steps_size_eq_horizon
-    simpa using this.symm
-  let hValues : horizon = valuesArr.size := by
-    have : valuesArr.size = horizon := by
-      simpa [valuesArr, Array.size_map] using r.steps_size_eq_horizon
-    simpa using this.symm
-  let hNextValues : horizon = nextValuesArr.size := by
-    have : nextValuesArr.size = horizon := by
-      simpa [nextValuesArr, Array.size_map] using r.steps_size_eq_horizon
-    simpa using this.symm
-
-  let rewards : Tensor α [horizon] :=
-    Tensor.ofFlatArrayExact (.dim horizon .scalar) rewardsArr (by
-      simpa [Shape.size] using hRewards.symm)
-  let dones : Tensor Bool [horizon] :=
-    Tensor.ofFlatArrayExact (.dim horizon .scalar) donesArr (by
-      simpa [Shape.size] using hDones.symm)
-  let values : Tensor α [horizon] :=
-    Tensor.ofFlatArrayExact (.dim horizon .scalar) valuesArr (by
-      simpa [Shape.size] using hValues.symm)
-  let nextValues : Tensor α [horizon] :=
-    Tensor.ofFlatArrayExact (.dim horizon .scalar) nextValuesArr (by
-      simpa [Shape.size] using hNextValues.symm)
+  let stepAt (index : Fin horizon) :=
+    r.steps[index.val]'(by simp [r.steps_size_eq_horizon])
+  let rewards : Tensor α [horizon] := Tensor.ofFn (fun i => (stepAt i).reward)
+  let dones : Tensor Bool [horizon] := Tensor.ofFn (fun i => (stepAt i).done)
+  let values : Tensor α [horizon] := Tensor.ofFn (fun i => (stepAt i).value)
+  let nextValues : Tensor α [horizon] := Tensor.ofFn (fun i => (stepAt i).nextValue)
 
   let advRaw :=
-    _root_.Runtime.RL.Core.generalizedAdvantageEstimationTensor (α := α) (n := horizon)
+    Runtime.RL.Core.generalizedAdvantageEstimation (α := α) (n := horizon)
       gamma lam rewards values nextValues dones
   let returns :=
-    _root_.Runtime.RL.Core.returnsFromAdvantagesTensor (α := α) (n := horizon) advRaw values
+    Runtime.RL.Core.returnsFromAdvantages (α := α) (n := horizon) advRaw values
 
-  let rewardsF : Array Float := rewardsArr.map ToVizFloat.toVizFloat
+  let rewardsF : Array Float := tensorToFloatArray rewards
   let returnsF : Array Float := tensorToFloatArray (α := α) (n := horizon) returns
   let advF : Array Float := tensorToFloatArray (α := α) (n := horizon) advRaw
 
@@ -166,10 +119,10 @@ def ppoRolloutTrainLog {α : Type} [Context α] [ToVizFloat α] [DecidableEq Sha
   { title := "PPO rollout", series := series, notes := notes }
 
 /-- Render a PPO rollout viewer as infoview HTML (reward/return/advantage curves + table). -/
-def ppoRolloutHtml {α : Type} [Context α] [ToVizFloat α] [DecidableEq Shape]
+def ppoRolloutHtml {α : Type} [TorchLean.Storage α] [Context α] [ToVizFloat α]
     {obsShape : Shape} {nActions horizon : Nat}
     (gamma lam : α)
-    (r : _root_.Runtime.RL.PPO.Rollout α obsShape nActions horizon) :
+    (r : Runtime.RL.PPO.Rollout α obsShape nActions horizon) :
     ProofWidgets.Html :=
   trainLogHtml (ppoRolloutTrainLog (α := α) (obsShape := obsShape) (nActions := nActions)
     (horizon := horizon) gamma lam r)

@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.DirectedRoundingSoundness
+public import NN.Floats.IEEEExec.DirectedRoundingSoundness.SignedOps
 public import NN.Floats.IEEEExec.Semantics.MinMaxERealSoundness
 public import NN.Floats.Interval.IEEEExec32
 

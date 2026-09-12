@@ -7,8 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.BoundOps
-public import NN.Verification.Util.Array
 public import NN.Verification.Util.Json
+public import NN.Verification.Util.Tensor
 
 /-!
 # VNNLIB-style output specifications
@@ -31,9 +31,18 @@ open Lean
 open Json
 open NN.Verification.Json
 open NN.MLTheory.CROWN
+open TorchLean
 
 /-- One conjunction term $\mathrm{mat}\,y\leq\mathrm{rhs}$ in a VNNLIB disjunction. -/
-abbrev Term := Array (Array Float) × Array Float
+structure Term where
+  /-- Number of inequalities in this conjunction. -/
+  rows : Nat
+  /-- Network output dimension. -/
+  cols : Nat
+  /-- Left-hand-side coefficients. -/
+  mat : Tensor Float [rows, cols]
+  /-- Right-hand-side thresholds. -/
+  rhs : Tensor Float [rows]
 
 /-- A VNNLIB-style unsafe-region spec: a disjunction of conjunction terms. -/
 abbrev Spec := Array Term
@@ -48,16 +57,10 @@ network output vector `y`.
 structure Instance where
   /-- Instance id copied from the exported suite JSON. -/
   id : Nat
-  /-- Lower bound for the input box. -/
-  inputLo : Array Float
-  /-- Upper bound for the input box. -/
-  inputHi : Array Float
+  /-- Ordered input endpoints, decoded at the artifact boundary. -/
+  input : FlatBox Float
   /-- Unsafe output-region specification. -/
   spec : Spec
-
-/-- Whether two endpoint arrays define a finite-dimensional, componentwise ordered input box. -/
-def inputBoxValid (lo hi : Array Float) : Bool :=
-  lo.size == hi.size && allPairwise lo hi NN.Verification.Util.Array.floatLe
 
 /--
 Load the compact VNNLIB suite JSON format used by TorchLean checkers.
@@ -70,21 +73,29 @@ def loadSuite (path : String) : IO (Array Instance) := do
   let instArr ← expectFieldArray top "instances" "top-level"
   let mut out : Array Instance := #[]
   for ex in instArr do
-    let exo ← expectObj ex "instance"
+    let exo ← expectObject ex "instance"
     let id ← expectFieldNat exo "id" "instance"
     let lo ← expectFieldFiniteFloatArray exo "input_lo" "instance"
     let hi ← expectFieldFiniteFloatArray exo "input_hi" "instance"
-    if !inputBoxValid lo hi then
+    let inputDim := lo.size
+    let lo ← NN.Verification.Util.Tensor.requireVecOfArray "input_lo" inputDim lo
+    let hi ← NN.Verification.Util.Tensor.requireVecOfArray "input_hi" inputDim hi
+    if !NN.Verification.Util.Tensor.boundsOrdered lo hi then
       throw <| IO.userError s!"instance {id}: input box endpoints are mismatched or reversed"
     let specArr ← expectFieldArray exo "spec" "instance"
     let mut specOut : Spec := #[]
     for t in specArr do
-      let termObj ← expectObj t "spec term"
+      let termObj ← expectObject t "spec term"
       let matJ ← expectField termObj "mat" "spec term"
       let mat ← expectFiniteFloatMatrix matJ "spec term.mat"
       let rhs ← expectFieldFiniteFloatArray termObj "rhs" "spec term"
-      specOut := specOut.push (mat, rhs)
-    out := out.push { id := id, inputLo := lo, inputHi := hi, spec := specOut }
+      let rows := mat.size
+      let cols := (mat[0]?).map Array.size |>.getD 0
+      let some mat := NN.Verification.Util.Tensor.matOfArray rows cols mat
+        | throw <| IO.userError "spec term.mat: ragged coefficient matrix"
+      let rhs ← NN.Verification.Util.Tensor.requireVecOfArray "spec term.rhs" rows rhs
+      specOut := specOut.push { rows, cols, mat, rhs }
+    out := out.push { id := id, input := { dim := inputDim, lo, hi }, spec := specOut }
   pure out
 
 /--
@@ -93,47 +104,20 @@ Lower-bound one linear row over an output interval box.
 For each coefficient $a_j$, the minimum of $a_jy_j$ over
 $y_j\in[\mathrm{lo}_j,\mathrm{hi}_j]$ is the smaller of the endpoint products.
 -/
-def rowLowerBoundOnBox? (row yLo yHi : Array Float) : Option Float :=
-  if hLo : yLo.size = row.size then
-    if hHi : yHi.size = row.size then
-      some <| (List.finRange row.size).foldl (fun (acc : Float) (j : Fin row.size) =>
-        let a := row[j.1]'j.2
-        let lo :=
-          have h : j.1 < yLo.size := by
-            simp [hLo, j.2]
-          yLo[j.1]'h
-        let hi :=
-          have h : j.1 < yHi.size := by
-            simp [hHi, j.2]
-          yHi[j.1]'h
-        BoundOps.addDown acc
-          (min (BoundOps.mulDown a lo) (BoundOps.mulDown a hi))) 0.0
-    else
-      none
-  else
-    none
+def rowLowerBoundOnBox {n : Nat} (row yLo yHi : Tensor Float [n]) : Float :=
+  let lowerProducts := Tensor.map2Spec BoundOps.mulDown row yLo
+  let upperProducts := Tensor.map2Spec BoundOps.mulDown row yHi
+  Tensor.foldl BoundOps.addDown 0.0 (Tensor.map2Spec min lowerProducts upperProducts)
 
-/-- Check whether a conjunction term is refuted by the output interval box. -/
-def termRefutedByOutputBox (yLo yHi : Array Float) (term : Term) : Bool :=
-  let outDim := yLo.size
-  let mat := term.fst
-  let rhs := term.snd
-  if hHi : yHi.size = outDim then
-  if hRhs : rhs.size = mat.size then
-    (List.finRange mat.size).any (fun (i : Fin mat.size) =>
-      let row := mat[i.1]'i.2
-      match rowLowerBoundOnBox? row yLo yHi with
-      | some lb =>
-          let rhsI :=
-            have h : i.1 < rhs.size := by
-              simp [hRhs, i.2]
-            rhs[i.1]'h
-          lb > rhsI
-      | none => false)
-  else
-    false
-  else
-    false
+/-- Check whether a conjunction term is refuted by an equally dimensioned output box. -/
+def termRefutedByOutputBox (box : FlatBox Float) (term : Term) : Bool :=
+  if h : box.dim = term.cols then
+    let lo : Tensor Float [term.cols] := h ▸ box.lo
+    let hi : Tensor Float [term.cols] := h ▸ box.hi
+    NN.Verification.Util.Tensor.boundsOrdered lo hi &&
+      (List.finRange term.rows).any (fun i =>
+        rowLowerBoundOnBox (term.mat.unstack i) lo hi > term.rhs.getScalar i)
+  else false
 
 /--
 Check whether an unsafe VNNLIB spec is refuted by an output interval box.
@@ -143,7 +127,7 @@ be refuted. For a conjunction, it is enough for one row lower bound to exceed it
 This executable predicate uses the explicit host-`Float` `BoundOps` boundary; its Boolean result is
 not itself a Lean theorem about real-valued graph semantics.
 -/
-def refutedByOutputBox (yLo yHi : Array Float) (spec : Spec) : Bool :=
-  spec.all (termRefutedByOutputBox yLo yHi)
+def refutedByOutputBox (box : FlatBox Float) (spec : Spec) : Bool :=
+  spec.all (termRefutedByOutputBox box)
 
 end NN.Verification.VNNComp.VNNLib

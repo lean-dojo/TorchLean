@@ -24,7 +24,7 @@ executable formulas and their boundary cases.
 namespace NN.Tests.MLTheory.CROWNOperators
 
 open NN.MLTheory.CROWN.Operators
-open _root_.Spec
+open Spec TorchLean
 
 def expectApprox (name : String) (actual expected : Float) (tol : Float := 1e-6) : IO Unit := do
   unless Float.abs (actual - expected) <= tol do

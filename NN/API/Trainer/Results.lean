@@ -6,13 +6,20 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Trainer.Core
-public import NN.API.Trainer.Manual.Evaluation
+public import NN.API.Verification.Core
+public import NN.API.Neural.State
+public import NN.API.Trainer.Summary
+public import NN.API.Trainer.Core -- shake: keep
 
 /-!
 # Training Results
 
 Regression, cross-entropy, and custom losses all return the same trained-model type.
+
+A `Result` keeps a parameter snapshot of the trained model. Prediction and verification use it
+directly. `Result.state` reads the parameters back as `Float` tensors and `Result.save` writes
+them with `Checkpoint.State.save`, so a trained model can be stored and later restored with
+`Trainer.load`. Results are produced by `Session.finish`.
 -/
 
 @[expose] public section
@@ -24,64 +31,132 @@ namespace Trainer
 /--
 A trained TorchLean model.
 
-The result retains the live runtime state through its prediction closures. Import
-`NN.API.Verification.Trainer` and use `Trainer.trainVerified` when the trained parameters should
-also be retained for IBP verification.
+The result retains its parameter snapshot through prediction, state-reading, and verification
+closures. Continued training of the source session does not change the result.
+
+The runtime state lives in the binary32 scalar selected by `RunConfig.arithmetic` (`Float32` or
+`IEEE32Exec`). `state` and `save` read it back as `Float`, which is exact because every binary32
+value is a binary64 value.
 -/
-structure TrainResult (inputShape outputShape : List Nat) where
-  /-- Before/after scalar summary for the completed run. -/
-  report : TrainSummary
-  /-- Run one `Float` input through the trained model. -/
-  predict : Tensor Float inputShape → IO (Tensor Float outputShape)
-  /-- Run several `Float` inputs through the trained model. -/
-  predictMany : Array (Tensor Float inputShape) → IO (Array (Tensor Float outputShape))
+structure Result (σ τ : Shape) where
+  private mk ::
+  private reportValue : Report
+  /-- Shapes of the trained parameters and buffers, in the order used by `state` and `save`. -/
+  stateShapes : List Shape
+  private readState : IO (TorchLean.nn.State Float stateShapes)
+  private saveState : System.FilePath → IO Unit
+  private predictOne :
+    Tensor Float σ → IO (Tensor Float τ)
+  private runVerification :
+    (center : Tensor Float σ) →
+    (radius : Float) →
+    Verification.Norm →
+    Verification.Property →
+    Verification.Algorithm →
+    IO Verification.Report
+
+namespace Result
 
 namespace Internal
-namespace SelectedTask
 
-/-- Package an already-trained runner as the public prediction and reporting result. -/
-def toTrainResult {inputShape outputShape : List Nat} {α : Type}
-    [_root_.Context α] [DecidableEq Shape] [ToString α] [Runtime.FromFloat α]
-    [Runtime.TensorTransfer α]
-    (selected : SelectedTask inputShape outputShape)
-    (runner : Manual.Runner α selected.task) (steps : Nat) (before after : α) :
-    TrainResult inputShape outputShape :=
-  let predict := fun (xFloat : Tensor Float inputShape) => do
-    Manual.Runner.eval (task := selected.task) runner
-    let x := Tensor.map (Runtime.ofFloat (α := α)) xFloat
-    let yhat ← Manual.Runner.run (task := selected.task) runner x
-    Runtime.readFloatTensor yhat
-  { report := { steps := steps, before := toString before, after := toString after }
-    predict := predict
-    predictMany := fun xs => xs.mapM predict }
+/-- Verification implementation used by training paths that cannot lower a verifier. -/
+def verificationUnavailable {σ : Shape} :
+    Tensor Float σ → Float → Verification.Norm →
+      Verification.Property → Verification.Algorithm → IO Verification.Report :=
+  fun _ _ _ _ _ =>
+    throw <| IO.userError <|
+      "verification is unavailable for this result; " ++
+        "use the public trainer path with a supported model"
 
-end SelectedTask
+/-- Construct an opaque trained-model result at the trainer implementation boundary. -/
+opaque create {σ τ : Shape}
+    (report : Report)
+    (stateShapes : List Shape)
+    (readState : IO (TorchLean.nn.State Float stateShapes))
+    (saveState : System.FilePath → IO Unit)
+    (predict : Tensor Float σ → IO (Tensor Float τ))
+    (verify := verificationUnavailable (σ := σ)) :
+    Trainer.Result σ τ :=
+  ⟨report, stateShapes, readState, saveState, predict, verify⟩
+
 end Internal
 
-namespace TrainResult
+/-- Loss progress, step count, and runtime arithmetic for the completed run. -/
+opaque report {σ τ : Shape}
+    (result : Result σ τ) : Report :=
+  result.reportValue
+
+/--
+Read the trained parameters and persistent buffers as `Float` tensors.
+
+The runtime holds them in binary32 (`Float32` or `IEEE32Exec`); reading them back to binary64 is
+exact. The layout `result.stateShapes` equals `nn.stateShapes` of the trained model, which is what
+`Checkpoint.State.save` and `Checkpoint.State.load` expect.
+-/
+opaque state {σ τ : Shape}
+    (result : Result σ τ) : IO (TorchLean.nn.State Float result.stateShapes) :=
+  result.readState
+
+/-- Save the trained state with `Checkpoint.State.save`; restore it with `Trainer.load`. -/
+opaque save {σ τ : Shape}
+    (result : Result σ τ) (path : System.FilePath) : IO Unit :=
+  result.saveState path
+
+/-- Run one `Float` input through the trained model. -/
+opaque predict {σ τ : Shape}
+    (result : Result σ τ)
+    (input : Tensor Float σ) : IO (Tensor Float τ) :=
+  result.predictOne input
+
+/-- Run several `Float` inputs through the trained model. -/
+opaque predictMany {σ τ : Shape} {batch : Nat}
+    (result : Result σ τ)
+    (inputs : Tensor Float (σ.prependDim batch)) :
+    IO (Tensor Float (τ.prependDim batch)) :=
+  Tensor.stackLeadingM fun index => result.predictOne inputs[index]
+
+/--
+Verify the trained model over a region around `center`.
+
+`property` and `algorithm` have defaults, so checking output bounds needs only `center` and
+`radius`.
+-/
+opaque verify {σ τ : Shape}
+    (result : Result σ τ)
+    (center : Tensor Float σ)
+    (radius : Float)
+    (norm : Verification.Norm := .inf)
+    (property : Verification.Property := .bounds)
+    (algorithm : Verification.Algorithm := .alphaBetaCrown) :
+    IO Verification.Report :=
+  result.runVerification center radius norm property algorithm
+
+end Result
+
+namespace Result
 
 /-- One-line summary for the completed training run. -/
-def summary {inputShape outputShape : List Nat}
-    (result : TrainResult inputShape outputShape) : String :=
+def summary {σ τ : Shape}
+    (result : Result σ τ) : String :=
   result.report.summary
 
 /-- Print the before/after training summary. -/
-def printSummary {inputShape outputShape : List Nat}
-    (result : TrainResult inputShape outputShape) : IO Unit :=
+def printSummary {σ τ : Shape}
+    (result : Result σ τ) : IO Unit :=
   IO.println result.summary
 
 /-- Print one prediction with a caller-supplied label. -/
-def printPrediction {inputShape outputShape : List Nat}
-    (result : TrainResult inputShape outputShape) (label : String)
-    (x : Tensor Float inputShape) : IO Unit := do
-  let yhat ← result.predict x
-  IO.println s!"{label} = {Tensor.pretty yhat}"
+def printPrediction {σ τ : Shape}
+    (result : Result σ τ) (label : String)
+    (input : Tensor Float σ) : IO Unit := do
+  let prediction ← result.predict input
+  IO.println s!"{label} = {reprStr prediction}"
 
-instance {inputShape outputShape : List Nat} :
-    ToString (TrainResult inputShape outputShape) where
+instance {σ τ : Shape} :
+    ToString (Result σ τ) where
   toString := summary
 
-end TrainResult
+end Result
 
 /--
 A trained model returned by step-indexed stream training.
@@ -89,79 +164,78 @@ A trained model returned by step-indexed stream training.
 Generated or resampled workloads may not have one static dataset to summarize. The ordinary training
 result is paired with the evaluation curve collected from a caller-provided sample.
 -/
-structure StreamTrainResult (inputShape outputShape : List Nat) where
+structure StreamResult (σ τ : Shape) where
   /-- Trained model result. -/
-  result : TrainResult inputShape outputShape
+  trained : Result σ τ
   /-- Evaluation loss curve recorded during stream training. -/
   curve : Training.Curve
 
-namespace StreamTrainResult
+namespace StreamResult
 
 /-- One-line summary for the trained stream run. -/
-def summary {inputShape outputShape : List Nat}
-    (result : StreamTrainResult inputShape outputShape) : String :=
-  result.result.summary
+def summary {σ τ : Shape}
+    (result : StreamResult σ τ) : String :=
+  result.trained.summary
 
 /-- Print the stream training summary. -/
-def printSummary {inputShape outputShape : List Nat}
-    (result : StreamTrainResult inputShape outputShape) : IO Unit :=
+def printSummary {σ τ : Shape}
+    (result : StreamResult σ τ) : IO Unit :=
   IO.println result.summary
 
 /-- Run one prediction through the trained stream result. -/
-def predict {inputShape outputShape : List Nat}
-    (result : StreamTrainResult inputShape outputShape) (x : Tensor Float inputShape) :
-    IO (Tensor Float outputShape) :=
-  result.result.predict x
+def predict {σ τ : Shape}
+    (result : StreamResult σ τ) (input : Tensor Float σ) :
+    IO (Tensor Float τ) :=
+  result.trained.predict input
 
 /-- Run several predictions through the trained stream result. -/
-def predictMany {inputShape outputShape : List Nat}
-    (result : StreamTrainResult inputShape outputShape)
-    (xs : Array (Tensor Float inputShape)) : IO (Array (Tensor Float outputShape)) :=
-  result.result.predictMany xs
+def predictMany {σ τ : Shape} {batch : Nat}
+    (result : StreamResult σ τ)
+    (inputs : Tensor Float (σ.prependDim batch)) : IO (Tensor Float (τ.prependDim batch)) :=
+  result.trained.predictMany inputs
 
-instance {inputShape outputShape : List Nat} :
-    ToString (StreamTrainResult inputShape outputShape) where
+instance {σ τ : Shape} :
+    ToString (StreamResult σ τ) where
   toString := summary
 
-end StreamTrainResult
+end StreamResult
 
-/-- Two trained regression models and the coupled metric recorded by an alternating stream. -/
-structure PairStreamTrainResult
-    (inputShape₁ outputShape₁ inputShape₂ outputShape₂ : List Nat) where
+/-- Two trained regression models and the coupled metric recorded by alternating updates. -/
+structure AlternatingResult
+    (σ₁ τ₁ σ₂ τ₂ : Shape) where
   /-- Trained result for the first model. -/
-  first : TrainResult inputShape₁ outputShape₁
+  first : Result σ₁ τ₁
   /-- Trained result for the second model. -/
-  second : TrainResult inputShape₂ outputShape₂
+  second : Result σ₂ τ₂
   /-- Task-specific curve recorded by the caller-provided evaluation function. -/
   curve : Training.Curve
 
-namespace PairStreamTrainResult
+namespace AlternatingResult
 
 /-- One-line summary for the two trained models. -/
-def summary {inputShape₁ outputShape₁ inputShape₂ outputShape₂ : List Nat}
-    (result : PairStreamTrainResult inputShape₁ outputShape₁ inputShape₂ outputShape₂) : String :=
+def summary {σ₁ τ₁ σ₂ τ₂ : Shape}
+    (result : AlternatingResult σ₁ τ₁ σ₂ τ₂) : String :=
   s!"first: {result.first.summary}; second: {result.second.summary}"
 
 /-- Print the training summary for both models. -/
-def printSummary {inputShape₁ outputShape₁ inputShape₂ outputShape₂ : List Nat}
-    (result : PairStreamTrainResult inputShape₁ outputShape₁ inputShape₂ outputShape₂) : IO Unit :=
+def printSummary {σ₁ τ₁ σ₂ τ₂ : Shape}
+    (result : AlternatingResult σ₁ τ₁ σ₂ τ₂) : IO Unit :=
   IO.println result.summary
 
 /-- Print the endpoints of the coupled metric curve. -/
-def printCurveSummary {inputShape₁ outputShape₁ inputShape₂ outputShape₂ : List Nat}
-    (result : PairStreamTrainResult inputShape₁ outputShape₁ inputShape₂ outputShape₂)
+def printCurveSummary {σ₁ τ₁ σ₂ τ₂ : Shape}
+    (result : AlternatingResult σ₁ τ₁ σ₂ τ₂)
     (metric : String := "loss") : IO Unit := do
   let endpoints ←
-    Training.Curve.endpoints result.curve "PairStreamTrainResult.printCurveSummary"
-  let firstMetric := s!"{metric}0={endpoints.first}"
-  let lastMetric := s!"{metric}{endpoints.finalStep}={endpoints.last}"
-  IO.println s!"  steps={endpoints.finalStep} {firstMetric} {lastMetric}"
+    Training.Curve.endpoints result.curve "AlternatingResult.printCurveSummary"
+  IO.println
+    s!"  steps={endpoints.lastStep} {metric}={endpoints.firstValue} -> {endpoints.lastValue}"
 
-instance {inputShape₁ outputShape₁ inputShape₂ outputShape₂ : List Nat} :
-    ToString (PairStreamTrainResult inputShape₁ outputShape₁ inputShape₂ outputShape₂) where
+instance {σ₁ τ₁ σ₂ τ₂ : Shape} :
+    ToString (AlternatingResult σ₁ τ₁ σ₂ τ₂) where
   toString := summary
 
-end PairStreamTrainResult
+end AlternatingResult
 
 end Trainer
 

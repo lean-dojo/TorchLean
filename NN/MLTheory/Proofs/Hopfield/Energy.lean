@@ -6,10 +6,15 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.BigOperators.Group.Finset.Piecewise
 public import NN.MLTheory.Proofs.Hopfield.Basic
-import Mathlib.Tactic.Linarith
-import Mathlib.Tactic.Ring
+public import Mathlib.Data.Real.Basic
+public import Mathlib.Algebra.BigOperators.Ring.Finset
+import Mathlib.Data.Rat.Cast.Order
+import Mathlib.Tactic.Linarith.Frontend
+import Mathlib.Tactic.NormNum.Abs
+import Mathlib.Tactic.NormNum.DivMod
+import Mathlib.Tactic.NormNum.OfScientific
+import Mathlib.Tactic.Ring.RingNF
 
 /-!
 # Hopfield energy: single-step dynamics (spec layer)
@@ -30,7 +35,7 @@ through explicit runtime/rounding bridge statements, not by silently reusing rea
 namespace NN.MLTheory.Proofs.Hopfield
 
 open scoped BigOperators
-open _root_.Spec
+open Spec TorchLean
 
 open Spec.Hopfield
 
@@ -41,32 +46,43 @@ def SymmetricW (p : Params ℝ n) : Prop := ∀ i j, p.W i j = p.W j i
 /-- Zero-diagonal condition on Hopfield weights: `W i i = 0`. -/
 def DiagonalZero (p : Params ℝ n) : Prop := ∀ i, p.W i i = 0
 
+/-- Bipolar activation vector of a state, `±1` per unit. -/
 noncomputable def x (s : State n) : Fin n → ℝ :=
   actVec (α := ℝ) s
 
+/-- The index set of all units, named so the sums below read like the paper. -/
 noncomputable def U : Finset (Fin n) := Finset.univ
 
+/-- Net input at `u`, written as a function of the activation vector rather than the Boolean state.
+
+The energy computations are all linear algebra over `ℝ`, so working with `x` instead of `s` keeps
+`Function.update` and `Finset.sum` lemmas applicable throughout. -/
 noncomputable def netx (p : Params ℝ n) (x : Fin n → ℝ) (u : Fin n) : ℝ :=
   ∑ j ∈ (U (n := n)), p.W u j * x j
 
+/-- The quadratic form `∑ᵢⱼ Wᵢⱼ xᵢ xⱼ`. -/
 noncomputable def quad (p : Params ℝ n) (x : Fin n → ℝ) : ℝ :=
   ∑ i ∈ (U (n := n)), ∑ j ∈ (U (n := n)), p.W i j * x i * x j
 
+/-- Energy as a function of the activation vector: `-½ xᵀWx + θᵀx`. -/
 noncomputable def energyU (p : Params ℝ n) (x : Fin n → ℝ) : ℝ :=
   (-(1 / (2 : ℝ))) * quad (n := n) p x + ∑ i ∈ (U (n := n)), p.θ i * x i
 
-lemma energy_eq_energyU (p : Params ℝ n) (s : State n) :
+/-- The state-level energy and the vector-level one agree. -/
+theorem energy_eq_energyU (p : Params ℝ n) (s : State n) :
     energy (α := ℝ) p s = energyU (n := n) p (x (n := n) s) := by
   classical
   -- `energy` uses `∑ i : Fin n`, which is definally over `Finset.univ`.
   simp [Spec.Hopfield.energy, energyU, quad, x, U, Spec.Hopfield.actVec, mul_left_comm, mul_comm,
     add_comm]
 
-lemma net_eq_netx (p : Params ℝ n) (s : State n) (u : Fin n) :
+/-- Likewise for the net input. -/
+theorem net_eq_netx (p : Params ℝ n) (s : State n) (u : Fin n) :
     net (α := ℝ) p s u = netx (n := n) p (x (n := n) s) u := by
   simp [Spec.Hopfield.net, Spec.Hopfield.mulVec, netx, x, U, Spec.Hopfield.actVec]
 
-lemma x_updateAt_eq_update (p : Params ℝ n) (s : State n) (u : Fin n) :
+/-- An update of the state becomes a `Function.update` of the activation vector. -/
+theorem x_updateAt_eq_update (p : Params ℝ n) (s : State n) (u : Fin n) :
     x (n := n) (updateAt (α := ℝ) p s u) =
       Function.update (x (n := n) s) u (act (α := ℝ) (decide (p.θ u ≤ net (α := ℝ) p s u))) := by
   classical
@@ -76,7 +92,9 @@ lemma x_updateAt_eq_update (p : Params ℝ n) (s : State n) (u : Fin n) :
     simp [x, updateAt, Spec.Hopfield.actVec, Function.update, Spec.Hopfield.act]
   · simp [x, updateAt, Spec.Hopfield.actVec, Function.update, h, Spec.Hopfield.act]
 
-lemma netx_update_eq (p : Params ℝ n) (x0 : Fin n → ℝ) (u : Fin n) (xu' : ℝ) :
+/-- Changing coordinate `u` shifts the net input at `u` only through the self-weight `W u u`, which
+the zero-diagonal hypothesis later kills. -/
+theorem netx_update_eq (p : Params ℝ n) (x0 : Fin n → ℝ) (u : Fin n) (xu' : ℝ) :
     netx (n := n) p (Function.update x0 u xu') u
       =
     netx (n := n) p x0 u + p.W u u * (xu' - x0 u) := by
@@ -117,7 +135,8 @@ lemma netx_update_eq (p : Params ℝ n) (x0 : Fin n → ℝ) (u : Fin n) (xu' : 
     _ = netx (n := n) p x0 u + p.W u u * (xu' - x0 u) := by
         simp [netx, hs0]
 
-lemma quad_inner_delta_ne (p : Params ℝ n) {u i : Fin n} (hi : i ≠ u)
+/-- Contribution of a single row `i ≠ u` to the change in the quadratic form. -/
+theorem quad_inner_delta_ne (p : Params ℝ n) {u i : Fin n} (hi : i ≠ u)
     (x0 : Fin n → ℝ) (xu' : ℝ) :
     (∑ j ∈ (U (n := n)), p.W i j * x0 i * (Function.update x0 u xu' j))
       -
@@ -160,8 +179,13 @@ lemma quad_inner_delta_ne (p : Params ℝ n) {u i : Fin n} (hi : i ≠ u)
     _ = p.W i u * x0 i * (xu' - x0 u) := by
         ring
 
-lemma quad_delta_update (p : Params ℝ n) (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n :=
-  n) p)
+/-- Change in the quadratic form under a single-unit update: `2 (x'ᵤ - xᵤ) · netᵤ`.
+
+Symmetry is what merges the row and column contributions into a single factor of two, and the zero
+diagonal is what removes the term where the unit acts on itself. Without either hypothesis the
+energy can increase and the network need not converge. -/
+theorem quad_delta_update (p : Params ℝ n) (hsym : SymmetricW (n := n) p)
+    (hdiag : DiagonalZero (n := n) p)
     (x0 : Fin n → ℝ) (u : Fin n) (xu' : ℝ) :
     quad (n := n) p (Function.update x0 u xu') - quad (n := n) p x0
       =
@@ -337,6 +361,7 @@ lemma quad_delta_update (p : Params ℝ n) (hsym : SymmetricW (n := n) p) (hdiag
     _ = 2 * (xu' - x0 u) * netx (n := n) p x0 u := by
           ring
 
+/-- A single asynchronous update never increases the energy. -/
 theorem energy_updateAt_le (p : Params ℝ n) (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n
   := n) p)
     (s : State n) (u : Fin n) :
@@ -438,6 +463,10 @@ theorem energy_updateAt_le (p : Params ℝ n) (hsym : SymmetricW (n := n) p) (hd
   -- `E' - E ≤ 0` implies `E' ≤ E`.
   linarith
 
+/-- Exact energy change of one update: `-(x'ᵤ - xᵤ)(netᵤ - θᵤ)`.
+
+The sign is forced: the update sets `x'ᵤ` to agree with the sign of `netᵤ - θᵤ`, so the product is
+nonnegative and the energy change is nonpositive. Everything else in this file is a corollary. -/
 theorem energy_updateAt_delta (p : Params ℝ n)
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     (s : State n) (u : Fin n) :
@@ -510,6 +539,8 @@ theorem energy_updateAt_delta (p : Params ℝ n)
         simp [hquad, hlin, hnet]
         ring
 
+/-- Exactly at the threshold the energy does not move, which is the flat case the active-unit
+counter has to handle. -/
 theorem energy_updateAt_eq_of_net_eq_theta (p : Params ℝ n)
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     (s : State n) (u : Fin n) (hnet : net (α := ℝ) p s u = p.θ u) :
@@ -523,6 +554,7 @@ theorem energy_updateAt_eq_of_net_eq_theta (p : Params ℝ n)
     simpa [hnet, sub_self] using hΔ
   linarith
 
+/-- Away from the threshold, a state change strictly lowers the energy. -/
 theorem energy_updateAt_lt_of_change_of_ne (p : Params ℝ n)
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     (s : State n) (u : Fin n)

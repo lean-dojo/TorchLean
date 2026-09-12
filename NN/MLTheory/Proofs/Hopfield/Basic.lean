@@ -22,30 +22,38 @@ separate files once proved.
 
 namespace NN.MLTheory.Proofs.Hopfield
 
-open _root_.Spec
+open Spec TorchLean
 
 open Spec.Hopfield
 
-@[simp] lemma updateAt_apply_eq_update {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
+/-- One asynchronous update is a `Function.update` at the chosen unit, with the threshold test as
+the new value. Stating it this way lets the Mathlib `Function.update` lemmas do the bookkeeping. -/
+@[simp] theorem updateAt_apply_eq_update {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
     [LE α] [DecidableRel ((· ≤ ·) : α → α → Prop)]
     {n : Nat} (p : Params α n) (s : State n) (u : Fin n) :
     updateAt (α := α) p s u =
       Function.update s u (decide (p.θ u ≤ net (α := α) p s u)) := by
   rfl
 
-@[simp] lemma updateAt_apply_self {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
+/-- At the updated unit, the new state is the threshold test. -/
+@[simp] theorem updateAt_apply_self {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
     [LE α] [DecidableRel ((· ≤ ·) : α → α → Prop)]
     {n : Nat} (p : Params α n) (s : State n) (u : Fin n) :
     updateAt (α := α) p s u u = decide (p.θ u ≤ net (α := α) p s u) := by
   simp [updateAt]
 
-@[simp] lemma updateAt_apply_ne {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
+/-- Every other unit is untouched, which is what makes the update asynchronous. -/
+@[simp] theorem updateAt_apply_ne {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
     [LE α] [DecidableRel ((· ≤ ·) : α → α → Prop)]
     {n : Nat} (p : Params α n) (s : State n) {u v : Fin n} (h : v ≠ u) :
     updateAt (α := α) p s u v = s v := by
   simp [updateAt, h]
 
-lemma pluses_updateAt_eq_succ_of_set_true {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
+/-- Flipping a unit from `false` to `true` raises the count of active units by one.
+
+The active count is the tie-breaking measure in the convergence proof: when the energy stays flat, a
+real state change still has to move this counter, and it cannot rise forever. -/
+theorem pluses_updateAt_eq_succ_of_set_true {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
     [LE α] [DecidableRel ((· ≤ ·) : α → α → Prop)]
     {n : Nat} (p : Params α n) (s : State n) (u : Fin n)
     (hsu : s u = false)
@@ -83,7 +91,8 @@ lemma pluses_updateAt_eq_succ_of_set_true {α : Type} [AddCommMonoid α] [Mul α
     simp [hA', Finset.card_insert_of_notMem huA]
   simpa [Spec.Hopfield.pluses, A, A'] using hcard
 
-lemma pluses_updateAt_eq_pred_of_set_false {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
+/-- Flipping a unit from `true` to `false` lowers the active count by one. -/
+theorem pluses_updateAt_eq_pred_of_set_false {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
     [LE α] [DecidableRel ((· ≤ ·) : α → α → Prop)]
     {n : Nat} (p : Params α n) (s : State n) (u : Fin n)
     (hsu : s u = true)

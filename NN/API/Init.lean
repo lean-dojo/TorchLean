@@ -4,16 +4,19 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+-- This module supplies public namespace exports used by downstream consumers. Import shaking
+-- cannot see those downstream lookups, so keep the marked imports.
+module -- shake: keep-downstream
 
-public import NN.Tensor
-public import NN.Runtime.Autograd.Torch.Initialization
+public import NN.API.Arithmetic -- shake: keep
+public import NN.Runtime.Autograd.Torch.Initialization -- shake: keep
+public import NN.Tensor -- shake: keep
 
 /-!
 # Tensor Initialization
 
 Deterministic tensor initialization helpers (Xavier/Kaiming, etc.) that return TorchLean
-`Spec.Tensor`s with shape tracked in the type.
+`TorchLean.Tensor`s with shape tracked in the type.
 -/
 
 @[expose] public section
@@ -21,13 +24,13 @@ Deterministic tensor initialization helpers (Xavier/Kaiming, etc.) that return T
 namespace TorchLean
 namespace Init
 
-open Spec
+open Spec TorchLean
 
 /-!
 ## Tensor Initialization Helpers
 
 This module exposes `Runtime.Autograd.Torch.Init` through TorchLean
-`Spec.Tensor`s with shapes tracked in the type.
+`TorchLean.Tensor`s with shapes tracked in the type.
 
 All initializers are deterministic given an explicit `seed : Nat`, which is convenient for:
 - reproducible examples
@@ -44,43 +47,40 @@ See the PyTorch init docs:
 `https://pytorch.org/docs/stable/nn.init.html`
 -/
 
-export _root_.Runtime.Autograd.Torch.Init (Scheme)
+export Runtime.Autograd.Torch.Init (Scheme)
 
 /--
-Initialize a `Float` tensor using the given scheme.
+Initialize a tensor under any executable arithmetic.
 
-Most user code should prefer `tensor`, which casts the generated values into its chosen scalar
-semantics. The dimension list is normally inferred from the expected tensor type.
+The element type and dimensions are normally inferred from the expected tensor type. Initialization
+is generated once in `Float`, then converted through the element type's canonical
+`Runtime.FromFloat` instance.
 -/
-def tensorFloat {shape : List Nat} (sch : Scheme) (seed : Nat := 0) : Tensor Float shape :=
-  _root_.Runtime.Autograd.Torch.Init.tensor
-    (sch := sch) (seed := seed) (s := Shape.ofList shape)
+def tensor {α : Type} [TorchLean.Storage α] [Runtime.FromFloat α] {shape : Shape}
+    (scheme : Scheme) (seed : Nat := 0) : Tensor α shape :=
+  TorchLean.Tensor.map (Runtime.ofFloat (α := α))
+    (Runtime.Autograd.Torch.Init.tensor
+      (sch := scheme) (seed := seed) (s := shape))
 
 /--
-Initialize a tensor under an arbitrary scalar semantics `α`, by first generating `Float`s and
-then casting elementwise via `cast : Float → α`.
+Xavier/Glorot uniform initialization for a linear weight matrix.
+
+Both widths are inferred from the expected `Tensor α [outputWidth, inputWidth]` type.
 -/
-def tensor {α : Type} [Context α] {shape : List Nat}
-    (cast : Float → α) (sch : Scheme) (seed : Nat := 0) : Tensor α shape :=
-  TorchLean.Tensor.map cast (tensorFloat (sch := sch) (seed := seed))
+def xavierUniform {α : Type} [TorchLean.Storage α] [Runtime.FromFloat α]
+    {outputWidth inputWidth : Nat} (seed : Nat := 0) :
+    Tensor α [outputWidth, inputWidth] :=
+  tensor (.xavierUniform inputWidth outputWidth) seed
 
 /--
-Xavier/Glorot initializer for a linear weight matrix of shape `(outDim, inDim)`.
+Kaiming/He uniform initialization for a linear weight matrix used before a ReLU.
 
-PyTorch analogue: `torch.nn.init.xavier_uniform_` (for example).
+Both widths are inferred from the expected `Tensor α [outputWidth, inputWidth]` type.
 -/
-def xavierW {α : Type} [Context α] (cast : Float → α) (outDim inDim : Nat) (seed : Nat := 0) :
-    Tensor α [outDim, inDim] :=
-  TorchLean.Tensor.map cast (_root_.Runtime.Autograd.Torch.Init.xavierW outDim inDim seed)
-
-/--
-Kaiming/He initializer for a linear weight matrix of shape `(outDim, inDim)`.
-
-PyTorch analogue: `torch.nn.init.kaiming_uniform_` (for example).
--/
-def kaimingW {α : Type} [Context α] (cast : Float → α) (outDim inDim : Nat) (seed : Nat := 0) :
-    Tensor α [outDim, inDim] :=
-  TorchLean.Tensor.map cast (_root_.Runtime.Autograd.Torch.Init.kaimingW outDim inDim seed)
+def kaimingUniform {α : Type} [TorchLean.Storage α] [Runtime.FromFloat α]
+    {outputWidth inputWidth : Nat} (seed : Nat := 0) :
+    Tensor α [outputWidth, inputWidth] :=
+  tensor (.kaimingUniform inputWidth) seed
 
 end Init
 end TorchLean

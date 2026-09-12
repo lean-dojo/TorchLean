@@ -25,7 +25,7 @@ spec/runtime path use hard masking, where blocked entries contribute zero softma
 namespace Proofs
 namespace Autograd
 
-open Spec
+open Spec TorchLean
 
 open scoped BigOperators
 

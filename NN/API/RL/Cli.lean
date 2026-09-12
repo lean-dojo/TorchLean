@@ -6,8 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.CLI
 public import NN.Runtime.Training.Log
+public import NN.API.CLI.Parser
+public import NN.API.CLI -- shake: keep
 
 /-!
 # RL Command-Line Options
@@ -30,10 +31,21 @@ namespace TorchLean
 namespace rl
 namespace cli
 
+/-- Parsed PPO command options shared by multiple runnable examples. -/
+structure PPOOptions where
+  updateCount : Nat
+  evaluationInterval : Nat
+  evaluationEpisodes : Nat
+  maximumEvaluationSteps : Nat
+  logDestination : Runtime.Training.LogDestination
+deriving Repr
+
+namespace PPOOptions
+
 /-- Help text for PPO commands, with optional environment-specific artifact flags. -/
-def ppoUsage (exeName : String) (artifactOptions : Array String := #[]) : String :=
+def usage (exeName : String) (artifactOptions : Array String := #[]) : String :=
   String.intercalate "\n" <| (#[
-    s!"Usage: lake exe torchlean {exeName.drop 10} [options]",
+    s!"Usage: lake exe torchlean {exeName} [options]",
     "",
     "Training and evaluation:",
     "  --updates N         PPO update iterations",
@@ -46,51 +58,47 @@ def ppoUsage (exeName : String) (artifactOptions : Array String := #[]) : String
     "Runtime:",
     "  --device auto|cpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external",
     "  --execution eager|typed-graph",
-    "  --scalar float32",
+    "  --arithmetic native",
     "  --seed N --show-backend"
   ]).toList
 
-/-- Parsed PPO-style training flags shared by multiple runnable examples. -/
-structure PpoFlags where
-  updates : Nat
-  evalEvery : Nat
-  evalEpisodes : Nat
-  evalMaxSteps : Nat
-  log : _root_.Runtime.Training.LogDestination
-  logPath : System.FilePath
-deriving Repr
-
 /--
-Parse PPO-style shared flags.
+Parse shared PPO command options.
 
 Notes:
-- `--log off|none|false` disables writing the JSON artifact but still returns the resolved default
-  `logPath` (useful for printing consistent banners).
+- `--log off|none|false` selects `LogDestination.disabled`.
 - We treat `0` as invalid for the update/eval counts because a “no-op” run usually indicates a CLI
   mistake.
 -/
-def parsePpoFlags (exeName : String) (args : List String)
+def parse (exeName : String) (arguments : List String)
     (defaultLogPath : System.FilePath)
-    (defaultUpdates defaultEvalEvery defaultEvalEpisodes defaultEvalMaxSteps : Nat) :
-    Except String (PpoFlags × List String) := do
-  let (logRaw?, args) ← TorchLean.CLI.takeFlagValueOnce args "log"
-  let (updates, args) ←
-    TorchLean.CLI.takePositiveNatFlag args exeName "updates" defaultUpdates
-  let (evalEvery, args) ←
-    TorchLean.CLI.takePositiveNatFlag args exeName "eval-every" defaultEvalEvery
-  let (evalEpisodes, args) ←
-    TorchLean.CLI.takePositiveNatFlag args exeName "eval-episodes" defaultEvalEpisodes
-  let (evalMaxSteps, args) ←
-    TorchLean.CLI.takePositiveNatFlag args exeName "eval-max-steps" defaultEvalMaxSteps
+    (defaultUpdateCount defaultEvaluationInterval defaultEvaluationEpisodes
+      defaultMaximumEvaluationSteps : Nat) :
+    Except String (PPOOptions × List String) := do
+  let (logRaw?, arguments) ← TorchLean.CLI.takeFlagValue? arguments "log"
+  let (updateCount, arguments) ←
+    TorchLean.CLI.takePositiveNatFlag arguments exeName "updates" (default := defaultUpdateCount)
+  let (evaluationInterval, arguments) ←
+    TorchLean.CLI.takePositiveNatFlag
+      arguments exeName "eval-every" (default := defaultEvaluationInterval)
+  let (evaluationEpisodes, arguments) ←
+    TorchLean.CLI.takePositiveNatFlag
+      arguments exeName "eval-episodes" (default := defaultEvaluationEpisodes)
+  let (maximumEvaluationSteps, arguments) ←
+    TorchLean.CLI.takePositiveNatFlag
+      arguments exeName "eval-max-steps" (default := defaultMaximumEvaluationSteps)
 
-  let log := _root_.Runtime.Training.LogDestination.parse? defaultLogPath logRaw?
-  pure ({ updates := updates
-          evalEvery := evalEvery
-          evalEpisodes := evalEpisodes
-          evalMaxSteps := evalMaxSteps
-          log := log
-          logPath := log.pathD defaultLogPath }, args)
+  let logDestination :=
+    Runtime.Training.LogDestination.resolve (.json defaultLogPath) logRaw?
+  pure
+    ({ updateCount
+       evaluationInterval
+       evaluationEpisodes
+       maximumEvaluationSteps
+       logDestination },
+     arguments)
 
+end PPOOptions
 end cli
 end rl
 end TorchLean

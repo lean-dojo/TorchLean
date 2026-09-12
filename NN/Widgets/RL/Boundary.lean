@@ -7,7 +7,11 @@ Authors: TorchLean Team
 module
 
 public meta import NN.Runtime.RL.Boundary.Json
-
+public import Mathlib.Algebra.Order.Field.Basic
+import Mathlib.Tactic.NormNum.Inv
+import Mathlib.Tactic.NormNum.Pow
+import Mathlib.Tactic.Positivity.Finset
+public import NN.Tensor.Internal.Elab.TensorLiteral
 public meta import NN.Widgets.Core.UI
 public meta import ProofWidgets.Component.HtmlDisplay
 public meta import ProofWidgets.Demos.Macro
@@ -18,7 +22,7 @@ public meta import ProofWidgets.Demos.Macro
 This widget is the “trust boundary debugger” for TorchLean RL.
 
 It reads a Gymnasium-style rollout JSON file (typically produced by
-`scripts/rl/export_gymnasium_rollout.py`), validates every transition against a Lean side
+`scripts/rl/gymnasium_server.py --out PATH`), validates every transition against a Lean side
 `Runtime.RL.Boundary.Contract`, and renders a compact report:
 
 - number of transitions,
@@ -38,9 +42,10 @@ open scoped ProofWidgets.Jsx
 namespace RL
 namespace Boundary
 
-open _root_.Runtime.RL.Boundary
+open Runtime.RL.Boundary
 
-private def summarize {obsShape : _root_.Spec.Shape} {nActions : Nat}
+/-- Count accepted and rejected transitions, keeping the rejection messages with their index. -/
+private def summarize {obsShape : Spec.Shape} {nActions : Nat}
     (xs : Array (Except String (Transition obsShape nActions))) :
     Nat × Nat × Array (Nat × String) :=
   Id.run do
@@ -57,13 +62,13 @@ private def summarize {obsShape : _root_.Spec.Shape} {nActions : Nat}
     return (okCount, errCount, errs)
 
 /-- Render a small HTML report for a rollout JSON file under a given contract. -/
-def rolloutBoundaryReportHtml {obsShape : _root_.Spec.Shape} {nActions : Nat}
+def rolloutBoundaryReportHtml {obsShape : Spec.Shape} {nActions : Nat}
     (path : System.FilePath)
     (c : Contract obsShape nActions)
     (maxErrors : Nat := 8) :
     IO ProofWidgets.Html := do
   try
-    let xs ← _root_.Runtime.RL.Boundary.loadRolloutAll (obsShape := obsShape) (nActions := nActions)
+    let xs ← Runtime.RL.Boundary.loadRolloutAll (obsShape := obsShape) (nActions := nActions)
       (path := path.toString) c
     let (okCount, errCount, errs) := summarize (obsShape := obsShape) (nActions := nActions) xs
     let shown := errs.take maxErrors
@@ -80,11 +85,21 @@ def rolloutBoundaryReportHtml {obsShape : _root_.Spec.Shape} {nActions : Nat}
         </ul>
       </div>
 
-    if errCount = 0 then
+    if xs.isEmpty then
       pure <|
         <div>
           {header}
-          <div className="torchlean-ok">{.text "All transitions passed the boundary contract."}</div>
+          <div className="torchlean-warn">
+            {.text "No transitions were found; no boundary contract checks ran."}
+          </div>
+        </div>
+    else if errCount = 0 then
+      pure <|
+        <div>
+          {header}
+          <div className="torchlean-ok">
+            {.text "All transitions passed the boundary contract."}
+          </div>
         </div>
     else
       pure <|
@@ -118,7 +133,8 @@ def rolloutBoundaryReportHtml {obsShape : _root_.Spec.Shape} {nActions : Nat}
 syntax (name := rlBoundaryRolloutFileViewCmd)
   "#rl_boundary_rollout_file_view " term ", " term ", " term : command
 
-macro "#rl_boundary_rollout_file_view " path:term ", " contract:term ", " maxErrors:term : command =>
+macro "#rl_boundary_rollout_file_view " path:term ", " contract:term ", " maxErrors:term :
+    command =>
   Lean.TSyntax.mkInfoCanonical <$> `(
     #html (rolloutBoundaryReportHtml (path := $path) (c := $contract) (maxErrors := $maxErrors))
   )

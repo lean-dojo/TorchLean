@@ -29,7 +29,7 @@ namespace Proofs
 namespace Autograd
 namespace Transformer
 
-open Spec
+open Spec TorchLean
 open TapeNodes
 open DGraph
 
@@ -49,7 +49,8 @@ The FFN affine maps are supplied as fixed sequence-level linear maps, matching t
 `seqFfnResidualDGraph`.
 -/
 
-/-- Full encoder-block context: MHA parameters, first LayerNorm affine parameters, second LayerNorm affine parameters. -/
+/-- Full encoder-block context: MHA parameters, first LayerNorm affine parameters, second LayerNorm
+affine parameters. -/
 abbrev ΓEncoderBlock (seqLen dModel numHeads headDim : Nat) : List Shape :=
   ΓMHAWithNorm seqLen dModel numHeads headDim ++
     [LayerNorm.VecShape dModel, LayerNorm.VecShape dModel]
@@ -149,7 +150,7 @@ def idxEncoderNorm1OutAfterFfn {seqLen dModel numHeads headDim dFF : Nat} :
         [SeqFFNHiddenShape seqLen dFF, SeqFFNHiddenShape seqLen dFF,
           SeqFFNModelShape seqLen dModel])
       (SeqFFNModelShape seqLen dModel) :=
-  _root_.Proofs.Autograd.Idx.weaken
+  Proofs.Idx.weaken
     (idxEncoderNorm1Out (seqLen := seqLen) (dModel := dModel)
       (numHeads := numHeads) (headDim := headDim))
     [SeqFFNHiddenShape seqLen dFF, SeqFFNHiddenShape seqLen dFF, SeqFFNModelShape seqLen dModel]
@@ -311,20 +312,7 @@ def encoderFfnResidualGraphFDerivCorrectAt {seqLen dModel numHeads headDim dFF :
     (b2 : Vec (Spec.Shape.size (SeqFFNModelShape seqLen dModel)))
     (c ε₁ : ℝ)
     (xV : CtxVec (ΓEncoderBlock seqLen dModel numHeads headDim))
-    (hNorm1 :
-      NodeFDerivCorrectAt
-        (LayerNorm.wholeNode
-          (Γ := ΓEncoderBlock seqLen dModel numHeads headDim ++
-            ssMHAResidual seqLen dModel numHeads headDim)
-          (m := seqLen) (n := dModel)
-          (encoderNorm1Inputs (seqLen := seqLen) (dModel := dModel)
-            (numHeads := numHeads) (headDim := headDim))
-          ε₁)
-        (Graph.evalVec
-          (Γ := ΓEncoderBlock seqLen dModel numHeads headDim)
-          (ss := ssMHAResidual seqLen dModel numHeads headDim)
-          (encoderMhaResidualDGraph (seqLen := seqLen) (dModel := dModel)
-            (numHeads := numHeads) (headDim := headDim) c).g xV)) :
+    (hε₁ : 0 < ε₁) :
     GraphFDerivCorrectAt
       (Γ := ΓEncoderBlock seqLen dModel numHeads headDim)
       (ss := ssMHAResidual seqLen dModel numHeads headDim ++
@@ -342,7 +330,19 @@ def encoderFfnResidualGraphFDerivCorrectAt {seqLen dModel numHeads headDim dFF :
     DGraph.graphFDerivCorrectAtOfCorrect dgMha.hg xV
   refine ⟨⟨⟨⟨⟨?_, ?_⟩, ?_⟩, ?_⟩, ?_⟩, ?_⟩
   · simpa [encoderAfterNorm1Graph, dgMha] using hgMha
-  · simpa [encoderAfterNorm1Graph, dgMha] using hNorm1
+  · simpa [encoderAfterNorm1Graph, dgMha] using
+      LayerNorm.wholeNodeFDerivCorrectAt
+          (Γ := ΓEncoderBlock seqLen dModel numHeads headDim ++
+            ssMHAResidual seqLen dModel numHeads headDim)
+          (m := seqLen) (n := dModel)
+          (encoderNorm1Inputs (seqLen := seqLen) (dModel := dModel)
+            (numHeads := numHeads) (headDim := headDim))
+          ε₁
+          (Graph.evalVec
+            (Γ := ΓEncoderBlock seqLen dModel numHeads headDim)
+            (ss := ssMHAResidual seqLen dModel numHeads headDim)
+            dgMha.g xV)
+          hε₁
   · exact NodeFDerivCorrect.at
       (TapeNodes.affineFderiv
         (Γ := ΓEncoderBlock seqLen dModel numHeads headDim ++
@@ -396,38 +396,8 @@ def encoderBlockGraphFDerivCorrectAt {seqLen dModel numHeads headDim dFF : Nat}
     (b2 : Vec (Spec.Shape.size (SeqFFNModelShape seqLen dModel)))
     (c ε₁ ε₂ : ℝ)
     (xV : CtxVec (ΓEncoderBlock seqLen dModel numHeads headDim))
-    (hNorm1 :
-      NodeFDerivCorrectAt
-        (LayerNorm.wholeNode
-          (Γ := ΓEncoderBlock seqLen dModel numHeads headDim ++
-            ssMHAResidual seqLen dModel numHeads headDim)
-          (m := seqLen) (n := dModel)
-          (encoderNorm1Inputs (seqLen := seqLen) (dModel := dModel)
-            (numHeads := numHeads) (headDim := headDim))
-          ε₁)
-        (Graph.evalVec
-          (Γ := ΓEncoderBlock seqLen dModel numHeads headDim)
-          (ss := ssMHAResidual seqLen dModel numHeads headDim)
-          (encoderMhaResidualDGraph (seqLen := seqLen) (dModel := dModel)
-            (numHeads := numHeads) (headDim := headDim) c).g xV))
-    (hNorm2 :
-      NodeFDerivCorrectAt
-        (LayerNorm.wholeNode
-          (Γ := ΓEncoderBlock seqLen dModel numHeads headDim ++
-            ssMHAResidual seqLen dModel numHeads headDim ++ [LayerNorm.MatShape seqLen dModel] ++
-            ssSeqFFNResidual seqLen dModel dFF)
-          (m := seqLen) (n := dModel)
-          (encoderNorm2Inputs (seqLen := seqLen) (dModel := dModel)
-            (numHeads := numHeads) (headDim := headDim) (dFF := dFF))
-          ε₂)
-        (Graph.evalVec
-          (Γ := ΓEncoderBlock seqLen dModel numHeads headDim)
-          (ss := ssMHAResidual seqLen dModel numHeads headDim ++
-            [LayerNorm.MatShape seqLen dModel] ++ ssSeqFFNResidual seqLen dModel dFF)
-          (encoderFfnResidualGraph (seqLen := seqLen) (dModel := dModel)
-            (numHeads := numHeads) (headDim := headDim) (dFF := dFF)
-            fc1 b1 fc2 b2 c ε₁)
-          xV)) :
+    (hε₁ : 0 < ε₁)
+    (hε₂ : 0 < ε₂) :
     GraphFDerivCorrectAt
       (Γ := ΓEncoderBlock seqLen dModel numHeads headDim)
       (ss := ssEncoderBlock seqLen dModel numHeads headDim dFF)
@@ -438,7 +408,15 @@ def encoderBlockGraphFDerivCorrectAt {seqLen dModel numHeads headDim dFF : Nat}
   exact
     ⟨encoderFfnResidualGraphFDerivCorrectAt
       (seqLen := seqLen) (dModel := dModel) (numHeads := numHeads) (headDim := headDim)
-      (dFF := dFF) fc1 b1 fc2 b2 c ε₁ xV hNorm1, hNorm2⟩
+      (dFF := dFF) fc1 b1 fc2 b2 c ε₁ xV hε₁,
+      LayerNorm.wholeNodeFDerivCorrectAt
+          (Γ := ΓEncoderBlock seqLen dModel numHeads headDim ++
+            ssMHAResidual seqLen dModel numHeads headDim ++ [LayerNorm.MatShape seqLen dModel] ++
+            ssSeqFFNResidual seqLen dModel dFF)
+          (m := seqLen) (n := dModel)
+          (encoderNorm2Inputs (seqLen := seqLen) (dModel := dModel)
+            (numHeads := numHeads) (headDim := headDim) (dFF := dFF))
+          ε₂ _ hε₂⟩
 
 /-- End-to-end VJP theorem for the concrete post-norm Transformer encoder-block graph. -/
 theorem encoderBlock_backpropVec_eq_adjoint_fderiv_at
@@ -455,38 +433,8 @@ theorem encoderBlock_backpropVec_eq_adjoint_fderiv_at
     (xV : CtxVec (ΓEncoderBlock seqLen dModel numHeads headDim))
     (seedV : CtxVec (ΓEncoderBlock seqLen dModel numHeads headDim ++
       ssEncoderBlock seqLen dModel numHeads headDim dFF))
-    (hNorm1 :
-      NodeFDerivCorrectAt
-        (LayerNorm.wholeNode
-          (Γ := ΓEncoderBlock seqLen dModel numHeads headDim ++
-            ssMHAResidual seqLen dModel numHeads headDim)
-          (m := seqLen) (n := dModel)
-          (encoderNorm1Inputs (seqLen := seqLen) (dModel := dModel)
-            (numHeads := numHeads) (headDim := headDim))
-          ε₁)
-        (Graph.evalVec
-          (Γ := ΓEncoderBlock seqLen dModel numHeads headDim)
-          (ss := ssMHAResidual seqLen dModel numHeads headDim)
-          (encoderMhaResidualDGraph (seqLen := seqLen) (dModel := dModel)
-            (numHeads := numHeads) (headDim := headDim) c).g xV))
-    (hNorm2 :
-      NodeFDerivCorrectAt
-        (LayerNorm.wholeNode
-          (Γ := ΓEncoderBlock seqLen dModel numHeads headDim ++
-            ssMHAResidual seqLen dModel numHeads headDim ++ [LayerNorm.MatShape seqLen dModel] ++
-            ssSeqFFNResidual seqLen dModel dFF)
-          (m := seqLen) (n := dModel)
-          (encoderNorm2Inputs (seqLen := seqLen) (dModel := dModel)
-            (numHeads := numHeads) (headDim := headDim) (dFF := dFF))
-          ε₂)
-        (Graph.evalVec
-          (Γ := ΓEncoderBlock seqLen dModel numHeads headDim)
-          (ss := ssMHAResidual seqLen dModel numHeads headDim ++
-            [LayerNorm.MatShape seqLen dModel] ++ ssSeqFFNResidual seqLen dModel dFF)
-          (encoderFfnResidualGraph (seqLen := seqLen) (dModel := dModel)
-            (numHeads := numHeads) (headDim := headDim) (dFF := dFF)
-            fc1 b1 fc2 b2 c ε₁)
-          xV)) :
+    (hε₁ : 0 < ε₁)
+    (hε₂ : 0 < ε₂) :
     Graph.backpropVec
         (Γ := ΓEncoderBlock seqLen dModel numHeads headDim)
         (ss := ssEncoderBlock seqLen dModel numHeads headDim dFF)
@@ -512,14 +460,14 @@ theorem encoderBlock_backpropVec_eq_adjoint_fderiv_at
     xV seedV
     (encoderBlockGraphFDerivCorrectAt
       (seqLen := seqLen) (dModel := dModel) (numHeads := numHeads) (headDim := headDim)
-      (dFF := dFF) fc1 b1 fc2 b2 c ε₁ ε₂ xV hNorm1 hNorm2)
+      (dFF := dFF) fc1 b1 fc2 b2 c ε₁ ε₂ xV hε₁ hε₂)
 
 /--
 Fréchet differentiability of a complete post-norm Transformer encoder block.
 
 `attnPack` builds the first LayerNorm input triple from the outer model context.  `ffnPack` builds
-the second LayerNorm input triple after the first post-norm sublayer has evaluated.  The LayerNorm
-side conditions are local to the two concrete normalization calls.
+the second LayerNorm input triple after the first post-norm sublayer has evaluated.  Both LayerNorm
+epsilons must be positive.
 -/
 theorem postNormEncoderBlock_hasFDerivAt
     {E : Type u} [NormedAddCommGroup E] [NormedSpace ℝ E]
@@ -534,62 +482,14 @@ theorem postNormEncoderBlock_hasFDerivAt
         CtxVec (ΓPostNorm seqLen dModel))
     (x : E)
     (hAttnPack : HasFDerivAt attnPack DattnPack x)
-    (hNorm1VarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        0 < CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix6 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxVarEps (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix6 seqLen dModel)
-            (LayerNorm.layerNormPrefix6 (m := seqLen) (n := dModel) ε₁) (attnPack x)) i)
-    (hNorm1StdNe0 :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix7 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxStd (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix7 seqLen dModel)
-            (LayerNorm.layerNormPrefix7 (m := seqLen) (n := dModel) ε₁) (attnPack x)) i ≠ 0)
+    (hε₁ : 0 < ε₁)
     (hFfnPack :
       HasFDerivAt ffnPack DffnPack
         (Graph.evalVec
           (Γ := ΓPostNorm seqLen dModel)
           (ss := ssPostNorm seqLen dModel)
           (postNormGraph (seqLen := seqLen) (dModel := dModel) ε₁) (attnPack x)))
-    (hNorm2VarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        0 < CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix6 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxVarEps (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix6 seqLen dModel)
-            (LayerNorm.layerNormPrefix6 (m := seqLen) (n := dModel) ε₂)
-            (ffnPack
-              (Graph.evalVec
-                (Γ := ΓPostNorm seqLen dModel)
-                (ss := ssPostNorm seqLen dModel)
-                (postNormGraph (seqLen := seqLen) (dModel := dModel) ε₁) (attnPack x)))) i)
-    (hNorm2StdNe0 :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix7 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxStd (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix7 seqLen dModel)
-            (LayerNorm.layerNormPrefix7 (m := seqLen) (n := dModel) ε₂)
-            (ffnPack
-              (Graph.evalVec
-                (Γ := ΓPostNorm seqLen dModel)
-                (ss := ssPostNorm seqLen dModel)
-                (postNormGraph (seqLen := seqLen) (dModel := dModel) ε₁) (attnPack x)))) i ≠ 0) :
+    (hε₂ : 0 < ε₂) :
     HasFDerivAt
       (fun z : E =>
         Graph.evalVec
@@ -622,7 +522,7 @@ theorem postNormEncoderBlock_hasFDerivAt
   twoSublayerPostNormBlock_hasFDerivAt
     (seqLen := seqLen) (dModel := dModel) ε₁ ε₂
     attnPack DattnPack ffnPack DffnPack x
-    hAttnPack hNorm1VarEpsPos hNorm1StdNe0 hFfnPack hNorm2VarEpsPos hNorm2StdNe0
+    hAttnPack hε₁ hFfnPack hε₂
 
 end
 

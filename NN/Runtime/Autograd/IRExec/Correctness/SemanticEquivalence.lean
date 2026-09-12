@@ -10,10 +10,12 @@ public import NN.Runtime.Autograd.IRExec.Correctness.Common
 public import NN.Runtime.Autograd.IRExec.Correctness.SemanticEquivalenceCommon
 public import NN.Runtime.Autograd.IRExec.Correctness.SemanticEquivalenceOpCases
 public import NN.Runtime.Autograd.IRExec.Correctness.Ops.Activations
+public import NN.Runtime.Autograd.IRExec.Correctness.Ops.Concat
 public import NN.Runtime.Autograd.IRExec.Correctness.Ops.Constants
 public import NN.Runtime.Autograd.IRExec.Correctness.Ops.Convolution
 public import NN.Runtime.Autograd.IRExec.Correctness.Ops.Elementwise
 public import NN.Runtime.Autograd.IRExec.Correctness.Ops.LinearAlgebra
+public import NN.Runtime.Autograd.IRExec.Correctness.Ops.Loss
 public import NN.Runtime.Autograd.IRExec.Correctness.Ops.Normalization
 public import NN.Runtime.Autograd.IRExec.Correctness.Ops.Pooling
 public import NN.Runtime.Autograd.IRExec.Correctness.Ops.Permutation
@@ -40,8 +42,8 @@ This module ties the per-op correctness lemmas together into the recursive prese
 ## Main definitions
 
 - `buildFrom_preserves_denotation`: recursive preservation theorem for `buildFrom`.
-- `denoteAll_eq_of_lowerToForwardGraph`: end-to-end forward semantic equivalence theorem for the named
-  supported fragment.
+- `denoteAll_eq_of_lowerToForwardGraph`: end-to-end forward semantic equivalence theorem, under the
+  `NoRawLog` side condition.
 
 ## Implementation notes
 
@@ -49,8 +51,8 @@ This module ties the per-op correctness lemmas together into the recursive prese
   style makes regressions easier to diagnose when new ops are added.
 - This is one of the slower proof modules in TorchLean. The theorem recursively walks an IR graph,
   dispatches every supported node kind, and maintains equality between an untyped IR value table and
-  a shape-indexed execution context. Even simple operator branches can become expensive once shape equality,
-  `Except` success/failure paths, and cast proof irrelevance all appear in the same goal.
+  a shape-indexed execution context. Even simple operator branches can become expensive once shape
+  equality, `Except` success/failure paths, and cast proof irrelevance all appear in the same goal.
 - Branch-local work belongs in `Correctness/Ops/*` files, with repeated simplification scripts
   replaced by named lemmas. Each lowering branch should stay small enough that adding a new IR op is
   routine.
@@ -67,8 +69,7 @@ namespace Runtime
 namespace Autograd
 namespace IRExec
 
-open Spec
-open Tensor
+open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
@@ -83,12 +84,10 @@ the same value table as `denoteAllState` for the lowered state, for the named su
 This theorem is the workhorse behind `denoteAll_eq_of_lowerToForwardGraph`.
 -/
 private theorem buildFrom_preserves_denotation
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) {inShape : Shape}
     (i : Nat) (st st' : State α inShape)
-    (hNoMSE : NoMSELoss g)
     (hNoRawLog : NoRawLog g)
-    (hNoConcat : NoConcat g)
     (h : buildFrom (α := α) (g := g) (payload := payload) (inShape := inShape) (i := i) st = .ok
       st') :
     ∀ x : Tensor α inShape,
@@ -102,7 +101,7 @@ private theorem buildFrom_preserves_denotation
   let vals0 : Array (Spec.SomeTensor α) :=
     denoteAllState (α := α) inShape (st := (⟨ss, gd⟩ : State α inShape)) x
   -- The runtime context corresponding to the already-lowered prefix.
-  let ctx : _root_.TorchLean.TensorPack α ([inShape] ++ ss) :=
+  let ctx : TorchLean.TensorPack α ([inShape] ++ ss) :=
     ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil)
 
   by_cases hi : i < g.nodes.size
@@ -139,8 +138,8 @@ private theorem buildFrom_preserves_denotation
           -- The recursive call leaves a termination side-goal (`size - (i+1) < size - i`) which we
           -- discharge from the `hi : i < g.nodes.size` step-case hypothesis.
           simpa [input] using
-            (buildFrom_preserves_denotation (α := α) (g := g) (payload := payload) (inShape := inShape)
-              (i := i + 1) (st := st1) (st' := st') hNoMSE hNoRawLog hNoConcat hRec x)
+            (buildFrom_preserves_denotation (α := α) (g := g) (payload := payload)
+              (inShape := inShape) (i := i + 1) (st := st1) (st' := st') hNoRawLog hRec x)
         -- Common tail step: unfold `denoteAllFrom` once, rewrite by the `evalAt` step result, then
         -- discharge the remaining tail via the recursive correctness lemma.
         have finish
@@ -195,8 +194,8 @@ private theorem buildFrom_preserves_denotation
           | sub =>
               exact buildFrom_denoteAllFrom_sub (α := α) (g := g) (payload := payload)
                 (gd := gd) (i := i) (st' := st') (x := x) (n := n) hN hk hi hBuild0 tail
-          | mul_elem =>
-              exact buildFrom_denoteAllFrom_mul_elem (α := α) (g := g) (payload := payload)
+          | mulElem =>
+              exact buildFrom_denoteAllFrom_mulElem (α := α) (g := g) (payload := payload)
                 (gd := gd) (i := i) (st' := st') (x := x) (n := n) hN hk hi hBuild0 tail
           | abs =>
               exact buildFrom_denoteAllFrom_abs (α := α) (g := g) (payload := payload)
@@ -266,6 +265,14 @@ private theorem buildFrom_preserves_denotation
               exact buildFrom_denoteAllFrom_sigmoid (α := α) (g := g) (payload := payload)
                 (gd := gd) (i := i) (st' := st') (x := x) (n := n)
                 hN hk hi hBuild0 tail
+          | softplus =>
+              exact buildFrom_denoteAllFrom_softplus (α := α) (g := g) (payload := payload)
+                (gd := gd) (i := i) (st' := st') (x := x) (n := n)
+                hN hk hi hBuild0 tail
+          | safeLog =>
+              exact buildFrom_denoteAllFrom_safeLog (α := α) (g := g) (payload := payload)
+                (gd := gd) (i := i) (st' := st') (x := x) (n := n)
+                hN hk hi hBuild0 tail
           | exp =>
               exact buildFrom_denoteAllFrom_exp (α := α) (g := g) (payload := payload)
                 (gd := gd) (i := i) (st' := st') (x := x) (n := n)
@@ -304,16 +311,17 @@ private theorem buildFrom_preserves_denotation
                 (gd := gd) (i := i) (st' := st') (x := x) (n := n) (s := s)
                 hN hk hi hBuild0 (fun st1 hRec => tail (st1 := st1) hRec)
           | concat axis =>
-              have : False := (hNoConcat i n hN axis) hk
-              cases this
+              exact buildFrom_denoteAllFrom_concat (α := α) g payload gd i st' x n axis hN hk hi
+                hBuild0 (fun st1 hRec => tail (st1 := st1) hRec)
           | transpose axis₁ axis₂ =>
               exact buildFrom_denoteAllFrom_transpose (α := α) (g := g) (payload := payload)
                 (gd := gd) (i := i) (st' := st') (x := x) (n := n)
                 (axis₁ := axis₁) (axis₂ := axis₂) hN hk hi hBuild0
                 (fun st1 hRec => tail (st1 := st1) hRec)
           | mseLoss =>
-              have : False := (hNoMSE i n hN) hk
-              cases this
+              exact buildFrom_denoteAllFrom_mse_loss (α := α) (g := g) (payload := payload)
+                (gd := gd) (i := i) (st' := st') (x := x) (n := n) hN hk hi hBuild0
+                (fun st1 hRec => tail (st1 := st1) hRec)
   · -- Out-of-bounds: lowering pass is identity and evaluator returns the current table.
     have h0 := h
     unfold buildFrom at h0
@@ -327,18 +335,24 @@ decreasing_by
   simpa using Nat.sub_succ_lt_self (a := g.nodes.size) (i := i) hi
 
 /--
-End-to-end semantic equivalence for successful IR lowering over the named supported fragment.
+End-to-end semantic equivalence for successful IR lowering.
 
 If `lowerToForwardGraph` returns an executable graph, evaluating that executable graph on any input
-matches the denotational semantics of the original IR graph, provided the graph avoids operators
-whose current lowering proof needs extra side conditions.
+matches the denotational semantics of the original IR graph.
+
+One side condition remains. `NoRawLog` excludes raw `.log`: the IR evaluator rejects nonpositive
+inputs while the lowered closure applies `Tensor.logSpec` to every input, so the two can only be
+compared under a positivity precondition the theorem does not carry.
+
+Every other operation kind is covered, including `.mseLoss` and `.concat` along any axis. The
+lowering accepts exactly the shapes the IR semantics accepts for `.matmul` and `.linear` (any shared
+leading shape, so rank at least four matmul and batched linear are covered); shapes rejected by the
+lowering never reach this theorem because `lowerToForwardGraph` returns an error for them.
 -/
 theorem denoteAll_eq_of_lowerToForwardGraph
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) (exec : ForwardGraph α)
-    (hNoMSE : NoMSELoss g)
     (hNoRawLog : NoRawLog g)
-    (hNoConcat : NoConcat g)
     (h : lowerToForwardGraph (α := α) g payload = .ok exec) :
     ∀ x : Tensor α exec.inShape,
       NN.IR.Graph.denoteAll (α := α) (g := g) (payload := payload)
@@ -384,7 +398,8 @@ theorem denoteAll_eq_of_lowerToForwardGraph
               -- Rewrite the executable result in terms of `stFinal`.
               have hExec :
                   ForwardGraph.denoteAll (α := α)
-                      (e := (fun a ↦ { inShape := n0.outShape, ss := a.fst, body := a.snd }) stFinal) x
+                      (e := (fun a ↦ { inShape := n0.outShape, ss := a.fst, body := a.snd })
+                        stFinal) x
                         =
                     denoteAllState (α := α) n0.outShape stFinal x := by
                 rfl
@@ -414,7 +429,7 @@ theorem denoteAll_eq_of_lowerToForwardGraph
                   (buildFrom_preserves_denotation (α := α) (g := g) (payload := payload) (inShape :=
                     n0.outShape)
                       (i := 1) (st := (⟨[], .nil⟩ : State α n0.outShape)) (st' := stFinal)
-                      hNoMSE hNoRawLog hNoConcat hSt x)
+                      hNoRawLog hSt x)
               -- Now unfold `denoteAllFrom` at `i=0` and rewrite by `h0`/`hTail`.
               have hSize : 0 < g.nodes.size := by
                 -- If `g.nodes.size = 0`, `getNode 0` would be out of bounds.

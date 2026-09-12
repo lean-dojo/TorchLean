@@ -7,21 +7,22 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Neural.Blocks
+public import NN.Runtime.Autograd.Torch.Initialization
+public import NN.Spec.Layers.Activation
+public import NN.API.Macros -- shake: keep
+public import NN.API.Neural.Blocks -- shake: keep
 
 /-!
 # Transformer Blocks
 
-This module exposes attention, feed-forward, and Transformer-stack constructors used by sequence
-models and higher-level examples.
+This module defines the configuration records for Transformer encoder blocks and stacks. The seeded
+constructors `nn.transformerEncoderBlock` and `nn.transformerEncoderStack` live in `NN.API.Seeded`.
 -/
 
 @[expose] public section
 
 namespace TorchLean
 namespace nn
-namespace Internal
-namespace blocks
 
 /--
 Config record for `transformerEncoderBlock`.
@@ -29,177 +30,91 @@ Config record for `transformerEncoderBlock`.
 Separating the config as a structure makes it easier to write readable examples and keep seed
 management deterministic.
 -/
-structure TransformerEncoderBlock where
-  /-- Number of attention heads. -/
-  numHeads : Nat
-  /-- Per-head embedding dimension. -/
-  headDim : Nat
+structure TransformerEncoder.Block.Config where
+  /-- Number of attention heads. Must be positive. -/
+  headCount : Nat
+  /-- Per-head embedding dimension. Must be positive. -/
+  headWidth : Nat
   /-- Hidden dimension of the feed-forward network. -/
-  ffnHidden : Nat
+  feedForwardWidth : Nat
   /-- Activation used in the feed-forward network. -/
-  activation : _root_.Activation.Kind := .gelu
-  /-- Optional dropout probability for examples; `none` means no dropout. -/
+  activation : Activation.Kind := .gelu
+  /--
+  Dropout on the attention and feed-forward outputs before their residual additions.
+
+  This retains the original two-site behavior. Set `attentionDropout?` and
+  `feedForwardDropout?` as well when all four Transformer dropout sites are wanted.
+  -/
   dropout? : Option Float := none
   /-- Normalize before attention and feed-forward sublayers instead of after each residual. -/
-  normFirst : Bool := false
+  normalizeFirst : Bool := false
   /-- Add a trainable bias after the attention output projection. -/
   attentionOutputBias : Bool := false
+  /-- Add a separate bias to each query, key, and value projection. -/
+  attentionInputBias : Bool := false
+  /-- Drop softmax attention probabilities before they weight the value vectors. -/
+  attentionDropout? : Option Float := none
+  /-- Drop activated feed-forward hidden units before the second affine map. -/
+  feedForwardDropout? : Option Float := none
   /-- Attention and feed-forward weight initialization. `none` keeps each layer's default. -/
-  weightInit? : Option _root_.Runtime.Autograd.Torch.Init.Scheme := none
+  weightInitialization? : Option Init.Scheme := none
   /--
   Initializer for the attention and feed-forward projections that write to residual streams.
 
-  When omitted, `weightInit?` is used. The separate field supports depth-scaled residual
+  When omitted, `weightInitialization?` is used. The separate field supports depth-scaled residual
   initialization without imposing that convention on every Transformer.
   -/
-  residualOutputInit? : Option _root_.Runtime.Autograd.Torch.Init.Scheme := none
-  /-- Base seed used to derive deterministic per-layer seeds inside the block. -/
-  seedBase : Nat := 0
+  residualOutputInitialization? : Option Init.Scheme := none
 
 /--
-Transformer encoder block configuration.
+Configuration for a stack of Transformer encoder blocks.
 
-This follows the familiar pattern:
-`(residual MHA) -> LayerNorm -> (residual FFN) -> LayerNorm`.
-
-PyTorch analogue:
-- `torch.nn.TransformerEncoderLayer`
-  (`https://pytorch.org/docs/stable/generated/torch.nn.TransformerEncoderLayer.html`)
+Initialization seeds are allocated by `nn.build`; they are deliberately not part of model
+configuration.
 -/
-def transformerEncoderBlock (leading : List Nat := []) {n dModel : Nat}
-    [NeZero n] [NeZero dModel]
-    (cfg : TransformerEncoderBlock)
-    (mask : Option (Tensor Bool [n, n]) := none) :
-    Sequential (leading ++ [n, dModel]) (leading ++ [n, dModel]) := by
-  let seedAttn := cfg.seedBase
-  let seedNorm1Gamma := cfg.seedBase + 1
-  let seedNorm1Beta := cfg.seedBase + 2
-  let seedFfnW1 := cfg.seedBase + 3
-  let seedFfnB1 := cfg.seedBase + 4
-  let seedFfnW2 := cfg.seedBase + 5
-  let seedFfnB2 := cfg.seedBase + 6
-  let seedNorm2Gamma := cfg.seedBase + 7
-  let seedNorm2Beta := cfg.seedBase + 8
-  let seedDrop1 := cfg.seedBase + 9
-  let seedDrop2 := cfg.seedBase + 10
+structure TransformerEncoder.Stack.Config where
+  /-- Number of encoder blocks. -/
+  layerCount : Nat
+  /-- Shared configuration for each block. -/
+  block : TransformerEncoder.Block.Config
 
-  let tokenLeading := leading ++ [n]
-  let modelShape : Spec.Shape := tokenLeading ++ [dModel]
-  let attn : Sequential modelShape modelShape := by
-    simpa [modelShape, tokenLeading, List.append_assoc] using
-      (multiHeadAttention leading (n := n) (dModel := dModel)
-        { numHeads := cfg.numHeads, headDim := cfg.headDim, seedW := seedAttn,
-          outputBias := cfg.attentionOutputBias, weightInit? := cfg.weightInit?,
-          outputWeightInit? := cfg.residualOutputInit? }
-        (mask := mask))
-  let attnInner :=
-    match cfg.dropout? with
-    | none => attn
-    | some p =>
-        seq! attn, dropout (s := modelShape) p (seed := seedDrop1)
-  let norm1 : Sequential modelShape modelShape :=
-    layerNorm tokenLeading (width := dModel)
-      { seedGamma := seedNorm1Gamma, seedBeta := seedNorm1Beta }
-
-  let ffn : Sequential modelShape modelShape :=
-    seq!
-      linearWith dModel cfg.ffnHidden { weightInit? := cfg.weightInit? }
-        seedFfnW1 seedFfnB1 (leading := tokenLeading),
-      activation (s := Spec.Shape.ofList (tokenLeading ++ [cfg.ffnHidden])) cfg.activation,
-      linearWith cfg.ffnHidden dModel
-        { weightInit? := cfg.residualOutputInit?.orElse (fun _ => cfg.weightInit?) }
-        seedFfnW2 seedFfnB2 (leading := tokenLeading)
-  let ffnInner :=
-    match cfg.dropout? with
-    | none => ffn
-    | some p =>
-        seq! ffn, dropout (s := modelShape) p (seed := seedDrop2)
-  let norm2 : Sequential modelShape modelShape :=
-    layerNorm tokenLeading (width := dModel)
-      { seedGamma := seedNorm2Gamma, seedBeta := seedNorm2Beta }
-
-  let result : Sequential modelShape modelShape :=
-    if cfg.normFirst then
-      seq!
-        residual (seq! norm1, attnInner),
-        residual (seq! norm2, ffnInner)
-    else
-      seq!
-        residual attnInner,
-        norm1,
-        residual ffnInner,
-        norm2
-  simpa [modelShape, tokenLeading, List.append_assoc] using result
+namespace TransformerEncoder.Block.Config
 
 /--
-Config record for `transformerEncoderStack`.
+Validate the shared Transformer block template.
 
-This builds `layers` copies of `transformerEncoderBlock`, allocating seeds in a fixed stride.
+Validation belongs to the configuration itself rather than to an instantiated block so an empty
+stack cannot silently accept settings that would fail as soon as its depth changes.
 -/
-structure TransformerEncoderStack where
-  /-- Layer stack. -/
-  layers : Nat
-  /-- Template config for each block (its `seedBase` is ignored; we allocate per-layer seeds). -/
-  block : TransformerEncoderBlock
-  /-- Base seed for the whole stack. -/
-  seedBase : Nat := 0
-  /-- Seed stride between consecutive blocks (must exceed the per-block seed footprint). -/
-  seedStride : Nat := 100
+def validate (config : TransformerEncoder.Block.Config)
+    (kind : String := "TransformerEncoder") : Except String Unit := do
+  if config.headCount = 0 then
+    throw s!"{kind}: head count must be positive"
+  if config.headWidth = 0 then
+    throw s!"{kind}: head width must be positive"
+  if config.feedForwardWidth = 0 then
+    throw s!"{kind}: feed-forward width must be positive"
+  match config.dropout? with
+  | none => pure ()
+  | some probability =>
+      unless probability.isFinite && 0.0 <= probability && probability <= 1.0 do
+        throw s!"{kind}: dropout probability must be finite and in [0, 1], got {probability}"
+  for (site, probability?) in
+      [("attention", config.attentionDropout?), ("feed-forward", config.feedForwardDropout?)] do
+    match probability? with
+    | none => pure ()
+    | some probability =>
+        unless probability.isFinite && 0.0 <= probability && probability <= 1.0 do
+          throw
+            s!"{kind}: {site} dropout probability must be finite and in [0, 1], got {probability}"
+  match config.weightInitialization? with
+  | none => pure ()
+  | some initialization => initialization.validate
+  match config.residualOutputInitialization? with
+  | none => pure ()
+  | some initialization => initialization.validate
 
-/-- Build the remaining encoder blocks, assigning each block its configured seed interval. -/
-def encoderStackLayers (leading : List Nat := []) {n dModel : Nat}
-    [NeZero n] [NeZero dModel]
-    (template : TransformerEncoderBlock) (seedBase seedStride : Nat)
-    (mask : Option (Tensor Bool [n, n]) := none) :
-    (layerIdx : Nat) → (remaining : Nat) →
-      Sequential (leading ++ [n, dModel]) (leading ++ [n, dModel])
-  | _layerIdx, 0 =>
-      _root_.Runtime.Autograd.TorchLean.NN.Seq.id
-        (Spec.Shape.ofList (leading ++ [n, dModel]))
-  | layerIdx, remaining + 1 =>
-      let seed := seedBase + layerIdx * seedStride
-      let blockCfg : TransformerEncoderBlock := { template with seedBase := seed }
-      let here := transformerEncoderBlock leading (n := n) (dModel := dModel) blockCfg
-        (mask := mask)
-      let rest :=
-        encoderStackLayers leading (n := n) (dModel := dModel)
-          template seedBase seedStride (mask := mask)
-          (layerIdx + 1) remaining
-      seq! here, rest
+end TransformerEncoder.Block.Config
 
-/--
-Stack `cfg.layers` copies of `blocks.transformerEncoderBlock`.
-
-TorchLean analogue of composing `torch.nn.TransformerEncoderLayer` into a
-`torch.nn.TransformerEncoder`, using `Seq` composition for the typed model.
--/
-def transformerEncoderStack (leading : List Nat := []) {n dModel : Nat}
-    [NeZero n] [NeZero dModel]
-    (cfg : TransformerEncoderStack)
-    (mask : Option (Tensor Bool [n, n]) := none) :
-    Sequential (leading ++ [n, dModel]) (leading ++ [n, dModel]) :=
-  encoderStackLayers leading (n := n) (dModel := dModel)
-    cfg.block cfg.seedBase cfg.seedStride (mask := mask) 0 cfg.layers
-
-/--
-Transformer encoder followed by a flatten+linear classification head.
-
-PyTorch analogue (approximately): `nn.TransformerEncoder(...)` followed by pooling or flattening
-and `nn.Linear`.
--/
-def transformerEncoderClassifier (leading : List Nat := []) {n dModel : Nat}
-    [NeZero n] [NeZero dModel]
-    (classes : Nat) (cfg : TransformerEncoderStack) :
-    Sequential (leading ++ [n, dModel]) (leading ++ [classes]) :=
-  let enc := transformerEncoderStack leading (n := n) (dModel := dModel) cfg
-  let seedHeadW := cfg.seedBase + cfg.layers * cfg.seedStride
-  let seedHeadB := seedHeadW + 1
-  let flat : Sequential (leading ++ [n, dModel]) (leading ++ [n * dModel]) :=
-    by simpa using flattenAfter leading (shape := [n, dModel])
-  let head : Sequential (leading ++ [n * dModel]) (leading ++ [classes]) :=
-    linear (n * dModel) classes
-      (seedW := seedHeadW) (seedB := seedHeadB)
-      (leading := leading)
-  seq! enc, flat, head
-
-end blocks
+end nn
+end TorchLean

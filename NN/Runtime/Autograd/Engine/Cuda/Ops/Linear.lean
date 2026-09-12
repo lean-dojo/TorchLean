@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Engine.Cuda.Ops.Shape
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Core
 
 /-!
 # CUDA Tape Operations: Matrix, FFT, and Loss Nodes
@@ -18,8 +18,8 @@ namespace Runtime
 namespace Autograd
 namespace Cuda
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Tape
 

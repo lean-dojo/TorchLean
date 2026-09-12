@@ -23,7 +23,7 @@ The numerical-bugs study by Wang et al. gives a complementary source of real PyT
 failures: invalid domains for `log`, `sqrt`, division, `exp`, and related math APIs:
 
 - Wang et al., “An Empirical Study on Numerical Bugs in Deep Learning Programs”, ASE NIER 2022.
-  https://conf.researchr.org/details/ase-2022/ase-2022-nier-track/18/An-Empirical-Study-on-Numerical-Bugs-in-Deep-Learning-Programs
+  https://doi.org/10.1145/3551349.3559561
 
 TorchLean cannot repair an arbitrary hand-written unstable loss after the fact. The design instead
 gives stable primitives and domain-aware variants a named place in the spec. For example,
@@ -58,82 +58,85 @@ y = x / denom
 TorchLean makes the protected variant visible:
 
 ```lean
-Spec.Tensor.safedivSpec x denom
+TorchLean.Tensor.safedivSpec x denom
 ```
 
-The checked definition and theorem below give the library-approved stable path for this division
-pattern.
+The checked definition and theorem below expose the shifted denominator. Adding epsilon does not
+prevent division by zero when `denom = -epsilon`, nor guarantee finite floating-point results.
+Callers must establish the domain conditions for their inputs.
 -/
 
 @[expose] public section
 
+open TorchLean
+
 namespace NN.Examples.BugZoo.StableLoss
 
-open Spec.Tensor
+open TorchLean.Tensor
 
 /--
 The logits cross-entropy spec is exactly the log-softmax form.
 
-This compact theorem is a useful contract: if a model uses `crossEntropyLogitsSpec`, the
-intended decomposition is stable-logits first, then target weighting and mean reduction. That is the
-TorchLean answer to the TensorFuzz-style broken-cross-entropy class inside the verified fragment.
+It weights log probabilities by targets, then averages over non-class dimensions.
 -/
 theorem crossEntropyLogits_uses_logSoftmax {s : Spec.Shape} (axis : Nat)
     [Spec.Shape.AxisInBounds axis s]
-    {α : Type} [Context α]
-    (logits target : Spec.Tensor α s) :
+    {α : Type} [Storage α] [Context α]
+    (logits target : Tensor α s) :
     Spec.crossEntropyLogitsSpec axis logits target =
       let logp := Activation.logSoftmaxSpec (α := α) (s := s) axis logits
-      let total := Spec.Tensor.sumSpec (Spec.Tensor.mulSpec target logp)
+      let total := Tensor.sumSpec (Tensor.mulSpec target logp)
       Spec.meanOverAxisSlices (s := s) axis (-total) := by
   rfl
 
 /--
-The logits-loss gradient spec is the familiar
-$\operatorname{softmax}(\mathrm{logits})-\mathrm{target}$, averaged over the
-non-class dimensions. The selected class dimension is summed, not averaged.
+The logits-loss gradient keeps the total target weight in each class slice.
 
-Verified AD can only prove the gradient for the loss we actually specify. This theorem makes the
-specified training signal visible, so a future implementation can be checked against this contract
-instead of an informal “cross entropy” name.
+For weights `t`, the formula is `softmax(logits) * sum(t) - t`, averaged over the non-class
+dimensions. Probability targets have total weight one and give the familiar `softmax - target`.
+An all-zero target gives a zero loss and zero gradient. The same formula also handles weighted
+targets without normalizing them or changing the loss.
+
+This theorem unfolds the supplied gradient spec. The reduction drops the selected class axis, and
+`broadcastAfterSum` restores that same axis before multiplying by the probabilities.
 -/
-theorem crossEntropyLogitsDeriv_is_softmax_minus_target {s : Spec.Shape} (axis : Nat)
+theorem crossEntropyLogitsDeriv_uses_target_mass {s : Spec.Shape} (axis : Nat)
     [Spec.Shape.AxisInBounds axis s]
-    {α : Type} [Context α]
-    (logits target : Spec.Tensor α s) :
+    {α : Type} [Storage α] [Context α]
+    (logits target : Tensor α s) :
     Spec.crossEntropyLogitsDerivSpec axis logits target =
-      Spec.Tensor.scaleSpec
-        (Spec.Tensor.subSpec
-          (Activation.softmaxSpec (α := α) (s := s) axis logits) target)
+      Tensor.scaleSpec
+        (Tensor.subSpec
+          (Tensor.mulSpec (Activation.softmaxSpec (α := α) (s := s) axis logits)
+            (Tensor.broadcastAfterSum s axis (Tensor.reduceDim Tensor.sumSpec axis target)))
+          target)
         (1 / (Spec.axisMeanDenom s axis : α)) := by
   rfl
 
 /--
 Probability-space cross entropy clips the predicted probability before taking `log`.
 
-This is a different API from logits cross entropy. We keep both because the safe choice depends on
-what the caller has: logits should use `crossEntropyLogitsSpec`; already-normalized probabilities
-should use the clipped probability form below.
+Pass logits to `crossEntropyLogitsSpec`; use this form for probabilities.
 -/
 theorem crossEntropyProbabilities_clips_before_log {s : Spec.Shape} (axis : Nat)
     [Spec.Shape.AxisInBounds axis s]
-    {α : Type} [Context α]
-    (predicted target : Spec.Tensor α s) (epsilon : α) :
+    {α : Type} [Storage α] [Context α]
+    (predicted target : Tensor α s) (epsilon : α) :
     Spec.crossEntropySpec axis predicted target epsilon =
       let clamp01 := fun x : α =>
         let x := if x > epsilon then x else epsilon
         if x < (1 : α) - epsilon then x else (1 : α) - epsilon
-      let q := Spec.Tensor.mapSpec clamp01 predicted
-      let logq := Spec.Tensor.logSpec q
-      let total := Spec.Tensor.sumSpec (Spec.Tensor.mulSpec target logq)
+      let q := Tensor.mapSpec clamp01 predicted
+      let logq := Tensor.logSpec q
+      let total := Tensor.sumSpec (Tensor.mulSpec target logq)
       Spec.meanOverAxisSlices (s := s) axis (-total) := by
   simp [Spec.crossEntropySpec]
 
 /-- Epsilon-protected division is a separate named tensor operation, not a hidden rewrite. -/
 theorem safeDivSpec_unfold {s : Spec.Shape}
-    {α : Type} [Context α] (x y : Spec.Tensor α s) :
-    Spec.Tensor.safedivSpec x y =
-      Spec.Tensor.map2Spec (fun a b => a / (b + Numbers.epsilon)) x y := by
+    {α : Type} [Storage α] [Context α] (x y : Tensor α s) :
+    Tensor.safedivSpec x y =
+      Tensor.map2Spec (fun a b => a / (b + Context.defaultEpsilon)) x y := by
   rfl
 
 end NN.Examples.BugZoo.StableLoss

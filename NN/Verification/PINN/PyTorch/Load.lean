@@ -30,8 +30,8 @@ The generic JSON helpers (`loadWeights?`, `parseTensor`, `inferMatrixDims`, …)
 namespace Import
 namespace PINNPyTorch
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Shape
 open Lean
 open Data

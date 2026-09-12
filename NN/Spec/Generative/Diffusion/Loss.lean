@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Generative.Diffusion.ForwardProcess
 public import NN.Spec.Layers.Loss
+public import NN.Spec.Generative.Diffusion.ForwardProcess
 
 /-!
 # Diffusion training losses (spec layer)
@@ -25,10 +25,10 @@ Why keep this separate from `NN.Spec.Layers.Loss`:
 
 namespace Generative.Diffusion
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {T : Nat} {s : Shape}
 
 /--

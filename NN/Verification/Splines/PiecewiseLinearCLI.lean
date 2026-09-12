@@ -47,6 +47,19 @@ namespace NN.Verification.Splines.PiecewiseLinearCLI
 open Lean
 open Json
 
+/-- Arithmetic used for the optional runtime cross-check. -/
+inductive Arithmetic where
+  | exact
+  | ieee
+  deriving DecidableEq, Repr
+
+/-- Parse the command-line arithmetic selector. -/
+def parseArithmetic (value : String) : Except String Arithmetic :=
+  match value with
+  | "exact" => pure .exact
+  | "ieee" => pure .ieee
+  | _ => throw s!"--arithmetic: expected exact or ieee; got `{value}`"
+
 /-- Repository-relative path of the bundled piecewise-linear certificate. -/
 def defaultCertPath : String :=
   "NN/Examples/Verification/Splines/piecewise_linear_cert.json"
@@ -65,7 +78,7 @@ def usage : String :=
     "Arguments:",
     s!"  <path>            certificate JSON path (default: {defaultCertPath})",
     "  --regen            call Julia to regenerate the JSON and check the stdout payload",
-    "  --ieee32-exec      additionally check the same equalities under IEEE32Exec semantics",
+    "  --arithmetic=exact|ieee  check exactly (default) or also replay under IEEE arithmetic",
     s!"  --script=PATH     override Julia script path (default: {defaultJuliaScript})",
   ]
 
@@ -83,29 +96,28 @@ def main (args : List String) : IO Unit := do
     return
 
   let (regen, args) ←
-    match TorchLean.CLI.takeBoolFlagOnce args "regen" with
+    match TorchLean.CLI.takeBoolFlag args "regen" with
     | .ok result => pure result
     | .error e => throw <| IO.userError s!"{e}\n\n{usage}"
-  let (ieee32Exec, args) ←
-    match TorchLean.CLI.takeBoolFlagOnce args "ieee32-exec" with
+  let (arithmetic, args) ←
+    match TorchLean.CLI.takeParsedFlag args "arithmetic" (default := "exact") parseArithmetic with
     | .ok result => pure result
     | .error e => throw <| IO.userError s!"{e}\n\n{usage}"
   let (scriptPath, args) ←
-    match TorchLean.CLI.takeFlagValueDefault args "script" defaultJuliaScript with
+    match TorchLean.CLI.takeFlagValue args "script" (default := defaultJuliaScript) with
     | .ok result => pure result
     | .error e => throw <| IO.userError s!"{e}\n\n{usage}"
   let (certPath, args) ←
-    match TorchLean.CLI.takePositionalDefault args defaultCertPath with
+    match TorchLean.CLI.takePositional args (default := defaultCertPath) with
     | .ok result => pure result
     | .error e => throw <| IO.userError s!"{e}\n\n{usage}"
   match TorchLean.CLI.checkNoArgs args with
   | .ok () => pure ()
   | .error e => throw <| IO.userError s!"{e}\n\n{usage}"
   let check :=
-    if ieee32Exec then
-      NN.Verification.Splines.PiecewisePolyCert.checkJsonIEEE32ExecExact
-    else
-      NN.Verification.Splines.PiecewisePolyCert.checkJson
+    match arithmetic with
+    | .exact => NN.Verification.Splines.PiecewisePolyCert.checkJson
+    | .ieee => NN.Verification.Splines.PiecewisePolyCert.checkJsonIEEE32ExecExact
 
   let j ←
     if regen then

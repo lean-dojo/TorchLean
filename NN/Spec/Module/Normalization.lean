@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Layers.Normalization
+public import NN.Spec.Layers.Normalization.Core
 public import NN.Spec.Module.Core
 
 /-!
@@ -27,9 +27,9 @@ PyTorch mental picture: `nn.LayerNorm(embedDim)` applied at each timestep, with 
 
 namespace Spec.Module
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- LayerNorm over the final axis, wrapped as a `Spec.Module`. -/
 def layerNorm (leading : Shape) (width : Nat)

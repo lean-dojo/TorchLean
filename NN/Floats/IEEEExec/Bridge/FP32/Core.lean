@@ -6,19 +6,15 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Field.Basic
-public import Mathlib.Analysis.SpecialFunctions.Log.Base
-public import Mathlib.Analysis.SpecialFunctions.Sqrt
-public import Mathlib.Data.Nat.Bitwise
-public import Mathlib.Data.Nat.Sqrt
-public import Mathlib.Data.Rat.Floor
-public import NN.Floats.FP32
-public import NN.Floats.IEEEExec.Exec32
+public import NN.Floats.FP32.Core
+public import NN.Floats.NeuralFloat.Format.Theorems
 public import NN.Floats.IEEEExec.Encoding.MkBitsToDyadic
 public import NN.Floats.IEEEExec.Semantics.RealSemantics
 public import NN.Floats.IEEEExec.Encoding.Negation
 public import NN.Floats.IEEEExec.Rounding.NatLemmas
-public import NN.Floats.IEEEExec.Rounding.RoundShiftRightEven
+public import Mathlib.Algebra.Order.Algebra
+public import Mathlib.Analysis.SpecialFunctions.Pow.Real
+import Mathlib.Tactic.Positivity.Finset
 
 /-!
 # IEEE32Exec and FP32: Real Semantics Core
@@ -71,9 +67,14 @@ small facts that connect:
 These lemmas are local: they exist to keep the later op-level theorems readable.
 -/
 
+/-- The real number a sign bit denotes: `1` for a positive sign, `-1` for a negative one. -/
 noncomputable def signFactor (s : Bool) : ℝ :=
   if s then (-1 : ℝ) else (1 : ℝ)
 
+/-- The sign bit is multiplicative: xor on bits becomes multiplication of `±1`.
+
+This is what lets the multiplication and division proofs handle signs once, up front, and then argue
+only about magnitudes. -/
 lemma signFactor_xor (a b : Bool) :
     signFactor (Bool.xor a b) = signFactor a * signFactor b := by
   by_cases ha : a <;> by_cases hb : b <;> simp [signFactor, Bool.xor, ha, hb]

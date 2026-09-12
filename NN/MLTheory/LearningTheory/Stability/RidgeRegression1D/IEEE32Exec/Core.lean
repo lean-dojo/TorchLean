@@ -8,6 +8,7 @@ module
 
 public import NN.Floats.IEEEExec.Bridge.Expressions
 public import NN.MLTheory.LearningTheory.Stability.Core
+public import NN.Floats.IEEEExec.Exec32.Instances -- shake: keep
 
 /-!
 # 1D ridge regression under `IEEE32Exec`: core definitions
@@ -68,11 +69,13 @@ Even if exceptional values never occur, evaluation order still matters for float
 def sumFin (m : Nat) (f : Fin m → IEEE32Exec) : IEEE32Exec :=
   Fin.foldl m (fun acc i => acc + f i) 0
 
-/-- Executable sum $\sum_i x_i^2$ (with IEEE-754 rounding after every multiplication and addition). -/
+/-- Executable sum $\sum_i x_i^2$ (with IEEE-754 rounding after every multiplication and
+addition). -/
 def sumXX (S : Dataset (n + 1) ExampleIEEE32) : IEEE32Exec :=
   sumFin (n + 1) (fun i => (Dataset.get S i).x * (Dataset.get S i).x)
 
-/-- Executable sum $\sum_i x_i y_i$ (with IEEE-754 rounding after every multiplication and addition). -/
+/-- Executable sum $\sum_i x_i y_i$ (with IEEE-754 rounding after every multiplication and
+addition). -/
 def sumXY (S : Dataset (n + 1) ExampleIEEE32) : IEEE32Exec :=
   sumFin (n + 1) (fun i => (Dataset.get S i).x * (Dataset.get S i).y)
 
@@ -97,15 +100,13 @@ This is closer to typical ML “(feature vector, label)” layouts and makes it 
 utilities elsewhere in TorchLean.
 -/
 abbrev ExampleIEEE32Vec1 : Type :=
-  Spec.Tensor IEEE32Exec XShape × IEEE32Exec
+  TorchLean.Tensor IEEE32Exec XShape × IEEE32Exec
 
 /--
 Extract the single feature coordinate (entry $0$) from a length-$1$ feature tensor.
 -/
 def ExampleIEEE32Vec1.x0 (z : ExampleIEEE32Vec1) : IEEE32Exec :=
-  match z.1 with
-  | .dim f =>
-      (f ⟨0, by decide⟩).item
+  z.1.getScalar ⟨0, by decide⟩
 
 /-- Label coordinate `y` of an `ExampleIEEE32Vec1` pair. -/
 @[simp] abbrev ExampleIEEE32Vec1.y (z : ExampleIEEE32Vec1) : IEEE32Exec := z.2
@@ -113,7 +114,7 @@ def ExampleIEEE32Vec1.x0 (z : ExampleIEEE32Vec1) : IEEE32Exec :=
 /--
 Ridge regression where the dataset stores inputs as length-`1` tensors.
 
-This is just a packaging conversion into the scalar-pair dataset expected by `ridgeFit1D_exec`.
+This is just a packaging conversion into the scalar-pair dataset expected by `ridgeFit1DExec`.
 -/
 def ridgeFit1DExecVec1 (lam : IEEE32Exec) (S : Dataset (n + 1) ExampleIEEE32Vec1) : IEEE32Exec :=
   ridgeFit1DExec (n := n) lam <|

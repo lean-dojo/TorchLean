@@ -7,10 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Cert.AlphaBetaCROWN
-public import NN.MLTheory.CROWN.Graph
-public import NN.Spec.Core.Tensor
 public import NN.Verification.Cert.IBPNodeCert
-public import Lean.Data.Json
+public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # CROWNNodeCertAlphaBeta
@@ -55,8 +53,8 @@ open NN.MLTheory.CROWN.Cert
 open NN.Verification.Json
 open NN.Verification.Cert.NodeReplay
 open Import.PyTorch
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open Lean Data Json
 open TorchLean.Floats.IEEE754
 
@@ -117,7 +115,8 @@ structure AlphaBetaCROWNNodeCertificate where
   beta : Array (Option (Array Int))
 
 /-- Read an alpha/beta-CROWN node certificate from JSON on disk. -/
-def readAlphaBetaCROWNNodeCertificate (g : Graph) (path : String) : IO AlphaBetaCROWNNodeCertificate := do
+def readAlphaBetaCROWNNodeCertificate (g : Graph) (path : String) :
+    IO AlphaBetaCROWNNodeCertificate := do
   let topObj ← readJsonObjectFile path
   let core ← parseCROWNNodeCoreCertificate g topObj
   let betaArr ←
@@ -135,7 +134,8 @@ def readAlphaBetaCROWNNodeCertificate (g : Graph) (path : String) : IO AlphaBeta
       let betaJson := betaArr[i.val]'hBeta
       let betaEntry ← parseBetaVec? node.outShape.size betaJson
       beta := beta.push betaEntry
-    pure { ctx := core.ctx, ibp := core.ibp, crown := core.crown, alpha := core.alpha, beta := beta }
+    pure { ctx := core.ctx, ibp := core.ibp, crown := core.crown, alpha := core.alpha,
+           beta := beta }
   else
     throw <| IO.userError s!"beta length {betaArr.size} ≠ g.nodes.size {g.nodes.size}"
 
@@ -210,7 +210,8 @@ def checkAlphaBetaCROWNNodeCertificate (g : Graph) (ps : ParamStore IEEE32Exec) 
   let accepted := cert.accepts g ps authoritativeIbp ok
   if accepted then
     IO.println
-      "[CROWNNodeCertAlphaBeta] artifact matched an authoritative Lean IBP and alpha/beta-CROWN replay."
+      ("[CROWNNodeCertAlphaBeta] artifact matched an authoritative Lean IBP " ++
+        "and alpha/beta-CROWN replay.")
   pure accepted
 
 end NN.Verification.CROWNNodeCertAlphaBeta

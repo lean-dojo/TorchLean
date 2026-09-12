@@ -6,9 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.RuntimeApprox.NF.Ops
-public import NN.Proofs.RuntimeApprox.NF.FoldLemmas
-public import NN.Spec.Core.Tensor.Linalg
+public import NN.Proofs.RuntimeApprox.NF.Ops.Plumbing
+public import NN.Proofs.RuntimeApprox.NF.Ops.Scalar
+public import NN.Spec.Core.TensorReductionShape.ConcatSlice
+public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
 
 /-!
 # NF Linear Algebra
@@ -35,8 +36,8 @@ https://pytorch.org/docs/stable/generated/torch.nn.functional.linear.html
 namespace Proofs
 namespace RuntimeApprox
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
 
 noncomputable section
@@ -56,18 +57,12 @@ local notation "R" => TorchLean.Floats.NF β fexp rnd
 
 /-- Extract matrix entry `(i,j)` from a runtime matrix tensor as an `NF` scalar. -/
 def matGet {m n : Nat} (A : Tensor R [m, n]) (i : Fin m) (j : Fin n) : R :=
-  match A with
-  | Tensor.dim rows =>
-      match rows i with
-      | Tensor.dim cols => Tensor.item (cols j)
+  Spec.get2 A i j
 
 /-- Extract matrix entry `(i,j)` from a spec matrix tensor as a real scalar. -/
 private def matGetS {m n : Nat} (A : SpecTensor [m, n]) (i : Fin m) (j : Fin n)
   : SpecScalar :=
-  match A with
-  | Tensor.dim rows =>
-      match rows i with
-      | Tensor.dim cols => Tensor.item (cols j)
+  Spec.get2 A i j
 
 -- ---------------------------------------------------------------------------
 -- Exact shape ops preserve approximation (`unsqueeze`, `transpose`)
@@ -75,7 +70,7 @@ private def matGetS {m n : Nat} (A : SpecTensor [m, n]) (i : Fin m) (j : Fin n)
 
 omit [NeuralValidExp fexp] [NeuralValidRndToNearest rnd] in
 /-- Inserting a singleton axis is a reindexing operation and adds no numerical error. -/
-lemma approxTensor_unsqueeze_spec {shape : Shape} {xS : SpecTensor shape}
+theorem approxTensor_unsqueeze_spec {shape : Shape} {xS : SpecTensor shape}
     {xR : Tensor R shape} {eps : ℝ} (axis : Nat) (hAxis : axis ≤ shape.rank)
     (hx : approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
       xS xR eps) :
@@ -86,37 +81,28 @@ lemma approxTensor_unsqueeze_spec {shape : Shape} {xS : SpecTensor shape}
       have heps : 0 ≤ eps := approxTensor_eps_nonneg hx
       cases shape with
       | scalar =>
-          cases xS with
-          | scalar x =>
-              cases xR with
-              | scalar y =>
-                  rw [Tensor.unsqueezeSpec.eq_1, Tensor.unsqueezeSpec.eq_1]
-                  exact approxTensor_dim_of_forall heps (fun _ => hx)
+          rw [Tensor.unsqueezeSpec.eq_1, Tensor.unsqueezeSpec.eq_1]
+          exact approxTensor_dim_of_forall heps (fun _ => by
+            simpa only [Tensor.unstack_dim] using hx)
       | dim n rest =>
-          cases xS with
-          | dim xSf =>
-              cases xR with
-              | dim xRf =>
-                  rw [Tensor.unsqueezeSpec.eq_2, Tensor.unsqueezeSpec.eq_2]
-                  exact approxTensor_dim_of_forall heps (fun _ => hx)
+          rw [Tensor.unsqueezeSpec.eq_2, Tensor.unsqueezeSpec.eq_2]
+          exact approxTensor_dim_of_forall heps (fun _ => by
+            simpa only [Tensor.unstack_dim] using hx)
   | succ axis ih =>
       cases shape with
       | scalar => exact False.elim (Nat.not_succ_le_zero axis hAxis)
       | dim n rest =>
-          cases xS with
-          | dim xSf =>
-              cases xR with
-              | dim xRf =>
-                  rw [Tensor.unsqueezeSpec.eq_3, Tensor.unsqueezeSpec.eq_3]
-                  apply approxTensor_dim_of_forall (approxTensor_eps_nonneg hx)
-                  intro i
-                  apply ih (Nat.lt_succ_iff.mp (by
-                    simpa [Shape.rank, Nat.add_comm] using hAxis))
-                  exact approxTensor_dim_get hx i
+          rw [Tensor.unsqueezeSpec.eq_3, Tensor.unsqueezeSpec.eq_3]
+          apply approxTensor_dim_of_forall (approxTensor_eps_nonneg hx)
+          intro i
+          simpa only [Tensor.unstack_dim] using
+            ih (Nat.lt_succ_iff.mp (by
+              simpa [Shape.rank, Nat.add_comm] using hAxis))
+              (approxTensor_dim_get hx i)
 
 omit [NeuralValidExp fexp] [NeuralValidRndToNearest rnd] in
 /-- Swapping any pair of adjacent axes preserves the approximation error budget. -/
-lemma approxTensor_swapAdjacentAxes {shape : Shape} {depth : Nat}
+theorem approxTensor_swapAdjacentAxes {shape : Shape} {depth : Nat}
     {xS : SpecTensor shape} {xR : Tensor R shape} {eps : ℝ}
     (hx : approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR eps) :
     approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
@@ -124,54 +110,26 @@ lemma approxTensor_swapAdjacentAxes {shape : Shape} {depth : Nat}
   induction depth generalizing shape with
   | zero =>
       cases shape with
-      | scalar =>
-          cases xS
-          cases xR
-          exact hx
+      | scalar => simpa [Tensor.swapAdjacentAxes] using hx
       | dim n rest =>
           cases rest with
-          | scalar =>
-              cases xS
-              cases xR
-              exact hx
+          | scalar => simpa [Tensor.swapAdjacentAxes] using hx
           | dim m rest =>
               rw [Tensor.swapAdjacentAxes_zero, Tensor.swapAdjacentAxes_zero]
-              cases xS with
-              | dim xSf =>
-                  cases xR with
-                  | dim xRf =>
-                      apply approxTensor_dim_of_forall (approxTensor_eps_nonneg hx)
-                      intro j
-                      apply approxTensor_dim_of_forall (approxTensor_eps_nonneg hx)
-                      intro i
-                      have hrow := approxTensor_dim_get hx i
-                      cases hxSi : xSf i with
-                      | dim xSfRow =>
-                          cases hxRi : xRf i with
-                          | dim xRfRow =>
-                              have hrow' :
-                                  approxTensor
-                                    (toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                                    (Tensor.dim xSfRow) (Tensor.dim xRfRow) eps := by
-                                simpa only [hxSi, hxRi] using hrow
-                              simpa only [Spec.get_dim, hxSi, hxRi] using
-                                (approxTensor_dim_get hrow' j)
+              apply approxTensor_dim_of_forall (approxTensor_eps_nonneg hx)
+              intro j
+              apply approxTensor_dim_of_forall (approxTensor_eps_nonneg hx)
+              intro i
+              simpa only [Tensor.unstack_dim, Spec.get] using
+                (approxTensor_dim_get (approxTensor_dim_get hx i) j)
   | succ depth ih =>
       cases shape with
-      | scalar =>
-          cases xS
-          cases xR
-          exact hx
+      | scalar => simpa [Tensor.swapAdjacentAxes] using hx
       | dim n rest =>
-          cases xS with
-          | dim xSf =>
-            cases xR with
-            | dim xRf =>
-                  change approxTensor _ (.dim fun i => Tensor.swapAdjacentAxes (xSf i) depth)
-                    (.dim fun i => Tensor.swapAdjacentAxes (xRf i) depth) eps
-                  apply approxTensor_dim_of_forall (approxTensor_eps_nonneg hx)
-                  intro i
-                  exact ih (approxTensor_dim_get hx i)
+          simp only [Tensor.swapAdjacentAxes]
+          apply approxTensor_dim_of_forall (approxTensor_eps_nonneg hx)
+          intro i
+          simpa only [Tensor.unstack_dim] using ih (approxTensor_dim_get hx i)
 
 -- ---------------------------------------------------------------------------
 -- Dot-product (sum of products) bound over a list of indices
@@ -205,7 +163,7 @@ def dotStep {n : Nat} (epsa epsb : ℝ) (aR bR : Fin n → R) :
 /--
 Closed-form bound for a runtime dot-product over `List.finRange n`.
 
-`dot_bound epsa epsb aR bR` is the accumulated `eps` component produced by folding `dot_step`
+`dot_bound epsa epsb aR bR` is the accumulated `eps` component produced by folding `dotStep`
 starting from 0.
 -/
 def dotBound {n : Nat} (epsa epsb : ℝ) (aR bR : Fin n → R) : ℝ :=
@@ -214,50 +172,41 @@ def dotBound {n : Nat} (epsa epsb : ℝ) (aR bR : Fin n → R) : ℝ :=
       ((0 : R), initEps)).2
 
 omit [NeuralValidRndToNearest rnd] in
-/-- The `i`-th output entry of `Spec.mat_vec_mul_spec` is the dot-product of row `i` with `v`. -/
-private lemma vec_get_mat_vec_mul_spec {m n : Nat}
+/-- The `i`-th output entry of `Spec.matVecMulSpec` is the dot-product of row `i` with `v`. -/
+private theorem vec_get_mat_vec_mul_spec {m n : Nat}
     (A : Tensor R [m, n]) (v : Tensor R [n]) (i : Fin m) :
-    Spec.Tensor.getScalar (Spec.matVecMulSpec (α := R) A v) i =
+    TorchLean.Tensor.getScalar (Spec.matVecMulSpec (α := R) A v) i =
       (List.finRange n).foldl
         (fun acc k =>
           acc +
-            matGet A i k * Spec.Tensor.getScalar v k)
+            matGet A i k * TorchLean.Tensor.getScalar v k)
         (0 : R) := by
-  cases A with
-  | dim rowsA =>
-      cases v with
-      | dim valsV =>
-          cases hRow : rowsA i with
-          | dim colsA =>
-              simp [Spec.matVecMulSpec, Spec.Tensor.getScalar, matGet, hRow]
-              have h :=
-                Spec.foldl_tensorScalar_mulAdd
-                  (cols := colsA) (vals := valsV) (l := List.finRange n) (acc := (0 : R))
-              have hto := congrArg Tensor.item h
-              exact hto
+  change
+    (TorchLean.Tensor.Internal.Rep.ofFn fun
+      coordinate : TorchLean.Tensor.Internal.Coord [m] =>
+      (List.finRange n).foldl
+        (fun sum k => sum + Spec.get2 A coordinate.1 k * v.getScalar k) 0)
+        (i, PUnit.unit) =
+      _
+  exact TorchLean.Tensor.Internal.Rep.get_ofFn _ _
 
 /-- Spec (real) version of `vec_get_mat_vec_mul_spec`. -/
-private lemma vec_getS_mat_vec_mul_spec {m n : Nat}
+private theorem vec_getS_mat_vec_mul_spec {m n : Nat}
     (A : SpecTensor [m, n]) (v : SpecTensor [n]) (i : Fin m) :
-    Spec.Tensor.getScalar (Spec.matVecMulSpec (α := SpecScalar) A v) i =
+    TorchLean.Tensor.getScalar (Spec.matVecMulSpec (α := SpecScalar) A v) i =
       (List.finRange n).foldl
         (fun acc k =>
           acc +
-            matGetS A i k * Spec.Tensor.getScalar v k)
+            matGetS A i k * TorchLean.Tensor.getScalar v k)
         (0 : SpecScalar) := by
-  cases A with
-  | dim rowsA =>
-      cases v with
-      | dim valsV =>
-          cases hRow : rowsA i with
-          | dim colsA =>
-              simp [Spec.matVecMulSpec, Spec.Tensor.getScalar, matGetS, hRow]
-              have h :=
-                Spec.foldl_tensorScalar_mulAdd
-                  (cols := colsA) (vals := valsV) (l := List.finRange n)
-                  (acc := (0 : SpecScalar))
-              have hto := congrArg Tensor.item h
-              exact hto
+  change
+    (TorchLean.Tensor.Internal.Rep.ofFn fun
+      coordinate : TorchLean.Tensor.Internal.Coord [m] =>
+      (List.finRange n).foldl
+        (fun sum k => sum + Spec.get2 A coordinate.1 k * v.getScalar k) 0)
+        (i, PUnit.unit) =
+      _
+  exact TorchLean.Tensor.Internal.Rep.get_ofFn _ _
 
 /--
 Dot-product approximation bound over an arbitrary list of indices.
@@ -265,7 +214,7 @@ Dot-product approximation bound over an arbitrary list of indices.
 In words: if `aR` and `bR` approximate `aS` and `bS` entrywise (within `epsa`/`epsb`),
   then
 folding `acc + aR k * bR k` approximates the corresponding spec fold, with error bounded by the
-accumulated `dot_step` epsilon.
+accumulated `dotStep` epsilon.
 -/
 private theorem approx_dot_list {n : Nat} (l : List (Fin n))
     {aS bS : Fin n → SpecScalar} {aR bR : Fin n → R}
@@ -372,9 +321,9 @@ private theorem approx_dot_finRange {n : Nat}
 -- ---------------------------------------------------------------------------
 
 /--
-Per-output bound tensor for `mat_vec_mul_spec`.
+Per-output bound tensor for `matVecMulSpec`.
 
-Entry `i` is a dot-product bound for row `i` of `A` dotted with `v`, using `dot_bound`.
+Entry `i` is a dot-product bound for row `i` of `A` dotted with `v`, using `dotBound`.
 -/
 def matVecMulBoundTensor {m n : Nat} (epsA epsV : ℝ)
     (A : Tensor R [m, n]) (v : Tensor R [n]) :
@@ -382,7 +331,7 @@ def matVecMulBoundTensor {m n : Nat} (epsA epsV : ℝ)
   Tensor.dim (fun i =>
     Tensor.scalar (dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsV
       (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) A i k)
-      (fun k => Spec.Tensor.getScalar v k)))
+      (fun k => TorchLean.Tensor.getScalar v k)))
 
 /--
 Forward approximation bound for matrix-vector multiplication.
@@ -403,255 +352,77 @@ theorem approxTensor_mat_vec_mul_spec {m n : Nat} :
           (linfNorm (matVecMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (m := m) (n :=
             n) epsA epsV AR vR)) := by
   intro AS vS AR vR epsA epsV hA hv
-  -- unfold the concrete shapes
-  cases AS with
-  | dim ASf =>
-      cases AR with
-      | dim ARf =>
-          cases vS with
-          | dim vSf =>
-              cases vR with
-              | dim vRf =>
-                  let bnd : SpecTensor [m] :=
-                    matVecMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                      (m := m) (n := n) epsA epsV (Tensor.dim ARf) (Tensor.dim vRf)
-                  let B : ℝ := linfNorm bnd
-                  have hB_nonneg : 0 ≤ B := by
-                    simpa [B] using (linf_norm_nonneg (t := bnd))
-
-                  -- componentwise error bound
-                  have hcomp : ∀ i : Fin m,
-                      abs
-                          (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                              (Spec.Tensor.getScalar
-                                (Spec.matVecMulSpec (α := R) (Tensor.dim ARf) (Tensor.dim vRf))
-                                  i) -
-                            Spec.Tensor.getScalar
-                              (Spec.matVecMulSpec (α := SpecScalar) (Tensor.dim ASf) (Tensor.dim
-                                vSf)) i)
-                        ≤ B := by
-                    intro i
-                    -- rewrite outputs to scalar folds
-                    have hyR :
-                        Spec.Tensor.getScalar
-                            (Spec.matVecMulSpec (α := R) (Tensor.dim ARf) (Tensor.dim vRf)) i =
-                          (List.finRange n).foldl
-                            (fun acc k =>
-                              acc +
-                                matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim ARf) i k *
-                                  Spec.Tensor.getScalar (Tensor.dim vRf) k)
-                            (0 : R) :=
-                      vec_get_mat_vec_mul_spec (β := β) (fexp := fexp) (rnd := rnd)
-                        (A := Tensor.dim ARf) (v := Tensor.dim vRf) i
-                    have hyS :
-                        Spec.Tensor.getScalar
-                            (Spec.matVecMulSpec (α := SpecScalar) (Tensor.dim ASf) (Tensor.dim
-                              vSf)) i =
-                          (List.finRange n).foldl
-                            (fun acc k =>
-                              acc +
-                                matGetS (Tensor.dim ASf) i k *
-                                  Spec.Tensor.getScalar (Tensor.dim vSf) k)
-                            (0 : SpecScalar) :=
-                      vec_getS_mat_vec_mul_spec (A := Tensor.dim ASf) (v := Tensor.dim vSf) i
-
-                    -- per-entry approximations from `approxTensor`
-                    have hRowA :
-                        ∀ k : Fin n,
-                          abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                                (matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim ARf) i k)
-                                  -
-                              matGetS (Tensor.dim ASf) i k) ≤ epsA := by
-                      intro k
-                      have hRow :=
-                        approxTensor_dim_get (α := R)
-                          (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hA i
-                      cases hASi : ASf i with
-                      | dim ASrow =>
-                          cases hARi : ARf i with
-                          | dim ARrow =>
-                              have hRow' :
-                                  approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                                    rnd))
-                                    (Tensor.dim ASrow) (Tensor.dim ARrow) epsA := by
-                                simpa [hASi, hARi] using hRow
-                              have hkT :=
-                                approxTensor_dim_get (α := R)
-                                  (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hRow' k
-                              cases hASk : ASrow k with
-                              | scalar aS =>
-                                  cases hARk : ARrow k with
-                                  | scalar aR =>
-                                      have habs :
-                                          abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) aR - aS)
-                                            ≤ epsA := by
-                                        exact
-                                          (approxTensor_scalar_iff (α := R)
-                                            (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                                            (x := aS) (xR := aR) (eps := epsA)).1
-                                            (by simpa [hASk, hARk] using hkT)
-                                      simpa [matGet, matGetS, hASi, hARi, hASk, hARk] using habs
-
-                    have hVecV :
-                        ∀ k : Fin n,
-                          abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                                (Spec.Tensor.getScalar (Tensor.dim vRf) k) -
-                              Spec.Tensor.getScalar (Tensor.dim vSf) k) ≤ epsV := by
-                      intro k
-                      have hkT :=
-                        approxTensor_dim_get (α := R)
-                          (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hv k
-                      cases hVS : vSf k with
-                      | scalar vS =>
-                          cases hVR : vRf k with
-                          | scalar vR =>
-                              have habs :
-                                  abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) vR - vS) ≤ epsV
-                                    := by
-                                exact
-                                  (approxTensor_scalar_iff (α := R)
-                                    (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                                    (x := vS) (xR := vR) (eps := epsV)).1
-                                    (by simpa [hVS, hVR] using hkT)
-                              simpa [Spec.Tensor.getScalar, Spec.Tensor.getScalar, hVS, hVR] using habs
-
-                    have hdot :
-                        abs
-                            (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                                  ((List.finRange n).foldl
-                                    (fun acc k =>
-                                      acc +
-                                        matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim
-                                          ARf) i k *
-                                          Spec.Tensor.getScalar (Tensor.dim
-                                            vRf) k)
-                                    (0 : R)) -
-                                  (List.finRange n).foldl
-                                    (fun acc k =>
-                                      acc +
-                                        matGetS (Tensor.dim ASf) i k *
-                                          Spec.Tensor.getScalar (Tensor.dim vSf) k)
-                                    (0 : SpecScalar)) ≤
-                          dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsV
-                            (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim ARf)
-                              i k)
-                            (fun k => Spec.Tensor.getScalar (Tensor.dim vRf)
-                              k) :=
-                      approx_dot_finRange (β := β) (fexp := fexp) (rnd := rnd) (n := n)
-                        (aS := fun k => matGetS (Tensor.dim ASf) i k)
-                        (bS := fun k => Spec.Tensor.getScalar (Tensor.dim vSf) k)
-                        (aR := fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim
-                          ARf) i k)
-                        (bR := fun k => Spec.Tensor.getScalar (Tensor.dim
-                          vRf) k)
-                        (epsa := epsA) (epsb := epsV) hRowA hVecV
-
-                    have hEntryAbs :
-                        abs
-                            (dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsV
-                              (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim
-                                ARf) i k)
-                              (fun k => Spec.Tensor.getScalar (Tensor.dim
-                                vRf) k)) ≤
-                          B := by
-                      have :=
-                        linf_norm_le_get_dim (t := bnd) i
-                      simpa [bnd, matVecMulBoundTensor, dotBound, B, linfNorm,
-                        RuntimeApprox.linfNorm, tensorLinfNorm, MathFunctions.abs, SpecScalar] using
-                        this
-
-                    have hB_ge :
-                        dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsV
-                            (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim ARf)
-                              i k)
-                            (fun k => Spec.Tensor.getScalar (Tensor.dim vRf)
-                              k) ≤
-                          B :=
-                      le_trans (le_abs_self _) hEntryAbs
-
-                    -- rewrite using the output fold equalities
-                    have hle : abs
-                        (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                            (Spec.Tensor.getScalar
-                              (Spec.matVecMulSpec (α := R) (Tensor.dim ARf) (Tensor.dim vRf)) i)
-                                -
-                          Spec.Tensor.getScalar
-                            (Spec.matVecMulSpec (α := SpecScalar) (Tensor.dim ASf) (Tensor.dim
-                              vSf)) i) ≤
-                        dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsV
-                          (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim ARf) i
-                            k)
-                          (fun k => Spec.Tensor.getScalar (Tensor.dim vRf) k)
-                            := by
-                      simpa [hyR, hyS] using hdot
-
-                    exact le_trans hle hB_ge
-
-                  -- lift to the tensor-level Linf approximation
-                  cases hOutS : (Spec.matVecMulSpec (α := SpecScalar) (Tensor.dim ASf)
-                    (Tensor.dim vSf)) with
-                  | dim ySf =>
-                      cases hOutR : (Spec.matVecMulSpec (α := R) (Tensor.dim ARf) (Tensor.dim
-                        vRf)) with
-                      | dim yRf =>
-                          have hf :
-                              ∀ i ∈ List.finRange m,
-                                tensorDistance (α := SpecScalar) linfNorm (ySf i)
-                                    (tensorToSpec (α := R)
-                                      (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                                      (yRf i))
-                                  ≤ B := by
-                            intro i _hi
-                            have hscalar := hcomp i
-                            cases hYS : ySf i with
-                            | scalar yS =>
-                                cases hYR : yRf i with
-                                | scalar yR =>
-                                    have hAbs :
-                                        abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) yR - yS) ≤
-                                          B := by
-                                      simpa [hOutS, hOutR, Spec.Tensor.getScalar, Spec.Tensor.getScalar, hYS, hYR] using
-                                        hscalar
-                                    have hApprox :
-                                        approxTensor (α := R)
-                                            (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                                            (Tensor.scalar yS) (Tensor.scalar yR) B :=
-                                      (approxTensor_scalar_iff (α := R)
-                                        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                                        (x := yS) (xR := yR) (eps := B)).2 hAbs
-                                    simpa [approxTensor, approxWith, hYS, hYR, tensorToSpec,
-                                      Spec.Tensor.map] using hApprox
-
-                          have hfold :=
-                            List.foldl_max_le_of_le (List.finRange m)
-                              (fun i =>
-                                tensorDistance (α := SpecScalar) linfNorm (ySf i)
-                                  (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp)
-                                    (rnd := rnd))
-                                    (yRf i)))
-                              (acc := (0 : ℝ)) (eps := B) hB_nonneg hf
-
-                          have :
-                              tensorDistance (α := SpecScalar) linfNorm (Tensor.dim ySf)
-                                  (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp)
-                                    (rnd := rnd))
-                                    (Tensor.dim yRf))
-                                ≤ B := by
-                                simpa [tensorDistance, linfNorm, RuntimeApprox.linfNorm,
-                                  tensorLinfNorm, Spec.Tensor.subSpec, Spec.Tensor.map2Spec,
-                                  tensorToSpec, Spec.Tensor.map] using hfold
-
-                          simpa [approxTensor, approxWith, B, bnd] using this
+  let bnd : SpecTensor [m] :=
+    matVecMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
+      (m := m) (n := n) epsA epsV AR vR
+  let B : ℝ := linfNorm bnd
+  have hB_nonneg : 0 ≤ B := by
+    simpa [B] using linf_norm_nonneg (t := bnd)
+  refine approxTensor_dim_of_forall hB_nonneg ?_
+  intro i
+  apply (approxTensor_scalar_iff (α := R)
+    (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).2
+  have hAik : ∀ k : Fin n,
+      abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
+          (matGet (β := β) (fexp := fexp) (rnd := rnd) AR i k) -
+        matGetS AS i k) ≤ epsA := by
+    intro k
+    change abs
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) ((AR.unstack i).unstack k).item -
+        ((AS.unstack i).unstack k).item) ≤ epsA
+    have hEntry := approxTensor_dim_get
+      (approxTensor_dim_get (α := R)
+        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hA i) k
+    exact (approxTensor_scalar_iff (α := R)
+      (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).1 hEntry
+  have hvk : ∀ k : Fin n,
+      abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (vR.getScalar k) -
+        vS.getScalar k) ≤ epsV := by
+    intro k
+    change abs
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (vR.unstack k).item -
+        (vS.unstack k).item) ≤ epsV
+    have hEntry := approxTensor_dim_get (α := R)
+      (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hv k
+    exact (approxTensor_scalar_iff (α := R)
+      (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).1 hEntry
+  have hdot :=
+    approx_dot_finRange (β := β) (fexp := fexp) (rnd := rnd) (n := n)
+      (aS := fun k => matGetS AS i k)
+      (bS := fun k => vS.getScalar k)
+      (aR := fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) AR i k)
+      (bR := fun k => vR.getScalar k)
+      (epsa := epsA) (epsb := epsV) hAik hvk
+  have hEntryAbs :
+      abs (dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsV
+        (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) AR i k)
+        (fun k => vR.getScalar k)) ≤ B := by
+    simpa [bnd, matVecMulBoundTensor, dotBound, B, linfNorm,
+      RuntimeApprox.linfNorm, tensorLinfNorm, MathFunctions.abs, SpecScalar] using
+      linf_norm_le_get_dim (t := bnd) i
+  have hBound :
+      dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsV
+        (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) AR i k)
+        (fun k => vR.getScalar k) ≤ B :=
+    le_trans (le_abs_self _) hEntryAbs
+  have hOutput := le_trans hdot hBound
+  rw [← vec_get_mat_vec_mul_spec (β := β) (fexp := fexp) (rnd := rnd) AR vR i,
+    ← vec_getS_mat_vec_mul_spec AS vS i] at hOutput
+  change abs
+    (toSpec (β := β) (fexp := fexp) (rnd := rnd)
+        ((Spec.matVecMulSpec (α := R) AR vR).unstack i).item -
+      ((Spec.matVecMulSpec (α := SpecScalar) AS vS).unstack i).item) ≤ B
+  exact hOutput
 
 -- ---------------------------------------------------------------------------
 -- Matrix-matrix multiply
 -- ---------------------------------------------------------------------------
 
 /--
-Per-entry bound tensor for `mat_mul_spec`.
+Per-entry bound tensor for `matMulSpec`.
 
 Entry `(i,j)` is a dot-product bound for row `i` of `A` dotted with column `j` of `B`, using
-  `dot_bound`.
+  `dotBound`.
 -/
 def matMulBoundTensor {m n p : Nat} (epsA epsB : ℝ)
     (A : Tensor R [m, n]) (B : Tensor R [n, p]) :
@@ -663,9 +434,9 @@ def matMulBoundTensor {m n p : Nat} (epsA epsB : ℝ)
         (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) B k j))))
 
 omit [NeuralValidRndToNearest rnd] in
-/-- The matrix entry `(i,j)` of `Spec.mat_mul_spec` is the dot-product of row `i` of `A` with column
+/-- The matrix entry `(i,j)` of `Spec.matMulSpec` is the dot-product of row `i` of `A` with column
   `j` of `B`. -/
-private lemma mat_get_mat_mul_spec {m n p : Nat}
+private theorem mat_get_mat_mul_spec {m n p : Nat}
     (A : Tensor R [m, n]) (B : Tensor R [n, p])
     (i : Fin m) (j : Fin p) :
     matGet (β := β) (fexp := fexp) (rnd := rnd) (Spec.matMulSpec (α := R) A B) i j =
@@ -675,28 +446,12 @@ private lemma mat_get_mat_mul_spec {m n p : Nat}
             matGet (β := β) (fexp := fexp) (rnd := rnd) A i k *
               matGet (β := β) (fexp := fexp) (rnd := rnd) B k j)
         (0 : R) := by
-  cases A with
-  | dim rowsA =>
-      cases B with
-      | dim rowsB =>
-          cases hRow : rowsA i with
-          | dim colsA =>
-              -- Unfold spec matmul and matrix indexing; then rewrite the fold using scalar
-              -- extraction.
-              simp [Spec.matMulSpec, matGet, hRow]
-              refine
-                foldl_congr (l := List.finRange n) (f := _) (g := _) (init := (0 : R)) ?_
-              intro sum k
-              cases hRowB : rowsB k with
-              | dim colsB =>
-                  cases hA : colsA k with
-                  | scalar a =>
-                      cases hBj : colsB j with
-                      | scalar b =>
-                          simp [hA, hBj]
+  simp only [matGet, Spec.matMulSpec, Spec.get2, Tensor.getScalar, Spec.get,
+    Tensor.unstack, Tensor.item, TorchLean.Tensor.Internal.Rep.unstack_apply,
+    TorchLean.Tensor.Internal.Rep.get_ofFn]
 
 /-- Spec (real) version of `mat_get_mat_mul_spec`. -/
-private lemma mat_getS_mat_mul_spec {m n p : Nat}
+private theorem mat_getS_mat_mul_spec {m n p : Nat}
     (A : SpecTensor [m, n]) (B : SpecTensor [n, p])
     (i : Fin m) (j : Fin p) :
     matGetS (Spec.matMulSpec (α := SpecScalar) A B) i j =
@@ -705,23 +460,9 @@ private lemma mat_getS_mat_mul_spec {m n p : Nat}
           acc +
             matGetS A i k * matGetS B k j)
         (0 : SpecScalar) := by
-  cases A with
-  | dim rowsA =>
-      cases B with
-      | dim rowsB =>
-          cases hRow : rowsA i with
-          | dim colsA =>
-              simp [Spec.matMulSpec, matGetS, hRow]
-              refine
-                foldl_congr (l := List.finRange n) (f := _) (g := _) (init := (0 : SpecScalar)) ?_
-              intro sum k
-              cases hRowB : rowsB k with
-              | dim colsB =>
-                  cases hA : colsA k with
-                  | scalar a =>
-                      cases hBj : colsB j with
-                      | scalar b =>
-                          simp [hA, hBj]
+  simp only [matGetS, Spec.matMulSpec, Spec.get2, Tensor.getScalar, Spec.get,
+    Tensor.unstack, Tensor.item, TorchLean.Tensor.Internal.Rep.unstack_apply,
+    TorchLean.Tensor.Internal.Rep.get_ofFn]
 
 /--
 Forward approximation bound for matrix-matrix multiplication.
@@ -743,269 +484,74 @@ theorem approxTensor_mat_mul_spec {m n p : Nat} :
           (linfNorm (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (m := m) (n := n) (p
             := p) epsA epsB AR BR)) := by
   intro AS BS AR BR epsA epsB hA hB
-  cases AS with
-  | dim ASf =>
-      cases AR with
-      | dim ARf =>
-          cases BS with
-          | dim BSf =>
-              cases BR with
-              | dim BRf =>
-                  let bnd : SpecTensor [m, p] :=
-                    matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                      (m := m) (n := n) (p := p) epsA epsB (Tensor.dim ARf) (Tensor.dim BRf)
-                  let B : ℝ := linfNorm bnd
-                  have hB_nonneg : 0 ≤ B := by
-                    simpa [B] using (linf_norm_nonneg (t := bnd))
-
-                  have hEntry :
-                      ∀ i : Fin m, ∀ j : Fin p,
-                        abs
-                            (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                                (matGet (β := β) (fexp := fexp) (rnd := rnd)
-                                  (Spec.matMulSpec (α := R) (Tensor.dim ARf) (Tensor.dim BRf)) i
-                                    j) -
-                              matGetS
-                                (Spec.matMulSpec (α := SpecScalar) (Tensor.dim ASf) (Tensor.dim
-                                  BSf)) i j)
-                          ≤ B := by
-                    intro i j
-                    -- rewrite both entries to dot-fold forms
-                    have hyR :=
-                      mat_get_mat_mul_spec (β := β) (fexp := fexp) (rnd := rnd)
-                        (A := Tensor.dim ARf) (B := Tensor.dim BRf) i j
-                    have hyS :=
-                      mat_getS_mat_mul_spec (A := Tensor.dim ASf) (B := Tensor.dim BSf) i j
-
-                    -- per-entry approximations
-                    have hAik :
-                        ∀ k : Fin n,
-                          abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                                (matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim ARf) i k)
-                                  -
-                              matGetS (Tensor.dim ASf) i k) ≤ epsA := by
-                      intro k
-                      have hRow :=
-                        approxTensor_dim_get (α := R)
-                          (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hA i
-                      cases hASi : ASf i with
-                      | dim ASrow =>
-                          cases hARi : ARf i with
-                          | dim ARrow =>
-                              have hRow' :
-                                  approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                                    rnd))
-                                    (Tensor.dim ASrow) (Tensor.dim ARrow) epsA := by
-                                simpa [hASi, hARi] using hRow
-                              have hkT :=
-                                approxTensor_dim_get (α := R)
-                                  (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hRow' k
-                              cases hASk : ASrow k with
-                              | scalar aS =>
-                                  cases hARk : ARrow k with
-                                  | scalar aR =>
-                                      have habs :
-                                          abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) aR - aS)
-                                            ≤ epsA := by
-                                        exact
-                                          (approxTensor_scalar_iff (α := R)
-                                            (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                                            (x := aS) (xR := aR) (eps := epsA)).1
-                                            (by simpa [hASk, hARk] using hkT)
-                                      simpa [matGet, matGetS, hASi, hARi, hASk, hARk] using habs
-
-                    have hBkj :
-                        ∀ k : Fin n,
-                          abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                                (matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim BRf) k j)
-                                  -
-                              matGetS (Tensor.dim BSf) k j) ≤ epsB := by
-                      intro k
-                      have hRow :=
-                        approxTensor_dim_get (α := R)
-                          (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hB k
-                      cases hBSk : BSf k with
-                      | dim BSrow =>
-                          cases hBRk : BRf k with
-                          | dim BRrow =>
-                              have hRow' :
-                                  approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                                    rnd))
-                                    (Tensor.dim BSrow) (Tensor.dim BRrow) epsB := by
-                                simpa [hBSk, hBRk] using hRow
-                              have hjT :=
-                                approxTensor_dim_get (α := R)
-                                  (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hRow' j
-                              cases hBSj : BSrow j with
-                              | scalar bS =>
-                                  cases hBRj : BRrow j with
-                                  | scalar bR =>
-                                      have habs :
-                                          abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) bR - bS)
-                                            ≤ epsB := by
-                                        exact
-                                          (approxTensor_scalar_iff (α := R)
-                                            (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                                            (x := bS) (xR := bR) (eps := epsB)).1
-                                            (by simpa [hBSj, hBRj] using hjT)
-                                      simpa [matGet, matGetS, hBSk, hBRk, hBSj, hBRj] using habs
-
-                    have hdot :=
-                      approx_dot_finRange (β := β) (fexp := fexp) (rnd := rnd) (n := n)
-                        (aS := fun k => matGetS (Tensor.dim ASf) i k)
-                        (bS := fun k => matGetS (Tensor.dim BSf) k j)
-                        (aR := fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim
-                          ARf) i k)
-                        (bR := fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim
-                          BRf) k j)
-                        (epsa := epsA) (epsb := epsB) hAik hBkj
-
-                    have hAbsBound :
-                        abs
-                            (dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsB
-                              (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim
-                                ARf) i k)
-                              (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim
-                                BRf) k j)) ≤
-                          B := by
-                      -- two-level projection: row then column
-                      have hRow :=
-                        linf_norm_le_get_dim (t := bnd) i
-                      have hCol :=
-                        linf_norm_le_get_dim
-                          (t := match bnd with | Tensor.dim f => f i) j
-                      have : linfNorm
-                          (match match bnd with
-                            | Tensor.dim f => f i with
-                            | Tensor.dim g => g j) ≤ B := by
-                        have hRowB : linfNorm (match bnd with | Tensor.dim f => f i) ≤ B := by
-                          exact hRow
-                        exact le_trans hCol hRowB
-                      -- scalar entry simplifies to `abs (dot_bound ..)`
-                      simpa [bnd, matMulBoundTensor, dotBound, B, linfNorm,
-                        RuntimeApprox.linfNorm, tensorLinfNorm, MathFunctions.abs, SpecScalar] using this
-
-                    have hBound :
-                        dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsB
-                            (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim ARf)
-                              i k)
-                            (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim BRf)
-                              k j) ≤
-                          B :=
-                      le_trans (le_abs_self _) hAbsBound
-
-                    have hle :
-                        abs
-                            (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                                (matGet (β := β) (fexp := fexp) (rnd := rnd)
-                                  (Spec.matMulSpec (α := R) (Tensor.dim ARf) (Tensor.dim BRf)) i
-                                    j) -
-                              matGetS
-                                (Spec.matMulSpec (α := SpecScalar) (Tensor.dim ASf) (Tensor.dim
-                                  BSf)) i j) ≤
-                          dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsB
-                            (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim ARf)
-                              i k)
-                            (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) (Tensor.dim BRf)
-                              k j) := by
-                      simpa [hyR, hyS] using hdot
-
-                    exact le_trans hle hBound
-
-                  -- lift to the tensor-level Linf approximation (matrix: max over rows, then cols)
-                  cases hOutS : (Spec.matMulSpec (α := SpecScalar) (Tensor.dim ASf) (Tensor.dim
-                    BSf)) with
-                  | dim ySf =>
-                      cases hOutR : (Spec.matMulSpec (α := R) (Tensor.dim ARf) (Tensor.dim BRf))
-                        with
-                      | dim yRf =>
-                          have hRowDist :
-                              ∀ i ∈ List.finRange m,
-                                tensorDistance (α := SpecScalar) linfNorm (ySf i)
-                                    (tensorToSpec (α := R)
-                                      (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                                      (yRf i))
-                                  ≤ B := by
-                            intro i _hi
-                            cases hYSrow : ySf i with
-                            | dim ySrow =>
-                                cases hYRrow : yRf i with
-                                | dim yRrow =>
-                                    have hf :
-                                        ∀ j ∈ List.finRange p,
-                                          tensorDistance (α := SpecScalar) linfNorm (ySrow j)
-                                              (tensorToSpec (α := R)
-                                                (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                                                  rnd))
-                                                (yRrow j))
-                                            ≤ B := by
-                                      intro j _hj
-                                      have hscalar := hEntry i j
-                                      cases hYS : ySrow j with
-                                      | scalar yS =>
-                                          cases hYR : yRrow j with
-                                          | scalar yR =>
-                                              have hAbs :
-                                                  abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                                                    yR - yS) ≤ B := by
-                                                simpa [hOutS, hOutR, matGet, matGetS, hYSrow,
-                                                  hYRrow, hYS, hYR] using hscalar
-                                              have hApprox :
-                                                  approxTensor (α := R)
-                                                      (toSpec := toSpec (β := β) (fexp := fexp) (rnd
-                                                        := rnd))
-                                                      (Tensor.scalar yS) (Tensor.scalar yR) B :=
-                                                (approxTensor_scalar_iff (α := R)
-                                                  (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                                                    rnd))
-                                                  (x := yS) (xR := yR) (eps := B)).2 hAbs
-                                              simpa [approxTensor, approxWith, hYS, hYR, tensorToSpec,
-                                                Spec.Tensor.map] using hApprox
-
-                                    have hfold :=
-                                      List.foldl_max_le_of_le (List.finRange p)
-                                        (fun j =>
-                                          tensorDistance (α := SpecScalar) linfNorm (ySrow j)
-                                            (tensorToSpec (α := R)
-                                              (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                                                rnd))
-                                              (yRrow j)))
-                                        (acc := (0 : ℝ)) (eps := B) hB_nonneg hf
-
-                                    have :
-                                        tensorDistance (α := SpecScalar) linfNorm (Tensor.dim
-                                          ySrow)
-                                            (tensorToSpec (α := R)
-                                              (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                                                rnd))
-                                              (Tensor.dim yRrow))
-                                          ≤ B := by
-                                          simpa [tensorDistance, linfNorm, RuntimeApprox.linfNorm,
-                                            tensorLinfNorm, Spec.Tensor.subSpec, Spec.Tensor.map2Spec,
-                                            tensorToSpec, Spec.Tensor.map] using hfold
-
-                                    simpa [hYSrow, hYRrow] using this
-
-                          have hfold :=
-                            List.foldl_max_le_of_le (List.finRange m)
-                              (fun i =>
-                                tensorDistance (α := SpecScalar) linfNorm (ySf i)
-                                  (tensorToSpec (α := R)
-                                    (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                                    (yRf i)))
-                              (acc := (0 : ℝ)) (eps := B) hB_nonneg hRowDist
-
-                          have :
-                              tensorDistance (α := SpecScalar) linfNorm (Tensor.dim ySf)
-                                  (tensorToSpec (α := R)
-                                    (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                                    (Tensor.dim yRf))
-                                ≤ B := by
-                                simpa [tensorDistance, linfNorm, RuntimeApprox.linfNorm,
-                                  tensorLinfNorm, Spec.Tensor.subSpec, Spec.Tensor.map2Spec,
-                                  tensorToSpec, Spec.Tensor.map] using hfold
-
-                          simpa [approxTensor, approxWith, B, bnd] using this
+  let bnd : SpecTensor [m, p] :=
+    matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
+      (m := m) (n := n) (p := p) epsA epsB AR BR
+  let B : ℝ := linfNorm bnd
+  have hB_nonneg : 0 ≤ B := by
+    simpa [B] using linf_norm_nonneg (t := bnd)
+  refine approxTensor_dim_of_forall hB_nonneg ?_
+  intro i
+  refine approxTensor_dim_of_forall hB_nonneg ?_
+  intro j
+  apply (approxTensor_scalar_iff (α := R)
+    (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).2
+  have hAik : ∀ k : Fin n,
+      abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
+          (matGet (β := β) (fexp := fexp) (rnd := rnd) AR i k) -
+        matGetS AS i k) ≤ epsA := by
+    intro k
+    change abs
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) ((AR.unstack i).unstack k).item -
+        ((AS.unstack i).unstack k).item) ≤ epsA
+    have hEntry := approxTensor_dim_get
+      (approxTensor_dim_get (α := R)
+        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hA i) k
+    exact (approxTensor_scalar_iff (α := R)
+      (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).1 hEntry
+  have hBkj : ∀ k : Fin n,
+      abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
+          (matGet (β := β) (fexp := fexp) (rnd := rnd) BR k j) -
+        matGetS BS k j) ≤ epsB := by
+    intro k
+    change abs
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) ((BR.unstack k).unstack j).item -
+        ((BS.unstack k).unstack j).item) ≤ epsB
+    have hEntry := approxTensor_dim_get
+      (approxTensor_dim_get (α := R)
+        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hB k) j
+    exact (approxTensor_scalar_iff (α := R)
+      (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).1 hEntry
+  have hdot :=
+    approx_dot_finRange (β := β) (fexp := fexp) (rnd := rnd) (n := n)
+      (aS := fun k => matGetS AS i k)
+      (bS := fun k => matGetS BS k j)
+      (aR := fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) AR i k)
+      (bR := fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) BR k j)
+      (epsa := epsA) (epsb := epsB) hAik hBkj
+  have hEntryNorm :
+      linfNorm ((bnd.unstack i).unstack j) ≤ B :=
+    le_trans (linf_norm_le_get_dim (t := bnd.unstack i) j)
+      (linf_norm_le_get_dim (t := bnd) i)
+  have hEntryAbs :
+      abs (dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsB
+        (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) AR i k)
+        (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) BR k j)) ≤ B := by
+    simpa [bnd, matMulBoundTensor, dotBound, B, linfNorm,
+      RuntimeApprox.linfNorm, tensorLinfNorm, MathFunctions.abs, SpecScalar] using hEntryNorm
+  have hBound :
+      dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsB
+        (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) AR i k)
+        (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) BR k j) ≤ B :=
+    le_trans (le_abs_self _) hEntryAbs
+  have hOutput := le_trans hdot hBound
+  rw [← mat_get_mat_mul_spec (β := β) (fexp := fexp) (rnd := rnd) AR BR i j,
+    ← mat_getS_mat_mul_spec AS BS i j] at hOutput
+  change abs
+    (toSpec (β := β) (fexp := fexp) (rnd := rnd)
+        (((Spec.matMulSpec (α := R) AR BR).unstack i).unstack j).item -
+      (((Spec.matMulSpec (α := SpecScalar) AS BS).unstack i).unstack j).item) ≤ B
+  exact hOutput
 
 -- ---------------------------------------------------------------------------
 -- `FwdNode` constructors for linalg ops
@@ -1025,10 +571,10 @@ by
   classical
   refine
     { forwardSpec := fun ctx =>
-        Tensor.swapAdjacentAxes (d := 0) (getIdx (α := SpecScalar)
+        Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := SpecScalar)
           ctx x)
     , forwardRuntime := fun ctx =>
-        Tensor.swapAdjacentAxes (d := 0) (getIdx (α := R) ctx x)
+        Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctx x)
     , bound := fun eps _ctx =>
         getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) eps x
     , sound := ?_ }
@@ -1043,8 +589,8 @@ by
 /--
 `FwdNode` for matrix-vector multiplication.
 
-The bound is computed by `mat_vec_mul_bound_tensor` and then reduced to a scalar budget via
-  `linf_norm`.
+The bound is computed by `matVecMulBoundTensor` and then reduced to a scalar budget via
+  `linfNorm`.
 -/
 def matVecMulNode {Γ : List Shape} {m n : Nat}
     (A : Idx Γ (.dim m (.dim n .scalar))) (v : Idx Γ (.dim n .scalar)) :
@@ -1084,7 +630,7 @@ by
 /--
 `FwdNode` for matrix-matrix multiplication.
 
-The bound is computed by `mat_mul_bound_tensor` and then reduced to a scalar budget via `linf_norm`.
+The bound is computed by `matMulBoundTensor` and then reduced to a scalar budget via `linfNorm`.
 -/
 def matMulNode {Γ : List Shape} {m n p : Nat}
     (A : Idx Γ (.dim m (.dim n .scalar))) (B : Idx Γ (.dim n (.dim p .scalar))) :

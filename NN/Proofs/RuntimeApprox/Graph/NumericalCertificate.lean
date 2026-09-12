@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Certificate
+public import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Contracts
+public import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Enclosure
 
 /-!
 # Numerical certificates for TorchLean graphs
@@ -23,9 +25,9 @@ artifact format; this module does not prescribe a JSON schema. `check` does not 
 ranges. It reconstructs the canonical range trace from the graph and source
 assumptions, checks every interval for finite ordered endpoints, replans the graph under the named
 backend profile, and compares the result with the raw artifact. Successful checking returns a
-`RegistryCheckedCertificate`, whose node ranges carry finite-endpoint and ordering proofs. This executable
-check does not by itself prove enclosure of the exact-real graph denotation; that evidence is the
-separate `ProvedRealEnclosure` value used by `RangeCheckedExecution.errorTrace`.
+`RegistryCheckedCertificate`, whose node ranges carry finite-endpoint and ordering proofs. This
+executable check does not by itself prove enclosure of the exact-real graph denotation; that
+evidence is the separate `ProvedRealEnclosure` value used by `RangeCheckedExecution.error_trace`.
 
 The range trace deliberately starts with operations whose enclosure is already provided by the
 sound `Interval32` core. Unsupported operations fail with the node id and operation name. They are

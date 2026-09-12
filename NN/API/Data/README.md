@@ -5,16 +5,39 @@
 Application code uses one supervised-data type:
 
 ```lean
-Trainer.Dataset inputShape targetShape
+Trainer.Dataset input target
 ```
 
 It keeps the sample shapes in the type while delaying scalar conversion until the trainer chooses
-its runtime. Constructors such as `Data.tensorDataset`, `Data.floatSamples`, and
-`Data.supervisedDataset` all return this type.
+its runtime. Constructors such as `Data.fromTensors`, `Data.fromSamples`, and
+`Data.fromSupervisedSource` all return this type.
+
+For data already represented as Lean values:
+
+- `Data.fromTensors xs ys` splits two batched `Float` tensors along their leading axis.
+- `Data.fromSamples values` wraps an array of concrete `Float` samples.
+- `Data.fromSample sample` wraps one concrete `Float` sample.
+- `Data.defer action` materializes one concrete `Float` sample from an `IO` action.
+- `Data.generate builder` constructs samples using the arithmetic selected by the trainer.
+
+These are source constructors for one dataset abstraction, not separate dataset types.
 
 Manual loops that already own a runtime scalar can import `NN.Data.SampleStream`. A sample stream is
 finite and lazily indexed: wrapping an array does not copy it, and slicing a batched tensor happens
 when a sample is requested. It is deliberately not a second application-level dataset API.
+
+Fixed-size manual loops can turn that stream into a typed loader:
+
+```lean
+def loader : Data.Loader Float 32 [features] [targets] :=
+  Data.Loader.fromStream samples 32 (shuffle := true) (seed := 7)
+```
+
+`Data.Loader.nextEpoch` returns full tensor batches and the loader state for the next deterministic
+epoch. The fixed batch size is part of the type, so the loader omits a final partial batch rather
+than exposing a `dropLast` option that could contradict its result type.
+`Data.collateStream` and `Data.batch` construct batches on access. Use
+`Data.Loader.firstFullBatch` to request one batch without constructing the rest of the epoch.
 
 The data boundary is focused:
 
@@ -30,31 +53,48 @@ python3 scripts/datasets/torchlean_data_convert.py --help
 
 The design is intentionally conservative. TorchLean does not need to own every dataset format in
 the ML ecosystem. Python handles ecosystem formats and writes a simple boundary file. TorchLean then
-checks shape, scalar type, batch structure, and labels before the data reaches a trainer, graph
+checks shape, element type, batch structure, and labels before the data reaches a trainer, graph
 export, or verifier.
 
 ## Which Source Should I Use?
 
 | Data shape | Use |
 | --- | --- |
-| one tensor file | `Data.TensorSource` |
+| one tensor file | `Tensor.load` |
 | supervised `X.npy`, `Y.npy` | `Data.SupervisedSource` |
 | image/classification labels | `Data.LabeledSource` |
 | small numeric CSV | `Data.TabularSupervisedSource` |
-| fixed-size tensor batches | `Data.batchDataset` |
+| fixed-size tensor batches | `Data.batch` |
 | generated or file-backed batches | typed step streams through the trainer API |
 | text windows | `TorchLean.text` helpers, then bounded-token samples |
 
 The main Lean entry points are:
 
-- `Data.TensorSource`: one tensor file plus expected dimensions.
-- `Data.SupervisedSource`: two batched tensors, `X : (N, xDims...)` and `Y : (N, yDims...)`.
-- `Data.LabeledSource`: batched inputs plus label vector, one-hot encoded when loaded.
+- `Tensor.load`: one NPY or numeric CSV file, with scalar type and shape selected by the result type.
+- `Data.SupervisedSource`: two batched tensors with named input and target shapes.
+- `Data.LabeledSource`: batched inputs plus labels checked on load and one-hot encoded on access.
 - `Data.TabularSupervisedSource`: one CSV where each row contains `x..., y...`.
-- `Data.batchDataset`: fixed-size tensor minibatches represented as another `Trainer.Dataset`.
+- `Data.batch`: fixed-size tensor minibatches represented as another `Trainer.Dataset`.
 
-Use `Tensor.map` and `Sample.mapX` or `Sample.mapY` for preprocessing. Manual stream code may use
-`SampleStream.map`; it transforms samples only when they are requested.
+Load a single tensor without a source wrapper:
+
+```lean
+def matrix : IO (Tensor Float [2, 3]) :=
+  Tensor.load "data/matrix.npy"
+```
+
+The file metadata must match `[2, 3]`; otherwise `Tensor.load` raises a descriptive `IO` error.
+
+A concrete supervised sample is a named tensor record:
+
+```lean
+def sample : Sample.Supervised Float [2] [1] :=
+  { input := [1.0, 2.0]
+    target := [3.0] }
+```
+
+Use `sample.input`, `sample.target`, `Sample.mapInput`, and `Sample.mapTarget` for preprocessing.
+Manual stream code may use `SampleStream.map`; it transforms samples only when they are requested.
 
 ## Boundary Discipline
 
@@ -63,7 +103,7 @@ Every loader should make these facts visible:
 - the number of samples,
 - the input shape after removing the batch axis,
 - the target or label shape,
-- the scalar interpretation,
+- the arithmetic interpretation,
 - whether labels are one-hot encoded or integer ids,
 - whether shuffling is deterministic and which seed controls it.
 
@@ -100,7 +140,7 @@ When adding a new data path, document:
 - whether shuffling is deterministic;
 - where generated logs, predictions, or manifests are written.
 
-If the source is a public dataset or third-party artifact, update `THIRD_PARTY_NOTICES.md`. If the
+If the source is a public dataset or third-party artifact, update `docs/THIRD_PARTY_NOTICES.md`. If the
 data feeds a checker, also update the relevant `NN/Verification` or `NN/Examples/Verification`
 README so the checked predicate names the data boundary it relies on.
 

@@ -1,7 +1,7 @@
 # Common Model Example Helpers
 
 This folder contains shared plumbing for runnable model examples. It should stay predictable:
-reusable data-loading helpers, flag parsing, standard training summaries, and common
+repository data conventions, model-specific flag defaults, and common
 "prepare this dataset" messages. Model definitions, runtime kernels, and proof logic belong
 elsewhere.
 
@@ -9,8 +9,9 @@ elsewhere.
 
 - `RealData.lean`: shared real-data helpers for CIFAR-10, ImageNet-style tensors, local text
   corpora, cropping, typed minibatches, and missing-data hints.
-- `Train.lean`: common command runners for model-zoo examples: parse flags, choose runtime options,
-  check files, call the public trainer, print summaries, and write logs.
+- `Train.lean`: dataset-specific command adapters delegating to
+  `TorchLean.CLI.Training.Command`. Generic runtime parsing lives in `TorchLean.CLI.Trainer`;
+  curves and metric-history writers live in `TorchLean.Training`.
 
 ## Boundary
 
@@ -44,14 +45,14 @@ whether an example is using the ordinary public trainer or crossing into a speci
 
 ## Adding A New Model Command
 
-When adding a model-zoo command, use this folder only for shared boilerplate. The model file itself
+When adding a model command, use this folder only for shared boilerplate. The model file itself
 should still say:
 
 - what data it expects and how to prepare it;
 - which shapes enter the model;
-- which `Trainer` task and optimizer are used;
+- which `Trainer` objective and optimizer are used;
 - what artifacts are written, such as `TrainLog` JSON, prediction CSV, images, or saved params;
 - whether CUDA, ATen/libtorch, or another backend is part of the runtime boundary.
 
 If the command produces an artifact that a verifier later consumes, document that handoff in the
-verification README too. The model-zoo command is the producer; the checker owns the verified claim.
+verification README too. The model command is the producer; the checker owns the verified claim.

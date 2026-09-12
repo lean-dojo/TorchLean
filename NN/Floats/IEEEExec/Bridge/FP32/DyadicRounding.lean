@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.IEEEExec.Bridge.FP32.Core
+public import Mathlib.Analysis.SpecialFunctions.Log.Base
 
 /-!
 # IEEE32Exec and FP32: Dyadic Rounding Helpers
@@ -33,13 +34,19 @@ factor the refinement into two steps:
 the lemmas below show that its real interpretation is exactly real addition.
 -/
 
+/-- Fold a sign bit and a magnitude mantissa into one signed integer mantissa. -/
 noncomputable def signedMant (sign : Bool) (m : Nat) : Int :=
   if sign then -(Int.ofNat m) else Int.ofNat m
 
+/-- Rewrite a dyadic as a signed integer mantissa times a radix power.
+
+The encoding keeps sign and magnitude apart, but the arithmetic lemmas want a single integer, so
+nearly every proof in this file starts by moving to this form. -/
 lemma dyadicToReal_eq_signedMant (d : Dyadic) :
     dyadicToReal d = (signedMant d.sign d.mant : ℝ) * neuralBpow binaryRadix d.exp := by
   by_cases hs : d.sign <;> simp [dyadicToReal, signedMant, hs]
 
+/-- Shifting a mantissa left multiplies its real value by the corresponding power of two. -/
 lemma signedMant_shiftLeft (sign : Bool) (m sh : Nat) :
     ((signedMant sign (Nat.shiftLeft m sh) : Int) : ℝ) =
       ((signedMant sign m : Int) : ℝ) * neuralBpow binaryRadix (Int.ofNat sh) := by
@@ -51,6 +58,7 @@ lemma signedMant_shiftLeft (sign : Bool) (m sh : Nat) :
     Nat.shiftLeft_eq,
       Nat.cast_mul, Nat.cast_pow]
 
+/-- Sign times absolute value recovers the integer, over `ℝ`. -/
 lemma signFactor_natAbs_int (s : Int) :
     (if decide (s < 0) then (-1 : ℝ) else (1 : ℝ)) * (Int.natAbs s : ℝ) = (s : ℝ) := by
   cases s with
@@ -59,12 +67,14 @@ lemma signFactor_natAbs_int (s : Int) :
   | negSucc n =>
       simp
 
+/-- Packing a signed integer into a dyadic by sign and absolute value denotes what one expects. -/
 lemma dyadicToReal_ofNatAbs (s : Int) (e : Int) :
     dyadicToReal { sign := decide (s < 0), mant := Int.natAbs s, exp := e } =
       (s : ℝ) * neuralBpow binaryRadix e := by
   dsimp [dyadicToReal]
   rw [signFactor_natAbs_int (s := s)]
 
+/-- Both signed zeros denote `0`, so no proof needs to case on the sign of a zero. -/
 lemma dyadicToReal_zero (sign : Bool) :
     dyadicToReal { sign := sign, mant := 0, exp := 0 } = (0 : ℝ) := by
   by_cases hs : sign <;> simp [dyadicToReal, hs, TorchLean.Floats.neuralBpow, binaryRadix,
@@ -231,10 +241,10 @@ theorem dyadicToReal_addDyadic_exact (a b : Dyadic) :
     · exact dyadicToReal_addDyadic_exact_of_mant_ne_zero a b ha0 hb0
 
 /--
-For a nonzero dyadic, `neural_magnitude` matches the expected “power-of-two interval”
+For a nonzero dyadic, `neuralMagnitude` matches the expected “power-of-two interval”
 characterization: `mag = ⌊logb 2 (mant)⌋ + exp + 1`.
 
-We use this as a key link between the `FP32` rounding model (defined using `neural_magnitude`) and
+We use this as a key link between the `FP32` rounding model (defined using `neuralMagnitude`) and
 the executable kernel (which naturally computes `Nat.log2 mant + exp` from the decoded dyadic).
 -/
 theorem neural_magnitude_dyadic (d : Dyadic) (hm : d.mant ≠ 0) :
@@ -310,6 +320,10 @@ theorem neural_magnitude_dyadic (d : Dyadic) (hm : d.mant ≠ 0) :
   -- `simp` reduced the goal to a statement about the floored `logb`; discharge it.
   exact hfloor_total
 
+/-- Pin down `neuralMagnitude` from a two-sided power-of-two bracket on `|x|`.
+
+The exponent of a value is easier to bound than to compute, so this is the standard route from
+inequalities the caller can prove to the exact exponent the rounding argument needs. -/
 lemma neural_magnitude_eq_of_bpow_bounds (x : ℝ) (k : Int)
     (hx0 : x ≠ 0)
     (hlo : neuralBpow binaryRadix k ≤ _root_.abs x)
@@ -359,7 +373,7 @@ lemma neural_magnitude_eq_of_bpow_bounds (x : ℝ) (k : Int)
 ## Nearest-even on rationals (core bridge lemma)
 
 To relate the executable kernel’s integer rounding (`roundQuotEven` / `roundShiftRightEven`) to the
-proof-relevant model’s rounding (`neural_nearest_even`), we need a lemma that computes nearest-even
+proof-relevant model’s rounding (`neuralNearestEven`), we need a lemma that computes nearest-even
 rounding of a nonnegative rational `num/den` using Euclidean division.
 -/
 
@@ -382,6 +396,8 @@ lemma fract_real_div_nat (n den : Nat) (hden : den ≠ 0) :
             simp [hsplit]
     _ = ((n % den : Nat) : ℝ) / (den : ℝ) := by ring
 
+/-- Real division of naturals floors to natural division. Proved through `ℚ`, where Mathlib already
+has the floor lemma, rather than reasoning about `ℝ` directly. -/
 lemma floor_real_nat_div (n den : Nat) :
     (⌊(n : ℝ) / (den : ℝ)⌋ : Int) = (n / den : Nat) := by
   -- Reduce to `Rat` where the floor/div lemma exists, then cast back to `ℝ`.
@@ -394,6 +410,10 @@ lemma floor_real_nat_div (n den : Nat) :
     _ = (n / den : Nat) := by
             simpa using (Rat.floor_natCast_div_natCast n den)
 
+/-- The remainder is below half the denominator exactly when `2 * r < den`.
+
+This is the "round down" side of nearest-even stated without any real arithmetic, so the executable
+rounding function can be compared against the spec by integer reasoning. -/
 lemma div_lt_half_iff (r den : Nat) (hden : den ≠ 0) :
     ((r : ℝ) / (den : ℝ) < (2⁻¹ : ℝ)) ↔ (2 * r < den) := by
   have hdenpos : (0 : ℝ) < (den : ℝ) := by
@@ -429,6 +449,8 @@ lemma div_lt_half_iff (r den : Nat) (hden : den ≠ 0) :
     have hr : (r : ℝ) < (2⁻¹ : ℝ) * (den : ℝ) := (mul_lt_mul_iff_right₀ h2pos).1 hmul'
     exact h1.mpr hr
 
+/-- The "round up" companion of `div_lt_half_iff`. The tie case `2 * r = den` is deliberately in
+neither lemma; that is where the even-mantissa rule takes over. -/
 lemma half_lt_div_iff (r den : Nat) (hden : den ≠ 0) :
     ((2⁻¹ : ℝ) < (r : ℝ) / (den : ℝ)) ↔ (den < 2 * r) := by
   have hdenpos : (0 : ℝ) < (den : ℝ) := by
@@ -464,6 +486,8 @@ lemma half_lt_div_iff (r den : Nat) (hden : den ≠ 0) :
     have hr : (2⁻¹ : ℝ) * (den : ℝ) < (r : ℝ) := (mul_lt_mul_iff_right₀ h2pos).1 hmul'
     exact h1.mpr hr
 
+/-- The spec-level nearest-even rounding of a nonnegative quotient agrees with the executable
+integer `roundQuotEven`. This is the key bridge lemma of the file. -/
 lemma neural_nearest_even_div_eq_roundQuotEven (num den : Nat) (hden : den ≠ 0) :
     TorchLean.Floats.neuralNearestEven ((num : ℝ) / (den : ℝ)) =
       Int.ofNat (roundQuotEven num den) := by

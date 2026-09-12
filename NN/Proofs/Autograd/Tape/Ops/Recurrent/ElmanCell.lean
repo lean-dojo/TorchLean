@@ -34,7 +34,7 @@ namespace Proofs
 namespace Autograd
 namespace Recurrent
 
-open Spec
+open Spec TorchLean
 open TapeNodes
 open DGraph
 

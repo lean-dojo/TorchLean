@@ -2,6 +2,9 @@
 # Run the native CUDA test suite under NVIDIA sanitizers.
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+LAKE="${LAKE:-$repo_root/scripts/lake.sh}"
+
 usage() {
   cat <<'EOF'
 Usage: scripts/checks/cuda_sanitize_tests.sh [options]
@@ -10,8 +13,9 @@ Build TorchLean with native CUDA externs and run the curated CUDA/Lean test suit
 NVIDIA Compute Sanitizer.
 
 Default:
-  lake -R -K cuda=true build nn_tests_suite
-  lake env compute-sanitizer --tool memcheck .lake/build/bin/nn_tests_suite
+  scripts/lake.sh -R -K cuda=true build nn_tests_suite
+  scripts/lake.sh -R -K cuda=true env compute-sanitizer --tool memcheck \
+    --target-processes application-only .lake/build/bin/nn_tests_suite
 
 Options:
   --tool TOOL           Sanitizer tool to run. May be repeated.
@@ -21,6 +25,9 @@ Options:
   --cuda-home PATH     CUDA toolkit root; passes -K cuda_home=PATH and prepends PATH/lib64.
   --target PATH        Executable to run after building.
                         Default: .lake/build/bin/nn_tests_suite.
+  --target-processes MODE
+                        Processes instrumented by Compute Sanitizer: application-only or all.
+                        Default: application-only.
   --skip-build         Do not rebuild before running sanitizer.
   --sanitizer PATH     CUDA sanitizer executable name/path.
                         Default: compute-sanitizer if available, otherwise cuda-memcheck.
@@ -28,7 +35,7 @@ Options:
   -h, --help           Show this help message.
 
 Environment:
-  LAKE                 Lake executable to use (default: lake).
+  LAKE                 Lake command to use (default: scripts/lake.sh).
 
 Examples:
   scripts/checks/cuda_sanitize_tests.sh
@@ -37,9 +44,9 @@ Examples:
 EOF
 }
 
-LAKE="${LAKE:-lake}"
 sanitizer=""
 target=".lake/build/bin/nn_tests_suite"
+target_processes="application-only"
 cuda_home=""
 skip_build=false
 declare -a tools=()
@@ -75,6 +82,22 @@ while [[ $# -gt 0 ]]; do
       target="$2"
       shift 2
       ;;
+    --target-processes)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --target-processes requires application-only or all" >&2
+        exit 2
+      fi
+      case "$2" in
+        application-only|all)
+          target_processes="$2"
+          ;;
+        *)
+          echo "error: --target-processes must be application-only or all" >&2
+          exit 2
+          ;;
+      esac
+      shift 2
+      ;;
     --skip-build)
       skip_build=true
       shift
@@ -104,16 +127,34 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+cd "$repo_root"
+
 if [[ ${#tools[@]} -eq 0 ]]; then
   tools=(memcheck)
 fi
 
-if [[ -z "$sanitizer" ]]; then
-  sanitizer="compute-sanitizer"
+if [[ -n "$cuda_home" ]]; then
+  # Tool binaries and runtime libraries must come from the same selected
+  # toolkit when several CUDA installations are present.
+  export PATH="$cuda_home/bin:$PATH"
+  export LD_LIBRARY_PATH="$cuda_home/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
-if ! command -v "$sanitizer" >/dev/null 2>&1; then
-  echo "error: could not find '$sanitizer' on PATH" >&2
+if [[ -z "$sanitizer" ]]; then
+  for candidate in \
+      compute-sanitizer \
+      /usr/local/cuda/bin/compute-sanitizer \
+      cuda-memcheck \
+      /usr/local/cuda/bin/cuda-memcheck; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      sanitizer="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$sanitizer" || ! -x "$(command -v "$sanitizer" 2>/dev/null)" ]]; then
+  echo "error: could not find an NVIDIA CUDA sanitizer" >&2
   echo "hint: install the NVIDIA CUDA toolkit or pass --sanitizer /path/to/compute-sanitizer" >&2
   exit 127
 fi
@@ -121,10 +162,6 @@ fi
 lake_flags=(-R -K cuda=true)
 if [[ -n "$cuda_home" ]]; then
   lake_flags+=(-K "cuda_home=$cuda_home")
-  # Native CUDA tests load shared libraries at runtime. Prepending the requested
-  # toolkit keeps this script self-contained on machines with multiple CUDA
-  # installations.
-  export LD_LIBRARY_PATH="$cuda_home/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
 run() {
@@ -138,7 +175,7 @@ run() {
 }
 
 if [[ "$skip_build" == false ]]; then
-  run "$LAKE" build "${lake_flags[@]}" nn_tests_suite
+  run "$LAKE" "${lake_flags[@]}" build nn_tests_suite
 fi
 
 if [[ ! -x "$target" ]]; then
@@ -150,7 +187,12 @@ fi
 for tool in "${tools[@]}"; do
   # `--error-exitcode` converts sanitizer findings into a nonzero process exit,
   # which lets CI fail even when the test binary itself exits successfully.
-  run "$LAKE" env "$sanitizer" --tool "$tool" --error-exitcode 99 "$target" "${exe_args[@]}"
+  # Repeat the profile flags because scripts/lake.sh selects `.lake/build`
+  # atomically on every invocation. Root-only instrumentation also lets the
+  # suite's intentional self-reexec cache probe complete normally.
+  run "$LAKE" "${lake_flags[@]}" env \
+    "$sanitizer" --tool "$tool" --target-processes "$target_processes" \
+    --error-exitcode 99 "$target" "${exe_args[@]}"
 done
 
 printf '\nTorchLean CUDA sanitizer pass completed.\n'

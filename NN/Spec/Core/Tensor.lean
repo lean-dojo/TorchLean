@@ -4,11 +4,13 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+-- The `export Spec (...)` block below is the point of this file, so its imports have to stay and
+-- so does every downstream import of it: reaching the leaves directly loses the aliases.
+module -- shake: keep-downstream
 
-public import NN.Spec.Core.Tensor.Constructors
-public import NN.Spec.Core.Tensor.Core
-public import NN.Spec.Core.Tensor.Linalg
+public import NN.Spec.Core.Tensor.Constructors -- shake: keep
+public import NN.Spec.Core.Tensor.Core -- shake: keep
+public import NN.Spec.Core.Tensor.Linalg -- shake: keep
 
 /-!
 # Tensor
@@ -28,16 +30,13 @@ Elementwise ops and reductions remain in:
 @[expose] public section
 
 
-namespace Spec
-namespace Tensor
+namespace TorchLean.Tensor
 
--- Convenience re-exports: make accessors/constructors from `Spec` available as `Spec.Tensor.*`,
--- so `open Tensor` brings them into scope.
-  export Spec (shapeOf getSpec get get2 getAtOrZero finZero getHead getTail
+-- Expose the semantic accessors and constructors through the canonical tensor API.
+export Spec (shapeOf getSpec get get2 getAtOrZero finZero getHead getTail
   tensorCast replicate
   sliceRangeSpec
-  fill singleton padLeft
+  singleton padLeft
   identityTensorSpec matMulSpec matVecMulSpec vecMatMulSpec outerProductSpec)
 
-end Tensor
-end Spec
+end TorchLean.Tensor

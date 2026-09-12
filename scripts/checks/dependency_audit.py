@@ -33,7 +33,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
 # The parser is intentionally shallow: TorchLean's public graph page needs module imports,
 # namespaces, and declaration headers, not a full elaborated Lean environment.
-IMPORT_RE = re.compile(r"^\s*(public\s+)?import\s+([A-Za-z0-9_'.]+)\s*$")
+IMPORT_RE = re.compile(r"^\s*(public\s+)?(?:meta\s+)?import\s+([A-Za-z0-9_'.]+)\s*$")
 NAMESPACE_RE = re.compile(r"^\s*namespace\s+([A-Za-z0-9_'.]+)\s*$")
 DECL_RE = re.compile(
     r"^\s*(?:private\s+|protected\s+|partial\s+|unsafe\s+|noncomputable\s+|scoped\s+|local\s+)*"
@@ -61,7 +61,7 @@ BROAD_IMPORTS = {
 CRITICAL_PATH_EXCLUDE = {
     "NN",
     "NN.CI.All",
-    "NN.Examples.Zoo",
+    "NN.Examples",
     "NN.Tests.Suite",
     "NN.Verification.CLI",
 }
@@ -89,32 +89,26 @@ class Finding:
 
 
 def iter_lean_files(root: pathlib.Path) -> Iterable[pathlib.Path]:
-    """Yield Lean source files that belong to the TorchLean architecture graph."""
-    for path in sorted(root.rglob("*.lean")):
-        rel_parts = path.relative_to(root).parts
-        # Build artifacts and vendored external projects would make the public
-        # architecture page report dependencies that are not part of TorchLean.
-        if any(part in SKIP_PARTS for part in rel_parts):
-            continue
-        if any(part in EXTERNAL_TREE_NAMES for part in rel_parts):
-            continue
-        if is_git_ignored(root, path):
-            continue
-        yield path
-
-
-def is_git_ignored(root: pathlib.Path, path: pathlib.Path) -> bool:
-    """Return whether Git ignores `path`."""
-    rel = path.relative_to(root).as_posix()
+    """Enumerate project sources without traversing ignored build and package caches."""
     try:
-        proc = subprocess.run(
-            ["git", "-C", str(root), "check-ignore", "-q", rel],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--cached", "--others",
+             "--exclude-standard", "-z", "--", "*.lean"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )
     except OSError:
-        return False
-    return proc.returncode == 0
+        result = None
+    if result is not None and result.returncode == 0:
+        paths = (root / name.decode("utf-8", errors="surrogateescape")
+                 for name in result.stdout.split(b"\0") if name)
+    else:
+        # Source archives remain inspectable without Git metadata.
+        paths = root.rglob("*.lean")
+    for path in sorted(set(paths)):
+        if any(part in SKIP_PARTS | EXTERNAL_TREE_NAMES for part in path.relative_to(root).parts):
+            continue
+        if path.is_file():
+            yield path
 
 
 def module_name(root: pathlib.Path, path: pathlib.Path) -> str:
@@ -277,7 +271,7 @@ def parse_file(root: pathlib.Path, path: pathlib.Path) -> tuple[list[ImportEdge]
         # Test aggregators deliberately exercise the complete public surface. Examples use
         # `NN.API` or a focused subsystem so their dependencies remain visible to readers.
         rel.startswith("NN/Tests/")
-        or rel.startswith("blueprint/")
+        or rel.startswith("home_page/blueprint/")
         or rel in {"NN.lean", "NN/Docs.lean"}
     )
 

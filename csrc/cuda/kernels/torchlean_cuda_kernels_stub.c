@@ -256,28 +256,31 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_layer_norm_fwd(
     lean_internal_panic("torchlean_cuda_buffer_layer_norm_fwd_stub: buffer size mismatch");
   }
 
-  const float invCols = (float)invColsArg;
-  const float epsilon = (float)epsilonArg;
+  // Match the CUDA forward path: preserve small differences around a large row mean
+  // by keeping the reductions and centering in double until xhat is stored.
+  (void)invColsArg;
+  const double columnCount = (double)cols;
+  const double epsilon = epsilonArg;
   torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(total);
   torchlean_cuda_buffer* normalized = torchlean_cuda_buffer_alloc(total);
   torchlean_cuda_buffer* invStd = torchlean_cuda_buffer_alloc(R);
   for (size_t row = 0; row < R; ++row) {
     const size_t rowOffset = row * C;
-    float totalValue = 0.0f;
+    double totalValue = 0.0;
     for (size_t col = 0; col < C; ++col) {
-      totalValue += x->data[rowOffset + col];
+      totalValue += (double)x->data[rowOffset + col];
     }
-    const float mean = totalValue * invCols;
-    float squareTotal = 0.0f;
+    const double mean = totalValue / columnCount;
+    double squareTotal = 0.0;
     for (size_t col = 0; col < C; ++col) {
-      const float centered = x->data[rowOffset + col] - mean;
+      const double centered = (double)x->data[rowOffset + col] - mean;
       squareTotal += centered * centered;
     }
-    const float std = sqrtf(squareTotal * invCols + epsilon);
-    invStd->data[row] = 1.0f / std;
+    const double std = sqrt(squareTotal / columnCount + epsilon);
+    invStd->data[row] = (float)(1.0 / std);
     for (size_t col = 0; col < C; ++col) {
       const size_t index = rowOffset + col;
-      const float xHat = (x->data[index] - mean) / std;
+      const float xHat = (float)(((double)x->data[index] - mean) / std);
       normalized->data[index] = xHat;
       out->data[index] = xHat * gamma->data[col] + beta->data[col];
     }
@@ -437,7 +440,8 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rfft1d_packed(b_lean_obj_arg XObj
         im -= xb[t] * sinf(angle);
       }
       ob[2 * k] = re;
-      ob[2 * k + 1] = im;
+      // Self-conjugate bins have no imaginary coordinate, even if sinf(pi*t) rounds away from zero.
+      ob[2 * k + 1] = (k == 0 || (N % 2 == 0 && k == N / 2)) ? 0.0f : im;
     }
   }
   return torchlean_cuda_buffer_box(out);
@@ -532,7 +536,7 @@ static void spectral_conv1d_rfft_ref(const float* x, float* re, float* im, size_
         xi -= v * sinf(angle);
       }
       re[k * width + c] = xr;
-      im[k * width + c] = xi;
+      im[k * width + c] = (k == 0 || (grid % 2 == 0 && k == grid / 2)) ? 0.0f : xi;
     }
   }
 }
@@ -561,6 +565,10 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_fwd(
   size_t xSz = 0, wSz = 0, Freq = 0;
   validate_spectral_conv1d_stub(x, wRe, wIm, NULL, grid, width, modes, &xSz, &wSz, &Freq);
   torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(xSz);
+  if (modes == 0) {
+    for (size_t i = 0; i < xSz; ++i) out->data[i] = 0.0f;
+    return torchlean_cuda_buffer_box(out);
+  }
   float* xRe = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
   float* xIm = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
   float* zRe = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
@@ -589,7 +597,7 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_fwd(
         const float factor = isNyquist ? 1.0f : 2.0f;
         const float angle = 2.0f * kTorchLeanPiF * (float)k * (float)t / (float)grid;
         sum += factor * (zRe[k * (size_t)width + o] * cosf(angle) -
-                         zIm[k * (size_t)width + o] * sinf(angle));
+                         (isNyquist ? 0.0f : zIm[k * (size_t)width + o] * sinf(angle)));
       }
       out->data[t * (size_t)width + o] = sum / (float)grid;
     }
@@ -608,6 +616,10 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_bwd_x(
   size_t xSz = 0, wSz = 0, Freq = 0;
   validate_spectral_conv1d_stub(x, wRe, wIm, dY, grid, width, modes, &xSz, &wSz, &Freq);
   torchlean_cuda_buffer* dx = torchlean_cuda_buffer_alloc(xSz);
+  if (modes == 0) {
+    for (size_t i = 0; i < xSz; ++i) dx->data[i] = 0.0f;
+    return torchlean_cuda_buffer_box(dx);
+  }
   float* dzRe = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
   float* dzIm = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
   float* dXRe = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
@@ -634,7 +646,8 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_bwd_x(
       for (size_t k = 0; k < (size_t)modes; ++k) {
         const float angle = 2.0f * kTorchLeanPiF * (float)k * (float)t / (float)grid;
         const size_t idx = k * (size_t)width + c;
-        acc += dXRe[idx] * cosf(angle) - dXIm[idx] * sinf(angle);
+        const int endpoint = k == 0 || (grid % 2 == 0 && k == grid / 2);
+        acc += dXRe[idx] * cosf(angle) - (endpoint ? 0.0f : dXIm[idx] * sinf(angle));
       }
       dx->data[t * (size_t)width + c] = acc;
     }
@@ -653,6 +666,9 @@ static lean_obj_res spectral_conv1d_bwd_w_stub_common(
   size_t xSz = 0, wSz = 0, Freq = 0;
   validate_spectral_conv1d_stub(x, wRe, wIm, dY, grid, width, modes, &xSz, &wSz, &Freq);
   torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(wSz);
+  if (modes == 0) {
+    return torchlean_cuda_buffer_box(out);
+  }
   float* xRe = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
   float* xIm = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
   float* dzRe = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
@@ -824,6 +840,43 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_selective_scan_diag_var_fwd(
   }
 
   return torchlean_cuda_buffer_box(out);
+}
+
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_selective_scan_diag_var_bwd(
+    b_lean_obj_arg AObj, b_lean_obj_arg BObj, b_lean_obj_arg XObj, b_lean_obj_arg H0Obj,
+    b_lean_obj_arg OutObj, b_lean_obj_arg DYObj, uint32_t seqLen, uint32_t stateDim) {
+  torchlean_cuda_buffer* A = torchlean_cuda_buffer_unbox(AObj);
+  torchlean_cuda_buffer* B = torchlean_cuda_buffer_unbox(BObj);
+  torchlean_cuda_buffer* X = torchlean_cuda_buffer_unbox(XObj);
+  torchlean_cuda_buffer* h0 = torchlean_cuda_buffer_unbox(H0Obj);
+  torchlean_cuda_buffer* out = torchlean_cuda_buffer_unbox(OutObj);
+  torchlean_cuda_buffer* dY = torchlean_cuda_buffer_unbox(DYObj);
+  const size_t D = (size_t)stateDim;
+  const size_t total = checked_mul_size(
+      (size_t)seqLen, D, "selectiveScanDiagVarBwd: sequence size overflow");
+  if (A->size != total || B->size != total || X->size != total ||
+      out->size != total || dY->size != total || h0->size != D) {
+    lean_internal_panic("selectiveScanDiagVarBwd: input or saved-state size mismatch");
+  }
+  torchlean_cuda_buffer* dA = torchlean_cuda_buffer_alloc(total);
+  torchlean_cuda_buffer* dB = torchlean_cuda_buffer_alloc(total);
+  torchlean_cuda_buffer* dX = torchlean_cuda_buffer_alloc(total);
+  torchlean_cuda_buffer* dH0 = torchlean_cuda_buffer_alloc(D);
+  for (size_t j = 0; j < D; ++j) {
+    float carried = 0.0f;
+    for (size_t remaining = (size_t)seqLen; remaining > 0; --remaining) {
+      const size_t t = remaining - 1;
+      const size_t idx = t * D + j;
+      const float previous = t == 0 ? h0->data[j] : out->data[idx - D];
+      const float gradient = dY->data[idx] + carried;
+      dA->data[idx] = gradient * previous;
+      dB->data[idx] = gradient * X->data[idx];
+      dX->data[idx] = gradient * B->data[idx];
+      carried = gradient * A->data[idx];
+    }
+    dH0->data[j] = carried;
+  }
+  return torchlean_cuda_box_four_buffers(dA, dB, dX, dH0);
 }
 
 static inline int flash_attention_allowed_stub(const torchlean_cuda_buffer* mask, uint32_t hasMask,
@@ -1167,6 +1220,9 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_broadcast_to(b_lean_obj_arg XObj,
     lean_internal_panic("torchlean_cuda_buffer_broadcast_to_stub: input size mismatch");
   }
 
+  torchlean_cuda_require_broadcast_map(
+      axisMap, rankIn, rankOut, "torchlean_cuda_buffer_broadcast_to_stub");
+
   for (size_t ax = 0; ax < rankOut; ++ax) {
     const uint32_t mv = axisMap[ax];
     if (mv == 0) continue;
@@ -1286,6 +1342,9 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_from_broadcast(b_lean_obj_
   if (dOut->size != outSize) {
     lean_internal_panic("torchlean_cuda_buffer_reduce_from_broadcast_stub: dOut size mismatch");
   }
+
+  torchlean_cuda_require_broadcast_map(
+      axisMap, rankIn, rankOut, "torchlean_cuda_buffer_reduce_from_broadcast_stub");
 
   for (size_t ax = 0; ax < rankOut; ++ax) {
     const uint32_t mv = axisMap[ax];

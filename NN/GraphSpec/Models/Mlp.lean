@@ -6,18 +6,19 @@ Authors: TorchLean Team
 
 module
 
-public import NN.GraphSpec.Core
+public import NN.GraphSpec.Chain.Primitives
+public import NN.GraphSpec.Chain.ToDAG.Model
+public import NN.Runtime.Autograd.Model.Layers.Seq
 
 /-!
 # GraphSpec MLP Example
 
 This file contains the smallest GraphSpec architecture example:
 
-`Linear(in,hid) → ReLU → Linear(hid,out)`.
+`Linear(input, hidden) → ReLU → Linear(hidden, output)`.
 
-This does not duplicate TorchLean's executable MLP helper. That constructor lives under
-`NN.GraphSpec.Models.TorchLean.Mlp`; application code reaches the corresponding public constructor
-through `TorchLean.nn.models`.
+This does not duplicate TorchLean's executable MLP helper. Application code uses
+`TorchLean.nn.mlp`; this file keeps only the proof-oriented graph description.
 The point here is narrower and proof-oriented:
 
 - show the sequential `Chain` DSL in its simplest useful form;
@@ -35,30 +36,30 @@ namespace NN
 namespace GraphSpec
 namespace Models
 
-open _root_.Spec
-open _root_.TorchLean.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /--
-2-layer MLP: `Linear(in,hid) → ReLU → Linear(hid,out)`.
+2-layer MLP: `Linear(input, hidden) → ReLU → Linear(hidden, output)`.
 
 Notice how the parameter interface is explicit in the type:
 
-- the first `Linear(in,hid)` contributes tensors `W₁ : Tensor α [hid, in]` and
-  `b₁ : Tensor α [hid]`,
-- the second `Linear(hid,out)` contributes tensors `W₂ : Tensor α [out, hid]` and
-  `b₂ : Tensor α [out]`,
+- the first linear layer contributes tensors `W₁ : Tensor α [hiddenWidth, inputWidth]` and
+  `b₁ : Tensor α [hiddenWidth]`,
+- the second linear layer contributes tensors `W₂ : Tensor α [outputWidth, hiddenWidth]` and
+  `b₂ : Tensor α [outputWidth]`,
 - and `ReLU` contributes no parameters.
 
 So the overall parameter list is exactly:
-`[[hid, in], [hid], [out, hid], [out]]`.
+`[[hiddenWidth, inputWidth], [hiddenWidth], [outputWidth, hiddenWidth], [outputWidth]]`.
 -/
-def mlp (inDim hidDim outDim : Nat) :
+def mlp (inputWidth hiddenWidth outputWidth : Nat) :
     Chain
-      [[hidDim, inDim], [hidDim], [outDim, hidDim], [outDim]]
-      [inDim] [outDim] :=
-  Chain.linear inDim hidDim >>>
-  Chain.relu [hidDim] >>>
-  Chain.linear hidDim outDim
+      [[hiddenWidth, inputWidth], [hiddenWidth], [outputWidth, hiddenWidth], [outputWidth]]
+      [inputWidth] [outputWidth] :=
+  Chain.linear inputWidth hiddenWidth >>>
+  Chain.relu [hiddenWidth] >>>
+  Chain.linear hiddenWidth outputWidth
 
 /--
 The same 2-layer MLP, but exposed as a DAG `Model` via the structural lowering
@@ -69,12 +70,13 @@ consume this even though it was authored using the sequential `>>>` syntax.
 
 Initialization: all-zero parameters (see `LowerToDAG.Chain.toDAGModelZeroInit`).
 -/
-def mlpDAGModelZeroInit (inDim hidDim outDim : Nat) :
+def mlpDAGModelZeroInit (inputWidth hiddenWidth outputWidth : Nat) :
     DAG.Model
-      [[hidDim, inDim], [hidDim], [outDim, hidDim], [outDim]]
-      [[inDim]]
-      [outDim] :=
-  LowerToDAG.Chain.toDAGModelZeroInit (mlp (inDim := inDim) (hidDim := hidDim) (outDim := outDim))
+      [[hiddenWidth, inputWidth], [hiddenWidth], [outputWidth, hiddenWidth], [outputWidth]]
+      [[inputWidth]]
+      [outputWidth] :=
+  LowerToDAG.Chain.toDAGModelZeroInit
+    (mlp (inputWidth := inputWidth) (hiddenWidth := hiddenWidth) (outputWidth := outputWidth))
 
 /-!
 ## Example Usage
@@ -82,11 +84,11 @@ def mlpDAGModelZeroInit (inDim hidDim outDim : Nat) :
 You can build a simple classifier head by appending a softmax:
 
 ```lean
-def g (inDim hidDim outDim : Nat) :
+def g (inputWidth hiddenWidth outputWidth : Nat) :
     Chain
-      [[hidDim, inDim], [hidDim], [outDim, hidDim], [outDim]]
-      [inDim] [outDim] :=
-  Models.mlp inDim hidDim outDim >>> Chain.softmax [outDim] 0
+      [[hiddenWidth, inputWidth], [hiddenWidth], [outputWidth, hiddenWidth], [outputWidth]]
+      [inputWidth] [outputWidth] :=
+  Models.mlp inputWidth hiddenWidth outputWidth >>> Chain.softmax [outputWidth] 0
 ```
 
 Then:

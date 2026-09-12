@@ -34,27 +34,35 @@ namespace NN.Verification.LiRPA.Mlp
 
 open NN.MLTheory.CROWN.Graph
 open NN.MLTheory.CROWN
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /-- Four-node `3 → 4 → 2` ReLU MLP graph used by the compact LiRPA certificate example. -/
 def buildGraph : Graph :=
-  let inputNode : Node := { id := 0, parents := #[], kind := .input, outShape := .dim 3 .scalar }
-  let hiddenLinearNode : Node := { id := 1, parents := #[0], kind := .linear, outShape := .dim 4 .scalar }
-  let reluNode : Node := { id := 2, parents := #[1], kind := .relu, outShape := .dim 4 .scalar }
-  let outputLinearNode : Node := { id := 3, parents := #[2], kind := .linear, outShape := .dim 2 .scalar }
+  let inputNode : Node := { id := 0, parents := #[], kind := .input, outShape := [3] }
+  let hiddenLinearNode : Node := { id := 1, parents := #[0], kind := .linear, outShape := [4] }
+  let reluNode : Node := { id := 2, parents := #[1], kind := .relu, outShape := [4] }
+  let outputLinearNode : Node := { id := 3, parents := #[2], kind := .linear, outShape := [2] }
   { nodes := #[inputNode, hiddenLinearNode, reluNode, outputLinearNode] }
 
 /-- Deterministic Float weights and biases for both linear nodes in `buildGraph`. -/
 def seedParamsFloat : ParamStore Float :=
   let hiddenWeight : Tensor Float [4, 3] :=
-    Tensor.dim (fun i => Tensor.dim (fun j => Tensor.scalar (Float.ofNat (1 + (i.val + j.val)))))
-  let hiddenBias : Tensor Float [4] := Tensor.dim (fun i => Tensor.scalar (Float.ofNat (i.val +
-    1)))
+    Tensor.generate [4, 3] fun
+      | [i, j] => Float.ofNat (1 + i + j)
+      | _ => 0.0
+  let hiddenBias : Tensor Float [4] :=
+    Tensor.generate [4] fun
+      | [i] => Float.ofNat (i + 1)
+      | _ => 0.0
   let outputWeight : Tensor Float [2, 4] :=
-    Tensor.dim (fun i => Tensor.dim (fun j => Tensor.scalar (Float.ofNat (2 + (i.val + j.val)))))
-  let outputBias : Tensor Float [2] := Tensor.dim (fun i => Tensor.scalar (Float.ofNat
-    (i.val)))
+    Tensor.generate [2, 4] fun
+      | [i, j] => Float.ofNat (2 + i + j)
+      | _ => 0.0
+  let outputBias : Tensor Float [2] :=
+    Tensor.generate [2] fun
+      | [i] => Float.ofNat i
+      | _ => 0.0
   let emptyStore : ParamStore Float := {}
   let withHiddenLayer :=
     { emptyStore with
@@ -66,14 +74,12 @@ def seedParamsFloat : ParamStore Float :=
         ({ m := 2, n := 4, w := outputWeight, b := outputBias }) }
   withOutputLayer
 
-/-- Add the example's natural input box of radius `eps` to a parameter store. -/
-def seedInputFloat (ps : ParamStore Float) (eps : Float) : ParamStore Float :=
-  NN.Verification.LiRPA.ExampleInputs.seedNaturalInputBox 0 3 eps ps
-
 /-- Check an IBP certificate JSON file and throw an error if it does not match recomputed bounds. -/
 def verifyCert (path : String) : IO Unit := do
   let g := buildGraph
-  let ps := seedInputFloat (seedParamsFloat) (eps := (1.0))
+  -- Every input coordinate gets the box $[x_i - \varepsilon, x_i + \varepsilon]$; the
+  -- graph has 3 inputs, ids `0 .. 2`.
+  let ps := ExampleInputs.seedNaturalInputBox 0 3 1.0 seedParamsFloat
   NN.Verification.IBPCert.checkOrThrow g ps (outId := 3) path
 
 end NN.Verification.LiRPA.Mlp

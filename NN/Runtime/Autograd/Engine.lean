@@ -22,7 +22,7 @@ This is the public umbrella for TorchLean's low-level eager autograd engine.
 - `Engine.Cuda` collects the CUDA float32 tape, FFI kernels, and proof layer native contracts.
 
 Higher-level APIs should usually import `NN.Runtime.Autograd.Torch` or
-`NN.Runtime.Autograd.TorchLean`; this module is for code that works directly at the tape
+`NN.Runtime.Autograd.Model`; this module is for code that works directly at the tape
 engine boundary.
 -/
 

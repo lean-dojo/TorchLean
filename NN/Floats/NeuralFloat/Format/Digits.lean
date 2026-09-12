@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.NeuralFloat.Format.Magnitude
-public import Mathlib.Data.Nat.Log
 
 /-!
 # Integer Digits, Scaling, and Slices
@@ -25,15 +24,19 @@ namespace TorchLean.Floats
 def neuralIntPower (β : NeuralRadix) (e : ℤ) : ℤ :=
   if 0 ≤ e then Int.ofNat (β.base ^ e.toNat) else 0
 
+/-- On nonnegative exponents the radix power is the ordinary one. -/
 @[simp] theorem neuralIntPower_of_nonneg (β : NeuralRadix) {e : ℤ} (he : 0 ≤ e) :
     neuralIntPower β e = Int.ofNat (β.base ^ e.toNat) := by
   simp [neuralIntPower, he]
 
+/-- Negative exponents give zero, which is the Flocq convention rather than a truncation accident:
+it keeps `neuralIntPower` an integer function and makes the slice lemmas below unconditional. -/
 @[simp] theorem neuralIntPower_of_neg (β : NeuralRadix) {e : ℤ} (he : e < 0) :
     neuralIntPower β e = 0 := by
   have hnot : ¬0 ≤ e := by linarith
   simp [neuralIntPower, hnot]
 
+/-- `β⁰ = 1`. -/
 @[simp] theorem neuralIntPower_zero (β : NeuralRadix) : neuralIntPower β 0 = 1 := by
   simp [neuralIntPower]
 
@@ -41,13 +44,16 @@ def neuralIntPower (β : NeuralRadix) (e : ℤ) : ℤ :=
 def neuralDigit (β : NeuralRadix) (n k : ℤ) : ℤ :=
   Int.tmod (Int.tdiv n (neuralIntPower β k)) (Int.ofNat β.base)
 
+/-- Every digit of zero is zero. -/
 @[simp] theorem neuralDigit_zero (β : NeuralRadix) (k : ℤ) : neuralDigit β 0 k = 0 := by
   simp [neuralDigit]
 
+/-- Digits are odd in the value, because `tdiv` and `tmod` truncate toward zero on both signs. -/
 @[simp] theorem neuralDigit_neg (β : NeuralRadix) (n k : ℤ) :
     neuralDigit β (-n) k = -neuralDigit β n k := by
   simp [neuralDigit]
 
+/-- There are no digits below position zero: this layer describes integers, not fractions. -/
 theorem neuralDigit_of_neg_index (β : NeuralRadix) (n : ℤ) {k : ℤ} (hk : k < 0) :
     neuralDigit β n k = 0 := by
   simp [neuralDigit, neuralIntPower_of_neg β hk]
@@ -68,21 +74,27 @@ theorem neuralDigit_abs_lt_base (β : NeuralRadix) (n k : ℤ) :
 def neuralScale (β : NeuralRadix) (n k : ℤ) : ℤ :=
   if 0 ≤ k then n * neuralIntPower β k else Int.tdiv n (neuralIntPower β (-k))
 
+/-- A nonnegative shift is exact multiplication by a radix power. -/
 theorem neuralScale_of_nonneg (β : NeuralRadix) (n : ℤ) {k : ℤ} (hk : 0 ≤ k) :
     neuralScale β n k = n * neuralIntPower β k := by
   simp [neuralScale, hk]
 
+/-- A negative shift truncates toward zero, which is where information is lost and hence where the
+rounding proofs have to do real work. -/
 theorem neuralScale_of_neg (β : NeuralRadix) (n : ℤ) {k : ℤ} (hk : k < 0) :
     neuralScale β n k = Int.tdiv n (neuralIntPower β (-k)) := by
   have hnot : ¬0 ≤ k := by linarith
   simp [neuralScale, hnot]
 
+/-- Shifting zero gives zero, at any shift. -/
 @[simp] theorem neuralScale_zero_value (β : NeuralRadix) (k : ℤ) : neuralScale β 0 k = 0 := by
   simp [neuralScale]
 
+/-- A zero shift is the identity. -/
 @[simp] theorem neuralScale_zero_shift (β : NeuralRadix) (n : ℤ) : neuralScale β n 0 = n := by
   simp [neuralScale]
 
+/-- Shifting is odd in the value, in both the multiplying and the truncating branch. -/
 @[simp] theorem neuralScale_neg (β : NeuralRadix) (n k : ℤ) :
     neuralScale β (-n) k = -neuralScale β n k := by
   unfold neuralScale
@@ -94,10 +106,13 @@ def neuralSlice (β : NeuralRadix) (n start width : ℤ) : ℤ :=
     Int.tmod (neuralScale β n (-start)) (neuralIntPower β width)
   else 0
 
+/-- Any slice of zero is zero. -/
 @[simp] theorem neuralSlice_zero_value (β : NeuralRadix) (start width : ℤ) :
     neuralSlice β 0 start width = 0 := by
   simp [neuralSlice]
 
+/-- A negative width selects no digits. Total rather than partial, so callers need no side
+condition; the interesting bound is `neuralSlice_abs_lt_power`. -/
 theorem neuralSlice_of_neg_width (β : NeuralRadix) (n start : ℤ) {width : ℤ}
     (hwidth : width < 0) : neuralSlice β n start width = 0 := by
   have hnot : ¬0 ≤ width := by linarith
@@ -116,6 +131,7 @@ theorem neuralSlice_abs_lt_power (β : NeuralRadix) (n start : ℤ) {width : ℤ
   exact ⟨by simpa [neuralSlice, hwidth] using hlower,
     by simpa [neuralSlice, hwidth] using hupper⟩
 
+/-- Slices are odd in the value, inherited from `neuralScale` and `Int.tmod`. -/
 @[simp] theorem neuralSlice_neg (β : NeuralRadix) (n start width : ℤ) :
     neuralSlice β (-n) start width = -neuralSlice β n start width := by
   unfold neuralSlice
@@ -125,9 +141,11 @@ theorem neuralSlice_abs_lt_power (β : NeuralRadix) (n start : ℤ) {width : ℤ
 def neuralDigits (β : NeuralRadix) (n : ℤ) : ℕ :=
   if n = 0 then 0 else Nat.log β.base n.natAbs + 1
 
+/-- Zero is given zero digits rather than one, again following Flocq. -/
 @[simp] theorem neuralDigits_zero (β : NeuralRadix) : neuralDigits β 0 = 0 := by
   simp [neuralDigits]
 
+/-- The digit count depends only on the magnitude. -/
 @[simp] theorem neuralDigits_neg (β : NeuralRadix) (n : ℤ) :
     neuralDigits β (-n) = neuralDigits β n := by
   by_cases hn : n = 0
@@ -135,6 +153,7 @@ def neuralDigits (β : NeuralRadix) (n : ℤ) : ℕ :=
     simp
   · simp [neuralDigits, hn]
 
+/-- A nonzero integer has at least one digit, the converse of `neuralDigits_zero`. -/
 theorem neuralDigits_pos {β : NeuralRadix} {n : ℤ} (hn : n ≠ 0) :
     0 < neuralDigits β n := by
   simp [neuralDigits, hn]

@@ -36,6 +36,7 @@ inductive RuntimeStatus where
   | nativeUnavailable
   deriving DecidableEq, Repr
 
+/-- Raw status word from the C layer; `runtimeStatus` decodes it. -/
 @[never_extract, extern "torchlean_cuda_runtime_status"]
 opaque runtimeStatusRaw (token : UInt32) : UInt32
 
@@ -52,7 +53,8 @@ def requireNativeRuntime : IO Unit :=
   | .nativeAvailable => pure ()
   | .cpuStub =>
       throw <| IO.userError
-        "CUDA was requested, but this executable is linked to TorchLean's CPU parity stubs; rebuild and run with `-K cuda=true`"
+        "CUDA was requested, but this executable is linked to TorchLean's CPU parity stubs; \
+          rebuild and run with `-K cuda=true`"
   | .nativeUnavailable =>
       throw <| IO.userError
         "CUDA was requested and this is a CUDA build, but no usable CUDA device is visible"
@@ -71,12 +73,15 @@ This flag is a *runtime* setting affecting only the CUDA/stub backends; it has n
 pure Lean Spec.
 -/
 
+/-- Set the deterministic-reductions flag in the native backend. -/
 @[never_extract, extern "torchlean_cuda_set_deterministic_reductions"]
 opaque setDeterministicReductionsRaw (on : UInt32) : Unit
 
+/-- Read the deterministic-reductions flag. The argument only forces a call. -/
 @[never_extract, extern "torchlean_cuda_get_deterministic_reductions_u"]
 opaque getDeterministicReductionsRaw (u : UInt32) : UInt32
 
+/-- Set the flag and return what the runtime observed, so the call has a used result. -/
 @[never_extract, extern "torchlean_cuda_set_deterministic_reductions_checked"]
 opaque setDeterministicReductionsCheckedRaw (on : UInt32) : UInt32
 
@@ -91,50 +96,78 @@ giving us a single call with an explicit return value dependency.
 def setDeterministicReductionsChecked (on : Bool) : Bool :=
   setDeterministicReductionsCheckedRaw (if on then 1 else 0) != 0
 
-/-- Enable/disable deterministic reductions mode (see module docstring). -/
-def setDeterministicReductions (on : Bool) : Unit :=
-  let _ := setDeterministicReductionsChecked on
-  ()
+/--
+Enable/disable deterministic reductions mode as an `IO` action.
 
-/-- Query whether deterministic reductions mode is enabled. -/
-def getDeterministicReductions : Bool :=
-  getDeterministicReductionsRaw 0 != 0
+The call is sequenced with the surrounding effects and its observed value is checked, so unlike a
+`let _ := ...` binding of the pure setter it cannot be dropped as dead code. Throws if the runtime
+reports a different flag than requested.
+-/
+def setDeterministicReductions (on : Bool) : IO Unit := do
+  let observed ← IO.lazyPure fun _ => setDeterministicReductionsChecked on
+  unless observed == on do
+    throw <| IO.userError
+      s!"cuda: deterministic reductions flag is {observed} after requesting {on}"
+
+/--
+Query whether deterministic reductions mode is enabled.
+
+This is an `IO` action and not a pure `Bool`, for the same reason `allocatorStatsWithToken` takes a
+token. A nullary definition whose body reads native state compiles to a value initialized once when
+the module loads, so every later caller is handed that startup snapshot: a pure version of this
+getter answered `false` even directly after `setDeterministicReductions true` had demonstrably
+switched the CUDA kernels to their fixed-order paths. Sequencing the read keeps the answer current.
+-/
+def getDeterministicReductions : IO Bool :=
+  IO.lazyPure fun _ => getDeterministicReductionsRaw 0 != 0
 
 /-! ### Allocator Telemetry -/
 
+/-- Bytes currently handed out by the CUDA allocator. -/
 @[never_extract, extern "torchlean_cuda_allocator_live_bytes"]
 opaque allocatorLiveBytesRaw (u : UInt32) : UInt64
 
+/-- High-water mark of `allocatorLiveBytesRaw` since process start. -/
 @[never_extract, extern "torchlean_cuda_allocator_peak_bytes"]
 opaque allocatorPeakBytesRaw (u : UInt32) : UInt64
 
+/-- Total device allocations this process has made. -/
 @[never_extract, extern "torchlean_cuda_allocator_alloc_count"]
 opaque allocatorAllocCountRaw (u : UInt32) : UInt64
 
+/-- Total device frees this process has made. -/
 @[never_extract, extern "torchlean_cuda_allocator_free_count"]
 opaque allocatorFreeCountRaw (u : UInt32) : UInt64
 
+/-- Lean external objects currently owning a device payload. -/
 @[never_extract, extern "torchlean_cuda_wrapper_live_count"]
 opaque wrapperLiveCountRaw (u : UInt32) : UInt64
 
+/-- High-water mark of that live wrapper count. -/
 @[never_extract, extern "torchlean_cuda_wrapper_peak_count"]
 opaque wrapperPeakCountRaw (u : UInt32) : UInt64
 
+/-- Wrappers created since process start. -/
 @[never_extract, extern "torchlean_cuda_wrapper_alloc_count"]
 opaque wrapperAllocCountRaw (u : UInt32) : UInt64
 
+/-- Wrappers finalized by the Lean garbage collector since process start. -/
 @[never_extract, extern "torchlean_cuda_wrapper_finalize_count"]
 opaque wrapperFinalizeCountRaw (u : UInt32) : UInt64
 
+/-- Bytes the device reports as free, as seen by the driver rather than by this allocator. -/
 @[never_extract, extern "torchlean_cuda_allocator_device_free_bytes"]
 opaque allocatorDeviceFreeBytesRaw (u : UInt32) : UInt64
 
+/-- Total device memory reported by the driver. -/
 @[never_extract, extern "torchlean_cuda_allocator_device_total_bytes"]
 opaque allocatorDeviceTotalBytesRaw (u : UInt32) : UInt64
 
+/-- Bytes held in the block cache, freed by Lean but not yet returned to the driver. -/
 @[never_extract, extern "torchlean_cuda_allocator_cache_bytes"]
 opaque allocatorCacheBytesRaw (u : UInt32) : UInt64
 
+/-- Configured ceiling on that cache, zero when uncapped. -/
 @[never_extract, extern "torchlean_cuda_allocator_cache_cap_bytes"]
 opaque allocatorCacheCapBytesRaw (u : UInt32) : UInt64
 
@@ -224,6 +257,7 @@ an IO token so two uploads cannot be collapsed into the same external object aft
 @[never_extract, extern "torchlean_cuda_buffer_of_float_array"]
 opaque ofFloatArray (a : @& FloatArray) : Buffer
 
+/-- Upload with an explicit token; `ofFloatArrayIO` supplies a changing one. -/
 @[never_extract, extern "torchlean_cuda_buffer_of_float_array_with_token"]
 opaque ofFloatArrayWithToken (a : @& FloatArray) (token : UInt32) : Buffer
 
@@ -242,6 +276,7 @@ def ofFloatArrayIO (a : @& FloatArray) : IO Buffer := do
 @[never_extract, extern "torchlean_cuda_buffer_to_float_array"]
 opaque toFloatArray (b : @& Buffer) : FloatArray
 
+/-- Download a buffer to the host, widening each element to Lean `Float`. -/
 @[never_extract, extern "torchlean_cuda_buffer_to_float_array_io"]
 opaque toFloatArrayIO (b : @& Buffer) : IO FloatArray
 
@@ -271,6 +306,7 @@ opaque float32BytesToFloatArray (bytes : @& ByteArray) : FloatArray
 @[never_extract, extern "torchlean_cuda_buffer_size"]
 opaque size (b : @& Buffer) : UInt32
 
+/-- Element count read at an explicit token; `sizeIO` supplies a changing one. -/
 @[never_extract, extern "torchlean_cuda_buffer_size_with_token"]
 opaque sizeWithToken (b : @& Buffer) (token : UInt32) : UInt32
 
@@ -279,6 +315,7 @@ def sizeIO (b : @& Buffer) : IO UInt32 := do
   let token ← IO.monoNanosNow
   pure <| sizeWithToken b (UInt32.ofNat token)
 
+/-- Release at an explicit token; the returned word is what keeps the call alive. -/
 @[never_extract, extern "torchlean_cuda_buffer_release_with_token"]
 opaque releaseWithToken (b : @& Buffer) (token : UInt32) : UInt32
 
@@ -361,10 +398,21 @@ def collectAllocator (force : Bool := true) : UInt32 :=
 @[never_extract, extern "torchlean_cuda_buffer_zeros"]
 opaque zeros (n : UInt32) : Buffer
 
+/--
+Allocate a fresh zero-filled buffer inside `IO` code.
+
+The pure `zeros` has an effectful native implementation (a device allocation). This variant
+sequences the allocation with the surrounding effects, so repeated allocations in a loop are
+ordered and cannot be treated as one shared value.
+-/
+def zerosIO (n : UInt32) : IO Buffer :=
+  IO.lazyPure fun _ => zeros n
+
 /-- Allocate a length-`n` buffer filled with `v` (host `Float`, cast to float32). -/
 @[never_extract, extern "torchlean_cuda_buffer_full"]
 opaque full (n : UInt32) (v : Float) : Buffer
 
+/-- Filled allocation at an explicit token; `fullIO` supplies a changing one. -/
 @[never_extract, extern "torchlean_cuda_buffer_full_with_token"]
 opaque fullWithToken (n : UInt32) (v : Float) (token : UInt32) : Buffer
 
@@ -387,6 +435,10 @@ deterministic given `(seed, counter)` and a row-major linear index.
 @[never_extract, extern "torchlean_cuda_buffer_rand_uniform"]
 opaque randUniform (n : UInt32) (key : UInt64) : Buffer
 
+/-- Effectful form of `randUniform`: the device allocation is sequenced with surrounding effects. -/
+def randUniformIO (n : UInt32) (key : UInt64) : IO Buffer :=
+  IO.lazyPure fun _ => randUniform n key
+
 /-- Deterministic normal generator using Box-Muller on the device. -/
 @[never_extract, extern "torchlean_cuda_buffer_rand_normal"]
 opaque randNormal (n : UInt32) (mean std : Float) (key : UInt64) : Buffer
@@ -394,6 +446,10 @@ opaque randNormal (n : UInt32) (mean std : Float) (key : UInt64) : Buffer
 /-- Deterministic `{0,1}` mask generator: returns a length-`n` buffer keyed by `key`. -/
 @[never_extract, extern "torchlean_cuda_buffer_bernoulli_mask"]
 opaque bernoulliMask (n : UInt32) (keepProb : Float) (key : UInt64) : Buffer
+
+/-- Effectful form of `bernoulliMask`: the allocation is sequenced with surrounding effects. -/
+def bernoulliMaskIO (n : UInt32) (keepProb : Float) (key : UInt64) : IO Buffer :=
+  IO.lazyPure fun _ => bernoulliMask n keepProb key
 
 /-- Absolute value applied pointwise to a CUDA buffer. -/
 @[never_extract, extern "torchlean_cuda_buffer_abs"]
@@ -403,6 +459,10 @@ opaque abs (b : @& Buffer) : Buffer
 @[never_extract, extern "torchlean_cuda_buffer_abs_bwd"]
 opaque absBwd (x dLdy : @& Buffer) : Buffer
 
+/-- Elementwise `sqrt (max x 0)`, matching `Tensor.sqrtSpec`.
+
+Negative inputs and either signed zero return positive zero. NaN inputs remain NaN; the clamp
+uses the same ordered comparison as the floating-point maximum in the tensor spec. -/
 @[never_extract, extern "torchlean_cuda_buffer_sqrt"]
 opaque sqrt (b : @& Buffer) : Buffer
 
@@ -414,9 +474,26 @@ Uses the TorchLean convention: `dx = dLdy * (1 / (2*sqrt(x)))` for `x > 0`, else
 @[never_extract, extern "torchlean_cuda_buffer_sqrt_bwd"]
 opaque sqrtBwd (x dLdy : @& Buffer) : Buffer
 
+/-- Elementwise `exp`. -/
 @[never_extract, extern "torchlean_cuda_buffer_exp"]
 opaque exp (b : @& Buffer) : Buffer
 
+/--
+Elementwise sine of angles in radians, returning a new float32 buffer.
+
+The native implementation applies `sinf` to each entry. The input is borrowed, so the tape can
+retain it for the cosine factor in the backward pass.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_sin"]
+opaque sin (b : @& Buffer) : Buffer
+
+/--
+Elementwise cosine of angles in radians, returning a new float32 buffer and borrowing its input.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_cos"]
+opaque cos (b : @& Buffer) : Buffer
+
+/-- Elementwise natural logarithm. -/
 @[never_extract, extern "torchlean_cuda_buffer_log"]
 opaque log (b : @& Buffer) : Buffer
 
@@ -448,6 +525,7 @@ Tie-breaking follows the spec: when `a = b`, split upstream gradient evenly (`0.
 @[never_extract, extern "torchlean_cuda_buffer_max_bwd"]
 opaque maxBwd (a b dLdy : @& Buffer) : Buffer × Buffer
 
+/-- Elementwise minimum of two buffers. -/
 @[never_extract, extern "torchlean_cuda_buffer_min"]
 opaque min (a b : @& Buffer) : Buffer
 
@@ -544,6 +622,7 @@ opaque adamStep
 @[never_extract, extern "torchlean_cuda_buffer_reduce_sum"]
 opaque reduceSum (b : @& Buffer) : Buffer
 
+/-- Mean of all elements, returned as a one-element buffer. -/
 @[never_extract, extern "torchlean_cuda_buffer_reduce_mean"]
 opaque reduceMean (b : @& Buffer) : Buffer
 

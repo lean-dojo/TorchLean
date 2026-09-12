@@ -6,10 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Finset.Lattice.Fold
-public import NN.Spec.Core.TensorOps
-public import NN.Spec.RL.Core
 public import NN.Spec.RL.MDP
+public import Mathlib.Data.Real.Basic
+public import Mathlib.Algebra.BigOperators.Group.Finset.Defs
 
 /-!
 # Finite Stochastic Discounted MDPs
@@ -47,11 +46,13 @@ Naming note:
 
 @[expose] public section
 
+open TorchLean
+
 namespace Spec
 namespace RL
 namespace FiniteStochastic
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
 variable {nStates nActions : Nat}
 
@@ -111,15 +112,14 @@ def actionValues
     (mdp : MDP nStates nActions)
     (values : ValueFunction ℝ nStates)
     (state : Fin nStates) : Tensor ℝ [nActions] :=
-  Tensor.dim (fun action => Tensor.scalar (actionValue mdp values state action))
+  Tensor.ofFn (fun action => actionValue mdp values state action)
 
 /-- Bellman expectation operator for a deterministic policy. -/
 def bellmanPolicy
     (mdp : MDP nStates nActions)
     (policy : Policy nStates nActions)
     (values : ValueFunction ℝ nStates) : ValueFunction ℝ nStates :=
-  Tensor.dim (fun state =>
-    Tensor.scalar (actionValue mdp values state (policy state)))
+  Tensor.ofFn (fun state => actionValue mdp values state (policy state))
 
 /-- Bellman optimality operator for a finite stochastic MDP. -/
 def bellmanOptimality
@@ -127,10 +127,9 @@ def bellmanOptimality
     (mdp : MDP nStates nActions)
     (values : ValueFunction ℝ nStates) : ValueFunction ℝ nStates :=
   let _ : Nonempty (Fin nActions) := ⟨⟨0, Fact.out⟩⟩
-  Tensor.dim (fun state =>
-    Tensor.scalar
-      ((Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty
-        (actionValue mdp values state)))
+  Tensor.ofFn (fun state =>
+    (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty
+      (actionValue mdp values state))
 
 end FiniteStochastic
 end RL

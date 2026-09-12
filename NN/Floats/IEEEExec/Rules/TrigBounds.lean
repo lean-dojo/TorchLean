@@ -6,8 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Rules.TrigRules
-import Mathlib.Analysis.Complex.Trigonometric
+public import Mathlib.Analysis.Complex.Trigonometric
 
 /-!
 ## Simple Taylor remainder bounds for `Real.sin` / `Real.cos`
@@ -41,10 +40,15 @@ def cosTaylor2 (x : ℝ) : ℝ :=
 def sinTaylor3 (x : ℝ) : ℝ :=
   x - x ^ 3 / 6
 
+/-- Degree-three Taylor error for sine on `|x| ≤ 1`, as `|x|⁵ / 100`.
+
+This is Mathlib `Real.sin_bound` restated in the shape the enclosure proofs consume, so the interval
+rules never have to unfold `sinTaylor3`. -/
 theorem abs_sin_sub_sinTaylor3_le (x : ℝ) (hx : |x| ≤ 1) :
     |Real.sin x - sinTaylor3 x| ≤ |x| ^ 5 / 100 := by
   simpa [sinTaylor3] using (Real.sin_bound (x := x) hx)
 
+/-- Degree-two Taylor error for cosine on `|x| ≤ 1`, from Mathlib `Real.cos_bound`. -/
 theorem abs_cos_sub_cosTaylor2_le (x : ℝ) (hx : |x| ≤ 1) :
     |Real.cos x - cosTaylor2 x| ≤ |x| ^ 4 * (5 / 96) := by
   simpa [cosTaylor2] using (Real.cos_bound (x := x) hx)

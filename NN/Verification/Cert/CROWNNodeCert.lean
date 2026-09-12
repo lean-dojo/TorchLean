@@ -7,10 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Cert.AlphaCROWN
-public import NN.MLTheory.CROWN.Graph
-public import NN.Spec.Core.Tensor
 public import NN.Verification.Cert.IBPNodeCert
-public import Lean.Data.Json
+public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # CROWNNodeCert
@@ -55,8 +53,8 @@ open NN.MLTheory.CROWN.Cert
 open NN.Verification.Json
 open NN.Verification.Cert.NodeReplay
 open Import.PyTorch
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open Lean Data Json
 open TorchLean.Floats.IEEE754
 
@@ -126,7 +124,8 @@ Check a per-node α-CROWN certificate against Lean's propagation rules.
 Returns `true` iff every supplied IBP box contains Lean's authoritative recomputation and every
 node's affine replay data agrees exactly with Lean's CROWN step.
 -/
-def checkCROWNNodeCertificate (g : Graph) (ps : ParamStore IEEE32Exec) (path : String) : IO Bool := do
+def checkCROWNNodeCertificate (g : Graph) (ps : ParamStore IEEE32Exec) (path : String) :
+    IO Bool := do
   let cert ← readCROWNNodeCertificate g path
   let authoritativeIbp := runIBP (α := IEEE32Exec) g ps
   let mut authoritativeCrown : Array (Option (FlatAffineBounds IEEE32Exec)) :=

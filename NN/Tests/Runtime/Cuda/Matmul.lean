@@ -27,8 +27,8 @@ namespace Tests
 namespace Cuda
 namespace Matmul
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Runtime.Autograd
 
 def runMatmul : IO Unit := do
@@ -42,16 +42,16 @@ def runMatmul : IO Unit := do
   let sY : Shape := [m, p]
 
   let a : Tensor Float sA :=
-    tensorOfArray! [m, n] #[
+    (Tensor.from #[
       0.10, 0.20, 0.30,
       -0.10, 0.05, 0.15
-    ]
+    ]).reshape [m, n] (by dsimp; decide)
   let b : Tensor Float sB :=
-    tensorOfArray! [n, p] #[
+    (Tensor.from #[
       0.20, -0.10,
       0.00, 0.30,
       -0.20, 0.10
-    ]
+    ]).reshape [n, p] (by dsimp; decide)
 
   -- CPU
   let t0 : Tape Float := Tape.empty
@@ -60,7 +60,7 @@ def runMatmul : IO Unit := do
   let (t3, yId) ← Utils.okOrThrow
     (Tape.matmul (α := Float) (t := t2) (m := m) (n := n) (p := p) aId bId)
   let yCpu ← Utils.cpuValue (s := sY) t3 yId
-  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (fill (1.0 : Float) sY)
+  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (Tensor.full sY (1.0 : Float))
   let gradsCpu ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t3) yId seedCpu)
   let dACpu ← Utils.cpuGrad (s := sA) gradsCpu aId
   let dBCpu ← Utils.cpuGrad (s := sB) gradsCpu bId
@@ -98,19 +98,19 @@ def runBatchedMatmul : IO Unit := do
   let sY : Shape := [batch, m, p]
 
   let a : Tensor Float sA :=
-    tensorOfArray! [batch, m, n] #[
+    (Tensor.from #[
       0.10, 0.20,
       0.30, 0.40,
       -0.10, 0.05,
       0.15, -0.20
-    ]
+    ]).reshape [batch, m, n] (by dsimp; decide)
   let b : Tensor Float sB :=
-    tensorOfArray! [batch, n, p] #[
+    (Tensor.from #[
       0.20, 0.10,
       -0.10, 0.30,
       0.05, -0.20,
       0.25, 0.10
-    ]
+    ]).reshape [batch, n, p] (by dsimp; decide)
 
   -- CPU
   let t0 : Tape Float := Tape.empty
@@ -120,7 +120,7 @@ def runBatchedMatmul : IO Unit := do
     (Tape.matmul (α := Float) (t := t2) (m := m) (n := n) (p := p) aId bId
       (batchA := [batch]) (batchB := [batch]) (batch := [batch]))
   let yCpu ← Utils.cpuValue (s := sY) t3 yId
-  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (fill (1.0 : Float) sY)
+  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (Tensor.full sY (1.0 : Float))
   let gradsCpu ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t3) yId seedCpu)
   let dACpu ← Utils.cpuGrad (s := sA) gradsCpu aId
   let dBCpu ← Utils.cpuGrad (s := sB) gradsCpu bId
@@ -157,20 +157,20 @@ def runFastMatmulPrecision : IO Unit := do
   let sY : Shape := [m, p]
 
   let a : Tensor Float sA :=
-    tensorOfArray! [m, n] #[
+    (Tensor.from #[
       0.10, 0.20, 0.30,
       -0.10, 0.05, 0.15
-    ]
+    ]).reshape [m, n] (by dsimp; decide)
   let b : Tensor Float sB :=
-    tensorOfArray! [n, p] #[
+    (Tensor.from #[
       0.20, -0.10,
       0.00, 0.30,
       -0.20, 0.10
-    ]
+    ]).reshape [n, p] (by dsimp; decide)
 
   let yCpu := FastKernels.matmulReference (α := Float) (m := m) (n := n) (p := p) a b
-  let yFp32 := FastKernels.Cuda.matmulCublas .fp32 (m := m) (n := n) (p := p) a b
-  let yFp64 := FastKernels.Cuda.matmulCublas .fp64 (m := m) (n := n) (p := p) a b
+  let yFp32 ← IO.ofExcept (FastKernels.Cuda.matmulCublas .fp32 (m := m) (n := n) (p := p) a b)
+  let yFp64 ← IO.ofExcept (FastKernels.Cuda.matmulCublas .fp64 (m := m) (n := n) (p := p) a b)
 
   Utils.assertTensorApprox (s := sY) "fast matmul fp32" yFp32 yCpu (tol := 5e-3)
   Utils.assertTensorApprox (s := sY) "fast matmul fp64" yFp64 yCpu (tol := 1e-9)

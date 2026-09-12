@@ -22,7 +22,7 @@ namespace Runtime
 namespace Autograd
 namespace Torch
 
-open Spec
+open Spec TorchLean
 
 /--
 Conversion between an executable scalar type and the host `Float` representation used at native
@@ -32,7 +32,7 @@ Native transfer and host inspection are separate operations. A scalar semantics 
 element to be inspected as `Float` without claiming that a native tensor has the same arithmetic or
 storage representation.
 -/
-class TensorTransfer (α : Type) where
+class TensorTransfer (α : Type) [TorchLean.Storage α] where
   /-- Encode a tensor in the host representation used by native runtimes. -/
   toFloatTensor : {s : Shape} → Tensor α s → IO (Tensor Float s)
   /-- Decode a tensor received from a native runtime without changing its shape. -/
@@ -43,19 +43,21 @@ class TensorTransfer (α : Type) where
   readFloatTensor : {s : Shape} → Tensor α s → IO (Tensor Float s) := toFloatTensor
 
 /-- Encode every tensor element with the supplied scalar conversion. -/
-def TensorTransfer.toFloatTensorWith {α : Type} (encode : α → Float) {s : Shape}
+def TensorTransfer.toFloatTensorWith {α : Type} [TorchLean.Storage α]
+    (encode : α → Float) {s : Shape}
     (tensor : Tensor α s) : IO (Tensor Float s) :=
-  pure <| Spec.Tensor.map encode tensor
+  pure <| TorchLean.Tensor.map encode tensor
 
 /-- Decode every tensor element with the supplied scalar conversion. -/
-def TensorTransfer.ofFloatTensorWith {α : Type} (decode : Float → α) {s : Shape}
+def TensorTransfer.ofFloatTensorWith {α : Type} [TorchLean.Storage α]
+    (decode : Float → α) {s : Shape}
     (tensor : Tensor Float s) : IO (Tensor α s) :=
-  pure <| Spec.Tensor.map decode tensor
+  pure <| TorchLean.Tensor.map decode tensor
 
 /-- `Float` transfers preserve the runtime's host representation. -/
 instance (priority := 1000) : TensorTransfer Float where
-  toFloatTensor := pure
-  ofFloatTensor := pure
+  toFloatTensor := fun tensor => pure tensor
+  ofFloatTensor := fun tensor => pure tensor
   toFloat := pure
 
 /-- Native binary32 transfers preserve the runtime's float32 wire representation. -/
@@ -88,7 +90,7 @@ CPU-preserving fallback for scalar types without a native tensor representation.
 Add a higher-priority `TensorTransfer α` instance when a scalar type has an honest host `Float`
 encoding. CPU execution does not invoke these failing transfer operations.
 -/
-instance (priority := 10) (α : Type) : TensorTransfer α where
+instance (priority := 10) (α : Type) [TorchLean.Storage α] : TensorTransfer α where
   toFloatTensor := fun {_s} _ =>
     throw <| IO.userError <|
       "torch: this scalar type has no TensorTransfer tensor encoding; " ++

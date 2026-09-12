@@ -28,7 +28,7 @@ The main helpers are:
 values, but it does not record the backward pass itself as a differentiable graph. So this layer is
 the right place for ordinary training losses, not for Hessians or differentiating-through-backward.
 
-For higher derivatives, use the functional autodiff surface in `NN.Runtime.Autograd.TorchLean`
+For higher derivatives, use the functional autodiff surface in `NN.Runtime.Autograd.Model`
 (`hvpInputs`, `hessianInput`, and the public API wrappers). That path rebuilds the program over dual
 numbers and typed graph structure; it is the correct architecture for JVP-over-VJP style
 derivatives.
@@ -42,8 +42,8 @@ namespace Autograd
 namespace Train
 namespace TapeM
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 /--
 Create a trainable leaf node.
@@ -51,7 +51,7 @@ Create a trainable leaf node.
 This constructor records a leaf with `requiresGrad := true`, matching the role of a parameter
 tensor in a PyTorch-style eager tape.
 -/
-def param {a : Type} {s : Shape}
+def param {a : Type} [TorchLean.Storage a] {s : Shape}
   (value : Tensor a s) (name : Option String := none) : Runtime.Autograd.TapeM a Nat :=
   Runtime.Autograd.TapeM.leaf value (name := name) (requiresGrad := true)
 
@@ -61,7 +61,7 @@ Create a constant/data leaf node.
 Use this for minibatch inputs, labels, masks, and frozen tensors. The value is still used by the
 forward computation, but `backwardScalar` will not accumulate a gradient for it as a leaf.
 -/
-def const {a : Type} {s : Shape}
+def const {a : Type} [TorchLean.Storage a] {s : Shape}
   (value : Tensor a s) (name : Option String := none) : Runtime.Autograd.TapeM a Nat :=
   Runtime.Autograd.TapeM.leaf value (name := name) (requiresGrad := false)
 
@@ -76,7 +76,7 @@ This is a common pattern in training loops: compute a scalar loss per sample, su
 `1/N`.
 -/
 def meanScalarOver {a b : Type}
-  [Add a] [Mul a] [Div a] [One a] [Coe Nat a] [DecidableEq Shape]
+  [TorchLean.Storage a] [Add a] [Mul a] [Div a] [One a] [NatCast a]
   (tag : String) (xs : Array b) (lossOf : b -> Runtime.Autograd.TapeM a Nat) :
   Runtime.Autograd.TapeM a Nat := do
   match xs[0]? with
@@ -94,12 +94,12 @@ def meanScalarOver {a b : Type}
 /--
 Mean reduction for a finite `SampleStream`.
 
-This is the natural bridge from `TorchLean.Data.SampleStream` batches to a scalar loss node. It materializes the
-current dataset order as an array and delegates to `meanScalarOver`, without shuffling, batching, or
-mutating the dataset.
+This is the natural bridge from `TorchLean.Data.SampleStream` batches to a scalar loss node. It
+materializes the current dataset order as an array and delegates to `meanScalarOver`, without
+shuffling, batching, or mutating the dataset.
 -/
 def meanScalarOverDataset {a b : Type}
-  [Add a] [Mul a] [Div a] [One a] [Coe Nat a] [DecidableEq Shape]
+  [TorchLean.Storage a] [Add a] [Mul a] [Div a] [One a] [NatCast a]
   (tag : String) (xs : TorchLean.Data.SampleStream b)
   (lossOf : b -> Runtime.Autograd.TapeM a Nat) :
   Runtime.Autograd.TapeM a Nat :=

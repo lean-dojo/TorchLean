@@ -6,6 +6,8 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Floats.NeuralFloat.Rounding.Core
+public import NN.Floats.NeuralFloat.Rounding.Predicates
 public import NN.Floats.NeuralFloat.Rounding.Order
 
 /-!

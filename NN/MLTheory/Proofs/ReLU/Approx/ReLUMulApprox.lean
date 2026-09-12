@@ -6,9 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Fin.Tuple.Basic
 public import NN.MLTheory.Proofs.ReLU.Bridge.ReLUMlpBridge
-import Mathlib.Tactic.Ring
 
 /-!
 # Approximating multiplication with a 2-layer ReLU MLP (2D box)
@@ -24,7 +22,7 @@ ReLU MLP on `Tensor ℝ [2]`.
 
 namespace NN.MLTheory.Proofs.ReLUMulApprox
 
-open _root_.Spec
+open _root_.Spec _root_.TorchLean
 open Examples
 
 open NN.MLTheory.Proofs.UniversalApproximation
@@ -32,11 +30,11 @@ open NN.MLTheory.Proofs.ReLUMlpBridge
 
 /-- First coordinate projection from a rank-one tensor with two entries. -/
 noncomputable def firstCoordinate (x : Tensor ℝ [2]) : ℝ :=
-  Spec.Tensor.getScalar x ⟨0, by decide⟩
+  TorchLean.Tensor.getScalar x ⟨0, by decide⟩
 
 /-- Second coordinate projection from a rank-one tensor with two entries. -/
 noncomputable def secondCoordinate (x : Tensor ℝ [2]) : ℝ :=
-  Spec.Tensor.getScalar x ⟨1, by decide⟩
+  TorchLean.Tensor.getScalar x ⟨1, by decide⟩
 
 /-- The closed box domain $[-M,M]\times[-M,M]$. -/
 noncomputable def box (M : ℝ) : Set (Tensor ℝ [2]) :=
@@ -53,26 +51,27 @@ noncomputable def wPlus : Fin 2 → ℝ := fun _ => 1
 noncomputable def wMinus : Fin 2 → ℝ := fun i => if i.1 = 0 then 1 else (-1 : ℝ)
 
 /-- Evaluate the ridge `wPlus`: it sums the two coordinates. -/
-lemma dot_wPlus (x : Tensor ℝ [2]) : dot wPlus x = firstCoordinate x + secondCoordinate x := by
+theorem dot_wPlus (x : Tensor ℝ [2]) : dot wPlus x = firstCoordinate x + secondCoordinate x := by
   classical
   -- Expand the `Fin 2` sum explicitly.
-  simp [dot, wPlus, firstCoordinate, secondCoordinate, Fin.sum_univ_two]
+  simp [ReLUMlpBridge.dot, wPlus, firstCoordinate, secondCoordinate, Fin.sum_univ_two]
 
 /-- Evaluate the ridge `wMinus`: $\operatorname{dot}(w_-,x)=x_0-x_1$. -/
-lemma dot_wMinus (x : Tensor ℝ [2]) : dot wMinus x = firstCoordinate x - secondCoordinate x := by
+theorem dot_wMinus (x : Tensor ℝ [2]) : dot wMinus x = firstCoordinate x - secondCoordinate x := by
   classical
-  simp [dot, wMinus, firstCoordinate, secondCoordinate, Fin.sum_univ_two, sub_eq_add_neg]
+  simp [ReLUMlpBridge.dot, wMinus, firstCoordinate, secondCoordinate, Fin.sum_univ_two,
+    sub_eq_add_neg]
 
 /-- Algebraic identity expressing multiplication via a difference of squares. -/
-lemma mul_identity (x y : ℝ) : x * y = ((x + y) * (x + y) - (x - y) * (x - y)) / 4 := by
+theorem mul_identity (x y : ℝ) : x * y = ((x + y) * (x + y) - (x - y) * (x - y)) / 4 := by
   ring
 
 /-- Unpack the defining bounds of membership in `box M`. -/
-lemma box_bounds {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [2]} (hx : x ∈ box M) :
+theorem box_bounds {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [2]} (hx : x ∈ box M) :
     firstCoordinate x ∈ Set.Icc (-M) M ∧ secondCoordinate x ∈ Set.Icc (-M) M := hx
 
 /-- If $x\in\operatorname{box}(M)$, then $x_0+x_1\in[-2M,2M]$. -/
-lemma sum_mem_Icc {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [2]} (hx : x ∈ box M) :
+theorem sum_mem_Icc {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [2]} (hx : x ∈ box M) :
     dot wPlus x ∈ Set.Icc (-2*M) (2*M) := by
   have hx0 := hx.1
   have hx1 := hx.2
@@ -86,7 +85,7 @@ lemma sum_mem_Icc {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [2]} (hx : x ∈ box
   simpa [dot_wPlus] using And.intro hl hu
 
 /-- If $x\in\operatorname{box}(M)$, then $x_0-x_1\in[-2M,2M]$. -/
-lemma diff_mem_Icc {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [2]} (hx : x ∈ box M) :
+theorem diff_mem_Icc {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [2]} (hx : x ∈ box M) :
     dot wMinus x ∈ Set.Icc (-2*M) (2*M) := by
   have hx0 := hx.1
   have hx1 := hx.2
@@ -99,7 +98,7 @@ lemma diff_mem_Icc {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [2]} (hx : x ∈ bo
   simpa [dot_wMinus] using And.intro hl hu
 
 /-- Lipschitz bound for `square` on $[-R,R]$: $|x^2-y^2|\leq 2R|x-y|$. -/
-lemma square_lipschitz_Icc {R : ℝ} (_hR : 0 ≤ R) :
+theorem square_lipschitz_Icc {R : ℝ} (_hR : 0 ≤ R) :
     ∀ x ∈ Set.Icc (-R) R, ∀ y ∈ Set.Icc (-R) R, |(x*x) - (y*y)| ≤ (2*R) * |x - y| := by
   intro x hx y hy
   have hxabs : |x| ≤ R := by
@@ -130,10 +129,9 @@ Concatenate tensors along the leading dimension.
 
 In this file, this is used to append the hidden-unit vectors of two subnetworks.
 -/
-noncomputable def appendDim {α : Type} {m n : Nat} {s : Shape}
+noncomputable def appendDim {α : Type} [TorchLean.Storage α] {m n : Nat} {s : Shape}
     (a : Tensor α (.dim m s)) (b : Tensor α (.dim n s)) : Tensor α (.dim (m+n) s) :=
-  match a, b with
-  | .dim fa, .dim fb => .dim (Fin.append fa fb)
+  Tensor.dim (Fin.append a.unstack b.unstack)
 
 /-- Append two first-layer linear specs by appending their weight and bias tensors. -/
 noncomputable def appendLinearSpec
@@ -144,15 +142,12 @@ noncomputable def appendLinearSpec
 
 /-- Extract the `j`-th entry from a `1 × n` tensor interpreted as a row matrix. -/
 noncomputable def mat1Get {n : Nat} (A : Tensor ℝ [1, n]) (j : Fin n) : ℝ :=
-  match A with
-  | .dim rows =>
-    match rows ⟨0, by decide⟩ with
-    | .dim cols => (cols j).item
+  Spec.get2 A ⟨0, by decide⟩ j
 
 /-- `mat1Get` agrees with the `Tensor.matrix` constructor. -/
-lemma singleRowMatrix_get_matrix {n : Nat} (f : Fin 1 → Fin n → ℝ) (j : Fin n) :
+theorem singleRowMatrix_get_matrix {n : Nat} (f : Fin 1 → Fin n → ℝ) (j : Fin n) :
     mat1Get (Tensor.matrix (m := 1) (n := n) f) j = f 0 j := by
-  simp [mat1Get, Tensor.matrix, Tensor.ofFn, Tensor.item]
+  simp [mat1Get, Tensor.matrix, Spec.get2]
 
 /--
 Combine two scalar-output linear specs into one scalar-output spec on an appended hidden layer.
@@ -171,72 +166,33 @@ noncomputable def combineOutput
       (fun _ => γ + α * extractScalarOutput a.bias + β * extractScalarOutput b.bias) }
 
 /-- Reading the left component from an appended hidden vector. -/
-lemma getScalar_append_left {m n : Nat} (a : Tensor ℝ [m]) (b : Tensor ℝ [n]) (i : Fin m) :
-    Spec.Tensor.getScalar (appendDim a b) (Fin.castAdd n i) = Spec.Tensor.getScalar a i := by
-  cases a with
-  | dim fa =>
-    cases b with
-    | dim fb =>
-      simp [appendDim, Spec.Tensor.getScalar, Fin.append]
+theorem getScalar_append_left {m n : Nat} (a : Tensor ℝ [m]) (b : Tensor ℝ [n]) (i : Fin m) :
+    TorchLean.Tensor.getScalar (appendDim a b) (Fin.castAdd n i) =
+      TorchLean.Tensor.getScalar a i := by
+  simp [appendDim, TorchLean.Tensor.getScalar, Spec.get, Fin.append]
 
 /-- Reading the right component from an appended hidden vector. -/
-lemma getScalar_append_right {m n : Nat} (a : Tensor ℝ [m]) (b : Tensor ℝ [n]) (i : Fin n) :
-    Spec.Tensor.getScalar (appendDim a b) (Fin.natAdd m i) = Spec.Tensor.getScalar b i := by
-  cases a with
-  | dim fa =>
-    cases b with
-    | dim fb =>
-      simp [appendDim, Spec.Tensor.getScalar, Fin.append]
+theorem getScalar_append_right {m n : Nat} (a : Tensor ℝ [m]) (b : Tensor ℝ [n]) (i : Fin n) :
+    TorchLean.Tensor.getScalar (appendDim a b) (Fin.natAdd m i) =
+      TorchLean.Tensor.getScalar b i := by
+  simp [appendDim, TorchLean.Tensor.getScalar, Spec.get, Fin.append]
 
 /-- Pointwise behavior of the ReLU activation on tensor-vectors. -/
-lemma getScalar_relu {n : Nat} (z : Tensor ℝ [n]) (i : Fin n) :
-    Spec.Tensor.getScalar (Activation.reluSpec (α := ℝ) (s := .dim n .scalar) z) i = relu (Spec.Tensor.getScalar z i) := by
-  cases z with
-  | dim f =>
-    cases hfi : f i with
-    | scalar r =>
-      simp [Activation.reluSpec, Spec.Tensor.mapSpec, Spec.Tensor.getScalar, relu, Activation.Math.reluSpec,
-        hfi, Tensor.item]
+theorem getScalar_relu {n : Nat} (z : Tensor ℝ [n]) (i : Fin n) :
+    TorchLean.Tensor.getScalar (Activation.reluSpec (α := ℝ) (s := .dim n .scalar) z) i =
+      relu (TorchLean.Tensor.getScalar z i) := by
+  simp [Activation.reluSpec, relu]
 
 /-- Matrix-vector multiplication for a `1 × n` matrix produces a single scalar coordinate. -/
-lemma mat_vec_mul_spec_oneRow {n : Nat} (A : Tensor ℝ [1, n]) (v : Tensor ℝ [n]) :
+theorem mat_vec_mul_spec_oneRow {n : Nat} (A : Tensor ℝ [1, n]) (v : Tensor ℝ [n]) :
     Spec.matVecMulSpec A v =
-      Tensor.dim (fun _ : Fin 1 => Tensor.scalar (∑ j : Fin n, mat1Get A j * Spec.Tensor.getScalar v j)) := by
+      Tensor.dim (fun _ : Fin 1 =>
+        Tensor.scalar (∑ j : Fin n, mat1Get A j * TorchLean.Tensor.getScalar v j)) := by
   classical
-  -- Put `A` and `v` into canonical `Tensor.matrix` / `Tensor.dim (Tensor.scalar ·)` forms,
-  -- then use the general matrix×vector lemma from `relu_mlp_bridge.lean`.
-  let c : Fin 1 → Fin n → ℝ := fun _ j => mat1Get A j
-  let vfun : Fin n → ℝ := fun j => Spec.Tensor.getScalar v j
-  have hA : A = Tensor.matrix (m := 1) (n := n) c := by
-    cases A with
-    | dim rows =>
-      apply congrArg Tensor.dim
-      funext i
-      fin_cases i
-      -- Reduce to pointwise equality of the unique row.
-      cases hrow : rows ⟨0, by decide⟩ with
-      | dim cols =>
-        have hrow0 : rows 0 = Tensor.dim cols := by
-          simpa using hrow
-        -- Now show the row entries match `Tensor.scalar (mat1_get ...)`.
-        -- `mat1_get` unfolds to `Tensor.item (cols j)`.
-        apply congrArg Tensor.dim
-        funext j
-        cases hcol : cols j with
-        | scalar r =>
-          simp [c, mat1Get, hrow0, Tensor.item, hcol]
-  have hv : v = Tensor.dim (fun j => Tensor.scalar (vfun j)) := by
-    cases v with
-    | dim valuesV =>
-      apply congrArg Tensor.dim
-      funext j
-      cases hvj : valuesV j with
-      | scalar r =>
-        simp [vfun, Spec.Tensor.getScalar, Tensor.item, hvj]
-  -- Rewrite and apply the general lemma.
-  rw [hA, hv]
-  simpa [c, vfun, singleRowMatrix_get_matrix, Spec.Tensor.getScalar, Tensor.item] using
-    (mat_vec_mul_spec_matrix_vector (m := 1) (n := n) (c := c) (v := vfun))
+  apply TorchLean.Tensor.ext_vector
+  intro i
+  fin_cases i
+  simp [Spec.getScalar_mat_vec_mul_spec, mat1Get]
 
 /--
 Expand `mlp_eval_nd` into “bias + sum over hidden units” form.
@@ -244,13 +200,13 @@ Expand `mlp_eval_nd` into “bias + sum over hidden units” form.
 This is the main normalization lemma used to prove that `appendLinearSpec` together with
 `combineOutput` implements affine combinations of subnetworks.
 -/
-lemma mlp_eval_nd_eq_bias_sum
+theorem mlp_eval_nd_eq_bias_sum
     {inDim hidDim : Nat} (l1 : LinearSpec ℝ inDim hidDim) (l2 : LinearSpec ℝ hidDim 1)
     (x : Tensor ℝ [inDim]) :
     mlpEval (n := inDim) (hidDim := hidDim) l1 l2 x =
       extractScalarOutput l2.bias
-        + ∑ j : Fin hidDim, (mat1Get l2.weights j) * relu (Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1 x)
-          j) := by
+        + ∑ j : Fin hidDim, (mat1Get l2.weights j) *
+            relu (TorchLean.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1 x) j) := by
   classical
   unfold mlpEval
   rw [mlp_forward_eq_linear_relu_linear (n := inDim) (hidDim := hidDim) (l1 := l1) (l2 := l2) (x :=
@@ -263,90 +219,53 @@ lemma mlp_eval_nd_eq_bias_sum
         Tensor.dim (fun _ : Fin 1 =>
           Tensor.scalar (∑ j : Fin hidDim,
             mat1Get l2.weights j *
-              Spec.Tensor.getScalar (Activation.reluSpec (α := ℝ) (s := .dim hidDim .scalar) (Spec.linearSpec (α
-                := ℝ) l1 x)) j)) := by
+              TorchLean.Tensor.getScalar
+                (Activation.reluSpec (α := ℝ) (s := .dim hidDim .scalar)
+                  (Spec.linearSpec (α := ℝ) l1 x)) j)) := by
     simpa using mat_vec_mul_spec_oneRow (A := l2.weights)
       (v := Activation.reluSpec (α := ℝ) (s := .dim hidDim .scalar) (Spec.linearSpec (α := ℝ) l1
         x))
-  cases hbias : l2.bias with
-  | dim fb =>
-    -- `Spec.linear_spec` unfolds to a `Tensor.map2_spec` term; rewrite `hmv` to match that form.
-    have hmv' : Spec.matVecMulSpec l2.weights
-        (Activation.reluSpec (α := ℝ) (s := .dim hidDim .scalar)
-          (Tensor.map2Spec (fun secondCoordinate x2 ↦ secondCoordinate + x2) (Spec.matVecMulSpec l1.weights x) l1.bias))
-        =
-        Tensor.dim (fun _ : Fin 1 =>
-          Tensor.scalar (∑ j : Fin hidDim,
-            mat1Get l2.weights j *
-              Spec.Tensor.getScalar
-                (Activation.reluSpec (α := ℝ) (s := .dim hidDim .scalar)
-                  (Tensor.map2Spec (fun secondCoordinate x2 ↦ secondCoordinate + x2) (Spec.matVecMulSpec l1.weights x)
-                    l1.bias))
-                j)) := by
-      simpa [Spec.linearSpec, Spec.Tensor.addSpec, Spec.Tensor.map2Spec] using hmv
-    -- Use the mat-vec sum form, then compute the single coordinate.
-    cases hfb0 : fb 0 with
-    | scalar b0 =>
-      simp [Spec.linearSpec, hmv', Spec.Tensor.addSpec, Spec.Tensor.map2Spec,
-        extractScalarOutput,
-        getScalar_relu, hbias, hfb0, add_comm, Tensor.item]
+  change extractScalarOutput
+      (TorchLean.Tensor.addSpec
+        (Spec.matVecMulSpec l2.weights
+          (Activation.reluSpec (Spec.linearSpec (α := ℝ) l1 x)))
+        l2.bias) = _
+  rw [hmv]
+  unfold extractScalarOutput
+  rw [congrFun (Spec.getScalar_add_spec _ _) ⟨0, by decide⟩]
+  simp [getScalar_relu, add_comm]
 
 /-- Selecting the left block of a linear spec appended via `appendLinearSpec`. -/
-lemma getScalar_linear_spec_append_left
+theorem getScalar_linear_spec_append_left
     {inDim m n : Nat} (l1a : LinearSpec ℝ inDim m) (l1b : LinearSpec ℝ inDim n)
     (x : Tensor ℝ [inDim]) (i : Fin m) :
-    Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) (appendLinearSpec (inDim := inDim) l1a l1b) x) (Fin.castAdd n
-      i)
+    TorchLean.Tensor.getScalar
+        (Spec.linearSpec (α := ℝ) (appendLinearSpec (inDim := inDim) l1a l1b) x) (Fin.castAdd n i)
       =
-    Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1a x) i := by
+    TorchLean.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1a x) i := by
   classical
-  -- Unfold down to pointwise evaluation; `Fin.castAdd` selects the left half of the appended layer.
-  cases l1a with
-  | mk wa ba =>
-    cases l1b with
-    | mk wb bb =>
-      cases wa with
-      | dim waF =>
-        cases wb with
-        | dim wbF =>
-          cases ba with
-          | dim baF =>
-            cases bb with
-            | dim bbF =>
-              cases x with
-              | dim xv =>
-                simp [appendLinearSpec, appendDim, Spec.linearSpec, Spec.Tensor.addSpec,
-                  Spec.Tensor.map2Spec,
-                  Spec.matVecMulSpec, Spec.Tensor.getScalar, Fin.append, Fin.addCases,
-                  Tensor.item]
+  unfold Spec.linearSpec
+  rw [congrFun (Spec.getScalar_add_spec _ _) (Fin.castAdd n i)]
+  rw [congrFun (Spec.getScalar_add_spec _ _) i]
+  rw [Spec.getScalar_mat_vec_mul_spec, Spec.getScalar_mat_vec_mul_spec]
+  simp [appendLinearSpec, appendDim, Spec.get2, Spec.get, TorchLean.Tensor.getScalar,
+    Fin.append]
 
 /-- Selecting the right block of a linear spec appended via `appendLinearSpec`. -/
-lemma getScalar_linear_spec_append_right
+theorem getScalar_linear_spec_append_right
     {inDim m n : Nat} (l1a : LinearSpec ℝ inDim m) (l1b : LinearSpec ℝ inDim n)
     (x : Tensor ℝ [inDim]) (i : Fin n) :
-    Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) (appendLinearSpec (inDim := inDim) l1a l1b) x) (Fin.natAdd m
-      i)
+    TorchLean.Tensor.getScalar
+        (Spec.linearSpec (α := ℝ) (appendLinearSpec (inDim := inDim) l1a l1b) x) (Fin.natAdd m i)
       =
-    Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1b x) i := by
+    TorchLean.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1b x) i := by
   classical
-  cases l1a with
-  | mk wa ba =>
-    cases l1b with
-    | mk wb bb =>
-      cases wa with
-      | dim waF =>
-        cases wb with
-        | dim wbF =>
-          cases ba with
-          | dim baF =>
-            cases bb with
-            | dim bbF =>
-              cases x with
-              | dim xv =>
-                simp [appendLinearSpec, appendDim, Spec.linearSpec, Spec.Tensor.addSpec,
-                  Spec.Tensor.map2Spec,
-                  Spec.matVecMulSpec, Spec.Tensor.getScalar, Fin.append, Fin.addCases,
-                  Tensor.item]
+  unfold Spec.linearSpec
+  rw [congrFun (Spec.getScalar_add_spec _ _) (Fin.natAdd m i)]
+  rw [congrFun (Spec.getScalar_add_spec _ _) i]
+  rw [Spec.getScalar_mat_vec_mul_spec, Spec.getScalar_mat_vec_mul_spec]
+  simp [appendLinearSpec, appendDim, Spec.get2, Spec.get, TorchLean.Tensor.getScalar,
+    Fin.append]
 
 /--
 Appending hidden units and wiring the output with `combineOutput` yields an affine combination.
@@ -379,24 +298,24 @@ theorem mlp_eval_append_linear
   have hsplit :
       (∑ j : Fin (m + n),
           mat1Get (combineOutput (m := m) (n := n) α β γ l2a l2b).weights j *
-            relu (Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) (appendLinearSpec (inDim := inDim) l1a l1b) x)
-              j))
+            relu (TorchLean.Tensor.getScalar
+              (Spec.linearSpec (α := ℝ) (appendLinearSpec (inDim := inDim) l1a l1b) x) j))
         =
       (∑ j : Fin m,
           (α * mat1Get l2a.weights j) *
-            relu (Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1a x) j))
+            relu (TorchLean.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1a x) j))
       +
       (∑ j : Fin n,
           (β * mat1Get l2b.weights j) *
-            relu (Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1b x) j)) := by
+            relu (TorchLean.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1b x) j)) := by
     classical
     -- Use `Fin.sum_univ_add` and then simplify the `Fin.addCases` selectors.
     have hsum :=
       (Fin.sum_univ_add (a := m) (b := n)
         (f := fun j : Fin (m+n) =>
           mat1Get (combineOutput (m := m) (n := n) α β γ l2a l2b).weights j *
-            relu (Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) (appendLinearSpec (inDim := inDim) l1a l1b) x)
-              j)))
+            relu (TorchLean.Tensor.getScalar
+              (Spec.linearSpec (α := ℝ) (appendLinearSpec (inDim := inDim) l1a l1b) x) j)))
     -- Rewrite the `castAdd` / `natAdd` branches using the selector lemmas above.
     -- `combineOutput` uses `Fin.addCases` in its weights.
     simpa [combineOutput, singleRowMatrix_get_matrix, relu,
@@ -406,34 +325,38 @@ theorem mlp_eval_append_linear
   -- Factor out the scalars `α`/`β` from the two sums.
   let sumA : ℝ :=
     ∑ j : Fin m,
-      mat1Get l2a.weights j * relu (Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1a x) j)
+      mat1Get l2a.weights j * relu (TorchLean.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1a x) j)
   let sumB : ℝ :=
     ∑ j : Fin n,
-      mat1Get l2b.weights j * relu (Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1b x) j)
+      mat1Get l2b.weights j * relu (TorchLean.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1b x) j)
   have hsumA :
       (∑ j : Fin m,
-          (α * mat1Get l2a.weights j) * relu (Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1a x) j))
+          (α * mat1Get l2a.weights j) *
+            relu (TorchLean.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1a x) j))
         = α * sumA := by
     classical
     -- `∑ (α * t_j) = α * ∑ t_j` over `Fin m`.
     simpa [sumA, mul_assoc, mul_left_comm, mul_comm] using
       (Finset.mul_sum α (s := (Finset.univ : Finset (Fin m)))
           (f := fun j : Fin m =>
-            mat1Get l2a.weights j * relu (Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1a x) j))).symm
+            mat1Get l2a.weights j *
+              relu (TorchLean.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1a x) j))).symm
   have hsumB :
       (∑ j : Fin n,
-          (β * mat1Get l2b.weights j) * relu (Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1b x) j))
+          (β * mat1Get l2b.weights j) *
+            relu (TorchLean.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1b x) j))
         = β * sumB := by
     classical
     simpa [sumB, mul_assoc, mul_left_comm, mul_comm] using
       (Finset.mul_sum β (s := (Finset.univ : Finset (Fin n)))
           (f := fun j : Fin n =>
-            mat1Get l2b.weights j * relu (Spec.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1b x) j))).symm
+            mat1Get l2b.weights j *
+              relu (TorchLean.Tensor.getScalar (Spec.linearSpec (α := ℝ) l1b x) j))).symm
   -- Finish by normalizing the combined output bias and collecting the two hidden sums.
   have hbias :
       extractScalarOutput (combineOutput (m := m) (n := n) α β γ l2a l2b).bias
         = γ + α * extractScalarOutput l2a.bias + β * extractScalarOutput l2b.bias := by
-    simp [combineOutput, extractScalarOutput, Tensor.ofFn, Tensor.item]
+    simp [combineOutput, extractScalarOutput, Tensor.ofFn]
   rw [hbias, hsplit, hsumA, hsumB]
   simp [sumA, sumB, mul_add, add_assoc, add_left_comm]
 
@@ -472,7 +395,8 @@ theorem relu_mul_universal_approximation_box
     convert h using 1; ring
   rcases relu_universal_approximation_Icc (f := fun u => u*u) (a := -2*M) (b := 2*M) (L := 4*M)
       h_ab hL h_lip δ hδ with ⟨hidSq, l1Sq, l2Sq, hSq⟩
-  -- Step 2: lift to `u = firstCoordinate+secondCoordinate` and `u = firstCoordinate-secondCoordinate`.
+  -- Step 2: lift to `u = firstCoordinate+secondCoordinate` and
+  -- `u = firstCoordinate-secondCoordinate`.
   let l1Plus : LinearSpec ℝ 2 hidSq := liftScalarLayer1 (n := 2) l1Sq wPlus 0
   let l1Minus : LinearSpec ℝ 2 hidSq := liftScalarLayer1 (n := 2) l1Sq wMinus 0
   -- Step 3: combine the two lifted square nets to form a product approximator.
@@ -507,10 +431,11 @@ theorem relu_mul_universal_approximation_box
       (α := (1/4 : ℝ)) (β := (-1/4 : ℝ)) (γ := 0) (x := x)
     simpa [l1Prod, l2Prod, add_assoc, add_left_comm, add_comm] using this
   -- Apply the square approximation bounds.
-  have hsq_plus : |(dot wPlus x) * (dot wPlus x) - mlpEvalScalar hidSq l1Sq l2Sq (dot wPlus x)| < δ :=
+  have hsq_plus :
+      |(dot wPlus x) * (dot wPlus x) - mlpEvalScalar hidSq l1Sq l2Sq (dot wPlus x)| < δ :=
     hSq (dot wPlus x) hx_plus
-  have hsq_minus : |(dot wMinus x) * (dot wMinus x) - mlpEvalScalar hidSq l1Sq l2Sq (dot wMinus x)| <
-    δ :=
+  have hsq_minus :
+      |(dot wMinus x) * (dot wMinus x) - mlpEvalScalar hidSq l1Sq l2Sq (dot wMinus x)| < δ :=
     hSq (dot wMinus x) hx_minus
   -- Now finish via `xy = ((x+y)^2 - (x-y)^2)/4` and triangle inequality.
   -- Expand `mulFun` and rewrite the network output using `hcomb` and the lift equalities.
@@ -527,7 +452,8 @@ theorem relu_mul_universal_approximation_box
     rw [hmul, hcomb, hplus_eval, hminus_eval]
     -- Let `e₁,e₂` be the square approximation errors.
     set e1 := (dot wPlus x) * (dot wPlus x) - mlpEvalScalar hidSq l1Sq l2Sq (dot wPlus x) with he1
-    set e2 := (dot wMinus x) * (dot wMinus x) - mlpEvalScalar hidSq l1Sq l2Sq (dot wMinus x) with he2
+    set e2 := (dot wMinus x) * (dot wMinus x) - mlpEvalScalar hidSq l1Sq l2Sq (dot wMinus x)
+      with he2
     -- Reduce to bounding `|(e1 - e2)/4|`.
     have hrew :
         ((dot wPlus x) * (dot wPlus x) - (dot wMinus x) * (dot wMinus x)) / 4

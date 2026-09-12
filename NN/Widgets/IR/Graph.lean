@@ -7,10 +7,13 @@ Authors: TorchLean Team
 module
 
 public meta import NN.IR.Pretty
-public meta import NN.Spec.Core.Shape
+public import Mathlib.Data.Finset.Attr
+import Mathlib.Tactic.Finiteness.Attr
+import Mathlib.Tactic.SetLike
 public meta import NN.Widgets.Core.UI
 public meta import ProofWidgets.Component.HtmlDisplay
 public meta import ProofWidgets.Demos.Macro
+public meta import NN.Spec.Core.Shape -- shake: keep
 
 /-!
 # Widgets IR
@@ -29,23 +32,6 @@ should cite the underlying graph definitions and theorems directly.
 
 - `irHtml`: render checks, node details, and DOT text for one `NN.IR.Graph`.
 - `#ir_view`: command frontend for interactive infoview inspection.
-
-## Implementation notes
-
-- We keep a single "inspect graph" panel: in practice this is the fastest way to
-  inspect graph structure during pass development.
-- DOT preview is clipped on large graphs because huge text blocks make infoview interaction slow.
-- Theme-aware badge styles are used so the panel remains readable in dark/light setups.
-
-## References
-
-- [ProofWidgets](https://github.com/leanprover-community/ProofWidgets4)
-- [GraphViz DOT language](https://graphviz.org/doc/info/lang.html)
-- [Lean community documentation style](https://leanprover-community.github.io/contribute/doc.html)
-
-## Tags
-
-ir, graph, visualization, dot, proofwidgets
 -/
 
 public meta section
@@ -57,6 +43,7 @@ namespace NN.Widgets
 open NN.IR
 open UI
 
+/-- Report `Graph.checkWellFormed` as a badge, with the rejection message when it fails. -/
 private def wfHtml (g : Graph) : ProofWidgets.Html :=
   match Graph.checkWellFormed g with
   | .ok () =>

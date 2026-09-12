@@ -7,11 +7,13 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.FP32
+public import NN.Spec.Core.FloatInstances.NF
 public import NN.Floats.Interval.Rounders
 public import NN.Floats.NeuralFloat.Rounding.Properties
 public import NN.MLTheory.CROWN.BoundOps
 public import NN.MLTheory.CROWN.Extras.IntervalLemmas
 public import NN.MLTheory.CROWN.Graph
+public import NN.MLTheory.CROWN.BoundOps.Lawful
 
 /-!
 # FP32
@@ -307,48 +309,49 @@ noncomputable instance : LawfulNonlinearBoundOps FP32 where
 
 /-- Run IBP over `FP32` graph semantics. -/
 noncomputable def runIBP (g : Graph) (ps : NN.MLTheory.CROWN.Graph.ParamStore FP32) :
-    Array (Option (_root_.NN.MLTheory.CROWN.FlatBox FP32)) :=
+    Array (Option (NN.MLTheory.CROWN.FlatBox FP32)) :=
   NN.MLTheory.CROWN.Graph.runIBP (α := FP32) g ps
 
 /-- Run the scalar-input derivative IBP pass over `FP32` graph semantics. -/
 noncomputable def runScalarDerivative (g : Graph) (ps : NN.MLTheory.CROWN.Graph.ParamStore FP32)
-    (ibp : Array (Option (_root_.NN.MLTheory.CROWN.FlatBox FP32))) :
-    Array (Option (_root_.NN.MLTheory.CROWN.FlatBox FP32)) :=
+    (ibp : Array (Option (NN.MLTheory.CROWN.FlatBox FP32))) :
+    Array (Option (NN.MLTheory.CROWN.FlatBox FP32)) :=
   NN.MLTheory.CROWN.Graph.runScalarDerivative (α := FP32) g ps ibp
 
 /-- Run a first-derivative pass from an arbitrary interval-valued direction. -/
 noncomputable def runDirectionalDerivative (g : Graph)
     (ps : NN.MLTheory.CROWN.Graph.ParamStore FP32)
-    (ibp : Array (Option (_root_.NN.MLTheory.CROWN.FlatBox FP32)))
-    (seed : _root_.NN.MLTheory.CROWN.FlatBox FP32) :
-    Array (Option (_root_.NN.MLTheory.CROWN.FlatBox FP32)) :=
+    (ibp : Array (Option (NN.MLTheory.CROWN.FlatBox FP32)))
+    (seed : NN.MLTheory.CROWN.FlatBox FP32) :
+    Array (Option (NN.MLTheory.CROWN.FlatBox FP32)) :=
   NN.MLTheory.CROWN.Graph.runDirectionalDerivative (α := FP32) g ps ibp seed
 
 /-- Run the mixed second-derivative pass `D²f[u, v]` over `FP32` graph semantics. -/
 noncomputable def runMixedSecondDerivative (g : Graph)
     (ps : NN.MLTheory.CROWN.Graph.ParamStore FP32)
-    (ibp dLeft dRight : Array (Option (_root_.NN.MLTheory.CROWN.FlatBox FP32))) :
-    Array (Option (_root_.NN.MLTheory.CROWN.FlatBox FP32)) :=
+    (ibp dLeft dRight : Array (Option (NN.MLTheory.CROWN.FlatBox FP32))) :
+    Array (Option (NN.MLTheory.CROWN.FlatBox FP32)) :=
   NN.MLTheory.CROWN.Graph.runMixedSecondDerivative (α := FP32) g ps ibp dLeft dRight
 
 /-- Run the second-derivative IBP pass over `FP32` graph semantics. -/
-noncomputable def runScalarSecondDerivative (g : Graph) (ps : NN.MLTheory.CROWN.Graph.ParamStore FP32)
-    (ibp : Array (Option (_root_.NN.MLTheory.CROWN.FlatBox FP32)))
-    (d1 : Array (Option (_root_.NN.MLTheory.CROWN.FlatBox FP32))) :
-    Array (Option (_root_.NN.MLTheory.CROWN.FlatBox FP32)) :=
+noncomputable def runScalarSecondDerivative (g : Graph)
+    (ps : NN.MLTheory.CROWN.Graph.ParamStore FP32)
+    (ibp : Array (Option (NN.MLTheory.CROWN.FlatBox FP32)))
+    (d1 : Array (Option (NN.MLTheory.CROWN.FlatBox FP32))) :
+    Array (Option (NN.MLTheory.CROWN.FlatBox FP32)) :=
   NN.MLTheory.CROWN.Graph.runScalarSecondDerivative (α := FP32) g ps ibp d1
 
 /-- Run the forward affine CROWN pass over `FP32` graph semantics. -/
 noncomputable def runAffine (g : Graph) (ps : NN.MLTheory.CROWN.Graph.ParamStore FP32)
     (ctx : NN.MLTheory.CROWN.Graph.AffineCtx)
-    (ibp : Array (Option (_root_.NN.MLTheory.CROWN.FlatBox FP32))) :
+    (ibp : Array (Option (NN.MLTheory.CROWN.FlatBox FP32))) :
     Array (Option (NN.MLTheory.CROWN.Graph.FlatAffine FP32)) :=
   NN.MLTheory.CROWN.Graph.runAffine (α := FP32) g ps ctx ibp
 
 /-- Run the forward CROWN lower/upper affine-bounds pass over `FP32` graph semantics. -/
 noncomputable def runCROWN (g : Graph) (ps : NN.MLTheory.CROWN.Graph.ParamStore FP32)
     (ctx : NN.MLTheory.CROWN.Graph.AffineCtx)
-    (ibp : Array (Option (_root_.NN.MLTheory.CROWN.FlatBox FP32))) :
+    (ibp : Array (Option (NN.MLTheory.CROWN.FlatBox FP32))) :
     Array (Option (NN.MLTheory.CROWN.Graph.FlatAffineBounds FP32)) :=
   NN.MLTheory.CROWN.Graph.runCROWN (α := FP32) g ps ctx ibp
 

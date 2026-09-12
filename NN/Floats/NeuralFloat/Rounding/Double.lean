@@ -6,8 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.NeuralFloat.Format.Theorems
+public import NN.Floats.NeuralFloat.Rounding.Core
+public import NN.Floats.NeuralFloat.Rounding.Predicates
 public import NN.Floats.NeuralFloat.Rounding.Order
+public import NN.Floats.NeuralFloat.Format.Formats
 
 /-!
 # Double Rounding

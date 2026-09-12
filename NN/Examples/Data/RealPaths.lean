@@ -25,14 +25,14 @@ namespace Examples
 namespace Data
 namespace RealPaths
 
-/-- Default root for user-downloaded real datasets. -/
+/--
+Default root for user-downloaded real datasets.
+
+Pass this to `TorchLean.CLI.takePathFlag args "data-dir"` when an example accepts
+`--data-dir` for prepared real datasets.
+-/
 def defaultDataDir : System.FilePath :=
   "data/real"
-
-/-- Parse an optional `--data-dir PATH` flag for real-data examples. -/
-def takeDataDir (args : List String) (default : System.FilePath := defaultDataDir) :
-    Except String (System.FilePath × List String) := do
-  TorchLean.CLI.takePathFlagDefault args "data-dir" default
 
 /-- Directory containing prepared CIFAR-10 `.npy` arrays. -/
 def cifar10Dir (dataDir : System.FilePath := defaultDataDir) : System.FilePath :=
@@ -45,14 +45,6 @@ def cifar10TrainX (dataDir : System.FilePath := defaultDataDir) : System.FilePat
 /-- Prepared CIFAR-10 training labels, shape `(N,)`, float32 integer labels `0..9`. -/
 def cifar10TrainY (dataDir : System.FilePath := defaultDataDir) : System.FilePath :=
   cifar10Dir dataDir / "cifar10_train_y.npy"
-
-/-- Prepared CIFAR-10 test images, shape `(N, 3, 32, 32)`, float32 in $[0,1]$. -/
-def cifar10TestX (dataDir : System.FilePath := defaultDataDir) : System.FilePath :=
-  cifar10Dir dataDir / "cifar10_test_X.npy"
-
-/-- Prepared CIFAR-10 test labels, shape `(N,)`, float32 integer labels `0..9`. -/
-def cifar10TestY (dataDir : System.FilePath := defaultDataDir) : System.FilePath :=
-  cifar10Dir dataDir / "cifar10_test_y.npy"
 
 /--
 Directory containing a user-prepared ImageNet-style 64x64 subset.
@@ -115,6 +107,20 @@ def tinyShakespeare (dataDir : System.FilePath := defaultDataDir) : System.FileP
 /-- TinyStories validation split, useful for small local language-model training checks. -/
 def tinyStoriesValid (dataDir : System.FilePath := defaultDataDir) : System.FilePath :=
   textDir dataDir / "tinystories_valid.txt"
+
+/--
+Data-preparation hint for commands that only need Tiny Shakespeare.
+
+-/
+def missingTinyShakespeareHint : String :=
+  "Download Tiny Shakespeare with:\n" ++
+  "  python3 scripts/datasets/download_example_data.py --tiny-shakespeare"
+
+/-- Data-preparation hint for commands that accept both Tiny Shakespeare and TinyStories. -/
+def missingTinyShakespeareOrTinyStoriesHint : String :=
+  missingTinyShakespeareHint ++ "\n" ++
+  "For TinyStories (valid split):\n" ++
+  "  python3 scripts/datasets/download_example_data.py --tinystories-valid"
 
 end RealPaths
 end Data

@@ -366,7 +366,7 @@ def write_index(docs: Path) -> None:
         <a href="./NN/GraphSpec.html">GraphSpec</a>
         <a href="./NN/Proofs.html">Proofs</a>
         <a href="./NN/Verification.html">Verification</a>
-        <a href="./NN/Examples/Zoo.html">Examples</a>
+        <a href="./NN/Examples.html">Examples</a>
       </div>
     </section>
 
@@ -478,12 +478,17 @@ header h1 {
   align-items: center;
   gap: 0.35rem;
   min-width: 0;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 header .header_filename {
   color: color-mix(in srgb, var(--text-color) 66%, transparent);
   font-size: 0.92rem;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #search_form {
@@ -534,6 +539,14 @@ header .header_filename {
   color: var(--tl-teal);
   background: var(--tl-teal-soft);
   text-decoration: none;
+}
+
+/* Leave room for the module drawer and search before the header links crowd
+   those controls. */
+@media (max-width: 1200px) {
+  .tl-docsite-links {
+    display: none;
+  }
 }
 
 .tl-doc-theme-toggle {
@@ -995,6 +1008,7 @@ label[for="nav_toggle"]::before {
 #nav_toggle:checked ~ .nav {
   display: block;
   left: 1rem;
+  margin-left: 0;
   width: min(28rem, calc(100vw - 2rem));
   max-width: min(28rem, calc(100vw - 2rem));
   z-index: 20;
@@ -1130,7 +1144,14 @@ code {
   font-size: 0.92em;
 }
 
-body:not(.tl-docs-index) main,
+/* DocGen places the declaration sidebar beside its content column. Keep that
+   column's width when allowing long Lean declarations to scroll; expanding main
+   to the full viewport would put the text underneath the fixed sidebar. */
+body:not(.tl-docs-index) main {
+  min-width: 0;
+  overflow-x: auto;
+}
+
 body:not(.tl-docs-index) .mod_doc,
 body:not(.tl-docs-index) .def,
 body:not(.tl-docs-index) .theorem,
@@ -1176,6 +1197,11 @@ body:not(.tl-docs-index) :not(pre) > code {
 @media (max-width: 700px) {
   .tl-docs-index {
     --content-width: calc(100vw - 1.25rem);
+  }
+
+  .tl-docs-index:has(#nav_toggle:checked) {
+    display: block;
+    padding: 0;
   }
 
   .tl-docs-index header {

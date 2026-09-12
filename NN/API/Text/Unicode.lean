@@ -27,7 +27,7 @@ namespace text
 namespace Unicode
 
 /-- Sorted inclusive code-point ranges for Unicode general categories `L*` (Unicode 15.1.0). -/
-def unicodeLetterRanges : Array (Nat × Nat) := #[
+def letterRanges : Array (Nat × Nat) := #[
   (65, 90), (97, 122), (170, 170), (181, 181),
   (186, 186), (192, 214), (216, 246), (248, 705),
   (710, 721), (736, 740), (748, 748), (750, 750),
@@ -196,7 +196,7 @@ def unicodeLetterRanges : Array (Nat × Nat) := #[
 ]
 
 /-- Sorted inclusive code-point ranges for Unicode general categories `N*` (Unicode 15.1.0). -/
-def unicodeNumberRanges : Array (Nat × Nat) := #[
+def numberRanges : Array (Nat × Nat) := #[
   (48, 57), (178, 179), (185, 185), (188, 190),
   (1632, 1641), (1776, 1785), (1984, 1993), (2406, 2415),
   (2534, 2543), (2548, 2553), (2662, 2671), (2790, 2799),
@@ -236,15 +236,22 @@ def unicodeNumberRanges : Array (Nat × Nat) := #[
 
 namespace Internal
 
+/--
+Binary search for `n` in a sorted array of inclusive ranges, over the slice `[lo, hi)`.
+
+`fuel` is what makes the recursion structural. The interval halves at every step, so any fuel at
+least `log2 ranges.size` suffices; callers pass `ranges.size` and stay clear of the bound without
+having to prove anything about it.
+-/
 def inSortedRanges (ranges : Array (Nat × Nat)) (n lo hi : Nat) : Nat → Bool
   | 0 => false
   | fuel + 1 =>
       if lo < hi then
         let mid := (lo + hi) / 2
-        let r := ranges.getD mid (0, 0)
-        if n < r.1 then
+        let (lower, upper) := ranges.getD mid (0, 0)
+        if n < lower then
           inSortedRanges ranges n lo mid fuel
-        else if n ≤ r.2 then
+        else if n ≤ upper then
           true
         else
           inSortedRanges ranges n (mid + 1) hi fuel
@@ -259,11 +266,11 @@ def inSortedRanges (ranges : Array (Nat × Nat)) (n : Nat) : Bool :=
 
 /-- Unicode `\p{L}` predicate used by GPT-2's regex pre-tokenizer. -/
 def isLetter (c : Char) : Bool :=
-  inSortedRanges unicodeLetterRanges c.toNat
+  inSortedRanges letterRanges c.toNat
 
 /-- Unicode `\p{N}` predicate used by GPT-2's regex pre-tokenizer. -/
 def isNumber (c : Char) : Bool :=
-  inSortedRanges unicodeNumberRanges c.toNat
+  inSortedRanges numberRanges c.toNat
 
 /--
 Unicode regex whitespace predicate for GPT-2 pre-tokenization.

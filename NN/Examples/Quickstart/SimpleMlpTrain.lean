@@ -10,76 +10,49 @@ public import NN.API
 public import NN.Examples.Quickstart.Common
 
 /-!
-# Simple MLP training example (regression)
+# Quickstart: Training a Small MLP
 
-This is a focused end-to-end example of training a small MLP in TorchLean.
+Regression with a two-layer MLP on a synthetic grid:
 
-It mirrors the simplest PyTorch workflow:
-
-1. build a small synthetic dataset (in-memory),
-2. define an MLP (`Linear -> ReLU -> Linear`),
-3. train with Adam,
-4. report loss before/after, plus a few sample predictions.
+1. define the model with `nn.Sequential!`,
+2. build an in-memory dataset with `Data.fromTensors`,
+3. create a `Trainer` with an objective and optimizer,
+4. call `trainer.train`, then predict with the result.
 
 Run:
 
-- `lake exe torchlean quickstart_mlp`
-- `lake exe torchlean quickstart_mlp --steps 200 --scalar ieee32-exec --execution eager`
-- `lake exe torchlean quickstart_mlp --steps 200 --scalar float32 --execution eager`
+- `scripts/lake.sh exe torchlean quickstart_mlp`
+- `scripts/lake.sh exe torchlean quickstart_mlp --steps 20 --seed 3`
 
-Optional flags (tutorial-specific):
-
-- `--seed S` (model init + any shuffling)
-- `--steps N`
+Flags: `--steps N`, `--seed S`, `--arithmetic`, `--execution`, `--device`, and `--show-backend`.
 -/
 
 @[expose] public section
 
-
-namespace NN.Examples.Quickstart.SimpleMLPTrain
+namespace NN.Examples.Quickstart.SimpleMlpTrain
 
 open TorchLean
 
-/-- Default JSON log path used only when the user explicitly passes `--log`. -/
-def defaultLogJson : System.FilePath := ModelZoo.trainLogPath "quickstart_simple_mlp"
+/-- Command name used in diagnostics and by the top-level example runner. -/
+def exeName : String := "quickstart_mlp"
 
-def inDim : Nat := 2
-def outDim : Nat := 1
-
-/-- A small 2-layer MLP `2 -> 8 -> 1`. -/
-def model : nn.Builder (nn.Sequential [inDim] [outDim]) :=
+/-- A two-layer ReLU MLP `2 -> 8 -> 1`. -/
+def model : nn.Builder (nn.Sequential [2] [1]) :=
   nn.Sequential![
-    nn.linear inDim 8,
+    nn.linear 2 8,
     nn.relu,
-    nn.linear 8 outDim
+    nn.linear 8 1
   ]
 
-/--
-Small piecewise-linear regression target:
+/-- Piecewise-linear regression target `0.8 relu(x₁ + x₂) - 0.4 relu(x₂ - x₁) + 0.2`. -/
+def target (x : Tensor Float [2]) : Tensor Float [1] :=
+  let features := Tensor.relu ([x[0] + x[1], x[1] - x[0]] : Tensor Float [2])
+  [0.8 * features[0] - 0.4 * features[1] + 0.2]
 
-$$
-y=0.8\,\operatorname{ReLU}(x_1+x_2)
-  -0.4\,\operatorname{ReLU}(x_2-x_1)+0.2.
-$$
-
-This is a natural fit for a small ReLU MLP, which keeps the command dependable.
--/
-def target (x1 x2 : Float) : Float :=
-  let relu (x : Float) := if x < 0.0 then 0.0 else x
-  (0.8 * relu (x1 + x2)) - (0.4 * relu (x2 - x1)) + 0.2
-
-/-- Evaluate the scalar target on one shape-indexed input row. -/
-def targetTensor (x : Tensor Float [inDim]) :
-    Tensor Float [outDim] :=
-  let x1 := Tensor.item (_root_.Spec.get x ⟨0, by decide⟩)
-  let x2 := Tensor.item (_root_.Spec.get x ⟨1, by decide⟩)
-  tensor! [target x1 x2]
-
-/-- Build the tutorial dataset at the runtime-selected scalar type. -/
-def buildDataset : Trainer.Dataset [inDim] [outDim] :=
+/-- Twenty-five grid points in `[-1, 1]²` with their targets. -/
+def data : Trainer.Dataset [2] [1] :=
   let inputs := Data.Synthetic.squareGrid (-1.0) 1.0 5
-  let targets := Tensor.mapEach [5 * 5] targetTensor inputs
-  Data.tensorDataset inputs targets
+  Data.fromTensors inputs (Tensor.mapLeading [5 * 5] target inputs)
 
 /-- Command-line help for the simple MLP quickstart. -/
 def usage : String :=
@@ -87,47 +60,36 @@ def usage : String :=
     [ "TorchLean simple MLP quickstart"
     , ""
     , "Usage:"
-    , "  lake exe torchlean quickstart_mlp [options]"
-    , ""
-    , "Options:"
-    , "  --seed N"
-    , "  --steps N"
-    , "  --scalar float32|ieee32-exec"
-    , "  --execution eager|typed-graph"
-    , "  --device auto|cpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external"
-    , "  --show-backend                    print backend capsules as they execute"
-    , "  --log PATH"
-    , ""
-    , "Top-level chooser:"
-    , "  lake exe torchlean --choose quickstart_mlp --steps 20"
+    , "  scripts/lake.sh exe torchlean quickstart_mlp [--steps N] [--seed S]"
+    , "    [--arithmetic native|ieee] [--execution eager|typed-graph] [--device cpu|cuda]"
+    , "    [--show-backend]"
     ]
 
+/--
+Entry point. Parses the training flags, then runs the loop; `--steps` defaults to 200, which is
+enough for the printed loss to visibly fall without the demo taking long.
+-/
 def main (args : List String) : IO Unit := do
   let args := CLI.dropDashDash args
   if CLI.hasHelp args then
     IO.println usage
     return
-  let (seed, args) ← CLI.seed "SimpleMLPTrain" args
-  let parsed ←
-    _root_.NN.Examples.Quickstart.parseRuntimeTrain
-      "SimpleMLPTrain" args defaultLogJson 200 (optim.adam { lr := 0.03 })
-      (logEvery := 25)
-  let trainer := Trainer.new model <|
-    Trainer.Config.fromRunConfig parsed.run .regression (seed := seed)
+  let flags ← parseFlags exeName args (defaultSteps := 200)
 
-  IO.println "== Quickstart: simple MLP training =="
-  IO.println s!"seed  = {seed}"
-  IO.println s!"steps = {parsed.train.steps}"
+  let trainer := Trainer.new model
+    { flags.runtime with
+        objective := .meanSquaredError
+        optimizer := optim.adam { learningRate := 0.03 }
+        seed := flags.seed }
 
-  let probes : Array (Trainer.Probe [inDim]) := #[
-    Trainer.Probe.ofFloatTensor "center" (tensor! (ty := Float) [0.0, 0.0])
-      "x=(0.0,0.0)" (some (toString (target 0.0 0.0))),
-    Trainer.Probe.ofFloatTensor "heldout" (tensor! (ty := Float) [0.25, -0.75])
-      "x=(0.25,-0.75)" (some (toString (target 0.25 (-0.75))))
-  ]
-  let trained ← trainer.train buildDataset parsed.trainOptions probes
+  IO.println s!"== Quickstart: simple MLP training (seed={flags.seed}, steps={flags.steps}) =="
+  let heldout : Tensor Float [2] := [0.25, -0.75]
+  IO.println s!"target(heldout)    = {reprStr (target heldout)}"
+  let untrained ← trainer.predict heldout
+  IO.println s!"untrained(heldout) = {reprStr untrained}"
+
+  let trained ← trainer.train data { steps := flags.steps, logEvery := 25 }
   trained.printSummary
-  let heldout : Tensor Float [inDim] := tensor! [0.25, -0.75]
-  trained.printPrediction "predict(heldout)" heldout
+  trained.printPrediction "trained(heldout)" heldout
 
-end NN.Examples.Quickstart.SimpleMLPTrain
+end NN.Examples.Quickstart.SimpleMlpTrain

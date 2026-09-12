@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Analysis.Normalization
+public import NN.Tensor
 
 /-!
 # BugZoo: normalization state and BatchNorm contracts
@@ -31,6 +32,8 @@ TorchLean addresses this class in two layers:
 
 @[expose] public section
 
+open TorchLean
+
 namespace NN.Examples.BugZoo.NormalizationState
 
 noncomputable section
@@ -49,8 +52,7 @@ $$
 \frac{x-\mu}{\sqrt{\sigma^2}+\varepsilon}.
 $$
 
-We keep this definition as the "bad PyTorch-like code" analogue for documentation and regression
-tests. TorchLean's actual `normalizeCore` does not use this expression.
+The separating example below uses zero variance and epsilon four.
 -/
 def wrongEpsilonOutsideSqrt (x mean variance gamma beta epsilon : ℝ) : ℝ :=
   ((x - mean) / (Real.sqrt variance + epsilon)) * gamma + beta
@@ -63,6 +65,15 @@ def correctEpsilonInsideSqrt (x mean variance gamma beta epsilon : ℝ) : ℝ :=
   ((x - mean) / Real.sqrt (variance + epsilon)) * gamma + beta
 
 /--
+At variance zero and epsilon four, the misplaced epsilon divides by four instead of two.
+-/
+theorem wrongEpsilonOutsideSqrt_ne_correctEpsilonInsideSqrt :
+    wrongEpsilonOutsideSqrt 1 0 0 1 0 4 ≠ correctEpsilonInsideSqrt 1 0 0 1 0 4 := by
+  have hsqrt : Real.sqrt 4 = 2 := by
+    rw [show (4 : ℝ) = 2 ^ 2 by norm_num, Real.sqrt_sq (by norm_num)]
+  simp [wrongEpsilonOutsideSqrt, correctEpsilonInsideSqrt, hsqrt]
+
+/--
 Spec-level BatchNorm uses epsilon inside the variance term.
 
 There is one extra implementation detail worth making explicit: `sqrtSpec` is total, so it computes
@@ -73,49 +84,45 @@ $\sqrt{\mathrm{variance}+\varepsilon}$.
 theorem normalizeCore_scalar_uses_variance_plus_epsilon
     (x mean variance gamma beta epsilon : ℝ) :
     Spec.normalizeCore
-        (s := .scalar)
-        (s_mean := .scalar)
-        (s_var := .scalar)
-        (s_gamma := .scalar)
-        (s_beta := .scalar)
         (epsilon := epsilon)
-        (x := Spec.Tensor.scalar x)
-        (mean := Spec.Tensor.scalar mean)
-        (variance := Spec.Tensor.scalar variance)
-        (gamma := Spec.Tensor.scalar gamma)
-        (beta := Spec.Tensor.scalar beta)
-        (cb_mean := Spec.Shape.CanBroadcastTo.scalar)
-        (cb_var := Spec.Shape.CanBroadcastTo.scalar)
-        (cb_gamma := Spec.Shape.CanBroadcastTo.scalar)
-        (cb_beta := Spec.Shape.CanBroadcastTo.scalar)
+        (x := Tensor.full [] x)
+        (mean := Tensor.full [] mean)
+        (variance := Tensor.full [] variance)
+        (gamma := Tensor.full [] gamma)
+        (beta := Tensor.full [] beta)
+        (cbMean := Spec.Shape.CanBroadcastTo.refl [])
+        (cbVar := Spec.Shape.CanBroadcastTo.refl [])
+        (cbGamma := Spec.Shape.CanBroadcastTo.refl [])
+        (cbBeta := Spec.Shape.CanBroadcastTo.refl [])
       =
-    Spec.Tensor.scalar
+    Tensor.full []
       (((x - mean) / MathFunctions.sqrt (Max.max (variance + epsilon) 0)) * gamma + beta) := by
-  simp [Spec.normalizeCore, Spec.Tensor.broadcastTo, Spec.Tensor.addSpec, Spec.Tensor.subSpec,
-    Spec.Tensor.mulSpec, Spec.Tensor.divSpec, Spec.Tensor.sqrtSpec, Spec.Tensor.map2Spec,
-    Spec.fill]
+  apply Tensor.ext_scalar
+  simp [Spec.normalizeCore, Tensor.addSpec,
+    Tensor.subSpec, Tensor.mulSpec, Tensor.divSpec,
+    Tensor.sqrtSpec]
 
 /--
 Running statistics are part of the BatchNorm inference contract.
 
-This is the boundary that catches a common state bug: using stale or unintended moving statistics
-cannot be invisible inside TorchLean, because the exact `runningMean` and `runningVar` tensors are
-arguments to the spec.
+The exact running mean and variance are arguments to the spec, so a reviewer can identify which
+state the result uses. Their shape does not establish that they are current or came from the
+intended training run; that provenance remains a separate obligation.
 -/
 structure RunningStats (channels : Nat) where
   /-- Inference-time running mean, usually learned/updated during training. -/
-  mean : Spec.Tensor ℝ [channels]
+  mean : Tensor ℝ [channels]
   /-- Inference-time running variance, clamped by the spec before normalization. -/
-  variance : Spec.Tensor ℝ [channels]
+  variance : Tensor ℝ [channels]
 
 /-- Evaluation-time BatchNorm with state packaged as an explicit value. -/
 def batchNormEvalWithStats {channels : Nat} {sSpatial : Spec.Shape}
-    (x : Spec.Tensor ℝ (sSpatial.prependDim channels))
+    (x : Tensor ℝ (sSpatial.prependDim channels))
     (stats : RunningStats channels)
-    (gamma : Spec.Tensor ℝ [channels])
-    (beta : Spec.Tensor ℝ [channels])
-    (epsilon : ℝ := Numbers.normalizationEpsilon) :
-    Spec.Tensor ℝ (sSpatial.prependDim channels) :=
+    (gamma : Tensor ℝ [channels])
+    (beta : Tensor ℝ [channels])
+    (epsilon : ℝ := TorchLean.normalizationEpsilon) :
+    Tensor ℝ (sSpatial.prependDim channels) :=
   Spec.batchNormInference
     (x := x)
     (runningMean := stats.mean)
@@ -126,11 +133,11 @@ def batchNormEvalWithStats {channels : Nat} {sSpatial : Spec.Shape}
 
 /-- The packaged-state wrapper is exactly the public inference-time BatchNorm spec. -/
 theorem batchNormEvalWithStats_unfolds {channels : Nat} {sSpatial : Spec.Shape}
-    (x : Spec.Tensor ℝ (sSpatial.prependDim channels))
+    (x : Tensor ℝ (sSpatial.prependDim channels))
     (stats : RunningStats channels)
-    (gamma : Spec.Tensor ℝ [channels])
-    (beta : Spec.Tensor ℝ [channels])
-    (epsilon : ℝ := Numbers.normalizationEpsilon) :
+    (gamma : Tensor ℝ [channels])
+    (beta : Tensor ℝ [channels])
+    (epsilon : ℝ := TorchLean.normalizationEpsilon) :
     batchNormEvalWithStats x stats gamma beta epsilon =
       Spec.batchNormInference
         (x := x)
@@ -142,33 +149,37 @@ theorem batchNormEvalWithStats_unfolds {channels : Nat} {sSpatial : Spec.Shape}
   rfl
 
 /--
-Inference-time BatchNorm is affine once running statistics are fixed.
+Fixed BatchNorm running statistics determine one scale and bias that work for every input.
 
-This re-exports the analysis theorem used by optimizers and verifiers: the checked stateful
-inference spec can be folded into a pointwise affine map, but only after the running statistics are
-made explicit.
+The witnesses depend only on the running statistics, affine parameters, and epsilon. This is the
+uniform affine representation needed when folding inference-time normalization into another layer.
 -/
-theorem batchNormEvalWithStats_is_affine
+theorem batchNormEvalWithStats_affine
     {channels : Nat} {sSpatial : Spec.Shape}
-    (x : Spec.Tensor ℝ (sSpatial.prependDim channels))
     (stats : RunningStats channels)
-    (gamma : Spec.Tensor ℝ [channels])
-    (beta : Spec.Tensor ℝ [channels])
-    (epsilon : ℝ := Numbers.normalizationEpsilon) :
-    ∃ scale bias : Spec.Tensor ℝ (sSpatial.prependDim channels),
-      batchNormEvalWithStats x stats gamma beta epsilon =
-        Spec.Tensor.addSpec (Spec.Tensor.mulSpec x scale) bias := by
+    (gamma : Tensor ℝ [channels])
+    (beta : Tensor ℝ [channels])
+    (epsilon : ℝ := TorchLean.normalizationEpsilon) :
+    ∃ scale bias : Tensor ℝ (sSpatial.prependDim channels),
+      ∀ x : Tensor ℝ (sSpatial.prependDim channels),
+        batchNormEvalWithStats x stats gamma beta epsilon =
+          Tensor.addSpec (Tensor.mulSpec x scale) bias := by
   let s : Spec.Shape := sSpatial.prependDim channels
-  let runningVar := Spec.Tensor.maxSpec stats.variance (Spec.fill 0 [channels])
+  let runningVar :=
+    Tensor.maxSpec stats.variance (Tensor.full [channels] 0)
   let mean_b := Spec.broadcastChannel sSpatial stats.mean
   let var_b := Spec.broadcastChannel sSpatial runningVar
   let gamma_b := Spec.broadcastChannel sSpatial gamma
   let beta_b := Spec.broadcastChannel sSpatial beta
-  let std := Spec.Tensor.sqrtSpec (Spec.Tensor.addSpec var_b (Spec.fill epsilon s))
+  let std :=
+    Tensor.sqrtSpec
+      (Tensor.addSpec var_b (Tensor.full s epsilon))
   refine
-    ⟨Spec.Tensor.divSpec gamma_b std,
-      Spec.Tensor.subSpec beta_b (Spec.Tensor.mulSpec mean_b (Spec.Tensor.divSpec gamma_b std)),
+    ⟨Tensor.divSpec gamma_b std,
+      Tensor.subSpec beta_b
+        (Tensor.mulSpec mean_b (Tensor.divSpec gamma_b std)),
       ?_⟩
+  intro x
   simpa [batchNormEvalWithStats, s, runningVar, mean_b, var_b, gamma_b, beta_b, std]
     using
       Proofs.Normalization.batchNorm_inference_eq_mul_add
@@ -178,6 +189,22 @@ theorem batchNormEvalWithStats_is_affine
         (gamma := gamma)
         (beta := beta)
         (epsilon := epsilon)
+
+
+/-- Specialize the shared affine representation to one input. -/
+theorem batchNormEvalWithStats_is_affine
+    {channels : Nat} {sSpatial : Spec.Shape}
+    (x : Tensor ℝ (sSpatial.prependDim channels))
+    (stats : RunningStats channels)
+    (gamma : Tensor ℝ [channels])
+    (beta : Tensor ℝ [channels])
+    (epsilon : ℝ := TorchLean.normalizationEpsilon) :
+    ∃ scale bias : Tensor ℝ (sSpatial.prependDim channels),
+      batchNormEvalWithStats x stats gamma beta epsilon =
+        Tensor.addSpec (Tensor.mulSpec x scale) bias := by
+  obtain ⟨scale, bias, h⟩ := batchNormEvalWithStats_affine (sSpatial := sSpatial)
+    stats gamma beta epsilon
+  exact ⟨scale, bias, h x⟩
 
 end
 

@@ -8,7 +8,6 @@ module
 
 public import NN.Spec.Models.Autoencoder
 public import NN.Spec.Models.Cnn
-public import NN.Spec.Core.Tensor.Numerics
 public import NN.Spec.Models.Gan
 public import NN.Spec.Models.Gmm
 public import NN.Spec.Models.Gnn

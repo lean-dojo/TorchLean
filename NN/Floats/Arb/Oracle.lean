@@ -6,9 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import Lean.Data.Json
 public import NN.Core.ExternalProcess
-import Lean
+public import Lean.Data.Json.Printer
 
 /-!
 # Arb oracle (python-flint) integration
@@ -255,7 +254,7 @@ Render a unary `Query` into the CLI arguments expected by `arb_oracle.py` in una
 
 This is separated out so tools can log or override arguments more easily.
 -/
-def Query.toArgs (q : Query) : Array String :=
+def Query.cliArguments (q : Query) : Array String :=
   #[
     oracleScriptPath,
     "--func", q.func,
@@ -275,7 +274,7 @@ This only checks that:
 Use `parseResult` if you want the typed `Result`.
 -/
 def runJson (q : Query) (pythonCmd : String := "python3") : IO Json := do
-  runPythonJson pythonCmd q.toArgs
+  runPythonJson pythonCmd q.cliArguments
 
 /--
 Parse the `ctx` object shared by all oracle responses.

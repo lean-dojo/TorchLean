@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.TensorReductionShape
+public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
 
 /-!
 # Graph neural network layers (spec layer)
@@ -63,12 +63,14 @@ Why this file defines only these two:
 @[expose] public section
 
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 open Shape
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Neighbor aggregation / message passing via a graph matrix: `Agg(A, X) = A · X`.
 
@@ -80,7 +82,7 @@ def messagePassingSpec {n inDim : Nat}
   Tensor α [n, inDim] :=
   matMulSpec A x
 
-/-- Backward/VJP for `message_passing_spec`: returns `(dA, dX)`. -/
+/-- Backward/VJP for `messagePassingSpec`: returns `(dA, dX)`. -/
 def messagePassingBackwardSpec {n inDim : Nat}
   (A : Tensor α [n, n])
   (x : Tensor α [n, inDim])
@@ -95,12 +97,12 @@ We bundle `A` with the layer because many code paths treat `A` as a fixed input 
 others treat it as a parameter (e.g. learned normalization). Keeping it in the record makes both
 uses explicit.
 -/
-structure GCNLayerSpec (n inDim outDim : Nat) (α : Type) where
-  /-- A. -/
+structure GCNLayerSpec (n inDim outDim : Nat) (α : Type) [TorchLean.Storage α] where
+  /-- The (possibly normalized) adjacency operator acting on the `n` nodes. -/
   A : Tensor α [n, n]
-  /-- W. -/
+  /-- The weight matrix mapping input features to output features. -/
   W : Tensor α [inDim, outDim]
-  /-- b. -/
+  /-- The bias vector, broadcast across nodes. -/
   b : Tensor α [outDim]
 
 /-- Forward spec for a GCN-style layer: `Y = A · X · W + b`.
@@ -144,34 +146,54 @@ We include `dA` because in some setups the adjacency/normalization is also:
 - treated as a parameter (e.g. learned edge weights / learned normalization).
 -/
 
-/-- Backward/VJP spec for `gcn_layer_spec`.
+/--
+Parameter gradients for a `GCNLayerSpec`.
 
-Returns `(dA, dW, db, dX)` in that order. -/
+The adjacency gradient sits with the weight and bias gradients because a GCN layer can be trained
+with learned edge weights, in which case `A` really is a parameter; when it is a fixed normalization
+the field is simply ignored.
+-/
+structure GCNLayerParameterGradients (n inDim outDim : Nat) (α : Type) [TorchLean.Storage α] where
+  /-- Gradient with respect to the adjacency operator `A`. -/
+  adjacencyGradient : Tensor α [n, n]
+  /-- Gradient with respect to the weight matrix `W`. -/
+  weightGradient : Tensor α [inDim, outDim]
+  /-- Gradient with respect to the bias vector `b`. -/
+  biasGradient : Tensor α [outDim]
+
+/-- Everything a GCN layer's backward pass produces: the parameter gradients plus the gradient
+travelling on to the node features. -/
+structure GCNLayerGradients (n inDim outDim : Nat) (α : Type) [TorchLean.Storage α] where
+  /-- Gradients for the layer parameters. -/
+  parameters : GCNLayerParameterGradients n inDim outDim α
+  /-- Gradient with respect to the node feature matrix `X`. -/
+  inputGradient : Tensor α [n, inDim]
+
+/-- Backward/VJP spec for `gcnLayerSpec`. -/
 def gcnLayerBackwardSpec {n inDim outDim : Nat}
   (layer : GCNLayerSpec n inDim outDim α)
   (x : Tensor α [n, inDim])
-  (grad_output : Tensor α [n, outDim])
+  (gradOutput : Tensor α [n, outDim])
   (h_n : n ≠ 0) :
-  (Tensor α [n, n] ×               -- ∂L/∂A
-   Tensor α [inDim, outDim] ×      -- ∂L/∂W
-   Tensor α [outDim] ×                   -- ∂L/∂b
-   Tensor α [n, inDim]) :=         -- ∂L/∂x
+  GCNLayerGradients n inDim outDim α :=
 
   let ax : Tensor α [n, inDim] := matMulSpec layer.A x
 
   -- Backprop through the second matmul: (A·X) · W
   let (dAx, dW) :=
     matmulBackwardSpec (Shape.CanBroadcastTo.refl .scalar)
-      (Shape.CanBroadcastTo.refl .scalar) ax layer.W grad_output
+      (Shape.CanBroadcastTo.refl .scalar) ax layer.W gradOutput
 
   -- Bias gradient: sum across the node axis.
   let db := reduceSum (α := α) (s := Shape.dim n (Shape.dim outDim Shape.scalar)) 0
-    grad_output (Shape.hasNonemptyAxisZeroOfNe h_n).proof
+    gradOutput (Shape.hasNonemptyAxisZeroOfNe h_n).proof
 
   -- Backprop through the first matmul: A · X
   let (dA, dX) :=
     matmulBackwardSpec (Shape.CanBroadcastTo.refl .scalar)
       (Shape.CanBroadcastTo.refl .scalar) layer.A x dAx
-  (dA, dW, db, dX)
+  { parameters :=
+      { adjacencyGradient := dA, weightGradient := dW, biasGradient := db }
+    inputGradient := dX }
 
 end Spec

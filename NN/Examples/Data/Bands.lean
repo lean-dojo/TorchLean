@@ -17,8 +17,8 @@ Several TorchLean examples use a compact 4×4 image classification task:
 - class `1`: a horizontal band
 
 This domain module owns both the renderer and the canonical 4×4 dataset. Keeping these definitions
-out of `TorchLean.Data.Synthetic` prevents a particular image layout from becoming part of TorchLean's
-general tensor and sample abstractions.
+out of `TorchLean.Data.Synthetic` prevents a particular image layout from becoming part of
+TorchLean's general tensor and sample abstractions.
 -/
 
 @[expose] public section
@@ -69,8 +69,8 @@ def renderBand (height width : Nat) (axis : Axis) (offset : Nat) (thickness : Na
     Tensor Float [1, height, width] :=
   renderBinary 1 height width
     (match axis with
-    | .row => fun _ row _ => offset ≤ row.1 ∧ row.1 < offset + thickness
-    | .column => fun _ _ column => offset ≤ column.1 ∧ column.1 < offset + thickness)
+    | .row => fun _ row _ => offset ≤ row.val ∧ row.val < offset + thickness
+    | .column => fun _ _ column => offset ≤ column.val ∧ column.val < offset + thickness)
     onValue offValue
 
 /-! ## Classes and datasets -/
@@ -100,12 +100,6 @@ def samples (height width : Nat) (classes : Array Class) (offsets : Array Nat)
     offsets.map fun offset =>
       (renderBand height width cls.axis offset thickness, cls.label)
 
-/-- Generate named samples for reports and prediction probes. -/
-def namedSamples (height width : Nat) (specs : Array (Class × Nat)) (thickness : Nat := 2) :
-    Array (String × Tensor Float [1, height, width] × Nat) :=
-  specs.map fun (cls, offset) =>
-    (s!"{cls.name}-{offset}", renderBand height width cls.axis offset thickness, cls.label.val)
-
 /-- Canonical label set for the band dataset: vertical ↦ `0`, horizontal ↦ `1`. -/
 def classes : Array Class :=
   #[vertical, horizontal]
@@ -113,29 +107,16 @@ def classes : Array Class :=
 /-! ### Typed Tensors (Tensor-First) -/
 
 /-- Canonical image shape for the band dataset (single-channel 4×4). -/
-abbrev shape : List Nat := [1, 4, 4]
+abbrev shape : Shape := [1, 4, 4]
 
 /-- Training set samples as a runtime-sized array of fixed-shape tensors. -/
 def trainFloat : Array (Tensor Float shape × Fin 2) :=
   samples 4 4 classes #[0, 1, 2]
 
-/-- Probe set for reporting: `(name, x, expectedLabel)` triples. -/
-def probesFloat : Array (String × Tensor Float shape × Nat) :=
-  namedSamples 4 4
-    #[ (vertical, 1)
-    , (vertical, 2)
-    , (horizontal, 1)
-    , (horizontal, 2)
-    ]
-
 /-- Small vertical-versus-horizontal dataset with one-hot class targets. -/
 def dataset : Trainer.Dataset shape [2] :=
-  TorchLean.Data.floatSamples <| trainFloat.map fun (input, label) =>
-    Sample.mk input (Tensor.oneHot (α := Float) 2 label)
-
-/-- Concrete `Float` probe inputs for prediction examples. -/
-def probeSamples : Array (String × Tensor Float shape × Nat) :=
-  probesFloat
+  TorchLean.Data.fromSamples <| trainFloat.map fun (input, label) =>
+    { input, target := Tensor.oneHot (α := Float) 2 label }
 
 end Bands
 end NN.Examples.Data

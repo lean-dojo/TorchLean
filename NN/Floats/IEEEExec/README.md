@@ -50,7 +50,7 @@ The bridge files connect executable bit patterns with rounded-real and language-
 
 Use `IEEE32Exec` for executable binary32 calculations inside Lean and `FP32` for rounded-real error
 bounds. Native `Float32`, CUDA, and external libraries have separate provider contracts in
-`TRUST_BOUNDARIES.md`.
+`docs/TRUST_BOUNDARIES.md`.
 
 The value-only operations (`add`, `mul`, `div`, `fma`, and `sqrt`) are accompanied by
 status-bearing operations (`addWithStatus`, `mulWithStatus`, `divWithStatus`, `fmaWithStatus`, and

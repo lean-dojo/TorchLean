@@ -24,33 +24,39 @@ explicit.
 References:
 - Kingma and Welling (2014), "Auto-Encoding Variational Bayes".
 - Rezende, Mohamed, and Wierstra (2014), "Stochastic Backpropagation and Approximate Inference".
+
+## Implementation status
+
+No API builder implements this model. The theorems in `NN/MLTheory/Generative/Latent/VAE.lean`
+(beta-VAE loss decomposition, nonnegativity and vanishing of the diagonal-Gaussian KL term, and the
+reparameterization law) are stated directly against these definitions.
 -/
 
 @[expose] public section
 
 namespace Generative.VAE
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Generative.Latent
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {obs latent : Shape}
 
 /-- Diagonal-Gaussian encoder `q_φ(z|x)`, returning `(μ, logσ²)`. -/
-structure Encoder (α : Type) (obs latent : Shape) [Context α] where
+structure Encoder (α : Type) (obs latent : Shape) [TorchLean.Storage α] [Context α] where
   /-- Posterior mean. -/
   mean : Tensor α obs → Tensor α latent
   /-- Posterior log-variance. -/
   logvar : Tensor α obs → Tensor α latent
 
 /-- Decoder/generator `p_θ(x|z)` represented by its reconstruction mean. -/
-structure Decoder (α : Type) (latent obs : Shape) [Context α] where
+structure Decoder (α : Type) (latent obs : Shape) [TorchLean.Storage α] [Context α] where
   /-- Decode a latent sample into observation space. -/
   forward : Tensor α latent → Tensor α obs
 
 /-- A VAE is an encoder plus a decoder. -/
-structure Model (α : Type) (obs latent : Shape) [Context α] where
+structure Model (α : Type) (obs latent : Shape) [TorchLean.Storage α] [Context α] where
   /-- Approximate posterior network. -/
   encoder : Encoder α obs latent
   /-- Generative decoder network. -/

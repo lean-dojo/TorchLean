@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Floats.FP32.Core
 public import NN.Floats.FP32.Error
+public import NN.Floats.FP32.Notation
 public import NN.Floats.FP32.Sterbenz
 
 /-!

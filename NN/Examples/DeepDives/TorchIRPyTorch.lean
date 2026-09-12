@@ -7,8 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.API
+public import NN.API.Verification.Lowering
 public import NN.Runtime.PyTorch.Export.IRPyTorch
-public import NN.Verification.TorchLean.Lowering
 
 /-!
 # TorchLean IR to PyTorch
@@ -25,6 +25,10 @@ Run:
   `lake exe torchlean torch_ir_pytorch --arch transformer > exported_model.py`
 Then:
   `python3 exported_model.py`
+
+The command emits the selected architecture and initialized parameters; it does not train them.
+Python execution requires PyTorch. Exporting or running the file does not by itself prove
+TorchLean/PyTorch numerical parity.
 -/
 
 @[expose] public section
@@ -34,11 +38,15 @@ namespace NN.Examples.DeepDives.TorchIRPyTorch
 
 open TorchLean
 
+/-- Command name used in diagnostics and by the top-level example runner. -/
+def exeName : String := "torch_ir_pytorch"
+
 /-! ## Architectures -/
 
 def archLinear : nn.Builder (nn.Sequential [2] [1]) :=
   nn.linear 2 1
 
+/-- A `2 -> 3 -> 1` MLP with ReLU, the smallest architecture with a nonlinearity. -/
 def archMLP : nn.Builder (nn.Sequential [2] [1]) :=
   nn.Sequential![
     nn.linear 2 3,
@@ -46,9 +54,11 @@ def archMLP : nn.Builder (nn.Sequential [2] [1]) :=
     nn.linear 3 1
   ]
 
-def archSumReduce : nn.Builder (nn.Sequential [4] ([] : List Nat)) :=
+/-- A bare reduction, included because it exports to `torch.sum` rather than to a module. -/
+def archSumReduce : nn.Builder (nn.Sequential [4] []) :=
   nn.sum (shape := [4])
 
+/-- A `3 -> 2 -> 3` autoencoder with a tanh bottleneck. -/
 def archAutoencoder : nn.Builder (nn.Sequential [3] [3]) :=
   nn.Sequential![
     nn.linear 3 2,
@@ -56,64 +66,38 @@ def archAutoencoder : nn.Builder (nn.Sequential [3] [3]) :=
     nn.linear 2 3
   ]
 
-def archCNN : nn.Builder (nn.Sequential [1, 1, 4, 4] [1, 3]) :=
-  let cfg : nn.models.CnnConfig 2 :=
-    { inChannels := 1
-      spatial := tensor! [4, 4]
-      outDim := 3
-      conv :=
-        { outChannels := 2
-          kernel := tensor! [3, 3]
-          kernelNonzero := by intro i; fin_cases i <;> decide
-          strideNonzero := by intro i; fin_cases i <;> decide }
-      pool :=
-        { kernel := tensor! [1, 1]
-          kernelNonzero := by intro i; fin_cases i <;> decide
-          strideNonzero := by intro i; fin_cases i <;> decide } }
-  by
-    simpa [cfg, nn.models.CnnConfig.inputShape, nn.models.CnnConfig.outputShape,
-      Spec.Shape.ofList, Spec.Shape.concat, Spec.Shape.appendDim] using
-      nn.models.cnn cfg [1]
-
-def archConvMLP :
-    nn.Builder (nn.Sequential [1, 1, 3, 3] [1, 1]) :=
-  let cfg : nn.models.CnnConfig 2 :=
-    { inChannels := 1
-      spatial := tensor! [3, 3]
-      outDim := 1
-      conv :=
-        { outChannels := 1
-          kernel := tensor! [2, 2]
-          kernelNonzero := by intro i; fin_cases i <;> decide
-          strideNonzero := by intro i; fin_cases i <;> decide }
-      pool :=
-        { kernel := tensor! [1, 1]
-          kernelNonzero := by intro i; fin_cases i <;> decide
-          strideNonzero := by intro i; fin_cases i <;> decide } }
-  by
-    simpa [cfg, nn.models.CnnConfig.inputShape, nn.models.CnnConfig.outputShape,
-      Spec.Shape.ofList, Spec.Shape.concat, Spec.Shape.appendDim] using
-      nn.models.cnn cfg [1]
-
+/-- Two-head self-attention over a length-four sequence of width eight. -/
 def archMHA :
     nn.Builder (nn.Sequential [1, 4, 8] [1, 4, 8]) :=
-  nn.multiHeadAttention [1] (n := 4) (dModel := 8)
-    { numHeads := 2, headDim := 4 }
+  nn.multiHeadAttention { headCount := 2, headWidth := 4 }
+    (batchShape := [1]) (sequenceLength := 4) (modelWidth := 8)
 
+/-- A causal mask: position `i` may attend only to positions `j ≤ i`. -/
 def archMHAMask : Tensor Bool [4, 4] :=
   Spec.causalMask 4
 
+/--
+The same attention block with the causal mask applied, so the export can be compared against
+`torch.nn.MultiheadAttention` with `attn_mask`.
+-/
 def archMHAMasked :
     nn.Builder (nn.Sequential [1, 4, 8] [1, 4, 8]) :=
-  nn.multiHeadAttention [1] (n := 4) (dModel := 8)
-    { numHeads := 2, headDim := 4 } (mask := some archMHAMask)
+  nn.multiHeadAttention { headCount := 2, headWidth := 4 }
+    (mask := some archMHAMask) (batchShape := [1])
+    (sequenceLength := 4) (modelWidth := 8)
 
+/--
+A full encoder block: attention, residual, LayerNorm, feed-forward, residual, LayerNorm.
+
+Deliberately tiny (one head of width two) so the emitted Python stays readable.
+-/
 def archTransformer :
     nn.Builder (nn.Sequential [1, 2, 2] [1, 2, 2]) :=
-  nn.transformerEncoderBlock [1] (n := 2) (dModel := 2)
-    { numHeads := 1
-    , headDim := 2
-    , ffnHidden := 2 }
+  nn.transformerEncoderBlock
+    { headCount := 1
+    , headWidth := 2
+    , feedForwardWidth := 2 }
+    (batchShape := [1]) (sequenceLength := 2) (modelWidth := 2)
 
 /-! ## CLI parsing -/
 
@@ -136,15 +120,10 @@ def usage : String :=
 
 /-! ## Export driver -/
 
+/-- Lower a sequential model and its initial state, then write generated Python to stdout. -/
 def emitSeq {σ τ : Shape} (className : String) (model : nn.Sequential σ τ) : IO Unit := do
-  let ps := nn.stateShapes model
-  let prog : _root_.Runtime.Autograd.TorchLean.Program Float (ps ++ [σ]) τ :=
-    nn.forward model (α := Float)
-  let params := nn.initState (m := model)
   let lowered ←
-    match NN.Verification.TorchLean.lowerForwardToIR
-        (α := Float) (paramShapes := ps) (inShape := σ) (outShape := τ)
-        (model := prog) (params := params) with
+    match Verification.lowerForwardToIR model (nn.initialState model) with
     | .error e => throw <| IO.userError e
     | .ok c => pure c
 
@@ -152,22 +131,25 @@ def emitSeq {σ τ : Shape} (className : String) (model : nn.Sequential σ τ) :
     match Export.IRPyTorch.emit
         (g := lowered.graph) (ps := lowered.ps) (inputId := lowered.inputId) (outputId :=
           lowered.outputId)
-        (opts := { className := className }) with
+        (options := { className := className }) with
     | .error e => throw <| IO.userError e
     | .ok s => pure s
 
   IO.println code
 
+/--
+Entry point. Writes Python to stdout for redirection to a file and execution under PyTorch.
+-/
 def main (args : List String) : IO Unit := do
   let args := CLI.dropDashDash args
   let help := args.contains "--help" || args.contains "-h"
   if help then
     IO.println usage
   else
-    let (seed, args) ← CLI.orThrow "TorchIRPyTorch" <| CLI.takeSeed args 0
-    let (arch, rest) ← CLI.orThrow "TorchIRPyTorch" <|
-      CLI.takeFlagValueDefault args "arch" "mlp"
-    CLI.requireNoArgs "TorchIRPyTorch" rest
+    let (seed, args) ← CLI.orThrow exeName <| CLI.takeSeed args (default := 0)
+    let (arch, rest) ← CLI.orThrow exeName <|
+      CLI.takeFlagValue args "arch" (default := "mlp")
+    CLI.requireNoArgs exeName rest
     if arch == "linear" then
       emitSeq (className := "TorchLeanLinear") (nn.build seed archLinear)
     else if arch == "mlp" then
@@ -176,12 +158,6 @@ def main (args : List String) : IO Unit := do
       emitSeq (className := "TorchLeanSumReduce") (nn.build seed archSumReduce)
     else if arch == "autoencoder" then
       emitSeq (className := "TorchLeanAutoencoder") (nn.build seed archAutoencoder)
-    else if arch == "cnn" then
-      throw <| IO.userError
-        "torch_ir_pytorch: --arch cnn is not in the supported exporter fragment yet (conv lowering uses scatter)"
-    else if arch == "conv-mlp" then
-      throw <| IO.userError
-        "torch_ir_pytorch: --arch conv-mlp is not in the supported exporter fragment yet (conv lowering uses scatter)"
     else if arch == "mha" then
       emitSeq (className := "TorchLeanMHA") (nn.build seed archMHA)
     else if arch == "mha-mask" then

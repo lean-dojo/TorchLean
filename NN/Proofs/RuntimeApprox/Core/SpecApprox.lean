@@ -10,8 +10,8 @@ public import NN.Floats.NeuralFloat.Metadata
 public import NN.MLTheory.LearningTheory.Robustness.Spec
 public import NN.Proofs.RuntimeApprox.Core.Tolerance
 public import NN.Spec.Core.Scalar
-public import NN.Spec.Core.Shape
-public import NN.Spec.Core.Tensor
+public import NN.Spec.Core.Context.Real
+public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # SpecApprox
@@ -31,8 +31,9 @@ Trust boundary:
   rounding error bounds are explicit and can be composed.
 
 ## PyTorch correspondence / citations
-Conceptually, `approxWith` / `approxTensorWithTol` are theorem-level versions of “runtime tensor is close to spec
-tensor under a chosen norm”, similar to how PyTorch uses norms and `rtol`/`atol` style checks in
+Conceptually, `approxWith` / `approxTensorWithTol` are theorem-level versions of “runtime tensor is
+close to spec tensor under a chosen norm”, similar to how PyTorch uses norms and `rtol`/`atol`
+style checks in
 testing/validation.
 https://pytorch.org/docs/stable/generated/torch.linalg.vector_norm.html
 https://pytorch.org/docs/stable/generated/torch.allclose.html
@@ -44,23 +45,23 @@ https://pytorch.org/docs/stable/generated/torch.allclose.html
 namespace Proofs
 namespace RuntimeApprox
 
-open Spec
+open Spec TorchLean
 open NN.MLTheory.Robustness.Spec
 open TorchLean.Floats
 
 noncomputable section
 
 /-- Convert a runtime tensor into the spec scalar by mapping a scalar function. -/
-def tensorToSpec {α : Type} {s : Shape} (toSpec : α → SpecScalar) (t : Tensor α s) :
-    SpecTensor s :=
-  Spec.Tensor.map toSpec t
+def tensorToSpec {α : Type} [TorchLean.Storage α] {s : Shape} (toSpec : α → SpecScalar)
+    (t : Tensor α s) : SpecTensor s :=
+  TorchLean.Tensor.map toSpec t
 
 /-- Linf norm on spec tensors. -/
 def linfNorm : ∀ {s : Shape}, SpecTensor s → SpecScalar :=
   tensorLinfNorm (α := SpecScalar)
 
 /-- Approximation predicate with an explicit error bound. -/
-def approxWith {α : Type} {s : Shape}
+def approxWith {α : Type} [TorchLean.Storage α] {s : Shape}
     (toSpec : α → SpecScalar)
     (norm : ∀ {s : Shape}, SpecTensor s → SpecScalar)
     (spec : SpecTensor s)
@@ -69,7 +70,7 @@ def approxWith {α : Type} {s : Shape}
   tensorDistance (α := SpecScalar) norm spec (tensorToSpec toSpec runtime) ≤ eps
 
 /-- Abs+rel approximation predicate with a `ApproxTol` budget (scaled by `max ‖spec‖ ‖runtime‖`). -/
-def approxWithTol {α : Type} {s : Shape}
+def approxWithTol {α : Type} [TorchLean.Storage α] {s : Shape}
     (toSpec : α → SpecScalar)
     (norm : ∀ {s : Shape}, SpecTensor s → SpecScalar)
     (spec : SpecTensor s)
@@ -79,15 +80,20 @@ def approxWithTol {α : Type} {s : Shape}
   tensorDistance (α := SpecScalar) norm spec runtimeS ≤
     approxBound tol (norm spec) (norm runtimeS)
 
-/-- Default abs+rel tensor approximation (uses `linf_norm`). -/
-def approxTensorWithTol {α : Type} {s : Shape}
+/-- Default abs+rel tensor approximation (uses `linfNorm`). -/
+def approxTensorWithTol {α : Type} [TorchLean.Storage α] {s : Shape}
     (toSpec : α → SpecScalar)
     (spec : SpecTensor s)
     (runtime : Tensor α s)
     (tol : ApproxTol) : Prop :=
   approxWithTol (toSpec := toSpec) (norm := linfNorm) spec runtime tol
 
-lemma approx_with_to_approx_with_tol_absOnly {α : Type} {s : Shape}
+/-- A plain `eps` bound is an abs-only tolerance bound.
+
+The clamping in `Real.toNNReal` only ever weakens the claim, so no sign hypothesis on `eps` is
+needed
+in this direction; the converse `approx_with_tol_absOnly_iff` does need one. -/
+theorem approx_with_to_approx_with_tol_absOnly {α : Type} [TorchLean.Storage α] {s : Shape}
     {toSpec : α → SpecScalar}
     {norm : ∀ {s : Shape}, SpecTensor s → SpecScalar}
     {spec : SpecTensor s} {runtime : Tensor α s} (eps : ℝ)
@@ -100,7 +106,8 @@ lemma approx_with_to_approx_with_tol_absOnly {α : Type} {s : Shape}
     exact le_trans (by simpa [approxWith, runtimeS] using h) (Real.le_coe_toNNReal eps)
   simpa [approxBound_absOnly] using this
 
-lemma approxTensor_to_approxTensorWithTol_absOnly {α : Type} {s : Shape}
+/-- The same lift specialized to the default `linfNorm` tensor relation. -/
+theorem approxTensor_to_approxTensorWithTol_absOnly {α : Type} [TorchLean.Storage α] {s : Shape}
     {toSpec : α → SpecScalar}
     {spec : SpecTensor s} {runtime : Tensor α s} (eps : ℝ)
     (h : approxWith (toSpec := toSpec) (norm := linfNorm) spec runtime eps) :
@@ -109,7 +116,8 @@ lemma approxTensor_to_approxTensorWithTol_absOnly {α : Type} {s : Shape}
     (approx_with_to_approx_with_tol_absOnly (toSpec := toSpec) (norm := linfNorm)
       (spec := spec) (runtime := runtime) eps h)
 
-lemma approx_with_tol_to_approx_with {α : Type} {s : Shape}
+/-- Conversely, a tolerance bound is a plain bound at the tolerance's own evaluated budget. -/
+theorem approx_with_tol_to_approx_with {α : Type} [TorchLean.Storage α] {s : Shape}
     {toSpec : α → SpecScalar}
     {norm : ∀ {s : Shape}, SpecTensor s → SpecScalar}
     {spec : SpecTensor s} {runtime : Tensor α s} {tol : ApproxTol}
@@ -118,7 +126,8 @@ lemma approx_with_tol_to_approx_with {α : Type} {s : Shape}
       (approxBound tol (norm spec) (norm (tensorToSpec toSpec runtime))) := by
   simpa [approxWith, approxWithTol] using h
 
-lemma approx_with_tol_mono {α : Type} {s : Shape}
+/-- Tensor approximation is preserved when the tolerance is weakened in any field. -/
+theorem approx_with_tol_mono {α : Type} [TorchLean.Storage α] {s : Shape}
     {toSpec : α → SpecScalar}
     {norm : ∀ {s : Shape}, SpecTensor s → SpecScalar}
     {spec : SpecTensor s} {runtime : Tensor α s} {tol₁ tol₂ : ApproxTol}
@@ -133,7 +142,10 @@ lemma approx_with_tol_mono {α : Type} {s : Shape}
     approxBound_mono (t₁ := tol₁) (t₂ := tol₂) habs hrel hslack (norm spec) (norm runtimeS)
   exact le_trans h hmono
 
-lemma approx_with_tol_absOnly_iff {α : Type} {s : Shape}
+/-- For nonnegative `eps` the two formulations coincide, so nothing is lost by working with
+whichever
+is convenient at each step. -/
+theorem approx_with_tol_absOnly_iff {α : Type} [TorchLean.Storage α] {s : Shape}
     {toSpec : α → SpecScalar}
     {norm : ∀ {s : Shape}, SpecTensor s → SpecScalar}
     {spec : SpecTensor s} {runtime : Tensor α s} {eps : ℝ} (heps : 0 ≤ eps) :
@@ -162,7 +174,7 @@ scoped[ApproxTol] notation:50 spec " ≈ᵀ[" toSpec ", " tol "] " runtime =>
   Proofs.RuntimeApprox.approxTensorWithTol (toSpec := toSpec) spec runtime tol
 
 /-- Packaged approximation witness (defaults to Linf on spec tensors). -/
-structure Witness (α : Type) (s : Shape) where
+structure Witness (α : Type) [TorchLean.Storage α] (s : Shape) where
   /-- Map a runtime scalar into the specification scalar domain. -/
   toSpec : α → SpecScalar
   /-- Specification tensor. -/
@@ -177,12 +189,12 @@ structure Witness (α : Type) (s : Shape) where
 /-- Map annotated NeuralFloat tensors to spec scalars. -/
 def neuralTensorToReal {β : NeuralRadix} {s : Shape} (t : Tensor (AnnotatedNeuralFloat β) s) :
     SpecTensor s :=
-  Spec.Tensor.map AnnotatedNeuralFloat.toReal t
+  TorchLean.Tensor.map AnnotatedNeuralFloat.toReal t
 
 /-- Linf bound over annotated NeuralFloat error markers. -/
 def neuralTensorErrorBound {β : NeuralRadix} {s : Shape} (t : Tensor (AnnotatedNeuralFloat β) s) :
     SpecScalar :=
-  linfNorm (Spec.Tensor.map (fun x => x.metadata.errorBound) t)
+  linfNorm (TorchLean.Tensor.map (fun x => x.metadata.errorBound) t)
 
 /-- Annotated NeuralFloat runtime approximation to the spec with explicit epsilon bound. -/
 def neuralRuntimeApprox {β : NeuralRadix} {s : Shape}

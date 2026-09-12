@@ -3,7 +3,6 @@
 This folder contains reusable facts about grid spacing and exact operations.
 
 - `Ulp.lean` defines format-parametric units in the last place.
-- `StandardUlp.lean` specializes ULP behavior to standard exponent formats.
 - `Neighbors.lean` characterizes predecessor and successor values.
 - `Sterbenz.lean` proves exact subtraction for unbounded-exponent formats.
 - `SterbenzFLT.lean` extends exact subtraction through the gradual-underflow boundary.

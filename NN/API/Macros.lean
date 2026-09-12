@@ -6,87 +6,93 @@ Authors: TorchLean Team
 
 module
 
-public import Lean
+public import Mathlib.Algebra.Order.Field.Basic
+meta import Mathlib.Tactic.Basic
+import Mathlib.Tactic.NormNum.Inv
+import Mathlib.Tactic.NormNum.Pow
+import Mathlib.Tactic.Positivity.Finset
+meta import Mathlib.Tactic.ToAdditive
+public import NN.API.Neural.Builders -- shake: keep
 
 /-!
-# Small Convenience Macros
+# Sequential Model Literals
 
-This file contains only **general-purpose** syntactic sugar:
-- `seq! a, b, c` for composing TorchLean `Seq` models without chaining `>>>` manually.
-- `_root_.TorchLean.TensorPack! x, y, ...` for building `TorchLean.TensorPack` values without
-  `.cons ... .nil` boilerplate.
+TorchLean sequential models are shape-indexed (`Sequential σ τ`), so a plain `List` of layers
+cannot describe a model the way PyTorch's `nn.Sequential([...])` does: every element would need
+the same type. This file provides two list-shaped spellings that expand to ordinary composition
+through `TorchLean.nn.compose`:
 
-The sequential macro expands to the composition helpers defined by `NN.API.Neural.Builders`.
-The tensor-pack macro expands directly to the generic tensor-pack constructors.
+- `nn.Sequential![a, b, c]` runs each entry as a monadic layer builder and returns the composed
+  model in that monad. This is the spelling used with the seeded builders of `NN.API.Seeded`.
+- `nn.compose![a, b, c]` composes already-built layers or sequential models without any monad.
 
-We avoid layer-specific "proof-eliding" macros here; prefer the named-field APIs in `NN.API.Neural`
-for clarity and stable documentation.
+Both are scoped syntax in the `TorchLean` namespace, so they become available after
+`open TorchLean`. The `!` suffix keeps `nn.Sequential` itself usable as a type name in expressions
+such as `nn.Sequential σ τ`.
 -/
 
 @[expose] public section
 
-
 namespace TorchLean
 
-/-- Compose `Seq` models without chaining `>>>` manually. -/
-syntax (name := seqLit) "seq!" term,+ : term
+/--
+`nn.Sequential![a, b, c]` builds a sequential model from monadic layer builders.
 
-/-!
-## Sequential Literals
+Each entry is run in order in the ambient monad and the results are composed left to right with
+`TorchLean.nn.compose`, so the output shape of every entry must match the input shape of
+the next. A single entry is converted to a `Sequential` model with
+`TorchLean.nn.AsSequential.asSequential`. Entries may be layers or sequential models.
 
-TorchLean sequential models are *shape-indexed* (`Seq σ τ`), so we cannot use a plain `List` of
-layers like PyTorch does (a `List` would require every element to have the same type).
-
-Instead we provide macros that expand to ordinary `Seq` composition while still letting users
-write “list-shaped” model definitions.
+Example:
+```lean
+-- As close to `torch.nn.Sequential([...])` as a shape-indexed model can get: the entries are
+-- builders, they run in order, and the shapes have to line up or the model does not compile.
+def model : nn.Builder (nn.Sequential [2] [1]) :=
+  nn.Sequential![
+    nn.linear 2 8,
+    nn.relu,
+    nn.linear 8 1
+  ]
+```
 -/
-
--- NOTE: This must *not* reserve the keyword `nn.Sequential`, because that breaks parsing of
--- expressions like `nn.Sequential σ τ` where `nn.Sequential` is used as a constant/type name.
---
--- So we provide the `...!` form (with `!`): `nn.Sequential![...]`.
-syntax (name := nnSequentialBangLit) "nn.Sequential!" "[" term,+ "]" : term
-
-private meta def mkGlobalIdent (val : Lean.Name) : Lean.Ident :=
-  -- Use a *macro-scope-free* identifier, so expansions refer to the actual constant name
-  -- (e.g. `...compAny`) instead of a macro-scoped one (`...compAny✝`).
-  ⟨Lean.Syntax.ident Lean.SourceInfo.none (toString val).toRawSubstring val []⟩
+scoped syntax (name := nnSequentialBangLit) "nn.Sequential!" "[" term,+ "]" : term
 
 macro_rules (kind := nnSequentialBangLit)
   | `(nn.Sequential![$a:term]) =>
-      let f := mkGlobalIdent `_root_.TorchLean.nn.Internal.AsSequential.asSequential
       `(do
         let a ← ($a)
-        pure ($f a))
+        pure (TorchLean.nn.AsSequential.asSequential a))
   | `(nn.Sequential![$a:term, $b:term]) =>
-      let f := mkGlobalIdent `_root_.TorchLean.nn.Internal.compose
       `(do
         let a ← ($a)
         let b ← ($b)
-        pure ($f a b))
+        pure (TorchLean.nn.compose a b))
   | `(nn.Sequential![$a:term, $b:term, $rest:term,*]) =>
-      let f := mkGlobalIdent `_root_.TorchLean.nn.Internal.compose
       `(do
         let a ← ($a)
         let bc ← (nn.Sequential![$b, $rest,*])
-        pure ($f a bc))
+        pure (TorchLean.nn.compose a bc))
 
-macro_rules (kind := seqLit)
-  | `(seq! $a:term) => `($a)
-  | `(seq! $a:term, $b:term) =>
-      let f := mkGlobalIdent `_root_.TorchLean.nn.Internal.compose
-      `($f $a $b)
-  | `(seq! $a:term, $b:term, $rest:term,*) =>
-      let f := mkGlobalIdent `_root_.TorchLean.nn.Internal.compose
-      `($f $a (seq! $b, $rest,*))
+/--
+`nn.compose![a, b, c]` composes already-built layers and sequential models without a monad.
 
-/-- Build a `TorchLean.TensorPack` from comma-separated tensors. -/
-syntax (name := tensorpackLit) "_root_.TorchLean.TensorPack!" term,+ : term
+Entries are composed left to right with `TorchLean.nn.compose`, so the output shape of
+every entry must match the input shape of the next. A single entry is returned unchanged.
 
-macro_rules (kind := tensorpackLit)
-  | `(_root_.TorchLean.TensorPack! $x:term) =>
-      `(.cons $x .nil)
-  | `(_root_.TorchLean.TensorPack! $x:term, $rest:term,*) =>
-      `(.cons $x (_root_.TorchLean.TensorPack! $rest,*))
+Example:
+```lean
+-- The same list spelling for models that are already built, with no monad in the way.
+def stack (first : nn.Sequential [4] [8]) (second : nn.Sequential [8] [2]) :
+    nn.Sequential [4] [2] :=
+  nn.compose![first, second]
+```
+-/
+scoped syntax (name := nnComposeBangLit) "nn.compose!" "[" term,+ "]" : term
+
+macro_rules (kind := nnComposeBangLit)
+  | `(nn.compose![$a:term]) => `($a)
+  | `(nn.compose![$a:term, $b:term]) => `(TorchLean.nn.compose $a $b)
+  | `(nn.compose![$a:term, $b:term, $rest:term,*]) =>
+      `(TorchLean.nn.compose $a (nn.compose![$b, $rest,*]))
 
 end TorchLean

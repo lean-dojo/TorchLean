@@ -8,6 +8,7 @@ module
 
 public import NN.MLTheory.CROWN.Graph.Engine.Base
 public import NN.MLTheory.CROWN.Graph.Engine.IBP
+public import NN.MLTheory.CROWN.Graph.Engine.Refinement
 public import NN.MLTheory.CROWN.Graph.Engine.Derivatives
 public import NN.MLTheory.CROWN.Graph.Engine.Affine
 public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Run
@@ -20,6 +21,7 @@ Executable graph engine for interval propagation, affine forms, and CROWN-style 
 
 - `Engine.Base`: flat vectors, boxes, parameter stores, and shared tensor helpers.
 - `Engine.IBP`: interval bound propagation.
+- `Engine.Refinement`: optional input subdivision with a shared work budget.
 - `Engine.Derivatives`: first- and second-derivative interval passes.
 - `Engine.Affine`: affine-form propagation.
 - `Engine.CROWN`: forward CROWN/DeepPoly bounds.

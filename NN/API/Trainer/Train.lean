@@ -6,13 +6,14 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Trainer.Train.Regression
-public import NN.API.Trainer.Train.OneHotCrossEntropy
-public import NN.API.Trainer.Train.Custom
-public import NN.API.Trainer.Train.Streams
+public import NN.API.Trainer.Train.Loop
 
 /-!
-# Training Objectives
+# Training
 
-Regression, cross-entropy, custom-loss, and stream training.
+Import aggregator for the training entry points. The implementation lives in
+`NN.API.Trainer.Train.Loop`: `Trainer.train`, `predict`, `predictMany`, `load`, `trainStream`,
+and `trainAlternating`, all written over `Trainer.Session`.
 -/
+
+@[expose] public section

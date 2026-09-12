@@ -11,10 +11,11 @@ public import NN.Examples.Optimization.MuonCertificates
 /-!
 # Optimization Examples
 
-Examples showing how optimizer statements are consumed from downstream proof code.
+A concrete Muon direction and parameter update, followed by conditional backend proof examples.
 
 Reusable optimizer statements live under `NN.MLTheory.Optimization`. This folder gives short
-worked examples that use those statements through the public `TorchLean.optim` names.
+worked examples that use the `Optim.Muon` certificate API. Runtime optimizer configuration
+uses `TorchLean.optim`.
 -/
 
 @[expose] public section

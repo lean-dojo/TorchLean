@@ -7,16 +7,16 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Seeded
-public import NN.Spec.Models.Mamba
+public import NN.Runtime.Autograd.Model.Mamba
 
 /-!
 # Mamba Models
 
-Reusable configuration, model constructors, and text helpers for Mamba-style sequence models.
+Configuration and a language-model constructor for selective Mamba-1 sequence models.
 
-The trainable model path uses TorchLean autograd layers and therefore runs on the CPU and CUDA
-backends.  The spec-backed deterministic helpers below are kept as small mathematical reference
-utilities; runnable training examples use the autograd constructor.
+The recurrent core uses causal depthwise convolution, input-dependent time steps and B/C vectors,
+learned negative state rates, and a gated readout. It is built from generic differentiable
+operations shared by CPU and CUDA execution.
 -/
 
 @[expose] public section
@@ -24,127 +24,90 @@ utilities; runnable training examples use the autograd constructor.
 namespace TorchLean
 
 
-open Spec Tensor
+open Spec TorchLean TorchLean.Tensor
 
 namespace nn
 namespace models
 namespace Mamba
 
-/-- Configuration for the trainable byte-level Mamba-style language model. -/
+/-- Configuration for the trainable one-hot-token Mamba language model. -/
 structure Config where
-  vocab : Nat
-  stateDim : Nat
+  /-- Number of token categories accepted and predicted at each sequence position. -/
+  vocabularySize : Nat
+  /-- Output feature width of the Mamba block, before the vocabulary projection. -/
+  modelWidth : Nat
+  /-- Expanded channels per model feature in the convolution and recurrent path. -/
+  expansion : Nat := 2
+  /-- Diagonal recurrent states per expanded channel. -/
+  stateWidth : Nat := 16
+  /-- Newest-first taps in the causal depthwise convolution. -/
+  kernelWidth : Nat := 4
 deriving Repr
 
-/-- One-hot token shape `leading ++ (seqLen × vocab)`. -/
-abbrev inputShape (cfg : Config) (seqLen : Nat)
-    (leading : List Nat := []) : List Nat :=
-  leading ++ [seqLen, cfg.vocab]
+namespace Config
 
-/-- Output-logit shape `leading ++ (seqLen × vocab)`. -/
-abbrev outputShape (cfg : Config) (seqLen : Nat)
-    (leading : List Nat := []) : List Nat :=
-  leading ++ [seqLen, cfg.vocab]
+/-- Internal Mamba dimensions passed unchanged to the trainable layer. -/
+def options (config : Config) : Runtime.Autograd.Model.Mamba.Options :=
+  { expansion := config.expansion
+    stateWidth := config.stateWidth
+    kernelWidth := config.kernelWidth }
 
-/--
-Trainable Mamba-style causal language model over one-hot token inputs.
+/-- Validate model dimensions before allocating recurrent or projection parameters. -/
+def validate (config : Config) (sequenceLength : Nat) : Except String Unit := do
+  if sequenceLength = 0 then
+    throw "Mamba: sequence length must be positive"
+  if config.vocabularySize = 0 then
+    throw "Mamba: vocabulary size must be positive"
+  if config.modelWidth = 0 then
+    throw "Mamba: model width must be positive"
+  config.options.validate
 
-Architecture:
+/-- One-hot input shape `batchShape × sequenceLength × vocabularySize`. -/
+abbrev input (config : Config) (sequenceLength : Nat)
+    (batchShape : Shape := []) : Shape :=
+  batchShape.concat [sequenceLength, config.vocabularySize]
 
-`mamba(seqLen, vocab, stateDim) → linear(stateDim → vocab)` applied at every time step.
+/-- Logit output shape `batchShape × sequenceLength × vocabularySize`. -/
+abbrev output (config : Config) (sequenceLength : Nat)
+    (batchShape : Shape := []) : Shape :=
+  batchShape.concat [sequenceLength, config.vocabularySize]
 
-The recurrent core is a gated diagonal state-space update implemented with autograd-covered
-TorchLean ops. Passing `--device cuda` to a runner that instantiates this model trains the same
-parameters on the CUDA backend.
--/
-def textLM (cfg : Config) (seqLen : Nat) (leading : List Nat := []) :
-    nn.Builder (nn.Sequential (inputShape cfg seqLen leading) (outputShape cfg seqLen leading)) := do
-  let recurrent ← nn.mamba seqLen cfg.vocab cfg.stateDim (leading := leading)
-  let headRaw ← linear cfg.stateDim cfg.vocab
-    (leading := leading ++ [seqLen])
-  let head : nn.Sequential
-      (leading ++ [seqLen, cfg.stateDim])
-      (leading ++ [seqLen, cfg.vocab]) := by
-    simpa [List.append_assoc] using headRaw
-  pure (recurrent >>> head)
-
-namespace Reference
-
-/-- Dimensions used by the full selective reference block. -/
-structure SelectiveConfig extends Config where
-  ssmStateDim : Nat
-  convWidth : Nat
-deriving Repr
-
-namespace Internal
-
-/-- Deterministic scalar initializer shared by the reference Mamba blocks. -/
-def centeredHash (seed modulus : Nat) : Float :=
-  (Float.ofNat (seed % modulus) - Float.ofNat (modulus / 2)) / Float.ofNat modulus
-
-end Internal
-
-/-- Compact diagonal Mamba-style block for spec-level reference evaluation. -/
-def compact (cfg : Config) :
-    _root_.Models.MambaBlockSpec Float cfg.vocab cfg.stateDim cfg.vocab :=
-  { inProj := Tensor.generate [cfg.vocab, cfg.stateDim] fun coordinates =>
-      Internal.centeredHash
-        (coordinates.getD 0 0 * 17 + coordinates.getD 1 0 * 31 + 3) 47 / 4.0
-    gateProj := Tensor.generate [cfg.vocab, cfg.stateDim] fun coordinates =>
-      Internal.centeredHash
-        (coordinates.getD 0 0 * 13 + coordinates.getD 1 0 * 19 + 7) 43 / 5.0
-    outProj := Tensor.generate [cfg.stateDim, cfg.vocab] fun coordinates =>
-      Internal.centeredHash
-        (coordinates.getD 0 0 * 29 + coordinates.getD 1 0 * 11 + 5) 53 / 3.0
-    ssm :=
-      { A := Tensor.generate [cfg.stateDim] fun coordinates =>
-          0.82 + Float.ofNat (coordinates.getD 0 0 % 5) * 0.025
-        B := Tensor.generate [cfg.stateDim] fun coordinates =>
-          0.12 + Float.ofNat (coordinates.getD 0 0 % 3) * 0.015
-        C := Tensor.generate [cfg.stateDim] fun coordinates =>
-          0.90 - Float.ofNat (coordinates.getD 0 0 % 4) * 0.03
-        D := Tensor.generate [cfg.stateDim] fun coordinates =>
-          0.08 + Float.ofNat (coordinates.getD 0 0 % 2) * 0.02 } }
+end Config
 
 /--
-Full selective Mamba-style block with causal depthwise convolution and token-dependent scan
-parameters.  This deterministic initializer is meant for reference evaluation rather than
-checkpoint-quality training.
--/
-def selective (cfg : SelectiveConfig) :
-    _root_.Models.SelectiveMambaBlockSpec Float
-      cfg.vocab cfg.stateDim cfg.ssmStateDim cfg.vocab cfg.convWidth :=
-  { xProj := Tensor.generate [cfg.vocab, cfg.stateDim] fun coordinates =>
-      Internal.centeredHash
-        (coordinates.getD 0 0 * 17 + coordinates.getD 1 0 * 31 + 3) 47 * 2.0
-    zProj := Tensor.generate [cfg.vocab, cfg.stateDim] fun coordinates =>
-      Internal.centeredHash
-        (coordinates.getD 0 0 * 13 + coordinates.getD 1 0 * 19 + 7) 43 * 2.0
-    convKernel := Tensor.generate [cfg.convWidth, cfg.stateDim] fun coordinates =>
-      0.4 + Internal.centeredHash
-        (coordinates.getD 0 0 * 23 + coordinates.getD 1 0 * 7 + 11) 41 * 0.2
-    convBias := Tensor.generate [cfg.stateDim] fun coordinates =>
-      Internal.centeredHash (coordinates.getD 0 0 * 5 + 3) 37 * 0.2
-    dtProj := Tensor.generate [cfg.stateDim, cfg.stateDim] fun coordinates =>
-      Internal.centeredHash
-        (coordinates.getD 0 0 * 19 + coordinates.getD 1 0 * 17 + 5) 47 * 0.2
-    dtBias := Tensor.generate [cfg.stateDim] fun coordinates =>
-      -1.5 + Float.ofNat (coordinates.getD 0 0 % 5) * 0.1
-    A := Tensor.generate [cfg.stateDim, cfg.ssmStateDim] fun coordinates =>
-      0.2 + Float.ofNat ((coordinates.getD 0 0 + coordinates.getD 1 0) % 7) * 0.03
-    bProj := Tensor.generate [cfg.stateDim, cfg.ssmStateDim] fun coordinates =>
-      Internal.centeredHash
-        (coordinates.getD 0 0 * 11 + coordinates.getD 1 0 * 29 + 13) 53
-    cProj := Tensor.generate [cfg.stateDim, cfg.ssmStateDim] fun coordinates =>
-      Internal.centeredHash
-        (coordinates.getD 0 0 * 31 + coordinates.getD 1 0 * 7 + 17) 59
-    dSkip := Tensor.generate [cfg.stateDim] fun coordinates =>
-      0.35 + Float.ofNat (coordinates.getD 0 0 % 3) * 0.03
-    outProj := Tensor.generate [cfg.stateDim, cfg.vocab] fun coordinates =>
-      Internal.centeredHash
-        (coordinates.getD 0 0 * 29 + coordinates.getD 1 0 * 11 + 5) 53 / 3.0 }
+Trainable selective Mamba-1 language model over one-hot token inputs.
 
-end Reference
+The block maps each `vocabularySize`-wide token to `modelWidth` features, and a final affine map
+produces vocabulary logits at every position. Its internal width is `expansion * modelWidth`.
+Every sequence starts with zero hidden state and empty convolution history; each batch element has
+its own recurrence while sharing the eleven Mamba tensors and vocabulary projection.
+
+The time-step projection is a dense matrix, matching `Models.SelectiveMambaBlockSpec`. The usual
+low-rank Mamba checkpoint stores two factors instead; their product matches a forward map here, but
+training a dense matrix gives a different parameterization. `Model.Mamba.runArray` exposes explicit
+state and convolution history for streaming computations.
+-/
+def languageModel (config : Config) (sequenceLength : Nat) (batchShape : Shape := []) :
+    nn.Builder
+      (nn.Sequential
+        (config.input sequenceLength batchShape)
+        (config.output sequenceLength batchShape)) := by
+  match config.validate sequenceLength with
+  | .error message =>
+      exact pure <| nn.Internal.invalidConfiguration
+        (config.input sequenceLength batchShape)
+        (config.output sequenceLength batchShape)
+        "Mamba.languageModel" message
+  | .ok () =>
+      have model := do
+        let recurrent ←
+          nn.mamba sequenceLength config.vocabularySize config.modelWidth
+            (batchShape := batchShape)
+            (options := config.options)
+        let outputProjection ← linear config.modelWidth config.vocabularySize
+          (batchShape := batchShape.appendDim sequenceLength)
+        pure (recurrent >>> outputProjection)
+      simpa only [Config.input, Config.output, Shape.appendDim_appendDim_eq_concat] using model
 
 end Mamba
 end models

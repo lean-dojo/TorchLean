@@ -6,12 +6,12 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Floats.IEEEExec.Bridge.LeanFloat32.RationalRounding
 public import NN.Floats.IEEEExec.Bridge.LeanFloat32.Representation
 public import NN.Floats.IEEEExec.Bridge.LeanFloat32.Rounding
 import NN.Floats.IEEEExec.Bridge.FP32.Compare
-import NN.Floats.IEEEExec.Bridge.LeanFloat32.RationalRounding
-import NN.Floats.IEEEExec.Encoding.Negation
 import NN.Floats.IEEEExec.Rules.SpecialRules
+public import NN.Floats.IEEEExec.Exec32.Compare
 
 /-!
 # Lean `Float32` and `IEEE32Exec`
@@ -65,6 +65,10 @@ namespace Float32Bridge
     (Float32.ofModel x).toModel = x := by
   rfl
 
+/-- `Float32` and its model are the same data, so the round trip is the identity by `rfl`.
+
+This direction is the one that matters for rewriting: a goal about the opaque `Float32` can be
+turned into a goal about the model without any side condition. -/
 @[simp] theorem ofModel_toModel (x : _root_.Float32) :
     Float32.ofModel x.toModel = x := by
   cases x
@@ -132,14 +136,17 @@ namespace Float32Bridge
     Float32.beq a b = Float32.Model.beq a.toModel b.toModel := by
   rfl
 
+/-- `Float32.isFinite` is the model predicate. -/
 @[simp] theorem isFinite_eq_model (a : _root_.Float32) :
     Float32.isFinite a = a.toModel.isFinite := by
   rfl
 
+/-- `Float32.isInf` is the model predicate. -/
 @[simp] theorem isInf_eq_model (a : _root_.Float32) :
     Float32.isInf a = a.toModel.isInf := by
   rfl
 
+/-- `Float32.isNaN` is the model predicate. -/
 @[simp] theorem isNaN_eq_model (a : _root_.Float32) :
     Float32.isNaN a = a.toModel.isNaN := by
   rfl
@@ -731,20 +738,28 @@ theorem model_isNaN_eq_ieee32 (a : Float32.Model) :
         IEEE32Exec.isNaN, Float.Model.UnpackedFloat.unpack, hExp255]
       split_ifs <;> simp [Float.Model.UnpackedFloat.isNaN, hField]
 
+/-- Finiteness agrees between Lean `Float32` and our `IEEE32Exec` encoding. -/
 @[simp] theorem float32_isFinite_eq_ieee32 (a : _root_.Float32) :
     Float32.isFinite a = IEEE32Exec.isFinite (toIEEE32Exec a) := by
   exact model_isFinite_eq_ieee32 a.toModel
 
+/-- Infinity detection agrees between Lean `Float32` and `IEEE32Exec`. -/
 @[simp] theorem float32_isInf_eq_ieee32 (a : _root_.Float32) :
     Float32.isInf a = IEEE32Exec.isInf (toIEEE32Exec a) := by
   exact model_isInf_eq_ieee32 a.toModel
 
+/-- NaN detection agrees between Lean `Float32` and `IEEE32Exec`, payload and all. -/
 @[simp] theorem float32_isNaN_eq_ieee32 (a : _root_.Float32) :
     Float32.isNaN a = IEEE32Exec.isNaN (toIEEE32Exec a) := by
   exact model_isNaN_eq_ieee32 a.toModel
 
 /-! ## Comparisons -/
 
+/-- The shape of a finite binary32 payload: either a subnormal at the minimal exponent `-149`
+with a mantissa below `2^23`, or a normal number with a mantissa in `[2^23, 2^24)`.
+
+The comparison lemmas below all need this same case split, so it is named once here instead of
+being restated at every use site. -/
 private def finiteBounds (mantissa : Nat) (exponent : Int) : Prop :=
   (exponent = -149 ∧ mantissa < 2 ^ 23) ∨
     (-149 ≤ exponent ∧ 2 ^ 23 ≤ mantissa ∧ mantissa < 2 ^ 24)
@@ -946,6 +961,11 @@ private lemma cmpDyadic_finite_zero
 @[simp] private lemma negInf_signBit : IEEE32Exec.signBit IEEE32Exec.negInf = true := by decide
 @[simp] private lemma posInf_signBit : IEEE32Exec.signBit IEEE32Exec.posInf = false := by decide
 
+/-- Model comparison and `IEEE32Exec.compare` agree, including the unordered NaN case.
+
+Comparison is where the two developments are most easily out of step, since IEEE 754 asks for a
+partial order rather than a total one; carrying `Option Ordering` on both sides is what makes the
+agreement statable at all. The three user-facing operators below are corollaries. -/
 theorem model_compare_eq_ieee32 (a b : Float32.Model) :
     Float32.Model.compare a b =
       IEEE32Exec.compare (modelToIEEE32Exec a) (modelToIEEE32Exec b) := by
@@ -1059,36 +1079,43 @@ theorem model_compare_eq_ieee32 (a b : Float32.Model) :
           · simpa [Float.Model.UnpackedFloat.compare, signToBool] using congrArg some
               (cmpDyadic_positive_canonical hapos hbpos habounds hbbounds).symm
 
+/-- Strict less-than in terms of `IEEE32Exec.compare`. -/
 theorem model_lt_eq_ieee32 (a b : Float32.Model) :
     Float32.Model.lt a b =
       (IEEE32Exec.compare (modelToIEEE32Exec a) (modelToIEEE32Exec b) == some .lt) := by
   simp only [Float32.Model.lt, Float.Model.UnpackedFloat.lt]
   rw [← Float32.Model.compare, model_compare_eq_ieee32]
 
+/-- Less-or-equal in terms of `IEEE32Exec.compare`; `Option.any` makes an unordered pair false. -/
 theorem model_le_eq_ieee32 (a b : Float32.Model) :
     Float32.Model.le a b =
       (IEEE32Exec.compare (modelToIEEE32Exec a) (modelToIEEE32Exec b)).any Ordering.isLE := by
   simp only [Float32.Model.le, Float.Model.UnpackedFloat.le]
   rw [← Float32.Model.compare, model_compare_eq_ieee32]
 
+/-- Float equality in terms of `IEEE32Exec.compare`, so `NaN ≠ NaN` and `-0.0 = 0.0` both fall out
+of the comparison rather than being special cased. -/
 theorem model_beq_eq_ieee32 (a b : Float32.Model) :
     Float32.Model.beq a b =
       (IEEE32Exec.compare (modelToIEEE32Exec a) (modelToIEEE32Exec b) == some .eq) := by
   simp only [Float32.Model.beq, Float.Model.UnpackedFloat.beq]
   rw [← Float32.Model.compare, model_compare_eq_ieee32]
 
+/-- `Float32.lt` in terms of `IEEE32Exec.compare`. -/
 theorem float32_lt_eq_ieee32 (a b : _root_.Float32) :
     Float32.lt a b =
       (IEEE32Exec.compare (toIEEE32Exec a) (toIEEE32Exec b) == some .lt) := by
   rw [lt_eq_model, model_lt_eq_ieee32]
   rfl
 
+/-- `Float32.le` in terms of `IEEE32Exec.compare`. -/
 theorem float32_le_eq_ieee32 (a b : _root_.Float32) :
     Float32.le a b =
       (IEEE32Exec.compare (toIEEE32Exec a) (toIEEE32Exec b)).any Ordering.isLE := by
   rw [le_eq_model, model_le_eq_ieee32]
   rfl
 
+/-- `Float32.beq` in terms of `IEEE32Exec.compare`. -/
 theorem float32_beq_eq_ieee32 (a b : _root_.Float32) :
     Float32.beq a b =
       (IEEE32Exec.compare (toIEEE32Exec a) (toIEEE32Exec b) == some .eq) := by

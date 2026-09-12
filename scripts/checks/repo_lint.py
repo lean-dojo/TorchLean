@@ -12,8 +12,10 @@ Checks are split into:
 from __future__ import annotations
 
 import argparse
+import os
 import pathlib
 import re
+import subprocess
 import urllib.parse
 from dataclasses import dataclass
 from typing import Iterable
@@ -25,22 +27,43 @@ LINT_SCOPE_SENTINEL = REPO_ROOT / "NN/MLTheory/CROWN/Lyapunov/Certificate.lean"
 # External trees that may exist in a developer checkout but are not part of TorchLean's core sources
 # and must not affect repo policy/CI. These are user-cloned repos outside TorchLean's source tree.
 #
-# Important: `Path.rglob` walks the filesystem, not git-tracked files, so this linter explicitly skips
-# these directories to ensure `lake lint` does not start depending on optional checkouts.
+# Source discovery skips these directories so optional checkouts do not affect `lake lint`.
 VENDORED_DIR_NAMES = {
     "Two-Stage_Neural_Controller_Training",  # optional external checkout (α,β-CROWN workflows)
     "PINN_verification",  # user-cloned external repo (gitignored)
 }
 
+# Prune these before descent: filtering yielded paths still crawls their contents on EFS.
+SOURCE_EXCLUDED_DIR_NAMES = VENDORED_DIR_NAMES | {
+    ".git",
+    ".lake",
+    ".cache",
+    ".venv",
+    ".bundle",
+    ".jekyll-cache",
+    ".sass-cache",
+    ".verso",
+    ".pytest_cache",
+    ".mypy_cache",
+    "__pycache__",
+    "node_modules",
+    "_out",
+    "_site",
+    "vendor",
+}
+
+# These output paths have ordinary names that can also occur in authored source directories.
+GENERATED_DOC_DIRS = {
+    "docs/manual",
+    "home_page/docs",
+    "home_page/manual",
+    "home_page/blueprint/print",
+    "home_page/blueprint/web",
+}
+
 # Keep the trusted boundary explicit: axioms must be quarantined, named, and documented.
 # TorchLean currently has no custom axioms.
 ALLOWED_AXIOMS: dict[str, set[str]] = {}
-
-# Narrow allowlist for linter suppressions that are noisy in API entrypoint files but do
-# not weaken proofs. Keep this list small and review each addition.
-ALLOWED_LINTER_SUPPRESSION_FILES = {
-    "NN/Tensor.lean",
-}
 
 # These modules were pure compatibility routes or duplicate import surfaces. New code must use the
 # canonical subsystem umbrellas and namespaces instead of recreating them.
@@ -50,6 +73,8 @@ REMOVED_COMPATIBILITY_PATHS = {
     "NN/Spec/Core/Tensor/API.lean",
     "NN/Examples/Verification/LiRPA.lean",
     "NN/GraphSpec/Models/TorchLean/Fno1d.lean",
+    "NN/GraphSpec/Models/TorchLean.lean",
+    "NN/GraphSpec/Models/TorchLean/Autoencoder.lean",
     "NN/Library.lean",
     "NN/API/TorchLean/Trainer/Verify.lean",
     "NN/API/TorchLean/Data/DotInfo.lean",
@@ -64,7 +89,7 @@ REMOVED_COMPATIBILITY_PATHS = {
     "NN/Spec/Core/Utils.lean",
     "NN/Spec/Models/CommonHelpers.lean",
     "NN/Spec/Layers/Utils.lean",
-    "NN/Verification/TorchLean/Proved/Correctness/Eval/Coverage.lean",
+    "NN/Verification/Builtin/Proved/Correctness/Eval/Coverage.lean",
     "NN/MLTheory/CROWN/Lyapunov/Oracle.lean",
     "NN/MLTheory/CROWN/Tactics/CrownOracle.lean",
     "NN/Spec/Layers/Pooling/Aliases.lean",
@@ -75,6 +100,8 @@ REMOVED_COMPATIBILITY_PATHS = {
     "NN/Spec/Core/TensorArray.lean",
     "NN/Spec/Core/TensorBridge.lean",
     "NN/GraphSpec/Models/TorchLean/Cnn.lean",
+    "NN/GraphSpec/Models/TorchLean/Mlp.lean",
+    "NN/GraphSpec/Models/TorchLean/TransformerBlock.lean",
     "NN/Proofs/Autograd/Tape/Ops/Norm/BatchNormChannelFirst.lean",
     "NN/Proofs/RuntimeApprox/NF/Conv.lean",
     "NN/Proofs/RuntimeApprox/NF/ConvBackward.lean",
@@ -87,14 +114,38 @@ REMOVED_COMPATIBILITY_PATHS = {
     "NN/Runtime/Autograd/Train/IoLoader/Parsing.lean",
     "NN/Runtime/Autograd/Train/IoLoader/Csv.lean",
     "NN/Runtime/Autograd/Train/IoLoader/Npy.lean",
-    "NN/Verification/TorchLean/Verified.lean",
-    "NN/Verification/TorchLean/Proved/Correctness/Eval/Pooling.lean",
+    "NN/Verification/Builtin/Verified.lean",
+    "NN/Verification/Builtin/Proved/Correctness/Eval/Pooling.lean",
     "NN/Runtime/Context.lean",
     "NN/Widgets/Runtime/Context.lean",
     "NN/Runtime/Optim/GradientUtils.lean",
     "NN/Spec/Core/Tensor/Packed.lean",
     "NN/Proofs/Autograd/Runtime/PackedTensor.lean",
     "NN/API/Data/PackedDataset.lean",
+    "NN/API/Data/TensorDataset.lean",
+    "NN/API/Models/Transformer.lean",
+    "NN/API/Neural/Heads.lean",
+    "NN/API/Neural/Layers/Normalization.lean",
+    "NN/API/Scalar.lean",
+    "NN/API/Trainer/Manual.lean",
+    "NN/API/Trainer/Manual/Control.lean",
+    "NN/API/Trainer/Manual/Core.lean",
+    "NN/API/Trainer/Manual/Evaluation.lean",
+    "NN/API/Trainer/Manual/Execution.lean",
+    "NN/API/Trainer/Manual/Loaders.lean",
+    "NN/API/Trainer/Manual/Loops.lean",
+    "NN/API/Trainer/Manual/Optimizer.lean",
+    "NN/API/Trainer/Manual/Stepper.lean",
+    "NN/API/Trainer/Manual/Streams.lean",
+    "NN/API/Trainer/Predict.lean",
+    "NN/API/Trainer/Train/Custom.lean",
+    "NN/API/Trainer/Train/OneHotCrossEntropy.lean",
+    "NN/API/Trainer/Train/Regression.lean",
+    "NN/API/Trainer/Train/Streams.lean",
+    "NN/API/Verification/Trainer.lean",
+    "NN/Tensor/Printing.lean",
+    "NN/Tensor/Syntax.lean",
+    "NN/Runtime/Autograd/Model/Random.lean",
 }
 
 REMOVED_COMPATIBILITY_PREFIXES = (
@@ -215,6 +266,24 @@ DOC_FACT_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 
 PUBLIC_DOC_API_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (
+        re.compile(
+            r"\bData\.(?:TensorSource|SupervisedEpochs)\b|\bTensorSource\.load\b"
+        ),
+        "single tensor files load through `Tensor.load`; dataset source records are reserved "
+        "for paired supervised or labeled data, and typed manual loops use `Data.Loader`.",
+    ),
+    (
+        re.compile(r"\b(?:inputShape|outputShape|targetShape)\b(?!\?)"),
+        "public tensor signatures use `input`, `output`, or `target`; use `σ`/`τ` for "
+        "invisible generic shape indices and reserve a `Shape` suffix for names that "
+        "distinguish multiple shapes.",
+    ),
+    (
+        re.compile(r"\bdata/model_zoo/"),
+        "example artifacts live under `data/examples`; the removed ModelZoo name must not "
+        "reappear in public documentation.",
+    ),
+    (
         re.compile(r"\bRuntime\.(?:mm|bmm)\b"),
         "public docs should use generic `Runtime.matmul`; the rank-specific `mm` and `bmm` APIs "
         "were removed.",
@@ -222,6 +291,74 @@ PUBLIC_DOC_API_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(r"(?<![A-Za-z0-9_])\.dim\b"),
         "public docs should write concrete tensor shapes with dimension-list syntax.",
+    ),
+    (
+        re.compile(
+            r"(?<![A-Za-z0-9_])\.scalar\b|\b(?:Shape|Tensor)\.scalar\b"
+        ),
+        "public docs should write rank-zero tensor shapes as `[]` and rank-zero values as "
+        "ordinary typed literals, not recursive representation constructors.",
+    ),
+    (
+        re.compile(r"(?<![0-9])\.[12]\b(?!\.)"),
+        "public docs should destructure multi-value results instead of using anonymous `.1` and "
+        "`.2` projections.",
+    ),
+    (
+        re.compile(r"\b(?:stateGradient|stateCotangent|inputCotangent)\b"),
+        "public docs should name destructured VJP values `gradient` and `inputGradient`.",
+    ),
+    (
+        re.compile(
+            r"\b(?:ValueAndGradient|valueAndGradient|LossAndGradients|lossAndGradients|"
+            r"VjpResult|LossAndGradient|lossAndGradient)\b"
+        ),
+        "public docs should use `grad ... (value := true)` and destructure multi-value results.",
+    ),
+    (
+        re.compile(r"\b(?:gradAndValue|stepWithLoss|stepWithGradients)\b"),
+        "public docs should use one base operation with named options: "
+        "`grad ... (value := true)`, `step ... (loss := true)`, or `update`.",
+    ),
+    (
+        re.compile(
+            r"\b(?:TrainReport|LossEndpoints|initialValue|finalValue|initialLoss|finalLoss)\b"
+        ),
+        "public docs should describe training loss through `Training.LossProgress` and its "
+        "`.before` / `.after` fields.",
+    ),
+    (
+        re.compile(r"\bloss[01]="),
+        "public docs should render training progress as `loss=before -> after`.",
+    ),
+    (
+        re.compile(
+            r"\b(?:takeFlagValueOnce|takeFlagValueDefault|takeRequiredFlagValue|"
+            r"takeParsedFlagDefault|takeBoolFlagOnce|takePositionalDefault|"
+            r"takeNatFlagOnce|takeNatFlagDefault|takeFloatFlagDefault|"
+            r"takeRequiredFloatFlag|takeBoolValueFlagDefault|takeSwitchDefault|"
+            r"takePathFlagOnce|takePathFlagDefault|takeRequiredPathFlag|"
+            r"takeStepsFlagDefault)\b"
+        ),
+        "public docs should use `takeX?` for optional values, `takeX (default := ...)` for "
+        "defaults, and `requireX` for required values.",
+    ),
+    (
+        re.compile(
+            r"\b(?:writeLogTo|writeLossComparisonTo)\b|"
+            r"\bLogDestination\.(?:parseValue\b|parse\?(?![A-Za-z0-9_])|pathD\b)"
+        ),
+        "public docs should use the destination-based `writeLog` / `writeLossComparison` "
+        "operations and `LogDestination.parse`, `resolve`, or `path?`.",
+    ),
+    (
+        re.compile(
+            r"\b(?:resolvedLogPath|nextEpochWith|collectRolloutSessionWith|"
+            r"collectRolloutCheckedSessionWith|collectRolloutWith|collectRolloutNativeWith)\b|"
+            r"\bLogDestination\.path(?!\?)\b"
+        ),
+        "public docs should keep one log destination, use `mapNextEpoch`, and name rollout "
+        "sources explicitly with `collectRolloutFrom...`.",
     ),
     (
         re.compile(
@@ -299,12 +436,54 @@ PUBLIC_EXAMPLE_PREFIXES = (
     "NN/Examples/Quickstart/",
     "NN/Examples/Models/",
     "NN/Examples/Data/",
+    "NN/Examples/Factorization/",
+    "NN/Examples/Functional/",
+    "NN/Examples/Interop/",
+    "NN/Examples/Support",
 )
 
 PUBLIC_TUTORIAL_PREFIXES = (
     "NN/Examples/Quickstart/",
     "NN/Examples/Data/",
 )
+
+PUBLIC_NUMERICAL_EXAMPLE_PREFIXES = (
+    "NN/Examples/Quickstart/",
+    "NN/Examples/Models/",
+    "NN/Examples/Data/",
+    "NN/Examples/Functional/",
+    "NN/Examples/Factorization/",
+    "NN/Examples/Interop/",
+)
+
+PUBLIC_NUMERICAL_SPEC_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(
+            r"\bSpec\.(?:fill|mseSpec|getSpec|toScalarSpec|qrQSpec|qrRSpec|qrSpec|"
+            r"choleskySpec|linearSpec|matVecMulSpec|matMulSpec|"
+            r"convOutSpatial|poolOutSpatialPad)\b|"
+            r"\bActivation\.(?:reluSpec|sigmoidSpec|tanhSpec)\b|"
+            r"\b(?:Spec\.)?Tensor\.(?:addSpec|subSpec|mulSpec|divSpec|scaleSpec)\b"
+        ),
+        "runnable numerical examples should call the public `Tensor.*` or `nn.*` operation; "
+        "reserve direct computational `Spec.*` calls for proof and specification examples.",
+    ),
+    (
+        re.compile(r"^\s*def\s+[A-Z]\s*(?::|:=)", flags=re.MULTILINE),
+        "runnable numerical examples should use descriptive lowerCamelCase names for tensor values; "
+        "single-letter uppercase names are reserved for mathematical prose and type-level names.",
+    ),
+    (
+        re.compile(r"\[[^\]\n]+\]!"),
+        "runnable numerical examples should use bounded tensor indices or checked container lookup, "
+        "not forced indexing.",
+    ),
+    (
+        re.compile(r"\bunreachable!"),
+        "runnable numerical examples should report invalid runtime input explicitly, not use "
+        "`unreachable!`.",
+    ),
+]
 
 # Root-driven Lake targets that collectively typecheck maintained modules outside the dedicated
 # example and test libraries. Keep this list aligned with `lakefile.lean`.
@@ -320,6 +499,16 @@ LEAN_TYPECHECK_GLOB_PREFIXES = (
     "NN/Examples/",
     "NN/Tests/",
 )
+
+# The tensor compiler's internal language uses Lean vectors for compiler indices,
+# proof-recursive lists for syntax.
+# Public numerical-container policies apply at `NN.Tensor`, not inside this
+# implementation namespace.
+TENSOR_INTERNAL_PREFIX = "NN/Tensor/Internal/"
+TENSOR_VECTOR_BOUNDARY_FILES = {
+    "NN/Tensor/Conversion.lean",
+    "NN/Tests/Tensor/Storage.lean",
+}
 
 PUBLIC_GUIDE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (
@@ -351,8 +540,12 @@ PUBLIC_GUIDE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         "public guides should call the trained handle `trained`; `trainer.train` returns a reusable trained object, not just a report.",
     ),
     (
-        re.compile(r"\bRuntimeFit\b|\bparseRuntimeFit\b|\bparsed\.fit\b"),
-        "quickstart docs should use `RuntimeTrain`, `parseRuntimeTrain`, and `parsed.trainOptions`.",
+        re.compile(
+            r"\bRuntime(?:Fit|Train)\b|\bparseRuntime(?:Fit|Train)\b|"
+            r"\bparsed\.(?:fit|trainOptions)\b"
+        ),
+        "quickstart docs should use internal `TrainingArgs`, `parseTrainingArgs`, and "
+        "`parsed.options`.",
     ),
     (
         re.compile(r"\bfitOptionsWhenLogRequested\b|\bfitOptions\b"),
@@ -375,7 +568,7 @@ PUBLIC_GUIDE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         "public guides should show `Trainer.new` / `trainer.train`, not removed command-wrapper names.",
     ),
     (
-        re.compile(r"\bModelZoo\.Command\b|\bTrainer\.Command\b|\bTrainCommand\.run\b"),
+        re.compile(r"\bSupport\.Command\b|\bTrainer\.Command\b|\bTrainCommand\.run\b"),
         "public guides should teach `Trainer.new` / `trainer.train`; repository command glue belongs in examples.",
     ),
     (
@@ -398,6 +591,32 @@ PUBLIC_GUIDE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 
 PUBLIC_EXAMPLE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (
+        re.compile(r"\bdata/model_zoo/"),
+        "runnable example artifacts live under `data/examples`; the removed ModelZoo name must "
+        "not reappear.",
+    ),
+    (
+        re.compile(r"^\s*def\s+(?:cfg|modelCfg|cfgFor)\b", flags=re.MULTILINE),
+        "public example configuration values should use a descriptive name such as "
+        "`modelConfig` or contextual `config`, not an abbreviated top-level name.",
+    ),
+    (
+        re.compile(
+            r"\b(?:observationShape|rolloutLeadingShape|rolloutStateShape|"
+            r"rolloutLogitsShape|rolloutValueShape|actionLogitsShape|valueShape)\b"
+        ),
+        "public examples should use contextual tensor names such as `observation`, "
+        "`rolloutStates`, `rolloutLogits`, and `value` instead of repeating `Shape`.",
+    ),
+    (
+        re.compile(
+            r"^\s*(?:def|abbrev)\s+(?:batchShape|latentShape|dataShape|scoreShape|obsShape)\b",
+            flags=re.MULTILINE,
+        ),
+        "public example shape aliases should use the contextual tensor role directly, such as "
+        "`batch`, `latent`, `data`, `score`, or `observation`.",
+    ),
+    (
         re.compile(r"\bScalarShape\b|shape!|\bTensor\.T\b"),
         "public examples should write `Tensor α [dims]` and list-shaped model/dataset types.",
     ),
@@ -406,9 +625,48 @@ PUBLIC_EXAMPLE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         "public examples should use `Tensor` constructors and general indexing, not the recursive spec representation.",
     ),
     (
+        re.compile(r"\b(?:TorchLean\.)?Tensor\.Internal\b"),
+        "public examples should use the ordinary `Tensor` API, not its physical representation.",
+    ),
+    (
         re.compile(r"(?<![A-Za-z0-9_])\.dim\b"),
         "public fixed-shape examples should write `Tensor α [dims]`; `.dim` is reserved "
         "for recursive shape implementations.",
+    ),
+    (
+        re.compile(
+            r"(?<![A-Za-z0-9_])\.scalar\b|\b(?:Shape|Tensor)\.scalar\b"
+        ),
+        "public examples should write rank-zero tensors with shape `[]` and ordinary typed "
+        "literals; recursive scalar constructors belong to implementation code.",
+    ),
+    (
+        re.compile(r"(?<![0-9])\.[12]\b(?!\.)"),
+        "public examples should destructure multi-value results instead of using anonymous `.1` "
+        "and `.2` projections.",
+    ),
+    (
+        re.compile(r"\b(?:stateGradient|stateCotangent|inputCotangent)\b"),
+        "public examples should name destructured VJP values `gradient` and `inputGradient`.",
+    ),
+    (
+        re.compile(
+            r"\b(?:ValueAndGradient|valueAndGradient|LossAndGradients|lossAndGradients|"
+            r"VjpResult|LossAndGradient|lossAndGradient)\b"
+        ),
+        "public examples should use `grad ... (value := true)` and destructure multi-value results.",
+    ),
+    (
+        re.compile(r"\b(?:gradAndValue|stepWithLoss|stepWithGradients)\b"),
+        "public examples should use one base operation with named options: "
+        "`grad ... (value := true)`, `step ... (loss := true)`, or `update`.",
+    ),
+    (
+        re.compile(
+            r"\b(?:TrainReport|LossEndpoints|initialValue|finalValue|initialLoss|finalLoss)\b"
+        ),
+        "public examples should use `Training.LossProgress` and its `.before` / `.after` "
+        "fields for training loss.",
     ),
     (
         re.compile(r"\bNN\.API\.nn\b"),
@@ -439,10 +697,6 @@ PUBLIC_EXAMPLE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         "public examples should use `nn.Sequential!`, not the lowercase macro spelling.",
     ),
     (
-        re.compile(r"\bnn\.summary\b"),
-        "public examples should print `model.info`; do not introduce a second model-summary spelling.",
-    ),
-    (
         re.compile(r"\bShape\.(?:Vec|Mat|Image|Images|NCHW|vec|mat|image|images|nchw)\b"),
         "public examples should express fixed dimensions as lists or use `Shape.ofList` for computed dimensions, not domain- or layout-specific shape aliases.",
     ),
@@ -460,7 +714,7 @@ PUBLIC_EXAMPLE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
     (
         re.compile(r"\bTrainer\.Manual\.logLossEvery\b"),
-        "public examples should keep logging inline or use `Trainer.TrainSummary`; do not expose `Trainer.Manual.logLossEvery`.",
+        "public examples should keep logging inline or use `Trainer.Report`; do not expose `Trainer.Manual.logLossEvery`.",
     ),
     (
         re.compile(r"\bfitWithParams\b"),
@@ -475,14 +729,27 @@ PUBLIC_EXAMPLE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         "public examples should use the `Trainer` API or `Module.Command.run`, not a removed raw `TorchLean.Module.run` dispatcher.",
     ),
     (
-        re.compile(r"\bModule\.(lossValue|optimizerStep)\b"),
-        "public model/example training should use trained handles (`trained.predict`, callbacks, or `verify`), not raw module stepping.",
+        re.compile(
+            r"\b(?:TorchLean\.)?Module\.(?:loss|lossValue|gradState|lossAndGradState|"
+            r"initOptimizer|optimizerStep(?:WithLoss)?|state)\b"
+        ),
+        "public model/example training should use `Trainer`; advanced manual code should keep "
+        "objective operations under `Module.Objective`.",
+    ),
+    (
+        re.compile(r"\.loadState\b"),
+        "in-memory state replacement is `setState`; reserve `load` for checkpoints and external data.",
+    ),
+    (
+        re.compile(r"\bTensor\.(?:pretty|print)\b"),
+        "tensors already use Lean's standard `Repr`; use `#eval tensor` or "
+        "`IO.println (reprStr tensor)` instead of a second display API.",
     ),
     (
         re.compile(
             r"\bRealData\.fit(CifarClassifierModel|CifarRegressionModel|CsvRegressionModel|HouseholdPowerRegressionModel)\b"
         ),
-        "public model-zoo examples should use the shared example `TrainCommand` runners, not the old `*Model` wrappers.",
+        "public model examples should use the shared example `TrainCommand` runners, not the old `*Model` wrappers.",
     ),
     (
         re.compile(r"\bTrainer\.NewConfig\b|\bNewConfig\b"),
@@ -497,8 +764,8 @@ PUBLIC_EXAMPLE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         "public examples should use `Trainer.new` / `trainer.train` or the shared example `TrainCommand` runners, not removed command-wrapper names.",
     ),
     (
-        re.compile(r"\bModelZoo\.Command\b|\bTrainer\.Command\b"),
-        "repository command glue belongs under `NN.Examples.Models.TrainCommand`, outside the public Trainer namespace.",
+        re.compile(r"\bTrainer\.Command\b"),
+        "repository command glue belongs under `NN.Examples.Support`, outside the public Trainer namespace.",
     ),
     (
         re.compile(r"\bSimpleText\.main\b"),
@@ -518,7 +785,7 @@ PUBLIC_EXAMPLE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
     (
         re.compile(r"\bTrainer\.FitSummary\b"),
-        "`Trainer.FitSummary` was removed; public examples should use `Trainer.TrainSummary`.",
+        "`Trainer.FitSummary` was removed; public examples should use `Trainer.Report`.",
     ),
     (
         re.compile(r"\bTrainer\.(regression|classifier|crossEntropy|custom)\b"),
@@ -537,8 +804,12 @@ PUBLIC_EXAMPLE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         "public examples should call `trainer.train`; `trained` is the conventional local name for the trained result.",
     ),
     (
-        re.compile(r"\bRuntimeFit\b|\bparseRuntimeFit\b|\bparsed\.fit\b"),
-        "quickstart examples should use `RuntimeTrain`, `parseRuntimeTrain`, and `parsed.trainOptions`.",
+        re.compile(
+            r"\bRuntime(?:Fit|Train)\b|\bparseRuntime(?:Fit|Train)\b|"
+            r"\bparsed\.(?:fit|trainOptions)\b"
+        ),
+        "quickstart examples should use internal `TrainingArgs`, `parseTrainingArgs`, and "
+        "`parsed.options`.",
     ),
     (
         re.compile(r"\bfitOptionsWhenLogRequested\b|\bfitOptions\b"),
@@ -586,15 +857,15 @@ PUBLIC_EXAMPLE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
     (
         re.compile(r"IO\.println\s+\"model\s*="),
-        "public examples should print `model.info`, not a hardcoded model banner.",
+        "public examples should use the structured model summary instead of a hardcoded model banner.",
     ),
     (
-        re.compile(r"\bIO\.println\s+trainer\.info\b"),
-        "public examples should use `trainer.printInfo` so model-summary formatting stays consistent.",
+        re.compile(r"\bIO\.println\s+trainer\.summary\b"),
+        "public examples should use `trainer.printSummary` so model-summary formatting stays consistent.",
     ),
     (
-        re.compile(r"\bIO\.println\s+\w*Trainer\.info\b"),
-        "public examples should use `trainer.printInfo` / `trainer.printInfoAs`, not direct trainer-info printing.",
+        re.compile(r"\bIO\.println\s+\w*Trainer\.summary\b"),
+        "public examples should use `trainer.printSummary`, not direct model-summary printing.",
     ),
     (
         re.compile(r"\bIO\.println\s+(report|fit)\.summary\b"),
@@ -618,11 +889,11 @@ PUBLIC_EXAMPLE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
     (
         re.compile(r"\bTrainer\.FitSummary\.parseFloat\?\b"),
-        "public examples should use `Trainer.TrainSummary.printFloatLosses` when numeric losses are required, not hand-rolled optional parsing.",
+        "public examples should use `Trainer.Report.numeric?` or `requireNumeric` for numeric metrics.",
     ),
     (
         re.compile(r"\bTrainer\.FitSummary\.requireFloatLosses\b"),
-        "public examples should use `Trainer.TrainSummary.printFloatLosses` when they need numeric losses for logs.",
+        "public examples should use `Trainer.Report.requireNumeric` or `printNumeric` for numeric metrics.",
     ),
 ]
 
@@ -668,7 +939,7 @@ BROAD_LOW_LEVEL_IMPORTS = {
     "NN.Runtime",
     "NN.Spec",
     "NN.Verification",
-    "NN.Runtime.Autograd.TorchLean",
+    "NN.Runtime.Autograd.Model",
 }
 
 BROAD_LOW_LEVEL_IMPORT_PREFIXES = (
@@ -711,17 +982,69 @@ class Finding:
 
 
 def _iter_lean_files() -> Iterable[pathlib.Path]:
-    """Yield project Lean files while skipping vendored and generated trees."""
-    for p in REPO_ROOT.rglob("*.lean"):
-        # Vendored dependencies are checked by their own projects.
-        if ".lake" in p.parts:
+    """Yield tracked and non-ignored project Lean sources without crawling build trees."""
+    command = [
+        "git",
+        "ls-files",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        "--",
+        "*.lean",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError as error:
+        raise RuntimeError("repo lint requires Git to enumerate project sources") from error
+    except subprocess.CalledProcessError as error:
+        message = error.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"failed to enumerate project sources with Git: {message}") from error
+
+    for relative_bytes in result.stdout.split(b"\0"):
+        if not relative_bytes:
             continue
-        if any(d in p.parts for d in VENDORED_DIR_NAMES):
+        relative = pathlib.Path(relative_bytes.decode("utf-8", errors="surrogateescape"))
+        if any(directory in relative.parts for directory in VENDORED_DIR_NAMES):
             continue
-        # `_out` can contain generated artifacts; keep policy focused on sources.
-        if "_out" in p.parts:
+        if "_out" in relative.parts:
             continue
-        yield p
+        path = REPO_ROOT / relative
+        if path.is_file():
+            yield path
+
+# `NN/Floats` is scheduled for extraction into its own package and is frozen until then; the
+# style rules below therefore apply to everything else.
+FROZEN_STYLE_PREFIXES = ("NN/Floats/",)
+
+MAX_LINE_LENGTH = 100
+
+
+def _check_line_style(path: pathlib.Path, rel: str, text: str, findings: list[Finding]) -> None:
+    """Mathlib-style line rules: at most 100 columns and no em-dashes in prose."""
+    if rel.startswith(FROZEN_STYLE_PREFIXES):
+        return
+    for lineno, line in enumerate(text.split("\n"), start=1):
+        # Verso block directives (`:::theorem "label" (lean := "...")`) must stay on one line, so
+        # the column limit does not apply to them.
+        if line.lstrip().startswith(":::"):
+            continue
+        if len(line) > MAX_LINE_LENGTH:
+            findings.append(
+                Finding("ERROR", path, lineno, MAX_LINE_LENGTH + 1,
+                        f"line exceeds {MAX_LINE_LENGTH} characters; wrap it.")
+            )
+        if "\u2014" in line:
+            findings.append(
+                Finding("ERROR", path, lineno, line.index("\u2014") + 1,
+                        "em-dash in source; use a comma, colon, parentheses, or a new sentence.")
+            )
 
 
 def _check_lean_target_coverage(findings: list[Finding]) -> None:
@@ -733,7 +1056,7 @@ def _check_lean_target_coverage(findings: list[Finding]) -> None:
         if path == REPO_ROOT / "NN.lean" or path.is_relative_to(REPO_ROOT / "NN")
     }
     import_re = re.compile(
-        r"^\s*(?:public\s+)?import\s+([A-Za-z0-9_.]+)",
+        r"^\s*(?:public\s+)?(?:meta\s+)?import\s+([A-Za-z0-9_.]+)",
         flags=re.MULTILINE,
     )
     imports: dict[str, list[str]] = {}
@@ -742,7 +1065,8 @@ def _check_lean_target_coverage(findings: list[Finding]) -> None:
             text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        imports[module] = [name for name in import_re.findall(text) if name in nn_files]
+        masked = _mask_lean_comments_and_strings(text)
+        imports[module] = [name for name in import_re.findall(masked) if name in nn_files]
 
     covered: set[str] = set()
     pending = list(LEAN_TYPECHECK_ROOTS)
@@ -770,15 +1094,45 @@ def _check_lean_target_coverage(findings: list[Finding]) -> None:
         )
 
 
+def _iter_source_files(
+    root: pathlib.Path, suffix: str, *, exclude_dirs: Iterable[str] = ()
+) -> Iterable[pathlib.Path]:
+    """Yield authored files, including untracked sources, without entering generated trees."""
+
+    excluded_names = SOURCE_EXCLUDED_DIR_NAMES | set(exclude_dirs)
+    excluded_paths = {REPO_ROOT / relative for relative in GENERATED_DOC_DIRS}
+    if root.name in excluded_names or root in excluded_paths:
+        return
+    for directory, directories, files in os.walk(root, topdown=True, followlinks=False):
+        parent = pathlib.Path(directory)
+        directories[:] = sorted(
+            name for name in directories
+            if name not in excluded_names and parent / name not in excluded_paths
+        )
+        for name in sorted(files):
+            if name.endswith(suffix):
+                yield parent / name
+
+
 def _iter_authored_public_docs() -> Iterable[pathlib.Path]:
     """Yield maintained guide and website sources, excluding generated and vendored trees."""
 
     yield REPO_ROOT / "README.md"
-    yield from (REPO_ROOT / "blueprint/TorchLeanBlueprint").rglob("*.lean")
-    for path in (REPO_ROOT / "home_page").rglob("*.md"):
-        if any(part in {"blueprint", "_site", "docs", "vendor"} for part in path.parts):
-            continue
-        yield path
+    yield from (REPO_ROOT / "docs").glob("*.md")
+    yield from _iter_source_files(REPO_ROOT / "home_page/blueprint/TorchLeanBlueprint", ".lean")
+    yield from _iter_source_files(
+        REPO_ROOT / "home_page", ".md", exclude_dirs={"blueprint", "docs"}
+    )
+
+
+def _iter_doc_fact_paths() -> Iterable[pathlib.Path]:
+    """Yield guide, website, blueprint, and source-local documentation for factual checks."""
+
+    yield from REPO_ROOT.glob("README.md")
+    yield from (REPO_ROOT / "docs").glob("*.md")
+    yield from _iter_source_files(REPO_ROOT / "home_page/blueprint", ".lean")
+    for relative in ("home_page", "NN", "scripts"):
+        yield from _iter_source_files(REPO_ROOT / relative, ".md")
 
 
 def _normalized_prose_paragraphs(text: str) -> Iterable[tuple[str, int]]:
@@ -842,16 +1196,6 @@ def _has_python_module_docstring(text: str) -> bool:
     return body.startswith(('"""', "'''"))
 
 
-def _script_needs_readme_entry(path: pathlib.Path) -> bool:
-    """Return whether `path` should be mentioned explicitly in `scripts/README.md`."""
-
-    if path.name == "README.md":
-        return False
-    if path.suffix in {".json", ".txt"}:
-        return False
-    return path.is_file()
-
-
 def _line_col(text: str, idx: int) -> tuple[int, int]:
     """Translate a string offset into 1-based line and column coordinates."""
     # 1-based (Lean-style).
@@ -873,6 +1217,43 @@ def _has_nn_header(path: pathlib.Path, text: str) -> bool:
 def _has_lean_module_docstring(text: str) -> bool:
     """Return whether a Lean source contains a module docstring (`/-! ... -/`)."""
     return "/-!" in text
+
+
+def _mask_verso_prose(text: str) -> str:
+    """Preserve Lean examples in a `#doc` body without treating its prose as Lean code."""
+
+    doc = re.search(r"^#doc\b[^\n]*=>[ \t]*\n", text, flags=re.MULTILINE)
+    if doc is None:
+        return text
+    out = [text[:doc.end()]]
+    fence: str | None = None
+    lean_block = False
+    for line in text[doc.end():].splitlines(keepends=True):
+        marker = re.match(r"^[ \t]*(`{3,}|~{3,})(.*?)[\r\n]*$", line)
+        if marker is not None and fence is None:
+            fence = marker.group(1)
+            language = marker.group(2).strip().split()
+            lean_block = not language or language[0] in {"lean", "leanTerm", "leanInit"}
+        elif (
+            marker is not None
+            and fence is not None
+            and marker.group(1)[0] == fence[0]
+            and len(marker.group(1)) >= len(fence)
+            and not marker.group(2).strip()
+        ):
+            fence = None
+            lean_block = False
+        elif lean_block:
+            out.append(line)
+            continue
+        # Inline Lean roles also elaborate terms; retain them for the banned-construct checks.
+        masked = list(re.sub(r"[^\r\n]", " ", line))
+        if fence is None:
+            for role in re.finditer(r"\{lean(?:\s[^}\n]*)?\}(`+)(.*?)\1", line):
+                start, end = role.span(2)
+                masked[start:end] = line[start:end]
+        out.append("".join(masked))
+    return "".join(out)
 
 
 def _mask_lean_comments_and_strings(text: str) -> str:
@@ -1099,7 +1480,7 @@ def _check_verso_math_roles(path: pathlib.Path, text: str, findings: list[Findin
     """Catch mathematical TeX that would remain an ordinary monospace code span."""
 
     patterns = [VERSO_TEX_IN_ORDINARY_CODE_RE]
-    if path.is_relative_to(REPO_ROOT / "blueprint/TorchLeanBlueprint/FormalizationMap"):
+    if path.is_relative_to(REPO_ROOT / "home_page/blueprint/TorchLeanBlueprint/FormalizationMap"):
         patterns.append(FORMALIZATION_MATH_IN_ORDINARY_CODE_RE)
     for pattern in patterns:
         for match in pattern.finditer(text):
@@ -1224,6 +1605,236 @@ def _check_backend_contract_refs(
             )
 
 
+# --- Compiled docstring examples ----------------------------------------------------------------
+#
+# Every `Example:` block in an API docstring is generated from a snippet that lives in a mirror
+# module under `NN/Tests/API/DocExamples/`, where the compiler checks it on every build. Copying an
+# example out of a docstring is only useful if the example still elaborates, and the way to keep
+# that true is to make the docstring a copy of something that gets compiled rather than prose that
+# nobody rechecks. This check compares the two and refuses to let them drift; the writing direction
+# is `--sync-doc-examples`, mirror module first, docstring second.
+
+DOC_EXAMPLE_MIRROR_DIR = "NN/Tests/API/DocExamples"
+DOC_EXAMPLE_MARKER = re.compile(r"^--\s*doc-example:\s*(\S+)\s*::\s*(.+?)\s*$")
+DOC_EXAMPLE_SYNC_HINT = "run `python3 scripts/checks/repo_lint.py --sync-doc-examples`"
+# An anchor may only stop at a boundary, so `def train` never matches `def trainStream`.
+DOC_EXAMPLE_NAME_CHARS = set("!'?_")
+
+
+@dataclass
+class DocExample:
+    """One compiled snippet and the declaration whose docstring should carry it."""
+
+    mirror: pathlib.Path
+    mirror_line: int
+    target: pathlib.Path
+    target_rel: str
+    anchor: str
+    snippet: list[str]
+
+
+def _strip_blank_edges(lines: list[str]) -> list[str]:
+    """Drop leading and trailing blank lines, keeping the interior spacing intact."""
+    start, end = 0, len(lines)
+    while start < end and not lines[start].strip():
+        start += 1
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    return lines[start:end]
+
+
+def _collect_doc_examples(findings: list[Finding]) -> list[DocExample]:
+    """Read every `doc-example:` marker and the namespace body that follows it."""
+    mirror_root = REPO_ROOT / DOC_EXAMPLE_MIRROR_DIR
+    if not mirror_root.is_dir():
+        return []
+    examples: list[DocExample] = []
+    for path in sorted(mirror_root.rglob("*.lean")):
+        lines = path.read_text(encoding="utf-8").split("\n")
+        index = 0
+        while index < len(lines):
+            match = DOC_EXAMPLE_MARKER.match(lines[index].strip())
+            if match is None:
+                index += 1
+                continue
+            marker_line = index + 1
+            target_rel, anchor = match.group(1), match.group(2)
+            cursor = index + 1
+            while cursor < len(lines) and not lines[cursor].strip():
+                cursor += 1
+            opener = lines[cursor] if cursor < len(lines) else ""
+            if not opener.startswith("namespace ") or len(opener.split()) != 2:
+                findings.append(
+                    Finding("ERROR", path, marker_line, None,
+                            "a doc-example marker must be followed by `namespace <Name>` holding "
+                            "the snippet.")
+                )
+                index = cursor + 1
+                continue
+            closer = f"end {opener.split()[1]}"
+            body_start = cursor + 1
+            body_end = body_start
+            while body_end < len(lines) and lines[body_end].rstrip() != closer:
+                body_end += 1
+            if body_end >= len(lines):
+                findings.append(
+                    Finding("ERROR", path, marker_line, None,
+                            f"doc-example namespace is never closed with `{closer}`.")
+                )
+                break
+            target = REPO_ROOT / target_rel
+            snippet = _strip_blank_edges(lines[body_start:body_end])
+            if not target.is_file():
+                findings.append(
+                    Finding("ERROR", path, marker_line, None,
+                            f"doc-example target does not exist: `{target_rel}`.")
+                )
+            elif not snippet:
+                findings.append(
+                    Finding("ERROR", path, marker_line, None,
+                            "doc-example namespace is empty; write the snippet inside it.")
+                )
+            else:
+                examples.append(
+                    DocExample(path, marker_line, target, target_rel, anchor, snippet)
+                )
+            index = body_end + 1
+    return examples
+
+
+def _anchor_matches(line: str, anchor: str) -> bool:
+    """Match an anchor as a whole prefix: the character after it must end an identifier."""
+    if not line.startswith(anchor):
+        return False
+    if len(line) == len(anchor):
+        return True
+    following = line[len(anchor)]
+    return not (following.isalnum() or following in DOC_EXAMPLE_NAME_CHARS)
+
+
+def _docstring_span(lines: list[str], declaration: int) -> tuple[int, int] | None:
+    """Locate the docstring directly above a declaration, skipping attribute lines."""
+    cursor = declaration - 1
+    while cursor >= 0 and lines[cursor].lstrip().startswith("@["):
+        cursor -= 1
+    if cursor < 0 or not lines[cursor].rstrip().endswith("-/"):
+        return None
+    end = cursor
+    if lines[end].lstrip().startswith("/--"):
+        return (end, end)
+    start = end - 1
+    while start >= 0 and not lines[start].lstrip().startswith("/--"):
+        if lines[start].rstrip().endswith("-/"):
+            return None
+        start -= 1
+    return None if start < 0 else (start, end)
+
+
+def _fenced_example(body: list[str]) -> tuple[int, int] | None:
+    """Return the line range of an existing `Example:` block inside a docstring body."""
+    for index, line in enumerate(body):
+        if line.strip() != "Example:":
+            continue
+        if index + 1 >= len(body) or body[index + 1].strip() != "```lean":
+            return None
+        closing = index + 2
+        while closing < len(body) and body[closing].strip() != "```":
+            closing += 1
+        return None if closing >= len(body) else (index, closing)
+    return None
+
+
+def _render_docstring(block: list[str], snippet: list[str]) -> list[str]:
+    """Rewrite a docstring so its `Example:` block is exactly `snippet`."""
+    indent = block[0][: len(block[0]) - len(block[0].lstrip())]
+    example = ["Example:", "```lean", *snippet, "```"]
+    if len(block) == 1:
+        # A one-line docstring grows into the multi-line form to make room for the example.
+        summary = block[0].strip()
+        body = [summary[len("/--"):-len("-/")].strip()]
+    else:
+        body = [line[len(indent):] if line.startswith(indent) else line.lstrip()
+                for line in block[1:-1]]
+        found = _fenced_example(body)
+        if found is not None:
+            body = body[: found[0]] + example + body[found[1] + 1:]
+            example = []
+    if example:
+        body = _strip_blank_edges(body) + [""] + example
+    rendered = ["/--", *body, "-/"]
+    return [indent + line if line else line for line in rendered]
+
+
+def _sync_doc_examples(*, write: bool) -> tuple[list[Finding], list[str]]:
+    """Compare (or rewrite) every docstring `Example:` block against its compiled mirror."""
+    findings: list[Finding] = []
+    updates: list[str] = []
+    by_target: dict[pathlib.Path, list[DocExample]] = {}
+    for example in _collect_doc_examples(findings):
+        by_target.setdefault(example.target, []).append(example)
+
+    for target, group in sorted(by_target.items()):
+        lines = target.read_text(encoding="utf-8").split("\n")
+        located: list[tuple[int, tuple[int, int], DocExample]] = []
+        for example in group:
+            hits = [index for index, line in enumerate(lines)
+                    if _anchor_matches(line, example.anchor)]
+            if not hits:
+                findings.append(
+                    Finding("ERROR", example.mirror, example.mirror_line, None,
+                            f"doc-example anchor `{example.anchor}` is not a declaration in "
+                            f"`{example.target_rel}`.")
+                )
+                continue
+            if len(hits) > 1:
+                findings.append(
+                    Finding("ERROR", example.mirror, example.mirror_line, None,
+                            f"doc-example anchor `{example.anchor}` matches "
+                            f"{len(hits)} declarations in `{example.target_rel}`; extend it until "
+                            "it names exactly one.")
+                )
+                continue
+            span = _docstring_span(lines, hits[0])
+            if span is None:
+                findings.append(
+                    Finding("ERROR", target, hits[0] + 1, None,
+                            "a doc-example target needs its own docstring to carry the "
+                            "`Example:` block.")
+                )
+                continue
+            located.append((hits[0], span, example))
+
+        changed = False
+        # Rewrite from the bottom of the file upward so earlier spans keep their line numbers.
+        for _, (start, end), example in sorted(located, key=lambda item: -item[0]):
+            block = lines[start:end + 1]
+            rendered = _render_docstring(block, example.snippet)
+            if rendered == block:
+                continue
+            if write:
+                lines[start:end + 1] = rendered
+                updates.append(f"{example.target_rel}: {example.anchor}")
+                changed = True
+            else:
+                mirror_rel = example.mirror.relative_to(REPO_ROOT).as_posix()
+                findings.append(
+                    Finding("ERROR", target, start + 1, None,
+                            f"the `Example:` block for `{example.anchor}` does not match its "
+                            f"compiled snippet in `{mirror_rel}`; {DOC_EXAMPLE_SYNC_HINT}.")
+                )
+        if changed:
+            target.write_text("\n".join(lines), encoding="utf-8")
+
+    return findings, updates
+
+
+def _check_doc_examples(findings: list[Finding]) -> None:
+    """Fail when a docstring example no longer matches the snippet the compiler checks."""
+    drift, _ = _sync_doc_examples(write=False)
+    findings.extend(drift)
+
+
+
 def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
     """Run TorchLean's repository hygiene checks and return all findings."""
     findings: list[Finding] = []
@@ -1246,6 +1857,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
         )
 
     _check_lean_target_coverage(findings)
+    _check_doc_examples(findings)
 
     for path in _iter_generated_script_artifacts():
         findings.append(
@@ -1258,21 +1870,11 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
             )
         )
 
-    scripts_readme = REPO_ROOT / "scripts/README.md"
-    try:
-        scripts_readme_text = scripts_readme.read_text(encoding="utf-8")
-    except OSError as e:
-        scripts_readme_text = ""
-        findings.append(Finding("ERROR", scripts_readme, None, None, f"failed to read file: {e}"))
+
 
     for env_var, rel_impl in DOCUMENTED_ENV_VAR_IMPLEMENTATIONS.items():
         docs_mention = False
-        for path in list(REPO_ROOT.glob("README.md")) + list((REPO_ROOT / "blueprint").rglob("*.lean")) + list((REPO_ROOT / "home_page").rglob("*.md")):
-            if any(
-                part in {".lake", "_site", "docs", "vendor"}
-                for part in path.relative_to(REPO_ROOT).parts
-            ):
-                continue
+        for path in _iter_authored_public_docs():
             try:
                 if env_var in path.read_text(encoding="utf-8"):
                     docs_mention = True
@@ -1297,7 +1899,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     )
                 )
 
-    trust_file = REPO_ROOT / "TRUST_BOUNDARIES.md"
+    trust_file = REPO_ROOT / "docs/TRUST_BOUNDARIES.md"
     try:
         trust_text = trust_file.read_text(encoding="utf-8")
     except OSError as e:
@@ -1312,7 +1914,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     trust_file,
                     None,
                     None,
-                    f"trust-boundary declaration `{fq_name}` is missing from TRUST_BOUNDARIES.md.",
+                    f"trust-boundary declaration `{fq_name}` is missing from docs/TRUST_BOUNDARIES.md.",
                 )
             )
         source = REPO_ROOT / rel_source
@@ -1328,27 +1930,13 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     source,
                     None,
                     None,
-                    f"TRUST_BOUNDARIES.md cites `{fq_name}`, but the expected declaration was not found.",
+                    f"docs/TRUST_BOUNDARIES.md cites `{fq_name}`, but the expected declaration was not found.",
                 )
             )
 
-    doc_fact_paths = (
-        list(REPO_ROOT.glob("README.md"))
-        + list(REPO_ROOT.glob("TRUST_BOUNDARIES.md"))
-        + list(REPO_ROOT.glob("THIRD_PARTY_NOTICES.md"))
-        + list((REPO_ROOT / "blueprint").rglob("*.lean"))
-        + list((REPO_ROOT / "home_page").rglob("*.md"))
-        + list((REPO_ROOT / "NN").rglob("*.md"))
-        + list((REPO_ROOT / "scripts").rglob("*.md"))
-    )
     authored_public_docs = set(_iter_authored_public_docs())
     seen_prose: dict[str, tuple[pathlib.Path, int]] = {}
-    for path in doc_fact_paths:
-        if any(
-            part in {".lake", "_site", "docs", "vendor"}
-            for part in path.relative_to(REPO_ROOT).parts
-        ):
-            continue
+    for path in _iter_doc_fact_paths():
         try:
             text = path.read_text(encoding="utf-8")
         except OSError:
@@ -1356,7 +1944,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
         if path.suffix != ".lean":
             _check_local_source_refs(path, text, findings)
             _check_docgen_api_links(path, text, findings)
-        elif path.is_relative_to(REPO_ROOT / "blueprint/TorchLeanBlueprint"):
+        elif path.is_relative_to(REPO_ROOT / "home_page/blueprint/TorchLeanBlueprint"):
             _check_verso_math_roles(path, text, findings)
         for rx, msg in DOC_FACT_BANNED_PATTERNS:
             for m in rx.finditer(text):
@@ -1392,7 +1980,10 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                         "account and link or summarize it here.",
                     )
                 )
-            if path == REPO_ROOT / "README.md" or path.is_relative_to(REPO_ROOT / "home_page"):
+            if path.suffix == ".md" and (
+                path == REPO_ROOT / "README.md"
+                or path.is_relative_to(REPO_ROOT / "home_page")
+            ):
                 for rx, msg in PUBLIC_WEBSITE_API_BANNED_PATTERNS:
                     for m in rx.finditer(text):
                         line, col = _line_col(text, m.start())
@@ -1439,13 +2030,6 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                 Finding("ERROR", path, 1, 1, "Python scripts/helpers should start with a module docstring.")
             )
 
-        if _script_needs_readme_entry(path):
-            script_rel = rel.removeprefix("scripts/")
-            if script_rel not in scripts_readme_text:
-                findings.append(
-                    Finding("ERROR", path, None, None, "`scripts/README.md` should explain this script.")
-                )
-
     for rel in sorted(REMOVED_COMPATIBILITY_PATHS):
         path = REPO_ROOT / rel
         if path.exists():
@@ -1473,9 +2057,47 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
 
     banned_regexes: list[tuple[re.Pattern[str], str]] = [
         (
+            re.compile(
+                r"\b(?:takeFlagValueOnce|takeFlagValueDefault|takeRequiredFlagValue|"
+                r"takeParsedFlagDefault|takeBoolFlagOnce|takePositionalDefault|"
+                r"takeNatFlagOnce|takeNatFlagDefault|takeFloatFlagDefault|"
+                r"takeRequiredFloatFlag|takeBoolValueFlagDefault|takeSwitchDefault|"
+                r"takePathFlagOnce|takePathFlagDefault|takeRequiredPathFlag|"
+                r"takeStepsFlagDefault)\b"
+            ),
+            "removed CLI parser variant found; use `takeX?` for optional values, `takeX "
+            "(default := ...)` for defaults, and `requireX` for required values.",
+        ),
+        (
+            re.compile(
+                r"\b(?:writeLogTo|writeLossComparisonTo)\b|"
+                r"\bLogDestination\.(?:parseValue\b|parse\?(?![A-Za-z0-9_])|pathD\b)"
+            ),
+            "removed duplicate logging operation found; use the destination-based `writeLog` / "
+            "`writeLossComparison` operations and `LogDestination.parse`, `resolve`, or `path?`.",
+        ),
+        (
+            re.compile(
+                r"\b(?:resolvedLogPath|nextEpochWith|collectRolloutSessionWith|"
+                r"collectRolloutCheckedSessionWith|collectRolloutWith|collectRolloutNativeWith)\b|"
+                r"\bLogDestination\.path(?!\?)\b"
+            ),
+            "removed duplicate or implementation-shaped API found; keep one log destination, use "
+            "`mapNextEpoch`, and name rollout sources explicitly with `collectRolloutFrom...`.",
+        ),
+        (
             re.compile(r"\b(?:rowSoftmaxFwd|rowLogSoftmaxFwd)\b"),
             "obsolete value-only CUDA softmax adapters were removed; retain the workspace from "
             "`rowSoftmaxForward` or `rowLogSoftmaxForward` for explicit buffer ownership.",
+        ),
+        (
+            re.compile(
+                r"\b(?:packedResultOrPanic|LinearAlgebraImpl|ShapeChangeImpl|ReductionImpl|"
+                r"appendTimeChannelImpl|bmmLikeSpec|"
+                r"OperationImpl\.(?:linearLast|stack)|linearLast)\b"
+            ),
+            "removed implementation-shaped tensor or lowering helper found; keep recursive tensor "
+            "workers private and make lowered closures return `Except` for checked results.",
         ),
         (
             re.compile(r"\b[A-Za-z0-9_]*TList[A-Za-z0-9_]*\b|\btlist!\b"),
@@ -1490,7 +2112,41 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
         ),
         (
             re.compile(r"\b(FitConfig|LoaderFitConfig|FitReport)\b"),
-            "old lower training names are removed; use `TrainConfig`, `LoaderTrainConfig`, and `TrainReport`.",
+            "old lower training names are removed; use `TrainConfig`, `LoaderTrainConfig`, "
+            "and `Training.LossProgress`.",
+        ),
+        (
+            re.compile(r"\b(?:TrainReport|LossEndpoints)\b"),
+            "duplicate training endpoint records are removed; use `Training.LossProgress`.",
+        ),
+        (
+            re.compile(
+                r"\b(?:stateGradient|stateCotangent|inputCotangent|initialValue|finalValue|"
+                r"initialLoss|finalLoss)\b"
+            ),
+            "removed public result vocabulary found; use clear local gradient names or "
+            "`loss.before` / `loss.after`.",
+        ),
+        (
+            re.compile(r"\bpositiveDimensions\b"),
+            "removed shape-helper vocabulary found; use `natValues` for a tensor's natural-number "
+            "contents.",
+        ),
+        (
+            re.compile(
+                r"\b(?:ValueAndGradient|valueAndGradient|LossAndGradients|lossAndGradients|"
+                r"VjpResult|LossAndGradient|lossAndGradient)\b"
+            ),
+            "removed autograd result vocabulary found; use `grad ... (value := true)` and "
+            "destructure its result.",
+        ),
+        (
+            re.compile(
+                r"\bgradAndValue\b|"
+                r"\bTorchLean\.Module\.Objective\.(?:diff|stepWithLoss|stepWithGradients)\b"
+            ),
+            "removed compound public operation found; use `grad` or `step` with named options, "
+            "or `update` for an already-computed gradient.",
         ),
         (
             re.compile(r"\bRuntime\.Autograd\.Train\.(?:Dataset|DataLoader)\b"),
@@ -1517,8 +2173,56 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
             "old lower training helper names are removed; use `effectiveTrainBatchSize`.",
         ),
         (
-            re.compile(r"\b(FitResult|StreamFitResult|PairStreamFitResult)\b"),
-            "old trainer result names are removed; use `TrainResult`, `StreamTrainResult`, and `PairStreamTrainResult`.",
+            re.compile(
+                r"\b(?:FitResult|StreamFitResult|PairStreamFitResult|"
+                r"TrainResult|StreamTrainResult|AlternatingTrainResult|"
+                r"TrainSummary|NumericSummary|LoaderTrainConfig|LoaderTrainingResult)\b"
+            ),
+            "old trainer API names are removed; use `Trainer.Result`, `Trainer.Report`, "
+            "`Trainer.Manual.LoaderConfig`, and `Trainer.Manual.LoaderResult`.",
+        ),
+        (
+            re.compile(
+                r"\bTrainer\.Metrics\b|"
+                r"\bReport\.(?:numeric\?|requireNumeric|printNumeric|toTrainLog\?)\b"
+            ),
+            "trainer reports carry host `Float` losses directly; read `report.loss` or use "
+            "`Report.toTrainLog`.",
+        ),
+        (
+            re.compile(
+                r"\b(?:BurgersOptions|LoadedData|EvalData|DiffusionOptions|AdderOptions|"
+            r"SavedOptions|CorpusOptions|ExperimentConfig)\b"
+        ),
+            "leaf examples use namespace-local `Options`, `Preset`, `Splits`, and `Evaluation` "
+            "instead of repeating the command name.",
+        ),
+        (
+            re.compile(
+                r"\b(?:TensorSource|matrixFromArray|matrixStorage|"
+                r"trainCorpusFloat|trainBpeCorpusFloat|SupervisedEpochs|epochLoader|"
+                r"shuffleEachEpoch|shuffleSeed|dropIncompleteBatch)\b"
+            ),
+            "removed representation-shaped API or example name found; use `Tensor.load` and "
+            "short contextual names such as `Data.Loader`, `shuffle`, `seed`, and `dropLast`.",
+        ),
+    (
+        re.compile(
+            r"\b(?:cleanImageShape|noisyInputShape|modelConfigFor|modelFor|"
+            r"cifarCleanImageBatch|imageNet64CleanImageBatch|"
+            r"loadCifarCleanImageBatches|loadImageNet64CleanImageBatches|"
+            r"trainCurveFloat|writeTrainingLog|runTypedDataset|"
+            r"EvalScore|evalBatched|evalAllBatched|CurriculumMode|trainAdderFloat|"
+            r"cudaMemoryCadence|writePredictionProbe|metricHistory|writeMetricLog|"
+            r"evaluationData|pushLossPoint|evalLosses|recordEval|runPortableDense|"
+            r"logRunHeader|runOptionsUsage)\b"
+        ),
+        "removed verbose example identifier found; use the short contextual name used by the "
+        "model command.",
+    ),
+        (
+            re.compile(r"\b(?:modelSummary|printModelSummary)\b"),
+            "old trainer summary names are removed; use `trainer.summary` and `trainer.printSummary`.",
         ),
         (
             re.compile(r"\bverifyLInfIBP\b|\b(Trainer\.)?Verify\.robustLInf\b"),
@@ -1531,7 +2235,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                 r"\b(?:argmaxRankOne|correctOneHotRankOne)\?"
             ),
             "removed compatibility name found; use `Trainer.RunConfig`, the axis-general metric "
-            "operations, `Tensor.toArray`, or arbitrary-rank `tensorToPyString`.",
+            "operations, `Tensor.to tensor (Array α)`, or arbitrary-rank `tensorToPyString`.",
         ),
         (
             re.compile(
@@ -1548,6 +2252,56 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                 r"oneHotSequenceOrZero|oneHotBatchOrZero|Synthetic\.oneHot)\b"
             ),
             "removed duplicate name found; use the canonical declaration directly.",
+        ),
+        (
+            re.compile(
+                r"\b(?:ExecConfig|runFloat32|runCudaFloat32|runCudaEagerFloat32)\b|"
+                r"\b(?:TorchLean\.)?Module\.(?:withRuntime|withModule)\b"
+            ),
+            "removed executable-command wrapper found; use `Module.RuntimeSelection`, "
+            "`Module.withSelectedRuntime`, or the single "
+            "`Module.Command.run` entrypoint with explicit runtime requirements.",
+        ),
+        (
+            re.compile(
+                r"\b(?:SgdConfig|MomentumSgdConfig|AdagradConfig|RmspropConfig|"
+                r"AdadeltaConfig|momentumSgd)\b|"
+                r"\boptim\.Kind\b|\bKind\.(?:name|toOptimizer)\b"
+            ),
+            "removed optimizer API name found; use the acronym-correct public config types, "
+            "`optim.sgd { momentum := ... }`, or `optim.Algorithm.displayName/build`.",
+        ),
+        (
+            re.compile(r"\b(?:tensorFloat|xavierW|kaimingW)\b"),
+            "removed initializer API name found; use scalar-polymorphic `Init.tensor`, "
+            "`Init.xavierUniform`, or `Init.kaimingUniform`.",
+        ),
+        (
+            re.compile(
+                r"\b(?:Data\.(?:floatSamples|singletonFloatIO)|"
+                r"Trainer\.Probe\.ofFloatTensor|"
+                r"TensorDataset\.(?:ofSupervisedFloatPairs|ofLabeledFloatPairs|ofBatchedFloat)|"
+                r"Sample\.mapXY)\b"
+            ),
+            "removed Float-specific data API found; use `Data.samples`, `Data.singletonIO`, "
+            "`Trainer.Probe.tensor`, generic `TensorDataset` constructors, or `Sample.map`.",
+        ),
+        (
+            re.compile(
+                r"\bRunConfig\.(?:ofRuntimeOptions|parseRuntimeArgs|parseRuntimeArgsOrThrow|"
+                r"parse|parseCommandLine|cliArguments|"
+                r"withScalar|withExecution|eager|typedGraph|cpu|cuda)\b|"
+                r"\bTrainer\.TrainOptions\.(?:forSteps|withLogEvery|withCudaMemWatch|"
+                r"withBatchSize|withScheduler|withoutScheduler|withLog|disableLog|withTitle|"
+                r"withNotes|withLoadCheckpoint|withSaveCheckpoint)\b"
+            ),
+            "removed trainer convenience API found; use `RunConfig.fromRuntime`, direct "
+            "`TrainOptions` record syntax, or the example-owned `TrainerFlags` parser.",
+        ),
+        (
+            re.compile(r"\bTensor\.QR\b"),
+            "removed tensor linear-algebra type found; QR decomposition results use "
+            "`Tensor.QRFactors`.",
         ),
         (
             re.compile(
@@ -1571,8 +2325,16 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
             "removed shape-tagged-value alias found; use `Spec.SomeTensor` and its canonical operations.",
         ),
         (
-            re.compile(r"\bautograd\.func\.Fn\b|\babbrev\s+Fn\b"),
-            "the ambiguous `Fn` API name is removed; use `autograd.func.TensorFunction`.",
+            re.compile(
+                r"\bautograd\.func\b|"
+                r"\bautograd\.model\.(?:initState(?:With)?|OutputLoss|"
+                r"valueAndGrad(?:Tensor)?|valueAndAllGrads|gradState|gradInputs|"
+                r"vjpState|vjpInput|jacrevState|jvpState|hvpState)\b|"
+                r"\babbrev\s+Fn\b"
+            ),
+            "removed autograd API name found; use `autograd.Function`, top-level tensor "
+            "transforms, `autograd.model.State.init`, `autograd.model.Loss`, and the "
+            "short model transforms.",
         ),
         (
             re.compile(
@@ -1602,7 +2364,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
         ),
         (
             re.compile(
-                r"\b(?:flattenBatch|flattenBatchPrefix|flattenLeading|mapLeading|zipWithLeading|"
+                r"\b(?:flattenBatch|flattenBatchPrefix|flattenLeading|zipWithLeading|"
                 r"classifierBatch|regressorBatch|"
                 r"uniformND|maskND|randND|loadCsvTensorND)\b"
             ),
@@ -1643,7 +2405,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                 r"KANConfig|ViTConfig|ViTMAEConfig|round₃₂|ulp₃₂|eps₃₂|"
                 r"round₃₂_eq_round32|ulp₃₂_eq_ulp32|eps₃₂_eq_eps32|"
                 r"adaptFlatBatch|applyBatch|KANEdgeFamily|KANPiecewiseLinear|"
-                r"SGDConfig|RMSpropConfig|PPOFlags|BPECorpusOptions|optimizerLR|stepLR|"
+                r"RMSpropConfig|PPOFlags|BPECorpusOptions|optimizerLR|stepLR|"
                 r"bitsToα|[A-Za-z0-9_]*StateWithLR|VectorMAE|MaskedPrediction|vectorOfArrayD|"
                 r"expandVecToBatchSpec|batchToEndSpec|channelFirstToLastSpec|"
                 r"collectAtIndexSpec|linearBatchedSpec|sliceVectorSpec|"
@@ -1742,10 +2504,6 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
             ),
             "fixed-rank spatial API name found; use the rank-polymorphic convolution, pooling, normalization, permutation, or adaptive-pooling API.",
         ),
-        (
-            re.compile(r"\bomega\b"),
-            "`omega` is banned in TorchLean; prefer `linarith`/`nlinarith`/`grind` or small arithmetic lemmas.",
-        ),
         (re.compile(r"\bsimp\s*\[\s*\*(\s*[,\]])"), "`simp [*]` is banned; prefer `simp [h₁, h₂]` or `simp (config := ...)` with explicit hypotheses."),
         (
             re.compile(r"\bset_option\s+maxHeartbeats\b"),
@@ -1762,11 +2520,25 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
         (re.compile(r"@\[\s*de" r"precated\b"), "`@[de" "precated]` is banned in TorchLean sources."),
         (
             re.compile(
-                r"\b(?:compatibility (?:alias|shim|wrapper|layer)|legacy (?:alias|name)|"
+                r"\b(?:compatibility (?:alias|shim|wrapper|layer|re-export)|"
+                r"legacy (?:alias|name|spelling)|historical (?:alias|name|spelling)|"
                 r"deprecated alias|old import path|migration shim|kept for compatibility)\b",
                 flags=re.IGNORECASE,
             ),
             "compatibility aliases and shims are not allowed; migrate callers to the canonical API and delete the old route.",
+        ),
+        (
+            re.compile(
+                r"\b(?:Spec\.(?:fill|zeros|ones)|Tensor\.fill|broadcastLike|broadcastFill|"
+                r"Runtime\.Autograd\.Model\.Random|TorchLean\.Einops)\b"
+            ),
+            "removed tensor, syntax-scope, or RNG compatibility name found; use `Tensor.full`, "
+            "`Tensor.zeros`, `Tensor.ones`, `replicate`, `TorchLean.Tensor`, or `Spec.Random`.",
+        ),
+        (
+            re.compile(r"\bmapEach\b"),
+            "`mapEach` is ambiguous across tensor, module, builder, and runtime layers; use "
+            "`Tensor.mapLeading`, `Module.liftLeading`, or the layer-appropriate `mapLeading`.",
         ),
     ]
 
@@ -1785,12 +2557,218 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
             continue
 
         text = raw.decode("utf-8", errors="replace")
-        masked = _mask_lean_comments_and_strings(text)
+        masked = _mask_lean_comments_and_strings(_mask_verso_prose(text))
         rel = path.relative_to(REPO_ROOT).as_posix()
+        _check_line_style(path, rel, text, findings)
         internal_namespace_lines = _internal_namespace_lines(masked)
         _check_local_source_refs(path, text, findings)
         _check_lean_doc_math(path, text, findings)
         _check_backend_contract_refs(path, text, lake_text, findings)
+
+        if rel.startswith(("NN/API/", "NN/Examples/")):
+            for match in re.finditer(r"_root_\.", masked):
+                line, col = _line_col(text, match.start())
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        path,
+                        line,
+                        col,
+                        "public API and example code must resolve canonical namespaces without "
+                        "`_root_.`; fix the namespace or import boundary instead.",
+                    )
+                )
+
+        if rel.startswith("NN/Examples/Quickstart/"):
+            quickstart_internals = [
+                (re.compile(r"\bTensorPack\b"), "heterogeneous runtime packs"),
+                (re.compile(r"\bRuntime\.Autograd\b"), "runtime autograd internals"),
+                (re.compile(r"\bNN\.IR\b"), "raw compiler IR"),
+                (re.compile(r"\bTensor\.ofFn\b"), "proof-level tensor construction"),
+                (re.compile(r"\bList\.finRange\b"), "bounded-index proof plumbing"),
+            ]
+            for pattern, description in quickstart_internals:
+                for match in pattern.finditer(masked):
+                    line, col = _line_col(text, match.start())
+                    findings.append(
+                        Finding(
+                            "ERROR",
+                            path,
+                            line,
+                            col,
+                            f"quickstarts must use reader-facing APIs, not {description}; "
+                            "move the internal demonstration to `DeepDives` or add a public wrapper.",
+                        )
+                    )
+
+        runtime_example_prefixes = (
+            "NN/Examples/Quickstart/",
+            "NN/Examples/Data/",
+            "NN/Examples/Factorization/",
+            "NN/Examples/Models/Supervised/",
+            "NN/Examples/Models/Vision/",
+            "NN/Examples/Models/Sequence/",
+            "NN/Examples/Models/Generative/",
+            "NN/Examples/Models/Operators/",
+        )
+        if rel.startswith(runtime_example_prefixes):
+            for match in re.finditer(r"\bSpec\.", masked):
+                line, col = _line_col(text, match.start())
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        path,
+                        line,
+                        col,
+                        "runtime-facing examples must call the public executable API, not `Spec`; "
+                        "move proof-only material to a proof example or add a public operation.",
+                    )
+                )
+
+        if rel.startswith("NN/Examples/"):
+            for match in re.finditer(r"\b(?:nn\.)?State\.Internal\b", masked):
+                line, col = _line_col(text, match.start())
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        path,
+                        line,
+                        col,
+                        "examples must use the public opaque `nn.State` and public execution or "
+                        "verification APIs, not unpack its internal tensor representation.",
+                    )
+                )
+
+        if rel.startswith("NN/Examples/Models/"):
+            prefixed_name_re = re.compile(
+                r'\bdef\s+exeName\s*:\s*String\s*:=\s*"torchlean(?:\s|")'
+            )
+            for match in prefixed_name_re.finditer(text):
+                line, col = _line_col(text, match.start())
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        path,
+                        line,
+                        col,
+                        "model examples store only their CLI subcommand in `exeName`; help text "
+                        "adds `lake exe torchlean` at the rendering boundary.",
+                    )
+                )
+
+        if rel.startswith(
+            (
+                "NN/API/",
+                "NN/Examples/Models/",
+                "home_page/blueprint/TorchLeanBlueprint/Guide/",
+            )
+        ):
+            redundant_shape_name_re = re.compile(
+                r"\b(?:inputShape|outputShape|targetShape)\b(?!\?)"
+            )
+            for match in redundant_shape_name_re.finditer(masked):
+                line, col = _line_col(text, match.start())
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        path,
+                        line,
+                        col,
+                        "public tensor signatures use `input`, `output`, or `target`; use `σ`/`τ` "
+                        "for invisible generic shape indices and reserve a `Shape` suffix for names "
+                        "that distinguish multiple shapes.",
+                    )
+                )
+
+        if rel.startswith("NN/Tensor/Internal/"):
+            removed_tensor_checker_names_re = re.compile(
+                r"\b(?:"
+                r"NormalizedTransform\.inputShape|"
+                r"TransformPlan\.(?:outputShape|inferredInputShape|inferredOutputShape)|"
+                r"CheckedPack\.outputShape|"
+                r"CheckedEinsum\.outputShape|"
+                r"einsumOutputShape"
+                r")\b"
+            )
+            for match in removed_tensor_checker_names_re.finditer(masked):
+                line, col = _line_col(text, match.start())
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        path,
+                        line,
+                        col,
+                        "tensor checker records already identify shape-valued fields by type; "
+                        "use `input`, `output`, `inferredInput`, or `inferredOutput`.",
+                    )
+                )
+
+        if rel.startswith("NN/Examples/Models/") or rel == "NN/API/RL/Cli.lean":
+            for match in re.finditer(r"\.drop\s+10\b", masked):
+                line, col = _line_col(text, match.start())
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        path,
+                        line,
+                        col,
+                        "do not recover a CLI subcommand by stripping a fixed prefix; store the "
+                        "subcommand directly.",
+                    )
+                )
+
+        removed_model_api_patterns = (
+            (r"\bMamba\.textLM\b", "`Mamba.languageModel`"),
+            (r"\bDenseGenerative\b", "`Generative`"),
+            (r"\bGenerative\.ganGenerator\b", "`Generative.generator`"),
+            (r"\bGenerative\.ganDiscriminator\b", "`Generative.discriminator`"),
+            (r"\bConvolutionActivation\.Config\b", "`ConvBlock.Config`"),
+            (r"\bConvolutionActivationPooling\.Config\b", "`ConvPoolBlock.Config`"),
+            (r"\bconvAct\b", "`convBlock`"),
+            (r"\bconvActPool\b", "`convPoolBlock`"),
+        )
+        for pattern, replacement in removed_model_api_patterns:
+            for match in re.finditer(pattern, masked):
+                line, col = _line_col(text, match.start())
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        path,
+                        line,
+                        col,
+                        f"removed model API name found; use {replacement}.",
+                    )
+                )
+
+        if rel == "NN/API/Models/Transformer.lean":
+            for match in re.finditer(r"\babbrev\s+shape\b", masked):
+                line, col = _line_col(text, match.start())
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        path,
+                        line,
+                        col,
+                        "the Transformer config shape is specifically a token shape; use "
+                        "`tokenShape`.",
+                    )
+                )
+
+        if rel.startswith("NN/API/") and rel != "NN/API/Neural/Builders.lean":
+            for match in re.finditer(
+                r"\bRuntime\.Autograd\.TorchLean\.NN\.Seq\.id\b", masked
+            ):
+                line, col = _line_col(text, match.start())
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        path,
+                        line,
+                        col,
+                        "public API implementations should construct identity branches through "
+                        "`nn.Sequential.identity`.",
+                    )
+                )
 
         import_directives: dict[str, int] = {}
         import_re = re.compile(
@@ -1912,18 +2890,22 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
 
         if rel.startswith("NN/"):
             fixed_vector_re = re.compile(r"\b(?:List\.)?Vector\b|#v\[")
-            for m in fixed_vector_re.finditer(masked):
-                line, col = _line_col(text, m.start())
-                findings.append(
-                    Finding(
-                        "ERROR",
-                        path,
-                        line,
-                        col,
-                        "fixed-shape numerical data must use `Spec.Tensor`; use `Array` for "
-                        "dynamic homogeneous storage.",
+            if (
+                not rel.startswith(TENSOR_INTERNAL_PREFIX)
+                and rel not in TENSOR_VECTOR_BOUNDARY_FILES
+            ):
+                for m in fixed_vector_re.finditer(masked):
+                    line, col = _line_col(text, m.start())
+                    findings.append(
+                        Finding(
+                            "ERROR",
+                            path,
+                            line,
+                            col,
+                            "fixed-shape numerical data must use `TorchLean.Tensor`; use `Array` for "
+                            "dynamic homogeneous storage.",
+                        )
                     )
-                )
 
             removed_numeric_container_re = re.compile(
                 r"\b(?:Tensor\.ofList|NN\.Tensor\.ofList|someTensorOfArray|"
@@ -1981,20 +2963,25 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                 r"\bList\s*\(\s*NN\.Backend\.KernelHandler\b|"
                 r"\bhiddenDims\s*:\s*List\s+Nat\b"
             )
-            for m in dynamic_numeric_list_re.finditer(masked):
-                line, col = _line_col(text, m.start())
-                findings.append(
-                    Finding(
-                        "ERROR",
-                        path,
-                        line,
-                        col,
-                        "dynamic homogeneous numerical collections must use `Array`; reserve "
-                        "`List` for type-level or proof-recursive structure.",
+            if not rel.startswith(TENSOR_INTERNAL_PREFIX):
+                for m in dynamic_numeric_list_re.finditer(masked):
+                    line, col = _line_col(text, m.start())
+                    findings.append(
+                        Finding(
+                            "ERROR",
+                            path,
+                            line,
+                            col,
+                            "dynamic homogeneous numerical collections must use `Array`; reserve "
+                            "`List` for type-level or proof-recursive structure.",
+                        )
                     )
-                )
 
         for rx, msg in banned_regexes:
+            if rel.startswith(TENSOR_INTERNAL_PREFIX) and msg.startswith(
+                "removed specialized or inconsistently named helper"
+            ):
+                continue
             for m in rx.finditer(masked):
                 line, col = _line_col(text, m.start())
                 findings.append(Finding("ERROR", path, line, col, msg))
@@ -2029,6 +3016,40 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
             or rel.startswith("NN/API/Neural/")
         )
         if is_shape_generic_public_api:
+            for m in re.finditer(r"\bPNat\b", masked):
+                line, col = _line_col(text, m.start())
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        path,
+                        line,
+                        col,
+                        "public tensor and model APIs use ordinary `Nat` dimensions and validate "
+                        "positivity at construction time; do not expose proof-carrying `PNat` "
+                        "configuration fields.",
+                    )
+                )
+            for m in re.finditer(r"\bList\s+Nat\b", masked):
+                line_start = masked.rfind("\n", 0, m.start()) + 1
+                line_end = masked.find("\n", m.end())
+                if line_end < 0:
+                    line_end = len(masked)
+                source_line = masked[line_start:line_end]
+                if "hiddenWidths" in source_line:
+                    continue
+                line, col = _line_col(text, m.start())
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        path,
+                        line,
+                        col,
+                        "public tensor and model geometry must use `Spec.Shape` for static "
+                        "shape indices or `Tensor Nat [d]` for computed geometry, not `List Nat`; "
+                        "ordinary lists are reserved for explicitly named recursive architecture "
+                        "plans such as `hiddenWidths`.",
+                    )
+                )
             for declaration in PUBLIC_DECL_RE.finditer(masked):
                 name = declaration.group("name")
                 line, col = _line_col(text, declaration.start("name"))
@@ -2040,7 +3061,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                             line,
                             col,
                             f"public declaration `{name}` encodes a fixed rank or memory layout; "
-                            "express axes through `Spec.Shape`, `Spec.Tensor Nat [d]`, or a domain-specific "
+                            "express axes through `Spec.Shape`, `TorchLean.Tensor Nat [d]`, or a domain-specific "
                             "example outside the public tensor/model API.",
                         )
                     )
@@ -2110,6 +3131,14 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     line, col = _line_col(text, m.start())
                     findings.append(Finding("ERROR", path, line, col, msg))
 
+        if rel.endswith(".lean") and any(
+            rel.startswith(prefix) for prefix in PUBLIC_NUMERICAL_EXAMPLE_PREFIXES
+        ):
+            for rx, msg in PUBLIC_NUMERICAL_SPEC_BANNED_PATTERNS:
+                for m in rx.finditer(masked):
+                    line, col = _line_col(text, m.start())
+                    findings.append(Finding("ERROR", path, line, col, msg))
+
         # Axioms must be quarantined and named explicitly.
         allowed_axiom_names = ALLOWED_AXIOMS.get(rel, set())
         for m in axiom_re.finditer(masked):
@@ -2126,42 +3155,66 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     )
                 )
 
-        # Warn by default; callers can promote these warnings with `--fail-on-warn`.
-        if "set_option linter." in masked and " false" in masked:
-            suppressions = list(
-                re.finditer(r"set_option\s+linter\.([A-Za-z0-9_]+)\s+false(?:\s+in)?", masked)
+        # Warning and visibility checks are part of the build contract. Do not hide them locally:
+        # fix the declaration or proof that emits the diagnostic.
+        suppressed_linter_re = re.compile(
+            r"set_option\s+linter\.([A-Za-z0-9_]+)\s+false(?:\s+in)?"
+        )
+        for m in suppressed_linter_re.finditer(masked):
+            line, col = _line_col(text, m.start())
+            findings.append(
+                Finding(
+                    "ERROR",
+                    path,
+                    line,
+                    col,
+                    f"suppresses Lean linter `{m.group(1)}`; fix the diagnostic instead.",
+                )
             )
-            disallowed_suppressions = [
-                m for m in suppressions
-                if not (m.group(1) == "auxLemma" and m.group(0).rstrip().endswith(" in"))
-            ]
-            # Only a coarse signal; report once per file.
-            if disallowed_suppressions:
-                rel_posix = path.relative_to(REPO_ROOT).as_posix()
-                # Some executable examples, tests, and maintenance scripts scope linter options
-                # locally. Keep this warning focused on library-facing code where suppressions are
-                # part of the public proof surface.
-                if (
-                    rel_posix in ALLOWED_LINTER_SUPPRESSION_FILES
-                    or
-                    rel_posix.startswith("NN/Examples/")
-                    or rel_posix.startswith("NN/Tests/")
-                    or rel_posix.startswith("scripts/")
-                    # The typed-graph correctness proofs scope linter options locally to
-                    # keep proof scripts readable; warning here is usually not actionable.
-                    or rel_posix.startswith("NN/Runtime/Autograd/TypedGraph/IRExec/Correctness/")
-                ):
-                    pass
-                else:
-                    findings.append(
-                        Finding(
-                            "WARN",
-                            path,
-                            None,
-                            None,
-                            "suppresses a linter (`set_option linter.* false`). Prefer fixing the warning or scoping the option tightly.",
-                        )
-                    )
+
+        nolint_re = re.compile(
+            r"(?:@\[\s*|attribute\s+\[\s*)nolint\b"
+        )
+        for m in nolint_re.finditer(masked):
+            line, col = _line_col(text, m.start())
+            findings.append(
+                Finding(
+                    "ERROR",
+                    path,
+                    line,
+                    col,
+                    "suppresses a Lean linter with `nolint`; fix the diagnostic instead.",
+                )
+            )
+
+        private_compat_re = re.compile(r"\bbackward\.privateInPublic(?:\.warn)?\b")
+        for m in private_compat_re.finditer(masked):
+            line, col = _line_col(text, m.start())
+            findings.append(
+                Finding(
+                    "ERROR",
+                    path,
+                    line,
+                    col,
+                    "overrides Lean's strict private-in-public boundary; remove the override.",
+                )
+            )
+
+        hidden_warning_re = re.compile(
+            r"(?:set_option\s+warningAsError\s+false|"
+            r"⟨\s*`warningAsError\s*,\s*false\s*⟩)"
+        )
+        for m in hidden_warning_re.finditer(masked):
+            line, col = _line_col(text, m.start())
+            findings.append(
+                Finding(
+                    "ERROR",
+                    path,
+                    line,
+                    col,
+                    "disables warnings-as-errors; keep compiler warnings visible and fix them.",
+                )
+            )
 
     if not fail_on_warn:
         return findings
@@ -2180,7 +3233,24 @@ def main() -> int:
         action="store_true",
         help="Treat warnings as errors (useful for tightening policies over time).",
     )
+    ap.add_argument(
+        "--sync-doc-examples",
+        action="store_true",
+        help="Copy every compiled snippet from NN/Tests/API/DocExamples into its docstring.",
+    )
     args = ap.parse_args()
+
+    if args.sync_doc_examples:
+        findings, updates = _sync_doc_examples(write=True)
+        for update in updates:
+            print(f"synced: {update}")
+        for f in findings:
+            print(f.render())
+        if any(f.level == "ERROR" for f in findings):
+            print(f"\nFAILED: could not sync every doc example.")
+            return 1
+        print(f"OK: {len(updates)} docstring example(s) updated.")
+        return 0
 
     findings = lint_repo(fail_on_warn=args.fail_on_warn)
     errors = [f for f in findings if f.level == "ERROR"]

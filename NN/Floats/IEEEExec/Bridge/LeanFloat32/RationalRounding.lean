@@ -6,9 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Bridge.LeanFloat32.Rounding
 import NN.Floats.IEEEExec.Bridge.FP32.RatBounds
 import NN.Floats.IEEEExec.Rounding.RoundQuotEvenBounds
+public import NN.Floats.IEEEExec.Bridge.LeanFloat32.Rounding
 
 /-!
 # Rational rounding in the Lean Float32 bridge

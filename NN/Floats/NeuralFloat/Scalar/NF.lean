@@ -8,6 +8,7 @@ module
 
 public import NN.Floats.NeuralFloat.Rounding.Core
 public import NN.Core.Numeric
+public import Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic
 
 /-!
 ## `NF`: a rounded scalar type (rounding-on-`ℝ`)
@@ -19,7 +20,7 @@ stating format predicates like `FLT_format`. In many places, though, we want som
 `NF β fexp rnd` is that scalar carrier:
 
 - it stores a semantic value `val : ℝ`,
-- and every primitive arithmetic operation rounds back to the format using `neural_round`.
+- and every primitive arithmetic operation rounds back to the format using `neuralRound`.
 
 The public constructor remains available because proof developments sometimes embed an arbitrary
 real as a comparison value. Such a value need not be representable. `NF.IsRepresentable` records the
@@ -53,7 +54,8 @@ Rounded scalar value at a given radix/format/rounding mode.
 mantissa to an integer.
 -/
 structure NF (β : NeuralRadix) (fexp : ℤ → ℤ) (rnd : ℝ → ℤ) where
-  /-- val. -/
+  /-- The real number carried by the wrapper. It is a genuine real, not a bit pattern: `NF` records
+  *which* reals are reachable at a given format, and the rounding theorems are what constrain it. -/
   val : ℝ
 
 namespace NF
@@ -268,58 +270,6 @@ omit [NeuralValidRnd rnd] in
 @[simp] theorem checkedLog_eq_none_iff (x : NF β fexp rnd) :
     checkedLog x = none ↔ ¬0 < x.val := by
   simp [checkedLog]
-
-/-- Numeric constants for NF via rounded reals. -/
-noncomputable instance : Numbers (NF β fexp rnd) where
-  negHalf       := ofReal (β := β) (fexp := fexp) (rnd := rnd) (-0.5)
-  negOne        := ofReal (β := β) (fexp := fexp) (rnd := rnd) (-1)
-  oneTenth      := ofReal (β := β) (fexp := fexp) (rnd := rnd) 0.1
-  half          := ofReal (β := β) (fexp := fexp) (rnd := rnd) 0.5
-  zero          := ofReal (β := β) (fexp := fexp) (rnd := rnd) 0
-  one           := ofReal (β := β) (fexp := fexp) (rnd := rnd) 1
-  two           := ofReal (β := β) (fexp := fexp) (rnd := rnd) 2
-  three         := ofReal (β := β) (fexp := fexp) (rnd := rnd) 3
-  four          := ofReal (β := β) (fexp := fexp) (rnd := rnd) 4
-  five          := ofReal (β := β) (fexp := fexp) (rnd := rnd) 5
-  ten           := ofReal (β := β) (fexp := fexp) (rnd := rnd) 10
-  lnTen         := ofReal (β := β) (fexp := fexp) (rnd := rnd) (Real.log 10)
-  lnTenThousand := ofReal (β := β) (fexp := fexp) (rnd := rnd) (Real.log 10000)
-  epsilon       := ofReal (β := β) (fexp := fexp) (rnd := rnd) (1e-6)
-
-/--
-Extract an approximate radix-`β` mantissa/exponent pair for debugging.
-
-We compute:
-
-- `e := cexp(x)` from the format (`fexp`),
-- `m := rnd( scaled_mantissa(x) )`,
-
-so that `x ≈ m · β^e` (with the approximation coming from rounding).
-
-This is meant for logs / human inspection; it is not used by the core proofs.
--/
-noncomputable def mantExp (x : NF β fexp rnd) : Int × Int :=
-  let e : Int := neuralCexp β fexp x.val
-  let m : Int := (rnd (neuralScaledMantissa β fexp x.val))
-  (m, e)
-
-/-- Format an integer in base 10. -/
-@[inline] def fmtInt (n : Int) : String := toString n
-
-/--
-Format an `NF` value as a radix-`β` scientific string `"m * β^e"`.
-
-Example (β = 2): `"-123 * 2^7"`.
--/
-noncomputable def formatRadix (x : NF β fexp rnd) : String :=
-  let (m, e) := mantExp (β := β) (fexp := fexp) (rnd := rnd) x
-  if m = 0 then "0"
-  else s!"{fmtInt m} * {β.base}^{fmtInt e}"
-
-/-- Format an interval [lo, hi] for NF values using `formatRadix`. -/
-noncomputable def formatIntervalRadix (lo hi : NF β fexp rnd) : String :=
-  (s!"[ {formatRadix (β := β) (fexp := fexp) (rnd := rnd) lo}, " ++
-    s!"{formatRadix (β := β) (fexp := fexp) (rnd := rnd) hi} ]")
 
 end NF
 

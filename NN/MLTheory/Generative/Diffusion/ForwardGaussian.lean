@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.MeasureTheory.Measure.Typeclasses.Probability
 public import Mathlib.Probability.Distributions.Gaussian.Multivariate
 
 /-!
@@ -27,9 +26,9 @@ In the DDPM/VP setting, the usual coefficients are:
 - $c_0 = \sqrt{\bar{\alpha}_t}$
 - $c_1 = \sqrt{1-\bar{\alpha}_t}$
 
-At the spec layer (`NN.Spec.Generative.Diffusion.ForwardProcess`), we treat the noise $\varepsilon$ as an
-explicit tensor input. This file provides the probability-theory side: when that noise is sampled
-from `stdGaussian`, the resulting distribution is Gaussian.
+At the spec layer (`NN.Spec.Generative.Diffusion.ForwardProcess`), we treat the noise
+$\varepsilon$ as an explicit tensor input. This file provides the probability-theory side: when
+that noise is sampled from `stdGaussian`, the resulting distribution is Gaussian.
 
 The result gives the exact law-level fact used by VP/DDPM forward processes: affine noising of a
 fixed data point by standard Gaussian noise produces another Gaussian probability measure. We keep
@@ -78,6 +77,8 @@ instance (c0 c1 : ℝ) (x0 : E) : IsProbabilityMeasure (forwardGaussian (ι := �
   change IsProbabilityMeasure (ν.map (fun y : E => y + c0 • x0))
   exact Measure.isProbabilityMeasure_map (μ := ν) (f := fun y : E => y + c0 • x0) (by fun_prop)
 
+/-- Affine noising of a fixed point has a Gaussian law. This closure theorem does not identify
+the marginal of a separately defined multistep diffusion chain. -/
 theorem forwardGaussian_isGaussian (c0 c1 : ℝ) (x0 : E) :
     IsGaussian (forwardGaussian (ι := ι) c0 c1 x0) := by
   -- Gaussian laws are closed under continuous linear maps and translations.

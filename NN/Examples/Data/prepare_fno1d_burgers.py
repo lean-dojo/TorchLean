@@ -38,7 +38,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ntrain", type=int, default=128, help="Training samples to export")
     parser.add_argument("--ntest", type=int, default=32, help="Test samples to export")
     parser.add_argument("--seed", type=int, default=0, help="Deterministic shuffle seed")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.ntrain <= 0 or args.ntest <= 0:
+        parser.error("--ntrain and --ntest must be positive")
+    if args.grid <= 1:
+        parser.error("--grid must be greater than one")
+    return args
 
 
 def download_if_needed(url: str, dst: pathlib.Path) -> pathlib.Path:
@@ -51,7 +56,7 @@ def download_if_needed(url: str, dst: pathlib.Path) -> pathlib.Path:
     return dst
 
 
-def load_mat(path: pathlib.Path) -> tuple[np.ndarray, np.ndarray]:
+def load_mat(path: pathlib.Path) -> tuple[np.ndarray, np.ndarray, dict[str, str]]:
     try:
         from scipy.io import loadmat
     except ImportError as exc:
@@ -72,19 +77,24 @@ def load_mat(path: pathlib.Path) -> tuple[np.ndarray, np.ndarray]:
         raise SystemExit(f"Expected 2D arrays, got {x_key}{x.shape} and {y_key}{y.shape}")
     if x.shape != y.shape:
         raise SystemExit(f"Input/target shapes differ: {x.shape} vs {y.shape}")
-    return x, y
+    if not np.isfinite(x).all() or not np.isfinite(y).all():
+        raise SystemExit("Burgers fields must contain finite numeric values")
+    return x, y, {"x": x_key, "y": y_key}
 
 
-def subsample_to_grid(a: np.ndarray, grid: int) -> np.ndarray:
+def resample_to_grid(a: np.ndarray, grid: int) -> np.ndarray:
     if grid <= 1:
         raise SystemExit("--grid must be > 1")
     if grid > a.shape[1]:
         raise SystemExit(f"--grid={grid} exceeds source resolution {a.shape[1]}")
-    # Match the common FNO tutorial pattern: uniform stride when possible, otherwise nearest picks.
+    # Keep the output on the uniform periodic grid used by the Fourier layer.
     if a.shape[1] % grid == 0:
         return a[:, :: a.shape[1] // grid][:, :grid]
-    idx = np.linspace(0, a.shape[1] - 1, grid).round().astype(np.int64)
-    return a[:, idx]
+    positions = np.arange(grid, dtype=np.float64) * (a.shape[1] / grid)
+    left = np.floor(positions).astype(np.int64)
+    right = (left + 1) % a.shape[1]
+    fraction = positions - left
+    return (a[:, left] * (1.0 - fraction) + a[:, right] * fraction).astype(np.float32)
 
 
 def main() -> None:
@@ -95,9 +105,10 @@ def main() -> None:
     if mat_path is None:
         raise SystemExit("Pass --mat PATH or --download")
 
-    x, y = load_mat(mat_path)
-    x = subsample_to_grid(x, args.grid)
-    y = subsample_to_grid(y, args.grid)
+    x, y, fields = load_mat(mat_path)
+    source_grid = x.shape[1]
+    x = resample_to_grid(x, args.grid)
+    y = resample_to_grid(y, args.grid)
 
     needed = args.ntrain + args.ntest
     if needed > x.shape[0]:
@@ -121,7 +132,11 @@ def main() -> None:
         "ntrain": args.ntrain,
         "ntest": args.ntest,
         "dtype": "float32",
-        "fields": {"x": "a", "y": "u"},
+        "seed": args.seed,
+        "fields": fields,
+        "source_grid": source_grid,
+        "grid_convention": "periodic endpoint-excluded [0,1)",
+        "resampling": "uniform_stride" if source_grid % args.grid == 0 else "periodic_linear",
     }
     (args.out_dir / "burgers_meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     print(f"Wrote TorchLean arrays under {args.out_dir}")

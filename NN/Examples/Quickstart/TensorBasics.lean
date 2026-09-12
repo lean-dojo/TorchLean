@@ -6,27 +6,25 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Scalar
-public import NN.Tensor
+public import NN.API
 
 /-!
 # Quickstart: Tensor Basics
 
-This is the first stop in the TorchLean examples. It does **not** use sessions, CUDA, or autograd.
-It is just about building typed tensors in Lean with a convenient constructor layer.
+This first TorchLean example introduces typed tensor construction, reshaping,
+and element-type conversion.
 
 What it covers:
-- arbitrary-rank constructors from literals or runtime arrays (`tensor!`, `Tensor.ofArray`),
-- the fact that the element type `α` selects the tensor's scalar semantics,
-- conversion of host `Float` literals to native `Float32` and reference `IEEE32Exec`,
-- why we generally do not try to `print` tensors over `ℝ` (noncomputable / too large).
+- rank-zero and arbitrary-rank literals,
+- reshaping without changing entry order,
+- the fact that the element type `α` selects the tensor's arithmetic,
+- conversion to native `Float32`.
 
 Run:
-  `lake exe torchlean quickstart_tensors`
+  `scripts/lake.sh exe torchlean quickstart_tensors`
 -/
 
 @[expose] public section
-
 
 namespace NN.Examples.Quickstart.TensorBasics
 
@@ -38,11 +36,12 @@ def usage : String :=
     [ "TorchLean tensor basics quickstart"
     , ""
     , "Usage:"
-    , "  lake exe torchlean quickstart_tensors"
+    , "  scripts/lake.sh exe torchlean quickstart_tensors"
     , ""
     , "This demo has no tutorial-specific flags."
     ]
 
+/-- Entry point. Nothing to configure, so the only accepted argument is `--help`. -/
 def main (args : List String) : IO Unit := do
   let args := CLI.dropDashDash args
   if CLI.hasHelp args then
@@ -51,49 +50,33 @@ def main (args : List String) : IO Unit := do
   CLI.requireNoArgs "quickstart_tensors" args
   IO.println "== Quickstart: tensor basics =="
 
-  -- Each tensor has one scalar type `α`; this is more static than a PyTorch runtime dtype.
-  let xF : Tensor Float [4] := tensor! [0.1, 0.2, 0.3, 0.4]
-  let xQ : Tensor ℚ [4] := tensor! (ty := ℚ) [0.1, 0.2, 0.3, 0.4]
-  let xI : Tensor Int [4] := tensor! (ty := Int) [1, 2, 3, 4]
+  -- Rank-zero tensors use the empty shape and an ordinary numeric literal.
+  let threshold : Tensor Float [] := 0.5
+  IO.println s!"Rank-zero tensor: {reprStr threshold}"
 
-  Tensor.print xF
-  Tensor.print xQ
-  Tensor.print xI
+  -- Each tensor has one element type `α`.
+  let floatTensor : Tensor Float [4] := [0.1, 0.2, 0.3, 0.4]
+  let rationalTensor : Tensor ℚ [4] := [0.1, 0.2, 0.3, 0.4]
+  let integerTensor : Tensor Int [4] := [1, 2, 3, 4]
 
-  -- Native binary32 and the independent raw-bit reference have deliberately different names.
-  let x32 ← CLI.orThrowIO <|
-    Tensor.fromFloatArray Float.toFloat32 [4] #[0.1, 0.2, 0.3, 0.4]
-  let x32Ref ← CLI.orThrowIO <|
-    Tensor.fromFloatArray TorchLean.Floats.IEEE754.IEEE32Exec.ofFloat [4]
-      #[0.1, 0.2, 0.3, 0.4]
-  Tensor.print x32
-  Tensor.print x32Ref
+  IO.println s!"Float tensor:    {reprStr floatTensor}"
+  IO.println s!"Rational tensor: {reprStr rationalTensor}"
+  IO.println s!"Integer tensor:  {reprStr integerTensor}"
 
-  -- N-D tensor using "nested brackets" (like nested Python lists in PyTorch).
-  -- This is often the clearest way to see where each element goes.
-  let x3 : Tensor Float [2, 2, 2] :=
-    tensor! [
+  -- A cast changes the element type while preserving the shape.
+  let nativeFloat32 : Tensor Float32 [4] := Tensor.cast floatTensor Float32
+  IO.println s!"Float32 cast:    {reprStr nativeFloat32}"
+
+  -- Nested brackets show where every value lies along each axis.
+  let cube : Tensor Float [2, 2, 2] :=
+    [
       [ [1, 2], [3, 4] ],
       [ [5, 6], [7, 8] ]
     ]
-  Tensor.print x3
+  IO.println s!"Rank-3 tensor:   {reprStr cube}"
 
-  -- Runtime values use `Tensor.ofArray`: provide dimensions and flat row-major storage.
-  -- Row-major means the last dimension changes fastest:
-  -- the above `x3` is the same as `Tensor.ofArray [2,2,2] #[1,2,3,4,5,6,7,8]`.
-
-  -- Types may depend on runtime values, so dynamic dimensions still produce one `Tensor`.
-  let dims := #[2, 2]
-  let dynamic ← CLI.orThrowIO <|
-    Tensor.ofArray dims.toList #[1.0, 2.0, 3.0, 4.0]
-  if dynamic.toArray != #[1.0, 2.0, 3.0, 4.0] then
-    throw <| IO.userError "dynamic tensor changed its row-major payload"
-
-  -- Showing the intentional “Real tensors refuse to print” behavior.
-  let xR : Tensor ℝ [4] := tensor! (ty := ℝ) [0.1, 0.2, 0.3, 0.4]
-  try
-    Tensor.print xR
-  catch e =>
-    IO.println s!"Expected failure printing Tensor ℝ: {e}"
+  -- Reshape preserves the values and their row-major order.
+  let matrix : Tensor Float [2, 2] := floatTensor.reshape [2, 2]
+  IO.println s!"Reshaped matrix: {reprStr matrix}"
 
 end NN.Examples.Quickstart.TensorBasics

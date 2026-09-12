@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.Graph.ForwardApprox
-public import NN.Spec.Core.TensorOps
 
 /-!
 # BackwardApprox
@@ -51,8 +50,8 @@ https://pytorch.org/docs/stable/autograd.html
 namespace Proofs
 namespace RuntimeApprox
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
 open Proofs.Autograd.Algebra
 
@@ -75,14 +74,14 @@ variable {α : Type}
 structure RevNode (toSpec : α → SpecScalar) (Γ : List Shape) (τ : Shape) extends
     FwdNode (α := α) toSpec Γ τ where
   /-- Spec-level VJP: maps a context and an output cotangent into a context cotangent. -/
-  vjpSpec : _root_.TorchLean.TensorPack SpecScalar Γ → SpecTensor τ → _root_.TorchLean.TensorPack SpecScalar Γ
+  vjpSpec : TorchLean.TensorPack SpecScalar Γ → SpecTensor τ → TorchLean.TensorPack SpecScalar Γ
   /-- Runtime VJP: same shape-level function on the runtime side. -/
-  vjpRuntime : _root_.TorchLean.TensorPack α Γ → Tensor α τ → _root_.TorchLean.TensorPack α Γ
+  vjpRuntime : TorchLean.TensorPack α Γ → Tensor α τ → TorchLean.TensorPack α Γ
   /-- Explicit bound transformer for VJP: pushes bounds backward through this node. -/
-  vjpBound : EList Γ → _root_.TorchLean.TensorPack α Γ → SpecScalar → Tensor α τ → EList Γ
+  vjpBound : EList Γ → TorchLean.TensorPack α Γ → SpecScalar → Tensor α τ → EList Γ
   /-- Soundness of the VJP bound: if context + output cotangent are approximated, so is the VJP. -/
-  vjpSound : ∀ (ctxS : _root_.TorchLean.TensorPack SpecScalar Γ) (ctxR : _root_.TorchLean.TensorPack α Γ) (epsCtx : EList Γ)
-      (δS : SpecTensor τ) (δR : Tensor α τ) (epsδ : SpecScalar),
+  vjpSound : ∀ (ctxS : TorchLean.TensorPack SpecScalar Γ) (ctxR : TorchLean.TensorPack α Γ)
+      (epsCtx : EList Γ) (δS : SpecTensor τ) (δR : Tensor α τ) (epsδ : SpecScalar),
       approxCtx (α := α) toSpec ctxS ctxR epsCtx →
       approxTensor (α := α) (toSpec := toSpec) δS δR epsδ →
         approxCtx (α := α) toSpec (vjpSpec ctxS δS) (vjpRuntime ctxR δR) (vjpBound epsCtx ctxR epsδ
@@ -116,20 +115,20 @@ def toFwdGraph {Γ : List Shape} {ss : List Shape} :
   | .snoc g node => .snoc (toFwdGraph g) node.toFwdNode
 
 /-- Spec-level evaluation of a `RevGraph` (delegates to `toFwdGraph`). -/
-def evalSpec {Γ : List Shape} {ss : List Shape} (g : RevGraph (α := α) toSpec Γ ss) (x : _root_.TorchLean.TensorPack
-  SpecScalar Γ) :
-    _root_.TorchLean.TensorPack SpecScalar (Γ ++ ss) :=
+def evalSpec {Γ : List Shape} {ss : List Shape} (g : RevGraph (α := α) toSpec Γ ss)
+    (x : TorchLean.TensorPack SpecScalar Γ) :
+    TorchLean.TensorPack SpecScalar (Γ ++ ss) :=
   FwdGraph.evalSpec (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) (toFwdGraph (α := α) g) x
 
 /-- Runtime-level evaluation of a `RevGraph` (delegates to `toFwdGraph`). -/
-def evalRuntime {Γ : List Shape} {ss : List Shape} (g : RevGraph (α := α) toSpec Γ ss) (x : _root_.TorchLean.TensorPack α
-  Γ) :
-    _root_.TorchLean.TensorPack α (Γ ++ ss) :=
+def evalRuntime {Γ : List Shape} {ss : List Shape} (g : RevGraph (α := α) toSpec Γ ss)
+    (x : TorchLean.TensorPack α Γ) :
+    TorchLean.TensorPack α (Γ ++ ss) :=
   FwdGraph.evalRuntime (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) (toFwdGraph (α := α) g) x
 
 /-- Forward bound propagation for a `RevGraph` (delegates to `toFwdGraph`). -/
 def evalBounds {Γ : List Shape} {ss : List Shape} (g : RevGraph (α := α) toSpec Γ ss)
-    (epsIn : EList Γ) (xR : _root_.TorchLean.TensorPack α Γ) : EList (Γ ++ ss) :=
+    (epsIn : EList Γ) (xR : TorchLean.TensorPack α Γ) : EList (Γ ++ ss) :=
   FwdGraph.evalBounds (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) (toFwdGraph (α := α) g) epsIn
     xR
 
@@ -137,7 +136,7 @@ def evalBounds {Γ : List Shape} {ss : List Shape} (g : RevGraph (α := α) toSp
 Forward approximation theorem for `RevGraph` (just `FwdGraph.eval_approx` via `toFwdGraph`).
 -/
 theorem eval_approx {Γ : List Shape} {ss : List Shape} (g : RevGraph (α := α) toSpec Γ ss) :
-    ∀ (xS : _root_.TorchLean.TensorPack SpecScalar Γ) (xR : _root_.TorchLean.TensorPack α Γ) (epsIn : EList Γ),
+    ∀ (xS : TorchLean.TensorPack SpecScalar Γ) (xR : TorchLean.TensorPack α Γ) (epsIn : EList Γ),
       approxCtx (α := α) toSpec xS xR epsIn →
         approxCtx (α := α) toSpec
           (evalSpec (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) g xS)
@@ -157,22 +156,24 @@ order, applying each node’s VJP and accumulating the resulting context-cotange
 seed.
 -/
 def backpropSpec {Γ : List Shape} {ss : List Shape} (g : RevGraph (α := α) toSpec Γ ss)
-    (x : _root_.TorchLean.TensorPack SpecScalar Γ) (seed : _root_.TorchLean.TensorPack SpecScalar (Γ ++ ss)) : _root_.TorchLean.TensorPack SpecScalar Γ :=
+    (x : TorchLean.TensorPack SpecScalar Γ) (seed : TorchLean.TensorPack SpecScalar (Γ ++ ss)) :
+    TorchLean.TensorPack SpecScalar Γ :=
   match g with
   | .nil =>
-      _root_.TorchLean.TensorPack.cast (α := SpecScalar) (ss₁ := Γ ++ []) (ss₂ := Γ) (List.append_nil Γ) seed
+      TorchLean.TensorPack.cast (α := SpecScalar) (ss₁ := Γ ++ []) (ss₂ := Γ)
+        (List.append_nil Γ) seed
   | .snoc (ss := ssPrev) (τ := τ) g node =>
       let assoc : (Γ ++ ssPrev) ++ [τ] = Γ ++ (ssPrev ++ [τ]) := List.append_assoc Γ ssPrev [τ]
-      let seed' : _root_.TorchLean.TensorPack SpecScalar ((Γ ++ ssPrev) ++ [τ]) :=
-        _root_.TorchLean.TensorPack.cast (α := SpecScalar) (ss₁ := Γ ++ (ssPrev ++ [τ])) (ss₂ := (Γ ++ ssPrev) ++ [τ])
-          assoc.symm seed
-      let seedPrev : _root_.TorchLean.TensorPack SpecScalar (Γ ++ ssPrev) := (_root_.TorchLean.TensorPack.unsnoc (α := SpecScalar) (ss := Γ ++
-        ssPrev) (τ := τ) seed').1
-      let seedOut : SpecTensor τ := (_root_.TorchLean.TensorPack.unsnoc (α := SpecScalar) (ss := Γ ++ ssPrev) (τ := τ)
-        seed').2
+      let seed' : TorchLean.TensorPack SpecScalar ((Γ ++ ssPrev) ++ [τ]) :=
+        TorchLean.TensorPack.cast (α := SpecScalar) (ss₁ := Γ ++ (ssPrev ++ [τ]))
+          (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm seed
+      let seedPrev : TorchLean.TensorPack SpecScalar (Γ ++ ssPrev) :=
+        (TorchLean.TensorPack.unsnoc (α := SpecScalar) (ss := Γ ++ ssPrev) (τ := τ) seed').1
+      let seedOut : SpecTensor τ :=
+        (TorchLean.TensorPack.unsnoc (α := SpecScalar) (ss := Γ ++ ssPrev) (τ := τ) seed').2
       let ctx := evalSpec (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ssPrev) g x
       let contrib := node.vjpSpec ctx seedOut
-      let seedPrev' := _root_.TorchLean.TensorPack.add (α := SpecScalar) seedPrev contrib
+      let seedPrev' := TorchLean.TensorPack.add (α := SpecScalar) seedPrev contrib
       backpropSpec g x seedPrev'
 
 /--
@@ -183,21 +184,23 @@ accumulate contributions at shared nodes.
 -/
 def backpropRuntime {Γ : List Shape} {ss : List Shape} (g : RevGraph (α := α) toSpec Γ ss)
     [Add α]
-    (x : _root_.TorchLean.TensorPack α Γ) (seed : _root_.TorchLean.TensorPack α (Γ ++ ss)) : _root_.TorchLean.TensorPack α Γ :=
+    (x : TorchLean.TensorPack α Γ) (seed : TorchLean.TensorPack α (Γ ++ ss)) :
+    TorchLean.TensorPack α Γ :=
   match g with
   | .nil =>
-      _root_.TorchLean.TensorPack.cast (α := α) (ss₁ := Γ ++ []) (ss₂ := Γ) (List.append_nil Γ) seed
+      TorchLean.TensorPack.cast (α := α) (ss₁ := Γ ++ []) (ss₂ := Γ) (List.append_nil Γ) seed
   | .snoc (ss := ssPrev) (τ := τ) g node =>
       let assoc : (Γ ++ ssPrev) ++ [τ] = Γ ++ (ssPrev ++ [τ]) := List.append_assoc Γ ssPrev [τ]
-      let seed' : _root_.TorchLean.TensorPack α ((Γ ++ ssPrev) ++ [τ]) :=
-        _root_.TorchLean.TensorPack.cast (α := α) (ss₁ := Γ ++ (ssPrev ++ [τ])) (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm
-          seed
-      let seedPrev : _root_.TorchLean.TensorPack α (Γ ++ ssPrev) := (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ)
-        seed').1
-      let seedOut : Tensor α τ := (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seed').2
+      let seed' : TorchLean.TensorPack α ((Γ ++ ssPrev) ++ [τ]) :=
+        TorchLean.TensorPack.cast (α := α) (ss₁ := Γ ++ (ssPrev ++ [τ]))
+          (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm seed
+      let seedPrev : TorchLean.TensorPack α (Γ ++ ssPrev) :=
+        (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seed').1
+      let seedOut : Tensor α τ :=
+        (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seed').2
       let ctx := evalRuntime (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ssPrev) g x
       let contrib := node.vjpRuntime ctx seedOut
-      let seedPrev' := _root_.TorchLean.TensorPack.add (α := α) seedPrev contrib
+      let seedPrev' := TorchLean.TensorPack.add (α := α) seedPrev contrib
       backpropRuntime g x seedPrev'
 
 /--
@@ -210,9 +213,10 @@ This is parameterized by:
 -/
 def backpropBounds {Γ : List Shape} {ss : List Shape} (g : RevGraph (α := α) toSpec Γ ss)
     [Add α]
-    (epsIn : EList Γ) (xR : _root_.TorchLean.TensorPack α Γ)
-    (epsSeed : EList (Γ ++ ss)) (seedR : _root_.TorchLean.TensorPack α (Γ ++ ss))
-    (addBound : {Δ : List Shape} → EList Δ → EList Δ → _root_.TorchLean.TensorPack α Δ → _root_.TorchLean.TensorPack α Δ → EList Δ) : EList Γ :=
+    (epsIn : EList Γ) (xR : TorchLean.TensorPack α Γ)
+    (epsSeed : EList (Γ ++ ss)) (seedR : TorchLean.TensorPack α (Γ ++ ss))
+    (addBound : {Δ : List Shape} → EList Δ → EList Δ →
+      TorchLean.TensorPack α Δ → TorchLean.TensorPack α Δ → EList Δ) : EList Γ :=
   match g with
   | .nil =>
       EList.cast (ss₁ := Γ ++ []) (ss₂ := Γ) (List.append_nil Γ) epsSeed
@@ -220,20 +224,21 @@ def backpropBounds {Γ : List Shape} {ss : List Shape} (g : RevGraph (α := α) 
       let assoc : (Γ ++ ssPrev) ++ [τ] = Γ ++ (ssPrev ++ [τ]) := List.append_assoc Γ ssPrev [τ]
       let epsSeed' : EList ((Γ ++ ssPrev) ++ [τ]) :=
         EList.cast (ss₁ := Γ ++ (ssPrev ++ [τ])) (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm epsSeed
-      let seed' : _root_.TorchLean.TensorPack α ((Γ ++ ssPrev) ++ [τ]) :=
-        _root_.TorchLean.TensorPack.cast (α := α) (ss₁ := Γ ++ (ssPrev ++ [τ])) (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm
-          seedR
-      let epsSeedPrev : EList (Γ ++ ssPrev) := (EList.unsnoc (ss := Γ ++ ssPrev) (τ := τ)
-        epsSeed').1
+      let seed' : TorchLean.TensorPack α ((Γ ++ ssPrev) ++ [τ]) :=
+        TorchLean.TensorPack.cast (α := α) (ss₁ := Γ ++ (ssPrev ++ [τ]))
+          (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm seedR
+      let epsSeedPrev : EList (Γ ++ ssPrev) :=
+        (EList.unsnoc (ss := Γ ++ ssPrev) (τ := τ) epsSeed').1
       let epsSeedOut : SpecScalar := (EList.unsnoc (ss := Γ ++ ssPrev) (τ := τ) epsSeed').2
-      let seedPrev : _root_.TorchLean.TensorPack α (Γ ++ ssPrev) := (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ)
-        seed').1
-      let seedOut : Tensor α τ := (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seed').2
+      let seedPrev : TorchLean.TensorPack α (Γ ++ ssPrev) :=
+        (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seed').1
+      let seedOut : Tensor α τ :=
+        (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seed').2
       let ctxR := evalRuntime (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ssPrev) g xR
       let epsCtx := evalBounds (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ssPrev) g epsIn xR
       let contrib := node.vjpRuntime ctxR seedOut
       let epsContrib := node.vjpBound epsCtx ctxR epsSeedOut seedOut
-      let seedPrev' := _root_.TorchLean.TensorPack.add (α := α) seedPrev contrib
+      let seedPrev' := TorchLean.TensorPack.add (α := α) seedPrev contrib
       let epsSeedPrev' := addBound (Δ := Γ ++ ssPrev) epsSeedPrev epsContrib seedPrev contrib
       backpropBounds g epsIn xR epsSeedPrev' seedPrev' addBound
 
@@ -252,15 +257,17 @@ The only "extra" ingredient beyond per-node VJP approximation is how we accumula
 -/
 theorem backprop_approx {Γ : List Shape} {ss : List Shape} (g : RevGraph (α := α) toSpec Γ ss)
     [Add α]
-    (addBound : {Δ : List Shape} → EList Δ → EList Δ → _root_.TorchLean.TensorPack α Δ → _root_.TorchLean.TensorPack α Δ → EList Δ)
-    (addSound : ∀ {Δ : List Shape} (xS yS : _root_.TorchLean.TensorPack SpecScalar Δ) (xR yR : _root_.TorchLean.TensorPack α Δ)
-      (epsx epsy : EList Δ),
+    (addBound : {Δ : List Shape} → EList Δ → EList Δ →
+      TorchLean.TensorPack α Δ → TorchLean.TensorPack α Δ → EList Δ)
+    (addSound : ∀ {Δ : List Shape} (xS yS : TorchLean.TensorPack SpecScalar Δ)
+      (xR yR : TorchLean.TensorPack α Δ) (epsx epsy : EList Δ),
       approxCtx (α := α) toSpec xS xR epsx →
       approxCtx (α := α) toSpec yS yR epsy →
-        approxCtx (α := α) toSpec (_root_.TorchLean.TensorPack.add (α := SpecScalar) xS yS) (_root_.TorchLean.TensorPack.add (α := α) xR yR)
-          (addBound epsx epsy xR yR)) :
-    ∀ (xS : _root_.TorchLean.TensorPack SpecScalar Γ) (xR : _root_.TorchLean.TensorPack α Γ) (epsIn : EList Γ)
-      (seedS : _root_.TorchLean.TensorPack SpecScalar (Γ ++ ss)) (seedR : _root_.TorchLean.TensorPack α (Γ ++ ss)) (epsSeed : EList (Γ ++ ss)),
+        approxCtx (α := α) toSpec (TorchLean.TensorPack.add (α := SpecScalar) xS yS)
+          (TorchLean.TensorPack.add (α := α) xR yR) (addBound epsx epsy xR yR)) :
+    ∀ (xS : TorchLean.TensorPack SpecScalar Γ) (xR : TorchLean.TensorPack α Γ) (epsIn : EList Γ)
+      (seedS : TorchLean.TensorPack SpecScalar (Γ ++ ss)) (seedR : TorchLean.TensorPack α (Γ ++ ss))
+      (epsSeed : EList (Γ ++ ss)),
       approxCtx (α := α) toSpec xS xR epsIn →
       approxCtx (α := α) toSpec seedS seedR epsSeed →
         approxCtx (α := α) toSpec
@@ -286,12 +293,12 @@ theorem backprop_approx {Γ : List Shape} {ss : List Shape} (g : RevGraph (α :=
 
       -- Cast seed to `(Γ ++ ssPrev) ++ [τ]`, then split.
       let assoc : (Γ ++ ssPrev) ++ [τ] = Γ ++ (ssPrev ++ [τ]) := List.append_assoc Γ ssPrev [τ]
-      let seedS' : _root_.TorchLean.TensorPack SpecScalar ((Γ ++ ssPrev) ++ [τ]) :=
-        _root_.TorchLean.TensorPack.cast (α := SpecScalar) (ss₁ := Γ ++ (ssPrev ++ [τ])) (ss₂ := (Γ ++ ssPrev) ++ [τ])
-          assoc.symm seedS
-      let seedR' : _root_.TorchLean.TensorPack α ((Γ ++ ssPrev) ++ [τ]) :=
-        _root_.TorchLean.TensorPack.cast (α := α) (ss₁ := Γ ++ (ssPrev ++ [τ])) (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm
-          seedR
+      let seedS' : TorchLean.TensorPack SpecScalar ((Γ ++ ssPrev) ++ [τ]) :=
+        TorchLean.TensorPack.cast (α := SpecScalar) (ss₁ := Γ ++ (ssPrev ++ [τ]))
+          (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm seedS
+      let seedR' : TorchLean.TensorPack α ((Γ ++ ssPrev) ++ [τ]) :=
+        TorchLean.TensorPack.cast (α := α) (ss₁ := Γ ++ (ssPrev ++ [τ]))
+          (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm seedR
       let epsSeed' : EList ((Γ ++ ssPrev) ++ [τ]) :=
         EList.cast (ss₁ := Γ ++ (ssPrev ++ [τ])) (ss₂ := (Γ ++ ssPrev) ++ [τ]) assoc.symm epsSeed
 
@@ -301,14 +308,14 @@ theorem backprop_approx {Γ : List Shape} {ss : List Shape} (g : RevGraph (α :=
           (approxCtx_cast (α := α) (toSpec := toSpec) (h := assoc.symm) (xS := seedS) (xR := seedR)
             (eps := epsSeed) hseed)
 
-      let seedPrevS : _root_.TorchLean.TensorPack SpecScalar (Γ ++ ssPrev) :=
-        (_root_.TorchLean.TensorPack.unsnoc (α := SpecScalar) (ss := Γ ++ ssPrev) (τ := τ) seedS').1
+      let seedPrevS : TorchLean.TensorPack SpecScalar (Γ ++ ssPrev) :=
+        (TorchLean.TensorPack.unsnoc (α := SpecScalar) (ss := Γ ++ ssPrev) (τ := τ) seedS').1
       let seedOutS : SpecTensor τ :=
-        (_root_.TorchLean.TensorPack.unsnoc (α := SpecScalar) (ss := Γ ++ ssPrev) (τ := τ) seedS').2
-      let seedPrevR : _root_.TorchLean.TensorPack α (Γ ++ ssPrev) :=
-        (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seedR').1
+        (TorchLean.TensorPack.unsnoc (α := SpecScalar) (ss := Γ ++ ssPrev) (τ := τ) seedS').2
+      let seedPrevR : TorchLean.TensorPack α (Γ ++ ssPrev) :=
+        (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seedR').1
       let seedOutR : Tensor α τ :=
-        (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seedR').2
+        (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) seedR').2
       let epsSeedPrev : EList (Γ ++ ssPrev) :=
         (EList.unsnoc (ss := Γ ++ ssPrev) (τ := τ) epsSeed').1
       let epsSeedOut : SpecScalar :=
@@ -344,8 +351,8 @@ theorem backprop_approx {Γ : List Shape} {ss : List Shape} (g : RevGraph (α :=
       -- accumulate into the seed prefix
       have hseedPrev' :
           approxCtx (α := α) toSpec
-            (_root_.TorchLean.TensorPack.add (α := SpecScalar) seedPrevS contribS)
-            (_root_.TorchLean.TensorPack.add (α := α) seedPrevR contribR)
+            (TorchLean.TensorPack.add (α := SpecScalar) seedPrevS contribS)
+            (TorchLean.TensorPack.add (α := α) seedPrevR contribR)
             (addBound (Δ := Γ ++ ssPrev) epsSeedPrev epsContrib seedPrevR contribR) :=
         addSound (Δ := Γ ++ ssPrev) seedPrevS contribS seedPrevR contribR epsSeedPrev epsContrib
           hseedPrev hcontrib
@@ -356,8 +363,8 @@ theorem backprop_approx {Γ : List Shape} {ss : List Shape} (g : RevGraph (α :=
           contribS, contribR, epsContrib]
         using
           ih
-            (seedS := _root_.TorchLean.TensorPack.add (α := SpecScalar) seedPrevS contribS)
-            (seedR := _root_.TorchLean.TensorPack.add (α := α) seedPrevR contribR)
+            (seedS := TorchLean.TensorPack.add (α := SpecScalar) seedPrevS contribS)
+            (seedR := TorchLean.TensorPack.add (α := α) seedPrevR contribR)
             (epsSeed := addBound (Δ := Γ ++ ssPrev) epsSeedPrev epsContrib seedPrevR contribR)
             hseedPrev'
 

@@ -47,59 +47,48 @@ namespace NN.Verification.PINN.PdeParse
 
 open NN.Verification.PINN.PdeAst
 open NN.Verification.Util
+open TextCursor (Cursor)
 
 namespace Internal
 
-/-- Cursor state for the hand-written PDE expression parser. -/
-abbrev State := TextCursor.Cursor
+/-!
+`NN.Verification.Util.TextCursor` is the shared byte-position cursor, and this parser and the ODE
+parser both scan with it. The four forwarders below read exactly like the ODE parser's, but each one
+closes over `fuelOf`, and the fuel policy is where the two grammars part company. Binding it once
+here is what keeps the recursive descent underneath free of budget arithmetic.
+-/
 
-/-- Whether the PDE parser cursor has reached the end of its source text. -/
-@[inline] def eof (st : State) : Bool := TextCursor.atEnd st
+/--
+Recursion budget with additional headroom for the mutually recursive PDE grammar.
 
-/-- Inspect the current PDE source character without advancing. -/
-@[inline] def peek (st : State) : Option Char := TextCursor.peek st
-
-/-- Advance the PDE parser cursor by one character. -/
-@[inline] def bump (st : State) : State := TextCursor.bump st
-
-/-- Recursion budget with additional headroom for the mutually recursive PDE grammar. -/
-@[inline] def fuelOf (st : State) : Nat :=
-  -- `fuel` is a recursion budget (not a token count). Even very small inputs like "u"
-  -- require several mutually-recursive descent steps, so we scale the remaining-byte
-  -- budget by a small constant and add a fixed headroom.
-  let remaining := TextCursor.remainingFuel st
-  16 + 8 * remaining
-
-/-- Whitespace predicate used by the PDE expression parser. -/
-def isWs (c : Char) : Bool :=
-  TextCursor.isWhitespace c
-
-/-- Skip whitespace with an explicit recursion budget. -/
-def skipWsFuel (fuel : Nat) (st : State) : State :=
-  TextCursor.skipWhileFuel isWs fuel st
+This is the one place where the two hand-written parsers genuinely differ, so it is worth stating
+why. `fuel` is a recursion budget, not a token count. Even a one-character input like `u` walks
+`expr → term → unary → factor → primary`, so a budget equal to the remaining bytes would run out
+before the grammar bottoms out. Scaling by 8 and adding 16 covers the deepest descent that any
+accepted input can force.
+-/
+@[inline] def fuelOf (st : Cursor) : Nat :=
+  16 + 8 * TextCursor.remainingFuel st
 
 /-- Skip whitespace from the current parser state. -/
-def skipWs (st : State) : State :=
-  skipWsFuel (fuelOf st) st
-
-/-- Consume characters satisfying `p`, accumulating into `acc`, with explicit fuel. -/
-def takeWhileFuel (fuel : Nat) (p : Char → Bool) (acc : String) (st : State) : String × State :=
-  TextCursor.takeWhileFuel fuel p acc st
+def skipWs (st : Cursor) : Cursor :=
+  TextCursor.skipWhileFuel TextCursor.isWhitespace (fuelOf st) st
 
 /-- Consume characters satisfying `p`, accumulating into `acc`. -/
-def takeWhile (p : Char → Bool) (acc : String) (st : State) : String × State :=
-  takeWhileFuel (fuelOf st) p acc st
+def takeWhile (p : Char → Bool) (acc : String) (st : Cursor) :
+    String × Cursor :=
+  TextCursor.takeWhileFuel (fuelOf st) p acc st
 
 /-- Parse a signed decimal number without exponent, e.g. `-12.34`. -/
-def parseNumber (st : State) : Except String (Float × State) :=
+def parseNumber (st : Cursor) : Except String (Float × Cursor) :=
   TextCursor.parseFloat (fuelOf st) st
 
 /-- Parse a natural number at the current parser state. -/
-def parseNat (st : State) : Except String (Nat × State) :=
+def parseNat (st : Cursor) : Except String (Nat × Cursor) :=
   TextCursor.parseNat (fuelOf st) st
 
 /-- Parse an identifier used for environment lookup. -/
-def parseIdent (st : State) : Except String (String × State) := do
+def parseIdent (st : Cursor) : Except String (String × Cursor) := do
   let (txt, st1) := takeWhile (fun c => c.isAlpha || c.isDigit || c = '_' ) "" st
   if txt = "" then .error "expected identifier" else .ok (txt, st1)
 
@@ -114,60 +103,62 @@ def builtinIdent? : String → Option Expr
 
 mutual
   /-- Parse an additive/subtractive expression with an explicit recursion budget. -/
-  def parseExprCoreFuel (fuel : Nat) (env : String → Option Float) (st : State) : Except String
-    (Expr × State) := do
+  def parseExprCoreFuel (fuel : Nat) (env : String → Option Float) (st : Cursor) :
+      Except String (Expr × Cursor) := do
     match fuel with
     | 0 => .error "parser: out of fuel"
     | Nat.succ fuel =>
       let (t, st1) ← parseTermFuel fuel env st
-      let rec loop (fuel : Nat) (acc : Expr) (st : State) : Except String (Expr × State) := do
+      let rec loop (fuel : Nat) (acc : Expr) (st : Cursor) :
+          Except String (Expr × Cursor) := do
         match fuel with
         | 0 => .ok (acc, st)
         | Nat.succ fuel =>
           let st' := skipWs st
-          match peek st' with
+          match TextCursor.peek st' with
           | some '+' =>
-            let st'' := bump st'
+            let st'' := TextCursor.bump st'
             let (t2, st3) ← parseTermFuel fuel env st''
             loop fuel (.add acc t2) st3
           | some '-' =>
-            let st'' := bump st'
+            let st'' := TextCursor.bump st'
             let (t2, st3) ← parseTermFuel fuel env st''
             loop fuel (.sub acc t2) st3
           | _ => .ok (acc, st')
       loop fuel t st1
 
   /-- Parse a multiplicative term with an explicit recursion budget. -/
-  def parseTermFuel (fuel : Nat) (env : String → Option Float) (st : State) : Except String (Expr ×
-    State) := do
+  def parseTermFuel (fuel : Nat) (env : String → Option Float) (st : Cursor) :
+      Except String (Expr × Cursor) := do
     match fuel with
     | 0 => .error "parser: out of fuel"
     | Nat.succ fuel =>
       let (f, st1) ← parseUnaryFuel fuel env st
-      let rec loop (fuel : Nat) (acc : Expr) (st : State) : Except String (Expr × State) := do
+      let rec loop (fuel : Nat) (acc : Expr) (st : Cursor) :
+          Except String (Expr × Cursor) := do
         match fuel with
         | 0 => .ok (acc, st)
         | Nat.succ fuel =>
           let st' := skipWs st
-          match peek st' with
+          match TextCursor.peek st' with
           | some '*' =>
-            let st'' := bump st'
+            let st'' := TextCursor.bump st'
             let (f2, st3) ← parseUnaryFuel fuel env st''
             loop fuel (.mul acc f2) st3
           | _ => .ok (acc, st')
       loop fuel f st1
 
   /-- Parse a primary expression plus an optional natural-number power, with $x^0=1$. -/
-  def parseFactorFuel (fuel : Nat) (env : String → Option Float) (st : State) : Except String (Expr
-    × State) := do
+  def parseFactorFuel (fuel : Nat) (env : String → Option Float) (st : Cursor) :
+      Except String (Expr × Cursor) := do
     match fuel with
     | 0 => .error "parser: out of fuel"
     | Nat.succ fuel =>
       let (p, st1) ← parsePrimaryFuel fuel env st
       let st1' := skipWs st1
-      match peek st1' with
+      match TextCursor.peek st1' with
       | some '^' =>
-        let st2 := bump st1'
+        let st2 := TextCursor.bump st1'
         let (n, st3) ← parseNat (skipWs st2)
         if n = 0 then
           .ok (.const 1.0, st3)
@@ -183,32 +174,33 @@ mutual
       | _ => .ok (p, st1')
 
   /-- Parse leading negations. Exponentiation binds more tightly than unary minus. -/
-  def parseUnaryFuel (fuel : Nat) (env : String → Option Float) (st : State) : Except String (Expr ×
-    State) := do
+  def parseUnaryFuel (fuel : Nat) (env : String → Option Float) (st : Cursor) :
+      Except String (Expr × Cursor) := do
     match fuel with
     | 0 => .error "parser: out of fuel"
     | Nat.succ fuel =>
       let st' := skipWs st
-      match peek st' with
+      match TextCursor.peek st' with
       | some '-' =>
-        let (e, st1) ← parseUnaryFuel fuel env (bump st')
+        let (e, st1) ← parseUnaryFuel fuel env (TextCursor.bump st')
         .ok (.neg e, st1)
       | _ => parseFactorFuel fuel env st'
 
-  /-- Parse atoms: parenthesized expressions, `u`/derivative names, numerals, or environment identifiers. -/
-  def parsePrimaryFuel (fuel : Nat) (env : String → Option Float) (st : State) : Except String (Expr
-    × State) := do
+  /-- Parse atoms: parenthesized expressions, `u`/derivative names, numerals, or environment
+  identifiers. -/
+  def parsePrimaryFuel (fuel : Nat) (env : String → Option Float) (st : Cursor) :
+      Except String (Expr × Cursor) := do
     match fuel with
     | 0 => .error "parser: out of fuel"
     | Nat.succ fuel =>
       let st' := skipWs st
-      match peek st' with
+      match TextCursor.peek st' with
       | some '(' =>
-        let st1 := bump st'
+        let st1 := TextCursor.bump st'
         let (e, st2) ← parseExprCoreFuel fuel env st1
         let st3 := skipWs st2
-        match peek st3 with
-        | some ')' => .ok (e, bump st3)
+        match TextCursor.peek st3 with
+        | some ')' => .ok (e, TextCursor.bump st3)
         | _ => .error "expected ')'"
       | some c =>
         if c.isDigit || c = '.' then
@@ -228,7 +220,7 @@ mutual
 end
 
 /-- Parse a full expression from the current parser state. -/
-def parseExprCore (env : String → Option Float) (st : State) : Except String (Expr × State) :=
+def parseExprCore (env : String → Option Float) (st : Cursor) : Except String (Expr × Cursor) :=
   parseExprCoreFuel (fuelOf st) env st
 
 end Internal
@@ -238,10 +230,10 @@ def parseExpr (env : String → Option Float) (s : String) : Except String Expr 
   match Internal.parseExprCore env { source := s } with
   | .ok (e, st) =>
       let st := Internal.skipWs st
-      if Internal.eof st then
+      if TextCursor.atEnd st then
         .ok e
       else
-        match Internal.peek st with
+        match TextCursor.peek st with
         | some c => .error s!"unexpected trailing input near '{c}'"
         | none => .error "unexpected trailing input"
   | .error msg => .error msg

@@ -8,6 +8,7 @@ module
 
 public import NN.Spec.Layers.Conv
 public import NN.Spec.Module.Core
+public import NN.Tensor.Conversion
 
 /-!
 # Convolution Modules
@@ -20,26 +21,28 @@ one-dimensional sequences, images, volumes, and higher-rank spatial data.
 
 namespace Spec.Module
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
 /-- Wrap an arbitrary-rank channels-first convolution as a `Spec.Module`. -/
-def conv {α : Type} [Context α]
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+def conv {α : Type} [TorchLean.Storage α] [Context α]
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (m : ConvSpec d inC outC kernel stride padding α) :
     Spec.Module α
-      (Shape.ofList (inC :: inSpatial.toList))
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList)) :=
+      (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat))))
+      (Shape.ofList (outC :: Tensor.to
+        (convOutSpatial inSpatial kernel stride padding) (List Nat))) :=
   { forward := convSpec m
     kind := "Conv"
     pythonExpr := "nn.Conv(...)" }
 
 /-- Wrap an arbitrary-rank channels-first transposed convolution as a `Spec.Module`. -/
-def convTranspose {α : Type} [Context α]
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+def convTranspose {α : Type} [TorchLean.Storage α] [Context α]
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (m : ConvTransposeSpec d inC outC kernel stride padding α) :
     Spec.Module α
-      (Shape.ofList (inC :: inSpatial.toList))
-      (Shape.ofList (outC :: (convTransposeOutSpatial inSpatial kernel stride padding).toList)) :=
+      (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat))))
+      (Shape.ofList (outC :: Tensor.to
+        (convTransposeOutSpatial inSpatial kernel stride padding) (List Nat))) :=
   { forward := convTransposeSpec m
     kind := "ConvTranspose"
     pythonExpr := "nn.ConvTranspose(...)" }

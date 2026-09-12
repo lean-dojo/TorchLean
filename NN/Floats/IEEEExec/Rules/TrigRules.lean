@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Exec32
+public import NN.Floats.IEEEExec.Exec32.Transcendentals
 
 /-!
 ## Deterministic trigonometric special-value rules (`sin`, `cos`)

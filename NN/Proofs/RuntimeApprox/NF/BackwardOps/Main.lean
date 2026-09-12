@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.RuntimeApprox.NF.BackwardOps.Linalg
+public import NN.Proofs.RuntimeApprox.NF.BackwardOps.Backend
+public import NN.Proofs.RuntimeApprox.Graph.BackwardApprox
 
 /-!
 # NF Backpropagation Approximation
@@ -19,8 +20,8 @@ local nodes produces a runtime backpropagated context enclosed by the correspond
 namespace Proofs
 namespace RuntimeApprox
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
 open Proofs.Autograd.Algebra
 
@@ -48,8 +49,9 @@ then the whole backpropagated context is an `approxCtx` enclosure of the spec ba
 -/
 theorem backprop_approx {Γ : List Shape} {ss : List Shape}
     (g : RevGraph (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) Γ ss) :
-    ∀ (xS : _root_.TorchLean.TensorPack SpecScalar Γ) (xR : _root_.TorchLean.TensorPack R Γ) (epsIn : EList Γ)
-      (seedS : _root_.TorchLean.TensorPack SpecScalar (Γ ++ ss)) (seedR : _root_.TorchLean.TensorPack R (Γ ++ ss)) (epsSeed : EList (Γ ++ ss)),
+    ∀ (xS : TorchLean.TensorPack SpecScalar Γ) (xR : TorchLean.TensorPack R Γ) (epsIn : EList Γ)
+      (seedS : TorchLean.TensorPack SpecScalar (Γ ++ ss))
+      (seedR : TorchLean.TensorPack R (Γ ++ ss)) (epsSeed : EList (Γ ++ ss)),
       approxCtx (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR epsIn →
       approxCtx (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) seedS seedR epsSeed
         →

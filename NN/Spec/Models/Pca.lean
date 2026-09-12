@@ -27,16 +27,23 @@ References:
   https://doi.org/10.1080/14786440109462720
 - Hotelling (1933), "Analysis of a complex of statistical variables into principal components".
   https://doi.org/10.2307/2333955
+
+## Implementation status
+
+No API builder implements this model, and no theorem is proved about it. It is a reference
+definition only.
 -/
 
 @[expose] public section
 
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Parameters for PCA as a linear map plus centering.
 
@@ -49,7 +56,8 @@ We store:
 This matches the typical PCA API: you can `transform` to `outDim` coordinates and `inverse` back
 to `inDim`.
 -/
-structure PCASpec (α : Type) (inDim outDim : Nat) where
+structure PCASpec (α : Type) [TorchLean.Storage α]
+    (inDim outDim : Nat) where
   /-- Principal directions, one row for each output coordinate. -/
   components : Tensor α [outDim, inDim]
   /-- Coordinate-wise sample mean subtracted before projection. -/
@@ -85,10 +93,7 @@ def pcaComponentsDerivSpec {inDim outDim : Nat}
   let centered := subSpec input m.mean
   Tensor.dim (fun i =>
     Tensor.dim (fun j =>
-      match gradOutput, centered with
-      | Tensor.dim g_vals, Tensor.dim x_vals =>
-        match g_vals i, x_vals j with
-        | Tensor.scalar g, Tensor.scalar x => Tensor.scalar (g * x)
+      Tensor.scalar (Tensor.getScalar gradOutput i * Tensor.getScalar centered j)
     ))
 
 /-- VJP contribution for `mean`: `dL/dmean = -componentsᵀ · dL/dy`. -/
@@ -105,18 +110,24 @@ def pcaInputDerivSpec {inDim outDim : Nat}
   Tensor α [inDim] :=
   vecMatMulSpec gradOutput m.components
 
-/-- Full backward pass returning `(dComponents, dMean, dInput)`. -/
+/-- Gradients for a `PCASpec` projection. -/
+structure PCAGradients (α : Type) [TorchLean.Storage α] (inDim outDim : Nat) where
+  /-- Gradient with respect to the component matrix. -/
+  componentsGradient : Tensor α [outDim, inDim]
+  /-- Gradient with respect to the stored mean. -/
+  meanGradient : Tensor α [inDim]
+  /-- Gradient with respect to the projected input. -/
+  inputGradient : Tensor α [inDim]
+
+/-- Full backward pass for a PCA projection. -/
 def pcaBackwardSpec {inDim outDim : Nat}
   (m : PCASpec α inDim outDim)
   (input : Tensor α [inDim])
   (gradOutput : Tensor α [outDim]) :
-  (Tensor α [outDim, inDim] ×
-   Tensor α [inDim] ×
-   Tensor α [inDim]) :=
-  let dComponents := pcaComponentsDerivSpec m input gradOutput
-  let dMean := pcaMeanDerivSpec m gradOutput
-  let dInput := pcaInputDerivSpec m gradOutput
-  (dComponents, dMean, dInput)
+  PCAGradients α inDim outDim :=
+  { componentsGradient := pcaComponentsDerivSpec m input gradOutput
+    meanGradient := pcaMeanDerivSpec m gradOutput
+    inputGradient := pcaInputDerivSpec m gradOutput }
 
 /-- Approximate the leading PCA component using the scaled covariance matrix and power iteration.
 
@@ -169,9 +180,7 @@ def pcaTransformSpec {nSamples inDim outDim : Nat}
   (m : PCASpec α inDim outDim)
   (data : Tensor α [nSamples, inDim]) :
   Tensor α [nSamples, outDim] :=
-  match data with
-  | Tensor.dim batch_fn =>
-    Tensor.dim (fun i => pcaForwardSpec m (batch_fn i))
+  Tensor.dim (fun i => pcaForwardSpec m (Tensor.unstack data i))
 
 /-- Reconstruction error: `||x - inverse(transform(x))||_2^2` (sum of squared coordinates).
 
@@ -191,16 +200,13 @@ def pcaReconstructionErrorSpec {inDim outDim : Nat}
 
 /-- Cumulative explained variance, obtained by prefix-summing `explainedVariance`. -/
 def pcaCumulativeExplainedVarianceSpec {α : Type} [Add α] [Zero α]
+    [TorchLean.Storage α]
     {inDim outDim : Nat} (m : PCASpec α inDim outDim) :
     Tensor α [outDim] :=
-  match m.explainedVariance with
-  | Tensor.dim f =>
-    Tensor.dim (fun i =>
-      let entries := (List.finRange outDim).take (i.val + 1)
-      Tensor.scalar <| entries.foldl (fun acc j =>
-        match f j with
-        | Tensor.scalar x => acc + x) 0
-    )
+  Tensor.dim (fun i =>
+    let entries := (List.finRange outDim).take (i.val + 1)
+    Tensor.scalar <| entries.foldl
+      (fun acc j => acc + Tensor.getScalar m.explainedVariance j) 0)
 
 
 end Spec

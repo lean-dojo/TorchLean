@@ -6,9 +6,17 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Bridge.FP32Total
-public import NN.MLTheory.Proofs.ReLU.Bridge.ReLUMlpBridge
 public import NN.Spec.Core.FloatInstances
+public import Mathlib.Algebra.Order.Algebra
+public import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
+public import Mathlib.Data.Sym.Sym2.Init
+import Mathlib.Tactic.NormNum.GCD
+import Mathlib.Tactic.Positivity.Finset
+public import NN.Floats.IEEEExec.Semantics.RealSemantics
+public import NN.Spec.Models.Mlp
+-- Supplies the `ReLUMlpBridge` namespace opened below. `lake shake` cannot see an import that
+-- only feeds an `open`, so it needs the annotation.
+public import NN.MLTheory.Proofs.ReLU.Bridge.ReLUMlpBridge -- shake: keep
 
 /-!
 # Shared IEEE32Exec helpers for approximation theorems
@@ -35,7 +43,7 @@ real-valued MLP semantics used by the universal-approximation files.
 namespace NN.MLTheory.Proofs.UniversalApproximation
 namespace IEEE32ExecCore
 
-open _root_.Spec
+open _root_.Spec _root_.TorchLean
 open NN.MLTheory.Proofs.ReLUMlpBridge
 open TorchLean.Floats.IEEE754
 
@@ -48,8 +56,7 @@ Most approximation statements end with scalar-valued targets.  Keeping this as a
 the shape boundary explicit instead of hiding the `Fin 1` index proof at every call site.
 -/
 def extractScalarOutputIEEE32Exec (t : Tensor IEEE32Exec [1]) : IEEE32Exec :=
-  match t with
-  | .dim f => Tensor.item (f ⟨0, by decide⟩)
+  t.getScalar ⟨0, by decide⟩
 
 /--
 Evaluate a two-layer ReLU MLP over executable IEEE binary32 semantics.
@@ -71,9 +78,9 @@ Lean's dependent tensor shape is part of the type, so the map is recursive over 
 implemented as a runtime loop. Coercions such as `tensorToReal` stay definitionally transparent in
 downstream proofs.
 -/
-noncomputable def tensorMap {α β : Type} (f : α → β) : {s : Shape} → Tensor α s → Tensor β s
-  | .scalar, .scalar x => .scalar (f x)
-  | .dim n s, .dim g => .dim (fun i : Fin n => tensorMap f (s := s) (g i))
+noncomputable def tensorMap {α β : Type} (f : α → β) {s : Shape}
+    (tensor : Tensor α s) : Tensor β s :=
+  Tensor.map f tensor
 
 /--
 Interpret an executable IEEE tensor as the exact real tensor denoted by its entries.

@@ -6,14 +6,14 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph
-public import NN.MLTheory.CROWN.Extras.BoundOpsIEEE32Exec
 public import NN.MLTheory.CROWN.Proofs.GraphCrownCertSoundness
 public import NN.Runtime.PyTorch.Import.Core
-public import NN.Spec.Core.Tensor
-public import NN.Verification.Util.FloatApprox
 public import NN.Verification.Util.Json
-public import Lean.Data.Json
+public import NN.MLTheory.CROWN.Graph -- shake: keep
+public import NN.MLTheory.CROWN.Extras.BoundOpsIEEE32Exec -- shake: keep
+public import NN.Spec.Core.Tensor -- shake: keep
+public import NN.Verification.Util.FloatApprox -- shake: keep
+public import Lean.Data.Json -- shake: keep
 
 /-!
 # Node-Certificate Replay
@@ -43,8 +43,8 @@ open NN.MLTheory.CROWN.Graph
 open NN.Verification.Util
 open NN.Verification.Json
 open Import.PyTorch
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 open Lean Data Json
 open TorchLean.Floats.IEEE754
 
@@ -58,29 +58,22 @@ def finiteMatrix (rows cols : Nat) (A : Fin rows → Fin cols → Float) : Bool 
 
 /-- Bitwise equality for shape-indexed binary32 tensors. -/
 def exactEqTensor : {s : Shape} → Tensor IEEE32Exec s → Tensor IEEE32Exec s → Bool
-  | .scalar, .scalar a, .scalar b => decide (a = b)
-  | .dim n _, .dim xs, .dim ys =>
-      (List.finRange n).all fun i => exactEqTensor (xs i) (ys i)
+  | .scalar, left, right => decide (left.item = right.item)
+  | .dim n _, left, right =>
+      (List.finRange n).all fun i => exactEqTensor (left.unstack i) (right.unstack i)
 
 /-- A successful bitwise tensor comparison proves equality at every rank. -/
 theorem exactEqTensor_eq_true {s : Shape} {t u : Tensor IEEE32Exec s}
     (h : exactEqTensor t u = true) : t = u := by
   induction s with
   | scalar =>
-      cases t with
-      | scalar a =>
-          cases u with
-          | scalar b =>
-              simpa [exactEqTensor] using of_decide_eq_true h
+      apply Tensor.ext_scalar
+      simpa [exactEqTensor] using of_decide_eq_true h
   | dim n s ih =>
-      cases t with
-      | dim xs =>
-          cases u with
-          | dim ys =>
-              simp only [exactEqTensor, List.all_eq_true] at h
-              congr
-              funext i
-              exact ih (h i (List.mem_finRange i))
+      apply (Tensor.dimEquiv n s).injective
+      funext i
+      apply ih
+      exact (List.all_eq_true.mp (by simpa [exactEqTensor] using h)) i (List.mem_finRange i)
 
 /--
 Whether `outer` contains `inner` componentwise.
@@ -91,17 +84,11 @@ the relation used for interval claims.
 -/
 def flatBoxContains (outer inner : FlatBox IEEE32Exec) : Bool :=
   if h : outer.dim = inner.dim then
-    match outer, inner with
-    | ⟨n, outerLo, outerHi⟩, ⟨_m, innerLo, innerHi⟩ =>
-        by
-          cases h
-          exact
-            match outerLo, outerHi, innerLo, innerHi with
-            | .dim olo, .dim ohi, .dim ilo, .dim ihi =>
-                (List.finRange n).all fun i =>
-                  match olo i, ohi i, ilo i, ihi i with
-                  | .scalar ol, .scalar oh, .scalar il, .scalar ih =>
-                      decide (ol <= il) && decide (ih <= oh)
+    let innerLo := castDimScalar (α := IEEE32Exec) h.symm inner.lo
+    let innerHi := castDimScalar (α := IEEE32Exec) h.symm inner.hi
+    (List.finRange outer.dim).all fun i =>
+      decide (outer.lo.getScalar i <= innerLo.getScalar i) &&
+        decide (innerHi.getScalar i <= outer.hi.getScalar i)
   else
     false
 
@@ -267,7 +254,7 @@ def parseFlatBox? (dim : Nat) (j : Json) : IO (Option (FlatBox IEEE32Exec)) := d
   match j with
   | .null => pure none
   | _ =>
-      let o ← expectObj j "ibp[i]"
+      let o ← expectObject j "ibp[i]"
       let loJ ← expectField o "lo" "ibp[i]"
       let hiJ ← expectField o "hi" "ibp[i]"
       let some loVec := parseFloatVec dim loJ
@@ -279,9 +266,9 @@ def parseFlatBox? (dim : Nat) (j : Json) : IO (Option (FlatBox IEEE32Exec)) := d
       unless (List.finRange dim).all (fun i => decide (loVec i <= hiVec i)) do
         throw <| IO.userError "Invalid ibp[i]: every lower bound must be <= its upper bound"
       let loT : Tensor IEEE32Exec [dim] :=
-        Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.ofFn loVec)
+        TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn loVec)
       let hiT : Tensor IEEE32Exec [dim] :=
-        Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.ofFn hiVec)
+        TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn hiVec)
       pure (some { dim := dim, lo := loT, hi := hiT })
 
 /--
@@ -304,7 +291,7 @@ def parseAlphaVec? (dim : Nat) (j : Json) (ctx : String := "alpha[i]") :
           throw <| IO.userError
             s!"Invalid {ctx}[{k.val}]: α-CROWN requires 0 ≤ alpha ≤ 1, got {a}"
       let t : Tensor IEEE32Exec [dim] :=
-        Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.ofFn v)
+        TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn v)
       pure (some { n := dim, v := t })
 
 /-- Parse flattened affine bounds (lower/upper) from JSON. -/
@@ -313,7 +300,7 @@ def parseAffineBounds? (inDim outDim : Nat) (j : Json) :
   match j with
   | .null => pure none
   | _ =>
-      let o ← expectObj j "crown[i]"
+      let o ← expectObject j "crown[i]"
       let loAJ ← expectField o "loA" "crown[i]"
       let loCJ ← expectField o "loC" "crown[i]"
       let hiAJ ← expectField o "hiA" "crown[i]"
@@ -330,11 +317,11 @@ def parseAffineBounds? (inDim outDim : Nat) (j : Json) :
           finiteVec outDim loC && finiteVec outDim hiC do
         throw <| IO.userError "Invalid crown[i]: affine bounds must be finite"
       let loAff : AffineVec IEEE32Exec inDim outDim :=
-        { A := Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.matrix loA)
-          c := Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.ofFn loC) }
+        { A := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.matrix loA)
+          c := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn loC) }
       let hiAff : AffineVec IEEE32Exec inDim outDim :=
-        { A := Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.matrix hiA)
-          c := Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.ofFn hiC) }
+        { A := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.matrix hiA)
+          c := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn hiC) }
       pure (some { inDim := inDim, outDim := outDim, loAff := loAff, hiAff := hiAff })
 
 /--
@@ -362,7 +349,7 @@ relaxation proof.
 -/
 def parseCROWNNodeCoreCertificate (g : Graph) (topObj : Json) :
     IO CROWNNodeCoreCertificate := do
-  let ctxObj ← expectFieldObj topObj "ctx" "top-level"
+  let ctxObj ← expectFieldObject topObj "ctx" "top-level"
   let inputId ← expectFieldNat ctxObj "inputId" "ctx"
   let inputDim ← expectFieldNat ctxObj "inputDim" "ctx"
   let ctx : AffineCtx := { inputId := inputId, inputDim := inputDim }
@@ -479,13 +466,13 @@ def ibpNodePreconditionsOk
   | none => false
   | some node =>
       match node.kind with
-      | .add | .sub | .mul_elem | .maxElem | .minElem =>
+      | .add | .sub | .mulElem | .maxElem | .minElem =>
           binaryElementwiseBoxesMatchOutput g cert id
       | .log =>
           match NN.IR.unaryParent? node.parents with
           | some p1 =>
               match getFlatBox? cert p1 with
-              | some B => flatBoxStrictlyAbove B Numbers.epsilon
+              | some B => flatBoxStrictlyAbove B Context.defaultEpsilon
               | none => false
           | _ => false
       | .inv =>
@@ -532,7 +519,8 @@ def checkCROWNLikeNode
     return false
   if !(ibpNodePreconditionsOk g authoritativeIbp id) then
     IO.eprintln
-      s!"[{label}] node {id}: authoritative trace violates shape/domain preconditions for {repr node.kind}"
+      (s!"[{label}] node {id}: authoritative trace violates shape/domain preconditions " ++
+        s!"for {repr node.kind}")
     return false
 
   let certCrown? :=

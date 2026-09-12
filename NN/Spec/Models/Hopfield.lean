@@ -6,7 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Tensor
+public import Mathlib.Algebra.BigOperators.Group.Finset.Defs
+public import NN.Spec.Core.Context
+public import NN.Spec.Core.Tensor.Core
+public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Hopfield networks (spec-level)
@@ -47,10 +50,18 @@ the correspondence is:
 - `energy` is the Lyapunov/energy functional used for convergence arguments,
 - theorems in `NN.MLTheory.Proofs.Hopfield.Energy` and `NN.MLTheory.Proofs.Hopfield.Convergence`
   capture the classic “energy decreases ⇒ convergence” theorem pattern for finite state spaces.
+
+## Implementation status
+
+No API builder implements this model; it is used only by the proofs in
+`NN/MLTheory/Proofs/Hopfield/*` described above (`Basic`, `Dynamics`, `Energy`, `Progress`,
+`Convergence`).
 -/
 
 @[expose] public section
 
+
+open TorchLean
 
 namespace Spec
 namespace Hopfield
@@ -69,8 +80,10 @@ def act {α : Type} [One α] [Neg α] : Bool → α
   | true => 1
   | false => -1
 
-@[simp] lemma act_true {α : Type} [One α] [Neg α] : act (α := α) true = 1 := rfl
-@[simp] lemma act_false {α : Type} [One α] [Neg α] : act (α := α) false = -1 := rfl
+/-- A `true` unit activates to `+1`. -/
+@[simp] theorem act_true {α : Type} [One α] [Neg α] : act (α := α) true = 1 := rfl
+/-- A `false` unit activates to `-1`; the network is the classical bipolar Hopfield model. -/
+@[simp] theorem act_false {α : Type} [One α] [Neg α] : act (α := α) false = -1 := rfl
 
 /-- Hopfield state as a Boolean activation vector. -/
 abbrev State (n : Nat) : Type := Fin n → Bool
@@ -89,11 +102,16 @@ def TensorState.toFun {n : Nat} (s : TensorState n) : State n :=
 def TensorState.ofFun {n : Nat} (s : State n) : TensorState n :=
   (Tensor.vectorEquiv (α := Bool) n).invFun s
 
-@[simp] lemma TensorState.toFun_ofFun {n : Nat} (s : State n) :
+/-- Packing a state into a tensor and reading it back returns the same function. -/
+@[simp] theorem TensorState.toFun_ofFun {n : Nat} (s : State n) :
     TensorState.toFun (TensorState.ofFun (n := n) s) = s := by
   simp [TensorState.toFun, TensorState.ofFun]
 
-@[simp] lemma TensorState.ofFun_toFun {n : Nat} (s : TensorState n) :
+/-- Reading a tensor state out and packing it back returns the same tensor.
+
+The two directions together say the function and tensor views of a state carry the same information,
+so an energy argument written over `Fin n → Bool` transfers to the executable representation. -/
+@[simp] theorem TensorState.ofFun_toFun {n : Nat} (s : TensorState n) :
     TensorState.ofFun (n := n) (TensorState.toFun s) = s := by
   simp [TensorState.toFun, TensorState.ofFun]
 
@@ -128,14 +146,15 @@ structure Params (α : Type) (n : Nat) where
   θ : Fin n → α
 
 /-- Hopfield parameters as tensor-shaped weights and thresholds. -/
-structure TensorParams (α : Type) (n : Nat) where
+structure TensorParams (α : Type) [TorchLean.Storage α] (n : Nat) where
   /-- Weight matrix, with destination units on the first axis and source units on the second. -/
   W : Tensor α [n, n]
   /-- Rank-one tensor of per-unit activation thresholds. -/
   θ : Tensor α [n]
 
 /-- Convert tensor-shaped parameters to the function representation. -/
-def TensorParams.toFun {α : Type} {n : Nat} (p : TensorParams α n) : Params α n where
+def TensorParams.toFun {α : Type} [TorchLean.Storage α] {n : Nat}
+    (p : TensorParams α n) : Params α n where
   W := fun i j => Spec.get2 p.W i j
   θ := fun i => Tensor.getScalar p.θ i
 
@@ -147,7 +166,8 @@ def net {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α] {n : Nat}
   mulVec p.W (actVec (α := α) s) u
 
 /-- Tensor-shaped wrapper for `net` (useful for interop with TorchLean tensor APIs). -/
-def netTensor {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α] {n : Nat}
+def netTensor {α : Type} [TorchLean.Storage α] [AddCommMonoid α] [Mul α] [One α] [Neg α]
+    {n : Nat}
     (p : TensorParams α n) (s : TensorState n) (u : Fin n) : α :=
   net (α := α) (p := p.toFun) (s := s.toFun) u
 
@@ -171,7 +191,7 @@ def updateAt {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
   Function.update s u (decide (p.θ u ≤ x))
 
 /-- Tensor-shaped wrapper for `updateAt`. -/
-def updateAtTensor {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
+def updateAtTensor {α : Type} [TorchLean.Storage α] [AddCommMonoid α] [Mul α] [One α] [Neg α]
     [LE α] [DecidableRel ((· ≤ ·) : α → α → Prop)] {n : Nat}
     (p : TensorParams α n) (s : TensorState n) (u : Fin n) : TensorState n :=
   TensorState.ofFun (n := n) (updateAt (α := α) (p := p.toFun) (s := s.toFun) u)
@@ -204,7 +224,7 @@ def energy {α : Type} [Field α] {n : Nat}
     ∑ i : Fin n, p.θ i * x i
 
 /-- Tensor-shaped wrapper for `energy`. -/
-def energyTensor {α : Type} [Field α] {n : Nat}
+def energyTensor {α : Type} [TorchLean.Storage α] [Field α] {n : Nat}
     (p : TensorParams α n) (s : TensorState n) : α :=
   energy (α := α) (p := p.toFun) (s := s.toFun)
 
@@ -222,7 +242,7 @@ def seqStates {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
   | k + 1 => updateAt (α := α) p (seqStates p useq s0 k) (useq k)
 
 /-- Tensor-shaped wrapper for `seqStates`. -/
-def seqStatesTensor {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α]
+def seqStatesTensor {α : Type} [TorchLean.Storage α] [AddCommMonoid α] [Mul α] [One α] [Neg α]
     [LE α] [DecidableRel ((· ≤ ·) : α → α → Prop)] {n : Nat}
     (p : TensorParams α n) (useq : Nat → Fin n) (s0 : TensorState n) : Nat → TensorState n
   | 0 => s0
@@ -243,7 +263,7 @@ When we execute Hopfield over IEEE-like scalars (e.g. `Float`, `IEEE32Exec`), we
 pretend those algebraic laws hold exactly: NaNs and rounding make addition non-associative and
 non-commutative in general. So for runtime execution we provide a “plain loop” variant that:
 
-- requires only the operations from `[Context α]`,
+- requires only the operations from `[TorchLean.Storage α] [Context α]`,
 - uses explicit `List.foldl` iteration over `Fin n`.
 
 This is the same model, written with the runtime arithmetic assumptions exposed.
@@ -256,22 +276,26 @@ References:
 
 namespace Exec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α] [DecidableRel ((· ≤ ·) : α → α → Prop)]
+variable {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· ≤ ·) : α → α → Prop)]
 
+/-- Bipolar activation, re-exported here so the tensor-facing API needs no namespace prefix. -/
 @[inline] def act : Bool → α := Hopfield.act (α := α)
 
+/-- Threshold of unit `i`. -/
 @[inline] def theta {n : Nat} (p : TensorParams α n) (i : Fin n) : α :=
   Tensor.getScalar p.θ i
 
+/-- Coupling weight between units `i` and `j`. -/
 @[inline] def weight {n : Nat} (p : TensorParams α n) (i j : Fin n) : α :=
   Spec.get2 p.W i j
 
 /--
 Net input to unit `u` computed by explicit iteration.
 
-This matches `Hopfield.netTensor`, but avoids `Finset` sums so it can execute over IEEE-like scalars.
+This matches `Hopfield.netTensor`, but avoids `Finset` sums so it can execute over IEEE-like
+scalars.
 -/
 def net {n : Nat} (p : TensorParams α n) (s : TensorState n) (u : Fin n) : α :=
   let sf := Hopfield.TensorState.toFun s
@@ -288,7 +312,8 @@ def updateAt {n : Nat} (p : TensorParams α n) (s : TensorState n) (u : Fin n) :
   Hopfield.TensorState.ofFun (n := n) (Function.update sf u b)
 
 /-- State sequence induced by an update schedule `useq : Nat → Fin n` (loop-based). -/
-def seqStates {n : Nat} (p : TensorParams α n) (useq : Nat → Fin n) (s0 : TensorState n) : Nat → TensorState n
+def seqStates {n : Nat} (p : TensorParams α n) (useq : Nat → Fin n) (s0 : TensorState n) :
+    Nat → TensorState n
   | 0 => s0
   | k + 1 => Exec.updateAt p (seqStates p useq s0 k) (useq k)
 

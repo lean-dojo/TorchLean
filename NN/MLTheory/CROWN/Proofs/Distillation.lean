@@ -25,8 +25,8 @@ IBP soundness theorem for 2-layer MLPs (`NN.MLTheory.CROWN.Theorems.bound_ibp_so
 
 namespace NN.MLTheory.CROWN.Distillation
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.MLTheory.CROWN
 
 /-! ## Small vector helpers -/
@@ -34,16 +34,7 @@ open NN.MLTheory.CROWN
 @[simp] theorem getScalar_sub {n : Nat}
     (x y : Tensor ℝ [n]) (i : Fin n) :
     (Tensor.subSpec x y).getScalar i = x.getScalar i - y.getScalar i := by
-  cases x with
-  | dim fx =>
-    cases y with
-    | dim fy =>
-      cases hxi : fx i with
-      | scalar xv =>
-        cases hyi : fy i with
-        | scalar yv =>
-          simp [Tensor.getScalar, Tensor.subSpec, Spec.Tensor.subSpec, Spec.Tensor.map2Spec,
-            Spec.get, Tensor.item, hxi, hyi]
+  simp [Tensor.subSpec]
 
 /-! ## Interval arithmetic on output boxes -/
 
@@ -58,6 +49,12 @@ def boxSub {n : Nat}
 def boxWithinAbs {n : Nat} (B : Box ℝ (.dim n .scalar)) (eps : ℝ) : Prop :=
   ∀ i : Fin n, (-eps ≤ B.lo.getScalar i) ∧ (B.hi.getScalar i ≤ eps)
 
+/-- Classical decision procedure for `boxWithinAbs`.
+
+Noncomputable and `decide`-based because the carrier here is `ℝ`; the point is to have a
+`Bool`-valued
+checker to state agreement against, not to run it. The executable float version lives in the CROWN
+engine. -/
 noncomputable def checkBoxWithinAbs {n : Nat} (B : Box ℝ (.dim n .scalar)) (eps : ℝ) : Bool := by
   classical
   exact decide (boxWithinAbs (n := n) B eps)
@@ -75,79 +72,26 @@ theorem boxSub_contains {n : Nat}
     (hx : Box.contains (α := ℝ) T x)
     (hy : Box.contains (α := ℝ) S y) :
     Box.contains (α := ℝ) (boxSub (n := n) T S) (Tensor.subSpec x y) := by
-  cases T with
-  | mk Tlo Thi =>
-    cases S with
-    | mk Slo Shi =>
-      cases x with
-      | dim xf =>
-        cases y with
-        | dim yf =>
-          cases Tlo with
-          | dim TloF =>
-            cases Thi with
-            | dim ThiF =>
-              cases Slo with
-              | dim SloF =>
-                cases Shi with
-                | dim ShiF =>
-                  -- Unfold `Box.contains` on vectors and work pointwise.
-                  have hx' :
-                      ∀ i : Fin n, Box.contains (α := ℝ) { lo := TloF i, hi := ThiF i } (xf i) := by
-                    simpa [NN.MLTheory.CROWN.Box.contains] using hx
-                  have hy' :
-                      ∀ i : Fin n, Box.contains (α := ℝ) { lo := SloF i, hi := ShiF i } (yf i) := by
-                    simpa [NN.MLTheory.CROWN.Box.contains] using hy
-                  -- Goal is also pointwise.
-                  refine (show ∀ i : Fin n, _ from ?_)
-                  intro i
-                  cases hTlo : TloF i with
-                  | scalar tlo =>
-                    cases hThi : ThiF i with
-                    | scalar thi =>
-                      cases hSlo : SloF i with
-                      | scalar slo =>
-                        cases hShi : ShiF i with
-                        | scalar shi =>
-                          cases hxf : xf i with
-                          | scalar xv =>
-                            cases hyf : yf i with
-                            | scalar yv =>
-                              have hx_i := hx' i
-                              have hy_i := hy' i
-                              -- Rewrite to expose scalar endpoints/values.
-                              simp [hTlo, hThi, hSlo, hShi, hxf, hyf,
-                                NN.MLTheory.CROWN.Box.contains] at hx_i hy_i
-                              have hdiff : (tlo - shi ≤ xv - yv) ∧ (xv - yv ≤ thi - slo) := by
-                                constructor <;> linarith [hx_i, hy_i]
-                              simpa [boxSub, Tensor.subSpec, Spec.Tensor.subSpec,
-                                Spec.Tensor.map2Spec,
-                                NN.MLTheory.CROWN.Box.contains, hTlo, hThi, hSlo, hShi, hxf, hyf]
-                                  using hdiff
+  intro i
+  have hx_i := hx i
+  have hy_i := hy i
+  have hx_scalar :
+      T.lo.getScalar i ≤ x.getScalar i ∧ x.getScalar i ≤ T.hi.getScalar i := by
+    simpa [Box.contains, Tensor.getScalar, Spec.get] using hx_i
+  have hy_scalar :
+      S.lo.getScalar i ≤ y.getScalar i ∧ y.getScalar i ≤ S.hi.getScalar i := by
+    simpa [Box.contains, Tensor.getScalar, Spec.get] using hy_i
+  change
+    (boxSub T S).lo.getScalar i ≤ (Tensor.subSpec x y).getScalar i ∧
+      (Tensor.subSpec x y).getScalar i ≤ (boxSub T S).hi.getScalar i
+  simp only [boxSub, getScalar_sub]
+  constructor <;> linarith [hx_scalar.1, hx_scalar.2, hy_scalar.1, hy_scalar.2]
 
 /-- Project a `Box.contains` hypothesis to scalar inequalities at a single coordinate. -/
 theorem boxContains_getScalar {n : Nat} {B : Box ℝ (.dim n .scalar)} {x : Tensor ℝ [n]}
     (h : Box.contains (α := ℝ) B x) (i : Fin n) :
     B.lo.getScalar i ≤ x.getScalar i ∧ x.getScalar i ≤ B.hi.getScalar i := by
-  cases B with
-  | mk Blo Bhi =>
-    cases x with
-    | dim xf =>
-      cases Blo with
-      | dim BloF =>
-        cases Bhi with
-        | dim BhiF =>
-          have h' : ∀ i : Fin n, Box.contains (α := ℝ) { lo := BloF i, hi := BhiF i } (xf i) := by
-            simpa [NN.MLTheory.CROWN.Box.contains] using h
-          cases hlo : BloF i with
-          | scalar lo =>
-            cases hhi : BhiF i with
-            | scalar hi' =>
-              cases hxv : xf i with
-              | scalar xv =>
-                have hi := h' i
-                simp [NN.MLTheory.CROWN.Box.contains, hlo, hhi, hxv] at hi
-                simpa [Tensor.getScalar, Spec.get, hlo, hhi, hxv] using hi
+  exact h i
 
 /-! ## Distillation certificate for 2-layer MLPs -/
 

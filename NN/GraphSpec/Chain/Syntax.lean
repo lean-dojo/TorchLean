@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.TorchLean.NN
+public import NN.Runtime.Autograd.Model.Layers.Core
 
 /-!
 # Sequential GraphSpec syntax
@@ -21,33 +21,33 @@ concatenates those parameter lists.
 namespace NN
 namespace GraphSpec
 
-open _root_.Spec
+open Spec TorchLean
 
 /--
 A primitive operation in the sequential GraphSpec language.
 
 The pure `specFwd` interpretation and executable `program` share the same parameter, input, and
 output shape indices. The optional layer conversion supports deterministic initialization and
-conversion to `TorchLean.NN.Seq`.
+conversion to `Runtime.Autograd.Model.Layers.Seq`.
 -/
 structure Primitive (ps : List Shape) (σ τ : Shape) where
   /-- Short name used mainly for debugging and error messages. -/
   name : String
   /-- Pure reference semantics of the primitive. -/
   specFwd :
-    ∀ {α : Type 0}, [Context α] →
-      TorchLean.TensorPack α ps → Spec.Tensor α σ → Spec.Tensor α τ
+    ∀ {α : Type 0}, [TorchLean.Storage α] → [Context α] →
+      TorchLean.TensorPack α ps → TorchLean.Tensor α σ → TorchLean.Tensor α τ
   /--
   Executable TorchLean forward program, with parameters followed by the data input.
   -/
   program :
-    ∀ {α : Type 0}, [Context α] → [DecidableEq Shape] →
-      Runtime.Autograd.TorchLean.Program α (ps ++ [σ]) τ
+    ∀ {α : Type 0}, [TorchLean.Storage α] → [Context α] →
+      Runtime.Autograd.Model.Program α (ps ++ [σ]) τ
   /--
   Optional conversion to a TorchLean layer, indexed by its occurrence in the surrounding chain.
   -/
   toLayerM? :
-    Option (Nat → { l : Runtime.Autograd.TorchLean.NN.Layer σ τ // l.stateShapes = ps }) := none
+    Option (Nat → { l : Runtime.Autograd.Model.Layers.Layer σ τ // l.stateShapes = ps }) := none
   /-- Whether this primitive advances the layer-occurrence counter. -/
   countsAsLayer : Bool := false
 

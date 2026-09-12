@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Lean
+public import Std.Do.Triple.SpecLemmas
 
 /-!
 # Binary Checkpoint IO

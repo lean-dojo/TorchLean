@@ -8,6 +8,8 @@ and Lyapunov/controller experiments.
 ## Main Files
 
 1. `Core.lean`: interval boxes (`Box`) and the basic affine form container (`AffineVec`).
+   `Flatbox.lean` holds `FlatBox`, the interval container over flattened tensor values that the
+   graph engine and the flattened transfer rules share.
 2. `Models/Mlp.lean`: vector-in/vector-out CROWN development for small MLP-style networks. It uses
    the canonical executable ReLU relaxations from `Runtime/Ops.lean` together with its IBP bounds
    and model-specific affine composition.
@@ -16,10 +18,18 @@ and Lyapunov/controller experiments.
 4. `Operators.lean` and `Operators/`: transfer rules for ReLU-family activations, arithmetic,
    convolution, pooling, batch normalization, reductions, slicing, and trigonometric operations.
 5. `Cert/`: alpha-CROWN and alpha-beta-CROWN certificate data structures.
-6. `Proofs/`: theorem-backed pieces of the CROWN development, including graph-IBP theorems,
-   graph-certificate soundness, alpha/beta ReLU scalar soundness, and transfer-rule soundness
-   interfaces. `Proofs/AlphaReLULowerBound.lean` is the shared scalar lower-bound lemma used by
-   both alpha-CROWN and alpha/beta-CROWN proofs.
+6. `Proofs/`: theorem-backed pieces of the CROWN development. `GraphCertSoundness/` proves IBP
+   certificate soundness, with `cert_encloses_semantics` dispatching over the operator files in
+   `Main/`. `GraphAlphaCrownTransferSoundness/` proves `alphaCrown_transfer_sound` and
+   `alphaBetaCrown_transfer_sound` as short dispatches over `Alpha/` and `AlphaBeta/`; its
+   `EndToEnd.lean` discharges their `IBPEnclosesVals` hypothesis from the IBP theorem
+   (`ibp_encloses_vals_of_cert_local_ok`) and states the composed corollaries
+   `alphaCrown_cert_encloses_semantics`, `alphaBetaCrown_cert_encloses_semantics'`, and
+   `alphaCrown_cert_encloses_evalGraphRec`. `GraphRunibpEndToEnd.lean` connects the proof-side
+   IBP pass to the engine's executable `runIBP` (`runIBP_eq_runIBP?`, `runIBP_encloses_evalGraphRec`)
+   and `GraphRuntimeBridge.lean` relates the runtime evaluator to the semantics (`evalNode_bridge`).
+   `AlphaReLULowerBound.lean` is the shared scalar lower-bound theorem used by both alpha-CROWN and
+   alpha/beta-CROWN proofs.
 7. `Runtime/Ops.lean`: the canonical executable ReLU relaxation definitions used by both the graph
    engine and MLP development, kept separate from heavier proof imports.
 
@@ -118,7 +128,7 @@ appropriate transfer and finite-precision refinement hypotheses.
   a theorem only after the caller proves `LyapunovCert.ValidFor`.
   The two Lean-executed pipelines share lowered gradient search and loss-box verification through
   `Lyapunov/TwoStage/LossAnalysis.lean` (`projectedGradientStep` and `checkLossBox`).
-- `Proofs/`: soundness theorems and proof layer overviews.
+- `Proofs/`: soundness theorems and proof layer overviews; `Proofs/Overview.lean` is the map.
 - `Extras/`: optional helpers and proof toolboxes.
 - `Tactics/`: diagnostic commands for running an external producer and inspecting its certificates.
 
@@ -128,3 +138,33 @@ appropriate transfer and finite-precision refinement hypotheses.
 - `Extras/AlphaConfig.lean`: data structures for alpha-optimized relaxations.
 - `Extras/FP32.lean` and `Extras/BoundOpsIEEE32Exec.lean`: finite-precision specializations and
   executable IEEE32 connections.
+
+## Optional input subdivision
+
+`Graph.refinedIBPOutput? g ps inputId outId splitBudget` refines an output box by splitting one
+selected graph input. It uses the existing transfers for every supported layer; there is no
+Transformer-specific path. Other graph inputs and parameters retain their original boxes/values.
+
+For example, over `x ∈ [-1, 1]`, independent interval evaluation of
+`ReLU(x) + ReLU(-x)` gives approximately `[0, 2]`. Splitting at zero and taking the hull of both
+results gives approximately `[0, 1]`. Likewise, splitting can improve the lower bound on `x * x`.
+A dense layer with independent input coordinates may already have tight bounds and see no gain.
+Input-independent activation fallbacks such as `[0, 1]` also need not improve.
+
+The budget counts binary splits, not depth: there are at most `2 * splitBudget + 1` IBP calls.
+Zero leaves the ordinary enclosure calculation unchanged for a valid input/output selection.
+No representable interior midpoint means no split. Both child results are required; a failed branch
+retains the parent result. Child results are combined by a hull, then intersected with the parent
+bound so a successful refinement does not widen it. Invalid boxes or incompatible output dimensions
+are rejected before they can become graph output certificates.
+
+The artifact checker accepts the same option:
+`NN.Verification.IBPCert.check g ps outId path (refinement := some (inputId, splitBudget))`.
+Its default remains the original single pass. A split budget is an explicit runtime/precision
+tradeoff, rather than a hidden cost added to every verification request.
+
+In `NN.MLTheory.CROWN.Proofs.GraphRefinement`, `Graph.Refinement.splitAt_covers` proves that every real input in a parent box belongs to at least
+one child. The enclosure procedure still needs sound transfer rules: subdivision does not prove
+universal soundness of rounded LayerNorm or other backend operations. The maintained tests cover
+containment, actual tightening, Float/Float32/IEEE32Exec, multiple inputs, failed branches, invalid
+endpoints, and the artifact-checker option.

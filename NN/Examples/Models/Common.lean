@@ -11,8 +11,9 @@ public import NN.Examples.Models.Common.RealData
 /-!
 # Shared Model-Example Helpers
 
-Shared utilities for runnable model examples. This layer stays focused: it should hold
-data paths and loading code, not model architectures or training loops.
+Shared data loaders and command runners for runnable model examples. `RealData` prepares typed
+samples and missing-file hints; `Train` parses command options and calls the public trainer.
+Model architectures remain in the family-specific modules.
 -/
 
 @[expose] public section

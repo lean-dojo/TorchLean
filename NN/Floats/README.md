@@ -139,7 +139,7 @@ The bridge modules connect the rounded-real and executable representations:
 - `IEEEExec/Bridge/LeanFloat32.lean` proves agreement with Lean's logical `Float32` operations.
 
 These theorems concern Lean definitions. Compiled CPU instructions, CUDA kernels, cuBLAS, and
-LibTorch are runtime providers with contracts recorded in `TRUST_BOUNDARIES.md`.
+LibTorch are runtime providers with contracts recorded in `docs/TRUST_BOUNDARIES.md`.
 
 ## Intervals And Quantization
 

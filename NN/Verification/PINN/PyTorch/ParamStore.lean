@@ -26,8 +26,8 @@ checkpoint bridge for PINN verification.
 namespace Import
 namespace PINNPyTorch
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Shape
 
 open NN.MLTheory.CROWN
@@ -61,7 +61,8 @@ This is useful when you want to reuse the same trained parameters for:
 - executable backends (`Float`, `IEEE32Exec`), or
 - proof-level backends (e.g. `ℝ`), by supplying an appropriate `ofFloat` cast.
 -/
-def toParamStoreWith {α : Type} [Context α] (ofFloat : Float → α) (sd : PinnState) : ParamStore α :=
+def toParamStoreWith {α : Type} [TorchLean.Storage α] [Context α] (ofFloat : Float → α)
+    (sd : PinnState) : ParamStore α :=
   CROWNParamStore.ofLinearStackWith
     (α := α)
     (ofFloat := ofFloat)

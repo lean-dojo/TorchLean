@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.List.Basic
+import Mathlib.Tactic.Attr.Core
 
 /-!
 # List fold lemmas for runtime-approximation proofs
@@ -22,7 +22,7 @@ namespace RuntimeApprox
 namespace NFBackend
 
 /-- Replace the step function of a left fold by a pointwise equal function. -/
-lemma foldl_congr {α β : Type} (l : List β) (f g : α → β → α) (init : α)
+theorem foldl_congr {α β : Type} (l : List β) (f g : α → β → α) (init : α)
     (h : ∀ a b, f a b = g a b) :
     l.foldl f init = l.foldl g init := by
   induction l generalizing init with
@@ -31,7 +31,7 @@ lemma foldl_congr {α β : Type} (l : List β) (f g : α → β → α) (init : 
       simp [List.foldl, h, ih]
 
 /-- A fold over `flatMap` agrees with the corresponding nested fold. -/
-lemma foldl_flatMap {α β γ : Type}
+theorem foldl_flatMap {α β γ : Type}
     (l : List α) (g : α → List β) (f : γ → β → γ) (init : γ) :
     (l.flatMap g).foldl f init = l.foldl (fun acc a => (g a).foldl f acc) init := by
   induction l generalizing init with

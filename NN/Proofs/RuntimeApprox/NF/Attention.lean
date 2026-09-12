@@ -8,7 +8,7 @@ module
 
 public import NN.Proofs.RuntimeApprox.NF.Linalg
 public import NN.Proofs.RuntimeApprox.NF.SoftmaxAxis
-public import NN.Spec.Layers.Attention
+public import NN.Floats.NeuralFloat.Rounding.Order
 
 /-!
 # Rounded scaled dot-product attention
@@ -40,8 +40,8 @@ namespace Proofs
 namespace RuntimeApprox
 namespace Attention
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
 open TorchLean.Floats
 

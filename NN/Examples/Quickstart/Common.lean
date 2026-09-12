@@ -6,17 +6,15 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API
-public import NN.Examples.ModelZoo
+public import NN.API.CLI.Trainer
 
 /-!
-# Quickstart Shared Parsing
+# Training Quickstart Flag Parsing
 
-Small command-line parsers shared by the first-tour examples.
+Flag parsing for `SimpleMlpTrain`, kept separate from the model and training example.
 
-These are example utilities, not part of the training API. User code should still start from
-`Trainer.new` and `trainer.train`; this file only keeps repeated
-quickstart flag parsing out of the tutorial bodies.
+This is example support, not part of the training API. User code starts from `Trainer.new` and
+`trainer.train`; this file only keeps flag handling out of the tutorial bodies.
 -/
 
 @[expose] public section
@@ -25,37 +23,20 @@ namespace NN.Examples.Quickstart
 
 open TorchLean
 
-/-- Parsed runtime and training settings for quickstart commands. -/
-structure RuntimeTrain where
-  /-- Logged training flags parsed from `--steps`, `--log`, and related options. -/
-  train : CLI.Training.RunOptions
-  /-- Runtime settings parsed from scalar, execution-mode, and device flags. -/
-  run : Trainer.RunConfig
-  /-- Public trainer training options derived from the parsed flags. -/
-  trainOptions : Trainer.TrainOptions
+/-- Command-line choices accepted by a training quickstart. -/
+structure Flags where
+  /-- Model initialization seed from `--seed`. -/
+  seed : Nat
+  /-- Number of optimizer updates from `--steps`. -/
+  steps : Nat
+  /-- Runtime settings from `--arithmetic`, `--execution`, `--device`, and `--show-backend`. -/
+  runtime : Trainer.RunConfig
 
-/--
-Parse the common quickstart tail:
-
-`--steps`, optional logging flags, and runtime flags such as `--scalar`, `--execution`, or `--device`.
-
-Each quickstart still owns its model, dataset, task, and any tutorial-specific flags.
--/
-def parseRuntimeTrain
-    (exeName : String)
-    (args : List String)
-    (defaultLogJson : System.FilePath)
-    (defaultSteps : Nat)
-    (optimizer : optim.Optimizer)
-    (logEvery : Nat := 0) :
-    IO RuntimeTrain := do
-  let (train, args) ← CLI.orThrow exeName <|
-    CLI.Training.RunOptions.parse exeName args defaultLogJson defaultSteps
-  let trainOptions :=
-    CLI.Training.RunOptions.toTrainerOptionsWhenRequested train args
-      (logEvery := logEvery)
-  let run ← Trainer.RunConfig.parseRuntimeArgsOrThrow exeName args
-    { optimizer := optimizer }
-  pure { train := train, run := run, trainOptions := trainOptions }
+/-- Parse `--seed`, `--steps`, and the runtime flags, rejecting anything else. -/
+def parseFlags (exeName : String) (args : List String) (defaultSteps : Nat) : IO Flags := do
+  let (seed, args) ← CLI.seed exeName args
+  let (steps, args) ← CLI.positiveNatFlag exeName args "steps" defaultSteps
+  let runtime ← CLI.Trainer.parseCommandLine exeName args
+  pure { seed, steps, runtime }
 
 end NN.Examples.Quickstart

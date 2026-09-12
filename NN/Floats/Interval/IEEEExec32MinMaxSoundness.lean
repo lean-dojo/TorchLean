@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Bridge.FP32Total
 public import NN.Floats.Interval.IEEEExec32
+public import NN.Floats.IEEEExec.Bridge.FP32Total.Effective
 
 /-!
 # `minOfFour`/`maxOfFour` real semantics (finite regime)

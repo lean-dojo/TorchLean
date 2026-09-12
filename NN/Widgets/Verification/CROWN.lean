@@ -7,11 +7,12 @@ Authors: TorchLean Team
 module
 
 public meta import NN.IR.Pretty
-public meta import NN.MLTheory.CROWN.Graph
+public meta import NN.MLTheory.CROWN.Graph.Core
 public meta import NN.Widgets.Core.Tensor
-public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
+public meta import NN.MLTheory.CROWN.Graph -- shake: keep
+public meta import NN.Widgets.Core.UI -- shake: keep
+public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
+public meta import ProofWidgets.Demos.Macro -- shake: keep
 
 /-!
 # Verification
@@ -35,23 +36,6 @@ The panel makes it easy to inspect:
 - `boundsTightnessHtml`: interval-width diagnostic panel ($\mathrm{hi}-\mathrm{lo}$) per node.
 - `#crown_view g, st`: command form for `crownPropHtml`.
 - `#bounds_tightness_view g, st`: command form for `boundsTightnessHtml`.
-
-## Implementation notes
-
-- We keep this viewer "pure HTML" using ProofWidgets `#html` with no custom JS.
-- The same node ids are used for IR nodes and propagated states, so mismatches are easy to spot.
-- DOT text is intentionally clipped for large graphs to keep infoview rendering responsive.
-
-## References
-
-- [CROWN / LiRPA style bound propagation](https://arxiv.org/abs/1811.00866)
-- [GraphViz DOT language](https://graphviz.org/doc/info/lang.html)
-- [ProofWidgets](https://github.com/leanprover-community/ProofWidgets4)
-- [Lean community documentation style](https://leanprover-community.github.io/contribute/doc.html)
-
-## Tags
-
-verification, crown, ibp, bounds, certificates, widgets
 -/
 
 public meta section
@@ -60,12 +44,14 @@ open scoped ProofWidgets.Jsx
 
 namespace NN.Widgets
 
-open _root_.Spec
+open _root_.Spec _root_.TorchLean
 open NN.MLTheory.CROWN.Graph
 open NN.MLTheory.CROWN
 open UI
 
-private def flatBoxHtml {α : Type} [Context α] [ToString α] (b : FlatBox α) : ProofWidgets.Html :=
+/-- Show a flat interval box as its two endpoint vectors side by side. -/
+private def flatBoxHtml {α : Type} [TorchLean.Storage α] [Context α] [ToString α] (b : FlatBox α) :
+    ProofWidgets.Html :=
   <div style={json% {
     "display": "grid",
     "grid-template-columns": "1fr 1fr",
@@ -84,7 +70,8 @@ private def flatBoxHtml {α : Type} [Context α] [ToString α] (b : FlatBox α) 
     </div>
   </div>
 
-private def affineVecHtml {α : Type} [ToString α] {inDim outDim : Nat}
+/-- Show an affine form as two collapsed panels, the coefficient matrix and the offset. -/
+private def affineVecHtml {α : Type} [TorchLean.Storage α] [ToString α] {inDim outDim : Nat}
     (aff : NN.MLTheory.CROWN.AffineVec α inDim outDim) : ProofWidgets.Html :=
   <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px", "margin-top":
     "8px"}}>
@@ -108,7 +95,8 @@ private def affineVecHtml {α : Type} [ToString α] {inDim outDim : Nat}
     </details>
   </div>
 
-private def nodeStateHtml {α : Type} [Context α] [ToString α]
+/-- One row of the CROWN panel: the IR node's pretty line plus whatever state the run recorded. -/
+private def nodeStateHtml {α : Type} [TorchLean.Storage α] [Context α] [ToString α]
     (nid : Nat) (n? : Option Node) (st? : Option (NodeState α)) : ProofWidgets.Html :=
   let summaryLine : String :=
     match n? with
@@ -144,7 +132,8 @@ private def nodeStateHtml {α : Type} [Context α] [ToString α]
         | some st =>
             <div>
               <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap"}}>
-                {pill s!"shape={Shape.pretty st.shape}"} {pill s!"flatDim={Spec.Shape.size st.shape}"}
+                {pill s!"shape={Shape.pretty st.shape}"}
+                {pill s!"flatDim={Spec.Shape.size st.shape}"}
               </div>
               {match st.ibp? with
                 | none => ProofWidgets.Html.text ""
@@ -173,15 +162,15 @@ private def arrayPreview {α : Type} [ToString α] (maxElems : Nat) (xs : Array 
   "[" ++ body ++ suffix ++ "]"
 
 /-- Produce a compact one-line preview of a flat interval box. -/
-private def flatBoxPreview {α : Type} [Context α] [ToString α] (b : FlatBox α) (maxElems : Nat := 4)
-  : String :=
-  let lo := Spec.Tensor.toArray b.lo
-  let hi := Spec.Tensor.toArray b.hi
+private def flatBoxPreview {α : Type} [TorchLean.Storage α] [Context α] [ToString α]
+    (b : FlatBox α) (maxElems : Nat := 4) : String :=
+  let lo := Tensor.to b.lo (Array α)
+  let hi := Tensor.to b.hi (Array α)
   s!"lo={arrayPreview (α := α) maxElems lo}, hi={arrayPreview (α := α) maxElems hi}"
 
 /-- Build a DOT graph for compact visualization of state coverage across nodes. -/
-private def crownDot {α : Type} [Context α] [ToString α] (g : Graph) (ps : PropState α)
-    (maxNodes : Nat := 400) : String :=
+private def crownDot {α : Type} [TorchLean.Storage α] [Context α] [ToString α] (g : Graph)
+    (ps : PropState α) (maxNodes : Nat := 400) : String :=
   let nG := g.size
   let nS := ps.states.size
   let n := min (max nG nS) maxNodes
@@ -196,16 +185,16 @@ private def crownDot {α : Type} [Context α] [ToString α] (g : Graph) (ps : Pr
       let label :=
         match n?, st? with
         | some n, some st =>
-            let base := s!"{nid}: {n.kind.tag}\\nshape={Shape.pretty st.shape}"
+            let base := s!"{nid}: {n.kind.tag}\nshape={Shape.pretty st.shape}"
             match st.ibp? with
             | none => base
-            | some b => base ++ s!"\\n{flatBoxPreview (α := α) b 3}"
+            | some b => base ++ s!"\n{flatBoxPreview (α := α) b 3}"
         | some n, none =>
-            s!"{nid}: {n.kind.tag}\\n(no state)"
+            s!"{nid}: {n.kind.tag}\n(no state)"
         | none, some st =>
-            s!"{nid}: <missing node>\\nshape={Shape.pretty st.shape}"
+            s!"{nid}: <missing node>\nshape={Shape.pretty st.shape}"
         | none, none =>
-            s!"{nid}: <missing node>\\n(no state)"
+            s!"{nid}: <missing node>\n(no state)"
       let fill :=
         match st? with
         | none => "#fff3cc"
@@ -224,12 +213,12 @@ private def crownDot {α : Type} [Context α] [ToString α] (g : Graph) (ps : Pr
   header ++ String.intercalate "\n" (nodes ++ edges) ++ "\n}\n"
 
 /-- Render a compact table summary of per-node state availability and previews. -/
-private def compactTableHtml {α : Type} [Context α] [ToString α]
+private def compactTableHtml {α : Type} [TorchLean.Storage α] [Context α] [ToString α]
     (g : Graph) (ps : PropState α) (maxNodes : Nat := 200) : ProofWidgets.Html :=
   let nG := g.size
   let nS := ps.states.size
   let n := max nG nS
-  let ids := (List.range n).take maxNodes
+  let ids := List.range (min n maxNodes)
   let clipped : Bool := decide (n > maxNodes);
   <div style={json% {"overflow": "auto", "max-height": "360px", "border":
     "1px solid var(--vscode-panel-border, #e5e5e5)", "border-radius": "10px"}}>
@@ -289,14 +278,14 @@ private def compactTableHtml {α : Type} [Context α] [ToString α]
   </div>
 
 /-- Render a `CROWN.graph.PropState` as a per-node HTML panel. -/
-def crownPropHtml {α : Type} [Context α] [ToString α] (g : Graph) (ps : PropState α)
-    (maxNodes : Nat := 200) : ProofWidgets.Html :=
+def crownPropHtml {α : Type} [TorchLean.Storage α] [Context α] [ToString α] (g : Graph)
+    (ps : PropState α) (maxNodes : Nat := 200) : ProofWidgets.Html :=
   let nG := g.size
   let nS := ps.states.size
   let n := max nG nS
   let clipped : Bool := decide (n > maxNodes)
-  let ids := (List.range n).take maxNodes;
-  let dot := crownDot (α := α) g ps
+  let ids := List.range (min n maxNodes);
+  let dot := crownDot (α := α) g ps (maxNodes := maxNodes)
   let dotPreview :=
     if dot.length <= 6000 then
       dot
@@ -317,7 +306,8 @@ def crownPropHtml {α : Type} [Context α] [ToString α] (g : Graph) (ps : PropS
       {if clipped then warnBadge s!"clipped to {maxNodes}" else ProofWidgets.Html.text ""}
     </div>
     <div style={json% {"opacity": 0.85, "margin-bottom": "10px"}}>
-      {.text "This viewer displays optional IBP boxes and affine forms per IR node id."}
+      {.text ("This viewer displays optional IBP boxes and affine forms per IR node id. " ++
+          "Their presence is diagnostic state, not a checked certificate.")}
     </div>
     <details «open»={false} style={json% {"margin-bottom": "10px"}}>
       <summary>{.text "Compact summary (table)"}</summary>
@@ -362,7 +352,8 @@ This viewer computes width summaries per node and highlights missing IBP coverag
 -/
 
 /-- Compute `(min, max, mean)` for a nonempty array. -/
-private def arrayStats {α : Type} [Context α] (xs : Array α) : Option (α × α × α) :=
+private def arrayStats {α : Type} [TorchLean.Storage α] [Context α] (xs : Array α) :
+    Option (α × α × α) :=
   xs[0]?.map fun x =>
     let rest := xs.extract 1 xs.size
     let mn := rest.foldl (fun acc y => min acc y) x
@@ -371,18 +362,19 @@ private def arrayStats {α : Type} [Context α] (xs : Array α) : Option (α × 
     let mean := sum / (↑xs.size : α)
     (mn, mx, mean)
 
-private def flatBoxWidthTensor {α : Type} [Context α] (b : FlatBox α) : Tensor α [b.dim] :=
-  -- Width per flattened component.
+/-- Per-component width `hi - lo` of a box, the quantity the diagnostic panel ranks nodes by. -/
+private def flatBoxWidthTensor {α : Type} [TorchLean.Storage α] [Context α] (b : FlatBox α) :
+    Tensor α [b.dim] :=
   Tensor.subSpec (α := α) b.hi b.lo
 
 /-- Render a per-node diagnostic panel summarizing IBP interval widths
 $\mathrm{hi}-\mathrm{lo}$. -/
-def boundsTightnessHtml {α : Type} [Context α] [ToString α]
+def boundsTightnessHtml {α : Type} [TorchLean.Storage α] [Context α] [ToString α]
     (g : Graph) (ps : PropState α) (maxNodes : Nat := 200) : ProofWidgets.Html :=
   let nG := g.size
   let nS := ps.states.size
   let n := max nG nS
-  let ids := (List.range n).take maxNodes
+  let ids := List.range (min n maxNodes)
   let clipped : Bool := decide (n > maxNodes)
   ;
   <div style={json% {
@@ -469,7 +461,7 @@ def boundsTightnessHtml {α : Type} [Context α] [ToString α]
                     </tr>
                 | some b =>
                     let wT := flatBoxWidthTensor (α := α) b
-                    let ws : Array α := Spec.Tensor.toArray wT
+                    let ws : Array α := Tensor.to wT (Array α)
                     let stats := arrayStats (α := α) ws
                     let mxS := match stats with | none => "?" | some s => toString s.2.1
                     let meanS := match stats with | none => "?" | some s => toString s.2.2

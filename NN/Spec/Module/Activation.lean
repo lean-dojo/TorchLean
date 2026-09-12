@@ -20,12 +20,13 @@ Shape-preserving activation specifications packaged for module composition.
 
 namespace Spec.Module
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+variable {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
 
 /-- ReLU as a shape-preserving module. -/
-def relu {α : Type} [Zero α] [Max α] (s : Shape) : Spec.Module α s s :=
+def relu {α : Type} [TorchLean.Storage α] [Zero α] [Max α] [BEq α]
+    (s : Shape) : Spec.Module α s s :=
   { forward := Activation.reluSpec, kind := "ReLU", pythonExpr := "nn.ReLU()" }
 
 /-- Sigmoid as a shape-preserving module. -/

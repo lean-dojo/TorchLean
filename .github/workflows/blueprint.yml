@@ -6,8 +6,9 @@ on:
     paths:
       - ".github/workflows/blueprint.yml"
       - "**/*.lean"
-      - "blueprint/**"
+      - "csrc/**"
       - "home_page/**"
+      - "docs/**"
       - "scripts/docs/**"
       - "scripts/checks/dependency_audit.py"
       - "lakefile.lean"
@@ -19,8 +20,9 @@ on:
     paths:
       - ".github/workflows/blueprint.yml"
       - "**/*.lean"
-      - "blueprint/**"
+      - "csrc/**"
       - "home_page/**"
+      - "docs/**"
       - "scripts/docs/**"
       - "scripts/checks/dependency_audit.py"
       - "lakefile.lean"
@@ -95,24 +97,22 @@ jobs:
             echo "HOME_PAGE_EXISTS=false" >> $GITHUB_ENV
           fi
 
-      - name: Build Verso guide (blueprint package) and copy to `home_page/blueprint`
+      - name: Build Verso guide from `home_page/blueprint`
         run: |
-          cd blueprint
+          cd home_page/blueprint
           ~/.elan/bin/lake exe cache get || true
           rm -f ~/.cache/mathlib/*.ltar || true
-          ~/.elan/bin/lake exe vbp build --output ../_out/blueprint
-          ~/.elan/bin/lake exe vbp check --site ../_out/blueprint
-          cd ..
+          ~/.elan/bin/lake exe vbp build --output ../../_out/blueprint
+          ~/.elan/bin/lake exe vbp check --site ../../_out/blueprint
+          cd ../..
           test -s _out/blueprint/html-multi/-verso-data/blueprint-manifest.json
           test -s _out/blueprint/html-multi/-verso-data/blueprint-html-cache.json
-          if [ -d blueprint/TorchLeanBlueprint/Guide/Assets ]; then
+          if [ -d home_page/blueprint/TorchLeanBlueprint/Guide/Assets ]; then
             mkdir -p _out/blueprint/html-multi/Guide/Assets
-            cp -r blueprint/TorchLeanBlueprint/Guide/Assets/* _out/blueprint/html-multi/Guide/Assets/
+            cp -r home_page/blueprint/TorchLeanBlueprint/Guide/Assets/* _out/blueprint/html-multi/Guide/Assets/
           fi
           python3 scripts/docs/polish_verso_guide.py --guide _out/blueprint/html-multi
-          rm -rf home_page/blueprint
-          mkdir -p home_page/blueprint
-          cp -r _out/blueprint/html-multi/* home_page/blueprint/
+          python3 scripts/docs/check_verso_layout.py --guide _out/blueprint/html-multi
 
       - name: Copy API documentation to `home_page/docs`
         run: |
@@ -146,7 +146,7 @@ jobs:
         uses: ruby/setup-ruby@v1
         with:
           working-directory: home_page
-          ruby-version: "3.0"
+          ruby-version: "3.3"
           bundler-cache: true
 
       - name: Build website using Jekyll
@@ -156,6 +156,8 @@ jobs:
           JEKYLL_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           JEKYLL_ENV=production bundle exec jekyll build
+          mkdir -p _site/blueprint
+          cp -r ../_out/blueprint/html-multi/. _site/blueprint/
           content_pages=0
           while IFS= read -r -d '' page; do
             if grep -Fq "<main" "$page"; then
@@ -174,8 +176,13 @@ jobs:
           )
           test "$content_pages" -gt 0
 
+      - name: Check generated links and anchors
+        run: |
+          python3 scripts/docs/check_site_links.py home_page/_site \
+            --baseurl /TorchLean --site-url https://lean-dojo.github.io/TorchLean
+
       - name: "Upload website (API documentation, blueprint and any home page)"
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: ${{ env.HOME_PAGE_EXISTS == 'true' && 'home_page/_site' || 'home_page/' }}
@@ -184,7 +191,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Deploy GitHub Pages
     needs: build_project
-    if: github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     permissions:
       pages: write
       id-token: write

@@ -6,10 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Real.Basic
 public import NN.MLTheory.CROWN.Core
-public import NN.Spec.Core.Tensor
-public import NN.Spec.Core.TensorOps
+public import Mathlib.Algebra.Order.AbsoluteValue.Basic
+public import Mathlib.Algebra.Order.Field.Basic
+public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Lyapunov certificate semantics
@@ -30,11 +30,11 @@ References:
 
 namespace NN.MLTheory.CROWN.Lyapunov
 
-open _root_.Spec
+open Spec TorchLean
 open NN.MLTheory.CROWN
 
 /-- Certificate for Lyapunov verification over a boxed region. -/
-structure LyapunovCert (α : Type) [Context α] (n : Nat) where
+structure LyapunovCert (α : Type) [TorchLean.Storage α] [Context α] (n : Nat) where
   /-- Region on which the bounds are claimed. -/
   region : Box α (.dim n .scalar)
   /-- Lower bound for `V`. -/
@@ -49,13 +49,13 @@ structure LyapunovCert (α : Type) [Context α] (n : Nat) where
 /-- A neural Lyapunov function specification.
 
 `Vdot` is supplied by the application; this file does not derive it from dynamics on its own. -/
-structure NeuralLyapunov (α : Type) [Context α] (n : Nat) where
+structure NeuralLyapunov (α : Type) [TorchLean.Storage α] [Context α] (n : Nat) where
   /-- Candidate Lyapunov scalar field. -/
   value : Tensor α [n] → α
   /-- Orbital derivative or decay witness associated with `V`. -/
   orbitalDerivative : Tensor α [n] → α
 
-variable {α : Type} [Context α] {n : Nat}
+variable {α : Type} [TorchLean.Storage α] [Context α] {n : Nat}
 
 /--
 Proof object produced by a semantic certificate checker.

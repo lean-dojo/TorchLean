@@ -8,9 +8,12 @@ module
 
 public import NN.Proofs.Tensor.Algebra
 public import NN.Tensor.Pack
+-- `Idx` and `getIdx` are shared with the real-valued tape proofs and the
+-- runtime-approximation graphs; they live in one place so index lemmas transfer.
+public import NN.Proofs.Autograd.Tape.Util.Idx
 
 /-!
-# Soundness
+# Algebraic tape soundness
 
 Tape-style (SSA/DAG) reverse-mode soundness (algebraic, backend-generic).
 
@@ -20,7 +23,6 @@ global reverse-mode accumulation algorithm is sound assuming only commutative se
 This file lives under `NN/Proofs/Autograd/Tape/Algebra/` because it is reused by both proof-only
 and runtime-link developments that target exact backends (e.g. `ℚ`).
 
-In particular, it can be instantiated for exact backends such as `ℚ`.
 
 ## PyTorch correspondence / citations
 This corresponds to the high-level structure of PyTorch’s reverse-mode engine, but stated over an
@@ -35,16 +37,13 @@ namespace Proofs
 namespace Autograd
 namespace Algebra
 
-open Spec
-open Tensor
-open TensorAlgebra
-open TorchLean
+open Spec TorchLean TorchLean.Tensor TensorAlgebra
 
 noncomputable section
 
 namespace TensorPack
 
-variable {α : Type}
+variable {α : Type} [TorchLean.Storage α]
 variable {ss : List Shape}
 
 section
@@ -61,15 +60,17 @@ def dotList : {ss : List Shape} → TorchLean.TensorPack α ss → TorchLean.Ten
   | _ :: ss, .cons a as, .cons b bs => dot (α := α) a b + dotList (ss := ss) as bs
 
 /-- `dotList` commutes with casting the left context along a shape-list equality. -/
-theorem dotList_cast_left {ss₁ ss₂ : List Shape} (h : ss₁ = ss₂) (x : TorchLean.TensorPack α ss₁) (y : TorchLean.TensorPack α ss₂)
-  :
-    dotList (α := α) (TorchLean.TensorPack.cast (α := α) h x) y = dotList (α := α) x (TorchLean.TensorPack.cast (α := α) h.symm y) := by
+theorem dotList_cast_left {ss₁ ss₂ : List Shape} (h : ss₁ = ss₂) (x : TorchLean.TensorPack α ss₁)
+    (y : TorchLean.TensorPack α ss₂) :
+    dotList (α := α) (TorchLean.TensorPack.cast (α := α) h x) y =
+      dotList (α := α) x (TorchLean.TensorPack.cast (α := α) h.symm y) := by
   cases h
   rfl
 
-/-- `dotList` is linear in its right argument with respect to `_root_.TorchLean.TensorPack.add`. -/
+/-- `dotList` is linear in its right argument with respect to `TorchLean.TensorPack.add`. -/
 theorem dotList_add_right {ss : List Shape} (x y z : TorchLean.TensorPack α ss) :
-    dotList (α := α) x (TorchLean.TensorPack.add (α := α) y z) = dotList (α := α) x y + dotList (α := α) x z := by
+    dotList (α := α) x (TorchLean.TensorPack.add (α := α) y z) =
+      dotList (α := α) x y + dotList (α := α) x z := by
   induction ss with
   | nil =>
     cases x; cases y; cases z; simp [dotList, TorchLean.TensorPack.add]
@@ -85,8 +86,10 @@ theorem dotList_add_right {ss : List Shape} (x y z : TorchLean.TensorPack α ss)
             ih, add_assoc, add_left_comm]
 
 /-- Dot respects appending: dot of two `snoc`ed contexts splits into prefix + last entry. -/
-theorem dotList_snoc {ss : List Shape} {τ : Shape} (x y : TorchLean.TensorPack α ss) (a b : Tensor α τ) :
-    dotList (α := α) (TorchLean.TensorPack.snoc (α := α) (ss := ss) x a) (TorchLean.TensorPack.snoc (α := α) (ss := ss) y b) =
+theorem dotList_snoc {ss : List Shape} {τ : Shape} (x y : TorchLean.TensorPack α ss)
+    (a b : Tensor α τ) :
+    dotList (α := α) (TorchLean.TensorPack.snoc (α := α) (ss := ss) x a)
+        (TorchLean.TensorPack.snoc (α := α) (ss := ss) y b) =
       dotList (α := α) x y + dot (α := α) a b := by
   revert x y
   induction ss with
@@ -113,35 +116,19 @@ theorem dotList_zero_right {ss : List Shape} (x : TorchLean.TensorPack α ss) :
     cases x with
     | cons xh xt =>
       simp [dotList, TorchLean.TensorPack.zero,
-        TensorAlgebra.dot_fill_zero_right (α := α) (s := s) (a := xh), ih]
+        TensorAlgebra.dot_full_zero_right (α := α) (s := s) (a := xh), ih]
 
 end
 
 end TensorPack
 
-/-!
-`Idx Γ s` is a “typed index” into a heterogeneous context: it stores a `Fin Γ.length` together
-with a proof that the shape at that position is `s`.
--/
-
-/-- A typed index into a heterogeneous context `Γ`, carrying a proof of the expected shape `s`. -/
-structure Idx (Γ : List Shape) (s : Shape) where
-  /-- Position in the heterogeneous context. -/
-  i : Fin Γ.length
-  /-- Proof that the selected context entry has shape `s`. -/
-  h : Γ.get i = s
-
-/-- Read a tensor from a context at a typed index, casting along the stored shape equality. -/
-def getIdx {α : Type} {Γ : List Shape} {s : Shape} (xs : TorchLean.TensorPack α Γ) (idx : Idx Γ s) :
-    Tensor α s :=
-  Tensor.castShape (xs.get (α := α) idx.i) idx.h
-
 namespace TensorPack
 
-variable {α : Type}
+variable {α : Type} [TorchLean.Storage α]
 
 /-- Sparse context with a single nonzero entry at `idx` (all other tensors are `0`). -/
-def single [Zero α] {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (v : Tensor α s) : TorchLean.TensorPack α Γ :=
+def single [Zero α] {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (v : Tensor α s) :
+    TorchLean.TensorPack α Γ :=
   match Γ, idx with
   | [], ⟨i, _h⟩ =>
       match i with
@@ -154,7 +141,7 @@ def single [Zero α] {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (v : Tensor 
           let iTail : Fin Γtail.length := ⟨j, Nat.lt_of_succ_lt_succ hj⟩
           let hTail : Γtail.get iTail = s := by
             simpa using h
-          .cons (fill (0 : α) s0) (single (Γ := Γtail) (s := s) ⟨iTail, hTail⟩ v)
+          .cons (Tensor.full s0 (0 : α)) (single (Γ := Γtail) (s := s) ⟨iTail, hTail⟩ v)
 
 section
 
@@ -193,21 +180,24 @@ theorem dotList_single {Γ : List Shape} {s : Shape}
                   simpa [hs0] using h
                 cases hs
                 calc
-                  TensorPack.dotList (α := α) (TorchLean.TensorPack.cons dx0 dxRest) (single ⟨⟨0, isLt⟩, rfl⟩ v)
+                  TensorPack.dotList (α := α) (TorchLean.TensorPack.cons dx0 dxRest)
+                      (single ⟨⟨0, isLt⟩, rfl⟩ v)
                       = dot (α := α) dx0 v := by
-                          simp [TensorPack.dotList, single, Tensor.castShape, TensorPack.dotList_zero_right]
-                  _ = dot (α := α) (getIdx (α := α) (TorchLean.TensorPack.cons dx0 dxRest) ⟨⟨0, isLt⟩, rfl⟩) v :=
-                    by
+                          simp [TensorPack.dotList, single, Tensor.castShape,
+                            TensorPack.dotList_zero_right]
+                  _ = dot (α := α)
+                        (getIdx (α := α) (TorchLean.TensorPack.cons dx0 dxRest)
+                          ⟨⟨0, isLt⟩, rfl⟩) v := by
                           -- `getIdx` at index `0` reduces definitionally to the head tensor.
                           dsimp [getIdx, Tensor.castShape]
                           have hget0 :
-                              (TorchLean.TensorPack.cons dx0 dxRest).get (i := (0 : Fin (s :: Γtail).length)) = dx0
-                                := by
+                              (TorchLean.TensorPack.cons dx0 dxRest).get
+                                (i := (0 : Fin (s :: Γtail).length)) = dx0 := by
                             rfl
                           exact (congrArg (fun t => dot (α := α) t v) hget0).symm
             | succ j =>
-                have h0 : dot (α := α) dx0 (fill (0 : α) s0) = 0 :=
-                  TensorAlgebra.dot_fill_zero_right (α := α) (s := s0) (a := dx0)
+                have h0 : dot (α := α) dx0 (Tensor.full s0 (0 : α)) = 0 :=
+                  TensorAlgebra.dot_full_zero_right (α := α) (s := s0) (a := dx0)
                 let iHead : Fin (s0 :: Γtail).length := ⟨Nat.succ j, isLt⟩
                 let iTail : Fin Γtail.length := ⟨j, Nat.lt_of_succ_lt_succ isLt⟩
                 let hTail : Γtail.get iTail = s := by
@@ -220,7 +210,8 @@ theorem dotList_single {Γ : List Shape} {s : Shape}
                   -- rewriting the index proof.
                   dsimp [getIdx, idxTail, iHead, iTail]
                   have hcons :
-                      TorchLean.TensorPack.get (α := α) (ss := s0 :: Γtail) (TorchLean.TensorPack.cons dx0 dxRest) iHead =
+                      TorchLean.TensorPack.get (α := α) (ss := s0 :: Γtail)
+                          (TorchLean.TensorPack.cons dx0 dxRest) iHead =
                         TorchLean.TensorPack.get (α := α) (ss := Γtail) dxRest iTail := by
                     exact TorchLean.TensorPack.get_cons_succ (α := α) (s := s0)
                       (ss := Γtail) dx0 dxRest j isLt
@@ -228,53 +219,54 @@ theorem dotList_single {Γ : List Shape} {s : Shape}
                   cases h
                   rw [hcons]
                 calc
-                  TensorPack.dotList (α := α) (TorchLean.TensorPack.cons dx0 dxRest) (single ⟨iHead, h⟩ v)
-                      = dot (α := α) dx0 (fill (0 : α) s0) +
+                  TensorPack.dotList (α := α) (TorchLean.TensorPack.cons dx0 dxRest)
+                      (single ⟨iHead, h⟩ v)
+                      = dot (α := α) dx0 (Tensor.full s0 (0 : α)) +
                           TensorPack.dotList (α := α) dxRest (single idxTail v) := by
                             simp [TensorPack.dotList, single, idxTail, iHead, iTail]
                   _ = TensorPack.dotList (α := α) dxRest (single idxTail v) := by
                         simp [h0]
                   _ = dot (α := α) (getIdx (α := α) dxRest idxTail) v :=
                         ih (dx := dxRest) (idx := idxTail)
-                  _ = dot (α := α) (getIdx (α := α) (TorchLean.TensorPack.cons dx0 dxRest) ⟨iHead, h⟩) v := by
+                  _ = dot (α := α)
+                        (getIdx (α := α) (TorchLean.TensorPack.cons dx0 dxRest) ⟨iHead, h⟩) v := by
                         simp [hget]
 
 end
 
 end TensorPack
 
--- Executable node payload (no algebraic assumptions).
---
--- `Δ` is an extra *non-differentiable* environment threaded through evaluation.
--- It is intentionally opaque to the reverse-mode accumulator: `vjp` returns gradients only for `Γ`.
 /--
 Executable node payload (no correctness proof).
 
 `Δ` is an extra non-differentiable environment threaded through evaluation (e.g. parameters,
 auxiliary data). The VJP returns gradients only for the differentiable context `Γ`.
 -/
-structure NodeData (α : Type) (Δ : Type) (Γ : List Shape) (τ : Shape) where
+structure NodeData (α : Type) [TorchLean.Storage α]
+    (Δ : Type) (Γ : List Shape) (τ : Shape) where
   /-- Evaluate the node from the current differentiable context and auxiliary data. -/
   forward : TorchLean.TensorPack α Γ → Δ → Tensor α τ
   /-- Propagate one tangent context through the node. -/
   jvp : TorchLean.TensorPack α Γ → TorchLean.TensorPack α Γ → Δ → Tensor α τ
   /-- Pull an output cotangent back to the node's differentiable input context. -/
   vjp : TorchLean.TensorPack α Γ → Δ → Tensor α τ → TorchLean.TensorPack α Γ
+  /-- Optional runtime precondition, enforced by checked execution before evaluating this node. -/
+  validate : TorchLean.TensorPack α Γ → Δ → Except String Unit := fun _ _ => .ok ()
 
--- A node with a VJP/JVP adjointness law (proof-carrying).
 /--
 Proof-carrying node: `NodeData` plus the local adjointness law.
 
 The field `correct` is the algebraic version of the standard JVP/VJP inner-product law.
 -/
-structure Node {α : Type} [CommSemiring α] (Δ : Type) (Γ : List Shape) (τ : Shape)
+structure Node {α : Type} [TorchLean.Storage α] [CommSemiring α]
+    (Δ : Type) (Γ : List Shape) (τ : Shape)
     extends NodeData α Δ Γ τ where
   /-- The node's JVP and VJP satisfy the local dot-product adjoint identity. -/
   correct : ∀ x dx d δ, dot (α := α) (jvp x dx d) δ = TensorPack.dotList (α := α) dx (vjp x d δ)
 
--- A tape/SSA graph without local correctness proofs (executable form).
 /-- Executable-only graph: a snoc-list of `NodeData`. -/
-inductive GraphData (α : Type) (Δ : Type) (Γ : List Shape) : List Shape → Type where
+inductive GraphData (α : Type) [TorchLean.Storage α]
+    (Δ : Type) (Γ : List Shape) : List Shape → Type where
   /-- A graph with no computed nodes; its context consists only of the inputs `Γ`. -/
   | nil : GraphData α Δ Γ []
   /-- Append one node whose inputs may use the original and previously computed values. -/
@@ -283,45 +275,49 @@ inductive GraphData (α : Type) (Δ : Type) (Γ : List Shape) : List Shape → T
 
 namespace GraphData
 
-variable {α : Type}
+variable {α : Type} [TorchLean.Storage α]
 variable {Δ : Type}
 variable {Γ : List Shape}
 
 /-- Evaluate a `GraphData` on an input context `x`, producing the full context `Γ ++ ss`. -/
-def eval {ss : List Shape} (g : GraphData α Δ Γ ss) (x : TorchLean.TensorPack α Γ) (d : Δ) : TorchLean.TensorPack α (Γ ++ ss) :=
-  match g with
-  | .nil => _root_.TorchLean.TensorPack.cast (α := α) (h := (List.append_nil Γ).symm) x
-  | .snoc (ss := ss) (τ := τ) g node =>
-      let ctx := eval (ss := ss) g x d
-      let y := Tensor.materialize (node.forward ctx d)
-      _root_.TorchLean.TensorPack.cast (α := α) (h := List.append_assoc Γ ss [τ]) (_root_.TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ
-        := τ) ctx y)
-
-/-- Compute the JVP of `eval`, producing a tangent context of shape `Γ ++ ss`. -/
-def jvpCtx {ss : List Shape} (g : GraphData α Δ Γ ss) (x : TorchLean.TensorPack α Γ) (dx : TorchLean.TensorPack α Γ) (d : Δ) :
+def eval {ss : List Shape} (g : GraphData α Δ Γ ss) (x : TorchLean.TensorPack α Γ) (d : Δ) :
     TorchLean.TensorPack α (Γ ++ ss) :=
   match g with
-  | .nil => _root_.TorchLean.TensorPack.cast (α := α) (h := (List.append_nil Γ).symm) dx
+  | .nil => TorchLean.TensorPack.cast (α := α) (h := (List.append_nil Γ).symm) x
+  | .snoc (ss := ss) (τ := τ) g node =>
+      let ctx := eval (ss := ss) g x d
+      let y := node.forward ctx d
+      TorchLean.TensorPack.cast (α := α) (h := List.append_assoc Γ ss [τ])
+        (TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ := τ) ctx y)
+
+/-- Compute the JVP of `eval`, producing a tangent context of shape `Γ ++ ss`. -/
+def jvpCtx {ss : List Shape} (g : GraphData α Δ Γ ss) (x : TorchLean.TensorPack α Γ)
+    (dx : TorchLean.TensorPack α Γ) (d : Δ) :
+    TorchLean.TensorPack α (Γ ++ ss) :=
+  match g with
+  | .nil => TorchLean.TensorPack.cast (α := α) (h := (List.append_nil Γ).symm) dx
   | .snoc (ss := ss) (τ := τ) g node =>
       let ctx := eval (ss := ss) g x d
       let dctx := jvpCtx (ss := ss) g x dx d
-      let dy := Tensor.materialize (node.jvp ctx dctx d)
-      _root_.TorchLean.TensorPack.cast (α := α) (h := List.append_assoc Γ ss [τ]) (_root_.TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ
-        := τ) dctx dy)
+      let dy := node.jvp ctx dctx d
+      TorchLean.TensorPack.cast (α := α) (h := List.append_assoc Γ ss [τ])
+        (TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ := τ) dctx dy)
 
 /-- Reverse-mode accumulation on contexts (VJP), given a seed cotangent for `Γ ++ ss`. -/
-def backpropCtx [Add α] {ss : List Shape} (g : GraphData α Δ Γ ss) (x : TorchLean.TensorPack α Γ) (d : Δ)
-    (seed : TorchLean.TensorPack α (Γ ++ ss)) : TorchLean.TensorPack α Γ :=
+def backpropCtx [Add α] {ss : List Shape} (g : GraphData α Δ Γ ss) (x : TorchLean.TensorPack α Γ)
+    (d : Δ) (seed : TorchLean.TensorPack α (Γ ++ ss)) : TorchLean.TensorPack α Γ :=
   match g with
-  | .nil => _root_.TorchLean.TensorPack.cast (α := α) (h := List.append_nil Γ) seed
+  | .nil => TorchLean.TensorPack.cast (α := α) (h := List.append_nil Γ) seed
   | .snoc (ss := ss) (τ := τ) g node =>
       let seed' : TorchLean.TensorPack α ((Γ ++ ss) ++ [τ]) :=
-        _root_.TorchLean.TensorPack.cast (α := α) (h := (List.append_assoc Γ ss [τ]).symm) seed
-      let seedPrev : TorchLean.TensorPack α (Γ ++ ss) := (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ss) (τ := τ) seed').1
-      let seedOut : Tensor α τ := (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ss) (τ := τ) seed').2
+        TorchLean.TensorPack.cast (α := α) (h := (List.append_assoc Γ ss [τ]).symm) seed
+      let seedPrev : TorchLean.TensorPack α (Γ ++ ss) :=
+        (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ss) (τ := τ) seed').1
+      let seedOut : Tensor α τ :=
+        (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ss) (τ := τ) seed').2
       let ctx := eval (ss := ss) g x d
       let contrib := node.vjp ctx d seedOut
-      let seedPrev' := _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) seedPrev contrib
+      let seedPrev' := TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) seedPrev contrib
       backpropCtx (ss := ss) g x d seedPrev'
 
 end GraphData
@@ -339,7 +335,8 @@ A proof-carrying tape/SSA graph.
 
 Nodes are appended in topological order and may reference any previously computed value.
 -/
-inductive Graph {α : Type} [CommSemiring α] (Δ : Type) (Γ : List Shape) : List Shape → Type where
+inductive Graph {α : Type} [TorchLean.Storage α] [CommSemiring α]
+    (Δ : Type) (Γ : List Shape) : List Shape → Type where
   /-- A graph with no computed nodes; its context consists only of the inputs `Γ`. -/
   | nil : Graph Δ Γ []
   /-- Append one locally correct node that may use the inputs and all preceding results. -/
@@ -348,7 +345,7 @@ inductive Graph {α : Type} [CommSemiring α] (Δ : Type) (Γ : List Shape) : Li
 
 namespace Graph
 
-variable {α : Type} [CommSemiring α]
+variable {α : Type} [TorchLean.Storage α] [CommSemiring α]
 variable {Δ : Type}
 variable {Γ : List Shape}
 
@@ -361,47 +358,25 @@ end Graph
 
 namespace Graph
 
-variable {α : Type} [CommSemiring α]
+variable {α : Type} [TorchLean.Storage α] [CommSemiring α]
 variable {Δ : Type}
 variable {Γ : List Shape}
 
-/-- Evaluate a proof-carrying `Graph` on an input context `x`. -/
-def eval {ss : List Shape} (g : Graph (α := α) Δ Γ ss) (x : TorchLean.TensorPack α Γ) (d : Δ) : TorchLean.TensorPack α (Γ ++ ss)
-  :=
-  match g with
-  | .nil => _root_.TorchLean.TensorPack.cast (α := α) (h := (List.append_nil Γ).symm) x
-  | .snoc (ss := ss) (τ := τ) g node =>
-      let ctx := eval (ss := ss) g x d
-      let y := node.forward ctx d
-      _root_.TorchLean.TensorPack.cast (α := α) (h := List.append_assoc Γ ss [τ]) (_root_.TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ
-        := τ) ctx y)
-
-/-- Compute the JVP of `eval`, producing a tangent context of shape `Γ ++ ss`. -/
-def jvpCtx {ss : List Shape} (g : Graph (α := α) Δ Γ ss) (x : TorchLean.TensorPack α Γ) (dx : TorchLean.TensorPack α Γ) (d : Δ) :
+/-- Evaluate a proof-carrying graph through its executable representation. -/
+def eval {ss : List Shape} (g : Graph (α := α) Δ Γ ss) (x : TorchLean.TensorPack α Γ) (d : Δ) :
     TorchLean.TensorPack α (Γ ++ ss) :=
-  match g with
-  | .nil => _root_.TorchLean.TensorPack.cast (α := α) (h := (List.append_nil Γ).symm) dx
-  | .snoc (ss := ss) (τ := τ) g node =>
-      let ctx := eval (ss := ss) g x d
-      let dctx := jvpCtx (ss := ss) g x dx d
-      let dy := node.jvp ctx dctx d
-      _root_.TorchLean.TensorPack.cast (α := α) (h := List.append_assoc Γ ss [τ]) (_root_.TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ
-        := τ) dctx dy)
+  GraphData.eval g.toData x d
 
-/-- Reverse-mode accumulation on contexts (VJP) for a proof-carrying `Graph`. -/
+/-- Propagate tangents with the same evaluator used by the executable graph. -/
+def jvpCtx {ss : List Shape} (g : Graph (α := α) Δ Γ ss) (x : TorchLean.TensorPack α Γ)
+    (dx : TorchLean.TensorPack α Γ) (d : Δ) :
+    TorchLean.TensorPack α (Γ ++ ss) :=
+  GraphData.jvpCtx g.toData x dx d
+
+/-- Accumulate cotangents with the executable graph's reverse pass. -/
 def backpropCtx {ss : List Shape} (g : Graph (α := α) Δ Γ ss) (x : TorchLean.TensorPack α Γ) (d : Δ)
     (seed : TorchLean.TensorPack α (Γ ++ ss)) : TorchLean.TensorPack α Γ :=
-  match g with
-  | .nil => _root_.TorchLean.TensorPack.cast (α := α) (h := List.append_nil Γ) seed
-  | .snoc (ss := ss) (τ := τ) g node =>
-      let seed' : TorchLean.TensorPack α ((Γ ++ ss) ++ [τ]) :=
-        _root_.TorchLean.TensorPack.cast (α := α) (h := (List.append_assoc Γ ss [τ]).symm) seed
-      let seedPrev : TorchLean.TensorPack α (Γ ++ ss) := (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ss) (τ := τ) seed').1
-      let seedOut : Tensor α τ := (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ss) (τ := τ) seed').2
-      let ctx := eval (ss := ss) g x d
-      let contrib := node.vjp ctx d seedOut
-      let seedPrev' := _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) seedPrev contrib
-      backpropCtx (ss := ss) g x d seedPrev'
+  GraphData.backpropCtx g.toData x d seed
 
 /--
 Global tape soundness (algebraic form).
@@ -416,7 +391,7 @@ theorem backprop_correct {ss : List Shape} (g : Graph (α := α) Δ Γ ss) :
   induction g with
   | nil =>
     intro x dx d seed
-    simpa [jvpCtx, backpropCtx] using
+    simpa [jvpCtx, backpropCtx, toData, GraphData.jvpCtx, GraphData.backpropCtx] using
       (TensorPack.dotList_cast_left (α := α) (h := (List.append_nil Γ).symm) (x := dx) (y := seed))
   | snoc g node ih =>
     intro x dx d seed
@@ -425,55 +400,65 @@ theorem backprop_correct {ss : List Shape} (g : Graph (α := α) Δ Γ ss) :
     let dctx := jvpCtx (ss := ss) g x dx d
     let dy := node.jvp ctx dctx d
     let assoc : (Γ ++ ss) ++ [τ] = Γ ++ (ss ++ [τ]) := List.append_assoc Γ ss [τ]
-    let seed' : TorchLean.TensorPack α ((Γ ++ ss) ++ [τ]) := _root_.TorchLean.TensorPack.cast (α := α) (h := assoc.symm) seed
-    let seedPrev : TorchLean.TensorPack α (Γ ++ ss) := (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ss) (τ := τ) seed').1
-    let seedOut : Tensor α τ := (_root_.TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ss) (τ := τ) seed').2
-    have hseed : _root_.TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ := τ) seedPrev seedOut = seed' := by
-      change _root_.TorchLean.TensorPack.snoc
-        (_root_.TorchLean.TensorPack.unsnoc seed').1
-        (_root_.TorchLean.TensorPack.unsnoc seed').2 = seed'
-      exact _root_.TorchLean.TensorPack.snoc_unsnoc seed'
+    let seed' : TorchLean.TensorPack α ((Γ ++ ss) ++ [τ]) :=
+      TorchLean.TensorPack.cast (α := α) (h := assoc.symm) seed
+    let seedPrev : TorchLean.TensorPack α (Γ ++ ss) :=
+      (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ss) (τ := τ) seed').1
+    let seedOut : Tensor α τ :=
+      (TorchLean.TensorPack.unsnoc (α := α) (ss := Γ ++ ss) (τ := τ) seed').2
+    have hseed :
+        TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ := τ) seedPrev seedOut = seed' := by
+      change TorchLean.TensorPack.snoc
+        (TorchLean.TensorPack.unsnoc seed').1
+        (TorchLean.TensorPack.unsnoc seed').2 = seed'
+      exact TorchLean.TensorPack.snoc_unsnoc seed'
     have hjvp :
         TensorPack.dotList (α := α) (jvpCtx (ss := ss ++ [τ]) (Graph.snoc g node) x dx d) seed =
           TensorPack.dotList (α := α) dctx seedPrev + dot (α := α) dy seedOut := by
       have :
-          TensorPack.dotList (α := α) (_root_.TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ := τ) dctx dy) seed' =
+          TensorPack.dotList (α := α)
+              (TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ := τ) dctx dy) seed' =
             TensorPack.dotList (α := α) dctx seedPrev + dot (α := α) dy seedOut := by
         simpa [hseed] using
-          (TensorPack.dotList_snoc (α := α) (ss := Γ ++ ss) (τ := τ) (x := dctx) (y := seedPrev) (a :=
-            dy) (b := seedOut))
-      simpa [jvpCtx, ctx, dctx, dy, seed', assoc] using
-        (TensorPack.dotList_cast_left (α := α) (h := assoc) (x := _root_.TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ
-          := τ) dctx dy) (y := seed)
+          (TensorPack.dotList_snoc (α := α) (ss := Γ ++ ss) (τ := τ) (x := dctx) (y := seedPrev)
+            (a := dy) (b := seedOut))
+      simpa [jvpCtx, ctx, dctx, dy, seed', assoc, toData, GraphData.jvpCtx, eval] using
+        (TensorPack.dotList_cast_left (α := α) (h := assoc)
+          (x := TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ := τ) dctx dy) (y := seed)
           |>.trans this)
-    have hlocal : dot (α := α) dy seedOut = TensorPack.dotList (α := α) dctx (node.vjp ctx d seedOut) :=
-      by
+    have hlocal :
+        dot (α := α) dy seedOut = TensorPack.dotList (α := α) dctx (node.vjp ctx d seedOut) := by
       simpa [dy] using (node.correct ctx dctx d seedOut)
     have hadd :
-        TensorPack.dotList (α := α) dctx seedPrev + TensorPack.dotList (α := α) dctx (node.vjp ctx d seedOut)
-          =
-          TensorPack.dotList (α := α) dctx (_root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) seedPrev (node.vjp ctx d
-            seedOut)) := by
+        TensorPack.dotList (α := α) dctx seedPrev +
+            TensorPack.dotList (α := α) dctx (node.vjp ctx d seedOut) =
+          TensorPack.dotList (α := α) dctx
+            (TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) seedPrev
+              (node.vjp ctx d seedOut)) := by
       simpa using
         (TensorPack.dotList_add_right (α := α) (x := dctx) (y := seedPrev) (z := node.vjp ctx d
           seedOut)).symm
     calc
       TensorPack.dotList (α := α) (jvpCtx (ss := ss ++ [τ]) (Graph.snoc g node) x dx d) seed
           = TensorPack.dotList (α := α) dctx seedPrev + dot (α := α) dy seedOut := hjvp
-      _ = TensorPack.dotList (α := α) dctx seedPrev + TensorPack.dotList (α := α) dctx (node.vjp ctx d
-        seedOut) := by
+      _ = TensorPack.dotList (α := α) dctx seedPrev +
+            TensorPack.dotList (α := α) dctx (node.vjp ctx d seedOut) := by
             simp [hlocal]
-      _ = TensorPack.dotList (α := α) dctx (_root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) seedPrev (node.vjp ctx d
-        seedOut)) := by
+      _ = TensorPack.dotList (α := α) dctx
+            (TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) seedPrev
+              (node.vjp ctx d seedOut)) := by
             simp [hadd]
       _ = TensorPack.dotList (α := α) dx
-            (backpropCtx (ss := ss) g x d (_root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) seedPrev (node.vjp ctx
-              d seedOut))) := by
-            simpa [dctx] using (ih x dx d (_root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) seedPrev (node.vjp ctx
-              d seedOut)))
-      _ = TensorPack.dotList (α := α) dx (backpropCtx (ss := ss ++ [τ]) (Graph.snoc g node) x d seed) :=
-        by
-            simp [backpropCtx, ctx, seed', seedPrev, seedOut]
+            (backpropCtx (ss := ss) g x d
+              (TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) seedPrev
+                (node.vjp ctx d seedOut))) := by
+            simpa [dctx] using
+              (ih x dx d
+                (TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) seedPrev
+                  (node.vjp ctx d seedOut)))
+      _ = TensorPack.dotList (α := α) dx
+            (backpropCtx (ss := ss ++ [τ]) (Graph.snoc g node) x d seed) := by
+            simp [backpropCtx, ctx, seed', seedPrev, seedOut, toData, GraphData.backpropCtx, eval]
 
 end Graph
 

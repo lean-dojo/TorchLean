@@ -7,12 +7,16 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Text.Tokenizer
-public import NN.API.CLI.Training
+public import NN.API.CLI.Parser
+public import NN.API.Trainer.Reporting
+public import NN.API.CLI.Training -- shake: keep
+public import NN.Tensor.Conversion -- shake: keep
 
 /-!
 # Text Workflow Configuration
 
-Display helpers, generation and corpus option records, training-log metadata, and CLI parsers for text workflows.
+Display helpers, generation and corpus option records, training-log metadata, and CLI parsers for
+text workflows.
 -/
 
 @[expose] public section
@@ -26,18 +30,43 @@ namespace text
 Return a fixed-length token window from a text string.
 
 `offset = 0` is the model prompt window; `offset = 1` is the usual next-token target window for
-causal language modeling. Missing tokens are padded with `padId`, matching
-`Data.CausalLM.oneHotPair`.
+causal language modeling. Missing tokens are padded with `paddingTokenId`, matching
+`Data.CausalLM.oneHotSample`.
+
+Example:
+```lean
+-- `offset = 0` is the prompt window and `offset = 1` is its next-token target. That pair is the
+-- whole of causal language-model supervision.
+def prompt : Tensor Nat [8] :=
+  text.tokenWindow text.Tokenizer.byte 8 "hello world"
+
+def target : Tensor Nat [8] :=
+  text.tokenWindow text.Tokenizer.byte 8 "hello world" (offset := 1)
+```
 -/
-def tokenWindow (t : Tokenizer) (n : Nat) (input : String) (offset : Nat := 0)
-    (padId : Nat := 0) : Tensor Nat [n] :=
-  let toks := t.encode input
-  Spec.Tensor.ofFn (fun i => toks.getD (offset + i.val) padId)
+def tokenWindow
+    (tokenizer : Tokenizer)
+    (length : Nat)
+    (text : String)
+    (offset : Nat := 0)
+    (paddingTokenId : Nat := 0) :
+    Tensor Nat [length] :=
+  let tokens := tokenizer.encode text
+  TorchLean.Tensor.ofFn fun position =>
+    tokens.getD (offset + position.val) paddingTokenId
 
 /-- Decode a fixed token window extracted by `tokenWindow`. -/
-def decodeWindow (t : Tokenizer) (n : Nat) (input : String) (offset : Nat := 0)
-    (padId : Nat := 0) : String :=
-  t.decode (tokenWindow t n input (offset := offset) (padId := padId)).toArray
+def decodeWindow
+    (tokenizer : Tokenizer)
+    (length : Nat)
+    (text : String)
+    (offset : Nat := 0)
+    (paddingTokenId : Nat := 0) :
+    String :=
+  tokenizer.decode <| Tensor.to
+    (tokenWindow
+      tokenizer length text (offset := offset) (paddingTokenId := paddingTokenId))
+    (Array Nat)
 
 /--
 Escape a short text fragment for one-line terminal output.
@@ -45,8 +74,12 @@ Escape a short text fragment for one-line terminal output.
 Display-only: this does not change tokenizer semantics. Quotes and backslashes use their usual
 escapes, common whitespace controls use `\\n`, `\\r`, and `\\t`, and every other ASCII control
 character is written as `\\xNN`. Thus byte-token predictions cannot turn a log into a binary file.
+
+The argument is called `fragment` rather than `text` so it cannot shadow the `text` namespace inside
+the body; a local named `text` makes every `text.foo` spelling in scope resolve to a field access
+instead, which is a genuinely confusing error to read.
 -/
-def escapeForDisplay (s : String) : String :=
+def escape (fragment : String) : String :=
   let hexDigit := fun n =>
     (#['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f']).getD
       (n % 16) '0'
@@ -63,21 +96,38 @@ def escapeForDisplay (s : String) : String :=
           "\\x" ++ String.singleton (hexDigit (n / 16)) ++ String.singleton (hexDigit n)
         else
           String.singleton c
-  "\"" ++ String.join (s.toList.map escapeChar) ++ "\""
+  "\"" ++ String.join (fragment.toList.map escapeChar) ++ "\""
 
 /-! ## Sampling Helpers (Top-k) -/
 
-/-- Shared text-generation flags for GPT-style examples. -/
+/--
+Shared text-generation flags for GPT-style examples.
+
+Example:
+```lean
+-- `topK := 1` is greedy decoding; anything larger samples, and `seed` is what makes that sampling
+-- reproducible from one run to the next.
+def greedy : text.GenerationOptions :=
+  { prompt := "Once upon a time"
+    newTokenCount := 64
+    temperature := 1.0
+    topK := 1
+    repeatPenalty := 0.0
+    repeatWindow := 0
+    seed := 0
+    asciiOnly := true }
+```
+-/
 structure GenerationOptions where
   /-- Prompt used to seed autoregressive generation. -/
   prompt : String
   /-- Number of new tokens to append. -/
-  generate : Nat
-  /-- Softmax temperature. Must be positive. -/
+  newTokenCount : Nat
+  /-- Softmax temperature. Must be finite and positive for sampling; ignored by greedy decoding. -/
   temperature : Float
-  /-- Top-k cutoff. `1` gives greedy decoding. -/
+  /-- Top-k cutoff. `0` samples the full vocabulary; `1` gives greedy decoding. -/
   topK : Nat
-  /-- Penalty subtracted for repeated recent tokens. `0` disables it. -/
+  /-- Finite nonnegative penalty subtracted for repeated recent tokens. `0` disables it. -/
   repeatPenalty : Float
   /-- Number of recent tokens considered by the repeat penalty. `0` disables the window. -/
   repeatWindow : Nat
@@ -87,121 +137,105 @@ structure GenerationOptions where
   asciiOnly : Bool
 deriving Repr
 
-/-- Defaults for `parseGenerationOptions`. -/
-structure GenerationDefaults where
-  prompt : String := "First Citizen:"
-  generate : Nat := 64
-  temperature : Float := 0.85
-  topK : Nat := 12
-  repeatPenalty : Float := 1.25
-  repeatWindow : Nat := 24
-  seed : Nat := 0
-  asciiOnly : Bool := false
-deriving Repr
+namespace Internal
 
-/-- Parse `--ascii-only`, accepting either a bare flag or `true`/`false` value. -/
-def parseAsciiOnlyFlag (exeName : String) (args : List String) :
+/--
+Parse `--ascii-only`, accepting either a bare flag or a `true`/`false` value.
+
+Internal on purpose: `GenerationOptions.parse` is the entry point, and parsing this flag on its own
+would let a command accept it without recording it in the training log.
+-/
+def parseAsciiOnlyFlag (exeName : String) (arguments : List String) (default : Bool) :
     Except String (Bool × List String) := do
-  match TorchLean.CLI.takeSwitchDefault args "ascii-only" false with
+  match TorchLean.CLI.takeSwitch arguments "ascii-only" (default := default) with
   | .ok result => pure result
   | .error e => throw s!"{exeName}: {e}"
+
+end Internal
+
+namespace GenerationOptions
 
 /--
 Parse the generation flags shared by GPT-style examples.
 
-The model file still owns its training/data flags. This helper only handles prompt, sampling, repeat
-penalty, deterministic seed, and ASCII restriction.
--/
-def parseGenerationOptions (exeName : String) (args : List String)
-    (defaults : GenerationDefaults := {}) :
-    Except String (GenerationOptions × List String) := do
-  let (prompt, args) ← TorchLean.CLI.takeFlagValueDefault args "prompt" defaults.prompt
-  let (generate, args) ← TorchLean.CLI.takeNatFlagDefault args "generate" defaults.generate
-  let (temperature, args) ←
-    TorchLean.CLI.takePositiveFloatFlag args exeName "temperature" defaults.temperature
-  let (topK, args) ← TorchLean.CLI.takeNatFlagDefault args "top-k" defaults.topK
-  let (repeatPenalty, args) ←
-    TorchLean.CLI.takeNonnegativeFloatFlag args exeName "repeat-penalty" defaults.repeatPenalty
-  let (repeatWindow, args) ← TorchLean.CLI.takeNatFlagDefault args "repeat-window" defaults.repeatWindow
-  let (seed, args) ← TorchLean.CLI.takeNatFlagDefault args "sample-seed" defaults.seed
-  let (asciiOnly, args) ← parseAsciiOnlyFlag exeName args
-  pure ({ prompt := prompt
-          generate := generate
-          temperature := temperature
-          topK := topK
-          repeatPenalty := repeatPenalty
-          repeatWindow := repeatWindow
-          seed := seed
-          asciiOnly := asciiOnly || defaults.asciiOnly }, args)
-
-namespace GenerationOptions
-
-/- Convert a concrete generation option record back to parser defaults. -/
-def toDefaults (opts : GenerationOptions) : GenerationDefaults :=
-  { prompt := opts.prompt
-    generate := opts.generate
-    temperature := opts.temperature
-    topK := opts.topK
-    repeatPenalty := opts.repeatPenalty
-    repeatWindow := opts.repeatWindow
-    seed := opts.seed
-    asciiOnly := opts.asciiOnly }
-
-/--
-Parse generation flags using a full `GenerationOptions` value as defaults.
-
-This is the public API shape used by model commands: they provide a concrete default prompt and
-sampling policy, and the shared parser handles the stable CLI surface.
+The model command supplies its concrete default prompt and sampling policy. This parser owns only
+the stable generation flags and returns arguments belonging to the caller.
 -/
 def parse
     (exeName : String)
-    (args : List String)
+    (arguments : List String)
     (defaults : GenerationOptions) :
-    Except String (GenerationOptions × List String) :=
-  parseGenerationOptions exeName args defaults.toDefaults
+    Except String (GenerationOptions × List String) := do
+  let (prompt, arguments) ←
+    TorchLean.CLI.takeFlagValue arguments "prompt" (default := defaults.prompt)
+  let (newTokenCount, arguments) ←
+    TorchLean.CLI.takeNatFlag arguments "generate" (default := defaults.newTokenCount)
+  let (temperature, arguments) ←
+    TorchLean.CLI.takePositiveFloatFlag
+      arguments exeName "temperature" (default := defaults.temperature)
+  let (topK, arguments) ← TorchLean.CLI.takeNatFlag arguments "top-k" (default := defaults.topK)
+  let (repeatPenalty, arguments) ←
+    TorchLean.CLI.takeNonnegativeFloatFlag
+      arguments exeName "repeat-penalty" (default := defaults.repeatPenalty)
+  let (repeatWindow, arguments) ←
+    TorchLean.CLI.takeNatFlag arguments "repeat-window" (default := defaults.repeatWindow)
+  let (seed, arguments) ←
+    TorchLean.CLI.takeNatFlag arguments "sample-seed" (default := defaults.seed)
+  let (asciiOnly, arguments) ← Internal.parseAsciiOnlyFlag exeName arguments defaults.asciiOnly
+  pure
+    ({ prompt
+       newTokenCount
+       temperature
+       topK
+       repeatPenalty
+       repeatWindow
+       seed
+       asciiOnly },
+     arguments)
 
 end GenerationOptions
 
 /-! ## Text Workflow Option Records -/
 
 /-- Required text-corpus path plus the explicit small-data option used by local corpus trainers. -/
-structure TextCorpusOptions where
+structure CorpusFileOptions where
   /-- UTF-8 or raw-byte corpus path selected by `--data-file`. -/
   dataFile : System.FilePath
   /-- Allow local runs below the normal corpus-size floor. -/
   allowSmallData : Bool
 deriving Repr
 
-namespace TextCorpusOptions
+namespace CorpusFileOptions
 
 /-- Parse the required `--data-file` corpus flag and optional `--allow-small-data` switch. -/
 def parse
     (exeName : String)
-    (args : List String) :
-    Except String (TextCorpusOptions × List String) := do
-  let (dataFile, args) ← TorchLean.CLI.takeRequiredPathFlag args "data-file" (exeName := exeName)
-  let (allowSmallData, args) ← TorchLean.CLI.takeBoolFlagOnce args "allow-small-data"
-  pure ({ dataFile := dataFile, allowSmallData := allowSmallData }, args)
+    (arguments : List String) :
+    Except String (CorpusFileOptions × List String) := do
+  let (dataFile, arguments) ←
+    TorchLean.CLI.requirePathFlag arguments "data-file" (exeName := exeName)
+  let (allowSmallData, arguments) ← TorchLean.CLI.takeBoolFlag arguments "allow-small-data"
+  pure ({ dataFile := dataFile, allowSmallData := allowSmallData }, arguments)
 
-end TextCorpusOptions
+end CorpusFileOptions
 
 /-- Optional text-corpus path selected by `--data-file`, with caller-supplied default. -/
-structure TextCorpusPathOptions where
+structure CorpusPathOptions where
   /-- Local text corpus path. -/
   path : System.FilePath
 deriving Repr
 
-namespace TextCorpusPathOptions
+namespace CorpusPathOptions
 
 /-- Parse an optional `--data-file` flag using the supplied default path. -/
 def parse
-    (args : List String)
+    (arguments : List String)
     (defaultPath : System.FilePath) :
-    Except String (TextCorpusPathOptions × List String) := do
-  let (path, args) ← TorchLean.CLI.takePathFlagDefault args "data-file" defaultPath
-  pure ({ path := path }, args)
+    Except String (CorpusPathOptions × List String) := do
+  let (path, arguments) ← TorchLean.CLI.takePathFlag arguments "data-file" (default := defaultPath)
+  pure ({ path := path }, arguments)
 
-end TextCorpusPathOptions
+end CorpusPathOptions
 
 /-- Optional second corpus pass after the main training run. -/
 structure FinetuneOptions where
@@ -219,24 +253,25 @@ Parse the optional `--finetune-file` / `--finetune-steps` pair.
 The caller supplies the default step count so commands can reuse their main training-step default.
 -/
 def parse
-    (args : List String)
+    (arguments : List String)
     (defaultSteps : Nat) :
     Except String (FinetuneOptions × List String) := do
-  let (finetuneFile?, args) ← TorchLean.CLI.takePathFlagOnce args "finetune-file"
-  let (finetuneSteps, args) ← TorchLean.CLI.takeNatFlagDefault args "finetune-steps" defaultSteps
+  let (finetuneFile?, arguments) ← TorchLean.CLI.takePathFlag? arguments "finetune-file"
+  let (finetuneSteps, arguments) ←
+    TorchLean.CLI.takeNatFlag arguments "finetune-steps" (default := defaultSteps)
   pure ({ finetuneFile? := finetuneFile?
-          finetuneSteps := finetuneSteps }, args)
+          finetuneSteps := finetuneSteps }, arguments)
 
 end FinetuneOptions
 
 /-- Optional GPT-2 BPE tokenizer bundle plus an optional bounded-text cap. -/
 structure BpeCorpusOptions where
-  /-- Optional GPT-2 `vocab.json` path. Must be paired with `bpeMerges?`. -/
-  bpeVocab? : Option System.FilePath
-  /-- Optional GPT-2 `merges.txt` path. Must be paired with `bpeVocab?`. -/
-  bpeMerges? : Option System.FilePath
+  /-- Optional GPT-2 `vocab.json` path. Must be paired with `mergesFile?`. -/
+  vocabularyFile? : Option System.FilePath
+  /-- Optional GPT-2 `merges.txt` path. Must be paired with `vocabularyFile?`. -/
+  mergesFile? : Option System.FilePath
   /-- Optional text-character cap for bounded local BPE runs. -/
-  maxChars? : Option Nat
+  maximumCharacters? : Option Nat
 deriving Repr
 
 namespace BpeCorpusOptions
@@ -247,14 +282,13 @@ Parse the optional GPT-2 BPE tokenizer bundle.
 `--bpe-vocab` and `--bpe-merges` must appear together; `--max-chars` is independent.
 -/
 def parse
-    (args : List String) :
+    (arguments : List String) :
     Except String (BpeCorpusOptions × List String) := do
-  let ((bpeVocab?, bpeMerges?), args) ←
-    TorchLean.CLI.takePairedPathFlags args "bpe-vocab" "bpe-merges"
-  let (maxCharsRaw?, args) ← TorchLean.CLI.takeNatFlagOnce args "max-chars"
-  pure ({ bpeVocab? := bpeVocab?
-          bpeMerges? := bpeMerges?
-          maxChars? := maxCharsRaw? }, args)
+  let ((vocabularyFile?, mergesFile?), arguments) ←
+    TorchLean.CLI.takePairedPathFlags arguments "bpe-vocab" "bpe-merges"
+  let (maximumCharacters?, arguments) ←
+    TorchLean.CLI.takeNatFlag? arguments "max-chars"
+  pure ({ vocabularyFile?, mergesFile?, maximumCharacters? }, arguments)
 
 end BpeCorpusOptions
 
@@ -268,10 +302,10 @@ namespace InteractiveOptions
 
 /-- Parse the shared `--interactive` flag used by text examples with a terminal prompt loop. -/
 def parse
-    (args : List String) :
+    (arguments : List String) :
     Except String (InteractiveOptions × List String) := do
-  let (interactive, args) ← TorchLean.CLI.takeBoolFlagOnce args "interactive"
-  pure ({ interactive := interactive }, args)
+  let (interactive, arguments) ← TorchLean.CLI.takeBoolFlag arguments "interactive"
+  pure ({ interactive := interactive }, arguments)
 
 end InteractiveOptions
 
@@ -280,24 +314,27 @@ structure PromptGenerationOptions where
   /-- Prompt used for before/after reports and generation. -/
   prompt : String
   /-- Number of generated tokens or characters after training. -/
-  generate : Nat
+  newTokenCount : Nat
 deriving Repr
 
 namespace PromptGenerationOptions
 
 /-- Parse the shared `--prompt` / `--generate` flags. -/
 def parse
-    (args : List String)
+    (arguments : List String)
     (defaults : PromptGenerationOptions) :
     Except String (PromptGenerationOptions × List String) := do
-  let (prompt, args) ← TorchLean.CLI.takeFlagValueDefault args "prompt" defaults.prompt
-  let (generate, args) ← TorchLean.CLI.takeNatFlagDefault args "generate" defaults.generate
-  pure ({ prompt := prompt
-          generate := generate }, args)
+  let (prompt, arguments) ←
+    TorchLean.CLI.takeFlagValue arguments "prompt" (default := defaults.prompt)
+  let (newTokenCount, arguments) ←
+    TorchLean.CLI.takeNatFlag arguments "generate" (default := defaults.newTokenCount)
+  pure ({ prompt, newTokenCount }, arguments)
 
 end PromptGenerationOptions
 
 /-! ## Text TrainLog Notes -/
+
+namespace Internal
 
 /--
 TrainLog note fields for generation-capable text commands.
@@ -305,68 +342,85 @@ TrainLog note fields for generation-capable text commands.
 The stable generation surface is prompt, continuation length, temperature/top-k, repetition
 control, RNG seed, and ASCII-only filtering. Model commands can prepend dataset or architecture
 notes through `extra`.
+
+Internal on purpose: these note arrays only make sense inside the `Log.write*` wrappers below,
+which pair them with the matching loss comparison.
 -/
 def generationNotes
-    (gen : GenerationOptions)
+    (options : GenerationOptions)
     (generated? : Option String := none)
-    (extra : Array String := #[]) : Array String :=
-  extra ++
-    #[s!"prompt={escapeForDisplay gen.prompt}",
-      s!"generate={gen.generate}",
-      s!"temperature={gen.temperature}",
-      s!"top_k={gen.topK}",
-      s!"sample_seed={gen.seed}",
-      s!"repeat_penalty={gen.repeatPenalty}",
-      s!"repeat_window={gen.repeatWindow}",
-      s!"ascii_only={gen.asciiOnly}"] ++
+    (extraNotes : Array String := #[]) : Array String :=
+  extraNotes ++
+    #[s!"prompt={escape options.prompt}",
+      s!"generate={options.newTokenCount}",
+      s!"temperature={options.temperature}",
+      s!"top_k={options.topK}",
+      s!"sample_seed={options.seed}",
+      s!"repeat_penalty={options.repeatPenalty}",
+      s!"repeat_window={options.repeatWindow}",
+      s!"ascii_only={options.asciiOnly}"] ++
     match generated? with
     | some generated => #[s!"generated={generated}"]
     | none => #[]
 
-/--
-TrainLog note fields for prompt-based text commands that do not expose the full sampling surface.
--/
+/-- TrainLog note fields for prompt commands that do not expose the full sampling surface. -/
 def promptGenerationNotes
-    (gen : PromptGenerationOptions)
+    (options : PromptGenerationOptions)
     (generated? : Option String := none)
-    (extra : Array String := #[]) : Array String :=
-  extra ++
-    #[s!"prompt={escapeForDisplay gen.prompt}",
-      s!"generate={gen.generate}"] ++
+    (extraNotes : Array String := #[]) : Array String :=
+  extraNotes ++
+    #[s!"prompt={escape options.prompt}",
+      s!"generate={options.newTokenCount}"] ++
     match generated? with
     | some generated => #[s!"generated={generated}"]
     | none => #[]
+
+end Internal
+
+/-!
+### Training logs
+
+`text.Log` is the whole logging surface for text commands. It lives in its own namespace so that
+`text.` completion shows tokenizers, sampling, and option parsers rather than a pair of long
+`write*TrainLog` names.
+-/
+
+namespace Log
 
 /-- Write a before/after loss log for a generation-capable text training command. -/
-def writeGenerationTrainLog
-    (log : _root_.Runtime.Training.LogDestination)
+def writeGeneration
+    (destination : Runtime.Training.LogDestination)
     (title : String)
-    (steps : Nat)
-    (beforeLoss afterLoss : Float)
-    (gen : GenerationOptions)
+    (trainingSteps : Nat)
+    (lossBefore lossAfter : Float)
+    (options : GenerationOptions)
     (generated? : Option String := none)
-    (extra : Array String := #[]) : IO Unit :=
-  TorchLean.Training.writeLossComparisonTo log title steps beforeLoss afterLoss
-    (generationNotes gen generated? extra)
+    (extraNotes : Array String := #[]) : IO Unit :=
+  TorchLean.Training.writeLossComparison
+    destination title trainingSteps lossBefore lossAfter
+    (Internal.generationNotes options generated? extraNotes)
 
 /-- Write a before/after loss log for a prompt-based text training command. -/
-def writePromptTrainLog
-    (log : _root_.Runtime.Training.LogDestination)
+def writePrompt
+    (destination : Runtime.Training.LogDestination)
     (title : String)
-    (steps : Nat)
-    (beforeLoss afterLoss : Float)
-    (gen : PromptGenerationOptions)
+    (trainingSteps : Nat)
+    (lossBefore lossAfter : Float)
+    (options : PromptGenerationOptions)
     (generated? : Option String := none)
-    (extra : Array String := #[]) : IO Unit :=
-  TorchLean.Training.writeLossComparisonTo log title steps beforeLoss afterLoss
-    (promptGenerationNotes gen generated? extra)
+    (extraNotes : Array String := #[]) : IO Unit :=
+  TorchLean.Training.writeLossComparison
+    destination title trainingSteps lossBefore lossAfter
+    (Internal.promptGenerationNotes options generated? extraNotes)
+
+end Log
 
 /-! ## Text Training Option Combinators -/
 
 /-- Number of corpus windows used by a finite or cyclic text-training command. -/
 structure WindowOptions where
   /-- Number of windows available to the training sampler. -/
-  windows : Nat
+  windowCount : Nat
 deriving Repr
 
 namespace WindowOptions
@@ -374,12 +428,12 @@ namespace WindowOptions
 /-- Parse a positive `--windows` value. -/
 def parse
     (exeName : String)
-    (args : List String)
+    (arguments : List String)
     (defaultWindows : Nat) :
     Except String (WindowOptions × List String) := do
-  let (windows, args) ←
-    TorchLean.CLI.takePositiveNatFlag args exeName "windows" defaultWindows
-  pure ({ windows }, args)
+  let (windowCount, arguments) ←
+    TorchLean.CLI.takePositiveNatFlag arguments exeName "windows" (default := defaultWindows)
+  pure ({ windowCount }, arguments)
 
 end WindowOptions
 
@@ -394,10 +448,10 @@ deriving Repr
 namespace CheckpointOptions
 
 /-- Parse `--load-checkpoint` and `--save-checkpoint`. -/
-def parse (args : List String) : Except String (CheckpointOptions × List String) := do
-  let (loadCheckpoint?, args) ← TorchLean.CLI.takePathFlagOnce args "load-checkpoint"
-  let (saveCheckpoint?, args) ← TorchLean.CLI.takePathFlagOnce args "save-checkpoint"
-  pure ({ loadCheckpoint?, saveCheckpoint? }, args)
+def parse (arguments : List String) : Except String (CheckpointOptions × List String) := do
+  let (loadCheckpoint?, arguments) ← TorchLean.CLI.takePathFlag? arguments "load-checkpoint"
+  let (saveCheckpoint?, arguments) ← TorchLean.CLI.takePathFlag? arguments "save-checkpoint"
+  pure ({ loadCheckpoint?, saveCheckpoint? }, arguments)
 
 end CheckpointOptions
 

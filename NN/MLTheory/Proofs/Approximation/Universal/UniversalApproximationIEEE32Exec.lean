@@ -6,8 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.Proofs.Approximation.Universal.IEEE32ExecCore
 public import NN.MLTheory.Proofs.Approximation.Universal.UniversalApproximationFP32
+public import NN.Floats.IEEEExec.Bridge.FP32Total.Arithmetic
+public import NN.Floats.IEEEExec.Bridge.FP32Total.Order
+public import NN.Floats.IEEEExec.Exec32.Instances
 
 /-!
 # IEEE32 executable ReLU approximation
@@ -51,6 +53,7 @@ noncomputable section
 
 /-! ## Embedding IEEE32Exec values into the FP32 (rounded-ℝ) model -/
 
+/-- Read an executable binary32 value as a point of the rounded-ℝ FP32 model. -/
 @[inline] def embed (x : IEEE32Exec) : FP32 := ⟨IEEE32Exec.toReal x⟩
 
 @[simp] theorem embed_val (x : IEEE32Exec) : (embed x).val = IEEE32Exec.toReal x := rfl
@@ -58,39 +61,48 @@ noncomputable section
 /-- Pointwise embedding of a vector of `IEEE32Exec` values into the FP32 model. -/
 @[inline] def embedVec {n : ℕ} (v : Fin n → IEEE32Exec) : Fin n → FP32 := fun i => embed (v i)
 
-/-! ## IEEE32Exec hinge network (same shape as `hinge_fun_fp32`) -/
+/-! ## IEEE32Exec hinge network (same shape as `hingeFunFp32`) -/
 
+/-- ReLU in the executable backend, as `maximum x 0` rather than a branch, so that the IEEE 754
+treatment of signed zeros and NaN comes from `maximum` itself. -/
 @[inline] def reluIeee (x : IEEE32Exec) : IEEE32Exec :=
-  IEEE32Exec.maximum x (Numbers.zero : IEEE32Exec)
+  IEEE32Exec.maximum x (0 : IEEE32Exec)
 
 /-- One hinge term `cᵢ * ReLU(x - tᵢ)` evaluated in the executable IEEE32Exec backend. -/
 @[inline] def hingeTermIeee {n : ℕ} (c t : Fin n → IEEE32Exec) (x : IEEE32Exec) (i : Fin n) :
   IEEE32Exec :=
   IEEE32Exec.mul (c i) (reluIeee (IEEE32Exec.sub x (t i)))
 
-/-- Fold step for summing hinge terms, used by `hinge_sum_ieee`. -/
+/-- Fold step for summing hinge terms, used by `hingeSumIeee`. -/
 @[inline] def hingeSumStepIeee {n : ℕ} (c t : Fin n → IEEE32Exec) (x : IEEE32Exec) :
     IEEE32Exec → Fin n → IEEE32Exec :=
   fun acc i => IEEE32Exec.add acc (hingeTermIeee c t x i)
 
 /-- Executable IEEE32Exec sum of hinge terms, in the fixed `List.finRange` order. -/
-noncomputable def hingeSumIeee {n : ℕ} (c t : Fin n → IEEE32Exec) (x : IEEE32Exec) : IEEE32Exec :=
-  (List.finRange n).foldl (hingeSumStepIeee c t x) (Numbers.zero : IEEE32Exec)
+def hingeSumIeee {n : ℕ} (c t : Fin n → IEEE32Exec) (x : IEEE32Exec) : IEEE32Exec :=
+  (List.finRange n).foldl (hingeSumStepIeee c t x) (0 : IEEE32Exec)
 
 /-- Executable IEEE32Exec hinge network: sum hinge terms, then add the executable bias. -/
-noncomputable def hingeFunIeee {n : ℕ} (t c : Fin n → IEEE32Exec) (b x : IEEE32Exec) : IEEE32Exec
+def hingeFunIeee {n : ℕ} (t c : Fin n → IEEE32Exec) (b x : IEEE32Exec) : IEEE32Exec
   :=
   IEEE32Exec.add (hingeSumIeee (c := c) (t := t) x) b
 
 /-! ## A finiteness witness for IEEE evaluation (no NaN/Inf intermediates) -/
 
+/--
+Every intermediate of the hinge fold is finite: no subtraction, ReLU, product, or partial sum
+overflows to an infinity or produces a NaN.
+
+Stating it as an inductive over the remaining index list rather than as a conjunction is what makes
+it checkable by `decide` on a concrete input, via `instDecHingeSumFinite`.
+-/
 inductive HingeSumFinite {n : ℕ} (t c : Fin n → IEEE32Exec) (x : IEEE32Exec) :
     IEEE32Exec → List (Fin n) → Prop where
   | nil {acc : IEEE32Exec} (hacc : IEEE32Exec.isFinite acc = true) :
       HingeSumFinite t c x acc []
   | cons {acc : IEEE32Exec} {i : Fin n} {xs : List (Fin n)}
       (hsub : IEEE32Exec.isFinite (IEEE32Exec.sub x (t i)) = true)
-      (hmax : IEEE32Exec.isFinite (IEEE32Exec.maximum (IEEE32Exec.sub x (t i)) (Numbers.zero :
+      (hmax : IEEE32Exec.isFinite (IEEE32Exec.maximum (IEEE32Exec.sub x (t i)) (0 :
         IEEE32Exec)) = true)
       (hmul : IEEE32Exec.isFinite (hingeTermIeee (c := c) (t := t) x i) = true)
       (hadd : IEEE32Exec.isFinite (IEEE32Exec.add acc (hingeTermIeee (c := c) (t := t) x i)) =
@@ -113,8 +125,8 @@ This enables proofs like:
 ```lean
   classical
   haveI := IEEE32ExecReLUApprox.instDecHingeSumFinite (t := t) (c := c) (x := x)
-    (acc := (Numbers.zero : IEEE32Exec)) (xs := List.finRange n)
-  have hSum : HingeSumFinite t c x (Numbers.zero : IEEE32Exec) (List.finRange n) := by
+    (acc := (0 : IEEE32Exec)) (xs := List.finRange n)
+  have hSum : HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange n) := by
     decide
 ```
 
@@ -122,6 +134,7 @@ This does *not* solve the symbolic “no overflow for all x” problem, but it m
 theorems in this file directly usable for concrete executions.
 -/
 
+/-- Decide `HingeSumFinite` by walking the fold, which is what lets concrete runs use `decide`. -/
 def instDecHingeSumFinite {n : ℕ} (t c : Fin n → IEEE32Exec) (x : IEEE32Exec) :
     ∀ (acc : IEEE32Exec) (xs : List (Fin n)),
       Decidable (HingeSumFinite t c x acc xs)
@@ -136,7 +149,7 @@ def instDecHingeSumFinite {n : ℕ} (t c : Fin n → IEEE32Exec) (x : IEEE32Exec
                 exact hacc hacc')
     | acc, i :: xs =>
         let sub := IEEE32Exec.sub x (t i)
-        let mx := IEEE32Exec.maximum sub (Numbers.zero : IEEE32Exec)
+        let mx := IEEE32Exec.maximum sub (0 : IEEE32Exec)
         let term := hingeTermIeee (c := c) (t := t) x i
         let acc' := IEEE32Exec.add acc term
       if hsub : IEEE32Exec.isFinite sub = true then
@@ -190,11 +203,12 @@ def instDecHingeSumFinite {n : ℕ} (t c : Fin n → IEEE32Exec) (x : IEEE32Exec
 
 /-! ### A compact finiteness hypothesis bundle (pointwise) -/
 
+/-- The finiteness hypotheses the pointwise theorems need, bundled into one conjunction. -/
 def HingeEvalFiniteProp {n : ℕ} (t c : Fin n → IEEE32Exec) (b x : IEEE32Exec) : Prop :=
   IEEE32Exec.isFinite x = true ∧
     (∀ i, IEEE32Exec.isFinite (t i) = true) ∧
     (∀ i, IEEE32Exec.isFinite (c i) = true) ∧
-    HingeSumFinite t c x (Numbers.zero : IEEE32Exec) (List.finRange n) ∧
+    HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange n) ∧
     IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true
 
 /--
@@ -209,7 +223,7 @@ theorem hingeEvalFiniteProp_to_witness {n : ℕ} {t c : Fin n → IEEE32Exec} {b
       (IEEE32Exec.isFinite x = true) ∧
       (∀ i, IEEE32Exec.isFinite (t i) = true) ∧
       (∀ i, IEEE32Exec.isFinite (c i) = true) ∧
-      HingeSumFinite t c x (Numbers.zero : IEEE32Exec) (List.finRange n) ∧
+      HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange n) ∧
       IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true := by
   intro h; simpa [HingeEvalFiniteProp] using h
 
@@ -229,7 +243,8 @@ private theorem fp32_sub_val (a b : FP32) :
     TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round (a.val - b.val)
   rfl
 
-/-- FP32 multiplication in the rounded-`ℝ` model uses the same `fp32Round` operation as IEEE32Exec. -/
+/-- FP32 multiplication in the rounded-`ℝ` model uses the same `fp32Round` operation as
+IEEE32Exec. -/
 private theorem fp32_mul_val (a b : FP32) :
     (a * b).val = TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round (a.val * b.val) := by
   change TorchLean.Floats.round32 (a.val * b.val) =
@@ -258,17 +273,17 @@ The IEEE operation here is `maximum x 0`; once NaN/Inf paths are ruled out, the 
 private theorem toReal_relu_ieee_eq_relu {x : IEEE32Exec}
     (hx : IEEE32Exec.isFinite x = true) :
     IEEE32Exec.toReal (reluIeee x) = relu (IEEE32Exec.toReal x) := by
-  have h0 : IEEE32Exec.isFinite (Numbers.zero : IEEE32Exec) = true := by decide
-  have hto0 : IEEE32Exec.toReal (Numbers.zero : IEEE32Exec) = 0 := by
-    -- `Numbers.zero` is `posZero`.
-    simp [Numbers.zero, TorchLean.Floats.IEEE754.IEEE32Exec.toReal_posZero]
+  have h0 : IEEE32Exec.isFinite (0 : IEEE32Exec) = true := by decide
+  have hto0 : IEEE32Exec.toReal (0 : IEEE32Exec) = 0 := by
+    -- `0` is `posZero`.
+    exact TorchLean.Floats.IEEE754.IEEE32Exec.toReal_posZero
   have hmax :
-      IEEE32Exec.toReal (IEEE32Exec.maximum x (Numbers.zero : IEEE32Exec)) =
-        max (IEEE32Exec.toReal x) (IEEE32Exec.toReal (Numbers.zero : IEEE32Exec)) :=
+      IEEE32Exec.toReal (IEEE32Exec.maximum x (0 : IEEE32Exec)) =
+        max (IEEE32Exec.toReal x) (IEEE32Exec.toReal (0 : IEEE32Exec)) :=
     TorchLean.Floats.IEEE754.IEEE32Exec.toReal_maximum_eq_max_of_isFinite (x := x)
-      (y := (Numbers.zero : IEEE32Exec)) hx h0
+      (y := (0 : IEEE32Exec)) hx h0
   -- `relu` is `max _ 0` on reals.
-  simpa [reluIeee, relu, Activation.Math.reluSpec, hto0] using hmax
+  simpa only [reluIeee, relu, Activation.Math.reluSpec_eq_max, hto0] using hmax
 
 /--
 Refine one executable hinge term to the corresponding FP32 rounded-`ℝ` hinge term.
@@ -292,7 +307,7 @@ private theorem toReal_hinge_term_eq_fp32_val {n : ℕ}
           i)) :=
     toReal_sub_eq_fp32Round_of_isFinite (x := x) (y := t i) hx ht (by simpa using hsub)
   -- ReLU is `maximum _ 0`, which is exact as `max` on reals for finite inputs.
-  have h0 : IEEE32Exec.isFinite (Numbers.zero : IEEE32Exec) = true := by decide
+  have h0 : IEEE32Exec.isFinite (0 : IEEE32Exec) = true := by decide
   have hsubFinite : IEEE32Exec.isFinite (IEEE32Exec.sub x (t i)) = true := hsub
   have hreluR :
       IEEE32Exec.toReal (reluIeee (IEEE32Exec.sub x (t i))) =
@@ -415,7 +430,7 @@ theorem toReal_hinge_fun_ieee_eq_fp32_val {n : ℕ}
     (ht : ∀ i, IEEE32Exec.isFinite (t i) = true)
     (hc : ∀ i, IEEE32Exec.isFinite (c i) = true)
     (hSum :
-      HingeSumFinite t c x (Numbers.zero : IEEE32Exec) (List.finRange n))
+      HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange n))
     (hOut : IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true) :
     IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b) x) =
       (hingeFunFp32 (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x)).val := by
@@ -433,14 +448,15 @@ theorem toReal_hinge_fun_ieee_eq_fp32_val {n : ℕ}
     -- Use the fold refinement lemma on the same list.
     have hfold :=
       toReal_hinge_sum_ieee_eq_fp32_val (t := t) (c := c) (x := x)
-        (acc := (Numbers.zero : IEEE32Exec)) (xs := List.finRange n) hSum hx ht hc
-    have hstartVal : (embed (Numbers.zero : IEEE32Exec)).val = (0 : FP32).val := by
+        (acc := (0 : IEEE32Exec)) (xs := List.finRange n) hSum hx ht hc
+    have hstartVal : (embed (0 : IEEE32Exec)).val = (0 : FP32).val := by
       -- Both are real zero.
-      simp [embed, Numbers.zero, TorchLean.Floats.IEEE754.IEEE32Exec.toReal_posZero]
-    have hstart : embed (Numbers.zero : IEEE32Exec) = (0 : FP32) := fp32_ext hstartVal
+      simp [embed]
+      exact TorchLean.Floats.IEEE754.IEEE32Exec.toReal_posZero
+    have hstart : embed (0 : IEEE32Exec) = (0 : FP32) := fp32_ext hstartVal
     -- Convert the RHS fold's start accumulator using `hstart`, then rewrite via `hsumFold`.
     have hfold' :
-        IEEE32Exec.toReal ((List.finRange n).foldl (hingeSumStepIeee c t x) (Numbers.zero :
+        IEEE32Exec.toReal ((List.finRange n).foldl (hingeSumStepIeee c t x) (0 :
           IEEE32Exec)) =
           ((List.finRange n).foldl
               (fun acc32 i =>
@@ -480,7 +496,7 @@ theorem hinge_fun_ieee_abs_error_le {n : ℕ}
     (ht : ∀ i, IEEE32Exec.isFinite (t i) = true)
     (hc : ∀ i, IEEE32Exec.isFinite (c i) = true)
     (hSum :
-      HingeSumFinite t c x (Numbers.zero : IEEE32Exec) (List.finRange n))
+      HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange n))
     (hOut : IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true) :
     |IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b) x) -
         hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x)| ≤
@@ -499,13 +515,13 @@ theorem hinge_fun_ieee_abs_error_le {n : ℕ}
 Pointwise triangle bound: target error to executable output is bounded by real approximation error
 plus the certified FP32/IEEE rounding error.
 -/
-lemma hinge_fun_total_abs_error_ieee_le {n : ℕ} (f : ℝ → ℝ)
+theorem hinge_fun_total_abs_error_ieee_le {n : ℕ} (f : ℝ → ℝ)
     (t c : Fin n → IEEE32Exec) (b x : IEEE32Exec)
     (hx : IEEE32Exec.isFinite x = true)
     (ht : ∀ i, IEEE32Exec.isFinite (t i) = true)
     (hc : ∀ i, IEEE32Exec.isFinite (c i) = true)
     (hSum :
-      HingeSumFinite t c x (Numbers.zero : IEEE32Exec) (List.finRange n))
+      HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange n))
     (hOut : IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true) :
     |f (IEEE32Exec.toReal x) - IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b) x)| ≤
       |f (IEEE32Exec.toReal x) - hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b)
@@ -532,13 +548,13 @@ lemma hinge_fun_total_abs_error_ieee_le {n : ℕ} (f : ℝ → ℝ)
   exact le_trans htri (add_le_add_right hround _)
 
 /-- Strict version of `hinge_fun_total_abs_error_ieee_le`, useful for approximation theorems. -/
-lemma hinge_fun_total_abs_error_ieee_lt {n : ℕ} (f : ℝ → ℝ)
+theorem hinge_fun_total_abs_error_ieee_lt {n : ℕ} (f : ℝ → ℝ)
     (t c : Fin n → IEEE32Exec) (b x : IEEE32Exec)
     (hx : IEEE32Exec.isFinite x = true)
     (ht : ∀ i, IEEE32Exec.isFinite (t i) = true)
     (hc : ∀ i, IEEE32Exec.isFinite (c i) = true)
     (hSum :
-      HingeSumFinite t c x (Numbers.zero : IEEE32Exec) (List.finRange n))
+      HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange n))
     (hOut : IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true)
     {ε : ℝ}
     (hε :
@@ -569,10 +585,10 @@ from a real target. Instead it packages the already-proved pointwise inequality
 `hinge_fun_total_abs_error_ieee_lt` into an existence/for-all form:
 
 - assume there exist IEEE32Exec hinge parameters `(t,c,b0)` that approximate `f` at the real level
-  (via `hinge_fun_real` on the embedded reals),
+  (via `hingeFunReal` on the embedded reals),
 - and assume a finiteness/no-NaN/no-Inf witness for IEEE32Exec evaluation,
 - then IEEE32Exec evaluation approximates `f` with an explicit extra rounding term
-  `hinge_fun_error_bound`.
+  `hingeFunErrorBound`.
 -/
 theorem reluApproximationIccIEEE32Exec_fromHinge
     {f : ℝ → ℝ} {a b : ℝ} :
@@ -583,7 +599,7 @@ theorem reluApproximationIccIEEE32Exec_fromHinge
           (∀ x : IEEE32Exec,
               IEEE32Exec.isFinite x = true →
               IEEE32Exec.toReal x ∈ Set.Icc a b →
-                HingeSumFinite t c x (Numbers.zero : IEEE32Exec) (List.finRange hidDim) ∧
+                HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange hidDim) ∧
                 IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b0) x) = true) ∧
           (∀ x : IEEE32Exec,
               IEEE32Exec.isFinite x = true →
@@ -624,7 +640,7 @@ theorem reluApproximationIccIEEE32Exec_fromHinge
    $|\operatorname{hinge\_fun}(\ldots,r)
    -\operatorname{hinge\_fun}_{\mathbb R}(\operatorname{embed}(\text{IEEE parameters}),
      \operatorname{embed}(r))|\leq\varepsilon_Q$.
-3. **IEEE rounding error** (proved): `hinge_fun_error_bound`.
+3. **IEEE rounding error** (proved): `hingeFunErrorBound`.
 
 To obtain a fully synthesized IEEE32Exec approximation theorem, callers must additionally:
 - construct IEEE32Exec parameters `(t,c,b0)` from the real hinge parameters, and
@@ -640,12 +656,13 @@ theorem reluApproximationIccIEEE32Exec_threeTerm
       (∀ x : IEEE32Exec,
           IEEE32Exec.isFinite x = true →
           IEEE32Exec.toReal x ∈ Set.Icc a b →
-            HingeSumFinite t c x (Numbers.zero : IEEE32Exec) (List.finRange hidDim) ∧
+            HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange hidDim) ∧
             IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b0) x) = true) →
       (∀ x : IEEE32Exec,
           IEEE32Exec.isFinite x = true →
           IEEE32Exec.toReal x ∈ Set.Icc a b →
-            |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x)| < εApprox) →
+            |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x)| <
+              εApprox) →
       (∀ x : IEEE32Exec,
           IEEE32Exec.isFinite x = true →
           IEEE32Exec.toReal x ∈ Set.Icc a b →
@@ -662,8 +679,8 @@ theorem reluApproximationIccIEEE32Exec_threeTerm
                 x) := by
   intro εApprox εQ hFinite hApprox hQ x hx hxIn
   rcases hFinite x hx hxIn with ⟨hSum, hOut⟩
-  have hApproxx : |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x)| < εApprox
-    :=
+  have hApproxx :
+      |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x)| < εApprox :=
     hApprox x hx hxIn
   have hQx :
       |hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x) -
@@ -742,7 +759,7 @@ theorem reluApproximationIccIEEE32Exec_threeTerm_bias
       (∀ x : IEEE32Exec,
           IEEE32Exec.isFinite x = true →
           IEEE32Exec.toReal x ∈ Set.Icc a b →
-            HingeSumFinite t c x (Numbers.zero : IEEE32Exec) (List.finRange hidDim) ∧
+            HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange hidDim) ∧
             IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b0) x) = true) →
       (∀ x : IEEE32Exec,
           IEEE32Exec.isFinite x = true →
@@ -764,7 +781,8 @@ theorem reluApproximationIccIEEE32Exec_threeTerm_bias
                 x) := by
   intro εApprox εQ hFinite hApprox hQ x hx hxIn
   rcases hFinite x hx hxIn with ⟨hSum, hOut⟩
-  have hApproxx : |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR bR (IEEE32Exec.toReal x)| < εApprox :=
+  have hApproxx :
+      |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR bR (IEEE32Exec.toReal x)| < εApprox :=
     hApprox x hx hxIn
   have hQx :
       |hingeFun hidDim tR cR bR (IEEE32Exec.toReal x) -
@@ -842,21 +860,18 @@ lie in the input interval `[a,b]`, then bounds the output perturbation using:
 -/
 
 /-- Nonnegativity of the real ReLU used in the compact-domain perturbation bound. -/
-private lemma relu_nonneg (u : ℝ) : 0 ≤ relu u := by
-  -- `relu u = max u 0`.
-  simp [relu, Activation.Math.reluSpec]
+private theorem relu_nonneg (u : ℝ) : 0 ≤ relu u := by
+  rw [relu, Activation.Math.reluSpec_eq_max]
+  exact le_max_right u 0
 
 /-- Since ReLU is nonnegative, its absolute value is itself. -/
-private lemma abs_relu (u : ℝ) : abs (relu u) = relu u := by
-  simp [abs_of_nonneg (relu_nonneg u)]
+private theorem abs_relu (u : ℝ) : abs (relu u) = relu u := by
+  exact abs_of_nonneg (relu_nonneg u)
 
 /-- ReLU is pointwise bounded by absolute value. -/
-private lemma relu_le_abs (u : ℝ) : relu u ≤ abs u := by
-  by_cases hu : 0 ≤ u
-  · simp [relu, Activation.Math.reluSpec, max_eq_left hu, abs_of_nonneg hu]
-  · have hu' : u ≤ 0 := le_of_not_ge hu
-    -- `relu u = 0` for `u ≤ 0`, so the goal is `0 ≤ |u|`.
-    simp [relu, Activation.Math.reluSpec, max_eq_right hu']
+private theorem relu_le_abs (u : ℝ) : relu u ≤ abs u := by
+  rw [relu, Activation.Math.reluSpec_eq_max]
+  exact max_le (le_abs_self u) (abs_nonneg u)
 
 /--
 If both points lie in `[a,b]`, their distance is bounded by the interval width.
@@ -864,7 +879,7 @@ If both points lie in `[a,b]`, their distance is bounded by the interval width.
 This is the compact-domain geometric fact used to control the size of each hinge activation under
 parameter perturbations.
 -/
-private lemma abs_sub_le_abs_width_Icc {a b x t : ℝ}
+private theorem abs_sub_le_abs_width_Icc {a b x t : ℝ}
     (hx : x ∈ Set.Icc a b) (ht : t ∈ Set.Icc a b) :
     abs (x - t) ≤ abs (b - a) := by
   have hab : a ≤ b := le_trans hx.1 hx.2
@@ -877,7 +892,7 @@ private lemma abs_sub_le_abs_width_Icc {a b x t : ℝ}
   simpa [abs_of_nonneg hbnonneg] using habs
 
 /-- On `[a,b]`, a hinge activation `relu (x - t)` is bounded by the interval width. -/
-private lemma abs_relu_sub_le_abs_width_Icc {a b x t : ℝ}
+private theorem abs_relu_sub_le_abs_width_Icc {a b x t : ℝ}
     (hx : x ∈ Set.Icc a b) (ht : t ∈ Set.Icc a b) :
     abs (relu (x - t)) ≤ abs (b - a) := by
   calc
@@ -942,7 +957,7 @@ theorem hinge_fun_abs_error_le_of_params_Icc
         abs (cR i * relu (x - tR i) - cI i * relu (x - tI i)) ≤
           abs ((cR i - cI i) * relu (x - tR i)) +
             abs (cI i * (relu (x - tR i) - relu (x - tI i))) := by
-      simpa [hdecomp] using
+      simpa only [hdecomp] using
         (abs_add_le ((cR i - cI i) * relu (x - tR i)) (cI i * (relu (x - tR i) - relu (x - tI i))))
     have hreluWidth : abs (relu (x - tR i)) ≤ abs (b - a) :=
       abs_relu_sub_le_abs_width_Icc (hx := hx) (ht := htR i)
@@ -1074,7 +1089,7 @@ theorem hinge_fun_real_embed_eq_hinge_fun_toReal {n : ℕ}
     simpa [hingeTermReal, embedVec, embed] using
       (hinge_sum_real_eq_sum (c := embedVec c) (t := embedVec t) (x := embed x))
   -- Finish (commute the final `+ b`).
-  simpa [hingeFunReal, hingeFun, hsum, embed, add_comm, add_left_comm, add_assoc]
+  rw [hingeFunReal, hingeFun, hsum, embed_val, add_comm]
 
 /--
 Uniform quantization-error bound between a real hinge network and executable IEEE parameters.
@@ -1327,7 +1342,7 @@ theorem reluApproximationIccIEEE32Exec_dyadicHalfUlp
             HingeSumFinite
                 (fun i => IEEE32Exec.roundDyadicToIEEE32 (tD i))
                 (fun i => IEEE32Exec.roundDyadicToIEEE32 (cD i))
-                x (Numbers.zero : IEEE32Exec) (List.finRange hidDim) ∧
+                x (0 : IEEE32Exec) (List.finRange hidDim) ∧
               IEEE32Exec.isFinite
                 (hingeFunIeee
                   (t := fun i => IEEE32Exec.roundDyadicToIEEE32 (tD i))
@@ -1418,7 +1433,7 @@ theorem reluApproximationIccIEEE32Exec_twoTerm
       (∀ x : IEEE32Exec,
           IEEE32Exec.isFinite x = true →
           IEEE32Exec.toReal x ∈ Set.Icc a b →
-            HingeSumFinite t c x (Numbers.zero : IEEE32Exec) (List.finRange hidDim) ∧
+            HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange hidDim) ∧
             IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b0) x) = true) →
       (∀ x : IEEE32Exec,
           IEEE32Exec.isFinite x = true →

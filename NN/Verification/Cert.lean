@@ -10,6 +10,7 @@ public import NN.Verification.Cert.NodeReplay
 public import NN.Verification.Cert.IBPCert
 public import NN.Verification.Cert.IBPNodeCert
 public import NN.Verification.Cert.CROWNNodeCert
+public import NN.Verification.Cert.CROWNQuery.Json
 public import NN.Verification.Cert.CROWNNodeCertAlphaBeta
 public import NN.Verification.Cert.AbCrownLeafCert
 

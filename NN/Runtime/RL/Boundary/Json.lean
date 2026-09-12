@@ -8,7 +8,7 @@ module
 
 public import NN.Runtime.RL.Boundary.Core
 public import NN.Runtime.PyTorch.Import.Core
-import Lean.Data.Json
+public import NN.Tensor.Internal.Elab.TensorLiteral
 
 /-!
 # RL Trust Boundary JSON Loader
@@ -28,8 +28,8 @@ namespace Runtime
 namespace RL
 namespace Boundary
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Import
 open Lean
 open Json
@@ -111,7 +111,8 @@ This relies on TorchLean's JSON tensor encoding used by Python bridges.
 def parseTensorE (field : String) (s : Shape) (j : Json) : Except String (Tensor Float s) :=
   match Import.PyTorch.parseTensor s j with
   | some t => .ok t
-  | none => .error s!"RL boundary: `{field}` did not match the expected shape {Spec.Shape.pretty s}."
+  | none =>
+    .error s!"RL boundary: `{field}` did not match the expected shape {Spec.Shape.pretty s}."
 
 /-- Parse a single transition object using the schema described above. -/
 def parseTransitionJson {obsShape : Shape} {nActions : Nat}
@@ -154,7 +155,8 @@ def parseTransitionJson {obsShape : Shape} {nActions : Nat}
   let terminated ← parseBool (field := "terminated") terminatedJ
   let truncated ← parseBool (field := "truncated") truncatedJ
 
-  checkTransition (obsShape := obsShape) (nActions := nActions) c obs nextObs action reward terminated truncated
+  checkTransition (obsShape := obsShape) (nActions := nActions) c obs nextObs action reward
+    terminated truncated
 
 /-- Load and validate a rollout file, returning an array of typed transitions. -/
 def loadRollout {obsShape : Shape} {nActions : Nat}

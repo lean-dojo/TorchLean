@@ -70,11 +70,7 @@ def mantissaBits : NeuralPrecision → ℕ
   | ieeeDouble => 52
   | tensorFloat32 => 10
 
-/-- Total bit width (sign + exponent + mantissa bits). -/
-def totalBits (p : NeuralPrecision) : ℕ :=
-  1 + p.expBits + p.mantissaBits
-
-/-- A common “machine epsilon” proxy: `2^{-mantissa_bits}` for binary-like formats. -/
+/-- A common “machine epsilon” proxy: `2^{-mantissaBits}` for binary-like formats. -/
 noncomputable def machineEpsilon (p : NeuralPrecision) : ℝ :=
   (2 : ℝ) ^ (-(p.mantissaBits : ℤ))
 

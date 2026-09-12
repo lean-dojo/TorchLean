@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Analysis.Complex.Trigonometric
-public import Mathlib.Data.EReal.Basic
 public import NN.Floats.Interval.Rounders
 
 /-!
@@ -46,9 +44,10 @@ open scoped BigOperators
 
 /-- A closed real interval $[\mathtt{lo},\mathtt{hi}]$. -/
 structure RInterval where
-  /-- lo. -/
+  /-- Lower endpoint. -/
   lo : ℝ
-  /-- hi. -/
+  /-- Upper endpoint. Ordering is not baked in: `Valid` states `lo ≤ hi` separately, so an
+  interval can be built first and shown ordered afterwards. -/
   hi : ℝ
 
 namespace RInterval
@@ -278,9 +277,10 @@ We use this for operations like division where a single interval may need to rep
 results (`-∞`/`+∞`) in a sound-but-coarse way.
 -/
 structure EInterval where
-  /-- lo. -/
+  /-- Lower endpoint, possibly `-∞`. -/
   lo : EReal
-  /-- hi. -/
+  /-- Upper endpoint, possibly `+∞`. The unbounded endpoints are the whole point of this type:
+  division by an interval straddling zero has no finite enclosure. -/
   hi : EReal
 
 noncomputable section

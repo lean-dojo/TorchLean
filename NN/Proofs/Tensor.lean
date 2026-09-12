@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Tensor.Algebra
+public import NN.Proofs.Tensor.AxisAdjoint
+public import NN.Proofs.Tensor.AxisLinear
 public import NN.Proofs.Tensor.Basic
 
 /-!

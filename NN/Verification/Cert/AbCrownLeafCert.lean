@@ -6,10 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.CLI
-public import NN.Verification.Util.Array
-public import NN.Verification.Util.FloatApprox
+public import NN.Verification.Util.Tensor
 public import NN.Verification.Util.Json
+public import NN.Verification.Util.FloatApprox
+public import NN.API.CLI.Parser
 
 /-!
 # AbCrown Leaf Artifact
@@ -55,18 +55,26 @@ def defaultArtifactPath : String :=
 /--
 Parse and validate a `abcrown_leaf_artifact_v0_1` JSON artifact.
 
-On failure this throws `IO.userError` with a brief message.
+Structural problems with the document itself (wrong format tag, missing fields, inconsistent
+dimensions) throw `IO.userError` immediately. A leaf that parses but fails one of the three accepted
+predicates is counted, and the reason is printed for that leaf before the summary line, because the
+three failure modes call for different responses: a leaf outside the root box means the exporter
+built the wrong region, a failed prune inequality means the producer's bound does not clear the
+threshold, and a stale `witness_margin` means the document disagrees with itself.
 -/
 def checkAbCrownLeafArtifact (path : String) : IO Unit := do
   let topObj ← readJsonObjectFile path
   expectFormat topObj "abcrown_leaf_artifact_v0_1"
   let inputDim ← expectFieldNat topObj "input_dim" "top-level"
 
-  let rootObj ← expectFieldObj topObj "root" "top-level"
-  let root ← fromExcept <| expectEndpointBoxRegionE "root" rootObj
+  let rootObj ← expectFieldObject topObj "root" "top-level"
+  let root ← fromExcept <| parseEndpointBoxRegion "root" rootObj
   if root.dim ≠ inputDim then
     throw <| IO.userError
       s!"root dimension mismatch: input_dim={inputDim}, endpoints={root.dim}"
+
+  let rootLo ← NN.Verification.Util.Tensor.requireVecOfArray "root.lo" inputDim root.lo
+  let rootHi ← NN.Verification.Util.Tensor.requireVecOfArray "root.hi" inputDim root.hi
 
   let leaves ← expectFieldArray topObj "leaves" "top-level"
   if leaves.isEmpty then
@@ -74,9 +82,10 @@ def checkAbCrownLeafArtifact (path : String) : IO Unit := do
 
   let mut okCount := 0
   let mut badCount := 0
+  let mut leafIdx := 0
   for leaf in leaves do
-    let leafObj ← expectObj leaf "leaf"
-    let region ← fromExcept <| expectEndpointBoxRegionE "leaf" leafObj
+    let leafObj ← expectObject leaf "leaf"
+    let region ← fromExcept <| parseEndpointBoxRegion "leaf" leafObj
     let lb ← expectFieldFiniteFloatArray leafObj "lb" "leaf"
     let thr ← expectFieldFiniteFloatArray leafObj "threshold" "leaf"
     if region.dim ≠ inputDim then
@@ -86,29 +95,57 @@ def checkAbCrownLeafArtifact (path : String) : IO Unit := do
       throw <| IO.userError
         s!"leaf lower-bound/threshold length mismatch: lb={lb.size}, threshold={thr.size}"
 
-    let within :=
-      NN.Verification.Util.Array.boxWithin root.lo root.hi region.lo region.hi
+    let lo ← NN.Verification.Util.Tensor.requireVecOfArray "leaf.lo" inputDim region.lo
+    let hi ← NN.Verification.Util.Tensor.requireVecOfArray "leaf.hi" inputDim region.hi
+    let outputDim := lb.size
+    let lb ← NN.Verification.Util.Tensor.requireVecOfArray "leaf.lb" outputDim lb
+    let thr ← NN.Verification.Util.Tensor.requireVecOfArray "leaf.threshold" outputDim thr
+    let within := NN.Verification.Util.Tensor.boxWithin rootLo rootHi lo hi
     let witnessIdx? ← optionalFieldNat? leafObj "witness_idx" "leaf"
     let witnessMargin? ← optionalFieldFiniteFloat? leafObj "witness_margin" "leaf"
     let verified :=
       match witnessIdx? with
-      | some wi => NN.Verification.Util.Array.refutesThresholdAt lb thr wi
-      | none => NN.Verification.Util.Array.refutesThreshold lb thr
+      | some wi => NN.Verification.Util.Tensor.refutesThresholdAt lb thr wi
+      | none => NN.Verification.Util.Tensor.refutesThreshold lb thr
+    -- The margin this leaf should have reported, when it names a witness index that is in range.
+    -- Keeping it as a value rather than folding it into the comparison lets the failure message
+    -- quote both numbers, which is the difference between a diagnostic and a verdict.
+    let actualMargin? : Option Float :=
+      match witnessIdx? with
+      | some wi =>
+          if h : wi < outputDim then
+            some (lb.getScalar ⟨wi, h⟩ - thr.getScalar ⟨wi, h⟩)
+          else none
+      | none => none
     let marginMatches :=
-      match witnessIdx?, witnessMargin? with
-      | some wi, some claimedMargin =>
-          if hLb : wi < lb.size then
-            if hThr : wi < thr.size then
-              let actualMargin := lb[wi]'hLb - thr[wi]'hThr
-              NN.Verification.Util.approxEq actualMargin claimedMargin (tol := 1e-6)
-            else false
-          else false
-      | none, some _ => false
-      | _, none => true
+      match witnessMargin?, actualMargin? with
+      | some claimedMargin, some actualMargin =>
+          NN.Verification.Util.approxEq actualMargin claimedMargin (tol := 1e-6)
+      | some _, none => false
+      | none, _ => true
     if within && verified && marginMatches then
       okCount := okCount + 1
     else
       badCount := badCount + 1
+      let mut reasons : Array String := #[]
+      unless within do
+        reasons := reasons.push "box escapes the root region"
+      unless verified do
+        reasons := reasons.push <|
+          match witnessIdx? with
+          | some wi => s!"witness index {wi} does not satisfy lb > threshold"
+          | none => "no coordinate satisfies lb > threshold"
+      unless marginMatches do
+        reasons := reasons.push <|
+          match witnessMargin?, actualMargin? with
+          | some claimed, some actual =>
+              s!"witness_margin {claimed} disagrees with lb - threshold = {actual}"
+          | some claimed, none =>
+              s!"witness_margin {claimed} names no witness index in range"
+          | none, _ => "witness margin bookkeeping is inconsistent"
+      IO.println
+        s!"[artifact] leaf {leafIdx} rejected: {String.intercalate "; " reasons.toList}"
+    leafIdx := leafIdx + 1
 
   IO.println s!"[artifact] Checked {leaves.size} leaves: ok={okCount}, bad={badCount}"
   if badCount > 0 then
@@ -136,7 +173,7 @@ def run (args : List String) : IO Unit := do
 
   let args := TorchLean.CLI.dropDashDash args
   let (path, rest) ←
-    match TorchLean.CLI.takePositionalDefault args defaultArtifactPath with
+    match TorchLean.CLI.takePositional args (default := defaultArtifactPath) with
     | .ok result => pure result
     | .error e => throw <| IO.userError s!"{e}\n\n{usage}"
   match TorchLean.CLI.checkNoArgs rest with

@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Models.Attention.CausalMask
+public import NN.Proofs.Models.Attention.HardMask
 public import NN.Proofs.Models.Attention.PermutationEquivariance
 public import NN.Proofs.Models.Attention.Weights
 

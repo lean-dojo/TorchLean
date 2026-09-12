@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Bridge.FP32Total
 public import NN.Floats.FP32.Error
+public import NN.Floats.IEEEExec.Bridge.FP32Total.Arithmetic
 
 /-!
 # `IEEE32Exec` per-op real error bounds (finite branch)

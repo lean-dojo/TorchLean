@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.IR.Graph
-public import NN.Spec.Core.TensorReductionShape
+public import NN.Spec.Core.TensorReductionShape.ShapeChange
 
 /-!
 # Hard-Mask Payloads
@@ -21,18 +21,14 @@ validation rule for mask payloads.
 
 namespace NN.IR.HardMask
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 
 /-- Flatten a typed Boolean mask into an IR payload. -/
 def ofTensor {s : Shape} (mask : Tensor Bool s) : NN.IR.HardMask :=
   let flat := Tensor.flattenSpec mask
   { shape := s
-    allowed :=
-      match flat with
-      | Tensor.dim entries => Array.ofFn fun i =>
-          match entries i with
-          | Tensor.scalar allowed => allowed }
+    allowed := Array.ofFn fun i => Tensor.getScalar flat i }
 
 /-- Check a hard-mask payload and return the equality needed to recover its typed shape. -/
 def validateAs (mask : NN.IR.HardMask) (expected : Shape) :
@@ -50,7 +46,6 @@ def validateAs (mask : NN.IR.HardMask) (expected : Shape) :
 
 /-- Reconstruct a typed mask, rejecting a payload whose flat length disagrees with its shape. -/
 def toTensor? (mask : NN.IR.HardMask) : Except String (Tensor Bool mask.shape) := do
-  let _ ← validateAs mask mask.shape
   if hSize : mask.allowed.size = Shape.size mask.shape then
     let flat : Tensor Bool [Shape.size mask.shape] :=
       Tensor.dim fun i => Tensor.scalar <| mask.allowed[i.val]'(by simp [hSize, i.isLt])
@@ -78,15 +73,12 @@ def toTensorAs? (mask : NN.IR.HardMask) (expected : Shape) :
 /-- Encoding and then decoding a typed mask preserves every Boolean entry. -/
 @[simp] theorem toTensor?_ofTensor {s : Shape} (mask : Tensor Bool s) :
     toTensor? (ofTensor mask) = .ok mask := by
-  cases hflat : Tensor.flattenSpec mask with
-  | dim entries =>
-      simp [toTensor?, validateAs, ofTensor, hflat]
-      rw [← Tensor.flatten_unflatten_inverse (t := mask)]
-      simp only [hflat]
-      congr 3
-      funext i
-      cases entries i
-      rfl
+  simp [toTensor?, ofTensor]
+  rw [← Tensor.unflattenSpec_flattenSpec (tensor := mask)]
+  congr 2
+  apply Tensor.ext_vector
+  intro i
+  simp
 
 /-- Encoding a typed mask and decoding it at the same expected shape is a round trip. -/
 @[simp] theorem toTensorAs?_ofTensor {s : Shape} (mask : Tensor Bool s) :

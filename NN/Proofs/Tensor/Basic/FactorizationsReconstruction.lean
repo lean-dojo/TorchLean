@@ -6,11 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Tensor.Factorizations
-public import NN.Proofs.Tensor.Basic.Factorizations
 public import NN.Proofs.Utils.MathFunctions
-public import Mathlib.Data.List.GetD
-public import Mathlib.Algebra.BigOperators.Fin
+public import NN.Proofs.Tensor.Basic.Factorizations
+public import NN.Proofs.Tensor.Basic.Core -- shake: keep
 
 /-!
 # Exact reconstruction of the finite factorizations (Cholesky and QR)
@@ -18,36 +16,37 @@ public import Mathlib.Algebra.BigOperators.Fin
 This file proves the *exact* algebraic reconstruction of the finite executable Cholesky and QR
 factorizations from `NN.Spec.Core.Tensor.Factorizations`, building on the predicates and
 fold-indexing lemmas of `NN.Proofs.Tensor.Basic.Factorizations`. Because Cholesky and Gram–Schmidt
-are *direct, finite* constructions — no iteration, no convergence caveat — over `ℝ` they reconstruct
-their input on the nose under the success hypotheses (positive pivots / full column rank), an exact
-identity rather than an a-posteriori bound.
+are *direct, finite* constructions with no iteration and no convergence caveat; over `ℝ` they
+reconstruct their input on the nose under the success hypotheses (positive pivots / full column
+rank), an exact identity rather than an a-posteriori bound.
 
 ## Main results
 
-* `isCholesky_of_pos`: for a symmetric `A : Fin n → Fin n → ℝ` whose executable Cholesky pivots are all
-  positive (`0 < choleskyFn A j j`, the exact condition under which the algorithm succeeds over `ℝ`),
-  the factor `L = choleskyFn A` satisfies the spec `Spec.Factorization.IsCholesky`: lower-triangular
-  and `A = L · Lᵀ`. `choleskySpec_reconstruction` is the tensor-level corollary.
+* `isCholesky_of_pos`: for a symmetric `A : Fin n → Fin n → ℝ` whose executable Cholesky pivots are
+  all positive (`0 < choleskyFn A j j`, the exact condition under which the algorithm succeeds over
+  `ℝ`), the factor `L = choleskyFn A` satisfies the spec `Spec.Factorization.IsCholesky`:
+  lower-triangular and `A = L · Lᵀ`. `choleskySpec_reconstruction` is the tensor-level corollary.
 * `qr_mul_eq`: for `A : Fin m → Fin n → ℝ` whose executable Gram–Schmidt `R`-pivots are positive
-  (`0 < Rmat A j j`, full column rank), the factors `Q = gramSchmidtFn A` and `R` satisfy `A = Q · R`,
-  with `R` upper-triangular (`Rmat_upper_triangular`). `qrSpec_reconstruction` is the tensor-level
-  corollary.
+  (`0 < Rmat A j j`, full column rank), the factors `Q = gramSchmidtFn A` and `R` satisfy
+  `A = Q · R`, with `R` upper-triangular (`Rmat_upper_triangular`). `qrSpec_reconstruction` is the
+  tensor-level corollary.
 
 ## Method
 
-Each executable factor is built by a `List.foldl` that snocs one column per index. The core technical
-device is `getD_foldl_snoc_read`, a general lemma reading the `j`-th element of such a fold as the step
-function applied to the length-`j` prefix. From it, `prefix_eq_map`/`qsPrefix_eq_map` identify the
-prefix with the first `j` columns of the final factor, and `take_map_sum_eq` turns the code's
-`List.foldl` sums into masked `Finset` partial sums. The QR fold threads a `GSState` that snocs onto
-*both* the `Q`-list and the `R`-list at once; `gs_proj_qs` and `gs_fold_split`/`rTail_getD` recover the
-single-list read lemmas for each projection (the step depends only on the `Q`-history). The
-positive-pivot hypotheses discharge the `√`-radicand and divisor side conditions.
+Each executable factor is built by a `List.foldl` that snocs one column per index. The core
+technical device is `getD_foldl_snoc_read`, a general lemma reading the `j`-th element of such a
+fold as the step function applied to the length-`j` prefix. From it,
+`prefix_eq_map`/`qsPrefix_eq_map` identify the prefix with the first `j` columns of the final
+factor, and `take_map_sum_eq` turns the code's `List.foldl` sums into masked `Finset` partial sums.
+The QR fold threads a `GSState` that snocs onto *both* the `Q`-list and the `R`-list at once;
+`gs_proj_qs` and `gs_fold_split`/`rTail_getD` recover the single-list read lemmas for each
+projection (the step depends only on the `Q`-history). The positive-pivot hypotheses discharge the
+`√`-radicand and divisor side conditions.
 
 ## Scope
 
-This file proves `A = L · Lᵀ` and `A = Q · R` purely algebraically. The remaining QR property —
-orthonormality of the `Q` factor, `Qᵀ Q = 1` — is proved in the companion file
+This file proves `A = L · Lᵀ` and `A = Q · R` purely algebraically. The remaining QR property,
+orthonormality of the `Q` factor, `Qᵀ Q = 1`, is proved in the companion file
 `NN.Proofs.Tensor.Basic.FactorizationsOrthonormal` by bridging the executable Gram–Schmidt to
 Mathlib's `gramSchmidt`, completing the full `Spec.Factorization.IsQR` predicate (`isQR_of_pos`).
 -/
@@ -108,7 +107,8 @@ theorem choleskyColsFn_eq (A : Fin n → Fin n → ℝ) :
 /-- The diagonal value produced by `cholStep`. -/
 theorem cholStep_diag (A : Fin n → Fin n → ℝ) (cols : List (Fin n → ℝ)) (j : Fin n) :
     cholStep A cols j j
-      = MathFunctions.sqrt (A j j - (cols.map (fun ck => ck j)).foldl (fun s x => s + x * x) 0) := by
+      = MathFunctions.sqrt
+          (A j j - (cols.map (fun ck => ck j)).foldl (fun s x => s + x * x) 0) := by
   simp only [cholStep]
   rw [if_neg (lt_irrefl _), if_pos (beq_self_eq_true _)]
 
@@ -117,7 +117,8 @@ theorem cholStep_offdiag (A : Fin n → Fin n → ℝ) (cols : List (Fin n → �
     (hij : j.val < i.val) :
     cholStep A cols j i
       = (A i j - (cols.map (fun ck => ck i * ck j)).foldl (fun acc x => acc + x) 0)
-          / MathFunctions.sqrt (A j j - (cols.map (fun ck => ck j)).foldl (fun s x => s + x * x) 0) := by
+          / MathFunctions.sqrt
+              (A j j - (cols.map (fun ck => ck j)).foldl (fun s x => s + x * x) 0) := by
   simp only [cholStep]
   rw [if_neg (by grind), if_neg (by rw [beq_iff_eq]; grind)]
 
@@ -151,7 +152,8 @@ theorem prefix_eq_map (A : Fin n → Fin n → ℝ) (j : Fin n) :
     rw [List.length_map, hjval] at h2
     have hpn : p < n := lt_trans h2 j.isLt
     rw [List.getElem_map]
-    have hidx : ((List.finRange n).take j.val)[p]'(by rw [hjval]; exact h2) = (⟨p, hpn⟩ : Fin n) := by
+    have hidx :
+        ((List.finRange n).take j.val)[p]'(by rw [hjval]; exact h2) = (⟨p, hpn⟩ : Fin n) := by
       rw [List.getElem_take, List.getElem_finRange]; exact Fin.ext rfl
     rw [show (prefixCols A j)[p]'h1 = (prefixCols A j).getD p (fun _ => 0) from
       (List.getD_eq_getElem _ _ h1).symm]
@@ -192,7 +194,8 @@ theorem take_map_sum_eq (m : Nat) (f : Fin n → ℝ) :
   have htake : ((List.finRange n).take m).map (fun k => if k.val < m then f k else 0)
       = ((List.finRange n).take m).map f :=
     List.map_congr_left (fun x hx => if_pos (mem_take_finRange hx))
-  have hdrop : (((List.finRange n).drop m).map (fun k => if k.val < m then f k else 0)).sum = 0 := by
+  have hdrop :
+      (((List.finRange n).drop m).map (fun k => if k.val < m then f k else 0)).sum = 0 := by
     rw [List.sum_eq_zero]
     intro y hy
     rw [List.mem_map] at hy
@@ -203,18 +206,22 @@ theorem take_map_sum_eq (m : Nat) (f : Fin n → ℝ) :
 /-- The Cholesky cross-sum equals the masked partial dot product of rows `i` and `j` of `L`. -/
 theorem cross_sum_eq (A : Fin n → Fin n → ℝ) (i j : Fin n) :
     ((prefixCols A j).map (fun ck => ck i * ck j)).foldl (fun acc x => acc + x) 0
-      = ∑ k : Fin n, if k.val < j.val then Spec.choleskyFn A i k * Spec.choleskyFn A j k else 0 := by
+      = ∑ k : Fin n,
+          if k.val < j.val then Spec.choleskyFn A i k * Spec.choleskyFn A j k else 0 := by
   rw [prefix_eq_map, List.map_map, foldl_add_eq_sum, zero_add,
     show ((fun ck : Fin n → ℝ => ck i * ck j) ∘ fun k => fun r => Spec.choleskyFn A r k)
       = (fun k => Spec.choleskyFn A i k * Spec.choleskyFn A j k) from rfl]
   exact take_map_sum_eq j.val (fun k => Spec.choleskyFn A i k * Spec.choleskyFn A j k)
 
-/-- The Cholesky diagonal sum-of-squares equals the masked partial squared norm of row `j` of `L`. -/
+/-- The Cholesky diagonal sum-of-squares equals the masked partial squared norm of row `j`
+of `L`. -/
 theorem sumsq_eq (A : Fin n → Fin n → ℝ) (j : Fin n) :
     ((prefixCols A j).map (fun ck => ck j)).foldl (fun s x => s + x * x) 0
-      = ∑ k : Fin n, if k.val < j.val then Spec.choleskyFn A j k * Spec.choleskyFn A j k else 0 := by
+      = ∑ k : Fin n,
+          if k.val < j.val then Spec.choleskyFn A j k * Spec.choleskyFn A j k else 0 := by
   rw [prefix_eq_map, List.map_map, foldl_addsq_eq_sum, zero_add, List.map_map,
-    show ((fun x : ℝ => x * x) ∘ ((fun ck : Fin n → ℝ => ck j) ∘ fun k => fun r => Spec.choleskyFn A r k))
+    show ((fun x : ℝ => x * x) ∘
+        ((fun ck : Fin n → ℝ => ck j) ∘ fun k => fun r => Spec.choleskyFn A r k))
       = (fun k => Spec.choleskyFn A j k * Spec.choleskyFn A j k) from rfl]
   exact take_map_sum_eq j.val (fun k => Spec.choleskyFn A j k * Spec.choleskyFn A j k)
 
@@ -242,7 +249,8 @@ The diagonal of the rotated/peeled product is reconstructed using the closed-for
 positive-pivot hypothesis (`0 < L[j,j]`), which is exactly the condition under which the executable
 Cholesky succeeds over `ℝ`. -/
 
-/-- Per-entry reconstruction for the lower part (`j ≤ i`): the `(i, j)` entry of `L · Lᵀ` is `A i j`. -/
+/-- Per-entry reconstruction for the lower part (`j ≤ i`): the `(i, j)` entry of `L · Lᵀ` is
+`A i j`. -/
 theorem choleskyFn_dot_eq (A : Fin n → Fin n → ℝ)
     (hpos : ∀ j : Fin n, 0 < Spec.choleskyFn A j j) {i j : Fin n} (hji : j.val ≤ i.val) :
     (∑ k, Spec.choleskyFn A i k * Spec.choleskyFn A j k) = A i j := by
@@ -309,14 +317,15 @@ theorem isCholesky_of_pos (A : Fin n → Fin n → ℝ) (hsymm : ∀ i j, A i j 
 /-- **Tensor-level Cholesky reconstruction.** For a symmetric tensor `A` whose `choleskySpec` pivots
 are positive, every entry of `A` is reconstructed by `L · Lᵀ`:
 `A[i,j] = Σ_k L[i,k] · L[j,k]`, with `L = choleskySpec A`. -/
-theorem choleskySpec_reconstruction (A : Spec.Tensor ℝ [n, n])
+theorem choleskySpec_reconstruction (A : TorchLean.Tensor ℝ [n, n])
     (hsymm : ∀ i j, Spec.get2 A i j = Spec.get2 A j i)
     (hpos : ∀ j : Fin n, 0 < Spec.get2 (Spec.choleskySpec A) j j) (i j : Fin n) :
     Spec.get2 A i j
       = ∑ k, Spec.get2 (Spec.choleskySpec A) i k * Spec.get2 (Spec.choleskySpec A) j k := by
   have hg : ∀ a b, Spec.get2 (Spec.choleskySpec A) a b = Spec.choleskyFn (Spec.toMatFn A) a b := by
     intro a b
-    rw [show Spec.choleskySpec A = Spec.Tensor.matrix (Spec.choleskyFn (Spec.toMatFn A)) from rfl,
+    rw [show Spec.choleskySpec A =
+        TorchLean.Tensor.matrix (Spec.choleskyFn (Spec.toMatFn A)) from rfl,
       Spec.Factorization.get2_matrix]
   simp only [hg]
   show Spec.toMatFn A i j = _
@@ -327,8 +336,8 @@ theorem choleskySpec_reconstruction (A : Spec.Tensor ℝ [n, n])
 
 `gramSchmidtFn` threads a `GSState` that snocs a column onto *both* the `Q`-list and the `R`-list at
 each index. The appended values depend only on the `Q`-history (`st.qs`), never on the
-`R`-history, so the `Q`-list is itself a single-list snoc-fold (`gs_proj_qs`) and the `R`-list is the
-`Q`-prefix-indexed tail `rTail`. -/
+`R`-history, so the `Q`-list is itself a single-list snoc-fold (`gs_proj_qs`) and the `R`-list is
+the `Q`-prefix-indexed tail `rTail`. -/
 
 section QR
 
@@ -368,13 +377,15 @@ noncomputable def rStep (A : Fin m → Fin n → ℝ) (qs : List (Fin m → ℝ)
 theorem gramSchmidtFn_eq (A : Fin m → Fin n → ℝ) :
     Spec.gramSchmidtFn A
       = (List.finRange n).foldl
-          (fun st j => (⟨st.qs ++ [qStep A st.qs j], st.rcols ++ [rStep A st.qs j]⟩ : GSState m n ℝ))
+          (fun st j =>
+            (⟨st.qs ++ [qStep A st.qs j], st.rcols ++ [rStep A st.qs j]⟩ : GSState m n ℝ))
           ⟨[], []⟩ := rfl
 
 /-- The `Q`-list projection of the structure fold is the single-list `qStep` snoc-fold. -/
 theorem gs_proj_qs (A : Fin m → Fin n → ℝ) (l : List (Fin n)) (q0 : List (Fin m → ℝ))
     (r0 : List (Fin n → ℝ)) :
-    (l.foldl (fun st j => (⟨st.qs ++ [qStep A st.qs j], st.rcols ++ [rStep A st.qs j]⟩ : GSState m n ℝ))
+    (l.foldl (fun st j =>
+          (⟨st.qs ++ [qStep A st.qs j], st.rcols ++ [rStep A st.qs j]⟩ : GSState m n ℝ))
         ⟨q0, r0⟩).qs
       = l.foldl (fun qs j => qs ++ [qStep A qs j]) q0 := by
   induction l generalizing q0 r0 with
@@ -394,7 +405,8 @@ noncomputable def rTail (A : Fin m → Fin n → ℝ) (q0 : List (Fin m → ℝ)
 /-- The structure fold splits into the `qStep` snoc-fold (`Q`-list) and the `rTail` (`R`-list). -/
 theorem gs_fold_split (A : Fin m → Fin n → ℝ) (l : List (Fin n)) (q0 : List (Fin m → ℝ))
     (r0 : List (Fin n → ℝ)) :
-    (l.foldl (fun st j => (⟨st.qs ++ [qStep A st.qs j], st.rcols ++ [rStep A st.qs j]⟩ : GSState m n ℝ))
+    (l.foldl (fun st j =>
+          (⟨st.qs ++ [qStep A st.qs j], st.rcols ++ [rStep A st.qs j]⟩ : GSState m n ℝ))
         ⟨q0, r0⟩)
       = ⟨l.foldl (fun qs j => qs ++ [qStep A qs j]) q0, r0 ++ rTail A q0 l⟩ := by
   induction l generalizing q0 r0 with
@@ -521,7 +533,8 @@ theorem qsPrefix_eq_map (A : Fin m → Fin n → ℝ) (j : Fin n) :
     rw [List.length_map, hjval] at h2
     have hpn : p < n := lt_trans h2 j.isLt
     rw [List.getElem_map]
-    have hidx : ((List.finRange n).take j.val)[p]'(by rw [hjval]; exact h2) = (⟨p, hpn⟩ : Fin n) := by
+    have hidx :
+        ((List.finRange n).take j.val)[p]'(by rw [hjval]; exact h2) = (⟨p, hpn⟩ : Fin n) := by
       rw [List.getElem_take, List.getElem_finRange]; exact Fin.ext rfl
     rw [show (qsPrefix A j)[p]'h1 = (qsPrefix A j).getD p (fun _ => 0) from
       (List.getD_eq_getElem _ _ h1).symm]
@@ -630,12 +643,16 @@ theorem qr_mul_eq (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < Rmat
 /-- **Tensor-level QR reconstruction.** For a tensor `A` whose `qrSpec` `R`-pivots are positive
 (full column rank), every entry of `A` is reconstructed by `Q · R`:
 `A[i,j] = Σ_k Q[i,k]·R[k,j]`, with `Q = qrQSpec A`, `R = qrRSpec A`. -/
-theorem qrSpec_reconstruction (A : Spec.Tensor ℝ [m, n])
+theorem qrSpec_reconstruction (A : TorchLean.Tensor ℝ [m, n])
     (hrank : ∀ j : Fin n, 0 < Spec.get2 (Spec.qrRSpec A) j j) (i : Fin m) (j : Fin n) :
     Spec.get2 A i j
       = ∑ k, Spec.get2 (Spec.qrQSpec A) i k * Spec.get2 (Spec.qrRSpec A) k j := by
-  have hQ : ∀ a b, Spec.get2 (Spec.qrQSpec A) a b = Qmat (Spec.toMatFn A) a b := fun _ _ => rfl
-  have hR : ∀ a b, Spec.get2 (Spec.qrRSpec A) a b = Rmat (Spec.toMatFn A) a b := fun _ _ => rfl
+  have hQ : ∀ a b, Spec.get2 (Spec.qrQSpec A) a b = Qmat (Spec.toMatFn A) a b := by
+    intro a b
+    simp [Spec.qrQSpec, Spec.Factorization.get2_matrix, Qmat]
+  have hR : ∀ a b, Spec.get2 (Spec.qrRSpec A) a b = Rmat (Spec.toMatFn A) a b := by
+    intro a b
+    simp [Spec.qrRSpec, Spec.Factorization.get2_matrix, Rmat]
   simp only [hQ, hR]
   show Spec.toMatFn A i j = _
   exact qr_reconstruction (Spec.toMatFn A) (fun b => by rw [← hR b b]; exact hrank b) i j

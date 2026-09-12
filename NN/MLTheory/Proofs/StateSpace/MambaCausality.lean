@@ -32,10 +32,10 @@ References:
 
 namespace NN.MLTheory.StateSpace
 
-open _root_.Spec
-open _root_.Models
+open Spec TorchLean
+open Models
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {inputDim stateDim outputDim innerDim convWidth : Nat}
 
 /--

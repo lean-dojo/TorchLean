@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Gymnasium JSON-lines server used by TorchLean RL examples.
 
-This starts one Gymnasium environment and then speaks a compact JSON-lines protocol over
+With --out PATH, records a seeded random-policy rollout for the Lean boundary viewer.
+Otherwise starts one Gymnasium environment and speaks a compact JSON-lines protocol over
 stdin/stdout so a Lean process can:
   - reset the env, and
   - step the env with discrete actions.
@@ -42,6 +43,7 @@ import json
 import sys
 from argparse import ArgumentParser
 from importlib import metadata
+from pathlib import Path
 from typing import Any, Dict, NoReturn
 
 
@@ -94,6 +96,31 @@ def _register_ale_if_needed(env_id: str) -> None:
         ) from e
 
 
+def export_rollout(env: Any, env_id: str, steps: int, seed: int, output: Path) -> None:
+    """Write transitions in the schema consumed by `NN.Runtime.RL.Boundary.loadRollout`."""
+    env.action_space.seed(seed)
+    obs, _ = env.reset(seed=seed)
+    transitions = []
+    for _ in range(steps):
+        action = int(env.action_space.sample())
+        next_obs, reward, terminated, truncated, _ = env.step(action)
+        transitions.append({
+            "obs": _to_jsonable_obs(obs), "action": action, "reward": float(reward),
+            "terminated": bool(terminated), "truncated": bool(truncated),
+            "next_obs": _to_jsonable_obs(next_obs),
+        })
+        obs = next_obs
+        if terminated or truncated:
+            obs, _ = env.reset()
+    payload = {
+        "meta": {"env_id": env_id, "seed": seed, "steps": steps},
+        "transitions": transitions,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    print(f"Wrote {len(transitions)} transitions to {output}")
+
+
 def main() -> int:
     """Run the Gymnasium environment server until stdin closes or `close` arrives."""
     ap = ArgumentParser(description="Run one Gymnasium env behind TorchLean's JSON-lines protocol.")
@@ -103,7 +130,12 @@ def main() -> int:
         default=None,
         help="JSON object of kwargs passed to gym.make(env_id, **kwargs), e.g. '{\"obs_type\":\"ram\"}'",
     )
+    ap.add_argument("--out", type=Path, help="record a rollout to this JSON file instead of serving")
+    ap.add_argument("--steps", type=int, default=256, help="transitions to record with --out")
+    ap.add_argument("--seed", type=int, default=0, help="environment and action seed for --out")
     args = ap.parse_args()
+    if args.out is not None and args.steps < 0:
+        ap.error("--steps must be nonnegative")
 
     import gymnasium as gym
 
@@ -122,6 +154,10 @@ def main() -> int:
     try:
         if env.action_space.__class__.__name__ != "Discrete":
             _fail(f"Only Discrete action spaces are supported, got {env.action_space}")
+
+        if args.out is not None:
+            export_rollout(env, args.env_id, args.steps, args.seed, args.out)
+            return 0
 
         n_actions = int(env.action_space.n)
         obs_shape = (

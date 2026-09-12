@@ -6,8 +6,15 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Floats.Interval.Comparison
 public import NN.Floats.Interval.FP32
 public import NN.Floats.Interval.IEEEExec32
+public import NN.Floats.Interval.IEEEExec32AddSoundness
+public import NN.Floats.Interval.IEEEExec32ArbTrans
+public import NN.Floats.Interval.IEEEExec32DivSoundness
+public import NN.Floats.Interval.IEEEExec32MinMaxSoundness
+public import NN.Floats.Interval.IEEEExec32MulSoundness
+public import NN.Floats.Interval.IEEEExec32NoNaN
 public import NN.Floats.Interval.IEEEExec32Soundness
 public import NN.Floats.Interval.Quantized
 public import NN.Floats.Interval.RealBounds

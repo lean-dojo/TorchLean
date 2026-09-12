@@ -16,7 +16,12 @@ public import NN.Examples.Models.Common.RealData
 /-!
 # Autoencoder CIFAR Example
 
-Trains a compact vector autoencoder on a real CIFAR-10 minibatch.
+Trains a dense `16 → 8 → 4 → 8 → 16` autoencoder with a final sigmoid. The input is the first
+16 values of one flattened, channel-first CIFAR-10 image; the target is that same vector.
+This is a compact reconstruction exercise, not a full-image autoencoder.
+
+The command uses Adam and mean squared error through the public `Trainer`, then prints a training
+summary and writes the selected `TrainLog` JSON. It does not export reconstructed image files.
 -/
 
 @[expose] public section
@@ -26,25 +31,25 @@ open TorchLean
 namespace NN.Examples.Models.Generative.Autoencoder
 
 /-- CLI subcommand name used in terminal banners and error messages. -/
-def exeName : String := "torchlean autoencoder"
+def exeName : String := "autoencoder"
 
 /-- Default JSON loss-curve path for this command. -/
-def defaultLogJson : System.FilePath := ModelZoo.trainLogPath "autoencoder"
+def defaultLogPath : System.FilePath := Support.trainLogPath "autoencoder"
 
 /--
 Dense autoencoder dimensions shared by the model and data boundary.
 -/
-def cfg : nn.models.DenseGenerative.Config :=
-  { dataDim := 16, hiddenDim := 8, latentDim := 4 }
+abbrev modelConfig : nn.models.Generative.Config :=
+  { dataWidth := 16, hiddenWidth := 8, latentWidth := 4 }
 
 /-- Number of image vectors loaded for each training sample. -/
-def batch : Nat := 1
+def batchSize : Nat := 1
 
 /-- Input shape: a batch of flattened CIFAR image vectors. -/
-abbrev σ := cfg.dataShape [batch]
+abbrev input := modelConfig.data [batchSize]
 
 /-- Target shape: the same flattened image-vector batch, because this is reconstruction. -/
-abbrev τ := cfg.dataShape [batch]
+abbrev output := modelConfig.data [batchSize]
 
 /--
 Trainable dense autoencoder.
@@ -52,32 +57,37 @@ Trainable dense autoencoder.
 The architecture is defined in the public model API. The command chooses the dataset, optimizer,
 runtime options, and logging path.
 -/
-def model : nn.Builder (nn.Sequential σ τ) :=
-  nn.models.DenseGenerative.autoencoder cfg [batch]
+def model : nn.Builder (nn.Sequential input output) :=
+  nn.Sequential![
+    nn.models.Generative.autoencoder modelConfig [batchSize],
+    nn.sigmoid
+  ]
 
 /-- Public singleton dataset for compact CIFAR reconstruction. -/
-def data (flags : RealData.CifarModelTrainFlags) : Trainer.Dataset σ τ :=
-  RealData.cifarFeatureDataset batch cfg (by decide) exeName (fun x ↦ Sample.mk x x)
-    flags.xPath flags.yPath flags.nRows flags.seed
+def data (flags : RealData.CifarModelTrainFlags) : Trainer.Dataset input output :=
+  RealData.cifarFeatureDataset batchSize modelConfig exeName
+    (fun tensor ↦ { input := tensor, target := tensor })
+    flags.data.xPath flags.data.yPath flags.data.nRows flags.data.seed
 
 /-- Train the compact autoencoder with the public `Trainer` surface. -/
-def train (opts : Options) (flags : RealData.CifarModelTrainFlags) :
-    IO (Trainer.TrainResult σ τ) := do
+def train (runtime : Runtime.Config) (flags : RealData.CifarModelTrainFlags) :
+    IO (Trainer.Result input output) := do
   Data.requirePairedFiles exeName
-    "CIFAR-10 images" flags.xPath
-    "CIFAR-10 labels" flags.yPath
+    "CIFAR-10 images" flags.data.xPath
+    "CIFAR-10 labels" flags.data.yPath
     RealData.missingCifarHint
   let trainer :=
     Trainer.new model <|
-      Trainer.Config.fromRunConfig
-        (Trainer.RunConfig.ofRuntimeOptions opts { optimizer := optim.adam { lr := flags.lr } })
-        .regression
-        (seed := flags.seed)
+      Trainer.RunConfig.forObjective
+        (Trainer.RunConfig.fromRuntime runtime
+          { optimizer := optim.adam { learningRate := flags.training.learningRate } })
+        .meanSquaredError
+        (seed := flags.data.seed)
   trainer.train
     (data flags)
-    (CLI.Training.OptimizerOptions.toTrainerOptions flags.toOptimizerOptions
-      (title := "Autoencoder CIFAR reconstruction")
-      (notes := RealData.cifarClassifierNotes batch flags))
+    (flags.training.trainOptions
+      (logTitle := "Autoencoder CIFAR reconstruction")
+      (logNotes := RealData.cifarClassifierNotes batchSize flags))
 
 /--
 Executable entrypoint for CIFAR reconstruction.
@@ -87,8 +97,8 @@ trains the autoencoder for `--steps`, and writes the standard TorchLean training
 -/
 def main (args : List String) : IO UInt32 :=
   TrainCommand.regressionNpy exeName args
-    (fun rest => RealData.CifarModelTrainFlags.parse exeName rest defaultLogJson 10 1e-3)
-    (ModelZoo.bannerWithDevice exeName "CIFAR vector reconstruction")
+    (fun rest => RealData.CifarModelTrainFlags.parse exeName rest defaultLogPath 10 1e-3)
+    (Support.bannerWithDevice exeName "CIFAR vector reconstruction")
     train
 
 end NN.Examples.Models.Generative.Autoencoder

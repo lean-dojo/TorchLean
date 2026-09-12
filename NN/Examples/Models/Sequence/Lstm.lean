@@ -24,7 +24,7 @@ public import NN.Examples.Models.Common.RealData
 Runnable `torchlean lstm` example. It reads a local text corpus, takes a short byte window from the
 front, and trains an LSTM plus a time-distributed linear head.
 
-The model constructor is exposed as `TorchLean.nn.models.lstmWithLinearHead`. The local code names the
+The model constructor is exposed as `TorchLean.nn.models.lstm`. The local code names the
 architecture, builds the text dataset, and trains through the public `Trainer` surface.
 
 ## Scope
@@ -49,74 +49,79 @@ open TorchLean
 namespace NN.Examples.Models.Sequence.Lstm
 
 /-- CLI subcommand name used in terminal banners and error messages. -/
-def exeName : String := "torchlean lstm"
+def exeName : String := "lstm"
 
 /-- Default JSON loss-curve path for this command. -/
-def defaultLogJson : System.FilePath := ModelZoo.trainLogPath "lstm"
+def defaultLogPath : System.FilePath := Support.trainLogPath "lstm"
 
 /-- Number of byte-level timesteps in the training window. -/
-def seqLen : Nat := 2
+def contextLength : Nat := 4
 /-- Tiny one-hot token width for the example dataset. -/
-def inputSize : Nat := 4
+def vocabularySize : Nat := 8
+/-- Default number of distinct corpus windows exposed to the trainer. -/
+def defaultWindows : Nat := 16
 
-/-- Toy byte bucketing: encode byte id `b` as `b % 4`; collisions are intentional. -/
-def byteBucket (id : Nat) : Fin inputSize :=
-  ⟨id % inputSize, Nat.mod_lt _ (by decide)⟩
+local instance : NeZero vocabularySize := ⟨by decide⟩
+
+/-- Compact byte vocabulary: encode byte id `b` as `b % 8`; collisions are intentional. -/
+def byteBucket (id : Nat) : Fin vocabularySize :=
+  Fin.ofNat vocabularySize id
 /-- Hidden state width of the LSTM cell. -/
-def hiddenSize : Nat := 2
+def hiddenWidth : Nat := 4
 
 /-- Shared shape/config record for the reusable LSTM-with-head constructor. -/
-def cfg : nn.models.RecurrentConfig :=
-  { seqLen := seqLen
-    inputSize := inputSize
-    hiddenSize := hiddenSize
-    outputSize := inputSize }
+abbrev modelConfig : nn.models.Recurrent.Config :=
+  { sequenceLength := contextLength
+    inputWidth := vocabularySize
+    hiddenWidth := hiddenWidth
+    outputWidth := vocabularySize }
 
 /-- Input shape: one token vector per timestep. -/
-abbrev σ :=
-  cfg.inputShape
+abbrev input :=
+  modelConfig.input
 
 /-- Output shape: one prediction row per timestep. -/
-abbrev τ :=
-  cfg.outputShape
+abbrev output :=
+  modelConfig.output
 
 /-- LSTM followed by a time-distributed linear output head. -/
-def model : nn.Builder (nn.Sequential σ τ) :=
-  nn.models.lstmWithLinearHead cfg
+def model : nn.Builder (nn.Sequential input output) :=
+  nn.models.lstm modelConfig
 
-/-- Build one next-token training sample from the loaded corpus prefix. -/
-def sample (corpus : String) : Sample.Supervised Float σ τ :=
-  let s := Data.CausalLM.byteSample
-    (α := Float) seqLen inputSize byteBucket (corpus.take (seqLen + 1)).toString
-  Sample.mk (Spec.Tensor.materialize (Sample.x s)) (Spec.Tensor.materialize (Sample.y s))
+/-- Build a finite next-token dataset from evenly spaced corpus windows. -/
+def samples (corpus : String) (windows : Nat) :
+    Data.SampleStream (Sample.Supervised Float input output) :=
+  Data.CausalLM.byteSamples
+    (α := Float) contextLength vocabularySize byteBucket windows corpus
 
 /-- Train the LSTM with the public `Trainer` surface. -/
-def train (opts : Options) (corpusFlags : RealData.TextCorpusFlags)
+def train (runtime : Runtime.Config) (data : RealData.TextWindowFlags)
     (flags : CLI.Training.OptimizerOptions) : IO Unit := do
-  let corpus ← RealData.TextCorpusFlags.read exeName corpusFlags
+  let corpus ← RealData.TextWindowFlags.read exeName data
   let trainer :=
     Trainer.new model <|
-      Trainer.Config.fromRunConfig
-        (Trainer.RunConfig.ofRuntimeOptions opts { optimizer := optim.sgd { lr := flags.lr } })
-        .regression
-  let trainData := Data.floatSamples #[sample corpus]
+      Trainer.RunConfig.forObjective
+        (Trainer.RunConfig.fromRuntime runtime
+          { optimizer := optim.sgd { learningRate := flags.learningRate } })
+        (.oneHotCrossEntropy 1) (seed := runtime.seed)
+  let trainData := Data.fromStream (samples corpus data.windows)
   let trained ← trainer.train
     trainData
-    (CLI.Training.OptimizerOptions.toTrainerOptions flags
-      (title := "LSTM text training")
-      (notes := #[s!"corpus={corpusFlags.path}"]))
+    (flags.trainOptions
+      (logTitle := "LSTM text training")
+      (logNotes := #[s!"corpus={data.corpus.path}", s!"windows={data.windows}"]))
   trained.printSummary
 
 /-- CLI entrypoint for the LSTM text command. -/
 def main (args : List String) : IO UInt32 := do
-  TrainCommand.run
+  CLI.Training.Command.run
     { exeName := exeName
-      defaultLogJson := defaultLogJson
+      defaultLogPath := defaultLogPath
       defaultSteps := 1
-      defaultLr := 1e-2
+      defaultLearningRate := 1e-2
       description := "LSTM"
-      dataOptions := RealData.TextCorpusFlags.help
-      parseData := RealData.TextCorpusFlags.parse
+      dataOptions := RealData.TextWindowFlags.help defaultWindows
+      parseData := RealData.TextWindowFlags.parse exeName defaultWindows
       train := train }
     args
 

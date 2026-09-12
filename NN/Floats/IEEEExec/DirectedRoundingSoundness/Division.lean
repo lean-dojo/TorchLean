@@ -6,12 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Real.Basic
-public import NN.Floats.IEEEExec.Bridge.FP32Total
-public import NN.Floats.IEEEExec.Rounding.RatScaling
 public import NN.Floats.IEEEExec.DirectedRoundingSoundness.SignedOps
-public import NN.Floats.IEEEExec.Semantics.MinMaxERealSoundness
-public import NN.Floats.IEEEExec.Rounding.NatLemmas
 
 /-!
 # Directed rounding soundness for division (`IEEE32Exec`)

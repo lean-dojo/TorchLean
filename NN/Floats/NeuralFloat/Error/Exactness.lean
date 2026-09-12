@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.NeuralFloat.Format.Generic
-public import NN.Floats.NeuralFloat.Rounding.Order
 public import NN.Floats.NeuralFloat.Format.Formats
 
 /-!

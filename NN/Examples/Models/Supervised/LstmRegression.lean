@@ -50,30 +50,26 @@ open TorchLean
 namespace NN.Examples.Models.Supervised.LstmRegression
 
 /-- Runner subcommand: `lake exe torchlean lstm_regression ...`. -/
-def exeName : String := "torchlean lstm_regression"
+def exeName : String := "lstm_regression"
 
 /--
 Default JSON path for the before/after loss.
 
 Pass `--log PATH` to write somewhere else, or `--log disabled` when you only want terminal output.
 -/
-def defaultLogJson : System.FilePath := ModelZoo.trainLogPath "lstm_regression"
-
-/-- Default root for downloaded real datasets. Override with `--data-dir`. -/
-def defaultDataDir : System.FilePath :=
-  _root_.NN.Examples.Data.RealPaths.defaultDataDir
+def defaultLogPath : System.FilePath := Support.trainLogPath "lstm_regression"
 
 /-- Prepared household-power windows contain one day of hourly samples. -/
-def rawSeqLen : Nat := 24
+def sequenceLength : Nat := 24
 
-/-- Short prefix used by the runnable recurrent example. -/
-def seqLen : Nat := 2
-
-/-- One scalar feature. If you add calendar/weather features, increase this and update `scalarRow`. -/
-def inputSize : Nat := 1
+/-- One scalar feature. Increase this when the prepared sequence data gains more features. -/
+def featureCount : Nat := 1
 
 /-- Hidden width for the recurrent state used by this runnable example. -/
-def hiddenSize : Nat := 2
+def hiddenWidth : Nat := 8
+
+/-- One scalar power-consumption prediction at each timestep. -/
+def outputWidth : Nat := 1
 
 /--
 Shared recurrent-model configuration.
@@ -81,41 +77,33 @@ Shared recurrent-model configuration.
 The model constructor, input shape, and output shape all read from this value. The single output
 feature is the next power-consumption prediction at each time step.
 -/
-def cfg : nn.models.RecurrentConfig :=
-  { seqLen := seqLen
-    inputSize := inputSize
-    hiddenSize := hiddenSize
-    outputSize := 1 }
+abbrev modelConfig : nn.models.Recurrent.Config :=
+  { sequenceLength := sequenceLength
+    inputWidth := featureCount
+    hiddenWidth := hiddenWidth
+    outputWidth := outputWidth }
 
-/-- Input shape: one scalar observation at each of `seqLen` timesteps. -/
-abbrev σ : List Nat :=
-  [seqLen, inputSize]
+/-- Input shape: one scalar observation at each timestep. -/
+abbrev input : Shape :=
+  modelConfig.input
 
-/-- Target/prediction shape: one next-step scalar at each of `seqLen` timesteps. -/
-abbrev τ : List Nat :=
-  [seqLen, cfg.outputSize]
-
-/-- Raw input shape stored by the prepared household-power `.npy` files. -/
-abbrev rawσ : List Nat :=
-  [rawSeqLen, inputSize]
-
-/-- Raw target shape stored by the prepared household-power `.npy` files. -/
-abbrev rawτ : List Nat :=
-  [rawSeqLen, inputSize]
+/-- Target/prediction shape: one next-step scalar at each timestep. -/
+abbrev output : Shape :=
+  modelConfig.output
 
 /--
 The actual forecaster.
 
-`nn.models.lstmWithLinearHead cfg` expands to:
+`nn.models.lstm modelConfig` expands to:
 
-`nn.LSTM seqLen inputSize hiddenSize`
-followed by a time-distributed `nn.linear hiddenSize 1`.
+`nn.lstm sequenceLength featureCount hiddenWidth`
+followed by a time-distributed `nn.linear hiddenWidth outputWidth`.
 
-So every timestep emits a scalar forecast. We are not using only the final hidden state here; the loss
-checks the whole output sequence.
+So every timestep emits a scalar forecast. We are not using only the final hidden state here; the
+loss checks the whole output sequence.
 -/
-def mkModel : nn.Builder (nn.Sequential σ τ) :=
-  nn.models.lstmWithLinearHead cfg
+def model : nn.Builder (nn.Sequential input output) :=
+  nn.models.lstm modelConfig
 
 /-- Data source tags for terminal logs and JSON metadata. -/
 def dataTags (xPath yPath : System.FilePath) : Array String :=
@@ -123,47 +111,43 @@ def dataTags (xPath yPath : System.FilePath) : Array String :=
 
 /-- Validate the prepared input file and return its available window count. -/
 def availableWindows (xPath : System.FilePath) :
-    IO (Except String Nat) :=
-  Data.availableNpyRows xPath [rawSeqLen, inputSize]
-    s!"X.npy shape (N,{rawSeqLen},{inputSize})"
+    IO Nat :=
+  Data.availableNpyRows xPath [sequenceLength, featureCount]
+    s!"X.npy shape (N,{sequenceLength},{featureCount})"
 
 /-- Load the Float version once for reporting probes and short training. -/
 def loadReportSamples (xPath yPath : System.FilePath) (windows : Nat) :
-    IO (Except String (Array (Sample.Supervised Float rawσ rawτ))) := do
-  Data.loadSupervisedNpy xPath yPath windows
-    [rawSeqLen, inputSize] [rawSeqLen, inputSize]
+    IO (Array (Sample.Supervised Float input output)) := do
+  let source := Data.SupervisedSource.fromFiles xPath yPath windows
+    [sequenceLength, featureCount] [sequenceLength, outputWidth]
+  let samples ← source.load (α := Float)
+  pure <| by
+    simpa [input, output, modelConfig, source,
+      Data.SupervisedSource.fromFiles] using samples.toArray
 
-/-- Keep the first `seqLen` rows of a prepared `rawSeqLen × 1` tensor. -/
-def takePrefix (t : Tensor Float rawσ) : Tensor Float σ :=
-  Tensor.take t 0 seqLen (by decide : seqLen ≤ rawSeqLen)
-
-/-- Convert one real 24-hour prepared window into the tiny recurrent training sample. -/
-def prefixSample (sample : Sample.Supervised Float rawσ rawτ) : Sample.Supervised Float σ τ :=
-  Sample.mk (takePrefix (Sample.x sample)) (takePrefix (Sample.y sample))
-
-/--
-Read `t[row,0]` from a `seqLen × 1` forecast tensor.
-
-The row is clamped so the reporting loop remains valid if `seqLen` is changed without also updating
-the number of displayed rows.
--/
-def readSeriesAt (t : Tensor Float τ) (i : Nat) : Float :=
-  (Tensor.at? t #[Nat.min i (seqLen - 1), 0]).getD 0.0
+/-- Read `t[row,0]` from a forecast tensor. -/
+def readSeriesAt (t : Tensor Float output) (row : Fin sequenceLength) : Float :=
+  t (row, ⟨0, by decide⟩, PUnit.unit)
 
 /--
 Render the first few target values for one forecast window.
 -/
-def targetSummary (sample : Sample.Supervised Float σ τ) : String :=
+def targetSummary (sample : Sample.Supervised Float input output) : String :=
   String.intercalate ", " <|
-    (List.range (Nat.min seqLen 8)).map (fun i =>
-      s!"t+{i+1}={readSeriesAt (Sample.y sample) i}")
+    (List.finRange (Nat.min sequenceLength 8)).map (fun i =>
+      let row : Fin sequenceLength :=
+        ⟨i.val, Nat.lt_of_lt_of_le i.isLt (Nat.min_le_left sequenceLength 8)⟩
+      s!"t+{i.val + 1}={readSeriesAt sample.target row}")
 
 /-- Public trainer probe for a deterministic forecast window. -/
-def probeOfSample (sample : Sample.Supervised Float σ τ) (idx : Nat) : Trainer.Probe σ :=
-  Trainer.Probe.ofFloatTensor
+def probeOfSample
+    (sample : Sample.Supervised Float input output)
+    (index : Nat) :
+    Trainer.Probe input :=
+  Trainer.Probe.tensor
     "forecast"
-    (Sample.x sample)
-    (inputText := s!"report_index={idx}")
+    sample.input
+    (inputText := s!"report_index={index}")
     (expected := some (targetSummary sample))
 
 /-
@@ -175,44 +159,48 @@ LSTM regression uses the same public training recipe as the other supervised exa
 4. choose per-training options; and
 5. call the configured public trainer session.
 -/
-def trainForecast (opts : Options) (train : RealData.HouseholdPowerModelTrainFlags) := do
+def trainForecast (runtime : Runtime.Config) (flags : RealData.HouseholdPowerModelTrainFlags) := do
   Data.requirePairedFiles exeName
-    "household-power inputs" train.xPath
-    "household-power targets" train.yPath
+    "household-power inputs" flags.data.xPath
+    "household-power targets" flags.data.yPath
     RealData.missingHouseholdPowerHint
-  let available ← ModelZoo.orThrow exeName =<< availableWindows train.xPath
-  if train.windows > available then
+  let available ← availableWindows flags.data.xPath
+  if flags.data.windows > available then
     throw <| IO.userError
-      s!"{exeName}: requested --windows {train.windows}, but {train.xPath} only contains {available} windows"
-  let rawSamples ← ModelZoo.orThrow exeName =<< loadReportSamples train.xPath train.yPath train.windows
-  let samples := rawSamples.map prefixSample
-  let fallback ← ModelZoo.orThrow exeName <|
-    match samples[0]? with
-    | some sample => .ok sample
-    | none => .error "no training windows loaded"
-  let probeIdx := train.reportOffset % Nat.max 1 samples.size
-  let probe := probeOfSample (samples.getD probeIdx fallback) probeIdx
+      (s!"{exeName}: requested --windows {flags.data.windows}, "
+        ++ s!"but {flags.data.xPath} only contains {available} windows")
+  let samples ←
+    loadReportSamples flags.data.xPath flags.data.yPath flags.data.windows
+  let probeIndex := flags.data.reportOffset % Nat.max 1 samples.size
+  let probeSample ←
+    match samples[probeIndex]? with
+    | some sample => pure sample
+    | none => throw <| IO.userError s!"{exeName}: no training windows loaded"
+  let probe := probeOfSample probeSample probeIndex
   let trainer :=
-    Trainer.new mkModel <|
-      Trainer.Config.fromRunConfig
-        (Trainer.RunConfig.ofRuntimeOptions opts { optimizer := optim.adam { lr := train.lr } })
-        .regression
-        (seed := train.seed)
+    Trainer.new model <|
+      Trainer.RunConfig.forObjective
+        (Trainer.RunConfig.fromRuntime runtime
+          { optimizer := optim.adam { learningRate := flags.training.learningRate } })
+        .meanSquaredError
+        (seed := flags.data.seed)
   trainer.train
-    (Data.floatSamples samples)
-    (CLI.Training.OptimizerOptions.toTrainerOptions train.toOptimizerOptions
-      (title := "LSTM seasonal regression")
-      (notes := ModelZoo.ForecastWindowDataFlags.trainLogNotes train.toForecastWindowDataFlags ++
-        #[s!"lr={train.lr}", s!"cuda_mem_watch={train.cudaMemWatch}",
-          "task=next-step household power forecasting"] ++ dataTags train.xPath train.yPath))
+    (Data.fromSamples samples)
+    (flags.training.trainOptions
+      (logTitle := "LSTM seasonal regression")
+      (logNotes := Support.ForecastWindowDataFlags.trainLogNotes flags.data ++
+        #[s!"lr={flags.training.learningRate}",
+          s!"cuda_mem_watch={flags.training.cudaMemorySampleEvery}",
+          "task=next-step household power forecasting"] ++
+        dataTags flags.data.xPath flags.data.yPath))
     #[probe]
 
 /-- Executable entrypoint for CPU/CUDA Float training. -/
 def main (args : List String) : IO UInt32 :=
   TrainCommand.forecastWindow exeName args
     (fun rest =>
-      RealData.HouseholdPowerModelTrainFlags.parse exeName rest defaultLogJson 100 0.01 512 96)
-    (ModelZoo.bannerWithDevice exeName "LSTM time-series regression")
+      RealData.HouseholdPowerModelTrainFlags.parse exeName rest defaultLogPath 100 0.01 512 96)
+    (Support.bannerWithDevice exeName "LSTM time-series regression")
     trainForecast
 
 end NN.Examples.Models.Supervised.LstmRegression

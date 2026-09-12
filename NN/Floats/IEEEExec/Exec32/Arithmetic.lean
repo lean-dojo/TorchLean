@@ -7,6 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.IEEEExec.Exec32.Dyadic
+public import Mathlib.Data.Nat.Basic
+import Mathlib.Tactic.Attr.Core
+import Mathlib.Tactic.Push
 
 /-!
 # IEEE32 Executable Arithmetic

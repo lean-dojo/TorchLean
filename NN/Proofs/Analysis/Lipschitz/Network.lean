@@ -6,9 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Analysis.Calculus.MeanValue
 public import NN.Proofs.Analysis.Lipschitz.Norm
 public import NN.Spec.Layers.Activation
+import Mathlib.Tactic.Positivity.Finset
+public import NN.Proofs.Tensor.Basic.Algebra
 
 /-!
 # Lipschitz bounds for neural-network operations
@@ -24,8 +25,8 @@ Import `NN.Proofs.Analysis.Lipschitz` for the complete norm and network-bound AP
 
 namespace Proofs
 
-open Spec
-open Tensor
+open Spec _root_.TorchLean
+open _root_.TorchLean _root_.TorchLean.Tensor
 open Activation
 open scoped BigOperators
 
@@ -33,6 +34,22 @@ open Spec (dot tensorNormSquared tensor_norm_squared_nonneg
            tensor_norm_squared_zero_iff mul_spec_comm add_spec_comm dot_comm
            sum_spec_add_distrib mul_spec_add_left mul_spec_add_right
            add_spec_assoc)
+
+/-! ## Bridges between `tensorL2Dist` bounds and Mathlib's `LipschitzWith` -/
+
+/-- A `tensorL2Dist` bound with a nonnegative constant is a Mathlib Lipschitz bound. -/
+theorem lipschitzWith_of_tensorL2Dist_le {s t : Shape} {f : Tensor ℝ s → Tensor ℝ t} {L : ℝ}
+    (hL : 0 ≤ L) (h : ∀ x y, tensorL2Dist (f x) (f y) ≤ L * tensorL2Dist x y) :
+    LipschitzWith ⟨L, hL⟩ f :=
+  LipschitzWith.of_dist_le_mul fun x y => by
+    rw [← tensorL2Dist_eq_dist, ← tensorL2Dist_eq_dist]
+    exact h x y
+
+/-- A Mathlib Lipschitz bound on real tensors is a `tensorL2Dist` bound. -/
+theorem _root_.LipschitzWith.tensorL2Dist_le {s t : Shape} {f : Tensor ℝ s → Tensor ℝ t}
+    {K : NNReal} (hf : LipschitzWith K f) (x y : Tensor ℝ s) :
+    tensorL2Dist (f x) (f y) ≤ K * tensorL2Dist x y := by
+  simpa only [tensorL2Dist_eq_dist] using hf.dist_le_mul x y
 
 -- ====================================================================
 -- RELU LIPSCHITZ CONTINUITY PROOFS
@@ -75,244 +92,36 @@ theorem relu_scalar_lipschitz (x y : ℝ) :
       push Not at hy
       simp [max_eq_left (le_of_lt hx), max_eq_left (le_of_lt hy)]
 
-/--
-ReLU is 1-Lipschitz on scalar tensors.
--/
-theorem relu_scalar_tensor_lipschitz (x y : Tensor ℝ .scalar) :
-  tensorL2Dist (reluSpec x) (reluSpec y) ≤ tensorL2Dist x y := by
-  cases x with | scalar a =>
-  cases y with | scalar b =>
-  unfold reluSpec tensorL2Dist tensorL2Norm tensorNormSquared dot subSpec
-  simp [mapSpec, map2Spec, sumSpec, tensorFoldlSpec, mulSpec]
-  unfold Math.reluSpec
-  -- Goal is now about square roots of squares
-  -- We need to show: √((relu a - relu b)²) ≤ √((a - b)²)
-  -- Since sqrt is monotone, this is equivalent to (relu a - relu b)² ≤ (a - b)²
+
+private theorem relu_squared_difference_le (x y : ℝ) :
+    (Math.reluSpec x - Math.reluSpec y) * (Math.reluSpec x - Math.reluSpec y) ≤
+      (x - y) * (x - y) := by
+  have hAbs : |Math.reluSpec x - Math.reluSpec y| ≤ |x - y| := by
+    simpa [Math.reluSpec_eq_max, max_comm] using relu_scalar_lipschitz x y
+  have hSquared :=
+    mul_self_le_mul_self (abs_nonneg (Math.reluSpec x - Math.reluSpec y)) hAbs
+  simpa [sq_abs, pow_two] using hSquared
+
+private theorem relu_lipschitz_packed {shape : Shape}
+    (x y : Tensor ℝ shape) :
+    tensorL2Dist (reluSpec x) (reluSpec y) ≤ tensorL2Dist x y := by
+  unfold tensorL2Dist tensorL2Norm tensorNormSquared dot
   apply Real.sqrt_le_sqrt
-  -- Now we need: (max a 0 - max b 0)² ≤ (a - b)², which follows from the scalar Lipschitz bound.
-  have h_abs : |max a 0 - max b 0| ≤ |a - b| := by
-    simpa [max_comm] using (relu_scalar_lipschitz a b)
-  -- Convert absolute value inequality to squared inequality
-  have h_sq : |max a 0 - max b 0|^2 ≤ |a - b|^2 := by
-    -- Use the fact that if 0 ≤ x ≤ y, then x² ≤ y²
-    have h1 : (0 : ℝ) ≤ |max a 0 - max b 0| := abs_nonneg _
-    have h2 : (0 : ℝ) ≤ |a - b| := abs_nonneg _
-    -- Since |max 0 a - max 0 b| ≤ |a - b| and both are non-negative
-    -- we can square both sides using monotonicity of squaring on non-negative reals
-    -- Use monotonicity of squaring on non-negative reals
-    -- If 0 ≤ a ≤ b, then a² ≤ b²
-    -- Since |max 0 a - max 0 b| ≤ |a - b| and both are non-negative
-    -- we can square both sides
-    have : |max a 0 - max b 0| * |max a 0 - max b 0| ≤ |a - b| * |a - b| := by
-      exact mul_self_le_mul_self h1 h_abs
-    rw [← sq, ← sq] at this
-    exact this
-  -- Use the fact that |x|² = x²
-  rw [sq_abs, sq_abs] at h_sq
-  -- Convert from ^2 to multiplication
-  simp only [sq] at h_sq
-  exact h_sq
+  rw [sum_spec_eq_coord_sum, sum_spec_eq_coord_sum]
+  apply Finset.sum_le_sum
+  intro coordinate _
+  simpa [reluSpec, mapSpec, subSpec, mulSpec, Tensor.map] using
+    relu_squared_difference_le (x coordinate) (y coordinate)
 
-/--
-General ReLU Lipschitz theorem for arbitrary tensor shapes.
-Main result: ReLU is 1-Lipschitz in the $\ell_2$ norm for any tensor shape.
--/
+/-- ReLU is 1-Lipschitz on scalar tensors. -/
+theorem relu_scalar_tensor_lipschitz (x y : Tensor ℝ .scalar) :
+    tensorL2Dist (reluSpec x) (reluSpec y) ≤ tensorL2Dist x y :=
+  relu_lipschitz_packed x y
+
+/-- ReLU is 1-Lipschitz in the L2 norm for tensors of every shape. -/
 theorem relu_lipschitz_general {s : Shape} (x y : Tensor ℝ s) :
-  tensorL2Dist (reluSpec x) (reluSpec y) ≤ tensorL2Dist x y := by
-  induction s with
-  | scalar => exact relu_scalar_tensor_lipschitz x y
-  | dim n s' ih =>
-    cases x with | dim fx =>
-    cases y with | dim fy =>
-    unfold reluSpec tensorL2Dist tensorL2Norm tensorNormSquared dot subSpec
-    simp [mapSpec, map2Spec, sumSpec, mulSpec, tensorFoldlSpec]
-    -- The key insight: for vectors, ||relu(x) - relu(y)||² = Σᵢ (relu(xᵢ) - relu(yᵢ))²
-    -- and ||x - y||² = Σᵢ (xᵢ - yᵢ)²
-    -- Since ReLU is 1-Lipschitz componentwise, each term satisfies (relu(xᵢ) - relu(yᵢ))² ≤ (xᵢ -
-    -- yᵢ)²
-    apply Real.sqrt_le_sqrt
-    -- We need to show the sum of squared differences is preserved
-    -- This requires showing the fold preserves the inequality
-    suffices ∀ k acc_relu acc_orig, k ≤ n → acc_relu ≤ acc_orig →
-      tensorFoldlSpec.go (· + ·) n s'
-        (fun i => mulSpec (subSpec (mapSpec Math.reluSpec (fx i)) (mapSpec Math.reluSpec (fy
-          i)))
-                          (subSpec (mapSpec Math.reluSpec (fx i)) (mapSpec Math.reluSpec (fy
-                            i)))) k acc_relu ≤
-      tensorFoldlSpec.go (· + ·) n s'
-        (fun i => mulSpec (subSpec (fx i) (fy i)) (subSpec (fx i) (fy i))) k acc_orig by
-      exact this 0 (0 : ℝ) (0 : ℝ) (Nat.zero_le n) (le_refl (0 : ℝ))
-
-    intro k acc_relu acc_orig hk hacc
-    induction hn : n - k generalizing k acc_relu acc_orig with
-    | zero =>
-      have k_eq_n : k = n := by grind
-      subst k
-      have hgo_relu :
-          tensorFoldlSpec.go (· + ·) n s'
-              (fun i =>
-                mulSpec
-                  (subSpec (mapSpec Math.reluSpec (fx i)) (mapSpec Math.reluSpec (fy i)))
-                  (subSpec (mapSpec Math.reluSpec (fx i)) (mapSpec Math.reluSpec (fy i))))
-              n acc_relu
-            = acc_relu := by
-        simpa using
-          (Spec.tensor_foldl_spec_go_of_not_lt (f := (· + ·))
-              (values := fun i =>
-                mulSpec
-                  (subSpec (mapSpec Math.reluSpec (fx i)) (mapSpec Math.reluSpec (fy i)))
-                  (subSpec (mapSpec Math.reluSpec (fx i)) (mapSpec Math.reluSpec (fy i))))
-              (k := n) (acc := acc_relu) (by simp))
-      have hgo_orig :
-          tensorFoldlSpec.go (· + ·) n s' (fun i => mulSpec (subSpec (fx i) (fy i)) (subSpec (fx i) (fy i)))
-              n acc_orig
-            = acc_orig := by
-        simpa using
-          (Spec.tensor_foldl_spec_go_of_not_lt (f := (· + ·))
-              (values := fun i =>
-                mulSpec (subSpec (fx i) (fy i)) (subSpec (fx i) (fy i)))
-              (k := n) (acc := acc_orig) (by simp))
-      simpa [hgo_relu, hgo_orig] using hacc
-    | succ m ih_fold =>
-      have hlt : k < n := by grind
-      -- Peel one `go` step on both sides.
-      rw [Spec.tensor_foldl_spec_go_of_lt (f := (· + ·))
-        (values := fun i =>
-          mulSpec
-            (subSpec (mapSpec Math.reluSpec (fx i)) (mapSpec Math.reluSpec (fy i)))
-            (subSpec (mapSpec Math.reluSpec (fx i)) (mapSpec Math.reluSpec (fy i))))
-        (k := k) (acc := acc_relu) hlt]
-      rw [Spec.tensor_foldl_spec_go_of_lt (f := (· + ·))
-        (values := fun i =>
-          mulSpec (subSpec (fx i) (fy i)) (subSpec (fx i) (fy i)))
-        (k := k) (acc := acc_orig) hlt]
-      have h_next : n - (k + 1) = m := by grind
-      have k_plus_one_le : k + 1 ≤ n := Nat.succ_le_of_lt hlt
-      -- Need to show the accumulated inequality is preserved first
-      have component_ineq :
-        sumSpec (mulSpec (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                     (mapSpec Math.reluSpec (fy ⟨k, hlt⟩)))
-                          (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                     (mapSpec Math.reluSpec (fy ⟨k, hlt⟩)))) ≤
-        sumSpec (mulSpec (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))
-                          (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))) := by
-        -- This is the squared L2 distance for component k
-        -- We need ||relu(fx[k]) - relu(fy[k])||² ≤ ||fx[k] - fy[k]||²
-        have h_comp : tensorL2Dist (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                    (mapSpec Math.reluSpec (fy ⟨k, hlt⟩)) ≤
-                     tensorL2Dist (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩) := by
-          -- Apply the induction hypothesis to component k
-          have : reluSpec (fx ⟨k, hlt⟩) = mapSpec Math.reluSpec (fx ⟨k, hlt⟩) := by
-            unfold reluSpec
-            rfl
-          have : reluSpec (fy ⟨k, hlt⟩) = mapSpec Math.reluSpec (fy ⟨k, hlt⟩) := by
-            unfold reluSpec
-            rfl
-          simp
-          exact ih (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩)
-        -- Square both sides to get the desired inequality
-        unfold tensorL2Dist tensorL2Norm at h_comp
-        have h_sq : Real.sqrt (tensorNormSquared (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                                            (mapSpec Math.reluSpec (fy ⟨k,
-                                                              hlt⟩)))) ≤
-                   Real.sqrt (tensorNormSquared (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))) := h_comp
-        -- Apply Real.le_sqrt_iff_sq_le_sq to get the squared inequality
-        have h_sq' : tensorNormSquared (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                                  (mapSpec Math.reluSpec (fy ⟨k, hlt⟩))) ≤
-                     tensorNormSquared (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩)) := by
-          -- From h_sq: √a ≤ √b, we want to show a ≤ b
-          -- Since sqrt is strictly monotone on non-negative reals
-          have ha := tensor_norm_squared_nonneg (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                                           (mapSpec Math.reluSpec (fy ⟨k, hlt⟩)))
-          have hb := tensor_norm_squared_nonneg (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))
-          -- sqrt is monotone, so √a ≤ √b implies a ≤ b when both args are non-negative
-          -- sqrt is monotone, so √a ≤ √b implies a ≤ b when both args are non-negative
-          -- Use the fact that sqrt is monotone on non-negative reals
-          -- If √a ≤ √b and a,b ≥ 0, then a ≤ b
-          -- Since sqrt is strictly monotone on non-negative reals
-          -- We can use the fact that if sqrt(a) ≤ sqrt(b) then a ≤ b
-          have : Real.sqrt (tensorNormSquared (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                                          (mapSpec Math.reluSpec (fy ⟨k, hlt⟩))))
-                                                            ≤
-                 Real.sqrt (tensorNormSquared (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))) := h_sq
-          -- Apply monotonicity of sqrt: if √a ≤ √b and a,b ≥ 0, then a ≤ b
-          -- Since sqrt is strictly monotone on non-negative reals, √a ≤ √b implies a ≤ b
-          -- We'll prove this by contradiction
-          by_contra h_not_le
-          push Not at h_not_le
-          -- If a > b, then √a > √b
-          have h_sqrt_gt : Real.sqrt (tensorNormSquared (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))) <
-                           Real.sqrt (tensorNormSquared (subSpec (mapSpec Math.reluSpec (fx ⟨k,
-                             hlt⟩))
-                                                                   (mapSpec Math.reluSpec (fy ⟨k,
-                                                                     hlt⟩)))) := by
-            exact Real.sqrt_lt_sqrt hb h_not_le
-          -- But this contradicts our assumption that √a ≤ √b
-          linarith
-        unfold tensorNormSquared dot at h_sq'
-        exact h_sq'
-      -- Add the inequalities
-      -- We have: acc_relu ≤ acc_orig (from hacc)
-      -- We have: component_ineq tells us the sum of squared differences for ReLU is ≤ the original
-      -- For the fold with addition, we need to show that adding these to the accumulators preserves
-      -- the inequality
-      -- Note that tensor_foldl_spec (· + ·) acc t adds sum_spec t to acc
-      have h1 : tensorFoldlSpec (· + ·) acc_relu
-                  (mulSpec (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                     (mapSpec Math.reluSpec (fy ⟨k, hlt⟩)))
-                           (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                    (mapSpec Math.reluSpec (fy ⟨k, hlt⟩)))) =
-                acc_relu + sumSpec (mulSpec (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                                       (mapSpec Math.reluSpec (fy ⟨k, hlt⟩)))
-                                             (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                                      (mapSpec Math.reluSpec (fy ⟨k, hlt⟩)))) :=
-                                                        by
-        simpa using
-          (Spec.tensor_foldl_spec_add_init (s := s')
-            (acc := acc_relu)
-            (t :=
-              mulSpec (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                (mapSpec Math.reluSpec (fy ⟨k, hlt⟩)))
-                       (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                (mapSpec Math.reluSpec (fy ⟨k, hlt⟩)))))
-      have h2 : tensorFoldlSpec (· + ·) acc_orig
-                  (mulSpec (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))
-                           (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))) =
-                acc_orig + sumSpec (mulSpec (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))
-                                             (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))) := by
-        simpa using
-          (Spec.tensor_foldl_spec_add_init (s := s')
-            (acc := acc_orig)
-            (t := mulSpec (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))
-                          (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))))
-      rw [h1, h2]
-
-      -- Apply IH to the recursive call
-      -- First, show the new accumulators maintain the inequality
-      have new_acc_ineq : tensorFoldlSpec (· + ·) acc_relu
-                            (mulSpec (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                               (mapSpec Math.reluSpec (fy ⟨k, hlt⟩)))
-                                     (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                              (mapSpec Math.reluSpec (fy ⟨k, hlt⟩)))) ≤
-                          tensorFoldlSpec (· + ·) acc_orig
-                            (mulSpec (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))
-                                     (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))) := by
-        rw [h1, h2]
-        linarith [hacc, component_ineq]
-
-      -- Apply IH to the recursive call with the updated accumulators
-      -- First, we need to convert new_acc_ineq to the right form
-      have new_acc_ineq' : (acc_relu + sumSpec (mulSpec (subSpec (mapSpec Math.reluSpec (fx ⟨k,
-        hlt⟩))
-                                                                  (mapSpec Math.reluSpec (fy ⟨k,
-                                                                    hlt⟩)))
-                                               (subSpec (mapSpec Math.reluSpec (fx ⟨k, hlt⟩))
-                                                        (mapSpec Math.reluSpec (fy ⟨k, hlt⟩))))) ≤
-                          (acc_orig + sumSpec (mulSpec (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩))
-                                                       (subSpec (fx ⟨k, hlt⟩) (fy ⟨k, hlt⟩)))) :=
-                                                         by
-        linarith [hacc, component_ineq]
-      exact ih_fold (k + 1) _ _ k_plus_one_le new_acc_ineq' h_next
+    tensorL2Dist (reluSpec x) (reluSpec y) ≤ tensorL2Dist x y :=
+  relu_lipschitz_packed x y
 
 /--
 Rank-one ReLU is 1-Lipschitz in $\ell_2$.
@@ -324,6 +133,12 @@ theorem relu_vector_lipschitz {n : Nat} (x y : Tensor ℝ [n]) :
   tensorL2Dist (reluSpec x) (reluSpec y) ≤ tensorL2Dist x y := by
   simpa using (relu_lipschitz_general (s := .dim n .scalar) x y)
 
+/-- ReLU is `1`-Lipschitz for the Euclidean metric on real tensors. -/
+theorem reluSpec_lipschitzWith {s : Shape} :
+    LipschitzWith 1 (reluSpec : Tensor ℝ s → Tensor ℝ s) :=
+  LipschitzWith.of_dist_le_mul fun x y => by
+    simpa only [tensorL2Dist_eq_dist, NNReal.coe_one, one_mul] using relu_lipschitz_general x y
+
 -- Linear-operator norm bounds for affine layers and matrix products.
 
 /--
@@ -334,39 +149,18 @@ reuse additive and scaling lemmas than reason about `subSpec` directly.
 -/
 theorem sub_spec_eq_add_scale_neg_one {s : Shape} (a b : Tensor ℝ s) :
   subSpec a b = addSpec a (scaleSpec b (-1 : ℝ)) := by
-  induction s with
-  | scalar =>
-    cases a with
-    | scalar x =>
-      cases b with
-      | scalar y =>
-        simp [subSpec, addSpec, scaleSpec, map2Spec, mapSpec]
-        ring
-  | dim n s ih =>
-    cases a with
-    | dim fa =>
-      cases b with
-      | dim fb =>
-        simp [subSpec, addSpec, scaleSpec, map2Spec, mapSpec]
-        funext i
-        simpa [subSpec, addSpec, scaleSpec, map2Spec, mapSpec] using ih (fa i) (fb i)
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simp [subSpec, addSpec, scaleSpec, map2Spec, mapSpec, Tensor.map]
+  ring
 
 /-- Subtracting the zero tensor on the right leaves the tensor unchanged. -/
 theorem sub_spec_zero_right {s : Shape} (t : Tensor ℝ s) :
-  subSpec t (fill (0 : ℝ) s) = t := by
-  induction s with
-  | scalar =>
-    cases t with
-    | scalar x =>
-      simp [subSpec, map2Spec, fill]
-  | dim n s ih =>
-    cases t with
-    | dim f =>
-      simp [subSpec, map2Spec, fill]
-      funext i
-      exact ih (f i)
+  subSpec t (Tensor.full s (0 : ℝ)) = t := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simp [subSpec, map2Spec, Tensor.full]
 
-set_option linter.auxLemma false in
 /--
 Matrix-vector multiplication sends the zero vector to the zero vector.
 
@@ -374,70 +168,12 @@ The proof follows the spec definition: each output coordinate is a fold over sca
 every scalar product contains a zero input coordinate.
 -/
 theorem mat_vec_mul_spec_zero {m n : Nat} (W : Tensor ℝ [m, n]) :
-  matVecMulSpec W (fill (0 : ℝ) (.dim n .scalar)) = fill (0 : ℝ) (.dim m .scalar) := by
+    matVecMulSpec W (Tensor.full (.dim n .scalar) (0 : ℝ)) =
+      Tensor.full (.dim m .scalar) (0 : ℝ) := by
   classical
-  cases W with
-  | dim rowsA =>
-    -- Both sides are vectors; prove pointwise.
-    apply congrArg Tensor.dim
-    funext i
-    cases hrow : rowsA i with
-    | dim colsA =>
-      -- Reduce to a scalar list fold.
-      simp [fill]
-      -- The values vector is identically zero, so each step adds `ak * 0 = 0`.
-      have hfold :
-          (List.finRange n).foldl
-              (fun (s : ℝ) (k : Fin n) =>
-                Spec.matMulSpec.match_1
-                  (motive := fun _ _ => ℝ)
-                  (colsA k) (Tensor.scalar (0 : ℝ))
-                  (fun ak vk => s + ak * vk))
-              0
-            =
-            0 := by
-        -- Each step is `s ↦ s + ak * 0 = s`, so the fold returns the initial accumulator.
-        let f : ℝ → Fin n → ℝ := fun s k =>
-          Spec.matMulSpec.match_1
-            (motive := fun _ _ => ℝ)
-            (colsA k) (Tensor.scalar (0 : ℝ))
-            (fun ak vk => s + ak * vk)
-        have hf : ∀ s k, f s k = s := by
-          intro s k
-          cases hcol : colsA k with
-          | scalar ak =>
-            simp [f, hcol]
-        -- Replace the fold function with `f`, then it is the identity on the accumulator.
-        change (List.finRange n).foldl f 0 = 0
-        induction (List.finRange n) with
-        | nil =>
-          simp [List.foldl]
-        | cons hd tl ih =>
-          simp [List.foldl, hf, ih]
-      -- Convert the scalar-tensor fold in `mat_vec_mul_spec` to an ℝ fold, then apply `hfold`.
-      have hscalar :
-          (List.finRange n).foldl
-              (fun (acc : Tensor ℝ .scalar) (k : Fin n) =>
-                Spec.matVecMulSpec.match_1
-                  (motive := fun _ _ _ => Tensor ℝ .scalar)
-                  acc (colsA k) (Tensor.scalar (0 : ℝ))
-                  (fun s ak vk => Tensor.scalar (s + ak * vk)))
-              (Tensor.scalar 0)
-            =
-            Tensor.scalar
-              ((List.finRange n).foldl
-                (fun (s : ℝ) (k : Fin n) =>
-                  Spec.matMulSpec.match_1
-                    (motive := fun _ _ => ℝ)
-                    (colsA k) (Tensor.scalar (0 : ℝ))
-                    (fun ak vk => s + ak * vk))
-                0) := by
-        exact
-          (Spec.foldl_matvec_scalar (l := List.finRange n) (a := 0) (cols := colsA)
-            (vals := fun _ => Tensor.scalar (0 : ℝ)))
-      -- Finish by reducing to the ℝ fold value.
-      rw [hscalar]
-      simp [hfold]
+  apply Tensor.ext_vector
+  intro i
+  simp [getScalar_mat_vec_mul_spec]
 
 /--
 Frobenius norm of a matrix tensor.
@@ -459,17 +195,10 @@ Compatibility between two row/column access views:
 
 `getScalar (get W i) j` and `get2 W i j` name the same scalar entry of a matrix tensor.
 -/
-private lemma getScalar_get_eq_get2 {m n : Nat}
+private theorem getScalar_get_eq_get2 {m n : Nat}
     (W : Tensor ℝ [m, n]) (i : Fin m) (j : Fin n) :
     getScalar (get W i) j = get2 W i j := by
-  classical
-  cases W with
-  | dim rows =>
-    cases hrow : rows i with
-    | dim cols =>
-      cases hcol : cols j with
-      | scalar v =>
-        simp [Spec.Tensor.getScalar, Spec.get, Spec.get2, hrow, hcol]
+  rfl
 
 /--
 Each coordinate of `matVecMulSpec W x` is the dot product of the corresponding matrix row with
@@ -477,7 +206,7 @@ Each coordinate of `matVecMulSpec W x` is the dot product of the corresponding m
 
 This is the coordinate bridge used by the Frobenius/operator-norm bound below.
 -/
-private lemma mat_vec_coord_eq_dot_row {m n : Nat}
+private theorem mat_vec_coord_eq_dot_row {m n : Nat}
     (W : Tensor ℝ [m, n])
     (x : Tensor ℝ [n]) (i : Fin m) :
     getScalar (matVecMulSpec W x) i = dot (get W i) x := by
@@ -500,7 +229,7 @@ theorem matVec_norm_le_frobenius {m n : Nat}
     have : 0 ≤ ∑ i ∈ (Finset.univ : Finset (Fin m)), tensorNormSquared (get W i) := by
       refine Finset.sum_nonneg ?_
       intro i _
-      exact tensor_norm_squared_nonneg (t := get W i)
+      exact tensor_norm_squared_nonneg (tensor := get W i)
     simpa using this
 
   have hsquared :
@@ -540,10 +269,10 @@ theorem matVec_norm_le_frobenius {m n : Nat}
 
       have row_sq : (tensorL2Norm (get W i)) ^ 2 = tensorNormSquared (get W i) := by
         unfold tensorL2Norm
-        simp [Real.sq_sqrt (tensor_norm_squared_nonneg (t := get W i))]
+        simp [Real.sq_sqrt (tensor_norm_squared_nonneg (tensor := get W i))]
       have x_sq : (tensorL2Norm x) ^ 2 = tensorNormSquared x := by
         unfold tensorL2Norm
-        simp [Real.sq_sqrt (tensor_norm_squared_nonneg (t := x))]
+        simp [Real.sq_sqrt (tensor_norm_squared_nonneg (tensor := x))]
       have rhs_sq :
           (tensorL2Norm (get W i) * tensorL2Norm x) ^ 2 =
             tensorNormSquared (get W i) * tensorNormSquared x := by
@@ -624,6 +353,9 @@ theorem linear_op_norm_bound {m n : Nat}
 /--
 Composition of Lipschitz functions preserves Lipschitz property.
 Essential for analyzing deep neural networks.
+
+This is `LipschitzWith.comp` read through `tensorL2Dist_eq_dist`. A negative `Lf` is degenerate:
+the hypothesis on `f` then forces `x = y`, and both sides vanish.
 -/
 theorem lipschitz_composition {s t u : Shape}
   (f : Tensor ℝ s → Tensor ℝ t) (g : Tensor ℝ t → Tensor ℝ u)
@@ -633,13 +365,22 @@ theorem lipschitz_composition {s t u : Shape}
   (hLg : 0 ≤ Lg)
   (x y : Tensor ℝ s) :
   tensorL2Dist (g (f x)) (g (f y)) ≤ (Lg * Lf) * tensorL2Dist x y := by
-  calc tensorL2Dist (g (f x)) (g (f y))
-    ≤ Lg * tensorL2Dist (f x) (f y)     := hg (f x) (f y)
-    _ ≤ Lg * (Lf * tensorL2Dist x y)    := by
-      apply mul_le_mul_of_nonneg_left
-      exact hf x y
-      exact hLg
-    _ = (Lg * Lf) * tensorL2Dist x y    := by ring
+  rcases le_or_gt 0 Lf with hLf | hLf
+  · have h :=
+      ((lipschitzWith_of_tensorL2Dist_le hLg hg).comp
+        (lipschitzWith_of_tensorL2Dist_le hLf hf)).tensorL2Dist_le x y
+    exact h
+  · have hxy : x = y := by
+      have h0 : 0 ≤ Lf * tensorL2Dist x y :=
+        le_trans (by rw [tensorL2Dist_eq_dist]; exact dist_nonneg) (hf x y)
+      have hle : tensorL2Dist x y ≤ 0 := by
+        by_contra hpos
+        have hpos' : 0 < tensorL2Dist x y := lt_of_not_ge hpos
+        exact absurd h0 (not_le.mpr (mul_neg_of_neg_of_pos hLf hpos'))
+      rw [tensorL2Dist_eq_dist] at hle
+      exact dist_le_zero.mp hle
+    subst hxy
+    simp only [tensorL2Dist_eq_dist, dist_self, mul_zero, le_refl]
 
 /--
 ReLU + Linear composition Lipschitz bound.

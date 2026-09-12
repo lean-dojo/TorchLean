@@ -103,15 +103,22 @@ def write_manifest(out: Path, arr: np.ndarray, *, source: Path, key: str | None,
 
 
 def load_csv_array(path: Path, *, skip_header: int = 0) -> np.ndarray:
-    """Load a numeric CSV, retrying once for a likely header row."""
-    arr = np.genfromtxt(path, delimiter=",", dtype=np.float32, skip_header=skip_header)
-    if skip_header == 0 and np.size(arr) > 0 and np.isnan(arr).any():
-        # Common spreadsheet exports include one textual header row. NumPy turns
-        # that row into NaNs, so retry once with a skipped header before failing.
-        retry = np.genfromtxt(path, delimiter=",", dtype=np.float32, skip_header=1)
-        if np.size(retry) > 0 and not np.isnan(retry).all():
-            return retry
-    return arr
+    """Load a numeric CSV, recognizing an all-text first row as a header."""
+    if skip_header == 0:
+        with path.open(newline="") as stream:
+            first_row = next(csv.reader(stream), [])
+        # Only infer a header when every cell is text. A missing or nonfinite
+        # numeric value later in the file must never discard the first sample.
+        if first_row and all(cell.strip() for cell in first_row):
+            for cell in first_row:
+                try:
+                    float(cell)
+                    break
+                except ValueError:
+                    continue
+            else:
+                skip_header = 1
+    return np.loadtxt(path, delimiter=",", dtype=np.float32, skiprows=skip_header)
 
 
 def load_torch_artifact(path: Path, *, trusted_pickle: bool) -> Any:
@@ -174,30 +181,6 @@ def cmd_tensor(args: argparse.Namespace) -> None:
     if args.manifest:
         write_manifest(out, arr, source=inp, key=args.key, kind="tensor")
     print(f"[write] {out} shape={tuple(arr.shape)} dtype={arr.dtype}")
-
-
-def cmd_pair(args: argparse.Namespace) -> None:
-    """Implement the `pair` subcommand for feature/label tensor exports."""
-    x_args = argparse.Namespace(
-        input=args.x_input,
-        output=args.x_output,
-        key=args.x_key,
-        dtype=args.dtype,
-        manifest=args.manifest,
-        skip_header=0,
-        trusted_pickle=args.trusted_pickle,
-    )
-    y_args = argparse.Namespace(
-        input=args.y_input,
-        output=args.y_output,
-        key=args.y_key,
-        dtype=args.label_dtype,
-        manifest=args.manifest,
-        skip_header=0,
-        trusted_pickle=args.trusted_pickle,
-    )
-    cmd_tensor(x_args)
-    cmd_tensor(y_args)
 
 
 def read_labels_csv(path: Path, label_col: str | None) -> list[int]:
@@ -318,23 +301,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="allow pickle-based torch.load for trusted .pt/.pth files",
     )
     p.set_defaults(func=cmd_tensor)
-
-    p = sub.add_parser("pair", help="convert X and y artifacts for supervised/labeled training")
-    p.add_argument("--x-input", required=True)
-    p.add_argument("--y-input", required=True)
-    p.add_argument("--x-output", required=True)
-    p.add_argument("--y-output", required=True)
-    p.add_argument("--x-key")
-    p.add_argument("--y-key")
-    p.add_argument("--dtype", default="float32")
-    p.add_argument("--label-dtype", default="float32")
-    p.add_argument("--manifest", action="store_true")
-    p.add_argument(
-        "--trusted-pickle",
-        action="store_true",
-        help="allow pickle-based torch.load for trusted .pt/.pth files",
-    )
-    p.set_defaults(func=cmd_pair)
 
     p = sub.add_parser("labels", help="convert label files to a float32/int npy vector")
     p.add_argument("--input", required=True)

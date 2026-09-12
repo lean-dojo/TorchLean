@@ -7,13 +7,13 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Analysis.Fft
-public import NN.Runtime.Autograd.TorchLean.Fft
+public import NN.Runtime.Autograd.Model.Fft
 public import Mathlib.Analysis.RCLike.Sqrt
 
 /-!
 # Runtime FFT transport lemmas (`NN.Runtime.*.Fft` → mathlib `ℂ`)
 
-`NN.Runtime.Autograd.TorchLean.Fft` defines FFT/IFFT matrices using “twiddle factors” written as
+`NN.Runtime.Autograd.Model.Fft` defines FFT/IFFT matrices using “twiddle factors” written as
 $\cos\theta\pm i\sin\theta$ so the definitions work for TorchLean’s runtime complex scalar
 `TorchLean.Complex β`.
 
@@ -46,7 +46,7 @@ namespace FftBridge
 
 open scoped BigOperators
 
-open Spec
+open Spec TorchLean
 
 -- ---------------------------------------------------------------------------
 -- Local `Context ℂ` instance (only used to instantiate the runtime FFT definitions).
@@ -59,7 +59,7 @@ open Complex
 local instance : Coe Nat ℂ where
   coe n := (Nat.cast n : ℂ)
 
-@[simp] private lemma coeNat_eq_natCast (n : Nat) : (Coe.coe n : ℂ) = (n : ℂ) := rfl
+@[simp] private theorem coeNat_eq_natCast (n : Nat) : (Coe.coe n : ℂ) = (n : ℂ) := rfl
 
 local instance : LT ℂ := ⟨fun x y => x.re < y.re⟩
 local instance : LE ℂ := ⟨fun x y => x.re ≤ y.re⟩
@@ -93,27 +93,12 @@ noncomputable local instance : MathFunctions ℂ where
   sin := Complex.sin
   sinh := fun _ => 0
 
-noncomputable local instance : Numbers ℂ where
-  negHalf := (-1 : ℂ) / 2
-  negOne := (-1 : ℂ)
-  oneTenth := (1 : ℂ) / 10
-  half := (1 : ℂ) / 2
-  one := (1 : ℂ)
-  zero := (0 : ℂ)
-  two := (2 : ℂ)
-  three := (3 : ℂ)
-  four := (4 : ℂ)
-  five := (5 : ℂ)
-  ten := (10 : ℂ)
-  lnTen := 0
-  lnTenThousand := 0
-  epsilon := (1 : ℂ) / 1000000
-
 /- Local-only `Context ℂ`: the ordering is not mathematically meaningful for complex numbers.
 It is present solely because the generic TorchLean runtime context class includes order-dependent
 operations used by other tensor code. The FFT bridge below never relies on that order.
 -/
 local instance : Context ℂ := {
+  defaultEpsilon := (1 : ℂ) / 1000000
   decidableGT := fun x y => inferInstanceAs (Decidable (x > y))
 }
 
@@ -121,7 +106,7 @@ local instance : Context ℂ := {
 -- Twiddle factors on `ℂ`.
 -- ---------------------------------------------------------------------------
 
-open Runtime.Autograd.TorchLean.NN
+open Runtime.Autograd.Model.Layers
 
 /--
 TorchLean's runtime FFT uses $\sqrt{-1}$ as its scalar-polymorphic imaginary unit.
@@ -129,8 +114,8 @@ TorchLean's runtime FFT uses $\sqrt{-1}$ as its scalar-polymorphic imaginary uni
 When we instantiate the runtime definitions at mathlib `ℂ`, that value is the usual
 `Complex.I`.
 -/
-private lemma FFT_I_eq :
-    Runtime.Autograd.TorchLean.NN.FFT.I (α := ℂ) = (Complex.I : ℂ) := by
+private theorem FFT_I_eq :
+    Runtime.Autograd.Model.Layers.FFT.I (α := ℂ) = (Complex.I : ℂ) := by
   -- `FFT.I` is defined as `sqrt(-1)`.
   change Complex.sqrt (-1 : ℂ) = (Complex.I : ℂ)
   exact Complex.sqrt_neg_one
@@ -150,10 +135,10 @@ $\omega_n^{jk}=\exp(-2\pi ijk/n)$.
 The proof is just Euler's formula plus scalar normalization of the exponent.
 -/
 theorem twiddle_eq_omega_pow (n j k : Nat) (hn : n ≠ 0) :
-    Runtime.Autograd.TorchLean.NN.FFT.twiddle (α := ℂ) n j k =
+    Runtime.Autograd.Model.Layers.FFT.twiddle (α := ℂ) n j k =
       Proofs.Fft.ω n ^ (j * k) := by
   have hn0 : (n : ℂ) ≠ 0 := by exact_mod_cast hn
-  set θ : ℂ := (Numbers.two : ℂ) * MathFunctions.pi * (j : ℂ) * (k : ℂ) / (n : ℂ)
+  set θ : ℂ := (2 : ℂ) * MathFunctions.pi * (j : ℂ) * (k : ℂ) / (n : ℂ)
 
   have hEuler :
       Complex.exp (-(θ * Complex.I)) =
@@ -171,10 +156,10 @@ theorem twiddle_eq_omega_pow (n j k : Nat) (hn : n ≠ 0) :
             rfl
 
   have htw :
-      Runtime.Autograd.TorchLean.NN.FFT.twiddle (α := ℂ) n j k =
+      Runtime.Autograd.Model.Layers.FFT.twiddle (α := ℂ) n j k =
         Complex.exp (-(θ * Complex.I)) := by
     -- Unfold `twiddle` and rewrite `I` as `Complex.I`.
-    simp [Runtime.Autograd.TorchLean.NN.FFT.twiddle, θ, FFT_I_eq, hEuler]
+    simp [Runtime.Autograd.Model.Layers.FFT.twiddle, θ, FFT_I_eq, hEuler]
 
   have hω : Proofs.Fft.ω n = Complex.exp (-(2 * Real.pi * Complex.I / (n : ℂ))) := by
     simp [Proofs.Fft.ω, Proofs.Fft.ζ, Complex.exp_neg]
@@ -187,7 +172,7 @@ theorem twiddle_eq_omega_pow (n j k : Nat) (hn : n ≠ 0) :
 
   -- Match exponents: `θ = 2π * j*k / n` and multiplication is commutative.
   have hθ : θ = (2 * Real.pi * (j : ℂ) * (k : ℂ)) / (n : ℂ) := by
-    simp [θ, Numbers.two, MathFunctions.pi, mul_left_comm, mul_comm]
+    simp [θ, MathFunctions.pi, mul_left_comm, mul_comm]
 
   have hexp :
       -θ * Complex.I =
@@ -203,7 +188,7 @@ theorem twiddle_eq_omega_pow (n j k : Nat) (hn : n ≠ 0) :
       _ = (j * k : ℕ) * (-(2 * Real.pi * Complex.I / (n : ℂ))) := by rfl
 
   calc
-    Runtime.Autograd.TorchLean.NN.FFT.twiddle (α := ℂ) n j k
+    Runtime.Autograd.Model.Layers.FFT.twiddle (α := ℂ) n j k
         = Complex.exp (-(θ * Complex.I)) := htw
     _ = Complex.exp (-θ * Complex.I) := by
           simp [neg_mul]
@@ -220,10 +205,10 @@ This is the inverse-direction analogue of `twiddle_eq_omega_pow`: the runtime
 $\cos\theta+i\sin\theta$ term is $\zeta_n^{jk}$.
 -/
 theorem twiddleInv_eq_zeta_pow (n j k : Nat) (hn : n ≠ 0) :
-    Runtime.Autograd.TorchLean.NN.FFT.twiddleInv (α := ℂ) n j k =
+    Runtime.Autograd.Model.Layers.FFT.twiddleInv (α := ℂ) n j k =
       Proofs.Fft.ζ n ^ (j * k) := by
   have hn0 : (n : ℂ) ≠ 0 := by exact_mod_cast hn
-  set θ : ℂ := (Numbers.two : ℂ) * MathFunctions.pi * (j : ℂ) * (k : ℂ) / (n : ℂ)
+  set θ : ℂ := (2 : ℂ) * MathFunctions.pi * (j : ℂ) * (k : ℂ) / (n : ℂ)
 
   have hEuler :
       Complex.exp (θ * Complex.I) =
@@ -237,9 +222,9 @@ theorem twiddleInv_eq_zeta_pow (n j k : Nat) (hn : n ≠ 0) :
         rfl
 
   have htw :
-      Runtime.Autograd.TorchLean.NN.FFT.twiddleInv (α := ℂ) n j k =
+      Runtime.Autograd.Model.Layers.FFT.twiddleInv (α := ℂ) n j k =
         Complex.exp (θ * Complex.I) := by
-    simp [Runtime.Autograd.TorchLean.NN.FFT.twiddleInv, θ, FFT_I_eq, hEuler]
+    simp [Runtime.Autograd.Model.Layers.FFT.twiddleInv, θ, FFT_I_eq, hEuler]
 
   have hζ : Proofs.Fft.ζ n = Complex.exp (2 * Real.pi * Complex.I / (n : ℂ)) := by
     simp [Proofs.Fft.ζ]
@@ -250,7 +235,7 @@ theorem twiddleInv_eq_zeta_pow (n j k : Nat) (hn : n ≠ 0) :
     simpa [hζ] using (Complex.exp_nat_mul (2 * Real.pi * Complex.I / (n : ℂ)) (j * k)).symm
 
   have hθ : θ = (2 * Real.pi * (j : ℂ) * (k : ℂ)) / (n : ℂ) := by
-    simp [θ, Numbers.two, MathFunctions.pi, mul_left_comm, mul_comm]
+    simp [θ, MathFunctions.pi, mul_left_comm, mul_comm]
 
   have hexp :
       θ * Complex.I =
@@ -266,7 +251,7 @@ theorem twiddleInv_eq_zeta_pow (n j k : Nat) (hn : n ≠ 0) :
       _ = (j * k : ℕ) * (2 * Real.pi * Complex.I / (n : ℂ)) := by rfl
 
   calc
-    Runtime.Autograd.TorchLean.NN.FFT.twiddleInv (α := ℂ) n j k
+    Runtime.Autograd.Model.Layers.FFT.twiddleInv (α := ℂ) n j k
         = Complex.exp (θ * Complex.I) := htw
     _ = Complex.exp ((j * k : ℕ) * (2 * Real.pi * Complex.I / (n : ℂ))) := by
           simp [hexp]
@@ -284,11 +269,11 @@ This is the first point where we leave pure root-of-unity algebra and connect to
 shape-indexed tensor representation.
 -/
 theorem dftMatrix_entry_eq (n : Nat) (hn : n ≠ 0) (k j : Fin n) :
-    Spec.get2 (Runtime.Autograd.TorchLean.NN.FFT.dftMatrix (α := ℂ) n) k j =
+    Spec.get2 (Runtime.Autograd.Model.Layers.FFT.dftMatrix (α := ℂ) n) k j =
       Proofs.Fft.dftMatrix n k j := by
   -- `get2` reduces the tensor constructor and exposes `twiddle`.
   simp [Spec.get2, Spec.get,
-    Runtime.Autograd.TorchLean.NN.FFT.dftMatrix, Proofs.Fft.dftMatrix,
+    Runtime.Autograd.Model.Layers.FFT.dftMatrix, Proofs.Fft.dftMatrix,
     twiddle_eq_omega_pow (n := n) (j := j.val) (k := k.val) hn]
 
 /--
@@ -298,11 +283,11 @@ Together with `dftMatrix_entry_eq`, this is the transport layer needed to reuse 
 inversion theorem for runtime FFT matrix definitions.
 -/
 theorem idftMatrix_entry_eq (n : Nat) (hn : n ≠ 0) (j k : Fin n) :
-    Spec.get2 (Runtime.Autograd.TorchLean.NN.FFT.idftMatrix (α := ℂ) n) j k =
+    Spec.get2 (Runtime.Autograd.Model.Layers.FFT.idftMatrix (α := ℂ) n) j k =
       Proofs.Fft.idftMatrix n j k := by
   -- `get2` reduces the tensor constructor and exposes `twiddleInv`.
   simp [Spec.get2, Spec.get,
-    Runtime.Autograd.TorchLean.NN.FFT.idftMatrix, Proofs.Fft.idftMatrix,
+    Runtime.Autograd.Model.Layers.FFT.idftMatrix, Proofs.Fft.idftMatrix,
     twiddleInv_eq_zeta_pow (n := n) (j := j.val) (k := k.val) hn]
 
 end ComplexContext

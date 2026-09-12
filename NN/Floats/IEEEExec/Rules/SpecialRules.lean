@@ -6,8 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Nat.Bitwise
-public import NN.Floats.IEEEExec.Exec32
+public import Mathlib.Algebra.Group.Nat.Defs
+public import Mathlib.Logic.IsEmpty.Defs
+import Mathlib.Tactic.Widget.Calc
+public import NN.Floats.IEEEExec.Exec32.Compare
 
 /-!
 # Special-value rules for `IEEE32Exec`

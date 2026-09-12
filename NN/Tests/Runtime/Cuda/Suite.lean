@@ -22,6 +22,7 @@ public import NN.Tests.Runtime.Cuda.Fft
 public import NN.Tests.Runtime.Cuda.ViewsBroadcastReduce
 public import NN.Tests.Runtime.Cuda.LinearMseConcatSliceGather
 public import NN.Tests.Runtime.Cuda.Stress
+public import NN.Tests.Runtime.Cuda.Trainer
 
 /-!
 # Suite
@@ -57,6 +58,7 @@ def run : IO Unit := do
   ViewsBroadcastReduce.run
   LinearMseConcatSliceGather.run
   Stress.run
+  Trainer.run
   IO.println "=== CUDA kernel coverage suite completed ==="
 
 end Cuda

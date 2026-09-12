@@ -7,14 +7,16 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Tape.Nodes.Reductions
+public import Mathlib.Analysis.InnerProductSpace.Calculus
+public import NN.Proofs.Autograd.FDeriv.Elementwise
 
 @[expose] public section
 
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -279,7 +281,7 @@ def klDivLast {Γ : List Shape} {m n : Nat}
                       CtxVec.single (Γ := Γ) (s := s) target (castVec hsz.symm dTarget)) := by
                 simp [inner_add_right])
 
-/-- Pointwise `NodeFDerivCorrectAt` for `kl_div_last`, assuming `target` entries are nonzero. -/
+/-- Pointwise `NodeFDerivCorrectAt` for `klDivLast`, assuming `target` entries are nonzero. -/
 def klDivLastFderivAt {Γ : List Shape} {m n : Nat}
     (logProbs target : Idx Γ (.dim m (.dim n .scalar))) (xV : CtxVec Γ)
     (ht :
@@ -399,7 +401,8 @@ def klDivLastFderivAt {Γ : List Shape} {m n : Nat}
         convert
           euclideanEquiv_symm_ofLp
             (n := Spec.Shape.size Shape.scalar)
-            (f := fun _ : Fin (Spec.Shape.size Shape.scalar) => c * (inner ℝ dq rhs + inner ℝ q drhs))
+            (f := fun _ : Fin (Spec.Shape.size Shape.scalar) =>
+              c * (inner ℝ dq rhs + inner ℝ q drhs))
             (i := i) using 1
       simp only [klDivLast, Node.jvpVec_ofFn]
       simpa [qMN, lpMN, logqMN, c, s, q, dq, lp, dlp, logq, dlogq, rhs, drhs,

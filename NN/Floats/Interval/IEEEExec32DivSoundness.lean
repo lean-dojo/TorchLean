@@ -6,15 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Field.Basic
-public import Mathlib.Data.Bool.Basic
-public import Mathlib.Data.EReal.Basic
-public import Mathlib.Data.Real.Basic
-public import NN.Floats.IEEEExec.DirectedRoundingSoundness
+public import NN.Floats.IEEEExec.DirectedRoundingSoundness.Division
 public import NN.Floats.IEEEExec.Semantics.ERealSemantics
 public import NN.Floats.Interval.IEEEExec32
-public import NN.Floats.Interval.IEEEExec32NoNaN
 public import NN.Floats.Interval.RealBounds
+public import NN.Floats.Interval.IEEEExec32NoNaN
 
 /-!
 # Soundness of `IEEE32Exec.Interval32.div` / `inv` (4-corner rule + zero-straddle fallback)

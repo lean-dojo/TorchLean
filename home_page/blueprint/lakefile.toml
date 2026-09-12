@@ -1,0 +1,28 @@
+name = "TorchLeanBlueprint"
+defaultTargets = ["TorchLeanBlueprint", "blueprint-gen"]
+
+[[require]]
+name = "VersoBlueprint"
+git = "https://github.com/leanprover/verso-blueprint"
+rev = "v4.33.0"
+
+[[require]]
+name = "TorchLean"
+path = "../.."
+options = { cuda = "false" }
+
+[[lean_lib]]
+name = "TorchLeanBlueprint"
+# Guide pages run their own examples. `Tensor Float` addition, subtraction, and multiplication go
+# through `@[extern]` bulk operations in `csrc/cpu/torchlean_tensor.c`, so without this line an
+# `#eval x + y` inside a chapter fails with "could not find native implementation" while the same
+# expression works in a compiled example. Loading the CPU tensor library during elaboration keeps
+# the numbers printed in the guide identical to what `lake exe torchlean` prints.
+dynlibs = ["@TorchLean/torchlean_tensor_cpu_shared"]
+# Warnings are failures here, as they are in the library: a node that points at an undocumented
+# declaration, or a sample that trips a linter, has to be fixed rather than logged.
+leanOptions = [{ name = "warningAsError", value = true }]
+
+[[lean_exe]]
+name = "blueprint-gen"
+root = "TorchLeanBlueprintMain"

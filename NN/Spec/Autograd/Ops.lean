@@ -7,12 +7,11 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Autograd.AutogradSpec
+public import NN.Spec.Autograd.Trigonometric
 public import NN.Spec.Layers.Dropout
 public import NN.Spec.Layers.Embedding
-public import NN.Spec.Layers.Activation
 public import NN.Spec.Layers.Linear
 public import NN.Spec.Layers.Loss
-public import NN.Spec.Layers.Normalization
 
 /-!
 # Autograd OpSpecs (spec layer)
@@ -46,12 +45,14 @@ PyTorch analogy (approximately):
 @[expose] public section
 
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 open Activation
 
-variable {α : Type}
+variable {α : Type} [TorchLean.Storage α]
 
 /-! ## Elementwise lifting helpers -/
 
@@ -77,7 +78,7 @@ def liftElementwiseBackward [Mul α] {s : Shape}
 /-- Elementwise ReLU OpSpec on any shape.
 
 PyTorch analogy: `torch.relu(x)` / `torch.nn.functional.relu(x)`. -/
-def reluOp [Mul α] [One α] [Zero α] [Max α] [LT α]
+def reluOp [Mul α] [One α] [Zero α] [Max α] [BEq α] [LT α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {s : Shape} : OpSpec α s s :=
 { forward      := liftElementwise (α:=α) (s:=s) Activation.Math.reluSpec
@@ -146,8 +147,8 @@ def softmaxOp {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s] : OpSpec α s
 
 /-- Stable log-softmax `OpSpec` along an explicitly selected tensor dimension.
 
-Backward recomputes the forward output so the VJP uses the same axis-parametric semantics. Runtime engines
-may cache that output instead. -/
+Backward recomputes the forward output so the VJP uses the same axis-parametric semantics. Runtime
+engines may cache that output instead. -/
 def logSoftmaxOp {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s] : OpSpec α s s :=
 { forward      := fun x => Activation.logSoftmaxSpec (α := α) (s := s) axis x
 , backward     := fun x dLdy =>
@@ -164,7 +165,8 @@ are not part of `OpSpec` (those live at the graph/runtime level).
 
 PyTorch analogy: `torch.nn.functional.linear` forward, with autograd producing gradients for
 `x`, `W`, and `b`. -/
-def linearOp {α : Type} [Add α] [Mul α] [Zero α] [One α] {inDim outDim : Nat}
+def linearOp {α : Type} [TorchLean.Storage α]
+    [Add α] [Mul α] [Zero α] [One α] {inDim outDim : Nat}
   (m : LinearSpec α inDim outDim) :
   OpSpec α ([inDim]) ([outDim]) :=
 { forward      := fun x => linearSpec (α:=α) m x
@@ -215,9 +217,9 @@ def absOp   {s : Shape} : OpSpec α s s :=
 /-- Smooth absolute value (a differentiable surrogate for `abs`).
 
 This is useful when you want to avoid a kink at 0 in optimization.
-PyTorch analogy: there is no single canonical `smooth_abs`, but it is similar in spirit to
+PyTorch analogy: there is no single canonical `smoothAbs`, but it is similar in spirit to
 $\sqrt{x^2+\varepsilon}$-style smoothings. -/
-def smoothAbsOp {s : Shape} (ε : α := Numbers.epsilon) : OpSpec α s s :=
+def smoothAbsOp {s : Shape} (ε : α := Context.defaultEpsilon) : OpSpec α s s :=
 { forward      := liftElementwise (α:=α) (s:=s) (fun x => Activation.Math.smoothAbsSpec (α := α)
   x ε)
 , backward     := liftElementwiseBackward (α:=α) (s:=s) (fun x =>
@@ -236,7 +238,7 @@ Elementwise natural logarithm.
 Domain discipline: this is the raw mathematical/PyTorch-style rule. The VJP multiplies by `1/x`,
 so callers should use it only when the input is strictly positive. Runtime backends are allowed to
 reject nonpositive inputs rather than silently manufacture a gradient. Use `safeLogOp` when the
-intended model is $\log(x+\varepsilon)$.
+intended model is the smooth surrogate $\log(\operatorname{softplus}(x)+\varepsilon)$.
 
 PyTorch analogy: `torch.log(x)`. -/
 def logOp   {s : Shape} : OpSpec α s s :=
@@ -244,13 +246,14 @@ def logOp   {s : Shape} : OpSpec α s s :=
 , backward := fun x dLdy => mulSpec (invSpec x) dLdy }
 
 /--
-Elementwise log with epsilon shift, $\log(x+\varepsilon)$.
+Elementwise smooth logarithm surrogate, $\log(\operatorname{softplus}(x)+\varepsilon)$.
 
-This is the default API-safe logarithm: it is total as a spec expression and its VJP uses
-$1/(x+\varepsilon)$ pointwise.
+For $\varepsilon>0$ this is defined on every real input. Its VJP multiplies by
+$\operatorname{sigmoid}(x)/(\operatorname{softplus}(x)+\varepsilon)$.
 
-PyTorch analogy: often written manually as `torch.log(x + eps)`. -/
-def safeLogOp {s : Shape} (ε : α := Numbers.epsilon) : OpSpec α s s :=
+PyTorch expression: `torch.log(torch.nn.functional.softplus(x) + eps)`.
+-/
+def safeLogOp {s : Shape} (ε : α := Context.defaultEpsilon) : OpSpec α s s :=
 { forward      := liftElementwise (α:=α) (s:=s) (fun x => Activation.Math.safeLogSpec (α := α) x
   ε)
 , backward     := liftElementwiseBackward (α:=α) (s:=s) (fun x =>
@@ -277,7 +280,7 @@ def sqrtOp  {s : Shape} : OpSpec α s s :=
     let dsqrt : Tensor α s :=
       mapSpec (α := α) (s := s) (fun v =>
         if v > 0 then
-          (1 : α) / (Numbers.two * MathFunctions.sqrt v)
+          (1 : α) / (2 * MathFunctions.sqrt v)
         else
           (0 : α)) x
     mulSpec dsqrt dLdy
@@ -286,16 +289,16 @@ def sqrtOp  {s : Shape} : OpSpec α s s :=
 /-- Elementwise square, $x^2$. -/
 def squareOp {s : Shape} : OpSpec α s s :=
 { forward := fun x => squareSpec x
-, backward := fun x dLdy => mulSpec (mulSpec (fill (Numbers.two) _) x) dLdy }
+, backward := fun x dLdy => mulSpec (mulSpec (Tensor.full _ (2)) x) dLdy }
 
 /-- Elementwise power with a captured RHS exponent tensor.
 
-This is the VJP with respect to the base $x$ for $x^{\mathtt{rhs}}$. Domain restrictions are the usual
-ones for the scalar backend's power operation. -/
+This is the VJP with respect to the base $x$ for $x^{\mathtt{rhs}}$. Domain restrictions are the
+usual ones for the scalar backend's power operation. -/
 def powOp {s : Shape} (rhs : Tensor α s) : OpSpec α s s :=
 { forward := fun x => powSpec x rhs
 , backward := fun x dLdy =>
-    let exponentMinusOne := subSpec rhs (fill (1 : α) s)
+    let exponentMinusOne := subSpec rhs (Tensor.full s (1 : α))
     let localGrad := mulSpec rhs (powSpec x exponentMinusOne)
     mulSpec localGrad dLdy }
 
@@ -312,7 +315,7 @@ def invOp   {s : Shape} : OpSpec α s s :=
 , backward := fun x dLdy =>
     -- d/dx (1/x) = -1/x^2
     let x2 := squareSpec x
-    let g := mulSpec (fill (-(1 : α)) _) (invSpec x2)
+    let g := mulSpec (Tensor.full _ (-(1 : α))) (invSpec x2)
     mulSpec g dLdy
 }
 
@@ -325,10 +328,10 @@ unit numerator, and the VJP is the derivative of the same shifted expression.
 PyTorch analogy: usually written manually as `1.0 / (x + eps)`.
 -/
 def safeInvOp {s : Shape} : OpSpec α s s :=
-{ forward := fun x => safedivSpec (fill (1 : α) _) x
+{ forward := fun x => safedivSpec (Tensor.full _ (1 : α)) x
 , backward := fun x dLdy =>
-    let denomInv := mapSpec (fun y => (1 : α) / (y + Numbers.epsilon)) x
-    let g := mulSpec (fill (-(1 : α)) _) (squareSpec denomInv)
+    let denomInv := mapSpec (fun y => (1 : α) / (y + Context.defaultEpsilon)) x
+    let g := mulSpec (Tensor.full _ (-(1 : α))) (squareSpec denomInv)
     mulSpec g dLdy
 }
 
@@ -364,32 +367,46 @@ PyTorch analogy: usually written manually as `x / (rhs + eps)`.
 def safeDivOp {s : Shape} (rhs : Tensor α s) : OpSpec α s s :=
 { forward      := fun x => safedivSpec x rhs
 , backward     := fun _x dLdy =>
-    let denomInv := mapSpec (fun y => (1 : α) / (y + Numbers.epsilon)) rhs
+    let denomInv := mapSpec (fun y => (1 : α) / (y + Context.defaultEpsilon)) rhs
     mulSpec denomInv dLdy
 }
 
-/-- Elementwise min with captured RHS.
+/-- Elementwise minimum with a captured right-hand tensor.
 
-We pick a subgradient via a $\le$ mask (ties go to the left input).
+The backward pass gives the input the full upstream gradient where it is strictly smaller than
+`rhs`, zero where it is strictly larger, and half at a tie. This is the same selected gradient as
+the two-input tape operation. Capturing `rhs` removes its gradient output; it does not transfer
+its half of a tied gradient to the remaining input.
 
-PyTorch analogy: `torch.minimum(x, rhs)` (subgradient convention is an implementation detail). -/
+Away from ties this is the usual derivative. At a tie, minimum is not differentiable, and the
+half-gradient is the convention used by the runtime.
+-/
 def minOp {s : Shape} (rhs : Tensor α s) : OpSpec α s s :=
 { forward      := fun x => minSpec x rhs
 , backward     := fun x dLdy =>
-    let mask := lessEqualSpec x rhs
-    mulBoolMaskSpec dLdy mask
+    let half : α := (1 : α) / ((2 : Nat) : α)
+    let mask := map2Spec (fun a b =>
+      if b > a then (1 : α) else if a > b then (0 : α) else half) x rhs
+    mulSpec mask dLdy
 }
 
-/-- Elementwise max with captured RHS.
+/-- Elementwise maximum with a captured right-hand tensor.
 
-We pick a subgradient via a $\ge$ mask (ties go to the left input).
+The backward pass gives the input the full upstream gradient where it is strictly larger than
+`rhs`, zero where it is strictly smaller, and half at a tie. As in `minOp`, the captured tensor
+keeps its share of the selected gradient even though this operation returns only the gradient
+with respect to the input.
 
-PyTorch analogy: `torch.maximum(x, rhs)` (subgradient convention is an implementation detail). -/
+The strict comparisons and their order match the two-input tape operation, including its
+fallback when neither comparison holds.
+-/
 def maxOp {s : Shape} (rhs : Tensor α s) : OpSpec α s s :=
 { forward      := fun x => maxSpec x rhs
 , backward     := fun x dLdy =>
-    let mask := greaterEqualSpec x rhs
-    mulBoolMaskSpec dLdy mask
+    let half : α := (1 : α) / ((2 : Nat) : α)
+    let mask := map2Spec (fun a b =>
+      if a > b then (1 : α) else if b > a then (0 : α) else half) x rhs
+    mulSpec mask dLdy
 }
 
 /-- Leaky ReLU with slope parameter.
@@ -454,7 +471,7 @@ This is "cross-entropy between distributions": `target` is $p$, `yhat` is $q$.
 PyTorch analogy: closer to `-(p * log(q)).mean()` than to the logits-based
 `torch.nn.functional.cross_entropy` default. -/
 def crossEntropyLossOp {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
-    (target : Tensor α s) (epsilon : α := Numbers.epsilon) :
+    (target : Tensor α s) (epsilon : α := Context.defaultEpsilon) :
   OpSpec α s Shape.scalar :=
 { forward      := fun yhat =>
     Tensor.scalar (crossEntropySpec (α:=α) (s:=s) axis yhat target epsilon)
@@ -473,7 +490,8 @@ def crossEntropyLogitsLossOp {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s
     scaleSpec (crossEntropyLogitsDerivSpec (α:=α) (s:=s) axis logits target) g }
 
 /-- Binary cross-entropy loss on probability tensors, capturing the target tensor. -/
-def binaryCrossEntropyLossOp {s : Shape} (target : Tensor α s) (epsilon : α := Numbers.epsilon) :
+def binaryCrossEntropyLossOp {s : Shape} (target : Tensor α s)
+    (epsilon : α := Context.defaultEpsilon) :
     OpSpec α s Shape.scalar :=
 { forward      := fun yhat =>
     Tensor.scalar (binaryCrossEntropyTensorSpec (α:=α) (s:=s) yhat target epsilon)
@@ -482,7 +500,8 @@ def binaryCrossEntropyLossOp {s : Shape} (target : Tensor α s) (epsilon : α :=
     scaleSpec (binaryCrossEntropyTensorDerivSpec (α:=α) (s:=s) yhat target epsilon) g }
 
 /-- Cosine-similarity loss, capturing the target tensor. -/
-def cosineSimilarityLossOp {s : Shape} (target : Tensor α s) (epsilon : α := Numbers.epsilon) :
+def cosineSimilarityLossOp {s : Shape} (target : Tensor α s)
+    (epsilon : α := Context.defaultEpsilon) :
     OpSpec α s Shape.scalar :=
 { forward      := fun yhat => Tensor.scalar (cosineSimilaritySpec (α:=α) (s:=s) yhat target epsilon)
 , backward     := fun yhat dLdy =>
@@ -513,11 +532,6 @@ def logCoshLossOp {s : Shape} (target : Tensor α s) : OpSpec α s Shape.scalar 
     scaleSpec (logCoshDerivSpec (α:=α) (s:=s) yhat target) g
 }
 
-/-- Identity op: pass-through forward and backward. -/
-def identityOp {s : Shape} : OpSpec α s s :=
-{ forward      := fun x => x
-, backward     := fun _x dLdy => dLdy }
-
 /-! ## Shape/structure ops -/
 
 /-- Reshape op (requires a size-equality proof).
@@ -525,8 +539,9 @@ def identityOp {s : Shape} : OpSpec α s s :=
 PyTorch analogy: `x.reshape(...)` (or `view`), but here the shape relationship is explicit. -/
 def reshapeOp {s t : Shape}
   (h : s.size = t.size) : OpSpec α s t :=
-{ forward      := fun x => reshapeSpec (α:=α) (s₁:=s) (s₂:=t) x h
-, backward     := fun _x dLdz => reshapeSpec (α:=α) (s₁:=t) (s₂:=s) dLdz h.symm }
+{ forward      := fun x => reshapeSpec (α := α) (source := s) (target := t) x h
+, backward     := fun _x dLdz =>
+    reshapeSpec (α := α) (source := t) (target := s) dLdz h.symm }
 
 /-- Swap adjacent axes at an arbitrary depth. -/
 def swapAdjacentAxesOp {s : Shape} (depth : Nat) :
@@ -541,7 +556,7 @@ def swapAdjacentAxesOp {s : Shape} (depth : Nat) :
 PyTorch analogy: `torch.full_like(x, value)` (but here we keep the input only to fit the `OpSpec`
 shape, and ignore its content). -/
 def constantOp {s : Shape} (value : α) : OpSpec α s s :=
-{ forward      := fun _x => broadcastFill (α:=α) s value
+{ forward      := fun _x => Tensor.full s value
 , backward     := fun x _d => mapSpec (fun _ => 0) x }
 
 /-- Replicate a scalar to any shape; backward sums gradients back to a scalar.
@@ -549,7 +564,7 @@ def constantOp {s : Shape} (value : α) : OpSpec α s s :=
 PyTorch analogy: broadcasting a scalar in arithmetic, and in backward accumulating by sum. -/
 def scalarToShapeOp {s : Shape} :
   OpSpec α Shape.scalar s :=
-{ forward      := fun a => replicate (α:=α) (s:=s) a
+{ forward      := fun a => replicate (α := α) (shape := s) a
 , backward     := fun _a dLdy => Tensor.scalar (sumSpec (α:=α) dLdy) }
 
 /-- Apply boolean mask: keep where mask true, else set 0.
@@ -621,7 +636,7 @@ def reduceSumOp {s : Shape} (axis : Nat)
 The caller supplies:
 
 - explicit broadcast proofs (`CanBroadcastTo`) for both sides, and
-- a `reduce_back` map that takes a gradient in the broadcasted shape `t` and reduces it back to
+- a `reduceBack` map that takes a gradient in the broadcasted shape `t` and reduces it back to
   the left shape `s1`.
 
 PyTorch analogy: this is where PyTorch's implicit broadcasting rules and reduction-of-broadcasted
@@ -633,7 +648,7 @@ def binaryBroadcastOp {s1 s2 t : Shape}
   (cby : Shape.CanBroadcastTo s2 t)
   (f : α → α → α)
   (dfdx : α → α → α)
-  (reduce_back : Tensor α t → Tensor α s1) :
+  (reduceBack : Tensor α t → Tensor α s1) :
   OpSpec α s1 t :=
 { forward      := fun x =>
     let xb := broadcastTo (α:=α) cbx x
@@ -644,21 +659,21 @@ def binaryBroadcastOp {s1 s2 t : Shape}
     let yb := broadcastTo (α:=α) cby rhs
     let gx := map2Spec dfdx xb yb
     let g  := mulSpec gx dLdz
-    reduce_back g
+    reduceBack g
 }
 
 /-- Convenience: broadcasting-aware add with caller-provided reduction. -/
 def addBroadcastOp {s1 s2 t : Shape}
   (rhs : Tensor α s2) (cbx : Shape.CanBroadcastTo s1 t) (cby : Shape.CanBroadcastTo s2 t)
-  (reduce_back : Tensor α t → Tensor α s1) :
+  (reduceBack : Tensor α t → Tensor α s1) :
   OpSpec α s1 t :=
-  binaryBroadcastOp (α:=α) rhs cbx cby (· + ·) (fun _ _ => (1 : α)) reduce_back
+  binaryBroadcastOp (α:=α) rhs cbx cby (· + ·) (fun _ _ => (1 : α)) reduceBack
 
 /-- Convenience: broadcasting-aware mul with caller-provided reduction. -/
 def mulBroadcastOp {s1 s2 t : Shape}
   (rhs : Tensor α s2) (cbx : Shape.CanBroadcastTo s1 t) (cby : Shape.CanBroadcastTo s2 t)
-  (reduce_back : Tensor α t → Tensor α s1) :
+  (reduceBack : Tensor α t → Tensor α s1) :
   OpSpec α s1 t :=
-  binaryBroadcastOp (α:=α) rhs cbx cby (· * ·) (fun _ y => y) reduce_back
+  binaryBroadcastOp (α:=α) rhs cbx cby (· * ·) (fun _ y => y) reduceBack
 
 end Spec

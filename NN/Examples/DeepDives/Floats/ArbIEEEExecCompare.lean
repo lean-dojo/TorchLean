@@ -11,24 +11,20 @@ public import NN.Floats.Interval.IEEEExec32ArbTrans
 public import NN.Floats.Interval.Comparison
 public import NN.API.CLI
 public import Std
-
+public import NN.Floats.IEEEExec.Exec32.Transcendentals -- shake: keep
 /-!
 # Arb vs IEEE32Exec interval tutorial
-
 This tutorial prints side-by-side enclosures for a few unary functions over a one-dimensional input
 interval:
-
 - **Arb** (`python-flint` / Arb ball arithmetic): rigorous real enclosures at chosen precision.
 - **IEEE32Exec**: executable float32 evaluation on the endpoints (not a proved outward-rounded
   interval rule for transcendentals).
 - **Float32 baseline**: ordinary runtime `Float32` endpoint arithmetic, included to show why
   directed rounding matters.
 - **Rational baseline**: exact `Rat` interval arithmetic for small polynomial/reference checks.
-
 NumPy / PyTorch analogue:
-
 ```python
-public import numpy as np
+import numpy as np
 
 lo, hi = np.float32(-0.5), np.float32(0.5)
 endpoint_box = (np.tanh(lo), np.tanh(hi))   # common fast check, not a rigorous enclosure
@@ -55,7 +51,7 @@ If Arb is not installed, the tutorial still prints the IEEE32Exec side and repor
 
 open Std
 
-namespace TorchLean.Floats.Interval.ComparisonTutorial
+namespace NN.Examples.DeepDives.Floats.ArbIEEEExecCompare
 
 open TorchLean.Floats.Arb
 open TorchLean.Floats.IEEE754
@@ -251,6 +247,14 @@ def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := 
 
   IO.println ""
 
+/--
+The classic round-to-nearest-even tie: `1 + 2^-24` in binary32.
+
+The exact sum needs 25 significand bits, so it sits exactly halfway between `1` and the next float.
+Round-to-nearest-even therefore returns `1`, not the next value up. Comparing the naive interval
+arithmetic against the directed `addDown`/`addUp` pair here is the point: only the directed version
+still encloses the exact rational sum.
+-/
 def runAddTie : IO Unit := do
   let one : Float32 := Float.toFloat32 1.0
   -- Exact `2^-24` as a float32 bit pattern.
@@ -266,7 +270,8 @@ def runAddTie : IO Unit := do
   let sum32 : Interval32 := Interval32.add A32 B32
 
   IO.println "func=add_tie (round-to-nearest-even stress)"
-  IO.println "  PyTorch analogue: torch.tensor(1.0, dtype=torch.float32) + torch.tensor(2**-24, dtype=torch.float32)"
+  IO.println ("  PyTorch analogue: torch.tensor(1.0, dtype=torch.float32) "
+    ++ "+ torch.tensor(2**-24, dtype=torch.float32)")
   IO.println s!"  a=[{showFloat32 one}, {showFloat32 one}]"
   IO.println s!"  b=[{showFloat32 halfUlp}, {showFloat32 halfUlp}]"
   IO.println s!"  Float32 add (naive IA): {showIntervalF32 sumF32}"
@@ -291,6 +296,12 @@ def runAddTie : IO Unit := do
 
   IO.println ""
 
+/--
+Division by negative zero, which IEEE 754 defines as `-∞` rather than an error.
+
+The sign of zero is observable precisely through operations like this one, which is why the float32
+model keeps `+0` and `-0` distinct instead of collapsing them.
+-/
 def runSignedZeroDiv : IO Unit := do
   let one : Float32 := Float.toFloat32 1.0
   let negZ : Float32 := Float32Interval.IntervalF32.negZero
@@ -307,7 +318,8 @@ def runSignedZeroDiv : IO Unit := do
   let qPoint32 := IEEE32Exec.div one32 negZ32
 
   IO.println "func=div_signed_zero (widening from signed-zero containment)"
-  IO.println "  PyTorch analogue: torch.tensor(1.0, dtype=torch.float32) / torch.tensor(-0.0, dtype=torch.float32)"
+  IO.println ("  PyTorch analogue: torch.tensor(1.0, dtype=torch.float32) "
+    ++ "/ torch.tensor(-0.0, dtype=torch.float32)")
   IO.println s!"  point Float32: 1/(-0.0) = {showFloat32 qPoint}"
   IO.println s!"  point IEEE32Exec: 1/(-0.0) = {IEEE32Exec.toFloat qPoint32} (bits={qPoint32.bits})"
   IO.println s!"  Float32 IA div: {showIntervalF32 qF32}"
@@ -334,10 +346,6 @@ def run : IO UInt32 := do
   runSignedZeroDiv
   pure 0
 
-end TorchLean.Floats.Interval.ComparisonTutorial
-
-namespace NN.Examples.DeepDives.Floats.ArbIEEEExecCompare
-
 /-- Command-line help for the Arb-vs-IEEE32 interval tutorial. -/
 def usage : String :=
   String.intercalate "\n"
@@ -351,13 +359,11 @@ def usage : String :=
 
 /-- Entrypoint: run the Arb-vs-`IEEE32Exec` interval tutorial. -/
 def main (args : List String) : IO UInt32 := do
-  let args := _root_.TorchLean.CLI.dropDashDash args
-  if _root_.TorchLean.CLI.hasHelp args then
+  let args := TorchLean.CLI.dropDashDash args
+  if TorchLean.CLI.hasHelp args then
     IO.println usage
     return 0
-  match _root_.TorchLean.CLI.checkNoArgs args with
-  | .ok () => pure ()
-  | .error e => throw <| IO.userError s!"floats_arb_ieee_compare: {e}"
-  TorchLean.Floats.Interval.ComparisonTutorial.run
+  TorchLean.CLI.requireNoArgs "floats_arb_ieee_compare" args
+  run
 
 end NN.Examples.DeepDives.Floats.ArbIEEEExecCompare

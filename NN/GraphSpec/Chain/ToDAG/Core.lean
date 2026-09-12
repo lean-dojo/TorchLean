@@ -7,8 +7,10 @@ Authors: TorchLean Team
 module
 
 public import NN.GraphSpec.Chain.Syntax
-public import NN.GraphSpec.DAG.Core
 import Mathlib.Algebra.Order.Algebra
+public import NN.GraphSpec.DAG.Syntax
+-- Re-export DAG semantics and lowering alongside the chain conversion.
+public import NN.GraphSpec.DAG.Core
 
 /-!
 # Structural conversion of sequential GraphSpec chains to DAG terms
@@ -22,9 +24,8 @@ explicit SSA-style let bindings.
 namespace NN
 namespace GraphSpec
 
-open _root_.Spec
-open Spec.Tensor
-open _root_.TorchLean.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /-! ## Lowering: sequential chain → DAG term -/
 
@@ -76,35 +77,23 @@ def castEnvTerm {Γ Γ' : List Shape} {τ : Shape} (h : Γ = Γ') :
     DAG.Term Γ τ → DAG.Term Γ' τ :=
   fun x => DAG.Term.castEnv x h
 
-/-- Cast the environment of `DAG.Args` across a proven equality of environments. -/
-def castEnvArgs {Γ Γ' : List Shape} {ins : List Shape} (h : Γ = Γ') :
-    DAG.Args Γ ins → DAG.Args Γ' ins := by
-  cases h
-  intro xs
-  exact xs
-
 /-! ### `List.get` lemmas (small, self-contained) -/
 
 /-- `List.get` into `as` is unchanged by appending a right list (Nat-index form). -/
-lemma get_append_left_nat {α : Type} :
+theorem get_append_left_nat {α : Type} :
     ∀ (as bs : List α) (i : Nat) (hi : i < as.length),
       (as ++ bs).get ⟨i, by
         simpa [List.length_append] using Nat.lt_of_lt_of_le hi (Nat.le_add_right _ _)⟩
       =
       as.get ⟨i, hi⟩
-  | [], _bs, _i, hi => by simp at hi
-  | _a :: as, bs, 0, _hi => rfl
-  | _a :: as, bs, (i + 1), hi => by
-      have hi' : i < as.length := Nat.lt_of_succ_lt_succ hi
-      -- Reduce to the tail case.
-      -- (The definitional reduction of `List.get` on a successor index handles the index-shift.)
-      exact get_append_left_nat as bs i hi'
+  | as, bs, i, hi => by
+      simp [List.get_eq_getElem, List.getElem_append_left, hi]
 
 /--
 `List.get` into the right list after appending, using an explicit offset `as.length + j`
 (Nat-index form).
 -/
-lemma get_append_right_offset_nat {α : Type} :
+theorem get_append_right_offset_nat {α : Type} :
     ∀ (as bs : List α) (j : Nat) (hj : as.length + j < (as ++ bs).length),
       (as ++ bs).get ⟨as.length + j, hj⟩
       =
@@ -112,50 +101,15 @@ lemma get_append_right_offset_nat {α : Type} :
         have : as.length + j < as.length + bs.length := by
           simpa [List.length_append] using hj
         exact Nat.lt_of_add_lt_add_left this⟩
-  | [], bs, j, _hj => by
-      -- `[] ++ bs = bs`, and the two `Fin` proofs are propositionally equal.
-      let idxL : Fin bs.length := ⟨j, by simpa using _hj⟩
-      let idxR : Fin bs.length := ⟨j, by
-        have : ([] : List α).length + j < ([] : List α).length + bs.length := by
-          simpa using (by simpa [List.nil_append] using _hj)
-        exact Nat.lt_of_add_lt_add_left this⟩
-      have hIdx : idxL = idxR := by
-        apply Fin.ext
-        rfl
-      -- Both sides are `bs.get` at the same index.
-      simp [idxL, idxR, hIdx]
-  | a :: as, bs, j, hj => by
-      -- Re-express the index as a successor so `List.get` reduces to the tail.
-      have hIdx2 : Nat.succ (as.length + j) < ((a :: as) ++ bs).length := by
-        simpa [List.length_append, Nat.succ_add, Nat.add_assoc, Nat.add_left_comm, Nat.add_comm]
-          using hj
-      let idx1 : Fin (((a :: as) ++ bs).length) := ⟨(a :: as).length + j, hj⟩
-      let idx2 : Fin (((a :: as) ++ bs).length) := ⟨Nat.succ (as.length + j), hIdx2⟩
-      have hidx : idx1 = idx2 := by
-        apply Fin.ext
-        simp [idx1, idx2, List.length, Nat.succ_add, Nat.add_assoc, Nat.add_comm]
-      have hj' : as.length + j < (as ++ bs).length :=
-        Nat.lt_of_succ_lt_succ (by
-          -- `((a :: as) ++ bs).length = Nat.succ ((as ++ bs).length)`
-          simpa [List.length_append] using hIdx2)
-      calc
-        ((a :: as) ++ bs).get idx1
-            = ((a :: as) ++ bs).get idx2 := by simp [hidx]
-        _ = (as ++ bs).get ⟨as.length + j, hj'⟩ := by
-              -- definitional reduction of `List.get` on a successor index
-              rfl
-        _ = bs.get ⟨j, by
-              have : as.length + j < as.length + bs.length := by
-                simpa [List.length_append] using hj'
-              exact Nat.lt_of_add_lt_add_left this⟩ := by
-              exact get_append_right_offset_nat as bs j hj'
+  | as, bs, j, hj => by
+      simp [List.get_eq_getElem, List.getElem_append_right]
 
 /-- `List.get` of the last element after appending a singleton list. -/
-lemma get_append_last {α : Type} :
+theorem get_append_last {α : Type} :
     ∀ (xs : List α) (x : α),
       (xs ++ [x]).get ⟨xs.length, by simp [List.length_append]⟩ = x
-  | [], x => rfl
-  | _a :: xs, x => by
+  | .nil, x => rfl
+  | .cons _a xs, x => by
       -- Reduce to tail.
       simp
 
@@ -169,18 +123,18 @@ The resulting op has input shapes `ps ++ [σ]` (parameters followed by the data 
 def Primitive.toDAGPrimOp {ps : List Shape} {σ τ : Shape} (p : Primitive ps σ τ) :
     DAG.PrimOp (ps ++ [σ]) τ :=
   { name := p.name
-    specFwd := fun {α} _ctx xs =>
+    specFwd := fun {α} _storage _ctx xs =>
       let (params, xs') :=
         TorchLean.TensorPack.split
           (α := α) (ss₁ := ps) (ss₂ := [σ]) xs
       match xs' with
       | .cons x .nil => p.specFwd (α := α) params x
-    program := fun {α} _ctx _deq => p.program (α := α)
+    program := fun {α} _storage _ctx => p.program (α := α)
   }
 
 /-! ### Building well-typed DAG arguments for a primitive call -/
 
-lemma get_succ
+theorem get_succ
     {α : Type} (a : α) (as : List α) (i : Fin as.length) :
     (a :: as).get ⟨i.1 + 1, Nat.succ_lt_succ i.2⟩ = as.get i := by
   cases i with
@@ -195,16 +149,16 @@ This is the bridge from “arguments as a function of `Fin ins.length`” to the
 encoding used by `DAG.Term.op`.
 -/
 def argsOfFn {Γ : List Shape} :
-    {ins : List Shape} →
+    (ins : List Shape) →
     (∀ i : Fin ins.length, DAG.Term Γ (ins.get i)) →
     DAG.Args Γ ins
-  | [], _f => .nil
-  | s :: ss, f =>
+  | .nil, _f => .nil
+  | .cons s ss, f =>
       -- Head: index 0.
       let head : DAG.Term Γ ((s :: ss).get ⟨0, by simp⟩) := f ⟨0, by simp⟩
       -- Tail: shift indices by 1, and cast the `List.get` result to match `ss.get i`.
       let tail : DAG.Args Γ ss :=
-        argsOfFn (ins := ss) (fun i =>
+        argsOfFn ss (fun i =>
           castTerm (Γ := Γ) (s := (s :: ss).get ⟨i.1 + 1, Nat.succ_lt_succ i.2⟩) (t := ss.get i)
             (get_succ (a := s) (as := ss) i) (f ⟨i.1 + 1, Nat.succ_lt_succ i.2⟩))
       .cons (by simpa using head) tail
@@ -226,84 +180,13 @@ def mkParamTerm
     (i : Fin ps.length) :
     DAG.Term ((pre ++ ps ++ post) ++ extra) (ps.get i) := by
   let Γ : List Shape := (pre ++ ps ++ post) ++ extra
-  let n : Nat := pre.length + i.1
-  have hPrePsPost : n < (pre ++ ps ++ post).length := by
-    have hi' : i.1 < (ps ++ post).length := by
-      have : i.1 < ps.length + post.length := Nat.lt_of_lt_of_le i.2 (Nat.le_add_right _ _)
-      simpa [List.length_append, Nat.add_assoc, Nat.add_left_comm, Nat.add_comm] using this
-    have : pre.length + i.1 < pre.length + (ps ++ post).length :=
-      Nat.add_lt_add_left hi' pre.length
-    simpa [n, List.length_append] using this
-  have hΓ : n < Γ.length := by
-    have : n < (pre ++ ps ++ post).length + extra.length :=
-      Nat.lt_of_lt_of_le hPrePsPost (Nat.le_add_right _ _)
-    simpa [Γ, List.length_append, Nat.add_assoc] using this
-  let idx : Fin Γ.length := ⟨n, hΓ⟩
+  let idx : Fin Γ.length := ⟨pre.length + i.val, by
+    have := i.isLt
+    simp only [Γ, List.length_append]
+    omega⟩
   have hGet : Γ.get idx = ps.get i := by
-    -- Drop the trailing `extra`.
-    have hExtra :
-        Γ.get idx
-          =
-        (pre ++ ps ++ post).get ⟨n, hPrePsPost⟩ := by
-      have hIdx :
-          idx
-            =
-          ⟨n, by
-            have : n < (pre ++ ps ++ post).length + extra.length :=
-              Nat.lt_of_lt_of_le hPrePsPost (Nat.le_add_right _ _)
-            simpa [Γ, List.length_append, Nat.add_assoc] using this⟩ := by
-        apply Fin.ext
-        rfl
-      simpa [Γ, hIdx] using
-        (get_append_left_nat (as := (pre ++ ps ++ post)) (bs := extra) (i := n) (hi := hPrePsPost))
-    -- Strip the leading `pre` inside `pre ++ (ps ++ post)`.
-    have hPre :
-        (pre ++ ps ++ post).get ⟨n, hPrePsPost⟩
-          =
-        (ps ++ post).get ⟨i.1, by
-          have : i.1 < (ps ++ post).length := by
-            have : i.1 < ps.length + post.length := Nat.lt_of_lt_of_le i.2 (Nat.le_add_right _ _)
-            simpa [List.length_append, Nat.add_assoc, Nat.add_left_comm, Nat.add_comm] using this
-          simpa [List.length_append] using this⟩ := by
-      have hj : pre.length + i.1 < (pre ++ (ps ++ post)).length := by
-        simpa [n, List.length_append, Nat.add_assoc] using hPrePsPost
-      -- Strip `pre` via `get_append_right_offset_nat` (with `j = i.1`).
-      simp [n]
-    -- Drop the trailing `post`, focusing to `ps`.
-    have hPost :
-        (ps ++ post).get ⟨i.1, by
-          have : i.1 < (ps ++ post).length := by
-            have : i.1 < ps.length + post.length := Nat.lt_of_lt_of_le i.2 (Nat.le_add_right _ _)
-            simpa [List.length_append, Nat.add_assoc, Nat.add_left_comm, Nat.add_comm] using this
-          simpa [List.length_append] using this⟩
-          =
-        ps.get i := by
-      -- `get_append_left_nat` returns `ps.get ⟨i.1, i.2⟩`; align that index with `i`.
-      have hFin : (⟨i.1, i.2⟩ : Fin ps.length) = i := by
-        apply Fin.ext
-        rfl
-      -- Match the `Fin` proof used by `get_append_left_nat` on the left.
-      have hIdx :
-          (⟨i.1, by
-            simpa [List.length_append] using Nat.lt_of_lt_of_le i.2 (Nat.le_add_right _ _)⟩ : Fin
-              (ps ++ post).length)
-            =
-          ⟨i.1, by
-            have : i.1 < (ps ++ post).length := by
-              have : i.1 < ps.length + post.length := Nat.lt_of_lt_of_le i.2 (Nat.le_add_right _ _)
-              simpa [List.length_append, Nat.add_assoc, Nat.add_left_comm, Nat.add_comm] using this
-            simpa [List.length_append] using this⟩ := by
-        apply Fin.ext
-        rfl
-      have h0 :
-          (ps ++ post).get ⟨i.1, by
-            simpa [List.length_append] using Nat.lt_of_lt_of_le i.2 (Nat.le_add_right _ _)⟩
-            =
-          ps.get ⟨i.1, i.2⟩ :=
-        get_append_left_nat (as := ps) (bs := post) (i := i.1) (hi := i.2)
-      simp
-    exact Eq.trans hExtra (Eq.trans hPre (Eq.trans hPost rfl))
-  simpa [Γ] using castTerm hGet (DAG.Term.var (Γ := Γ) (DAG.Var.ofFin idx))
+    simp [Γ, idx, List.get_eq_getElem, i.isLt]
+  exact castTerm hGet (DAG.Term.var (DAG.Var.ofFin idx))
 
 /--
 Lower a unary `Primitive` application into the DAG term language.
@@ -319,7 +202,7 @@ def primCall
   let Γ : List Shape := (pre ++ ps ++ post) ++ extra
   let op : DAG.PrimOp (ps ++ [σ]) τ := Primitive.toDAGPrimOp (ps := ps) (σ := σ) (τ := τ) p
   let paramsArgs : DAG.Args Γ ps :=
-    argsOfFn (Γ := Γ) (ins := ps) (fun i => mkParamTerm (pre := pre) (ps := ps) (post := post)
+    argsOfFn (Γ := Γ) ps (fun i => mkParamTerm (pre := pre) (ps := ps) (post := post)
       (extra := extra) i)
   let args : DAG.Args Γ (ps ++ [σ]) :=
     Args.append1 (Γ := Γ) (ps := ps) (σ := σ) paramsArgs x

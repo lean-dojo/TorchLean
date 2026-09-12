@@ -7,30 +7,22 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Module.Activation
-public import NN.Spec.Module.Attention
 public import NN.Spec.Module.Autoencoder
 public import NN.Spec.Module.Conv
 public import NN.Spec.Module.DecisionTree
 public import NN.Spec.Module.Dropout
 public import NN.Spec.Module.Embedding
 public import NN.Spec.Module.Flatten
-public import NN.Spec.Module.Gnn
-public import NN.Spec.Module.GradientBoostedTrees
 public import NN.Spec.Module.GruModels
 public import NN.Spec.Module.Hmm
 public import NN.Spec.Module.Linear
-public import NN.Spec.Module.LinearRegression
-public import NN.Spec.Module.LogisticRegression
 public import NN.Spec.Module.LstmModels
 public import NN.Spec.Module.Normalization
-public import NN.Spec.Module.Pca
 public import NN.Spec.Module.Pooling
-public import NN.Spec.Module.PositionalEncoding
 public import NN.Spec.Module.Rnn
 public import NN.Spec.Module.RnnModels
 public import NN.Spec.Module.Seq2seq
 public import NN.Spec.Module.Core
-public import NN.Spec.Module.Svm
 
 /-!
 # Spec modules

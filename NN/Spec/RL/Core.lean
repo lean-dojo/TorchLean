@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Batteries.Data.Array.Scan
+public import NN.Tensor.Constructors
 
 /-!
 # Core Reinforcement-Learning Definitions
@@ -26,15 +26,9 @@ runtime/trainer code.
 
 ## Numerical Containers
 
-Dynamic trajectories use `Array α`; fixed-horizon trajectories use vectors.
-
-- A trajectory length is usually *data-dependent* (episode termination, truncation, variable rollout
-  horizon), so its length may not be available in the tensor type.
-- TorchLean uses typed tensors heavily for *fixed-shape* objects (value tables, Q-tables, logits,
-  and fixed rollout windows). Arrays are the homogeneous runtime-sized counterpart.
-
-This keeps numerical payloads in the same two representations used elsewhere in TorchLean:
-`Tensor α shape` when the shape is known and `Array α` when it is not.
+Trajectories use `Tensor α [horizon]`, including when the horizon is chosen at runtime. Rewards,
+values, and termination markers share that index, so mismatched trajectories cannot be silently
+truncated. Scalar recurrences and their evaluation order are explicit below.
 
 Primary references:
 
@@ -55,17 +49,6 @@ namespace Spec
 namespace RL
 
 variable {α : Type}
-
-/-- Small record used by generalized-advantage-estimation helpers. -/
-structure AdvantageStep (α : Type) where
-  /-- Immediate reward $r_t$. -/
-  reward : α
-  /-- Baseline / critic value estimate $V(s_t)$. -/
-  value : α
-  /-- Bootstrap value $V(s_{t+1})$. -/
-  nextValue : α
-  /-- Episode termination flag. -/
-  done : Bool
 
 /-- Convert a terminal flag into a multiplicative continuation mask (`1` for continue, `0` for
 stop). -/
@@ -89,44 +72,45 @@ def tdResidual [Zero α] [One α] [Add α] [Mul α] [Sub α]
     (value reward gamma nextValue : α) (done : Bool) : α :=
   tdTarget (α := α) reward gamma nextValue done - value
 
-/-- Discounted returns with a bootstrap value on the far right:
-$G_t=r_t+\gamma G_{t+1}$. -/
-def discountedReturnsFrom [Zero α] [Add α] [Mul α]
-    (gamma : α) (rewards : Array α) (bootstrap : α := 0) : Array α :=
-  (rewards.scanr (fun reward future => reward + gamma * future) bootstrap).pop
+open TorchLean
 
-/-- Discounted returns for a terminal trajectory (bootstrap defaults to `0`). -/
-def discountedReturns [Zero α] [Add α] [Mul α] (gamma : α) (rewards : Array α) : Array α :=
-  discountedReturnsFrom (α := α) gamma rewards 0
+variable [TorchLean.Storage α]
 
-/-- Discounted returns with explicit termination markers.
+/-! ## Shape-indexed trajectory calculations -/
 
-When `done = true`, the future return is reset before bootstrapping the current reward.
+/-- Discounted returns with a far-right bootstrap, evaluated from right to left. -/
+def discountedReturnsFrom [Zero α] [Add α] [Mul α] {n : Nat} (gamma : α)
+    (rewards : Tensor α [n]) (bootstrap : α := 0) : Tensor α [n] :=
+  Tensor.scanr (fun reward future => reward + gamma * future) bootstrap rewards
+
+/-- Discounted returns for a terminal trajectory. -/
+def discountedReturns [Zero α] [Add α] [Mul α] {n : Nat}
+    (gamma : α) (rewards : Tensor α [n]) : Tensor α [n] :=
+  discountedReturnsFrom gamma rewards 0
+
+/-- Discounted returns with one termination marker per reward; unequal lengths are unrepresentable.
+
+The multiplication order matches `discountedBackup`, including its floating-point behavior.
 -/
-def discountedReturnsDone [Zero α] [One α] [Add α] [Mul α]
-    (gamma : α) (rewards : Array α) (dones : Array Bool) (bootstrap : α := 0) :
-    Array α :=
-  ((rewards.zip dones).scanr
-    (fun step future => discountedBackup (α := α) step.1 gamma future step.2)
-    bootstrap).pop
+def discountedReturnsDone [Zero α] [One α] [Add α] [Mul α] {n : Nat} (gamma : α)
+    (rewards : Tensor α [n]) (dones : Tensor Bool [n]) (bootstrap : α := 0) : Tensor α [n] :=
+  let indices : Tensor (Fin n) [n] := Tensor.ofFn id
+  Tensor.scanr (fun i future => discountedBackup rewards[i] gamma future dones[i]) bootstrap indices
 
-/-- Generalized Advantage Estimation (GAE).
-
-Each input step provides $r_t$, $V(s_t)$, $V(s_{t+1})$, and $\mathtt{done}_t$. The resulting array contains
-advantages in forward time order.
--/
+/-- Generalized Advantage Estimation, retaining the common horizon in all five tensor types. -/
 def generalizedAdvantageEstimation [Zero α] [One α] [Add α] [Mul α] [Sub α]
-    (gamma lam : α) (steps : Array (AdvantageStep α)) : Array α :=
-  (steps.scanr
-    (fun step nextAdvantage =>
-      let mask := continueMask (α := α) step.done
-      let delta := step.reward + gamma * mask * step.nextValue - step.value
-      delta + gamma * lam * mask * nextAdvantage)
-    0).pop
+    {n : Nat} (gamma lam : α)
+    (rewards values nextValues : Tensor α [n]) (dones : Tensor Bool [n]) : Tensor α [n] :=
+  let indices : Tensor (Fin n) [n] := Tensor.ofFn id
+  Tensor.scanr (fun i nextAdvantage =>
+    let mask := continueMask (α := α) dones[i]
+    let delta := rewards[i] + gamma * mask * nextValues[i] - values[i]
+    delta + gamma * lam * mask * nextAdvantage) 0 indices
 
-/-- Recover lambda-returns from advantages and baseline values via $R_t=A_t+V(s_t)$. -/
-def returnsFromAdvantages [Add α] (advantages values : Array α) : Array α :=
-  Array.zipWith (fun advantage value => advantage + value) advantages values
+/-- Lambda-returns `R_t = A_t + V_t`, with equal lengths enforced by the tensor shape. -/
+def returnsFromAdvantages [Add α] {n : Nat} (advantages values : Tensor α [n]) : Tensor α [n] :=
+  Tensor.ofFn fun i => advantages[i] + values[i]
+
 
 end RL
 end Spec

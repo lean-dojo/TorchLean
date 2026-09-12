@@ -2,6 +2,9 @@
 # Run the standard local build, test, and lint checks.
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+LAKE="${LAKE:-$repo_root/scripts/lake.sh}"
+
 usage() {
   cat <<'EOF'
 Usage: scripts/checks/check.sh [options]
@@ -9,9 +12,9 @@ Usage: scripts/checks/check.sh [options]
 Run TorchLean's local verification gate.
 
 Default:
-  lake build
-  lake test
-  lake lint
+  scripts/lake.sh build
+  scripts/lake.sh test
+  scripts/lake.sh lint
 
 Options:
   --ci-all              Also build NN.CI.All, the broad developer/CI import umbrella.
@@ -23,7 +26,7 @@ Options:
   -h, --help            Show this help message.
 
 Environment:
-  LAKE                  Lake executable to use (default: lake).
+  LAKE                  Lake command to use (default: scripts/lake.sh).
 
 Examples:
   scripts/checks/check.sh
@@ -83,10 +86,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-LAKE="${LAKE:-lake}"
+cd "$repo_root"
 lake_flags=()
 
-# CUDA builds need both Lake's runtime flag (`-R`) and the TorchLean package
+# CUDA builds need both Lake's reconfiguration flag (`-R`) and the TorchLean package
 # option selecting native CUDA externs. `--cuda-home` is passed separately so
 # local toolkits do not need to live in a global default location.
 if [[ "$cuda" == true ]]; then

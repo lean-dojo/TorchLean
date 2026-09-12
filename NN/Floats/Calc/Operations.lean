@@ -110,15 +110,21 @@ def mulExact (f g : NeuralFloat β) : NeuralFloat β :=
   { mantissa := f.mantissa * g.mantissa
     exponent := f.exponent + g.exponent }
 
+/-- Negation is exact: no format can lose information by flipping a sign. -/
 @[simp] theorem toReal_negExact (f : NeuralFloat β) :
     neuralToReal (negExact f) = -neuralToReal f := by
   simp [negExact, neuralToReal]
 
+/-- Absolute value is exact, for the same reason. -/
 @[simp] theorem toReal_absExact (f : NeuralFloat β) :
     neuralToReal (absExact f) = |neuralToReal f| := by
   unfold absExact neuralToReal
   rw [Int.cast_abs, abs_mul, abs_of_pos (neuralBpow.pos β f.exponent)]
 
+/-- Addition after aligning exponents is exact on the reals.
+
+The alignment step is where an implementation would round; keeping it exact here and rounding once
+afterwards is what makes `toReal_addRounded` a one-line consequence. -/
 @[simp] theorem toReal_addExact (f g : NeuralFloat β) :
     neuralToReal (addExact f g) = neuralToReal f + neuralToReal g := by
   obtain ⟨hf, hg⟩ := align_toReal f g
@@ -135,10 +141,12 @@ def mulExact (f g : NeuralFloat β) : NeuralFloat β :=
       neuralToReal f + neuralToReal g
   rw [← hf, ← hg]
 
+/-- Subtraction is exact, being addition of a negation. -/
 @[simp] theorem toReal_subExact (f g : NeuralFloat β) :
     neuralToReal (subExact f g) = neuralToReal f - neuralToReal g := by
   simp [subExact, sub_eq_add_neg]
 
+/-- Multiplication is exact: mantissas multiply and exponents add, with no alignment needed. -/
 @[simp] theorem toReal_mulExact (f g : NeuralFloat β) :
     neuralToReal (mulExact f g) = neuralToReal f * neuralToReal g := by
   unfold mulExact neuralToReal

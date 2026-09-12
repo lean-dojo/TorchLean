@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph
-public import NN.Spec.Core.Tensor
+public import NN.MLTheory.CROWN.Graph.Engine.Base
+public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # CrownParamstore
@@ -38,8 +38,8 @@ and so model example loaders can share the same ParamStore-building utilities.
 namespace Import
 namespace CROWNParamStore
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Shape
 
 open NN.MLTheory.CROWN.Graph
@@ -56,22 +56,23 @@ Build a `ParamStore Float` from an array of linear-layer parameters.
 `nodeIdOfIndex` tells us which graph node id corresponds to the i-th layer in the array.
 This is the only model-specific decision; the remaining steps are model-agnostic parameter assembly.
 -/
-def ofLinearStack (nodeIdOfIndex : Nat → Nat) (layers : Array (LinParams Float)) : ParamStore Float :=
+def ofLinearStack (nodeIdOfIndex : Nat → Nat) (layers : Array (LinParams Float)) :
+    ParamStore Float :=
   layers.zipIdx.foldl (fun ps layerAndIndex =>
     insertLinearWB (nodeId := nodeIdOfIndex layerAndIndex.2) layerAndIndex.1 ps) {}
 
 /-- Cast linear parameters from Float to an arbitrary scalar type. -/
-def castLinParams {α : Type} [Context α] (ofFloat : Float → α) (p : LinParams Float) : LinParams α
-  :=
+def castLinParams {α : Type} [TorchLean.Storage α] [Context α] (ofFloat : Float → α)
+    (p : LinParams Float) : LinParams α :=
   { m := p.m
     n := p.n
-    w := Spec.Tensor.map ofFloat p.w
-    b := Spec.Tensor.map ofFloat p.b }
+    w := TorchLean.Tensor.map ofFloat p.w
+    b := TorchLean.Tensor.map ofFloat p.b }
 
 /--
 Build a `ParamStore α` from Float parameters by casting each tensor entry with `ofFloat`.
 -/
-def ofLinearStackWith {α : Type} [Context α]
+def ofLinearStackWith {α : Type} [TorchLean.Storage α] [Context α]
   (ofFloat : Float → α)
   (nodeIdOfIndex : Nat → Nat)
   (layers : Array (LinParams Float)) : ParamStore α :=

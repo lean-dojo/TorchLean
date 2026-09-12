@@ -6,24 +6,25 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Engine.Cuda.Tape
 public import NN.Runtime.Autograd.Engine.Cuda.Convert
-public import NN.Runtime.Autograd.TorchLean.Random
-
-public import NN.Runtime.Autograd.Engine.Cuda.Ops
+public import NN.Spec.Core.Random
+public import NN.Tensor
+public import NN.Data.SampleStream
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Elementwise
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Linear
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Shape
 
 /-!
 # CUDA FNO1D (real RFFT fused path)
 
-This file provides a CUDA-only forward + VJP wrapper for a small real-valued FNO1D model whose
-spectral convolution is implemented by the fused cuFFT-backed internal tape primitive.
+This file provides a direct CUDA forward and VJP runner for a real-valued FNO1D model. Its
+spectral convolution uses the same native tape primitive as `nn.models.fnoRfft` on CUDA.
+The public constructor also offers a dense reference with identical one-sided weights.
 
-Why this is not a `TorchLean.NN.Layer`:
-- `Layer` is execution-polymorphic and runs through the `Torch.Ops` interface.
-- The fused `spectralConv1dRfft` op is implemented only for the CUDA tape backend.
-
-This module is meant to be called by runnable examples that want the performance path, while the
-portable arbitrary-rank reference path lives in `NN.Runtime.Autograd.TorchLean.Fno`.
+This runner keeps its explicit buffer lifetime and Adam handling for the Burgers example.
+Comparisons with the public constructor must load identical parameter tensors and use the same
+ReLU blocks, loss, and update rule. The arbitrary-rank full-DFT model in `Model.Fno` has a different
+spectral parameterization and is not an interchangeable checkpoint.
 -/
 
 @[expose] public section
@@ -32,33 +33,26 @@ namespace Runtime
 namespace Autograd
 namespace Cuda
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Fno1dRfftFused
-
-/-- Runtime vector shape abbreviation used by the small fused FNO wrapper. -/
-abbrev vec (n : Nat) : Shape := .dim n .scalar
-
-/-- Runtime matrix shape abbreviation used by the small fused FNO wrapper. -/
-abbrev mat (m n : Nat) : Shape := .dim m (.dim n .scalar)
 
 /--
 Trainable parameter plus Adam moment buffers.
 
-All three arrays use the same row-major layout for `shape`. The value array is uploaded to CUDA
-when building a tape; the moment arrays stay on the host because this small wrapper performs Adam
-updates in Lean after downloading gradients.
+All three tensors share `shape`. Values are serialized only when uploaded to CUDA; host Adam
+updates consume downloaded gradients as tensors.
 -/
 structure Param where
   /-- Runtime tensor shape for `value`, `m`, and `v`. -/
   shape : Shape
   /-- Current parameter values in row-major order. -/
-  value : FloatArray
+  value : Tensor Float shape
   /-- Adam first-moment accumulator. -/
-  m : FloatArray
+  m : Tensor Float shape
   /-- Adam second-moment accumulator. -/
-  v : FloatArray
+  v : Tensor Float shape
 
 /-- Output of one fused-FNO tape construction. -/
 structure Forward where
@@ -75,7 +69,8 @@ namespace Forward
 
 /-- Number of CUDA buffer handles owned by a completed forward tape. -/
 def ownedBufferCount (fw : Forward) : Nat :=
-  fw.tape.nodes.foldl (fun n node => n + 1 + node.cleanup.size) 0
+  fw.tape.nodes.foldl (fun n node =>
+    n + (if node.ownsValue then 1 else 0) + node.cleanup.size) 0
 
 /--
 Release every forward value and saved workspace owned by a completed tape.
@@ -87,7 +82,8 @@ evaluation runs retain one full tape per sample until a later runtime collection
 def dispose (fw : Forward) : IO Unit := do
   let mut released := 0
   for node in fw.tape.nodes do
-    released := released + (← Buffer.releaseIO node.value.buf).toNat
+    if node.ownsValue then
+      released := released + (← Buffer.releaseIO node.value.buf).toNat
     for workspace in node.cleanup do
       released := released + (← Buffer.releaseIO workspace).toNat
   if released > fw.ownedBufferCount then
@@ -104,36 +100,27 @@ structure AdamState where
   /-- Cached `beta2^step` for bias correction (starts at 1). -/
   beta2Pow : Float := 1.0
 
-/-- Allocate a zero-filled `FloatArray` of length `n`. -/
-def zerosArray (n : Nat) : FloatArray :=
-  FloatArray.mk (Array.mk (List.replicate n 0.0))
-
 /-- Deterministic uniform sample in `[lo, hi)` for a scalar index. -/
 def uniformAt (seed idx : Nat) (lo hi : Float) : Float :=
-  let key := _root_.Runtime.Autograd.TorchLean.Random.keyOf seed 0
+  let key := Spec.Random.keyOf seed 0
   let denom : Nat := (2 : Nat) ^ 32
-  let unit := _root_.Runtime.Autograd.TorchLean.Random.sampleUnit (α := Float)
-    (_root_.Runtime.Autograd.TorchLean.Random.sampleNat key idx denom) denom
+  let unit := Spec.Random.sampleUnit (α := Float)
+    (Spec.Random.sampleNat key idx denom) denom
   lo + unit * (hi - lo)
-
-/-- Initialize a row-major parameter array with deterministic uniform samples. -/
-def initFloatArray (shape : Shape) (seed : Nat) (lo hi : Float) : FloatArray :=
-  FloatArray.mk <| Array.ofFn (n := Spec.Shape.size shape) (fun i =>
-    uniformAt seed i.val lo hi)
 
 /-- Initialize a trainable parameter and zero Adam moments. -/
 def initParam (shape : Shape) (seed : Nat) (lo hi : Float) : Param :=
   { shape := shape
-    value := initFloatArray shape seed lo hi
-    m := zerosArray (Spec.Shape.size shape)
-    v := zerosArray (Spec.Shape.size shape) }
+    value := Tensor.generateFlat shape (fun index => uniformAt seed index lo hi)
+    m := Tensor.full shape 0.0
+    v := Tensor.full shape 0.0 }
 
 /-- Initialize a bias-like parameter at zero with zero Adam moments. -/
 def initBias (shape : Shape) : Param :=
   { shape := shape
-    value := zerosArray (Spec.Shape.size shape)
-    m := zerosArray (Spec.Shape.size shape)
-    v := zerosArray (Spec.Shape.size shape) }
+    value := Tensor.full shape 0.0
+    m := Tensor.full shape 0.0
+    v := Tensor.full shape 0.0 }
 
 /--
 Initialize parameters for the fused FNO1D model:
@@ -142,22 +129,21 @@ Initialize parameters for the fused FNO1D model:
 - blocks: `(wRe,wIm) : (modes,width,width)`, `wSkip : (width,width)`, `bSkip : (width)`
 - output proj: `W_out : (width,1)`, `b_out : (1)`
 -/
-def initParams (grid width modes blocks : Nat) (seed : Nat) : Array Param := Id.run do
-  let _ := grid
+def initParams (width modes blocks : Nat) (seed : Nat) : Array Param := Id.run do
   let spectralShape : Shape := .dim modes (.dim width (.dim width .scalar))
-  let wSkipShape : Shape := mat width width
-  let bSkipShape : Shape := vec width
+  let wSkipShape : Shape := [width, width]
+  let bSkipShape : Shape := [width]
   let mut ps : Array Param := #[]
-  ps := ps.push (initParam (mat 1 width) (seed + 1) (-0.04) 0.04)
-  ps := ps.push (initBias (vec width))
+  ps := ps.push (initParam ([1, width]) (seed + 1) (-0.04) 0.04)
+  ps := ps.push (initBias ([width]))
   for b in [0:blocks] do
     let base := seed + 100 + 31 * b
     ps := ps.push (initParam spectralShape (base + 0) (-0.04) 0.04)
     ps := ps.push (initParam spectralShape (base + 1) (-0.04) 0.04)
     ps := ps.push (initParam wSkipShape (base + 2) (-0.04) 0.04)
     ps := ps.push (initBias bSkipShape)
-  ps := ps.push (initParam (mat width 1) (seed + 1000) (-0.04) 0.04)
-  ps := ps.push (initBias (vec 1))
+  ps := ps.push (initParam ([width, 1]) (seed + 1000) (-0.04) 0.04)
+  ps := ps.push (initBias ([1]))
   pure ps
 
 /-- Fetch a parameter with an error message that points to the fused-FNO wrapper. -/
@@ -188,8 +174,8 @@ def addParamLeaf (t : Tape) (ps : Array Param) (paramBuffers : Array Buffer)
 /-- Broadcast a vector of length `cols` across `grid` rows. -/
 def broadcastVecToMat (t : Tape) (grid cols : Nat) (xId : Nat) : Result (Tape × Nat) :=
   do
-    let _ ← t.requireValue xId (vec cols)
-    Tape.broadcastTo (t := t) (s₁ := vec cols) (s₂ := mat grid cols) Shape.BroadcastTo.proof xId
+    let _ ← t.requireValue xId ([cols])
+    Tape.broadcastTo (t := t) (s₁ := [cols]) (s₂ := [grid, cols]) Shape.BroadcastTo.proof xId
 
 /--
 Build a CUDA tape that computes prediction (and optionally MSE loss) for the fused real-RFFT FNO.
@@ -204,12 +190,12 @@ are added; the optional target is checked by the MSE operation on the loss path.
 -/
 def forwardWithBuffers (grid width modes blocks : Nat)
     (ps : Array Param)
-    (target? : Option (Tensor Float (vec grid)))
+    (target? : Option (Tensor Float ([grid])))
     (xBuffer : Buffer) (paramBuffers : Array Buffer) (targetBuffer? : Option Buffer) :
     Result Forward := do
-  let xMatShape : Shape := mat grid 1
-  let yMatShape : Shape := mat grid 1
-  let hiddenShape : Shape := mat grid width
+  let xMatShape : Shape := [grid, 1]
+  let yMatShape : Shape := [grid, 1]
+  let hiddenShape : Shape := [grid, width]
   let paramIds0 : Array Nat := #[]
   let checkedInput ← match AnyBuffer.validate { s := xMatShape, buf := xBuffer } with
     | .ok checked => pure checked
@@ -257,7 +243,7 @@ def forwardWithBuffers (grid width modes blocks : Nat)
   t := tOutB; paramIds := idsOutB
   let (tPred0, pred0Id) ←
     Tape.Internal.matmul (t := t) (m := grid) (n := width) (p := 1) hId wOutId
-  let (tPredB, bOutBId) ← Tape.broadcastTo (t := tPred0) (s₁ := vec 1) (s₂ := yMatShape)
+  let (tPredB, bOutBId) ← Tape.broadcastTo (t := tPred0) (s₁ := [1]) (s₂ := yMatShape)
     Shape.BroadcastTo.proof bOutId
   let (tPred, predId) ← Tape.add (t := tPredB) (s := yMatShape) pred0Id bOutBId
   match target? with
@@ -281,18 +267,19 @@ buffer handle. This gives each returned `Forward` exclusive ownership of the buf
 -/
 def forward (grid width modes blocks : Nat)
     (ps : Array Param)
-    (x : Tensor Float (vec grid))
-    (target? : Option (Tensor Float (vec grid))) :
+    (x : Tensor Float ([grid]))
+    (target? : Option (Tensor Float ([grid]))) :
     IO (Result Forward) := do
-  let xBuffer ← Buffer.ofFloatArrayIO (Convert.flattenFloat (s := vec grid) x)
+  let xBuffer ← Buffer.ofFloatArrayIO (Convert.flattenFloat (s := [grid]) x)
   let mut paramBuffers := #[]
   for p in ps do
-    paramBuffers := paramBuffers.push (← Buffer.ofFloatArrayIO p.value)
+    paramBuffers := paramBuffers.push (← Buffer.ofFloatArrayIO (Convert.flattenFloat p.value))
   let targetBuffer? ← match target? with
     | none => pure none
     | some y =>
-        pure <| some (← Buffer.ofFloatArrayIO (Convert.flattenFloat (s := vec grid) y))
-  let result := forwardWithBuffers grid width modes blocks ps target? xBuffer paramBuffers targetBuffer?
+        pure <| some (← Buffer.ofFloatArrayIO (Convert.flattenFloat (s := [grid]) y))
+  let result :=
+    forwardWithBuffers grid width modes blocks ps target? xBuffer paramBuffers targetBuffer?
   match result with
   | .ok fw => pure <| .ok fw
   | .error msg =>
@@ -313,60 +300,46 @@ def scalarFromTape (t : Tape) (id : Nat) : IO (Result Float) := do
       pure <| .ok (a.get! 0)
 
 /-- Download a `(grid,1)` prediction matrix as a length-`grid` tensor. -/
-def predFromTape (grid : Nat) (t : Tape) (id : Nat) : IO (Result (Tensor Float (vec grid))) := do
-  match Tape.requireValue (t := t) id (mat grid 1) with
+def predFromTape (grid : Nat) (t : Tape) (id : Nat) : IO (Result (Tensor Float ([grid]))) := do
+  match Tape.requireValue (t := t) id ([grid, 1]) with
   | .error msg => pure <| .error msg
   | .ok b =>
       let values ← Buffer.toFloatArrayIO b
-      match Convert.unflattenFloat? (s := vec grid) values with
+      match Convert.unflattenFloat? (s := [grid]) values with
       | some y => pure <| .ok y
       | none => pure <| .error "autograd: fused-fno: prediction shape mismatch"
 
-/-- Mean MSE loss over a host-side array of `(input,target)` samples. -/
-def meanLoss (grid width modes blocks : Nat)
-    (ps : Array Param) (samples : Array (Tensor Float (vec grid) × Tensor Float (vec grid))) :
+/-- Mean MSE over a nonempty indexed sample stream, releasing each tape after scalar download. -/
+def meanLoss (grid width modes blocks : Nat) (ps : Array Param)
+    (samples : TorchLean.Data.SampleStream (Tensor Float ([grid]) × Tensor Float ([grid]))) :
     IO (Result Float) := do
-  if samples.isEmpty then
-    pure <| .ok (0.0 / 0.0)
-  else
-    let mut acc := 0.0
-    for (x, y) in samples do
-      match ← forward (grid := grid) (width := width) (modes := modes) (blocks := blocks) ps x
-          (some y) with
-      | .error msg => return .error msg
-      | .ok fw =>
-          let result ← match fw.lossId? with
-            | some lossId => scalarFromTape fw.tape lossId
-            | none => pure <| .error "autograd: fused-fno: internal missing loss id"
-          fw.dispose
-          match result with
-          | .error msg => return .error msg
-          | .ok loss => acc := acc + loss
-    pure <| .ok (acc / Float.ofNat samples.size)
+  if samples.size == 0 then
+    return .error "autograd: fused-fno: empty evaluation stream"
+  let compute : ExceptT String IO (Tensor Float [samples.size]) :=
+    Tensor.generateFlatM [samples.size] fun index => do
+      let (x, y) := samples.get ⟨index.val, by simpa [Shape.size] using index.isLt⟩
+      let fw ← ExceptT.mk (forward grid width modes blocks ps x (some y))
+      ExceptT.mk <| try
+        match fw.lossId? with
+        | some lossId => scalarFromTape fw.tape lossId
+        | none => pure (.error "autograd: fused-fno: internal missing loss id")
+      finally fw.dispose
+  return (← compute.run).map Tensor.mean
 
-/--
-Host-side Adam update for one flattened parameter array.
+/-- Tensor Adam update with cached bias corrections and the fused path's scalar evaluation order.
 
-Bias correction factors are passed in already computed as `1 - beta₁^t` and `1 - beta₂^t`.
+Each multiplication/division retains its original ordering, including `(1-beta2)*g*g` and
+`lr*(m/biasCorr1)/(sqrt(v/biasCorr2)+eps)`. Equal shapes replace the former runtime length checks.
 -/
-def adamUpdateArrayBiasCorrected
-    (value m v grad : FloatArray)
-    (lr beta1 beta2 eps : Float)
-    (biasCorr1 biasCorr2 : Float) :
-    FloatArray × FloatArray × FloatArray := Id.run do
-  let mut value' : Array Float := #[]
-  let mut m' : Array Float := #[]
-  let mut v' : Array Float := #[]
-  for i in [:value.size] do
-    let g := grad.get! i
-    let mi := beta1 * m.get! i + (1.0 - beta1) * g
-    let vi := beta2 * v.get! i + (1.0 - beta2) * g * g
-    let mHat := mi / biasCorr1
-    let vHat := vi / biasCorr2
-    value' := value'.push (value.get! i - lr * mHat / (Float.sqrt vHat + eps))
-    m' := m'.push mi
-    v' := v'.push vi
-  pure (FloatArray.mk value', FloatArray.mk m', FloatArray.mk v')
+def adamUpdateBiasCorrected {shape : Shape}
+    (value m v grad : Tensor Float shape)
+    (lr beta1 beta2 eps : Float) (biasCorr1 biasCorr2 : Float) :
+    Tensor Float shape × Tensor Float shape × Tensor Float shape :=
+  let nextM := m.map (fun x => beta1 * x) + grad.map (fun g => (1.0 - beta1) * g)
+  let nextV := v.map (fun x => beta2 * x) + grad.map (fun g => (1.0 - beta2) * g * g)
+  let numerator := nextM.map (fun x => lr * (x / biasCorr1))
+  let denominator := nextV.map (fun x => Float.sqrt (x / biasCorr2) + eps)
+  (value - numerator / denominator, nextM, nextV)
 
 /--
 Run reverse-mode on the fused-FNO tape and update every recorded parameter with Adam.
@@ -427,8 +400,14 @@ def updateParamsAdam
               return .error "autograd: fused-fno: internal missing grad"
         if _h : gAny.s = p.shape then
           let grad ← Buffer.toFloatArrayIO gAny.buf
-          let (value', m', v') := adamUpdateArrayBiasCorrected
-            p.value p.m p.v grad lr beta1 beta2 eps biasCorr1 biasCorr2
+          let gradient ← match Convert.unflattenFloat? (s := p.shape) grad with
+            | some gradient => pure gradient
+            | none =>
+                Tape.releaseSparseGrads grads
+                fw.dispose
+                return .error "autograd: fused-fno: gradient buffer length mismatch"
+          let (value', m', v') := adamUpdateBiasCorrected
+            p.value p.m p.v gradient lr beta1 beta2 eps biasCorr1 biasCorr2
           if hi : i < out.size then
             out := out.set i { p with value := value', m := m', v := v' } hi
           else
@@ -442,6 +421,23 @@ def updateParamsAdam
       Tape.releaseSparseGrads grads
       fw.dispose
       pure <| .ok (out, st')
+
+/-- Predict through the fused spectral path and release the temporary tape after downloading. -/
+def predict (grid width modes blocks : Nat) (parameters : Array Param)
+    (input : Tensor Float [grid]) : IO (Result (Tensor Float [grid])) := do
+  match ← forward grid width modes blocks parameters input none with
+  | .error message => pure (.error message)
+  | .ok fw =>
+      try predFromTape grid fw.tape fw.predId
+      finally fw.dispose
+
+/-- Consume one fused training tape, returning updated parameters and cached Adam state. -/
+def trainStep (grid width modes blocks : Nat) (parameters : Array Param)
+    (input target : Tensor Float [grid]) (learningRate : Float) (state : AdamState) :
+    IO (Result (Array Param × AdamState)) := do
+  match ← forward grid width modes blocks parameters input (some target) with
+  | .error message => pure (.error message)
+  | .ok fw => updateParamsAdam parameters fw learningRate state
 
 end Fno1dRfftFused
 

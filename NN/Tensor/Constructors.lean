@@ -4,135 +4,197 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+-- This module supplies public namespace exports used by downstream consumers. Import shaking
+-- cannot see those downstream lookups, so keep the marked imports.
+module -- shake: keep-downstream
 
-public import NN.Floats.Float32
-public import NN.Spec.Core.Complex
-public import NN.Spec.Core.Tensor
-import Mathlib.Algebra.Order.Algebra
+import Mathlib.Algebra.Order.Algebra -- shake: keep
+import Mathlib.Tactic.Bound.Init -- shake: keep
+public import NN.Spec.Core.Tensor.Core -- shake: keep
+public import NN.Floats.IEEEExec.Exec32 -- shake: keep
+public import NN.Spec.Core.Complex -- shake: keep
+public import NN.Tensor.Conversion -- shake: keep
 
 /-!
 # Public Tensor Constructors
 
-This module owns the `TorchLean.Tensor` construction surface. It re-exports the shape-indexed
-`Spec.Tensor` type and provides checked array conversion, coordinate generation, constants, and
-bounded-index constructors. Import `NN.Tensor` for the complete public tensor API.
+This module owns the `TorchLean.Tensor` construction surface: literals, flat-index generation,
+and bounded-index constructors. The constant constructors `full`, `zeros`, and `ones` live with the
+specification-layer constructors so that spec code can use them too. Import `NN.Tensor` for the
+complete public tensor API.
+
+The scalar side comes in through `NN.Floats.IEEEExec.Exec32` rather than the `NN.Floats.Float32`
+hub. All this module needs is the executable binary32 type and its instances; the hub also
+re-exports the rounded-real `FP32` model, and that pulls the Mathlib real-analysis stack into every
+module downstream of the tensor API. Files that reason about `FP32` import `NN.Floats.Float32`
+themselves.
 -/
 
 @[expose] public section
 
 namespace TorchLean
 
-export Spec (Shape Tensor)
+export Spec (Shape)
 
 namespace Shape
 
 export Spec.Shape
-  (AxisInBounds appendDim appendDim_appendDim_eq_concat appendDim_eq_concat concat
-   concat_appendDim concat_assoc getDim insertAxis insertAxis_zero ofArray ofList ofList_append
-   prependDim pretty rank replaceAxis size size_appendDim size_concat toList axisSize)
+  (AxisInBounds EndsWith appendDim appendDim_appendDim_eq_concat appendDim_eq_concat axisSize concat
+   concat_appendDim concat_assoc getDim insertAxis insertAxis_zero ofArray ofList
+   prependDim pretty rank rank_prependDim replaceAxis replaceLast size size_appendDim size_concat
+   size_prependDim toList)
 
 end Shape
 
 namespace Tensor
 
-open _root_.Spec
+/--
+Lift an integer literal into a rank-zero tensor.
 
-export Spec.Tensor (item map ofArrayExact ofFlatArrayExact)
+The expected tensor type fixes both the scalar representation and the empty
+shape, so users can write `1 : Tensor α []` without an explicit constructor.
+-/
+instance scalarOfNat {α : Type} [TorchLean.Storage α] {n : Nat} [OfNat α n] :
+    OfNat (Tensor α (Shape.ofList [])) n where
+  ofNat := TorchLean.Tensor.scalar (OfNat.ofNat n)
 
-/-- Construct an arbitrary-rank tensor from a coordinate function. -/
-abbrev generate {α : Type} (dims : List Nat) (f : List Nat → α) : Tensor α dims :=
-  Spec.Tensor.generate dims f
+/--
+Lift a decimal or scientific literal into a rank-zero tensor.
+
+This is representation-polymorphic: any executable or proof-oriented scalar
+type with `OfScientific` receives the same ordinary literal syntax.
+-/
+instance scalarOfScientific {α : Type} [TorchLean.Storage α] [OfScientific α] :
+    OfScientific (Tensor α (Shape.ofList [])) where
+  ofScientific mantissa exponentSign decimalExponent :=
+    TorchLean.Tensor.scalar <|
+      OfScientific.ofScientific mantissa exponentSign decimalExponent
 
 /-- One-hot vector of length `n`, with a single `1` at index `k`. -/
-def oneHot {α : Type} [Zero α] [One α] (n : Nat) (k : Fin n) : Tensor α [n] :=
-  Spec.Tensor.dim fun i => Spec.Tensor.scalar (if decide (i = k) then (1 : α) else 0)
+def oneHot {α : Type} [TorchLean.Storage α] [Zero α] [One α]
+    (n : Nat) (k : Fin n) : Tensor α [n] :=
+  TorchLean.Tensor.dim fun i => TorchLean.Tensor.scalar (if decide (i = k) then (1 : α) else 0)
 
 /-- One-hot encode every bounded index along a new final axis. -/
-def oneHotIndices {α : Type} [Zero α] [One α] (n : Nat) :
+def oneHotIndices {α : Type} [TorchLean.Storage α] [Zero α] [One α] (n : Nat) :
     {s : Shape} → Tensor (Fin n) s → Tensor α (s.appendDim n)
-  | .scalar, .scalar k => oneHot (α := α) n k
-  | .dim _ _, .dim values =>
-      Spec.Tensor.dim fun i => oneHotIndices (α := α) n (values i)
+  | .scalar, tensor => oneHot (α := α) n tensor.item
+  | .dim _ _, tensor =>
+      TorchLean.Tensor.dim fun i =>
+        oneHotIndices (α := α) n (TorchLean.Tensor.unstack tensor i)
 
-/-- Convert a natural number to a bounded index, rejecting an out-of-range value. -/
-def checkIndex (n k : Nat) : Except String (Fin n) :=
-  if h : k < n then
-    .ok ⟨k, h⟩
-  else
-    .error s!"index {k} is outside the valid range [0, {n})"
-
-namespace Internal
+namespace IndexValidation
 
 /-- Decide whether every tensor entry is smaller than `n`. -/
 def indicesInRangeDecidable (n : Nat) :
     {s : Shape} → (x : Tensor Nat s) →
-      Decidable (Spec.Tensor.Forall (fun k => k < n) x)
-  | .scalar, .scalar _ => by
-      unfold Spec.Tensor.Forall
+      Decidable (TorchLean.Tensor.Forall (fun k => k < n) x)
+  | .scalar, _ => by
+      unfold TorchLean.Tensor.Forall
       infer_instance
-  | .dim _ _, .dim values =>
-      letI : DecidablePred (fun i => Spec.Tensor.Forall (fun k => k < n) (values i)) :=
-        fun i => indicesInRangeDecidable n (values i)
+  | .dim _ _, tensor =>
+      letI : DecidablePred
+          (fun i => TorchLean.Tensor.Forall (fun k => k < n) (TorchLean.Tensor.unstack tensor i)) :=
+        fun i => indicesInRangeDecidable n (TorchLean.Tensor.unstack tensor i)
       by
-        unfold Spec.Tensor.Forall
+        unfold TorchLean.Tensor.Forall
         exact Fintype.decidableForallFintype
 
 /-- Attach a proved scalar bound to every entry of a tensor. -/
 def boundIndices (n : Nat) :
     {s : Shape} → (x : Tensor Nat s) →
-      Spec.Tensor.Forall (fun k => k < n) x → Tensor (Fin n) s
-  | .scalar, .scalar k, h => .scalar ⟨k, h⟩
-  | .dim _ _, .dim values, h => .dim fun i => boundIndices n (values i) (h i)
+      TorchLean.Tensor.Forall (fun k => k < n) x → Tensor (Fin n) s
+  | .scalar, tensor, h => TorchLean.Tensor.scalar ⟨tensor.item, h⟩
+  | .dim _ _, tensor, h =>
+      TorchLean.Tensor.dim fun i =>
+        boundIndices n (TorchLean.Tensor.unstack tensor i) (h i)
 
-/-- Build a tensor from a flat array whose length exactly matches its dimensions. -/
-def fromArray {α : Type} (dims : List Nat) (xs : Array α)
-    (h : xs.size = dims.prod) : Tensor α dims :=
-  Spec.Tensor.ofFlatArrayExact (Shape.ofList dims) xs (by simpa using h)
-
-end Internal
+end IndexValidation
 
 /-- Validate every natural-number entry and return a tensor of bounded indices. -/
 def checkIndices (n : Nat) {s : Shape} (x : Tensor Nat s) :
     Except String (Tensor (Fin n) s) :=
-  letI := Internal.indicesInRangeDecidable n x
-  if h : Spec.Tensor.Forall (fun k => k < n) x then
-    .ok (Internal.boundIndices n x h)
+  letI := IndexValidation.indicesInRangeDecidable n x
+  if h : TorchLean.Tensor.Forall (fun k => k < n) x then
+    .ok (IndexValidation.boundIndices n x h)
   else
     .error s!"tensor contains an index outside the valid range [0, {n})"
 
-/-- Build a tensor from runtime dimensions and a flat array, checking the payload length. -/
-def ofArray {α : Type} (dims : List Nat) (xs : Array α) : Except String (Tensor α dims) :=
-  let expected := dims.prod
-  if h : xs.size = expected then
-    .ok (Spec.Tensor.ofFlatArrayExact (Shape.ofList dims) xs (by simpa using h))
-  else
-    .error s!"ofArray: expected {expected} elements for dims={dims}, got {xs.size}"
+/-- Generate tensor entries from contiguous row-major flat indices.
 
-/-- Fill a tensor of arbitrary shape with one value. -/
-def full {α : Type} (dims : List Nat) (value : α) : Tensor α dims :=
-  Spec.fill value (Shape.ofList dims)
+The buffer is filled directly from the index function; no intermediate array is built. -/
+def generateFlat {α : Type} [TorchLean.Storage α]
+    (shape : Shape) (f : Nat → α) :
+    Tensor α shape :=
+  TorchLean.Tensor.Internal.Rep.ofFlatFn fun index => f index.val
 
-/-- Construct an all-zero tensor of arbitrary shape. -/
-def zeros {α : Type} [Zero α] (dims : List Nat) : Tensor α dims :=
-  full (α := α) dims 0
+/-- Construct a tensor by running one action per row-major coordinate, in increasing flat order.
 
-/-- Construct an all-one tensor of arbitrary shape. -/
-def ones {α : Type} [One α] (dims : List Nat) : Tensor α dims :=
-  full (α := α) dims 1
+The result retains the requested shape. A failed action stops construction according to the
+supplied monad.
+-/
+def generateFlatM {m : Type → Type} [Monad m] {α : Type} [TorchLean.Storage α]
+    (shape : Shape) (f : Fin shape.size → m α) : m (Tensor α shape) :=
+  TorchLean.Tensor.Internal.Rep.ofFlatFnM fun index =>
+    f (index.cast (Spec.Shape.internalSize_eq shape))
 
-/-- Build from `Float` storage and convert each entry to the selected scalar type. -/
-def fromFloatArray {α : Type} (cast : Float → α) (dims : List Nat) (xs : Array Float) :
-    Except String (Tensor α dims) := do
-  let tensor ← ofArray (α := Float) dims xs
-  pure (map cast tensor)
+/-- Run one action per leading slice and stack its result, preserving the common trailing shape. -/
+def stackLeadingM {m : Type → Type} [Monad m] {α : Type} [TorchLean.Storage α]
+    {count : Nat} {shape : Shape} (components : Fin count → m (Tensor α shape)) :
+    m (Tensor α (shape.prependDim count)) :=
+  TorchLean.Tensor.Internal.Rep.stackM components
 
-/-- Generate entries from flat indices as `Float` values and convert them to another scalar type. -/
-def generateFromFloat {α : Type} (cast : Float → α) (dims : List Nat) (f : Nat → Float) :
-    Tensor α dims :=
-  let xs := Array.ofFn (fun i : Fin dims.prod => f i)
-  have hSize : xs.size = dims.prod := by simp [xs]
-  map cast (Spec.Tensor.ofFlatArrayExact (Shape.ofList dims) xs (by simpa using hSize))
+/-- Apply an effectful scalar operation in row-major order, retaining the tensor shape. -/
+def mapM {m : Type → Type} [Monad m] {α β : Type}
+    [TorchLean.Storage α] [TorchLean.Storage β] {shape : Shape}
+    (f : α → m β) (tensor : Tensor α shape) : m (Tensor β shape) :=
+  generateFlatM shape fun index => f (TorchLean.Tensor.Internal.Rep.getFlat tensor
+    (index.cast (Spec.Shape.internalSize_eq shape).symm))
+
+/-- Left-to-right scan with one output per input entry, excluding the initial accumulator. -/
+def scanl {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β] {n : Nat}
+    (step : β → α → β) (initial : β) (values : Tensor α [n]) : Tensor β [n] :=
+  let build : StateM β (Tensor β [n]) :=
+    generateFlatM [n] fun flat => do
+      let index : Fin n := ⟨flat.val, by simpa [Spec.Shape.size] using flat.isLt⟩
+      let next := step (← MonadState.get) values[index]
+      MonadState.set next
+      pure next
+  (build.run initial).1
+
+/-- Effectful right-to-left scan, with one output per input entry.
+
+The terminal accumulator is excluded. Effects run from the last input to the first; an error
+stops the scan according to the supplied monad.
+-/
+def scanrM {m : Type → Type} [Monad m] {α β : Type}
+    [TorchLean.Storage α] [TorchLean.Storage β] {n : Nat}
+    (step : α → β → m β) (initial : β) (values : Tensor α [n]) : m (Tensor β [n]) := do
+  let build : StateT β m (Tensor β [n]) :=
+    generateFlatM [n] fun flat => do
+      let index : Fin n := ⟨flat.val, by simpa [Spec.Shape.size] using flat.isLt⟩
+      let next ← liftM (step values[index.rev] (← MonadState.get))
+      MonadState.set next
+      pure next
+  let (reversed, _) ← build.run initial
+  pure (TorchLean.Tensor.ofFn fun index => reversed[index.rev])
+
+/-- Right-to-left scan with one output per input entry, excluding the terminal accumulator. -/
+def scanr {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β] {n : Nat}
+    (step : α → β → β) (initial : β) (values : Tensor α [n]) : Tensor β [n] :=
+  Id.run (scanrM (fun value accumulator => pure (step value accumulator)) initial values)
+
+/--
+Take a fixed-width tensor window, padding entries past the end.
+
+`offset` and `length` determine the result without exposing bounded-index construction. This is the
+general in-memory constructor used by token, byte, and minibatch window helpers.
+-/
+def window {α : Type} [TorchLean.Storage α] {count : Nat}
+    (values : Tensor α [count]) (length : Nat) (offset : Nat := 0) (pad : α) :
+    Tensor α [length] :=
+  generateFlat [length] fun i =>
+    if h : offset + i < count then values[(⟨offset + i, h⟩ : Fin count)] else pad
 
 end Tensor
 end TorchLean

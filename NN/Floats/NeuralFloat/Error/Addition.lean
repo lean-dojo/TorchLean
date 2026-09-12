@@ -8,6 +8,7 @@ module
 
 public import NN.Floats.NeuralFloat.Error.Exactness
 public import NN.Floats.NeuralFloat.Format.Theorems
+public import NN.Floats.NeuralFloat.Rounding.Order
 
 /-!
 # Exactness of Addition Errors

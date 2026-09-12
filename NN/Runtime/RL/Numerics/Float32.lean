@@ -6,11 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.RL.Numerics.Float32.Types
-public import NN.Runtime.RL.Numerics.Float32.Returns
 public import NN.Runtime.RL.Numerics.Float32.Advantage
-public import NN.Runtime.RL.Numerics.Float32.PPO
 public import NN.Runtime.RL.Numerics.Float32.Intervals
+public import NN.Runtime.RL.Numerics.Float32.PPO
+public import NN.Runtime.RL.Numerics.Float32.Returns
+public import NN.Runtime.RL.Numerics.Float32.Types
 
 /-!
 # RL Float32 Numeric Checks (Umbrella)

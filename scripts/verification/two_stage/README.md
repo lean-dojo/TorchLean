@@ -1,12 +1,11 @@
 # Two-Stage TorchLean Verification
 
 This folder contains the TorchLean pieces of a two stage Van der Pol verification workflow.
-The Python scripts are producers and baselines; their outputs are not trusted until a Lean checker
-parses and verifies the relevant property.
+The Python producer exports a trained seed; TorchLean consumes its parameters in Stage 2.
 
 ## Files
 
-- Source code belongs here: Lean modules, Python producers, and small documentation.
+- The Python producer lives here; Lean workflows live under `NN/MLTheory/CROWN/Lyapunov/TwoStage`.
 - Regenerated weights and stage outputs go under `_external/`, `/tmp`, or another local output
   directory.
 - Tiny reproducible fixtures can live here when a checker or doc page uses them directly.
@@ -23,26 +22,6 @@ python3 scripts/verification/two_stage/export_van_stage1_bits.py \
   --width 100 \
   --steps 50 \
   --out _external/van_stage1_w100_bits.json
-```
-
-`scripts/verification/two_stage/cegis_van_stage2_python_baseline.py`
-
-Runs a compact PyTorch Stage 2 reference loop using the same scalar loss and parameter pack order.
-This is useful for comparing behavior with TorchLean Stage 2 code, not for producing a trusted
-certificate.
-
-```bash
-python3 scripts/verification/two_stage/cegis_van_stage2_python_baseline.py \
-  --weights _external/van_stage1_w100_bits.json \
-  --stage2_rounds 5 \
-  --candidates 8 \
-  --pgd_steps 10
-```
-
-You can also print these commands through the verification asset catalog:
-
-```bash
-python3 scripts/verification/regenerate_assets.py --group two-stage
 ```
 
 ## Trust Boundary

@@ -25,16 +25,18 @@ namespace Tests
 namespace Cuda
 namespace Elementwise
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Runtime.Autograd
 
 def run : IO Unit := do
   IO.println "=== CUDA kernel coverage: elementwise ==="
 
   let s : Shape := [5]
-  let a : Tensor Float s := tensorOfArray! [5] #[0.10, -0.20, 0.30, -0.15, 0.05]
-  let b : Tensor Float s := tensorOfArray! [5] #[0.20,  0.10, -0.25, 0.40, -0.05]
+  let a : Tensor Float s :=
+    (Tensor.from #[0.10, -0.20, 0.30, -0.15, 0.05]).reshape [5] (by dsimp; decide)
+  let b : Tensor Float s :=
+    (Tensor.from #[0.20,  0.10, -0.25, 0.40, -0.05]).reshape [5] (by dsimp; decide)
 
   let scaleC : Float := 0.3
   let clampLo : Float := 1e-3
@@ -74,10 +76,13 @@ def run : IO Unit := do
 
   -- CUDA tape
   let t0c : Runtime.Autograd.Cuda.Tape := Runtime.Autograd.Cuda.Tape.empty
-  let (t1c, aIdc) := Runtime.Autograd.Cuda.Tape.leaf (t := t0c) (Utils.tensorToAnyBuffer a) (name := some "a")
-  let (t2c, bIdc) := Runtime.Autograd.Cuda.Tape.leaf (t := t1c) (Utils.tensorToAnyBuffer b) (name := some "b")
+  let (t1c, aIdc) :=
+    Runtime.Autograd.Cuda.Tape.leaf (t := t0c) (Utils.tensorToAnyBuffer a) (name := some "a")
+  let (t2c, bIdc) :=
+    Runtime.Autograd.Cuda.Tape.leaf (t := t1c) (Utils.tensorToAnyBuffer b) (name := some "b")
   let (t3c, u1c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.add (t := t2c) (s := s) aIdc bIdc)
-  let (t4c, u2c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.scale (t := t3c) (s := s) aIdc scaleC)
+  let (t4c, u2c) ← Utils.okOrThrow
+    (Runtime.Autograd.Cuda.Tape.scale (t := t3c) (s := s) aIdc scaleC)
   let (t5c, u3c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.sub (t := t4c) (s := s) u1c u2c)
   let (t6c, u4c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.mul (t := t5c) (s := s) u3c bIdc)
   let (t7c, u5c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.max (t := t6c) (s := s) u4c aIdc)
@@ -88,11 +93,13 @@ def run : IO Unit := do
   let (t12c, u10c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.softplus (t := t11c) (s := s) u9c)
   let (t13c, u11c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.exp (t := t12c) (s := s) u10c)
   let (t14c, u12c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.abs (t := t13c) (s := s) u11c)
-  let (t15c, u13c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.clamp (t := t14c) (s := s) u12c clampLo clampHi)
+  let (t15c, u13c) ← Utils.okOrThrow
+    (Runtime.Autograd.Cuda.Tape.clamp (t := t14c) (s := s) u12c clampLo clampHi)
   let (t16c, u14c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.sqrt (t := t15c) (s := s) u13c)
   let (t17c, u15c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.inv (t := t16c) (s := s) u14c)
   let (t18c, u16c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.log (t := t17c) (s := s) u14c)
-  let (t19c, u17c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.safeLog (t := t18c) (s := s) u14c eps)
+  let (t19c, u17c) ← Utils.okOrThrow
+    (Runtime.Autograd.Cuda.Tape.safeLog (t := t18c) (s := s) u14c eps)
   let (t20c, u18c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.add (t := t19c) (s := s) u15c u16c)
   let (t21c, u19c) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.add (t := t20c) (s := s) u18c u17c)
   let (t22c, outIdc) ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.sum (t := t21c) (s := s) u19c)
@@ -100,7 +107,8 @@ def run : IO Unit := do
   let outCuda ← Utils.cudaValue (s := Shape.scalar) t22c outIdc
   let seedCuda : Runtime.Autograd.Cuda.AnyBuffer :=
     { s := Shape.scalar, buf := Runtime.Autograd.Cuda.Buffer.full 1 1.0 }
-  let gradsCuda ← Utils.okOrThrow (Runtime.Autograd.Cuda.Tape.backwardDenseAll (t := t22c) outIdc seedCuda)
+  let gradsCuda ← Utils.okOrThrow
+    (Runtime.Autograd.Cuda.Tape.backwardDenseAll (t := t22c) outIdc seedCuda)
   let dA_cuda ← Utils.cudaGrad (s := s) gradsCuda aIdc
   let dB_cuda ← Utils.cudaGrad (s := s) gradsCuda bIdc
 
@@ -110,21 +118,23 @@ def run : IO Unit := do
 
   -- The former exp(2x) quotient produced infinity divided by infinity at +100.
   let tailShape : Shape := [2]
-  let tails : Tensor Float tailShape := tensorOfArray! [2] #[100.0, -100.0]
+  let tails : Tensor Float tailShape :=
+    (Tensor.from #[100.0, -100.0]).reshape [2] (by dsimp; decide)
   let tailTape0 : Runtime.Autograd.Cuda.Tape := Runtime.Autograd.Cuda.Tape.empty
   let (tailTape1, tailsId) := Runtime.Autograd.Cuda.Tape.leaf
     (t := tailTape0) (Utils.tensorToAnyBuffer tails) (name := some "tanh tails")
   let (tailTape2, tanhId) ← Utils.okOrThrow <|
     Runtime.Autograd.Cuda.Tape.tanh (t := tailTape1) (s := tailShape) tailsId
   let gotTails ← Utils.cudaValue (s := tailShape) tailTape2 tanhId
-  let expectedTails : Tensor Float tailShape := tensorOfArray! [2] #[1.0, -1.0]
+  let expectedTails : Tensor Float tailShape :=
+    (Tensor.from #[1.0, -1.0]).reshape [2] (by dsimp; decide)
   Utils.assertTensorApprox (s := tailShape) "tanh finite tails" gotTails expectedTails
 
   -- GELU is one semantic tape node and one pointwise kernel in each direction. Check both against
   -- the spec-backed CPU tape over the nonlinear center and saturated tails.
   let geluShape : Shape := [7]
   let geluInput : Tensor Float geluShape :=
-    tensorOfArray! [7] #[-10.0, -3.0, -1.0, 0.0, 1.0, 3.0, 10.0]
+    (Tensor.from #[-10.0, -3.0, -1.0, 0.0, 1.0, 3.0, 10.0]).reshape [7] (by dsimp; decide)
   let geluCpu0 : Tape Float := Tape.empty
   let (geluCpu1, geluCpuInputId) :=
     Tape.leaf (t := geluCpu0) geluInput (name := some "gelu input")
@@ -132,7 +142,7 @@ def run : IO Unit := do
     Tape.gelu (α := Float) (t := geluCpu1) (s := geluShape) geluCpuInputId
   let geluCpuOutput ← Utils.cpuValue (s := geluShape) geluCpu2 geluCpuOutputId
   let geluSeedCpu : Spec.SomeTensor Float :=
-    Spec.SomeTensor.ofTensor (Spec.fill (α := Float) 1.0 geluShape)
+    Spec.SomeTensor.ofTensor (Tensor.full (α := Float) geluShape 1.0)
   let geluCpuGrads ← Utils.okOrThrow <|
     Tape.backwardDenseAll (α := Float) (t := geluCpu2) geluCpuOutputId geluSeedCpu
   let geluCpuGrad ← Utils.cpuGrad (s := geluShape) geluCpuGrads geluCpuInputId
@@ -158,10 +168,14 @@ def run : IO Unit := do
 
   -- The fused optimizer primitive must preserve the staged AdamW computation it replaces.
   let optimShape : Shape := [4]
-  let params : Tensor Float optimShape := tensorOfArray! [4] #[1.0, -2.0, 0.5, 4.0]
-  let gradient : Tensor Float optimShape := tensorOfArray! [4] #[0.2, -0.1, 0.4, -0.3]
-  let firstMoment : Tensor Float optimShape := tensorOfArray! [4] #[0.01, -0.02, 0.03, -0.04]
-  let secondMoment : Tensor Float optimShape := tensorOfArray! [4] #[0.2, 0.1, 0.4, 0.3]
+  let params : Tensor Float optimShape :=
+    (Tensor.from #[1.0, -2.0, 0.5, 4.0]).reshape [4] (by dsimp; decide)
+  let gradient : Tensor Float optimShape :=
+    (Tensor.from #[0.2, -0.1, 0.4, -0.3]).reshape [4] (by dsimp; decide)
+  let firstMoment : Tensor Float optimShape :=
+    (Tensor.from #[0.01, -0.02, 0.03, -0.04]).reshape [4] (by dsimp; decide)
+  let secondMoment : Tensor Float optimShape :=
+    (Tensor.from #[0.2, 0.1, 0.4, 0.3]).reshape [4] (by dsimp; decide)
   let paramsBuf := Utils.tensorToBuffer params
   let gradientBuf := Utils.tensorToBuffer gradient
   let firstMomentBuf := Utils.tensorToBuffer firstMoment

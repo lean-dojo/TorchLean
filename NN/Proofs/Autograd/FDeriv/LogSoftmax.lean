@@ -8,17 +8,12 @@ module
 
 public import NN.Proofs.Autograd.FDeriv.Softmax
 
-public import Mathlib.Analysis.Calculus.FDeriv.Add
-public import Mathlib.Analysis.Calculus.FDeriv.Comp
-public import Mathlib.Analysis.Calculus.FDeriv.Pi
-public import Mathlib.Analysis.InnerProductSpace.Calculus
-
 /-!
 # LogSoftmax
 
 Fréchet-derivative facts for **log-softmax** on Euclidean vectors.
 
-This is the analytic ($\mathbb R$) ingredient used to justify `log_softmax` nodes
+This is the analytic ($\mathbb R$) ingredient used to justify `logSoftmax` nodes
 (`Vec n → Vec n`) in the tape/DAG autograd proofs.
 
 ## References
@@ -38,12 +33,12 @@ open scoped BigOperators
 noncomputable section
 
 /-- `sumExp x` is strictly positive when the index type is nonempty. -/
-lemma sumExp_pos {n : Nat} (x : Vec (Nat.succ n)) : 0 < sumExp (n := Nat.succ n) x := by
+theorem sumExp_pos {n : Nat} (x : Vec (Nat.succ n)) : 0 < sumExp (n := Nat.succ n) x := by
   have hterm : ∀ i : Fin (Nat.succ n), 0 < Real.exp (x i) := fun i => Real.exp_pos (x i)
   simpa [sumExp] using Finset.sum_pos (fun i _ => hterm i) (Finset.univ_nonempty)
 
 /-- Convenience corollary: `sumExp x ≠ 0` (for `n = succ _`). -/
-lemma sumExp_ne_zero {n : Nat} (x : Vec (Nat.succ n)) : sumExp (n := Nat.succ n) x ≠ 0 :=
+theorem sumExp_ne_zero {n : Nat} (x : Vec (Nat.succ n)) : sumExp (n := Nat.succ n) x ≠ 0 :=
   ne_of_gt (sumExp_pos (n := n) x)
 
 /--

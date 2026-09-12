@@ -6,15 +6,17 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.CLI
 public import NN.Verification.PINN.Core
 public import NN.Verification.PINN.Dataset
-public import NN.Verification.PINN.PdeParse
-public import NN.MLTheory.CROWN.Graph
-public import NN.Verification.PINN.PyTorch
-public import NN.Verification.PINN.Architecture
-public import NN.Verification.Util.Json
-import Lean.Data.Json
+public import NN.API.CLI.Parser
+public import NN.Verification.PINN.PyTorch.ParamStore
+public import NN.API.CLI -- shake: keep
+public import NN.Verification.PINN.PdeParse -- shake: keep
+public import NN.MLTheory.CROWN.Graph -- shake: keep
+public import NN.Verification.PINN.PyTorch -- shake: keep
+public import NN.Verification.PINN.Architecture -- shake: keep
+public import NN.Verification.Util.Json -- shake: keep
+import Lean.Data.Json -- shake: keep
 
 /-!
 # PINN Dataset Check
@@ -46,15 +48,15 @@ open NN.MLTheory.CROWN.Graph
 open NN.Verification.PINN
 open NN.Verification.PINN.PdeParse
 open Import
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /-- Bundled dataset sample used by `lake exe verify -- pinn-dataset-check`. -/
 def defaultDatasetPath : String :=
   "NN/Examples/Verification/PINN/sample_dataset_1d.json"
 
 /-- CLI options for `pinn-dataset-check`. -/
-structure DatasetCheckOpts where
+structure Options where
   /-- Optional JSON file containing exported PINN weights. -/
   weights : Option String := none
   /-- Dataset JSON containing initial, boundary, or supervised data points to check. -/
@@ -77,16 +79,16 @@ def usage : String :=
     "[--strict]\n")
 
 /-- Parse command-line flags for `pinn-dataset-check`. -/
-def parseArgs (args : List String) : Except String DatasetCheckOpts := do
+def parseArgs (args : List String) : Except String Options := do
   let args := TorchLean.CLI.dropDashDash args
   if TorchLean.CLI.hasHelp args then
     throw usage
-  let (weights?, args) ← TorchLean.CLI.takeFlagValueOnce args "weights"
-  let (dataset?, args) ← TorchLean.CLI.takeFlagValueOnce args "dataset"
-  let (eps, args) ← TorchLean.CLI.takeFloatFlagDefault args "eps" 0.0
-  let (tol, args) ← TorchLean.CLI.takeFloatFlagDefault args "tol" 1e-3
-  let (maxPts, args) ← TorchLean.CLI.takeNatFlagDefault args "max" 200
-  let (strict, args) ← TorchLean.CLI.takeBoolFlagOnce args "strict"
+  let (weights?, args) ← TorchLean.CLI.takeFlagValue? args "weights"
+  let (dataset?, args) ← TorchLean.CLI.takeFlagValue? args "dataset"
+  let (eps, args) ← TorchLean.CLI.takeFloatFlag args "eps" (default := 0.0)
+  let (tol, args) ← TorchLean.CLI.takeFloatFlag args "tol" (default := 1e-3)
+  let (maxPts, args) ← TorchLean.CLI.takeNatFlag args "max" (default := 200)
+  let (strict, args) ← TorchLean.CLI.takeBoolFlag args "strict"
   TorchLean.CLI.checkNoArgs args
   unless eps.isFinite && eps ≥ 0.0 do
     throw s!"--eps must be finite and nonnegative, got {eps}"
@@ -99,7 +101,8 @@ def parseArgs (args : List String) : Except String DatasetCheckOpts := do
          maxPts := maxPts
          strict := strict }
 
-/-- Load a PINN graph and parameters, using built-in seed parameters when no weights are supplied. -/
+/-- Load a PINN graph and parameters, using built-in seed parameters when no weights are
+supplied. -/
 def loadGraphAndParams (weightsPath? : Option String) : IO (Graph × ParamStore Float) := do
   match weightsPath? with
   | none =>
@@ -114,27 +117,28 @@ def loadGraphAndParams (weightsPath? : Option String) : IO (Graph × ParamStore 
 
 /-- Check one dataset section and return `(contained, missed, maxAbsMidpointError)`. -/
 def checkSection
-    (g : Graph) (baseParams : ParamStore Float) (opts : DatasetCheckOpts)
+    (g : Graph) (baseParams : ParamStore Float) (options : Options)
     (sectionName : String) (pts : Array Dataset.Point) : IO (Nat × Nat × Float) := do
   let outId := SequentialPINNArch.graphOutputId g
-  let pts := pts.take opts.maxPts
+  let pts := pts.take options.maxPts
   let mut okCount : Nat := 0
   let mut badCount : Nat := 0
   let mut maxAbsErr : Float := 0.0
   for point in pts do
-    let center : Spec.Tensor Float [2] :=
-      Spec.Tensor.dim fun i => Spec.Tensor.scalar <| if i.val = 0 then point.x else point.yOrT
-    let ps := seedInput baseParams center opts.eps
+    let center : TorchLean.Tensor Float [2] :=
+      TorchLean.Tensor.dim fun i =>
+        TorchLean.Tensor.scalar <| if i.val = 0 then point.x else point.yOrT
+    let ps := seedInput baseParams center options.eps
     let ibp := runIBP (α := Float) g ps
     let outB ←
       match NN.MLTheory.CROWN.Graph.outputBox? ibp outId with
       | .ok outB => pure outB
       | .error msg => throw <| IO.userError s!"IBP failed at output for {sectionName}: {msg}"
-    let lo := Spec.Tensor.sumSpec outB.lo
-    let hi := Spec.Tensor.sumSpec outB.hi
+    let lo := TorchLean.Tensor.sumSpec outB.lo
+    let hi := TorchLean.Tensor.sumSpec outB.hi
     let mid := (lo + hi) / 2.0
     maxAbsErr := max maxAbsErr (Dataset.absDiff mid point.u)
-    if Dataset.containsWithTol point.u lo hi opts.tol then
+    if Dataset.containsWithTol point.u lo hi options.tol then
       okCount := okCount + 1
     else
       badCount := badCount + 1
@@ -150,25 +154,25 @@ The JSON schema matches the exporter used by `train_pinn_1d.py --dataset-json`.
 -/
 def main (args : List String) : IO Unit := do
   let args := TorchLean.CLI.normalizePathFlag args "dataset" defaultDatasetPath
-  let opts ←
+  let options ←
     match parseArgs args with
     | .ok o => pure o
     | .error msg => throw <| IO.userError s!"{msg}\n\n{usage}"
-  let some datasetPath := opts.dataset | throw <| IO.userError usage
-  let (g, baseParams) ← loadGraphAndParams opts.weights
+  let some datasetPath := options.dataset | throw <| IO.userError usage
+  let (g, baseParams) ← loadGraphAndParams options.weights
   let initial ← Dataset.loadSection datasetPath "initial"
   let boundary ← Dataset.loadSection datasetPath "boundary"
   let data ← Dataset.loadSection datasetPath "data"
 
-  let (okI, badI, maxI) ← checkSection g baseParams opts "initial" initial
-  let (okB, badB, maxB) ← checkSection g baseParams opts "boundary" boundary
-  let (okD, badD, maxD) ← checkSection g baseParams opts "data" data
+  let (okI, badI, maxI) ← checkSection g baseParams options "initial" initial
+  let (okB, badB, maxB) ← checkSection g baseParams options "boundary" boundary
+  let (okD, badD, maxD) ← checkSection g baseParams options "data" data
 
   IO.println s!"[PINN dataset] initial: ok={okI} bad={badI} max|err|≈{maxI}"
   IO.println s!"[PINN dataset] boundary: ok={okB} bad={badB} max|err|≈{maxB}"
   IO.println s!"[PINN dataset] data: ok={okD} bad={badD} max|err|≈{maxD}"
 
-  if opts.strict && (badI + badB + badD) > 0 then
+  if options.strict && (badI + badB + badD) > 0 then
     throw <| IO.userError
       "dataset check failed (--strict): some points not contained by output interval"
 

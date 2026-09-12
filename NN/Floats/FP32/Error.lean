@@ -6,10 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.FP32.Notation
 public import NN.Floats.NeuralFloat.Error.Addition
 public import NN.Floats.NeuralFloat.Error.Relative
 import Mathlib.Algebra.Order.Algebra
+public import NN.Floats.FP32.Notation
 
 /-!
 # `FP32` per-op error bounds

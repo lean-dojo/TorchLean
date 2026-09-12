@@ -8,7 +8,6 @@ module
 
 public import NN.Proofs.Autograd.FDeriv.Core
 
-public import Mathlib.Analysis.Normed.Module.FiniteDimension
 
 /-!
 # Params
@@ -45,7 +44,8 @@ abbrev Mat (m n : Nat) := PiLp 2 (fun _ : Fin m => PiLp 2 (fun _ : Fin n => ℝ)
 def vecOfFunMat {n : Nat} (f : Fin n → ℝ) : Vec n :=
   (euclideanEquiv n).symm f
 
-@[simp] lemma vecOfFunMat_ofLp {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
+/-- Coordinates of `vecOfFunMat f` are the values of `f`. -/
+@[simp] theorem vecOfFunMat_ofLp {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
     (vecOfFunMat (n := n) f).ofLp i = f i := by
   simp [vecOfFunMat, euclideanEquiv]
 
@@ -53,13 +53,13 @@ def vecOfFunMat {n : Nat} (f : Fin n → ℝ) : Vec n :=
 def toMatrix {m n : Nat} (W : Mat m n) : Matrix (Fin m) (Fin n) ℝ := fun i j => W i j
 
 /-- `toMatrix` preserves addition. -/
-lemma toMatrix_add {m n : Nat} (W1 W2 : Mat m n) :
+theorem toMatrix_add {m n : Nat} (W1 W2 : Mat m n) :
     toMatrix (W1 + W2) = toMatrix W1 + toMatrix W2 := by
   funext i j
   rfl
 
 /-- `toMatrix` preserves scalar multiplication. -/
-lemma toMatrix_smul {m n : Nat} (a : ℝ) (W : Mat m n) :
+theorem toMatrix_smul {m n : Nat} (a : ℝ) (W : Mat m n) :
     toMatrix (a • W) = a • toMatrix W := by
   funext i j
   rfl
@@ -92,12 +92,16 @@ def outer {m n : Nat} (δ : Vec m) (x : Vec n) : Mat m n :=
     WithLp.toLp 2 fun j : Fin n =>
       δ.ofLp i * x.ofLp j
 
-@[simp] lemma outer_apply {m n : Nat} (δ : Vec m) (x : Vec n) (i : Fin m) (j : Fin n) :
+/-- Entries of the outer product are the pairwise products, as expected.
+
+This is the shape a weight gradient takes: `∂L/∂W = δ ⊗ x`. Having it as a `simp` lemma means the
+adjointness proof below never has to unfold the nested `WithLp` wrappers. -/
+@[simp] theorem outer_apply {m n : Nat} (δ : Vec m) (x : Vec n) (i : Fin m) (j : Fin n) :
     outer (m := m) (n := n) δ x i j = δ.ofLp i * x.ofLp j := by
   simp [outer]
 
 /-- Coordinate formula for the Frobenius/$\ell_2$ inner product on `Mat m n`. -/
-lemma inner_mat_eq_sum {m n : Nat} (A B : Mat m n) :
+theorem inner_mat_eq_sum {m n : Nat} (A B : Mat m n) :
     inner ℝ A B = ∑ i : Fin m, ∑ j : Fin n, A i j * B i j := by
   classical
   calc
@@ -113,7 +117,7 @@ Adjointness identity for `matApplyLin x`:
 
 `⟪(W ↦ W x) dW, δ⟫ = ⟪dW, δ ⊗ x⟫`.
 -/
-lemma inner_matApply_eq {m n : Nat} (x : Vec n) (dW : Mat m n) (δ : Vec m) :
+theorem inner_matApply_eq {m n : Nat} (x : Vec n) (dW : Mat m n) (δ : Vec m) :
     inner ℝ ((matApplyLin (m := m) (n := n) x) dW) δ
       =
     inner ℝ dW (outer (m := m) (n := n) δ x) := by
@@ -162,7 +166,7 @@ Adjoint of `W ↦ W x` under Frobenius/$\ell_2$ inner products.
 This is the mathematical core of the “weight gradient is outer product” rule:
 `(matApplyLin x)† δ = δ ⊗ x`.
 -/
-lemma matApplyLin_adjoint_apply {m n : Nat} (x : Vec n) (δ : Vec m) :
+theorem matApplyLin_adjoint_apply {m n : Nat} (x : Vec n) (δ : Vec m) :
     (matApplyLin (m := m) (n := n) x).adjoint δ = outer (m := m) (n := n) δ x := by
   classical
   let A := matApplyLin (m := m) (n := n) x

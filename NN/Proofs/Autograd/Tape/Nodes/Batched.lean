@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Tape.Nodes.GraphComposition
+public import NN.Proofs.Autograd.Tape.Nodes.Matrix
+public import NN.Proofs.Autograd.Tape.Nodes.Softmax
 
 /-!
 # Batched
@@ -26,8 +27,8 @@ All results here are spec-level over `ℝ`.
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -90,15 +91,21 @@ def unheadsCLM {h n : Nat} : (Fin h → Vec n) →L[ℝ] Vec (h * n) := by
   refine ⟨fLin, ?_⟩
   exact LinearMap.continuous_of_finiteDimensional (f := fLin)
 
-@[simp] lemma headsCLM_apply {h n : Nat} (x : Vec (h * n)) :
+/-- The bundled split into heads computes `heads`. -/
+@[simp] theorem headsCLM_apply {h n : Nat} (x : Vec (h * n)) :
     headsCLM (h := h) (n := n) x = heads (h := h) (n := n) x := by
   rfl
 
-@[simp] lemma unheadsCLM_apply {h n : Nat} (r : Fin h → Vec n) :
+/-- And the bundled reassembly computes `unheads`. Multi-head attention is exactly this split, a
+per-head computation, and this join, so both directions being linear is what keeps the derivative
+compositional. -/
+@[simp] theorem unheadsCLM_apply {h n : Nat} (r : Fin h → Vec n) :
     unheadsCLM (h := h) (n := n) r = unheads (h := h) (n := n) r := by
   rfl
 
-lemma size3_eq (h m n : Nat) :
+/-- Flattened size of a rank-3 shape. Stated separately because the batched maps below need it as a
+size cast, not as a `simp` step. -/
+theorem size3_eq (h m n : Nat) :
     Spec.Shape.size (.dim h (.dim m (.dim n .scalar))) = h * (m * n) := by
   simp [Spec.Shape.size]
 
@@ -217,7 +224,8 @@ def matmul {Γ : List Shape} {h m n p : Nat}
   let sA : Shape := .dim h (.dim m (.dim n .scalar))
   let sB : Shape := .dim h (.dim n (.dim p .scalar))
   let sOut : Shape := .dim h (.dim m (.dim p .scalar))
-  let Bmul : Vec (Spec.Shape.size sA) →L[ℝ] Vec (Spec.Shape.size sB) →L[ℝ] Vec (Spec.Shape.size sOut) :=
+  let Bmul :
+      Vec (Spec.Shape.size sA) →L[ℝ] Vec (Spec.Shape.size sB) →L[ℝ] Vec (Spec.Shape.size sOut) :=
     matmulBilin (h := h) (m := m) (n := n) (p := p)
   let fA : CtxVec Γ → Vec (Spec.Shape.size sA) :=
     fun x => CtxVec.get (Γ := Γ) (s := sA) A x
@@ -244,7 +252,8 @@ def matmulFderiv {Γ : List Shape} {h m n p : Nat}
   let sA : Shape := .dim h (.dim m (.dim n .scalar))
   let sB : Shape := .dim h (.dim n (.dim p .scalar))
   let sOut : Shape := .dim h (.dim m (.dim p .scalar))
-  let Bmul : Vec (Spec.Shape.size sA) →L[ℝ] Vec (Spec.Shape.size sB) →L[ℝ] Vec (Spec.Shape.size sOut) :=
+  let Bmul :
+      Vec (Spec.Shape.size sA) →L[ℝ] Vec (Spec.Shape.size sB) →L[ℝ] Vec (Spec.Shape.size sOut) :=
     matmulBilin (h := h) (m := m) (n := n) (p := p)
   let fA : CtxVec Γ → Vec (Spec.Shape.size sA) :=
     fun x => CtxVec.get (Γ := Γ) (s := sA) A x
@@ -291,7 +300,7 @@ def matmulFderiv {Γ : List Shape} {h m n p : Nat}
 -- ---------------------------------------------------------------------------
 
 /--
-Batched row-wise softmax node: apply `softmax_last` independently per head.
+Batched row-wise softmax node: apply `softmaxLast` independently per head.
 
 Shape: `h × (m×n) → h × (m×n)`, where each head contains an `m×n` matrix and softmax is along the
 last axis (size `n`) within each row.
@@ -331,7 +340,7 @@ def softmaxLast {Γ : List Shape} {h m n : Nat}
       intro xV dxV δV
       simpa using (ContinuousLinearMap.adjoint_inner_right (A := D xV) (x := dxV) (y := δV)).symm)
 
-/-- `NodeFDerivCorrect` for `softmax_last` in the batched/head-wise setting. -/
+/-- `NodeFDerivCorrect` for `softmaxLast` in the batched/head-wise setting. -/
 def softmaxLastFderiv {Γ : List Shape} {h m n : Nat}
     (idx : Idx Γ (.dim h (.dim m (.dim n .scalar)))) :
     NodeFDerivCorrect (softmaxLast (Γ := Γ) (h := h) (m := m) (n := n) idx) := by

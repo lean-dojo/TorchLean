@@ -7,11 +7,15 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Adapters
+public import NN.API.Arguments
 public import NN.API.Autograd
 public import NN.API.Checkpoint
-public import NN.API.Scalar
+public import NN.API.CLI.Trainer
+public import NN.API.CLI.Training.Command
+public import NN.API.Arithmetic
 public import NN.API.Data
 public import NN.API.Loss
+public import NN.API.Macros
 public import NN.API.Models
 public import NN.API.Module
 public import NN.API.Neural
@@ -19,11 +23,16 @@ public import NN.API.Optim
 public import NN.API.RL
 public import NN.API.Runtime
 public import NN.API.SelfSupervised
-public import NN.Tensor
+-- `NN.Tensor` re-exports the tensor constructors and operations under their short names, and
+-- readers of this umbrella expect `Tensor.zeros`-style spellings to be in scope. Nothing in
+-- this file needs it, so shake removes it: keep it for the consumers.
+public import NN.Tensor -- shake: keep
 public import NN.API.Sample
 public import NN.API.Text
 public import NN.API.Trainer
 
+public import NN.API.Data.Image
+public import NN.API.Models.Diffusion.Sampling
 /-!
 # TorchLean
 

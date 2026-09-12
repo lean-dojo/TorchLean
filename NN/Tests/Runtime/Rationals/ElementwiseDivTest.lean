@@ -8,6 +8,7 @@ module
 
 public import NN.Runtime.Autograd.Train
 public import NN.Tensor
+public import NN.Spec.Core.Context.Rational
 
 /-!
 # ElementwiseDivTest
@@ -32,12 +33,12 @@ y=[3,2],\qquad
 $$
 -/
 
-open scoped NN.Spec.RationalAlgebraic
+open scoped Spec.RationalAlgebraic
 
 @[expose] public section
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Tests
 namespace Rationals
@@ -52,20 +53,20 @@ abbrev tag : String := "elementwise_div_test (Rat)"
 abbrev s2 : Shape := [2]
 
 /-- Numerator `a`. -/
-def a : Tensor ℚ s2 := tensorOfArray! [2] #[6.0, 8.0]
+def a : Tensor ℚ s2 := [6.0, 8.0]
 /-- Denominator `b`. -/
-def b : Tensor ℚ s2 := tensorOfArray! [2] #[2.0, 4.0]
+def b : Tensor ℚ s2 := [2.0, 4.0]
 /-- Upstream gradient $\partial L/\partial y$. -/
-def dLdy : Tensor ℚ s2 := tensorOfArray! [2] #[1.0, 1.0]
+def dLdy : Tensor ℚ s2 := [1.0, 1.0]
 
 /-- Expected forward value $a/b=[3,2]$. -/
-def yExp : Tensor ℚ s2 := tensorOfArray! [2] #[3.0, 2.0]
+def yExp : Tensor ℚ s2 := [3.0, 2.0]
 /-- Expected gradient $\partial L/\partial a=\mathrm{dLdy}/b=[1/2,1/4]$. -/
-def daExp : Tensor ℚ s2 := tensorOfArray! [2] #[0.5, 0.25]
+def daExp : Tensor ℚ s2 := [0.5, 0.25]
 /-- Expected gradient
 $\partial L/\partial b=-\mathrm{dLdy}\,a/b^2=[-3/2,-1/2]$
 (built by negating $[3/2,1/2]$). -/
-def dbExp : Tensor ℚ s2 := - tensorOfArray! [2] #[1.5, 0.5]
+def dbExp : Tensor ℚ s2 := Tensor.negSpec [1.5, 0.5]
 
 /-- Build a tape for $y=a/b$, run the backward pass, and check the forward value and both
 input gradients against the exact rational references. -/

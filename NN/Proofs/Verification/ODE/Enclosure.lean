@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import Mathlib.Analysis.Calculus.MeanValue
-public import Mathlib.Topology.Order.OrderClosed
 
 /-!
 # ODE Corridor Enclosures
@@ -54,13 +53,13 @@ def clampToCorridor (uL uU : ℝ → ℝ) (t : ℝ) (u : ℝ) : ℝ :=
   max (uL t) (min (uU t) u)
 
 /-- If `u` is already within the corridor, clamping is a no-op. -/
-lemma clampToCorridor_eq_self {uL uU : ℝ → ℝ} {t u : ℝ}
+theorem clampToCorridor_eq_self {uL uU : ℝ → ℝ} {t u : ℝ}
     (hL : uL t ≤ u) (hU : u ≤ uU t) :
     clampToCorridor uL uU t u = u := by
   simp [clampToCorridor, min_eq_right hU, max_eq_right hL]
 
 /-- If `u` lies strictly above the corridor, clamping snaps to the upper wall. -/
-lemma clampToCorridor_eq_upper {uL uU : ℝ → ℝ} {t u : ℝ}
+theorem clampToCorridor_eq_upper {uL uU : ℝ → ℝ} {t u : ℝ}
     (hLU : uL t ≤ uU t) (hU : uU t < u) :
     clampToCorridor uL uU t u = uU t := by
   have hm : min (uU t) u = uU t := min_eq_left (le_of_lt hU)
@@ -68,7 +67,7 @@ lemma clampToCorridor_eq_upper {uL uU : ℝ → ℝ} {t u : ℝ}
   simp [clampToCorridor, hm, hM]
 
 /-- If `u` lies strictly below the corridor, clamping snaps to the lower wall. -/
-lemma clampToCorridor_eq_lower {uL uU : ℝ → ℝ} {t u : ℝ}
+theorem clampToCorridor_eq_lower {uL uU : ℝ → ℝ} {t u : ℝ}
     (hLU : uL t ≤ uU t) (hL : u < uL t) :
     clampToCorridor uL uU t u = uL t := by
   have hU : u ≤ uU t := le_trans (le_of_lt hL) hLU
@@ -91,12 +90,12 @@ We implement this by reducing to mathlib’s 1D *fencing theorem*
 -/
 
 /-- Helper: on $[0,T]$, we have $1+t>0$ (used to pick $\varepsilon$ scaled by $1+t$). -/
-private lemma one_add_pos_of_mem_Icc {T t : ℝ} (ht : t ∈ Icc 0 T) : 0 < (1 + t) := by
+private theorem one_add_pos_of_mem_Icc {T t : ℝ} (ht : t ∈ Icc 0 T) : 0 < (1 + t) := by
   have : 0 ≤ t := ht.1
   linarith
 
 /-- Helper: on `[0,T)`, we have `1 + t > 0` (used in the fencing boundary condition). -/
-private lemma one_add_pos_of_mem_Ico {T t : ℝ} (ht : t ∈ Ico 0 T) : 0 < (1 + t) := by
+private theorem one_add_pos_of_mem_Ico {T t : ℝ} (ht : t ∈ Ico 0 T) : 0 < (1 + t) := by
   have : 0 ≤ t := ht.1
   linarith
 
@@ -350,11 +349,11 @@ noncomputable def constantExtensionAfter (T : ℝ) (g : ℝ → ℝ) : ℝ → �
   fun t => if t ≤ T then g t else g T
 
 /-- On the left side of the switching time (`t ≤ T`), the extension agrees with `g`. -/
-@[simp] lemma constantExtensionAfter_of_le {T : ℝ} {g : ℝ → ℝ} {t : ℝ} (ht : t ≤ T) :
+@[simp] theorem constantExtensionAfter_of_le {T : ℝ} {g : ℝ → ℝ} {t : ℝ} (ht : t ≤ T) :
     constantExtensionAfter T g t = g t := by simp [constantExtensionAfter, ht]
 
 /-- On the right side of the switching time (`T < t`), the extension is constant `g T`. -/
-@[simp] lemma constantExtensionAfter_of_gt {T : ℝ} {g : ℝ → ℝ} {t : ℝ} (ht : T < t) :
+@[simp] theorem constantExtensionAfter_of_gt {T : ℝ} {g : ℝ → ℝ} {t : ℝ} (ht : T < t) :
     constantExtensionAfter T g t = g T := by simp [constantExtensionAfter, not_le_of_gt ht]
 
 /-!
@@ -364,7 +363,7 @@ The next two lemmas provide derivatives for `constantExtensionAfter T g`:
   when viewed within the right-derivative filter `𝓝[Ici t] t`).
 -/
 /-- Derivative of `constantExtensionAfter T g` strictly before `T` matches the derivative of `g`. -/
-private lemma hasDerivWithinAt_constantExtensionAfter_before
+private theorem hasDerivWithinAt_constantExtensionAfter_before
     {T : ℝ} {g g' : ℝ → ℝ} {t : ℝ} (ht : t < T)
     (hg : HasDerivWithinAt g (g' t) (Ici t) t) :
     HasDerivWithinAt (constantExtensionAfter T g) (g' t) (Ici t) t := by
@@ -382,7 +381,7 @@ private lemma hasDerivWithinAt_constantExtensionAfter_before
   exact hg.congr_of_eventuallyEq hEq (by simp [constantExtensionAfter, le_of_lt ht])
 
 /-- Derivative of `constantExtensionAfter T g` at/after `T` is zero in the right-derivative view. -/
-private lemma hasDerivWithinAt_constantExtensionAfter_after
+private theorem hasDerivWithinAt_constantExtensionAfter_after
     {T : ℝ} {g : ℝ → ℝ} {t : ℝ} (ht : T ≤ t) :
     HasDerivWithinAt (constantExtensionAfter T g) 0 (Ici t) t := by
   have hEq : ∀ x ∈ Ici t, constantExtensionAfter T g x = g T := by

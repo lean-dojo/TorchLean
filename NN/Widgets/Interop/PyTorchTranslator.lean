@@ -70,7 +70,7 @@ inductive Layer where
   | maxPool (rank kernel stride : Nat)
   /-- Adaptive average pooling is detected as a rank-parameterized boundary item. -/
   | adaptiveAvgPool (rank out : Nat)
-  /-- Flatten layer; translated to `nn.flatten` in vector-style sequential skeletons. -/
+  /-- Flatten layer; its axis range needs an explicit shape contract. -/
   | flatten
   /-- Elementwise ReLU. -/
   | relu
@@ -80,7 +80,8 @@ inductive Layer where
   | sigmoid
   /-- Elementwise tanh. -/
   | tanh
-  /-- Dropout is recognized, but emitted as a boundary comment because mode/seed must be explicit. -/
+  /-- Dropout is recognized, but emitted as a boundary comment because mode/seed must be
+  explicit. -/
   | dropout
   /-- A line that looks relevant to PyTorch but is outside the supported translator subset. -/
   | unsupported (raw reason : String)
@@ -114,6 +115,11 @@ Lean's core string API is enough for this bounded-scope assistant. A VS Code ext
 private def hasSubstr (s needle : String) : Bool :=
   (s.splitOn needle).length > 1
 
+/-- Match a complete call name, so `ReLU6` is not mistaken for `ReLU`. -/
+private def hasCall (s name : String) : Bool :=
+  let head := ((s.splitOn "(").headD s).trimAscii.toString
+  head == name || head.endsWith ("." ++ name) || head.endsWith (" " ++ name)
+
 /--
 Normalize a source line before matching constructors.
 
@@ -128,43 +134,45 @@ and trims whitespace. It deliberately does not try to understand arbitrary Pytho
 -/
 private def lineClean (s : String) : String :=
   let s := s.trimAscii.toString
+  if s.startsWith "#" then s else
   -- Drop the common `self.foo =` or `foo =` prefix so constructor matching is stable.
   match s.splitOn "=" with
-  | _lhs :: rhs :: _ => rhs.trimAscii.toString
+  | lhs :: rhs =>
+      if hasSubstr lhs "(" then s else (String.intercalate "=" rhs).trimAscii.toString
   | _ => s
 
-/-- Convert an ASCII digit character to its numeric value. Called only after `Char.isDigit`. -/
-private def digitVal (c : Char) : Nat :=
-  c.toNat - '0'.toNat
+/-- Read natural-valued positional or named arguments from one simple constructor call.
 
-/--
-Extract decimal natural numbers from a constructor line.
-
-This is enough for layer signatures like `Linear(784, 128)` and `Conv2d(3, 64, 7, stride=2,
-padding=3)`. It intentionally ignores floating literals, symbolic dimensions, tuples with different
-height/width values, and keyword names; those cases are better handled by the real graph-capture
-path. The payoff is that the widget stays total, fast, and easy to inspect.
+Nested tuples, symbolic dimensions, negative or fractional values, duplicate keywords, and unknown
+options are rejected rather than guessed. Constructor-name digits are outside the argument list.
 -/
-private def numbersInString (s : String) : Array Nat :=
-  let finish (acc : Array Nat) (cur? : Option Nat) : Array Nat :=
-    match cur? with
-    | some n => acc.push n
-    | none => acc
-  let (acc, cur?) :=
-    s.toList.foldl
-      (fun (state : Array Nat × Option Nat) c =>
-        let (acc, cur?) := state
-        if c.isDigit then
-          let d := digitVal c
-          let n := match cur? with | some n => n * 10 + d | none => d
-          (acc, some n)
-        else
-          (finish acc cur?, none))
-      (#[], none)
-  finish acc cur?
-
-private def nth? (xs : Array Nat) (i : Nat) : Option Nat :=
-  if h : i < xs.size then some xs[i] else none
+private def constructorNatArgs? (s : String) (names : Array String) :
+    Option (Array (Option Nat)) := do
+  let [_head, body] := s.splitOn "(" | none
+  let [args, tail] := body.splitOn ")" | none
+  unless tail.trimAscii.toString ∈ ["", ","] do none
+  let mut values : Array (Option Nat) := Array.replicate names.size none
+  let mut positional : Nat := 0
+  let mut sawKeyword := false
+  for raw in args.splitOn "," do
+    let raw := raw.trimAscii.toString
+    if raw.isEmpty then none
+    let (index, value) ←
+      match raw.splitOn "=" with
+      | [value] => do
+          if sawKeyword then none
+          let index := positional
+          positional := positional + 1
+          pure (index, value)
+      | [key, value] => do
+          sawKeyword := true
+          let index ← names.findIdx? (· == key.trimAscii.toString)
+          pure (index, value)
+      | _ => none
+    let .none ← values[index]? | none
+    let number ← value.trimAscii.toString.toNat?
+    values := values.set! index (some number)
+  pure values
 
 /-- Whether a layer row belongs to the recognized vocabulary rather than the unsupported bucket. -/
 private def supported (l : Layer) : Bool :=
@@ -196,9 +204,7 @@ experience TorchLean should avoid.
 -/
 private def layerTorchLeanTerm? : Layer → Option String
   | .linear i o => some s!"nn.linear {i} {o}"
-  | .flatten => some "nn.flatten"
   | .relu => some "nn.relu"
-  | .gelu => some "nn.gelu"
   | .sigmoid => some "nn.sigmoid"
   | .tanh => some "nn.tanh"
   | _ => none
@@ -206,11 +212,17 @@ private def layerTorchLeanTerm? : Layer → Option String
 /--
 Render the non-direct pieces as comments in the generated skeleton.
 
-These comments are part of the user-facing translator output. A user should be able to paste the skeleton into a
-Lean file and immediately see which information is still missing: image shape, dropout probability
-and seed, adaptive-pooling semantics, or an unsupported PyTorch operation.
+These comments are part of the user-facing translator output. A user should be able to paste the
+skeleton into a Lean file and immediately see which information is still missing: image shape,
+dropout probability and seed, adaptive-pooling semantics, or an unsupported PyTorch operation.
 -/
 private def layerBoundaryComment? : Layer → Option String
+  | .flatten =>
+      some "-- Flatten detected: choose `nn.flatten` or `nn.flattenAfter` after checking the \
+        source axis range and batch shape."
+  | .gelu =>
+      some "-- GELU detected: `nn.gelu` uses the tanh approximation. Check the source \
+        approximation before adding it."
   | .conv d i o k s p =>
       some <| s!"-- Conv(rank={d}, in={i}, out={o}, kernel={k}, stride={s}, padding={p}) " ++
         "detected: add `nn.conv` after choosing the input spatial vector."
@@ -221,7 +233,8 @@ private def layerBoundaryComment? : Layer → Option String
       some <| s!"-- AdaptiveAvgPool(rank={d}, output={o}) detected: connect it to the " ++
         "rank-polymorphic pooling operation required by the model."
   | .dropout =>
-      some "-- Dropout detected: add `nn.Dropout p (seed := seed)` after making `p` and mode behavior explicit."
+      some "-- Dropout detected: choose `p`, add `nn.dropout p`, and build the model with \
+        `nn.build seed` after checking train/eval behavior."
   | .unsupported raw reason =>
       some s!"-- Unsupported PyTorch line: {raw} ({reason})"
   | _ => none
@@ -244,51 +257,58 @@ private def analyzeLine (raw : String) : Option Layer :=
   let s := lineClean raw
   if s.isEmpty || s.startsWith "#" then
     none
-  else if hasSubstr s "nn.linear" || hasSubstr s "Linear(" then
-    let ns := numbersInString s
-    match nth? ns 0, nth? ns 1 with
+  else if hasCall s "nn.linear" || hasCall s "Linear" then
+    let ns := (constructorNatArgs? s #["in_features", "out_features"]).getD #[]
+    match (ns[0]?.getD none), (ns[1]?.getD none) with
     | some i, some o => some (.linear i o)
-    | _, _ => some (.unsupported s "Linear needs numeric in_features and out_features")
-  else if hasSubstr s "nn.Conv1d" || hasSubstr s "Conv1d(" ||
-      hasSubstr s "nn.Conv2d" || hasSubstr s "Conv2d(" ||
-      hasSubstr s "nn.Conv3d" || hasSubstr s "Conv3d(" then
+    | _, _ => some (.unsupported s
+        "Linear needs natural in_features/out_features with no extra options")
+  else if hasCall s "nn.Conv1d" || hasCall s "Conv1d" ||
+      hasCall s "nn.Conv2d" || hasCall s "Conv2d" ||
+      hasCall s "nn.Conv3d" || hasCall s "Conv3d" then
     let rank := if hasSubstr s "Conv1d" then 1 else if hasSubstr s "Conv2d" then 2 else 3
-    let ns := numbersInString s
-    match nth? ns 0, nth? ns 1, nth? ns 2 with
+    let ns := (constructorNatArgs? s
+      #["in_channels", "out_channels", "kernel_size", "stride", "padding"]).getD #[]
+    match (ns[0]?.getD none), (ns[1]?.getD none), (ns[2]?.getD none) with
     | some i, some o, some k =>
-        let stride := (nth? ns 3).getD 1
-        let padding := (nth? ns 4).getD 0
+        let stride := (ns[3]?.getD none).getD 1
+        let padding := (ns[4]?.getD none).getD 0
         some (.conv rank i o k stride padding)
-    | _, _, _ => some (.unsupported s "Conv needs numeric in_channels, out_channels, kernel_size")
-  else if hasSubstr s "nn.MaxPool1d" || hasSubstr s "MaxPool1d(" ||
-      hasSubstr s "nn.MaxPool2d" || hasSubstr s "MaxPool2d(" ||
-      hasSubstr s "nn.MaxPool3d" || hasSubstr s "MaxPool3d(" then
+    | _, _, _ => some (.unsupported s
+        "Conv needs scalar natural dimensions/stride/padding; extra options need manual handling")
+  else if hasCall s "nn.MaxPool1d" || hasCall s "MaxPool1d" ||
+      hasCall s "nn.MaxPool2d" || hasCall s "MaxPool2d" ||
+      hasCall s "nn.MaxPool3d" || hasCall s "MaxPool3d" then
     let rank := if hasSubstr s "MaxPool1d" then 1 else if hasSubstr s "MaxPool2d" then 2 else 3
-    let ns := numbersInString s
-    match nth? ns 0 with
+    let ns := (constructorNatArgs? s #["kernel_size", "stride"]).getD #[]
+    match (ns[0]?.getD none) with
     | some k =>
-        let stride := (nth? ns 1).getD k
+        let stride := (ns[1]?.getD none).getD k
         some (.maxPool rank k stride)
-    | none => some (.unsupported s "MaxPool needs a numeric kernel_size")
-  else if hasSubstr s "nn.AdaptiveAvgPool1d" || hasSubstr s "AdaptiveAvgPool1d(" ||
-      hasSubstr s "nn.AdaptiveAvgPool2d" || hasSubstr s "AdaptiveAvgPool2d(" ||
-      hasSubstr s "nn.AdaptiveAvgPool3d" || hasSubstr s "AdaptiveAvgPool3d(" then
+    | none => some (.unsupported s
+        "MaxPool needs scalar natural kernel_size/stride and no extra options")
+  else if hasCall s "nn.AdaptiveAvgPool1d" || hasCall s "AdaptiveAvgPool1d" ||
+      hasCall s "nn.AdaptiveAvgPool2d" || hasCall s "AdaptiveAvgPool2d" ||
+      hasCall s "nn.AdaptiveAvgPool3d" || hasCall s "AdaptiveAvgPool3d" then
     let rank := if hasSubstr s "AdaptiveAvgPool1d" then 1
       else if hasSubstr s "AdaptiveAvgPool2d" then 2 else 3
-    match nth? (numbersInString s) 0 with
+    let ns := (constructorNatArgs? s #["output_size"]).getD #[]
+    match (ns[0]?.getD none) with
     | some o => some (.adaptiveAvgPool rank o)
-    | none => some (.unsupported s "AdaptiveAvgPool needs a numeric output size")
-  else if hasSubstr s "nn.flatten" || hasSubstr s "torch.flatten" || hasSubstr s ".flatten(" then
+    | none => some (.unsupported s "AdaptiveAvgPool needs a scalar natural output_size")
+  else if hasCall s "nn.Flatten" || hasCall s "nn.flatten" ||
+      hasCall s "torch.flatten" || hasCall s "flatten" then
     some .flatten
-  else if hasSubstr s "nn.relu" || hasSubstr s "F.relu" || hasSubstr s ".relu(" then
+  else if hasCall s "nn.ReLU" || hasCall s "nn.relu" ||
+      hasCall s "F.relu" || hasCall s "relu" then
     some .relu
-  else if hasSubstr s "nn.gelu" || hasSubstr s "F.gelu" then
+  else if hasCall s "nn.GELU" || hasCall s "nn.gelu" || hasCall s "F.gelu" then
     some .gelu
-  else if hasSubstr s "nn.sigmoid" || hasSubstr s "torch.sigmoid" then
+  else if hasCall s "nn.Sigmoid" || hasCall s "nn.sigmoid" || hasCall s "torch.sigmoid" then
     some .sigmoid
-  else if hasSubstr s "nn.tanh" || hasSubstr s "torch.tanh" then
+  else if hasCall s "nn.Tanh" || hasCall s "nn.tanh" || hasCall s "torch.tanh" then
     some .tanh
-  else if hasSubstr s "nn.Dropout" || hasSubstr s "Dropout(" then
+  else if hasCall s "nn.Dropout" || hasCall s "Dropout" then
     some .dropout
   else if hasSubstr s "def forward" || hasSubstr s "class " || hasSubstr s "super().__init__" ||
       hasSubstr s "return " || hasSubstr s "import " || hasSubstr s "from " ||
@@ -328,25 +348,28 @@ def analyze (snippet : String) : Report :=
         generated TorchLean skeleton can be made executable."
     if layers.any (fun l => match l with | .dropout => true | _ => false) then
       warnings := warnings.push
-        "Dropout is mode-dependent; TorchLean asks for an explicit probability/seed and keeps train/eval \
-        behavior visible."
+        "Dropout is mode-dependent; TorchLean asks for an explicit probability/seed and keeps \
+        train/eval behavior visible."
     if layers.any (fun l => match l with | .adaptiveAvgPool .. => true | _ => false) then
       warnings := warnings.push
         "Adaptive pooling is detected as a shape-changing operation; connect it to the specific \
         TorchLean pooling spec you want before treating the skeleton as executable."
+    if layers.any (fun l => match l with | .flatten => true | _ => false) then
+      warnings := warnings.push
+        "Flatten needs an explicit axis range and batch shape; it is left as a boundary note."
+    if layers.any (fun l => match l with | .gelu => true | _ => false) then
+      warnings := warnings.push
+        "GELU needs an explicit approximation choice; TorchLean's `nn.gelu` uses tanh."
     pure warnings
   { layers, translated, warnings, unsupported }
-
-private def joinLines (xs : Array String) : String :=
-  String.intercalate "\n" xs.toList
 
 /--
 Generate a TorchLean skeleton from the recognized layer sequence.
 
 The emitted code is meant to be a starting point, not a final theorem. It imports the public
 TorchLean umbrella, opens the user-facing API namespaces, emits direct sequential terms for the safe
-subset, and then appends boundary notes as Lean comments. The next intended step is to add a concrete
-shape contract and wrap the model in a `Trainer.Manual.SeqTask`.
+subset, and then appends boundary notes as Lean comments. The next intended step is to add a
+concrete shape contract and hand the model to `Trainer.new` with an objective.
 -/
 def torchLeanSkeleton (r : Report) (name : String := "translatedModel") : String :=
   let translatedLines := r.layers.filterMap layerTorchLeanTerm?
@@ -354,15 +377,15 @@ def torchLeanSkeleton (r : Report) (name : String := "translatedModel") : String
     match translatedLines[0]? with
     | none => "    -- No directly translatable sequential terms were recognized."
     | some first =>
-        joinLines <| #["    " ++ first] ++
+        String.intercalate "\n" <| Array.toList <| #["    " ++ first] ++
           (translatedLines.extract 1 translatedLines.size).map (fun line => "  , " ++ line)
   let boundaryComments := r.layers.filterMap layerBoundaryComment?
   let boundaryBlock :=
     if boundaryComments.isEmpty then
       "-- Boundary notes: none for this supported translator subset."
     else
-      joinLines (#["-- Boundary notes:"] ++ boundaryComments)
-  joinLines #[
+      String.intercalate "\n" (#["-- Boundary notes:"] ++ boundaryComments).toList
+  String.intercalate "\n" <| Array.toList #[
     "import NN",
     "",
     "open TorchLean",
@@ -376,8 +399,9 @@ def torchLeanSkeleton (r : Report) (name : String := "translatedModel") : String
     "",
     "-- Next steps:",
     "-- 1. Add the concrete input/output shape contract.",
-    "-- 2. Choose a loss and wrap this in a `Trainer.Manual.SeqTask`.",
-    "-- 3. If this came from a real PyTorch module, use `torch.export` capture for a checked graph path."
+    "-- 2. Choose a loss and hand this to `Trainer.new` with that objective.",
+    "-- 3. If this came from a real PyTorch module, use `torch.export` capture for a checked \
+    graph path."
   ]
 
 /-- Render one recognized/unsupported layer row in the HTML report table. -/
@@ -389,6 +413,8 @@ private def layerRowHtml (l : Layer) : ProofWidgets.Html :=
     | .conv .. => "recognized; executable lowering needs the input spatial shape"
     | .maxPool .. => "recognized; executable lowering needs the input spatial shape"
     | .adaptiveAvgPool .. => "recognized as a boundary item"
+    | .flatten => "recognized; axis range and batch shape must be explicit"
+    | .gelu => "recognized; approximation choice must be explicit"
     | .dropout => "recognized; probability/seed must be explicit"
     | _ => "direct sequential skeleton"
   ;
@@ -410,7 +436,8 @@ Render a compact warning/error list.
 The empty case returns an empty `div` rather than an optional HTML value so the caller can compose
 panels in the JSX block without extra branching noise.
 -/
-private def msgListHtml (title : String) (msgs : Array String) (kind : String) : ProofWidgets.Html :=
+private def msgListHtml (title : String) (msgs : Array String) (kind : String) :
+    ProofWidgets.Html :=
   if msgs.isEmpty then
     <div></div>
   else
@@ -451,14 +478,17 @@ def html (snippet : String) : ProofWidgets.Html :=
     "background": "var(--vscode-editor-background, transparent)",
     "color": "var(--vscode-editor-foreground, inherit)"
   }}>
-    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom": "10px"}}>
+    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap",
+        "margin-bottom": "10px"}}>
       {pill "PyTorch -> TorchLean"}
       {pill s!"layers={r.layers.size}"}
       {pill s!"translated={r.translated}"}
       {if allSupported then okBadge "supported subset" else warnBadge "boundary report"}
     </div>
     <p style={json% {"margin": "0 0 10px 0"}}>
-      {.text "Supported-subset assistant for common PyTorch layer stacks. It generates a TorchLean skeleton and names the parts that still need shape contracts or the full torch.export path."}
+      {.text "Supported-subset assistant for common PyTorch layer stacks. It generates a TorchLean \
+        skeleton and names the parts that still need shape contracts or the full torch.export \
+        path."}
     </p>
     <details «open»={true}>
       <summary>{.text "Recognized layers"}</summary>
@@ -490,9 +520,12 @@ def html (snippet : String) : ProofWidgets.Html :=
     <details style={json% {"margin-top": "10px"}}>
       <summary>{.text "Trust boundary"}</summary>
       <ul>
-        <li>{.text "This widget is a heuristic editor assistant; checked import uses the explicit artifact bridge."}</li>
-        <li>{.text "A skeleton becomes executable only after you add the typed input/output shape contract."}</li>
-        <li>{.text "For real PyTorch modules, use the existing torch.export JSON bridge to capture and validate the graph."}</li>
+        <li>{.text "This widget is a heuristic editor assistant; checked import uses the explicit \
+          artifact bridge."}</li>
+        <li>{.text "A skeleton becomes executable only after you add the typed input/output shape \
+          contract."}</li>
+        <li>{.text "For real PyTorch modules, use the existing torch.export JSON bridge to capture \
+          and validate the graph."}</li>
       </ul>
     </details>
   </div>
@@ -519,8 +552,9 @@ The argument is a Lean term of type `String`, so examples can define reusable sn
 putting large multi-line strings directly in the command.
 -/
 macro "#pytorch_translate_view " snippet:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (_root_.NN.Widgets.PyTorchTranslator.html $snippet))
+  Lean.TSyntax.mkInfoCanonical <$> `(#html (NN.Widgets.PyTorchTranslator.html $snippet))
 
+/-- Panel shown when the snippet file cannot be read at all. -/
 private def fileErrorHtml (path msg : String) : ProofWidgets.Html :=
   <div style={json% {
     "padding": "10px",
@@ -546,7 +580,7 @@ Read a Python source file and render the translator report.
 This is the practical in-repo workflow:
 
 ```lean
-#pytorch_translate_file "NN/Examples/Quickstart/pytorch_translator_mlp.py"
+#pytorch_translate_file "NN/Examples/Interop/PyTorch/MLP/train_mlp.py"
 ```
 
 The command runs during elaboration, reads the file relative to the current Lake working directory,
@@ -558,7 +592,9 @@ def htmlFromFile (path : String) : CommandElabM ProofWidgets.Html := do
     let source ← liftIO <| IO.FS.readFile path
     pure (html source)
   catch _ =>
-    pure (fileErrorHtml path "IO.FS.readFile failed. Check that the path is relative to the Lake project root and that the file exists.")
+    pure (fileErrorHtml path
+      "IO.FS.readFile failed. Check that the path is relative to the Lake project root and that \
+      the file exists.")
 
 syntax (name := pytorchTranslateFileCmd) "#pytorch_translate_file " str : command
 
@@ -571,7 +607,7 @@ subset.
 -/
 macro "#pytorch_translate_file " path:str : command =>
   Lean.TSyntax.mkInfoCanonical <$>
-    `(#html (_root_.NN.Widgets.PyTorchTranslator.htmlFromFile $path))
+    `(#html (NN.Widgets.PyTorchTranslator.htmlFromFile $path))
 
 end PyTorchTranslator
 end NN.Widgets

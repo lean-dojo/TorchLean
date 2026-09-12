@@ -6,12 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.EReal.Basic
-public import NN.Floats.IEEEExec.Exec32
-public import NN.Floats.IEEEExec.Bridge.FP32Total
 public import NN.Floats.IEEEExec.Semantics.ERealSemantics
 public import NN.Floats.IEEEExec.Rounding.RoundDyadicToIEEE32Bounds
-public import NN.Floats.IEEEExec.Rules.SpecialRules
 
 /-!
 # Nearest-even lies between directed roundings (op-level corollaries)

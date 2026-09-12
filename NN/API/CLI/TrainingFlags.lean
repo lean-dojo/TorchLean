@@ -23,25 +23,20 @@ structure EpochBatch where
   /-- Number of epochs to train for. -/
   epochs : Nat
   /-- Batch size. -/
-  batch : Nat
+  batchSize : Nat
 
 /-- Parse `--epochs` and `--batch`, requiring both selected values to be positive. -/
 def takePositiveEpochBatch
-    (args : List String)
+    (arguments : List String)
     (exeName : String)
     (defaultEpochs defaultBatch : Nat) :
     Except String (EpochBatch × List String) := do
-  let (epochs, args) ← takeNatFlagDefault args "epochs" defaultEpochs
-  let (batch, args) ← takeNatFlagDefault args "batch" defaultBatch
+  let (epochs, arguments) ← takeNatFlag arguments "epochs" (default := defaultEpochs)
+  let (batchSize, arguments) ← takeNatFlag arguments "batch" (default := defaultBatch)
   if epochs = 0 then
     throw s!"{exeName}: --epochs must be > 0"
-  if batch = 0 then
+  if batchSize = 0 then
     throw s!"{exeName}: --batch must be > 0"
-  pure ({ epochs, batch }, args)
-
-/-- Parse an optional `--steps` flag with the provided default. -/
-def takeStepsFlagDefault (args : List String) (default : Nat) :
-    Except String (Nat × List String) :=
-  takeNatFlagDefault args "steps" default
+  pure ({ epochs, batchSize }, arguments)
 
 end TorchLean.CLI

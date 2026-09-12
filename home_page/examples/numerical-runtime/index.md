@@ -26,10 +26,10 @@ The final two rows should be:
   ok  two-layer MLP IEEE replay
 ```
 
-The same file also runs negative checks. It corrupts a range, registers a duplicate contract,
-changes the registry identity, violates the square-root domain, and asks a CUDA capsule with an
-implementation-defined reduction order to satisfy a fixed-left reduction certificate. Each case is
-rejected.
+The example also demonstrates rejection of a corrupted range. The regression suite in
+`NN/Tests/Verification/GraphNumericalCertificate.lean` checks duplicate contracts, changed registry
+identities, invalid square-root inputs, and incompatible CUDA reduction policies. Run the complete
+suite with `lake test`.
 
 ## The Model
 
@@ -94,8 +94,10 @@ rejects NaN, infinity, malformed payloads, missing constants, and out-of-range i
 
 A successful replay means that this concrete binary32 execution passed the stored graph
 certificate. It does not, by itself, turn an interval endpoint calculation into a theorem about
-every real input. For that statement, pair the checked replay with `ProvedRealEnclosure`, which
-supplies the exact-real inclusion theorem for the same graph and source region.
+every real input. A `ProvedRealEnclosure` supplies inclusion evidence for one real execution of the
+same graph, with its own input, payload, and node trace. Paired with the checked replay, it yields
+pointwise error bounds from the shared interval widths. A guarantee over an entire source region
+would need this evidence for every admissible real input; this example does not construct it.
 
 ## Forward, Backward, and the Optimizer
 

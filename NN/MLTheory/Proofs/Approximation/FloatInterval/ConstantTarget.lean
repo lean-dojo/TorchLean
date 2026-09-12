@@ -6,10 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Fin.Tuple.Basic
-public import Mathlib.Data.Set.Image
-public import NN.Floats.IEEEExec.Bridge.FP32Total
 public import NN.Floats.Interval.IEEEExec32
+public import NN.MLTheory.Proofs.Approximation.FloatInterval.Semantics
+public import NN.Floats.IEEEExec.Bridge.FP32Total.Order
+public import NN.Floats.IEEEExec.Exec32.Instances
 
 /-!
 # Constant rounded targets over `Interval32`
@@ -37,18 +37,19 @@ namespace FloatIntervalApprox.ConstantTarget
 
 open IEEE32Exec
 
+-- The scalar type and the extremum vocabulary are the companion file's; only the interval type
+-- differs here, because this file works over the concrete `Interval32` rather than the abstract
+-- domain. Borrowing them keeps one definition of "minimum on a set" for the whole development.
+open FloatIntervalApprox (F)
+open FloatIntervalApprox.ExactImage (Icc IsMinOn IsMaxOn)
+
 noncomputable section
 
-/-- Shorthand for the float32 executable type `IEEE32Exec`. -/
-abbrev F : Type := IEEE32Exec
 /-- Shorthand for the float32 interval type `IEEE32Exec.Interval32`. -/
 abbrev I : Type := IEEE32Exec.Interval32
 
 /-- Product box of float32 intervals. -/
 abbrev Box (d : Nat) : Type := Fin d → I
-
-/-- Float interval set `{x | a ≤ x ∧ x ≤ b}` (avoids requiring `Preorder`). -/
-def Icc (a b : F) : Set F := fun x => a ≤ x ∧ x ≤ b
 
 /-- Concretization of a float32 interval to a set of float32 values. -/
 def γI (J : I) : Set F := fun x => x ∈ J
@@ -61,15 +62,7 @@ def BoxValid {d : Nat} (B : Box d) : Prop := ∀ i, Interval32.Valid (B i)
 
 /-- `B` is a box contained in `[-1,1]^d`. -/
 def BoxInCube {d : Nat} (B : Box d) : Prop :=
-  ∀ i, (Numbers.negOne : F) ≤ (B i).lo ∧ (B i).hi ≤ (Numbers.one : F)
-
-/-- `m` is a minimum of `g` on the set `S`, stated without choosing a canonical `min`. -/
-def IsMinOn {X : Type} (g : X → F) (S : Set X) (m : F) : Prop :=
-  (∃ x, x ∈ S ∧ g x = m) ∧ ∀ y, (∃ x, x ∈ S ∧ g x = y) → m ≤ y
-
-/-- `M` is a maximum of `g` on the set `S`, stated without choosing a canonical `max`. -/
-def IsMaxOn {X : Type} (g : X → F) (S : Set X) (M : F) : Prop :=
-  (∃ x, x ∈ S ∧ g x = M) ∧ ∀ y, (∃ x, x ∈ S ∧ g x = y) → y ≤ M
+  ∀ i, ((-1) : F) ≤ (B i).lo ∧ (B i).hi ≤ (1 : F)
 
 /--
 Exact interval-image property, phrased as:
@@ -100,6 +93,8 @@ def RoundedTargetExactIntervalImageStatement (d : Nat) : Prop :=
           IsMaxOn fHat (γ (d := d) B) M ∧
           γI (nuInt B) = Icc m M)
 
+/-- Float comparison is reflexive on finite values. Not a `Preorder` instance, because `NaN` is not
+comparable to itself and IEEE 754 order is genuinely partial. -/
 theorem le_refl_of_isFinite (x : F) (hx : isFinite x = true) : x ≤ x := by
   have hcmp : compare x x = some .eq := by
     have h :=
@@ -108,6 +103,10 @@ theorem le_refl_of_isFinite (x : F) (hx : isFinite x = true) : x ≤ x := by
   change IEEE32Exec.le x x
   simp [IEEE32Exec.le, hcmp]
 
+/-- A valid box is nonempty, witnessed by its own lower corner.
+
+The exact-image statements quantify over nonempty concretizations, so this is what discharges that
+hypothesis for any box the checker actually produces. -/
 theorem gamma_nonempty_of_BoxValid {d : Nat} {B : Box d} (hB : BoxValid B) :
     (γ (d := d) B).Nonempty := by
   refine ⟨fun i => (B i).lo, ?_⟩
@@ -117,8 +116,8 @@ theorem gamma_nonempty_of_BoxValid {d : Nat} {B : Box d} (hB : BoxValid B) :
   exact And.intro hlelo hv.2.2
 
 /--
-Base case: a constant target `g(x) = c` has an exact interval-image witness given by the constant network and the
-point interval `[c,c]`.
+Base case: a constant target `g(x) = c` has an exact interval-image witness given by the constant
+network and the point interval `[c,c]`.
 -/
 theorem exactIntervalImage_constant {d : Nat} (c : F) (hc : isFinite c = true) :
     ExactIntervalImage (d := d) (g := fun _ => c) (_ν := fun _ => c)

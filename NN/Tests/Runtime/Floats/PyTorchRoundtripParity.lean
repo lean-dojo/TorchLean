@@ -9,11 +9,11 @@ module
 public import Lean.Data.Json
 public import NN.API.Json
 public import NN.Tensor
-public import NN.Examples.Interop.PyTorch.CNN.Import
-public import NN.Examples.Interop.PyTorch.MLP.Import
-public import NN.Examples.Interop.PyTorch.Transformer.Import
+public import NN.Runtime.PyTorch.Import.CNN
+public import NN.Runtime.PyTorch.Import.MLP
+public import NN.Examples.Interop.PyTorch.Roundtrip
+public import NN.Runtime.PyTorch.Import.Transformer
 public import NN.Core.ExternalProcess
-public import NN.Spec.Models.Cnn
 public import NN.Tests.Runtime.Floats.Utils
 
 /-!
@@ -26,8 +26,9 @@ inputs used by the round-trip examples.
 @[expose] public section
 
 open Lean
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
+open Tests.Utils
 open Tests.Floats.Utils
 
 namespace Tests
@@ -39,15 +40,6 @@ def workDir : System.FilePath :=
 
 def parityScriptPath : System.FilePath :=
   workDir / "compute_parity.py"
-
-def mlpJson : System.FilePath :=
-  "NN/Examples/Interop/PyTorch/MLP/mlp.json"
-
-def cnnJson : System.FilePath :=
-  "NN/Examples/Interop/PyTorch/CNN/cnn.json"
-
-def transformerJson : System.FilePath :=
-  "NN/Examples/Interop/PyTorch/Transformer/transformer_encoder.json"
 
 def parityScript : String :=
   String.intercalate "\n"
@@ -118,9 +110,9 @@ def parityScript : String :=
     , "    fc2 = nn.Linear(2, 2)"
     , "    norm2 = nn.LayerNorm(2)"
     , "    with torch.no_grad():"
-    , "        fc1.weight.copy_(torch.tensor(p['W1'], dtype=torch.float32).t())"
+    , "        fc1.weight.copy_(torch.tensor(p['W1'], dtype=torch.float32))"
     , "        fc1.bias.copy_(torch.tensor(p['b1'], dtype=torch.float32))"
-    , "        fc2.weight.copy_(torch.tensor(p['W2'], dtype=torch.float32).t())"
+    , "        fc2.weight.copy_(torch.tensor(p['W2'], dtype=torch.float32))"
     , "        fc2.bias.copy_(torch.tensor(p['b2'], dtype=torch.float32))"
     , "        norm1.weight.copy_(torch.tensor(p['norm1_gamma'], dtype=torch.float32))"
     , "        norm1.bias.copy_(torch.tensor(p['norm1_beta'], dtype=torch.float32))"
@@ -134,91 +126,15 @@ def parityScript : String :=
     ]
 
 def leanMlp : IO (Array Float) := do
-  let j ← TorchLean.Json.parseFile mlpJson
-  let some sd := Import.MLPPyTorch.loadMlpStateDict 2 3 1 j
-    | throw (IO.userError "pytorch_roundtrip_parity: failed to load MLP state dict")
-  let x : Tensor Float [2] := tensor! [0.5, 0.8]
-  let y := Import.MLPPyTorch.forward sd x
+  let y ← NN.Examples.Interop.PyTorch.Roundtrip.mlpOutput
   pure #[vecVal y ⟨0, by decide⟩]
 
 def leanCnn : IO (Array Float) := do
-  let j ← TorchLean.Json.parseFile cnnJson
-  let some sd := Import.CNNPyTorch.loadCnnStateDict 1 2 3 3 8 j
-    | throw (IO.userError "pytorch_roundtrip_parity: failed to load CNN state dict")
-  let spatial : Tensor Nat [2] := tensor! [8, 8]
-  let kernel : Tensor Nat [2] := tensor! [3, 3]
-  let unit : Tensor Nat [2] := tensor! [1, 1]
-  let poolKernel : Tensor Nat [2] := tensor! [2, 2]
-  let poolStride : Tensor Nat [2] := tensor! [2, 2]
-  let noPadding : Tensor Nat [2] := tensor! [0, 0]
-  have hPoolKernel : ∀ i : Fin 2, poolKernel.getScalar i ≠ 0 := by
-    intro i
-    fin_cases i <;> simp [poolKernel]
-  have hPoolStride : ∀ i : Fin 2, poolStride.getScalar i ≠ 0 := by
-    intro i
-    fin_cases i <;> simp [poolStride]
-  let conv1 : ConvSpec 2 1 2 kernel unit unit Float :=
-    { kernel := by simpa [kernel] using sd.convW1, bias := sd.convB1 }
-  let conv2 : ConvSpec 2 2 2 kernel unit unit Float :=
-    { kernel := by simpa [kernel] using sd.convW2, bias := sd.convB2 }
-  let pool1 : MaxPoolSpec 2 poolKernel poolStride noPadding
-      hPoolKernel hPoolStride :=
-    {}
-  let pool2 : MaxPoolSpec 2 poolKernel poolStride noPadding
-      hPoolKernel hPoolStride :=
-    {}
-  let flatSize := Models.Cnn.featureSize 2 spatial kernel unit unit unit unit
-    poolKernel poolStride noPadding poolStride noPadding
-  have hOutputSpatial :
-      Models.Cnn.outputSpatial spatial kernel unit unit unit unit
-        poolKernel poolStride noPadding poolStride noPadding = poolKernel := by
-    apply Spec.Tensor.ext_vector
-    intro i
-    have hi' : i = 0 ∨ i = 1 := by grind
-    rcases hi' with rfl | rfl <;>
-      norm_num [spatial, kernel, unit, poolKernel, poolStride, noPadding,
-        Models.Cnn.outputSpatial, Models.Cnn.blockOutSpatial, Spec.convOutSpatial,
-        Spec.poolOutSpatialPad, Spec.poolOutDim, Shape.slidingWindowOutDim]
-  have hFlatSize : flatSize = 8 := by
-    simp [flatSize, Models.Cnn.featureSize, Models.Cnn.featureShape, hOutputSpatial,
-      poolKernel, Shape.size, Shape.ofList]
-  let linear : LinearSpec Float flatSize 2 :=
-    { weights := hFlatSize.symm ▸ sd.linearW, bias := sd.linearB }
-  let net := Models.Cnn.withReluSpec (α := Float)
-    (spatial := spatial) conv1 conv2 pool1 pool2 linear
-  let xRaw : Tensor Float [1, 8, 8] :=
-    TorchLean.Tensor.generate [1, 8, 8] fun coordinate =>
-      Float.ofNat (coordinate.getD 1 0 * 8 + coordinate.getD 2 0 + 1)
-  have hSpatialList : spatial.toList = [8, 8] := by simp [spatial]
-  let x : Tensor Float (Shape.ofList (1 :: spatial.toList)) := by
-    rw [hSpatialList]
-    exact xRaw
-  let y := Spec.Module.Chain.forward (α := Float) net x
+  let y ← NN.Examples.Interop.PyTorch.Roundtrip.cnnOutput
   pure #[vecVal y ⟨0, by decide⟩, vecVal y ⟨1, by decide⟩]
 
 def leanTransformer : IO (Array Float) := do
-  let j ← TorchLean.Json.parseFile transformerJson
-  let some sd := Import.TransformerPyTorch.loadTransformerEncoderStateDict 2 1 2 j
-    | throw (IO.userError "pytorch_roundtrip_parity: failed to load Transformer state dict")
-  let layer : TransformerEncoderLayer 1 2 2 Float :=
-    { mha :=
-        { queryWeight := sd.queryWeight
-          keyWeight := sd.keyWeight
-          valueWeight := sd.valueWeight
-          outputWeight := sd.outputWeight }
-      ffn :=
-        { inputWeight := sd.feedForwardInputWeight
-          outputWeight := sd.feedForwardOutputWeight
-          inputBias := sd.feedForwardInputBias
-          outputBias := sd.feedForwardOutputBias }
-      norm1Scale := sd.norm1Scale
-      norm1Bias := sd.norm1Bias
-      norm2Scale := sd.norm2Scale
-      norm2Bias := sd.norm2Bias }
-  let encoder : TransformerEncoder 1 1 2 2 Float := { layers := tensor! [layer] }
-  let x : Tensor Float [1, 2] := tensor! [[1.5, 1.5]]
-  let y := TransformerEncoder.forward (seqLen := 1) (embedDim := 2)
-    encoder x (by decide) (by decide)
+  let y ← NN.Examples.Interop.PyTorch.Roundtrip.transformerOutput
   pure #[matVal y ⟨0, by decide⟩ ⟨0, by decide⟩,
     matVal y ⟨0, by decide⟩ ⟨1, by decide⟩]
 

@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Exec32
 public import NN.Floats.IEEEExec.Semantics.RealSemantics
+public import NN.Floats.IEEEExec.Exec32.Transcendentals
 
 /-!
 ## Deterministic transcendental functions (`exp`, `log`, `tanh`, `sinh`, `cosh`)

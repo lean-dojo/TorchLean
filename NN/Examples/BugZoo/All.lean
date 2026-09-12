@@ -35,9 +35,6 @@ Each submodule follows the same pattern:
 
 This is not a separate theory fork. The examples re-export the actual TorchLean
 semantics and proof theorems so the examples stay connected to the library.
-
-The writing style is kept plain: tell the reader what the bug is, state the contract in
-ordinary language, then show the small checked theorem.
 -/
 
 @[expose] public section

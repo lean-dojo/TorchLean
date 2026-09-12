@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Logic.Equiv.Fin.Basic
 public import NN.Spec.RL.FiniteStochasticMDP
 
 /-!
@@ -33,11 +32,13 @@ References (high-level context only):
 
 @[expose] public section
 
+open TorchLean
+
 namespace Spec
 namespace RL
 namespace Envs
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
 /-!
 ## Environment Dynamics

@@ -7,6 +7,10 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Enclosure
+public import NN.Backend.ContractCheck
+public import NN.IR.OpContracts
+public import NN.Spec.Core.FloatInstances
+public import NN.Spec.Core.Tensor.SomeTensor
 
 /-!
 # Numerical certificate contracts
@@ -25,7 +29,7 @@ namespace NumericalCertificate
 open NN
 open NN.Backend
 open NN.IR
-open Spec
+open Spec TorchLean
 open TorchLean.Floats.IEEE754
 
 /-! ## Canonical local transfer rules -/
@@ -198,7 +202,8 @@ def sumLeftRange (count : Nat) (range : IEEE32Exec.Interval32) : IEEE32Exec.Inte
     (fun acc _ => IEEE32Exec.Interval32.add acc range)
     (IEEE32Exec.Interval32.point IEEE32Exec.posZero)
 
-/-- Left-fold mean range, using the same binary32 conversion of the divisor as the tensor context. -/
+/-- Left-fold mean range, using the same binary32 conversion of the divisor as the tensor
+context. -/
 def meanLeftRange (count : Nat) (range : IEEE32Exec.Interval32) : IEEE32Exec.Interval32 :=
   IEEE32Exec.Interval32.div (sumLeftRange count range)
     (IEEE32Exec.Interval32.point (count : IEEE32Exec))
@@ -217,9 +222,11 @@ def requireFixedLeftReduction (plan : AcceptedGraphKernelPlan) (node : Node) : E
       if policy.reduction = .fixedLeft then
         pure ()
       else
-        throw s!"numerical certificate: node {node.id} ({node.kind.describe}) uses reduction policy {repr policy.reduction}; fixedLeft is required by this transfer"
+        throw (s!"numerical certificate: node {node.id} ({node.kind.describe}) uses reduction " ++
+          s!"policy {repr policy.reduction}; fixedLeft is required by this transfer")
   | none =>
-      throw s!"numerical certificate: node {node.id} ({node.kind.describe}) has no backend numerical policy"
+      throw (s!"numerical certificate: node {node.id} ({node.kind.describe}) has no backend " ++
+        "numerical policy")
 
 /-- Inner accumulation length for the rank-2 and batched rank-3 matrix products implemented by
 `IR.Graph.denoteAll`. The graph shape checker has already validated matching dimensions; retaining
@@ -283,9 +290,12 @@ def numericalOpKey : OpKind -> NumericalOpKey
   | .detach => .structural
   | .sum => .wholeSum
   | .maxPool config =>
-      if config.padding.toList.any (fun padding => padding != 0) then .maxPoolPad else .maxPool
+      if (Tensor.to config.padding (List Nat)).any (fun padding => padding != 0) then
+        .maxPoolPad
+      else
+        .maxPool
   | .avgPool config =>
-      if config.padding.toList.any (fun padding => padding != 0) then
+      if (Tensor.to config.padding (List Nat)).any (fun padding => padding != 0) then
         .averagePoolPad
       else
         .averagePool
@@ -335,7 +345,8 @@ def register (registry : GraphRangeRegistry) (contract : GraphRangeContract) :
     Except String GraphRangeRegistry :=
   match registry.find? contract.key with
   | some previous =>
-      throw s!"numerical contract: duplicate key {repr contract.key} ({previous.name}, {contract.name})"
+      throw (s!"numerical contract: duplicate key {repr contract.key} " ++
+        s!"({previous.name}, {contract.name})")
   | none => pure { registry with contracts := registry.contracts.push contract }
 
 /-- Build a registry while checking key uniqueness. -/
@@ -379,11 +390,13 @@ def requireNumericalCoverage (registry : GraphRangeRegistry) (graph : Graph) :
   if report.missing.isEmpty then
     pure report
   else
-    throw s!"numerical certificate: registry {registry.name} does not cover graph nodes {repr report.missing}"
+    throw (s!"numerical certificate: registry {registry.name} does not cover graph nodes " ++
+      s!"{repr report.missing}")
 
 /-- Standard diagnostic for a contract whose graph arity does not match its operation. -/
 def arityError (contractName : String) (node : Node) (expected : String) : String :=
-  s!"numerical contract {contractName}: node {node.id} ({node.kind.describe}) expected {expected}, got {node.parents.size} parent(s)"
+  s!"numerical contract {contractName}: node {node.id} ({node.kind.describe}) " ++
+    s!"expected {expected}, got {node.parents.size} parent(s)"
 
 /-- Shared source-node contract. The source interval remains an explicit certificate assumption. -/
 def sourceContract : GraphRangeContract where
@@ -472,10 +485,10 @@ def averagePoolContract (padded : Bool) : GraphRangeContract where
     | .avgPool config, #[parent] => do
         requireFixedLeftReduction context.plan node
         let input <- parentRange context.ranges parent
-        let count := config.kernel.toList.foldl (fun size extent => size * extent) 1
+        let count := (Tensor.to config.kernel (List Nat)).foldl (fun size extent => size * extent) 1
         if count = 0 then
           throw s!"numerical certificate: node {node.id} has an empty average-pooling window"
-        let hasPadding := config.padding.toList.any (fun padding => padding != 0)
+        let hasPadding := (Tensor.to config.padding (List Nat)).any (fun padding => padding != 0)
         let source :=
           if hasPadding then
             IEEE32Exec.Interval32.hull input
@@ -522,14 +535,16 @@ def axisReductionContract (mean : Bool) : GraphRangeContract where
         let input <- parentNodeRange context.ranges parent
         let count <- match input.outShape.getDim axis with
           | some count => pure count
-          | none => throw s!"numerical certificate: node {node.id} has invalid reduction axis {axis}"
+          | none =>
+              throw s!"numerical certificate: node {node.id} has invalid reduction axis {axis}"
         pure (.sumLeft parent count, sumLeftRange count input.enclosure)
     | .reduceMean axis, #[parent] => do
         requireFixedLeftReduction context.plan node
         let input <- parentNodeRange context.ranges parent
         let count <- match input.outShape.getDim axis with
           | some count => pure count
-          | none => throw s!"numerical certificate: node {node.id} has invalid reduction axis {axis}"
+          | none =>
+              throw s!"numerical certificate: node {node.id} has invalid reduction axis {axis}"
         if count = 0 then
           throw s!"numerical certificate: node {node.id} cannot certify a mean over an empty axis"
         pure (.meanLeft parent count, meanLeftRange count input.enclosure)
@@ -593,7 +608,7 @@ def layerNormContract : GraphRangeContract where
         let centered := IEEE32Exec.Interval32.sub input.enclosure mean
         let squared := (IEEE32Exec.Interval32.mul centered centered).relu
         let variance := meanLeftRange normalizedSize squared
-        let epsilon : IEEE32Exec := Numbers.normalizationEpsilon
+        let epsilon : IEEE32Exec := TorchLean.normalizationEpsilon
         let stabilized := IEEE32Exec.Interval32.add variance
           (IEEE32Exec.Interval32.point epsilon)
         if nonnegativeEndpoint stabilized.lo && nonnegativeEndpoint stabilized.hi then
@@ -715,7 +730,8 @@ def deriveNodeRangeWith (registry : GraphRangeRegistry)
   let contract <- match registry.find? key with
     | some contract => pure contract
     | none =>
-        throw s!"numerical certificate: node {node.id} ({node.kind.describe}) has no registered numerical contract"
+        throw (s!"numerical certificate: node {node.id} ({node.kind.describe}) " ++
+          "has no registered numerical contract")
   contract.derive { sources, plan, ranges } node
 
 /-- Compute one node range using TorchLean's built-in registry. -/
@@ -743,7 +759,8 @@ def buildRangeTraceWith (registry : GraphRangeRegistry)
           enclosure
           valid := (validInterval_eq_true_iff enclosure).mp h }
     else
-      throw s!"numerical certificate: node {node.id} ({node.kind.describe}) produced a non-finite or unordered enclosure"
+      throw (s!"numerical certificate: node {node.id} ({node.kind.describe}) produced a " ++
+        "non-finite or unordered enclosure")
   pure ranges
 
 /-- Construct and validate the canonical range trace using TorchLean's built-in contracts. -/

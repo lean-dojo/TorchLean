@@ -133,11 +133,15 @@ __global__ void pack_cufft_complex_to_ri_f32(const cufftComplex* in, float* out,
   out[2 * i + 1] = in[i].y;
 }
 
-__global__ void pack_ri_to_cufft_complex_f32(const float* in, cufftComplex* out, size_t count) {
+__global__ void pack_ri_to_cufft_complex_f32(
+    const float* in, cufftComplex* out, size_t count, uint32_t n) {
   const size_t i = (size_t)blockIdx.x * (size_t)blockDim.x + (size_t)threadIdx.x;
   if (i >= count) return;
+  const size_t k = i % ((size_t)n / 2 + 1);
+  const bool endpoint = k == 0 || ((n % 2 == 0) && k == (size_t)n / 2);
   out[i].x = in[2 * i];
-  out[i].y = in[2 * i + 1];
+  // C2R requires real DC/Nyquist bins; match the host inverse's ignored coordinates.
+  out[i].y = endpoint ? 0.0f : in[2 * i + 1];
 }
 
 __global__ void scale_f32(float* data, size_t n, float scale) {
@@ -148,7 +152,7 @@ __global__ void scale_f32(float* data, size_t n, float scale) {
 
 __global__ void spectral_conv1d_mul_f32(const cufftComplex* X, const float* wRe,
                                         const float* wIm, cufftComplex* Z, uint32_t width,
-                                        uint32_t modes) {
+                                        uint32_t modes, uint32_t grid) {
   const size_t idx = (size_t)blockIdx.x * (size_t)blockDim.x + (size_t)threadIdx.x;
   const size_t total = (size_t)modes * (size_t)width;
   if (idx >= total) return;
@@ -167,7 +171,9 @@ __global__ void spectral_conv1d_mul_f32(const cufftComplex* X, const float* wRe,
     zi += x.x * wi + x.y * wr;
   }
   Z[(size_t)k * (size_t)width + (size_t)o].x = zr;
-  Z[(size_t)k * (size_t)width + (size_t)o].y = zi;
+  // Complex weights can introduce endpoint imaginary values even for real FFT inputs.
+  const bool endpoint = k == 0 || ((grid % 2 == 0) && k == grid / 2);
+  Z[(size_t)k * (size_t)width + (size_t)o].y = endpoint ? 0.0f : zi;
 }
 
 __global__ void spectral_conv1d_dz_from_dy_f32(const cufftComplex* G, cufftComplex* dZ,
@@ -182,7 +188,7 @@ __global__ void spectral_conv1d_dz_from_dy_f32(const cufftComplex* G, cufftCompl
   const float scale = (edge ? 1.0f : 2.0f) / (float)grid;
   const cufftComplex g = G[(size_t)k * (size_t)width + (size_t)o];
   dZ[(size_t)k * (size_t)width + (size_t)o].x = scale * g.x;
-  dZ[(size_t)k * (size_t)width + (size_t)o].y = scale * g.y;
+  dZ[(size_t)k * (size_t)width + (size_t)o].y = edge ? 0.0f : scale * g.y;
 }
 
 __global__ void spectral_conv1d_bwd_weights_f32(const cufftComplex* X, const cufftComplex* dZ,
@@ -223,21 +229,22 @@ __global__ void spectral_conv1d_bwd_xspec_f32(const cufftComplex* dZ, const floa
   dX[(size_t)k * (size_t)width + (size_t)c].y = xi;
 }
 
-__global__ void spectral_conv1d_irfft_adjoint_f32(const cufftComplex* dX, float* dx,
-                                                 uint32_t grid, uint32_t width,
-                                                 uint32_t modes) {
+// C2R supplies both members of each interior conjugate pair. The packed-real adjoint
+// needs each stored coordinate only once, so halve interior bins before the unnormalized
+// inverse. Endpoint imaginary coordinates are absent from the real transform.
+__global__ void spectral_conv1d_prepare_rfft_adjoint_f32(cufftComplex* dX,
+                                                         uint32_t grid, uint32_t width) {
   const size_t idx = (size_t)blockIdx.x * (size_t)blockDim.x + (size_t)threadIdx.x;
-  const size_t total = (size_t)grid * (size_t)width;
+  const size_t total = ((size_t)grid / 2 + 1) * (size_t)width;
   if (idx >= total) return;
-  const uint32_t c = (uint32_t)(idx % (size_t)width);
-  const uint32_t t = (uint32_t)(idx / (size_t)width);
-  float acc = 0.0f;
-  for (uint32_t k = 0; k < modes; ++k) {
-    const cufftComplex g = dX[(size_t)k * (size_t)width + (size_t)c];
-    const float angle = 2.0f * 3.14159265358979323846f * (float)k * (float)t / (float)grid;
-    acc += g.x * cosf(angle) - g.y * sinf(angle);
+  const size_t k = idx / (size_t)width;
+  const bool endpoint = k == 0 || ((grid % 2 == 0) && k == (size_t)grid / 2);
+  if (endpoint) {
+    dX[idx].y = 0.0f;
+  } else {
+    dX[idx].x *= 0.5f;
+    dX[idx].y *= 0.5f;
   }
-  dx[idx] = acc;
 }
 
 __global__ void reduce_sum_by_column_partial_f32(const float* in, float* partialOut,
@@ -349,7 +356,7 @@ __global__ void reduce_sum_by_row_f32(const float* in, float* out, uint32_t rows
   const int tid = threadIdx.x;
 
   float sum = 0.0f;
-  for (uint32_t c = (uint32_t)tid; c < cols; c += (uint32_t)blockDim.x) {
+  for (size_t c = (size_t)tid; c < (size_t)cols; c += (size_t)blockDim.x) {
     sum += in[(size_t)row * (size_t)cols + (size_t)c];
   }
   sdata[tid] = sum;
@@ -376,61 +383,64 @@ __global__ void layer_norm_fwd_f32(
     float* invStdOut,
     uint32_t rows,
     uint32_t cols,
-    float invCols,
-    float epsilon) {
+    double epsilon) {
   if (blockDim.x != kBlockSize) return;
   const uint32_t row = (uint32_t)blockIdx.x;
   if (row >= rows) return;
 
-  __shared__ float sums[kBlockSize];
-  __shared__ float mean;
-  __shared__ float std;
-  __shared__ float invStd;
+  // A row can have a large common offset and a small spread, even when every input is
+  // exactly representable in float. Accumulate both passes in double and keep the mean
+  // in double through subtraction: rounding it back to float would erase that spread.
+  __shared__ double sums[kBlockSize];
+  __shared__ double mean;
+  __shared__ double std;
   const uint32_t tid = (uint32_t)threadIdx.x;
   const size_t rowOffset = (size_t)row * (size_t)cols;
+  const double columnCount = (double)cols;
 
-  float total = 0.0f;
-  for (uint32_t col = tid; col < cols; col += (uint32_t)kBlockSize) {
-    total = __fadd_rn(total, x[rowOffset + (size_t)col]);
+  double total = 0.0;
+  for (size_t col = (size_t)tid; col < (size_t)cols; col += (size_t)kBlockSize) {
+    total = __dadd_rn(total, (double)x[rowOffset + (size_t)col]);
   }
   sums[tid] = total;
   __syncthreads();
   for (int stride = kBlockSize / 2; stride > 0; stride >>= 1) {
     if (tid < (uint32_t)stride) {
-      sums[tid] = __fadd_rn(sums[tid], sums[tid + (uint32_t)stride]);
+      sums[tid] = __dadd_rn(sums[tid], sums[tid + (uint32_t)stride]);
     }
     __syncthreads();
   }
   if (tid == 0) {
-    mean = __fmul_rn(sums[0], invCols);
+    mean = __ddiv_rn(sums[0], columnCount);
   }
   __syncthreads();
 
-  float squareTotal = 0.0f;
-  for (uint32_t col = tid; col < cols; col += (uint32_t)kBlockSize) {
-    const float centered = __fsub_rn(x[rowOffset + (size_t)col], mean);
-    squareTotal = __fadd_rn(squareTotal, __fmul_rn(centered, centered));
+  double squareTotal = 0.0;
+  for (size_t col = (size_t)tid; col < (size_t)cols; col += (size_t)kBlockSize) {
+    const double centered = __dsub_rn((double)x[rowOffset + (size_t)col], mean);
+    squareTotal = __dadd_rn(squareTotal, __dmul_rn(centered, centered));
   }
   sums[tid] = squareTotal;
   __syncthreads();
   for (int stride = kBlockSize / 2; stride > 0; stride >>= 1) {
     if (tid < (uint32_t)stride) {
-      sums[tid] = __fadd_rn(sums[tid], sums[tid + (uint32_t)stride]);
+      sums[tid] = __dadd_rn(sums[tid], sums[tid + (uint32_t)stride]);
     }
     __syncthreads();
   }
   if (tid == 0) {
-    const float variance = __fmul_rn(sums[0], invCols);
-    std = __fsqrt_rn(__fadd_rn(variance, epsilon));
-    invStd = __fdiv_rn(1.0f, std);
-    invStdOut[row] = invStd;
+    const double variance = __ddiv_rn(sums[0], columnCount);
+    std = __dsqrt_rn(__dadd_rn(variance, epsilon));
+    invStdOut[row] = __double2float_rn(__ddiv_rn(1.0, std));
   }
   __syncthreads();
 
-  for (uint32_t col = tid; col < cols; col += (uint32_t)kBlockSize) {
+  for (size_t col = (size_t)tid; col < (size_t)cols; col += (size_t)kBlockSize) {
     const size_t index = rowOffset + (size_t)col;
-    const float centered = __fsub_rn(x[index], mean);
-    const float xHat = __fdiv_rn(centered, std);
+    // Only the completed normalized coordinate is rounded to float. Backward retains
+    // its existing float xhat and inverse-standard-deviation buffers.
+    const double centered = __dsub_rn((double)x[index], mean);
+    const float xHat = __double2float_rn(__ddiv_rn(centered, std));
     normalized[index] = xHat;
     out[index] = __fadd_rn(__fmul_rn(xHat, gamma[col]), beta[col]);
   }
@@ -458,7 +468,7 @@ __global__ void layer_norm_bwd_rows_f32(
 
   float dXhatTotal = 0.0f;
   float dXhatXhatTotal = 0.0f;
-  for (uint32_t col = tid; col < cols; col += (uint32_t)kBlockSize) {
+  for (size_t col = (size_t)tid; col < (size_t)cols; col += (size_t)kBlockSize) {
     const size_t index = rowOffset + (size_t)col;
     const float dXhat = __fmul_rn(dOut[index], gamma[col]);
     dXhatTotal = __fadd_rn(dXhatTotal, dXhat);
@@ -482,7 +492,7 @@ __global__ void layer_norm_bwd_rows_f32(
   const float sumDXhat = dXhatSums[0];
   const float sumDXhatXhat = dXhatXhatSums[0];
   const float rowInvStd = invStd[row];
-  for (uint32_t col = tid; col < cols; col += (uint32_t)kBlockSize) {
+  for (size_t col = (size_t)tid; col < (size_t)cols; col += (size_t)kBlockSize) {
     const size_t index = rowOffset + (size_t)col;
     const float dXhat = __fmul_rn(dOut[index], gamma[col]);
     const float scaledDXhat = __fmul_rn(dXhat, colsScale);
@@ -504,7 +514,7 @@ __global__ void reduce_max_by_column_f32(const float* in, float* out, uint32_t r
   const int tid = threadIdx.x;
 
   float m = -INFINITY;
-  for (uint32_t r = (uint32_t)tid; r < rows; r += (uint32_t)blockDim.x) {
+  for (size_t r = (size_t)tid; r < (size_t)rows; r += (size_t)blockDim.x) {
     float v = in[(size_t)r * (size_t)cols + (size_t)col];
     m = fmaxf(m, v);
   }
@@ -823,14 +833,14 @@ __global__ void scatter_add_rows_det_f32(const float* mat, const float* values, 
   const uint32_t r = (uint32_t)(t / (size_t)cols);
   const uint32_t c = (uint32_t)(t % (size_t)cols);
 
-  float acc = 0.0f;
+  float acc = mat[t];
   for (uint32_t j = 0; j < k; ++j) {
     if (idx[(size_t)j] == r) {
       acc += values[(size_t)j * (size_t)cols + (size_t)c];
     }
   }
 
-  out[t] = mat[t] + acc;
+  out[t] = acc;
 }
 
 __global__ void reduce_max_by_row_f32(const float* in, float* out, uint32_t rows, uint32_t cols) {
@@ -842,7 +852,7 @@ __global__ void reduce_max_by_row_f32(const float* in, float* out, uint32_t rows
   const int tid = threadIdx.x;
 
   float m = -INFINITY;
-  for (uint32_t c = (uint32_t)tid; c < cols; c += (uint32_t)blockDim.x) {
+  for (size_t c = (size_t)tid; c < (size_t)cols; c += (size_t)blockDim.x) {
     float v = in[(size_t)row * (size_t)cols + (size_t)c];
     m = fmaxf(m, v);
   }
@@ -872,7 +882,7 @@ __global__ void hard_masked_softmax_by_row_f32(const float* scores, const float*
   const size_t base = (size_t)row * (size_t)cols;
 
   float m = -INFINITY;
-  for (uint32_t c = (uint32_t)tid; c < cols; c += (uint32_t)blockDim.x) {
+  for (size_t c = (size_t)tid; c < (size_t)cols; c += (size_t)blockDim.x) {
     if (mask[base + (size_t)c] != 0.0f) {
       m = fmaxf(m, scores[base + (size_t)c]);
     }
@@ -889,7 +899,7 @@ __global__ void hard_masked_softmax_by_row_f32(const float* scores, const float*
 
   float z = 0.0f;
   if (rowMax != -INFINITY) {
-    for (uint32_t c = (uint32_t)tid; c < cols; c += (uint32_t)blockDim.x) {
+    for (size_t c = (size_t)tid; c < (size_t)cols; c += (size_t)blockDim.x) {
       if (mask[base + (size_t)c] != 0.0f) {
         z += expf(scores[base + (size_t)c] - rowMax);
       }
@@ -903,7 +913,7 @@ __global__ void hard_masked_softmax_by_row_f32(const float* scores, const float*
   }
   const float denom = sdata[0];
 
-  for (uint32_t c = (uint32_t)tid; c < cols; c += (uint32_t)blockDim.x) {
+  for (size_t c = (size_t)tid; c < (size_t)cols; c += (size_t)blockDim.x) {
     const size_t idx = base + (size_t)c;
     out[idx] = (mask[idx] != 0.0f && denom != 0.0f)
         ? expf(scores[idx] - rowMax) / denom
@@ -978,14 +988,14 @@ __global__ void scatter_add_det_f32(const float* x, const float* values, const u
   if (i64 >= (size_t)n) return;
   const uint32_t i = (uint32_t)i64;
 
-  float acc = 0.0f;
+  float acc = x[i64];
   for (size_t j = 0; j < k; ++j) {
     if (idx[j] == i) {
       acc += values[j];
     }
   }
 
-  out[i64] = x[i64] + acc;
+  out[i64] = acc;
 }
 
 __global__ void selective_scan_diag_fwd_f32(const float* A, const float* B, const float* X,
@@ -1047,6 +1057,29 @@ __global__ void selective_scan_diag_bwd_f32(const float* A, const float* B, cons
   dA[j] = accA;
   dB[j] = accB;
   dH0[j] = dhNext;
+}
+
+// Reverse time within each independent state channel. A coefficient at time t multiplies
+// h[t-1], so it is A[t], rather than A[t-1], that carries this step's cotangent backwards.
+__global__ void selective_scan_diag_var_bwd_f32(
+    const float* A, const float* B, const float* X, const float* h0,
+    const float* out, const float* dY, float* dA, float* dB, float* dX, float* dH0,
+    uint32_t seqLen, uint32_t stateDim) {
+  const size_t j = (size_t)blockIdx.x * (size_t)blockDim.x + (size_t)threadIdx.x;
+  if (j >= (size_t)stateDim) return;
+  float carried = 0.0f;
+  for (uint32_t remaining = seqLen; remaining > 0; --remaining) {
+    const size_t t = (size_t)remaining - 1;
+    const size_t idx = t * (size_t)stateDim + j;
+    const float previous = t == 0 ? h0[j] : out[idx - (size_t)stateDim];
+    const float gradient = dY[idx] + carried;
+    dA[idx] = gradient * previous;
+    dB[idx] = gradient * X[idx];
+    dX[idx] = gradient * B[idx];
+    carried = gradient * A[idx];
+  }
+  // This also initializes the initial-state cotangent when the sequence is empty.
+  dH0[j] = carried;
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_sum_by_column(b_lean_obj_arg BObj,
@@ -1298,6 +1331,9 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_layer_norm_fwd(
     uint32_t cols,
     double invCols,
     double epsilon) {
+  // Keep the FFI signature stable, but derive the forward divisor from integer cols.
+  // Widening a pre-rounded reciprocal would retain its error in a large row mean.
+  (void)invCols;
   torchlean_cuda_buffer* x = torchlean_cuda_buffer_unbox(XObj);
   torchlean_cuda_buffer* gamma = torchlean_cuda_buffer_unbox(GammaObj);
   torchlean_cuda_buffer* beta = torchlean_cuda_buffer_unbox(BetaObj);
@@ -1324,8 +1360,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_layer_norm_fwd(
       invStd->data,
       rows,
       cols,
-      (float)invCols,
-      (float)epsilon);
+      epsilon);
   checkCuda(cudaGetLastError(), "cuda layerNorm forward kernel launch failed");
   return torchlean_cuda_box_three_buffers(out, normalized, invStd);
 }
@@ -1571,7 +1606,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_irfft1d_packed(b_lean_
       complexSz, "torchlean_cuda_buffer_irfft1d_packed: cudaMalloc spectrum failed");
 
   pack_ri_to_cufft_complex_f32<<<blocks_for(complexSz), dim3(kBlockSize)>>>(spec->data, dSpec,
-                                                                            complexSz);
+                                                                            complexSz, n);
   if (cudaGetLastError() != cudaSuccess) {
     torchlean_cuda_scratch_free(&dSpec, complexSz, "torchlean_cuda_buffer_irfft1d_packed: cleanup spectrum after pack failure failed");
     lean_internal_panic("torchlean_cuda_buffer_irfft1d_packed: pack kernel launch failed");
@@ -1710,7 +1745,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_f
   const size_t mulElems =
       checked_mul_size((size_t)modes, (size_t)width, "spectralConv1dRfft: mul launch size overflow");
   spectral_conv1d_mul_f32<<<blocks_for(mulElems), dim3(kBlockSize)>>>(
-      X, wRe->data, wIm->data, Z, width, modes);
+      X, wRe->data, wIm->data, Z, width, modes, grid);
   cudaError_t mulErr = cudaGetLastError();
   if (mulErr != cudaSuccess) {
     cufftDestroy(r2c);
@@ -1843,15 +1878,32 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_b
     torchlean_cuda_scratch_free(&dX, specSz, "spectralConv1dRfft bwd_x: cleanup dX after dXspec failed");
     checkCuda(xSpecErr, "spectralConv1dRfft bwd_x: dXspec kernel failed");
   }
+  spectral_conv1d_prepare_rfft_adjoint_f32<<<blocks_for(specSz), dim3(kBlockSize)>>>(
+      dX, grid, width);
+  cudaError_t prepareErr = cudaGetLastError();
+  if (prepareErr != cudaSuccess) {
+    torchlean_cuda_scratch_free(&X, specSz, "spectralConv1dRfft bwd_x: cleanup X after prepare failed");
+    torchlean_cuda_scratch_free(&dZ, specSz, "spectralConv1dRfft bwd_x: cleanup dZ after prepare failed");
+    torchlean_cuda_scratch_free(&dX, specSz, "spectralConv1dRfft bwd_x: cleanup dX after prepare failed");
+    checkCuda(prepareErr, "spectralConv1dRfft bwd_x: prepare adjoint failed");
+  }
+  cufftHandle c2r = 0;
+  cufftResult planResult = try_make_spectral_conv1d_c2r_plan(grid, width, (uint32_t)Freq, &c2r);
+  if (planResult != CUFFT_SUCCESS) {
+    torchlean_cuda_scratch_free(&X, specSz, "spectralConv1dRfft bwd_x: cleanup X after plan failed");
+    torchlean_cuda_scratch_free(&dZ, specSz, "spectralConv1dRfft bwd_x: cleanup dZ after plan failed");
+    torchlean_cuda_scratch_free(&dX, specSz, "spectralConv1dRfft bwd_x: cleanup dX after plan failed");
+    checkCufft(planResult, "spectralConv1dRfft bwd_x: C2R plan failed");
+  }
   torchlean_cuda_buffer* dx = torchlean_cuda_buffer_alloc(xSz);
-  spectral_conv1d_irfft_adjoint_f32<<<blocks_for(xSz), dim3(kBlockSize)>>>(dX, dx->data, grid,
-                                                                            width, modes);
-  cudaError_t irfftErr = cudaGetLastError();
-  if (irfftErr != cudaSuccess) {
-    torchlean_cuda_scratch_free(&X, specSz, "spectralConv1dRfft bwd_x: cleanup X after irfft failed");
-    torchlean_cuda_scratch_free(&dZ, specSz, "spectralConv1dRfft bwd_x: cleanup dZ after irfft failed");
-    torchlean_cuda_scratch_free(&dX, specSz, "spectralConv1dRfft bwd_x: cleanup dX after irfft failed");
-    checkCuda(irfftErr, "spectralConv1dRfft bwd_x: irfft adjoint kernel failed");
+  cufftResult inverseResult = cufftExecC2R(c2r, dX, (cufftReal*)dx->data);
+  cufftResult destroyResult = cufftDestroy(c2r);
+  if (inverseResult != CUFFT_SUCCESS || destroyResult != CUFFT_SUCCESS) {
+    torchlean_cuda_scratch_free(&X, specSz, "spectralConv1dRfft bwd_x: cleanup X after C2R failed");
+    torchlean_cuda_scratch_free(&dZ, specSz, "spectralConv1dRfft bwd_x: cleanup dZ after C2R failed");
+    torchlean_cuda_scratch_free(&dX, specSz, "spectralConv1dRfft bwd_x: cleanup dX after C2R failed");
+    checkCufft(inverseResult, "spectralConv1dRfft bwd_x: C2R failed");
+    checkCufft(destroyResult, "spectralConv1dRfft bwd_x: destroy C2R failed");
   }
   torchlean_cuda_scratch_free(&X, specSz, "spectralConv1dRfft bwd_x: free X failed");
   torchlean_cuda_scratch_free(&dZ, specSz, "spectralConv1dRfft bwd_x: free dZ failed");
@@ -1972,7 +2024,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_selective_scan_diag_bw
   torchlean_cuda_buffer* dX = torchlean_cuda_buffer_alloc(total);
   torchlean_cuda_buffer* dH0 = torchlean_cuda_buffer_alloc(D);
 
-  if (total != 0 && D != 0) {
+  if (D != 0) {
     dim3 blocks = blocks_for(D);
     dim3 threads = dim3(kBlockSize);
     selective_scan_diag_bwd_f32<<<blocks, threads>>>(A->data, B->data, X->data, h0->data,
@@ -2021,6 +2073,35 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_selective_scan_diag_va
                                                       out->data, seqLen, stateDim);
   checkCuda(cudaGetLastError(), "cuda selectiveScanDiagVarFwd kernel launch failed");
   return torchlean_cuda_buffer_box(out);
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_selective_scan_diag_var_bwd(
+    b_lean_obj_arg AObj, b_lean_obj_arg BObj, b_lean_obj_arg XObj, b_lean_obj_arg H0Obj,
+    b_lean_obj_arg OutObj, b_lean_obj_arg DYObj, uint32_t seqLen, uint32_t stateDim) {
+  torchlean_cuda_buffer* A = torchlean_cuda_buffer_unbox(AObj);
+  torchlean_cuda_buffer* B = torchlean_cuda_buffer_unbox(BObj);
+  torchlean_cuda_buffer* X = torchlean_cuda_buffer_unbox(XObj);
+  torchlean_cuda_buffer* h0 = torchlean_cuda_buffer_unbox(H0Obj);
+  torchlean_cuda_buffer* out = torchlean_cuda_buffer_unbox(OutObj);
+  torchlean_cuda_buffer* dY = torchlean_cuda_buffer_unbox(DYObj);
+  const size_t D = (size_t)stateDim;
+  const size_t total = checked_mul_size(
+      (size_t)seqLen, D, "selectiveScanDiagVarBwd: sequence size overflow");
+  if (A->size != total || B->size != total || X->size != total ||
+      out->size != total || dY->size != total || h0->size != D) {
+    lean_internal_panic("selectiveScanDiagVarBwd: input or saved-state size mismatch");
+  }
+  torchlean_cuda_buffer* dA = torchlean_cuda_buffer_alloc(total);
+  torchlean_cuda_buffer* dB = torchlean_cuda_buffer_alloc(total);
+  torchlean_cuda_buffer* dX = torchlean_cuda_buffer_alloc(total);
+  torchlean_cuda_buffer* dH0 = torchlean_cuda_buffer_alloc(D);
+  if (D != 0) {
+    selective_scan_diag_var_bwd_f32<<<blocks_for(D), dim3(kBlockSize)>>>(
+        A->data, B->data, X->data, h0->data, out->data, dY->data,
+        dA->data, dB->data, dX->data, dH0->data, seqLen, stateDim);
+    checkCuda(cudaGetLastError(), "cuda selectiveScanDiagVarBwd kernel launch failed");
+  }
+  return torchlean_cuda_box_four_buffers(dA, dB, dX, dH0);
 }
 
 // Simple attention kernel.
@@ -2453,6 +2534,9 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_broadcast_to(b_lean_ob
     lean_internal_panic("torchlean_cuda_buffer_broadcast_to: input size mismatch");
   }
 
+  torchlean_cuda_require_broadcast_map(
+      h.axisMap, rankIn, rankOut, "torchlean_cuda_buffer_broadcast_to");
+
   // Check broadcast shape agreement before launch.
   for (size_t ax = 0; ax < rankOut; ++ax) {
     uint32_t mv = h.axisMap[ax];
@@ -2577,6 +2661,9 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_from_broadcast(
   if (dOut->size != outSize) {
     lean_internal_panic("torchlean_cuda_buffer_reduce_from_broadcast: dOut size mismatch");
   }
+
+  torchlean_cuda_require_broadcast_map(
+      h.axisMap, rankIn, rankOut, "torchlean_cuda_buffer_reduce_from_broadcast");
 
   // Use the same broadcast checks as the forward path.
   for (size_t ax = 0; ax < rankOut; ++ax) {

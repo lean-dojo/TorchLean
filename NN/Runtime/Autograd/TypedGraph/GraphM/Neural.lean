@@ -6,8 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.TypedGraph.GraphM.ShapeIndex
 public import NN.Runtime.Autograd.LeadingAxis
+public import NN.Runtime.Autograd.TypedGraph.GraphM.Elementwise
+public import NN.Runtime.Autograd.TypedGraph.GraphM.ShapeIndex
+public import NN.Spec.Layers.Attention
+public import NN.Spec.Layers.Normalization.BatchNorm
 
 /-!
 # GraphM Neural Layers
@@ -22,10 +25,12 @@ namespace Autograd
 namespace TypedGraph
 namespace GraphM
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Proofs.Autograd.Algebra
-open Runtime.Autograd.TorchLean
+-- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
+-- `Idx` and `getIdx` are defined.
+open Proofs (Idx getIdx)
 
 /--
 Layer normalization (sequence-first), producing the same shape as the input.
@@ -35,13 +40,14 @@ PyTorch comparison: `torch.nn.LayerNorm` / `torch.nn.functional.layer_norm` (mod
 Forward-mode status: implemented by `Spec.layerNormJvp`, including parameter tangents for
 `gamma` and `beta`.
 -/
-def layerNorm {α : Type} {Δ : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
-  [DecidableEq Shape]
+def layerNorm {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {Γ : List Shape} {seqLen embedDim : Nat}
   (h_seq_pos : seqLen > 0) (h_embed_pos : embedDim > 0)
   (x : Var (.dim seqLen (.dim embedDim .scalar)))
   (gamma : Var (.dim embedDim .scalar))
-  (beta : Var (.dim embedDim .scalar)) :
+  (beta : Var (.dim embedDim .scalar))
+  (epsilon : α := TorchLean.normalizationEpsilon) :
   MWith α Δ Γ (Var (.dim seqLen (.dim embedDim .scalar))) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -53,7 +59,7 @@ def layerNorm {α : Type} {Δ : Type} [Context α] [DecidableRel ((· > ·) : α
           (x := getIdx (α := α) (xs := ctx) ix)
           (gamma := getIdx (α := α) (xs := ctx) ig)
           (beta := getIdx (α := α) (xs := ctx) ib)
-          (h_seq_pos := h_seq_pos) (h_embed_pos := h_embed_pos)
+          (h_seq_pos := h_seq_pos) (h_embed_pos := h_embed_pos) (epsilon := epsilon)
       jvp := fun ctx dctx _d =>
         let xv := getIdx (α := α) (xs := ctx) ix
         let gv := getIdx (α := α) (xs := ctx) ig
@@ -64,29 +70,34 @@ def layerNorm {α : Type} {Δ : Type} [Context α] [DecidableRel ((· > ·) : α
         Spec.layerNormJvp (α := α) (seqLen := seqLen) (embedDim := embedDim)
           (h_seq_pos := h_seq_pos) (h_embed_pos := h_embed_pos)
           (x := xv) (tangent := dx) (gamma := gv) (dgamma := dg) (_beta := bv) (dbeta := db)
+          (epsilon := epsilon)
       vjp := fun ctx _d dLdy =>
         let xv := getIdx (α := α) (xs := ctx) ix
         let gv := getIdx (α := α) (xs := ctx) ig
-        let bv := getIdx (α := α) (xs := ctx) ib
-        let (dx, dgamma, dbeta) :=
+        let gradients :=
           Spec.layerNormBackward (α := α) (seqLen := seqLen) (embedDim := embedDim)
-            (h_seq_pos := h_seq_pos) (h_embed_pos := h_embed_pos)
-            (x := xv) (gamma := gv) (_beta := bv) (grad_output := dLdy)
+            (sequenceLengthPositive := h_seq_pos)
+            (embeddingWidthPositive := h_embed_pos)
+            (input := xv) (scale := gv) (outputGradient := dLdy) (epsilon := epsilon)
         let z0 :=
-          _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
-            (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim seqLen (.dim embedDim .scalar)) ix dx)
-            (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim embedDim .scalar) ig dgamma)
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z0
-          (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim embedDim .scalar) ib dbeta) }
+          TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+            (TensorPack.single (α := α) (Γ := Γ ++ ss)
+              (s := .dim seqLen (.dim embedDim .scalar)) ix gradients.inputGradient)
+            (TensorPack.single (α := α) (Γ := Γ ++ ss)
+              (s := .dim embedDim .scalar) ig gradients.scaleGradient)
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z0
+          (TensorPack.single (α := α) (Γ := Γ ++ ss)
+            (s := .dim embedDim .scalar) ib gradients.biasGradient) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := (.dim seqLen (.dim embedDim .scalar))) g node
 
 /-- Batch normalization over every spatial axis of a channel-first tensor. -/
-def batchNorm {α : Type} {Δ : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
-  [DecidableEq Shape] {Γ : List Shape} {channels : Nat} {sSpatial : Shape}
+def batchNorm {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)] {Γ : List Shape} {channels : Nat} {sSpatial : Shape}
   (hWellFormed : (Shape.dim channels sSpatial).wellFormed)
   (x : Var (.dim channels sSpatial))
   (gamma : Var (.dim channels .scalar))
-  (beta : Var (.dim channels .scalar)) :
+  (beta : Var (.dim channels .scalar))
+  (epsilon : α := TorchLean.normalizationEpsilon) :
   MWith α Δ Γ (Var (.dim channels sSpatial)) := do
   let _ : Shape.WellFormed (.dim channels sSpatial) := ⟨hWellFormed⟩
   let ⟨ss, g⟩ ← get
@@ -99,7 +110,7 @@ def batchNorm {α : Type} {Δ : Type} [Context α] [DecidableRel ((· > ·) : α
         Spec.batchNorm (α := α) (channels := channels) (sSpatial := sSpatial)
           (x := getIdx (α := α) (xs := ctx) ix)
           (gamma := getIdx (α := α) (xs := ctx) ig)
-          (beta := getIdx (α := α) (xs := ctx) ib)
+          (beta := getIdx (α := α) (xs := ctx) ib) (epsilon := epsilon)
       jvp := fun ctx dctx _d =>
         let xv := getIdx (α := α) (xs := ctx) ix
         let gv := getIdx (α := α) (xs := ctx) ig
@@ -109,18 +120,22 @@ def batchNorm {α : Type} {Δ : Type} [Context α] [DecidableRel ((· > ·) : α
         let db := getIdx (α := α) (xs := dctx) ib
         Spec.batchNormJvp (α := α) (channels := channels) (sSpatial := sSpatial)
           (x := xv) (tangent := dx) (gamma := gv) (dgamma := dg) (_beta := bv) (dbeta := db)
+          (epsilon := epsilon)
       vjp := fun ctx _d dLdy =>
         let xv := getIdx (α := α) (xs := ctx) ix
         let gv := getIdx (α := α) (xs := ctx) ig
-        let (dx, dgamma, dbeta) :=
+        let gradients :=
           Spec.batchNormBackward (α := α) (channels := channels) (sSpatial := sSpatial)
-            (x := xv) (gamma := gv) (gradOutput := dLdy)
+            (x := xv) (gamma := gv) (gradOutput := dLdy) (epsilon := epsilon)
         let z0 :=
-          _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
-            (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := outS) ix dx)
-            (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim channels .scalar) ig dgamma)
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z0
-          (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim channels .scalar) ib dbeta) }
+          TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+            (TensorPack.single (α := α) (Γ := Γ ++ ss)
+              (s := outS) ix gradients.inputGradient)
+            (TensorPack.single (α := α) (Γ := Γ ++ ss)
+              (s := .dim channels .scalar) ig gradients.scaleGradient)
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z0
+          (TensorPack.single (α := α) (Γ := Γ ++ ss)
+            (s := .dim channels .scalar) ib gradients.biasGradient) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := outS) g node
 
 /--
@@ -131,8 +146,8 @@ PyTorch comparison: `torch.nn.MultiheadAttention` / scaled dot-product attention
 Forward-mode status: implemented by `Spec.multiHeadAttentionJvp`, including tangents for the
 input and all four projection matrices.
 -/
-def multiHeadAttention {α : Type} {Δ : Type} [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)] [DecidableEq Shape]
+def multiHeadAttention {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {Γ : List Shape} {n numHeads dModel headDim : Nat} (h1 : n ≠ 0)
   (wq : Var (.dim dModel (.dim (numHeads * headDim) .scalar)))
   (wk : Var (.dim dModel (.dim (numHeads * headDim) .scalar)))
@@ -181,25 +196,30 @@ def multiHeadAttention {α : Type} {Δ : Type} [Context α]
             valueWeight := getIdx (α := α) (xs := ctx) iwv
             outputWeight := getIdx (α := α) (xs := ctx) iwo }
         let xv := getIdx (α := α) (xs := ctx) ix
-        let (dx, dWq, dWk, dWv, dWo) :=
+        let gradients :=
           Spec.multiHeadAttentionBackward (α := α) (h1 := h1)
             (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
-            (mha := mha) (x := xv) (mask := mask) (grad_output := dLdy)
+            (mha := mha) (x := xv) (mask := mask) (gradOutput := dLdy)
+        let dWq := gradients.parameters.queryWeight
+        let dWk := gradients.parameters.keyWeight
+        let dWv := gradients.parameters.valueWeight
+        let dWo := gradients.parameters.outputWeight
+        let dx := gradients.input
         let z0 :=
-          _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+          TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
             (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim dModel (.dim (numHeads * headDim)
               .scalar)) iwq dWq)
             (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim dModel (.dim (numHeads * headDim)
               .scalar)) iwk dWk)
         let z1 :=
-          _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z0
+          TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z0
             (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim dModel (.dim (numHeads * headDim)
               .scalar)) iwv dWv)
         let z2 :=
-          _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z1
+          TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z1
             (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim (numHeads * headDim) (.dim dModel
               .scalar)) iwo dWo)
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z2
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z2
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim n (.dim dModel .scalar)) ix dx) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := (.dim n (.dim dModel .scalar))) g node
 
@@ -210,8 +230,8 @@ The typed graph intentionally records the per-sample nodes. This keeps its forwa
 VJP definitions inherited directly from `multiHeadAttention`, while an eager device backend may
 execute the same map as one batched contraction.
 -/
-def batchedMultiHeadAttention {α : Type} {Δ : Type} [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)] [DecidableEq Shape]
+def batchedMultiHeadAttention {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {Γ : List Shape} {batch n numHeads dModel headDim : Nat} (h1 : n ≠ 0)
   (wq : Var (.dim dModel (.dim (numHeads * headDim) .scalar)))
   (wk : Var (.dim dModel (.dim (numHeads * headDim) .scalar)))
@@ -220,7 +240,7 @@ def batchedMultiHeadAttention {α : Type} {Δ : Type} [Context α]
   (x : Var (.dim batch (.dim n (.dim dModel .scalar))))
   (mask : Option (Tensor Bool [n, n]) := none) :
   MWith α Δ Γ (Var (.dim batch (.dim n (.dim dModel .scalar)))) :=
-  _root_.Runtime.Autograd.mapOuterAxisWith
+  Runtime.Autograd.mapOuterAxisWith
     (const (α := α) (Δ := Δ) (Γ := Γ) <| Tensor.dim (fun i : Fin 0 => Fin.elim0 i))
     (fun x start len h =>
       sliceLeadingAxisRange (α := α) (Δ := Δ) (Γ := Γ) x start len h)

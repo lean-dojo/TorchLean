@@ -6,6 +6,7 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Floats.IEEEExec.Bridge.FP32.Compare
 public import NN.Floats.IEEEExec.Bridge.FP32Total.Core
 
 /-!

@@ -6,8 +6,8 @@ Authors: Nicolas Rouquette, TorchLean Team
 
 module
 
-public import NN.Floats.FP32.Notation
 public import NN.Floats.NeuralFloat.Analysis.SterbenzFLT
+public import NN.Floats.FP32.Notation
 
 /-!
 # Exact Binary32 Subtraction

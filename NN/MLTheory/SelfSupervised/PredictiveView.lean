@@ -9,7 +9,6 @@ module
 public import NN.MLTheory.SelfSupervised.JEPA
 public import NN.MLTheory.SelfSupervised.MAE
 public import NN.MLTheory.SelfSupervised.VICReg
-public import Mathlib.Algebra.BigOperators.Fin
 public import Mathlib.Algebra.BigOperators.Group.Finset.Defs
 public import Mathlib.Algebra.Order.BigOperators.Group.Finset
 public import Mathlib.Data.Real.Basic
@@ -109,6 +108,7 @@ def withGeometryGuard {n : Nat} {Context Target TargetRep Prediction : Type}
     PredictiveViewContract n Context Target TargetRep Prediction :=
   { contract with geometryGuard := guard }
 
+/-- Attaching a geometry guard leaves the predictive loss itself untouched. -/
 @[simp] theorem predictiveLoss_withGeometryGuard
     {n : Nat} {Context Target TargetRep Prediction : Type}
     (contract : PredictiveViewContract n Context Target TargetRep Prediction)
@@ -116,6 +116,8 @@ def withGeometryGuard {n : Nat} {Context Target TargetRep Prediction : Type}
     predictiveLoss (withGeometryGuard contract guard) = predictiveLoss contract := by
   rfl
 
+/-- The full objective is the predictive loss plus the guard, so the two concerns stay separable:
+changing the guard cannot silently change what the predictor is being asked to do. -/
 @[simp] theorem predictiveViewObjective_withGeometryGuard
     {n : Nat} {Context Target TargetRep Prediction : Type}
     (contract : PredictiveViewContract n Context Target TargetRep Prediction)
@@ -217,7 +219,7 @@ More general JEPA/predictive-view contract with a separate target encoder.
 
 This is the paper bridge: changing `targetEncoder` changes the target space while leaving the
 finite view-prediction algebra alone. MAE is the special case where this encoder is identity into
-pixels/patches; JEPA uses a latent/stopped target branch.
+pixels/patches; JEPA uses a latent target branch. Gradient stopping is outside this contract.
 -/
 def encodedTargetPredictiveViewContract {n : Nat} {Context Target TargetRep Pred : Type}
     (targetIdxs : Array (Fin n))
@@ -236,6 +238,10 @@ def encodedTargetPredictiveViewContract {n : Nat} {Context Target TargetRep Pred
   distance := repLoss
   geometryGuard := geometryGuard
 
+/-- The encoded-target contract computes exactly the masked loss of encoder against predictor.
+
+True by `rfl`, which is the point: the contract is a repackaging of `maskedLoss`, not a new
+definition that could drift from it. -/
 theorem encodedTargetPredictiveViewContract_loss_eq_maskedLoss
     {n : Nat} {Context Target TargetRep Pred : Type}
     (targetIdxs : Array (Fin n))
@@ -248,7 +254,8 @@ theorem encodedTargetPredictiveViewContract_loss_eq_maskedLoss
     predictiveLoss
         (encodedTargetPredictiveViewContract targetIdxs context target targetEncoder predict repLoss
           geometryGuard) =
-      maskedLoss targetIdxs (fun i => repLoss (targetEncoder i (target i)) (predict context i)) := by
+      maskedLoss targetIdxs
+        (fun i => repLoss (targetEncoder i (target i)) (predict context i)) := by
   rfl
 
 /-! ## Geometry guards as reusable SSL modules -/
@@ -442,7 +449,8 @@ theorem realVarianceFloorGuard_zero_spread {d : Nat} {gamma : ℝ}
     realVarianceFloorGuard (d := d) gamma (fun _ => 0) = d * gamma := by
   simp [realVarianceFloorGuard, realVarianceFloorPenalty, hgamma]
 
-/-- Collapsed coordinate-spread summaries pay a positive variance-floor guard in nonzero dimension. -/
+/-- Collapsed coordinate-spread summaries pay a positive variance-floor guard in nonzero
+dimension. -/
 theorem realVarianceFloorGuard_zero_spread_positive {d : Nat} {gamma : ℝ}
     (hd : 0 < d) (hgamma : 0 < gamma) :
     0 < realVarianceFloorGuard (d := d) gamma (fun _ => 0) := by
@@ -453,8 +461,8 @@ theorem realVarianceFloorGuard_zero_spread_positive {d : Nat} {gamma : ℝ}
 The concrete finite alignment-plus-spread objective.
 
 This is the graph-theoretic SSL reading: compatible views should align along positive edges, while
-the spread guard prevents the trivial all-views-identical representation from being accepted for
-free.
+with positive dimension and positive `gamma`, the spread guard assigns a positive value to an
+all-views-identical representation. This does not by itself exclude collapsed minimizers.
 -/
 noncomputable def graphSSLObjective {n d : Nat}
     (graph : SSLViewGraph n) (rep : Fin n → EuclideanRep d) (gamma : ℝ) : ℝ :=

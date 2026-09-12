@@ -6,14 +6,15 @@ Authors: TorchLean Team
 
 module
 
-public meta import NN.IR.Check
-public meta import NN.IR.Pretty
+public meta import NN.IR.Infer
 public meta import NN.IR.Semantics
-public meta import NN.Spec.Core.Tensor.SomeTensor
 public meta import NN.Widgets.Core.Tensor
-public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
+public meta import NN.IR.Check -- shake: keep
+public meta import NN.IR.Pretty -- shake: keep
+public meta import NN.Spec.Core.Tensor.SomeTensor -- shake: keep
+public meta import NN.Widgets.Core.UI -- shake: keep
+public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
+public meta import ProofWidgets.Demos.Macro -- shake: keep
 
 /-!
 # IRExecTrace
@@ -38,22 +39,6 @@ Main commands:
 - `execTrace`: execute nodes left-to-right and capture the first failure point.
 - `irExecTraceHtml`: render checks, status badges, and per-node intermediate values.
 - `#ir_exec_trace_view`: command entry point with optional payload.
-
-## Implementation notes
-
-- A stop-at-first-failure trace is the default debugging mode for IR execution.
-- We intentionally display shape checks next to runtime trace data to reduce context switching.
-- This viewer favors explicit node ids and parent links so failures are easy to localize.
-
-## References
-
-- [ProofWidgets](https://github.com/leanprover-community/ProofWidgets4)
-- [GraphViz DOT language](https://graphviz.org/doc/info/lang.html)
-- [Lean community documentation style](https://leanprover-community.github.io/contribute/doc.html)
-
-## Tags
-
-ir, execution-trace, debugging, semantics, proofwidgets
 -/
 
 public meta section
@@ -62,29 +47,32 @@ open scoped ProofWidgets.Jsx
 
 namespace NN.Widgets
 
-open _root_.Spec
+open _root_.Spec _root_.TorchLean
 open NN.IR
 open Runtime
 open UI
 
+/-- Turn an `Except` check into a badge, showing the message when the check failed. -/
 private def checkBadge (name : String) (r : Except String Unit) : ProofWidgets.Html :=
   match r with
   | .ok _ => <span>{okBadge name}</span>
   | .error msg => <span>{warnBadge name} <span style={json% {"margin-left": "6px"}}>{monospace
     msg}</span></span>
 
-private structure Trace (α : Type) [Context α] where
+/-- Result of a step-by-step graph execution: the values produced, and where it stopped. -/
+private structure Trace (α : Type) [TorchLean.Storage α] [Context α] where
+  /-- Values produced by the nodes that ran, in node order. -/
   vals : Array (Spec.SomeTensor α)
+  /-- Node index and message of the first failure, `none` when the whole graph ran. -/
   failedAt? : Option (Nat × String)
 
 /-- Execute a graph step-by-step, recording values until the first error. -/
 private def execTrace
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : Graph) (payload : Payload α) (input : Spec.SomeTensor α) : Trace α :=
-  let inputD : Spec.SomeTensor α := input
   let rec go (i : Nat) (vals : Array (Spec.SomeTensor α)) : Trace α :=
     if i < g.nodes.size then
-      match Graph.evalAt (α := α) (g := g) (payload := payload) (input := inputD) (vals := vals) (i
+      match Graph.evalAt (α := α) (g := g) (payload := payload) (input := input) (vals := vals) (i
         := i) with
       | .ok v => go (i + 1) (vals.push v)
       | .error msg => { vals := vals, failedAt? := some (i, msg) }
@@ -92,11 +80,8 @@ private def execTrace
       { vals := vals, failedAt? := none }
   go 0 #[]
 
-/-- Convert a semantic-domain value into a runtime shape-erased tensor wrapper. -/
-private def dvToAny {α : Type} [Context α] (v : Spec.SomeTensor α) : Spec.SomeTensor α :=
-  { shape := v.1, tensor := v.2 }
-
-private def nodeRowHtml {α : Type} [Context α] [ToString α]
+/-- One table row per IR node: op tag, parents, declared shape, and the value it produced. -/
+private def nodeRowHtml {α : Type} [TorchLean.Storage α] [Context α] [ToString α]
     (g : Graph) (i : Nat) (v? : Option (Spec.SomeTensor α)) : ProofWidgets.Html :=
   let n? := g.nodes[i]?
   let op := match n? with | none => "<missing>" | some n => n.kind.tag
@@ -118,16 +103,14 @@ private def nodeRowHtml {α : Type} [Context α] [ToString α]
     {match v? with
       | none => ProofWidgets.Html.text ""
       | some v =>
-          let any := dvToAny (α := α) v
-          ;
           <div style={json% {"margin-top": "8px", "padding-left": "10px"}}>
-            {packedTensorHtml (α := α) any (maxRows := 10) (maxCols := 12) (maxElems := 64)}
+            {packedTensorHtml (α := α) v (maxRows := 10) (maxCols := 12) (maxElems := 64)}
           </div>}
   </details>
 
 /-- Render an "execute and show intermediates" panel for an IR graph and a single input. -/
 def irExecTraceHtml
-    {α : Type} [Context α] [DecidableEq Shape] [ToString α]
+    {α : Type} [TorchLean.Storage α] [Context α] [ToString α]
     (g : Graph) (payload : Payload α) (input : Spec.SomeTensor α) : ProofWidgets.Html :=
   let wf := g.checkWellFormed
   let sh := g.checkShapes

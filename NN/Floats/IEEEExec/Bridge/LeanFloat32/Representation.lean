@@ -6,10 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import Init.Data.Float.Float32
-public import NN.Floats.IEEEExec.Exec32
 import NN.Floats.IEEEExec.Encoding.Negation
 import Mathlib.Tactic.IntervalCases
+public import NN.Floats.IEEEExec.Exec32.Dyadic
 
 /-!
 # Lean Float32 and IEEE32Exec: representation

@@ -7,8 +7,8 @@ Authors: TorchLean Team
 module
 
 public import Mathlib.Topology.ContinuousMap.StoneWeierstrass
-public import NN.Spec.Core.Tensor
-public import NN.Spec.Core.Tensor.SomeTensor
+public import NN.Proofs.Tensor.Euclidean
+public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Stone–Weierstrass Approximation for Tensor Inputs
@@ -24,8 +24,8 @@ What we *do* prove here is a standard expressivity theorem in approximation theo
 Equivalently: functions on a compact set can be uniformly approximated by polynomial expressions in
 the coordinates (Stone–Weierstrass).
 
-We phrase this for TorchLean’s rank-one tensors `Tensor ℝ [n]`, using the equivalence
-`Tensor.vectorEquiv` to transport the standard product topology.
+We phrase this for TorchLean’s rank-one tensors `Tensor ℝ [n]` with their Euclidean topology, using
+the equivalence `Tensor.vectorEquiv` as a homeomorphism onto the standard product topology.
 
 This module is therefore a topology/approximation bridge, not a claim about one particular neural
 architecture.  The cited classical lineage is Stone--Weierstrass for polynomial density, with the
@@ -39,34 +39,28 @@ tensor-valued inputs to TorchLean network semantics.
 
 namespace NN.MLTheory.Proofs.UniversalApproximation
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open scoped Topology
 
 namespace VectorTensor
 
-noncomputable instance (n : Nat) : TopologicalSpace (Tensor ℝ [n]) :=
-  TopologicalSpace.induced (Tensor.vectorEquiv (α := ℝ) n).toFun inferInstance
+/-!
+The topology on `Tensor ℝ [n]` is the Euclidean metric topology from `NN.Proofs.Tensor.Euclidean`.
+The coordinate view `Tensor.vectorEquiv` is a linear equivalence between finite-dimensional real
+normed spaces, hence a homeomorphism; no separate induced topology is installed here.
+-/
 
-/-- The tensor-to-function direction is continuous by construction of the induced topology. -/
-lemma continuous_toFun (n : Nat) :
-    Continuous (Tensor.vectorEquiv (α := ℝ) n).toFun := by
-  exact continuous_induced_dom
+/-- The tensor-to-function direction is continuous for the Euclidean topology. -/
+theorem continuous_toFun (n : Nat) :
+    Continuous (Tensor.vectorEquiv (α := ℝ) n).toFun :=
+  Tensor.continuous_vectorEquiv n
 
-/-- The function-to-tensor inverse is continuous, so the tensor/vector equivalence is a homeomorphism. -/
-lemma continuous_invFun (n : Nat) :
-    Continuous (Tensor.vectorEquiv (α := ℝ) n).invFun := by
-  -- The rank-one tensor topology is induced by `toFun`, so it suffices to show
-  -- `toFun ∘ invFun` is
-  -- continuous.
-  -- But `toFun ∘ invFun = id` by the equivalence laws.
-  have : Continuous ((Tensor.vectorEquiv (α := ℝ) n).toFun ∘ (Tensor.vectorEquiv (α := ℝ)
-    n).invFun) := by
-    simpa using (continuous_id : Continuous (fun x : (Fin n → ℝ) => x))
-  -- Convert via `continuous_induced_rng`.
-  simpa [Function.comp] using
-    (continuous_induced_rng (f := (Tensor.vectorEquiv (α := ℝ) n).toFun)
-      (g := (Tensor.vectorEquiv (α := ℝ) n).invFun)).2 this
+/-- The function-to-tensor inverse is continuous, so the tensor/vector equivalence is a
+homeomorphism. -/
+theorem continuous_invFun (n : Nat) :
+    Continuous (Tensor.vectorEquiv (α := ℝ) n).invFun :=
+  Tensor.continuous_vectorEquiv_symm n
 
 /-- Homeomorphism between rank-one tensors and coordinate functions
 $\operatorname{Fin}(n)\to\mathbb{R}$. -/

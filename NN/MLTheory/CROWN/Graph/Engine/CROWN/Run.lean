@@ -7,17 +7,19 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Node
+public import NN.MLTheory.CROWN.Graph.Engine.IBP
+public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Linear -- shake: keep
 
 @[expose] public section
 
 namespace NN.MLTheory.CROWN.Graph
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.MLTheory.CROWN
 open NN.IR
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable [BoundOps α]
 variable [NonlinearBoundOps α]
 

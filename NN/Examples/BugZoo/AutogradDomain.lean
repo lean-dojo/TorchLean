@@ -22,58 +22,56 @@ TorchLean's useful claim here is the graph-level contract. The safe-domain choic
 spec node: use `safedivSpec` in the computation that is recorded, then mask or weight the resulting
 tensor. Downstream proofs and importers can then see the protected division directly in the graph
 shape.
+
+Here `safedivSpec` means division by `denominator + epsilon`; it does not clamp the denominator
+away from zero. A denominator equal to `-epsilon` still makes that sum zero. The unfolding theorem
+below identifies the formula, but does not establish finite forward values or correct gradients
+for arbitrary inputs or scalar instances. Those require domain and backend-conformance evidence.
 -/
 
 @[expose] public section
 
+open TorchLean
+
 namespace NN.Examples.BugZoo.AutogradDomain
 
-open Spec.Tensor
+open TorchLean.Tensor
 
 /--
-The safe pattern records an epsilon-protected division in the graph before the mask is applied.
-
-This mirrors PyTorch's recommendation to mask before division or otherwise avoid recording an
-undefined division. The mask is represented as a numeric weight tensor because this file is about
-the algebraic graph boundary, not boolean indexing.
+Shift the denominator by epsilon before applying the numeric contribution mask.
+The shifted denominator must still be nonzero.
 -/
 def maskAfterSafeDiv {s : Spec.Shape}
-    {α : Type} [Context α]
-    (mask numerator denominator : Spec.Tensor α s) : Spec.Tensor α s :=
-  Spec.Tensor.mulSpec mask (Spec.Tensor.safedivSpec numerator denominator)
+    {α : Type} [Storage α] [Context α]
+    (mask numerator denominator : Tensor α s) : Tensor α s :=
+  Tensor.mulSpec mask (Tensor.safedivSpec numerator denominator)
 
 /--
-The risky shape of the graph: division is recorded first, and the mask is applied afterward.
-
-This definition records the contrast class. It can still be useful at runtime when a denominator is
-externally known to be safe, but that safety is not visible in the graph shape itself.
+Raw division followed by a numeric mask. A zero mask does not remove an undefined division.
 -/
 def unsafeDivThenMask {s : Spec.Shape}
-    {α : Type} [Context α]
-    (mask numerator denominator : Spec.Tensor α s) : Spec.Tensor α s :=
-  Spec.Tensor.mulSpec mask (Spec.Tensor.divSpec numerator denominator)
+    {α : Type} [Storage α] [Context α]
+    (mask numerator denominator : Tensor α s) : Tensor α s :=
+  Tensor.mulSpec mask (Tensor.divSpec numerator denominator)
 
 /--
-The safe-domain contract expands to division by $\mathrm{denominator}+\varepsilon$, followed by
-the mask.
-
-This is the checked TorchLean hook: downstream proofs and importers can distinguish the protected
-graph from the "divide first, mask later" graph.
+The shifted denominator is visible in the specification before masking.
 -/
 theorem maskAfterSafeDiv_uses_epsilon_denominator {s : Spec.Shape}
-    {α : Type} [Context α]
-    (mask numerator denominator : Spec.Tensor α s) :
+    {α : Type} [Storage α] [Context α]
+    (mask numerator denominator : Tensor α s) :
     maskAfterSafeDiv mask numerator denominator =
-      Spec.Tensor.mulSpec mask
-        (Spec.Tensor.map2Spec (fun a b => a / (b + Numbers.epsilon)) numerator denominator) := by
+      Tensor.mulSpec mask
+        (Tensor.map2Spec (fun a b => a / (b + Context.defaultEpsilon))
+          numerator denominator) := by
   rfl
 
 /-- The contrast graph really is a raw division followed by masking. -/
 theorem unsafeDivThenMask_unfold {s : Spec.Shape}
-    {α : Type} [Context α]
-    (mask numerator denominator : Spec.Tensor α s) :
+    {α : Type} [Storage α] [Context α]
+    (mask numerator denominator : Tensor α s) :
     unsafeDivThenMask mask numerator denominator =
-      Spec.Tensor.mulSpec mask (Spec.Tensor.divSpec numerator denominator) := by
+      Tensor.mulSpec mask (Tensor.divSpec numerator denominator) := by
   rfl
 
 end NN.Examples.BugZoo.AutogradDomain

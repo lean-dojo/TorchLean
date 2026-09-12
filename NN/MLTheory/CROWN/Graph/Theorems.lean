@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph.Engine
+public import NN.MLTheory.CROWN.Graph.Engine.Base
+public import NN.MLTheory.CROWN.Graph.Engine -- shake: keep
 
 /-!
 # CROWN Graph Theorems
@@ -20,13 +21,13 @@ public section
 
 namespace NN.MLTheory.CROWN.Graph
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.MLTheory.CROWN
 open NN.IR
 open Std
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable [BoundOps α]
 
 open BoundOps
@@ -34,7 +35,7 @@ open BoundOps
 namespace Theorems
 
 /-- Dimension lemma: linear IBP returns an output box with the expected dimension. -/
-lemma ibp_linear_output_dim
+theorem ibp_linear_output_dim
   (p : LinParams α) (Xin : FlatBox α)
   (h : Xin.dim = p.n)
   (ps : ParamStore α) (id : Nat)
@@ -43,7 +44,7 @@ lemma ibp_linear_output_dim
   simp [ibpLinear, ibpLinearParams, h, hstore, toFlatBox]
 
 /-- Simple shape-preservation facts for FlatBox combinators used by IBP. -/
-lemma box_add_dim (B1 B2 : FlatBox α) : (boxAdd (α:=α) B1 B2).dim = B1.dim := by
+theorem box_add_dim (B1 B2 : FlatBox α) : (boxAdd (α:=α) B1 B2).dim = B1.dim := by
   cases B1 with
   | mk n1 lo1 hi1 =>
     cases B2 with
@@ -54,7 +55,7 @@ lemma box_add_dim (B1 B2 : FlatBox α) : (boxAdd (α:=α) B1 B2).dim = B1.dim :=
 
 /-- `boxSub` preserves the left operand’s `dim` (even when the right operand has a mismatched dim).
   -/
-lemma box_sub_dim (B1 B2 : FlatBox α) : (boxSub (α:=α) B1 B2).dim = B1.dim := by
+theorem box_sub_dim (B1 B2 : FlatBox α) : (boxSub (α:=α) B1 B2).dim = B1.dim := by
   cases B1 with
   | mk n1 lo1 hi1 =>
     cases B2 with
@@ -65,17 +66,17 @@ lemma box_sub_dim (B1 B2 : FlatBox α) : (boxSub (α:=α) B1 B2).dim = B1.dim :=
 
 omit [BoundOps α] in
 /-- `boxRelu` preserves `dim`. -/
-lemma box_relu_dim (B : FlatBox α) : (boxRelu (α:=α) B).dim = B.dim := by
+theorem box_relu_dim (B : FlatBox α) : (boxRelu (α:=α) B).dim = B.dim := by
   simp [boxRelu]
 
 omit [BoundOps α] in
-/-- `box_square` preserves `dim`. -/
-lemma box_square_dim (B : FlatBox α) : (boxSquare (α:=α) B).dim = B.dim := by
+/-- `boxSquare` preserves `dim`. -/
+theorem box_square_dim (B : FlatBox α) : (boxSquare (α:=α) B).dim = B.dim := by
   cases B; simp [boxSquare]
 
 /-! Canonical forms for boxAdd/boxSub when dimensions match -/
 
-lemma box_add_on_eq (n : Nat)
+theorem box_add_on_eq (n : Nat)
   (lo1 hi1 lo2 hi2 : Tensor α [n]) :
   boxAdd (α:=α) { dim := n, lo := lo1, hi := hi1 } { dim := n, lo := lo2, hi := hi2 }
     =
@@ -85,7 +86,7 @@ lemma box_add_on_eq (n : Nat)
   simp [boxAdd]
 
 /-- Canonical form for `boxSub` when both boxes have the same dimension. -/
-lemma box_sub_on_eq (n : Nat)
+theorem box_sub_on_eq (n : Nat)
   (lo1 hi1 lo2 hi2 : Tensor α [n]) :
   boxSub (α:=α) { dim := n, lo := lo1, hi := hi1 } { dim := n, lo := lo2, hi := hi2 }
     =
@@ -100,12 +101,9 @@ namespace Semantics
 
 /-- `encloses B x` means vector `x` lies componentwise between `B.lo` and `B.hi`. -/
 @[expose] public def encloses (B : FlatBox α) (x : Tensor α [B.dim]) : Prop :=
-  let fx := getDimScalarFn (α:=α) x
-  let flo := getDimScalarFn (α:=α) B.lo
-  let fhi := getDimScalarFn (α:=α) B.hi
   ∀ i : Fin B.dim,
-    match flo i, fhi i, fx i with
-    | .scalar l, .scalar u, .scalar v => l ≤ v ∧ v ≤ u
+    Tensor.getScalar B.lo i ≤ Tensor.getScalar x i ∧
+      Tensor.getScalar x i ≤ Tensor.getScalar B.hi i
 
 /- Enclosure for `boxAdd`: if x ∈ B1 and y ∈ B2, then x + y ∈ boxAdd B1 B2. -/
 
@@ -125,40 +123,11 @@ theorem box_add_sound (n : Nat)
   : encloses (α:=α)
       { dim := n, lo := Tensor.addSpec lo1 lo2, hi := Tensor.addSpec hi1 hi2 }
       (Tensor.addSpec (α:=α) x y) := by
-  cases lo1 with
-  | dim flo1 =>
-    cases hi1 with
-    | dim fhi1 =>
-      cases lo2 with
-      | dim flo2 =>
-        cases hi2 with
-        | dim fhi2 =>
-          cases x with
-          | dim fx =>
-            cases y with
-            | dim fy =>
-              simp [encloses, getDimScalarFn, Tensor.addSpec, Tensor.map2Spec] at hx hy ⊢
-              intro i
-              have hx_i := hx i
-              have hy_i := hy i
-              cases hL1 : flo1 i with
-              | scalar l1 =>
-                cases hU1 : fhi1 i with
-                | scalar u1 =>
-                  cases hX : fx i with
-                  | scalar xv =>
-                    cases hL2 : flo2 i with
-                    | scalar l2 =>
-                      cases hU2 : fhi2 i with
-                      | scalar u2 =>
-                        cases hY : fy i with
-                        | scalar yv =>
-                          have hx' : l1 ≤ xv ∧ xv ≤ u1 := by
-                            simpa [hL1, hU1, hX] using hx_i
-                          have hy' : l2 ≤ yv ∧ yv ≤ u2 := by
-                            simpa [hL2, hU2, hY] using hy_i
-                          simpa [Tensor.map2Spec, hL1, hU1, hX, hL2, hU2, hY] using
-                            And.intro (add_mono hx'.1 hy'.1) (add_mono hx'.2 hy'.2)
+  intro i
+  have hx_i := hx i
+  have hy_i := hy i
+  simpa [encloses, Tensor.addSpec] using
+    And.intro (add_mono hx_i.1 hy_i.1) (add_mono hx_i.2 hy_i.2)
 
 omit [BoundOps α] in
 /-- If `x` is enclosed in `[lo1,hi1]` and `y` is enclosed in `[lo2,hi2]`, then `x-y` is enclosed in
@@ -176,41 +145,11 @@ theorem box_sub_sound (n : Nat)
   : encloses (α:=α)
       { dim := n, lo := Tensor.subSpec lo1 hi2, hi := Tensor.subSpec hi1 lo2 }
       (Tensor.subSpec (α:=α) x y) := by
-  cases lo1 with
-  | dim flo1 =>
-    cases hi1 with
-    | dim fhi1 =>
-      cases lo2 with
-      | dim flo2 =>
-        cases hi2 with
-        | dim fhi2 =>
-          cases x with
-          | dim fx =>
-            cases y with
-            | dim fy =>
-              simp [encloses, getDimScalarFn, Tensor.subSpec, Tensor.map2Spec] at hx hy ⊢
-              intro i
-              have hx_i := hx i
-              have hy_i := hy i
-              cases hL1 : flo1 i with
-              | scalar l1 =>
-                cases hU1 : fhi1 i with
-                | scalar u1 =>
-                  cases hX : fx i with
-                  | scalar xv =>
-                    cases hL2 : flo2 i with
-                    | scalar l2 =>
-                      cases hU2 : fhi2 i with
-                      | scalar u2 =>
-                        cases hY : fy i with
-                        | scalar yv =>
-                          have hx' : l1 ≤ xv ∧ xv ≤ u1 := by
-                            simpa [hL1, hU1, hX] using hx_i
-                          have hy' : l2 ≤ yv ∧ yv ≤ u2 := by
-                            simpa [hL2, hU2, hY] using hy_i
-                          have hlo : l1 - u2 ≤ xv - yv := sub_mono hx'.1 hy'.2
-                          have hhi : xv - yv ≤ u1 - l2 := sub_mono hx'.2 hy'.1
-                          simpa [Tensor.map2Spec, hL1, hU1, hX, hL2, hU2, hY] using And.intro hlo hhi
+  intro i
+  have hx_i := hx i
+  have hy_i := hy i
+  simpa [encloses, Tensor.subSpec] using
+    And.intro (sub_mono hx_i.1 hy_i.2) (sub_mono hx_i.2 hy_i.1)
 
 omit [BoundOps α] in
 /-- Enclosure for `boxRelu`: if $x\in B$, then $\operatorname{ReLU}(x)$ belongs to the resulting
@@ -222,94 +161,68 @@ theorem box_relu_sound (n : Nat)
   (x : Tensor α [n])
   (hx : encloses (α:=α) { dim := n, lo := lo, hi := hi } x)
   : encloses (α:=α) (boxRelu (α:=α) { dim := n, lo := lo, hi := hi })
-      (castDimScalar (α:=α)
-        (by
-          have hdim : (boxRelu (α:=α) { dim := n, lo := lo, hi := hi }).dim = n := by
-            simpa using (Theorems.box_relu_dim (α:=α) { dim := n, lo := lo, hi := hi })
-          exact hdim.symm)
-        (Activation.reluSpec (α:=α) x)) := by
-  cases lo with
-  | dim flo =>
-    cases hi with
-    | dim fhi =>
-      cases x with
-      | dim fx =>
-        simp [castDimScalar, boxRelu, Activation.reluSpec, Tensor.mapSpec,
-          encloses, getDimScalarFn] at hx ⊢
-        intro i
-        have hx_i := hx i
-        cases hL : flo i with
-        | scalar l =>
-          cases hU : fhi i with
-          | scalar u =>
-            cases hX : fx i with
-            | scalar v =>
-              have hx' : l ≤ v ∧ v ≤ u := by
-                simpa [hL, hU, hX] using hx_i
-              have hlo : Activation.Math.reluSpec (α:=α) l ≤ Activation.Math.reluSpec (α:=α) v :=
-                relu_mono hx'.1
-              have hhi : Activation.Math.reluSpec (α:=α) v ≤ Activation.Math.reluSpec (α:=α) u :=
-                relu_mono hx'.2
-              simpa [Tensor.mapSpec, Activation.Math.reluSpec, hL, hU, hX] using And.intro hlo hhi
+      (castDimScalar (α:=α) rfl (Activation.reluSpec (α:=α) x)) := by
+  rw [castDimScalar_self]
+  change ∀ i : Fin n,
+    Tensor.getScalar (Tensor.mapSpec (fun value =>
+      Activation.Math.reluSpec (α := α) value) lo) i ≤
+        Tensor.getScalar (Activation.reluSpec (α := α) x) i ∧
+      Tensor.getScalar (Activation.reluSpec (α := α) x) i ≤
+        Tensor.getScalar (Tensor.mapSpec (fun value =>
+          Activation.Math.reluSpec (α := α) value) hi) i
+  intro i
+  have hx_i := hx i
+  simpa [Activation.reluSpec] using
+    And.intro (relu_mono hx_i.1) (relu_mono hx_i.2)
 
 /- Enclosure for `box_square`: if x ∈ B then x ⊙ x ∈ box_square B. -/
 
+/-- Lower bound for `v * v` on `[l, u]`.
+
+Squaring is not monotone, so the sign matters here: an interval straddling zero attains `0`, and
+otherwise the minimum sits at the endpoint nearer the origin. -/
 def sqLower (l u : α) : α :=
   let l2 := l * l
   let u2 := u * u
-  if l < Numbers.zero then
-    if Numbers.zero < u then Numbers.zero else (if l2 < u2 then l2 else u2)
+  if l < 0 then
+    if 0 < u then 0 else (if l2 < u2 then l2 else u2)
   else (if l2 < u2 then l2 else u2)
 
+/-- Upper bound for `v * v` on `[l, u]`: the larger of the two squared endpoints.
+
+Unlike `sqLower` there is no case split on the sign, because squaring is maximized at whichever
+endpoint is farther from the origin whether or not the interval straddles zero. -/
 def sqUpper (l u : α) : α :=
   let l2 := l * l
   let u2 := u * u
   if l2 > u2 then l2 else u2
 
 omit [BoundOps α] in
+/-- Coordinatewise squaring of a box encloses the elementwise product of an enclosed tensor.
+
+The scalar bound is taken as a hypothesis rather than proved here, since it is the one step that
+depends on the ordered-field structure of `α`; every instance discharges it separately. -/
 theorem box_square_sound (B : FlatBox α)
   (sq_bound : ∀ {l u v : α}, l ≤ v → v ≤ u → sqLower (α:=α) l u ≤ v * v ∧ v * v ≤ sqUpper (α:=α) l
     u)
   (x : Tensor α [B.dim])
   (hx : encloses (α:=α) B x)
   : encloses (α:=α) (boxSquare (α:=α) B)
-      (castDimScalar (α:=α)
-        (by simpa using (box_square_dim (α:=α) B).symm)
-        (Tensor.mulSpec (α:=α) x x)) := by
+      (castDimScalar (α:=α) rfl (Tensor.mulSpec (α:=α) x x)) := by
   cases B with
   | mk n lo hi =>
-    cases lo with
-    | dim flo =>
-      cases hi with
-      | dim fhi =>
-        cases x with
-        | dim fx =>
-          simp [castDimScalar, encloses, getDimScalarFn, boxSquare, Tensor.mulSpec,
-            Tensor.map2Spec] at hx ⊢
-          intro i
-          have hx_i := hx i
-          cases hL : flo i with
-          | scalar l =>
-            cases hU : fhi i with
-            | scalar u =>
-              cases hX : fx i with
-              | scalar v =>
-                have hx' : l ≤ v ∧ v ≤ u := by
-                  simpa [hL, hU, hX] using hx_i
-                have hbounds : sqLower (α:=α) l u ≤ v * v ∧ v * v ≤ sqUpper (α:=α) l u :=
-                  sq_bound hx'.1 hx'.2
-                have hbounds' :
-                    (if l < Numbers.zero then
-                        if Numbers.zero < u then Numbers.zero
-                        else if l * l < u * u then l * l else u * u
-                      else if l * l < u * u then l * l else u * u) ≤
-                        v * v ∧
-                      v * v ≤ (if u * u < l * l then l * l else u * u) := by
-                  simpa [sqLower, sqUpper] using hbounds
-                -- Reduce the enclosure goal to the same pointwise bound.
-                simpa [boxSquare, castDimScalar, encloses, getDimScalarFn, Tensor.mulSpec,
-                  Tensor.map2Spec, hL, hU, hX] using
-                  hbounds'
+      rw [castDimScalar_self]
+      change ∀ i : Fin n,
+        Tensor.getScalar (Tensor.ofFn (fun i => sqLower (lo.getScalar i)
+          (hi.getScalar i))) i ≤
+            Tensor.getScalar (Tensor.mulSpec x x) i ∧
+          Tensor.getScalar (Tensor.mulSpec x x) i ≤
+            Tensor.getScalar (Tensor.ofFn (fun i => sqUpper (lo.getScalar i)
+              (hi.getScalar i))) i
+      intro i
+      have hx_i := hx i
+      have hbounds := sq_bound hx_i.1 hx_i.2
+      simpa [Tensor.mulSpec] using hbounds
 
 end Semantics
 

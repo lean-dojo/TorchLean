@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.Calc.Operations
 public import NN.Floats.Calc.Round
 
 /-!
@@ -48,6 +47,7 @@ noncomputable def divRounded (rnd : ℝ → ℤ) (f g : NeuralFloat β) : Neural
 noncomputable def sqrtRounded (rnd : ℝ → ℤ) (f : NeuralFloat β) : NeuralFloat β :=
   neuralRoundedFloat (β := β) (fexp := fexp) rnd (Real.sqrt (neuralToReal f))
 
+/-- The rounded add denotes the rounding of the exact real sum. -/
 @[simp] theorem toReal_addRounded (rnd : ℝ → ℤ) (f g : NeuralFloat β) :
     neuralToReal (addRounded (fexp := fexp) rnd f g) =
       neuralRound (β := β) (fexp := fexp) rnd (neuralToReal f + neuralToReal g) := by
@@ -55,6 +55,7 @@ noncomputable def sqrtRounded (rnd : ℝ → ℤ) (f : NeuralFloat β) : NeuralF
   rw [toReal_addExact]
   rfl
 
+/-- The rounded sub denotes the rounding of the exact real difference. -/
 @[simp] theorem toReal_subRounded (rnd : ℝ → ℤ) (f g : NeuralFloat β) :
     neuralToReal (subRounded (fexp := fexp) rnd f g) =
       neuralRound (β := β) (fexp := fexp) rnd (neuralToReal f - neuralToReal g) := by
@@ -62,6 +63,7 @@ noncomputable def sqrtRounded (rnd : ℝ → ℤ) (f : NeuralFloat β) : NeuralF
   rw [toReal_subExact]
   rfl
 
+/-- The rounded mul denotes the rounding of the exact real product. -/
 @[simp] theorem toReal_mulRounded (rnd : ℝ → ℤ) (f g : NeuralFloat β) :
     neuralToReal (mulRounded (fexp := fexp) rnd f g) =
       neuralRound (β := β) (fexp := fexp) rnd (neuralToReal f * neuralToReal g) := by
@@ -69,11 +71,17 @@ noncomputable def sqrtRounded (rnd : ℝ → ℤ) (f : NeuralFloat β) : NeuralF
   rw [toReal_mulExact]
   rfl
 
+/-- The rounded div denotes the rounding of the exact real quotient. -/
 @[simp] theorem toReal_divRounded (rnd : ℝ → ℤ) (f g : NeuralFloat β) :
     neuralToReal (divRounded (fexp := fexp) rnd f g) =
       neuralRound (β := β) (fexp := fexp) rnd (neuralToReal f / neuralToReal g) := by
   rfl
 
+/-- The rounded square root denotes the rounding of the exact real square root.
+
+Together with the four lemmas above this is the whole content of "correctly rounded arithmetic": each
+operation is specified by the real operation followed by one rounding, so an error analysis never has
+to look inside an implementation. -/
 @[simp] theorem toReal_sqrtRounded (rnd : ℝ → ℤ) (f : NeuralFloat β) :
     neuralToReal (sqrtRounded (fexp := fexp) rnd f) =
       neuralRound (β := β) (fexp := fexp) rnd (Real.sqrt (neuralToReal f)) := by

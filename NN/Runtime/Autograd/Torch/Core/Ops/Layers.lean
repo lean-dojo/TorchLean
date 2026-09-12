@@ -7,6 +7,12 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Torch.Core.Ops.Dispatch
+public import NN.Runtime.Autograd.Engine.Core.ActivationsLoss
+public import NN.Runtime.Autograd.Engine.Core.Linear
+public import NN.Runtime.Autograd.Engine.Core.Neural
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Attention
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Linear
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.NormSoftmax
 
 /-!
 # Eager Tensor Operations
@@ -22,9 +28,7 @@ namespace Runtime
 namespace Autograd
 namespace Torch
 
-open Spec
-open Tensor
-open Proofs.Autograd.Algebra
+open Spec TorchLean TorchLean.Tensor
 
 namespace Internal
 
@@ -33,8 +37,8 @@ namespace EagerSession
 /-! ## Neural-network layers -/
 
 /-- Fully-connected linear layer `y = w x + b`. PyTorch: `torch.nn.functional.linear`. -/
-def linear {α : Type} (s : EagerSession α) [Inhabited α] [Add α] [Mul α] [Zero α] [DecidableEq
-  Shape]
+def linear {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Inhabited α] [Add α]
+  [Mul α] [Zero α]
   {inDim outDim : Nat}
   (w : TensorRef α [outDim, inDim])
   (b : TensorRef α [outDim])
@@ -54,8 +58,8 @@ def linear {α : Type} (s : EagerSession α) [Inhabited α] [Add α] [Mul α] [Z
   dispatchCudaOpt (α := α) s .linear #[w.identity?, b.identity?, x.identity?] cpu cuda
 
 /-- Mean-squared-error loss returning a scalar. PyTorch: `torch.nn.functional.mse_loss`. -/
-def mseLoss {α : Type} [TensorTransfer α] (s : EagerSession α)
-  [Inhabited α] [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [Coe Nat α] [DecidableEq Shape]
+def mseLoss {α : Type} [TorchLean.Storage α] [TensorTransfer α] (s : EagerSession α)
+  [Inhabited α] [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [NatCast α]
   {sh : Shape} (yhat target : TensorRef α sh) : IO (TensorRef α Shape.scalar) := do
   let cpu := do
     let t0 ← s.tape.get
@@ -72,56 +76,64 @@ def mseLoss {α : Type} [TensorTransfer α] (s : EagerSession α)
 
 /-- Layer normalization over embedding dimension. PyTorch: `nn.LayerNorm` / `functional.layer_norm`.
   -/
-def layerNorm {α : Type} (s : EagerSession α) [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)] [DecidableEq Shape]
+def layerNorm {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
+  [TensorTransfer α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {seqLen embedDim : Nat} (h_seq_pos : seqLen > 0) (h_embed_pos : embedDim > 0)
   (x : TensorRef α [seqLen, embedDim])
   (gamma : TensorRef α [embedDim])
-  (beta : TensorRef α [embedDim]) : IO (TensorRef α [seqLen, embedDim]) := do
+  (beta : TensorRef α [embedDim])
+  (epsilon : α := TorchLean.normalizationEpsilon) : IO (TensorRef α [seqLen, embedDim]) := do
   let cpu := do
     let t0 ← s.tape.get
     let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.layerNorm (t := t0)
-      (seqLen := seqLen) (embedDim := embedDim) (h_seq_pos := h_seq_pos) (h_embed_pos := h_embed_pos)
-      x.id gamma.id beta.id)
+      (seqLen := seqLen) (embedDim := embedDim) (h_seq_pos := h_seq_pos)
+      (h_embed_pos := h_embed_pos) x.id gamma.id beta.id (epsilon := epsilon))
     s.tape.set t1
     pure { id := id }
   let cuda := do
+    let epsilonFloat ← TensorTransfer.toFloat (α := α) epsilon
     let t0 ← s.cudaTape.get
     let (t1, id) ← okOrThrow (Runtime.Autograd.Cuda.Tape.layerNorm (t := t0)
-      (seqLen := seqLen) (embedDim := embedDim) (h_seq_pos := h_seq_pos) (h_embed_pos := h_embed_pos)
-      x.id gamma.id beta.id)
+      (seqLen := seqLen) (embedDim := embedDim) (h_seq_pos := h_seq_pos)
+      (h_embed_pos := h_embed_pos) x.id gamma.id beta.id (epsilon := epsilonFloat))
     s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .layerNorm #[x.identity?, gamma.identity?, beta.identity?] cpu cuda
 
 /-- Batch normalization over every spatial axis of a channel-first tensor. -/
-def batchNorm {α : Type} (s : EagerSession α) [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)] [DecidableEq Shape]
+def batchNorm {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
+  [TensorTransfer α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {channels : Nat} {sSpatial : Shape}
   (hWellFormed : (Shape.dim channels sSpatial).wellFormed)
   (x : TensorRef α (.dim channels sSpatial))
   (gamma : TensorRef α [channels])
-  (beta : TensorRef α [channels]) : IO (TensorRef α (.dim channels sSpatial)) := do
+  (beta : TensorRef α [channels])
+  (epsilon : α := TorchLean.normalizationEpsilon) :
+  IO (TensorRef α (.dim channels sSpatial)) := do
   let cpu := do
     let t0 ← s.tape.get
     let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.batchNorm (t := t0)
       (channels := channels) (sSpatial := sSpatial) hWellFormed
-      x.id gamma.id beta.id)
+      x.id gamma.id beta.id (epsilon := epsilon))
     s.tape.set t1
     pure { id := id }
   let cuda : IO (Option (TensorRef α (.dim channels sSpatial))) :=
     do
+      let epsilonFloat ← TensorTransfer.toFloat (α := α) epsilon
       let t0 ← s.cudaTape.get
       let (t1, id) ← okOrThrow (Runtime.Autograd.Cuda.Tape.batchNorm (t := t0)
-        (channels := channels) (spatial := sSpatial) hWellFormed x.id gamma.id beta.id)
+        (channels := channels) (spatial := sSpatial) hWellFormed x.id gamma.id beta.id
+        (epsilon := epsilonFloat))
       s.cudaTape.set t1
       pure (some { id := id })
   dispatchCudaOpt (α := α) s .batchNorm #[x.identity?, gamma.identity?, beta.identity?] cpu cuda
 
 /-- Multi-head self-attention (typed, proof-friendly). PyTorch: `nn.MultiheadAttention`
   (conceptually). -/
-def multiHeadAttention {α : Type} (s : EagerSession α) [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)] [DecidableEq Shape]
+def multiHeadAttention {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {n numHeads dModel headDim : Nat} (h1 : n ≠ 0)
   (wq : TensorRef α [dModel, numHeads * headDim])
   (wk : TensorRef α [dModel, numHeads * headDim])

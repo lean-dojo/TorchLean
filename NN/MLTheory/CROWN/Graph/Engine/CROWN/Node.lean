@@ -7,17 +7,18 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Structural
+public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Linear -- shake: keep
 
 @[expose] public section
 
 namespace NN.MLTheory.CROWN.Graph
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 open NN.MLTheory.CROWN
 open NN.IR
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable [BoundOps α]
 
 open BoundOps
@@ -145,7 +146,7 @@ def propagateCROWNNode
       match getB p1, ps.matmulW[id]? with
       | some xin, some p =>
         if hout : xin.outDim = p.n then
-          let zb := Spec.fill (α:=α) 0 (.dim p.m .scalar)
+          let zb := Tensor.full (α:=α) (.dim p.m .scalar) 0
           let out := propagateLinearBounds (α:=α) (n:=p.n) (m:=p.m) p.w zb xin hout
           bounds.set! id (some out)
         else bounds
@@ -157,7 +158,7 @@ def propagateCROWNNode
     match ibp[id]! with
     | some B => bounds.set! id (some (boundsConst (α := α) ctx.inputDim B.dim B.lo B.hi))
     | none => bounds
-  | .exp | .log | .inv | .sigmoid | .tanh =>
+  | .exp | .log | .inv | .sigmoid | .tanh | .softplus | .safeLog =>
     -- Executable nonlinear bounds come from the directed IBP pass. Turning that box into a
     -- constant affine form is less precise than an analytic relaxation, but it does not recompute
     -- transcendental values with unqualified host arithmetic. Ideal-real relaxation formulas
@@ -165,7 +166,7 @@ def propagateCROWNNode
     match ibp[id]! with
     | some Bout => bounds.set! id (some (boundsConst (α:=α) ctx.inputDim Bout.dim Bout.lo Bout.hi))
     | none => bounds
-  | .mul_elem =>
+  | .mulElem =>
     match node.parents with
     | #[p1, p2] =>
       match getB p1, getB p2, ibp[p1]!, ibp[p2]! with
@@ -189,7 +190,7 @@ def propagateCROWNNode
       match getB p1 with
       | some xin =>
         let onesRow : Tensor α [1, xin.outDim] :=
-          Spec.fill (α := α) Numbers.one (.dim 1 (.dim xin.outDim .scalar))
+          Tensor.full (α := α) (.dim 1 (.dim xin.outDim .scalar)) 1
         let loAff : AffineVec α xin.inDim 1 :=
           { A := Spec.matMulSpec onesRow xin.loAff.A
             c := Spec.matVecMulSpec onesRow xin.loAff.c }
@@ -230,29 +231,37 @@ def propagateCROWNNode
             let b2Hi : AffineVec α b1.inDim b2.outDim :=
               castAffineIn (α := α) (n := b2.inDim) (n' := b1.inDim) (m := b2.outDim) hin.symm
                 b2.hiAff
-            match b1.loAff.A, b1.hiAff.A, b1.loAff.c, b1.hiAff.c, b2Lo.A, b2Hi.A, b2Lo.c,
-                b2Hi.c with
-            | .dim A1L, .dim A1U, .dim c1L, .dim c1U, .dim A2L, .dim A2U, .dim c2L,
-                .dim c2U =>
-              let outDim := b1.outDim + b2.outDim
-              let ALo : Tensor α [outDim, b1.inDim] :=
-                Tensor.dim (fun i =>
-                  Fin.addCases (fun i1 => A1L i1) (fun i2 => A2L i2) i)
-              let AHi : Tensor α [outDim, b1.inDim] :=
-                Tensor.dim (fun i =>
-                  Fin.addCases (fun i1 => A1U i1) (fun i2 => A2U i2) i)
-              let cLo : Tensor α [outDim] :=
-                Tensor.dim (fun i =>
-                  Fin.addCases (fun i1 => c1L i1) (fun i2 => c2L i2) i)
-              let cHi : Tensor α [outDim] :=
-                Tensor.dim (fun i =>
-                  Fin.addCases (fun i1 => c1U i1) (fun i2 => c2U i2) i)
-              bounds.set! id
-                (some
-                  { inDim := b1.inDim
-                    outDim := outDim
-                    loAff := { A := ALo, c := cLo }
-                    hiAff := { A := AHi, c := cHi } })
+            let outDim := b1.outDim + b2.outDim
+            let ALo : Tensor α [outDim, b1.inDim] :=
+              Tensor.matrix fun i j =>
+                Fin.addCases
+                  (fun i1 => Spec.get2 b1.loAff.A i1 j)
+                  (fun i2 => Spec.get2 b2Lo.A i2 j)
+                  i
+            let AHi : Tensor α [outDim, b1.inDim] :=
+              Tensor.matrix fun i j =>
+                Fin.addCases
+                  (fun i1 => Spec.get2 b1.hiAff.A i1 j)
+                  (fun i2 => Spec.get2 b2Hi.A i2 j)
+                  i
+            let cLo : Tensor α [outDim] :=
+              Tensor.ofFn fun i =>
+                Fin.addCases
+                  (fun i1 => Tensor.getScalar b1.loAff.c i1)
+                  (fun i2 => Tensor.getScalar b2Lo.c i2)
+                  i
+            let cHi : Tensor α [outDim] :=
+              Tensor.ofFn fun i =>
+                Fin.addCases
+                  (fun i1 => Tensor.getScalar b1.hiAff.c i1)
+                  (fun i2 => Tensor.getScalar b2Hi.c i2)
+                  i
+            bounds.set! id
+              (some
+                { inDim := b1.inDim
+                  outDim := outDim
+                  loAff := { A := ALo, c := cLo }
+                  hiAff := { A := AHi, c := cHi } })
           else bounds
         | _, _ => bounds
       | _ => bounds
@@ -309,12 +318,14 @@ def propagateCROWNNode
         match getB p1 with
         | some xin =>
           match ps.convCfg[id]? with
-          | some cfg =>
-            let inShape := Shape.ofList (cfg.inChannels :: cfg.inputSpatial.toList)
-            let outSpatial := Spec.convOutSpatial cfg.inputSpatial cfg.kernel cfg.stride cfg.padding
-            let outShape := Shape.ofList (cfg.outChannels :: outSpatial.toList)
+          | some config =>
+            let inShape :=
+              Shape.ofList (config.inChannels :: Tensor.to config.inputSpatial (List Nat))
+            let outSpatial :=
+              Spec.convOutSpatial config.inputSpatial config.kernel config.stride config.padding
+            let outShape := Shape.ofList (config.outChannels :: Tensor.to outSpatial (List Nat))
             if hout : xin.outDim = inShape.size then
-              let convAff := affOfConv (α:=α) cfg
+              let convAff := affOfConv (α:=α) config
               let out := propagateLinearBounds (α:=α) (n:=inShape.size) (m:=outShape.size)
                 convAff.A convAff.c xin hout
               bounds.set! id (some out)
@@ -326,8 +337,8 @@ def propagateCROWNNode
     match node.parents with
     | #[p1] =>
       match getB p1, ps.batchNormEval[id]? with
-      | some xin, some cfg =>
-        match batchNormEvalLinear? (α := α) nodes[p1]!.outShape channelAxis cfg with
+      | some xin, some config =>
+        match batchNormEvalLinear? (α := α) nodes[p1]!.outShape channelAxis config with
         | some p =>
           if hout : xin.outDim = p.n then
             let out := propagateLinearBounds (α := α) (n := p.n) (m := p.m) p.w p.b xin hout

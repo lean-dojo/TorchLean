@@ -6,7 +6,12 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Exec32
+public import Mathlib.Data.Nat.Basic
+public import Mathlib.Order.Basic
+import Mathlib.Tactic.Attr.Core
+import Mathlib.Tactic.Push
+import Mathlib.Tactic.Set
+public import NN.Floats.IEEEExec.Exec32.Dyadic
 
 /-!
 # Order bounds for `roundQuotEven`

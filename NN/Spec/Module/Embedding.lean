@@ -22,9 +22,9 @@ linear map `oneHot @ weight`.
 
 namespace Spec.Module
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- One-hot embedding module: `(seqLen, vocab)` to `(seqLen, embedDim)`. -/
 def oneHotEmbedding {vocab embedDim seqLen : Nat}

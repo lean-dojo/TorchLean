@@ -11,7 +11,6 @@ Device-agnostic real-data example:
 
 module
 
-
 public import NN.API
 public import NN.Examples.Models.Common
 
@@ -42,67 +41,69 @@ open TorchLean
 namespace NN.Examples.Models.Supervised.Mlp
 
 /-- CLI subcommand name used in terminal banners and error messages. -/
-def exeName : String := "torchlean mlp"
+def exeName : String := "mlp"
 
 /-- Default JSON loss-curve path for this command. -/
-def defaultLogJson : System.FilePath := ModelZoo.trainLogPath "mlp"
+def defaultLogPath : System.FilePath := Support.trainLogPath "mlp"
 
 /-- Static minibatch size for the Auto MPG tabular loader. -/
-def batch : Nat := 5
+def batchSize : Nat := 5
 
 /-- Auto MPG has seven numeric predictors after dropping `car_name`. -/
-def inDim : Nat := 7
+def inputWidth : Nat := 7
 
 /-- Hidden width of the one-hidden-layer MLP. -/
-def hidDim : Nat := 32
+def hiddenWidth : Nat := 32
 
 /-- Regression target width: normalized miles-per-gallon. -/
-def outDim : Nat := 1
+def outputWidth : Nat := 1
 
 /-- Input shape: a minibatch of Auto MPG feature vectors. -/
-abbrev σ : List Nat := [batch, inDim]
+abbrev input : Shape := [batchSize, inputWidth]
 
 /-- Output shape: one scalar regression prediction per row. -/
-abbrev τ : List Nat := [batch, outDim]
+abbrev output : Shape := [batchSize, outputWidth]
 
 /-- One-hidden-layer ReLU MLP from the public block API. -/
-def model : nn.Builder (nn.Sequential σ τ) :=
-  nn.blocks.mlp inDim outDim { hidden := [hidDim] } [batch]
+def model : nn.Builder (nn.Sequential input output) :=
+  nn.mlp inputWidth outputWidth { hiddenWidths := [hiddenWidth] } [batchSize]
 
 /--
 Auto MPG as a public TorchLean dataset.
 
 The only dataset-specific details here are the CSV path, header convention, batch size, and feature
-count. Runtime scalar selection stays inside `Trainer`, so the same dataset works for CPU, CUDA,
-typed graph, eager, and checked scalar modes.
+count. Runtime arithmetic selection stays inside `Trainer`, so the same dataset works for CPU,
+CUDA, typed graph, eager, and IEEE-reference modes.
 -/
 def data (path : System.FilePath) (seed : Nat) :
-    Trainer.Dataset σ τ :=
-  Data.tabularCsvDataset path batch inDim outDim
-    (csvOptions := { skipHeader := true }) (shuffle := true) (seed := seed)
+    Trainer.Dataset input output :=
+  Data.fromCsv path batchSize inputWidth outputWidth
+    (csvOptions := { skipHeader := true })
+    (shuffle := true) (seed := seed)
 
 /-- Train the Auto MPG MLP with the public `Trainer` surface. -/
-def train (opts : Options) (flags : ModelZoo.CsvTrainFlags) :
-    IO (Trainer.TrainResult σ τ) := do
+def train (runtime : Runtime.Config) (flags : Support.CsvTrainFlags) :
+    IO (Trainer.Result input output) := do
   Data.requireFile exeName "CSV dataset" flags.csvPath RealData.missingAutoMpgHint
   let trainer :=
     Trainer.new model <|
-      Trainer.Config.fromRunConfig
-        (Trainer.RunConfig.ofRuntimeOptions opts { optimizer := optim.adam { lr := flags.lr } })
-        .regression
+      Trainer.RunConfig.forObjective
+        (Trainer.RunConfig.fromRuntime runtime
+          { optimizer := optim.adam { learningRate := flags.training.learningRate } })
+        .meanSquaredError
         (seed := flags.seed)
   trainer.train
     (data flags.csvPath flags.seed)
-    (CLI.Training.OptimizerOptions.toTrainerOptions flags.toOptimizerOptions
-      (title := "MLP tabular training")
-      (notes := #[s!"dataset={flags.csvPath}", s!"lr={flags.lr}",
-        s!"steps={flags.steps}", s!"batch={batch}"]))
+    (flags.training.trainOptions
+      (logTitle := "MLP tabular training")
+      (logNotes := #[s!"dataset={flags.csvPath}", s!"lr={flags.training.learningRate}",
+        s!"steps={flags.training.steps}", s!"batch={batchSize}"]))
 
 /-- CLI entrypoint for Auto MPG regression on CPU or CUDA. -/
 def main (args : List String) : IO UInt32 :=
   TrainCommand.regressionCsv exeName args
-    _root_.NN.Examples.Data.RealPaths.autoMpgCsv defaultLogJson 1 1e-3
-    (ModelZoo.bannerWithDevice exeName "Auto MPG MLP regression")
+    NN.Examples.Data.RealPaths.autoMpgCsv defaultLogPath 1 1e-3
+    (Support.bannerWithDevice exeName "Auto MPG MLP regression")
     train
 
 end NN.Examples.Models.Supervised.Mlp

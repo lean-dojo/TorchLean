@@ -10,48 +10,29 @@ public import NN.API
 public import NN.Proofs.Autograd.FDeriv.Elementwise
 
 /-!
-# Functional transcendentals + scalar-affine: proofs and runtime regression checks
+# Differentiate three scalar functions
 
-Positive / negative example for the `nn.functional.{exp, log, scale, shift, affine}`
-ops added for scientific forward models — e.g. the soil-moisture retrieval that
-combines SMAP (Soil Moisture Active Passive) and NISAR (NASA–ISRO Synthetic
-Aperture Radar) observations through the AVS (Attenuation–Volume–Surface) model,
-whose surface term is $\exp(-2b\,\mathrm{NDVI})\,c\,|R|^2$.
+Run `lake exe torchlean transcendentals` to compare autograd with hand-computed derivatives:
 
-These operations are differentiated by the **autograd engine**, so a forward model written once
-yields its gradient without a hand-coded derivative.
-This file has two layers:
+* `exp x` has derivative `exp x`;
+* `3 * x + 1` has derivative `3`;
+* `exp (-2 * x)` has derivative `-2 * exp (-2 * x)` by the chain rule.
 
-* a proof layer handle for the real-valued `exp` op, using
-  `Proofs.Autograd.OpSpecFDerivCorrect.exp` and the generic
-  `backward_eq_adjoint_fderiv` theorem;
-* runtime regression checks that differentiate tiny Float functions and compare the
-  autograd gradient to the closed form.
+All three are evaluated at `x = 0.5` using `Float` and absolute tolerance `1e-6`. Each check also
+rejects a named wrong answer. In particular, the last one distinguishes a missing minus sign from
+rounding error. Every check should print `PASS` or `PASS-NEG`; a mismatch exits with an error.
+No dataset or GPU is needed.
 
-The runtime checks below are not the proof. They make sure the executable tape path used by
-scientific examples still follows the expected derivative numerically. The proof layer declarations
-state the corresponding operation specifications and derivative theorems.
-
-Each runtime check differentiates a tiny function and compares the autograd gradient to the closed
-form:
-
-* positive controls — the gradient matches the analytic value;
-* negative controls — a deliberately *wrong* analytic value (notably the
-  wrong-sign gradient of $\exp(-2x)$) does **not** match. That is exactly the
-  defect class — a sign/factor error in a hand-coded Jacobian — that deriving the
-  gradient by autograd eliminates.
-
-`checkAll` runs as a compiled executable — `lake exe transcendentals_check` — and
-exits non-zero on any regression. It is deliberately *not* an `#eval` check:
-autograd uses the native tape externs, which the interpreter cannot load (see the
-`main` entry point below).
+`expProofSurface` and `expBackward_eq_adjoint_fderiv` give the separate real-arithmetic theorem.
+The executable comparisons test the Float tape on these inputs; they do not prove its native
+implementation or establish a derivative at every input. Read `expNegativeTwoFn`, then `gradAt`,
+then `checkAll` for the application flow.
 -/
 
 @[expose] public section
 
 namespace NN.Examples.Functional.Transcendentals
 
-open Spec.Tensor
 open TorchLean.Tensor
 open TorchLean
 
@@ -75,7 +56,7 @@ For scalar exp over `ℝ`, the proved backward rule is the adjoint of the Fréch
 This is the theorem-level statement that the executable regression check is meant to complement.
 -/
 theorem expBackward_eq_adjoint_fderiv
-    (x δ : Spec.Tensor ℝ [1]) :
+    (x δ : Tensor ℝ [1]) :
     Proofs.Autograd.getScalarE (expProofSurface.correct.op.backward x δ) =
       Proofs.Autograd.vjp expProofSurface.forwardVec (Proofs.Autograd.getScalarE x)
         (Proofs.Autograd.getScalarE δ) :=
@@ -86,19 +67,18 @@ end
 /-! ## Functions under test (written once; gradients come from autograd) -/
 
 /-- $f(x)=e^x$. -/
-def expFn : autograd.func.TensorFunction [] [] :=
+def expFn : autograd.Function [] [] :=
   fun x => nn.functional.exp x
 
-/-- $f(x)=e^{-2x}$ — the shape of the AVS canopy two-way transmittance as a
-function of the attenuation parameter. -/
-def expNegativeTwoFn : autograd.func.TensorFunction [] [] :=
+/-- $f(x)=e^{-2x}$; its derivative needs both the factor two and the minus sign. -/
+def expNegativeTwoFn : autograd.Function [] [] :=
   fun x => do
-    let u ← nn.functional.scale x (-Numbers.two)
+    let u ← nn.functional.scale x (-2)
     nn.functional.exp u
 
 /-- $f(x)=3x+1$ via the scalar-affine op. -/
-def affineFn : autograd.func.TensorFunction [] [] :=
-  fun x => nn.functional.affine x Numbers.three Numbers.one
+def affineFn : autograd.Function [] [] :=
+  fun x => nn.functional.affine x 3 1
 
 /-! ## Float checks -/
 
@@ -121,12 +101,18 @@ def expectNot (name : String) (got wrong : Float) (tol : Float := 1e-6) : IO Uni
     IO.println s!"[PASS-NEG] {name}: grad = {got} ≠ {wrong} (test discriminates)"
 
 /-- Differentiate a scalar→scalar `Fn` at a Float point, returning the gradient. -/
-def gradAt (f : autograd.func.TensorFunction [] []) (x0 : Float) :
+def gradAt (f : autograd.Function [] []) (x0 : Float) :
     IO Float := do
   let x := Tensor.full [] x0
-  let g ← autograd.func.grad (inputShape := []) (α := Float) f x
-  pure (Spec.toScalarSpec g)
+  let g ← autograd.grad (σ := []) (α := Float) f x
+  pure g.item
 
+/--
+Compare each derivative with its analytic value and reject a plausible wrong value.
+
+The positive checks establish agreement at the sampled point; the negative controls show that
+those points and tolerances distinguish the particular mistakes named below.
+-/
 def checkAll : IO Unit := do
   -- exp:  d/dx eˣ = eˣ
   let ge ← gradAt expFn 0.5
@@ -141,14 +127,30 @@ def checkAll : IO Unit := do
   -- exp(-2x):  d/dx e^{-2x} = -2·e^{-2x}
   let gn ← gradAt expNegativeTwoFn 0.5
   expectGrad "exp(-2x)"      gn ((-2.0) * Float.exp (-1.0))
-  -- THE AVS bug class: the wrong-SIGN analytic (+2·e^{-2x}) must NOT match.
+  -- A positive derivative would have the wrong sign for this decreasing function.
   expectNot  "exp(-2x) sign" gn (( 2.0) * Float.exp (-1.0))
 
   IO.println "[transcendentals] all positive + negative controls passed ✓"
 
-end NN.Examples.Functional.Transcendentals
+/-- Command-line help for the transcendental autograd checks. -/
+def usage : String :=
+  String.intercalate "\n"
+    [ "TorchLean transcendental autograd checks"
+    , ""
+    , "Usage:"
+    , "  lake exe torchlean transcendentals"
+    , ""
+    , "Checks derivatives of exp(x), 3x+1, and exp(-2x) at x=0.5 (Float tolerance 1e-6)."
+    , "PASS-NEG means a deliberately wrong derivative was rejected. No data or GPU needed."
+    ]
 
-/-- Compiled entry point. Autograd uses the native runtime, so this runs as a compiled `lean_exe`
-(`lake exe transcendentals_check`), not via `#eval` (the interpreter cannot load native tape
-externs). -/
-def main : IO Unit := NN.Examples.Functional.Transcendentals.checkAll
+/-- Entry point. -/
+def main (args : List String) : IO Unit := do
+  let args := CLI.dropDashDash args
+  if CLI.hasHelp args then
+    IO.println usage
+    return
+  CLI.requireNoArgs "transcendentals" args
+  checkAll
+
+end NN.Examples.Functional.Transcendentals

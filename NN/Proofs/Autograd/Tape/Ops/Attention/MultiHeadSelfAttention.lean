@@ -7,8 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Tape.Nodes.Batched
-public import NN.Proofs.Autograd.Tape.Nodes.Shape
 public import NN.Proofs.Autograd.Tape.Util.Idx
+public import NN.Proofs.Autograd.Tape.Nodes.GraphComposition
+public import NN.Proofs.Autograd.Tape.Nodes.Arithmetic
 
 /-!
 # MultiHeadSelfAttention
@@ -36,7 +37,7 @@ used by the graph has a `NodeFDerivCorrect` instance.
 namespace Proofs
 namespace Autograd
 
-open Spec
+open Spec TorchLean
 
 open scoped BigOperators
 
@@ -154,15 +155,23 @@ def idxWo {n dModel numHeads headDim : Nat} {ss : List Shape} :
     Idx (ΓMHA n dModel numHeads headDim ++ ss) (WoShape dModel numHeads headDim) :=
   ⟨⟨4, by simp [ΓMHA]⟩, by simp [ΓMHA]⟩
 
-lemma size_big_to_heads (n numHeads headDim : Nat) :
-    Spec.Shape.size (BigShape n numHeads headDim) = Spec.Shape.size (HeadsShape n numHeads headDim) := by
-  -- `Spec.Shape.size` multiplies dimension sizes; the remaining goal is a commutative-monoid identity.
+/-- Reshaping between the flat `[n, numHeads * headDim]` view and the split `[n, numHeads, headDim]`
+view preserves the element count.
+
+This is what makes the head split a pure reinterpretation: no data moves, only the shape changes, so
+the reshape node is the identity on the underlying vector. -/
+theorem size_big_to_heads (n numHeads headDim : Nat) :
+    Spec.Shape.size (BigShape n numHeads headDim) =
+      Spec.Shape.size (HeadsShape n numHeads headDim) := by
+  -- `Spec.Shape.size` multiplies dimension sizes; the remaining goal is a commutative-monoid
+  -- identity.
   simp [Spec.Shape.size]
   ac_rfl
 
-lemma size_swap_to_concat (n numHeads headDim : Nat) :
-    Spec.Shape.size (.dim n (.dim numHeads (.dim headDim .scalar))) = Spec.Shape.size (BigShape n numHeads
-      headDim) := by
+/-- The same count equality in the direction used when concatenating heads back together. -/
+theorem size_swap_to_concat (n numHeads headDim : Nat) :
+    Spec.Shape.size (.dim n (.dim numHeads (.dim headDim .scalar))) =
+      Spec.Shape.size (BigShape n numHeads headDim) := by
   simp [Spec.Shape.size]
 
 /-- Append a constant scaling node for the most recently saved tensor. -/
@@ -438,7 +447,7 @@ def mhaScoresDGraph {n dModel numHeads headDim : Nat} (c : ℝ) :
       (τ := HeadsShape n numHeads headDim)
   let idxQheads7 :
       Idx (ΓMHA n dModel numHeads headDim ++ ss7) (HeadsShape n numHeads headDim) :=
-    _root_.Proofs.Autograd.Idx.weaken
+    Proofs.Idx.weaken
       (Γ := ΓMHA n dModel numHeads headDim ++ [BigShape n numHeads headDim, HeadsShape n numHeads
         headDim])
       idxQheads0
@@ -460,7 +469,7 @@ def mhaScoresDGraph {n dModel numHeads headDim : Nat} (c : ℝ) :
       (τ := .dim numHeads (.dim headDim (.dim n .scalar)))
   let idxKt7 :
       Idx (ΓMHA n dModel numHeads headDim ++ ss7) (.dim numHeads (.dim headDim (.dim n .scalar))) :=
-    _root_.Proofs.Autograd.Idx.weaken
+    Proofs.Idx.weaken
       (Γ := ΓMHA n dModel numHeads headDim ++
         [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
         , BigShape n numHeads headDim, HeadsShape n numHeads headDim
@@ -520,7 +529,7 @@ def mhaAttentionDGraph {n dModel numHeads headDim : Nat} (c : ℝ) :
       (τ := HeadsShape n numHeads headDim)
   let idxVheads10 :
       Idx (ΓMHA n dModel numHeads headDim ++ ss10) (HeadsShape n numHeads headDim) :=
-    _root_.Proofs.Autograd.Idx.weaken
+    Proofs.Idx.weaken
       (Γ := ΓMHA n dModel numHeads headDim ++ ss7)
       idxVheads0
       (rest :=

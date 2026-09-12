@@ -6,14 +6,21 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Tensor
+public import Mathlib.Algebra.Order.Field.Basic
+import Mathlib.Tactic.NormNum.Inv
+import Mathlib.Tactic.NormNum.Pow
+import Mathlib.Tactic.Positivity.Finset
+public import NN.Tensor.Internal.Elab.TensorLiteral
+public import NN.Tensor.Operations
+public import NN.Tensor -- shake: keep
 
 /-!
 # Low-Rank Adapters
 
 LoRA represents a linear-weight update as two smaller matrices. For a base weight
-$W : \mathbb{R}^{d_{in}\times d_{out}}$, an adapter of rank $r$ uses
-$A : \mathbb{R}^{d_{in}\times r}$ and $B : \mathbb{R}^{r\times d_{out}}$:
+$W : \mathbb{R}^{d_{in}\times d_{out}}$, an adapter of rank $r$ uses an input factor
+$A : \mathbb{R}^{d_{in}\times r}$ and an output factor
+$B : \mathbb{R}^{r\times d_{out}}$:
 
 $$W_{eff}=W+sAB.$$
 
@@ -28,41 +35,45 @@ https://arxiv.org/abs/2106.09685.
 
 namespace TorchLean.Adapters.LoRA
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
-/-- LoRA factors for a linear weight of shape `inDim × outDim`. -/
-structure Params (α : Type) (inDim rank outDim : Nat) where
+/-- LoRA factors for a linear weight of shape `inputWidth × outputWidth`. -/
+structure Parameters (α : Type) [TorchLean.Storage α]
+    (inputWidth rank outputWidth : Nat) where
   /-- Projection from the input dimension to the adapter rank. -/
-  A : Tensor α [inDim, rank]
+  inputFactor : Tensor α [inputWidth, rank]
   /-- Projection from the adapter rank to the output dimension. -/
-  B : Tensor α [rank, outDim]
+  outputFactor : Tensor α [rank, outputWidth]
 
 /-- The scaled low-rank update $sAB$. -/
-def delta {α : Type} [Add α] [Mul α] [Zero α]
-    {inDim rank outDim : Nat} (p : Params α inDim rank outDim) (scale : α) :
-    Tensor α [inDim, outDim] :=
-  scaleSpec (matMulSpec p.A p.B) scale
+def weightUpdate {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
+    {inputWidth rank outputWidth : Nat}
+    (parameters : Parameters α inputWidth rank outputWidth) (scale : α) :
+    Tensor α [inputWidth, outputWidth] :=
+  Tensor.scale (Tensor.matmul parameters.inputFactor parameters.outputFactor) scale
 
 /-- Add a LoRA update to a base linear weight. -/
-def effectiveWeight {α : Type} [Add α] [Mul α] [Sub α] [Zero α]
-    {inDim rank outDim : Nat}
-    (base : Tensor α [inDim, outDim])
-    (p : Params α inDim rank outDim) (scale : α) :
-    Tensor α [inDim, outDim] :=
-  addSpec base (delta p scale)
+def effectiveWeight {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Sub α] [Zero α]
+    {inputWidth rank outputWidth : Nat}
+    (baseWeight : Tensor α [inputWidth, outputWidth])
+    (parameters : Parameters α inputWidth rank outputWidth) (scale : α) :
+    Tensor α [inputWidth, outputWidth] :=
+  Tensor.add baseWeight (weightUpdate parameters scale)
 
-/-- Apply a linear map whose weight is augmented by a LoRA update at every leading index. -/
-def linear {α : Type} [Add α] [Mul α] [Sub α] [Zero α]
-    {leading : List Nat} {inDim rank outDim : Nat}
-    (x : Tensor α (leading ++ [inDim]))
-    (base : Tensor α [inDim, outDim])
-    (p : Params α inDim rank outDim) (scale : α) :
-    Tensor α (leading ++ [outDim]) := by
-  let x' : Tensor α ((Shape.ofList leading).concat (Shape.ofList [inDim])) := by
-    simpa only [Shape.ofList_append] using x
-  simpa only [Shape.ofList_append] using
-    Spec.Tensor.mapEach (Shape.ofList leading)
-      (fun row => vecMatMulSpec row (effectiveWeight base p scale)) x'
+/-- Apply a linear map whose weight is augmented by a LoRA update over an arbitrary batch shape. -/
+def linear {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Sub α] [Zero α]
+    {batchShape : Shape} {inputWidth rank outputWidth : Nat}
+    (input : Tensor α (batchShape.appendDim inputWidth))
+    (baseWeight : Tensor α [inputWidth, outputWidth])
+    (parameters : Parameters α inputWidth rank outputWidth) (scale : α) :
+    Tensor α (batchShape.appendDim outputWidth) := by
+  let input' : Tensor α (batchShape.concat [inputWidth]) := by
+    simpa only [Shape.appendDim_eq_concat] using input
+  simpa only [Shape.appendDim_eq_concat] using
+    TorchLean.Tensor.mapLeading batchShape
+      (fun row =>
+        Tensor.vecmat row (effectiveWeight baseWeight parameters scale))
+      input'
 
 end TorchLean.Adapters.LoRA

@@ -13,8 +13,8 @@ public import Mathlib.Analysis.SpecialFunctions.Log.ERealExp
 # BugZoo: attention-mask semantics
 
 Attention code has its own failure modes: mask polarity, head reshaping, Q/K/V layout, and KV-cache
-mismatches are easy to get wrong and hard to notice from accuracy tests alone. This file focuses on the
-mask part, because TorchLean already has precise theorems for it.
+mismatches are easy to get wrong and hard to notice from accuracy tests alone. This file focuses on
+the mask part, because TorchLean already has precise theorems for it.
 
 Here is the bug-shaped PyTorch pattern we want to rule out:
 
@@ -30,7 +30,7 @@ The intended PyTorch version uses true negative infinity on blocked future entri
 ```python
 future = torch.triu(torch.ones(T, T, dtype=torch.bool), diagonal=1)
 weights = torch.softmax(scores.masked_fill(future, -torch.inf), dim=-1)
-assert weights[i, j] == 0.0 for all j > i
+assert torch.all(weights[future] == 0.0)
 ```
 
 Lean's ordinary `ℝ` does not contain a literal $-\infty$, but mathlib does provide extended reals
@@ -53,9 +53,11 @@ References:
 
 @[expose] public section
 
+open TorchLean
+
 namespace NN.Examples.BugZoo.AttentionMask
 
-open Spec.Tensor
+open TorchLean.Tensor
 
 /-- Exact extended-real masked logit: allowed entries keep their real score, blocked entries are
 literal $-\infty$ (`⊥ : EReal`). -/
@@ -74,8 +76,8 @@ noncomputable def exactMaskedLogit (score : ℝ) (allowed : Bool) : EReal :=
 
 /-- Exact extended-real causal masking of one score-matrix coordinate. -/
 noncomputable def exactCausalMaskedScore {n : Nat}
-    (scores : Spec.Tensor ℝ [n, n]) (i j : Fin n) : EReal :=
-  exactMaskedLogit (Spec.get2 scores i j) (Spec.get2 (Spec.causalMask n) i j)
+    (scores : Tensor ℝ [n, n]) (i j : Fin n) : EReal :=
+  exactMaskedLogit scores[(i, j)] (Spec.causalMask n)[(i, j)]
 
 /--
 For a strict-future position, exact causal masking assigns literal $-\infty$.
@@ -85,11 +87,11 @@ This is the formal version of the PyTorch operation
 -/
 theorem exactCausalMaskedScore_future_eq_bot
     {n : Nat}
-    (scores : Spec.Tensor ℝ [n, n])
+    (scores : Tensor ℝ [n, n])
     (i j : Fin n) (hij : i.val < j.val) :
     exactCausalMaskedScore scores i j = (⊥ : EReal) := by
-  simp [exactCausalMaskedScore, exactMaskedLogit,
-    NN.Proofs.Models.Attention.causalMask_blocks_future i j hij]
+  change exactMaskedLogit scores[(i, j)] (Spec.get2 (Spec.causalMask n) i j) = ⊥
+  simp [exactMaskedLogit, NN.Proofs.Models.Attention.causalMask_blocks_future i j hij]
 
 /--
 Therefore, the strict-future numerator is exactly zero.
@@ -98,7 +100,7 @@ This is why TorchLean's attention spec writes this zero numerator directly.
 -/
 theorem exactCausalMaskedScore_future_exp_zero
     {n : Nat}
-    (scores : Spec.Tensor ℝ [n, n])
+    (scores : Tensor ℝ [n, n])
     (i j : Fin n) (hij : i.val < j.val) :
     EReal.exp (exactCausalMaskedScore scores i j) = 0 := by
   simp [exactCausalMaskedScore_future_eq_bot scores i j hij]
@@ -112,9 +114,9 @@ zero attention mass for the current query row. In TorchLean this is represented 
 -/
 theorem trueInfinityMask_future_attention_weight_zero
     {n : Nat}
-    (scores : Spec.Tensor ℝ [n, n])
+    (scores : Tensor ℝ [n, n])
     (i j : Fin n) (hij : i.val < j.val) :
-    Spec.get2 (Spec.hardMaskedSoftmaxSpec scores (Spec.causalMask n)) i j = 0 :=
+    (Spec.hardMaskedSoftmaxSpec scores (Spec.causalMask n))[(i, j)] = 0 :=
   NN.Proofs.Models.Attention.hardMaskedSoftmaxSpec_causal_future_zero scores i j hij
 
 end NN.Examples.BugZoo.AttentionMask

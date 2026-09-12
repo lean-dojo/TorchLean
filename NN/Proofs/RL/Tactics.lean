@@ -4,10 +4,11 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+-- The macros below name `Spec.RL.*` constants, and macro hygiene resolves those against this
+-- file rather than the call site, so shake's constant-level analysis cannot see the need.
+module -- shake: keep-all
 
 import Lean.Parser.Tactic
-
 public import NN.Spec.RL.Core
 
 /-!

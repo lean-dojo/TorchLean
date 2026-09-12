@@ -7,15 +7,17 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Tensor.Factorizations
-public import NN.Proofs.Tensor.Basic.LinearAlgebra
 public import Mathlib.Data.List.GetD
+public import NN.Spec.Core.Context.Real
+public import NN.Proofs.Tensor.Basic.Core -- shake: keep
 
 /-!
 # Correctness of the exact matrix factorizations (Cholesky and QR)
 
-This file sets up the **formal correctness layer** for the two exact, finite spec-layer factorizations
-in `NN.Spec.Core.Tensor.Factorizations` (`choleskySpec`, `qrSpec`): the factorization predicates
-over real matrices, and the first structural theorem about the executable Cholesky factor.
+This file sets up the **formal correctness layer** for the two exact, finite spec-layer
+factorizations in `NN.Spec.Core.Tensor.Factorizations` (`choleskySpec`, `qrSpec`): the
+factorization predicates over real matrices, and the first structural theorem about the executable
+Cholesky factor.
 
 ## Architecture (refinement)
 
@@ -24,17 +26,18 @@ over real matrices, and the first structural theorem about the executable Choles
   `Spec.toMatFn` produced by the executable specs bridges for free.
 * **Fold-indexing lemmas** (`length_foldl_snoc`, `getD_foldl_snoc_lt`, `getD_foldl_snoc_read`,
   `getD_foldl_finRange`) read off the column produced at a given position of the left fold that both
-  `choleskyColsFn` and `gramSchmidtFn` use to build their output, bridging the executable `List.foldl`
-  form to per-entry reasoning. They live here once and are reused by `FactorizationsReconstruction`.
+  `choleskyColsFn` and `gramSchmidtFn` use to build their output, bridging the executable
+  `List.foldl` form to per-entry reasoning. They live here once and are reused by
+  `FactorizationsReconstruction`.
 * **Structural theorem.** The executable Cholesky factor is lower-triangular
   (`choleskyFn_lower_triangular`, lifted to the tensor level as `choleskySpec_lower_triangular`),
-  proved directly from the column fold — the above-diagonal entry is forced to `0` by construction.
+  proved directly from the column fold: the above-diagonal entry is forced to `0` by construction.
 
 ## Scope
 
 This file proves only the predicates and the lower-triangularity fact. The exact algebraic
-reconstructions — `A = L · Lᵀ` for Cholesky (under positive pivots) and `A = Q · R` with `Qᵀ Q = 1`
-for Gram–Schmidt (under full column rank) — are proved in the companion modules
+reconstructions, namely `A = L · Lᵀ` for Cholesky (under positive pivots) and `A = Q · R` with
+`Qᵀ Q = 1` for Gram–Schmidt (under full column rank), are proved in the companion modules
 `NN.Proofs.Tensor.Basic.FactorizationsReconstruction` and
 `NN.Proofs.Tensor.Basic.FactorizationsOrthonormal`. Everything here is an exact identity over `ℝ`;
 the only hypotheses are the genuine success conditions of the algorithms.
@@ -70,7 +73,7 @@ def IsQR {m k : Nat} (A Q : Matrix (Fin m) (Fin k) ℝ) (R : Matrix (Fin k) (Fin
 `choleskyColsFn` and `gramSchmidtFn` build their output with a left fold that appends one column per
 index. The lemmas here read off the column produced at a given position, bridging the executable
 `List.foldl` form to per-entry reasoning. They are generic over the appended-value function `g` and
-are the single home for these snoc-fold read lemmas — `FactorizationsReconstruction` reuses them. -/
+are the single home for these snoc-fold read lemmas; `FactorizationsReconstruction` reuses them. -/
 
 section FoldSnoc
 
@@ -148,7 +151,8 @@ theorem getD_foldl_finRange (g : List β → Fin n → β) (d : β) (j : Fin n) 
             = (List.finRange n).take (j.val + 1) ++ (List.finRange n).drop (j.val + 1) from
             (List.take_append_drop _ _).symm]
           rw [List.foldl_append]
-    _ = ((List.finRange n).take (j.val + 1) |>.foldl (fun s a => s ++ [g s a]) []).getD j.val d := by
+    _ = ((List.finRange n).take (j.val + 1) |>.foldl (fun s a => s ++ [g s a]) []).getD
+          j.val d := by
           apply getD_foldl_snoc_lt
           rw [length_foldl_snoc, List.length_nil, List.length_take, List.length_finRange,
             Nat.zero_add]
@@ -167,9 +171,11 @@ above the diagonal is forced to `0` by the construction. -/
 
 /-- Reading an entry of a matrix tensor returns the underlying function value. -/
 theorem get2_matrix {m k : Nat} (f : Fin m → Fin k → ℝ) (i : Fin m) (j : Fin k) :
-    Spec.get2 (Spec.Tensor.matrix f) i j = f i j := rfl
+    Spec.get2 (TorchLean.Tensor.matrix f) i j = f i j := by
+  simp [TorchLean.Tensor.matrix, Spec.get2]
 
-/-- The executable Cholesky factor is lower-triangular: entries strictly above the diagonal vanish. -/
+/-- The executable Cholesky factor is lower-triangular: entries strictly above the diagonal
+vanish. -/
 theorem choleskyFn_lower_triangular (A : Fin n → Fin n → ℝ) {i j : Fin n} (hij : i.val < j.val) :
     Spec.choleskyFn A i j = 0 := by
   unfold Spec.choleskyFn Spec.choleskyColsFn
@@ -177,10 +183,11 @@ theorem choleskyFn_lower_triangular (A : Fin n → Fin n → ℝ) {i j : Fin n} 
   rw [if_pos hij]
 
 /-- Tensor-level statement: the Cholesky factor `choleskySpec A` is lower-triangular. -/
-theorem choleskySpec_lower_triangular (A : Spec.Tensor ℝ [n, n])
+theorem choleskySpec_lower_triangular (A : TorchLean.Tensor ℝ [n, n])
     {i j : Fin n} (hij : i.val < j.val) :
     Spec.get2 (Spec.choleskySpec A) i j = 0 := by
-  rw [show Spec.choleskySpec A = Spec.Tensor.matrix (Spec.choleskyFn (Spec.toMatFn A)) from rfl,
+  rw [show Spec.choleskySpec A =
+      TorchLean.Tensor.matrix (Spec.choleskyFn (Spec.toMatFn A)) from rfl,
     get2_matrix]
   exact choleskyFn_lower_triangular _ hij
 end Spec.Factorization

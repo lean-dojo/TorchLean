@@ -17,18 +17,18 @@ Files:
   axis-indexed softmax/log-softmax and their VJPs, plus final-axis primitives used by row-oriented
   backends.
 - `Linear.lean`: fully connected layer spec ($y=Wx+b$) and gradients.
-- `Attention.lean`: scaled dot product attention and multihead attention with hard-mask semantics;
-  blocked weights are exactly zero, and a fully blocked row evaluates to the zero vector
-  semantics and VJPs.
+- `Attention.lean`: scaled dot product attention and multihead attention with hard-mask semantics
+  (blocked weights are exactly zero, and a fully blocked row evaluates to the zero vector), with
+  VJPs.
 - `FlashAttention.lean`: FlashAttention style tiling metadata/specs tied back to the same attention
   semantics.
 - `Conv.lean`: rank-polymorphic convolution and transposed-convolution specs with explicit
-  backward rules.
-- `Pooling.lean`: max/avg pooling, padded pooling, adaptive pooling, and smooth max pooling
-  surrogates, including backward/JVP rules.
-- `Pooling/ND.lean`: shared sliding-window geometry for arbitrary spatial rank.
-- `GlobalPooling.lean`: global avg/max pooling and backward rules.
-- `Normalization.lean`: LayerNorm and BatchNorm style utilities with explicit backward specs.
+  backward rules, including grouped and dilated convolution in both the block-diagonal dense and
+  the PyTorch packed weight layouts.
+- `Pooling.lean` and `Pooling/Spatial.lean`: max/avg pooling, padded pooling, adaptive pooling, and
+  smooth max pooling surrogates for arbitrary spatial rank, including backward/JVP rules.
+- `Normalization.lean`, `Normalization/Core.lean`, `Normalization/BatchNorm.lean`: LayerNorm,
+  RMSNorm, and BatchNorm style utilities with explicit backward specs.
 - `Embedding.lean`: one-hot embeddings (`oneHot @ W`) and the corresponding VJP.
 - `PositionalEncoding.lean`: learnable/sinusoidal positional encodings and RoPE style rotations.
 - `Dropout.lean`: deterministic inference and mask-driven training dropout specs.
@@ -36,7 +36,6 @@ Files:
 - `Gnn.lean`: a compact GCN-style graph layer and backward rules.
 - `Rnn.lean`, `Lstm.lean`, `Gru.lean`: recurrent layers and BPTT-style backwards.
 - `SelectiveScan.lean`: affine scan primitives used by S4/Mamba style state space models.
-- `Utils.lean`: shared indexing and sliding-window geometry used by convolution and pooling layers.
 
 The underlying tensor primitives (maps, matmul, reshape, broadcasting) live under `NN/Spec/Core/*`.
 

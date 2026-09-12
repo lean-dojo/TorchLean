@@ -38,8 +38,8 @@ namespace NN.Verification.LiRPA.Cnn
 
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 
 /--
 Small fixed graph:
@@ -49,18 +49,18 @@ We keep it flat so the certificate checker works over `FlatBox` inputs.
 -/
 def buildGraph : Graph :=
   let inC := 1; let inH := 4; let inW := 4
-  let inShape := Shape.dim inC (Shape.dim inH (Shape.dim inW Shape.scalar))
+  let inShape : Shape := [inC, inH, inW]
   let nIn := inShape.size
   let outC := 1; let kH := 3; let kW := 3; let stride := 1; let padding := 0
   let outH := Spec.Shape.slidingWindowOutDim inH kH stride padding
   let outW := Spec.Shape.slidingWindowOutDim inW kW stride padding
-  let outShape := Shape.dim outC (Shape.dim outH (Shape.dim outW Shape.scalar))
+  let outShape : Shape := [outC, outH, outW]
   let nConv := outShape.size
   let nOut := 2
-  let inputNode : Node := { id := 0, parents := #[], kind := .input, outShape := .dim nIn .scalar }
-  let convAffineNode : Node := { id := 1, parents := #[0], kind := .linear, outShape := .dim nConv .scalar }
-  let reluNode : Node := { id := 2, parents := #[1], kind := .relu, outShape := .dim nConv .scalar }
-  let classifierNode : Node := { id := 3, parents := #[2], kind := .linear, outShape := .dim nOut .scalar }
+  let inputNode : Node := { id := 0, parents := #[], kind := .input, outShape := [nIn] }
+  let convAffineNode : Node := { id := 1, parents := #[0], kind := .linear, outShape := [nConv] }
+  let reluNode : Node := { id := 2, parents := #[1], kind := .relu, outShape := [nConv] }
+  let classifierNode : Node := { id := 3, parents := #[2], kind := .linear, outShape := [nOut] }
   { nodes := #[inputNode, convAffineNode, reluNode, classifierNode] }
 
 /--
@@ -73,31 +73,36 @@ linear layer.
 def seedParamsFloat : ParamStore Float :=
   let inC := 1; let outC := 1; let kH := 3; let kW := 3; let stride := 1; let padding := 0
   let inH := 4; let inW := 4
-  let kernelShape : Spec.Tensor Nat [2] :=
-    Spec.Tensor.ofArrayExact #[kH, kW] (by simp)
-  let strides : Spec.Tensor Nat [2] :=
-    Spec.Tensor.ofArrayExact #[stride, stride] (by simp)
-  let paddings : Spec.Tensor Nat [2] :=
-    Spec.Tensor.ofArrayExact #[padding, padding] (by simp)
-  let inputSpatial : Spec.Tensor Nat [2] :=
-    Spec.Tensor.ofArrayExact #[inH, inW] (by simp)
-  let inShape := Shape.ofList (inC :: inputSpatial.toList)
+  let kernelShape : TorchLean.Tensor Nat [2] :=
+    Tensor.from #[kH, kW]
+  let strides : TorchLean.Tensor Nat [2] :=
+    Tensor.from #[stride, stride]
+  let paddings : TorchLean.Tensor Nat [2] :=
+    Tensor.from #[padding, padding]
+  let inputSpatial : TorchLean.Tensor Nat [2] :=
+    Tensor.from #[inH, inW]
+  let inShape := Shape.ofList (inC :: Tensor.to inputSpatial (List Nat))
   let outSpatial := Spec.convOutSpatial inputSpatial kernelShape strides paddings
-  let outShape := Shape.ofList (outC :: outSpatial.toList)
+  let outShape := Shape.ofList (outC :: Tensor.to outSpatial (List Nat))
   let nIn := inShape.size
   let nConv := outShape.size
   let kernelValues : Tensor Float [outC, inC, kH, kW] :=
-    Tensor.dim (fun _ => Tensor.dim (fun _ => Tensor.dim (fun i => Tensor.dim (fun j =>
-      Tensor.scalar (Float.ofNat (1 + (i.val + j.val)))))))
-  let kernel : Tensor Float (Shape.ofList (outC :: inC :: kernelShape.toList)) := by
-    simpa [kernelShape] using kernelValues
-  let bias : Tensor Float [outC] := Tensor.dim (fun _ => Tensor.scalar (0.0))
+    Tensor.generate [outC, inC, kH, kW] fun
+      | [_, _, i, j] => Float.ofNat (1 + i + j)
+      | _ => 0.0
+  let kernel :
+      Tensor Float (Shape.ofList (outC :: inC :: Tensor.to kernelShape (List Nat))) := by
+    have hKernelShape : Tensor.to kernelShape (List Nat) = [kH, kW] := by
+      change Tensor.to (Tensor.from #[kH, kW]) (List Nat) = [kH, kW]
+      exact Tensor.to_list_from_array #[kH, kW]
+    simpa [hKernelShape] using kernelValues
+  let bias : Tensor Float [outC] := Tensor.generate [outC] fun _ => 0.0
   let conv : Spec.ConvSpec 2 inC outC kernelShape strides paddings Float :=
     { kernel := kernel, bias := bias }
   -- Seed input box (center ones, eps)
-  let inputCenter : Tensor Float inShape := Spec.fill 1.0 inShape
+  let inputCenter : Tensor Float inShape := Tensor.full inShape 1.0
   let eps : Float := 0.1
-  let rad := Spec.fill (α := Float) eps inShape
+  let rad := Tensor.full (α := Float) inShape eps
   let xB : Box Float inShape :=
     { lo := Tensor.subSpec inputCenter rad, hi := Tensor.addSpec inputCenter rad }
   let convWeight : Tensor Float [nConv, nIn] :=
@@ -106,10 +111,14 @@ def seedParamsFloat : ParamStore Float :=
   let convBias : Tensor Float [nConv] :=
     NN.MLTheory.CROWN.convBiasBroadcast (α := Float) (outSpatial := outSpatial) conv.bias
   -- Linear head 4→2
-  let headWeight : Tensor Float [2, nConv] := Tensor.dim (fun i => Tensor.dim (fun j
-    => Tensor.scalar (Float.ofNat (2 + (i.val + j.val)))))
-  let headBias : Tensor Float [2] := Tensor.dim (fun i => Tensor.scalar (Float.ofNat
-    (i.val)))
+  let headWeight : Tensor Float [2, nConv] :=
+    Tensor.generate [2, nConv] fun
+      | [i, j] => Float.ofNat (2 + i + j)
+      | _ => 0.0
+  let headBias : Tensor Float [2] :=
+    Tensor.generate [2] fun
+      | [i] => Float.ofNat i
+      | _ => 0.0
   let emptyStore : ParamStore Float := {}
   -- set input box
   let inFlat : FlatBox Float :=

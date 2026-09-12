@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Layers.Normalization
+public import NN.Tensor
+public import NN.Spec.Core.Context.Real
 
 /-!
 # BugZoo: constant normalization slices
@@ -25,11 +27,17 @@ The scale/weight gradient for that slice is also zero, because it is multiplied 
 activation. This applies to the mathematical core behind LayerNorm, GroupNorm, InstanceNorm, and
 BatchNorm; those layers differ mainly in which axes define the slice.
 
-The paired Python reproducer checks this contract against PyTorch normalization kernels on large
-constant tensors.
+Run `python3 scripts/verification/normalization_contract_probe.py --device cpu` to measure forward
+and backward residuals from PyTorch normalization kernels on constant tensors.
+
+The theorems use real arithmetic with totalized division and square root. They assume the supplied
+mean and variance already equal `x` and zero; they do not prove that a floating-point statistics
+kernel computes those values exactly on a constant slice.
 -/
 
 @[expose] public section
+
+open TorchLean
 
 namespace NN.Examples.BugZoo.ConstantNormalizationSlice
 
@@ -42,25 +50,21 @@ contribution is zero and only `beta` remains.
 -/
 theorem constant_slice_normalizeCore_outputs_bias (x gamma beta epsilon : ℝ) :
     Spec.normalizeCore
-        (s := .scalar)
-        (s_mean := .scalar)
-        (s_var := .scalar)
-        (s_gamma := .scalar)
-        (s_beta := .scalar)
         (epsilon := epsilon)
-        (x := Spec.Tensor.scalar x)
-        (mean := Spec.Tensor.scalar x)
-        (variance := Spec.Tensor.scalar 0)
-        (gamma := Spec.Tensor.scalar gamma)
-        (beta := Spec.Tensor.scalar beta)
-        (cb_mean := Spec.Shape.CanBroadcastTo.scalar)
-        (cb_var := Spec.Shape.CanBroadcastTo.scalar)
-        (cb_gamma := Spec.Shape.CanBroadcastTo.scalar)
-        (cb_beta := Spec.Shape.CanBroadcastTo.scalar)
-      = Spec.Tensor.scalar beta := by
-  simp [Spec.normalizeCore, Spec.Tensor.broadcastTo, Spec.Tensor.addSpec, Spec.Tensor.subSpec,
-    Spec.Tensor.mulSpec, Spec.Tensor.divSpec, Spec.Tensor.sqrtSpec, Spec.Tensor.map2Spec,
-    Spec.fill]
+        (x := Tensor.full [] x)
+        (mean := Tensor.full [] x)
+        (variance := Tensor.full [] 0)
+        (gamma := Tensor.full [] gamma)
+        (beta := Tensor.full [] beta)
+        (cbMean := Spec.Shape.CanBroadcastTo.refl [])
+        (cbVar := Spec.Shape.CanBroadcastTo.refl [])
+        (cbGamma := Spec.Shape.CanBroadcastTo.refl [])
+        (cbBeta := Spec.Shape.CanBroadcastTo.refl [])
+      = Tensor.full [] beta := by
+  apply Tensor.ext_scalar
+  simp [Spec.normalizeCore, Tensor.full, Tensor.addSpec,
+    Tensor.subSpec, Tensor.mulSpec, Tensor.divSpec,
+    Tensor.sqrtSpec]
 
 /-- The scale gradient contribution from a constant normalized slice is zero. -/
 theorem constant_slice_scale_grad_zero (dy x epsilon : ℝ) :

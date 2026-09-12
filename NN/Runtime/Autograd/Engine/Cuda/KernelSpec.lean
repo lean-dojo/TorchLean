@@ -65,13 +65,13 @@ abbrev FlatBuffer (n : Nat) := Fin n → RefScalar
 /-- A native-result buffer represented only by raw binary32 bits. -/
 abbrev NativeBitsBuffer (n : Nat) := Fin n → UInt32
 
-/-- Extensionality for the thin `IEEE32Exec` wrapper, phrased through native bits. -/
-private theorem ref_ext {x y : RefScalar} (h : toNativeBits x = toNativeBits y) : x = y := by
-  cases x
-  cases y
-  cases h
-  rfl
-
+/-!
+`ref_ext` is the `RefScalar` extensionality lemma from `Float32Contract`, which point 2 of the
+module docstring above already names as this file's source of scalar float32 facts. It had a
+private copy here with the same statement and the same proof, so the copy is gone and the lemma
+is opened instead.
+-/
+open Float32Contract (ref_ext)
 /-- Reinterpret a native bit buffer as reference `IEEE32Exec` values. -/
 def fromNativeBitsBuffer {n : Nat} (xs : NativeBitsBuffer n) : FlatBuffer n :=
   fun i => fromNativeBits (xs i)
@@ -89,11 +89,14 @@ def getD {n : Nat} (x : FlatBuffer n) (i : Nat) : RefScalar :=
 def toNativeBitsBuffer {n : Nat} (xs : FlatBuffer n) : NativeBitsBuffer n :=
   fun i => toNativeBits (xs i)
 
+/-- A buffer of reference scalars survives a round trip through its bits. -/
 @[simp] theorem fromNativeBitsBuffer_toNativeBitsBuffer {n : Nat} (xs : FlatBuffer n) :
     fromNativeBitsBuffer (toNativeBitsBuffer xs) = xs := by
   funext i
   simp [fromNativeBitsBuffer, toNativeBitsBuffer]
 
+/-- And a buffer of bits survives a round trip through reference scalars, so kernel specs may be
+stated on whichever side reads better and transported to the other. -/
 @[simp] theorem toNativeBitsBuffer_fromNativeBitsBuffer {n : Nat} (xs : NativeBitsBuffer n) :
     toNativeBitsBuffer (fromNativeBitsBuffer xs) = xs := by
   funext i
@@ -179,7 +182,7 @@ theorem native_add_pointwise_abs_error_of_bits
     (hbits : ∀ i, bits i = toNativeBits (IEEE32Exec.add (x i) (y i)))
     (i : Fin n)
     (hfin : IEEE32Exec.isFinite (fromNativeBits (bits i)) = true) :
-    _root_.abs
+    abs
         (IEEE32Exec.toReal (fromNativeBits (bits i)) -
           (IEEE32Exec.toReal (x i) + IEEE32Exec.toReal (y i))) ≤
       eps32 (IEEE32Exec.toReal (x i) + IEEE32Exec.toReal (y i)) := by
@@ -197,7 +200,7 @@ theorem native_mul_pointwise_abs_error_of_bits
     (hbits : ∀ i, bits i = toNativeBits (IEEE32Exec.mul (x i) (y i)))
     (i : Fin n)
     (hfin : IEEE32Exec.isFinite (fromNativeBits (bits i)) = true) :
-    _root_.abs
+    abs
         (IEEE32Exec.toReal (fromNativeBits (bits i)) -
           (IEEE32Exec.toReal (x i) * IEEE32Exec.toReal (y i))) ≤
       eps32 (IEEE32Exec.toReal (x i) * IEEE32Exec.toReal (y i)) := by
@@ -215,7 +218,7 @@ theorem native_div_pointwise_abs_error_of_bits
     (hbits : ∀ i, bits i = toNativeBits (IEEE32Exec.div (x i) (y i)))
     (i : Fin n)
     (hfin : IEEE32Exec.isFinite (fromNativeBits (bits i)) = true) :
-    _root_.abs
+    abs
         (IEEE32Exec.toReal (fromNativeBits (bits i)) -
           (IEEE32Exec.toReal (x i) / IEEE32Exec.toReal (y i))) ≤
       eps32 (IEEE32Exec.toReal (x i) / IEEE32Exec.toReal (y i)) := by
@@ -233,10 +236,10 @@ theorem native_sqrt_pointwise_abs_error_of_bits
     (hbits : ∀ i, bits i = toNativeBits (IEEE32Exec.sqrt (x i)))
     (i : Fin n)
     (hfin : IEEE32Exec.isFinite (fromNativeBits (bits i)) = true) :
-    _root_.abs
+    abs
         (IEEE32Exec.toReal (fromNativeBits (bits i)) -
-          _root_.Real.sqrt (IEEE32Exec.toReal (x i))) ≤
-      eps32 (_root_.Real.sqrt (IEEE32Exec.toReal (x i))) := by
+          Real.sqrt (IEEE32Exec.toReal (x i))) ≤
+      eps32 (Real.sqrt (IEEE32Exec.toReal (x i))) := by
   have hx : fromNativeBits (bits i) = IEEE32Exec.sqrt (x i) := by
     apply ref_ext
     simp [hbits i]
@@ -258,9 +261,9 @@ def reduceSumLeftSpec {n : Nat} (x : FlatBuffer n) : RefScalar :=
 /--
 Explicit assumption package for a native reduction implementation.
 
-Use this when a native CUDA reduction has been configured or validated to use the same fixed order as
-`reduceSumLeftSpec`. Non-deterministic `atomicAdd` reductions should not claim this contract unless
-the runtime mode or kernel implementation fixes the accumulation order.
+Use this when a native CUDA reduction has been configured or validated to use the same fixed order
+as `reduceSumLeftSpec`. Non-deterministic `atomicAdd` reductions should not claim this contract
+unless the runtime mode or kernel implementation fixes the accumulation order.
 -/
 structure NativeReduceAgreement {n : Nat} (nativeBits : UInt32) (x : FlatBuffer n) : Prop where
   bits_eq_left_fold : nativeBits = toNativeBits (reduceSumLeftSpec x)
@@ -274,10 +277,6 @@ theorem native_reduce_eq_leftSpec
   simp [h.bits_eq_left_fold]
 
 /-! ## Gather/scatter indexing -/
-
-/-- Gather `k` elements from a length-`n` vector using proof-carrying indices. -/
-def gatherVecSpec {n k : Nat} (x : FlatBuffer n) (idx : Fin k → Fin n) : FlatBuffer k :=
-  fun j => x (idx j)
 
 /--
 Scatter-add a length-`k` value buffer into a length-`n` input buffer.
@@ -293,11 +292,6 @@ def scatterAddSpec {n k : Nat} (x : FlatBuffer n) (values : FlatBuffer k)
       (fun acc j => if idx j = i then IEEE32Exec.add acc (values j) else acc)
       (x i)
 
-/-- A gather followed by scatter-add to zeros accumulates each selected source position. -/
-def gatherThenScatterToZeroSpec {n k : Nat} (x : FlatBuffer n) (idx : Fin k → Fin n) :
-    FlatBuffer n :=
-  scatterAddSpec (fun _ => IEEE32Exec.posZero) (gatherVecSpec x idx) idx
-
 /-! ## Batched row-major matrix multiplication -/
 
 /-- Linear row-major index for `A[b, i, k]` with shape `(batch, m, n)`. -/
@@ -307,10 +301,6 @@ def bmmAIndex (m n : Nat) (b i k : Nat) : Nat :=
 /-- Linear row-major index for `B[b, k, j]` with shape `(batch, n, p)`. -/
 def bmmBIndex (n p : Nat) (b k j : Nat) : Nat :=
   (b * n + k) * p + j
-
-/-- Linear row-major index for `C[b, i, j]` with shape `(batch, m, p)`. -/
-def bmmCIndex (m p : Nat) (b i j : Nat) : Nat :=
-  (b * m + i) * p + j
 
 /-- Decode a flat row-major output index for shape `(batch, m, p)`. -/
 def bmmDecodeC (m p : Nat) (q : Nat) : Nat × Nat × Nat :=

@@ -12,7 +12,6 @@ public import NN.API.Models.ResNet
 public import NN.API.Models.Unet
 public import NN.API.Models.Vit
 public import NN.API.Models.Recurrent
-public import NN.API.Models.Transformer
 public import NN.API.Models.CausalTransformer
 public import NN.API.Models.Mamba
 public import NN.API.Models.Generative

@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.RuntimeApprox.NF.Ops.Sum
+public import NN.Proofs.RuntimeApprox.NF.Ops.Plumbing
+public import NN.Proofs.RuntimeApprox.NF.Ops.Scalar
 
 /-!
 # NF Elementwise Bounds: Core Arithmetic Budgets
@@ -17,8 +18,8 @@ public import NN.Proofs.RuntimeApprox.NF.Ops.Sum
 namespace Proofs
 namespace RuntimeApprox
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
 
 noncomputable section
@@ -39,7 +40,7 @@ local notation "R" => TorchLean.Floats.NF β fexp rnd
 Per-entry bound tensor for addition.
 
 `add_bound_tensor epsx epsy xR yR` computes an elementwise error budget for `xR + yR`. Its
-  `linf_norm`
+  `linfNorm`
 is used as the output epsilon in `approxTensor_add_spec`.
 -/
 def addBoundTensor {s : Shape} (epsx epsy : ℝ) (xR yR : Tensor R s) : SpecTensor s :=
@@ -52,7 +53,7 @@ def addBoundTensor {s : Shape} (epsx epsy : ℝ) (xR yR : Tensor R s) : SpecTens
 /--
 Per-entry bound tensor for subtraction.
 
-Analogous to `add_bound_tensor`, but for `xR - yR` (and the corresponding spec subtraction).
+Analogous to `addBoundTensor`, but for `xR - yR` (and the corresponding spec subtraction).
 -/
 def subBoundTensor {s : Shape} (epsx epsy : ℝ) (xR yR : Tensor R s) : SpecTensor s :=
   map2Spec
@@ -146,8 +147,8 @@ def tanhBoundTensor {s : Shape} (_eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
 /--
 Per-entry bound tensor for `safeLog`.
 
-`safeLog_bound_tensor ε eps xR` is the elementwise bound used by `approxTensor_safeLog_spec`, combining a
-`(1/ε)` Lipschitz propagation term with one rounding-ULP term.
+`safeLog_bound_tensor ε eps xR` is the elementwise bound used by `approxTensor_safeLog_spec`,
+combining a `(1/ε)` Lipschitz propagation term with one rounding-ULP term.
 -/
 def safeLogBoundTensor {s : Shape} (ε eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
   mapSpec
@@ -171,135 +172,17 @@ theorem approxTensor_safeLog_spec {s : Shape} (ε : ℝ) (hε : 0 < ε) :
           (linfNorm (safeLogBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (s := s) ε eps xR))
             := by
   intro xS xR eps hx
-  induction s with
-  | scalar =>
-      cases xS with
-      | scalar x =>
-          cases xR with
-          | scalar xR =>
-              have hx' :=
-                (approxTensor_scalar_iff (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                  (x := x) (xR := xR) (eps := eps)).1 hx
-              have h :=
-                approx_safeLog_nf (β := β) (fexp := fexp) (rnd := rnd) (x := x) (xR := xR) (eps :=
-                  eps) (ε := ε)
-                  hε hx'
-              have hle :
-                  abs
-                      (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                          (safeLogR (β := β) (fexp := fexp) (rnd := rnd) ε xR) -
-                        safeLog (ε := ε) x) ≤
-                    linfNorm
-                      (safeLogBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (s := Shape.scalar)
-                        ε eps
-                        (Tensor.scalar xR)) := by
-                refine le_trans h ?_
-                -- `linf_norm` of a scalar tensor is the `abs` of its entry.
-                simpa [safeLogBoundTensor, tensorToSpec, Spec.Tensor.map, mapSpec, linfNorm,
-                  RuntimeApprox.linfNorm, tensorDistance,
-                    NN.MLTheory.Robustness.Spec.tensorDistance.tensor_sub,
-                  tensorLinfNorm, MathFunctions.abs, safeLog] using le_abs_self _
-              -- Wrap back into `approxTensor`.
-              exact
-                (approxTensor_scalar_iff (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                  (x := safeLog (ε := ε) x)
-                  (xR := safeLogR (β := β) (fexp := fexp) (rnd := rnd) ε xR)
-                  (eps := linfNorm
-                    (safeLogBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (s := Shape.scalar) ε
-                      eps
-                      (Tensor.scalar xR)))).2 hle
-  | dim n s ih =>
-      cases xS with
-      | dim xSf =>
-          cases xR with
-          | dim xRf =>
-              let B : ℝ :=
-                linfNorm
-                  (safeLogBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (s := Shape.dim n s) ε
-                    eps
-                    (Tensor.dim xRf))
-              have hB_nonneg : 0 ≤ B := by
-                simpa [B] using
-                  (linf_norm_nonneg (t := safeLogBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                    (s := Shape.dim n s) ε eps (Tensor.dim xRf)))
-              have hcomp :
-                  ∀ i : Fin n,
-                tensorDistance (α := SpecScalar) linfNorm
-                        (mapSpec (s := s) (safeLog (ε := ε)) (xSf i))
-                        (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                          rnd))
-                          (mapSpec (s := s) (safeLogR (β := β) (fexp := fexp) (rnd := rnd) ε) (xRf
-                            i)))
-                      ≤ B := by
-                intro i
-                have hx_i := approxTensor_dim_get (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd
-                  := rnd)) hx i
-                have hih := ih (xS := xSf i) (xR := xRf i) hx_i
-                have hB_ge :
-                    linfNorm
-                        (safeLogBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (s := s) ε eps
-                          (xRf i)) ≤
-                      B := by
-                    simpa [B, safeLogBoundTensor, tensorToSpec, Spec.Tensor.map, mapSpec] using
-                      (linf_norm_le_get_dim
-                        (t := safeLogBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-                          (s := Shape.dim n s) ε eps (Tensor.dim xRf)) i)
-                have hdist :
-                    tensorDistance (α := SpecScalar) linfNorm
-                        (mapSpec (s := s) (safeLog (ε := ε)) (xSf i))
-                        (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                          rnd))
-                          (mapSpec (s := s) (safeLogR (β := β) (fexp := fexp) (rnd := rnd) ε) (xRf
-                            i)))
-                      ≤ linfNorm
-                        (safeLogBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (s := s) ε eps
-                          (xRf i)) := by
-                  simpa [approxTensor, approxWith] using hih
-                exact le_trans hdist hB_ge
-              have hf :
-                  ∀ i ∈ List.finRange n,
-                tensorDistance (α := SpecScalar) linfNorm
-                        (mapSpec (s := s) (safeLog (ε := ε)) (xSf i))
-                        (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                          rnd))
-                          (mapSpec (s := s) (safeLogR (β := β) (fexp := fexp) (rnd := rnd) ε) (xRf
-                            i)))
-                      ≤ B := by
-                intro i _hi
-                exact hcomp i
-              have hfold :=
-                List.foldl_max_le_of_le (List.finRange n)
-                  (fun i =>
-                    tensorDistance (α := SpecScalar) linfNorm
-                      (mapSpec (s := s) (safeLog (ε := ε)) (xSf i))
-                      (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                        rnd))
-                        (mapSpec (s := s) (safeLogR (β := β) (fexp := fexp) (rnd := rnd) ε) (xRf
-                          i))))
-                  (acc := (0 : ℝ)) (eps := B) hB_nonneg hf
-              have :
-                  tensorDistance (α := SpecScalar) linfNorm
-                      (mapSpec (s := Shape.dim n s) (safeLog (ε := ε)) (Tensor.dim xSf))
-                      (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                        rnd))
-                        (mapSpec (s := Shape.dim n s) (safeLogR (β := β) (fexp := fexp) (rnd :=
-                          rnd) ε)
-                          (Tensor.dim xRf)))
-                      ≤ B := by
-                    change
-                      List.foldl
-                        (fun a i =>
-                          max a
-                            (tensorDistance (α := SpecScalar) linfNorm
-                              (mapSpec (s := s) (safeLog (ε := ε)) (xSf i))
-                              (tensorToSpec (α := R)
-                                (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-                                (mapSpec (s := s)
-                                  (safeLogR (β := β) (fexp := fexp) (rnd := rnd) ε)
-                                  (xRf i)))))
-                        0 (List.finRange n) ≤ B
-                    exact hfold
-              simpa [approxTensor, approxWith, B] using this
+  have h :=
+    approxTensor_map_spec_of_scalar_bound
+      (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
+      (s := s) (fS := safeLog (ε := ε))
+      (fR := safeLogR (β := β) (fexp := fexp) (rnd := rnd) ε)
+      (bnd := fun a inputError =>
+        (1 / ε) * inputError + neuralUlp β fexp (safeLog (ε := ε) a) / 2)
+      (xS := xS) (xR := xR) (eps := eps) hx (by
+        intro x xR hx
+        exact approx_safeLog_nf (β := β) (fexp := fexp) (rnd := rnd) hε hx)
+  simpa [safeLogBoundTensor] using h
 end NFBackend
 
 end

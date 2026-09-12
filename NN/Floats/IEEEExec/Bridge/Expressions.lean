@@ -6,6 +6,11 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Floats.IEEEExec.Bridge.FP32.Ops
+public import NN.Floats.IEEEExec.Bridge.FP32.Sqrt
+-- The op-level refinement theorems live in `Bridge.FP32`; this file builds on them through the
+-- `FP32.Ops` and `FP32.Sqrt` splits, so `lake shake` sees no direct use of the parent module.
+-- Keep it: it is what puts the op-level layer in front of the expression layer.
 public import NN.Floats.IEEEExec.Bridge.FP32
 
 /-!

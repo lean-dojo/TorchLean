@@ -6,15 +6,17 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Floor.Semiring
-public import Mathlib.Data.Real.Basic
-public import NN.Proofs.Utils.List
-public import NN.Spec.Core.Tensor
-public import NN.Spec.Core.Tensor.SomeTensor
-public import NN.Spec.Layers.Activation
-public import NN.Spec.Layers.Linear
 public import NN.Spec.Models.Mlp
-import Mathlib.Tactic.Linarith
+public import Mathlib.Algebra.EuclideanDomain.Basic
+public import Mathlib.Algebra.EuclideanDomain.Field
+public import Mathlib.Algebra.Order.Algebra
+public import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
+public import Mathlib.Data.Sym.Sym2.Init
+import Mathlib.Tactic.NormNum.GCD
+public import NN.Proofs.Tensor.Basic.Core
+public import NN.Proofs.Tensor.Basic.Folds
+public import NN.Spec.Core.Context.Real
+public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Universal approximation (1D, constructive)
@@ -47,26 +49,26 @@ This file formalizes the classic constructive proof strategy:
 namespace NN.MLTheory.Proofs.UniversalApproximation
 
   open _root_.Spec
-  open _root_.Spec.Tensor
+  open _root_.TorchLean
+  open _root_.TorchLean.Tensor
   open Examples
 
   /-- Shorthand for `relu` in this development, using TorchLean’s spec semantics. -/
-  abbrev relu (x : ℝ) : ℝ := Activation.Math.reluSpec x
+  noncomputable abbrev relu (x : ℝ) : ℝ := Activation.Math.reluSpec x
 
   /-- If the knot $t$ is to the left of $x$, then $\operatorname{ReLU}(x-t)=x-t$. -/
-  lemma relu_sub_eq_of_le {x t : ℝ} (h : t ≤ x) : relu (x - t) = x - t := by
+  theorem relu_sub_eq_of_le {x t : ℝ} (h : t ≤ x) : relu (x - t) = x - t := by
     have : 0 ≤ x - t := sub_nonneg.mpr h
-    simp [relu, Activation.Math.reluSpec, max_eq_left this]
+    rw [relu, Activation.Math.reluSpec_eq_max, max_eq_left this]
 
   /-- If $x$ is to the left of the knot $t$, then $\operatorname{ReLU}(x-t)=0$. -/
-  lemma relu_sub_eq_zero_of_le {x t : ℝ} (h : x ≤ t) : relu (x - t) = 0 := by
+  theorem relu_sub_eq_zero_of_le {x t : ℝ} (h : x ≤ t) : relu (x - t) = 0 := by
     have : x - t ≤ 0 := sub_nonpos.mpr h
-    simp [relu, Activation.Math.reluSpec, max_eq_right this]
+    rw [relu, Activation.Math.reluSpec_eq_max, max_eq_right this]
 
 /-- Extract scalar from a length-1 tensor. -/
 def extractScalarOutput (t : Tensor ℝ [1]) : ℝ :=
-  match t with
-  | .dim f => item (f ⟨0, by norm_num⟩)
+  t.getScalar ⟨0, by norm_num⟩
 
 /-- Evaluate a 2-layer ReLU MLP on a scalar input. -/
 noncomputable def mlpEvalScalar (hidDim : ℕ)
@@ -77,7 +79,7 @@ noncomputable def mlpEvalScalar (hidDim : ℕ)
 TorchLean's MLP forward pass is exactly
 $\operatorname{linear}\circ\operatorname{ReLU}\circ\operatorname{linear}$.
 -/
-lemma mlp_forward_eq_linear_relu_linear {hidDim : ℕ}
+theorem mlp_forward_eq_linear_relu_linear {hidDim : ℕ}
     (l1 : LinearSpec ℝ 1 hidDim) (l2 : LinearSpec ℝ hidDim 1) (x : Tensor ℝ [1]) :
     Examples.mlpForward l1 l2 x =
       let z1 := Spec.linearSpec (α := ℝ) l1 x
@@ -99,88 +101,27 @@ noncomputable def hingeLayer2 (n : ℕ) (c : Fin n → ℝ) (b : ℝ) : LinearSp
 noncomputable def hingeFun (n : ℕ) (t : Fin n → ℝ) (c : Fin n → ℝ) (b x : ℝ) : ℝ :=
   b + ∑ i : Fin n, c i * relu (x - t i)
 
-/-- Fold lemma matching the scalar tensor accumulator used in `matVecMulSpec`. -/
-lemma finRange_foldl_add_scalar (n : ℕ) (f : Fin n → ℝ) :
-    (List.finRange n).foldl
-        (fun (acc : Tensor ℝ .scalar) (k : Fin n) =>
-          match acc with
-          | Tensor.scalar s => Tensor.scalar (s + f k))
-        (Tensor.scalar 0)
-      =
-      Tensor.scalar (∑ k : Fin n, f k) := by
-  classical
-  -- First, reduce the tensor fold to a scalar fold.
-  have h_scalar :
-      ∀ s0 : ℝ,
-        (List.finRange n).foldl
-            (fun (acc : Tensor ℝ .scalar) (k : Fin n) =>
-              match acc with
-              | Tensor.scalar s => Tensor.scalar (s + f k))
-            (Tensor.scalar s0)
-          =
-          Tensor.scalar ((List.finRange n).foldl (fun (s : ℝ) (k : Fin n) => s + f k) s0) := by
-    intro s0
-    induction (List.finRange n) generalizing s0 with
-    | nil =>
-      simp
-    | cons k ks ih =>
-      simp [List.foldl, ih]
-  -- Then use the shared list-to-finset fold theorem on the scalar fold.
-  rw [h_scalar 0]
-  congr 1
-  simpa using (List.finRange_foldl_add_eq_finset_sum (n := n) f)
-
-set_option linter.auxLemma false in
 /-- Matrix-vector multiply for a one-row matrix is the expected finite dot product. -/
-lemma mat_vec_mul_spec_matrix_vector (n : ℕ) (c v : Fin n → ℝ) :
+theorem mat_vec_mul_spec_matrix_vector (n : ℕ) (c v : Fin n → ℝ) :
     matVecMulSpec (Tensor.matrix (m := 1) (n := n) (fun _ j => c j))
         (Tensor.dim (fun j => Tensor.scalar (v j))) =
       Tensor.dim (fun _ => Tensor.scalar (∑ j : Fin n, c j * v j)) := by
   classical
-  -- Reduce to pointwise equality on the unique index of `Fin 1`, then compute the dot product.
-  apply congrArg Tensor.dim
-  funext i
+  apply Tensor.ext_vector
+  intro i
   fin_cases i
-  -- Unfold everything; the goal becomes a `List.foldl` over `Fin n`.
-  simp
-  -- Convert the fold step (which is an aux matcher generated inside `mat_vec_mul_spec`) into the
-  -- scalar-accumulator form, then apply `finRange_foldl_add_scalar`.
-  have hfold :
-      List.foldl
-          (fun (acc : Tensor ℝ .scalar) (k : Fin n) =>
-            Spec.matVecMulSpec.match_1 (α := ℝ) (motive := fun _ _ _ => Tensor ℝ .scalar)
-              acc (Tensor.scalar (c k)) (Tensor.scalar (v k))
-              (fun s ak vk => Tensor.scalar (s + ak * vk)))
-          (Tensor.scalar 0) (List.finRange n) =
-        List.foldl
-          (fun (acc : Tensor ℝ .scalar) (k : Fin n) =>
-            match acc with
-            | Tensor.scalar s => Tensor.scalar (s + c k * v k))
-          (Tensor.scalar 0) (List.finRange n) := by
-    refine List.foldl_ext
-        (f := fun (acc : Tensor ℝ .scalar) (k : Fin n) =>
-          Spec.matVecMulSpec.match_1 (α := ℝ) (motive := fun _ _ _ => Tensor ℝ .scalar)
-            acc (Tensor.scalar (c k)) (Tensor.scalar (v k))
-            (fun s ak vk => Tensor.scalar (s + ak * vk)))
-        (g := fun (acc : Tensor ℝ .scalar) (k : Fin n) =>
-          match acc with
-          | Tensor.scalar s => Tensor.scalar (s + c k * v k))
-        (a := Tensor.scalar 0) ?_
-    intro acc k _
-    cases acc
-    simp
-  exact hfold.trans (finRange_foldl_add_scalar n (fun j : Fin n => c j * v j))
+  simp [getScalar_mat_vec_mul_spec, Tensor.matrix, Spec.get2]
 
-/-- Matrix-vector multiply by the all-ones column extracts the scalar input into every hidden unit. -/
-lemma mat_vec_mul_spec_matrix_singleton (n : ℕ) (x : ℝ) :
+/-- Matrix-vector multiply by the all-ones column extracts the scalar input into every hidden
+unit. -/
+theorem mat_vec_mul_spec_matrix_singleton (n : ℕ) (x : ℝ) :
     matVecMulSpec (Tensor.matrix (m := n) (n := 1) (fun _ _ => (1 : ℝ)))
         (Tensor.singleton x) =
       Tensor.dim (fun _ : Fin n => Tensor.scalar x) := by
   classical
-  apply congrArg Tensor.dim
-  funext i
-  -- Unfold and compute the unique dot product over `Fin 1`.
-  simp [Tensor.ofFn, List.finRange_succ, List.foldl]
+  apply Tensor.ext_vector
+  intro i
+  simp [getScalar_mat_vec_mul_spec, Tensor.matrix, Spec.get2, Tensor.singleton]
 
 /--
 The explicit two-layer network built from `hingeLayer1` and `hingeLayer2` computes `hingeFun`.
@@ -188,7 +129,7 @@ The explicit two-layer network built from `hingeLayer1` and `hingeLayer2` comput
 This is the main semantic bridge from the approximation-theory hinge representation to TorchLean's
 spec-level MLP model.
 -/
-lemma mlp_eval_scalar_hinge (n : ℕ) (t : Fin n → ℝ) (c : Fin n → ℝ) (b x : ℝ) :
+theorem mlp_eval_scalar_hinge (n : ℕ) (t : Fin n → ℝ) (c : Fin n → ℝ) (b x : ℝ) :
     mlpEvalScalar n (hingeLayer1 n t) (hingeLayer2 n c b) x = hingeFun n t c b x := by
   classical
   -- Unfold the definition of `mlp_eval_scalar` and rewrite `mlp_forward`.
@@ -205,7 +146,10 @@ lemma mlp_eval_scalar_hinge (n : ℕ) (t : Fin n → ℝ) (c : Fin n → ℝ) (b
     unfold hingeLayer1 Spec.linearSpec
     -- `mat_vec_mul_spec` yields the constant vector `x`; then add the bias `-t`.
     rw [mat_vec_mul_spec_matrix_singleton]
-    simp [Tensor.ofFn, addSpec, Tensor.map2Spec, sub_eq_add_neg]
+    apply Tensor.ext_vector
+    intro i
+    rw [congrFun (Spec.getScalar_add_spec _ _) i]
+    simp [Tensor.ofFn, sub_eq_add_neg]
   -- Apply ReLU pointwise.
   have ha1 :
       Activation.reluSpec (α := ℝ) (s := .dim n .scalar)
@@ -229,7 +173,10 @@ lemma mlp_eval_scalar_hinge (n : ℕ) (t : Fin n → ℝ) (c : Fin n → ℝ) (b
           Tensor.dim (fun _ : Fin 1 => Tensor.scalar (∑ j : Fin n, c j * relu (x - t j))) := by
       simpa using mat_vec_mul_spec_matrix_vector n c (fun j => relu (x - t j))
     rw [hmv]
-    simp [Tensor.ofFn, addSpec, Tensor.map2Spec, add_comm]
+    apply Tensor.ext_vector
+    intro i
+    fin_cases i
+    simp [Spec.getScalar_add_spec, Tensor.ofFn, add_comm]
   -- Extract the scalar output (the unique element of `Fin 1`) and reorder `b + sum`.
   -- `Fin 1` has a unique element, so `fin_cases` reduces the extracted component.
   simp [hy, Tensor.item, add_comm]
@@ -343,7 +290,7 @@ $\operatorname{ReLU}(x-t_i)$.
           exact Nat.le_of_not_gt this
         have hgi : grid (k + 1) ≤ grid i := grid_mono hik'
         have hxle : x ≤ grid i := le_trans hx1 hgi
-        simp [F, relu_sub_eq_zero_of_le (x := x) (t := grid i) hxle]
+        simp only [F, relu_sub_eq_zero_of_le (x := x) (t := grid i) hxle, mul_zero]
       have hGzero : ∀ i ∈ Finset.range N, i ∉ Finset.range (k + 1) → G i = 0 := by
         intro i hiN hik
         have hik' : k + 1 ≤ i := by
@@ -353,7 +300,7 @@ $\operatorname{ReLU}(x-t_i)$.
         have hgi : grid k ≤ grid i := by
           have : k ≤ i := le_trans (Nat.le_succ k) hik'
           exact grid_mono this
-        simp [G, relu_sub_eq_zero_of_le (x := grid k) (t := grid i) hgi]
+        simp only [G, relu_sub_eq_zero_of_le (x := grid k) (t := grid i) hgi, mul_zero]
       have sumF : (∑ i ∈ Finset.range N, F i) = (∑ i ∈ Finset.range (k + 1), F i) := by
         symm
         exact Finset.sum_subset hsub hFzero
@@ -361,20 +308,20 @@ $\operatorname{ReLU}(x-t_i)$.
         symm
         exact Finset.sum_subset hsub hGzero
       have gx : g x = f a + ∑ i ∈ Finset.range (k + 1), F i := by
-        simp [g, F, sumF]
+        exact congrArg (fun y : ℝ => f a + y) sumF
       have gk : g (grid k) = f a + ∑ i ∈ Finset.range (k + 1), G i := by
-        simp [g, G, sumG]
+        exact congrArg (fun y : ℝ => f a + y) sumG
       have hF' : ∀ i ∈ Finset.range (k + 1), F i = cNat i * (x - grid i) := by
         intro i hi
         have hi' : i ≤ k := Nat.le_of_lt_succ (Finset.mem_range.mp hi)
         have hgi : grid i ≤ grid k := grid_mono hi'
         have : grid i ≤ x := le_trans hgi hx0
-        simp [F, relu_sub_eq_of_le (x := x) (t := grid i) this]
+        simp only [F, relu_sub_eq_of_le (x := x) (t := grid i) this]
       have hG' : ∀ i ∈ Finset.range (k + 1), G i = cNat i * (grid k - grid i) := by
         intro i hi
         have hi' : i ≤ k := Nat.le_of_lt_succ (Finset.mem_range.mp hi)
         have : grid i ≤ grid k := grid_mono hi'
-        simp [G, relu_sub_eq_of_le (x := grid k) (t := grid i) this]
+        simp only [G, relu_sub_eq_of_le (x := grid k) (t := grid i) this]
       have gx' : g x = f a + ∑ i ∈ Finset.range (k + 1), cNat i * (x - grid i) := by
         refine gx.trans ?_
         congr 1
@@ -437,8 +384,8 @@ $\operatorname{ReLU}(x-t_i)$.
           refine Finset.sum_eq_zero ?_
           intro i hi
           have : a ≤ grid i := ha_le i hi
-          simp [relu_sub_eq_zero_of_le (x := a) (t := grid i) this]
-        simp [g, hgrid0, hsum]
+          simp only [relu_sub_eq_zero_of_le (x := a) (t := grid i) this, mul_zero]
+        simp only [g, hgrid0, hsum, add_zero]
       | succ k ih =>
         have hkN : k + 1 ≤ N := hk
         have hk_le : k ≤ N := le_trans (Nat.le_succ k) hkN

@@ -24,13 +24,16 @@ namespace TorchLean
 namespace CLI
 
 /--
-Strip at most one occurrence of a `--key` flag from an argument list.
+Take an optional `--key` value from an argument list.
 
 Accepted forms:
 - `--key value`
 - `--key=value`
+
+Duplicate occurrences are rejected. The returned argument list contains every
+unconsumed argument in its original order.
 -/
-def takeFlagValueOnce (args : List String) (key : String) :
+def takeFlagValue? (arguments : List String) (key : String) :
     Except String (Option String × List String) :=
   let eqPrefix := s!"--{key}="
   let keyTok := s!"--{key}"
@@ -54,7 +57,7 @@ def takeFlagValueOnce (args : List String) (key : String) :
             go rest (some v) acc
         else
           go rest found (a :: acc)
-  go args none []
+  go arguments none []
 
 /-- Select a default when an optional parser result contains no value. -/
 private def parsedWithDefault
@@ -77,13 +80,13 @@ private def requireParsed
   | none => throw missing
 
 /-- Parse an optional string-valued flag with a caller-supplied value decoder. -/
-private def takeParsedFlagOnce
+private def takeParsedFlag?
     {α : Type}
-    (args : List String)
+    (arguments : List String)
     (key : String)
     (parse : String → Except String α) :
     Except String (Option α × List String) := do
-  let (raw?, rest) ← takeFlagValueOnce args key
+  let (raw?, rest) ← takeFlagValue? arguments key
   match raw? with
   | none => pure (none, rest)
   | some raw => pure (some (← parse raw), rest)
@@ -93,30 +96,30 @@ Parse an optional string-valued flag and fall back to a provided default.
 
 Use this when a command parser wants a concrete string immediately rather than an optional override.
 -/
-opaque takeFlagValueDefault
-    (args : List String)
+opaque takeFlagValue
+    (arguments : List String)
     (key : String)
     (default : String) :
     Except String (String × List String) :=
-  parsedWithDefault (takeFlagValueOnce args key) default
+  parsedWithDefault (takeFlagValue? arguments key) default
 
 /-- Parse a required string-valued flag and return the remaining arguments. -/
-opaque takeRequiredFlagValue
-    (args : List String)
+opaque requireFlagValue
+    (arguments : List String)
     (key : String)
     (missing? : Option String := none) :
     Except String (String × List String) :=
-  requireParsed (takeFlagValueOnce args key) (missing?.getD s!"missing --{key}=<value>")
+  requireParsed (takeFlagValue? arguments key) (missing?.getD s!"missing --{key}=<value>")
 
 /--
 Look up a string-valued flag without returning the remaining arguments.
 
 This is useful for command shapes that support optional overrides but do not otherwise need a
-left-to-right consuming parser. Accepted forms are the same as `takeFlagValueOnce`:
+left-to-right consuming parser. Accepted forms are the same as `takeFlagValue?`:
 `--key value` and `--key=value`.
 -/
-def flagValue? (args : List String) (key : String) : Except String (Option String) := do
-  let (value?, _) ← takeFlagValueOnce args key
+def flagValue? (arguments : List String) (key : String) : Except String (Option String) := do
+  let (value?, _) ← takeFlagValue? arguments key
   pure value?
 
 /--
@@ -125,23 +128,23 @@ decode the selected spelling with a caller-supplied parser.
 
 This is useful for enum-like CLI flags whose valid strings remain command-specific.
 -/
-opaque takeParsedFlagDefault
+opaque takeParsedFlag
     {α : Type}
-    (args : List String)
+    (arguments : List String)
     (key : String)
     (default : String)
     (parse : String → Except String α) :
     Except String (α × List String) := do
-  let (value?, rest) ← takeParsedFlagOnce args key parse
+  let (value?, rest) ← takeParsedFlag? arguments key parse
   match value? with
   | some value => pure (value, rest)
   | none => pure (← parse default, rest)
 
-/-- Return true when `args` contains `--key value` or `--key=value`. -/
-def hasFlagValue (args : List String) (key : String) : Bool :=
+/-- Return true when `arguments` contains `--key value` or `--key=value`. -/
+def hasFlagValue (arguments : List String) (key : String) : Bool :=
   let eqPrefix := s!"--{key}="
   let keyTok := s!"--{key}"
-  args.any (fun a => a == keyTok || a.startsWith eqPrefix)
+  arguments.any (fun a => a == keyTok || a.startsWith eqPrefix)
 
 /--
 Remove every occurrence of a string-valued flag, accepting both `--key value` and `--key=value`.
@@ -150,7 +153,7 @@ This is for wrapper commands that own a flag locally and forward the remaining a
 tool. It deliberately does not reject duplicates; the wrapper's local parser decides whether a
 duplicated flag is an error.
 -/
-def stripFlagValues (args : List String) (keys : List String) : List String :=
+def stripFlagValues (arguments : List String) (keys : List String) : List String :=
   let rec go : List String → List String
     | [] => []
     | a :: rest =>
@@ -163,10 +166,10 @@ def stripFlagValues (args : List String) (keys : List String) : List String :=
           | _value :: rest' => go rest'
         else
           a :: go rest
-  go args
+  go arguments
 
-/-- Remove a no-value boolean flag once, returning whether it appeared. -/
-def takeBoolFlagOnce (args : List String) (key : String) :
+/-- Take a no-value boolean flag, returning whether it appeared. -/
+def takeBoolFlag (arguments : List String) (key : String) :
     Except String (Bool × List String) := do
   let keyTok := s!"--{key}"
   let rec go : List String → Bool → List String → Except String (Bool × List String)
@@ -179,24 +182,24 @@ def takeBoolFlagOnce (args : List String) (key : String) :
             go rest true acc
         else
           go rest seen (a :: acc)
-  go args false []
+  go arguments false []
 
 /-- Drop the leading `--` separator commonly used with `lean --run`. -/
-def dropDashDash (args : List String) : List String :=
-  match args with
+def dropDashDash (arguments : List String) : List String :=
+  match arguments with
   | "--" :: rest => rest
   | xs => xs
 
 /-- Return true when the argument list requests command help. -/
-def hasHelp (args : List String) : Bool :=
-  args.contains "--help" || args.contains "-h"
+def hasHelp (arguments : List String) : Bool :=
+  arguments.contains "--help" || arguments.contains "-h"
 
 /-- Fail if there are any unconsumed CLI arguments. -/
-def checkNoArgs (args : List String) : Except String Unit :=
-  if args.isEmpty then
+def checkNoArgs (arguments : List String) : Except String Unit :=
+  if arguments.isEmpty then
     .ok ()
   else
-    .error s!"unexpected arguments: {args}"
+    .error s!"unexpected arguments: {arguments}"
 
 /--
 Take at most one positional argument, leaving flags untouched.
@@ -204,7 +207,7 @@ Take at most one positional argument, leaving flags untouched.
 This is useful for commands with a single optional artifact path plus named flags. A second
 positional argument is reported as an error instead of being silently ignored.
 -/
-private def takePositionalOnce (args : List String) :
+opaque takePositional? (arguments : List String) :
     Except String (Option String × List String) :=
   let rec go :
       List String → Option String → List String → Except String (Option String × List String)
@@ -216,12 +219,12 @@ private def takePositionalOnce (args : List String) :
           .error s!"unexpected positional argument: {a}"
         else
           go rest (some a) acc
-  go args none []
+  go arguments none []
 
 /-- Take one optional positional argument and fall back to `default` when it is absent. -/
-opaque takePositionalDefault (args : List String) (default : String) :
+opaque takePositional (arguments : List String) (default : String) :
     Except String (String × List String) := do
-  let (value?, rest) ← takePositionalOnce args
+  let (value?, rest) ← takePositional? arguments
   pure (value?.getD default, rest)
 
 /--
@@ -232,14 +235,14 @@ first positional argument is rewritten to `--key=<path>`. If there is no positio
 provided default path is inserted.
 -/
 def normalizePathFlag
-    (args : List String)
+    (arguments : List String)
     (key default : String) :
     List String :=
-  let args := dropDashDash args
-  if hasFlagValue args key then
-    args
+  let arguments := dropDashDash arguments
+  if hasFlagValue arguments key then
+    arguments
   else
-    match args with
+    match arguments with
     | [] => [s!"--{key}={default}"]
     | a :: rest =>
         if a.startsWith "--" then
@@ -247,10 +250,10 @@ def normalizePathFlag
         else
           s!"--{key}={a}" :: rest
 
-/-- Like `takeFlagValueOnce`, but parse the value as a `Nat`. -/
-opaque takeNatFlagOnce (args : List String) (key : String) :
+/-- Take an optional natural-number flag. -/
+opaque takeNatFlag? (arguments : List String) (key : String) :
     Except String (Option Nat × List String) :=
-  takeParsedFlagOnce args key fun value =>
+  takeParsedFlag? arguments key fun value =>
     match value.toNat? with
     | some n => pure n
     | none => throw s!"--{key}: expected a natural number, got `{value}`"
@@ -258,24 +261,24 @@ opaque takeNatFlagOnce (args : List String) (key : String) :
 /--
 Parse an optional natural-number flag and fall back to the provided default.
 -/
-opaque takeNatFlagDefault
-    (args : List String)
+opaque takeNatFlag
+    (arguments : List String)
     (key : String)
     (default : Nat) :
     Except String (Nat × List String) :=
-  parsedWithDefault (takeNatFlagOnce args key) default
+  parsedWithDefault (takeNatFlag? arguments key) default
 
 /--
 Parse an optional natural-number flag, fall back to a default, and require that the selected value
 is strictly positive.
 -/
 def takePositiveNatFlag
-    (args : List String)
+    (arguments : List String)
     (exeName : String)
     (key : String)
     (default : Nat) :
     Except String (Nat × List String) := do
-  let (value, rest) ← takeNatFlagDefault args key default
+  let (value, rest) ← takeNatFlag arguments key (default := default)
   if value = 0 then
     throw s!"{exeName}: --{key} must be > 0"
   pure (value, rest)
@@ -286,7 +289,7 @@ Parse a signed decimal float literal.
 The primary path accepts the same numeric syntax as `Lean.Json`, including scientific notation. The
 fallback accepts the CLI-friendly decimal form `1.`.
 -/
-def parseFloatLit (s : String) : Option Float :=
+def parseFloatLit? (s : String) : Option Float :=
   match Lean.Json.parse s with
   | Except.ok (.num n) => some n.toFloat
   | _ =>
@@ -315,31 +318,31 @@ def parseFloatLit (s : String) : Option Float :=
               | none => none
       | _ => none
 
-/-- Like `takeFlagValueOnce`, but parse the value as a `Float`. -/
-private def takeFloatFlagOnce (args : List String) (key : String) :
+/-- Take an optional floating-point flag. -/
+opaque takeFloatFlag? (arguments : List String) (key : String) :
     Except String (Option Float × List String) :=
-  takeParsedFlagOnce args key fun value =>
-    match parseFloatLit value with
+  takeParsedFlag? arguments key fun value =>
+    match parseFloatLit? value with
     | some x => pure x
     | none => throw s!"--{key}: expected a float literal, got `{value}`"
 
 /--
 Parse an optional floating-point flag and fall back to the provided default.
 -/
-opaque takeFloatFlagDefault
-    (args : List String)
+opaque takeFloatFlag
+    (arguments : List String)
     (key : String)
     (default : Float) :
     Except String (Float × List String) :=
-  parsedWithDefault (takeFloatFlagOnce args key) default
+  parsedWithDefault (takeFloatFlag? arguments key) default
 
 /-- Parse a required floating-point flag and return the remaining arguments. -/
-opaque takeRequiredFloatFlag
-    (args : List String)
+opaque requireFloatFlag
+    (arguments : List String)
     (key : String)
     (missing? : Option String := none) :
     Except String (Float × List String) :=
-  requireParsed (takeFloatFlagOnce args key)
+  requireParsed (takeFloatFlag? arguments key)
     (missing?.getD s!"missing --{key}=<float>")
 
 /-- Parse a CLI boolean value. Accepted spellings are `true`, `false`, `1`, and `0`. -/
@@ -351,18 +354,18 @@ private def parseBoolLit (s : String) : Option Bool :=
   | "0" => some false
   | _ => none
 
-/-- Like `takeFlagValueOnce`, but parse the value as a boolean. -/
-private def takeBoolValueFlagOnce (args : List String) (key : String) :
+/-- Take an optional explicitly valued boolean flag. -/
+opaque takeBoolValueFlag? (arguments : List String) (key : String) :
     Except String (Option Bool × List String) :=
-  takeParsedFlagOnce args key fun value =>
+  takeParsedFlag? arguments key fun value =>
     match parseBoolLit value with
     | some b => pure b
     | none => throw s!"--{key}: expected true, false, 1, or 0; got `{value}`"
 
 /-- Parse an optional boolean-valued flag and fall back to the provided default. -/
-opaque takeBoolValueFlagDefault (args : List String) (key : String) (default : Bool) :
+opaque takeBoolValueFlag (arguments : List String) (key : String) (default : Bool) :
     Except String (Bool × List String) :=
-  parsedWithDefault (takeBoolValueFlagOnce args key) default
+  parsedWithDefault (takeBoolValueFlag? arguments key) default
 
 /--
 Remove a boolean flag that may be written either as a bare switch or with an explicit value.
@@ -377,13 +380,13 @@ Accepted forms:
 When `--key` is followed by a non-boolean token, the flag is treated as a bare switch and the next
 token is left for the caller. Duplicate occurrences are rejected.
 -/
-private def takeSwitchOnce (args : List String) (key : String) :
+opaque takeSwitch? (arguments : List String) (key : String) :
     Except String (Option Bool × List String) := do
   let keyTok := s!"--{key}"
   let eqPrefix := s!"--{key}="
-  let rec go (args : List String) (seen : Option Bool) (acc : List String) :
+  let rec go (arguments : List String) (seen : Option Bool) (acc : List String) :
       Except String (Option Bool × List String) := do
-    match args with
+    match arguments with
     | [] => pure (seen, acc.reverse)
     | a :: rest =>
         if a == keyTok then
@@ -406,32 +409,32 @@ private def takeSwitchOnce (args : List String) (key : String) :
             | none => throw s!"{keyTok}: expected true, false, 1, or 0; got `{raw}`"
         else
           go rest seen (a :: acc)
-    termination_by args.length
+    termination_by arguments.length
     decreasing_by
       all_goals
         try subst rest
         simp
       exact Nat.lt_succ_of_lt (Nat.lt_succ_self _)
-  go args none []
+  go arguments none []
 
 /-- Parse a bare-or-valued boolean flag and fall back to the provided default. -/
-opaque takeSwitchDefault (args : List String) (key : String) (default : Bool) :
+opaque takeSwitch (arguments : List String) (key : String) (default : Bool) :
     Except String (Bool × List String) :=
-  parsedWithDefault (takeSwitchOnce args key) default
+  parsedWithDefault (takeSwitch? arguments key) default
 
 /--
 Parse an optional floating-point flag, fall back to the provided default, and require that the
 selected value is strictly positive.
 -/
 def takePositiveFloatFlag
-    (args : List String)
+    (arguments : List String)
     (exeName : String)
     (key : String)
     (default : Float) :
     Except String (Float × List String) := do
-  let (value, rest) ← takeFloatFlagDefault args key default
-  if value <= 0.0 then
-    throw s!"{exeName}: --{key} must be > 0"
+  let (value, rest) ← takeFloatFlag arguments key (default := default)
+  unless value.isFinite && 0.0 < value do
+    throw s!"{exeName}: --{key} must be finite and > 0"
   pure (value, rest)
 
 /--
@@ -439,46 +442,46 @@ Parse an optional floating-point flag, fall back to the provided default, and re
 selected value is nonnegative.
 -/
 def takeNonnegativeFloatFlag
-    (args : List String)
+    (arguments : List String)
     (exeName : String)
     (key : String)
     (default : Float) :
     Except String (Float × List String) := do
-  let (value, rest) ← takeFloatFlagDefault args key default
-  if value < 0.0 then
-    throw s!"{exeName}: --{key} must be >= 0"
+  let (value, rest) ← takeFloatFlag arguments key (default := default)
+  unless value.isFinite && 0.0 <= value do
+    throw s!"{exeName}: --{key} must be finite and >= 0"
   pure (value, rest)
 
-/-- Like `takeFlagValueOnce`, but return the value as a `System.FilePath`. -/
-opaque takePathFlagOnce (args : List String) (key : String) :
+/-- Take an optional path flag. -/
+opaque takePathFlag? (arguments : List String) (key : String) :
     Except String (Option System.FilePath × List String) :=
-  takeParsedFlagOnce args key fun value => pure value
+  takeParsedFlag? arguments key fun value => pure value
 
 /--
 Parse an optional path flag and fall back to the provided default path.
 
 Use this when an example parser wants a concrete path immediately instead of an optional override.
 -/
-opaque takePathFlagDefault
-    (args : List String)
+opaque takePathFlag
+    (arguments : List String)
     (key : String)
     (default : System.FilePath) :
     Except String (System.FilePath × List String) :=
-  parsedWithDefault (takePathFlagOnce args key) default
+  parsedWithDefault (takePathFlag? arguments key) default
 
 /--
 Parse a required path flag such as `--data-file corpus.txt`.
 
 The error message includes `exeName` when provided.
 -/
-opaque takeRequiredPathFlag
-    (args : List String)
+opaque requirePathFlag
+    (arguments : List String)
     (key : String)
     (exeName : String := "") :
     Except String (System.FilePath × List String) :=
   let messagePrefix := if exeName.isEmpty then "" else s!"{exeName}: "
   requireParsed
-    (takePathFlagOnce args key)
+    (takePathFlag? arguments key)
     s!"{messagePrefix}missing required --{key} <path>"
 
 /--
@@ -488,20 +491,20 @@ This is useful for paired artifacts such as tokenizer vocab/merge files, where a
 meaningful on its own.
 -/
 def takePairedPathFlags
-    (args : List String)
+    (arguments : List String)
     (firstKey secondKey : String) :
     Except String ((Option System.FilePath × Option System.FilePath) × List String) := do
-  let (firstPath?, args) ← takePathFlagOnce args firstKey
-  let (secondPath?, args) ← takePathFlagOnce args secondKey
+  let (firstPath?, arguments) ← takePathFlag? arguments firstKey
+  let (secondPath?, arguments) ← takePathFlag? arguments secondKey
   match firstPath?, secondPath? with
   | some _, none => throw s!"--{firstKey} requires --{secondKey}"
   | none, some _ => throw s!"--{secondKey} requires --{firstKey}"
-  | _, _ => pure ((firstPath?, secondPath?), args)
+  | _, _ => pure ((firstPath?, secondPath?), arguments)
 
 /-- Parse an optional `--seed` flag (defaults to the provided value). -/
-def takeSeed (args : List String) (default : Nat := 0) :
+def takeSeed (arguments : List String) (default : Nat := 0) :
     Except String (Nat × List String) :=
-  takeNatFlagDefault args "seed" default
+  takeNatFlag arguments "seed" (default := default)
 
 end CLI
 end TorchLean

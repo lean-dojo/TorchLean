@@ -183,6 +183,9 @@ lemma neural_nearest_even_neg (x : ℝ) :
           rw [hy_round, hx_round, hfloor_neg]
           ring
 
+/-- Same agreement for negative quotients, obtained from the nonnegative case by oddness.
+
+Nearest-even is symmetric about zero, so the negative branch needs no separate tie analysis. -/
 lemma neural_nearest_even_neg_div_eq_roundQuotEven (num den : Nat) (hden : den ≠ 0) :
     TorchLean.Floats.neuralNearestEven (-((num : ℝ) / (den : ℝ))) =
       -Int.ofNat (roundQuotEven num den) := by
@@ -194,6 +197,8 @@ lemma neural_nearest_even_neg_div_eq_roundQuotEven (num den : Nat) (hden : den �
   -- `neural_nearest_even (-x) = -neural_nearest_even x`.
   simpa [hpos] using hodd
 
+/-- A rounding right shift is division by a power of two, both rounded to nearest even. This is what
+lets the hardware-shaped implementation be verified against the arithmetic specification. -/
 lemma roundShiftRightEven_eq_roundQuotEven_pow2 (n shift : Nat) :
     roundShiftRightEven n shift = roundQuotEven n (pow2 shift) := by
   classical
@@ -303,6 +308,8 @@ lemma roundShiftRightEven_eq_roundQuotEven_pow2 (n shift : Nat) :
           -- Give `simp` the rewritten remainder for `den = 2*half`.
           simp [hrlt, hrgt, htw_lt', htw_gt']
 
+/-- Composite of the previous two: the spec rounding of a division by `2 ^ shift` is exactly the
+executable rounding shift. -/
 lemma neural_nearest_even_div_pow2_eq_roundShiftRightEven (num shift : Nat) :
     TorchLean.Floats.neuralNearestEven ((num : ℝ) / (pow2 shift : ℝ)) =
       Int.ofNat (roundShiftRightEven num shift) := by
@@ -316,6 +323,11 @@ lemma neural_nearest_even_div_pow2_eq_roundShiftRightEven (num shift : Nat) :
     neural_nearest_even_div_eq_roundQuotEven (num := num) (den := pow2 shift) hden
   simpa [roundShiftRightEven_eq_roundQuotEven_pow2 (n := num) (shift := shift)] using h
 
+/-- Nearest-even rounding of `√n` is decided by comparing the remainder `n - ⌊√n⌋²` against `⌊√n⌋`.
+
+That comparison is exactly the midpoint test: `q + 1` wins precisely when `n` exceeds `(q + ½)²`,
+and since `(q + ½)² = q² + q + ¼` the quarter never matters for integer `n`, so the tie case cannot
+arise and no even-mantissa rule is needed here. -/
 lemma neural_nearest_even_sqrt_nat (n : Nat) :
     TorchLean.Floats.neuralNearestEven (Real.sqrt (n : ℝ)) =
       Int.ofNat

@@ -6,8 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Lean.Data.Json
-import Lean
+public import Lean.Data.Json.Parser
 
 /-!
 # External Process Helpers

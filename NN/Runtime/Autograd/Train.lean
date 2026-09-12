@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Train.Core
-public import NN.Data.SampleStream
 public import NN.Runtime.Autograd.Train.Trainer
 public import NN.Runtime.Autograd.Train.Logging
 public import NN.Runtime.Autograd.Train.Eval

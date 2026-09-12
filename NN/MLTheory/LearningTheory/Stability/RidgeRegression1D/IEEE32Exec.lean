@@ -45,6 +45,9 @@ Instead, this file establishes the first correctness link in that pipeline:
 The bridge lemma is local: it shows that `toReal` of the executable IEEE run agrees with the
 `FP32`-style “round-after-each-primitive” semantics, under an explicit finiteness assumption
 (`FiniteEval`) ruling out NaN/Inf and division-by-zero.
+It applies specifically to `RidgeIEEEBridge.ridgeFit1DExecExpr`. The separately defined
+fold-based `ridgeFit1DExec` has the same intended arithmetic order, but this file does not prove
+an equality between those two implementations.
 
 ## Why this file exists
 
@@ -58,7 +61,7 @@ algorithm in finite precision. This file is the first piece of the numerics brid
 
 This file reuses the stability dataset type from `Stability.Core`:
 
-`Dataset N Z := Spec.Tensor Z [N]`
+`Dataset N Z := TorchLean.Tensor Z [N]`
 
 so our executable ridge regression runs on the same tensor-based dataset representation as the rest
 of the learning-theory layer.

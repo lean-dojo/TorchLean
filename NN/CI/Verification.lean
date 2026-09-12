@@ -15,9 +15,9 @@ import NN.Verification.PINN.CLI
 import NN.Verification.PINN.Certificate
 import NN.Verification.PINN.DatasetCheck
 import NN.Verification.Robustness.Digits
-import NN.Verification.TorchLean.ExecutableLowering
-import NN.Verification.TorchLean.Proved
-import NN.Verification.TorchLean.SpecEval
+import NN.Verification.Builtin.ExecutableLowering
+import NN.Verification.Builtin.Proved
+import NN.Verification.Builtin.SpecEval
 
 /-!
 # Additional Verification Modules

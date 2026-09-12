@@ -6,9 +6,12 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Layers.Normalization
-import NN.Proofs.Tensor.Basic
-import Mathlib.Tactic.Ring
+public import NN.Spec.Layers.Normalization.BatchNorm
+public import NN.Spec.Core.Context.Real
+import Mathlib.Algebra.Order.Algebra
+import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
+import Mathlib.Data.Sym.Sym2.Init
+import Mathlib.Tactic.NormNum.GCD
 
 /-!
 # Normalization analysis properties
@@ -29,8 +32,8 @@ batch-dependent statistics and is not claimed by this theorem.
 
 namespace Proofs
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -55,7 +58,7 @@ $\frac{x-\mu}{\operatorname{std}}\gamma+\beta$
 is affine in $x$, with multiplicative coefficient $\gamma/\operatorname{std}$ and bias
 $\beta-\mu\gamma/\operatorname{std}$.
 -/
-private lemma batchNorm_inference_affine_scalar (x μ γ β std : ℝ) :
+private theorem batchNorm_inference_affine_scalar (x μ γ β std : ℝ) :
     ((x - μ) / std) * γ + β = x * (γ / std) + (β - μ * (γ / std)) := by
   -- Treat `γ / std` as an atom, so we can use `ring` on the remaining algebra.
   set t : ℝ := γ / std
@@ -82,30 +85,11 @@ private theorem batchNorm_inference_affine_tensor {s : Shape}
     Tensor.addSpec (Tensor.mulSpec (Tensor.divSpec (Tensor.subSpec x mean) std) gamma) beta =
       Tensor.addSpec (Tensor.mulSpec x (Tensor.divSpec gamma std))
         (Tensor.subSpec beta (Tensor.mulSpec mean (Tensor.divSpec gamma std))) := by
-  induction s with
-  | scalar =>
-      cases x
-      cases mean
-      cases gamma
-      cases beta
-      cases std
-      simp [Tensor.addSpec, Tensor.subSpec, Tensor.mulSpec, Tensor.divSpec, Tensor.map2Spec,
-        batchNorm_inference_affine_scalar]
-  | dim n s ih =>
-      cases x with
-      | dim fx =>
-        cases mean with
-        | dim fmean =>
-          cases gamma with
-          | dim fgamma =>
-            cases beta with
-            | dim fbeta =>
-              cases std with
-              | dim fstd =>
-                apply congrArg Tensor.dim
-                funext i
-                exact ih (x := fx i) (mean := fmean i) (gamma := fgamma i) (beta := fbeta i)
-                  (std := fstd i)
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simpa [Tensor.addSpec, Tensor.subSpec, Tensor.mulSpec, Tensor.divSpec, Tensor.map2Spec] using
+    batchNorm_inference_affine_scalar
+      (x coordinate) (mean coordinate) (gamma coordinate) (beta coordinate) (std coordinate)
 
 /--
 Inference-time BatchNorm is affine in the input `x`.
@@ -129,17 +113,17 @@ theorem batchNorm_inference_eq_mul_add
     (runningVar : Tensor ℝ [channels])
     (gamma : Tensor ℝ [channels])
     (beta : Tensor ℝ [channels])
-    (epsilon : ℝ := Numbers.normalizationEpsilon) :
+    (epsilon : ℝ := TorchLean.normalizationEpsilon) :
     Spec.batchNormInference (α := ℝ) (channels := channels) (sSpatial := sSpatial)
         x runningMean runningVar gamma beta epsilon
       =
     let s : Shape := .dim channels sSpatial
-    let runningVar := Tensor.maxSpec runningVar (Tensor.fill 0 (.dim channels .scalar))
+    let runningVar := Tensor.maxSpec runningVar (Tensor.full (.dim channels .scalar) 0)
     let mean_b := Spec.broadcastChannel sSpatial runningMean
     let var_b := Spec.broadcastChannel sSpatial runningVar
     let gamma_b := Spec.broadcastChannel sSpatial gamma
     let beta_b := Spec.broadcastChannel sSpatial beta
-    let std := Tensor.sqrtSpec (Tensor.addSpec var_b (Tensor.fill epsilon s))
+    let std := Tensor.sqrtSpec (Tensor.addSpec var_b (Tensor.full s epsilon))
     Tensor.addSpec (Tensor.mulSpec x (Tensor.divSpec gamma_b std))
       (Tensor.subSpec beta_b (Tensor.mulSpec mean_b (Tensor.divSpec gamma_b std))) := by
   simp [Spec.batchNormInference, batchNorm_inference_affine_tensor]

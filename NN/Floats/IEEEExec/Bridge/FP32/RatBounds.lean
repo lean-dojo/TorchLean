@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Bridge.FP32.NearestEven
+public import NN.Floats.IEEEExec.Bridge.FP32.Core
 
 /-!
 # IEEE32Exec and FP32: Rational Magnitude Bounds
@@ -112,6 +112,10 @@ lemma ratLtPow2_eq_true_iff (num den : Nat) (k : Int) (hden : den ≠ 0) :
           lt_of_eq_of_lt hshift hmul
         exact_mod_cast hR
 
+/-- The executable comparison against a power of two is correct on `ℝ`.
+
+The implementation cross-multiplies to stay in `Nat`, so the two exponent signs are separate cases;
+nothing here rounds, which is why the statement is an iff rather than a bound. -/
 lemma ratGePow2_eq_true_iff (num den : Nat) (k : Int) (hden : den ≠ 0) :
     ratGePow2 num den k = true ↔ neuralBpow binaryRadix k ≤ (num : ℝ) / (den : ℝ) := by
   classical
@@ -209,6 +213,7 @@ lemma bpow_k0_sub_one_eq (ln ld : Nat) :
   simp [TorchLean.Floats.neuralBpow, binaryRadix, NeuralRadix.toReal, zpow_sub₀]
   simp [pow_succ, div_eq_mul_inv, mul_left_comm, mul_comm]
 
+/-- Arithmetic step: shifting the log-difference by one is multiplying by two. -/
 lemma bpow_k0_add_one_eq (ln ld : Nat) :
     neuralBpow binaryRadix (Int.ofNat ln - Int.ofNat ld + 1) =
       (2 : ℝ) ^ ln.succ / (2 : ℝ) ^ ld := by
@@ -223,6 +228,10 @@ lemma bpow_k0_add_one_eq (ln ld : Nat) :
     exact zpow_ofNat (2 : ℝ) ln.succ
   rw [hnum]
 
+/-- The difference of the integer `log2`s brackets the quotient within one power of two.
+
+A difference of logs can be off by one either way, so this is deliberately a two-power window;
+`floorLog2Rat_bounds` narrows it to the exact exponent with one comparison. -/
 lemma rat_bounds_k0 (num den : Nat) (hnum : num ≠ 0) (hden : den ≠ 0) :
     let ln : Nat := Nat.log2 num
     let ld : Nat := Nat.log2 den
@@ -311,6 +320,10 @@ lemma rat_bounds_k0 (num den : Nat) (hnum : num ≠ 0) (hden : den ≠ 0) :
       simp [k0, sub_eq_add_neg, add_assoc]
     simpa [hk] using this
 
+/-- `floorLog2Rat` really is the floor of the base-two logarithm of a positive rational.
+
+This is the entry point the rounding code uses to find a starting exponent, and the tight bracket is
+what makes the subsequent normalization loop terminate immediately. -/
 lemma floorLog2Rat_bounds (num den : Nat) (hnum : num ≠ 0) (hden : den ≠ 0) :
     let k : Int := floorLog2Rat num den
     neuralBpow binaryRadix k ≤ (num : ℝ) / (den : ℝ) ∧

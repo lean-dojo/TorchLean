@@ -13,12 +13,21 @@ The bundled artifacts cover several graph shapes:
 - `gru_gate_cert.json` from `scripts/verification/lirpa/export_gru_cert.py`
 - `transformer_encoder_cert.json` from `scripts/verification/lirpa/export_crown_cert.py`
 
-Run the curated group with:
+Start with `lake exe verify -- lirpa-mlp`. No Python producer needs to run first: the JSON
+fixtures are already bundled. The checker reconstructs the supported network fragment and compares
+its propagated bounds with the reported result. A mismatch raises an error.
+
+To regenerate the fixtures deliberately, run:
 
 ```bash
-python3 scripts/verification/regenerate_assets.py --group lirpa --run
-lake exe verify -- all
+python3 scripts/verification/lirpa/export_mlp_cert.py
+python3 scripts/verification/lirpa/export_cnn_cert.py
+python3 scripts/verification/lirpa/export_attention_cert.py
+python3 scripts/verification/lirpa/export_gru_cert.py
+python3 scripts/verification/lirpa/export_crown_cert.py
 ```
+
+This invokes the external producers and can replace the checked-in fixture files.
 
 Or run a single checker through the unified verifier:
 
@@ -29,9 +38,3 @@ lake exe verify -- lirpa-attention
 lake exe verify -- lirpa-gru
 lake exe verify -- lirpa-encoder
 ```
-
-The producer and checker have separate roles. Python scripts may use ordinary numerical
-code to construct the example artifact. TorchLean's Lean code checks the artifact it receives. If a
-larger auto-LiRPA experiment is used as the producer, its raw logs, checkpoints, and large JSON
-outputs should live in `_external/`, `/tmp`, or another documented generated-data directory. This
-folder keeps only compact fixtures that are useful for review and CI.

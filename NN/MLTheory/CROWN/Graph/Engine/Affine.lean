@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph.Engine.IBP
+public import NN.MLTheory.CROWN.Graph.Engine.Base
+public import NN.MLTheory.CROWN.Graph.Engine.IBP -- shake: keep
 
 /-!
 # Affine Propagation
@@ -21,12 +22,12 @@ public section
 
 namespace NN.MLTheory.CROWN.Graph
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 open NN.MLTheory.CROWN
 open NN.IR
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable [BoundOps α]
 
 open BoundOps
@@ -49,7 +50,7 @@ def affIdentity (n : Nat) : AffineVec α n n :=
   let A :=
     Tensor.dim (fun i =>
       Tensor.dim (fun j => Tensor.scalar (if decide (i.val = j.val) then 1 else 0)))
-  let c := Spec.fill (α:=α) 0 (.dim n .scalar)
+  let c := Tensor.full (α:=α) (.dim n .scalar) 0
   { A := A, c := c }
 
 /-- Pointwise addition of two affine maps with the same input and output dimensions. -/
@@ -62,11 +63,13 @@ def affSub {n m : Nat} (a1 a2 : AffineVec α n m) : AffineVec α n m :=
 
 -- Affine helpers for linear/matmul are handled by the explicit transfer rules below.
 
+/-- The exact affine form of a linear layer: its own weight matrix and bias. -/
 private def affOfLinear (p : LinParams α) : AffineVec α p.n p.m :=
   AffineVec.ofLinear (α:=α) (inDim:=p.n) (outDim:=p.m) p.w p.b
 
+/-- The exact affine form of a bare matmul, which is a linear layer with a zero bias. -/
 private def affOfMatmul (p : MatParams α) : AffineVec α p.n p.m :=
-  let zb := Spec.fill (α:=α) 0 (.dim p.m .scalar)
+  let zb := Tensor.full (α:=α) (.dim p.m .scalar) 0
   AffineVec.ofLinear (α:=α) (inDim:=p.n) (outDim:=p.m) p.w zb
 
 /-- Regard the upper endpoint of a checked box as a constant upper affine bound. -/
@@ -74,7 +77,7 @@ private def upperConstAffine (inputDim : Nat) (B : FlatBox α) : FlatAffine α :
   { inDim := inputDim
     outDim := B.dim
     aff :=
-      { A := Spec.fill (α := α) Numbers.zero (.dim B.dim (.dim inputDim .scalar))
+      { A := Tensor.full (α := α) (.dim B.dim (.dim inputDim .scalar)) 0
         c := B.hi } }
 
 /--
@@ -84,16 +87,19 @@ The CROWN pass uses this when a convolution is linear in the selected input. Kee
 here lets convolution share the same affine machinery as linear and matmul nodes.
 
 -/
-def affOfConv (cfg : NN.IR.ConvParams α) :
-    let inShape := Shape.ofList (cfg.inChannels :: cfg.inputSpatial.toList)
-    let outSpatial := Spec.convOutSpatial cfg.inputSpatial cfg.kernel cfg.stride cfg.padding
-    let outShape := Shape.ofList (cfg.outChannels :: outSpatial.toList)
+def affOfConv (config : NN.IR.ConvParams α) :
+    let inShape := Shape.ofList (config.inChannels :: Tensor.to config.inputSpatial (List Nat))
+    let outSpatial :=
+      Spec.convOutSpatial config.inputSpatial config.kernel config.stride config.padding
+    let outShape := Shape.ofList (config.outChannels :: Tensor.to outSpatial (List Nat))
     AffineVec α inShape.size outShape.size :=
-  let inShape := Shape.ofList (cfg.inChannels :: cfg.inputSpatial.toList)
-  let outSpatial := Spec.convOutSpatial cfg.inputSpatial cfg.kernel cfg.stride cfg.padding
-  let outShape := Shape.ofList (cfg.outChannels :: outSpatial.toList)
-  let W := NN.MLTheory.CROWN.convLinearMatrix (α := α) (inSpatial := cfg.inputSpatial) cfg.spec
-  let b := NN.MLTheory.CROWN.convBiasBroadcast (α := α) (outSpatial := outSpatial) cfg.spec.bias
+  let inShape := Shape.ofList (config.inChannels :: Tensor.to config.inputSpatial (List Nat))
+  let outSpatial :=
+    Spec.convOutSpatial config.inputSpatial config.kernel config.stride config.padding
+  let outShape := Shape.ofList (config.outChannels :: Tensor.to outSpatial (List Nat))
+  let W :=
+    NN.MLTheory.CROWN.convLinearMatrix (α := α) (inSpatial := config.inputSpatial) config.spec
+  let b := NN.MLTheory.CROWN.convBiasBroadcast (α := α) (outSpatial := outSpatial) config.spec.bias
   AffineVec.ofLinear (α:=α)
     (inDim := inShape.size)
     (outDim := outShape.size)
@@ -123,7 +129,7 @@ def propagateAffineNode
     -- Lift constant to an affine with zero A and constant c; use ctx.inputDim for input width
     match ps.constVals[id]? with
     | some v =>
-      let zA := Spec.fill (α:=α) 0 (.dim v.n (.dim ctx.inputDim .scalar))
+      let zA := Tensor.full (α:=α) (.dim v.n (.dim ctx.inputDim .scalar)) 0
       let aff : AffineVec α ctx.inputDim v.n := { A := zA, c := v.v }
       affs.set! id (some { inDim := ctx.inputDim, outDim := v.n, aff := aff })
     | none => affs
@@ -214,7 +220,7 @@ def propagateAffineNode
       match getAff p1 with
       | some paff =>
         let onesRow : Tensor α [1, paff.outDim] :=
-          Spec.fill (α := α) Numbers.one (.dim 1 (.dim paff.outDim .scalar))
+          Tensor.full (α := α) (.dim 1 (.dim paff.outDim .scalar)) 1
         let outAff : AffineVec α paff.inDim 1 :=
           { A := Spec.matMulSpec onesRow paff.aff.A
             c := Spec.matVecMulSpec onesRow paff.aff.c }
@@ -226,7 +232,7 @@ def propagateAffineNode
   | .transpose .. => affs
   | .permute _ => affs
   | .mseLoss => affs
-  | .mul_elem =>
+  | .mulElem =>
     match node.parents with
     | #[p1, p2] =>
       match getAff p1, getAff p2, ibp[p1]!, ibp[p2]! with
@@ -246,40 +252,34 @@ def propagateAffineNode
                 let byBox := castBoxDim (α:=α) (n:=By.dim) (n':=ax.outDim) (h:=hby2) (ofFlatBox By)
                 -- McCormick upper affine envelope per component i
                 let A' :=
-                  match ax.aff.A, ayAligned.A, bxBox.lo, bxBox.hi, byBox.lo, byBox.hi with
-                  | .dim rowsX, .dim rowsY, .dim lox, .dim hix, .dim loy, .dim hiy =>
-                    Tensor.dim (fun i =>
-                      let rowX := rowsX i
-                      let rowY := rowsY i
-                      match rowX, rowY, lox i, hix i, loy i, hiy i with
-                      | .dim colsX, .dim colsY,
-                        .scalar lx, .scalar ux,
-                        .scalar ly, .scalar uy =>
-                        let cx := (lx + ux) * Numbers.half
-                        let cy := (ly + uy) * Numbers.half
-                        let u1_center := ux * cy + ly * cx - ux * ly
-                        let u2_center := lx * cy + uy * cx - lx * uy
-                        let sX := if u1_center < u2_center then ly else uy
-                        let sY := if u1_center < u2_center then ux else lx
-                        Tensor.dim (fun j =>
-                          match colsX j, colsY j with
-                          | .scalar aijx, .scalar aijy => Tensor.scalar (sX * aijx + sY * aijy)))
+                  Tensor.dim (fun i =>
+                    let lx := bxBox.lo.getScalar i
+                    let ux := bxBox.hi.getScalar i
+                    let ly := byBox.lo.getScalar i
+                    let uy := byBox.hi.getScalar i
+                    let cx := (lx + ux) * (1 / 2)
+                    let cy := (ly + uy) * (1 / 2)
+                    let u1_center := ux * cy + ly * cx - ux * ly
+                    let u2_center := lx * cy + uy * cx - lx * uy
+                    let sX := if u1_center < u2_center then ly else uy
+                    let sY := if u1_center < u2_center then ux else lx
+                    Tensor.dim (fun j =>
+                      Tensor.scalar (sX * get2 ax.aff.A i j + sY * get2 ayAligned.A i j)))
                 let c' :=
-                  match ax.aff.c, ayAligned.c, bxBox.lo, bxBox.hi, byBox.lo, byBox.hi with
-                  | .dim cxv, .dim cyv, .dim lox, .dim hix, .dim loy, .dim hiy =>
-                    Tensor.dim (fun i =>
-                      match cxv i, cyv i, lox i, hix i, loy i, hiy i with
-                      | .scalar cxi, .scalar cyi,
-                        .scalar lx, .scalar ux,
-                        .scalar ly, .scalar uy =>
-                        let cx := (lx + ux) * Numbers.half
-                        let cy := (ly + uy) * Numbers.half
-                        let u1_center := ux * cy + ly * cx - ux * ly
-                        let u2_center := lx * cy + uy * cx - lx * uy
-                        let sX := if u1_center < u2_center then ly else uy
-                        let sY := if u1_center < u2_center then ux else lx
-                        let off := if u1_center < u2_center then (-(ux * ly)) else (-(lx * uy))
-                        Tensor.scalar (sX * cxi + sY * cyi + off))
+                  Tensor.dim (fun i =>
+                    let lx := bxBox.lo.getScalar i
+                    let ux := bxBox.hi.getScalar i
+                    let ly := byBox.lo.getScalar i
+                    let uy := byBox.hi.getScalar i
+                    let cx := (lx + ux) * (1 / 2)
+                    let cy := (ly + uy) * (1 / 2)
+                    let u1_center := ux * cy + ly * cx - ux * ly
+                    let u2_center := lx * cy + uy * cx - lx * uy
+                    let sX := if u1_center < u2_center then ly else uy
+                    let sY := if u1_center < u2_center then ux else lx
+                    let off := if u1_center < u2_center then (-(ux * ly)) else (-(lx * uy))
+                    Tensor.scalar
+                      (sX * ax.aff.c.getScalar i + sY * ayAligned.c.getScalar i + off))
                 let outAff : AffineVec α ax.inDim ax.outDim := { A := A', c := c' }
                 affs.set! id (some { inDim := ax.inDim, outDim := ax.outDim, aff := outAff })
               else affs
@@ -295,13 +295,15 @@ def propagateAffineNode
       match node.parents with
       | #[p1] =>
         match getAff p1, ps.convCfg[id]? with
-        | some paff, some cfg =>
-          let inShape := Shape.ofList (cfg.inChannels :: cfg.inputSpatial.toList)
-          let outSpatial := Spec.convOutSpatial cfg.inputSpatial cfg.kernel cfg.stride cfg.padding
-          let outShape := Shape.ofList (cfg.outChannels :: outSpatial.toList)
+        | some paff, some config =>
+          let inShape :=
+            Shape.ofList (config.inChannels :: Tensor.to config.inputSpatial (List Nat))
+          let outSpatial :=
+            Spec.convOutSpatial config.inputSpatial config.kernel config.stride config.padding
+          let outShape := Shape.ofList (config.outChannels :: Tensor.to outSpatial (List Nat))
           let convIn := inShape.size
           if hdim : paff.outDim = convIn then
-            let convAff0 := affOfConv (α:=α) cfg
+            let convAff0 := affOfConv (α:=α) config
             let convAff := castAffineIn (α:=α)
               (n:=convIn) (n':=paff.outDim) (m:=outShape.size)
               hdim.symm convAff0
@@ -317,8 +319,8 @@ def propagateAffineNode
     match node.parents with
     | #[p1] =>
       match getAff p1, ps.batchNormEval[id]? with
-      | some paff, some cfg =>
-        match batchNormEvalLinear? (α := α) nodes[p1]!.outShape channelAxis cfg with
+      | some paff, some config =>
+        match batchNormEvalLinear? (α := α) nodes[p1]!.outShape channelAxis config with
         | some p =>
           if hdim : paff.outDim = p.n then
             let bnAff0 := affOfLinear (α := α) p
@@ -332,7 +334,7 @@ def propagateAffineNode
         | none => affs
       | _, _ => affs
     | _ => affs
-  | .exp | .log | .softmax _ | .hardMaskedSoftmax _ =>
+  | .exp | .log | .softplus | .safeLog | .softmax _ | .hardMaskedSoftmax _ =>
     match ibp[id]! with
     | some B => affs.set! id (some (upperConstAffine (α := α) ctx.inputDim B))
     | none => affs

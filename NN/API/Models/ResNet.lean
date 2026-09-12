@@ -7,88 +7,111 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Seeded
+public import NN.API.Macros -- shake: keep
 
 /-!
 # Residual Convolutional Classifier
 
-The model is polymorphic in its leading dimensions and spatial rank. Residual branches operate on
-a common typed shape, and global average pooling reduces every spatial axis before the classifier
-head.
+The model accepts any `batchShape` and spatial rank. Residual branches operate on a common typed
+shape, and global average pooling reduces every spatial axis before the classifier head.
 -/
 
 @[expose] public section
 
 namespace TorchLean
 
+open Spec
+
 namespace nn
 namespace models
 
 /-- Configuration for a residual classifier over `d` spatial axes. -/
-structure ResNetConfig (d : Nat) where
+structure ResNet.Config (d : Nat) where
   /-- Number of channels in each input sample. -/
-  inChannels : Nat
-  /-- Extent of each spatial axis. -/
+  inputChannels : Nat
+  /-- Size of each input axis. Values such as `[32, 32]` work directly. -/
   spatial : Tensor Nat [d]
-  /-- Spatial axes are nonempty, as required by global average pooling. -/
-  spatialNonzero : ∀ i : Fin d, spatial.getScalar i ≠ 0
   /-- Channel width used by the residual trunk. -/
   hiddenChannels : Nat
-  /-- Geometry used by the stem and residual convolutions. -/
-  block : ConvGeometry d
-  /-- The configured convolutions preserve the residual trunk's spatial extent. -/
-  blockPreservesSpatial :
-    Spec.convOutSpatial spatial block.kernel block.stride block.padding = spatial
+  /--
+  Radius of the same-padding convolution kernel on each axis.
+
+  A radius of `1` gives the familiar kernel size `3`; all convolutions therefore preserve the
+  input grid without an additional shape proof.
+  -/
+  kernelRadius : Tensor Nat [d] := Tensor.ones [d]
   /-- Number of classifier logits per sample. -/
-  numClasses : Nat
+  classCount : Nat
 
-namespace ResNetConfig
+namespace ResNet.Config
 
-/-- Input shape with arbitrary leading dimensions. -/
-def inputShape {d : Nat} (cfg : ResNetConfig d) (leading : List Nat := []) : List Nat :=
-  leading ++ cfg.inChannels :: cfg.spatial.toList
+/-- Validate the complete residual classifier before allocating any branch parameters. -/
+def validate {d : Nat} (config : ResNet.Config d) : Except String Unit := do
+  if config.inputChannels = 0 then
+    throw "ResNet: input channel count must be positive"
+  if config.spatial.prod = 0 then
+    throw "ResNet: input spatial dimensions must be positive"
+  if config.hiddenChannels = 0 then
+    throw "ResNet: hidden channel count must be positive"
+  if config.classCount = 0 then
+    throw "ResNet: class count must be positive"
 
-/-- Activation shape shared by the residual branches. -/
-def hiddenShape {d : Nat} (cfg : ResNetConfig d) (leading : List Nat := []) : List Nat :=
-  leading ++ cfg.hiddenChannels :: cfg.spatial.toList
+/-- Input tensor shape with an arbitrary batch shape. -/
+abbrev input {d : Nat} (config : ResNet.Config d)
+    (batchShape : Shape := []) : Shape :=
+  batchShape.concat ((config.spatial.to Shape).prependDim config.inputChannels)
 
-/-- Classifier output shape with the same leading dimensions as the input. -/
-abbrev outputShape {d : Nat} (cfg : ResNetConfig d) (leading : List Nat := []) : List Nat :=
-  leading ++ [cfg.numClasses]
+/-- Hidden activation shape shared by the residual branches. -/
+abbrev hidden {d : Nat} (config : ResNet.Config d)
+    (batchShape : Shape := []) : Shape :=
+  batchShape.concat ((config.spatial.to Shape).prependDim config.hiddenChannels)
 
-end ResNetConfig
+/-- Classifier output shape with the same batch shape as the input. -/
+abbrev output {d : Nat} (config : ResNet.Config d)
+    (batchShape : Shape := []) : Shape :=
+  batchShape.appendDim config.classCount
+
+end ResNet.Config
 
 /-- Build a convolutional stem, two residual blocks, global pooling, and a linear classifier. -/
-def resnet {d : Nat} (cfg : ResNetConfig d) (leading : List Nat := [])
-    (hInChannels : cfg.inChannels ≠ 0 := by decide)
-    (hHiddenChannels : cfg.hiddenChannels ≠ 0 := by decide) :
-    Builder (Sequential (cfg.inputShape leading) (cfg.outputShape leading)) :=
-  letI : NeZero cfg.inChannels := ⟨hInChannels⟩
-  letI : NeZero cfg.hiddenChannels := ⟨hHiddenChannels⟩
-  let stemRaw := conv leading (inChannels := cfg.inChannels) cfg.spatial
-    (cfg.block.toConv cfg.hiddenChannels)
-  let stem : Builder (Sequential (cfg.inputShape leading) (cfg.hiddenShape leading)) := by
-    simpa [ResNetConfig.inputShape, ResNetConfig.hiddenShape, ConvGeometry.toConv,
-      ConvGeometry.outSpatial, cfg.blockPreservesSpatial] using stemRaw
-  let hiddenConvRaw := conv leading (inChannels := cfg.hiddenChannels) cfg.spatial
-    (cfg.block.toConv cfg.hiddenChannels)
-  let hiddenConv : Builder (Sequential (cfg.hiddenShape leading) (cfg.hiddenShape leading)) := by
-    simpa [ResNetConfig.hiddenShape, ConvGeometry.toConv,
-      ConvGeometry.outSpatial, cfg.blockPreservesSpatial] using hiddenConvRaw
-  let residualBranch := do
-    let branch ← nn.Sequential![hiddenConv, relu, hiddenConv]
-    return blocks.residual branch
-  let pooling := globalAvgPool leading
-    (channels := cfg.hiddenChannels) cfg.spatial cfg.spatialNonzero
-  nn.Sequential![
-    stem,
-    relu,
-    residualBranch,
-    relu,
-    residualBranch,
-    relu,
-    pooling,
-    linear cfg.hiddenChannels cfg.numClasses (leading := leading)
-  ]
+def resnet {d : Nat} (config : ResNet.Config d) (batchShape : Shape := []) :
+    Builder (Sequential (config.input batchShape) (config.output batchShape)) :=
+  match config.validate with
+  | .error message =>
+      pure <| nn.Internal.invalidConfiguration
+        (config.input batchShape) (config.output batchShape) "ResNet" message
+  | .ok () =>
+      let geometry := Convolution.Geometry.samePadding config.kernelRadius
+      have preservesSize : geometry.output config.spatial = config.spatial :=
+        Convolution.Geometry.output_samePadding config.spatial config.kernelRadius
+      let builtStem := conv config.spatial (geometry.convolution config.hiddenChannels)
+        (batchShape := batchShape) (inputChannels := config.inputChannels)
+      let stem :
+          Builder (Sequential (config.input batchShape) (config.hidden batchShape)) := by
+        simpa [ResNet.Config.input, ResNet.Config.hidden,
+          preservesSize] using builtStem
+      let builtHiddenConvolution :=
+        conv config.spatial (geometry.convolution config.hiddenChannels)
+          (batchShape := batchShape) (inputChannels := config.hiddenChannels)
+      let hiddenConvolution :
+          Builder (Sequential (config.hidden batchShape) (config.hidden batchShape)) := by
+        simpa [ResNet.Config.hidden, preservesSize] using
+          builtHiddenConvolution
+      let residualBranch := do
+        let branch ← nn.Sequential![hiddenConvolution, relu, hiddenConvolution]
+        return residual branch
+      let pooling := globalAvgPool config.spatial
+        (batchShape := batchShape) (channels := config.hiddenChannels)
+      nn.Sequential![
+        stem,
+        relu,
+        residualBranch,
+        relu,
+        residualBranch,
+        relu,
+        pooling,
+        linear config.hiddenChannels config.classCount (batchShape := batchShape)
+      ]
 
 end models
 end nn

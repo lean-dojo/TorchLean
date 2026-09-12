@@ -6,9 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Exec32
-public import NN.MLTheory.CROWN.Graph
-public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness
+public import NN.MLTheory.CROWN.Graph.Engine.Affine
+public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Main
+public import NN.Spec.Core.FloatInstances
 
 /-!
 # End-to-end CROWN certificate-checking framework (graph dialect)
@@ -54,8 +54,8 @@ external interval enclosure, but it may not infer it from a particular `libm` im
 
 namespace NN.MLTheory.CROWN.Graph
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.MLTheory.CROWN
 
 namespace CrownCertSoundness
@@ -72,12 +72,13 @@ flattened input vector. To compare it to a concrete semantic value, we evaluate 
 the chosen input point.
 -/
 
-def affineEvalAt {α : Type} [Context α] {inDim outDim : Nat}
+/-- Evaluate an affine form `A x + c` at a concrete input point. -/
+def affineEvalAt {α : Type} [TorchLean.Storage α] [Context α] {inDim outDim : Nat}
     (aff : AffineVec α inDim outDim) (x : Tensor α [inDim]) : Tensor α [outDim] :=
   Tensor.addSpec (Spec.matVecMulSpec (α := α) aff.A x) aff.c
 
 /-- Evaluate affine lower/upper bounds at a concrete input point, yielding a `FlatBox`. -/
-def boundsEvalAt {α : Type} [Context α]
+def boundsEvalAt {α : Type} [TorchLean.Storage α] [Context α]
     (b : FlatAffineBounds α) (x : Tensor α [b.inDim]) : FlatBox α :=
   { dim := b.outDim
     lo := affineEvalAt (α := α) (inDim := b.inDim) (outDim := b.outDim) b.loAff x
@@ -89,7 +90,8 @@ def boundsEvalAt {α : Type} [Context α]
 We reuse `Semantics.encloses` from `NN.MLTheory.CROWN.Graph` for componentwise enclosure.
 -/
 
-def EnclosesVec {α : Type} [Context α]
+/-- A flat box encloses a flat vector, once their lengths are known to agree. -/
+def EnclosesVec {α : Type} [TorchLean.Storage α] [Context α]
     (B : FlatBox α) (v : FlatTensor α) : Prop :=
   ∃ h : B.dim = v.n,
     Theorems.Semantics.encloses (α := α) B (castDimScalar (α := α) (n := v.n) (n' := B.dim) h.symm
@@ -103,7 +105,7 @@ dimension `b.inDim`.
 In a well-formed CROWN certificate, every bound satisfies `b.inDim = ctx.inputDim`, so the guard
 branch is the one that matters.
 -/
-def EnclosesAtInput {α : Type} [Context α]
+def EnclosesAtInput {α : Type} [TorchLean.Storage α] [Context α]
     (ctx : AffineCtx) (x : Tensor α [ctx.inputDim])
     (b : FlatAffineBounds α) (v : FlatTensor α) : Prop :=
   ∃ h : b.inDim = ctx.inputDim,
@@ -136,8 +138,9 @@ transcendental operators are represented by explicit transfer-soundness assumpti
 backend or checker workflow.
 -/
 
-def getAff? {α : Type} [Context α] (cert : Array (Option (FlatAffineBounds α))) (pid : Nat) :
-    Option (FlatAffineBounds α) :=
+/-- Safe lookup of a certificate entry, returning `none` out of bounds. -/
+def getAff? {α : Type} [TorchLean.Storage α] [Context α]
+    (cert : Array (Option (FlatAffineBounds α))) (pid : Nat) : Option (FlatAffineBounds α) :=
   if _h : pid < cert.size then cert[pid]! else none
 
 /-!
@@ -146,14 +149,18 @@ different certificate formats (plain CROWN, α/β-CROWN, split certificates) can
 end-to-end theorem as long as they provide a step function and discharge transfer soundness.
 -/
 
-def CrownCertLocalOK {α : Type} [Context α]
+/-- The certificate is exactly what the step rule recomputes at every node: a local fixed point.
+
+Checking this is cheap and purely syntactic, which is the whole point of shipping a certificate
+rather than rerunning the bounding algorithm. -/
+def CrownCertLocalOK {α : Type} [TorchLean.Storage α] [Context α]
     (g : Graph) (step : Array (Option (FlatAffineBounds α)) → Nat → Option (FlatAffineBounds α))
     (cert : Array (Option (FlatAffineBounds α))) : Prop :=
   cert.size = g.nodes.size ∧
   ∀ id : Nat, id < g.nodes.size → cert[id]! = step cert id
 
 /-- Every graph node has both a certificate entry and a semantic value. -/
-def CrownCertCovers {α : Type} [Context α]
+def CrownCertCovers {α : Type} [TorchLean.Storage α] [Context α]
     (g : Graph) (cert : Array (Option (FlatAffineBounds α)))
     (vals : Array (Option (FlatTensor α))) : Prop :=
   cert.size = g.nodes.size ∧ vals.size = g.nodes.size ∧
@@ -169,6 +176,8 @@ step rule is sound for each supported node kind.
 For transcendental ops, this assumption is where you connect to an oracle model (e.g. Arb).
 -/
 
+/-- Each node's step rule is sound: parents enclosing their values force the node to enclose its
+own. This is the assumption a certificate format has to discharge to reuse the checker theorem. -/
 def CrownTransferSound
     (g : Graph) (_ps : ParamStore ℝ) (_inputs : Std.HashMap Nat Val)
     (vals : Array (Option Val)) (ctx : AffineCtx) (x : Tensor ℝ [ctx.inputDim])
@@ -249,6 +258,11 @@ theorem crown_checker_encloses_semantics_match
             have h := hsound k hk hparents
             simpa [hcertk, hvalk, hstepk] using h
 
+/-- Wherever both a certificate entry and a semantic value are present, the entry encloses the
+value.
+
+This is the partial form of the main theorem: it says nothing about nodes the checker skipped, which
+is exactly why `crown_checker_encloses_all_nodes` below also takes a coverage hypothesis. -/
 theorem crown_checker_encloses_semantics
     (g : Graph) (ps : ParamStore ℝ)
     (step : Array (Option (FlatAffineBounds ℝ)) → Nat → Option (FlatAffineBounds ℝ))
@@ -310,8 +324,11 @@ proves that `vals` is its trace, and proves that evaluating node `id` does not r
 The floating-point refinement theorem itself lives outside this checker lemma.
 -/
 
+/-- A flat node value in the binary32 executable semantics. -/
 abbrev IEEE32Val := FlatTensor TorchLean.Floats.IEEE754.IEEE32Exec
 
+/-- Type of a caller-supplied binary32 node evaluator: nodes, parameters, inputs, partial trace,
+node id, and an optional result. -/
 abbrev IEEE32EvalNode? :=
   Array Node →
     ParamStore TorchLean.Floats.IEEE754.IEEE32Exec →
@@ -332,6 +349,8 @@ def IEEE32EvalNoSelfDependency (evalNode? : IEEE32EvalNode?) : Prop :=
       (∀ j : Nat, j ≠ id → vals[j]! = vals'[j]!) →
       evalNode? nodes ps inputs vals id = evalNode? nodes ps inputs vals' id
 
+/-- The binary32 counterpart of `SemLocalOK`: `vals` is a full-length trace of `evalNode?`, and the
+evaluator does not read the slot it writes. -/
 def IEEE32SemLocalOK
     (evalNode? : IEEE32EvalNode?)
     (g : Graph) (ps : ParamStore TorchLean.Floats.IEEE754.IEEE32Exec)
@@ -342,6 +361,15 @@ def IEEE32SemLocalOK
     ∀ id : Nat, id < g.nodes.size →
       vals[id]! = evalNode? g.nodes ps inputs vals id
 
+/--
+Checker-implies-enclosure for `IEEE32Exec` certificates, in the partial `match` form.
+
+The proof is a pure topological induction: it only rewrites certificate entries with the step
+function and passes parent enclosures to `hsound`. In particular it never compares two
+`IEEE32Exec` values, so no order structure on `IEEE32Exec` is assumed; the enclosure predicate
+itself uses the `LE` supplied by the `Context IEEE32Exec` instance, which is not a lawful order
+because of NaN. Any order reasoning belongs in the transfer proofs discharging `hsound`.
+-/
 theorem crown_checker_encloses_semantics_ieee32exec_match
     (g : Graph) (_ps : ParamStore TorchLean.Floats.IEEE754.IEEE32Exec)
     (step : Array (Option (FlatAffineBounds TorchLean.Floats.IEEE754.IEEE32Exec)) → Nat →
@@ -352,7 +380,6 @@ theorem crown_checker_encloses_semantics_ieee32exec_match
     (vals : Array (Option IEEE32Val))
     (ctx : AffineCtx)
     (x : Tensor TorchLean.Floats.IEEE754.IEEE32Exec [ctx.inputDim])
-    [Preorder TorchLean.Floats.IEEE754.IEEE32Exec]
     (htopo : TopoSorted g)
     (_hsem : IEEE32SemLocalOK (evalNode? := evalNode?) (g := g) (ps := _ps) (inputs := inputs)
       (vals := vals))
@@ -410,6 +437,11 @@ theorem crown_checker_encloses_semantics_ieee32exec_match
             have h := hsound k hk hparents
             simpa [hcertk, hvalk, hstepk] using h
 
+/--
+Checker-implies-enclosure for `IEEE32Exec` certificates, quantified over the node ids at which
+both a certificate entry and a semantic value are present. See
+`crown_checker_encloses_semantics_ieee32exec_match` for why no order on `IEEE32Exec` is assumed.
+-/
 theorem crown_checker_encloses_semantics_ieee32exec
     (g : Graph) (ps : ParamStore TorchLean.Floats.IEEE754.IEEE32Exec)
     (step : Array (Option (FlatAffineBounds TorchLean.Floats.IEEE754.IEEE32Exec)) → Nat →
@@ -420,7 +452,6 @@ theorem crown_checker_encloses_semantics_ieee32exec
     (vals : Array (Option IEEE32Val))
     (ctx : AffineCtx)
     (x : Tensor TorchLean.Floats.IEEE754.IEEE32Exec [ctx.inputDim])
-    [Preorder TorchLean.Floats.IEEE754.IEEE32Exec]
     (htopo : TopoSorted g)
     (hsem : IEEE32SemLocalOK (evalNode? := evalNode?) (g := g) (ps := ps) (inputs := inputs)
       (vals := vals))

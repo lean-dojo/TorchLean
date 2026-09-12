@@ -18,8 +18,9 @@ Small compile-and-run runtime checks for TorchLean's RL helper surface.
 
 @[expose] public section
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
+open Tests.Utils
 open Tests.Floats.Utils
 
 namespace Tests
@@ -33,22 +34,15 @@ def assertBool (msg : String) (b : Bool) : IO Unit := do
 
 /-- Check discounted returns in host, executable float32, and interval semantics. -/
 def checkReturns : IO Unit := do
-  let returns := Spec.RL.discountedReturns (α := Float) 0.5 #[1.0, 2.0, 3.0]
-  unless returns.size = 3 do
-    throw <| IO.userError "discounted returns size mismatch"
-  assertApprox "discounted return[0]" returns[0]! 2.75 1e-6
-  assertApprox "discounted return[1]" returns[1]! 3.5 1e-6
-  assertApprox "discounted return[2]" returns[2]! 3.0 1e-6
-
-  let rewards : Tensor Float [3] := tensorOfArray! [3] #[1.0, 2.0, 3.0]
+  let rewards : Tensor Float [3] := [1.0, 2.0, 3.0]
   let checkTensorReturns (tensorReturns : Tensor Float [3]) : IO Unit := do
-    assertApprox "discountedReturnsTensor[0]"
+    assertApprox "discountedReturns[0]"
       (Tensor.getScalar tensorReturns ⟨0, by decide⟩) 2.75 1e-6
-    assertApprox "discountedReturnsTensor[1]"
+    assertApprox "discountedReturns[1]"
       (Tensor.getScalar tensorReturns ⟨1, by decide⟩) 3.5 1e-6
-    assertApprox "discountedReturnsTensor[2]"
+    assertApprox "discountedReturns[2]"
       (Tensor.getScalar tensorReturns ⟨2, by decide⟩) 3.0 1e-6
-  checkTensorReturns <| Runtime.RL.Core.discountedReturnsTensor (α := Float) 0.5 rewards
+  checkTensorReturns <| Runtime.RL.Core.discountedReturns (α := Float) 0.5 rewards
 
   -- Run the same return recursion in executable float32 semantics (`IEEE32Exec`), with:
   -- 1) a checked Float→float32 cast (catches binary64→binary32 overflow), and
@@ -65,12 +59,15 @@ def checkReturns : IO Unit := do
     match Runtime.RL.Numerics.Float32.discountedReturnsChecked (n := 3) gamma32 rewards32 with
     | .ok t => pure t
     | .error e => throw <| IO.userError e
-  assertApprox "discountedReturnsTensor IEEE32Exec[0]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar returns32 ⟨0, by decide⟩)) 2.75 1e-5
-  assertApprox "discountedReturnsTensor IEEE32Exec[1]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar returns32 ⟨1, by decide⟩)) 3.5 1e-5
-  assertApprox "discountedReturnsTensor IEEE32Exec[2]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar returns32 ⟨2, by decide⟩)) 3.0 1e-5
+  assertApprox "discountedReturns IEEE32Exec[0]"
+    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar returns32 ⟨0, by decide⟩))
+    2.75 1e-5
+  assertApprox "discountedReturns IEEE32Exec[1]"
+    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar returns32 ⟨1, by decide⟩))
+    3.5 1e-5
+  assertApprox "discountedReturns IEEE32Exec[2]"
+    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar returns32 ⟨2, by decide⟩))
+    3.0 1e-5
   let intervals32 : Tensor Runtime.RL.Numerics.Float32.Interval32 [3] :=
     Runtime.RL.Numerics.Float32.discountedReturnsIntervals (n := 3) gamma32 rewards32
   assertBool "interval enclosure should contain IEEE32Exec returns"
@@ -82,13 +79,43 @@ def checkReturns : IO Unit := do
   | .ok _ => throw <| IO.userError "expected Float→IEEE32Exec cast to reject huge value"
   | .error _ => pure ()
 
+open Runtime.RL.Numerics.Float32 in
+/-- Checked scans preserve empty horizons, termination resets, and failure order. -/
+def checkCheckedScans : IO Unit := do
+  let emptyRewards : Tensor Float32Exec [0] := []
+  match discountedReturnsChecked (1 / 2) emptyRewards with
+  | .ok _ => pure ()
+  | .error error => throw (IO.userError s!"empty checked returns: {error}")
+  let rewards : Tensor Float32Exec [3] := [1, 2, 3]
+  let baseline : Tensor Float32Exec [3] := [0, 0, 0]
+  let dones : Tensor Bool [3] := [false, true, false]
+  let advantages ← match generalizedAdvantageEstimationChecked
+      (1 / 2) 1 rewards baseline baseline dones with
+    | .ok values => pure values
+    | .error error => throw (IO.userError error)
+  let expected : Tensor Float32Exec [3] := [2, 2, 3]
+  assertBool "terminal GAE step resets the future advantage" (advantages == expected)
+  let intervals := generalizedAdvantageEstimationIntervals
+    (1 / 2) 1 rewards baseline baseline dones
+  assertBool "terminal GAE interval enclosure" (returnsWithinIntervals advantages intervals)
+  let invalid : Tensor Float32Exec [2] :=
+    [TorchLean.Floats.IEEE754.IEEE32Exec.posInf,
+     TorchLean.Floats.IEEE754.IEEE32Exec.posMaxFinite]
+  match discountedReturnsChecked 2 invalid
+      TorchLean.Floats.IEEE754.IEEE32Exec.posMaxFinite with
+  | .ok _ => throw (IO.userError "checked returns accepted multiplication overflow")
+  | .error error =>
+      assertBool "rightmost overflow is reported before the earlier nonfinite reward"
+        (error.contains "mul")
+
 /-- Check the numerical transforms used by PPO advantage estimation. -/
 def checkAdvantages : IO Unit := do
-  let rewards : Tensor Float [3] := tensorOfArray! [3] #[1.0, 2.0, 3.0]
-  let gaeRewards : Tensor Float [3] := tensorOfArray! [3] #[1.0, 1.0, 1.0]
-  let gaeValues : Tensor Float [3] := fill (0 : Float) [3]
-  let gaeNext : Tensor Float [3] := fill (0 : Float) [3]
-  let gaeDones : Tensor Bool [3] := tensorOfArray! [3] #[false, false, false]
+  let rewards : Tensor Float [3] := [1.0, 2.0, 3.0]
+  let gaeRewards : Tensor Float [3] := [1.0, 1.0, 1.0]
+  let gaeValues : Tensor Float [3] := Tensor.full [3] (0 : Float)
+  let gaeNext : Tensor Float [3] := Tensor.full [3] (0 : Float)
+  let gaeDones : Tensor Bool [3] :=
+    [false, false, false]
 
   let gamma32 : Runtime.RL.Numerics.Float32.Float32Exec ←
     match Runtime.RL.Numerics.Float32.ofFloatChecked 0.5 with
@@ -105,8 +132,8 @@ def checkAdvantages : IO Unit := do
     | .ok x => pure x
     | .error e => throw <| IO.userError e
   let tdRes32 : Runtime.RL.Numerics.Float32.Float32Exec ←
-    match Runtime.RL.Numerics.Float32.tdResidualChecked (value := 0) (reward := one32) (gamma := gamma32)
-        (nextValue := 0) (done := false) with
+    match Runtime.RL.Numerics.Float32.tdResidualChecked (value := 0) (reward := one32)
+        (gamma := gamma32) (nextValue := 0) (done := false) with
     | .ok x => pure x
     | .error e => throw <| IO.userError e
   assertApprox "tdResidual IEEE32Exec"
@@ -131,11 +158,14 @@ def checkAdvantages : IO Unit := do
     | .ok t => pure t
     | .error e => throw <| IO.userError e
   assertApprox "gaeTensor IEEE32Exec[0]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar advantages32 ⟨0, by decide⟩)) 1.75 1e-4
+    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar advantages32 ⟨0, by decide⟩))
+    1.75 1e-4
   assertApprox "gaeTensor IEEE32Exec[1]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar advantages32 ⟨1, by decide⟩)) 1.5 1e-4
+    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar advantages32 ⟨1, by decide⟩))
+    1.5 1e-4
   assertApprox "gaeTensor IEEE32Exec[2]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar advantages32 ⟨2, by decide⟩)) 1.0 1e-4
+    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar advantages32 ⟨2, by decide⟩))
+    1.0 1e-4
 
   let normIn32 : Tensor Runtime.RL.Numerics.Float32.Float32Exec [3] ←
     match Runtime.RL.Numerics.Float32.castTensorChecked (s := [3]) rewards with
@@ -147,7 +177,8 @@ def checkAdvantages : IO Unit := do
     | .error e => throw <| IO.userError e
   -- Mean-centered input has a 0 entry; after z-score it should remain 0 (finite).
   assertApprox "zscore IEEE32Exec[1]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar normed32 ⟨1, by decide⟩)) 0.0 1e-6
+    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar normed32 ⟨1, by decide⟩))
+    0.0 1e-6
 
   let ratio32 : Runtime.RL.Numerics.Float32.Float32Exec ←
     match Runtime.RL.Numerics.Float32.ofFloatChecked 1.5 with
@@ -158,42 +189,43 @@ def checkAdvantages : IO Unit := do
     | .ok x => pure x
     | .error e => throw <| IO.userError e
   let ppoObj32 : Runtime.RL.Numerics.Float32.Float32Exec ←
-    match Runtime.RL.Numerics.Float32.ppoClippedObjectiveFromRatioChecked ratio32 one32 clipEps32 with
+    match Runtime.RL.Numerics.Float32.ppoClippedObjectiveFromRatioChecked
+        ratio32 one32 clipEps32 with
     | .ok x => pure x
     | .error e => throw <| IO.userError e
   assertApprox "ppoClipFromRatio IEEE32Exec"
     (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat ppoObj32) 1.2 1e-5
 
   let advantages :=
-    Runtime.RL.Core.generalizedAdvantageEstimationTensor (α := Float)
+    Runtime.RL.Core.generalizedAdvantageEstimation (α := Float)
       0.5 1.0 gaeRewards gaeValues gaeNext gaeDones
   assertApprox "gaeTensor[0]" (Tensor.getScalar advantages ⟨0, by decide⟩) 1.75 1e-6
   assertApprox "gaeTensor[1]" (Tensor.getScalar advantages ⟨1, by decide⟩) 1.5 1e-6
   assertApprox "gaeTensor[2]" (Tensor.getScalar advantages ⟨2, by decide⟩) 1.0 1e-6
   let returnsFromAdv :=
-    Runtime.RL.Core.returnsFromAdvantagesTensor (α := Float) advantages gaeValues
-  assertApprox "returnsFromAdvantagesTensor[0]"
+    Runtime.RL.Core.returnsFromAdvantages (α := Float) advantages gaeValues
+  assertApprox "returnsFromAdvantages[0]"
     (Tensor.getScalar returnsFromAdv ⟨0, by decide⟩) 1.75 1e-6
 
 /-- Check bandit, tabular, DQN, and policy-gradient runtime helpers. -/
 def checkValueLearning : IO Unit := do
   let bandit0 : Runtime.RL.Bandits.ValueState Float 3 :=
-    { counts := fill (0 : Float) [3]
-      values := fill (0 : Float) [3] }
+    { counts := Tensor.full [3] (0 : Float)
+      values := Tensor.full [3] (0 : Float) }
   let bandit1 := Runtime.RL.Bandits.sampleAverageStep bandit0 ⟨1, by decide⟩ 4.0
   assertApprox "bandit count" (Tensor.getScalar bandit1.counts ⟨1, by decide⟩) 1.0 1e-6
   assertApprox "bandit value" (Tensor.getScalar bandit1.values ⟨1, by decide⟩) 4.0 1e-6
   let greedy := Runtime.RL.Bandits.greedyAction? bandit1
   assertBool "bandit greedy action should be arm 1" (greedy = some ⟨1, by decide⟩)
 
-  let q0 : Tensor Float [2, 2] := fill (0 : Float) [2, 2]
+  let q0 : Tensor Float [2, 2] := Tensor.full [2, 2] (0 : Float)
   let q1 :=
     Runtime.RL.Tabular.qLearningUpdate q0 ⟨0, by decide⟩ ⟨1, by decide⟩ 1.0 ⟨1, by decide⟩ 0.9 0.5
   assertApprox "q-learning update"
     (get2 q1 ⟨0, by decide⟩ ⟨1, by decide⟩) 0.5 1e-6
 
-  let qPred : Tensor Float [3] := tensorOfArray! [3] #[1.0, 2.0, 0.5]
-  let qNext : Tensor Float [3] := tensorOfArray! [3] #[0.1, 1.4, 0.3]
+  let qPred : Tensor Float [3] := [1.0, 2.0, 0.5]
+  let qNext : Tensor Float [3] := [0.1, 1.4, 0.3]
   let dqnTarget := Runtime.RL.ValueLearning.dqnTarget (α := Float) 1.0 0.9 false qNext
   assertApprox "dqn target" dqnTarget 2.26 1e-6
   let dqnLoss := Runtime.RL.ValueLearning.dqnMSELoss qPred ⟨1, by decide⟩ 1.0 0.9 false qNext
@@ -201,8 +233,8 @@ def checkValueLearning : IO Unit := do
 
   -- Replay + minibatch DQN layer: store typed transitions, sample deterministically, and compute
   -- the same DQN loss through caller-provided Q-functions.
-  let obs2 : Tensor Float [2] := tensorOfArray! [2] #[0.0, 1.0]
-  let nextObs2 : Tensor Float [2] := tensorOfArray! [2] #[1.0, 0.0]
+  let obs2 : Tensor Float [2] := [0.0, 1.0]
+  let nextObs2 : Tensor Float [2] := [1.0, 0.0]
   let tr0 : Runtime.RL.Core.Transition Float [2] 3 :=
     { state := obs2
       action := ⟨1, by decide⟩
@@ -222,26 +254,26 @@ def checkValueLearning : IO Unit := do
   let soft := Runtime.RL.DQN.softUpdateScalar (α := Float) 0.1 10.0 0.0
   assertApprox "soft target update" soft 1.0 1e-6
 
-  let logits : Tensor Float [2] := tensorOfArray! [2] #[0.0, 1.0]
+  let logits : Tensor Float [2] := [0.0, 1.0]
   let logp := Runtime.RL.PolicyGradient.actionLogProbability (α := Float) logits ⟨1, by decide⟩
-  assertBool "log-prob should be finite" (!Float.isNaN logp)
+  assertFinite "action log-probability" logp
   let ppoObj := Runtime.RL.PolicyGradient.ppoClippedObjective (α := Float) logits ⟨1, by decide⟩
     (-0.2) 1.5 0.2
-  assertBool "ppo objective should be finite" (!Float.isNaN ppoObj)
+  assertFinite "ppo objective" ppoObj
   let klSame := Runtime.RL.PolicyGradient.categoricalKLFromLogits (α := Float) logits logits
   assertApprox "categorical KL same policy" klSame 0.0 1e-6
   let a2cLoss := Runtime.RL.PolicyGradient.a2cLoss (α := Float) logits ⟨1, by decide⟩
     1.0 0.2 0.5 1.0 0.01
-  assertBool "a2c loss should be finite" (!Float.isNaN a2cLoss)
-  let qForPolicy : Tensor Float [2] := tensorOfArray! [2] #[0.1, 0.8]
+  assertFinite "a2c loss" a2cLoss
+  let qForPolicy : Tensor Float [2] := [0.1, 0.8]
   let sacActor := Runtime.RL.PolicyGradient.sacCategoricalActorLoss (α := Float)
     logits qForPolicy ⟨1, by decide⟩ 0.2
-  assertBool "sac categorical actor loss should be finite" (!Float.isNaN sacActor)
+  assertFinite "sac categorical actor loss" sacActor
 
 /-- Check validation at an external RL environment boundary. -/
 def checkBoundary : IO Unit := do
-  let obs2 : Tensor Float [2] := tensorOfArray! [2] #[0.0, 1.0]
-  let nextObs2 : Tensor Float [2] := tensorOfArray! [2] #[1.0, 0.0]
+  let obs2 : Tensor Float [2] := [0.0, 1.0]
+  let nextObs2 : Tensor Float [2] := [1.0, 0.0]
 
   -- Boundary-contract check: validate a small discrete-action transition.
   let c0 : Runtime.RL.Boundary.Contract [2] 3 := {}
@@ -272,6 +304,7 @@ def checkBoundary : IO Unit := do
 def run : IO Unit := do
   IO.println "rl_check: begin"
   checkReturns
+  checkCheckedScans
   checkAdvantages
   checkValueLearning
   checkBoundary

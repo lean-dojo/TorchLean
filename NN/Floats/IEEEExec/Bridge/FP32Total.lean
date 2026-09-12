@@ -6,7 +6,11 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Floats.IEEEExec.Bridge.FP32Total.Arithmetic
+public import NN.Floats.IEEEExec.Bridge.FP32Total.Core
+public import NN.Floats.IEEEExec.Bridge.FP32Total.Effective
 public import NN.Floats.IEEEExec.Bridge.FP32Total.MinMax
+public import NN.Floats.IEEEExec.Bridge.FP32Total.Order
 
 /-!
 # Total FP32 Refinement Bridge

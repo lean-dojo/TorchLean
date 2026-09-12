@@ -8,17 +8,17 @@ module
 
 public import NN.Verification.Cert
 public import NN.Verification.Geometry3D
+public import NN.Verification.Monotonicity.Json
 public import NN.Verification.ODE
 public import NN.Verification.PINN
 public import NN.Verification.Robustness
 public import NN.Verification.Splines
-public import NN.Verification.TorchLean.Lowering
-public import NN.Verification.TorchLean.ExecutableLowering
-public import NN.Verification.TorchLean.Proved
+public import NN.Verification.Builtin.Lowering
+public import NN.Verification.Builtin.ExecutableLowering
+public import NN.Verification.Builtin.Proved
 public import NN.Verification.Util.Json
 public import NN.Verification.Util.TextCursor
 public import NN.Verification.VNNComp
-public import NN.MLTheory.CROWN.Proofs.Overview
 
 /-!
 # Verification
@@ -30,7 +30,7 @@ forward lowering.
 Their expression parsers share the fuel-bounded byte cursor and decimal scanners from
 `NN.Verification.Util.TextCursor`; each verifier keeps only its grammar and AST-specific logic.
 
-The lowering API is imported through `NN.Verification.TorchLean.Proved`, which contains both the
+The lowering API is imported through `NN.Verification.Builtin.Proved`, which contains both the
 lowering functions and their correctness theorems.
 
 Runnable CLIs stay out of this umbrella. If you want a command-line tool, import

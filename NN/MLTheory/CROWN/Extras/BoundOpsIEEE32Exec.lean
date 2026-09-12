@@ -6,9 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Exec32
 public import NN.MLTheory.CROWN.BoundOps
 public import NN.Spec.Core.FloatInstances
+public import NN.Floats.IEEEExec.Exec32.Directed
 
 /-!
 # `BoundOps` instance for `IEEE32Exec`
@@ -59,15 +59,15 @@ instance (priority := 1000) : NonlinearBoundOps IEEE32Exec where
   expBounds := fun _ _ => none
   logBounds := fun _ _ => none
   sqrtBounds lo hi :=
-    if hi < Numbers.zero then
+    if hi < 0 then
       none
     else
-      let lo' := if lo > Numbers.zero then lo else Numbers.zero
+      let lo' := if lo > 0 then lo else 0
       some (IEEE32Exec.sqrtDown lo', IEEE32Exec.sqrtUp hi)
-  sigmoidBounds := fun _ _ => some (Numbers.zero, Numbers.one)
-  tanhBounds := fun _ _ => some (Numbers.negOne, Numbers.one)
-  sinBounds := fun _ _ => some (Numbers.negOne, Numbers.one)
-  cosBounds := fun _ _ => some (Numbers.negOne, Numbers.one)
+  sigmoidBounds := fun _ _ => some (0, 1)
+  tanhBounds := fun _ _ => some ((-1), 1)
+  sinBounds := fun _ _ => some ((-1), 1)
+  cosBounds := fun _ _ => some ((-1), 1)
   layerNormAbsBound := fun _ => none
   supportsIdealCoupledDerivatives := false
 

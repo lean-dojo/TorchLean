@@ -6,11 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Real.Basic
-public import Mathlib.Logic.Function.Iterate
 public import NN.Proofs.RL.FinsetSup
-public import NN.Proofs.Tensor.Basic
 public import NN.Spec.RL.MDP
+public import Mathlib.Algebra.Order.Algebra
+public import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
+public import Mathlib.Data.Sym.Sym2.Init
+import Mathlib.Tactic.NormNum.GCD
+public import NN.Spec.Core.Context.Real
 
 /-!
 # Finite-MDP Proofs
@@ -48,8 +50,16 @@ variable {nStates nActions : Nat}
 /-!
 ## Sup Metric for Finite Value Tables
 
-The finite deterministic and finite stochastic developments intentionally use the same metric:
-the maximum absolute pointwise difference between two value tables.
+The metric is the maximum absolute pointwise difference between two value tables, and it is defined
+once here for both finite developments: `Proofs.RL.FiniteStochastic` opens these three declarations
+rather than restating them. This module owns them because the specs already put `Spec.RL.MDP`
+underneath `Spec.RL.FiniteStochasticMDP`, so the deterministic side is the more basic of the two.
+
+Do not confuse this with `Proofs.RL.Markov.valueSupDist`, which measures the same thing on a
+possibly-infinite state space. That one is an `sSup` rather than a `Finset.sup'`, so it needs a
+boundedness hypothesis before any of these facts hold, and the two cannot share an implementation.
+The contraction argument itself is standard: see Puterman, *Markov Decision Processes* (1994), and
+Bertsekas, *Dynamic Programming and Optimal Control*, Vol. 1.
 -/
 
 /-- Sup distance on finite value functions, using the maximum absolute pointwise difference. -/
@@ -63,22 +73,22 @@ noncomputable def valueSupDist [Fact (0 < nStates)]
 theorem valueSupDist_nonneg [Fact (0 < nStates)]
     (values₁ values₂ : ValueFunction ℝ nStates) :
     0 ≤ valueSupDist values₁ values₂ := by
-  have hcoord :
-      0 ≤ |valueAt values₁ ⟨0, Fact.out⟩ - valueAt values₂ ⟨0, Fact.out⟩| := abs_nonneg _
-  have hle :
-      |valueAt values₁ ⟨0, Fact.out⟩ - valueAt values₂ ⟨0, Fact.out⟩| ≤
-          valueSupDist values₁ values₂ := by
-    unfold valueSupDist
-    exact Finset.le_sup' (fun state => |valueAt values₁ state - valueAt values₂ state|)
-      (Finset.mem_univ ⟨0, Fact.out⟩)
-  exact hcoord.trans hle
+  let _ : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
+  change 0 ≤ (Finset.univ : Finset (Fin nStates)).sup' Finset.univ_nonempty
+    (fun state => |valueAt values₁ state - valueAt values₂ state|)
+  exact Finset.le_sup'_of_le
+    (f := fun state => |valueAt values₁ state - valueAt values₂ state|)
+    (Finset.mem_univ ⟨0, Fact.out⟩) (abs_nonneg _)
 
 /-- Every pointwise absolute difference is bounded by the sup distance. -/
 theorem abs_sub_valueAt_le_valueSupDist [Fact (0 < nStates)]
     (values₁ values₂ : ValueFunction ℝ nStates)
     (state : Fin nStates) :
     |valueAt values₁ state - valueAt values₂ state| ≤ valueSupDist values₁ values₂ := by
-  unfold valueSupDist
+  let _ : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
+  change |valueAt values₁ state - valueAt values₂ state| ≤
+    (Finset.univ : Finset (Fin nStates)).sup' Finset.univ_nonempty
+      (fun s => |valueAt values₁ s - valueAt values₂ s|)
   exact Finset.le_sup' (fun s => |valueAt values₁ s - valueAt values₂ s|) (Finset.mem_univ state)
 
 /-- `stateActionValue` is exactly the Bellman backup on the chosen successor state. -/
@@ -89,7 +99,8 @@ theorem stateActionValue_eq
     (action : Fin nActions) :
     stateActionValue mdp values state action =
       let out := mdp.step state action
-      out.reward + mdp.discount * continueMask (α := ℝ) out.terminated * valueAt values out.state := by
+      out.reward +
+        mdp.discount * continueMask (α := ℝ) out.terminated * valueAt values out.state := by
   rfl
 
 /-- Policy Bellman operators read back exactly the selected state-action value. -/
@@ -100,7 +111,7 @@ theorem valueAt_bellmanPolicy
     (state : Fin nStates) :
     valueAt (bellmanPolicy mdp policy values) state =
       stateActionValue mdp values state (policy state) := by
-  rfl
+  simp [valueAt, bellmanPolicy]
 
 /-- `continueMask` is always nonnegative. -/
 theorem continueMask_nonneg (done : Bool) :
@@ -154,6 +165,7 @@ theorem stateActionValue_le_bellmanOptimality
     stateActionValue mdp values state action ≤
       valueAt (bellmanOptimality mdp values) state := by
   let _ : Nonempty (Fin nActions) := ⟨⟨0, Fact.out⟩⟩
+  simp only [valueAt, bellmanOptimality, TorchLean.Tensor.getScalar_ofFn]
   change
     stateActionValue mdp values state action ≤
       (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty
@@ -183,6 +195,7 @@ theorem bellmanOptimality_monotone
     valueAt (bellmanOptimality mdp values₁) state ≤
       valueAt (bellmanOptimality mdp values₂) state := by
   let _ : Nonempty (Fin nActions) := ⟨⟨0, Fact.out⟩⟩
+  simp only [valueAt, bellmanOptimality, TorchLean.Tensor.getScalar_ofFn]
   change
     (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty
         (stateActionValue mdp values₁ state) ≤
@@ -257,6 +270,7 @@ theorem bellmanPolicy_contraction
       |valueAt (bellmanPolicy mdp policy values₁) state -
           valueAt (bellmanPolicy mdp policy values₂) state|) ?_
   intro state _
+  simp only [valueAt_bellmanPolicy]
   change
     |stateActionValue mdp values₁ state (policy state) -
         stateActionValue mdp values₂ state (policy state)|
@@ -288,19 +302,19 @@ theorem bellmanOptimality_abs_sub_le
   have hs1 :
       (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty f
         ≤ (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty g + bound :=
-    _root_.Proofs.RL.sup'_le_add_const
+    Proofs.RL.sup'_le_add_const
       (Finset.univ : Finset (Fin nActions)) Finset.univ_nonempty f g bound hfg
   have hs2 :
       (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty g
         ≤ (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty f + bound :=
-    _root_.Proofs.RL.sup'_le_add_const
+    Proofs.RL.sup'_le_add_const
       (Finset.univ : Finset (Fin nActions)) Finset.univ_nonempty g f bound hgf
   have habs :
       |(Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty f -
           (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty g|
         ≤ bound :=
     abs_sub_le_iff.mpr ⟨sub_le_iff_le_add'.mpr hs1, sub_le_iff_le_add'.mpr hs2⟩
-  simpa [bellmanOptimality, valueAt, Spec.get, Spec.Tensor.item,
+  simpa [bellmanOptimality, valueAt, Spec.get, TorchLean.Tensor.item,
     f, g, bound] using habs
 
 /-- Bellman optimality is a `γ`-contraction in the finite sup metric. -/

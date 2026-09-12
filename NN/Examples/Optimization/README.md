@@ -1,35 +1,64 @@
 # Optimization Examples
 
-This folder contains example theorems for optimizer behavior. These files are different from a
-training run: they do not tune a model or report a loss curve. They show how an optimizer update can
-be named as a Lean object and how the public theorem API exposes the facts a later proof would
-want to consume.
+A **Muon step certificate** here is an ordinary Lean proof value about one optimizer update.
+It records that the chosen matrix direction has orthonormal columns, that the backend actually
+returned that direction, and that the new state and parameters follow the update rule. It is not
+an exported certificate file or a claim that training will succeed.
 
-`MuonCertificates.lean` focuses on Muon-style updates. Muon combines a momentum buffer with an
-orthogonalized update direction. In TorchLean, the orthogonalizer is not treated as a mysterious
-black box. The state records which orthogonalizer is being used, and the theorem states what
-that orthogonalizer certifies about the direction.
+## Start with the numbers
 
-The examples cover three useful cases:
+Read the `Concrete` namespace at the start of `MuonCertificates.lean`:
 
-| Case | What the theorem exposes |
+```text
+                  [3/5]                       [2]
+direction Q =     [4/5]       parameters P =   [3]
+
+QᵀQ = [(3/5)² + (4/5)²] = [1]
+
+                       [2 - (1/10)(3/5)]   [97/50]
+P' = P - (1/10) Q =    [3 - (1/10)(4/5)] = [73/25]
+```
+
+For a single column, `QᵀQ = I` means unit length. With several columns it additionally means that
+different columns have inner product zero. The same example proves that `(1, 1)ᵀ` fails: its Gram
+matrix is `[2]`.
+
+Momentum is zero and the gradient is `Q`, so the fresh momentum buffer is already `Q`. The example
+uses the identity backend only because this particular buffer is already normalized. Identity does
+not turn arbitrary gradients into orthonormal directions.
+
+| Theorem in `Concrete` | What Lean proves |
 | --- | --- |
-| QR checked backend | Positive QR pivots give an exact column-Gram certificate for the update direction. |
-| Newton-Schulz residual backend | A residual check gives an approximate column-Gram certificate with an explicit tolerance. |
-| Newton-Schulz fixed-point backend | Under the fixed-point hypotheses, the approximate iteration can be consumed as an exact certified step. |
+| `direction_has_exact_gram` | The proposed direction satisfies `QᵀQ = I`. |
+| `unnormalized_direction_rejected` | The direction `(1, 1)ᵀ` cannot satisfy that condition. |
+| `fresh_buffer_eq_direction` | This update's new momentum buffer is exactly `Q`. |
+| `step_certified` | The concrete inputs satisfy the real `Optim.Muon.ExactCertifiedStep` API, with no remaining backend assumption. |
+| `updated_parameters_eq` | Consuming the certificate's parameter equation yields `(97/50, 73/25)ᵀ`. |
 
-The resulting theorems expose both pieces downstream code needs:
+These are proofs over exact real numbers. They establish the direction and update equations;
+they do not establish decreasing loss, convergence, speed, or native/CUDA numerical agreement.
 
-- a direction certificate, such as `HasExactColumnGram direction` or `HasApproxColumnGram eps direction`;
-- the parameter equation saying the new parameters are `params - lr • direction`.
+## Then read the backend examples
 
-Build the optimization examples with:
+The remaining theorems show how a caller obtains the same kind of certificate from a backend.
+They are conditional: the caller must supply the obligation in the middle column.
+
+| Backend | Required evidence | Result |
+| --- | --- | --- |
+| QR | Positive QR pivots for the fresh momentum buffer | Exact `QᵀQ = I`. |
+| Newton–Schulz residual check | An entrywise bound on `QᵀQ - I` | Approximate Gram certificate with the stated tolerance. |
+
+Selecting a Newton–Schulz iteration count alone does not prove its residual is small.
+The two consumers preserve those hypotheses and extract the direction and parameter equation.
+For initialized-state and fixed-point variants, use the library theorems in `Optim.Muon`.
+
+## Build and continue
 
 ```bash
 lake build NN.Examples.Optimization
 ```
 
-For the surrounding theory, read `NN/MLTheory/Optimization/OptimizerLaws.lean` and
-`NN/MLTheory/Optimization/Muon.lean`. Runtime users configure Muon through
-`TorchLean.optim.muon.optimizer`, because the orthogonalizer backend is part of the update. Proof
-examples and theorem statements use the canonical `Optim.Muon` namespace.
+This directory contains proof tutorials, so it has no CLI or loss-curve output. Runtime users
+configure Muon through `TorchLean.optim.muon.optimizer`; proof examples use `Optim.Muon`.
+The reusable definitions and theorems live in `NN/MLTheory/Optimization/Muon.lean` and
+`NN/MLTheory/Optimization/OptimizerLaws.lean`.

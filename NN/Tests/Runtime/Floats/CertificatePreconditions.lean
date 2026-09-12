@@ -30,7 +30,7 @@ their documented power/negation semantics, and interval comparisons must reject 
 
 @[expose] public section
 
-open Spec
+open Spec TorchLean
 open Lean
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph
@@ -73,13 +73,13 @@ def parseInputRegion! (source : String) : IO NN.Verification.Json.BoxRegion := d
     match inputResult with
     | .ok input => pure input
     | .error e => throw <| IO.userError s!"input-region parser rejected a valid fixture: {e}"
-  match NN.Verification.Json.expectBoxRegionE "input" input with
+  match NN.Verification.Json.parseBoxRegion "input" input with
   | .ok region => pure region
   | .error e => throw <| IO.userError s!"input-region parser rejected a valid fixture: {e}"
 
 /-- Whether a JSON value passes the complete PINN certificate schema checks. -/
 def pinnCertificateAccepted (json : Json) : Bool :=
-  match NN.Verification.PINN.parseCert json with
+  match NN.Verification.PINN.parseCertificate json with
   | .ok _ => true
   | .error _ => false
 
@@ -107,25 +107,25 @@ def evalPDEAtTwo (source : String) : Option (Float × Float) := do
 
 def flatBox (lo hi : Fin 2 → Float) : FlatBox IEEE32Exec :=
   { dim := 2
-    lo := Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.ofFn lo)
-    hi := Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.ofFn hi) }
+    lo := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn lo)
+    hi := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn hi) }
 
 def flatBox3 : FlatBox IEEE32Exec :=
   { dim := 3
-    lo := Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.ofFn (fun _ : Fin 3 => 0.0))
-    hi := Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.ofFn (fun _ : Fin 3 => 1.0)) }
+    lo := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn (fun _ : Fin 3 => 0.0))
+    hi := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn (fun _ : Fin 3 => 1.0)) }
 
-def inputNode (id dim : Nat) : _root_.NN.IR.Node :=
+def inputNode (id dim : Nat) : NN.IR.Node :=
   { id := id, parents := #[], kind := .input, outShape := [dim] }
 
-def addGraph : _root_.NN.IR.Graph :=
+def addGraph : NN.IR.Graph :=
   { nodes := #[
       inputNode 0 2,
       inputNode 1 3,
       { id := 2, parents := #[0, 1], kind := .add, outShape := [2] }
     ] }
 
-def logGraph : _root_.NN.IR.Graph :=
+def logGraph : NN.IR.Graph :=
   { nodes := #[
       inputNode 0 2,
       { id := 1, parents := #[0], kind := .log, outShape := [2] }
@@ -158,9 +158,39 @@ def run : IO Unit := do
     parseInputRegion! "{\"input\":{\"lo\":[0.0],\"hi\":[1.0],\"eps\":0.5}}"
 
   expect "VNN-COMP accepted a reversed input box" <|
-    !NN.Verification.VNNComp.VNNLib.inputBoxValid #[1.0, 0.0] #[0.0, 1.0]
+    !NN.Verification.Util.Tensor.boundsOrdered ([1.0, 0.0] : TorchLean.Tensor Float [2])
+      [0.0, 1.0]
   expect "VNN-COMP rejected a well-formed input box" <|
-    NN.Verification.VNNComp.VNNLib.inputBoxValid #[-1.0, 0.0] #[1.0, 2.0]
+    NN.Verification.Util.Tensor.boundsOrdered ([-1.0, 0.0] : TorchLean.Tensor Float [2])
+      [1.0, 2.0]
+
+  let lower : Tensor Float [2] := [0.0, 1.0]
+  let threshold : Tensor Float [2] := [0.0, 0.0]
+  expect "threshold refutation missed the second coordinate" <|
+    NN.Verification.Util.Tensor.refutesThreshold lower threshold
+  expect "threshold witness silently fell back to another coordinate" <|
+    !NN.Verification.Util.Tensor.refutesThresholdAt lower threshold 0
+  expect "threshold witness accepted an out-of-range index" <|
+    !NN.Verification.Util.Tensor.refutesThresholdAt lower threshold 2
+  let nan : Float := Float.ofBits 0x7ff8000000000000
+  expect "threshold witness accepted NaN" <|
+    !NN.Verification.Util.Tensor.refutesThresholdAt ([nan] : Tensor Float [1]) [0.0] 0
+  expect "bound ordering accepted NaN" <|
+    !NN.Verification.Util.Tensor.boundsOrdered ([nan] : Tensor Float [1]) [0.0]
+  expect "vector decoding accepted a mismatched length" <|
+    (NN.Verification.Util.Tensor.vecOfArray 2 #[1.0]).isNone
+  expect "matrix decoding accepted a ragged row" <|
+    (NN.Verification.Util.Tensor.matOfArray 2 2 #[#[1.0, 0.0], #[1.0]]).isNone
+  let term : NN.Verification.VNNComp.VNNLib.Term :=
+    { rows := 1, cols := 2, mat := [[2.0, -3.0]], rhs := [-5.0] }
+  let box : FlatBox Float := { dim := 2, lo := [1.0, 1.0], hi := [2.0, 2.0] }
+  expect "outward row bound failed to refute a separated threshold" <|
+    NN.Verification.VNNComp.VNNLib.termRefutedByOutputBox box term
+  expect "outward row bound accepted equality as a strict refutation" <|
+    !NN.Verification.VNNComp.VNNLib.termRefutedByOutputBox box { term with rhs := [-4.0] }
+  expect "output spec accepted a dimension mismatch" <|
+    !NN.Verification.VNNComp.VNNLib.termRefutedByOutputBox
+      { dim := 1, lo := [1.0], hi := [2.0] } term
 
   let reversedMarginEntry ← parseJson! <|
     "{\"label\":0,\"logits_lo\":[2.0,0.0],\"logits_hi\":[1.0,0.5]}"
@@ -284,7 +314,7 @@ def run : IO Unit := do
   expect "IEEE32Exec log was accepted without a directed transcendental implementation"
     (positiveRun[1]!.isNone)
 
-  let inputGraph : _root_.NN.IR.Graph := { nodes := #[inputNode 0 2] }
+  let inputGraph : NN.IR.Graph := { nodes := #[inputNode 0 2] }
   let authoritative := flatBox (fun _ => 0.0) (fun _ => 1.0)
   let inward := flatBox (fun _ => 0.0) (fun _ => 0.999999)
   let outward := flatBox (fun _ => -0.000001) (fun _ => 1.000001)

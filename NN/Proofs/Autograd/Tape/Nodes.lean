@@ -6,15 +6,17 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Proofs.Autograd.Tape.Nodes.Arithmetic
+public import NN.Proofs.Autograd.Tape.Nodes.Batched
 public import NN.Proofs.Autograd.Tape.Nodes.Context
 public import NN.Proofs.Autograd.Tape.Nodes.Elementwise
-public import NN.Proofs.Autograd.Tape.Nodes.Arithmetic
-public import NN.Proofs.Autograd.Tape.Nodes.Matrix
-public import NN.Proofs.Autograd.Tape.Nodes.Softmax
-public import NN.Proofs.Autograd.Tape.Nodes.Reductions
-public import NN.Proofs.Autograd.Tape.Nodes.Losses
-public import NN.Proofs.Autograd.Tape.Nodes.Piecewise
 public import NN.Proofs.Autograd.Tape.Nodes.GraphComposition
+public import NN.Proofs.Autograd.Tape.Nodes.Losses
+public import NN.Proofs.Autograd.Tape.Nodes.Matrix
+public import NN.Proofs.Autograd.Tape.Nodes.Piecewise
+public import NN.Proofs.Autograd.Tape.Nodes.Reductions
+public import NN.Proofs.Autograd.Tape.Nodes.Shape
+public import NN.Proofs.Autograd.Tape.Nodes.Softmax
 
 /-!
 # Tape Nodes

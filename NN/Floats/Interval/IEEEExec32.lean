@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Exec32
+public import NN.Floats.IEEEExec.Exec32.Compare
+public import NN.Floats.IEEEExec.Exec32.Directed
 
 /-!
 # Executable IEEE32Exec endpoint intervals
@@ -37,9 +38,10 @@ theorems relating these intervals to real/extended-real interpretations are stat
 bridge files (so theorems can choose the right notion of "real meaning" for the application).
 -/
 structure Interval32 where
-  /-- lo. -/
+  /-- Lower binary32 endpoint. Arithmetic constructors round this endpoint toward `-∞`. -/
   lo : IEEE32Exec
-  /-- hi. -/
+  /-- Upper binary32 endpoint. Arithmetic constructors round this endpoint toward `+∞`.
+  Orderedness is a separate predicate; the constructor does not require `lo ≤ hi`. -/
   hi : IEEE32Exec
   deriving Repr
 

@@ -126,6 +126,6 @@ layout: null
     "title": "Updates",
     "url": "{{ '/updates/' | relative_url }}",
     "section": "News",
-    "text": "updates release notes recent work roadmap status"
+    "text": "updates release notes recent work roadmap status refactor backward sweep Frechet derivative shape inference soundness CROWN end to end samplesPerStep nn.compose nn.Sequential Verification.Builtin Autograd.Model"
   }
 ]

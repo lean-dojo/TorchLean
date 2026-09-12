@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.Optimization.Muon.NewtonSchulz
+public import NN.MLTheory.Optimization.Muon.Core
 
 /-!
 # Muon Step Certificates
@@ -20,12 +20,12 @@ proof interface; concrete QR and Newton-Schulz backends instantiate them in thei
 
 namespace Optim
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Muon
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /--
 Evidence that `direction` is exactly the output of an orthogonalizer on `buffer` and has column
@@ -57,51 +57,62 @@ stores that buffer, and the parameters move along the certified direction.
 -/
 structure ExactCertifiedStep {m n : Nat}
     (state : State α (.dim m (.dim n .scalar)))
-    (params grads direction : MatrixTensor α m n) : Prop where
+    (parameters gradients direction : MatrixTensor α m n) : Prop where
   /-- Certificate for the direction computed from the fresh momentum buffer. -/
   direction_cert :
-    ExactCertifiedDirection state.orthogonalizer (update state params grads).1.buf direction
+    ExactCertifiedDirection state.orthogonalizer
+      (update state parameters gradients).optimizerState.momentumBuffer direction
   /-- Muon changes only the momentum buffer in its optimizer state. -/
   state_eq :
-    (update state params grads).1 =
-      { state with buf := OptimizerUtils.updateMomentumBuf state.buf state.momentum grads }
+    (update state parameters gradients).optimizerState =
+      { state with
+          momentumBuffer := updateMomentumBuffer state.momentumBuffer state.momentum gradients }
   /-- Parameter equation for the certified update direction. -/
-  params_eq :
-    (update state params grads).2 = subSpec params (scaleSpec direction state.lr)
+  parameters_eq :
+    (update state parameters gradients).parameters =
+      subSpec parameters (scaleSpec direction state.learningRate)
 
 /-- The residual-bounded counterpart of `ExactCertifiedStep`. -/
 structure ApproxCertifiedStep {m n : Nat} (eps : α)
     (state : State α (.dim m (.dim n .scalar)))
-    (params grads direction : MatrixTensor α m n) : Prop where
+    (parameters gradients direction : MatrixTensor α m n) : Prop where
   /-- Certificate for the direction computed from the fresh momentum buffer. -/
   direction_cert :
-    ApproxCertifiedDirection eps state.orthogonalizer (update state params grads).1.buf direction
+    ApproxCertifiedDirection eps state.orthogonalizer
+      (update state parameters gradients).optimizerState.momentumBuffer direction
   /-- Muon changes only the momentum buffer in its optimizer state. -/
   state_eq :
-    (update state params grads).1 =
-      { state with buf := OptimizerUtils.updateMomentumBuf state.buf state.momentum grads }
+    (update state parameters gradients).optimizerState =
+      { state with
+          momentumBuffer := updateMomentumBuffer state.momentumBuffer state.momentum gradients }
   /-- Parameter equation for the certified update direction. -/
-  params_eq :
-    (update state params grads).2 = subSpec params (scaleSpec direction state.lr)
+  parameters_eq :
+    (update state parameters gradients).parameters =
+      subSpec parameters (scaleSpec direction state.learningRate)
 
 /-- A local exact backend fact for the fresh buffer produces a certified Muon step. -/
 theorem exactCertifiedStep_of_buffer {m n : Nat}
     (state : State α (.dim m (.dim n .scalar)))
-    (params grads : MatrixTensor α m n)
-    (horth : ExactOrthogonalizesBuffer state.orthogonalizer (update state params grads).1.buf) :
-    ∃ direction : MatrixTensor α m n, ExactCertifiedStep state params grads direction := by
-  let direction := state.orthogonalizer.apply (update state params grads).1.buf
+    (parameters gradients : MatrixTensor α m n)
+    (horth : ExactOrthogonalizesBuffer state.orthogonalizer
+      (update state parameters gradients).optimizerState.momentumBuffer) :
+    ∃ direction : MatrixTensor α m n, ExactCertifiedStep state parameters gradients direction := by
+  let direction :=
+    state.orthogonalizer.apply (update state parameters gradients).optimizerState.momentumBuffer
   refine ⟨direction, ⟨⟨rfl, horth⟩, rfl, ?_⟩⟩
   rfl
 
 /-- A local residual bound for the fresh buffer produces a certified Muon step. -/
 theorem approxCertifiedStep_of_buffer {m n : Nat} {eps : α}
     (state : State α (.dim m (.dim n .scalar)))
-    (params grads : MatrixTensor α m n)
+    (parameters gradients : MatrixTensor α m n)
     (horth :
-      ApproxOrthogonalizesBuffer eps state.orthogonalizer (update state params grads).1.buf) :
-    ∃ direction : MatrixTensor α m n, ApproxCertifiedStep eps state params grads direction := by
-  let direction := state.orthogonalizer.apply (update state params grads).1.buf
+      ApproxOrthogonalizesBuffer eps state.orthogonalizer
+        (update state parameters gradients).optimizerState.momentumBuffer) :
+    ∃ direction : MatrixTensor α m n,
+      ApproxCertifiedStep eps state parameters gradients direction := by
+  let direction :=
+    state.orthogonalizer.apply (update state parameters gradients).optimizerState.momentumBuffer
   refine ⟨direction, ⟨⟨rfl, horth⟩, rfl, ?_⟩⟩
   rfl
 
@@ -111,24 +122,25 @@ its success predicate holds on the fresh momentum buffer.
 -/
 theorem exactCertifiedStep_of_checkedBackend {m n : Nat}
     (backend : CheckedExactOrthogonalizer α m n)
-    (lr momentum : α) (buf params grads : MatrixTensor α m n)
+    (learningRate momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
     (hsuccess :
       backend.Success
         (update
-          ({ lr := lr, momentum := momentum, buf := buf,
+          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := backend.orthogonalizer } :
             State α (.dim m (.dim n .scalar)))
-          params grads).1.buf) :
+          parameters gradients).optimizerState.momentumBuffer) :
     ∃ direction : MatrixTensor α m n,
       ExactCertifiedStep
-        ({ lr := lr, momentum := momentum, buf := buf,
+        ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
            orthogonalizer := backend.orthogonalizer } :
           State α (.dim m (.dim n .scalar)))
-        params grads direction := by
+        parameters gradients direction := by
   let state : State α (.dim m (.dim n .scalar)) :=
-    { lr := lr, momentum := momentum, buf := buf, orthogonalizer := backend.orthogonalizer }
-  exact exactCertifiedStep_of_buffer state params grads
-    (backend.certified (update state params grads).1.buf hsuccess)
+    { learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+      orthogonalizer := backend.orthogonalizer }
+  exact exactCertifiedStep_of_buffer state parameters gradients
+    (backend.certified (update state parameters gradients).optimizerState.momentumBuffer hsuccess)
 
 /--
 A checked approximate backend certifies one Muon update whenever its success predicate establishes
@@ -136,78 +148,79 @@ the requested Gram-residual bound on the fresh momentum buffer.
 -/
 theorem approxCertifiedStep_of_checkedBackend {m n : Nat} {eps : α}
     (backend : CheckedApproxOrthogonalizer α m n eps)
-    (lr momentum : α) (buf params grads : MatrixTensor α m n)
+    (learningRate momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
     (hsuccess :
       backend.Success
         (update
-          ({ lr := lr, momentum := momentum, buf := buf,
+          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := backend.orthogonalizer } :
             State α (.dim m (.dim n .scalar)))
-          params grads).1.buf) :
+          parameters gradients).optimizerState.momentumBuffer) :
     ∃ direction : MatrixTensor α m n,
       ApproxCertifiedStep eps
-        ({ lr := lr, momentum := momentum, buf := buf,
+        ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
            orthogonalizer := backend.orthogonalizer } :
           State α (.dim m (.dim n .scalar)))
-        params grads direction := by
+        parameters gradients direction := by
   let state : State α (.dim m (.dim n .scalar)) :=
-    { lr := lr, momentum := momentum, buf := buf, orthogonalizer := backend.orthogonalizer }
-  exact approxCertifiedStep_of_buffer state params grads
-    (backend.certified (update state params grads).1.buf hsuccess)
+    { learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+      orthogonalizer := backend.orthogonalizer }
+  exact approxCertifiedStep_of_buffer state parameters gradients
+    (backend.certified (update state parameters gradients).optimizerState.momentumBuffer hsuccess)
 
 /-- A checked exact backend gives $Q^\mathsf{T}Q=I$ for the direction used by an update. -/
 theorem checkedBackend_updateDirection_hasExactColumnGram {m n : Nat}
     (backend : CheckedExactOrthogonalizer α m n)
-    (lr momentum : α) (buf params grads : MatrixTensor α m n)
+    (learningRate momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
     (hsuccess :
       backend.Success
         (update
-          ({ lr := lr, momentum := momentum, buf := buf,
+          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := backend.orthogonalizer } :
             State α (.dim m (.dim n .scalar)))
-          params grads).1.buf) :
+          parameters gradients).optimizerState.momentumBuffer) :
     HasExactColumnGram
       (backend.orthogonalizer.apply
         (update
-          ({ lr := lr, momentum := momentum, buf := buf,
+          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := backend.orthogonalizer } :
             State α (.dim m (.dim n .scalar)))
-          params grads).1.buf) := by
+          parameters gradients).optimizerState.momentumBuffer) := by
   exact backend.certified _ hsuccess
 
 /-- A checked approximate backend gives its residual bound for the direction used by an update. -/
 theorem checkedBackend_updateDirection_hasApproxColumnGram {m n : Nat} {eps : α}
     (backend : CheckedApproxOrthogonalizer α m n eps)
-    (lr momentum : α) (buf params grads : MatrixTensor α m n)
+    (learningRate momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
     (hsuccess :
       backend.Success
         (update
-          ({ lr := lr, momentum := momentum, buf := buf,
+          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := backend.orthogonalizer } :
             State α (.dim m (.dim n .scalar)))
-          params grads).1.buf) :
+          parameters gradients).optimizerState.momentumBuffer) :
     HasApproxColumnGram eps
       (backend.orthogonalizer.apply
         (update
-          ({ lr := lr, momentum := momentum, buf := buf,
+          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := backend.orthogonalizer } :
             State α (.dim m (.dim n .scalar)))
-          params grads).1.buf) := by
+          parameters gradients).optimizerState.momentumBuffer) := by
   exact backend.certified _ hsuccess
 
 /-- Extract exact column orthogonality from a certified step. -/
 theorem ExactCertifiedStep.hasExactColumnGram {m n : Nat}
     {state : State α (.dim m (.dim n .scalar))}
-    {params grads direction : MatrixTensor α m n}
-    (cert : ExactCertifiedStep state params grads direction) :
+    {parameters gradients direction : MatrixTensor α m n}
+    (cert : ExactCertifiedStep state parameters gradients direction) :
     HasExactColumnGram direction :=
   cert.direction_cert.exact_column_gram
 
 /-- Extract the Gram-residual bound from an approximate certified step. -/
 theorem ApproxCertifiedStep.hasApproxColumnGram {m n : Nat} {eps : α}
     {state : State α (.dim m (.dim n .scalar))}
-    {params grads direction : MatrixTensor α m n}
-    (cert : ApproxCertifiedStep eps state params grads direction) :
+    {parameters gradients direction : MatrixTensor α m n}
+    (cert : ApproxCertifiedStep eps state parameters gradients direction) :
     HasApproxColumnGram eps direction :=
   cert.direction_cert.approx_column_gram
 

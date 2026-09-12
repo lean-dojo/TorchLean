@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Bridge.FP32.Ops
-
+public import NN.Floats.IEEEExec.Bridge.FP32.RoundDyadic
+public import NN.Floats.IEEEExec.Exec32.Compare
 /-!
 # IEEE32Exec and FP32: Comparisons and Min/Max
 -/
@@ -320,6 +320,10 @@ theorem compare_eq_some_gt_iff_toReal_gt (x y : IEEE32Exec) {dx dy : Dyadic}
   simpa [hcmp, hto, hto'] using
     (cmpDyadic_gt_iff (a := dx) (b := dy))
 
+/-- A bit pattern the encoding calls zero really does decode to the real number `0`.
+
+Both signed zeros land here, which is why the statement is about `toReal` rather than about the
+dyadic: the two dyadics differ in their sign bit but not in the value they denote. -/
 lemma toReal_eq_zero_of_isZero (x : IEEE32Exec) {d : Dyadic}
     (hx : toDyadic? x = some d) (hz : isZero x = true) : toReal x = 0 := by
   -- Extract bitfield facts from `isZero`.

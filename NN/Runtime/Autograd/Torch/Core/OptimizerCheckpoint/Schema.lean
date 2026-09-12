@@ -40,7 +40,8 @@ def trainableCount (schema : ParameterSchema) : Nat :=
 
 /-- Write the ordered parameter schema for an optimizer-specific checkpoint format. -/
 def write
-    (format : CheckpointIO.Format) (handle : IO.FS.Handle) (schema : ParameterSchema) : IO Unit := do
+    (format : CheckpointIO.Format) (handle : IO.FS.Handle) (schema : ParameterSchema) :
+    IO Unit := do
   unless schema.isWellFormed do
     throw <| IO.userError s!"{format.name}: malformed in-memory parameter schema"
   CheckpointIO.writeNat64 format.name handle schema.shapes.size
@@ -60,7 +61,8 @@ def write
 
 /-- Read a parameter schema and reject any difference from the expected module layout. -/
 def readAndCheck
-    (format : CheckpointIO.Format) (handle : IO.FS.Handle) (expected : ParameterSchema) : IO Unit := do
+    (format : CheckpointIO.Format) (handle : IO.FS.Handle) (expected : ParameterSchema) :
+    IO Unit := do
   unless expected.isWellFormed do
     throw <| IO.userError s!"{format.name}: malformed expected parameter schema"
   let parameterCount ← CheckpointIO.readNat64 format.name handle

@@ -6,9 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Nat.Bitwise
-public import NN.Floats.IEEEExec.Exec32
 import Mathlib.Tactic.IntervalCases
+public import NN.Floats.IEEEExec.Exec32.Dyadic
 
 /-!
 # Lemmas about sign-bit flips (`b ^^^ signMask`)

@@ -27,8 +27,8 @@ TorchLean is pinned by `lean-toolchain` and currently builds with
 ## Quickstart
 
 ```bash
-lake exe torchlean quickstart_mlp --device cpu --steps 10 --scalar ieee32-exec --execution eager
-lake exe torchlean quickstart_mlp --device cpu --steps 10 --scalar float32 --execution eager
+lake exe torchlean quickstart_mlp --device cpu --steps 10 --arithmetic ieee --execution eager
+lake exe torchlean quickstart_mlp --device cpu --steps 10 --execution eager
 
 # Optional CUDA run, if the CUDA toolkit and an NVIDIA GPU are available:
 lake -R -K cuda=true build
@@ -39,7 +39,7 @@ The first quickstart uses TorchLean's independent raw-bit binary32 reference. Th
 Lean's native `Float32` arithmetic. The CUDA command selects the native GPU runtime and reports an
 error when CUDA is unavailable.
 
-Application code writes concrete tensor types as `Tensor α [dims...]`, with the scalar type first.
+Application code writes concrete tensor types as `Tensor α [dims...]`, with the element type first.
 For example, `Tensor Float [4, 2]` is a four-by-two tensor of `Float` values:
 
 ```lean
@@ -56,30 +56,30 @@ def model :=
 
 -- Four input rows, each containing two features.
 def xs : Tensor Float [4, 2] :=
-  tensor! [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]
+  [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]]
 
 -- One regression target for each input row.
 def ys : Tensor Float [4, 1] :=
-  tensor! [[0.2], [1.0], [1.0], [1.8]]
+  [[0.2], [1.0], [1.0], [1.8]]
 
 -- The leading `4` counts samples; each sample has shapes `[2]` and `[1]`.
-def data : Trainer.Dataset [2] [1] := Data.tensorDataset xs ys
+def data : Trainer.Dataset [2] [1] := Data.fromTensors xs ys
 
 def trainOnce : IO Unit := do
   -- Select the loss and train through a typed graph interpreted by IEEE32Exec.
   let trainer :=
     Trainer.new model
-      { task := .regression
-        optimizer := optim.sgd { lr := 0.05 }
+      { objective := .meanSquaredError
+        optimizer := optim.sgd { learningRate := 0.05 }
         execution := .typedGraph
         device := .cpu
-        scalar := .ieee32Exec }
+        arithmetic := .ieee }
   -- Inspect the initialized model before any parameter updates.
-  let initialPrediction ← trainer.predict (tensor! [0.5, -0.25])
-  IO.println s!"initial={Tensor.pretty initialPrediction}"
+  let initialPrediction ← trainer.predict ([0.5, -0.25])
+  IO.println s!"initial={reprStr initialPrediction}"
   -- Each step averages 16 sample gradients at one parameter point, then updates once.
-  -- Training returns a new trainer containing the updated parameters and run history.
-  let trained ← trainer.train data { steps := 200, batchSize := 16, logEvery := 25 }
+  -- Training returns a result that retains the updated parameters and run report.
+  let trained ← trainer.train data { steps := 200, samplesPerStep := 16, logEvery := 25 }
   trained.printSummary
 ```
 
@@ -115,10 +115,11 @@ lake build
 
 Use `import NN.API` for model, data, and training code. It provides `TorchLean.nn`,
 `TorchLean.Data`, `TorchLean.Trainer`, and `TorchLean.optim` without exposing the full proof and
-backend trees. Direct verifier lowering has the focused import `NN.API.Verification`. Use
-`NN.API.Verification.Trainer` specifically for `Trainer.trainVerified`. Use
-`import NN` when the same file also needs proofs or backend infrastructure; focused imports such
-as `NN.GraphSpec`, `NN.Runtime`, or `NN.Proofs` are available for subsystem work.
+backend trees. Use `NN.API.Verification` to call
+`trained.verify center (radius := r) (norm := .inf)` after ordinary training. Explicit verifier
+graph lowering has the focused import `NN.API.Verification.Lowering`. Use `import NN` when the
+same file also needs proofs or backend infrastructure; focused imports such as `NN.GraphSpec`,
+`NN.Runtime`, or `NN.Proofs` are available for subsystem work.
 
 Downstream model and training files should start from:
 
@@ -151,10 +152,12 @@ require TorchLean from "../TorchLean"
 
 - `NN.lean`: complete import for model, tensor, data, training, verification, and proof workflows.
 - `NN/API`: the application API exported by `import NN.API` and included by `import NN`.
+- `NN/Tensor`: the shared shape-indexed tensor type, packed CPU storage, conversions, and operations.
 - `NN/Spec`: mathematical tensor, layer, model, and dynamical-system definitions.
 - `NN/Runtime`: executable autograd, optimizers, training loops, CUDA boundary,
   PyTorch import/export, and RL runtime support.
-- `NN/Backend`: contract-carrying backend capsules, profiles, device targets, reports, and gates.
+- `NN/Backend`: contract-carrying kernel capsules, the planner, backend profiles, execution
+  audits, and the contract check that accepts or rejects a kernel plan.
 - `NN/IR` and `NN/GraphSpec`: graph IR, graph semantics, and typed architecture
   descriptions.
 - `NN/Proofs`: tensor algebra, selected autograd correctness theorems, analytic derivatives,
@@ -164,23 +167,27 @@ require TorchLean from "../TorchLean"
 - `NN/MLTheory`: learning theory, robustness, CROWN/LiRPA, generative objectives,
   optimization theory, and related proof layers.
 - `NN/Verification`: certificate checkers and CLI workflows.
-- `NN/Examples`: quickstarts, model zoo commands, widgets, bundled verification assets,
+- `NN/Examples`: quickstarts, runnable model examples, widgets, bundled verification assets,
   and interoperability workflows.
-- `blueprint/TorchLeanBlueprint/Guide`: source for the guide.
+- `home_page/blueprint/TorchLeanBlueprint/Guide`: source for the guide.
 - `home_page`: project website sources.
 
 ## Proofs And Runtime Boundaries
 
 TorchLean proves properties of explicit Lean definitions. It also checks certificates produced by
-external tools, including bound-propagation and scientific-computing workflows. A successful
-certificate check proves the predicate implemented by that checker; it does not certify the program
-that produced the certificate.
+external tools, including bound-propagation and scientific-computing workflows. An executable
+certificate check reports acceptance by that checker. A semantic guarantee additionally requires
+the checker's soundness theorem and its hypotheses; a Lean proof needs kernel-checked evidence of
+acceptance. None of these checks certifies the program that produced the certificate.
 
 CPU instructions, CUDA kernels, cuBLAS, LibTorch, PyTorch, Julia, and other external systems are
 runtime providers. Their interfaces, assumptions, and available checks are listed in
-[`TRUST_BOUNDARIES.md`](TRUST_BOUNDARIES.md). Third-party sources and licenses are listed in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), and [`AI_USAGE.md`](AI_USAGE.md) describes the
+[`docs/TRUST_BOUNDARIES.md`](docs/TRUST_BOUNDARIES.md). Third-party sources and licenses are listed in
+[`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md), and
+[`docs/AI_USAGE.md`](docs/AI_USAGE.md) describes the
 project's use of coding assistants.
+
+Contribution guidelines are in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
 ## Citation
 

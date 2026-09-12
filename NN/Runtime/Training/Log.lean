@@ -25,6 +25,11 @@ references while still lowering to the same stable `TrainLog` JSON that TorchLea
 know how to render. This gives examples one clean local artifact format and a straightforward bridge
 to hosted trackers.
 
+Metric values are `Float` on purpose. A logged loss or accuracy is a reporting scalar that has
+already left the generic `α` optimizer layer: it is converted once at the call site and then only
+compared, plotted, and written as a JSON number. Generalising the log over `α` would push a
+`ToJson`/`FromJson` obligation onto every scalar type for no gain in precision.
+
 We keep JSON support in the same module as the data model so there is one canonical logging API:
 `Runtime.Training.TrainLog.writeJson` / `readJson`. Widgets live in
 `NN.Widgets.Runtime.Training` and render these logs in the infoview.
@@ -120,17 +125,17 @@ structure TrainLog where
 namespace TrainLog
 
 /--
-Build a two-point loss log from an initial and final scalar loss.
+Build a two-point loss log from scalar losses measured before and after training.
 
-This is useful for any training routine that records a baseline loss at step `0` and another
-loss after `steps` updates. More detailed loops should use `Curve` or `MetricHistory` below.
+This is useful for any training routine that records a baseline loss at step `0` and another loss
+after `steps` updates. More detailed loops should use `Curve` or `MetricHistory` below.
 -/
-def beforeAfterLoss (title : String) (steps : Nat) (beforeLoss afterLoss : Float)
+def lossComparison (title : String) (steps : Nat) (lossBefore lossAfter : Float)
     (notes : Array String := #[]) (color : String := "#4e79a7") : TrainLog :=
   { title := title
     steps := #[0, steps]
     series := #[
-      { name := "loss", values := #[beforeLoss, afterLoss], color := color }
+      { name := "loss", values := #[lossBefore, lossAfter], color := color }
     ]
     notes := notes }
 
@@ -283,26 +288,22 @@ namespace ExperimentLog
 def init (run : RunInfo := {}) (metrics : Array (String × String) := #[]) : ExperimentLog :=
   { run := run, history := MetricHistory.empty metrics }
 
-/-- Append one scalar metric. New metric names are added lazily with a default color. -/
+/-- Record a scalar at a step. Consecutive writes at the same step share one row;
+writing the same metric again replaces its value. Unreported metrics use `NaN`,
+including earlier rows when a metric is first introduced. -/
 def log (e : ExperimentLog) (step : Nat) (name : String) (value : Float)
-    (color : String := "#4e79a7") : ExperimentLog :=
-  let idx? := e.history.series.findIdx? (fun s => s.name = name)
-  match idx? with
-  | some i =>
-      let series := e.history.series.modify i (fun s =>
-        { s with values := s.values.push value })
-      { e with history := { steps := e.history.steps.push step, series := series } }
-  | none =>
-      let series := e.history.series.push { name := name, values := #[value], color := color }
-      { e with history := { steps := e.history.steps.push step, series := series } }
-
-/-- Append one aligned row of metrics to an experiment. -/
-def logRow (e : ExperimentLog) (step : Nat) (values : Array Float) : ExperimentLog :=
-  { e with history := e.history.push step values }
-
-/-- Attach a local file artifact to the run. -/
-def addArtifact (e : ExperimentLog) (artifact : Artifact) : ExperimentLog :=
-  { e with artifacts := e.artifacts.push artifact }
+    (color : String := "#4e79a7") : ExperimentLog := Id.run do
+  let missing := Float.ofBits 0x7ff8000000000000
+  let sameStep := e.history.steps.back? == some step
+  let steps := if sameStep then e.history.steps else e.history.steps.push step
+  let row := steps.size - 1
+  let series := if sameStep then e.history.series else
+    e.history.series.map (fun s => { s with values := s.values.push missing })
+  let series := match series.findIdx? (fun s => s.name = name) with
+    | some i => series.modify i (fun s => { s with values := s.values.set! row value })
+    | none => series.push
+        { name, color, values := (Array.replicate steps.size missing).set! row value }
+  return { e with history := { steps, series } }
 
 /-- Convert a rich experiment object into the stable widget/JSON `TrainLog` artifact. -/
 def toTrainLog (e : ExperimentLog) (title : String := "") : TrainLog :=
@@ -328,7 +329,12 @@ inductive LogDestination where
   | disabled
   /-- Write a local JSON artifact to the given path. -/
   | json (path : System.FilePath)
-  deriving Inhabited, Repr
+  deriving Inhabited, Repr, BEq
+
+instance : ToString LogDestination where
+  toString
+    | .disabled => "disabled"
+    | .json path => path.toString
 
 namespace LogDestination
 
@@ -342,17 +348,13 @@ def path? : LogDestination → Option System.FilePath
   | .disabled => none
   | .json path => some path
 
-/-- Return the JSON path, falling back to `defaultPath` when logging is disabled. -/
-def pathD (dest : LogDestination) (defaultPath : System.FilePath) : System.FilePath :=
-  dest.path?.getD defaultPath
-
 /--
 Parse a CLI logging value.
 
 Accepted disabled values are `false`, `off`, `none`, `no`, and `disabled`. Any other value is
 treated as a JSON path.
 -/
-def parseValue (raw : String) : LogDestination :=
+def parse (raw : String) : LogDestination :=
   let lower := raw.trimAscii.toString.toLower
   if lower = "false" || lower = "off" || lower = "none" || lower = "no" ||
       lower = "disabled" then
@@ -360,11 +362,11 @@ def parseValue (raw : String) : LogDestination :=
   else
     .json (System.FilePath.mk raw)
 
-/-- Parse an optional CLI value, using the default JSON path when no value is supplied. -/
-def parse? (defaultPath : System.FilePath) (raw? : Option String) : LogDestination :=
-  match raw? with
-  | none => .json defaultPath
-  | some raw => parseValue raw
+/-- Resolve an optional CLI value, preserving `default` when no override is supplied. -/
+def resolve (default : LogDestination) (value? : Option String) : LogDestination :=
+  match value? with
+  | none => default
+  | some raw => parse raw
 
 end LogDestination
 
@@ -385,11 +387,25 @@ namespace JsonCodec
 
 /-! ### Primitive arrays -/
 
-/-- Encode a `Float` as JSON: a number when finite, otherwise Lean's standard string sentinel. -/
+/-- Encode finite metric values without losing precision to the default six-decimal formatter.
+Non-finite values use Lean's string sentinels; both signed zeros retain the historical JSON `0`.
+-/
 def floatToJson (x : Float) : Json :=
   match JsonNumber.fromFloat? x with
-  | .inr n => .num n
   | .inl s => .str s
+  | .inr short =>
+      if short.toFloat == x then
+        .num short
+      else
+        match x.toModel.unpack with
+        | .finite sign mantissa exponent _ =>
+            -- Convert m * 2^e exactly: a negative exponent gives m * 5^(-e) / 10^(-e).
+            let (digits, places) := match exponent with
+              | .ofNat e => (mantissa * 2 ^ e, 0)
+              | .negSucc e => (mantissa * 5 ^ (e + 1), e + 1)
+            let signed : Int := if sign == .negative then -(Int.ofNat digits) else Int.ofNat digits
+            .num ⟨signed, places⟩
+        | _ => .num short
 
 /--
 Decode a `Float` from JSON.
@@ -571,6 +587,28 @@ end TrainLog
 
 namespace ConfusionMatrix
 
+/-- Counts over every class, independent of any display limits. -/
+structure Statistics where
+  /-- Number of true examples per class (row totals). -/
+  support : Array Nat
+  /-- Number of predictions per class (column totals). -/
+  predicted : Array Nat
+  /-- Number of correctly classified examples. -/
+  correct : Nat
+  /-- Total number of classified examples. -/
+  total : Nat
+
+/-- Summarize a square confusion matrix, rejecting malformed row lengths. -/
+def statistics (cm : ConfusionMatrix) : Except String Statistics := do
+  let n := cm.counts.size
+  unless cm.counts.all (fun row => row.size == n) do
+    throw "confusion matrix must be square"
+  let support := cm.counts.map (fun row => row.foldl (· + ·) 0)
+  let predicted := (Array.range n).map (fun j =>
+    cm.counts.foldl (fun count row => count + row[j]!) 0)
+  let correct := (Array.range n).foldl (fun count i => count + cm.counts[i]![i]!) 0
+  return { support, predicted, correct, total := support.foldl (· + ·) 0 }
+
 /-- JSON encoding for a classification confusion matrix. -/
 def toJson (cm : ConfusionMatrix) : Json :=
   .arr <| cm.counts.map (fun row => JsonCodec.natArrayToJson row)
@@ -585,7 +623,8 @@ def ofJsonE (j : Json) : Except String ConfusionMatrix := do
   pure { counts := counts }
 
 /-- Write a confusion matrix as JSON to disk, creating parent directories if needed. -/
-def writeJson (path : System.FilePath) (cm : ConfusionMatrix) (pretty : Bool := true) : IO Unit := do
+def writeJson (path : System.FilePath) (cm : ConfusionMatrix) (pretty : Bool := true) :
+    IO Unit := do
   match path.parent with
   | some parent => IO.FS.createDirAll parent
   | none => pure ()
@@ -613,11 +652,6 @@ def writeTrainLog (dest : LogDestination) (log : TrainLog) (pretty : Bool := tru
   match dest with
   | .disabled => pure ()
   | .json path => TrainLog.writeJson path log pretty
-
-/-- Write an `ExperimentLog` to this destination. Disabled destinations are a no-op. -/
-def writeExperimentLog (dest : LogDestination) (log : ExperimentLog)
-    (title : String := "") (pretty : Bool := true) : IO Unit := do
-  writeTrainLog dest (log.toTrainLog title) pretty
 
 end LogDestination
 

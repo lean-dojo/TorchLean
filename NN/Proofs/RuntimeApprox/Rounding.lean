@@ -13,7 +13,7 @@ public import NN.Proofs.RuntimeApprox.Rounding.RoundingApprox
 
 Scalar approximation lemmas for proof-relevant rounded arithmetic.
 
-This layer reasons about a rounding model such as `neural_round`: one scalar operation is replaced
+This layer reasons about a rounding model such as `neuralRound`: one scalar operation is replaced
 by a rounded scalar operation, and the proof records the resulting `ulp`-style error budget. Tensor
 and graph modules lift these scalar facts to operators and end-to-end executions.
 

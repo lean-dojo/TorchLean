@@ -6,8 +6,8 @@ Authors: TorchLean Team
 CUDA FFI: additional kernels over `Cuda.Buffer` (float32) to support composite ops.
 
 Notes:
-- `Cuda.Buffer` is an opaque contiguous float32 buffer (device memory when built with `-K cuda=true`,
-  otherwise a CPU stub buffer).
+- `Cuda.Buffer` is an opaque contiguous float32 buffer (device memory when built with
+  `-K cuda=true`, otherwise a CPU stub buffer).
 - These kernels keep their shape APIs explicit: dimensions are passed as `UInt32`.
 - Build with `lake -R -K cuda=true build` to use real CUDA kernels at runtime; otherwise the stub
   implementation runs on CPU for portability.
@@ -15,15 +15,14 @@ Notes:
 
 module
 
-
-public import NN.Runtime.Autograd.Engine.Cuda.Buffer
+public import NN.Runtime.Autograd.Engine.Cuda.Trusted
 
 /-!
 # CUDA Buffer Kernels FFI
 
 Foreign-function declarations for TorchLean's float32 `Cuda.Buffer` kernels: reductions, indexing,
 matmul/BMM, attention, broadcast/view helpers, and related tensor operations. The declarations here
-are the Lean side of the explicit CUDA trust boundary documented in `TRUST_BOUNDARIES.md`.
+are the Lean side of the explicit CUDA trust boundary documented in `docs/TRUST_BOUNDARIES.md`.
 -/
 
 @[expose] public section
@@ -281,6 +280,18 @@ controls the affine transition coefficients.
 opaque selectiveScanDiagVarFwd (A B X h0 : @& Buffer) (seqLen state : UInt32) : Buffer
 
 /--
+Reverse accumulation for token-dependent diagonal coefficients.
+
+With `g[t] = dY[t] + A[t+1] * g[t+1]`, the returned arrays are
+`dA[t] = g[t] * h[t-1]`, `dB[t] = g[t] * X[t]`, `dX[t] = g[t] * B[t]`, and
+`dH0 = A[0] * g[0]`. Empty sequences return an empty coefficient/input gradient and zero `dH0`.
+The native kernel walks time backwards independently for each state channel.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_selective_scan_diag_var_bwd"]
+opaque selectiveScanDiagVarBwd (A B X h0 out dY : @& Buffer) (seqLen state : UInt32) :
+    Buffer × Buffer × Buffer × Buffer
+
+/--
 Native fused scaled dot-product attention forward over split attention heads.
 
 Inputs are row-major buffers with shapes:
@@ -351,8 +362,9 @@ Arguments:
 - `x`: input buffer
 - `inDims`: input dimension list (outermost-first)
 - `outDims`: output dimension list (outermost-first)
-- `axisMap`: length `outDims.size`; `axisMap[j] = 0` means the output axis `j` is an inserted/broadcast
-  axis (input coordinate is `0`), otherwise `axisMap[j] = inAxis+1` tells which input axis to read.
+- `axisMap`: length `outDims.size`; `axisMap[j] = 0` means the output axis `j` is an
+  inserted/broadcast axis (input coordinate is `0`), otherwise `axisMap[j] = inAxis+1` tells which
+  input axis to read.
 
 This shape-driven mapping is generated in Lean from a `Shape.CanBroadcastTo` proof so the kernel
 does not need to interpret the proof object.
@@ -399,7 +411,8 @@ Indices that fit in `UInt32` but are out of bounds are totalized to `0` rows.
 Large `Nat` values outside the FFI index range are rejected by the runtime.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_gather_rows"]
-opaque gatherRows (mat : @& Buffer) (rows cols : UInt32) (indices : @& Array Nat) (k : UInt32) : Buffer
+opaque gatherRows (mat : @& Buffer) (rows cols : UInt32) (indices : @& Array Nat) (k : UInt32) :
+  Buffer
 
 /--
 Scatter-add `k` rows given host indices.
@@ -409,8 +422,8 @@ Indices that fit in `UInt32` but are out of bounds are ignored; repeated indices
 (scatter-add). Large `Nat` values outside the FFI index range are rejected by the runtime.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_scatter_add_rows"]
-opaque scatterAddRows (mat values : @& Buffer) (rows cols : UInt32) (indices : @& Array Nat) (k : UInt32) :
-  Buffer
+opaque scatterAddRows (mat values : @& Buffer) (rows cols : UInt32) (indices : @& Array Nat)
+  (k : UInt32) : Buffer
 
 end Buffer
 

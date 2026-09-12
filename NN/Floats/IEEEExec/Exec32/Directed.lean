@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Exec32.Arithmetic
+public import NN.Floats.IEEEExec.Exec32.Dyadic
 
 /-!
 Directed executable IEEE32 operations.

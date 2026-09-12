@@ -322,6 +322,10 @@ This is **deterministic** and uses only the IEEE32Exec kernel ops (`roundRatToIE
 etc.). We do not claim correctly-rounded libm behavior; reproducible execution is the contract.
 -/
 
+/-- Exact dyadic multiplication: xor the signs, multiply the mantissas, add the exponents.
+
+No rounding happens here, which is the point: the series evaluations below stay exact until a single
+final `roundRatToIEEE32`. -/
 @[inline] def mulDyadic (a b : Dyadic) : Dyadic :=
   { sign := Bool.xor a.sign b.sign, mant := a.mant * b.mant, exp := a.exp + b.exp }
 
@@ -366,9 +370,15 @@ For $z=y^2$:
   \frac1{12!}\sum_{i=0}^{6}(-1)^i\frac{12!}{(2i)!}z^i$.
 -/
 
+/-- Common denominator `13!` of the sine polynomial, so all its coefficients are integers. -/
 def sinDen : Nat := 6227020800   -- 13!
+/-- Common denominator `12!` of the cosine polynomial. -/
 def cosDen : Nat := 479001600    -- 12!
 
+/-- Integer coefficient `(-1)^i * 13! / (2i+1)!` of the scaled sine polynomial in `z = y²`.
+
+Written out as literals rather than computed from factorials so that the kernel never has to
+evaluate a factorial during rounding, and so the values are auditable by eye. -/
 def sinCoeff (i : Nat) : Int :=
   match i with
   | 0 => 6227020800
@@ -379,6 +389,7 @@ def sinCoeff (i : Nat) : Int :=
   | 5 => -156
   | _ => 1
 
+/-- Integer coefficient `(-1)^i * 12! / (2i)!` of the scaled cosine polynomial in `z = y²`. -/
 def cosCoeff (i : Nat) : Int :=
   match i with
   | 0 => 479001600
@@ -389,12 +400,18 @@ def cosCoeff (i : Nat) : Int :=
   | 5 => -132
   | _ => 1
 
+/-- View an integer coefficient as an exact dyadic with exponent zero. -/
 def coeffToDyadic (c : Int) : Dyadic :=
   if c < 0 then
     { sign := true, mant := Int.natAbs c, exp := 0 }
   else
     { sign := false, mant := Int.natAbs c, exp := 0 }
 
+/-- Evaluate `Σ_{i<7} coeff i * z ^ i` exactly over the dyadics.
+
+Every step is an exact dyadic multiply-add, so the only rounding in the whole sine and cosine path
+happens once at the end, in the final division by `13!` or `12!`. That is what keeps the error
+analysis to a single rounding plus the Taylor remainder. -/
 def evalPolyNumerator (coeff : Nat → Int) (z : Dyadic) : Dyadic :=
   -- Degree 6 polynomial: Σ_{i=0..6} coeff(i) * z^i, evaluated by successive multiplication.
   let step (st : Dyadic × Dyadic) (i : Nat) : Dyadic × Dyadic :=
@@ -408,6 +425,10 @@ def evalPolyNumerator (coeff : Nat → Int) (z : Dyadic) : Dyadic :=
   let acc0 : Dyadic := { sign := false, mant := 0, exp := 0 }
   ((List.range 7).foldl step (oneDyadic, acc0)).2
 
+/-- Sine and cosine of a reduced argument `|y| ≤ π/4`, as a pair of binary32 values.
+
+Both polynomials use the same exact square `z = y²`. Each polynomial is evaluated separately,
+and each result is rounded once to binary32. -/
 def sinCosTaylorSmall (y : Dyadic) : IEEE32Exec × IEEE32Exec :=
   -- z = y^2
   let z : Dyadic :=

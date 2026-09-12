@@ -9,6 +9,7 @@ module
 public import NN.Spec.Autograd
 public import NN.Spec.Core
 public import NN.Spec.Core.FloatInstances
+public import NN.Spec.Core.FloatInstances.NF
 public import NN.Spec.Dynamics
 public import NN.Spec.Generative
 public import NN.Spec.Layers

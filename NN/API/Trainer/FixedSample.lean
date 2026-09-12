@@ -9,8 +9,8 @@ module
 public import NN.API.CLI
 public import NN.API.Module
 public import NN.API.Trainer.Memory
+public import NN.API.Trainer.Reporting
 public import NN.API.Seeded
-public import NN.Runtime.Training.Log
 
 /-!
 # Fixed-Sample Training
@@ -18,10 +18,10 @@ public import NN.Runtime.Training.Log
 Some runnable examples train repeatedly on one caller-supplied sample:
 
 1. build a model with `TorchLean.nn.withModel`,
-2. wrap it as an `ObjectiveDef` (model + supervised loss),
-3. load or synthesize one supervised sample `(x, y)`,
-4. run `steps` optimizer updates on that fixed sample, and
-5. either print before/after loss or write a TrainLog curve.
+2. wrap it as an `ObjectiveDefinition` (model + supervised loss),
+3. load or synthesize one supervised input and target,
+4. run optimizer updates on that fixed sample, and
+5. report the loss before and after training.
 
 This module provides that loop without tying it to a particular model family.
 
@@ -30,7 +30,7 @@ Scope:
 - it is model-agnostic: callers supply the loss wrapper and optimizer constructor;
 - it is backend-agnostic: callers can use it on CPU or CUDA via `API.Runtime.Options`.
 
-For dataset-backed training, use the `TorchLean.Trainer` API exported by `NN` or the shared model-zoo
+For dataset-backed training, use the `TorchLean.Trainer` API exported by `NN` or the shared model
 loader helpers.
 -/
 
@@ -38,92 +38,54 @@ loader helpers.
 
 namespace TorchLean
 
-open Spec Tensor
+open Spec TorchLean TorchLean.Tensor
 
 namespace Trainer
 namespace FixedSample
 
-/-- Before/after scalar losses for a fixed-sample training run. -/
-structure LossPair (α : Type) where
-  beforeLoss : α
-  afterLoss : α
-deriving Repr
-
 /-- One fixed-sample run for an arbitrary scalar backend. -/
-def steps
-    {α : Type} [_root_.Context α] [DecidableEq Shape] [ToString α] [_root_.TorchLean.Runtime.FromFloat α]
+def train
+    {α : Type} [TorchLean.Storage α] [Context α]
+    [ToString α] [TorchLean.Runtime.FromFloat α]
     [Runtime.TensorTransfer α]
-    {inputShape targetShape : List Nat}
-    (mkModel : TorchLean.nn.Builder
-      (TorchLean.nn.Sequential inputShape targetShape))
-    (mkModuleDef :
-      (model : TorchLean.nn.Sequential inputShape targetShape) →
-        TorchLean.Module.ObjectiveDef Unit (TorchLean.nn.stateShapes model)
-          [Shape.ofList inputShape, Shape.ofList targetShape])
-    (mkOptim :
-      (cast : Float → α) → (paramShapes : List Shape) →
-        _root_.Runtime.Autograd.TorchLean.Optim.Optimizer α paramShapes)
+    {σ τ : Spec.Shape}
+    (buildModel : TorchLean.nn.Builder
+      (TorchLean.nn.Sequential σ τ))
+    (buildObjective :
+      (model : TorchLean.nn.Sequential σ τ) →
+        TorchLean.Module.ObjectiveDefinition Unit (TorchLean.nn.stateShapes model)
+          [σ, τ])
+    (buildOptimizer :
+      (cast : Float → α) → (stateShapes : List Shape) →
+        Runtime.Autograd.Model.Optim.Optimizer α stateShapes)
     (cast : Float → α)
-    (opts : _root_.Runtime.Autograd.Torch.Options)
-    (sample : TorchLean.Sample.Supervised α inputShape targetShape)
+    (options : Runtime.Autograd.Torch.Config)
+    (sample : TorchLean.Sample.Supervised α σ τ)
     (steps : Nat)
-    (cudaMemWatch : Nat := 0) :
-    IO (LossPair α) := do
-  TorchLean.nn.withModel mkModel fun model => do
-    let modDef := mkModuleDef model
-    let m ← TorchLean.Module.instantiateAs (α := α) modDef cast opts
-    let initialLossTensor ← TorchLean.Module.loss (α := α) m sample .nil
-    let beforeLoss := _root_.Spec.Tensor.item initialLossTensor
-    let opt := mkOptim cast (TorchLean.nn.stateShapes model)
-    let bound ← _root_.Runtime.Autograd.TorchLean.Module.bindOptimizer (α := α) m opt
-    let watchEvery := TorchLean.Trainer.Manual.CUDAMemory.cadence opts steps cudaMemWatch
-    let mut memWatch? ← TorchLean.Trainer.Manual.CUDAMemory.sample opts watchEvery steps 0 none
+    (cudaMemorySampleEvery : Nat := 0) :
+    IO (Training.LossProgress α) := do
+  TorchLean.nn.withModel buildModel fun model => do
+    let objectiveDefinition := buildObjective model
+    let runtimeObjective ←
+      TorchLean.Module.Internal.instantiate (α := α) objectiveDefinition cast options
+    let arguments := TorchLean.Sample.Internal.arguments sample
+    let lossBeforeTensor ← TorchLean.Module.Objective.loss (α := α) runtimeObjective
+      arguments Arguments.empty
+    let lossBefore := TorchLean.Tensor.item lossBeforeTensor
+    let optimizer := buildOptimizer cast (TorchLean.nn.stateShapes model)
+    let boundOptimizer ←
+      TorchLean.Module.Internal.bindOptimizer (α := α) runtimeObjective optimizer
+    let watchEvery := TorchLean.Trainer.Memory.cadence options steps cudaMemorySampleEvery
+    let mut memorySample? ← TorchLean.Trainer.Memory.sample options watchEvery steps 0 none
     for step in [0:steps] do
-      bound.step sample
-      memWatch? ←
-        TorchLean.Trainer.Manual.CUDAMemory.sample
-          opts watchEvery steps (step + 1) memWatch?
-    let finalLossTensor ← TorchLean.Module.loss (α := α) m sample .nil
-    let afterLoss := _root_.Spec.Tensor.item finalLossTensor
-    pure { beforeLoss := beforeLoss, afterLoss := afterLoss }
-
-/-- Fixed-sample run over Lean's `Float`, returning a full per-step loss curve. -/
-def curve
-    {inputShape targetShape : List Nat}
-    (mkModel : TorchLean.nn.Builder
-      (TorchLean.nn.Sequential inputShape targetShape))
-    (mkModuleDef :
-      (model : TorchLean.nn.Sequential inputShape targetShape) →
-        TorchLean.Module.ObjectiveDef Unit (TorchLean.nn.stateShapes model)
-          [Shape.ofList inputShape, Shape.ofList targetShape])
-    (mkOptim :
-      (paramShapes : List Shape) → _root_.Runtime.Autograd.TorchLean.Optim.Optimizer Float paramShapes)
-    (opts : _root_.Runtime.Autograd.Torch.Options)
-    (sample : TorchLean.Sample.Supervised Float inputShape targetShape)
-    (steps : Nat)
-    (cudaMemWatch : Nat := 0) :
-    IO _root_.Runtime.Training.Curve := do
-  TorchLean.nn.withModel mkModel fun model => do
-    let modDef := mkModuleDef model
-    let m ← TorchLean.Module.instantiateAs (α := Float) modDef id opts
-    let initialLossTensor ← TorchLean.Module.loss (α := Float) m sample .nil
-    let initialLoss := _root_.Spec.Tensor.item initialLossTensor
-    let opt := mkOptim (TorchLean.nn.stateShapes model)
-    let bound ← _root_.Runtime.Autograd.TorchLean.Module.bindOptimizer (α := Float) m opt
-    let mut curve : _root_.Runtime.Training.Curve := {}
-    curve := curve.push 0 initialLoss
-    let mut last := initialLoss
-    let watchEvery := TorchLean.Trainer.Manual.CUDAMemory.cadence opts steps cudaMemWatch
-    let mut memWatch? ← TorchLean.Trainer.Manual.CUDAMemory.sample opts watchEvery steps 0 none
-    for step in [0:steps] do
-      bound.step sample
-      memWatch? ←
-        TorchLean.Trainer.Manual.CUDAMemory.sample
-          opts watchEvery steps (step + 1) memWatch?
-      let loss ← TorchLean.Module.loss (α := Float) m sample .nil
-      last := _root_.Spec.Tensor.item loss
-      curve := curve.push (step + 1) last
-    pure curve
+      boundOptimizer.step (Arguments.Internal.toTensorPack arguments) TensorPack.empty
+      memorySample? ←
+        TorchLean.Trainer.Memory.sample
+          options watchEvery steps (step + 1) memorySample?
+    let lossAfterTensor ← TorchLean.Module.Objective.loss (α := α) runtimeObjective
+      arguments Arguments.empty
+    let lossAfter := TorchLean.Tensor.item lossAfterTensor
+    pure { before := lossBefore, after := lossAfter }
 
 end FixedSample
 end Trainer

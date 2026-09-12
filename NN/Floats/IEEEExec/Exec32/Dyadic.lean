@@ -7,8 +7,11 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.IEEEExec.Exec32.Core
-import Mathlib.Data.Nat.Bitwise
 import Mathlib.Tactic.IntervalCases
+public import Aesop.BuiltinRules
+public import Mathlib.Algebra.Group.Defs
+import Mathlib.Tactic.ToDual
+import Mathlib.Data.Nat.Bitwise -- shake: keep
 
 /-!
 Dyadic helpers for executable IEEE32 arithmetic.
@@ -24,11 +27,14 @@ namespace IEEE32Exec
 
 /-- Exact dyadic value `(-1)^sign * mant * 2^exp` used as an intermediate for finite ops. -/
 structure Dyadic where
-  /-- sign. -/
+  /-- Sign of the value, with `true` meaning negative. Kept separate from `mant` so the
+  significand can stay a `Nat` and the rounding code never has to reason about negative division. -/
   sign : Bool
-  /-- mant. -/
+  /-- Unnormalized significand. It is a plain `Nat`, so an exact product of two binary32
+  significands (up to 48 bits) fits without any intermediate rounding. -/
   mant : Nat
-  /-- exp. -/
+  /-- Binary exponent, so the represented value is `(-1)^sign * mant * 2^exp`. `Int` rather than a
+  bounded field: intermediate exponents during multiplication and FMA leave the binary32 range. -/
   exp : Int
   deriving Repr, DecidableEq
 

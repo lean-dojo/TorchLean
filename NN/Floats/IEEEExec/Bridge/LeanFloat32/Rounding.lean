@@ -8,7 +8,7 @@ module
 
 public import NN.Floats.IEEEExec.Bridge.FP32.NearestEven
 public import NN.Floats.IEEEExec.Bridge.LeanFloat32.Representation
-public import Init.Data.Float.Model.Unpacked.Operations.Div
+public import NN.Floats.IEEEExec.Rounding.RoundShiftRightEven
 
 /-!
 # Lean Float32 and IEEE32Exec: nearest-even rounding
@@ -67,6 +67,8 @@ theorem roundToNearestEven_accuracyOfFraction_mod
         · have hodd : num / den % 2 = 1 := by grind
           simp [hodd]
 
+/-- An extended mantissa carrying `n` with no accumulated inexactness, used as the starting point
+of a shift-and-round chain. -/
 private abbrev exactExtendedMantissa (n : Nat) : ExtendedMantissa :=
   ExtendedMantissa.ofMantissaAndAccuracy n .exact
 

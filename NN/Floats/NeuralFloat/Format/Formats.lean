@@ -119,11 +119,9 @@ instance fixValidExp (emin : ℤ) : NeuralValidExp (FIXExp emin) where
     · intro h; simp [FIXExp] at h ⊢; exact Int.le_of_lt h
     · intro _; simp [FIXExp]
 
+/-- A fixed-point grid has a monotone exponent function: it is constant, so monotone. -/
 instance fixMonotoneExp (emin : ℤ) : NeuralMonotoneExp (FIXExp emin) where
   monotone := by simp [FIXExp]
-
-instance fixBoundedExpGrowth (emin : ℤ) : NeuralBoundedExpGrowth (FIXExp emin) where
-  boundedGrowth := by simp [FIXExp]
 
 /-- The ULP at zero for a fixed-point grid is its fixed grid step. -/
 theorem neuralUlp_zero_FIX (emin : ℤ) :
@@ -141,7 +139,7 @@ theorem neuralUlp_zero_FIX (emin : ℤ) :
 `FIX_format emin x` says “`x` is exactly representable on the fixed grid”.
 
 This is phrased via an existential `NeuralFloat β` so that it composes smoothly with the rest of
-the rounding model (`neural_to_real`, ULP bounds, etc.).
+the rounding model (`neuralToReal`, ULP bounds, etc.).
 -/
 def FIXFormat (emin : ℤ) (x : ℝ) : Prop :=
   ∃ f : NeuralFloat β, x = neuralToReal f ∧ f.exponent = emin
@@ -193,15 +191,6 @@ instance flxExpValid (precision : NeuralFormatPrecision) : NeuralValidExp precis
 
 end NeuralFormatPrecision
 
-
-abbrev flxMonotoneExp (prec : ℤ) : NeuralMonotoneExp (FLXExp prec) where
-  monotone := by
-    intros k1 k2 hk
-    simp [FLXExp]
-    linarith
-
-abbrev flxBoundedExpGrowth (prec : ℤ) : NeuralBoundedExpGrowth (FLXExp prec) where
-  boundedGrowth := by simp [FLXExp]
 
 /--
 Exact representability predicate for `FLX`.
@@ -315,37 +304,7 @@ instance fltExpValid (precision : NeuralFormatPrecision) (emin : ℤ) :
 end NeuralFormatPrecision
 
 
-abbrev fltBoundedExpGrowth (emin prec : ℤ) :
-    NeuralBoundedExpGrowth (FLTExp emin prec) where
-  boundedGrowth := by
-    intro k
-    simp [FLTExp]
-    -- |max (k + 1 - prec) emin - max (k - prec) emin| ≤ 1
-    -- This follows from the properties of max function
-    have h1 : max (k + 1 - prec) emin ≤ max (k - prec) emin + 1 := by
-      simp [max_def]
-      split_ifs with h2 h3
-      · -- Both cases where the first argument is chosen
-        linarith
-      · -- Mixed cases
-        linarith
-      · -- Mixed cases
-        linarith
-      · -- Both cases where emin is chosen
-        linarith
-    have h2 : max (k - prec) emin ≤ max (k + 1 - prec) emin + 1 := by
-      simp [max_def]
-      split_ifs with h4 h5
-      · -- Both cases where the first argument is chosen
-        linarith
-      · -- Mixed cases
-        linarith
-      · -- Mixed cases
-        linarith
-      · -- Both cases where emin is chosen
-        linarith
-    exact abs_sub_le_iff.mpr ⟨by linarith, by linarith⟩
-
+/-- `FLT` exponents are monotone, since `max` is monotone in its first argument. -/
 abbrev fltMonotoneExp (emin prec : ℤ) : NeuralMonotoneExp (FLTExp emin prec) where
   monotone := by
     intros k1 k2 hk

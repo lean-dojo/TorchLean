@@ -6,23 +6,15 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.Optimization.GDLinearConvergence
-
+public import NN.MLTheory.Optimization.StronglyConvexGD
 public import Mathlib.Analysis.Calculus.Gradient.Basic
 public import Mathlib.Analysis.Convex.Strong
-
-import Mathlib.Analysis.Convex.Function
 import Mathlib.Analysis.Convex.Deriv
-import Mathlib.Analysis.Calculus.Deriv.Comp
-import Mathlib.Analysis.Calculus.Deriv.AffineMap
 import Mathlib.Analysis.InnerProductSpace.Calculus
 
-import Mathlib.Tactic.Abel
-import Mathlib.Tactic.Linarith
-import Mathlib.Tactic.Ring
 
 /-!
-# Smooth + Strongly Convex ⇒ Strongly Monotone Gradient (Bridge Lemma)
+# Strong Convexity and Strongly Monotone Gradients
 
 TorchLean's GD convergence theorems are stated at the operator level:
 
@@ -43,18 +35,17 @@ is $\mu$-strongly monotone in the sense needed by `GDLinearConvergence`.
 This file provides a concrete bridge from mathlib's `StrongConvexOn` definition
 to a first-order inequality, under a `DifferentiableAt` assumption at the base point `x`.
 
-In other words, the chain we can use is:
+The pointwise theorem gives the first-order inequality at one differentiability point.
+To obtain global strong monotonicity, the first-order inequality must hold at every
+base point. A strong-convexity hypothesis together with differentiability everywhere
+provides that global premise.
 
-$$
-\operatorname{StrongConvexOn}(\mathbb{R}^n,\mu,f) +
-  \operatorname{DifferentiableAt}(f,x)
-\Longrightarrow \operatorname{FirstOrderStrongConvex}(\mu,f)\text{ at }x
-\Longrightarrow \operatorname{StrongMonotone}(\mu,\nabla f).
-$$
-
-The remaining (separate) “smoothness” bridge for the Lipschitz-gradient assumption can be done
-later via bounds on `fderiv` (mean value theorem / operator norm bounds) or by importing an
-appropriate $L$-smoothness development.
+The smoothness half is not proved here. Nothing in this file derives `LipschitzWith L (∇ f)` from
+a second-order or `fderiv`-level smoothness hypothesis on `f`; the Lipschitz gradient is taken as
+an explicit assumption. The closing theorem `dist_sq_iterate_le_of_firstOrderStrongConvex`
+assembles the pieces that are proved: first-order strong convexity gives strong monotonicity of
+`∇ f`, and together with an assumed Lipschitz gradient and a step-size condition this yields linear
+convergence of gradient descent to a critical point.
 -/
 
 @[expose] public section
@@ -306,6 +297,24 @@ theorem strongMonotone_gradient_of_firstOrderStrongConvex (μ : ℝ) {f : E → 
     rw [hinner, hnorm] at hadd'
     nlinarith
   exact hmono0
+
+/--
+Linear convergence of gradient descent on a first-order strongly convex objective whose gradient
+is assumed `L`-Lipschitz.
+
+With `0 ≤ μ ≤ L`, `0 < η`, `η * L ^ 2 < 2 * μ`, and a critical point `xStar` of `f`, the iterates
+of `step η (∇ f)` satisfy the geometric bound with factor `q η μ L < 1`. The Lipschitz hypothesis
+on `∇ f` is not derived from smoothness of `f` in this repository; it must be supplied.
+-/
+theorem dist_sq_iterate_le_of_firstOrderStrongConvex (η μ : ℝ) {L : NNReal} {f : E → ℝ}
+    (hsc : FirstOrderStrongConvex (μ := μ) f) (hlip : LipschitzWith L (fun x => (∇ f) x))
+    {xStar x : E} (hxStar : (∇ f) xStar = 0)
+    (hμ : 0 ≤ μ) (hμL : μ ≤ (L : ℝ)) (hη : 0 < η) (hstep : η * (L : ℝ) ^ 2 < 2 * μ) (k : Nat) :
+    ‖(step η (fun x => (∇ f) x))^[k] x - xStar‖ ^ 2 ≤ (q η μ L) ^ k * ‖x - xStar‖ ^ 2 ∧
+      q η μ L < 1 :=
+  dist_sq_iterate_le_of_step_size (E := E) η μ (fun x => (∇ f) x)
+    (strongMonotone_gradient_of_firstOrderStrongConvex (E := E) μ hsc) hlip hxStar hμ hμL hη
+    hstep k
 
 end GD
 end Optim

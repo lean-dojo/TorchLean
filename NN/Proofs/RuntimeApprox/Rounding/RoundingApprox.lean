@@ -6,10 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.NeuralFloat.Error.Bounds
 public import NN.Proofs.RuntimeApprox.Core.Tolerance
-
 public import Mathlib.Analysis.SpecialFunctions.Pow.Real
+public import NN.Floats.NeuralFloat.Rounding.Core
 
 /-!
 # Scalar Rounding Approximation
@@ -56,7 +55,7 @@ def scalarApprox (x xhat eps : ℝ) : Prop :=
   abs (xhat - x) ≤ eps
 
 /-- Convert the scalar rounding predicate to the shared `ApproxTol.absOnly` predicate. -/
-lemma scalarApprox_to_approxR_absOnly {x xhat eps : ℝ} (h : scalarApprox x xhat eps) :
+theorem scalarApprox_to_approxR_absOnly {x xhat eps : ℝ} (h : scalarApprox x xhat eps) :
     Proofs.RuntimeApprox.approxR x xhat (Proofs.RuntimeApprox.ApproxTol.absOnly eps) := by
   -- `ApproxTol.absOnly eps` uses `Real.toNNReal eps` (i.e. `max eps 0`) as the budget.
   have h' : abs (xhat - x) ≤ max eps 0 := le_trans h (le_max_left _ _)
@@ -66,11 +65,11 @@ lemma scalarApprox_to_approxR_absOnly {x xhat eps : ℝ} (h : scalarApprox x xha
     h''
 
 /-- Exact equality is zero-error scalar approximation. -/
-lemma scalarApprox_refl_zero (x : ℝ) : scalarApprox x x 0 := by
+theorem scalarApprox_refl_zero (x : ℝ) : scalarApprox x x 0 := by
   simp [scalarApprox]
 
 /-- Enlarging the error budget preserves scalar approximation. -/
-lemma scalarApprox_mono {x xhat eps₁ eps₂ : ℝ} (h : scalarApprox x xhat eps₁) (hε : eps₁ ≤ eps₂) :
+theorem scalarApprox_mono {x xhat eps₁ eps₂ : ℝ} (h : scalarApprox x xhat eps₁) (hε : eps₁ ≤ eps₂) :
     scalarApprox x xhat eps₂ :=
   le_trans h hε
 
@@ -81,7 +80,7 @@ def roundR (x : ℝ) : ℝ :=
   neuralRound (β := β) (fexp := fexp) rnd x
 
 /-- One `neuralRound` step is within half an ulp of the exact real input. -/
-lemma roundR_abs_error (x : ℝ) :
+theorem roundR_abs_error (x : ℝ) :
     abs (roundR (β := β) (fexp := fexp) (rnd := rnd) x - x) ≤
       neuralUlp β fexp x / 2 := by
   simpa [roundR] using neural_error_bound_ulp (β := β) (fexp := fexp) (rnd := rnd) x
@@ -101,7 +100,7 @@ Compositional absolute-error bound for rounded addition.
 
 The output budget is the input budgets plus one fresh rounding term for the addition result.
 -/
-lemma scalarApprox_roundedAdd {x y xhat yhat epsx epsy : ℝ}
+theorem scalarApprox_roundedAdd {x y xhat yhat epsx epsy : ℝ}
     (hx : scalarApprox x xhat epsx) (hy : scalarApprox y yhat epsy) :
     scalarApprox (x + y) (roundedAdd (β := β) (fexp := fexp) (rnd := rnd) xhat yhat)
       (epsx + epsy + neuralUlp β fexp (xhat + yhat) / 2) := by
@@ -140,7 +139,7 @@ Compositional absolute-error bound for rounded multiplication.
 Besides the fresh rounding term for `xhat * yhat`, the budget includes the usual first-order
 product perturbation terms using the available magnitude/error bounds.
 -/
-lemma scalarApprox_roundedMul {x y xhat yhat epsx epsy : ℝ}
+theorem scalarApprox_roundedMul {x y xhat yhat epsx epsy : ℝ}
     (hx : scalarApprox x xhat epsx) (hy : scalarApprox y yhat epsy) :
     scalarApprox (x * y) (roundedMul (β := β) (fexp := fexp) (rnd := rnd) xhat yhat)
       ((abs xhat + epsx) * epsy + (abs yhat + epsy) * epsx +

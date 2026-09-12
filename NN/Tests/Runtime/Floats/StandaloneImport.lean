@@ -90,6 +90,15 @@ def run : IO Unit := do
   let largeNatural : Nat := 2 ^ 53 + 2 ^ 29 + 1
   unless (largeNatural : TorchLean.Floats.IEEE754.IEEE32Exec).bits == 0x5A000001 do
     throw <| IO.userError "IEEE32 natural conversion was double-rounded"
+  unless (largeNatural : Float32).toBits == 0x5A000001 do
+    throw <| IO.userError "native binary32 natural conversion was double-rounded"
+  for exponent in [0, 1, 23, 24, 53, 63, 64, 100, 127, 128, 256] do
+    let base : Nat := 2 ^ exponent
+    let halfUlp : Nat := if exponent < 24 then 0 else 2 ^ (exponent - 24)
+    for n in [base - 1, base, base + 1, base + halfUlp - 1,
+        base + halfUlp, base + halfUlp + 1, base + 3 * halfUlp] do
+      unless (n : Float32).toBits == (n : TorchLean.Floats.IEEE754.IEEE32Exec).bits do
+        throw <| IO.userError s!"native/model natural conversion disagrees at {n}"
 
   unless (addDown one negOne).bits == negZero.bits do
     throw <| IO.userError "IEEE32 downward exact cancellation did not return -0"
@@ -125,13 +134,17 @@ def run : IO Unit := do
   unless (negOne ^ posInf).bits == posOne.bits do
     throw <| IO.userError "IEEE32 pow mishandled -1 raised to positive infinity"
   unless (ofFloat (-2.0) ^ posInf).bits == posInf.bits do
-    throw <| IO.userError "IEEE32 pow mishandled a negative magnitude above one at positive infinity"
+    throw <| IO.userError
+      "IEEE32 pow mishandled a negative magnitude above one at positive infinity"
   unless (ofFloat (-0.5) ^ posInf).bits == posZero.bits do
-    throw <| IO.userError "IEEE32 pow mishandled a negative magnitude below one at positive infinity"
+    throw <| IO.userError
+      "IEEE32 pow mishandled a negative magnitude below one at positive infinity"
   unless (negInf ^ ofFloat 0.5).bits == posInf.bits do
-    throw <| IO.userError "IEEE32 pow mishandled negative infinity at a positive noninteger exponent"
+    throw <| IO.userError
+      "IEEE32 pow mishandled negative infinity at a positive noninteger exponent"
   unless (negInf ^ ofFloat (-0.5)).bits == posZero.bits do
-    throw <| IO.userError "IEEE32 pow mishandled negative infinity at a negative noninteger exponent"
+    throw <| IO.userError
+      "IEEE32 pow mishandled negative infinity at a negative noninteger exponent"
 
   -- Exercise argument reduction from small values through both signs of the largest finite input.
   let trigTolerance : Float := 1e-5

@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.NeuralFloat.Analysis.Neighbors
-public import NN.Floats.NeuralFloat.Analysis.StandardUlp
 public import NN.Floats.NeuralFloat.Analysis.SterbenzFLT
 
 /-!

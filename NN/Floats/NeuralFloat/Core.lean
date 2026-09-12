@@ -58,9 +58,6 @@ structure NeuralRadix where
 /-- Standard binary radix ($\beta=2$). -/
 def binaryRadix : NeuralRadix := ⟨2, by norm_num⟩
 
-/-- Decimal radix ($\beta=10$, useful for compact examples and exact decimal inputs). -/
-def decimalRadix : NeuralRadix := ⟨10, by norm_num⟩
-
 namespace NeuralRadix
 
 variable (r : NeuralRadix)
@@ -193,10 +190,6 @@ class NeuralValidExp (fexp : ℤ → ℤ) : Prop where
 class NeuralMonotoneExp (fexp : ℤ → ℤ) : Prop where
   monotone : ∀ k1 k2 : ℤ, k1 ≤ k2 → fexp k1 ≤ fexp k2
 
-/-- Optional local growth bound used by selected numerical estimates. -/
-class NeuralBoundedExpGrowth (fexp : ℤ → ℤ) : Prop where
-  boundedGrowth : ∀ k : ℤ, |fexp (k + 1) - fexp k| ≤ 1
-
 /-- A witness that the format has a lower exponent region, in Flocq's sense. -/
 def IsNeuralNegligibleExp (fexp : ℤ → ℤ) (n : ℤ) : Prop :=
   n ≤ fexp n
@@ -285,7 +278,7 @@ namespace neuralUlp
 variable (β : NeuralRadix) (fexp : ℤ → ℤ) [NeuralValidExp fexp]
 
 /--
-`neural_ulp` is always nonnegative.
+`neuralUlp` is always nonnegative.
 
 Informally: an ulp is a step size on a real grid, so it cannot be negative.
 -/
@@ -296,7 +289,7 @@ lemma nonneg (x : ℝ) : 0 ≤ neuralUlp β fexp x := by
   · simp [neuralUlp, hx, neuralBpow.nonneg]
 
 /--
-`neural_ulp` is strictly positive away from zero.
+`neuralUlp` is strictly positive away from zero.
 
 If $x\ne0$, the exponent selection $\operatorname{cexp}(x)$ picks a power of $\beta$, which is
 strictly positive.

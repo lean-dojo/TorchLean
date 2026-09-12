@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Rat.Defs
-
 /-!
 # Executable IEEE-754 binary32 (`IEEE32Exec`)
 
@@ -58,7 +56,10 @@ namespace TorchLean.Floats.IEEE754
 
 /-- Executable IEEE-754 binary32 value, stored as raw bits. -/
 structure IEEE32Exec where
-  /-- bits. -/
+  /-- The 32 bits of the encoding, laid out as IEEE-754 requires: sign in bit 31, biased
+  exponent in bits 30..23, trailing significand in bits 22..0. Storing the encoding rather than a
+  sign/exponent/mantissa triple is what makes `IEEE32Exec` a faithful model of hardware: NaN
+  payloads and the two zeros survive a round trip. -/
   bits : UInt32
   deriving DecidableEq, Repr
 

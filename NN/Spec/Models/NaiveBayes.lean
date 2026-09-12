@@ -8,6 +8,7 @@ module
 
 public import NN.Spec.Core.Context
 import Std.Data.HashMap.AdditionalOperations
+public import NN.Tensor.Internal.Representation.Storage
 
 /-!
 # Multinomial Naive Bayes
@@ -32,6 +33,10 @@ are learned and where predictions are made.
 The API exposes an explicit `fit` step that produces a `Model`, plus:
 - `predictModel` for inference using the fitted counts
 - `negLogLikelihood` as a standard training objective (useful for evaluation/comparison)
+
+## Implementation status
+
+No API builder implements this model, nothing imports it, and no theorem is proved about it.
 -/
 
 public section
@@ -44,9 +49,9 @@ namespace NaiveBayes
 -- A training example is a bag of features (multiset) and a label
 /-- One training example: a bag-of-words feature multiset and a class label. -/
 structure Example where
-  /-- features. -/
+  /-- The feature tokens of the example; duplicates are kept so it acts as a multiset. -/
   features : Array String  -- multiset-like: allows duplicates
-  /-- Label. -/
+  /-- The class label of the example. -/
   label : String
 deriving Repr
 
@@ -96,17 +101,17 @@ This stores raw counts plus a little derived bookkeeping (`labels`, `vocab`, `to
 Scoring functions turn these counts into Laplace-smoothed log probabilities on demand.
 -/
 structure Model where
-  /-- label Counts. -/
+  /-- Number of training examples seen for each label. -/
   labelCounts : HashMap String Nat
-  /-- feature Counts. -/
+  /-- For each label, the number of occurrences of each feature token. -/
   featureCounts : HashMap String (HashMap String Nat)
-  /-- total Counts. -/
+  /-- For each label, the total number of feature tokens across its examples. -/
   totalCounts : HashMap String Nat
-  /-- labels. -/
+  /-- The distinct labels seen during fitting. -/
   labels : Array String
-  /-- vocab. -/
+  /-- The distinct feature tokens seen during fitting. -/
   vocab : Array String
-  /-- total Examples. -/
+  /-- The total number of training examples. -/
   totalExamples : Nat
 
 /-- Fit a naive Bayes model by collecting counts from the dataset. -/
@@ -119,7 +124,7 @@ def fit (data : Array Example) : Model :=
   { labelCounts, featureCounts, totalCounts, labels, vocab, totalExamples := data.size }
 
 /-- Vocabulary size (number of distinct features). -/
-private def vocabSize (m : Model) : Nat := m.vocab.size
+private def vocabularySize (m : Model) : Nat := m.vocab.size
 /-- Number of distinct labels. -/
 private def nLabels (m : Model) : Nat := m.labels.size
 
@@ -129,24 +134,26 @@ private def nLabels (m : Model) : Nat := m.labels.size
 We use the standard multinomial NB scoring rule (with Laplace smoothing):
 
 - prior: `(count(label)+1) / (N + nLabels)`
-- conditional: `(count(feature,label)+1) / (totalFeatures(label) + vocabSize)`
+- conditional: `(count(feature,label)+1) / (totalFeatures(label) + vocabularySize)`
 
 Scores are in log space. For prediction we only need relative ordering.
 -/
 
 /-- Log prior probability `log P(lbl)` with Laplace smoothing. -/
-private def logPrior {α : Type} [Context α] (m : Model) (lbl : String) : α :=
+private def logPrior {α : Type} [TorchLean.Storage α] [Context α] (m : Model) (lbl : String) : α :=
   MathFunctions.log (((m.labelCounts.getD lbl 0 + 1) : α) /
     ((m.totalExamples + nLabels m) : α))
 
 /-- Log conditional probability `log P(f | lbl)` with Laplace smoothing. -/
-private def logCond {α : Type} [Context α] (m : Model) (lbl : String) (f : String) : α :=
+private def logCond {α : Type} [TorchLean.Storage α] [Context α] (m : Model) (lbl : String)
+    (f : String) : α :=
   let countF := m.featureCounts.getD lbl {} |>.getD f 0
   let totalF := m.totalCounts.getD lbl 0
-  MathFunctions.log (((countF + 1) : α) / ((totalF + vocabSize m) : α))
+  MathFunctions.log (((countF + 1) : α) / ((totalF + vocabularySize m) : α))
 
 /-- Unnormalized log score `log P(lbl) + Σ log P(f|lbl)` for a bag of features. -/
-def score {α : Type} [Context α] (m : Model) (input : Array String) (lbl : String) : α :=
+def score {α : Type} [TorchLean.Storage α] [Context α] (m : Model) (input : Array String)
+    (lbl : String) : α :=
   let prior := logPrior (α := α) m lbl
   let cond := input.foldl (fun acc f => acc + logCond (α := α) m lbl f) 0
   prior + cond
@@ -155,7 +162,7 @@ def score {α : Type} [Context α] (m : Model) (input : Array String) (lbl : Str
 def predictModel
   (m : Model)
   (input : Array String)
-  (α : Type) [Context α] : String :=
+  (α : Type) [TorchLean.Storage α] [Context α] : String :=
   match m.labels[0]? with
   | none => ""
   | some lbl0 =>
@@ -184,7 +191,7 @@ private def arraySum {α : Type} [Add α] [Zero α] (xs : Array α) : α :=
   xs.foldl (fun acc x => acc + x) 0
 
 /-- Numerically stable `log (sum_i exp xs[i])`. -/
-private def logSumExp {α : Type} [Context α] (xs : Array α) : α :=
+private def logSumExp {α : Type} [TorchLean.Storage α] [Context α] (xs : Array α) : α :=
   -- Numerically-stable log-sum-exp:
   --   log Σ exp(x_i) = m + log Σ exp(x_i - m), where m = max_i x_i.
   match xs[0]? with
@@ -196,7 +203,8 @@ private def logSumExp {α : Type} [Context α] (xs : Array α) : α :=
       m + MathFunctions.log s
 
 /-- Negative log-likelihood of the dataset under the trained Naive Bayes model. -/
-def negLogLikelihood {α : Type} [Context α] (m : Model) (data : Array Example) : α :=
+def negLogLikelihood {α : Type} [TorchLean.Storage α] [Context α] (m : Model)
+    (data : Array Example) : α :=
   data.foldl (fun acc ex =>
     if m.labels.isEmpty then
       acc

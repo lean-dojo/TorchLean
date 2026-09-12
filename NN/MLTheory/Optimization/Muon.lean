@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.Optimization.Muon.Certificates
+public import NN.MLTheory.Optimization.Muon.Core
+public import NN.MLTheory.Optimization.Muon.NewtonSchulz
 public import NN.MLTheory.Optimization.Muon.QR
 
 /-!

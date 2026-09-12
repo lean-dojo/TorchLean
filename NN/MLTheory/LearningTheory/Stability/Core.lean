@@ -6,10 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-public import Mathlib.MeasureTheory.Integral.Bochner.Basic
 public import Mathlib.MeasureTheory.Measure.FiniteMeasurePi
-public import Mathlib.MeasureTheory.Measure.ProbabilityMeasure
 public import NN.Spec.Core.Tensor.Core
 
 /-!
@@ -36,7 +33,7 @@ right ambient structure depends on the application.
 
 We represent a dataset of size `n` as a **length-`n` spec tensor**
 
-  `Dataset n Z := Spec.Tensor Z [n]`.
+  `Dataset n Z := TorchLean.Tensor Z [n]`.
 
   This integrates the learning-theory layer with TorchLean’s core, shape-indexed tensor datatype
   (`NN.Spec.Core.Tensor.Core`) and keeps the “dataset has exactly `n` elements” invariant enforced
@@ -55,6 +52,11 @@ mathlib's `ProbabilityMeasure`. In particular:
 
 - `(iid μ n)` is the product distribution on datasets (samples `S : Dataset n Z`),
 - `∫ z, ... ∂μ` and `∫ S, ... ∂(iid μ n)` are Bochner integrals in `ℝ`.
+
+These definitions do not require integrability. Mathlib totalizes nonintegrable Bochner integrals
+to zero, so interpreting the inequalities as finite expected-loss guarantees requires separate
+measurability and integrability hypotheses. The supremum-based definitions additionally record
+boundedness of the loss-change ranges.
 
 ## References
 
@@ -78,7 +80,7 @@ open scoped BigOperators
 
 namespace NN.MLTheory.LearningTheory.Stability
 
-open Spec
+open Spec TorchLean
 
 variable {Z H : Type}
 
@@ -90,7 +92,7 @@ A dataset of size `n` with examples in `Z`.
 The leading dimension records the sample count in the type.
 -/
 abbrev Dataset (n : Nat) (Z : Type) : Type :=
-  Spec.Tensor Z [n]
+  TorchLean.Tensor Z [n]
 
 namespace Dataset
 
@@ -99,22 +101,26 @@ variable {n : Nat} {Z : Type}
 /--
 View a dataset tensor as a function `Fin n → Z`.
 
-This is definitional content via `Spec.Tensor.vectorEquiv`, and is used to:
+This is definitional content via `TorchLean.Tensor.vectorEquiv`, and is used to:
 
 - define replace/remove operations via `Function.update` and `Fin.succAbove`, and
 - transport the standard product measurable space / IID sampling measure to the tensor type.
 -/
 abbrev toFn (S : Dataset n Z) : Fin n → Z :=
-  (Spec.Tensor.vectorEquiv (α := Z) n).toFun S
+  (TorchLean.Tensor.vectorEquiv (α := Z) n).toFun S
 
 /-- Build a dataset tensor from a function `Fin n → Z`. -/
 abbrev ofFn (f : Fin n → Z) : Dataset n Z :=
-  (Spec.Tensor.vectorEquiv (α := Z) n).invFun f
+  (TorchLean.Tensor.vectorEquiv (α := Z) n).invFun f
 
+/-- Reading back a dataset built from a function recovers the function. -/
 @[simp] theorem toFn_ofFn (f : Fin n → Z) : toFn (n := n) (Z := Z) (ofFn (n := n) (Z := Z) f) = f :=
   by
   simp [toFn, ofFn]
 
+/-- The other round trip. Together with `toFn_ofFn` this is what lets stability arguments move
+freely
+between the tensor representation of a sample and the function view the measure theory prefers. -/
 @[simp] theorem ofFn_toFn (S : Dataset n Z) : ofFn (n := n) (Z := Z) (toFn (n := n) (Z := Z) S) = S
   := by
   simp [toFn, ofFn]
@@ -123,6 +129,7 @@ abbrev ofFn (f : Fin n → Z) : Dataset n Z :=
 abbrev get (S : Dataset n Z) (i : Fin n) : Z :=
   toFn (n := n) (Z := Z) S i
 
+/-- Coordinate access on a dataset built from a function is just application. -/
 @[simp] theorem get_ofFn (f : Fin n → Z) (i : Fin n) :
     get (n := n) (Z := Z) (ofFn (n := n) (Z := Z) f) i = f i := by
   change Tensor.vectorEquiv n ((Tensor.vectorEquiv n).symm f) i = f i
@@ -142,19 +149,26 @@ their measure-theoretic content; it is just a representation choice.
 instance : MeasurableSpace (Dataset n Z) :=
   (inferInstance : MeasurableSpace (Fin n → Z)).comap (toFn (n := n) (Z := Z))
 
+/-- `toFn` is measurable by construction: the measurable space on datasets is its `comap`. -/
 theorem measurable_toFn : Measurable (toFn (n := n) (Z := Z) : Dataset n Z → (Fin n → Z)) :=
   comap_measurable _
 
+/-- `ofFn` is measurable too, so the representation choice is invisible to the measure theory. -/
 theorem measurable_ofFn : Measurable (ofFn (n := n) (Z := Z) : (Fin n → Z) → Dataset n Z) := by
   -- In the `comap` measurable space, a function into `Dataset n Z` is measurable iff composing with
   -- `toFn` is measurable.
   -- Here, `toFn ∘ ofFn = id`.
-  simpa [Function.comp, ofFn, toFn] using
+  apply
     (measurable_comap_iff (f := (ofFn (n := n) (Z := Z) : (Fin n → Z) → Dataset n Z))
       (g := (toFn (n := n) (Z := Z) : Dataset n Z → (Fin n → Z)))).2
-      (by
-        change Measurable (fun x : Fin n → Z => x)
-        exact measurable_id)
+  have hcomp :
+      (toFn (n := n) (Z := Z) : Dataset n Z → (Fin n → Z)) ∘
+          (ofFn (n := n) (Z := Z) : (Fin n → Z) → Dataset n Z) =
+        id := by
+    funext f
+    exact toFn_ofFn f
+  rw [hcomp]
+  exact measurable_id
 
 end Measure
 
@@ -184,6 +198,11 @@ This uses `Fin.succAbove` to reindex the remaining elements into `Fin n`.
 def removeAt {n : Nat} (S : Dataset (n + 1) Z) (i : Fin (n + 1)) : Dataset n Z :=
   Dataset.ofFn (n := n) (Z := Z) (fun j => Dataset.get (n := n + 1) (Z := Z) S (i.succAbove j))
 
+/-- Reading a shortened dataset skips the removed index, which is what `Fin.succAbove` encodes. -/
+@[simp] theorem get_removeAt {n : Nat} (S : Dataset (n + 1) Z) (i : Fin (n + 1)) (j : Fin n) :
+    Dataset.get (removeAt S i) j = Dataset.get S (i.succAbove j) := by
+  simp [removeAt]
+
 /-! ## Learning algorithms and loss -/
 
 /--
@@ -210,6 +229,7 @@ abbrev Loss (H Z : Type) : Type :=
 Empirical error (average loss on a dataset).
 
 We write this with an explicit $1/n$ normalization so downstream lemmas can control constants.
+At `n = 0`, the totalized real expression is zero.
 -/
 def empiricalError {n : Nat} [Fintype (Fin n)] (ℓ : Loss H Z) (h : H) (S : Dataset n Z) : ℝ :=
   (1 / (n : ℝ)) * ∑ i : Fin n, ℓ h (Dataset.get (n := n) (Z := Z) S i)
@@ -409,6 +429,5 @@ end Measure
 
 end NN.MLTheory.LearningTheory.Stability
 /-!
-The remaining definitions in this file are various stability notions appearing in the literature.
-We keep them in a single place so downstream theorems can reference a shared vocabulary.
+The definitions above provide a shared vocabulary for downstream stability theorems.
 -/

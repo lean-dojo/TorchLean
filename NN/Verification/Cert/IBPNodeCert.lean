@@ -6,10 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph
-public import NN.Spec.Core.Tensor
 public import NN.Verification.Cert.NodeReplay
-public import Lean.Data.Json
+public import NN.MLTheory.CROWN.Extras.BoundOpsIEEE32Exec
+public import NN.MLTheory.CROWN.Graph.Engine.IBP
+public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # IBPNodeCert
@@ -51,8 +51,8 @@ open NN.MLTheory.CROWN
 open NN.Verification.Json
 open NN.Verification.Cert.NodeReplay
 open Import.PyTorch
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open Lean Data Json
 open TorchLean.Floats.IEEE754
 
@@ -83,7 +83,8 @@ def checkIBPNode (g : Graph)
       pure false
   if !(ibpNodePreconditionsOk g authoritative id) then
     IO.eprintln
-      s!"[IBPNodeCert] node {id}: authoritative trace violates shape/domain preconditions for {repr node.kind}"
+      (s!"[IBPNodeCert] node {id}: authoritative trace violates shape/domain preconditions " ++
+        s!"for {repr node.kind}")
     return false
   let certBox? :=
     match cert[id]? with

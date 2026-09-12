@@ -7,6 +7,10 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.TypedGraph.GraphM.Core
+public import NN.Spec.Autograd.Ops
+public import NN.Spec.Core.TensorReductionShape.ConcatSlice
+public import NN.Spec.Layers.Activation
+public import NN.Spec.Layers.Linear
 
 /-!
 # GraphM Elementwise And Scalar Ops
@@ -21,10 +25,12 @@ namespace Autograd
 namespace TypedGraph
 namespace GraphM
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Proofs.Autograd.Algebra
-open Runtime.Autograd.TorchLean
+-- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
+-- `Idx` and `getIdx` are defined.
+open Proofs (Idx getIdx)
 
 /-!
 JVP vs VJP in this module
@@ -44,7 +50,8 @@ Elementwise addition node (`y = a + b`).
 
 PyTorch comparison: `torch.add(a, b)`.
 -/
-def add {α : Type} {Δ : Type} [Add α] [Zero α] [DecidableEq Shape] {Γ : List Shape} {s : Shape}
+def add {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Zero α]
+    {Γ : List Shape} {s : Shape}
     (a b : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ia ← liftM (mkIdx (_α := α) (Γ := Γ) ss a)
@@ -55,7 +62,7 @@ def add {α : Type} {Δ : Type} [Add α] [Zero α] [DecidableEq Shape] {Γ : Lis
       jvp := fun _ctx dctx _d =>
         addSpec (getIdx (α := α) (xs := dctx) ia) (getIdx (α := α) (xs := dctx) ib)
       vjp := fun _ctx _d δ =>
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ia δ)
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ib δ) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
@@ -65,8 +72,8 @@ Elementwise subtraction node (`y = a - b`).
 
 PyTorch comparison: `torch.sub(a, b)`.
 -/
-def sub {α : Type} {Δ : Type} [Sub α] [Add α] [Zero α] [DecidableEq Shape] {Γ : List Shape} {s :
-  Shape}
+def sub {α : Type} {Δ : Type} [TorchLean.Storage α] [Sub α] [Add α] [Zero α]
+    {Γ : List Shape} {s : Shape}
     (a b : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ia ← liftM (mkIdx (_α := α) (Γ := Γ) ss a)
@@ -77,8 +84,8 @@ def sub {α : Type} {Δ : Type} [Sub α] [Add α] [Zero α] [DecidableEq Shape] 
       jvp := fun _ctx dctx _d =>
         subSpec (getIdx (α := α) (xs := dctx) ia) (getIdx (α := α) (xs := dctx) ib)
       vjp := fun _ctx _d δ =>
-        let negδ : Tensor α s := subSpec (fill (0 : α) s) δ
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+        let negδ : Tensor α s := subSpec (Tensor.full s (0 : α)) δ
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ia δ)
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ib negδ) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
@@ -88,8 +95,8 @@ Elementwise multiplication node (`y = a ⊙ b`).
 
 PyTorch comparison: `torch.mul(a, b)`.
 -/
-def mul {α : Type} {Δ : Type} [Mul α] [Add α] [Zero α] [DecidableEq Shape] {Γ : List Shape} {s :
-  Shape}
+def mul {α : Type} {Δ : Type} [TorchLean.Storage α] [Mul α] [Add α] [Zero α]
+    {Γ : List Shape} {s : Shape}
     (a b : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ia ← liftM (mkIdx (_α := α) (Γ := Γ) ss a)
@@ -106,14 +113,14 @@ def mul {α : Type} {Δ : Type} [Mul α] [Add α] [Zero α] [DecidableEq Shape] 
       vjp := fun ctx _d δ =>
         let av := getIdx (α := α) (xs := ctx) ia
         let bv := getIdx (α := α) (xs := ctx) ib
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ia (mulSpec δ bv))
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ib (mulSpec δ av)) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /-- Square `x ↦ x ⊙ x`. -/
-def square {α : Type} {Δ : Type} [Mul α] [Add α] [Zero α] [DecidableEq Shape] {Γ : List Shape} {s :
-  Shape}
+def square {α : Type} {Δ : Type} [TorchLean.Storage α] [Mul α] [Add α] [Zero α]
+    {Γ : List Shape} {s : Shape}
     (x : Var s) : MWith α Δ Γ (Var s) :=
   mul (α := α) (Δ := Δ) (Γ := Γ) (s := s) x x
 
@@ -122,8 +129,8 @@ Scale a tensor by a scalar constant `c` (`y = c * x`).
 
 PyTorch comparison: `c * x` / `torch.mul(x, c)`.
 -/
-def scale {α : Type} {Δ : Type} [Mul α] [Add α] [Zero α] [DecidableEq Shape] {Γ : List Shape} {s :
-  Shape}
+def scale {α : Type} {Δ : Type} [TorchLean.Storage α] [Mul α] [Add α] [Zero α]
+    {Γ : List Shape} {s : Shape}
     (x : Var s) (c : α) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -141,7 +148,7 @@ Elementwise absolute value.
 
 PyTorch comparison: `torch.abs(x)`.
 -/
-def abs {α : Type} [Context α] [DecidableEq Shape]
+def abs {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
@@ -165,7 +172,7 @@ Elementwise square root.
 
 PyTorch comparison: `torch.sqrt(x)`.
 -/
-def sqrt {α : Type} [Context α] [DecidableEq Shape]
+def sqrt {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
@@ -199,7 +206,7 @@ Elementwise clamp to `[minVal, maxVal]`.
 
 PyTorch comparison: `torch.clamp(x, min=minVal, max=maxVal)`.
 -/
-def clamp {α : Type} [Context α] [DecidableEq Shape]
+def clamp {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) (minVal maxVal : α) : MWith α Δ Γ (Var s) :=
     do
@@ -231,7 +238,7 @@ the eager tape (`NN.Runtime.Autograd.Engine.Core`).
 
 PyTorch comparison: `torch.maximum(a, b)`.
 -/
-def max {α : Type} [Context α] [DecidableEq Shape]
+def max {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (a b : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
@@ -245,27 +252,15 @@ def max {α : Type} [Context α] [DecidableEq Shape]
         let bv := getIdx (α := α) (xs := ctx) ib
         let da := getIdx (α := α) (xs := dctx) ia
         let db := getIdx (α := α) (xs := dctx) ib
-        let half : α := (1 : α) / ((2 : Nat) : α)
-        let maskA : Tensor α s :=
-          map2Spec (α := α) (β := α) (γ := α) (s := s) (fun x y =>
-            if x > y then (1 : α) else if y > x then (0 : α) else half) av bv
-        let maskB : Tensor α s :=
-          map2Spec (α := α) (β := α) (γ := α) (s := s) (fun x y =>
-            if y > x then (1 : α) else if x > y then (0 : α) else half) av bv
-        addSpec (mulSpec maskA da) (mulSpec maskB db)
+        addSpec ((Spec.maxOp bv).backward av da) ((Spec.maxOp av).backward bv db)
       vjp := fun ctx _d δ =>
         let av := getIdx (α := α) (xs := ctx) ia
         let bv := getIdx (α := α) (xs := ctx) ib
-        let half : α := (1 : α) / ((2 : Nat) : α)
-        let maskA : Tensor α s :=
-          map2Spec (α := α) (β := α) (γ := α) (s := s) (fun x y =>
-            if x > y then (1 : α) else if y > x then (0 : α) else half) av bv
-        let maskB : Tensor α s :=
-          map2Spec (α := α) (β := α) (γ := α) (s := s) (fun x y =>
-            if y > x then (1 : α) else if x > y then (0 : α) else half) av bv
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
-          (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ia (mulSpec maskA δ))
-          (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ib (mulSpec maskB δ)) }
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+          (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ia
+            ((Spec.maxOp bv).backward av δ))
+          (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ib
+            ((Spec.maxOp av).backward bv δ)) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /--
@@ -275,7 +270,7 @@ At ties we split the gradient equally (`0.5` / `0.5`).
 
 PyTorch comparison: `torch.minimum(a, b)`.
 -/
-def min {α : Type} [Context α] [DecidableEq Shape]
+def min {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (a b : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
@@ -289,27 +284,15 @@ def min {α : Type} [Context α] [DecidableEq Shape]
         let bv := getIdx (α := α) (xs := ctx) ib
         let da := getIdx (α := α) (xs := dctx) ia
         let db := getIdx (α := α) (xs := dctx) ib
-        let half : α := (1 : α) / ((2 : Nat) : α)
-        let maskA : Tensor α s :=
-          map2Spec (α := α) (β := α) (γ := α) (s := s) (fun x y =>
-            if y > x then (1 : α) else if x > y then (0 : α) else half) av bv
-        let maskB : Tensor α s :=
-          map2Spec (α := α) (β := α) (γ := α) (s := s) (fun x y =>
-            if x > y then (1 : α) else if y > x then (0 : α) else half) av bv
-        addSpec (mulSpec maskA da) (mulSpec maskB db)
+        addSpec ((Spec.minOp bv).backward av da) ((Spec.minOp av).backward bv db)
       vjp := fun ctx _d δ =>
         let av := getIdx (α := α) (xs := ctx) ia
         let bv := getIdx (α := α) (xs := ctx) ib
-        let half : α := (1 : α) / ((2 : Nat) : α)
-        let maskA : Tensor α s :=
-          map2Spec (α := α) (β := α) (γ := α) (s := s) (fun x y =>
-            if y > x then (1 : α) else if x > y then (0 : α) else half) av bv
-        let maskB : Tensor α s :=
-          map2Spec (α := α) (β := α) (γ := α) (s := s) (fun x y =>
-            if x > y then (1 : α) else if y > x then (0 : α) else half) av bv
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
-          (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ia (mulSpec maskA δ))
-          (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ib (mulSpec maskB δ)) }
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+          (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ia
+            ((Spec.minOp bv).backward av δ))
+          (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ib
+            ((Spec.minOp av).backward bv δ)) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /--
@@ -317,9 +300,9 @@ Elementwise ReLU.
 
 PyTorch comparison: `torch.nn.functional.relu(x)`.
 -/
-def relu {α : Type}
-  [Mul α] [Add α] [Zero α] [Max α] [One α] [LT α]
-  [DecidableRel ((· > ·) : α → α → Prop)] [DecidableEq Shape]
+def relu {α : Type} [TorchLean.Storage α]
+  [Mul α] [Add α] [Zero α] [Max α] [BEq α] [One α] [LT α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -338,7 +321,7 @@ def relu {α : Type}
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /-- Elementwise sigmoid. PyTorch comparison: `torch.sigmoid(x)`. -/
-def sigmoid {α : Type} [Context α] [DecidableEq Shape]
+def sigmoid {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -357,7 +340,7 @@ def sigmoid {α : Type} [Context α] [DecidableEq Shape]
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /-- Elementwise tanh. PyTorch comparison: `torch.tanh(x)`. -/
-def tanh {α : Type} [Context α] [DecidableEq Shape]
+def tanh {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -382,7 +365,7 @@ This is one graph node with the specification-level derivative, rather than an e
 temporary pointwise nodes. The smaller graph is important for large Transformer activations while
 retaining the same JVP and VJP meaning.
 -/
-def gelu {α : Type} [Context α] [DecidableEq Shape]
+def gelu {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -405,7 +388,7 @@ Softmax along the last axis (recursing over outer dimensions).
 
 PyTorch comparison: `torch.softmax(x, dim=-1)`.
 -/
-def softmaxLast {α : Type} [Context α] [DecidableEq Shape]
+def softmaxLast {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -425,7 +408,7 @@ def softmaxLast {α : Type} [Context α] [DecidableEq Shape]
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /-- Softmax along an explicitly selected tensor dimension. -/
-def softmax {α : Type} [Context α] [DecidableEq Shape]
+def softmax {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
     (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
@@ -450,7 +433,7 @@ Stable log-softmax along the last axis.
 This is a primitive in the typed graph, not the composition `log ∘ softmax`, so proof/IR
 execution and eager CUDA share the same PyTorch-style numerical contract.
 -/
-def logSoftmaxLast {α : Type} [Context α] [DecidableEq Shape]
+def logSoftmaxLast {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -472,7 +455,7 @@ def logSoftmaxLast {α : Type} [Context α] [DecidableEq Shape]
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /-- Stable log-softmax along an explicitly selected tensor dimension. -/
-def logSoftmax {α : Type} [Context α] [DecidableEq Shape]
+def logSoftmax {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
     (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
@@ -494,7 +477,7 @@ def logSoftmax {α : Type} [Context α] [DecidableEq Shape]
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /-- Elementwise softplus. PyTorch comparison: `torch.nn.functional.softplus(x)`. -/
-def softplus {α : Type} [Context α] [DecidableEq Shape]
+def softplus {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -513,7 +496,7 @@ def softplus {α : Type} [Context α] [DecidableEq Shape]
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /-- Elementwise exponential. PyTorch comparison: `torch.exp(x)`. -/
-def exp {α : Type} [Context α] [DecidableEq Shape]
+def exp {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -529,13 +512,56 @@ def exp {α : Type} [Context α] [DecidableEq Shape]
         TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ix (mulSpec (expSpec (α := α) xval) δ) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
+/--
+Elementwise sine, with angles in radians.
+
+Its Jacobian is diagonal: both the forward tangent and the reverse cotangent multiply by
+`cos(x)`. Using the shared spec keeps these two derivative paths consistent, including when
+dual-number scalars differentiate the VJP again for a Hessian-vector product.
+-/
+def sin {α : Type} [TorchLean.Storage α] [Context α]
+    {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
+  let ⟨ss, g⟩ ← get
+  let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
+  let op := Spec.sinOp (α := α) (s := s)
+  let node : NodeData α Δ (Γ ++ ss) s :=
+    { forward := fun ctx _d => op.forward (getIdx (α := α) (xs := ctx) ix)
+      jvp := fun ctx dctx _d =>
+        op.backward (getIdx (α := α) (xs := ctx) ix) (getIdx (α := α) (xs := dctx) ix)
+      vjp := fun ctx _d δ =>
+        let dx := op.backward (getIdx (α := α) (xs := ctx) ix) δ
+        TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ix dx }
+  push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
+
+/-- Elementwise cosine; its JVP and VJP multiply by `-sin(x)` at the original input. -/
+def cos {α : Type} [TorchLean.Storage α] [Context α]
+    {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
+  let ⟨ss, g⟩ ← get
+  let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
+  let op := Spec.cosOp (α := α) (s := s)
+  let node : NodeData α Δ (Γ ++ ss) s :=
+    { forward := fun ctx _d => op.forward (getIdx (α := α) (xs := ctx) ix)
+      jvp := fun ctx dctx _d =>
+        op.backward (getIdx (α := α) (xs := ctx) ix) (getIdx (α := α) (xs := dctx) ix)
+      vjp := fun ctx _d δ =>
+        let dx := op.backward (getIdx (α := α) (xs := ctx) ix) δ
+        TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ix dx }
+  push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
+
 /-- Elementwise natural logarithm. PyTorch comparison: `torch.log(x)`. -/
-def log {α : Type} [Context α] [DecidableEq Shape]
+def log {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
-    { forward := fun ctx _d =>
+    { validate := fun ctx _d =>
+        let input := getIdx (α := α) (xs := ctx) ix
+        if Tensor.allSpec (α := α) (s := s) (fun value => decide (value > (0 : α))) input then
+          .ok ()
+        else
+          .error "autograd: log: input contains values <= 0 (or NaN); \
+            use `safe_log` if you want epsilon protection"
+      forward := fun ctx _d =>
         let xval := getIdx (α := α) (xs := ctx) ix
         -- This typed graph closure is pure, so it cannot return the eager engine's `Except`
         -- error. A bad raw-log domain reaches a runtime panic; use `safe_log` for total epsilon
@@ -543,7 +569,8 @@ def log {α : Type} [Context α] [DecidableEq Shape]
         if Tensor.allSpec (α := α) (s := s) (fun v => decide (v > (0 : α))) xval then
           logSpec (α := α) (s := s) xval
         else
-          panic! "GraphM: log: input contains values <= 0 (or NaN); use `safe_log` if you want epsilon protection"
+          panic! "GraphM: log: input contains values <= 0 (or NaN); \
+            use `safe_log` if you want epsilon protection"
       jvp := fun ctx dctx _d =>
         let xval := getIdx (α := α) (xs := ctx) ix
         let dx := getIdx (α := α) (xs := dctx) ix
@@ -554,7 +581,7 @@ def log {α : Type} [Context α] [DecidableEq Shape]
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /-- Elementwise reciprocal `x ↦ 1/x`. PyTorch comparison: `torch.reciprocal(x)`. -/
-def inv {α : Type} [Context α] [DecidableEq Shape]
+def inv {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -576,13 +603,15 @@ def inv {α : Type} [Context α] [DecidableEq Shape]
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /--
-Elementwise numerically-stable log (uses an internal `ε`).
+Apply `log(softplus(x) + ε)` elementwise.
 
-PyTorch comparison: commonly written `torch.log(x + eps)`.
+Softplus maps each real input to a positive value. A positive `ε` also keeps the logarithm's
+argument positive when softplus rounds to zero. The JVP and VJP use
+`sigmoid(x) / (softplus(x) + ε)`, with `ε` held fixed.
 -/
-def safeLog {α : Type} [Context α] [DecidableEq Shape]
-  {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) (ε : α := Numbers.epsilon) : MWith α Δ Γ (Var
-    s) := do
+def safeLog {α : Type} [TorchLean.Storage α] [Context α]
+  {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) (ε : α := Context.defaultEpsilon) :
+    MWith α Δ Γ (Var s) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -605,7 +634,7 @@ Reduce-sum over all entries, producing a scalar.
 
 PyTorch comparison: `torch.sum(x)`.
 -/
-def sum {α : Type} [Add α] [Zero α] [DecidableEq Shape]
+def sum {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var Shape.scalar) := do
   let ⟨ss, g⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -615,7 +644,8 @@ def sum {α : Type} [Add α] [Zero α] [DecidableEq Shape]
       jvp := fun _ctx dctx _d =>
         Tensor.scalar (sumSpec (α := α) (s := s) (getIdx (α := α) (xs := dctx) ix))
       vjp := fun _ctx _d dLdy =>
-        TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ix (replicate (α := α) (s := s) dLdy) }
+        TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) ix
+          (replicate (α := α) (shape := s) dLdy) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := Shape.scalar) g node
 
 /--
@@ -623,8 +653,8 @@ Mean-squared error loss with `"mean"` reduction, producing a scalar.
 
 PyTorch comparison: `torch.nn.functional.mse_loss(yhat, target, reduction=\"mean\")`.
 -/
-def mseLoss {α : Type}
-  [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [Coe Nat α] [DecidableEq Shape]
+def mseLoss {α : Type} [TorchLean.Storage α]
+  [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [NatCast α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (yhat target : Var s) : MWith α Δ Γ (Var Shape.scalar) :=
     do
   let ⟨ss, g⟩ ← get
@@ -659,8 +689,8 @@ def mseLoss {α : Type}
         let baseGrad : Tensor α s := scaleSpec (α := α) (s := s) diff (two / (denom : α))
         let gscalar : α := Tensor.item dLdy
         let dYhat : Tensor α s := scaleSpec (α := α) (s := s) baseGrad gscalar
-        let dTarget : Tensor α s := subSpec (fill (0 : α) s) dYhat
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+        let dTarget : Tensor α s := subSpec (Tensor.full s (0 : α)) dYhat
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) iyhat dYhat)
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := s) itarget dTarget) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := Shape.scalar) g node
@@ -673,7 +703,8 @@ def mseLoss {α : Type}
   The JVP is the usual product rule:
   `d(Wx+b) = dW*x + W*dx + db`.
   -/
-  def linear {α : Type} {Δ : Type} [Add α] [Mul α] [Zero α] [DecidableEq Shape]
+  def linear {α : Type} {Δ : Type} [TorchLean.Storage α]
+    [Add α] [Mul α] [Zero α]
     {Γ : List Shape} {inDim outDim : Nat}
     (w : Var (.dim outDim (.dim inDim .scalar)))
     (b : Var (.dim outDim .scalar))
@@ -696,7 +727,8 @@ def mseLoss {α : Type}
         let db := getIdx (α := α) (xs := dctx) ib
         let dx := getIdx (α := α) (xs := dctx) ix
         let dLayer : Spec.LinearSpec α inDim outDim := { weights := dW, bias := db }
-        let xLayer : Spec.LinearSpec α inDim outDim := { weights := W, bias := fill (0 : α) (.dim outDim .scalar) }
+        let xLayer : Spec.LinearSpec α inDim outDim :=
+          { weights := W, bias := Tensor.full (.dim outDim .scalar) (0 : α) }
         addSpec (Spec.linearSpec (α := α) dLayer xv) (Spec.linearSpec (α := α) xLayer dx)
       vjp := fun ctx _d dLdy =>
         let W := getIdx (α := α) (xs := ctx) iW
@@ -706,10 +738,10 @@ def mseLoss {α : Type}
         let db := Spec.linearBiasDerivSpec (α := α) (inDim := inDim) (outDim := outDim) dW dLdy
           xv
         let dx := Spec.linearInputDerivSpec (α := α) (inDim := inDim) (outDim := outDim) W dLdy
-        let z0 := _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+        let z0 := TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim outDim (.dim inDim .scalar)) iW dW)
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim outDim .scalar) ib db)
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z0
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z0
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim inDim .scalar) ix dx) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := (.dim outDim .scalar)) g node
 
@@ -722,8 +754,8 @@ product rule `d(A @ B) = dA @ B + A @ dB`.
 
 PyTorch comparison: `torch.matmul` for operands of rank at least two.
 -/
-def matmul {α : Type} {Δ : Type} [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] [DecidableEq Shape]
+def matmul {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
+    [DecidableRel ((· > ·) : α → α → Prop)]
     {Γ : List Shape} {batchA batchB batch : Shape} {m n p : Nat}
     [broadcastA : Shape.BroadcastTo batchA batch]
     [broadcastB : Shape.BroadcastTo batchB batch]
@@ -739,21 +771,21 @@ def matmul {α : Type} {Δ : Type} [Context α]
     { forward := fun ctx _d =>
         let av := getIdx (α := α) (xs := ctx) ia
         let bv := getIdx (α := α) (xs := ctx) ib
-        Spec.Tensor.matmulSpec broadcastA.proof broadcastB.proof av bv
+        TorchLean.Tensor.matmulSpec broadcastA.proof broadcastB.proof av bv
       jvp := fun ctx dctx _d =>
         let av := getIdx (α := α) (xs := ctx) ia
         let bv := getIdx (α := α) (xs := ctx) ib
         let da := getIdx (α := α) (xs := dctx) ia
         let db := getIdx (α := α) (xs := dctx) ib
         addSpec
-          (Spec.Tensor.matmulSpec broadcastA.proof broadcastB.proof da bv)
-          (Spec.Tensor.matmulSpec broadcastA.proof broadcastB.proof av db)
+          (TorchLean.Tensor.matmulSpec broadcastA.proof broadcastB.proof da bv)
+          (TorchLean.Tensor.matmulSpec broadcastA.proof broadcastB.proof av db)
       vjp := fun ctx _d dLdy =>
         let av := getIdx (α := α) (xs := ctx) ia
         let bv := getIdx (α := α) (xs := ctx) ib
         let (dA, dB) :=
-          Spec.Tensor.matmulBackwardSpec broadcastA.proof broadcastB.proof av bv dLdy
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+          TorchLean.Tensor.matmulBackwardSpec broadcastA.proof broadcastB.proof av bv dLdy
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := aShape) ia dA)
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := bShape) ib dB) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := outShape) g node
@@ -763,7 +795,7 @@ def matmul {α : Type} {Δ : Type} [Context α]
 
   PyTorch comparison: `torch.cat([a, b], dim=0)`.
   -/
-  def concatLeadingAxis {α : Type} {Δ : Type} [Add α] [Zero α] [DecidableEq Shape]
+  def concatLeadingAxis {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {Γ : List Shape} {n m : Nat} {s : Shape}
     (a : Var (.dim n s)) (b : Var (.dim m s)) :
     MWith α Δ Γ (Var (.dim (n + m) s)) := do
@@ -777,17 +809,17 @@ def matmul {α : Type} {Δ : Type} [Context α]
     { forward := fun ctx _d =>
         let av := getIdx (α := α) (xs := ctx) ia
         let bv := getIdx (α := α) (xs := ctx) ib
-        Spec.Tensor.concatAxisSpec .scalar (α := α) (n := n) (m := m) (suffix := s) av bv
+        TorchLean.Tensor.concatAxisSpec .scalar (α := α) (n := n) (m := m) (suffix := s) av bv
       jvp := fun _ctx dctx _d =>
         let da := getIdx (α := α) (xs := dctx) ia
         let db := getIdx (α := α) (xs := dctx) ib
-        Spec.Tensor.concatAxisSpec .scalar (α := α) (n := n) (m := m) (suffix := s) da db
+        TorchLean.Tensor.concatAxisSpec .scalar (α := α) (n := n) (m := m) (suffix := s) da db
       vjp := fun _ctx _d dLdy =>
-        let dA := Spec.sliceRangeSpec (α := α) (n := n + m) (s := s) dLdy 0 n
+        let dA := Spec.sliceRangeSpec (α := α) (n := n + m) (shape := s) dLdy 0 n
           (by simp)
-        let dB := Spec.sliceRangeSpec (α := α) (n := n + m) (s := s) dLdy n m
+        let dB := Spec.sliceRangeSpec (α := α) (n := n + m) (shape := s) dLdy n m
           (by simp)
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := aS) ia dA)
           (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := bS) ib dB) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := outS) g node
@@ -797,7 +829,7 @@ def matmul {α : Type} {Δ : Type} [Context α]
 
   PyTorch comparison: `x[start : start+len]` for tensors where the leading dimension is indexed.
   -/
-  def sliceLeadingAxisRange {α : Type} {Δ : Type} [Zero α] [DecidableEq Shape]
+  def sliceLeadingAxisRange {α : Type} {Δ : Type} [TorchLean.Storage α] [Zero α]
     {Γ : List Shape} {n : Nat} {s : Shape}
     (x : Var (.dim n s)) (start len : Nat) (h : start + len ≤ n) :
     MWith α Δ Γ (Var (.dim len s)) := do
@@ -807,14 +839,14 @@ def matmul {α : Type} {Δ : Type} [Context α]
   let inS : Shape := .dim n s
   let node : NodeData α Δ (Γ ++ ss) outS :=
     { forward := fun ctx _d =>
-        Spec.sliceRangeSpec (α := α) (n := n) (s := s) (getIdx (α := α) (xs := ctx) ix) start len
-          h
+        Spec.sliceRangeSpec (α := α) (n := n) (shape := s)
+          (getIdx (α := α) (xs := ctx) ix) start len h
       jvp := fun _ctx dctx _d =>
         let dx := getIdx (α := α) (xs := dctx) ix
-        Spec.sliceRangeSpec (α := α) (n := n) (s := s) dx start len h
+        Spec.sliceRangeSpec (α := α) (n := n) (shape := s) dx start len h
       vjp := fun _ctx _d δ =>
         TensorPack.single (α := α) (Γ := Γ ++ ss) (s := inS) ix
-          (Spec.Tensor.sliceAxisRangeBackwardSpec (α := α) (s := .dim n s) 0 start len h δ) }
+          (TorchLean.Tensor.sliceAxisRangeBackwardSpec (α := α) (s := .dim n s) 0 start len h δ) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := outS) g node
 
 end GraphM

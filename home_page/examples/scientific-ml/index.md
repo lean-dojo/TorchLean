@@ -28,6 +28,8 @@ the domain, while the viscosity term $\nu u_{xx}$ smooths them. That combination
 good compact benchmark for scientific ML: the model has to learn a time evolution pattern rather
 than a static regression label.
 
+"Benchmark" here means the standard test problem, not a timing measurement.
+
 There are two common neural ways to approach this equation.
 
 An operator-learning model sees examples of whole functions. Given an initial condition $u_0(x)$,
@@ -227,7 +229,7 @@ conditions through `NN.Verification.PINN`.
 Run the small checked assets:
 
 ```bash
-python3 scripts/verification/regenerate_assets.py --group pinn-small --run
+python3 scripts/verification/pinn/export_pinn_cert.py
 lake exe verify -- pinn-cert
 lake exe verify -- pinn-cli -- "u_t + u*u_x - 0.01*u_xx" 0.0 0.5 0.01
 lake exe verify -- pinn-dataset-check

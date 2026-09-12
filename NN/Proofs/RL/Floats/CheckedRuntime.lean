@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.RL.Numerics.Float32
 public import NN.Proofs.RL.Floats.IEEE32Exec
+public import NN.Runtime.RL.Numerics.Float32.Advantage
 
 /-!
 # Runtime Checked Preconditions → Float32 Semantics Theorems
@@ -17,8 +17,8 @@ public import NN.Proofs.RL.Floats.IEEE32Exec
 `isFinite … = true` hypotheses for each intermediate.
 
 In the runtime layer, TorchLean typically enforces these hypotheses by *checked preconditions*:
-`Runtime.RL.Numerics.Float32.*Checked` returns `Except String …` and fails fast if any intermediate becomes
-NaN/Inf.
+`Runtime.RL.Numerics.Float32.*Checked` returns `Except String …` and fails fast if any
+intermediate becomes NaN/Inf.
 
 This file is the glue: it turns “the runtime checker returned `.ok`” into the proof hypotheses
 needed by the refinement theorem, yielding a user-facing statement:
@@ -54,7 +54,8 @@ This is the direct `checked boundary ⇒ semantics theorem applies` wrapper.
 theorem toReal_discountedBackupChecked_eq_fp32Round_chain
     (reward gamma bootstrap : TorchLean.Floats.IEEE754.IEEE32Exec) (done : Bool)
     (out : TorchLean.Floats.IEEE754.IEEE32Exec)
-    (h : Runtime.RL.Numerics.Float32.discountedBackupChecked reward gamma bootstrap done = .ok out) :
+    (h : Runtime.RL.Numerics.Float32.discountedBackupChecked reward gamma bootstrap done
+      = .ok out) :
     toReal out =
       fp32Round
         (toReal reward +
@@ -83,7 +84,8 @@ This is the `checked boundary ⇒ semantics theorem applies` wrapper for TD resi
 theorem toReal_tdResidualChecked_eq_fp32Round_chain
     (value reward gamma nextValue : TorchLean.Floats.IEEE754.IEEE32Exec) (done : Bool)
     (out : TorchLean.Floats.IEEE754.IEEE32Exec)
-    (h : Runtime.RL.Numerics.Float32.tdResidualChecked value reward gamma nextValue done = .ok out) :
+    (h : Runtime.RL.Numerics.Float32.tdResidualChecked value reward gamma nextValue done
+      = .ok out) :
     toReal out =
       fp32Round
         (fp32Round

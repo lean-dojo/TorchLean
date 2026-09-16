@@ -126,8 +126,9 @@ while the other changes how often the existing data influences the parameters.
 
 The evaluation metric is
 {src "NN/Runtime/RL/Eval.lean"}[`rl.eval.averageEpisodeTotalReward`], the undiscounted sum of
-rewards over a greedy episode, capped at `--eval-max-steps`. The command also writes the greedy policy and
-path. Together with the reward definition, these artifacts let us recompute the two reported
+rewards over a greedy episode, capped at `--eval-max-steps`. The command also writes the greedy
+policy and path. Together with the reward definition, these artifacts let us recompute the
+two reported
 returns.
 
 The path artifact records decoded `(row, column)` states:
@@ -950,7 +951,8 @@ operations, so the diagnostic locates the failing calculation within the update.
 
 For background on formal floating-point analysis, see {Informal.citep flocq2011}[]. Here we can
 inspect the same recurrence with an interval calculation: compute the returns in binary32 and
-propagate intervals alongside them, then check whether each binary32 result lies inside its interval:
+propagate intervals alongside them, then check whether each binary32 result lies inside
+its interval:
 
 ```lean (name := rlEnclosure)
 -- Compare the checked recurrence’s values with

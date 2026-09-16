@@ -234,8 +234,9 @@ The current proof is split for auditability:
   {src "NN/Runtime/Autograd/IRExec/Correctness/SemanticEquivalence.lean"}[semantic equivalence
   theorem API] ties the cases together into `denoteAll_eq_of_lowerToForwardGraph`.
 
-The recursive theorem walks every node kind, so a goal in the middle of it mentions shape equality, `Except`
-success and failure paths, and cast proof irrelevance at the same time. Separating operator families
+The recursive theorem walks every node kind, so a goal in the middle of it mentions shape
+equality, `Except` success and failure paths, and cast proof irrelevance at the same time.
+Separating operator families
 helps isolate proof failures; adding an operation can still require
 changes to its lowering, local preservation lemmas, and the recursive proof.
 

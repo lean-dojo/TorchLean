@@ -326,7 +326,7 @@ over a seed stream. `nn.build` runs that computation with an initial seed:
 @nn.build : {α : Type u_1} → ℕ → nn.Builder α → α
 ```
 
-Here `α` is the type of value the builder produces—a sequential model in this example.
+Here `α` is the type of value the builder produces, a sequential model in this example.
 `nn.build` takes the seed and builder and returns that value directly, without `IO`. Repeating
 the same arguments gives the same value. A custom builder could use the seed to choose an
 architecture too; our fixed builder uses it to draw the weights:

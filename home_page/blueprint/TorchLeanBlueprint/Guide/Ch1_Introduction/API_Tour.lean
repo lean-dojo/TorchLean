@@ -448,7 +448,8 @@ We can also reduce these entries to a scalar loss, apply ReLU, or select a row:
 
 Mean squared error squares each difference before taking the mean:
 $`((-3)^2+7^2+(-3)^2)/3=67/3`, or
-$`\frac13\left(9+49+9\right)=\frac{67}{3}\approx22.333333` with the final decimal rounded for display.
+$`\frac13\left(9+49+9\right)=\frac{67}{3}\approx22.333333` with the final decimal rounded
+for display.
 ReLU keeps the positive entry and replaces the negative one by zero; the zero stays zero.
 
 The indexing calls distinguish a row from an entry. Selecting row one leaves a length-three

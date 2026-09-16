@@ -15,8 +15,9 @@ file := "Training___-One-State-Transition-At-A-Time"
 %%%
 
 Follow one update of the running $`2\to8\to1` MLP. A sample enters the current model, the objective
-reduces its prediction to a scalar, and reverse mode produces one gradient tensor for each trainable state
-tensor. The optimizer consumes those gradients together with its own memory and installs the next
+reduces its prediction to a scalar, and reverse mode produces one gradient tensor for each
+trainable state tensor. The optimizer consumes those gradients together with its own memory
+and installs the next
 parameters. With Adam, saving those parameters is enough to recover a prediction, but recovering
 the next update also requires the optimizer's moments and step counter.
 

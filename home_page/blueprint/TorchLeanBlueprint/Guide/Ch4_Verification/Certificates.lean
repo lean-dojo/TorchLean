@@ -797,8 +797,9 @@ signature encodes an artifact kind. These node schemas do not require a distingu
 `format` field: the selected checker parses its fields and recomputes its own rules. Callers must
 choose the intended checker; shared or extra JSON fields do not establish that choice.
 
-Use `abcrown-leaf` when the artifact is a branch-and-bound leaf summary. `IBPCert.check` checks a compact
-Float output-bound artifact against a supplied graph and parameter store. `IBPNodeCert` instead
+Use `abcrown-leaf` when the artifact is a branch-and-bound leaf summary. `IBPCert.check` checks
+a compact Float output-bound artifact against a supplied graph and parameter store.
+`IBPNodeCert` instead
 replays per-node interval data with FloatLib binary32. `CROWNNodeCert` adds affine CROWN data, and
 the
 alpha-beta variant adds the corresponding relaxation parameters. These formats are related, but

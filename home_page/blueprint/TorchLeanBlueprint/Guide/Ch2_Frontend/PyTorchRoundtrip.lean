@@ -1007,7 +1007,8 @@ verification chapters are where a claim about all inputs in a region gets establ
   * emit PyTorch from the IR
 :::
 
-An imported model can subsequently be lowered to IR or exported again; these choices can be combined.
+An imported model can subsequently be lowered to IR or exported again; these choices can be
+combined.
 
 # Guarantees And Limits
 

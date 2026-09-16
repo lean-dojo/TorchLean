@@ -611,7 +611,8 @@ of which appears in this transcript.
 
 The predictions and gradients above concern particular inputs. To ask whether an output stays
 within a bound throughout a region, we need to account for every input in that region.
-Interval bound propagation does this by carrying an enclosure through the model. Start from an input box
+Interval bound propagation does this by carrying an enclosure through the model. Start from
+an input box
 
 $$`x\in[\ell,u]`
 

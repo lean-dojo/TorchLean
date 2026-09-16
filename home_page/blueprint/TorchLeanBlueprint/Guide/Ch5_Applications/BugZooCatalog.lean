@@ -1387,5 +1387,6 @@ Remaining obligations and scope distinctions:
   covers all configured inputs through NaN canonicalization. Compiled CPU instructions, vectorized
   reductions, and CUDA kernels are separate boundaries with no theorem here.
 - The 3D projection check is exact at `ℚ`. At `Float` the same theorem still establishes
-  `Verified3DBox` for the float-valued predicate. Exact real containment needs the interval statement
-  described above and an argument that the float executor's intervals enclose the projection.
+  `Verified3DBox` for the float-valued predicate. Exact real containment needs the interval
+  statement described above and an argument that the float executor's intervals enclose the
+  projection.

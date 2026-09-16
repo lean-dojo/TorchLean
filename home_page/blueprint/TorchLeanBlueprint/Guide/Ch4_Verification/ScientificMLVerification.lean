@@ -35,8 +35,9 @@ tag := "scientific-ml-verification"
 
 Scientific models need guarantees between the points where they are evaluated. A trained PINN
 may look accurate on a plot while violating its PDE between sample points. A numerical ODE
-trajectory may look smooth while accumulated error takes it outside the claimed corridor. A spline fit may be
-excellent at the knots and deviate from the target inside one interval. TorchLean's scientific
+trajectory may look smooth while accumulated error takes it outside the claimed corridor.
+A spline fit may be excellent at the knots and deviate from the target inside one interval.
+TorchLean's scientific
 checkers examine finite certificates: proposed corridors, residual intervals, or polynomial pieces
 whose conditions can be recomputed.
 
@@ -871,8 +872,9 @@ are the user-facing pieces for that path.
 
 A PINN claim names the PDE residual, domain, boundary data, and parameters as well as the model
 architecture. TorchLean records these inputs across its PINN tools. `pinn-cli` explores one- and
-two-dimensional residual boxes with IBP or CROWN-style methods, while `pinn-dataset-check` performs pointwise interval containment
-checks and can load an optional PyTorch parameter file. The dataset command is report-only by
+two-dimensional residual boxes with IBP or CROWN-style methods, while `pinn-dataset-check`
+performs pointwise interval containment checks and can load an optional PyTorch parameter file.
+The dataset command is report-only by
 default: it prints `ok` and `bad` counts but exits successfully even when misses are present. Use
 
 ```terminal

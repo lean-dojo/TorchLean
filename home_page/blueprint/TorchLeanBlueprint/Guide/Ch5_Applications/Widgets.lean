@@ -135,8 +135,8 @@ has a checker, check it first and then inspect the accepted object.
 # Tensor Viewer
 
 I encode the three indices of `rankThreeGrid` in the hundreds, tens, and units places so we can
-recognize an axis change in the entries themselves. The floating-point vectors address a separate inspection problem:
-decimal printing can hide differences in scalar representation.
+recognize an axis change in the entries themselves. The floating-point vectors address a
+separate inspection problem: decimal printing can hide differences in scalar representation.
 
 ```lean
 -- Encode tensor coordinates in decimal digits and keep

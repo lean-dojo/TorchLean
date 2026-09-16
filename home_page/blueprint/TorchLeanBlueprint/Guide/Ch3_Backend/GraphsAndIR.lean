@@ -297,8 +297,8 @@ and passes a payload separately, which is what makes it possible to run the same
 parameters later in this chapter.
 
 FX adds an explicit `output` node, so its listing has seven nodes. TorchLean names the output by
-id, and `Graph.denote` takes `outputId := 5`. The extra FX node selects the result; it adds no tensor
-calculation.
+id, and `Graph.denote` takes `outputId := 5`. The extra FX node selects the result; it adds no
+tensor calculation.
 
 The PyTorch output at `x0` is `0.027713`. We will compare it with the IR evaluator after supplying
 the parameter payload.

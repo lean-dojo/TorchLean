@@ -634,7 +634,8 @@ contain the dataset, complete model state, or every setting needed to reproduce 
   "betaStart=0.000100", "betaEnd=0.120000"]}
 ```
 
-The default $`\beta` range, $`10^{-4}` to $`0.12`, has a larger upper variance than the linear schedule of
+The default $`\beta` range, $`10^{-4}` to $`0.12`, has a larger upper variance than the linear
+schedule of
 {Informal.citet ddpm2020}[], which used $`10^{-4}` to $`0.02` over a thousand steps. A short
 schedule may need larger variances to make its terminal distribution resemble pure
 noise. The two-step run above does not achieve that: its final cumulative coefficient
@@ -1036,8 +1037,8 @@ In this identity-decoder fixture, selecting code zero makes every squared-distan
 $`(1^2+(-0.5)^2)/2=0.625`. Weighting commitment by $`0.25` gives
 $`0.625+0.625+0.25\cdot0.625=1.40625`. Forcing code one changes the coordinate differences
 to $`0` and $`-1.5`, so the common mean becomes $`1.125` and the total becomes $`2.53125`.
-I use the identity decoder so we can compare all three loss terms directly. With a learned nonlinear decoder,
-nearest latent distance need not select the smallest reconstruction error.
+I use the identity decoder so we can compare all three loss terms directly. With a learned
+nonlinear decoder, nearest latent distance need not select the smallest reconstruction error.
 
 Changing latent width affects the training scale even when nearest-code ordering is unchanged.
 A mean squared distance divides each coordinate's contribution by the number of latent coordinates.

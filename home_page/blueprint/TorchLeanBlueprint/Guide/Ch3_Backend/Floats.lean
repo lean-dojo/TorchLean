@@ -221,7 +221,8 @@ of schedules, rather than treating associativity of real addition as a floating-
 
 # Formats And Rounding
 %%%
-tag := "TorchLean--Floating-Point-and-Native-Boundaries--Floating-Point-Semantics--Flocq-And-FloatLib___s-Generic-Theory"
+tag := "TorchLean--Floating-Point-and-Native-Boundaries--Floating-Point-Semantics--\
+        Flocq-And-FloatLib___s-Generic-Theory"
 %%%
 
 A format tells us which real numbers are available. A rounding rule chooses one of those numbers.
@@ -1366,8 +1367,9 @@ Use the smallest layer that states the claim accurately:
   * runtime result plus an explicit bridge or boundary
 :::
 
-The table also helps when a numerical argument gets stuck. If a theorem is cluttered with NaN cases while the
-algorithm assumes a finite path, move up to `FP32`. If a proof needs the sign of zero or an
+The table also helps when a numerical argument gets stuck. If a theorem is cluttered with NaN
+cases while the algorithm assumes a finite path, move up to `FP32`. If a proof needs the sign
+of zero or an
 exception flag, use the configured bit-level operations. If two GPU runs disagree, inspect
 reduction and
 contraction policy before blaming the real-valued model.

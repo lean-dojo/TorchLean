@@ -676,8 +676,9 @@ steps=1 arithmetic=ieee scalar=IEEE32Exec loss=1.159370 -> 1.100337
 
 The two implementations agree to six printed decimals on this update. Native arithmetic executes
 hardware floating-point operations; FloatLib binary32 computes binary32 operations with rounding
-defined in Lean. Running both can expose a disagreement between the executable reference and the runtime,
-although this transcript neither compares every bit nor covers other inputs. The proof statements
+defined in Lean. Running both can expose a disagreement between the executable reference and
+the runtime, although this transcript neither compares every bit nor covers other inputs.
+The proof statements
 and their assumptions are in {ref "fp32-soundness"}[Float32 Soundness];
 {ref "floats"}[Floating-Point Semantics] describes the scalar types {Informal.citep flocq2011}[].
 
@@ -718,8 +719,9 @@ lake exe torchlean quickstart_mlp --steps 1 --execution eager
 lake exe torchlean quickstart_mlp --steps 1 --execution typed-graph
 ```
 
-Both runs printed `loss=1.159370 -> 1.100337` and the same held-out prediction. This is one numerical
-comparison of the eager and typed-graph paths. The flag selects a shape-indexed host execution
+Both runs printed `loss=1.159370 -> 1.100337` and the same held-out prediction. This is one
+numerical comparison of the eager and typed-graph paths. The flag selects a shape-indexed
+host execution
 path; it does not request CUDA graph capture, compiler optimization, or a derivative proof.
 Some specialized CUDA applications require eager execution.
 {ref "execution-modes"}[Execution Modes] compares the paths.

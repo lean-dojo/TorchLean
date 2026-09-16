@@ -517,8 +517,9 @@ The printed shape tags correspond to the return type:
 ```
 
 The returned state gradient has type `autograd.model.State model α`, the same type as the
-parameters that went in. The pack checks their ordered shape list, but it cannot detect a semantic swap
-between gradients for two parameters with equal shapes. The input gradient is returned alongside
+parameters that went in. The pack checks their ordered shape list, but it cannot detect a
+semantic swap between gradients for two parameters with equal shapes. The input gradient is
+returned alongside
 the state gradient, so both results come from the same reverse pass.
 
 The type protects structural correspondence: a `[3,2]` weight gradient cannot occupy the `[3]`

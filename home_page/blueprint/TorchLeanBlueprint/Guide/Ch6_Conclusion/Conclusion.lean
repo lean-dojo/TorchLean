@@ -25,7 +25,8 @@ tag := "conclusion"
 file := "Where-The-Pieces-Meet"
 %%%
 
-Return to the regression model. After training, its parameter tuple $`\theta` contains weight matrices
+Return to the regression model. After training, its parameter tuple $`\theta` contains weight
+matrices
 $`W_1,W_2` and bias vectors $`b_1,b_2`:
 
 $$`
@@ -167,8 +168,9 @@ open NN.MLTheory.CROWN in
 false
 ```
 
-The first result, 6, lies in $`[5.5,6.5]`; the second, 1, does not. The second result still satisfies
-the real lower bound proved above. We asked a stricter question when we chose this output window.
+The first result, 6, lies in $`[5.5,6.5]`; the second, 1, does not. The second result still
+satisfies the real lower bound proved above. We asked a stricter question when we chose this
+output window.
 Testing both catches a checker
 that returns `true` unconditionally on these cases. Larger certificate workflows also test
 malformed evidence; see {ref "certificates"}[the certificate chapter].

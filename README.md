@@ -21,11 +21,6 @@ lake build
 For Linux, macOS, Windows/WSL, CUDA, optional LibTorch support, and an explanation of
 TorchLean's backend architecture, see the [Installation guide](https://lean-dojo.github.io/TorchLean/installation/).
 
-TorchLean's `lean-toolchain` requires
-`leanprover/lean4:v4.34.0`. Its numerical library is
-[FloatLib](https://github.com/lean-dojo/FloatLib), pinned in `lakefile.lean` to
-`40301cd44f253a4ac6ccd34a0eb6c221e185e25c`.
-
 ## Quickstart
 
 ```bash
@@ -37,7 +32,8 @@ lake -R -K cuda=true build
 lake -R -K cuda=true exe torchlean mlp --device cuda --steps 1000
 ```
 
-The first quickstart uses FloatLib's binary32 arithmetic. The second uses Lean's native `Float32`.
+The first quickstart uses [FloatLib](https://github.com/lean-dojo/FloatLib)'s binary32 arithmetic.
+The second uses Lean's native `Float32`.
 For more precision, choose a FloatLib binary format directly in typed tensors and models, as shown
 below.
 The CUDA command selects the native GPU runtime and reports an error when CUDA is unavailable.
@@ -186,9 +182,9 @@ rate and gradients in the same type. It preserves frozen state and rejects model
 hooks, including BatchNorm. The [typed training example](NN/Examples/Quickstart/TypedTraining.lean)
 combines a typed VJP with this update to fit an affine model in binary128.
 
-Here is one such update. For \(a=1+2^{-100}\), the initial model is \(x\mapsto ax+a\).
-At input 2 and target 0, half squared error gives parameter gradients \(6a\) and \(3a\).
-An SGD step of size \(1/8\) gives weight \(a/4\) and bias \(5a/8\):
+Take $a = 1 + 2^{-100}$ and start with the affine model $x \mapsto ax + a$.
+For input $2$ and target $0$, the gradients of half squared error are $6a$ for the weight
+and $3a$ for the bias. One SGD step with learning rate $1/8$ gives weight $a/4$ and bias $5a/8$:
 
 ```lean
 import NN.API
@@ -216,7 +212,7 @@ def trainOnce : IO (Option Rat) := do
 #eval trainOnce
 ```
 
-The final prediction is \(9a/8\). Returning an exact rational observation preserves the digits
+The final prediction is $9a/8$. Returning an exact rational observation preserves the digits
 that would disappear in a conversion to binary64. The same typed interfaces accept other valid
 configured binary formats; their rounding can change the arithmetic result.
 

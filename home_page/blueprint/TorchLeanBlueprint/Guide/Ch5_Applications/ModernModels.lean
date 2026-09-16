@@ -763,10 +763,11 @@ general: stable softmax subtracts the row maximum, and an all-sentinel row becom
 before exponentiation, producing uniform weights rather than an all-zero masked row.
 
 The specification layer states its causality theorem over $`\mathbb{R}`, where the exponential
-of any real number is strictly positive. A finite sentinel therefore gives positive strict-future weights;
-their size depends on the sentinel and the other logits. An exact-zero theorem cannot apply.
-TorchLean forms the softmax numerators directly, taking blocked entries to be zero by definition, which makes the
-statement exact:
+of any real number is strictly positive. A finite sentinel therefore gives positive
+strict-future weights; their size depends on the sentinel and the other logits.
+An exact-zero theorem cannot apply.
+TorchLean forms the softmax numerators directly, taking blocked entries to be zero by
+definition, which makes the statement exact:
 
 ```lean (name := mmCausalThm)
 -- Inspect the strict-future hypothesis and the exact zero
@@ -1000,8 +1001,8 @@ therefore determines which frequencies the spectral branch can change.
 
 The configuration in {src "NN/API/Models/FNO.lean"}[`NN.API.Models.FNO`] is again parameterized by
 spatial rank, and the field-to-field boundary is visible in its shapes: a grid of sixty-four points
-with a mode-band width of twelve, a latent width of thirty-two, and four blocks maps a sampled field to a
-sampled field of the same extent.
+with a mode-band width of twelve, a latent width of thirty-two, and four blocks maps a sampled
+field to a sampled field of the same extent.
 
 ```lean (name := mmFnoShapes)
 -- Predict a scalar field on the same grid, with a separate

@@ -6,9 +6,11 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Elab
-public import NN.Tensor.Internal.Laws.Equivalence
-public import Mathlib.Data.Matrix.Mul
 public import Mathlib.LinearAlgebra.Matrix.Trace
+public import NN.Tensor.Internal.Elab.TensorLiteral
+public import Std.Tactic.BVDecide.Normalize.Prop
+import NN.Spec.Core.Tensor
+import NN.Tensor.Internal.Elab.Syntax
 
 /-!
 # Mathlib matrix correspondence

@@ -14,8 +14,6 @@ Native TorchLean 1D FNO on the Burgers operator:
 
 module
 
-public import NN.API
-public import NN.Examples.Support
 public import NN.Examples.Models.Common.Train
 public import NN.Runtime.Autograd.Engine.Cuda.Fno1dRfftFused
 

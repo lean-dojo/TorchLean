@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph.Engine.Refinement
 public import NN.Verification.Cert.IBPCert
 public import NN.Tensor
 

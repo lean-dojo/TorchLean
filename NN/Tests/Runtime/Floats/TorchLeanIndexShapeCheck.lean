@@ -7,15 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.Tests.Runtime.Floats.Utils
-public import Std
-public import NN.API.Module.Execution
-public import NN.API.Neural.Builders
 public import NN.API.Seeded
-public import NN.Runtime.Autograd.Model.Module.Objective
 public import NN.Runtime.Autograd.Model.Session.Autograd
 public import NN.Runtime.Autograd.Model.Session.ShapeIndex
-public import NN.Runtime.Autograd.Model.Session.Types
-public import NN.Runtime.Autograd.Torch.Core.Types
 
 /-!
 # TorchLeanIndexShapeCheck

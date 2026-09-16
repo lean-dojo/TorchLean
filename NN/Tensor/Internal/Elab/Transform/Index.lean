@@ -7,8 +7,9 @@ module
 
 public meta import NN.Tensor.Internal.Elab.Einsum.Index
 public meta import NN.Tensor.Internal.Elab.Native.Index
-public import NN.Tensor.Internal.Laws.Equivalence.Plan
 public import NN.Tensor.Internal.Laws.Equivalence -- shake: keep
+public import NN.Tensor.Internal.Elab.Einsum.Index
+import NN.Tensor.Internal.Elab.Native.Index
 
 /-!
 # Certified transform index compilation

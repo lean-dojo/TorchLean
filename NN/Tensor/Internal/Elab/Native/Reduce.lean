@@ -10,6 +10,9 @@ public import NN.Tensor.Internal.Elab.Native.Tensor -- shake: keep
 public meta import NN.Tensor.Internal.Elab.Einsum.Kernel.Affine
 public meta import NN.Tensor.Internal.Elab.Einsum.Kernel.Index
 public meta import NN.Tensor.Internal.Elab.Native.ReductionIndex
+public import NN.Tensor.Internal.Elab.Einsum.Kernel.Affine
+public import NN.Tensor.Internal.Elab.Einsum.Kernel.Index
+public import NN.Tensor.Internal.Elab.Native.ReductionIndex
 
 /-!
 # Certified native reduction loops

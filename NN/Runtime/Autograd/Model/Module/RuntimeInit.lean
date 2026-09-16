@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Torch.Initialization
-import Mathlib.Algebra.Order.Algebra
 public import NN.Runtime.Autograd.Torch.Core.Trainer.Parameters
 public import NN.Runtime.Autograd.Model.Program -- shake: keep
 

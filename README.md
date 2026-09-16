@@ -29,7 +29,7 @@ lake exe torchlean quickstart_mlp --device cpu --steps 10 --execution eager
 
 # Optional CUDA run, if the CUDA toolkit and an NVIDIA GPU are available:
 lake -R -K cuda=true build
-lake -R -K cuda=true exe torchlean mlp --device cuda --steps 1000
+lake -R -K cuda=true exe torchlean quickstart_mlp --device cuda --steps 10 --execution eager
 ```
 
 The first quickstart uses [FloatLib](https://github.com/lean-dojo/FloatLib)'s binary32 arithmetic.

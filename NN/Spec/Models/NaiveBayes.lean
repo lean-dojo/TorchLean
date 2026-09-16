@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Context
-import Std.Data.HashMap.AdditionalOperations
 public import NN.Tensor.Internal.Representation.Storage
 
 /-!

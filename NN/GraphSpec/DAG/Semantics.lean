@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.GraphSpec.DAG.Syntax
-import Mathlib.Algebra.Order.Algebra
 
 /-!
 # Pure semantics of GraphSpec DAGs

@@ -9,7 +9,6 @@ module
 public import NN.API
 public import NN.Examples.Data.RealPaths
 public import NN.Examples.Data.SamplePaths
-public import NN.API.CLI.Trainer
 
 /-!
 # CIFAR10-style image loader tutorial (NPY, offline)

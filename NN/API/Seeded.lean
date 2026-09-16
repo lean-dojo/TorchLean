@@ -10,18 +10,6 @@ module -- shake: keep-downstream
 
 public import NN.API.Rand -- shake: keep
 public import NN.API.Neural.Impl -- shake: keep
-public import NN.API.Macros -- shake: keep
-public import NN.Tensor -- shake: keep
-public import NN.Tensor.Conversion -- shake: keep
-public import NN.API.Neural.Blocks -- shake: keep
-public import NN.API.Neural.Indexed -- shake: keep
-public import NN.API.Neural.Layers.Attention -- shake: keep
-public import NN.API.Neural.Layers.Convolution -- shake: keep
-public import NN.API.Neural.Layers.Pooling -- shake: keep
-public import NN.API.Neural.Leading -- shake: keep
-public import NN.API.Neural.Positional -- shake: keep
-public import NN.API.Neural.Transformer -- shake: keep
-public import NN.Runtime.Autograd.Model.Functional.Fourier
 public import NN.Runtime.Autograd.Model.Functional.SelectiveScan
 public import NN.Runtime.Autograd.Model.Functional.Spectral
 

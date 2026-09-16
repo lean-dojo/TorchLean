@@ -7,8 +7,6 @@ module
 
 public import NN.Tensor.Internal.Laws.RowMajor
 public import NN.Tensor.Internal.Lowering.Reduce
-public import NN.Tensor.Internal.Laws.Equivalence.Index
-public import NN.Tensor.Internal.Lowering.Rearrange
 public import NN.Tensor.Internal.Laws.Equivalence -- shake: keep
 
 /-!

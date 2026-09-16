@@ -9,8 +9,10 @@ public import NN.Tensor.Internal.Elab.Einsum.Kernel.Product
 public meta import NN.Tensor.Internal.Elab.Einsum.Output
 public meta import NN.Tensor.Internal.Elab.Einsum.Planning
 public meta import NN.Tensor.Internal.Elab.Transform.View
-public import NN.Tensor.Internal.Syntax.Diagnostic
-public meta import NN.Tensor.Internal.Syntax.Parser.Einsum
+public import NN.Tensor.Internal.Elab.Einsum.Output
+public import NN.Tensor.Internal.Elab.Einsum.Planning
+public import NN.Tensor.Internal.Elab.Syntax
+public import NN.Tensor.Internal.Elab.Transform.View
 
 /-!
 # Elaboration of einsum

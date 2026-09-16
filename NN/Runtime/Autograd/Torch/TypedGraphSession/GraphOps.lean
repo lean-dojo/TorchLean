@@ -45,8 +45,9 @@ def runGraphM {α : Type} [TorchLean.Storage α] {Γ : List Shape} {β : Type}
     (m : Runtime.Autograd.TypedGraph.GraphM.MWith α NatEnv Γ β)
     (ss : List Shape) (g : Proofs.Autograd.Algebra.GraphData α NatEnv Γ ss) :
     Runtime.Autograd.Result (β × (Σ ss' : List Shape, Proofs.Autograd.Algebra.GraphData α
-      NatEnv Γ ss')) :=
-  StateT.run m ⟨ss, g⟩
+      NatEnv Γ ss')) := do
+  let (value, state) ← StateT.run m ⟨ss, g, #[]⟩
+  pure (value, ⟨state.nodeShapes, state.data⟩)
 
 /--
 Atomically apply a graph-building update to the session snapshot.

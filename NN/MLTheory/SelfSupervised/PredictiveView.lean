@@ -9,7 +9,6 @@ module
 public import NN.MLTheory.SelfSupervised.JEPA
 public import NN.MLTheory.SelfSupervised.MAE
 public import NN.MLTheory.SelfSupervised.VICReg
-public import Mathlib.Algebra.BigOperators.Group.Finset.Defs
 public import Mathlib.Algebra.Order.BigOperators.Group.Finset
 public import Mathlib.Basic.Real.Basic
 

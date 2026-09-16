@@ -8,8 +8,6 @@ module
 
 public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Text.DecimalFormatting
 public import FloatLib.Floats.Formats.BinaryInterchange.Format.Catalog
-public import FloatLib.Floats.Formats.BinaryInterchange.Model.Carrier
-public import Init.Meta
 
 /-!
 # Optimizer Configuration

@@ -8,12 +8,7 @@ module
 
 public import NN.API.Sample
 public import NN.MLTheory.SelfSupervised.PredictiveView
-public import NN.Tensor.Conversion
-public import NN.Tensor.Operations
-public import NN.Tensor.Reductions
-public import Std.Tactic.BVDecide.Normalize.Bool
 public import NN.API.Arithmetic -- shake: keep
-public import NN.Tensor -- shake: keep
 
 /-!
 # Arbitrary-Rank Block Masks

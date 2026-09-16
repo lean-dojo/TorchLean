@@ -8,12 +8,7 @@ module
 
 public import NN.Spec.Models.Mlp
 public import NN.Tests.Runtime.Floats.Utils
-public import Std
 public import NN.API.Seeded
-public import NN.Runtime.Autograd.Model.Autodiff
-public import NN.Runtime.Autograd.Model.Layers.Seq
-public import NN.Runtime.Autograd.Torch.Core.TypedGraph
-public import NN.Tensor.Pack
 
 /-!
 # TorchLeanSpecMlpEquivCheck

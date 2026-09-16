@@ -6,12 +6,8 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Representation.Coordinate
-public import Mathlib.Data.Fintype.Pi
-public import NN.Tensor.Internal.Representation.Basic.Core -- shake: keep
 public import NN.Tensor.Internal.Representation.Basic.Pointwise -- shake: keep
 public import Mathlib.Data.Fintype.BigOperators -- shake: keep
-public import Mathlib.Data.List.NodupEquivFin -- shake: keep
-public import Mathlib.Logic.Equiv.Prod -- shake: keep
 
 /-!
 # Axis-selection fibers

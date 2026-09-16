@@ -76,15 +76,19 @@ def tail {s : Shape} {ss : List Shape} : VarList (s :: ss) → VarList ss
 
 end VarList
 
-/--
-State for the `GraphM` builder.
+/-- Buffer writes computed from one runtime forward's recorded values. -/
+abbrev BufferUpdate (α : Type) [TorchLean.Storage α] :=
+  (∀ {s : Shape}, Nat → IO (Tensor α s)) →
+  (∀ {s : Shape}, Nat → IO (Tensor α s)) → IO (Array (Nat × Spec.SomeTensor α))
 
-It is a sigma pair of:
-- the list of intermediate shapes `ss` produced so far, and
-- the corresponding executable SSA graph payload `GraphData α Δ Γ ss`.
--/
-abbrev StateWith (α : Type) [TorchLean.Storage α] (Δ : Type) (Γ : List Shape) : Type :=
-  Σ ss : List Shape, GraphData α Δ Γ ss
+/-- Graph builder state, including runtime-only buffer observers outside the pure graph. -/
+structure StateWith (α : Type) [TorchLean.Storage α] (Δ : Type) (Γ : List Shape) where
+  /-- Shapes of the intermediate values. -/
+  nodeShapes : List Shape
+  /-- Pure forward and derivative semantics. -/
+  data : GraphData α Δ Γ nodeShapes
+  /-- Buffer observers to execute against the completed runtime tape. -/
+  bufferUpdates : Array (BufferUpdate α) := #[]
 
 /-- Default `GraphM` state with no extra environment (`Δ := Unit`). -/
 abbrev State (α : Type) [TorchLean.Storage α] (Γ : List Shape) : Type :=
@@ -100,12 +104,12 @@ abbrev M (α : Type) [TorchLean.Storage α] (Γ : List Shape) : Type → Type :=
 
 /-- Empty builder state (no intermediate nodes yet). -/
 def empty {α : Type} [TorchLean.Storage α] {Γ : List Shape} : State α Γ :=
-  ⟨[], .nil⟩
+  ⟨[], .nil, #[]⟩
 
 /-- Empty builder state for an explicit environment type `Δ`. -/
 def emptyWith {α : Type} [TorchLean.Storage α]
     {Δ : Type} {Γ : List Shape} : StateWith α Δ Γ :=
-  ⟨[], .nil⟩
+  ⟨[], .nil, #[]⟩
 
 /-- Run a `GraphM` program from an empty state. -/
 def run {α : Type} [TorchLean.Storage α] {Γ : List Shape} {β : Type} (m : M α Γ β) :
@@ -145,7 +149,10 @@ The returned variable id is `Γ.length + ss.length`, i.e. it points at the newly
 def push {α : Type} [TorchLean.Storage α]
     {Δ : Type} {Γ : List Shape} {ss : List Shape} {s : Shape}
     (g : GraphData α Δ Γ ss) (node : NodeData α Δ (Γ ++ ss) s) : MWith α Δ Γ (Var s) := do
-  set (σ := StateWith α Δ Γ) ⟨ss ++ [s], .snoc g node⟩
+  modify fun state =>
+    { nodeShapes := ss ++ [s]
+      data := .snoc g node
+      bufferUpdates := state.bufferUpdates }
   pure { id := Γ.length + ss.length }
 
 /--
@@ -203,7 +210,7 @@ PyTorch comparison: a constant literal captured into a traced/typed graph.
 def const {α : Type} [TorchLean.Storage α]
     {Δ : Type} [Zero α] {Γ : List Shape} {s : Shape} (t : Tensor α s) :
     MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun _ctx _d => t
       jvp := fun _ctx _dctx _d => Tensor.full s (0 : α)
@@ -213,7 +220,7 @@ def const {α : Type} [TorchLean.Storage α]
 /-- Deterministic `U[0,1)` tensor generator (seeded, pure). -/
 def randUniform {α : Type} [TorchLean.Storage α] [Context α] {Δ : Type} {Γ : List Shape} {s : Shape}
     (seed : Nat) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let counter := ss.length
   let key := Spec.Random.keyOf seed counter
   let t : Tensor α s := Spec.Random.uniform (α := α) key (s := s)
@@ -235,7 +242,7 @@ def bernoulliMask {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape}
     (keepProb : Var Shape.scalar) (seed : Nat) :
     MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let counter := ss.length
   let key := Spec.Random.keyOf seed counter
   let ikp ← liftM (mkIdx (_α := α) (Γ := Γ) ss keepProb)
@@ -257,7 +264,7 @@ runs over dual numbers, so a later reverse rule cannot recover a dependency from
 def detach {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape}
     (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d => Tensor.detachSpec (getIdx (α := α) (xs := ctx) ix)

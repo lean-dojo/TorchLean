@@ -8,7 +8,6 @@ module
 
 public import NN.Runtime.Autograd.IRExec.Lowering.Primitives
 public import NN.Runtime.Autograd.IRExec.Lowering.Common
-public import NN.IR.Semantics
 
 /-!
 # Reduction IR Lowering

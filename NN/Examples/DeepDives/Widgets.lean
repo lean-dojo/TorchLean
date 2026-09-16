@@ -6,16 +6,20 @@ Authors: TorchLean Team
 
 module
 
-import FloatLib.Floats.Formats.BinaryInterchange.Configured
-import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
-import FloatLib.Floats.Formats.IEEE754.Native
-import NN.IR.Graph
-import NN.IR.Semantics
-import NN.MLTheory.CROWN.Graph
-import NN.Runtime.Autograd.Engine.Core
 import NN.Spec.RL.Envs.GridWorld
-import NN.Tensor
-import NN.Widgets
+import NN.MLTheory.CROWN.Graph.Core
+import NN.Runtime.Autograd.Engine.Core.Elementwise
+import NN.Runtime.RL.Core
+import NN.Runtime.Training.Log
+import NN.Widgets.IR.ExecutionTrace
+import NN.Widgets.IR.Rewrite
+import NN.Widgets.IR.ShapeInference
+import NN.Widgets.Interop.PyTorchTranslator
+import NN.Widgets.Numerics.Float32
+import NN.Widgets.RL.GridWorld
+import NN.Widgets.Runtime.Autograd
+import NN.Widgets.Runtime.Training
+import NN.Widgets.Verification.CROWN
 
 /-!
 # Widget Gallery

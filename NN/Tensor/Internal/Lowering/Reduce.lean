@@ -5,8 +5,6 @@ Authors: TorchLean contributors
 -/
 module
 
-public import NN.Tensor.Internal.Semantics.Transform.Reduction
-public import Batteries.Data.Fin.Fold -- shake: keep
 public import NN.Tensor.Internal.Lowering.Rearrange -- shake: keep
 
 /-!

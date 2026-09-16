@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API
-public import NN.API.CLI.Training.Command
 public import NN.Examples.Support
 
 /-!

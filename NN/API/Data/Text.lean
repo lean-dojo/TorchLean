@@ -6,11 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Data.SampleStream
 public import NN.API.Text.Tokenizer
-public import NN.API.Arithmetic
 public import NN.API.Data.Training -- shake: keep
-public import NN.Tensor.Conversion -- shake: keep
 
 /-!
 # Text Datasets

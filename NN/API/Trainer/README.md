@@ -84,6 +84,14 @@ gradients are accumulated, one after another, into a single update; it is not a 
 minibatch. For vectorized batching give the model a leading batch axis and build the dataset with
 `Data.batch`, whose items are already tensor minibatches, keeping `samplesPerStep := 1`.
 
+Each training forward updates running buffers from the same activations used for its gradients.
+For example, BatchNorm after dropout sees that forward's mask, not a separately replayed mask.
+This also holds inside residual and parallel blocks. Prediction uses evaluation mode and leaves
+the buffers unchanged.
+
+Eager sessions advance their seeded random stream between forwards. Typed-graph training replays
+the draws recorded in its fixed graph; it does not share the eager session's random schedule.
+
 ## Saving And Restoring
 
 ```lean

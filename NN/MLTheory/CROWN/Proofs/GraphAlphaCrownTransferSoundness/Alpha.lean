@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Common
 public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Alpha.Basic
 public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Alpha.Leaf
 public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Alpha.Shape

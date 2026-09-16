@@ -6,11 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Finset.Attr
-import Mathlib.Tactic.Basic
-import Mathlib.Tactic.SetLike
 public import NN.Spec.Core.Context
-public import NN.Tensor.Internal.Representation.Storage
 public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!

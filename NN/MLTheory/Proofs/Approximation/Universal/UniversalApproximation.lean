@@ -9,14 +9,11 @@ module
 public import NN.Spec.Models.Mlp
 public import Mathlib.Algebra.EuclideanDomain.Basic
 public import Mathlib.Algebra.EuclideanDomain.Field
-public import Mathlib.Algebra.Order.Algebra
 public import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
 public import Mathlib.Data.Sym.Sym2.Init
 import Mathlib.Tactic.NormNum.GCD
-public import NN.Proofs.Tensor.Basic.Core
 public import NN.Proofs.Tensor.Basic.Folds
 public import NN.Spec.Core.Context.Real
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Universal approximation (1D, constructive)

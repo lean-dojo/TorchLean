@@ -6,10 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Analysis.SpecialFunctions.Bernstein
-public import Mathlib.Analysis.SpecialFunctions.Gamma.Basic
-public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
-public import Mathlib.Data.Nat.Factorial.DoubleFactorial
 -- Read as an umbrella: this file names no constant from the modules below, so `lake shake` sees
 -- them as redundant. They stay because being importable under one name is the point, and because
 -- `NN.MLTheory.API` is how the theory layer reaches a typecheck target at all.
@@ -22,10 +18,8 @@ public import NN.MLTheory.Generative.Diffusion
 public import NN.MLTheory.Generative.Latent
 public import NN.MLTheory.LearningTheory
 public import NN.MLTheory.Optimization.FirstOrder
-public import NN.MLTheory.Optimization.GDLinearConvergence
 public import NN.MLTheory.Optimization.OptimizerLaws
 public import NN.MLTheory.Optimization.SmoothStrongConvexBridge
-public import NN.MLTheory.Optimization.StronglyConvexGD
 public import NN.MLTheory.Proofs
 public import NN.MLTheory.SelfSupervised
 

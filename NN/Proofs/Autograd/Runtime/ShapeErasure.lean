@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Tensor.ShapeErasure
-public import Batteries.Lean.Except
-public import Mathlib.Algebra.GroupWithZero.Nat
 
 /-!
 # Shape Erasure

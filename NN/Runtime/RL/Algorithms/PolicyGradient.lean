@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL.Core
-public import NN.Spec.Layers.Activation
 public import NN.Spec.Core.Random
 
 /-!

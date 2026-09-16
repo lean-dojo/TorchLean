@@ -6,13 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import NN.IR.Semantics
 public import NN.Tests.Runtime.Floats.Utils
 public import NN.Verification.Builtin.ExecutableLowering
-public import Std
 public import NN.API.Seeded
-public import NN.Runtime.Autograd.Model.Layers.Seq
 public import NN.MLTheory.CROWN.Graph.Engine.Derivatives -- shake: keep
+public import NN.MLTheory.CROWN.Graph.Engine.Affine
 
 /-!
 # TorchLeanIRExecEquivCheck
@@ -120,8 +118,9 @@ def checkNonlinearBoundCapabilities : IO Unit := do
         let aff22 := NN.MLTheory.CROWN.Graph.castAffineOut (α := Float) hOut affIn
         assertApprox "ReLU constant affine coefficient"
           (matVal aff22.A ⟨0, by decide⟩ ⟨0, by decide⟩) 0.0 0.0
-        assertApprox "ReLU constant affine endpoint"
-          (vecVal aff22.c ⟨0, by decide⟩) 2.0 0.0
+        let endpoint := vecVal aff22.c ⟨0, by decide⟩
+        unless 2.0 ≤ endpoint && endpoint < 2.000001 do
+          throw <| IO.userError "ReLU affine endpoint lost its directed enclosure"
       else
         throw <| IO.userError s!"ReLU affine output dimension was {upper.outDim}, expected 2"
     else

@@ -5,12 +5,10 @@ Authors: TorchLean contributors
 -/
 module
 
-public meta import Aesop.BuiltinRules
 public import Mathlib.Algebra.Order.Field.Basic
 import Mathlib.Tactic.NormNum.Inv
 import Mathlib.Tactic.NormNum.Pow
 import Mathlib.Tactic.Positivity.Finset
-meta import Mathlib.Tactic.ToAdditive
 public meta import NN.Tensor.Internal.Elab.Einsum.Contraction.Loop -- shake: keep
 
 /-!

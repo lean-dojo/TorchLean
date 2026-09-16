@@ -8,8 +8,6 @@ module
 
 public import NN.Runtime.Autograd.IRExec.Lowering.Primitives
 public import NN.Runtime.Autograd.IRExec.Lowering.Common
-public import NN.IR.HardMask
-public import NN.Spec.Layers.Attention
 
 /-!
 # Elementwise and Activation IR Lowering

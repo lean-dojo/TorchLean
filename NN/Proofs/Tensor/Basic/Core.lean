@@ -8,24 +8,10 @@ Authors: TorchLean Team
 -- cannot see those downstream lookups, so keep the marked imports.
 module -- shake: keep-downstream
 
-public import Mathlib.Basic.Real.Basic -- shake: keep
-public import NN.Spec.Core.TensorOps -- shake: keep
-public import NN.Spec.Core.TensorReductionShape.ShapeChange -- shake: keep
-public import Mathlib.Algebra.BigOperators.GroupWithZero.Action -- shake: keep
-public import Mathlib.Algebra.BigOperators.Ring.Finset -- shake: keep
-public import Mathlib.Algebra.BigOperators.Ring.List -- shake: keep
-public import Mathlib.Algebra.BigOperators.Ring.Multiset -- shake: keep
 public import Mathlib.Algebra.BigOperators.Ring.Nat -- shake: keep
-public import Mathlib.Data.Fin.Basic -- shake: keep
-public import Mathlib.Data.List.FinRange -- shake: keep
 public import NN.Proofs.Tensor.Algebra -- shake: keep
-public import NN.Spec.Core.Context -- shake: keep
-public import NN.Spec.Core.Shape -- shake: keep
-public import NN.Spec.Core.Tensor -- shake: keep
-public import NN.Spec.Core.TensorReductionShape.Broadcasting -- shake: keep
 public import NN.Spec.Core.TensorReductionShape.ConcatSlice -- shake: keep
 public import NN.Spec.Core.TensorReductionShape.LinearAlgebra -- shake: keep
-public import NN.Spec.Core.TensorReductionShape.Reductions -- shake: keep
 
 /-!
 # Real Tensor Proof Toolkit

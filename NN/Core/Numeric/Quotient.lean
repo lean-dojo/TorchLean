@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import FloatLib.Floats.Formats.IEEE754.Native
-public import FloatLib.Floats.Formats.BinaryInterchange.Dyadic.Rational
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Rounding.Runtime
 
 /-!

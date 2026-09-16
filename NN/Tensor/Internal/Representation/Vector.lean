@@ -7,8 +7,6 @@ module
 
 public import Batteries.Data.Vector.Lemmas
 public import NN.Tensor.Internal.Representation.Basic.Reindex
-public import NN.Tensor.Internal.Representation.Basic.Core -- shake: keep
-public import NN.Tensor.Internal.Representation.Basic.Pointwise -- shake: keep
 public import NN.Tensor.Internal.Representation.Basic.Traversal -- shake: keep
 
 /-!

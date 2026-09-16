@@ -9,7 +9,6 @@ module
 public import NN.API.Verification.Core
 public import NN.API.Trainer.Core
 public import NN.MLTheory.CROWN.Cert.AlphaBetaCROWN
-public import NN.Verification.Builtin.Lowering.API
 public import NN.API.Neural.Execution -- shake: keep
 public import NN.Verification.Builtin.Lowering -- shake: keep
 

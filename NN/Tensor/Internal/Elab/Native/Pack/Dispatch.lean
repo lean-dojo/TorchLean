@@ -6,10 +6,10 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Laws.PackIndex
-public meta import Mathlib.Algebra.GroupWithZero.Nat
 public import NN.Tensor.Internal.Elab.Einsum.Kernel.Index
-public meta import NN.Tensor.Internal.Elab.Native.Index
 public meta import NN.Tensor.Internal.Elab.Native.Pull -- shake: keep
+import NN.Tensor.Internal.Elab.Native.Index
+import NN.Tensor.Internal.Elab.Native.Tensor
 
 /-!
 # Certified native pack dispatch

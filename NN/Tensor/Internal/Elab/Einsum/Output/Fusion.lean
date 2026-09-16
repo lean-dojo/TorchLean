@@ -5,8 +5,6 @@ Authors: TorchLean contributors
 -/
 module
 
-public meta import Aesop.BuiltinRules
-meta import Mathlib.Tactic.ToAdditive
 public import NN.Tensor.Internal.Elab.Einsum.Tiling.Width4
 public import NN.Tensor.Internal.Elab.Einsum.Tiling.Width8
 public meta import NN.Tensor.Internal.Elab.Einsum.Tiling -- shake: keep

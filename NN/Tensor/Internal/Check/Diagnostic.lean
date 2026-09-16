@@ -5,7 +5,6 @@ Authors: TorchLean contributors
 -/
 module
 
-public import NN.Tensor.Internal.Syntax.Span
 public import NN.Tensor.Internal.Syntax.Diagnostic -- shake: keep
 
 /-!

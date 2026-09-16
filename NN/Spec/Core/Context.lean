@@ -8,10 +8,6 @@ module
 
 public import NN.Core.Numeric
 public import NN.Core.Numeric.Quotient
-public import Mathlib.Algebra.Field.Defs
-public import Mathlib.Algebra.Order.Ring.Defs
-public import Mathlib.Algebra.Order.Group.Unbundled.Abs
-public import Mathlib.Data.Rat.Cast.Defs
 
 /-!
 # `Context α`: scalar interface for models + proofs

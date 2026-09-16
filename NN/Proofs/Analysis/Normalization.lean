@@ -8,7 +8,6 @@ module
 
 public import NN.Spec.Layers.Normalization.BatchNorm
 public import NN.Spec.Core.Context.Real
-import Mathlib.Algebra.Order.Algebra
 import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
 import Mathlib.Data.Sym.Sym2.Init
 import Mathlib.Tactic.NormNum.GCD

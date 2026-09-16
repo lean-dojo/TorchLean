@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Seeded
-public import NN.API.Macros -- shake: keep
 
 /-!
 # Convolutional Classifier

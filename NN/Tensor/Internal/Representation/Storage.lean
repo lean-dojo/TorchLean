@@ -6,16 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import Batteries.Data.Fin.Fold
-public import Aesop.BuiltinRules
-public import Mathlib.Data.Nat.Basic
-public import Mathlib.Order.RelClasses
-import Mathlib.Tactic.Attr.Core
-import Mathlib.Tactic.Conv
-import Mathlib.Tactic.Finiteness.Attr
-import Mathlib.Tactic.Widget.Calc
-public import Batteries.Data.Fin.Lemmas -- shake: keep
-public import Init.Data.ByteArray.Lemmas -- shake: keep
-public import Init.Data.FloatArray -- shake: keep
 public import Mathlib.Data.List.OfFn -- shake: keep
 
 /-!

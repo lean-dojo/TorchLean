@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Analysis.SpecialFunctions.Pow.Real
 public import NN.Core.Numeric.Real
 public import NN.Spec.Core.Context
 

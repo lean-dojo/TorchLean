@@ -7,7 +7,6 @@ module
 
 public import NN.Tensor.Internal.Check.Diagnostic
 public import NN.Tensor.Internal.Representation.Shape
-public import NN.Tensor.Internal.Syntax.Ast
 public import NN.Tensor.Internal.Syntax.Parser -- shake: keep
 
 /-!

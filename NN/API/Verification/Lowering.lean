@@ -8,11 +8,7 @@ Authors: TorchLean Team
 -- cannot see those downstream lookups, so keep the marked imports.
 module -- shake: keep-downstream
 
-public import NN.API.Neural.Builders -- shake: keep
-public import NN.Verification.Builtin.Lowering.API -- shake: keep
 public import NN.API.Neural.Execution -- shake: keep
-public import NN.Tensor -- shake: keep
-public import NN.MLTheory.CROWN.Flatbox -- shake: keep
 public import NN.MLTheory.CROWN.Graph -- shake: keep
 public import NN.Verification.Builtin.Lowering -- shake: keep
 
@@ -61,7 +57,10 @@ def inputShape? {α : Type} [TorchLean.Storage α] [Context α]
     (lowered : LoweredIR α) : Except String Shape :=
   lowered.inputShape?
 
-/-- Run the forward affine pass after validating the lowered verifier input. -/
+/-- Compute upper affine bounds after validating the lowered verifier input.
+
+The engine retains both sides internally so negative coefficients use the correct parent bound.
+-/
 def runAffine {α : Type} [TorchLean.Storage α] [Context α]
     [NN.MLTheory.CROWN.BoundOps α]
     (lowered : LoweredIR α) (parameters : ParamStore α)
@@ -71,7 +70,7 @@ def runAffine {α : Type} [TorchLean.Storage α] [Context α]
   pure <| NN.MLTheory.CROWN.Graph.runAffine
     (α := α) lowered.graph parameters affineContext intervalBounds
 
-/-- Run forward CROWN after validating the lowered verifier input. -/
+/-- Compute nodewise CROWN bounds after validating the lowered verifier input. -/
 def runCROWN {α : Type} [TorchLean.Storage α] [Context α]
     [NN.MLTheory.CROWN.BoundOps α] [NN.MLTheory.CROWN.NonlinearBoundOps α]
     (lowered : LoweredIR α) (parameters : ParamStore α)

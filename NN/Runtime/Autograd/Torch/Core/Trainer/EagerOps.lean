@@ -47,6 +47,32 @@ instance {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfer α] :
   DataRef := fun β _ s => Tensor β s
   dataConst := fun x => x
   mapData := fun f x => f x
+  updateBuffers? := some fun refs input update session => do
+    let parameters ← session.paramsByLeaf.get
+    let storages ← session.parameterStorageByLeaf.get
+    let rec read : {ss : List Shape} → RefList (TensorRef α) ss → IO (TensorPack α ss)
+      | [], .nil => pure .nil
+      | shape :: _, .cons ref rest => do
+          session.validateTensorRef ref
+          let value ←
+            match parameters[ref.id]?, storages[ref.id]? with
+            | some parameter, some storage => do
+                if ← storage.hostCurrent.get then
+                  let value ← parameter.get
+                  if h : value.shape = shape then pure (value.cast h)
+                  else throw <| IO.userError "buffer update: state shape mismatch"
+                else session.getValue ref
+            | _, _ => session.getValue ref
+          pure (.cons value (← read rest))
+    let values ← update (← read refs) (← session.getValue input)
+    let rec write : {ss : List Shape} → RefList (TensorRef α) ss → TensorPack α ss → IO Unit
+      | [], .nil, .nil => pure ()
+      | _ :: _, .cons ref rest, .cons value values => do
+          if let some parameter := parameters[ref.id]? then
+            unless parameter.requiresGrad do
+              parameter.set (Spec.SomeTensor.ofTensor value)
+          write rest values
+    write refs values
   rfft1dNative? := some fun {batch n} x sess =>
     Internal.EagerSession.rfft1dNative? sess (batch := batch) (n := n) x
   irfft1dNative? := some fun {batch n} x sess =>

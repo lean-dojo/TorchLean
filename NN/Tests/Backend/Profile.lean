@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Backend.Report
-public import NN.Backend.IR
 public import NN.Runtime.Autograd.Torch.Core.Ops
 public import NN.Tensor
 

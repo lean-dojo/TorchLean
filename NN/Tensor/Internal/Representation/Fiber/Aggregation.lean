@@ -7,8 +7,6 @@ module
 
 public import NN.Tensor.Internal.Representation.Basic.Reindex
 public import NN.Tensor.Internal.Representation.Fiber.Basic
-public import Mathlib.Data.Fintype.BigOperators
-public import NN.Tensor.Internal.Representation.Fiber.Axis -- shake: keep
 public import NN.Tensor.Internal.Representation.Reduction -- shake: keep
 public import Mathlib.Algebra.BigOperators.Ring.Finset -- shake: keep
 

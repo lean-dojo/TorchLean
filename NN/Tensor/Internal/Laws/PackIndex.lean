@@ -8,9 +8,6 @@ module
 public import NN.Tensor.Internal.Laws.MixedRadix
 public import NN.Tensor.Internal.Laws.RowMajor
 public import NN.Tensor.Internal.Semantics.Pack
-public import NN.Tensor.Internal.Laws.Equivalence.Index
-import Mathlib.Algebra.Order.Group.Nat
-import Mathlib.Tactic.Ring.RingNF
 import Mathlib.Tactic.Ring -- shake: keep
 public import NN.Tensor.Internal.Laws.Equivalence -- shake: keep
 

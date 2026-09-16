@@ -8,7 +8,6 @@ module
 
 public import NN.Spec.Autograd.AutogradSpec
 public import NN.Spec.Core.Sequence
-public import Mathlib.Algebra.GroupWithZero.Nat
 public import NN.Spec.Core.TensorReductionShape.Reductions
 
 /-!

@@ -8,7 +8,6 @@ module
 
 public import NN.Runtime.Autograd.Engine.Cuda.Tape
 public import NN.Backend.Profile
-import Mathlib.Algebra.Order.Algebra
 public import NN.Spec.Core.Tensor.SomeTensor
 
 /-!

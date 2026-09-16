@@ -7,11 +7,10 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Operators.Activations
-public import NN.MLTheory.CROWN.Runtime.Ops
+public import NN.MLTheory.CROWN.Graph.Engine.BackwardObjective
 public import NN.Spec.Layers.Linear
 import NN.Proofs.Tensor.Algebra
 public import NN.MLTheory.CROWN.BoundOps.Lawful
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Mlp
@@ -193,60 +192,89 @@ def boundIbp {inDim hidDim outDim : Nat} [BoundOps α]
 The lower and upper affine CROWN forms for this two-layer ReLU MLP.
 
 The returned pair is `(lower, upper)`. `boundAffineCrown` evaluates these forms on the input box and
-takes the lower and upper endpoints.
+takes the lower and upper endpoints. Exact backends use the two-layer algebraic formula;
+rounded backends share the graph engine's directed coefficient propagation.
 -/
 def affineCrownForms {inDim hidDim outDim : Nat} [BoundOps α]
   (net : TwoLayerMLP α inDim hidDim outDim)
   (xB : Box α (.dim inDim .scalar)) : AffineVec α inDim outDim × AffineVec α inDim outDim :=
-  -- First get the ReLU intervals. Then outputWeight's sign tells us which relaxation feeds the
-  -- lower or upper affine form.
-  let b1B : Box α (.dim hidDim .scalar) := { lo := net.hiddenBias, hi := net.hiddenBias }
-  let z1B := IBP.linear (α:=α) net.hiddenWeight xB b1B
-  let relaxU := ReLU.relaxVector (α:=α) (n:=hidDim) z1B.lo z1B.hi
-  let relaxL := ReLU.relaxVectorLower (α:=α) (n:=hidDim) z1B.lo z1B.hi
-  let slopeU := reluRelaxSlopeVec (α:=α) (n:=hidDim) relaxU
-  let biasU  := reluRelaxBiasVec  (α:=α) (n:=hidDim) relaxU
-  let slopeL := reluRelaxSlopeVec (α:=α) (n:=hidDim) relaxL
-  let biasL  := reluRelaxBiasVec  (α:=α) (n:=hidDim) relaxL
+  if !BoundOps.supportsExactAffineReassociation (α := α) then
+    let graph : NN.IR.Graph := ⟨#[
+      { id := 0, parents := #[], kind := .input, outShape := [inDim] },
+      { id := 1, parents := #[0], kind := .linear, outShape := [hidDim] },
+      { id := 2, parents := #[1], kind := .relu, outShape := [hidDim] },
+      { id := 3, parents := #[2], kind := .linear, outShape := [outDim] }]⟩
+    let params : Graph.ParamStore α :=
+      { inputBoxes := ({} : Std.HashMap Nat (FlatBox α)).insert 0
+          { dim := inDim, lo := xB.lo, hi := xB.hi }
+        linearWB := ({} : Std.HashMap Nat (Graph.LinParams α)).insert 1
+          { m := hidDim, n := inDim, w := net.hiddenWeight, b := net.hiddenBias } |>.insert 3
+          { m := outDim, n := hidDim, w := net.outputWeight, b := net.outputBias } }
+    let fallback :=
+      let box := boundIbp net xB
+      let zero := Tensor.full [outDim, inDim] 0
+      ({ A := zero, c := box.lo }, { A := zero, c := box.hi })
+    match Graph.directedNodeBounds? graph params { inputId := 0, inputDim := inDim }
+        (Graph.runIBP graph params) 3 with
+    | some bounds =>
+      if hIn : bounds.inDim = inDim then
+        if hOut : bounds.outDim = outDim then
+          let castForm (aff : AffineVec α bounds.inDim bounds.outDim) :
+              AffineVec α inDim outDim :=
+            Graph.castAffineIn hIn (Graph.castAffineOut hOut aff)
+          (castForm bounds.loAff, castForm bounds.hiAff)
+        else fallback
+      else fallback
+    | none => fallback
+  else
+    -- First get the ReLU intervals. Then outputWeight's sign tells us which relaxation feeds the
+    -- lower or upper affine form.
+    let b1B : Box α (.dim hidDim .scalar) := { lo := net.hiddenBias, hi := net.hiddenBias }
+    let z1B := IBP.linear (α:=α) net.hiddenWeight xB b1B
+    let relaxU := ReLU.relaxVector (α:=α) (n:=hidDim) z1B.lo z1B.hi
+    let relaxL := ReLU.relaxVectorLower (α:=α) (n:=hidDim) z1B.lo z1B.hi
+    let slopeU := reluRelaxSlopeVec (α:=α) (n:=hidDim) relaxU
+    let biasU  := reluRelaxBiasVec  (α:=α) (n:=hidDim) relaxU
+    let slopeL := reluRelaxSlopeVec (α:=α) (n:=hidDim) relaxL
+    let biasL  := reluRelaxBiasVec  (α:=α) (n:=hidDim) relaxL
 
-  let W2pos := matPosSpec (α:=α) (m:=outDim) (n:=hidDim) net.outputWeight
-  let W2neg := matNegSpec (α:=α) (m:=outDim) (n:=hidDim) net.outputWeight
+    let W2pos := matPosSpec (α:=α) (m:=outDim) (n:=hidDim) net.outputWeight
+    let W2neg := matNegSpec (α:=α) (m:=outDim) (n:=hidDim) net.outputWeight
 
-  -- Upper affine: W2pos uses ReLU upper, W2neg uses ReLU lower.
-  let W2posU := matColScaleSpec (α:=α) (m:=outDim) (n:=hidDim) W2pos slopeU
-  let W2negL := matColScaleSpec (α:=α) (m:=outDim) (n:=hidDim) W2neg slopeL
-  let AU := Spec.matMulSpec (α:=α) (Tensor.addSpec W2posU W2negL) net.hiddenWeight
-  let innerUPos := Tensor.addSpec (Tensor.mulSpec slopeU net.hiddenBias) biasU
-  let innerLNeg := Tensor.addSpec (Tensor.mulSpec slopeL net.hiddenBias) biasL
-  let cU :=
-    Tensor.addSpec
-      (Tensor.addSpec
-        (Spec.matVecMulSpec (α:=α) W2pos innerUPos)
-        (Spec.matVecMulSpec (α:=α) W2neg innerLNeg))
-      net.outputBias
+    -- Upper affine: W2pos uses ReLU upper, W2neg uses ReLU lower.
+    let W2posU := matColScaleSpec (α:=α) (m:=outDim) (n:=hidDim) W2pos slopeU
+    let W2negL := matColScaleSpec (α:=α) (m:=outDim) (n:=hidDim) W2neg slopeL
+    let AU := Spec.matMulSpec (α:=α) (Tensor.addSpec W2posU W2negL) net.hiddenWeight
+    let innerUPos := Tensor.addSpec (Tensor.mulSpec slopeU net.hiddenBias) biasU
+    let innerLNeg := Tensor.addSpec (Tensor.mulSpec slopeL net.hiddenBias) biasL
+    let cU :=
+      Tensor.addSpec
+        (Tensor.addSpec
+          (Spec.matVecMulSpec (α:=α) W2pos innerUPos)
+          (Spec.matVecMulSpec (α:=α) W2neg innerLNeg))
+        net.outputBias
 
-  -- Lower affine: W2pos uses ReLU lower, W2neg uses ReLU upper.
-  let W2posL := matColScaleSpec (α:=α) (m:=outDim) (n:=hidDim) W2pos slopeL
-  let W2negU := matColScaleSpec (α:=α) (m:=outDim) (n:=hidDim) W2neg slopeU
-  let AL := Spec.matMulSpec (α:=α) (Tensor.addSpec W2posL W2negU) net.hiddenWeight
-  let innerLPos := Tensor.addSpec (Tensor.mulSpec slopeL net.hiddenBias) biasL
-  let innerUNeg := Tensor.addSpec (Tensor.mulSpec slopeU net.hiddenBias) biasU
-  let cL :=
-    Tensor.addSpec
-      (Tensor.addSpec
-        (Spec.matVecMulSpec (α:=α) W2pos innerLPos)
-        (Spec.matVecMulSpec (α:=α) W2neg innerUNeg))
-      net.outputBias
+    -- Lower affine: W2pos uses ReLU lower, W2neg uses ReLU upper.
+    let W2posL := matColScaleSpec (α:=α) (m:=outDim) (n:=hidDim) W2pos slopeL
+    let W2negU := matColScaleSpec (α:=α) (m:=outDim) (n:=hidDim) W2neg slopeU
+    let AL := Spec.matMulSpec (α:=α) (Tensor.addSpec W2posL W2negU) net.hiddenWeight
+    let innerLPos := Tensor.addSpec (Tensor.mulSpec slopeL net.hiddenBias) biasL
+    let innerUNeg := Tensor.addSpec (Tensor.mulSpec slopeU net.hiddenBias) biasU
+    let cL :=
+      Tensor.addSpec
+        (Tensor.addSpec
+          (Spec.matVecMulSpec (α:=α) W2pos innerLPos)
+          (Spec.matVecMulSpec (α:=α) W2neg innerUNeg))
+        net.outputBias
 
-  let affU : AffineVec α inDim outDim := AffineVec.ofLinear (α:=α) AU cU
-  let affL : AffineVec α inDim outDim := AffineVec.ofLinear (α:=α) AL cL
-  (affL, affU)
+    let affU : AffineVec α inDim outDim := AffineVec.ofLinear (α:=α) AU cU
+    let affL : AffineVec α inDim outDim := AffineVec.ofLinear (α:=α) AL cL
+    (affL, affU)
 
 /--
-Single-pass affine (CROWN/DeepPoly-style) bounds for the 2-layer ReLU MLP.
+Affine (CROWN/DeepPoly-style) bounds for the 2-layer ReLU MLP.
 
-This path is only the direct two-layer MLP version. The graph-level code is still the general CROWN
-API.
+Rounded scalar backends use the same directed arithmetic as the general graph CROWN API.
 -/
 def boundAffineCrown {inDim hidDim outDim : Nat} [BoundOps α]
   (net : TwoLayerMLP α inDim hidDim outDim)
@@ -260,7 +288,8 @@ def boundAffineCrown {inDim hidDim outDim : Nat} [BoundOps α]
 End-to-end bound API exposed by this file.
 
 This API returns the IBP bound. Its enclosure guarantee depends on the selected `BoundOps`
-implementation; `boundAffineCrown` is the direct two-layer ReLU affine implementation.
+implementation; `boundAffineCrown` additionally retains affine dependence on exact backends
+and uses directed graph propagation on rounded backends.
 -/
 def boundAffine {inDim hidDim outDim : Nat} [BoundOps α]
   (net : TwoLayerMLP α inDim hidDim outDim)

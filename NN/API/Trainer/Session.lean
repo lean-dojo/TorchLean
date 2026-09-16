@@ -7,11 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Checkpoint
-public import NN.API.Trainer.Dataset
 public import NN.API.Trainer.Results
 public import NN.API.Trainer.Run
 public import NN.API.Verification.Execution
-public import NN.MLTheory.CROWN.Extras.BoundOpsIEEE32Exec
 public import NN.API.Trainer.Runner -- shake: keep
 
 /-!
@@ -273,7 +271,7 @@ def openSession {σ τ : Shape} {α : Type}
             (TensorPack.singleton (Tensor.map (Runtime.ofFloat (α := α)) input)) .nil
           Runtime.readFloatTensor output
       else do
-        let graph := runner.predictor .eval
+        let graph ← nn.lowerToTypedGraph trainer.model (α := α) (mode := .eval)
         pure fun input =>
           Runtime.readFloatTensor <| nn.TypedGraphModel.forward graph frozenState
             (Tensor.map (Runtime.ofFloat (α := α)) input)

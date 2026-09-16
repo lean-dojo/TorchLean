@@ -6,7 +6,6 @@ Authors: Nicolas Rouquette, TorchLean Team
 
 module
 
-public import FloatLib.Floats.Formats.Flocq
 
 public import NN.Floats.FP32.Notation
 

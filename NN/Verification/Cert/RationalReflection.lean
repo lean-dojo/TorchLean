@@ -10,8 +10,6 @@ public import NN.Proofs.Tensor.Algebra
 public import NN.MLTheory.CROWN.Cert.AlphaCROWN
 public import NN.MLTheory.CROWN.BoundOps.Lawful
 public import NN.Spec.Core.Context.Rational
-public import NN.Spec.Core.Context.Real
-public import Mathlib.Data.Rat.Cast.Order
 
 /-!
 # Exact rational reflection for algebraic certificates

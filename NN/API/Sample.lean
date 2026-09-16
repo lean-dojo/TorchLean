@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Arguments
-public import NN.Tensor -- shake: keep
 
 /-!
 # Supervised Samples

@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API
 public import NN.Examples.Models
 public import NN.Examples.DeepDives.AutogradTransforms
 public import NN.Examples.DeepDives.Floats.ArbIEEEExecCompare

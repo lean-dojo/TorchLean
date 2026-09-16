@@ -6,12 +6,12 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph.Engine.Affine
+public import NN.MLTheory.CROWN.Graph.Engine.IBP
 
 /-!
 # Forward CROWN Bounds
 
-This module computes lower and upper affine bounds for each graph node. The pass is
+Shared affine forms and exact-arithmetic transfer rules for graph CROWN.
 Linear nodes compose affine lower and upper forms. Operator-specific rules may retain more
 dependence, while unsupported or numerically unjustified cases fall back to constant affine bounds
 derived from the already-computed IBP box.
@@ -30,6 +30,62 @@ variable {α : Type} [TorchLean.Storage α] [Context α]
 variable [BoundOps α]
 
 open BoundOps
+
+/--
+Context for affine (CROWN/DeepPoly) propagation.
+
+Affine bounds are computed with respect to a single designated *input* node, whose flattened
+dimension is `inputDim`.
+-/
+structure AffineCtx where
+  /-- Node id treated as the input variable for affine bounds. -/
+  inputId  : Nat
+  /-- Flattened input dimension. -/
+  inputDim : Nat
+
+/-- Identity affine map on a flattened vector of length `n`. -/
+@[expose]
+def affIdentity (n : Nat) : AffineVec α n n :=
+  let A :=
+    Tensor.dim (fun i =>
+      Tensor.dim (fun j => Tensor.scalar (if decide (i.val = j.val) then 1 else 0)))
+  let c := Tensor.full (α:=α) (.dim n .scalar) 0
+  { A := A, c := c }
+
+/-- Pointwise addition of two affine maps with the same input and output dimensions. -/
+def affAdd {n m : Nat} (a1 a2 : AffineVec α n m) : AffineVec α n m :=
+  { A := Tensor.addSpec a1.A a2.A, c := Tensor.addSpec a1.c a2.c }
+
+/-- Pointwise subtraction of two affine maps with the same input and output dimensions. -/
+def affSub {n m : Nat} (a1 a2 : AffineVec α n m) : AffineVec α n m :=
+  { A := Tensor.subSpec a1.A a2.A, c := Tensor.subSpec a1.c a2.c }
+
+-- Affine helpers for linear/matmul are handled by the explicit transfer rules below.
+
+/--
+Flatten a typed convolution into the affine map it denotes.
+
+The CROWN pass uses this when a convolution is linear in the selected input. Keeping the conversion
+here lets convolution share the same affine machinery as linear and matmul nodes.
+
+-/
+def affOfConv (config : NN.IR.ConvParams α) :
+    let inShape := Shape.ofList (config.inChannels :: Tensor.to config.inputSpatial (List Nat))
+    let outSpatial :=
+      Spec.convOutSpatial config.inputSpatial config.kernel config.stride config.padding
+    let outShape := Shape.ofList (config.outChannels :: Tensor.to outSpatial (List Nat))
+    AffineVec α inShape.size outShape.size :=
+  let inShape := Shape.ofList (config.inChannels :: Tensor.to config.inputSpatial (List Nat))
+  let outSpatial :=
+    Spec.convOutSpatial config.inputSpatial config.kernel config.stride config.padding
+  let outShape := Shape.ofList (config.outChannels :: Tensor.to outSpatial (List Nat))
+  let W :=
+    NN.MLTheory.CROWN.convLinearMatrix (α := α) (inSpatial := config.inputSpatial) config.spec
+  let b := NN.MLTheory.CROWN.convBiasBroadcast (α := α) (outSpatial := outSpatial) config.spec.bias
+  AffineVec.ofLinear (α:=α)
+    (inDim := inShape.size)
+    (outDim := outShape.size)
+    W b
 
 /-!
 For a chosen flattened input node `ctx.inputId`, the pass computes a pair of affine forms
@@ -58,7 +114,11 @@ def boundsConst (inputDim outDim : Nat) (lo hi : Tensor α [outDim]) :
     loAff := { A := zA, c := lo }
     hiAff := { A := zA, c := hi } }
 
-/-- Propagate affine lower/upper bounds through an affine layer `W*x + b`. -/
+/-- Algebraic composition of affine bounds through `W*x + b` on exact scalar backends.
+
+Rounded backends must account for coefficient errors as well as final evaluation errors.
+The graph runner selects directed backward propagation for those backends.
+-/
 def propagateLinearBounds
   {n m : Nat}
   (W : Tensor α [m, n])

@@ -6,9 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Field.Basic
-import Mathlib.Tactic.NormNum.Inv
-import Mathlib.Tactic.NormNum.Pow
 import Mathlib.Tactic.Positivity.Finset
 public import NN.Spec.Core.Context
 public import NN.Spec.Core.Tensor.Core
@@ -31,21 +28,12 @@ open Spec TorchLean
 open TorchLean.Tensor
 
 /-- Strict label certificate over any indexed lower/upper bounds. -/
-def strictTopLabelBy {α : Type} [Max α] (n label : Nat)
+def strictTopLabelBy {α : Type} (n label : Nat)
     (lo hi : Fin n → α) (gt : α → α → Bool) : Bool :=
   if h : label < n then
     let y : Fin n := ⟨label, h⟩
     let loY := lo y
-    let maxOther? :=
-      (List.finRange n).foldl (fun (acc : Option α) i =>
-        if i = y then acc
-        else
-          match acc with
-          | none => some (hi i)
-          | some m => some (max m (hi i))) none
-    match maxOther? with
-    | none => true
-    | some m => gt loY m
+    (List.finRange n).all fun i => i == y || gt loY (hi i)
   else
     false
 

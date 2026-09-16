@@ -8,7 +8,6 @@ module
 
 public import Aesop.BuiltinRules
 public import Mathlib.Data.Finset.Attr
-import Mathlib.Tactic.Attr.Core
 import Mathlib.Tactic.Bound.Init
 import Mathlib.Tactic.Finiteness.Attr
 import Mathlib.Tactic.SetLike

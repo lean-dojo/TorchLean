@@ -8,7 +8,6 @@ module
 
 public import NN.Runtime.Autograd.Model.StateIO
 public import NN.API.Neural.Builders
-public import NN.API.Module.Execution -- shake: keep
 public import NN.API.Sample -- shake: keep
 
 /-!

@@ -7,16 +7,12 @@ Authors: TorchLean Team
 module
 
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured
-public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
-public import FloatLib.Floats.Formats.BinaryInterchange.Model.RealSemantics
-public import FloatLib.Floats.Formats.BinaryInterchange.Model.ERealSemantics
 public import FloatLib.Floats.Formats.IEEE754.Native
 public meta import NN.Widgets.Core.Tensor
 public meta import FloatLib.Floats.Formats.BinaryInterchange.Configured -- shake: keep
-public meta import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime -- shake: keep
-public meta import FloatLib.Floats.Formats.IEEE754.Native -- shake: keep
-public meta import NN.Widgets.Core.UI -- shake: keep
-public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
+public import NN.Widgets.Core.Tensor
+import NN.Spec.Core.Tensor
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # Float32

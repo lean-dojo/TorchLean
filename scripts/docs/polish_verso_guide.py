@@ -93,6 +93,13 @@ body {
   scroll-padding-top: 3.4rem;
 }
 
+/* Chapter anchors target whole sections, not individual Lean declarations. */
+main section:is(.bp_decl_target, .bp_decl_target_block) {
+  background: transparent;
+  box-shadow: none;
+  animation: none;
+}
+
 body.tl-progress-mounted {
   padding-top: 0;
 }

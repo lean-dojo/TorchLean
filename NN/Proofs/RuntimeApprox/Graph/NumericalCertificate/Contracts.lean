@@ -7,10 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Enclosure
-public import NN.Backend.ContractCheck
-public import NN.IR.OpContracts
-public import NN.Spec.Core.FloatInstances
-public import NN.Spec.Core.Tensor.SomeTensor
 
 /-!
 # Numerical certificate contracts

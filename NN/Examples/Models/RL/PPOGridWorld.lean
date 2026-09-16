@@ -12,9 +12,7 @@ public import NN.API
 public import NN.Examples.Support
 public import NN.Runtime.RL.Artifacts.GridWorld
 public import NN.Runtime.RL.Artifacts.DefaultPaths
-public import NN.Spec.RL.Envs.GridWorld
 public import NN.Proofs.RL.Envs.GridWorld
-import Mathlib.Tactic.NormNum.Ineq
 
 /-!
 # PPO on Lean-native GridWorld (Executable Example + Formal Model)

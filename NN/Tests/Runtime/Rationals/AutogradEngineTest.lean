@@ -11,7 +11,6 @@ public import NN.Spec.Models.Mlp
 public import NN.Tensor
 public import NN.Tests.Utils
 public import NN.Spec.Core.Context.Rational
-import Mathlib.Algebra.Order.Ring.Unbundled.Rat
 
 /-!
 # AutogradEngineTest

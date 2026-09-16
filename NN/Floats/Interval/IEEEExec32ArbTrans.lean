@@ -7,8 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.Arb.Oracle
-public import FloatLib.Floats.Formats.BinaryInterchange.DirectedSemantics.Rational.Conversion
 public import NN.Floats.Interval.IEEEExec32
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-!
 # Arb-backed enclosures with FloatLib endpoint rounding

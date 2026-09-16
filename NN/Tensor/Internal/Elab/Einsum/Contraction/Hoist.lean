@@ -7,8 +7,7 @@ module
 
 public meta import NN.Tensor.Internal.Elab.Einsum.Contraction.Index
 public import NN.Tensor.Internal.Elab.Einsum.Index
-public import NN.Tensor.Internal.Elab.Einsum.Tiling.Width4
-public import NN.Tensor.Internal.Elab.Einsum.Tiling.Width8
+public import NN.Tensor.Internal.Elab.Einsum.Contraction.Index
 
 /-!
 # Contraction-loop invariant motion

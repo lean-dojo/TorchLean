@@ -7,11 +7,14 @@ Authors: TorchLean Team
 module
 
 public meta import NN.IR.Infer
-import Mathlib.Tactic.Bound.Init
 public import NN.Spec.Core.Shape
 public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
 public meta import NN.IR.Pretty -- shake: keep
+public import NN.Widgets.Core.UI
+import Mathlib.Algebra.Order.Algebra
+import Mathlib.Analysis.SpecialFunctions.Pow.Real
+import NN.Spec.Core.Tensor
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # ShapeInfer

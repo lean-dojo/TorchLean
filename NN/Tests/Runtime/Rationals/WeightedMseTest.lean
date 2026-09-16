@@ -9,7 +9,6 @@ module
 public import NN.Runtime.Autograd.Model.Loss
 public import NN.Runtime.Autograd.Torch.Core.BackwardOptim
 public import NN.Runtime.Autograd.Torch.Core.Trainer.EagerOps
-public import NN.Tensor
 public import NN.Spec.Core.Context.Rational
 
 /-!

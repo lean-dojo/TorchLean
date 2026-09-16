@@ -8,11 +8,6 @@ module
 
 public import NN.Spec.Core.TensorReductionShape.Broadcasting
 public import NN.Spec.Core.TensorReductionShape.Reductions
-import Mathlib.Data.Rat.Cast.Order
-import Mathlib.Tactic.NormNum.Abs
-import Mathlib.Tactic.NormNum.DivMod
-import Mathlib.Tactic.NormNum.OfScientific
-import Mathlib.Tactic.NormNum.Pow
 
 /-!
 # Normalization layers (spec layer)

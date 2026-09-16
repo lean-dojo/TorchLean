@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.RuntimeApprox.NF.Ops.Plumbing
 public import NN.Proofs.RuntimeApprox.NF.Ops.Scalar
 public import NN.Spec.Core.TensorReductionShape.ConcatSlice
 public import NN.Spec.Core.TensorReductionShape.LinearAlgebra

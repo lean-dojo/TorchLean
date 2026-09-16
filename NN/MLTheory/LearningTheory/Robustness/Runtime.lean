@@ -8,7 +8,6 @@ module
 
 public import NN.MLTheory.LearningTheory.Robustness.Spec
 public import NN.Tensor.Conversion
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # `NN.MLTheory.Robustness.Runtime`

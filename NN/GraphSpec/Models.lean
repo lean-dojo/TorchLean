@@ -9,7 +9,6 @@ module
 public import NN.GraphSpec.Models.Mlp
 public import NN.GraphSpec.Models.Cnn
 public import NN.GraphSpec.Models.ResidualLinear
-public import Mathlib.Analysis.SpecialFunctions.Pow.Real
 
 /-!
 # GraphSpec Model Catalog

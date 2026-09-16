@@ -6,13 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Field.Basic
-import Mathlib.Tactic.NormNum.Inv
-import Mathlib.Tactic.NormNum.Pow
-import Mathlib.Tactic.Positivity.Finset
 public import NN.MLTheory.CROWN.Graph.Engine.Base
-public import NN.Runtime.Autograd.Torch.Core.Functional
-public import NN.Tensor.Internal.Elab.TensorLiteral
 public import NN.Runtime.Autograd.Model.Program -- shake: keep
 
 /-!

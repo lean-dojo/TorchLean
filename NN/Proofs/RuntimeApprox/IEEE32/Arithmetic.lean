@@ -7,11 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.IEEEExec.Bridge.Finite
-public import FloatLib.Floats.Formats.BinaryInterchange.Arithmetic.DivisionSemantics
-public import FloatLib.Floats.Formats.BinaryInterchange.Arithmetic.SignedSemantics.Subtraction
-public import FloatLib.Floats.Formats.BinaryInterchange.Arithmetic.SqrtSemantics
-public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Rounding.Proof
-public import FloatLib.Floats.Formats.BinaryInterchange.Operations.Compare.Proof
 
 /-!
 # Finite binary32 refinement for proof consumers

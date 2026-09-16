@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Verification.Builtin.Proved.Syntax
-public import NN.Verification.Builtin.Lowering.API
 
 /-!
 # Verified Forward Fragment: Lowering

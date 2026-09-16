@@ -6,12 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Algebra
 public import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
 public import Mathlib.Data.Sym.Sym2.Init
 import Mathlib.Tactic.NormNum.GCD
 public import NN.Proofs.Tensor.Basic.BoundsNorms
-public import NN.Tensor.Pack
 -- Typed context indices are shared with the generic and runtime-approximation
 -- graph developments, so `Idx` and `getIdx` come from one module.
 public import NN.Proofs.Autograd.Tape.Util.Idx

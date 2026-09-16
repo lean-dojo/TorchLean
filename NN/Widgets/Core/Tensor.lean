@@ -8,11 +8,13 @@ module
 
 public meta import NN.Spec.Core.Tensor.SomeTensor
 public meta import NN.Tensor.Conversion
-import Mathlib.Tactic.Bound.Init
 public import NN.Spec.Core.Tensor.Core
 public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
-public meta import NN.Spec.Core.Tensor -- shake: keep
+public import NN.Widgets.Core.UI
+import Mathlib.Algebra.Order.Algebra
+import Mathlib.Analysis.SpecialFunctions.Pow.Real
+import NN.Spec.Core.Tensor
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # Tensor

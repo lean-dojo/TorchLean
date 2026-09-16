@@ -8,11 +8,6 @@ module
 
 public import NN.Verification.Util.Json
 public import NN.Verification.Util.Tensor
-import Mathlib.Data.Rat.Cast.Order
-import Mathlib.Tactic.Linarith.Frontend
-import Mathlib.Tactic.NormNum.Abs
-import Mathlib.Tactic.NormNum.DivMod
-import Mathlib.Tactic.NormNum.OfScientific
 
 /-!
 # Tensor-native 3D box camera certificates

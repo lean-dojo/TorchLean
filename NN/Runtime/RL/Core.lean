@@ -8,15 +8,7 @@ Authors: TorchLean Team
 -- cannot see those downstream lookups, so keep the marked imports.
 module -- shake: keep-downstream
 
-public import NN.Spec.Core.TensorOps -- shake: keep
 public import NN.Spec.RL.Core -- shake: keep
-public import Batteries.Data.Array.Scan -- shake: keep
-public import Mathlib.Algebra.Order.Field.Basic -- shake: keep
-import Mathlib.Tactic.NormNum.Inv -- shake: keep
-import Mathlib.Tactic.NormNum.Pow -- shake: keep
-import Mathlib.Tactic.Positivity.Finset -- shake: keep
-public import NN.Tensor.Internal.Elab.TensorLiteral -- shake: keep
-public import NN.Spec.Core.Context -- shake: keep
 public import NN.Tensor -- shake: keep
 
 /-!

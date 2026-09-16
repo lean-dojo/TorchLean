@@ -6,7 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Representation.Fiber.Axis
-public import Mathlib.Algebra.BigOperators.Group.Finset.Defs
 
 /-!
 # Finite-fiber values

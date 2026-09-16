@@ -13,7 +13,9 @@ import Mathlib.Tactic.NormNum.Pow
 import Mathlib.Tactic.Positivity.Finset
 public import NN.Tensor.Internal.Elab.TensorLiteral
 public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
+public import NN.Widgets.Core.UI
+import NN.Spec.Core.Tensor
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # RL Boundary Rollout Viewer

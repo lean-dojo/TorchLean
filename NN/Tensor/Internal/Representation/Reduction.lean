@@ -8,7 +8,6 @@ module
 public import Mathlib.Algebra.CharZero.Defs
 public import Mathlib.Algebra.Field.Defs
 public import Mathlib.Data.Finset.Max
-public import Mathlib.Algebra.BigOperators.Group.Multiset.Defs
 public import Mathlib.Algebra.BigOperators.Group.Multiset.Basic -- shake: keep
 
 /-!

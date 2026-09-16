@@ -8,9 +8,6 @@ module
 
 public import NN.API.Trainer.Constructor
 public import NN.API.Trainer.Session
-public import NN.Runtime.Autograd.Model.Session.Types
-public import NN.Runtime.Autograd.Torch.Core.Ops.ShapeReduction
-public import NN.Runtime.Autograd.Torch.Core.Trainer
 
 /-!
 # CUDA Trainer Coverage

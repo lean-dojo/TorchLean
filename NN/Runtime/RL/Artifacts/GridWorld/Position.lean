@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Lean.Data.Json.Basic
 public import NN.Runtime.Training.Log -- shake: keep
 
 /-!

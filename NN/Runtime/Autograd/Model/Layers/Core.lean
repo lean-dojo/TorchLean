@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Model.Autodiff
-import Mathlib.Algebra.Order.Algebra
 public import NN.Runtime.Autograd.Model.Module.RuntimeInit
 
 /-!
@@ -136,6 +135,8 @@ structure Layer (σ τ : Shape) where
       Mode → ∀ {α : Type}, [TorchLean.Storage α] → [Context α] →
         TorchLean.TensorPack α stateShapes → Tensor α σ → IO (TorchLean.TensorPack α stateShapes)
     ) := none
+  /-- Composite layers delegate runtime buffer updates to their nested forward programs. -/
+  updatesBuffersInForward : Bool := false
   /--
   Forward pass as a typed TorchLean program.
 

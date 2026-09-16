@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Context
-public import NN.Spec.Core.Tensor.Core
 public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!

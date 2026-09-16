@@ -9,10 +9,7 @@ module
 public import NN.API.Module.Execution
 public import NN.API.Neural.Indexed
 public import NN.API.Sample
-public import NN.API.Optim.Config
 public import NN.API.Optim -- shake: keep
-public import NN.API.Neural.State -- shake: keep
-public import NN.Tensor -- shake: keep
 
 /-!
 # Executable Modules
@@ -39,6 +36,7 @@ structure RuntimeState (α : Type) [TorchLean.Storage α] [Context α]
   private stateRef : Runtime.Autograd.Torch.ParamList α stateShapes
   private runtime : Runtime.Config
   private modeRef : IO.Ref nn.Mode
+  private rngCounter : IO.Ref Nat
 
 namespace RuntimeState
 
@@ -54,9 +52,9 @@ namespace Internal
 opaque create {α : Type} [TorchLean.Storage α] [Context α]
     {stateShapes : List Shape}
     (stateRef : Runtime.Autograd.Torch.ParamList α stateShapes)
-    (runtime : Runtime.Config) (modeRef : IO.Ref nn.Mode) :
+    (runtime : Runtime.Config) (modeRef : IO.Ref nn.Mode) (rngCounter : IO.Ref Nat) :
     RuntimeState α stateShapes :=
-  ⟨stateRef, runtime, modeRef⟩
+  ⟨stateRef, runtime, modeRef, rngCounter⟩
 
 /-- Instantiate runtime state after converting semantic initializer tensors to `α`. -/
 def instantiate {α : Type} [TorchLean.Storage α] [Context α]
@@ -80,28 +78,35 @@ def instantiate {α : Type} [TorchLean.Storage α] [Context α]
         let values := Runtime.Autograd.Model.Module.castPack cast initial
         Runtime.Autograd.Torch.ParamList.ofPackWithRequiresGrad values requiresGrad
   let modeRef ← IO.mkRef nn.Mode.train
-  pure (create stateRef runtime modeRef)
+  let rngCounter ← IO.mkRef 0
+  pure (create stateRef runtime modeRef rngCounter)
 
 /-- Reveal parameter storage only to executable-module implementation code. -/
 opaque stateRef {α : Type} [TorchLean.Storage α] [Context α]
     {stateShapes : List Shape} (state : RuntimeState α stateShapes) :
     Runtime.Autograd.Torch.ParamList α stateShapes :=
   match state with
-  | ⟨stateRef, _, _⟩ => stateRef
+  | ⟨stateRef, _, _, _⟩ => stateRef
 
 /-- Reveal runtime configuration only to executable-module implementation code. -/
 opaque runtime {α : Type} [TorchLean.Storage α] [Context α]
     {stateShapes : List Shape} (state : RuntimeState α stateShapes) :
     Runtime.Config :=
   match state with
-  | ⟨_, runtime, _⟩ => runtime
+  | ⟨_, runtime, _, _⟩ => runtime
 
 /-- Reveal the train/eval mode cell only to executable-module implementation code. -/
 opaque modeRef {α : Type} [TorchLean.Storage α] [Context α]
     {stateShapes : List Shape} (state : RuntimeState α stateShapes) :
     IO.Ref nn.Mode :=
   match state with
-  | ⟨_, _, modeRef⟩ => modeRef
+  | ⟨_, _, modeRef, _⟩ => modeRef
+
+/-- Preserve random-operation order across successive forwards of the same module. -/
+opaque rngCounter {α : Type} [TorchLean.Storage α] [Context α]
+    {stateShapes : List Shape} (state : RuntimeState α stateShapes) : IO.Ref Nat :=
+  match state with
+  | ⟨_, _, _, counter⟩ => counter
 
 end Internal
 
@@ -259,15 +264,16 @@ def forwardWithMode {σ τ : Shape} {α : Type}
     (α := α) (tensorTransfer := tensorTransfer)
     (TorchLean.Module.RuntimeState.Internal.runtime state) model
     (TorchLean.Module.RuntimeState.Internal.stateRef state) input
-    (mode := mode)
+    (mode := mode) (rngCounter := some (TorchLean.Module.RuntimeState.Internal.rngCounter state))
 
 end Internal
 
 /--
 Evaluate one concrete input without constructing a backward tape.
 
-The module's mode controls training-sensitive layer behavior. This concrete runtime call does not
-construct a backward tape; differentiable model programs use `nn.forward`.
+The module's mode controls training-sensitive layer behavior. Training forwards update running
+buffers from their actual activations and advance the module's random stream. This concrete call
+does not construct a backward tape; differentiable model programs use `nn.forward`.
 -/
 def forward {σ τ : Shape} {α : Type}
     [TorchLean.Storage α] [Context α]
@@ -397,6 +403,7 @@ def forwardWithMode {σ τ : Shape} {α β : Type}
         (program := program)
         (TorchLean.Module.RuntimeState.Internal.runtime state)
         (TorchLean.Module.RuntimeState.Internal.stateRef state)
+        (rngCounter := some (TorchLean.Module.RuntimeState.Internal.rngCounter state))
       Runtime.Autograd.Model.Module.Evaluator.run
         evaluator TensorPack.empty (TensorPack.singleton input)
 

@@ -7,9 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Neural.Builders
-public import NN.Spec.Core.Shape -- shake: keep
 public import NN.API.Sample -- shake: keep
-public import NN.API.Neural.State -- shake: keep
 
 /-!
 # Model Automatic Differentiation

@@ -7,12 +7,10 @@ module
 
 public import NN.Tensor.Internal.Elab.Einsum.Tiling.Width4
 public import NN.Tensor.Internal.Elab.Einsum.Tiling.Width8
-public meta import Aesop.BuiltinRules
 public import Mathlib.Algebra.Order.Field.Basic
 import Mathlib.Tactic.NormNum.Inv
 import Mathlib.Tactic.NormNum.Pow
 import Mathlib.Tactic.Positivity.Finset
-meta import Mathlib.Tactic.Simps.Basic
 public meta import NN.Tensor.Internal.Elab.Einsum.Index -- shake: keep
 
 /-!

@@ -8,9 +8,6 @@ Authors: TorchLean Team
 -- cannot see those downstream lookups, so keep the marked imports.
 module -- shake: keep-downstream
 
-import Mathlib.Algebra.Order.Algebra -- shake: keep
-import Mathlib.Tactic.Bound.Init -- shake: keep
-public import NN.Spec.Core.Tensor.Core -- shake: keep
 public import NN.Spec.Core.FloatInstances -- shake: keep
 public import NN.Spec.Core.Complex -- shake: keep
 public import NN.Tensor.Conversion -- shake: keep

@@ -6,10 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Transcendentals
 public import NN.Runtime.RL.Numerics.Float32.Types
-public import NN.Spec.RL.Core
-public import NN.Tensor.Internal.Elab.TensorLiteral
 
 /-!
 # Checked Float32 Discounted Returns

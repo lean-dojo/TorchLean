@@ -8,22 +8,11 @@ module
 
 public import NN.Runtime.RL.PPO.Rollout
 public import NN.Runtime.Training.Log
-public import NN.Tensor.Conversion
 -- We compute GAE/returns in a widget (meta) context, so the RL core must be available to meta code.
-public import FloatLib.Floats.Formats.BinaryInterchange.Configured
-public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
-public import FloatLib.Floats.Formats.BinaryInterchange.Model.RealSemantics
-public import FloatLib.Floats.Formats.BinaryInterchange.Model.ERealSemantics
-public import FloatLib.Floats.Formats.IEEE754.Native
 public meta import NN.Runtime.RL.PPO.Rollout
-public meta import NN.Tensor.Conversion
 public meta import NN.Widgets.Runtime.Training
-public meta import NN.Widgets.Core.UI
-public meta import NN.Runtime.RL.Core -- shake: keep
-public meta import FloatLib.Floats.Formats.BinaryInterchange.Configured -- shake: keep
-public meta import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime -- shake: keep
-public meta import FloatLib.Floats.Formats.IEEE754.Native -- shake: keep
-public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
+public import NN.Widgets.Runtime.Training
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # PPO Rollout Viewer

@@ -5,8 +5,9 @@ Authors: TorchLean contributors
 -/
 module
 
-public meta import NN.Tensor.Internal.Tactic.Proof
 public meta import NN.Tensor.Internal.Tactic.Report
+public import NN.Tensor.Internal.Tactic.Proof
+import Mathlib.Algebra.Order.Field.Basic
 
 /-!
 # Verified tensor proof automation

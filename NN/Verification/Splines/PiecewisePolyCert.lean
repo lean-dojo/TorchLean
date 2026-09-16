@@ -9,12 +9,7 @@ module
 public import NN.Verification.Util.Json
 public import NN.Tensor.Conversion
 public import NN.Floats.Interval.IEEEExec32ArbTrans
-public import FloatLib.Floats.Formats.BinaryInterchange.Configured
-public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
-public import FloatLib.Floats.Formats.BinaryInterchange.Model.RealSemantics
-public import FloatLib.Floats.Formats.BinaryInterchange.Model.ERealSemantics
-public import FloatLib.Floats.Formats.IEEE754.Native
-public import FloatLib.Floats.Formats.BinaryInterchange.DirectedSemantics.Rational.Conversion
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-!
 # Piecewise polynomial certificates

@@ -6,14 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public meta import NN.IR.Infer
 public meta import NN.IR.Semantics
 public meta import NN.Widgets.Core.Tensor
 public meta import NN.IR.Check -- shake: keep
 public meta import NN.IR.Pretty -- shake: keep
-public meta import NN.Spec.Core.Tensor.SomeTensor -- shake: keep
-public meta import NN.Widgets.Core.UI -- shake: keep
-public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
+public import NN.Widgets.Core.Tensor
+import ProofWidgets.Component.HtmlDisplay
+public import NN.IR.Semantics
 
 /-!
 # IRExecTrace

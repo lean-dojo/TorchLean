@@ -6,6 +6,8 @@ Authors: TorchLean contributors
 module
 
 public meta import NN.Tensor.Internal.Tactic.Report.Analysis.Common
+public import NN.Tensor.Internal.Tactic.Report.Analysis.Common
+import Mathlib.Algebra.Order.Field.Basic
 
 /-!
 # Transform reports

@@ -7,10 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Model.Module.Objective
-public import NN.Runtime.Autograd.Model.Program
-public import NN.Runtime.Autograd.Torch.Core.Trainer.Recording
-public import NN.Runtime.Autograd.Torch.Core.Trainer.GraphOps
-public import NN.Runtime.Autograd.Torch.Core.TypedGraph
 
 /-!
 # Module Evaluators
@@ -82,10 +78,13 @@ def withState
     (options : Torch.Config)
     (state : Torch.ParamList α stateShapes)
     (validateDataInputs : TorchLean.TensorPack β dataInputShapes → Except String Unit :=
-      fun _ => pure ()) :
+      fun _ => pure ()) (rngCounter : Option (IO.Ref Nat) := none) :
     IO (Evaluator α β stateShapes inputShapes dataInputShapes outputShape) := do
   let options := { options with gradEnabled := false }
   let sess ← Torch.Internal.EagerSession.new (α := α) options
+  let sess := match rngCounter with
+    | some counter => { sess with rngCounter := counter }
+    | none => sess
   let programEager := program (m := Torch.Internal.EagerM α)
   let evaluate : Torch.Curried.Fn α inputShapes
       (Torch.Curried.Fn β dataInputShapes (IO (Tensor α outputShape))) :=

@@ -8,7 +8,6 @@ module
 
 public import NN.API.Verification
 public import NN.API.Data.Training
-public import NN.API.Macros
 public import NN.API.Module.Command
 public import NN.API.Trainer.Constructor
 

@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Tensor.Conversion
 public import NN.Tensor.Reductions
 public import NN.MLTheory.CROWN.Flatbox
 

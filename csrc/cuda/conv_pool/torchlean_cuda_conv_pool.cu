@@ -109,14 +109,13 @@ __device__ inline bool input_index_from_window(
     size_t* inIdxOut) {
   size_t inIdx = (size_t)c;
   for (int ax = 0; ax < rank; ++ax) {
-    const int64_t pos =
-        (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] -
-        (int64_t)padding[ax];
+    uint32_t pos;
     const uint32_t dim = inSpatial[ax];
-    if (pos < 0 || (uint32_t)pos >= dim) {
+    if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                            dim, &pos)) {
       return false;
     }
-    inIdx = inIdx * (size_t)dim + (size_t)(uint32_t)pos;
+    inIdx = inIdx * (size_t)dim + (size_t)pos;
   }
   *inIdxOut = inIdx;
   return true;
@@ -169,13 +168,14 @@ __global__ void convnd_fwd_kernel(const float* input, const float* kernel, const
       bool inBounds = true;
       size_t inIdx = (size_t)ic;
       for (int ax = 0; ax < rank; ++ax) {
-        const int pos = (int)outCoord[ax] * (int)stride[ax] + (int)kCoord[ax] - (int)padding[ax];
+        uint32_t pos;
         const uint32_t dim = inSpatial[ax];
-        if (pos < 0 || (uint32_t)pos >= dim) {
+        if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                dim, &pos)) {
           inBounds = false;
           break;
         }
-        inIdx = inIdx * (size_t)dim + (size_t)(uint32_t)pos;
+        inIdx = inIdx * (size_t)dim + (size_t)pos;
       }
       if (!inBounds) continue;
 
@@ -238,13 +238,14 @@ __global__ void convnd_dkernel_kernel(const float* input, const float* gradOutpu
     bool inBounds = true;
     size_t inIdx = (size_t)ic;
     for (int ax = 0; ax < rank; ++ax) {
-      const int pos = (int)outCoord[ax] * (int)stride[ax] + (int)kCoord[ax] - (int)padding[ax];
+      uint32_t pos;
       const uint32_t dim = inSpatial[ax];
-      if (pos < 0 || (uint32_t)pos >= dim) {
+      if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                              dim, &pos)) {
         inBounds = false;
         break;
       }
-      inIdx = inIdx * (size_t)dim + (size_t)(uint32_t)pos;
+      inIdx = inIdx * (size_t)dim + (size_t)pos;
     }
     if (!inBounds) continue;
 
@@ -287,22 +288,11 @@ __global__ void convnd_dinput_kernel(const float* kernel, const float* gradOutpu
 
       bool ok = true;
       for (int ax = 0; ax < rank; ++ax) {
-        const int num = (int)inCoord[ax] + (int)padding[ax] - (int)kCoord[ax];
-        const uint32_t s = stride[ax];
-        if (num < 0) {
+        if (!window_output_coord(inCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                 outSpatial[ax], &outCoord[ax])) {
           ok = false;
           break;
         }
-        if ((num % (int)s) != 0) {
-          ok = false;
-          break;
-        }
-        const uint32_t o = (uint32_t)(num / (int)s);
-        if (o >= outSpatial[ax]) {
-          ok = false;
-          break;
-        }
-        outCoord[ax] = o;
       }
       if (!ok) continue;
 
@@ -398,13 +388,14 @@ __global__ void maxpoolnd_bwd_kernel(const float* input, const float* gradOutput
 
     bool inBounds = true;
     for (int ax = 0; ax < rank; ++ax) {
-      const int pos = (int)outCoord[ax] * (int)stride[ax] + (int)kCoord[ax] - (int)padding[ax];
+      uint32_t pos;
       const uint32_t dim = inSpatial[ax];
-      if (pos < 0 || (uint32_t)pos >= dim) {
+      if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                              dim, &pos)) {
         inBounds = false;
         break;
       }
-      candInCoord[ax] = (uint32_t)pos;
+      candInCoord[ax] = pos;
     }
 
     if (inBounds) {
@@ -525,14 +516,14 @@ __global__ void maxpoolnd_bwd_det_kernel(const float* input, const float* gradOu
 
         bool inBounds = true;
         for (int ax = 0; ax < rank; ++ax) {
-          const int64_t pos64 =
-              (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] - (int64_t)padding[ax];
+          uint32_t pos;
           const uint32_t dim = inSpatial[ax];
-          if (pos64 < 0 || (uint64_t)pos64 >= (uint64_t)dim) {
+          if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                  dim, &pos)) {
             inBounds = false;
             break;
           }
-          candInCoord[ax] = (uint32_t)pos64;
+          candInCoord[ax] = pos;
         }
 
         if (inBounds) {
@@ -753,13 +744,14 @@ __global__ void smoothmaxpoolnd_fwd_kernel(const float* input, float* output,
     bool inBounds = true;
     size_t inIdx = (size_t)c;
     for (int ax = 0; ax < rank; ++ax) {
-      const int pos = (int)outCoord[ax] * (int)stride[ax] + (int)kCoord[ax] - (int)padding[ax];
+      uint32_t pos;
       const uint32_t dim = inSpatial[ax];
-      if (pos < 0 || (uint32_t)pos >= dim) {
+      if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                              dim, &pos)) {
         inBounds = false;
         break;
       }
-      inIdx = inIdx * (size_t)dim + (size_t)(uint32_t)pos;
+      inIdx = inIdx * (size_t)dim + (size_t)pos;
     }
 
     float v = 0.0f;
@@ -776,13 +768,14 @@ __global__ void smoothmaxpoolnd_fwd_kernel(const float* input, float* output,
     bool inBounds = true;
     size_t inIdx = (size_t)c;
     for (int ax = 0; ax < rank; ++ax) {
-      const int pos = (int)outCoord[ax] * (int)stride[ax] + (int)kCoord[ax] - (int)padding[ax];
+      uint32_t pos;
       const uint32_t dim = inSpatial[ax];
-      if (pos < 0 || (uint32_t)pos >= dim) {
+      if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                              dim, &pos)) {
         inBounds = false;
         break;
       }
-      inIdx = inIdx * (size_t)dim + (size_t)(uint32_t)pos;
+      inIdx = inIdx * (size_t)dim + (size_t)pos;
     }
 
     float v = 0.0f;
@@ -825,13 +818,14 @@ __global__ void smoothmaxpoolnd_bwd_kernel(const float* input, const float* grad
     bool inBounds = true;
     size_t inIdx = (size_t)c;
     for (int ax = 0; ax < rank; ++ax) {
-      const int pos = (int)outCoord[ax] * (int)stride[ax] + (int)kCoord[ax] - (int)padding[ax];
+      uint32_t pos;
       const uint32_t dim = inSpatial[ax];
-      if (pos < 0 || (uint32_t)pos >= dim) {
+      if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                              dim, &pos)) {
         inBounds = false;
         break;
       }
-      inIdx = inIdx * (size_t)dim + (size_t)(uint32_t)pos;
+      inIdx = inIdx * (size_t)dim + (size_t)pos;
     }
 
     float v = 0.0f;
@@ -848,13 +842,14 @@ __global__ void smoothmaxpoolnd_bwd_kernel(const float* input, const float* grad
     bool inBounds = true;
     size_t inIdx = (size_t)c;
     for (int ax = 0; ax < rank; ++ax) {
-      const int pos = (int)outCoord[ax] * (int)stride[ax] + (int)kCoord[ax] - (int)padding[ax];
+      uint32_t pos;
       const uint32_t dim = inSpatial[ax];
-      if (pos < 0 || (uint32_t)pos >= dim) {
+      if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                              dim, &pos)) {
         inBounds = false;
         break;
       }
-      inIdx = inIdx * (size_t)dim + (size_t)(uint32_t)pos;
+      inIdx = inIdx * (size_t)dim + (size_t)pos;
     }
 
     float v = 0.0f;
@@ -872,13 +867,14 @@ __global__ void smoothmaxpoolnd_bwd_kernel(const float* input, const float* grad
     bool inBounds = true;
     size_t inIdx = (size_t)c;
     for (int ax = 0; ax < rank; ++ax) {
-      const int pos = (int)outCoord[ax] * (int)stride[ax] + (int)kCoord[ax] - (int)padding[ax];
+      uint32_t pos;
       const uint32_t dim = inSpatial[ax];
-      if (pos < 0 || (uint32_t)pos >= dim) {
+      if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                              dim, &pos)) {
         inBounds = false;
         break;
       }
-      inIdx = inIdx * (size_t)dim + (size_t)(uint32_t)pos;
+      inIdx = inIdx * (size_t)dim + (size_t)pos;
     }
     if (!inBounds) continue;
 
@@ -977,14 +973,14 @@ __global__ void smoothmaxpoolnd_bwd_det_kernel(const float* input, const float* 
         bool inBounds = true;
         size_t inIdx = (size_t)c;
         for (int ax = 0; ax < rank; ++ax) {
-          const int64_t pos64 =
-              (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] - (int64_t)padding[ax];
+          uint32_t pos;
           const uint32_t dim = inSpatial[ax];
-          if (pos64 < 0 || (uint64_t)pos64 >= (uint64_t)dim) {
+          if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                  dim, &pos)) {
             inBounds = false;
             break;
           }
-          inIdx = inIdx * (size_t)dim + (size_t)(uint32_t)pos64;
+          inIdx = inIdx * (size_t)dim + (size_t)pos;
         }
 
         float v = 0.0f;
@@ -1001,14 +997,14 @@ __global__ void smoothmaxpoolnd_bwd_det_kernel(const float* input, const float* 
         bool inBounds = true;
         size_t inIdx = (size_t)c;
         for (int ax = 0; ax < rank; ++ax) {
-          const int64_t pos64 =
-              (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] - (int64_t)padding[ax];
+          uint32_t pos;
           const uint32_t dim = inSpatial[ax];
-          if (pos64 < 0 || (uint64_t)pos64 >= (uint64_t)dim) {
+          if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                  dim, &pos)) {
             inBounds = false;
             break;
           }
-          inIdx = inIdx * (size_t)dim + (size_t)(uint32_t)pos64;
+          inIdx = inIdx * (size_t)dim + (size_t)pos;
         }
 
         float v = 0.0f;

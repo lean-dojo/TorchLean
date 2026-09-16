@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.TensorOps
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Selective scan specs

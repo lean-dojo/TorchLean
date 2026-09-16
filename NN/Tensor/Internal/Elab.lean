@@ -10,6 +10,7 @@ public meta import NN.Tensor.Internal.Elab.Pack
 public meta import NN.Tensor.Internal.Elab.TensorLiteral
 public meta import NN.Tensor.Internal.Elab.Transform
 public import NN.Tensor.Internal.Runtime -- shake: keep
+import NN.Spec.Core.Tensor
 
 /-!
 # Tensor Pattern Elaborators

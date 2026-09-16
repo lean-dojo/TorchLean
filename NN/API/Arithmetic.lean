@@ -14,7 +14,6 @@ public import NN.Spec.Core.Complex
 public import NN.Spec.Core.FloatInstances
 public import NN.Spec.Core.FloatInstances.Angle
 public import NN.API.CLI
-import Mathlib.Algebra.Order.Algebra
 
 /-!
 # Runtime Arithmetic

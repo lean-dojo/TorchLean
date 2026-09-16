@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Tape.Nodes.Context
 public import NN.Proofs.Autograd.Tape.Nodes.Elementwise
 
 /-!

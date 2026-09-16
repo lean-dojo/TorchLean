@@ -5,9 +5,7 @@ Authors: TorchLean contributors
 -/
 module
 
-public import NN.Tensor.Internal.Laws.Equivalence.Plan
 public import NN.Tensor.Internal.Laws.Equivalence.Semantics
-public import NN.Tensor.Internal.Laws.Equivalence.Index -- shake: keep
 
 /-!
 # Lowered rearrangement equivalence

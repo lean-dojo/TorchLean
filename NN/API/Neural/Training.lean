@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Neural.Execution
-import NN.Runtime.Optim.Optimizers
 
 /-!
 # SGD on explicit typed model state

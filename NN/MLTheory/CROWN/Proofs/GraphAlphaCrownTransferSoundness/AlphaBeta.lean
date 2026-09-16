@@ -9,7 +9,6 @@ module
 public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Alpha
 public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.AlphaBeta.StepInversion
 public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.AlphaBeta.ReLUPhase
-public import NN.MLTheory.CROWN.Proofs.GraphCrownCertSoundness
 
 /-!
 # α/β-CROWN Graph Transfer Soundness

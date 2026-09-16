@@ -8,7 +8,6 @@ module
 
 public import NN.MLTheory.CROWN.BoundOps
 public import NN.MLTheory.CROWN.Flatbox
-public import NN.Spec.Core.Tensor.Linalg
 public import NN.Spec.Core.TensorOps
 
 /-!
@@ -69,12 +68,13 @@ def radius (b : Box α s) : Tensor α s :=
   Tensor.scaleSpec (Tensor.subSpec b.hi b.lo) ((1 / 2))
 
 /--
-Boolean `a <= b` using only the backend's decidable `>` from `Context`.
+Boolean `a <= b` using the backend's strict order and Boolean equality.
 
-This is useful for executable checks in backends that do not provide a decidable `<=`.
+Reflexivity guards reject NaNs even on backends whose strict comparison uses a total
+implementation order. For a logical containment theorem, use `containsDecBool`.
 -/
 def leBool (a b : α) : Bool :=
-  if decide (a > b) then false else true
+  a == a && b == b && (decide (b > a) || a == b)
 
 /--
 Executable containment check: returns `true` iff every component is within bounds.

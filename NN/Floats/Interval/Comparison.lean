@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.Interval.IEEEExec32
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-!
 # Comparison helpers for executable interval examples

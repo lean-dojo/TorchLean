@@ -8,7 +8,6 @@ module
 
 public import NN.Proofs.RuntimeApprox.NF.BackwardOps.Sparse
 public import NN.Proofs.RuntimeApprox.NF.ShapeOps
-public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Binary
 
 /-!
 # NF Backward Approximation Backend

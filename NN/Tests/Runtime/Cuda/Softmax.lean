@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Model.Session
-public import NN.Tensor
 public import NN.Tests.Runtime.Cuda.Utils
 
 /-!

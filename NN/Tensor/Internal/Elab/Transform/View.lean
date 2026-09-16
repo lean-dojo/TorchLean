@@ -8,8 +8,10 @@ module
 public import NN.Tensor.Internal.Lowering.TransformFusion
 public meta import NN.Tensor.Internal.Elab.Transform.Index
 public meta import NN.Tensor.Internal.Elab.Transform.ViewAttribute
-public meta import Lean.Meta.Tactic.Rewrite -- shake: keep
 public import NN.Tensor.Internal.Elab.Native.Tensor -- shake: keep
+public import NN.Tensor.Internal.Elab.Transform.Index
+import Mathlib.Algebra.Order.Field.Basic
+import NN.Tensor.Internal.Elab.Transform.ViewAttribute
 
 /-!
 # Certified input views for transform fusion

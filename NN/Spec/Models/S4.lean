@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Tensor.Linalg
 public import NN.Spec.Dynamics.StateSpace
 
 /-!

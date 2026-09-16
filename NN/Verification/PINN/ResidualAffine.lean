@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph.Engine.BackwardObjective
 public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Run
 
 /-!

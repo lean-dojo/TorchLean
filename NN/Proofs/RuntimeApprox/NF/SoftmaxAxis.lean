@@ -10,10 +10,6 @@ public import NN.Proofs.Analysis.Softmax
 public import NN.Proofs.Autograd.FDeriv.Softmax
 public import NN.Proofs.RuntimeApprox.NF.ShapeOps
 public import NN.Spec.Layers.Attention
-public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Binary
-public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.SafeDivSigmoid
-public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Unary
-public import NN.Proofs.RuntimeApprox.NF.Ops.Sum
 
 /-!
 # Axis softmax

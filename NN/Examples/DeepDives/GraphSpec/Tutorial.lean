@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API
-public import NN.API.CLI.Trainer
 public import NN.GraphSpec.Models
 public import NN.GraphSpec.ToSequential
 

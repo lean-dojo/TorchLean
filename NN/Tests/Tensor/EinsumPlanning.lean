@@ -8,6 +8,9 @@ module
 
 public meta import NN.Tensor.Internal.Elab.Einsum.Output.Planning
 public meta import NN.Tensor.Internal.Elab.Einsum.Planning
+import Mathlib.Algebra.Order.Field.Basic
+import Mathlib.Data.Finset.Attr
+import Mathlib.Tactic.SetLike
 
 /-!
 # Einsum Planner Regression Tests

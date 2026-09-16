@@ -8,7 +8,6 @@ module
 
 public import NN.Proofs.Utils.MathFunctions
 public import NN.Proofs.Tensor.Basic.Factorizations
-public import NN.Proofs.Tensor.Basic.Core -- shake: keep
 
 /-!
 # Exact reconstruction of the finite factorizations (Cholesky and QR)

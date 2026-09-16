@@ -7,6 +7,8 @@ module
 
 public meta import NN.Tensor.Internal.Elab.Einsum.Contraction.Scalarize
 public import NN.Tensor.Internal.Elab.Einsum.Index
+public import NN.Tensor.Internal.Elab.Common
+public import NN.Tensor.Internal.Elab.Einsum.Contraction.Scalarize
 
 /-!
 # Flat contraction lowering

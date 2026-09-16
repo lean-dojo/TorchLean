@@ -16,7 +16,6 @@ This is a real-data ViT-style CIFAR-10 minibatch run:
 
 module
 
-public import NN.API
 public import NN.Examples.Models.Common.RealData
 
 /-!

@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Seeded
-public import NN.API.Macros -- shake: keep
-public import NN.Tensor -- shake: keep
 
 /-!
 # Generative Models

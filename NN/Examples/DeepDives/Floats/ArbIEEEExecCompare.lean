@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.Arb.Oracle
 public import NN.Floats.Interval.IEEEExec32ArbTrans
 public import NN.Floats.Interval.Comparison
 public import NN.API.CLI

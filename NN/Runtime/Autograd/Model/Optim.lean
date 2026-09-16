@@ -8,7 +8,6 @@ module
 
 public import NN.Runtime.Autograd.Torch.ScalarTrainer
 public import NN.Runtime.Optim.Optimizers
-import Mathlib.Algebra.Order.Algebra
 
 /-!
 # Optim

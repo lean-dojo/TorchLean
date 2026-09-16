@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Node
-public import NN.MLTheory.CROWN.Graph.Engine.IBP
-public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Linear -- shake: keep
 
 @[expose] public section
 
@@ -28,13 +26,16 @@ open BoundOps
 /-!
 # Running CROWN
 
-Graph traversal and output-box evaluation for the forward CROWN pass.
+Nodewise affine bounds and output-box evaluation for CROWN.
 -/
 
 /--
-Run the forward CROWN affine-bounds pass from previously computed node intervals.
+Compute nodewise CROWN affine bounds from previously computed node intervals.
 
 Nodes without a justified affine transfer retain their IBP enclosure as a constant affine bound.
+Exact backends use a forward sweep. Rounded backends use the directed backward engine for
+each coordinate objective, retaining coefficient-rounding errors rather than reassociating
+ordinary floating-point arithmetic.
 -/
 def runCROWN (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)
     (ibp : Array (Option (FlatBox α))) : Array (Option (FlatAffineBounds α)) :=
@@ -63,7 +64,7 @@ def evalCROWNOutputBox? (bounds : Array (Option (FlatAffineBounds α))) (xB : Fl
     throw s!"CROWN input dimension mismatch: got {outAff.inDim}, expected {inputDim}"
 
 /--
-Run IBP, run forward CROWN, and evaluate the output affine bounds on the selected input box.
+Run IBP, compute CROWN output bounds, and evaluate them on the selected input box.
 
 This is the common "forward CROWN output box" workflow. It keeps callers from open-coding the same
 output-array lookup and input-dimension proof checks around `runCROWN`.
@@ -73,7 +74,13 @@ def outputBoxCROWN? (g : Graph) (ps : ParamStore α) (xB : FlatBox α)
     (inputId outputId inputDim : Nat) : Except String (FlatBox α) := do
   let ibp := runIBP (α := α) g ps
   let ctx : AffineCtx := { inputId := inputId, inputDim := inputDim }
-  let crown := runCROWN (α := α) g ps ctx ibp
+  -- The output API needs only these rows; do not run a backward sweep for every hidden node.
+  let crown :=
+    if BoundOps.supportsExactAffineReassociation (α := α) then
+      runCROWN (α := α) g ps ctx ibp
+    else
+      (Array.replicate g.nodes.size none).set! outputId
+        (directedNodeBounds? g ps ctx ibp outputId)
   evalCROWNOutputBox? (α := α) crown xB outputId inputDim
 
 namespace ParamStore

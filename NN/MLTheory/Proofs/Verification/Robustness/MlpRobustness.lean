@@ -8,7 +8,6 @@ module
 
 public import NN.Spec.Models.Mlp
 public import NN.Proofs.Analysis.Lipschitz.Network
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # MLP robustness: basic analytic lemmas

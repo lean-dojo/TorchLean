@@ -9,9 +9,7 @@ module
 public import NN.Proofs.Autograd.Tape.Ops.Conv.Index
 public import NN.Proofs.RuntimeApprox.NF.FoldLemmas
 public import NN.Tensor.Conversion
-public import NN.Proofs.RuntimeApprox.NF.Ops.Plumbing
 public import NN.Proofs.RuntimeApprox.NF.Ops.Scalar
-public import NN.Spec.Core.FloatInstances.NF
 
 /-!
 # Rounded Convolution

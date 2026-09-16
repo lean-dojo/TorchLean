@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Std
 public import NN.Tests.API.BufferUpdates
 public import NN.Tests.API.BuilderSeeds
 public import NN.Tests.API.CLI
@@ -118,8 +117,10 @@ def run : IO Unit := do
     Tests.Rationals.Suite.run
     match Runtime.Autograd.Cuda.Buffer.runtimeStatus with
     | .cpuStub =>
+        Tests.Cuda.ConvPool.runWideGeometryChecks
         IO.println "  CUDA kernels: skipped (CPU build)"
     | .nativeAvailable =>
+        NN.Tests.API.BufferUpdates.checkStochasticBuffers (device := .cuda)
         Tests.Cuda.run
     | .nativeUnavailable =>
         throw <| IO.userError

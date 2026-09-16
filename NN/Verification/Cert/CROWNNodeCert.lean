@@ -8,7 +8,6 @@ module
 
 public import NN.MLTheory.CROWN.Cert.AlphaCROWN
 public import NN.Verification.Cert.IBPNodeCert
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # CROWNNodeCert

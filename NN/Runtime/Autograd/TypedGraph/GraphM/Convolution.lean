@@ -48,7 +48,7 @@ def conv {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
   (x : Var (Shape.ofList (inC :: Tensor.to inSpatial (List Nat)))) :
   MWith α Δ Γ (Var (Shape.ofList
     (outC :: Tensor.to (Spec.convOutSpatial inSpatial kernel stride padding) (List Nat)))) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let iw ← liftM (mkIdx (_α := α) (Γ := Γ) ss w)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss b)
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -121,7 +121,7 @@ def convTranspose {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
   MWith α Δ Γ (Var (Shape.ofList
     (outC :: Tensor.to
       (Spec.convTransposeOutSpatial inSpatial kernel stride padding) (List Nat)))) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let iw ← liftM (mkIdx (_α := α) (Γ := Γ) ss w)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss b)
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)

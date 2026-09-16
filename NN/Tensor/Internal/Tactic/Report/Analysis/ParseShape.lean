@@ -5,8 +5,9 @@ Authors: TorchLean contributors
 -/
 module
 
-public import NN.Tensor.Internal.Check.ParseShape
 public meta import NN.Tensor.Internal.Tactic.Report.Analysis.Common
+public import NN.Tensor.Internal.Tactic.Report.Analysis.Common
+import Mathlib.Algebra.Order.Field.Basic
 
 /-!
 # Parse-shape reports

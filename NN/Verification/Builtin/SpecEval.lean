@@ -7,16 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Model.Program
-public import NN.Spec.Core.TensorReductionShape.Broadcasting
-public import NN.Spec.Core.TensorReductionShape.ConcatSlice
-public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
-public import NN.Spec.Core.TensorReductionShape.Reductions
-public import NN.Spec.Core.TensorReductionShape.ShapeChange
-public import NN.Spec.Layers.Activation
 public import NN.Spec.Layers.Attention
-public import NN.Spec.Layers.Conv
 public import NN.Spec.Layers.Loss
-public import NN.Spec.Layers.Normalization.Core
 public import NN.Spec.Layers.Normalization.BatchNorm
 public import NN.Spec.Layers.Pooling
 

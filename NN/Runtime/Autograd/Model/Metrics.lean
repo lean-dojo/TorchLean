@@ -8,7 +8,6 @@ module
 
 public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
 public import NN.Tensor.Conversion
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Metrics

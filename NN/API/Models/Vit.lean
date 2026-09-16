@@ -7,9 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Seeded
-public import NN.API.Runtime -- shake: keep
-public import NN.Spec.Core.Shape -- shake: keep
-public import NN.API.Macros -- shake: keep
 
 /-!
 # Vision Transformer

@@ -8,7 +8,6 @@ module
 
 public import NN.Runtime.RL.Boundary.Core
 public import NN.Proofs.RL.Tactics
-public import Batteries.Lean.Except
 
 /-!
 # RL Trust-Boundary Proofs

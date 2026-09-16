@@ -8,7 +8,6 @@ module
 
 public import NN.API.Arithmetic
 public import NN.Verification.Builtin.Lowering.API
-public import NN.MLTheory.CROWN.Extras.BoundOpsIEEE32Exec
 
 /-!
 # TorchLean Verification Lowering

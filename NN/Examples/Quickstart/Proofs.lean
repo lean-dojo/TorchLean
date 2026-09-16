@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Tensor
 public import NN.Proofs
 
 /-!

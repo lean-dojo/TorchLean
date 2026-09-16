@@ -54,7 +54,7 @@ def layerNorm {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
   (beta : Var (.dim embedDim .scalar))
   (epsilon : α := TorchLean.normalizationEpsilon) :
   MWith α Δ Γ (Var (.dim seqLen (.dim embedDim .scalar))) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let ig ← liftM (mkIdx (_α := α) (Γ := Γ) ss gamma)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss beta)
@@ -105,7 +105,7 @@ def batchNorm {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
   (epsilon : α := TorchLean.normalizationEpsilon) :
   MWith α Δ Γ (Var (.dim channels sSpatial)) := do
   let _ : Shape.WellFormed (.dim channels sSpatial) := ⟨hWellFormed⟩
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let ig ← liftM (mkIdx (_α := α) (Γ := Γ) ss gamma)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss beta)
@@ -161,7 +161,7 @@ def multiHeadAttention {α : Type} {Δ : Type} [TorchLean.Storage α] [Context �
   (x : Var (.dim n (.dim dModel .scalar)))
   (mask : Option (Tensor Bool [n, n]) := none) :
   MWith α Δ Γ (Var (.dim n (.dim dModel .scalar))) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let iwq ← liftM (mkIdx (_α := α) (Γ := Γ) ss wq)
   let iwk ← liftM (mkIdx (_α := α) (Γ := Γ) ss wk)
   let iwv ← liftM (mkIdx (_α := α) (Γ := Γ) ss wv)

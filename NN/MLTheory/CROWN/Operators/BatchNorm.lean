@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Core
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # BatchNorm operator bounds (IBP + affine)

@@ -7,9 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Core
-public import Mathlib.Algebra.Order.AbsoluteValue.Basic
-public import Mathlib.Algebra.Order.Field.Basic
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Lyapunov certificate semantics

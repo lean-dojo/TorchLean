@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Model.Layers.Core
-import Mathlib.Algebra.Order.Algebra
 
 /-!
 # Fourier Neural Operators over Arbitrary Spatial Rank

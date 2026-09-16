@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Fintype.Basic
 public import Mathlib.Basic.Real.Basic
 public import Mathlib.Algebra.BigOperators.Ring.Finset
 

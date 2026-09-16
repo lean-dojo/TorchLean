@@ -9,9 +9,6 @@ module
 public import NN.Runtime.Autograd.Model.Layers.Core
 public import NN.Runtime.Autograd.Model.Loss
 public import NN.Runtime.Autograd.Model.Module.Objective
-public import NN.Runtime.Autograd.Torch.Core.Trainer.Recording
-public import NN.Runtime.Autograd.Torch.Core.Trainer.GraphOps
-public import NN.Runtime.Autograd.Torch.Core.TypedGraph
 
 /-!
 # TorchLean NN: Sequential Models
@@ -143,6 +140,10 @@ def forwardState {σ τ : Shape} (model : Seq σ τ) {α : Type} [TorchLean.Stor
           (ss₁ := l.stateShapes) (ss₂ := stateShapes rest) ps
       do
         let y ← l.forwardRef (α := α) (m := m) mode psL x
+        if mode == .train && !l.updatesBuffersInForward then
+          if let some update := l.updateBuffers then
+            if let some observe := Torch.Ops.updateBuffers? (m := m) (α := α) then
+              observe psL x (update mode)
         forwardState (model := rest) (α := α) (m := m) mode psR y
 
 /--
@@ -187,7 +188,8 @@ def forward {σ τ : Shape} (model : Seq σ τ) (mode : Mode := .eval)
       {α : Type} [TorchLean.Storage α] [Context α]
       [tensorTransfer : Runtime.Autograd.Torch.TensorTransfer α]
       (params : Runtime.Autograd.Torch.ParamList α (stateShapes model))
-      (x : TorchLean.Tensor α σ) (mode : Mode := .eval) : IO (TorchLean.Tensor α τ) := do
+      (x : TorchLean.Tensor α σ) (mode : Mode := .eval)
+      (rngCounter : Option (IO.Ref Nat) := none) : IO (TorchLean.Tensor α τ) := do
     match validate model with
     | .error message => throw <| IO.userError message
     | .ok () => pure ()
@@ -195,6 +197,9 @@ def forward {σ τ : Shape} (model : Seq σ τ) (mode : Mode := .eval)
     -- leaves are deliberately non-differentiable and the transient tape is released before return.
     let options := { options with gradEnabled := false }
     let sess ← Runtime.Autograd.Torch.Internal.EagerSession.new (α := α) options
+    let sess := match rngCounter with
+      | some counter => { sess with rngCounter := counter }
+      | none => sess
     sess.resetTape
     try
       let outRef ← (do
@@ -249,9 +254,10 @@ def forward {σ τ : Shape} (model : Seq σ τ) (mode : Mode := .eval)
   /--
   Update per-layer buffers across a sequential model.
 
-This walks the model left-to-right and, for each layer that defines `Layer.updateBuffers`,
-updates that layer’s parameter/buffer slice using the current activation. This is used to implement
-BatchNorm-style running statistics (and similar stateful layers) in a pure, explicit way.
+This explicit reference replay walks the model left-to-right, updating each layer's state from
+its reference activation. It does not observe a previous runtime execution or reproduce an eager
+session's random stream. Live modules and trainers instead use the buffer hooks in their actual
+forward pass.
 
 PyTorch analogy: updating `running_mean` / `running_var` buffers during a forward pass in train
   mode.

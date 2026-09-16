@@ -6,18 +6,15 @@ Authors: TorchLean Team
 
 module
 
-public meta import Aesop.BuiltinRules
 public import Mathlib.Data.Finset.Attr
-meta import Mathlib.Tactic.Basic
-import Mathlib.Tactic.Bound.Init
-import Mathlib.Tactic.Finiteness.Attr
-import Mathlib.Tactic.SetLike
-meta import Mathlib.Tactic.ToAdditive
-meta import Mathlib.Tactic.ToDual
 public meta import NN.Runtime.Training.Log
-public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
 public meta import NN.Widgets.Core.Tensor -- shake: keep
+public import NN.Widgets.Core.UI
+import Mathlib.Algebra.Order.Algebra
+import Mathlib.Analysis.SpecialFunctions.Pow.Real
+import NN.Runtime.Training.Log
+import NN.Spec.Core.Tensor
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # Training

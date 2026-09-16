@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Verification.Monotonicity.Json
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-!
 # Exact monotonicity checker tests

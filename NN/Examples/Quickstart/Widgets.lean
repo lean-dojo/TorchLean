@@ -7,10 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Widgets
-public import FloatLib.Floats.Formats.BinaryInterchange.Configured
-public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
-public import FloatLib.Floats.Formats.IEEE754.Native
-public import NN.Tensor
 public import NN.API.Trainer.Reporting
 
 /-!

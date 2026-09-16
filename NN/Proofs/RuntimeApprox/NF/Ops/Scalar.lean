@@ -7,13 +7,8 @@ Authors: TorchLean Team
 module
 
 public import Mathlib.Analysis.SpecialFunctions.Log.Deriv
-public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
-public import FloatLib.Floats.Formats.Flocq.Theory.Scalar.NF
 public import NN.Proofs.RuntimeApprox.Rounding.RoundingApprox
-public import NN.Spec.Core.Context.Real
 public import NN.Spec.Core.FloatInstances.NF
-public import NN.Spec.Core.Scalar
-public import FloatLib.Floats.Formats.Flocq.Theory.Rounding.Order -- shake: keep
 public import NN.Proofs.RuntimeApprox.NF.Ops.Plumbing -- shake: keep
 
 /-!
@@ -110,17 +105,6 @@ Keeping these as named lemmas (instead of repeating huge `simp [...]` lists) mak
 forward-approx proofs much easier to read.
 -/
 
-/-- Rounding `0` is `0` for any valid rounding mode. -/
-private theorem roundR_zero :
-    Proofs.RuntimeRoundingApprox.roundR (β := β) (fexp := fexp) (rnd := rnd) (0 : ℝ) = 0 := by
-  -- For `x = 0`, the scaled mantissa is `0`, so `rnd` returns `0` by `ValidRnd.id`,
-  -- and `Flocq.toReal` is `0` regardless of exponent.
-  have hrnd0 : rnd (0 : ℝ) = 0 := by
-    -- `rnd` is exact on integers.
-    simpa using (ValidRnd.id (rnd := rnd) (n := (0 : ℤ)))
-  simp [Proofs.RuntimeRoundingApprox.roundR, Flocq.round,
-    Flocq.scaledMantissa, Flocq.toReal, hrnd0]
-
 /-- The `NF.roundR` wrapper also rounds `0` to `0`. -/
 private theorem NF_roundR_zero :
     NF.roundR (β := β) (fexp := fexp) (rnd := rnd) (0 : ℝ) = 0 := by
@@ -156,15 +140,6 @@ private theorem toSpec_mul (x y : R) :
       roundedMul (β := β) (fexp := fexp) (rnd := rnd)
         (toSpec (β := β) (fexp := fexp) (rnd := rnd) x)
         (toSpec (β := β) (fexp := fexp) (rnd := rnd) y) := by
-  rfl
-
-omit [ValidRndToNearest rnd] in
-/-- `toSpec` respects runtime division, up to an explicit rounding step. -/
-private theorem toSpec_div (x y : R) :
-    toSpec (β := β) (fexp := fexp) (rnd := rnd) (x / y) =
-      Proofs.RuntimeRoundingApprox.roundR (β := β) (fexp := fexp) (rnd := rnd)
-        (toSpec (β := β) (fexp := fexp) (rnd := rnd) x /
-          toSpec (β := β) (fexp := fexp) (rnd := rnd) y) := by
   rfl
 
 omit [ValidRndToNearest rnd] in

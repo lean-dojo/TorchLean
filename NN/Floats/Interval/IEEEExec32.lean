@@ -7,12 +7,10 @@ Authors: TorchLean Team
 module
 
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured
-public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
-public import FloatLib.Floats.Formats.BinaryInterchange.Model.RealSemantics
-public import FloatLib.Floats.Formats.BinaryInterchange.Model.ERealSemantics
 public import FloatLib.Floats.Formats.IEEE754.Native
 public import FloatLib.Floats.Formats.BinaryInterchange.Interval
 public import FloatLib.Floats.Formats.BinaryInterchange.IntervalSemantics
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-!
 # Configured endpoints for FloatLib intervals

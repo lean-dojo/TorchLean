@@ -7,15 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Models.CausalTransformer.Architecture
-public import NN.API.Module.Execution -- shake: keep
-public import NN.API.Runtime -- shake: keep
-public import NN.Runtime.Autograd.Model.Layers.Activations -- shake: keep
-public import NN.Runtime.Autograd.Model.Layers.Attention -- shake: keep
-public import NN.Runtime.Autograd.Model.Layers.ConvPool -- shake: keep
-public import NN.Runtime.Autograd.Model.Layers.Core -- shake: keep
-public import NN.Runtime.Autograd.Model.Layers.Normalization -- shake: keep
-public import NN.Runtime.Autograd.Model.Layers.Recurrent -- shake: keep
-public import NN.Runtime.Autograd.Model.Layers.Seq -- shake: keep
 
 /-!
 # Causal Transformer Runtime Support

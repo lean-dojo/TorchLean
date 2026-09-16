@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Verification.Builtin.Proved.Correctness.WellFormed
-public import Std.Data.HashMap.Lemmas
 
 /-!
 # Lowered Forward Evaluation: Prefix Preservation

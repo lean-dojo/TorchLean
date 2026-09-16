@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Neural.Builders
-public import NN.API.Runtime -- shake: keep
 
 /-!
 # Models over Leading Dimensions
@@ -35,6 +34,7 @@ private def mapLayerOverAxis (n : Nat) {σ τ : Spec.Shape} (layer : Layer σ τ
     runtimeInit := layer.runtimeInit
     requiresGrad := layer.requiresGrad
     validateConfig := layer.validateConfig
+    updatesBuffersInForward := layer.updatesBuffersInForward
     updateBuffers := layer.updateBuffers.map fun update mode {_α} _ _ state input =>
       (List.finRange n).foldlM (init := state) fun nextState index =>
         update mode nextState (TorchLean.Tensor.unstack input index)

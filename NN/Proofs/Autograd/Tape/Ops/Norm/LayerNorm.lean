@@ -8,7 +8,6 @@ module
 
 public import NN.Proofs.Autograd.Tape.Ops.Norm.LayerNormEval
 public import NN.Proofs.Autograd.Tape.Ops.Norm.RowNormalization
-public import NN.Proofs.Autograd.Tape.Ops.Norm.MatrixEntries
 public import NN.Proofs.Autograd.Tape.Ops.Norm.LayerNormAdjoint
 
 /-!

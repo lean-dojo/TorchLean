@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.GraphSpec.Chain.Syntax
-import Mathlib.Algebra.Order.Algebra
 public import NN.GraphSpec.DAG.Syntax
 -- Re-export DAG semantics and lowering alongside the chain conversion.
 public import NN.GraphSpec.DAG.Core

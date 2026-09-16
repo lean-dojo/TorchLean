@@ -6,12 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Field.Basic
-meta import Mathlib.Tactic.Basic
-import Mathlib.Tactic.NormNum.Inv
-import Mathlib.Tactic.NormNum.Pow
-import Mathlib.Tactic.Positivity.Finset
-meta import Mathlib.Tactic.ToAdditive
 public import NN.API.Neural.Builders -- shake: keep
 
 /-!

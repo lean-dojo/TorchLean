@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Tensor.Operations
-public import NN.Tensor.Conversion
 public import NN.Tensor.Internal.Elab.TensorLiteral
 
 /-!

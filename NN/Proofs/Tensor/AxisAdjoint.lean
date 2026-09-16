@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Tensor.Basic.Folds
-public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
 
 /-!
 # Inner products under axis permutations

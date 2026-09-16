@@ -9,7 +9,6 @@ module
 
 public import NN.Runtime.Autograd.Engine.Core.Base
 public import NN.Spec.Autograd.Ops
-public import NN.Spec.Layers.Activation
 
 /-!
 Elementwise eager-engine operations.

@@ -27,7 +27,6 @@ Local file run:
 
 module
 
-public import NN.API.Text.Vocabulary
 public import NN.API
 public import NN.Examples.Support
 

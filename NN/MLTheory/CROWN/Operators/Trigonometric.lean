@@ -6,11 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Core
 public import NN.MLTheory.CROWN.Runtime.Ops
-public import NN.Spec.Core.Context
-public import NN.Spec.Core.Tensor
-public import NN.Spec.Core.TensorOps
 
 /-!
 # Trigonometric operator bounds (optional)

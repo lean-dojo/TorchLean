@@ -6,18 +6,15 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Sample
 public import NN.API.Trainer.Core
 public import NN.API.Trainer.Scheduler
 public import NN.Data.SampleStream
-public import NN.Tensor.Operations
-public import NN.API.Arithmetic -- shake: keep
 
 /-!
 # Trainer Runtime Internals
 
-Scalar-generic implementation of the trainer: an instantiated model with lowered forward and loss
-graphs (`Runner`), gradient accumulation and optimizer updates, and the stateful `Stepper` that
+Scalar-generic implementation of the trainer: an instantiated model with reusable forward and loss
+evaluators (`Runner`), gradient accumulation and optimizer updates, and the stateful `Stepper` that
 applies a configured optimizer and schedule.
 
 Everything here is indexed by the runtime scalar `α`. The public API (`Trainer.Session`,
@@ -33,10 +30,9 @@ namespace Internal
 /--
 A checked model instantiated under one runtime scalar.
 
-This bundles the imperative runtime objective (parameters and buffers stored in refs), lowered typed
-graphs for forward evaluation and loss in both `.train` and `.eval` modes, a reusable CUDA
-evaluation objective over the same live state, and the current mode. The mode influences operator
-behavior (dropout, batch normalization) and whether buffers are updated during training.
+This bundles the imperative runtime objective (parameters and buffers stored in refs), reusable
+no-gradient forward and evaluation-loss evaluators over the same live state, and the current mode.
+Training forwards update their buffers; evaluation forwards leave them unchanged.
 -/
 structure Runner (α : Type) [TorchLean.Storage α] [Context α]
     {σ τ : Spec.Shape} (model : TorchLean.nn.Sequential σ τ) where
@@ -44,42 +40,31 @@ structure Runner (α : Type) [TorchLean.Storage α] [Context α]
   private runtimeObjective :
     TorchLean.Module.Objective α Unit (TorchLean.nn.stateShapes model) [σ, τ]
   private trainingPredictor :
-    Runtime.Autograd.Torch.TypedGraph α (TorchLean.nn.stateShapes model ++ [σ]) τ
+    Runtime.Autograd.Model.Module.Evaluator α Unit (TorchLean.nn.stateShapes model) [σ] [] τ
   private evaluationPredictor :
-    Runtime.Autograd.Torch.TypedGraph α (TorchLean.nn.stateShapes model ++ [σ]) τ
-  private trainingLoss :
-    Runtime.Autograd.Torch.TypedScalarGraph α (TorchLean.nn.stateShapes model ++ [σ, τ])
-  private evaluationLoss :
-    Runtime.Autograd.Torch.TypedScalarGraph α (TorchLean.nn.stateShapes model ++ [σ, τ])
-  private evaluationLossEvaluator? :
-    Option
-      (Runtime.Autograd.Model.Module.ObjectiveEvaluator α Unit
-        (TorchLean.nn.stateShapes model) [σ, τ])
+    Runtime.Autograd.Model.Module.Evaluator α Unit (TorchLean.nn.stateShapes model) [σ] [] τ
+  private evaluationLossEvaluator :
+    Runtime.Autograd.Model.Module.ObjectiveEvaluator α Unit
+      (TorchLean.nn.stateShapes model) [σ, τ]
   private modeRef : IO.Ref nn.Mode
 
 namespace Runner
 
-/-- Construct a runner from its objective, lowered graphs, and mode cell. -/
+/-- Construct a runner from its objective, evaluators, and mode cell. -/
 opaque create {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
     (runtimeObjective :
       TorchLean.Module.Objective α Unit (TorchLean.nn.stateShapes model) [σ, τ])
     (trainingPredictor :
-      Runtime.Autograd.Torch.TypedGraph α (TorchLean.nn.stateShapes model ++ [σ]) τ)
+      Runtime.Autograd.Model.Module.Evaluator α Unit (TorchLean.nn.stateShapes model) [σ] [] τ)
     (evaluationPredictor :
-      Runtime.Autograd.Torch.TypedGraph α (TorchLean.nn.stateShapes model ++ [σ]) τ)
-    (trainingLoss :
-      Runtime.Autograd.Torch.TypedScalarGraph α (TorchLean.nn.stateShapes model ++ [σ, τ]))
-    (evaluationLoss :
-      Runtime.Autograd.Torch.TypedScalarGraph α (TorchLean.nn.stateShapes model ++ [σ, τ]))
-    (evaluationLossEvaluator? :
-      Option
-        (Runtime.Autograd.Model.Module.ObjectiveEvaluator α Unit
-          (TorchLean.nn.stateShapes model) [σ, τ]))
+      Runtime.Autograd.Model.Module.Evaluator α Unit (TorchLean.nn.stateShapes model) [σ] [] τ)
+    (evaluationLossEvaluator :
+      Runtime.Autograd.Model.Module.ObjectiveEvaluator α Unit
+        (TorchLean.nn.stateShapes model) [σ, τ])
     (modeRef : IO.Ref nn.Mode) :
     Runner α model :=
-  ⟨runtimeObjective, trainingPredictor, evaluationPredictor, trainingLoss, evaluationLoss,
-    evaluationLossEvaluator?, modeRef⟩
+  ⟨runtimeObjective, trainingPredictor, evaluationPredictor, evaluationLossEvaluator, modeRef⟩
 
 /-- The executable runtime module behind a runner. -/
 opaque objectiveModule {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
@@ -87,43 +72,33 @@ opaque objectiveModule {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ 
     (runner : Runner α model) :
     TorchLean.Module.Objective α Unit (TorchLean.nn.stateShapes model) [σ, τ] :=
   match runner with
-  | ⟨runtimeObjective, _, _, _, _, _, _⟩ => runtimeObjective
+  | ⟨runtimeObjective, _, _, _, _⟩ => runtimeObjective
 
-/-- The lowered forward graph for one execution mode. -/
+/-- The reusable no-gradient evaluator for one execution mode. -/
 opaque predictor {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
     (runner : Runner α model) (mode : nn.Mode) :
-    Runtime.Autograd.Torch.TypedGraph α (TorchLean.nn.stateShapes model ++ [σ]) τ :=
+    Runtime.Autograd.Model.Module.Evaluator α Unit (TorchLean.nn.stateShapes model) [σ] [] τ :=
   match runner, mode with
-  | ⟨_, trainingPredictor, _, _, _, _, _⟩, .train => trainingPredictor
-  | ⟨_, _, evaluationPredictor, _, _, _, _⟩, .eval => evaluationPredictor
+  | ⟨_, trainingPredictor, _, _, _⟩, .train => trainingPredictor
+  | ⟨_, _, evaluationPredictor, _, _⟩, .eval => evaluationPredictor
 
-/-- The lowered scalar-loss graph for one execution mode. -/
-opaque lossGraph {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α]
-    (runner : Runner α model) (mode : nn.Mode) :
-    Runtime.Autograd.Torch.TypedScalarGraph α (TorchLean.nn.stateShapes model ++ [σ, τ]) :=
-  match runner, mode with
-  | ⟨_, _, _, trainingLoss, _, _, _⟩, .train => trainingLoss
-  | ⟨_, _, _, _, evaluationLoss, _, _⟩, .eval => evaluationLoss
-
-/-- Reusable CUDA evaluator for the evaluation-mode loss, when the runner uses CUDA. -/
+/-- Reusable evaluator for the evaluation-mode loss. -/
 opaque evaluationEvaluator {σ τ : Spec.Shape}
     {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
     (runner : Runner α model) :
-    Option
-      (Runtime.Autograd.Model.Module.ObjectiveEvaluator α Unit
-        (TorchLean.nn.stateShapes model) [σ, τ]) :=
+    Runtime.Autograd.Model.Module.ObjectiveEvaluator α Unit
+      (TorchLean.nn.stateShapes model) [σ, τ] :=
   match runner with
-  | ⟨_, _, _, _, _, evaluator?, _⟩ => evaluator?
+  | ⟨_, _, _, evaluator, _⟩ => evaluator
 
 /-- The runner's mode cell. -/
 opaque modeCell {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
     (runner : Runner α model) : IO.Ref nn.Mode :=
   match runner with
-  | ⟨_, _, _, _, _, _, modeRef⟩ => modeRef
+  | ⟨_, _, _, _, modeRef⟩ => modeRef
 
 /-- Runtime configuration used by the runner's objective. -/
 def runtime {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
@@ -139,27 +114,22 @@ def fromRuntimeObjective {σ τ : Spec.Shape}
     (runtimeObjective :
       TorchLean.Module.Objective α Unit (TorchLean.nn.stateShapes model) [σ, τ]) :
     IO (Runner α model) := do
-  let trainingPredictor ← Runtime.Autograd.Model.Layers.Seq.lowerToTypedGraph
-    (α := α) model (mode := .train)
-  let evaluationPredictor ← Runtime.Autograd.Model.Layers.Seq.lowerToTypedGraph
-    (α := α) model (mode := .eval)
-  let trainingLoss ← Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph (α := α)
-    (paramShapes := TorchLean.nn.stateShapes model) (inputShapes := [σ, τ])
-    (objective.definition model (mode := .train)).loss
-  let evaluationLoss ← Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph (α := α)
-    (paramShapes := TorchLean.nn.stateShapes model) (inputShapes := [σ, τ])
-    (objective.definition model (mode := .eval)).loss
   let executableObjective := TorchLean.Module.Objective.Internal.runtime runtimeObjective
-  let evaluationLossEvaluator? ←
-    if executableObjective.runtime.usesCuda then
-      some <$> Runtime.Autograd.Model.Module.ObjectiveDef.evaluatorWithState
-        (objective.definition model (mode := .eval))
-        executableObjective.runtime executableObjective.trainer.state
-    else
-      pure none
+  let makePredictor (mode : nn.Mode) :=
+    Runtime.Autograd.Model.Module.Evaluator.withState (β := Unit)
+      (stateShapes := TorchLean.nn.stateShapes model) (inputShapes := [σ])
+      (dataInputShapes := [])
+      (program := Runtime.Autograd.Model.Layers.Seq.forward model mode (α := α))
+      executableObjective.runtime executableObjective.trainer.state
+  let trainingPredictor ← makePredictor .train
+  let evaluationPredictor ← makePredictor .eval
+  let evaluationLossEvaluator ←
+    Runtime.Autograd.Model.Module.ObjectiveDef.evaluatorWithState
+      (objective.definition model (mode := .eval))
+      executableObjective.runtime executableObjective.trainer.state
   let modeRef : IO.Ref nn.Mode ← IO.mkRef .train
   pure (create runtimeObjective trainingPredictor evaluationPredictor
-    trainingLoss evaluationLoss evaluationLossEvaluator? modeRef)
+    evaluationLossEvaluator modeRef)
 
 /-- Instantiate a model and objective under a runtime scalar, injecting literals with `ofFloat`. -/
 def instantiate {σ τ : Spec.Shape} (model : TorchLean.nn.Sequential σ τ)
@@ -249,41 +219,13 @@ def eval {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     (runner : Runner α model) : IO Unit :=
   setMode runner .eval
 
-/-- Refresh mode-dependent buffers using one supervised sample; a no-op outside training mode. -/
-def updateBuffers {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α]
-    (runner : Runner α model)
-    (sample : TorchLean.Sample.Supervised α σ τ) : IO Unit := do
-  let selectedMode ← mode runner
-  if selectedMode == .train &&
-      Runtime.Autograd.Model.Layers.Seq.hasBufferUpdates model then
-    let state ← state runner
-    let updated ←
-      Runtime.Autograd.Model.Layers.Seq.updateBuffers selectedMode model
-        (nn.State.Internal.toTensorPack state) sample.input
-    setState runner (nn.State.Internal.fromTensorPack updated)
-  else
-    pure ()
-
 /-- Evaluate one input tensor in an explicit mode without changing the runner's mode cell. -/
 def forwardWithMode {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
     (runner : Runner α model)
     (selectedMode : nn.Mode) (input : Tensor α σ) : IO (Tensor α τ) := do
-  let objectiveRuntime := TorchLean.Module.Objective.Internal.runtime (objectiveModule runner)
-  if objectiveRuntime.runtime.usesCuda then
-    Runtime.Autograd.Model.Layers.Seq.forwardNoGrad
-      (α := α) (tensorTransfer := objectiveRuntime.tensorTransfer)
-      objectiveRuntime.runtime model objectiveRuntime.trainer.state input
-      (mode := selectedMode)
-  else
-    let modelState ← state runner
-    let arguments : TorchLean.TensorPack α (TorchLean.nn.stateShapes model ++ [σ]) :=
-      TorchLean.TensorPack.append
-        (ss₁ := TorchLean.nn.stateShapes model) (ss₂ := [σ])
-        (nn.State.Internal.toTensorPack modelState)
-        (TorchLean.TensorPack.singleton input)
-    pure (Runtime.Autograd.Torch.TypedGraph.forward (predictor runner selectedMode) arguments)
+  Runtime.Autograd.Model.Module.Evaluator.run (predictor runner selectedMode)
+    (TorchLean.TensorPack.singleton input) TorchLean.TensorPack.empty
 
 /-- Evaluate one input tensor using the active mode (`.train` or `.eval`). -/
 def forward {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
@@ -302,41 +244,23 @@ def predict {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
 /--
 Scalar loss of one supervised sample in an explicit mode without changing the runner's mode cell.
 
-On CPU the corresponding lowered graph is evaluated without a tape. On CUDA, training uses the
-instantiated objective and evaluation uses a reusable evaluator over the same live parameter
-objects. Keeping separate executable programs matters for mode-sensitive layers such as dropout
-and batch normalization.
+Training uses the instantiated objective, including its random stream and buffer updates.
+Evaluation uses a reusable no-gradient evaluator over the same live parameter objects and does
+not update running buffers.
 -/
 def sampleLossWithMode {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
     (runner : Runner α model) (selectedMode : nn.Mode)
     (sample : TorchLean.Sample.Supervised α σ τ) : IO α := do
-  if (runtime runner).usesCuda then
-    match selectedMode with
+  let loss ← match selectedMode with
     | .train =>
-        let loss ← TorchLean.Module.Objective.loss (objectiveModule runner)
-          (TorchLean.Sample.Internal.arguments sample) TorchLean.Arguments.empty
-        pure (TorchLean.Tensor.item loss)
+      TorchLean.Module.Objective.loss (objectiveModule runner)
+        (TorchLean.Sample.Internal.arguments sample) TorchLean.Arguments.empty
     | .eval =>
-        match evaluationEvaluator runner with
-        | some evaluator =>
-            let loss ← Runtime.Autograd.Model.Module.Evaluator.run evaluator
-              (TorchLean.Arguments.Internal.toTensorPack
-                (TorchLean.Sample.Internal.arguments sample))
-              TorchLean.TensorPack.empty
-            pure (TorchLean.Tensor.item loss)
-        | none =>
-            throw <| IO.userError
-              "Trainer.Runner: CUDA evaluation objective was not initialized"
-  else
-    let modelState ← state runner
-    let arguments : TorchLean.TensorPack α (TorchLean.nn.stateShapes model ++ [σ, τ]) :=
-      TorchLean.TensorPack.append
-        (α := α) (ss₁ := TorchLean.nn.stateShapes model) (ss₂ := [σ, τ])
-        (nn.State.Internal.toTensorPack modelState)
+      Runtime.Autograd.Model.Module.Evaluator.run (evaluationEvaluator runner)
         (TorchLean.Arguments.Internal.toTensorPack (TorchLean.Sample.Internal.arguments sample))
-    pure (TorchLean.Tensor.item <|
-      Runtime.Autograd.Torch.TypedScalarGraph.forward (lossGraph runner selectedMode) arguments)
+        TorchLean.TensorPack.empty
+  pure loss.item
 
 /-- Scalar loss of one supervised sample using the active mode. -/
 def sampleLoss {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
@@ -488,8 +412,7 @@ Set `value := true` to return `(meanGradient, meanLoss)`.
 def meanGrad {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
     (runner : Runner α model)
-    (batch : Array (TorchLean.Sample.Supervised α σ τ)) (value : Bool := false)
-    (updateBuffers : Bool := true) :
+    (batch : Array (TorchLean.Sample.Supervised α σ τ)) (value : Bool := false) :
     IO (match value with
       | false => nn.State α (TorchLean.nn.stateShapes model)
       | true => nn.State α (TorchLean.nn.stateShapes model) × α) := by
@@ -499,9 +422,6 @@ def meanGrad {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
         match batch[0]? with
         | none => throw <| IO.userError "Trainer.meanGrad: empty batch"
         | some firstSample =>
-            if updateBuffers then
-              for sample in batch do
-                Runner.updateBuffers runner sample
             let objective := Runner.objectiveModule runner
             let mut gradientSum ← TorchLean.Module.Objective.grad objective
               (TorchLean.Sample.Internal.arguments firstSample) TorchLean.Arguments.empty
@@ -516,9 +436,6 @@ def meanGrad {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
         match batch[0]? with
         | none => throw <| IO.userError "Trainer.meanGrad: empty batch"
         | some firstSample =>
-            if updateBuffers then
-              for sample in batch do
-                Runner.updateBuffers runner sample
             let objective := Runner.objectiveModule runner
             let (firstGradient, firstLoss) ←
               TorchLean.Module.Objective.grad objective
@@ -559,8 +476,6 @@ def stepBatch {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
       exact do
         if batch.isEmpty then
           throw <| IO.userError "Trainer.stepBatch: empty batch"
-        for sample in batch do
-          Runner.updateBuffers runner sample
         let objective := Runner.objectiveModule runner
         if useNative then
           if hSingleton : batch.size = 1 then
@@ -573,14 +488,12 @@ def stepBatch {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
               TorchLean.Module.Objective.Internal.tryNativeBatchStep
                 objective optimizer state arguments false then
             return nextState
-        let meanGradient ← meanGrad runner batch (updateBuffers := false)
+        let meanGradient ← meanGrad runner batch
         TorchLean.Module.Objective.update objective optimizer state meanGradient
   | true =>
       exact do
         if batch.isEmpty then
           throw <| IO.userError "Trainer.stepBatch: empty batch"
-        for sample in batch do
-          Runner.updateBuffers runner sample
         let objective := Runner.objectiveModule runner
         if useNative then
           if hSingleton : batch.size = 1 then
@@ -600,7 +513,7 @@ def stepBatch {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
             | none =>
               throw <| IO.userError "Trainer.stepBatch: native update omitted requested loss"
         let (meanGradient, meanLoss) ←
-          meanGrad runner batch (value := true) (updateBuffers := false)
+          meanGrad runner batch (value := true)
         let nextOptimizerState ←
           TorchLean.Module.Objective.update objective optimizer state meanGradient
         pure (nextOptimizerState, meanLoss)

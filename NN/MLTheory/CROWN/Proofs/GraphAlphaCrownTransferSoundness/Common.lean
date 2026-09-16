@@ -6,14 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Cert.AlphaBetaCROWN
-public import NN.MLTheory.CROWN.Cert.AlphaCROWN
 public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness
 public import NN.MLTheory.CROWN.Proofs.GraphCrownCertSoundness
-public import NN.MLTheory.CROWN.Proofs.AlphaReLULowerBound
 public import NN.MLTheory.CROWN.Proofs.AlphaBetaReLUScalarSoundness
 public import NN.Proofs.Tensor.Basic
-import Mathlib.Tactic.Linarith
 
 /-!
 # Shared α-CROWN Transfer Lemmas

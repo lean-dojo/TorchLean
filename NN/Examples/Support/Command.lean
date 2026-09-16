@@ -6,10 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Arithmetic
 public import NN.API.CLI.Trainer
-public import NN.API.Module.Command
-public import NN.API.Trainer.Run
 
 /-!
 # Runnable Example Commands

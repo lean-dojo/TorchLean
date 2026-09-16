@@ -8,7 +8,6 @@ module
 
 public import FloatLib.Floats.Formats.Flocq
 
-import Mathlib.Analysis.SpecialFunctions.Pow.Real
 
 /-!
 # FloatRep Metadata

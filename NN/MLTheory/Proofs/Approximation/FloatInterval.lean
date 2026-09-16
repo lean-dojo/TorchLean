@@ -9,6 +9,7 @@ module
 public import NN.MLTheory.Proofs.Approximation.FloatInterval.ConstantTarget
 public import NN.MLTheory.Proofs.Approximation.FloatInterval.ExactImageTheorem
 public import NN.MLTheory.Proofs.Approximation.FloatInterval.Semantics
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-!
 # Floating-point interval approximation proofs

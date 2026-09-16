@@ -6,9 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API
-public import NN.API.Data.Image
-public import NN.API.Models.Diffusion.Sampling
 public import NN.Examples.Models.Common.RealData
 
 /-!

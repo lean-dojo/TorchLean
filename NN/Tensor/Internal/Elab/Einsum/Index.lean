@@ -8,8 +8,8 @@ module
 public import NN.Tensor.Internal.Elab.Einsum.Loop
 public import NN.Tensor.Internal.Lowering.Einsum.Planning
 public import Lean.Meta.Tactic.SplitIf
-public meta import NN.Tensor.Internal.Elab.Common
 public meta import NN.Tensor.Internal.Elab.Einsum.Symbolic -- shake: keep
+import NN.Tensor.Internal.Elab.Common
 
 /-!
 # Reflected einsum index construction

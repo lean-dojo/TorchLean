@@ -7,9 +7,7 @@ Authors: TorchLean Team
 -- This facade exposes the upstream scalar and the existing typed model operations to consumers.
 module -- shake: keep-downstream
 
-public import NN.Spec.Core.FloatInstances -- shake: keep
 public import NN.API.Seeded -- shake: keep
-public import NN.API.Neural.Execution -- shake: keep
 public import NN.API.Neural.Training -- shake: keep
 
 /-!

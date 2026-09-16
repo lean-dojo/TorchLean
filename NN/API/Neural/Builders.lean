@@ -10,24 +10,12 @@ module -- shake: keep-downstream
 
 public import NN.API.Module.Execution -- shake: keep
 public import NN.Runtime.Autograd.Model.Layers.Seq -- shake: keep
-import Mathlib.Algebra.Order.Algebra -- shake: keep
 public import NN.API.Init -- shake: keep
-public import NN.API.Runtime -- shake: keep
-import NN.Spec.Core.Tensor -- shake: keep
-public import NN.API.Neural.State -- shake: keep
-public import NN.Tensor -- shake: keep
-public import NN.Runtime.Autograd.Model.Functional.Core -- shake: keep
-public import NN.Runtime.Autograd.Model.Functional.Einsum -- shake: keep
-public import NN.Runtime.Autograd.Model.Functional.ShapeOps -- shake: keep
-public import NN.Runtime.Autograd.Model.Module.RuntimeInit -- shake: keep
 public import NN.Runtime.Autograd.Model.Layers.Activations -- shake: keep
 public import NN.Runtime.Autograd.Model.Layers.Attention -- shake: keep
 public import NN.Runtime.Autograd.Model.Layers.ConvPool -- shake: keep
-public import NN.Runtime.Autograd.Model.Layers.Core -- shake: keep
 public import NN.Runtime.Autograd.Model.Layers.Normalization -- shake: keep
 public import NN.Runtime.Autograd.Model.Layers.Recurrent -- shake: keep
-public import NN.Spec.Core.Shape -- shake: keep
-import NN.Spec.Core.TensorReductionShape.Reductions -- shake: keep
 
 @[expose] public section
 

@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.Proofs.Approximation.Universal.IEEE32ExecCore
-public import NN.MLTheory.Proofs.ReLU.Bridge.ReLUMlpBridge
 
 /-!
 # IEEE32Exec two-layer ReLU approximation bound

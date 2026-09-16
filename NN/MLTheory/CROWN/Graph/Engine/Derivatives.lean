@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph.Engine.Base
 public import NN.MLTheory.CROWN.Graph.Engine.IBP -- shake: keep
 
 /-!

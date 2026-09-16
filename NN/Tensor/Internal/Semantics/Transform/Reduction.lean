@@ -6,8 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Semantics.Transform.Geometry
-public import NN.Tensor.Internal.Representation.Fiber.Mean
-public import NN.Tensor.Internal.Representation.Fiber.Tie
 
 /-!
 # Reduction semantics

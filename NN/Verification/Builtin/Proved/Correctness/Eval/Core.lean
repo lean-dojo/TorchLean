@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Batteries.Lean.Except
 public import NN.Verification.Builtin.Proved.Correctness.WellFormed
 
 /-!

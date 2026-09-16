@@ -6,12 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public meta import NN.Runtime.Autograd.Engine.Core.Backward
 public import NN.Runtime.Autograd.Engine.Core.Base
 public meta import NN.Widgets.Core.Tensor
 public meta import NN.Runtime.Autograd.Engine.Core -- shake: keep
-public meta import NN.Widgets.Core.UI -- shake: keep
-public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
+public import NN.Widgets.Core.Tensor
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # Autograd

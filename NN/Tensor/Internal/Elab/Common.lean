@@ -9,25 +9,23 @@ public import NN.Tensor.Internal.Check.Einsum
 public import NN.Tensor.Internal.Check.Pack
 public import NN.Tensor.Internal.Representation.Promotion
 public import Mathlib.Algebra.Order.Field.Basic
-meta import Mathlib.Tactic.FinCases
 import Mathlib.Tactic.Positivity.Finset
 import Mathlib.Tactic.Ring.RingNF
 public meta import NN.Spec.Core.Tensor.Core
 public meta import NN.Tensor.Internal.Check.Einsum
-public meta import NN.Tensor.Internal.Check.Normalize
 public meta import NN.Tensor.Internal.Check.Pack
 public meta import NN.Tensor.Internal.Check.Transform
 public meta import NN.Tensor.Internal.Elab.Native.Tensor
 public meta import NN.Tensor.Internal.Elab.Syntax
 public meta import Lean.Elab.Tactic -- shake: keep
-public meta import Lean.Elab.Tactic.Omega -- shake: keep
-public meta import Lean.Meta.LitValues -- shake: keep
-public meta import Aesop -- shake: keep
 meta import Mathlib.Tactic.Positivity -- shake: keep
 meta import Mathlib.Tactic.Ring -- shake: keep
-public meta import NN.Tensor.Internal.Syntax.Span -- shake: keep
 public import NN.Tensor.Internal.Check.ParseShape -- shake: keep
 public import NN.Tensor.Internal.Semantics.Transform -- shake: keep
+import Mathlib.Tactic.FinCases
+import NN.Spec.Core.Tensor.Core
+import NN.Tensor.Internal.Elab.Native.Tensor
+import NN.Tensor.Internal.Elab.Syntax
 
 /-!
 # Shared elaboration infrastructure

@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Data.Training
 public import NN.API.Data.Text
 public import NN.API.Data.Image
 public import NN.API.Trainer.Run

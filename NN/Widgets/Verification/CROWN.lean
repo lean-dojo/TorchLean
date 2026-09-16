@@ -7,11 +7,13 @@ Authors: TorchLean Team
 module
 
 public meta import NN.IR.Pretty
-public meta import NN.MLTheory.CROWN.Graph.Core
 public meta import NN.Widgets.Core.Tensor
 public meta import NN.MLTheory.CROWN.Graph -- shake: keep
-public meta import NN.Widgets.Core.UI -- shake: keep
-public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
+public import NN.Widgets.Core.Tensor
+import Mathlib.Analysis.SpecialFunctions.Pow.Real
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
+import NN.Spec.Core.Tensor
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # Verification

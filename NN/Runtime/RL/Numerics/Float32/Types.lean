@@ -8,7 +8,6 @@ module
 
 public import NN.Runtime.RL.Boundary.Core
 public import NN.Floats.Interval.IEEEExec32
-public import NN.Spec.Core.FloatInstances
 public import NN.Runtime.RL.Core -- shake: keep
 
 /-!

@@ -7,9 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.API
-public import NN.IR.Semantics
 public import NN.MLTheory.CROWN.Extras.FP32
-public import FloatLib.Floats.Formats.BinaryInterchange.Configured
 
 /-!
 # One semantic universe

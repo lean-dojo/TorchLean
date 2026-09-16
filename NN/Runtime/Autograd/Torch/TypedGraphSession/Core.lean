@@ -8,8 +8,6 @@ module
 
 public import NN.Runtime.Autograd.Torch.Core.Session
 public import NN.Runtime.Autograd.TypedGraph.Core
-import Mathlib.Algebra.Order.Algebra
-public import NN.Proofs.Autograd.Tape.Algebra.Soundness
 
 /-!
 # Typed graph sessions

@@ -8,9 +8,6 @@ module
 
 public import NN.Proofs.RuntimeApprox.NF.ShapeOps
 public import NN.Spec.Layers.Normalization.Core
-public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Binary
-public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.SafeDivSigmoid
-public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Unary
 
 /-!
 # Rounded Normalization Certificates

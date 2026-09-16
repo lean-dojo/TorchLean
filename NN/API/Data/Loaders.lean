@@ -6,9 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Sample
-public import NN.Data.SampleStream
-public import NN.Tensor.Operations
 public import NN.API.Data.Sources -- shake: keep
 
 /-!

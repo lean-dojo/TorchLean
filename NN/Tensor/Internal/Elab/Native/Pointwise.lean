@@ -5,7 +5,6 @@ Authors: TorchLean contributors
 -/
 module
 
-public import NN.Tensor.Internal.Representation.Basic.Core
 public import NN.Tensor.Internal.Representation.Basic.Pointwise -- shake: keep
 
 /-!

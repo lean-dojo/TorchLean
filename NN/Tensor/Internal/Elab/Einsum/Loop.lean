@@ -6,9 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Representation.Basic.Traversal
-public import NN.Tensor.Internal.Elab.Native.Loop -- shake: keep
-public import NN.Tensor.Internal.Representation.Basic.Core -- shake: keep
-public import NN.Tensor.Internal.Representation.Basic.Pointwise -- shake: keep
 public import NN.Tensor.Internal.Representation.Basic.Reindex -- shake: keep
 
 /-!

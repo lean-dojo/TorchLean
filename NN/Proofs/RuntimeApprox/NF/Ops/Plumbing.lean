@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.Graph.ForwardApprox
-public import NN.Proofs.Utils.List
 public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 

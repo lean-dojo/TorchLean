@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Activations
-public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Linear -- shake: keep
 
 @[expose] public section
 

@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec
 public import FloatLib.Floats.Formats.BinaryInterchange
 public import NN.MLTheory.CROWN.Lyapunov.TwoStage.Core
 

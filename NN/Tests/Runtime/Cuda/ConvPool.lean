@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Engine.Core
 public import NN.Runtime.Autograd.Engine.Cuda.Ops
 public import NN.Tensor
 public import NN.Tests.Runtime.Cuda.Utils
@@ -978,6 +977,58 @@ def runBoundaryGeometryChecks : IO Unit := do
   unless Runtime.Autograd.Cuda.Buffer.size paddedConv = 5 do
     throw <| IO.userError "spatial convolution incorrectly applied pooling padding restrictions"
 
+/-- Large valid strides and padding keep their full width through native coordinate arithmetic. -/
+def runWideGeometryChecks : IO Unit := do
+  IO.println "== conv UInt32 geometry =="
+  let unit : Tensor Nat [1] := [1]
+  let wide : Tensor Nat [1] := [4294967295]
+  let kernel : Tensor Float [1, 1, 1] := [[[1.0]]]
+  let bias : Tensor Float [1] := [0.0]
+  let cases : List (Tensor Float [1, 3] × Tensor Nat [1] × Tensor Float [1, 3] ×
+      Tensor Float [1, 3] × Float) :=
+      [([[2.0, 7.0, 11.0]], wide, [[0.0, 2.0, 0.0]],
+        [[1.0, 0.0, 0.0]], 2.0),
+       ([[2.0, 7.0, 11.0]], ([4294967294] : Tensor Nat [1]),
+        [[0.0, 7.0, 0.0]], [[0.0, 1.0, 0.0]], 7.0)]
+  for (input, padding, expected, expectedGrad, expectedKernelGrad) in cases do
+    let (t1, kernelId) :=
+      Runtime.Autograd.Cuda.Tape.empty.leaf (Utils.tensorToAnyBuffer kernel)
+    let (t2, biasId) := t1.leaf (Utils.tensorToAnyBuffer bias)
+    let (t3, inputId) := t2.leaf (Utils.tensorToAnyBuffer (input : Tensor Float [1, 3]))
+    let (t4, outputId) ← Utils.okOrThrow
+      (Runtime.Autograd.Cuda.Tape.conv (t := t3)
+        (d := 1) (inC := 1) (outC := 1) (inSpatial := [3])
+        (kernel := unit) (stride := wide) (padding := padding) kernelId biasId inputId)
+    let output ← Utils.cudaValue (s := [1, 3]) t4 outputId
+    Utils.assertTensorApprox "wide conv output" output expected (tol := 0)
+    let grads ← Utils.okOrThrow <| Runtime.Autograd.Cuda.Tape.backwardDenseAll t4 outputId
+      (Utils.tensorToAnyBuffer (Tensor.full [1, 3] (1.0 : Float)))
+    let dx ← Utils.cudaGrad (s := [1, 3]) grads inputId
+    let dw ← Utils.cudaGrad (s := [1, 1, 1]) grads kernelId
+    Utils.assertTensorApprox "wide conv input gradient" dx expectedGrad (tol := 0)
+    Utils.assertTensorApprox "wide conv kernel gradient" dw
+      (Tensor.full [1, 1, 1] expectedKernelGrad) (tol := 0)
+
+  let (t1, kernelId) :=
+    Runtime.Autograd.Cuda.Tape.empty.leaf (Utils.tensorToAnyBuffer kernel)
+  let (t2, biasId) := t1.leaf (Utils.tensorToAnyBuffer bias)
+  let (t3, inputId) := t2.leaf
+    (Utils.tensorToAnyBuffer ([[2.0, 7.0, 11.0]] : Tensor Float [1, 3]))
+  let (t4, outputId) ← Utils.okOrThrow
+    (Runtime.Autograd.Cuda.Tape.convTranspose (t := t3)
+      (d := 1) (inC := 1) (outC := 1) (inSpatial := [3])
+      (kernel := unit) (stride := wide) (padding := wide) kernelId biasId inputId)
+  let output ← Utils.cudaValue (s := [1, 1]) t4 outputId
+  Utils.assertTensorApprox "wide transpose conv output" output ([[7.0]]) (tol := 0)
+  let grads ← Utils.okOrThrow <| Runtime.Autograd.Cuda.Tape.backwardDenseAll t4 outputId
+    (Utils.tensorToAnyBuffer (Tensor.full [1, 1] (1.0 : Float)))
+  let dx ← Utils.cudaGrad (s := [1, 3]) grads inputId
+  let dw ← Utils.cudaGrad (s := [1, 1, 1]) grads kernelId
+  Utils.assertTensorApprox "wide transpose conv input gradient" dx
+    ([[0.0, 1.0, 0.0]]) (tol := 0)
+  Utils.assertTensorApprox "wide transpose conv kernel gradient" dw
+    ([[[7.0]]]) (tol := 0)
+
 def run : IO Unit := do
   IO.println "=== CUDA kernel coverage: convolution + pooling ==="
   runConv
@@ -995,6 +1046,7 @@ def run : IO Unit := do
   runAvgPool3
   runZeroStrideChecks
   runBoundaryGeometryChecks
+  runWideGeometryChecks
 
 end ConvPool
 end Cuda

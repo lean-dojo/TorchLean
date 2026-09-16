@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.IRExec.Core
-public import NN.Proofs.Autograd.Tape.Algebra.Soundness
-public import NN.Spec.Core.TensorReductionShape.ConcatSlice
 
 /-!
 # IR Lowering Primitives

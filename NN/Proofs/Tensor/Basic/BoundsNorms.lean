@@ -7,9 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Context.Real
-public import NN.Proofs.Tensor.Basic.Folds
 public import NN.Proofs.Tensor.Basic.LinearAlgebra
-public import NN.Proofs.Tensor.Basic.Core -- shake: keep
 
 /-!
 Bounds and norm facts for dependent tensors.

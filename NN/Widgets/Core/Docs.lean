@@ -8,9 +8,9 @@ module
 
 public import Lean.Exception
 public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
-public meta import Std.Do.Triple.SpecLemmas
 public meta import Lean -- shake: keep
+public import NN.Widgets.Core.UI
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # Docs

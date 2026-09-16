@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.CLI
 public import NN.API.Rand
 public import NN.API.Module.Execution
 

@@ -7,13 +7,10 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.TypedGraph.GraphM
-public import NN.Runtime.Autograd.Torch.Core.TypedGraph
 public import NN.API.Neural.Execution
 public import NN.API.Optim
 public import NN.Runtime.Autograd.Train
-public import NN.Spec.Core.Tensor
 public import NN.Spec.Models.Mlp
-public import NN.Tensor
 public import NN.Tests.Utils
 
 /-!

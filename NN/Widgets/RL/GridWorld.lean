@@ -10,11 +10,12 @@ public meta import NN.Spec.RL.Envs.GridWorld
 public import Mathlib.Algebra.Order.AbsoluteValue.Basic
 public import Mathlib.Algebra.Order.Field.Basic
 public import Mathlib.Data.Finset.Attr
-import Mathlib.Tactic.SetLike
 public meta import NN.Runtime.RL.Artifacts.GridWorld.Path
 public meta import NN.Runtime.RL.Artifacts.GridWorld.Policy
 public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
+public import NN.Widgets.Core.UI
+import NN.Tensor.Constructors
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # GridWorld Widgets

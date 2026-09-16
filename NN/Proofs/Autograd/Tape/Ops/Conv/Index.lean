@@ -8,7 +8,6 @@ module
 
 public import NN.Proofs.Tensor.Algebra
 public import NN.Spec.Layers.Conv
-public import Mathlib.Data.Fintype.BigOperators
 
 /-!
 # Convolution Index Arithmetic

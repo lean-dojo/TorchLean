@@ -6,25 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Neural.Blocks
 public import NN.API.Neural.Indexed
-public import NN.API.Neural.Layers.Attention
 public import NN.API.Neural.Leading
 public import NN.API.Neural.Positional
 public import NN.API.Neural.Transformer
-public import NN.Spec.Layers.PositionalEncoding
-import Mathlib.Algebra.Order.Algebra
-public import NN.Runtime.Autograd.Model.Layers.Attention
-public import NN.Runtime.Autograd.Model.Layers.ConvPool
-public import NN.Runtime.Autograd.Model.Layers.Normalization
-public import NN.Runtime.Autograd.Model.Layers.Recurrent
 public import NN.Runtime.Autograd.Model.Layers.Mamba
-public import NN.Tensor.Operations
-import NN.Spec.Core.Tensor -- shake: keep
-public import NN.API.Macros -- shake: keep
-public import NN.API.Neural.Layers.Convolution -- shake: keep
-public import NN.API.Neural.Layers.Pooling -- shake: keep
-import NN.Spec.Core.TensorReductionShape.Reductions -- shake: keep
 
 /-!
 # Layer Implementations
@@ -63,6 +49,7 @@ def adaptLeadingShape (leading : Spec.Shape) {σ τ : Spec.Shape}
     runtimeInit := layer.runtimeInit
     requiresGrad := layer.requiresGrad
     validateConfig := layer.validateConfig
+    updatesBuffersInForward := layer.updatesBuffersInForward
     updateBuffers := layer.updateBuffers.map fun update mode {α} _ _ state input =>
       update mode state <| input.reshape _ (by
         simp [Spec.Shape.size_concat, Spec.Shape.size])

@@ -9,8 +9,6 @@ Authors: TorchLean Team
 module -- shake: keep-downstream
 
 public import NN.Backend.Report -- shake: keep
-public import NN.Runtime.Autograd.Model.Program -- shake: keep
-public import NN.Runtime.Autograd.Torch.Core.Types -- shake: keep
 public import NN.Runtime.Autograd.Model.Functional.ShapeOps -- shake: keep
 public import NN.API.Arithmetic -- shake: keep
 public import NN.Runtime.Autograd.Torch.Core.TensorTransfer -- shake: keep

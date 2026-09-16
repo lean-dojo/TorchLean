@@ -8,7 +8,6 @@ module
 
 public import NN.Proofs.RuntimeApprox.NF.Ops.Scalar
 public import NN.Proofs.Tensor.Basic.Folds
-public import NN.Proofs.RuntimeApprox.NF.Ops.Plumbing
 
 /-!
 # NF Sum Reduction Bounds

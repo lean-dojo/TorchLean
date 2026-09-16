@@ -6,11 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec
 public import NN.API.Neural.State
 public import NN.API.Sample
 public import NN.MLTheory.CROWN.Graph
-public import NN.MLTheory.CROWN.Lyapunov.TwoStage.Core
 public import NN.MLTheory.CROWN.Lyapunov.TwoStage.Execution
 public import NN.Runtime.Autograd.Model.Autodiff
 public import NN.Verification.Builtin.Lowering

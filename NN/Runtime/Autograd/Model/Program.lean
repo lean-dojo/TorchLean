@@ -9,13 +9,6 @@ Authors: TorchLean Team
 module -- shake: keep-downstream
 
 public import NN.Runtime.Autograd.Torch.Core.Functional -- shake: keep
-import Mathlib.Algebra.Order.Algebra -- shake: keep
-public import Mathlib.Algebra.Order.Field.Basic -- shake: keep
-import Mathlib.Tactic.NormNum.Inv -- shake: keep
-import Mathlib.Tactic.NormNum.Pow -- shake: keep
-import Mathlib.Tactic.Positivity.Finset -- shake: keep
-public import NN.Tensor.Internal.Elab.TensorLiteral -- shake: keep
-public import Std.Tactic.BVDecide.Normalize.Prop -- shake: keep
 public import NN.Runtime.Autograd.Torch.Core.Types
 public import NN.Tensor -- shake: keep
 

@@ -12,9 +12,13 @@ import NN.Runtime.PyTorch.Export.Transformer
 import NN.Runtime.PyTorch.Import.MLP
 import NN.Runtime.PyTorch.Import.CNN
 import NN.Runtime.PyTorch.Import.Transformer
-import NN.API
-import NN.Examples.Support
 public import NN.Tensor
+import NN.API.Data.Sources
+import NN.API.Json
+import NN.API.Precision
+import NN.API.RL.Runtime
+import NN.API.Trainer.Reporting
+import NN.Runtime.Autograd.Model
 
 /-!
 # PyTorch Round-Trip Driver

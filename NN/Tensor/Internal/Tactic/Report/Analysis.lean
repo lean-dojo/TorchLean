@@ -6,6 +6,9 @@ Authors: TorchLean contributors
 module
 
 public meta import NN.Tensor.Internal.Tactic.Report.Analysis.Render
+import Mathlib.Algebra.Order.Field.Basic
+import Mathlib.Data.Finset.Attr
+import Mathlib.Tactic.SetLike
 
 /-!
 # Static analysis for verified tensor transformations

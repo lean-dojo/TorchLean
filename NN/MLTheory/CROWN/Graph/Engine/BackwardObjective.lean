@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Activations
-public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Run -- shake: keep
 
 /-!
 # Objective-Dependent Backward CROWN
@@ -463,6 +462,19 @@ private def backwardAxisPermutation? (outputShape : Shape) (forwardPerm : Array 
     let inverse ← (OpContracts.inversePerm forwardPerm).toOption
     let flatPerm ← flatAxisPermutation? outputShape inverse aY.n
     pure { n := aY.n, v := backwardPermuteVec (α := α) flatPerm aY.v }
+
+/-- Pull interval coefficients back through a permutation without scalar arithmetic. -/
+private def directedAxisPermutation? (outputShape : Shape) (forwardPerm : Array Nat)
+    (aY : FlatBox α) : Option (FlatBox α) := do
+  if aY.dim = 0 then
+    pure aY
+  else
+    let inverse ← (OpContracts.inversePerm forwardPerm).toOption
+    let flatPerm ← flatAxisPermutation? outputShape inverse aY.dim
+    pure
+      { dim := aY.dim
+        lo := backwardPermuteVec flatPerm aY.lo
+        hi := backwardPermuteVec flatPerm aY.hi }
 
 /--
 Push an objective back through a matrix product whose operands both vary.
@@ -1174,6 +1186,21 @@ private def directedBackwardNode
                     | none => st.fail
                 | _, _ => st.fail
             | _ => st.fail
+      | .transpose axis₁ axis₂ =>
+          match node.parents with
+          | #[p] =>
+              match (OpContracts.transposePerm nodes[p]!.outShape.rank axis₁ axis₂).toOption
+                  >>= fun perm => directedAxisPermutation? node.outShape perm aY with
+              | some aX => addDirectedCoeff st p aX
+              | none => st.fail
+          | _ => st.fail
+      | .permute perm =>
+          match node.parents with
+          | #[p] =>
+              match directedAxisPermutation? node.outShape perm aY with
+              | some aX => addDirectedCoeff st p aX
+              | none => st.fail
+          | _ => st.fail
       | .layernorm _ =>
           if !crownNodeSemanticsSupported (α := α) nodes ps id then st.fail else consumeCurrent
       | _ => consumeCurrent
@@ -1261,6 +1288,44 @@ private def runDirectedBackwardObjective
       directedInputAffines (α := α) ctx.inputDim inputBox aIn st.cstLo st.cstHi
   else
     none
+
+/-- Nodewise affine bounds obtained by directed backward propagation of the coordinate objectives.
+
+The rows share the checked node intervals. Coefficients are rounded outwards throughout each
+sweep, including cancellation and sign changes; rounding only the final affine evaluation would
+not enclose errors introduced while composing coefficients. A node without a directed transfer
+retains its IBP enclosure as constant affine forms.
+
+These bounds target the real-arithmetic graph described by the stored parameters, under the
+backend's directed-arithmetic contract. They do not establish an error bound for a separate
+floating-point execution schedule.
+-/
+def directedNodeBounds? (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)
+    (ibp : Array (Option (FlatBox α))) (outputId : Nat) :
+    Option (FlatAffineBounds α) := do
+  unless crownGraphSemanticsSupported g ps do failure
+  let node ← g.nodes[outputId]?
+  let outDim := node.outShape.size
+  let rows : Option (Fin outDim → AffineVec α ctx.inputDim 1 × AffineVec α ctx.inputDim 1) :=
+    Tensor.Internal.sequenceFinM fun i =>
+      let objective : FlatTensor α :=
+        { n := outDim, v := Tensor.ofFn fun j => if i = j then 1 else 0 }
+      runDirectedBackwardObjective g ps ctx ibp outputId objective
+  match rows with
+  | some rows =>
+    pure
+      { inDim := ctx.inputDim
+        outDim := outDim
+        loAff :=
+          { A := Tensor.matrix fun i j => Spec.get2 (rows i).1.A 0 j
+            c := Tensor.ofFn fun i => Tensor.getScalar (rows i).1.c 0 }
+        hiAff :=
+          { A := Tensor.matrix fun i j => Spec.get2 (rows i).2.A 0 j
+            c := Tensor.ofFn fun i => Tensor.getScalar (rows i).2.c 0 } }
+  | none =>
+    let box ← ibp[outputId]?
+    let box ← box
+    pure (boundsConst ctx.inputDim box.dim box.lo box.hi)
 
 /--
 Objective-dependent backward CROWN bound for a scalar objective.

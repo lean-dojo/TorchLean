@@ -11,7 +11,6 @@ public import NN.MLTheory.LearningTheory.Robustness.Spec
 public import NN.Proofs.RuntimeApprox.Core.Tolerance
 public import NN.Spec.Core.Scalar
 public import NN.Spec.Core.Context.Real
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # SpecApprox

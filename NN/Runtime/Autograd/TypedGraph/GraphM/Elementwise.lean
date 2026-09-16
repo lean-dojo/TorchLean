@@ -9,8 +9,6 @@ module
 public import NN.Runtime.Autograd.TypedGraph.GraphM.Core
 public import NN.Spec.Autograd.Ops
 public import NN.Spec.Core.TensorReductionShape.ConcatSlice
-public import NN.Spec.Layers.Activation
-public import NN.Spec.Layers.Linear
 
 /-!
 # GraphM Elementwise And Scalar Ops
@@ -53,7 +51,7 @@ PyTorch comparison: `torch.add(a, b)`.
 def add {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {Γ : List Shape} {s : Shape}
     (a b : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ia ← liftM (mkIdx (_α := α) (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss b)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -75,7 +73,7 @@ PyTorch comparison: `torch.sub(a, b)`.
 def sub {α : Type} {Δ : Type} [TorchLean.Storage α] [Sub α] [Add α] [Zero α]
     {Γ : List Shape} {s : Shape}
     (a b : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ia ← liftM (mkIdx (_α := α) (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss b)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -98,7 +96,7 @@ PyTorch comparison: `torch.mul(a, b)`.
 def mul {α : Type} {Δ : Type} [TorchLean.Storage α] [Mul α] [Add α] [Zero α]
     {Γ : List Shape} {s : Shape}
     (a b : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ia ← liftM (mkIdx (_α := α) (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss b)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -132,7 +130,7 @@ PyTorch comparison: `c * x` / `torch.mul(x, c)`.
 def scale {α : Type} {Δ : Type} [TorchLean.Storage α] [Mul α] [Add α] [Zero α]
     {Γ : List Shape} {s : Shape}
     (x : Var s) (c : α) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -151,7 +149,7 @@ PyTorch comparison: `torch.abs(x)`.
 def abs {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -175,7 +173,7 @@ PyTorch comparison: `torch.sqrt(x)`.
 def sqrt {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -210,7 +208,7 @@ def clamp {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) (minVal maxVal : α) : MWith α Δ Γ (Var s) :=
     do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -241,7 +239,7 @@ PyTorch comparison: `torch.maximum(a, b)`.
 def max {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (a b : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ia ← liftM (mkIdx (_α := α) (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss b)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -273,7 +271,7 @@ PyTorch comparison: `torch.minimum(a, b)`.
 def min {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (a b : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ia ← liftM (mkIdx (_α := α) (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss b)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -304,7 +302,7 @@ def relu {α : Type} [TorchLean.Storage α]
   [Mul α] [Add α] [Zero α] [Max α] [BEq α] [One α] [LT α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -323,7 +321,7 @@ def relu {α : Type} [TorchLean.Storage α]
 /-- Elementwise sigmoid. PyTorch comparison: `torch.sigmoid(x)`. -/
 def sigmoid {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -342,7 +340,7 @@ def sigmoid {α : Type} [TorchLean.Storage α] [Context α]
 /-- Elementwise tanh. PyTorch comparison: `torch.tanh(x)`. -/
 def tanh {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -367,7 +365,7 @@ retaining the same JVP and VJP meaning.
 -/
 def gelu {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -390,7 +388,7 @@ PyTorch comparison: `torch.softmax(x, dim=-1)`.
 -/
 def softmaxLast {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -411,7 +409,7 @@ def softmaxLast {α : Type} [TorchLean.Storage α] [Context α]
 def softmax {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
     (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -435,7 +433,7 @@ execution and eager CUDA share the same PyTorch-style numerical contract.
 -/
 def logSoftmaxLast {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -458,7 +456,7 @@ def logSoftmaxLast {α : Type} [TorchLean.Storage α] [Context α]
 def logSoftmax {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
     (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -479,7 +477,7 @@ def logSoftmax {α : Type} [TorchLean.Storage α] [Context α]
 /-- Elementwise softplus. PyTorch comparison: `torch.nn.functional.softplus(x)`. -/
 def softplus {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -498,7 +496,7 @@ def softplus {α : Type} [TorchLean.Storage α] [Context α]
 /-- Elementwise exponential. PyTorch comparison: `torch.exp(x)`. -/
 def exp {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -521,7 +519,7 @@ dual-number scalars differentiate the VJP again for a Hessian-vector product.
 -/
 def sin {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let op := Spec.sinOp (α := α) (s := s)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -536,7 +534,7 @@ def sin {α : Type} [TorchLean.Storage α] [Context α]
 /-- Elementwise cosine; its JVP and VJP multiply by `-sin(x)` at the original input. -/
 def cos {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let op := Spec.cosOp (α := α) (s := s)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -551,7 +549,7 @@ def cos {α : Type} [TorchLean.Storage α] [Context α]
 /-- Elementwise natural logarithm. PyTorch comparison: `torch.log(x)`. -/
 def log {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { validate := fun ctx _d =>
@@ -583,7 +581,7 @@ def log {α : Type} [TorchLean.Storage α] [Context α]
 /-- Elementwise reciprocal `x ↦ 1/x`. PyTorch comparison: `torch.reciprocal(x)`. -/
 def inv {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -612,7 +610,7 @@ argument positive when softplus rounds to zero. The JVP and VJP use
 def safeLog {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) (ε : α := Context.defaultEpsilon) :
     MWith α Δ Γ (Var s) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     { forward := fun ctx _d =>
@@ -636,7 +634,7 @@ PyTorch comparison: `torch.sum(x)`.
 -/
 def sum {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var Shape.scalar) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) Shape.scalar :=
     { forward := fun ctx _d => Tensor.scalar (sumSpec (α := α) (s := s) (getIdx (α := α) (xs :=
@@ -657,7 +655,7 @@ def mseLoss {α : Type} [TorchLean.Storage α]
   [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [NatCast α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (yhat target : Var s) : MWith α Δ Γ (Var Shape.scalar) :=
     do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let iyhat ← liftM (mkIdx (_α := α) (Γ := Γ) ss yhat)
   let itarget ← liftM (mkIdx (_α := α) (Γ := Γ) ss target)
   let node : NodeData α Δ (Γ ++ ss) Shape.scalar :=
@@ -709,7 +707,7 @@ def mseLoss {α : Type} [TorchLean.Storage α]
     (w : Var (.dim outDim (.dim inDim .scalar)))
     (b : Var (.dim outDim .scalar))
     (x : Var (.dim inDim .scalar)) : MWith α Δ Γ (Var (.dim outDim .scalar)) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let iW ← liftM (mkIdx (_α := α) (Γ := Γ) ss w)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss b)
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
@@ -761,7 +759,7 @@ def matmul {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
     [broadcastB : Shape.BroadcastTo batchB batch]
     (a : Var (batchA.concat [m, n])) (b : Var (batchB.concat [n, p])) :
     MWith α Δ Γ (Var (batch.concat [m, p])) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ia ← liftM (mkIdx (_α := α) (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss b)
   let aShape := batchA.concat [m, n]
@@ -799,7 +797,7 @@ def matmul {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
     {Γ : List Shape} {n m : Nat} {s : Shape}
     (a : Var (.dim n s)) (b : Var (.dim m s)) :
     MWith α Δ Γ (Var (.dim (n + m) s)) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ia ← liftM (mkIdx (_α := α) (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss b)
   let outS : Shape := .dim (n + m) s
@@ -833,7 +831,7 @@ def matmul {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
     {Γ : List Shape} {n : Nat} {s : Shape}
     (x : Var (.dim n s)) (start len : Nat) (h : start + len ≤ n) :
     MWith α Δ Γ (Var (.dim len s)) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let outS : Shape := .dim len s
   let inS : Shape := .dim n s

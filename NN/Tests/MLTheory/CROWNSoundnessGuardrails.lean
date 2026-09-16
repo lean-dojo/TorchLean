@@ -6,11 +6,9 @@ Authors: TorchLean Team
 
 module
 
-import Mathlib.Tactic.FinCases
-public import NN.MLTheory.CROWN.Graph.Engine
+public import NN.MLTheory.CROWN.Models.Mlp
 public import NN.Tests.MLTheory.Utils
 public import NN.Tests.Utils
-public import NN.Tensor
 
 /-!
 # CROWN Soundness Guardrails
@@ -182,8 +180,59 @@ def checkLayerNormPayloadGuard : IO Unit := do
   | none => pure ()
   | some _ => throw <| IO.userError "mismatched LayerNorm backward CROWN was accepted"
 
+/-- Coefficient cancellation must not turn a lower logit into a certified winner. -/
+def checkAffineCancellation : IO Unit := do
+  let graph : NN.IR.Graph := ⟨#[
+    { id := 0, parents := #[], kind := .input, outShape := [1] },
+    { id := 1, parents := #[0], kind := .linear, outShape := [3] },
+    { id := 2, parents := #[1], kind := .linear, outShape := [2] }]⟩
+  let w1 : Tensor Float32 [3, 1] := Tensor.full [3, 1] 1
+  let b1 : Tensor Float32 [3] := Tensor.full [3] 0
+  let w2 : Tensor Float32 [2, 3] := Tensor.matrix fun i j =>
+    if i.val = 1 then 0 else
+    if j.val = 0 then 16777216 else if j.val = 1 then 1 else -16777216
+  let b2 : Tensor Float32 [2] := [0, 0.05]
+  let input : Tensor Float32 [1] := [0.1]
+  let box : FlatBox Float32 := { dim := 1, lo := input, hi := input }
+  let params : ParamStore Float32 :=
+    { inputBoxes := ({} : Std.HashMap Nat (FlatBox Float32)).insert 0 box
+      linearWB := ({} : Std.HashMap Nat (LinParams Float32)).insert 1
+        { m := 3, n := 1, w := w1, b := b1 } |>.insert 2
+        { m := 2, n := 3, w := w2, b := b2 } }
+  let .ok output := outputBoxCROWN? graph params box 0 2 1
+    | throw <| IO.userError "CROWN failed on the cancellation graph"
+  -- The stored weights sum to one in real arithmetic; execution rounds its first logit to 0.125.
+  unless getAtOrZero output.lo [0] ≤ 0.1 && 0.125 ≤ getAtOrZero output.hi [0] do
+    throw <| IO.userError "CROWN lost coefficient-rounding error"
+  unless !(getAtOrZero output.lo [1] > getAtOrZero output.hi [0]) do
+    throw <| IO.userError "CROWN certified the wrong class after coefficient cancellation"
+  let net : TwoLayerMLP Float32 1 3 2 :=
+    { hiddenWeight := w1, hiddenBias := b1, outputWeight := w2, outputBias := b2 }
+  let mlpBounds := boundAffineCrown net (Box.point input)
+  unless mlpBounds.lo.getScalar 0 ≤ 0.1 && 0.125 ≤ mlpBounds.hi.getScalar 0 do
+    throw <| IO.userError "standalone MLP CROWN lost coefficient-rounding error"
+
+/-- Negative weights must consume a lower parent bound, even in the upper-only API. -/
+def checkUpperAffineSign : IO Unit := do
+  let graph : NN.IR.Graph := ⟨#[
+    { id := 0, parents := #[], kind := .input, outShape := [1] },
+    { id := 1, parents := #[0], kind := .relu, outShape := [1] },
+    { id := 2, parents := #[1], kind := .linear, outShape := [1] }]⟩
+  let params : ParamStore Float :=
+    { inputBoxes := ({} : Std.HashMap Nat (FlatBox Float)).insert 0
+        { dim := 1, lo := [-1], hi := [1] }
+      linearWB := ({} : Std.HashMap Nat (LinParams Float)).insert 2
+        { m := 1, n := 1, w := [[-1]], b := [0] } }
+  let affines := runAffine graph params { inputId := 0, inputDim := 1 } (runIBP graph params)
+  let some affine := affines[2]!
+    | throw <| IO.userError "upper affine bound missing for negative ReLU"
+  unless 0 ≤ getAtOrZero affine.aff.c [0] do
+    throw <| IO.userError "upper affine bound excludes -ReLU(0) = 0"
+
 def run : IO Unit := do
   checkConvolutionGuards
   checkLayerNormPayloadGuard
+  checkAffineCancellation
+  checkUpperAffineSign
 
 end NN.Tests.MLTheory.CROWNSoundnessGuardrails

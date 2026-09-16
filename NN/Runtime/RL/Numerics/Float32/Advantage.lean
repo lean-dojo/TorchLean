@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.FloatInstances
 public import NN.Runtime.RL.Numerics.Float32.Returns
 public import NN.Spec.Core.Tensor.Numerics
 

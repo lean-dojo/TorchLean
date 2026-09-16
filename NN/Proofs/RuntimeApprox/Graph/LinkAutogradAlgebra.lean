@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Tape.Algebra.Soundness
 public import NN.Proofs.RuntimeApprox.Graph.BackwardApprox
 
 /-!

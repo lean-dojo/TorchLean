@@ -11,6 +11,8 @@ interop bridge for the other common artifacts people keep on disk:
 * numeric CSV tables
 * image folders, when Pillow is installed
 
+Requires NumPy 1.23 or later.
+
 The output is always `.npy`, optionally accompanied by a small JSON manifest.
 That keeps TorchLean examples and training code simple:
 
@@ -23,6 +25,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -102,8 +105,18 @@ def write_manifest(out: Path, arr: np.ndarray, *, source: Path, key: str | None,
     path.write_text(json.dumps(manifest, indent=2) + "\n")
 
 
-def load_csv_array(path: Path, *, skip_header: int = 0) -> np.ndarray:
-    """Load a numeric CSV, recognizing an all-text first row as a header."""
+def parse_integer(value: str) -> int:
+    """Parse integral decimal text without rounding through a binary float."""
+    number = Decimal(value)
+    if not number.is_finite() or number != number.to_integral_value():
+        raise ValueError(f"expected an integer, got {value!r}")
+    return int(number)
+
+
+def load_csv_array(path: Path, *, skip_header: int = 0, dtype: str = "float32") -> np.ndarray:
+    """Parse CSV directly in the requested dtype; untyped `preserve` CSV uses float64."""
+    if skip_header < 0:
+        die("--skip-header must be nonnegative")
     if skip_header == 0:
         with path.open(newline="") as stream:
             first_row = next(csv.reader(stream), [])
@@ -118,7 +131,12 @@ def load_csv_array(path: Path, *, skip_header: int = 0) -> np.ndarray:
                     continue
             else:
                 skip_header = 1
-    return np.loadtxt(path, delimiter=",", dtype=np.float32, skiprows=skip_header)
+    csv_dtype = "float64" if dtype == "preserve" else dtype
+    converters = parse_integer if np.dtype(csv_dtype).kind in "iu" else None
+    return np.loadtxt(
+        path, delimiter=",", dtype=csv_dtype, skiprows=skip_header,
+        converters=converters, encoding="utf-8",
+    )
 
 
 def load_torch_artifact(path: Path, *, trusted_pickle: bool) -> Any:
@@ -143,6 +161,7 @@ def load_tensor(
     key: str | None,
     *,
     csv_skip_header: int = 0,
+    csv_dtype: str = "float32",
     trusted_pickle: bool = False,
 ) -> Any:
     """Load one tensor-like artifact from `.npy`, `.npz`, `.mat`, `.pt`, `.pth`, or CSV."""
@@ -161,7 +180,7 @@ def load_tensor(
         obj = load_torch_artifact(path, trusted_pickle=trusted_pickle)
         return select_key(obj, key, source=path)
     if suffix == ".csv":
-        return load_csv_array(path, skip_header=csv_skip_header)
+        return load_csv_array(path, skip_header=csv_skip_header, dtype=csv_dtype)
     die(f"unsupported tensor input suffix {suffix!r}")
 
 
@@ -174,6 +193,7 @@ def cmd_tensor(args: argparse.Namespace) -> None:
         inp,
         args.key,
         csv_skip_header=args.skip_header,
+        csv_dtype=args.dtype,
         trusted_pickle=args.trusted_pickle,
     )
     arr = cast_array(to_numpy(obj, source=inp), args.dtype)
@@ -183,19 +203,35 @@ def cmd_tensor(args: argparse.Namespace) -> None:
     print(f"[write] {out} shape={tuple(arr.shape)} dtype={arr.dtype}")
 
 
-def read_labels_csv(path: Path, label_col: str | None) -> list[int]:
-    """Read integer labels from a header or no-header CSV file."""
+def read_labels_csv(path: Path, label_col: str | None, *, skip_header: int = 0) -> list[int]:
+    """Read exact integer labels, optionally selecting a named column after skipped rows."""
+    if skip_header < 0:
+        die("--skip-header must be nonnegative")
     with path.open(newline="") as f:
-        sample = f.read(2048)
-        f.seek(0)
-        has_header = csv.Sniffer().has_header(sample)
-        if has_header:
-            reader = csv.DictReader(f)
-            if label_col is None:
-                die("--label-col is required for a header CSV label file")
-            return [int(float(row[label_col])) for row in reader]
         reader = csv.reader(f)
-        return [int(float(row[0])) for row in reader if row]
+        for _ in range(skip_header):
+            next(reader, None)
+        column = 0
+        if label_col is not None:
+            header = next((row for row in reader if row), [])
+            if header.count(label_col) != 1:
+                die(f"{path}: expected one {label_col!r} column; header is {header}")
+            column = header.index(label_col)
+        labels = []
+        for row in reader:
+            if not row:
+                continue
+            if column >= len(row):
+                die(f"{path}:{reader.line_num}: missing label column")
+            try:
+                value = parse_integer(row[column])
+            except (InvalidOperation, ValueError):
+                die(
+                    f"{path}:{reader.line_num}: expected an integer label, got {row[column]!r}; "
+                    "use --label-col for a header CSV"
+                )
+            labels.append(value)
+        return labels
 
 
 def cmd_labels(args: argparse.Namespace) -> None:
@@ -204,7 +240,9 @@ def cmd_labels(args: argparse.Namespace) -> None:
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     if inp.suffix.lower() == ".csv":
-        labels = np.asarray(read_labels_csv(inp, args.label_col), dtype=args.dtype)
+        labels = np.asarray(
+            read_labels_csv(inp, args.label_col, skip_header=args.skip_header), dtype=args.dtype
+        )
     else:
         obj = load_tensor(
             inp,
@@ -293,7 +331,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", required=True)
     p.add_argument("--key", help="key for .npz/.mat/.pt dictionaries")
     p.add_argument("--skip-header", type=int, default=0, help="CSV rows to skip before reading")
-    p.add_argument("--dtype", default="float32", help="float32, float64, int64, or preserve")
+    p.add_argument(
+        "--dtype", default="float32",
+        help="float32, float64, int64, or preserve (CSV has no dtype; uses float64)",
+    )
     p.add_argument("--manifest", action="store_true", help="write OUTPUT.npy.json metadata")
     p.add_argument(
         "--trusted-pickle",
@@ -307,7 +348,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", required=True)
     p.add_argument("--key")
     p.add_argument("--skip-header", type=int, default=0, help="CSV rows to skip before reading")
-    p.add_argument("--label-col")
+    p.add_argument("--label-col", help="column name in the header after --skip-header rows")
     p.add_argument("--classes", type=int)
     p.add_argument("--dtype", default="float32")
     p.add_argument("--manifest", action="store_true")

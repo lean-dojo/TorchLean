@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Runtime.Link.Core
 public import NN.Proofs.Autograd.Tape.Core.FDeriv
 public import NN.Proofs.Autograd.Runtime.Link.BackwardGraph
 

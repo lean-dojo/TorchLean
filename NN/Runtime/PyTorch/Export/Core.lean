@@ -6,11 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import Lean.Data.Json
-public import NN.Spec.Module.Core
 public import NN.Spec.Module.Activation -- shake: keep
 public import NN.Spec.Module.Linear -- shake: keep
-public import NN.Spec.Core.Tensor.Core -- shake: keep
 
 /-!
 # Export Core

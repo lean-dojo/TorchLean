@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL.Numerics.Float32.Types
-public import NN.Spec.RL.Core
-public import NN.Tensor.Internal.Elab.TensorLiteral
 
 /-!
 # Float32 Interval Diagnostics for RL

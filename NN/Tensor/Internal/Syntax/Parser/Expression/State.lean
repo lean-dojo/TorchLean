@@ -7,8 +7,6 @@ module
 
 public import NN.Tensor.Internal.Syntax.Parser.Expression.Config
 public import NN.Tensor.Internal.Syntax.Render
-public import NN.Tensor.Internal.Syntax.Diagnostic -- shake: keep
-public import NN.Tensor.Internal.Syntax.Lexer -- shake: keep
 
 /-!
 # Expression token state

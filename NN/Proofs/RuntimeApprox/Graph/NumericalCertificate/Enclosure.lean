@@ -6,14 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import NN.IR.Graph
 public import NN.Proofs.Analysis.Softmax
 public import NN.Floats.Interval.IEEEExec32
-public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Rounding.Proof
 public import NN.Backend.Profile -- shake: keep
 public import NN.IR.Semantics -- shake: keep
 public import NN.Spec.Core.FloatInstances -- shake: keep
-public import NN.Spec.Core.TensorOps -- shake: keep
 
 /-!
 # Numerical certificate enclosures

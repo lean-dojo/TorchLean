@@ -5,13 +5,16 @@ Authors: TorchLean contributors
 -/
 module
 
-public import NN.Tensor.Internal.Lowering.Reduce
 public meta import NN.Tensor.Internal.Tactic.Report.Analysis.Einsum
 public meta import NN.Tensor.Internal.Tactic.Report.Analysis.Pack
 public meta import NN.Tensor.Internal.Tactic.Report.Analysis.ParseShape
 public meta import NN.Tensor.Internal.Tactic.Report.Analysis.Symbolic
 public meta import NN.Tensor.Internal.Tactic.Report.Analysis.Transform
-public meta import NN.Tensor.Internal.Lowering.TransformFusion -- shake: keep
+public import NN.Tensor.Internal.Tactic.Report.Analysis.Einsum
+public import NN.Tensor.Internal.Tactic.Report.Analysis.Pack
+public import NN.Tensor.Internal.Tactic.Report.Analysis.ParseShape
+public import NN.Tensor.Internal.Tactic.Report.Analysis.Symbolic
+public import NN.Tensor.Internal.Tactic.Report.Analysis.Transform
 
 /-!
 # Report rendering

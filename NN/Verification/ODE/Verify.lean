@@ -9,7 +9,6 @@ module
 public import NN.Verification.Util.Json
 public import NN.Verification.ODE.Parse
 public import NN.API.CLI.Command
-public import NN.MLTheory.CROWN.Extras.BoundOpsIEEE32Exec
 public import NN.Verification.Builtin.Lowering.API
 public import NN.Verification.PINN.PyTorch.ParamStore
 

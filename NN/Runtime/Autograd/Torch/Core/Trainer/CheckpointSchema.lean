@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Torch.Core.Trainer.Parameters
-public import NN.Runtime.Autograd.Torch.Core.Session.State
 public import NN.Runtime.Autograd.Torch.Core.OptimizerCheckpoint.Schema
 
 /-!

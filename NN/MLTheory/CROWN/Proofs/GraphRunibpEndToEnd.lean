@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph.Engine.IBP
 public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Main
 
 /-!

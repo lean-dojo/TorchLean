@@ -15,7 +15,6 @@ This example trains a tiny byte-level RNN on real text:
 
 module
 
-public import NN.API
 public import NN.Examples.Models.Common.RealData
 
 /-!

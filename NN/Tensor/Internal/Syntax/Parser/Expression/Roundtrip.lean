@@ -6,8 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Syntax.Parser.Expression.Parse
-public import NN.Tensor.Internal.Syntax.Parser.Expression.Config -- shake: keep
-public import NN.Tensor.Internal.Syntax.Render -- shake: keep
 
 /-!
 # Expression render round-trips

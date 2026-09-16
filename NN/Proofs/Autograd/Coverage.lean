@@ -6,21 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
-public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
-public import Mathlib.Data.Sym.Sym2.Init
-import Mathlib.Tactic.NormNum.GCD
 -- The roadmap prose below is about these modules, not the constants in them, so `lake shake` sees
 -- no use and wants them gone. They stay: this curated surface is what puts the composite-op
 -- proofs (attention, transformer blocks, the Elman cell) into a typecheck target.
-public import NN.Proofs.Autograd.Tape.Ops.Attention.MaskedMultiHeadSelfAttention
 public import NN.Proofs.Autograd.Tape.Ops.Attention.MaskedScaledDotProduct
 public import NN.Proofs.Autograd.Tape.Ops.Recurrent.ElmanCell
 public import NN.Proofs.Autograd.Tape.Ops.Transformer.DecoderBlock
 public import NN.Proofs.Autograd.Tape.Ops.Transformer.EncoderBlock
-public import NN.Proofs.Autograd.Tape.Ops.Transformer.FeedForward
-public import NN.Proofs.Autograd.Tape.Ops.Transformer.PostNorm
-public import NN.Proofs.Autograd.Tape.Ops.Transformer.ResidualAttention
 
 /-!
 # Autograd Proof Coverage

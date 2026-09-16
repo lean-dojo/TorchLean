@@ -7,10 +7,11 @@ module
 
 public import NN.Tensor.Internal.Laws.PackIndex
 public import NN.Tensor.Internal.Lowering.Pack
-public meta import Mathlib.Algebra.GroupWithZero.Nat
 public meta import NN.Tensor.Internal.Elab.Native.Pull
-public meta import NN.Tensor.Internal.Elab.Native.Index -- shake: keep
-public import NN.Tensor.Internal.Elab.Native.Slice -- shake: keep
+public import NN.Tensor.Internal.Elab.Common
+public import NN.Tensor.Internal.Elab.Native.Pull
+import NN.Tensor.Internal.Elab.Einsum.Kernel.Index
+import NN.Tensor.Internal.Elab.Native.Index
 
 /-!
 # Certified native unpack

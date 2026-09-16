@@ -5,14 +5,15 @@ Authors: TorchLean contributors
 -/
 module
 
-public import Batteries.Data.Vector.Lemmas
 public import NN.Tensor.Internal.Elab.Einsum.Contraction.Loop
 public meta import NN.Tensor.Internal.Elab.Einsum.Output.Fusion
 public meta import NN.Tensor.Internal.Elab.Einsum.Output.Planning
-public meta import NN.Tensor.Internal.Elab.Einsum.OutputIndex
 public meta import NN.Tensor.Internal.Elab.Einsum.ParallelOutput
 public meta import NN.Tensor.Internal.Elab.Einsum.Kernel.Product -- shake: keep
-public meta import NN.Tensor.Internal.Lowering.Einsum.Planning -- shake: keep
+public import NN.Tensor.Internal.Elab.Einsum.Output.Planning
+public import NN.Tensor.Internal.Elab.Einsum.OutputIndex
+public import NN.Tensor.Internal.Elab.Einsum.ParallelOutput
+import NN.Tensor.Internal.Elab.Einsum.Output.Fusion
 
 /-!
 # Verified einsum output generation

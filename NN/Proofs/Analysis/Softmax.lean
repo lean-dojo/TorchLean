@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.BigOperators.Field
 public import NN.Proofs.Tensor.Basic.LinearAlgebra
 public import NN.Proofs.Utils.MathFunctions
 public import NN.Spec.Layers.Activation
@@ -59,28 +58,6 @@ namespace Proofs
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
 open Activation
-
-/-! ## Scalar helpers
-
-`softmaxVecSpec` is written over tensors, so even one coordinate has type `Tensor ℝ .scalar`.
-Local helper definitions expose scalar coordinates to the proof without adding public API.
--/
-
-/--
-Eliminate a scalar tensor using the same matcher as `Activation.softmaxVecSpec`.
-
-This local eliminator avoids depending on compiler-generated matcher names, which are not a stable
-interface and can change when an earlier definition is inserted in `Activation.lean`.
--/
-private def scalarElim {β : Sort _} (t : Tensor ℝ .scalar) (k : ℝ → β) : β :=
-  k t.item
-
-@[simp] private theorem scalarElim_scalar {β : Sort _} (k : ℝ → β) (v : ℝ) :
-    scalarElim (β := β) (Tensor.scalar v) k = k v := by simp [scalarElim]
-
-/-- Extract the real value from a scalar tensor for local proof steps. -/
-private abbrev scalarVal (t : Tensor ℝ .scalar) : ℝ :=
-  scalarElim (β := ℝ) t (fun v => v)
 
 /-! ## Stable max shift -/
 

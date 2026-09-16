@@ -11,7 +11,6 @@ Device-agnostic real-data example:
 
 module
 
-public import NN.API
 public import NN.Examples.Models.Common
 
 /-!

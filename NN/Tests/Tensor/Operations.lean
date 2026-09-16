@@ -7,12 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Tensor
-public import FloatLib.Floats.Formats.BinaryInterchange.Configured
-public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
-public import FloatLib.Floats.Formats.IEEE754.Native
-import Mathlib.Algebra.Ring.Rat
-import NN.Tensor.Internal.Check.Einsum -- shake: keep
-import NN.Tensor.Internal.Check.Normalize -- shake: keep
 
 /-!
 # Public Tensor Operation Regression Tests

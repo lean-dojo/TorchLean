@@ -7,11 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Tensor.Internal.Representation.Segment
-import Mathlib.Tactic.Bound.Init
-public import NN.Spec.Core.Tensor.Core
 public import NN.Spec.Core.TensorReductionShape.ShapeChange -- shake: keep
 public import NN.Spec.Core.Context -- shake: keep
-public import NN.Tensor.Internal.Representation.Storage -- shake: keep
 
 @[expose] public section
 

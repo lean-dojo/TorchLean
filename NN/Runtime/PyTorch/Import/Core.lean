@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 import Mathlib.Tactic.Bound.Init
-public import NN.Spec.Core.Tensor.Core
 public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!

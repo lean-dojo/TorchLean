@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.LearningTheory.Robustness.Runtime
-public import Mathlib.Analysis.SpecialFunctions.Pow.Real
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # `NN.MLTheory.Stability.Runtime`

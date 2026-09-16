@@ -13,6 +13,7 @@ TorchLean website.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -185,6 +186,48 @@ def rewrite_dependency_links(docs: Path) -> None:
         updated = HREF_RE.sub(repl, text)
         if updated != text:
             path.write_text(updated, encoding="utf-8")
+
+
+def rewrite_search_links(docs: Path) -> None:
+    """Keep dependency search, instance lists, and import links usable after pruning."""
+    index_path = docs / "declarations" / "declaration-data.bmp"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    for collection, field in [("declarations", "docLink"), ("modules", "url")]:
+        for entry in index[collection].values():
+            url = entry[field]
+            parsed = urlsplit(url)
+            if parsed.scheme or parsed.netloc:
+                continue
+            relative = parsed.path.removeprefix("./")
+            root = relative.split("/", 1)[0].removesuffix(".html")
+            if root in DOCGEN_DEPENDENCY_MODULES:
+                entry[field] = UPSTREAM_DOCGEN_BASE + url.removeprefix("./")
+    index_path.write_text(json.dumps(index, separators=(",", ":")), encoding="utf-8")
+
+    # DocGen prefixes every index URL with SITE_ROOT. Absolute upstream URLs need
+    # URL resolution instead, both on the landing page and in nested modules.
+    base = "new URL(SITE_ROOT, window.location.href)"
+    replacements = {
+        "search.js": [("SITE_ROOT + result[j].docLink",
+                       f"new URL(result[j].docLink, {base}).href")],
+        "find/find.js": [("SITE_ROOT + result.docLink",
+                          f"new URL(result.docLink, {base}).href"),
+                         ("window.location.replace(result.link)",
+                          "window.location.replace(result.docLink)")],
+        "instances.js": [("${SITE_ROOT}${instanceLink}",
+                          f"${{new URL(instanceLink, {base}).href}}")],
+        "importedBy.js": [("${SITE_ROOT}${moduleLink}",
+                           f"${{new URL(moduleLink, {base}).href}}")],
+        "how-about.js": [("a.href = docLink;", f"a.href = new URL(docLink, {base}).href;")],
+    }
+    for filename, edits in replacements.items():
+        path = docs / filename
+        source = path.read_text(encoding="utf-8")
+        for old, new in edits:
+            if old not in source and new not in source:
+                raise SystemExit(f"DocGen URL handling changed in {path}; update the polish step")
+            source = source.replace(old, new)
+        path.write_text(source, encoding="utf-8")
 
 
 def _nearest_existing_doc_page(docs: Path, target: Path) -> Path | None:
@@ -1479,6 +1522,7 @@ def main() -> None:
         raise SystemExit(f"DocGen output directory does not exist: {docs}")
     prune_dependency_pages(docs)
     rewrite_dependency_links(docs)
+    rewrite_search_links(docs)
     write_index(docs)
     append_style(docs)
     add_nav_hint(docs)

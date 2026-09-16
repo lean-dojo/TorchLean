@@ -8,7 +8,6 @@ module
 
 public import NN.Runtime.Autograd.Engine.Cuda.Ops.Core
 public import NN.Spec.Core.Context
-public import NN.Core.Numeric
 
 /-!
 # CUDA Tape Operations: Normalization and Row Softmax

@@ -5,7 +5,6 @@ Authors: TorchLean contributors
 -/
 module
 
-public import NN.Tensor.Internal.Semantics.Transform.RearrangeRepeat
 public import NN.Tensor.Internal.Semantics.Transform -- shake: keep
 
 /-!

@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Algebra
 public import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
 public import Mathlib.Data.Sym.Sym2.Init
 import Mathlib.Tactic.NormNum.GCD

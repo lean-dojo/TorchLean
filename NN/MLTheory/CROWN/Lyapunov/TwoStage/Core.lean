@@ -8,9 +8,7 @@ module
 
 public import NN.Spec
 public import NN.Runtime.Autograd.Model.Functional.Core
-public import NN.Runtime.Autograd.Model.Functional.Einsum
 public import NN.Runtime.Autograd.Model.Functional.ShapeOps
-public import NN.Tensor
 
 /-!
 # TwoStage Core

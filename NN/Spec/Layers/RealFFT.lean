@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Core.Numeric
 public import NN.Tensor
 
 /-!

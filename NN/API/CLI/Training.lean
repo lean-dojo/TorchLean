@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.CLI.Parser
-public import NN.Runtime.Training.Log
 public import NN.API.Trainer.Reporting -- shake: keep
 public import NN.API.CLI -- shake: keep
 

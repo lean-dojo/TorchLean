@@ -10,12 +10,7 @@ module -- shake: keep-downstream
 
 public import NN.API.Arithmetic
 public import NN.API.Optim.Config -- shake: keep
-public import NN.Tensor.Constructors -- shake: keep
 public import NN.Runtime.Autograd.Model.Optim -- shake: keep
-public import Mathlib.Algebra.Order.Field.Basic -- shake: keep
-import Mathlib.Tactic.NormNum.Inv -- shake: keep
-import Mathlib.Tactic.NormNum.Pow -- shake: keep
-import Mathlib.Tactic.Positivity.Finset -- shake: keep
 public import NN.Tensor -- shake: keep
 
 /-!

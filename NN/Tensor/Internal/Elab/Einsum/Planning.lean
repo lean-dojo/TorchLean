@@ -6,7 +6,8 @@ Authors: TorchLean contributors
 module
 
 public meta import NN.Tensor.Internal.Elab.Einsum.Index
-public meta import NN.Tensor.Internal.Lowering.Einsum.Planning -- shake: keep
+public import NN.Tensor.Internal.Elab.Common
+public import NN.Tensor.Internal.Elab.Einsum.Index
 
 /-!
 # Automatic einsum contraction planning

@@ -8,6 +8,7 @@ module
 
 public import NN.Verification.Splines.PiecewisePolyCert
 public import NN.Spec.Layers.Linear
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-! # Shape-checked decoding of exact rational parameters -/
 

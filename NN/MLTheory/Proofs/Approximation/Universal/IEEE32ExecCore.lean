@@ -7,17 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.FloatInstances
-public import Mathlib.Algebra.Order.Algebra
-public import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
-public import Mathlib.Data.Sym.Sym2.Init
 import Mathlib.Tactic.NormNum.GCD
-import Mathlib.Tactic.Positivity.Finset
-public import FloatLib.Floats.Formats.BinaryInterchange.Configured
-public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
-public import FloatLib.Floats.Formats.BinaryInterchange.Model.RealSemantics
-public import FloatLib.Floats.Formats.BinaryInterchange.Model.ERealSemantics
-public import FloatLib.Floats.Formats.IEEE754.Native
-public import NN.Spec.Models.Mlp
 -- Supplies the `ReLUMlpBridge` namespace opened below. `lake shake` cannot see an import that
 -- only feeds an `open`, so it needs the annotation.
 public import NN.MLTheory.Proofs.ReLU.Bridge.ReLUMlpBridge -- shake: keep

@@ -7,9 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Seeded
-public import NN.API.Sample
-public import NN.API.Macros -- shake: keep
-public import NN.Spec.Core.TensorReductionShape.ConcatSlice -- shake: keep
 
 /-!
 # Diffusion Models

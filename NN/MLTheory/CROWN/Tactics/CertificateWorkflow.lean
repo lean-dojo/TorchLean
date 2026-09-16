@@ -7,13 +7,7 @@ Authors: TorchLean Team
 module
 
 public import Lean
-public import Lean.Data.Json
-public import Lean.Elab.Exception
-public import Lean.Elab.Tactic
-public import Lean.Elab.Tactic.Basic
-public import Lean.Log
 public meta import NN.Verification.Util.Json
-public import Std.Data.HashMap
 
 /-!
 # CROWN certificate workflow tools

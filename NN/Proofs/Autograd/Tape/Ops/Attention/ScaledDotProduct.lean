@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Tape.Nodes.GraphComposition
-public import NN.Proofs.Autograd.Tape.Util.Idx
 public import NN.Proofs.Autograd.Tape.Nodes.Arithmetic
 public import NN.Proofs.Autograd.Tape.Nodes.Matrix
 public import NN.Proofs.Autograd.Tape.Nodes.Softmax

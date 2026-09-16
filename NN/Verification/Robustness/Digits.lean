@@ -12,8 +12,6 @@ public import NN.Verification.Robustness.TopLabel
 public import NN.Verification.Util.Json
 public import NN.Verification.Util.Tensor
 public import NN.Runtime.Autograd.Model.Metrics
-public import NN.Verification.Builtin.Lowering
-public import NN.API.Runtime -- shake: keep
 
 /-!
 # Digits certified robustness

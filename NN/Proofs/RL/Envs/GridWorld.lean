@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.RL.Envs.GridWorld
-public import Mathlib.Algebra.BigOperators.Group.Finset.Piecewise
 
 /-!
 # GridWorld proof layer

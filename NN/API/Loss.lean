@@ -6,10 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Field.Basic
-import Mathlib.Tactic.NormNum.Inv
-import Mathlib.Tactic.NormNum.Pow
-import Mathlib.Tactic.Positivity.Finset
 public import NN.Runtime.Autograd.Model.Loss -- shake: keep
 public import NN.Runtime.Autograd.Model.Metrics -- shake: keep
 

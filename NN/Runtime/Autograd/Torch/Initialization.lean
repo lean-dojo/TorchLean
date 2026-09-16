@@ -8,10 +8,6 @@ module
 
 public import NN.Spec.Core.Random
 public import NN.Tensor.Constructors
-public import Mathlib.Algebra.Order.Field.Basic
-import Mathlib.Tactic.NormNum.Inv
-import Mathlib.Tactic.NormNum.Pow
-import Mathlib.Tactic.Positivity.Finset
 public import NN.Tensor.Internal.Elab.TensorLiteral
 
 /-!

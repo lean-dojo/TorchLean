@@ -7,15 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Examples.DeepDives.Floats.GraphNumericalCertificate
-public meta import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate
-import NN.Backend.Profile
-import NN.Floats.Interval.IEEEExec32
-import NN.IR.Graph
-import NN.IR.Payload
-import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Contracts
-import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Enclosure
-import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Certificate
-import NN.Spec.Core.Tensor.SomeTensor
 
 /-!
 # Numerical certificate regression coverage

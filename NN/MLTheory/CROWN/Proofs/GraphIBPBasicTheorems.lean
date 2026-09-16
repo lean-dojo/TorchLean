@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Models.Mlp
-public import NN.MLTheory.CROWN.BoundOps.Lawful
 public import NN.MLTheory.CROWN.Graph.Theorems
 
 /-!

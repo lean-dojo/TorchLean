@@ -6,9 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Representation.Storage
-public import Batteries.Data.Fin.Fold -- shake: keep
-public import Batteries.Data.Fin.Lemmas -- shake: keep
-public import Mathlib.Data.List.OfFn -- shake: keep
 
 /-!
 # Certified native finite loops

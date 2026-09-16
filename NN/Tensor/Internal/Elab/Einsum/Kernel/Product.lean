@@ -8,6 +8,9 @@ module
 public meta import NN.Tensor.Internal.Elab.Einsum.Kernel.Analysis
 public meta import NN.Tensor.Internal.Elab.Einsum.Kernel.Utilities
 public meta import NN.Tensor.Internal.Elab.Einsum.Kernel.View
+public import NN.Tensor.Internal.Elab.Einsum.Kernel.Analysis
+public import NN.Tensor.Internal.Elab.Einsum.Kernel.Utilities
+public import NN.Tensor.Internal.Elab.Einsum.Kernel.View
 
 /-!
 # Verified einsum scalar product generation

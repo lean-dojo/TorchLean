@@ -6,7 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Representation.Basic.Pointwise
-public import NN.Tensor.Internal.Representation.Basic.Core -- shake: keep
 
 /-!
 # Tensor Pullbacks, Reindexing, and Reshape

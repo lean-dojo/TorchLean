@@ -7,10 +7,7 @@ Authors: TorchLean Team
 module
 
 public import Aesop.BuiltinRules
-import Mathlib.Tactic.Attr.Core
 import Mathlib.Tactic.Finiteness.Attr
-import Mathlib.Tactic.ToAdditive
-import Mathlib.Tactic.ToDual
 
 /-!
 # Text cursor primitives for verification parsers

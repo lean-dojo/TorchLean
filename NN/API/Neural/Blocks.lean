@@ -8,11 +8,7 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Macros
-public import NN.API.Neural.Layers.Convolution
 public import NN.API.Neural.Layers.Pooling
-public import NN.API.Neural.Builders
-public import NN.Runtime.Autograd.Model.Layers.Activations
-public import NN.API.Runtime -- shake: keep
 public import NN.API.Neural.Layers.Attention -- shake: keep
 public import NN.API.Sample -- shake: keep
 
@@ -129,6 +125,7 @@ the namespace, not in the identifier.
 def Layer.residual {s : Spec.Shape} (inner : Sequential s s) : Layer s s :=
   let stateShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes inner
   { kind := "Residual"
+    updatesBuffersInForward := true
     stateShapes
     initState := Runtime.Autograd.Model.Layers.Seq.initState inner
     runtimeInit := Runtime.Autograd.Model.Layers.Seq.runtimeInit? inner
@@ -203,6 +200,7 @@ def Layer.combineBranches {σ τ₁ τ₂ υ : Spec.Shape} (kind : String)
   let firstStateShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes f
   let secondStateShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes g
   { kind := kind
+    updatesBuffersInForward := true
     stateShapes := firstStateShapes ++ secondStateShapes
     initState :=
       TorchLean.TensorPack.append

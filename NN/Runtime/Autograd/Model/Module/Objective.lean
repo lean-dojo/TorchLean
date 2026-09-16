@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Model.Module.RuntimeInit
-import Mathlib.Algebra.Order.Algebra
 public import NN.Runtime.Autograd.Model.Optim
 public import NN.Runtime.Autograd.Torch.Core.Trainer
 

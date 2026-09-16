@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Model.Functional.Core
-import Mathlib.Algebra.Order.Algebra
 
 /-!
 # Norm

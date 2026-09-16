@@ -6,14 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import Lean.Data.Json
 public import NN.API.Json
-public import NN.Tensor
 public import NN.Runtime.PyTorch.Import.CNN
 public import NN.Runtime.PyTorch.Import.MLP
 public import NN.Examples.Interop.PyTorch.Roundtrip
 public import NN.Runtime.PyTorch.Import.Transformer
-public import NN.Core.ExternalProcess
 public import NN.Tests.Runtime.Floats.Utils
 
 /-!

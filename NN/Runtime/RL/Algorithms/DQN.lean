@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL.Algorithms.ValueLearning
-public import NN.Tensor.Reductions
 
 /-!
 # DQN Minibatch Helpers

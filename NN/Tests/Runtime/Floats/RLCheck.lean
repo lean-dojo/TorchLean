@@ -9,7 +9,6 @@ module
 public import NN.Runtime.RL
 public import NN.Tests.Runtime.Floats.DQN
 public import NN.Tests.Runtime.Floats.Utils
-public import Std
 
 /-!
 # RL Runtime Checks

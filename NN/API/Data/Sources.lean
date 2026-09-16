@@ -11,10 +11,6 @@ module -- shake: keep-downstream
 public import NN.API.Arithmetic -- shake: keep
 public import NN.API.Sample -- shake: keep
 public import NN.Data.SampleStream -- shake: keep
-public import NN.Data.IO.Csv -- shake: keep
-public import NN.Data.IO.Npy -- shake: keep
-public import NN.Tensor.Constructors -- shake: keep
-public import NN.Tensor.Conversion -- shake: keep
 public import NN.Data.IO -- shake: keep
 
 /-!

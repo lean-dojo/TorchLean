@@ -8,7 +8,6 @@ module
 
 public import NN.API.Data.Loaders
 public import NN.API.Trainer.Dataset
-public import NN.API.Data.Sources
 
 /-!
 # Datasets

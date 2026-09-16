@@ -9,7 +9,7 @@ module
 public import NN.Runtime.External.Julia
 public import NN.API.CLI
 public import NN.Verification.Splines.PiecewisePolyCert
-import Lean.Data.Json
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-!
 # Piecewise-linear spline certificate CLI

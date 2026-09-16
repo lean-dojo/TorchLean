@@ -5,7 +5,6 @@ Authors: TorchLean contributors
 -/
 module
 
-public import NN.Tensor.Internal.Representation.Basic.Reindex
 public import NN.Tensor.Internal.Elab.Native.Slice -- shake: keep
 
 /-!

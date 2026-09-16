@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Cert.AlphaCROWN
-public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Run
 
 /-!
 # α/β-CROWN certificate step function (graph dialect)

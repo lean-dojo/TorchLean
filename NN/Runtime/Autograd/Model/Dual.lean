@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Tensor.Pack
-import Mathlib.Algebra.Order.Algebra
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Dual

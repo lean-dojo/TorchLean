@@ -8,12 +8,8 @@ module
 
 public import NN.Floats.FP32
 public import NN.Spec.Core.FloatInstances.NF
-public import FloatLib.Floats.Interval.Rounders
-public import FloatLib.Floats.Formats.Flocq.Theory.Rounding.Properties
-public import NN.MLTheory.CROWN.BoundOps
 public import NN.MLTheory.CROWN.Extras.IntervalLemmas
 public import NN.MLTheory.CROWN.Graph
-public import NN.MLTheory.CROWN.BoundOps.Lawful
 
 /-!
 # FP32

@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Core
-public import NN.Spec.Core.FloatInstances.NF
 public import NN.Proofs.Utils.MathFunctions
 
 /-!

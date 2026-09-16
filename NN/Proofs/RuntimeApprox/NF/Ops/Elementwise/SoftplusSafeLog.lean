@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Gradients.Activation
-public import NN.Proofs.RuntimeApprox.NF.Ops.Plumbing
 public import NN.Proofs.RuntimeApprox.NF.Ops.Scalar
 
 /-!

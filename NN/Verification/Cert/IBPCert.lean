@@ -10,7 +10,6 @@ public import NN.Runtime.PyTorch.Import.Core
 public import NN.Verification.Util.Json
 public import NN.Verification.Util.Tensor
 public import NN.MLTheory.CROWN.Graph.Engine.Refinement
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # IBPCert

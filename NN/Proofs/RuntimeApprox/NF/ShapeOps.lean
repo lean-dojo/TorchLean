@@ -6,15 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.TensorReductionShape.Broadcasting
-public import NN.Proofs.RuntimeApprox.NF.Ops.Plumbing
-public import NN.Proofs.RuntimeApprox.NF.Ops.Scalar
 public import NN.Proofs.RuntimeApprox.NF.Ops -- shake: keep
 public import NN.Proofs.RuntimeApprox.NF.FoldLemmas -- shake: keep
-public import NN.Spec.Core.TensorReductionShape.ConcatSlice -- shake: keep
-public import NN.Spec.Core.TensorReductionShape.LinearAlgebra -- shake: keep
-public import NN.Spec.Core.TensorReductionShape.Reductions -- shake: keep
-public import NN.Spec.Core.TensorReductionShape.ShapeChange -- shake: keep
 
 /-!
 # NF Shape Operators

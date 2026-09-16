@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import Mathlib.Analysis.SpecialFunctions.Trigonometric.Arctan
-public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 import Mathlib.Tactic.Measurability.Init
 public import NN.MLTheory.CROWN.BoundOps.Lawful
 public import NN.MLTheory.CROWN.Graph.Engine.Base

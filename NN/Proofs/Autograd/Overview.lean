@@ -6,10 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Core.RealCorrectness
 public import NN.Proofs.Autograd.Coverage
 public import NN.Proofs.Autograd.Runtime.Link
-public import NN.Proofs.Autograd.Tape.Core.Soundness
 
 /-!
 # Autograd proofs: overview and map to PyTorch

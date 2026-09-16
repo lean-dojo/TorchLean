@@ -6,12 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import Lean.Data.Json
-public import NN.Spec.Core.Tensor
 public import NN.Tensor
 public import NN.Core.ExternalProcess
 public import NN.Tests.Utils
-public import Std
 
 /-!
 # Floats Utils

@@ -7,10 +7,7 @@ module
 
 public import NN.Tensor.Internal.Check.Einsum
 public import Mathlib.Algebra.BigOperators.Fin
-public import NN.Tensor.Internal.Representation.Fiber.Differential
-public import NN.Tensor.Internal.Representation.Coordinate -- shake: keep
 public import NN.Tensor.Internal.Representation.Fiber -- shake: keep
-public import Batteries.Data.Fin.Fold -- shake: keep
 
 /-!
 # Algebraic semantics for einsum

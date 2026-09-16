@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Neural.Builders
-public import NN.API.Module.Execution -- shake: keep
 
 @[expose] public section
 

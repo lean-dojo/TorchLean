@@ -7,10 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.PyTorch.Import.Core
-public import NN.Verification.Util.Tensor
 public import NN.Verification.VNNComp.Spec
 public import NN.API.CLI.Parser
-public import NN.MLTheory.CROWN.Graph.Engine.BackwardObjective
 public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Run
 
 /-!

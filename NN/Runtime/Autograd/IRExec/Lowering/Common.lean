@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.IR.Payload
-public import NN.Proofs.Autograd.Tape.Algebra.Soundness
 public import NN.Runtime.Autograd.IRExec.Core
 
 /-!

@@ -6,7 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Laws.Equivalence.Index
-public import NN.Tensor.Internal.Lowering.Rearrange
 
 /-!
 # Checked rearrangement equivalence

@@ -8,11 +8,7 @@ module
 
 public import NN.MLTheory.CROWN.Graph.Core
 public import NN.IR.Semantics
-public import NN.MLTheory.CROWN.Operators.Conv
 public import NN.MLTheory.CROWN.Runtime.Ops
-public import NN.IR.Payload -- shake: keep
-public import NN.Spec.Core.Shape -- shake: keep
-public import NN.Spec.Core.Tensor.SomeTensor -- shake: keep
 
 /-!
 Shared definitions for the graph CROWN engine.

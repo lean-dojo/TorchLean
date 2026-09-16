@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Analysis.Lipschitz.Network
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Tensor-shape induction and lifting lemmas

@@ -6,10 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import Mathlib.Data.List.GetD
-import Mathlib.Tactic.Bound.Init
-public import NN.Tensor.Internal.Representation.Basic.Reindex
-public import NN.Tensor.Internal.Representation.Coordinate
-public import Mathlib.Data.List.OfFn -- shake: keep
 public import NN.Tensor.Internal.Lowering.Rearrange -- shake: keep
 
 /-!

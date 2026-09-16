@@ -8,11 +8,7 @@ module
 
 public import NN.Runtime.Autograd.Model.Program
 public import NN.Runtime.Autograd.Model.Dual
-public import NN.Tensor
-import Mathlib.Algebra.Order.Algebra
 public import NN.Runtime.Autograd.Torch.Core.Trainer
-public import NN.Runtime.Autograd.Torch.Core.Trainer.GraphOps
-public import NN.Runtime.Autograd.Torch.Core.TypedGraph
 
 /-!
 # Autodiff

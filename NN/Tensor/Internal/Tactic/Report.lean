@@ -7,9 +7,8 @@ module
 
 public meta import NN.Tensor.Internal.Tactic.Report.Analysis
 public meta import ProofWidgets.Component.HtmlDisplay
-public meta import NN.Tensor.Internal.Lowering.TransformFusion -- shake: keep
-public meta import NN.Tensor.Internal.Elab.Native.Tensor -- shake: keep
-public meta import Lean.Meta.Tactic.TryThis -- shake: keep
+public import NN.Tensor.Internal.Tactic.Report.Analysis.Render
+public import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # InfoView reports for verified tensor transformations

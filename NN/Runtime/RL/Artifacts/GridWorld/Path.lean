@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL.Artifacts.GridWorld.Position
-public import NN.Runtime.Training.Log
 
 /-!
 # GridWorld Path-Difference Artifacts

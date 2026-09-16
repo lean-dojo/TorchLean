@@ -9,6 +9,7 @@ module -- shake: keep-all
 public import FloatLib.Floats.Interval
 public import NN.Floats.Interval.FP32
 public import NN.Floats.Interval.IEEEExec32
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-!
 # Interval adapters for TorchLean scalar formats

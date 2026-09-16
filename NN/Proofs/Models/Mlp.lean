@@ -8,7 +8,6 @@ module
 
 public import NN.Spec.Models.Mlp
 public import NN.Spec.Core.Context.Rational
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Closed MLP Model Facts

@@ -11,7 +11,6 @@ public import NN.Spec.Module.Conv
 public import NN.Spec.Module.Flatten
 public import NN.Spec.Module.Linear
 public import NN.Spec.Module.Pooling
-public import Mathlib.Algebra.Ring.Nat
 
 /-!
 # Convolutional Network Specifications

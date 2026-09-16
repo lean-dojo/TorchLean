@@ -8,15 +8,10 @@ module
 
 public import NN.Verification.PINN.Core
 public import NN.Verification.PINN.Dataset
-public import NN.API.CLI.Parser
-public import NN.Verification.PINN.PyTorch.ParamStore
 public import NN.API.CLI -- shake: keep
 public import NN.Verification.PINN.PdeParse -- shake: keep
 public import NN.MLTheory.CROWN.Graph -- shake: keep
 public import NN.Verification.PINN.PyTorch -- shake: keep
-public import NN.Verification.PINN.Architecture -- shake: keep
-public import NN.Verification.Util.Json -- shake: keep
-import Lean.Data.Json -- shake: keep
 
 /-!
 # PINN Dataset Check

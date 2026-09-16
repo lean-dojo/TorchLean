@@ -6,7 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import Mathlib.Algebra.DualNumber
-public import NN.Tensor.Internal.Representation.Fiber.Product
 public import NN.Tensor.Internal.Semantics.Transform.Reduction
 
 /-!

@@ -5,13 +5,9 @@ Authors: TorchLean contributors
 -/
 module
 
-meta import Mathlib.Tactic.Basic
-meta import Mathlib.Tactic.ToAdditive
-meta import Mathlib.Tactic.ToDual
 public meta import NN.Spec.Core.Shape
-public import NN.Tensor.Internal.Representation.Basic.Pointwise
-public meta import Lean.Elab.Term -- shake: keep
 public import NN.Tensor.Internal.Representation.Basic -- shake: keep
+import NN.Spec.Core.Shape
 
 /-!
 # Native tensor literals

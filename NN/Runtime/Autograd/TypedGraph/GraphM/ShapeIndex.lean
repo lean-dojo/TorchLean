@@ -36,7 +36,7 @@ PyTorch comparison: `torch.flatten(x)` (for a single tensor value).
 def flatten {α : Type} {Δ : Type} [TorchLean.Storage α] [Inhabited α] [Zero α]
   {Γ : List Shape} {s : Shape} (x : Var s) :
   MWith α Δ Γ (Var (.dim (Spec.Shape.size s) .scalar)) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let outS : Shape := .dim (Spec.Shape.size s) .scalar
   let node : NodeData α Δ (Γ ++ ss) outS :=
@@ -55,7 +55,7 @@ PyTorch comparison: `torch.reshape(x, new_shape)`.
 def reshape {α : Type} {Δ : Type} [TorchLean.Storage α] [Inhabited α] [Zero α]
   {Γ : List Shape} {s₁ s₂ : Shape} (x : Var s₁) (h : Spec.Shape.size s₁ = Spec.Shape.size s₂) :
     MWith α Δ Γ (Var s₂) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s₂ :=
     { forward := fun ctx _d =>
@@ -77,7 +77,7 @@ This is the typed-graph primitive used to lower arbitrary permutations.
 def swapAdjacentAtDepth {α : Type} {Δ : Type} [TorchLean.Storage α] [Zero α]
   {Γ : List Shape} {s : Shape} (depth : Nat) (x : Var s) :
     MWith α Δ Γ (Var (s.swapAdjacentAtDepth depth)) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let outS : Shape := s.swapAdjacentAtDepth depth
   let node : NodeData α Δ (Γ ++ ss) outS :=
@@ -101,7 +101,7 @@ PyTorch comparison: `x.expand(...)` / broadcasting semantics in elementwise ops.
 def broadcastTo {α : Type} {Δ : Type} [TorchLean.Storage α] [Inhabited α] [Add α] [Zero α]
   {Γ : List Shape} {s₁ s₂ : Shape} (cb : Shape.CanBroadcastTo s₁ s₂) (x : Var s₁) :
   MWith α Δ Γ (Var s₂) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s₂ :=
     { forward := fun ctx _d =>
@@ -122,7 +122,7 @@ def reduceSum {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Zero α] 
   {Γ : List Shape} {s : Shape} (axis : Nat)
   [_valid : Shape.HasNonemptyAxis axis s] [_wf : Shape.WellFormed s]
   (x : Var s) : MWith α Δ Γ (Var (shapeAfterSum s axis)) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let outS : Shape := shapeAfterSum s axis
   let node : NodeData α Δ (Γ ++ ss) outS :=
@@ -146,7 +146,7 @@ def reduceMean {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
   {Γ : List Shape} {s : Shape} (axis : Nat)
   [valid : Shape.HasNonemptyAxis axis s] [_wf : Shape.WellFormed s]
   (x : Var s) : MWith α Δ Γ (Var (shapeAfterSum s axis)) := do
-  let ⟨ss, g⟩ ← get
+  let ⟨ss, g, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let outS : Shape := shapeAfterSum s axis
   letI : Shape.AxisInBounds axis s := valid.proof.toAxisInBounds
@@ -173,7 +173,7 @@ def select {α : Type} {Δ : Type} [TorchLean.Storage α] [Zero α]
     {Γ : List Shape} {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
     (x : Var s) (index : Fin (Shape.axisSize s axis)) :
     MWith α Δ Γ (Var (s.eraseAxis axis)) := do
-  let ⟨ss, graph⟩ ← get
+  let ⟨ss, graph, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) (s.eraseAxis axis) :=
     { forward := fun context _ =>
@@ -190,7 +190,7 @@ def indexSelect {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Zero α
     {Γ : List Shape} {s : Shape} (axis count : Nat) [Shape.AxisInBounds axis s]
     (x : Var s) (indices : Δ → Tensor (Fin (Shape.axisSize s axis)) [count]) :
     MWith α Δ Γ (Var (s.replaceAxis axis count)) := do
-  let ⟨ss, graph⟩ ← get
+  let ⟨ss, graph, _⟩ ← get
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) (s.replaceAxis axis count) :=
     { forward := fun context data =>
@@ -208,7 +208,7 @@ def scatterAdd {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Zero α]
     (base : Var s) (source : Var (s.replaceAxis axis count))
     (indices : Δ → Tensor (Fin (Shape.axisSize s axis)) [count]) :
     MWith α Δ Γ (Var s) := do
-  let ⟨ss, graph⟩ ← get
+  let ⟨ss, graph, _⟩ ← get
   let ibase ← liftM (mkIdx (_α := α) (Γ := Γ) ss base)
   let isource ← liftM (mkIdx (_α := α) (Γ := Γ) ss source)
   let node : NodeData α Δ (Γ ++ ss) s :=

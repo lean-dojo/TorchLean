@@ -8,7 +8,6 @@ module
 
 public import NN.Runtime.Autograd.Engine.Core.Base
 public import NN.Runtime.Autograd.Torch.Core.Types
-import Std.Data.TreeMap.Basic
 
 /-!
 # Eager Session State

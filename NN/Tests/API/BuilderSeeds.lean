@@ -10,7 +10,6 @@ public import NN.API.Models.CausalTransformer.Runtime
 public import NN.API.Models.Cnn
 public import NN.API.Models.Diffusion
 public import NN.API.Models.FNO
-public import NN.API.Models.Generative
 public import NN.API.Models.KAN
 public import NN.API.Models.Mamba
 public import NN.API.Models.PPO
@@ -18,8 +17,6 @@ public import NN.API.Models.Recurrent
 public import NN.API.Models.ResNet
 public import NN.API.Models.SelfSupervised
 public import NN.API.Models.Unet
-public import NN.API.Models.Vit
-public import NN.API.Neural.Transformer
 
 /-!
 # Builder Seed API Tests

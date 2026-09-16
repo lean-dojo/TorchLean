@@ -6,10 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Finset.Lattice.Fold
 public import NN.Spec.RL.Core
 public import NN.Spec.RL.Environment
-public import NN.Spec.Core.Tensor.Constructors
 
 /-!
 # Finite Discounted MDPs

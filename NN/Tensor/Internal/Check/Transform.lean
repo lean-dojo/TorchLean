@@ -6,8 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Check.Normalize
-public import NN.Tensor.Internal.Check.Diagnostic -- shake: keep
-public import NN.Tensor.Internal.Syntax.Ast -- shake: keep
 
 /-!
 # Transformation plans and executable checking

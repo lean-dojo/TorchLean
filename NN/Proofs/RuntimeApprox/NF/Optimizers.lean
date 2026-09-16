@@ -6,11 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Unary
 public import NN.Proofs.RuntimeApprox.NF.ShapeOps
 public import NN.Proofs.RuntimeApprox.Optimizer
-public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Binary
-public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.SafeDivSigmoid
 
 /-!
 # Rounded Optimizer Steps for `NF`

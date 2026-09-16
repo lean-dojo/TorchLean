@@ -8,12 +8,7 @@ module
 
 public import NN.Verification.PINN.Architecture
 public import NN.Verification.Util.Json
-public import Mathlib.Algebra.Order.Field.Basic
-import Mathlib.Tactic.NormNum.Inv
-import Mathlib.Tactic.NormNum.Pow
-import Mathlib.Tactic.Positivity.Finset
 public import NN.MLTheory.CROWN.Graph.Engine.Derivatives
-public import NN.MLTheory.CROWN.Graph.Engine.IBP
 public import NN.Tensor.Constructors
 public import NN.Tensor.Internal.Elab.TensorLiteral
 

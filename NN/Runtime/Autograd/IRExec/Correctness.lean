@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.IRExec
 public import NN.Runtime.Autograd.IRExec.Correctness.Common
 public import NN.Runtime.Autograd.IRExec.Correctness.Ops
 

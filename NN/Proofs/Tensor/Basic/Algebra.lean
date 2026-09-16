@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Tensor.Basic.Folds
-public import NN.Proofs.Tensor.Basic.Core
 public import NN.Spec.Core.Context.Real
 
 /-!

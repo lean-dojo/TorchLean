@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API
-public import NN.API.Module.Command
 public import NN.Runtime.Autograd.IRExec
 
 /-!

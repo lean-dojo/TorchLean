@@ -9,7 +9,6 @@ module
 public import NN.MLTheory.LearningTheory.Robustness.Spec
 public import NN.Proofs.Tensor.Euclidean
 public import NN.Proofs.Tensor.Basic.BoundsNorms
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Real-valued tensor norm facts

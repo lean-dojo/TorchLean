@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Verification.Builtin.Proved.Lowering
-public import Std.Tactic.BVDecide.Normalize.BitVec
 
 /-!
 # Verified Forward Fragment: Graph Structure

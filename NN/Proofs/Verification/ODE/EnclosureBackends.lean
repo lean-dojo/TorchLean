@@ -7,12 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Verification.ODE.Enclosure
-public import Mathlib.Analysis.SpecialFunctions.Pow.Real
 public import NN.Floats.FP32.Core
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured
-public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
-public import FloatLib.Floats.Formats.BinaryInterchange.Model.RealSemantics
-public import FloatLib.Floats.Formats.BinaryInterchange.Model.ERealSemantics
 public import FloatLib.Floats.Formats.IEEE754.Native
 
 /-!

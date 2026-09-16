@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Seeded
 public import NN.API.Trainer.Constructor
 public import NN.API.Trainer.Train.Loop
 public import NN.API.Data.Training

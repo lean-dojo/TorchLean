@@ -10,7 +10,6 @@ public import NN.Spec.Layers.Activation
 -- The encoder and decoder halves are linear layers, so their gradients reuse
 -- `Spec.LinearParameterGradients` rather than repeating the weight/bias pair here.
 public import NN.Spec.Layers.Linear
-public import NN.Spec.Core.Sequence
 
 /-!
 # Autoencoder (spec model)

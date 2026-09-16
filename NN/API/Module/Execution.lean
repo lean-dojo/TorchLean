@@ -11,9 +11,6 @@ module -- shake: keep-downstream
 public import NN.API.Arguments -- shake: keep
 public import NN.API.Runtime -- shake: keep
 public import NN.API.Neural.State -- shake: keep
-public import NN.API.Arithmetic -- shake: keep
-public import NN.Runtime.Autograd.Model.Module.Evaluator -- shake: keep
-public import NN.Runtime.Autograd.Model.Module.Instantiation -- shake: keep
 public import NN.Runtime.Autograd.Model.Module -- shake: keep
 
 @[expose] public section

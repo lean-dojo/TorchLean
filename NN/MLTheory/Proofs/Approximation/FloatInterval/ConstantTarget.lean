@@ -8,6 +8,7 @@ module
 
 public import NN.Floats.Interval.IEEEExec32
 public import NN.MLTheory.Proofs.Approximation.FloatInterval.Semantics
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-!
 # Constant rounded targets over `Interval32`

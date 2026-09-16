@@ -6,13 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Field.Basic
-import Mathlib.Tactic.NormNum.Inv
-import Mathlib.Tactic.NormNum.Pow
-import Mathlib.Tactic.Positivity.Finset
-public import NN.Spec.Layers.Pooling.Spatial
-public import NN.Tensor.Internal.Elab.TensorLiteral
-public import NN.API.Neural.Builders -- shake: keep
 public import NN.API.Neural.Layers.Convolution -- shake: keep
 
 /-!

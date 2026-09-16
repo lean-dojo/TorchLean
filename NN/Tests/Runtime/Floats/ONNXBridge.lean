@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Lean.Data.Json
 public import NN.Core.ExternalProcess
 public import NN.Runtime.PyTorch.Export.ONNX
 public import NN.Runtime.PyTorch.Import.TorchExport

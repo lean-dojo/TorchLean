@@ -7,10 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Text.Tokenizer
-public import NN.API.CLI.Parser
-public import NN.API.Trainer.Reporting
 public import NN.API.CLI.Training -- shake: keep
-public import NN.Tensor.Conversion -- shake: keep
 
 /-!
 # Text Workflow Configuration

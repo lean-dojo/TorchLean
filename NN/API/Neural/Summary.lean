@@ -6,9 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Neural.Builders
 public import NN.API.Seeded -- shake: keep
-public import NN.Tensor -- shake: keep
 
 /-!
 # Model Summaries

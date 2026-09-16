@@ -5,7 +5,6 @@ Authors: TorchLean contributors
 -/
 module
 
-public meta import Lean.Attributes
 public meta import Lean.Meta.MatchUtil
 public import Lean.Exception
 

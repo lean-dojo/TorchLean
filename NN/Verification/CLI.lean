@@ -18,7 +18,6 @@ public import NN.Verification.Builtin.CrownOpsWorkflow
 public import NN.Verification.Builtin.TransformerIBPWorkflow
 public import NN.Verification.Builtin.MlpTrainVerifyWorkflow
 public import NN.Verification.Robustness.Digits
-public import NN.Verification.Robustness.MarginCert
 public import NN.Verification.Robustness.MarginCertCLI
 public import NN.Verification.Splines.PiecewiseLinearCLI
 public import NN.Verification.VNNComp.MnistFC

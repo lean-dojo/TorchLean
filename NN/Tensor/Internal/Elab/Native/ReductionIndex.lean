@@ -6,9 +6,9 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Laws.ReductionIndex
-public meta import NN.Tensor.Internal.Check.Transform
 public meta import NN.Tensor.Internal.Elab.Native.Index
 public meta import NN.Tensor.Internal.Elab.Einsum.Index -- shake: keep
+public import NN.Tensor.Internal.Elab.Native.Index
 
 /-!
 # Certified native reduction indices

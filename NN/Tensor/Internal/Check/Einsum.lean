@@ -7,9 +7,7 @@ module
 
 public import NN.Tensor.Internal.Check.Diagnostic
 public import NN.Tensor.Internal.Representation.Shape
-public import NN.Tensor.Internal.Syntax.Ast
 public import NN.Tensor.Internal.Syntax.Parser -- shake: keep
-public import Mathlib.Data.List.Dedup -- shake: keep
 
 /-!
 # Einsum plans and executable checking

@@ -8,7 +8,6 @@ module
 
 public import NN.Spec.Core.TensorReductionShape.Broadcasting
 public import NN.Spec.Core.TensorReductionShape.Reductions
-public import NN.Spec.Core.Tensor.Linalg
 
 @[expose] public section
 

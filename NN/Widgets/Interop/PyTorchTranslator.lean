@@ -7,7 +7,8 @@ Authors: TorchLean Team
 module
 
 public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
+public import NN.Widgets.Core.UI
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # PyTorch Translator Widget

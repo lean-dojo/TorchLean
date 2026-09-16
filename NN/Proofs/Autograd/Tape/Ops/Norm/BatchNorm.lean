@@ -6,9 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Layers.Normalization.BatchNorm
-public import NN.Proofs.Autograd.Tape.Core.FDeriv
-public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 -- The companion module named in the docstring below. Its Fréchet-derivative proof is a
 -- prerequisite for reading this one, but nothing here cites it, so `lake shake` drops it.
 public import NN.Proofs.Autograd.Tape.Ops.Norm.BatchNormFDeriv

@@ -5,8 +5,6 @@ Authors: TorchLean contributors
 -/
 module
 
-public import NN.Tensor.Internal.Syntax.Parser.Expression.Parse
-public import NN.Tensor.Internal.Syntax.Parser.Expression.Split
 public import NN.Tensor.Internal.Syntax.Parser.Expression -- shake: keep
 
 /-!

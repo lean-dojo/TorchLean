@@ -7,9 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Text.Options
-public import NN.Tensor.Reductions
 public import Batteries.Data.BinomialHeap.Basic
-public import Std.Data.HashMap.Basic
 
 /-!
 # Text Generation

@@ -5,10 +5,6 @@ Authors: TorchLean contributors
 -/
 module
 
-public import Mathlib.Data.Finset.Attr
-import Mathlib.Tactic.SetLike
-import Mathlib.Tactic.ToAdditive
-public import NN.Tensor.Internal.Representation.Storage
 public import NN.Tensor.Internal.Elab.Einsum.Loop -- shake: keep
 
 /-!

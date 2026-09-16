@@ -7,14 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Model.Metrics
-public import Mathlib.Algebra.Order.Field.Basic
-import Mathlib.Tactic.NormNum.Inv
-import Mathlib.Tactic.NormNum.Pow
-import Mathlib.Tactic.Positivity.Finset
-public import NN.Spec.RL.Core
-public import NN.Tensor.Internal.Elab.TensorLiteral
 public import NN.Runtime.RL.Core -- shake: keep
-public import NN.Spec.Layers.Activation -- shake: keep
 
 /-!
 # Tabular Reinforcement Learning

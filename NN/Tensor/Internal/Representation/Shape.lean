@@ -7,8 +7,6 @@ module
 
 public import Mathlib.Data.Fintype.Prod
 public import Mathlib.Logic.Equiv.Fin.Basic
-public import Mathlib.Data.Fintype.Card -- shake: keep
-public import Mathlib.Logic.Equiv.Prod -- shake: keep
 
 /-!
 # Static tensor shapes and coordinates

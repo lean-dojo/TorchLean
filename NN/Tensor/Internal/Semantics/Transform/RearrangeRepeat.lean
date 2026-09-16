@@ -6,8 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Semantics.Transform.Geometry
-public import Mathlib.Algebra.BigOperators.GroupWithZero.Action
-public import NN.Tensor.Internal.Representation.Fiber.Differential
 
 /-!
 # Rearrange and repeat semantics

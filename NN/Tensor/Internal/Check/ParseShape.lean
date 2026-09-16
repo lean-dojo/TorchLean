@@ -6,8 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Check.Transform
-public import NN.Tensor.Internal.Check.Diagnostic -- shake: keep
-public import NN.Tensor.Internal.Syntax.Ast -- shake: keep
 
 /-!
 # Checked `parse_shape`

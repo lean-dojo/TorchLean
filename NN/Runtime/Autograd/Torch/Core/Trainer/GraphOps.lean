@@ -39,6 +39,24 @@ instance {α Δ : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape} :
   DataRef := fun β _ s => Δ → Tensor β s
   dataConst := fun x _ => x
   mapData := fun f x d => f (x d)
+  updateBuffers? := some fun refs input update => do
+    let readState (getValue : ∀ {s : Shape}, Nat → IO (Tensor α s)) :=
+      let rec read : {ss : List Shape} →
+          RefList Runtime.Autograd.TypedGraph.GraphM.Var ss → IO (TensorPack α ss)
+        | [], .nil => pure .nil
+        | _ :: _, .cons ref rest => do
+            pure (.cons (← getValue ref.id) (← read rest))
+      read refs
+    let observer : Runtime.Autograd.TypedGraph.GraphM.BufferUpdate α := fun getState getValue => do
+      let values ← update (← readState getState) (← getValue input.id)
+      let rec writes : {ss : List Shape} →
+          RefList Runtime.Autograd.TypedGraph.GraphM.Var ss → TensorPack α ss →
+          Array (Nat × Spec.SomeTensor α)
+        | [], .nil, .nil => #[]
+        | _ :: _, .cons ref rest, .cons value values =>
+            #[(ref.id, Spec.SomeTensor.ofTensor value)] ++ writes rest values
+      pure (writes refs values)
+    modify fun state => { state with bufferUpdates := state.bufferUpdates.push observer }
   const := fun {s} t => Runtime.Autograd.TypedGraph.GraphM.const (α := α) (Γ := Γ) (s := s) t
   add := fun {s} a b => Runtime.Autograd.TypedGraph.GraphM.add (α := α) (Γ := Γ) (s := s) a b
   sub := fun {s} a b => Runtime.Autograd.TypedGraph.GraphM.sub (α := α) (Γ := Γ) (s := s) a b

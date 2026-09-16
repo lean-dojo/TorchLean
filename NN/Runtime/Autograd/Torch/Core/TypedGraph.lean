@@ -67,6 +67,8 @@ structure TypedGraphWithData (α : Type) (Δ : Type) [TorchLean.Storage α]
   data : Proofs.Autograd.Algebra.GraphData α Δ Γ nodeShapes
   /-- Typed reference to the graph output, which may be an input or any recorded node. -/
   output : Proofs.Idx (Γ ++ nodeShapes) τ
+  /-- Runtime buffer observers; pure evaluation and differentiation leave these unapplied. -/
+  bufferUpdates : Array (Runtime.Autograd.TypedGraph.GraphM.BufferUpdate α) := #[]
 
 namespace TypedGraphWithData
 
@@ -157,8 +159,12 @@ def lowerToTypedGraphWithData {α Δ : Type} [TorchLean.Storage α]
     Runtime.Autograd.Result (TypedGraphWithData α Δ Γ τ) := do
   let (outVar, st) ← StateT.run build Runtime.Autograd.TypedGraph.GraphM.emptyWith
   let output ← Runtime.Autograd.TypedGraph.GraphM.mkIdx
-    (_α := α) (Γ := Γ) st.1 outVar
-  pure { nodeShapes := st.1, data := st.2, output := output }
+    (_α := α) (Γ := Γ) st.nodeShapes outVar
+  pure
+    { nodeShapes := st.nodeShapes
+      data := st.data
+      output := output
+      bufferUpdates := st.bufferUpdates }
 
 /--
 Lower a scalar-output graph builder into a `TypedScalarGraph`.

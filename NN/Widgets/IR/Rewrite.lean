@@ -8,9 +8,8 @@ module
 
 public import NN.IR.Graph
 public meta import NN.Widgets.IR.Graph
-public meta import NN.IR.Pretty -- shake: keep
-public meta import NN.Widgets.Core.UI -- shake: keep
-public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
+public import NN.Widgets.IR.Graph
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # GraphRewrite

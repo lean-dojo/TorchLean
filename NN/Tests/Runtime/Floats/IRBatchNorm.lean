@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.IR.Check
-public import NN.IR.Semantics
 public import NN.MLTheory.CROWN.Graph.Engine
 public import NN.Runtime.Autograd.IRExec
 public import NN.Runtime.PyTorch.Export.IRPyTorch

@@ -8,7 +8,6 @@ module
 
 public import Mathlib.Topology.ContinuousMap.StoneWeierstrass
 public import NN.Proofs.Tensor.Euclidean
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Stone–Weierstrass Approximation for Tensor Inputs

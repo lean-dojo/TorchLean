@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Verification.Builtin.Proved.Correctness.Eval.Core
 public import NN.Verification.Builtin.Proved.Correctness.Eval.NodeShape
 
 /-!

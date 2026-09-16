@@ -8,18 +8,9 @@ Authors: TorchLean Team
 -- cannot see those downstream lookups, so keep the marked imports.
 module -- shake: keep-downstream
 
-public import Mathlib.Algebra.Order.AbsoluteValue.Basic -- shake: keep
-public import Mathlib.Algebra.Order.Field.Basic -- shake: keep
-import Mathlib.Tactic.NormNum.Inv -- shake: keep
-import Mathlib.Tactic.NormNum.Pow -- shake: keep
-import Mathlib.Tactic.Positivity.Finset -- shake: keep
 public import NN.API.Runtime -- shake: keep
-public import NN.Spec.RL.Core -- shake: keep
-public import NN.Spec.RL.Environment -- shake: keep
-public import NN.Spec.RL.MDP -- shake: keep
 public import NN.Spec.RL.FiniteStochasticMDP -- shake: keep
 public import NN.Runtime.RL.Algorithms -- shake: keep
-public import NN.Runtime.RL.Core -- shake: keep
 public import NN.Runtime.RL.DQN.Autograd -- shake: keep
 public import NN.Runtime.RL.Eval -- shake: keep
 public import NN.Runtime.RL.PolicyGradient.Autograd -- shake: keep

@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Torch.Initialization
-public import NN.Spec.Layers.Conv
 public import NN.API.Neural.Builders -- shake: keep
 
 /-!

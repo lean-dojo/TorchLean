@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Tensor
-public import Std.Data.HashMap.Basic
 
 /-!
 # Vocabulary Projection

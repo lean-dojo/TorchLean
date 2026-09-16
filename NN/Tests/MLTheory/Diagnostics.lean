@@ -6,9 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.LearningTheory.Robustness.Runtime
 public import NN.MLTheory.LearningTheory.Stability.Dynamics.Runtime
-meta import NN.Tensor.Internal.Elab.TensorLiteral
+public import NN.Tensor.Internal.Elab.TensorLiteral
 
 /-!
 # Empirical Diagnostic Regressions

@@ -6,9 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Representation.Fiber.Differential
-public import NN.Tensor.Internal.Representation.Fiber.Axis -- shake: keep
-public import NN.Tensor.Internal.Representation.Fiber.Basic -- shake: keep
-public import NN.Tensor.Internal.Representation.Fiber.Aggregation -- shake: keep
 
 /-!
 # Product-reduction differentiation

@@ -6,10 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Check.Transform
-import Mathlib.Tactic.Bound.Init
-public import NN.Tensor.Internal.Representation.Basic.Core
-public import NN.Tensor.Internal.Representation.Fiber.Basic
-public import NN.Tensor.Internal.Representation.Coordinate -- shake: keep
 public import NN.Tensor.Internal.Representation.Fiber -- shake: keep
 public import Mathlib.Algebra.BigOperators.GroupWithZero.Action -- shake: keep
 

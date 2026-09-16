@@ -8,7 +8,6 @@ module
 
 public import Mathlib.Analysis.InnerProductSpace.GramSchmidtOrtho
 public import NN.Proofs.Tensor.Basic.FactorizationsReconstruction
-public import NN.Proofs.Tensor.Basic.Core -- shake: keep
 
 /-!
 # Orthonormality of the executable Gram–Schmidt `Q` factor (`Qᵀ Q = 1`)

@@ -6,7 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Lowering.Repeat
-public import NN.Tensor.Internal.Laws.Equivalence.Plan
 public import NN.Tensor.Internal.Laws.Equivalence -- shake: keep
 
 /-!

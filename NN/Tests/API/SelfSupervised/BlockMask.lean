@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.SelfSupervised.BlockMask
-public import NN.Tensor
 
 /-!
 # Block-Mask API Tests

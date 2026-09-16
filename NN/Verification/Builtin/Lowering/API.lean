@@ -8,9 +8,7 @@ module
 
 public import NN.Verification.Builtin.Lowering.Builder
 public import NN.IR.Infer
-public import NN.MLTheory.CROWN.Graph.Engine.BackwardObjective
 public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Run
-public import NN.Runtime.Autograd.Model.Program
 
 /-!
 # Verification IR Lowering

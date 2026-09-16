@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Tensor
-import NN.Tensor.Internal.Check.Einsum -- shake: keep
 
 /-!
 # Public Tensor Linear-Algebra Regression Tests

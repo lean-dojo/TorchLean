@@ -5,9 +5,7 @@ Authors: TorchLean contributors
 -/
 module
 
-public import NN.Tensor.Internal.Representation.Basic.Core
 public import Mathlib.Algebra.BigOperators.Fin
-public import NN.Tensor.Internal.Representation.Basic.Pointwise -- shake: keep
 public import NN.Tensor.Internal.Representation.Basic.Reindex -- shake: keep
 public import NN.Tensor.Internal.Representation.Basic.Traversal -- shake: keep
 

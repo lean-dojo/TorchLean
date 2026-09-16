@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Tensor.Basic.Folds
-public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
-public import NN.Proofs.Tensor.Basic.Core -- shake: keep
 
 /-!
 Linear-algebra facts for dependent tensors.

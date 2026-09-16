@@ -8,7 +8,6 @@ Authors: TorchLean Team
 -- file rather than the call site, so shake's constant-level analysis cannot see the need.
 module -- shake: keep-all
 
-import Lean.Parser.Tactic
 public import NN.Spec.RL.Core
 
 /-!

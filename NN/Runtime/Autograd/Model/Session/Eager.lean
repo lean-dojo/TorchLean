@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Model.Functional.ShapeOps
-import Mathlib.Algebra.Order.Algebra
 public import NN.Runtime.Autograd.Torch.Core.Trainer.EagerOps
 public import NN.Runtime.Autograd.Torch.Core.BackwardOptim
 

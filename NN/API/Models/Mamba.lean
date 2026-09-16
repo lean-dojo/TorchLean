@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Seeded
-public import NN.Runtime.Autograd.Model.Mamba
 
 /-!
 # Mamba Models

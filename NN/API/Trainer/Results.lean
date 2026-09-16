@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Verification.Core
-public import NN.API.Neural.State
-public import NN.API.Trainer.Summary
 public import NN.API.Trainer.Core -- shake: keep
 
 /-!

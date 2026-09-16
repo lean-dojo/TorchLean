@@ -8,7 +8,6 @@ module
 
 public import NN.Runtime.RL.Core
 public import NN.Spec.Core.Tensor.Numerics
-public import NN.Tensor.Constructors
 public import NN.Tensor.Pack
 
 /-!

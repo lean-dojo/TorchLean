@@ -6,9 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Analysis.SpecialFunctions.Pow.Real
-public import Mathlib.Analysis.SpecialFunctions.Trigonometric.Arctan
-public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 import Mathlib.Tactic.Measurability.Init
 -- These two are discussed in the overview rather than used by it, which is exactly the shape
 -- `lake shake` reads as dead. They stay: the overview is the only route by which they get

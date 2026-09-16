@@ -8,7 +8,6 @@ module
 
 public import NN.Runtime.Autograd.Model.Functional.Core
 public import NN.Runtime.Autograd.Model.Functional.ShapeOps
-import Mathlib.Algebra.Order.Algebra
 
 /-!
 # Loss

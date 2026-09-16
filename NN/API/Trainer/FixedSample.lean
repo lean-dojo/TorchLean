@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.CLI
 public import NN.API.Module
 public import NN.API.Trainer.Memory
 public import NN.API.Trainer.Reporting

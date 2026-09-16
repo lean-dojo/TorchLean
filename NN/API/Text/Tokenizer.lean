@@ -13,7 +13,6 @@ public import NN.API.Sample
 public import NN.Runtime.Autograd.Model.Metrics
 public import NN.Spec.Core.Random
 public import Std.Data.HashMap.Basic
-import Mathlib.Algebra.Order.Algebra
 
 /-!
 # Tokenizers and Text Tensors

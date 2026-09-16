@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Tape.Nodes.GraphComposition
-public import NN.Proofs.Autograd.Tape.Util.Idx
 
 /-!
 # Elman RNN Cell VJP

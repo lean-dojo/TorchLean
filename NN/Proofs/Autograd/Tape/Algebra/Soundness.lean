@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Tensor.Algebra
-public import NN.Tensor.Pack
 -- `Idx` and `getIdx` are shared with the real-valued tape proofs and the
 -- runtime-approximation graphs; they live in one place so index lemmas transfer.
 public import NN.Proofs.Autograd.Tape.Util.Idx

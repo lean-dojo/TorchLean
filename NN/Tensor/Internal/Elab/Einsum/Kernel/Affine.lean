@@ -7,6 +7,8 @@ module
 
 public import NN.Tensor.Internal.Laws.MixedRadix
 public meta import NN.Tensor.Internal.Elab.Einsum.Index
+import Mathlib.Algebra.Order.Field.Basic
+import NN.Tensor.Internal.Elab.Einsum.Index
 
 /-!
 # Certified affine-index normalization

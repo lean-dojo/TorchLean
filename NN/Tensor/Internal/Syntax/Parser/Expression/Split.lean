@@ -6,8 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Syntax.Parser.Expression.State
-public import NN.Tensor.Internal.Syntax.Parser.Expression.Config -- shake: keep
-public import NN.Tensor.Internal.Syntax.Lexer -- shake: keep
 
 /-!
 # Transformation arrow splitting

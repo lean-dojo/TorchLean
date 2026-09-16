@@ -6,17 +6,10 @@ Authors: TorchLean Team
 
 module
 
-import NN.Backend.Profile
-import NN.Floats.Interval.IEEEExec32
-import NN.IR.Graph
 public import NN.Tensor
 -- Load the checker implementation for execution; its data contracts are imported normally below.
 public meta import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate
-import NN.IR.Payload -- shake: keep
-import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Contracts -- shake: keep
-import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Enclosure -- shake: keep
-import NN.Spec.Core.Tensor.SomeTensor -- shake: keep
-import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Certificate -- shake: keep
+public import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Certificate
 
 /-!
 # A graph numerical certificate

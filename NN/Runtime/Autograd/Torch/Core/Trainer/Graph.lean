@@ -58,6 +58,12 @@ def Internal.graphScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
   let graphData : Proofs.Autograd.Algebra.GraphData α dataInputPack argumentShapes nodeShapes :=
     graph.data
   let lossNodeId : Nat := graph.output.i.val
+  let rec collectParameters : {ss : List Shape} → ParamList α ss → Array (AnyParam α) →
+      Array (AnyParam α)
+    | [], .nil, result => result
+    | _ :: _, .cons parameter rest, result =>
+        collectParameters rest (result.push (AnyParam.ofParam parameter))
+  let parameterSlots := collectParameters parameters #[]
 
   let getScalarFromTape (tape : Runtime.Autograd.Tape α) : IO (Tensor α []) := do
     let outputValue ← match tape.getValue? lossNodeId with
@@ -78,6 +84,28 @@ def Internal.graphScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
       (ss₂ := inputShapes) parameterValues inputs
     let (tape, _) ← okOrThrow <|
       Runtime.Autograd.TypedGraph.lowerToTapeChecked graphData arguments dataInputs
+    let getValue {s : Shape} (id : Nat) : IO (Tensor α s) := do
+      let some value := tape.getValue? id
+        | throw <| IO.userError "typed graph buffer update: missing recorded value"
+      if h : value.shape = s then
+        pure (value.cast h)
+      else
+        throw <| IO.userError "typed graph buffer update: recorded shape mismatch"
+    let getParameter (id : Nat) : IO (AnyParam α) :=
+      match parameterSlots[id]? with
+      | some parameter => pure parameter
+      | none => throw <| IO.userError "typed graph buffer update: expected a state reference"
+    let getState {s : Shape} (id : Nat) : IO (Tensor α s) := do
+      let value ← (← getParameter id).get
+      if h : value.shape = s then
+        pure (value.cast h)
+      else
+        throw <| IO.userError "typed graph buffer update: state shape mismatch"
+    for update in graph.bufferUpdates do
+      for (id, value) in ← update getState getValue do
+        let parameter ← getParameter id
+        unless parameter.requiresGrad do
+          parameter.set value
     pure tape
   -- Parameters are the first graph arguments, so their gradients form the leading pack.
   let parameterGradients (tape : Runtime.Autograd.Tape α) :
@@ -86,8 +114,15 @@ def Internal.graphScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
       (Runtime.Autograd.TypedGraph.backwardDenseAllFrom
         (α := α) (Γ := argumentShapes) (ss := nodeShapes) tape graph.output
         (Tensor.scalar (1 : α)))
-    okOrThrow (TorchLean.TensorPack.ofShapeErasedArray
+    let values ← okOrThrow (TorchLean.TensorPack.ofShapeErasedArray
       (α := α) gradients (shapes := paramShapes))
+    let rec retainTrainable : {shapes : List Shape} → ParamList α shapes →
+        TorchLean.TensorPack α shapes → TorchLean.TensorPack α shapes
+      | [], .nil, .nil => .nil
+      | shape :: _, .cons parameter rest, .cons gradient gradients =>
+          .cons (if parameter.requiresGrad then gradient else Tensor.zeros shape)
+            (retainTrainable rest gradients)
+    pure (retainTrainable parameters values)
   let lossFn :
       Curried.Fn α inputShapes
         (Curried.Fn δ dataInputShapes (IO (Tensor α []))) :=

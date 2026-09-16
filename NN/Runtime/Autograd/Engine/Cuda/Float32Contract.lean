@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.FP32.Error
-public import FloatLib.Floats.Formats.IEEE754.Native
 public import NN.Proofs.RuntimeApprox.IEEE32.Arithmetic
 
 /-!

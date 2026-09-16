@@ -7,9 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.Core.SpecApprox
-public import NN.Tensor.Pack
 -- `Idx` and `getIdx`: one definition of a typed context index, shared with the tape proofs.
-public import NN.Proofs.Autograd.Tape.Util.Idx
 public import NN.Proofs.Autograd.Tape.Algebra.Soundness -- shake: keep
 
 /-!

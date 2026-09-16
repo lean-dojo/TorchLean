@@ -11,8 +11,8 @@ public import Mathlib.Data.Finset.Attr
 import Mathlib.Tactic.Finiteness.Attr
 import Mathlib.Tactic.SetLike
 public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
-public meta import NN.Spec.Core.Shape -- shake: keep
+public import NN.Widgets.Core.UI
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # Widgets IR

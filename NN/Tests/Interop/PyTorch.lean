@@ -6,13 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import Lean.Data.Json
 public import NN.Core.ExternalProcess
-public import NN.IR.Semantics
 public import NN.Runtime.PyTorch.Export.IRPyTorch
 public import NN.Runtime.PyTorch.Export.TorchExport
 public import NN.Runtime.PyTorch.Import.TorchExport
-public import NN.Tensor
 public import NN.API.CLI.Command
 public import NN.API.Json
 public import NN.Runtime.PyTorch.Export.MLP

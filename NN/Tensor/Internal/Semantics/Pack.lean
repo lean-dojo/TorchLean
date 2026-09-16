@@ -7,7 +7,6 @@ module
 
 public import NN.Tensor.Internal.Check.Pack
 public import NN.Tensor.Internal.Representation.Segment
-public import NN.Tensor.Internal.Representation.Fiber.Differential
 public import NN.Tensor.Internal.Representation.Fiber -- shake: keep
 
 /-!

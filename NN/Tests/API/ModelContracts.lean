@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Models.Vit
 public import NN.API.Models.FNO
 public import NN.API.Models.Cnn
 public import NN.API.Models.ResNet
@@ -16,7 +15,6 @@ public import NN.API.Models.SelfSupervised
 public import NN.API.Models.Unet
 public import NN.API.Autograd.Model
 public import NN.API.Neural.Execution
-public import NN.API.Neural.Positional
 public import NN.API.Trainer.Core
 
 /-!

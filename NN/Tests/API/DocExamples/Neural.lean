@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Seeded
 public import NN.API.Neural.Summary
 
 /-!

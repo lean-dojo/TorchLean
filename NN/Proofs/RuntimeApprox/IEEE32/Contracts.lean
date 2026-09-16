@@ -8,7 +8,6 @@ module
 
 public import NN.Proofs.RuntimeApprox.IEEE32.Arithmetic
 public import NN.Floats.FP32.Error
-public import FloatLib.Floats.Formats.BinaryInterchange.Rounding.Proof
 
 /-!
 # Binary32 observation and error contracts

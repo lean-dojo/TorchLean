@@ -7,10 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Data.Text
-public import NN.API.Text.Options
 public import NN.API.Text.Bpe
 public import NN.API.Text.Generation
-public import Batteries.Lean.Except
 
 /-!
 # Text API Tests

@@ -11,7 +11,6 @@ public import NN.Spec.Module.Activation
 public import NN.Spec.Module.Linear
 public import NN.Spec.Core.Context.Rational
 public import NN.Spec.Core.Context.Real
-public import Mathlib.Data.Rat.Cast.Order
 
 /-!
 # Exact monotonicity certificates

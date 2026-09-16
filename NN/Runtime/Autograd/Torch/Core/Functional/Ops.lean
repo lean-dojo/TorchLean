@@ -7,10 +7,10 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.TensorReductionShape.Reductions
-public import NN.Core.Numeric
 public import NN.Spec.Layers.Conv
 public import NN.Spec.Layers.Pooling.Spatial
 public import NN.Tensor.Conversion
+public import NN.Runtime.Autograd.Torch.Core.Functional.Curried
 
 /-!
 # Backend Operation Interface
@@ -42,6 +42,14 @@ class Ops (m : Type → Type) (α : Type) [Storage α] [Context α] where
   /-- Apply a pure transformation to non-differentiable data. -/
   mapData : {β γ : Type} → [Storage β] → [Storage γ] → {s₁ s₂ : Shape} →
       (Tensor β s₁ → Tensor γ s₂) → DataRef β s₁ → DataRef γ s₂
+  /--
+  Observe a stateful layer's actual forward input and update its persistent buffers.
+
+  Pure interpreters may omit this hook. Runtime interpreters retain the recorded state values for
+  differentiation and write updated values only to their persistent, non-trainable storage.
+  -/
+  updateBuffers? : Option ({ss : List Shape} → {s : Shape} → RefList Ref ss → Ref s →
+    (TensorPack α ss → Tensor α s → IO (TensorPack α ss)) → m Unit) := none
   /-- Record a fixed tensor value. -/
   const : {s : Shape} → Tensor α s → m (Ref s)
   /-- Add tensors elementwise. -/

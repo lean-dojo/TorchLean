@@ -7,19 +7,9 @@ module
 
 public import NN.Tensor.Internal.Elab.Transform.View
 public import NN.Tensor.Internal.Lowering.Pack
-public import NN.Tensor.Internal.Laws.Equivalence.Lowering
-public meta import Lean.Elab.Tactic -- shake: keep
-public meta import Lean.Elab.Tactic.Omega -- shake: keep
-public meta import Lean.Meta.Tactic.Assert -- shake: keep
-public meta import Lean.Meta.Tactic.Clear -- shake: keep
-public meta import Lean.Util.FindExpr -- shake: keep
-public import NN.Tensor.Internal.Elab.Native.Tensor -- shake: keep
-public import NN.Tensor.Internal.Laws.Equivalence -- shake: keep
 public import NN.Tensor.Internal.Laws.MixedRadix -- shake: keep
-public import NN.Tensor.Internal.Lowering.Einsum -- shake: keep
 public import NN.Tensor.Internal.Lowering.Reduce -- shake: keep
-public import NN.Tensor.Internal.Lowering.Repeat -- shake: keep
-public import NN.Tensor.Internal.Lowering.TransformFusion -- shake: keep
+import Mathlib.Algebra.Order.Field.Basic
 
 /-!
 # Proof automation for verified tensor transformations

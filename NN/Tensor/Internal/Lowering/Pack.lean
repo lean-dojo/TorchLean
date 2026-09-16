@@ -6,7 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Semantics.Pack
-public import NN.Tensor.Internal.Representation.Fiber -- shake: keep
 
 /-!
 # Direct native lowering for pack and unpack

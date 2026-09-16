@@ -5,10 +5,7 @@ Authors: TorchLean contributors
 -/
 module
 
-public import Mathlib.Algebra.Field.Defs
 public import NN.Tensor.Internal.Representation.Fiber.Differential
-public import NN.Tensor.Internal.Representation.Fiber.Axis -- shake: keep
-public import NN.Tensor.Internal.Representation.Fiber.Aggregation -- shake: keep
 
 /-!
 # Equal-share tie rules

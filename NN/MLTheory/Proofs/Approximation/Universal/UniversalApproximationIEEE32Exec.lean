@@ -268,10 +268,6 @@ private theorem fp32_mul_val (a b : FP32) :
     TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round (a.val * b.val)
   rfl
 
-/-- ReLU is exact at the FP32 value level because it is a comparison with zero, not arithmetic. -/
-private theorem fp32_relu_val' (x : FP32) : (reluFp32 x).val = relu x.val := by
-  simp [relu_fp32_val]
-
 /-- Extensionality for the rounded-`ℝ` FP32 wrapper. -/
 private theorem fp32_ext {u v : FP32} (h : u.val = v.val) : u = v := by
   cases u with

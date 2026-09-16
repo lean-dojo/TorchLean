@@ -6,8 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Representation.Fiber.Aggregation
-public import Mathlib.Algebra.BigOperators.Ring.Finset
-public import NN.Tensor.Internal.Representation.Fiber.Axis -- shake: keep
 
 /-!
 # Fiberwise differential identities

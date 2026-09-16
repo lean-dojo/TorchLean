@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Autograd.AutogradSpec
 public import NN.Spec.Autograd.Trigonometric
 public import NN.Spec.Layers.Dropout
 public import NN.Spec.Layers.Embedding

@@ -8,7 +8,6 @@ module
 
 public import NN.API.Data.Training
 public import NN.API.Trainer.Constructor
-public import NN.API.Trainer.Runner
 public import NN.API.Trainer.Train
 
 /-!

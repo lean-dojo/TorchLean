@@ -8,6 +8,8 @@ module
 public meta import NN.Tensor.Internal.Tactic.Proof
 public meta import NN.Tensor.Internal.Elab.Einsum.ParallelOutput -- shake: keep
 public import NN.Tensor.Internal.Check.ParseShape -- shake: keep
+public import NN.Tensor.Internal.Tactic.Proof
+import Mathlib.Algebra.Order.Field.Basic
 
 /-!
 # Shared report decoding

@@ -4,7 +4,7 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+module -- shake: keep-all (Anonymous examples are checked but not retained as declarations.)
 
 import FloatLib.Floats.Formats.IEEE754.Native.AddSub
 import FloatLib.Floats.Formats.IEEE754.Native.Sqrt

@@ -8,7 +8,6 @@ module
 
 public import NN.API.Trainer.Core
 public import NN.API.Trainer.Scheduler
-public import NN.Runtime.Training.Log
 public import NN.API.Trainer.Dataset -- shake: keep
 
 /-!

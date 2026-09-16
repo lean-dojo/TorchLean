@@ -8,11 +8,7 @@ Authors: TorchLean Team
 -- cannot see those downstream lookups, so keep the marked imports.
 module -- shake: keep-downstream
 
-public import NN.API.Neural.State -- shake: keep
-public import NN.Runtime.Autograd.Torch.Core.TypedGraph -- shake: keep
 public import NN.API.Neural.Builders -- shake: keep
-public import NN.API.Runtime -- shake: keep
-public import NN.Tensor -- shake: keep
 
 /-!
 # Executing Sequential Models

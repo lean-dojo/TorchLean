@@ -7,6 +7,8 @@ module
 
 public meta import NN.Tensor.Internal.Elab.Einsum.Contraction.Flat
 public meta import NN.Tensor.Internal.Elab.Einsum.Contraction.Hoist
+public import NN.Tensor.Internal.Elab.Einsum.Contraction.Flat
+public import NN.Tensor.Internal.Elab.Einsum.Contraction.Hoist
 
 /-!
 # Verified contraction-loop generation

@@ -5,15 +5,10 @@ Authors: TorchLean contributors
 -/
 module
 
-public meta import Aesop.BuiltinRules
 public import Mathlib.Algebra.Order.Field.Basic
 import Mathlib.Tactic.NormNum.Inv
 import Mathlib.Tactic.NormNum.Pow
 import Mathlib.Tactic.Positivity.Finset
-meta import Mathlib.Tactic.Simps.Basic
-meta import Mathlib.Tactic.ToAdditive
-public import NN.Tensor.Internal.Check.Transform
-public import NN.Tensor.Internal.Laws.Equivalence.Index
 public meta import NN.Tensor.Internal.Elab.Common -- shake: keep
 public import NN.Tensor.Internal.Laws.Equivalence -- shake: keep
 

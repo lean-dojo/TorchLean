@@ -146,6 +146,36 @@ static inline size_t checked_conv_kernel_size(uint32_t outerC, uint32_t innerC,
 #define TORCHLEAN_CUDA_CONV_POOL_HD
 #endif
 
+// Keep padded coordinates wide until the bounds check. A UInt32 product plus a UInt32
+// kernel coordinate fits UInt64, but can overflow signed arithmetic or a narrowed index.
+TORCHLEAN_CUDA_CONV_POOL_HD static inline int window_input_coord(
+    uint32_t out, uint32_t kernel, uint32_t stride, uint32_t padding,
+    uint32_t inputSize, uint32_t* input) {
+  const uint64_t padded = (uint64_t)out * (uint64_t)stride + (uint64_t)kernel;
+  if (padded < padding || padded - padding >= inputSize) {
+    return 0;
+  }
+  *input = (uint32_t)(padded - padding);
+  return 1;
+}
+
+// Invert input = output * stride + kernel - padding, requiring exact divisibility.
+TORCHLEAN_CUDA_CONV_POOL_HD static inline int window_output_coord(
+    uint32_t input, uint32_t kernel, uint32_t stride, uint32_t padding,
+    uint32_t outputSize, uint32_t* output) {
+  const uint64_t padded = (uint64_t)input + (uint64_t)padding;
+  if (stride == 0 || padded < kernel) {
+    return 0;
+  }
+  const uint64_t offset = padded - kernel;
+  const uint64_t index = offset / stride;
+  if (offset % stride != 0 || index >= outputSize) {
+    return 0;
+  }
+  *output = (uint32_t)index;
+  return 1;
+}
+
 TORCHLEAN_CUDA_CONV_POOL_HD static inline int64_t floor_div_i64(int64_t a, int64_t b) {
   // b must be > 0. Integer division truncates toward 0; use floor for negatives.
   int64_t q = a / b;

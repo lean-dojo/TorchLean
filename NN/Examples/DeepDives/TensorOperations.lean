@@ -6,9 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Tensor
 public import NN.Widgets
-import NN.Tensor.Internal.Check.Einsum -- shake: keep
 
 /-!
 # Tensor Operations

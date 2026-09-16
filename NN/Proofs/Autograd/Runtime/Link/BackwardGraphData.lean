@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Runtime.Link.Core
 public import NN.Proofs.Autograd.Runtime.Link.BackwardLeaves
 public import NN.Proofs.Autograd.Runtime.Link.BackwardSnoc
 public import NN.Proofs.Autograd.Runtime.Link.Invariants

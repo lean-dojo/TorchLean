@@ -8,7 +8,6 @@ module
 
 public import NN.Floats.Quantization
 public import NN.Spec.Quantization.Rational
-public import NN.Spec.Core.TensorOps
 
 /-!
 # Tensor Quantization

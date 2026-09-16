@@ -47,7 +47,7 @@ def maxPool {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
     (C :: Tensor.to (Spec.poolOutSpatialPad inSpatial kernel stride padding) (List Nat)))) := do
   if hKernel : (∀ i : Fin d, kernel.getScalar i ≠ 0) then
     if hStride : (∀ i : Fin d, stride.getScalar i ≠ 0) then
-      let ⟨ss, g⟩ ← get
+      let ⟨ss, g, _⟩ ← get
       let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
       let layer : Spec.MaxPoolSpec d kernel stride padding hKernel hStride := {}
       let outSpatial := Spec.poolOutSpatialPad inSpatial kernel stride padding
@@ -95,7 +95,7 @@ def avgPool {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
     (C :: Tensor.to (Spec.poolOutSpatialPad inSpatial kernel stride padding) (List Nat)))) := do
   if hKernel : (∀ i : Fin d, kernel.getScalar i ≠ 0) then
     if hStride : (∀ i : Fin d, stride.getScalar i ≠ 0) then
-      let ⟨ss, g⟩ ← get
+      let ⟨ss, g, _⟩ ← get
       let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
       let layer : Spec.AvgPoolSpec d kernel stride padding hKernel hStride := {}
       let outSpatial := Spec.poolOutSpatialPad inSpatial kernel stride padding
@@ -151,7 +151,7 @@ def smoothMaxPool {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α] [D
       throw "typed GraphM: smooth_max_pool requires at least one spatial dimension"
     if hKernel : (∀ i : Fin d, kernel.getScalar i ≠ 0) then
       if hStride : (∀ i : Fin d, stride.getScalar i ≠ 0) then
-        let ⟨ss, g⟩ ← get
+        let ⟨ss, g, _⟩ ← get
         let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
         let layer : Spec.MaxPoolSpec d kernel stride padding hKernel hStride := {}
         let outSpatial := Spec.poolOutSpatialPad inSpatial kernel stride padding

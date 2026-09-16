@@ -7,9 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Verification.Cert.NodeReplay
-public import NN.MLTheory.CROWN.Extras.BoundOpsIEEE32Exec
-public import NN.MLTheory.CROWN.Graph.Engine.IBP
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # IBPNodeCert

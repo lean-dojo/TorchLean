@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.GroupWithZero.Nat
 public import NN.Spec.Core.TensorOps
 
 @[expose] public section

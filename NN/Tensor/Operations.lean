@@ -8,7 +8,6 @@ Authors: TorchLean Team
 -- cannot see those downstream lookups, so keep the marked imports.
 module -- shake: keep-downstream
 
-public import NN.Spec.Core.Sequence -- shake: keep
 public import NN.Spec.Layers.Activation -- shake: keep
 public import NN.Spec.Layers.Linear -- shake: keep
 public import NN.Tensor.Internal.Representation.Promotion -- shake: keep

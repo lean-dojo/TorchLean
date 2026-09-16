@@ -8,10 +8,13 @@ module
 public import NN.Tensor.Internal.Elab.Native.Transpose
 public meta import NN.Tensor.Internal.Elab.Einsum.Kernel.Affine
 public meta import NN.Tensor.Internal.Elab.Einsum.Kernel.Index
-public import NN.Tensor.Internal.Elab.Native.Slice
 public meta import NN.Tensor.Internal.Elab.Transform.Index
 public import NN.Tensor.Internal.Elab.Native.Tensor -- shake: keep
 public import NN.Tensor.Internal.Lowering.TransformFusion -- shake: keep
+public import NN.Tensor.Internal.Elab.Transform.Index
+import NN.Tensor.Internal.Elab.Einsum.Kernel.Affine
+import NN.Tensor.Internal.Elab.Einsum.Kernel.Index
+import NN.Tensor.Internal.Elab.Native.Index
 
 /-!
 # Certified native flat pullbacks

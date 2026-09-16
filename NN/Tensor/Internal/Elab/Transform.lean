@@ -5,20 +5,13 @@ Authors: TorchLean contributors
 -/
 module
 
-public meta import NN.Tensor.Internal.Check.ParseShape
-public import NN.Tensor.Internal.Check.ParseShape
 public meta import NN.Tensor.Internal.Elab.Native.Pull
 public meta import NN.Tensor.Internal.Elab.Native.Reduce
 public meta import NN.Tensor.Internal.Elab.Transform.View
-public meta import NN.Tensor.Internal.Semantics.Transform.Geometry
-public import NN.Tensor.Internal.Syntax.Diagnostic
-public meta import NN.Tensor.Internal.Syntax.Parser.Expression.Roundtrip
-public meta import NN.Tensor.Internal.Syntax.Parser.Transform
-public import NN.Tensor.Internal.Lowering.Rearrange -- shake: keep
-public import NN.Tensor.Internal.Lowering.Reduce.View -- shake: keep
-public import NN.Tensor.Internal.Lowering.Repeat -- shake: keep
-public import NN.Tensor.Internal.Lowering.TransformFusion -- shake: keep
-public import NN.Tensor.Internal.Representation.Reduction -- shake: keep
+public import NN.Tensor.Internal.Elab.Native.Pull
+public import NN.Tensor.Internal.Elab.Native.Reduce
+public import NN.Tensor.Internal.Elab.Syntax
+public import NN.Tensor.Internal.Elab.Transform.View
 
 /-!
 # Elaboration of transformations and parse-shape expressions

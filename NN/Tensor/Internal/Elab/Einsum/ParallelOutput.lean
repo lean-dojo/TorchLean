@@ -8,6 +8,7 @@ module
 public import NN.Tensor.Internal.Elab.Einsum.Parallel
 public import NN.Tensor.Internal.Elab.Einsum.Index
 public meta import NN.Tensor.Internal.Elab.Einsum.OutputIndex -- shake: keep
+public import NN.Tensor.Internal.Elab.Common
 
 /-!
 # Parallel lowering for generated einsum outputs

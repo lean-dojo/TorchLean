@@ -7,10 +7,12 @@ Authors: TorchLean Team
 module
 
 import NN.Spec.RL.Envs.GridWorld
-import NN.Widgets
 import NN.Runtime.RL.Artifacts.DefaultPaths
 public meta import NN.Runtime.RL.Artifacts.GridWorld.Policy
 public meta import NN.Runtime.RL.Artifacts.GridWorld.Path
+import NN.Runtime.RL.Core
+import NN.Widgets.RL.GridWorld
+import NN.Widgets.Runtime.Training
 
 /-!
 # PPO GridWorld View

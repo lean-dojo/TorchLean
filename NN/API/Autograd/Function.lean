@@ -8,7 +8,6 @@ module
 
 public import NN.API.Runtime
 public import NN.Runtime.Autograd.Model.Autodiff
-public import NN.Tensor -- shake: keep
 
 /-!
 # Function Transforms

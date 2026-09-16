@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Contracts
-public import NN.Backend.Profile
-public import NN.IR.Semantics
 
 /-!
 # Backend-linked graph numerical certificates

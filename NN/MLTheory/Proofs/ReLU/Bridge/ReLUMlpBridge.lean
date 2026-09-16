@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.Proofs.Approximation.Universal.UniversalApproximation
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Bridging Scalar ReLU MLPs to Tensor Inputs

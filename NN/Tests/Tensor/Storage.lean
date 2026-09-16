@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Tensor
-import NN.Tensor.Internal.Elab.Native.Pointwise
 
 /-!
 # Tensor Storage Regression Tests

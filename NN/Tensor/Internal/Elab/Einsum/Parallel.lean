@@ -6,7 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Elab.Einsum.Partition
-public import NN.Tensor.Internal.Elab.Einsum.Loop
 
 /-!
 # Certified parallel output assembly

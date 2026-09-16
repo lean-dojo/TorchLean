@@ -7,11 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Tensor.Pack
-public import Mathlib.Algebra.Order.Field.Basic
-import Mathlib.Tactic.NormNum.Inv
-import Mathlib.Tactic.NormNum.Pow
-import Mathlib.Tactic.Positivity.Finset
-public import NN.Tensor.Internal.Elab.TensorLiteral
 public import NN.Tensor -- shake: keep
 
 /-!

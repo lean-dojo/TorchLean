@@ -6,6 +6,7 @@ Authors: TorchLean contributors
 module
 
 public meta import NN.Tensor.Internal.Elab.Common
+public import NN.Tensor.Internal.Elab.Common
 
 /-!
 # Symbolic einsum certificates

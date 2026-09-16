@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Fintype.BigOperators
-public import Mathlib.Data.Fintype.Pigeonhole
 public import NN.MLTheory.Proofs.Hopfield.Progress
 
 /-!

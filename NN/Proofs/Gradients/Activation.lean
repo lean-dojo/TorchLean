@@ -12,7 +12,6 @@ public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 public import NN.Proofs.Utils.MathFunctions
 public import NN.Spec.Layers.Activation
 public import NN.Spec.Core.Context.Real
-public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # `NN.Proofs.Gradients.Activation`

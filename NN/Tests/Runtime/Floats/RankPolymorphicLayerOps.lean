@@ -6,14 +6,9 @@ Authors: TorchLean Team
 
 module
 
-import Mathlib.Tactic.FinCases
-public import NN.IR.Semantics
-public import NN.MLTheory.CROWN.Graph.Engine
 public import NN.Runtime.Autograd.Model.Layers.Core
 public import NN.Runtime.PyTorch.Export.IRPyTorch
 public import NN.Runtime.PyTorch.Import.TorchExport
-public import NN.Spec.Layers.Linear
-public import NN.Tensor
 public import NN.Tests.MLTheory.Utils
 public import NN.Tests.Utils
 

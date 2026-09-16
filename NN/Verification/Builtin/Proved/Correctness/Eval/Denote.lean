@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Verification.Builtin.Proved.Correctness.Eval.LoweringPrefix
-public import NN.Verification.Builtin.Proved.Correctness.Eval.Core
 public import NN.Verification.Builtin.Proved.Correctness.Eval.LoweredNodeBasic
 public import NN.Verification.Builtin.Proved.Correctness.Eval.LoweredNodePayload
 public import NN.Verification.Builtin.Proved.Correctness.Eval.NodeShape

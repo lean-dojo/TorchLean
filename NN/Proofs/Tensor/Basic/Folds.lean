@@ -6,10 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.BigOperators.Fin
-public import Mathlib.Basic.Real.Basic
-public import NN.Proofs.Tensor.Algebra
-public import NN.Spec.Core.TensorReductionShape.Reductions
 public import NN.Proofs.Tensor.Basic.Core -- shake: keep
 
 /-!

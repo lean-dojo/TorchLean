@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 public import Mathlib.Analysis.SpecialFunctions.Trigonometric.Arctan
 import Mathlib.Tactic.Measurability.Init
 public import NN.MLTheory.CROWN.Graph.Theorems

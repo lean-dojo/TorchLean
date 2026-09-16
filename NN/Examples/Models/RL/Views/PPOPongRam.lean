@@ -6,8 +6,9 @@ Authors: TorchLean Team
 
 module
 
-import NN.Widgets
 import NN.Runtime.RL.Artifacts.DefaultPaths
+import NN.Runtime.RL.Core
+import NN.Widgets.Runtime.Training
 
 /-!
 # PPO Atari Pong RAM View

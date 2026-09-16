@@ -6,8 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Semantics.Einsum
-public import Batteries.Data.Fin.Fold -- shake: keep
-public import Batteries.Data.Fin.Lemmas -- shake: keep
 
 /-!
 # Fused native lowering for einsum

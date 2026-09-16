@@ -7,9 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Init
-public import FloatLib.Floats.Formats.BinaryInterchange.Configured
-public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
-public import FloatLib.Floats.Formats.IEEE754.Native
 
 /-!
 # Tensor Initialization API Tests

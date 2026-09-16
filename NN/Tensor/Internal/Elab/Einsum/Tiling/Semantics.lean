@@ -8,7 +8,6 @@ module
 public import NN.Tensor.Internal.Elab.Einsum.Loop
 public import NN.Tensor.Internal.Lowering.Einsum
 public import Batteries.Data.Vector.Lemmas -- shake: keep
-public import Init.Data.Vector.OfFn -- shake: keep
 
 /-!
 # Width-polymorphic semantics for einsum output tiles

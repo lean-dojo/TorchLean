@@ -8,10 +8,8 @@ module
 public import NN.Tensor.Packing
 public import NN.Tensor.Internal.Elab.Native.Pack.Dispatch
 public import NN.Tensor.Internal.Elab.Native.Pack.Unpack
-public meta import NN.Tensor.Internal.Syntax.Parser.Pack
-public meta import NN.Tensor.Internal.Elab.Common -- shake: keep
 public meta import NN.Tensor.Internal.Elab.Native.Pack -- shake: keep
-public import NN.Tensor.Internal.Lowering.Pack -- shake: keep
+public import NN.Tensor.Internal.Elab.Syntax
 
 /-!
 # Elaboration of pack and unpack

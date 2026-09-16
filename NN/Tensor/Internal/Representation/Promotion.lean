@@ -6,10 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Elab.Native.Pointwise
-public import NN.Tensor.Internal.Representation.Basic.Pointwise
-public import Init.Data.Float.Float -- shake: keep
-public import Init.Data.Float.Float32 -- shake: keep
-public import Init.Data.Rat.Basic -- shake: keep
 
 /-!
 # Element conversion and mixed-type tensor arithmetic

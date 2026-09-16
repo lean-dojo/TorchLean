@@ -7,7 +7,6 @@ module
 
 public import NN.Tensor.Internal.Representation.Coordinate
 public import NN.Tensor.Internal.Representation.Segment
-import Mathlib.Tactic.Ring.RingNF
 import Mathlib.Tactic.Ring -- shake: keep
 
 /-!

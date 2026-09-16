@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.Core.Tolerance
-public import Mathlib.Analysis.SpecialFunctions.Pow.Real
 public import FloatLib.Floats.Formats.Flocq.Theory.Rounding.Core
 
 /-!

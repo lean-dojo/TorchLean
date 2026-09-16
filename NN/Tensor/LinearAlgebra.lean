@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Tensor.Factorizations
-public import NN.Spec.Core.Tensor.Linalg
-public import NN.Tensor.Operations -- shake: keep
 public import NN.Tensor.Reductions
 
 /-!

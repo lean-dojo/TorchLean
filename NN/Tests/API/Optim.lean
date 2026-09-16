@@ -8,9 +8,6 @@ module
 
 public import NN.API.Module
 public import NN.API.Trainer.Scheduler
-public import FloatLib.Floats.Formats.BinaryInterchange.Configured
-
-import Lean.Data.Json.Parser
 
 /-!
 # Optimizer API Tests

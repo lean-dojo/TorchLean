@@ -8,7 +8,6 @@ module
 
 public import NN.Proofs.Autograd.FDeriv.HardMaskedSoftmax
 public import NN.Proofs.Autograd.FDeriv.Reindex
-public import NN.Proofs.Tensor.Basic.BoundsNorms
 
 /-!
 # Rectangular attention with a Boolean mask

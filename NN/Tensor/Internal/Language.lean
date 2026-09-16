@@ -5,15 +5,9 @@ Authors: TorchLean contributors
 -/
 module
 
-public import Mathlib.Data.Finset.Attr
-import Mathlib.Tactic.Finiteness.Attr
-import Mathlib.Tactic.SetLike
 public import NN.Tensor.Internal.Check.Einsum -- shake: keep
 public import NN.Tensor.Internal.Check.Pack -- shake: keep
 public import NN.Tensor.Internal.Check.ParseShape -- shake: keep
-public import NN.Tensor.Internal.Check.Transform -- shake: keep
-public import NN.Tensor.Internal.Syntax.Parser -- shake: keep
-public import NN.Tensor.Internal.Syntax.Render -- shake: keep
 
 /-!
 # Tensor Pattern Language

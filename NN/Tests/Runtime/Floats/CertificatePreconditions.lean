@@ -7,15 +7,12 @@ Authors: TorchLean Team
 module
 
 public import NN.Tests.Runtime.Floats.Utils
-public import NN.Verification.Cert.NodeReplay
 public import NN.Verification.Cert.CROWNNodeCert
-public import NN.Verification.Cert.IBPNodeCert
 public import NN.Verification.ODE.Parse
 public import NN.Verification.PINN.Core
 public import NN.Verification.PINN.PdeParse
 public import NN.Verification.Robustness.MarginCert
 public import NN.Verification.VNNComp.Spec
-public import Lean.Data.Json
 
 /-!
 # CertificatePreconditions
@@ -279,6 +276,28 @@ def run : IO Unit := do
     (evalPDEAtTwo "--u") (2.0, 2.0)
 
   let floatNaN := Float.ofBits 0x7ff8000000000000
+  let labelLower : Tensor Float [3] := [1, 0, 0]
+  let labelUpper : Tensor Float [3] := [1, floatNaN, 0]
+  expect "top-label check hid an unordered competitor while taking a maximum"
+    (!NN.Verification.Robustness.TopLabel.certifiesLabelFromTensorBounds labelLower labelUpper 0)
+  let unitBox : NN.MLTheory.CROWN.Box Float .scalar :=
+    ⟨Tensor.scalar 0, Tensor.scalar 1⟩
+  expect "box containment accepted a NaN value"
+    (!unitBox.containsBool (Tensor.scalar floatNaN))
+  expect "box containment accepted a NaN lower endpoint"
+    (!(NN.MLTheory.CROWN.Box.containsBool
+      { unitBox with lo := Tensor.scalar floatNaN } (Tensor.scalar 0)))
+  expect "box containment accepted a NaN upper endpoint"
+    (!(NN.MLTheory.CROWN.Box.containsBool
+      { unitBox with hi := Tensor.scalar floatNaN } (Tensor.scalar 0)))
+  expect "box containment rejected its lower endpoint"
+    (unitBox.containsBool (Tensor.scalar 0))
+  expect "box containment rejected its upper endpoint"
+    (unitBox.containsBool (Tensor.scalar 1))
+  expect "box comparison accepted native binary32 NaN"
+    (!NN.MLTheory.CROWN.Box.leBool (Float32.ofBits 0x7fc00000) (0 : Float32))
+  expect "box comparison accepted configured binary32 NaN"
+    (!NN.MLTheory.CROWN.Box.leBool (Binary.canonicalNaN : Binary 8 23) 0)
   expect "Float NaN was accepted as <= a finite value"
     (!(NN.Verification.ODE.Ival.leBool floatNaN 0.0))
   expect "a finite Float was accepted as <= NaN"

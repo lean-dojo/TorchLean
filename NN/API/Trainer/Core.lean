@@ -7,14 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Neural.Summary
-public import NN.API.Optim.Config
-public import NN.API.Neural.Builders -- shake: keep
-public import NN.API.Optim -- shake: keep
-public import NN.API.Trainer.Reporting -- shake: keep
 public import NN.Runtime.Autograd.Model -- shake: keep
-public import NN.Spec.Core.Shape -- shake: keep
 public import NN.API.Module -- shake: keep
-public import NN.API.Neural.State -- shake: keep
 public import NN.API.Loss -- shake: keep
 public import NN.API.Trainer.Summary -- shake: keep
 

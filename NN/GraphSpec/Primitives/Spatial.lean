@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-import Mathlib.Algebra.Order.Algebra
 public import NN.GraphSpec.Chain.Syntax
 public import NN.Runtime.Autograd.Model.Layers.Activations
 

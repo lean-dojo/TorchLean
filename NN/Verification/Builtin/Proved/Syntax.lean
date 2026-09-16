@@ -6,25 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Field.Basic
-import Mathlib.Tactic.NormNum.Inv
-import Mathlib.Tactic.NormNum.Pow
-import Mathlib.Tactic.Positivity.Finset
-public import NN.IR.Semantics
-public import NN.Tensor.Internal.Elab.TensorLiteral
-public import NN.Tensor.Pack
-public import Init.Data.Array.Lemmas -- shake: keep
-public import Init.Data.List.FinRange -- shake: keep
-public import Init.Data.List.Lemmas -- shake: keep
-public import Init.Data.Range.Lemmas -- shake: keep
-public import NN.Spec.Core.TensorReductionShape.Broadcasting -- shake: keep
-public import NN.Spec.Core.TensorReductionShape.ConcatSlice -- shake: keep
-public import NN.Spec.Core.TensorReductionShape.LinearAlgebra -- shake: keep
-public import NN.Spec.Core.TensorReductionShape.Reductions -- shake: keep
-public import NN.Spec.Core.TensorReductionShape.ShapeChange -- shake: keep
 public import NN.Verification.Builtin.Lowering -- shake: keep
 public import NN.Verification.Builtin.Correctness -- shake: keep
-public import Std.Data.HashMap.Lemmas -- shake: keep
 
 /-!
 # Verified Forward Fragment: Syntax And Evaluation

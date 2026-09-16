@@ -6,9 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph.Engine.Affine
 public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Main
-public import NN.Spec.Core.FloatInstances
 
 /-!
 # End-to-end CROWN certificate-checking framework (graph dialect)
@@ -130,7 +128,7 @@ For IEEE32Exec, a separate evaluator can be plugged in later; the theorem below 
 /-!
 ## A CROWN certificate "step function" (checker interface)
 
-The runtime `runCROWN` produces `FlatAffineBounds` by a forward pass. For a certificate/checker
+The runtime `runCROWN` produces nodewise `FlatAffineBounds`. For a certificate/checker
 architecture, we treat the producer as untrusted and phrase correctness as a local step condition:
 
 * `CrownCertLocalOK`: the certificate is locally consistent with a (trusted) step function.

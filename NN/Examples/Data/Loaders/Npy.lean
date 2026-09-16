@@ -8,7 +8,6 @@ module
 
 public import NN.API
 public import NN.Examples.Data.SamplePaths
-public import NN.API.CLI.Trainer
 
 /-!
 # NPY loader tutorial (NumPy/PyTorch interop)

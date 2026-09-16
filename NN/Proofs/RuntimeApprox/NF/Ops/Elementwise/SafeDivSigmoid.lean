@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.SoftplusSafeLog
-public import NN.Spec.Core.FloatInstances.NF
 
 /-!
 # NF Elementwise Bounds: Safe Division and Sigmoid

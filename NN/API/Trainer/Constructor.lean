@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Trainer.Core
-public import NN.API.Seeded
 
 /-!
 # Trainer Construction

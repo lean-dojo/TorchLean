@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Graph.Engine.Base
-public import NN.IR.HardMask -- shake: keep
 
 /-!
 # Interval Bound Propagation

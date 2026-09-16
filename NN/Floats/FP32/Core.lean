@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import FloatLib.Floats.Formats.Flocq
 public import NN.Floats.NeuralFloat.Metadata
 
 import Mathlib.Algebra.Order.Algebra

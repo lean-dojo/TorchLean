@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Verification.Builtin.Proved.Correctness.Eval.Core
-public import NN.Verification.Builtin.Correctness
-public import Std.Data.HashMap.Lemmas
 
 /-!
 # Parameter Store To IR Payload Bridge

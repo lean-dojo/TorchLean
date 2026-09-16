@@ -164,7 +164,7 @@ theorem getAtOrZero_eq_sum_indicator {α : Type} [TorchLean.Storage α] [AddComm
   induction dims generalizing indices with
   | nil =>
       rw [← Tensor.scalar_item x]
-      cases indices <;> simp [MultiIndex.toList, MultiIndex.get, one_nsmul]
+      cases indices <;> simp [MultiIndex.toList, MultiIndex.get]
   | cons n ns ih =>
       rw [← Tensor.dim_unstack x]
       rw [Fintype.sum_prod_type]

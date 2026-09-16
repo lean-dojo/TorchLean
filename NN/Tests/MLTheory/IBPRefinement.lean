@@ -20,6 +20,10 @@ subset of the input region would give narrow but incorrect answers.
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 namespace NN.Tests.MLTheory.IBPRefinement
 
 open Spec TorchLean
@@ -165,10 +169,11 @@ def run : IO Unit := do
   checkGraphs
   checkFailures
   checkScalarBackend Float32 "native Float32"
-  checkScalarBackend TorchLean.Floats.IEEE754.IEEE32Exec "IEEE32Exec"
+  checkScalarBackend (Binary 8 23) "ExecFloat.Binary 8 23"
   checkMatmulAccumulation Float (1 / 18014398509481984) "Float"
   checkMatmulAccumulation Float32 (1 / 67108864) "Float32"
-  checkMatmulAccumulation TorchLean.Floats.IEEE754.IEEE32Exec (1 / 67108864) "IEEE32Exec"
+  checkMatmulAccumulation (Binary 8 23)
+    (ExecFloat.div (1 : Binary 8 23) (67108864 : Binary 8 23)) "ExecFloat.Binary 8 23"
   checkInvalidCertificate
   IO.println "IBP refinement: containment, tightening, and failure checks passed"
 

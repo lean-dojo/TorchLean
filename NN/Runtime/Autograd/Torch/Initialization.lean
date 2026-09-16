@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Random
+public import NN.Tensor.Constructors
 public import Mathlib.Algebra.Order.Field.Basic
 import Mathlib.Tactic.NormNum.Inv
 import Mathlib.Tactic.NormNum.Pow
@@ -115,20 +116,12 @@ def sampleAt (sch : Scheme) (seed idx : Nat) : Float :=
       let limit := kaimingUniformLimit fanIn
       (-limit) + unit * (2.0 * limit)
 
-/-- Initialize a tensor by assigning sample `i` to the scalar at flat index `i`. -/
+/--
+Initialize the row-major buffer directly, avoiding recursive subtensor construction.
+Flat index `i` still receives `sampleAt sch seed i`, preserving the seed and sample order.
+-/
 def tensor (sch : Scheme) (seed : Nat := 0) : {s : Shape} → Tensor Float s
-  | .scalar =>
-      Tensor.scalar (sampleAt sch seed 0)
-  | .dim _ s =>
-      let blockSize := Spec.Shape.size s
-      Tensor.dim fun i =>
-        let offset := i.val * blockSize
-        let rec build : {t : Shape} → Nat → Tensor Float t
-          | .scalar, j => Tensor.scalar (sampleAt sch seed (offset + j))
-          | .dim _ t, j =>
-              let childSize := Spec.Shape.size t
-              Tensor.dim fun k => build (t := t) (j + k.val * childSize)
-        build (t := s) 0
+  | s => Tensor.generateFlat s (sampleAt sch seed)
 
 /-- Initialize a matrix with the Xavier/Glorot uniform distribution and gain `1`. -/
 def xavierUniform (outDim inDim : Nat) (seed : Nat := 0) :

@@ -309,7 +309,7 @@ def classificationForestPredictSpec {β : Type} [TorchLean.Storage β]
     let preds : Tensor β [nTrees] :=
       Tensor.ofFn (fun i =>
         let t := model.trees.getScalar i
-        Spec.decisionTreeClassifyForwardSpecN (α := α) (β := β)
+        Spec.decisionTreeClassifyForwardSpec (α := α) (β := β)
           (maxDepth := maxDepth) (nFeatures := nFeatures) t x)
     majorityLabel (β := β) preds
 

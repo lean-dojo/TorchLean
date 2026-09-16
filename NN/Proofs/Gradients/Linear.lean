@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Layers.Linear
-public import Mathlib.Data.Real.Basic
+public import Mathlib.Basic.Real.Basic
 
 /-!
 # Spec-level gradient identities for the linear layer

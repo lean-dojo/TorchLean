@@ -23,7 +23,8 @@ All operations are *shape-indexed* in their types, so misuse is caught by elabor
 These are kept simple, “obvious” definitions (folding over `List.finRange`) so that:
 
 - they are easy to reason about in proofs, and
-- they can be instantiated over many scalar backends (`Float`, `ℚ`, `IEEE32Exec`, `ℝ`, …).
+- they can be instantiated over many scalar backends (`Float`, `ℚ`, `ExecFloat.Binary 8 23`, `ℝ`,
+…).
 
 PyTorch analogies:
 

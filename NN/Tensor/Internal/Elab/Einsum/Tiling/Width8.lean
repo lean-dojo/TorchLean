@@ -355,13 +355,13 @@ private theorem nativeFinSum8Loop_eq_nativeFinFoldlLoop
   · intro index
       total0 total1 total2 total3 total4 total5 total6 total7
       hIndex _hIndexNat inductionHypothesis
-    rw [nativeFinSum8Loop.eq_1, dif_pos hIndex]
-    rw [nativeFinFoldlLoop.eq_1, dif_pos hIndex]
+    rw [nativeFinSum8Loop.eq_1, dite_eq_left hIndex]
+    rw [nativeFinFoldlLoop.eq_1, dite_eq_left hIndex]
     simpa [updateTile8] using inductionHypothesis
   · intro index
       total0 total1 total2 total3 total4 total5 total6 total7 hIndex
-    rw [nativeFinSum8Loop.eq_1, dif_neg hIndex]
-    rw [nativeFinFoldlLoop.eq_1, dif_neg hIndex]
+    rw [nativeFinSum8Loop.eq_1, dite_eq_right hIndex]
+    rw [nativeFinFoldlLoop.eq_1, dite_eq_right hIndex]
 
 /--
 The eight-scalar native loop is exactly the ordinary native fold using
@@ -439,13 +439,13 @@ theorem nativeFinSum8Push_eq_pushTile8
   · intro index
       total0 total1 total2 total3 total4 total5 total6 total7
       hIndex _hIndexNat inductionHypothesis
-    rw [nativeFinSum8PushLoop.eq_1, dif_pos hIndex]
-    rw [nativeFinSum8Loop.eq_1, dif_pos hIndex]
+    rw [nativeFinSum8PushLoop.eq_1, dite_eq_left hIndex]
+    rw [nativeFinSum8Loop.eq_1, dite_eq_left hIndex]
     exact inductionHypothesis
   · intro index
       total0 total1 total2 total3 total4 total5 total6 total7 hIndex
-    rw [nativeFinSum8PushLoop.eq_1, dif_neg hIndex]
-    rw [nativeFinSum8Loop.eq_1, dif_neg hIndex]
+    rw [nativeFinSum8PushLoop.eq_1, dite_eq_right hIndex]
+    rw [nativeFinSum8Loop.eq_1, dite_eq_right hIndex]
     rfl
 
 /--
@@ -583,13 +583,13 @@ theorem nativeFinSum8FinalizePush_eq_pushTile8
   · intro index
       total0 total1 total2 total3 total4 total5 total6 total7
       hIndex _hIndexNat inductionHypothesis
-    rw [nativeFinSum8FinalizePushLoop.eq_1, dif_pos hIndex]
-    rw [nativeFinSum8Loop.eq_1, dif_pos hIndex]
+    rw [nativeFinSum8FinalizePushLoop.eq_1, dite_eq_left hIndex]
+    rw [nativeFinSum8Loop.eq_1, dite_eq_left hIndex]
     exact inductionHypothesis
   · intro index
       total0 total1 total2 total3 total4 total5 total6 total7 hIndex
-    rw [nativeFinSum8FinalizePushLoop.eq_1, dif_neg hIndex]
-    rw [nativeFinSum8Loop.eq_1, dif_neg hIndex]
+    rw [nativeFinSum8FinalizePushLoop.eq_1, dite_eq_right hIndex]
+    rw [nativeFinSum8Loop.eq_1, dite_eq_right hIndex]
     simp [pushTile8, selectTile8]
 
 end TorchLean.Tensor.Internal.Elab.Impl

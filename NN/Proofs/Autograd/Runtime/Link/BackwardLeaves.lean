@@ -95,7 +95,7 @@ theorem backwardDenseFrom_addLeaves_empty [Add α] (x seed : TorchLean.TensorPac
         (addLeaves (α := α) (t := Tape.empty) (Γ := Γ) x).nodes.size := by
     simp [hlen, TorchLean.TensorPack.size_toShapeErasedArray]
   unfold Tape.backwardDenseFrom
-  rw [if_pos hsize, hlen]
+  rw [ite_eq_left hsize, hlen]
   exact backwardDenseFromLoop_addLeaves_empty x seed Γ.length le_rfl
 
 end Graph

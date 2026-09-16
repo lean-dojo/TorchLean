@@ -260,8 +260,6 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_release_then(
 LEAN_EXPORT uint32_t torchlean_runtime_collect_allocator(uint32_t force) {
   const bool force_collect = force != 0;
   mi_collect(force_collect);
-  mi_heap_collect(mi_heap_get_default(), force_collect);
-  mi_collect_reduce(0);
   return 1;
 }
 
@@ -273,6 +271,11 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_zeros(uint32_t n) {
   return torchlean_cuda_buffer_box(out);
 }
 
+// The CPU stub preserves successful IO sequencing; host OOM follows the existing host policy.
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_zeros_io(uint32_t n) {
+  return lean_io_result_mk_ok(torchlean_cuda_buffer_zeros(n));
+}
+
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_full(uint32_t n, double v) {
   torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc((size_t)n);
   float fv = (float)v;
@@ -282,10 +285,8 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_full(uint32_t n, double v) {
   return torchlean_cuda_buffer_box(out);
 }
 
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_full_with_token(
-    uint32_t n, double v, uint32_t token) {
-  (void)token;
-  return torchlean_cuda_buffer_full(n, v);
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_full_io(uint32_t n, double v) {
+  return lean_io_result_mk_ok(torchlean_cuda_buffer_full(n, v));
 }
 
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_uniform(uint32_t n, uint64_t key) {
@@ -298,6 +299,10 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_uniform(uint32_t n, uint64_t
     out->data[i] = (float)(((double)u) / denom);
   }
   return torchlean_cuda_buffer_box(out);
+}
+
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_uniform_io(uint32_t n, uint64_t key) {
+  return lean_io_result_mk_ok(torchlean_cuda_buffer_rand_uniform(n, key));
 }
 
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_normal(
@@ -325,6 +330,11 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_bernoulli_mask(uint32_t n, double
   return torchlean_cuda_buffer_box(out);
 }
 
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_bernoulli_mask_io(
+    uint32_t n, double keepProb, uint64_t key) {
+  return lean_io_result_mk_ok(torchlean_cuda_buffer_bernoulli_mask(n, keepProb, key));
+}
+
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float_array(b_lean_obj_arg AObj) {
   lean_object* A = (lean_object*)AObj;
   size_t n = lean_sarray_size(A);
@@ -337,10 +347,8 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float_array(b_lean_obj_arg AOb
   return torchlean_cuda_buffer_box(out);
 }
 
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float_array_with_token(
-    b_lean_obj_arg AObj, uint32_t token) {
-  (void)token;
-  return torchlean_cuda_buffer_of_float_array(AObj);
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float_array_io(b_lean_obj_arg AObj) {
+  return lean_io_result_mk_ok(torchlean_cuda_buffer_of_float_array(AObj));
 }
 
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_to_float_array(b_lean_obj_arg BObj) {

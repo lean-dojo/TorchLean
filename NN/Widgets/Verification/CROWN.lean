@@ -12,7 +12,6 @@ public meta import NN.Widgets.Core.Tensor
 public meta import NN.MLTheory.CROWN.Graph -- shake: keep
 public meta import NN.Widgets.Core.UI -- shake: keep
 public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
-public meta import ProofWidgets.Demos.Macro -- shake: keep
 
 /-!
 # Verification
@@ -505,11 +504,11 @@ def boundsTightnessHtml {α : Type} [TorchLean.Storage α] [Context α] [ToStrin
 syntax (name := crownViewCmd) "#crown_view " term ", " term : command
 
 macro "#crown_view " g:term ", " ps:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (crownPropHtml $g $ps))
+  UI.canonicalCommand <$> `(#html (crownPropHtml $g $ps))
 
 syntax (name := boundsTightnessViewCmd) "#bounds_tightness_view " term ", " term : command
 
 macro "#bounds_tightness_view " g:term ", " ps:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (boundsTightnessHtml $g $ps))
+  UI.canonicalCommand <$> `(#html (boundsTightnessHtml $g $ps))
 
 end NN.Widgets

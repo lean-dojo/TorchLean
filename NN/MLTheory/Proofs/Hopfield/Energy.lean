@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.Proofs.Hopfield.Basic
-public import Mathlib.Data.Real.Basic
+public import Mathlib.Basic.Real.Basic
 public import Mathlib.Algebra.BigOperators.Ring.Finset
 import Mathlib.Data.Rat.Cast.Order
 import Mathlib.Tactic.Linarith.Frontend
@@ -25,7 +25,8 @@ This file proves the key “global dynamics” lemma from the Hopfield literatur
 > asynchronous update.
 
 We work over `ℝ`, where the classical energy argument is algebraic. The executable Hopfield
-implementation uses `IEEE32Exec`; floating-point executions are connected to this theorem only
+implementation uses `ExecFloat.Binary 8 23`; floating-point executions are connected to this theorem
+only
 through explicit runtime/rounding bridge statements, not by silently reusing real arithmetic laws.
 -/
 

@@ -30,12 +30,16 @@ their documented power/negation semantics, and interval comparisons must reject 
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofModel toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 open Spec TorchLean
 open Lean
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph
 open NN.Verification.Cert.NodeReplay
-open TorchLean.Floats.IEEE754
 
 namespace Tests
 namespace Floats
@@ -105,15 +109,19 @@ def evalPDEAtTwo (source : String) : Option (Float × Float) := do
     { u := some (2.0, 2.0), duX := none, duY := none, d2uX := none, d2uY := none }
     expr
 
-def flatBox (lo hi : Fin 2 → Float) : FlatBox IEEE32Exec :=
+def flatBox (lo hi : Fin 2 → Float) : FlatBox (Binary 8 23) :=
   { dim := 2
-    lo := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn lo)
-    hi := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn hi) }
+    lo := TorchLean.Tensor.map (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel
+      (Binary.ofFloat x))) : Binary 8 23)) (TorchLean.Tensor.ofFn lo)
+    hi := TorchLean.Tensor.map (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel
+      (Binary.ofFloat x))) : Binary 8 23)) (TorchLean.Tensor.ofFn hi) }
 
-def flatBox3 : FlatBox IEEE32Exec :=
+def flatBox3 : FlatBox (Binary 8 23) :=
   { dim := 3
-    lo := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn (fun _ : Fin 3 => 0.0))
-    hi := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn (fun _ : Fin 3 => 1.0)) }
+    lo := TorchLean.Tensor.map (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel
+      (Binary.ofFloat x))) : Binary 8 23)) (TorchLean.Tensor.ofFn (fun _ : Fin 3 => 0.0))
+    hi := TorchLean.Tensor.map (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel
+      (Binary.ofFloat x))) : Binary 8 23)) (TorchLean.Tensor.ofFn (fun _ : Fin 3 => 1.0)) }
 
 def inputNode (id dim : Nat) : NN.IR.Node :=
   { id := id, parents := #[], kind := .input, outShape := [dim] }
@@ -283,19 +291,24 @@ def run : IO Unit := do
   expect "interval maximum hid a non-finite Float endpoint"
     (!(NN.Verification.ODE.Ival.max2 0.0 floatInf).isFinite)
 
-  expect "IEEE32Exec NaN was accepted as <= a finite value"
-    (!(NN.Verification.ODE.Ival.leBool IEEE32Exec.canonicalNaN IEEE32Exec.posZero))
-  expect "a finite IEEE32Exec value was accepted as <= NaN"
-    (!(NN.Verification.ODE.Ival.leBool IEEE32Exec.posZero IEEE32Exec.canonicalNaN))
-  expect "IEEE32Exec infinity was accepted as an ordered finite endpoint"
-    (!(NN.Verification.ODE.Ival.leBool IEEE32Exec.posInf IEEE32Exec.posZero))
-  expect "interval minimum hid a non-finite IEEE32Exec endpoint"
-    (!(IEEE32Exec.isFinite <| NN.Verification.ODE.Ival.min2 IEEE32Exec.posInf IEEE32Exec.posZero))
-  expect "interval maximum hid a non-finite IEEE32Exec endpoint"
-    (!(IEEE32Exec.isFinite <| NN.Verification.ODE.Ival.max2 IEEE32Exec.posZero IEEE32Exec.posInf))
+  expect "configured binary32 NaN was accepted as <= a finite value"
+    (!(NN.Verification.ODE.Ival.leBool (Binary.canonicalNaN : Binary 8 23) (Binary.zero false :
+      Binary 8 23)))
+  expect "a finite configured binary32 value was accepted as <= NaN"
+    (!(NN.Verification.ODE.Ival.leBool (Binary.zero false : Binary 8 23) (Binary.canonicalNaN :
+      Binary 8 23)))
+  expect "configured binary32 infinity was accepted as an ordered finite endpoint"
+    (!(NN.Verification.ODE.Ival.leBool (Binary.infinity false : Binary 8 23) (Binary.zero false :
+      Binary 8 23)))
+  expect "interval minimum hid a non-finite configured binary32 endpoint"
+    (!(Binary.isFinite <| NN.Verification.ODE.Ival.min2 (Binary.infinity false : Binary 8 23)
+      (Binary.zero false : Binary 8 23)))
+  expect "interval maximum hid a non-finite configured binary32 endpoint"
+    (!(Binary.isFinite <| NN.Verification.ODE.Ival.max2 (Binary.zero false : Binary 8 23)
+      (Binary.infinity false : Binary 8 23)))
 
   let b2 := flatBox (fun _ => 0.0) (fun _ => 1.0)
-  let mismatchCert : Array (Option (FlatBox IEEE32Exec)) := #[some b2, some flatBox3, some b2]
+  let mismatchCert : Array (Option (FlatBox (Binary 8 23))) := #[some b2, some flatBox3, some b2]
   expect "binary elementwise dimension mismatch was accepted"
     (!(ibpNodePreconditionsOk addGraph mismatchCert 2))
 
@@ -306,12 +319,12 @@ def run : IO Unit := do
   expect "positive log input was rejected"
     (ibpNodePreconditionsOk logGraph #[some positive, some positive] 1)
 
-  let emptyStore : ParamStore IEEE32Exec := {}
+  let emptyStore : ParamStore (Binary 8 23) := {}
   let nonPositiveRun := runIBP logGraph (emptyStore.seedInputBox 0 nonPositive)
   let positiveRun := runIBP logGraph (emptyStore.seedInputBox 0 positive)
   expect "IBP evaluated raw log across its nonpositive domain boundary"
     (nonPositiveRun[1]!.isNone)
-  expect "IEEE32Exec log was accepted without a directed transcendental implementation"
+  expect "configured binary32 log was accepted without a directed transcendental implementation"
     (positiveRun[1]!.isNone)
 
   let inputGraph : NN.IR.Graph := { nodes := #[inputNode 0 2] }
@@ -329,7 +342,7 @@ def run : IO Unit := do
   let crownCert : CROWNNodeCoreCertificate :=
     { ctx := ctx
       ibp := #[some authoritative]
-      crown := #[some (boundsIdentity (α := IEEE32Exec) 2)]
+      crown := #[some (boundsIdentity (α := (Binary 8 23)) 2)]
       alpha := #[none] }
   expect "a complete exact alpha-CROWN replay was rejected"
     (NN.Verification.CROWNNodeCert.certificateAccepts crownCert inputGraph emptyStore

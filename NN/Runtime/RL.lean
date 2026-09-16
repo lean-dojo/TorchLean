@@ -9,6 +9,7 @@ module
 public import NN.Runtime.RL.Core
 public import NN.Runtime.RL.Replay
 public import NN.Runtime.RL.Algorithms
+public import NN.Runtime.RL.DQN.Autograd
 public import NN.Runtime.RL.Boundary
 public import NN.Runtime.RL.Session
 public import NN.Runtime.RL.Eval
@@ -16,7 +17,6 @@ public import NN.Runtime.RL.Gymnasium
 public import NN.Runtime.RL.PPO
 public import NN.Runtime.RL.PolicyGradient.Autograd
 public import NN.Runtime.RL.Numerics
-public import NN.Runtime.RL.Artifacts.DefaultPaths
 
 /-!
 # Reinforcement Learning Runtime Entrypoint
@@ -34,6 +34,7 @@ The split is intentional:
 - `Runtime.RL.Boundary` records host-side rollout contracts before converting observations and
   rewards into TorchLean tensors;
 - `Runtime.RL.Gymnasium` is an external-process bridge and therefore a trust boundary;
+- `Runtime.RL.DQN.Autograd` contains semi-gradient Huber objectives for value learning;
 - `Runtime.RL.PolicyGradient.Autograd` contains differentiable actor/critic losses over TorchLean
   refs; model architectures remain in GraphSpec/API model layers;
 - `Runtime.RL.PPO` contains rollout/sample construction;

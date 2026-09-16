@@ -24,9 +24,10 @@ public import NN.Proofs.RuntimeApprox.NF.SoftmaxAxis
 
 Proof-relevant rounded tensor/operator approximation for `NF`.
 
-`NF` wraps real values and inserts an explicit `neuralRound` step after primitive arithmetic. The
-modules collected here prove local bounds for elementwise ops, reductions, shape-only ops, linear
-algebra, attention, normalization, optimizers, and graph-level end-to-end execution.
+The noncomputable `FloatLib.Floats.Formats.Flocq.NF` wraps real values and inserts an explicit
+`Flocq.round` step after primitive arithmetic. The modules collected here prove local bounds for
+elementwise ops, reductions, shape-only ops, linear algebra, attention, normalization, optimizers,
+and graph-level end-to-end execution.
 
 File roles:
 - `Ops`: scalar and elementwise tensor bounds, plus primitive `FwdNode` constructors.

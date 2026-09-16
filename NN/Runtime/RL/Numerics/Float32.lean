@@ -18,7 +18,8 @@ public import NN.Runtime.RL.Numerics.Float32.Types
 Umbrella import for TorchLean's explicit binary32 RL diagnostics. The implementation is split by
 concern:
 
-- `Types`: `IEEE32Exec`/`Interval32` aliases, boundary casts, and checked scalar primitives;
+- `Types`: `ExecFloat.Binary 8 23`/`Interval32` aliases, boundary casts, and checked scalar
+primitives;
 - `Returns`: checked discounted backups and fixed-horizon returns;
 - `Advantage`: checked TD residuals, $\operatorname{GAE}(\lambda)$, and advantage normalization;
 - `PPO`: checked importance ratios and clipped PPO objective pieces;

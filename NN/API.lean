@@ -20,6 +20,7 @@ public import NN.API.Models
 public import NN.API.Module
 public import NN.API.Neural
 public import NN.API.Optim
+public import NN.API.Precision
 public import NN.API.RL
 public import NN.API.Runtime
 public import NN.API.SelfSupervised
@@ -41,8 +42,8 @@ self-supervised learning, and automatic differentiation.
 
 Import `NN.API` for model code. Import `NN` when a file also uses specification or proof internals.
 
-Focused application surfaces are also available as `NN.API.RL`, `NN.API.SelfSupervised`, and
-`NN.API.Verification`.
+Focused application surfaces are also available as `NN.API.Precision`, `NN.API.RL`,
+`NN.API.SelfSupervised`, and `NN.API.Verification`.
 -/
 
 @[expose] public section

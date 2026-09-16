@@ -966,9 +966,9 @@ theorem denoteAllRawFrom_eq_denoteAllFrom (g : Graph) (payload : Payload α)
     denoteAllRawFrom g payload input i vals = denoteAllFrom g payload input i vals := by
   unfold denoteAllRawFrom denoteAllFrom
   by_cases hi : i < g.nodes.size
-  · rw [dif_pos hi, dif_pos hi]
+  · rw [dite_eq_left hi, dite_eq_left hi]
     unfold inferShapesFrom at hInfer
-    rw [dif_pos hi] at hInfer
+    rw [dite_eq_left hi] at hInfer
     peel_ok hInfer
     obtain ⟨n, hN, hInfer⟩ := hInfer
     rcases Option.eq_none_or_eq_some (lookupParentShapes inferred n.parents.toList) with
@@ -999,7 +999,7 @@ theorem denoteAllRawFrom_eq_denoteAllFrom (g : Graph) (payload : Payload α)
           subst hji
           simp only [Array.getElem_push, hVals, hInferred, lt_irrefl, dite_false]
           rw [hvShape, hDecl]
-  · rw [dif_neg hi, dif_neg hi]
+  · rw [dite_eq_right hi, dite_eq_right hi]
 termination_by g.nodes.size - i
 decreasing_by
   exact Nat.sub_succ_lt_self _ _ hi
@@ -1026,14 +1026,14 @@ theorem denoteAllFrom_prefix (g : Graph) (payload : Payload α) (input : Spec.So
     ∀ (j : Nat) (hj : j < vals.size), out[j]? = some vals[j] := by
   unfold denoteAllFrom at h
   by_cases hi : i < g.nodes.size
-  · rw [dif_pos hi] at h
+  · rw [dite_eq_left hi] at h
     peel_ok h
     obtain ⟨v, _, hRec⟩ := h
     intro j hj
     have := denoteAllFrom_prefix g payload input (i + 1) (vals.push v) out hRec j
       (by simp only [Array.size_push]; exact Nat.lt_succ_of_lt hj)
     rw [this, Array.getElem_push_lt hj]
-  · rw [dif_neg hi] at h
+  · rw [dite_eq_right hi] at h
     peel_ok h
     subst h
     intro j hj
@@ -1052,7 +1052,7 @@ theorem denoteAllFrom_ok_shapes (g : Graph) (payload : Payload α) (input : Spec
         out[j].shape = g.nodes[j].outShape := by
   unfold denoteAllFrom at h
   by_cases hlt : i < g.nodes.size
-  · rw [dif_pos hlt] at h
+  · rw [dite_eq_left hlt] at h
     unfold evalAt at h
     peel_ok h
     obtain ⟨v, ⟨n, hN, hV⟩, hRec⟩ := h
@@ -1072,7 +1072,7 @@ theorem denoteAllFrom_ok_shapes (g : Graph) (payload : Payload α) (input : Spec
       rw [Option.some.inj hprefix, Option.some.inj hnode]
       simp only [Array.getElem_push, hSize, lt_irrefl, dite_false]
       exact evalNode_ok_shape hV
-  · rw [dif_neg hlt] at h
+  · rw [dite_eq_right hlt] at h
     peel_ok h
     subst h
     refine ⟨hSize.trans (Nat.le_antisymm hi (Nat.le_of_not_lt hlt)), fun j hj hjo hij => ?_⟩

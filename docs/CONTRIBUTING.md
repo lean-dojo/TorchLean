@@ -1,7 +1,8 @@
 # Contributing to TorchLean
 
-Use the pinned `lean-toolchain` and keep changes focused. Paths below are relative to the
-repository root.
+Use the pinned Lean 4.34.0 toolchain and mathlib dependency, and keep changes focused. FloatLib is
+pinned by commit in `lakefile.lean`; update dependencies through Lake with the pinned toolchain.
+Paths below are relative to the repository root.
 
 ## Build and Check
 
@@ -97,7 +98,7 @@ assumptions; see [trust boundaries](TRUST_BOUNDARIES.md). AI assistance is discl
 ## Names and Proof Style
 
 - Use UpperCamelCase for types and namespaces, lowerCamelCase for functions, and snake_case for
-  theorems. Use `theorem`, not `lemma`, outside the separately maintained `NN/Floats` code.
+  theorems. Use `theorem` for theorem declarations.
 - Prefer `open TorchLean` and the short `Tensor`/`Storage` names within a module. Qualify names
   where needed to resolve ambiguity. Do not create local aliases for an already-open name.
 - Keep one canonical implementation. Public facades may re-export it; do not preserve unused
@@ -115,7 +116,6 @@ assumptions; see [trust boundaries](TRUST_BOUNDARIES.md). AI assistance is discl
 - Preserve theorem statements. Split expensive proofs into reusable lemmas rather than weakening
   hypotheses or raising resource limits.
 
-`NN/Floats` is exempt from the line-length and em-dash lint rules pending separate packaging.
 Run `python3 scripts/checks/repo_lint.py --fail-on-warn` for source and API checks.
 
 ## Documentation

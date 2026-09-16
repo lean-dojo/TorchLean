@@ -25,27 +25,22 @@ import NN.API
 open TorchLean
 ```
 
-`NN.API` is the maintained import for application code. It brings in tensors, models, data,
-training, optimizers, prediction, and explicit differentiation. It does not pull every proof,
-verifier, floating-point implementation, widget, and backend-internal module into a small training
-file.
+`NN.API` supplies the tensors, model builders, and training operations used below. A file that also
+proves a property or inspects a backend can add the relevant module explicitly.
 
-Keeping those dependencies separate limits what a training script needs to elaborate and makes
-its purpose easier to read from the imports. A file that also proves a property or inspects a
-backend can add the relevant module explicitly. Lean's module system determines which
-declarations are available in a file {Informal.citep lean4}[]; the import list also documents
-which parts of the library the file depends on.
+Keeping those dependencies separate limits what a training script needs to elaborate. Lean's
+module system determines which declarations are available in a file {Informal.citep lean4}[];
+the import list records those dependencies.
 
-The import chooses which declarations are in scope; it does not choose the arithmetic or execution
-mode of a later training run. Those choices remain values in the trainer configuration. Separating
-these decisions is useful when reading a short script: its imports tell us which interfaces it uses,
-its model annotation tells us what tensors it accepts, and its configuration tells us how the
-executable computation will run.
+Arithmetic and execution mode are separate choices in the trainer configuration. Importing
+`NN.API` leaves them open: we can keep a model's layers and shapes fixed while changing how a
+training run executes.
 
-We will build one program using only that API, run it, compare it against the same program in
-PyTorch {Informal.citep pytorch2019}[], and then explain when a narrower or lower import is
-appropriate. Named Lean blocks are build-checked; shell and PyTorch transcripts document separate
-runs.
+The XOR example below uses the same architecture and optimizer in TorchLean and
+PyTorch {Informal.citep pytorch2019}[]. Both fit the four training rows, yet predict differently
+away from them. The calculations leading up to it establish the tensor and shape conventions
+needed to read that comparison. Named Lean blocks are build-checked; shell and PyTorch
+transcripts document separate runs.
 
 # The Namespaces
 
@@ -760,16 +755,17 @@ the constructor and configuration:
 #eval (optim.adam { learningRate := 0.03 }).describe
 ```
 ```leanOutput apiDescribe (whitespace := lax)
-"optim.adam { learningRate := 0.030000,
-  beta1 := 0.900000, beta2 := 0.999000,
-  epsilon := 1.000000e-8 }"
+"optim.adam { learningRate := 2.9999999999999999e-2,
+  beta1 := 9.0000000000000002e-1,
+  beta2 := 9.9900000000000000e-1,
+  epsilon := 1.0000000000000000e-8 }"
 ```
 
 The moment coefficients match PyTorch's Adam defaults, so a script ported from
-`torch.optim.Adam(params, lr=0.03)` need not restate them. The stabilizer prints in exponent form
-so its nonzero value remains visible; setting epsilon to zero would change the update rule.
-The description is formatted text. Read the field defaults from `optim.Adam.Config` when the
-exact values matter.
+`torch.optim.Adam(params, lr=0.03)` need not restate them. FloatLib supplies scientific decimal
+text for the stored binary64 values. The formatter checks that Lean's literal decoder reconstructs
+the same bits before returning that text; if the check fails, it emits a `Float.ofBits` expression.
+The check protects small stabilizers and coefficients near one when their descriptions are copied.
 
 The available optimizers are `optim.sgd` (with optional heavy-ball momentum
 {Informal.citep polyak1964}[]), `optim.adaGrad`, `optim.rmsProp`, `optim.adam`, `optim.adamW`
@@ -793,9 +789,9 @@ optimizer or the objective.
 # Runtime Arithmetic
 
 `Runtime.Arithmetic` is not a storage dtype. It chooses the arithmetic for an executable run.
-`.native` selects Lean's native binary32 `Float32`; `.ieee` selects TorchLean's independent
-raw-bit `IEEE32Exec` implementation; `.complex` selects complex numbers over that reference
-binary32 implementation. The choice changes the meaning of arithmetic operations rather than
+`.native` selects Lean's native binary32 `Float32`; `.ieee` selects FloatLib binary32;
+`.complex` selects complex numbers over FloatLib binary32. The choice changes the meaning of
+arithmetic operations rather than
 attaching a label to an untyped buffer. This is why the scratch run above reported
 `arithmetic=native scalar=Float32` in its summary line: the run states its own semantics.
 
@@ -803,13 +799,16 @@ Trainer-facing datasets are commonly authored as `Tensor Float ...`, where `Floa
 binary64 type. The dataset builder converts those values once the trainer selects its scalar
 semantics. This is an input boundary, not a claim that training itself uses binary64.
 
+For a different precision, choose a FloatLib binary format directly in typed tensors, state and
+graphs. The CPU path supports binary128 and custom valid binary widths through the same
+`nn.sgdStep` interface. The supervised trainer still exchanges `Float` data, reports and
+checkpoints;
+its `.ieee` setting does not select an arbitrary width.
+
 Proofs choose `ℝ` or `TorchLean.Floats.FP32` directly. They are not runtime modes because
 they are noncomputable. The high-level trainer accepts the real runtime modes. Genuine complex
 training needs a real-valued loss, conjugate-aware reverse mode, and complex prediction results, so
 the generic runtime's `.complex` mode is not presented as a supervised trainer option.
-
-For theorem work, instantiate specification tensors directly over `ℝ` or `FP32`. For a runtime run,
-choose executable arithmetic and record the provider boundary.
 
 The direct tensor calculations earlier in this chapter use the `Float` written in their
 annotations. They are not silently redirected through a trainer's `.native` setting. The same is
@@ -977,10 +976,9 @@ reject operations whose derivative lowering it does not support.
 
 # Classical Models
 
-Statistical and classical ML models do not need a neural layer stack. Their definitions live in
-`Spec`, alongside the tensor mathematics they use. Keeping them in the library does not require
-pretending they are neural networks; what they share with the neural code is the shape-indexed
-tensor foundation and explicit data, not one forced architecture abstraction.
+The k-nearest-neighbor classifier stores labeled points and votes among nearby ones; it has no
+layers to initialize. Its definition lives in `Spec`, alongside other classical models that use
+the same shape-indexed tensors.
 
 These models are not re-exported through `NN.API`, so a file that uses them adds one focused import.
 Here is a complete executable k-nearest-neighbor classifier. The model stores its labeled samples;
@@ -1035,8 +1033,7 @@ open Spec in
 ```
 
 Two of the three nearest neighbors of $`(0.2, 0.1)` are blue, so the ideal vote share is
-$`2/3` ; the returned `Float` is rounded. It is not calibrated and does not become one by being
-computed in Lean.
+$`2/3` ; the returned `Float` is rounded. This vote share is not a calibrated probability.
 
 This classifier has no seed-consuming builder or optimizer step. Its state is the four stored
 labeled points, and a query selects neighbors from that state before voting. With three neighbors,
@@ -1189,10 +1186,9 @@ These objects may all refer to the same architecture:
   * accepted external claim plus checker theorem
 :::
 
-The distinction matters when reading a claim about a model. A trainer run reports what happened
-once, under one arithmetic and one device. A theorem reports what must happen under its hypotheses,
-on every input they allow. The XOR transcripts earlier in this chapter are the first kind. The
-TorchLean API makes the common path concise without collapsing these meanings.
+The XOR transcripts record two particular training runs. A theorem about either resulting model
+would need to state a property of its predictions and the inputs on which that property holds.
+The small training losses alone do not supply that statement.
 
 # Declaration Search
 
@@ -1250,11 +1246,8 @@ the `Float` row prints a rounded value while the `Rat` row holds exactly $`1/10`
 chapters run their geometry over `Rat` for precisely this reason, and it is the same `Tensor` type
 in both rows.
 
-These four commands cover the tensor, derivative, model, dataset, trainer, and prediction
-interfaces without requiring backend or proof internals.
-
 Lean's
 [source-file and module
 reference](https://lean-lang.org/doc/reference/latest/Source-Files-and-Modules/) explains how these
-imports determine the environment in which a file elaborates. With the common path in one place, the
-next chapter keeps this same model and changes only how it executes.
+imports determine the environment in which a file elaborates. The runtime chapters follow the
+model from its trainer configuration to the operations that execute it.

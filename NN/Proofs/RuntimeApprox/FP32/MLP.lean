@@ -20,11 +20,16 @@ readable bridge lemmas that downstream verification examples can cite: “this w
 within some explicit real error budget of the corresponding real-spec MLP.”
 
 The `_fp32` suffix refers to the rounded-real model `TorchLean.Floats.FP32 := NF binaryRadix fexp32
-rnd32`, not to Lean's `Float32` or to the bit-level `IEEE32Exec` model. The bridge from this model
-to bit-level binary32 arithmetic lives in `NN/Floats/IEEEExec/Bridge/FP32`.
+rnd32`, not to Lean's `Float32` or to the bit-level `ExecFloat.Binary 8 23` model. Finite binary32
+add/mul
+refinements are in `NN/Floats/IEEEExec/Bridge/Finite.lean`; further arithmetic refinements are in
+`NN/Proofs/RuntimeApprox/IEEE32/Arithmetic.lean`.
 -/
 
 @[expose] public section
+
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
 
 namespace NN.Proofs.RuntimeApprox.FP32
@@ -46,12 +51,12 @@ def tanhMlp3ErrorBudget {d0 d1 d2 d3 : Nat}
     (L2R : LinearSpec R d2 d3) (xR : Tensor R [d0]) : ℝ :=
   let z0R := Spec.linearSpec (α := R) L0R xR
   let eZ0 := linearErrorBudget e0W e0b ex L0R xR
-  let a0R := mapSpec MathFunctions.tanh z0R
+  let a0R := mapSpec Numerics.MathFunctions.tanh z0R
   let eA0 := linfNorm (Proofs.RuntimeApprox.NFBackend.tanhBoundTensor
     (β := β) (fexp := fexp) (rnd := rnd) (s := Shape.dim d1 .scalar) eZ0 z0R)
   let z1R := Spec.linearSpec (α := R) L1R a0R
   let eZ1 := linearErrorBudget e1W e1b eA0 L1R a0R
-  let a1R := mapSpec MathFunctions.tanh z1R
+  let a1R := mapSpec Numerics.MathFunctions.tanh z1R
   let eA1 := linfNorm (Proofs.RuntimeApprox.NFBackend.tanhBoundTensor
     (β := β) (fexp := fexp) (rnd := rnd) (s := Shape.dim d2 .scalar) eZ1 z1R)
   linearErrorBudget e2W e2b eA1 L2R a1R
@@ -79,14 +84,14 @@ theorem approxTensor_tanhMlp3_fp32 {d0 d1 d2 d3 : Nat}
     (hx : approxTensor (α := R) (toSpec := toSpec) xS xR ex) :
     approxTensor (α := R) (toSpec := toSpec)
       (let z0 := Spec.linearSpec (α := ℝ) L0S xS
-       let a0 := mapSpec MathFunctions.tanh z0
+       let a0 := mapSpec Numerics.MathFunctions.tanh z0
        let z1 := Spec.linearSpec (α := ℝ) L1S a0
-       let a1 := mapSpec MathFunctions.tanh z1
+       let a1 := mapSpec Numerics.MathFunctions.tanh z1
        Spec.linearSpec (α := ℝ) L2S a1)
       (let z0 := Spec.linearSpec (α := R) L0R xR
-       let a0 := mapSpec MathFunctions.tanh z0
+       let a0 := mapSpec Numerics.MathFunctions.tanh z0
        let z1 := Spec.linearSpec (α := R) L1R a0
-       let a1 := mapSpec MathFunctions.tanh z1
+       let a1 := mapSpec Numerics.MathFunctions.tanh z1
        Spec.linearSpec (α := R) L2R a1)
       (tanhMlp3ErrorBudget e0W e0b e1W e1b e2W e2b ex L0R L1R L2R xR) := by
   -- First linear layer: propagate input/weight/bias error to the first pre-activation.
@@ -110,58 +115,58 @@ theorem approxTensor_tanhMlp3_fp32 {d0 d1 d2 d3 : Nat}
       (Spec.linearSpec (α := R) L0R xR))
   have hA0' :
       approxTensor (α := R) (toSpec := toSpec)
-        (mapSpec MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))
-        (mapSpec MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))
+        (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))
+        (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))
         eA0 := by
       simpa [toSpec, NFBackend.toSpec, eA0] using hA0
 
   -- Second linear layer: use the tanh activation bound as this layer's input bound.
   let eZ1 := linearErrorBudget e1W e1b eA0 L1R
-    (mapSpec MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))
+    (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))
   have hZ1 :
       approxTensor (α := R) (toSpec := toSpec)
         (Spec.linearSpec (α := ℝ) L1S
-          (mapSpec MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS)))
+          (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS)))
         (Spec.linearSpec (α := R) L1R
-          (mapSpec MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))) eZ1 := by
+          (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))) eZ1 := by
     simpa [eZ1] using approxTensor_linear_fp32
       (WS := L1S) (WR := L1R)
-      (xS := mapSpec MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))
-      (xR := mapSpec MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))
+      (xS := mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))
+      (xR := mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))
       (epsW := e1W) (epsb := e1b) (epsx := eA0) h1W h1b hA0'
   have hA1 :=
     Proofs.RuntimeApprox.NFBackend.approxTensor_tanh_spec
       (β := β) (fexp := fexp) (rnd := rnd) (s := Shape.dim d2 .scalar)
-      (xS := Spec.linearSpec (α := ℝ) L1S (mapSpec MathFunctions.tanh (Spec.linearSpec (α := ℝ)
-        L0S xS)))
-      (xR := Spec.linearSpec (α := R) L1R (mapSpec MathFunctions.tanh (Spec.linearSpec (α := R)
-        L0R xR)))
+      (xS := Spec.linearSpec (α := ℝ) L1S
+        (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS)))
+      (xR := Spec.linearSpec (α := R) L1R
+        (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR)))
       (eps := eZ1) hZ1
   let eA1 : ℝ :=
     linfNorm (Proofs.RuntimeApprox.NFBackend.tanhBoundTensor
       (β := β) (fexp := fexp) (rnd := rnd) (s := Shape.dim d2 .scalar) eZ1
-      (Spec.linearSpec (α := R) L1R (mapSpec MathFunctions.tanh (Spec.linearSpec (α := R) L0R
-        xR))))
+      (Spec.linearSpec (α := R) L1R
+        (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))))
   have hA1' :
       approxTensor (α := R) (toSpec := toSpec)
-        (mapSpec MathFunctions.tanh
+        (mapSpec Numerics.MathFunctions.tanh
           (Spec.linearSpec (α := ℝ) L1S
-            (mapSpec MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))))
-        (mapSpec MathFunctions.tanh
+            (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))))
+        (mapSpec Numerics.MathFunctions.tanh
           (Spec.linearSpec (α := R) L1R
-            (mapSpec MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))))
+            (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))))
         eA1 := by
       simpa [toSpec, NFBackend.toSpec, eA1] using hA1
 
   -- Final linear layer: produces the network-level output approximation.
   have hOut := approxTensor_linear_fp32
       (WS := L2S) (WR := L2R)
-      (xS := mapSpec MathFunctions.tanh
+      (xS := mapSpec Numerics.MathFunctions.tanh
         (Spec.linearSpec (α := ℝ) L1S
-          (mapSpec MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))))
-      (xR := mapSpec MathFunctions.tanh
+          (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))))
+      (xR := mapSpec Numerics.MathFunctions.tanh
         (Spec.linearSpec (α := R) L1R
-          (mapSpec MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))))
+          (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))))
       (epsW := e2W) (epsb := e2b) (epsx := eA1) h2W h2b hA1'
 
   simpa [tanhMlp3ErrorBudget, eZ0, eA0, eZ1, eA1] using hOut

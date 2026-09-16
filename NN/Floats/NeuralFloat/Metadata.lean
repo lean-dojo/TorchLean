@@ -6,11 +6,12 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.NeuralFloat.Core
+public import FloatLib.Floats.Formats.Flocq
+
 import Mathlib.Analysis.SpecialFunctions.Pow.Real
 
 /-!
-# NeuralFloat Metadata
+# FloatRep Metadata
 
 The Flocq-style core model is rounded arithmetic on `ℝ`. TorchLean attaches two pieces of
 non-semantic information when converting values for runtime-refinement arguments:
@@ -18,11 +19,13 @@ non-semantic information when converting values for runtime-refinement arguments
 - the phase in which a value was produced;
 - a named hardware format and a conservative absolute error bound.
 
-These notions are deliberately separate from `NeuralFloat`, which remains the pure
+These notions are deliberately separate from `FloatRep`, which remains the pure
 mantissa/exponent representation used by the generic format theory.
 -/
 
 @[expose] public section
+
+open FloatLib.Numerics FloatLib.Floats.Formats.Flocq
 
 
 namespace TorchLean.Floats
@@ -41,9 +44,9 @@ inductive TrainingPhase
 /--
 Named precision levels commonly used in ML.
 
-These carry the intended mantissa/exponent widths. Bit-level IEEE-754 behavior lives elsewhere
-(`NN/Floats/IEEEExec`), and the “finite, rounding-only” float32 semantics used in most proofs is
-`NN/Floats/FP32`.
+These carry the intended mantissa/exponent widths. Bit-level arithmetic and special values are
+defined by FloatLib's configured `ExecFloat.Binary` formats. The rounded-real float32 model used
+in proofs is `NN/Floats/FP32`.
 -/
 inductive NeuralPrecision
   | brainFloat16
@@ -87,18 +90,18 @@ structure NeuralFloatMetadata where
   /-- Training phase in which the value was produced. -/
   phase : TrainingPhase
 
-/-- A pure `NeuralFloat` together with ML-specific analysis metadata. -/
-structure AnnotatedNeuralFloat (β : NeuralRadix) where
+/-- A pure `FloatRep` together with ML-specific analysis metadata. -/
+structure AnnotatedNeuralFloat (β : Radix) where
   /-- Mathematical mantissa/exponent value. -/
-  value : NeuralFloat β
+  value : FloatRep β
   /-- Metadata that does not affect the real denotation of `value`. -/
   metadata : NeuralFloatMetadata
 
 namespace AnnotatedNeuralFloat
 
 /-- Real denotation of an annotated value; metadata has no semantic effect. -/
-noncomputable def toReal {β : NeuralRadix} (x : AnnotatedNeuralFloat β) : ℝ :=
-  neuralToReal x.value
+noncomputable def toReal {β : Radix} (x : AnnotatedNeuralFloat β) : ℝ :=
+  FloatLib.Floats.Formats.Flocq.toReal x.value
 
 end AnnotatedNeuralFloat
 

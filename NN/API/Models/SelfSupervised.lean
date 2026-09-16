@@ -40,26 +40,26 @@ reconstruction vector per batch position.
 
 `reconstructionWidth` can be the full image size (`C*H*W`) or a prefix for faster experiments.
 -/
-structure ViT.MaskedAutoencoder.Config (d : Nat) where
+structure ViT.MaskedPatchReconstructor.Config (d : Nat) where
   /-- Patch-transformer encoder configuration. -/
   encoder : ViT.EncoderConfig d
   /-- Number of reconstructed output coordinates. -/
   reconstructionWidth : Nat
 
-namespace ViT.MaskedAutoencoder.Config
+namespace ViT.MaskedPatchReconstructor.Config
 
 /-- Validate both the encoder and decoder width before allocating either component. -/
-def validate {d : Nat} (config : ViT.MaskedAutoencoder.Config d) :
+def validate {d : Nat} (config : ViT.MaskedPatchReconstructor.Config d) :
     Except String Unit := do
-  config.encoder.validate (kind := "ViT.MaskedAutoencoder")
+  config.encoder.validate (kind := "ViT.MaskedPatchReconstructor")
   if config.reconstructionWidth = 0 then
-    throw "ViT.MaskedAutoencoder: reconstruction width must be positive"
+    throw "ViT.MaskedPatchReconstructor: reconstruction width must be positive"
 
-end ViT.MaskedAutoencoder.Config
+end ViT.MaskedPatchReconstructor.Config
 
 /-- Reconstruction output shape for the same batch shape as the input. -/
-abbrev ViT.MaskedAutoencoder.Config.output {d : Nat}
-    (config : ViT.MaskedAutoencoder.Config d)
+abbrev ViT.MaskedPatchReconstructor.Config.output {d : Nat}
+    (config : ViT.MaskedPatchReconstructor.Config d)
     (batchShape : Shape := []) : Shape :=
   batchShape.appendDim config.reconstructionWidth
 
@@ -76,7 +76,7 @@ The masking objective is provided by `TorchLean.ssl.BlockMAE.sample`. Its axis p
 independent of the model architecture and spatial rank, so this constructor uses the same checked
 operation as signal, volume, and higher-dimensional masked-prediction models.
 -/
-def ViT.maskedPatchReconstructor {d : Nat} (config : ViT.MaskedAutoencoder.Config d)
+def ViT.maskedPatchReconstructor {d : Nat} (config : ViT.MaskedPatchReconstructor.Config d)
     (batchShape : Shape := []) :
     nn.Builder
       (nn.Sequential
@@ -86,7 +86,7 @@ def ViT.maskedPatchReconstructor {d : Nat} (config : ViT.MaskedAutoencoder.Confi
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
         (config.encoder.input batchShape) (config.output batchShape)
-        "ViT.MaskedAutoencoder" message
+        "ViT.MaskedPatchReconstructor" message
   | .ok () => do
       let encoder ← vitEncoder config.encoder batchShape
       let builtFlattening ← flattenAfter batchShape
@@ -101,24 +101,6 @@ def ViT.maskedPatchReconstructor {d : Nat} (config : ViT.MaskedAutoencoder.Confi
         linear config.encoder.flattenedWidth config.reconstructionWidth
           (batchShape := batchShape)
       pure <| encoder >>> flattenTokens >>> decoder
-
-/--
-Configuration for `ViT.maskedPatchReconstructor`.
-
-The original configuration name remains available so existing model definitions and checkpoints
-keep their types. This name describes the architecture: every patch is encoded, all token features
-are flattened, and one dense projection reconstructs the requested coordinates.
--/
-abbrev ViT.MaskedPatchReconstructor.Config := ViT.MaskedAutoencoder.Config
-
-/--
-Compatibility name for `ViT.maskedPatchReconstructor`.
-
-Mask the input and choose reconstruction targets in the data/loss pipeline. This model encodes
-all patch positions, including masked positions; it does not remove tokens before the encoder or
-restore learned mask tokens in a separate Transformer decoder as the MAE paper does.
--/
-abbrev ViT.maskedAutoencoder := @ViT.maskedPatchReconstructor
 
 end models
 end nn

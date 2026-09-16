@@ -44,12 +44,13 @@ noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 -- ---------------------------------------------------------------------------
 -- Scalar access helpers
@@ -68,7 +69,7 @@ private def matGetS {m n : Nat} (A : SpecTensor [m, n]) (i : Fin m) (j : Fin n)
 -- Exact shape ops preserve approximation (`unsqueeze`, `transpose`)
 -- ---------------------------------------------------------------------------
 
-omit [NeuralValidExp fexp] [NeuralValidRndToNearest rnd] in
+omit [ValidExp fexp] [ValidRndToNearest rnd] in
 /-- Inserting a singleton axis is a reindexing operation and adds no numerical error. -/
 theorem approxTensor_unsqueeze_spec {shape : Shape} {xS : SpecTensor shape}
     {xR : Tensor R shape} {eps : ℝ} (axis : Nat) (hAxis : axis ≤ shape.rank)
@@ -100,7 +101,7 @@ theorem approxTensor_unsqueeze_spec {shape : Shape} {xS : SpecTensor shape}
               simpa [Shape.rank, Nat.add_comm] using hAxis))
               (approxTensor_dim_get hx i)
 
-omit [NeuralValidExp fexp] [NeuralValidRndToNearest rnd] in
+omit [ValidExp fexp] [ValidRndToNearest rnd] in
 /-- Swapping any pair of adjacent axes preserves the approximation error budget. -/
 theorem approxTensor_swapAdjacentAxes {shape : Shape} {depth : Nat}
     {xS : SpecTensor shape} {xR : Tensor R shape} {eps : ℝ}
@@ -150,12 +151,12 @@ def dotStep {n : Nat} (epsa epsb : ℝ) (aR bR : Fin n → R) :
       let epsProd : ℝ :=
         (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) akR) + epsa) * epsb +
           (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) bkR) + epsb) * epsa +
-          neuralUlp β fexp
+          ulp β fexp
               (toSpec (β := β) (fexp := fexp) (rnd := rnd) akR *
                 toSpec (β := β) (fexp := fexp) (rnd := rnd) bkR) / 2
       let epsAcc' : ℝ :=
         epsAcc + epsProd +
-          neuralUlp β fexp
+          ulp β fexp
               (toSpec (β := β) (fexp := fexp) (rnd := rnd) accR +
                 toSpec (β := β) (fexp := fexp) (rnd := rnd) prodR) / 2
       (accR + prodR, epsAcc')
@@ -167,11 +168,11 @@ Closed-form bound for a runtime dot-product over `List.finRange n`.
 starting from 0.
 -/
 def dotBound {n : Nat} (epsa epsb : ℝ) (aR bR : Fin n → R) : ℝ :=
-  let initEps : ℝ := neuralUlp β fexp 0 / 2
+  let initEps : ℝ := ulp β fexp 0 / 2
   ((List.finRange n).foldl (dotStep (β := β) (fexp := fexp) (rnd := rnd) epsa epsb aR bR)
       ((0 : R), initEps)).2
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /-- The `i`-th output entry of `Spec.matVecMulSpec` is the dot-product of row `i` with `v`. -/
 private theorem vec_get_mat_vec_mul_spec {m n : Nat}
     (A : Tensor R [m, n]) (v : Tensor R [n]) (i : Fin m) :
@@ -238,7 +239,7 @@ private theorem approx_dot_list {n : Nat} (l : List (Fin n))
               (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k * bR k) - aS k * bS k) ≤
             ((abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k)) + epsa) * epsb +
               (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) + epsb) * epsa +
-              neuralUlp β fexp
+              ulp β fexp
                   (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k) *
                     toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) / 2) := by
         exact approx_mul_nf (β := β) (fexp := fexp) (rnd := rnd) (x := aS k) (y := bS k)
@@ -251,10 +252,10 @@ private theorem approx_dot_list {n : Nat} (l : List (Fin n))
             epsAcc +
               ((abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k)) + epsa) * epsb +
                 (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) + epsb) * epsa +
-                neuralUlp β fexp
+                ulp β fexp
                     (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k) *
                       toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) / 2) +
-              neuralUlp β fexp
+              ulp β fexp
                   (toSpec (β := β) (fexp := fexp) (rnd := rnd) accR +
                     toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k * bR k)) / 2 := by
         -- apply the scalar add bound with `acc` and `prod`
@@ -264,7 +265,7 @@ private theorem approx_dot_list {n : Nat} (l : List (Fin n))
           (epsy :=
             ((abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k)) + epsa) * epsb +
               (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) + epsb) * epsa +
-              neuralUlp β fexp
+              ulp β fexp
                   (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k) *
                     toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) / 2))
           hAcc hProd
@@ -278,10 +279,10 @@ private theorem approx_dot_list {n : Nat} (l : List (Fin n))
             epsAcc +
               ((abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k)) + epsa) * epsb +
                 (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) + epsb) * epsa +
-                neuralUlp β fexp
+                ulp β fexp
                     (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k) *
                       toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) / 2) +
-              neuralUlp β fexp
+              ulp β fexp
                   (toSpec (β := β) (fexp := fexp) (rnd := rnd) accR +
                     toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k * bR k)) / 2)
           hStep
@@ -306,14 +307,14 @@ private theorem approx_dot_finRange {n : Nat}
     -- base approximation for the initial accumulator `0`
   have h0 :
       abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (0 : R) - (0 : SpecScalar)) ≤
-        neuralUlp β fexp 0 / 2 := by
+        ulp β fexp 0 / 2 := by
     rw [toSpec_zero (β := β) (fexp := fexp) (rnd := rnd), sub_zero, abs_zero]
-    exact div_nonneg (neuralUlp.nonneg β fexp 0) (by norm_num)
+    exact div_nonneg (ulp.nonneg β fexp 0) (by norm_num)
   simpa [dotBound] using
     (approx_dot_list (β := β) (fexp := fexp) (rnd := rnd) (n := n) (l := List.finRange n)
       (aS := aS) (bS := bS) (aR := aR) (bR := bR)
       (accS := (0 : SpecScalar)) (accR := (0 : R))
-      (epsAcc := neuralUlp β fexp 0 / 2)
+      (epsAcc := ulp β fexp 0 / 2)
       (epsa := epsa) (epsb := epsb) h0 ha hb)
 
 -- ---------------------------------------------------------------------------
@@ -398,7 +399,7 @@ theorem approxTensor_mat_vec_mul_spec {m n : Nat} :
         (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) AR i k)
         (fun k => vR.getScalar k)) ≤ B := by
     simpa [bnd, matVecMulBoundTensor, dotBound, B, linfNorm,
-      RuntimeApprox.linfNorm, tensorLinfNorm, MathFunctions.abs, SpecScalar] using
+      RuntimeApprox.linfNorm, tensorLinfNorm, Numerics.MathFunctions.abs, SpecScalar] using
       linf_norm_le_get_dim (t := bnd) i
   have hBound :
       dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsV
@@ -433,7 +434,7 @@ def matMulBoundTensor {m n p : Nat} (epsA epsB : ℝ)
         (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) A i k)
         (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) B k j))))
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /-- The matrix entry `(i,j)` of `Spec.matMulSpec` is the dot-product of row `i` of `A` with column
   `j` of `B`. -/
 private theorem mat_get_mat_mul_spec {m n p : Nat}
@@ -538,7 +539,8 @@ theorem approxTensor_mat_mul_spec {m n p : Nat} :
         (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) AR i k)
         (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) BR k j)) ≤ B := by
     simpa [bnd, matMulBoundTensor, dotBound, B, linfNorm,
-      RuntimeApprox.linfNorm, tensorLinfNorm, MathFunctions.abs, SpecScalar] using hEntryNorm
+      RuntimeApprox.linfNorm, tensorLinfNorm, Numerics.MathFunctions.abs, SpecScalar]
+      using hEntryNorm
   have hBound :
       dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsB
         (fun k => matGet (β := β) (fexp := fexp) (rnd := rnd) AR i k)

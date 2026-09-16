@@ -261,7 +261,7 @@ theorem evalConcatLeadingAxisFold_eq_concatInputsForward
   rw [hIR, concatInputsForward_eq]
   have hY : (concatLeadingAxisFromInputs (α := α) context inputs).1 = nOut :=
     (concatLeadingAxisFromInputs_size_eq_sum (α := α) context inputs).trans hSum
-  rw [dif_pos hY]
+  rw [dite_eq_left hY]
   change Except.ok _ = Except.ok _
   congr 2
   exact eq_mp_eq_cast_shape _ _ _

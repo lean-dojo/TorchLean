@@ -43,13 +43,14 @@ noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 open Proofs.RuntimeRoundingApprox
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 -- ---------------------------------------------------------------------------
 -- Safe division (clamped): `x / max y ε`
@@ -61,7 +62,7 @@ def safeDiv (ε : ℝ) (x y : ℝ) : ℝ :=
 
 /-- Runtime implementation of `safeDiv` as a single rounded primitive. -/
 def safeDivR (ε : ℝ) (xR yR : R) : R :=
-  TorchLean.Floats.NF.ofReal (β := β) (fexp := fexp) (rnd := rnd)
+  NF.ofReal (β := β) (fexp := fexp) (rnd := rnd)
     (safeDiv (ε := ε)
       (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR)
       (toSpec (β := β) (fexp := fexp) (rnd := rnd) yR))
@@ -83,7 +84,7 @@ theorem approx_safeDiv_nf {x y : ℝ} {xR yR : R} {epsx epsy ε : ℝ}
           safeDiv (ε := ε) x y) ≤
       (1 / ε) * epsx +
         (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) + epsx) * (epsy / (ε * ε)) +
-        neuralUlp β fexp
+        ulp β fexp
             (safeDiv (ε := ε)
               (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR)
               (toSpec (β := β) (fexp := fexp) (rnd := rnd) yR)) / 2 := by
@@ -121,10 +122,10 @@ theorem approx_safeDiv_nf {x y : ℝ} {xR yR : R} {epsx epsy ε : ℝ}
           (toSpec (β := β) (fexp := fexp) (rnd := rnd)
               (safeDivR (β := β) (fexp := fexp) (rnd := rnd) ε xR yR) -
             safeDiv (ε := ε) xhat yhat) ≤
-        neuralUlp β fexp (safeDiv (ε := ε) xhat yhat) / 2 := by
-    simpa [safeDivR, safeDiv, xhat, yhat, toSpec, TorchLean.Floats.NF.toReal,
-      TorchLean.Floats.NF.ofReal,
-      TorchLean.Floats.NF.roundR, Proofs.RuntimeRoundingApprox.roundR] using
+        ulp β fexp (safeDiv (ε := ε) xhat yhat) / 2 := by
+    simpa [safeDivR, safeDiv, xhat, yhat, toSpec, NF.toReal,
+      NF.ofReal,
+      NF.roundR, Proofs.RuntimeRoundingApprox.roundR] using
         (Proofs.RuntimeRoundingApprox.roundR_abs_error (β := β) (fexp := fexp) (rnd := rnd)
           (safeDiv (ε := ε) xhat yhat))
 
@@ -240,11 +241,11 @@ theorem approx_safeDiv_nf {x y : ℝ} {xR yR : R} {epsx epsy ε : ℝ}
                 (safeDiv (ε := ε) xhat yhat)
                 (safeDiv (ε := ε) x y)
       _ ≤
-        neuralUlp β fexp (safeDiv (ε := ε) xhat yhat) / 2 +
+        ulp β fexp (safeDiv (ε := ε) xhat yhat) / 2 +
           ((1 / ε) * epsx + (abs xhat + epsx) * (epsy / (ε * ε))) := by
             exact add_le_add hround hdiff
       _ = (1 / ε) * epsx + (abs xhat + epsx) * (epsy / (ε * ε)) +
-        neuralUlp β fexp (safeDiv (ε := ε) xhat yhat) / 2 := by
+        ulp β fexp (safeDiv (ε := ε) xhat yhat) / 2 := by
             ring
 
   simpa [xhat, yhat] using this
@@ -256,7 +257,7 @@ may cross zero and no finite perturbation bound follows.
 def divPosErrorBound (η epsx epsy xhat yhat : ℝ) : ℝ :=
   (1 / (η - epsy)) * epsx +
     (abs xhat + epsx) * (epsy / ((η - epsy) * (η - epsy))) +
-    neuralUlp β fexp (xhat / yhat) / 2
+    ulp β fexp (xhat / yhat) / 2
 
 /-- Forward error for ordinary division when the exact denominator stays positively separated
 from zero and its approximation budget is smaller than that separation.
@@ -317,7 +318,7 @@ theorem divPosErrorBound_le_of_epsy_le_half {η epsx epsy xhat yhat : ℝ}
     (hη : 0 < η) (hepsx : 0 ≤ epsx) (hepsy : 0 ≤ epsy) (hhalf : epsy ≤ η / 2) :
     divPosErrorBound (β := β) (fexp := fexp) η epsx epsy xhat yhat ≤
       (2 / η) * epsx + (abs xhat + epsx) * (4 * epsy / (η * η)) +
-        neuralUlp β fexp (xhat / yhat) / 2 := by
+        ulp β fexp (xhat / yhat) / 2 := by
   have hmargin : η / 2 ≤ η - epsy := by linarith
   have hhalfpos : 0 < η / 2 := by positivity
   have hinv : 1 / (η - epsy) ≤ 2 / η := by
@@ -350,7 +351,7 @@ def safeDivBoundTensor {s : Shape} (ε epsx epsy : ℝ) (xR yR : Tensor R s) : S
     (fun a b =>
       (1 / ε) * epsx +
         (abs a + epsx) * (epsy / (ε * ε)) +
-        neuralUlp β fexp (safeDiv (ε := ε) a b) / 2)
+        ulp β fexp (safeDiv (ε := ε) a b) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) yR)
 
@@ -465,7 +466,7 @@ theorem approxTensor_safeDiv_spec {s : Shape} (ε : ℝ) (hε : 0 < ε) :
       (bnd := fun a b epsx epsy =>
         (1 / ε) * epsx +
           (abs a + epsx) * (epsy / (ε * ε)) +
-          neuralUlp β fexp (safeDiv (ε := ε) a b) / 2)
+          ulp β fexp (safeDiv (ε := ε) a b) / 2)
       (xS := xS) (yS := yS) (xR := xR) (yR := yR) (epsx := epsx) (epsy := epsy) hx hy (by
         intro x y xR yR hx hy
         simpa using
@@ -481,18 +482,18 @@ theorem abs_toSpec_one_sub_one_le :
     abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) - (1 : ℝ)) ≤
       oneEps (β := β) (fexp := fexp) := by
   change
-    abs ((TorchLean.Floats.NF.ofReal (β := β) (fexp := fexp) (rnd := rnd)
+    abs ((NF.ofReal (β := β) (fexp := fexp) (rnd := rnd)
       (1 : ℝ)).val - (1 : ℝ)) ≤ oneEps (β := β) (fexp := fexp)
-  simpa [oneEps, NFBackend.toSpec, TorchLean.Floats.NF.toReal,
-    Proofs.RuntimeRoundingApprox.roundR, TorchLean.Floats.NF.roundR,
-    TorchLean.Floats.NF.ofReal] using
+  simpa [oneEps, NFBackend.toSpec, NF.toReal,
+    Proofs.RuntimeRoundingApprox.roundR, NF.roundR,
+    NF.ofReal] using
     (Proofs.RuntimeRoundingApprox.roundR_abs_error
       (β := β) (fexp := fexp) (rnd := rnd) (1 : ℝ))
 
 /-- `oneEps` is a half ulp, hence nonnegative. -/
 theorem oneEps_nonneg : 0 ≤ oneEps (β := β) (fexp := fexp) := by
   unfold oneEps
-  have := neuralUlp.nonneg β fexp (1 : ℝ)
+  have := ulp.nonneg β fexp (1 : ℝ)
   linarith
 
 /-- `expErrorBound` is nonnegative whenever the propagated input error is. -/
@@ -500,7 +501,7 @@ theorem expErrorBound_nonneg (a : ℝ) {eps : ℝ} (heps : 0 ≤ eps) :
     0 ≤ expErrorBound (β := β) (fexp := fexp) a eps := by
   unfold expErrorBound
   have h1 : 0 ≤ Real.exp (a + eps) * eps := mul_nonneg (Real.exp_pos _).le heps
-  have h2 := neuralUlp.nonneg β fexp (Real.exp a)
+  have h2 := ulp.nonneg β fexp (Real.exp a)
   linarith
 
 /-- Sigmoid evaluated as `1 / (1 + exp (-x))` for every input.
@@ -509,11 +510,11 @@ This sequence is retained for its NF rounding certificate. The public sigmoid ch
 sequence on nonpositive inputs, so the two rounded results need not agree. Both approximate the
 same real logistic function. -/
 def reciprocalSigmoidR (xR : R) : R :=
-  (1 : R) / (1 + MathFunctions.exp (-xR))
+  (1 : R) / (1 + Numerics.MathFunctions.exp (-xR))
 
 /-- Rounded denominator of `reciprocalSigmoidR`. -/
 def reciprocalSigmoidDenomR (xR : R) : R :=
-  (1 : R) + MathFunctions.exp (-xR)
+  (1 : R) + Numerics.MathFunctions.exp (-xR)
 
 /-- Error budget of the rounded sigmoid denominator `1 + exp(-x)` given input error `eps`.
 
@@ -523,25 +524,25 @@ def reciprocalSigmoidDenomError (eps : ℝ) (xR : R) : ℝ :=
   oneEps (β := β) (fexp := fexp) +
     expErrorBound (β := β) (fexp := fexp)
       (toSpec (β := β) (fexp := fexp) (rnd := rnd) (-xR))
-      (eps + neuralUlp β fexp (-toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) / 2) +
-    neuralUlp β fexp
+      (eps + ulp β fexp (-toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) / 2) +
+    ulp β fexp
       (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) +
-        toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.exp (-xR))) / 2
+        toSpec (β := β) (fexp := fexp) (rnd := rnd) (Numerics.MathFunctions.exp (-xR))) / 2
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /-- `reciprocalSigmoidDenomError` is nonnegative for nonnegative input error. -/
 theorem reciprocalSigmoidDenomError_nonneg {eps : ℝ} (xR : R) (heps : 0 ≤ eps) :
     0 ≤ reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR := by
   unfold reciprocalSigmoidDenomError
   have h1 := oneEps_nonneg (β := β) (fexp := fexp)
-  have hulp0 : 0 ≤ neuralUlp β fexp (-toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) / 2 := by
-    have := neuralUlp.nonneg β fexp (-toSpec (β := β) (fexp := fexp) (rnd := rnd) xR)
+  have hulp0 : 0 ≤ ulp β fexp (-toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) / 2 := by
+    have := ulp.nonneg β fexp (-toSpec (β := β) (fexp := fexp) (rnd := rnd) xR)
     linarith
   have h2 := expErrorBound_nonneg (β := β) (fexp := fexp)
     (toSpec (β := β) (fexp := fexp) (rnd := rnd) (-xR)) (add_nonneg heps hulp0)
-  have h3 := neuralUlp.nonneg β fexp
+  have h3 := ulp.nonneg β fexp
     (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) +
-      toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.exp (-xR)))
+      toSpec (β := β) (fexp := fexp) (rnd := rnd) (Numerics.MathFunctions.exp (-xR)))
   linarith
 
 /--
@@ -616,7 +617,7 @@ private theorem approx_reciprocal_sigmoid_nf {x : ℝ} {xR : R} {eps : ℝ}
             rw [abs_of_pos hpos]
             linarith
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /-- With denominator error at most `1/2`, the reciprocal sequence's bound is linear in the
 rounding budget of the constant `1`, the denominator error, and one output rounding.
 In particular it tends to the output half ulp as the format is refined. -/
@@ -627,14 +628,14 @@ theorem reciprocal_sigmoid_bound_scalar_le_of_denom_le_half {eps : ℝ} (xR : R)
         (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R)) +
             oneEps (β := β) (fexp := fexp)) *
           (4 * reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR) +
-        neuralUlp β fexp
+        ulp β fexp
           (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) /
             toSpec (β := β) (fexp := fexp) (rnd := rnd) (reciprocalSigmoidDenomR xR)) / 2 := by
   have hden0 := reciprocalSigmoidDenomError_nonneg (β := β) (fexp := fexp) (rnd := rnd) xR heps
   have hlt : reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR < 1 := by
     linarith
   unfold reciprocalSigmoidBoundScalar
-  rw [if_pos hlt]
+  rw [ite_eq_left hlt]
   have h := divPosErrorBound_le_of_epsy_le_half (β := β) (fexp := fexp) (η := 1)
     (xhat := toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R))
     (yhat := toSpec (β := β) (fexp := fexp) (rnd := rnd) (reciprocalSigmoidDenomR xR))
@@ -647,7 +648,7 @@ most `1`. -/
 theorem reciprocal_sigmoid_bound_scalar_le_one {eps : ℝ} (xR : R) (heps : 0 ≤ eps)
     (hone : oneEps (β := β) (fexp := fexp) ≤ 1 / 16)
     (hden : reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR ≤ 1 / 16)
-    (hulp : neuralUlp β fexp
+    (hulp : ulp β fexp
       (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) /
         toSpec (β := β) (fexp := fexp) (rnd := rnd) (reciprocalSigmoidDenomR xR)) ≤ 1 / 2) :
     reciprocalSigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps xR ≤ 1 := by
@@ -708,12 +709,12 @@ theorem approxTensor_reciprocal_sigmoid_spec {s : Shape} :
 and denominator. It is defined for every NF input so its certificate can be stated independently
 of the comparison that selects the public sigmoid branch. -/
 def expRatioSigmoidR (xR : R) : R :=
-  let z := MathFunctions.exp xR
+  let z := Numerics.MathFunctions.exp xR
   z / (1 + z)
 
 /-- Rounded denominator of `expRatioSigmoidR`. -/
 def expRatioSigmoidDenomR (xR : R) : R :=
-  (1 : R) + MathFunctions.exp xR
+  (1 : R) + Numerics.MathFunctions.exp xR
 
 /-- Error in the negative-input sequence's denominator. The exponential has input error `eps`;
 the other two terms account for representing `1` and adding it to that exponential. -/
@@ -721,9 +722,9 @@ def expRatioSigmoidDenomError (eps : ℝ) (xR : R) : ℝ :=
   oneEps (β := β) (fexp := fexp) +
     expErrorBound (β := β) (fexp := fexp)
       (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) eps +
-    neuralUlp β fexp
+    ulp β fexp
       (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) +
-        toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.exp xR)) / 2
+        toSpec (β := β) (fexp := fexp) (rnd := rnd) (Numerics.MathFunctions.exp xR)) / 2
 
 /-- Forward-error budget for the exponential-ratio sequence. Both occurrences of `exp x` share
 the same rounded value, but the division estimate only needs separate numerator and denominator
@@ -734,7 +735,7 @@ def expRatioSigmoidBoundScalar (eps : ℝ) (xR : R) : ℝ :=
       (expErrorBound (β := β) (fexp := fexp)
         (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) eps)
       (expRatioSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR)
-      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.exp xR))
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (Numerics.MathFunctions.exp xR))
       (toSpec (β := β) (fexp := fexp) (rnd := rnd) (expRatioSigmoidDenomR xR))
   else
     abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
@@ -804,10 +805,10 @@ theorem approx_sigmoid_nf {x : ℝ} {xR : R} {eps : ℝ}
         Activation.Math.sigmoidSpec (α := ℝ) x) ≤
       sigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps xR := by
   by_cases hpos : xR > 0
-  · simpa only [Activation.Math.sigmoidSpec, if_pos hpos, sigmoidBoundScalar,
+  · simpa only [Activation.Math.sigmoidSpec, ite_eq_left hpos, sigmoidBoundScalar,
       reciprocalSigmoidR] using
       (approx_reciprocal_sigmoid_nf (β := β) (fexp := fexp) (rnd := rnd) hx)
-  · simpa only [Activation.Math.sigmoidSpec, if_neg hpos, sigmoidBoundScalar,
+  · simpa only [Activation.Math.sigmoidSpec, ite_eq_right hpos, sigmoidBoundScalar,
       expRatioSigmoidR] using
       (approx_exp_ratio_sigmoid_nf (β := β) (fexp := fexp) (rnd := rnd) hx)
 

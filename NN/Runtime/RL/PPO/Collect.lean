@@ -106,7 +106,8 @@ def collectRolloutFromCallbacks {obsShape : Shape} {nActions horizon : Nat} {Ses
         reward := castReward tr.reward
         done := done
         value := v
-        nextValue := nv }
+        nextValue := nv
+        terminated := tr.terminated }
 
   if h : steps.size = horizon then
     pure ({ steps := steps, steps_size_eq_horizon := h }, counter)

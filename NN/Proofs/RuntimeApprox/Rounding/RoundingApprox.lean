@@ -8,7 +8,7 @@ module
 
 public import NN.Proofs.RuntimeApprox.Core.Tolerance
 public import Mathlib.Analysis.SpecialFunctions.Pow.Real
-public import NN.Floats.NeuralFloat.Rounding.Core
+public import FloatLib.Floats.Formats.Flocq.Theory.Rounding.Core
 
 /-!
 # Scalar Rounding Approximation
@@ -16,14 +16,14 @@ public import NN.Floats.NeuralFloat.Rounding.Core
 Rounding-level approximation lemmas.
 
 This module begins the runtime-to-spec bridge. It gives compositional error bounds for expressions
-evaluated under a declared `neuralRound` rounded-real model such as `NF`.
+evaluated under a declared `Flocq.round` rounded-real model such as `NF`.
 
 These lemmas are scalar-level and can be lifted to tensors/graphs once a concrete set of ops is
 fixed (MLP first, then larger models).
 
 ## PyTorch correspondence / citations
 In ordinary PyTorch execution, floating-point ops are performed in a chosen dtype (e.g. `float32`)
-with hardware/IEEE-754 rounding. In TorchLean, `neuralRound`/`NF` is a proof-relevant rounding model
+with hardware/IEEE-754 rounding. In TorchLean, `Flocq.round`/`NF` is a proof-relevant rounding model
 where each operation exposes an explicit `ulp`-style error bound suitable for composition.
 https://pytorch.org/docs/stable/tensor_attributes.html#torch.dtype
 -/
@@ -36,12 +36,13 @@ namespace RuntimeRoundingApprox
 
 open scoped Real
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
 noncomputable section
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
 /-! ## Scalar Approximation Predicate -/
 
@@ -75,15 +76,15 @@ theorem scalarApprox_mono {x xhat eps₁ eps₂ : ℝ} (h : scalarApprox x xhat 
 
 /-! ## Single-Step Rounding Bounds -/
 
-/-- Interpret one rounded real operation as `neuralRound` applied to a real input. -/
+/-- Interpret one rounded real operation as `Flocq.round` applied to a real input. -/
 def roundR (x : ℝ) : ℝ :=
-  neuralRound (β := β) (fexp := fexp) rnd x
+  Flocq.round (β := β) (fexp := fexp) rnd x
 
-/-- One `neuralRound` step is within half an ulp of the exact real input. -/
+/-- One `Flocq.round` step is within half an ulp of the exact real input. -/
 theorem roundR_abs_error (x : ℝ) :
     abs (roundR (β := β) (fexp := fexp) (rnd := rnd) x - x) ≤
-      neuralUlp β fexp x / 2 := by
-  simpa [roundR] using neural_error_bound_ulp (β := β) (fexp := fexp) (rnd := rnd) x
+      ulp β fexp x / 2 := by
+  simpa [roundR] using error_bound_ulp (β := β) (fexp := fexp) (rnd := rnd) x
 
 /-! ## Compositional Bounds For `+` And `*` -/
 
@@ -103,12 +104,12 @@ The output budget is the input budgets plus one fresh rounding term for the addi
 theorem scalarApprox_roundedAdd {x y xhat yhat epsx epsy : ℝ}
     (hx : scalarApprox x xhat epsx) (hy : scalarApprox y yhat epsy) :
     scalarApprox (x + y) (roundedAdd (β := β) (fexp := fexp) (rnd := rnd) xhat yhat)
-      (epsx + epsy + neuralUlp β fexp (xhat + yhat) / 2) := by
+      (epsx + epsy + ulp β fexp (xhat + yhat) / 2) := by
   -- Triangle inequality: (rounded(x̂+ŷ) - (x+y)) =
   --   (rounded(x̂+ŷ) - (x̂+ŷ)) + ((x̂+ŷ) - (x+y)).
   have hround :
       abs (roundedAdd (β := β) (fexp := fexp) (rnd := rnd) xhat yhat - (xhat + yhat)) ≤
-        neuralUlp β fexp (xhat + yhat) / 2 := by
+        ulp β fexp (xhat + yhat) / 2 := by
     simpa [roundedAdd, roundR] using
       roundR_abs_error (β := β) (fexp := fexp) (rnd := rnd) (xhat + yhat)
 
@@ -128,9 +129,9 @@ theorem scalarApprox_roundedAdd {x y xhat yhat epsx epsy : ℝ}
                 simpa [sub_eq_add_neg, add_assoc] using
                   abs_sub_le (roundedAdd (β := β) (fexp := fexp) (rnd := rnd) xhat yhat)
                     (xhat + yhat) (x + y)
-      _ ≤ neuralUlp β fexp (xhat + yhat) / 2 + (epsx + epsy) := by
+      _ ≤ ulp β fexp (xhat + yhat) / 2 + (epsx + epsy) := by
             exact add_le_add hround hsum
-      _ = epsx + epsy + neuralUlp β fexp (xhat + yhat) / 2 := by ring
+      _ = epsx + epsy + ulp β fexp (xhat + yhat) / 2 := by ring
   simpa [scalarApprox, roundedAdd, sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using this
 
 /--
@@ -143,7 +144,7 @@ theorem scalarApprox_roundedMul {x y xhat yhat epsx epsy : ℝ}
     (hx : scalarApprox x xhat epsx) (hy : scalarApprox y yhat epsy) :
     scalarApprox (x * y) (roundedMul (β := β) (fexp := fexp) (rnd := rnd) xhat yhat)
       ((abs xhat + epsx) * epsy + (abs yhat + epsy) * epsx +
-        neuralUlp β fexp (xhat * yhat) / 2) := by
+        ulp β fexp (xhat * yhat) / 2) := by
   have hx' : abs (xhat - x) ≤ epsx := hx
   have hy' : abs (yhat - y) ≤ epsy := hy
   have hepsx : 0 ≤ epsx := le_trans (abs_nonneg (xhat - x)) hx'
@@ -151,7 +152,7 @@ theorem scalarApprox_roundedMul {x y xhat yhat epsx epsy : ℝ}
 
   have hround :
       abs (roundedMul (β := β) (fexp := fexp) (rnd := rnd) xhat yhat - (xhat * yhat)) ≤
-        neuralUlp β fexp (xhat * yhat) / 2 := by
+        ulp β fexp (xhat * yhat) / 2 := by
     simpa [roundedMul, roundR] using
       roundR_abs_error (β := β) (fexp := fexp) (rnd := rnd) (xhat * yhat)
 
@@ -205,10 +206,10 @@ theorem scalarApprox_roundedMul {x y xhat yhat epsx epsy : ℝ}
                 simpa [sub_eq_add_neg, add_assoc] using
                   abs_sub_le (roundedMul (β := β) (fexp := fexp) (rnd := rnd) xhat yhat)
                     (xhat * yhat) (x * y)
-      _ ≤ neuralUlp β fexp (xhat * yhat) / 2 + ((abs yhat) * epsx + (abs x) *
+      _ ≤ ulp β fexp (xhat * yhat) / 2 + ((abs yhat) * epsx + (abs x) *
         epsy) := by
             exact add_le_add hround hpert
-      _ ≤ neuralUlp β fexp (xhat * yhat) / 2 +
+      _ ≤ ulp β fexp (xhat * yhat) / 2 +
             (abs yhat * epsx + (abs xhat + epsx) * epsy) := by
             have hx_mul : abs x * epsy ≤ (abs xhat + epsx) * epsy :=
               mul_le_mul_of_nonneg_right hx_abs hepsy
@@ -216,7 +217,7 @@ theorem scalarApprox_roundedMul {x y xhat yhat epsx epsy : ℝ}
                 abs yhat * epsx + abs x * epsy ≤ abs yhat * epsx + (abs xhat + epsx) * epsy := by
               linarith [hx_mul]
             linarith [hpert']
-      _ ≤ neuralUlp β fexp (xhat * yhat) / 2 +
+      _ ≤ ulp β fexp (xhat * yhat) / 2 +
             ((abs yhat + epsy) * epsx + (abs xhat + epsx) * epsy) := by
             have hy_le : abs yhat ≤ abs yhat + epsy := by linarith
             have hy_mul : abs yhat * epsx ≤ (abs yhat + epsy) * epsx :=
@@ -227,7 +228,7 @@ theorem scalarApprox_roundedMul {x y xhat yhat epsx epsy : ℝ}
               linarith [hy_mul]
             linarith [hsum]
       _ = (abs xhat + epsx) * epsy + (abs yhat + epsy) * epsx +
-            neuralUlp β fexp (xhat * yhat) / 2 := by ring
+            ulp β fexp (xhat * yhat) / 2 := by ring
 
   simpa [scalarApprox, roundedMul, sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using this
 

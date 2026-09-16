@@ -8,7 +8,6 @@ End-to-end PPO example: train an actor-critic on a Lean-native GridWorld environ
 
 module
 
-public import NN.Runtime.RL.PPO.Training
 public import NN.API
 public import NN.Examples.Support
 public import NN.Runtime.RL.Artifacts.GridWorld
@@ -455,7 +454,7 @@ def main (args : List String) : IO UInt32 := do
             Spec.RL.Envs.GridWorld.decode (width := width) (height := height) s
           (x.val, y.val))
 
-      curve ← Runtime.RL.PPO.train discountFactor gaeLambda
+      curve ← rl.ppo.train discountFactor gaeLambda
         { updates := updateCount, epochs := updateEpochs,
           evaluationEvery := evaluationInterval, seed := runtime.seed }
         (fun _update rngSeed rngCounter => do

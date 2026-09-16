@@ -7,7 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.Tensor
-import NN.Floats.IEEEExec.Exec32
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured
+public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
+public import FloatLib.Floats.Formats.IEEE754.Native
 import Mathlib.Algebra.Ring.Rat
 import NN.Tensor.Internal.Check.Einsum -- shake: keep
 import NN.Tensor.Internal.Check.Normalize -- shake: keep
@@ -21,6 +23,11 @@ ensuring that the compiled contiguous-buffer path returns the expected values.
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofModel toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 namespace NN.Tests.Tensor.Operations
 
@@ -178,9 +185,10 @@ def checkErrorReductions : IO Unit := do
     (Tensor.maxAbsDiff infinite infinite).isNaN
   let native : Tensor Float32 [2] := [1.0, -3.0]
   expect "binary32 maximum absolute value" (Tensor.maxAbs native == 3.0)
-  let reference : Tensor Floats.IEEE754.IEEE32Exec [2] :=
-    [Floats.IEEE754.IEEE32Exec.posOne, Floats.IEEE754.IEEE32Exec.canonicalNaN]
-  expect "reference binary32 NaN survives maximum" (Tensor.maxAbs reference).isNaN
+  let reference : Tensor (Binary 8 23) [2] :=
+    [(1 : Binary 8 23), (Binary.canonicalNaN : Binary 8 23)]
+  expect "reference binary32 NaN survives maximum"
+    (Binary.isNaN (Tensor.maxAbs reference))
   let integral : Tensor Int [2] := [-3, 2]
   expect "ordered tensor fold" (Tensor.foldl (fun acc x => 10 * acc + x) 0 integral == -28)
 
@@ -375,14 +383,15 @@ def run : IO Unit := do
     ((binary32Transposed.to (Array Float32)).map (Float32.toFloat ·) ==
       #[1.0, 4.0, 2.0, 5.0, 3.0, 6.0])
 
-  let ieee32Matrix : Tensor Floats.IEEE754.IEEE32Exec [2, 3] :=
+  let ieee32Matrix : Tensor (Binary 8 23) [2, 3] :=
     Tensor.generateFlat [2, 3] fun index =>
-      Floats.IEEE754.IEEE32Exec.ofFloat (Float.ofNat (index + 1))
-  let ieee32Transpose : Tensor Floats.IEEE754.IEEE32Exec [3, 2] :=
+      (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat (Float.ofNat (index + 1)))))
+        : Binary 8 23)
+  let ieee32Transpose : Tensor (Binary 8 23) [3, 2] :=
     rearrange ieee32Matrix "row column -> column row"
   expect "IEEE32 reference rearrange remains correct"
-    ((ieee32Transpose.to (Array Floats.IEEE754.IEEE32Exec)).map
-      (Floats.IEEE754.IEEE32Exec.toFloat ·) ==
+    ((ieee32Transpose.to (Array (Binary 8 23))).map
+      ((fun x => Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel x)))) ·) ==
         #[1.0, 4.0, 2.0, 5.0, 3.0, 6.0])
 
   let rationalMatrix : Tensor Rat [2, 3] :=

@@ -12,8 +12,8 @@ real spec value
   -> bounded error or interval enclosure
 ```
 
-Bit-level binary32 behavior, including special values, is defined by
-`TorchLean.Floats.IEEE754.IEEE32Exec` under `NN/Floats/IEEEExec/`.
+Bit-level binary32 behavior, including special values, is defined by FloatLib's configured
+`ExecFloat.Binary 8 23` format.
 
 ## Files
 

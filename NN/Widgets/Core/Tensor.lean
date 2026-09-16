@@ -12,7 +12,6 @@ import Mathlib.Tactic.Bound.Init
 public import NN.Spec.Core.Tensor.Core
 public meta import NN.Widgets.Core.UI
 public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
 public meta import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
@@ -333,12 +332,12 @@ syntax (name := tensorStatsViewCmd) "#tensor_stats_view " term : command
 
 macro "#tensor_view " t:term : command =>
   -- Ensure the widget is attached to a canonical syntax node.
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (tensorHtml $t))
+  UI.canonicalCommand <$> `(#html (tensorHtml $t))
 
 macro "#anytensor_view " v:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (packedTensorHtml $v))
+  UI.canonicalCommand <$> `(#html (packedTensorHtml $v))
 
 macro "#tensor_stats_view " t:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (tensorStatsHtml $t))
+  UI.canonicalCommand <$> `(#html (tensorStatsHtml $t))
 
 end NN.Widgets

@@ -20,10 +20,10 @@ Forward (runtime→spec) approximation framework.
 This file is **backend-agnostic**: it proves that approximation bounds compose over a
 tape/SSA-style graph, assuming each node provides a local forward approximation lemma.
 
-It is intended to be instantiated by proof-relevant runtimes such as rounding models
-(`NF` / `neuralRound`). Lean gives builtin `Float` a logical model, but connecting that model
-and its runtime implementation to these approximation bounds requires separate per-operation
-proofs.
+It is intended to be instantiated by rounding models such as the noncomputable
+`FloatLib.Floats.Formats.Flocq.NF`, whose arithmetic uses `Flocq.round`. Lean gives builtin `Float`
+a logical model, but connecting that model and its runtime implementation to these approximation
+bounds requires separate per-operation proofs.
 
 ## What you get
 - `FwdGraph.eval_approx`: an end-to-end theorem saying that if the runtime input context is within

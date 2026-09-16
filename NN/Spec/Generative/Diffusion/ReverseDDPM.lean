@@ -23,8 +23,9 @@ We expose:
 
 We keep everything scalar-polymorphic (`Context α`). The intended use is:
 
-- execute with `Float`/`IEEE32Exec`/`NeuralFloat` for concrete runs, and
-- reuse the same definitions with `ℝ` in proofs.
+- execute with `Float`, `Float32`, or the configured binary32 type `ExecFloat.Binary 8 23`;
+- run in CPU software at a chosen precision with `FloatLib.Floats.ExecFloat.Binary`; and
+- reuse the definitions with `ℝ` or noncomputable `FloatLib.Floats.Formats.Flocq.NF` in proofs.
 
 References (informal pointers):
 

@@ -72,10 +72,10 @@ claims about the corresponding mathematical definitions. The distinction matters
 real-valued matrix multiplication does not by itself verify the floating-point instructions issued
 by a GPU kernel.
 
-Later chapters use the same ideas for transformers, ResNets, Fourier neural operators, diffusion,
-and reinforcement learning. They also introduce executable binary32 arithmetic, error bounds,
-autograd proofs, robustness analysis, and certificate checking. Each claim identifies its evidence:
-an implementation, a test, a checked certificate, or a Lean theorem.
+The same questions recur in larger models. An attention mask changes which tokens can influence
+a prediction; a reduction order changes where arithmetic rounds; a certificate needs to identify
+the weights and input region it covers. We will follow these connections from small calculations
+to transformers, ResNets, Fourier neural operators, diffusion, and reinforcement learning.
 
 All commands are run from the repository root. Readers new to Lean may also use
 [*Functional Programming in Lean*](https://lean-lang.org/functional_programming_in_lean/),
@@ -83,11 +83,6 @@ All commands are run from the repository root. Readers new to Lean may also use
 [*The Lean Language Reference*](https://lean-lang.org/doc/reference/latest/).
 
 # Introduction
-
-The introduction follows a model through its architecture, parameters, executable program, and
-verification graph. These objects need to agree for a claim about the model to apply to an actual
-prediction. The Lean and API chapters explain how to express those objects, then the running
-example connects them in a regression program.
 
 An architecture fixes how layers connect, but many different functions share that architecture.
 The weight values select one of them. A training run changes those values while retaining the
@@ -194,8 +189,8 @@ Training changes the parameters in the forward map
 $$`f_\theta(x)=W_2\,\operatorname{ReLU}(W_1x+b_1)+b_2`.
 
 To compute an update, reverse mode needs intermediate values from the forward pass, and the
-optimizer may need state from earlier updates. This chapter follows those values through eager
-execution and typed graph execution, then examines how CUDA and LibTorch supply numerical
+optimizer may need state from earlier updates. Eager execution and typed graph execution retain
+that information differently. CUDA and LibTorch add a choice of implementation for the numerical
 operations.
 
 At the ReLU, reverse mode needs to know which pre-activations were positive. At a linear layer,
@@ -228,8 +223,7 @@ and backward calculation through these interfaces makes their roles easier to di
 Verification needs a definition of what a model computes for every input covered by the claim.
 The specification layer gives that mathematical function. `GraphSpec` records its architecture
 with shapes in the types, while the shared IR uses a node array that importers and verification
-passes can inspect. The chapters below explain each representation and the correspondence needed
-when moving between them.
+passes can inspect.
 
 For a linear layer, the specification can say directly that each output is a dot product plus
 a bias. A graph must also say where the input came from, which parameter entry supplies the
@@ -253,22 +247,21 @@ refer back to the model from which it was built.
 
 # Floating Point and Native Boundaries
 
-Real-valued specifications describe the intended arithmetic. Executable models also depend on a
-floating-point format, rounding behavior, and evaluation order. This part explains Flocq's
-separation of formats from rounding, TorchLean's generic `NeuralFloat` theory, executable binary32,
-and the assumptions required to relate native kernels to those definitions.
+A dot product looks like a sum of products on paper. To run it, we also choose a number format
+and an order of evaluation. Products and partial sums may round, so two implementations of the
+same real formula can return different values.
 
-A dot product illustrates why the distinction appears so early. Its real specification is a
-sum of products. A floating implementation rounds products and partial sums, and changing their
-order can change the result. To compare the two, we need both a definition of each rounded
-operation and a bound on the accumulated error. An error estimate also needs to say what happens
-at small values, overflow, and exceptional inputs.
+In TorchLean, the scalar type selects a format from FloatLib. We will use binary32 for a first
+example, then change the precision through the same interface. Custom exponent and fraction widths
+are available on the typed CPU path; CUDA providers support native binary32 and binary64.
+The useful question is what a precision change preserves in the actual calculation.
 
-TorchLean uses separate objects for the rounded-real theory and the executable binary32 bit
-patterns. The former supports algebraic error arguments; the latter makes encodings and
-exceptional behavior explicit. A finite refinement theorem connects appropriate executions
-between them. This gives the numerical chapters a concrete purpose: determine which arithmetic
-a statement describes and how much error a later model-level claim must allow.
+An error bound adds another step. We need to relate the rounded operations to their real-valued
+specification, including what happens near zero, at overflow, and on exceptional inputs.
+FloatLib supplies the scalar arithmetic and rounding theorems. TorchLean carries the relevant
+bounds through tensor operations and records the numerical choices of native providers.
+A bound for one accumulation order applies to a kernel only once that kernel's order is accounted
+for.
 
 {include 2 TorchLeanBlueprint.Guide.Ch3_Backend.Floats}
 
@@ -297,8 +290,8 @@ $$`\forall x\in B,\qquad P(\operatorname{denote}(g,\theta,x))`.
 Here $`\operatorname{denote}` is the chosen graph semantics and $`P` is the property required of
 each output. Interval and affine bounds establish such properties over whole input regions.
 Lowering proofs and numerical error bounds justify transferring a claim between representations
-or arithmetic models. The chapters also cover derivative theorems, optimizer laws, and certificate
-checkers, with rejected artifacts showing which conditions each checker enforces.
+or arithmetic models. The same need to state what is preserved arises for derivatives and
+optimizer updates.
 
 The quantifier `∀ x ∈ B` is the demanding part. Sampling the box gives examples of behavior;
 an enclosure gives a bound that applies throughout it under the enclosure theorem's hypotheses.
@@ -348,8 +341,8 @@ conditions needed to turn local bounds into a claim about the whole region.
 A ResNet adds spatial layouts and skip connections to the operations used by the MLP. GPT adds
 token streams and causal masks. Fourier neural operators connect learned maps to PDE data, while
 diffusion and reinforcement learning introduce probabilistic transitions and evolving state.
-Each example explains its model, gives a reproducible command, and relates the resulting output
-to the implementation or theorem being studied.
+We can still trace a prediction through the familiar layer operations, provided we also account
+for these additional choices.
 
 The extra structure changes what we need to inspect. For attention, two tensors can have the
 expected dimensions while using the wrong causal mask. For a Fourier layer, a transform convention

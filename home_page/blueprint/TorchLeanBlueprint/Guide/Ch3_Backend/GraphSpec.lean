@@ -21,29 +21,24 @@ The previous chapter described the MLP by its pure formula:
 
 $$`x\mapsto W_2\operatorname{ReLU}(W_1x+b_1)+b_2.`
 
-It is less convenient for a tool. A tool wants to enumerate layers, print parameter shapes,
-replace one operation, count trainable scalars before allocating anything, or lower the same
-architecture to several targets. A plain function does not expose a traversable layer list;
-structural inspection needs an explicit
-representation or a suitable interpreter interface. For those tasks TorchLean uses
-GraphSpec, a small typed language in which the architecture itself is data.
+Suppose we want to count its trainable scalars before allocating the weights, or replace the
+activation while keeping the layers on either side. A plain function does not expose a layer
+list to traverse. GraphSpec stores the architecture as data, with shape indices that describe its
+parameters, input, and output. Tools can inspect that description and interpret it for several
+execution targets.
 
 Every Lean block on this page is elaborated when the guide is built, and every printed value below
 was produced by that elaboration. The command transcripts come from the same checkout.
 
 # Architecture Representation
 
-Before a trainer can run the MLP, it needs the shapes of all four parameter tensors. A structural
-tool also needs to know where each layer starts and ends: that is how it can print a model summary,
-change a layer, or select a lowering. Typed functions already express shape composition and
-mathematical meaning. GraphSpec additionally makes the architecture available for traversal.
+The same layer connections are needed by initialization, forward evaluation, gradient extraction,
+and parameter loading. GraphSpec records those connections in a shape-indexed syntax. Its
+parameter ABI is the ordered list of tensor shapes that a caller must supply.
 
-GraphSpec stores the syntax of the architecture and gives it several interpretations, an
-object language with multiple interpreters. Its
-`program` fields use the tagless-final operation interface
-({Informal.citep kiselyov2012}[]). The part TorchLean adds is that the syntax is shape-indexed, so
-the type of an architecture term already contains its parameter ABI, its input shape, and its
-output shape.
+The syntax has several interpreters. Its `program` fields use the tagless-final operation
+interface ({Informal.citep kiselyov2012}[]), letting an execution interface choose what each
+operation does:
 
 ```
 -- One model description has several interpretations with
@@ -73,17 +68,9 @@ end-to-end semantic theorem for every GraphSpec primitive. The smaller
 `NN.Verification.Builtin.Proved.ForwardProgram` language has the corresponding source-to-IR
 correctness theorem.
 
-An architecture description is useful because the same connections must otherwise be repeated in
-initialization, forward evaluation, gradient extraction, and parameter loading. GraphSpec makes
-those connections explicit in one value. Each interpretation still has a job to do: the pure
-interpretation assigns tensor functions, while the program interpretation chooses operations in
-an execution interface. Keeping both fields in one primitive makes their intended relationship
-visible, but a semantic equality theorem is what establishes that relationship for a proved
-fragment. Merely storing both fields does not make them equal.
-
 # MLP Chain Definition
 
-For a concrete instance, take two input features, three hidden features, and one output. In
+I'll use two input features, three hidden features, and one output. In
 `Chain ps σ τ`, `ps` is the ordered list of parameter shapes, `σ` is the input shape, and `τ`
 is the output shape:
 
@@ -151,12 +138,9 @@ The four slots contain $`6+3+3+1=13` trainable scalars. Their shapes are availab
 type before allocation, so a tool can compute this count without inspecting initialized tensors
 or interpreting parameter names.
 
-Read the result of `#check @Models.mlp` from the widths outward. The first matrix has one row per
-hidden unit and one column per input feature; the second has one row per output and one column
-per hidden unit. The two bias vectors match their respective output widths. For the concrete
-`2 → 3 → 1` model, this gives six, three, three, and one scalar entries. The list order says how
-these thirteen scalars are grouped into four tensors. It is therefore both a shape description
-and an interface for supplying the model's parameters.
+Each weight matrix has one row per output of its layer and one column per input. The bias
+matches that layer's output width. A caller supplies four tensors in this order, rather than an
+undifferentiated collection of thirteen scalars.
 
 # Composition And The Parameter ABI
 
@@ -206,9 +190,9 @@ in the application
   Chain.relu [5] >>> Chain.linear 3 1
 ```
 
-The report names the two shapes that disagree, `[3]` and `[5]`, and points at the composition where
-they meet. No initialization ran, no data was loaded, no kernel was selected. The failure is in the
-architecture definition, because the broken edge has no well-typed composition.
+The report names the two shapes that disagree, `[3]` and `[5]`, and points at their connection.
+Each linear layer is valid on its own, but the first produces five hidden values while the last
+expects three. Lean rejects their composition while checking the architecture definition.
 
 One practical note about reading these messages. `>>>` is overloaded: TorchLean also uses it for
 sequential layer composition and for `Spec.OpSpec` composition. When a shape error additionally
@@ -247,8 +231,8 @@ below:
 RuntimeError: mat1 and mat2 shapes cannot be multiplied (1x5 and 3x1)
 ```
 
-The correct model agrees with GraphSpec on everything that both systems represent: the same four
-parameter tensors, the same thirteen scalars. The difference is where the broken model gets caught.
+The correct model reports the same four parameter shapes and thirteen scalars as GraphSpec.
+The difference is where the broken model gets caught.
 `nn.Sequential(nn.Linear(2, 5), nn.ReLU(), nn.Linear(3, 1))` is a perfectly good Python object. It
 constructs, it reports nineteen parameters, it can be moved to a device, it can be handed to an
 optimizer, and it can be saved. It fails on the first tensor that reaches it.
@@ -259,17 +243,9 @@ string keys. GraphSpec requires shapes that the elaborator can see, which can ma
 It can then reject the incompatible connection while checking the architecture and expose the
 parameter shapes through the type.
 
-The broken-chain diagnostic identifies the connection where the two shapes disagree. Neither
-matrix is malformed on its own: the issue is that the first layer produces five hidden values
-while the last layer expects three. This is the sort of local architectural mistake that the
-chain type can reject before data are supplied. The comparison module can construct both layer
-objects independently, so its corresponding mismatch is exposed when a tensor flows through the
-connection. The difference is when that particular constraint is checked, not whether all possible
-modeling mistakes have been excluded.
-
 # Primitive Specifications And Runtime Programs
 
-Everything above rests on the primitive interface, so it is worth printing:
+The layers in a chain are built from `Primitive`:
 
 ```lean (name := gsPrimitive)
 -- Inspect the separate specification and runtime fields,
@@ -341,19 +317,13 @@ Such a theorem must identify the interpreter and the reference function being co
 theorem later in this chapter, for example, compares `Interp.spec` with a pure reference model; it
 does not establish agreement with native execution.
 
-The primitive record separates operations needed by different consumers. `specFwd` determines the
-pure tensor function, and `program` supplies an implementation through the operation interface.
-The optional layer conversion answers whether this primitive can be expressed in that older layer
-view. Its absence does not imply that the first two fields are missing. Likewise, a layer-counting
-flag affects structural bookkeeping such as initialization order; it does not prove a numerical
-property of the operation. Reading the fields individually avoids treating one consumer's
-limitations as a limitation of the whole representation.
+The remaining fields serve the sequential-layer adapter. `toLayerM?` can be absent even when both
+forward interpretations are present. `countsAsLayer` controls the occurrence index used for
+initialization; we will inspect those indices for the MLP below.
 
 ## A Primitive Without A Layer View
 
-The optional layer constructor makes the sequential-layer view partial. To see that concretely,
-here is a new primitive defined on this page. It doubles its input, it has a pure meaning, it has
-an executable program, and it deliberately does not supply `toLayerM?`:
+We can leave out `toLayerM?` in a primitive that doubles its input:
 
 ```lean (name := gsDoubleDef)
 -- Both interpretations double the input; the optional layer
@@ -425,20 +395,16 @@ never specified. The three primitives of the sequential core, and the four in
 {src "NN/GraphSpec/Primitives/Spatial.lean"}[`Primitives/Spatial.lean`], all do supply a layer, so
 the partiality only shows up for primitives like the one above.
 
-The doubling example needs no parameters, which is why the pure call supplies `.nil`. Its program
-still receives the ordinary input through the program interface, and the displayed `toProgram`
-type shows where that input sits after the parameter list. The successful pure result and the
-failed sequential conversion can coexist: they exercise different fields of the same primitive.
-A proof about its derivative would be another obligation. In this example the intended derivative
-is simple, but that fact is not established merely by making the two forward definitions look
-alike.
+The pure call supplies `.nil` because doubling needs no parameters. In the program interface,
+the ordinary input follows the parameter list, as the `ps ++ [σ]` type shows. The absent layer
+adapter prevents initialization through `toSeq`; it leaves these two forward definitions
+available. Derivative correctness would need its own statement.
 
 # Parameter Order And Shape Checking
 
 For a new primitive, check the parameter order in three places: the type-level list `ps`,
 the pattern match inside `specFwd`, and the argument order inside `program`. Shape typing proves
-that each slot has the right shape. It does not prove that two tensors *of the same shape* have not
-been exchanged, and that is a real failure mode rather than a hypothetical one.
+that each slot has the right shape. Two tensors *of the same shape* can still be exchanged.
 
 The demonstration needs a model with two same-shaped biases, so widen the middle layer to match:
 
@@ -484,8 +450,7 @@ gives $`\operatorname{ReLU}(-1)+1=1` in the first coordinate and the exchanged o
 $`\operatorname{ReLU}(1)-1=0`. Exchanging the biases changes the function while preserving every
 tensor's type. The activation between the biases makes their positions observable in the output.
 
-PyTorch behaves the same way for the same reason, and it is worth seeing there because checkpoint
-loading is where this bites in practice:
+The same swap passes PyTorch's checkpoint-loading checks:
 
 ```
 # A state dictionary can accept all keys while placing
@@ -518,12 +483,9 @@ through composition. The example shows the remaining obligation: the tensors ass
 slots must have the intended roles. A primitive's correctness theorem relates the slot order to
 its computation.
 
-The swapped-bias example isolates a mistake that dimensions cannot detect. Both bias tensors have
-shape `[3]`, so either fits either slot. Their role relative to the ReLU is different, however:
-one shifts the values before thresholding, and the other shifts the values afterwards. Those
-operations do not commute. The state-dictionary success message therefore certifies acceptance of
-keys and shapes, while the changed output reveals a semantic parameter mapping error. A reliable
-checkpoint bridge must retain which layer and which role each supplied tensor belongs to.
+A checkpoint bridge must therefore retain each tensor's layer and role. In this model,
+one bias shifts values before thresholding and the other shifts them afterwards; exchanging
+those roles changes the function.
 
 # Deterministic Initialization
 
@@ -554,7 +516,7 @@ Four tensors, in ABI order, with the two biases exactly zero. The traversal retu
 it inherits the same partiality as the sequential lowering: a primitive with no layer view has no
 initializer either.
 
-The seed discipline is stated as a theorem rather than left to the reader:
+The initializer theorem identifies the two layer occurrences:
 
 ```lean (name := gsInitThm)
 -- The theorem identifies the actual per-layer initializers,
@@ -586,13 +548,9 @@ This theorem establishes reproducibility and agreement with the runtime initiali
 initialization quality, scaling with depth, and the provenance of imported checkpoints as separate
 questions.
 
-The initialization theorem is more informative than repeatability of one printed array. It
-identifies each weight and bias with the initializer selected for that layer occurrence. The
-ReLU contributes no parameter tensors and does not advance that occurrence counter. A structural
-refactor that adds or reorders parameter-bearing layers can therefore change later initialized
-weights even when a final model has the same total number of scalars. Matching this convention is
-needed for a fair execution comparison; it is not a statement that this initializer is suitable
-for every learning problem.
+Adding or reordering parameter-bearing layers can change later occurrence indices and hence
+their initialized weights, even if the total scalar count stays the same. When comparing two
+execution routes, keep this initialization convention fixed along with the architecture.
 
 # Pure, Runtime, And PyTorch Forward Evaluation
 
@@ -643,7 +601,7 @@ The repository contains an executable GraphSpec tutorial:
 lake exe torchlean graphspec --device cpu --execution eager
 ```
 
-The current checkout prints:
+The recorded run prints:
 
 ```terminal +output
 == GraphSpec tutorial ==
@@ -664,7 +622,7 @@ forward: GraphSpec MLP lowered to TorchLean and executed
 steps=3 arithmetic=native scalar=Float32 loss=1.023910 -> 0.260259
 ```
 
-Every number in the summary is the type-level ABI, read back out at runtime: `params=13` is the
+The model summary reads the type-level ABI back at runtime: `params=13` is the
 thirteen scalars of the table above, and the per-layer `[[3, 2], [3]]` and `[[1, 3], [1]]` are the
 two halves of the parameter list that `>>>` concatenated. `params` and `state` are equal here
 because this model has no non-trainable state; a model with persistent BatchNorm statistics
@@ -704,12 +662,9 @@ The command takes the standard runtime flags, `--arithmetic native|ieee`,
 `--execution eager|typed-graph`, `--device`, and `--show-backend`; see
 {ref "execution-modes"}[the execution modes chapter] for what each target means.
 
-The recorded eager and typed-graph losses give a concrete integration check across the model,
-parameter pack, execution route, and optimizer used by the example. They are useful precisely
-because those pieces must agree to reproduce the displayed trajectory. A functional equivalence
-theorem asks a different question: it quantifies over supplied parameters and inputs, rather than
-only the initializer and training samples chosen for this run. The next statement exposes that
-pure equality, which can be combined with execution evidence of the appropriate scope.
+Matching the three-step trajectory checks the optimizer and execution route as well as the
+initial forward value. To reason about arbitrary parameters and inputs, we need the pure equality
+below and the separate evidence connecting each execution route to it.
 
 # The Equivalence Theorem
 
@@ -792,13 +747,6 @@ equalities under their lowering and operator hypotheses. Neither extends this pu
 to arbitrary native kernels. {ref "verification"}[The verification chapter] explains the
 additional connections.
 
-The pattern match in the equivalence type unpacks the parameter list in its declared order. Each
-branch then names the matrix and bias supplied to the corresponding specification layer. This
-makes the parameter ABI part of the statement instead of an informal convention hidden in a
-loader. The proof can be definitional because both sides expand to the same pure operations in
-that order. The axiom printout describes the logical dependencies of this equality; it says
-nothing by itself about how a native kernel implements any of those operations.
-
 # DAG Syntax And Shared Computations
 
 A chain joins unary stages with `>>>`. To represent the sharing inside a residual block explicitly,
@@ -872,12 +820,9 @@ standard remedy ({Informal.citep benton2012}[]), and the payoff is visible in
 renaming and substitution lemmas are stated without casts. A numeric position is still available
 through `Var.ofFin` for lowerings that discover indices dynamically.
 
-A DAG variable identifies a value already available in the environment. A `let1` evaluates one
-intermediate and extends that environment before evaluating its body. Two later references can
-therefore select the same stored result without duplicating the computation in the syntax.
-Shape-indexed variables also ensure that selecting a value retains its original tensor shape.
-This combination is useful for residual connections: the original input and the transformed input
-are both available, and the term must explicitly choose which one each edge reads.
+Two references to the same `let1` result express sharing without duplicating its computation.
+In a residual block, the original input remains available after the linear result is bound.
+The skip edge must select that original input.
 
 ## Residual Block Evaluation
 
@@ -1060,17 +1005,9 @@ chain = [-0.011884]
 dag   = [-0.011884]
 ```
 
-The theorem establishes equality independently of these printed decimals. In the reverse
-direction, a DAG with fan-out has no
-faithful chain representation without duplicating computation or introducing a special combinator,
-which is the whole reason both syntaxes exist.
-
-The chain-to-DAG preservation theorem quantifies over custom primitives because the conversion
-reuses their pure `specFwd` fields. Its proof concerns parameter lookup, environment extension,
-and composition order. It does not need to inspect whether a primitive is linear, nonlinear, or
-implemented by a particular backend. This is a useful division of proof work: a new primitive can
-inherit the structural conversion theorem immediately, while its program-versus-spec equality
-remains a local semantic obligation before execution claims can be transferred.
+The theorem establishes equality independently of these printed decimals, including for a chain
+containing a custom primitive. In the reverse direction, preserving a DAG's fan-out in a chain
+requires a special combinator; duplicating the branch would lose the explicit sharing.
 
 # Chain Versus DAG Model
 
@@ -1107,7 +1044,7 @@ adds spatial-rank-polymorphic convolution and max pooling, flattening, and Batch
 explicit channel axis. Rank-polymorphic means the same definition applies to signals, images, and
 volumes: the spatial extents are a `Tensor Nat [d]` rather than a fixed pair.
 
-The interesting consequence is that the intermediate spatial arithmetic is part of the type. For
+The intermediate spatial arithmetic is part of the type. For
 the CNN in the tutorial ladder, an `8x8` single-channel input, `3x3` kernels with stride 1 and
 padding 1, and `2x2` pooling with stride 2, the feature map that reaches the linear head is:
 
@@ -1142,13 +1079,6 @@ appears inside the type of the linear head, so editing the input size or the poo
 the head's weight shape automatically. Get one of them wrong and the mismatch is a compile error of
 the same kind as the width typo earlier in this chapter.
 
-The two convolution shape outputs should be read together. The first retains the channel and
-spatial axes, while the second is their total number of entries and becomes the flattened linear
-head width. Computing that width avoids repeating a manually maintained constant in the model
-definition. It also gives a concrete debugging check when kernel or stride settings change. The
-shape calculation does not establish a convolution gradient theorem; it determines the interface
-to which any forward, backward, or execution theorem must apply.
-
 # Checkpoint Import And Parameter Mapping
 
 GraphSpec's parameter ABI is a positional convention that the type computes. An imported checkpoint
@@ -1163,18 +1093,13 @@ cannot supply on their own:
 Steps one to three are code, and {ref "external-tools-and-ffi"}[the boundary chapter] shows the
 parser and its checks. Step four is a modeling assumption about someone else's file format, and the
 swapped-bias experiment above is exactly what it looks like when that assumption is wrong: all keys
-match, all shapes agree, the function is different. Architecture correctness cannot authenticate
-training provenance, and it is better to write the assumption down than to let a successful load
-imply more than it does.
+match, all shapes agree, the function is different. The import contract must record the mapping;
+the architecture's shape constraints cannot authenticate training provenance.
 
-The bias-swap experiment also explains how to inspect a proposed mapping before relying on it.
-Distinct parameter values make a permutation visible in the output; filling both biases with
-zero would hide this particular mistake. That experiment can expose an incorrect mapping, but
-a passing sample is still weaker than equality of the interpreted models. The forward equality
-theorem earlier in the chapter states the stronger claim for arbitrary parameters in the agreed
-order. A checkpoint importer must connect its named tensors to that order before the theorem
-applies to the imported model. Shape checks make this connection well-typed, while the mapping
-determines which mathematical function those well-typed values define.
+Distinct parameter values help test the mapping: filling both biases with zero would have hidden
+our swap. A passing sample still cannot establish equality for all parameters. To apply the MLP
+equivalence theorem to an imported model, the importer must connect its named tensors to the
+ordered parameter pack in that theorem.
 
 # GraphSpec And The Backend IR
 
@@ -1185,10 +1110,10 @@ sharing. A model that connects incompatible shapes does not elaborate, and each 
 both a pure interpretation and a TorchLean-program interpretation.
 
 `NN.IR.Graph` is a serializable op-tagged DAG. Nodes carry numeric identifiers, parent identifiers,
-output shapes, and attributes; tensors and parameters live in an external payload. That form is
-better for importers, validators, generic passes, verification, and kernel selection, and it is
-worse for authoring, because nothing in it prevents a node from claiming a shape its parents cannot
-produce. The check that closes that gap is a validator, not a type.
+output shapes, and attributes; tensors and parameters live in an external payload. That form lets
+importers construct candidate graphs for validation, transformation, verification, and kernel
+selection. A candidate node can claim a shape its parents cannot produce, so a validator must
+check the declaration.
 
 There is no universal lowering pass from every GraphSpec model to `NN.IR.Graph`. Selected frontend
 and model paths lower to IR, and their semantic theorems state which meaning is preserved.

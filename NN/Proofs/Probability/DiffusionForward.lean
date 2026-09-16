@@ -94,7 +94,7 @@ instance (a b : ℝ) (x : E) : IsProbabilityMeasure (forwardNoising (E := E) a b
 /-- The explicit total-mass theorem for the forward-noising measure. -/
 @[simp]
 theorem forwardNoising_univ (a b : ℝ) (x : E) : forwardNoising (E := E) a b x Set.univ = 1 := by
-  simpa using (measure_univ : forwardNoising (E := E) a b x Set.univ = 1)
+  exact measure_univ
 
 /--
 The mean of one forward-noising step is the scaled clean state:

@@ -13,6 +13,7 @@ public import NN.API.Neural.Execution
 public import NN.API.Neural.Layers
 public import NN.API.Neural.State
 public import NN.API.Neural.Summary
+public import NN.API.Neural.Training
 
 /-!
 # Neural Networks

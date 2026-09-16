@@ -75,16 +75,16 @@ theorem reshape_flatten_sound {g : Graph} {ps : ParamStore ℝ} {ibp : Array (Op
       simp only [hxin] at hs
       simp only [hgv] at hEvalSome
       by_cases hout : xin.outDim = (g.nodes[id]!).outShape.size
-      · rw [dif_pos hout] at hs
+      · rw [dite_eq_left hout] at hs
         by_cases hvout : vp.n = (g.nodes[id]!).outShape.size
-        · rw [dif_pos hvout] at hEvalSome
+        · rw [dite_eq_left hvout] at hEvalSome
           cases hs
           cases hEvalSome
           exact enclosesAtInput_castOut ctx x xin vp hout hvout
             (parent_encloses_of_unaryParent? hpar hps hxin hgv)
-        · rw [dif_neg hvout] at hEvalSome
+        · rw [dite_eq_right hvout] at hEvalSome
           cases hEvalSome
-      · rw [dif_neg hout] at hs
+      · rw [dite_eq_right hout] at hs
         cases hs
 
 end NN.MLTheory.CROWN.Graph.AlphaCrownTransferSoundness.Alpha

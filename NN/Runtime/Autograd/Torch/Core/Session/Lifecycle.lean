@@ -11,8 +11,8 @@ public import NN.Runtime.Autograd.Torch.Core.Session.State
 /-!
 # Eager Session Lifecycle
 
-Create and reset sessions, and release the buffers their CUDA tapes own. Parameter mirrors survive
-a normal reset; after an optimizer update, only frozen parameters still own their old leaf values.
+Create and reset sessions, and release the intermediates their CUDA tapes own. Parameter snapshots
+use Lean reference counting so a reset or update in one session cannot invalidate another session.
 -/
 
 public section
@@ -31,6 +31,7 @@ def new {α : Type} [Storage α] (options : Config := {}) : IO (EagerSession α)
   let tape ← IO.mkRef Runtime.Autograd.Tape.empty
   let cudaTape ← IO.mkRef Runtime.Autograd.Cuda.Tape.empty
   let paramsByLeaf ← IO.mkRef (Std.HashMap.emptyWithCapacity)
+  let parameterStorageByLeaf ← IO.mkRef (Std.HashMap.emptyWithCapacity)
   let nats ← IO.mkRef #[]
   let rngCounter ← IO.mkRef 0
   let selectedBackends ← IO.mkRef (#[] : Array NN.Backend.AcceptedKernel)
@@ -43,6 +44,7 @@ def new {α : Type} [Storage α] (options : Config := {}) : IO (EagerSession α)
       tape := tape
       cudaTape := cudaTape
       paramsByLeaf := paramsByLeaf
+      parameterStorageByLeaf := parameterStorageByLeaf
       nats := nats
       rngCounter := rngCounter
       selectedBackends := selectedBackends
@@ -61,40 +63,19 @@ def releaseCudaAnyBuffer (b : Runtime.Autograd.Cuda.AnyBuffer) : IO Unit :=
 /-- Device-resident gradients keyed by parameter leaf ids, with each leaf's shape. -/
 abbrev CudaGradMap := Std.HashMap Nat Runtime.Autograd.Cuda.AnyBuffer
 
-/-- Release the tape's values, preserving parameter mirrors that are still current. -/
-private def releaseCudaTapeValues {α : Type} [Storage α] (session : EagerSession α)
-    (parametersUpdated : Bool) : IO Unit := do
+/-- Release owned intermediates while leaving shared parameter snapshots to reference counting. -/
+private def releaseCudaTapeValues {α : Type} [Storage α]
+    (session : EagerSession α) : IO Unit := do
   let tape ← session.cudaTape.get
   let parameters ← session.paramsByLeaf.get
   for id in [0:tape.nodes.size] do
     match tape.nodes[id]? with
     | none => pure ()
     | some node =>
-        let releaseValue := match parameters.get? id with
-          | none => true
-          | some parameter => parametersUpdated && parameter.requiresGrad
-        if node.ownsValue && releaseValue then
+        if node.ownsValue && !parameters.contains id then
           releaseCudaAnyBuffer node.value
         for buffer in node.cleanup do
           releaseCudaBuffer buffer
-
-/--
-Release the current CUDA tape's intermediates and backward workspace.
-
-Parameter mirrors stay alive: their `Param` objects own them across forward passes.
--/
-def releaseCudaTapeNonParamValues {α : Type} [Storage α] (s : EagerSession α) : IO Unit :=
-  releaseCudaTapeValues s false
-
-/--
-Release CUDA tape values after an optimizer step.
-
-Trainable parameters now have fresh mirrors, so their old leaf values can go too. Frozen parameters
-still use the same mirrors; keep those alive.
--/
-def releaseCudaTapeAfterOptimizerStep {α : Type} [Storage α]
-    (s : EagerSession α) : IO Unit :=
-  releaseCudaTapeValues s true
 
 /-- Release a sparse CUDA gradient map after an optimizer has consumed it. -/
 def releaseCudaGradMap (xs : CudaGradMap) : IO Unit := do
@@ -127,18 +108,21 @@ def checkCudaAnyBufferSize (where_ : String)
   else
     throw <| IO.userError s!"torch: CUDA tensor too large in {where_}"
 
-/-- Ask the native allocator to return/free pages after a large CUDA eager step. -/
-def collectCudaAllocator : IO Unit := do
-  let released := Runtime.Autograd.Cuda.Buffer.collectAllocator true
-  AnyParam.observeCudaCleanupFlag released
+/--
+Discard the current forward pass and invalidate its handles. Keep parameters and RNG state.
 
-/-- Discard the current forward pass and invalidate its handles. Keep parameters and RNG state. -/
+Owned CUDA intermediates are released before the tape drops its references. Parameter leaves can
+refer to the current mirror or an older recorded value, so their snapshots follow Lean reference
+counting and remain valid in any other session that still uses them. Resetting the tape neither
+drains the reuse cache nor changes optimizer history.
+-/
 def resetTape {α : Type} [Storage α] (s : EagerSession α) : IO Unit := do
   if Config.device s.options == .cuda then
-    releaseCudaTapeNonParamValues s
+    releaseCudaTapeValues s
   s.tape.set Runtime.Autograd.Tape.empty
   s.cudaTape.set Runtime.Autograd.Cuda.Tape.empty
   s.paramsByLeaf.set (Std.HashMap.emptyWithCapacity)
+  s.parameterStorageByLeaf.set (Std.HashMap.emptyWithCapacity)
   s.nats.set #[]
   s.refGeneration.modify (fun generation => generation + 1)
 

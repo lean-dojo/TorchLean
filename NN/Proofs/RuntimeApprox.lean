@@ -10,8 +10,10 @@ public import NN.Proofs.RuntimeApprox.Core
 public import NN.Proofs.RuntimeApprox.FP32
 public import NN.Proofs.RuntimeApprox.FP32.CROWN
 public import NN.Proofs.RuntimeApprox.Graph
+public import NN.Proofs.RuntimeApprox.IEEE32.MinMaxTotal
 public import NN.Proofs.RuntimeApprox.NF
 public import NN.Proofs.RuntimeApprox.Optimizer
+public import NN.Proofs.RuntimeApprox.Reductions.IEEE32
 public import NN.Proofs.RuntimeApprox.Rounding
 public import NN.Proofs.RuntimeApprox.Scale
 
@@ -22,11 +24,12 @@ Umbrella import for TorchLean's executable-runtime-to-real-spec approximation th
 
 The runtime-approximation library is intentionally layered:
 - `Core`: tolerance objects and tensor/context approximation predicates;
-- `Rounding`: scalar `neuralRound` error lemmas;
+- `Rounding`: scalar FloatLib rounding-error lemmas;
 - `Graph`: forward and reverse graph composition theorems;
 - `NF`: proof-relevant rounded tensor/operator backend;
 - `FP32`: convenient FP32-specialized layer/MLP/CROWN statements;
 - `Optimizer`: one finite-run contract for numerical optimizer updates;
+- `Reductions`: error bounds for rounded-addition trees and finite binary32 schedules;
 - `Scale`: optional magnitude propagation for abs/rel tolerance reporting.
 
 Leaf modules stay available for developers working on one operator family, but public entrypoints

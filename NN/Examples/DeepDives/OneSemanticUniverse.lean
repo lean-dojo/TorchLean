@@ -9,7 +9,7 @@ module
 public import NN.API
 public import NN.IR.Semantics
 public import NN.MLTheory.CROWN.Extras.FP32
-public import NN.Floats.Float32
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured
 
 /-!
 # One semantic universe
@@ -27,8 +27,9 @@ x\mapsto\tanh\!\left(\operatorname{sum}
 $$
 
 and then:
-1) evaluate it under multiple scalar semantics (`ℝ`, `FP32`, `IEEE32Exec`);
-2) run IBP under multiple interval semantics (endpoints in `ℝ`, `FP32`, `IEEE32Exec` with directed
+1) evaluate it under multiple scalar semantics (`ℝ`, `FP32`, `ExecFloat.Binary 8 23`);
+2) run IBP under multiple interval semantics (endpoints in `ℝ`, `FP32`, `ExecFloat.Binary 8 23` with
+directed
   rounding);
 3) empirically check that `evalIEEE(G,x)` lies in the IBP output box for random $x\in B$;
 4) point to the Lean theorem that the Boolean checker is sound (`Box.containsDecBool_sound`).
@@ -36,13 +37,18 @@ and then:
 Notes:
 - `ℝ` and `FP32` instantiations are proof-oriented and noncomputable (they typecheck, but do not run
   as an executable).
-- `IEEE32Exec` is fully executable inside Lean, so we use it for the runnable consistency check.
+- `ExecFloat.Binary 8 23` is fully executable inside Lean, so we use it for the runnable consistency
+check.
 
 Run:
   `lake exe torchlean one_semantic_universe --samples 50`
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 open Spec TorchLean
 open TorchLean.Tensor
@@ -272,18 +278,18 @@ def flattenInputBox {α : Type} [Storage α] [Context α]
 /--
 Read a one-dimensional flat box back as a scalar box, failing loudly if the dimension is not one.
 -/
-def scalarBoxOfFlat (box : FlatBox IEEE32Exec) :
-    Except String (Box IEEE32Exec []) :=
+def scalarBoxOfFlat (box : FlatBox (Binary 8 23)) :
+    Except String (Box (Binary 8 23) []) :=
   do
   if h : box.dim = 1 then
-    let lowerTensor : Tensor IEEE32Exec [1] :=
+    let lowerTensor : Tensor (Binary 8 23) [1] :=
       Tensor.castShape box.lo
         (congrArg (fun extent => ([extent] : Spec.Shape)) h)
-    let upperTensor : Tensor IEEE32Exec [1] :=
+    let upperTensor : Tensor (Binary 8 23) [1] :=
       Tensor.castShape box.hi
         (congrArg (fun extent => ([extent] : Spec.Shape)) h)
-    let lower : IEEE32Exec := lowerTensor[0]
-    let upper : IEEE32Exec := upperTensor[0]
+    let lower : Binary 8 23 := lowerTensor[0]
+    let upper : Binary 8 23 := upperTensor[0]
     pure { lo := Tensor.full [] lower, hi := Tensor.full [] upper }
   else
     throw s!"expected a scalar FlatBox (dim=1), got dim={box.dim}"
@@ -295,18 +301,18 @@ The final clamp is not cosmetic: `lo + u * (hi - lo)` is computed in binary32, s
 the result a fraction of an ulp outside the box. Clamping makes the sample genuinely a member of the
 box, which is what the enclosure check below assumes.
 -/
-def sampleInBoxIEEE (seed idx : Nat) (box : Box IEEE32Exec input) :
-    Tensor IEEE32Exec input :=
+def sampleInBoxIEEE (seed idx : Nat) (box : Box (Binary 8 23) input) :
+    Tensor (Binary 8 23) input :=
   let key := rand.keyOf seed idx
-  let unitSample : Tensor IEEE32Exec input :=
-    rand.uniform (α := IEEE32Exec) key (s := input)
-  let width := Tensor.subSpec (α := IEEE32Exec) box.hi box.lo
+  let unitSample : Tensor (Binary 8 23) input :=
+    rand.uniform (α := (Binary 8 23)) key (s := input)
+  let width := Tensor.subSpec (α := (Binary 8 23)) box.hi box.lo
   let rawSample :=
-    Tensor.addSpec (α := IEEE32Exec) box.lo
-      (Tensor.mulSpec (α := IEEE32Exec) unitSample width)
+    Tensor.addSpec (α := (Binary 8 23)) box.lo
+      (Tensor.mulSpec (α := (Binary 8 23)) unitSample width)
   -- Clamp to be sure we land inside `[lo,hi]` despite rounding.
-  let lowerClamped := Tensor.maxSpec (α := IEEE32Exec) rawSample box.lo
-  Tensor.minSpec (α := IEEE32Exec) lowerClamped box.hi
+  let lowerClamped := Tensor.maxSpec (α := (Binary 8 23)) rawSample box.lo
+  Tensor.minSpec (α := (Binary 8 23)) lowerClamped box.hi
 
 /--
 Run the tutorial: evaluate at the centre, propagate bounds, then check that randomly drawn samples
@@ -316,21 +322,24 @@ def showIEEECheck (samples : Nat) : IO Unit := do
   IO.println "== One semantic universe tutorial =="
   IO.println s!"graph nodes = {graph.nodes.size}"
 
-  let ieeeParameters : Parameters IEEE32Exec := floatParameters.map Runtime.ofFloat
-  let inputBox : Box IEEE32Exec input := inputBoxOf (α := IEEE32Exec) (eps := 0.05)
-  let flatInputBox : FlatBox IEEE32Exec := flattenInputBox (α := IEEE32Exec) inputBox
+  let ieeeParameters : Parameters (Binary 8 23) := floatParameters.map Runtime.ofFloat
+  let inputBox : Box (Binary 8 23) input := inputBoxOf (α := (Binary 8 23)) (eps := 0.05)
+  let flatInputBox : FlatBox (Binary 8 23) := flattenInputBox (α := (Binary 8 23)) inputBox
 
   -- Evaluate at the center point.
-  let referenceInputIEEE : Tensor IEEE32Exec input :=
+  let referenceInputIEEE : Tensor (Binary 8 23) input :=
     Tensor.map Runtime.ofFloat referenceInputFloat
-  match evaluateOutput (α := IEEE32Exec) ieeeParameters referenceInputIEEE with
+  let centerResult : Except String (Tensor (Binary 8 23) []) :=
+    evaluateOutput (α := Binary 8 23) ieeeParameters referenceInputIEEE
+  match centerResult with
   | .error msg => throw <| IO.userError msg
   | .ok outputAtCenter =>
-      IO.println s!"[eval IEEE32Exec] y(x0) = {Spec.pretty outputAtCenter}"
+      IO.println s!"[eval configured binary32] y(x0) = {Spec.pretty outputAtCenter}"
 
-  -- Compute IBP box (IEEE endpoints with directed rounding via `BoundOps IEEE32Exec`).
-  let parameters := parameterStore (α := IEEE32Exec) ieeeParameters flatInputBox
-  let ibp := runIBP (α := IEEE32Exec) graph parameters
+  -- Compute the IBP box with directed rounding via
+  -- `BoundOps (FloatLib.Floats.ExecFloat.Binary 8 23)`.
+  let parameters := parameterStore (α := (Binary 8 23)) ieeeParameters flatInputBox
+  let ibp := runIBP (α := (Binary 8 23)) graph parameters
   let outEntry ←
     match ibp[5]? with
     | some outEntry => pure outEntry
@@ -347,14 +356,16 @@ def showIEEECheck (samples : Nat) : IO Unit := do
   let mut okCount : Nat := 0
   for k in [0:samples] do
     let x := sampleInBoxIEEE (seed := 12345) (idx := k) inputBox
-    let inOk := Box.containsDecBool (α := IEEE32Exec) (s := input) inputBox x
+    let inOk := Box.containsDecBool (α := (Binary 8 23)) (s := input) inputBox x
     if inOk != true then
       throw <| IO.userError s!"internal error: sampled x not in box (k={k})"
-    match evaluateOutput (α := IEEE32Exec) ieeeParameters x with
+    let sampleResult : Except String (Tensor (Binary 8 23) []) :=
+      evaluateOutput (α := Binary 8 23) ieeeParameters x
+    match sampleResult with
     | .error msg => throw <| IO.userError msg
     | .ok y =>
         let outOk :=
-          Box.containsDecBool (α := IEEE32Exec) (s := []) outBox y
+          Box.containsDecBool (α := (Binary 8 23)) (s := []) outBox y
         if outOk then
           okCount := okCount + 1
         else

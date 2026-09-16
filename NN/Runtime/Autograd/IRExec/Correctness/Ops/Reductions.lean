@@ -456,9 +456,9 @@ theorem buildFrom_denoteAllFrom_sum
                       (ctx := ctx) (vals0 := vals0) (input := input) hTail hEval hStep
                   ·
                     -- `simp` normalizes the guard to `n.outShape = []` (via `List.nil_eq`), so the
-                    -- `dif_neg` witness has to be stated in that orientation too.
+                    -- `dite_eq_right` witness has to be stated in that orientation too.
                     exact False.elim <|
-                      throw_bind_ne_ok (h := (by simpa [dif_neg (Ne.symm hOut)] using hBuild))
+                      throw_bind_ne_ok (h := (by simpa [dite_eq_right (Ne.symm hOut)] using hBuild))
 
 end IRExec
 end Autograd

@@ -13,7 +13,8 @@ public import NN.MLTheory.Proofs.Approximation.FloatInterval.Semantics
 /-!
 # Floating-point interval approximation proofs
 
-This entrypoint collects the `IEEE32Exec` interval-semantics development used by the floating-point
+This entrypoint collects the `ExecFloat.Binary 8 23` interval-semantics development used by the
+floating-point
 universal-approximation development. The files underneath separate the work into:
 
 - interval-domain semantics for executable binary32 networks;
@@ -21,7 +22,7 @@ universal-approximation development. The files underneath separate the work into
 - the constant-target base theorem.
 
 The design keeps the trusted/executable float representation visible while proving the interval
-claims in Lean over the concrete `IEEE32Exec` semantics.
+claims in Lean over the concrete `ExecFloat.Binary 8 23` semantics.
 
 Reference:
 - Hwang, Lee, Park, Park, and Saad, "Floating-Point Neural Networks Are Provably Robust Universal

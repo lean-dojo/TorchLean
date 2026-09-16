@@ -34,6 +34,9 @@ open NN.Verification.Json (fromExcept parseEndpointBoxRegion)
 -- message exactly as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 #doc (Manual) "Verification Certificates" =>
 %%%
 tag := "certificates"
@@ -61,8 +64,9 @@ network, intermediate bounds, and a derivation of that margin.
 The evidence determines how much the checker can establish. A list of boxes and claimed lower
 bounds permits consistency checks on those fields. Proving that the lower bounds enclose the
 network requires a graph and justification for the bound transfers. Proving a property over the
-original input region also requires coverage by the represented boxes. We will follow one leaf
-artifact through the first set of checks, then examine what the stronger claims need.
+original input region also requires coverage by the represented boxes. The bundled leaf artifact
+lets us inspect the consistency checks directly; its missing evidence identifies what a
+root-region proof would still need.
 
 TorchLean does not vendor the Two-Stage / α,β-CROWN repository {Informal.citep betacrown2021}[].
 The core Lean build does not require that Python environment. Generating fresh α,β-CROWN leaf
@@ -112,9 +116,8 @@ Lean reports:
 
 This counts represented leaves. `ok=1` means that the one parsed leaf passed containment and
 witness checks; `bad=0` means that none failed those checks. The summary has no count of network
-nodes because this entry point does not read or evaluate a network. Keeping that reading in
-mind makes the failure example below much more informative than treating the line as a general
-“verification succeeded” message.
+nodes because this entry point does not read or evaluate a network. We can change one field
+to see exactly which of these checks rejects the artifact.
 
 To see what was actually checked, make a temporary copy whose threshold is larger than the
 exported lower bound:
@@ -514,7 +517,7 @@ There are three progressively stronger designs:
   stated arithmetic test. This is what `abcrown-leaf` provides.
 - *Recompute and compare:* the artifact contains a network and enough node data for Lean to
   reproduce the bound calculation. TorchLean's node-certificate checkers recompute the complete
-  trace with `IEEE32Exec`: interval entries must contain the authoritative trace, while affine
+  trace with FloatLib binary32: interval entries must contain the authoritative trace, while affine
   replay entries must agree exactly at the binary32 level.
 - *Proof-backed soundness:* checker acceptance supplies the exact hypotheses of a theorem that
   encloses the graph semantics. This requires a proved local transfer for every supported
@@ -669,8 +672,8 @@ runIBP_encloses_evalGraphRec : ∀ (g : NN.MLTheory.CROWN.Graph)
                   EnclosesBox B v
 ```
 
-Read the hypotheses as a specification of what a producer has to supply, because that is what they
-are. `TopoSorted g` says parents come before children, so a single left-to-right pass is a valid
+To apply the theorem, we must establish each premise. `TopoSorted g` says parents come before
+children, so a single left-to-right pass is a valid
 schedule. `EngineCore g` restricts the graph to the operator fragment whose transfer rules have
 proved local soundness; an unsupported operator does not make the theorem false, it makes it
 inapplicable. `IBPCovers` says the proof-side pass produced a box at every node, which rules out the
@@ -681,7 +684,7 @@ premise must be established throughout that region.
 
 With those hypotheses, each available engine box encloses the corresponding semantic value.
 The statement is over $`ℝ`. The demonstration above used `Float`; applying the real theorem to a
-rounded pass requires an arithmetic bridge. Using `IEEE32Exec` in the node checkers fixes the
+rounded pass requires an arithmetic bridge. Using FloatLib binary32 in the node checkers fixes the
 reference binary32 operations for replay, but does not by itself provide that bridge. The
 {ref "fp32-soundness"}[floating-point soundness chapter] develops the relevant distinction.
 
@@ -743,12 +746,20 @@ those failure modes.
 
 ```leanOutput nodeEntries (whitespace := lax)
 IBPNodeCert.checkIBPNodeCertificate : NN.MLTheory.CROWN.Graph →
-  NN.MLTheory.CROWN.Graph.ParamStore TorchLean.Floats.IEEE754.IEEE32Exec → String → IO Bool
+  NN.MLTheory.CROWN.Graph.ParamStore
+      (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
+        IBPNodeCert.readIBPNodeCertificate._proof_1 IBPNodeCert.readIBPNodeCertificate._proof_2
+        IBPNodeCert.readIBPNodeCertificate._proof_3 IBPNodeCert.readIBPNodeCertificate._proof_4) →
+    String → IO Bool
 ```
 
 ```leanOutput nodeEntries (whitespace := lax)
 CROWNNodeCert.checkCROWNNodeCertificate : NN.MLTheory.CROWN.Graph →
-  NN.MLTheory.CROWN.Graph.ParamStore TorchLean.Floats.IEEE754.IEEE32Exec → String → IO Bool
+  NN.MLTheory.CROWN.Graph.ParamStore
+      (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
+        CROWNNodeCert.checkCROWNNode._proof_1 CROWNNodeCert.checkCROWNNode._proof_2
+        CROWNNodeCert.checkCROWNNode._proof_3 CROWNNodeCert.checkCROWNNode._proof_4) →
+    String → IO Bool
 ```
 
 ```leanOutput nodeEntries
@@ -757,12 +768,17 @@ AlphaBetaCROWNNodeCertificate : Type
 
 ```leanOutput nodeEntries (whitespace := lax)
 checkAlphaBetaCROWNNodeCertificate : NN.MLTheory.CROWN.Graph →
-  NN.MLTheory.CROWN.Graph.ParamStore TorchLean.Floats.IEEE754.IEEE32Exec → String → IO Bool
+  NN.MLTheory.CROWN.Graph.ParamStore
+      (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
+        AlphaBetaCROWNNodeCertificate._proof_1 AlphaBetaCROWNNodeCertificate._proof_2
+        AlphaBetaCROWNNodeCertificate._proof_3 AlphaBetaCROWNNodeCertificate._proof_4) →
+    String → IO Bool
 ```
 
 All four node/output checkers receive a graph and parameter store, so they can recompute bounds
 for a supplied network. `IBPNodeCert`, `CROWNNodeCert`, and the alpha-beta variant use
-`ParamStore IEEE32Exec` and compare against a specified binary32 execution. A producer using
+`ParamStore (ExecFloat.Binary 8 23)` and compare against a specified binary32 execution. A
+producer using
 different rounding or reduction rules may disagree with that replay.
 
 `IBPCert.check` instead uses host `Float` and takes an output-node identifier. Its artifact stores
@@ -781,13 +797,14 @@ signature encodes an artifact kind. These node schemas do not require a distingu
 `format` field: the selected checker parses its fields and recomputes its own rules. Callers must
 choose the intended checker; shared or extra JSON fields do not establish that choice.
 
-Use the first when the artifact is a branch-and-bound leaf summary. `IBPCert.check` checks a compact
+Use `abcrown-leaf` when the artifact is a branch-and-bound leaf summary. `IBPCert.check` checks a compact
 Float output-bound artifact against a supplied graph and parameter store. `IBPNodeCert` instead
-replays per-node interval data with `IEEE32Exec`. `CROWNNodeCert` adds affine CROWN data, and the
+replays per-node interval data with FloatLib binary32. `CROWNNodeCert` adds affine CROWN data, and
+the
 alpha-beta variant adds the corresponding relaxation parameters. These formats are related, but
 they are not interchangeable transcripts.
 
-This split is important for citations:
+When reporting an accepted artifact, name the checker and the condition it established:
 
 - `abcrown-leaf` checks a structural leaf artifact.
 - `checkIBPNodeCertificate` recomputes the authoritative binary32 interval trace and requires the
@@ -912,7 +929,7 @@ With no path, the command uses the bundled sample. With a path, it checks that a
 Run `lake exe verify -- list` to see the other registered certificate and workflow checkers,
 including LiRPA, PINN, spline, logit-margin, and TorchLean-to-IR robustness paths.
 
-The leaf command is intentionally modest: it answers whether the exported leaf document satisfies
+The leaf command answers whether the exported leaf document satisfies
 the `v0.1` structural contract. The neural-network verification chapter gives the theorem chain
 needed for a semantic robustness result, while the two-stage chapter shows where an external
 producer enters that chain.
@@ -923,6 +940,5 @@ The branch-and-bound framework of {Informal.citet bunel2020}[] provides context 
 subdomains and pruning. The β-CROWN, LiRPA, and proof-carrying-code references above describe the
 bound methods and the producer/checker separation.
 
-One remaining pointer is not a paper-level bibliography entry: the
-[α,β-CROWN project](https://github.com/Verified-Intelligence/alpha-beta-CROWN), which is the
-implementation the exporter reads from rather than a publication.
+The [α,β-CROWN project](https://github.com/Verified-Intelligence/alpha-beta-CROWN) contains the
+producer implementation whose terminal-domain output the exporter reads.

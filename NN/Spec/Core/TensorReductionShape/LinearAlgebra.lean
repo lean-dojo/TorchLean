@@ -41,6 +41,73 @@ def swapAdjacentAxes {β : Type} [TorchLean.Storage β]
       cases depth <;> exact tensor
   | 0, .dim _ .scalar => tensor
 
+namespace Internal
+
+/-- Map an output coordinate back to the input coordinate of an adjacent-axis swap.
+
+At depth zero, an output coordinate `(j, i, rest)` reads `(i, j, rest)`. At greater
+depths, the preceding coordinates stay fixed. If there are fewer than two axes
+left to exchange, the coordinate stays unchanged, as in `Shape.swapAdjacentAtDepth`. -/
+def swapAdjacentAxesCoordinate (shape : Spec.Shape) (depth : Nat) :
+    (shape.swapAdjacentAtDepth depth).Coord → shape.Coord :=
+  match depth, shape with
+  | 0, .dim _ (.dim _ _) =>
+      fun coordinate => (coordinate.2.1, coordinate.1, coordinate.2.2)
+  | depth + 1, .dim _ rest =>
+      fun coordinate =>
+        (coordinate.1, swapAdjacentAxesCoordinate rest depth coordinate.2)
+  | depth, .scalar => by
+      cases depth <;> exact id
+  | 0, .dim _ .scalar => id
+
+/-- Build an adjacent-axis swap by reading each output entry directly from the input.
+
+The recursive specification constructs tensor slices with `unstack`. Each slice
+owns a buffer, so constructing a column of a matrix this way repeatedly copies
+input rows. A coordinate pull constructs the output buffer in one pass and reads
+the corresponding scalar from the original tensor, without intermediate slices. -/
+def swapAdjacentAxesDirect {β : Type} [TorchLean.Storage β]
+    {shape : Spec.Shape} (tensor : Tensor β shape) (depth : Nat) :
+    Tensor β (shape.swapAdjacentAtDepth depth) :=
+  Rep.pull (swapAdjacentAxesCoordinate shape depth) tensor
+
+end Internal
+
+/-- Adjacent-axis swaps read the input at the coordinate with the same axes exchanged. -/
+theorem swapAdjacentAxes_apply {β : Type} [TorchLean.Storage β]
+    {shape : Shape} (tensor : Tensor β shape) (depth : Nat)
+    (coordinate : (shape.swapAdjacentAtDepth depth).Coord) :
+    swapAdjacentAxes tensor depth coordinate =
+      tensor (Internal.swapAdjacentAxesCoordinate shape depth coordinate) := by
+  induction depth generalizing shape with
+  | zero =>
+      cases shape with
+      | scalar => rfl
+      | dim m rest =>
+          cases rest with
+          | scalar => rfl
+          | dim n tail =>
+              simp [swapAdjacentAxes, Internal.swapAdjacentAxesCoordinate, dim, unstack]
+  | succ depth ih =>
+      cases shape with
+      | scalar => rfl
+      | dim n rest =>
+          simp [swapAdjacentAxes, Internal.swapAdjacentAxesCoordinate, dim, unstack, ih]
+
+/-- Compile the recursive specification as a direct coordinate pull.
+
+Equality is proved for every scalar storage instance, shape, and swap depth. The
+public definition and its reduction equations remain available to proofs; compiled
+calls use the equivalent implementation that avoids copying intermediate slices. -/
+@[csimp] theorem swapAdjacentAxes_eq_swapAdjacentAxesDirect :
+    @swapAdjacentAxes = @Internal.swapAdjacentAxesDirect := by
+  funext β storage shape tensor depth
+  apply Internal.Rep.ext
+  intro coordinate
+  rw [swapAdjacentAxes_apply]
+  exact (Internal.Rep.pull_apply
+    (Internal.swapAdjacentAxesCoordinate shape depth) tensor coordinate).symm
+
 /-- Apply adjacent-axis swaps while retaining the resulting shape in the return type. -/
 def permuteByAdjacentSwaps {β : Type} [TorchLean.Storage β]
     {s : Shape} (tensor : Tensor β s) :

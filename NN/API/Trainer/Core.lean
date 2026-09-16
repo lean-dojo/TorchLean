@@ -34,13 +34,17 @@ trained.save "model.state"
 ```
 
 Inputs, targets, and predictions cross the API as `Tensor Float`. Training itself never runs in
-binary64: `.native` arithmetic uses `Float32` and `.ieee` uses `IEEE32Exec`, both binary32. The
+binary64: `.native` arithmetic uses `Float32` and `.ieee` uses `ExecFloat.Binary 8 23`, both
+binary32. The
 `Float` values are converted at the boundary, and `Result.report` records which scalar ran.
 
 `trainer.open` returns a `Trainer.Session` for programs that drive the optimizer loop themselves.
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 namespace TorchLean
 
@@ -68,7 +72,8 @@ structure RunConfig where
   /--
   Arithmetic semantics used for the run.
 
-  `.native` trains in Lean's `Float32` and `.ieee` in the bit-level `IEEE32Exec` reference. Both
+  `.native` trains in Lean's `Float32` and `.ieee` in the bit-level `ExecFloat.Binary 8 23`
+  reference. Both
   are binary32; the `Tensor Float` values in the public signatures are converted at the boundary.
   Supervised training rejects `.complex`.
   -/
@@ -137,7 +142,8 @@ Model-independent options accepted by `Trainer.new`.
 
 The `RunConfig` fields select the optimizer and runtime. Although the trainer's public signatures
 use `Tensor Float`, training runs in the binary32 scalar chosen by `arithmetic`: `Float32` for
-`.native` and `IEEE32Exec` for `.ieee`. Trained parameters are read back to `Float` exactly.
+`.native` and `ExecFloat.Binary 8 23` for `.ieee`. Trained parameters are read back to `Float`
+exactly.
 -/
 structure Config (input output : Shape) extends RunConfig where
   /-- Training objective attached to this trainer. -/

@@ -18,7 +18,7 @@ This file defines a basic GMM with `nComponents` multivariate Gaussians over `nF
 - means $\mu$, and
 - covariances $\Sigma$.
 
-`gmmForwardSpec` computes **per-component** log-probabilities for a single input:
+`gmmForwardSpec` computes per-component log scores for a single input:
 
 $$
 \log \pi_k + \log \mathcal{N}(x \mid \mu_k, \Sigma_k).
@@ -30,8 +30,13 @@ PyTorch analogies:
 - `torch.distributions.MixtureSameFamily` for mixture distributions,
 - `torch.softmax` for turning per-component log-probabilities into responsibilities.
 
-Invalid mixture weights and singular or non-positive-determinant covariance matrices are reported
-as `none`. Determinants and inverses are defined via `NN.Spec.Core.Tensor.Numerics`; those
+Mixture weights must be positive and normalized within the scalar backend's validation tolerance.
+Covariances must be symmetric positive definite. Parameters outside this domain are reported as
+`none`. Scores use the stored weights directly: when the weights sum to one, their exponential sum
+is a probability density. The default normalization tolerance also applies to exact scalar
+backends; callers needing a stricter gate can check `mixtureWeightsValidSpec` with zero tolerance.
+
+Determinants and inverses are defined via `NN.Spec.Core.Tensor.Numerics`; those
 definitions are intended for small feature dimensions and proof/reference usage, not
 high-performance clustering on large matrices.
 
@@ -64,7 +69,8 @@ variable {α : Type} [TorchLean.Storage α] [Context α]
 /-- Parameters of a Gaussian mixture model (GMM). -/
 structure GMMSpec (α : Type) [TorchLean.Storage α]
     (nComponents nFeatures : Nat) where
-  /-- Mixing weights $\pi_k$ (typically nonnegative and summing to $1$). -/
+  /-- Mixing weights $\pi_k$. Model operations require every weight to be strictly positive
+  and their compensated total to be within `Context.defaultEpsilon` of one. -/
   weights : Tensor α [nComponents]
   /-- Component means $\mu_k$. -/
   means : Tensor α [nComponents, nFeatures]
@@ -101,13 +107,47 @@ def covariancePositiveDefiniteSpec {n : Nat}
       let leading := leadingPrincipalSubmatrix matrix k hk
       Context.gtBool (Tensor.item (determinantSpec leading)) 0)
 
-/-- Positive, normalized mixture weights. -/
-def mixtureWeightsValidSpec {n : Nat} (weights : Tensor α [n]) : Bool :=
+/--
+Sum the mixture weights while retaining the low-order part lost at each addition.
+
+The correction is carried into the next addition. This matters for mixtures with many components:
+adding their small weights directly can accumulate enough rounding error to reject a normalized
+mixture. Over exact arithmetic, the correction is zero and this is the ordinary sum.
+-/
+private def mixtureWeightTotal {n : Nat} (weights : Tensor α [n]) : α :=
+  ((List.finRange n).foldl (fun (state : α × α) i =>
+    let adjusted := weights.getScalar i - state.2
+    let total := state.1 + adjusted
+    (total, (total - state.1) - adjusted)) (0, 0)).1
+
+/--
+Check that every mixture weight is positive and their total is within `tolerance` of one.
+
+Floating-point division usually cannot represent the exact uniform weight `1 / n`. A check against
+exactly one can therefore reject `gmmInitSpec` before its first forward pass. The compensated total
+limits error from the reduction, and the tolerance accounts for rounding in the weights themselves.
+The admissible tolerance is in `[0, 1)`, and the comparison uses absolute error. The default
+`Context.defaultEpsilon` is the backend's configured numerical safeguard. It also applies to exact
+scalar backends. Zero requires the computed compensated total to equal one; callers can use this
+stricter check before invoking model operations, which use the default tolerance.
+-/
+def mixtureWeightsValidSpec {n : Nat} (weights : Tensor α [n])
+    (tolerance : α := Context.defaultEpsilon) : Bool :=
+  let toleranceValid := (tolerance == 0 || Context.gtBool tolerance 0) &&
+    Context.gtBool 1 tolerance
   let positive :=
     (List.finRange n).all (fun i => Context.gtBool (weights.getScalar i) 0)
-  positive && (sumSpec weights == 1)
+  let discrepancy := MathFunctions.abs (mixtureWeightTotal weights - 1)
+  toleranceValid && positive &&
+    (discrepancy == tolerance || Context.gtBool tolerance discrepancy)
 
-/-- Whether all parameter-domain conditions required by the GMM density hold. -/
+/--
+Check the dimensions, mixing weights, and covariance matrices before evaluating the model.
+
+The model needs at least one component and one feature. Its weights must be positive and satisfy
+the configured normalization tolerance, and every covariance must be symmetric positive definite.
+Accepted weights are used as stored; this check does not rescale them to sum to exactly one.
+-/
 def gmmParametersValidSpec {nComponents nFeatures : Nat}
     (m : GMMSpec α nComponents nFeatures) : Bool :=
   nComponents != 0 && nFeatures != 0 &&
@@ -115,7 +155,7 @@ def gmmParametersValidSpec {nComponents nFeatures : Nat}
     (List.finRange nComponents).all (fun k =>
       covariancePositiveDefiniteSpec (Tensor.unstack m.covariances k))
 
-/-- Per-component log-probabilities for a single input.
+/-- Per-component log scores for a single input.
 
 Given $x \in \mathbb{R}^d$, each component contributes
 
@@ -177,25 +217,32 @@ def gmmExpectationSpec {nComponents nFeatures : Nat}
   let componentLogProbs ← gmmForwardSpec m input
   pure (Activation.softmaxVecSpec (α := α) (n := nComponents) componentLogProbs)
 
-/-- Batched forward pass: apply `gmmForwardSpec` to each sample in a batch. -/
+/--
+Batched forward pass: apply `gmmForwardSpec` to each sample in a batch.
+
+Invalid model parameters return `none`, including for an empty batch.
+-/
 def gmmBatchedForwardSpec {batch nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
   (input : Tensor α [batch, nFeatures]) :
   Option (Tensor α [batch, nComponents]) :=
-  sequenceFin (fun i => gmmForwardSpec m (Tensor.unstack input i))
+  if gmmParametersValidSpec m then
+    sequenceFin (fun i => gmmForwardSpec m (Tensor.unstack input i))
+  else
+    none
 
 /-!
 ## Backward/VJP (for `gmmForwardSpec`)
 
-`gmmForwardSpec` is **vector-valued**: it returns one log-probability per component.
+`gmmForwardSpec` is **vector-valued**: it returns one log score per component.
 
 The gradients below are the VJP for that vector function. In particular, responsibilities
-$\gamma=\operatorname{softmax}(\text{component log-probabilities})$ do *not* appear in these
+$\gamma=\operatorname{softmax}(\text{component log scores})$ do *not* appear in these
 formulas by themselves.
 
 Responsibilities show up when you differentiate a **scalar** objective that aggregates components,
-like the mixture log-likelihood $\operatorname{logsumexp}(\text{component log-probabilities})$.
-In that case, you compute the derivative with respect to the component log-probabilities first
+like the mixture log-likelihood $\operatorname{logsumexp}(\text{component log scores})$.
+In that case, you compute the derivative with respect to the component log scores first
 (which will involve $\gamma$), then feed that vector into
 `gmmBackwardSpec`.
 -/
@@ -412,6 +459,10 @@ $$
   \sum_k \exp\!\left(\log p(x\mid z_k)+\log\pi_k\right)
 \right).
 $$
+
+This is the log of a normalized mixture density when the stored weights sum to one.
+The default domain check allows `Context.defaultEpsilon` error in that sum; accepted weights
+are used directly without renormalization.
 -/
 def gmmLogLikelihoodSpec {nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
@@ -440,19 +491,21 @@ Numerical notes:
   well-behaved.
 -/
 
-/-- Batched responsibilities: apply `gmmExpectationSpec` to each sample. -/
+/--
+Batched responsibilities: apply `gmmExpectationSpec` to each sample.
+
+Invalid model parameters return `none`, including for an empty dataset.
+-/
 def gmmResponsibilitiesBatchedSpec {nSamples nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
   (data : Tensor α [nSamples, nFeatures])
   (hK : nComponents ≠ 0) :
   Option (Tensor α [nSamples, nComponents]) :=
-  sequenceFin (fun i => gmmExpectationSpec (α := α) (nComponents := nComponents) (nFeatures :=
-    nFeatures) m (Tensor.unstack data i) hK)
-
-/-- Scalar extraction helper for matrices: `t[i,j]` as an `α`. -/
-private def getMatrix {n m : Nat} (t : Tensor α [n, m]) (i : Fin n) (j : Fin m) : α
-  :=
-  (Tensor.unstack t i).getScalar j
+  if gmmParametersValidSpec m then
+    sequenceFin (fun i => gmmExpectationSpec (α := α) (nComponents := nComponents)
+      (nFeatures := nFeatures) m (Tensor.unstack data i) hK)
+  else
+    none
 
 /-- Build a vector tensor from a function `Fin n -> α`. -/
 private def vecFromFn {n : Nat} (f : Fin n → α) : Tensor α [n] :=
@@ -462,14 +515,18 @@ private def vecFromFn {n : Nat} (f : Fin n → α) : Tensor α [n] :=
 private def matFromFn {n m : Nat} (f : Fin n → Fin m → α) : Tensor α [n, m] :=
   Tensor.dim (fun i => Tensor.dim (fun j => Tensor.scalar (f i j)))
 
-/-- One EM step for a batched dataset. -/
+/--
+One EM step for a batched dataset.
+
+An empty dataset preserves a valid model; invalid parameters still return `none`.
+-/
 def gmmEmStepSpec {nSamples nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
   (data : Tensor α [nSamples, nFeatures])
   (hK : nComponents ≠ 0) :
   Option (GMMSpec α nComponents nFeatures) :=
   if _hN : nSamples = 0 then
-    some m
+    if gmmParametersValidSpec m then some m else none
   else do
     let resp ← gmmResponsibilitiesBatchedSpec (α := α) (nSamples := nSamples)
       (nComponents := nComponents) (nFeatures := nFeatures) m data hK
@@ -478,7 +535,7 @@ def gmmEmStepSpec {nSamples nComponents nFeatures : Nat}
     let Nk : Tensor α [nComponents] :=
       vecFromFn (n := nComponents) (fun k =>
         (List.finRange nSamples).foldl (fun acc i =>
-          acc + getMatrix (n := nSamples) (m := nComponents) resp i k
+          acc + get2 resp i k
         ) 0)
 
     -- π_k = N_k / N
@@ -488,7 +545,9 @@ def gmmEmStepSpec {nSamples nComponents nFeatures : Nat}
           let nk := Nk.getScalar k
           let w := m.weights.getScalar k
           if nk > 0 then Tensor.scalar (nk / (nSamples : α)) else Tensor.scalar w)
-      let s := sumSpec wRaw
+      -- Use the same compensated total as validation. A long rounded sum here would
+      -- rescale every weight by an inaccurate denominator and invalidate the next EM step.
+      let s := mixtureWeightTotal wRaw
       if s > 0 then scaleSpec wRaw (1 / s) else uniformWeights (α := α) (nComponents :=
         nComponents)
 
@@ -500,7 +559,7 @@ def gmmEmStepSpec {nSamples nComponents nFeatures : Nat}
           Tensor.dim (fun f =>
             Tensor.scalar (
               (List.finRange nSamples).foldl (fun acc i =>
-                let rik := getMatrix (n := nSamples) (m := nComponents) resp i k
+                let rik := get2 resp i k
                 let xi := Tensor.unstack data i
                 acc + rik * Tensor.getScalar xi f
               ) 0 / nk))
@@ -514,9 +573,13 @@ def gmmEmStepSpec {nSamples nComponents nFeatures : Nat}
         let μ := Tensor.unstack means k
         if nk > 0 then
           let base :=
-            matFromFn (n := nFeatures) (m := nFeatures) (fun a b =>
+            matFromFn (n := nFeatures) (m := nFeatures) (fun row column =>
+              -- Both entries of a symmetric pair use the same ordered product and reduction.
+              -- Computing the two triangles separately can round them differently, causing the
+              -- covariance-domain check to reject the next EM step.
+              let (a, b) := if row.val ≤ column.val then (row, column) else (column, row)
               (List.finRange nSamples).foldl (fun acc i =>
-                let rik := getMatrix (n := nSamples) (m := nComponents) resp i k
+                let rik := get2 resp i k
                 let xi := Tensor.unstack data i
                 let da := Tensor.getScalar xi a - Tensor.getScalar μ a
                 let db := Tensor.getScalar xi b - Tensor.getScalar μ b
@@ -529,25 +592,39 @@ def gmmEmStepSpec {nSamples nComponents nFeatures : Nat}
 
     pure { weights := weights, means := means, covariances := covariances }
 
-/-- Total negative log-likelihood of a dataset under the current model. -/
+/--
+Sum of negative `gmmLogLikelihoodSpec` scores over the dataset.
+
+An empty dataset has score zero for a valid model; invalid parameters still return `none`.
+-/
 def gmmNegLogLikelihoodBatchedSpec {nSamples nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
   (data : Tensor α [nSamples, nFeatures])
   (hK : nComponents ≠ 0) : Option α :=
-  (List.finRange nSamples).foldlM (init := 0) (fun acc i => do
-    let xi := get data i
-    let ll ← gmmLogLikelihoodSpec (α := α) (nComponents := nComponents) (nFeatures := nFeatures)
-      m xi hK
-    pure (acc - ll))
+  if gmmParametersValidSpec m then
+    (List.finRange nSamples).foldlM (init := 0) (fun acc i => do
+      let xi := get data i
+      let ll ← gmmLogLikelihoodSpec (α := α) (nComponents := nComponents)
+        (nFeatures := nFeatures) m xi hK
+      pure (acc - ll))
+  else
+    none
 
-/-- Run `epochs` EM steps (deterministic). -/
+/--
+Run `epochs` EM steps (deterministic).
+
+Zero epochs preserve a valid model; invalid initial parameters still return `none`.
+-/
 def gmmEmTrainSpec {nSamples nComponents nFeatures : Nat}
   (epochs : Nat)
   (m : GMMSpec α nComponents nFeatures)
   (data : Tensor α [nSamples, nFeatures])
   (hK : nComponents ≠ 0) :
   Option (GMMSpec α nComponents nFeatures) :=
-  (List.finRange epochs).foldlM (init := m) (fun cur _ =>
-    gmmEmStepSpec (α := α) cur data hK)
+  if gmmParametersValidSpec m then
+    (List.finRange epochs).foldlM (init := m) (fun cur _ =>
+      gmmEmStepSpec (α := α) cur data hK)
+  else
+    none
 
 end Spec

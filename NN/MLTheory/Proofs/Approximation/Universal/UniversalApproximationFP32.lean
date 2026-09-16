@@ -29,6 +29,9 @@ numerical-analysis separation used in Goldberg and Higham.
 
 @[expose] public section
 
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
+
 
 namespace NN.MLTheory.Proofs.UniversalApproximation
 
@@ -274,17 +277,17 @@ Neither branch performs an additional rounding operation. -/
 
 @[simp] theorem fp32_zero_val : (0 : FP32).val = 0 := by
   -- `0 : FP32` is `NF.ofReal 0`, i.e. rounding `0`.
-  have hne : TorchLean.Floats.neuralNearestEven (0 : ℝ) = 0 := by
-    simp [TorchLean.Floats.neuralNearestEven]
+  have hne : nearestEven (0 : ℝ) = 0 := by
+    simp [nearestEven]
   change
-    (TorchLean.Floats.NF.ofReal (β := TorchLean.Floats.binaryRadix) (fexp :=
+    (Flocq.NF.ofReal (β := binaryRadix) (fexp :=
       TorchLean.Floats.fexp32)
           (rnd := TorchLean.Floats.rnd32) (0 : ℝ)).val = 0
   -- Reduce to the mantissa being `0`; the exponent is irrelevant.
-  simp [TorchLean.Floats.NF.ofReal, TorchLean.Floats.NF.roundR, TorchLean.Floats.neuralRound,
-    TorchLean.Floats.neuralToReal, TorchLean.Floats.neuralScaledMantissa,
-      TorchLean.Floats.neuralCexp,
-    TorchLean.Floats.neuralMagnitude, TorchLean.Floats.rnd32, hne]
+  simp [Flocq.NF.ofReal, Flocq.NF.roundR, Flocq.round,
+    Flocq.toReal, scaledMantissa,
+      cexp,
+    magnitude, TorchLean.Floats.rnd32, hne]
 
 /-- The `FP32` ReLU agrees with the real ReLU on the underlying value.
 
@@ -292,18 +295,17 @@ The Boolean zero test compares real values. A zero-valued input therefore return
 value is zero, and the remaining branch selects the input or zero according to the same real order.
 Both cases give $\max(x.\mathrm{val},0)$ exactly, with no rounding error. -/
 @[simp] theorem relu_fp32_val (x : FP32) : (reluFp32 x).val = relu x.val := by
-  rw [relu, Activation.Math.reluSpec_eq_max]
-  -- Expose the value comparisons in the zero test and the maximum before splitting into cases.
-  change
-    (if decide (x.val = (0 : FP32).val) then (0 : FP32)
-      else if (0 : FP32).val ≤ x.val then x else 0).val = max x.val 0
-  simp only [fp32_zero_val, decide_eq_true_eq]
-  by_cases hz : x.val = 0
-  · rw [if_pos hz, fp32_zero_val, hz, max_self]
-  · rw [if_neg hz]
-    by_cases hx : 0 ≤ x.val
-    · rw [if_pos hx, max_eq_left hx]
-    · rw [if_neg hx, fp32_zero_val, max_eq_right (le_of_not_ge hx)]
+  rw [reluFp32, Activation.Math.reluSpec_eq_max, relu, Activation.Math.reluSpec_eq_max]
+  by_cases hx : (0 : FP32) ≤ x
+  · have hReal : 0 ≤ x.val := by
+      change (0 : FP32).val ≤ x.val at hx
+      simpa only [fp32_zero_val] using hx
+    rw [max_eq_left hx, max_eq_left hReal]
+  · have hx0 : x ≤ (0 : FP32) := le_of_not_ge hx
+    have hReal : x.val ≤ 0 := by
+      change x.val ≤ (0 : FP32).val at hx0
+      simpa only [fp32_zero_val] using hx0
+    rw [max_eq_right hx0, fp32_zero_val, max_eq_right hReal]
 
 /--
 Real ReLU is 1-Lipschitz.
@@ -344,17 +346,17 @@ rounding term propagated through the $1$-Lipschitz ReLU and scaled by $|c_i|$.
     let term32 := hingeTermFp32 c t x i
     let termR := hingeTermReal c t x i
     |term32.val - termR| ≤
-      neuralUlp binaryRadix fexp32 ((c i).val * (reluFp32 (x - t i)).val) /
+      ulp binaryRadix fexp32 ((c i).val * (reluFp32 (x - t i)).val) /
         2
       + |(c i).val| *
-          (neuralUlp binaryRadix fexp32 (x.val - (t i).val) / 2) := by
+          (ulp binaryRadix fexp32 (x.val - (t i).val) / 2) := by
   intro term32 termR
   -- Notation for the intermediate subtraction and ReLU.
   let u32 : FP32 := x - t i
   let r32 : FP32 := reluFp32 u32
   have hsub :
       |u32.val - (x.val - (t i).val)| ≤
-        neuralUlp binaryRadix fexp32 (x.val - (t i).val) / 2 := by
+        ulp binaryRadix fexp32 (x.val - (t i).val) / 2 := by
     -- `sub_abs_error` is exactly this statement.
     simpa [u32] using (TorchLean.Floats.FP32.sub_abs_error (a := x) (b := t i))
   have hrelu :
@@ -364,7 +366,7 @@ rounding term propagated through the $1$-Lipschitz ReLU and scaled by $|c_i|$.
     simpa [r32, u32] using (relu_lipschitz u32.val (x.val - (t i).val))
   have hmul :
       |term32.val - ((c i).val * r32.val)| ≤
-        neuralUlp binaryRadix fexp32 ((c i).val * r32.val) / 2 := by
+        ulp binaryRadix fexp32 ((c i).val * r32.val) / 2 := by
     -- `mul_abs_error` compares `(a*b).val` to `a.val*b.val`.
     have := TorchLean.Floats.FP32.mul_abs_error (a := c i) (b := r32)
     simpa [term32, hingeTermFp32, r32] using this
@@ -382,7 +384,7 @@ rounding term propagated through the $1$-Lipschitz ReLU and scaled by $|c_i|$.
               -- use `abs_sub_le` directly
               simpa [termR, hingeTermReal] using
                 (abs_sub_le (term32.val) ((c i).val * r32.val) termR)
-    _ ≤ neuralUlp binaryRadix fexp32 ((c i).val * r32.val) / 2 +
+    _ ≤ ulp binaryRadix fexp32 ((c i).val * r32.val) / 2 +
           (|(c i).val| * |r32.val - relu (x.val - (t i).val)|) := by
           -- Apply the two bounds.
           have hmul' := hmul
@@ -390,24 +392,24 @@ rounding term propagated through the $1$-Lipschitz ReLU and scaled by $|c_i|$.
               |(c i).val| * |r32.val - relu (x.val - (t i).val)| := by
             exact le_of_eq hlin
           exact add_le_add hmul' hlin'
-    _ ≤ neuralUlp binaryRadix fexp32 ((c i).val * r32.val) / 2 +
+    _ ≤ ulp binaryRadix fexp32 ((c i).val * r32.val) / 2 +
           (|(c i).val| * |u32.val - (x.val - (t i).val)|) := by
           gcongr
-    _ ≤ neuralUlp binaryRadix fexp32 ((c i).val * r32.val) / 2 +
-          (|(c i).val| * (neuralUlp binaryRadix fexp32 (x.val - (t i).val) /
+    _ ≤ ulp binaryRadix fexp32 ((c i).val * r32.val) / 2 +
+          (|(c i).val| * (ulp binaryRadix fexp32 (x.val - (t i).val) /
             2)) := by
           gcongr
-    _ = neuralUlp binaryRadix fexp32 ((c i).val * (reluFp32 (x - t i)).val)
+    _ = ulp binaryRadix fexp32 ((c i).val * (reluFp32 (x - t i)).val)
       / 2
-        + |(c i).val| * (neuralUlp binaryRadix fexp32 (x.val - (t i).val) /
+        + |(c i).val| * (ulp binaryRadix fexp32 (x.val - (t i).val) /
           2) := by
           simp [u32, r32]
 
 /-- The per-hinge error bound used by `hinge_term_abs_error`. -/
 noncomputable def hingeTermErrorBound {n : ℕ} (c t : Fin n → FP32) (x : FP32) (i : Fin n) : ℝ :=
-  neuralUlp binaryRadix fexp32 ((c i).val * (reluFp32 (x - t i)).val) / 2
+  ulp binaryRadix fexp32 ((c i).val * (reluFp32 (x - t i)).val) / 2
   + |(c i).val| *
-      (neuralUlp binaryRadix fexp32 (x.val - (t i).val) / 2)
+      (ulp binaryRadix fexp32 (x.val - (t i).val) / 2)
 
 /-- Named version of `hinge_term_abs_error` using `hingeTermErrorBound`. -/
   @[simp] theorem hinge_term_abs_error' {n : ℕ} (c t : Fin n → FP32) (x : FP32) (i : Fin n) :
@@ -431,7 +433,7 @@ noncomputable def hingeSumStateStep {n : ℕ} (c t : Fin n → FP32) (x : FP32) 
       let termR : ℝ := hingeTermReal c t x i
       let termErr : ℝ := hingeTermErrorBound c t x i
       let addErr : ℝ :=
-        neuralUlp binaryRadix fexp32 (acc32.val + term32.val) / 2
+        ulp binaryRadix fexp32 (acc32.val + term32.val) / 2
       (acc32 + term32, accR + termR, err + termErr + addErr)
 
 /-- Compute the hinge-term sum state over all `Fin n` in a fixed order (`List.finRange`). -/
@@ -474,7 +476,7 @@ not associative.
       let termR : ℝ := hingeTermReal c t x i
       let termErr : ℝ := hingeTermErrorBound c t x i
       let addErr : ℝ :=
-        neuralUlp binaryRadix fexp32 (acc32.val + term32.val) / 2
+        ulp binaryRadix fexp32 (acc32.val + term32.val) / 2
       have hterm : |term32.val - termR| ≤ termErr := by
         dsimp [term32, termR, termErr]
         exact hinge_term_abs_error' (c := c) (t := t) (x := x) (i := i)
@@ -534,7 +536,7 @@ noncomputable def hingeFunReal {n : ℕ} (t c : Fin n → FP32) (b : FP32) (x : 
 /-- Total FP32 hinge-network error budget, including the final rounded bias addition. -/
   noncomputable def hingeFunErrorBound {n : ℕ} (t c : Fin n → FP32) (b : FP32) (x : FP32) : ℝ :=
   hingeSumErrorBound c t x
-    + neuralUlp binaryRadix fexp32 ((hingeSumFp32 c t x).val + b.val) / 2
+    + ulp binaryRadix fexp32 ((hingeSumFp32 c t x).val + b.val) / 2
 
 /--
 Certified absolute-error bound for the complete FP32 hinge network.
@@ -552,7 +554,7 @@ used by the executable approximation theorems.
   set eS : ℝ := hingeSumErrorBound c t x
   have hadd :
       |(s32 + b).val - (s32.val + b.val)| ≤
-        neuralUlp binaryRadix fexp32 (s32.val + b.val) / 2 := by
+        ulp binaryRadix fexp32 (s32.val + b.val) / 2 := by
     simpa using (TorchLean.Floats.FP32.add_abs_error (a := s32) (b := b))
   have htri :
       |(s32 + b).val - (sR + b.val)| ≤
@@ -562,9 +564,9 @@ used by the executable approximation theorems.
   -- Combine and finish.
   have hbound :
       |(s32 + b).val - (sR + b.val)| ≤
-        (neuralUlp binaryRadix fexp32 (s32.val + b.val) / 2) + eS := by
+        (ulp binaryRadix fexp32 (s32.val + b.val) / 2) + eS := by
     have : |(s32 + b).val - (sR + b.val)| ≤
-        (neuralUlp binaryRadix fexp32 (s32.val + b.val) / 2) + |s32.val -
+        (ulp binaryRadix fexp32 (s32.val + b.val) / 2) + |s32.val -
           sR| := by
       simpa [hcancel] using le_trans htri (add_le_add hadd (le_rfl))
     exact le_trans this (by gcongr)

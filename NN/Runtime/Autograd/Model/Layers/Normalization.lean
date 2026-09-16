@@ -23,6 +23,9 @@ and convert it with `Context.ofRat` when the forward program chooses its scalar 
 the layer configuration usable with both real-valued specifications and floating-point execution.
 Floating-point execution requires the converted epsilon to remain positive and finite; the static
 configuration check only enforces positivity of the rational input.
+In tiny formats the default can round to zero. Neither eager execution nor typed-graph lowering
+substitutes `Context.defaultEpsilon`; a constant LayerNorm input can therefore produce NaNs.
+Pass an `eps` whose converted value is positive and finite before lowering the model.
 -/
 
 @[expose] public section

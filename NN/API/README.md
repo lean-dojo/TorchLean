@@ -21,6 +21,7 @@ internals.
 | Optimizers | `optim` | Select optimizer behavior and hyperparameters. |
 | Differentiation | `autograd`, `autograd.model` | Compute derivatives directly without running a training loop. |
 | Runtime choices | `Runtime` | Select arithmetic semantics, execution mode, device, and backend reporting. |
+| Configured precision | `FloatLib.Floats.ExecFloat.Binary` | Select exponent/fraction widths for CPU typed tensors, model state, and derivatives. |
 
 These are one lifecycle, not competing tensor or model systems:
 
@@ -85,8 +86,9 @@ The model definition is immutable. `Trainer.new` attaches the objective and runt
 
 `steps` is required. `samplesPerStep` accumulates gradients from that many dataset items per
 update; vectorized minibatches come from `Data.batch` and a model with an explicit batch axis.
-Although the types say `Tensor Float`, training runs in binary32: `Float32` under `.native`
-arithmetic and `IEEE32Exec` under `.ieee`. The result's summary names the scalar that ran.
+The supervised `Trainer` accepts `Tensor Float` at its boundary and runs training in binary32:
+`Float32` under `.native` arithmetic and FloatLib's configured `ExecFloat.Binary` under `.ieee`
+(8 exponent bits and 23 fraction bits). The result's summary names the scalar that ran.
 
 ## Tensors
 
@@ -176,13 +178,41 @@ be pulled back to the model input.
 
 `Trainer.RunConfig` keeps execution choices on the same model:
 
-- `arithmetic` selects the binary32 scalar (`Float32` for `.native`, `IEEE32Exec` for `.ieee`);
+- `arithmetic` selects native or configured software binary32 (`Float32` or `ExecFloat.Binary`);
 - `execution` selects eager tape execution or reusable typed-graph execution;
 - `device` selects the storage and kernel target;
 - `showBackend` reports accepted backend capsules.
 
 Typed graph execution records reusable forward/JVP/VJP structure. It is not native-code
 compilation and it is not the verification IR.
+
+## Configured Binary Precision
+
+Use `FloatLib.Floats.ExecFloat.Binary (exponentBits := 15) (fractionBits := 112)` as the scalar
+of a `Tensor` and `nn.State` to retain binary128 precision. FloatLib checks the format's width
+and bias constraints in the type. Construct constants from exact rationals, decimal literals, or
+its decimal parser; a prior conversion to `Float` can already discard the additional bits.
+
+Lower the architecture with `nn.lowerToTypedGraph model (α := Scalar)`, then use
+`nn.TypedGraphModel.forward`, `jvp`, or `vjp` with explicit typed state and inputs.
+`NN/Examples/Quickstart/Precision.lean` demonstrates an affine model whose parameter and
+derivative retain `1 + 2^-100`. `NN/Tests/API/Precision.lean` supplies maintained checks at
+several widths and native controls.
+
+This path uses CPU software arithmetic. The supervised trainer's data, reports, checkpoints and
+default initialization pass through `Float`; selecting a wide scalar does not extend those
+boundaries or CUDA kernels. Configured transcendental functions use FloatLib's deterministic
+approximations, without a general accuracy theorem for `exp`, `log`, or their derivatives.
+The default safeguard rounds `1/1000000`, falling back to the smallest positive subnormal when
+that rounds to zero. In a tiny format this may be large; choose explicit tolerances for the problem.
+Normalization separately rounds the exact rational `1/100000`, which remains nonzero in binary16.
+It has no fallback; formats where this tolerance rounds to zero require an explicit positive
+epsilon.
+For three exponent bits and two fraction bits, `nn.layerNorm (width := 2) (eps := (1 / 16 : Rat))`
+uses a representable positive value. Set `eps` before lowering the model to a typed graph.
+The default can otherwise produce NaNs on constant inputs: model validation checks the positive
+rational setting, not the converted scalar. The spec-level `Spec.layerNorm` accepts `epsilon`
+directly in the selected scalar type.
 
 ## Focused Advanced Imports
 
@@ -194,6 +224,8 @@ Advanced tools remain explicit:
 | Fixed-sample benchmark/diagnostic loops | `NN.API.Trainer.FixedSample` |
 | Train and check model robustness | `NN.API.Verification` |
 | Explicit verifier graph lowering and inspection | `NN.API.Verification.Lowering` |
+| Typed tensors/models with selected binary precision | `NN.API.Precision` |
+| Classical model reference definitions | `NN.Spec.Models.<Model>` (for example, `NN.Spec.Models.Knn`) |
 | Full specifications, proofs, and backend internals | `NN` |
 
 Start with the runnable learning path:

@@ -577,14 +577,14 @@ theorem canBroadcastTo_dim_dim_of_rank_eq {m n : Nat} {s t : Shape} (hRank : s.r
     CanBroadcastTo (.dim m s) (.dim n t) ↔ (m = n ∨ m = 1) ∧ CanBroadcastTo s t := by
   show (if s.rank = t.rank then (m = n ∨ m = 1) ∧ CanBroadcastTo s t
     else CanBroadcastTo (.dim m s) t) ↔ _
-  rw [if_pos hRank]
+  rw [ite_eq_left hRank]
 
 /-- A target of larger rank absorbs its leading axis before the extents are compared. -/
 theorem canBroadcastTo_dim_dim_of_rank_ne {m n : Nat} {s t : Shape} (hRank : s.rank ≠ t.rank) :
     CanBroadcastTo (.dim m s) (.dim n t) ↔ CanBroadcastTo (.dim m s) t := by
   show (if s.rank = t.rank then (m = n ∨ m = 1) ∧ CanBroadcastTo s t
     else CanBroadcastTo (.dim m s) t) ↔ _
-  rw [if_neg hRank]
+  rw [ite_eq_right hRank]
 
 /-- The broadcast relation is decidable by the same recursion that defines it. -/
 instance instDecidableCanBroadcastTo : (s t : Shape) → Decidable (CanBroadcastTo s t)

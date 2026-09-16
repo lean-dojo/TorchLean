@@ -6,14 +6,17 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Bridge.ERealTotal
-public import NN.Floats.IEEEExec.Bridge.FP32Total.Order
-public import NN.Floats.IEEEExec.Exec32.Instances
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured
+public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
+public import FloatLib.Floats.Formats.BinaryInterchange.Model.RealSemantics
+public import FloatLib.Floats.Formats.BinaryInterchange.Model.ERealSemantics
+public import FloatLib.Floats.Formats.IEEE754.Native
+public import FloatLib.Floats.Formats.BinaryInterchange.IntervalSemantics.Order
 
 /-!
 # Floating-Point Interval Semantics
 
-Interval-domain semantics for `IEEE32Exec` neural networks.
+Interval-domain semantics for `ExecFloat.Binary 8 23` neural networks.
 
 This file formalizes the interval domain, concretization map, executable interval operators, and
 the exact-interval-image property used by the floating-point interval-approximation theorem of
@@ -23,30 +26,31 @@ Approximators* (`arXiv:2506.16065`).
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat.Binary (isInfinite isNaN signBit toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 
 namespace NN.MLTheory.Proofs.UniversalApproximation
 
-open TorchLean.Floats.IEEE754
+open FloatLib.Floats.Formats.BinaryInterchange
 
 namespace FloatIntervalApprox
-
-open IEEE32Exec
 
 noncomputable section
 
 /-! ## Basic aliases -/
 
 /-- Shorthand for the executable binary32 float type used in this development. -/
-abbrev F : Type := IEEE32Exec
+abbrev F : Type := (ExecFloat.Binary 8 23)
 
 /-!
-`IEEE32Exec` is stored as a `UInt32` bit-pattern, so the carrier is finite. We use this only to
+`ExecFloat.Binary 8 23` is stored as a `UInt32` bit-pattern, so the carrier is finite. We use this
+only to
 obtain `Finset.univ` for paper-style “finite hull” definitions; nothing is computed.
 -/
 
 namespace DecidableInstances
-
-open IEEE32Exec
 
 instance : DecidableRel (fun x y : F => x ≤ y) := by
   classical
@@ -72,64 +76,36 @@ noncomputable instance : Fintype UInt32 := by
   exact Fintype.ofFinite UInt32
 
 /-- Binary32 is finite, since it is determined by its bits. -/
-noncomputable instance : Finite IEEE32Exec := by
+noncomputable instance : Finite (ExecFloat.Binary 8 23) := by
   classical
-  refine Finite.of_injective IEEE32Exec.toBits ?_
+  refine Finite.of_injective ExecFloat.Binary.toBits32 ?_
   intro a b hab
-  cases a
-  cases b
-  cases hab
-  rfl
+  have h := congrArg ExecFloat.Binary.ofBits32 hab
+  simpa only [ExecFloat.Binary.ofBits32_toBits32] using h
 
 /-- Hence a `Fintype`. This is what makes the interval hull below a `Finset` construction and the
 abstract operators exact rather than approximate: the whole float type can be enumerated. -/
-noncomputable instance : Fintype IEEE32Exec := by
+noncomputable instance : Fintype (ExecFloat.Binary 8 23) := by
   classical
-  exact Fintype.ofFinite IEEE32Exec
+  exact Fintype.ofFinite (ExecFloat.Binary 8 23)
 
 end FintypeInstances
 
-/-! ## Small helper lemmas about the `IEEE32Exec` order -/
+/-! ## Small helper lemmas about the `ExecFloat.Binary 8 23` order -/
 
 namespace ExecLemmas
 
-open IEEE32Exec
-
 /-- Comparing a non-NaN float with itself yields `eq`, infinities included. -/
-theorem compare_self_of_isNaN_false (x : F) (hx : IEEE32Exec.isNaN x = false) :
-    IEEE32Exec.compare x x = some .eq := by
-  classical
-  cases hinf : IEEE32Exec.isInf x with
-  | true =>
-      -- `compare` short-circuits on infinities.
-      simp [IEEE32Exec.compare, hx, hinf]
-  | false =>
-      -- For finite, non-NaN values, `toDyadic?` is definitional and comparison reduces to
-      -- `cmpDyadic d d = .eq`.
-      have hdy : ∃ d, IEEE32Exec.toDyadic? x = some d := by
-        unfold IEEE32Exec.toDyadic?
-        -- Reduce to the finite branch and pick the corresponding dyadic witness.
-        simp [hx, hinf]
-        by_cases he : IEEE32Exec.expField x = 0
-        · by_cases hf : IEEE32Exec.fracField x = 0
-          · refine ⟨{ sign := IEEE32Exec.signBit x, mant := 0, exp := 0 }, ?_⟩
-            simp [he, hf]
-          · refine ⟨{ sign := IEEE32Exec.signBit x, mant := (IEEE32Exec.fracField x).toNat, exp :=
-            -149 }, ?_⟩
-            simp [he, hf]
-        · refine
-            ⟨{ sign := IEEE32Exec.signBit x
-              , mant := IEEE32Exec.pow2 23 + (IEEE32Exec.fracField x).toNat
-              , exp := (Int.ofNat (IEEE32Exec.expField x).toNat) - 150 }, ?_⟩
-          simp [he]
-      rcases hdy with ⟨d, hd⟩
-      simp [IEEE32Exec.compare, hx, hinf, hd, IEEE32Exec.cmpDyadic]
+theorem compare_self_of_isNaN_false (x : F) (hx : isNaN x = false) :
+    ExecFloat.compare x x = some .eq := by
+  change Model.compare (toModel x) (toModel x) = some .eq
+  exact Model.compare_self_of_isNaN_eq_false (toModel x) hx
 
 /-- Reflexivity of `≤` away from NaN, which is as much as IEEE 754 order gives. -/
-theorem le_self_of_isNaN_false (x : F) (hx : IEEE32Exec.isNaN x = false) : x ≤ x := by
-  have hcmp : IEEE32Exec.compare x x = some .eq := compare_self_of_isNaN_false (x := x) hx
-  change IEEE32Exec.le x x
-  simp [IEEE32Exec.le, hcmp]
+theorem le_self_of_isNaN_false (x : F) (hx : isNaN x = false) : x ≤ x := by
+  apply FloatLib.Floats.ExecFloat.Binary.le_iff_le_toModel.mpr
+  exact (Model.Interval.le_iff_toEReal_le_of_isNaN_eq_false
+    (toModel x) (toModel x) hx hx).mpr le_rfl
 
 end ExecLemmas
 
@@ -176,7 +152,7 @@ def InCube {d : Nat} (B : Box d) : Prop :=
 /-- Point interval `⟨x,x⟩`. -/
 @[inline] def point (x : F) : I := range x x
 
-theorem mem_point_of_isNaN_false (x : F) (hx : IEEE32Exec.isNaN x = false) : x ∈ point x := by
+theorem mem_point_of_isNaN_false (x : F) (hx : isNaN x = false) : x ∈ point x := by
   dsimp [point]
   -- `x ∈ ⟨x,x⟩` reduces to `x ≤ x ∧ x ≤ x`.
   simp [mem_range_iff, ExecLemmas.le_self_of_isNaN_false (x := x) hx]
@@ -184,7 +160,7 @@ theorem mem_point_of_isNaN_false (x : F) (hx : IEEE32Exec.isNaN x = false) : x �
 /-- Point box `⟨x,x⟩^d`. -/
 @[inline] def pointBox {d : Nat} (x : Fin d → F) : Box d := fun i => point (x i)
 
-theorem mem_pointBox_of_isNaN_false {d : Nat} (x : Fin d → F) (hx : ∀ i, IEEE32Exec.isNaN (x i) =
+theorem mem_pointBox_of_isNaN_false {d : Nat} (x : Fin d → F) (hx : ∀ i, isNaN (x i) =
   false) :
     x ∈ γ (pointBox (d := d) x) := by
   intro i
@@ -198,51 +174,51 @@ namespace OpsExact
 
 open I
 
-/-- Minimum of two `IEEE32Exec` values (NaN-aware, via `IEEE32Exec.minimum`). -/
-@[inline] def min2 (x y : F) : F := IEEE32Exec.minimum x y
+/-- Minimum of two `ExecFloat.Binary 8 23` values (NaN-aware, via `min`). -/
+@[inline] def min2 (x y : F) : F := min x y
 
-/-- Maximum of two `IEEE32Exec` values (NaN-aware, via `IEEE32Exec.maximum`). -/
-@[inline] def max2 (x y : F) : F := IEEE32Exec.maximum x y
+/-- Maximum of two `ExecFloat.Binary 8 23` values (NaN-aware, via `max`). -/
+@[inline] def max2 (x y : F) : F := max x y
 
-/-- Minimum of four `IEEE32Exec` values, computed via nested `min2`. -/
+/-- Minimum of four `ExecFloat.Binary 8 23` values, computed via nested `min2`. -/
 @[inline] def minOfFour (a b c d : F) : F := min2 (min2 a b) (min2 c d)
-/-- Maximum of four `IEEE32Exec` values, computed via nested `max2`. -/
+/-- Maximum of four `ExecFloat.Binary 8 23` values, computed via nested `max2`. -/
 @[inline] def maxOfFour (a b c d : F) : F := max2 (max2 a b) (max2 c d)
 
 /-- Return `true` iff any of the four arguments is `NaN`. -/
 @[inline] def hasNaNAmongFour (a b c d : F) : Bool :=
-  IEEE32Exec.isNaN a || IEEE32Exec.isNaN b || IEEE32Exec.isNaN c || IEEE32Exec.isNaN d
+  isNaN a || isNaN b || isNaN c || isNaN d
 
-/-- Corner-based interval addition for `IEEE32Exec.add`. -/
+/-- Corner-based interval addition for `ExecFloat.add`. -/
 def addSharpCorners : I → I → I
   | I.top, _ => I.top
   | _, I.top => I.top
   | I.range a b, I.range c d =>
-      let p00 := IEEE32Exec.add a c
-      let p01 := IEEE32Exec.add a d
-      let p10 := IEEE32Exec.add b c
-      let p11 := IEEE32Exec.add b d
+      let p00 := ExecFloat.add a c
+      let p01 := ExecFloat.add a d
+      let p10 := ExecFloat.add b c
+      let p11 := ExecFloat.add b d
       if hasNaNAmongFour p00 p01 p10 p11 then
         I.top
       else
         I.range (minOfFour p00 p01 p10 p11) (maxOfFour p00 p01 p10 p11)
 
-/-- Corner-based interval multiplication for `IEEE32Exec.mul`. -/
+/-- Corner-based interval multiplication for `ExecFloat.mul`. -/
 def mulSharpCorners : I → I → I
   | I.top, _ => I.top
   | _, I.top => I.top
   | I.range a b, I.range c d =>
-      let p00 := IEEE32Exec.mul a c
-      let p01 := IEEE32Exec.mul a d
-      let p10 := IEEE32Exec.mul b c
-      let p11 := IEEE32Exec.mul b d
+      let p00 := ExecFloat.mul a c
+      let p01 := ExecFloat.mul a d
+      let p10 := ExecFloat.mul b c
+      let p11 := ExecFloat.mul b d
       if hasNaNAmongFour p00 p01 p10 p11 then
         I.top
   else
         I.range (minOfFour p00 p01 p10 p11) (maxOfFour p00 p01 p10 p11)
 
-/-- Executable ReLU for `IEEE32Exec`, defined via `IEEE32Exec.maximum`. -/
-@[inline] def relu (x : F) : F := IEEE32Exec.maximum x (0 : F)
+/-- Executable ReLU for `ExecFloat.Binary 8 23`, defined via `max`. -/
+@[inline] def relu (x : F) : F := max x (0 : F)
 
 /--
 Exact `ReLU♯` for intervals, using monotonicity of ReLU:
@@ -253,125 +229,34 @@ def reluSharpEndpoints : I → I
   | I.range a b =>
       let ra := relu a
       let rb := relu b
-      if IEEE32Exec.isNaN ra || IEEE32Exec.isNaN rb then I.top else I.range ra rb
+      if isNaN ra || isNaN rb then I.top else I.range ra rb
 
 /-! ### Eq. (8): exact interval hull on finite sets -/
 
 /-- Totalized extended-real interpretation (defaults to `0` only on NaN). -/
 noncomputable def toERealTotal (x : F) : EReal :=
-  if IEEE32Exec.isNaN x then
+  if isNaN x then
     (0 : EReal)
-  else if IEEE32Exec.isInf x then
-    (if IEEE32Exec.signBit x then (⊥ : EReal) else (⊤ : EReal))
+  else if isInfinite x then
+    (if signBit x then (⊥ : EReal) else (⊤ : EReal))
   else
-    (IEEE32Exec.toReal x : EReal)
+    ((toModel x).toReal : EReal)
+
+private theorem toERealTotal_eq_model (x : F) :
+    toERealTotal x = Model.toEReal (toModel x) := by
+  exact (Model.toEReal_eq_ite (toModel x)).symm
 
 /-- Away from NaN, float comparison agrees with the order on `EReal` under the total embedding.
 
 This is the lemma that buys the whole development a linear order to take minima and maxima in:
-`IEEE32Exec` itself has no `LinearOrder`, but its non-NaN part embeds into one. -/
+`ExecFloat.Binary 8 23` itself has no `LinearOrder`, but its non-NaN part embeds into one. -/
 theorem le_iff_toERealTotal_le_of_isNaN_false (x y : F)
-    (hx : IEEE32Exec.isNaN x = false) (hy : IEEE32Exec.isNaN y = false) :
+    (hx : isNaN x = false) (hy : isNaN y = false) :
     x ≤ y ↔ toERealTotal x ≤ toERealTotal y := by
-  classical
-  -- Split on infinities; for the finite branch, use `BridgeFP32Total` compare↔`toReal` lemmas.
-  cases hxInf : IEEE32Exec.isInf x with
-  | true =>
-      cases hyInf : IEEE32Exec.isInf y with
-      | true =>
-          cases hsx : IEEE32Exec.signBit x <;> cases hsy : IEEE32Exec.signBit y <;>
-            (change IEEE32Exec.le x y ↔ _; simp [IEEE32Exec.le, IEEE32Exec.compare, toERealTotal,
-              hx, hy, hxInf, hyInf, hsx, hsy])
-      | false =>
-          cases hsx : IEEE32Exec.signBit x <;>
-            (change IEEE32Exec.le x y ↔ _; simp [IEEE32Exec.le, IEEE32Exec.compare, toERealTotal,
-              hx, hy, hxInf, hyInf, hsx])
-  | false =>
-      cases hyInf : IEEE32Exec.isInf y with
-      | true =>
-          cases hsy : IEEE32Exec.signBit y <;>
-            (change IEEE32Exec.le x y ↔ _; simp [IEEE32Exec.le, IEEE32Exec.compare, toERealTotal,
-              hx, hy, hxInf, hyInf, hsy])
-      | false =>
-          have hxFin : IEEE32Exec.isFinite x = true :=
-            IEEE32Exec.isFinite_eq_true_of_isNaN_eq_false_of_isInf_eq_false (x := x) hx hxInf
-          have hyFin : IEEE32Exec.isFinite y = true :=
-            IEEE32Exec.isFinite_eq_true_of_isNaN_eq_false_of_isInf_eq_false (x := y) hy hyInf
-          have hlt : IEEE32Exec.compare x y = some .lt ↔ IEEE32Exec.toReal x < IEEE32Exec.toReal y
-            :=
-            IEEE32Exec.compare_eq_some_lt_iff_toReal_lt_of_isFinite (x := x) (y := y) hxFin hyFin
-          have heq : IEEE32Exec.compare x y = some .eq ↔ IEEE32Exec.toReal x = IEEE32Exec.toReal y
-            :=
-            IEEE32Exec.compare_eq_some_eq_iff_toReal_eq_of_isFinite (x := x) (y := y) hxFin hyFin
-          have hgt : IEEE32Exec.compare x y = some .gt ↔ IEEE32Exec.toReal y < IEEE32Exec.toReal x
-            :=
-            IEEE32Exec.compare_eq_some_gt_iff_toReal_gt_of_isFinite (x := x) (y := y) hxFin hyFin
-          have hcmp_ne_none : IEEE32Exec.compare x y ≠ none := by
-            intro hcmp
-            unfold IEEE32Exec.compare at hcmp
-            simp [hx, hy, hxInf, hyInf] at hcmp
-            have hxDy : IEEE32Exec.toDyadic? x ≠ none := by
-              intro hxDy
-              have : IEEE32Exec.isFinite x = false :=
-                IEEE32Exec.isFinite_eq_false_of_toDyadic?_eq_none (x := x) hxDy
-              have h := this
-              rw [hxFin] at h
-              cases h
-            have hyDy : IEEE32Exec.toDyadic? y ≠ none := by
-              intro hyDy
-              have : IEEE32Exec.isFinite y = false :=
-                IEEE32Exec.isFinite_eq_false_of_toDyadic?_eq_none (x := y) hyDy
-              have h := this
-              rw [hyFin] at h
-              cases h
-            cases hxdy : IEEE32Exec.toDyadic? x with
-            | none =>
-                exact (hxDy hxdy).elim
-            | some dx =>
-                cases hydy : IEEE32Exec.toDyadic? y with
-                | none =>
-                    exact (hyDy hydy).elim
-                | some dy =>
-                    simp [hxdy, hydy] at hcmp
-          constructor
-          · intro hxy
-            change IEEE32Exec.le x y at hxy
-            cases hcmp : IEEE32Exec.compare x y with
-            | none =>
-                exact False.elim (hcmp_ne_none hcmp)
-            | some o =>
-                cases o with
-                | lt =>
-                    have hto : IEEE32Exec.toReal x < IEEE32Exec.toReal y := (hlt).1 (by simp [hcmp])
-                    have hle : (IEEE32Exec.toReal x : EReal) ≤ (IEEE32Exec.toReal y : EReal) := by
-                      simpa [EReal.coe_le_coe_iff] using le_of_lt hto
-                    simpa [toERealTotal, hx, hy, hxInf, hyInf] using hle
-                | eq =>
-                    have hto : IEEE32Exec.toReal x = IEEE32Exec.toReal y := (heq).1 (by simp [hcmp])
-                    have hle : (IEEE32Exec.toReal x : EReal) ≤ (IEEE32Exec.toReal y : EReal) := by
-                      simpa [EReal.coe_le_coe_iff] using le_of_eq hto
-                    simpa [toERealTotal, hx, hy, hxInf, hyInf] using hle
-                | gt =>
-                    have : False := by
-                      simp [IEEE32Exec.le, hcmp] at hxy
-                    exact this.elim
-          · intro hxy
-            change IEEE32Exec.le x y
-            cases hcmp : IEEE32Exec.compare x y with
-            | none =>
-                exact False.elim (hcmp_ne_none hcmp)
-            | some o =>
-                cases o with
-                | lt => simp [IEEE32Exec.le, hcmp]
-                | eq => simp [IEEE32Exec.le, hcmp]
-                | gt =>
-                    have hto : IEEE32Exec.toReal y < IEEE32Exec.toReal x := (hgt).1 (by simp [hcmp])
-                    have hnot : ¬ (IEEE32Exec.toReal x : EReal) ≤ (IEEE32Exec.toReal y : EReal) :=
-                      by
-                      simpa [EReal.coe_le_coe_iff] using (not_le_of_gt hto)
-                    have hxy' : (IEEE32Exec.toReal x : EReal) ≤ (IEEE32Exec.toReal y : EReal) := by
-                      simpa [toERealTotal, hx, hy, hxInf, hyInf] using hxy
-                    exact (hnot hxy').elim
+  rw [toERealTotal_eq_model, toERealTotal_eq_model,
+    FloatLib.Floats.ExecFloat.Binary.le_iff_le_toModel]
+  exact Model.Interval.le_iff_toEReal_le_of_isNaN_eq_false
+    (toModel x) (toModel y) hx hy
 
 /-- A nonempty finite set of floats has an element attaining the minimum of its `EReal` image. -/
 theorem exists_chooseMin (s : Finset F) (hs : s.Nonempty) :
@@ -422,7 +307,7 @@ Interval hull for a finite set of floats:
 - the interval `⟨min S, max S⟩`.
 -/
 noncomputable def hull (s : Finset F) : I :=
-  if _hnan : ∃ x ∈ s, IEEE32Exec.isNaN x = true then
+  if _hnan : ∃ x ∈ s, isNaN x = true then
     I.top
   else if hs : s.Nonempty then
     I.range (chooseMin s hs) (chooseMax s hs)
@@ -434,17 +319,17 @@ reduce to this one fact. -/
 theorem mem_hull_of_mem (s : Finset F) {x : F} (hx : x ∈ s) : x ∈ hull s := by
   classical
   unfold hull
-  by_cases hnan : ∃ z ∈ s, IEEE32Exec.isNaN z = true
+  by_cases hnan : ∃ z ∈ s, isNaN z = true
   · simp [hnan, I.mem_top]
   · have hs : s.Nonempty := ⟨x, hx⟩
-    have hn : ∀ z, z ∈ s → IEEE32Exec.isNaN z = false := by
+    have hn : ∀ z, z ∈ s → isNaN z = false := by
       intro z hz
       by_contra hz'
-      have : IEEE32Exec.isNaN z = true := by simpa using hz'
+      have : isNaN z = true := by simpa using hz'
       exact hnan ⟨z, hz, this⟩
-    have hxNaN : IEEE32Exec.isNaN x = false := hn x hx
-    have hminNaN : IEEE32Exec.isNaN (chooseMin s hs) = false := hn _ (chooseMin_spec s hs).1
-    have hmaxNaN : IEEE32Exec.isNaN (chooseMax s hs) = false := hn _ (chooseMax_spec s hs).1
+    have hxNaN : isNaN x = false := hn x hx
+    have hminNaN : isNaN (chooseMin s hs) = false := hn _ (chooseMin_spec s hs).1
+    have hmaxNaN : isNaN (chooseMax s hs) = false := hn _ (chooseMax_spec s hs).1
     -- bounds in `EReal` from min'/max' on the image
     have hminE :
         toERealTotal (chooseMin s hs) ≤ toERealTotal x := by
@@ -505,14 +390,14 @@ noncomputable def addSharp : I → I → I
   | I.top, _ => I.top
   | _, I.top => I.top
   | A, B =>
-      hull <| (γFinsetBox (box2 A B)).image (fun p => IEEE32Exec.add (p 0) (p 1))
+      hull <| (γFinsetBox (box2 A B)).image (fun p => ExecFloat.add (p 0) (p 1))
 
 /-- Abstract multiplication `*♯`, again as the hull of the concrete image over the box. -/
 noncomputable def mulSharp : I → I → I
   | I.top, _ => I.top
   | _, I.top => I.top
   | A, B =>
-      hull <| (γFinsetBox (box2 A B)).image (fun p => IEEE32Exec.mul (p 0) (p 1))
+      hull <| (γFinsetBox (box2 A B)).image (fun p => ExecFloat.mul (p 0) (p 1))
 
 /-- Abstract ReLU, the hull of the concrete image. -/
 noncomputable def reluSharp : I → I
@@ -530,7 +415,7 @@ def sumSharp {n : Nat} (ts : Fin n → I) : I :=
 
 The `Sound` class isolates the operation-level obligations used by higher-level semantic proofs.
 The addition, multiplication, and ReLU obligations are proved below, followed by the canonical
-`IEEE32Exec` instance.
+`ExecFloat.Binary 8 23` instance.
 -/
 
 /-- The per-operation soundness obligations the interval semantics rests on: every abstract
@@ -538,17 +423,17 @@ operation must contain the concrete result of any pair of members of its argumen
 class Sound : Prop where
   /-- Abstract addition contains every concrete sum of members. -/
   add_sound :
-    ∀ {A B : I} {x y : F}, x ∈ A → y ∈ B → IEEE32Exec.add x y ∈ addSharp A B
+    ∀ {A B : I} {x y : F}, x ∈ A → y ∈ B → ExecFloat.add x y ∈ addSharp A B
   /-- Abstract multiplication contains every concrete product of members. -/
   mul_sound :
-    ∀ {A B : I} {x y : F}, x ∈ A → y ∈ B → IEEE32Exec.mul x y ∈ mulSharp A B
+    ∀ {A B : I} {x y : F}, x ∈ A → y ∈ B → ExecFloat.mul x y ∈ mulSharp A B
   /-- Abstract ReLU contains the concrete ReLU of every member. -/
   relu_sound :
     ∀ {A : I} {x : F}, x ∈ A → relu x ∈ reluSharp A
 
 /-- Soundness of abstract addition: concrete sums of members stay in the abstract sum. -/
 theorem add_sound (A B : I) :
-    ∀ {x y : F}, x ∈ A → y ∈ B → IEEE32Exec.add x y ∈ addSharp A B := by
+    ∀ {x y : F}, x ∈ A → y ∈ B → ExecFloat.add x y ∈ addSharp A B := by
   intro x y hx hy
   cases A with
   | top =>
@@ -563,8 +448,8 @@ theorem add_sound (A B : I) :
             exact (Fin.forall_fin_two).2 ⟨by simpa [pair, box2] using hx, by simpa [pair, box2]
               using hy⟩
           have hmem :
-              IEEE32Exec.add x y ∈
-                (γFinsetBox (box2 (I.range a b) (I.range c d))).image (fun p => IEEE32Exec.add (p 0)
+              ExecFloat.add x y ∈
+                (γFinsetBox (box2 (I.range a b) (I.range c d))).image (fun p => ExecFloat.add (p 0)
                   (p 1)) := by
             refine Finset.mem_image.mpr ?_
             refine ⟨pair x y, hp, ?_⟩
@@ -573,7 +458,7 @@ theorem add_sound (A B : I) :
 
 /-- Soundness of abstract multiplication. -/
 theorem mul_sound (A B : I) :
-    ∀ {x y : F}, x ∈ A → y ∈ B → IEEE32Exec.mul x y ∈ mulSharp A B := by
+    ∀ {x y : F}, x ∈ A → y ∈ B → ExecFloat.mul x y ∈ mulSharp A B := by
   intro x y hx hy
   cases A with
   | top =>
@@ -588,8 +473,8 @@ theorem mul_sound (A B : I) :
             exact (Fin.forall_fin_two).2 ⟨by simpa [pair, box2] using hx, by simpa [pair, box2]
               using hy⟩
           have hmem :
-              IEEE32Exec.mul x y ∈
-                (γFinsetBox (box2 (I.range a b) (I.range c d))).image (fun p => IEEE32Exec.mul (p 0)
+              ExecFloat.mul x y ∈
+                (γFinsetBox (box2 (I.range a b) (I.range c d))).image (fun p => ExecFloat.mul (p 0)
                   (p 1)) := by
             refine Finset.mem_image.mpr ?_
             refine ⟨pair x y, hp, ?_⟩
@@ -628,14 +513,10 @@ Proved by induction on the list rather than on `Fin n`, so that the accumulator 
 the base case needs `0 ∈ ⟨0, 0⟩`, which is where the non-NaN side condition on zero comes in. -/
 theorem sumSharp_sound [Sound] {n : Nat} (ts : Fin n → I) (t : Fin n → F)
     (ht : ∀ i, t i ∈ ts i) :
-    (List.finRange n).foldl (fun acc i => IEEE32Exec.add acc (t i)) (0 : F) ∈ sumSharp ts
+    (List.finRange n).foldl (fun acc i => ExecFloat.add acc (t i)) (0 : F) ∈ sumSharp ts
       := by
   -- Prove the stronger list-induction form, then instantiate with `List.finRange n`.
-  have hz : IEEE32Exec.isNaN (0 : F) = false := by
-    -- For `IEEE32Exec`, `0` is definitionally `posZero = ofBits 0`.
-    change IEEE32Exec.isNaN (IEEE32Exec.posZero : F) = false
-    simp [IEEE32Exec.isNaN, IEEE32Exec.posZero, IEEE32Exec.ofBits, IEEE32Exec.expField,
-      IEEE32Exec.fracField, IEEE32Exec.expAllOnes]
+  have hz : isNaN (0 : F) = false := by decide
   have h0 : (0 : F) ∈ (I.range (0 : F) (0 : F)) := by
     -- Avoid rewriting via `point` to keep simp from collapsing `∧` goals.
     exact And.intro (ExecLemmas.le_self_of_isNaN_false (x := (0 : F)) hz)
@@ -643,7 +524,7 @@ theorem sumSharp_sound [Sound] {n : Nat} (ts : Fin n → I) (t : Fin n → F)
   have hList :
       ∀ (l : List (Fin n)) (accI : I) (accV : F),
         accV ∈ accI →
-          (l.foldl (fun acc i => IEEE32Exec.add acc (t i)) accV) ∈
+          (l.foldl (fun acc i => ExecFloat.add acc (t i)) accV) ∈
             (l.foldl (fun acc i => addSharp acc (ts i)) accI) := by
     intro l
     induction l with
@@ -653,10 +534,10 @@ theorem sumSharp_sound [Sound] {n : Nat} (ts : Fin n → I) (t : Fin n → F)
     | cons i l ih =>
         intro accI accV hacc
         have hi : t i ∈ ts i := ht i
-        have hstep : IEEE32Exec.add accV (t i) ∈ addSharp accI (ts i) :=
+        have hstep : ExecFloat.add accV (t i) ∈ addSharp accI (ts i) :=
           Sound.add_sound (A := accI) (B := ts i) (x := accV) (y := t i) hacc hi
         simpa using
-          (ih (accI := addSharp accI (ts i)) (accV := IEEE32Exec.add accV (t i)) hstep)
+          (ih (accI := addSharp accI (ts i)) (accV := ExecFloat.add accV (t i)) hstep)
   -- Finish by unfolding `sumSharp` and using the list induction lemma.
   simpa [sumSharp] using hList (List.finRange n) (I.range (0 : F) (0 : F))
     (0 : F) h0
@@ -747,9 +628,9 @@ def aff {d m : Nat} (W : Fin m → Fin d → F) (b : Fin m → F) (x : Fin d →
   fun i =>
     let s :=
       (List.finRange d).foldl
-        (fun acc j => IEEE32Exec.add acc (IEEE32Exec.mul (W i j) (x j)))
+        (fun acc j => ExecFloat.add acc (ExecFloat.mul (W i j) (x j)))
         (0 : F)
-    IEEE32Exec.add s (b i)
+    ExecFloat.add s (b i)
 
 /-- Evaluate a 2-layer ReLU MLP on a concrete input, using the exact op wrappers (`OpsExact.relu`).
   -/
@@ -779,12 +660,12 @@ Weights enter as point intervals, so the proof is `mulSharp` soundness coordinat
 `sumSharp` soundness, then one `addSharp` for the bias, in exactly the order `aff` computes. -/
 theorem aff_sound [OpsExact.Sound] {d m : Nat}
     (W : Fin m → Fin d → F) (b : Fin m → F) (B : I.Box d)
-    (hW : ∀ i j, IEEE32Exec.isNaN (W i j) = false)
-    (hb : ∀ i, IEEE32Exec.isNaN (b i) = false) :
+    (hW : ∀ i j, isNaN (W i j) = false)
+    (hb : ∀ i, isNaN (b i) = false) :
     ∀ {x : Fin d → F}, x ∈ I.γ B → aff W b x ∈ I.γ (affSharp W b B) := by
   intro x hx i
   -- Soundness of each multiplicative term.
-  have hterms : ∀ j, IEEE32Exec.mul (W i j) (x j) ∈ OpsExact.mulSharp (I.range (W i j) (W i j)) (B
+  have hterms : ∀ j, ExecFloat.mul (W i j) (x j) ∈ OpsExact.mulSharp (I.range (W i j) (W i j)) (B
     j) := by
     intro j
     have hWij : (W i j) ∈ I.point (W i j) := I.mem_point_of_isNaN_false (x := W i j) (hW i j)
@@ -794,19 +675,19 @@ theorem aff_sound [OpsExact.Sound] {d m : Nat}
     exact OpsExact.Sound.mul_sound (A := I.range (W i j) (W i j)) (B := B j) hWij' hxj
   -- Sum soundness via `◦∑♯`.
   have hsum :
-      (List.finRange d).foldl (fun acc j => IEEE32Exec.add acc (IEEE32Exec.mul (W i j) (x j)))
+      (List.finRange d).foldl (fun acc j => ExecFloat.add acc (ExecFloat.mul (W i j) (x j)))
         (0 : F)
         ∈ OpsExact.sumSharp (fun j => OpsExact.mulSharp (I.range (W i j) (W i j)) (B j)) := by
     -- Apply `sumSharp_sound` with the instantiated term intervals and values.
     simpa using
       (OpsExact.sumSharp_sound (ts := fun j => OpsExact.mulSharp (I.range (W i j) (W i j)) (B j))
-        (t := fun j => IEEE32Exec.mul (W i j) (x j)) hterms)
+        (t := fun j => ExecFloat.mul (W i j) (x j)) hterms)
   -- Add the bias (a point interval).
   have hbi : (b i) ∈ (I.range (b i) (b i)) := by
     simpa [I.point] using (I.mem_point_of_isNaN_false (x := b i) (hb i))
   have hfinal :
-      IEEE32Exec.add
-          ((List.finRange d).foldl (fun acc j => IEEE32Exec.add acc (IEEE32Exec.mul (W i j) (x j)))
+      ExecFloat.add
+          ((List.finRange d).foldl (fun acc j => ExecFloat.add acc (ExecFloat.mul (W i j) (x j)))
             (0 : F))
           (b i)
         ∈ OpsExact.addSharp
@@ -819,10 +700,10 @@ theorem aff_sound [OpsExact.Sound] {d m : Nat}
 
 /-- The abstract semantics `ν♯` of a two-layer ReLU network overapproximates the concrete one. -/
 theorem eval_sound [OpsExact.Sound] {d h : Nat} (net : Net d h) (B : I.Box d)
-    (hW1 : ∀ i j, IEEE32Exec.isNaN (net.W1 i j) = false)
-    (hb1 : ∀ i, IEEE32Exec.isNaN (net.b1 i) = false)
-    (hW2 : ∀ i j, IEEE32Exec.isNaN (net.W2 i j) = false)
-    (hb2 : ∀ i, IEEE32Exec.isNaN (net.b2 i) = false) :
+    (hW1 : ∀ i j, isNaN (net.W1 i j) = false)
+    (hb1 : ∀ i, isNaN (net.b1 i) = false)
+    (hW2 : ∀ i j, isNaN (net.W2 i j) = false)
+    (hb2 : ∀ i, isNaN (net.b2 i) = false) :
     ∀ {x : Fin d → F}, x ∈ I.γ B → eval net x ∈ evalSharp net B := by
   intro x hx
   -- First affine layer.
@@ -847,10 +728,10 @@ theorem eval_sound [OpsExact.Sound] {d h : Nat} (net : Net d h) (B : I.Box d)
 This is the form the approximation theorem cites, since it speaks about images of sets rather than
 about individual points. -/
 theorem interval_semantics_sound [OpsExact.Sound] {d h : Nat} (net : Net d h) (B : I.Box d)
-    (hW1 : ∀ i j, IEEE32Exec.isNaN (net.W1 i j) = false)
-    (hb1 : ∀ i, IEEE32Exec.isNaN (net.b1 i) = false)
-    (hW2 : ∀ i j, IEEE32Exec.isNaN (net.W2 i j) = false)
-    (hb2 : ∀ i, IEEE32Exec.isNaN (net.b2 i) = false) :
+    (hW1 : ∀ i j, isNaN (net.W1 i j) = false)
+    (hb1 : ∀ i, isNaN (net.b1 i) = false)
+    (hW2 : ∀ i j, isNaN (net.W2 i j) = false)
+    (hb2 : ∀ i, isNaN (net.b2 i) = false) :
     Set.image (eval net) (I.γ B) ⊆ I.γI (evalSharp net B) := by
   intro y hy
   rcases hy with ⟨x, hx, rfl⟩
@@ -861,11 +742,11 @@ theorem interval_semantics_sound [OpsExact.Sound] {d h : Nat} (net : Net d h) (B
 Worth stating separately because it says the abstraction has no false negatives at single inputs,
 which is what a verifier reports back to a user. -/
 theorem eval_sound_pointBox [OpsExact.Sound] {d h : Nat} (net : Net d h) (x : Fin d → F)
-    (hx : ∀ i, IEEE32Exec.isNaN (x i) = false)
-    (hW1 : ∀ i j, IEEE32Exec.isNaN (net.W1 i j) = false)
-    (hb1 : ∀ i, IEEE32Exec.isNaN (net.b1 i) = false)
-    (hW2 : ∀ i j, IEEE32Exec.isNaN (net.W2 i j) = false)
-    (hb2 : ∀ i, IEEE32Exec.isNaN (net.b2 i) = false) :
+    (hx : ∀ i, isNaN (x i) = false)
+    (hW1 : ∀ i j, isNaN (net.W1 i j) = false)
+    (hb1 : ∀ i, isNaN (net.b1 i) = false)
+    (hW2 : ∀ i j, isNaN (net.W2 i j) = false)
+    (hb2 : ∀ i, isNaN (net.b2 i) = false) :
     eval net x ∈ evalSharp net (I.pointBox (d := d) x) := by
   have hxBox : x ∈ I.γ (I.pointBox (d := d) x) := I.mem_pointBox_of_isNaN_false (x := x) hx
   exact eval_sound (net := net) (B := I.pointBox (d := d) x) hW1 hb1 hW2 hb2 hxBox

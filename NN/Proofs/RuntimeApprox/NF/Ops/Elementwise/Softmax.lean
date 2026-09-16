@@ -41,22 +41,23 @@ noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 open Proofs.RuntimeRoundingApprox
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 /-- Runtime numerator `exp x` of the rounded logistic node. -/
 def logisticNumR (xR : R) : R :=
-  MathFunctions.exp xR
+  Numerics.MathFunctions.exp xR
 
 /-- Runtime denominator `exp x + 1` of the rounded logistic node, exactly as it appears inside
 `Activation.Math.logisticSpec` at the `NF` backend. -/
 def logisticDenomR (xR : R) : R :=
-  MathFunctions.exp xR + (1 : R)
+  Numerics.MathFunctions.exp xR + (1 : R)
 
 /-- Numerator error budget of the logistic node: one rounded exponential at input error `eps`. -/
 def logisticNumError (eps : ℝ) (xR : R) : ℝ :=
@@ -67,25 +68,25 @@ and one addition rounding. -/
 def logisticDenomError (eps : ℝ) (xR : R) : ℝ :=
   logisticNumError (β := β) (fexp := fexp) (rnd := rnd) eps xR +
     oneEps (β := β) (fexp := fexp) +
-    neuralUlp β fexp
-      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.exp xR) +
+    ulp β fexp
+      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (Numerics.MathFunctions.exp xR) +
         toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R)) / 2
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /-- `logisticNumError` is nonnegative for nonnegative input error. -/
 theorem logisticNumError_nonneg {eps : ℝ} (xR : R) (heps : 0 ≤ eps) :
     0 ≤ logisticNumError (β := β) (fexp := fexp) (rnd := rnd) eps xR :=
   expErrorBound_nonneg (β := β) (fexp := fexp) _ heps
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /-- `logisticDenomError` is nonnegative for nonnegative input error. -/
 theorem logisticDenomError_nonneg {eps : ℝ} (xR : R) (heps : 0 ≤ eps) :
     0 ≤ logisticDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR := by
   unfold logisticDenomError
   have h1 := logisticNumError_nonneg (β := β) (fexp := fexp) (rnd := rnd) xR heps
   have h2 := oneEps_nonneg (β := β) (fexp := fexp)
-  have h3 := neuralUlp.nonneg β fexp
-    (toSpec (β := β) (fexp := fexp) (rnd := rnd) (MathFunctions.exp xR) +
+  have h3 := ulp.nonneg β fexp
+    (toSpec (β := β) (fexp := fexp) (rnd := rnd) (Numerics.MathFunctions.exp xR) +
       toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R))
   linarith
 
@@ -138,7 +139,7 @@ private theorem approx_logistic_nf {x : ℝ} {xR : R} {eps : ℝ}
       Activation.Math.logisticSpec (α := R) xR = logisticNumR xR / logisticDenomR xR := rfl
   have hspec :
       Activation.Math.logisticSpec (α := ℝ) x = Real.exp x / (Real.exp x + 1) := by
-    simp [Activation.Math.logisticSpec, MathFunctions.exp]
+    simp [Activation.Math.logisticSpec, Numerics.MathFunctions.exp]
   unfold softmaxBoundScalar
   split_ifs with hcert
   · rw [hspecR, hspec]
@@ -162,7 +163,7 @@ private theorem approx_logistic_nf {x : ℝ} {xR : R} {eps : ℝ}
             rw [abs_of_pos hpos]
             linarith
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /-- Regression: under the half-margin certificate `logisticDenomError eps xR ≤ 1 / 2`, the logistic
 bound is linear in the numerator budget, the denominator budget, and one output rounding. -/
 theorem softmax_bound_scalar_le_of_denom_le_half {eps : ℝ} (xR : R) (heps : 0 ≤ eps)
@@ -172,21 +173,21 @@ theorem softmax_bound_scalar_le_of_denom_le_half {eps : ℝ} (xR : R) (heps : 0 
         (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (logisticNumR xR)) +
             logisticNumError (β := β) (fexp := fexp) (rnd := rnd) eps xR) *
           (4 * logisticDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR) +
-        neuralUlp β fexp
+        ulp β fexp
           (toSpec (β := β) (fexp := fexp) (rnd := rnd) (logisticNumR xR) /
             toSpec (β := β) (fexp := fexp) (rnd := rnd) (logisticDenomR xR)) / 2 := by
   have hnum0 := logisticNumError_nonneg (β := β) (fexp := fexp) (rnd := rnd) xR heps
   have hden0 := logisticDenomError_nonneg (β := β) (fexp := fexp) (rnd := rnd) xR heps
   have hlt : logisticDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR < 1 := by linarith
   unfold softmaxBoundScalar
-  rw [if_pos hlt]
+  rw [ite_eq_left hlt]
   have h := divPosErrorBound_le_of_epsy_le_half (β := β) (fexp := fexp) (η := 1)
     (xhat := toSpec (β := β) (fexp := fexp) (rnd := rnd) (logisticNumR xR))
     (yhat := toSpec (β := β) (fexp := fexp) (rnd := rnd) (logisticDenomR xR))
     one_pos hnum0 hden0 (by linarith)
   exact h.trans (le_of_eq (by ring))
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /-- Regression: when the rounded numerator `exp(x̂)` is at most `1` (the nonpositive half line),
 the numerator and denominator budgets are at most `1/16`, and the output half ulp is at most `1/4`,
 the logistic bound is at most `1`. -/
@@ -194,7 +195,7 @@ theorem softmax_bound_scalar_le_one {eps : ℝ} (xR : R) (heps : 0 ≤ eps)
     (hnumHat : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (logisticNumR xR)) ≤ 1)
     (hnum : logisticNumError (β := β) (fexp := fexp) (rnd := rnd) eps xR ≤ 1 / 16)
     (hden : logisticDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR ≤ 1 / 16)
-    (hulp : neuralUlp β fexp
+    (hulp : ulp β fexp
       (toSpec (β := β) (fexp := fexp) (rnd := rnd) (logisticNumR xR) /
         toSpec (β := β) (fexp := fexp) (rnd := rnd) (logisticDenomR xR)) ≤ 1 / 2) :
     softmaxBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps xR ≤ 1 := by

@@ -24,7 +24,7 @@ adjoint of the graph JVP, construct the proof-carrying `Proofs.Autograd.Algebra.
 include their local adjointness laws.
 
 Notes / trust boundaries:
-- If you instantiate `α := Float` or `α := TorchLean.Floats.IEEE754.IEEE32Exec`, you get an
+- If you instantiate `α := Float` or `α := FloatLib.Floats.ExecFloat.Binary 8 23`, you get an
   executable engine,
   but connecting those runs to real hardware semantics is treated as a trusted interface.
 - The proof-carrying graph (`Proofs.Autograd.Algebra.Graph`) is available for backends

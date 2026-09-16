@@ -40,9 +40,8 @@ $$`
 \longrightarrow \text{typed handler}.
 `
 
-The sections below trace that path from an operation request to the handler that executes it. Every
-plan, rejection, and report on this page is produced by running the planner during elaboration, so
-what you read is what the current code decides.
+The Lean examples run the planner during elaboration. We can ask it to select an attention kernel,
+misfile a contract deliberately, and inspect the rejection before any kernel executes.
 
 Device selection first requires a profile. There are nine device constructors, and maintained
 profiles exist for two of them:
@@ -141,12 +140,8 @@ The sources are {src "NN/Backend/Capsule.lean"}[`Capsule.lean`] for the record a
 [installation and kernel
 overview](https://lean-dojo.github.io/TorchLean/installation/#from-a-model-to-a-kernel).
 
-The first registry output rejects the second occurrence of the name `libtorch`; it is checking
-the identity of contributed modules. The second accepts the maintained module collection. Neither
-result launches attention or compares two numerical answers. This check matters when an extension
-adds capsules: silently registering the same module twice could make catalog order and fallback
-hard to understand. Once modules have distinct names, the planner can still consider several
-implementations of one semantic operation and select among them using the profile.
+The registry rejects the duplicate `libtorch` name. Distinct modules
+can still contribute implementations of the same operation; the profile decides which one to use.
 
 # Capsule Contracts And Evidence
 
@@ -227,13 +222,8 @@ capsules whose evidence is guards and tests. A capsule whose value contract rest
 boundary is admitted only under the explicit `external` policy, even if the capsule itself is
 labelled `checked`: the contract check reads the evidence, not the label.
 
-The pair `(true, false)` isolates a bookkeeping invariant: the original capsule places each
-claim in its matching field, while the edited capsule puts a value claim where a shape claim is
-required. The subsequent error demonstrates that this mismatch affects selection. It would not
-be enough merely to print a warning and then execute the capsule. Conversely, alignment alone
-cannot establish that the named tests cover the implementation well. The descriptor separates
-what is claimed from what kind of evidence is offered, and the policy checks both at their
-respective boundaries.
+Alignment checks that each claim belongs in its assigned field. Whether a named test adequately
+covers that claim remains a separate question about the test and implementation.
 
 For a matrix product, layout and numerical policy answer different questions. Layout determines
 which stored elements are interpreted as each row and column. Reduction policy determines the
@@ -352,12 +342,9 @@ tensor call site, including the unsupported dtype. TorchLean's planner returns a
 execution that tools can store, compare across builds, or attach to a benchmark. Runtime binding
 and hardware checks still follow; a successful plan alone does not establish that a kernel ran.
 
-The successful PyTorch output is only an output shape. It establishes that the call returned a
-tensor with the expected batch, head, sequence, and feature dimensions; it does not identify a
-kernel from that tensor alone. The failure transcript concerns a different request with CUDA
-double-precision inputs. Such retained messages describe the tested build and invocation, not a
-universal rule for every PyTorch version. For either system, a useful provider comparison needs
-matching dtypes and operation settings in addition to matching output shapes.
+The failed request uses CUDA double-precision inputs, while the successful request uses CPU
+tensors. These transcripts describe those builds and invocations. To compare providers, we would
+also need to match the dtypes and operation settings.
 
 # The Attention Specification Theorem
 
@@ -972,14 +959,9 @@ provider and the evidence attached to it. Keeping that report beside a benchmark
 concrete: readers can see which operations were native or external and which guards and tests stand
 behind each one.
 
-Assessing a claim about a run requires identifying:
-
-1. which capsule answered the operation, and under which profile;
-2. which of the four obligations the claim depends on;
-3. what the evidence label for that obligation actually says.
-
-These answers identify the implementation and the scope of its recorded evidence. Assessing the
-claim still requires checking that the cited guard, test, or trusted boundary supports it.
+For example, a shape guard cannot justify a claim about attention's numerical result. Follow the
+selected capsule's value obligation to its cited test or trusted boundary, then check what that
+evidence covers.
 
 # Related Chapters
 

@@ -54,9 +54,9 @@ autograd relates a reverse rule to the derivative of the forward map; runtime ap
 rounded execution to ideal arithmetic. These are different proof systems, but each begins by
 naming two objects and the relation that is supposed to connect them.
 
-We will follow one three-node graph through the IR evaluator and its lowered forward graph.
-Their executions show what is being compared; the lowering theorem states the conditions under
-which the two value tables agree for every input.
+For a three-node affine-ReLU graph, we can inspect both value tables directly, including the
+pre-activation that ReLU partly erases. The lowering theorem then states when those tables agree
+for every input.
 
 # Proof Obligations As Relations
 
@@ -91,9 +91,9 @@ which proof or checker to run.
 
 The idea is old enough to have a name. Proof-carrying code {Informal.citep necula1997}[] made the
 same move for machine code: an untrusted producer ships a proof alongside the artifact, and the host
-runs a small trusted checker rather than trusting the compiler. What is new in the neural-network
-setting is only the semantic object, which is now a tensor program with shapes, axis conventions,
-and a scalar interpretation, rather than a machine-code fragment with a memory-safety policy.
+runs a small trusted checker rather than trusting the compiler. For a tensor program, the semantic
+object includes shapes, axis conventions, and a scalar interpretation. The relation must preserve
+those choices through each translation.
 
 # IR Lowering Correctness
 
@@ -234,8 +234,7 @@ The current proof is split for auditability:
   {src "NN/Runtime/Autograd/IRExec/Correctness/SemanticEquivalence.lean"}[semantic equivalence
   theorem API] ties the cases together into `denoteAll_eq_of_lowerToForwardGraph`.
 
-That split is a deliberate reaction to how the proof behaves under maintenance. The recursive
-theorem walks every node kind, so a goal in the middle of it mentions shape equality, `Except`
+The recursive theorem walks every node kind, so a goal in the middle of it mentions shape equality, `Except`
 success and failure paths, and cast proof irrelevance at the same time. Separating operator families
 helps isolate proof failures; adding an operation can still require
 changes to its lowering, local preservation lemmas, and the recursive proof.
@@ -573,7 +572,7 @@ Except.error "IR eval: log: input contains values <= 0
 Except.ok [NaN, 0.693147]
 ```
 
-The IR denotation is *partial*: the scientific positive-input domain excludes $`-1` , so the
+The IR denotation is *partial*: the positive-input domain excludes $`-1`, so the
 evaluator refuses and
 says which operator refused and what to use instead. The lowered closure is *total*: it applies the
 specification logarithm to every input and returns a NaN. Both behaviors are defensible, and neither
@@ -741,9 +740,9 @@ For concatenation on the middle axis, it prints the output shape and leading val
 If shape validation or lowering fails, the runtime returns an error and the example reports it.
 
 This distinction matters. The semantic language can describe more
-programs than a particular lowering theorem or runtime path currently covers. A clean system
-rejects or skips the unsupported lowering; it does not infer correctness from the fact that a
-different implementation happened to return an array of the expected shape.
+programs than a particular lowering theorem or runtime path currently covers. Returning an array
+of the expected shape would not establish correctness for an unsupported operation; the lowering
+path must either justify that operation or reject it.
 
 The executable negative cases in
 {src "NN/Tests/IR/ShapeContracts.lean"}[`IR.ShapeContracts`]

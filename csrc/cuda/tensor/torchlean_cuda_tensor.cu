@@ -75,7 +75,7 @@ struct torchlean_cuda_cached_block {
   cudaEvent_t ready;
 };
 
-static void torchlean_cuda_free_best_effort(void* ptr, const char* what);
+static bool torchlean_cuda_free_best_effort(void* ptr, const char* what);
 static void torchlean_cuda_destroy_event_best_effort(cudaEvent_t event, const char* what);
 static void torchlean_cuda_synchronize_event_best_effort(cudaEvent_t event, const char* what);
 
@@ -83,23 +83,20 @@ static pthread_mutex_t g_torchlean_cuda_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 static torchlean_cuda_cached_block* g_torchlean_cuda_cache = nullptr;
 static size_t g_torchlean_cuda_cache_count = 0;
 static size_t g_torchlean_cuda_cache_slot_capacity = 0;
-// Total device bytes currently held in the reuse cache (sum of the cached blocks' byte sizes),
-// guarded by `g_torchlean_cuda_cache_mutex`. The cache holds buffers Lean has already dropped, so
-// these bytes are NOT counted in `live_bytes`; left unbounded the cache can grow without limit.
-static size_t g_torchlean_cuda_cache_bytes = 0;
+// Retained device bytes across the tensor cache and every translation unit's scratch cache.
+// A reservation covers a block from the time it is returned until it is reused or freed. Live
+// tensors and workspaces do not consume this budget; no device memory is allocated in advance.
+static std::atomic<size_t> g_torchlean_cuda_cache_bytes{0};
 
-// Optional byte cap on the reuse cache, read once from the environment.
-// `TORCHLEAN_CUDA_CACHE_CAP_BYTES` is the maximum total bytes the cache may hold; 0 (the default)
-// leaves it unbounded, preserving the prior behaviour exactly. When set, a returned block that would
-// grow the cache past the cap is freed immediately instead of cached. The value must be a plain
-// decimal byte count; a malformed or overflowing value is rejected with a warning and leaves the
-// cache unbounded, rather than being silently misread as some other cap.
+// Use one 1 GiB budget for all caches. The environment can override that total with a plain decimal
+// byte count; an explicit zero requests unbounded retention. Unset, empty, malformed, and overflowing
+// values use the finite default. Blocks that do not fit are released after their CUDA event completes.
 //
 // The environment is read exactly once, under `pthread_once`, so concurrent first callers cannot
 // race on the parse: the initializer runs on a single thread while the others block, and the value
-// is published before any caller observes it. (A plain function-local static assigned after its
-// declaration would be a data race, and would depend on `-fthreadsafe-statics` being enabled.)
-static size_t g_torchlean_cuda_cache_cap_value = 0;
+// is published before any caller observes it.
+static constexpr size_t kDefaultCudaCacheBytes = (size_t)1 << 30;
+static size_t g_torchlean_cuda_cache_cap_value = kDefaultCudaCacheBytes;
 static pthread_once_t g_torchlean_cuda_cache_cap_once = PTHREAD_ONCE_INIT;
 
 // Strict decimal parser for the cap: accepts exactly a non-empty digit string whose value fits
@@ -125,7 +122,7 @@ static bool torchlean_cuda_parse_cache_cap(const char* s, size_t* out) {
 static void torchlean_cuda_cache_byte_cap_init(void) {
   const char* v = getenv("TORCHLEAN_CUDA_CACHE_CAP_BYTES");
   if (!v || !v[0]) {
-    return;  // unset or empty: the cache stays unbounded (cap 0)
+    return;
   }
   size_t parsed = 0;
   if (torchlean_cuda_parse_cache_cap(v, &parsed)) {
@@ -133,14 +130,38 @@ static void torchlean_cuda_cache_byte_cap_init(void) {
   } else {
     fprintf(stderr,
             "TorchLean CUDA warning: ignoring TORCHLEAN_CUDA_CACHE_CAP_BYTES='%s': "
-            "expected an unsigned decimal byte count; the cache stays unbounded\n",
-            v);
+            "expected an unsigned decimal byte count; using the default %llu-byte cache budget\n",
+            v, (unsigned long long)kDefaultCudaCacheBytes);
   }
 }
 
 static size_t torchlean_cuda_cache_byte_cap(void) {
   pthread_once(&g_torchlean_cuda_cache_cap_once, torchlean_cuda_cache_byte_cap_init);
   return g_torchlean_cuda_cache_cap_value;
+}
+
+extern "C" bool torchlean_cuda_cache_reserve_bytes(size_t bytes) {
+  const size_t cap = torchlean_cuda_cache_byte_cap();
+  size_t retained = g_torchlean_cuda_cache_bytes.load(std::memory_order_relaxed);
+  while (true) {
+    // Check the addition even for an explicitly unbounded cache. A reservation must never wrap
+    // the counter, and a finite cap applies to the shared total rather than separately to each pool.
+    if (bytes > SIZE_MAX - retained ||
+        (cap != 0 && (bytes > cap || retained > cap - bytes))) {
+      return false;
+    }
+    if (g_torchlean_cuda_cache_bytes.compare_exchange_weak(
+            retained, retained + bytes, std::memory_order_relaxed, std::memory_order_relaxed)) {
+      return true;
+    }
+  }
+}
+
+extern "C" void torchlean_cuda_cache_release_bytes(size_t bytes) {
+  const size_t previous = g_torchlean_cuda_cache_bytes.fetch_sub(bytes, std::memory_order_relaxed);
+  if (previous < bytes) {
+    lean_internal_panic("torchlean_cuda_cache_release_bytes: cache accounting underflow");
+  }
 }
 
 // Reuse exact-size buffers only after CUDA has recorded that all earlier work using the block has
@@ -150,8 +171,13 @@ static void torchlean_cuda_cache_push(torchlean_cuda_cached_block block) {
   if (g_torchlean_cuda_cache_count == g_torchlean_cuda_cache_slot_capacity) {
     size_t new_capacity =
         g_torchlean_cuda_cache_slot_capacity == 0 ? 16 : g_torchlean_cuda_cache_slot_capacity * 2;
-    void* next =
-        realloc(g_torchlean_cuda_cache, new_capacity * sizeof(torchlean_cuda_cached_block));
+    if (new_capacity < g_torchlean_cuda_cache_slot_capacity) {
+      lean_internal_panic("torchlean_cuda_cache_push: capacity overflow");
+    }
+    const size_t bytes = checked_bytes_size(
+        new_capacity, sizeof(torchlean_cuda_cached_block),
+        "torchlean_cuda_cache_push: cache byte size overflow");
+    void* next = realloc(g_torchlean_cuda_cache, bytes);
     if (!next) {
       lean_internal_panic_out_of_memory();
     }
@@ -177,9 +203,9 @@ static float* torchlean_cuda_take_cached_block(size_t n) {
                                                "cudaEventDestroy cached buffer reuse failed");
       g_torchlean_cuda_cache[i] = g_torchlean_cuda_cache[g_torchlean_cuda_cache_count - 1];
       g_torchlean_cuda_cache_count--;
-      g_torchlean_cuda_cache_bytes -= (size_t)torchlean_float_bytes_for(n);
       torchlean_cuda_unlock(&g_torchlean_cuda_cache_mutex,
                             "pthread_mutex_unlock buffer cache failed");
+      torchlean_cuda_cache_release_bytes((size_t)torchlean_float_bytes_for(n));
       return data;
     }
     if (ready != cudaErrorNotReady) {
@@ -213,26 +239,13 @@ static void torchlean_cuda_return_cached_block(size_t n, float* data) {
     return;
   }
   const size_t incoming = (size_t)torchlean_float_bytes_for(n);
-  const size_t cap = torchlean_cuda_cache_byte_cap();
-  bool over_cap = false;
-  torchlean_cuda_lock(&g_torchlean_cuda_cache_mutex, "pthread_mutex_lock buffer return failed");
-  // Overflow-safe form of `g_torchlean_cuda_cache_bytes + incoming > cap`: the sum is never formed,
-  // so it cannot wrap `size_t`. A single incoming block larger than the cap trips it directly;
-  // otherwise `cap - incoming` is a well-defined non-negative headroom that the current total must
-  // not exceed.
-  if (cap != 0 &&
-      (incoming > cap || g_torchlean_cuda_cache_bytes > cap - incoming)) {
-    over_cap = true;
-  } else {
+  if (torchlean_cuda_cache_reserve_bytes(incoming)) {
+    torchlean_cuda_lock(&g_torchlean_cuda_cache_mutex, "pthread_mutex_lock buffer return failed");
     torchlean_cuda_cache_push({n, data, ready});
-    g_torchlean_cuda_cache_bytes += incoming;
-  }
-  torchlean_cuda_unlock(&g_torchlean_cuda_cache_mutex, "pthread_mutex_unlock buffer return failed");
-  if (over_cap) {
-    // Caching this block would grow the process-global cache past the byte cap, so free it now
-    // instead. The just-recorded event signals when pending work on the block completes; wait on it
-    // before releasing the device memory, exactly as the flush path does, so an in-flight kernel
-    // never reads freed memory.
+    torchlean_cuda_unlock(&g_torchlean_cuda_cache_mutex, "pthread_mutex_unlock buffer return failed");
+  } else {
+    // The tensor and scratch pools have exhausted their shared budget. The recorded event protects
+    // any pending use of this block until it can be returned to the driver.
     torchlean_cuda_synchronize_event_best_effort(ready, "cudaEventSynchronize over-cap buffer failed");
     torchlean_cuda_destroy_event_best_effort(ready, "cudaEventDestroy over-cap buffer failed");
     torchlean_cuda_free_best_effort(data, "cudaFree over-cap buffer failed");
@@ -246,7 +259,6 @@ static void torchlean_cuda_flush_cached_blocks(void) {
   g_torchlean_cuda_cache = nullptr;
   g_torchlean_cuda_cache_count = 0;
   g_torchlean_cuda_cache_slot_capacity = 0;
-  g_torchlean_cuda_cache_bytes = 0;
   torchlean_cuda_unlock(&g_torchlean_cuda_cache_mutex, "pthread_mutex_unlock buffer flush failed");
 
   for (size_t i = 0; i < count; ++i) {
@@ -255,9 +267,22 @@ static void torchlean_cuda_flush_cached_blocks(void) {
                                                  "cudaEventSynchronize cached buffer failed");
     torchlean_cuda_destroy_event_best_effort(block.ready,
                                              "cudaEventDestroy cached buffer failed");
-    torchlean_cuda_free_best_effort(block.data, "cudaFree cached buffer failed");
+    if (torchlean_cuda_free_best_effort(block.data, "cudaFree cached buffer failed")) {
+      torchlean_cuda_cache_release_bytes((size_t)torchlean_float_bytes_for(block.size));
+    }
   }
   free(blocks);
+}
+
+// Only blocks already returned to a cache are reclaimed. Each pool detaches its list under its
+// own mutex, then waits for recorded uses and frees outside the lock. Parameters and live scratch
+// allocations remain owned by their callers throughout an explicit flush or an OOM retry.
+extern "C" void torchlean_cuda_flush_all_caches(void) {
+  torchlean_cuda_flush_cached_blocks();
+  torchlean_cuda_scratch_flush();
+  torchlean_cuda_kernels_flush_scratch_cache();
+  torchlean_cuda_conv_pool_flush_scratch_cache();
+  torchlean_cuda_blas_flush_scratch_cache();
 }
 
 static void torchlean_cuda_note_alloc(size_t n) {
@@ -285,12 +310,12 @@ static void torchlean_cuda_note_free(size_t n) {
   }
 }
 
-static void torchlean_cuda_panic_malloc_failed(size_t n, cudaError_t err) {
+static void torchlean_cuda_malloc_error_message(size_t n, cudaError_t err,
+                                                char* msg, size_t capacity) {
   size_t freeBytes = 0;
   size_t totalBytes = 0;
   (void)cudaMemGetInfo(&freeBytes, &totalBytes);
-  char msg[512];
-  snprintf(msg, sizeof(msg),
+  snprintf(msg, capacity,
            "cudaMalloc buffer failed: requested=%llu bytes live=%llu peak=%llu "
            "allocs=%llu frees=%llu cuda_free=%llu cuda_total=%llu error=%s",
            (unsigned long long)torchlean_float_bytes_for(n),
@@ -300,17 +325,24 @@ static void torchlean_cuda_panic_malloc_failed(size_t n, cudaError_t err) {
            (unsigned long long)g_torchlean_cuda_free_count.load(std::memory_order_relaxed),
            (unsigned long long)freeBytes, (unsigned long long)totalBytes,
            cudaGetErrorString(err));
+}
+
+static void torchlean_cuda_panic_malloc_failed(size_t n, cudaError_t err) {
+  char msg[512];
+  torchlean_cuda_malloc_error_message(n, err, msg, sizeof(msg));
   lean_internal_panic(msg);
 }
 
-static void torchlean_cuda_free_best_effort(void* ptr, const char* what) {
+static bool torchlean_cuda_free_best_effort(void* ptr, const char* what) {
   if (!ptr) {
-    return;
+    return true;
   }
   cudaError_t err = cudaFree(ptr);
   if (err != cudaSuccess) {
     fprintf(stderr, "TorchLean CUDA warning: %s: %s\n", what, cudaGetErrorString(err));
+    return false;
   }
+  return true;
 }
 
 static void torchlean_cuda_destroy_event_best_effort(cudaEvent_t event, const char* what) {
@@ -392,7 +424,11 @@ extern "C" void torchlean_cuda_buffer_drop_unboxed(torchlean_cuda_buffer* b) {
   free(b);
 }
 
-extern "C" torchlean_cuda_buffer* torchlean_cuda_buffer_alloc(size_t n) {
+// Both allocation interfaces share cache reuse, reclamation, retry, and accounting. The IO
+// caller receives a CUDA error before a wrapper is created; pure kernel callers keep their
+// existing panic behavior. Host descriptor allocation still uses Lean's host-OOM policy.
+static torchlean_cuda_buffer* torchlean_cuda_buffer_alloc_checked(size_t n, cudaError_t* error) {
+  *error = cudaSuccess;
   torchlean_cuda_buffer* b = (torchlean_cuda_buffer*)malloc(sizeof(torchlean_cuda_buffer));
   if (!b) {
     lean_internal_panic_out_of_memory();
@@ -412,12 +448,18 @@ extern "C" torchlean_cuda_buffer* torchlean_cuda_buffer_alloc(size_t n) {
         // well as returning it directly. Clear that copy before retrying; otherwise the next
         // successful kernel launch can be blamed for this already-recovered OOM.
         (void)cudaGetLastError();
-        torchlean_cuda_flush_cached_blocks();
+        torchlean_cuda_flush_all_caches();
         err = cudaMalloc((void**)&b->data, bytes);
       }
       if (err != cudaSuccess) {
+        // The caller may continue after device OOM. Retire the final failed request from the
+        // last-error slot too, so it cannot be reported by the next successful kernel launch.
+        if (err == cudaErrorMemoryAllocation) {
+          (void)cudaGetLastError();
+        }
         free(b);
-        torchlean_cuda_panic_malloc_failed(n, err);
+        *error = err;
+        return NULL;
       }
     }
   }
@@ -425,6 +467,15 @@ extern "C" torchlean_cuda_buffer* torchlean_cuda_buffer_alloc(size_t n) {
     torchlean_cuda_note_alloc(n);
   }
   return b;
+}
+
+extern "C" torchlean_cuda_buffer* torchlean_cuda_buffer_alloc(size_t n) {
+  cudaError_t error = cudaSuccess;
+  torchlean_cuda_buffer* buffer = torchlean_cuda_buffer_alloc_checked(n, &error);
+  if (!buffer) {
+    torchlean_cuda_panic_malloc_failed(n, error);
+  }
+  return buffer;
 }
 
 // --- Kernels -----------------------------------------------------------------
@@ -975,10 +1026,7 @@ extern "C" LEAN_EXPORT uint64_t torchlean_cuda_allocator_device_total_bytes(uint
 
 extern "C" LEAN_EXPORT uint64_t torchlean_cuda_allocator_cache_bytes(uint32_t u) {
   (void)u;
-  torchlean_cuda_lock(&g_torchlean_cuda_cache_mutex, "pthread_mutex_lock cache-bytes query failed");
-  uint64_t bytes = (uint64_t)g_torchlean_cuda_cache_bytes;
-  torchlean_cuda_unlock(&g_torchlean_cuda_cache_mutex, "pthread_mutex_unlock cache-bytes query failed");
-  return bytes;
+  return (uint64_t)g_torchlean_cuda_cache_bytes.load(std::memory_order_relaxed);
 }
 
 extern "C" LEAN_EXPORT uint64_t torchlean_cuda_allocator_cache_cap_bytes(uint32_t u) {
@@ -1023,15 +1071,10 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_release_then(
 extern "C" LEAN_EXPORT uint32_t torchlean_runtime_collect_allocator(uint32_t force) {
   const bool force_collect = force != 0;
   if (force_collect) {
-    torchlean_cuda_flush_cached_blocks();
-    torchlean_cuda_scratch_flush();
-    torchlean_cuda_kernels_flush_scratch_cache();
-    torchlean_cuda_conv_pool_flush_scratch_cache();
-    torchlean_cuda_blas_flush_scratch_cache();
+    torchlean_cuda_flush_all_caches();
   }
+  // Forced collection releases retired pages and purges arenas in mimalloc.
   mi_collect(force_collect);
-  mi_heap_collect(mi_heap_get_default(), force_collect);
-  mi_collect_reduce(0);
   return 1;
 }
 
@@ -1042,6 +1085,45 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_zeros(uint32_t n) {
   }
   checkCuda(cudaMemset(out->data, 0, (size_t)n * sizeof(float)), "cudaMemset zeros failed");
   return torchlean_cuda_buffer_box(out);
+}
+
+// Allocate and initialize a buffer before publishing it to Lean. All allocating IO constructors
+// use the same cache/retry/accounting path as pure allocations. A rejected device allocation
+// returns an IO error without creating a wrapper; successful allocations are boxed only after
+// initialization succeeds. Empty buffers need no initialization.
+template <typename Initialize>
+static lean_obj_res torchlean_cuda_buffer_create_io(
+    size_t n, const char* operation, Initialize initialize) {
+  cudaError_t error = cudaSuccess;
+  torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc_checked(n, &error);
+  if (!out) {
+    char message[512];
+    torchlean_cuda_malloc_error_message(n, error, message, sizeof(message));
+    lean_object* details = lean_mk_string(message);
+    lean_object* ioError = error == cudaErrorMemoryAllocation
+        ? lean_mk_io_error_resource_exhausted((uint32_t)error, details)
+        : lean_mk_io_error_other_error((uint32_t)error, details);
+    return lean_io_result_mk_error(ioError);
+  }
+  if (n > 0) {
+    error = initialize(out->data);
+    if (error != cudaSuccess) {
+      // A buffer becomes visible to Lean only after initialization succeeds.
+      torchlean_cuda_buffer_drop_unboxed(out);
+      char message[512];
+      snprintf(message, sizeof(message), "%s: %s", operation, cudaGetErrorString(error));
+      return lean_io_result_mk_error(
+          lean_mk_io_error_other_error((uint32_t)error, lean_mk_string(message)));
+    }
+  }
+  return lean_io_result_mk_ok(torchlean_cuda_buffer_box(out));
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_zeros_io(uint32_t n) {
+  return torchlean_cuda_buffer_create_io((size_t)n, "cudaMemset zeros failed",
+      [n](float* data) {
+        return cudaMemset(data, 0, (size_t)n * sizeof(float));
+      });
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_full(uint32_t n, double v) {
@@ -1056,10 +1138,14 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_full(uint32_t n, doubl
   return torchlean_cuda_buffer_box(out);
 }
 
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_full_with_token(
-    uint32_t n, double v, uint32_t token) {
-  (void)token;
-  return torchlean_cuda_buffer_full(n, v);
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_full_io(uint32_t n, double v) {
+  return torchlean_cuda_buffer_create_io((size_t)n, "cuda full kernel launch failed",
+      [n, v](float* data) {
+        dim3 blocks = torchlean_blocks_for((size_t)n);
+        dim3 threads = dim3(kBlockSize);
+        torchlean_fill_f32<<<blocks, threads>>>(data, (size_t)n, (float)v);
+        return cudaGetLastError();
+      });
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_uniform(uint32_t n, uint64_t key) {
@@ -1072,6 +1158,17 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_uniform(uint32_t 
   torchlean_rand_uniform_f32<<<blocks, threads>>>(out->data, (size_t)n, key);
   checkCuda(cudaGetLastError(), "cuda rand_uniform kernel launch failed");
   return torchlean_cuda_buffer_box(out);
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_uniform_io(
+    uint32_t n, uint64_t key) {
+  return torchlean_cuda_buffer_create_io((size_t)n, "cuda rand_uniform kernel launch failed",
+      [n, key](float* data) {
+        dim3 blocks = torchlean_blocks_for((size_t)n);
+        dim3 threads = dim3(kBlockSize);
+        torchlean_rand_uniform_f32<<<blocks, threads>>>(data, (size_t)n, key);
+        return cudaGetLastError();
+      });
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_normal(
@@ -1101,6 +1198,17 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_bernoulli_mask(uint32_
   return torchlean_cuda_buffer_box(out);
 }
 
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_bernoulli_mask_io(
+    uint32_t n, double keepProb, uint64_t key) {
+  return torchlean_cuda_buffer_create_io((size_t)n, "cuda bernoulli_mask kernel launch failed",
+      [n, keepProb, key](float* data) {
+        dim3 blocks = torchlean_blocks_for((size_t)n);
+        dim3 threads = dim3(kBlockSize);
+        torchlean_bernoulli_mask_f32<<<blocks, threads>>>(data, (size_t)n, (float)keepProb, key);
+        return cudaGetLastError();
+      });
+}
+
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float_array(b_lean_obj_arg AObj) {
   lean_object* A = (lean_object*)AObj;
   size_t n = lean_sarray_size(A);
@@ -1126,10 +1234,27 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float_array(b_lean_
   return torchlean_cuda_buffer_box(out);
 }
 
-extern "C" LEAN_EXPORT lean_obj_res
-torchlean_cuda_buffer_of_float_array_with_token(b_lean_obj_arg AObj, uint32_t token) {
-  (void)token;
-  return torchlean_cuda_buffer_of_float_array(AObj);
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float_array_io(b_lean_obj_arg AObj) {
+  lean_object* A = (lean_object*)AObj;
+  size_t n = lean_sarray_size(A);
+  const double* src = lean_float_array_cptr(A);
+  return torchlean_cuda_buffer_create_io(n, "cudaMemcpy H2D failed",
+      [n, src](float* data) {
+        // Keep the existing Float-to-float32 conversion and allocate host staging only after
+        // device allocation succeeds. A rejected upload therefore leaves the host input intact.
+        const size_t bytes = checked_bytes_size(
+            n, sizeof(float), "torchlean_cuda_buffer_of_float_array: tmp size overflow");
+        float* tmp = (float*)malloc(bytes);
+        if (!tmp) {
+          lean_internal_panic_out_of_memory();
+        }
+        for (size_t i = 0; i < n; ++i) {
+          tmp[i] = (float)src[i];
+        }
+        cudaError_t error = cudaMemcpy(data, tmp, bytes, cudaMemcpyHostToDevice);
+        free(tmp);
+        return error;
+      });
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_to_float_array(b_lean_obj_arg BObj) {
@@ -1202,25 +1327,24 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float32_bytes_io(
     lean_internal_panic("torchlean: float32 checkpoint payload is not a multiple of four bytes");
   }
   size_t n = bytes / sizeof(float);
-  torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(n);
-  if (bytes != 0) {
-    float* values = (float*)malloc(bytes);
-    if (!values) {
-      lean_internal_panic_out_of_memory();
-    }
-    const uint8_t* src = (const uint8_t*)lean_sarray_cptr(bytesObj);
-    for (size_t i = 0; i < n; ++i) {
-      uint32_t bits = (uint32_t)src[4 * i] |
-                      ((uint32_t)src[4 * i + 1] << 8) |
-                      ((uint32_t)src[4 * i + 2] << 16) |
-                      ((uint32_t)src[4 * i + 3] << 24);
-      memcpy(&values[i], &bits, sizeof(bits));
-    }
-    checkCuda(cudaMemcpy(out->data, values, bytes, cudaMemcpyHostToDevice),
-              "cuda checkpoint H2D copy failed");
-    free(values);
-  }
-  return lean_io_result_mk_ok(torchlean_cuda_buffer_box(out));
+  return torchlean_cuda_buffer_create_io(n, "cuda checkpoint H2D copy failed",
+      [bytesObj, bytes, n](float* data) {
+        float* values = (float*)malloc(bytes);
+        if (!values) {
+          lean_internal_panic_out_of_memory();
+        }
+        const uint8_t* src = (const uint8_t*)lean_sarray_cptr(bytesObj);
+        for (size_t i = 0; i < n; ++i) {
+          uint32_t bits = (uint32_t)src[4 * i] |
+                          ((uint32_t)src[4 * i + 1] << 8) |
+                          ((uint32_t)src[4 * i + 2] << 16) |
+                          ((uint32_t)src[4 * i + 3] << 24);
+          memcpy(&values[i], &bits, sizeof(bits));
+        }
+        cudaError_t error = cudaMemcpy(data, values, bytes, cudaMemcpyHostToDevice);
+        free(values);
+        return error;
+      });
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_float_array_to_float32_bytes(

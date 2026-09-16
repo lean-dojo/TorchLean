@@ -51,6 +51,13 @@ static inline void torchlean_cuda_unlock(pthread_mutex_t* mutex, const char* msg
   }
 }
 
+// Tensor buffers and the scratch pools below share one retention budget. Each translation unit
+// still owns its scratch list, but reserving bytes here charges the same process-wide counter.
+// Global reclamation is called only after releasing the local pool mutex.
+extern "C" bool torchlean_cuda_cache_reserve_bytes(size_t bytes);
+extern "C" void torchlean_cuda_cache_release_bytes(size_t bytes);
+extern "C" void torchlean_cuda_flush_all_caches(void);
+
 struct torchlean_cuda_scratch_block {
   size_t bytes;
   void* ptr;
@@ -98,6 +105,7 @@ static inline void torchlean_cuda_scratch_flush(void) {
       checkCuda(cudaEventDestroy(block.ready), "cudaEventDestroy cached scratch block failed");
     }
     torchlean_cuda_free_checked(&block.ptr, "cudaFree cached scratch block failed");
+    torchlean_cuda_cache_release_bytes(block.bytes);
   }
   free(blocks);
 }
@@ -121,6 +129,7 @@ static inline void* torchlean_cuda_scratch_alloc_bytes(size_t bytes, const char*
       g_torchlean_cuda_scratch_count--;
       torchlean_cuda_unlock(&g_torchlean_cuda_scratch_mutex,
                             "pthread_mutex_unlock scratch alloc failed");
+      torchlean_cuda_cache_release_bytes(bytes);
       return ptr;
     }
     if (ready != cudaErrorNotReady) {
@@ -132,8 +141,11 @@ static inline void* torchlean_cuda_scratch_alloc_bytes(size_t bytes, const char*
   torchlean_cuda_unlock(&g_torchlean_cuda_scratch_mutex, "pthread_mutex_unlock scratch alloc failed");
   void* ptr = nullptr;
   cudaError_t err = cudaMalloc(&ptr, bytes);
-  if (err != cudaSuccess) {
-    torchlean_cuda_scratch_flush();
+  if (err == cudaErrorMemoryAllocation) {
+    // An allocation failure can be caused by cached blocks in a different pool. Reclaim all
+    // reusable storage once, clearing the recovered OOM before any later launch-error check.
+    (void)cudaGetLastError();
+    torchlean_cuda_flush_all_caches();
     err = cudaMalloc(&ptr, bytes);
   }
   checkCuda(err, msg);
@@ -153,6 +165,14 @@ static inline void torchlean_cuda_scratch_free_bytes(void** ptr, size_t bytes, c
   checkCuda(cudaEventCreateWithFlags(&ready, cudaEventDisableTiming),
             "cudaEventCreate cached scratch block failed");
   checkCuda(cudaEventRecord(ready, 0), "cudaEventRecord cached scratch block failed");
+  if (!torchlean_cuda_cache_reserve_bytes(bytes)) {
+    // A pending kernel may still read this workspace. Wait for its recorded use to finish
+    // before returning an over-budget block to the driver.
+    checkCuda(cudaEventSynchronize(ready), "cudaEventSynchronize uncached scratch block failed");
+    checkCuda(cudaEventDestroy(ready), "cudaEventDestroy uncached scratch block failed");
+    torchlean_cuda_free_checked(ptr, msg);
+    return;
+  }
   torchlean_cuda_lock(&g_torchlean_cuda_scratch_mutex, "pthread_mutex_lock scratch free failed");
   torchlean_cuda_scratch_push({bytes, *ptr, ready});
   torchlean_cuda_unlock(&g_torchlean_cuda_scratch_mutex, "pthread_mutex_unlock scratch free failed");

@@ -122,6 +122,17 @@ requires an agreement argument between the two implementations.
 solves, and ridge solves. Their strict array implementations are tested executable code, not
 consequences of the reconstruction theorems about the logical definitions.
 
+Parameter alias grouping in `NN/Runtime/Autograd/Torch/Core/Session/State.lean` uses a private
+executable replacement for its lookup key. The logical key groups by shape; the compiled key also
+uses full-width addresses of the three mutable `IO.Ref` cells. Every bucket candidate still passes
+`ParameterStorage.same`: equal shape and `IO.Ref.ptrEq` on the value, CUDA-mirror, and host-validity
+cells. Tensor contents and CUDA allocation addresses do not decide aliases.
+
+This refinement relies on Lean's address primitive returning stable addresses for live reference
+cells. The index retains its representatives until that grouping call ends, preventing address
+reuse while a key is present; no keys or references are cached between calls. Collision and retie
+regressions exercise this boundary, but do not constitute a formal proof of compiled agreement.
+
 ## Native Host Tensors
 
 The public `TorchLean.Tensor` type has one certified contiguous row-major buffer. `Float` uses
@@ -148,6 +159,27 @@ rectangular array without changing their reference counts, and retains elements 
 shared. Correct reference counting in those branches remains part of the native runtime boundary.
 The packed Float pointwise loops are auto-vectorized by the C compiler; they preserve independent
 scalar operations but do not authorize reassociation of reductions.
+
+## Native Host Allocation
+
+On Linux, `scripts/lean_allocator.py` builds a private mimalloc 3.4.4 object for TorchLean's
+native executables and shared libraries. It checks the source archive and Lean SDK header by
+SHA-256, then compiles position-independent code with initial-exec thread-local storage. This
+supports both native link modes without replacing the installed Lean runtime or the allocator
+used by the Lean compiler and `#eval`.
+
+The local patch addresses a lost global purge wakeup: a collector finishing its scan could erase
+a deadline another thread had just published. Publishing a newly set arena deadline now completes
+an acquire-release atomic read-modify-write even when a global deadline is already pending.
+The collector consumes that global timer with an acquire-release exchange before taking its arena
+snapshot. Later publications survive scan completion, and retry publication preserves the earliest
+pending deadline so expired work left by the purge budget stays eligible. Zero remains reserved
+for the absence of a wakeup.
+
+Per-arena timer, purge-bitmap, and free-range operations retain their upstream ordering. Controlled
+regressions exercise collection/free interleavings and check page release through ordinary
+collection. Those observations and the global memory-order argument do not constitute a Lean proof
+or a complete concurrency proof of mimalloc, its compiler output, or operating-system behavior.
 
 ## Opaque Non-FFI Declarations
 
@@ -203,12 +235,10 @@ scalar operations but do not authorize reassociation of reductions.
   accumulation paths with fixed-order algorithms (slower, but bit-stable across runs on the same
   GPU). You can enable it either:
   - from Lean (recommended): call `Runtime.Autograd.Cuda.Buffer.setDeterministicReductions true`,
-    which is `IO Unit`. It writes the flag, reads it back, and throws when the observed value
-    differs from the request, so the call cannot be dropped as dead code. The pure
-    `setDeterministicReductionsChecked` still exists and returns the observed flag; if you use it,
-    bind and consume the result, because a `let _ :=` binding has no data dependency and may be
-    eliminated by the compiler, as the docstring in `NN/Runtime/Autograd/Engine/Cuda/Buffer.lean`
-    explains.
+    which is `IO Unit`. The action calls the checked native setter, consumes its returned flag,
+    and throws if that flag differs from the request. Read the current setting with
+    `Runtime.Autograd.Cuda.Buffer.getDeterministicReductions : IO Bool`; each call observes
+    the native flag at that point in the `IO` sequence.
 
     ```lean
     Runtime.Autograd.Cuda.Buffer.setDeterministicReductions true
@@ -263,17 +293,30 @@ scalar operations but do not authorize reassociation of reductions.
 
 ## Executable Floating Point
 
-- `NN/Floats/IEEEExec/` proves and implements a deterministic IEEE-style executable model for many
-  core operations.
+- FloatLib supplies the executable floating-point formats, software arithmetic, rounding theory,
+  and interval semantics. `lakefile.lean` pins the dependency to commit
+  `40301cd44f253a4ac6ccd34a0eb6c221e185e25c`, with Lean and mathlib 4.34.0.
+  TorchLean's runtime and certificate interfaces use `ExecFloat.Binary 8 23` directly.
+  The typed tensor/model API supports FloatLib's configured binary family, including custom
+  precision with valid widths, bias, and storage plans. This does not supply tensor `Context`
+  instances for FloatLib's posit, fixed-point, or decimal families.
+  Higher-precision training uses typed state, graphs, and `nn.sgdStep` on CPU. The supervised
+  trainer's input/report/checkpoint boundary remains `Float`; `.arithmetic := .ieee` selects
+  binary32. Native CUDA providers support binary32 and binary64.
 - Lean defines ordinary `Float32` addition, subtraction, multiplication, division, negation,
   absolute value, square root, bit conversion, comparison, and classification through the
-  canonical `Float32.Model` visible to the kernel.
-  `NN/Floats/IEEEExec/Bridge/LeanFloat32.lean` exposes those definitional equalities
-  and proves agreement with TorchLean's independent executable algorithm for classification,
-  comparison, addition, subtraction, multiplication, division, square root, negation, and absolute
-  value.
-  Arithmetic results are compared after canonicalizing NaNs because the two models deliberately
-  retain different payload information.
+  canonical `Float32.Model` visible to the kernel. FloatLib's public
+  `FloatLib.Floats.Formats.IEEE754` import supplies native conversions and operation-specific
+  correspondence theorems directly:
+  - `ExecFloat.Binary.toFloat32_ofFloat32` proves the exact native round trip for every value.
+  - `ExecFloat.Binary.ofFloat32_add_of_isFinite` and `ofFloat32_sub_of_isFinite` require
+    both operands to be finite, including signed zeros and subnormals. Their results may overflow.
+  - `ExecFloat.Binary.toFloat32_sqrt` covers every configured input through native export,
+    which canonicalizes NaNs. It does not preserve arbitrary NaN payloads.
+  The corresponding binary64 interfaces use `ofFloat` and `toFloat`. The old local native bridge
+  files and unused total exports have been removed; the finite-input theorems do not stand in for
+  the retired total arithmetic claims. Configured division has its own all-input software-model
+  refinement, which does not prove agreement with arbitrary native `Float32` division.
   The `@[extern]` implementations used by compiled programs are still native code and remain a
   deployment boundary. Lean's transcendental `Float32` functions are opaque and are not covered by
   the core model bridge.
@@ -284,6 +327,29 @@ scalar operations but do not authorize reassociation of reductions.
   `executeIEEE32` can replay only that stored graph.
 - Transcendental functions such as `exp`, `log`, and `tanh` are deterministic approximations unless
   a file states a stronger theorem for a specific operation.
+
+`NN/Spec/Core/FloatInstances.lean` supplies a `Context` for FloatLib's configured binary values.
+The exponent and fraction widths are part of the scalar type; they can exceed binary64's widths.
+Tensor storage keeps these values in `Array α`, and integer and rational constants are rounded
+directly in the selected format. Constructing a value through a native `Float` first retains that
+earlier rounding, regardless of the destination precision.
+
+This context makes the shared tensor and model specifications executable with software arithmetic.
+It does not supply a CUDA storage representation, a trainer/checkpoint encoding, or an ordered
+field law for floating-point operations. Its elementary functions come from FloatLib's explicit
+binary transcendental module, whose deterministic approximations have no general error or
+correct-rounding guarantee. A proof about those functions must supply the bounds it uses.
+
+The context's default safeguard is the rounded rational `1/1000000`. If that rounds to zero in a
+coarse format, the context uses its smallest positive subnormal instead. This keeps the default
+nonzero, but it can substantially change a guarded formula. The safeguard is neither machine
+epsilon nor an accuracy bound; tolerances remain part of the model's numerical specification.
+
+Normalization has a separate default, the exact rational `1/100000` rounded once in the selected
+scalar. It remains nonzero in binary16 but can round to zero in a coarser format. There is no
+minimum-subnormal fallback for this constant: callers must supply a positive, representable
+normalization epsilon when the default is too small. Validation of a rational model configuration
+checks positivity before scalar conversion; it does not establish positivity after rounding.
 
 Kernel capsules record one numerical choice: the reduction order (`NumericalPolicy.reduction`,
 one of `fixedLeft`, `implementationDefined`, or `notApplicable`). It is audited contract data, not
@@ -296,11 +362,11 @@ fold. Native CUDA and LibTorch matrix products, convolutions, normalizations, po
 FFT/FNO paths, scans, and attention advertise implementation-dependent reductions. Consequently,
 the fixed-left graph certificate refuses to reuse its transfer for those accelerated paths. A
 theorem about such a path needs either a backend-specific schedule or the order-independent
-enclosure from `NN/Floats/IEEEExec/Reductions.lean`.
+enclosure from `NN/Proofs/RuntimeApprox/Reductions/IEEE32.lean`.
 
 For a checked replay, interval validity proves that each endpoint is finite and ordered. The replay
 also checks every computed entry for finiteness, and `executeIEEE32` returns a
-`RangeCheckedExecution` only when every `IEEE32Exec` node value lies inside its checked range. That
+`RangeCheckedExecution` only when every FloatLib binary32 node value lies inside its checked range. That
 is the whole of what the checker proves. It does not prove that the exact-real denotation of the
 graph lies in those ranges. That statement is the structure `ProvedRealEnclosure` in
 `NN/Proofs/RuntimeApprox/Graph/NumericalCertificate/Certificate.lean`, whose fields require a real
@@ -308,7 +374,7 @@ payload and input, the complete real node trace, a proof that the trace is the g
 denotation, and a pointwise proof that each real value lies in its checked interval. The caller must
 supply this structure; nothing in the repository constructs one today. Given both, the theorem
 `RangeCheckedExecution.error_trace` yields the pointwise interval-width error bound for every
-intermediate. This is a theorem about the `IEEE32Exec` replay. Transporting it to Lean runtime
+intermediate. This is a theorem about the FloatLib binary32 replay. Transporting it to Lean runtime
 `Float32`, CUDA, LibTorch, cuBLAS, or cuDNN still requires the agreement recorded by that backend's
 capsule.
 
@@ -330,12 +396,14 @@ Use the float layers as follows:
 
 | Claim | Layer to cite |
 | --- | --- |
-| executable binary32 behavior inside Lean | `NN/Floats/IEEEExec` |
+| executable configured binary behavior inside Lean | FloatLib's `ExecFloat.Binary` and `BinaryInterchange` refinement theorems |
+| TorchLean binary32 certificate representation | FloatLib's `ExecFloat.Binary 8 23` |
 | finite rounded-real float32 error bound | `NN/Floats/FP32` |
-| precision-parametric rounding theorem | `NN/Floats/NeuralFloat` |
-| endpoint interval enclosure | `NN/Floats/Interval` |
+| precision-parametric rounding theorem | `FloatLib.Floats.Formats.Flocq` |
+| endpoint interval enclosure | FloatLib's `BinaryInterchange.IntervalSemantics` and `NN/Floats/Interval` adapters |
 | external high-precision enclosure evidence | `NN/Floats/Arb` plus the oracle boundary |
-| meaning of Lean `Float32` core arithmetic | `Float32.Model` and `Bridge/LeanFloat32.lean` |
+| meaning of Lean `Float32` core arithmetic | Lean's `Float32.Model` definitions |
+| native logical import/export and arithmetic correspondence | FloatLib's `IEEE754.Native` proof modules, with each operation's stated hypotheses |
 | compiled `Float`/`Float32`, CUDA, or LibTorch behavior | provider bridge or boundary statement |
 
 ## External Numeric Oracles

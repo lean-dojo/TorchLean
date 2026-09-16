@@ -6,6 +6,8 @@ Authors: TorchLean Team
 
 module
 
+public import FloatLib.Floats.Formats.Flocq
+
 public import NN.Floats.FP32.Core
 import Mathlib.Algebra.Order.Algebra
 
@@ -29,6 +31,8 @@ without polluting unrelated namespaces.
 
 @[expose] public section
 
+open FloatLib.Numerics FloatLib.Floats.Formats.Flocq
+
 namespace TorchLean.Floats
 
 noncomputable section
@@ -40,18 +44,18 @@ This is definitionally the same rounding operator used in the `NF`/`FP32` semant
 a function $\mathbb{R}\to\mathbb{R}$ (useful for bridge theorems and error bounds).
 -/
 noncomputable abbrev round32 (x : ℝ) : ℝ :=
-  neuralRound (β := binaryRadix) (fexp := fexp32) rnd32 x
+  round (β := binaryRadix) (fexp := fexp32) rnd32 x
 
 /-- One ULP at `x` for the canonical binary32 exponent configuration. -/
 noncomputable abbrev ulp32 (x : ℝ) : ℝ :=
-  neuralUlp binaryRadix fexp32 x
+  ulp binaryRadix fexp32 x
 
 /-- Convenience abbreviation: half an ULP at `x`. -/
 noncomputable abbrev eps32 (x : ℝ) : ℝ := ulp32 x / 2
 
 /-- Binary32 has a smallest grid step, so its ULP at zero is $2^{-149}$. -/
-@[simp] theorem ulp32_zero : ulp32 0 = neuralBpow binaryRadix (-149) := by
-  exact neuralUlp_zero_FLT (-149) 24 (by norm_num)
+@[simp] theorem ulp32_zero : ulp32 0 = bpow binaryRadix (-149) := by
+  exact ulp_zero_FLT (-149) 24 (by norm_num)
 
 end
 

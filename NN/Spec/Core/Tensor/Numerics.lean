@@ -174,9 +174,24 @@ PyTorch analogue: `torch.linalg.vector_norm(x - y)` or `torch.cdist` (batched).
 def euclideanDistanceSpec {nFeatures : Nat}
   (x y : Tensor α [nFeatures]) : α :=
   let diff := subSpec x y
-  let squaredDiff := squareSpec diff
-  let sumSquared := sumSpec squaredDiff
-  MathFunctions.sqrt sumSquared
+  let sumSquared := sumSpec (squareSpec diff)
+  let finiteDifferences := foldlSpec (fun finite value =>
+    finite && value - value == 0) true diff
+  -- Preserve nonfinite differences before considering a scale: an overflowing subtraction
+  -- must remain an infinite distance, and a NaN must not become an exact match.
+  if !finiteDifferences || (sumSquared - sumSquared == 0 && !(sumSquared == 0)) then
+    MathFunctions.sqrt sumSquared
+  else
+    -- Finite differences can lose their norm when squaring overflows or rounds to zero.
+    -- Dividing by the largest magnitude keeps each square at most one; restore the scale
+    -- after the square root. Coincident inputs retain the original square-root convention.
+    let scale := foldlSpec (fun largest value => max largest (MathFunctions.abs value)) 0 diff
+    if scale == 0 then MathFunctions.sqrt sumSquared
+    else
+      let scaledSum := foldlSpec (fun total value =>
+        let ratio := value / scale
+        total + ratio * ratio) 0 diff
+      scale * MathFunctions.sqrt scaledSum
 
 /-- Squared Euclidean distance (avoids the final square root). -/
 def squaredEuclideanDistanceSpec {nFeatures : Nat}

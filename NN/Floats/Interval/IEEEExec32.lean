@@ -6,217 +6,155 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Exec32.Compare
-public import NN.Floats.IEEEExec.Exec32.Directed
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured
+public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
+public import FloatLib.Floats.Formats.BinaryInterchange.Model.RealSemantics
+public import FloatLib.Floats.Formats.BinaryInterchange.Model.ERealSemantics
+public import FloatLib.Floats.Formats.IEEE754.Native
+public import FloatLib.Floats.Formats.BinaryInterchange.Interval
+public import FloatLib.Floats.Formats.BinaryInterchange.IntervalSemantics
 
 /-!
-# Executable IEEE32Exec endpoint intervals
+# Configured endpoints for FloatLib intervals
 
-This module contains the executable interval definitions for `IEEE32Exec` endpoints.
-
-It keeps the API small: the main goal is to have an **executable** interval type
-with endpoints in the same discrete grid as IEEE-754 binary32 (`IEEE32Exec`), using outward-rounded
-endpoint arithmetic (`addDown/addUp/mulDown/mulUp`).
-
-Soundness theorems (enclosure proofs) are not bundled here; they are best stated
-relative to a chosen real/extended-real interpretation (see
-  `NN/Floats/IEEEExec/Bridge/ERealTotal.lean`).
+TorchLean certificates store the same configured values as the runtime. This adapter transports
+FloatLib's format-generic `Model.Interval` to configured binary32 endpoints. All constructors and
+operations delegate to the library, including its conservative whole-range fallback for unordered
+or indeterminate endpoint results. The `toModel_*` lemmas expose the library operations to proofs.
 -/
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
-namespace TorchLean.Floats.IEEE754
 
-namespace IEEE32Exec
+namespace TorchLean.Floats.IEEE754.IEEE32Exec
 
-/--
-An executable closed interval with IEEE-754 binary32 semantics (`IEEE32Exec`) as endpoints.
+open FloatLib.Floats.Formats.BinaryInterchange
 
-This type is intended for *computation* (endpoint arithmetic with outward rounding). Soundness
-theorems relating these intervals to real/extended-real interpretations are stated in separate
-bridge files (so theorems can choose the right notion of "real meaning" for the application).
--/
+/-- Configured binary32 endpoints for FloatLib's executable interval semantics. -/
 structure Interval32 where
-  /-- Lower binary32 endpoint. Arithmetic constructors round this endpoint toward `-∞`. -/
-  lo : IEEE32Exec
-  /-- Upper binary32 endpoint. Arithmetic constructors round this endpoint toward `+∞`.
-  Orderedness is a separate predicate; the constructor does not require `lo ≤ hi`. -/
-  hi : IEEE32Exec
+  lo : ExecFloat.Binary 8 23
+  hi : ExecFloat.Binary 8 23
   deriving Repr
 
 namespace Interval32
 
-/-- Membership predicate: $x$ lies between `lo` and `hi` using the `IEEE32Exec` order. -/
-def mem (I : Interval32) (x : IEEE32Exec) : Prop :=
-  le I.lo x ∧ le x I.hi
+@[inline] def toModel (x : Interval32) : Model.Interval FloatFormat.binary32 :=
+  ⟨ExecFloat.Binary.toModel x.lo, ExecFloat.Binary.toModel x.hi⟩
 
-/-- Enable $x\in I$ notation for executable `Interval32` intervals. -/
-instance : Membership IEEE32Exec Interval32 where
-  mem I x := Interval32.mem I x
+@[inline] def ofModel (x : Model.Interval FloatFormat.binary32) : Interval32 :=
+  ⟨ExecFloat.Binary.ofModel x.lo, ExecFloat.Binary.ofModel x.hi⟩
 
-/-- Unfold membership: $x\in I\iff I.\mathtt{lo}\le x\land x\le I.\mathtt{hi}$. -/
-@[simp] theorem mem_iff (I : Interval32) (x : IEEE32Exec) : x ∈ I ↔ le I.lo x ∧ le x I.hi :=
-  Iff.rfl
+@[simp] theorem toModel_ofModel (x : Model.Interval FloatFormat.binary32) :
+    toModel (ofModel x) = x := by
+  cases x with
+  | mk lo hi =>
+    exact congrArg₂ Model.Interval.mk
+      (ExecFloat.Binary.toModel_ofModel lo) (ExecFloat.Binary.toModel_ofModel hi)
 
-/--
-Validity predicate for executable intervals.
+@[simp] theorem ofModel_toModel (x : Interval32) : ofModel (toModel x) = x := by
+  cases x with
+  | mk lo hi =>
+    exact congrArg₂ Interval32.mk
+      (ExecFloat.Binary.ofModel_toModel lo) (ExecFloat.Binary.ofModel_toModel hi)
 
-We require both endpoints to be finite (not NaN/Inf) and ordered
-($\mathtt{lo}\le\mathtt{hi}$).
--/
-def Valid (I : Interval32) : Prop :=
-  isFinite I.lo = true ∧ isFinite I.hi = true ∧ le I.lo I.hi
+def mem (x : Interval32) (value : ExecFloat.Binary 8 23) : Prop :=
+  Model.Interval.mem (toModel x) (ExecFloat.Binary.toModel value)
 
-/-- Degenerate interval `[x, x]`. -/
-@[inline] def point (x : IEEE32Exec) : Interval32 := ⟨x, x⟩
+instance : Membership (ExecFloat.Binary 8 23) Interval32 where
+  mem := Interval32.mem
 
-/--
-Interval hull / union enclosure of two executable intervals.
+abbrev Valid (x : Interval32) : Prop := Model.Interval.Valid (toModel x)
+abbrev ValidExtended (x : Interval32) : Prop := Model.Interval.ValidExtended (toModel x)
 
-This is the smallest interval (by endpoints) that contains both `A` and `B`, computed by taking the
-minimum of lower endpoints and maximum of upper endpoints.
+@[inline] def point (x : ExecFloat.Binary 8 23) : Interval32 :=
+  ofModel (Model.Interval.point (ExecFloat.Binary.toModel x))
 
-Implementation note: we use IEEE-754 `minimum`/`maximum` so NaNs propagate.
--/
-@[inline] def hull (A B : Interval32) : Interval32 :=
-  { lo := IEEE32Exec.minimum A.lo B.lo
-    hi := IEEE32Exec.maximum A.hi B.hi }
+@[simp] theorem toModel_point (x : ExecFloat.Binary 8 23) :
+    toModel (point x) = Model.Interval.point (ExecFloat.Binary.toModel x) :=
+  toModel_ofModel _
 
-/-- `point x` is valid exactly when `x` is finite. -/
-@[simp] theorem valid_point_iff_isFinite (x : IEEE32Exec) :
-    Valid (point x) ↔ isFinite x = true := by
-  simp [Valid, point]
+@[inline] def whole : Interval32 := ofModel (Model.Interval.whole FloatFormat.binary32)
 
-/-- Outward-rounded interval addition. -/
-@[inline] def add (A B : Interval32) : Interval32 :=
-  ⟨addDown A.lo B.lo, addUp A.hi B.hi⟩
+@[simp] theorem toModel_whole :
+    toModel whole = Model.Interval.whole FloatFormat.binary32 := by
+  simp [whole]
 
-/-- Interval negation: $-[\mathtt{lo},\mathtt{hi}]=[-\mathtt{hi},-\mathtt{lo}]$. -/
-@[inline] def neg (A : Interval32) : Interval32 :=
-  ⟨IEEE32Exec.neg A.hi, IEEE32Exec.neg A.lo⟩
+@[inline] def containsZero (x : Interval32) : Bool := Model.Interval.containsZero (toModel x)
+@[inline] def leB (x y : ExecFloat.Binary 8 23) : Bool :=
+  Model.Interval.leB (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel y)
 
-/-- Outward-rounded interval subtraction. -/
-@[inline] def sub (A B : Interval32) : Interval32 :=
-  ⟨subDown A.lo B.hi, subUp A.hi B.lo⟩
+@[inline] def hull (x y : Interval32) : Interval32 :=
+  ofModel (Model.Interval.hull (toModel x) (toModel y))
 
-/-!
-Helper combinators for interval multiplication.
+@[simp] theorem toModel_hull (x y : Interval32) :
+    toModel (hull x y) = Model.Interval.hull (toModel x) (toModel y) := by
+  simp [hull]
 
-`mul` needs the minimum/maximum of 4 corner products. We expose these helpers (instead of keeping
-them `private`) so downstream soundness proofs can unfold `Interval32.mul` in a stable way.
--/
+@[inline] def add (x y : Interval32) : Interval32 :=
+  ofModel (Model.Interval.add (toModel x) (toModel y))
 
-/-- Minimum of 4 float values, using IEEE `minimum` (NaNs propagate). -/
-def minOfFour (a b c d : IEEE32Exec) : IEEE32Exec :=
-  minimum (minimum a b) (minimum c d)
+@[simp] theorem toModel_add (x y : Interval32) :
+    toModel (add x y) = Model.Interval.add (toModel x) (toModel y) := by
+  simp [add]
 
-/-- Maximum of 4 float values, using IEEE `maximum` (NaNs propagate). -/
-def maxOfFour (a b c d : IEEE32Exec) : IEEE32Exec :=
-  maximum (maximum a b) (maximum c d)
+@[inline] def sub (x y : Interval32) : Interval32 :=
+  ofModel (Model.Interval.sub (toModel x) (toModel y))
 
-/--
-Outward-rounded interval multiplication via the classical 4-corner rule.
+@[simp] theorem toModel_sub (x y : Interval32) :
+    toModel (sub x y) = Model.Interval.sub (toModel x) (toModel y) := by
+  simp [sub]
 
-We compute downward-rounded lower-corner products for the lower bound and upward-rounded products
-for the upper bound, then take the min/max across corners.
--/
-def mul (A B : Interval32) : Interval32 :=
-  let p00 := mulDown A.lo B.lo
-  let p01 := mulDown A.lo B.hi
-  let p10 := mulDown A.hi B.lo
-  let p11 := mulDown A.hi B.hi
-  let q00 := mulUp A.lo B.lo
-  let q01 := mulUp A.lo B.hi
-  let q10 := mulUp A.hi B.lo
-  let q11 := mulUp A.hi B.hi
-  ⟨minOfFour p00 p01 p10 p11, maxOfFour q00 q01 q10 q11⟩
+@[inline] def mul (x y : Interval32) : Interval32 :=
+  ofModel (Model.Interval.mul (toModel x) (toModel y))
 
-/-- The "whole" interval $[-\infty,+\infty]$ (useful as a conservative fallback). -/
-@[inline] def whole : Interval32 := ⟨negInf, posInf⟩
+@[simp] theorem toModel_mul (x y : Interval32) :
+    toModel (mul x y) = Model.Interval.mul (toModel x) (toModel y) := by
+  simp [mul]
 
-/--
-Executable Boolean $x\le y$ using IEEE `compare`.
+@[inline] def div (x y : Interval32) : Interval32 :=
+  ofModel (Model.Interval.div (toModel x) (toModel y))
 
-If `compare` is unordered (`none`, i.e. NaN involved), we return `false`.
--/
-def leB (x y : IEEE32Exec) : Bool :=
-  match compare x y with
-  | some .lt => true
-  | some .eq => true
-  | _ => false
+@[simp] theorem toModel_div (x y : Interval32) :
+    toModel (div x y) = Model.Interval.div (toModel x) (toModel y) := by
+  simp [div]
 
-/--
-Returns `true` iff the real interval denoted by `I` contains `0`.
+@[inline] def neg (x : Interval32) : Interval32 :=
+  ofModel (Model.Interval.neg (toModel x))
 
-We use this to conservative-handle division by an interval that straddles zero: a single interval
-cannot precisely represent the true quotient set (which is typically a union), so we return
-`whole` instead.
--/
-def containsZero (I : Interval32) : Bool :=
-  leB I.lo posZero && leB negZero I.hi
+@[simp] theorem toModel_neg (x : Interval32) :
+    toModel (neg x) = Model.Interval.neg (toModel x) := by
+  simp [neg]
 
-/--
-Interval division via the classical four-corner rule when the denominator interval does not
-contain $0$.
+@[inline] def inv (x : Interval32) : Interval32 :=
+  ofModel (Model.Interval.inv (toModel x))
 
-If $0\in B$, we conservatively return $\mathtt{whole}=[-\infty,+\infty]$.
--/
-def div (A B : Interval32) : Interval32 :=
-  if containsZero B then
-    whole
-  else
-    let p00 := divDown A.lo B.lo
-    let p01 := divDown A.lo B.hi
-    let p10 := divDown A.hi B.lo
-    let p11 := divDown A.hi B.hi
-    let q00 := divUp A.lo B.lo
-    let q01 := divUp A.lo B.hi
-    let q10 := divUp A.hi B.lo
-    let q11 := divUp A.hi B.hi
-    ⟨minOfFour p00 p01 p10 p11, maxOfFour q00 q01 q10 q11⟩
+@[simp] theorem toModel_inv (x : Interval32) :
+    toModel (inv x) = Model.Interval.inv (toModel x) := by
+  simp [inv]
 
-/--
-Interval reciprocal $1/B$, implemented as a special case of interval division.
+@[inline] def relu (x : Interval32) : Interval32 :=
+  ofModel (Model.Interval.relu (toModel x))
 
-If $0\in B$, we return `whole`.
--/
-@[inline] def inv (B : Interval32) : Interval32 :=
-  div (point posOne) B
+@[simp] theorem toModel_relu (x : Interval32) :
+    toModel (relu x) = Model.Interval.relu (toModel x) := by
+  simp [relu]
 
-/-! ## Pointwise activation ranges -/
+@[inline] def abs (x : Interval32) : Interval32 :=
+  ofModel (Model.Interval.abs (toModel x))
 
-/-- Image enclosure for ReLU. Because ReLU is monotone, applying `max(x,0)` to both endpoints is
-both sound and sharp on the binary32 endpoint grid. -/
-@[inline] def relu (A : Interval32) : Interval32 :=
-  { lo := IEEE32Exec.maximum A.lo posZero
-    hi := IEEE32Exec.maximum A.hi posZero }
+@[simp] theorem toModel_abs (x : Interval32) :
+    toModel (abs x) = Model.Interval.abs (toModel x) := by
+  simp [abs]
 
-/-- Image enclosure for absolute value.
+@[inline] def sqrt (x : Interval32) : Interval32 :=
+  ofModel (Model.Interval.sqrt (toModel x))
 
-Intervals entirely on one side of zero are preserved or negated. An interval crossing zero maps to
-`[0, max(-lo, hi)]`.
--/
-def abs (A : Interval32) : Interval32 :=
-  if leB A.hi negZero then
-    neg A
-  else if leB posZero A.lo then
-    A
-  else
-    { lo := posZero
-      hi := IEEE32Exec.maximum (IEEE32Exec.neg A.lo) A.hi }
-
-/-- Outward-rounded square-root image of a nonnegative interval.
-
-The operation itself is total because `IEEE32Exec.sqrtDown` and `sqrtUp` implement IEEE special
-values. Callers that want a real enclosure must separately establish that both endpoints are finite
-and nonnegative; the graph numerical checker enforces that domain before constructing this range. -/
-@[inline] def sqrt (A : Interval32) : Interval32 :=
-  { lo := IEEE32Exec.sqrtDown A.lo
-    hi := IEEE32Exec.sqrtUp A.hi }
+@[simp] theorem toModel_sqrt (x : Interval32) :
+    toModel (sqrt x) = Model.Interval.sqrt (toModel x) := by
+  simp [sqrt]
 
 end Interval32
-
-end IEEE32Exec
-
-end TorchLean.Floats.IEEE754
+end TorchLean.Floats.IEEE754.IEEE32Exec

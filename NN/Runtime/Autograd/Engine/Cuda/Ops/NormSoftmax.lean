@@ -165,6 +165,9 @@ This covers:
 
 /-- Record a last-axis softmax on the tape, returning the extended tape and the new node id. -/
 def softmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
+  -- With no coordinates, both the result and its cotangent have the same empty shape.
+  if Shape.size s == 0 then
+    return ← unary t "softmax" xId s s Buffer.copy (fun _ gradient => Buffer.copy gradient)
   match s with
   | .scalar =>
       let _x ← requireValue (t := t) xId Shape.scalar
@@ -198,6 +201,8 @@ def softmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
 
 /-- Stable log-softmax along the last axis, implemented directly on CUDA buffers. -/
 def logSoftmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
+  if Shape.size s == 0 then
+    return ← unary t "log_softmax" xId s s Buffer.copy (fun _ gradient => Buffer.copy gradient)
   match s with
   | .scalar =>
       let _x ← requireValue (t := t) xId Shape.scalar

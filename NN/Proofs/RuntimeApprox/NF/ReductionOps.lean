@@ -50,12 +50,13 @@ noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 
 -- ---------------------------------------------------------------------------
@@ -170,7 +171,7 @@ theorem approxTensor_reduce_sum_rows
     have habs : abs (sumBound (β := β) (fexp := fexp) (rnd := rnd)
         (s := .dim n .scalar) eps (xR.unstack i)) ≤ linfNorm boundVec := by
       simpa [boundVec, linfNorm, RuntimeApprox.linfNorm, tensorLinfNorm,
-        MathFunctions.abs] using hcomponent
+        Numerics.MathFunctions.abs] using hcomponent
     exact le_trans (le_abs_self _) habs
   have herror : abs
       (toSpec (β := β) (fexp := fexp) (rnd := rnd)
@@ -268,13 +269,13 @@ theorem approx_mean_row_nf {n : Nat} (hn : 0 < n)
           rw [abs_div, abs_of_pos hnpos]
       _ ≤ _ := by gcongr
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /-- Regression: when the row length is exactly representable, the mean budget is precisely one
 output half ulp plus the row-sum budget divided by `n`. -/
 theorem mean_row_bound_of_exact {n : Nat} (hn : 0 < n) (eps : ℝ) (rowR : Tensor R [n])
     (hexact : toSpec (β := β) (fexp := fexp) (rnd := rnd) (n : R) = (n : ℝ)) :
     meanRowBound (β := β) (fexp := fexp) (rnd := rnd) eps rowR =
-      neuralUlp β fexp
+      ulp β fexp
           (toSpec (β := β) (fexp := fexp) (rnd := rnd) (sumSpec (α := R) (s := [n]) rowR) /
             (n : ℝ)) / 2 +
         sumBound (β := β) (fexp := fexp) (rnd := rnd) (s := [n]) eps rowR / (n : ℝ) := by
@@ -283,11 +284,11 @@ theorem mean_row_bound_of_exact {n : Nat} (hn : 0 < n) (eps : ℝ) (rowR : Tenso
     unfold natCastError
     rw [hexact, sub_self, abs_zero]
   unfold meanRowBound
-  rw [if_pos (by rw [hzero]; exact hnpos), hzero, hexact]
+  rw [ite_eq_left (by rw [hzero]; exact hnpos), hzero, hexact]
   simp only [divPosErrorBound, sub_zero, zero_div, mul_zero, add_zero]
   ring
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /-- Regression: under the half-margin certificate `natCastError n ≤ n / 2`, the mean budget is
 linear in the row-sum budget, the row-length rounding error, and one output rounding. The
 hypothesis `hsum` records that the row-sum budget is nonnegative, which holds for every budget
@@ -301,14 +302,14 @@ theorem mean_row_bound_le_of_natCastError_le_half {n : Nat} (hn : 0 < n) (eps : 
         (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (sumSpec (α := R) (s := [n]) rowR)) +
             sumBound (β := β) (fexp := fexp) (rnd := rnd) (s := [n]) eps rowR) *
           (4 * natCastError (β := β) (fexp := fexp) (rnd := rnd) n / ((n : ℝ) * (n : ℝ))) +
-        neuralUlp β fexp
+        ulp β fexp
           (toSpec (β := β) (fexp := fexp) (rnd := rnd) (sumSpec (α := R) (s := [n]) rowR) /
             toSpec (β := β) (fexp := fexp) (rnd := rnd) (n : R)) / 2 := by
   have hnpos : (0 : ℝ) < (n : ℝ) := by exact_mod_cast hn
   have hcast0 : 0 ≤ natCastError (β := β) (fexp := fexp) (rnd := rnd) n := abs_nonneg _
   have hlt : natCastError (β := β) (fexp := fexp) (rnd := rnd) n < (n : ℝ) := by linarith
   unfold meanRowBound
-  rw [if_pos hlt]
+  rw [ite_eq_left hlt]
   exact divPosErrorBound_le_of_epsy_le_half (β := β) (fexp := fexp) hnpos hsum hcast0 hcast
 
 /-- Row-wise `reduceMean` along axis `1` of an `m × n` matrix approximates the exact row means
@@ -350,7 +351,8 @@ theorem approxTensor_reduce_mean_rows
     rw [hunstack] at hcomponent
     have habs : abs (meanRowBound (β := β) (fexp := fexp) (rnd := rnd) eps (xR.unstack i)) ≤
         linfNorm boundVec := by
-      simpa [linfNorm, RuntimeApprox.linfNorm, tensorLinfNorm, MathFunctions.abs] using hcomponent
+      simpa [linfNorm, RuntimeApprox.linfNorm, tensorLinfNorm, Numerics.MathFunctions.abs]
+        using hcomponent
     exact le_trans (le_abs_self _) habs
   have hScalarApprox :
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
@@ -444,7 +446,7 @@ theorem approxTensor_reduce_sum_columns
         abs (sumBound (β := β) (fexp := fexp) (rnd := rnd) (s := .dim m .scalar)
           eps (colR (m := m) (n := n) xR j)) ≤ linfNorm boundVec := by
       simpa [boundVec, linfNorm, RuntimeApprox.linfNorm, tensorLinfNorm,
-        MathFunctions.abs] using hcomponent
+        Numerics.MathFunctions.abs] using hcomponent
     exact le_trans (le_abs_self _) habs
   have herror : abs
       (toSpec (β := β) (fexp := fexp) (rnd := rnd)

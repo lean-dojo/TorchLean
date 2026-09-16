@@ -21,7 +21,7 @@ This entrypoint collects the constructive ReLU approximation results:
 
 - one-dimensional constructive ReLU approximation by hinge sums;
 - quantitative width/rate refinements;
-- finite-precision lifts through `FP32` and executable `IEEE32Exec` semantics; and
+- finite-precision lifts through `FP32` and executable `ExecFloat.Binary 8 23` semantics; and
 - an `n`-dimensional Stone-Weierstrass bridge through coordinate polynomials.
 
 The results connect the exact real-valued construction to TorchLean's spec-level MLP and executable

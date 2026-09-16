@@ -110,11 +110,7 @@ per-coordinate summand without re-proving a list induction locally.
 theorem foldl_add_congr {α β : Type} [Add α] (l : List β) (f g : β → α) (a : α)
     (h : ∀ x, f x = g x) :
     l.foldl (fun s x => s + f x) a = l.foldl (fun s x => s + g x) a := by
-  induction l generalizing a with
-  | nil =>
-      simp
-  | cons hd tl ih =>
-      simp [List.foldl, h hd, ih]
+  rw [funext h]
 
 /-- Folding `(+ 0)` over a list leaves the accumulator unchanged. -/
 theorem foldl_add_const_zero {α β : Type} [AddMonoid α] (l : List β) (a : α) :
@@ -132,18 +128,9 @@ This is the standard "peel off the initial accumulator" lemma for left folds ove
 -/
 theorem foldl_add_init {α β : Type} [AddMonoid β] (l : List α) (f : α → β) (acc : β) :
     l.foldl (fun a x => a + f x) acc = acc + l.foldl (fun a x => a + f x) 0 := by
-  induction l generalizing acc with
-  | nil =>
-      simp
-  | cons x xs ih =>
-      -- Use the IH twice: once for `acc + f x`, once for `f x`.
-      have h1 :
-          xs.foldl (fun a y => a + f y) (acc + f x) =
-            (acc + f x) + xs.foldl (fun a y => a + f y) 0 := ih (acc := acc + f x)
-      have h2 :
-          xs.foldl (fun a y => a + f y) (f x) =
-            (f x) + xs.foldl (fun a y => a + f y) 0 := ih (acc := f x)
-      simp [List.foldl, h1, h2, add_assoc]
+  simpa only [List.foldl_map, add_zero] using
+    (List.foldl_assoc (op := (· + ·)) (ha := ⟨add_assoc⟩)
+      (l := l.map f) (a₁ := acc) (a₂ := 0))
 
 /-- `foldl_add_init` read right to left, which is the direction `rw` usually needs. -/
 theorem add_foldl_add0 {α β : Type} [AddMonoid β] (l : List α) (f : α → β) (acc : β) :
@@ -175,13 +162,7 @@ theorem foldl_add_distrib2 {α β : Type} [AddCommMonoid α] (l : List β) (g1 g
 theorem foldl_add_mul_right {α β : Type} [Semiring α] (l : List β) (g : β → α) (a k : α) :
     l.foldl (fun acc x => acc + g x * k) (a * k) =
       (l.foldl (fun acc x => acc + g x) a) * k := by
-  induction l generalizing a with
-  | nil =>
-      simp
-  | cons hd tl ih =>
-      have hstart : a * k + g hd * k = (a + g hd) * k := by
-        simp [add_mul]
-      simpa [List.foldl, hstart] using (ih (a := a + g hd))
+  exact List.foldl_hom (fun x => x * k) (fun x y => (add_mul x (g y) k).symm)
 
 /--
 Length of the second component when a left fold prepends exactly one output per input.
@@ -212,22 +193,11 @@ big-operator lemmas apply.
 theorem finRange_foldl_add_eq_finset_sum {β : Type} [AddCommMonoid β] {n : Nat} (f : Fin n → β) :
     (List.finRange n).foldl (fun s i => s + f i) 0 = (Finset.univ : Finset (Fin n)).sum f := by
   classical
-  have hmap :
-      (List.finRange n).foldl (fun s i => s + f i) 0 =
-        List.foldl (fun s x => s + x) 0 ((List.finRange n).map f) := by
-    simpa using
-      (List.foldl_map (f := f) (g := fun s x => s + x) (l := List.finRange n)
-        (init := (0 : β))).symm
-  have hfold :
-      List.foldl (fun s x : β => s + x) 0 ((List.finRange n).map f) =
-        ((List.finRange n).map f).sum := by
-    simpa [List.sum] using
-      (List.foldl_eq_foldr (f := fun s x : β => s + x) (a := (0 : β))
-        (l := (List.finRange n).map f))
-  have hsum :
-      (Finset.univ : Finset (Fin n)).sum f = ((List.finRange n).map f).sum := by
-    simp [Finset.sum, Finset.val_univ_fin, Multiset.map_coe, Multiset.sum_coe]
-  exact hmap.trans (hfold.trans hsum.symm)
+  calc
+    _ = ((List.finRange n).map f).sum := by
+      rw [List.sum_eq_foldl, List.foldl_map]
+    _ = _ := by
+      simp only [Finset.sum, Finset.val_univ_fin, Multiset.map_coe, Multiset.sum_coe]
 
 /--
 Accumulator form of `finRange_foldl_add_eq_finset_sum`.
@@ -238,8 +208,6 @@ finite-sum proofs.
 theorem finRange_foldl_add_acc {β : Type} [AddCommMonoid β] {n : Nat} (f : Fin n → β) (acc : β) :
     (List.finRange n).foldl (fun s i => s + f i) acc =
       acc + (Finset.univ : Finset (Fin n)).sum f := by
-  have h1 := foldl_add_init (l := List.finRange n) (f := f) (acc := acc)
-  have h2 := finRange_foldl_add_eq_finset_sum (n := n) (f := f)
-  simpa [h2] using h1
+  rw [foldl_add_init, finRange_foldl_add_eq_finset_sum]
 
 end List

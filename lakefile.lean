@@ -21,6 +21,28 @@ private def cudaHome : String := Id.run do
     panic! s!"cuda_home must be a path, not an option-like value: {home}"
   return if home.isEmpty then "/usr/local/cuda" else home
 
+/--
+GPU architectures included in the native CUDA objects.
+
+`all-major` includes native code for each supported major architecture and works on headless
+builders. Set `cuda_arch=sm_80`, for example, to build specifically for A100. `native` is rejected:
+nvcc otherwise falls back to its default target when no GPU is visible, and the same setting could
+produce different objects on different build machines.
+-/
+private def cudaArch : String := Id.run do
+  let value := ((get_config? cuda_arch).getD "all-major").trimAscii.toString
+  let arch := if value.isEmpty then "all-major" else value
+  if arch == "native" then
+    panic! "cuda_arch=native is not supported; use all-major or an explicit target such as sm_80"
+  if arch == "all-major" || arch == "all" then
+    return arch
+  let suffix := (arch.drop 3).toString
+  let digits := if suffix.endsWith "a" || suffix.endsWith "f" then
+    (suffix.dropEnd 1).toString else suffix
+  if arch.startsWith "sm_" && !digits.isEmpty && digits.toList.all Char.isDigit then
+    return arch
+  panic! s!"invalid cuda_arch: {arch}; expected all-major, all, or a real target such as sm_80"
+
 /-- Optional LibTorch root; relative paths are resolved against the package directory. -/
 private def libtorchHomeConfig : Option String :=
   (get_config? libtorch_home).bind fun path =>
@@ -39,7 +61,7 @@ private def nativeLinkArgs : Array String :=
     let cudaArgs := #[
       "-L", s!"{cudaHome}/lib64", "-lcudart", "-lcublas", "-lcufft",
       "-Wl,-rpath," ++ s!"{cudaHome}/lib64"
-    ]
+    ] ++ if Platform.isWindows || Platform.isOSX then #[] else #["-lstdc++"]
     if libtorchEnabled then
       cudaArgs.push ("-Wl,-rpath," ++ s!"{lt}/lib")
     else
@@ -121,6 +143,84 @@ private def nativeHeaderDeps (pkg : Package) : SpawnM (Job Unit) := do
   let convPool ← inputDir (pkg.dir / "csrc/cuda/conv_pool") true isHeader
   pure <| common.mix convPool
 
+/--
+Find the executable that will be passed to a native compile or link command.
+Keep its invocation path: names such as `clang++` can select a language mode even when they are
+symlinks to the same binary. The dependency trace separately records the resolved file.
+-/
+private def nativeCompilerPath (name : String) : JobM FilePath := do
+  let path := FilePath.mk name
+  let cwd ← IO.currentDir
+  let candidates ←
+    if path.isAbsolute || path.components.length > 1 then
+      pure [cwd / path]
+    else
+      pure <| (SearchPath.parse ((← IO.getEnv "PATH").getD "")).map (cwd / · / path)
+  for candidate in candidates do
+    if (← candidate.pathExists) && !(← candidate.isDir) then
+      return candidate.normalize
+  error s!"native compiler not found: {name}"
+
+/-- Hash tool contents on each build, including replacements installed at the same path. -/
+private def traceNativeTool (path : FilePath) : JobM Unit := do
+  let resolved ← IO.FS.realPath path
+  addPureTrace (path.toString, resolved.toString) "native tool paths"
+  addTrace (.ofHash (← computeFileHash resolved) resolved.toString)
+
+/-- Resolve and trace a native compiler before checking whether its object can be reused. -/
+private def nativeCompilerJob (name : String) : SpawnM (Job FilePath) := Job.async do
+  let compiler ← nativeCompilerPath name
+  traceNativeTool compiler
+  return compiler
+
+/--
+Record nvcc's extra flags without allowing them to replace the traced target or host compiler.
+Option files and response files could hide those overrides, so pass ordinary flags directly.
+-/
+private def traceCudaFlags : JobM Unit := do
+  let selectors := #[
+    "-arch", "--gpu-architecture", "-code", "--gpu-code", "-gencode", "--generate-code",
+    "-ccbin", "--compiler-bindir", "-optf", "--options-file", "@"
+  ]
+  for name in #["NVCC_PREPEND_FLAGS", "NVCC_APPEND_FLAGS"] do
+    let value := (← IO.getEnv name).getD ""
+    if selectors.any (fun selector => (value.splitOn selector).length > 1) then
+      error <| s!"{name} cannot select architectures, host compilers, or option files; " ++
+        "use cuda_arch and NVCC_CCBIN for the target and host compiler"
+    addPureTrace value name
+
+/--
+One dependency shared by the four native CUDA components. The Lean revision alone does not
+identify nvcc or its host compiler. Record the actual tools, toolkit version, and environment
+flags before Lake decides whether a previously compiled object can be reused.
+-/
+target torchlean_cuda_compiler pkg : FilePath × FilePath := Job.async do
+  let home := pkg.dir / cudaHome
+  let nvcc := home / "bin" / "nvcc"
+  let defaultHost := if Platform.isWindows then "cl.exe" else "g++"
+  let configured := ((← IO.getEnv "NVCC_CCBIN").getD "").trimAscii.toString
+  let hostName := if configured.isEmpty then defaultHost else configured
+  let hostPath := FilePath.mk hostName
+  let hostName ← if ← hostPath.isDir then
+    pure (hostPath / defaultHost).toString else pure hostName
+  let host ← nativeCompilerPath hostName
+  traceCudaFlags
+  traceNativeTool nvcc
+  traceNativeTool host
+  traceNativeTool (home / "bin" / "ptxas")
+  -- Toolkit packages can update these components independently of the nvcc driver binary.
+  for relative in #["nvvm/bin/cicc", "bin/nvcc.profile", "version.json", "version.txt"] do
+    let path := home / relative
+    if ← path.pathExists then
+      traceNativeTool path
+  let version ← captureProc {
+    cmd := nvcc.toString
+    args := #["--version"]
+    env := #[("NVCC_PREPEND_FLAGS", none), ("NVCC_APPEND_FLAGS", none)]
+  }
+  addPureTrace version "CUDA compiler version"
+  return (nvcc, host)
+
 /-- Validate the configured SDK and track its path for native builds. -/
 private def libtorchResolveJob (pkg : Package) : SpawnM (Job FilePath) := do
   let stamp := pkg.buildDir / "libtorch.path"
@@ -143,13 +243,16 @@ private def buildLibtorchSDPASo (pkg : Package) := do
   let cppJob ← inputFile (pkg.dir / "csrc/cuda/kernels/torchlean_libtorch_sdpa.cpp") false
   let cppO := pkg.buildDir / "torchlean_libtorch_sdpa.o"
   let deps := cppJob.zipWith (fun src _ => src) (resolveJob.mix headerDeps)
-  let cppOJob ← buildO cppO deps #[] (libtorchCppCompileArgs pkg lean lt) "c++"
-    getLeanTrace
+  let compilerJob ← nativeCompilerJob "c++"
+  let cppOJob ← compilerJob.bindM fun compiler =>
+    buildO cppO deps #[] (libtorchCppCompileArgs pkg lean lt) compiler getLeanTrace
   let soFile := pkg.buildDir / nameToSharedLib "torchlean_libtorch_sdpa"
   cppOJob.mapM fun o => do
+    let linker ← nativeCompilerPath "g++"
+    traceNativeTool linker
     addPureTrace (libtorchSDPALinkArgs lt) "link flags"
     let art ← buildArtifactUnlessUpToDate soFile (ext := sharedLibExt) (restore := true) do
-      compileSharedLib soFile (#[o.toString] ++ libtorchSDPALinkArgs lt) "g++"
+      compileSharedLib soFile (#[o.toString] ++ libtorchSDPALinkArgs lt) linker
     return art.path
 
 /-- Linkable error-returning symbols when the CUDA LibTorch provider is unavailable. -/
@@ -157,8 +260,9 @@ private def buildLibtorchSDPAStub (pkg : Package) := do
   let lean ← getLeanInstall
   let srcJob ← inputFile (pkg.dir / "csrc/cuda/kernels/torchlean_libtorch_sdpa_stub.c") false
   let oFile := pkg.buildDir / "torchlean_libtorch_sdpa_stub.o"
-  let oJob ← buildO oFile srcJob
-    #["-I", lean.includeDir.toString] #["-O2", "-fPIC"] "cc" getLeanTrace
+  let compilerJob ← nativeCompilerJob "cc"
+  let oJob ← compilerJob.bindM fun compiler =>
+    buildO oFile srcJob #["-I", lean.includeDir.toString] #["-O2", "-fPIC"] compiler getLeanTrace
   let libFile := pkg.buildDir / nameToStaticLib "torchlean_libtorch_sdpa_stub"
   buildStaticLib libFile #[oJob]
 
@@ -180,8 +284,9 @@ private def buildTensorCpuObject (pkg : Package) := do
   let srcJob ← inputFile
     (pkg.dir / "csrc/cpu/torchlean_tensor.c") false
   let oFile := pkg.buildDir / "torchlean_tensor_cpu.o"
-  buildO oFile srcJob
-    #["-I", lean.includeDir.toString] #["-O3", "-fPIC"] "cc" getLeanTrace
+  let compilerJob ← nativeCompilerJob "cc"
+  compilerJob.bindM fun compiler =>
+    buildO oFile srcJob #["-I", lean.includeDir.toString] #["-O3", "-fPIC"] compiler getLeanTrace
 
 /-- Object shared by the static executable link and the dynamic elaborator library. -/
 target torchlean_tensor_cpu_object pkg : FilePath :=
@@ -201,7 +306,8 @@ target torchlean_tensor_cpu_shared pkg : Dynlib := do
   buildLeanSharedLib libName libFile #[oJob] #[]
 
 /-- Compile a CUDA component or its portable stub, tracking headers and compiler settings. -/
-private def buildNativeBackendLib (pkg : Package) (dir stem : String) := do
+private def buildNativeBackendLib (pkg : Package) (dir stem : String) :
+    FetchM (Job FilePath) := do
   let lean ← getLeanInstall
   let headerDeps ← nativeHeaderDeps pkg
   let source := if cudaEnabled then s!"{stem}.cu" else s!"{stem}_stub.c"
@@ -209,13 +315,21 @@ private def buildNativeBackendLib (pkg : Package) (dir stem : String) := do
   let srcJob := srcJob.zipWith (fun src _ => src) headerDeps
   let objectStem := if cudaEnabled then stem else s!"{stem}_stub"
   let libraryStem := if cudaEnabled then s!"{stem}_cuda" else objectStem
-  let flags := if cudaEnabled then
-    #["-I", s!"{cudaHome}/include", "--std=c++17", "-O2", "-Xcompiler", "-fPIC"]
+  let oFile := pkg.buildDir / s!"{objectStem}.o"
+  let includes := #["-I", lean.includeDir.toString] ++ nativeIncludeArgs pkg
+  let oJob ← if cudaEnabled then
+    let compilerJob ← torchlean_cuda_compiler.fetch
+    compilerJob.bindM fun (nvcc, host) => do
+      -- These are traced arguments: changing the target or compiler must invalidate the object.
+      let flags := #[
+        "-I", s!"{cudaHome}/include", "--std=c++17", "-O2", "-Xcompiler", "-fPIC",
+        s!"--gpu-architecture={cudaArch}", s!"--compiler-bindir={host}"
+      ]
+      buildO oFile srcJob includes flags nvcc getLeanTrace
   else
-    #["-O2", "-fPIC"]
-  let oJob ← buildO (pkg.buildDir / s!"{objectStem}.o") srcJob
-    (#["-I", lean.includeDir.toString] ++ nativeIncludeArgs pkg) flags
-    (if cudaEnabled then s!"{cudaHome}/bin/nvcc" else "cc") getLeanTrace
+    let compilerJob ← nativeCompilerJob "cc"
+    compilerJob.bindM fun compiler =>
+      buildO oFile srcJob includes #["-O2", "-fPIC"] compiler getLeanTrace
   buildStaticLib (pkg.buildDir / nameToStaticLib libraryStem) #[oJob]
 
 /-- CUDA+cuBLAS matrix multiplication, or portable stubs. -/
@@ -234,9 +348,29 @@ target torchlean_cuda_conv_pool pkg : FilePath :=
 target torchlean_cuda_tensor pkg : FilePath :=
   buildNativeBackendLib pkg "tensor" "torchlean_cuda_tensor"
 
+/-- Repair large frees and delayed arena purging in the pinned Linux allocator. -/
+target torchlean_allocator pkg : FilePath := do
+  let lean ← getLeanInstall
+  let buildScript := pkg.dir / "scripts/lean_allocator.py"
+  let scriptJob ← inputFile buildScript false
+  let compatJob ← inputFile (pkg.dir / "csrc/runtime/lean_libc_compat.h") false
+  let headerJob ← inputFile (lean.includeDir / "lean/mimalloc.h") false
+  let deps := scriptJob.mix (compatJob.mix headerJob)
+  let compilerJob ← nativeCompilerJob "c++"
+  compilerJob.bindM fun compiler => do
+    let output := pkg.buildDir / "torchlean_allocator.o"
+    buildFileAfterDep output deps (fun _ => do
+      proc {
+        cmd := "python3"
+        args := #[buildScript.toString, "--lean-include", lean.includeDir.toString,
+          "--compiler", compiler.toString, "--output", output.toString]
+      }) getLeanTrace
+
 @[default_target]
 lean_lib NN where
   moreLinkObjs :=
+    (if Platform.isWindows || Platform.isOSX then (#[] : TargetArray FilePath)
+      else (#[torchlean_allocator] : TargetArray FilePath)) ++
     (#[
       torchlean_tensor_cpu,
       torchlean_dgemm_cuda,
@@ -304,10 +438,14 @@ lean_exe torchlean_lint where
 lean_exe torchlean where
   root := `NN.Examples.RunnerMain
 
+-- Shared executable numerical formats and refinement proofs.
+require floatlib from git
+  "https://github.com/lean-dojo/FloatLib" @ "40301cd44f253a4ac6ccd34a0eb6c221e185e25c"
+
 -- Complete API documentation (HTML) via `lake build TorchLeanDocs:docs`.
 require «doc-gen4» from git
-  "https://github.com/leanprover/doc-gen4" @ "v4.33.0"
+  "https://github.com/leanprover/doc-gen4" @ "v4.34.0"
 
 -- Keep `mathlib` last so Mathlib’s dependency versions win, which is required for cache tooling.
 require mathlib from git
-  "https://github.com/leanprover-community/mathlib4" @ "v4.33.0"
+  "https://github.com/leanprover-community/mathlib4" @ "v4.34.0"

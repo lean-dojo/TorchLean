@@ -307,7 +307,7 @@ theorem evalAt_eq_evalNode_mseLoss
           (out := .scalar) (Node.mseLoss yhat target) params vals =
         Except.ok (Spec.SomeTensor.mk (α := α) .scalar (Tensor.scalar mean)) := by
     simp only [evalNode, getValue?, hSomeY, hSomeT, Bind.bind, Except.bind]
-    rw [dif_pos hSameShape]
+    rw [dite_eq_left hSameShape]
     rfl
   exact hIREval.trans hTypedEval.symm
 

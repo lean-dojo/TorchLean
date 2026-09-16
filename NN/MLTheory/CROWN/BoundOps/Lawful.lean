@@ -40,7 +40,8 @@ on those real values. This is stronger than merely surrounding the backend's ord
 operation.
 
 There is a global instance for `ℝ`.  There is deliberately no global instance for Lean `Float` or
-for all `IEEE32Exec` bit patterns.  Host `Float` is a trusted runtime boundary, while IEEE-754 NaNs,
+for all `ExecFloat.Binary 8 23` bit patterns.  Host `Float` is a trusted runtime boundary, while
+IEEE-754 NaNs,
 infinities, and overflow require finite-path hypotheses; those facts are stated at the IEEE
 semantics layer rather than hidden in an invalid ordered-ring instance.
 -/

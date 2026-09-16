@@ -8,7 +8,6 @@ module
 
 public meta import NN.Widgets.Core.UI
 public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
 
 /-!
 # PyTorch Translator Widget
@@ -552,7 +551,7 @@ The argument is a Lean term of type `String`, so examples can define reusable sn
 putting large multi-line strings directly in the command.
 -/
 macro "#pytorch_translate_view " snippet:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (NN.Widgets.PyTorchTranslator.html $snippet))
+  UI.canonicalCommand <$> `(#html (NN.Widgets.PyTorchTranslator.html $snippet))
 
 /-- Panel shown when the snippet file cannot be read at all. -/
 private def fileErrorHtml (path msg : String) : ProofWidgets.Html :=
@@ -606,7 +605,7 @@ existing `torch.export` JSON bridge after the report tells you the model is clos
 subset.
 -/
 macro "#pytorch_translate_file " path:str : command =>
-  Lean.TSyntax.mkInfoCanonical <$>
+  UI.canonicalCommand <$>
     `(#html (NN.Widgets.PyTorchTranslator.htmlFromFile $path))
 
 end PyTorchTranslator

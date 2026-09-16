@@ -6,17 +6,16 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Bridge.Expressions
+public import NN.Proofs.RuntimeApprox.IEEE32.Expressions
 public import NN.MLTheory.LearningTheory.Stability.Core
-public import NN.Floats.IEEEExec.Exec32.Instances -- shake: keep
 
 /-!
-# 1D ridge regression under `IEEE32Exec`: core definitions
+# 1D ridge regression under `ExecFloat.Binary 8 23`: core definitions
 
 This module contains the **reusable definitions** used for the executable float32 ridge regression
 development:
 
-- an `(x,y)` example type over `IEEE32Exec`,
+- an `(x,y)` example type over `ExecFloat.Binary 8 23`,
 - fold-order-sensitive floating-point sums (`Fin.foldl`), and
 - an executable ridge regression implementation together with an FP32-style expression spec and a
   bridge lemma (under a finiteness assumption).
@@ -26,6 +25,9 @@ For a higher-level overview and “why this exists”, see the umbrella module
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 
 noncomputable section
@@ -42,23 +44,24 @@ variable {n : Nat}
 /-! ## Example types -/
 
 /--
-An example $(x,y)$ where both coordinates are `IEEE32Exec` numbers.
+An example $(x,y)$ where both coordinates are `ExecFloat.Binary 8 23` numbers.
 
 This mirrors the real-valued pair $(x,y)\in\mathbb{R}\times\mathbb{R}$ used in
 `NN.MLTheory.LearningTheory.Stability.RidgeRegression1D.Real`.
 -/
 abbrev ExampleIEEE32 : Type :=
-  IEEE32Exec × IEEE32Exec
+  (ExecFloat.Binary 8 23) × (ExecFloat.Binary 8 23)
 
 /-- Feature coordinate `x` of an `ExampleIEEE32` pair. -/
-@[simp] abbrev ExampleIEEE32.x (z : ExampleIEEE32) : IEEE32Exec := z.1
+@[simp] abbrev ExampleIEEE32.x (z : ExampleIEEE32) : ExecFloat.Binary 8 23 := z.1
 /-- Label coordinate `y` of an `ExampleIEEE32` pair. -/
-@[simp] abbrev ExampleIEEE32.y (z : ExampleIEEE32) : IEEE32Exec := z.2
+@[simp] abbrev ExampleIEEE32.y (z : ExampleIEEE32) : ExecFloat.Binary 8 23 := z.2
 
 /-!
 ## IEEE32Exec implementation (executable)
 
-We implement sums using `Fin.foldl` instead of `Finset.sum` because `IEEE32Exec` does not satisfy
+We implement sums using `Fin.foldl` instead of `Finset.sum` because `ExecFloat.Binary 8 23` does not
+satisfy
 the commutative-monoid laws required by `Finset.sum` (NaN payload propagation breaks algebraic
 equalities).
 
@@ -66,17 +69,17 @@ Even if exceptional values never occur, evaluation order still matters for float
 -/
 
 /-- Sum $f(0)+f(1)+\cdots+f(m-1)$ using a left fold (order matters for floats). -/
-def sumFin (m : Nat) (f : Fin m → IEEE32Exec) : IEEE32Exec :=
+def sumFin (m : Nat) (f : Fin m → (ExecFloat.Binary 8 23)) : ExecFloat.Binary 8 23 :=
   Fin.foldl m (fun acc i => acc + f i) 0
 
 /-- Executable sum $\sum_i x_i^2$ (with IEEE-754 rounding after every multiplication and
 addition). -/
-def sumXX (S : Dataset (n + 1) ExampleIEEE32) : IEEE32Exec :=
+def sumXX (S : Dataset (n + 1) ExampleIEEE32) : ExecFloat.Binary 8 23 :=
   sumFin (n + 1) (fun i => (Dataset.get S i).x * (Dataset.get S i).x)
 
 /-- Executable sum $\sum_i x_i y_i$ (with IEEE-754 rounding after every multiplication and
 addition). -/
-def sumXY (S : Dataset (n + 1) ExampleIEEE32) : IEEE32Exec :=
+def sumXY (S : Dataset (n + 1) ExampleIEEE32) : ExecFloat.Binary 8 23 :=
   sumFin (n + 1) (fun i => (Dataset.get S i).x * (Dataset.get S i).y)
 
 /--
@@ -84,8 +87,9 @@ Executable ridge regression (1D) using the fold-based sums.
 
 This is the direct “what we would run” implementation (subject to IEEE-754 behavior).
 -/
-def ridgeFit1DExec (lam : IEEE32Exec) (S : Dataset (n + 1) ExampleIEEE32) : IEEE32Exec :=
-  let N : IEEE32Exec := (n + 1 : Nat)
+def ridgeFit1DExec (lam : ExecFloat.Binary 8 23) (S : Dataset (n + 1) ExampleIEEE32) :
+  ExecFloat.Binary 8 23 :=
+  let N : ExecFloat.Binary 8 23 := OfNat.ofNat (n + 1)
   (sumXY (n := n) S) / (sumXX (n := n) S + lam * N)
 
 /-! ## A tensor-flavored wrapper (feature vector of length 1) -/
@@ -100,23 +104,24 @@ This is closer to typical ML “(feature vector, label)” layouts and makes it 
 utilities elsewhere in TorchLean.
 -/
 abbrev ExampleIEEE32Vec1 : Type :=
-  TorchLean.Tensor IEEE32Exec XShape × IEEE32Exec
+  TorchLean.Tensor (ExecFloat.Binary 8 23) XShape × (ExecFloat.Binary 8 23)
 
 /--
 Extract the single feature coordinate (entry $0$) from a length-$1$ feature tensor.
 -/
-def ExampleIEEE32Vec1.x0 (z : ExampleIEEE32Vec1) : IEEE32Exec :=
+def ExampleIEEE32Vec1.x0 (z : ExampleIEEE32Vec1) : ExecFloat.Binary 8 23 :=
   z.1.getScalar ⟨0, by decide⟩
 
 /-- Label coordinate `y` of an `ExampleIEEE32Vec1` pair. -/
-@[simp] abbrev ExampleIEEE32Vec1.y (z : ExampleIEEE32Vec1) : IEEE32Exec := z.2
+@[simp] abbrev ExampleIEEE32Vec1.y (z : ExampleIEEE32Vec1) : ExecFloat.Binary 8 23 := z.2
 
 /--
 Ridge regression where the dataset stores inputs as length-`1` tensors.
 
 This is just a packaging conversion into the scalar-pair dataset expected by `ridgeFit1DExec`.
 -/
-def ridgeFit1DExecVec1 (lam : IEEE32Exec) (S : Dataset (n + 1) ExampleIEEE32Vec1) : IEEE32Exec :=
+def ridgeFit1DExecVec1 (lam : ExecFloat.Binary 8 23) (S : Dataset (n + 1) ExampleIEEE32Vec1) :
+  ExecFloat.Binary 8 23 :=
   ridgeFit1DExec (n := n) lam <|
     Dataset.ofFn (n := n + 1) (Z := ExampleIEEE32) (fun i =>
       let zi := Dataset.get S i
@@ -138,18 +143,20 @@ def termXYExpr (z : ExampleIEEE32) : IEEE32Exec.Expr :=
 
 /-- Expression for $\sum_i x_i^2$ over the dataset. -/
 def sumXXExpr (S : Dataset (n + 1) ExampleIEEE32) : IEEE32Exec.Expr :=
-  Fin.foldl (n + 1) (fun acc i => .add acc (termXXExpr (Dataset.get S i))) (.const (0 : IEEE32Exec))
+  Fin.foldl (n + 1) (fun acc i => .add acc (termXXExpr (Dataset.get S i))) (.const (0 :
+    ExecFloat.Binary 8 23))
 
 /-- Expression for $\sum_i x_i y_i$ over the dataset. -/
 def sumXYExpr (S : Dataset (n + 1) ExampleIEEE32) : IEEE32Exec.Expr :=
-  Fin.foldl (n + 1) (fun acc i => .add acc (termXYExpr (Dataset.get S i))) (.const (0 : IEEE32Exec))
+  Fin.foldl (n + 1) (fun acc i => .add acc (termXYExpr (Dataset.get S i))) (.const (0 :
+    ExecFloat.Binary 8 23))
 
 /--
 Closed expression computing the ridge-regression slope
 $\beta=(\sum_i x_i y_i)/(\sum_i x_i^2+\lambda N)$.
 -/
-def ridgeExpr (lam : IEEE32Exec) (S : Dataset (n + 1) ExampleIEEE32) : IEEE32Exec.Expr :=
-  let N : IEEE32Exec := (n + 1 : Nat)
+def ridgeExpr (lam : ExecFloat.Binary 8 23) (S : Dataset (n + 1) ExampleIEEE32) : IEEE32Exec.Expr :=
+  let N : ExecFloat.Binary 8 23 := OfNat.ofNat (n + 1)
   .div
     (sumXYExpr (n := n) S)
     (.add (sumXXExpr (n := n) S) (.mul (.const lam) (.const N)))
@@ -160,7 +167,8 @@ Execute `ridgeExpr` using the bit-level IEEE runtime evaluator.
 We use the constant environment `fun _ => 0` because `ridgeExpr` is closed (it contains no
 variables).
 -/
-def ridgeFit1DExecExpr (lam : IEEE32Exec) (S : Dataset (n + 1) ExampleIEEE32) : IEEE32Exec :=
+def ridgeFit1DExecExpr (lam : ExecFloat.Binary 8 23) (S : Dataset (n + 1) ExampleIEEE32) :
+  ExecFloat.Binary 8 23 :=
   IEEE32Exec.evalRuntime (fun _ => 0) (ridgeExpr (n := n) lam S)
 
 /--
@@ -172,21 +180,23 @@ This returns a real number that corresponds to interpreting each float primitive
 2. round to float32, then
 3. coerce back to $\mathbb{R}$ via `toReal`.
 -/
-def ridgeFit1DFp32Spec (lam : IEEE32Exec) (S : Dataset (n + 1) ExampleIEEE32) : ℝ :=
-  IEEE32Exec.evalSpec (fun _ => IEEE32Exec.toReal (0 : IEEE32Exec)) (ridgeExpr (n := n) lam S)
+def ridgeFit1DFp32Spec (lam : ExecFloat.Binary 8 23) (S : Dataset (n + 1) ExampleIEEE32) : ℝ :=
+  IEEE32Exec.evalSpec (fun _ => (ExecFloat.Binary.toModel (0 : ExecFloat.Binary 8 23)).toReal)
+    (ridgeExpr (n := n) lam S)
 
 /--
 Bridge lemma: `toReal` of the executable IEEE evaluator agrees with the FP32-expression semantics,
 provided evaluation stays finite (no NaN/Inf/div-by-zero along the way).
 -/
 theorem ridgeFit1D_execExpr_toReal_eq_fp32Spec_of_finiteEval
-    (lam : IEEE32Exec) (S : Dataset (n + 1) ExampleIEEE32)
-    {d : IEEE32Exec.Dyadic}
+    (lam : ExecFloat.Binary 8 23) (S : Dataset (n + 1) ExampleIEEE32)
+    {d : FloatLib.Numerics.Dyadic}
     (hfin : IEEE32Exec.FiniteEval (fun _ => 0) (ridgeExpr (n := n) lam S) d) :
-    IEEE32Exec.toReal (ridgeFit1DExecExpr (n := n) lam S) = ridgeFit1DFp32Spec (n := n) lam S :=
+    (ExecFloat.Binary.toModel (ridgeFit1DExecExpr (n := n) lam S)).toReal = ridgeFit1DFp32Spec (n :=
+      n) lam S :=
       by
   simpa [ridgeFit1DExecExpr, ridgeFit1DFp32Spec] using
-    (IEEE32Exec.toReal_evalRuntime_eq_evalSpec (env := fun _ => (0 : IEEE32Exec))
+    (IEEE32Exec.toReal_evalRuntime_eq_evalSpec (env := fun _ => (0 : ExecFloat.Binary 8 23))
       (e := ridgeExpr (n := n) lam S) (d := d) hfin)
 
 end RidgeIEEEBridge

@@ -304,7 +304,7 @@ theorem relu_relax_scalar_upper_real
       have hle0 : l ≤ 0 := le_of_not_gt hlpos
       have hden : 0 < (u - l) := by linarith
       have hne : (u - l) ≠ 0 := ne_of_gt hden
-      simp only [hu, hlpos, if_true, if_false]
+      simp only [hu, hlpos, ite_true, ite_false]
       -- two subcases depending on x sign
       by_cases hxpos : 0 < x
       · -- 0 < x ≤ u: relu x = x. Show x ≤ (u/(u-l))*x - (u/(u-l))*l

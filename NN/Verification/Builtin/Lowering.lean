@@ -18,6 +18,10 @@ Umbrella import for the graph builder and the public TorchLean-to-verifier-IR lo
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+
 namespace NN.Verification.Builtin
 
 open NN.MLTheory.CROWN
@@ -26,7 +30,7 @@ open NN.MLTheory.CROWN
 Dispatch an executable bound-propagation computation under arithmetic semantics with explicit
 outward endpoint operations, including nonlinear division and normalization bounds.
 
-Native `Float32` and the bit-level `IEEE32Exec` backend meet that interface. Complex
+Native `Float32` and the bit-level `ExecFloat.Binary 8 23` backend meet that interface. Complex
 arithmetic is rejected instead of receiving an invalid real-valued bound implementation.
 -/
 def withBoundArithmetic
@@ -39,7 +43,7 @@ def withBoundArithmetic
   | .native =>
       k (α := Float32)
   | .ieee =>
-      k (α := TorchLean.Floats.IEEE754.IEEE32Exec)
+      k (α := (ExecFloat.Binary 8 23))
   | .complex =>
       throw <| IO.userError
         "bound propagation currently supports real-valued arithmetic only"

@@ -56,7 +56,7 @@ theorem evalConv_eq_generalSpec
   unfold NN.IR.Graph.evalConv
   simp only [Spec.SomeTensor.shape_ofTensor, Spec.SomeTensor.tensor_ofTensor]
   rw [hInfer]
-  simp only [hParams, hMatches, if_true]
+  simp only [hParams, hMatches, ite_true]
   rw [hLeading]
   split
   · congr

@@ -540,7 +540,7 @@ tensor([[2., 0., 0.],
         [1., 1., 2.]])
 ```
 
-Identical factor. On the indefinite one:
+The factor agrees with the Lean result. On the indefinite matrix, PyTorch reports the failed pivot:
 
 ```
 >>> # Inspect both the exception and the leading-minor
@@ -845,7 +845,7 @@ reveals values hidden by six decimal places; it does not change the computed fac
 their accuracy. For a model that repeatedly uses an orthogonal basis, such as a projection layer,
 the cross-column error is directly relevant even when the reconstruction residual looks smaller.
 
-`torch.linalg.qr` on the same matrix in float64 makes a specific and useful contrast:
+On the same matrix in float64, `torch.linalg.qr` returns factors with different signs:
 
 ```
 >>> # Inspect the alternative factor signs together with
@@ -1096,8 +1096,8 @@ real identity, or evidence from a concrete Float run.
 
 # Factorization Proof Gaps
 
-The exact reconstruction developments are substantial, but they are not a complete verified
-numerical linear algebra package. The most useful next theorems are:
+To connect the exact reconstruction results to rank conditions, solvers, and numerical stability,
+we still need the following theorems:
 
 1. positive definiteness implies positive executable Cholesky pivots;
 2. full column rank implies positive executable Gram-Schmidt pivots;

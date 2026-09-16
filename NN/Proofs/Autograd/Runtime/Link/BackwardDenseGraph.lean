@@ -339,7 +339,7 @@ theorem oneHotGrads_lowerGraphToTape_eq_single [CommSemiring α] {Δ : Type} {Γ
     rw [hnode, Option.map_some] at hshape
     by_cases hj : j = output.i.1
     · simp [hj]
-    · simp only [Option.map_some, if_neg hj, ← hshape, zeroCotangent]
+    · simp only [Option.map_some, ite_eq_right hj, ← hshape, zeroCotangent]
 
 /-! ### Corollaries for the executed backward pass -/
 

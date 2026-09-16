@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Exec32.Compare
+public import FloatLib.Floats.Formats.IEEE754.Native
 public import NN.Spec.Core.Tensor.Core
 
 /-!
@@ -23,6 +23,7 @@ namespace Autograd
 namespace Torch
 
 open Spec TorchLean
+open FloatLib.Floats
 
 /--
 Conversion between an executable scalar type and the host `Float` representation used at native
@@ -67,22 +68,23 @@ instance (priority := 1000) : TensorTransfer Float32 where
   toFloat := fun x => pure x.toFloat
 
 /--
-Host-side conversion for TorchLean's executable IEEE-754 binary32 scalar.
+Host-side conversion for FloatLib's configured IEEE-754 binary32 scalar.
 
-`IEEE32Exec` is a Lean-defined bit-level scalar semantics, not a native float32 wire format. Scalar
-and tensor readback to `Float` remain available for reports and checkpoints, but bulk native
-transfer is unsupported.
+The configured arithmetic uses software kernels. Scalar and tensor readback to `Float` remain
+available for reports and checkpoints, but this does not select native CUDA arithmetic. Finite
+binary32 values embed exactly in binary64; the native conversion canonicalizes NaN payloads.
 -/
-instance (priority := 1000) : TensorTransfer TorchLean.Floats.IEEE754.IEEE32Exec where
+instance (priority := 1000) :
+    TensorTransfer (ExecFloat.Binary (exponentBits := 8) (fractionBits := 23)) where
   toFloatTensor := fun {_s} _ =>
     throw <| IO.userError
-      "torch: IEEE32Exec has host-side scalar conversion only; use Float for native tensor transfer"
+      "torch: configured binary32 supports host readback; select native arithmetic for CUDA"
   ofFloatTensor := fun {_s} _ =>
     throw <| IO.userError
-      "torch: IEEE32Exec has host-side scalar conversion only; use Float for native tensor transfer"
-  toFloat := fun x => pure (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat x)
+      "torch: configured binary32 supports host readback; select native arithmetic for CUDA"
+  toFloat := fun x => pure (ExecFloat.Binary.toFloat32 x).toFloat
   readFloatTensor := TensorTransfer.toFloatTensorWith
-    TorchLean.Floats.IEEE754.IEEE32Exec.toFloat
+    (fun x => (ExecFloat.Binary.toFloat32 x).toFloat)
 
 /--
 CPU-preserving fallback for scalar types without a native tensor representation.

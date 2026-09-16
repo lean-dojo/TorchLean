@@ -21,8 +21,9 @@ Lean's ordinary bracket syntax remains list syntax unless its expected type is
 `Shape.ofList`. For a tensor expected type, ordinary nested brackets construct
 a tensor and verify every dimension during elaboration.
 
-The elaborator delegates to the packed implementation, so there is one storage
-invariant and no literal-only tensor representation.
+List patterns retain their usual meaning, including empty and nested patterns.
+The tensor elaborator delegates to the packed implementation, so there is one
+storage invariant and no separate representation for literals.
 -/
 
 public meta section
@@ -34,42 +35,48 @@ open Lean.Elab
 open Lean.Elab.Term
 open Lean.Meta
 
-/-- Internal syntax used to distinguish tensor literals from ordinary list literals. -/
-syntax (name := tensorOrListLiteralStx)
-  "tensor_literal%[" withoutPosition(term,*,?) "]" : term
+/-- Brackets whose interpretation can be directed by an expected tensor type. -/
+syntax (name := tensorOrListLiteralStx) (priority := high)
+  "[" withoutPosition(term,*,?) "]" : term
 
-macro_rules
-  | `([$elements,*]) => `(tensor_literal%[$elements,*])
-
-/--
-Expand bracket elements to the ordinary list constructors without invoking
-bracket syntax again. This is the fallback for every non-shape, non-tensor
-expected type.
--/
-private def expandListLiteral
-    (elements : Array (TSyntax `term)) : TermElabM (TSyntax `term) := do
-  let mut result ← `(List.nil)
-  for element in elements.reverse do
-    result ← `(List.cons $element $result)
-  return result
+/-- Internal marker carrying the expected type through bracket expansion. -/
+syntax (name := tensorLiteralExpectedTypeStx) "tensor_literal_expected_type%" : term
 
 /--
-Elaborate intercepted bracket syntax as a shape or tensor when directed by the
-expected type. Every other use expands to Lean's ordinary list constructors.
+Keep the contents as Lean's builtin list syntax and mark the surrounding type
+ascription for the tensor elaborator. Lean expands macros before collecting
+pattern variables: a custom term node at that point would make even `[x]` an
+invalid list pattern. A type ascription lets that collector see the ordinary
+list constructors while leaving the expected-type decision to elaboration.
+
+The inner node uses the original list parser directly. Its expansion therefore
+keeps Lean's own handling of long lists and cannot call this macro again.
 -/
-@[term_elab tensorOrListLiteralStx]
+@[macro tensorOrListLiteralStx]
+def expandTensorLiteral : Macro := fun stx => do
+  let literal : TSyntax `term := ⟨stx.setKind ``«term[_]»⟩
+  `(($literal : tensor_literal_expected_type%))
+
+/--
+Interpret marked brackets using their expected type. Ordinary lists, including
+the constructor expressions produced while elaborating patterns, go straight
+to Lean's list elaboration.
+
+For tensors, elaborate the list with the scalar or subtensor type required by
+the trailing dimensions, then use the usual packed constructors. This also
+works when a caller has already expanded the list macro before elaboration.
+-/
+@[term_elab Lean.Parser.Term.typeAscription]
 def elabTensorLiteral : TermElab := fun stx expectedType? => withRef stx do
-  let `(tensor_literal%[$elements,*]) := stx
+  let `(($literal : tensor_literal_expected_type%)) := stx
     | throwUnsupportedSyntax
-  let elements := elements.getElems
   if let some expectedType := expectedType? then
     let expectedType ←
       withTransparency .reducible <| whnf (← instantiateMVars expectedType)
     if expectedType.isConstOf ``Spec.Shape then
-      let dimensions ← elements.mapM fun element =>
-        elabTermEnsuringType element (mkConst ``Nat)
-      let dimensionList ← mkListLit (mkConst ``Nat) dimensions.toList
-      let result ← mkAppM ``Spec.Shape.ofList (Array.singleton dimensionList)
+      let listType ← mkAppM ``List #[mkConst ``Nat]
+      let dimensions ← elabTermEnsuringType literal listType
+      let result ← mkAppM ``Spec.Shape.ofList #[dimensions]
       return ← ensureHasType (some expectedType) result
     if expectedType.isAppOfArity ``TorchLean.Tensor.Internal.Rep 3 then
       let tensorArguments := expectedType.getAppArgs
@@ -81,12 +88,13 @@ def elabTensorLiteral : TermElab := fun stx expectedType? => withRef stx do
       let shapeArguments := expectedShape.getAppArgs
       let expectedLength := shapeArguments[1]!
       let innerShape ← withTransparency .reducible <| whnf shapeArguments[2]!
-      let literalLength := mkNatLit elements.size
-      unless ← withTransparency .default <|
-          isDefEq expectedLength literalLength do
-        throwError
-          "tensor literal has leading dimension {literalLength}, but the expected \
-            leading dimension is {expectedLength}"
+      if literal.raw.isOfKind ``«term[_]» then
+        let literalLength := mkNatLit literal.raw[1].getSepArgs.size
+        unless ← withTransparency .default <|
+            isDefEq expectedLength literalLength do
+          throwError
+            "tensor literal has leading dimension {literalLength}, but the expected \
+              leading dimension is {expectedLength}"
       let scalarType := tensorArguments[0]!
       let storage := tensorArguments[2]!
       let elementType :=
@@ -94,14 +102,13 @@ def elabTensorLiteral : TermElab := fun stx expectedType? => withRef stx do
           scalarType
         else
           mkApp3 expectedType.getAppFn scalarType innerShape storage
-      let values ← elements.mapM fun element =>
-        elabTermEnsuringType element elementType
-      let valueList ← mkListLit elementType values.toList
+      let listType ← mkAppM ``List #[elementType]
+      let values ← elabTermEnsuringType literal listType
       let result ← if innerShape.isAppOfArity ``List.nil 1 then
-        mkAppM ``TorchLean.Tensor.Internal.Rep.ofList (Array.singleton valueList)
+        mkAppM ``TorchLean.Tensor.Internal.Rep.ofList #[values]
       else
-        mkAppM ``TorchLean.Tensor.Internal.Rep.stackList (Array.singleton valueList)
+        mkAppM ``TorchLean.Tensor.Internal.Rep.stackList #[values]
       return ← ensureHasType (some expectedType) result
-  elabTerm (← expandListLiteral elements) expectedType?
+  elabTerm literal expectedType?
 
 end TorchLean.Tensor.Internal.Elab

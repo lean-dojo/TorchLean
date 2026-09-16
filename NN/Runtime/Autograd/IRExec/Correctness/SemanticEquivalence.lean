@@ -446,7 +446,7 @@ theorem denoteAll_eq_of_lowerToForwardGraph
                     simp
               -- With `0 < size`, the `if` guard in `denoteAllFrom` is true at `i=0`.
               unfold NN.IR.Graph.denoteAllFrom
-              rw [dif_pos hSize, h0, hExec]
+              rw [dite_eq_left hSize, h0, hExec]
               simpa using hTail
           all_goals
             have : False := by

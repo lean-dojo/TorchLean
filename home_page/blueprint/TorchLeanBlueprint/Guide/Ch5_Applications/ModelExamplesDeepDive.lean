@@ -17,16 +17,16 @@ tag := "model-examples-deep-dive"
 file := "Three-End-to-End-Case-Studies"
 %%%
 
-Three case studies expose the objects that move through TorchLean. The first is a character-level
-Transformer, where sequence length, masking, and generation matter. The second compares two runs,
-residual and patch-token vision models, on the same prepared dataset. The third is a Fourier neural
-operator, where the important boundary is the spectral kernel rather than an image or token
-representation.
+The small CharGPT run below ends with a validation loss of `4.178707` and a continuation with no
+sustained words. To interpret that result, we need a scale for the loss, the model's parameter
+layout, and the distinction between predicting held-out tokens and feeding sampled tokens back
+into the model.
 
-The Lean blocks derive shapes and parameter counts from the model definitions. Shell transcripts
-record separate runs, and PyTorch module counts provide another comparison for three architectures.
-Matching these counts can expose a missing bias, a different width, or accidental weight sharing;
-it does not establish equality of the forward computations.
+I use the same approach for the vision models and the Burgers neural operator: read a reported
+number alongside the computation that produced it. The Lean blocks derive shapes and parameter
+counts from model definitions; the shell transcripts record separate runs. PyTorch module counts
+provide another comparison for three architectures. A count can expose a missing bias, a different
+width, or accidental weight sharing, though it cannot establish equality of forward computations.
 
 The displayed losses come from runs with the stated seeds and row counts; reproducing them also
 requires matching data, arithmetic, and backend behavior. They are not performance benchmarks.
@@ -82,8 +82,8 @@ reported losses while leaving the actual distribution of predictions to further 
 
 # CharGPT
 
-The Tiny Shakespeare experiment is the clearest sequence-model application because it begins with a
-text file and ends with both a trained parameter file and generated text.
+The Tiny Shakespeare experiment begins with a text file. Its character inventory determines the
+vocabulary, and the run writes both trained parameters and generated text.
 
 Prepare the corpus:
 
@@ -104,7 +104,7 @@ lake -R -K cuda=true exe torchlean chargpt --device cuda \
   --log /tmp/chargpt-trainlog.json
 ```
 
-The current run reports:
+The recorded run reports:
 
 ```terminal +output
 [TorchLean] arithmetic: native binary32
@@ -174,7 +174,8 @@ def dpGpt : nn.IndexedModel (dpSmoke.tokens [2])
 ```
 
 The parameter list is ordered: token embedding, positional embedding, thirteen tensors per
-Transformer block, the final layer normalization, and the vocabulary head. Summing those runs:
+Transformer block, the final layer normalization, and the vocabulary head. We can count each
+contiguous group in that order:
 
 ```lean (name := dpCountDef)
 /-- Scalars in a contiguous run of parameter shapes. -/
@@ -490,7 +491,7 @@ The hard mask instead encodes zero weight directly. This also affects the backwa
 finite, a zero forward weight gives zero gradient into that logit. A small positive weight can
 carry a nonzero gradient, whose magnitude also depends on the upstream cotangent and weighted sum.
 
-The one-visible-key row is chosen because its expected answer does not depend on any score.
+I use a row with one visible key because its expected answer does not depend on any score.
 After normalization, the single permitted value receives all the weight. That isolates mask
 semantics from whether a particular dot product happened to be large or small. The logarithm
 of the penalized entry then gives information the six-decimal tensor printer cannot show. For
@@ -740,7 +741,7 @@ mean_loss(after training) = 2.363078
 ```
 
 Both starting values are now within 0.13 of 2.302585, and ten updates on eight samples move each
-model by a modest amount. This is a useful wiring check. A ten-class loss of 4.6 means the
+model by a modest amount. A ten-class loss of 4.6 means the
 true label receives low probability; it does not mean the head predicts a hundred classes. Inspect
 logits and labels before diagnosing the cause.
 
@@ -756,8 +757,8 @@ builds:
 - the backend capsules printed by adding `--show-backend`;
 - the JSON metadata written by `--log`.
 
-The capsule output is long, and worth reading once. Each operation the run touched reports its
-provider and its per-field evidence:
+Read the capsule output alongside the loss: each operation the run touched reports its
+provider and the evidence for its shape, value, and derivative claims:
 
 ```terminal +output
 [TorchLean] backend capsules used:
@@ -806,7 +807,7 @@ lake -R -K cuda=true exe torchlean fno1d_burgers --device cuda \
   --plot-csv /tmp/fno-predictions.csv
 ```
 
-The current output identifies the numerical path before reporting the loss:
+The recorded output identifies the numerical path before reporting the loss:
 
 ```terminal +output
 fno1d_burgers: native real-split FNO1D Burgers
@@ -896,7 +897,7 @@ pointwise linear map, passes through one FNO block, and is projected back to one
 a bare field. The reshape layers around the pointwise maps are explicit rather than implied,
 which is the same choice the ViT patch conversion makes.
 
-The parameter counts come from the model, not the printer:
+We can recover the parameter count directly from the model's state shapes:
 
 ```lean (name := dpFno)
 -- Count stored real and imaginary spectral weights,
@@ -1019,12 +1020,11 @@ Setting the two runs side by side:
 
 The typed input/output contract and dataset remain the same, but the spectral parameterization
 and numerical provider change. These loss differences are not an isolated comparison of rounding
-error between equivalent implementations. This is precisely the kind of comparison for which backend
-capsules are useful: provider, reduction policy, layout, and evidence can change without silently
-changing the model's mathematical interface.
+error between equivalent implementations. Backend capsules help identify the provider, reduction
+policy, layout, and evidence behind each run, even when the input and output types agree.
 
-The output line `spectral path=fused cuFFT RFFT autograd op` is therefore part of the scientific
-record. It says which external numerical provider produced the transform. It does not turn cuFFT
+Keep `spectral path=fused cuFFT RFFT autograd op` with the reported loss: it identifies the external
+numerical provider that produced the transform. It does not turn cuFFT
 into a Lean-proved implementation. The reusable
 {src "NN/API/Models/FNO.lean"}[`FNO constructor`] states the grid and mode constraints independently
 of the backend, and the
@@ -1040,7 +1040,7 @@ for an otherwise identical repeat of the experiment.
 
 # Application Coverage
 
-The four application runs stress different parts of TorchLean:
+The artifact to retain depends on what we want to inspect from each run:
 
 :::table +header
 *
@@ -1065,9 +1065,9 @@ The four application runs stress different parts of TorchLean:
   * train/test loss and prediction CSV
 :::
 
-Generative models and reinforcement learning add schedules, samplers, environments, and rollout
-data to these architectural choices. Their corresponding chapters follow those objects through
-training and evaluation.
+For generative models, the schedule and sampler also determine what happens after training.
+For reinforcement learning, the environment and recorded rollout determine which observations
+the learner receives. A model configuration alone cannot describe either complete experiment.
 
 Checkpoint and dataset files in these runs are runtime artifacts, not proof objects. Loading one
 checks its declared schema and dimensions where the command implements those checks; it does not

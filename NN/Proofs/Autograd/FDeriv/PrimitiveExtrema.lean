@@ -35,11 +35,11 @@ theorem hasDerivAt_min_const_of_ne {x c : ℝ} (h : x ≠ c) :
     HasDerivAt (fun y => min y c)
       (if x < c then 1 else if c < x then 0 else 1 / 2) x := by
   rcases lt_or_gt_of_ne h with hlt | hgt
-  · simp only [if_pos hlt]
+  · simp only [ite_eq_left hlt]
     apply (hasDerivAt_id' x).congr_of_eventuallyEq
     filter_upwards [Iio_mem_nhds hlt] with y hy
     exact min_eq_left (le_of_lt hy)
-  · simp only [if_neg (not_lt_of_ge hgt.le), if_pos hgt]
+  · simp only [ite_eq_right (not_lt_of_ge hgt.le), ite_eq_left hgt]
     apply (hasDerivAt_const x c).congr_of_eventuallyEq
     filter_upwards [Ioi_mem_nhds hgt] with y hy
     exact min_eq_right (le_of_lt hy)
@@ -49,11 +49,11 @@ theorem hasDerivAt_max_const_of_ne {x c : ℝ} (h : x ≠ c) :
     HasDerivAt (fun y => max y c)
       (if c < x then 1 else if x < c then 0 else 1 / 2) x := by
   rcases lt_or_gt_of_ne h with hlt | hgt
-  · simp only [if_neg (not_lt_of_ge hlt.le), if_pos hlt]
+  · simp only [ite_eq_right (not_lt_of_ge hlt.le), ite_eq_left hlt]
     apply (hasDerivAt_const x c).congr_of_eventuallyEq
     filter_upwards [Iio_mem_nhds hlt] with y hy
     exact max_eq_right (le_of_lt hy)
-  · simp only [if_pos hgt]
+  · simp only [ite_eq_left hgt]
     apply (hasDerivAt_id' x).congr_of_eventuallyEq
     filter_upwards [Ioi_mem_nhds hgt] with y hy
     exact max_eq_left (le_of_lt hy)

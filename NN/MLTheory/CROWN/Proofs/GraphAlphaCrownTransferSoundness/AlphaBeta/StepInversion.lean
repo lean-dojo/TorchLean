@@ -155,7 +155,7 @@ theorem stepAlphaBeta_relu_beta_inv
       simp only [hxin, hpre, hαopt] at hs'
       by_cases hout : xin.outDim = preB.dim
       · by_cases hα : αv.n = preB.dim
-        · rw [dif_pos hout, dif_pos hα] at hs'
+        · rw [dite_eq_left hout, dite_eq_left hα] at hs'
           cases hrelax : phaseRelaxVec? (α := ℝ) (n := preB.dim) preB.lo preB.hi
               (castDimScalar (α := ℝ) hα αv.v) phases with
           | none => simp [hrelax] at hs'
@@ -165,14 +165,14 @@ theorem stepAlphaBeta_relu_beta_inv
               exact ⟨hout, castDimScalar (α := ℝ) hα αv.v, relaxLo, relaxHi, rfl, rfl,
                 castDimScalar_unit_range hα αv.v (getAlpha?_unit_range halpha hαopt), hrelax,
                 (Option.some.inj hs').symm⟩
-        · rw [dif_pos hout, dif_neg hα] at hs'
+        · rw [dite_eq_left hout, dite_eq_right hα] at hs'
           cases hs'
-      · rw [dif_neg hout] at hs'
+      · rw [dite_eq_right hout] at hs'
         cases hs'
   | none =>
       simp only [hxin, hpre, hαopt] at hs'
       by_cases hout : xin.outDim = preB.dim
-      · rw [dif_pos hout] at hs'
+      · rw [dite_eq_left hout] at hs'
         cases hrelax : phaseRelaxVec? (α := ℝ) (n := preB.dim) preB.lo preB.hi
             (defaultAlphaVec (α := ℝ) (n := preB.dim) preB.lo preB.hi) phases with
         | none => simp [hrelax] at hs'
@@ -182,7 +182,7 @@ theorem stepAlphaBeta_relu_beta_inv
             exact ⟨hout, defaultAlphaVec (α := ℝ) (n := preB.dim) preB.lo preB.hi, relaxLo,
               relaxHi, rfl, rfl, defaultAlphaVec_range preB.lo preB.hi, hrelax,
               (Option.some.inj hs').symm⟩
-      · rw [dif_neg hout] at hs'
+      · rw [dite_eq_right hout] at hs'
         cases hs'
 
 end

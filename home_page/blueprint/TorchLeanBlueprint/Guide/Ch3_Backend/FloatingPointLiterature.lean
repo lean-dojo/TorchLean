@@ -1,24 +1,23 @@
 import VersoManual
 import NN.Proofs.Analysis.Lipschitz.Network
 import NN.Proofs.RuntimeApprox.NF.EndToEnd
--- The accumulated-rounding experiment further down builds binary32 values with
--- `IEEE32Exec.ofFloat` and reads them back with `toFloat`. Those live in the float layer, not in
--- any approximation proof, so the chapter names the module it uses instead of leaning on an import
--- it happens to inherit today.
-import NN.Floats.IEEEExec.Exec32
+-- The experiments narrow finite native inputs to binary32 and widen their results for display.
+-- Import the scalar API directly, separately from the reduction proofs.
+import FloatLib
 -- The reduction-schedule section prints `sumTreeResult_enclosure`, which lives with the
 -- `SumTree` theory rather than with the scalar operations.
-import NN.Floats.IEEEExec.Reductions
+import NN.Proofs.RuntimeApprox.Reductions.IEEE32
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
 
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
+open FloatLib.Numerics
+open FloatLib.Floats.Formats.Flocq
 open TorchLean
 open Proofs
 open Proofs.RuntimeApprox
--- Keeps the bit-level reference spelled `IEEE32Exec` in the experiment below rather than
--- `TorchLean.Floats.IEEE754.IEEE32Exec`, which would not fit the width limit on a live block.
+-- Open the namespace containing the retained reduction theorems.
 open TorchLean.Floats.IEEE754
 
 -- Verso checks `leanOutput` blocks against the real compiler message. The graph
@@ -27,29 +26,32 @@ open TorchLean.Floats.IEEE754
 -- rendered page still shows the signature exactly as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 #doc (Manual) "Numerical Error" =>
 %%%
 tag := "floating-point-literature"
 file := "Tracking-Numerical-Error-Through-A-Network"
 %%%
 
-The previous chapter explained how one operation rounds, following the local analysis described
-by {Informal.citet goldberg1991}[]. In a network, an error introduced by one operation becomes part
-of the input to the next. A bound on the final result must account for both the errors introduced
-along the way and the effect of later operations on those errors.
+A rounding error in the first linear layer becomes part of the input to ReLU and then to the
+second layer. The later operations may preserve, amplify, or reduce it while introducing errors
+of their own. Bounding each operation in isolation leaves out that dependence.
 
-During training, this analysis continues through the saved forward values, the backward pass,
-and the optimizer update. We want to bound the distance between the runtime's forward value,
-gradients, and next parameter state and their real-valued counterparts.
+I'll follow the error through the same two-layer MLP used in the executable comparison below.
+The local rounding analysis of {Informal.citet goldberg1991}[] gives us a starting point.
+FloatLib supplies those scalar facts, and TorchLean's covered tensor operations turn them into
+bounds on output tensors. A graph theorem composes the bounds in evaluation order.
 
-TorchLean answers this compositionally for its proof-bearing operator fragment. Each covered
-operation contributes a local error rule. A graph theorem combines those rules in forward order,
-a reverse-mode theorem combines the covered VJP rules in backward order, and an optimizer contract
-carries the resulting gradient error into the next training state.
+Training extends the calculation. Reverse mode reads saved forward values, so their errors
+affect the gradient. An optimizer then uses that gradient to change the parameters. With a
+contract for each of these operations, we can follow the discrepancy through one complete
+training step: forward values, gradients, and the next parameter state.
 
 # Native And Reference MLP Execution
 
-Start with the checked-in example:
+Run the native/reference comparison with:
 
 ```terminal
 # Compare the executable binary32 model with the Float32
@@ -62,8 +64,9 @@ It evaluates
 $$`y=W_2\operatorname{ReLU}(W_1x+b_1)+b_2`
 
 twice. The first run uses Lean's native `Float32`; the second uses the independent bit-level
-`IEEE32Exec` reference. Both runs then compute
-the parameter and input VJPs. Here is the whole thing, copied from a real run:
+FloatLib binary32 reference. Both runs then compute
+the parameter and input VJPs. The following recorded run predates the FloatLib migration; it shows
+the comparison's outputs and parameter ordering. It is not validation of the migrated executable:
 
 ```terminal +output
 == Float32 semantics tutorial ==
@@ -132,14 +135,11 @@ The signature says the same thing more tersely:
     Spec.SpecTensor s → Tensor α s → Spec.SpecScalar → Prop
 ```
 
-The bound is the last argument, not a field of anything. That is deliberate: the same runtime value
-may be known to approximate several ideal values with different errors, and graph propagation should
-update the bound without rebuilding the tensor. `toSpec` is an argument too, so the relation is not
-tied to one runtime scalar type.
+The last argument is the error bound. Passing it separately lets graph propagation update the
+bound without rebuilding the tensor. It also lets us relate the same runtime value to several ideal
+values, each with its own error. The `toSpec` argument selects how to interpret the runtime scalar.
 
-The tensor shape in the displayed type is shared by both arguments. This already settles which
-coordinates are compared: no broadcasting, reshaping, or parameter remapping is hidden inside
-`approxTensor`. The remaining work is numerical. A budget of $`\varepsilon` permits that much
+The shared shape fixes which coordinates are compared. A budget of $`\varepsilon` permits that much
 error at each coordinate, so summing many coordinates can require a larger output budget even when
 every input satisfies the same relation. Reading the relation this way explains why a layer theorem
 needs an error transformer as well as an input approximation hypothesis.
@@ -242,11 +242,12 @@ classical factor is a comparison scale, not a Lean proof about this complete exp
 -- classical gamma factor.
 -- The binary64 sum is a numerical reference, not an
 -- exact-real oracle.
-def harm32 (n : Nat) : IEEE32Exec :=
+def harm32 (n : Nat) : (ExecFloat.Binary 8 23) :=
   (List.range n).foldl
     (fun acc k =>
-      IEEE32Exec.add acc
-        (IEEE32Exec.ofFloat (1.0 / Nat.toFloat (k + 1))))
+      ExecFloat.add acc
+        ((ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32)
+          (1.0 / Nat.toFloat (k + 1))))
     0
 
 def harm64 (n : Nat) : Float :=
@@ -262,7 +263,8 @@ def gammaN (n : Nat) : Float :=
 #eval do
   for n in [4, 16, 64, 256, 1024, 4096] do
     let ideal := harm64 n
-    let got := (harm32 n).toFloat
+    let got :=
+      (ExecFloat.Binary.toFloat32 (harm32 n)).toFloat
     let rel := ((got - ideal) / ideal).abs
     IO.println s!"n={n} observed={rel / u32} u  \
       bound={gammaN n / u32} u"
@@ -302,19 +304,21 @@ it to adjust the next term. All three are compared with the same binary64 refere
 
 ```lean (name := sumStrategies)
 -- The same term the naive fold above added.
-def harmTerm (k : Nat) : IEEE32Exec :=
-  IEEE32Exec.ofFloat (1.0 / Nat.toFloat (k + 1))
+def harmTerm (k : Nat) : (ExecFloat.Binary 8 23) :=
+  (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32)
+    (1.0 / Nat.toFloat (k + 1))
 
 -- Pairwise reduction: logarithmic depth instead of linear.
 -- An odd element rides to the next round untouched.
-def harmPairwise32 (n : Nat) : IEEE32Exec := Id.run do
-  let mut level : Array IEEE32Exec :=
+def harmPairwise32 (n : Nat) :
+    (ExecFloat.Binary 8 23) := Id.run do
+  let mut level : Array (ExecFloat.Binary 8 23) :=
     (Array.range n).map harmTerm
   while level.size > 1 do
-    let mut next : Array IEEE32Exec := #[]
+    let mut next : Array (ExecFloat.Binary 8 23) := #[]
     for i in [0 : level.size / 2] do
       next := next.push
-        (IEEE32Exec.add level[2 * i]! level[2 * i + 1]!)
+        (ExecFloat.add level[2 * i]! level[2 * i + 1]!)
     if level.size % 2 == 1 then
       next := next.push level[level.size - 1]!
     level := next
@@ -323,21 +327,23 @@ def harmPairwise32 (n : Nat) : IEEE32Exec := Id.run do
 -- Kahan compensated summation. `drift` holds the part of
 -- the last addend that did not fit into the accumulator,
 -- recovered by subtracting the old accumulator back out.
-def harmKahan32 (n : Nat) : IEEE32Exec :=
+def harmKahan32 (n : Nat) : (ExecFloat.Binary 8 23) :=
   ((List.range n).foldl
-    (fun (state : IEEE32Exec × IEEE32Exec) k =>
+    (fun (state : (ExecFloat.Binary 8 23) ×
+        (ExecFloat.Binary 8 23)) k =>
       let (total, drift) := state
-      let adjusted := IEEE32Exec.sub (harmTerm k) drift
-      let next := IEEE32Exec.add total adjusted
-      let recovered := IEEE32Exec.sub next total
-      (next, IEEE32Exec.sub recovered adjusted))
+      let adjusted := ExecFloat.sub (harmTerm k) drift
+      let next := ExecFloat.add total adjusted
+      let recovered := ExecFloat.sub next total
+      (next, ExecFloat.sub recovered adjusted))
     (0, 0)).fst
 
 #eval do
   for n in [64, 256, 1024, 4096] do
     let ideal := harm64 n
-    let err := fun (got : IEEE32Exec) =>
-      ((got.toFloat - ideal) / ideal).abs / u32
+    let err := fun (got : (ExecFloat.Binary 8 23)) =>
+      (((ExecFloat.Binary.toFloat32 got).toFloat - ideal)
+        / ideal).abs / u32
     IO.println s!"n={n} naive={err (harm32 n)} \
       pairwise={err (harmPairwise32 n)} \
       kahan={err (harmKahan32 n)}"
@@ -373,7 +379,16 @@ whichever schedule that was:
 #check @IEEE32Exec.sumTreeResult_enclosure
 ```
 ```leanOutput sumTreeEnc (whitespace := lax)
-IEEE32Exec.sumTreeResult_enclosure : ∀ (xs : Array IEEE32Exec) (r : IEEE32Exec),
+IEEE32Exec.sumTreeResult_enclosure : ∀
+  (xs :
+    Array
+      (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
+        IEEE32Exec.evalIEEE._proof_1 IEEE32Exec.evalIEEE._proof_2 IEEE32Exec.evalIEEE._proof_3
+        IEEE32Exec.evalIEEE._proof_4))
+  (r :
+    ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
+      IEEE32Exec.evalIEEE._proof_1 IEEE32Exec.evalIEEE._proof_2 IEEE32Exec.evalIEEE._proof_3
+      IEEE32Exec.evalIEEE._proof_4),
   IEEE32Exec.sumTreeResult xs r →
     ∀ (u : ℝ),
       RelativeLocalAddBound (fun a b => IEEE32Exec.fp32Round (a + b)) u →
@@ -381,7 +396,7 @@ IEEE32Exec.sumTreeResult_enclosure : ∀ (xs : Array IEEE32Exec) (r : IEEE32Exec
           ∃ t,
             t.leaves.toList.Perm xs.toList ∧
               IEEE32Exec.evalIEEE t = r ∧
-                |r.toReal - IEEE32Exec.exactSumIEEE t| ≤
+                |(ExecFloat.Binary.toModel r).toReal - IEEE32Exec.exactSumIEEE t| ≤
                   (ReductionBound.growth u t.leafCount - 1) * IEEE32Exec.sumAbsIEEE t
 ```
 
@@ -416,27 +431,34 @@ large number, a small one, and the negative of the large one in left-to-right or
 ```lean (name := cancelSum)
 -- Keep the summands fixed and change their order to expose
 -- cancellation.
-def cancelTerms : Array IEEE32Exec :=
-  #[ IEEE32Exec.ofFloat 1.0e8
-   , IEEE32Exec.ofFloat 1.0
-   , IEEE32Exec.ofFloat (-1.0e8) ]
+def cancelTerms : Array (ExecFloat.Binary 8 23) :=
+  #[ (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32) 1.0e8
+   , (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32) 1.0
+   , (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32)
+       (-1.0e8) ]
 
-def foldLeft32 (xs : Array IEEE32Exec) : IEEE32Exec :=
-  xs.foldl IEEE32Exec.add 0
+def foldLeft32 (xs : Array (ExecFloat.Binary 8 23)) :
+    (ExecFloat.Binary 8 23) :=
+  xs.foldl ExecFloat.add 0
 
 -- Same three numbers, small term last.
-def cancelReordered : Array IEEE32Exec :=
+def cancelReordered : Array (ExecFloat.Binary 8 23) :=
   #[ cancelTerms[0]!, cancelTerms[2]!, cancelTerms[1]! ]
 
 #eval do
   let sumAbs :=
     cancelTerms.foldl
-      (fun acc (x : IEEE32Exec) =>
-        acc + x.toFloat.abs) 0.0
+      (fun acc (x : (ExecFloat.Binary 8 23)) =>
+        acc + (ExecFloat.Binary.toFloat32 x).toFloat.abs)
+      0.0
   -- Growth factor for a three-leaf schedule: (1+u)^2 - 1.
   let growth := (1.0 + u32) * (1.0 + u32) - 1.0
-  let naive := (foldLeft32 cancelTerms).toFloat
-  let reordered := (foldLeft32 cancelReordered).toFloat
+  let naive :=
+    (ExecFloat.Binary.toFloat32
+      (foldLeft32 cancelTerms)).toFloat
+  let reordered :=
+    (ExecFloat.Binary.toFloat32
+      (foldLeft32 cancelReordered)).toFloat
   IO.println s!"naive     = {naive}"
   IO.println s!"reordered = {reordered}"
   IO.println s!"exact     = 1.0"
@@ -456,8 +478,8 @@ binary32 keeps twenty four significand bits, so `1e8 + 1` returns `1e8` unchange
 subtraction returns zero. Relative to the exact answer that is a one hundred percent error. Move the
 small term to the end and the same three numbers add up exactly.
 
-Now notice which quantity the bound in `sumTreeResult_enclosure` multiplies: `sumAbsIEEE`, the sum
-of absolute values, not the result. Here that factor is approximately $`2\times 10^8` while the
+The bound in `sumTreeResult_enclosure` scales with `sumAbsIEEE`, the sum of absolute values.
+Here that factor is approximately $`2\times 10^8` while the
 answer is $`1`, so
 the illustrative growth formula gives an absolute bound of about twenty-four, while the observed
 error is one. Turning an absolute bound into relative accuracy requires the
@@ -469,12 +491,9 @@ Reordering also matters: the same inputs produced either zero or one here. `sumT
 allows permutations of the inputs; applying a theorem about one particular schedule requires
 establishing that the runtime used it.
 
-Cancellation makes the distinction between absolute and relative error especially sharp. Here the
-exact answer is one, while two operands have magnitude one hundred million. A budget proportional
-to their total magnitude can easily exceed the answer itself. That does not contradict the bound;
-it says that the data and evaluation order permit poor relative accuracy in the final result.
-Compensation attempts to preserve contributions lost at intermediate additions, but the compensated
-example needs its own algorithm-specific argument before it can inherit a stronger guarantee.
+Compensation attempts to preserve the unit contribution lost at the first addition. To claim a
+stronger guarantee for that program, we would need an argument about how its correction variable
+behaves as well as a bound on each primitive operation.
 
 # ReLU Lipschitz Bounds
 
@@ -518,11 +537,9 @@ the ReLU output close while changing which VJP branch is selected. Backward appr
 therefore carries branch hypotheses or a bound that covers both possibilities rather than blindly
 reusing the forward proof.
 
-The scalar proof also covers inputs on opposite sides of zero. If one input is negative and the
-other positive, removing the negative part can only shorten their distance. Thus a forward ReLU
-bound needs no assumption that both evaluations choose the same branch. The reverse rule is more
-sensitive: its selected slope changes at zero. A theorem controlling activation values therefore
-cannot be reused as a bound on their derivatives without examining that branch change separately.
+We can see the forward argument directly when the inputs straddle zero: removing the negative
+part shortens their distance. The outputs stay close even though the reverse rules select
+different slopes. That is why the forward bound needs no same-branch hypothesis.
 
 # Range Conditions For Softmax And Normalization
 
@@ -596,10 +613,10 @@ result:
 ```
 ```leanOutput evalApproxSig (whitespace := lax)
 @NFBackend.eval_approx_graphData :
-  ∀ {β : Floats.NeuralRadix} {fexp : ℤ → ℤ} {rnd : ℝ → ℤ}
+  ∀ {β : Radix} {fexp : ℤ → ℤ} {rnd : ℝ → ℤ}
     {Γ ss : List Spec.Shape} (g : RevGraph NFBackend.toSpec Γ ss)
     (xS : TensorPack Spec.SpecScalar Γ)
-    (xR : TensorPack (Floats.NF β fexp rnd) Γ) (epsIn : EList Γ),
+    (xR : TensorPack (NF β fexp rnd) Γ) (epsIn : EList Γ),
   approxCtx NFBackend.toSpec xS xR epsIn →
     approxCtx NFBackend.toSpec (g.evalSpec xS)
       ((LinkAutogradAlgebra.RevGraph.toGraphData g).eval xR ())
@@ -647,14 +664,14 @@ error context. The backward theorem adds a second `approxCtx` hypothesis for the
 ```
 ```leanOutput backpropApproxSig (whitespace := lax)
 @NFBackend.backprop_approx_graphData :
-  ∀ {β : Floats.NeuralRadix} {fexp : ℤ → ℤ}
-    [inst : Floats.NeuralValidExp fexp] {rnd : ℝ → ℤ}
-    [Floats.NeuralValidRndToNearest rnd] {Γ ss : List Spec.Shape}
+  ∀ {β : Radix} {fexp : ℤ → ℤ}
+    [inst : ValidExp fexp] {rnd : ℝ → ℤ}
+    [ValidRndToNearest rnd] {Γ ss : List Spec.Shape}
     (g : RevGraph NFBackend.toSpec Γ ss)
     (xS : TensorPack Spec.SpecScalar Γ)
-    (xR : TensorPack (Floats.NF β fexp rnd) Γ) (epsIn : EList Γ)
+    (xR : TensorPack (NF β fexp rnd) Γ) (epsIn : EList Γ)
     (seedS : TensorPack Spec.SpecScalar (Γ ++ ss))
-    (seedR : TensorPack (Floats.NF β fexp rnd) (Γ ++ ss))
+    (seedR : TensorPack (NF β fexp rnd) (Γ ++ ss))
     (epsSeed : EList (Γ ++ ss)),
   approxCtx NFBackend.toSpec xS xR epsIn →
     approxCtx NFBackend.toSpec seedS seedR epsSeed →
@@ -702,10 +719,9 @@ supplies:
 - an error transformer for the new state and parameters;
 - a theorem that the transformer is sound.
 
-The generic theorem takes one parameter gradient from reverse mode and passes it through any
+The generic theorem takes one parameter gradient from reverse mode and passes it through an
 optimizer satisfying that interface. Its statement carries the graph, optimizer contract, exact
-and runtime states, and their error bounds into a conclusion about the updated state. The checked
-reference below names that combined theorem:
+and runtime states, and their error bounds into a conclusion about the updated state:
 
 ```lean
 -- Check that an optimizer consumes the gradient bound
@@ -765,7 +781,7 @@ input [1,2]
 ```
 
 It generates outward-rounded binary32 ranges for every node, binds them to the selected backend
-profile, and replays a concrete `IEEE32Exec` execution. The full report, again from a real run:
+profile, and replays a concrete FloatLib binary32 execution. The recorded report is:
 
 ```terminal +output
 TorchLean numerical runtime certificate
@@ -797,8 +813,8 @@ but successful replay alone supplies only the rounded side of this argument.
 
 # Training Error Traces
 
-`trainingStepTrace` turns the computed bounds into a record a front end can display. Filling one in
-by hand is the shortest way to list its fields:
+`trainingStepTrace` records the bounds for inspection. Here is its data layout, with empty arrays
+standing in for the bounds a calculation would supply:
 
 ```lean
 -- An empty report illustrates the data layout; it supplies
@@ -835,9 +851,10 @@ For the MLP, this includes the order used by each dot product and the branch con
 the ReLU VJP. A native provider's connection to that arithmetic remains part of the backend
 contract.
 
-The generic rounding results can be reused across these operators because format and rounding
-are separate parameters, following {Informal.citet flocq2011}[]. The graph and optimizer contracts
-then specify where each rounding result is used in the forward, backward, and update recurrences.
+FloatLib keeps format and rounding as separate parameters in its generic results
+{Informal.citep flocq2011}[]. To use one in this MLP, we select the parameters and establish its
+hypotheses at the relevant operation. The graph and optimizer contracts then carry that local
+bound to the updated parameters.
 
 # References
 

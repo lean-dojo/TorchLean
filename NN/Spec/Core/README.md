@@ -41,5 +41,5 @@ these primitives rather than inventing a second tensor language.
 ## Boundary
 
 This folder defines meanings, not fast kernels. Runtime code may execute the same operations over
-`Float`, `IEEE32Exec`, CUDA buffers, or external providers, but a theorem should say which spec
-object that runtime path is meant to approximate or preserve.
+`Float`, FloatLib’s `ExecFloat.Binary 8 23`, CUDA buffers, or external providers, but a theorem
+should say which spec object that runtime path is meant to approximate or preserve.

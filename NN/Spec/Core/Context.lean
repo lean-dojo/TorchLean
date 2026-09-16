@@ -7,11 +7,11 @@ Authors: TorchLean Team
 module
 
 public import NN.Core.Numeric
+public import NN.Core.Numeric.Quotient
 public import Mathlib.Algebra.Field.Defs
 public import Mathlib.Algebra.Order.Ring.Defs
 public import Mathlib.Algebra.Order.Group.Unbundled.Abs
 public import Mathlib.Data.Rat.Cast.Defs
-public import NN.Floats.IEEEExec.Exec32.Dyadic
 
 /-!
 # `Context α`: scalar interface for models + proofs
@@ -20,8 +20,9 @@ TorchLean is designed to be *scalar-polymorphic*: the same model/layer definitio
 instantiated over many numeric backends:
 
 - `Float` (fast binary64 execution with a logical model and a separate native boundary),
-- `TorchLean.Floats.IEEE754.IEEE32Exec` (executable bit-level IEEE-754 binary32),
-- interval enclosures for verification (see `NN/Floats/Interval/*`),
+- FloatLib configured binary values, with the exponent and fraction widths selected in their type
+  (import `NN.Spec.Core.FloatInstances` for their adapters),
+- interval enclosures for verification,
 - `ℝ` (proof-level mathematics).
 
 The scalar parameter serves several purposes:
@@ -67,9 +68,9 @@ transcendental functions (exp/tanh/log/sqrt) used by activations and losses.
 - `Context.decidableGT` is included so executable code can decide comparisons (e.g. ReLU / argmax).
   The derived global `DecidableRel` instance has low priority so native decision procedures win.
 - `LawfulContext α` (below) records when a `Context` agrees with a Mathlib ordered field on `α`.
-- This module stays clear of real analysis. The `ℝ` dictionary lives in `NN.Spec.Core.Context.Real`
-  and the opt-in rational one in `NN.Spec.Core.Context.Rational`, so the many modules that only ever
-  work at `Float` or at a general `[Context α]` do not load the analysis hierarchy.
+- The `ℝ` context dictionary lives in `NN.Spec.Core.Context.Real` and the opt-in rational one in
+  `NN.Spec.Core.Context.Rational`. FloatLib's shared elementary-function class already imports real
+  analysis; selecting a context does not add an accuracy theorem for finite-precision arithmetic.
 - For executable examples, `Context.gtBool` converts `x > y` into a printable `Bool`.
 - For interval arithmetic, we override some order/comparison behavior (see `namespace Interval`
   below).
@@ -83,12 +84,12 @@ class Context (α : Type) extends
   Add α, Sub α, Mul α, Div α, Neg α, Pow α α, Max α, Min α,
   BEq α, LT α, LE α, -- For ordering
   MathFunctions α,
-  NatCast α, RatCast α where
+  NatCast α, RatCast α, TorchLean.Numeric.QuotientArithmetic α where
   /--
   Convert a rational constant using the backend's arithmetic.
 
   The default casts its numerator and denominator separately. Native `Float`, `Float32`, and
-  executable IEEE32 backends override this to round the exact fraction, avoiding overflow in
+  configured binary backends override this to round the exact fraction, avoiding overflow in
   either intermediate integer cast.
   -/
   ratCast value :=
@@ -205,22 +206,13 @@ attribute [simp] LawfulContext.add_eq LawfulContext.mul_eq LawfulContext.sub_eq
   LawfulContext.beq_iff LawfulContext.natCast_eq LawfulContext.abs_eq
 
 /-- Full `Context` instance for `Float` (runtime backend). -/
-instance : Context Float where
+@[inline] instance : Context Float where
   defaultEpsilon := 1e-6
   decidableGT := inferInstance
-  ratCast value :=
-    let numerator := if h : value.num.natAbs = 0 then
-      Float.Model.UnpackedFloat.zero .positive
-    else
-      .finite (if value.num < 0 then .negative else .positive) value.num.natAbs 0
-        (Nat.pos_of_ne_zero h)
-    let denominator := Float.Model.UnpackedFloat.finite .positive value.den 0 value.den_pos
-    Float.ofModel (Float.Model.pack
-      (Float.Model.UnpackedFloat.div .binary64 numerator denominator))
+  ratCast value := TorchLean.Numeric.QuotientArithmetic.roundFloat value
 /-- Full `Context` instance for native binary32 execution. -/
-instance : Context Float32 where
+@[inline] instance : Context Float32 where
   defaultEpsilon := (1e-6 : Float).toFloat32
   decidableGT := inferInstance
   ratCast value :=
-    Float32.ofBits (TorchLean.Floats.IEEE754.IEEE32Exec.roundRatToIEEE32
-      (value.num < 0) value.num.natAbs value.den).toBits
+    TorchLean.Numeric.QuotientArithmetic.roundFloat32 value

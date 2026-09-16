@@ -19,8 +19,10 @@ This module specializes the backend-generic runtime-approximation framework
 `TorchLean.Floats.FP32 := NF binaryRadix fexp32 rnd32` (round-to-nearest-even with the IEEE-754
 binary32 exponent function). Every theorem in this directory, including those whose names end in
 `_fp32`, is a statement about that rounded-real model. None of them is a statement about Lean's
-`Float32` type or about the bit-level `IEEE32Exec` model; the bridge from the rounded-real model to
-bit-level binary32 lives in `NN/Floats/IEEEExec/Bridge/FP32`.
+`Float32` type or about the bit-level `ExecFloat.Binary 8 23` model. Finite binary32 add/mul
+refinements are in
+`NN/Floats/IEEEExec/Bridge/Finite.lean`; further arithmetic refinements are in
+`NN/Proofs/RuntimeApprox/IEEE32/Arithmetic.lean`.
 
 The lemmas here are *compositional*: they let you relate a real-valued spec computation
 to its float32 execution under an explicit error budget, so that larger network theorems can be
@@ -32,6 +34,9 @@ condition that execution stays finite (no NaN/Inf/overflow in an IEEE-754 hardwa
 -/
 
 @[expose] public section
+
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
 
 namespace NN.Proofs.RuntimeApprox.FP32
@@ -50,7 +55,7 @@ noncomputable section
 abbrev R : Type := TorchLean.Floats.FP32
 
 /-- Radix for the `FP32` rounding model (binary). -/
-abbrev β : NeuralRadix := binaryRadix
+abbrev β : Radix := binaryRadix
 /-- Exponent function used by the `FP32` rounding model. -/
 abbrev fexp : ℤ → ℤ := TorchLean.Floats.fexp32
 /-- Round-to-nearest-even function used by the `FP32` rounding model. -/

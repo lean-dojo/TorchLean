@@ -19,7 +19,7 @@ Mathlib’s `ℂ` is specialized to `ℝ` and intentionally has no order instanc
 `Context` includes order-like operations (`LT/LE`, `max/min`) for ReLU/argmax-style code paths.
 
 To avoid changing mathlib’s global behavior (and to support runtime-friendly backends like
-`IEEE32Exec`), we provide a small parametric complex scalar:
+`ExecFloat.Binary 8 23`), we provide a small parametric complex scalar:
 
 `TorchLean.Complex α := α × α` with fields `re` and `im`.
 

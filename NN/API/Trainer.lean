@@ -33,7 +33,7 @@ trained.save "model.state"
 
 The same interface supports regression, classification, custom losses, finite datasets, and
 streaming batches. Public signatures use `Tensor Float`; the run executes in the binary32 scalar
-selected by `arithmetic` (`Float32` or `IEEE32Exec`) and the report names it.
+selected by `arithmetic` (`Float32` or `ExecFloat.Binary 8 23`) and the report names it.
 
 Programs that own the optimizer loop open the same trainer as a session:
 

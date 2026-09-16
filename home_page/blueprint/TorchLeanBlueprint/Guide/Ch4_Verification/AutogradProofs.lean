@@ -125,8 +125,8 @@ example (a b c : ℝ) :
 ```
 
 The second half of the demo is a single affine layer `y = W x + b` with two inputs, one output, and
-squared-error loss, run at `x = [0.5, -1.0]` and `t = [0.25]`. Its printed numbers have more
-structure than they look like they do. The bias gradient is $`\partial L/\partial b=2(y-t)`, and the
+squared-error loss, run at `x = [0.5, -1.0]` and `t = [0.25]`. We can recover the weight gradient
+from the bias gradient and this input. The bias gradient is $`\partial L/\partial b=2(y-t)`, and the
 weight gradient is that same scalar times the input, so
 
 $$`\nabla_W L = (2(y-t))\,x^\top = (-1.754865)\cdot(0.5,-1.0) = (-0.877432,\;1.754865),`
@@ -299,9 +299,7 @@ The main theorem is `Graph.backpropVec_eq_adjoint_fderiv`. In plain English:
 There is also a pointwise version, `Graph.backpropVec_eq_adjoint_fderiv_at`, for hypotheses that
 only hold at a particular input. Neural networks need this local form because ReLU, normalization,
 division, logarithms, and square roots all have domain or nondifferentiability issues. TorchLean
-states those conditions explicitly instead of using a blanket "autograd works" slogan. The theorem
-can demand exactly the local smoothness or nonzero hypotheses needed by the graph being
-differentiated.
+states the local smoothness or nonzero conditions needed by the graph being differentiated.
 
 Adjointness alone cannot identify the derivative of the forward computation. Consider the scalar
 forward function $`f(x)=x^2` and imagine assigning zero to both its JVP and VJP. Their pairings
@@ -503,8 +501,8 @@ to be true at the point where the theorem is applied.
 
 # Operator Specs: Softmax And LogSoftmax
 
-Softmax and log-softmax are good examples because they look familiar but carry real analytic
-content. The two derivative APIs are:
+Softmax couples every output to every input through its normalization denominator. Following
+that dependence gives us both its derivative and the related log-softmax rule. Their APIs are:
 
 - {src "NN/Proofs/Autograd/FDeriv/Softmax.lean"}[NN.Proofs.Autograd.FDeriv.Softmax API]
 - {src "NN/Proofs/Autograd/FDeriv/LogSoftmax.lean"}[NN.Proofs.Autograd.FDeriv.LogSoftmax API]
@@ -562,8 +560,7 @@ on that special symmetry.
 
 ## Operator Derivative Proof Obligations
 
-When adding a new differentiable operator, the proof obligation is intentionally mechanical. The
-operator should expose the same three objects that the softmax files expose:
+For a new differentiable operator, we need the same three objects exposed by the softmax files:
 
 ```
 -- Mathematical forward map.
@@ -731,8 +728,8 @@ an autograd theorem merely because the code returns a tensor of the right shape.
 mathematical forward function, a derivative statement, and an adjointness statement that lets the
 graph theorem compose the local rule with surrounding nodes.
 
-This also explains why nondifferentiable points are not swept under the carpet. ReLU can be used in
-graphs, but a theorem phrased as a Fréchet derivative at a point must either avoid coordinates where
+At a ReLU kink, this distinction matters. A theorem phrased as a Fréchet derivative at a point
+must either avoid coordinates where
 the pre-activation is zero or state a subgradient convention in a different theorem. The current
 real-analysis statements take the first route: the hypothesis says where the derivative exists.
 
@@ -909,9 +906,9 @@ limits of the nonzero hypotheses in the MLP result.
 
 # Model Coverage: Attention, Transformers, And Recurrent Cells
 
-The autograd APIs for model blocks give theorem entry points for selected fragments rather than a
-claim that every modern model is fully verified end to end. We built them to show how the algebra
-scales to the shapes users care about while keeping boundaries explicit.
+The model-block APIs compose these local and graph theorems for selected attention, Transformer,
+and recurrent fragments. Each result retains the hypotheses of the operations it uses; connecting
+a complete model's runtime remains a separate obligation.
 
 Representative theorem entry points:
 

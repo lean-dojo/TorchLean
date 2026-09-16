@@ -3,6 +3,7 @@ title: Updates
 ---
 
 <nav class="timeline-nav" aria-label="TorchLean update timeline">
+  <a href="#september-2026-floatlib">FloatLib and precision</a>
   <a href="#september-2026-proof-refactor">Proof refactor</a>
   <a href="#august-2026-tensor-overhaul">Tensor overhaul</a>
   <a href="#august-2026-lean-433">Lean 4.33</a>
@@ -18,6 +19,41 @@ title: Updates
 </nav>
 
 <div class="updates-timeline">
+
+<article class="update-card" id="september-2026-floatlib" markdown="1">
+  <div class="update-date">September 2026</div>
+  <div class="update-body" markdown="1">
+
+## Choosing Scalar Precision with FloatLib
+
+The checkout selects Lean 4.34.0 and imports its reusable scalar arithmetic and generic
+rounding theory from a pinned FloatLib dependency. Choose a FloatLib binary format, including
+custom precision, directly in typed tensors and models. `ExecFloat.Binary 8 23` gives the familiar
+binary32 format; `ExecFloat.Binary 15 112` gives binary128. Valid custom widths use the same API.
+
+A wider type matters only if the extra digits reach the computation. For example, binary128
+can retain $1+2^{-100}$, while binary64 rounds it to 1. The
+[tensor chapter]({{ '/blueprint/Building-Models/Tensors-That-Remember-Their-Shapes/' | relative_url }})
+constructs that parameter directly from a rational, keeps it through a typed affine model,
+and compares its forward value, input derivatives and `nn.sgdStep` update with an elementary
+calculation. This uses software arithmetic on the typed CPU path. The supervised trainer retains
+`Float` data, report and checkpoint boundaries; its `.ieee` option remains fixed to binary32.
+CUDA kernels support binary32 and binary64, not the configured arbitrary-precision CPU path.
+
+The numerical proofs distinguish rounded trees from exact accumulation followed by one final
+rounding. Their intermediate values can differ, so an error theorem for one does not justify the
+other. Native Float32 import/export and arithmetic proofs now come directly from FloatLib:
+addition and subtraction require finite operands, while square root covers every input through
+NaN-canonicalizing native export. The old local bridge files have been removed. These logical
+results remain separate from compiler and hardware conformance.
+
+The [installation page]({{ '/installation/' | relative_url }}) records the current dependency pin,
+and the [floating-point chapter]({{ '/blueprint/Floating-Point-and-Native-Boundaries/Floating-Point-Semantics/' | relative_url }})
+explains the public scalar API and its proof boundaries. Earlier timeline entries describe the
+older versions, including their numerical module names and recorded validation runs.
+
+  </div>
+</article>
 
 <article class="update-card" id="september-2026-proof-refactor" markdown="1">
   <div class="update-date">September 2026</div>
@@ -232,7 +268,7 @@ same model state and runtime dispatch. The duplicate task-specific runners and d
 layout lemmas are gone.
 
 Lean's `Float32.Model` exposes the logical definitions of core binary32 operations. TorchLean now
-proves agreement between that model and its independent raw-bit `IEEE32Exec` implementation for
+proves agreement between that model and its independent raw-bit binary32 implementation for
 classification, comparison, addition, subtraction, multiplication, division, square root,
 negation, and absolute value. The arithmetic proofs cover normal and subnormal inputs, signed zeros,
 infinities, NaNs, underflow, overflow, and nearest-even rounding. NaN results are canonicalized
@@ -414,7 +450,7 @@ subtraction, and absolute and relative error bounds. Flocq influenced the layout
 definitions and proofs are written in Lean.
 
 Sterbenz subtraction covers gradual underflow and has a binary32 specialization. Every finite
-`IEEE32Exec` bit pattern is proved representable in that specification, so the executable Sterbenz
+executable binary32 bit pattern is proved representable in that specification, so the executable Sterbenz
 theorem can identify nearby subtraction with the exact real difference. Finite executable values
 also expose a checked ULP exponent, and an absorption theorem connects an unchanged binary32
 accumulator to the rounded-real specification.
@@ -423,7 +459,7 @@ We use the following distinction throughout TorchLean:
 
 - `NeuralFloat` and `NF` describe configurable rounded-real arithmetic used in proofs;
 - `FP32` specializes the rounded-real model to binary32-sized parameters;
-- `IEEE32Exec` models executable IEEE-754-style binary32 behavior, including special values;
+- The executable binary32 model includes IEEE-754-style behavior, including special values;
 - runtime bridges state how native values are interpreted by those models.
 
 The effective-rounding example shows the whole argument on one value: choose a format and rounding
@@ -450,7 +486,7 @@ tensor semantics. CUDA and LibTorch accumulations are marked
 implementation-dependent, so their matrix products, convolutions, normalizations, FFT/FNO paths,
 scans, and attention kernels cannot accidentally inherit a proof for a different reduction order.
 
-The bit-level replay evaluates every graph intermediate with `IEEE32Exec`, checks its shape and
+The bit-level replay evaluates every graph intermediate with executable binary32 arithmetic, checks its shape and
 range, and rejects NaN or infinity. A checked certificate stores the exact graph it was checked
 against, so replay cannot substitute a different graph. A separate proved real execution supplies
 the semantic enclosure; combining it with the bit-level replay yields an entrywise error trace for
@@ -521,7 +557,7 @@ covers native execution and platform boundaries.
     <h3>Certificates</h3>
     <p>
       JSON certificate readers reject non-finite claims before array comparisons. IBP certificates
-      are checked by recomputing the complete <code>IEEE32Exec</code> trace from the trusted graph,
+      are checked by recomputing the complete binary32 trace from the trusted graph,
       parameters, and input box; an artifact may widen that trace but may not shrink it. CROWN and
       $\alpha,\beta$-CROWN affine entries are compared exactly with a sequential replay instead of being
       propagated from certificate-supplied parents. A theorem turns successful exact replay into

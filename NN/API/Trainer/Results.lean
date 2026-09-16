@@ -35,7 +35,8 @@ The result retains its parameter snapshot through prediction, state-reading, and
 closures. Continued training of the source session does not change the result.
 
 The runtime state lives in the binary32 scalar selected by `RunConfig.arithmetic` (`Float32` or
-`IEEE32Exec`). `state` and `save` read it back as `Float`, which is exact because every binary32
+`ExecFloat.Binary 8 23`). `state` and `save` read it back as `Float`, which is exact because every
+binary32
 value is a binary64 value.
 -/
 structure Result (σ τ : Shape) where
@@ -89,7 +90,8 @@ opaque report {σ τ : Shape}
 /--
 Read the trained parameters and persistent buffers as `Float` tensors.
 
-The runtime holds them in binary32 (`Float32` or `IEEE32Exec`); reading them back to binary64 is
+The runtime holds them in binary32 (`Float32` or `ExecFloat.Binary 8 23`); reading them back to
+binary64 is
 exact. The layout `result.stateShapes` equals `nn.stateShapes` of the trained model, which is what
 `Checkpoint.State.save` and `Checkpoint.State.load` expect.
 -/

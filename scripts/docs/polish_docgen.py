@@ -17,7 +17,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlsplit
 
 
 # `append_style` is idempotent: it removes everything after this marker before
@@ -150,7 +150,8 @@ def rewrite_dependency_links(docs: Path) -> None:
             url = match.group(1)
             if (
                 not url
-                or url.startswith(("#", "http://", "https://", "mailto:", "javascript:", "data:"))
+                or url.startswith("#")
+                or urlsplit(url).scheme
             ):
                 return match.group(0)
 
@@ -233,7 +234,8 @@ def rewrite_missing_nn_links(docs: Path) -> None:
             url = match.group(1)
             if (
                 not url
-                or url.startswith(("#", "http://", "https://", "mailto:", "javascript:", "data:"))
+                or url.startswith("#")
+                or urlsplit(url).scheme
             ):
                 return match.group(0)
 
@@ -262,6 +264,22 @@ def rewrite_missing_nn_links(docs: Path) -> None:
         updated = HREF_RE.sub(repl, text)
         if updated != text:
             path.write_text(updated, encoding="utf-8")
+
+
+def rewrite_floatlib_profile_link(docs: Path) -> None:
+    """Repair one misresolved prose link only when its precise module page exists."""
+    page = docs / "FloatLib/Floats/Formats/BinaryInterchange/Transcendentals.html"
+    target = page.parent / "Info/Profile.html"
+    if not page.is_file() or not target.is_file():
+        return
+
+    text = page.read_text(encoding="utf-8")
+    updated = text.replace(
+        'href="../../../.././Info/Profile.html"',
+        'href="./Info/Profile.html"',
+    )
+    if updated != text:
+        page.write_text(updated, encoding="utf-8")
 
 
 def write_index(docs: Path) -> None:
@@ -350,9 +368,9 @@ def write_index(docs: Path) -> None:
         <p>The registered certificate and verification command surface.</p>
       </a>
       <a class="tl-api-card" href="./NN/Floats.html">
-        <strong>Audit Float32 execution</strong>
-        <span>NN.Floats.IEEEExec</span>
-        <p>Executable IEEE-754 binary32 semantics used in float audits.</p>
+        <strong>Use FloatLib formats</strong>
+        <span>NN.Floats</span>
+        <p>TorchLean adapters for FloatLib's configured binary formats and rounded-real models.</p>
       </a>
     </section>
 
@@ -1465,6 +1483,7 @@ def main() -> None:
     append_style(docs)
     add_nav_hint(docs)
     rename_docgen_header(docs)
+    rewrite_floatlib_profile_link(docs)
     rewrite_missing_nn_links(docs)
     configure_math_runtime(docs)
     validate_math_runtime(docs)

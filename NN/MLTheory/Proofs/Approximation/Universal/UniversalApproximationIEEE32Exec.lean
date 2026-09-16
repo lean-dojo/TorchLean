@@ -7,9 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.Proofs.Approximation.Universal.UniversalApproximationFP32
-public import NN.Floats.IEEEExec.Bridge.FP32Total.Arithmetic
-public import NN.Floats.IEEEExec.Bridge.FP32Total.Order
-public import NN.Floats.IEEEExec.Exec32.Instances
+public import NN.Proofs.RuntimeApprox.IEEE32.Arithmetic
 
 /-!
 # IEEE32 executable ReLU approximation
@@ -23,7 +21,8 @@ The file is organized as a refinement chain:
 
 - `hingeFunIeee` defines the executable network using IEEE-754 binary32 operations;
 - `HingeSumFinite` records the exact finiteness obligations needed to rule out NaN/Inf paths;
-- bridge lemmas connect the executable values, via `IEEE32Exec.toReal`, to the rounded-`ℝ`
+- bridge lemmas connect the executable values, via `ExecFloat.Binary.toModel followed by
+Model.toReal`, to the rounded-`ℝ`
   `FP32` semantics; and
 - the final theorem packages real approximation, FP32 rounding, and IEEE execution into one
   certified error bound.
@@ -37,6 +36,14 @@ Goldberg and Higham; the approximation side reuses the constructive hinge-networ
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat.Binary (isFinite ofModel toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
+
 
 namespace NN.MLTheory.Proofs.UniversalApproximation
 
@@ -49,43 +56,49 @@ open IEEE32Exec
 
 noncomputable section
 
--- We avoid simp-unfolding `IEEE32Exec.toReal`; this file uses the dedicated bridge lemmas instead.
+-- We avoid simp-unfolding `ExecFloat.Binary.toModel followed by Model.toReal`; this file uses the
+-- dedicated bridge lemmas instead.
 
 /-! ## Embedding IEEE32Exec values into the FP32 (rounded-ℝ) model -/
 
 /-- Read an executable binary32 value as a point of the rounded-ℝ FP32 model. -/
-@[inline] def embed (x : IEEE32Exec) : FP32 := ⟨IEEE32Exec.toReal x⟩
+@[inline] def embed (x : ExecFloat.Binary 8 23) : FP32 := ⟨(toModel x).toReal⟩
 
-@[simp] theorem embed_val (x : IEEE32Exec) : (embed x).val = IEEE32Exec.toReal x := rfl
+@[simp] theorem embed_val (x : ExecFloat.Binary 8 23) : (embed x).val = (toModel x).toReal := rfl
 
-/-- Pointwise embedding of a vector of `IEEE32Exec` values into the FP32 model. -/
-@[inline] def embedVec {n : ℕ} (v : Fin n → IEEE32Exec) : Fin n → FP32 := fun i => embed (v i)
+/-- Pointwise embedding of a vector of `ExecFloat.Binary 8 23` values into the FP32 model. -/
+@[inline] def embedVec {n : ℕ} (v : Fin n → (ExecFloat.Binary 8 23)) : Fin n → FP32 := fun i =>
+  embed (v i)
 
 /-! ## IEEE32Exec hinge network (same shape as `hingeFunFp32`) -/
 
 /-- ReLU in the executable backend, as `maximum x 0` rather than a branch, so that the IEEE 754
 treatment of signed zeros and NaN comes from `maximum` itself. -/
-@[inline] def reluIeee (x : IEEE32Exec) : IEEE32Exec :=
-  IEEE32Exec.maximum x (0 : IEEE32Exec)
+@[inline] def reluIeee (x : ExecFloat.Binary 8 23) : ExecFloat.Binary 8 23 :=
+  max x (0 : ExecFloat.Binary 8 23)
 
 /-- One hinge term `cᵢ * ReLU(x - tᵢ)` evaluated in the executable IEEE32Exec backend. -/
-@[inline] def hingeTermIeee {n : ℕ} (c t : Fin n → IEEE32Exec) (x : IEEE32Exec) (i : Fin n) :
-  IEEE32Exec :=
-  IEEE32Exec.mul (c i) (reluIeee (IEEE32Exec.sub x (t i)))
+@[inline] def hingeTermIeee {n : ℕ} (c t : Fin n → (ExecFloat.Binary 8 23)) (x : ExecFloat.Binary 8
+  23) (i : Fin n) :
+  (ExecFloat.Binary 8 23) :=
+  ExecFloat.mul (c i) (reluIeee (ExecFloat.sub x (t i)))
 
 /-- Fold step for summing hinge terms, used by `hingeSumIeee`. -/
-@[inline] def hingeSumStepIeee {n : ℕ} (c t : Fin n → IEEE32Exec) (x : IEEE32Exec) :
-    IEEE32Exec → Fin n → IEEE32Exec :=
-  fun acc i => IEEE32Exec.add acc (hingeTermIeee c t x i)
+@[inline] def hingeSumStepIeee {n : ℕ} (c t : Fin n → (ExecFloat.Binary 8 23)) (x : ExecFloat.Binary
+  8 23) :
+    (ExecFloat.Binary 8 23) → Fin n → (ExecFloat.Binary 8 23) :=
+  fun acc i => ExecFloat.add acc (hingeTermIeee c t x i)
 
 /-- Executable IEEE32Exec sum of hinge terms, in the fixed `List.finRange` order. -/
-def hingeSumIeee {n : ℕ} (c t : Fin n → IEEE32Exec) (x : IEEE32Exec) : IEEE32Exec :=
-  (List.finRange n).foldl (hingeSumStepIeee c t x) (0 : IEEE32Exec)
+def hingeSumIeee {n : ℕ} (c t : Fin n → (ExecFloat.Binary 8 23)) (x : ExecFloat.Binary 8 23) :
+  ExecFloat.Binary 8 23 :=
+  (List.finRange n).foldl (hingeSumStepIeee c t x) (0 : ExecFloat.Binary 8 23)
 
 /-- Executable IEEE32Exec hinge network: sum hinge terms, then add the executable bias. -/
-def hingeFunIeee {n : ℕ} (t c : Fin n → IEEE32Exec) (b x : IEEE32Exec) : IEEE32Exec
+def hingeFunIeee {n : ℕ} (t c : Fin n → (ExecFloat.Binary 8 23)) (b x : ExecFloat.Binary 8 23) :
+  ExecFloat.Binary 8 23
   :=
-  IEEE32Exec.add (hingeSumIeee (c := c) (t := t) x) b
+  ExecFloat.add (hingeSumIeee (c := c) (t := t) x) b
 
 /-! ## A finiteness witness for IEEE evaluation (no NaN/Inf intermediates) -/
 
@@ -96,19 +109,20 @@ overflows to an infinity or produces a NaN.
 Stating it as an inductive over the remaining index list rather than as a conjunction is what makes
 it checkable by `decide` on a concrete input, via `instDecHingeSumFinite`.
 -/
-inductive HingeSumFinite {n : ℕ} (t c : Fin n → IEEE32Exec) (x : IEEE32Exec) :
-    IEEE32Exec → List (Fin n) → Prop where
-  | nil {acc : IEEE32Exec} (hacc : IEEE32Exec.isFinite acc = true) :
+inductive HingeSumFinite {n : ℕ} (t c : Fin n → (ExecFloat.Binary 8 23)) (x : ExecFloat.Binary 8 23)
+  :
+    (ExecFloat.Binary 8 23) → List (Fin n) → Prop where
+  | nil {acc : ExecFloat.Binary 8 23} (hacc : isFinite acc = true) :
       HingeSumFinite t c x acc []
-  | cons {acc : IEEE32Exec} {i : Fin n} {xs : List (Fin n)}
-      (hsub : IEEE32Exec.isFinite (IEEE32Exec.sub x (t i)) = true)
-      (hmax : IEEE32Exec.isFinite (IEEE32Exec.maximum (IEEE32Exec.sub x (t i)) (0 :
-        IEEE32Exec)) = true)
-      (hmul : IEEE32Exec.isFinite (hingeTermIeee (c := c) (t := t) x i) = true)
-      (hadd : IEEE32Exec.isFinite (IEEE32Exec.add acc (hingeTermIeee (c := c) (t := t) x i)) =
+  | cons {acc : ExecFloat.Binary 8 23} {i : Fin n} {xs : List (Fin n)}
+      (hsub : isFinite (ExecFloat.sub x (t i)) = true)
+      (hmax : isFinite (max (ExecFloat.sub x (t i)) (0 :
+        (ExecFloat.Binary 8 23))) = true)
+      (hmul : isFinite (hingeTermIeee (c := c) (t := t) x i) = true)
+      (hadd : isFinite (ExecFloat.add acc (hingeTermIeee (c := c) (t := t) x i)) =
         true)
       (hrest :
-        HingeSumFinite t c x (IEEE32Exec.add acc (hingeTermIeee (c := c) (t := t) x i)) xs) :
+        HingeSumFinite t c x (ExecFloat.add acc (hingeTermIeee (c := c) (t := t) x i)) xs) :
       HingeSumFinite t c x acc (i :: xs)
 
 /-!
@@ -135,11 +149,12 @@ theorems in this file directly usable for concrete executions.
 -/
 
 /-- Decide `HingeSumFinite` by walking the fold, which is what lets concrete runs use `decide`. -/
-def instDecHingeSumFinite {n : ℕ} (t c : Fin n → IEEE32Exec) (x : IEEE32Exec) :
-    ∀ (acc : IEEE32Exec) (xs : List (Fin n)),
+def instDecHingeSumFinite {n : ℕ} (t c : Fin n → (ExecFloat.Binary 8 23)) (x : ExecFloat.Binary 8
+  23) :
+    ∀ (acc : ExecFloat.Binary 8 23) (xs : List (Fin n)),
       Decidable (HingeSumFinite t c x acc xs)
     | acc, [] =>
-        if hacc : IEEE32Exec.isFinite acc = true then
+        if hacc : isFinite acc = true then
           isTrue (HingeSumFinite.nil (t := t) (c := c) (x := x) (acc := acc) hacc)
         else
           isFalse (by
@@ -148,14 +163,14 @@ def instDecHingeSumFinite {n : ℕ} (t c : Fin n → IEEE32Exec) (x : IEEE32Exec
             | nil hacc' =>
                 exact hacc hacc')
     | acc, i :: xs =>
-        let sub := IEEE32Exec.sub x (t i)
-        let mx := IEEE32Exec.maximum sub (0 : IEEE32Exec)
+        let sub := ExecFloat.sub x (t i)
+        let mx := max sub (0 : ExecFloat.Binary 8 23)
         let term := hingeTermIeee (c := c) (t := t) x i
-        let acc' := IEEE32Exec.add acc term
-      if hsub : IEEE32Exec.isFinite sub = true then
-        if hmax : IEEE32Exec.isFinite mx = true then
-          if hmul : IEEE32Exec.isFinite term = true then
-            if hadd : IEEE32Exec.isFinite acc' = true then
+        let acc' := ExecFloat.add acc term
+      if hsub : isFinite sub = true then
+        if hmax : isFinite mx = true then
+          if hmul : isFinite term = true then
+            if hadd : isFinite acc' = true then
               match instDecHingeSumFinite t c x acc' xs with
               | isTrue hrest =>
                   isTrue
@@ -204,12 +219,13 @@ def instDecHingeSumFinite {n : ℕ} (t c : Fin n → IEEE32Exec) (x : IEEE32Exec
 /-! ### A compact finiteness hypothesis bundle (pointwise) -/
 
 /-- The finiteness hypotheses the pointwise theorems need, bundled into one conjunction. -/
-def HingeEvalFiniteProp {n : ℕ} (t c : Fin n → IEEE32Exec) (b x : IEEE32Exec) : Prop :=
-  IEEE32Exec.isFinite x = true ∧
-    (∀ i, IEEE32Exec.isFinite (t i) = true) ∧
-    (∀ i, IEEE32Exec.isFinite (c i) = true) ∧
-    HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange n) ∧
-    IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true
+def HingeEvalFiniteProp {n : ℕ} (t c : Fin n → (ExecFloat.Binary 8 23)) (b x : ExecFloat.Binary 8
+  23) : Prop :=
+  isFinite x = true ∧
+    (∀ i, isFinite (t i) = true) ∧
+    (∀ i, isFinite (c i) = true) ∧
+    HingeSumFinite t c x (0 : ExecFloat.Binary 8 23) (List.finRange n) ∧
+    isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true
 
 /--
 Unpack the compact pointwise finiteness bundle.
@@ -218,13 +234,14 @@ The executable bridge lemmas need separate finiteness facts for the input, param
 and final output. Keeping the bundled form at theorem boundaries makes user-facing statements
 shorter, while this projection feeds the stepwise IEEE-754 refinement proofs.
 -/
-theorem hingeEvalFiniteProp_to_witness {n : ℕ} {t c : Fin n → IEEE32Exec} {b x : IEEE32Exec} :
+theorem hingeEvalFiniteProp_to_witness {n : ℕ} {t c : Fin n → (ExecFloat.Binary 8 23)} {b x :
+  ExecFloat.Binary 8 23} :
     HingeEvalFiniteProp t c b x →
-      (IEEE32Exec.isFinite x = true) ∧
-      (∀ i, IEEE32Exec.isFinite (t i) = true) ∧
-      (∀ i, IEEE32Exec.isFinite (c i) = true) ∧
-      HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange n) ∧
-      IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true := by
+      (isFinite x = true) ∧
+      (∀ i, isFinite (t i) = true) ∧
+      (∀ i, isFinite (c i) = true) ∧
+      HingeSumFinite t c x (0 : ExecFloat.Binary 8 23) (List.finRange n) ∧
+      isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true := by
   intro h; simpa [HingeEvalFiniteProp] using h
 
 /-! ## Refinement: IEEE32Exec execution equals FP32 rounded-ℝ execution (as reals) -/
@@ -270,18 +287,17 @@ Finite IEEE32Exec ReLU agrees with real ReLU after `toReal`.
 The IEEE operation here is `maximum x 0`; once NaN/Inf paths are ruled out, the bridge theorem for
 `maximum` turns it into real `max`, which is exactly TorchLean's real ReLU specification.
 -/
-private theorem toReal_relu_ieee_eq_relu {x : IEEE32Exec}
-    (hx : IEEE32Exec.isFinite x = true) :
-    IEEE32Exec.toReal (reluIeee x) = relu (IEEE32Exec.toReal x) := by
-  have h0 : IEEE32Exec.isFinite (0 : IEEE32Exec) = true := by decide
-  have hto0 : IEEE32Exec.toReal (0 : IEEE32Exec) = 0 := by
-    -- `0` is `posZero`.
-    exact TorchLean.Floats.IEEE754.IEEE32Exec.toReal_posZero
+private theorem toReal_relu_ieee_eq_relu {x : ExecFloat.Binary 8 23}
+    (hx : isFinite x = true) :
+    (toModel (reluIeee x)).toReal = relu ((toModel x).toReal) := by
+  have h0 : isFinite (0 : ExecFloat.Binary 8 23) = true := by decide
+  have hto0 : (toModel (0 : ExecFloat.Binary 8 23)).toReal = 0 := by
+    exact IEEE32Exec.toReal_zero
   have hmax :
-      IEEE32Exec.toReal (IEEE32Exec.maximum x (0 : IEEE32Exec)) =
-        max (IEEE32Exec.toReal x) (IEEE32Exec.toReal (0 : IEEE32Exec)) :=
+      (toModel (max x (0 : ExecFloat.Binary 8 23))).toReal =
+        max ((toModel x).toReal) ((toModel (0 : ExecFloat.Binary 8 23)).toReal) :=
     TorchLean.Floats.IEEE754.IEEE32Exec.toReal_maximum_eq_max_of_isFinite (x := x)
-      (y := (0 : IEEE32Exec)) hx h0
+      (y := (0 : ExecFloat.Binary 8 23)) hx h0
   -- `relu` is `max _ 0` on reals.
   simpa only [reluIeee, relu, Activation.Math.reluSpec_eq_max, hto0] using hmax
 
@@ -293,61 +309,60 @@ and multiplication rounds.  The statement is deliberately per-neuron so the fold
 can reuse it uniformly across `List.finRange n`.
 -/
 private theorem toReal_hinge_term_eq_fp32_val {n : ℕ}
-    (t c : Fin n → IEEE32Exec) (x : IEEE32Exec) (i : Fin n)
-    (hsub : IEEE32Exec.isFinite (IEEE32Exec.sub x (t i)) = true)
-    (hmul : IEEE32Exec.isFinite (hingeTermIeee (c := c) (t := t) x i) = true)
-    (hx : IEEE32Exec.isFinite x = true)
-    (ht : IEEE32Exec.isFinite (t i) = true) :
-    IEEE32Exec.toReal (hingeTermIeee (c := c) (t := t) x i) =
+    (t c : Fin n → (ExecFloat.Binary 8 23)) (x : ExecFloat.Binary 8 23) (i : Fin n)
+    (hsub : isFinite (ExecFloat.sub x (t i)) = true)
+    (hmul : isFinite (hingeTermIeee (c := c) (t := t) x i) = true)
+    (hx : isFinite x = true)
+    (ht : isFinite (t i) = true) :
+    (toModel (hingeTermIeee (c := c) (t := t) x i)).toReal =
       (hingeTermFp32 (c := embedVec c) (t := embedVec t) (x := embed x) i).val := by
   -- Subtraction refinement.
   have hsubR :
-      IEEE32Exec.toReal (IEEE32Exec.sub x (t i)) =
-        TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round (IEEE32Exec.toReal x - IEEE32Exec.toReal (t
-          i)) :=
+      (toModel (ExecFloat.sub x (t i))).toReal =
+        TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round ((toModel x).toReal - (toModel (t
+          i)).toReal) :=
     toReal_sub_eq_fp32Round_of_isFinite (x := x) (y := t i) hx ht (by simpa using hsub)
   -- ReLU is `maximum _ 0`, which is exact as `max` on reals for finite inputs.
-  have h0 : IEEE32Exec.isFinite (0 : IEEE32Exec) = true := by decide
-  have hsubFinite : IEEE32Exec.isFinite (IEEE32Exec.sub x (t i)) = true := hsub
+  have h0 : isFinite (0 : ExecFloat.Binary 8 23) = true := by decide
+  have hsubFinite : isFinite (ExecFloat.sub x (t i)) = true := hsub
   have hreluR :
-      IEEE32Exec.toReal (reluIeee (IEEE32Exec.sub x (t i))) =
-        relu (IEEE32Exec.toReal (IEEE32Exec.sub x (t i))) := by
-    exact toReal_relu_ieee_eq_relu (x := IEEE32Exec.sub x (t i)) hsubFinite
+      (toModel (reluIeee (ExecFloat.sub x (t i)))).toReal =
+        relu ((toModel (ExecFloat.sub x (t i))).toReal) := by
+    exact toReal_relu_ieee_eq_relu (x := ExecFloat.sub x (t i)) hsubFinite
   -- Multiplication refinement.
   have hmulR :
-      IEEE32Exec.toReal (IEEE32Exec.mul (c i) (reluIeee (IEEE32Exec.sub x (t i)))) =
+      (toModel (ExecFloat.mul (c i) (reluIeee (ExecFloat.sub x (t i))))).toReal =
         TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round
-          (IEEE32Exec.toReal (c i) * IEEE32Exec.toReal (reluIeee (IEEE32Exec.sub x (t i)))) :=
+          ((toModel (c i)).toReal * (toModel (reluIeee (ExecFloat.sub x (t i)))).toReal) :=
     TorchLean.Floats.IEEE754.IEEE32Exec.toReal_mul_eq_fp32Round_of_isFinite (x := c i)
-      (y := reluIeee (IEEE32Exec.sub x (t i))) (by simpa [hingeTermIeee] using hmul)
+      (y := reluIeee (ExecFloat.sub x (t i))) (by simpa [hingeTermIeee] using hmul)
   -- Compute the FP32 hinge term as the same `fp32Round` expression.
   have htermFP :
       (hingeTermFp32 (c := embedVec c) (t := embedVec t) (x := embed x) i).val =
         TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round
-          (IEEE32Exec.toReal (c i) *
+          ((toModel (c i)).toReal *
             relu
-              (TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round (IEEE32Exec.toReal x -
-                IEEE32Exec.toReal (t i)))) := by
+              (TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round ((toModel x).toReal -
+                (toModel (t i)).toReal))) := by
     -- `reluFp32` is exact on `.val`, and FP32 `-`/`*` round with the same `fp32Round`.
-    simp [hingeTermFp32, embedVec, embed, fp32_mul_val, fp32_sub_val, relu,
-      Activation.Math.reluSpec]
+    simp only [hingeTermFp32, fp32_mul_val, relu_fp32_val, fp32_sub_val, embedVec, embed]
   -- Rewrite IEEE32Exec `mul` and `reluIeee` using the bridge lemmas, then match `htermFP`.
   calc
-    IEEE32Exec.toReal (hingeTermIeee (c := c) (t := t) x i)
+    (Model.toReal ∘ toModel) (hingeTermIeee (c := c) (t := t) x i)
         = TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round
-            (IEEE32Exec.toReal (c i) * IEEE32Exec.toReal (reluIeee (IEEE32Exec.sub x (t i)))) := by
-              simpa [hingeTermIeee] using hmulR
+            ((toModel (c i)).toReal * (toModel (reluIeee (ExecFloat.sub x (t i)))).toReal) := by
+              exact hmulR
     _ = TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round
-            (IEEE32Exec.toReal (c i) * relu (IEEE32Exec.toReal (IEEE32Exec.sub x (t i)))) := by
-              simp [hreluR]
+            ((toModel (c i)).toReal * relu ((toModel (ExecFloat.sub x (t i))).toReal)) := by
+              rw [hreluR]
     _ = TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round
-            (IEEE32Exec.toReal (c i) *
+            ((toModel (c i)).toReal *
               relu
-                (TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round (IEEE32Exec.toReal x -
-                  IEEE32Exec.toReal (t i)))) := by
-              simp [hsubR]
+                (TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round ((toModel x).toReal -
+                  (toModel (t i)).toReal))) := by
+              rw [hsubR]
     _ = (hingeTermFp32 (c := embedVec c) (t := embedVec t) (x := embed x) i).val := by
-              simp [htermFP]
+              exact htermFP.symm
 
 /-- The FP32 hinge-sum definition is the plain fold over FP32 hinge terms. -/
 private theorem hinge_sum_fp32_eq_fold {n : ℕ} (c t : Fin n → FP32) (x : FP32) :
@@ -377,13 +392,13 @@ evaluation order.  This is why the proof is fold-based rather than rewriting dir
 unordered finite sum.
 -/
 theorem toReal_hinge_sum_ieee_eq_fp32_val {n : ℕ}
-    (t c : Fin n → IEEE32Exec) (x : IEEE32Exec)
-    {acc : IEEE32Exec} {xs : List (Fin n)}
+    (t c : Fin n → (ExecFloat.Binary 8 23)) (x : ExecFloat.Binary 8 23)
+    {acc : ExecFloat.Binary 8 23} {xs : List (Fin n)}
     (hfin : HingeSumFinite t c x acc xs)
-    (hx : IEEE32Exec.isFinite x = true)
-    (ht : ∀ i, IEEE32Exec.isFinite (t i) = true)
-    (_hc : ∀ i, IEEE32Exec.isFinite (c i) = true) :
-    IEEE32Exec.toReal (xs.foldl (hingeSumStepIeee (c := c) (t := t) x) acc) =
+    (hx : isFinite x = true)
+    (ht : ∀ i, isFinite (t i) = true)
+    (_hc : ∀ i, isFinite (c i) = true) :
+    (toModel (xs.foldl (hingeSumStepIeee (c := c) (t := t) x) acc)).toReal =
       (xs.foldl (fun acc32 i => acc32 + hingeTermFp32 (c := embedVec c) (t := embedVec t) (x :=
         embed x) i)
         (embed acc)).val := by
@@ -393,26 +408,26 @@ theorem toReal_hinge_sum_ieee_eq_fp32_val {n : ℕ}
   | cons hsub hmax hmul hadd hrest ih =>
       rename_i acc i xs
       -- Abbreviations for this step.
-      let termI : IEEE32Exec := hingeTermIeee (c := c) (t := t) x i
+      let termI : ExecFloat.Binary 8 23 := hingeTermIeee (c := c) (t := t) x i
       let termFP : FP32 := hingeTermFp32 (c := embedVec c) (t := embedVec t) (x := embed x) i
-      have hterm : IEEE32Exec.toReal termI = termFP.val := by
+      have hterm : (toModel termI).toReal = termFP.val := by
         simpa [termI, termFP] using
           (toReal_hinge_term_eq_fp32_val (t := t) (c := c) (x := x) (i := i) hsub hmul hx (ht i))
       have haddR :
-          IEEE32Exec.toReal (IEEE32Exec.add acc termI) =
-            TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round (IEEE32Exec.toReal acc + IEEE32Exec.toReal
-              termI) :=
+          (toModel (ExecFloat.add acc termI)).toReal =
+            TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round ((toModel acc).toReal + (toModel
+              termI).toReal) :=
         TorchLean.Floats.IEEE754.IEEE32Exec.toReal_add_eq_fp32Round_of_isFinite (x := acc) (y :=
           termI)
           (by simpa [termI] using hadd)
       have hfpStep :
           ((embed acc) + termFP).val =
-            TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round (IEEE32Exec.toReal acc + termFP.val) := by
-        simp [embed, termFP, fp32_add_val]
-      have hstartVal : (embed (IEEE32Exec.add acc termI)).val = ((embed acc) + termFP).val := by
+            TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round ((toModel acc).toReal + termFP.val) := by
+        exact fp32_add_val (embed acc) termFP
+      have hstartVal : (embed (ExecFloat.add acc termI)).val = ((embed acc) + termFP).val := by
         -- `embed` exposes `toReal`, and both additions round with the same `fp32Round`.
-        simpa [embed, haddR, hfpStep, hterm]
-      have hstart : embed (IEEE32Exec.add acc termI) = (embed acc) + termFP :=
+        rw [embed_val, haddR, hfpStep, hterm]
+      have hstart : embed (ExecFloat.add acc termI) = (embed acc) + termFP :=
         fp32_ext hstartVal
       -- Unfold one fold step and apply the IH (whose start accumulator is `embed (add acc termI)`).
       -- Then rewrite that start accumulator to `embed acc + termFP`.
@@ -425,18 +440,18 @@ The theorem composes the fold refinement with the final rounded bias addition.  
 exactly the finiteness obligations needed by the IEEE-754 bridge lemmas.
 -/
 theorem toReal_hinge_fun_ieee_eq_fp32_val {n : ℕ}
-    (t c : Fin n → IEEE32Exec) (b x : IEEE32Exec)
-    (hx : IEEE32Exec.isFinite x = true)
-    (ht : ∀ i, IEEE32Exec.isFinite (t i) = true)
-    (hc : ∀ i, IEEE32Exec.isFinite (c i) = true)
+    (t c : Fin n → (ExecFloat.Binary 8 23)) (b x : ExecFloat.Binary 8 23)
+    (hx : isFinite x = true)
+    (ht : ∀ i, isFinite (t i) = true)
+    (hc : ∀ i, isFinite (c i) = true)
     (hSum :
-      HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange n))
-    (hOut : IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true) :
-    IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b) x) =
+      HingeSumFinite t c x (0 : ExecFloat.Binary 8 23) (List.finRange n))
+    (hOut : isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true) :
+    (toModel (hingeFunIeee (t := t) (c := c) (b := b) x)).toReal =
       (hingeFunFp32 (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x)).val := by
   -- First refine the hinge sum.
   have hsum :
-      IEEE32Exec.toReal (hingeSumIeee (c := c) (t := t) x) =
+      (toModel (hingeSumIeee (c := c) (t := t) x)).toReal =
         (hingeSumFp32 (c := embedVec c) (t := embedVec t) (x := embed x)).val := by
     -- Rewrite `hinge_sum_fp32` into a fold on the FP32 accumulator component.
     have hsumFold :
@@ -448,16 +463,15 @@ theorem toReal_hinge_fun_ieee_eq_fp32_val {n : ℕ}
     -- Use the fold refinement lemma on the same list.
     have hfold :=
       toReal_hinge_sum_ieee_eq_fp32_val (t := t) (c := c) (x := x)
-        (acc := (0 : IEEE32Exec)) (xs := List.finRange n) hSum hx ht hc
-    have hstartVal : (embed (0 : IEEE32Exec)).val = (0 : FP32).val := by
+        (acc := (0 : ExecFloat.Binary 8 23)) (xs := List.finRange n) hSum hx ht hc
+    have hstartVal : (embed (0 : ExecFloat.Binary 8 23)).val = (0 : FP32).val := by
       -- Both are real zero.
       simp [embed]
-      exact TorchLean.Floats.IEEE754.IEEE32Exec.toReal_posZero
-    have hstart : embed (0 : IEEE32Exec) = (0 : FP32) := fp32_ext hstartVal
+    have hstart : embed (0 : ExecFloat.Binary 8 23) = (0 : FP32) := fp32_ext hstartVal
     -- Convert the RHS fold's start accumulator using `hstart`, then rewrite via `hsumFold`.
     have hfold' :
-        IEEE32Exec.toReal ((List.finRange n).foldl (hingeSumStepIeee c t x) (0 :
-          IEEE32Exec)) =
+        (toModel ((List.finRange n).foldl (hingeSumStepIeee c t x) (0 :
+          (ExecFloat.Binary 8 23)))).toReal =
           ((List.finRange n).foldl
               (fun acc32 i =>
                 acc32 + hingeTermFp32 (c := embedVec c) (t := embedVec t) (x := embed x) i)
@@ -467,9 +481,9 @@ theorem toReal_hinge_fun_ieee_eq_fp32_val {n : ℕ}
     simpa [hingeSumIeee, hsumFold] using hfold'
   -- Finally refine the last `+ b`.
   have haddR :
-      IEEE32Exec.toReal (IEEE32Exec.add (hingeSumIeee (c := c) (t := t) x) b) =
+      (toModel (ExecFloat.add (hingeSumIeee (c := c) (t := t) x) b)).toReal =
         TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round
-          (IEEE32Exec.toReal (hingeSumIeee (c := c) (t := t) x) + IEEE32Exec.toReal b) :=
+          ((toModel (hingeSumIeee (c := c) (t := t) x)).toReal + (toModel b).toReal) :=
     TorchLean.Floats.IEEE754.IEEE32Exec.toReal_add_eq_fp32Round_of_isFinite
       (x := hingeSumIeee (c := c) (t := t) x) (y := b) (by simpa [hingeFunIeee] using hOut)
   have hfp :
@@ -478,9 +492,9 @@ theorem toReal_hinge_fun_ieee_eq_fp32_val {n : ℕ}
           ((hingeSumFp32 (c := embedVec c) (t := embedVec t) (x := embed x)).val + (embed b).val)
             := by
     -- `hinge_fun_fp32` is `sum + b`, and FP32 `+` rounds with `fp32Round`.
-    simp [hingeFunFp32, fp32_add_val, embed]
+    rw [hingeFunFp32, fp32_add_val]
   -- Combine.
-  simp [hingeFunIeee, haddR, hfp, hsum]
+  rw [hingeFunIeee, haddR, hfp, hsum, embed_val]
 
 /-! ## IEEE32Exec error bound inherited from the FP32 bound -/
 
@@ -491,23 +505,23 @@ Once `toReal_hinge_fun_ieee_eq_fp32_val` identifies the executable result with t
 already-proved FP32 error bound transfers directly.
 -/
 theorem hinge_fun_ieee_abs_error_le {n : ℕ}
-    (t c : Fin n → IEEE32Exec) (b x : IEEE32Exec)
-    (hx : IEEE32Exec.isFinite x = true)
-    (ht : ∀ i, IEEE32Exec.isFinite (t i) = true)
-    (hc : ∀ i, IEEE32Exec.isFinite (c i) = true)
+    (t c : Fin n → (ExecFloat.Binary 8 23)) (b x : ExecFloat.Binary 8 23)
+    (hx : isFinite x = true)
+    (ht : ∀ i, isFinite (t i) = true)
+    (hc : ∀ i, isFinite (c i) = true)
     (hSum :
-      HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange n))
-    (hOut : IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true) :
-    |IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b) x) -
+      HingeSumFinite t c x (0 : ExecFloat.Binary 8 23) (List.finRange n))
+    (hOut : isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true) :
+    |(toModel (hingeFunIeee (t := t) (c := c) (b := b) x)).toReal -
         hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x)| ≤
       hingeFunErrorBound (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x) := by
   have href :
-      IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b) x) =
+      (toModel (hingeFunIeee (t := t) (c := c) (b := b) x)).toReal =
         (hingeFunFp32 (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x)).val :=
     toReal_hinge_fun_ieee_eq_fp32_val (t := t) (c := c) (b := b) (x := x) hx ht hc hSum hOut
   -- Reuse the existing FP32 bound.
-  simpa [href] using
-    (hinge_fun_abs_error (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x))
+  rw [href]
+  exact hinge_fun_abs_error (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x)
 
 /-! ## “Approximation error + rounding error” (pointwise) -/
 
@@ -516,58 +530,57 @@ Pointwise triangle bound: target error to executable output is bounded by real a
 plus the certified FP32/IEEE rounding error.
 -/
 theorem hinge_fun_total_abs_error_ieee_le {n : ℕ} (f : ℝ → ℝ)
-    (t c : Fin n → IEEE32Exec) (b x : IEEE32Exec)
-    (hx : IEEE32Exec.isFinite x = true)
-    (ht : ∀ i, IEEE32Exec.isFinite (t i) = true)
-    (hc : ∀ i, IEEE32Exec.isFinite (c i) = true)
+    (t c : Fin n → (ExecFloat.Binary 8 23)) (b x : ExecFloat.Binary 8 23)
+    (hx : isFinite x = true)
+    (ht : ∀ i, isFinite (t i) = true)
+    (hc : ∀ i, isFinite (c i) = true)
     (hSum :
-      HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange n))
-    (hOut : IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true) :
-    |f (IEEE32Exec.toReal x) - IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b) x)| ≤
-      |f (IEEE32Exec.toReal x) - hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b)
+      HingeSumFinite t c x (0 : ExecFloat.Binary 8 23) (List.finRange n))
+    (hOut : isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true) :
+    |f ((toModel x).toReal) - (toModel (hingeFunIeee (t := t) (c := c) (b := b) x)).toReal| ≤
+      |f ((toModel x).toReal) - hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b)
         (x := embed x)| +
         hingeFunErrorBound (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x) :=
           by
   have hround :
       |hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x) -
-          IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b) x)| ≤
+          (toModel (hingeFunIeee (t := t) (c := c) (b := b) x)).toReal| ≤
         hingeFunErrorBound (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x) :=
           by
-    simpa [abs_sub_comm] using
-      (hinge_fun_ieee_abs_error_le (t := t) (c := c) (b := b) (x := x) hx ht hc hSum hOut)
+    rw [abs_sub_comm]
+    exact hinge_fun_ieee_abs_error_le (t := t) (c := c) (b := b) (x := x) hx ht hc hSum hOut
   have htri :
-      |f (IEEE32Exec.toReal x) - IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b) x)| ≤
-        |f (IEEE32Exec.toReal x) - hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b)
+      |f ((toModel x).toReal) - (toModel (hingeFunIeee (t := t) (c := c) (b := b) x)).toReal| ≤
+        |f ((toModel x).toReal) - hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b)
           (x := embed x)| +
           |hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x) -
-              IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b) x)| := by
-    simpa using
-      (abs_sub_le (a := f (IEEE32Exec.toReal x))
-        (b := hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x))
-        (c := IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b) x)))
+              (toModel (hingeFunIeee (t := t) (c := c) (b := b) x)).toReal| := by
+    exact abs_sub_le (a := f ((toModel x).toReal))
+      (b := hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x))
+      (c := (toModel (hingeFunIeee (t := t) (c := c) (b := b) x)).toReal)
   exact le_trans htri (add_le_add_right hround _)
 
 /-- Strict version of `hinge_fun_total_abs_error_ieee_le`, useful for approximation theorems. -/
 theorem hinge_fun_total_abs_error_ieee_lt {n : ℕ} (f : ℝ → ℝ)
-    (t c : Fin n → IEEE32Exec) (b x : IEEE32Exec)
-    (hx : IEEE32Exec.isFinite x = true)
-    (ht : ∀ i, IEEE32Exec.isFinite (t i) = true)
-    (hc : ∀ i, IEEE32Exec.isFinite (c i) = true)
+    (t c : Fin n → (ExecFloat.Binary 8 23)) (b x : ExecFloat.Binary 8 23)
+    (hx : isFinite x = true)
+    (ht : ∀ i, isFinite (t i) = true)
+    (hc : ∀ i, isFinite (c i) = true)
     (hSum :
-      HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange n))
-    (hOut : IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true)
+      HingeSumFinite t c x (0 : ExecFloat.Binary 8 23) (List.finRange n))
+    (hOut : isFinite (hingeFunIeee (t := t) (c := c) (b := b) x) = true)
     {ε : ℝ}
     (hε :
-      |f (IEEE32Exec.toReal x) -
+      |f ((toModel x).toReal) -
           hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x)| < ε) :
-    |f (IEEE32Exec.toReal x) - IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b) x)| <
+    |f ((toModel x).toReal) - (toModel (hingeFunIeee (t := t) (c := c) (b := b) x)).toReal| <
       ε + hingeFunErrorBound (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x) :=
         by
   have hle :=
     hinge_fun_total_abs_error_ieee_le (f := f) (t := t) (c := c) (b := b) (x := x) hx ht hc hSum
       hOut
   have hlt :
-      |f (IEEE32Exec.toReal x) -
+      |f ((toModel x).toReal) -
           hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x)| +
         hingeFunErrorBound (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x) <
         ε + hingeFunErrorBound (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x)
@@ -593,27 +606,27 @@ from a real target. Instead it packages the already-proved pointwise inequality
 theorem reluApproximationIccIEEE32Exec_fromHinge
     {f : ℝ → ℝ} {a b : ℝ} :
     ∀ ε > 0,
-      (∃ (hidDim : ℕ) (t c : Fin hidDim → IEEE32Exec) (b0 : IEEE32Exec),
-          (∀ i, IEEE32Exec.isFinite (t i) = true) ∧
-          (∀ i, IEEE32Exec.isFinite (c i) = true) ∧
-          (∀ x : IEEE32Exec,
-              IEEE32Exec.isFinite x = true →
-              IEEE32Exec.toReal x ∈ Set.Icc a b →
-                HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange hidDim) ∧
-                IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b0) x) = true) ∧
-          (∀ x : IEEE32Exec,
-              IEEE32Exec.isFinite x = true →
-              IEEE32Exec.toReal x ∈ Set.Icc a b →
-                |f (IEEE32Exec.toReal x) -
+      (∃ (hidDim : ℕ) (t c : Fin hidDim → (ExecFloat.Binary 8 23)) (b0 : ExecFloat.Binary 8 23),
+          (∀ i, isFinite (t i) = true) ∧
+          (∀ i, isFinite (c i) = true) ∧
+          (∀ x : ExecFloat.Binary 8 23,
+              isFinite x = true →
+              (toModel x).toReal ∈ Set.Icc a b →
+                HingeSumFinite t c x (0 : ExecFloat.Binary 8 23) (List.finRange hidDim) ∧
+                isFinite (hingeFunIeee (t := t) (c := c) (b := b0) x) = true) ∧
+          (∀ x : ExecFloat.Binary 8 23,
+              isFinite x = true →
+              (toModel x).toReal ∈ Set.Icc a b →
+                |f ((toModel x).toReal) -
                     hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed
                       x)| < ε))
       →
-      ∃ (hidDim : ℕ) (t c : Fin hidDim → IEEE32Exec) (b0 : IEEE32Exec),
-        ∀ x : IEEE32Exec,
-          IEEE32Exec.isFinite x = true →
-          IEEE32Exec.toReal x ∈ Set.Icc a b →
-            |f (IEEE32Exec.toReal x) -
-                IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b0) x)| <
+      ∃ (hidDim : ℕ) (t c : Fin hidDim → (ExecFloat.Binary 8 23)) (b0 : ExecFloat.Binary 8 23),
+        ∀ x : ExecFloat.Binary 8 23,
+          isFinite x = true →
+          (toModel x).toReal ∈ Set.Icc a b →
+            |f ((toModel x).toReal) -
+                (toModel (hingeFunIeee (t := t) (c := c) (b := b0) x)).toReal| <
               ε +
                 hingeFunErrorBound (t := embedVec t) (c := embedVec c) (b := embed b0) (x :=
                   embed x) := by
@@ -649,62 +662,63 @@ To obtain a fully synthesized IEEE32Exec approximation theorem, callers must add
 -/
 theorem reluApproximationIccIEEE32Exec_threeTerm
     {f : ℝ → ℝ} {a b : ℝ} {hidDim : ℕ}
-    (tR cR : Fin hidDim → ℝ) (t c : Fin hidDim → IEEE32Exec) (b0 : IEEE32Exec)
-    (ht : ∀ i, IEEE32Exec.isFinite (t i) = true)
-    (hc : ∀ i, IEEE32Exec.isFinite (c i) = true) :
+    (tR cR : Fin hidDim → ℝ) (t c : Fin hidDim → (ExecFloat.Binary 8 23)) (b0 : ExecFloat.Binary 8
+      23)
+    (ht : ∀ i, isFinite (t i) = true)
+    (hc : ∀ i, isFinite (c i) = true) :
     ∀ εApprox εQ : ℝ,
-      (∀ x : IEEE32Exec,
-          IEEE32Exec.isFinite x = true →
-          IEEE32Exec.toReal x ∈ Set.Icc a b →
-            HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange hidDim) ∧
-            IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b0) x) = true) →
-      (∀ x : IEEE32Exec,
-          IEEE32Exec.isFinite x = true →
-          IEEE32Exec.toReal x ∈ Set.Icc a b →
-            |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x)| <
+      (∀ x : ExecFloat.Binary 8 23,
+          isFinite x = true →
+          (toModel x).toReal ∈ Set.Icc a b →
+            HingeSumFinite t c x (0 : ExecFloat.Binary 8 23) (List.finRange hidDim) ∧
+            isFinite (hingeFunIeee (t := t) (c := c) (b := b0) x) = true) →
+      (∀ x : ExecFloat.Binary 8 23,
+          isFinite x = true →
+          (toModel x).toReal ∈ Set.Icc a b →
+            |f ((toModel x).toReal) - hingeFun hidDim tR cR (f a) ((toModel x).toReal)| <
               εApprox) →
-      (∀ x : IEEE32Exec,
-          IEEE32Exec.isFinite x = true →
-          IEEE32Exec.toReal x ∈ Set.Icc a b →
-            |hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x) -
+      (∀ x : ExecFloat.Binary 8 23,
+          isFinite x = true →
+          (toModel x).toReal ∈ Set.Icc a b →
+            |hingeFun hidDim tR cR (f a) ((toModel x).toReal) -
                 hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)| ≤
                   εQ) →
-      ∀ x : IEEE32Exec,
-        IEEE32Exec.isFinite x = true →
-        IEEE32Exec.toReal x ∈ Set.Icc a b →
-          |f (IEEE32Exec.toReal x) -
-              IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b0) x)| <
+      ∀ x : ExecFloat.Binary 8 23,
+        isFinite x = true →
+        (toModel x).toReal ∈ Set.Icc a b →
+          |f ((toModel x).toReal) -
+              (toModel (hingeFunIeee (t := t) (c := c) (b := b0) x)).toReal| <
             (εApprox + εQ) +
               hingeFunErrorBound (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed
                 x) := by
   intro εApprox εQ hFinite hApprox hQ x hx hxIn
   rcases hFinite x hx hxIn with ⟨hSum, hOut⟩
   have hApproxx :
-      |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x)| < εApprox :=
+      |f ((toModel x).toReal) - hingeFun hidDim tR cR (f a) ((toModel x).toReal)| < εApprox :=
     hApprox x hx hxIn
   have hQx :
-      |hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x) -
+      |hingeFun hidDim tR cR (f a) ((toModel x).toReal) -
           hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)| ≤ εQ :=
     hQ x hx hxIn
   have hApproxEmbed :
-      |f (IEEE32Exec.toReal x) -
+      |f ((toModel x).toReal) -
           hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)| <
         εApprox + εQ := by
     have htri :
-        |f (IEEE32Exec.toReal x) -
+        |f ((toModel x).toReal) -
             hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)| ≤
-          |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x)| +
-            |hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x) -
+          |f ((toModel x).toReal) - hingeFun hidDim tR cR (f a) ((toModel x).toReal)| +
+            |hingeFun hidDim tR cR (f a) ((toModel x).toReal) -
                 hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)|
                   := by
       simpa using
         (abs_sub_le
-          (a := f (IEEE32Exec.toReal x))
-          (b := hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x))
+          (a := f ((toModel x).toReal))
+          (b := hingeFun hidDim tR cR (f a) ((toModel x).toReal))
           (c := hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)))
     have hsum :
-        |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x)| +
-            |hingeFun hidDim tR cR (f a) (IEEE32Exec.toReal x) -
+        |f ((toModel x).toReal) - hingeFun hidDim tR cR (f a) ((toModel x).toReal)| +
+            |hingeFun hidDim tR cR (f a) ((toModel x).toReal) -
                 hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)| <
           εApprox + εQ :=
       add_lt_add_of_lt_of_le hApproxx hQx
@@ -724,13 +738,13 @@ Use this form when a checker or proof generator has produced one `HingeEvalFinit
 instead of separate hypotheses for input, parameter, fold, and output finiteness.
 -/
 theorem hinge_fun_total_abs_error_ieee_lt_of_finiteProp {n : ℕ}
-    {f : ℝ → ℝ} (t c : Fin n → IEEE32Exec) (b x : IEEE32Exec)
+    {f : ℝ → ℝ} (t c : Fin n → (ExecFloat.Binary 8 23)) (b x : ExecFloat.Binary 8 23)
     {ε : ℝ}
     (hFin : HingeEvalFiniteProp t c b x)
     (hε :
-      |f (IEEE32Exec.toReal x) -
+      |f ((toModel x).toReal) -
           hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x)| < ε) :
-    |f (IEEE32Exec.toReal x) - IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b) x)| <
+    |f ((toModel x).toReal) - (toModel (hingeFunIeee (t := t) (c := c) (b := b) x)).toReal| <
       ε + hingeFunErrorBound (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x) :=
         by
   rcases (hingeEvalFiniteProp_to_witness (t := t) (c := c) (b := b) (x := x) hFin) with
@@ -752,61 +766,62 @@ executable bias `b0`.
 theorem reluApproximationIccIEEE32Exec_threeTerm_bias
     {f : ℝ → ℝ} {a b : ℝ} {hidDim : ℕ}
     (bR : ℝ)
-    (tR cR : Fin hidDim → ℝ) (t c : Fin hidDim → IEEE32Exec) (b0 : IEEE32Exec)
-    (ht : ∀ i, IEEE32Exec.isFinite (t i) = true)
-    (hc : ∀ i, IEEE32Exec.isFinite (c i) = true) :
+    (tR cR : Fin hidDim → ℝ) (t c : Fin hidDim → (ExecFloat.Binary 8 23)) (b0 : ExecFloat.Binary 8
+      23)
+    (ht : ∀ i, isFinite (t i) = true)
+    (hc : ∀ i, isFinite (c i) = true) :
     ∀ εApprox εQ : ℝ,
-      (∀ x : IEEE32Exec,
-          IEEE32Exec.isFinite x = true →
-          IEEE32Exec.toReal x ∈ Set.Icc a b →
-            HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange hidDim) ∧
-            IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b0) x) = true) →
-      (∀ x : IEEE32Exec,
-          IEEE32Exec.isFinite x = true →
-          IEEE32Exec.toReal x ∈ Set.Icc a b →
-            |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR bR (IEEE32Exec.toReal x)| < εApprox) →
-      (∀ x : IEEE32Exec,
-          IEEE32Exec.isFinite x = true →
-          IEEE32Exec.toReal x ∈ Set.Icc a b →
-            |hingeFun hidDim tR cR bR (IEEE32Exec.toReal x) -
+      (∀ x : ExecFloat.Binary 8 23,
+          isFinite x = true →
+          (toModel x).toReal ∈ Set.Icc a b →
+            HingeSumFinite t c x (0 : ExecFloat.Binary 8 23) (List.finRange hidDim) ∧
+            isFinite (hingeFunIeee (t := t) (c := c) (b := b0) x) = true) →
+      (∀ x : ExecFloat.Binary 8 23,
+          isFinite x = true →
+          (toModel x).toReal ∈ Set.Icc a b →
+            |f ((toModel x).toReal) - hingeFun hidDim tR cR bR ((toModel x).toReal)| < εApprox) →
+      (∀ x : ExecFloat.Binary 8 23,
+          isFinite x = true →
+          (toModel x).toReal ∈ Set.Icc a b →
+            |hingeFun hidDim tR cR bR ((toModel x).toReal) -
                 hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)| ≤
                   εQ) →
-      ∀ x : IEEE32Exec,
-        IEEE32Exec.isFinite x = true →
-        IEEE32Exec.toReal x ∈ Set.Icc a b →
-          |f (IEEE32Exec.toReal x) -
-              IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b0) x)| <
+      ∀ x : ExecFloat.Binary 8 23,
+        isFinite x = true →
+        (toModel x).toReal ∈ Set.Icc a b →
+          |f ((toModel x).toReal) -
+              (toModel (hingeFunIeee (t := t) (c := c) (b := b0) x)).toReal| <
             (εApprox + εQ) +
               hingeFunErrorBound (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed
                 x) := by
   intro εApprox εQ hFinite hApprox hQ x hx hxIn
   rcases hFinite x hx hxIn with ⟨hSum, hOut⟩
   have hApproxx :
-      |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR bR (IEEE32Exec.toReal x)| < εApprox :=
+      |f ((toModel x).toReal) - hingeFun hidDim tR cR bR ((toModel x).toReal)| < εApprox :=
     hApprox x hx hxIn
   have hQx :
-      |hingeFun hidDim tR cR bR (IEEE32Exec.toReal x) -
+      |hingeFun hidDim tR cR bR ((toModel x).toReal) -
           hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)| ≤ εQ :=
     hQ x hx hxIn
   have hApproxEmbed :
-      |f (IEEE32Exec.toReal x) -
+      |f ((toModel x).toReal) -
           hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)| <
         εApprox + εQ := by
     have htri :
-        |f (IEEE32Exec.toReal x) -
+        |f ((toModel x).toReal) -
             hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)| ≤
-          |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR bR (IEEE32Exec.toReal x)| +
-            |hingeFun hidDim tR cR bR (IEEE32Exec.toReal x) -
+          |f ((toModel x).toReal) - hingeFun hidDim tR cR bR ((toModel x).toReal)| +
+            |hingeFun hidDim tR cR bR ((toModel x).toReal) -
                 hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)|
                   := by
       simpa using
         (abs_sub_le
-          (a := f (IEEE32Exec.toReal x))
-          (b := hingeFun hidDim tR cR bR (IEEE32Exec.toReal x))
+          (a := f ((toModel x).toReal))
+          (b := hingeFun hidDim tR cR bR ((toModel x).toReal))
           (c := hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)))
     have hsum :
-        |f (IEEE32Exec.toReal x) - hingeFun hidDim tR cR bR (IEEE32Exec.toReal x)| +
-            |hingeFun hidDim tR cR bR (IEEE32Exec.toReal x) -
+        |f ((toModel x).toReal) - hingeFun hidDim tR cR bR ((toModel x).toReal)| +
+            |hingeFun hidDim tR cR bR ((toModel x).toReal) -
                 hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)| <
           εApprox + εQ :=
       add_lt_add_of_lt_of_le hApproxx hQx
@@ -828,9 +843,9 @@ quantization budgets.
 -/
 theorem fp32Round_abs_error_bound (x : ℝ) :
     abs (TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round x - x) ≤
-      neuralUlp binaryRadix fexp32 x / 2 := by
+      ulp binaryRadix fexp32 x / 2 := by
   simpa [TorchLean.Floats.IEEE754.IEEE32Exec.fp32Round] using
-    (neural_error_bound_ulp
+    (error_bound_ulp
       (β := binaryRadix) (fexp := fexp32) (rnd := TorchLean.Floats.rnd32) x)
 
 /--
@@ -839,10 +854,12 @@ Half-ulp error bound for dyadic values rounded into executable IEEE32Exec values
 The finiteness hypothesis excludes overflow/NaN paths, after which `roundDyadicToIEEE32` agrees
 with the same real `fp32Round` operation used by the FP32 model.
 -/
-theorem toReal_roundDyadicToIEEE32_abs_error_bound (d : IEEE32Exec.Dyadic)
-    (hfin : IEEE32Exec.isFinite (IEEE32Exec.roundDyadicToIEEE32 d) = true) :
-    abs (IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 d) - IEEE32Exec.dyadicToReal d) ≤
-      neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal d) / 2 := by
+theorem toReal_roundDyadicToIEEE32_abs_error_bound (d : FloatLib.Numerics.Dyadic)
+    (hfin : isFinite ((ofModel (Model.roundDyadic FloatFormat.binary32 d) : ExecFloat.Binary 8 23))
+      = true) :
+    abs ((toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 d) : ExecFloat.Binary 8
+      23))).toReal - IEEE32Exec.dyadicToReal d) ≤
+      ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal d) / 2 := by
   have hbridge :=
     TorchLean.Floats.IEEE754.IEEE32Exec.toReal_roundDyadicToIEEE32_eq_fp32Round (d := d) hfin
   -- Reduce to the generic rounding bound for `fp32Round`.
@@ -1069,22 +1086,22 @@ theorem hinge_fun_abs_error_le_of_params_Icc_uniform
 
 /--
 The embedded FP32/IEEE real reference is exactly the ordinary real hinge network evaluated on
-entrywise `IEEE32Exec.toReal` parameters.
+entrywise `ExecFloat.Binary.toModel followed by Model.toReal` parameters.
 -/
 theorem hinge_fun_real_embed_eq_hinge_fun_toReal {n : ℕ}
-    (t c : Fin n → IEEE32Exec) (b x : IEEE32Exec) :
+    (t c : Fin n → (ExecFloat.Binary 8 23)) (b x : ExecFloat.Binary 8 23) :
     hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b) (x := embed x) =
       hingeFun n
-        (fun i => IEEE32Exec.toReal (t i))
-        (fun i => IEEE32Exec.toReal (c i))
-        (IEEE32Exec.toReal b)
-        (IEEE32Exec.toReal x) := by
+        (fun i => (toModel (t i)).toReal)
+        (fun i => (toModel (c i)).toReal)
+        ((toModel b).toReal)
+        ((toModel x).toReal) := by
   classical
   -- Expand `hinge_fun_real` via `hinge_sum_real_eq_sum`, then match `hinge_fun`.
   have hsum :
       hingeSumReal (c := embedVec c) (t := embedVec t) (x := embed x) =
         ∑ i : Fin n,
-          (IEEE32Exec.toReal (c i)) * relu (IEEE32Exec.toReal x - IEEE32Exec.toReal (t i)) := by
+          ((toModel (c i)).toReal) * relu ((toModel x).toReal - (toModel (t i)).toReal) := by
     -- `hinge_sum_real` is a sum of `hinge_term_real`; embeddings expose `toReal` values.
     simpa [hingeTermReal, embedVec, embed] using
       (hinge_sum_real_eq_sum (c := embedVec c) (t := embedVec t) (x := embed x))
@@ -1100,34 +1117,34 @@ errors uniformly.
   theorem hinge_fun_quantization_error_le_Icc_uniform
       {n : ℕ} {a b : ℝ}
       (tR cR : Fin n → ℝ) (bR : ℝ)
-      (t c : Fin n → IEEE32Exec) (b0 x : IEEE32Exec)
-      (hxIn : IEEE32Exec.toReal x ∈ Set.Icc a b)
+      (t c : Fin n → (ExecFloat.Binary 8 23)) (b0 x : ExecFloat.Binary 8 23)
+      (hxIn : (toModel x).toReal ∈ Set.Icc a b)
       (htR : ∀ i, tR i ∈ Set.Icc a b)
       {Δc C Δt : ℝ}
       (hC0 : 0 ≤ C)
-      (hΔc : ∀ i, abs (cR i - IEEE32Exec.toReal (c i)) ≤ Δc)
-      (hC : ∀ i, abs (IEEE32Exec.toReal (c i)) ≤ C)
-      (hΔt : ∀ i, abs (tR i - IEEE32Exec.toReal (t i)) ≤ Δt) :
-    abs (hingeFun n tR cR bR (IEEE32Exec.toReal x) -
+      (hΔc : ∀ i, abs (cR i - (toModel (c i)).toReal) ≤ Δc)
+      (hC : ∀ i, abs ((toModel (c i)).toReal) ≤ C)
+      (hΔt : ∀ i, abs (tR i - (toModel (t i)).toReal) ≤ Δt) :
+    abs (hingeFun n tR cR bR ((toModel x).toReal) -
           hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)) ≤
-      abs (bR - IEEE32Exec.toReal b0) + (n : ℝ) * (Δc * abs (b - a) + C * Δt) := by
+      abs (bR - (toModel b0).toReal) + (n : ℝ) * (Δc * abs (b - a) + C * Δt) := by
   -- Rewrite the embedded-real reference into an explicit `hinge_fun` on `toReal` parameters.
   have hreal :
       hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x) =
         hingeFun n
-          (fun i => IEEE32Exec.toReal (t i))
-          (fun i => IEEE32Exec.toReal (c i))
-          (IEEE32Exec.toReal b0)
-          (IEEE32Exec.toReal x) := by
+          (fun i => (toModel (t i)).toReal)
+          (fun i => (toModel (c i)).toReal)
+          ((toModel b0).toReal)
+          ((toModel x).toReal) := by
     simpa using (hinge_fun_real_embed_eq_hinge_fun_toReal (t := t) (c := c) (b := b0) (x := x))
   -- Apply the uniform parameter-perturbation bound on `[a,b]`.
   have :=
     hinge_fun_abs_error_le_of_params_Icc_uniform
       (tR := tR) (cR := cR)
-      (tI := fun i => IEEE32Exec.toReal (t i))
-      (cI := fun i => IEEE32Exec.toReal (c i))
-      (bR := bR) (bI := IEEE32Exec.toReal b0)
-      (x := IEEE32Exec.toReal x)
+      (tI := fun i => (toModel (t i)).toReal)
+      (cI := fun i => (toModel (c i)).toReal)
+      (bR := bR) (bI := (toModel b0).toReal)
+      (x := (toModel x).toReal)
       (a := a) (b := b)
       (hx := hxIn) (htR := htR)
       (hC0 := hC0)
@@ -1151,58 +1168,74 @@ rounding errors.
 -/
 theorem hinge_fun_dyadic_quantization_error_le_Icc
     {n : ℕ} {a b : ℝ}
-    (tD cD : Fin n → IEEE32Exec.Dyadic) (bD : IEEE32Exec.Dyadic)
-    (x : IEEE32Exec)
-    (hxIn : IEEE32Exec.toReal x ∈ Set.Icc a b)
+    (tD cD : Fin n → FloatLib.Numerics.Dyadic) (bD : FloatLib.Numerics.Dyadic)
+    (x : ExecFloat.Binary 8 23)
+    (hxIn : (toModel x).toReal ∈ Set.Icc a b)
     (htIn : ∀ i, IEEE32Exec.dyadicToReal (tD i) ∈ Set.Icc a b) :
     abs
         (hingeFun n
             (fun i => IEEE32Exec.dyadicToReal (tD i))
             (fun i => IEEE32Exec.dyadicToReal (cD i))
             (IEEE32Exec.dyadicToReal bD)
-            (IEEE32Exec.toReal x) -
+            ((toModel x).toReal) -
           hingeFunReal
-            (t := embedVec (fun i => IEEE32Exec.roundDyadicToIEEE32 (tD i)))
-            (c := embedVec (fun i => IEEE32Exec.roundDyadicToIEEE32 (cD i)))
-            (b := embed (IEEE32Exec.roundDyadicToIEEE32 bD))
+            (t := embedVec (fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) :
+              ExecFloat.Binary 8 23)))
+            (c := embedVec (fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+              ExecFloat.Binary 8 23)))
+            (b := embed ((ofModel (Model.roundDyadic FloatFormat.binary32 bD) : ExecFloat.Binary 8
+              23)))
             (x := embed x)) ≤
-      abs (IEEE32Exec.dyadicToReal bD - IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 bD)) +
+      abs (IEEE32Exec.dyadicToReal bD - (toModel ((ofModel (Model.roundDyadic FloatFormat.binary32
+        bD) : ExecFloat.Binary 8 23))).toReal) +
         ∑ i : Fin n,
-          (abs (IEEE32Exec.dyadicToReal (cD i) - IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32
-            (cD i))) *
+          (abs (IEEE32Exec.dyadicToReal (cD i) - (toModel ((ofModel (Model.roundDyadic
+            FloatFormat.binary32 (cD i)) : ExecFloat.Binary 8 23))).toReal) *
               abs (b - a) +
-            abs (IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD i))) *
-              abs (IEEE32Exec.dyadicToReal (tD i) - IEEE32Exec.toReal
-                (IEEE32Exec.roundDyadicToIEEE32 (tD i)))) := by
+            abs ((toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+              ExecFloat.Binary 8 23))).toReal) *
+              abs (IEEE32Exec.dyadicToReal (tD i) - (toModel ((ofModel (Model.roundDyadic
+                FloatFormat.binary32 (tD i)) : ExecFloat.Binary 8 23))).toReal)) := by
   classical
   -- Rewrite the `hinge_fun_real` reference into a `hinge_fun` over the embedded reals.
   have hreal :
       hingeFunReal
-          (t := embedVec (fun i => IEEE32Exec.roundDyadicToIEEE32 (tD i)))
-          (c := embedVec (fun i => IEEE32Exec.roundDyadicToIEEE32 (cD i)))
-          (b := embed (IEEE32Exec.roundDyadicToIEEE32 bD))
+          (t := embedVec (fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) :
+            ExecFloat.Binary 8 23)))
+          (c := embedVec (fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+            ExecFloat.Binary 8 23)))
+          (b := embed ((ofModel (Model.roundDyadic FloatFormat.binary32 bD) : ExecFloat.Binary 8
+            23)))
           (x := embed x) =
         hingeFun n
-          (fun i => IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (tD i)))
-          (fun i => IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD i)))
-          (IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 bD))
-          (IEEE32Exec.toReal x) := by
+          (fun i => (toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) :
+            ExecFloat.Binary 8 23))).toReal)
+          (fun i => (toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+            ExecFloat.Binary 8 23))).toReal)
+          ((toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 bD) : ExecFloat.Binary 8
+            23))).toReal)
+          ((toModel x).toReal) := by
     simpa using
       (hinge_fun_real_embed_eq_hinge_fun_toReal
-        (t := fun i => IEEE32Exec.roundDyadicToIEEE32 (tD i))
-        (c := fun i => IEEE32Exec.roundDyadicToIEEE32 (cD i))
-        (b := IEEE32Exec.roundDyadicToIEEE32 bD)
+        (t := fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) : ExecFloat.Binary 8
+          23))
+        (c := fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) : ExecFloat.Binary 8
+          23))
+        (b := (ofModel (Model.roundDyadic FloatFormat.binary32 bD) : ExecFloat.Binary 8 23))
         (x := x))
   -- Apply the general “parameter sensitivity on `[a,b]`” bound.
   have :=
     hinge_fun_abs_error_le_of_params_Icc
       (tR := fun i => IEEE32Exec.dyadicToReal (tD i))
       (cR := fun i => IEEE32Exec.dyadicToReal (cD i))
-      (tI := fun i => IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (tD i)))
-      (cI := fun i => IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD i)))
+      (tI := fun i => (toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) :
+        ExecFloat.Binary 8 23))).toReal)
+      (cI := fun i => (toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+        ExecFloat.Binary 8 23))).toReal)
       (bR := IEEE32Exec.dyadicToReal bD)
-      (bI := IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 bD))
-      (x := IEEE32Exec.toReal x)
+      (bI := (toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 bD) : ExecFloat.Binary 8
+        23))).toReal)
+      (x := (toModel x).toReal)
       (a := a) (b := b) hxIn htIn
   simpa [hreal] using this
 
@@ -1214,31 +1247,38 @@ finiteness of every rounded dyadic value, and the theorem substitutes the standa
 -/
 theorem hinge_fun_dyadic_quantization_error_le_Icc_halfUlp
     {n : ℕ} {a b : ℝ}
-    (tD cD : Fin n → IEEE32Exec.Dyadic) (bD : IEEE32Exec.Dyadic)
-    (x : IEEE32Exec)
-    (hxIn : IEEE32Exec.toReal x ∈ Set.Icc a b)
+    (tD cD : Fin n → FloatLib.Numerics.Dyadic) (bD : FloatLib.Numerics.Dyadic)
+    (x : ExecFloat.Binary 8 23)
+    (hxIn : (toModel x).toReal ∈ Set.Icc a b)
     (htIn : ∀ i, IEEE32Exec.dyadicToReal (tD i) ∈ Set.Icc a b)
-    (htfin : ∀ i, IEEE32Exec.isFinite (IEEE32Exec.roundDyadicToIEEE32 (tD i)) = true)
-    (hcfin : ∀ i, IEEE32Exec.isFinite (IEEE32Exec.roundDyadicToIEEE32 (cD i)) = true)
-    (hbfin : IEEE32Exec.isFinite (IEEE32Exec.roundDyadicToIEEE32 bD) = true) :
+    (htfin : ∀ i, isFinite ((ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) :
+      ExecFloat.Binary 8 23)) = true)
+    (hcfin : ∀ i, isFinite ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+      ExecFloat.Binary 8 23)) = true)
+    (hbfin : isFinite ((ofModel (Model.roundDyadic FloatFormat.binary32 bD) : ExecFloat.Binary 8
+      23)) = true) :
     abs
         (hingeFun n
             (fun i => IEEE32Exec.dyadicToReal (tD i))
             (fun i => IEEE32Exec.dyadicToReal (cD i))
             (IEEE32Exec.dyadicToReal bD)
-            (IEEE32Exec.toReal x) -
+            ((toModel x).toReal) -
           hingeFunReal
-            (t := embedVec (fun i => IEEE32Exec.roundDyadicToIEEE32 (tD i)))
-            (c := embedVec (fun i => IEEE32Exec.roundDyadicToIEEE32 (cD i)))
-            (b := embed (IEEE32Exec.roundDyadicToIEEE32 bD))
+            (t := embedVec (fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) :
+              ExecFloat.Binary 8 23)))
+            (c := embedVec (fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+              ExecFloat.Binary 8 23)))
+            (b := embed ((ofModel (Model.roundDyadic FloatFormat.binary32 bD) : ExecFloat.Binary 8
+              23)))
             (x := embed x)) ≤
-      neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal bD) / 2 +
+      ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal bD) / 2 +
         ∑ i : Fin n,
-          (neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) / 2
+          (ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) / 2
             *
               abs (b - a) +
-            abs (IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD i))) *
-              (neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i))
+            abs ((toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+              ExecFloat.Binary 8 23))).toReal) *
+              (ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i))
                 / 2)) := by
   classical
   -- Start from the raw parameter-sensitivity bound.
@@ -1247,71 +1287,82 @@ theorem hinge_fun_dyadic_quantization_error_le_Icc_halfUlp
   -- Bound each parameter-difference term by a half-ULP using
   -- `toReal_roundDyadicToIEEE32_abs_error_bound`.
   have hb :
-      abs (IEEE32Exec.dyadicToReal bD - IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 bD)) ≤
-        neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal bD) / 2 := by
-    simpa [abs_sub_comm] using
-      (toReal_roundDyadicToIEEE32_abs_error_bound (d := bD) (hfin := hbfin))
+      abs (IEEE32Exec.dyadicToReal bD - (toModel ((ofModel (Model.roundDyadic FloatFormat.binary32
+        bD) : ExecFloat.Binary 8 23))).toReal) ≤
+        ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal bD) / 2 := by
+    rw [abs_sub_comm]
+    exact toReal_roundDyadicToIEEE32_abs_error_bound (d := bD) (hfin := hbfin)
   have hterm :
       ∀ i : Fin n,
-        (abs (IEEE32Exec.dyadicToReal (cD i) - IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD
-          i))) *
+        (abs (IEEE32Exec.dyadicToReal (cD i) - (toModel ((ofModel (Model.roundDyadic
+          FloatFormat.binary32 (cD
+          i)) : ExecFloat.Binary 8 23))).toReal) *
               abs (b - a) +
-            abs (IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD i))) *
-              abs (IEEE32Exec.dyadicToReal (tD i) - IEEE32Exec.toReal
-                (IEEE32Exec.roundDyadicToIEEE32 (tD i))))
+            abs ((toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+              ExecFloat.Binary 8 23))).toReal) *
+              abs (IEEE32Exec.dyadicToReal (tD i) - (toModel ((ofModel (Model.roundDyadic
+                FloatFormat.binary32 (tD i)) : ExecFloat.Binary 8 23))).toReal))
           ≤
-            (neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) /
+            (ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) /
               2 *
                 abs (b - a) +
-              abs (IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD i))) *
-                (neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i)) / 2)) := by
+              abs ((toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+                ExecFloat.Binary 8 23))).toReal) *
+                (ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i)) / 2)) := by
     intro i
     have hc :
-        abs (IEEE32Exec.dyadicToReal (cD i) - IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD
-          i))) ≤
-          neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) / 2
+        abs (IEEE32Exec.dyadicToReal (cD i) - (toModel ((ofModel (Model.roundDyadic
+          FloatFormat.binary32 (cD
+          i)) : ExecFloat.Binary 8 23))).toReal) ≤
+          ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) / 2
             := by
-      simpa [abs_sub_comm] using
-        (toReal_roundDyadicToIEEE32_abs_error_bound (d := cD i) (hfin := hcfin i))
+      rw [abs_sub_comm]
+      exact toReal_roundDyadicToIEEE32_abs_error_bound (d := cD i) (hfin := hcfin i)
     have ht :
-        abs (IEEE32Exec.dyadicToReal (tD i) - IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (tD
-          i))) ≤
-          neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i)) / 2
+        abs (IEEE32Exec.dyadicToReal (tD i) - (toModel ((ofModel (Model.roundDyadic
+          FloatFormat.binary32 (tD
+          i)) : ExecFloat.Binary 8 23))).toReal) ≤
+          ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i)) / 2
             := by
-      simpa [abs_sub_comm] using
-        (toReal_roundDyadicToIEEE32_abs_error_bound (d := tD i) (hfin := htfin i))
+      rw [abs_sub_comm]
+      exact toReal_roundDyadicToIEEE32_abs_error_bound (d := tD i) (hfin := htfin i)
     have hc' :
-        abs (IEEE32Exec.dyadicToReal (cD i) - IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD
-          i))) *
+        abs (IEEE32Exec.dyadicToReal (cD i) - (toModel ((ofModel (Model.roundDyadic
+          FloatFormat.binary32 (cD
+          i)) : ExecFloat.Binary 8 23))).toReal) *
             abs (b - a) ≤
-          (neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) /
+          (ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) /
             2) *
             abs (b - a) := by
       exact mul_le_mul_of_nonneg_right hc (abs_nonneg (b - a))
     have ht' :
-        abs (IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD i))) *
-            abs (IEEE32Exec.dyadicToReal (tD i) - IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32
-              (tD i))) ≤
-          abs (IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD i))) *
-            (neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i)) /
+        abs ((toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) : ExecFloat.Binary 8
+          23))).toReal) *
+            abs (IEEE32Exec.dyadicToReal (tD i) - (toModel ((ofModel (Model.roundDyadic
+              FloatFormat.binary32 (tD i)) : ExecFloat.Binary 8 23))).toReal) ≤
+          abs ((toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) : ExecFloat.Binary
+            8 23))).toReal) *
+            (ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i)) /
               2) := by
       exact mul_le_mul_of_nonneg_left ht (abs_nonneg _)
     exact add_le_add hc' ht'
   -- Combine the termwise bounds under the sum, then add the bias bound.
   have hsum :
       (∑ i : Fin n,
-          (abs (IEEE32Exec.dyadicToReal (cD i) - IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32
-            (cD i))) *
+          (abs (IEEE32Exec.dyadicToReal (cD i) - (toModel ((ofModel (Model.roundDyadic
+            FloatFormat.binary32 (cD i)) : ExecFloat.Binary 8 23))).toReal) *
                 abs (b - a) +
-              abs (IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD i))) *
-                abs (IEEE32Exec.dyadicToReal (tD i) - IEEE32Exec.toReal
-                  (IEEE32Exec.roundDyadicToIEEE32 (tD i))))) ≤
+              abs ((toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+                ExecFloat.Binary 8 23))).toReal) *
+                abs (IEEE32Exec.dyadicToReal (tD i) - (toModel ((ofModel (Model.roundDyadic
+                  FloatFormat.binary32 (tD i)) : ExecFloat.Binary 8 23))).toReal))) ≤
         ∑ i : Fin n,
-          (neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) / 2
+          (ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) / 2
             *
                 abs (b - a) +
-              abs (IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD i))) *
-                (neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i)) / 2)) := by
+              abs ((toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+                ExecFloat.Binary 8 23))).toReal) *
+                (ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i)) / 2)) := by
     exact Finset.sum_le_sum (fun i _ => hterm i)
   -- Finish by transitivity.
   have := add_le_add hb hsum
@@ -1330,66 +1381,83 @@ It still assumes the IEEE finiteness witnesses for evaluation (`HingeSumFinite` 
 
 theorem reluApproximationIccIEEE32Exec_dyadicHalfUlp
     {f : ℝ → ℝ} {a b : ℝ} {hidDim : ℕ}
-    (tD cD : Fin hidDim → IEEE32Exec.Dyadic) (bD : IEEE32Exec.Dyadic)
+    (tD cD : Fin hidDim → FloatLib.Numerics.Dyadic) (bD : FloatLib.Numerics.Dyadic)
     (htIn : ∀ i, IEEE32Exec.dyadicToReal (tD i) ∈ Set.Icc a b)
-    (htfin : ∀ i, IEEE32Exec.isFinite (IEEE32Exec.roundDyadicToIEEE32 (tD i)) = true)
-    (hcfin : ∀ i, IEEE32Exec.isFinite (IEEE32Exec.roundDyadicToIEEE32 (cD i)) = true)
-    (hbfin : IEEE32Exec.isFinite (IEEE32Exec.roundDyadicToIEEE32 bD) = true) :
+    (htfin : ∀ i, isFinite ((ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) :
+      ExecFloat.Binary 8 23)) = true)
+    (hcfin : ∀ i, isFinite ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+      ExecFloat.Binary 8 23)) = true)
+    (hbfin : isFinite ((ofModel (Model.roundDyadic FloatFormat.binary32 bD) : ExecFloat.Binary 8
+      23)) = true) :
     ∀ εApprox : ℝ,
-      (∀ x : IEEE32Exec,
-          IEEE32Exec.isFinite x = true →
-          IEEE32Exec.toReal x ∈ Set.Icc a b →
+      (∀ x : ExecFloat.Binary 8 23,
+          isFinite x = true →
+          (toModel x).toReal ∈ Set.Icc a b →
             HingeSumFinite
-                (fun i => IEEE32Exec.roundDyadicToIEEE32 (tD i))
-                (fun i => IEEE32Exec.roundDyadicToIEEE32 (cD i))
-                x (0 : IEEE32Exec) (List.finRange hidDim) ∧
-              IEEE32Exec.isFinite
+                (fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) :
+                  ExecFloat.Binary 8 23))
+                (fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+                  ExecFloat.Binary 8 23))
+                x (0 : ExecFloat.Binary 8 23) (List.finRange hidDim) ∧
+              isFinite
                 (hingeFunIeee
-                  (t := fun i => IEEE32Exec.roundDyadicToIEEE32 (tD i))
-                  (c := fun i => IEEE32Exec.roundDyadicToIEEE32 (cD i))
-                  (b := IEEE32Exec.roundDyadicToIEEE32 bD) x) = true) →
-      (∀ x : IEEE32Exec,
-          IEEE32Exec.isFinite x = true →
-          IEEE32Exec.toReal x ∈ Set.Icc a b →
-            |f (IEEE32Exec.toReal x) -
+                  (t := fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) :
+                    ExecFloat.Binary 8 23))
+                  (c := fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+                    ExecFloat.Binary 8 23))
+                  (b := (ofModel (Model.roundDyadic FloatFormat.binary32 bD) : ExecFloat.Binary 8
+                    23)) x) = true) →
+      (∀ x : ExecFloat.Binary 8 23,
+          isFinite x = true →
+          (toModel x).toReal ∈ Set.Icc a b →
+            |f ((toModel x).toReal) -
                 hingeFun hidDim
                   (fun i => IEEE32Exec.dyadicToReal (tD i))
                   (fun i => IEEE32Exec.dyadicToReal (cD i))
                   (IEEE32Exec.dyadicToReal bD)
-                  (IEEE32Exec.toReal x)| < εApprox) →
-      ∀ x : IEEE32Exec,
-        IEEE32Exec.isFinite x = true →
-        IEEE32Exec.toReal x ∈ Set.Icc a b →
-          |f (IEEE32Exec.toReal x) -
-              IEEE32Exec.toReal
-                (hingeFunIeee
-                  (t := fun i => IEEE32Exec.roundDyadicToIEEE32 (tD i))
-                  (c := fun i => IEEE32Exec.roundDyadicToIEEE32 (cD i))
-                  (b := IEEE32Exec.roundDyadicToIEEE32 bD) x)| <
+                  ((toModel x).toReal)| < εApprox) →
+      ∀ x : ExecFloat.Binary 8 23,
+        isFinite x = true →
+        (toModel x).toReal ∈ Set.Icc a b →
+          |f ((toModel x).toReal) -
+              (toModel (hingeFunIeee
+                  (t := fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) :
+                    ExecFloat.Binary 8 23))
+                  (c := fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+                    ExecFloat.Binary 8 23))
+                  (b := (ofModel (Model.roundDyadic FloatFormat.binary32 bD) : ExecFloat.Binary 8
+                    23)) x)).toReal| <
             (εApprox +
-              (neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal bD) / 2
+              (ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal bD) / 2
                 +
                 ∑ i : Fin hidDim,
-                  (neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) / 2 *
+                  (ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) / 2 *
                       abs (b - a) +
-                    abs (IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD i))) *
-                      (neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i)) / 2)))) +
+                    abs ((toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+                      ExecFloat.Binary 8 23))).toReal) *
+                      (ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i)) / 2)))) +
               hingeFunErrorBound
-                (t := embedVec (fun i => IEEE32Exec.roundDyadicToIEEE32 (tD i)))
-                (c := embedVec (fun i => IEEE32Exec.roundDyadicToIEEE32 (cD i)))
-                (b := embed (IEEE32Exec.roundDyadicToIEEE32 bD))
+                (t := embedVec (fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) :
+                  ExecFloat.Binary 8 23)))
+                (c := embedVec (fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+                  ExecFloat.Binary 8 23)))
+                (b := embed ((ofModel (Model.roundDyadic FloatFormat.binary32 bD) : ExecFloat.Binary
+                  8 23)))
                 (x := embed x) := by
   intro εApprox hFinite hApprox x hx hxIn
-  have ht : ∀ i, IEEE32Exec.isFinite (IEEE32Exec.roundDyadicToIEEE32 (tD i)) = true := htfin
-  have hc : ∀ i, IEEE32Exec.isFinite (IEEE32Exec.roundDyadicToIEEE32 (cD i)) = true := hcfin
+  have ht : ∀ i, isFinite ((ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) :
+    ExecFloat.Binary 8 23)) = true := htfin
+  have hc : ∀ i, isFinite ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) :
+    ExecFloat.Binary 8 23)) = true := hcfin
   -- Now apply the general 3-term (bias-parametric) theorem.
   let εQdy : ℝ :=
-    neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal bD) / 2 +
+    ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal bD) / 2 +
       ∑ i : Fin hidDim,
-        (neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) / 2 *
+        (ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (cD i)) / 2 *
             abs (b - a) +
-          abs (IEEE32Exec.toReal (IEEE32Exec.roundDyadicToIEEE32 (cD i))) *
-            (neuralUlp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i)) /
+          abs ((toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) : ExecFloat.Binary
+            8 23))).toReal) *
+            (ulp binaryRadix fexp32 (IEEE32Exec.dyadicToReal (tD i)) /
               2))
   have :=
     (reluApproximationIccIEEE32Exec_threeTerm_bias
@@ -1397,9 +1465,11 @@ theorem reluApproximationIccIEEE32Exec_dyadicHalfUlp
         (bR := IEEE32Exec.dyadicToReal bD)
         (tR := fun i => IEEE32Exec.dyadicToReal (tD i))
         (cR := fun i => IEEE32Exec.dyadicToReal (cD i))
-        (t := fun i => IEEE32Exec.roundDyadicToIEEE32 (tD i))
-        (c := fun i => IEEE32Exec.roundDyadicToIEEE32 (cD i))
-        (b0 := IEEE32Exec.roundDyadicToIEEE32 bD)
+        (t := fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (tD i)) : ExecFloat.Binary 8
+          23))
+        (c := fun i => (ofModel (Model.roundDyadic FloatFormat.binary32 (cD i)) : ExecFloat.Binary 8
+          23))
+        (b0 := (ofModel (Model.roundDyadic FloatFormat.binary32 bD) : ExecFloat.Binary 8 23))
         (ht := ht) (hc := hc))
       εApprox εQdy
       hFinite
@@ -1426,29 +1496,29 @@ This is a specialization of the 3-term theorem with `εQ = 0`.
 -/
 theorem reluApproximationIccIEEE32Exec_twoTerm
     {f : ℝ → ℝ} {a b : ℝ} {hidDim : ℕ}
-    (t c : Fin hidDim → IEEE32Exec) (b0 : IEEE32Exec)
-    (ht : ∀ i, IEEE32Exec.isFinite (t i) = true)
-    (hc : ∀ i, IEEE32Exec.isFinite (c i) = true) :
+    (t c : Fin hidDim → (ExecFloat.Binary 8 23)) (b0 : ExecFloat.Binary 8 23)
+    (ht : ∀ i, isFinite (t i) = true)
+    (hc : ∀ i, isFinite (c i) = true) :
     ∀ εApprox : ℝ,
-      (∀ x : IEEE32Exec,
-          IEEE32Exec.isFinite x = true →
-          IEEE32Exec.toReal x ∈ Set.Icc a b →
-            HingeSumFinite t c x (0 : IEEE32Exec) (List.finRange hidDim) ∧
-            IEEE32Exec.isFinite (hingeFunIeee (t := t) (c := c) (b := b0) x) = true) →
-      (∀ x : IEEE32Exec,
-          IEEE32Exec.isFinite x = true →
-          IEEE32Exec.toReal x ∈ Set.Icc a b →
-            |f (IEEE32Exec.toReal x) -
+      (∀ x : ExecFloat.Binary 8 23,
+          isFinite x = true →
+          (toModel x).toReal ∈ Set.Icc a b →
+            HingeSumFinite t c x (0 : ExecFloat.Binary 8 23) (List.finRange hidDim) ∧
+            isFinite (hingeFunIeee (t := t) (c := c) (b := b0) x) = true) →
+      (∀ x : ExecFloat.Binary 8 23,
+          isFinite x = true →
+          (toModel x).toReal ∈ Set.Icc a b →
+            |f ((toModel x).toReal) -
                 hingeFun hidDim
-                  (fun i => IEEE32Exec.toReal (t i))
-                  (fun i => IEEE32Exec.toReal (c i))
-                  (IEEE32Exec.toReal b0)
-                  (IEEE32Exec.toReal x)| < εApprox) →
-      ∀ x : IEEE32Exec,
-        IEEE32Exec.isFinite x = true →
-        IEEE32Exec.toReal x ∈ Set.Icc a b →
-          |f (IEEE32Exec.toReal x) -
-              IEEE32Exec.toReal (hingeFunIeee (t := t) (c := c) (b := b0) x)| <
+                  (fun i => (toModel (t i)).toReal)
+                  (fun i => (toModel (c i)).toReal)
+                  ((toModel b0).toReal)
+                  ((toModel x).toReal)| < εApprox) →
+      ∀ x : ExecFloat.Binary 8 23,
+        isFinite x = true →
+        (toModel x).toReal ∈ Set.Icc a b →
+          |f ((toModel x).toReal) -
+              (toModel (hingeFunIeee (t := t) (c := c) (b := b0) x)).toReal| <
             εApprox +
               hingeFunErrorBound (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed
                 x) := by
@@ -1457,7 +1527,7 @@ theorem reluApproximationIccIEEE32Exec_twoTerm
   have hApproxx :=
     hApprox x hx hxIn
   have hApproxEmbed :
-      |f (IEEE32Exec.toReal x) -
+      |f ((toModel x).toReal) -
           hingeFunReal (t := embedVec t) (c := embedVec c) (b := embed b0) (x := embed x)| < εApprox
             := by
     -- Replace `hinge_fun_real` by the explicit real hinge function on `toReal` parameters/inputs.

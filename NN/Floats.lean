@@ -4,30 +4,24 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+module -- shake: keep-all
 
-public import NN.Floats.Calc
+public import FloatLib.Floats
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Transcendentals
+public import NN.Core.Numeric
+public import NN.Floats.Arb
 public import NN.Floats.FP32
-public import NN.Floats.Float32
-public import NN.Floats.IEEEExec
+public import FloatLib.Floats.Formats.BinaryInterchange
 public import NN.Floats.Interval
-public import NN.Floats.NeuralFloat
+public import NN.Floats.NeuralFloat.Metadata
 public import NN.Floats.Quantization
 
 /-!
-# Floating-Point Semantics
+# Numerical formats used by TorchLean
 
-Import this file when you want the floating-point semantics in one place:
-
-- proof-oriented real-valued models (`FP32`, `NeuralFloat`),
-- effective rounded-arithmetic components (`Calc`),
-- the executable bit-level model (`IEEEExec`),
-- interval/enclosure utilities (`Interval`),
-- and the shared error-bound vocabulary used across the library.
-
-The focused, Lean-native `NN.Floats.*` subsystems are collected here so downstream users have one
-stable import without pulling in tensors, models, runtimes, CUDA, or external processes. The
-optional Arb oracle is available separately through `NN.Floats.Arb`.
+FloatLib supplies generic formats, arithmetic, rounding, and interval theory. This umbrella adds
+TorchLean's rounded-real specialization, interval endpoint contracts, real quantizer, and external
+Arb interface. Use FloatLib's configured formats and scalar operations directly.
 -/
 
 @[expose] public section

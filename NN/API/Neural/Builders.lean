@@ -55,12 +55,13 @@ end Mode
 /-- Parameter initialization for an affine layer. `none` selects Xavier-uniform weights. -/
 structure Linear.Config where
   /--
-  Weight initializer. `none` is Xavier-uniform, the default PyTorch also uses for `nn.Linear`
+  Weight initializer. `none` selects TorchLean's Xavier-uniform default
   (Glorot and Bengio, "Understanding the difficulty of training deep feedforward neural
-  networks", AISTATS 2010).
+  networks", AISTATS 2010). Set an explicit scheme when reproducing a model whose
+  initialization differs, or load the same parameter values when comparing runtimes.
   -/
   weightInitialization? : Option Init.Scheme := none
-  /-- Bias initializer. Zeros, as in `torch.nn.Linear`. -/
+  /-- Bias initializer. The default starts every output coordinate at zero. -/
   biasInitialization : Init.Scheme := .zeros
 
 namespace Linear.Config

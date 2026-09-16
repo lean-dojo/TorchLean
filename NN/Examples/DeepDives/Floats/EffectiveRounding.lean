@@ -7,33 +7,40 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.FP32.Sterbenz
-public import NN.Floats.IEEEExec.Bridge.FP32.Ulp
-public import NN.Floats.IEEEExec.Bridge.FP32Total
-public import NN.Floats.IEEEExec.DirectedRoundingSoundness
-public import NN.Floats.IEEEExec.Reductions
-public import NN.Floats.IEEEExec.Rules.SpecialRules
-public import NN.Floats.NeuralFloat.Rounding
+public import NN.Proofs.RuntimeApprox.Reductions.IEEE32
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Rounding.Proof
+public import FloatLib.Floats.Formats.BinaryInterchange.DirectedSemantics.SquareRoot
+public import FloatLib.Floats.Formats.Flocq.Theory.Rounding.Odd
 public import NN.Spec.Quantization
 public import NN.Spec.Core.Tensor
 public import NN.Spec.Core.TensorOps
-public import NN.Floats.IEEEExec.Exec32.Instances -- shake: keep
+public import NN.Spec.Core.FloatInstances -- shake: keep
 
 /-!
 # Effective Rounding in Tensor Semantics
 
 This example uses the same shape-indexed tensor operation twice.  The `FP32` tensor gives the
-proof-oriented rounded-real semantics.  The `IEEE32Exec` tensor executes binary32 arithmetic from
+proof-oriented rounded-real semantics.  The `ExecFloat.Binary 8 23` tensor executes binary32
+arithmetic from
 bits.  On a finite result, the IEEE bridge and the effective rounding calculation identify the
 same canonical mantissa and exponent.
 -/
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofBits32 toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 open Spec TorchLean
 open TorchLean.Floats
 open TorchLean.Floats.IEEE754
 open TorchLean.Floats.IEEE754.IEEE32Exec
 open TorchLean.Floats.Quantization
+open FloatLib.Numerics FloatLib.Floats.Formats.Flocq
+
+open FloatLib.Floats.Formats.BinaryInterchange
 
 namespace NN.Examples.DeepDives.Floats.EffectiveRounding
 
@@ -45,15 +52,15 @@ def width : Nat := 4
 abbrev vectorShape : Spec.Shape := [width]
 
 /-- Executable binary32 tensors used by the example. -/
-def runtimeOnes : Tensor IEEE32Exec vectorShape :=
-  Tensor.full vectorShape posOne
+def runtimeOnes : Tensor (Binary 8 23) vectorShape :=
+  Tensor.full vectorShape (1 : Binary 8 23)
 
 /-- The constant `2`, given by its bit pattern `0x40000000` so no decimal parsing is involved. -/
-def runtimeTwos : Tensor IEEE32Exec vectorShape :=
-  Tensor.full vectorShape (ofBits 0x40000000)
+def runtimeTwos : Tensor (Binary 8 23) vectorShape :=
+  Tensor.full vectorShape (ofBits32 0x40000000)
 
 /-- This addition executes pointwise in the bit-level IEEE32 model. -/
-def runtimeSum : Tensor IEEE32Exec vectorShape :=
+def runtimeSum : Tensor (Binary 8 23) vectorShape :=
   Tensor.addSpec runtimeOnes runtimeTwos
 
 /-- Proof-oriented tensors use the same tensor API with rounded-real FP32 scalars. -/
@@ -83,10 +90,10 @@ noncomputable def specSum : Tensor FP32 vectorShape :=
 /-- Every proof-oriented tensor entry exposes the effective nearest-even representation. -/
 theorem specSum_entry_computed (i : Fin width) :
     FP32.toReal specSum[i] =
-      neuralToReal (β := binaryRadix) {
-        mantissa := neuralNearestEvenMantissa
-          (neuralScaledMantissa binaryRadix fexp32 (specOne.val + specTwo.val))
-        exponent := neuralCexp binaryRadix fexp32 (specOne.val + specTwo.val) } := by
+      FloatLib.Floats.Formats.Flocq.toReal (β := binaryRadix) {
+        mantissa := nearestEvenMantissa
+          (scaledMantissa binaryRadix fexp32 (specOne.val + specTwo.val))
+        exponent := cexp binaryRadix fexp32 (specOne.val + specTwo.val) } := by
   have hitem : specSum[i] = specOne + specTwo := by
     change specSum.getScalar i = specOne + specTwo
     simp [specSum, specOnes, specTwos, Tensor.addSpec,
@@ -99,132 +106,173 @@ Every executable tensor entry reaches the same effective representation once fin
 The finiteness premise is discharged by computation for the concrete $1+2$ example.
 -/
 theorem runtimeSum_entry_computed (i : Fin width) :
-    toReal runtimeSum[i] =
-      neuralToReal (β := binaryRadix) {
-        mantissa := neuralNearestEvenMantissa
-          (neuralScaledMantissa binaryRadix fexp32
-            (toReal posOne + toReal (ofBits 0x40000000)))
-        exponent := neuralCexp binaryRadix fexp32
-          (toReal posOne + toReal (ofBits 0x40000000)) } := by
-  have hitem : runtimeSum[i] = add posOne (ofBits 0x40000000) := by
-    change runtimeSum.getScalar i = add posOne (ofBits 0x40000000)
-    simp [runtimeSum, runtimeOnes, runtimeTwos, Tensor.addSpec,
-      Tensor.map2Spec, Tensor.getScalar_eq_apply]
+    (toModel runtimeSum[i]).toReal =
+      FloatLib.Floats.Formats.Flocq.toReal (β := binaryRadix) {
+        mantissa := nearestEvenMantissa
+          (scaledMantissa binaryRadix fexp32
+            ((toModel (1 : Binary 8 23)).toReal + (toModel (ofBits32 0x40000000)).toReal))
+        exponent := cexp binaryRadix fexp32
+          ((toModel (1 : Binary 8 23)).toReal + (toModel (ofBits32 0x40000000)).toReal) } := by
+  have hadd (a b : Binary 8 23) : a + b = ExecFloat.add a b := by
     rfl
-  rw [hitem]
-  exact toReal_add_eq_computed_of_isFinite posOne (ofBits 0x40000000) (by decide)
+  have hitem : @Eq (Binary 8 23) (runtimeSum.getScalar i)
+      (ExecFloat.add (1 : Binary 8 23) (ofBits32 0x40000000)) := by
+    simp only [runtimeSum, runtimeOnes, runtimeTwos, Tensor.addSpec,
+      Tensor.getScalar_map2Spec, Tensor.getScalar_full]
+    exact hadd _ _
+  have hfinite :
+      Binary.isFinite (ExecFloat.add (1 : Binary 8 23) (ofBits32 0x40000000)) = true := by
+    change Model.isFinite (toModel (ExecFloat.add (1 : Binary 8 23) (ofBits32 0x40000000))) = true
+    rw [IEEE32Exec.toModel_add, Model.Proof.add_eq_spec]
+    decide
+  have hlookup : @Eq (Binary 8 23) runtimeSum[i] (runtimeSum.getScalar i) := by
+    exact (Tensor.getScalar_eq_apply runtimeSum i).symm
+  rw [hlookup, hitem]
+  rw [toReal_add_eq_fp32Round_of_isFinite hfinite, fp32Round_eq_computed]
 
 /-! ## Exact subtraction, local spacing, and absorption -/
 
 /-- Sterbenz's lemma certifies the concrete binary32 subtraction $2-1$ as exact. -/
 theorem two_sub_one_exact :
     round32 ((2 : ℝ) - 1) = (2 : ℝ) - 1 := by
-  have hOne : neuralGenericFormat binaryRadix fexp32 (1 : ℝ) := by
-    simpa [neuralBpow, binaryRadix, NeuralRadix.toReal] using
-      (neural_generic_format_bpow (β := binaryRadix) (fexp := fexp32) 0
-        (by norm_num [fexp32, FLTExp]))
-  have hTwo : neuralGenericFormat binaryRadix fexp32 (2 : ℝ) := by
-    simpa [neuralBpow, binaryRadix, NeuralRadix.toReal] using
-      (neural_generic_format_bpow (β := binaryRadix) (fexp := fexp32) 1
-        (by norm_num [fexp32, FLTExp]))
+  have hOne : genericFormat binaryRadix fexp32 (1 : ℝ) := by
+    simpa [bpow, binaryRadix, Radix.toReal] using
+      (generic_format_bpow (β := binaryRadix) (fexp := fexp32) 0
+        (by norm_num [fexp32, fltExp]))
+  have hTwo : genericFormat binaryRadix fexp32 (2 : ℝ) := by
+    simpa [bpow, binaryRadix, Radix.toReal] using
+      (generic_format_bpow (β := binaryRadix) (fexp := fexp32) 1
+        (by norm_num [fexp32, fltExp]))
   exact round32_sub_exact_of_sterbenz hTwo hOne (by norm_num) (by norm_num)
     (by norm_num) (by norm_num)
 
-/--
-The corresponding executable binary32 operation also denotes the exact real subtraction.
--/
-theorem runtime_two_sub_one_exact :
-    toReal (sub (ofBits 0x40000000) posOne) =
-      toReal (ofBits 0x40000000) - toReal posOne := by
-  have htwo : toReal (ofBits 0x40000000) = (2 : ℝ) := by
-    have h :=
-      toReal_ofBits_mkBits_fin false 128 0 (by norm_num) (by norm_num)
-    have hbits : mkBits false 128 0 = (0x40000000 : UInt32) := by decide
-    rw [hbits] at h
-    norm_num [pow2, Nat.shiftLeft_eq, neuralBpow, binaryRadix, NeuralRadix.toReal] at h ⊢
-    exact h
-  have hone : toReal posOne = (1 : ℝ) := by
-    have h :=
-      toReal_ofBits_mkBits_fin false 127 0 (by norm_num) (by norm_num)
-    have hbits : mkBits false 127 0 = (0x3f800000 : UInt32) := by decide
-    rw [hbits] at h
-    norm_num [posOne, pow2, Nat.shiftLeft_eq, neuralBpow, binaryRadix, NeuralRadix.toReal] at h ⊢
-    exact h
-  exact toReal_sub_eq_sub_of_sterbenz (ofBits 0x40000000) posOne
-    (by decide) (by decide)
-    (by rw [htwo]; norm_num) (by rw [hone]; norm_num)
-    (by rw [htwo, hone]; norm_num) (by rw [htwo, hone]; norm_num)
+private theorem toReal_of_decoded {x : (Binary 8 23)} {d : FloatLib.Numerics.Dyadic}
+    (h : (toModel x).toDyadic? = some d) : (toModel x).toReal = d.toReal := by
+  change Model.toDyadic? (toModel x) = some d at h
+  rw [Model.toReal_eq, h]
 
-/-- The executable ULP exponent at `1.0` is `-23`. -/
-theorem posOne_ulpExp : ulpExp? posOne = some (-23) := by
+private theorem toReal_one : (toModel (1 : Binary 8 23)).toReal = (1 : ℝ) := by
+  rw [toReal_of_decoded (show (toModel (1 : Binary 8 23)).toDyadic? = some ⟨false, 8388608, -23⟩ by
+    decide)]
+  norm_num
+
+private theorem toReal_two : (toModel (ofBits32 0x40000000)).toReal = (2 : ℝ) := by
+  rw [toReal_of_decoded
+    (show (toModel (ofBits32 0x40000000)).toDyadic? = some ⟨false, 8388608, -22⟩ by decide)]
+  norm_num
+
+/-- The corresponding executable binary32 operation denotes the exact real subtraction. -/
+theorem runtime_two_sub_one_exact :
+    (toModel (ExecFloat.sub (ofBits32 0x40000000) (1 : Binary 8 23))).toReal =
+      (toModel (ofBits32 0x40000000)).toReal - (toModel (1 : Binary 8 23)).toReal := by
+  have hbits : ExecFloat.sub (ofBits32 0x40000000) (1 : Binary 8 23) = (1 : Binary 8 23) := by
+    rw [FloatLib.Floats.ExecFloat.Proof.sub_eq_spec]
+    decide
+  rw [hbits, toReal_one, toReal_two]
+  norm_num
+
+/-- The decoded significand at `1.0` has scale `2^-23`, its binary32 spacing. -/
+theorem posOne_ulpExp : ((toModel (1 : Binary 8 23)).toDyadic?).map (·.exponent) = some (-23) := by
   decide
 
 /-- The computed exponent therefore denotes the mathematical ULP at `1.0`. -/
 theorem posOne_ulp :
-    neuralBpow binaryRadix (-23) = ulp32 (toReal posOne) :=
-  neuralBpow_eq_ulp32_of_ulpExp?_eq_some posOne_ulpExp
+    bpow binaryRadix (-23) = ulp32 ((toModel (1 : Binary 8 23)).toReal) := by
+  rw [toReal_one]
+  simpa [bpow, binaryRadix, Radix.toReal, fexp32, fltExp] using
+    (ulp_bpow (β := binaryRadix) (fexp := fexp32) 0).symm
 
-/-- NaN and infinity have no finite ULP exponent. -/
-theorem posInf_ulpExp : ulpExp? posInf = none := by
+/-- Infinity has no finite dyadic significand or scale. -/
+theorem posInf_ulpExp : ((toModel (Binary.infinity false : Binary 8 23)).toDyadic?).map (·.exponent)
+  = none := by
   decide
 
 /-- Adding the smallest positive subnormal does not change executable binary32 `1.0`. -/
-theorem posOne_absorbs_posMinSubnormal : absorbs posOne posMinSubnormal = true := by
+theorem posOne_absorbs_posMinSubnormal : ExecFloat.add (1 : Binary 8 23) (ofBits32 1) = (1 : Binary
+  8 23) := by
   decide
 
 /--
 The executable absorption result transports to the rounded-real binary32 specification.
 -/
 theorem posOne_add_posMinSubnormal_rounds_to_posOne :
-    round32 (toReal posOne + toReal posMinSubnormal) = toReal posOne := by
-  exact round32_add_eq_left_of_absorbs_of_isFinite
-    (by decide) (by decide) (by decide) posOne_absorbs_posMinSubnormal
+    round32 ((toModel (1 : Binary 8 23)).toReal + (toModel (ofBits32 1)).toReal) = (toModel (1 :
+      Binary 8 23)).toReal := by
+  have h := toReal_add_eq_fp32Round_of_isFinite
+    (x := (1 : Binary 8 23)) (y := ofBits32 1) (by decide)
+  rw [posOne_absorbs_posMinSubnormal] at h
+  exact h.symm
 
 /-! ## Named rounding modes and fused enclosures -/
 
 /-- The public mode API avoids passing a raw integer-rounding function at each call site. -/
 noncomputable def oneThirdDown : ℝ :=
-  NeuralRoundingMode.towardNegative.round
+  RoundingMode.towardNegative.round
     (β := binaryRadix) (fexp := fexp32) (1 / 3)
 
 /-- Directed rounding gives a certified lower endpoint, not merely a differently named value. -/
 theorem oneThirdDown_le : oneThirdDown ≤ 1 / 3 := by
-  simpa [oneThirdDown, NeuralRoundingMode.round, NeuralRoundingMode.roundingFunction] using
-    (neural_round_floor_le (β := binaryRadix) (fexp := fexp32) (1 / 3))
+  simpa [oneThirdDown, RoundingMode.round, RoundingMode.roundingFunction] using
+    (round_floor_le (β := binaryRadix) (fexp := fexp32) (1 / 3))
 
 /-- A concrete fused multiply-add lower endpoint, computed directly from binary32 inputs. -/
-def fusedLower : IEEE32Exec :=
-  fmaDown posOne (ofBits 0x40000000) (ofBits 0x3e800000)
+def fusedLower : Binary 8 23 :=
+  Binary.fma (1 : Binary 8 23) (ofBits32 0x40000000) (ofBits32 0x3e800000)
+    .towardNegativeInfinity
 
 /-- The corresponding upper endpoint. -/
-def fusedUpper : IEEE32Exec :=
-  fmaUp posOne (ofBits 0x40000000) (ofBits 0x3e800000)
+def fusedUpper : Binary 8 23 :=
+  Binary.fma (1 : Binary 8 23) (ofBits32 0x40000000) (ofBits32 0x3e800000)
+    .towardPositiveInfinity
 
 /-- The executable directed FMA endpoints enclose the exact single-rounding expression. -/
 theorem fused_enclosure :
-    toEReal fusedLower ≤
-        ((toReal posOne * toReal (ofBits 0x40000000) + toReal (ofBits 0x3e800000) : ℝ) : EReal) ∧
-      ((toReal posOne * toReal (ofBits 0x40000000) + toReal (ofBits 0x3e800000) : ℝ) : EReal) ≤
-        toEReal fusedUpper := by
-  constructor
-  · exact toEReal_fmaDown_le _ _ _ (by decide) (by decide) (by decide)
-  · exact toEReal_fmaUp_ge _ _ _ (by decide) (by decide) (by decide)
+    (toModel fusedLower).toEReal ≤
+        (((toModel (1 : Binary 8 23)).toReal * (toModel (ofBits32 0x40000000)).toReal + (toModel
+          (ofBits32 0x3e800000)).toReal : ℝ) : EReal) ∧
+      (((toModel (1 : Binary 8 23)).toReal * (toModel (ofBits32 0x40000000)).toReal + (toModel
+        (ofBits32 0x3e800000)).toReal : ℝ) : EReal) ≤
+        (toModel fusedUpper).toEReal := by
+  have hlo : fusedLower = ofBits32 0x40100000 := by decide
+  have hhi : fusedUpper = ofBits32 0x40100000 := by decide
+  have hquarter : (toModel (ofBits32 0x3e800000)).toReal = (1 / 4 : ℝ) := by
+    rw [toReal_of_decoded
+      (show (toModel (ofBits32 0x3e800000)).toDyadic? = some ⟨false, 8388608, -25⟩ by decide)]
+    norm_num
+  have hresult : (toModel (ofBits32 0x40100000)).toReal = (9 / 4 : ℝ) := by
+    rw [toReal_of_decoded
+      (show (toModel (ofBits32 0x40100000)).toDyadic? = some ⟨false, 9437184, -22⟩ by decide)]
+    norm_num
+  have hext : (toModel (ofBits32 0x40100000)).toEReal = ((9 / 4 : ℝ) : EReal) := by
+    rw [Model.toEReal_eq_coe_toReal_of_isFinite _ (by decide)]
+    exact congrArg (fun r : ℝ => (r : EReal)) hresult
+  rw [hlo, hhi, hext, toReal_one, toReal_two, hquarter]
+  norm_num
 
 /-- Directed binary32 square-root endpoints for the exact input `2`. -/
-def sqrtLower : IEEE32Exec :=
-  sqrtDown (ofBits 0x40000000)
+def sqrtLower : Binary 8 23 :=
+  (Binary.sqrt (rounding := .towardNegativeInfinity)) (ofBits32 0x40000000)
 
 /-- The upper endpoint, rounded away from zero, so the pair brackets the exact `sqrt 2`. -/
-def sqrtUpper : IEEE32Exec :=
-  sqrtUp (ofBits 0x40000000)
+def sqrtUpper : Binary 8 23 :=
+  (Binary.sqrt (rounding := .towardPositiveInfinity)) (ofBits32 0x40000000)
 
 /-- The executable endpoints enclose the exact real value `sqrt 2`. -/
 theorem sqrt_enclosure :
-    toEReal sqrtLower ≤ (Real.sqrt (toReal (ofBits 0x40000000)) : EReal) ∧
-      (Real.sqrt (toReal (ofBits 0x40000000)) : EReal) ≤ toEReal sqrtUpper := by
+    (toModel sqrtLower).toEReal ≤ (Real.sqrt ((toModel (ofBits32 0x40000000)).toReal) : EReal) ∧
+      (Real.sqrt ((toModel (ofBits32 0x40000000)).toReal) : EReal) ≤
+        (toModel sqrtUpper).toEReal := by
+  have hlo : toModel sqrtLower = Model.sqrtDown (toModel (ofBits32 0x40000000)) :=
+    Binary.toModel_sqrt (ofBits32 0x40000000) .towardNegativeInfinity
+  have hhi : toModel sqrtUpper = Model.sqrtUp (toModel (ofBits32 0x40000000)) :=
+    Binary.toModel_sqrt (ofBits32 0x40000000) .towardPositiveInfinity
   constructor
-  · exact toEReal_sqrtDown_le _ (by decide) (by decide)
-  · exact toEReal_sqrtUp_ge _ (by decide) (by decide)
+  · rw [hlo]
+    exact Model.toEReal_sqrtDown_le (toModel (ofBits32 0x40000000))
+      (by decide) (by decide) (by decide)
+  · rw [hhi]
+    exact Model.le_toEReal_sqrtUp (toModel (ofBits32 0x40000000))
+      (by decide) (by decide) (by decide)
 
 /-! ## Fixed grids, quantization, and double rounding -/
 
@@ -241,20 +289,20 @@ noncomputable def signedQuarterQuantizer : AffineQuantizer where
 /-- Every in-range code is recovered exactly after dequantization and requantization. -/
 theorem signedQuarterQuantizer_roundtrip {code : ℤ}
     (hlo : -128 ≤ code) (hhi : code ≤ 127) :
-    signedQuarterQuantizer.quantize neuralNearestEven
+    signedQuarterQuantizer.quantize nearestEven
         (signedQuarterQuantizer.dequantize code) = code := by
-  exact signedQuarterQuantizer.quantize_dequantize neuralNearestEven hlo hhi
+  exact signedQuarterQuantizer.quantize_dequantize nearestEven hlo hhi
 
 /-- When saturation is inactive, nearest-even reconstruction is within half a quantization step. -/
 theorem signedQuarterQuantizer_error (x : ℝ)
     (hlo : signedQuarterQuantizer.qmin ≤
-      signedQuarterQuantizer.rawCode neuralNearestEven x)
-    (hhi : signedQuarterQuantizer.rawCode neuralNearestEven x ≤
+      signedQuarterQuantizer.rawCode nearestEven x)
+    (hhi : signedQuarterQuantizer.rawCode nearestEven x ≤
       signedQuarterQuantizer.qmax) :
     abs (signedQuarterQuantizer.dequantize
-      (signedQuarterQuantizer.quantize neuralNearestEven x) - x) ≤ 1 / 8 := by
+      (signedQuarterQuantizer.quantize nearestEven x) - x) ≤ 1 / 8 := by
   have h :=
-    signedQuarterQuantizer.dequantize_quantize_error_le neuralNearestEven x hlo hhi
+    signedQuarterQuantizer.dequantize_quantize_error_le nearestEven x hlo hhi
   convert h using 1
   all_goals norm_num [signedQuarterQuantizer]
 
@@ -264,7 +312,7 @@ def quarterCodes : Tensor ℤ vectorShape :=
 
 /-- Pointwise tensor Q/DQ is exact on an in-range code tensor. -/
 theorem quarterCodes_roundtrip :
-    signedQuarterQuantizer.quantizeTensor neuralNearestEven
+    signedQuarterQuantizer.quantizeTensor nearestEven
       (signedQuarterQuantizer.dequantizeTensor quarterCodes) = quarterCodes := by
   apply signedQuarterQuantizer.quantizeTensor_dequantizeTensor
   intro i
@@ -277,32 +325,43 @@ theorem quarterCodes_roundtrip :
 
 /-- Round-to-odd on a sufficiently fine binary grid prevents double rounding on the quarter grid. -/
 theorem quarterGrid_doubleRounding_safe (extra : ℕ) (x : ℝ) :
-    neuralRoundAtScale neuralNearestEven (1 / 4) (by norm_num)
-        (neuralRoundAtScale neuralOddRound
+    roundAtScale nearestEven (1 / 4) (by norm_num)
+        (roundAtScale oddRound
           ((1 / 4) / (2 : ℝ) ^ (extra + 2)) (by positivity) x) =
-      neuralRoundAtScale neuralNearestEven (1 / 4) (by norm_num) x := by
-  exact neuralRoundAtScale_nearestEven_after_odd_binary_extra extra (1 / 4) x (by norm_num)
+      roundAtScale nearestEven (1 / 4) (by norm_num) x := by
+  exact roundAtScale_nearestEven_after_odd_binary_extra extra (1 / 4) x (by norm_num)
 
 /-! ## IEEE exception status -/
 
 /-- The status-bearing API records division by zero separately from invalid operation. -/
 theorem one_div_zero_status :
-    (divWithStatus posOne posZero).status.divideByZero = true ∧
-      (divWithStatus posOne posZero).status.invalid = false := by
-  exact divWithStatus_divideByZero_of_finite_nonzero posOne posZero
-    (by decide) (by decide) (by decide)
+    (Binary.divWithStatus (1 : Binary 8 23) (Binary.zero false : Binary 8 23)
+      .nearestEven).2.divideByZero = true ∧
+      (Binary.divWithStatus (1 : Binary 8 23) (Binary.zero false : Binary 8 23)
+        .nearestEven).2.invalid = false := by
+  decide
 
 /-! ## A training-shaped reduction -/
 
 /-- A fixed two-term dot-product tree. Its shape records the accumulation order. -/
-def runtimeDotTree : SumTree (IEEE32Exec × IEEE32Exec) :=
+def runtimeDotTree : SumTree ((Binary 8 23) × (Binary 8 23)) :=
   .node
-    (.leaf (posOne, ofBits 0x40000000))
-    (.leaf (ofBits 0x40400000, ofBits 0x40800000))
+    (.leaf ((1 : Binary 8 23), ofBits32 0x40000000))
+    (.leaf (ofBits32 0x40400000, ofBits32 0x40800000))
 
 /-- Every intermediate product and addition in the example remains finite. -/
 theorem runtimeDotTree_finite : FiniteEvalDot runtimeDotTree := by
-  simp only [runtimeDotTree, FiniteEvalDot]
+  have hleft : ExecFloat.mul (1 : Binary 8 23) (ofBits32 0x40000000) = ofBits32 0x40000000 := by
+    rw [FloatLib.Floats.ExecFloat.Proof.mul_eq_spec]
+    decide
+  have hright :
+      ExecFloat.mul (ofBits32 0x40400000) (ofBits32 0x40800000) = ofBits32 0x41400000 := by
+    rw [FloatLib.Floats.ExecFloat.Proof.mul_eq_spec]
+    decide
+  simp only [runtimeDotTree, FiniteEvalDot, evalDotIEEE, hleft, hright]
+  refine ⟨by decide, by decide, ?_⟩
+  change Model.isFinite (toModel (ExecFloat.add (ofBits32 0x40000000) (ofBits32 0x41400000))) = true
+  rw [IEEE32Exec.toModel_add, Model.Proof.add_eq_spec]
   decide
 
 /--
@@ -310,15 +369,15 @@ The executable dot product decodes to the computed mantissa/exponent representat
 rounded accumulation. The two leaf multiplications are rounded before this final addition.
 -/
 theorem runtimeDotTree_computed :
-    toReal (evalDotIEEE runtimeDotTree) =
-      neuralToReal (β := binaryRadix) {
-        mantissa := neuralNearestEvenMantissa
-          (neuralScaledMantissa binaryRadix fexp32
-            (evalRealDotIEEE (.leaf (posOne, ofBits 0x40000000)) +
-              evalRealDotIEEE (.leaf (ofBits 0x40400000, ofBits 0x40800000))))
-        exponent := neuralCexp binaryRadix fexp32
-          (evalRealDotIEEE (.leaf (posOne, ofBits 0x40000000)) +
-            evalRealDotIEEE (.leaf (ofBits 0x40400000, ofBits 0x40800000))) } := by
+    (toModel (evalDotIEEE runtimeDotTree)).toReal =
+      FloatLib.Floats.Formats.Flocq.toReal (β := binaryRadix) {
+        mantissa := nearestEvenMantissa
+          (scaledMantissa binaryRadix fexp32
+            (evalRealDotIEEE (.leaf ((1 : Binary 8 23), ofBits32 0x40000000)) +
+              evalRealDotIEEE (.leaf (ofBits32 0x40400000, ofBits32 0x40800000))))
+        exponent := cexp binaryRadix fexp32
+          (evalRealDotIEEE (.leaf ((1 : Binary 8 23), ofBits32 0x40000000)) +
+            evalRealDotIEEE (.leaf (ofBits32 0x40400000, ofBits32 0x40800000))) } := by
   rw [toReal_evalDotIEEE_eq_evalRealDotIEEE_of_FiniteEvalDot runtimeDotTree runtimeDotTree_finite]
   exact evalRealDotIEEE_node_eq_computed _ _
 

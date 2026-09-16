@@ -84,7 +84,7 @@ def toTensorAs? (mask : NN.IR.HardMask) (expected : Shape) :
 @[simp] theorem toTensorAs?_ofTensor {s : Shape} (mask : Tensor Bool s) :
     toTensorAs? (ofTensor mask) s = .ok mask := by
   unfold toTensorAs?
-  rw [dif_pos (by rfl)]
+  rw [dite_eq_left (by rfl)]
   rw [toTensor?_ofTensor]
   rfl
 

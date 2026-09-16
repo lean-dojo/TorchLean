@@ -681,6 +681,11 @@ the leading axes, starting at one and zero. `eps` is added to the variance befor
 root. Setting `bias := false` keeps only the scale; setting `affine := false` removes both
 parameters.
 
+The rational `eps` must remain positive and finite after conversion to the execution scalar.
+The default can round to zero in tiny formats, producing NaNs on constant rows in a typed graph.
+Validation checks rational positivity only. Choose a representable positive value with `eps`;
+for three exponent bits and two fraction bits, `(eps := (1 / 16 : Rat))` is such a value.
+
 Example:
 ```lean
 -- Normalizes across the final axis of each `[16, 64]` row, the Transformer convention.
@@ -699,6 +704,8 @@ Build RMS normalization over the final axis.
 Each row is divided by `sqrt(mean(x * x) + eps)`, then multiplied by a scale of shape `[width]`.
 There is no mean subtraction or bias. The scale starts at one; `affine := false` removes it from
 model state. The default `eps` is `1e-5` for every scalar type.
+The converted epsilon must remain positive and finite. If it rounds to zero in a tiny format,
+zero input can produce NaNs; pass a representable positive `eps` before lowering the model.
 -/
 def rmsNorm (batchShape : Shape := []) {width : Nat}
     (eps : Rat := 1e-5) (affine : Bool := true) :

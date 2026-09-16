@@ -196,26 +196,24 @@ def forward {σ τ : Shape} (model : Seq σ τ) (mode : Mode := .eval)
     let options := { options with gradEnabled := false }
     let sess ← Runtime.Autograd.Torch.Internal.EagerSession.new (α := α) options
     sess.resetTape
-    let outRef ← (do
-      let pRefs ← Runtime.Autograd.Torch.Internal.useParams (α := α)
-        (ss := stateShapes model) params
-      let xRefs ← Runtime.Autograd.Torch.Internal.useInputs (α := α)
-        (ss := [σ]) (.cons x .nil)
-      let allRefs := Runtime.Autograd.Torch.RefList.append
-        (ss₁ := stateShapes model) (ss₂ := [σ]) pRefs xRefs
-      Runtime.Autograd.Torch.CurriedRef.uncurry
-        (ss := stateShapes model ++ [σ])
-        (forward model (mode := mode) (α := α)) allRefs) |>.run sess
-    let y ← Runtime.Autograd.Torch.Internal.EagerSession.getValue (α := α) sess outRef
-    if options.usesCuda then
-      Runtime.Autograd.Torch.Internal.EagerSession.releaseCudaTapeNonParamValues sess
-      sess.cudaTape.set Runtime.Autograd.Cuda.Tape.empty
-      sess.paramsByLeaf.set (Std.HashMap.emptyWithCapacity)
-      sess.nats.set #[]
-      Runtime.Autograd.Torch.Internal.EagerSession.collectCudaAllocator
-    else
-      pure ()
-    pure y
+    try
+      let outRef ← (do
+        let pRefs ← Runtime.Autograd.Torch.Internal.useParams (α := α)
+          (ss := stateShapes model) params
+        let xRefs ← Runtime.Autograd.Torch.Internal.useInputs (α := α)
+          (ss := [σ]) (.cons x .nil)
+        let allRefs := Runtime.Autograd.Torch.RefList.append
+          (ss₁ := stateShapes model) (ss₂ := [σ]) pRefs xRefs
+        Runtime.Autograd.Torch.CurriedRef.uncurry
+          (ss := stateShapes model ++ [σ])
+          (forward model (mode := mode) (α := α)) allRefs) |>.run sess
+      Runtime.Autograd.Torch.Internal.EagerSession.getValue (α := α) sess outRef
+    finally
+      -- The result has its own host storage. Retire the tape even if execution or readback throws,
+      -- preserving shared parameter snapshots and reusable device blocks for the next call.
+      sess.resetTape
+      if options.usesCuda then
+        Runtime.Autograd.Cuda.Buffer.collectGarbage
 
   /--
   Run eval-mode eager inference for one concrete input.

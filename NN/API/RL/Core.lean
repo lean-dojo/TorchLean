@@ -20,6 +20,7 @@ public import NN.Spec.RL.MDP -- shake: keep
 public import NN.Spec.RL.FiniteStochasticMDP -- shake: keep
 public import NN.Runtime.RL.Algorithms -- shake: keep
 public import NN.Runtime.RL.Core -- shake: keep
+public import NN.Runtime.RL.DQN.Autograd -- shake: keep
 public import NN.Runtime.RL.Eval -- shake: keep
 public import NN.Runtime.RL.PolicyGradient.Autograd -- shake: keep
 public import NN.Runtime.RL.Replay -- shake: keep
@@ -57,7 +58,7 @@ namespace core
 export Spec.RL
   (continueMask discountedBackup tdTarget tdResidual)
 export Runtime.RL.Core
-  (Transition IndexedTransition
+  (Transition
    discountedReturnsFrom discountedReturns discountedReturnsDone
    generalizedAdvantageEstimation returnsFromAdvantages
    squaredError huberLoss)
@@ -118,6 +119,16 @@ export Runtime.RL.DQN
   (transitionMSELoss transitionHuberLoss transitionDoubleHuberLoss
    minibatchMSELoss minibatchHuberLoss minibatchDoubleHuberLoss
    softUpdateScalar)
+
+namespace autograd
+/-!
+Differentiable DQN losses over TorchLean backend references.
+
+These helpers build scalar semi-gradient losses for eager or typed graph autograd. Targets and
+action indicators are detached; the selected online Q values receive the loss gradient.
+-/
+export Runtime.RL.DQN.Autograd (huberTDLoss actionHuberLossBatch)
+end autograd
 end dqn
 
 namespace policy
@@ -143,8 +154,7 @@ export Runtime.RL.PolicyGradient.Autograd
   (actionLogProbOneHotBatch
    entropyMean
    ppoClippedObjectiveBatch
-   ppoLossBatch
-   ppoActorCriticObjectiveDef)
+   ppoLossBatch)
 end autograd
 end policy
 

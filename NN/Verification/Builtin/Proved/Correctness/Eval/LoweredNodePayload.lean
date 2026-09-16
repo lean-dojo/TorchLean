@@ -151,7 +151,7 @@ theorem evalAt_eq_evalNode_layerNorm
   have hLN :
       Graph.layerNormWithoutAffine (α := α) op.rows op.width xMatrix = Except.ok yMatrix := by
     unfold Graph.layerNormWithoutAffine Graph.layerNormMatrix
-    rw [dif_pos op.rows_pos, dif_pos op.width_pos]
+    rw [dite_eq_left op.rows_pos, dite_eq_left op.width_pos]
     rfl
   have hNoLayerNorm : (payloadOfParamStore (α := α) P).layerNorm? id = none := by
     rw [IRStep.payloadOfParamStore_layerNorm?_eq, hLayerNorm]

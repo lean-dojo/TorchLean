@@ -6,6 +6,7 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Tests.Runtime.ParameterAliases
 public import NN.Tests.Runtime.Cuda.Softmax
 public import NN.Tests.Runtime.Cuda.Elementwise
 public import NN.Tests.Runtime.Cuda.LayerNorm
@@ -41,6 +42,7 @@ namespace Cuda
 
 /-- Unified CUDA test entrypoint (called by `NN/Tests/Suite.lean`). -/
 def run : IO Unit := do
+  NN.Tests.Runtime.ParameterAliases.runCuda
   IO.println "=== Runtime CUDA kernel coverage suite ==="
   Softmax.run
   Elementwise.run

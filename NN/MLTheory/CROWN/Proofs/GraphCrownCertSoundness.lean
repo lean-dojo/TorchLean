@@ -51,6 +51,9 @@ external interval enclosure, but it may not infer it from a particular `libm` im
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 
 namespace NN.MLTheory.CROWN.Graph
 
@@ -325,13 +328,13 @@ The floating-point refinement theorem itself lives outside this checker lemma.
 -/
 
 /-- A flat node value in the binary32 executable semantics. -/
-abbrev IEEE32Val := FlatTensor TorchLean.Floats.IEEE754.IEEE32Exec
+abbrev IEEE32Val := FlatTensor (ExecFloat.Binary 8 23)
 
 /-- Type of a caller-supplied binary32 node evaluator: nodes, parameters, inputs, partial trace,
 node id, and an optional result. -/
 abbrev IEEE32EvalNode? :=
   Array Node →
-    ParamStore TorchLean.Floats.IEEE754.IEEE32Exec →
+    ParamStore (ExecFloat.Binary 8 23) →
     Std.HashMap Nat IEEE32Val →
     Array (Option IEEE32Val) →
     Nat →
@@ -342,7 +345,7 @@ The IEEE32 node evaluator may inspect already-computed values, but not the slot 
 compute.
 -/
 def IEEE32EvalNoSelfDependency (evalNode? : IEEE32EvalNode?) : Prop :=
-  ∀ (nodes : Array Node) (ps : ParamStore TorchLean.Floats.IEEE754.IEEE32Exec)
+  ∀ (nodes : Array Node) (ps : ParamStore (ExecFloat.Binary 8 23))
     (inputs : Std.HashMap Nat IEEE32Val)
     (vals vals' : Array (Option IEEE32Val)) (id : Nat),
       vals.size = vals'.size →
@@ -353,7 +356,7 @@ def IEEE32EvalNoSelfDependency (evalNode? : IEEE32EvalNode?) : Prop :=
 evaluator does not read the slot it writes. -/
 def IEEE32SemLocalOK
     (evalNode? : IEEE32EvalNode?)
-    (g : Graph) (ps : ParamStore TorchLean.Floats.IEEE754.IEEE32Exec)
+    (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
     (inputs : Std.HashMap Nat IEEE32Val)
     (vals : Array (Option IEEE32Val)) : Prop :=
   IEEE32EvalNoSelfDependency evalNode? ∧
@@ -362,24 +365,25 @@ def IEEE32SemLocalOK
       vals[id]! = evalNode? g.nodes ps inputs vals id
 
 /--
-Checker-implies-enclosure for `IEEE32Exec` certificates, in the partial `match` form.
+Checker-implies-enclosure for `ExecFloat.Binary 8 23` certificates, in the partial `match` form.
 
 The proof is a pure topological induction: it only rewrites certificate entries with the step
 function and passes parent enclosures to `hsound`. In particular it never compares two
-`IEEE32Exec` values, so no order structure on `IEEE32Exec` is assumed; the enclosure predicate
+`ExecFloat.Binary 8 23` values, so no order structure on `ExecFloat.Binary 8 23` is assumed; the
+enclosure predicate
 itself uses the `LE` supplied by the `Context IEEE32Exec` instance, which is not a lawful order
 because of NaN. Any order reasoning belongs in the transfer proofs discharging `hsound`.
 -/
 theorem crown_checker_encloses_semantics_ieee32exec_match
-    (g : Graph) (_ps : ParamStore TorchLean.Floats.IEEE754.IEEE32Exec)
-    (step : Array (Option (FlatAffineBounds TorchLean.Floats.IEEE754.IEEE32Exec)) → Nat →
-        Option (FlatAffineBounds TorchLean.Floats.IEEE754.IEEE32Exec))
-    (cert : Array (Option (FlatAffineBounds TorchLean.Floats.IEEE754.IEEE32Exec)))
+    (g : Graph) (_ps : ParamStore (ExecFloat.Binary 8 23))
+    (step : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) → Nat →
+        Option (FlatAffineBounds (ExecFloat.Binary 8 23)))
+    (cert : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))))
     (evalNode? : IEEE32EvalNode?)
     (inputs : Std.HashMap Nat IEEE32Val)
     (vals : Array (Option IEEE32Val))
     (ctx : AffineCtx)
-    (x : Tensor TorchLean.Floats.IEEE754.IEEE32Exec [ctx.inputDim])
+    (x : Tensor (ExecFloat.Binary 8 23) [ctx.inputDim])
     (htopo : TopoSorted g)
     (_hsem : IEEE32SemLocalOK (evalNode? := evalNode?) (g := g) (ps := _ps) (inputs := inputs)
       (vals := vals))
@@ -389,16 +393,16 @@ theorem crown_checker_encloses_semantics_ieee32exec_match
         (∀ p : Nat, p ∈ (g.nodes[id]!).parents →
           match cert[p]!, vals[p]! with
           | some bp, some vp =>
-              EnclosesAtInput (α := TorchLean.Floats.IEEE754.IEEE32Exec) ctx x bp vp
+              EnclosesAtInput (α := (ExecFloat.Binary 8 23)) ctx x bp vp
           | _, _ => True) →
         match step cert id, vals[id]! with
         | some b, some v =>
-            EnclosesAtInput (α := TorchLean.Floats.IEEE754.IEEE32Exec) ctx x b v
+            EnclosesAtInput (α := (ExecFloat.Binary 8 23)) ctx x b v
         | _, _ => True) :
     ∀ id : Nat, id < g.nodes.size →
       match cert[id]!, vals[id]! with
       | some b, some v =>
-          EnclosesAtInput (α := TorchLean.Floats.IEEE754.IEEE32Exec) ctx x b v
+          EnclosesAtInput (α := (ExecFloat.Binary 8 23)) ctx x b v
       | _, _ => True := by
   classical
   intro id hid
@@ -407,7 +411,7 @@ theorem crown_checker_encloses_semantics_ieee32exec_match
         k < g.nodes.size →
           match cert[k]!, vals[k]! with
           | some b, some v =>
-              EnclosesAtInput (α := TorchLean.Floats.IEEE754.IEEE32Exec) ctx x b v
+              EnclosesAtInput (α := (ExecFloat.Binary 8 23)) ctx x b v
           | _, _ => True) ?_ hid
   intro k ih hk
   cases hcert with
@@ -417,7 +421,7 @@ theorem crown_checker_encloses_semantics_ieee32exec_match
         (∀ p : Nat, p ∈ (g.nodes[k]!).parents →
           match cert[p]!, vals[p]! with
           | some bp, some vp =>
-              EnclosesAtInput (α := TorchLean.Floats.IEEE754.IEEE32Exec) ctx x bp vp
+              EnclosesAtInput (α := (ExecFloat.Binary 8 23)) ctx x bp vp
           | _, _ => True) := by
       intro p hp
       have hpLt : p < k := htopo k hk p hp
@@ -438,20 +442,22 @@ theorem crown_checker_encloses_semantics_ieee32exec_match
             simpa [hcertk, hvalk, hstepk] using h
 
 /--
-Checker-implies-enclosure for `IEEE32Exec` certificates, quantified over the node ids at which
+Checker-implies-enclosure for `ExecFloat.Binary 8 23` certificates, quantified over the node ids at
+which
 both a certificate entry and a semantic value are present. See
-`crown_checker_encloses_semantics_ieee32exec_match` for why no order on `IEEE32Exec` is assumed.
+`crown_checker_encloses_semantics_ieee32exec_match` for why no order on `ExecFloat.Binary 8 23` is
+assumed.
 -/
 theorem crown_checker_encloses_semantics_ieee32exec
-    (g : Graph) (ps : ParamStore TorchLean.Floats.IEEE754.IEEE32Exec)
-    (step : Array (Option (FlatAffineBounds TorchLean.Floats.IEEE754.IEEE32Exec)) → Nat →
-        Option (FlatAffineBounds TorchLean.Floats.IEEE754.IEEE32Exec))
-    (cert : Array (Option (FlatAffineBounds TorchLean.Floats.IEEE754.IEEE32Exec)))
+    (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
+    (step : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) → Nat →
+        Option (FlatAffineBounds (ExecFloat.Binary 8 23)))
+    (cert : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))))
     (evalNode? : IEEE32EvalNode?)
     (inputs : Std.HashMap Nat IEEE32Val)
     (vals : Array (Option IEEE32Val))
     (ctx : AffineCtx)
-    (x : Tensor TorchLean.Floats.IEEE754.IEEE32Exec [ctx.inputDim])
+    (x : Tensor (ExecFloat.Binary 8 23) [ctx.inputDim])
     (htopo : TopoSorted g)
     (hsem : IEEE32SemLocalOK (evalNode? := evalNode?) (g := g) (ps := ps) (inputs := inputs)
       (vals := vals))
@@ -461,17 +467,17 @@ theorem crown_checker_encloses_semantics_ieee32exec
         (∀ p : Nat, p ∈ (g.nodes[id]!).parents →
           match cert[p]!, vals[p]! with
           | some bp, some vp =>
-              EnclosesAtInput (α := TorchLean.Floats.IEEE754.IEEE32Exec) ctx x bp vp
+              EnclosesAtInput (α := (ExecFloat.Binary 8 23)) ctx x bp vp
           | _, _ => True) →
         match step cert id, vals[id]! with
         | some b, some v =>
-            EnclosesAtInput (α := TorchLean.Floats.IEEE754.IEEE32Exec) ctx x b v
+            EnclosesAtInput (α := (ExecFloat.Binary 8 23)) ctx x b v
         | _, _ => True) :
     ∀ id : Nat, id < g.nodes.size →
-      ∀ (b : FlatAffineBounds TorchLean.Floats.IEEE754.IEEE32Exec) (v : IEEE32Val),
+      ∀ (b : FlatAffineBounds (ExecFloat.Binary 8 23)) (v : IEEE32Val),
         cert[id]! = some b →
         vals[id]! = some v →
-        EnclosesAtInput (α := TorchLean.Floats.IEEE754.IEEE32Exec) ctx x b v := by
+        EnclosesAtInput (α := (ExecFloat.Binary 8 23)) ctx x b v := by
   intro id hid b v hcertId hvalId
   have hmatch :=
     crown_checker_encloses_semantics_ieee32exec_match

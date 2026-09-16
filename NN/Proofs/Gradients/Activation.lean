@@ -93,14 +93,14 @@ theorem relu_deriv_correct (x : ℝ) (h : x ≠ 0) :
   unfold Activation.Math.reluDerivSpec
   by_cases hx : 0 < x
   · -- Case: x > 0
-    simp only [if_pos hx]
+    simp only [ite_eq_left hx]
     apply (hasDerivAt_id' x).congr_of_eventuallyEq
     filter_upwards [Ioi_mem_nhds hx] with y hy
     simpa only [Activation.Math.reluSpec_eq_max] using max_eq_left (le_of_lt hy)
   · -- Case: x ≤ 0 but x ≠ 0 ⇒ x < 0
     push Not at hx
     have hx' : x < 0 := lt_of_le_of_ne hx h
-    simp only [if_neg (not_lt.mpr hx)]
+    simp only [ite_eq_right (not_lt.mpr hx)]
     apply (hasDerivAt_const x 0).congr_of_eventuallyEq
     filter_upwards [Iio_mem_nhds hx'] with y hy
     simpa only [Activation.Math.reluSpec_eq_max] using max_eq_right (le_of_lt hy)
@@ -115,7 +115,7 @@ theorem leaky_relu_deriv_correct (x : ℝ) (h : x ≠ 0) (αₗ : ℝ) (_ : α�
     αₗ) x := by
   unfold Activation.Math.leakyReluSpec Activation.Math.leakyReluDerivSpec
   by_cases hx : 0 < x
-  · simp only [if_pos hx]
+  · simp only [ite_eq_left hx]
     apply (hasDerivAt_id' x).congr_of_eventuallyEq
     filter_upwards [Ioi_mem_nhds hx] with y hy
     show Activation.Math.leakyReluSpec y αₗ = y
@@ -125,7 +125,7 @@ theorem leaky_relu_deriv_correct (x : ℝ) (h : x ≠ 0) (αₗ : ℝ) (_ : α�
     · contradiction
   · push Not at hx
     have hx' : x < 0 := lt_of_le_of_ne hx h
-    simp only [if_neg (not_lt.mpr hx)]
+    simp only [ite_eq_right (not_lt.mpr hx)]
     -- derivative is αₗ * id derivative = αₗ * 1 = αₗ
     apply (hasDerivAt_mul_const αₗ).congr_of_eventuallyEq
     filter_upwards [Iio_mem_nhds hx'] with y hy
@@ -169,14 +169,14 @@ theorem elu_deriv_correct (x α : ℝ) (h : x ≠ 0) :
       (Activation.Math.eluDerivSpec x α) x := by
   unfold Activation.Math.eluSpec Activation.Math.eluDerivSpec
   by_cases hx : 0 < x
-  · simp only [if_pos hx]
+  · simp only [ite_eq_left hx]
     apply (hasDerivAt_id' x).congr_of_eventuallyEq
     filter_upwards [Ioi_mem_nhds hx] with y hy
     have hy' : 0 < y := hy
     simp [hy']
   · push Not at hx
     have hx' : x < 0 := lt_of_le_of_ne hx h
-    simp only [if_neg (not_lt.mpr hx)]
+    simp only [ite_eq_right (not_lt.mpr hx)]
     have hbase : HasDerivAt (fun y : ℝ => Real.exp y - 1) (Real.exp x) x :=
       (Real.hasDerivAt_exp x).sub_const 1
     have hscaled : HasDerivAt (fun y : ℝ => α * (Real.exp y - 1)) (α * Real.exp x) x :=

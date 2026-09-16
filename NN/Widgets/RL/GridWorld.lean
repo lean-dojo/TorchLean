@@ -15,7 +15,6 @@ public meta import NN.Runtime.RL.Artifacts.GridWorld.Path
 public meta import NN.Runtime.RL.Artifacts.GridWorld.Policy
 public meta import NN.Widgets.Core.UI
 public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
 
 /-!
 # GridWorld Widgets
@@ -384,16 +383,16 @@ The JSON schema matches `Runtime.RL.Artifacts.GridWorld.PathDiff`.
 syntax (name := gridworldPathFileViewCmd) "#gridworld_path_file_view " term ", " term : command
 
 macro "#gridworld_view " gw:term ", " pos:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (gridworldHtml $gw $pos))
+  UI.canonicalCommand <$> `(#html (gridworldHtml $gw $pos))
 
 macro "#gridworld_policy_view " gw:term ", " pol:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (gridworldPolicyHtml $gw $pol))
+  UI.canonicalCommand <$> `(#html (gridworldPolicyHtml $gw $pol))
 
 macro "#gridworld_path_view " gw:term ", " path:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (gridworldPathHtml $gw $path))
+  UI.canonicalCommand <$> `(#html (gridworldPathHtml $gw $path))
 
 macro "#gridworld_policy_file_view " gw:term ", " path:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (do
+  UI.canonicalCommand <$> `(#html (do
     let p : System.FilePath := $path
     try
       let diff ← Runtime.RL.Artifacts.GridWorld.PolicyDiff.readJson p
@@ -415,7 +414,7 @@ macro "#gridworld_policy_file_view " gw:term ", " path:term : command =>
         </div>))
 
 macro "#gridworld_path_file_view " gw:term ", " path:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (do
+  UI.canonicalCommand <$> `(#html (do
     let p : System.FilePath := $path
     try
       let diff ← Runtime.RL.Artifacts.GridWorld.PathDiff.readJson p

@@ -31,13 +31,14 @@ noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 open Proofs.RuntimeRoundingApprox
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 -- ---------------------------------------------------------------------------
 -- `FwdNode` constructors for `NF` ops (for building SSA/DAG forward bounds)
@@ -346,9 +347,9 @@ by
   classical
   refine
     { forwardSpec := fun ctx =>
-        mapSpec (s := s) MathFunctions.tanh (getIdx (α := SpecScalar) ctx a)
+        mapSpec (s := s) Numerics.MathFunctions.tanh (getIdx (α := SpecScalar) ctx a)
     , forwardRuntime := fun ctx =>
-        mapSpec (s := s) MathFunctions.tanh (getIdx (α := R) ctx a)
+        mapSpec (s := s) Numerics.MathFunctions.tanh (getIdx (α := R) ctx a)
     , bound := fun eps ctx =>
         linfNorm (tanhBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
           (s := s) (getIdxEps (Γ := Γ) (s := s) eps a) (getIdx (α := R) ctx a))

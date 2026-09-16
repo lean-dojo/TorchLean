@@ -7,7 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Init
-public import NN.Floats.Float32
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured
+public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
+public import FloatLib.Floats.Formats.IEEE754.Native
 
 /-!
 # Tensor Initialization API Tests
@@ -16,6 +18,11 @@ Regression checks for shape inference, deterministic schemes, and scalar-polymor
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofModel toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 namespace NN.Tests.API.Init
 
@@ -77,11 +84,11 @@ def run : IO Unit := do
     ((nativeBinary32.to (Array Float32)).map Float32.toFloat ==
       #[1.0, 1.0, 1.0, 1.0])
 
-  let referenceBinary32 : Tensor TorchLean.Floats.IEEE32Exec [2, 2] :=
+  let referenceBinary32 : Tensor (Binary 8 23) [2, 2] :=
     TorchLean.Init.tensor .ones
   expect "reference IEEE binary32 uses the same initializer API"
-    ((referenceBinary32.to (Array TorchLean.Floats.IEEE32Exec)).map
-      TorchLean.Floats.IEEE754.IEEE32Exec.toFloat ==
+    ((referenceBinary32.to (Array (Binary 8 23))).map
+      (fun x => Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel x)))) ==
         #[1.0, 1.0, 1.0, 1.0])
 
   let complex : Tensor (TorchLean.Complex Float) [2] := TorchLean.Init.tensor .ones

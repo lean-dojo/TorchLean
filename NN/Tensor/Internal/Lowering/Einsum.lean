@@ -433,7 +433,7 @@ private theorem plannedAxisCoordinate_eq_select_append
           outputCoordinate contractionCoordinate axis =
         ((AxisTuple.select hInput canonicalCoordinate) position).val
     rw [hSelectedCoordinate]
-    simp only [plannedAxisCoordinate, if_pos hAxisOutput]
+    simp only [plannedAxisCoordinate, ite_eq_left hAxisOutput]
     exact hDecoded.trans hAppended.symm
   · have hAxisContracted : axis ∈ contractedAxes := by
       rcases List.mem_append.mp hAxisCanonical with hImpossible | hContracted
@@ -453,7 +453,7 @@ private theorem plannedAxisCoordinate_eq_select_append
           outputCoordinate contractionCoordinate axis =
         ((AxisTuple.select hInput canonicalCoordinate) position).val
     rw [hSelectedCoordinate]
-    simp only [plannedAxisCoordinate, if_neg hAxisOutput]
+    simp only [plannedAxisCoordinate, ite_eq_right hAxisOutput]
     exact hDecoded.trans hAppended.symm
 
 /-- The compiled operand plan computes the certified physical tensor index. -/

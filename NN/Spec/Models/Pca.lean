@@ -129,18 +129,17 @@ def pcaBackwardSpec {inDim outDim : Nat}
     meanGradient := pcaMeanDerivSpec m gradOutput
     inputGradient := pcaInputDerivSpec m gradOutput }
 
-/-- Approximate the leading PCA component using the scaled covariance matrix and power iteration.
+/-- Approximate one leading PCA component with deterministic multistart power iteration.
 
-Algorithm:
+The fit centers the samples and uses covariance `Xᵀ X / (n - 1)`. It runs `iterations` steps
+from the normalized all-ones vector and every coordinate vector, then keeps the largest Rayleigh
+quotient. The coordinate starts span the input space, so a dominant eigenspace cannot be orthogonal
+to every start. Convergence still depends on the spectral gap and iteration count.
 
-1. compute the mean and center the data,
-2. form the covariance matrix `C = (1/(n-1)) Xᵀ X`,
-3. run `iterations` power-iteration steps from the all-ones vector,
-4. orient the resulting vector deterministically so results are reproducible.
-
-The output has exactly one component. This is an executable approximation, not a theorem that the
-returned vector is the dominant eigenvector. Such a theorem would require spectral hypotheses and
-an error analysis. Numerical libraries generally use SVD or a convergent eigensolver for fitting.
+Scaling the covariance before iteration avoids squaring its original magnitude when normalizing
+iterates. This does not prevent overflow while forming the covariance itself. Zero covariance
+retains a unit direction and reports zero variance. The output has exactly one component; the
+iteration cost is cubic in `inDim`, with `inDim + 1` starts.
 -/
 def pcaFitLeadingComponentApproxSpec {nSamples inDim : Nat}
   (data : Tensor α [nSamples, inDim])
@@ -163,8 +162,32 @@ def pcaFitLeadingComponentApproxSpec {nSamples inDim : Nat}
   let covariance := matMulSpec (swapAdjacentAxes centeredData 0) centeredData
   let covarianceScaled := scaleSpec covariance (1 / (nSamples - 1 : α))
 
-  let (eigenvalue, eigenvector) :=
-    powerIterationLeadingEigenpairSpec covarianceScaled iterations
+  -- Rescale before taking squared norms, which otherwise lose very small or large covariance.
+  let coordinates := List.finRange inDim
+  let matrixScale := coordinates.foldl (fun largest i =>
+    coordinates.foldl (fun largest j =>
+      Max.max largest (MathFunctions.abs (getScalar (get covarianceScaled i) j))) largest) 0
+  let (iterationMatrix, restoreScale) := if matrixScale > 0 then
+    (mapSpec (fun value => value / matrixScale) covarianceScaled, matrixScale)
+  else (covarianceScaled, 1)
+  let rec iterate (direction : Tensor α [inDim]) (remaining : Nat) :
+      α × Tensor α [inDim] :=
+    match remaining with
+    | 0 => (dotSpec direction (matVecMulSpec iterationMatrix direction), direction)
+    | steps + 1 =>
+      let next := matVecMulSpec iterationMatrix direction
+      let norm := MathFunctions.sqrt (sumSpec (squareSpec next))
+      let normalized := if norm > 0 then mapSpec (fun value => value / norm) next
+        else direction
+      iterate normalized steps
+  let initial := powerIterationLeadingEigenpairSpec iterationMatrix iterations
+  -- A single fixed start can miss the leading component, even when it finds a nonzero eigenvalue.
+  let (scaledEigenvalue, eigenvector) := coordinates.foldl (fun best coordinate =>
+    let start := Tensor.ofFn (fun i => if i == coordinate then (1 : α) else 0)
+    let candidate := iterate start iterations
+    if candidate.1 > best.1 then candidate else best) initial
+  let eigenvalue := scaledEigenvalue * restoreScale
+
   let first := item (get eigenvector ⟨0, hDim⟩)
   let sign : α := if first < 0 then -1 else 1
   let oriented := scaleSpec eigenvector sign

@@ -18,16 +18,16 @@ tag := "autograd-walkthrough"
 file := "Differentiation-By-Example"
 %%%
 
-Reverse-mode automatic differentiation is usually introduced as "call backward and read the
-gradients." TorchLean makes the derivative object explicit: a function, an input, and an output
-cotangent determine a vector-Jacobian product. Parameter gradients come back as a returned pack
-whose shapes match the model's parameters, not as a mutable field on a tensor.
+Squaring two coordinates gives two outputs. To differentiate their sum, reverse mode starts
+with weight one on each output; to give the second output ten times the influence, we change
+that weight to ten. Those weights form the output cotangent. Together with the function and its
+input, they determine the vector-Jacobian product.
 
-We will follow a two-element vector and an affine model through the derivative transforms. Keeping
-their values fixed lets us compare a gradient, a Jacobian, and a Hessian-vector product against the
-same calculations. Named Lean blocks and their outputs are checked when this page is built; the
-shell and PyTorch transcripts are separate reproduction examples. The derivations below explain
-the numerical results, while the theorem statements identify the corresponding general claims.
+I'll keep the input fixed while changing the derivative query, then apply the same reasoning to
+an affine model with every parameter stated explicitly. We can calculate its loss, parameter
+gradient, and curvature by hand before comparing the returned tensors. Named Lean blocks and
+their outputs are checked when this page is built; shell and PyTorch transcripts record separate
+runs.
 
 After the command-line examples, the tensor calculations use:
 
@@ -197,9 +197,6 @@ By hand, $`f(x)=(0.25+1.44)/2=0.845` and $`\nabla f(x)=x=(0.5,-1.2)`. Both agree
 The reduction divides by two, cancelling the factor of two from differentiating each square. Thus
 the gradient of $`\tfrac12\sum x_i^2` is $`x`. Replacing `mean` with `sum` would leave the
 elementwise derivative rule unchanged but double the final gradient.
-
-This evaluation checks the transform at one input. The general correctness statements later in
-the chapter quantify over inputs and state the mathematical assumptions separately.
 
 The signature explains the `(value := true)`:
 
@@ -519,9 +516,8 @@ The printed shape tags correspond to the return type:
   IO (autograd.model.State model α × Tensor α σ)
 ```
 
-The returned state gradient has type `autograd.model.State model α`, the very same type as the
-parameters that went in. It is not a dictionary keyed by strings and not a flat vector that someone
-has to reshape. The pack checks the ordered shape list, but it cannot detect a semantic swap
+The returned state gradient has type `autograd.model.State model α`, the same type as the
+parameters that went in. The pack checks their ordered shape list, but it cannot detect a semantic swap
 between gradients for two parameters with equal shapes. The input gradient is returned alongside
 the state gradient, so both results come from the same reverse pass.
 
@@ -626,12 +622,9 @@ for all inputs over `ℝ`. Connecting a floating-point execution to this real-va
 requires a refinement argument about rounding, developed in
 {ref "fp32-soundness"}[Float32 Soundness].
 
-The seed `1` on the theorem's left is the same scalar cotangent used by `grad`. Here the
-adjoint converts a linear map from weight perturbations to loss perturbations into a gradient
-in weight space. This explains why the result has matrix shape even though the loss is scalar.
-The displayed `∀` quantifies the dimensions and model values; it is not a loop run by the
-example. The concrete calculation tests one execution, while this statement supplies a formula
-that can be instantiated at other dimensions and values.
+The seed `1` on the theorem's left is the same scalar cotangent used by `grad`. The adjoint
+converts a linear map from weight perturbations to loss perturbations into a gradient in weight
+space. That is why the result has matrix shape even though the loss is scalar.
 
 # ReLU Derivatives At Zero
 
@@ -998,11 +991,10 @@ Place the cursor on one of:
 #tape_trace_view ...
 ```
 
-The views show nodes, parent edges, accumulated gradients, and the reverse traversal, which answers
-the questions this chapter kept raising: which operations lie on the path to the scalar output,
-where cotangents merge, which leaf is which parameter, and whether a detached branch disappeared
-from the traversal. {ref "widgets"}[Interactive Widgets] documents them. They visualize an
-executable artifact; they do not add a theorem to it.
+For `agTwice`, inspect the two square nodes and the cotangents that meet at their shared input.
+For the detached loss, inspect where the reverse path stops. The views also identify parameter
+leaves and show the accumulated gradient at each reached node.
+{ref "widgets"}[Interactive Widgets] documents the controls.
 
 # API Summary
 

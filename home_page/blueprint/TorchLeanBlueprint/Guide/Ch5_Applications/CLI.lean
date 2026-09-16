@@ -50,7 +50,7 @@ registered command name per line, which is what you want in a script. Running `l
 with no arguments prints the same help and exits with status `1`, so a bare invocation in a
 Makefile fails rather than silently doing nothing.
 
-The full help is the inventory of the runnable surface:
+The help groups commands by the work they perform:
 
 ```
 TorchLean runnable examples
@@ -249,9 +249,9 @@ arguments. Each can also return an error message. `checkNoArgs` returns only `Un
 and succeeds only for an empty list. Calling it on the final remainder rejects flags that no
 parser consumed.
 
-The final remainder check matters in any parser. Python's `argparse.parse_args` also rejects unknown
-arguments by default; `parse_known_args` instead returns them to its caller. Here, `checkNoArgs`
-makes that final validation explicit.
+If you know Python's `argparse`, `parse_args` also rejects unknown arguments by default, while
+`parse_known_args` returns them to its caller. Here we can see that choice in the call to
+`checkNoArgs`.
 
 The `Except` and `Option` in these signatures answer separate questions. `Except.error` means
 that the supplied command line cannot be used. Inside `Except.ok`, `none` means that this
@@ -268,7 +268,7 @@ path flag in the remainder:
 
 ```lean (name := cliTake)
 -- The steps parser removes its flag while preserving the
--- unrelated seed flag.
+-- unrelated path flag.
 #eval CLI.takeNatFlag?
   ["--steps", "20", "--x", "a.npy"] "steps"
 ```
@@ -440,7 +440,7 @@ lake exe torchlean --device cpu quickstart_mlp \
 ```
 
 Both forms reach the same parser, because the runtime flags are removed from the list wherever they
-appear. Documentation uses the first because the application name reads better before its options.
+appear. I put the command first in these examples so we can read what will run before its options.
 A leading separator is accepted for wrappers that require one:
 
 ```terminal
@@ -637,7 +637,7 @@ then four evidence lines. Wrapped to fit this page, the matrix-multiply entry re
 
 For that one-step run the report covers seven operations: `reshape`, `permute`, `matmul`,
 `broadcast`, `add`, `relu`, and `mse_loss`. `reduction=fixed-left` records a specific summation
-order, which matters when reproducing floating-point results ({Informal.citep goldberg1991}[]).
+order, which matters when reproducing floating-point results {Informal.citep goldberg1991}[].
 The `trust=checked` entry points to runtime guards and tests; the two value/VJP lines name the test
 suite that supports those claims. They do not identify a kernel-checked refinement proof.
 
@@ -645,8 +645,8 @@ Capsule lines may interleave with the application's output. Redirect to a file a
 `provider=` to find the report. {ref "backend-selection"}[Backend Selection] explains
 what the fields mean and where they come from.
 
-Device selection answers "where did this run?"; capsule reporting answers the more precise question
-"which implementation was selected for each operation?"
+The device identifies where operations run. The capsule identifies the implementation selected
+for each operation on that device.
 
 A build flag and a runtime flag act at different stages. `-Kcuda=true` changes the build
 configuration and linked backend support. `--device cuda` asks an already built executable to
@@ -657,8 +657,7 @@ the command's own runtime messages then show the path selected for that particul
 # Arithmetic
 
 Most model commands use native `Float32`. The arithmetic-polymorphic quickstarts and numerical
-workflows also accept `--arithmetic ieee`, which swaps the scalar type for TorchLean's executable
-software binary32:
+workflows also accept `--arithmetic ieee`, which selects FloatLib's executable binary32:
 
 ```terminal
 # Keep the model configuration fixed while changing the
@@ -667,17 +666,20 @@ lake exe torchlean quickstart_mlp --steps 1
 lake exe torchlean quickstart_mlp --steps 1 --arithmetic ieee
 ```
 
+The following transcript predates the FloatLib migration and retains its recorded scalar labels
+and numerical results. Current `.ieee` execution uses FloatLib binary32.
+
 ```
 steps=1 arithmetic=native scalar=Float32 loss=1.159370 -> 1.100337
 steps=1 arithmetic=ieee scalar=IEEE32Exec loss=1.159370 -> 1.100337
 ```
 
 The two implementations agree to six printed decimals on this update. Native arithmetic executes
-hardware floating-point operations; `IEEE32Exec` computes binary32 operations with rounding defined
-in Lean. Running both can expose a disagreement between the executable reference and the runtime,
+hardware floating-point operations; FloatLib binary32 computes binary32 operations with rounding
+defined in Lean. Running both can expose a disagreement between the executable reference and the runtime,
 although this transcript neither compares every bit nor covers other inputs. The proof statements
 and their assumptions are in {ref "fp32-soundness"}[Float32 Soundness];
-{ref "floats"}[Floating-Point Semantics] describes the scalar types ({Informal.citep flocq2011}[]).
+{ref "floats"}[Floating-Point Semantics] describes the scalar types {Informal.citep flocq2011}[].
 
 A command that cannot implement the requested semantics says so instead of approximating:
 
@@ -707,7 +709,7 @@ the printed loss describes that run's objective.
 # Execution Modes
 
 `--execution typed-graph` selects the shape-indexed graph host path for commands that implement it.
-For the MLP quickstart the two paths agree:
+The recorded MLP quickstart comparison used the same arguments for both paths:
 
 ```terminal
 # Keep the training arguments fixed while comparing the two
@@ -716,7 +718,7 @@ lake exe torchlean quickstart_mlp --steps 1 --execution eager
 lake exe torchlean quickstart_mlp --steps 1 --execution typed-graph
 ```
 
-Both print `loss=1.159370 -> 1.100337` and the same held-out prediction. This is one numerical
+Both runs printed `loss=1.159370 -> 1.100337` and the same held-out prediction. This is one numerical
 comparison of the eager and typed-graph paths. The flag selects a shape-indexed host execution
 path; it does not request CUDA graph capture, compiler optimization, or a derivative proof.
 Some specialized CUDA applications require eager execution.
@@ -727,8 +729,8 @@ Some specialized CUDA applications require eager execution.
 Use `--choose` when running a command by hand and you do not want to remember the device flag:
 
 ```terminal
-# Enter the interactive dispatcher without selecting a
-# command in advance.
+# Choose the device interactively for the selected
+# quickstart command.
 lake exe torchlean --choose quickstart_mlp --steps 1
 ```
 
@@ -1019,11 +1021,11 @@ The registry currently holds 23 tools. Each row below is one `Tool` record in
   * no
 :::
 
-The families behind those names are documented where they belong: interval bound propagation
-({Informal.citep gowal2018}[]) and the LiRPA framework ({Informal.citep autolirpa2020}[]) for the
-`lirpa-*` checkers, α,β-CROWN ({Informal.citep betacrown2021}[]) for `abcrown-leaf`,
-physics-informed residuals ({Informal.citep pinn2019}[]) for the PINN tools, and neural Lyapunov
-functions ({Informal.citep neurallyapunov2019}[]) for the two-stage workflows.
+The `lirpa-*` names refer to interval bound propagation
+{Informal.citep gowal2018}[] and the LiRPA framework {Informal.citep autolirpa2020}[].
+The other names refer to α,β-CROWN {Informal.citep betacrown2021}[] for `abcrown-leaf`,
+physics-informed residuals {Informal.citep pinn2019}[] for the PINN tools, and neural Lyapunov
+functions {Informal.citep neurallyapunov2019}[] for the two-stage workflows.
 
 The table includes both in-memory computations and readers of external artifacts. An in-memory
 workflow such as `torchlean-ibp` builds a model, lowers it to IR, and runs a bound algorithm inside
@@ -1043,12 +1045,12 @@ output box lo: [1.904000]
 output box hi: [2.256001]
 ```
 
-Nothing was read from disk, and the printed box is a result computed here. An artifact checker such
-as `pinn-cert` or `abcrown-leaf` instead parses a file produced elsewhere and applies its declared
+The workflow computes this box from its built-in model. An artifact checker such
+as `pinn-cert` or `abcrown-leaf` parses a file produced elsewhere and applies its declared
 checks. These differ: the α,β-CROWN leaf reader validates artifact structure, while a semantic
 certificate checker must also establish the claimed bounds. This distinction matters for
 proof-carrying code
-({Informal.citep necula1997}[]): the producer may be untrusted as long as the consumer can check the
+{Informal.citep necula1997}[]: the producer may be untrusted as long as the consumer can check the
 evidence. A checker accepts only its declared schema and semantic fragment, and it does not
 retroactively verify the process that produced the artifact.
 
@@ -1087,7 +1089,7 @@ The tool checks report consistency; it does not require every example to have a 
 Likewise, the leaf reader's `ok=1` records acceptance under its structural checks. Interpret each
 message against the tool's contract before treating it as evidence of a semantic bound.
 
-There is one dispatch detail worth making explicit here: `verify all` runs each included tool
+`verify all` runs each included tool
 with an empty argument list. Extra arguments after `all` are not forwarded as shared checker
 options. To choose an artifact path or another tool-specific argument, invoke that tool directly.
 This behavior differs from the strict per-command parsers illustrated earlier, and it follows
@@ -1192,14 +1194,11 @@ http://127.0.0.1:4001/docs/
 ```
 
 If the source changed but the browser did not, rebuild the generated site before restarting Jekyll.
-A running web server cannot regenerate Lean documentation on its own.
-
-The blueprint build and the local web server perform separate jobs. The build checks and
-regenerates the guide content; the server makes the resulting website available to a browser.
-Starting a server against an older generated tree does not update the Lean examples in that tree.
-When reviewing an edited chapter, rebuild first, then inspect both the prose and its neighboring
-output blocks in the served page. A successful build checks the document's executable pieces;
-reading the page checks whether their explanations remain intelligible in context.
+The blueprint build checks the document's executable pieces and regenerates the guide; Jekyll
+serves the resulting files. Restarting the server against an older generated tree will still show
+the older examples. After rebuilding, read the edited prose beside its output blocks in the served
+page: elaboration checks the executable pieces, while this reading checks whether the explanation
+still makes sense with them.
 
 # Command Exercises
 

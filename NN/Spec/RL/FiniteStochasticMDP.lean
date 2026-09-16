@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.RL.MDP
-public import Mathlib.Data.Real.Basic
+public import Mathlib.Basic.Real.Basic
 public import Mathlib.Algebra.BigOperators.Group.Finset.Defs
 
 /-!

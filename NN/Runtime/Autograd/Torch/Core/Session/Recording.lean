@@ -143,8 +143,10 @@ def detach {α : Type} [Storage α] [Context α] [TensorTransfer α]
 /--
 Use a parameter in the tape by recording its current value as a leaf.
 
-Register the leaf in `paramsByLeaf` for optimizer updates and CUDA cleanup. Keep that registration
-when gradients are disabled: cleanup still needs to know that the parameter owns its mirror.
+Register every read separately, including reads after the parameter changes. CUDA leaves retain
+the mirror observed at that call; replacing the parameter does not invalidate an earlier leaf.
+Keep the parameter registration when gradients are disabled, because tape cleanup must preserve
+these shared snapshots too.
 -/
 def use {α : Type} [Storage α] [TensorTransfer α]
     (s : EagerSession α) {sh : Shape}
@@ -152,31 +154,16 @@ def use {α : Type} [Storage α] [TensorTransfer α]
   let requiresGrad := s.options.gradEnabled && p.requiresGrad
   let id ←
     if Config.device s.options == .cuda then
-      let buffer ←
-        match ← p.cudaValue.get with
-        | some stored =>
-            if _h : stored.s = sh then
-              pure ({ s := sh, buf := stored.buf } : Runtime.Autograd.Cuda.AnyBuffer)
-            else
-              -- A well-formed `Param` has a cached CUDA buffer with the declared shape; if the
-              -- cache is inconsistent, re-upload from the host value.
-              let v ← p.value.get
-              let uploaded ← CudaBridge.toAnyBuffer (α := α) (s := sh) v
-              AnyParam.releaseCachedCudaValue p
-              p.cudaValue.set (some uploaded)
-              p.hostCurrent.set true
-              pure uploaded
-        | none =>
-            let v ← p.value.get
-            let uploaded ← CudaBridge.toAnyBuffer (α := α) (s := sh) v
-            AnyParam.releaseCachedCudaValue p
-            p.cudaValue.set (some uploaded)
-            p.hostCurrent.set true
-            pure uploaded
+      let buffer ← getParamCudaValue p
       let tape ← s.cudaTape.get
       let (nextTape, id) :=
-        Runtime.Autograd.Cuda.Tape.leaf (t := tape) (value := buffer) (name := p.name)
-          (requiresGrad := requiresGrad)
+        tape.addNode
+          { name := p.name
+            value := buffer
+            ownsValue := false
+            requiresGrad := requiresGrad
+            parents := #[]
+            backward := fun _ => .ok #[] }
       s.cudaTape.set nextTape
       pure id
     else
@@ -189,6 +176,12 @@ def use {α : Type} [Storage α] [TensorTransfer α]
       s.tape.set nextTape
       pure id
   s.paramsByLeaf.modify (fun m => m.insert id (AnyParam.ofParam p))
+  s.parameterStorageByLeaf.modify fun m =>
+    m.insert id
+      { shape := sh
+        value := p.value
+        cudaValue := p.cudaValue
+        hostCurrent := p.hostCurrent }
   s.makeTensorRef id
 
 end EagerSession

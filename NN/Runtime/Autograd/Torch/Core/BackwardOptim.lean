@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Torch.Core.OptimizerCheckpoint.CudaAdam
+public import NN.Runtime.Autograd.Torch.Core.ParameterGroups
 public import NN.Runtime.Autograd.Engine.Core.Backward
 
 /-!
@@ -153,35 +154,37 @@ PyTorch comparison: `for p in params: p.data -= lr * p.grad`.
 def sgdStepAll {α : Type} [TorchLean.Storage α] [TensorTransfer α] (s : EagerSession α)
   [Sub α] [Mul α] [Add α] [Zero α]
   (lr : α) (grads : Array (Spec.SomeTensor α)) : IO Unit := do
+  let groups ← parameterGroups s
+  -- Validate and combine all leaf cotangents before changing any parameter.
+  let prepared ← groups.mapM fun group => do
+    pure (group, ← denseGroupGradient group grads)
   if Config.device s.options == .cuda then
     let lrF ← TensorTransfer.toFloat (α := α) lr
     let t0 ← s.cudaTape.get
-    let m ← s.paramsByLeaf.get
-    for (id, p) in m.toList.filter (fun entry => entry.2.requiresGrad) do
-      let gAny ← match grads[id]? with
-        | some g => pure g
-        | none => throw <| IO.userError "torch: gradient array out of bounds during SGD"
+    for group in groups do
+      for id in group.leaves do
+        let value ← okOrThrow <|
+          Runtime.Autograd.Cuda.Tape.requireValue (t := t0) (id := id) (s := group.parameter.s)
+        checkCudaAnyBufferSize "SGD parameter value" { s := group.parameter.s, buf := value }
+    let currentValues ← groups.mapM ParameterGroup.currentCudaValue
+    for ((group, gAny), currentValue) in prepared.zip currentValues do
+      let p := group.parameter
       if hs : gAny.shape = p.s then
         let gT : Tensor α p.s := gAny.cast hs
         let gDev ← CudaBridge.toAnyBuffer (α := α) (s := p.s) gT
-        let pBuf ← okOrThrow <|
-          Runtime.Autograd.Cuda.Tape.requireValue (t := t0) (id := id) (s := p.s)
-        let updatedDev : Runtime.Autograd.Cuda.AnyBuffer :=
-          { s := p.s, buf := Runtime.Autograd.Cuda.Buffer.axpy pBuf gDev.buf (-lrF) }
-        p.setCuda updatedDev
-        -- The uploaded host gradient is only a transient bridge buffer for this update.
-        let released ← Runtime.Autograd.Cuda.Buffer.releaseIO gDev.buf
-        AnyParam.observeCudaCleanupFlag released
+        try
+          let updatedDev : Runtime.Autograd.Cuda.AnyBuffer :=
+            { s := p.s, buf := Runtime.Autograd.Cuda.Buffer.axpy currentValue.buf gDev.buf (-lrF) }
+          p.setCuda updatedDev
+        finally
+          releaseCudaAnyBuffer gDev
       else
         throw <| IO.userError "torch: internal grad shape mismatch during SGD"
   else
-    let m ← s.paramsByLeaf.get
-    for (id, p) in m.toList.filter (fun entry => entry.2.requiresGrad) do
-      let gAny ← match grads[id]? with
-        | some g => pure g
-        | none => throw <| IO.userError "torch: gradient array out of bounds during SGD"
+    for (group, gAny) in prepared do
+      let p := group.parameter
       if hs : gAny.shape = p.s then
-        let pv ← p.get
+        let pv ← group.currentHostValue
         if hp : pv.shape = p.s then
           let pvT : Tensor α p.s := pv.cast hp
           let gT : Tensor α p.s := gAny.cast hs
@@ -229,6 +232,21 @@ def checkCudaLearningRate (operation : String) (learningRate : Float) : IO Unit 
   unless learningRate.isFinite && 0.0 ≤ learningRate do
     throw <| IO.userError s!"torch: {operation} learning rate must be finite and nonnegative"
 
+/-- A shared parameter has one optimizer history, keyed by its first recorded leaf.
+
+If an existing state contains separate histories for later aliases, there is no justified way to
+merge their moments. Reject that state before updating instead of silently discarding a history.
+Ordinary trainer slots and their checkpoint keys are unchanged.
+-/
+def checkSharedCudaAdamState {α : Type} [Storage α]
+    (groups : Array (ParameterGroup α)) (state : CudaAdamState) : IO Unit := do
+  for group in groups do
+    for id in group.leaves.toList.drop 1 do
+      if state.contains id then
+        throw <| IO.userError
+          s!"torch: shared parameter leaves {group.id} and {id} have separate Adam histories; \
+             initialize fresh optimizer state"
+
 /--
 Apply SGD from a sparse CUDA gradient map.
 
@@ -245,18 +263,17 @@ def sgdStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
   let t0 ← s.cudaTape.get
   let params ← s.paramsByLeaf.get
   checkCudaOptimizerInputs "CUDA SGD" t0 params grads
-  for (id, p) in params.toList.filter (fun entry => entry.2.requiresGrad) do
-    let gAny ← match grads.get? id with
-      | some g => pure g
-      | none => throw <| IO.userError "torch: gradient map missing parameter during CUDA SGD"
-    if _hs : gAny.s = p.s then
-      let pBuf ← okOrThrow <|
-        Runtime.Autograd.Cuda.Tape.requireValue (t := t0) (id := id) (s := p.s)
-      let updatedDev : Runtime.Autograd.Cuda.AnyBuffer :=
-        { s := p.s, buf := Runtime.Autograd.Cuda.Buffer.axpy pBuf gAny.buf (-lrF) }
-      p.setCuda updatedDev
-    else
-      throw <| IO.userError "torch: internal grad shape mismatch during CUDA SGD"
+  let groups ← parameterGroups s
+  let currentValues ← groups.mapM ParameterGroup.currentCudaValue
+  for (group, currentValue) in groups.zip currentValues do
+    let p := group.parameter
+    withCudaGroupGradient group grads fun gAny => do
+      if _hs : gAny.s = p.s then
+        let updatedDev : Runtime.Autograd.Cuda.AnyBuffer :=
+          { s := p.s, buf := Runtime.Autograd.Cuda.Buffer.axpy currentValue.buf gAny.buf (-lrF) }
+        p.setCuda updatedDev
+      else
+        throw <| IO.userError "torch: internal grad shape mismatch during CUDA SGD"
 
 /-- Apply Adam using an already-computed sparse CUDA gradient map. -/
 def adamStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
@@ -282,37 +299,40 @@ def adamStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
   let params ← s.paramsByLeaf.get
   let mut state ← stateRef.get
   checkCudaOptimizerInputs "CUDA Adam" t0 params grads (some state)
+  let groups ← parameterGroups s
+  checkSharedCudaAdamState groups state
+  let currentValues ← groups.mapM ParameterGroup.currentCudaValue
   ensureCudaAdamConfig configRef config
-  for (id, p) in params.toList.filter (fun entry => entry.2.requiresGrad) do
-    let gAny ← match grads.get? id with
-      | some g => pure g
-      | none => throw <| IO.userError "torch: gradient map missing parameter during CUDA Adam"
-    if _hs : gAny.s = p.s then
-      let pBuf ← okOrThrow <|
-        Runtime.Autograd.Cuda.Tape.requireValue (t := t0) (id := id) (s := p.s)
-      let n := Runtime.Autograd.Cuda.Buffer.size pBuf
-      let st :=
-        match state.get? id with
-        | some st => st
-        | none =>
-            { m := Runtime.Autograd.Cuda.Buffer.zeros n
-              v := Runtime.Autograd.Cuda.Buffer.zeros n
-              t := 0 }
-      let t' := st.t + 1
-      let mHatScale := 1.0 / (1.0 - Float.pow beta1F (Float.ofNat t'))
-      let vHatScale := 1.0 / (1.0 - Float.pow beta2F (Float.ofNat t'))
-      let (updated, m', v') := Runtime.Autograd.Cuda.Buffer.adamStep
-        pBuf gAny.buf st.m st.v
-        beta1F oneMinusBeta1 beta2F oneMinusBeta2
-        mHatScale vHatScale epsF 0.0 (-lrF)
-      let updatedDev : Runtime.Autograd.Cuda.AnyBuffer :=
-        { s := p.s, buf := updated }
-      p.setCuda updatedDev
-      releaseCudaBuffer st.m
-      releaseCudaBuffer st.v
-      state := state.insert id { m := m', v := v', t := t' }
-    else
-      throw <| IO.userError "torch: internal grad shape mismatch during CUDA Adam"
+  for (group, currentValue) in groups.zip currentValues do
+    let id := group.id
+    let p := group.parameter
+    let nextState ← withCudaGroupGradient group grads fun gAny => do
+      if _hs : gAny.s = p.s then
+        let pBuf := currentValue.buf
+        let n := Runtime.Autograd.Cuda.Buffer.size pBuf
+        let st :=
+          match state.get? id with
+          | some st => st
+          | none =>
+              { m := Runtime.Autograd.Cuda.Buffer.zeros n
+                v := Runtime.Autograd.Cuda.Buffer.zeros n
+                t := 0 }
+        let t' := st.t + 1
+        let mHatScale := 1.0 / (1.0 - Float.pow beta1F (Float.ofNat t'))
+        let vHatScale := 1.0 / (1.0 - Float.pow beta2F (Float.ofNat t'))
+        let (updated, m', v') := Runtime.Autograd.Cuda.Buffer.adamStep
+          pBuf gAny.buf st.m st.v
+          beta1F oneMinusBeta1 beta2F oneMinusBeta2
+          mHatScale vHatScale epsF 0.0 (-lrF)
+        let updatedDev : Runtime.Autograd.Cuda.AnyBuffer :=
+          { s := p.s, buf := updated }
+        p.setCuda updatedDev
+        releaseCudaBuffer st.m
+        releaseCudaBuffer st.v
+        pure ({ m := m', v := v', t := t' } : CudaAdamParamState)
+      else
+        throw <| IO.userError "torch: internal grad shape mismatch during CUDA Adam"
+    state := state.insert id nextState
   for (id, st) in state.toList do
     if params.contains id then
       pure ()
@@ -352,37 +372,40 @@ def adamWStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
   let params ← s.paramsByLeaf.get
   let mut state ← stateRef.get
   checkCudaOptimizerInputs "CUDA AdamW" t0 params grads (some state)
+  let groups ← parameterGroups s
+  checkSharedCudaAdamState groups state
+  let currentValues ← groups.mapM ParameterGroup.currentCudaValue
   ensureCudaAdamConfig configRef config
-  for (id, p) in params.toList.filter (fun entry => entry.2.requiresGrad) do
-    let gAny ← match grads.get? id with
-      | some g => pure g
-      | none => throw <| IO.userError "torch: gradient map missing parameter during CUDA AdamW"
-    if _hs : gAny.s = p.s then
-      let pBuf ← okOrThrow <|
-        Runtime.Autograd.Cuda.Tape.requireValue (t := t0) (id := id) (s := p.s)
-      let n := Runtime.Autograd.Cuda.Buffer.size pBuf
-      let st :=
-        match state.get? id with
-        | some st => st
-        | none =>
-            { m := Runtime.Autograd.Cuda.Buffer.zeros n
-              v := Runtime.Autograd.Cuda.Buffer.zeros n
-              t := 0 }
-      let t' := st.t + 1
-      let mHatScale := 1.0 / (1.0 - Float.pow beta1F (Float.ofNat t'))
-      let vHatScale := 1.0 / (1.0 - Float.pow beta2F (Float.ofNat t'))
-      let (updated, m', v') := Runtime.Autograd.Cuda.Buffer.adamStep
-        pBuf gAny.buf st.m st.v
-        beta1F oneMinusBeta1 beta2F oneMinusBeta2
-        mHatScale vHatScale epsF (-(lrF * wdF)) (-lrF)
-      let updatedDev : Runtime.Autograd.Cuda.AnyBuffer :=
-        { s := p.s, buf := updated }
-      p.setCuda updatedDev
-      releaseCudaBuffer st.m
-      releaseCudaBuffer st.v
-      state := state.insert id { m := m', v := v', t := t' }
-    else
-      throw <| IO.userError "torch: internal grad shape mismatch during CUDA AdamW"
+  for (group, currentValue) in groups.zip currentValues do
+    let id := group.id
+    let p := group.parameter
+    let nextState ← withCudaGroupGradient group grads fun gAny => do
+      if _hs : gAny.s = p.s then
+        let pBuf := currentValue.buf
+        let n := Runtime.Autograd.Cuda.Buffer.size pBuf
+        let st :=
+          match state.get? id with
+          | some st => st
+          | none =>
+              { m := Runtime.Autograd.Cuda.Buffer.zeros n
+                v := Runtime.Autograd.Cuda.Buffer.zeros n
+                t := 0 }
+        let t' := st.t + 1
+        let mHatScale := 1.0 / (1.0 - Float.pow beta1F (Float.ofNat t'))
+        let vHatScale := 1.0 / (1.0 - Float.pow beta2F (Float.ofNat t'))
+        let (updated, m', v') := Runtime.Autograd.Cuda.Buffer.adamStep
+          pBuf gAny.buf st.m st.v
+          beta1F oneMinusBeta1 beta2F oneMinusBeta2
+          mHatScale vHatScale epsF (-(lrF * wdF)) (-lrF)
+        let updatedDev : Runtime.Autograd.Cuda.AnyBuffer :=
+          { s := p.s, buf := updated }
+        p.setCuda updatedDev
+        releaseCudaBuffer st.m
+        releaseCudaBuffer st.v
+        pure ({ m := m', v := v', t := t' } : CudaAdamParamState)
+      else
+        throw <| IO.userError "torch: internal grad shape mismatch during CUDA AdamW"
+    state := state.insert id nextState
   for (id, st) in state.toList do
     if params.contains id then
       pure ()

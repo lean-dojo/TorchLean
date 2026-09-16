@@ -495,10 +495,10 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
     · have htIco : t ∈ Ico 0 T := ⟨ht.1, htT⟩
       have := hasDerivWithinAt_constantExtensionAfter_before
         (T := T) (g := uL) (g' := uL') htT (hL_der t htIco)
-      simpa [uLext, uLext', if_pos htT] using this
+      simpa [uLext, uLext', ite_eq_left htT] using this
     · have htge : T ≤ t := le_of_not_gt htT
       have := hasDerivWithinAt_constantExtensionAfter_after (T := T) (g := uL) (t := t) htge
-      simpa [uLext, uLext', if_neg htT] using this
+      simpa [uLext, uLext', ite_eq_right htT] using this
 
   have hUext_der : ∀ t ∈ Ico 0 τ, HasDerivWithinAt uUext (uUext' t) (Ici t) t := by
     intro t ht
@@ -506,16 +506,17 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
     · have htIco : t ∈ Ico 0 T := ⟨ht.1, htT⟩
       have := hasDerivWithinAt_constantExtensionAfter_before
         (T := T) (g := uU) (g' := uU') htT (hU_der t htIco)
-      simpa [uUext, uUext', if_pos htT] using this
+      simpa [uUext, uUext', ite_eq_left htT] using this
     · have htge : T ≤ t := le_of_not_gt htT
       have := hasDerivWithinAt_constantExtensionAfter_after (T := T) (g := uU) (t := t) htge
-      simpa [uUext, uUext', if_neg htT] using this
+      simpa [uUext, uUext', ite_eq_right htT] using this
 
   have hLext_sub : ∀ t ∈ Ico 0 τ, uLext' t ≤ f t (uLext t) := by
     intro t ht
     by_cases htT : t < T
     · have htIco : t ∈ Ico 0 T := ⟨ht.1, htT⟩
-      simpa [uLext, uLext', constantExtensionAfter, le_of_lt htT, if_pos htT] using hL_sub t htIco
+      simpa [uLext, uLext', constantExtensionAfter, le_of_lt htT, ite_eq_left htT]
+        using hL_sub t htIco
     · have htgt : T < t ∨ T = t := lt_or_eq_of_le (le_of_not_gt htT)
       have hnonneg : 0 ≤ f t (uL T) := by
         cases htgt with
@@ -532,13 +533,14 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
           simp [uLext, this]
         · simp [uLext, constantExtensionAfter, htle]
       -- Here `uLext' t = 0`; reduce to `0 ≤ f t (uL T)`.
-      simpa [uLext, uLext', if_neg htT, huLext] using hnonneg
+      simpa [uLext, uLext', ite_eq_right htT, huLext] using hnonneg
 
   have hUext_sup : ∀ t ∈ Ico 0 τ, f t (uUext t) ≤ uUext' t := by
     intro t ht
     by_cases htT : t < T
     · have htIco : t ∈ Ico 0 T := ⟨ht.1, htT⟩
-      simpa [uUext, uUext', constantExtensionAfter, le_of_lt htT, if_pos htT] using hU_sup t htIco
+      simpa [uUext, uUext', constantExtensionAfter, le_of_lt htT, ite_eq_left htT]
+        using hU_sup t htIco
     · have htge : T ≤ t := le_of_not_gt htT
       have htgt : T < t ∨ T = t := lt_or_eq_of_le htge
       have hnonpos : f t (uU T) ≤ 0 := by
@@ -555,7 +557,7 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
           simp [uUext, this]
         · simp [uUext, constantExtensionAfter, htle]
       -- Here `uUext' t = 0`; reduce to `f t (uU T) ≤ 0`.
-      simpa [uUext, uUext', if_neg htT, huUext] using hnonpos
+      simpa [uUext, uUext', ite_eq_right htT, huUext] using hnonpos
 
   have hLext0 : uLext 0 ≤ a := by simpa [uLext, constantExtensionAfter, hT] using hL0
   have hUext0 : a ≤ uUext 0 := by simpa [uUext, constantExtensionAfter, hT] using hU0

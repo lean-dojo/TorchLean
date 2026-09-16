@@ -7,42 +7,22 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.Arb.Oracle
-public import NN.Floats.IEEEExec.DirectedRoundingSoundness.Division
+public import FloatLib.Floats.Formats.BinaryInterchange.DirectedSemantics.Rational.Conversion
 public import NN.Floats.Interval.IEEEExec32
 
 /-!
-# Arb-backed transcendentals for `IEEE32Exec.Interval32`
+# Arb-backed enclosures with FloatLib endpoint rounding
 
-`NN/Floats/Interval/IEEEExec32.lean` provides an *executable* endpoint-interval type
-`IEEE32Exec.Interval32` with outward-rounded endpoint arithmetic for `add/sub/mul`:
-
-- endpoints live on the IEEE-754 binary32 grid (`IEEE32Exec`),
-- `addDown/addUp/mulDown/mulUp` are implemented via exact-dyadic arithmetic + directed rounding.
-
-For transcendentals (`exp/log/tanh/sqrt/...`) the situation is different:
-
-- the executable transcendental wrappers have no proved real-error contract (libm is out of scope),
-- `NN/Floats/IEEEExec/Exec32.lean` contains *deterministic* transcendental approximations, but
-  they are not proved outward-rounded w.r.t. real semantics.
-
-This file implements a pragmatic “sound route” for interval endpoints of transcendentals:
-
-1. Call the Arb oracle (`NN/Floats/Arb`) to obtain a **rigorous real enclosure** `[L,U] ⊇ f([a,b])`.
-2. Convert `L,U : ℚ` directly to **float32 endpoints** with the proved rational rounders:
-   - lower endpoint: `roundRatDown`,
-   - upper endpoint: `roundRatUp`.
-
-Trust boundary:
-- The enclosure `[L,U]` is an **oracle claim** from Arb/python-flint; Arb is the external trusted
-  producer for that real enclosure.
-- The exact-rational-to-float32 step is in Lean and its enclosure inequalities are proved in
-  `NN/Floats/IEEEExec/DirectedRoundingSoundness/Division.lean`.
-
-The result is useful when you want executable float32 endpoints *and* a clearly delineated source
-of transcendental soundness (Arb).
+Arb/python-flint supplies the external real-enclosure claim. Exact rational endpoints are then
+rounded outward by FloatLib's descriptor-generic software rounders. The theorems below are binary32
+transport corollaries of FloatLib's directed-rational bounds. No native floating-point conversion
+or software transcendental approximation participates in this endpoint conversion.
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 
 namespace Rat
@@ -61,18 +41,11 @@ end Rat
 namespace TorchLean.Floats.IEEE754
 
 open TorchLean.Floats
+open FloatLib.Floats.Formats.BinaryInterchange
 
 namespace IEEE32Exec
 
-/-! ## Proved outward rounding from `ℚ` to `IEEE32Exec` -/
-
-/-- Proved outward rounding down of an exact rational to a binary32 endpoint. -/
-def roundRatQDown (q : Rat) : IEEE32Exec :=
-  roundRatDown (q.num < 0) q.num.natAbs q.den
-
-/-- Proved outward rounding up of an exact rational to a binary32 endpoint. -/
-def roundRatQUp (q : Rat) : IEEE32Exec :=
-  roundRatUp (q.num < 0) q.num.natAbs q.den
+/-! ## Proved outward rounding from `ℚ` to `ExecFloat.Binary 8 23` -/
 
 /-- Rewrite a rational cast into the signed numerator/positive-denominator form used by the
 directed rational rounders. -/
@@ -88,27 +61,36 @@ private theorem rat_cast_eq_signed (q : Rat) :
 
 /-- The lower rational endpoint conversion is an `EReal` lower bound. -/
 theorem toEReal_roundRatQDown_le (q : Rat) :
-    toEReal (roundRatQDown q) ≤ ((q : ℝ) : EReal) := by
-  rw [rat_cast_eq_signed]
-  by_cases h : q.num < 0
-  · simpa [roundRatQDown, h, EReal.coe_div, EReal.coe_neg] using
-      (toEReal_roundRatDown_le (sign := q.num < 0) (num := q.num.natAbs)
-        (den := q.den) q.den_nz)
-  · simpa [roundRatQDown, h, EReal.coe_div] using
-      (toEReal_roundRatDown_le (sign := q.num < 0) (num := q.num.natAbs)
-        (den := q.den) q.den_nz)
+    (ExecFloat.Binary.toModel
+      (ExecFloat.Binary.ofModel (Model.roundRatQDown FloatFormat.binary32 q) :
+        ExecFloat.Binary 8 23)).toEReal ≤ ((q : ℝ) : EReal) := by
+  have hdecode :
+      ExecFloat.Binary.toModel
+        (ExecFloat.Binary.ofModel (Model.roundRatQDown FloatFormat.binary32 q) :
+          ExecFloat.Binary 8 23) = Model.roundRatQDown FloatFormat.binary32 q :=
+    ExecFloat.Binary.toModel_ofModel _
+  exact (congrArg (Model.toEReal (fmt := FloatFormat.binary32)) hdecode).trans_le
+    (Model.toEReal_roundRatQDown_le FloatFormat.binary32 q rfl)
 
 /-- The upper rational endpoint conversion is an `EReal` upper bound. -/
 theorem toEReal_roundRatQUp_ge (q : Rat) :
-    ((q : ℝ) : EReal) ≤ toEReal (roundRatQUp q) := by
-  rw [rat_cast_eq_signed]
-  by_cases h : q.num < 0
-  · simpa [roundRatQUp, h, EReal.coe_div, EReal.coe_neg] using
-      (toEReal_roundRatUp_ge (sign := q.num < 0) (num := q.num.natAbs)
-        (den := q.den) q.den_nz)
-  · simpa [roundRatQUp, h, EReal.coe_div] using
-      (toEReal_roundRatUp_ge (sign := q.num < 0) (num := q.num.natAbs)
-        (den := q.den) q.den_nz)
+    ((q : ℝ) : EReal) ≤ (ExecFloat.Binary.toModel
+      (ExecFloat.Binary.ofModel (Model.roundRatQUp FloatFormat.binary32 q) :
+        ExecFloat.Binary 8 23)).toEReal := by
+  have hdecode :
+      ExecFloat.Binary.toModel
+        (ExecFloat.Binary.ofModel (Model.roundRatQUp FloatFormat.binary32 q) :
+          ExecFloat.Binary 8 23) = Model.roundRatQUp FloatFormat.binary32 q :=
+    ExecFloat.Binary.toModel_ofModel _
+  have hbound : ((q : ℝ) : EReal) ≤
+      (Model.roundRatQUp FloatFormat.binary32 q).toEReal := by
+    rw [rat_cast_eq_signed]
+    simpa [Model.roundRatQUp, Model.roundRatQWithRounding, Model.roundRatUp,
+      Model.signedScaledRatToReal, Model.scaledRatToReal,
+      FloatLib.Floats.Formats.Flocq.bpow] using
+      Model.le_toEReal_roundRatUp FloatFormat.binary32 (q.num < 0)
+        q.num.natAbs q.den rfl q.den_nz
+  exact hbound.trans_eq (congrArg (Model.toEReal (fmt := FloatFormat.binary32)) hdecode).symm
 
 /-! ## Arb-backed interval endpoints for transcendentals -/
 
@@ -119,10 +101,10 @@ Decode a float endpoint as an exact rational, failing if the value is NaN/Inf.
 
 This is used to feed exact endpoint strings into the Arb oracle.
 -/
-def ensureFinite (x : IEEE32Exec) (label : String) : IO Rat := do
-  match toRat? x with
+def ensureFinite (x : ExecFloat.Binary 8 23) (label : String) : IO Rat := do
+  match ExecFloat.Binary.toRat? x with
   | some q => pure q
-  | none => throw <| IO.userError s!"Expected finite IEEE32Exec for {label}, got NaN/Inf."
+  | none => throw <| IO.userError s!"Expected finite binary32 for {label}, got NaN/Inf."
 
 /--
 Call Arb on the real interval `[X.lo, X.hi]` (interpreted exactly as rationals) and return the
@@ -148,14 +130,16 @@ Compute an `IEEE32Exec.Interval32` enclosure for a transcendental unary `func` b
 - getting a real enclosure `[L,U]` from Arb,
 - rounding endpoints outward to the binary32 grid.
 
-The exact rational endpoints are passed directly to the proved directed-rational interface. Its
-internal fixed-point quotient enclosure may be conservative, but the wrapper inequalities above
-cover the complete conversion and there is no caller-selected approximation scale.
+The exact rational endpoints are passed directly to the proved directed-rational interface.
+FloatLib's directed-rounding theorem covers the conversion, including overflow to
+infinite endpoints.
 -/
 def arbUnary (func : String) (X : Interval32) (precBits digits : Nat := 200) : IO Interval32 := do
   let (L, U) ← arbBounds func X (precBits := precBits) (digits := digits)
-  let lo32 := roundRatQDown L
-  let hi32 := roundRatQUp U
+  let lo32 : ExecFloat.Binary 8 23 :=
+    ExecFloat.Binary.ofModel (Model.roundRatQDown FloatFormat.binary32 L)
+  let hi32 : ExecFloat.Binary 8 23 :=
+    ExecFloat.Binary.ofModel (Model.roundRatQUp FloatFormat.binary32 U)
   pure ⟨lo32, hi32⟩
 
 /-- Arb-backed `tanh` enclosure for `Interval32` (oracle + outward rounding to float32 endpoints).

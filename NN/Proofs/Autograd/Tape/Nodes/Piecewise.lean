@@ -191,7 +191,7 @@ def maxElemFderivAt {Γ : List Shape} {s : Shape} (a b : Idx Γ s) (xV : CtxVec 
     have hlt : aCLM xV i < bCLM xV i ∨ aCLM xV i > bCLM xV i := lt_or_gt_of_ne hne
     cases hlt with
     | inr hgt =>
-        simpa [hgt, if_pos hgt] using (hasFDerivAt_max_of_lt ha_i hb_i hgt)
+        simpa [hgt, ite_eq_left hgt] using (hasFDerivAt_max_of_lt ha_i hb_i hgt)
     | inl hlt =>
         have hn : ¬ aCLM xV i > bCLM xV i := (le_of_lt hlt).not_gt
         have hgt : bCLM xV i > aCLM xV i := hlt
@@ -200,7 +200,7 @@ def maxElemFderivAt {Γ : List Shape} {s : Shape} (a b : Idx Γ s) (xV : CtxVec 
               ((evalCLM (n := Spec.Shape.size s) i).comp bCLM) xV :=
           hasFDerivAt_max_of_lt hb_i ha_i hgt
         -- rewrite back (and match the `if` branch)
-        simpa [hn, if_neg hn, max_comm] using h'
+        simpa [hn, ite_eq_right hn, max_comm] using h'
   -- assemble
   refine
       { deriv :=
@@ -304,7 +304,7 @@ def minElemFderivAt {Γ : List Shape} {s : Shape} (a b : Idx Γ s) (xV : CtxVec 
     cases hcmp with
     | inl hlt0 =>
         have hlt : aCLM xV i < bCLM xV i := by simpa [haCoord, hbCoord] using hlt0
-        simpa [hlt, if_pos hlt] using
+        simpa [hlt, ite_eq_left hlt] using
           (hasFDerivAt_min_of_lt (f := fun x : CtxVec Γ => aCLM x i) (g := fun x : CtxVec Γ => bCLM
             x i) ha_i hb_i hlt)
     | inr hgt0 =>
@@ -318,7 +318,7 @@ def minElemFderivAt {Γ : List Shape} {s : Shape} (a b : Idx Γ s) (xV : CtxVec 
               ((evalCLM (n := n) i).comp bCLM) xV :=
           hasFDerivAt_min_of_lt (f := fun x : CtxVec Γ => bCLM x i) (g := fun x : CtxVec Γ => aCLM x
             i) hb_i ha_i hlt
-        simpa [hn, if_neg hn, min_comm] using h'
+        simpa [hn, ite_eq_right hn, min_comm] using h'
   refine
     { deriv :=
         (euclideanEquiv n).symm.toContinuousLinearMap.comp <|

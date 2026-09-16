@@ -9,7 +9,6 @@ module
 public import Lean.Exception
 public meta import NN.Widgets.Core.UI
 public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
 public meta import Std.Do.Triple.SpecLemmas
 public meta import Lean -- shake: keep
 
@@ -145,7 +144,7 @@ elab_rules : command
       let docLit := Syntax.mkStrLit docStr
 
       -- Attach to a canonical syntax node so the infoview can anchor the panel reliably.
-      let cmd ← (Lean.TSyntax.mkInfoCanonical <$> `(
+      let cmd ← (UI.canonicalCommand <$> `(
         #html (NN.Widgets.DocsInternal.docPanel $declLit $tyLit $docLit)
       ))
       elabCommand cmd

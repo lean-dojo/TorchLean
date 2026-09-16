@@ -43,9 +43,8 @@ The trainer-facing type is:
 Trainer.Dataset input target
 ```
 
-Its shape parameters describe one training item. The element type is intentionally absent. The
-structure has a
-single field:
+Its shape parameters describe one training item. The scalar type is chosen later, through the
+structure's single field:
 
 ```lean (name := dlDatasetType)
 -- Materialization chooses the scalar type and returns a
@@ -66,7 +65,7 @@ single field:
 Read that signature from the inside out. A dataset is a function waiting for a scalar type. It
 returns samples in `IO`, because opening a file, parsing values, and reporting a malformed row all
 belong there. The scalar type `α` stays universally quantified, so one dataset value serves a
-native `Float32` run and an `IEEE32Exec` run without being rebuilt. Materialization chooses one
+native `Float32` run and a FloatLib binary32 run without being rebuilt. Materialization chooses one
 arithmetic semantics for every numeric input and target in that run; it is not a per-column dtype
 schema.
 
@@ -154,11 +153,8 @@ SupervisedSource.load: npy: prefix row loading requires C-order NPY arrays
 data_npy: X.npy: expected shape (N,2), got #[25, 1]
 ```
 
-Moving a check earlier improves the error message, but it does not change its logical strength. A
-CSV width check proves that accepted rows have the requested number of fields. It says nothing
-about whether the second field is the physical quantity the experiment intended to measure. That
-distinction is the whole reason this chapter separates the words "parsed", "well-shaped", and
-"correct".
+A width check can accept a row with the right number of fields even if the feature columns have
+been exchanged. The loader needs a declared column order, and the data producer must use that order.
 
 # Sample Shapes In Memory
 
@@ -218,12 +214,8 @@ input  = [0.000000, 1.000000]
 target = [1.000000]
 ```
 
-`get? 1` uses a zero-based stream position, so the displayed input is the second XOR row,
-`[0, 1]`. Its target is `[1]`, paired before the sample reaches training. The optional result
-handles an invalid stream position; the tensors inside a successful sample already have their
-promised dimensions. This separates a missing item from a malformed item. The example's
-`none` branch concerns whether a second sample exists, not whether its feature vector has length
-two.
+`get? 1` returns the second XOR row, `[0, 1]`, with its target `[1]`. The `none` branch handles
+a missing stream position; a returned sample already has the dimensions promised by the dataset.
 
 This is the same role played by PyTorch's `TensorDataset`, whose indexing returns the pair of
 tensors for one sample {Informal.citep pytorch2019}[]:
@@ -358,13 +350,6 @@ generalization. The seeded split is reproducible only if materializations return
 samples: `train` and `test` each materialize the source separately. For a changing source, capture
 one snapshot before splitting. Statistical evaluation and formal
 {ref "certificates"}[certificates and bounds] answer different questions.
-
-The displayed `3, 1` split describes membership counts, not the particular examples assigned
-to either side. The seed fixes that membership only relative to an ordered source. If a file
-changes between materializing `train` and `test`, applying the same permutation to its new row
-positions need not select complementary examples anymore. Capturing the source once makes the
-index-based split refer to one collection, which is the fact needed to interpret the two views
-as training and held-out portions of the same dataset.
 
 # Loading A Regression Table
 
@@ -524,20 +509,9 @@ select a subset and avoid this error
 FileNotFoundError
 ```
 
-These two failures are different in kind:
-
-- file existence is an operating-system boundary;
-- row width is a data-schema boundary.
-
-Neither is a theorem about the data-generating process. They establish that the accepted artifact
-has the structure the model requested.
-
-The short-row example shows why parsing and shape checking need different diagnostics. Every
-remaining cell may be a valid number, so numeric parsing alone can succeed. Only after the
-declared input width consumes the first two values does the missing target become apparent.
-Increasing the model's tolerance for numeric text would not repair that schema error. Conversely,
-changing the expected shape would not turn `oops` into a number. The boundary that rejects an
-artifact tells the caller which part of its preparation needs attention.
+The short row contains valid numbers but lacks a target. Repairing numeric parsing would not fix
+it, just as changing the expected shape would not turn `oops` into a number. Distinct diagnostics
+tell us which part of the file to repair.
 
 # NPY And Other Numeric Sources
 
@@ -695,8 +669,10 @@ between adjacent binary32 numbers; materialization would then choose representab
 runtime scalar. The file dtype, conversion, and arithmetic label describe three successive steps
 in the value's path from disk to a loss computation.
 
-Selecting a different executable arithmetic keeps the dataset untouched, which is the whole reason
-`materialize` is polymorphic in `α`:
+We can also keep the file and select a different arithmetic at materialization:
+
+The following transcript predates the FloatLib migration and retains its recorded scalar labels
+and numerical results. Current `.ieee` execution uses FloatLib binary32.
 
 ```terminal +output
 $ lake exe torchlean data_csv --batch 5 --steps 5 --seed 2026 --arithmetic ieee
@@ -704,9 +680,8 @@ $ lake exe torchlean data_csv --batch 5 --steps 5 --seed 2026 --arithmetic ieee
 steps=5 arithmetic=ieee scalar=IEEE32Exec loss=0.210192 -> 0.055578
 ```
 
-One dataset value, two arithmetic implementations, and here the printed losses agree. The chapter on
-{ref "floats"}[floating-point semantics] explains where the two stop agreeing and why the
-`IEEE32Exec` path exists at all.
+The printed losses agree here. The chapter on {ref "floats"}[floating-point semantics] examines
+the rounding behavior behind that comparison.
 
 ## NPY Header And Shape Errors
 
@@ -731,11 +706,9 @@ C-order storage. It rejects Fortran-order arrays at this boundary. Use
 `numpy.save(path, numpy.ascontiguousarray(array))` to make the saved array C-order;
 `numpy.save` can preserve Fortran order when given a Fortran-contiguous array.
 
-TorchLean does not maintain a second parser for every ecosystem format. `.pt`, `.pth`, `.npz`, image
-folders, and specialized scientific containers can be converted with Python into a small numeric
-boundary such as NPY or CSV. The converter is an untrusted producer; the Lean loader checks the
-resulting artifact. That division is deliberate: a Lean parser for every container format would be a
-large amount of trusted code that nothing else in the library needs.
+For `.pt`, `.pth`, `.npz`, image folders, and specialized scientific containers, convert the data
+to NPY or CSV in Python. The Lean loader then checks the resulting artifact's supported dtype and
+shape. It cannot check that the converter selected the intended fields or preprocessing.
 
 # Next-Token Datasets
 
@@ -788,16 +761,10 @@ implementation uses `castSucc` for inputs and `succ` for targets to preserve the
 dlShifted : Sample.Supervised ℕ [4] [4]
 ```
 
-The `+ 1` in that argument type is doing real work. A caller who has exactly `L` tokens cannot pass
-them: the window has to be one longer than the sequence the model sees, and any padding needed to
-reach that length is the corpus reader's decision, made before this function is called.
-
-At input position zero the model sees token `10` and is asked to predict `11`; at position
-three it sees `13` and is asked to predict `14`. The last token is a target without being the
-last input, which is why five source tokens are needed. The printed type records the two
-length-four tensors but not their positional relationship. That relationship comes from the
-construction with `castSucc` and `succ`, so keeping it in one helper prevents two equal-shaped
-slices from being accidentally exchanged.
+At position zero the model sees `10` and must predict `11`; at position three it sees `13` and
+must predict `14`. The final target accounts for the extra token required by the argument type.
+A caller with only `L` tokens must obtain another token or make an explicit padding choice before
+calling this function.
 
 PyTorch writes the same shift as two slices, and nothing in the shapes records which slice was
 which:
@@ -952,8 +919,8 @@ equivalence.
 
 # Tensor Batching And Gradient Accumulation
 
-TorchLean uses “batch size” for two related operations, and confusing them is the most common way to
-get a shape error out of an otherwise correct training script.
+Stacking samples changes the shape a model receives. Accumulating their gradients changes how much
+data contributes to an optimizer update. TorchLean provides both operations.
 
 ## Tensor minibatches
 
@@ -1020,11 +987,8 @@ more correct than the other. What must not differ is the multiset of samples, an
 The model must accept `[2, 2]` and return `[2, 1]`. One forward and backward pass processes the
 whole tensor minibatch.
 
-The first displayed batch contains two separate input rows and their two targets. Its outer
-axis indexes the selected examples; its inner input axis still indexes the two XOR features.
-A model accepting an unbatched `[2]` input cannot consume this value without a deliberate
-change in its contract. This makes a batching error visible at the trainer boundary rather than
-letting the model accidentally treat the number of examples as the feature width.
+In `[2, 2]`, the outer axis selects an example and the inner axis selects a feature. Both happen
+to have size two in this batch, so the dimensions alone would not reveal an accidental axis swap.
 
 ## Groups of unbatched samples
 
@@ -1190,12 +1154,8 @@ would repeat its state. Epoch order remains a function of the initial seed.
 Different seeds need not produce different permutations. There is no hidden global generator
 whose position depends on unrelated code that happened to draw a random number earlier.
 
-The returned seed is state for a later call, not an extra random seed to choose independently.
-An epoch loop should retain `nextLoader` along with whatever records its progress through the
-returned batches. Starting again from the original loader reconstructs the original epoch order;
-continuing from the returned loader requests the next one. This distinction matters when a run
-is interrupted: saving model weights alone does not identify which batch that loop should use
-next.
+To resume an interrupted epoch loop, retain `nextLoader` and the position within the current
+batches. Model weights alone do not identify the next batch.
 
 Use the lower loader API for a custom epoch loop. Ordinary model training should prefer
 `Data.batch`, `Data.fromCsv`, or another dataset constructor and let `trainer.train` own the loop.
@@ -1284,14 +1244,9 @@ let trained ← trainer.train data
     title := "small regression" }
 ```
 
-The log is an execution artifact. It can support debugging and reproducibility, but it is not a
-certificate of convergence or generalization.
-
-For this example, a useful reading of the log is a chain of concrete identities: the paths
-identify the source files, the declared widths identify the column split, the batch size explains
-the dataset-item count, and the runtime label identifies the arithmetic that produced the loss.
-Each entry answers a different reconstruction question. Together they make a discrepancy easier
-to locate than a final loss alone, without changing the statistical meaning of that loss.
+Keep the log with the source identity and configuration above. If the CSV and NPY runs diverge,
+those records let us check the input values, column split, batching, and arithmetic before
+attributing the difference to training.
 
 # CSV Training Example
 
@@ -1305,9 +1260,7 @@ lake exe torchlean data_csv \
   --device cpu --batch 5 --steps 5 --seed 2026
 ```
 
-It exercises CSV parsing, deterministic shuffling, fixed-size typed batching, model execution,
-autograd, Adam, and prediction. Swap `data_csv` for `data_npy` to run the same twenty-five samples
-through the NPY boundary instead.
+Swap `data_csv` for `data_npy` to train on the same twenty-five samples loaded from NPY.
 
 Sources:
 

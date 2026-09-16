@@ -206,10 +206,10 @@ theorem buildFrom_denoteAllFrom_permute
                                 -- branch using `hShape`.
                                 erw [hPermute0]
                                 simp (config := { failIfUnchanged := false })
-                                -- The remaining conditional is a dependent `if` (`dite`); `dif_pos`
-                                -- picks the success branch and carries the proof `hShape` into the
-                                -- cast.
-                                rw [dif_pos hShape]
+                                -- The remaining conditional is a dependent `if` (`dite`).
+                                -- `dite_eq_left` picks the success branch and carries the proof
+                                -- `hShape` into the cast.
+                                rw [dite_eq_left hShape]
                                 simp [nodeData, sFinal, mkForwardNode,
                                   Tensor.eqRec_eq_cast_shape, Tensor.cast_shape_trans]
                                 change Except.ok _ = Except.ok _

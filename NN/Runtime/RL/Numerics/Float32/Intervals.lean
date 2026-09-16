@@ -24,6 +24,9 @@ recurrences; Schulman et al. for GAE and PPO.
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 namespace Runtime
 namespace RL
 namespace Numerics
@@ -37,7 +40,7 @@ open TorchLean.Floats
 open TorchLean.Floats.IEEE754
 
 /-!
-## Interval Enclosures (IEEE32Exec endpoint intervals)
+## Interval Enclosures (configured binary32 endpoint intervals)
 -/
 
 /--
@@ -95,11 +98,11 @@ def ppoClippedObjectiveFromRatioInterval
   let one : Float32Exec := (1 : Float32Exec)
   -- Clipping thresholds are computed as float32 values (round-to-nearest). The main goal of this
   -- enclosure is to bound the subsequent products.
-  let lo : Float32Exec := TorchLean.Floats.IEEE754.IEEE32Exec.sub one clipEps
-  let hi : Float32Exec := TorchLean.Floats.IEEE754.IEEE32Exec.add one clipEps
+  let lo : Float32Exec := ExecFloat.sub one clipEps
+  let hi : Float32Exec := ExecFloat.add one clipEps
   let clippedRatio : Float32Exec :=
-    TorchLean.Floats.IEEE754.IEEE32Exec.minimum hi
-      (TorchLean.Floats.IEEE754.IEEE32Exec.maximum lo ratio)
+    min hi
+      (max lo ratio)
   let unclipped : Interval32 :=
     TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul
       (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point ratio)
@@ -114,7 +117,8 @@ def ppoClippedObjectiveFromRatioInterval
 Outward-rounded interval enclosure for fixed-horizon discounted returns.
 
 If you pass point intervals at the leaves (`Interval32.point`), the output is a conservative
-enclosure for the exact real return recursion (interpreting leaves via `IEEE32Exec.toReal`).
+enclosure for the exact real return recursion (interpreting leaves via `Model.toReal` after
+decoding).
 
 This is an *executable* diagnostic: you can run it alongside `discountedReturnsChecked`
 to detect blow-ups (endpoints becoming `±Inf` or `Valid` failing).
@@ -173,7 +177,7 @@ def generalizedAdvantageEstimationIntervals {n : Nat}
     adv) (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point 0) indices
 
 /--
-Executable check: every `returns[i]` lies inside `intervals[i]` in the `IEEE32Exec.le` order.
+Executable check: every `returns[i]` lies inside `intervals[i]` in the configured scalar order.
 
 This is an executable regression check for examples and tests; formal enclosure theorems live in
 `NN/Floats/Interval/*`.

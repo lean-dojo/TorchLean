@@ -139,7 +139,7 @@ theorem getVal?_liftVals {rvals : Array (SomeTensor ℝ)} {p : Nat} {r : SomeTen
   obtain ⟨hp, rfl⟩ := Array.getElem?_eq_some_iff.mp h
   have hp' : p < (rvals.map fun t => some (flatOfSome t)).size := by simpa using hp
   unfold getVal? liftVals
-  rw [dif_pos hp', getElem!_pos (c := rvals.map fun t => some (flatOfSome t)) (i := p) hp',
+  rw [dite_eq_left hp', getElem!_pos (c := rvals.map fun t => some (flatOfSome t)) (i := p) hp',
     Array.getElem_map]
 
 /-- Reading a present parent through the runtime accessor succeeds with that parent. -/
@@ -407,7 +407,7 @@ private theorem bridge_add
   simp only at hp
   simp only [evalNode?, hn, hp, getVal?_liftVals hra, getVal?_liftVals hrb]
   have hnn : (flatOfSome ⟨outShape, a⟩).n = (flatOfSome ⟨outShape, b⟩).n := rfl
-  rw [dif_pos hnn]
+  rw [dite_eq_left hnn]
   exact congrArg some (flat_binary (fun x y => x + y) a b hnn)
 
 /-- The `sub` node. -/
@@ -427,7 +427,7 @@ private theorem bridge_sub
   simp only at hp
   simp only [evalNode?, hn, hp, getVal?_liftVals hra, getVal?_liftVals hrb]
   have hnn : (flatOfSome ⟨outShape, a⟩).n = (flatOfSome ⟨outShape, b⟩).n := rfl
-  rw [dif_pos hnn]
+  rw [dite_eq_left hnn]
   exact congrArg some (flat_binary (fun x y => x - y) a b hnn)
 
 /-- The `mulElem` node. -/
@@ -447,7 +447,7 @@ private theorem bridge_mulElem
   simp only at hp
   simp only [evalNode?, hn, hp, getVal?_liftVals hra, getVal?_liftVals hrb]
   have hnn : (flatOfSome ⟨outShape, a⟩).n = (flatOfSome ⟨outShape, b⟩).n := rfl
-  rw [dif_pos hnn]
+  rw [dite_eq_left hnn]
   exact congrArg some (flat_binary (fun x y => x * y) a b hnn)
 
 /-- The `relu` node. -/
@@ -508,7 +508,7 @@ private theorem bridge_linear
   simp only [evalNode?, hn, hpar, getVal?_liftVals hr', hps.2 i, hpay, Option.map_some]
   have hnn : (flatOfSome ⟨Shape.dim p.inDim Shape.scalar, xr⟩).n = p.inDim :=
     Nat.mul_one p.inDim
-  rw [dif_pos hnn]
+  rw [dite_eq_left hnn]
   have hx :
       castDimScalar (α := ℝ) hnn (flatOfSome ⟨Shape.dim p.inDim Shape.scalar, xr⟩).v = xr := by
     simp only [flatOfSome, flattenSpec_vector]

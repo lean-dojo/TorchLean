@@ -7,19 +7,22 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.Quantization
+public import NN.Spec.Quantization.Rational
 public import NN.Spec.Core.TensorOps
 
 /-!
 # Tensor Quantization
 
 This module lifts the scalar affine quantizer from `NN.Floats.Quantization` pointwise over
-TorchLean's shape-indexed tensors. The numerical definition remains usable without importing the
-tensor library; only this adapter depends on `NN.Spec`.
+TorchLean's shape-indexed tensors. The real-domain specification retains arbitrary valid rounding
+rules. The rational tensor API imports FloatLib's executable affine quantizer directly.
 -/
 
 @[expose] public section
 
 namespace TorchLean.Floats.Quantization
+
+open FloatLib.Floats.Formats.Flocq
 
 open Spec TorchLean
 
@@ -53,7 +56,7 @@ theorem quantizeTensor_inRange (q : AffineQuantizer) (rnd : ℝ → ℤ)
   exact q.quantize_mem rnd a
 
 /-- Pointwise order is preserved by tensor quantization. -/
-theorem quantizeTensor_mono (q : AffineQuantizer) (rnd : ℝ → ℤ) [NeuralValidRnd rnd]
+theorem quantizeTensor_mono (q : AffineQuantizer) (rnd : ℝ → ℤ) [ValidRnd rnd]
     {s : Shape} {x y : Tensor ℝ s}
     (hxy : Tensor.Forall₂ (· ≤ ·) x y) :
     Tensor.Forall₂ (· ≤ ·) (q.quantizeTensor rnd x) (q.quantizeTensor rnd y) := by
@@ -77,7 +80,7 @@ theorem quantizeTensor_mono (q : AffineQuantizer) (rnd : ℝ → ℤ) [NeuralVal
 
 /-- An in-range code tensor survives pointwise dequantization and requantization exactly. -/
 theorem quantizeTensor_dequantizeTensor (q : AffineQuantizer) (rnd : ℝ → ℤ)
-    [NeuralValidRnd rnd] {s : Shape} {codes : Tensor ℤ s} (hcodes : q.CodesInRange codes) :
+    [ValidRnd rnd] {s : Shape} {codes : Tensor ℤ s} (hcodes : q.CodesInRange codes) :
     q.quantizeTensor rnd (q.dequantizeTensor codes) = codes := by
   induction s with
   | scalar =>
@@ -103,7 +106,7 @@ theorem quantizeTensor_dequantizeTensor (q : AffineQuantizer) (rnd : ℝ → ℤ
 
 /-- If no coordinate clips, every tensor reconstruction error is at most half a step. -/
 theorem dequantizeTensor_quantizeTensor_error_le (q : AffineQuantizer) (rnd : ℝ → ℤ)
-    [NeuralValidRndToNearest rnd] {s : Shape} {x : Tensor ℝ s}
+    [ValidRndToNearest rnd] {s : Shape} {x : Tensor ℝ s}
     (hinactive : q.SaturationInactive rnd x) :
     Tensor.Forall (fun e : ℝ => abs e ≤ q.scale / 2)
       ((q.dequantizeTensor (q.quantizeTensor rnd x)).subSpec x) := by

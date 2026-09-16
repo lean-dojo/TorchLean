@@ -43,8 +43,8 @@ private theorem foldl_of_step {n : Nat} (x : Fin n → ℝ) (f : Option ℝ → 
       rw [List.foldl_cons, hf, ih, List.foldl_cons]
       have hstep : (if x i > a then x i else a) = max a (x i) := by
         rcases lt_or_ge a (x i) with h | h
-        · rw [if_pos h, max_eq_right h.le]
-        · rw [if_neg (not_lt.mpr h), max_eq_left h]
+        · rw [ite_eq_left h, max_eq_right h.le]
+        · rw [ite_eq_right (not_lt.mpr h), max_eq_left h]
       rw [hstep]
 
 /-- With every key allowed, the hard-mask row maximum is the stable softmax shift. -/
@@ -52,7 +52,7 @@ private theorem hardMaskedMax?_allTrue {n : Nat} (scores : Tensor ℝ [Nat.succ 
     Spec.hardMaskedMax? scores (Tensor.dim fun _ => Tensor.scalar true) =
       some (Tensor.item (Activation.maxVecSpec scores)) := by
   unfold Spec.hardMaskedMax?
-  simp only [TorchLean.Tensor.getScalar_dim_entry, Tensor.item_scalar, if_true]
+  simp only [TorchLean.Tensor.getScalar_dim_entry, Tensor.item_scalar, ite_true]
   rw [List.finRange_succ, List.foldl_cons]
   dsimp only
   refine (foldl_of_step (fun i => scores.getScalar i) _ (fun b i => rfl) _ _).trans ?_

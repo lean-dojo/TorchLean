@@ -49,18 +49,19 @@ open Proofs.Autograd
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
 noncomputable section
 
-variable {β : NeuralRadix} {fexp : ℤ -> ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ -> ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ -> ℤ} [ValidExp fexp]
+variable {rnd : ℝ -> ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 /-! ## Maximum and max shift -/
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /-- Forgetting the `NF` format commutes with the nonempty-vector maximum exactly.
 
 `NF.max` only selects one operand; it performs no arithmetic and therefore introduces no rounding
@@ -89,7 +90,7 @@ theorem toSpec_maxVecSpec {n : Nat} (xR : Tensor R [Nat.succ n]) :
           acc (runtimeValue i)).symm)
   simpa [Activation.maxVecSpec, runtimeValue, realValue, first] using hfold.symm
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /-- The maximum of a rounded vector approximates the real maximum with the same infinity-norm
 budget as the vector itself. No additional ULP term appears because maximum is a selection.
 -/
@@ -277,7 +278,7 @@ theorem approxTensor_softmaxVecSpec {n : Nat}
     refine le_trans (le_abs_self _) ?_
     simpa [outBound, softmaxErrorBound, softmaxBoundTensor, exR, denomR,
       epsNum, epsDenom, numR, linfNorm, RuntimeApprox.linfNorm,
-      tensorLinfNorm, MathFunctions.abs] using hcoord
+      tensorLinfNorm, Numerics.MathFunctions.abs] using hcoord
   have hscalarOut : approxTensor (α := R)
       (toSpec := NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd))
       (Tensor.scalar (numS / denomS)) (Tensor.scalar (numR / denomR)) outBound :=
@@ -389,7 +390,7 @@ theorem hardMaskedNumerators_eq_fused {α : Type} [TorchLean.Storage α] [Contex
     (mask : Tensor Bool [n]) (rowMax : α) :
     hardMaskedNumerators scores mask rowMax =
       map2Spec
-        (fun score allowed => if allowed then MathFunctions.exp (score - rowMax) else 0)
+        (fun score allowed => if allowed then Numerics.MathFunctions.exp (score - rowMax) else 0)
         scores mask := by
   apply TorchLean.Tensor.Internal.Rep.ext
   intro coordinate
@@ -398,14 +399,14 @@ theorem hardMaskedNumerators_eq_fused {α : Type} [TorchLean.Storage α] [Contex
   simp only [hardMaskedNumerators, Tensor.replicate, map2Spec, expSpec, subSpec, mapSpec,
     Tensor.scalar, TorchLean.Tensor.Internal.Rep.zipWith_apply]
   by_cases hallowed : mask (i, PUnit.unit) = true
-  · simp only [hallowed, if_true]
+  · simp only [hallowed, ite_true]
     change
-      TorchLean.Tensor.Internal.Rep.map MathFunctions.exp
+      TorchLean.Tensor.Internal.Rep.map Numerics.MathFunctions.exp
           (TorchLean.Tensor.Internal.Rep.zipWith (· - ·) scores
             (TorchLean.Tensor.Internal.Rep.stack fun _ =>
               TorchLean.Tensor.Internal.Rep.ofFn fun _ => rowMax))
           (i, PUnit.unit) =
-        MathFunctions.exp (scores (i, PUnit.unit) - rowMax)
+        Numerics.MathFunctions.exp (scores (i, PUnit.unit) - rowMax)
     simp
   · simp [hallowed]
 

@@ -300,7 +300,13 @@ structure AnyParam (α : Type) [Storage α] where
   get : IO (Spec.SomeTensor α)
   /-- Overwrite the current parameter value, checking shape at the call site. -/
   set : Spec.SomeTensor α → IO Unit
-  /-- Store a CUDA buffer mirror without forcing an immediate host download. -/
+  /-- Store a CUDA buffer mirror without forcing an immediate host download.
+
+  The supplied buffer can be shared through Lean references, but another owner must not
+  force-release it while the parameter or a recorded snapshot still uses it. A scope-owned tape
+  intermediate needs an independent copy or a transfer of that scope's release responsibility before
+  installation.
+  -/
   setCuda : Runtime.Autograd.Cuda.AnyBuffer → IO Unit
 
 namespace AnyParam
@@ -319,19 +325,16 @@ def observeCudaCleanupFlag (released : UInt32) : IO Unit :=
   else
     pure ()
 
-/-- Atomically clear and release a cached CUDA mirror, if one exists.
+/-- Remove the parameter's reference to its cached CUDA mirror.
 
-CUDA buffers are external objects whose native finalizer tolerates repeated cleanup attempts, but
-parameter updates know exactly when an old device mirror is no longer the current value. Releasing
-that mirror here keeps eager CUDA sessions explicit about ownership. The cache is cleared before
-native release, so no caller can subsequently observe the released handle through `cudaValue`.
+A recorded leaf keeps the buffer that held the parameter's value when `use` was called. Replacing
+the parameter must preserve that snapshot, including when another session still refers to it.
+Dropping the cache reference lets Lean's external-object finalizer reclaim the allocation once
+the cache, recorded values, and backward closures have all stopped referring to it. An explicit
+`Buffer.releaseIO` here would invalidate those other references immediately.
 -/
-def releaseCachedCudaValue {α : Type} [Storage α] {s : Shape} (p : Param α s) : IO Unit := do
-  match ← p.cudaValue.swap none with
-  | none => pure ()
-  | some any =>
-      let released ← Runtime.Autograd.Cuda.Buffer.releaseIO any.buf
-      observeCudaCleanupFlag released
+def releaseCachedCudaValue {α : Type} [Storage α] {s : Shape} (p : Param α s) : IO Unit :=
+  p.cudaValue.set none
 
 /--
 Package a typed `Param α s` as an `AnyParam α`, checking shape on `set`.
@@ -349,7 +352,6 @@ def ofParam {α : Type} [Storage α] {s : Shape} (p : Param α s) : AnyParam α 
       if h : v.shape = s then
         releaseCachedCudaValue p
         p.value.set (v.cast h)
-        p.cudaValue.set none
         p.hostCurrent.set true
       else
         throw <| IO.userError <|
@@ -357,7 +359,6 @@ def ofParam {α : Type} [Storage α] {s : Shape} (p : Param α s) : AnyParam α 
             ++ s!"(expected {Shape.pretty s}, got {Shape.pretty v.shape})"
     setCuda := fun v => do
       if _h : v.s = s then
-        releaseCachedCudaValue p
         p.cudaValue.set (some { s := s, buf := v.buf })
         p.hostCurrent.set false
       else

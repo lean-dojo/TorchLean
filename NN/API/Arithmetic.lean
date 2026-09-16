@@ -8,7 +8,7 @@ module
 
 -- shake: keep-all
 
-public import NN.Floats.IEEEExec.Exec32
+public import FloatLib.Floats.Formats.IEEE754.Native
 public import NN.Runtime.Autograd.Model.Dual
 public import NN.Spec.Core.Complex
 public import NN.Spec.Core.FloatInstances
@@ -39,6 +39,8 @@ selected directly in theorems rather than through a command-line flag.
 namespace TorchLean
 namespace Runtime
 
+open FloatLib.Floats
+
 /--
 Conversion from Lean `Float` constants into a selected runtime arithmetic representation.
 -/
@@ -68,10 +70,9 @@ instance : FromFloat Float32 where
   roundForValidation x := x.toFloat32.toFloat
 
 /-- Inject binary64 literals into the executable IEEE-754 binary32 backend. -/
-instance : FromFloat TorchLean.Floats.IEEE754.IEEE32Exec where
-  ofFloat := TorchLean.Floats.IEEE754.IEEE32Exec.ofFloat
-  roundForValidation x :=
-    (TorchLean.Floats.IEEE754.IEEE32Exec.ofFloat x).toFloat
+instance : FromFloat (ExecFloat.Binary (exponentBits := 8) (fractionBits := 23)) where
+  ofFloat x := ExecFloat.Binary.ofFloat32 x.toFloat32
+  roundForValidation x := x.toFloat32.toFloat
 
 /--
 Inject binary64 literals into the dual-number backend used by the runtime autograd engine.
@@ -97,7 +98,7 @@ parametric in the element type `α`.
 Unlike a PyTorch per-tensor dtype, this choice fixes one arithmetic semantics for the complete run:
 
 - `.native` uses Lean's native `Float32` operations on CPU and binary32 CUDA storage on GPU,
-- `.ieee` uses TorchLean's independent bit-level IEEE-754 binary32 reference,
+- `.ieee` uses FloatLib's configured software IEEE-754 binary32 arithmetic,
 - `.complex` uses TorchLean's complex representation with binary32 real and imaginary components.
 -/
 inductive Arithmetic where
@@ -155,9 +156,10 @@ def withRuntime
   | .native =>
       continuation (α := Float32)
   | .ieee =>
-      continuation (α := TorchLean.Floats.IEEE754.IEEE32Exec)
+      continuation (α := ExecFloat.Binary (exponentBits := 8) (fractionBits := 23))
   | .complex =>
-      continuation (α := TorchLean.Complex TorchLean.Floats.IEEE754.IEEE32Exec)
+      continuation
+        (α := TorchLean.Complex (ExecFloat.Binary (exponentBits := 8) (fractionBits := 23)))
 
 end Arithmetic
 

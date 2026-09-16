@@ -9,6 +9,7 @@ module
 public import NN.Spec.Core.TensorReductionShape.ConcatSlice
 public import NN.Spec.Core.TensorReductionShape.Reductions
 public import NN.Spec.Core.Sequence
+public import NN.Spec.Layers.Activation
 
 /-!
 # Gradient boosted trees (spec model)
@@ -25,10 +26,8 @@ References (classical):
 - XGBoost: Chen and Guestrin, "XGBoost: A Scalable Tree Boosting System", 2016.
 - LightGBM: Ke et al., "LightGBM: A Highly Efficient Gradient Boosting Decision Tree", 2017.
 
-The squared-error gradient a boosting round needs is not defined here: it does not mention trees,
-and `mseLossGradSpec` in `NN/Spec/Models/LinearRegression.lean` is already exactly
-`(2 / batch) * (predictions - target)`. A `gbtMseGradSpec` copy of it lived here for a while with no
-callers, which is how the two drift apart in the first place.
+Squared-error boosting fits trees to `target - prediction`. The shared mean-squared-error gradient
+is `mseLossGradSpec` in `NN/Spec/Models/LinearRegression.lean`.
 
 ## Implementation status
 
@@ -408,7 +407,7 @@ $x_{\mathrm{feature}}\leq\mathrm{threshold}$ goes left and
 $x_{\mathrm{feature}}>\mathrm{threshold}$ goes right, but avoids needing a decidable `<` for every
 `Context α` backend.
 -/
-def decisionTreeClassifyForwardSpecN {β : Type} {maxDepth nFeatures : Nat}
+def decisionTreeClassifyForwardSpec {β : Type} {maxDepth nFeatures : Nat}
   (tree : DecisionTreeClassifierSpec α β nFeatures maxDepth)
   (input : Tensor α [nFeatures]) : β :=
   let rec traverse {depth : Nat} (node : ClassifierTreeNode α β nFeatures depth) : β :=
@@ -606,10 +605,12 @@ def gbtMseLossSpec {batch nTrees maxDepth nFeatures : Nat}
   scaleSpec mse (1 / (batch : α))
 
 /--
-Binary cross-entropy loss for classification (with a sigmoid), reduced to a scalar by averaging.
+Mean binary cross-entropy of the ensemble's logits.
 
-This is a direct probability-space loss helper. For numerically sensitive classification pipelines,
-prefer a stable "BCE with logits" implementation in the runtime/training layer.
+For logit `z` and target `y`, evaluate
+`max z 0 - z * y + log (1 + exp (-abs z))`. This avoids taking the logarithm of a sigmoid rounded
+to zero or one. The logarithmic term compensates for rounding in `1 + tail`; if that addition
+rounds to one, it retains `tail` instead of returning zero.
 -/
 def gbtBinaryCrossentropyLossSpec {batch nTrees maxDepth nFeatures : Nat}
   (model : GradientBoostedTreesSpec α nFeatures nTrees maxDepth)
@@ -617,27 +618,31 @@ def gbtBinaryCrossentropyLossSpec {batch nTrees maxDepth nFeatures : Nat}
   (target : Tensor α [batch]) (h : batch ≠ 0) :
   Tensor α .scalar :=
   let predictions := gradientBoostedTreesForwardLeadingSpec (.dim batch .scalar) model input
-  let sigmoidPreds := mapSpec (fun x => 1 / (1 + MathFunctions.exp (-x))) predictions
-  let logPreds := mapSpec MathFunctions.log sigmoidPreds
-  let logOneMinusPreds := mapSpec (fun x => MathFunctions.log (1 - x)) sigmoidPreds
-  let positiveLogLikelihood := mulSpec target logPreds
-  let negativeTarget :=
-    subSpec (replicate (shape := [batch]) (Tensor.scalar (1 : α))) target
-  let negativeLogLikelihood := mulSpec negativeTarget
-    logOneMinusPreds
-  let logLikelihood := addSpec positiveLogLikelihood negativeLogLikelihood
+  let losses := map2Spec (fun z y =>
+    let tail := MathFunctions.exp (-MathFunctions.abs z)
+    let sum := 1 + tail
+    -- Context has no log1p primitive; compensate for rounding in the addition to one.
+    let logTail := if sum == 1 then tail
+      else MathFunctions.log sum * (tail / (sum - 1))
+    Max.max z 0 - z * y + logTail)
+    predictions target
   have inst : Shape.HasNonemptyAxis 0 (Shape.dim batch Shape.scalar) := by
     apply Shape.hasNonemptyAxisZeroOfNe h
-  let summedLogLikelihood := reduceSum 0 logLikelihood inst.proof
-  negSpec (scaleSpec summedLogLikelihood (1 / (batch : α)))
+  scaleSpec (reduceSum 0 losses inst.proof) (1 / (batch : α))
 
-/-- Gradient of sigmoid binary cross-entropy loss w.r.t. predictions (elementwise). -/
+/-- Per-example sigmoid BCE derivative `sigmoid(logit) - target`, without batch reduction.
+
+Divide by `batch` to obtain the derivative of `gbtBinaryCrossentropyLossSpec`.
+When the target compares equal to one, use `(1 - target) - sigmoid(-logit)` to retain
+the positive-logit tail and any target tangent carried by the scalar.
+-/
 def gbtBinaryCrossentropyGradSpec {batch : Nat}
   (predictions : Tensor α [batch])
   (target : Tensor α [batch]) :
   Tensor α [batch] :=
-  let sigmoidPreds := mapSpec (fun x => 1 / (1 + MathFunctions.exp (-x))) predictions
-  subSpec sigmoidPreds target
+  map2Spec (fun z y =>
+    if y == 1 then (1 - y) - Activation.Math.sigmoidSpec (-z)
+    else Activation.Math.sigmoidSpec z - y) predictions target
 
 /--
 Residual computation for gradient boosting.
@@ -655,9 +660,8 @@ def computeResidualsSpec {batch nTrees maxDepth nFeatures : Nat}
 /--
 One gradient-boosting "add a tree" step, given a pre-fit `newTree`.
 
-This returns the current loss and the updated model with `newTree` appended.
-The residuals computed here are illustrative; the "fit a tree to residuals" variant below is
-usually the more self-contained baseline.
+This returns the loss before the update and the model with `newTree` appended.
+`gradientBoostedTreesTrainStepFitSpec` also fits the new tree to the current residuals.
 -/
 def gradientBoostedTreesTrainStepSpec {batch nTrees maxDepth nFeatures : Nat}
   (model : GradientBoostedTreesSpec α nFeatures nTrees maxDepth)
@@ -797,28 +801,6 @@ def gbtRmseSpec {batch nTrees maxDepth nFeatures : Nat}
   let mse := reduceMean 0 squaredErrors inst.proof
   sqrtSpec mse
 
-/--
-Loss-margin early-stopping predicate for gradient boosting.
-
-This compares a training loss and validation loss with a margin `min_delta`.
-The caller is responsible for tracking the patience counter; this predicate only checks one
-train/validation loss pair.
--/
-def earlyStoppingCheckSpec {batch nTrees maxDepth nFeatures : Nat}
-  (model : GradientBoostedTreesSpec α nFeatures nTrees maxDepth)
-  (input : Tensor α [batch, nFeatures])
-  (target : Tensor α [batch])
-  (validationInput : Tensor α [batch, nFeatures])
-  (validationTarget : Tensor α [batch])
-  (h : batch ≠ 0)
-  (_patience : Nat)
-  (min_delta : α) :
-  Bool :=
-  let trainLoss := Tensor.item (gbtMseLossSpec model input target h)
-  let valLoss := Tensor.item (gbtMseLossSpec model validationInput validationTarget h)
-  -- Single-step loss-margin check; patience is tracked by the caller.
-  Context.gtBool (trainLoss + min_delta) valLoss
-
 /-- Adjust the ensemble learning rate (shrinkage) while keeping the same trees. -/
 def adjustLearningRateSpec {nFeatures nTrees maxDepth : Nat}
   (model : GradientBoostedTreesSpec α nFeatures nTrees maxDepth)
@@ -827,64 +809,21 @@ def adjustLearningRateSpec {nFeatures nTrees maxDepth : Nat}
   { model with learningRate := newRate }
 
 /--
-Deterministic prefix selection used as a proof-friendly stand-in for stochastic subsampling.
+Select the first `newBatch` paired input rows and targets.
 
-Real stochastic GBDT implementations sample rows using randomness. This helper instead takes the
-first `newBatch` rows and uses `h_new_batch` to make that access total, so it is deterministic and
-does not silently pad with zeros.
+The requested row count is explicit; no random sampling or ratio-based rounding is performed.
 -/
 def prefixSubsampleDataSpec {batch newBatch nFeatures : Nat}
   (input : Tensor α [batch, nFeatures])
   (target : Tensor α [batch])
-  (_subsample_ratio : α)
-  (_h_ratio : _subsample_ratio > 0 ∧ _subsample_ratio ≤ 1)
-  (h_new_batch : newBatch ≤ batch) :
+  (hNewBatch : newBatch ≤ batch) :
   (Tensor α [newBatch, nFeatures] × Tensor α [newBatch]) :=
   let subsampledInput := Tensor.dim (fun i =>
-    have h : i.val < batch := Nat.lt_of_lt_of_le i.isLt h_new_batch
+    have h : i.val < batch := Nat.lt_of_lt_of_le i.isLt hNewBatch
     get input ⟨i.val, h⟩)
   let subsampledTarget := Tensor.dim (fun i =>
-    have h : i.val < batch := Nat.lt_of_lt_of_le i.isLt h_new_batch
+    have h : i.val < batch := Nat.lt_of_lt_of_le i.isLt hNewBatch
     get target ⟨i.val, h⟩)
   (subsampledInput, subsampledTarget)
-
-/--
-XGBoost-style squared-error proxy with an L2-shaped scalar penalty.
-
-This objective is a typed loss for an already-materialized ensemble. It is not a full XGBoost
-split-gain objective; tree-builder policies such as histogram binning and split search are
-represented elsewhere by the tree-fitting routines.
--/
-def xgboostSquaredErrorObjectiveSpec {batch nTrees maxDepth nFeatures : Nat}
-  (model : GradientBoostedTreesSpec α nFeatures nTrees maxDepth)
-  (input : Tensor α [batch, nFeatures])
-  (target : Tensor α [batch])
-  (h : batch ≠ 0)
-  (lambda : α)
-  (_gamma : α) :
-  Tensor α .scalar :=
-  let mse := Tensor.item (gbtMseLossSpec model input target h)
-  -- Compact scalar proxy for an L2-style ensemble penalty.
-  let regularization := lambda * mse
-  Tensor.scalar (mse + regularization)
-
-/--
-LightGBM-style squared-error proxy with L1/L2-shaped scalar penalties.
-
-This objective is deterministic because it operates on a fixed ensemble and batch. It records the
-loss shape used by examples rather than the full LightGBM histogram/split objective.
--/
-def lightgbmSquaredErrorObjectiveSpec {batch nTrees maxDepth nFeatures : Nat}
-  (model : GradientBoostedTreesSpec α nFeatures nTrees maxDepth)
-  (input : Tensor α [batch, nFeatures])
-  (target : Tensor α [batch])
-  (lambda_l1 : α)
-  (lambda_l2 : α)
-  (h : batch ≠ 0) :
-  Tensor α .scalar :=
-  let mse := Tensor.item (gbtMseLossSpec model input target h)
-  -- Compact scalar proxy for L1/L2-style ensemble penalties.
-  let regularization := lambda_l1 * mse + lambda_l2 * mse
-  Tensor.scalar (mse + regularization)
 
 end Spec

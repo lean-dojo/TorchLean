@@ -49,14 +49,15 @@ noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
-omit [NeuralValidExp fexp] [NeuralValidRndToNearest rnd] in
+omit [ValidExp fexp] [ValidRndToNearest rnd] in
 /-- Filling a tensor preserves a scalar approximation budget at every shape.
 
 Although this fact is used heavily when constructing reverse-mode zero contexts, it is a shape
@@ -94,20 +95,20 @@ theorem approxTensor_full_const {cS : ℝ} {cR : R} {eps : ℝ}
 
 private theorem toSpec_one_bound :
     abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (1 : R) - (1 : ℝ)) ≤
-      neuralUlp β fexp (1 : ℝ) / 2 := by
+      ulp β fexp (1 : ℝ) / 2 := by
   convert
     (Proofs.RuntimeRoundingApprox.roundR_abs_error
       (β := β) (fexp := fexp) (rnd := rnd) (1 : ℝ)) using 1
-  · simp [NFBackend.toSpec, TorchLean.Floats.NF.toReal,
+  · simp [NFBackend.toSpec, NF.toReal,
       Proofs.RuntimeRoundingApprox.roundR]
     exact congrArg (fun x => abs (x - (1 : ℝ)))
-      (show (1 : R).val = neuralRound (β := β) (fexp := fexp) rnd 1 from rfl)
+      (show (1 : R).val = Flocq.round (β := β) (fexp := fexp) rnd 1 from rfl)
 
 /-- A tensor filled with runtime one differs from exact one by at most one construction rounding. -/
 theorem approxTensor_full_one :
     ∀ {s : Shape},
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-        (Tensor.full s (1 : ℝ)) (Tensor.full s (1 : R)) (neuralUlp β fexp (1 : ℝ) / 2) := by
+        (Tensor.full s (1 : ℝ)) (Tensor.full s (1 : R)) (ulp β fexp (1 : ℝ) / 2) := by
   intro s
   apply approxTensor_full_const (β := β) (fexp := fexp) (rnd := rnd)
   exact toSpec_one_bound (β := β) (fexp := fexp) (rnd := rnd)
@@ -125,7 +126,7 @@ theorem approxTensor_full_zero :
 private def maskValue {α : Type} [Zero α] (value : α) (allowed : Bool) : α :=
   if allowed then value else 0
 
-omit [NeuralValidExp fexp] [NeuralValidRndToNearest rnd] in
+omit [ValidExp fexp] [ValidRndToNearest rnd] in
 /-- Filling a tensor with one approximate scalar gives an approximation with the same tolerance.
 
 Broadcasting a constant copies a value rather than computing with it, so no new rounding occurs and
@@ -151,7 +152,7 @@ theorem approxTensor_replicate {s : Shape}
       intro i
       simpa only [Spec.unstack_replicate] using ih
 
-omit [NeuralValidExp fexp] [NeuralValidRndToNearest rnd] in
+omit [ValidExp fexp] [ValidRndToNearest rnd] in
 /-- Broadcasting preserves the approximation tolerance, for the same reason `replicate` does: every
 output entry is a copy of some input entry, so it inherits that entry's error and nothing more. -/
 theorem approxTensor_broadcastTo
@@ -232,7 +233,7 @@ theorem approxTensor_applyBoolMask {s : Shape}
           change abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (0 : R) - (0 : ℝ)) ≤ eps
           simpa [toSpec_zero] using approxTensor_eps_nonneg hx
       | true =>
-          simpa only [map2Spec_scalar, maskValue, if_true] using hx
+          simpa only [map2Spec_scalar, maskValue, ite_true] using hx
   | dim n inner ih =>
       have hε := approxTensor_eps_nonneg hx
       refine approxTensor_dim_of_forall

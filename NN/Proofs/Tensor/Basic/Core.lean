@@ -8,7 +8,7 @@ Authors: TorchLean Team
 -- cannot see those downstream lookups, so keep the marked imports.
 module -- shake: keep-downstream
 
-public import Mathlib.Data.Real.Basic -- shake: keep
+public import Mathlib.Basic.Real.Basic -- shake: keep
 public import NN.Spec.Core.TensorOps -- shake: keep
 public import NN.Spec.Core.TensorReductionShape.ShapeChange -- shake: keep
 public import Mathlib.Algebra.BigOperators.GroupWithZero.Action -- shake: keep

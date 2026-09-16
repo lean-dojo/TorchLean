@@ -35,15 +35,16 @@ namespace Proofs.RuntimeApprox.NFBackend.Optimizer
 
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 open Proofs.RuntimeApprox.Optimizer
 
 noncomputable section
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 /-! ## SGD -/
 

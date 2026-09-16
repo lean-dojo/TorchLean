@@ -84,11 +84,40 @@ def validate (config : CudaAdamConfig) : Except String Unit := do
 
 end CudaAdamConfig
 
-/-- Versioned header for CUDA Adam and AdamW checkpoints. -/
+/-- Version 2 header, retained for layouts with independent trainable parameters. -/
 def cudaAdamCheckpointFormat : CheckpointIO.Format where
   name := checkpointName
   magic := "TLADAMF".toUTF8
   version := 2
+
+/-- Version 3 records storage sharing while retaining the original parameter-slot identifiers. -/
+def cudaAdamAliasCheckpointFormat : CheckpointIO.Format :=
+  { cudaAdamCheckpointFormat with version := 3 }
+
+/--
+Read a supported header and reject a legacy checkpoint when the destination shares parameters.
+
+Version 2 contains no sharing information. Its per-slot histories cannot establish which moment
+pair belongs to shared storage, so an aliased trainer must start a fresh history or load version 3.
+The check precedes config parsing and all device allocation.
+-/
+def readCudaAdamCheckpointFormat
+    (handle : IO.FS.Handle) (schema : OptimizerCheckpoint.ParameterSchema) :
+    IO CheckpointIO.Format := do
+  let magic ← CheckpointIO.readExact checkpointName handle cudaAdamCheckpointFormat.magic.size
+  if magic != cudaAdamCheckpointFormat.magic then
+    throw <| IO.userError s!"{checkpointName}: unsupported checkpoint family"
+  let version ← CheckpointIO.readNat64 checkpointName handle
+  match version with
+  | 2 => do
+      if schema.hasAliases then
+        throw <| IO.userError
+          s!"{checkpointName}: version 2 cannot restore shared parameter histories"
+      pure cudaAdamCheckpointFormat
+  | 3 => pure cudaAdamAliasCheckpointFormat
+  | _ =>
+      throw <| IO.userError
+        s!"{checkpointName}: unsupported format version {version}; expected 2 or 3"
 
 /-- Release every device buffer owned by an Adam state map. -/
 def releaseCudaAdamState (state : CudaAdamState) : IO Unit := do
@@ -148,8 +177,10 @@ def readConfig (handle : IO.FS.Handle) : IO CudaAdamConfig := do
 /--
 Stream CUDA Adam or AdamW moments to disk.
 
-The file includes the optimizer configuration and the complete ordered parameter schema. Saving
-before the first Adam-family update is rejected because no optimizer state has yet been defined.
+The file includes the optimizer configuration and the complete ordered parameter schema. Shared
+parameters use version 3 and one moment entry per representative; independent parameters keep the
+version 2 encoding. Saving before the first Adam-family update is rejected because no optimizer
+state has yet been defined.
 -/
 def writeCudaAdamStateFloat32
     (path : System.FilePath) (schema : OptimizerCheckpoint.ParameterSchema)
@@ -164,21 +195,27 @@ def writeCudaAdamStateFloat32
   | .ok () => pure ()
   | .error message => throw <| IO.userError message
   let state ← stateRef.get
-  if state.size != schema.trainableCount then
+  if state.size != schema.optimizerStateCount then
     throw <| IO.userError <|
-      s!"{checkpointName}: expected {schema.trainableCount} moment entries, got {state.size}"
+      s!"{checkpointName}: expected {schema.optimizerStateCount} moment entries, got {state.size}"
   let entries := state.toList.mergeSort (fun left right => left.1 ≤ right.1)
+  let format :=
+    if schema.hasAliases then cudaAdamAliasCheckpointFormat else cudaAdamCheckpointFormat
   CheckpointIO.writeAtomically path fun handle => do
-    CheckpointIO.writeFormat cudaAdamCheckpointFormat handle
+    CheckpointIO.writeFormat format handle
     writeConfig handle config
-    OptimizerCheckpoint.ParameterSchema.write cudaAdamCheckpointFormat handle schema
+    schema.write format handle
+    if format.version == 3 then
+      schema.writeRepresentatives format handle
     CheckpointIO.writeNat64 checkpointName handle entries.length
     for (id, entry) in entries do
       let shape ← match schema.shapes[id]? with
         | some shape => pure shape
         | none => throw <| IO.userError s!"{checkpointName}: invalid parameter id {id}"
-      if schema.requiresGrad[id]? != some true then
-        throw <| IO.userError s!"{checkpointName}: state exists for frozen parameter {id}"
+      unless schema.isRepresentative id do
+        throw <| IO.userError s!"{checkpointName}: parameter {id} does not own optimizer state"
+      if entry.t == 0 then
+        throw <| IO.userError s!"{checkpointName}: zero step counter for parameter {id}"
       let count := Spec.Shape.size shape
       if (Runtime.Autograd.Cuda.Buffer.size entry.m).toNat != count ||
           (Runtime.Autograd.Cuda.Buffer.size entry.v).toNat != count then
@@ -193,22 +230,31 @@ def writeCudaAdamStateFloat32
       handle.write mBytes
       handle.write vBytes
 
-/-- Read a whole CUDA Adam checkpoint: header, config, then one moment pair per parameter.
+/-- Read a whole CUDA Adam checkpoint: metadata, then one moment pair per representative.
 
 The state is built in a local map and only installed once every parameter has been read and checked
 against `schema`, so a truncated file leaves the live optimizer untouched. -/
 def readCheckpoint
-    (handle : IO.FS.Handle) (schema : OptimizerCheckpoint.ParameterSchema) :
+    (handle : IO.FS.Handle) (schema : OptimizerCheckpoint.ParameterSchema)
+    (expectedConfig : Option CudaAdamConfig := none) :
     IO (CudaAdamConfig × CudaAdamState) := do
+  unless schema.isWellFormed do
+    throw <| IO.userError s!"{checkpointName}: malformed expected parameter schema"
   let mut replacement : CudaAdamState := Std.HashMap.emptyWithCapacity
   try
-    CheckpointIO.readFormat cudaAdamCheckpointFormat handle
+    let format ← readCudaAdamCheckpointFormat handle schema
     let config ← readConfig handle
-    OptimizerCheckpoint.ParameterSchema.readAndCheck cudaAdamCheckpointFormat handle schema
+    if let some expected := expectedConfig then
+      unless config.sameBits expected do
+        throw <| IO.userError <|
+          s!"{checkpointName}: checkpoint belongs to a different optimizer configuration"
+    schema.readAndCheck format handle
+    if format.version == 3 then
+      schema.readAndCheckRepresentatives format handle
     let entryCount ← CheckpointIO.readNat64 checkpointName handle
-    if entryCount != schema.trainableCount then
+    if entryCount != schema.optimizerStateCount then
       throw <| IO.userError <|
-        s!"{checkpointName}: expected {schema.trainableCount} moment entries, got {entryCount}"
+        s!"{checkpointName}: expected {schema.optimizerStateCount} moment entries, got {entryCount}"
     for _ in [0:entryCount] do
       let id ← CheckpointIO.readNat64 checkpointName handle
       let step ← CheckpointIO.readNat64 checkpointName handle
@@ -218,8 +264,8 @@ def readCheckpoint
       let shape ← match schema.shapes[id]? with
         | some shape => pure shape
         | none => throw <| IO.userError s!"{checkpointName}: invalid parameter id {id}"
-      if schema.requiresGrad[id]? != some true then
-        throw <| IO.userError s!"{checkpointName}: state exists for frozen parameter {id}"
+      unless schema.isRepresentative id do
+        throw <| IO.userError s!"{checkpointName}: parameter {id} does not own optimizer state"
       if step = 0 then
         throw <| IO.userError s!"{checkpointName}: zero step counter for parameter {id}"
       if count != Spec.Shape.size shape then
@@ -255,8 +301,10 @@ def readCudaAdamStateFloat32
     (configRef : IO.Ref (Option CudaAdamConfig)) (stateRef : IO.Ref CudaAdamState) : IO Unit := do
   unless schema.isWellFormed do
     throw <| IO.userError s!"{checkpointName}: malformed in-memory parameter schema"
+  let expectedConfig ← configRef.get
   let (config, replacement) ←
-    IO.FS.withFile path IO.FS.Mode.read fun handle => readCheckpoint handle schema
+    IO.FS.withFile path IO.FS.Mode.read fun handle =>
+      readCheckpoint handle schema expectedConfig
   match ← configRef.get with
   | some expected =>
       unless config.sameBits expected do

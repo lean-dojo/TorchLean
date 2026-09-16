@@ -176,54 +176,69 @@ theorem wellFormed_push
     | add a b =>
       have ha : a.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) a
       have hb : b.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) b
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, ha, hb]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | sub a b =>
       have ha : a.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) a
       have hb : b.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) b
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, ha, hb]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | mulElem a b =>
       have ha : a.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) a
       have hb : b.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) b
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, ha, hb]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | relu x =>
       have hx : x.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) x
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, hx]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | exp x =>
       have hx : x.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) x
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, hx]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | log x =>
       have hx : x.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) x
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, hx]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | inv x =>
       have hx : x.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) x
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, hx]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | matmul _op a b =>
       have ha : a.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) a
       have hb : b.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) b
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, ha, hb]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | reshape _inS _outS _h x =>
       have hx : x.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) x
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, hx]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | transpose _axis₁ _axis₂ _hOut x =>
       have hx : x.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) x
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, hx]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | softmax _axis _hAxis x =>
       have hx : x.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) x
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, hx]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | layerNorm _op x =>
       have hx : x.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) x
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, hx]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | linear _inDim _outDim _w _b x =>
       have hx : x.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) x
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, hx]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | conv _inC _outC _kernelShape _stride _padding _inSpatial _hIn _hKernel _hStride
         _hFits _kernel _bias x =>
       have hx : x.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) x
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, hx]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
     | mseLoss yhat target =>
       have hy : yhat.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) yhat
       have ht : target.id < ss.length + 1 := idx_id_lt_ctxLen (inShape := inShape) (ss := ss) target
-      simp [lowerNode, NN.IR.Node.parentsBelow, List.all, hy, ht]
+      simp [lowerNode, NN.IR.Node.parentsBelow, List.all]
+      omega
 
   /--
   Lowering preserves `Graph.wellFormed` while threading the lowering pass accumulator through a

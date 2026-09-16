@@ -29,13 +29,14 @@ noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 open Proofs.RuntimeRoundingApprox
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 namespace Impl
 
@@ -48,7 +49,7 @@ end Impl
 
 open Impl
 
-omit [NeuralValidExp fexp] [NeuralValidRndToNearest rnd] in
+omit [ValidExp fexp] [ValidRndToNearest rnd] in
 /-- The internal axis-one spelling is an exact shape operation. -/
 theorem approxTensor_unsqueezeAfterLeading {n : Nat} {s : Shape}
     {xS : SpecTensor (.dim n s)} {xR : Tensor R (.dim n s)} {eps : ℝ}

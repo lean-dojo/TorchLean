@@ -9,7 +9,6 @@ module
 public import Lean.Data.Json.Elab
 public import ProofWidgets.Data.Html
 public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
-public meta import ProofWidgets.Demos.Macro -- shake: keep
 
 /-!
 # Widgets UI helpers
@@ -39,6 +38,18 @@ open scoped ProofWidgets.Jsx
 namespace NN.Widgets
 
 namespace UI
+
+/-- Mark a macro-generated command as the source location of its widget panel. -/
+def canonicalCommand (stx : Lean.TSyntax `command) : Lean.TSyntax `command :=
+  ⟨match stx.raw with
+    | .missing => .missing
+    | .node info kind args => .node (canonicalInfo info) kind args
+    | .atom info value => .atom (canonicalInfo info) value
+    | .ident info raw value pre => .ident (canonicalInfo info) raw value pre⟩
+where
+  canonicalInfo : Lean.SourceInfo → Lean.SourceInfo
+    | .synthetic start stop _ => .synthetic start stop true
+    | info => info
 
 /-- Render a string as monospace code, using VS Code theme fonts when available. -/
 def monospace (s : String) : ProofWidgets.Html :=

@@ -7,12 +7,13 @@ Authors: TorchLean Team
 module
 
 public import NN.API.CLI
-public import NN.Floats.IEEEExec.Exec32
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured
+public import FloatLib.Floats.Formats.IEEE754.Native
 /-!
 # Native binary32 parity: the test behind the CUDA float32 contract
 
 `Runtime.Autograd.Cuda.Float32Contract.NativePrimitiveAgreement` records assumptions that
-native `add`, `mul`, `div`, `fma`, and `sqrt` agree bit-for-bit with `IEEE32Exec`.
+native `add`, `mul`, `div`, `fma`, and `sqrt` agree bit-for-bit with `ExecFloat.Binary 8 23`.
 This regression harness compares selected host results with that reference; passing a finite set of
 cases does not establish the universal contract or verify a GPU implementation.
 
@@ -20,7 +21,8 @@ Lean's native `Float32` calls host binary32 arithmetic for four operations. Core
 `Float32` fused-multiply-add primitive, so this harness emits reference FMA cases for
 `scripts/checks/cuda_float32_parity.sh`. That script compares host `fmaf` and device `__fmaf_rn`.
 
-Lean's `Float32.ofBits` canonicalizes NaNs, while `IEEE32Exec` preserves their sign and payload
+Lean's `Float32.ofBits` canonicalizes NaNs, while `ExecFloat.Binary 8 23` preserves their sign and
+payload
 when quieting them. The native conversion therefore cannot serve as a payload-preserving oracle.
 The sweep skips NaN inputs and counts them separately; `nanOracleReport` displays the conversion
 behavior. This limitation concerns the host comparison, not a measured GPU result.
@@ -35,8 +37,12 @@ The last form prints one case per line for the CUDA parity script to consume.
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofBits32)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 open TorchLean
-open TorchLean.Floats.IEEE754
 
 namespace NN.Tests.Floats.NativePrimitiveParity
 
@@ -106,23 +112,23 @@ def isNaNBits (u : UInt32) : Bool :=
 
 /-- The reference model's answer for each primitive, as bits. -/
 def modelAdd (x y : UInt32) : UInt32 :=
-  (IEEE32Exec.add (IEEE32Exec.ofBits x) (IEEE32Exec.ofBits y)).toBits
+  Binary.toBits32 (ExecFloat.add (ofBits32 x) (ofBits32 y))
 
 @[inherit_doc modelAdd]
 def modelMul (x y : UInt32) : UInt32 :=
-  (IEEE32Exec.mul (IEEE32Exec.ofBits x) (IEEE32Exec.ofBits y)).toBits
+  Binary.toBits32 (ExecFloat.mul (ofBits32 x) (ofBits32 y))
 
 @[inherit_doc modelAdd]
 def modelDiv (x y : UInt32) : UInt32 :=
-  (IEEE32Exec.div (IEEE32Exec.ofBits x) (IEEE32Exec.ofBits y)).toBits
+  Binary.toBits32 (ExecFloat.div (ofBits32 x) (ofBits32 y))
 
 @[inherit_doc modelAdd]
 def modelSqrt (x : UInt32) : UInt32 :=
-  (IEEE32Exec.sqrt (IEEE32Exec.ofBits x)).toBits
+  Binary.toBits32 (Binary.sqrt (rounding := .nearestEven) (ofBits32 x))
 
 @[inherit_doc modelAdd]
 def modelFma (x y z : UInt32) : UInt32 :=
-  (IEEE32Exec.fma (IEEE32Exec.ofBits x) (IEEE32Exec.ofBits y) (IEEE32Exec.ofBits z)).toBits
+  Binary.toBits32 (Binary.fma (rounding := .nearestEven) (ofBits32 x) (ofBits32 y) (ofBits32 z))
 
 /-- The same expression with two roundings, used to show what a missing `fma` would return. -/
 def modelMulThenAdd (x y z : UInt32) : UInt32 :=
@@ -295,8 +301,8 @@ docstring rather than as a parity check.
 -/
 def nanOracleReport (payload : UInt32) : String :=
   let native := (Float32.ofBits payload).toBits
-  let model := (IEEE32Exec.ofBits payload).toBits
-  s!"NaN {hex8 payload}: Float32 keeps {hex8 native}, IEEE32Exec keeps {hex8 model}"
+  let model := (ofBits32 payload).toBits32
+  s!"NaN {hex8 payload}: Float32 keeps {hex8 native}, configured binary32 keeps {hex8 model}"
 
 /-- Command-line help for the native parity tutorial. -/
 def usage : String :=
@@ -362,7 +368,7 @@ def main (args : List String) : IO Unit := do
     for line in emitLines sweepCount (UInt32.ofNat seed) do
       IO.println line
     return
-  IO.println "== native binary32 parity (Float32 versus IEEE32Exec) =="
+  IO.println "== native binary32 parity (Float32 versus configured binary32) =="
   IO.println s!"curated cases: {curatedCases.size}, four primitives each"
   for c in curatedCases do
     IO.println (caseRows c)
@@ -373,7 +379,7 @@ def main (args : List String) : IO Unit := do
     IO.println s!"sweep: {sweepCount} operand pairs, seed {seed}"
     IO.println swept.render
     unless swept.clean do
-      throw <| IO.userError "native binary32 parity: sweep disagrees with IEEE32Exec"
+      throw <| IO.userError "native binary32 parity: sweep disagrees with configured binary32"
   IO.println "fused multiply-add has no Float32 primitive in Lean; reference bits only:"
   for c in curatedFmaCases do
     IO.println s!"  [{c.what}] {hex8 c.x} {hex8 c.y} {hex8 c.z}"
@@ -384,6 +390,6 @@ def main (args : List String) : IO Unit := do
   for payload in [0x7FAC6DE8, 0xFFAC6DE8, 0x7F800001] do
     IO.println s!"  {nanOracleReport (UInt32.ofNat payload)}"
   unless curated.clean do
-    throw <| IO.userError "native binary32 parity: curated cases disagree with IEEE32Exec"
+    throw <| IO.userError "native binary32 parity: curated cases disagree with configured binary32"
 
 end NN.Tests.Floats.NativePrimitiveParity

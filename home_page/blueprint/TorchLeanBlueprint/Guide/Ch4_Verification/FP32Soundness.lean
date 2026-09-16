@@ -1,8 +1,6 @@
 import VersoManual
--- The arithmetic instances for `IEEE32Exec` live here, and the `#eval` demonstrations below
--- write plain numerals and `+` at that type. Nothing in the proof modules imported next
--- re-exports them, so this chapter names the module it actually needs.
-import NN.Floats.IEEEExec.Exec32
+-- Executable examples use FloatLib directly; the following imports supply TorchLean error bounds.
+import FloatLib
 import NN.Proofs.RuntimeApprox.FP32
 import NN.Proofs.RuntimeApprox.FP32.Layers
 import NN.Proofs.RuntimeApprox.FP32.MLP
@@ -16,23 +14,17 @@ import TorchLeanBlueprint.Roles
 
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
+open FloatLib.Numerics
+open FloatLib.Floats.Formats.Flocq
 
 -- Every theorem quoted below lives in this one namespace, so opening it here keeps the
 -- displayed `#check` lines short. Inside the namespace, `R` is the FP32 abbreviation and
 -- `toSpec` is the map back to `ℝ`, which is why both names show up in the signatures.
 open NN.Proofs.RuntimeApprox.FP32
 
--- The float model itself, its pinned binary32 operators (`round32`, `ulp32`, `eps32`), and the
--- executable bit-level reference all live under `TorchLean.Floats`.
+-- TorchLean specializes rounded-real error bounds at binary32.
 open TorchLean.Floats
 open TorchLean.Floats.IEEE754
-
--- The executable demonstrations below read much better as `toDyadic? (nextUp 1)` than as a chain
--- of fully qualified names, but opening all of `IEEE32Exec` would shadow `add`, `abs`, and `neg`
--- for the rest of the file. Naming exactly the constructors and observers used here is the
--- compromise: the code blocks stay short and nothing else changes meaning.
-open TorchLean.Floats.IEEE754.IEEE32Exec
-  (ofBits ofFloat toDyadic? toRat? nextUp posMinSubnormal posMaxFinite isInf isZero)
 
 -- The CUDA float32 contract is where the "which provider actually ran this?" question is stated
 -- as a hypothesis rather than assumed away, so the last section quotes it directly.
@@ -47,6 +39,10 @@ open NN.Tests.Floats.NativePrimitiveParity
 -- `whitespace := lax`, which ignores where the expected text happens to be wrapped. The
 -- rendered page still shows the message exactly as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat.Binary (ofBits32 ofFloat32)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 #doc (Manual) "Float32 Soundness" =>
 %%%
@@ -88,34 +84,40 @@ with a counterexample to the network's property.
 
 # Binary32 Representation
 
-The error depends on the spacing of representable values. `IEEE32Exec` stores a `UInt32` bit
-pattern and can decode a finite value as a dyadic rational. In the records below, `mant` is an
-integer significand and `exp` gives its power-of-two scale. With `sign := false`, the value is
-`mant * 2^exp`; a true sign negates it.
+The error depends on the spacing of representable values. Choose `ExecFloat.Binary 8 23` for
+binary32: eight exponent bits and twenty-three stored fraction bits. FloatLib can expose its
+encoding as a `UInt32` and decode a finite value as a dyadic rational. In the records below,
+`significand` is a nonnegative integer, and `exponent` gives its power-of-two scale. With
+`negative := false`, the value is `significand * 2^exponent`; a true `negative` flag negates it.
 
 ```lean (name := fpsGrid)
 -- Decode exact grid points at one and at both ends of the
 -- finite binary32 range.
-#eval toDyadic? (1 : IEEE32Exec)
-#eval toDyadic? (nextUp 1)
-#eval toDyadic? posMinSubnormal
-#eval toDyadic? posMaxFinite
+-- The word 0x3f800000 encodes one.
+#eval Model.toDyadic? (ExecFloat.Binary.toModel
+  (ofBits32 0x3f800000))
+#eval Model.toDyadic? (ExecFloat.Binary.toModel
+  (ExecFloat.Binary.nextUp (ofBits32 0x3f800000)))
+#eval Model.toDyadic? (ExecFloat.Binary.toModel
+  (ofBits32 1))
+#eval Model.toDyadic? (ExecFloat.Binary.toModel
+  (ofBits32 0x7f7fffff))
 ```
 
 ```leanOutput fpsGrid (whitespace := lax)
-some { sign := false, mant := 8388608, exp := -23 }
+some { negative := false, significand := 8388608, exponent := -23 }
 ```
 
 ```leanOutput fpsGrid (whitespace := lax)
-some { sign := false, mant := 8388609, exp := -23 }
+some { negative := false, significand := 8388609, exponent := -23 }
 ```
 
 ```leanOutput fpsGrid (whitespace := lax)
-some { sign := false, mant := 1, exp := -149 }
+some { negative := false, significand := 1, exponent := -149 }
 ```
 
 ```leanOutput fpsGrid (whitespace := lax)
-some { sign := false, mant := 16777215, exp := 104 }
+some { negative := false, significand := 16777215, exponent := 104 }
 ```
 
 The first record represents one as $`2^{23}\cdot2^{-23}`, so the significand carries 24 bits and the
@@ -127,7 +129,7 @@ $`1\cdot2^{-149}`, and Lean will print that value as an exact rational if asked:
 ```lean (name := fpsMinSub)
 -- The rational output exposes the minimum subnormal without
 -- decimal rounding.
-#eval toRat? posMinSubnormal
+#eval ExecFloat.Binary.toRat? (ExecFloat.Binary.ofBits32 1)
 ```
 
 ```leanOutput fpsMinSub (whitespace := lax)
@@ -135,20 +137,20 @@ some (1 / 713623846352979940529142984724747568191373312)
 ```
 
 The two exponents `-23` and `-149` are precisely the two numbers that define the proof model. Its
-exponent function is `FLTExp (-149) 24`, and evaluating that function at a large and a small
+exponent function is `fltExp (-149) 24`, and evaluating that function at a large and a small
 magnitude recovers the two regimes visible above:
 
 ```lean
 -- The same exponent policy describes normal spacing and the
 -- fixed subnormal floor.
 example : fexp32 1 = -23 := by
-  simp [fexp32, FLTExp]
+  simp [fexp32, fltExp]
 
 example : fexp32 (-200) = -149 := by
-  simp [fexp32, FLTExp]
+  simp [fexp32, fltExp]
 ```
 
-`FLTExp emin prec` is `fun e => max (e - prec) emin`. Here `e` is the magnitude exponent, and
+`fltExp emin prec` is `fun e => max (e - prec) emin`. Here `e` is the magnitude exponent, and
 the result gives the exponent of the grid spacing. In the normal range, subtracting `prec` lets
 the spacing track the magnitude. Near zero, the lower limit fixes the spacing at
 $`2^{\mathtt{emin}}`, allowing successively smaller subnormal significands on the same grid.
@@ -160,7 +162,7 @@ The table compares these exact values with familiar `float32` format metadata. T
 :::table +header
 *
   * quantity
-  * Lean, from `IEEE32Exec`
+  * Lean, from FloatLib binary32
   * PyTorch / NumPy `float32`
 *
   * step above `1`
@@ -176,7 +178,7 @@ The table compares these exact values with familiar `float32` format metadata. T
   * `finfo.max = 3.4028235e+38`
 *
   * significand bits
-  * `mant` reaches $`2^{24}-1`
+  * `significand` reaches $`2^{24}-1`
   * `finfo.nmant = 23` plus the hidden bit
 :::
 
@@ -195,9 +197,11 @@ operations shown here, the sum and the literal round to the same value:
 ```lean (name := fpsFolklore)
 -- Check both equality and exact decoding for this
 -- precision-dependent decimal example.
-#eval ofFloat 0.1 + ofFloat 0.2 == ofFloat 0.3
-#eval toDyadic? (ofFloat 0.1 + ofFloat 0.2)
-#eval toDyadic? (ofFloat 0.3)
+#eval ofFloat32 0.1 + ofFloat32 0.2 == ofFloat32 0.3
+#eval Model.toDyadic? (ExecFloat.Binary.toModel
+  (ofFloat32 0.1 + ofFloat32 0.2))
+#eval Model.toDyadic? (ExecFloat.Binary.toModel
+  (ofFloat32 0.3))
 ```
 
 ```leanOutput fpsFolklore (whitespace := lax)
@@ -205,11 +209,11 @@ true
 ```
 
 ```leanOutput fpsFolklore (whitespace := lax)
-some { sign := false, mant := 10066330, exp := -25 }
+some { negative := false, significand := 10066330, exponent := -25 }
 ```
 
 ```leanOutput fpsFolklore (whitespace := lax)
-some { sign := false, mant := 10066330, exp := -25 }
+some { negative := false, significand := 10066330, exponent := -25 }
 ```
 
 PyTorch agrees, for the same reason:
@@ -233,8 +237,9 @@ new specializations; changing one exponent function does not establish a new nat
 
 The two identical dyadic records explain more than the Boolean result alone. They show that the
 sum and the converted literal occupy the same binary32 grid point, whose exact value is
-`10066330 * 2^-25`. That point is not the rational number three tenths. Also, `ofFloat` converts
-Lean's `Float` argument; the displayed computation does not begin with exact rational tenths.
+`10066330 * 2^-25`. That point is not the rational number three tenths. Here `ofFloat32` imports
+Lean's native `Float32` arguments by their interchange words; the decimal literals have already
+rounded to binary32. The addition and comparison then use FloatLib's configured operations.
 Keeping the conversion in view avoids turning a precision-specific observation into a claim
 that decimal fractions have become exactly representable.
 
@@ -246,8 +251,12 @@ The spacing at one and the unit roundoff are different constants, both sometimes
 ```lean (name := fpsEps)
 -- Compare a half-spacing tie with an increment of one full
 -- spacing.
-#eval (1 : IEEE32Exec) + ofBits 0x33800000 == 1
-#eval (1 : IEEE32Exec) + ofBits 0x34000000 == 1
+#eval
+  let one := ofBits32 0x3f800000
+  one + ofBits32 0x33800000 == one
+#eval
+  let one := ofBits32 0x3f800000
+  one + ofBits32 0x34000000 == one
 ```
 
 ```leanOutput fpsEps (whitespace := lax)
@@ -272,11 +281,11 @@ The spacing at `1` is a theorem, not a measurement:
 -- Express one as a radix power so the generic ULP theorem
 -- applies directly.
 theorem fpsUlpOne : ulp32 1 = 1 / 8388608 := by
-  have h : (1 : ℝ) = neuralBpow binaryRadix 0 := by
-    simp [neuralBpow]
-  rw [ulp32, h, neuralUlp_bpow]
-  norm_num [fexp32, FLTExp, neuralBpow,
-    NeuralRadix.toReal, binaryRadix]
+  have h : (1 : ℝ) = bpow binaryRadix 0 := by
+    simp [bpow]
+  rw [ulp32, h, ulp_bpow]
+  norm_num [fexp32, fltExp, bpow,
+    Radix.toReal, binaryRadix]
 ```
 
 The useful error theorem applies at an arbitrary exact result, including values that are not
@@ -287,7 +296,7 @@ representable. Instantiating it at $`1` alone would have zero actual rounding er
 -- exact real result.
 theorem fpsHalfUlp (x : ℝ) :
     |round32 x - x| ≤ ulp32 x / 2 := by
-  exact neural_error_bound_ulp (β := binaryRadix)
+  exact error_bound_ulp (β := binaryRadix)
     (fexp := fexp32) rnd32 x
 ```
 
@@ -303,16 +312,20 @@ half the subnormal spacing. Thus `fpsHalfUlp` can cover that point with the same
 near one, while a relative estimate using the normal-range unit roundoff needs a hypothesis
 excluding this underflow situation.
 
-Rounding also breaks associativity, which is not a curiosity but a constraint on how any bound may
-be stated:
+Rounding also breaks associativity. We can see why the evaluation order belongs in an error
+bound by adding the same two increments in different orders:
 
 ```lean (name := fpsAssoc)
 -- Only the parentheses change; each addition still rounds
 -- independently.
-#eval ((1 : IEEE32Exec) + ofBits 0x33800000)
-        + ofBits 0x33800000 == 1
-#eval (1 : IEEE32Exec)
-        + (ofBits 0x33800000 + ofBits 0x33800000) == 1
+#eval
+  let one := ofBits32 0x3f800000
+  let halfUlp := ofBits32 0x33800000
+  (one + halfUlp) + halfUlp == one
+#eval
+  let one := ofBits32 0x3f800000
+  let halfUlp := ofBits32 0x33800000
+  one + (halfUlp + halfUlp) == one
 ```
 
 ```leanOutput fpsAssoc (whitespace := lax)
@@ -342,7 +355,7 @@ the dot-product bound in this chapter is stated about a specific fold rather tha
 and why a claim about a GPU kernel has to say something about reduction order before it can say
 anything about error.
 
-# FP32 And IEEE32Exec Models
+# Rounded Reals And Executable Formats
 
 `FP32` is TorchLean's rounded-real proof model:
 
@@ -374,7 +387,7 @@ At the bottom, the two models agree, because `FP32` keeps the same smallest step
 ```
 
 ```leanOutput fpsUlpZero (whitespace := lax)
-ulp32_zero : ulp32 0 = neuralBpow binaryRadix (-149)
+ulp32_zero : ulp32 0 = bpow binaryRadix (-149)
 ```
 
 An exact magnitude at or below half of $`2^{-149}` rounds to zero under nearest-even rounding.
@@ -384,7 +397,7 @@ toward zero in both models. This is ordinary gradual-underflow rounding:
 ```lean (name := fpsUnderflow)
 -- The midpoint between zero and the least positive
 -- subnormal rounds to even zero.
-#eval isZero (posMinSubnormal / 2)
+#eval ExecFloat.Binary.isZero (ofBits32 1 / 2)
 ```
 
 ```leanOutput fpsUnderflow (whitespace := lax)
@@ -398,23 +411,21 @@ real value:
 ```lean (name := fpsOverflow)
 -- Finite operands can overflow, so input finiteness alone
 -- is insufficient for a bridge.
-#eval isInf (posMaxFinite + posMaxFinite)
+#eval ExecFloat.Binary.isInfinite
+  (ofBits32 0x7f7fffff + ofBits32 0x7f7fffff)
 ```
 
 ```leanOutput fpsOverflow (whitespace := lax)
 true
 ```
 
-This is a deliberate split rather than an oversight. Keeping overflow out of `FP32` gives the
-rounded-real arithmetic a total, unbounded-exponent
-meaning; connecting it to a network execution still requires finite-path hypotheses, and it is why
-every
-statement that has to survive a possible infinity is phrased over `IEEE32Exec` instead.
-`IEEE32Exec` stores a `UInt32` bit pattern and executes the binary32 special cases, so it is the
-right reference when a claim depends on NaN, infinity, subnormals, signed zero, or exact result
-bits. The two APIs begin at the
-[FP32 proof semantics](https://github.com/lean-dojo/TorchLean/blob/main/NN/Floats/FP32.lean) and the
-{src "NN/Floats/IEEEExec/Exec32.lean"}[IEEE32Exec semantics].
+Without an upper exponent cutoff, `FP32` arithmetic has a total, unbounded-exponent meaning.
+Connecting it to a network execution
+still requires finite-path hypotheses. FloatLib binary32 represents all 32-bit encodings, including
+NaN, infinity, subnormals and signed zero; use it when a claim depends on those cases or exact
+result bits. The two APIs begin at the
+[FP32 proof semantics](https://github.com/lean-dojo/TorchLean/blob/main/NN/Floats/FP32.lean) and
+{ref "floats"}[the direct FloatLib representation and arithmetic].
 
 Exact bridge theorems join the models for covered finite-path operations: basic arithmetic, FMA,
 square root, order, and min/max. Their qualifications are operation-specific; for example, division
@@ -442,49 +453,49 @@ source docstrings record the following correspondences:
   * TorchLean (Lean 4)
 *
   * `Valid_exp`
-  * `NeuralValidExp`, whose one field is literally named `flocq_valid`
+  * `ValidExp`, whose one field is literally named `flocq_valid`
 *
   * `FLT_exp emin prec`
-  * `FLTExp emin prec`, and `fexp32 = FLTExp (-149) 24`
+  * `fltExp emin prec`, and `fexp32 = fltExp (-149) 24`
 *
   * `FLX_exp prec`
-  * `FLXExp prec`, the same family without a lower cutoff
+  * `flxExp prec`, the same family without a lower cutoff
 *
   * `mag`
-  * `neuralMagnitude`
+  * `magnitude`
 *
   * `cexp`
-  * `neuralCexp`
+  * `cexp`
 *
   * `scaled_mantissa`
-  * `neuralScaledMantissa`
+  * `scaledMantissa`
 *
   * `generic_format`
-  * `neuralGenericFormat`
+  * `genericFormat`
 *
   * `negligible_exp`
-  * `neuralNegligibleExp`
+  * `negligibleExp`
 *
   * `ulp`
-  * `neuralUlp`, pinned to binary32 as `ulp32`
+  * `ulp`, pinned to binary32 as `ulp32`
 *
   * `round`
-  * `neuralRound`, pinned to binary32 as `round32`
+  * `round`, pinned to binary32 as `round32`
 *
   * `error_le_half_ulp`
-  * `neural_error_bound_ulp`
+  * `error_bound_ulp`
 *
   * `error_le_ulp`
-  * `neural_round_abs_error_le_ulp`
+  * `round_abs_error_le_ulp`
 *
   * `error_lt_ulp`
-  * `neural_round_abs_error_lt_ulp_of_inexact`
+  * `round_abs_error_lt_ulp_of_inexact`
 *
   * relative-error FLT lemmas
-  * `relative_error_round_ulp`, `neuralUlp_div_abs_le_FLT_normal`
+  * `relative_error_round_ulp`, `ulp_div_abs_le_FLT_normal`
 *
   * `binary_float`, `Bplus` and friends
-  * no analogue in `FP32`; `IEEE32Exec` fills that role
+  * no analogue in `FP32`; FloatLib binary32 fills that role
 :::
 
 Three design choices in that table explain the reusable interface.
@@ -496,19 +507,22 @@ $`\mathtt{fexp}:\mathbb{Z}\to\mathbb{Z}` plus a validity condition, so binary32 
 definition and every bound about it is an instance of a bound proved once.
 
 The validity class records the conditions on the exponent function that the generic rounding
-proofs need. Its `flocq_valid` field and names such as `neuralNegligibleExp` retain the source
+proofs need. Its `flocq_valid` field and names such as `negligibleExp` retain the source
 terminology, allowing the two definitions to be compared directly.
 
-The rounding mode is a separate argument to `neuralRound`; `rnd32` selects nearest-even for this
+The rounding mode is a separate argument to `round`; `rnd32` selects nearest-even for this
 specialization. Directed interval rounding can use the same format and ULP machinery. The
 half-ULP estimate depends on nearest rounding, while the grid alone only determines which values
 are representable.
 
 Flocq also contains a bounded-exponent
 `binary_float` type with the IEEE-754 special values and proved operations over it; `FP32` has no
-counterpart, and that job belongs to `IEEE32Exec`. Beyond the paper {Informal.citep flocq2011}[],
-Boldo and Melquiond's *Computer Arithmetic and Formal Proofs* (ISTE Press, 2017) is the book-length
-account of the library and the closest thing to a specification of what this port is a port of.
+counterpart, and that job belongs to FloatLib binary32. Beyond the paper
+{Informal.citep flocq2011}[],
+Boldo and Melquiond's *Computer Arithmetic and Formal Proofs* (ISTE Press, 2017) gives a book-length
+account of Flocq's approach. TorchLean now imports the corresponding generic theory from
+`FloatLib.Floats.Formats.Flocq`; its binary32 specialization and network error bounds build on those
+Lean definitions and proofs.
 
 The table is also a guide to which choices a specialization must supply. The exponent function
 chooses the grid, its validity evidence makes the generic format theorems applicable, and the
@@ -562,7 +576,7 @@ reported budget looks larger than the measured discrepancy.
 
 # Linear Layer Error Bounds
 
-The smallest useful network calculation is already more than one rounded operation:
+A single output of a linear layer already combines several rounded operations:
 
 $$`y_i=b_i+\sum_{j=0}^{n-1}W_{ij}x_j.`
 
@@ -800,18 +814,25 @@ strictly positive, unless a separate argument uses the classifier's tie conventi
 comparison should therefore match the property being certified, including whether equality
 is acceptable.
 
-# IEEE32Exec Refinement And Native Execution
+# Executable Refinement And Native Execution
 
 The result so far concerns the rounded-real `FP32` semantics. For a network whose primitives are
-covered, an `IEEE32Exec` claim can use the exact finite-path bridges and discharge their domain and
+covered, a FloatLib binary32 claim can use the exact finite-path bridges and discharge their
+domain and
 finiteness hypotheses. The current bridges cover basic arithmetic, FMA, square root, order, and
 min/max behavior; they do not yet give an accuracy or refinement theorem connecting executable
 `log` or `tanh` to the rounded-real operations. In particular, the tanh MLP theorem above remains a
 result about the `FP32` proof model until such a transcendental contract is supplied.
 
-The last step, from `IEEE32Exec` to native execution, has no proved bridge in this repository.
-Proving it would require a formal account of the native program and compilation path. Here the
-contract states the assumption and proves its consequences, which is what the CUDA
+FloatLib also proves correspondence with Lean 4.34's logical native float model. Its native
+round-trip theorem covers every value; addition and subtraction correspondence require finite
+inputs, while their results may overflow. Its square-root theorem covers every configured input
+through native export, which canonicalizes NaNs. These are operation-specific statements about
+Lean's logical definitions, with the hypotheses shown in {ref "floats"}[the floating-point chapter].
+
+Agreement with a compiled provider requires a further account of the native program and
+compilation path. Here the contract states the assumption and proves its consequences, which is
+what the CUDA
 float32 contract does. Native results enter as raw 32-bit patterns, and the agreement between those
 patterns and the reference model is a named hypothesis:
 
@@ -852,7 +873,7 @@ consequences: if the native result is finite, the NaN alternative is impossible.
 ```leanOutput fpsAgreeFinite (whitespace := lax)
 @AgreeUpToNaN.eq_of_isFinite : ∀ {native reference : UInt32},
   AgreeUpToNaN native reference →
-    IEEE32Exec.isFinite (fromNativeBits native) = true → native = reference
+    ExecFloat.Binary.isFinite (fromNativeBits native) = true → native = reference
 ```
 
 So under the assumption, a finite native sum *is* the reference sum, as a value and not only up to a
@@ -868,8 +889,8 @@ payload:
 @native_add_eq_ieee32_of_isFinite : ∀ {native : NativePrimitiveBits},
   NativePrimitiveAgreement native →
     ∀ (x y : RefScalar),
-      IEEE32Exec.isFinite (fromNativeBits (native.addBits x y)) = true →
-        fromNativeBits (native.addBits x y) = IEEE32Exec.add x y
+      ExecFloat.Binary.isFinite (fromNativeBits (native.addBits x y)) = true →
+        fromNativeBits (native.addBits x y) = ExecFloat.add x y
 ```
 
 And the half-ULP bound follows for the native result, with the same finiteness side condition:
@@ -884,10 +905,10 @@ And the half-ULP bound follows for the native result, with the same finiteness s
 @native_add_abs_error_of_isFinite : ∀ {native : NativePrimitiveBits},
   NativePrimitiveAgreement native →
     ∀ (x y : RefScalar),
-      IEEE32Exec.isFinite (fromNativeBits (native.addBits x y)) = true →
-        |IEEE32Exec.toReal (fromNativeBits (native.addBits x y)) -
-            (IEEE32Exec.toReal x + IEEE32Exec.toReal y)| ≤
-          eps32 (IEEE32Exec.toReal x + IEEE32Exec.toReal y)
+      ExecFloat.Binary.isFinite (fromNativeBits (native.addBits x y)) = true →
+        |(ExecFloat.Binary.toModel (fromNativeBits (native.addBits x y))).toReal -
+            ((ExecFloat.Binary.toModel x).toReal + (ExecFloat.Binary.toModel y).toReal)| ≤
+          eps32 ((ExecFloat.Binary.toModel x).toReal + (ExecFloat.Binary.toModel y).toReal)
 ```
 
 `NativePrimitiveAgreement` remains an assumption about the provider's operations. Tests can
@@ -926,15 +947,14 @@ agreement premise still has to apply to the primitive and configuration actually
 
 # Native Parity Test Results
 
-The parity examples test specific native operations against `IEEE32Exec`. The following results
+The parity examples test specific native operations against FloatLib binary32. The following results
 show the evidence they provide and how to interpret disagreements.
 
 The examples test two providers. The first is available inside Lean. `Float32` is a native binary32
 type, backed by the host's floating-point unit through externs,
 which makes it a provider in exactly the sense the contract means. The example
-`native_float32_parity` compares it against `IEEE32Exec`, and its API is what the rest of this
-section evaluates, so nothing here is a paraphrase of a log file. One curated case, computed as this
-page is built:
+`native_float32_parity` compares it against FloatLib binary32, and its API is what the rest of this
+section evaluates. The following block computes one curated case as the page builds:
 
 ```lean (name := fpsParityZeros)
 -- Signed-zero bits expose distinctions that a real-valued
@@ -994,15 +1014,16 @@ makes the sequence reproducible, so a disagreement can be investigated using the
   sqrt: 19839/19839 bit-exact
 ```
 
-That is the interpreter, running inside the elaborator that built this page. Compiled, the same code
-does two million draws in about six and a half seconds and reports 1,984,327 pairs bit-exact for all
-four primitives. The gap between 20,000 and 19,839, and between two million and 1,984,327, is draws
-whose operands were `NaN`, which the sweep skips.
+That is the interpreter, running inside the elaborator that built this page. A recorded compiled
+run before the FloatLib migration made two million draws in about six and a half seconds and
+reported 1,984,327 pairs bit-exact for all four primitives. That timing does not characterize the
+migrated implementation. The gap between 20,000 and 19,839, and between two million and 1,984,327,
+is draws whose operands were `NaN`, which the sweep skips.
 
 This bit-exact sweep deliberately skips NaN operands. Lean's `Float32` cannot serve as an oracle for
 `NaN` payloads at all,
 because `Float32.Model.ofBits` is documented to canonicalize every `NaN` input into the canonical
-one, while `IEEE32Exec` keeps the pattern it was handed:
+one, while FloatLib binary32 keeps the pattern it was handed:
 
 ```lean (name := fpsParityNaN)
 -- Inspect conversion before arithmetic when investigating a
@@ -1011,7 +1032,7 @@ one, while `IEEE32Exec` keeps the pattern it was handed:
 ```
 
 ```leanOutput fpsParityNaN
-NaN 0x7fac6de8: Float32 keeps 0x7fc00000, IEEE32Exec keeps 0x7fac6de8
+NaN 0x7fac6de8: Float32 keeps 0x7fc00000, configured binary32 keeps 0x7fac6de8
 ```
 
 The disagreement occurs during conversion, before arithmetic. It therefore cannot establish a
@@ -1025,7 +1046,8 @@ Writing `x * y + z` in CUDA lets the compiler contract the pair into a fused ins
 one of the ways this assumption fails, so the check asks for the operation it means. This also
 brings `fma` into scope, which is outside this four-operation Lean comparison. The CUDA harness
 evaluates a separate
-fused multiply-add primitive. The run:
+fused multiply-add primitive. This recorded A100 run also predates the FloatLib migration; the
+same comparison must be rerun for a claim about a new source and binary:
 
 ```terminal +output
 $ TMPDIR=/mnt/build scripts/checks/cuda_float32_parity.sh --sweep 100000
@@ -1054,16 +1076,16 @@ The `strict` columns count exact bit matches. For `add`,
 `mul` and `fma` they are perfect. For `div` two of 98,834 cases differ. For `sqrt` almost exactly
 half differ, which is the giveaway: half of a uniformly random 32-bit pattern is negative, and the
 square root of a negative number is an invalid operation. Every one of those differences is a `NaN`
-payload, and the three encodings are printed at the bottom: `IEEE32Exec` produces the canonical
+payload, and the three encodings are printed at the bottom: FloatLib binary32 produces the canonical
 `0x7fc00000`, this x86-64 host produces `0xffc00000` with the sign bit set, and the A100 produces
 `0x7fffffff`.
 
 All three are quiet `NaN`s. IEEE 754-2019 leaves the sign and the payload of a `NaN` produced by an
 invalid operation to the implementation, so this is not a bug in any of the three; it is three
 implementations exercising the same permission differently. What it does mean is that
-`NativePrimitiveAgreement` as originally written, with plain bit equality in all five fields, is
-false for both providers on this machine. That is why the fields ask for `AgreeUpToNaN` instead, and
-why the `contract` columns, which are the ones the exit status watches, read perfectly here across
+requiring plain bit equality in all five fields would fail for both providers on this machine.
+The `AgreeUpToNaN` fields allow these payload differences, so
+the `contract` columns, which are the ones the exit status watches, read perfectly here across
 988,350 comparisons.
 
 The same script also tests a `--fast-math` build, which disagrees on a finite quotient:
@@ -1119,18 +1141,17 @@ composed theorems; other architectures need their own composition and any missin
 The transcendental bridge is missing. `tanh` and `log` have rounded-real bounds and executable
 implementations, and no theorem relating the two, so tanh networks stop at the proof model.
 
-The native agreement is an assumption. It is written down, it is small, it has been tested on one
-configuration to just under a million comparisons, and this tested fast-math configuration falsifies
-it. Contraction and reduction schedules need
+Native agreement remains an assumption. The recorded run exercised just under a million
+comparisons on one configuration; the tested fast-math configuration falsifies it.
+Contraction and reduction schedules need
 additional expression-level policies. Native conformance remains supported by tests and the
 declared toolchain boundary.
 
 # References
 
-Two sources have no bibliography entry because neither is a paper: the
-[IEEE 754-2019 standard](https://standards.ieee.org/standard/754-2019.html), which defines binary32
-itself, and [Flocq](https://flocq.gitlabpages.inria.fr/), whose Rocq development is the closest
-relative of the model used here.
+The [IEEE 754-2019 standard](https://standards.ieee.org/standard/754-2019.html) defines binary32.
+The [Flocq](https://flocq.gitlabpages.inria.fr/) Rocq development supplies the generic-format
+vocabulary compared with the Lean definitions above.
 
 - Higham, *Accuracy and Stability of Numerical Algorithms* (2nd ed., SIAM, 2002), the standard
   numerical analysis reference for forward error and stability arguments of the kind TorchLean

@@ -16,6 +16,11 @@ public import NN.Spec.Layers.Normalization.BatchNorm
 # GraphM Neural Layers
 
 Normalization and attention builders for typed graphs.
+
+Normalization records the supplied `epsilon` without validating it or substituting
+`Context.defaultEpsilon`. The default `TorchLean.normalizationEpsilon` can round to zero in tiny
+formats. Pass an explicit representable positive, finite `epsilon`; a zero value can produce NaNs
+when normalizing a constant input.
 -/
 
 @[expose] public section

@@ -9,6 +9,9 @@ open Verso.Genre.Manual.InlineLean
 open TorchLean
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 #doc (Manual) "API Tour" =>
 %%%
 tag := "api_tour"
@@ -25,20 +28,9 @@ import NN.API
 open TorchLean
 ```
 
-It exposes the main application namespaces:
-
-- `Tensor` for shape-indexed tensor values, constructors, and elementwise arithmetic;
-- `nn` for layers, blocks, model families, and seeded initialization;
-- `Data` for in-memory datasets, loaders, checkpoints, and text helpers;
-- `optim` for optimizer configurations;
-- `Trainer` for prediction, training, summaries, and the verification bridge;
-- `autograd` for explicit function and model derivatives;
-- `classical` for statistical and non-neural model families.
-
-The tour follows the data needed to train and inspect a model: tensor values with fixed shapes,
-operations that transform those shapes, a parameterized layer sequence, and a dataset that matches
-its interface. After training, we examine what the observed loss says about the learned function
-and introduce the additional import needed for verification lowering.
+The layers built with `nn` and trained with `Trainer` consume shape-indexed tensors. Those tensors
+are also ordinary values we can construct and inspect directly, before running a model. This is
+useful for checking how a reshape groups entries or which axis a matrix product sums over.
 
 Named Lean blocks run while this chapter builds, and their outputs are checked against the
 recorded messages. The Python and PyTorch transcripts
@@ -94,31 +86,32 @@ differently:
 [0.100000, 0.200000, 0.300000, 0.400000]
 ```
 
-The rational line is useful because it shows what the decimal notation means before rounding:
-its first entry is exactly one tenth. The Float line and the cast to Float32 choose finite binary
-representations of those values. They can print the same six decimal places while storing different
-numbers. A cast therefore changes the arithmetic available to later operations; it does not merely
-change how a tensor is displayed. None of these choices changes the four-entry shape.
-
 `Tensor ℚ` stores $`1/10` exactly, and its printer shows the fraction;
 `Tensor Float` stores the binary64 number nearest to $`0.1`, and its printer rounds that back to six
 decimals so it reads as `0.100000`. Rational arithmetic satisfies the field laws exactly;
 floating-point rounding can break them, as the associativity example in the motivation chapter
 shows. {Informal.citet goldberg1991}[] is the standard explanation of why.
 
-`Float` is Lean's binary64 host type and `Float32` is its binary32 type. TorchLean also ships an
-independent bit-level binary32 reference, `IEEE32Exec`, whose values are literally their bit
-patterns:
+Casting the Float tensor to Float32 keeps its four-entry shape but rounds its values to the
+narrower format. A cast changes the numbers available to subsequent operations, even when the
+printed decimals stay the same.
+
+`Float` is Lean's binary64 host type and `Float32` is its binary32 type. For a format whose
+precision you choose, use FloatLib directly. Its binary32 configuration has eight exponent bits
+and twenty-three stored fraction bits. We can inspect its encoding without relying on a decimal
+printer:
 
 ```lean (name := atBits)
 -- Inspect the binary32 word for 0.1, then decode it for the
 -- usual decimal display.
-#eval Floats.IEEE754.IEEE32Exec.ofFloat 0.1
-#eval (Floats.IEEE754.IEEE32Exec.ofFloat 0.1).toFloat
+#eval ExecFloat.Binary.toBits32
+  (0.1 : ExecFloat.Binary 8 23)
+#eval (ExecFloat.Binary.toFloat32
+  (0.1 : ExecFloat.Binary 8 23)).toFloat
 ```
 
 ```leanOutput atBits (whitespace := lax)
-{ bits := 1036831949 }
+1036831949
 ```
 
 ```leanOutput atBits (whitespace := lax)
@@ -137,11 +130,18 @@ Python's binary32 encoding provides an independent comparison for this literal:
 '0x3dcccccd'
 ```
 
-The fields are sign bit 0, exponent `0x7b`, and fraction bits `0x4ccccd`. The encoded literal
-matches TorchLean's reference exactly. This checks one conversion; evaluating complete operations
-against the reference requires comparing their outputs as well.
+The sign bit is 0, the exponent is `0x7b`, and the fraction bits are `0x4ccccd`: the literal's
+encoding matches FloatLib's binary32 result exactly. Comparing an operation would require checking
+its output bits too.
 {ref "floats"}[The floats chapter] explains how that reference is defined and
 {ref "fp32-soundness"}[the FP32 soundness chapter] states what has been proved about it.
+
+The same constructor with fifteen exponent bits and 112 fraction bits selects binary128.
+Custom widths use that API too, subject to its width and bias constraints.
+{ref "tensors-shapes"}[Tensors And Shapes] carries a binary128 value through a typed model's
+parameters, output, and derivatives. That CPU path also supports `nn.sgdStep` in the selected
+type. The supervised trainer's data, reporting, and checkpoint boundary remains `Float`;
+its `.ieee` arithmetic setting selects binary32. It is not a width parameter.
 
 There is also `Tensor ℝ`, used in specifications and proofs. Mathlib constructs real numbers from
 Cauchy sequences; its general real arithmetic and order are noncomputable. Although particular
@@ -194,11 +194,9 @@ same number of entries:
 [[1.000000, 2.000000], [3.000000, 4.000000]]
 ```
 
-The reshape reuses the row-major payload. Constructing the tensor from an `Array Float` first
-packs its elements into the tensor's `FloatArray` storage. Loaders that read shapes from a file
-check
-those runtime dimensions once, at a named boundary, and only then hand values to these total
-operations.
+Constructing the tensor from an `Array Float` packs its elements into `FloatArray` storage.
+The reshape reuses that row-major payload. A loader first checks any dimensions read from a file,
+then constructs the shaped value these operations consume.
 
 # Arithmetic And Contractions
 
@@ -267,8 +265,8 @@ def atDot (a b : Tensor Float [3]) : Float :=
 
 By hand: $`1\cdot4+2\cdot(-5)+3\cdot6=4-10+18=12`. This explicit fold shows the reduction order;
 `Tensor.dotSpec` provides the specification operation, and the `einsum` example below offers a
-contraction notation. Direct tensor computations are separate from graph-recording autograd
-operations, whose derivative rules, lowering support, and backend coverage must be checked.
+contraction notation. This direct tensor fold does not record the autograd graph used by the
+training runtime.
 
 The matrix products are named after the ranks they combine:
 
@@ -304,7 +302,6 @@ adds across each row, whereas `vecmat` adds down each column. The final output i
 three-by-three identity matrix. Its diagonal ones preserve a compatible vector, and its off-diagonal
 zeros contribute nothing to the corresponding sums.
 
-`matvec` against a vector of ones sums across each row; `vecmat` sums down each column.
 `matmul` contracts the left matrix's columns with the right matrix's rows, requiring those
 dimensions to agree. Since `atM` has shape `[2, 3]`, `Tensor.matmul atM atM` fails that check.
 
@@ -412,7 +409,7 @@ A valid pattern determines the result shape. Related notation includes
 `rearrange`, `expand`, `reduce`, `pack`, and `unpack`,
 and {ref "tensors-shapes"}[the tensor chapter] works through them.
 
-Reductions, activations, and indexing round out the set:
+We can also reduce these entries to a scalar loss, apply ReLU, or select a row:
 
 ```lean (name := atReduce)
 -- Read these results in order: mean, mean squared error,
@@ -449,17 +446,15 @@ Reductions, activations, and indexing round out the set:
 6.000000
 ```
 
-Here the mean squared error is the mean of three squared differences, not the square of their
-mean: $`((-3)^2+7^2+(-3)^2)/3=67/3`. The ReLU result keeps the positive entry and replaces the
-negative one by zero; the zero entry stays zero. The three indexing examples then distinguish a
-scalar entry from a whole row. Selecting row one of the matrix leaves a length-three tensor;
-selecting both row one and column two reaches the scalar six. Indexing is zero-based throughout.
+Mean squared error squares each difference before taking the mean:
+$`((-3)^2+7^2+(-3)^2)/3=67/3`, or
+$`\frac13\left(9+49+9\right)=\frac{67}{3}\approx22.333333` with the final decimal rounded for display.
+ReLU keeps the positive entry and replaces the negative one by zero; the zero stays zero.
 
-The mean squared error calculation, with its final decimal rounded for display, is
-$`\frac13\left(9+49+9\right)=\frac{67}{3}\approx22.333333`. Indexing a rank-2 tensor with a
-single index
-returns a row; a pair of `Fin` values selects a scalar. Each `Fin` value carries a bound, though
-numerals at `Fin` types can wrap modulo that bound, as the
+The indexing calls distinguish a row from an entry. Selecting row one leaves a length-three
+tensor; selecting row one and column two reaches the scalar six. Indices are zero-based.
+A pair of `Fin` values supplies both coordinates and their bounds, though numerals at `Fin` types
+can wrap modulo the bound, as the
 {ref "lean_ecosystem"}[Lean language chapter] explains.
 
 The corresponding PyTorch operations give:
@@ -553,11 +548,10 @@ Going the other way, build an axis instead of removing one:
 ```
 
 The first construction uses indices as data: row `i` starts at `2*i`, so the result runs from
-zero through five. Concatenation instead preserves the contents of tensors that already exist,
-placing the one-row tensor before the two-row tensor. Repetition adds a leading axis containing two
-copies of the same vector. These are different ways to obtain a batch-shaped value. Only the
-leading axis says which entries belong to each sample; a reshape alone cannot recover that meaning
-if the original payload was arranged differently.
+zero through five. Concatenation places the existing one-row tensor before the two-row tensor.
+Repetition gives two copies of the same vector. Each construction fixes which entries belong to
+each leading slice; a reshape cannot recover the intended grouping from a differently ordered
+payload.
 
 `stackLeading` takes a function from an index to a tensor. Its return type fixes the shape of
 each selected tensor, so every entry in the stack must have that shape. `concat` joins on the
@@ -615,17 +609,12 @@ none
 some [[99.000000, 2.000000, 3.000000], [4.000000, 5.000000, 6.000000]]
 ```
 
-The coordinate array contains one index per axis. In `[1, 0, 2]`, the last index is valid because
-the final axis has length three; replacing it by three produces `none`. The update follows the
-same rule and returns a new tensor inside `some`. Mapping over that result selects its first slice
-for display. The old `atBatch` is still available with its original first entry. This lets code
-that reads coordinates from a file handle failure explicitly instead of inventing a value for a
-missing entry.
+The coordinate array contains one index per axis. In `[1, 0, 2]`, the last index fits the final
+axis of length three; replacing it by three produces `none`. `set?` checks coordinates the same
+way and returns the updated tensor inside `some`. Mapping over that result displays its first slice.
+The original `atBatch` still has its old first entry.
 
-The third coordinate `3` is out of range on an axis of size three and yields `none` rather than a
-default value, a wrapped index, or a crash. `set?` returns a new tensor and leaves `atBatch`
-untouched. The PyTorch spelling,
-`x[0, 0, 0] = 99.0`, mutates in place and would be visible to every other holder of that tensor.
+PyTorch's `x[0, 0, 0] = 99.0` updates the tensor in place, so other holders see the change.
 There is also `modify?` for the read-transform-write case;
 {ref "running-example"}[the running example] uses it to nudge a single weight for a finite
 difference check.
@@ -862,7 +851,7 @@ prediction before training = [-0.088261]
 
 That number came from the seeded initial weights, with no training at all. The default execution
 profile is checked CPU with the eager runtime and native `Float32`; a configuration may instead
-select typed graph execution or the bit-level `IEEE32Exec` reference, which
+select typed graph execution or the bit-level FloatLib binary32 reference, which
 {ref "execution-modes"}[the execution modes chapter] covers. Device and provider selection are
 runtime concerns and do not change the model's input and output shapes.
 
@@ -883,14 +872,9 @@ def atOptions : Trainer.TrainOptions :=
 atOptions : Trainer.TrainOptions
 ```
 
-With four dataset rows and four samples per step, this particular configuration lets each update
-use the whole dataset. The reported mean loss and the loss used for an individual update coincide
-in their set of examples here. That need not hold for a larger dataset or a smaller
-`samplesPerStep`. The type printed by `#check` only confirms that this record is a valid
-`Trainer.TrainOptions` value; it has not trained the model or measured whether two hundred steps
-will be sufficient.
-
-Here `steps` counts optimizer updates, not epochs. Each update differentiates four rows at the
+With four rows and four samples per step, each update uses the whole dataset. The update loss and
+reported mean loss therefore cover the same examples here; a smaller `samplesPerStep` would change
+that. `steps` counts optimizer updates, not epochs. Each update differentiates the four rows at the
 current parameters, averages their gradients, and applies Adam once, following
 {Informal.citet adamw2019}[] for the decoupled variant and the original Adam update otherwise.
 
@@ -981,15 +965,11 @@ def atLowered :
 "lowered to graph IR"
 ```
 
-There are two separate decisions in this call: which architecture to lower and which state to
-insert into it. `atBuilt` supplies the former, and `nn.initialState atBuilt` supplies the latter.
-The trained result from the preceding example is a different value. A successful `Except` result
-means this lowering request could be represented; it does not mean that the resulting graph has
-met a safety property. The verifier still needs an input region and a stated output condition,
-and any theorem must refer to this particular payload.
-
-The `Except` result allows lowering to report an unsupported operation or malformed input before
-bound propagation. Successful lowering returns an artifact with a distinguished input node:
+`atBuilt` supplies the architecture and `nn.initialState atBuilt` supplies fresh initialized
+weights, distinct from the trained state above.
+The verifier still needs a region and output condition for this particular payload. Lowering
+returns an error for an unsupported operation or malformed input; on success, the artifact
+identifies the node where the input region belongs:
 
 ```lean (name := atLowerInput)
 -- A successful lowering still carries an input node whose
@@ -1064,10 +1044,8 @@ $`2x=6`. The function passed to `autograd.grad` uses runtime references through 
 the concrete input tensor supplies their values when the function is executed. That separation lets
 the runtime record the operations needed for the backward pass.
 
-At input `3`, the result is the derivative `6`. This call seeds the scalar output with cotangent
-one and propagates it backward through the multiplication. There is also a command for inspecting
-gradients, VJPs, Jacobian rows and columns, and a
-Hessian-vector product together:
+The autograd quickstart extends this example to VJPs, Jacobian rows and columns, and a
+Hessian-vector product:
 
 ```terminal
 # Run the scalar-gradient and detach examples through the
@@ -1096,8 +1074,7 @@ The top-level help lists the runnable model families and the common `--device`, 
 `--execution`, `--seed`, and `--show-backend` flags.
 
 For exact names, the generated API page is the declaration index, and in a Lean file `#check` shows
-the elaborated type of any name while editor hover reveals its documentation and source. This guide
-stays with the design and the worked programs rather than reproducing the module tree.
+the elaborated type of any name while editor hover reveals its documentation and source.
 
 The state transitions and shape contracts used here are developed in
 {ref "why_functional"}[the functional programming chapter] and {ref "lean_ecosystem"}[the Lean

@@ -19,23 +19,15 @@ state, and execution devices are attached later. This separation is useful even 
 theorem: the architecture can be inspected without allocating parameters, and the same model can
 be initialized twice with different seeds or interpreted by different runtimes.
 
-We will build three complete architectures:
+I'll start with a $`2\to8\to1` regression MLP and follow the tensor through each layer. Its hidden
+width determines two weight matrices, so changing that one number changes both the intermediate
+shape and the parameter count. The same reasoning applies to the convolutional classifier and
+transformer encoder block {Informal.citep transformer2017}[] below.
 
-1. a $`2\to8\to1` regression MLP;
-2. a small convolutional classifier;
-3. a transformer encoder block {Informal.citep transformer2017}[].
-
-They use the same layer-composition mechanism, with different shapes and operations.
-Every parameter count in this chapter is printed
-by Lean, and every count is checked against the same architecture in PyTorch
-{Informal.citep pytorch2019}[]. We then use masking and a low-rank adapter to show how the same
-tensor contracts extend those architectures.
-
-The useful object to follow is the tensor moving through the model. At each layer we can ask
-which axes survive, which values are learned, and which intermediate result becomes the next
-input. Initialization then fills the state layout that this composition requires. Keeping that
-order makes summaries informative: a parameter count is a consequence of particular maps and
-their stored weights, rather than a number to reconcile after a forward pass fails.
+The Lean summaries expose each parameter shape alongside its count. Comparing those shapes with
+PyTorch {Informal.citep pytorch2019}[] reveals a detail a total can hide: the transformer examples
+use different attention-bias conventions. Later, masking changes the model's input while a
+low-rank adapter changes a projection's weights.
 
 # Layer Types And Shape Checking
 
@@ -527,13 +519,8 @@ def trainer (seed : Nat) :=
       seed := seed }
 ```
 
-Constructing this value records the training configuration:
-
-- the model builder;
-- the objective and target convention;
-- the optimizer configuration;
-- the initialization seed;
-- runtime options such as arithmetic, backend, and device.
+The seed now sits beside the objective and optimizer in the trainer configuration. We can
+initialize the same architecture at another seed without rewriting the layer list.
 
 # Prefix Shapes And Shared Parameters
 
@@ -679,9 +666,8 @@ convention is in doubt.
 
 ## Validating Spatial Geometry
 
-This is the second kind of mistake promised earlier. A shape mismatch between layers is a type
-error. A geometry that collapses to nothing is arithmetic on shapes, so it is caught by validation.
-Validation is an ordinary function returning `Except`:
+A convolution can have composable layer types and still request an empty spatial grid. Its
+configuration validator checks the computed extents and returns an `Except` result:
 
 ```lean (name := bmValidOk)
 -- Validation checks numeric configuration constraints that
@@ -763,11 +749,9 @@ classifier need not be uniform. In this recorded run,
 one optimizer step moved it by `0.005`. The leading dimension of the input is an ordinary tensor
 prefix preserved by the layers, not a separate image or batch container.
 
-The dataset size and step count make the scale of this run clear: it exercises one update on
-one image. The lower loss checks that the chosen data, objective, and parameter update work
-together for that execution. It cannot tell us how the classifier behaves on other images.
-The `TrainLog` path names an artifact for examining this run; it does not add an evaluation set
-or turn the reported change into an accuracy measurement.
+This one-image run exercises data loading, loss evaluation, and one parameter update. The
+`TrainLog` records that execution; assessing classification accuracy would require predictions
+on an evaluation set.
 
 The relevant source files are:
 
@@ -855,12 +839,10 @@ packed $`[24,8]` query/key/value projection is TorchLean's three separate $`[8,8
 ($`192=3\cdot64`), the output projection is $`[8,8]` in both, and the two feed-forward layers and
 the two normalizations agree exactly.
 
-The bias question is a real modeling choice rather than an oversight, and it is one the original
-architecture leaves open {Informal.citep transformer2017}[]. Attention projections followed by a
-softmax over dot products are commonly written without bias, and several widely used implementations
-disable it. Recording the difference here is more useful than hiding it: if you are porting weights
-from a PyTorch checkpoint, this is the line item that will not have a home, and the summary is where
-you find that out before the numbers disagree.
+The parameter comparison makes the bias choice in this transformer block
+{Informal.citep transformer2017}[] explicit. When porting the PyTorch block, its 32 attention bias
+values need a decision: the TorchLean block shown here has no corresponding state entries.
+The per-tensor summary exposes that mismatch before a forward comparison.
 
 ## Block Structure And Masks
 
@@ -944,9 +926,6 @@ A Fourier neural operator uses spectral transforms and mode truncation, but its 
 remain general tensors. The Burgers example later in the guide shows how a PDE trajectory dataset,
 FNO model, exported prediction, and Lean-checkable residual artifact fit together.
 
-The practical rule is: a model helper should remove repetitive construction, not invent a private
-tensor type or execution engine.
-
 # Masked Inputs And Reconstruction Targets
 
 Self-supervised learning changes the training problem more than it changes the tensor foundation
@@ -988,8 +967,8 @@ Change the period and the mask thins out. Period `4` hides one block in four, so
 readings disappear:
 
 ```lean (name := bmMask4)
--- Hiding all four blocks removes every original signal
--- value from the masked input.
+-- Period four hides the first block, replacing its two
+-- signal values with zero.
 #eval ssl.BlockMask.apply bmSignal bmBlocks 4 0
 ```
 ```leanOutput bmMask4 (whitespace := lax)
@@ -1150,8 +1129,8 @@ The two rows also separate the adapter's contributions. The first row multiplies
 the effective weight, so its outputs add to `(2.5, 5.5)`. The second row selects only the first
 weight row, giving `(1.5, 1.5)`. Keeping the base result beside the adapted result makes the change
 visible independently of any training procedure. The chosen rank restricts how the weight update
-is factored; the example evaluates that factorization without claiming that these factors were
-learned or improve an objective.
+is factored. Here we supplied both factors by hand, so the outputs show their effect before
+any training.
 
 Use `Adapters.LoRA.weightUpdate adapter scale` to inspect only the scaled low-rank update, or
 `Adapters.LoRA.effectiveWeight base adapter scale` to construct the combined weight. Keeping

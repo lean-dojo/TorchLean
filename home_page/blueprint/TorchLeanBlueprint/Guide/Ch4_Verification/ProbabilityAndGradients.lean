@@ -38,13 +38,9 @@ about affine images of Gaussian noise. An autograd theorem needs the derivative 
 A linear-layer proof needs to agree on whether weights are stored by input or output coordinate.
 TorchLean keeps these local facts small enough to use independently.
 
-Two examples show how these local results are used:
-
-1. the forward noising kernel used by diffusion models;
-2. scalar activation derivatives and linear-layer backward specifications.
-
-The Gaussian result can be reused across diffusion schedules. The derivative results can be
-composed across layers, provided each local differentiability condition holds.
+The Gaussian calculation can be reused across diffusion schedules because the noise coefficients
+are arguments to the theorem. For backward rules, reuse depends on the points where we apply
+them: composing layers also requires each local differentiability condition to hold.
 
 # Vector-Jacobian Products
 
@@ -745,7 +741,7 @@ separate `HasFDerivAt` argument. The equations alone also make no claim about a 
 
 # Scalar Activation Calculus
 
-Activation derivatives use a stronger style. The file
+Activation theorems connect the derivative helpers to real calculus. The file
 {src "NN/Proofs/Gradients/Activation.lean"}[`NN.Proofs.Gradients.Activation`]
 proves Mathlib `HasDerivAt` statements for real scalar functions. For smooth sigmoid,
 
@@ -997,7 +993,7 @@ a denoising objective, and an executable sampler.
 
 # Probability And Autograd Proof Gaps
 
-Collecting the gaps named above, in the order a reader would hit them:
+To extend these local results to the corresponding model and runtime proofs, we still need:
 
 * a bridge theorem identifying `forwardNoising` with
   `NN.MLTheory.Generative.Diffusion.forwardGaussian`, so the two developments can cite each other;

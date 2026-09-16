@@ -26,8 +26,10 @@ This is the key separation of concerns:
 
 "Float32" and the `_fp32` suffix here mean the rounded-real model
 `TorchLean.Floats.FP32 := NF binaryRadix fexp32 rnd32`. These theorems say nothing about Lean's
-`Float32` type or the bit-level `IEEE32Exec` model; that bridge lives in
-`NN/Floats/IEEEExec/Bridge/FP32`.
+`Float32` type or the bit-level `ExecFloat.Binary 8 23` model. Finite binary32 add/mul refinements
+are in
+`NN/Floats/IEEEExec/Bridge/Finite.lean`; further arithmetic refinements are in
+`NN/Proofs/RuntimeApprox/IEEE32/Arithmetic.lean`.
 -/
 
 @[expose] public section

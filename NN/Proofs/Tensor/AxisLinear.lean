@@ -31,39 +31,19 @@ open TorchLean.Tensor
 
 noncomputable section
 
-/-- Source coordinate read by one adjacent-axis swap. -/
-def swapCoordinate : (s : Shape) → (depth : Nat) →
-    Shape.Coord (s.swapAdjacentAtDepth depth) → Shape.Coord s
-  | .dim _ (.dim _ _), 0, p => (p.2.1, p.1, p.2.2)
-  | .dim _ s, depth + 1, p => (p.1, swapCoordinate s depth p.2)
-  | .scalar, 0, p => p
-  | .scalar, _ + 1, p => p
-  | .dim _ .scalar, 0, p => p
+/-- Source coordinate read by one adjacent-axis swap.
+
+The derivative proofs and the compiled tensor operation use the same coordinate
+map. This name keeps the coordinate description available in the proof API. -/
+abbrev swapCoordinate (s : Shape) (depth : Nat) :
+    Shape.Coord (s.swapAdjacentAtDepth depth) → Shape.Coord s :=
+  TorchLean.Tensor.Internal.swapAdjacentAxesCoordinate s depth
 
 /-- The tensor swap reads exactly the coordinate selected by `swapCoordinate`. -/
 theorem swapAdjacentAxes_apply {α : Type} [TorchLean.Storage α] {s : Shape}
     (x : Tensor α s) (depth : Nat) (p : Shape.Coord (s.swapAdjacentAtDepth depth)) :
     swapAdjacentAxes x depth p = x (swapCoordinate s depth p) := by
-  induction depth generalizing s with
-  | zero =>
-      cases s with
-      | scalar => rfl
-      | dim n s =>
-          cases s with
-          | scalar => rfl
-          | dim m s =>
-              simp only [swapAdjacentAxes, Tensor.dim,
-                TorchLean.Tensor.Internal.Rep.stack_apply, Tensor.unstack,
-                TorchLean.Tensor.Internal.Rep.unstack_apply, swapCoordinate]
-  | succ depth ih =>
-      cases s with
-      | scalar => rfl
-      | dim n s =>
-          change Tensor.dim (fun i => swapAdjacentAxes (x.unstack i) depth) p = _
-          simp only [Tensor.dim, TorchLean.Tensor.Internal.Rep.stack_apply]
-          rw [ih]
-          simpa only [Tensor.unstack, swapCoordinate] using
-            TorchLean.Tensor.Internal.Rep.unstack_apply x p.1 (swapCoordinate s depth p.2)
+  exact TorchLean.Tensor.swapAdjacentAxes_apply x depth p
 
 /-- Source coordinate read after a sequence of adjacent-axis swaps. -/
 def permutedCoordinate : (s : Shape) → (swaps : List Nat) →

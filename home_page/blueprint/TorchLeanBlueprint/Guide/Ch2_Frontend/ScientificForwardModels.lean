@@ -14,23 +14,17 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 tag := "scientific-forward-models"
 %%%
 
-Many scientific models are small compositions of affine maps and nonlinear scalar functions. A
-remote-sensing retrieval contains exponential attenuation; a chemical rate law contains `exp`; a
-likelihood contains `log`; a PINN residual differentiates a neural field with respect to space and
-time.
-
-Their structure often gives us an independent way to derive the expected gradient. That matters
-in inverse problems: a decreasing loss alone does not establish that the update direction is
-correct. We will carry an exponential attenuation model through first and second derivatives,
-domain checks, and an identifiability calculation, then use the same operations to build a PDE
-residual.
+An exponential attenuation model gives us a gradient we can derive independently of autograd.
+That makes it a useful starting point for an inverse problem: we can check the update direction
+before asking an optimizer to fit observations. I'll start by varying one input, then let both
+factors in the exponent be unknown to see why correct derivatives alone cannot identify them.
 
 The named Lean blocks evaluate the gradients, Jacobians, Hessians, and float counterexamples during
 the build. Closed-form calculations and separate PyTorch snippets provide comparison points.
 
 # Vegetation Attenuation Model
 
-The concrete model we keep coming back to is the canopy term of a soil-moisture retrieval that
+The model is the canopy term of a soil-moisture retrieval that
 combines SMAP (Soil Moisture Active Passive) radiometry with NISAR (NASA-ISRO Synthetic Aperture
 Radar) backscatter. Two-way transmittance through vegetation decays exponentially with
 attenuation. We isolate that term and an additive surface offset, with fixed coefficients so
@@ -249,12 +243,6 @@ The same `sfmAttenuation` can be instantiated at host `Float`, at `Float32`, or 
 proof-facing interpretation. Sharing source keeps the formula aligned; numerical refinement still
 requires separate evidence.
 
-The printed function type explains why constants need care. The body must work for the `α` chosen
-by its caller, so constructing a host `Float` coefficient inside it would prematurely choose an
-arithmetic interpretation. Integer literals and the scalar operations supplied by `Context` keep
-the expression within that interface. Writing `1 / 10` preserves the intended formula while
-letting the selected scalar implementation determine its executable value.
-
 The tuple `(0.500000, 0.100000, 0.000001)` is the host `Float` interpretation of those expressions
 and the default epsilon. It is not a declaration that every backend represents one tenth exactly
 or uses the same epsilon. In a scientific objective, changing epsilon changes a regularized
@@ -263,9 +251,8 @@ differentiated.
 
 # Functional Primitives: `scale`, `shift`, And `affine`
 
-The `nn.functional` layer used above provides `exp`, `log`, `scale`, `shift`, `affine`, `square`,
-`mean`, `detach`, `addB`, `mulB`, `embedding`, and the dropout family. Each one builds a node in the
-same checked tensor program that model autograd uses. There is no separate scientific mode.
+The attenuation model uses the same `nn.functional` operations as a neural network's forward pass.
+We can compose them and differentiate the result with the same transforms.
 
 `scale x c` is $`c\,x`, `shift x k` is $`x+k`, and `affine x c k` is $`c\,x+k`. Keeping `affine` as
 a named helper makes the formula readable. Its current implementation composes `scale` and `shift`;
@@ -327,8 +314,7 @@ h(3) = 9, stop-gradient result = 3.000000
 ```
 
 This mechanism is used in self-supervised objectives and detached targets in temporal-difference
-learning. The example separates two claims that can otherwise be obscured by a larger loss: the
-forward values agree with squaring, but the prescribed update rule differentiates only one factor.
+learning.
 
 In the mixed example, squaring contributes `2xᵢ`, the outer scale contributes `1/2`, and the mean
 contributes `1/3`. Their product gives `xᵢ/3`, explaining the increasing coordinates of the printed
@@ -336,18 +322,15 @@ gradient. The added constant contributes to the forward mean but disappears from
 derivative. A check that omitted the mean could return `[1, 2, 3]` with the right signs and still
 be wrong by a factor of three.
 
-The detach example deliberately asks a different derivative question. Its second factor has the
-current numerical value `3` but contributes no derivative path, so only one product-rule term
-survives. The printed `h(3) = 9` is explanatory text in the example, while the gradient is computed
-by the transform. It is useful to distinguish that literal forward reference from an independently
-printed forward evaluation when deciding what the block actually checks.
+In the detach block, `h(3) = 9` is printed as literal explanatory text; the transform computes the
+gradient. Only one product-rule contribution remains because the second factor is detached.
 
 # Positive And Negative Derivative Controls
 
-TorchLean keeps a regression check for exactly the derivative errors this chapter is about, in
-{src "NN/Examples/Functional/Transcendentals.lean"}[`Transcendentals.lean`]. It runs from the
-command line as `lake exe torchlean transcendentals`, and because the CPU tensor library is loaded
-while this chapter elaborates, we can also just run it here:
+{src "NN/Examples/Functional/Transcendentals.lean"}[`Transcendentals.lean`] checks the exponential
+rule, an affine slope, and the negative factor in a composed exponential. The command
+`lake exe torchlean transcendentals` runs these controls; the named block also runs them during
+the guide build:
 
 ```lean (name := sfmControls)
 -- Require both agreement with the formula and rejection of
@@ -422,9 +405,8 @@ gradient as evidence that the inner scale was ignored.
 
 # Numerical Checks And Real-Valued Derivatives
 
-The controls use host `Float` on three formulas at the concrete input `0.5` . Alongside them, the
-same file
-carries a proof-layer object for real-valued `exp`:
+The controls use host `Float` on three formulas at the input `0.5`. The same file also gives a
+proof-layer object for real-valued `exp`:
 
 ```lean (name := sfmProofSurface)
 -- This bundle connects a real operation to its Fréchet
@@ -473,23 +455,16 @@ open NN.Examples.Functional.Transcendentals in
 
 The audit lists the three standard Lean axioms, with no `sorryAx` or TorchLean-specific axiom.
 
-What the theorem does not do is tell you about the number `-0.367879` printed earlier. It speaks
-about the real-valued proof-layer operation. Connecting it to host Float, CUDA, or LibTorch is the
-job of the runtime refinement boundary, which {ref "runtime-approximation"}[the runtime
+The theorem concerns the real-valued proof-layer operation. Connecting it to host Float, CUDA, or
+LibTorch requires the runtime refinement boundary, which {ref "runtime-approximation"}[the runtime
 approximation chapter] develops and {ref "autograd-proofs"}[the autograd proofs chapter] applies to
-the differentiation rules themselves. The theorem concerns the real-valued operation; the
-numerical controls check particular executions against a separately evaluated formula.
+the differentiation rules.
 
 The proof-surface type uses one-dimensional real tensors, whereas the executable attenuation
 example used rank-zero `Float` tensors. Both represent one scalar quantity, but they are distinct
 interfaces and the theorem explicitly names the former. Its cotangent `δ` is arbitrary: the
 backward rule agrees with the derivative adjoint for every seed of the stated shape, not just the
 unit seed used by `grad`.
-
-The axiom output concerns the dependencies of that Lean theorem. It shows no placeholder proof
-axiom in this declaration, but it does not inspect a linked exponential implementation, a device
-instruction, or the decimal formatting of the numerical controls. The real theorem and the sampled
-execution comparison answer complementary questions with different scopes.
 
 # The Domain Of `log`
 
@@ -673,7 +648,7 @@ The rounded-real `NF` and `FP32`
 operations that {ref "runtime-approximation"}[the runtime approximation chapter] builds inherit
 that totalization. They never produce NaN or infinity. So a theorem proved about the rounded-real
 layer says nothing at all about the `NaN` printed above unless the positivity hypothesis is stated
-explicitly. Executable IEEE behavior lives in `IEEE32Exec` and in {ref "floats"}[the floats
+explicitly. Executable IEEE behavior lives in FloatLib binary32 and in {ref "floats"}[the floats
 chapter]; real-valued theorems should carry the domain hypotheses they mean.
 
 At input `2`, raw log gives slope `0.5`; safe log gives `0.414117`. That difference is expected
@@ -812,23 +787,12 @@ The offset $`\tfrac1{10}` contributes nothing to any partial derivative, which i
 statement that an additive bias in a forward model is invisible to the gradient with respect to
 inputs. If that offset were the unknown, it would have to be a parameter.
 
-With the forward model, the objective, and the gradient in hand, TorchLean can:
-
-1. express $`f_\theta` as a checked tensor program;
-2. build the mean-squared-error objective;
-3. differentiate with respect to the parameter pack;
-4. train through a selected runtime, as
-   {ref "training-from-scratch"}[the training chapter] does end to end;
-5. state real-valued derivative theorems for the primitives involved;
-6. attach numerical or backend evidence to the executable path.
-
-These steps address different parts of the inverse problem. A low loss does not establish that
-the parameters are identifiable. If both $`b` and $`x` are unknown and the observation depends
-only on their product, the gradient cannot separate them. The next calculation exhibits this
-ambiguity and relates it to the Gauss-Newton matrix. A derivative theorem also does not establish
-that observations follow the assumed model, and a native CUDA result needs the refinement bridge
-that
-{ref "backend-selection"}[the backend planner chapter] makes explicit.
+To fit $`f_\theta`, the optimizer needs derivatives with respect to its parameter pack, as in
+{ref "training-from-scratch"}[the training chapter]. The
+{ref "backend-selection"}[backend planner chapter] explains how the selected runtime records its
+implementation and evidence. Neither choice resolves an ambiguity in the model: if both $`b` and
+$`x` are unknown and observations depend only on their product, different parameter pairs can fit
+equally well.
 
 The mean-output example isolates reduction; it does not yet differentiate a least-squares fit.
 For the displayed inputs, the exponential sensitivity decreases from `1` to `exp(-2)`, and the
@@ -1051,19 +1015,14 @@ separation also used in TorchLean's float layer. {Informal.citet boldo2015}[] co
 rounded-arithmetic proofs to emitted code in CompCert. {ref "floating-point-literature"}[The
 floating-point literature chapter] discusses how TorchLean's layer relates to each of them.
 
-Concretely, TorchLean's executable `IEEE32Exec` transcendental functions are deterministic
-definitions, and {ref "fp32-soundness"}[the FP32 soundness chapter] states what has been proved
+FloatLib's executable transcendental approximations are deterministic definitions, and
+{ref "fp32-soundness"}[the FP32 soundness chapter] states what has been proved
 about them. What has not been proved is a universal correctly-rounded contract. A passing
 derivative check at $`\exp(-2x)` supports that input on that code path; it does not establish
-accuracy for `exp`, `log`, `sin`, or `cos` over all finite bit patterns. A universal result needs
-a proof or a checked exhaustive argument, not a few sampled comparisons.
+accuracy for `exp`, `log`, `sin`, or `cos` over all finite bit patterns.
 
-The scaled pair `(888.178420, -888.178420)` represents differences of about `8.88e-16` before
-multiplication by `1e18`. The scale makes a small discrepancy readable; it is not an error bound
-on every exponential evaluation. These two cases show that algebraically equal real expressions
-can land on adjacent floating-point values in either order. A rewrite used inside a scientific
-model therefore needs an arithmetic justification if the claim concerns executable values rather
-than the real formula alone.
+The display scale makes differences of about `8.88e-16` visible. It supplies no error bound beyond
+these two evaluations.
 
 # Parameterization, Reduction, And Arithmetic
 
@@ -1073,12 +1032,11 @@ Three variations isolate different parts of the model:
    model into the inverse problem above;
 2. Widening `sfmBatchMean` from three observations to thirty reduces the contribution of each
    unchanged coordinate by the factor predicted by $`1/N`;
-3. Evaluating the same finite input through `IEEE32Exec` and host Float compares different
+3. Evaluating the same finite input through FloatLib binary32 and host Float compares different
    arithmetic interpretations of the formula.
 
-These edits change a parameterization, a batch shape, or the arithmetic interpretation while
-keeping the forward model and derivative query explicit. The type fixes their shapes; the formula,
-domain assumptions, and scalar interpretation determine what the returned derivative means.
+Change one choice at a time and update the independent derivative calculation with it, just as
+the inner-scaling example changed both the exponential argument and its chain-rule factor.
 
 Sources and further reading:
 

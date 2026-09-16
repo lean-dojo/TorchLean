@@ -25,7 +25,8 @@ public import NN.Verification.Builtin.Lowering
 This file corresponds to **Figure 7 (iii)** in the TorchLean paper (`arXiv:2602.22631`).
 
 Everything runs *inside Lean*:
-- Stage 1: sample training points in a box and train parameters (SGD) under exact `IEEE32Exec`.
+- Stage 1: sample training points in a box and train parameters (SGD) under exact `ExecFloat.Binary
+8 23`.
 - Stage 2: for each round, run a small PGD loop on the input `x` to find “counterexample-ish”
   points, then train on them (CEGIS flavor).
 - Final: lower the same TorchLean loss program to the shared verifier IR and run in-repo IBP/CROWN
@@ -41,13 +42,15 @@ Run:
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
 
 namespace NN.MLTheory.CROWN.Lyapunov.TwoStage.PipelineIII.AllInLean
 
-open TorchLean.Floats.IEEE754
 open _root_.Runtime
 open _root_.Runtime.Autograd
 open NN.MLTheory.CROWN.Graph
@@ -56,7 +59,7 @@ open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Lyapunov.TwoStage.Core
 open NN.MLTheory.CROWN.Lyapunov.TwoStage.Execution
 
-local notation "Scalar" => IEEE32Exec
+local notation "Scalar" => (ExecFloat.Binary 8 23)
 
 
 /-- Learning rate for the stage-1 and stage-2 SGD loops. -/
@@ -120,7 +123,9 @@ def run (width : Nat) (args : List String) : IO Unit := do
     s!"width={width} stage1Steps={stage1Steps} stage2Rounds={stage2Rounds} pgdSteps={pgdSteps}"
 
   let mod ← Runtime.Autograd.Model.Module.ObjectiveDef.instantiate (α := Scalar)
-    (objectiveDef width) IEEE32Exec.ofFloat .typedGraph
+    (objectiveDef width) (fun x => (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary64
+      FloatFormat.binary32 (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))) :
+      ExecFloat.Binary 8 23)) .typedGraph
   let tr := mod.trainer
   let cLoss ← Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph
     (α := Scalar) (paramShapes := Core.paramShapes width) (inputShapes := [Core.xShape])

@@ -28,8 +28,9 @@ It re-exports:
 
 All specs are scalar-polymorphic (`Context α`) so the same definitions can be reused for:
 
-- runtime execution (`Float`, `IEEE32Exec`, `NeuralFloat`, …),
-- proofs (`ℝ`), and
+- runtime execution (`Float`, `Float32`, or the configured binary32 type `ExecFloat.Binary 8 23`),
+- CPU software execution at a chosen precision (`FloatLib.Floats.ExecFloat.Binary`),
+- proofs (`ℝ` or the noncomputable rounded-real model `FloatLib.Floats.Formats.Flocq.NF`), and
 - verification backends (interval scalars, etc.).
 -/
 

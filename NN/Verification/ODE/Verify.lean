@@ -51,6 +51,9 @@ Executable checking pipeline:
 section
 
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 namespace NN.Verification.ODE.Verify
 
 open NN.MLTheory.CROWN
@@ -1040,11 +1043,13 @@ def runCertificate (path : String) (backendOverride : Option ModelBackend)
     else
       throw <| IO.userError "[ODE] certificate verification failed."
   | .ieee =>
-    let αI := TorchLean.Floats.IEEE754.IEEE32Exec
-    let ofF := TorchLean.Floats.IEEE754.IEEE32Exec.ofFloat
+    let ofF := (fun x => (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary64
+      FloatFormat.binary32 (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))) :
+      ExecFloat.Binary 8 23))
     let mut allOk := true
     for seg in cert.segments do
-      let ok ← verifySegmentWith (α := αI) ofF (fun mb p => loadModelNonFloat (α := αI) ofF mb p)
+      let ok ← verifySegmentWith (α := ExecFloat.Binary 8 23) ofF
+        (fun mb p => loadModelNonFloat (α := ExecFloat.Binary 8 23) ofF mb p)
         rhsAst seg config
       if ¬ok then allOk := false
     if allOk then
@@ -1131,9 +1136,11 @@ def runArgs (args : List String) : IO Unit := do
       if ok then IO.println "[ODE] verification succeeded."
       else throw <| IO.userError "[ODE] verification failed."
     | .ieee =>
-      let αI := TorchLean.Floats.IEEE754.IEEE32Exec
-      let ofF := TorchLean.Floats.IEEE754.IEEE32Exec.ofFloat
-      let ok ← verifySegmentWith (α := αI) ofF (fun mb p => loadModelNonFloat (α := αI) ofF mb p)
+      let ofF := (fun x => (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary64
+        FloatFormat.binary32 (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))) :
+        ExecFloat.Binary 8 23))
+      let ok ← verifySegmentWith (α := ExecFloat.Binary 8 23) ofF
+        (fun mb p => loadModelNonFloat (α := ExecFloat.Binary 8 23) ofF mb p)
         rhsAst seg config
       if ok then IO.println "[ODE] verification succeeded."
       else throw <| IO.userError "[ODE] verification failed."

@@ -7,9 +7,13 @@ back to.
 The same spec can be instantiated in several scalar worlds:
 
 - `ℝ` for clean mathematical statements;
-- `FP32`/`NeuralFloat` for rounded-real proof models;
-- `IEEE32Exec` for executable binary32 semantics;
+- `FloatLib.Floats.Formats.Flocq.NF` and its `FP32` specialization for noncomputable
+  rounded-real proofs;
+- `FloatLib.Floats.ExecFloat.Binary` for CPU software arithmetic at a chosen precision;
 - runtime scalar backends where explicit bridges state what is assumed.
+
+Configured precision does not select arbitrary-precision CUDA kernels. See `NN/API/Precision.lean`
+for the typed tensor/model entrypoints and their numerical limits.
 
 The practical goal is to avoid a gap between the network we run and the network we reason about:
 define the reference behavior once, then make runtime, graph, and verifier layers say how they

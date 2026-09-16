@@ -42,8 +42,8 @@ namespace Report
 def runtimeScalar (report : Report) : String :=
   match report.arithmetic with
   | .native => "Float32"
-  | .ieee => "IEEE32Exec"
-  | .complex => "Complex IEEE32Exec"
+  | .ieee => "ExecFloat.Binary 8 23"
+  | .complex => "Complex (ExecFloat.Binary 8 23)"
 
 /-- One-line summary suitable for quickstarts and scripts. -/
 def summary (report : Report) : String :=

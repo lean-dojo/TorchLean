@@ -19,14 +19,13 @@ training entry points are `IO` programs, and proofs are terms checked by Lean's 
 {Informal.citep lean4}[]. The same language describes the model, its execution, and statements
 about its behavior.
 
-This chapter develops the language features that appear in the model examples. We begin with
-definitions and tensor shapes, then use the same objects to explain type checking, configuration
-records, and proofs. Reading a type will tell us which dimensions an operation accepts, what
-information Lean can infer, and whether a call computes a value or performs an effect.
+Much of a TorchLean program can be read from its types. A layer's type tells us which dimensions
+it accepts; a trainer's prediction method tells us that execution takes place in `IO`. We can ask
+Lean to print those types before running the model.
 
 Named Lean blocks are elaborated when this guide builds, and their output blocks are checked
-against Lean's messages, with the declared whitespace policy. Plain shell and Python examples
-are not executed by that build; explanatory prose still needs review.
+against Lean's messages, with the declared whitespace policy. Shell and Python examples are
+separate transcripts.
 
 # Running Lean Files
 
@@ -145,17 +144,14 @@ TorchLean.Trainer.new.{u} {Model : Type u} {σ τ : Shape}
   (config : Trainer.Config σ τ := { }) : Trainer σ τ
 ```
 
-The printed `.{u}` is a universe parameter describing how general the model's type may be.
-It is unrelated to a layer width, device, or seed. `ToModel` is the instance that connects that
-model representation to the trainer's input and output shapes. The ordinary `(model : Model)`
-argument is still supplied explicitly. Finally, `{ }` requests the configuration's default field
-values; it does not mean that the trainer has no objective or runtime settings. Reading those four
-parts separately is more useful than trying to interpret the entire signature as one long name.
+Start with the explicit argument `(model : Model)` and the result `Trainer σ τ`. Lean infers the
+curly-braced arguments, including the shapes, and searches for the square-bracketed `ToModel`
+instance that connects this model representation to the trainer. The printed `.{u}` is a universe
+parameter describing how general `Model`'s type may be.
 
-Curly braces are arguments Lean works out for you, square brackets are instances it searches for,
-and `:= { }` is a default. So `Trainer.new model` is a complete call: the shapes `σ` and `τ` come
-from the model, the `ToModel` instance says how to read that model as something trainable, and the
-configuration uses its default field values.
+The last argument has a default: `:= { }` fills the configuration with its default field values.
+Thus `Trainer.new model` is a complete call, with an objective and runtime settings even though we
+have not written them out.
 
 # Definitions
 
@@ -228,12 +224,10 @@ point : Tensor Float [2]
 [0.250000, -0.750000]
 ```
 
-`#check` elaborates an expression and reports its type. It need not execute a forward pass or
-print the tensor's contents. `#eval` executes an expression and displays its result. The first line
-therefore tells us that `point` has two Float entries, while the second tells us which entries they
-are. The distinction becomes more important for an effectful expression: checking the type of a
-prediction method does not run the model. Conversely, seeing one successful evaluation does not
-prove a general statement about every input of that type.
+`#check` elaborates an expression and reports its type; `#eval` executes it and displays the result.
+The first line tells us that `point` has two Float entries, and the second tells us which entries
+they are. The distinction also matters for effectful expressions: checking a prediction method's
+type leaves the model unexecuted.
 
 The bracket literal is not a `List Float` that happens to be used as a tensor. A custom elaborator
 reads it against the expected type, checks each axis, and builds the tensor's buffer directly, which
@@ -279,11 +273,6 @@ with three entries each. The empty shape has rank zero but size one, following t
 convention. This is how a scalar fits into the same tensor interface as a matrix. An axis of
 length zero would describe a different object with no entries. When a signature uses `[]` for a
 loss, it means one scalar value, not an empty batch or a missing result.
-
-`rank` is the number of axes and `size` is the number of scalars, the product of the
-dimensions. The empty shape has size one, because the
-product of no numbers is one, and a rank-zero tensor holds exactly one scalar. TorchLean uses `[]`
-for that shape, and a scalar loss lives in `Tensor Float []`.
 
 Both TorchLean and PyTorch track shape information. TorchLean's tensor type makes it available
 when checking the surrounding program:
@@ -383,12 +372,9 @@ def origin : Tensor Float [2] := [0.0, 0.0]
 0.312500
 ```
 
-The sum adds 0.25 and minus 0.75 to obtain minus 0.5. The mean divides that sum by two and
-returns minus 0.25. Squaring the differences from the origin gives 0.0625 and 0.5625; their mean
-is 0.3125. All three results are scalars, but they answer different questions. In particular, the
-mean squared error does not cancel positive and negative deviations before squaring. Reading the
-operation name together with the reduction rule is necessary even after the type has established
-that the prediction and target shapes agree.
+The sum is `0.25 - 0.75 = -0.5`, and dividing by two gives the mean `-0.25`. For mean squared
+error, we square the deviations first: `0.0625` and `0.5625` average to `0.3125`. Squaring before
+reducing prevents the positive and negative deviations from cancelling.
 
 `Tensor.matmul` uses the same type-level dimension for the left matrix's columns and the right
 matrix's rows. The arguments must agree on that dimension:
@@ -451,12 +437,10 @@ ReLU preserves the shape, while `reshape` changes its axes without changing the 
 [[1.000000, 2.000000], [3.000000, 4.000000], [5.000000, 6.000000]]
 ```
 
-The reshaped matrix lists the same six entries in the same flat order, now grouped into three
-rows of two. Transposition would instead exchange the role of row and column coordinates and move
-entries in that order. Both operations could produce shape `[3, 2]` from `[2, 3]`, so the result
-shape alone does not tell them apart. ReLU illustrates the complementary case: it preserves the
-shape and coordinate layout while changing negative values. These are three different semantic
-operations even though each can be described briefly as transforming a tensor.
+The reshaped matrix keeps the flat order `1, 2, 3, 4, 5, 6`, grouping it into three rows of two.
+A transpose would exchange row and column coordinates and rearrange that order. Both produce
+shape `[3, 2]` from `[2, 3]`, so their shapes alone cannot distinguish them. ReLU changes the
+negative entries while preserving both shape and coordinate layout.
 
 `reshape` takes its target shape as a named argument and checks that the two shapes have the same
 size while elaborating, so there is no runtime reshape failure to handle and no `-1` to infer.
@@ -586,15 +570,10 @@ example : Spec.Shape.Coord [2] = (Fin 2 × PUnit) :=
   rfl
 ```
 
-`Fin 2` is the type of natural numbers accompanied by evidence that they are less than two.
-The `PUnit` at the end carries no further coordinate; it terminates the nested tuple for a
-rank-one tensor. In a matrix coordinate, the tuple contains a bounded row index and a bounded
-column index before that terminator. The equality proved by `rfl` only unfolds this representation.
-It does not perform a lookup. The actual lookup can then use the supplied bounded indices without
-asking again whether each index is in range.
-
-`Fin n` is the type of naturals below `n`, so a coordinate cannot be out of range: the bound travels
-with the index instead of being rechecked on every access.
+`Fin n` pairs a natural number with evidence that it is below `n`. The `PUnit` terminates the
+coordinate tuple; a matrix coordinate has a bounded row and column index before that terminator.
+Here `rfl` unfolds the coordinate type. When we subsequently look up an entry, the bounds travel
+with its indices and need no further check.
 
 A numeral at a `Fin` type requires care, however:
 
@@ -632,12 +611,9 @@ some 6.000000
 none
 ```
 
-The two arrays here are ordinary runtime coordinates. The first has a valid row and column and
-returns `some 6`; the second has row five in a two-row matrix and returns `none`. This interface is
-appropriate when an index comes from user input or a file and no proof of its bound is available.
-The preceding literal in `Fin 2` follows a different convention: numeral five is interpreted modulo
-two. Choosing between these interfaces changes the intended handling of invalid input, so a caller
-should make that choice explicitly.
+The first array names a valid row and column and returns `some 6`. Row five in the second array
+exceeds the matrix's two rows, so it returns `none`. Use this interface for coordinates read from
+a file or supplied by a user when an out-of-range coordinate should fail.
 
 PyTorch raises `IndexError: index 5 is out of bounds for dimension 0 with size 2` for the same
 index. The checked Lean accessor represents the outcome with `Option Float`: `some` contains a
@@ -815,8 +791,7 @@ would show its fields. Note that `Affine.forward` is called as `p.forward x` as 
 whose first explicit argument has type `Affine` can be written with dot notation, and TorchLean's
 whole session and trainer API is built on that convention.
 
-TorchLean uses structures for configuration records, model summaries, backend contracts, graph
-nodes, and certificate data. A value such as
+The same record syntax lets us configure a trainer:
 
 ```
 -- Set the loss, Adam learning rate, and initialization seed
@@ -826,8 +801,8 @@ nodes, and certificate data. A value such as
   seed := 2026 }
 ```
 
-is a structure literal whose type Lean recovers from the expected type at the call site, which is
-also how `.meanSquaredError` resolves without naming the type it belongs to.
+Lean recovers this literal's type from the expected type at the call site. That also tells it
+which type `.meanSquaredError` belongs to.
 
 # Inductive Types
 
@@ -866,10 +841,9 @@ Missing cases:
 Reduction.sum
 ```
 
-TorchLean uses inductive types for execution modes, runtime element types, devices, backend
-providers, graph operations, optimizer choices, and model syntax.
-Adding a constructor makes a match incomplete if it listed only the old constructors. Matches
-with wildcard branches remain exhaustive, so reviewing their fallback behavior is still necessary.
+TorchLean's execution modes and graph operations are inductive types too. Adding a constructor
+exposes matches that listed only the old cases. A wildcard branch remains exhaustive, so its
+fallback behavior needs review when the alternatives change.
 
 Exhaustiveness checks that every case has a branch. Whether an unsupported combination returns
 an error depends on the branch's implementation; the type checker does not choose that policy.
@@ -905,19 +879,15 @@ def showTwice {α : Type} [ToString α] (x : α) : String :=
 "7, 7"
 ```
 
-The implicit type argument and the printing instance solve different problems. From the value
-seven, Lean can infer the type `Nat`; it then searches for a `ToString Nat` implementation.
-For tensors, a storage instance similarly supplies operations for representing entries. A scalar
-arithmetic instance supplies the operations required by an equation. The presence of those instances
-does not automatically establish algebraic laws such as real associativity. If a theorem requires
-such a law, its hypotheses or scalar type must provide it. This is why changing from reals to
-floating-point scalars can preserve a program's structure while changing what can be proved.
+Lean infers `Nat` from the argument seven, then finds a `ToString Nat` implementation. The
+`Storage α` argument in the chapter's first `#check` works similarly: it supplies the operations
+for storing tensor entries. TorchLean also requests arithmetic, decidable shape equality, and
+printing through instances.
 
-Lean found `ToString Nat` on its own. TorchLean uses instances to request arithmetic, storage
-support, decidable shape equality, and printing, which is what lets one definition serve `Float`
-tensors at runtime and real-valued tensors in proofs without duplicating the code. The `Storage α`
-argument in the very first `#check` of this chapter is exactly such an instance: it is the evidence
-that `α` can be laid out in a buffer.
+This lets a definition serve `Float` tensors at runtime and real-valued tensors in proofs.
+The operations alone do not supply algebraic laws. A theorem using associativity must obtain that
+law from its scalar type or hypotheses; replacing reals with floats can preserve the program's
+structure while changing which theorems hold.
 
 # Scalar Types
 
@@ -929,7 +899,7 @@ A declaration such as
 def preserveShape {α : Type} (x : Tensor α [2]) := x
 ```
 
-can be instantiated with `Float`, with `Rat`, or with `TorchLean.Floats.IEEE32Exec`. Within any one
+can be instantiated with `Float`, with `Rat`, or with FloatLib binary32. Within any one
 instantiation, the input and the output use the same `α`. Nothing in the type lets a run start in
 one element type and finish in another, and {ref "tensors-shapes"}[Tensors And Shapes] develops what
 that means for a whole training run.
@@ -1003,18 +973,14 @@ Mathematical results can also depend on the standard logical foundations:
 [propext, Classical.choice, Quot.sound]
 ```
 
-This output is a dependency report for one named theorem. `propext` identifies logically
+The command follows theorem dependencies down to their axioms. Here `propext` identifies logically
 equivalent propositions, `Classical.choice` supplies choices from existence, and `Quot.sound`
-supports reasoning with quotient constructions. The report does not list every theorem used during
-the proof; it follows those dependencies down to their axioms. It also does not certify a compiler,
-a foreign function, or a hardware kernel. Those implementations are outside the statement being
-inspected here. Reading the theorem's conclusion and its hypotheses remains necessary alongside
-checking that its foundations are the intended ones.
+supports quotient constructions. These are standard foundations used throughout Mathlib
+{Informal.citep mathlib2020}[]; individual theorems may depend on fewer of them.
 
-Those are standard foundations used throughout Mathlib {Informal.citep mathlib2020}[]:
-propositional extensionality, classical choice, and quotient soundness. Particular theorems may
-depend on fewer axioms. An audit checks that each theorem uses only the permitted foundations and
-its explicitly stated hypotheses, with no unfinished-proof axiom.
+To audit this result, read its conclusion and hypotheses alongside that list, checking for
+unexpected axioms or unfinished proofs. The report concerns the named theorem, so it gives no
+guarantee about a compiler or foreign kernel outside that theorem's statement.
 
 The displayed theorem connects a public operation to its specification:
 
@@ -1025,20 +991,11 @@ example : Tensor.mean point = Tensor.meanSpec point :=
   rfl
 ```
 
-There is no tolerance in this equality. Both sides name the same Lean computation after unfolding
-the public wrapper, so they are definitionally equal even before a numerical input is evaluated.
-That is a particularly direct connection between an API and a specification. It does not identify
-the result with an ideal real mean, nor does it say that every backend's reduction order agrees
-with it. Those questions require a different statement relating the selected scalar semantics or
-native implementation to this named computation.
-
-On the left is the operation an ordinary program calls. On the right is the specification the proofs
-reason about. They are equal by `rfl`, that is, definitionally, because the runtime operation is
-*defined* as the specification rather than reimplemented alongside it. This proves equality of
-the Lean definitions; native implementations still have their own trust
-boundary. The chapter
-{ref "spec-layer"}[The Specification Layer] explains where that is possible and where a real proof
-is needed instead.
+Unfolding the public `Tensor.mean` wrapper gives `Tensor.meanSpec`, so `rfl` closes the equality
+without a tolerance or a numerical evaluation. The program and proof use the same definition.
+Relating that computation to an ideal real mean, or to a native reduction with another evaluation
+order, requires a further theorem. {ref "spec-layer"}[The Specification Layer] explains which
+connections follow by unfolding and which need additional proofs.
 
 The same separation appears throughout verification. An interval pass computes a candidate output
 box: that is a program, and running it produces data. A predicate states that the box contains every
@@ -1072,12 +1029,9 @@ def printIncrement (n : Nat) : IO Unit := do
 next = 5
 ```
 
-`IO Unit` is the type of an action whose return value carries no useful data. The text
-`next = 5` is the effect of running that action, rather than a String returned by
-`printIncrement`. This explains why a program may print several lines while its type still ends
-in `Unit`. In a training script, the same distinction separates returning a trained model from
-printing its loss. A caller that needs to use the model must retain the returned value; a log
-message alone cannot be passed to a later prediction or verification call.
+`IO Unit` describes an action whose return value carries no useful data. The text `next = 5`
+is printed as an effect; `printIncrement` does not return that string. A training script likewise
+prints losses separately from returning the trained model that a later prediction call needs.
 
 The `do` block sequences effectful actions, and `s!"..."` is string interpolation. Training
 sessions, checkpoint access, subprocess calls, and native runtime entry points all live in `IO`;
@@ -1121,19 +1075,14 @@ def sharedUpdates (steps : Nat) : IO Float := do
   pure last
 ```
 
-Both functions return zero for zero updates and the last assigned index as a Float for a
-positive update count. That agreement does not make them identical workloads. The first repeatedly
-replaces its current tensor, while the second creates each candidate from an original that remains
-available. The final scalar observes only the updated entry, so it cannot reveal how much storage
-was copied or reused along the way. The code supplies an ownership experiment to measure; it does
-not supply a timing result. Any performance claim must come from a recorded execution of those
-workloads under stated conditions.
+Both functions return zero for zero updates and the last assigned index as a Float otherwise.
+Their return values hide the storage difference: one loop replaces its current tensor, while the
+other repeatedly updates from an original it must preserve.
 
-To measure the effect, time both functions with `IO.monoNanosNow`, repeat with a smaller tensor,
-and report the execution mode and update count. `#eval` and a compiled executable can have different
-costs. The loops deliberately perform different ownership patterns: the second repeatedly derives
-an updated value from the same retained original. A useful comparison checks both tensor size and
-ownership rather than attributing every timing difference to functional programming.
+To measure that difference, time both with `IO.monoNanosNow`, repeat with a smaller tensor, and
+report the execution mode and update count. `#eval` and a compiled executable can have different
+costs. These loops provide an experiment, not a timing result; changing the tensor size helps reveal
+whether a measured cost grows with the amount of data that must be copied.
 
 A retained value also matters to differentiation: the backward computation may need a value from
 the forward pass. PyTorch tracks mutation constraints and rejects, for example, this update:

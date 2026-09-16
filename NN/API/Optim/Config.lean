@@ -6,6 +6,11 @@ Authors: TorchLean Team
 
 module
 
+public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Text.DecimalFormatting
+public import FloatLib.Floats.Formats.BinaryInterchange.Format.Catalog
+public import FloatLib.Floats.Formats.BinaryInterchange.Model.Carrier
+public import Init.Meta
+
 /-!
 # Optimizer Configuration
 
@@ -118,37 +123,30 @@ opaque view (optimizer : Optimizer) : View :=
   | ⟨representation⟩ => representation
 
 /--
-Multiply by ten until the magnitude reaches one, reporting how many tens that took.
+Render a hyperparameter as a Lean expression, preserving every finite binary64 bit.
 
-`budget` is what makes the recursion obviously terminating. Four hundred steps is past the smallest
-subnormal `Float`, so a finite nonzero input never runs out of it.
--/
-def tensToUnit (value : Float) (budget : Nat) (digits : Nat := 0) : Float × Nat :=
-  match budget with
-  | 0 => (value, digits)
-  | remaining + 1 =>
-      if 1.0 ≤ value.abs then
-        (value, digits)
-      else
-        tensToUnit (value * 10.0) remaining (digits + 1)
-
-/--
-Render a hyperparameter so that reading the text back gives the same number.
-
-`toString` on `Float` always prints six digits after the decimal point, so Adam's default `epsilon`
-of `1e-8` comes out as `0.000000`. For `describe` that is not cosmetic: the string it returns is
-supposed to be the syntax that rebuilds the same optimizer, and an epsilon of zero rebuilds a
-different one, one whose adaptive denominator has lost its guard. Values that survive fixed-point
-printing are left exactly as `toString` gives them; anything smaller is scaled into exponent form,
-which Lean reads back as a float literal. Six significant digits is the resolution either way, so
-this is a legible description rather than a bit-exact serialization.
+FloatLib rounds the exact value to seventeen significant decimal digits. The candidate is decoded
+with Lean's scientific-literal decoder and `OfScientific Float`; it is used only if the resulting
+bits match. Otherwise an explicit `Float.ofBits` expression retains the original finite value.
+Negative zero and nonfinite values use `Float.ofBits` directly. NaNs follow Lean's canonicalization.
 -/
 def formatScalar (value : Float) : String :=
-  if !value.isFinite || value == 0.0 || 1e-4 ≤ value.abs then
-    toString value
+  let bits := value.toBits
+  let exact := s!"(Float.ofBits {bits.toNat})"
+  if !value.isFinite || bits == 0x8000000000000000 then
+    exact
   else
-    let (mantissa, digits) := tensToUnit value 400
-    s!"{mantissa}e-{digits}"
+    let model :=
+      FloatLib.Floats.Formats.BinaryInterchange.Model.ofNatBits (fmt := .binary64) bits.toNat
+    let text := model.formatScientific 16
+    let negative := text.startsWith "-"
+    let magnitude := if negative then (text.drop 1).toString else text
+    match Lean.Syntax.decodeScientificLitVal? magnitude with
+    | some (mantissa, sign, exponent) =>
+        let parsed : Float := OfScientific.ofScientific mantissa sign exponent
+        let parsed := if negative then -parsed else parsed
+        if parsed.toBits == bits then text else exact
+    | none => exact
 
 end Optimizer.Internal
 
@@ -210,9 +208,10 @@ def adaDelta (config : AdaDelta.Config) : Optimizer :=
 
 namespace Optimizer
 
-/-- Render an optimizer in the same record-based syntax used to construct it. Every scalar goes
-through `Internal.formatScalar`, so a small stabilizer such as Adam's `epsilon` stays readable
-instead of printing as `0.000000`. -/
+/-- Render an optimizer in the record-based syntax used to construct it. Finite fields retain
+their binary64 bits through `Internal.formatScalar`, including coefficients close to one and
+subnormal stabilizers. Negative zero and nonfinite fields use explicit `Float.ofBits` expressions;
+NaNs follow Lean's canonicalization. -/
 def describe (optimizer : Optimizer) : String :=
   let render := Internal.formatScalar
   match Internal.view optimizer with

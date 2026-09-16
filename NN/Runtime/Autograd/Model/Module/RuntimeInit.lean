@@ -20,6 +20,9 @@ initializers can materialize parameter storage on the host or directly in CUDA b
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 
 namespace Runtime
 namespace Autograd
@@ -37,7 +40,7 @@ namespace Module
 Cast a Float tensor to a backend scalar type `α` by mapping a scalar cast function.
 
 This is mainly used to turn ordinary Float tensor literals into
-`Float`/`IEEE32Exec`/etc.
+`Float`/`ExecFloat.Binary 8 23`/etc.
 -/
 def castTensor {α : Type} [TorchLean.Storage α]
     (cast : Float → α) {s : Shape} (t : Tensor Float s) : Tensor α s :=

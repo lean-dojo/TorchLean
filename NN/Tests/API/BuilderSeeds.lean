@@ -167,7 +167,7 @@ def vitEncoderConfig : nn.models.ViT.EncoderConfig 1 :=
 def vitConfig : nn.models.ViT.Config 1 :=
   vitEncoderConfig.classifier 3
 
-def maskedAutoencoderConfig : nn.models.ViT.MaskedAutoencoder.Config 1 :=
+def maskedPatchReconstructorConfig : nn.models.ViT.MaskedPatchReconstructor.Config 1 :=
   { encoder := vitEncoderConfig
     reconstructionWidth := 4 }
 
@@ -438,16 +438,16 @@ def run : IO Unit := do
     counterAfter
       (nn.models.vit { vitConfig with classCount := 0 })
       11
-  expectCounter "invalid masked autoencoder configuration consumes no keys" 0 <|
+  expectCounter "invalid masked patch reconstructor configuration consumes no keys" 0 <|
     counterAfter
-      (nn.models.ViT.maskedAutoencoder
-        { maskedAutoencoderConfig with reconstructionWidth := 0 })
+      (nn.models.ViT.maskedPatchReconstructor
+        { maskedPatchReconstructorConfig with reconstructionWidth := 0 })
       11
-  expectError "masked autoencoder validation names the public model"
-    "ViT.MaskedAutoencoder: head count must be positive" <|
-      nn.models.ViT.MaskedAutoencoder.Config.validate
-        { maskedAutoencoderConfig with
-          encoder := { maskedAutoencoderConfig.encoder with headCount := 0 } }
+  expectError "masked patch reconstructor validation names the public model"
+    "ViT.MaskedPatchReconstructor: head count must be positive" <|
+      nn.models.ViT.MaskedPatchReconstructor.Config.validate
+        { maskedPatchReconstructorConfig with
+          encoder := { maskedPatchReconstructorConfig.encoder with headCount := 0 } }
   expectCounter "invalid KAN configuration consumes no keys" 0 <|
     counterAfter
       (nn.models.kan { kanConfig with hiddenWidths := [3, 0] })

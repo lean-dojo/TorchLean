@@ -259,7 +259,8 @@ The definitions above (`net`, `energy`, …) are written in a math-first style u
 That is the right presentation for proofs, but it bakes in algebraic typeclasses like
 `AddCommMonoid` and uses `Finset` sums.
 
-When we execute Hopfield over IEEE-like scalars (e.g. `Float`, `IEEE32Exec`), we do *not* want to
+When we execute Hopfield over IEEE-like scalars (e.g. `Float`, `ExecFloat.Binary 8 23`), we do *not*
+want to
 pretend those algebraic laws hold exactly: NaNs and rounding make addition non-associative and
 non-commutative in general. So for runtime execution we provide a “plain loop” variant that:
 

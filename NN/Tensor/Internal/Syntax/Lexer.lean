@@ -473,8 +473,8 @@ private theorem lexChars_all_word_append (policy : IdentifierPolicy)
         cases wordRev with
         | nil => exact (hWordRev rfl).elim
         | cons => rfl
-      simp only [List.cons_append, lexChars, hCharacter, if_true]
-      simp only [hWordRevEmpty, Bool.false_eq_true, if_false]
+      simp only [List.cons_append, lexChars, hCharacter, ite_true]
+      simp only [hWordRevEmpty, Bool.false_eq_true, ite_false]
       rw [induction (offset := offset + 1)
         (wordRev := character :: wordRev) (by simp) hRemaining]
       simp [Nat.add_assoc]

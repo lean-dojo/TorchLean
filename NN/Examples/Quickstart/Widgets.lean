@@ -7,7 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.Widgets
-public import NN.Floats.IEEEExec.Exec32
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured
+public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
+public import FloatLib.Floats.Formats.IEEE754.Native
 public import NN.Tensor
 public import NN.API.Trainer.Reporting
 
@@ -30,10 +32,14 @@ This quickstart keeps only the smallest useful examples; the full widget gallery
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofModel toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 namespace NN.Examples.Quickstart.Widgets
 
 open TorchLean
-open TorchLean.Floats.IEEE754
 
 /-- A small vector, built with the same typed tensor constructor used in ordinary code. -/
 def vector : Tensor Float [4] :=
@@ -47,8 +53,9 @@ def matrix : Tensor Int [2, 3] :=
   ]
 
 /-- A binary32 value; the widget shows sign/exponent/fraction fields and classification flags. -/
-def one32 : IEEE32Exec :=
-  IEEE32Exec.ofFloat 1.0
+def one32 : Binary 8 23 :=
+  (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat x))) : Binary 8 23))
+    1.0
 
 /-- A minimal training log; runtime examples can write the same structure as JSON. -/
 def tinyTrainLog : Training.TrainLog :=

@@ -180,7 +180,7 @@ theorem choleskyFn_lower_triangular (A : Fin n → Fin n → ℝ) {i j : Fin n} 
     Spec.choleskyFn A i j = 0 := by
   unfold Spec.choleskyFn Spec.choleskyColsFn
   rw [getD_foldl_finRange]
-  rw [if_pos hij]
+  rw [ite_eq_left hij]
 
 /-- Tensor-level statement: the Cholesky factor `choleskySpec A` is lower-triangular. -/
 theorem choleskySpec_lower_triangular (A : TorchLean.Tensor ℝ [n, n])

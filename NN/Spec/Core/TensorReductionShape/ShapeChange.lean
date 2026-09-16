@@ -198,21 +198,19 @@ theorem flatten_reshapeSpec {α : Type} [TorchLean.Storage α]
     reshapeSpec (reshapeSpec tensor hSize) hSize.symm = tensor := by
   exact TorchLean.Tensor.Internal.Rep.reshape_symm_reshape (Shape.internalSize_congr hSize) tensor
 
-/-- Sequence a finite family of optional tensor slices. -/
+/--
+Collect optional tensor slices along a new leading axis.
+
+Slices are evaluated once, in index order. A missing slice makes the whole result `none`; an empty
+family gives an empty tensor. The intermediate vector retains each successful slice so that the
+output can be assembled in one pass. Rebuilding the remaining tensor at every recursive step would
+copy earlier results repeatedly, making large batches and mixture models unnecessarily expensive.
+-/
 def sequenceFin {α : Type} [TorchLean.Storage α]
     {shape : Shape} {n : Nat}
     (values : Fin n → Option (Tensor α shape)) :
-    Option (Tensor α (.dim n shape)) :=
-  match n with
-  | 0 => some (Tensor.dim fun index => Fin.elim0 index)
-  | n + 1 =>
-      match values ⟨0, Nat.succ_pos n⟩ with
-      | none => none
-      | some first =>
-          match sequenceFin (n := n) (fun index => values index.succ) with
-          | none => none
-          | some rest =>
-              some (Tensor.dim fun index =>
-                Fin.cases first (fun tail => Tensor.unstack rest tail) index)
+    Option (Tensor α (.dim n shape)) := do
+  let slices ← TorchLean.Tensor.Internal.sequenceFinM values
+  pure (Tensor.dim slices)
 
 end TorchLean.Tensor

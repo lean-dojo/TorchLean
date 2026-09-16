@@ -31,13 +31,14 @@ noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 open Proofs.RuntimeRoundingApprox
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 /-- Two context indices pointing at the same position must have the same shape.
 
@@ -65,7 +66,7 @@ def tensorCastOfIdxEq {α : Type} [TorchLean.Storage α] {Γ : List Shape} {s₁
   Spec.tensorCast (α := α) s₁
     (idx_shape_eq_of_i_eq (Γ := Γ) (a := a) (b := b) h).symm
 
-omit [NeuralValidExp fexp] [NeuralValidRndToNearest rnd] in
+omit [ValidExp fexp] [ValidRndToNearest rnd] in
 /-- Approximation is stable under transporting both tensors along the same shape equality. -/
 theorem approxTensor_tensor_cast {s t : Shape} (h : s = t)
     {xS : SpecTensor s} {xR : Tensor R s} {eps : ℝ}

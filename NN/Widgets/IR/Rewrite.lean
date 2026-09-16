@@ -11,7 +11,6 @@ public meta import NN.Widgets.IR.Graph
 public meta import NN.IR.Pretty -- shake: keep
 public meta import NN.Widgets.Core.UI -- shake: keep
 public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
-public meta import ProofWidgets.Demos.Macro -- shake: keep
 
 /-!
 # GraphRewrite
@@ -151,6 +150,6 @@ def graphRewriteHtml (g₁ g₂ : Graph) : ProofWidgets.Html :=
 syntax (name := graphRewriteViewCmd) "#graph_rewrite_view " term ", " term : command
 
 macro "#graph_rewrite_view " g1:term ", " g2:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (graphRewriteHtml $g1 $g2))
+  UI.canonicalCommand <$> `(#html (graphRewriteHtml $g1 $g2))
 
 end NN.Widgets

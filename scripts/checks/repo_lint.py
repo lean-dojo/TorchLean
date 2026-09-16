@@ -1019,17 +1019,13 @@ def _iter_lean_files() -> Iterable[pathlib.Path]:
         if path.is_file():
             yield path
 
-# `NN/Floats` is scheduled for extraction into its own package and is frozen until then; the
-# style rules below therefore apply to everything else.
-FROZEN_STYLE_PREFIXES = ("NN/Floats/",)
-
+# FloatLib owns the shared numerical library. The remaining TorchLean adapters follow the
+# same source-style rules as the rest of this repository.
 MAX_LINE_LENGTH = 100
 
 
 def _check_line_style(path: pathlib.Path, rel: str, text: str, findings: list[Finding]) -> None:
     """Mathlib-style line rules: at most 100 columns and no em-dashes in prose."""
-    if rel.startswith(FROZEN_STYLE_PREFIXES):
-        return
     for lineno, line in enumerate(text.split("\n"), start=1):
         # Verso block directives (`:::theorem "label" (lean := "...")`) must stay on one line, so
         # the column limit does not apply to them.
@@ -2988,8 +2984,8 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
 
         rel = path.relative_to(REPO_ROOT).as_posix()
 
-        # Keep the numerical library reusable without importing tensors, models, runtimes, or
-        # verification. TorchLean-specific adapters must point into `NN.Floats`, never the reverse.
+        # Keep the FloatLib adapters below TorchLean's spec, proof, runtime, and verification
+        # layers. Their TorchLean imports are restricted to fellow adapters and core definitions.
         if rel == "NN/Floats.lean" or rel.startswith("NN/Floats/"):
             for m in re.finditer(
                 r"^\s*(?:public\s+)?import\s+(NN\.[A-Za-z0-9_.]+)\s*$",

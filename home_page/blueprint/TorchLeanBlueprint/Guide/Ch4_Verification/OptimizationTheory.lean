@@ -37,10 +37,9 @@ A TorchLean training run may call SGD or Adam, but a convergence theorem cannot 
 of the optimizer alone. It needs an ideal update map, assumptions on the objective or gradient, and
 a step size condition.
 
-The examples below first compare SGD, momentum, Adam, and AdamW on a one-parameter problem. They
-then examine matrix directions for Muon and a gradient-descent recurrence with a known contraction
-factor. The displayed theorem signatures identify the assumptions needed to generalize those
-calculations.
+Even two updates that print the same parameter can differ: Adam's epsilon changes its recurrence
+by less than the six-decimal display reveals. We can expose that difference on a single parameter
+before asking which identities hold for arbitrary states.
 
 # The Optimization Contract
 
@@ -53,8 +52,8 @@ The optimization contract has three layers:
 - *Convergence theorem*: the conditional theorem saying that iterating the ideal map makes progress
   under assumptions such as strong monotonicity, Lipschitzness, and a safe step size.
 
-Keeping these layers separate stops a common overclaim. A decreasing loss curve is evidence about a
-run; it is not itself a proof that the update map is contractive.
+A decreasing loss curve describes one run. A contraction theorem compares the update at arbitrary
+pairs of states, so it needs more information than that curve supplies.
 
 # First Order Updates
 
@@ -1012,8 +1011,6 @@ The files behind this chapter:
 
 # References
 
-The optimizer papers are cited inline. One source stays a plain link because it is a book rather
-than a paper: Yurii Nesterov,
+The gradient-descent proof follows the contraction argument in Yurii Nesterov's
 [*Introductory Lectures on Convex
-Optimization*](https://link.springer.com/book/10.1007/978-1-4419-8853-9), Springer 2004, whose
-contraction argument is the one the theorems above reproduce.
+Optimization*](https://link.springer.com/book/10.1007/978-1-4419-8853-9), Springer 2004.

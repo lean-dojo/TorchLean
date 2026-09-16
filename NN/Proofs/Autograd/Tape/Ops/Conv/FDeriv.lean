@@ -429,7 +429,7 @@ theorem channelGet_convInputDerivSpec_eq_coefficients
       · simp [hOutput, hEqData.mpr hOutput]
         ring
       · have hForward := fun h => hOutput (hEq.mp h)
-        rw [if_neg hForward]
+        rw [ite_eq_right hForward]
         simp [hOutput]
 
 /-! ## Adjoint identities -/

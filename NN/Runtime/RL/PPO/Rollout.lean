@@ -20,8 +20,9 @@ This file defines:
 - a conversion to the minibatch format expected by the PPO autograd objective
   (`Runtime.RL.PolicyGradient.Autograd.ppoActorCriticObjectiveDef`).
 
-The shared tensor GAE/return definitions live in `NN.Spec.RL.Core` and are re-exported by
-`NN.Runtime.RL.Core`. This file supplies the typed rollout layer for PPO training loops.
+The single-mask tensor GAE/return definitions live in `NN.Spec.RL.Core` and are re-exported by
+`NN.Runtime.RL.Core`. This typed rollout layer separates task termination from episode boundaries
+when computing PPO advantages.
 
 References:
 - Schulman et al., "Proximal Policy Optimization Algorithms" (2017):
@@ -94,6 +95,9 @@ structure Step (α : Type) [TorchLean.Storage α] (obsShape : Shape) (nActions :
   value : α
   /-- Bootstrap value prediction `V(s_{t+1})` (before any auto-reset). -/
   nextValue : α
+  /-- Task termination suppresses value bootstrapping. An external truncation sets `done`
+  but leaves this false. The default preserves the single-mask behavior of older records. -/
+  terminated : Bool := done
 
 /--
 Fixed-horizon rollout buffer for PPO.
@@ -142,6 +146,45 @@ end TrainingBatch.Internal
 
 namespace Rollout
 
+namespace Internal
+
+/-- GAE with separate masks for the next-state value and continuation into the next step. -/
+def generalizedAdvantageEstimationWithBoundaries {n : Nat} (gamma lam : α)
+    (rewards values nextValues : Tensor α [n])
+    (terminated boundaries : Tensor Bool [n]) : Tensor α [n] :=
+  let indices : Tensor (Fin n) [n] := Tensor.ofFn id
+  Tensor.scanr (fun i nextAdvantage =>
+    let bootstrapMask := Core.continueMask (α := α) terminated[i]
+    let continuationMask := Core.continueMask (α := α) boundaries[i]
+    let delta := rewards[i] + gamma * bootstrapMask * nextValues[i] - values[i]
+    delta + gamma * lam * continuationMask * nextAdvantage) 0 indices
+
+/-- Using the same mask retains the existing GAE definition, including arithmetic order. -/
+private theorem generalizedAdvantageEstimationWithBoundaries_same {n : Nat} (gamma lam : α)
+    (rewards values nextValues : Tensor α [n]) (dones : Tensor Bool [n]) :
+    generalizedAdvantageEstimationWithBoundaries gamma lam rewards values nextValues dones dones =
+      Core.generalizedAdvantageEstimation gamma lam rewards values nextValues dones := by
+  rfl
+
+end Internal
+
+/--
+Unnormalized GAE for a PPO rollout. Task termination suppresses the next-state value;
+every episode boundary stops advantage continuation. Thus a truncation bootstraps from
+`nextValue` before auto-reset without using rewards from the following episode.
+-/
+def generalizedAdvantages {obsShape : Shape} {nActions horizon : Nat}
+    (gamma lam : α) (r : Rollout α obsShape nActions horizon) : Tensor α [horizon] :=
+  let stepAt (index : Fin horizon) :=
+    r.steps[index.val]'(by simp [r.steps_size_eq_horizon])
+  let rewards : Tensor α [horizon] := Tensor.ofFn (fun index => (stepAt index).reward)
+  let terminated : Tensor Bool [horizon] := Tensor.ofFn (fun index => (stepAt index).terminated)
+  let boundaries : Tensor Bool [horizon] := Tensor.ofFn (fun index => (stepAt index).done)
+  let values : Tensor α [horizon] := Tensor.ofFn (fun index => (stepAt index).value)
+  let nextValues : Tensor α [horizon] := Tensor.ofFn (fun index => (stepAt index).nextValue)
+  Internal.generalizedAdvantageEstimationWithBoundaries gamma lam rewards values nextValues
+    terminated boundaries
+
 /--
 Convert a fixed-horizon rollout into the PPO minibatch expected by
 `Autograd.ppoActorCriticObjectiveDef`.
@@ -151,6 +194,8 @@ Notes:
 - Advantages are normalized (z-score) for the policy-gradient term, a common PPO
   variance-reduction practice.
   Value targets (lambda-returns) are computed from the *unnormalized* advantages.
+- Termination suppresses bootstrapping; truncation retains the pre-reset next-state value.
+  Both stop advantage continuation across the episode boundary.
 -/
 def trainingBatch {obsShape : Shape} {nActions horizon : Nat}
     [NeZero horizon] [NeZero nActions]
@@ -165,14 +210,9 @@ def trainingBatch {obsShape : Shape} {nActions horizon : Nat}
     Tensor.stackLeading (fun index => Tensor.oneHot (α := α) nActions (stepAt index).action)
   let oldLogProb : Tensor α (ScalarBatchShape horizon) :=
     Tensor.ofFn (fun index => (stepAt index).oldLogProb)
-  let rewards : Tensor α [horizon] := Tensor.ofFn (fun index => (stepAt index).reward)
-  let dones : Tensor Bool [horizon] := Tensor.ofFn (fun index => (stepAt index).done)
   let values : Tensor α [horizon] := Tensor.ofFn (fun index => (stepAt index).value)
-  let nextValues : Tensor α [horizon] := Tensor.ofFn (fun index => (stepAt index).nextValue)
 
-  let advRaw :=
-    Core.generalizedAdvantageEstimation (α := α) (n := horizon)
-      gamma lam rewards values nextValues dones
+  let advRaw := generalizedAdvantages gamma lam r
   let returns := Core.returnsFromAdvantages (α := α) (n := horizon) advRaw values
   let normalizedAdvantages := Spec.normalizeZscoreSpec (α := α) (n := horizon) advRaw
 

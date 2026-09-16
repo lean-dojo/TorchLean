@@ -34,6 +34,9 @@ open NN.Verification.CROWNNodeCertAlphaBeta
 -- the text after collapsing runs of whitespace. The rendered page still shows Lean's own layout.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 #doc (Manual) "Neural Network Verification" =>
 %%%
 tag := "verification"
@@ -442,9 +445,9 @@ about the engine. No second arithmetic argument is needed for that substitution.
 
 ## IBP On A Two-Layer Affine Network
 
-The theorems say the boxes are sound. They say nothing about how wide the boxes are, and width is
-what decides whether a verification attempt succeeds. The cheapest way to see the cost is to run
-the pass on a graph whose answer we already know.
+The theorems establish enclosure, but a box can be sound and too wide to settle the property.
+We can measure that excess width by running the pass on a graph whose exact range we can
+calculate by hand.
 
 Consider the map $`x\mapsto (x_0+x_1)-(x_0-x_1)`, written as two affine layers. Composed, it is
 exactly $`2x_1`, so on the unit box $`[-1,1]^2` the exact output range is $`[-2,2]`. The bound
@@ -511,13 +514,14 @@ IBP   lo=[-4.000000] hi=[4.000000]
 CROWN lo=[-2.000000] hi=[2.000000]
 ```
 
-IBP is off by a factor of two, and it is off for a reason worth naming. Its box for node 1 is
+IBP returns twice the exact width. Its box for node 1 is
 $`[-2,2]\times[-2,2]`, and each coordinate really does range over $`[-2,2]`. What the box cannot
 record is that the two coordinates move together: whenever $`x_0+x_1` is at its maximum, $`x_0-x_1`
 is $`0`. The second layer subtracts them, and interval subtraction has to assume the worst case
 that the first is at $`2` while the second is at $`-2`, which no input achieves. This is dependency
-loss, the oldest known weakness of interval arithmetic, and it is why box propagation alone
-{Informal.citep gowal2018}[] gets loose quickly as depth grows.
+loss: each interval retains a coordinate's range but loses its relation to the others. Repeating
+this loss across layers can make box propagation alone
+{Informal.citep gowal2018}[] progressively looser as depth grows.
 
 CROWN {Informal.citep crown2018}[] carries an affine form of each node in terms of the input
 instead of a box, so the cancellation happens symbolically before any interval is evaluated:
@@ -576,8 +580,8 @@ corner value: 2.000000
 So $`\pm 2` are attained and the true range is $`[-2,2]`: CROWN's box is tight here, and IBP's
 extra factor of two is pure over-approximation. Neither pass is wrong. Soundness only promises
 containment, and a sound bound that is too wide reports "cannot verify" on a network that is in
-fact robust. Choosing a method is choosing how much over-approximation to accept for how much
-compute, which is the subject of the next section.
+fact robust. Tighter bounds may cost more computation; input subdivision lets us explore that
+tradeoff while keeping the local interval rules fixed.
 
 ## Input Subdivision
 
@@ -626,15 +630,13 @@ let report ← trained.verify center
 ```
 
 The default method is fixed-relaxation Alpha-Beta-CROWN; `.ibp` and `.crown` are available for
-comparison. Users who intentionally need graph nodes and intermediate bounds import
-`NN.API.Verification.Lowering` instead. This keeps the ordinary workflow tensor-first while
-preserving an explicit research boundary.
+comparison. To inspect graph nodes and intermediate bounds, import
+`NN.API.Verification.Lowering`.
 
 ## Bound Propagation With `auto_LiRPA`
 
-PyTorch has no bound propagation of its own. `torch.autograd` differentiates a model; it does not
-enclose one. The reference implementation for this family of algorithms is `auto_LiRPA`
-{Informal.citep autolirpa2020}[], and the equivalent script reads about like this:
+With PyTorch, we can use `auto_LiRPA` {Informal.citep autolirpa2020}[] to propagate bounds through
+the model. The wrapper takes the perturbation region along with the model input:
 
 ```
 # Wrap the same model with an interface that propagates
@@ -663,9 +665,9 @@ the trust ledger below records those obligations.
 # CROWN, Alpha-CROWN, And Alpha-Beta-CROWN
 
 CROWN {Informal.citep crown2018}[] propagates affine lower and upper forms rather than only boxes.
-Bounding a network by a convex outer approximation and then optimizing inside it is older than
-CROWN {Informal.citep wongkolter2018}[]; what CROWN contributed is a backward pass cheap enough to
-run on the networks people actually train. At an uncertain ReLU with $`\ell<0<u`, the secant upper
+Bounding a network by a convex outer approximation and then optimizing inside it predates
+CROWN {Informal.citep wongkolter2018}[]; CROWN obtains bounds with a backward pass.
+At an uncertain ReLU with $`\ell<0<u`, the secant upper
 relaxation is
 
 $$`\operatorname{ReLU}(z)
@@ -674,8 +676,7 @@ $$`\operatorname{ReLU}(z)
 while a lower relaxation may use a slope $`\alpha` constrained to a valid range. Alpha-CROWN
 optimizes these slopes. Alpha-beta-CROWN {Informal.citep betacrown2021}[] additionally records
 branch phases: an active branch uses $`z\ge 0`, and an inactive branch uses $`z\le 0`. Splitting on
-a phase can tighten the relaxation, which is why branch-and-bound pays for
-itself even though it multiplies the number of passes.
+a phase can tighten the relaxation, at the cost of additional bound passes.
 
 TorchLean's generic theorem `crown_checker_encloses_semantics` takes an exact
 `CrownCertLocalOK` hypothesis and a separate `CrownTransferSound` proof. The local transfer
@@ -855,7 +856,8 @@ These theorems should not be confused with the JSON node-certificate checkers:
 - `checkCROWNNodeCertificate`;
 - `checkAlphaBetaCROWNNodeCertificate`.
 
-Those `IO Bool` functions parse finite decimal fields into `IEEE32Exec`, recompute the complete IBP
+Those `IO Bool` functions parse finite decimal fields into FloatLib binary32, recompute the
+complete IBP
 trace from trusted inputs and parameters, and replay affine nodes from previously recomputed affine
 data. A serialized interval may be wider than the recomputed interval but may not move inward.
 Affine replay data must match exactly at the binary32 level. The alpha-beta checker also validates
@@ -869,7 +871,7 @@ rather than accepting the alternate center-radius notation.
 
 The final decisions are `CROWNNodeCert.certificateAccepts` and
 `CROWNNodeCertAlphaBeta.AlphaBetaCROWNNodeCertificate.accepts`. Their soundness theorems prove that
-acceptance supplies `CrownCertLocalOK` for the exact `IEEE32Exec` replay function used by the
+acceptance supplies `CrownCertLocalOK` for the exact FloatLib binary32 replay function used by the
 checker.
 
 ```lean (name := acceptThms)
@@ -882,10 +884,19 @@ checker.
 ```
 ```leanOutput acceptThms (whitespace := lax)
 certificateAccepts_eq_true : ∀ (cert : NN.Verification.Cert.NodeReplay.CROWNNodeCoreCertificate)
-  (g : NN.MLTheory.CROWN.Graph) (ps : NN.MLTheory.CROWN.Graph.ParamStore
-    TorchLean.Floats.IEEE754.IEEE32Exec)
-  (authoritativeIbp : Array (Option (NN.MLTheory.CROWN.FlatBox
-    TorchLean.Floats.IEEE754.IEEE32Exec)))
+  (g : NN.MLTheory.CROWN.Graph)
+  (ps :
+    NN.MLTheory.CROWN.Graph.ParamStore
+      (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
+        checkCROWNNode._proof_1
+        checkCROWNNode._proof_2 checkCROWNNode._proof_3 checkCROWNNode._proof_4))
+  (authoritativeIbp :
+    Array
+      (Option
+        (NN.MLTheory.CROWN.FlatBox
+          (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
+            checkCROWNNode._proof_1 checkCROWNNode._proof_2 checkCROWNNode._proof_3
+              checkCROWNNode._proof_4))))
   (diagnosticsOk : Bool),
   certificateAccepts cert g ps authoritativeIbp diagnosticsOk = true →
     CrownCertLocalOK g (NN.Verification.CROWNNodeCert.replayStep g ps authoritativeIbp cert)
@@ -894,13 +905,22 @@ certificateAccepts_eq_true : ∀ (cert : NN.Verification.Cert.NodeReplay.CROWNNo
 ```leanOutput acceptThms (whitespace := lax)
 AlphaBetaCROWNNodeCertificate.accepts_eq_true : ∀ (cert : AlphaBetaCROWNNodeCertificate) (g :
   NN.MLTheory.CROWN.Graph)
-  (ps : NN.MLTheory.CROWN.Graph.ParamStore TorchLean.Floats.IEEE754.IEEE32Exec)
-  (authoritativeIbp : Array (Option (NN.MLTheory.CROWN.FlatBox
-    TorchLean.Floats.IEEE754.IEEE32Exec)))
+  (ps :
+    NN.MLTheory.CROWN.Graph.ParamStore
+      (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
+        AlphaBetaCROWNNodeCertificate._proof_1 AlphaBetaCROWNNodeCertificate._proof_2
+        AlphaBetaCROWNNodeCertificate._proof_3 AlphaBetaCROWNNodeCertificate._proof_4))
+  (authoritativeIbp :
+    Array
+      (Option
+        (NN.MLTheory.CROWN.FlatBox
+          (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
+            AlphaBetaCROWNNodeCertificate._proof_1 AlphaBetaCROWNNodeCertificate._proof_2
+            AlphaBetaCROWNNodeCertificate._proof_3 AlphaBetaCROWNNodeCertificate._proof_4))))
   (diagnosticsOk : Bool),
   cert.accepts g ps authoritativeIbp diagnosticsOk = true →
-    CrownCertLocalOK g (NN.Verification.CROWNNodeCertAlphaBeta.replayStep g ps
-      authoritativeIbp cert) cert.crown
+    CrownCertLocalOK g (NN.Verification.CROWNNodeCertAlphaBeta.replayStep g ps authoritativeIbp
+      cert) cert.crown
 ```
 
 The first output says: for any certificate, graph, parameter store, interval trace, and diagnostic
@@ -934,11 +954,11 @@ The arguments have concrete jobs:
   * The function that recomputes a node's affine bounds from the table and node index.
 :::
 
-`Array (Option (FlatBox IEEE32Exec))` describes the interval table's representation.
+`Array (Option (FlatBox (ExecFloat.Binary 8 23)))` describes the interval table's representation.
 There is an array slot for each represented node, and a slot may hold a box (`some`) or no box
-(`none`). A `FlatBox` stores lower and upper vectors; `IEEE32Exec` says that their entries use
-the executable binary32 model. The lengthy scalar namespace identifies that particular model.
-It does not silently convert the theorem into one about real numbers.
+(`none`). A `FlatBox` stores lower and upper vectors. Their scalar type selects FloatLib binary32,
+including its rounding and exceptional values. A theorem about this table therefore concerns
+those executable values; a real-valued conclusion needs a further refinement argument.
 
 We can unpack `CrownCertLocalOK` precisely. It requires the affine table to have the same length
 as the graph's node array. At every valid node index, the table entry must equal the result of
@@ -986,7 +1006,8 @@ operation; sound entrypoints must require this class. A transfer returns `none` 
 backend has no finite implementation for that operation.
 
 `ℝ` and `FP32` have lawful nonlinear instances. The `FP32` proofs use its exact-real floor and
-ceiling rounding theorems. `IEEE32Exec` instead states finite-path soundness in its IEEE semantics
+ceiling rounding theorems. FloatLib binary32 instead states finite-path soundness in its IEEE
+semantics
 modules, where overflow, infinities, and NaNs can be handled explicitly. Its directed binary32
 division and square root are proved, but executable exponential is not yet proved to enclose real
 exponentiation. An IBP node using exponential therefore remains unresolved under that instance. Host
@@ -1102,12 +1123,14 @@ heterogeneous formats into one global verification theorem.
 
 The proof float `FP32` is `NF binaryRadix fexp32 rnd32`: a rounded-real model with gradual
 underflow. Its exponent description has no upper bound, so it does not model overflow, NaN,
-infinity, or signed-zero payload behavior. `IEEE32Exec` is the executable bit-level model.
+infinity, or signed-zero payload behavior. FloatLib binary32 is the executable bit-level model.
 
-Finite refinement lemmas such as `toReal_add_eq_fp32Round`, and corresponding multiplication,
-division, and square-root bridges, connect individual finite IEEE executions to the proof-level
-rounding model. Layer and MLP theorems then propagate explicit error budgets. Neither layer is an
-unstated theorem about native hardware or a vendor reduction schedule.
+The {src "NN/Floats/IEEEExec/Bridge/Finite.lean"}[finite addition theorem] connects executable
+addition to the proof-level rounding model under the explicit hypothesis that the result is finite.
+Corresponding
+multiplication, division, and square-root bridges carry their own finite-path hypotheses. Layer
+and MLP theorems then propagate explicit error budgets. Neither layer is an unstated theorem about
+native hardware or a vendor reduction schedule.
 
 The generic IEEE32 CROWN theorem likewise leaves the node evaluator and
 `CrownTransferSound` proof to its caller. Choosing an IEEE scalar type does not discharge the
@@ -1148,8 +1171,9 @@ A verification report should make the following boundary visible:
   * approximate artifact-checker acceptance
 *
   * CROWN node checker returns `true`
-  * artifact intervals contain the authoritative `IEEE32Exec` IBP trace and affine entries exactly
-    match a sequential `IEEE32Exec` replay
+  * artifact intervals contain the authoritative FloatLib binary32 IBP trace and affine entries
+  exactly
+    match a sequential FloatLib binary32 replay
   * exact-real CROWN soundness
 *
   * alpha-beta leaf checker succeeds
@@ -1171,6 +1195,4 @@ claim.
 
 # References
 
-The bound-propagation papers behind this chapter are cited inline. One source has no entry in the
-bibliography because it is a standard rather than a paper: IEEE 1788-2015, which fixes the
-interval-arithmetic conventions the `BoundOps` classes follow.
+IEEE 1788-2015 specifies the interval-arithmetic conventions followed by the `BoundOps` classes.

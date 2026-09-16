@@ -271,5 +271,59 @@ being carried through every proof by hand. -/
       cases xs with
       | cons head tail => simp [snoc, unsnoc, ih]
 
+/--
+Build the extended shape list together with the pack. Each constructor shares the shape-list
+suffix returned by the recursive call instead of appending to the original suffix again.
+-/
+private def snocWithShapes {τ : Shape} : {ss : List Shape} →
+    TensorPack α ss → TorchLean.Tensor α τ →
+      (shapes : List Shape) × TensorPack α shapes
+  | [], .nil, last => ⟨[τ], .cons last .nil⟩
+  | shape :: ss, .cons first rest, last =>
+      let result := snocWithShapes (ss := ss) rest last
+      ⟨shape :: result.1, .cons (ss := result.1) first result.2⟩
+
+private theorem snocWithShapes_eq {ss : List Shape} {τ : Shape}
+    (xs : TensorPack α ss) (last : TorchLean.Tensor α τ) :
+    snocWithShapes xs last = ⟨ss ++ [τ], snoc xs last⟩ := by
+  induction ss with
+  | nil =>
+      cases xs
+      rfl
+  | cons shape ss ih =>
+      cases xs with
+      | cons first rest =>
+          exact congrArg
+            (fun result : (shapes : List Shape) × TensorPack α shapes =>
+              (⟨shape :: result.1, .cons (ss := result.1) first result.2⟩ :
+                (shapes : List Shape) × TensorPack α shapes)) (ih rest)
+
+private theorem transport_snd_of_eq {ss : List Shape}
+    (result : (shapes : List Shape) × TensorPack α shapes)
+    (xs : TensorPack α ss) (h : result = ⟨ss, xs⟩) :
+    Eq.mp (congrArg (TensorPack α) (congrArg Sigma.fst h)) result.2 = xs := by
+  subst result
+  rfl
+
+/-- A shape-sharing implementation of `snoc`, with the same indexed result type. -/
+@[no_expose] def Internal.snocLinear {τ : Shape} {ss : List Shape}
+    (xs : TensorPack α ss) (last : TorchLean.Tensor α τ) :
+    TensorPack α (ss ++ [τ]) :=
+  let result := snocWithShapes xs last
+  have shapes_eq : result.1 = ss ++ [τ] :=
+    congrArg Sigma.fst (snocWithShapes_eq xs last)
+  Eq.mp (congrArg (TensorPack α) shapes_eq) result.2
+
+private theorem snocLinear_eq_snoc {ss : List Shape} {τ : Shape}
+    (xs : TensorPack α ss) (last : TorchLean.Tensor α τ) :
+    Internal.snocLinear xs last = snoc xs last := by
+  unfold Internal.snocLinear
+  exact transport_snd_of_eq _ _ (snocWithShapes_eq xs last)
+
+/-- Compile `snoc` using shared shape-list suffixes while retaining its logical definition. -/
+@[csimp] theorem snoc_eq_snocLinear : @snoc = @Internal.snocLinear := by
+  funext α inst τ ss xs last
+  exact (snocLinear_eq_snoc xs last).symm
+
 end TensorPack
 end TorchLean

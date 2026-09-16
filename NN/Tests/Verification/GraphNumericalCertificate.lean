@@ -27,6 +27,11 @@ positive and negative cases without placing the test suite in the tutorial.
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofBits32)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 open Proofs.RuntimeApprox.NumericalCertificate
 open Spec TorchLean
 open TorchLean.Floats.IEEE754
@@ -100,11 +105,11 @@ def reductionSources : Array SourceRange := #[
 Three concrete entries whose exact sum is representable, so any drift comes from the summation order
 rather than from the values themselves.
 -/
-def reductionInput : Spec.SomeTensor IEEE32Exec := by
-  let tensor : Tensor IEEE32Exec [3] :=
-    [ IEEE32Exec.ofBits 0x3f800000
-    , IEEE32Exec.ofBits 0xbf000000
-    , IEEE32Exec.ofBits 0x40000000 ]
+def reductionInput : Spec.SomeTensor (Binary 8 23) := by
+  let tensor : Tensor (Binary 8 23) [3] :=
+    [ ofBits32 0x3f800000
+    , ofBits32 0xbf000000
+    , ofBits32 0x40000000 ]
   exact { shape := [3], tensor }
 
 /-- Generate the certificate for the portable CPU profile, then replay it at bit level. -/
@@ -140,21 +145,21 @@ def matmulSources : Array SourceRange := #[
 /--
 The constant weight, supplied as the payload of node 1: the two-by-two identity in row-major order.
 -/
-def matmulPayload : NN.IR.Payload IEEE32Exec where
+def matmulPayload : NN.IR.Payload (Binary 8 23) where
   const? := fun nodeId =>
     if nodeId = 1 then
       some
         { n := 4
-          v := [ IEEE32Exec.posOne, IEEE32Exec.posZero
-               , IEEE32Exec.posZero, IEEE32Exec.posOne ] }
+          v := [ (1 : Binary 8 23), (Binary.zero false : Binary 8 23)
+               , (Binary.zero false : Binary 8 23), (1 : Binary 8 23) ] }
     else
       none
 
 /-- A concrete two-by-two input, so the replay has actual bits to work with. -/
-def matmulInput : Spec.SomeTensor IEEE32Exec := by
-  let tensor : Tensor IEEE32Exec [2, 2] :=
-    [ [IEEE32Exec.posOne, IEEE32Exec.negOne]
-    , [IEEE32Exec.negOne, IEEE32Exec.posOne] ]
+def matmulInput : Spec.SomeTensor (Binary 8 23) := by
+  let tensor : Tensor (Binary 8 23) [2, 2] :=
+    [ [(1 : Binary 8 23), (-1 : Binary 8 23)]
+    , [(-1 : Binary 8 23), (1 : Binary 8 23)] ]
   exact { shape := [2, 2], tensor }
 
 /-- Certificate plus bit-level replay for the matrix product. -/
@@ -193,8 +198,8 @@ def sqrtSources : Array SourceRange := #[
 /--
 A negative concrete input, `-4`, to show that `abs` really is what makes the domain condition hold.
 -/
-def sqrtInput : Spec.SomeTensor IEEE32Exec :=
-  Spec.SomeTensor.ofTensor (Tensor.full [] (IEEE32Exec.ofBits 0xc0800000))
+def sqrtInput : Spec.SomeTensor (Binary 8 23) :=
+  Spec.SomeTensor.ofTensor (Tensor.full [] (ofBits32 0xc0800000))
 
 /-- Certificate plus replay for the `abs` then `sqrt` chain. -/
 def sqrtReplay : Except String RangeCheckedExecution := do
@@ -234,10 +239,10 @@ def layerNormSources : Array SourceRange := #[
 ]
 
 /-- A two-by-three input for the LayerNorm replay. -/
-def layerNormInput : Spec.SomeTensor IEEE32Exec := by
-  let tensor : Tensor IEEE32Exec [2, 3] :=
-    [ [IEEE32Exec.negOne, IEEE32Exec.posZero, IEEE32Exec.posOne]
-    , [IEEE32Exec.ofBits 0x40000000, IEEE32Exec.posOne, IEEE32Exec.posZero] ]
+def layerNormInput : Spec.SomeTensor (Binary 8 23) := by
+  let tensor : Tensor (Binary 8 23) [2, 3] :=
+    [ [(-1 : Binary 8 23), (Binary.zero false : Binary 8 23), (1 : Binary 8 23)]
+    , [ofBits32 0x40000000, (1 : Binary 8 23), (Binary.zero false : Binary 8 23)] ]
   exact { shape := [2, 3], tensor }
 
 /-- Certificate plus replay for LayerNorm on the portable profile. -/
@@ -272,9 +277,9 @@ def softmaxSources : Array SourceRange := #[
 ]
 
 /-- Three concrete logits for the softmax replay. -/
-def softmaxInput : Spec.SomeTensor IEEE32Exec := by
-  let tensor : Tensor IEEE32Exec [3] :=
-    [IEEE32Exec.posOne, IEEE32Exec.posZero, IEEE32Exec.negOne]
+def softmaxInput : Spec.SomeTensor (Binary 8 23) := by
+  let tensor : Tensor (Binary 8 23) [3] :=
+    [(1 : Binary 8 23), (Binary.zero false : Binary 8 23), (-1 : Binary 8 23)]
   exact { shape := [3], tensor }
 
 /-- Certificate plus replay for the numerically stable softmax. -/

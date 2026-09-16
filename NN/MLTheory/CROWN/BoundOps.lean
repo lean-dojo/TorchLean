@@ -19,7 +19,8 @@ endpoint operations (directed rounding).
 Intuition:
 - For pure real/interval backends, using ordinary `+`/`*` is already enclosure-safe (because the
   scalar itself is an interval type with outward rounding).
-- For finite-precision backends with discrete grids (e.g. `IEEE32Exec`), we want *directed rounding*
+- For finite-precision backends with discrete grids (e.g. `ExecFloat.Binary 8 23`), we want
+*directed rounding*
   primitives like `addDown/addUp` and `mulDown/mulUp` so that interval propagation encloses the
   corresponding exact real operation.
 
@@ -202,7 +203,8 @@ instance (priority := 100) instNonlinearBoundOpsConservative : NonlinearBoundOps
 Lean's `Float` operations round to nearest on the host binary64 format. For executable checking we
 widen every finite result by one adjacent representable value. This is deliberately an explicit
 instance rather than a generic fallback: its soundness depends on the host IEEE-754 arithmetic
-boundary documented by Lean, whereas `instBoundOpsReal` is exact and the `IEEE32Exec` instance is
+boundary documented by Lean, whereas `instBoundOpsReal` is exact and the `ExecFloat.Binary 8 23`
+instance is
 connected to TorchLean's bit-level binary32 proofs.
 -/
 
@@ -247,7 +249,8 @@ end HostFloat
 Outward-widened host binary64 operations.
 
 This instance is suitable for executable certificate replay under the trusted host-Float boundary.
-Use `IEEE32Exec` when the binary32 endpoint calculation itself must be connected to Lean proofs.
+Use `ExecFloat.Binary 8 23` when the binary32 endpoint calculation itself must be connected to Lean
+proofs.
 -/
 instance instBoundOpsFloat : BoundOps Float where
   addDown a b := HostFloat.nextDown (a + b)

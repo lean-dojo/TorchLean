@@ -115,8 +115,8 @@ theorem rearrangeEquivalent?_eq_true_iff_of_shapes
     first.rearrangeEquivalent? second hFirstKind hSecondKind = true ↔
       first.RearrangeEquivalent second hFirstKind hSecondKind
         hInputShape hOutputShape := by
-  simp only [rearrangeEquivalent?, dif_pos hInputShape,
-    dif_pos hOutputShape, decide_eq_true_eq, RearrangeEquivalent]
+  simp only [rearrangeEquivalent?, dite_eq_left hInputShape,
+    dite_eq_left hOutputShape, decide_eq_true_eq, RearrangeEquivalent]
   constructor
   · intro hEquivalent outputCoordinate
     simpa using hEquivalent (Coord.linearize outputCoordinate)
@@ -170,8 +170,8 @@ theorem rearrangeCounterexample?_eq_none_iff
     first.rearrangeCounterexample? second hFirstKind hSecondKind = none ↔
       first.RearrangeEquivalent second hFirstKind hSecondKind
         hInputShape hOutputShape := by
-  simp only [rearrangeCounterexample?, dif_pos hInputShape,
-    dif_pos hOutputShape, List.find?_eq_none, RearrangeEquivalent]
+  simp only [rearrangeCounterexample?, dite_eq_left hInputShape,
+    dite_eq_left hOutputShape, List.find?_eq_none, RearrangeEquivalent]
   constructor
   · intro hNoCounterexample outputCoordinate
     have hNotDifferent :=

@@ -175,7 +175,7 @@ theorem evalConv_from_paramStore
   unfold Graph.evalConv
   rw [hInfer]
   simp only [Bind.bind, Except.bind, hPayload]
-  rw [if_pos hConfig, hLeading]
+  rw [ite_eq_left hConfig, hLeading]
   split
   · congr
   · contradiction

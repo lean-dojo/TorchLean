@@ -13,7 +13,7 @@ public import NN.Runtime.RL.Numerics.Float32.Advantage
 # Runtime Checked Preconditions → Float32 Semantics Theorems
 
 `NN.Proofs.RL.Floats.IEEE32Exec` proves refinement theorems for RL formulas in the executable
-`IEEE32Exec` float32 semantics, but those theorems are intentionally stated with explicit
+`ExecFloat.Binary 8 23` float32 semantics, but those theorems are intentionally stated with explicit
 `isFinite … = true` hypotheses for each intermediate.
 
 In the runtime layer, TorchLean typically enforces these hypotheses by *checked preconditions*:
@@ -34,6 +34,10 @@ References:
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+
 namespace Proofs
 namespace RL
 namespace Float32Exec
@@ -52,18 +56,19 @@ at each primitive operation.
 This is the direct `checked boundary ⇒ semantics theorem applies` wrapper.
 -/
 theorem toReal_discountedBackupChecked_eq_fp32Round_chain
-    (reward gamma bootstrap : TorchLean.Floats.IEEE754.IEEE32Exec) (done : Bool)
-    (out : TorchLean.Floats.IEEE754.IEEE32Exec)
+    (reward gamma bootstrap : ExecFloat.Binary 8 23) (done : Bool)
+    (out : ExecFloat.Binary 8 23)
     (h : Runtime.RL.Numerics.Float32.discountedBackupChecked reward gamma bootstrap done
       = .ok out) :
-    toReal out =
+    (ExecFloat.Binary.toModel out).toReal =
       fp32Round
-        (toReal reward +
+        ((ExecFloat.Binary.toModel reward).toReal +
           fp32Round
             (fp32Round
-                (toReal gamma *
-                  toReal (continueMask (α := TorchLean.Floats.IEEE754.IEEE32Exec) done)) *
-              toReal bootstrap)) := by
+                ((ExecFloat.Binary.toModel gamma).toReal *
+                  (ExecFloat.Binary.toModel (continueMask (α := (ExecFloat.Binary 8 23))
+                    done)).toReal) *
+              (ExecFloat.Binary.toModel bootstrap).toReal)) := by
   obtain ⟨h₁, h₂, h₃, hout⟩ :=
     Runtime.RL.Numerics.Float32.discountedBackup_eq_ok
       (reward := reward) (gamma := gamma) (bootstrap := bootstrap) (done := done) (out := out) h
@@ -82,18 +87,19 @@ primitive operation.
 This is the `checked boundary ⇒ semantics theorem applies` wrapper for TD residuals.
 -/
 theorem toReal_tdResidualChecked_eq_fp32Round_chain
-    (value reward gamma nextValue : TorchLean.Floats.IEEE754.IEEE32Exec) (done : Bool)
-    (out : TorchLean.Floats.IEEE754.IEEE32Exec)
+    (value reward gamma nextValue : ExecFloat.Binary 8 23) (done : Bool)
+    (out : ExecFloat.Binary 8 23)
     (h : Runtime.RL.Numerics.Float32.tdResidualChecked value reward gamma nextValue done
       = .ok out) :
-    toReal out =
+    (ExecFloat.Binary.toModel out).toReal =
       fp32Round
         (fp32Round
-            (toReal reward +
+            ((ExecFloat.Binary.toModel reward).toReal +
               fp32Round
-                (fp32Round (toReal gamma * toReal (continueMask (α := IEEE32Exec) done)) *
-                  toReal nextValue)) -
-          toReal value) := by
+                (fp32Round ((ExecFloat.Binary.toModel gamma).toReal * (ExecFloat.Binary.toModel
+                  (continueMask (α := (ExecFloat.Binary 8 23)) done)).toReal) *
+                  (ExecFloat.Binary.toModel nextValue).toReal)) -
+          (ExecFloat.Binary.toModel value).toReal) := by
   obtain ⟨h₁, h₂, h₃, hval, hsub, hout⟩ :=
     Runtime.RL.Numerics.Float32.tdResidual_eq_ok
       (value := value) (reward := reward) (gamma := gamma) (nextValue := nextValue) (done := done)

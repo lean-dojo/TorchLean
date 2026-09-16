@@ -27,6 +27,23 @@ python3 scripts/rl/gymnasium_server.py --help
 scripts/docs/build_site.sh
 ```
 
+CUDA builds default to `cuda_arch=all-major`. For a known deployment target, pass its architecture
+explicitly; these commands select `sm_80` for an A100:
+
+```bash
+scripts/lake.sh -R -K cuda=true -K cuda_arch=sm_80 build nn_tests_suite
+scripts/checks/check.sh --cuda-arch sm_80
+scripts/checks/cuda_sanitize_tests.sh --cuda-arch sm_80 --all-tools
+scripts/checks/cuda_float32_parity.sh --cuda-arch sm_80
+```
+
+`check.sh --cuda-arch` enables CUDA. The sanitizer wrapper passes the option to both the build and
+the Lake environment used to run the executable. The Float32 parity wrapper compiles its CUDA
+comparison directly with `nvcc`; its existing `--arch` spelling remains an alias. All three accept
+`--cuda-home` to select the toolkit. Keep the same architecture and toolkit on later invocations,
+including sanitizer runs with `--skip-build`. `native` is rejected because it depends on the
+builder's visible GPUs; an explicit target also works when the build machine has no GPU.
+
 The site builder runs the documentation post-processors and link checker. The guide source lives
 in `home_page/blueprint/`; generated pages go to `home_page/_site/blueprint/`.
 

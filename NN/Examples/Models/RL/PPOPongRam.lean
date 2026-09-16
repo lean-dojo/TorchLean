@@ -8,7 +8,6 @@ End-to-end PPO example: train an actor-critic on Atari Pong (ALE) using TorchLea
 
 module
 
-public import NN.Runtime.RL.PPO.Training
 public import NN.API
 public import NN.Examples.Support
 public import NN.Runtime.RL.Artifacts.DefaultPaths
@@ -339,7 +338,7 @@ def main (args : List String) : IO UInt32 := do
           curve := curve.push 0 avg0
           IO.eprintln s!"  eval(step=0) avg_return={avg0}"
 
-        curve ← Runtime.RL.PPO.train discountFactor gaeLambda
+        curve ← rl.ppo.train discountFactor gaeLambda
           { updates := updateCount, epochs := updateEpochs,
             evaluationEvery := evaluationInterval, seed := runtime.seed }
           (fun update rngSeed rngCounter => do

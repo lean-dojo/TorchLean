@@ -134,9 +134,9 @@ theorem selected_alpha_range {alpha : Array (Option (FlatTensor ℝ))} {id : Nat
       getScalar (if hα : αv.n = preB.dim then castDimScalar (α := ℝ) hα αv.v
         else defaultAlphaVec (α := ℝ) preB.lo preB.hi) i ≤ 1 := by
   by_cases hα : αv.n = preB.dim
-  · rw [dif_pos hα]
+  · rw [dite_eq_left hα]
     exact alpha_cast_range halpha hαopt hα
-  · rw [dif_neg hα]
+  · rw [dite_eq_right hα]
     exact defaultAlphaVec_range preB.lo preB.hi
 
 /-! ## The `.relu` case -/
@@ -179,20 +179,20 @@ theorem relu_sound {g : Graph} {ps : ParamStore ℝ} {ibp : Array (Option (FlatB
     | none =>
       simp only [hxin, hpre, hαopt] at hs
       by_cases hout : xin.outDim = preB.dim
-      · rw [dif_pos hout] at hs
+      · rw [dite_eq_left hout] at hs
         cases hs
         exact enclosesAtInput_relu_propagate _ (defaultAlphaVec_range preB.lo preB.hi) hout hpar'
           hEncIbp
-      · rw [dif_neg hout] at hs
+      · rw [dite_eq_right hout] at hs
         cases hs
     | some αv =>
       simp only [hxin, hpre, hαopt] at hs
       by_cases hout : xin.outDim = preB.dim
-      · rw [dif_pos hout] at hs
+      · rw [dite_eq_left hout] at hs
         cases hs
         exact enclosesAtInput_relu_propagate _ (selected_alpha_range halpha hαopt) hout hpar'
           hEncIbp
-      · rw [dif_neg hout] at hs
+      · rw [dite_eq_right hout] at hs
         cases hs
 
 end NN.MLTheory.CROWN.Graph.AlphaCrownTransferSoundness.Alpha

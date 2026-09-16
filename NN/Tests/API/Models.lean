@@ -105,13 +105,13 @@ def meanVit : nn.Sequential ((vitConfig .mean).input [2]) ((vitConfig .mean).out
 def classVit : nn.Sequential ((vitConfig .cls).input [2]) ((vitConfig .cls).output [2]) :=
   nn.build 4 (nn.models.vit (vitConfig .cls) [2])
 
-def maeConfig : nn.models.ViT.MaskedAutoencoder.Config 1 :=
+def maskedPatchConfig : nn.models.ViT.MaskedPatchReconstructor.Config 1 :=
   { encoder := vitEncoderConfig .mean
     reconstructionWidth := 3 }
 
-def maskedAutoencoder :
-    nn.Sequential (maeConfig.encoder.input [2]) (maeConfig.output [2]) :=
-  nn.build 5 (nn.models.ViT.maskedAutoencoder maeConfig [2])
+def maskedPatchReconstructor :
+    nn.Sequential (maskedPatchConfig.encoder.input [2]) (maskedPatchConfig.output [2]) :=
+  nn.build 5 (nn.models.ViT.maskedPatchReconstructor maskedPatchConfig [2])
 
 def kanConfig : nn.models.KAN.Config :=
   { inputWidth := 2
@@ -260,7 +260,7 @@ def run : IO Unit := do
   runModel "ResNet" resnet
   runModel "mean-pooled ViT" meanVit
   runModel "class-token ViT" classVit
-  runModel "masked autoencoder" maskedAutoencoder
+  runModel "masked patch reconstructor" maskedPatchReconstructor
   runModel "KAN" kan
   runModel "FNO" fno
   runModel "RNN" rnn

@@ -28,9 +28,9 @@ buffers whose lifetime matters.
 
 TorchLean makes these dependencies explicit in arguments, results, and effectful interfaces.
 That gives a theorem access to the same parameters and state that determine a computation.
-We will follow the consequences from a scalar affine function to initialization, optimizer state,
-and mode-dependent layers, comparing the corresponding PyTorch interfaces
-{Informal.citep pytorch2019}[].
+For example, an optimizer update receives its old momentum buffer and returns the new one;
+a forward pass receives the mode that determines whether dropout applies. The corresponding
+PyTorch interfaces {Informal.citep pytorch2019}[] expose those dependencies through mutable objects.
 
 # An Affine Model With Explicit Parameters
 
@@ -69,15 +69,10 @@ example : WfAffine.forward wfSmall 3.0 = 6.5 := by
   rfl
 ```
 
-The proof refers to a concrete parameter record and a concrete input. Both the coefficients and
-the intermediate values in this example are exactly representable, so unfolding the definitions
-reaches the same Float value on each side. This shows how a program and a proposition can name
-the very same computation. It does not establish that arbitrary Float expressions can be simplified
-using real-number identities. The next failed equality changes the numerical situation while keeping
-the proof method identical, which helps locate the boundary between reduction and algebra.
-
-`rfl` succeeds because both sides reduce to the same value. The proof refers directly to the
-function applied to `(p, x)`; no additional session state is needed to identify the computation.
+The coefficients and intermediate values are exactly representable, so `rfl` can unfold the
+definitions to the same Float value on each side. The proposition names the parameter record and
+input directly; those arguments identify the entire computation. This proof works by reduction.
+It does not give Float arithmetic the algebraic laws of the reals.
 
 ## Floating-Point Equality
 
@@ -97,8 +92,8 @@ is not definitionally equal to the right-hand side
 ⊢ 0.1 + 0.2 = 0.3
 ```
 
-The proof did not fail because Lean cannot compute with floats. It failed because the two sides
-really are different values, and the following pair of commands says by how much:
+The two sides are different Float values. We can state the equality that does hold, then magnify
+the difference from `0.3`:
 
 ```lean (name := wfFloatTrue)
 -- State the actual Float equality, then magnify its
@@ -119,11 +114,10 @@ the last place at that magnitude. Notice that `#eval` on the sum by itself would
 the proof checks equality directly, while the scaled numerical difference exposes what decimal
 printing hides.
 
-Making the computation pure lets us state a claim about its result. Whether that claim holds
-still depends on the arithmetic. TorchLean distinguishes three layers:
-executable {lean}`Float` and {lean}`Float32` computations, an explicit IEEE-754 model with a
-rounding function you can name, and specifications over $`\mathbb{R}`. Flocq made the same split for
-Coq, separating the choice of format from the choice of rounding
+Purity fixes which computation we mean; its arithmetic determines which equalities hold.
+TorchLean can execute {lean}`Float` and {lean}`Float32` computations, describe IEEE-754 rounding
+explicitly, and state specifications over $`\mathbb{R}`. Connecting these interpretations requires
+choosing a format and a rounding rule, a distinction also developed in Flocq
 {Informal.citet flocq2011}[]. Goldberg's survey explains the effects of representation and
 rounding {Informal.citep goldberg1991}[]. The float chapter,
 {ref "floats"}[Floats And Rounded Arithmetic], works through the machinery, and
@@ -305,14 +299,9 @@ The count is not merely computable, it is checkable by the kernel:
 example : wfParamCount wfInit = 17 := by rfl
 ```
 
-There are no variables or numerical tolerance in this particular statement. Its left side
-computes a natural number from the fixed model's shape list, and its right side is seventeen.
-The proof closes because those expressions reduce to the same number. This is stronger than
-printing seventeen once as an observation about executable code, but narrower than a theorem about
-all builders or all seeds. A general parameter-budget theorem would need to quantify over the
-architectures or initialization procedure it intends to cover.
-
-Lean unfolds `wfParamCount` and computes the sum of the shape sizes. PyTorch's corresponding
+Lean unfolds `wfParamCount` and sums the fixed model's shape sizes to seventeen. The theorem is
+about `wfInit`; a result for arbitrary builders or seeds would need to quantify over them.
+PyTorch's corresponding
 expression is `sum(p.numel() for p in model.parameters())`, which obtains the counts from the
 module's parameter tensors. The Lean helper computes from the state shape list, though this
 initialized model also contains tensor values. It counts all state entries, including persistent
@@ -337,15 +326,10 @@ over a seed stream. `nn.build` runs that computation with an initial seed:
 @nn.build : {α : Type u_1} → ℕ → nn.Builder α → α
 ```
 
-Here `α` is the type of value produced by the builder, not necessarily a tensor's scalar type.
-For this chapter it is a sequential model. The natural number is the explicit seed, and the final
-arrow returns the constructed value directly, with no `IO` wrapper. The type alone does not force
-every custom builder to use randomness or preserve a fixed architecture. It says that whatever the
-builder computes is determined by the supplied stream, so reasoning about the result can keep that
-initial seed visible.
-
-A number and a builder go in; a model comes out. Two calls with the same arguments are the same
-value. These two distinct seeds produce different initialized weights in our example:
+Here `α` is the type of value the builder produces—a sequential model in this example.
+`nn.build` takes the seed and builder and returns that value directly, without `IO`. Repeating
+the same arguments gives the same value. A custom builder could use the seed to choose an
+architecture too; our fixed builder uses it to draw the weights:
 
 ```lean (name := wfSeeds)
 -- Repeat one seed and compare another while holding the
@@ -370,12 +354,9 @@ def wfOther := nn.build 7 wfModel
 2026 twice equal: true
 ```
 
-The printed state contains a two-by-two weight matrix followed by a length-two zero bias. The
-biases agree across these seeds because their initialization scheme is deterministic zero; the
-weight draws differ. The final Boolean compares the formatted state strings. It is a convenient
-visible replay check, not a separate comparison of every bit hidden by formatting. The stronger
-reason the repeated construction is deterministic is the pure definition of `nn.build` applied
-to the same seed and builder. The printout lets us inspect a consequence of that definition.
+The two seeds give different weight matrices and the same zero bias. The final Boolean compares
+formatted state strings, so it checks only what the printer exposes. Exact reproducibility follows
+from applying the pure `nn.build` definition to the same seed and builder.
 
 The builder's seed stream is independent of unrelated random draws. Repeating the build after
 drawing randomness and initializing another model gives:
@@ -420,7 +401,7 @@ torch.manual_seed(2026); _ = torch.randn(1); f = nn.Linear(2, 2)
 print(torch.equal(e.weight, f.weight))
 ```
 
-On this machine, with torch 2.13:
+The recorded PyTorch 2.13 run prints:
 
 ```
 False
@@ -436,14 +417,8 @@ described in PyTorch's reproducibility notes, linked below.
 
 ## Initial And Trained Parameters
 
-Explicit initialization lets us distinguish:
-
-- which builder describes the architecture;
-- which seed initialized it;
-- which parameter payload is in use now;
-- whether a theorem is about the initial payload or a trained one.
-
-The trainer accepts either a builder or an already initialized model:
+Passing a seed to a trainer has a different meaning depending on whether its model is already
+initialized. Compare these two calls:
 
 ```lean (name := wfTrainers)
 -- Contrast a builder that consumes the config seed with a
@@ -466,18 +441,14 @@ wfFromBuilder.predict : Tensor Float [2] → IO (Tensor Float [1])
 wfFromValue.predict : Tensor Float [2] → IO (Tensor Float [1])
 ```
 
-Each displayed method accepts a concrete length-two Float tensor and returns an action producing
-a length-one Float tensor. The type checks establish those interfaces without making either
-prediction. Receiving an already initialized model is useful when loading or constructing a specific
-payload: the trainer must preserve it instead of drawing fresh weights just because another seed
-appears in the configuration. After training, the updated runner is yet another stateful object.
-A later analysis needs to identify which of these payloads it reads, even though their prediction
-methods can have identical types.
+Both prediction methods take a length-two Float tensor and return an `IO` action producing
+length one. The first trainer uses `2026` to run the builder. The second receives `wfInit`,
+which already has its weights, so `999` does not reinitialize them. This allows a trainer to
+preserve a deliberately constructed or loaded payload.
 
-The two trainers have the same interface but were configured differently: the first used `2026` to
-run the builder, while the second received a model that was already built, so its `999` never
-reinitializes anything. Which of the two happened is decided by the `Trainer.ToModel` instance that
-elaboration picked, not by a runtime test on the value.
+The `Trainer.ToModel` instance chosen during elaboration determines which construction applies.
+The identical prediction types do not identify the weights: after training, an analysis must
+still read the updated payload.
 
 # Optimizer State Transitions
 
@@ -527,13 +498,10 @@ Optim.Step : (α : Type) → [Storage α] → Shape → Type → Type
               Optim.Step α s (Optim.MomentumSGD.State α s)
 ```
 
-The return type `Step` has two pieces whose lifetimes are linked. Its parameter tensor is the
-starting point for the next update, and its optimizer state carries the buffer needed to compute
-that update. Passing only the new parameters while retaining an old buffer changes the recurrence.
-The common shape variable ties parameters, gradients, and buffer entries together coordinate by
-coordinate. The storage and arithmetic instances describe how those tensors are represented and
-calculated with; a numerical approximation theorem must additionally state how those operations
-relate to its exact scalar equations.
+The next call needs both fields of `Step`. Passing new parameters with an old momentum buffer
+changes the recurrence. The shared shape variable aligns parameters, gradients, and buffer entries
+coordinate by coordinate; the storage and arithmetic instances supply their representation and
+operations.
 
 Let us run two steps of it from $`\theta_0 = 2`, with $`\eta = 0.1`, $`\mu = 0.9`, and a constant
 gradient $`g = 0.25`. By hand: $`v_1 = 0.25`, so $`\theta_1 = 2 - 0.025 = 1.975`; then
@@ -561,12 +529,10 @@ step 1: [1.975000], buffer [0.250000]
 step 2: [1.927500], buffer [0.475000]
 ```
 
-On the first call, the zero buffer becomes 0.25 and the parameter loses `0.1 * 0.25`, giving
-1.975. On the second, the buffer becomes `0.9 * 0.25 + 0.25 = 0.475`, so the parameter loses
-0.0475 and reaches 1.9275. The gradient argument was unchanged, but the update grew because the
-state remembered the earlier gradient. That is why a training checkpoint may need optimizer state
-as well as parameter tensors when the goal is to resume the same trajectory rather than merely
-reuse the learned forward function.
+The gradient stays fixed, but the second update grows because the buffer retains the first
+gradient's contribution. Resuming this trajectory therefore needs the momentum buffer as well as
+the parameter. Saving only the parameter is enough to reuse the forward function, but loses the
+state needed for the next training step.
 
 PyTorch, asked for the same two steps:
 
@@ -634,8 +600,8 @@ for i in range(3):
     print(i, p.grad.tolist(), p.detach().tolist())
 ```
 
-The gradient of this loss is the constant $`0.25`, so every iteration should move the parameter by
-$`0.025`. On this machine, with torch 2.13, it does not:
+The gradient of this loss is the constant $`0.25`, so an update using only that gradient would move
+the parameter by $`0.025`. The recorded PyTorch 2.13 run shows increasing steps:
 
 ```
 0 [0.25] [1.975000023841858]
@@ -680,16 +646,11 @@ neither is the default:
 [1.975000] [1.925000] [1.850000]
 ```
 
-The first trajectory subtracts 0.025 three times. The second subtracts 0.025, then 0.05,
-then 0.075, because its gradient argument deliberately accumulates another copy on each iteration.
-Both are valid programs with the same tensor shapes. The distinction is the loss whose gradient
-the caller intends to provide: a current sample, a sum over samples, or a mean over samples.
-Making that argument explicit helps review the choice, but it does not choose the correct scaling
-on the caller's behalf. A micro-batch mean must account for its intended sample count.
-
-The first line corresponds to PyTorch with `zero_grad`, the second to PyTorch without it.
-The expression passed to {name}`Optim.SGD.update` determines whether the update uses the current
-gradient or an accumulated sum.
+The first trajectory subtracts 0.025 three times, matching PyTorch with `zero_grad`. The second
+subtracts 0.025, then 0.05, then 0.075, matching the accumulating loop. The expression passed to
+{name}`Optim.SGD.update` makes that choice visible. Both programs have the same tensor shapes;
+the caller still has to decide whether the objective calls for a current gradient, a sum over
+samples, or a mean with the appropriate sample count.
 
 For accumulation across micro-batches, a TorchLean loop adds the gradient tensors and calls the
 update after forming the intended batch gradient. The accumulation state is then another explicit
@@ -788,12 +749,9 @@ open Runtime.Autograd.Model.Layers (updateRunning) in
 [1.200000, 2.200000]
 ```
 
-The first vector is the old running value, the second is the statistic of the current batch,
-and the rank-zero tensor supplies the mixing coefficient. Each coordinate moves one tenth of the
-way from its old value to the batch value: from one toward three and from two toward four.
-This coefficient weights the new batch, unlike the coefficient multiplying the old momentum buffer
-in the optimizer example. Reusing the word momentum for both conventions is a reason to read the
-update equation before comparing configuration values across layers and optimizers.
+The first vector holds the old running values and the second holds the batch statistics.
+The rank-zero tensor weights the new batch by one tenth. Optimizer momentum instead weights the
+old buffer, so the shared name hides a difference in the equations.
 
 That is $`0.9\cdot(1,2) + 0.1\cdot(3,4)`, the exponential moving average with momentum $`0.1`.
 The corresponding PyTorch `running_mean` update is:
@@ -839,13 +797,9 @@ eval  = [1.000000, 1.000000, 1.000000, 1.000000]
 train = [2.000000, 0.000000, 2.000000, 0.000000]
 ```
 
-For probability one half, a retained entry is divided by one half and becomes two, while a dropped
-entry becomes zero. The first output confirms that evaluation applies neither the mask nor that
-scaling. The training outputs need not contain the same number of survivors, and a single sample's
-sum need not equal the input sum. The expectation statement concerns repeated ideal mask draws at
-each coordinate. These two printed masks instead illustrate two concrete seeded executions, so
-matching the probability and seed numeral across libraries does not require their entries to
-match.
+Evaluation leaves the four ones unchanged. Training keeps two entries and doubles them. This
+particular mask preserves the input sum, but another mask need not: the expectation statement
+concerns repeated ideal draws at each coordinate.
 
 PyTorch, same layer and same input:
 
@@ -902,18 +856,11 @@ The `IO Unit` result says that switching a live module into evaluation mode is a
 no returned data. For a `Float` model with output shape `[1]`, `nn.Module.forward` returns
 {lean}`IO (Tensor Float [1])`: the action produces a tensor.
 
-TorchLean uses this separation throughout:
-
-- model construction and initialization are pure computations over a seed stream;
-- the model's mathematical content has pure interpretations, which is what the specification layer
-  reasons about;
-- training is an `IO` session with mutable parameters, optimizer state, tapes, and device buffers;
-- checkers consume ordinary Lean data;
-- theorems state what accepted data implies.
-
-A pure parser can inspect a string that `IO.FS.readFile` returned. A pure checker can inspect the
-certificate that parser produced. A theorem can describe that checker. The file system stays an
-effect while the objects we reason about afterwards are ordinary values.
+The same separation works for a saved certificate. `IO.FS.readFile` reads its bytes; a pure parser
+inspects the returned string; a pure checker inspects the parsed certificate. A theorem can then
+state what acceptance implies without modelling the file system. Training likewise performs its
+parameter updates, tape operations, and device activity in `IO`, while the specification layer
+reasons about pure interpretations of the model.
 
 # Storage Reuse In The Runtime
 
@@ -942,11 +889,6 @@ argument, and the new state is the `optimizerState` field of the returned `Optim
 on `autograd.model.grad`, which appears in {ref "torchlean_vs_pytorch"}[TorchLean and PyTorch]: it
 takes a model, a loss, a state, an input, and a target, and it returns its answer in `IO`, because
 it runs a tape on a real device.
-
-This identifies which dependencies a theorem must name and which actions belong to execution.
-For the optimizer, the returned state determines the next update. For the autograd call, `IO`
-includes tape and device activity whose relationship to the pure derivative needs a separate
-contract.
 
 # References
 

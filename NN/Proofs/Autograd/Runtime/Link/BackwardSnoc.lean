@@ -178,7 +178,7 @@ theorem backwardDenseFromStep_addNode_push (t : Tape α) (nd : Runtime.Autograd.
         | error e =>
             simp only [Tape.backwardDenseFromStep, hnodePrev, hnodeNext, hreq, hgetAcc, hgetAccPush,
               hshape, hback, result_pure_eq_ok, result_bind_ok, result_bind_error, result_map_error,
-              dite_true, Bool.true_eq_false, if_false]
+              dite_true, Bool.true_eq_false, ite_false]
         | ok contribs =>
             have hpids_list : ∀ {pid : Nat} {pg : Spec.SomeTensor α},
                 (pid, pg) ∈ contribs.toList → pid < t.nodes.size := by
@@ -189,7 +189,7 @@ theorem backwardDenseFromStep_addNode_push (t : Tape α) (nd : Runtime.Autograd.
             simp only [Array.foldlM_toList] at hfold
             simp only [Tape.backwardDenseFromStep, hnodePrev, hnodeNext, hreq, hgetAcc, hgetAccPush,
               hshape, hback, result_pure_eq_ok, result_bind_ok, dite_true, Bool.true_eq_false,
-              if_false]
+              ite_false]
             exact hfold
       · simp [Tape.backwardDenseFromStep, hnodePrev, hnodeNext, hreq, hgetAcc, hgetAccPush,
           hshape, result_map_error, result_throw_eq_error]
@@ -280,7 +280,7 @@ theorem backwardDenseFromStep_addNode_lowerNode_last {Δ : Type} {ss : List Shap
   have haccLast :
       ((TorchLean.TensorPack.toShapeErasedArray (α := α) (ss := ss) seedPrev).push
         outValue)[t.nodes.size]? = some outValue := by
-    rw [← hsizeArr, Array.getElem?_push, if_pos rfl]
+    rw [← hsizeArr, Array.getElem?_push, ite_eq_left rfl]
   have hreqNd : nd.requiresGrad = true := by
     rw [← hnd]
     rfl
@@ -310,8 +310,8 @@ theorem backwardDenseFromStep_addNode_lowerNode_last {Δ : Type} {ss : List Shap
     simpa [Array.append_assoc, Array.append_empty, Array.empty_append, Array.append_singleton]
       using hfold
   simp only [Tape.backwardDenseFromStep, hnodeLast, haccLast, hreqNd, result_pure_eq_ok,
-    result_bind_ok, Bool.true_eq_false, if_false]
-  rw [dif_pos hshapeNode, Spec.SomeTensor.ofTensor_cast, hbackLast, result_bind_ok]
+    result_bind_ok, Bool.true_eq_false, ite_false]
+  rw [dite_eq_left hshapeNode, Spec.SomeTensor.ofTensor_cast, hbackLast, result_bind_ok]
   exact hfoldLast
 
 /--
@@ -369,7 +369,7 @@ theorem backwardDenseFrom_addNode_lowerNode {Δ : Type} {ss : List Shape} {τ : 
           (bp seedPrev')) := by
     have h := hbp seedPrev'
     unfold Tape.backwardDenseFrom at h
-    rwa [if_pos hsizePrev'] at h
+    rwa [ite_eq_left hsizePrev'] at h
   have hloopFinal :
       Tape.backwardDenseFromLoop (t := (t.addNode nd).1) t.nodes.size
           ((TorchLean.TensorPack.toShapeErasedArray (α := α) (ss := ss) seedPrev').push
@@ -379,7 +379,7 @@ theorem backwardDenseFrom_addNode_lowerNode {Δ : Type} {ss : List Shape} {τ : 
     rw [backwardDenseFromLoop_addNode_push t nd (Spec.SomeTensor.ofTensor seedOut) hpids
       t.nodes.size le_rfl _ hsizePrev', hloopPrev, result_map_ok]
   unfold Tape.backwardDenseFrom
-  rw [if_pos hsizeCheck, htNextSize, TorchLean.TensorPack.toShapeErasedArray_snoc,
+  rw [ite_eq_left hsizeCheck, htNextSize, TorchLean.TensorPack.toShapeErasedArray_snoc,
     Tape.backwardDenseFromLoop, hstepLast, result_bind_ok, hloopFinal,
     TorchLean.TensorPack.toShapeErasedArray_snoc]
 

@@ -12,7 +12,8 @@ public import NN.Runtime.RL.Numerics.Float32.Returns
 # Checked Float32 PPO Objective Helpers
 
 PPO is usually run with ordinary host floats, but these helpers make the scalar objective pieces
-executable under the explicit `IEEE32Exec` model and reject non-finite intermediates. They are
+executable under the explicit `ExecFloat.Binary 8 23` model and reject non-finite intermediates.
+They are
 useful for regression tests, debugging numerically fragile runs, and connecting runtime checks to
 proof layer finite hypotheses.
 
@@ -34,7 +35,7 @@ open TorchLean.Floats
 open TorchLean.Floats.IEEE754
 
 /--
-Checked importance ratio `exp(newLogProb - oldLogProb)`, specialized to `IEEE32Exec`.
+Checked importance ratio `exp(newLogProb - oldLogProb)`, specialized to `ExecFloat.Binary 8 23`.
 
 This is the float32-semantics variant of `Runtime.RL.PolicyGradient.importanceRatio`.
 -/

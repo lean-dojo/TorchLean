@@ -23,8 +23,10 @@ pipeline” workflow in the TorchLean paper (`arXiv:2602.22631`, Figure 7):
 - (i) **Python-only**: PyTorch + α/β-CROWN produce numeric bounds; a Lean result is conditional on
   a proof that the imported certificate is valid for the stated model and region.
 - (ii) **Hybrid**: Stage-1 training in PyTorch, exported as *float32 bit patterns*; Stage-2
-  refinement + the final IBP/CROWN check run inside TorchLean under exact `IEEE32Exec` semantics.
-- (iii) **All-in-Lean**: both stages run inside TorchLean under `IEEE32Exec`; the final IBP/CROWN
+  refinement + the final IBP/CROWN check run inside TorchLean under exact `ExecFloat.Binary 8 23`
+  semantics.
+- (iii) **All-in-Lean**: both stages run inside TorchLean under `ExecFloat.Binary 8 23`; the final
+IBP/CROWN
   check is also in Lean.
 
 This file is shared by (ii) and (iii). It contains:
@@ -37,6 +39,9 @@ Key point: the *same* TorchLean program is used in two roles:
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 
 open Spec TorchLean

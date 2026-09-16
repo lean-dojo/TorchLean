@@ -8,8 +8,8 @@ module
 
 public import NN.Floats.FP32
 public import NN.Spec.Core.FloatInstances.NF
-public import NN.Floats.Interval.Rounders
-public import NN.Floats.NeuralFloat.Rounding.Properties
+public import FloatLib.Floats.Interval.Rounders
+public import FloatLib.Floats.Formats.Flocq.Theory.Rounding.Properties
 public import NN.MLTheory.CROWN.BoundOps
 public import NN.MLTheory.CROWN.Extras.IntervalLemmas
 public import NN.MLTheory.CROWN.Graph
@@ -29,6 +29,9 @@ This module is an optional convenience layer and lives under `NN/MLTheory/CROWN/
 
 @[expose] public section
 
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
+
 
 namespace NN.MLTheory.CROWN
 
@@ -46,27 +49,27 @@ Directed endpoint arithmetic for the rounded-real FP32 model.
 
 Each operation is performed on the underlying real values and rounded directly toward the
 appropriate side of the binary32 grid. The enclosure laws are
-`TorchLean.Floats.Interval.roundDown_le` and `TorchLean.Floats.Interval.le_roundUp`.
+`FloatLib.Floats.Interval.roundDown_le` and `FloatLib.Floats.Interval.le_roundUp`.
 -/
 noncomputable instance : BoundOps FP32 where
   addDown a b :=
-    ⟨TorchLean.Floats.Interval.roundDown
-      (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32) (a.val + b.val)⟩
+    ⟨FloatLib.Floats.Interval.roundDown
+      (β := binaryRadix) (fexp := TorchLean.Floats.fexp32) (a.val + b.val)⟩
   addUp a b :=
-    ⟨TorchLean.Floats.Interval.roundUp
-      (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32) (a.val + b.val)⟩
+    ⟨FloatLib.Floats.Interval.roundUp
+      (β := binaryRadix) (fexp := TorchLean.Floats.fexp32) (a.val + b.val)⟩
   subDown a b :=
-    ⟨TorchLean.Floats.Interval.roundDown
-      (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32) (a.val - b.val)⟩
+    ⟨FloatLib.Floats.Interval.roundDown
+      (β := binaryRadix) (fexp := TorchLean.Floats.fexp32) (a.val - b.val)⟩
   subUp a b :=
-    ⟨TorchLean.Floats.Interval.roundUp
-      (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32) (a.val - b.val)⟩
+    ⟨FloatLib.Floats.Interval.roundUp
+      (β := binaryRadix) (fexp := TorchLean.Floats.fexp32) (a.val - b.val)⟩
   mulDown a b :=
-    ⟨TorchLean.Floats.Interval.roundDown
-      (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32) (a.val * b.val)⟩
+    ⟨FloatLib.Floats.Interval.roundDown
+      (β := binaryRadix) (fexp := TorchLean.Floats.fexp32) (a.val * b.val)⟩
   mulUp a b :=
-    ⟨TorchLean.Floats.Interval.roundUp
-      (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32) (a.val * b.val)⟩
+    ⟨FloatLib.Floats.Interval.roundUp
+      (β := binaryRadix) (fexp := TorchLean.Floats.fexp32) (a.val * b.val)⟩
 
 /--
 The proof-oriented FP32 endpoint operations enclose exact real arithmetic.
@@ -78,48 +81,48 @@ noncomputable instance : LawfulBoundOps FP32 where
   toReal := TorchLean.Floats.FP32.toReal
   lt_iff _ _ := Iff.rfl
   addDown_le a b := by
-    change TorchLean.Floats.neuralRound
-        (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32)
-        TorchLean.Floats.neuralFloorRound (a.val + b.val) ≤ a.val + b.val
-    exact TorchLean.Floats.neural_round_floor_le _
+    change Flocq.round
+        (β := binaryRadix) (fexp := TorchLean.Floats.fexp32)
+        floorRound (a.val + b.val) ≤ a.val + b.val
+    exact round_floor_le _
   le_addUp a b := by
     change a.val + b.val ≤
-      TorchLean.Floats.neuralRound
-        (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32)
-        TorchLean.Floats.neuralCeilRound (a.val + b.val)
-    exact TorchLean.Floats.le_neural_round_ceil _
+      Flocq.round
+        (β := binaryRadix) (fexp := TorchLean.Floats.fexp32)
+        ceilRound (a.val + b.val)
+    exact le_round_ceil _
   subDown_le a b := by
-    change TorchLean.Floats.neuralRound
-        (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32)
-        TorchLean.Floats.neuralFloorRound (a.val - b.val) ≤ a.val - b.val
-    exact TorchLean.Floats.neural_round_floor_le _
+    change Flocq.round
+        (β := binaryRadix) (fexp := TorchLean.Floats.fexp32)
+        floorRound (a.val - b.val) ≤ a.val - b.val
+    exact round_floor_le _
   le_subUp a b := by
     change a.val - b.val ≤
-      TorchLean.Floats.neuralRound
-        (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32)
-        TorchLean.Floats.neuralCeilRound (a.val - b.val)
-    exact TorchLean.Floats.le_neural_round_ceil _
+      Flocq.round
+        (β := binaryRadix) (fexp := TorchLean.Floats.fexp32)
+        ceilRound (a.val - b.val)
+    exact le_round_ceil _
   mulDown_le a b := by
-    change TorchLean.Floats.neuralRound
-        (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32)
-        TorchLean.Floats.neuralFloorRound (a.val * b.val) ≤ a.val * b.val
-    exact TorchLean.Floats.neural_round_floor_le _
+    change Flocq.round
+        (β := binaryRadix) (fexp := TorchLean.Floats.fexp32)
+        floorRound (a.val * b.val) ≤ a.val * b.val
+    exact round_floor_le _
   le_mulUp a b := by
     change a.val * b.val ≤
-      TorchLean.Floats.neuralRound
-        (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32)
-        TorchLean.Floats.neuralCeilRound (a.val * b.val)
-    exact TorchLean.Floats.le_neural_round_ceil _
+      Flocq.round
+        (β := binaryRadix) (fexp := TorchLean.Floats.fexp32)
+        ceilRound (a.val * b.val)
+    exact le_round_ceil _
 
 /-- Embed a real endpoint after rounding it downward to the binary32 grid. -/
 noncomputable def roundDownEndpoint (x : ℝ) : FP32 :=
-  ⟨TorchLean.Floats.Interval.roundDown
-    (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32) x⟩
+  ⟨FloatLib.Floats.Interval.roundDown
+    (β := binaryRadix) (fexp := TorchLean.Floats.fexp32) x⟩
 
 /-- Embed a real endpoint after rounding it upward to the binary32 grid. -/
 noncomputable def roundUpEndpoint (x : ℝ) : FP32 :=
-  ⟨TorchLean.Floats.Interval.roundUp
-    (β := TorchLean.Floats.binaryRadix) (fexp := TorchLean.Floats.fexp32) x⟩
+  ⟨FloatLib.Floats.Interval.roundUp
+    (β := binaryRadix) (fexp := TorchLean.Floats.fexp32) x⟩
 
 /-- Exact-real nonlinear operations rounded outward to the binary32 grid. -/
 noncomputable instance : NonlinearBoundOps FP32 where
@@ -157,11 +160,11 @@ noncomputable instance : NonlinearBoundOps FP32 where
 
 /-- Downward-rounded proof endpoints do not exceed their exact real inputs. -/
 theorem roundDownEndpoint_le (x : ℝ) : (roundDownEndpoint x).val ≤ x := by
-  exact TorchLean.Floats.neural_round_floor_le x
+  exact round_floor_le x
 
 /-- Upward-rounded proof endpoints do not fall below their exact real inputs. -/
 theorem le_roundUpEndpoint (x : ℝ) : x ≤ (roundUpEndpoint x).val := by
-  exact TorchLean.Floats.le_neural_round_ceil x
+  exact le_round_ceil x
 
 private theorem roundedUnaryEnclosure_of_monotone (f : ℝ → ℝ) (hf : Monotone f) :
     UnaryEnclosure (α := FP32) f
@@ -213,7 +216,7 @@ noncomputable instance : LawfulNonlinearBoundOps FP32 where
       have hside : bHi.val < 0 ∨ 0 < bLo.val := by
         have hz : 0 < bLo.val ∨ bHi.val < 0 := by simpa using hAvoidsZero
         exact hz.elim Or.inr Or.inl
-      have hExact := TorchLean.Floats.Interval.div_bounds_Icc
+      have hExact := FloatLib.Floats.Interval.div_bounds_Icc
         aLo.val aHi.val bLo.val bHi.val x y ⟨hxLo, hxHi⟩ ⟨hyLo, hyHi⟩ hside
       change
         (roundDownEndpoint
@@ -225,11 +228,11 @@ noncomputable instance : LawfulNonlinearBoundOps FP32 where
                 (max (aHi.val / bLo.val) (aHi.val / bHi.val)))).val
       constructor
       · exact (roundDownEndpoint_le _).trans <| by
-          simpa only [TorchLean.Floats.Interval.minOfFourReal] using hExact.1
+          simpa only [FloatLib.Floats.Interval.minOfFour] using hExact.1
       · have hUpper :
             x / y ≤ max (max (aLo.val / bLo.val) (aLo.val / bHi.val))
               (max (aHi.val / bLo.val) (aHi.val / bHi.val)) := by
-          simpa only [TorchLean.Floats.Interval.maxOfFourReal] using hExact.2
+          simpa only [FloatLib.Floats.Interval.maxOfFour] using hExact.2
         exact hUpper.trans (le_roundUpEndpoint _)
     next hIncludesZero => simp at hout
   expBounds_enclosure := by

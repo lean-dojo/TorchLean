@@ -21,18 +21,23 @@ open Verso.Genre.Manual.InlineLean
 -- Everything quoted in this chapter lives under a root `Proofs.RuntimeApprox` namespace, with the
 -- rounded-real operator lemmas one level further down in `NFBackend`. Verso keeps displayed code
 -- narrow enough to read beside the prose, so the namespaces are opened here to let each `#check`
--- fit on one line. The printed signatures still spell out every name in full.
+-- fit on one line. The scalar namespaces identify the imported FloatLib theory.
 open Proofs.RuntimeApprox
 open Proofs.RuntimeApprox.Attention
 open Proofs.RuntimeApprox.NFBackend
 open Proofs.RuntimeApprox.NFBackend.Optimizer
 open Proofs.RuntimeApprox.NumericalCertificate
 open Proofs.RuntimeApprox.Optimizer
+open FloatLib.Numerics
+open FloatLib.Floats.Formats.Flocq
 
 -- A few of the signatures below print wider than this file's 100-column limit, so their
 -- `leanOutput` blocks ask for `whitespace := lax` and are wrapped in the source. The rendered page
 -- still shows each message exactly as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 #doc (Manual) "Runtime Approximation" =>
 %%%
@@ -59,7 +64,7 @@ cancellation, overflow, reduction order, fused kernels, and domain guards can af
 implementation, for example, combines max-subtraction, exponent approximations, a finite sum, and
 division. Its error depends on how those operations are carried out and how their errors interact.
 
-TorchLean's answer is to name the bridge:
+To transfer a real-arithmetic guarantee to execution, we need to:
 
 1. prove the claim over the reals or over the spec;
 2. prove an approximation relation between runtime tensors and spec tensors;
@@ -213,13 +218,13 @@ coordinatewise relation gives later operators a precise premise to consume.
 ## Comparison With PyTorch Tolerances
 
 A related comparison appears in PyTorch's `torch.allclose` {Informal.citep pytorch2019}[]. For
-finite entries, its condition with `rtol` and `atol` is
+finite entries, its condition with `rtol` and `atol` is the elementwise inequality
 
 $$`|a-b|\le \mathrm{atol}+\mathrm{rtol}\,|b|`
 
-holds elementwise. Put `approxBound` beside it and the family resemblance is immediate: `abs` is
-`atol`, `rel` is `rtol`, and the only structural differences are that TorchLean scales by
-$`\max(|a|,|b|)` rather than by the second argument alone, and that it carries a `slack` factor for
+In `approxBound`, `abs` plays the role of
+`atol` and `rel` that of `rtol`. TorchLean scales by
+$`\max(|a|,|b|)` rather than by the second argument alone, and it carries a `slack` factor for
 proofs that need to inflate a budget without rewriting it.
 
 Scaling by the maximum makes the relation symmetric, which matters because a tolerance theorem gets
@@ -476,8 +481,9 @@ different questions.
 the selected registry and kernel plan; they do not establish that every reconstructed interval
 encloses the graph's real denotation.
 
-`executeIEEE32` evaluates the same `NN.IR.Graph` with TorchLean's bit-level `IEEE32Exec` context and
-checks every intermediate value against the stored ranges, rejecting NaN and infinity. This is a
+`executeIEEE32` evaluates the same `NN.IR.Graph` with FloatLib's configured binary32 through
+the FloatLib binary32 context and checks every intermediate value against the stored ranges,
+rejecting NaN and infinity. This is a
 reference replay, not an agreement theorem for a high-throughput backend.
 `ProvedRealEnclosure` carries the separate semantic evidence: its fields require both the real
 denotation equality and a pointwise real enclosure proof. When that evidence is supplied,
@@ -537,7 +543,8 @@ input [1,2]
   -> add bias [1,1]
 ```
 
-The report shows generation, replay, and one deliberately corrupted artifact:
+The report captured before the FloatLib migration shows generation, replay, and one deliberately
+corrupted artifact. It is a record of that run, not a validation of the migrated executable:
 
 ```terminal +output
 TorchLean numerical runtime certificate
@@ -556,7 +563,8 @@ it does not establish soundness of every registered transfer.
 `mlpCertificate` checks that all ten graph nodes have a registered numerical rule. It derives every
 range, selects the CPU capsules, and stores the graph, registry identity, source assumptions,
 ranges, and backend audit in one artifact. `mlpReplay` then supplies concrete weights, biases, and
-input values, executes the stored graph with `IEEE32Exec`, and checks every intermediate tensor.
+input values, executes the stored graph with FloatLib binary32, and checks every intermediate
+tensor.
 The same file demonstrates rejection of a tampered range. These Boolean and `Except` checks are
 useful regression evidence; the example does not construct a `ProvedRealEnclosure`, so it is not
 by itself a proof that the MLP's exact real execution is enclosed.
@@ -585,12 +593,19 @@ real denotation and enclosure fields required by the proof-bearing record above.
 # NF Operations: Rounded Real Arithmetic
 
 The largest collection of local rules is
-{src "NN/Proofs/RuntimeApprox/NF/Ops.lean"}[NN.Proofs.RuntimeApprox.NF.Ops API]. `NF` is
-TorchLean's rounded real neural float model. It gives arithmetic for proofs that resembles finite
-precision without claiming that every hardware corner case has disappeared. This is the rounded-real
-style used by {Informal.citet flocq2011}[] in Rocq. Expressing an operation as rounding a real
-result makes its error available directly to real analysis. A bit-level model can also support
-such reasoning, but first needs decoding and a theorem relating the decoded operation to rounding.
+{src "NN/Proofs/RuntimeApprox/NF/Ops.lean"}[NN.Proofs.RuntimeApprox.NF.Ops API]. These rules use
+FloatLib's `Floats.Formats.Flocq.NF`, a noncomputable rounded-real model. Its radix, exponent
+function, and valid rounder determine the representable values and arithmetic. This is the
+rounded-real style used by {Informal.citet flocq2011}[] in Rocq. Expressing an operation as
+rounding a real result makes its error available directly to real analysis. A bit-level model
+can support such reasoning, but first needs decoding and a theorem relating the decoded
+operation to rounding.
+
+The local tensor, graph, and optimizer rules compose those imported scalar facts. Selecting
+`ExecFloat.Binary e f` for a program does not instantiate an NF error theorem automatically:
+the proof must connect the chosen bit format to the same rounding model and account for finite
+range and exceptional values. Likewise, an NF exponential denotes rounding the real exponential;
+it is not a theorem about the accuracy of a configured software approximation to that function.
 
 The file includes scalar and tensor approximation lemmas for common operations:
 
@@ -632,8 +647,8 @@ proof over real numbers would be too optimistic if copied directly onto a float 
 ```
 
 ```leanOutput nfOps (whitespace := lax)
-@divPosErrorBound : {β : TorchLean.Floats.NeuralRadix} →
-  {fexp : ℤ → ℤ} → [TorchLean.Floats.NeuralValidExp fexp] → ℝ → ℝ → ℝ → ℝ → ℝ → ℝ
+@divPosErrorBound : {β : Radix} →
+  {fexp : ℤ → ℤ} → [ValidExp fexp] → ℝ → ℝ → ℝ → ℝ → ℝ → ℝ
 ```
 
 The displayed `divPosErrorBound` signature makes the budget's dependencies explicit.
@@ -686,10 +701,10 @@ lemmas in
 #check @approxTensor_reduce_sum_columns
 ```
 ```leanOutput reductions (whitespace := lax)
-@approxTensor_reduce_sum_rows : ∀ {β : TorchLean.Floats.NeuralRadix} {fexp : ℤ → ℤ}
-  [inst : TorchLean.Floats.NeuralValidExp fexp] {rnd : ℝ → ℤ}
-    [TorchLean.Floats.NeuralValidRndToNearest rnd] {m n : ℕ}
-  {xS : Spec.SpecTensor [m, n]} {xR : TorchLean.Tensor (TorchLean.Floats.NF β fexp rnd) [m, n]}
+@approxTensor_reduce_sum_rows : ∀ {β : Radix} {fexp : ℤ → ℤ}
+  [inst : ValidExp fexp] {rnd : ℝ → ℤ}
+    [ValidRndToNearest rnd] {m n : ℕ}
+  {xS : Spec.SpecTensor [m, n]} {xR : TorchLean.Tensor (NF β fexp rnd) [m, n]}
     {eps : ℝ},
   approxTensor toSpec xS xR eps →
     ∀ (hRed : Spec.Shape.NonemptyAxis 1 [m, n]),
@@ -698,10 +713,10 @@ lemmas in
         (linfNorm (sumRowBoundVec eps xR))
 ```
 ```leanOutput reductions (whitespace := lax)
-@approxTensor_reduce_mean_rows : ∀ {β : TorchLean.Floats.NeuralRadix} {fexp : ℤ → ℤ}
-  [inst : TorchLean.Floats.NeuralValidExp fexp] {rnd : ℝ → ℤ}
-    [TorchLean.Floats.NeuralValidRndToNearest rnd] {m n : ℕ}
-  {xS : Spec.SpecTensor [m, n]} {xR : TorchLean.Tensor (TorchLean.Floats.NF β fexp rnd) [m, n]}
+@approxTensor_reduce_mean_rows : ∀ {β : Radix} {fexp : ℤ → ℤ}
+  [inst : ValidExp fexp] {rnd : ℝ → ℤ}
+    [ValidRndToNearest rnd] {m n : ℕ}
+  {xS : Spec.SpecTensor [m, n]} {xR : TorchLean.Tensor (NF β fexp rnd) [m, n]}
     {eps : ℝ},
   approxTensor toSpec xS xR eps →
     ∀ (hRed : Spec.Shape.NonemptyAxis 1 [m, n]),
@@ -710,10 +725,10 @@ lemmas in
         (linfNorm (meanRowBoundVec eps xR))
 ```
 ```leanOutput reductions (whitespace := lax)
-@approxTensor_reduce_sum_columns : ∀ {β : TorchLean.Floats.NeuralRadix} {fexp : ℤ → ℤ}
-  [inst : TorchLean.Floats.NeuralValidExp fexp] {rnd : ℝ → ℤ}
-    [TorchLean.Floats.NeuralValidRndToNearest rnd] {m n : ℕ}
-  {xS : Spec.SpecTensor [m, n]} {xR : TorchLean.Tensor (TorchLean.Floats.NF β fexp rnd) [m, n]}
+@approxTensor_reduce_sum_columns : ∀ {β : Radix} {fexp : ℤ → ℤ}
+  [inst : ValidExp fexp] {rnd : ℝ → ℤ}
+    [ValidRndToNearest rnd] {m n : ℕ}
+  {xS : Spec.SpecTensor [m, n]} {xR : TorchLean.Tensor (NF β fexp rnd) [m, n]}
     {eps : ℝ},
   approxTensor toSpec xS xR eps →
     ∀ (hRed : Spec.Shape.NonemptyAxis 0 [m, n]),
@@ -802,7 +817,7 @@ analytic facts `sum_softmaxVec`, `sum_softmaxJvp`, and `abs_softmaxJvp_le_two_mu
 normalization, zero-sum JVP coordinates, and the dimension-independent bound
 $`\lvert\operatorname{vjp}_i\rvert\le 2G`.
 
-These are NF rounded-real theorems, not automatic claims about `IEEE32Exec`, a fused attention
+These are NF rounded-real theorems, not automatic claims about FloatLib binary32, a fused attention
 kernel, or native binary32. The numerical-certificate registry's softmax rule only derives the
 coarse range $`[0,1]`; that range is not a forward-error theorem.
 
@@ -936,8 +951,8 @@ AdamW needs more than a nominal epsilon. Its theorem requires a positive lower b
 bias-corrected second moment and explicit margins showing that rounding does not cross either the
 square-root or division boundary. This is the numerical counterpart of the recurrence in Kingma and
 Ba's Adam paper (https://arxiv.org/abs/1412.6980) and of the decoupled decay
-{Informal.citet adamw2019}[] introduced. Anyone who has read `torch.optim.AdamW` will recognize the
-update stages. The theorem additionally records approximation budgets for the state and
+{Informal.citet adamw2019}[] introduced. Alongside those update stages, the theorem records
+approximation budgets for the state and
 derived scalars, and domain margins for the square root and division.
 
 ```lean (name := optimizers)
@@ -961,15 +976,15 @@ derived scalars, and domain margins for the square root and division.
         contract.RunApprox exact runtime error steps
 ```
 ```leanOutput optimizers (whitespace := lax)
-@approxTensor_sgd_update : ∀ {β : TorchLean.Floats.NeuralRadix} {fexp : ℤ → ℤ}
-  [inst : TorchLean.Floats.NeuralValidExp fexp] {rnd : ℝ → ℤ}
-    [TorchLean.Floats.NeuralValidRndToNearest rnd]
+@approxTensor_sgd_update : ∀ {β : Radix} {fexp : ℤ → ℤ}
+  [inst : ValidExp fexp] {rnd : ℝ → ℤ}
+    [ValidRndToNearest rnd]
   {s : Spec.Shape} {stateS : Optim.SGD.State ℝ s} {stateR : Optim.SGD.State
-    (TorchLean.Floats.NF β fexp rnd) s}
+    (NF β fexp rnd) s}
   {learningRateError : ℝ} {exactParameters : TorchLean.Tensor ℝ s}
-  {runtimeParameters : TorchLean.Tensor (TorchLean.Floats.NF β fexp rnd) s} {parameterError : ℝ}
+  {runtimeParameters : TorchLean.Tensor (NF β fexp rnd) s} {parameterError : ℝ}
   {exactGradients : TorchLean.Tensor ℝ s} {runtimeGradients : TorchLean.Tensor
-    (TorchLean.Floats.NF β fexp rnd) s}
+    (NF β fexp rnd) s}
   {gradientError : ℝ},
   sgdStateApprox stateS stateR learningRateError →
     approxTensor toSpec exactParameters runtimeParameters parameterError →
@@ -980,15 +995,15 @@ derived scalars, and domain margins for the square root and division.
               runtimeGradients).parameterError
 ```
 ```leanOutput optimizers (whitespace := lax)
-@approxTensor_momentumSGD_update : ∀ {β : TorchLean.Floats.NeuralRadix} {fexp : ℤ → ℤ}
-  [inst : TorchLean.Floats.NeuralValidExp fexp] {rnd : ℝ → ℤ}
-    [TorchLean.Floats.NeuralValidRndToNearest rnd]
+@approxTensor_momentumSGD_update : ∀ {β : Radix} {fexp : ℤ → ℤ}
+  [inst : ValidExp fexp] {rnd : ℝ → ℤ}
+    [ValidRndToNearest rnd]
   {s : Spec.Shape} {stateS : Optim.MomentumSGD.State ℝ s}
-  {stateR : Optim.MomentumSGD.State (TorchLean.Floats.NF β fexp rnd) s} {stateError :
+  {stateR : Optim.MomentumSGD.State (NF β fexp rnd) s} {stateError :
     MomentumSGDStateError s}
-  {paramsS : TorchLean.Tensor ℝ s} {paramsR : TorchLean.Tensor (TorchLean.Floats.NF β fexp
+  {paramsS : TorchLean.Tensor ℝ s} {paramsR : TorchLean.Tensor (NF β fexp
     rnd) s} {paramsError : ℝ}
-  {gradsS : TorchLean.Tensor ℝ s} {gradsR : TorchLean.Tensor (TorchLean.Floats.NF β fexp rnd)
+  {gradsS : TorchLean.Tensor ℝ s} {gradsR : TorchLean.Tensor (NF β fexp rnd)
     s} {gradsError : ℝ},
   momentumSGDStateApprox stateS stateR stateError →
     approxTensor toSpec paramsS paramsR paramsError →
@@ -1002,16 +1017,16 @@ derived scalars, and domain margins for the square root and division.
             (Optim.MomentumSGD.update stateR paramsR gradsR).parameters nextError.parameterError
 ```
 ```leanOutput optimizers (whitespace := lax)
-@approxTensor_adamW_update : ∀ {β : TorchLean.Floats.NeuralRadix} {fexp : ℤ → ℤ}
-  [inst : TorchLean.Floats.NeuralValidExp fexp] {rnd : ℝ → ℤ}
-    [TorchLean.Floats.NeuralValidRndToNearest rnd]
+@approxTensor_adamW_update : ∀ {β : Radix} {fexp : ℤ → ℤ}
+  [inst : ValidExp fexp] {rnd : ℝ → ℤ}
+    [ValidRndToNearest rnd]
   {s : Spec.Shape} {stateS : Optim.AdamW.State ℝ s} {stateR : Optim.AdamW.State
-    (TorchLean.Floats.NF β fexp rnd) s}
+    (NF β fexp rnd) s}
   {stateError : AdamWStateError s} {derivedErrors : AdamWDerivedErrors} {paramsS :
     TorchLean.Tensor ℝ s}
-  {paramsR : TorchLean.Tensor (TorchLean.Floats.NF β fexp rnd) s} {paramsError : ℝ} {gradsS :
+  {paramsR : TorchLean.Tensor (NF β fexp rnd) s} {paramsError : ℝ} {gradsS :
     TorchLean.Tensor ℝ s}
-  {gradsR : TorchLean.Tensor (TorchLean.Floats.NF β fexp rnd) s} {gradsError η : ℝ},
+  {gradsR : TorchLean.Tensor (NF β fexp rnd) s} {gradsError η : ℝ},
   adamWStateApprox stateS stateR stateError →
     approxTensor toSpec paramsS paramsR paramsError →
       approxTensor toSpec gradsS gradsR gradsError →
@@ -1151,7 +1166,8 @@ after subtracting the runtime error still has to be positive.
 
 When that inequality is proved, the runtime prediction is still certified.
 
-The Float32 soundness layer uses the same separation. `FP32` is a proof model, `IEEE32Exec` is an
+The Float32 soundness layer uses the same separation. `FP32` is a proof model, FloatLib binary32
+is an
 executable bit oriented model, and native hardware remains a named assumption unless a bridge
 theorem covers the path being used.
 
@@ -1185,7 +1201,7 @@ between the real margin theorem and the approximation theorem used to transfer i
 
 # End To End Rounded Training
 
-The normal-form end-to-end file connects the proof-bearing reverse graph to executable autograd
+The rounded-real end-to-end file connects the proof-bearing reverse graph to executable autograd
 `GraphData`, extracts typed parameter gradients, and composes those gradients with the optimizer
 contracts:
 
@@ -1200,17 +1216,17 @@ contracts:
 ```
 
 ```leanOutput endToEnd (whitespace := lax)
-@backprop_optimizer_update_approx_graphData : ∀ {β : TorchLean.Floats.NeuralRadix} {fexp : ℤ → ℤ}
-  [inst : TorchLean.Floats.NeuralValidExp fexp] {rnd : ℝ → ℤ}
-    [TorchLean.Floats.NeuralValidRndToNearest rnd]
+@backprop_optimizer_update_approx_graphData : ∀ {β : Radix} {fexp : ℤ → ℤ}
+  [inst : ValidExp fexp] {rnd : ℝ → ℤ}
+    [ValidRndToNearest rnd]
   {Γ ss : List Spec.Shape} (g : RevGraph toSpec Γ ss) (i : Fin Γ.length)
-  (contract : NumericalStepContract (TorchLean.Floats.NF β fexp rnd) toSpec)
+  (contract : NumericalStepContract (NF β fexp rnd) toSpec)
   (xS : TorchLean.TensorPack Spec.SpecScalar Γ) (xR : TorchLean.TensorPack
-    (TorchLean.Floats.NF β fexp rnd) Γ)
+    (NF β fexp rnd) Γ)
   (epsIn : EList Γ) (seedS : TorchLean.TensorPack Spec.SpecScalar (Γ ++ ss))
-  (seedR : TorchLean.TensorPack (TorchLean.Floats.NF β fexp rnd) (Γ ++ ss)) (epsSeed : EList
+  (seedR : TorchLean.TensorPack (NF β fexp rnd) (Γ ++ ss)) (epsSeed : EList
     (Γ ++ ss))
-  (paramsS : TorchLean.Tensor ℝ (Γ.get i)) (paramsR : TorchLean.Tensor (TorchLean.Floats.NF β
+  (paramsS : TorchLean.Tensor ℝ (Γ.get i)) (paramsR : TorchLean.Tensor (NF β
     fexp rnd) (Γ.get i))
   (paramsError : ℝ) (stateS : contract.ExactState (Γ.get i)) (stateR : contract.RuntimeState
     (Γ.get i))
@@ -1339,7 +1355,7 @@ bounds, compose them over forward and backward graphs, and finally connect the r
   {src "NN/Proofs/RuntimeApprox/Graph/BackwardApprox.lean"}[backward graph approximation API]
   contains `RevGraph.backprop_approx`.
 - The
-  {src "NN/Proofs/RuntimeApprox/NF/Ops.lean"}[normal form operator API] supplies local obligations,
+  {src "NN/Proofs/RuntimeApprox/NF/Ops.lean"}[rounded-real operator API] supplies local obligations,
   including domain-sensitive operations such as division and safe log.
 - The
   {src "NN/Proofs/RuntimeApprox/NF/Convolution.lean"}[rounded convolution proof] gives ordered

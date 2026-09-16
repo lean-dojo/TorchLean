@@ -21,10 +21,9 @@ tag := "pytorch-roundtrip"
 file := "PyTorch-Round-Trip"
 %%%
 
-Many TorchLean workflows will still involve Python. A model may be trained in PyTorch because the
-dataset, the optimizer, or the engineering environment lives there {Informal.citep pytorch2019}[].
-The question for TorchLean is what happens after that training run. Can the required names and
-shapes be checked before those numbers enter a typed family record?
+Suppose we train a `2 → 3 → 1` MLP in PyTorch {Informal.citep pytorch2019}[] and want to evaluate
+its learned weights in Lean. Four tensors must cross over: two weight matrices and two biases.
+Their names and nested dimensions tell the importer which field each tensor should fill.
 
 The importer reconstructs known model families with specified parameter layouts. It does not
 reconstruct arbitrary `nn.Module` objects, so the expected architecture must be supplied on the
@@ -63,9 +62,7 @@ layer2.weight
 layer2.bias
 ```
 
-TorchLean wants those names to become a checked parameter payload, not an implicit module object.
-The import code should be able to say exactly which TorchLean parameter each Python tensor is meant
-to fill.
+Each name must map to a particular parameter in the Lean family record.
 
 The bridge delegates loading PyTorch's own serialization format to PyTorch, then exports the
 required tensor payload as JSON. Nested numeric arrays keep the Lean parser small and make the
@@ -191,13 +188,6 @@ The decimal strings retain enough significant digits for finite binary32 values 
 values, while `meta.dtype` separately records their source dtype. The importer still constructs
 host `Float` tensors; source dtype metadata does not select the arithmetic of the Lean forward pass.
 
-The training transcript separates a fit from an exchange. Its near-zero loss says that this
-parameter state predicts the one supplied target well. The Lean prediction checks that loading the
-payload and evaluating the expected family reproduces that observation at the shown precision.
-Neither result identifies which parameter changes caused the fit, and neither tests another input.
-For example, the large output bias makes this training pair easy to fit without establishing the
-orientation of every hidden coefficient.
-
 The retained transcript's last label says `Training improved output by`. The current script labels
 that same absolute change `Output change from initialization`. It is a change in a prediction,
 not a validation score: moving a prediction by a larger amount is only helpful relative to the
@@ -317,12 +307,8 @@ The first rejection compares the nested array structure with the requested shape
 three rows of length two, so it cannot satisfy a request for `[2, 3]`, even though both shapes
 contain six values. No separate `"shape"` annotation is needed to make this check.
 
-The successful weight parse preserves the visible row grouping: `[1, 2]`, `[3, 4]`, and `[5, 6]`
-remain the three rows of the returned matrix. The bias parse is a separate lookup with its own
-shape. The three `false` results then test independent requirements: nested dimensions, the exact
-key spelling, and the scalar JSON kind. A string containing `nan` fails the third requirement
-because it is a string, regardless of whether another format uses that spelling for a special
-floating-point value.
+The other two failures need no dimension mismatch: one misspells `weight`, and the other supplies
+a string where a JSON number is required. `"nan"` fails because it is a string.
 
 These examples deliberately call the low-level dictionary and tensor helpers. They do not call
 `loadWeights?`, which performs wrapper dtype validation for the family loaders. In particular,
@@ -427,31 +413,15 @@ A loaded TorchLean family record retains its parameter shapes in its type. Later
 and theorem statements can use those shapes directly. This guarantee concerns the record's
 structure; it does not establish that a name or coordinate has the intended physical meaning.
 
-The return types explain another practical difference. `some tensor` means the requested tensor
-was constructed, while `none` gives no partial family to run. The family loader combines its
-required lookups before returning a parameter record, so a missing bias cannot silently leave a
-freshly initialized Lean bias in place. PyTorch's non-strict example above deliberately permits
-that kind of partial update and reports the missing key to its caller.
-
-These are different loading policies. Choosing one requires deciding whether an artifact should
-fully determine inference or whether retained state is intended. The narrow family importer
-chooses the former for its required tensors, although it still ignores extra keys. A successful
-load consequently does not certify that every field in the supplied artifact was used.
+The family loader combines all required lookups before returning a record. A missing bias
+therefore cannot leave a freshly initialized Lean bias in place, as PyTorch's non-strict load
+permits. Extra keys are still ignored, so success does not imply that every supplied field was used.
 
 # Serialized Tensor Layouts
 
-The round trip does not serialize an arbitrary Python object graph. It serializes a small amount of
-model family metadata plus a named tensor payload. The exact schema depends on the family, but the
-shape of the contract is always the same:
-
-- choose a known architecture family,
-- agree on required parameter names and tensor layout,
-- serialize tensors by name into JSON,
-- check that layout again on the Lean side before constructing typed parameters.
-
-Lean then reconstructs the family-specific typed record used by this example's specification
-forward pass. Converting that record into another model API is a separate, explicit adapter. The
-JSON file is transport, not semantics.
+The imported record supplies this example's family-specific forward pass. Using it through another
+model API requires an explicit adapter. Even before that step, the names must agree with one of
+the chosen family's accepted conventions.
 
 The MLP loader accepts two key conventions, `fc1.*`/`fc2.*` and `layers.0.*`/`layers.2.*`, because
 PyTorch itself produces both. A module with named attributes gives `fc1.weight`; the same
@@ -521,15 +491,9 @@ This small exchange format handles known TorchLean families. Keep the full objec
 training pipeline needs PyTorch's complete serialization graph, and export only the checked payload
 that TorchLean understands.
 
-The repeated `5.5` is a useful orientation probe because the coefficients are explicit and the
-input is positive. It checks the key convention without introducing a ReLU branch change. The
-mixed example's `none` has a different meaning from a numerical disagreement: no parameter record
-was produced, so there was no prediction to compare. Keeping these outcomes separate prevents a
-failed import from being treated as a model that happened to return zero or an empty tensor.
-
-For a new adapter, specify its complete naming convention before choosing numerical probes. If
-two keys of the same shape could both fill a slot, the adapter needs a deterministic policy for
-which one wins or whether that ambiguity is rejected. Tensor dimensions cannot express that policy.
+The identity weights make the naming test easy to check by hand. They would not reveal an
+accidental transpose of the first weight matrix, since transposing an identity changes nothing.
+The transformer example below uses an asymmetric matrix to expose that mistake.
 
 # Model Families
 
@@ -579,11 +543,8 @@ the imported predictions are within about $`4\times10^{-5}` of those targets. Un
 this family runs
 through an ordinary executable `nn` module.
 
-The CNN's two output coordinates are separate target checks. The first is about `0.000038` below
-`1`; the second is about `0.000014` above `0.5`. These small residuals describe the displayed
-trained example. They do not measure agreement between arbitrary convolution algorithms, and the
-printed `Float` CPU route should not be confused with a binary32 CUDA execution simply because
-Python produced the weights. The import and the forward evaluator make separate arithmetic choices.
+The residuals compare the imported model with its training targets. They do not compare CPU and
+CUDA convolutions; this forward pass uses host `Float` on the CPU.
 
 ## Transformer (Encoder)
 
@@ -665,13 +626,6 @@ literal nested-array transpose of a non-square projection fails the shape check.
 permutations can preserve shape, so numerical checks remain useful for both square and non-square
 parameters. Attention blocks are full of square
 projections, which is exactly why this family is the one that makes the caution concrete.
-
-The transformer transcript has one sequence position with two features. Its nearly opposite
-coordinates, `0.999998` and `-0.999998`, are the output of that particular imported encoder and
-input. Their symmetry does not certify its attention implementation or its projections. The basis
-probe below the transcript is a more targeted check of one possible transport error: it selects a
-specific column whose entries differ under transposition. It shows why a small diagnostic input
-can expose an orientation mistake that a rounded end-to-end prediction might hide.
 
 # PyTorch Code Generation
 
@@ -761,11 +715,8 @@ matrix multiplication produces three hidden features. Broadcasting the `[3]` bia
 per feature before the row is reshaped back to a vector. Those transformations preserve the
 intended feature order while adapting it to PyTorch's matrix interface.
 
-The lone printed `loss` from running the emitted file belongs to that file's training example.
-It confirms an observable result from its runnable program, but does not compare that program with
-the Lean forward pass. The next section pins a shared input and parameters to make that comparison
-explicit. Likewise, training parity would need to compare the trainable parameter set, loss,
-gradients, and updates rather than infer them from successful source generation.
+That printed loss comes from the emitted file's training example. To compare its initial forward
+pass with Lean, I'll use the same input and seeded parameters on both sides.
 
 ## Generated Model Forward Comparison
 
@@ -869,11 +820,8 @@ An emitted `torch.tensor(..., dtype=torch.float32)` then intentionally rounds to
 storage dtype. Exact source literals preserve input values across serialization, but do not prove
 that two frameworks use the same arithmetic, backward rules, or parameter/buffer classification.
 
-The formatter examples expose a failure that a six-decimal display would conceal. `1e-9` is
-nonzero, yet its ordinary displayed string is `0.000000`. Using that string as generated source
-would replace the parameter by zero. The hexadecimal expression keeps the finite binary64 input
-value, whereas `0.5` already survives the short decimal path. This is a serialization property;
-a later conversion into a float32 tensor deliberately asks for a different storage format.
+Using the ordinary display string for `1e-9` would replace a nonzero parameter by zero. In
+contrast, `0.5` already survives the short decimal path.
 
 ## JSON Transport And Bitwise Comparison
 
@@ -957,23 +905,17 @@ some [-0.052049]
 some "bfaaa6268ad8a440"
 ```
 
-The output bits match the NumPy float64 result in this test. The
-intended finite-float32 transport argument is:
-`json.dumps` printed each float32 at full double precision, every finite float32 value is exactly
-representable in float64, and the
-parser must recover that original value for transport to preserve it. The displayed output test
-does not prove this property for every decimal input. Lean's `Float` arithmetic landed on the same
-double NumPy did in this test. To test parameter preservation
-directly, compare each
-imported parameter bit pattern; one output comparison alone cannot establish it.
+Lean's output bits match the NumPy float64 result in this test. For lossless parameter transport,
+the parser must recover each value written by `json.dumps`: a finite float32 value is exactly
+representable in float64. Comparing the imported parameter bits directly would test that property
+without relying on a forward pass, where unused or canceling parameters could conceal an error.
 
 Against the widened float32 forward result, `bfaaa62680000000`, the two patterns share their first
 nine hex digits, followed by zeros in the float32 row. That gap
 does not come from source-literal truncation. Nor is it simply a final rounding of
 the float64 answer, since the module rounded to binary32 after every operation rather than at
 the end. Bounding such precision differences requires the operation hypotheses and error analysis in
-{ref "fp32-soundness"}[the FP32 soundness chapter]; that chapter does not certify this imported run
-merely because it uses floating-point numbers.
+{ref "fp32-soundness"}[the FP32 soundness chapter].
 
 This bit equality is a result for one run. Even a three-term dot product can be sensitive to
 cancellation, and a reference Lean loop, a NumPy BLAS call, and a fused CUDA kernel may accumulate
@@ -981,13 +923,6 @@ in different orders. {ref "spec-layer"}[The specification chapter] shows four nu
 sum already depends on that choice. The importer checks names and shapes and parses decimal numbers.
 Bit preservation, finite-range
 requirements, and evaluation parity require their own checks.
-
-The two bit outputs answer a narrower question than the rounded tensor display. Both forward
-values print near `-0.052049`, but their binary64 encodings differ. The widened binary32 result
-has trailing zero bits because widening adds precision without recovering the information lost
-during binary32 evaluation. Matching the other encoding establishes equality of this one output
-with the recorded float64 reference. It does not reveal whether unused or canceling parameters
-were transported correctly, which is why direct parameter comparisons remain a distinct check.
 
 # Python Training And Parameter Export
 
@@ -1072,18 +1007,12 @@ verification chapters are where a claim about all inputs in a region gets establ
   * emit PyTorch from the IR
 :::
 
-The rows are not exclusive. The workflow this chapter walked through uses three of them.
+An imported model can subsequently be lowered to IR or exported again; these choices can be combined.
 
 # Guarantees And Limits
 
-When the round trip succeeds, the result is a controlled bridge between Lean and Python:
-
-- Lean can emit a model skeleton and companion files.
-- Python can train or export weights using a matching layout.
-- Lean can parse the required named arrays into family-specific `Tensor Float` fields and run the
-  checked-in specification forward example.
-
-The scope is narrow, and the specific limits are:
+The family importers return typed parameters for a forward pass. When preparing an exchange,
+keep these limits in view:
 
 - arbitrary PyTorch training needs its own semantic or artifact bridge;
 - the importer covers the supported artifact formats rather than the full PyTorch ecosystem;
@@ -1095,12 +1024,6 @@ The scope is narrow, and the specific limits are:
 - shape checking cannot distinguish two conventions that agree on shape, such as a transposed
   square matrix;
 - binary32 behavior is handled by the floating point bridge rather than by the round trip format.
-
-Binary32 claims still require the relevant TorchLean float backend and the theorems in the
-floating-point chapters.
-
-The resulting typed payload is ready for a family-specific forward pass or an explicit adapter
-to graph analysis. Relating that graph to the foreign program remains a separate semantic claim.
 
 # References
 

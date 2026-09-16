@@ -137,7 +137,8 @@ def predictMany {σ τ : Shape} {batch : Nat}
 Train the model with the loss and runtime settings stored in `trainer`.
 
 The signature uses `Tensor Float`, but the run itself executes in binary32: `.native` arithmetic
-instantiates the model over `Float32` and `.ieee` over `IEEE32Exec`. Dataset samples are converted
+instantiates the model over `Float32` and `.ieee` over `ExecFloat.Binary 8 23`. Dataset samples are
+converted
 into that scalar as they are used, and results are read back to `Float`.
 
 The result stores the trained parameters together with prediction, reporting, state access, and

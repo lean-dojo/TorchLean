@@ -210,10 +210,11 @@ theorem buildFrom_denoteAllFrom_mse_loss
                             (nodeData := nodeData) (st1 := st1) (st' := st')
                             (ctx := ctx) (vals0 := vals0) (input := input) hTail hEval hStep
                 · -- `simp` normalizes the guard to `nOutShape = []` (via `List.nil_eq`), so the
-                  -- `dif_neg` witness has to be stated in that orientation too.
+                  -- `dite_eq_right` witness has to be stated in that orientation too.
                   exact False.elim <|
-                    throw_bind_ne_ok (h := (by simpa [dif_neg (Ne.symm hOut)] using hBuild2))
-              · exact False.elim <| throw_bind_ne_ok (h := (by simpa [if_neg hShape] using hBuild1))
+                    throw_bind_ne_ok (h := (by simpa [dite_eq_right (Ne.symm hOut)] using hBuild2))
+              · exact False.elim <|
+                  throw_bind_ne_ok (h := (by simpa [ite_eq_right hShape] using hBuild1))
 
 end IRExec
 end Autograd

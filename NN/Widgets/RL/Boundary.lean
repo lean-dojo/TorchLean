@@ -14,7 +14,6 @@ import Mathlib.Tactic.Positivity.Finset
 public import NN.Tensor.Internal.Elab.TensorLiteral
 public meta import NN.Widgets.Core.UI
 public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
 
 /-!
 # RL Boundary Rollout Viewer
@@ -135,7 +134,7 @@ syntax (name := rlBoundaryRolloutFileViewCmd)
 
 macro "#rl_boundary_rollout_file_view " path:term ", " contract:term ", " maxErrors:term :
     command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(
+  UI.canonicalCommand <$> `(
     #html (rolloutBoundaryReportHtml (path := $path) (c := $contract) (maxErrors := $maxErrors))
   )
 

@@ -20,10 +20,10 @@ tag := "running-example"
 file := "A-Running-Example"
 %%%
 
-The `quickstart_mlp` program fits a two-layer network to a known function. It builds a dataset,
-initializes the model, runs autograd and Adam, and prints predictions. Because we know the target,
-we can compare the learned function with an explicit network that represents it exactly, then
-inspect gradients and bounds for the initialized model. The source
+The `quickstart_mlp` program fits a two-layer network to a known function. Knowing the target lets
+us do more than watch the loss fall: we can write down weights that represent it exactly and compare
+them with the weights Adam finds. We can also perturb individual weights to check the backward pass
+and enlarge the input region to see how the output bounds change. The source
 is {src "NN/Examples/Quickstart/SimpleMlpTrain.lean"}[`NN/Examples/Quickstart/SimpleMlpTrain.lean`],
 and the chapter uses its definitions and records the outputs for the configurations shown below.
 
@@ -250,10 +250,6 @@ No reshuffling or independent target generation occurs in this construction, so 
 visible directly in the expression. This matters when debugging training: correct shapes alone
 would still permit labels to be attached to the wrong input rows.
 
-Each input has shape `[2]` and each target has shape `[1]`. The tensor types settle the dimensional
-question: every row fits the model. Whether 25 points are enough to learn the target is a different
-question; the training run below gives empirical evidence on the grid and a held-out point.
-
 # Training
 
 The trainer combines the model, objective, optimizer, seed, and runtime choices:
@@ -311,8 +307,11 @@ also introduce smaller purpose-built variants.
 
 ## IEEE Binary32 Reference Execution
 
-The same command accepts `--arithmetic ieee`, which replaces the host's native binary32 with
-TorchLean's own raw-bit IEEE binary32 reference:
+The same command accepts `--arithmetic ieee`, which selects FloatLib's executable binary32
+arithmetic in place of the host's native operations:
+
+The following transcript predates the FloatLib migration and retains its recorded scalar labels
+and numerical results. Current `.ieee` execution uses FloatLib binary32.
 
 ```terminal +output
 $ lake exe torchlean quickstart_mlp --device cpu --steps 200 \
@@ -427,34 +426,23 @@ def rePred : Tensor Float [1] :=
 [-0.088261]
 ```
 
-The pattern match binds weights and biases from the initial state; it does not read the mutable
-parameters inside a trainer that has already run. The displayed negative prediction is therefore
-the reference point for the later derivative and interval examples. Keeping this forward calculation
-small also separates two possible sources of disagreement: the numerical equations for the MLP,
-and the runtime machinery that obtains its state and executes them. A comparison is meaningful only
-when those two paths receive the same four parameter tensors.
-
-This agrees with `untrained(heldout) = [-0.088261]` in the training log at every printed digit.
-Both evaluations use the same seeded parameters, but only the eager runtime records a tape.
-The pure function gives proofs a forward computation to refer to without including the runtime's
-tape management. Agreement at this point is a regression check; relating the two implementations
-for all inputs requires a theorem.
+The pattern match reads the four tensors from the initial state. Its prediction agrees with
+`untrained(heldout) = [-0.088261]` in the training log at every printed digit. Both paths receive
+the same parameters; only the eager runtime records a tape. If they disagreed, this small forward
+calculation would help separate an error in the MLP equations from an error in loading or executing
+the state. It also gives proofs a computation to refer to without including tape management.
+The comparison checks one input; equality for all inputs requires a theorem. The derivative and
+interval examples below continue to use this initial payload.
 
 The loss for a single example is a scalar function of $`\theta`, even though the prediction has
 shape `[1]`. Reverse mode computes vector-Jacobian products from that scalar back to all four
 tensors {Informal.citep baydin2018}[]. Adam then uses those gradients and its optimizer state to
 construct the next payload.
 
-The repository contains four views of this step:
-
-- eager runtime code that actually allocates tensors and records tape nodes;
-- ideal VJP definitions used in autograd proofs;
-- rounded VJP error transformers used by runtime-approximation proofs;
-- optimizer contracts for SGD, momentum, and AdamW-style updates
-  {Informal.citep adamw2019}[].
-
-The ideal VJP describes the derivative being sought. The rounded transformers and optimizer
-contracts describe obligations for connecting that derivative to the executed update.
+To reason about that update, we need to connect the eager runtime's saved tensors and tape nodes
+to an ideal VJP. The autograd proofs state the derivative rule; rounded VJP error transformers
+bound the numerical discrepancy. Optimizer contracts then describe how those gradients enter SGD,
+momentum, or AdamW updates {Informal.citep adamw2019}[].
 
 # Exact Representation Of The Target
 
@@ -510,25 +498,18 @@ def reGridLoss
 true
 ```
 
-The zero loss checks a constructive answer to whether the architecture can express the sampled
-target. The hidden rows compute the two linear forms already present in `reTarget`, and the final
-row applies their coefficients. No optimization was needed to obtain these weights. Training the
-larger model asks a different question: whether the selected optimizer, initialization, and examples
-lead to a useful representation. Even finding another zero-loss state would not establish recovery
-of these particular weights, because the next examples show ways to change the representation
-without changing its real-valued function.
+The hidden rows compute the two linear forms in `reTarget`, and the readout applies their
+coefficients. We obtained these weights directly from the target equation. The final Boolean
+confirms that their computed grid loss is zero, even beyond the six printed decimals, and their
+held-out prediction is `0.2`.
 
-The last line compares the computed loss with zero, so the zero loss is not an artifact of
-decimal formatting. This construction returns `0.2` at the held-out point and has exactly zero
-computed mean squared error on the grid. The real-valued two-unit construction follows from the
-target
-equation; the finite floating-point test does not prove equality for every possible input, including
-overflow and non-finite cases. The training log's gap need not come from insufficient model
-width. The hypothesis class contains the target; two
-hundred single-example Adam steps from a random start did not find it. Those are separate subjects,
-and {ref "approximation-theory"}[the approximation theory chapter] and
-{ref "optimization-theory"}[the optimization theory chapter] are the two places this book treats
-them.
+Over the reals, the construction represents the target by definition. The floating-point test
+covers this finite grid; it does not establish equality for every input, including overflow and
+non-finite cases. Still, insufficient width cannot explain the training log's remaining error:
+two hundred single-example Adam steps did not find a function that the architecture can represent.
+That distinction separates {ref "approximation-theory"}[approximation theory] from
+{ref "optimization-theory"}[optimization theory]. Even a zero-loss run need not recover these
+particular weights, as the following symmetries show.
 
 ## Parameter Symmetries
 
@@ -719,18 +700,14 @@ some 0.082165
 some (-0.246494)
 ```
 
-The `some` wrapper confirms that both coordinates existed and could be modified. It says nothing
-about whether the perturbation size was numerically appropriate. Both forward calls preserve the
-other weights, biases, input, and target; otherwise their difference would mix several effects.
-Dividing by `2 * delta` compares changes across the symmetric interval around the original weight.
-All calls here use nonzero `delta`. The helper intentionally leaves that numerical precondition to
-the experiment, so it should not be copied as a general derivative validator without an appropriate
-check on the step size.
+Both entries agree with the backward pass to every printed digit. Each comparison changes one
+weight while holding the other weights, biases, input, and target fixed. Dividing by `2 * delta`
+measures the change across the symmetric interval around that weight.
 
-Both entries agree with the backward pass to every printed digit. `Tensor.modify?` keeps this short:
-it returns an `Option` because the coordinates are runtime naturals that could be out of range, and
-the `do` block threads that possibility for us rather than demanding a proof that `5 < 8` before we
-are allowed to write the experiment.
+`Tensor.modify?` returns an `Option` because the coordinates are runtime naturals. The `do` block
+propagates a failed lookup, and `some` confirms that these coordinates existed. Step size needs a
+separate check: all calls here use nonzero `delta`, but the helper does not enforce that condition
+or decide whether the perturbation is small enough.
 
 ## Finite-Difference Step Size
 
@@ -801,13 +778,6 @@ some 0.000000
 ```leanOutput reGradDead
 some 0.002521
 ```
-
-Changing weight `(0, 0)` changes that unit's pre-activation by one quarter of the weight change,
-because the first input coordinate is 0.25. The original pre-activation is about minus 0.48. A
-perturbation of one is too small to cross zero, but a perturbation of three can cross it in one
-direction. The resulting nonzero difference quotient measures behavior across two activation
-regions. It does not contradict the zero derivative at the original point. This is why a gradient
-check must consider the local branch structure as well as floating-point cancellation.
 
 A nudge of $`10^{-5}` leaves the loss bit-identical, and so does a nudge of $`1`. Unit zero has
 pre-activation $`-0.4797` and the entry we are moving enters it multiplied by $`x_1=0.25`, so it
@@ -909,17 +879,10 @@ Verification.lowerForwardToIR reInit (nn.initialState reInit) :
   Except String (NN.Verification.Builtin.LoweredIR Float)
 ```
 
-The result is a `LoweredIR Float` containing:
-
-- an `NN.IR.Graph`;
-- the payload store used by parameterized operations;
-- the distinguished input node;
-- the distinguished output node.
-
-`LoweredIR Float` makes the element representation visible. The underlying operation graph records
-shapes and operation tags, while the lowered artifact and its payload use the arithmetic selected
-for the run. The `Except` says that lowering can fail, which is why the examples below thread it
-through a `do` block rather than assuming success.
+On success, `LoweredIR Float` pairs an `NN.IR.Graph` with its parameter payload store and the
+distinguished input and output nodes. The graph records shapes and operation tags; the payload's
+scalar type fixes how its entries are represented. The `Except` also admits a lowering error,
+which the examples below propagate through a `do` block.
 
 The lowered graph expands the two linear layers and ReLU into primitive operations, parameter
 constants, and shape adjustments. Its node count is:
@@ -977,12 +940,9 @@ def reBox (eps : Float) :
     throw "expected one output coordinate"
 ```
 
-The `if h : out.dim = 1` branch produces evidence about the dimension carried by the flat output
-box. The expressions `h ▸ out.lo` and `h ▸ out.hi` use that evidence to view the endpoints as
-tensors of shape `[1]`; they do not alter their entries or round them again. The other branch
-reports an error instead of pretending the result was scalar. This is a small example of an
-executable check providing exactly the shape information needed by the caller, while leaving
-numerical containment to a separate soundness argument.
+The `if h : out.dim = 1` branch supplies evidence that the flat output box has one coordinate.
+The expressions `h ▸ out.lo` and `h ▸ out.hi` use it to return tensors of shape `[1]`, preserving
+their entries without rounding them again. If the dimension differs, the function returns an error.
 
 At radius zero, the input box contains only the held-out point, so we can compare its output
 bounds with the earlier prediction:
@@ -1042,12 +1002,9 @@ def reWidth (eps : Float) : Float :=
 [0.730910, 1.276392]
 ```
 
-The helper returns zero on an error to keep this display short. That branch is unsuitable for a
-verification decision: an error must not be interpreted as an interval of zero width. The preceding
-successful calls and the fixed graph explain the intended path here, but a reusable tool should
-preserve the `Except` result. On the successful path, dividing width by radius describes sensitivity
-of the computed enclosure. It does not compare that enclosure with the true range, so the changing
-ratios alone cannot tell us how much comes from the function and how much from relaxation.
+The helper returns zero on an error to keep this display short. A verification tool must instead
+preserve the `Except` result: failure is not an interval of zero width. Here we are inspecting the
+successful propagation path for the fixed graph.
 
 The first three ratios agree at the displayed precision. In the ideal real computation on these
 small boxes, only one hidden unit is active. Its affine output has width

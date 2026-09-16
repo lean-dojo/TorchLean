@@ -14,6 +14,9 @@ open Verso.Genre
 open Verso.Genre.Manual
 open Informal
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 #doc (Manual) "Backends and Training" =>
 
 Backend selection is a planning step over declared data. A capsule names the operation, provider,
@@ -133,7 +136,7 @@ owned buffers only for selected node ids and requires the caller to release them
 
 :::theorem "cuda_execution_contracts" (parent := "backend_selection") (lean := "Runtime.Autograd.Cuda.Float32Contract.native_add_eq_ieee32_of_isFinite")
 Given the stated native bit-agreement hypothesis and a finite native result, decoded native scalar
-addition equals {uses "executable_binary32"}[`IEEE32Exec.add`]. Both the hypothesis and the
+addition equals {uses "executable_binary32"}[`ExecFloat.add`]. Both the hypothesis and the
 finiteness side condition remain visible in the theorem type.
 :::
 

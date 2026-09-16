@@ -13,9 +13,10 @@ public import NN.Proofs.RuntimeApprox.Rounding.RoundingApprox
 
 Scalar approximation lemmas for proof-relevant rounded arithmetic.
 
-This layer reasons about a rounding model such as `neuralRound`: one scalar operation is replaced
-by a rounded scalar operation, and the proof records the resulting `ulp`-style error budget. Tensor
-and graph modules lift these scalar facts to operators and end-to-end executions.
+This layer reasons about the noncomputable rounded-real model `FloatLib.Floats.Formats.Flocq.round`,
+exposed locally as `roundR`: one scalar operation is replaced by a rounded scalar operation, and
+the proof records the resulting `ulp`-style error budget. Tensor and graph modules lift these
+scalar facts to operators and end-to-end executions.
 
 The public vocabulary is focused:
 - `scalarApprox` is the absolute-error predicate for one real scalar;

@@ -12,7 +12,6 @@ public meta import NN.Widgets.Core.Tensor
 public meta import NN.Runtime.Autograd.Engine.Core -- shake: keep
 public meta import NN.Widgets.Core.UI -- shake: keep
 public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
-public meta import ProofWidgets.Demos.Macro -- shake: keep
 
 /-!
 # Autograd
@@ -372,12 +371,12 @@ syntax (name := tapeGradsViewCmd) "#tape_grads_view " term ", " term : command
 syntax (name := tapeTraceViewCmd) "#tape_trace_view " term ", " term : command
 
 macro "#tape_view " t:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (tapeHtml $t))
+  UI.canonicalCommand <$> `(#html (tapeHtml $t))
 
 macro "#tape_grads_view " t:term ", " outId:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (tapeGradsHtml $t $outId))
+  UI.canonicalCommand <$> `(#html (tapeGradsHtml $t $outId))
 
 macro "#tape_trace_view " t:term ", " outId:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (tapeTraceHtml $t $outId))
+  UI.canonicalCommand <$> `(#html (tapeTraceHtml $t $outId))
 
 end NN.Widgets

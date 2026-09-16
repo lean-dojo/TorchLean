@@ -277,9 +277,7 @@ def iid (μ : MeasureTheory.ProbabilityMeasure Z) (n : Nat) : MeasureTheory.Prob
   (Dataset n Z) :=
   let ν : MeasureTheory.ProbabilityMeasure (Fin n → Z) :=
     MeasureTheory.ProbabilityMeasure.pi fun _ : Fin n => μ
-  have h : Measurable (Dataset.ofFn (n := n) (Z := Z) : (Fin n → Z) → Dataset n Z) :=
-    Dataset.measurable_ofFn (n := n) (Z := Z)
-  ν.map (f := (Dataset.ofFn (n := n) (Z := Z))) h.aemeasurable
+  ν.map (Dataset.ofFn (n := n) (Z := Z))
 
 /-! ## Expected/probabilistic stability notions -/
 

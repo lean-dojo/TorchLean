@@ -33,6 +33,9 @@ Pinkus.
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 
 namespace NN.MLTheory.Proofs.UniversalApproximation
 namespace IEEE32ExecTwoLayerMLP
@@ -40,7 +43,6 @@ namespace IEEE32ExecTwoLayerMLP
 open _root_.Spec _root_.TorchLean
 open _root_.TorchLean.Tensor
 open NN.MLTheory.Proofs.ReLUMlpBridge
-open TorchLean.Floats.IEEE754
 open IEEE32ExecCore
 
 noncomputable section
@@ -66,10 +68,11 @@ $\varepsilon_{\mathrm{approx}}+\varepsilon_Q+\varepsilon_R$.
 
 theorem relu_twoLayerMlp_ieee32exec_threeTerm
     {n hidDim : Nat}
-    (D : Set (Tensor IEEE32Exec [n]))
+    (D : Set (Tensor (ExecFloat.Binary 8 23) [n]))
     (f : Tensor ℝ [n] → ℝ)
     (l1R : LinearSpec ℝ n hidDim) (l2R : LinearSpec ℝ hidDim 1)
-    (l1I : LinearSpec IEEE32Exec n hidDim) (l2I : LinearSpec IEEE32Exec hidDim 1)
+    (l1I : LinearSpec (ExecFloat.Binary 8 23) n hidDim) (l2I : LinearSpec (ExecFloat.Binary 8 23)
+      hidDim 1)
     (εApprox εQ εR : ℝ)
     (hApprox :
       ∀ xI ∈ D,
@@ -84,12 +87,14 @@ theorem relu_twoLayerMlp_ieee32exec_threeTerm
     (hR :
       ∀ xI ∈ D,
         let xR : Tensor ℝ [n] := tensorToReal xI
-        |IEEE32Exec.toReal (mlpEvalIEEE32Exec (n := n) (hidDim := hidDim) l1I l2I xI)
+        |(ExecFloat.Binary.toModel (mlpEvalIEEE32Exec (n := n) (hidDim := hidDim) l1I l2I
+          xI)).toReal
           - mlpEval (n := n) (hidDim := hidDim) (linearSpecToReal l1I) (linearSpecToReal l2I)
             xR| ≤ εR) :
     ∀ xI ∈ D,
       let xR : Tensor ℝ [n] := tensorToReal xI
-      |f xR - IEEE32Exec.toReal (mlpEvalIEEE32Exec (n := n) (hidDim := hidDim) l1I l2I xI)|
+      |f xR - (ExecFloat.Binary.toModel (mlpEvalIEEE32Exec (n := n) (hidDim := hidDim) l1I l2I
+        xI)).toReal|
         ≤ εApprox + εQ + εR := by
   intro xI hxI
   classical
@@ -98,15 +103,12 @@ theorem relu_twoLayerMlp_ieee32exec_threeTerm
   set yU : ℝ := mlpEval (n := n) (hidDim := hidDim) l1R l2R xR
   set yQ : ℝ := mlpEval (n := n) (hidDim := hidDim) (linearSpecToReal l1I) (linearSpecToReal
     l2I) xR
-  set yI : ℝ := IEEE32Exec.toReal (mlpEvalIEEE32Exec (n := n) (hidDim := hidDim) l1I l2I xI)
+  set yI : ℝ := (ExecFloat.Binary.toModel (mlpEvalIEEE32Exec (n := n) (hidDim := hidDim) l1I l2I
+    xI)).toReal
   -- Pull in the approximation, quantization, and IEEE execution hypotheses at this point.
-  have h1 : |f xR - yU| ≤ εApprox := by
-    simpa [xR, yU] using (hApprox xI hxI)
-  have h2 : |yU - yQ| ≤ εQ := by
-    simpa [xR, yU, yQ] using (hQ xI hxI)
-  have h3 : |yI - yQ| ≤ εR := by
-    have := (hR xI hxI)
-    simpa [xR, yI, yQ, abs_sub_comm] using this
+  have h1 : |f xR - yU| ≤ εApprox := hApprox xI hxI
+  have h2 : |yU - yQ| ≤ εQ := hQ xI hxI
+  have h3 : |yI - yQ| ≤ εR := hR xI hxI
   -- Chain two triangle inequalities: first through the real approximant, then through the
   -- quantized real interpretation of the executable parameters.
   have hfyI : |f xR - yI| ≤ |f xR - yU| + (|yU - yQ| + |yI - yQ|) := by
@@ -128,7 +130,7 @@ theorem relu_twoLayerMlp_ieee32exec_threeTerm
         exact add_le_add h1 (add_le_add h2 h3)
       _ = εApprox + εQ + εR := by
         ring
-  simpa [xR, yI] using this
+  exact this
 
 end
 end IEEE32ExecTwoLayerMLP

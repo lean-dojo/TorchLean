@@ -17,7 +17,6 @@ meta import Mathlib.Tactic.ToDual
 public meta import NN.Runtime.Training.Log
 public meta import NN.Widgets.Core.UI
 public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
 public meta import NN.Widgets.Core.Tensor -- shake: keep
 
 /-!
@@ -348,7 +347,7 @@ This is the in-memory (non-IO) variant. For executables that write JSON logs to 
 syntax (name := trainLogViewCmd) "#train_log_view " term : command
 
 macro "#train_log_view " log:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (trainLogHtml $log))
+  UI.canonicalCommand <$> `(#html (trainLogHtml $log))
 
 /-!
 `TrainLog` is pure data, but many executables write logs to disk.
@@ -368,7 +367,7 @@ build, so widget-view files stay safe to import.
 syntax (name := trainLogFileViewCmd) "#train_log_file_view " term : command
 
 macro "#train_log_file_view " path:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (do
+  UI.canonicalCommand <$> `(#html (do
     let p : System.FilePath := $path
     try
       let log ← Runtime.Training.TrainLog.readJson p
@@ -400,7 +399,7 @@ labels.
 syntax (name := confusionViewCmd) "#confusion_view " term ", " term : command
 
 macro "#confusion_view " labels:term ", " cm:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (confusionHtml $labels $cm))
+  UI.canonicalCommand <$> `(#html (confusionHtml $labels $cm))
 
 end
 end NN.Widgets

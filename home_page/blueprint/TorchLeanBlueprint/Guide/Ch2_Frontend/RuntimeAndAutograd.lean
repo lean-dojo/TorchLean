@@ -19,18 +19,15 @@ tag := "runtime-autograd"
 file := "What-Actually-Runs"
 %%%
 
-Several representations sit behind an autograd call. An eager tape stores the values and local
-reverse rules for one execution. A typed graph records operations that can be reused with new
-parameters and inputs. The canonical IR exposes operations as data for inspection and
-verification, and its lowered forward graph executes those operations. A kernel plan records
-the selected implementations. Their lifetimes and contents determine which questions each can
-answer.
+When `x` is used twice in a multiplication, reverse mode must account for both uses. If two
+squares then share that same input, their contributions must meet there too. I'll record this
+small branched calculation by hand so we can inspect every parent reference and follow every
+contribution.
 
-We will follow a branched calculation through the tape and typed graph, then examine the
-boundaries between execution, inspection, and proof. {ref "autograd-walkthrough"}[Differentiation By
-Example] covers the public derivative API; {ref "execution-modes"}[Choosing How A Model
-Runs] covers runtime selection. Here the goal is to locate the values, rules, and checks behind
-those interfaces, particularly when two executions disagree.
+The eager tape keeps the values and reverse rules from that execution. A typed graph lets us
+record the operation sequence once and supply new values later. Comparing the two shows what
+the public calls in {ref "autograd-walkthrough"}[Differentiation By Example] construct.
+{ref "execution-modes"}[Choosing How A Model Runs] explains how the trainer selects its path.
 
 The named Lean blocks are elaborated while this page is built, together with checks of their
 displayed outputs. The command-line and PyTorch transcripts record separate runs; they are not
@@ -38,8 +35,8 @@ executed by the page build.
 
 # API Entry Points And Runtime Artifacts
 
-Three levels of API can compute the same gradient, and it matters which one you call, because they
-do not all build the same runtime object.
+An eager training step records a new tape; a typed-graph trainer reuses its recorded graph.
+A standalone `autograd.grad` call constructs its own computation:
 
 :::table +header
 *
@@ -445,12 +442,6 @@ added. Its derivative becomes `[6, -3]` because only the first square sends a co
 input. The printed node list keeps the stopped branch visible, which is useful when checking why
 a forward result survived a change to differentiation behavior.
 
-The reached identifiers `[0, 1, 4, 5]` describe the surviving reverse path through the input, first
-square, addition, and sum. The detach node and the second square are not reached by that path.
-An absent entry means no cotangent was propagated there. A present zero tensor could instead mean
-that contributions canceled or that a reached local rule returned zero. These cases can have the
-same final numerical gradient while exercising different reverse computations.
-
 # Differentiation Through The Transform API
 
 We now have a hand-built answer. Compare it with the answer the public transform API gives, which
@@ -496,11 +487,8 @@ this input. The comparison checks several implementations of the same branch str
 one result changes, that narrows the investigation to its construction or execution path; shared
 rules can still produce shared errors.
 
-The public transform reproduces the two tape gradients by expressing the same branch structure
-through functional operations. The comparison is useful because the manual tape spells out parent
-identifiers while the transform records them through its handler. Agreement checks this small
-construction at the chosen values. It does not establish that every operation's VJP is correct,
-or that the transform and manual tape could not share a primitive bug.
+The manual tape spells out parent identifiers, while the transform records them through its
+handler. Comparing the results checks their agreement at the chosen values.
 
 A useful independent reference here is the algebraic calculation above: two square branches give
 `4x`, and one stopped branch leaves `2x`. For a more complicated program, derive a small special
@@ -558,8 +546,8 @@ current parameters and inputs and reuses that graph. A separate typed reference 
 so the graph may return an input or an earlier node without adding a dummy final operation, and
 forward and reverse execution read and seed that exact reference.
 
-The graph's indices enforce shape agreement between node references.
-Derivative correctness does not. The executable node payload holds three functions, `forward`, `jvp`
+The graph's indices enforce shape agreement between node references, but do not establish
+derivative correctness. The executable node payload holds three functions, `forward`, `jvp`
 and `vjp`, and no proof field. The proof-carrying node in
 {src "NN/Proofs/Autograd/Tape/Algebra/Soundness.lean"}[`Tape/Algebra/Soundness.lean`] adds the local
 adjointness law relating its `jvp` and `vjp`, and the proof-carrying graph composes those local laws
@@ -590,11 +578,6 @@ The wrapper equality says where model state enters the graph: the leaf context i
 state shapes followed by the input shape. A caller can keep state and input separate at the API,
 while lowering supplies one ordered context to the graph. The order is part of the interface; two
 same-shaped parameter tensors are not interchangeable merely because either fits a slot.
-
-A node's executable JVP and VJP fields are functions. Their presence makes evaluation possible,
-but does not supply an adjointness proof. The proof-carrying graph adds the local laws needed for
-a global theorem. This is why a type-safe executable graph can still contain a numerically wrong
-rule, and why inspecting the graph type alone cannot settle derivative correctness.
 
 # Canonical IR Representation
 
@@ -858,8 +841,7 @@ structure visually when the cursor is placed on
 The first shows operation nodes and parent edges. The second evaluates a scalar-output reverse pass
 and annotates gradients. The third exposes traversal order. In the branched example above, these
 views show both products contributing to the leaf. With `detach`, the second product remains in
-the forward graph but contributes nothing to the leaf's cotangent. The widget
-reads a runtime artifact; it does not alter execution and it does not prove the tape correct. See
+the forward graph but contributes nothing to the leaf's cotangent. See
 {ref "widgets"}[Interactive Widgets].
 
 # Eager And Typed Graph Training Comparison

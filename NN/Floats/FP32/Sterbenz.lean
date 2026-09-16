@@ -6,14 +6,15 @@ Authors: Nicolas Rouquette, TorchLean Team
 
 module
 
-public import NN.Floats.NeuralFloat.Analysis.SterbenzFLT
+public import FloatLib.Floats.Formats.Flocq
+
 public import NN.Floats.FP32.Notation
 
 /-!
 # Exact Binary32 Subtraction
 
 Sterbenz's lemma specialized to the rounded-real binary32 configuration
-`fexp32 = FLTExp (-149) 24`. Two positive representable values within a factor of two have an
+`fexp32 = fltExp (-149) 24`. Two positive representable values within a factor of two have an
 exactly representable difference, so rounding that difference does nothing.
 
 ## Reference
@@ -23,6 +24,8 @@ exactly representable difference, so rounding that difference does nothing.
 
 @[expose] public section
 
+open FloatLib.Numerics FloatLib.Floats.Formats.Flocq
+
 namespace TorchLean.Floats
 
 /--
@@ -30,13 +33,13 @@ If two positive binary32-representable reals are within a factor of two, roundin
 difference is the identity.
 -/
 theorem round32_sub_exact_of_sterbenz {u v : ℝ}
-    (hu : neuralGenericFormat binaryRadix fexp32 u)
-    (hv : neuralGenericFormat binaryRadix fexp32 v)
+    (hu : genericFormat binaryRadix fexp32 u)
+    (hv : genericFormat binaryRadix fexp32 v)
     (hupos : 0 < u) (hvpos : 0 < v) (huv : u ≤ 2 * v) (hvu : v ≤ 2 * u) :
     round32 (u - v) = u - v := by
-  have hfmt : neuralGenericFormat binaryRadix fexp32 (u - v) :=
-    neural_generic_format_FLT_sterbenz (-149) 24 (by decide) hupos hvpos huv hvu hu hv
-  exact neural_round_preserves_generic (β := binaryRadix) (fexp := fexp32) rnd32 (u - v) hfmt
+  have hfmt : genericFormat binaryRadix fexp32 (u - v) :=
+    generic_format_FLT_sterbenz (-149) 24 (by decide) hupos hvpos huv hvu hu hv
+  exact round_preserves_generic (β := binaryRadix) (fexp := fexp32) rnd32 (u - v) hfmt
 
 namespace FP32
 

@@ -29,7 +29,8 @@ Options:
   --sweep N        number of random cases to add to the curated ones (default: 200000)
   --fast-math      also run a second pass compiled with --use_fast_math, which is expected to
                    fail; the point is to see what a violated assumption looks like
-  --arch ARCH      value for nvcc -arch (default: native)
+  --cuda-arch ARCH value for nvcc -arch (default: all-major; native is rejected)
+  --arch ARCH      alias for --cuda-arch
   --cuda-home PATH CUDA toolkit root, whose bin/nvcc is used (default: $CUDA_HOME or
                    /usr/local/cuda)
   --skip-build     do not rebuild the native_float32_parity executable
@@ -45,7 +46,7 @@ EOF
 
 fast_math=false
 sweep=200000
-arch="native"
+arch="all-major"
 skip_build=false
 keep=false
 
@@ -53,12 +54,47 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --sweep) sweep="$2"; shift 2 ;;
     --fast-math) fast_math=true; shift ;;
-    --arch) arch="$2"; shift 2 ;;
+    --cuda-arch|--arch)
+      if [[ $# -lt 2 ]]; then
+        echo "error: $1 requires a target such as all-major or sm_80" >&2
+        exit 2
+      fi
+      arch="$2"
+      shift 2
+      ;;
     --cuda-home) cuda_home="$2"; shift 2 ;;
     --skip-build) skip_build=true; shift ;;
     --keep) keep=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "error: unknown option $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+# Match Lake's trimAscii: space, tab, carriage return and newline only.
+arch_whitespace=$' \t\r\n'
+arch="${arch#"${arch%%[!$arch_whitespace]*}"}"
+arch="${arch%"${arch##*[!$arch_whitespace]}"}"
+arch="${arch:-all-major}"
+if [[ "$arch" == "native" ]]; then
+  echo "error: native is not supported; use --cuda-arch all-major or an explicit target" >&2
+  exit 2
+fi
+if [[ "$arch" != "all-major" && "$arch" != "all" && ! "$arch" =~ ^sm_[0123456789]+[af]?$ ]]; then
+  echo "error: invalid CUDA target: $arch; expected all-major, all, or a real target such as sm_80" >&2
+  exit 2
+fi
+
+# This wrapper calls nvcc directly. Apply Lake's selector guard here too, so
+# environment flags cannot replace the explicit architecture or hide it in an option file.
+for flags_name in NVCC_PREPEND_FLAGS NVCC_APPEND_FLAGS; do
+  flags="${!flags_name-}"
+  case "$flags" in
+    *-arch*|*--gpu-architecture*|*-code*|*--gpu-code*|*-gencode*|*--generate-code*|\
+    *-ccbin*|*--compiler-bindir*|*-optf*|*--options-file*|*@*)
+      echo "error: $flags_name cannot select architectures, host compilers, or option files" >&2
+      echo "hint: use --cuda-arch and NVCC_CCBIN for the target and host compiler" >&2
+      exit 2
+      ;;
   esac
 done
 

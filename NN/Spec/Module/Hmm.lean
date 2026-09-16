@@ -115,19 +115,16 @@ def hmmStateProbabilities {seqLen nStates nObservations : Nat}
   pythonExpr := "UnsupportedLayer(\"HMMStateProbabilities\", \"torch.distributions.Categorical\")"
 }
 
-/-- Sequence module: apply the one-step update independently at each timestep. -/
+/-- Apply `hmm` independently at each timestep, using the initial distribution for every row.
+
+Each row is decoded with `argmax`, as in the one-step module. The output contains filtered state
+probabilities, with the same totalization for impossible observations as `hmm`.
+-/
 def hmmIndependent {seqLen nStates nObservations : Nat}
   (hObservations : nObservations > 0) (m : HMMSpec α nStates nObservations) :
   Spec.Module α ([seqLen, nObservations]) ([seqLen, nStates]) :=
 {
-  forward := fun scores =>
-    Tensor.dim (fun t =>
-      let observation := decodeObservation hObservations (get scores t)
-      let oneObservation : ObservationSeq nObservations 1 :=
-        Tensor.ofFn fun _ => observation
-      let likelihood := hmmForwardSpec (α := α) m oneObservation
-      Tensor.dim (fun _s => Tensor.scalar likelihood)
-    ),
+  forward := (liftLeading (n := seqLen) (hmm hObservations m)).forward,
   kind := "HMMIndependent",
   pythonExpr := "UnsupportedLayer(\"HMMIndependent\", \"torch.distributions.Categorical\")"
 }

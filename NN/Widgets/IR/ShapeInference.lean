@@ -11,7 +11,6 @@ import Mathlib.Tactic.Bound.Init
 public import NN.Spec.Core.Shape
 public meta import NN.Widgets.Core.UI
 public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
 public meta import NN.IR.Pretty -- shake: keep
 
 /-!
@@ -183,6 +182,6 @@ def shapeInferHtml (g : Graph) : ProofWidgets.Html :=
 syntax (name := shapeInferViewCmd) "#shape_infer_view " term : command
 
 macro "#shape_infer_view " g:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (shapeInferHtml $g))
+  UI.canonicalCommand <$> `(#html (shapeInferHtml $g))
 
 end NN.Widgets

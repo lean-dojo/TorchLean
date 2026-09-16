@@ -163,12 +163,12 @@ def meanDenominator (s : Shape) : Nat :=
 /-- On a nonempty shape the mean denominator is the element count. -/
 theorem meanDenominator_of_size_pos {s : Shape} (h : 0 < s.size) :
     meanDenominator s = s.size := by
-  rw [meanDenominator, if_neg (Nat.pos_iff_ne_zero.mp h)]
+  rw [meanDenominator, ite_eq_right (Nat.pos_iff_ne_zero.mp h)]
 
 /-- On an empty shape the mean denominator is one. -/
 theorem meanDenominator_of_size_eq_zero {s : Shape} (h : s.size = 0) :
     meanDenominator s = 1 := by
-  rw [meanDenominator, if_pos h]
+  rw [meanDenominator, ite_eq_left h]
 
 /-- The mean denominator is never zero. -/
 theorem meanDenominator_pos (s : Shape) : 0 < meanDenominator s := by

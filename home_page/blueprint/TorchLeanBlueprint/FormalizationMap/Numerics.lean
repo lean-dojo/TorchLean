@@ -2,6 +2,7 @@ import Verso
 import VersoManual
 import VersoBlueprint
 import NN.Floats
+import NN.Floats.IEEEExec.Bridge.Finite
 import NN.Proofs.RuntimeApprox.Graph
 import NN.Proofs.RuntimeApprox.NF
 import NN.Proofs.RuntimeApprox.Optimizer
@@ -10,34 +11,40 @@ open Verso.Genre
 open Verso.Genre.Manual
 open Informal
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 #doc (Manual) "Floating-Point Numerics" =>
 
-The numerical map keeps two binary32 models in view. `FP32` is a rounded-real model for proofs;
-`IEEE32Exec` computes from raw bits and includes signed zeros, infinities, and NaNs. Bridge theorems
-connect their finite cases. The runtime-approximation layer then composes local operator bounds over
-whole forward and backward graphs.
+The numerical map starts with FloatLib's generic formats and configured executable scalars.
+TorchLean keeps two binary32 specializations in view: `FP32` is the imported rounded-real model
+with binary32's gradual-underflow grid; `ExecFloat.Binary 8 23` includes signed
+zeros, infinities, and NaNs. Bridge theorems connect their finite cases. TorchLean's
+runtime-approximation layer then composes local operator bounds over whole forward and backward
+graphs. Other configured widths share FloatLib's public scalar API, while a network error bound
+must still use the format and operation sequence actually selected.
 
 :::group "generic_numerics"
 Generic formats, rounding, and quantization.
 :::
 
-:::definition "radix_float_values" (parent := "generic_numerics") (lean := "TorchLean.Floats.NeuralFloat")
-`NeuralFloat` stores an integer mantissa and exponent at a chosen radix. Its real interpretation is
+:::definition "radix_float_values" (parent := "generic_numerics") (lean := "FloatLib.Floats.Formats.Flocq.FloatRep")
+`FloatRep` stores an integer mantissa and exponent at a chosen radix. Its real interpretation is
 the exact value of that pair.
 :::
 
-:::definition "representable_float_grid" (parent := "generic_numerics") (lean := "TorchLean.Floats.neuralGenericFormat")
-`neuralGenericFormat` says when a real number belongs to the grid selected by a radix and a valid
+:::definition "representable_float_grid" (parent := "generic_numerics") (lean := "FloatLib.Floats.Formats.Flocq.genericFormat")
+`genericFormat` says when a real number belongs to the grid selected by a radix and a valid
 exponent policy. Fixed, unbounded, and gradual-underflow formats are instances of this setup.
 :::
 
-:::definition "nearest_integer_rounding" (parent := "generic_numerics") (lean := "TorchLean.Floats.NeuralValidRndToNearest")
-`NeuralValidRndToNearest` is the contract required of an integer rounding rule: it is monotone,
+:::definition "nearest_integer_rounding" (parent := "generic_numerics") (lean := "FloatLib.Floats.Formats.Flocq.ValidRndToNearest")
+`ValidRndToNearest` is the contract required of an integer rounding rule: it is monotone,
 fixes integers, and stays within one half of its input.
 :::
 
-:::definition "generic_grid_rounding" (parent := "generic_numerics") (lean := "TorchLean.Floats.neuralRound")
-`neuralRound` scales at the canonical exponent, applies its supplied integer rounding rule, and
+:::definition "generic_grid_rounding" (parent := "generic_numerics") (lean := "FloatLib.Floats.Formats.Flocq.round")
+`round` scales at the canonical exponent, applies its supplied integer rounding rule, and
 maps the resulting {uses "radix_float_values"}[mantissa/exponent pair] back to a real value.
 Nearestness and tie handling come from that supplied rule.
 
@@ -46,7 +53,7 @@ lets the same format support nearest and directed modes; a nearest-error theorem
 transferred to a directed mode merely because their representable values coincide.
 :::
 
-:::theorem "nearest_rounding_error" (parent := "generic_numerics") (lean := "TorchLean.Floats.neural_error_bound_ulp")
+:::theorem "nearest_rounding_error" (parent := "generic_numerics") (lean := "FloatLib.Floats.Formats.Flocq.error_bound_ulp")
 When its integer rule satisfies {uses "nearest_integer_rounding"}[the nearest-rounding contract],
 {uses "generic_grid_rounding"}[generic grid rounding] is within half an ULP.
 :::
@@ -82,7 +89,7 @@ Proof-oriented and executable accounts of IEEE 754 binary32.
 :::definition "rounded_real_fp32" (parent := "binary32_semantics") (lean := "TorchLean.Floats.FP32")
 `FP32` specializes {uses "representable_float_grid"}[the generic format theory] to a proof-oriented
 nearest-even model over real values. It leaves out NaNs, infinities, and the upper exponent cutoff,
-so claims about those cases belong to `IEEE32Exec`.
+so claims about those cases belong to FloatLib binary32.
 :::
 
 :::theorem "fp32_rounding_accuracy" (parent := "binary32_semantics") (lean := "TorchLean.Floats.FP32.round_abs_error")
@@ -96,9 +103,11 @@ with binary32's exponent policy and nearest-even integer rounding. The
 {uses "nearest_rounding_error"}[generic half-ULP theorem] then supplies the error bound.
 :::
 
-:::definition "executable_binary32" (parent := "binary32_semantics") (lean := "TorchLean.Floats.IEEE754.IEEE32Exec")
-Raw 32-bit words drive executable addition, multiplication, division, fused multiply-add, and
-square root, together with IEEE exception status.
+:::definition "executable_binary32" (parent := "binary32_semantics") (lean := "FloatLib.Floats.ExecFloat.Binary")
+Choose exponent and fraction widths in FloatLib's configured binary constructor. The `8`, `23`
+configuration is binary32; wider and custom formats use the same interface. Encodings drive
+executable addition, multiplication, division, fused multiply-add, and square root, with explicit
+rounding modes and operation-specific exception status.
 :::
 
 :::theorem "finite_ieee_refinement" (parent := "binary32_semantics") (lean := "TorchLean.Floats.IEEE754.IEEE32Exec.toReal_add_eq_fp32Round_of_isFinite")
@@ -116,7 +125,7 @@ Finite source tensors alone do not establish this: addition or multiplication of
 can overflow before the final output is formed.
 :::
 
-:::theorem "directed_addition_lower_bound" (parent := "binary32_semantics") (lean := "TorchLean.Floats.IEEE754.IEEE32Exec.toEReal_addDown_le")
+:::theorem "directed_addition_lower_bound" (parent := "binary32_semantics") (lean := "FloatLib.Floats.Formats.BinaryInterchange.Model.toEReal_addDown_le")
 For finite inputs, downward-rounded {uses "executable_binary32"}[binary32 addition] is no greater
 than the exact real sum, including overflow to negative infinity.
 :::
@@ -126,7 +135,7 @@ The proof decodes the finite {uses "executable_binary32"}[inputs] to dyadics, co
 dyadic sum, and applies soundness of downward rounding in the extended reals.
 :::
 
-:::theorem "directed_addition_upper_bound" (parent := "binary32_semantics") (lean := "TorchLean.Floats.IEEE754.IEEE32Exec.toEReal_addUp_ge")
+:::theorem "directed_addition_upper_bound" (parent := "binary32_semantics") (lean := "FloatLib.Floats.Formats.BinaryInterchange.Model.le_toEReal_addUp")
 For finite inputs, the exact real sum is no greater than upward-rounded
 {uses "executable_binary32"}[binary32 addition], including overflow to positive infinity.
 :::

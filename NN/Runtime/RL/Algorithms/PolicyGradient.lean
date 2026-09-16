@@ -68,8 +68,11 @@ def actionLogProbability {nActions : Nat} (logits : Tensor α [nActions])
     (action : Fin nActions) (epsilon : α := Context.defaultEpsilon) : α :=
   MathFunctions.log (actionProbability (α := α) logits action epsilon)
 
-/-- Entropy bonus for a categorical policy:
-`-Σ p(a) log p(a)`. -/
+/-- Guarded entropy bonus `-Σ q(a) log q(a)`, where `p = softmax logits` and
+`q = clamp p epsilon (1 - epsilon)`.
+
+Clamped probabilities are used both as weights and as logarithm inputs, without
+renormalization. For positive `epsilon`, this can differ from the Shannon entropy of `p`. -/
 def entropyBonus {nActions : Nat} (logits : Tensor α [nActions])
     (epsilon : α := Context.defaultEpsilon) : α :=
   let probs := actionPolicy (α := α) logits
@@ -120,20 +123,31 @@ def importanceRatio (newLogProb oldLogProb : α) : α :=
   MathFunctions.exp (newLogProb - oldLogProb)
 
 /--
-Categorical KL divergence `KL(old || new)` from two probability vectors:
-`Σ_a old(a) * (log old(a) - log new(a))`.
+Categorical KL divergence after clamping and normalizing both probability vectors.
 
-Both distributions are clamped into `[epsilon, 1-epsilon]` before taking logs. This is the scalar
-penalty used by TRPO-style diagnostics and KL-penalized policy-gradient objectives.
+For finite inputs and `0 < epsilon < 1/2`, clamp each vector into `[epsilon, 1-epsilon]`,
+then divide by its sum before computing `Σ_a old(a) * (log old(a) - log new(a))`.
+Normalization keeps the guarded inputs probability distributions. The result agrees with
+`KL(old || new)` when clamping leaves normalized inputs unchanged, up to floating-point rounding.
+Empty action vectors return zero.
 -/
 def categoricalKL {nActions : Nat}
     (oldProbs newProbs : Tensor α [nActions])
     (epsilon : α := Context.defaultEpsilon) : α :=
-  let oldClamped := clampSpec oldProbs epsilon ((1 : α) - epsilon)
-  let newClamped := clampSpec newProbs epsilon ((1 : α) - epsilon)
-  sumSpec (mulSpec oldClamped (subSpec (logSpec oldClamped) (logSpec newClamped)))
+  match nActions with
+  | 0 => 0
+  | Nat.succ _ =>
+      let oldClamped := clampSpec oldProbs epsilon ((1 : α) - epsilon)
+      let newClamped := clampSpec newProbs epsilon ((1 : α) - epsilon)
+      let oldNormalized := divSpec oldClamped (replicate (Tensor.scalar (sumSpec oldClamped)))
+      let newNormalized := divSpec newClamped (replicate (Tensor.scalar (sumSpec newClamped)))
+      sumSpec (mulSpec oldNormalized
+        (subSpec (logSpec oldNormalized) (logSpec newNormalized)))
 
-/-- KL divergence `KL(π_old(.|s) || π_new(.|s))` from old/new logits. -/
+/--
+Categorical KL divergence from logits, using the clamped, normalized policies of
+`categoricalKL`.
+-/
 def categoricalKLFromLogits {nActions : Nat}
     (oldLogits newLogits : Tensor α [nActions])
     (epsilon : α := Context.defaultEpsilon) : α :=
@@ -163,18 +177,40 @@ def klPenalizedPolicyLoss (ratio advantage kl penaltyCoef : α) : α :=
   Neg.neg (trpoSurrogateFromRatio (α := α) ratio advantage) + penaltyCoef * kl
 
 /--
-Soft actor-critic categorical actor objective:
-`temperature * log π(a|s) - Q(s,a)`.
+Finite-action SAC actor objective, minimized over actor logits:
+`∑ a, π(a|s) * (temperature * log π(a|s) - Q(s,a))`.
 
-For continuous SAC the action is reparameterized; for finite actions this scalar is the
-sampled-action form used inside a categorical policy update.
+Max-shifted exponentials supply normalized policy weights. When a negative logit and positive
+maximum could overflow their difference, weight each before subtracting. Otherwise keep the
+usual shifted expression. Temperature multiplies the weighted entropy term. These rearrangements
+retain differentiation through the weights and normalization without taking the log of a zero
+probability.
+
+For an actor-only gradient, callers hold `qValues` and `temperature` constant with respect to actor
+parameters. If two critics are used, pass their pointwise minimum as `qValues`. This function sums
+over actions for one state without averaging across states.
 -/
-def sacCategoricalActorLoss {nActions : Nat}
-    (logits qValues : Tensor α [nActions])
-    (action : Fin nActions) (temperature : α)
-    (epsilon : α := Context.defaultEpsilon) : α :=
-  temperature * actionLogProbability (α := α) logits action epsilon
-    - Tensor.getScalar qValues action
+def sacCategoricalActorLoss {nActions : Nat} [NeZero nActions]
+    (logits qValues : Tensor α [nActions]) (temperature : α) : α := by
+  cases nActions with
+  | zero => exact False.elim (NeZero.ne 0 rfl)
+  | succ n =>
+      exact
+        let maximum := (Activation.maxVecSpec logits).item
+        let weights := Activation.maxShiftedExpVecSpec logits
+        let normalizer := Tensor.sumSpec weights
+        let logNormalizer := MathFunctions.log normalizer
+        Tensor.sumSpec <|
+          Tensor.dim fun action : Fin (Nat.succ n) =>
+            let z := Tensor.getScalar logits action
+            let p := Tensor.getScalar weights action / normalizer
+            let entropyTerm :=
+              if (0 : α) > z ∧ maximum > (0 : α) then
+                (p * z - p * maximum) - p * logNormalizer
+              else
+                p * ((z - maximum) - logNormalizer)
+            Tensor.scalar <|
+              temperature * entropyTerm - p * Tensor.getScalar qValues action
 
 /--
 PPO clipped surrogate objective from a precomputed importance ratio:

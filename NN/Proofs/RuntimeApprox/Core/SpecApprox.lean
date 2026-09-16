@@ -27,7 +27,7 @@ Trust boundary:
 - Lean supplies a logical model for `Float`, but this file does not yet provide per-operation
   approximation lemmas for that model. Native execution also requires a separate provider
   agreement. Neither connection is assumed here.
-- The intended proof-relevant path is to use rounding-model backends (`NeuralFloat` / `NF`) where
+- The intended proof-relevant path is to use rounding-model backends (FloatLib `NF`) where
   rounding error bounds are explicit and can be composed.
 
 ## PyTorch correspondence / citations
@@ -40,6 +40,9 @@ https://pytorch.org/docs/stable/generated/torch.allclose.html
 -/
 
 @[expose] public section
+
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
 
 namespace Proofs
@@ -187,17 +190,17 @@ structure Witness (α : Type) [TorchLean.Storage α] (s : Shape) where
   bound : approxWith (α := α) (toSpec := toSpec) (norm := linfNorm) spec runtime eps
 
 /-- Map annotated NeuralFloat tensors to spec scalars. -/
-def neuralTensorToReal {β : NeuralRadix} {s : Shape} (t : Tensor (AnnotatedNeuralFloat β) s) :
+def neuralTensorToReal {β : Radix} {s : Shape} (t : Tensor (AnnotatedNeuralFloat β) s) :
     SpecTensor s :=
   TorchLean.Tensor.map AnnotatedNeuralFloat.toReal t
 
 /-- Linf bound over annotated NeuralFloat error markers. -/
-def neuralTensorErrorBound {β : NeuralRadix} {s : Shape} (t : Tensor (AnnotatedNeuralFloat β) s) :
+def neuralTensorErrorBound {β : Radix} {s : Shape} (t : Tensor (AnnotatedNeuralFloat β) s) :
     SpecScalar :=
   linfNorm (TorchLean.Tensor.map (fun x => x.metadata.errorBound) t)
 
 /-- Annotated NeuralFloat runtime approximation to the spec with explicit epsilon bound. -/
-def neuralRuntimeApprox {β : NeuralRadix} {s : Shape}
+def neuralRuntimeApprox {β : Radix} {s : Shape}
     (spec : SpecTensor s) (runtime : Tensor (AnnotatedNeuralFloat β) s) : Prop :=
   tensorDistance (α := SpecScalar) linfNorm spec (neuralTensorToReal runtime)
     ≤ neuralTensorErrorBound runtime

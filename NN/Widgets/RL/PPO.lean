@@ -10,15 +10,20 @@ public import NN.Runtime.RL.PPO.Rollout
 public import NN.Runtime.Training.Log
 public import NN.Tensor.Conversion
 -- We compute GAE/returns in a widget (meta) context, so the RL core must be available to meta code.
-public meta import NN.Floats.IEEEExec.Exec32.Compare
-public import NN.Floats.IEEEExec.Exec32.Compare
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured
+public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
+public import FloatLib.Floats.Formats.BinaryInterchange.Model.RealSemantics
+public import FloatLib.Floats.Formats.BinaryInterchange.Model.ERealSemantics
+public import FloatLib.Floats.Formats.IEEE754.Native
 public meta import NN.Runtime.RL.PPO.Rollout
 public meta import NN.Tensor.Conversion
 public meta import NN.Widgets.Runtime.Training
+public meta import NN.Widgets.Core.UI
 public meta import NN.Runtime.RL.Core -- shake: keep
-public meta import NN.Floats.IEEEExec.Exec32 -- shake: keep
+public meta import FloatLib.Floats.Formats.BinaryInterchange.Configured -- shake: keep
+public meta import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime -- shake: keep
+public meta import FloatLib.Floats.Formats.IEEE754.Native -- shake: keep
 public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
-public meta import ProofWidgets.Demos.Macro -- shake: keep
 
 /-!
 # PPO Rollout Viewer
@@ -46,6 +51,9 @@ References:
 - `#ppo_rollout_view`: command form for inspecting rollout summaries.
 -/
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 namespace NN.Widgets
 
 public meta section
@@ -70,8 +78,9 @@ class ToVizFloat (α : Type) where
   toVizFloat : α → Float
 
 instance : ToVizFloat Float := ⟨fun x => x⟩
-instance : ToVizFloat TorchLean.Floats.IEEE754.IEEE32Exec :=
-  ⟨TorchLean.Floats.IEEE754.IEEE32Exec.toFloat⟩
+instance : ToVizFloat (ExecFloat.Binary 8 23) :=
+  ⟨(fun x => ExecFloat.Binary.toFloat (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary32
+    FloatFormat.binary64 (ExecFloat.Binary.toModel x))))⟩
 
 /--
 Convert a length-`n` scalar tensor to an `Array Float` for plotting.
@@ -91,13 +100,9 @@ def ppoRolloutTrainLog {α : Type} [TorchLean.Storage α] [Context α] [ToVizFlo
   let stepAt (index : Fin horizon) :=
     r.steps[index.val]'(by simp [r.steps_size_eq_horizon])
   let rewards : Tensor α [horizon] := Tensor.ofFn (fun i => (stepAt i).reward)
-  let dones : Tensor Bool [horizon] := Tensor.ofFn (fun i => (stepAt i).done)
   let values : Tensor α [horizon] := Tensor.ofFn (fun i => (stepAt i).value)
-  let nextValues : Tensor α [horizon] := Tensor.ofFn (fun i => (stepAt i).nextValue)
 
-  let advRaw :=
-    Runtime.RL.Core.generalizedAdvantageEstimation (α := α) (n := horizon)
-      gamma lam rewards values nextValues dones
+  let advRaw := r.generalizedAdvantages gamma lam
   let returns :=
     Runtime.RL.Core.returnsFromAdvantages (α := α) (n := horizon) advRaw values
 
@@ -134,7 +139,7 @@ def ppoRolloutHtml {α : Type} [TorchLean.Storage α] [Context α] [ToVizFloat �
 syntax (name := ppoRolloutViewCmd) "#ppo_rollout_view " term ", " term ", " term : command
 
 macro "#ppo_rollout_view " gamma:term ", " lam:term ", " r:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (ppoRolloutHtml $gamma $lam $r))
+  UI.canonicalCommand <$> `(#html (ppoRolloutHtml $gamma $lam $r))
 
 end PPO
 end RL

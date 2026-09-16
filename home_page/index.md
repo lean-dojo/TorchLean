@@ -25,9 +25,9 @@ description: "Tensor computation, floating-point verification, and machine learn
 
     <p>
       The tensor library provides general array operations and linear algebra, with shapes checked
-      in the types. The floating-point library supports executable arithmetic and proofs about
-      rounding, numerical error, and interval bounds. Both can be used independently of the machine
-      learning components.
+      in the types. For floating-point work, TorchLean integrates FloatLib's configurable binary
+      formats, executable arithmetic, and proofs about rounding, numerical error, and interval
+      bounds. The tensor and scalar APIs can be used independently of the machine learning components.
     </p>
 
     <p>

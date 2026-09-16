@@ -57,7 +57,7 @@ Changing the device selects implementations of the model's operations. Changing 
 mode can change the operations' behavior, as dropout will show below. Recording both choices is
 necessary to distinguish a provider comparison from a comparison of different forward computations.
 
-Two of the four dials are small closed inductives, so we can simply print them and count:
+`ExecutionMode` offers two ways to run the model:
 
 ```lean (name := emModes)
 -- These constructors select runtime representations, not
@@ -179,18 +179,9 @@ A custom backend needs both a profile describing admissible kernels and runtime 
 execute them. Supplying capsule metadata alone does not implement Metal. The maintained profiles
 reject unsupported devices at configuration time.
 
-The two validation signatures separate a configuration question from an execution question.
-`withDevice` can look up a maintained profile and return an error without opening a device. Its
-`Except String Config` result lets a caller handle that choice before entering `IO`.
-`validateForExecution` runs in `IO` because an accepted device name still needs the corresponding
-runtime to be available. CUDA support in the configuration vocabulary does not establish that the
-current process was linked with CUDA support or can open a device.
-
-The profile output should be read at that same level. `cpu` and `cuda` have maintained defaults;
-`metal` and `tpu` do not acquire a handler merely because their constructors print successfully.
-Even after configuration validation, a particular operation can have additional shape, layout,
-arithmetic, and gradient requirements. Validation gets a session to the point where those more
-specific choices can be made; it does not preapprove every computation expressible by the model.
+The `Except String Config` result lets a caller handle a missing profile before entering `IO`.
+Execution validation then checks the linked runtime and device availability. Individual operations
+still have their own shape, layout, arithmetic, and gradient requirements.
 
 # Runtime Flags
 
@@ -202,9 +193,7 @@ The runner lists its examples and runtime flags:
 lake exe torchlean --help
 ```
 
-The listing enumerates every example (quickstarts, supervised and vision models, sequence models,
-generative and operator learning, reinforcement learning, PyTorch interop, data loaders, numerical
-checks, and deep dives) and ends with the four runtime dials:
+The help lists the runnable examples, followed by their shared runtime flags:
 
 ```
 Runtime flags:
@@ -254,12 +243,8 @@ Select device [1]: == Quickstart: simple MLP training (seed=2026, steps=2) ==
 The prompt is opt-in precisely so that scripts and CI never block waiting on input. The transcript
 above pipes an answer in, which is also how it gets tested.
 
-The top-level help and the example help describe different scopes. The first chooses a runnable
-example; the second describes the controls that example accepts. Choosing a device through the
-interactive menu has the same role as supplying its flag: it requests a configuration. The menu
-does not install a provider or add an implementation for an unsupported target. Likewise, the
-configuration banner tells us what the run requested. The later backend report is where we inspect
-which implementations were selected for its actual operations.
+The menu and flags both request a configuration. The banner echoes that request; the backend
+report below names the implementations selected for the model's operations.
 
 # CPU Eager Execution
 
@@ -730,15 +715,16 @@ steps=2 arithmetic=ieee scalar=IEEE32Exec loss=0.495227 -> 0.392821
 trained(heldout) = [0.019031]
 ```
 
-The only visible change is `scalar=IEEE32Exec` in place of `scalar=Float32`. Underneath, every
-addition and multiplication now goes through TorchLean's explicit bit-level binary32 model instead
-of the host processor's hardware instruction. Comparing the two implementations can expose errors
+This recorded run predates the FloatLib migration, so it retains the old scalar label. The current
+`.ieee` path evaluates addition and multiplication with FloatLib binary32. Comparing the two
+implementations can expose errors
 in rounding or exceptional-value handling that a comparison of decimal output alone may miss.
 Formal floating-point models make these rules explicit
 {Informal.citep goldberg1991}[]. Flocq made such a model reusable inside a proof assistant
 {Informal.citep flocq2011}[], and the same group's later work connects such a model to the
-arithmetic a compiler actually emits {Informal.citep boldo2015}[]. `IEEE32Exec` is TorchLean's
-executable member of that family.
+arithmetic a compiler actually emits {Informal.citep boldo2015}[]. FloatLib supplies the executable
+format and arithmetic used here. For higher precision, select a valid FloatLib binary format in
+typed CPU tensors and graphs; the trainer flag shown above remains fixed to binary32.
 
 At two thousand steps, with the same seed, the runner's complete printed outputs differ only in
 the arithmetic label:
@@ -786,7 +772,7 @@ mean_loss(before training) = 0.495227
 mean_loss(after training) = 0.002402
 native = steps=200 arithmetic=native scalar=Float32
   loss=0.495227 -> 0.002402
-ieee   = steps=200 arithmetic=ieee scalar=IEEE32Exec
+ieee   = steps=200 arithmetic=ieee scalar=ExecFloat.Binary 8 23
   loss=0.495227 -> 0.002402
 native prediction = [0.228325]
 ieee   prediction = [0.228325]
@@ -798,7 +784,8 @@ test between a hardware instruction and a bit-level implementation can expose ro
 or sign errors exercised by its inputs and assertions. It says nothing about inputs we did not
 try. The theorem-side story lives in {ref "floats"}[Floating Point Semantics], where the
 proof-oriented `FP32` model and exact `Real` appear in statements rather than in `IO`, and where the
-finite and no-overflow bridge from `FP32` to `IEEE32Exec` is stated. `FP32` rounds reals at binary32
+finite and no-overflow bridge from `FP32` to FloatLib binary32 is stated. `FP32` rounds reals at
+binary32
 precision with gradual underflow, and it does not model overflow, NaN, infinity, or signed zero,
 which is why the bridge has hypotheses.
 
@@ -868,12 +855,9 @@ execution, device, backend-profile and reporting fields of a configuration, leav
 and the rest alone. A sweep therefore declares the model once, keeps one base `RunConfig`, and
 derives each cell of the sweep from it.
 
-These three printed configuration labels are projections of records. Constructing `cudaEager`
-does not open CUDA, and printing its device and execution fields does not validate a training
-session. The record updates show exactly which choices differ while retaining the other fields
-from the base configuration. Arithmetic, optimizer settings, and provider overrides still matter
-even though this compact output does not print them. When saving a configuration for a comparison,
-retain the record's relevant fields rather than reconstructing it from this abbreviated label.
+Constructing `emEagerCuda` does not open CUDA. These labels print only the device and execution
+fields of each record; they omit arithmetic, optimizer settings, and provider overrides. Save those
+fields too when comparing runs.
 
 # Graph Lowering And Direct Execution
 
@@ -981,9 +965,8 @@ assurance policy, VJP ownership, target availability, and capsule modules togeth
 profile are two ways to answer the same question, and the last answer wins rather than silently
 merging.
 
-{ref "backend-selection"}[Backend Selection] explains provider preference, capsule
-evidence, VJP ownership, and report contents in full. Keeping those details there lets this
-chapter stay on the question of choosing and comparing modes.
+{ref "backend-selection"}[Backend Selection] follows an operation request through provider
+selection, contract checks, and binding to a runtime handler.
 
 # Train And Evaluation Mode
 
@@ -1112,9 +1095,8 @@ must therefore retain the realized mask or enough state to reproduce that exact 
 Each dropout measurement starts a fresh session and evaluates before performing the batch update.
 Within that session, the evaluation and the training loss therefore refer to the same initial
 parameter state. The training loss is produced as part of the update; it is not a second evaluation
-of the updated model. This ordering is what lets the example expose the effect of train versus
-evaluation mode. A shared seed is useful for reproducing the setup, but it does not by itself prove
-that differently configured models have identical state or consume random numbers identically.
+of the updated model. Evaluating after the update would mix the effect of mode with the effect of
+changed parameters.
 
 # Dynamic Control Flow And Typed Graphs
 
@@ -1300,7 +1282,7 @@ a requested device is not mistaken for evidence of where an operation ran.
   * CUDA
 *
   * inspect binary32 reference behavior
-  * `IEEE32Exec`
+  * FloatLib binary32
   * eager
   * CPU
 *
@@ -1315,9 +1297,8 @@ a requested device is not mistaken for evidence of where an operation ran.
   * no trainer profile
 :::
 
-The final row is deliberately outside the trainer modes. Lowering a model to `NN.IR.Graph` produces
-an inspectable semantic artifact, not another high performance runtime switch, and the chapters in
-{ref "spec-layer"}[The Specification Layer] treat it that way.
+The final row lowers a model to `NN.IR.Graph` for semantic inspection and proof. See
+{ref "spec-layer"}[The Specification Layer] for how to reason about that graph.
 
 # Execution Reproducibility
 
@@ -1337,8 +1318,8 @@ checkpoint and code revision
 Without those, two loss curves may be incomparable even when both are labelled "TorchLean float32".
 The recorded device comparison differs in the sixth decimal, while the batching comparison has a
 nonzero gap that a six-decimal summary hides. Provider and reduction-policy metadata help
-investigate
-such differences; exact buffer comparisons and controlled experiments are needed to explain them.
+investigate such differences; exact buffer comparisons and controlled experiments are needed to
+explain them.
 
 Sources:
 

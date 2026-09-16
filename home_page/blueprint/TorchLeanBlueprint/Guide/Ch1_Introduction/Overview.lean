@@ -9,8 +9,10 @@ import TorchLeanBlueprint.Roles
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 open TorchLean
-open TorchLean.Floats.IEEE754 (IEEE32Exec)
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 #doc (Manual) "Overview" =>
 %%%
@@ -19,31 +21,20 @@ file := "The-Problem-TorchLean-Solves"
 %%%
 
 Suppose we train a small network, save its parameters, run it on a GPU, and later claim that its
-output stays in a safe range for every input near a test point. During that one workflow, the phrase
-"the model" can refer to at least six different things:
+output stays in a safe range for every input near a test point. The verifier must analyze the
+parameters and computation that actually run. The architecture alone cannot identify them:
+initialization chooses parameter values, training changes them, and exporting or compiling
+determines how the operations will be represented and evaluated.
 
-1. the source-level architecture;
-2. the initialized parameter tensors;
-3. the mutable parameters after training;
-4. an exported operation graph;
-5. the CPU or accelerator program that actually runs;
-6. the graph and parameter payload analyzed by a verifier.
-
-These objects are intended to describe the same computation. A mismatch can be hard to detect. A
-checkpoint loader may transpose a weight matrix. A verification script may forget that the model
-expects normalized inputs. A compiler may replace separate multiplication and addition with an FMA,
-changing the result by an amount that no test threshold was chosen to detect. The program still
-runs, but computes a different function from the one we had in mind.
+A mismatch can be hard to detect. A checkpoint loader may transpose a weight matrix. A verification
+script may forget that the model expects normalized inputs. A compiler may replace separate
+multiplication and addition with an FMA, changing the result by an amount that a test's tolerance
+hides. Each program still runs, but computes a different function from the one we had in mind.
 
 TorchLean was designed around that problem. It is a neural-network library in which the
 architecture, parameter payload, graph, arithmetic, and property can be named in the same language.
 Numerical kernels may still run through optimized native providers; their inputs, outputs, and
 assumptions remain attached to the computation being studied.
-
-We will follow one two-layer network from its builder to its parameter payload, executable
-prediction, and verification graph. The printed types show which distinctions Lean checks. The
-transposition, normalization, and fused-arithmetic examples then show where shapes alone leave
-questions unanswered.
 
 # Model Definition And Initialization
 
@@ -118,10 +109,6 @@ untrained prediction is a value we can reproduce with the same initialization an
 [-0.088261]
 ```
 
-We will compare this prediction with the graph evaluation below. Because Verso reruns the named
-Lean examples during the guide build, a change that alters the displayed prediction also requires
-updating its expected output.
-
 # Core Objects
 
 The declarations above let us inspect several stages of the model's lifecycle. `#check` prints the
@@ -155,16 +142,6 @@ Verification.lowerForwardToIR initialized
   (nn.initialState initialized) : Except String (NN.Verification.Builtin.LoweredIR Float)
 ```
 
-The arrows in these signatures describe different kinds of work. A builder is a value waiting
-for a seed; an initialized model already contains the result of that choice. Its state type records
-an ordered collection of tensors, rather than just a total parameter count. `predict` returns an
-`IO` action because execution may allocate buffers and run runtime operations. Lowering returns
-`Except` because it can reject a forward program it cannot represent. None of those return types
-by itself states that the model is accurate. They tell us what information the next stage can use
-and how that stage reports its result.
-
-The type changes at each stage describe what information has become available.
-
 `model` and `initialized` have different types. A builder is a recipe; a `nn.Sequential [2] [1]` is
 a network with concrete parameter tensors in it. Code that needs one and is handed the other does
 not compile. Initialization is therefore an explicit step in the interface.
@@ -184,11 +161,11 @@ Lowering returns `Except String (LoweredIR Float)`. The error alternative report
 forward programs or invalid inputs; the success alternative contains the lowered artifact.
 Its semantics still require a separate correctness argument.
 
-Here is the whole list with its Lean and PyTorch counterparts side by side:
+Each stage of the workflow has corresponding objects in Lean and PyTorch:
 
 :::table +header
 *
-  * Phrase from the list
+  * Stage of the workflow
   * TorchLean object
   * Usual PyTorch counterpart
 *
@@ -224,7 +201,7 @@ value-level questions, such as whether a checkpoint contains the intended weight
 
 # Model Representations
 
-The same initialized model can participate in several parts of TorchLean.
+The trainer, proof, and verifier each need a different view of the initialized model.
 
 ## The model description
 
@@ -253,8 +230,7 @@ chapter explains the maintained profiles and what their evidence supports.
 
 `NN.IR.Graph` is a directed acyclic graph of operation-tagged nodes. Each node has parent ids and a
 declared output shape. Constants, weights, convolution parameters, and similar data live in a
-separate payload store. This separation lets the graph structure be inspected without pretending
-that two different payloads are the same trained model.
+separate payload store, so inspecting the structure does not require inspecting every parameter.
 
 For the two linear layers and ReLU above, we can inspect the node count and input and output ids:
 
@@ -275,17 +251,13 @@ def ovGraphFacts :
 Except.ok (18, 0, 17)
 ```
 
-The tuple should be read as three fields with different meanings: eighteen stored nodes, an input
-node numbered zero, and a requested output node numbered seventeen. The last number is not a tensor
-dimension. The graph's output still has shape `[1]`. Likewise, the node count is not a parameter
-count: a constant node can hold an entire matrix. Keeping those notions separate makes the graph
-listing useful for understanding lowering without mistaking it for a memory estimate or a speed
-comparison with another framework.
+The tuple gives eighteen nodes, input id `0`, and output id `17`. The output still has shape `[1]`;
+seventeen identifies a node, not a dimension. Nor is the node count a parameter count: a constant
+node can hold an entire weight matrix.
 
-The graph has eighteen nodes, with input id `0` and output id `17`. Two linear layers and a ReLU
-expand into this many nodes because reshapes, broadcasts, and the separate matrix product and bias
-addition of each affine layer have their own nodes. A proof can follow these operations one at a
-time, using the equation attached to each node.
+Two linear layers and a ReLU expand to eighteen nodes because reshapes, broadcasts, matrix
+products, and bias additions each have their own nodes. A proof can follow these operations
+one at a time using the equation attached to each node.
 
 The graph structure itself does not choose an element type. Evaluation does: `NN.IR.Payload α` and
 the graph denotation use one `α` for the numeric input, parameters, intermediates, and output. The
@@ -301,19 +273,11 @@ bit-level ranges and backend policies over it. Other checkers consume external a
 alpha-beta-CROWN leaves ({Informal.citep betacrown2021}[]) or PINN residual
 certificates.
 
-These representations support different tasks. The model description supplies layers and
-parameters to the runtime; lowering exposes their operations as a graph; the equations give those
-operations meanings that can appear in a proof. Connecting the representations requires checking
-the translations between them.
-
 ## Comparing Runtime And Graph Evaluation
 
-We can first test the connection at a single input by shrinking the verifier's region to a point.
-A box of radius zero around
-$`(0.25,-0.75)` contains exactly the input the runtime was asked about a page ago, so interval
-propagation and runtime evaluation can be compared on exactly the same input. For this example,
-their displayed results coincide; that comparison is a regression check, not a general enclosure
-theorem for host `Float` execution:
+Shrink the verifier's input region to the single point
+$`(0.25,-0.75)`. This is the input used for the earlier prediction, so we can compare runtime
+evaluation with interval propagation through the lowered graph:
 
 ```lean (name := ovAgree)
 -- Feed the same input to the runtime and to a zero-radius
@@ -340,18 +304,12 @@ IBP lo   = [-0.088261]
 IBP hi   = [-0.088261]
 ```
 
-A zero-radius input box is a useful diagnostic because it removes variation in the input region.
-It does not remove the numerical choices made while propagating bounds. Nor does it ensure the
-runtime and the bound engine share every rounding decision. If the three lines differed, we would
-first check that they received the same initialized state and input, then inspect the lowered
-operations and arithmetic. Expanding the radius later asks an additional question: whether every
-input in a neighborhood is covered. That question requires more than repeating the pointwise
-comparison at a few extra inputs.
-
-The three displayed values agree. This exercises initialization, transfer of the parameter
-payload, lowering, interval propagation, and runtime execution on one input. A disagreement would
-give us a concrete case in which to inspect those translations. Agreement at one point and six
-decimal places can still hide mistakes elsewhere or smaller numerical differences.
+All three values agree at the displayed precision. This checks initialization, payload transfer,
+lowering, interval propagation, and runtime execution on one input. If they differed, we could
+first compare their states and inputs, then inspect the lowered operations and rounding choices.
+A zero-radius box removes input variation but leaves those numerical choices in place.
+Agreement at one point and six decimal places does not establish an enclosure theorem for host
+`Float` execution, or rule out smaller differences.
 
 The graph itself is a value, so the eighteen nodes can simply be printed. This is the level of
 detail the verifier sees:
@@ -397,9 +355,8 @@ bias gives it the same shape before addition, and the last reshape removes the t
 ReLU then acts on the eight entries. The second affine layer repeats the same construction with
 eight inputs and one output. These structural nodes make the storage convention explicit.
 
-Each `nn.linear` became a constant, a transpose, a `matmul`, a second constant, a `broadcastTo` for
-the bias, and an `add`, with reshapes around the batch axis. A soundness proof can then relate each
-primitive to its equation and compose the results along the graph.
+A soundness proof can relate each of these primitives to its equation and compose the results
+along the graph.
 
 ## Interval And Affine Bounds
 
@@ -441,11 +398,8 @@ backward = [-1.033713], [0.242680]
 
 The backward pass takes one extra ingredient: `obj` has one coefficient, equal to one, so the
 objective is the scalar network output itself. In a classifier, a vector of coefficients could
-instead ask about a difference between two logits. The three lines here all enclose the same
-quantity. Their agreement is worth understanding rather than assuming that an analysis named CROWN
-must always tighten a bound. At a node where the implementation replaces an affine expression by
-constant lower and upper bounds, dependence on the original input is lost, and later affine steps
-cannot reconstruct it.
+instead ask about a difference between two logits. Here all three passes compute bounds for the
+same scalar.
 
 All three produce the same displayed bounds here. The affine pass in
 {src "NN/MLTheory/CROWN/Graph/Engine/CROWN/Node.lean"}[the CROWN engine] carries real affine forms
@@ -475,12 +429,8 @@ and its output. For a proof of the upper bound, we would instead need an enclosu
 endpoint satisfies the requested threshold, together with the soundness argument connecting that
 enclosure to the intended computation.
 
-There are therefore two separate things to inspect when this example returns successfully. The
-`Except` result tells us whether the requested analysis produced an output box; the endpoints tell
-us whether that box is useful for the property we asked about. Neither the `.ok` constructor nor
-the number of printed decimal places supplies the missing soundness argument. Keeping those
-questions separate makes it possible to diagnose a loose bound without mistaking it for a model
-failure or an execution error.
+The analysis has succeeded in producing a box, but that box does not settle the requested
+inequality. A loose bound, an execution error, and a counterexample call for different next steps.
 
 # Shape Contracts In A Loss Function
 
@@ -546,19 +496,14 @@ in the application
   Spec.mseSpec predictions labels
 ```
 
-The all-zero contents make this example deliberately uninformative numerically: many incorrect
-ways of pairing these values would still give zero loss. The types expose the mismatch without
-depending on the values. With arbitrary data, confusing a column of thirty-two predictions with a
-length-thirty-two vector can turn thirty-two intended comparisons into all pairs under a
-broadcasting rule. Here the caller must decide explicitly whether to add or remove an axis. That
-decision belongs to the data convention, because it determines which target corresponds to which
-prediction.
+With all-zero tensors, even incorrectly paired entries would give zero loss. The type error
+exposes the mismatch without relying on the values. Under broadcasting, the `[32]` labels would
+stretch across the second axis and subtraction would produce a `[32, 32]` matrix of all pairwise
+residuals. On nonzero data, that loss could decrease while comparing every prediction with every
+label.
 
-In an array library with broadcasting this expression has a value: the `[32]` labels stretch across
-the second axis, the subtraction produces a `[32, 32]` matrix of all pairwise residuals, and the
-mean of that generally differs from the intended paired-example loss. The loss may decrease during
-training even though it compares each prediction with every label. Here the caller must reshape
-the labels, squeeze the predictions, or select another loss before the expression typechecks.
+TorchLean requires us to reshape the labels, squeeze the predictions, or select another loss.
+That choice should follow the intended pairing of samples and targets.
 
 # Limits Of Shape Checking
 
@@ -597,9 +542,8 @@ useful way to design an importer check: choose entries that distinguish row and 
 then choose an input that isolates one of them. A matrix of all zeros or a symmetric matrix would
 let the wrong convention pass this particular check.
 
-Both matrices have type `Tensor Float [2, 2]`, both products have type `Tensor Float [2]`, and the
-two answers are different functions of the input. A loader that reads a row-major buffer as if it
-were column-major produces precisely this, and no shape check anywhere in the pipeline will object.
+A loader that reads this row-major buffer as column-major would introduce exactly that transpose
+while preserving the tensor type `Tensor Float [2, 2]`.
 
 It helps to remember what the contraction is doing. `Spec.matVecMulSpec` sums over the second axis,
 so entry $`i` of the result is the dot product of row $`i` with the input:
@@ -634,10 +578,8 @@ specification scalars and executable runtime arithmetic.
 
 # Input Normalization
 
-The second bug in the opening list was a verification script that forgets the model expects
-normalized inputs. The error does not require floating-point rounding or transposition:
-every quantity has the right type, every call succeeds, and the number
-that comes back is simply an answer to a different question.
+An input can also have the right shape and the wrong units. If the model was trained on normalized
+features, passing raw measurements changes the prediction even though the call typechecks.
 
 Suppose the two features were standardized during training using the training set's means and
 standard deviations:
@@ -699,8 +641,7 @@ Around the normalized center `[0.5, 0.5]`, these half-widths describe the rectan
 `[0.45, 0.55]` by `[0.498, 0.502]`. The second feature has a much narrower normalized range
 because its raw scale is larger. Replacing both half-widths by 0.05 would enlarge the region in
 that feature, potentially making a bound much looser; replacing both by 0.002 would fail to cover
-the intended first-feature perturbations. Thus preprocessing affects both the meaning of a guarantee
-and the difficulty of obtaining it, even when the network weights stay fixed.
+the intended first-feature perturbations.
 
 A ball of radius $`0.1` in raw units becomes a box of half-widths $`0.05` and $`0.002` in normalized
 units. It is still a box, because the normalizer here is diagonal, but it is no longer a *ball*: the
@@ -720,17 +661,17 @@ statistics that define a normalizer come from.
 
 # Fused Multiply-Add
 
-The third example changes the arithmetic schedule. Replacing `x * y + z` with a single fused
-multiply-add can change the answer because the fused operation rounds only once. The
-float chapters build an executable binary32 semantics for exactly this kind of question, and it is
+Replacing `x * y + z` with a single fused multiply-add can change the answer because the fused
+operation rounds only once. The
+float chapters use FloatLib's executable semantics for exactly this kind of question, and it is
 available with one more import:
 
 ```
 -- Import the executable binary32 operations used to
 -- distinguish fused arithmetic.
-import NN.Floats
+import FloatLib
 
-open TorchLean.Floats.IEEE754
+open FloatLib.Floats
 ```
 
 Take $`a = 1 + 2^{-12}`, which is representable in binary32, and $`b = -1`:
@@ -738,11 +679,10 @@ Take $`a = 1 + 2^{-12}`, which is representable in binary32, and $`b = -1`:
 ```lean (name := ovFmaDefs)
 -- Choose exactly representable inputs whose product needs
 -- an extra significand bit.
-def ovA : IEEE32Exec :=
-  IEEE32Exec.ofFloat (1.0 + 0.000244140625)
+def ovA : ExecFloat.Binary 8 23 :=
+  1 + Rat.cast (1 / 4096 : Rat)
 
-def ovB : IEEE32Exec :=
-  IEEE32Exec.ofFloat (-1.0)
+def ovB : ExecFloat.Binary 8 23 := -1
 ```
 
 Now compute $`a \cdot a + b` with separate operations and with a fused operation:
@@ -750,11 +690,17 @@ Now compute $`a \cdot a + b` with separate operations and with a fused operation
 ```lean (name := ovFma)
 -- Compare two rounding schedules by equality, encoded
 -- words, and their scaled difference.
-#eval (ovA * ovA + ovB) == IEEE32Exec.fma ovA ovA ovB
-#eval ((ovA * ovA + ovB).toBits,
-  (IEEE32Exec.fma ovA ovA ovB).toBits)
-#eval ((IEEE32Exec.fma ovA ovA ovB).toFloat
-  - (ovA * ovA + ovB).toFloat) * 1000000000.0
+#eval (ovA * ovA + ovB) ==
+  ExecFloat.Binary.fma ovA ovA ovB .nearestEven
+#eval (ExecFloat.Binary.toBits32 (ovA * ovA + ovB),
+  ExecFloat.Binary.toBits32
+    (ExecFloat.Binary.fma ovA ovA ovB .nearestEven))
+#eval
+  ((ExecFloat.Binary.toFloat32
+      (ExecFloat.Binary.fma
+        ovA ovA ovB .nearestEven)).toFloat
+    - (ExecFloat.Binary.toFloat32
+      (ovA * ovA + ovB)).toFloat) * 1000000000.0
 ```
 ```leanOutput ovFma
 false
@@ -766,12 +712,9 @@ false
 59.604645
 ```
 
-The large ULP count is a consequence of cancellation. The product is close to one, so its
-rounding is measured at that magnitude. Subtracting one leaves a much smaller result, whose adjacent
-representable numbers are much closer together. An error small relative to the product can therefore
-span many result ULPs. Reading only the integer-word difference without considering those magnitudes
-would miss the mechanism. The fused operation retains the small product term through the
-subtraction; the separate multiplication has already discarded it before addition begins.
+Cancellation explains the large ULP count. The product is close to one, but subtracting one leaves
+a much smaller result with much finer spacing between representable numbers. A small rounding
+error in the product can therefore span many ULPs of the result.
 
 The exact product is $`a \cdot a = 1 + 2^{-11} + 2^{-24}`, and that value needs
 twenty-five significand bits, one more than binary32 has. So the separate multiply rounds it to
@@ -790,8 +733,8 @@ compilation of floating-point computations
 optimizer bug. A numerical guarantee must therefore account for whether the execution permits
 fusion.
 
-TorchLean's answer is that `*`, `+`, and `fma` on `IEEE32Exec` are three separate declarations with
-three separate specifications, so a theorem has to commit to one of them. The
+FloatLib gives `*`, `+`, and `fma` separate specifications, so a theorem has to commit to a
+rounding schedule. The
 {ref "floats"}[floating-point chapter] develops that semantics, compares the design against the Rocq
 Flocq library ({Informal.citep flocq2011}[]), and states which backend contracts assume that no
 fusion happened. For the underlying arithmetic, Goldberg's survey
@@ -829,17 +772,14 @@ function in the library, and its type lists the same ingredients:
       Spec.SomeTensor α → ℕ → Except String (Spec.SomeTensor α)
 ```
 
-`SomeTensor α` packages a tensor together with its shape. This is needed because a graph supplied
-as data determines intermediate shapes at evaluation time; the caller's Lean type does not fix all
-of them in advance. The square-bracketed `Storage` and `Context` arguments select implementations
-of storage and scalar operations. They are capabilities required to evaluate, rather than evidence
-of an output bound. An `.ok` result contains the tensor at the requested node. An `.error` result
-contains a diagnostic and must not be silently treated as an output satisfying the property.
+The arguments fix the scalar type and its storage and arithmetic instances, then the graph,
+payload, input tensor, and requested node id. For our model that id is `17`; another request can
+select another node in the same graph.
 
-Reading it left to right: an element type `α` with storage and arithmetic instances, a graph, a
-payload, an input tensor, and a node id. The node id is the `17` printed earlier, and it is an
-argument rather than a field because one graph can be asked about more than one of its outputs. The
-`Except String` result allows evaluation to report malformed graphs explicitly.
+`SomeTensor α` pairs the result with its shape, because a graph supplied as data determines
+intermediate shapes during evaluation. `Except String` reports malformed graphs as errors.
+The `Storage` and `Context` instances provide the operations needed to evaluate; a bound on the
+returned values still requires a soundness argument.
 
 An interval pass can compute lower and upper output bounds. A Boolean check can then confirm that
 the whole interval lies in $`[y^\star-\delta,y^\star+\delta]`. The last ingredient is a soundness
@@ -885,9 +825,8 @@ distributed training, compilers, and pretrained models that a project may alread
 TorchLean can call native CUDA or LibTorch for expensive operations while the source model,
 parameter layout, and graph remain TorchLean objects.
 {ref "backend-selection"}[Backend Selection]
-explains how each operation acquires an implementation and an auditable contract.
-
-The backend contract records the assumptions needed to connect those kernels to the graph semantics.
+explains how each operation acquires an implementation and a contract stating the assumptions
+that connect it to graph semantics.
 
 # Imports
 

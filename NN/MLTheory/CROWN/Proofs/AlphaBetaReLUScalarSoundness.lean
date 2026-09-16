@@ -66,7 +66,7 @@ private theorem relu_relax_scalar_upper_real_runtime
       simp [hu, hlpos, Activation.Math.reluSpec_eq_max, max_eq_left hxnonneg]
     · have hle0 : l ≤ 0 := le_of_not_gt hlpos
       have hden : 0 < (u - l) := by linarith
-      simp only [hu, hlpos, if_true, if_false]
+      simp only [hu, hlpos, ite_true, ite_false]
       by_cases hxpos : 0 < x
       · have hxnonneg : 0 ≤ x := le_of_lt hxpos
         simp [Activation.Math.reluSpec_eq_max, max_eq_left hxnonneg]

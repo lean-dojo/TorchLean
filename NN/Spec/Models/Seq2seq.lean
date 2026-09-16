@@ -515,7 +515,8 @@ def Seq2SeqDecoderSpec.forwardInference {embedDim hiddenDim vocabularySize : Nat
     let history := if decoder.attention.isSome then history else #[]
     let nextHistory := history.push input
     let inputPrefix : Tensor α [history.size + 1, embedDim] :=
-      Tensor.dim (fun i => nextHistory[i.val]'(by simp [nextHistory]))
+      Tensor.dim (fun i =>
+        nextHistory[i.val]'(by simpa only [nextHistory, Array.size_push] using i.isLt))
     let (nextHidden, logits) := decoder.forwardStep inputPrefix hidden
     let token := Fin.cast (by simp [Shape.size])
       (argmax (s := [vocabularySize]) (by simpa [Shape.size] using hVocab) logits)

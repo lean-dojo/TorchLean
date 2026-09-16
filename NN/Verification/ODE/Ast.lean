@@ -79,7 +79,7 @@ structure Env (α : Type) where
 Interval primitives used by `eval`.
 
 These operations are written against the abstract scalar interface `Context α` so we can evaluate
-the same expression under `Float` or `IEEE32Exec` (or other executable scalars).
+the same expression under `Float` or `ExecFloat.Binary 8 23` (or other executable scalars).
 -/
 namespace Ival
 
@@ -88,7 +88,7 @@ direct, inspectable enclosures over clever rewrites so that each arithmetic case
 against the mathematical interval rule it implements. -/
 
 /--
-Whether a checker scalar is finite under the supported `Float` and `IEEE32Exec` backends.
+Whether a checker scalar is finite under the supported `Float` and `ExecFloat.Binary 8 23` backends.
 
 Both backends produce NaN for $\infty-\infty$ and for $\mathrm{NaN}-\mathrm{NaN}$, whereas every
 finite value subtracts

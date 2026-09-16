@@ -1020,7 +1020,7 @@ private theorem foldl_range_propagateIBPNode (g : Graph) (ps : ParamStore ℝ) :
 theorem runIBP_eq_runIBPEnginePrefix (g : Graph) (ps : ParamStore ℝ)
     (hguard : crownGraphSemanticsSupported (α := ℝ) g ps = true) :
     runIBP (α := ℝ) g ps = runIBPEnginePrefix g ps g.nodes.size := by
-  simp only [runIBP, hguard, if_true]
+  simp only [runIBP, hguard, ite_true]
   -- The fold in `runIBP` runs over the `Fin`-to-`Nat` coercion of `List.finRange`.
   have h : (do
       let a ← List.finRange g.nodes.size

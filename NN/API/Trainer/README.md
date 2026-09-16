@@ -69,9 +69,10 @@ trained.report.arithmetic
 
 ## Precision
 
-Every public signature says `Tensor Float`, but no training runs in binary64. `arithmetic`
-selects the binary32 scalar: `.native` instantiates the model over Lean's `Float32`, `.ieee` over
-the bit-level `IEEE32Exec` reference. Inputs are converted into that scalar when a dataset is
+The supervised `Trainer` uses `Tensor Float` at its data and result boundaries and trains in
+binary32. `arithmetic` selects Lean's `Float32` for `.native` or FloatLib's configured
+`ExecFloat.Binary` with 8 exponent bits and 23 fraction bits for `.ieee`.
+Inputs are converted into that scalar when a dataset is
 materialized; predictions, losses, and `trained.state` are read back to `Float`, which is exact for
 binary32 values. `trained.summary` prints `arithmetic=... scalar=...` so a log always shows what
 ran.

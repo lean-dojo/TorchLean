@@ -24,16 +24,15 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 tag := "generative-models"
 %%%
 
-Generative models combine a trainable network with a probability law, a noise source, an objective,
-and a sampling procedure. Training and sampling use these pieces differently: a diffusion model
-learns to predict supplied noise, then uses repeated predictions to generate a sample. TorchLean
-defines the pieces separately so that a theorem about a noise law or a sampling step has an explicit
-subject and set of assumptions.
+An exact noise prediction need not give an exact reconstruction. In the oracle-denoiser example
+below, the prediction loss is zero, but the sampler recovers `0.499997` from an original value of
+`0.5`. The difference comes from a division guard. Supplying the noise ourselves lets us isolate
+that arithmetic before asking what a learned denoiser can do.
 
-Every Lean block on this page is elaborated when this guide is built, and every output block below
-one is the text Lean actually printed. The schedules, the noising formula, the samplers, the VAE
-and VQ-VAE objectives, and the least-squares GAN scores are all executed here rather than
-described. Where a number came from a command line or from PyTorch instead, the transcript says so.
+I use explicit inputs in the latent-model examples for the same reason: we can calculate a KL
+term or a codebook loss by hand, then compare it with the definition and its printed value.
+The Lean blocks are elaborated when this guide is built; their output blocks record Lean's
+evaluations and type checks. Command-line and PyTorch transcripts are identified separately.
 
 # Implementation Layers
 
@@ -48,21 +47,20 @@ definitions a theorem concerns:
 *
   * runnable API
   * `NN/API/Models`, `NN/Examples/Models/Generative`
-  * `Float` code the CLI trains: schedules, noising, DDIM, denoiser architectures
+  * runtime constructors and helpers for schedules, noising, DDIM, and denoiser architectures
 *
   * executable spec
   * `NN/Spec/Generative`, `NN/Spec/Models`
-  * the same objects over any scalar backend, total and side-effect free
+  * scalar-parametric model definitions, total and side-effect free
 *
   * theory
   * `NN/MLTheory/Generative`
   * theorems, in Mathlib's vocabulary, about the spec-layer or real-valued objects
 :::
 
-The spec functions are executable. Most evaluations below call them directly at `Float`, making
-their behavior
-inspectable. Relating these evaluations to training still requires
-matching definitions, scalar arithmetic, and any implementation refinement.
+The spec functions are executable. Most evaluations below call them directly at `Float`.
+Relating those values to a training run requires matching the definitions and scalar arithmetic,
+then accounting for any implementation refinement.
 
 A generative model is useful when the desired output is not a single label attached to an input.
 An image can have many plausible completions, and many images can belong to the same class.
@@ -341,8 +339,9 @@ $$`x_{t-1}
 =\sqrt{\bar\alpha_{t-1}}\,\operatorname{clip}(\widehat x_0,-1,1)
 +\sqrt{1-\bar\alpha_{t-1}}\,\widehat\epsilon_t.`
 
-To test this formula, supply the noise that was
-used. Then $`\widehat x_0` is exactly $`x_0`, and one step from $`t` to a timestep with
+To test this formula, supply the noise that was used. Over real arithmetic, with a positive signal
+coefficient and an inactive denominator floor, $`\widehat x_0` is exactly $`x_0`. If clipping also
+leaves that value unchanged, one step from $`t` to a timestep with
 $`\bar\alpha_{t-1}=1` should return the original image:
 
 ```lean (name := genDdimPrev)
@@ -560,10 +559,10 @@ near-zero output. Training updates the parameters through the same model interfa
 {ref "modern-models"}[the architecture chapter].
 
 The residual constructor is parameterized by spatial rank, so the same definition serves one, two,
-or three spatial axes. It omits what a production U-Net has: downsampling, upsampling, multi-scale
-skip concatenation, attention blocks, learned timestep embeddings, and an exponential moving average
-of the weights. These omissions limit comparisons between the compact runnable example and a
-production diffusion model.
+or three spatial axes. It has no downsampling, upsampling, multi-scale skip concatenation, attention
+blocks, or learned timestep embeddings. The example also has no exponential moving average of the
+weights. Those choices limit comparisons with diffusion systems that use a multiscale U-Net and
+weight averaging.
 
 The printed output is a noise field with three channels, matching the clean image's shape.
 Its small initialized values do not mean that the image has been reconstructed: they are the
@@ -635,10 +634,10 @@ contain the dataset, complete model state, or every setting needed to reproduce 
   "betaStart=0.000100", "betaEnd=0.120000"]}
 ```
 
-The default $`\beta` range, $`10^{-4}` to $`0.12`, is close to the linear schedule of
+The default $`\beta` range, $`10^{-4}` to $`0.12`, has a larger upper variance than the linear schedule of
 {Informal.citet ddpm2020}[], which used $`10^{-4}` to $`0.02` over a thousand steps. A short
 schedule may need larger variances to make its terminal distribution resemble pure
-noise. The two-step wiring check above does not achieve that: its final cumulative coefficient
+noise. The two-step run above does not achieve that: its final cumulative coefficient
 is approximately 0.88, so unconditional sampling is not justified by terminal noising alone. That
 is why the variance range has to be considered together with the number of diffusion steps.
 
@@ -878,9 +877,8 @@ The nonnegativity theorem below concerns the summed real-valued definition:
 ```
 
 For positive latent width and exact real arithmetic, division by that width preserves
-nonnegativity. This does not by itself prove nonnegativity for floating-point evaluation. Nothing
-in the repository performs that step. The theorem covers the mathematical KL, while the executable
-spec computes its mean.
+nonnegativity. Applying this result to the executable mean still needs an argument about its
+floating-point evaluation; the theorem above concerns the summed mathematical KL.
 
 The equality case identifies the posterior at which the regularizer vanishes:
 
@@ -1038,7 +1036,7 @@ In this identity-decoder fixture, selecting code zero makes every squared-distan
 $`(1^2+(-0.5)^2)/2=0.625`. Weighting commitment by $`0.25` gives
 $`0.625+0.625+0.25\cdot0.625=1.40625`. Forcing code one changes the coordinate differences
 to $`0` and $`-1.5`, so the common mean becomes $`1.125` and the total becomes $`2.53125`.
-The decoder was chosen to make this calculation transparent. With a learned nonlinear decoder,
+I use the identity decoder so we can compare all three loss terms directly. With a learned nonlinear decoder,
 nearest latent distance need not select the smallest reconstruction error.
 
 Changing latent width affects the training scale even when nearest-code ordering is unchanged.
@@ -1074,9 +1072,9 @@ different reconstructions and reconstruction losses.
 
 The definition it is stated against is a sum, `∑ k, (x k - y k) ^ 2`, whereas the executable
 `codebookLoss` uses `mseSpec`, which is that sum divided by the latent size. Over real arithmetic
-and a nonempty latent shape, the argmin agrees for
-both, since they differ by a positive constant, and again no lemma in the repository records that
-step.
+and a nonempty latent shape, the argmin agrees for both, since they differ by a positive constant.
+Using the summed-distance theorem for the executable mean requires making that relationship,
+and the change of scalar arithmetic, explicit.
 
 # Adversarial Training
 
@@ -1183,12 +1181,11 @@ decidable comparison,
 because runtime kernels branch on comparisons; at $`\mathbb R` that instance is supplied
 classically, allowing the same tensor definitions to be used at `Float` and $`\mathbb R`.
 
-The composition above is also the reason TorchLean exposes no runnable GAN command. Adversarial
-training needs the generator's gradient to flow through the discriminator, and the API builders here
-are two independent supervised models. As the spec docstring states, no API builder implements the
-GAN records and no theorem relates the two. Evaluating `D (G z)` checks the forward composition.
-Training additionally requires alternating parameter updates and controlling which network receives
-gradients during each update.
+Evaluating `D (G z)` checks the forward composition. Adversarial training additionally needs the
+generator's gradient to flow through the discriminator, alternating parameter updates, and control
+over which network receives gradients during each update. The API builders here are two independent
+supervised models. As the spec docstring states, they are not constructed from the GAN records,
+and no theorem relates the two. There is no runnable GAN training command.
 
 The two printed least-squares losses describe opposing targets for the same generated
 example. A discriminator score near zero is desirable during a discriminator update on fake
@@ -1324,10 +1321,9 @@ hidden-index calculation above is the relevant check that the mask and scoring s
 The finite theory for this objective lives in
 {srcDir "NN/MLTheory/SelfSupervised"}[`NN/MLTheory/SelfSupervised`] and is discussed in
 {ref "self-supervised-theory"}[the self-supervised chapter]. `maeLoss_append` says the objective
-over a
-concatenated coordinate list splits into its parts, and `exactReconstruction_identity` says a
-perfect reconstruction scores zero. Neither says anything about representation quality, which is an
-empirical question no theorem here addresses.
+over a concatenated coordinate list splits into its parts, and `exactReconstruction_identity` says
+a perfect reconstruction scores zero. These results describe how the objective is computed;
+assessing the learned representation requires an empirical evaluation.
 
 The hidden-index output is also a shape calculation. A channel plane contains sixteen
 coordinates, so copying the same spatial mask to successive channels adds offsets of sixteen.
@@ -1347,8 +1343,8 @@ The source of each result determines its scope:
   * What it covers
 *
   * `alphaBars` values, DDIM roundtrip, VAE and VQ-VAE losses
-  * live evaluation in this chapter
-  * these inputs, at `Float`, on this machine
+  * evaluation during the guide build
+  * these inputs, at `Float`, in the build's runtime
 *
   * `stateShapes`, input and output shapes
   * type-level computation
@@ -1390,13 +1386,10 @@ The examples expose three missing connections:
 - The executable `klLoss` returns the mean of the per-coordinate KL, while the theory defines and
   proves facts about the sum. Relating them requires a lemma with the latent-width and scalar
   assumptions made explicit.
-- The API's generator and discriminator builders are two independent supervised models, unrelated to
-  the spec's GAN records. There is no adversarial trainer, and the spec's own docstring says so.
-
-Further schedule comparisons and the KL relationship need their coefficient, size, and arithmetic
-assumptions made explicit. An adversarial trainer additionally needs an implementation and tests
-of its
-alternating updates and stop-gradient paths.
+- The API's generator and discriminator builders are two independent supervised models. The spec's
+  docstring records that they are not built from its GAN records and have no correspondence theorem.
+  Adding an adversarial trainer requires implementing and testing the alternating updates and
+  stop-gradient paths.
 
 # Further Reading
 

@@ -14,9 +14,10 @@ public import NN.Widgets
 # Float32 Semantics
 This tutorial runs the same compact MLP under two executable binary32 semantics:
 - `Float32`: Lean's native binary32 type and runtime implementation;
-- `TorchLean.Floats.IEEE32Exec`: TorchLean's executable bit-level IEEE-754 binary32 model.
+- `FloatLib.Floats.ExecFloat.Binary 8 23`: FloatLib's configured executable binary32 model.
 We run a single forward pass and a single reverse-mode VJP (seeded with `1.0`) and then report
-`max_abs_diff` between native Float32 and IEEE32Exec after converting both results to host `Float`
+`max_abs_diff` between native Float32 and configured binary32 after converting both results to host
+`Float`
 for display.
 PyTorch comparison:
 ```python
@@ -29,7 +30,8 @@ model = nn.Sequential(nn.Linear(2, 3), nn.ReLU(), nn.Linear(3, 1)).to(torch.floa
 ```
 
 The TorchLean example adds an independent second execution. Lean's native `Float32` supplies the
-ordinary runtime path, while `IEEE32Exec` computes from explicit binary32 fields and rounding rules.
+ordinary runtime path, while `ExecFloat.Binary 8 23` computes from explicit binary32 fields and
+rounding rules.
 The model and autograd program stay unchanged because their element type is generic.
 
 Run:
@@ -40,6 +42,11 @@ visualization only; the actual tutorial code uses ordinary `def` and `IO` defini
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofModel toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 open Spec TorchLean
 open TorchLean.Tensor
@@ -61,7 +68,7 @@ No `Runtime.Autograd.*` tape/session machinery appears in this file.
 
 /--
 `0.1` is the canonical "not exactly representable" decimal. The widget shows the binary32 value
-that `IEEE32Exec` receives after rounding from the host literal.
+that `ExecFloat.Binary 8 23` receives after rounding from the host literal.
 
 PyTorch analogue:
 
@@ -72,10 +79,11 @@ torch.tensor(0.1, dtype=torch.float32)
 def decimalTenth : Float := 0.1
 
 /-- A simple finite binary32 value for the bit-layout widget. -/
-def one32 : IEEE32Exec := IEEE32Exec.ofFloat 1.0
+def one32 : Binary 8 23 := (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel
+  (Binary.ofFloat x))) : Binary 8 23)) 1.0
 
 /-- Canonical quiet NaN, useful for showing classification and comparison behavior. -/
-def quietNaN32 : IEEE32Exec := IEEE32Exec.canonicalNaN
+def quietNaN32 : Binary 8 23 := (Binary.canonicalNaN : Binary 8 23)
 
 #float32_round_view decimalTenth
 #float32_view one32
@@ -238,14 +246,14 @@ Largest difference across every tensor in a run: the output, all four parameter 
 input gradient. One number summarizing how far the two precisions drifted apart.
 -/
 def maxAbsDiffResult (a b : RunResult Float) : Float :=
-  let errors : Tensor Float [6] :=
+  let differences : Tensor Float [6] :=
     [ Tensor.maxAbsDiff a.output b.output
     , Tensor.maxAbsDiff a.hiddenWeightGrad b.hiddenWeightGrad
     , Tensor.maxAbsDiff a.hiddenBiasGrad b.hiddenBiasGrad
     , Tensor.maxAbsDiff a.outputWeightGrad b.outputWeightGrad
     , Tensor.maxAbsDiff a.outputBiasGrad b.outputBiasGrad
     , Tensor.maxAbsDiff a.inputGrad b.inputGrad ]
-  Tensor.maxAbs errors
+  Tensor.maxAbs differences
 
 /-- Command-line help for the Float32 semantics tutorial. -/
 def usage : String :=
@@ -269,18 +277,18 @@ def main (args : List String) : IO Unit := do
   IO.println
     "Note: rounded-real binary32 is proof-only and is selected directly in theorem statements."
   IO.println "[TorchLean] FP32: finite rounded-real proof model"
-  IO.println "[TorchLean] IEEE32Exec: bit-level binary32 reference"
+  IO.println "[TorchLean] configured binary32: bit-level binary32 reference"
 
   let rNative ← runOnce (α := Float32) "Float32 (native runtime)"
-  let r32 ← runOnce (α := TorchLean.Floats.IEEE32Exec) "IEEE32Exec"
+  let r32 ← runOnce (α := (Binary 8 23)) "ExecFloat.Binary 8 23"
 
   let rNativeF : RunResult Float :=
     rNative.map fun {_shape} t => Tensor.map Float32.toFloat t
   let r32F : RunResult Float :=
     r32.map fun {_shape} t =>
-      Tensor.map TorchLean.Floats.IEEE754.IEEE32Exec.toFloat t
+      Tensor.map (fun x => Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel x)))) t
 
   let diff := maxAbsDiffResult rNativeF r32F
-  IO.println s!"max_abs_diff(Float32 vs IEEE32Exec) = {diff.toStringFull}"
+  IO.println s!"max_abs_diff(Float32 vs configured binary32) = {diff.toStringFull}"
 
 end NN.Examples.DeepDives.Floats.Float32Semantics

@@ -215,7 +215,17 @@ def update {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
   optimizer.step optimizerState runtimeObjective.trainer.state
     (nn.State.Internal.toTensorPack gradients)
 
-/-- Read the complete parameter-and-buffer state. -/
+/--
+Read the complete parameter-and-buffer state as host tensors.
+
+On CUDA, parameters changed on the device are copied back before this function returns.
+The runtime retains these host values and reuses them while they remain current. Reading
+the state after another device update requires a fresh transfer and host storage for the
+updated parameters.
+
+Use this operation when inspecting, saving, or transferring a model's state. For large
+models, include the host copy in the memory needed for those operations.
+-/
 def state {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
     [Context α]
     {stateShapes inputShapes dataInputShapes : List Spec.Shape}

@@ -29,8 +29,8 @@ Keeping Bellman / return / GAE definitions in the spec layer avoids an awkward s
 same mathematics would otherwise exist in both runtime and proof namespaces. This file therefore
 only keeps:
 
-- typed transition records for tensor-valued or indexed rollouts,
-- small action-encoding helpers,
+- a typed transition record for tensor-valued states and discrete actions,
+- public exports of the spec return and advantage helpers,
 - and scalar losses commonly used by deep RL objectives.
 -/
 
@@ -61,19 +61,6 @@ structure Transition (α : Type) [TorchLean.Storage α]
   reward : α
   /-- Next state `s_{t+1}`. -/
   nextState : Tensor α σ
-  /-- Episode termination flag. -/
-  done : Bool
-
-/-- A typed one-step transition for tabular RL over finite state/action spaces. -/
-structure IndexedTransition (α : Type) (nStates nActions : Nat) where
-  /-- Current state index `s_t`. -/
-  state : Fin nStates
-  /-- Discrete action `a_t`. -/
-  action : Fin nActions
-  /-- Reward `r_t`. -/
-  reward : α
-  /-- Next state index `s_{t+1}`. -/
-  nextState : Fin nStates
   /-- Episode termination flag. -/
   done : Bool
 

@@ -184,22 +184,41 @@ def classifyTreeMap (α β : Type) (n : ℕ)
 
 /-! ## Regression -/
 
+/-- Average targets in their original order, dividing before summation if the sum overflows.
+
+The ordinary sum preserves cancellation and the derivatives of zero-valued targets. When finite
+targets overflow that sum, dividing each target by the count first avoids the intermediate
+overflow. Explicit infinities and NaNs retain the ordinary sum's arithmetic.
+-/
+private def meanTargets (values : Array α) : α :=
+  if values.isEmpty then 0
+  else
+    let total := values.foldl (· + ·) 0
+    let count : α := values.size
+    -- Self-subtraction distinguishes finite IEEE values from infinities and NaNs. For dual
+    -- scalars, equality inspects the primal; this branch does not discard tangent components.
+    if total - total == 0 || !(values.all (fun value => value - value == 0)) then
+      total / count
+    else
+      values.foldl (fun acc value => acc + value / count) 0
+
 /-- Unweighted kNN regression: average of the neighbor targets. -/
 def predict (α : Type) (n : ℕ)
   [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   (knn : KNN α α n) (input : Tensor α [n]) : α :=
   let neighbors := findKNearest α α n knn input
-  if neighbors.isEmpty then 0
-  else
-    let values := neighbors.map (fun (_, value) => value)
-    (values.foldl (· + ·) 0) / (values.size : α)
+  meanTargets (neighbors.map (fun (_, value) => value))
 
 /-- Weighted kNN regression using inverse-distance weights.
 
 Select neighbors using the same `(distance, dataset position)` order as `findKNearest`. If one or
 more selected distances equal zero, return the arithmetic mean of just those targets. Positive
 distances then have no influence, however small they are. Otherwise use weights `w_i = 1 / d_i`.
+If finite positive distances and finite targets overflow the ordinary accumulation, divide all
+weights by the largest weight, giving `d_min / d_i`. These weights lie between zero and one.
+If their weighted sum still overflows, divide each weight by the total before multiplying by its
+target. No target-dependent scale is introduced.
 When more than `k` observations match exactly, dataset order determines which `k` are averaged.
 An empty neighborhood or a zero total weight returns `0`.
 -/
@@ -208,18 +227,37 @@ def predictWeighted (α : Type) (n : ℕ)
   [DecidableRel ((· > ·) : α → α → Prop)]
   (knn : KNN α α n) (input : Tensor α [n]) : α :=
   let neighbors := nearestWithDistances euclideanDistanceSpec knn input
-  if neighbors.isEmpty then 0
-  else
-    let neighborsWithDist := neighbors.map (fun ((_, value), dist) => (value, dist))
+  let neighborsWithDist := neighbors.map (fun ((_, value), dist) => (value, dist))
+  match neighborsWithDist[0]? with
+  | none => 0
+  | some (_, nearestDistance) =>
     let exactMatches := neighborsWithDist.filter (fun (_, dist) => dist == 0)
     if !exactMatches.isEmpty then
-      exactMatches.foldl (fun acc (value, _) => acc + value) 0 / (exactMatches.size : α)
+      meanTargets (exactMatches.map (·.1))
     else
       let (weightedSum, totalWeight) : α × α :=
         neighborsWithDist.foldl (fun (sum, total) (value, dist) =>
           let weight := 1 / dist
           (sum + weight * value, total + weight)) (0, 0)
-      if totalWeight == 0 then 0 else weightedSum / totalWeight
+      let ordinary := if totalWeight == 0 then 0 else weightedSum / totalWeight
+      let finiteInputs := neighborsWithDist.all (fun (value, dist) =>
+        value - value == 0 && dist - dist == 0 && Context.gtBool dist 0)
+      if (weightedSum - weightedSum == 0 && totalWeight - totalWeight == 0) ||
+          !finiteInputs then
+        ordinary
+      else
+        -- The first neighbor supplies the common weight scale. Preserve the original target
+        -- arithmetic so zero primals and cancellation retain their derivative information.
+        let weightedTargets := neighborsWithDist.map (fun (value, dist) =>
+          (value, nearestDistance / dist))
+        let (sum, total) : α × α :=
+          weightedTargets.foldl (fun (sum, total) (value, weight) =>
+            (sum + weight * value, total + weight)) (0, 0)
+        if total == 0 then 0
+        else if sum - sum == 0 then sum / total
+        else
+          weightedTargets.foldl (fun acc (value, weight) =>
+            acc + (weight / total) * value) 0
 
 /-! ## Helpers -/
 

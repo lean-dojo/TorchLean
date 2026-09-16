@@ -140,8 +140,7 @@ theorem foldlM_addGradAll_toIndexedShapeErasedArray_eq_add {α : Type}
                 suffix).set
                   pref.size newHeadValue
                   (by
-                    simp [Array.size_append, Nat.add_assoc]
-                    omega) =
+                    simp [Array.size_append, Nat.add_assoc]) =
                 (pref.push newHeadValue) ++
                   TorchLean.TensorPack.toShapeErasedArray (α := α) (ss := ss) seedTail ++
                   suffix := by
@@ -169,7 +168,6 @@ theorem foldlM_addGradAll_toIndexedShapeErasedArray_eq_add {α : Type}
                     TorchLean.TensorPack.toShapeErasedArray (α := α) (ss := ss) seedTail ++
                     suffix).size := by
                 simp [Array.size_append, Nat.add_assoc]
-                omega
               have hshapeG : contribHeadValue.shape = node0.value.shape := by
                 calc
                   contribHeadValue.shape = seedHeadValue.shape := by rfl

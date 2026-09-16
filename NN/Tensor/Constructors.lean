@@ -11,7 +11,7 @@ module -- shake: keep-downstream
 import Mathlib.Algebra.Order.Algebra -- shake: keep
 import Mathlib.Tactic.Bound.Init -- shake: keep
 public import NN.Spec.Core.Tensor.Core -- shake: keep
-public import NN.Floats.IEEEExec.Exec32 -- shake: keep
+public import NN.Spec.Core.FloatInstances -- shake: keep
 public import NN.Spec.Core.Complex -- shake: keep
 public import NN.Tensor.Conversion -- shake: keep
 
@@ -23,11 +23,8 @@ and bounded-index constructors. The constant constructors `full`, `zeros`, and `
 specification-layer constructors so that spec code can use them too. Import `NN.Tensor` for the
 complete public tensor API.
 
-The scalar side comes in through `NN.Floats.IEEEExec.Exec32` rather than the `NN.Floats.Float32`
-hub. All this module needs is the executable binary32 type and its instances; the hub also
-re-exports the rounded-real `FP32` model, and that pulls the Mathlib real-analysis stack into every
-module downstream of the tensor API. Files that reason about `FP32` import `NN.Floats.Float32`
-themselves.
+`NN.Spec.Core.FloatInstances` supplies FloatLib's configured binary scalar types and their
+TorchLean contexts, so the same constructors accept both native and configured precisions.
 -/
 
 @[expose] public section

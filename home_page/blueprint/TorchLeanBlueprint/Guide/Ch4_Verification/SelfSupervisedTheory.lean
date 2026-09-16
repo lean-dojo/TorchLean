@@ -38,11 +38,10 @@ model of masks, target views, predictive losses, and collapse guards. It does no
 a complete MAE or JEPA training run, and it does not prove that minimizing one of these objectives
 learns useful representations.
 
-The examples follow an index array into a loss, then connect that loss to target representations
-and tensor data. Named Lean blocks and their outputs are checked while the page is built; Python
-fragments illustrate related objectives. This exposes mistakes that a plausible loss value can
-hide: an index counted twice, a mask read with the wrong polarity, or a variance floor that assigns
-no penalty to a collapsed representation.
+A plausible loss value can hide an index counted twice, a mask read with the wrong polarity, or
+a variance floor that assigns no penalty to collapse. Small examples let us change one of these
+choices and calculate its effect. Named Lean blocks and their outputs are checked while the page
+is built; Python fragments illustrate related objectives.
 
 # Masks And Index Arrays
 
@@ -203,10 +202,9 @@ composition. The reverse theorem has the same qualification: reversing the array
 lookup function untouched. This is an algebraic fact about summing fixed natural values, useful
 once a caller has identified those values with the per-patch quantities its model should score.
 
-One more boundary is the scalar type. The finite skeleton computes in `ℕ`, so its "losses" are
-already-computed nonnegative summaries. That is convenient for exact array algebra and it is not a
-definition of mean-squared error over runtime floats. The last section of this chapter is where the
-floats enter.
+The scalar type also limits what these results say. The finite model computes in `ℕ`, so its
+"losses" are already-computed nonnegative summaries. Exact array algebra applies to those
+summaries; relating them to a mean-squared error over runtime floats requires a separate argument.
 
 # Predictive View Contracts
 
@@ -732,8 +730,7 @@ would require exhibiting a lower objective value or comparing minimizers under f
 conditions. The positive-loss theorem is a useful ingredient in that comparison because it
 computes the cost of collapse explicitly.
 
-The positivity theorem still applies in that setting, so it cannot by itself exclude collapsed
-minimizers. With several views, alignment costs can also compete with the spread reward.
+With several views, alignment costs can also compete with the spread reward.
 
 # Pairwise Spread And Variance
 
@@ -987,9 +984,9 @@ to a correlation matrix, a caller must identify which entries were extracted int
 what preprocessing produced their summaries. The penalty theorem then handles the arithmetic
 on those supplied values.
 
-`VICRegGuard` and `BarlowGuard` in the predictive-view file package these as drop-in geometry
-guards, so a prediction contract can acquire either one through `withGeometryGuard` without knowing
-which it got.
+`VICRegGuard` and `BarlowGuard` in the predictive-view file package these penalties as geometry
+guards. `withGeometryGuard` sets the contract's geometry penalty to the supplied value. The
+objective adds that penalty to the unchanged predictive term.
 
 # Block Masks And Tensor Objectives
 

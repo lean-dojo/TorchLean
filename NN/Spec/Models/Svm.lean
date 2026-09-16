@@ -23,7 +23,7 @@ PyTorch analogue:
 There are two "layers" in this file:
 
 - `LinearSVM`: the clean mathematical model + objective + backward pass (VJP-style gradients);
-- `fitLinearSVM`/`predict`: a small training + prediction wrapper used by runtime checks and
+- `fitLinearSVM`/`SVM.predict`: a small training + prediction wrapper used by runtime checks and
   examples.
 
 Classic SVM literature often uses `C` for the weight on the hinge term. This implementation instead
@@ -98,8 +98,17 @@ def LinearSVM.objective {n p : Nat} (lambda : α) (m : LinearSVM p α)
   (X : Tensor α [n, p]) (y : Tensor α [n]) : α :=
   let scores := LinearSVM.decisionBatch (n := n) m X
   let hinge := hingeLossMean scores y
-  let wnorm2 : α := Tensor.dotSpec m.w m.w
-  ((1 / 2) * lambda * wnorm2) + hinge
+  -- Form each scaled square before summing. Computing ‖w‖² first can overflow even
+  -- when a small regularization coefficient makes the objective representable.
+  -- For |w| > 1, halve w before applying lambda; for |w| ≤ 1, apply lambda first.
+  -- This also avoids prematurely halving a subnormal regularization coefficient.
+  let penalty := (List.finRange p).foldl (fun total i =>
+    let weight := Tensor.getScalar m.w i
+    let term := if abs weight > (1 : α) then
+      (lambda * (weight / (2 : α))) * weight
+    else (lambda * weight) * (weight / (2 : α))
+    total + term) 0
+  penalty + hinge
 
 /-!
 ### Backward pass
@@ -186,7 +195,7 @@ predictor, so we provide:
 
 - `SVM`: a small record holding `(weights, bias)` and a heuristic support-vector index tensor,
 - `fitLinearSVM`: deterministic gradient descent using `LinearSVM.backward`,
-- `predict`: sign prediction as `±1`.
+- `SVM.predict`: sign prediction as `±1`.
 -/
 
 /--
@@ -200,14 +209,19 @@ structure SVM (p n : ℕ) (α : Type) [TorchLean.Storage α] where
   weights : Tensor α [p]
   /-- Bias/intercept term `b`. -/
   bias : α
-  /-- Heuristic support-vector indices (approximate: margin near `1`). -/
+  /--
+  One entry per training row: its index when the margin is near `1`, or the sentinel `n`
+  otherwise. Filter out `n` before using entries to index the training data.
+  -/
   supportVectorIndices : Tensor Nat [n]
 
 /--
 Heuristic support-vector index extractor.
 
-We mark an example as a "support vector" if its margin is close to `1`. This is only meant for
-introspection and examples (it is not used by the optimizer).
+We mark an example as a "support vector" if its margin is close to `1`. The output has one entry
+per training row, containing that row's index or the sentinel `n` for a non-support row.
+It is not a compact list of valid indices. This is only meant for introspection and examples
+(it is not used by the optimizer).
 -/
 def findSupportVectorIndices {n p : Nat}
   (X : Tensor α [n, p])
@@ -226,23 +240,32 @@ def findSupportVectorIndices {n p : Nat}
       Tensor.scalar n      -- sentinel value, meaning "not a support vector"
   )
 
--- Fit method using gradient descent for linear SVM
-/--
-Fit a linear SVM by deterministic gradient descent on the primal objective.
+/-- A training label outside the signed encoding used by the hinge objective. -/
+inductive SVM.FitError where
+  /-- The zero-based row whose label is neither `-1` nor `1`. -/
+  | invalidLabel (row : Nat)
+  deriving Repr, BEq
 
-Parameters:
-- `learningRate`: gradient step size
-- `lambda`: L2 regularization strength
-- `iterations`: number of GD steps
+/-- Fit a linear SVM after checking that every label is `-1` or `1`.
+
+The check uses the scalar context's equality operation and precedes every optimization step,
+including a request for zero steps. Binary `0`/`1` labels therefore cannot silently change the
+hinge objective. `LinearSVM.objective` and `LinearSVM.backward` remain explicit formulas for
+mathematical work with a supplied parameter record.
 -/
 def fitLinearSVM {n p : ℕ} (X : Tensor α [n, p]) (y : Tensor α [n])
-                 (learningRate : α) (lambda : α) (iterations : Nat) : SVM p n α :=
+    (learningRate : α) (lambda : α) (iterations : Nat) :
+    Except SVM.FitError (SVM p n α) := do
+  for i in List.finRange n do
+    let label := Tensor.getScalar y i
+    unless label == (-(1 : α)) || label == (1 : α) do
+      throw (.invalidLabel i.val)
   -- Initialize weights with zeros
   let initialWeights : Tensor α [p] := Tensor.full [p] (0 : α)
   let initialBias := (0 : α)
 
   -- Implement gradient descent (structural recursion for predictable runtime)
-  let rec gradient_descent (iter : Nat) (weights : Tensor α [p]) (bias : α) :
+  let rec gradientDescent (iter : Nat) (weights : Tensor α [p]) (bias : α) :
       (Tensor α [p] × α) :=
     match iter with
     | 0 => (weights, bias)
@@ -251,18 +274,26 @@ def fitLinearSVM {n p : ℕ} (X : Tensor α [n, p]) (y : Tensor α [n])
         let (gradW, gradB, _dX) := LinearSVM.backward (n := n) (p := p) (lambda := lambda) m X y
         let newWeights := subSpec weights (scaleSpec gradW learningRate)
         let newBias := bias - learningRate * gradB
-        gradient_descent k newWeights newBias
+        gradientDescent k newWeights newBias
 
   -- Run gradient descent
-  let (finalWeights, finalBias) := gradient_descent iterations initialWeights initialBias
+  let (finalWeights, finalBias) := gradientDescent iterations initialWeights initialBias
 
   let supportVectorIndices := findSupportVectorIndices X y finalWeights finalBias
 
-  { weights := finalWeights, bias := finalBias, supportVectorIndices := supportVectorIndices }
+  return {
+    weights := finalWeights
+    bias := finalBias
+    supportVectorIndices := supportVectorIndices }
 
--- Predict method for linear SVM
-/-- Predict signed labels `±1` for a batch `X` using the learned hyperplane. -/
-def predict {n p : ℕ} (model : SVM p n α) (X : Tensor α [n, p]) : Tensor α [n] :=
+/-- Predict signed labels `±1` using the learned hyperplane.
+
+The training size `n` indexes the stored support-vector information. Prediction only needs the
+weights and bias, so the inference batch has an independent size. A zero decision value gives
+label `-1`; an empty batch returns an empty label tensor.
+-/
+def SVM.predict {n batch p : ℕ} (model : SVM p n α)
+  (X : Tensor α [batch, p]) : Tensor α [batch] :=
   Tensor.dim (fun i =>
     let decisionValue := Tensor.dotSpec model.weights (get X i) + model.bias
     if decisionValue > (0 : α) then
@@ -270,6 +301,10 @@ def predict {n p : ℕ} (model : SVM p n α) (X : Tensor α [n, p]) : Tensor α 
     else
       -- Tie-breaking at `0` is arbitrary; we choose `-1` for determinism.
       Tensor.scalar (-(1 : α)))
+
+/-- Predict a signed label for one feature vector using the batch predictor's arithmetic. -/
+def SVM.predictOne {n p : ℕ} (model : SVM p n α) (x : Tensor α [p]) : α :=
+  Tensor.getScalar (model.predict (Tensor.dim fun (_ : Fin 1) => x)) ⟨0, by decide⟩
 
 namespace Kernel
 /-- Linear kernel: `k(x, y) = x·y`. -/
@@ -287,13 +322,35 @@ def polynomial {p : ℕ} (degree : Nat) (c : α) (x y : Tensor α [p]) : α :=
     | n + 1 => base * powRec base n
   powRec (dot + c) degree
 
--- RBF kernel: k(x, y) = exp(-γ||x-y||^2)
-/-- RBF kernel: `k(x, y) = exp(-gamma * ||x - y||^2)`. -/
+/-- RBF kernel: `k(x, y) = exp(-gamma * ||x - y||^2)`.
+
+When the squared distance is finite, evaluate the usual distance-then-exponential expression.
+Finite feature differences can overflow that distance even when multiplication by a small
+`gamma` gives a representable exponent. In that case, multiply each difference by `gamma`
+before its second factor, then sum the weighted squares.
+-/
 def rbf {p : ℕ} (gamma : α) (x y : Tensor α [p]) {h : p ≠ 0} : α :=
   let diff := subSpec x y
   let squared := mulSpec diff diff
-  let squaredDist := reduceSum 0 squared (Shape.hasNonemptyAxisZeroOfNe h).proof
+  let leadingAxis := (Shape.hasNonemptyAxisZeroOfNe h).proof
+  let squaredDist := reduceSum 0 squared leadingAxis
   let distScalar := item squaredDist
-  exp ((-gamma * distScalar))
+  if distScalar - distScalar == 0 then
+    -- Preserve the existing arithmetic and rounding whenever the distance is finite.
+    exp (-gamma * distScalar)
+  else
+    let finiteDifferences := (List.finRange p).all fun i =>
+      let value := Tensor.getScalar diff i
+      value - value == 0
+    if finiteDifferences && (gamma - gamma == 0) then
+      -- Applying gamma before the square avoids an overflowing unweighted distance.
+      -- This also keeps gamma zero well-defined for finite differences: each weighted
+      -- term is zero, rather than multiplying zero by an already infinite distance.
+      let weightedSquares := mapSpec (fun value => (gamma * value) * value) diff
+      exp (-item (reduceSum 0 weightedSquares leadingAxis))
+    else
+      -- Nonfinite differences or gamma retain the original expression and its NaN or
+      -- infinity propagation; they are not an overflow of otherwise finite inputs.
+      exp (-gamma * distScalar)
 
 end Kernel

@@ -93,7 +93,7 @@ The command crops CIFAR images to `4×4`, divides them into four `2×2` patches,
 entire flattened crop. This keeps the command quick while making masking and attention genuinely
 operate across multiple patch positions.
 -/
-abbrev modelConfig : nn.models.ViT.MaskedAutoencoder.Config 2 :=
+abbrev modelConfig : nn.models.ViT.MaskedPatchReconstructor.Config 2 :=
   { encoder :=
       { inputChannels := inputChannels
         spatial := [cropHeight, cropWidth]
@@ -137,7 +137,7 @@ The architecture lives in the public self-supervised model API; this example onl
 loads data, and trains it.
 -/
 def model : nn.Builder (nn.Sequential input output) :=
-  nn.models.ViT.maskedAutoencoder modelConfig batch
+  nn.models.ViT.maskedPatchReconstructor modelConfig batch
 
 /--
 Turn a typed CIFAR image batch into the compact MAE training sample.
@@ -156,7 +156,7 @@ def maskedAutoencoderSample
       modelConfig.reconstructionWidth maskBlocks maskPeriod maskOffset b.input
   pure <| by
     simpa [input, output,
-      nn.models.ViT.MaskedAutoencoder.Config.output,
+      nn.models.ViT.MaskedPatchReconstructor.Config.output,
       nn.models.ViT.EncoderConfig.input, batch, modelConfig] using sample
 
 /--

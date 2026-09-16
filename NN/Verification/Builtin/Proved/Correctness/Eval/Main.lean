@@ -164,7 +164,7 @@ open NN.Verification.Builtin
         simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, NN.IR.Graph.normalizeNodeOutput, hGet0,
           inputNode, inputVal, NN.IR.Graph.expectShape,
           Bind.bind, Pure.pure, Except.pure, Except.bind]
-      rw [NN.IR.Graph.denoteAllFrom.eq_1, dif_pos h0]
+      rw [NN.IR.Graph.denoteAllFrom.eq_1, dite_eq_left h0]
       rw [hEval0]
       simp
       have hPushEq : (#[].push inputVal : Array (Spec.SomeTensor α)) = #[inputVal] := by

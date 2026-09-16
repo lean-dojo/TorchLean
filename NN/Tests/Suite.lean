@@ -14,6 +14,8 @@ public import NN.Tests.API.Command
 public import NN.Tests.API.Data
 public import NN.Tests.API.Diffusion
 public import NN.Tests.API.Optim
+public import NN.Tests.API.Precision
+public import NN.Tests.API.TypedTraining
 public import NN.Tests.API.PublicSurface
 public import NN.Tests.API.SelfSupervised.BlockMask
 public import NN.Tests.API.Text
@@ -87,6 +89,8 @@ def run : IO Unit := do
     NN.Tests.API.Data.run
     NN.Tests.API.Diffusion.run
     NN.Tests.API.Optim.run
+    NN.Tests.API.Precision.run
+    NN.Tests.API.TypedTraining.run
     NN.Tests.API.PublicSurface.run
     NN.Tests.API.SelfSupervised.BlockMask.run
     NN.Tests.API.Text.run

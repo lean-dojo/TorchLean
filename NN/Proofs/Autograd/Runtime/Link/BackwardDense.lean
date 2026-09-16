@@ -224,10 +224,10 @@ theorem optGradsOk_set {t : Tape α} {grads : Array (Option (Spec.SomeTensor α)
   rw [Array.getElem?_set] at hj
   by_cases hij : id = j
   · subst hij
-    simp only [if_true, Option.some.injEq] at hj
+    simp only [ite_true, Option.some.injEq] at hj
     cases hj
     exact ⟨node, hnode, hg⟩
-  · rw [if_neg hij] at hj
+  · rw [ite_eq_right hij] at hj
     exact hok.shape j g' hj
 
 /-! ### Adding a zero contribution is a no-op -/
@@ -286,8 +286,8 @@ theorem addGradAll_zeroCotangent [AddZeroClass α] {t : Tape α} {grads : Array 
   by_cases hreq : pnode.requiresGrad = false
   · simp [hreq]
   · have hreq' : pnode.requiresGrad = true := by simpa using hreq
-    simp only [hreq', Bool.true_eq_false, ite_false, hex, dif_pos hexs, dif_pos hid]
-    rw [dif_pos (shape_zeroCotangent pnode), Spec.SomeTensor.ofTensor_cast,
+    simp only [hreq', Bool.true_eq_false, ite_false, hex, dite_eq_left hexs, dite_eq_left hid]
+    rw [dite_eq_left (shape_zeroCotangent pnode), Spec.SomeTensor.ofTensor_cast,
       Spec.SomeTensor.ofTensor_cast, someTensor_add_zeroCotangent_right pnode existing hexs]
     show Except.ok (grads.set pid existing hid) = Except.ok grads
     rw [hset]
@@ -327,9 +327,9 @@ theorem addGradDense_optGradsOk [Add α] {t : Tape α} {grads : Array (Option (S
     · have hreq' : node.requiresGrad = true := by simpa using hreq
       simp only [hreq', Bool.true_eq_false, ite_false] at h
       by_cases hg : g.shape = node.value.shape
-      · simp only [dif_pos hg] at h
+      · simp only [dite_eq_left hg] at h
         by_cases hid : pid < grads.size
-        · simp only [dif_pos hid] at h
+        · simp only [dite_eq_left hid] at h
           cases hcur : grads[pid]'hid with
           | none =>
             simp only [hcur, Except.ok.injEq] at h
@@ -373,17 +373,17 @@ theorem addGradDense_map_totalizeGrads [AddZeroClass α] {t : Tape α}
     · have hreq' : node.requiresGrad = true := by simpa using hreq
       simp only [hreq', Bool.true_eq_false, ite_false]
       by_cases hg : g.shape = node.value.shape
-      · simp only [dif_pos hg]
+      · simp only [dite_eq_left hg]
         have hid : pid < grads.size := hok.size_eq ▸ getNode?_lt_size hnode
         have hidt : pid < t.nodes.size := getNode?_lt_size hnode
         have hidTot : pid < (totalizeGrads t grads).size := by simpa using hidt
-        simp only [dif_pos hid]
+        simp only [dite_eq_left hid]
         cases hcur : grads[pid]'hid with
         | none =>
           have hcur? : grads[pid]? = some none := by rw [Array.getElem?_eq_getElem hid, hcur]
           rw [getElem?_totalizeGrads_of_none hnode hcur?]
-          simp only [Spec.SomeTensor.ofTensor_cast, dif_pos hidTot, Except.map,
-            totalizeGrads_set t grads pid g hid hidt, dif_pos (shape_zeroCotangent node),
+          simp only [Spec.SomeTensor.ofTensor_cast, dite_eq_left hidTot, Except.map,
+            totalizeGrads_set t grads pid g hid hidt, dite_eq_left (shape_zeroCotangent node),
             someTensor_add_zeroCotangent_left node g hg]
         | some existing =>
           have hcur? : grads[pid]? = some (some existing) := by
@@ -392,7 +392,7 @@ theorem addGradDense_map_totalizeGrads [AddZeroClass α] {t : Tape α}
           rw [hnode] at hnode'
           cases hnode'
           rw [getElem?_totalizeGrads_of_some hnode hcur?]
-          simp only [dif_pos hexs, Spec.SomeTensor.ofTensor_cast, dif_pos hidTot]
+          simp only [dite_eq_left hexs, Spec.SomeTensor.ofTensor_cast, dite_eq_left hidTot]
           cases Runtime.Autograd.SomeTensor.add existing g with
           | error e => rfl
           | ok summed =>
@@ -542,8 +542,8 @@ theorem backwardDenseStep_map_totalizeGrads [AddZeroClass α] {t : Tape α}
       | none =>
         rw [getElem?_totalizeGrads_of_none hnode hcur]
         obtain ⟨contribs, hback, hz⟩ := hzp.backward_zero id node hnode hreq'
-        simp only [Except.map, dif_pos (shape_zeroCotangent node), Spec.SomeTensor.ofTensor_cast,
-          hback]
+        simp only [Except.map, dite_eq_left (shape_zeroCotangent node),
+          Spec.SomeTensor.ofTensor_cast, hback]
         rw [← Array.foldlM_toList]
         exact (foldlM_addGradAll_zero htot contribs.toList
           fun pid pg hmem => hz pid pg (Array.mem_toList_iff.1 hmem)).symm
@@ -552,7 +552,7 @@ theorem backwardDenseStep_map_totalizeGrads [AddZeroClass α] {t : Tape α}
         rw [hnode] at hnode'
         cases hnode'
         rw [getElem?_totalizeGrads_of_some hnode hcur]
-        simp only [dif_pos hshape, Spec.SomeTensor.ofTensor_cast]
+        simp only [dite_eq_left hshape, Spec.SomeTensor.ofTensor_cast]
         cases node.backward dLdy with
         | error e => rfl
         | ok contribs =>
@@ -639,7 +639,7 @@ theorem backwardDense_eq_foldlM [Add α] {t : Tape α} {outId : Nat}
           (by simpa using getNode?_lt_size hout)) := by
   have hlt : outId < t.nodes.size := getNode?_lt_size hout
   simp only [Tape.backwardDense, hout, Bind.bind, Except.bind, Pure.pure, Except.pure, throw,
-    throwThe, MonadExceptOf.throw, dif_pos hseed, Array.size_replicate, dif_pos hlt,
+    throwThe, MonadExceptOf.throw, dite_eq_left hseed, Array.size_replicate, dite_eq_left hlt,
     Spec.SomeTensor.ofTensor_cast]
   rfl
 

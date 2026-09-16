@@ -15,10 +15,11 @@ tag := "examples"
 file := "Worked-Examples"
 %%%
 
-The labs follow a small model from the first printable value to an artifact that Lean can check.
-They begin with tensor contents, then show derivatives, train two deliberately small models, lower a
-graph for verification, and finally replay numerical evidence. The last lab crosses an external-tool
-boundary and shows the limits of what accepting an imported graph establishes.
+Two tensors can print the same decimal digits and still contain different numbers. We will start
+there, with four entries whose sums we can check by hand. Keeping the calculations small also lets
+us follow a gradient back to its factors and an interval bound back to its endpoints. When the
+examples reach training and imported graphs, those calculations give us something concrete to
+compare with the command output.
 
 Every Lean block on this page is elaborated when the site is built, and its output is checked
 against the accompanying transcript. Shell and Python transcripts are
@@ -105,16 +106,15 @@ False True
 ```
 
 The printed digits alone cannot establish equality. TorchLean keeps `Float`, `Float32`,
-`IEEE32Exec`, `ℚ`, and $`\mathbb R` as separate element types so that definitions and theorems
+FloatLib binary32, `ℚ`, and $`\mathbb R` as separate element types so that definitions and theorems
 identify the arithmetic they use. See {ref "floats"}[the floating-point chapter] and
 {Informal.citet boldo2015}[] for the same separation in Coq.
 
 The rational calculation is a useful reference because its result does not depend on a
 rounding policy. It is not a replacement for checking the requested runtime arithmetic. If the
 application stores binary32 weights, a theorem about the corresponding rational expression
-still needs a connection to conversion and rounding. The example starts with decimals whose
-exact meanings are easy to recognize so that this distinction appears before larger tensor
-operations obscure it.
+still needs a connection to conversion and rounding. I use these decimals because we can keep
+their exact meanings in view while comparing the two arithmetic paths.
 
 ## Rank, Slices, And The Reshape Guard
 
@@ -215,9 +215,9 @@ the model.
 
 # Function And Model Differentiation
 
-TorchLean separates two things that a typical framework fuses: differentiating a tensor function,
-and differentiating a loss with respect to a model's typed state. The first is a mathematical
-operation on a function; the second also has to know what a model's parameters are.
+To compute a gradient, we first choose what may vary. `autograd.grad` takes the input tensor as
+that variable; `autograd.model.grad` takes the model's typed state. We can see the difference by
+differentiating a mean of squares, then a loss for one affine layer.
 
 ```lean (name := exGrad)
 -- Differentiate a scalar mean with respect to all three
@@ -512,6 +512,9 @@ lake exe torchlean quickstart_mlp \
   --device cpu --arithmetic ieee --steps 2 --seed 2026
 ```
 
+The following transcript predates the FloatLib migration and retains its recorded scalar labels
+and numerical results. Current `.ieee` execution uses FloatLib binary32.
+
 ```terminal +output
 mean_loss(before training) = 0.495227
 step 0: loss=0.250488
@@ -520,8 +523,8 @@ steps=2 arithmetic=ieee scalar=IEEE32Exec loss=0.495227 -> 0.392821
 trained(heldout) = [0.019031]
 ```
 
-Run the same two steps with `--arithmetic native` and every number is identical, down to the last
-digit of `0.392821` and `[0.019031]`. `IEEE32Exec` is a
+In the recorded comparison, the same two steps with `--arithmetic native` gave identical printed
+numbers, down to the last digit of `0.392821` and `[0.019031]`. FloatLib binary32 is a
 bit-level model of binary32 written in Lean, and the native path is hardware binary32, so equality
 of these six-decimal displays alone does not establish bitwise agreement. The maintained scalar
 conformance tests compare bits where that stronger claim is needed. The
@@ -590,8 +593,8 @@ run. The input contract is `[1, 3, 8, 8]`, and the output `[1, 10]` contains one
 
 The command defines one public `nn.models.CNN.Config`, derives the checked input and output shapes
 from that value, and passes it to `nn.models.cnn`. It then uses the shared NPY data boundary and
-`Trainer.new` with `trainer.train`. Its input shape is `[1, 3, 8, 8]` and its output shape is
-`[1, 10]`. `--n-total 1` deliberately keeps this a wiring check; it does not establish useful CIFAR
+`Trainer.new` with `trainer.train`. `--n-total 1` keeps this a check of that training path; it does
+not establish useful CIFAR
 accuracy. The reported change of about `0.005` records the effect of this particular update.
 
 Source:
@@ -606,9 +609,9 @@ of which appears in this transcript.
 
 # Model Lowering And Interval Bounds
 
-Labs one through four each evaluated one input. A robustness question is different in kind: it asks
-about every input in a region at once. Interval bound propagation propagates an enclosure of those
-inputs through the model. Start from an input box
+The predictions and gradients above concern particular inputs. To ask whether an output stays
+within a bound throughout a region, we need to account for every input in that region.
+Interval bound propagation does this by carrying an enclosure through the model. Start from an input box
 
 $$`x\in[\ell,u]`
 
@@ -770,9 +773,11 @@ output box lo: [1.904000]
 output box hi: [2.256000]
 ```
 
-`IEEE32Exec` has proved directed-rounding primitives, so `addUp` and `mulUp` produce the smallest
-representable value at or above the exact result rather than one step beyond the nearest one. The
-bound is tighter and still sound. The native path widens a nearest-rounded result, while the
+FloatLib exposes directed addition and multiplication through `ExecFloat.Binary.add` and
+`ExecFloat.Binary.mul` with `.towardPositiveInfinity`. On the finite real branch, these choose the
+smallest representable upper result, rather than always widening a nearest-rounded result. The
+interval rules also account for exceptional endpoints. The native path widens a nearest-rounded
+result, while the
 reference path computes directed rounding in Lean. The arithmetic banner identifies which policy
 produced the box.
 
@@ -819,10 +824,12 @@ successful propagation as successful verification.
 
 # Numerical Certificate Replay
 
-Lab five printed a bound. This lab produces a numerical certificate and replays it with a checker
+We can also record intermediate ranges in a numerical certificate and replay it with a checker
 {Informal.citep necula1997}[].
 
-Start with the scalar boundary, because it is the same model as lab five and the numbers connect:
+First, evaluate the same small MLP at the center of its input box and compare its native and
+reference gradients. We already have the weights and interval calculation needed to interpret
+the result. This comparison was recorded before the FloatLib migration:
 
 ```terminal
 # Compare the fixed MLP’s native and reference outputs and
@@ -899,7 +906,7 @@ $`W_2^{\top}x^{\top}`, and its first entry $`0.7\times0.5=0.35` is right there i
 autodiff implementation that gets all four of these right on a model this small is not proved
 correct, but it has passed the test that catches transposed matrices and dropped chain-rule factors.
 
-The final line, `max_abs_diff(Float32 vs IEEE32Exec) = 0`, says the hardware and the Lean bit-level
+The final maximum-difference line says the hardware and the Lean bit-level
 model returned matching finite values for the outputs and gradients compared in this example.
 It does not inspect every intermediate rounding decision or distinguish the signs of zero.
 The command also contrasts the proof-only rounded-real model, which is selected in theorem
@@ -944,7 +951,7 @@ The checker and its proof layer are:
 - {src "NN/Proofs/RuntimeApprox/Graph/NumericalCertificate.lean"}[
   `NN.Proofs.RuntimeApprox.Graph.NumericalCertificate`].
 
-Certificate ranges are outward-rounded `IEEE32Exec`, and concrete inputs can be replayed in the
+Certificate ranges are outward-rounded FloatLib binary32, and concrete inputs can be replayed in the
 bit-level interpreter, which is what the two `IEEE replay` lines do. A native runtime is a separate
 provider; the `max_abs_diff = 0` above is evidence that it agreed on one trajectory, not a proof
 that it always will.
@@ -1047,17 +1054,17 @@ rather than repeating the command name in every type.
 
 # Example Coverage
 
-The labs establish different kinds of evidence.
+When reusing an example, carry its evidence with it. The value and gradient transcripts record
+particular executions: `mean(x^2)` having the right gradient at $`(1,2,3)` is a useful check of
+autodiff, but a theorem must cover its stated domain. The reshape example illustrates a different
+condition: the API requires a proof that the element counts agree, and Lean rejects the attempted
+four-to-nine reshape because that proposition is false.
 
-Labs one through four are executions. They demonstrate, catch mistakes, and establish nothing
-universal: `mean(x^2)` having the right gradient at $`(1,2,3)` is evidence about autodiff, not a
-theorem about it. Lab one's reshape guard is the exception, because a rejected elaboration rules out
-a whole class of programs rather than one run.
-
-Lab five propagates bounds over an input region within a supported IR fragment and numerical
-policy. Lab six checks numerical artifacts and includes a tampered-range rejection test.
-Lab seven checks imported graph structure and compares outputs on fixed probes; it leaves the
-correctness of the Python exporter as a separate obligation.
+The interval workflow covers an input region within its supported IR fragment and numerical
+policy. Certificate replay checks an artifact against the checker's conditions, including a
+deliberately altered range that it rejects. The import checks combine a structural guarantee with
+output comparisons on fixed probes; correctness of the Python exporter remains a separate
+obligation.
 
 The chapters that carry those claims further are {ref "verification"}[verification],
 {ref "floats"}[floating point], and {ref "autograd-walkthrough"}[autograd].

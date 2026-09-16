@@ -72,16 +72,16 @@ theorem linear_sound {g : Graph} {ps : ParamStore ℝ} {ibp : Array (Option (Fla
     simp only [hxin, hwb] at hs
     simp only [hgv, hwb] at hEvalSome
     by_cases hout : xin.outDim = p.n
-    · rw [dif_pos hout] at hs
+    · rw [dite_eq_left hout] at hs
       by_cases hvIn : vp.n = p.n
-      · rw [dif_pos hvIn] at hEvalSome
+      · rw [dite_eq_left hvIn] at hEvalSome
         cases hs
         cases hEvalSome
         exact enclosesAtInput_linearBoundsFromAffine p.w p.b hout hvIn
           (parent_encloses_of_unaryParent? hpar hps hxin hgv)
-      · rw [dif_neg hvIn] at hEvalSome
+      · rw [dite_eq_right hvIn] at hEvalSome
         cases hEvalSome
-    · rw [dif_neg hout] at hs
+    · rw [dite_eq_right hout] at hs
       cases hs
 
 /-- The `.matmul` case: as `.linear`, with the node's weight matrix and a zero bias. -/
@@ -108,17 +108,17 @@ theorem matmul_sound {g : Graph} {ps : ParamStore ℝ} {ibp : Array (Option (Fla
     simp only [hxin, hwb] at hs
     simp only [hgv, hwb] at hEvalSome
     by_cases hout : xin.outDim = p.n
-    · rw [dif_pos hout] at hs
+    · rw [dite_eq_left hout] at hs
       by_cases hvIn : vp.n = p.n
-      · rw [dif_pos hvIn] at hEvalSome
+      · rw [dite_eq_left hvIn] at hEvalSome
         cases hs
         cases hEvalSome
         exact enclosesAtInput_linearBoundsFromAffine p.w
           (Tensor.full (α := ℝ) (.dim p.m .scalar) 0) hout hvIn
           (parent_encloses_of_unaryParent? hpar hps hxin hgv)
-      · rw [dif_neg hvIn] at hEvalSome
+      · rw [dite_eq_right hvIn] at hEvalSome
         cases hEvalSome
-    · rw [dif_neg hout] at hs
+    · rw [dite_eq_right hout] at hs
       cases hs
 
 /-- The `.sum` case: the step treats the sum as the `1 × n` linear layer with all-ones weights and

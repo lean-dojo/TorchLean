@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Core.Numeric.Angle
-public import NN.Floats.IEEEExec.Exec32.Compare
+public import FloatLib.Floats.Formats.IEEE754.Native
 
 /-!
 # Host polar-angle adapter for executable binary32
@@ -19,10 +19,14 @@ platform-independent binary32 arctangent implementation.
 
 @[expose] public section
 
-namespace TorchLean.Floats.IEEE754.IEEE32Exec
+namespace TorchLean
+
+open FloatLib.Floats
 
 /-- Host polar angle rounded from binary64 to executable binary32. -/
-instance : Atan2 IEEE32Exec :=
-  ⟨fun y x => ofFloat (Float.atan2 (toFloat y) (toFloat x))⟩
+instance : Atan2 (ExecFloat.Binary (exponentBits := 8) (fractionBits := 23)) :=
+  ⟨fun y x => ExecFloat.Binary.ofFloat32
+    (Float.atan2 (ExecFloat.Binary.toFloat32 y).toFloat
+      (ExecFloat.Binary.toFloat32 x).toFloat).toFloat32⟩
 
-end TorchLean.Floats.IEEE754.IEEE32Exec
+end TorchLean

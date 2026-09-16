@@ -54,6 +54,9 @@ Convenience flags for this workflow runner:
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
@@ -65,7 +68,6 @@ open Lean.Data
 open Lean.Json
 open NN.Verification.Json
 
-open TorchLean.Floats.IEEE754
 open _root_.Runtime
 open _root_.Runtime.Autograd
 open NN.MLTheory.CROWN.Graph
@@ -74,7 +76,7 @@ open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Lyapunov.TwoStage.Core
 open NN.MLTheory.CROWN.Lyapunov.TwoStage.Execution
 
-local notation "Scalar" => IEEE32Exec
+local notation "Scalar" => (ExecFloat.Binary 8 23)
 
 /-- Learning rate for the stage-2 SGD loop. -/
 def lr : Scalar := Execution.defaultLr
@@ -108,9 +110,9 @@ def Internal.parseBitsArray (j : Json) (ctx : String) : IO (Array UInt32) := do
     | none => throw <| IO.userError s!"{ctx}: expected nat/decimal-string array"
   ns.mapM (Internal.expectU32 ctx)
 
-/-- Turn `UInt32` float32 bit patterns into executable float32 values (`IEEE32Exec`). -/
+/-- Turn `UInt32` float32 bit patterns into executable float32 values (`ExecFloat.Binary 8 23`). -/
 def Internal.decodeBits (bits : Array UInt32) : Array Scalar :=
-  bits.map IEEE32Exec.ofBits
+  bits.map ExecFloat.Binary.ofBits32
 
 /-- Build a length-`n` vector tensor from an array (with a length check). -/
 def Internal.vector (n : Nat) (values : Array Scalar) : IO (Tensor Scalar [n]) := do
@@ -134,7 +136,7 @@ def Internal.matrix (m n : Nat) (values : Array Scalar) : IO (Tensor Scalar [m, 
 Load stage-1 parameters exported by PyTorch as *float32 bit patterns*.
 
 We do this (instead of parsing JSON floats) so stage-2 runs under *bit-exact* float32 semantics
-(`IEEE32Exec`) without decimal conversion error.
+(`ExecFloat.Binary 8 23`) without decimal conversion error.
 -/
 def loadInitialState (width : Nat) (path : String) :
     IO (TorchLean.nn.State Scalar (Core.paramShapes width)) := do
@@ -210,7 +212,8 @@ Run the external PyTorch Stage-1 exporter (if needed) and return the JSON path.
 
 This is the only place pipeline (ii) depends on Python. The trust boundary is still clean:
 - Stage 1 provides an **initialization only** (untrusted),
-- Stage 2 and the IBP/CROWN post-check run inside Lean under exact `IEEE32Exec` semantics.
+- Stage 2 and the IBP/CROWN post-check run inside Lean under exact `ExecFloat.Binary 8 23`
+semantics.
 -/
 def ensureFirstStageWeights (width : Nat) (options : HybridCliOptions) : IO String := do
   let weightsPath := options.weightsPath

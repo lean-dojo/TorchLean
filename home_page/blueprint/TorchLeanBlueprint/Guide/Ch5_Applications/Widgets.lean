@@ -4,7 +4,7 @@ import NN.Tensor
 import NN.Spec.Core.Tensor.Core
 import NN.IR.Graph
 import NN.IR.Semantics
-import NN.Floats.IEEEExec.Exec32
+import FloatLib
 import NN.MLTheory.CROWN.Graph
 import NN.Runtime.Autograd.Engine.Core
 import NN.Runtime.Training.Log
@@ -16,17 +16,19 @@ open Verso.Genre.Manual.InlineLean
 
 -- Every example in this chapter is elaborated when the page is built, so the namespaces come out
 -- here rather than being repeated inside each block. `Spec` and `TorchLean` carry the tensor type
--- and its literal notation, `NN.IR` the graph and its evaluator, `IEEE754` the executable binary32
--- reference, `CROWN` the interval boxes, and `Runtime.Autograd` the tape.
+-- and its literal notation, `NN.IR` the graph and its evaluator, FloatLib the binary scalars,
+-- `CROWN` the interval boxes, and `Runtime.Autograd` the tape.
 open Spec TorchLean
 open NN.IR
-open TorchLean.Floats.IEEE754
 open NN.MLTheory.CROWN
 open Runtime.Autograd
 
 -- A few printed reports are wider than the code column, so their `leanOutput` blocks ask for
 -- `whitespace := lax` and are wrapped in the source. The rendered page shows what Lean printed.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 #doc (Manual) "Widgets" =>
 %%%
@@ -132,8 +134,8 @@ has a checker, check it first and then inspect the accepted object.
 
 # Tensor Viewer
 
-`rankThreeGrid` encodes its three indices in the hundreds, tens, and units places, so moving an
-axis changes a visible pattern. The floating-point vectors address a separate inspection problem:
+I encode the three indices of `rankThreeGrid` in the hundreds, tens, and units places so we can
+recognize an axis change in the entries themselves. The floating-point vectors address a separate inspection problem:
 decimal printing can hide differences in scalar representation.
 
 ```lean
@@ -151,11 +153,14 @@ def floatTensor : Tensor Float [4] :=
   , decimalTenth
   , oneThirdFloat ]
 
-def ieeeTensor : Tensor IEEE32Exec [4] :=
-  [ IEEE32Exec.posOne
-  , IEEE32Exec.ofFloat (Float.ofNat 2)
-  , IEEE32Exec.ofFloat decimalTenth
-  , IEEE32Exec.ofFloat oneThirdFloat ]
+def ieeeTensor : Tensor (ExecFloat.Binary 8 23) [4] :=
+  [ (1 : (ExecFloat.Binary 8 23))
+  , (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32)
+      (Float.ofNat 2)
+  , (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32)
+      decimalTenth
+  , (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32)
+      oneThirdFloat ]
 
 def indexTensor : Tensor Nat [5] := [0, 1, 2, 3, 4]
 
@@ -213,9 +218,11 @@ not reveal every difference introduced by binary32 conversion:
 -- Put the binary32 bits beside rounded decimal text to
 -- expose hidden differences.
 def compareLine (x : Float) : String :=
-  let r := IEEE32Exec.ofFloat x
-  let bits := String.ofList (Nat.toDigits 16 r.toBits.toNat)
-  s!"binary64 {x}  binary32 {r}  bits 0x{bits}"
+  let r := (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32) x
+  let bits := String.ofList
+    (Nat.toDigits 16 (ExecFloat.Binary.toBits32 r).toNat)
+  let decimal := (ExecFloat.Binary.toFloat32 r).toFloat
+  s!"binary64 {x}  binary32 {decimal}  bits 0x{bits}"
 
 #eval do
   IO.println (compareLine (Float.ofNat 1))
@@ -232,9 +239,9 @@ binary64 0.333333  binary32 0.333333  bits 0x3eaaaaab
 Each row uses the same decimal rendering for its binary64 and binary32 values; the final column
 shows the binary32 bits. One is exact in both formats. One tenth is not a binary
 fraction, so neither format holds it exactly, and the two formats do not hold the same
-approximation of it ({Informal.citep goldberg1991}[]). `#tensor_view` on `floatTensor` and on
-`ieeeTensor` will show the same decimals for a reason that has nothing to do with the values being
-equal, which is exactly the case where `#float32_view` further down is the right tool instead.
+approximation of it {Informal.citep goldberg1991}[]. This comparison explicitly converts each
+binary32 result to the native decimal display. The configured tensor's own printer can show its
+exact dyadic value; `#float32_view` further down exposes the encoding and exceptional-value fields.
 
 The coordinate-coded grid is useful because a transposition can preserve both the number of
 entries and their minimum and maximum. A summary might therefore look unchanged while the model
@@ -245,7 +252,7 @@ decimal formatting can preserve the visual pattern while hiding different stored
 
 # IR Graph Viewer
 
-The IR widget family answers the three debugging questions that show up in practice:
+For the next graph, we can inspect three things separately:
 
 1. *Structure*: which nodes, parents, and shapes are present?
 2. *Invariants*: do declared node shapes match what the ops infer from parent shapes?
@@ -439,14 +446,14 @@ Inspect the first error before interpreting later empty rows.
 ```lean
 -- Use explicit bit patterns to contrast a finite value with
 -- a quiet NaN.
-def one32 : IEEE32Exec :=
-  IEEE32Exec.ofBits (0x3f800000 : UInt32)
+def one32 : (ExecFloat.Binary 8 23) :=
+  ExecFloat.Binary.ofBits32 (0x3f800000 : UInt32)
 
-def qnan32 : IEEE32Exec :=
-  IEEE32Exec.ofBits (0x7fc00000 : UInt32)
+def qnan32 : (ExecFloat.Binary 8 23) :=
+  ExecFloat.Binary.ofBits32 (0x7fc00000 : UInt32)
 
 #float32_view one32
-#float32_view (1 : IEEE32Exec)
+#float32_view (1 : (ExecFloat.Binary 8 23))
 #float32_view qnan32
 #float32_compare_view one32, qnan32
 
@@ -455,16 +462,19 @@ def qnan32 : IEEE32Exec :=
 #float32_round_view oneThirdFloat
 ```
 
-The fields the viewer lays out are ordinary projections, so the claim about what it shows can be
-stated as output:
+We can print the same sign, exponent, and fraction fields that the viewer displays:
 
 ```lean (name := wgBits)
 -- Print the sign, exponent, and fraction fields that drive
 -- the bit viewer.
-def bitLine (tag : String) (x : IEEE32Exec) : String :=
-  let s := if x.signBit then 1 else 0
-  s!"{tag}: sign={s} exp={x.expField}" ++
-    s!" frac={x.fracField} nan={x.isNaN}"
+def bitLine (tag : String)
+    (x : (ExecFloat.Binary 8 23)) : String :=
+  let s := if ExecFloat.Binary.signBit x then 1 else 0
+  s!"{tag}: sign={s} exp={Model.expField
+    (ExecFloat.Binary.toModel x)}" ++
+    s!" frac={Model.fracField
+      (ExecFloat.Binary.toModel x)} nan={
+        ExecFloat.Binary.isNaN x}"
 
 #eval do
   IO.println (bitLine "one32 " one32)
@@ -489,22 +499,24 @@ which binary32 pattern is chosen?
 -- Recover the exact dyadic value behind the six-decimal
 -- display.
 #eval do
-  let r := IEEE32Exec.ofFloat decimalTenth
-  IO.println s!"rounded value = {r}"
-  let d := repr (IEEE32Exec.toDyadic? r)
+  let r := (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32)
+    decimalTenth
+  IO.println s!"rounded value = {
+    (ExecFloat.Binary.toFloat32 r).toFloat}"
+  let d := repr
+    ((Model.toDyadic? ∘ ExecFloat.Binary.toModel) r)
   IO.println s!"exact value = {d}"
 ```
 
 ```leanOutput wgRound (whitespace := lax)
 rounded value = 0.100000
-exact value = some { sign := false, mant := 13421773, exp := -27 }
+exact value = some { negative := false, significand := 13421773, exponent := -27 }
 ```
 
-The rounded float is not one tenth, it is $`13421773 \cdot 2^{-27}`, and `toDyadic?` hands back that
-exact rational rather than a decimal rendering of it. This is what makes `IEEE32Exec` usable inside
-proofs: the value is a finite piece of arithmetic data, not a printed approximation. The same idea
-drives Flocq's treatment of IEEE-754 in Rocq ({Informal.citep flocq2011}[],
-{Informal.citep boldo2015}[]).
+The rounded float is $`13421773 \cdot 2^{-27}`. With the significand and exponent returned by
+`toDyadic?`, we can state its exact value in a proof even though the display rounds it to
+`0.100000`. Flocq's treatment of IEEE-754 in Rocq also reasons from exact representations of
+floating-point values {Informal.citep flocq2011}[] {Informal.citep boldo2015}[].
 
 The exact dyadic output also gives a way to reason about conversion error. Once the finite value
 is written as an integer times a power of two, its distance from the intended rational can be
@@ -583,7 +595,7 @@ The input and output both have width two; the constant has width zero. These rep
 endpoints make the translation exact. Over real arithmetic, adding a point preserves interval
 width, while directed floating-point arithmetic may widen endpoints through rounding. In a larger
 graph, inspecting the first unexpected increase helps distinguish rounding from precision lost by
-a bound-propagation rule ({Informal.citep crown2018}[]).
+a bound-propagation rule {Informal.citep crown2018}[].
 
 The state records use flattened boxes of dimension two even though the graph keeps tensor
 shapes separately. Matching the node id, shape, and flattened dimension prevents a convincing plot
@@ -616,14 +628,13 @@ relu x : [[0.000000, 0.000000], [1.000000, 1.000000]]
   width [1.000000, 1.000000]
 ```
 
-$`x - x` is zero for every $`x`, and interval subtraction answers with a width-four box. Nothing
-unsound has happened, since that box does contain zero; the bound is looser than the exact zero
-result,
-because `boxSub` was handed two independent boxes rather than one variable used twice. This is the
-dependency problem of interval arithmetic, and it is the reason plain interval bound propagation
-({Informal.citep gowal2018}[]) runs out of precision on deep networks while CROWN can preserve
-correlations through affine forms
-where its transfer rules support them ({Informal.citep crown2018}[]): an affine expression for $`x
+$`x - x` is zero for every $`x`, but interval subtraction returns a width-four box. The box still
+contains zero. It also contains values obtained by choosing different points from the two input
+intervals, because `boxSub` has no record that both occurrences denote the same variable.
+This dependency loss can make interval bound propagation
+{Informal.citep gowal2018}[] too imprecise for a network's verification property. CROWN can retain
+correlations through affine forms where its transfer rules support them
+{Informal.citep crown2018}[]: an affine expression for $`x
 - x` cancels its
 coefficients before any endpoint is ever computed.
 
@@ -637,7 +648,8 @@ Inspect that operation before choosing a tighter relaxation, input partitioning,
 
 TorchLean's eager autograd engine records a computation graph into a `Tape` and can run
 reverse-mode to accumulate gradients. The widget below shows the recorded tape and the gradients
-produced by scalar backprop (like `loss.backward()` in PyTorch {Informal.citep pytorch2019}[]).
+produced by scalar backprop, corresponding to a call to `loss.backward()` in PyTorch
+{Informal.citep pytorch2019}[].
 
 ```lean
 -- Record ab + b so the shared leaf b must receive two
@@ -708,7 +720,7 @@ feeds both multiplication and addition, so its gradient accumulates two contribu
 from multiplication and $`1` from addition. Dropping the addition's contribution would give the
 plausible but incorrect gradient `2.0`. The reverse traversal combines these contributions using
 `SomeTensor.add`, rather than mutating a leaf's `.grad` field as PyTorch does
-({Informal.citep pytorch2019}[]).
+{Informal.citep pytorch2019}[].
 
 `Tape.backwardScalar` returns a map from node ids to gradients and an `Except` error if a local
 VJP fails, for example because of a shape mismatch. The derivatives of $`ab+b` give a reference
@@ -844,7 +856,7 @@ That differs from the fixture log's final `val_acc` of `0.79`: the two literals 
 independently. When both artifacts describe the same evaluation in a real run, this comparison
 can detect inconsistent metrics or mismatched files.
 
-This widget family pairs particularly well with:
+For logs produced by a training command, see:
 
 - the CSV loader training example,
 - the NPY loader training example,
@@ -875,7 +887,7 @@ reads and renders the artifact.
 
 # RL Boundary And Policy Views
 
-RL widgets are about the part of training that scalar reward curves hide:
+A reward curve leaves out the transitions and actions that produced it. The RL views expose:
 
 - the checked transition boundary for Gymnasium rollouts,
 - GridWorld policies and paths,
@@ -899,7 +911,7 @@ The widget reports that no checks ran rather than presenting emptiness as eviden
 
 # PyTorch Translator Widget
 
-The PyTorch translator widget is an editor aid, not the checked importer:
+The PyTorch translator widget proposes a constructor sketch in the editor:
 
 ```
 -- Ask the editor assistant for a constructor sketch of this
@@ -928,8 +940,8 @@ Work through four changes:
    disagreement; restore the shape before continuing.
 3. Replace `sampleGraph` by `sampleGraphSub` in the rewrite view and inspect the changed operation
    tag rather than comparing raw record syntax.
-4. Compare `IEEE32Exec.posOne` with a quiet NaN. The bit viewer should expose the exponent,
-   fraction, and classification that ordinary decimal printing hides.
+4. Compare `(1 : ExecFloat.Binary 8 23)` with a quiet NaN. The bit viewer should expose the
+   exponent, fraction, and classification that ordinary decimal printing hides.
 
 The file can also be elaborated from a terminal:
 

@@ -24,18 +24,21 @@ ascent on the lowered loss and an IBP/CROWN check of that loss over an input box
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
 
 namespace NN.MLTheory.CROWN.Lyapunov.TwoStage.LossAnalysis
 
-open TorchLean.Floats.IEEE754
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph
 open NN.MLTheory.CROWN.Lyapunov.TwoStage
 
 /-- Executable float32 semantics used by both lowered two-stage pipelines. -/
-abbrev Scalar : Type := IEEE32Exec
+abbrev Scalar : Type := (ExecFloat.Binary 8 23)
 
 /-- Shapes supplied to the lowered scalar loss: parameters followed by one state vector. -/
 abbrev LossInputs (width : Nat) : List Shape := Core.paramShapes width ++ [Core.xShape]

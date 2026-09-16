@@ -333,7 +333,10 @@ def «open» {σ τ : Shape} (trainer : TorchLean.Trainer σ τ)
       "TorchLean.Trainer: CUDA execution currently requires --arithmetic native"
   match trainer.runtime.arithmetic with
   | .native => Internal.openSession (α := Float32) trainer scheduler
-  | .ieee => Internal.openSession (α := TorchLean.Floats.IEEE754.IEEE32Exec) trainer scheduler
+  | .ieee =>
+      Internal.openSession
+        (α := FloatLib.Floats.ExecFloat.Binary (exponentBits := 8) (fractionBits := 23))
+        trainer scheduler
   | .complex =>
       throw <| IO.userError <|
         "TorchLean.Trainer: supervised training supports real arithmetic; " ++

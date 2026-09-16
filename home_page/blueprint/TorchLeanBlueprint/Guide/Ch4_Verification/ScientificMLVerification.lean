@@ -34,9 +34,8 @@ tag := "scientific-ml-verification"
 %%%
 
 Scientific models need guarantees between the points where they are evaluated. A trained PINN
-may look
-accurate on a plot while violating its PDE between sample points. A numerical ODE trajectory may
-look smooth while accumulated error takes it outside the claimed corridor. A spline fit may be
+may look accurate on a plot while violating its PDE between sample points. A numerical ODE
+trajectory may look smooth while accumulated error takes it outside the claimed corridor. A spline fit may be
 excellent at the knots and deviate from the target inside one interval. TorchLean's scientific
 checkers examine finite certificates: proposed corridors, residual intervals, or polynomial pieces
 whose conditions can be recomputed.
@@ -141,8 +140,11 @@ lake exe verify -- spline-cert --regen
 ```
 
 `--arithmetic ieee` additionally requires every rational value to be exactly representable as finite
-binary32 and replays the endpoint equalities with TorchLean's IEEE reference arithmetic, adding one
+binary32 and replays the endpoint equalities with FloatLib's binary32 arithmetic, adding one
 line:
+
+The following transcript predates the FloatLib migration and retains its recorded scalar labels
+and numerical results. Current `.ieee` execution uses FloatLib binary32.
 
 ```terminal +output
 Piecewise polynomial certificate verified.
@@ -152,9 +154,8 @@ IEEE32Exec semantics check verified (exact representability + endpoint equalitie
 `--regen` asks the Julia producer to write a fresh JSON document before Lean checks it. Neither flag
 proves an interior range bound for a polynomial piece.
 
-The ODE tool has no meaningful default differential equation, so invoking it without a certificate
-prints its usage, whose two lines are the two accepted modes (the certificate placeholder is spelled
-out here for readability):
+Without an equation or certificate, the ODE tool prints its two accepted modes (the certificate
+placeholder is spelled out here for readability):
 
 ```terminal
 # With no equation or certificate, the ODE command displays
@@ -172,8 +173,8 @@ Usage:
 ```
 
 The bundled certificate is `NN/Examples/Verification/ODE/sample_ode_cert.json`.
-The two usage lines are the two modes, and the choice between them decides who owns the checker
-settings. In certificate mode the ODE expression, the time segments, the initial interval, the two
+The mode determines where the checker gets its settings. In certificate mode the ODE expression,
+the time segments, the initial interval, the two
 corridor networks, and the search settings all come from the JSON. In inline mode they come from the
 command line, and only then do `--maxDepth`, `--minWidth`, `--slack`, and `--verbose` mean anything.
 Passing one of those alongside `--cert` is rejected rather than ignored:
@@ -250,7 +251,7 @@ ODE.Verify.main : List String → IO Unit
 ```
 
 `eval` is generic in the scalar `α`, so the same
-expression can be evaluated in host `Float` or in `IEEE32Exec`, which is what makes
+expression can be evaluated in host `Float` or in FloatLib binary32, which is what makes
 `--arithmetic=native|ieee` a change of semantics rather than a change of code. It takes an explicit
 `ofFloat` rather than assuming a coercion, because the literals in a certificate arrive as decimal
 `Float` values and someone has to say how they enter the chosen carrier. And it returns
@@ -456,7 +457,7 @@ The executable side is exposed through the
 The core pieces are the expression AST, the interval evaluator, the segment certificate, and the
 final checker result.
 
-The bundled sample is deliberately the smallest nontrivial instance: the corridor is the constant
+The bundled sample lets us check the corridor by hand: it is the constant
 zero function on $`[0,1]`, the right-hand side is the constant `0`, and both the lower and the upper
 corridor network are a single tanh layer with zero weight and zero bias.
 
@@ -532,7 +533,8 @@ plain language:
 
 The backend bridge in
 {src "NN/Proofs/Verification/ODE/EnclosureBackends.lean"}[ODE enclosure backends] explains how
-backend valued trajectories, including FP32 and `IEEE32Exec` views, can be related back to the real
+backend valued trajectories, including FP32 and FloatLib binary32 views, can be related back to
+the real
 statement through explicit interpretation maps.
 
 Lean has a local real enclosure theorem, and the executable checker computes the kinds of corridor
@@ -599,7 +601,8 @@ PINN.DatasetCheck.Options : Type
 ```
 
 `referenceParams` is generic in the scalar type for the same reason `ODE.eval` is: the identical
-demonstration weights have to be available as `Float` for the bundled replay and as `IEEE32Exec`
+demonstration weights have to be available as `Float` for the bundled replay and as FloatLib
+binary32
 when a check wants bit-level semantics. Asking the architecture for its layer dimensions gives the
 `1 -> 16 -> 16 -> 1` network the certificate describes:
 
@@ -866,10 +869,9 @@ The
 [PINN command API](https://github.com/lean-dojo/TorchLean/blob/main/NN/Verification/PINN/CLI.lean)
 are the user-facing pieces for that path.
 
-PINNs are a good stress test because the model is only part of the claim. The PDE residual, the
-domain, the boundary data, and the imported parameters all matter. TorchLean's design makes those
-pieces explicit across its PINN tools. `pinn-cli` explores one- and two-dimensional residual boxes
-with IBP or CROWN-style methods, while `pinn-dataset-check` performs pointwise interval containment
+A PINN claim names the PDE residual, domain, boundary data, and parameters as well as the model
+architecture. TorchLean records these inputs across its PINN tools. `pinn-cli` explores one- and
+two-dimensional residual boxes with IBP or CROWN-style methods, while `pinn-dataset-check` performs pointwise interval containment
 checks and can load an optional PyTorch parameter file. The dataset command is report-only by
 default: it prints `ok` and `bad` counts but exits successfully even when misses are present. Use
 
@@ -939,7 +941,7 @@ to reduce that loss. Each selected path still needs a soundness argument.
 The spline path is concentrated in
 {src "NN/Verification/Splines/PiecewisePolyCert.lean"}[NN.Verification.Splines.PiecewisePolyCert
 API]. It parses `piecewise_poly_v0` JSON, evaluates polynomial pieces by Horner's rule, checks exact
-rational interpolation at adjacent knots, and also has an `IEEE32Exec` exact conversion path.
+rational interpolation at adjacent knots, and also has a FloatLib binary32 exact conversion path.
 
 A piecewise polynomial certificate names intervals $`I_i` and polynomial pieces
 
@@ -970,7 +972,8 @@ checkCertificateRat : PiecewisePolyCertificate → IO Unit
 ```
 
 `evalPolyHorner` asks only for `Zero`, `Add`, and `Mul`, which is what lets the same evaluation run
-over `Rat` for exact checking and over `IEEE32Exec` for the `--arithmetic ieee` pass. The checker
+over `Rat` for exact checking and over FloatLib binary32 for the `--arithmetic ieee` pass. The
+checker
 returns `IO Unit` and throws on the first mismatch. Successful direct evaluation prints nothing;
 a failed endpoint comparison names the piece and the two unequal values. The JSON parser also
 requires at least two knots and exactly one piece per adjacent pair. Those count checks belong

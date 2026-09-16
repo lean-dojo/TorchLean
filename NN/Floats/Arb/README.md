@@ -31,8 +31,10 @@ An Arb response can be used in either of two ways:
 
 For semantics defined entirely in Lean, use:
 
-- `IEEE32Exec`: executable bit level float32 kernel (`NN/Floats/IEEEExec/`).
-- `FP32` / `NF`: proof oriented rounding over `ℝ` (`NN/Floats/FP32/`, `NN/Floats/NeuralFloat/`).
+- FloatLib's configured `ExecFloat.Binary` formats: executable encoded arithmetic, including
+  binary32 (`ExecFloat.Binary 8 23`).
+- `FP32` / `NF`: proof oriented rounding over `ℝ` (`NN/Floats/FP32/` and
+  `FloatLib.Floats.Formats.Flocq.NF`).
 
 ## Installation
 

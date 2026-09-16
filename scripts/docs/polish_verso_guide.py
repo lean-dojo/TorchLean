@@ -542,6 +542,18 @@ main code:is(.math, .bp_math).display > .katex-display {
   padding: 0.25rem 0.5rem;
 }
 
+.docstring .tl-docstring-math {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.docstring .tl-docstring-math > .katex-display {
+  width: max-content;
+  min-width: 100%;
+  padding: 0.25rem 0;
+}
+
 mjx-container[display="true"] {
   box-sizing: border-box;
   contain: inline-size;
@@ -806,6 +818,46 @@ TORCHLEAN_JS_BODY = r"""
   const storageKey = "torchlean-guide-read-v1";
   const script = document.currentScript;
   const rootUrl = new URL(".", script ? script.src : window.location.href);
+
+  function installDocstringMath() {
+    if (!window.marked || !window.katex) return;
+    // Imported declarations use Markdown docstrings, rendered at window.load.
+    // Tokenize math before Markdown consumes TeX escapes or underscores.
+    const rules = [
+      {
+        name: "torchleanDisplayMath",
+        level: "block",
+        pattern: /^\$\$[ \t]*\n([\s\S]+?)\n\$\$[ \t]*(?:\n|$)/,
+        displayMode: true,
+      },
+      {
+        name: "torchleanInlineMath",
+        level: "inline",
+        pattern: /^\$(?!\$)((?:\\.|[^$\\\n])+?)\$(?!\$)/,
+        displayMode: false,
+      },
+    ];
+    window.marked.use({extensions: rules.map((rule) => ({
+      name: rule.name,
+      level: rule.level,
+      start(src) {
+        return rule.displayMode ? src.search(/^\$\$[ \t]*\n/m) : src.indexOf("$");
+      },
+      tokenizer(src) {
+        const match = rule.pattern.exec(src);
+        if (match) return {type: rule.name, raw: match[0], text: match[1]};
+      },
+      renderer(token) {
+        const rendered = window.katex.renderToString(token.text, {
+          throwOnError: false,
+          displayMode: rule.displayMode,
+        });
+        return rule.displayMode
+          ? '<div class="tl-docstring-math">' + rendered + "</div>"
+          : rendered;
+      },
+    }))});
+  }
 
   function normalizedCurrentPage() {
     const here = new URL(window.location.href);
@@ -1146,7 +1198,9 @@ TORCHLEAN_JS_BODY = r"""
 
   function addCopyButtons() {
     document.querySelectorAll("main pre").forEach((pre) => {
-      if (pre.closest(".tl-code-wrap, .tl-lean-example, .tl-terminal") || pre.matches(".lean-output")) return;
+      // Imported docstrings become prose at window.load, after this pass.
+      if (pre.closest(".tl-code-wrap, .tl-lean-example, .tl-terminal")
+          || pre.matches(".lean-output, .docstring")) return;
       const wrap = document.createElement("div");
       wrap.className = "tl-code-wrap";
       pre.parentNode.insertBefore(wrap, pre);
@@ -1274,6 +1328,7 @@ TORCHLEAN_JS_BODY = r"""
   // sentence punctuation into display math before Verso's KaTeX listener runs,
   // so it stays beside the equation instead of becoming a detached text line.
   moveDisplayMathPunctuation();
+  installDocstringMath();
 
   document.addEventListener("DOMContentLoaded", () => {
     mountGuideNav();
@@ -1327,7 +1382,7 @@ def inject_script(root: Path) -> None:
     script_re = re.compile(r'\s*<script defer src="[^"]*torchlean-guide-polish\.js(?:\?v=[^"]*)?"></script>\n?')
     # Verso emits a <base> tag on every generated page. A bare script URL is
     # therefore resolved relative to the guide root, even from nested pages.
-    tag = '    <script defer src="torchlean-guide-polish.js?v=20260911-reading"></script>\n'
+    tag = '    <script defer src="torchlean-guide-polish.js?v=20260916-docstring-math"></script>\n'
     for path in root.rglob("*.html"):
         html = path.read_text()
         if marker in html:

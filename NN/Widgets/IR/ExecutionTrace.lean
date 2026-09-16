@@ -14,7 +14,6 @@ public meta import NN.IR.Pretty -- shake: keep
 public meta import NN.Spec.Core.Tensor.SomeTensor -- shake: keep
 public meta import NN.Widgets.Core.UI -- shake: keep
 public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
-public meta import ProofWidgets.Demos.Macro -- shake: keep
 
 /-!
 # IRExecTrace
@@ -159,9 +158,9 @@ syntax (name := irExecTraceViewCmd1) "#ir_exec_trace_view " term ", " term : com
 syntax (name := irExecTraceViewCmd2) "#ir_exec_trace_view " term ", " term ", " term : command
 
 macro "#ir_exec_trace_view " g:term ", " input:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (irExecTraceHtml $g {} $input))
+  UI.canonicalCommand <$> `(#html (irExecTraceHtml $g {} $input))
 
 macro "#ir_exec_trace_view " g:term ", " payload:term ", " input:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (irExecTraceHtml $g $payload $input))
+  UI.canonicalCommand <$> `(#html (irExecTraceHtml $g $payload $input))
 
 end NN.Widgets

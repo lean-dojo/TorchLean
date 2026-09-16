@@ -23,26 +23,23 @@ tag := "external-tools-and-ffi"
 file := "Crossing-Lean___s-Boundary"
 %%%
 
-PyTorch can capture a model, an interval library can propose a numerical enclosure, and a CUDA
-kernel can compute a tensor. Each returns something that Lean can use, but the guarantee depends
-on how that result enters Lean. Parsing a graph gives access to its nodes; checking those nodes
-can establish a structural property. Receiving a native buffer leaves its contents and lifetime
-under the control of native code.
+A captured PyTorch graph arrives as a document naming operations, edges, and tensor shapes.
+Lean can parse those bytes, check the shapes, and evaluate the graph. None of those steps alone
+establishes that the document describes the intended Python model. We can see the gap by changing
+one activation name: both documents pass the shape checker, but their outputs differ.
 
 There are two main boundaries, and they fail differently:
 
 - a *subprocess* exchanges files, standard output, or JSON with another executable;
 - an *FFI call* invokes a linked native symbol and may exchange opaque memory handles.
 
-A subprocess can hand over copied bytes that become ordinary Lean values after parsing. An FFI
+A subprocess hands over copied bytes that become ordinary Lean values after parsing. An FFI
 may exchange opaque handles to native allocations, where native code can allocate, mutate, alias,
-and free storage outside Lean's type guarantees. We will first follow a JSON document through
-parsing, shape checking, and evaluation, then examine the ownership and effects required when a
-result stays in native memory.
+and free storage outside Lean's type guarantees. For a GPU tensor, the contract must account for
+the allocation's lifetime as well as its shape and contents.
 
-Nearly every experiment in the first half runs on this page. The parser is ordinary Lean code, so a
-document can be built as a string literal, handed to the importer, and its verdict printed while the
-site is being built.
+The JSON examples below build documents as Lean string literals and print the parser's verdict
+during the page build.
 
 # Subprocess Output Validation
 
@@ -124,12 +121,9 @@ Verification parsers therefore check finiteness after conversion, using the vari
 `parseFiniteFloat`, `parseFieldFiniteFloat`, and `expectFiniteFloatArray`, wherever the schema
 promises finite claims.
 
-The output `upper = inf, finite = false` separates two successful conversions from a failed
-semantic requirement. The text parsed as JSON, and the field parsed as a `Float`; neither action
-established finiteness. Checking only the original spelling would miss this example because it
-contains no literal infinity. The relevant check is on the converted value that later arithmetic
-will actually consume. The same principle applies to arrays: a single overflowing coordinate can
-invalidate a finite box even when every other coordinate is ordinary.
+Checking the original spelling for a literal infinity would miss `1e999`. The check must inspect
+the converted value that later arithmetic consumes. For an array, one overflowing coordinate is
+enough to violate a finite-box contract.
 
 ## Duplicate JSON Keys
 
@@ -162,11 +156,8 @@ and `hi` in its accepting message. This lets a reader compare the checked values
 Refusing duplicate keys outright would be another possible policy. Echoing recognized fields
 does not itself detect duplicates or report unknown fields that the schema ignores.
 
-The compressed object is the parser's effective input to subsequent checks. It contains one
-`upper` field with value `9.9`, so a checker over `Json` cannot later prove that the source text
-contained no duplicate keys. Such a policy would need to operate while reading the text or retain
-additional parsing evidence. Printing recognized fields makes the accepted interpretation visible,
-which is useful for review, but it cannot recover information that parsing already discarded.
+A policy that rejects duplicates must operate while reading the text, or retain additional parsing
+evidence. By the time a checker receives this `Json` object, the first occurrence is gone.
 
 ## Input Region Validation
 
@@ -233,10 +224,9 @@ In the last document, the center and radius describe `[0.4, 0.6]`, while the exp
 describe `[0.0, 1.0]`. Rejecting the mixed notation avoids choosing one of two different regions.
 The fourth message was rewrapped to fit this page.
 
-The endpoint output makes the two-coordinate geometry explicit. In the center form, radius `0.1`
-is subtracted from and added to each coordinate independently, producing a box rather than a disk
-around `[0.5, 0.8]`. The parser also checks that the resulting arrays have the declared dimension,
-when supplied, and that their computed endpoints are finite and ordered.
+In the center form, radius `0.1` is subtracted from and added to each coordinate independently.
+The result is a box around `[0.5, 0.8]`. The parser also checks the arrays against the declared
+dimension when one is supplied.
 
 That normalization uses host floating-point arithmetic. Acceptance establishes a well-formed box
 of the resulting endpoint values; it does not by itself prove outward rounding relative to exact
@@ -276,16 +266,14 @@ pytorch_export_check: ok
 The parser's structural theorem is `parseGraph_wellShaped`. The examples below inspect that
 statement and exercise malformed documents directly, independently of these numerical probes.
 
-Each numerical parity line names a particular captured model and deterministic probe. The two
-epsilon models make small normalization constants observable, where a formatter that rounded them
-to zero could change the computation without changing any shape. The generated-source and
-state-dictionary lines exercise different paths from graph parsing. Reading the transcript as a
-set of these specific checks is more informative than treating the final `ok` as a universal
-claim about every PyTorch operation or every possible parameter value.
+The two epsilon models make small normalization constants observable: a formatter that rounded
+them to zero could change the computation without changing any shape. Generated-source and
+state-dictionary checks exercise separate import paths. Each `ok` records the outcome of its
+named probe, with the supplied parameters and deterministic input.
 
 # Graph Exchange Format
 
-Consider a three-node graph with one input of shape `[1,4]`. The second node applies ReLU
+I'll use a three-node graph with one input of shape `[1,4]`. The second node applies ReLU
 elementwise, preserving that shape. The third sums all four entries to a scalar, whose shape is
 `[]`. Parent IDs record that sequence:
 
@@ -359,11 +347,6 @@ returns a tuple of attention output and attention weights. Treating that FX node
 tensor loses the distinction between its components. TorchLean first retains tuple shape metadata,
 then lowers only supported tensor projections. The later Lean checks apply to the resulting
 document, so their scope depends on exactly what the parser and graph validators recognize.
-
-The accepted graph has one external tensor input and one designated output, but it still records
-three values: the input, the activation, and the reduction. `outputs=#[2]` identifies which recorded
-value the caller should return. It is not a claim that node `2` has two elements; its declared
-shape `[]` makes it a scalar.
 
 Parent identifiers and output identifiers serve different purposes. Parent edges establish the
 dependencies needed to evaluate a node. The output list chooses which already-recorded values
@@ -452,16 +435,9 @@ exporters use `Except String Unit` to obtain a readable error. Proofs use a `Pro
 or conclusion. Defining the proposition as the checker's success gives both uses the same
 definition of well-shapedness.
 
-The theorem premise is an equality describing the result of the actual parser call. It rules out
-applying `parseGraph_wellShaped` to a graph that someone assembled independently and merely claims
-came from that document. The conclusion then unfolds to the same executable shape check used by
-other IR consumers. This is a useful bridge between a computed verdict and a proposition, with a
-precisely limited conclusion.
-
-The ReLU/sigmoid pair shows that limitation constructively. The parser accepts two different
-functions with the same interface, and the evaluator produces distinct scalars. Strengthening the
-shape checker cannot decide which activation the Python author intended; that information belongs
-to the translation and its relationship with the source program.
+The theorem requires an equality for the actual parser call, tying its conclusion to the graph
+returned from that document. It cannot choose between our two documents: both describe valid
+functions. Identifying the intended activation belongs to the translation from the source program.
 
 # Import Rejection
 
@@ -550,7 +526,7 @@ parameter references to the tensors in the state dictionary.
 
 # Semantic Guarantees For Imported Graphs
 
-Three propositions are easy to conflate:
+For an imported model, distinguish these three claims:
 
 1. Python produced a document and exited successfully.
 2. Lean parsed the document into a well-shaped supported graph.
@@ -590,9 +566,9 @@ import; a well-shaped convolution node by itself does not contain authenticated 
 
 # Native FFI And Memory Ownership
 
-Everything above worked because a subprocess returns copied bytes that Lean owns after parsing. A
-native symbol can allocate, mutate, alias, or free memory behind an opaque Lean value, and no parser
-stands between the two.
+The parsed graph is ordinary Lean data. A CUDA buffer instead holds an opaque reference to memory
+that native code can allocate, mutate, alias, or free. Parsing cannot establish that such an
+allocation remains live.
 
 The CUDA buffer boundary in
 {src "NN/Runtime/Autograd/Engine/Cuda/Buffer.lean"}[`Buffer.lean`] contains declarations such as:
@@ -600,21 +576,22 @@ The CUDA buffer boundary in
 ```
 -- These declarations expose native ownership operations
 -- without exposing pointer storage.
-@[never_extract, extern "torchlean_cuda_buffer_of_float_array_with_token"]
-opaque ofFloatArrayWithToken (a : @& FloatArray) (token : UInt32) : Buffer
+@[never_extract, extern "torchlean_cuda_buffer_of_float_array_io"]
+opaque ofFloatArrayIO (a : @& FloatArray) : IO Buffer
 
 @[never_extract, extern "torchlean_cuda_buffer_to_float_array_io"]
 opaque toFloatArrayIO (b : @& Buffer) : IO FloatArray
 
 @[never_extract, extern "torchlean_cuda_buffer_release_with_token"]
-opaque releaseWithToken (b : @& Buffer) (token : UInt32) : UInt32
+private opaque releaseWithToken (b : @& Buffer) (token : UInt32) : UInt32
 ```
 
 The annotations control three aspects of the boundary: access to the representation, reference
 ownership, and compiler treatment of calls.
 
-`opaque` with a `Buffer` result means Lean code cannot forge or inspect the internal pointer. The C
-implementation still determines whether allocation, copying, finalization, and release are
+Returning an opaque `Buffer`, including through `IO Buffer`, keeps the native pointer representation
+hidden from Lean callers. The C implementation still determines whether allocation, copying,
+finalization, and release are
 correct. Hiding the representation prevents Lean callers from manipulating the pointer directly;
 it does not verify the native implementation.
 
@@ -623,8 +600,9 @@ counting, and a borrowed parameter is one the callee may inspect during the call
 native code must not consume the borrowed reference. Retaining it beyond the call requires taking
 its own reference, with the matching release later. Getting this wrong produces a
 use-after-free or a leak that no type in the Lean source mentions. Native translation units also
-repeat critical length and geometry checks. The file-to-symbol map is documented on
-`NN.Runtime.Autograd.Engine.Cuda.Trusted`, the module that is the trust boundary.
+repeat critical length and geometry checks. The file-to-symbol map in
+`NN.Runtime.Autograd.Engine.Cuda.Trusted` identifies the native implementations behind these
+declarations.
 
 `never_extract` prevents closed-term extraction and common-subexpression elimination for calls
 to the marked declaration. It does not turn a pure signature into an effect type or establish
@@ -657,26 +635,23 @@ These checks turn malformed runtime values into ordinary Lean errors. They estab
 between the shape metadata and storage size. A buffer of the right length can still contain
 incorrect values, so numerical refinement remains a separate obligation.
 
-`AnyBuffer.validate` returns the accepted buffer again so downstream code can continue with the
-same value after the check. A `[2, 3]` tag requires six native elements, but six elements alone
-do not tell the wrapper whether they were written in row-major order or whether the allocation is
-still live. The length check is one part of the native contract. Layout, lifetime, and arithmetic
-remain separate obligations even when their failures would eventually appear as the same wrong
-prediction.
+`AnyBuffer.validate` returns the accepted buffer for downstream use. A `[2, 3]` tag requires six
+native elements; that count cannot establish their row-major layout or the allocation's lifetime.
+Those parts of the native contract remain necessary even after the size check succeeds.
 
 The integer-width checks precede conversion because Lean natural numbers do not overflow at the
 CUDA ABI's limit. A conversion that silently wrapped a large dimension could turn an apparently
 valid tensor into a much smaller allocation request. Checking each axis as well as the product
 also prevents a zero-sized axis from concealing another unrepresentable dimension.
 
-# IO Tokens And Allocation Effects
+# Allocation Effects In IO
 
-Native allocation also raises a question about how the compiler may reuse a result. Compare two
-declarations for the same upload:
+Native allocation also raises a question about how the compiler may reuse a result. Compare the
+pure primitive with the checked `IO` entry point for the same host upload:
 
 ```lean (name := ffiToken)
--- Compare a pure allocation signature with its effectful
--- upload wrapper.
+-- Compare the pure allocation primitive with the checked
+-- IO upload.
 open Runtime.Autograd.Cuda in
 #check @Buffer.ofFloatArray
 open Runtime.Autograd.Cuda in
@@ -696,38 +671,42 @@ elimination is sound for pure functions. Allocation combined with explicit relea
 treated that way without ownership rules. Two uploads of the
 same host array must produce independently owned buffers, or releasing one invalidates the other.
 
-The current wrapper also makes the call depend on a value read in the surrounding effect sequence:
+The effectful entry point declares the native call itself in `IO`:
 
 ```
--- Make the native allocation depend on the surrounding IO
--- sequence.
-def ofFloatArrayIO (a : @& FloatArray) : IO Buffer := do
-  let t ← IO.monoNanosNow
-  pure <| ofFloatArrayWithToken a (UInt32.ofNat t)
+-- Sequence the native upload and its allocation result in IO.
+@[never_extract, extern "torchlean_cuda_buffer_of_float_array_io"]
+opaque ofFloatArrayIO (a : @& FloatArray) : IO Buffer
 ```
 
-The native function ignores the token numerically. The token introduces a runtime dependency in
-addition to `never_extract`. It is not a unique
-allocation identifier: clock readings may coincide, and conversion to `UInt32` wraps. Correctness
-still depends on the compiler treatment and native ownership discipline. Release has the same issue,
-and `releaseIO` uses a token for the same reason. It is
+`ofFloatArrayIO a` describes an action. Executing it performs the upload at that point in the
+surrounding `IO` sequence. Executing it again with the same host array allocates a separate buffer.
+The allocation effect belongs to this native call, rather than to a pure upload evaluated inside
+`pure`. The borrowed host array remains available to the caller.
+
+Failure is also part of the call's result. When device allocation runs out of memory, the allocator
+releases unused cached blocks and retries. If that retry also runs out of memory, the action throws
+`IO.Error.resourceExhausted`, which the caller can handle through the usual `IO` exception
+mechanism.
+The call has returned no new buffer, and the caller retains its host array and existing device
+buffers. This is the checked upload contract; the `IO` type makes sequencing and failure visible,
+while correct allocation and ownership still depend on the native implementation.
+
+The release wrapper `releaseIO` still uses a token. It is
 called only at an ownership boundary where no alias will be used again; session caches atomically
 remove their published alias before calling it, and the native finalizer stays safe after explicit
 release because the implementation nulls the pointer.
 
-A stale alias after release is a memory-safety bug that the tensor's shape type cannot detect.
-The index in `Tensor α s` constrains rank and dimensions. The native ownership protocol must
-separately ensure that the storage remains alive whenever it is used.
+Both upload entry points copy the same host values, rounding each element to float32. The checked
+`IO` entry point additionally exposes when allocation happens and how allocation failure returns
+to the caller. These effects do not change the tensor's shape or intended contents. They also do
+not establish unique ownership of the returned handle: Lean references to a `Buffer` remain
+copyable.
 
-The two upload signatures therefore differ in how a caller sequences them, not in the tensor
-shape they produce. The `IO` wrapper places the allocation in an effectful program and supplies
-the token dependency used by the native boundary. The token's numerical value is unrelated to any
-element of the uploaded tensor; changing it must not change the intended array contents.
-
-After explicit release, copying a Lean reference does not bring the allocation back. Every alias
-still refers to the same native object whose payload was retired. Session code has to stop
-publishing that object before release, and every consumer has to respect that lifetime. This is
-why an apparently harmless cached handle can matter even when no tensor values are mutated.
+After explicit release, every alias still refers to the native object whose payload was retired.
+Copying a Lean reference does not bring the allocation back. The index in `Tensor α s` constrains
+rank and dimensions, so it cannot detect use of a stale cached handle. Session code must remove
+that handle before release, and consumers must respect the same lifetime.
 
 # Workspaces And Backward
 
@@ -841,12 +820,9 @@ ODE enclosures, and geometry certificates. The external search may use a large i
 while a checker validates only the returned artifact. The schema determines what information
 crosses the boundary; the acceptance theorem determines what can be concluded from it.
 
-Exact rational transport preserves what the external tool said, including a midpoint and radius
-that cannot be represented exactly as machine floats. Soundness still asks whether that interval
-contains the intended mathematical result. A checker can answer a specified part of that question
-only when the artifact contains enough information for its acceptance theorem. A filename ending
-in `certificate` and a successful JSON parse add no such theorem. The useful report identifies
-the checked proposition and the assumptions connecting its inputs to the requested computation.
+For each artifact, the report should identify the proposition the checker established and the
+assumptions connecting its inputs to the requested computation. Exact midpoint-radius data
+preserves the proposed interval; the acceptance theorem must still justify its enclosure claim.
 
 # Evidence For Boundary Contracts
 

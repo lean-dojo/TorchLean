@@ -334,7 +334,7 @@ theorem buildFrom_denoteAllFrom_flatten
                   simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode,
                     NN.IR.Graph.normalizeNodeOutput, hN, hk, hp, hGet]
                   -- `evalAt` performs a final produced-shape check against `n.outShape`.
-                  rw [dif_pos hOut]
+                  rw [dite_eq_left hOut]
                   simp [nodeData, Pure.pure, Except.pure]
                 have hStep :
                     denoteAllState (α := α) inShape st1 x =

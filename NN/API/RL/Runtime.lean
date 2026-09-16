@@ -140,8 +140,27 @@ export Runtime.RL.PPO
    collectRolloutFromCallbacks collectRolloutFromSession collectRolloutFromGymnasium)
 export Runtime.RL.PPO.Rollout (trainingBatch)
 
-/-- Instantiate the standard PPO actor-critic runtime module. -/
-def instantiateActorCritic
+/--
+PPO runtime state together with the actor and critic's buffer-update behavior.
+
+The factory retains an optional callback so each training step can refresh persistent buffers
+before evaluating gradients. The callback uses the same reference replay as `nn.updateBuffers`;
+layers with custom buffer hooks must support that replay contract.
+-/
+structure ActorCritic (α : Type) [TorchLean.Storage α] [Context α]
+    (stateShapes : List Spec.Shape) (stateShape : Spec.Shape) (batch nActions : Nat) where
+  private mk ::
+  private objective : TorchLean.Module.Objective α Unit stateShapes
+    [stateShape, [batch, nActions], [batch], [batch], [batch, 1]]
+  private updateBuffers? : Option (Tensor α stateShape → IO Unit)
+
+/--
+Instantiate the standard PPO actor-critic runtime.
+
+Models with buffer-update hooks retain them. If neither model has a hook, training skips
+the reference replay and its state round-trip.
+-/
+@[no_expose] def instantiateActorCritic
     {stateShape : Spec.Shape} {batch nActions : Nat} {α : Type}
     [TorchLean.Storage α] [Context α]
     [TorchLean.Runtime.FromFloat α]
@@ -149,11 +168,10 @@ def instantiateActorCritic
     (options : Runtime.Autograd.Torch.Config)
     (actor : Runtime.Autograd.Model.Layers.Seq stateShape [batch, nActions])
     (critic : Runtime.Autograd.Model.Layers.Seq stateShape [batch, 1]) :
-    IO (TorchLean.Module.Objective α Unit
+    IO (ActorCritic α
       (Runtime.Autograd.Model.Layers.Seq.stateShapes actor
         ++ Runtime.Autograd.Model.Layers.Seq.stateShapes critic)
-      [stateShape, [batch, nActions], [batch], [batch],
-        [batch, 1]]) :=
+      stateShape batch nActions) := do
   if hBatch : batch = 0 then
     throw <| IO.userError "PPO batch size must be positive"
   else if hActions : nActions = 0 then
@@ -161,41 +179,81 @@ def instantiateActorCritic
   else
     letI : NeZero batch := ⟨hBatch⟩
     letI : NeZero nActions := ⟨hActions⟩
-    TorchLean.Module.instantiate (α := α)
-      (Runtime.RL.PolicyGradient.Autograd.ppoActorCriticObjectiveDef
-        (batch := batch) (nActions := nActions) actor critic)
-      options
+    do
+      let objective ← TorchLean.Module.instantiate (α := α)
+        (Runtime.RL.PolicyGradient.Autograd.ppoActorCriticObjectiveDef
+          (batch := batch) (nActions := nActions) actor critic)
+        options
+      let actorHasBuffers := Runtime.Autograd.Model.Layers.Seq.hasBufferUpdates actor
+      let criticHasBuffers := Runtime.Autograd.Model.Layers.Seq.hasBufferUpdates critic
+      let updateBuffers? : Option (Tensor α stateShape → IO Unit) :=
+        if actorHasBuffers || criticHasBuffers then
+          some fun states => do
+            let combined ← TorchLean.Module.Objective.state objective
+            let parts := combined.split
+            let actorState ←
+              if actorHasBuffers then
+                let updated ← Runtime.Autograd.Model.Layers.Seq.updateBuffers .train actor
+                  (nn.State.Internal.toTensorPack parts.left) states
+                pure <| nn.State.Internal.fromTensorPack updated
+              else
+                pure parts.left
+            let criticState ←
+              if criticHasBuffers then
+                let updated ← Runtime.Autograd.Model.Layers.Seq.updateBuffers .train critic
+                  (nn.State.Internal.toTensorPack parts.right) states
+                pure <| nn.State.Internal.fromTensorPack updated
+              else
+                pure parts.right
+            TorchLean.Module.Objective.setState objective (actorState.append criticState)
+        else
+          none
+      pure ⟨objective, updateBuffers?⟩
 
-/-- Bind a PPO actor-critic update function to the module and optimizer configuration. -/
-def trainingStep {α : Type}
+/--
+Bind a PPO actor-critic update function and preserve its optimizer history across calls.
+
+Each call refreshes model buffers once from the batch and pre-optimizer parameters, then performs
+the optimizer step. This includes every repeated PPO epoch over the same rollout batch.
+-/
+@[no_expose] def trainingStep {α : Type}
     [TorchLean.Storage α] [Context α] [TorchLean.Runtime.FromFloat α]
-    {paramShapes : List Spec.Shape} {obsShape : Spec.Shape} {batch nActions : Nat}
-    (m : TorchLean.Module.Objective α Unit paramShapes
-      [Runtime.RL.PPO.StateBatchShape batch obsShape,
-       Runtime.RL.PPO.LogitsBatchShape batch nActions,
-       Runtime.RL.PPO.ScalarBatchShape batch,
-       Runtime.RL.PPO.ScalarBatchShape batch,
-       Runtime.RL.PPO.ValueBatchShape batch])
+    {stateShapes : List Spec.Shape} {obsShape : Spec.Shape} {batch nActions : Nat}
+    (m : ActorCritic α stateShapes
+      (Runtime.RL.PPO.StateBatchShape batch obsShape) batch nActions)
     (config : TorchLean.optim.Optimizer) :
     IO (Runtime.RL.PPO.TrainingBatch α obsShape nActions batch → IO Unit) := do
-  let step ← TorchLean.Module.Internal.packStep m config
-  pure fun trainingBatch =>
+  let step ← TorchLean.Module.Internal.packStep m.objective config
+  pure fun trainingBatch => do
+    if let some updateBuffers := m.updateBuffers? then
+      updateBuffers trainingBatch.states
     step <| TorchLean.Arguments.Internal.fromTensorPack
       (Runtime.RL.PPO.TrainingBatch.Internal.arguments trainingBatch)
 
-/-- Read the concatenated actor-critic state from a PPO runtime module. -/
-def state {α : Type} [TorchLean.Storage α] [Context α]
-    {stateShapes inputShapes : List Spec.Shape}
-    (m : TorchLean.Module.Objective α Unit stateShapes inputShapes) :
+/-- Read concatenated actor-critic state without refreshing buffers. -/
+@[no_expose] def state {α : Type} [TorchLean.Storage α] [Context α]
+    {stateShapes : List Spec.Shape} {stateShape : Spec.Shape} {batch nActions : Nat}
+    (m : ActorCritic α stateShapes stateShape batch nActions) :
     IO (nn.State α stateShapes) :=
-  TorchLean.Module.Objective.state m
+  TorchLean.Module.Objective.state m.objective
 
-/-- Actor and critic parameter states with their roles recorded in the type. -/
+/--
+Restore actor and critic parameters and persistent buffers.
+
+An already-bound `trainingStep` keeps its optimizer history; this restores model state only.
+-/
+@[no_expose] def setState {α : Type} [TorchLean.Storage α] [Context α]
+    {stateShapes : List Spec.Shape} {stateShape : Spec.Shape} {batch nActions : Nat}
+    (m : ActorCritic α stateShapes stateShape batch nActions)
+    (newState : nn.State α stateShapes) : IO Unit :=
+  TorchLean.Module.Objective.setState m.objective newState
+
+/-- Actor and critic states, including parameters and persistent buffers. -/
 structure ActorCriticState (α : Type) [TorchLean.Storage α]
     (actorShapes criticShapes : List Spec.Shape) where
-  /-- Parameters consumed by the actor graph. -/
+  /-- Parameters and persistent buffers consumed by the actor graph. -/
   actor : nn.State α actorShapes
-  /-- Parameters consumed by the critic graph. -/
+  /-- Parameters and persistent buffers consumed by the critic graph. -/
   critic : nn.State α criticShapes
 
 /-- Split concatenated actor-critic state into its actor and critic components. -/

@@ -154,9 +154,27 @@ def mseLossSpec {batch inDim : Nat}
   Tensor α .scalar :=
   let predictions := linearRegressionBatchedForwardSpec model input
   let errors := subSpec predictions target
-  let squaredErrors := squareSpec errors
-  let mse := reduceSum 0 squaredErrors (Shape.hasNonemptyAxisZeroOfNe h).proof
-  scaleSpec mse (1 / (batch : α))
+  let leadingAxis := (Shape.hasNonemptyAxisZeroOfNe h).proof
+  let squaredSum := reduceSum 0 (squareSpec errors) leadingAxis
+  let total := item squaredSum
+  if total - total == 0 then
+    -- Keep the ordinary square-and-mean arithmetic whenever its sum is finite. In
+    -- particular, small residuals retain their subnormal losses and Dual tangents.
+    scaleSpec squaredSum (1 / (batch : α))
+  else
+    let finiteErrors := (List.finRange batch).all fun i =>
+      let error := Tensor.getScalar errors i
+      error - error == 0
+    if finiteErrors then
+      -- Finite residuals can overflow the unnormalized squared sum while their mean is
+      -- representable. Divide one factor by the batch size before multiplication: each
+      -- nonnegative contribution is then bounded by the exact mean. The divisor is a
+      -- constant, so differentiation never passes through a data-dependent scale.
+      reduceSum 0 (mapSpec (fun error => error * (error / (batch : α))) errors) leadingAxis
+    else
+      -- A nonfinite residual belongs to the original loss, rather than to an overflowing
+      -- reduction. Preserve that result, including NaN when it occurs alongside infinity.
+      scaleSpec squaredSum (1 / (batch : α))
 
 /-- Gradient of MSE w.r.t. predictions: `d/dy (mean (y - t)^2) = (2/batch) * (y - t)`.
 
@@ -225,22 +243,14 @@ def rSquaredSpec {batch inDim : Nat}
   let ss_tot := reduceSum 0 (squareSpec (subSpec target targetMeanBroadcast)) leadingAxis.proof
   subSpec (Tensor.scalar 1) (divSpec ss_res ss_tot)
 
-/-- Ridge regression forward pass.
+/-- Ridge loss: MSE plus `lambda * ||w||_2^2`.
 
-Regularization changes the *objective*, not the raw prediction function, so the forward pass is
-identical to ordinary linear regression.
+Regularization changes the training objective. For fixed parameters, predictions use
+`linearRegressionForwardSpec` and do not take a regularization coefficient.
 
 Reference: Hoerl and Kennard, "Ridge Regression: Biased Estimation for Nonorthogonal Problems"
 (1970). https://doi.org/10.1080/00401706.1970.10488634
 -/
-def ridgeRegressionForwardSpec {inDim : Nat}
-  (model : LinearRegressionSpec α inDim)
-  (input : Tensor α [inDim])
-  (_lambda : α) :
-  Tensor α .scalar :=
-  linearRegressionForwardSpec model input
-
-/-- Ridge loss: MSE plus `lambda * ||w||_2^2`. -/
 def ridgeLossSpec {batch inDim : Nat}
   (model : LinearRegressionSpec α inDim)
   (input : Tensor α [batch, inDim])
@@ -283,15 +293,11 @@ def lassoSoftThresholdSpec {inDim : Nat}
     else if (-threshold) > w then w + threshold
     else 0) weights
 
-/-- Lasso forward pass (same raw prediction function as ordinary linear regression). -/
-def lassoRegressionForwardSpec {inDim : Nat}
-  (model : LinearRegressionSpec α inDim)
-  (input : Tensor α [inDim])
-  (_lambda : α) :
-  Tensor α .scalar :=
-  linearRegressionForwardSpec model input
+/-- Lasso loss: MSE plus `lambda * ||w||_1`.
 
-/-- Lasso loss: MSE plus `lambda * ||w||_1`. -/
+Regularization changes the training objective. For fixed parameters, predictions use
+`linearRegressionForwardSpec` and do not take a regularization coefficient.
+-/
 def lassoLossSpec {batch inDim : Nat}
   (model : LinearRegressionSpec α inDim)
   (input : Tensor α [batch, inDim])
@@ -332,19 +338,25 @@ then reuse `linearRegressionForwardSpec` on the expanded input.
 /-- Expand a length-`inDim` input vector into polynomial features up to `degree`.
 
 This expansion does not include a constant feature (the model bias already plays that role).
+Features are ordered by degree, with all input coordinates at power one followed by all at
+power two, and so on. Degree zero or an empty input gives an empty output.
 -/
 def polynomialFeaturesSpec {inDim : Nat} (degree : Nat)
   (input : Tensor α [inDim]) :
   Tensor α [inDim * degree] :=
-  Tensor.dim fun i =>
+  -- Reuse each power vector across its coordinates, advancing it once per degree.
+  -- Multiplication preserves polynomial derivatives at zero and negative inputs,
+  -- including all coefficients of nested Dual scalars.
+  (Sequence.mapAccum (inDim * degree) input fun i powers =>
     have hProduct : 0 < inDim * degree := lt_of_le_of_lt (Nat.zero_le i.val) i.isLt
     have hInDimNe : inDim ≠ 0 := by
       intro h
       simp [h] at hProduct
     have hInDim : 0 < inDim := Nat.pos_of_ne_zero hInDimNe
     let coordinate : Fin inDim := ⟨i.val % inDim, Nat.mod_lt _ hInDim⟩
-    let power := i.val / inDim + 1
-    Tensor.scalar (Tensor.getScalar input coordinate ^ (power : α))
+    let powers :=
+      if i.val ≠ 0 ∧ coordinate.val = 0 then mulSpec powers input else powers
+    (powers, Tensor.getScalar powers coordinate)).2
 
 /-- Forward pass for polynomial regression: expand features, then run linear regression. -/
 def polynomialRegressionForwardSpec {inDim degree : Nat}

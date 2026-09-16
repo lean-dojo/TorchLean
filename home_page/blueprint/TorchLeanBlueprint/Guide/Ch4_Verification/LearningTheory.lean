@@ -1,4 +1,5 @@
 import VersoManual
+import FloatLib
 import NN.MLTheory.LearningTheory.DifferentialPrivacy
 import NN.MLTheory.LearningTheory.Robustness
 import NN.MLTheory.LearningTheory.Stability
@@ -11,6 +12,7 @@ import TorchLeanBlueprint.Roles
 
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
+open FloatLib.Floats (ExecFloat)
 
 -- Learning theory is the most scattered layer in the repository: privacy lives under
 -- `NN.MLTheory.LearningTheory`, the robustness vocabulary under `NN.MLTheory.Robustness`, the
@@ -44,16 +46,11 @@ regression model. To turn those computations into guarantees, we need to specify
 quantified: all neighboring datasets for privacy, all allowed perturbations for robustness, or
 all replacement examples for algorithmic stability.
 
-TorchLean names those predicates and makes them usable beside models, runtimes, and verification
-artifacts. No single certificate checker covers all of learning theory. The recurring pattern is:
-
-- state a mathematical predicate such as privacy, robustness, or stability;
-- compute a runtime diagnostic or artifact when that evidence matters;
-- add a bridge theorem when an artifact is used to support a formal claim.
-
-This chapter applies that pattern to five kinds of claim. Named Lean blocks are checked during
-the page build; Python and CLI transcripts are separate experiments. Each section identifies the
-available theorem and the further premises or results needed to apply it.
+TorchLean defines these predicates alongside executable diagnostics. To use a diagnostic as
+evidence for a theorem, we need to show how its result addresses the theorem's quantifiers.
+A failed attack, for example, leaves open what happens at perturbations the attack never tried.
+Named Lean blocks below are checked during the page build; Python and CLI transcripts record
+separate experiments.
 
 # Learning Theory Claims
 
@@ -70,7 +67,7 @@ The learning theory material is organized around five concrete objects:
 - *Dynamical stability*: trajectories stay bounded or converge under stated hypotheses; Lean names
   Lyapunov, ISS, BIBO, incremental, practical, and finite time predicates.
 - *Ridge regression case study*: a one-dimensional strongly regularized ERM theorem, with a real
-  stability theorem plus an `IEEE32Exec` execution bridge.
+  stability theorem plus a FloatLib binary32 execution bridge.
 
 These objects do not share one proof method. Differential privacy is an inequality between
 measures. Robustness quantifies over a neighborhood of an input. Algorithmic stability compares
@@ -964,14 +961,17 @@ not yet the uniform stability predicate displayed above.
 
 For ridge regression the ideal theorem lives over $`\mathbb R`, while the executable development is
 in {src "NN/MLTheory/LearningTheory/Stability/RidgeRegression1D/IEEE32Exec.lean"}[
-RidgeRegression1D/IEEE32Exec], which implements the algorithm with TorchLean's executable binary32
-model. The bundled example dataset is $`x=(1,3)`, $`y=(2,4)`, with $`\lambda=1` and $`N=2`:
+the binary32 ridge-regression implementation], which evaluates the algorithm with FloatLib. The
+bundled example dataset is $`x=(1,3)`, $`y=(2,4)`, with $`\lambda=1` and $`N=2`:
 
 ```lean (name := ridgeExec)
 -- Display both the decimal rendering and the binary32
 -- representation of the fit.
-#eval IEEE32Exec.ExampleDataset.wHat.toFloat
-#eval IEEE32Exec.ExampleDataset.wHat.bits
+#eval
+  (ExecFloat.Binary.toFloat32
+    IEEE32Exec.ExampleDataset.wHat).toFloat
+#eval ExecFloat.Binary.toBits32
+  IEEE32Exec.ExampleDataset.wHat
 ```
 
 ```leanOutput ridgeExec
@@ -1015,14 +1015,16 @@ open IEEE32Exec.RidgeIEEEBridge in
 ```
 
 ```leanOutput ridgeBridge (whitespace := lax)
-@ridgeFit1D_execExpr_toReal_eq_fp32Spec_of_finiteEval :
-  ∀ {n : ℕ} (lam : Floats.IEEE754.IEEE32Exec)
-  (S : Dataset (n + 1) IEEE32Exec.ExampleIEEE32)
-  {d : Floats.IEEE754.IEEE32Exec.Dyadic},
-  Floats.IEEE754.IEEE32Exec.FiniteEval (fun x => 0)
-      (ridgeExpr lam S) d →
-    (ridgeFit1DExecExpr lam S).toReal =
-      ridgeFit1DFp32Spec lam S
+@ridgeFit1D_execExpr_toReal_eq_fp32Spec_of_finiteEval : ∀ {n : ℕ}
+  (lam :
+    ExecFloat.Binary 8 23 FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.Encoding.ieee
+      (FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.Encoding.ieee.defaultBias 8)
+      IEEE32Exec.ExampleIEEE32._proof_1 IEEE32Exec.ExampleIEEE32._proof_2
+        IEEE32Exec.ExampleIEEE32._proof_3
+      IEEE32Exec.ExampleIEEE32._proof_4)
+  (S : Dataset (n + 1) IEEE32Exec.ExampleIEEE32) {d : FloatLib.Numerics.Dyadic},
+  Floats.IEEE754.IEEE32Exec.FiniteEval (fun x => 0) (ridgeExpr lam S) d →
+    (ExecFloat.Binary.toModel (ridgeFit1DExecExpr lam S)).toReal = ridgeFit1DFp32Spec lam S
 ```
 
 This theorem concerns `ridgeFit1DExecExpr`, whose expression tree has its own association. The
@@ -1168,12 +1170,12 @@ For robustness the split is `Robustness.Spec` versus `Robustness.Runtime`, and t
 them live in a third place, `NN.MLTheory.Proofs.Verification.Robustness`. For dynamical stability it
 is `Stability.Dynamics.Spec` versus `Stability.Dynamics.Runtime`, with the joining theorems still
 missing. For ridge regression, `RidgeRegression1D.Real` proves ideal stability, while
-`RidgeRegression1D.IEEE32Exec` connects one executable expression to an FP32 expression.
+the ridge-regression bridge connects one executable binary32 expression to an FP32 expression.
 That finite-evaluation bridge does not yet transfer the real stability bound.
 
-The numerics philosophy is the one used throughout TorchLean. A theorem over the reals is not
-automatically a float theorem. We prove the clean mathematical result first, then separately say
-what finite-precision execution means and which hypotheses connect the two.
+A theorem over the reals does not automatically apply to a floating-point computation.
+For ridge regression, the real stability bound and the finite-evaluation bridge leave a specific
+obligation: bound the numerical error in each of the two fits whose losses we compare.
 
 # Learning Theory Assumptions And Evidence
 
@@ -1183,7 +1185,7 @@ A learning-theory claim has four visible fields:
 object       : mechanism, classifier, algorithm, dataset, trajectory, or estimator
 property     : privacy, robustness, stability, convergence, or bounded residual
 evidence     : theorem, checker, runtime diagnostic, or imported artifact
-boundary     : real semantics, FP32/IEEE32Exec bridge, or external producer assumption
+boundary     : real semantics, finite binary32 refinement, or external producer assumption
 ```
 
 These four fields separate a theorem from nearby runtime evidence. In particular:
@@ -1198,8 +1200,8 @@ These four fields separate a theorem from nearby runtime evidence. In particular
 - If a dynamical system stayed bounded in simulation, the formal statement is a BIBO, ISS,
   Lyapunov, or related stability predicate, and the diagnostic's thresholds are part of what it
   reported.
-- If the theorem is over the reals but the code uses float32, the missing link is an
-  `IEEE32Exec`/FP32 bridge with explicit finite-path hypotheses.
+- If the theorem is over the reals but the code uses float32, the missing link is a
+  FloatLib binary32/FP32 bridge with explicit finite-path hypotheses.
 
 These distinctions help decide what evidence to collect for a model. A robustness application
 needs a bound on output change and a margin at the particular input. A learning-stability

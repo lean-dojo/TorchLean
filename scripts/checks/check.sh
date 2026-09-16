@@ -20,6 +20,7 @@ Options:
   --ci-all              Also build NN.CI.All, the broad developer/CI import umbrella.
   --cuda                Build and test with real CUDA externs (-R -K cuda=true).
   --cuda-home PATH      CUDA toolkit root; implies --cuda.
+  --cuda-arch ARCH      CUDA target (default: all-major); implies --cuda.
   --no-build            Skip lake build.
   --no-test             Skip lake test.
   --no-lint             Skip lake lint.
@@ -32,6 +33,7 @@ Examples:
   scripts/checks/check.sh
   scripts/checks/check.sh --ci-all
   scripts/checks/check.sh --cuda --cuda-home /usr/local/cuda
+  scripts/checks/check.sh --cuda-arch sm_80
   LAKE=~/.elan/bin/lake scripts/checks/check.sh --ci-all
 EOF
 }
@@ -42,6 +44,7 @@ run_lint=true
 run_ci_all=false
 cuda=false
 cuda_home=""
+cuda_arch=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -60,6 +63,15 @@ while [[ $# -gt 0 ]]; do
       fi
       cuda=true
       cuda_home="$2"
+      shift 2
+      ;;
+    --cuda-arch)
+      if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
+        echo "error: --cuda-arch requires a target such as all-major or sm_80" >&2
+        exit 2
+      fi
+      cuda=true
+      cuda_arch="$2"
       shift 2
       ;;
     --no-build)
@@ -90,12 +102,15 @@ cd "$repo_root"
 lake_flags=()
 
 # CUDA builds need both Lake's reconfiguration flag (`-R`) and the TorchLean package
-# option selecting native CUDA externs. `--cuda-home` is passed separately so
-# local toolkits do not need to live in a global default location.
+# option selecting native CUDA externs. Keep toolkit and architecture options
+# together for every invocation; Lake validates the target and tracks the compiler.
 if [[ "$cuda" == true ]]; then
   lake_flags+=("-R" "-K" "cuda=true")
   if [[ -n "$cuda_home" ]]; then
     lake_flags+=("-K" "cuda_home=$cuda_home")
+  fi
+  if [[ -n "$cuda_arch" ]]; then
+    lake_flags+=("-K" "cuda_arch=$cuda_arch")
   fi
 fi
 

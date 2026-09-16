@@ -14,8 +14,8 @@ public import Mathlib.Analysis.SpecialFunctions.Pow.Real
 
 Spec-only scalar conventions.
 
-The spec layer fixes its scalar to `ℝ` for mathematical reasoning. Runtime scalars
-remain `Float`/`NeuralFloat` and are handled separately.
+These aliases fix their scalar to `ℝ` for mathematical reasoning. Typed tensors and model execution
+also support native `Float`/`Float32` and FloatLib configured binary scalars through `Context`.
 
 Because `SpecScalar` is `ℝ`, this is the module that brings in the real dictionary
 (`NN.Spec.Core.Context.Real`) and with it the real-analysis hierarchy. Anything that only needs
@@ -24,7 +24,8 @@ Because `SpecScalar` is `ℝ`, this is the module that brings in the real dictio
 References / context:
 - TorchLean paper (overall scalar-polymorphic architecture and trust boundary discussion):
   arXiv:2602.22631.
-- IEEE 754-2019 is the reference point for the executable Float32 model (`IEEE32Exec`) used in the
+- IEEE 754-2019 is the reference point for the executable Float32 model (`ExecFloat.Binary 8 23`)
+used in the
   runtime/numerics layers (not this file).
 -/
 

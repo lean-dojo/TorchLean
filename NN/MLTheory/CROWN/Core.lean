@@ -100,7 +100,8 @@ def contains : ∀ {s : Shape}, Box α s → Tensor α s → Prop
 /-!
 `containsBool` above is a minimal `Context`-only checker that avoids requiring decidable `≤`.
 
-For backends that *do* provide decidable `≤` (e.g. `ℝ`, `Float`, `IEEE32Exec`), we also expose a
+For backends that *do* provide decidable `≤` (e.g. `ℝ`, `Float`, `ExecFloat.Binary 8 23`), we also
+expose a
 checker that uses `≤` directly. We implement it by structural recursion (rather than
 `decide (Box.contains ...)`) so it remains executable.
 -/

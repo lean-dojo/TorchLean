@@ -28,7 +28,8 @@ namespace Memory
 /-- State carried by the CUDA-memory drift detector used by sustained training runs. -/
 structure State where
   firstStep : Nat
-  firstFreeBytes : Nat
+  /-- Driver-free bytes plus reclaimable cached bytes at the first sample. -/
+  firstAvailableBytes : Nat
   warned : Bool
 deriving Repr
 
@@ -43,35 +44,37 @@ def cadence (options : Runtime.Autograd.Torch.Config)
     0
 
 /--
-Sample the CUDA allocator and warn when sustained free-memory loss projects exhaustion before the
-requested run completes.
+Sample the CUDA allocator and warn when sustained loss of usable memory projects exhaustion before
+the requested run completes. Unused tensor buffers and kernel workspaces are reclaimable, so cache
+growth alone should not look like a loss of memory available for later allocations.
 -/
 def sample (options : Runtime.Autograd.Torch.Config)
     (watchEvery totalSteps done : Nat) (state? : Option State) : IO (Option State) := do
   if !options.usesCuda || watchEvery = 0 || (done != 0 && done % watchEvery != 0) then
     pure state?
   else
-    let stats ← Runtime.Autograd.Cuda.Buffer.allocatorStatsWithToken (UInt32.ofNat done)
+    let stats ← Runtime.Autograd.Cuda.Buffer.allocatorStats
     IO.println s!"  cuda_mem step={done}: {stats.format}"
-    let freeNow := stats.deviceFreeBytes.toNat
+    let availableNow := stats.deviceFreeBytes.toNat + stats.cacheBytes.toNat
     match state? with
     | none =>
-        pure (some { firstStep := done, firstFreeBytes := freeNow, warned := false })
+        pure (some { firstStep := done, firstAvailableBytes := availableNow, warned := false })
     | some st =>
-        if st.warned || done <= st.firstStep || st.firstFreeBytes <= freeNow then
+        if st.warned || done <= st.firstStep || st.firstAvailableBytes <= availableNow then
           pure (some st)
         else
           let span := done - st.firstStep
-          let drop := st.firstFreeBytes - freeNow
+          let drop := st.firstAvailableBytes - availableNow
           let dropPerStep := drop / Nat.max 1 span
           if dropPerStep = 0 then
             pure (some st)
           else
-            let projectedFailure := done + freeNow / dropPerStep
+            let projectedFailure := done + availableNow / dropPerStep
             if projectedFailure < totalSteps then
               IO.println <|
-                s!"  cuda_mem warning: free device memory is dropping by ~{dropPerStep} " ++
-                  s!"bytes/step; projected allocation failure before requested step count " ++
+                "  cuda_mem warning: driver-free plus reclaimable cached memory " ++
+                  s!"is dropping by ~{dropPerStep} bytes/step; projected exhaustion " ++
+                  "before requested step count " ++
                   s!"(around step {projectedFailure})."
               pure (some { st with warned := true })
             else

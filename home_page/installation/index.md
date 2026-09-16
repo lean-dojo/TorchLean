@@ -9,7 +9,8 @@ redirect_from:
 
 If you want to try TorchLean on a laptop, start with the CPU build. It does not require PyTorch,
 CUDA, or a GPU. The repository pins its Lean version in `lean-toolchain`, so Elan will select the
-right compiler for you.
+right compiler for you: Lean 4.34.0. Mathlib uses the matching release, and `lakefile.lean` pins
+FloatLib to commit `40301cd44f253a4ac6ccd34a0eb6c221e185e25c`.
 
 ## A Five-Minute CPU Install
 
@@ -77,6 +78,13 @@ sudo apt install -y git curl build-essential
 Then follow the five-minute install above. The default build uses the portable CPU runtime. It also
 builds harmless CUDA stub archives so that CPU-only machines can compile the complete Lean project;
 the stubs do not pretend that a GPU is present.
+
+Linux native targets also build a private mimalloc 3.4.4 object from checksum-pinned source.
+Position-independent code and initial-exec thread-local storage let it link into executables and
+shared libraries. It includes a narrow arena-purge wakeup repair; the installed Lean compiler and
+`#eval` keep their existing allocator. The
+[native allocation boundary](https://github.com/lean-dojo/TorchLean/blob/main/docs/TRUST_BOUNDARIES.md#native-host-allocation)
+describes the repair and its remaining assumptions.
 
 ### NVIDIA CUDA
 
@@ -213,18 +221,31 @@ import NN.API
 open TorchLean
 ```
 
-The numerical library has a smaller independent import:
+Scalar arithmetic and numerical proofs come from the separate
+[FloatLib package](https://github.com/lean-dojo/FloatLib), included as a pinned dependency:
 
 ```lean
-import NN.Floats
-open TorchLean.Floats
+import FloatLib
+open FloatLib.Floats
+
+abbrev Binary128 :=
+  ExecFloat.Binary (exponentBits := 15) (fractionBits := 112)
+
+def reading : Binary128 := 1.5
+def scaled : Binary128 := reading * 2.25
 ```
 
-It includes formats, rounding, finite binary32 semantics, executable IEEE binary32 operations,
-interval rounders, and scalar quantization. It does not load the tensor, model, autograd, CUDA,
-certificate, or external-tool layers. Use `NN.Spec.Quantization` when tensor quantization is needed,
-and `NN.Proofs.RuntimeApprox.FP32` when connecting binary32 arithmetic to runtime-approximation
-proofs.
+Here the type chooses 113 bits of significand precision in a 128-bit IEEE layout. Literals are
+rounded from exact rationals directly into the selected format. Wider software formats use the
+same public arithmetic interface; selecting one does not add arbitrary-precision hardware support
+to CUDA or cuBLAS.
+
+`import FloatLib` supplies configured numerical types, reference semantics, refinement theorems,
+and intervals without importing TorchLean's model or runtime layers. Binary elementary functions
+have a separate import,
+`FloatLib.Floats.Formats.BinaryInterchange.Configured.Transcendentals`; they are deterministic
+approximations and need their own accuracy claims. Tensor quantization and graph-level numerical
+proofs remain TorchLean integrations.
 
 For development against a neighboring checkout, use a path dependency:
 

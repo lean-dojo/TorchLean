@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec
-public import NN.Floats.IEEEExec
+public import FloatLib.Floats.Formats.BinaryInterchange
 public import NN.MLTheory.CROWN.Lyapunov.TwoStage.Core
 
 /-!
@@ -26,18 +26,20 @@ scalar semantics. The abstract CROWN theory does not depend on it.
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
 
 namespace NN.MLTheory.CROWN.Lyapunov.TwoStage.Execution
 
-open TorchLean.Floats.IEEE754
 open NN.MLTheory.CROWN.Lyapunov.TwoStage.Core
 
-local notation "Scalar" => IEEE32Exec
+local notation "Scalar" => (ExecFloat.Binary 8 23)
 
-/-- Coerce a natural number into `IEEE32Exec`. -/
+/-- Coerce a natural number into `ExecFloat.Binary 8 23`. -/
 def nat (k : Nat) : Scalar := ((k : Nat) : Scalar)
 
 /-- Default learning rate used by the TwoStage workflows (`0.05`). -/

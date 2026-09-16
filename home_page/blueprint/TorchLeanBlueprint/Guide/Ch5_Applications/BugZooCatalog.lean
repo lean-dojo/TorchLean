@@ -1,4 +1,5 @@
 import VersoManual
+import FloatLib.Floats.Formats.IEEE754
 import NN.API
 import NN.Examples.BugZoo.ShapeAndBroadcast
 import NN.Examples.BugZoo.StableLoss
@@ -38,7 +39,7 @@ each intended behavior.
 The {srcDir "NN/Examples/BugZoo"}[BugZoo directory] focuses on the TorchLean fragment itself: once a
 computation enters a typed TorchLean spec, shape changes, masks, token bounds, finite precision
 choices, stateful normalization parameters, and backend semantics become named objects that can be
-checked. The failure families are not invented for the occasion. Compiler fuzzing found silent
+checked. These failure families have been studied empirically. Compiler fuzzing found silent
 wrong-code bugs across TVM, TensorRT, ONNXRuntime, and PyTorch
 {Informal.citep nnsmith2023}[], coverage-guided fuzzing found rare numerical failures in trained
 models {Informal.citep tensorfuzz2019}[], and attention masking has its own long tail of polarity
@@ -50,10 +51,11 @@ hypotheses under which it holds.
 
 The examples below pair TorchLean reference computations with captured PyTorch runs
 {Informal.citep pytorch2019}[]. The `leanOutput` blocks record elaborator output; the PyTorch
-transcripts were captured with torch 2.13.0 on the machine that produced the manual. Their version
-and device matter when comparing numerical residuals or framework behavior.
+transcripts were captured before the FloatLib migration with torch 2.13.0 on the machine that
+produced the manual. Their version and device matter when comparing numerical residuals or
+framework behavior. These historical captures do not validate the migrated TorchLean executable.
 
-The small inputs serve different purposes. Repeated attention scores make the mask the only
+I choose small inputs that let us isolate a cause. Repeated attention scores make the mask the only
 reason rows differ; a one-feature normalization axis makes its centered activation exactly zero;
 a camera with rational coordinates makes projection arithmetic inspectable by hand. Choosing such
 inputs removes competing explanations for a surprising result. The companion general statements
@@ -124,7 +126,7 @@ $$`\text{bug pattern}
 \;\leadsto\;
 \text{checked claim}`
 
-Some representative contract shapes:
+The condition depends on the operation:
 
 :::table +header
 *
@@ -144,7 +146,7 @@ Some representative contract shapes:
   * appended key and value appear at the final slot
 *
   * Float boundary
-  * core arithmetic agrees with Lean's logical model after NaN canonicalization
+  * native import/export, finite-input add/sub, and total square-root export agree with FloatLib
 *
   * Compiler boundary
   * target output equals source output
@@ -281,7 +283,7 @@ of that operation agree. Neither chooses the modeling intention on the author's 
 ## Stable Loss
 
 {src "NN/Examples/BugZoo/StableLoss.lean"}[NN.Examples.BugZoo.StableLoss source] is about losses
-that look mathematically harmless but fail numerically. The classic sketch is `softmax` followed by
+that look mathematically harmless but fail numerically. One example is `softmax` followed by
 `log`: if a probability rounds to zero, the log path can produce infinities and downstream NaNs.
 TorchLean keeps two APIs separate. Logits should use `crossEntropyLogitsSpec`, which unfolds through
 the log-softmax; probability inputs use the clipped probability form `crossEntropySpec`.
@@ -391,7 +393,7 @@ TorchLean defines each label's contribution using an explicit active flag:
 2.500000
 ```
 
-The policy is the definition:
+The active flag selects a branch:
 
 $$`\operatorname{labelContribution}(active,loss)
 =
@@ -400,7 +402,7 @@ loss, & active\\
 0, & \neg active
 \end{cases}`
 
-and the checked form is the one-line theorem that the false branch really is zero at any element
+The corresponding theorem states that the false branch is zero at any element
 type with a zero:
 
 ```lean (name := bzIgnoredThm)
@@ -695,16 +697,18 @@ over reals {Informal.citep jiarinard2020}[]. Goldberg describes the underlying r
 numerical
 programs {Informal.citep boldo2015}[] develop mechanized ways to reason about them.
 
-`IEEE32Exec` is the executable bit-level binary32 model. Lean gives ordinary `Float32` core
-arithmetic a logical definition through `Float32.Model`. We can put the two side by side on the
-oldest example in the subject, adding a tenth to a fifth:
+Lean gives ordinary `Float32` core arithmetic a logical definition through `Float32.Model`.
+FloatLib's `ExecFloat.Binary 8 23` supplies configured binary32 arithmetic and native-model
+connections. Adding a tenth to a fifth lets us compare the two results at the bit level:
 
 ```lean (name := bzBits)
-open Floats.IEEE754 Floats.IEEE754.Float32Bridge in
+open FloatLib.Floats in
 /-- Lean's own binary32 add next to the executable model. -/
 def bzBits (a b : Float32) : UInt32 × UInt32 :=
   ((a + b).toBits,
-    (IEEE32Exec.add (toIEEE32Exec a) (toIEEE32Exec b)).bits)
+    ExecFloat.Binary.toBits32
+      (ExecFloat.Binary.ofFloat32 a +
+        ExecFloat.Binary.ofFloat32 b))
 
 #eval bzBits 0.1 0.2
 ```
@@ -720,36 +724,38 @@ sum: 0.30000001192092896 bits: 1050253722
 ```
 
 The bit pattern identifies the rounded result even when a decimal printer hides low-order bits.
-This one addition is a runtime comparison. The following theorem gives the general relation
-between Lean's logical `Float32` addition and `IEEE32Exec`:
+This one addition is a runtime comparison. The following proofs state the general relation for
+addition and subtraction, including the finite-input hypotheses:
 
 ```lean (name := bzAddThm)
--- The general addition bridge canonicalizes NaNs on the
--- executable-model side.
-#check @Floats.IEEE754.Float32Bridge.toIEEE32Exec_add
-```
-```leanOutput bzAddThm (whitespace := lax)
-Floats.IEEE754.Float32Bridge.toIEEE32Exec_add :
-  ∀ (a b : Float32),
-  Floats.IEEE754.Float32Bridge.toIEEE32Exec (a.add b) =
-    Floats.IEEE754.Float32Bridge.canonicalize
-      ((Floats.IEEE754.Float32Bridge.toIEEE32Exec a).add
-        (Floats.IEEE754.Float32Bridge.toIEEE32Exec b))
+open FloatLib.Floats in
+example (a b : Float32)
+    (ha : a.isFinite = true) (hb : b.isFinite = true) :
+    ExecFloat.Binary.ofFloat32 (a + b) =
+        ExecFloat.Binary.ofFloat32 a +
+          ExecFloat.Binary.ofFloat32 b ∧
+      ExecFloat.Binary.ofFloat32 (a - b) =
+        ExecFloat.Binary.ofFloat32 a -
+          ExecFloat.Binary.ofFloat32 b :=
+  ⟨ExecFloat.Binary.ofFloat32_add_of_isFinite a b ha hb,
+    ExecFloat.Binary.ofFloat32_sub_of_isFinite a b ha hb⟩
 ```
 
-NaN canonicalization discards payload and sign distinctions retained by `IEEE32Exec` but absent
-from Lean's logical model. TorchLean proves analogous agreement for finiteness, infinity, NaN,
-comparison, and the canonical results of subtraction, multiplication, division, square root,
-negation, and absolute value. A compiled CPU instruction or CUDA kernel is a separate execution
-boundary; the theorem does not establish conformance of a particular vectorized kernel.
+The inputs may be signed zeros or subnormals, and the result may overflow to infinity. NaN and
+infinite inputs are outside these two statements. FloatLib's square-root export theorem has a
+different domain: it covers every configured input, with NaNs canonicalized when exported to Lean.
+The catalog also shows configured division refining its software model; that theorem does not
+assert native `Float32` division agreement. A compiled CPU instruction or CUDA kernel is a separate
+execution boundary; none of these theorems establishes conformance of a particular vectorized
+kernel.
 
 The pair of integers in the addition output is useful because the comparison is about stored
-bits, not a tolerance chosen after printing. The theorem then makes its exceptional-value policy
-explicit through `canonicalize`. For finite results this still identifies the model's arithmetic
-result; for NaNs it deliberately identifies patterns whose payloads differ. A property about NaN
-payload preservation would therefore require a more precise relation. Likewise, a theorem about
-one addition does not fix the order in which a network's long reduction performs many additions;
-that order belongs to the surrounding computation.
+bits, not a tolerance chosen after printing. The theorem identifies those same configured values
+for arbitrary finite operands. Its input conditions are part of that conclusion, not an optional
+runtime check. Native export has a separate NaN policy: payload and sign distinctions can be lost
+when Lean's canonical NaN is constructed. A property about payload preservation would require a
+more precise relation. Likewise, a theorem about one addition does not fix the order in which a
+network's long reduction performs many additions; that order belongs to the surrounding computation.
 
 ## Normalization State
 
@@ -870,8 +876,8 @@ source] records a related but different normalization bug family. LayerNorm can 
 one element. The tensor output still has the expected shape, but the variance term is zero and the
 epsilon convention decides whether the result is finite and meaningful.
 
-With one feature the answer is forced: the centred value is $`x-x=0`, so the output is the bias and
-the input and scale gradients vanish in the finite, positive-epsilon case. The bias gradient
+Over real arithmetic, one feature has centred value $`x-x=0`, so the output is the bias and
+the input and scale gradients vanish when epsilon is positive. The bias gradient
 does not vanish in general; it is the upstream cotangent. The catalog evaluates that at a
 deliberately awkward input, $`x=10^6`, with
 weight 2, bias 3, and epsilon $`10^{-5}`:
@@ -903,8 +909,8 @@ weight 2, bias 3, and epsilon $`10^{-5}`:
 0.000000
 ```
 
-The forward value is the bias, as it must be, and both gradients are zero. The matching contract
-is a theorem over the reals rather than a sampled check:
+These evaluations return the bias and two zero gradients. The scale-gradient contract below
+quantifies over real inputs:
 
 ```lean (name := bzLnThm)
 -- Inspect the real-valued scale-gradient contract behind
@@ -1011,8 +1017,7 @@ nondeterminism](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm
 [LLM inference engine bug study](https://arxiv.org/abs/2506.09713).
 
 The reference semantics is `Tensor.mapLeading [batch]`: apply the same function to each row
-independently. Take the
-second row out of a batched squaring:
+independently. Take the second row out of a batched squaring:
 
 ```lean (name := bzBatchMap)
 -- Square each batch row independently, then select the
@@ -1235,12 +1240,12 @@ token meanings and special-token conventions.
 ## Geometry 3D Projection
 
 {src "NN/Examples/BugZoo/Geometry3DProjection.lean"}[NN.Examples.BugZoo.Geometry3DProjection source]
-shows why BugZoo is not limited to language-model incidents. Vision and robotics pipelines project
-3D points to image coordinates with a camera matrix. The formula is familiar:
+checks a camera projection. Vision and robotics pipelines use a camera matrix to project 3D points
+to image coordinates:
 
 $$`(u,v)=\left(\frac{x}{z},\frac{y}{z}\right)`
 
-up to intrinsics and coordinate conventions. The bug family is familiar too: depth is zero or has
+up to intrinsics and coordinate conventions. This can fail when depth is zero or has
 the wrong sign, coordinate frames are swapped, or the denominator convention is implicit. A tensor
 can still be emitted, but the geometry claim no longer matches the camera model.
 
@@ -1298,8 +1303,8 @@ def bzCertTight : BoxCameraCert ℚ :=
 false
 ```
 
-The rejection distinguishes this checker from a constant-true function on the two tested inputs.
-It exercises the enclosure condition; it does not independently test every conjunct. `checkCert`
+Changing only the claimed box tests the enclosure condition while keeping the camera and corners
+fixed. The pair does not independently test every conjunct. `checkCert`
 also checks positive image size, box ordering, that the box lies in the image, positive depths,
 and that the projection lies in the image.
 
@@ -1330,8 +1335,7 @@ it does not bound their discrepancy from exact real projection. The companion
 `homogeneous_projection_uncertainty_stays_inside_bbox` instead assumes nonnegative enclosing
 intervals for the homogeneous numerators and a depth interval bounded away from zero. Applying
 that result to a float executor requires showing that its intervals enclose both the geometric
-uncertainty and
-rounding error.
+uncertainty and rounding error.
 
 # Contract Review
 
@@ -1379,11 +1383,9 @@ Remaining obligations and scope distinctions:
 - The masked-mean epsilon is a policy choice. With one active label it multiplies the real-valued
   mean by $`1/(1+\varepsilon)`, a relative shrinkage of $`\varepsilon/(1+\varepsilon)`. An
   alternative fully ignored-batch policy needs its own definition.
-- The Float32 bridge proves agreement between Lean's model and the executable binary32 model after
-  NaN canonicalization. Compiled CPU instructions, vectorized reductions, and CUDA kernels are
-  separate boundaries with no theorem here.
+- FloatLib's native add/sub proofs require finite operands. Its square-root export theorem
+  covers all configured inputs through NaN canonicalization. Compiled CPU instructions, vectorized
+  reductions, and CUDA kernels are separate boundaries with no theorem here.
 - The 3D projection check is exact at `ℚ`. At `Float` the same theorem still establishes
-  `Verified3DBox` for the float-valued
-  predicate, but that is not containment for exact real projection; the interval statement is the
-  intended replacement, and wiring it
-  to a float executor is future work.
+  `Verified3DBox` for the float-valued predicate. Exact real containment needs the interval statement
+  described above and an argument that the float executor's intervals enclose the projection.

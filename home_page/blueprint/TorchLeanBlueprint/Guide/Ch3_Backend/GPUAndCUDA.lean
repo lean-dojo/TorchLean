@@ -37,15 +37,15 @@ When the running MLP evaluates
 
 $$`y=W x+b,`
 
-the mathematical specification sees matrix-vector multiplication and addition. The CUDA runtime
-sees something quite different: contiguous buffers, dimensions, an execution stream, a matrix
-kernel, a broadcast, and several error checks. TorchLean keeps both views and records the contract
-at the boundary between them.
+the specification describes matrix-vector multiplication and addition. Evaluating it on CUDA
+requires contiguous buffers, dimensions, an execution stream, a matrix kernel, and a broadcast
+for the bias. The wrapper must put the right values in those buffers, select a kernel, and retain
+the operands its backward rule will need.
 
-We will follow the linear layer through its buffers, selected kernel, and backward rule, then
-examine how reduction order affects its numerical contract. CUDA is the maintained accelerator
-today. The capsule and device types also allow a future Metal, ROCm, TPU, or custom-chip provider
-to state the same kinds of obligations; those device names do not imply an available runtime.
+TorchLean records the shape, layout, forward, and backward obligations in a kernel capsule.
+CUDA is the maintained accelerator. The capsule and device types also allow future Metal, ROCm,
+TPU, or custom-chip providers to state their contracts; the runtime lookup below shows which
+device names currently have implementations.
 
 # Native CUDA Build Configuration
 
@@ -62,6 +62,22 @@ scripts/lake.sh build -R -K cuda=true
 Run this command from the repository root. `-R` rebuilds targets affected by the Lake configuration,
 and `-K cuda=true` selects the CUDA source and link configuration. The build compiles TorchLean's
 CUDA code and links the CUDA runtime, cuBLAS, and cuFFT where those libraries are used.
+
+The default architecture setting is `cuda_arch=all-major`: the selected `nvcc` includes native
+code for its supported major GPU architectures. A build for a known deployment target can choose
+that target explicitly. For example, to build for an A100 from a machine with the CUDA toolkit:
+
+```terminal
+# Select the deployment GPU, even on a headless build host.
+scripts/lake.sh -R -K cuda=true -K cuda_home=/usr/local/cuda \
+  -K cuda_arch=sm_80 build
+```
+
+Keep the same toolkit and architecture options on later build, `exe`, and `env` commands. The
+`native` setting is rejected because its target depends on which GPUs the builder can see.
+Lake tracks the architecture, actual compiler identity, and permitted compiler environment flags
+when deciding whether to reuse native objects. Changing the deployment target therefore changes
+the build configuration even when the Lean source is identical.
 
 Compilation and session creation answer different questions. A native build can be produced on a
 machine that has the toolchain but no visible GPU. Its symbols are present, yet a CUDA session
@@ -101,11 +117,10 @@ below the level of a whole layer. Each capsule describes an operation that cross
 boundary. The only numerical field is the reduction policy; a native accumulation is marked
 implementation-defined so that a fixed-left range certificate cannot be applied to it.
 
-Read this report as an inventory of selected operation contracts. Two linear layers can reuse the
-same matmul capsule, and one operation can launch more than one native kernel. Counting the printed
-rows therefore gives neither the number of layers nor the number of launches. The two optimizer
-steps exercise the chosen route, but the report contains no timing measurement from which to infer
-its speed.
+Two linear layers can reuse the same matmul capsule, and one operation can launch more than one
+native kernel. The report's row count therefore measures neither layers nor launches. These two
+optimizer steps exercise the selected route; assessing its speed would require a timing
+measurement.
 
 # Linear Layer Execution
 
@@ -281,11 +296,6 @@ It does not inspect the closure body: a falsely labelled handler would still req
 and execution checks. Numerical correctness depends on the guard, test, or trusted-boundary
 evidence.
 
-The proof fields in `ExecutableKernel` identify the call being made. They prevent accidentally
-attaching a CPU handler to a CUDA contract, even when both implement matmul and return the same
-Lean type. The function stored in `execute` remains an `IO` computation. Its type does not encode
-the matrix formula, and its identity equalities do not derive that formula from the closure.
-
 To isolate the identity check, pair the registered native matmul capsule with a CPU reference
 handler for the same operation:
 
@@ -341,8 +351,8 @@ evidence moved: false
 planner admits: false
 ```
 
-The third line connects the descriptor check to selection. `KernelCapsule.admissible` calls
-`contractsAligned`, so the planner rejects the misplaced descriptor before selecting the capsule.
+`KernelCapsule.admissible` calls `contractsAligned`, which explains the third line: moving value
+evidence into the shape field prevents selection.
 
 # Planning, Selection, And Execution
 
@@ -369,8 +379,7 @@ declares which devices and providers planning may consider, while CUDA session c
 `Cuda.Buffer.requireNativeRuntime` to distinguish native CUDA, a native build with no visible GPU,
 and the host-memory parity stubs.
 
-A profile is a small piece of data, so the first two stages are computable on a machine with no GPU
-in it. The three maintained profiles describe themselves:
+We can inspect profiles and plans on a machine with no GPU. The three maintained profiles are:
 
 ```lean (name := gpuProfiles)
 -- Compare forward assurance with ownership of the overall
@@ -396,8 +405,7 @@ matmul row can appear together. The profile describes who assembles and traverse
 backward computation. The capsule describes how one node computes its contribution. TorchLean can
 walk the tape while a native kernel evaluates that node's matrix derivative.
 
-Planning produces the same kind of data, so the CUDA plan for one operation can be printed here, on
-a CPU build, without executing a GPU kernel:
+The CUDA matmul plan can also be printed on this CPU build:
 
 ```lean (name := gpuPlanReport)
 -- Plan one CUDA operation from metadata; printing the plan
@@ -625,9 +633,9 @@ There are three useful configurations for an operation:
   * only the surrounding contract and imported gradients
 :::
 
-The middle row is the preferred scaling direction when practical. An external provider computes a
-fast forward value, but the wrapper still records a TorchLean tape node and applies TorchLean's
-selected VJP. This keeps parameter ownership and optimizer flow local.
+In the middle row, an external provider computes the forward value while the wrapper records a
+TorchLean tape node and applies TorchLean's selected VJP. That configuration lets a model use an
+external forward kernel while keeping parameter ownership and optimizer flow in TorchLean.
 
 The local derivative must describe the forward operation that actually ran. Attention scale, mask
 convention, and any stochastic choices must agree across the boundary. Reusing a familiar VJP
@@ -742,11 +750,9 @@ zero is the chosen convention; rejecting fully blocked rows is another possible 
 `Spec.hardMaskedSoftmaxSpec` records the zero-row convention in its docstring. The native CUDA
 providers and the LibTorch adapter are tested against that same definition.
 
-In the first row, removing the third key leaves scores one and two. Their exponentials have ratio
-`1 : exp(1)`, giving the printed weights approximately `0.269` and `0.731`. In the second row there
-is no such ratio to normalize. Returning zero specifies the whole row's value and gives backward
-a defined case to handle. The boolean mask itself is discrete input data; the attention VJP
-tracks the numerical inputs while holding that choice of participating keys fixed.
+For scores one and two, the exponential ratio is `1 : exp(1)`, giving the first row's weights
+approximately `0.269` and `0.731`. The attention VJP holds the Boolean mask fixed while
+differentiating the numerical inputs, including the defined all-blocked case.
 
 The attention regression suite includes masked forward values, $`\mathrm dQ`, $`\mathrm dK`,
 $`\mathrm dV`, and fully blocked
@@ -826,17 +832,16 @@ The equality check compares the stored values and returns `false`; the bit-patte
 shows they are one ULP apart. Six printed digits hide that difference
 ({Informal.citep goldberg1991}[]). Formal floating-point models such as Flocq retain the rounding
 steps that real arithmetic omits ({Informal.citep flocq2011}[], {Informal.citep boldo2015}[]).
-TorchLean's `IEEE32Exec` serves that role here; {ref "fp32-soundness"}[Float32 Soundness] connects
-the executable model to its proofs.
+FloatLib supplies those binary32 operations; {ref "fp32-soundness"}[Float32 Soundness] explains
+how their values connect to rounded-real error analysis.
 
 This example uses Lean `Float`, so it demonstrates binary64 rounding rather than directly running
 the CUDA binary32 kernel. The same need to specify evaluation order applies to both formats. Here
 the positive finite results have adjacent bit patterns, making the subtraction a useful ULP count.
 It is not a general distance formula for arbitrary signed values, infinities, or NaNs.
 
-A mathematically equivalent reduction tree can therefore produce different final bits. Numerical
-certificates must use an error model or an exact policy strong enough for the claim; shape safety
-alone is insufficient.
+To cover different reduction trees, a numerical certificate needs an error model that permits
+their different rounding steps, or a policy that fixes the steps it assumes.
 
 # Deterministic Reduction Mode
 
@@ -907,11 +912,9 @@ smallest. No result is necessarily the correctly rounded exact sum. With fixed o
 all hundred calls produced one bit pattern. This repeatability helps reproduce a run, while
 comparisons between different reduction policies still need an appropriate numerical tolerance.
 
-The `52/100` count is the number of distinct results observed, not a failure rate or a measure of
-how often each result occurred. The program stores a set of bit patterns and discards their
-frequencies. Its spread also says nothing about which end is closer to the exact sum. To measure
-accuracy separately, the experiment would need a reference for the sum of these particular
-sampled values, with its own stated precision.
+The program stores a set of bit patterns, so `52/100` gives no frequency for any particular
+result. To measure accuracy, we would also need a reference sum of these same sampled values,
+with its precision stated.
 
 A comparable PyTorch experiment uses normally distributed values and a larger input. It also
 compares repeated GPU results with CPU float32 and float64 sums:
@@ -953,13 +956,12 @@ or error on a matched workload. The float64 sum in the second transcript is a hi
 comparison for those same stored inputs; it is still a floating-point sum. Neither transcript
 measures the time or memory cost of enabling deterministic reductions.
 
-These are transcripts rather than live `#eval`s for a structural reason. This book elaborates on a
-CPU build, where the CUDA externs resolve to the parity stubs in `torchlean_cuda_tensor_stub.c`, and
-the interpreter cannot call the native symbols at all. Evidence about device nondeterminism has to
-come from a device, which is why the corresponding contract lives in
-`NN/Tests/Runtime/Cuda/DeterministicReductions.lean` under `-K cuda=true`: it pins the mode on and
-then asserts *exact* equality between two runs of `scatterAdd` and of the average-pooling backward
-kernel, with `==` rather than a tolerance, because bit stability is the entire claim.
+These device runs are retained transcripts. The book elaborates on a CPU build, where CUDA
+externs resolve to the parity stubs in `torchlean_cuda_tensor_stub.c`; its interpreter cannot
+call the native symbols. The device check in
+`NN/Tests/Runtime/Cuda/DeterministicReductions.lean` runs under `-K cuda=true`, enables fixed-order
+mode, and asserts *exact* equality between two runs of `scatterAdd` and of the average-pooling
+backward kernel. It uses `==` because repeatability is the property being tested.
 
 ## Reading Mutable Native State
 
@@ -988,48 +990,36 @@ def getDeterministicReductions : IO Bool :=
   IO.lazyPure fun _ => getDeterministicReductionsRaw 0 != 0
 ```
 
-This is the convention the rest of the file already followed for the allocator counters, where
-`allocatorStatsWithToken` takes an ignored token for the same purpose, and the reason
-`setDeterministicReductions` is an `IO` action wrapping a `*_checked` native call. Reads and writes
-of mutable native state need an effectful observation boundary. An argument alone
-does not generally establish ordering or freshness; the low-level token and compiler attributes
-must also prevent unwanted sharing. A pure nullary reader can become a startup snapshot.
+Allocator telemetry follows the same rule: `Buffer.allocatorStats` reads the native counters inside
+`IO` when the caller executes the action. Repeated calls need no step counter or other changing
+argument. The setter, `setDeterministicReductions`, also runs in `IO` and checks the native call's
+returned flag. Reads and writes of mutable native state need this effectful observation boundary;
+an argument alone does not establish ordering or freshness. A pure nullary reader can become a
+startup snapshot.
 
-This affects interpretation of the log itself. A correct fixed-order kernel paired with a stale
-getter could print `deterministic=false`, sending a numerical investigation toward the wrong
-execution mode. The observed flag must be read after the setter in the same effectful sequence.
-The example thus checks two interfaces: the reduction's numerical behavior and the host program's
-ability to observe the configuration that selected it.
+A stale getter could print `deterministic=false` even when the fixed-order kernel ran. Read the
+flag after the setter in the same `IO` sequence, so the log records the configuration used by
+the measured reductions.
 
 # Device Reuse Cache Limits
 
-Dropped CUDA buffers are not always returned immediately to the driver. TorchLean keeps exact-size
-blocks in a process-wide reuse cache so a later allocation can avoid another `cudaMalloc`. This is
-useful in a steady training loop, but a workload that visits many distinct tensor sizes can retain
-more device memory than it will reuse.
+Dropped CUDA buffers are not always returned immediately to the driver. TorchLean retains unused
+blocks for exact-size reuse after their recorded CUDA work completes, so a later allocation can
+avoid another `cudaMalloc`. Ordinary training and evaluation use this cache automatically. Cleanup
+retires temporary buffers while keeping eligible blocks for the next operation; it does not force
+a cache flush after each step.
 
-Set a byte limit before starting the process:
+The default allowance is *1 GiB for the process*, shared by the tensor-buffer cache and all native
+kernel scratch caches together. It reserves no device memory in advance. When a returned block
+would exceed that shared allowance, the runtime waits for its recorded CUDA event and frees it
+instead of caching it. A workload that visits many tensor sizes therefore has a finite limit on
+unused memory retained for reuse, without requiring an environment setting.
 
-```terminal
-# Install the cache allowance before the native allocator
-# first initializes.
-TORCHLEAN_CUDA_CACHE_CAP_BYTES=$((512 * 1024 * 1024)) \
-  scripts/lake.sh -K cuda=true exe torchlean gpt2 --device cuda --steps 100
-```
-
-The limit is read once by the native allocator. A returned block that would exceed it waits for its
-recorded CUDA event and is then freed instead of cached. `0`, or an unset variable, keeps the cache
-unbounded. The value must be a decimal byte count; malformed and overflowing values produce a
-warning and are ignored.
-
-This limit applies only to released blocks in the reuse cache. It does not cap live model
-parameters, activations, gradients, or workspaces.
-
-The command requests a 512 MiB cache allowance: `512 * 1024 * 1024` bytes. If live tensors already
-occupy most of the GPU, this setting cannot make the next large activation fit. Its benefit is to
-limit memory retained after owners release buffers, especially when successive workloads use
-different sizes. Exact-size reuse also means a large cached block need not satisfy a smaller
-request. Interpreting an allocation failure therefore requires live and cached totals together.
+The allowance covers cached memory, not live parameters, activations, gradients, optimizer state,
+or workspaces still in use. If a CUDA allocation fails for lack of memory, the runtime reclaims
+unused blocks from every cache and retries that allocation once. Live allocations remain owned by
+their callers. The retry can still fail if the live workload needs more memory than is available;
+the cache allowance is not a limit on total GPU usage.
 
 Allocator telemetry distinguishes live tensors from reusable memory:
 
@@ -1043,21 +1033,39 @@ def printCudaMemory : IO Unit := do
   IO.println stats.format
 ```
 
-`liveBytes` counts payloads owned by live TorchLean buffers. `cacheBytes` counts released device
-blocks waiting for reuse and is therefore not included in `liveBytes`. `cacheCapBytes` reports the
-limit installed by the native parser, with `0` meaning unbounded. The formatted report includes all
-three values together with wrapper counts and `cudaMemGetInfo` totals.
+Each call reads the current counters at that point in `IO`. `liveBytes` counts payloads owned by
+live TorchLean buffers; it excludes live kernel scratch allocations. `cacheBytes` accounts for
+unused tensor buffers and scratch blocks under the shared retention budget, including reservations
+being returned to or removed from a cache. `cacheCapBytes` reports the configured allowance. The
+formatted report includes these values with wrapper counts and `cudaMemGetInfo` totals. The fields
+are read separately, so concurrent allocator activity can make a report differ from an atomic
+snapshot.
 
 These counters answer ownership questions at different levels. Releasing the last TorchLean
 wrapper can reduce `liveBytes` while increasing `cacheBytes`, leaving driver-visible usage nearly
 unchanged. A workspace may retain a buffer intentionally even after a local computation ends.
 Reading only free device memory would miss both distinctions; reading only the wrapper count
-would miss how large each retained allocation is.
+would miss how large each retained allocation is. The allocation and free counters count buffer
+payload lifetimes, including reuse, rather than calls to `cudaMalloc` and `cudaFree`.
 
-The CUDA stress test starts fresh subprocesses because the limit cannot change after the allocator
-has initialized. It checks a finite cap, an explicit unbounded control, malformed input, and integer
-overflow against the real allocator. The CPU parity stub reports zero cached bytes and zero cap
-because it frees host buffers directly.
+At a phase boundary, an application can explicitly return unused memory to the driver:
+
+```
+-- Give another workload the memory this process kept for reuse.
+def releaseUnusedCudaMemory : IO Unit :=
+  Runtime.Autograd.Cuda.Buffer.emptyCache
+```
+
+`emptyCache` waits for cached blocks to become safe to free and releases unused blocks from both
+the tensor and scratch caches. It also requests host allocator collection. It leaves live tensors,
+parameter mirrors, and optimizer state alone. This is optional: flushing after every training step
+would discard the reuse that the bounded cache provides.
+
+For a workload that needs a different allowance, `TORCHLEAN_CUDA_CACHE_CAP_BYTES` accepts a decimal
+byte count before the allocator first initializes. An explicit `0` selects unbounded caching.
+Unset, empty, malformed, and overflowing values use the finite 1 GiB default; nonempty invalid
+values also produce a warning. Configuration is read once, so checking different settings requires
+fresh subprocesses. The CPU parity stub keeps no reuse cache and reports zero for both cache fields.
 
 # CUDA Test Coverage
 
@@ -1074,8 +1082,7 @@ They exercise allocation, uploads and downloads, shapes, operation values, gradi
 and selected numerical behavior. Native sanitizer runs add memory diagnostics. The LibTorch SDPA
 test compares native and external forward/backward results within declared tolerances.
 
-Here is the shape of a real run on the A100 build used earlier in this chapter, elided in the middle
-because the coverage list is long:
+The retained A100 run includes these checks; the middle of the long coverage list is omitted:
 
 ```terminal +output
 === Runtime CUDA kernel coverage suite ===

@@ -110,7 +110,7 @@ theorem cholStep_diag (A : Fin n → Fin n → ℝ) (cols : List (Fin n → ℝ)
       = MathFunctions.sqrt
           (A j j - (cols.map (fun ck => ck j)).foldl (fun s x => s + x * x) 0) := by
   simp only [cholStep]
-  rw [if_neg (lt_irrefl _), if_pos (beq_self_eq_true _)]
+  rw [ite_eq_right (lt_irrefl _), ite_eq_left (beq_self_eq_true _)]
 
 /-- The below-diagonal value produced by `cholStep`. -/
 theorem cholStep_offdiag (A : Fin n → Fin n → ℝ) (cols : List (Fin n → ℝ)) {i j : Fin n}
@@ -120,7 +120,7 @@ theorem cholStep_offdiag (A : Fin n → Fin n → ℝ) (cols : List (Fin n → �
           / MathFunctions.sqrt
               (A j j - (cols.map (fun ck => ck j)).foldl (fun s x => s + x * x) 0) := by
   simp only [cholStep]
-  rw [if_neg (by grind), if_neg (by rw [beq_iff_eq]; grind)]
+  rw [ite_eq_right (by grind), ite_eq_right (by rw [beq_iff_eq]; grind)]
 
 /-- The length-`j` prefix of Cholesky columns built before index `j`. -/
 noncomputable def prefixCols (A : Fin n → Fin n → ℝ) (j : Fin n) : List (Fin n → ℝ) :=
@@ -193,14 +193,14 @@ theorem take_map_sum_eq (m : Nat) (f : Fin n → ℝ) :
   rw [List.map_append, List.sum_append]
   have htake : ((List.finRange n).take m).map (fun k => if k.val < m then f k else 0)
       = ((List.finRange n).take m).map f :=
-    List.map_congr_left (fun x hx => if_pos (mem_take_finRange hx))
+    List.map_congr_left (fun x hx => ite_eq_left (mem_take_finRange hx))
   have hdrop :
       (((List.finRange n).drop m).map (fun k => if k.val < m then f k else 0)).sum = 0 := by
     rw [List.sum_eq_zero]
     intro y hy
     rw [List.mem_map] at hy
     obtain ⟨x, hx, rfl⟩ := hy
-    exact if_neg (by have := mem_drop_finRange hx; grind)
+    exact ite_eq_right (by have := mem_drop_finRange hx; grind)
   rw [htake, hdrop, add_zero]
 
 /-- The Cholesky cross-sum equals the masked partial dot product of rows `i` and `j` of `L`. -/
@@ -260,17 +260,17 @@ theorem choleskyFn_dot_eq (A : Fin n → Fin n → ℝ)
     intro k
     rcases lt_trichotomy k.val j.val with h | h | h
     · have hne : k ≠ j := fun hk => by rw [hk] at h; exact lt_irrefl _ h
-      rw [if_pos h, if_neg hne, add_zero]
+      rw [ite_eq_left h, ite_eq_right hne, add_zero]
     · have hkj : k = j := Fin.ext h
-      rw [if_neg (by grind), if_pos hkj, zero_add, hkj]
+      rw [ite_eq_right (by grind), ite_eq_left hkj, zero_add, hkj]
     · have hne : k ≠ j := fun hk => by rw [hk] at h; exact lt_irrefl _ h
-      rw [if_neg (by grind), if_neg hne, add_zero,
+      rw [ite_eq_right (by grind), ite_eq_right hne, add_zero,
         show L j k = 0 from Spec.Factorization.choleskyFn_lower_triangular A h, mul_zero]
   rw [show (∑ k, L i k * L j k)
       = ∑ k, ((if k.val < j.val then L i k * L j k else 0) + (if k = j then L i j * L j j else 0))
       from Finset.sum_congr rfl (fun k _ => key k),
     Finset.sum_add_distrib, Finset.sum_ite_eq' Finset.univ j (fun _ => L i j * L j j)]
-  simp only [Finset.mem_univ, if_true]
+  simp only [Finset.mem_univ, ite_true]
   rcases eq_or_lt_of_le hji with heq | hlt
   · have hij' : i = j := Fin.ext heq.symm
     subst hij'
@@ -483,18 +483,18 @@ theorem Rmat_eq (A : Fin m → Fin n → ℝ) (k j : Fin n) :
 (`column j < row k`) vanishes. -/
 theorem rStep_below_diag_zero (A : Fin m → Fin n → ℝ) (qs : List (Fin m → ℝ)) {j k : Fin n}
     (hjk : j.val < k.val) : rStep A qs j k = 0 := by
-  simp only [rStep]; rw [if_neg (by grind), if_neg (by rw [beq_iff_eq]; grind)]
+  simp only [rStep]; rw [ite_eq_right (by grind), ite_eq_right (by rw [beq_iff_eq]; grind)]
 
 /-- The diagonal `R` entry is `rⱼⱼ`. -/
 theorem rStep_diag (A : Fin m → Fin n → ℝ) (qs : List (Fin m → ℝ)) (j : Fin n) :
     rStep A qs j j = gsRjj A qs j := by
-  simp only [rStep]; rw [if_neg (lt_irrefl _), if_pos (beq_self_eq_true _)]
+  simp only [rStep]; rw [ite_eq_right (lt_irrefl _), ite_eq_left (beq_self_eq_true _)]
 
 /-- The `Q` column when the pivot is positive: `qⱼ = v / rⱼⱼ`. -/
 theorem qStep_pos (A : Fin m → Fin n → ℝ) (qs : List (Fin m → ℝ)) (j : Fin n)
     (h : 0 < gsRjj A qs j) (i : Fin m) :
     qStep A qs j i = gsV A qs j i / gsRjj A qs j := by
-  simp only [qStep]; rw [if_pos (gtBool_true_iff.mpr h)]
+  simp only [qStep]; rw [ite_eq_left (gtBool_true_iff.mpr h)]
 
 /-! ### The orthogonalization sum as a `Finset` sum -/
 
@@ -566,7 +566,7 @@ theorem qsPrefix_getD (A : Fin m → Fin n → ℝ) {k j : Fin n} (hkj : k.val <
 `Q` column `k` with column `j`. -/
 theorem Rmat_above_diag_dot (A : Fin m → Fin n → ℝ) {k j : Fin n} (hkj : k.val < j.val) :
     Rmat A k j = Spec.dotFn (Qcol A k) (gsA A j) := by
-  rw [Rmat_eq]; simp only [rStep]; rw [if_pos hkj]; unfold gsRkjs
+  rw [Rmat_eq]; simp only [rStep]; rw [ite_eq_left hkj]; unfold gsRkjs
   rw [getD_map_dotFn (qsPrefix A j) (gsA A j) k.val (by rw [qsPrefix_length]; exact hkj),
     qsPrefix_getD A hkj]
 
@@ -580,10 +580,10 @@ theorem cross_sum_qr (A : Fin m → Fin n → ℝ) (i : Fin m) (j : Fin n) :
   apply Finset.sum_congr rfl
   intro k _
   by_cases hkj : k.val < j.val
-  · rw [if_pos hkj, if_pos hkj]
+  · rw [ite_eq_left hkj, ite_eq_left hkj]
     show Spec.dotFn (Qcol A k) (gsA A j) * Qmat A i k = Rmat A k j * Qmat A i k
     rw [Rmat_above_diag_dot A hkj]
-  · rw [if_neg hkj, if_neg hkj]
+  · rw [ite_eq_right hkj, ite_eq_right hkj]
 
 /-! ### Exact reconstruction `A = Q · R` -/
 
@@ -604,17 +604,17 @@ theorem qr_reconstruction (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 
     intro k
     rcases lt_trichotomy k.val j.val with h | h | h
     · have hne : k ≠ j := fun hk => by rw [hk] at h; exact lt_irrefl _ h
-      rw [if_pos h, if_neg hne, add_zero]
+      rw [ite_eq_left h, ite_eq_right hne, add_zero]
     · have hkj : k = j := Fin.ext h
-      rw [if_neg (by grind), if_pos hkj, zero_add, hkj]
+      rw [ite_eq_right (by grind), ite_eq_left hkj, zero_add, hkj]
     · have hne : k ≠ j := fun hk => by rw [hk] at h; exact lt_irrefl _ h
-      rw [if_neg (by grind), if_neg hne, add_zero, Rmat_upper_triangular A h, mul_zero]
+      rw [ite_eq_right (by grind), ite_eq_right hne, add_zero, Rmat_upper_triangular A h, mul_zero]
   rw [show (∑ k, Qmat A i k * Rmat A k j)
       = ∑ k, ((if k.val < j.val then Qmat A i k * Rmat A k j else 0)
         + (if k = j then Qmat A i j * Rmat A j j else 0))
       from Finset.sum_congr rfl (fun k _ => key k),
     Finset.sum_add_distrib, Finset.sum_ite_eq' Finset.univ j (fun _ => Qmat A i j * Rmat A j j)]
-  simp only [Finset.mem_univ, if_true]
+  simp only [Finset.mem_univ, ite_true]
   have hρpos : 0 < gsRjj A (qsPrefix A j) j := by
     have h := hrank j; rwa [Rmat_eq, rStep_diag] at h
   have hdiag : Qmat A i j * Rmat A j j = gsV A (qsPrefix A j) j i := by
@@ -627,8 +627,8 @@ theorem qr_reconstruction (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 
       = (∑ k, if k.val < j.val then Rmat A k j * Qmat A i k else 0)
       from Finset.sum_congr rfl (fun k _ => by
         by_cases hkj : k.val < j.val
-        · rw [if_pos hkj, if_pos hkj, mul_comm]
-        · rw [if_neg hkj, if_neg hkj])]
+        · rw [ite_eq_left hkj, ite_eq_left hkj, mul_comm]
+        · rw [ite_eq_right hkj, ite_eq_right hkj])]
   ring
 
 /-- **Matrix-level QR reconstruction.** `A = Q · R` for the executable Gram–Schmidt factors,

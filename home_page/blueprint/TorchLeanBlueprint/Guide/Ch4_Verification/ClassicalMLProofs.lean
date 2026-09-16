@@ -36,9 +36,9 @@ larger approximation constructions possible. Recurrent state-space models are ca
 output at time `t` is computed before future inputs are seen. These are structural facts about the
 mathematical models.
 
-TorchLean formalizes such results beside its runtime developments so that later work can connect
-them. These theorems concern the spec-level definitions; they do not by themselves certify a CUDA
-implementation.
+We can study these properties directly in TorchLean's mathematical specifications. To carry a
+result over to a CUDA implementation, we would also need to connect that implementation to the
+specification used by the theorem.
 
 # Hopfield Dynamics
 
@@ -1019,7 +1019,7 @@ example {α : Type} [Storage α] [Context α]
 ```
 
 
-The equations are character for character identical; only the state shape and the spec
+Both equations compare the output prefix in the same way; the state shape and the spec
 structure change. `DiagonalS4Spec` carries a single `[stateDim]` vector, `MambaBlockSpec` adds the
 selection projections but keeps the same state shape, and the selective block above is the one that
 grows to `[innerDim, stateDim]` plus a history.

@@ -25,6 +25,10 @@ References: Sutton and Barto, *Reinforcement Learning: An Introduction*; Schulma
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 namespace Runtime
 namespace RL
 namespace Numerics
@@ -38,7 +42,7 @@ open TorchLean.Floats
 open TorchLean.Floats.IEEE754
 
 /-!
-## Checked value-learning and advantage-estimation building blocks (IEEE32Exec)
+## Checked value-learning and advantage-estimation building blocks (configured binary32)
 
 These helpers are “PPO-shaped” but still live in `Runtime.RL.Numerics.Float32` because they are
 useful as general diagnostics/hardening tools whenever you want an explicit float32 execution
@@ -74,24 +78,24 @@ This is the runtime-checker analogue of `discountedBackup_eq_ok`.
 theorem tdResidual_eq_ok
     (value reward gamma nextValue : Float32Exec) (done : Bool) (out : Float32Exec)
     (h : tdResidualChecked value reward gamma nextValue done = .ok out) :
-    TorchLean.Floats.IEEE754.IEEE32Exec.isFinite
-        (TorchLean.Floats.IEEE754.IEEE32Exec.mul gamma (continueMask (α := Float32Exec) done)) =
+    Binary.isFinite
+        (ExecFloat.mul gamma (continueMask (α := Float32Exec) done)) =
       true ∧
-      TorchLean.Floats.IEEE754.IEEE32Exec.isFinite
-          (TorchLean.Floats.IEEE754.IEEE32Exec.mul
-            (TorchLean.Floats.IEEE754.IEEE32Exec.mul gamma (continueMask (α := Float32Exec) done))
+      Binary.isFinite
+          (ExecFloat.mul
+            (ExecFloat.mul gamma (continueMask (α := Float32Exec) done))
             nextValue) =
         true ∧
-        TorchLean.Floats.IEEE754.IEEE32Exec.isFinite
-            (TorchLean.Floats.IEEE754.IEEE32Exec.add reward
-              (TorchLean.Floats.IEEE754.IEEE32Exec.mul
-                (TorchLean.Floats.IEEE754.IEEE32Exec.mul gamma
+        Binary.isFinite
+            (ExecFloat.add reward
+              (ExecFloat.mul
+                (ExecFloat.mul gamma
                   (continueMask (α := Float32Exec) done))
                 nextValue)) =
           true ∧
-          TorchLean.Floats.IEEE754.IEEE32Exec.isFinite value = true ∧
-          TorchLean.Floats.IEEE754.IEEE32Exec.isFinite
-              (TorchLean.Floats.IEEE754.IEEE32Exec.sub
+          Binary.isFinite value = true ∧
+          Binary.isFinite
+              (ExecFloat.sub
                 (discountedBackup (α := Float32Exec) reward gamma nextValue done) value) =
             true ∧
             out = tdResidual (α := Float32Exec) value reward gamma nextValue done := by
@@ -107,8 +111,8 @@ theorem tdResidual_eq_ok
   | ok target =>
       -- The `.ok` TD residual means the value finiteness check and the subsequent checked
       -- subtraction both succeeded.
-      have hval : TorchLean.Floats.IEEE754.IEEE32Exec.isFinite value = true := by
-        cases hf : TorchLean.Floats.IEEE754.IEEE32Exec.isFinite value with
+      have hval : Binary.isFinite value = true := by
+        cases hf : Binary.isFinite value with
         | true =>
             rfl
         | false =>
@@ -128,9 +132,9 @@ theorem tdResidual_eq_ok
           (out := target) htarget
 
       -- Now handle the checked subtraction.
-      set out0 : Float32Exec := TorchLean.Floats.IEEE754.IEEE32Exec.sub target value
-      have hout0 : TorchLean.Floats.IEEE754.IEEE32Exec.isFinite out0 = true := by
-        cases hf : TorchLean.Floats.IEEE754.IEEE32Exec.isFinite out0 with
+      set out0 : Float32Exec := ExecFloat.sub target value
+      have hout0 : Binary.isFinite out0 = true := by
+        cases hf : Binary.isFinite out0 with
         | true =>
             rfl
         | false =>
@@ -156,11 +160,12 @@ theorem tdResidual_eq_ok
         -- `out0` is definitionally `target - value`.
         -- Rewrite `target` to the spec discounted backup and unfold `tdResidual`.
         rw [hout]
-        simp [out0, htargetEq, Spec.RL.tdResidual, Spec.RL.tdTarget, HSub.hSub, Sub.sub]
+        simp [out0, htargetEq, Spec.RL.tdResidual, Spec.RL.tdTarget,
+          HSub.hSub, Sub.sub]
 
 /--
 Checked fixed-horizon Generalized Advantage Estimation ($\operatorname{GAE}(\lambda)$), specialized
-to `IEEE32Exec`.
+to `ExecFloat.Binary 8 23`.
 
 This is the checked/finite counterpart to `Runtime.RL.Core.generalizedAdvantageEstimation`.
 
@@ -191,7 +196,7 @@ def generalizedAdvantageEstimationChecked {n : Nat}
 
 /--
 Checked z-score normalization (mean-center then divide by standard deviation), specialized to
-`IEEE32Exec`.
+`ExecFloat.Binary 8 23`.
 
 This is used by PPO to normalize advantages.
 
@@ -206,7 +211,7 @@ def normalizeZScoreChecked {n : Nat}
   let y : Tensor Float32Exec [n] :=
     Spec.normalizeZscoreSpec (α := Float32Exec) (n := n) x
   if Boundary.tensorAll (α := Float32Exec) (s := .dim n .scalar)
-      (fun z => TorchLean.Floats.IEEE754.IEEE32Exec.isFinite z) y then
+      (fun z => Binary.isFinite z) y then
     .ok y
   else
     .error "RL float32: normalizeZScore produced a non-finite entry."

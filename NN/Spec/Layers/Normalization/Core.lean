@@ -104,7 +104,9 @@ def normalizeCore
 /-- LayerNorm over the last dimension of a `(seqLen, embedDim)` tensor.
 
 Uses `epsilon` (default `TorchLean.normalizationEpsilon`) for numerical stability
-in the denominator.
+in the denominator. The default can round to zero in tiny formats and has no fallback. For those
+formats, pass a representable positive, finite `epsilon` explicitly; a constant row otherwise
+produces a zero denominator. This raw scalar-polymorphic operation does not validate the argument.
 -/
 def layerNorm {seqLen embedDim : Nat}
   (x : Tensor α [seqLen, embedDim])
@@ -239,7 +241,8 @@ def layerNormBackward
   --
   -- Note: this relies on the `Context`'s `NatCast α` behaving sensibly (in particular, that
   -- `(embedDim : α)` is nonzero when `embedDim > 0`). This holds for TorchLean's shipped backends
-  -- (Float/ℝ/IEEE32Exec), but for exotic saturating casts a specialized scalar interface may be
+  -- (Float/ℝ/configured binary32), but for exotic saturating casts a specialized scalar interface
+  -- may be
   -- preferable.
   let N : α := (embedDim : α)
   let meanDyGamma := divSpec sumDyGamma (Tensor.full (.dim seqLen .scalar) N)

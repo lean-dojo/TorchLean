@@ -20,6 +20,7 @@ training structures (`Torch.ParamList` + gradient `TorchLean.TensorPack`).
 
 Design notes:
 - Optimizer state is stored in a shape-indexed list aligned with the parameter shapes.
+- Trainable storage aliases share one history and one update from their summed gradients.
 - Updates run on *plain tensors* (not via the autograd tape), so they work the same for eager and
   typed graph training loops.
 - Parameters marked `requiresGrad := false` are left unchanged (state is preserved).
@@ -60,8 +61,9 @@ set_option genSizeOf false in
 /--
 A shape-indexed list of optimizer state values.
 
-This mirrors the parameter-shape list used by `Torch.ParamList`. Each parameter gets its own
-per-parameter optimizer state (e.g. momentum buffers) with the same shape as the parameter.
+This mirrors the parameter-shape list used by `Torch.ParamList`. Trainable storage aliases carry
+copies of one immutable optimizer state. Initialize through the optimizer and retain the complete
+returned list between steps; alias entries must not be edited independently.
 -/
 inductive StateList
     (State : (α : Type) → [TorchLean.Storage α] → Shape → Type)
@@ -128,6 +130,25 @@ structure Optimizer (α : Type) [TorchLean.Storage α] [Context α] (paramShapes
 
 namespace Internal
 
+/-- An optimizer state with its shape, used to copy a canonical state into later alias slots. -/
+structure SomeState
+    (State : (α : Type) → [TorchLean.Storage α] → Shape → Type)
+    (α : Type) [TorchLean.Storage α] where
+  shape : Shape
+  state : State α shape
+
+/-- Retrieve an earlier canonical state without comparing state or tensor contents. -/
+def canonicalState
+    {State : (α : Type) → [TorchLean.Storage α] → Shape → Type}
+    {α : Type} [TorchLean.Storage α] (shape : Shape)
+    (states : Array (SomeState State α)) (index : Nat) : IO (State α shape) := do
+  let some entry := states[index]?
+    | throw <| IO.userError "torch: canonical optimizer state missing"
+  if h : entry.shape = shape then
+    pure (h ▸ entry.state)
+  else
+    throw <| IO.userError "torch: canonical optimizer state shape mismatch"
+
 /-- Invoke a backend batch update while retaining the wrapper's scheduled optimizer state. -/
 def nativeBatchStep {α β State : Type} [TorchLean.Storage α] [TorchLean.Storage β]
     {paramShapes inputShapes dataInputShapes : List Shape}
@@ -152,54 +173,80 @@ def firstStateValue
   | _ :: _, .cons st _ => get st
 
 /--
-Initialize an optimizer state list by reading the current parameter tensors.
+Initialize once per trainable storage and copy that immutable state into its alias slots.
 
-This is used to build the per-parameter state buffers (for example: momentum vectors) with the
-correct shape.
+Frozen slots retain independent placeholder states so the public shape-indexed list is unchanged.
+All alias decisions use the same canonical-slot map as SGD and checkpoints.
 -/
 def initStateList {α : Type} [TorchLean.Storage α] [Context α]
-    {State : (α : Type) → [TorchLean.Storage α] → Shape → Type} :
-    {ss : List Shape} →
-    (initOne : {s : Shape} → Tensor α s → State α s) →
-    Torch.ParamList α ss → IO (StateList State α ss)
-  | [], _initOne, .nil => pure .nil
-  | _s :: ss, initOne, .cons p ps => do
-      let v ← p.value.get
-      let st := initOne (s := _s) v
-      let rest ← initStateList (α := α) (State := State) (ss := ss) initOne ps
-      pure (.cons st rest)
+    {State : (α : Type) → [TorchLean.Storage α] → Shape → Type}
+    {ss : List Shape}
+    (initOne : {s : Shape} → Tensor α s → State α s)
+    (parameters : Torch.ParamList α ss) : IO (StateList State α ss) := do
+  let slots ← Torch.ParamList.canonicalSlotIndices parameters
+  let rec buildStates : {shapes : List Shape} → Torch.ParamList α shapes → Nat →
+      Array (SomeState State α) → IO (StateList State α shapes)
+    | [], .nil, _, _ => pure .nil
+    | shape :: _, .cons parameter rest, index, previous => do
+        let some slot := slots[index]?
+          | throw <| IO.userError "torch: canonical parameter slot missing"
+        let state ← match slot with
+          | none => pure (initOne (← parameter.value.get))
+          | some canonical =>
+              if canonical = index then
+                pure (initOne (← parameter.value.get))
+              else if canonical < index then
+                canonicalState shape previous canonical
+              else
+                throw <| IO.userError "torch: invalid canonical optimizer slot"
+        let remaining ← buildStates rest (index + 1) (previous.push ⟨shape, state⟩)
+        pure (.cons state remaining)
+  buildStates parameters 0 #[]
 
 /--
-Run one optimizer update step over a parameter list.
+Run one optimizer update per trainable storage using its summed occurrence gradients.
 
-`updateOne` receives state, parameters, and gradients. Parameters are updated in-place via
-`IO.Ref` in the `Torch.ParamList`.
+`updateOne` is called only at canonical slots. Its one immutable returned state is copied into
+all aliases with a shape check; frozen states are preserved.
+
+Alias states must remain coherent, as produced by initialization or previous steps for the same
+storage layout. Generic `State` has no equality operation: divergent external histories are outside
+this contract and are not detected or merged. Checkpoint restoration must preserve this invariant.
 -/
 def stepStateList {α : Type} [TorchLean.Storage α] [Context α]
-    {State : (α : Type) → [TorchLean.Storage α] → Shape → Type} :
-    {ss : List Shape} →
+    {State : (α : Type) → [TorchLean.Storage α] → Shape → Type}
+    {ss : List Shape}
     (updateOne :
       {s : Shape} → State α s → Tensor α s → Tensor α s →
-        Optim.Step α s (State α s)) →
-    Torch.ParamList α ss → StateList State α ss → TorchLean.TensorPack α ss →
-      IO (StateList State α ss)
-  | [], _updateOne, .nil, .nil, .nil => pure .nil
-  | shape :: shapes, updateOne, .cons parameter restParameters,
-      .cons optimizerState restOptimizerStates, .cons gradient restGradients => do
-      let nextOptimizerState ←
-        if parameter.requiresGrad then
-          let currentParameters ← parameter.value.get
-          let result :=
-            updateOne (s := shape) optimizerState currentParameters gradient
-          Torch.Internal.setParamHostValue
-            (α := α) (sh := shape) parameter result.parameters
-          pure result.optimizerState
-        else
-          pure optimizerState
-      let rest ←
-        stepStateList (α := α) (State := State) (ss := shapes)
-          updateOne restParameters restOptimizerStates restGradients
-      pure (.cons nextOptimizerState rest)
+        Optim.Step α s (State α s))
+    (parameters : Torch.ParamList α ss) (states : StateList State α ss)
+    (gradients : TorchLean.TensorPack α ss) : IO (StateList State α ss) := do
+  let slots ← Torch.ParamList.canonicalSlotIndices parameters
+  let sums ← Torch.ParamList.canonicalGradients slots gradients
+  let rec update : {shapes : List Shape} → Torch.ParamList α shapes →
+      StateList State α shapes → Nat → Array (SomeState State α) →
+      IO (StateList State α shapes)
+    | [], .nil, .nil, _, _ => pure .nil
+    | shape :: _, .cons parameter restParameters, .cons state restStates, index, previous => do
+        let some slot := slots[index]?
+          | throw <| IO.userError "torch: canonical parameter slot missing"
+        let nextState ← match slot with
+          | none => pure state
+          | some canonical =>
+              if canonical = index then do
+                let gradient ← Torch.ParamList.canonicalGradient shape sums index
+                let current ← parameter.value.get
+                let result := updateOne state current gradient
+                Torch.Internal.setParamHostValue parameter result.parameters
+                pure result.optimizerState
+              else if canonical < index then
+                canonicalState shape previous canonical
+              else
+                throw <| IO.userError "torch: invalid canonical optimizer slot"
+        let rest ← update restParameters restStates (index + 1)
+          (previous.push ⟨shape, nextState⟩)
+        pure (.cons nextState rest)
+  update parameters states 0 #[]
 
 end Internal
 

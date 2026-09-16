@@ -30,13 +30,14 @@ noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 open Proofs.RuntimeRoundingApprox
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 -- ---------------------------------------------------------------------------
 -- Sum reduction bound (fold with rounded addition)
@@ -54,7 +55,7 @@ def sumStep (epsElem : ℝ) : (R × ℝ) → R → (R × ℝ)
   | (accR, epsAcc), xR =>
       let epsAcc' : ℝ :=
         epsAcc + epsElem +
-          neuralUlp β fexp
+          ulp β fexp
               (toSpec (β := β) (fexp := fexp) (rnd := rnd) accR +
                 toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) / 2
       (accR + xR, epsAcc')
@@ -77,9 +78,9 @@ term added at each step (cf. standard floating-point summation analyses).
 -/
 def sumBound {s : Shape} (epsElem : ℝ) (tR : Tensor R s) : ℝ :=
   (sumFoldState (β := β) (fexp := fexp) (rnd := rnd) (s := s) epsElem
-    ((0 : R), neuralUlp β fexp 0 / 2) tR).2
+    ((0 : R), ulp β fexp 0 / 2) tR).2
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /--
 The accumulator component of `sumFoldState` matches the plain spec fold.
 
@@ -241,10 +242,10 @@ theorem approxTensor_sum_spec {s : Shape} :
           (sumBound (β := β) (fexp := fexp) (rnd := rnd) (s := s) eps xR) := by
   intro xS xR eps hx
   -- Start from accumulator 0 with a conservative rounding bound.
-  let initEps : ℝ := neuralUlp β fexp 0 / 2
+  let initEps : ℝ := ulp β fexp 0 / 2
   have hAcc : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (0 : R) - (0 : ℝ)) ≤ initEps := by
     have hnonneg : 0 ≤ initEps := by
-      exact div_nonneg (neuralUlp.nonneg β fexp 0) (by norm_num)
+      exact div_nonneg (ulp.nonneg β fexp 0) (by norm_num)
     simpa [initEps] using hnonneg
   have h :=
     approx_sum_fold_state (β := β) (fexp := fexp) (rnd := rnd) (s := s)

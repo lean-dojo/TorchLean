@@ -27,13 +27,14 @@ noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 open Proofs.RuntimeRoundingApprox
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 /--
 `approxTensor` bound for scaling by a runtime constant (`scaleSpec`) over arbitrary tensor shapes.
@@ -57,7 +58,7 @@ theorem approxTensor_scale_spec {s : Shape} (c : R) :
       (fR := fun xR => xR * c)
       (bnd := fun a eps =>
         abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) c) * eps +
-          neuralUlp β fexp (a * toSpec (β := β) (fexp := fexp) (rnd := rnd) c) / 2)
+          ulp β fexp (a * toSpec (β := β) (fexp := fexp) (rnd := rnd) c) / 2)
       (xS := xS) (xR := xR) (eps := eps) hx (by
         intro x xR hx
         simpa using (approx_scale_nf (β := β) (fexp := fexp) (rnd := rnd) (c := c)
@@ -87,7 +88,7 @@ theorem approxTensor_scale_spec_of_approx {s : Shape} (cS : ℝ) (cR : R) :
       (bnd := fun a eps =>
         (abs a + eps) * epsC +
           (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) cR) + epsC) * eps +
-          neuralUlp β fexp
+          ulp β fexp
             (a * toSpec (β := β) (fexp := fexp) (rnd := rnd) cR) / 2)
       (xS := xS) (xR := xR) (eps := eps) hx (by
         intro x xR hx
@@ -111,7 +112,7 @@ theorem approxTensor_neg_spec {s : Shape} :
       (s := s)
       (fS := Neg.neg) (fR := Neg.neg)
       (bnd := fun a eps =>
-        eps + neuralUlp β fexp (-a) / 2)
+        eps + ulp β fexp (-a) / 2)
       (xS := xS) (xR := xR) (eps := eps) hx (by
         intro x xR hx
         simpa using
@@ -131,13 +132,13 @@ theorem approxTensor_abs_spec {s : Shape} :
     approxTensor_map_spec_of_scalar_bound (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
       rnd))
       (s := s)
-      (fS := MathFunctions.abs) (fR := MathFunctions.abs)
+      (fS := Numerics.MathFunctions.abs) (fR := Numerics.MathFunctions.abs)
       (bnd := fun a eps =>
-        eps + neuralUlp β fexp (abs a) / 2)
+        eps + ulp β fexp (abs a) / 2)
       (xS := xS) (xR := xR) (eps := eps) hx (by
         intro x xR hx
-        -- `MathFunctions.abs` is definitional `abs` on `ℝ`.
-        simpa [MathFunctions.abs] using
+        -- `Numerics.MathFunctions.abs` is definitional `abs` on `ℝ`.
+        simpa [Numerics.MathFunctions.abs] using
           (approx_abs_nf (β := β) (fexp := fexp) (rnd := rnd) (x := x) (xR := xR) (eps := eps) hx))
   simpa [absSpec, absBoundTensor] using h
 
@@ -157,7 +158,7 @@ theorem approxTensor_exp_spec {s : Shape} :
     approxTensor_map_spec_of_scalar_bound (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
       rnd))
       (s := s)
-      (fS := MathFunctions.exp) (fR := MathFunctions.exp)
+      (fS := Numerics.MathFunctions.exp) (fR := Numerics.MathFunctions.exp)
       (bnd := fun a eps => expErrorBound (β := β) (fexp := fexp) a eps)
       (xS := xS) (xR := xR) (eps := eps) hx (by
         intro x xR hx
@@ -185,11 +186,11 @@ theorem approxTensor_sqrt_spec_of_pos_lb {s : Shape} (η : ℝ) (hη : 0 < η) :
     approxTensor_map_spec_of_scalar_bound_of_forall
       (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
       (s := s) (predicate := fun x : ℝ => η ≤ x)
-      (fS := fun x => MathFunctions.sqrt (max x 0))
-      (fR := fun xR => MathFunctions.sqrt (max xR 0))
+      (fS := fun x => Numerics.MathFunctions.sqrt (max x 0))
+      (fR := fun xR => Numerics.MathFunctions.sqrt (max xR 0))
       (bnd := fun a eps =>
         eps / Real.sqrt η +
-          neuralUlp β fexp (Real.sqrt (max a 0)) / 2)
+          ulp β fexp (Real.sqrt (max a 0)) / 2)
       (xS := xS) (xR := xR) (eps := eps) hx hdom (by
         intro x xR hdomain hx
         simpa [Proofs.mathfunc_sqrt_eq_rsqrt] using
@@ -207,16 +208,16 @@ theorem approxTensor_tanh_spec {s : Shape} :
     ∀ {xS : SpecTensor s} {xR : Tensor R s} {eps : ℝ},
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR eps →
         approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-          (mapSpec (s := s) MathFunctions.tanh xS)
-          (mapSpec (s := s) MathFunctions.tanh xR)
+          (mapSpec (s := s) Numerics.MathFunctions.tanh xS)
+          (mapSpec (s := s) Numerics.MathFunctions.tanh xR)
           (linfNorm (tanhBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (s := s) eps xR)) := by
   intro xS xR eps hx
   have h :=
     approxTensor_map_spec_of_scalar_bound (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
       rnd))
       (s := s)
-      (fS := MathFunctions.tanh) (fR := MathFunctions.tanh)
-      (bnd := fun a _eps => (2 : ℝ) + neuralUlp β fexp (Real.tanh a) / 2)
+      (fS := Numerics.MathFunctions.tanh) (fR := Numerics.MathFunctions.tanh)
+      (bnd := fun a _eps => (2 : ℝ) + ulp β fexp (Real.tanh a) / 2)
       (xS := xS) (xR := xR) (eps := eps) hx (by
         intro x xR hx
         simpa [Proofs.mathfunc_tanh_eq_rtanh] using
@@ -231,7 +232,7 @@ private theorem abs_max0_sub_max0_le (x y : ℝ) : abs (max x 0 - max y 0) ≤ a
 
 /-- Rounded ReLU scalar op for `NF`: apply `max · 0` then round. -/
 noncomputable def reluR (x : R) : R :=
-  TorchLean.Floats.NF.ofReal (β := β) (fexp := fexp) (rnd := rnd)
+  NF.ofReal (β := β) (fexp := fexp) (rnd := rnd)
     (max (toSpec (β := β) (fexp := fexp) (rnd := rnd) x) 0)
 
 /--
@@ -242,7 +243,7 @@ step in `reluR`.
 -/
 def reluBoundTensor {s : Shape} (eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
   mapSpec
-    (fun a => eps + neuralUlp β fexp (max a 0) / 2)
+    (fun a => eps + ulp β fexp (max a 0) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
 /--
@@ -264,7 +265,7 @@ theorem approxTensor_relu_spec {s : Shape} :
       (s := s)
       (fS := fun x => max x 0)
       (fR := reluR (β := β) (fexp := fexp) (rnd := rnd))
-      (bnd := fun a eps => eps + neuralUlp β fexp (max a 0) / 2)
+      (bnd := fun a eps => eps + ulp β fexp (max a 0) / 2)
       (xS := xS) (xR := xR) (eps := eps) hx (by
         intro x xR hx
         let xhat := toSpec (β := β) (fexp := fexp) (rnd := rnd) xR
@@ -273,9 +274,9 @@ theorem approxTensor_relu_spec {s : Shape} :
                 (toSpec (β := β) (fexp := fexp) (rnd := rnd)
                     (reluR (β := β) (fexp := fexp) (rnd := rnd) xR) -
                   max xhat 0) ≤
-              neuralUlp β fexp (max xhat 0) / 2 := by
-          simpa [reluR, xhat, toSpec, TorchLean.Floats.NF.toReal,
-            TorchLean.Floats.NF.ofReal, TorchLean.Floats.NF.roundR,
+              ulp β fexp (max xhat 0) / 2 := by
+          simpa [reluR, xhat, toSpec, NF.toReal,
+            NF.ofReal, NF.roundR,
             Proofs.RuntimeRoundingApprox.roundR] using
             (Proofs.RuntimeRoundingApprox.roundR_abs_error
               (β := β) (fexp := fexp) (rnd := rnd) (max xhat 0))
@@ -295,11 +296,11 @@ theorem approxTensor_relu_spec {s : Shape} :
                   max xhat 0) +
               abs (max xhat 0 - max x 0) := by
                 exact abs_sub_le _ _ _
-          _ ≤ neuralUlp β fexp (max xhat 0) / 2 + abs (xhat - x) :=
+          _ ≤ ulp β fexp (max xhat 0) / 2 + abs (xhat - x) :=
             add_le_add hround hmax
-          _ ≤ neuralUlp β fexp (max xhat 0) / 2 + eps := by
+          _ ≤ ulp β fexp (max xhat 0) / 2 + eps := by
             exact add_le_add_right hxhat _
-          _ = eps + neuralUlp β fexp (max xhat 0) / 2 := by ring)
+          _ = eps + ulp β fexp (max xhat 0) / 2 := by ring)
   simpa [reluBoundTensor] using h
 
 

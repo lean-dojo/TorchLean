@@ -30,8 +30,10 @@ $$
 
 We keep the schedule scalar-polymorphic (`Context α`) so the same definitions can be reused under:
 
-- `Float` (fast runtime execution),
-- `IEEE32Exec` / `NeuralFloat` (proof-relevant floating-point models),
+- `Float` / `Float32` (native runtime execution),
+- `ExecFloat.Binary 8 23` (executable binary32 semantics),
+- `FloatLib.Floats.ExecFloat.Binary` (CPU software arithmetic at a chosen precision),
+- `FloatLib.Floats.Formats.Flocq.NF` (noncomputable rounded-real proofs),
 - interval-like scalars (verification), and
 - `ℝ` (mathematical proofs).
 

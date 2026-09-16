@@ -13,13 +13,14 @@ import Mathlib.Algebra.Order.Algebra
 # Fourier transforms along a selected axis
 
 TorchLean’s layer/model definitions are scalar-polymorphic: a model runs over whatever scalar type
-$\alpha$ you instantiate it with (for example `Float`, `IEEE32Exec`, or $\mathbb{R}$). A “real FFT”
+$\alpha$ you instantiate it with (for example `Float`, `ExecFloat.Binary 8 23`, or $\mathbb{R}$). A
+“real FFT”
 would normally *change* the scalar type (real $\to$ complex), but TorchLean’s `Layer` does not
 support changing the scalar type mid-model.
 
 So this module provides **complex-domain** transforms: `fft` and `ifft` as layers that assume the
-$\alpha$ already behaves like a complex field (for example `TorchLean.Complex
-IEEE32Exec`, selected via `--arithmetic=complex`).
+$\alpha$ already behaves like a complex field (for example
+`TorchLean.Complex (FloatLib.Floats.ExecFloat.Binary 8 23)`, selected via `--arithmetic=complex`).
 
 Implementation note: we define `fft`/`ifft` as multiplication by explicit DFT matrices (so they are
 purely built from existing ops like `const` and `matmul`).  This is correctness-first and keeps the
@@ -29,14 +30,18 @@ Numerics note:
 - Over mathlib’s `ℂ`, the corresponding DFT/IDFT inversion facts are proved in
   `NN.Proofs.Analysis.Fft` (and the bridge to these `twiddle`/matrix definitions is in
   `NN.Proofs.Analysis.FftBridge`).
-- For executable `IEEE32Exec`, `sin`/`cos` are implemented deterministically in Lean (see
-  `NN.Floats.IEEEExec.Exec32`). This makes FFT execution reproducible across platforms. Proving
+- For executable `ExecFloat.Binary 8 23`, `sin`/`cos` are implemented deterministically in Lean (see
+  `FloatLib.Floats.Formats.BinaryInterchange.Configured.Transcendentals`). This makes FFT execution
+  reproducible across platforms. Proving
   tight end-to-end *accuracy* bounds for FFT still requires a separate analysis layer (or an
   interval/oracle backend) to relate those executable trigonometric approximations to real
   `sin/cos`.
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 namespace Runtime
 namespace Autograd

@@ -78,30 +78,9 @@ theorem mat_vec_add {m n : Nat}
   (x y : Tensor ℝ [n]) :
   matVecMulSpec W (addSpec x y) =
   addSpec (matVecMulSpec W x) (matVecMulSpec W y) := by
-  classical
-  have hToVec :
-      getScalar (matVecMulSpec W (addSpec x y)) =
-        getScalar (addSpec (matVecMulSpec W x) (matVecMulSpec W y)) := by
-    funext i
-    -- Rewrite all mat-vec outputs as sums.
-    rw [getScalar_mat_vec_mul_spec (A := W) (v := addSpec x y) (i := i)]
-    -- Expand the elementwise addition on the right (without unfolding `getScalar` itself).
-    simp [getScalar_add_spec]
-    rw [getScalar_mat_vec_mul_spec (A := W) (v := x) (i := i)]
-    rw [getScalar_mat_vec_mul_spec (A := W) (v := y) (i := i)]
-    -- Distribute `*` over `+` inside the sum and split the sum.
-    simp [mul_add, Finset.sum_add_distrib]
-
-  have hTensor :
-      ofFn (getScalar (matVecMulSpec W (addSpec x y))) =
-        ofFn (getScalar (addSpec (matVecMulSpec W x) (matVecMulSpec W y))) :=
-    congrArg ofFn hToVec
-
-  -- `ofFn ∘ getScalar` is identity.
-  simpa using
-    (Eq.trans (ofFn_getScalar (t := matVecMulSpec W (addSpec x y))).symm
-      (Eq.trans hTensor (ofFn_getScalar (t := addSpec (matVecMulSpec W x) (matVecMulSpec W
-        y)))))
+  apply Tensor.ext_vector
+  intro i
+  simp only [getScalar_mat_vec_mul_spec, getScalar_add_spec, mul_add, Finset.sum_add_distrib]
 
 /-- Linearity of matrix-vector multiplication in the vector argument (scaling). -/
 theorem mat_vec_scale {m n : Nat}
@@ -109,37 +88,9 @@ theorem mat_vec_scale {m n : Nat}
   (x : Tensor ℝ [n]) (c : ℝ) :
   matVecMulSpec W (scaleSpec x c) =
   scaleSpec (matVecMulSpec W x) c := by
-  classical
-  have hToVec :
-      getScalar (matVecMulSpec W (scaleSpec x c)) =
-        getScalar (scaleSpec (matVecMulSpec W x) c) := by
-    funext i
-    rw [getScalar_mat_vec_mul_spec (A := W) (v := scaleSpec x c) (i := i)]
-    -- `getScalar (scale_spec _ c)` is pointwise scaling.
-    simp [getScalar_scale_spec]
-    rw [getScalar_mat_vec_mul_spec (A := W) (v := x) (i := i)]
-    -- Pull out the scalar `c` from the sum.
-    -- (Reassociate `*` so `Finset.sum_mul` applies.)
-    have hassoc :
-        (∑ k : Fin n, get2 W i k * (getScalar x k * c)) =
-          ∑ k : Fin n, (get2 W i k * getScalar x k) * c := by
-      refine Finset.sum_congr rfl ?_
-      intro k _
-      ring
-    -- Now use `Finset.sum_mul` to factor `c` to the right.
-    -- (`Finset.sum_mul` gives the reverse direction, so use symmetry.)
-    simpa [hassoc, mul_assoc] using
-      (Finset.sum_mul (s := (Finset.univ : Finset (Fin n)))
-        (f := fun k : Fin n => get2 W i k * getScalar x k) (a := c)).symm
-
-  have hTensor :
-      ofFn (getScalar (matVecMulSpec W (scaleSpec x c))) =
-        ofFn (getScalar (scaleSpec (matVecMulSpec W x) c)) :=
-    congrArg ofFn hToVec
-
-  simpa using
-    (Eq.trans (ofFn_getScalar (t := matVecMulSpec W (scaleSpec x c))).symm
-      (Eq.trans hTensor (ofFn_getScalar (t := scaleSpec (matVecMulSpec W x) c))))
+  apply Tensor.ext_vector
+  intro i
+  simp only [getScalar_mat_vec_mul_spec, getScalar_scale_spec, Finset.sum_mul, mul_assoc]
 
 /-- Full linearity of matrix-vector multiplication in the vector argument. -/
 theorem mat_vec_linear_combination {m n : Nat}

@@ -432,7 +432,7 @@ optimizer's branch-and-bound search.
 :::
 
 :::definition "alpha_beta_node_checker" (parent := "bound_propagation") (lean := "NN.Verification.CROWNNodeCertAlphaBeta.checkAlphaBetaCROWNNodeCertificate")
-The executable checker parses and replays an `IEEE32Exec` node certificate. Its final acceptance
+The executable checker parses and replays a FloatLib binary32 node certificate. Its final acceptance
 decision has a proved bridge to the proposition-level local replay condition. Connecting that
 binary32 condition to the real enclosure in {bpref "crown_generic_checker_sound"}[] still requires
 the refinement assumptions for the operations in the graph.
@@ -440,7 +440,7 @@ the refinement assumptions for the operations in the graph.
 
 :::theorem "alpha_beta_node_acceptance" (parent := "bound_propagation") (lean := "NN.Verification.CROWNNodeCertAlphaBeta.AlphaBetaCROWNNodeCertificate.accepts_eq_true")
 Acceptance of the in-memory α/β-CROWN decision implies `CrownCertLocalOK` for the exact
-`IEEE32Exec` replay step used by the checker.
+FloatLib binary32 replay step used by the checker.
 :::
 
 :::proof "alpha_beta_node_acceptance"

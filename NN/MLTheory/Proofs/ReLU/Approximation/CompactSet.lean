@@ -685,11 +685,11 @@ theorem signCoeff_eq_two_pow_iff_bijective {d : Nat} (p : Fin d → Fin d) :
   have h := signCoeff_eq_two_pow_iff_allOdd (d := d) p
   by_cases hb : Function.Bijective p
   · -- reduce the goal with `hb`, then use the all-odd characterization.
-    rw [if_pos hb]
+    rw [ite_eq_left hb]
     have hall : ∀ j : Fin d, Odd (fiberCount (d := d) p j) :=
       (allOdd_fiberCount_iff_bijective (d := d) p).2 hb
     simpa [hall] using h
-  · rw [if_neg hb]
+  · rw [ite_eq_right hb]
     have hall : ¬ (∀ j : Fin d, Odd (fiberCount (d := d) p j)) := by
       intro hall
       exact hb ((allOdd_fiberCount_iff_bijective (d := d) p).1 hall)
@@ -745,14 +745,14 @@ theorem polarization_prod {d : Nat} (u : Fin d → ℝ) :
       have hprod : (∏ i : Fin d, u (p i)) = ∏ i : Fin d, u i := by
         simpa using (Function.Bijective.prod_comp (e := p) hb (g := u))
       -- left side
-      rw [signCoeff_eq_two_pow_iff_bijective (d := d) p, if_pos hb]
+      rw [signCoeff_eq_two_pow_iff_bijective (d := d) p, ite_eq_left hb]
       -- right side
-      rw [if_pos hb]
+      rw [ite_eq_left hb]
       -- rewrite the `u`-product and commute.
       simp [hprod, mul_comm]
     · -- non-bijective: `signCoeff = 0` and the RHS is `0`.
-      rw [signCoeff_eq_two_pow_iff_bijective (d := d) p, if_neg hb]
-      rw [if_neg hb]
+      rw [signCoeff_eq_two_pow_iff_bijective (d := d) p, ite_eq_right hb]
+      rw [ite_eq_right hb]
       simp
 
   rw [hrewrite]

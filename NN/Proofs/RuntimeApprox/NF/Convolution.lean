@@ -28,21 +28,22 @@ namespace Proofs.RuntimeApprox.NFBackend
 open Spec TorchLean
 open TorchLean.Tensor
 open Spec.Conv.Internal
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
 noncomputable section
 
-variable {beta : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {beta : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF beta fexp rnd
+local notation "R" => NF beta fexp rnd
 
 /-! ## Ordered rounded sums -/
 
 /-- Error budget after one rounded addition. -/
 def accumulationError (acc term : R) (accError termError : ℝ) : ℝ :=
   accError + termError +
-    neuralUlp beta fexp
+    ulp beta fexp
       (toSpec (β := beta) (fexp := fexp) (rnd := rnd) acc +
         toSpec (β := beta) (fexp := fexp) (rnd := rnd) term) / 2
 
@@ -51,7 +52,7 @@ def productError (x y : R) (xError yError : ℝ) : ℝ :=
   let xValue := toSpec (β := beta) (fexp := fexp) (rnd := rnd) x
   let yValue := toSpec (β := beta) (fexp := fexp) (rnd := rnd) y
   (abs xValue + xError) * yError + (abs yValue + yError) * xError +
-    neuralUlp beta fexp (xValue * yValue) / 2
+    ulp beta fexp (xValue * yValue) / 2
 
 /-- Replay a rounded sum while carrying its absolute-error budget. -/
 def foldErrorState {iota : Type} (indices : List iota)

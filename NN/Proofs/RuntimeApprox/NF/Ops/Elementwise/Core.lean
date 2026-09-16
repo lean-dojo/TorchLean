@@ -26,13 +26,14 @@ noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 open Proofs.RuntimeRoundingApprox
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 -- Elementwise bounds lifted to tensors via `linf_norm`.
 
@@ -46,7 +47,7 @@ is used as the output epsilon in `approxTensor_add_spec`.
 def addBoundTensor {s : Shape} (epsx epsy : ℝ) (xR yR : Tensor R s) : SpecTensor s :=
   map2Spec
     (fun a b =>
-      epsx + epsy + neuralUlp β fexp (a + b) / 2)
+      epsx + epsy + ulp β fexp (a + b) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) yR)
 
@@ -58,7 +59,7 @@ Analogous to `addBoundTensor`, but for `xR - yR` (and the corresponding spec sub
 def subBoundTensor {s : Shape} (epsx epsy : ℝ) (xR yR : Tensor R s) : SpecTensor s :=
   map2Spec
     (fun a b =>
-      epsx + epsy + neuralUlp β fexp (a - b) / 2)
+      epsx + epsy + ulp β fexp (a - b) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) yR)
 
@@ -71,7 +72,7 @@ propagation plus one rounding term.
 def mulBoundTensor {s : Shape} (epsx epsy : ℝ) (xR yR : Tensor R s) : SpecTensor s :=
   map2Spec
     (fun a b =>
-      (abs a + epsx) * epsy + (abs b + epsy) * epsx + neuralUlp β fexp (a * b) / 2)
+      (abs a + epsx) * epsy + (abs b + epsy) * epsx + ulp β fexp (a * b) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) yR)
 
@@ -85,7 +86,7 @@ def scaleBoundTensor {s : Shape} (eps : ℝ) (c : R) (xR : Tensor R s) : SpecTen
   mapSpec
     (fun a =>
       abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) c) * eps +
-        neuralUlp β fexp (a * toSpec (β := β) (fexp := fexp) (rnd := rnd) c)
+        ulp β fexp (a * toSpec (β := β) (fexp := fexp) (rnd := rnd) c)
           / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
@@ -101,20 +102,20 @@ def scaleApproxBoundTensor {s : Shape} (eps epsC : ℝ) (c : R)
     (fun a =>
       (abs a + eps) * epsC +
         (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) c) + epsC) * eps +
-        neuralUlp β fexp
+        ulp β fexp
           (a * toSpec (β := β) (fexp := fexp) (rnd := rnd) c) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
 /-- Per-entry bound tensor for negation. -/
 def negBoundTensor {s : Shape} (eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
   mapSpec
-    (fun a => eps + neuralUlp β fexp (-a) / 2)
+    (fun a => eps + ulp β fexp (-a) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
 /-- Per-entry bound tensor for absolute value. -/
 def absBoundTensor {s : Shape} (eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
   mapSpec
-    (fun a => eps + neuralUlp β fexp (abs a) / 2)
+    (fun a => eps + ulp β fexp (abs a) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
 /--
@@ -129,7 +130,7 @@ def expBoundTensor {s : Shape} (eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
 /-- Per-entry square-root budget on a domain with exact lower bound `η`. -/
 def sqrtPosBoundTensor {s : Shape} (η eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
   mapSpec
-    (fun a => eps / Real.sqrt η + neuralUlp β fexp (Real.sqrt (max a 0)) / 2)
+    (fun a => eps / Real.sqrt η + ulp β fexp (Real.sqrt (max a 0)) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
 /--
@@ -139,7 +140,7 @@ Currently uses the coarse unconditional bound from `approx_tanh_nf` (boundedness
 -/
 def tanhBoundTensor {s : Shape} (_eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
   mapSpec
-    (fun a => (2 : ℝ) + neuralUlp β fexp (Real.tanh a) / 2)
+    (fun a => (2 : ℝ) + ulp β fexp (Real.tanh a) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
 -- Safe log (clamped) bound.
@@ -154,7 +155,7 @@ def safeLogBoundTensor {s : Shape} (ε eps : ℝ) (xR : Tensor R s) : SpecTensor
   mapSpec
     (fun a =>
       (1 / ε) * eps +
-        neuralUlp β fexp (safeLog (ε := ε) a) / 2)
+        ulp β fexp (safeLog (ε := ε) a) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
 /--
@@ -178,7 +179,7 @@ theorem approxTensor_safeLog_spec {s : Shape} (ε : ℝ) (hε : 0 < ε) :
       (s := s) (fS := safeLog (ε := ε))
       (fR := safeLogR (β := β) (fexp := fexp) (rnd := rnd) ε)
       (bnd := fun a inputError =>
-        (1 / ε) * inputError + neuralUlp β fexp (safeLog (ε := ε) a) / 2)
+        (1 / ε) * inputError + ulp β fexp (safeLog (ε := ε) a) / 2)
       (xS := xS) (xR := xR) (eps := eps) hx (by
         intro x xR hx
         exact approx_safeLog_nf (β := β) (fexp := fexp) (rnd := rnd) hε hx)

@@ -44,6 +44,9 @@ Two small conventions show up everywhere below:
 
 @[expose] public section
 
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
+
 
 namespace TorchLean.Floats
 namespace FP32
@@ -75,10 +78,10 @@ Nonnegativity of the FP32 half-ULP scale `eps32`.
 This is needed to use `approxR_absOnly_iff`, which requires $\varepsilon\ge 0$.
 -/
 private theorem eps32_nonneg (x : ℝ) : 0 ≤ eps32 x := by
-  -- Unfold to the underlying `neural_ulp` so we can reuse its nonnegativity lemma.
+  -- Unfold to FloatLib’s `ulp` so we can reuse its nonnegativity lemma.
   unfold eps32 ulp32
   exact div_nonneg
-    (neuralUlp.nonneg (β := binaryRadix) (fexp := fexp32) (x := x))
+    (ulp.nonneg (β := binaryRadix) (fexp := fexp32) (x := x))
     (by norm_num)
 
 /-! ## Arithmetic (one real op + one rounding step) -/
@@ -160,10 +163,10 @@ $\exp(\operatorname{val}(a))
 \operatorname{val}(\exp a)$.
 -/
 theorem exp_approxR (a : FP32) :
-    approxR (Real.exp a.val) (MathFunctions.exp a).val
+    approxR (Real.exp a.val) (Numerics.MathFunctions.exp a).val
       (ApproxTol.absOnly (eps32 (Real.exp a.val))) := by
-  refine approxR_absOnly_of_abs_sub_le (x := Real.exp a.val) (y := (MathFunctions.exp a).val) (eps
-    := _)
+  refine approxR_absOnly_of_abs_sub_le (x := Real.exp a.val)
+    (y := (Numerics.MathFunctions.exp a).val) (eps := _)
     (eps32_nonneg (x := Real.exp a.val)) ?_
   simpa using exp_abs_error (a := a)
 
@@ -176,10 +179,10 @@ $\tanh(\operatorname{val}(a))
 \operatorname{val}(\tanh a)$.
 -/
 theorem tanh_approxR (a : FP32) :
-    approxR (Real.tanh a.val) (MathFunctions.tanh a).val
+    approxR (Real.tanh a.val) (Numerics.MathFunctions.tanh a).val
       (ApproxTol.absOnly (eps32 (Real.tanh a.val))) := by
-  refine approxR_absOnly_of_abs_sub_le (x := Real.tanh a.val) (y := (MathFunctions.tanh a).val) (eps
-    := _)
+  refine approxR_absOnly_of_abs_sub_le (x := Real.tanh a.val)
+    (y := (Numerics.MathFunctions.tanh a).val) (eps := _)
     (eps32_nonneg (x := Real.tanh a.val)) ?_
   simpa using tanh_abs_error (a := a)
 
@@ -192,10 +195,10 @@ $\log(\operatorname{val}(a))
 \operatorname{val}(\log a)$.
 -/
 theorem log_approxR (a : FP32) :
-    approxR (Real.log a.val) (MathFunctions.log a).val
+    approxR (Real.log a.val) (Numerics.MathFunctions.log a).val
       (ApproxTol.absOnly (eps32 (Real.log a.val))) := by
-  refine approxR_absOnly_of_abs_sub_le (x := Real.log a.val) (y := (MathFunctions.log a).val) (eps
-    := _)
+  refine approxR_absOnly_of_abs_sub_le (x := Real.log a.val)
+    (y := (Numerics.MathFunctions.log a).val) (eps := _)
     (eps32_nonneg (x := Real.log a.val)) ?_
   simpa using log_abs_error (a := a)
 
@@ -208,10 +211,10 @@ $\cos(\operatorname{val}(a))
 \operatorname{val}(\cos a)$.
 -/
 theorem cos_approxR (a : FP32) :
-    approxR (Real.cos a.val) (MathFunctions.cos a).val
+    approxR (Real.cos a.val) (Numerics.MathFunctions.cos a).val
       (ApproxTol.absOnly (eps32 (Real.cos a.val))) := by
-  refine approxR_absOnly_of_abs_sub_le (x := Real.cos a.val) (y := (MathFunctions.cos a).val) (eps
-    := _)
+  refine approxR_absOnly_of_abs_sub_le (x := Real.cos a.val)
+    (y := (Numerics.MathFunctions.cos a).val) (eps := _)
     (eps32_nonneg (x := Real.cos a.val)) ?_
   simpa using cos_abs_error (a := a)
 
@@ -224,10 +227,10 @@ $\sin(\operatorname{val}(a))
 \operatorname{val}(\sin a)$.
 -/
 theorem sin_approxR (a : FP32) :
-    approxR (Real.sin a.val) (MathFunctions.sin a).val
+    approxR (Real.sin a.val) (Numerics.MathFunctions.sin a).val
       (ApproxTol.absOnly (eps32 (Real.sin a.val))) := by
-  refine approxR_absOnly_of_abs_sub_le (x := Real.sin a.val) (y := (MathFunctions.sin a).val) (eps
-    := _)
+  refine approxR_absOnly_of_abs_sub_le (x := Real.sin a.val)
+    (y := (Numerics.MathFunctions.sin a).val) (eps := _)
     (eps32_nonneg (x := Real.sin a.val)) ?_
   simpa using sin_abs_error (a := a)
 
@@ -240,10 +243,10 @@ $\sinh(\operatorname{val}(a))
 \operatorname{val}(\sinh a)$.
 -/
 theorem sinh_approxR (a : FP32) :
-    approxR (Real.sinh a.val) (MathFunctions.sinh a).val
+    approxR (Real.sinh a.val) (Numerics.MathFunctions.sinh a).val
       (ApproxTol.absOnly (eps32 (Real.sinh a.val))) := by
-  refine approxR_absOnly_of_abs_sub_le (x := Real.sinh a.val) (y := (MathFunctions.sinh a).val) (eps
-    := _)
+  refine approxR_absOnly_of_abs_sub_le (x := Real.sinh a.val)
+    (y := (Numerics.MathFunctions.sinh a).val) (eps := _)
     (eps32_nonneg (x := Real.sinh a.val)) ?_
   simpa using sinh_abs_error (a := a)
 
@@ -256,10 +259,10 @@ $\cosh(\operatorname{val}(a))
 \operatorname{val}(\cosh a)$.
 -/
 theorem cosh_approxR (a : FP32) :
-    approxR (Real.cosh a.val) (MathFunctions.cosh a).val
+    approxR (Real.cosh a.val) (Numerics.MathFunctions.cosh a).val
       (ApproxTol.absOnly (eps32 (Real.cosh a.val))) := by
-  refine approxR_absOnly_of_abs_sub_le (x := Real.cosh a.val) (y := (MathFunctions.cosh a).val) (eps
-    := _)
+  refine approxR_absOnly_of_abs_sub_le (x := Real.cosh a.val)
+    (y := (Numerics.MathFunctions.cosh a).val) (eps := _)
     (eps32_nonneg (x := Real.cosh a.val)) ?_
   simpa using cosh_abs_error (a := a)
 
@@ -272,10 +275,10 @@ $\sqrt{\operatorname{val}(a)}
 \operatorname{val}(\sqrt a)$.
 -/
 theorem sqrt_approxR (a : FP32) :
-    approxR (Real.sqrt a.val) (MathFunctions.sqrt a).val
+    approxR (Real.sqrt a.val) (Numerics.MathFunctions.sqrt a).val
       (ApproxTol.absOnly (eps32 (Real.sqrt a.val))) := by
-  refine approxR_absOnly_of_abs_sub_le (x := Real.sqrt a.val) (y := (MathFunctions.sqrt a).val) (eps
-    := _)
+  refine approxR_absOnly_of_abs_sub_le (x := Real.sqrt a.val)
+    (y := (Numerics.MathFunctions.sqrt a).val) (eps := _)
     (eps32_nonneg (x := Real.sqrt a.val)) ?_
   simpa using sqrt_abs_error (a := a)
 
@@ -288,9 +291,10 @@ $|\operatorname{val}(a)|
 \operatorname{val}(|a|)$.
 -/
 theorem abs_approxR (a : FP32) :
-    approxR (abs a.val) (MathFunctions.abs a).val
+    approxR (abs a.val) (Numerics.MathFunctions.abs a).val
       (ApproxTol.absOnly (eps32 (abs a.val))) := by
-  refine approxR_absOnly_of_abs_sub_le (x := abs a.val) (y := (MathFunctions.abs a).val) (eps := _)
+  refine approxR_absOnly_of_abs_sub_le (x := abs a.val)
+    (y := (Numerics.MathFunctions.abs a).val) (eps := _)
     (eps32_nonneg (x := abs a.val)) ?_
   simpa using abs_abs_error (a := a)
 

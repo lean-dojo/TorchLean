@@ -96,13 +96,91 @@ instance {α : Type} [Sub α] : Sub (Dual α) where
 instance {α : Type} [Mul α] [Add α] : Mul (Dual α) :=
   ⟨fun x y => ⟨x.re * y.re, x.du * y.re + x.re * y.du⟩⟩
 
-/-- Division uses the quotient rule:
-$(x/y)'=(x'y-xy')/y^2$. -/
-instance {α : Type} [Div α] [Mul α] [Sub α] [Add α] : Div (Dual α) :=
+/-- Evaluate a complete quotient layer while retaining all enclosed range flags. -/
+@[inline] def checkedDiv {α : Type}
+    (ops : TorchLean.Numeric.QuotientArithmetic α) (x y : Dual α) : Dual α × UInt8 :=
+  let (re, a) := ops.divWithFlags x.re y.re
+  let (denom, b) := ops.mulWithFlags y.re y.re
+  let (left, c) := ops.mulWithFlags x.du y.re
+  let (right, d) := ops.mulWithFlags x.re y.du
+  let (numerator, e) := ops.subWithFlags left right
+  let (du, f) := ops.divWithFlags numerator denom
+  (⟨re, du⟩, a ||| b ||| c ||| d ||| e ||| f)
+
+/-- Lift checked arithmetic through both coefficients without discarding inner range flags. -/
+@[inline] instance {α : Type} [lower : TorchLean.Numeric.QuotientArithmetic α] :
+    TorchLean.Numeric.QuotientArithmetic (Dual α) where
+  supported := lower.supported
+  depth := lower.depth + 1
+  addWithFlags x y :=
+    let (re, a) := lower.addWithFlags x.re y.re
+    let (du, b) := lower.addWithFlags x.du y.du
+    (⟨re, du⟩, a ||| b)
+  subWithFlags x y :=
+    let (re, a) := lower.subWithFlags x.re y.re
+    let (du, b) := lower.subWithFlags x.du y.du
+    (⟨re, du⟩, a ||| b)
+  mulWithFlags x y :=
+    let (re, a) := lower.mulWithFlags x.re y.re
+    let (left, b) := lower.mulWithFlags x.du y.re
+    let (right, c) := lower.mulWithFlags x.re y.du
+    let (du, d) := lower.addWithFlags left right
+    (⟨re, du⟩, a ||| b ||| c ||| d)
+  divWithFlags x y :=
+    checkedDiv lower x y
+  encode x := do
+    let re ← lower.encode x.re
+    let du ← lower.encode x.du
+    return .dual re du
+  decode | .dual re du => do
+    let re ← lower.decode re
+    let du ← lower.decode du
+    return ⟨re, du⟩
+  copyPrimal native exact := ⟨lower.copyPrimal native.re exact.re, exact.du⟩
+
+/--
+Division uses the quotient rule $(x/y)'=(x'y-xy')/y^2$ at every nesting depth.
+
+For native binary32/64 coefficient trees, ordinary operations retain this evaluation order.
+If any enclosed operation exposes a nonfinite or subnormal value, including a nonzero product
+or quotient rounded to zero, we replay the complete quotient over exact rational coefficients.
+Every final coefficient is then rounded independently to its native format. A representable
+mixed derivative can therefore survive an intermediate overflow or underflow at an inner depth.
+Replay requires all input coefficients finite and the denominator's scalar primal nonzero.
+Otherwise the native quotient-rule result is retained. An unrepresentable exact coefficient
+still rounds to infinity or zero; coefficients are never clamped or deleted.
+
+The scope is one quotient of the given coefficient trees. Rounding before entry is irreversible;
+ordinary rounding and cancellation outside a detected range event retain their native semantics.
+Carriers without checked coefficient arithmetic retain the previous operational rearrangement.
+-/
+@[inline] instance {α : Type} [Div α] [Mul α] [Sub α] [Add α] [BEq α] [Zero α]
+    [TorchLean.Numeric.QuotientArithmetic α] : Div (Dual α) :=
   ⟨fun x y =>
-    -- (x / y)' = (x' y - x y') / y^2
-    let denom := y.re * y.re
-    ⟨x.re / y.re, (x.du * y.re - x.re * y.du) / denom⟩⟩
+    let ops : TorchLean.Numeric.QuotientArithmetic (Dual α) := inferInstance
+    if ops.supported then
+      let (result, replay) :=
+        @TorchLean.Numeric.QuotientArithmetic.divChecked _ ops x y
+      if replay then
+        match TorchLean.Numeric.QuotientArithmetic.replay? ops.encode ops.decode x y with
+        | some exact => ops.copyPrimal result exact
+        | none => result
+      else result
+    else
+      let quotient := x.re / y.re
+      let denom := y.re * y.re
+      let tangent := (x.du * y.re - x.re * y.du) / denom
+      let needsFallback := denom == 0 || !((denom - denom) == 0) ||
+        !((tangent - tangent) == 0)
+      let finiteInputs := (x.re - x.re) == 0 && (x.du - x.du) == 0 &&
+        (y.re - y.re) == 0 && (y.du - y.du) == 0
+      let quotientRoundedAway := quotient == 0 && !(x.re == 0)
+      let derivative :=
+        if needsFallback && finiteInputs && (quotient - quotient) == 0 &&
+            !quotientRoundedAway then
+          (x.du - quotient * y.du) / y.re
+        else tangent
+      ⟨quotient, derivative⟩⟩
 
 /-- Boolean equality compares primals only (tangents are treated as metadata). -/
 instance {α : Type} [BEq α] : BEq (Dual α) where

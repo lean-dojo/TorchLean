@@ -20,6 +20,10 @@ Focused checks for the general request/report boundary and automatic ReLU phase 
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 namespace NN.Tests.API.Verification
 
 open TorchLean
@@ -210,17 +214,17 @@ def run : IO Unit := do
   expectPhase "Float active"
     (NN.MLTheory.CROWN.Cert.inferredPhase (α := Float) 0.0 2.0) .active
 
-  let ieee := Runtime.ofFloat (α := TorchLean.Floats.IEEE754.IEEE32Exec)
+  let ieee := Runtime.ofFloat (α := (Binary 8 23))
   expectPhase "IEEE32 inactive"
-    (NN.MLTheory.CROWN.Cert.inferredPhase (α := TorchLean.Floats.IEEE754.IEEE32Exec)
+    (NN.MLTheory.CROWN.Cert.inferredPhase (α := (Binary 8 23))
       (ieee (-2.0)) (ieee 0.0))
     .inactive
   expectPhase "IEEE32 unstable"
-    (NN.MLTheory.CROWN.Cert.inferredPhase (α := TorchLean.Floats.IEEE754.IEEE32Exec)
+    (NN.MLTheory.CROWN.Cert.inferredPhase (α := (Binary 8 23))
       (ieee (-1.0)) (ieee 1.0))
     .unstable
   expectPhase "IEEE32 active"
-    (NN.MLTheory.CROWN.Cert.inferredPhase (α := TorchLean.Floats.IEEE754.IEEE32Exec)
+    (NN.MLTheory.CROWN.Cert.inferredPhase (α := (Binary 8 23))
       (ieee 0.0) (ieee 2.0))
     .active
 

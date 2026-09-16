@@ -169,7 +169,8 @@ Formally, `postprocess M f` is the pushforward measure `(M a).map f` for each in
 -/
 def postprocess [MeasurableSpace β] [MeasurableSpace γ]
     (M : Mechanism α β) (f : β → γ) (hf : Measurable f) : Mechanism α γ :=
-  fun a => (M a).map hf.aemeasurable
+  fun a => ⟨(M a : Measure β).map f,
+    (Measure.isProbabilityMeasure_map_iff hf.aemeasurable).mpr inferInstance⟩
 
 /--
 Post-processing theorem: measurable mappings of outputs preserve DP.
@@ -187,9 +188,9 @@ theorem differentialPrivacy_postprocess {Adj : α → α → Prop} [MeasurableSp
         := by
   intro hdp a a' hadj S hS
   -- Reduce the event on the post-processed output to a preimage event on the original output.
-  have hpre : MeasurableSet (f ⁻¹' S) := hf hS
-  have h := hdp a a' hadj (f ⁻¹' S) hpre
-  -- Rewrite both sides via `ProbabilityMeasure.map_apply'` (ENNReal-level).
-  simpa [postprocess, ProbabilityMeasure.map_apply', hS, hpre, hf] using h
+  change ((M a).map f : Measure γ) S ≤
+    (ENNReal.ofReal (Real.exp ε)) * ((M a').map f : Measure γ) S + δ
+  rw [(M a).map_apply' hf.aemeasurable hS, (M a').map_apply' hf.aemeasurable hS]
+  exact hdp a a' hadj (f ⁻¹' S) (hf hS)
 
 end NN.MLTheory.LearningTheory

@@ -22,8 +22,10 @@ Why include this in the spec layer:
   IBP/CROWN bounds on the RHS, etc.).
 
 We keep the implementation scalar-polymorphic (`Context α`) so it can be:
-- executed with `Float` / `IEEE32Exec` / `NeuralFloat`, and
-- reasoned about with `ℝ`.
+- executed with `Float`, `Float32`, or the configured binary32 type `ExecFloat.Binary 8 23`;
+- run in CPU software at a chosen precision with `FloatLib.Floats.ExecFloat.Binary`; and
+- reasoned about with `ℝ` or the noncomputable rounded-real model
+  `FloatLib.Floats.Formats.Flocq.NF`.
 
 References (informal pointers):
 - Song et al. (2021), "Score-Based Generative Modeling through Stochastic Differential Equations".

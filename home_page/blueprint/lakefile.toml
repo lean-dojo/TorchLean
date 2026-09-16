@@ -4,7 +4,8 @@ defaultTargets = ["TorchLeanBlueprint", "blueprint-gen"]
 [[require]]
 name = "VersoBlueprint"
 git = "https://github.com/leanprover/verso-blueprint"
-rev = "v4.33.0"
+# Pin the upstream v4.34.0 maintenance branch for reproducible documentation builds.
+rev = "a48eea9ecb17d1551fef67d7de90571608663a11"
 
 [[require]]
 name = "TorchLean"

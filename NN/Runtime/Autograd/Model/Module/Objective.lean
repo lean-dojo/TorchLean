@@ -34,7 +34,7 @@ namespace Module
 /--
 An immutable scalar-objective definition:
 - `initState` stores initial trainable parameters and persistent buffers as `Float` tensors,
-- `loss` is *polymorphic in the scalar backend* (same code works for Float/IEEE32Exec/…).
+- `loss` is *polymorphic in the scalar backend* (same code works for Float/configured binary32/…).
 
 You can instantiate this definition as an `Objective` under a chosen execution mode and scalar.
 -/

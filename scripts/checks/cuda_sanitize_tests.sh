@@ -23,6 +23,7 @@ Options:
                         Default: memcheck.
   --all-tools          Run memcheck, racecheck, initcheck, and synccheck.
   --cuda-home PATH     CUDA toolkit root; passes -K cuda_home=PATH and prepends PATH/lib64.
+  --cuda-arch ARCH     CUDA target passed to Lake (default: all-major).
   --target PATH        Executable to run after building.
                         Default: .lake/build/bin/nn_tests_suite.
   --target-processes MODE
@@ -41,6 +42,7 @@ Examples:
   scripts/checks/cuda_sanitize_tests.sh
   scripts/checks/cuda_sanitize_tests.sh --all-tools
   scripts/checks/cuda_sanitize_tests.sh --cuda-home /usr/local/cuda --tool memcheck
+  scripts/checks/cuda_sanitize_tests.sh --cuda-arch sm_80 --all-tools
 EOF
 }
 
@@ -48,6 +50,7 @@ sanitizer=""
 target=".lake/build/bin/nn_tests_suite"
 target_processes="application-only"
 cuda_home=""
+cuda_arch=""
 skip_build=false
 declare -a tools=()
 declare -a exe_args=()
@@ -72,6 +75,14 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       cuda_home="$2"
+      shift 2
+      ;;
+    --cuda-arch)
+      if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
+        echo "error: --cuda-arch requires a target such as all-major or sm_80" >&2
+        exit 2
+      fi
+      cuda_arch="$2"
       shift 2
       ;;
     --target)
@@ -162,6 +173,9 @@ fi
 lake_flags=(-R -K cuda=true)
 if [[ -n "$cuda_home" ]]; then
   lake_flags+=(-K "cuda_home=$cuda_home")
+fi
+if [[ -n "$cuda_arch" ]]; then
+  lake_flags+=(-K "cuda_arch=$cuda_arch")
 fi
 
 run() {

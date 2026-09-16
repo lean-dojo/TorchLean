@@ -2,8 +2,8 @@ import VersoManual
 import NN.API
 import NN.Spec.Core.Context.Real
 import NN.Proofs.Gradients.Activation
-import NN.Floats.Float32
-import NN.Floats.NeuralFloat.Error.Directed
+import FloatLib
+import FloatLib.Floats.Formats.Flocq.Theory.Error.Directed
 import NN.MLTheory.CROWN.Core
 import NN.Runtime.PyTorch.Import.Core
 import TorchLeanBlueprint.Bib
@@ -12,7 +12,12 @@ import TorchLeanBlueprint.Roles
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 open TorchLean
+open FloatLib.Numerics
+open FloatLib.Floats.Formats.Flocq
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 #doc (Manual) "Conclusion" =>
 %%%
@@ -20,8 +25,7 @@ tag := "conclusion"
 file := "Where-The-Pieces-Meet"
 %%%
 
-An output bound for a trained network depends on its parameters, input domain, and arithmetic.
-For the regression model used earlier, the parameter tuple $`\theta` contains weight matrices
+Return to the regression model. After training, its parameter tuple $`\theta` contains weight matrices
 $`W_1,W_2` and bias vectors $`b_1,b_2`:
 
 $$`
@@ -30,12 +34,13 @@ F_\theta(x)
 W_2\operatorname{ReLU}(W_1x+b_1)+b_2.
 `
 
-The same formula can denote a real-valued function, a computation in an executable binary32
-model, or a native runtime calculation. A theorem about the first does not automatically describe
-the other two. Connecting them requires identifying the parameter artifact and operation graph,
-then establishing what each lowering or backend preserves.
+We can save those parameters, evaluate the network, or ask Lean for a bound on its output.
+For that bound to describe the saved model's predictions, it must use the same weights and input
+domain. We must also connect the arithmetic in the theorem to the arithmetic used in execution:
+the formula can denote a real-valued function, a FloatLib binary32 computation, or a native
+runtime calculation.
 
-The guide's model declarations, execution paths, and verification artifacts form this chain:
+Following a prediction back to the model gives us a sequence of objects to check:
 
 ```
 typed model
@@ -46,10 +51,10 @@ typed model
   -> checked proposition
 ```
 
-Each link has a different obligation. Shapes constrain composition; parameter artifacts identify
-the function being evaluated; numerical semantics determine how operations round; and a checker
-soundness theorem states what follows from acceptance. A useful verification claim names the
-links it covers.
+Shapes constrain composition, parameter artifacts identify the function being evaluated, and
+numerical semantics determine how operations round. At the last step, a checker soundness theorem
+states what follows from acceptance. I'll use a shifted ReLU to make these obligations small
+enough to inspect together.
 
 # Verification Evidence
 
@@ -69,7 +74,8 @@ def ccScalar {α : Type} [TorchLean.Storage α] [Context α]
 
 The definition is generic in the scalar type, as in {ref "twostage"}[the two-stage chapter]. At
 $`\mathbb R` it denotes a mathematical function; at `Float` it can execute on the host; at
-`IEEE32Exec` it executes within a binary32 model. `Context` supplies the operations in each case.
+FloatLib binary32 it executes within a binary32 model. `Context` supplies the operations in each
+case.
 Sharing the definition keeps the expression aligned, while the scalar instance determines the
 meaning of its arithmetic.
 
@@ -87,17 +93,14 @@ theorem ccLowerBound (x : ℝ) : 1 ≤ ccScalar x := by
   linarith
 ```
 
-The sole explicit argument is an arbitrary real number `x`. There is no hypothesis restricting
-it to a sampled interval, because `max 0 (x - 1)` is nonnegative everywhere. The intermediate
-`have` records that fact; unfolding `ccScalar` then leaves an elementary linear inequality.
-The theorem consequently covers the two branches and the threshold itself. Its lower-bound claim
-does not require differentiability at the threshold. This is an example of choosing a proposition
-whose assumptions match the question, rather than assuming that every property of a ReLU needs
-to exclude its kink.
+The `have` records that the maximum is nonnegative. Multiplying by 2 preserves that inequality,
+and adding 1 gives the bound. After unfolding `ccScalar`, `linarith` checks the remaining linear
+inequality.
 
-The maximum is nonnegative, multiplying by 2 preserves that inequality, and adding 1 gives the
-bound. The theorem quantifies over all real inputs. It assumes exact real operations and contains
-no statement about rounding, a device, or native execution.
+Because `x` is arbitrary, the result covers both branches and the threshold itself. The kink
+causes no problem for this lower bound: we never asked for a derivative there. The arithmetic in
+the statement is exact real arithmetic; relating it to an execution will require a numerical
+argument.
 
 ## Float Evaluation
 
@@ -164,14 +167,9 @@ open NN.MLTheory.CROWN in
 false
 ```
 
-The two Boolean outputs answer two different membership questions about the same fixed window.
-They do not contradict the universal real lower bound: an output of one still satisfies that
-bound, even though it lies outside `[5.5, 6.5]`. A failure to belong to a chosen output window is
-only a counterexample to the property expressed by that window at that point. It is not a failure
-of the checker or of every possible safety claim about the function. Identifying the property is
-therefore necessary before interpreting either success or rejection.
-
-The first result, 6, lies in $`[5.5,6.5]`; the second, 1, does not. Testing both catches a checker
+The first result, 6, lies in $`[5.5,6.5]`; the second, 1, does not. The second result still satisfies
+the real lower bound proved above. We asked a stricter question when we chose this output window.
+Testing both catches a checker
 that returns `true` unconditionally on these cases. Larger certificate workflows also test
 malformed evidence; see {ref "certificates"}[the certificate chapter].
 
@@ -202,10 +200,8 @@ tensor `x`. Finally, the arrow takes evidence that the Boolean check equals `tru
 network, or input region occurs in this statement. Applying it to a network output does not add
 a universal quantifier over that network's inputs.
 
-The hypothesis is an equality stating that the check returns `true`; the conclusion is
-`Box.contains`, a proposition about the same box and tensor. The theorem applies to every value
-satisfying that hypothesis. A printed `true` records a runtime observation, while applying the
-theorem inside Lean requires a kernel-checked proof of the acceptance equality.
+A printed `true` records the runtime observation. To apply this theorem inside Lean, we must
+supply a kernel-checked proof of the acceptance equality.
 
 The pinned Lean version includes logical models of core `Float` arithmetic. For example, this
 comparison can be established inside the kernel:
@@ -217,18 +213,11 @@ example : ((0.1 + 0.2 : Float) == 0.3) = false := by
   decide
 ```
 
-This proof concerns the Boolean expression comparing two scalar Float values. `decide` resolves
-that closed proposition using the logical definitions available for those scalar operations.
-The tensor membership example also requires traversing a packed tensor representation, which adds
-operations not discharged by the same reduction here. Failure of that proof attempt would not show
-that the observed membership is false. It would show that this chosen method has not constructed
-the required witness. The distinction matters when deciding whether a result is established,
-merely observed, or still awaiting a proof.
-
-That does not mean every tensor checker expression reduces automatically: `decide` does not close
-the `ccBox` acceptance expression above with the current instances. Nor does a proof about the
-logical model establish agreement with its native overrides. Keep the acceptance witness and the
-runtime-conformance boundary separate rather than treating a printed result as either proof.
+Here `decide` resolves the closed scalar proposition using Lean's logical definitions. The
+`ccBox` expression also traverses packed tensor storage, and `decide` does not close its acceptance
+equality with the current instances. We have observed acceptance for that example but have not
+constructed the witness needed by the theorem. Agreement between the logical scalar model and
+its native overrides is a further runtime obligation.
 
 ## Evidence Scope
 
@@ -321,13 +310,9 @@ gradient = [[1, 2]: [[-0.877432, 1.754865]],
             [1]: [-1.754865]]
 ```
 
-The tensor-function gradient has one entry per input coordinate, because the scalar objective
-can change independently with each of the three inputs. The model-loss gradient has one tensor per
-parameter group instead: a weight row and a bias. Those are different differentiation interfaces,
-even though both return objects called gradients. The model's loss value is specific to its
-initialized parameters and example target; it cannot be compared directly with the mean of squares
-above as a measure of which model is better. The shapes in the transcript identify what each
-derivative is with respect to.
+The first gradient has one entry per input coordinate. The model-loss gradient has a weight row
+and a bias, matching the parameters with respect to which we differentiated. The two loss values
+belong to different objectives and cannot be compared as measures of model quality.
 
 For $`x=(1,2,3)` the mean of squares is $`\tfrac{14}{3}=4.\overline{6}` and its gradient is
 $`\tfrac{2}{3}x`, which is what the second line prints. The model gradient is tagged by parameter
@@ -337,6 +322,9 @@ takes that structure apart.
 
 `graphspec` and `one_semantic_universe` then show why lowering matters: the same operation graph can
 be evaluated for values or interpreted for bounds.
+
+The following transcript predates the FloatLib migration and retains its recorded scalar labels
+and numerical results. Current `.ieee` execution uses FloatLib binary32.
 
 ```terminal +output
 == One semantic universe tutorial ==
@@ -355,8 +343,8 @@ $`\tanh` activation; it gives no tighter information about this input box. The s
 not establish that every input in the box is enclosed, and printing the theorem's name does not
 supply an acceptance proof.
 
-`float32_semantics` separates host arithmetic from executable binary32 semantics, and on its example
-the two agree exactly:
+In the same pre-migration record, `float32_semantics` compares host arithmetic with executable
+binary32 semantics. The two agree exactly on its example:
 
 ```terminal +output
 == Float32 (native runtime) ==
@@ -370,16 +358,11 @@ inputGrad  = [0.760000, 1.000000]
 max_abs_diff(Float32 vs IEEE32Exec) = 0
 ```
 
-Here `y` is the forward value, while `inputGrad` describes sensitivity to the two input
-coordinates in the example's backward calculation. Equality of the forward values would not by
-itself check that backward calculation, so displaying both is useful. The final zero difference
-reports the comparisons performed by this example, with their selected inputs and operations.
-It does not cover every possible graph. The elided lines remain elided in the transcript; the
-complete executable is the place to inspect the additional quantities included in its comparison.
-
-A zero difference here is evidence about this graph, these inputs, and this host, not a theorem that
-the native path implements the reference. That distinction is the subject of
-{ref "fp32-soundness"}[the FP32 soundness chapter].
+Here `y` is the forward value, while `inputGrad` describes sensitivity to the two input coordinates.
+Checking both exercises the forward and backward calculations. The complete executable also
+compares the parameter gradients elided here. Its zero difference concerns this graph, these
+inputs, and this host; {ref "fp32-soundness"}[the FP32 soundness chapter] develops the additional
+argument needed to relate native operations to the reference.
 
 `numerical_certificate` exercises a graph-level checker and negative cases containing malformed
 evidence. Its output records which cases accepted or rejected; the associated soundness statement
@@ -521,8 +504,7 @@ specifications, graph well-formedness, autograd rules, generic rounding, finite 
 executable IEEE32 reference algorithms, optimizer laws, and checker soundness are all stated as
 named definitions or theorems with explicit hypotheses.
 
-The directory structure is a more useful guide than a theorem count. A count includes helper lemmas
-and says little about whether the execution path you need has a correctness bridge:
+To find the statement behind a particular operation, use the corresponding source directory:
 
 :::table +header
 *
@@ -533,7 +515,10 @@ and says little about whether the execution path you need has a correctness brid
   * autograd soundness, RL, runtime approximation, analytic gradients
 *
   * `NN/Floats`
-  * generic rounding, FP32, IEEE32Exec, and quantization
+  * rounded-real binary32 analysis, finite-operation bridges, and real-scale quantization
+*
+  * FloatLib dependency
+  * generic rounding theory, configured executable scalars, and scalar interval arithmetic
 *
   * `NN/MLTheory`
   * bound propagation, learning theory, and optimizer mathematics
@@ -589,20 +574,19 @@ The hypothesis $`x\neq 0` excludes ReLU's kink, where the left and right derivat
 PyTorch selects 0 at zero for its backward rule {Informal.citep pytorch2019}[]. That convention
 can be specified and checked, but it is not an ordinary derivative of ReLU at zero.
 
-Rounding is proved once, generically in the radix and the exponent function, and then instantiated:
+FloatLib proves rounding facts generically in the radix and the exponent function. TorchLean
+instantiates those facts for its numerical models:
 
 ```lean (name := ccRound)
 -- Inspect the format and rounding assumptions of the
 -- generic one-ULP error bound.
-open Floats in
-#check @neural_round_abs_error_le_ulp
+#check @round_abs_error_le_ulp
 ```
 
 ```leanOutput ccRound (whitespace := lax)
-@neural_round_abs_error_le_ulp : ∀ {β : NeuralRadix}
-  {fexp : ℤ → ℤ} [inst : NeuralValidExp fexp] (rnd : ℝ → ℤ)
-  [NeuralValidRnd rnd] (x : ℝ),
-  |neuralRound rnd x - x| ≤ neuralUlp β fexp x
+@round_abs_error_le_ulp : ∀ {β : Radix} {fexp : ℤ → ℤ} [inst : ValidExp fexp] (rnd : ℝ → ℤ)
+  [ValidRnd rnd] (x : ℝ),
+  |FloatLib.Floats.Formats.Flocq.round rnd x - x| ≤ ulp β fexp x
 ```
 
 The radix `β` and exponent function `fexp` determine the representable-number system, while
@@ -613,11 +597,11 @@ one unit in the last place at that input. This theorem permits general valid rou
 not claim the sharper half-ULP bound associated with nearest rounding. Nor is it by itself an
 IEEE overflow or whole-network error theorem.
 
-`NeuralValidExp` constrains the exponent function, and `NeuralValidRnd` requires the integer
-rounding function to be monotone and to fix every integer. Once an instance satisfies those
-conditions, it can use the generic rounding theorem. This Flocq-style parameterization
-{Informal.citep flocq2011}[] supports reuse across formats; {ref "floats"}[the floats chapter] and
-{Informal.citet boldo2015}[] explain the corresponding format and rounding assumptions.
+`ValidExp` supplies laws for the exponent function; `ValidRnd` requires the integer rounder to
+be monotone and to fix every integer. Choosing a new format means supplying those laws, after
+which the same error theorem applies. This separation of formats and rounding is developed in
+{Informal.citet flocq2011}[] and {Informal.citet boldo2015}[];
+{ref "floats"}[the floating-point chapter] works through FloatLib's definitions.
 
 The checker bridge has a different hypothesis: a Boolean acceptance equality. Expensive search
 can propose evidence outside the kernel, while a sound checker and a kernel-checked acceptance
@@ -638,7 +622,7 @@ Real training crosses boundaries the Lean kernel cannot inspect directly:
   * operation graph semantics
   * model lowering, importer, or compiler
 *
-  * `IEEE32Exec` reference operation
+  * FloatLib binary32 reference operation
   * CPU/CUDA kernel, compiler, driver, and hardware conformance
 *
   * spectral or matrix operation contract
@@ -658,24 +642,23 @@ Python script in a Lean function would not make it proved.
 
 # Numerical Guarantees
 
-The floating-point stack has three central levels:
+For a numerical claim, choose the representation that retains the information the claim needs:
 
 ```
-NeuralFloat / NF
-  generic radix, format, and rounding mathematics
+FloatLib.Floats.Formats.Flocq
+  generic radix, format, and rounding mathematics; FloatRep and NF
 
 FP32
   binary32-precision, gradual-underflow rounded-real semantics with no upper exponent cutoff
 
-IEEE32Exec
-  executable 32-bit IEEE representation and operations
+FloatLib.Floats.ExecFloat.Binary e f
+  configured executable binary representation and operations
+  8 23 gives binary32; 15 112 gives binary128; valid custom widths use the same API
 ```
 
-The runtime adds CPU, CUDA, or external providers. A real-valued approximation theorem bounds
-the model's mathematical error; a rounding theorem bounds a specified arithmetic operation;
-an executable bit-pattern theorem describes a concrete representation; and a CUDA parity test
-compares observed executions. The format-generic layer follows the Flocq design
-{Informal.citep flocq2011}[], allowing arithmetic lemmas to be reused when their assumptions hold.
+The generic theory supports reasoning about spacing and rounding across formats
+{Informal.citep flocq2011}[]. Configured values also retain encodings and exceptional values.
+To connect either account to a CPU or CUDA run, we need the selected provider's contract.
 
 Our closing function makes the distinction concrete. Evaluate it at binary64 and at the executable
 binary32 semantics, and report the difference in units of $`10^{-9}`:
@@ -687,7 +670,9 @@ open Floats.IEEE754 in
 /-- The readout at binary64, at binary32, and the gap. -/
 def ccSemantics (x : Float) : Float × Float × Float :=
   let binary64 := ccScalar x
-  let f32 := (ccScalar (IEEE32Exec.ofFloat x)).toFloat
+  let f32 := (ExecFloat.Binary.toFloat32
+    (ccScalar
+      (ExecFloat.Binary.ofFloat32 x.toFloat32))).toFloat
   (binary64, f32, (f32 - binary64) * 1000000000)
 
 #eval ccSemantics 1.1
@@ -709,7 +694,8 @@ Both displayed values are `1.200000`, but their difference is about $`4.768\time
 roughly four tenths of a binary32 ULP near $`1.2`. The six-decimal display has rounded away the
 difference {Informal.citep goldberg1991}[]; comparing these strings would miss it.
 
-The captured PyTorch computations give the corresponding binary32 and binary64 values:
+The PyTorch computations captured before the FloatLib migration give the corresponding binary32
+and binary64 values:
 
 ```terminal +output
 python3 - <<'PY'
@@ -725,7 +711,8 @@ torch.float64 0x1.3333333333334p+0 1.2000000000000002
 
 The binary32 result, converted exactly to binary64 for display, is `0x1.3333340000000p+0`;
 the binary64 computation gives `0x1.3333333333334p+0`. These match the two TorchLean evaluations
-on this input. `IEEE32Exec` makes the representation and operations explicit
+on this input in that recorded comparison. This transcript is not a validation run of the migrated
+runtime. FloatLib binary32 makes the representation and operations explicit
 {Informal.citep boldo2015}[]; the comparison remains evidence for the tested expression and input.
 
 Let $`f` be the target function, $`F_{\mathbb R}` the ideal real-valued network, and
@@ -741,7 +728,7 @@ $$`
 `
 
 The first term is numerical implementation error. Rounding theorems at the `FP32` or
-`IEEE32Exec` level can contribute to its bound once the runtime is connected to that formal
+FloatLib binary32 level can contribute to its bound once the runtime is connected to that formal
 semantics. The second is model approximation error, addressed by the real-valued theory in
 *Approximation Theory*. Bounds on both terms must use compatible input domains and the same
 parameters to produce an end-to-end bound against $`f`.
@@ -860,7 +847,7 @@ Large models rely on specialized matrix multiplication, convolution, attention, 
 communication libraries. TorchLean can specify those operations and dispatch to a provider, with
 an explicit contract for the values and derivatives that provider returns.
 
-The architectural goal is:
+The graph fixes the computation, while the provider implements its numerical operations:
 
 ```
 one semantic operation graph

@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL
+public import NN.Tests.Runtime.Floats.DQN
 public import NN.Tests.Runtime.Floats.Utils
 public import Std
 
@@ -17,6 +18,11 @@ Small compile-and-run runtime checks for TorchLean's RL helper surface.
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofModel toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
@@ -44,7 +50,7 @@ def checkReturns : IO Unit := do
       (Tensor.getScalar tensorReturns ⟨2, by decide⟩) 3.0 1e-6
   checkTensorReturns <| Runtime.RL.Core.discountedReturns (α := Float) 0.5 rewards
 
-  -- Run the same return recursion in executable float32 semantics (`IEEE32Exec`), with:
+  -- Run the same return recursion in executable float32 semantics (`ExecFloat.Binary 8 23`), with:
   -- 1) a checked Float→float32 cast (catches binary64→binary32 overflow), and
   -- 2) a simple interval enclosure (`Interval32`) as a diagnostic.
   let gamma32 : Runtime.RL.Numerics.Float32.Float32Exec ←
@@ -59,24 +65,27 @@ def checkReturns : IO Unit := do
     match Runtime.RL.Numerics.Float32.discountedReturnsChecked (n := 3) gamma32 rewards32 with
     | .ok t => pure t
     | .error e => throw <| IO.userError e
-  assertApprox "discountedReturns IEEE32Exec[0]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar returns32 ⟨0, by decide⟩))
+  assertApprox "discountedReturns configured binary32[0]"
+    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar returns32
+      ⟨0, by decide⟩)))))
     2.75 1e-5
-  assertApprox "discountedReturns IEEE32Exec[1]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar returns32 ⟨1, by decide⟩))
+  assertApprox "discountedReturns configured binary32[1]"
+    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar returns32
+      ⟨1, by decide⟩)))))
     3.5 1e-5
-  assertApprox "discountedReturns IEEE32Exec[2]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar returns32 ⟨2, by decide⟩))
+  assertApprox "discountedReturns configured binary32[2]"
+    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar returns32
+      ⟨2, by decide⟩)))))
     3.0 1e-5
   let intervals32 : Tensor Runtime.RL.Numerics.Float32.Interval32 [3] :=
     Runtime.RL.Numerics.Float32.discountedReturnsIntervals (n := 3) gamma32 rewards32
-  assertBool "interval enclosure should contain IEEE32Exec returns"
+  assertBool "interval enclosure should contain configured binary32 returns"
     (Runtime.RL.Numerics.Float32.returnsWithinIntervals (n := 3) returns32 intervals32)
 
   -- A huge binary64 value should be rejected by the checked Float→float32 cast.
   let huge : Float := 1e100
   match Runtime.RL.Numerics.Float32.ofFloatChecked huge with
-  | .ok _ => throw <| IO.userError "expected Float→IEEE32Exec cast to reject huge value"
+  | .ok _ => throw <| IO.userError "expected Float→configured binary32 cast to reject huge value"
   | .error _ => pure ()
 
 open Runtime.RL.Numerics.Float32 in
@@ -99,10 +108,10 @@ def checkCheckedScans : IO Unit := do
     (1 / 2) 1 rewards baseline baseline dones
   assertBool "terminal GAE interval enclosure" (returnsWithinIntervals advantages intervals)
   let invalid : Tensor Float32Exec [2] :=
-    [TorchLean.Floats.IEEE754.IEEE32Exec.posInf,
-     TorchLean.Floats.IEEE754.IEEE32Exec.posMaxFinite]
+    [(Binary.infinity false : Binary 8 23),
+     (Binary.maxFinite false : Binary 8 23)]
   match discountedReturnsChecked 2 invalid
-      TorchLean.Floats.IEEE754.IEEE32Exec.posMaxFinite with
+      (Binary.maxFinite false : Binary 8 23) with
   | .ok _ => throw (IO.userError "checked returns accepted multiplication overflow")
   | .error error =>
       assertBool "rightmost overflow is reported before the earlier nonfinite reward"
@@ -136,8 +145,8 @@ def checkAdvantages : IO Unit := do
         (gamma := gamma32) (nextValue := 0) (done := false) with
     | .ok x => pure x
     | .error e => throw <| IO.userError e
-  assertApprox "tdResidual IEEE32Exec"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat tdRes32) 1.0 1e-5
+  assertApprox "tdResidual configured binary32"
+    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel tdRes32)))) 1.0 1e-5
 
   let gaeRewards32 : Tensor Runtime.RL.Numerics.Float32.Float32Exec [3] ←
     match Runtime.RL.Numerics.Float32.castTensorChecked (s := [3]) gaeRewards with
@@ -157,14 +166,17 @@ def checkAdvantages : IO Unit := do
         (gamma := gamma32) (lam := lam32) gaeRewards32 gaeValues32 gaeNext32 gaeDones with
     | .ok t => pure t
     | .error e => throw <| IO.userError e
-  assertApprox "gaeTensor IEEE32Exec[0]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar advantages32 ⟨0, by decide⟩))
+  assertApprox "gaeTensor configured binary32[0]"
+    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar advantages32
+      ⟨0, by decide⟩)))))
     1.75 1e-4
-  assertApprox "gaeTensor IEEE32Exec[1]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar advantages32 ⟨1, by decide⟩))
+  assertApprox "gaeTensor configured binary32[1]"
+    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar advantages32
+      ⟨1, by decide⟩)))))
     1.5 1e-4
-  assertApprox "gaeTensor IEEE32Exec[2]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar advantages32 ⟨2, by decide⟩))
+  assertApprox "gaeTensor configured binary32[2]"
+    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar advantages32
+      ⟨2, by decide⟩)))))
     1.0 1e-4
 
   let normIn32 : Tensor Runtime.RL.Numerics.Float32.Float32Exec [3] ←
@@ -176,8 +188,9 @@ def checkAdvantages : IO Unit := do
     | .ok t => pure t
     | .error e => throw <| IO.userError e
   -- Mean-centered input has a 0 entry; after z-score it should remain 0 (finite).
-  assertApprox "zscore IEEE32Exec[1]"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat (Tensor.getScalar normed32 ⟨1, by decide⟩))
+  assertApprox "zscore configured binary32[1]"
+    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar normed32 ⟨1,
+      by decide⟩)))))
     0.0 1e-6
 
   let ratio32 : Runtime.RL.Numerics.Float32.Float32Exec ←
@@ -193,8 +206,8 @@ def checkAdvantages : IO Unit := do
         ratio32 one32 clipEps32 with
     | .ok x => pure x
     | .error e => throw <| IO.userError e
-  assertApprox "ppoClipFromRatio IEEE32Exec"
-    (TorchLean.Floats.IEEE754.IEEE32Exec.toFloat ppoObj32) 1.2 1e-5
+  assertApprox "ppoClipFromRatio configured binary32"
+    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel ppoObj32)))) 1.2 1e-5
 
   let advantages :=
     Runtime.RL.Core.generalizedAdvantageEstimation (α := Float)
@@ -267,7 +280,7 @@ def checkValueLearning : IO Unit := do
   assertFinite "a2c loss" a2cLoss
   let qForPolicy : Tensor Float [2] := [0.1, 0.8]
   let sacActor := Runtime.RL.PolicyGradient.sacCategoricalActorLoss (α := Float)
-    logits qForPolicy ⟨1, by decide⟩ 0.2
+    logits qForPolicy 0.2
   assertFinite "sac categorical actor loss" sacActor
 
 /-- Check validation at an external RL environment boundary. -/
@@ -308,6 +321,7 @@ def run : IO Unit := do
   checkAdvantages
   checkValueLearning
   checkBoundary
+  DQN.run
   IO.println "rl_check: ok"
 
 end RLCheck

@@ -7,12 +7,13 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.Proofs.Approximation.FloatInterval.Semantics
+public import NN.Floats.IEEEExec.Bridge.Finite
 
 /-!
 # Exact Interval Images for Rounded Targets
 
 Structured theorem statements for exact interval images of rounded floating-point targets,
-specialized to `IEEE32Exec`.
+specialized to `ExecFloat.Binary 8 23`.
 
 This file defines correctly-rounded activation assumptions, separating-activation assumptions,
 finite σ-networks, exact interval semantics, and the pipeline theorem:
@@ -22,6 +23,14 @@ implies exact interval images for every finite rounded target on `[-1,1]^d`.
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat.Binary (isFinite isNaN toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
 
 namespace NN.MLTheory.Proofs.UniversalApproximation
@@ -36,7 +45,7 @@ open IEEE32Exec
 noncomputable section
 
 /-!
-## Separating activation condition, specialized to `IEEE32Exec`
+## Separating activation condition, specialized to `ExecFloat.Binary 8 23`
 
 Source: Hwang et al. (`arXiv:2506.16065`), Condition 1 and its correctly-rounded sufficient
 conditions.
@@ -46,7 +55,7 @@ namespace Condition1
 
 open IEEE32Exec
 
-local notation "F" => IEEE32Exec
+local notation "F" => (ExecFloat.Binary 8 23)
 
  /-! ### Float-format constants for IEEE binary32 -/
 
@@ -62,30 +71,30 @@ local notation "F" => IEEE32Exec
 -- half of this, 2^{-24}.
 /-- Machine epsilon `2⁻²³`, the spacing of binary32 just above `1`. The unit roundoff for
 round-to-nearest is half of this. -/
-noncomputable def ε : ℝ := neuralBpow binaryRadix (-23)
+noncomputable def ε : ℝ := bpow binaryRadix (-23)
 
 -- Smallest positive float ω = 2^{-149} (as a real number).
 /-- Smallest positive subnormal `2⁻¹⁴⁹`, as a real number. -/
-noncomputable def ω : ℝ := neuralBpow binaryRadix (-149)
+noncomputable def ω : ℝ := bpow binaryRadix (-149)
 
 /-- Real power of two, abbreviated because the error bounds below are dense with them. -/
-noncomputable def pow2 (k : Int) : ℝ := neuralBpow binaryRadix k
+noncomputable def pow2 (k : Int) : ℝ := bpow binaryRadix k
 
 /-! ### Basic helpers -/
 
 /-- Propositional form of finiteness, so hypotheses read `finite x` rather than `_ = true`. -/
-def finite (x : F) : Prop := IEEE32Exec.isFinite x = true
+def finite (x : F) : Prop := isFinite x = true
 
 /-- Real absolute value of a float, used in the magnitude side conditions. -/
-noncomputable def rabs (x : F) : ℝ := |IEEE32Exec.toReal x|
+noncomputable def rabs (x : F) : ℝ := |(toModel x).toReal|
 
 /-- `x` lies between `a` and `b`, in either order.
 
 Order-agnostic on purpose: the interval endpoints coming out of the abstract operations are not
 sorted, and `minimum`/`maximum` also give the IEEE 754 treatment of signed zeros for free. -/
 noncomputable def between (a b x : F) : Prop :=
-  let lo := IEEE32Exec.minimum a b
-  let hi := IEEE32Exec.maximum a b
+  let lo := min a b
+  let hi := max a b
   lo ≤ x ∧ x ≤ hi
 
 /-! ### Separating activation condition -/
@@ -127,18 +136,18 @@ structure Witness (σ : F → F) where
   /-- The activation value at the threshold is finite. -/
   sigma_eta_finite : finite (σ η)
   /-- The activation value at the next float above the threshold is finite. -/
-  sigma_etaPlus_finite : finite (σ (IEEE32Exec.nextUp η))
+  sigma_etaPlus_finite : finite (σ (ExecFloat.Binary.nextUp η))
   /-- The threshold activation magnitude is bounded in the required binary32 window. -/
   sigma_eta_abs_mem :
     (rabs (σ η) ∈ Set.Icc (pow2 (emin + 5)) (pow2 (emax - 6) * rabs η))
   /-- The next-up activation magnitude is bounded in the required binary32 window. -/
   sigma_etaPlus_abs_mem :
-    (rabs (σ (IEEE32Exec.nextUp η)) ∈ Set.Icc (pow2 (emin + 5)) (pow2 (emax - 6) * rabs η))
+    (rabs (σ (ExecFloat.Binary.nextUp η)) ∈ Set.Icc (pow2 (emin + 5)) (pow2 (emax - 6) * rabs η))
   /-- The activation separates values below and above the threshold interval. -/
   threshold_separates :
-    ∀ x y : F, x ≤ η → η < IEEE32Exec.nextUp η → IEEE32Exec.nextUp η ≤ y →
-      (σ x ≤ σ η ∧ σ η < σ (IEEE32Exec.nextUp η) ∧ σ (IEEE32Exec.nextUp η) ≤ σ y) ∨
-      (σ x ≥ σ η ∧ σ η > σ (IEEE32Exec.nextUp η) ∧ σ (IEEE32Exec.nextUp η) ≥ σ y)
+    ∀ x y : F, x ≤ η → η < ExecFloat.Binary.nextUp η → ExecFloat.Binary.nextUp η ≤ y →
+      (σ x ≤ σ η ∧ σ η < σ (ExecFloat.Binary.nextUp η) ∧ σ (ExecFloat.Binary.nextUp η) ≤ σ y) ∨
+      (σ x ≥ σ η ∧ σ η > σ (ExecFloat.Binary.nextUp η) ∧ σ (ExecFloat.Binary.nextUp η) ≥ σ y)
 
   /-- Real Lipschitz envelope around the threshold. -/
   lam : ℝ
@@ -147,11 +156,11 @@ structure Witness (σ : F → F) where
     (lam ∈ Set.Icc (0 : ℝ) (pow2 (emax - 7) * min (rabs (σ η)) (pow2 (Int.ofNat (M + 3)))))
   /-- Activation values obey the Lipschitz envelope on both sides of the threshold gap. -/
   lipschitz_around_threshold :
-    ∀ x y : F, x ≤ η → η < IEEE32Exec.nextUp η → IEEE32Exec.nextUp η ≤ y →
-      (|IEEE32Exec.toReal (σ x) - IEEE32Exec.toReal (σ η)| ≤ lam * |IEEE32Exec.toReal x -
-        IEEE32Exec.toReal η|) ∧
-      (|IEEE32Exec.toReal (σ y) - IEEE32Exec.toReal (σ (IEEE32Exec.nextUp η))| ≤
-          lam * |IEEE32Exec.toReal y - IEEE32Exec.toReal (IEEE32Exec.nextUp η)|)
+    ∀ x y : F, x ≤ η → η < ExecFloat.Binary.nextUp η → ExecFloat.Binary.nextUp η ≤ y →
+      (|(toModel (σ x)).toReal - (toModel (σ η)).toReal| ≤ lam * |(toModel x).toReal -
+        (toModel η).toReal|) ∧
+      (|(toModel (σ y)).toReal - (toModel (σ (ExecFloat.Binary.nextUp η))).toReal| ≤
+          lam * |(toModel y).toReal - (toModel (ExecFloat.Binary.nextUp η)).toReal|)
 
  /-- Separating activation condition for `σ`, packaged as existence of a `Witness`. -/
  def Holds (σ : F → F) : Prop := Nonempty (Witness σ)
@@ -164,7 +173,7 @@ structure CorrectlyRounded (ρ : ℝ → ℝ) (σ : F → F) : Prop where
   law. -/
   finite_input_implies :
     ∀ x : F, finite x →
-      finite (σ x) ∧ IEEE32Exec.toReal (σ x) = IEEE32Exec.fp32Round (ρ (IEEE32Exec.toReal x))
+      finite (σ x) ∧ (toModel (σ x)).toReal = IEEE32Exec.fp32Round (ρ ((toModel x).toReal))
 
  /--
 Real-valued sufficient conditions used to prove that a correctly-rounded activation satisfies the
@@ -182,18 +191,18 @@ This is a “real” analogue of `Witness` that talks about a target function `�
   /-- The second input is finite. -/
   c2'_finite : finite c2'
   /-- The real activation is close to zero at the first witness. -/
-  rho_c1'_small : |ρ (IEEE32Exec.toReal c1')| ≤ ω / 2
+  rho_c1'_small : |ρ ((toModel c1').toReal)| ≤ ω / 2
   /-- The real activation has the required magnitude at the second witness. -/
-  rho_c2'_range : |ρ (IEEE32Exec.toReal c2')| ∈ Set.Icc (ε / 2 + 2 * ε^2) (5 / 4 - 2 * ε)
+  rho_c2'_range : |ρ ((toModel c2').toReal)| ∈ Set.Icc (ε / 2 + 2 * ε^2) (5 / 4 - 2 * ε)
   /-- At least one real witness input has magnitude safely above underflow. -/
   max_abs_c1'_c2'_ge :
     max (rabs c1') (rabs c2') ≥ pow2 (emin + 1)
   /-- On the witness interval, `ρ` stays between its endpoint values. -/
   rho_between_on_Icc :
     ∀ x : ℝ,
-      IEEE32Exec.toReal c1' ≤ x → x ≤ IEEE32Exec.toReal c2' →
-        (min (ρ (IEEE32Exec.toReal c1')) (ρ (IEEE32Exec.toReal c2')) ≤ ρ x ∧
-          ρ x ≤ max (ρ (IEEE32Exec.toReal c1')) (ρ (IEEE32Exec.toReal c2')))
+      (toModel c1').toReal ≤ x → x ≤ (toModel c2').toReal →
+        (min (ρ ((toModel c1').toReal)) (ρ ((toModel c2').toReal)) ≤ ρ x ∧
+          ρ x ≤ max (ρ ((toModel c1').toReal)) (ρ ((toModel c2').toReal)))
 
   /-- Real-valued threshold location used by the sufficient conditions. -/
   δ : ℝ
@@ -237,7 +246,7 @@ open I OpsExact ExactImage
 
 namespace SigmaNet
 
-/-- Parameters of an affine layer `din → dout` over `IEEE32Exec` scalars. -/
+/-- Parameters of an affine layer `din → dout` over `ExecFloat.Binary 8 23` scalars. -/
 structure Affine (din dout : Nat) where
   /-- Weight matrix, indexed row (output) then column (input). -/
   W : Fin dout → Fin din → F
@@ -249,9 +258,9 @@ def aff {din dout : Nat} (A : Affine din dout) (x : Fin din → F) : Fin dout �
   fun i =>
     let s :=
       (List.finRange din).foldl
-        (fun acc j => IEEE32Exec.add acc (IEEE32Exec.mul (A.W i j) (x j)))
+        (fun acc j => ExecFloat.add acc (ExecFloat.mul (A.W i j) (x j)))
         (0 : F)
-    IEEE32Exec.add s (A.b i)
+    ExecFloat.add s (A.b i)
 
 /-- A feedforward σ-network: affine layers with σ between them, no σ after the final affine. -/
 inductive Net : Nat → Nat → Type
@@ -341,7 +350,7 @@ noncomputable def ιLe (a : F) : F → F :=
 
 /-- Scaled (by `K`) indicator: `K ⊗ ι`. -/
 noncomputable def scale (K : F) (g : F → F) : F → F :=
-  fun x => IEEE32Exec.mul K (g x)
+  fun x => ExecFloat.mul K (g x)
 
 end Indicators
 
@@ -390,23 +399,23 @@ namespace IdealMinMax
 open OpsExact
 
 private theorem not_exists_isNaN_true_of_forall_isNaN_false (s : Finset F)
-    (hn : ∀ z ∈ s, IEEE32Exec.isNaN z = false) :
-    ¬∃ z ∈ s, IEEE32Exec.isNaN z = true := by
+    (hn : ∀ z ∈ s, isNaN z = false) :
+    ¬∃ z ∈ s, isNaN z = true := by
   intro hex
   rcases hex with ⟨z, hz, hzNaN⟩
-  have hzFalse : IEEE32Exec.isNaN z = false := hn z hz
+  have hzFalse : isNaN z = false := hn z hz
   have hzNaN' := hzNaN
   rw [hzFalse] at hzNaN'
   cases hzNaN'
 
  /-- `chooseMin` is below every element of the finset (under the no-NaN side condition). -/
 theorem chooseMin_le_of_mem (s : Finset F) (hs : s.Nonempty)
-    (hn : ∀ z ∈ s, IEEE32Exec.isNaN z = false) {y : F} (hy : y ∈ s) :
+    (hn : ∀ z ∈ s, isNaN z = false) {y : F} (hy : y ∈ s) :
     OpsExact.chooseMin s hs ≤ y := by
   classical
-  have hminNaN : IEEE32Exec.isNaN (OpsExact.chooseMin s hs) = false :=
+  have hminNaN : isNaN (OpsExact.chooseMin s hs) = false :=
     hn _ (OpsExact.chooseMin_spec s hs).1
-  have hyNaN : IEEE32Exec.isNaN y = false := hn _ hy
+  have hyNaN : isNaN y = false := hn _ hy
   have hminE : OpsExact.toERealTotal (OpsExact.chooseMin s hs) ≤ OpsExact.toERealTotal y := by
     have hyImg : OpsExact.toERealTotal y ∈ s.image OpsExact.toERealTotal := Finset.mem_image_of_mem
       _ hy
@@ -418,12 +427,12 @@ theorem chooseMin_le_of_mem (s : Finset F) (hs : s.Nonempty)
 
  /-- `chooseMax` is above every element of the finset (under the no-NaN side condition). -/
 theorem le_chooseMax_of_mem (s : Finset F) (hs : s.Nonempty)
-    (hn : ∀ z ∈ s, IEEE32Exec.isNaN z = false) {y : F} (hy : y ∈ s) :
+    (hn : ∀ z ∈ s, isNaN z = false) {y : F} (hy : y ∈ s) :
     y ≤ OpsExact.chooseMax s hs := by
   classical
-  have hmaxNaN : IEEE32Exec.isNaN (OpsExact.chooseMax s hs) = false :=
+  have hmaxNaN : isNaN (OpsExact.chooseMax s hs) = false :=
     hn _ (OpsExact.chooseMax_spec s hs).1
-  have hyNaN : IEEE32Exec.isNaN y = false := hn _ hy
+  have hyNaN : isNaN y = false := hn _ hy
   have hmaxE : OpsExact.toERealTotal y ≤ OpsExact.toERealTotal (OpsExact.chooseMax s hs) := by
     have hyImg : OpsExact.toERealTotal y ∈ s.image OpsExact.toERealTotal := Finset.mem_image_of_mem
       _ hy
@@ -440,7 +449,7 @@ This packages the interval hull characterization of `idealSharp` as an `Icc m M`
 -/
 theorem exists_minmax_for_idealSharp {d : Nat} (h : (Fin d → F) → F) (B : I.Box d)
     (hB : (I.γ (d := d) B).Nonempty)
-    (hnan : ∀ x, IEEE32Exec.isNaN (h x) = false) :
+    (hnan : ∀ x, isNaN (h x) = false) :
     ∃ m M,
       IsMinOn h (I.γ (d := d) B) m ∧
       IsMaxOn h (I.γ (d := d) B) M ∧
@@ -455,11 +464,11 @@ theorem exists_minmax_for_idealSharp {d : Nat} (h : (Fin d → F) → F) (B : I.
       have : ∀ i, x0 i ∈ B i := hx0
       simpa [OpsExact.mem_γFinsetBox_iff] using this
     exact ⟨h x0, Finset.mem_image_of_mem _ hx0'⟩
-  have hn : ∀ z ∈ s, IEEE32Exec.isNaN z = false := by
+  have hn : ∀ z ∈ s, isNaN z = false := by
     intro z hz
     rcases Finset.mem_image.mp hz with ⟨x, hx, rfl⟩
     exact hnan x
-  have hnoNaN : ¬∃ z ∈ s, IEEE32Exec.isNaN z = true :=
+  have hnoNaN : ¬∃ z ∈ s, isNaN z = true :=
     not_exists_isNaN_true_of_forall_isNaN_false s hn
   -- Define min/max witnesses.
   let m : F := OpsExact.chooseMin s hs_nonempty
@@ -529,7 +538,7 @@ open SigmaNet IdealMinMax
 
 /-! ## Separability and exact-semantics premises -/
 
-/-- Separating activation condition specialized to `IEEE32Exec`. -/
+/-- Separating activation condition specialized to `ExecFloat.Binary 8 23`. -/
 abbrev SeparatingActivation (σ : F → F) : Prop := Condition1.Holds σ
 
 /-!
@@ -547,7 +556,7 @@ def ThresholdNetworksYieldExactIntervalSemantics (σ : F → F) : Prop :=
   ∀ {a b η K : F},
     Separability.SeparableOn σ (a := a) (b := b) η K →
       ∀ {d : Nat} (h : (Fin d → F) → F),
-        (∀ x, IEEE32Exec.isNaN (h x) = false) →
+        (∀ x, isNaN (h x) = false) →
         ∃ n : SigmaNet.Net d 1,
           ∀ B, BoxIn (d := d) (a := a) (b := b) B →
             SigmaNet.evalSharpScalar σ n B = idealSharp (d := d) h B
@@ -555,7 +564,7 @@ def ThresholdNetworksYieldExactIntervalSemantics (σ : F → F) : Prop :=
 /-- For any NaN-free rounded target `h`, there exists a σ-network with exact interval semantics. -/
 def ExactIntervalSemanticsUniversalOnCube (σ : F → F) : Prop :=
   ∀ {d : Nat} (h : (Fin d → F) → F),
-    (∀ x, IEEE32Exec.isNaN (h x) = false) →
+    (∀ x, isNaN (h x) = false) →
     ∃ n : SigmaNet.Net d 1,
       ∀ B, CubeBox (d := d) B → SigmaNet.evalSharpScalar σ n B = idealSharp (d := d) h B
 
@@ -584,7 +593,7 @@ box.
 -/
 def RoundedTargetExactIntervalImage (σ : F → F) : Prop :=
   ∀ {d : Nat} (fHat : (Fin d → F) → F),
-    (∀ x, IEEE32Exec.isNaN (fHat x) = false) →
+    (∀ x, isNaN (fHat x) = false) →
     ∃ n : SigmaNet.Net d 1,
       ∀ B, CubeBox (d := d) B → (I.γ (d := d) B).Nonempty →
         ∃ m M,

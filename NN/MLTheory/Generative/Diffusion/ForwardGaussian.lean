@@ -69,13 +69,8 @@ def forwardGaussian (c0 c1 : ℝ) (x0 : E) : Measure E :=
 
 instance (c0 c1 : ℝ) (x0 : E) : IsProbabilityMeasure (forwardGaussian (ι := ι) c0 c1 x0) := by
   -- We use that `stdGaussian` is a probability measure and measurable push-forwards preserve mass.
-  let ν : Measure E := (stdGaussian E).map (c1 • (ContinuousLinearMap.id ℝ E))
-  have : IsProbabilityMeasure ν := by
-    dsimp [ν]
-    exact Measure.isProbabilityMeasure_map (μ := stdGaussian E)
-      (f := (c1 • (ContinuousLinearMap.id ℝ E) : E → E)) (by fun_prop)
-  change IsProbabilityMeasure (ν.map (fun y : E => y + c0 • x0))
-  exact Measure.isProbabilityMeasure_map (μ := ν) (f := fun y : E => y + c0 • x0) (by fun_prop)
+  unfold forwardGaussian
+  infer_instance
 
 /-- Affine noising of a fixed point has a Gaussian law. This closure theorem does not identify
 the marginal of a separately defined multistep diffusion chain. -/

@@ -1,5 +1,5 @@
 import VersoManual
-import NN.Floats.IEEEExec.Exec32.Compare
+import FloatLib
 import NN.MLTheory.CROWN.Lyapunov.Verification
 import NN.Tensor
 -- The coverage experiment below calls the same array predicates the leaf checker calls, so it
@@ -13,12 +13,14 @@ open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 open TorchLean
 open Spec
-open TorchLean.Floats.IEEE754
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Lyapunov
 -- Tensor predicates for the coverage experiment.
 open NN.Verification.Util.Tensor
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 #doc (Manual) "Two-Stage Verification" =>
 %%%
@@ -282,7 +284,7 @@ root. Coverage is a union condition over all leaves, the current checker does no
 of the listed boxes, and the schema does not
 record the producer's search tree.
 
-So the honest reading of a green `abcrown-leaf` run is: *each listed leaf is a well-formed sub-box
+An accepted `abcrown-leaf` artifact establishes that *each listed leaf is a well-formed sub-box
 of the declared root, and each carries a witness that passes its own arithmetic test.* Whether the
 listed leaves exhaust the property region is a claim the producer makes in prose, and the checker
 does not see it.
@@ -294,10 +296,9 @@ leaves would say nothing about that point. A root-region theorem must be able to
 arbitrary root input, locate a leaf containing it, and apply the leaf's bound. The coverage
 evidence supplies exactly that middle step.
 
-Coverage can also fail when the root is correct. This next dump records two leaves and the
-intended
-$`[-1,1]^2` recorded explicitly, and a strip in the middle that no leaf mentions, as if a
-branch-and-bound search had lost a subtree.
+Coverage can also fail when the root is correct. This next dump records the intended root
+$`[-1,1]^2` and two leaves, leaving a strip in the middle that neither leaf covers. This is the
+kind of gap a lost branch-and-bound subtree could leave.
 
 ```
 {
@@ -322,9 +323,9 @@ Wrote TorchLean alpha-beta-CROWN-style leaf artifact to /tmp/torchlean-hole.json
 [artifact] Checked 2 leaves: ok=2, bad=0
 ```
 
-Green, and every point with first coordinate strictly between `0.0` and `0.5` was never bounded by
-anything. We can put both halves of that sentence side by side, using the same two predicates the
-leaf checker uses:
+Both leaves pass, yet neither covers a point whose first coordinate lies strictly between `0.0`
+and `0.5`. We can check acceptance and the missing coverage side by side, using the same two
+predicates the leaf checker uses:
 
 ```lean (name := tsCoverage)
 /-- One entry of the artifact's `leaves` array, carrying
@@ -368,12 +369,10 @@ def inBox (lo hi p : TorchLean.Tensor Float [2]) : Bool :=
 (true, false)
 ```
 
-Both leaves pass both checks, and `(0.25, 0.0)` is inside the root and inside no leaf. There is no
-contradiction here and no bug in the checker: it verified every claim the artifact makes, and the
-artifact never claimed to partition the root. But a reader who sees `ok=2, bad=0` and concludes "the
-property holds on $`[-1,1]^2`" has drawn a conclusion the file does not support, which is why this
-chapter states the reading of a green run in a full sentence rather than trusting the word
-"verified".
+Both leaves pass both checks, and `(0.25, 0.0)` is inside the root and inside no leaf. The checker
+has checked containment and the witness comparisons, but the artifact contains no partition
+evidence. The result `ok=2, bad=0` therefore leaves the property on $`[-1,1]^2` unresolved, even
+if we grant the claimed bound on each leaf.
 
 Root coverage requires a separate union-of-boxes check or evidence of a complete partition.
 Split-tree data could supply that evidence directly. With only finite endpoints, coverage can also
@@ -522,10 +521,10 @@ They identify failures at different points in this data path.
 
 # Neural Controllers
 
-The leaf artifact is the flattest two-stage path TorchLean has. The Lyapunov workflow runners sit
-further along, and they differ in *where* generation and checking happen. The pattern they follow,
-learning a Lyapunov function and a controller together and then certifying the pair, is the one
-introduced by {Informal.citet neurallyapunov2019}[].
+The leaf workflow exports and checks terminal-domain data. The Lyapunov workflows add training
+and bound propagation, with different choices about where those computations run. They learn
+a Lyapunov function and a controller together, then seek a certificate
+for the pair, following {Informal.citet neurallyapunov2019}[].
 
 A controller adds a time-dependent meaning to the output. Its action changes the system's next
 state, and a candidate Lyapunov function assigns a scalar value to each state. To reason about
@@ -549,13 +548,15 @@ part.
   environment, so it is the one runner this chapter does not execute.
 - {src "NN/MLTheory/CROWN/Lyapunov/TwoStage/PipelineIIHybrid.lean"}[`twostage-hybrid-van-stage2`]
   treats PyTorch as an untrusted initializer. Stage one trains in float32 and exports the
-  parameters as raw bit patterns; stage two loads those bits into `IEEE32Exec`, refines, and runs
+  parameters as raw bit patterns; stage two loads those bits into FloatLib binary32, refines, and
+  runs
   the IBP and CROWN box check inside Lean.
 - {src "NN/MLTheory/CROWN/Lyapunov/TwoStage/PipelineIIIAllInLean.lean"}[
   `twostage-torchlean-cegis-van`] does initialization, sampled training, PGD-style candidate
   search, refinement, and the final bound check in Lean, with no external stage one at all.
 
-The all-in-Lean runner takes no arguments:
+These runner transcripts predate the FloatLib migration; their source and toolchain identities
+are recorded below. The all-in-Lean runner takes no arguments:
 
 ```terminal +output
 $ lake exe verify -- twostage-torchlean-cegis-van
@@ -623,7 +624,7 @@ that training converged or that a longer run would obtain a useful bound. The re
 is concrete: can the selected model and verifier produce an upper bound small enough to establish
 the encoded condition, together with the semantic and arithmetic evidence needed to trust it?
 
-The gap between the two upper bounds is itself informative:
+The two transcripts also record different model widths:
 
 :::table +header
 *
@@ -652,9 +653,8 @@ claim still requires the checker-to-model theorem and its arithmetic assumptions
 
 ## Float32 Parameter Bit Patterns
 
-*Untrusted initialization* only means something if stage two reads what stage one wrote, with
-nothing lost in the middle. Stage one does not export decimal text; it exports float32 bit
-patterns, as decimal-encoded `uint32` values:
+To check the parameters produced by stage one, stage two must load the same values. The export
+records float32 bit patterns as decimal-encoded `uint32` values:
 
 ```
 {
@@ -677,14 +677,16 @@ In Python those two integers decode with `struct`:
 [-0.009760046377778053, 0.7584617733955383]
 ```
 
-The Lean side consumes the same integers through `IEEE32Exec.ofBits`, which is a wrapper around the
-raw bits rather than a parse:
+The Lean side consumes the same integers through `ExecFloat.Binary.ofBits32`. This preserves the
+stored encoding without parsing a decimal approximation:
 
 ```lean (name := tsBits)
 -- Decode the exact stored bit patterns; printing toFloat
 -- rounds only their display.
-#eval (IEEE32Exec.ofBits 3156207770).toFloat
-#eval (IEEE32Exec.ofBits 1061300877).toFloat
+#eval (ExecFloat.Binary.toFloat32
+  (ExecFloat.Binary.ofBits32 3156207770)).toFloat
+#eval (ExecFloat.Binary.toFloat32
+  (ExecFloat.Binary.ofBits32 1061300877)).toFloat
 ```
 
 ```leanOutput tsBits (whitespace := lax)
@@ -896,7 +898,10 @@ terms rather than credited by association with the name of an external solver.
 
 # Recording A Run
 
-A useful run record pins down everything the numbers depend on. For the transcripts above:
+A useful run record pins down everything the numbers depend on. The transcripts above were
+recorded before the FloatLib migration, with the following identities. Their recorded toolchain
+remains 4.33.0; the current checkout requires 4.34.0 and pinned FloatLib. Rebuilding the current
+examples is a separate validation from preserving this record:
 
 :::table +header
 *
@@ -927,7 +932,7 @@ A useful run record pins down everything the numbers depend on. For the transcri
 
 For a real α,β-CROWN run the same table would also carry the verifier repository and commit, the
 Python and solver versions, the model checkpoint hash, the property file, and the dtype, device, and
-numerical flags. This is not administrative detail. A lower-bound vector has no stable meaning once
+numerical flags. A lower-bound vector has no stable meaning once
 the model, the property, or the output-margin convention has changed, and none of those changes are
 visible in the artifact.
 

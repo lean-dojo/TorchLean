@@ -39,12 +39,12 @@ theorem splitAt_covers (box : FlatBox ℝ) (axis : Fin box.dim) (cut : ℝ)
     by_cases hi : i = axis
     · subst i
       simpa [splitAt] using And.intro (hx axis).1 hcut
-    · simpa only [splitAt, Tensor.getScalar_ofFn, if_neg hi] using hx i
+    · simpa only [splitAt, Tensor.getScalar_ofFn, ite_eq_right hi] using hx i
   · right
     intro i
     by_cases hi : i = axis
     · subst i
       simpa [splitAt] using And.intro (le_of_lt (lt_of_not_ge hcut)) (hx axis).2
-    · simpa only [splitAt, Tensor.getScalar_ofFn, if_neg hi] using hx i
+    · simpa only [splitAt, Tensor.getScalar_ofFn, ite_eq_right hi] using hx i
 
 end NN.MLTheory.CROWN.Graph.Refinement

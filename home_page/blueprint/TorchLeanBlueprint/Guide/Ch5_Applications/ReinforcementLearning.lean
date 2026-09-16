@@ -16,14 +16,18 @@ open Verso.Genre.Manual.InlineLean
 open TorchLean
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 #doc (Manual) "Reinforcement Learning" =>
 %%%
 tag := "reinforcement-learning"
 %%%
 
-In supervised learning the dataset is usually fixed before training starts. In reinforcement
-learning the current policy helps create its own future data. A complete application therefore
-contains more than a neural network:
+The GridWorld run below raises its measured return from `-0.4` to `3.6`, yet the updated policy
+still stops at a wall. I start with the saved path so we can explain both numbers and see what
+the policy actually learned to do. In reinforcement learning, the current policy helps create
+its own future training data, so understanding an update means following the whole loop:
 
 $$`\text{environment}
 \longrightarrow\text{transition}
@@ -33,9 +37,9 @@ $$`\text{environment}
 
 Each arrow carries assumptions about observation shape, valid actions, finite rewards, episode
 boundaries, and alignment of rollout fields. TorchLean represents these assumptions in types,
-runtime checks, and theorem hypotheses. The examples below show which form each assumption takes.
+runtime checks, and theorem hypotheses; we need to know which one we have before using a result.
 
-There are three complementary layers:
+The implementation assigns these responsibilities to three source directories:
 
 - {srcDir "NN/Spec/RL"}[`NN.Spec.RL`] defines environments, MDPs, Bellman operators, returns, and
   advantages. Numerical trajectories use shape-indexed tensors over the chosen scalar type;
@@ -52,7 +56,7 @@ recurrence from rounding.
 
 The standard textbook for the material below is Sutton and Barto,
 [*Reinforcement Learning: An Introduction*](http://incompleteideas.net/book/the-book-2nd.html)
-(second edition), and the three algorithms we implement have their own papers:
+(second edition). The calculations below also draw on
 {Informal.citet gae2015}[] for advantage estimation, {Informal.citet ppo2017}[] for the clipped
 policy objective, and {Informal.citet dqn2015}[] for replay-based value learning.
 
@@ -122,8 +126,7 @@ while the other changes how often the existing data influences the parameters.
 
 The evaluation metric is
 {src "NN/Runtime/RL/Eval.lean"}[`rl.eval.averageEpisodeTotalReward`], the undiscounted sum of
-rewards
-over a greedy episode, capped at `--eval-max-steps`. The command also writes the greedy policy and
+rewards over a greedy episode, capped at `--eval-max-steps`. The command also writes the greedy policy and
 path. Together with the reward definition, these artifacts let us recompute the two reported
 returns.
 
@@ -319,8 +322,8 @@ open Spec.RL.Envs.GridWorld in
 (7, 1, 3)
 ```
 
-Using the mathlib equivalence rather than writing `row * width + column` by hand is what lets the
-proofs treat the flattening as a bijection without a single lemma of our own.
+The mathlib equivalence supplies both the encoding and its inverse laws, so subsequent proofs can
+use the flattening as a bijection.
 
 Now the reward. Here is the specification environment, instantiated at the grid the examples use,
 together with the reward on a step that does not reach the goal:
@@ -420,13 +423,12 @@ Except.error "PPO: action count must be positive"
 A zero action count would otherwise build a model whose logit axis has length zero, and the first
 symptom would be a categorical sampler that cannot return anything.
 
-GridWorld, CartPole, and Pong RAM all reuse these two constructors with different observation and
-action widths. Environment collection and boundary checking stay outside the model helper, which is
-why the same actor definition serves a single-state rollout and a full-horizon update without a
-second, loosely related network appearing anywhere.
+GridWorld, CartPole, and Pong RAM reuse these two constructors with different observation and
+action widths. Environment collection and boundary checking stay outside the model helper.
+The actor definition can therefore serve both a single-state rollout and a full-horizon update.
 
-The actor's four outputs are logits, so their absolute scale and differences affect the action
-distribution after normalization. The critic's one output estimates future reward in the units
+The actor's four outputs are logits; their differences determine the action distribution after
+normalization. The critic's one output estimates future reward in the units
 of the chosen reward convention. These heads have different training targets even though they
 share the same observation width and hidden-width configuration. The `[64, 1]` critic output
 must eventually align with one scalar target per collected step; the singleton axis is a model
@@ -437,12 +439,15 @@ interface choice, not sixty-four additional value predictions.
 For a discrete action space of size $`A`, one PPO step stores
 
 $$`(s_t,\;a_t,\;\log\pi_{\mathrm{old}}(a_t\mid s_t),\;
-r_t,\;d_t,\;V(s_t),\;V(s_{t+1})).`
+r_t,\;d_t,\;\mathrm{terminated}_t,\;V(s_t),\;V(s_{t+1})).`
 
 The Lean structure in
 {src "NN/Runtime/RL/PPO/Rollout.lean"}[`NN.Runtime.RL.PPO.Rollout`]
-holds one observation tensor, one `Fin nActions` action, four scalars, and one Boolean episode
-marker per step. The container is where the design shows:
+holds one observation tensor, one `Fin nActions` action, four scalars, and two Boolean markers
+per step. `done` marks either termination or truncation and stops advantage continuation.
+`terminated` suppresses the next-state value bootstrap. When constructing a step manually,
+omitting `terminated` defaults it to `done`, preserving the earlier single-mask behavior.
+The rollout container also fixes the number of steps:
 
 ```
 structure Rollout (α : Type) [TorchLean.Storage α]
@@ -452,10 +457,9 @@ structure Rollout (α : Type) [TorchLean.Storage α]
   steps_size_eq_horizon : steps.size = horizon
 ```
 
-The array carries its length as a proof field. Hand-written PPO buffers usually keep six or seven
-parallel arrays and rely on the loop being written correctly; the classic failure is one array
-having an extra entry after an early episode end, which silently misaligns rewards from values.
-A single step record keeps its fields together, and the proof fixes the number of records.
+The array carries its length as a proof field. With separate arrays for rewards, values, and
+observations, an extra entry after an early episode end can misalign the fields. A single step
+record keeps its fields together, and the proof fixes the number of records.
 Neither prevents a caller from putting semantically mismatched observations and rewards into a step.
 
 `Rollout.trainingBatch` converts the records into five named tensors whose shapes are computed
@@ -513,11 +517,12 @@ collection determines their semantic alignment.
 
 # Returns And Generalized Advantage Estimation
 
-Let $`d_t` be one when timestep $`t` ends an episode and zero otherwise. The one-step temporal
-difference residual is
+Let $`d_t` mark an episode boundary and $`z_t` mark task termination. Both are zero or one.
+An external time-limit truncation has $`d_t=1` and $`z_t=0`. The one-step temporal
+difference residual used by PPO is
 
 $$`\delta_t
-=r_t+\gamma(1-d_t)V(s_{t+1})-V(s_t),`
+=r_t+\gamma(1-z_t)V(s_{t+1})-V(s_t),`
 
 generalized advantage estimation runs the backward recursion
 
@@ -525,6 +530,10 @@ $$`A_t
 =\delta_t+\gamma\lambda(1-d_t)A_{t+1},`
 
 and the matching value target is $`R_t=A_t+V(s_t)` {Informal.citep gae2015}[].
+
+The generic `rl.core.generalizedAdvantageEstimation` API below has one mask and uses it in
+both places. These examples have no external truncations, so $`z_t=d_t`. PPO's
+`Rollout.generalizedAdvantages` keeps the two masks separate.
 
 Begin with discounted returns at $`\gamma=1/2` over rewards $`1,2,3`:
 
@@ -569,8 +578,8 @@ A `done` flag stops the return recursion at an episode boundary:
 
 Step 1 terminates, so its return is its own reward, $`2`, with no $`\tfrac12\cdot3` attached. Step 0
 still bootstraps from step 1, giving $`1+\tfrac12\cdot2=2`. Compare with `[11/4, 7/2, 3]` above:
-one Boolean changed two of the three targets. This is the kind of thing that shows up in a training
-curve as mysterious variance rather than as an error.
+one Boolean changed two of the three targets. An incorrect boundary flag would silently change
+these targets while leaving every tensor shape intact.
 
 Now generalized advantage estimation. With $`\lambda=1` and a zero baseline it must degenerate to
 the Monte Carlo return, which is a good self-check on the recursion direction:
@@ -639,14 +648,16 @@ rewards     = torch.tensor([1.0, 2.0, 3.0])
 values      = torch.tensor([1.0, 2.0, 3.0])
 next_values = torch.tensor([2.0, 3.0, 0.0])
 dones       = torch.tensor([0.0, 0.0, 1.0])
+terminated  = torch.tensor([0.0, 0.0, 1.0])
 gamma, lam = 0.5, 0.5
 
 adv = torch.zeros_like(rewards)
 running = 0.0
 for t in reversed(range(len(rewards))):
-    mask = 1.0 - dones[t]
-    delta = rewards[t] + gamma * mask * next_values[t] - values[t]
-    running = delta + gamma * lam * mask * running
+    bootstrap_mask = 1.0 - terminated[t]
+    continuation_mask = 1.0 - dones[t]
+    delta = rewards[t] + gamma * bootstrap_mask * next_values[t] - values[t]
+    running = delta + gamma * lam * continuation_mask * running
     adv[t] = running
 print("advantages", adv.tolist())
 print("returns   ", (adv + values).tolist())
@@ -660,7 +671,8 @@ returns    [2.375, 3.5, 3.0]
 ```
 
 $`11/8 = 1.375` and $`19/8 = 2.375`, so the implementations agree exactly on these inputs. The
-TorchLean runtime reuses the spec-layer recurrence, which can first be checked at `ℚ`.
+generic TorchLean runtime reuses the spec-layer recurrence, which can first be checked at `ℚ`.
+PPO uses the separate masks shown here when a rollout includes truncations.
 
 The difference is what happens when the shapes do not line up. The `values` tensor above is
 one-dimensional. Store it as a column instead, which is easy to do by accident when values come
@@ -765,8 +777,8 @@ At ratio $`3/2`, the clipped branch reaches $`1+\epsilon`:
 1.250000
 ```
 
-$`1.25` rather than $`1.5`: the gradient of this term with respect to the ratio is zero, which is
-removing this sample's incentive to increase the ratio further. This does not enforce a hard
+$`1.25` rather than $`1.5`: the gradient of this term with respect to the ratio is zero, removing
+this sample's incentive to increase the ratio further. This does not enforce a hard
 bound on policy movement: other samples, shared parameters, and optimizer state still affect it.
 Pull the ratio down to
 $`1/2` and nothing is clipped, because the minimum picks the unclipped branch:
@@ -860,15 +872,15 @@ is not a bound on the complete update.
 
 # Checked Arithmetic For Returns And Ratios
 
-Returns, advantages, and importance ratios are the numerically nastiest part of an RL loop. A
-return accumulates over a horizon, a ratio is an exponential of a difference of logarithms, and a
-normalization divides by a standard deviation that can be zero. In binary32 all three can produce
-an infinity or a NaN that then propagates through an entire update without complaint, because
-floating point arithmetic is total {Informal.citep goldberg1991}[].
+Returns, advantages, and importance ratios give us three places to look for non-finite values.
+A return accumulates over a horizon, a ratio is an exponential of a difference of logarithms, and
+normalization divides by a standard deviation that can be zero. Binary32 arithmetic can produce
+an infinity or a NaN and continue the calculation with that value
+{Informal.citep goldberg1991}[].
 
-TorchLean's answer is a set of checked helpers under
+The checked helpers under
 {srcDir "NN/Runtime/RL/Numerics/Float32"}[`NN.Runtime.RL.Numerics.Float32`]
-that run the same recurrences over an executable binary32 semantics and return
+run the same recurrences over an executable binary32 semantics and return
 `Except String ...`. They are described in {ref "fp32-soundness"}[the float32 soundness chapter];
 here we use them.
 
@@ -887,17 +899,18 @@ overflow, and the cast refuses rather than quietly returning an infinity:
 "rejected before it reached the update"
 ```
 
-The real error message names the input and the resulting value; we match on the constructor here
-only because printing $`10^{39}` in full is not enlightening. An accepted value carries its bit
+The full error message names the input and the resulting value. I match on the constructor here
+to keep the rejection of $`10^{39}` readable. An accepted value carries its bit
 pattern, which is a reminder that this type is a binary32 encoding rather than a real number:
 
 ```lean (name := rlCastOk)
 -- Inspect the accepted binary32 encoding of one half.
-#eval rl.numerics.float32.ofFloatChecked 0.5
+#eval (rl.numerics.float32.ofFloatChecked 0.5).map
+  ExecFloat.Binary.toBits32
 ```
 
 ```leanOutput rlCastOk (whitespace := lax)
-Except.ok { bits := 1056964608 }
+Except.ok 1056964608
 ```
 
 $`1056964608` is `0x3F000000`, the binary32 encoding of $`0.5`.
@@ -907,29 +920,27 @@ Now the discounted backup $`r+\gamma(1-d)\,V(s')`, first on ordinary inputs:
 ```lean (name := rlBackupOk)
 -- Compute one reward plus a discounted, nonterminal
 -- bootstrap.
-open Runtime.RL.Numerics.Float32 Floats.IEEE754 in
-#eval (discountedBackupChecked (IEEE32Exec.ofFloat 1.0)
-  (IEEE32Exec.ofFloat 0.5) (IEEE32Exec.ofFloat 2.0)
-  false).map IEEE32Exec.toFloat
+open Runtime.RL.Numerics.Float32 in
+#eval (discountedBackupChecked 1 (1 / 2) 2 false).map
+  (Float32.toFloat ∘ ExecFloat.Binary.toFloat32)
 ```
 
 ```leanOutput rlBackupOk (whitespace := lax)
 Except.ok 2.000000
 ```
 
-Then with a bootstrap value that is already infinite, which is what a diverged critic hands you:
+Now supply a bootstrap value that is already infinite:
 
 ```lean (name := rlBackupInf)
 -- Supply an infinite critic value to locate the failed
 -- intermediate operation.
-open Runtime.RL.Numerics.Float32 Floats.IEEE754 in
-#eval discountedBackupChecked (IEEE32Exec.ofFloat 1.0)
-  (IEEE32Exec.ofFloat 0.5)
-  (IEEE32Exec.ofFloat (1.0 / 0.0)) false
+open Runtime.RL.Numerics.Float32 in
+#eval discountedBackupChecked 1 (1 / 2)
+  (ExecFloat.Binary.infinity false) false
 ```
 
 ```leanOutput rlBackupInf (whitespace := lax)
-Except.error "RL float32: non-finite IEEE32Exec value at
+Except.error "RL float32: non-finite configured binary32 value at
   discountedBackup/mul(t1,bootstrap): inf"
 ```
 
@@ -937,9 +948,9 @@ The label identifies the multiplication that produced the non-finite value:
 $`\gamma\cdot(1-d)\cdot V(s')`. Larger checked routines retain the labels of their primitive
 operations, so the diagnostic locates the failing calculation within the update.
 
-There is also an interval enclosure available for the same recurrence, in the spirit of Flocq's
-approach to verified floating point {Informal.citep flocq2011}[]: compute the returns twice, once in
-binary32 and once in intervals, then confirm that the binary32 answers lie inside:
+For background on formal floating-point analysis, see {Informal.citep flocq2011}[]. Here we can
+inspect the same recurrence with an interval calculation: compute the returns in binary32 and
+propagate intervals alongside them, then check whether each binary32 result lies inside its interval:
 
 ```lean (name := rlEnclosure)
 -- Compare the checked recurrence’s values with
@@ -978,29 +989,20 @@ open Runtime.RL.Numerics.Float32 Floats.IEEE754 Spec.RL in
 ```
 
 ```leanOutput rlBackupBridge (whitespace := lax)
-discountedBackup_eq_ok : ∀
-  (reward gamma bootstrap : Float32Exec) (done : Bool)
-  (out : Float32Exec),
-  discountedBackupChecked reward gamma bootstrap done =
-      Except.ok out →
-    (IEEE32Exec.mul gamma (continueMask done)).isFinite =
-        true ∧
-      ((IEEE32Exec.mul gamma
-              (continueMask done)).mul bootstrap).isFinite =
-          true ∧
-        (IEEE32Exec.add reward
-              ((IEEE32Exec.mul gamma
-                (continueMask done)).mul
-                bootstrap)).isFinite = true ∧
-          out =
-            discountedBackup reward gamma bootstrap done
+discountedBackup_eq_ok : ∀ (reward gamma bootstrap : Float32Exec) (done : Bool) (out : Float32Exec),
+  discountedBackupChecked reward gamma bootstrap done = Except.ok out →
+    ExecFloat.Binary.isFinite (ExecFloat.mul gamma (continueMask done)) = true ∧
+      ExecFloat.Binary.isFinite ((ExecFloat.mul gamma (continueMask done)).mul bootstrap) = true ∧
+        ExecFloat.Binary.isFinite (ExecFloat.add reward ((ExecFloat.mul gamma (continueMask
+          done)).mul bootstrap)) =
+            true ∧
+          out = discountedBackup reward gamma bootstrap done
 ```
 
 Read the conclusion right to left. The last conjunct says the checked routine agrees with the
 spec-layer formula, and the first three say every intermediate was finite. So one successful call
-gives you both the value equality and the three finiteness conditions that the `IEEE32Exec` bridge
-theorems in
-{src "NN/Proofs/RL/Floats/IEEE32Exec.lean"}[`Floats.IEEE32Exec`]
+gives you both the value equality and the three finiteness conditions that the bridge theorems in
+{src "NN/Proofs/RL/Floats/IEEE32Exec.lean"}[FloatLib binary32]
 ask for.
 
 These results cover selected scalar recurrences. They do not establish agreement with a parallel
@@ -1044,12 +1046,12 @@ open Proofs.RL.FiniteStochastic Spec.RL.FiniteStochastic in
         mdp.discount * valueSupDist values₁ values₂
 ```
 
-Note what appears in the statement and what does not. The discount bound arrives through
+The discount bound arrives through
 `Valid mdp`, which also requires the transition rows to be probability distributions; the state and
 action counts are positive by instance arguments; and `valueSupDist` is a `Finset.sup'` over states,
 which is why nonemptiness has to be available. Nothing here is inferred from a simulator run.
 
-The consequence people actually use is the geometric error bound for value iteration:
+Iterating that inequality gives a geometric error bound for value iteration:
 
 ```lean (name := rlIterate)
 -- Iterate toward a supplied fixed point and inspect the
@@ -1114,8 +1116,8 @@ open Proofs.RL.Envs.GridWorld Spec.RL.FiniteStochastic in
     Valid gw.toFiniteStochasticMDP
 ```
 
-The one-hot transition rows are where the work went: proving that a deterministic successor state
-gives a row-stochastic kernel. Applying it to the grid from earlier in this chapter takes two
+The theorem packages the proof that a deterministic successor state gives a row-stochastic
+kernel. Applying it to the grid from earlier in this chapter takes two
 `norm_num` calls:
 
 ```lean (name := rlValidGrid)
@@ -1141,11 +1143,11 @@ GridWorld's transition function is a Lean definition that proofs can refer to. C
 runs in Gymnasium, a Python library. Its transitions enter Lean through a checked communication
 boundary.
 
-TorchLean's answer is a subprocess speaking JSON lines, one object per line, plus a contract checked
-on the Lean side of every message. The server is
+The bridge uses a subprocess speaking JSON lines, one object per line, and checks a contract on
+the Lean side of the exchange. The server is
 {src "scripts/rl/gymnasium_server.py"}[`scripts/rl/gymnasium_server.py`],
-and its docstring gives the reason for the format: you can run the file directly and type the
-protocol by hand. That is worth doing once, because it shows exactly what crosses the boundary:
+and its docstring explains that you can run the file directly and type the protocol by hand.
+The exchange below shows what crosses the boundary:
 
 ```terminal +output
 $ python3 scripts/rl/gymnasium_server.py --env-id CartPole-v1
@@ -1168,16 +1170,18 @@ $ python3 scripts/rl/gymnasium_server.py --env-id CartPole-v1
 {"ok":true}
 ```
 
-The observation lines are wrapped here to fit the page; on the wire each reply is one line. Four
-things are worth noticing. The `describe` reply is what makes the Lean side able to pick its shapes
-at all. Gymnasium's `terminated` and `truncated` arrive as separate flags, which is the distinction
-that matters for bootstrapping: an external time-limit truncation generally retains the value
-bootstrap, while termination
-ends it. The current PPO collector merges these flags into one `done` field and suppresses both
-bootstrapping and advantage continuation in either case. It therefore does not implement separate
-time-limit bootstrapping, even though the JSON boundary preserves both flags. An out-of-range
-action is refused by Python rather than silently clipped.
-And `close` gets an acknowledgement, so the Lean side can distinguish a clean shutdown from a crash.
+The observation lines are wrapped here to fit the page; on the wire each reply is one line.
+The `describe` reply supplies the dimensions Lean uses to construct its tensor shapes.
+Gymnasium's `terminated` and `truncated` arrive as separate flags: an external time-limit
+truncation generally retains the value bootstrap, while termination ends it.
+The PPO collector records both the `done` episode boundary and the task's `terminated`
+flag. GAE uses `terminated` to mask the next-state value and `done` to stop advantage continuation.
+A truncated step therefore bootstraps from the final observation before auto-reset, without
+including rewards from the following episode. The rollout viewer uses the same calculation as
+training. The generic single-mask GAE API retains its existing semantics.
+
+Python refuses the out-of-range action. The `close` command gets an acknowledgement, so the
+Lean side can distinguish a clean shutdown from a crash.
 
 The `describe` handshake fixes the observation and action contract before training tensors
 are constructed. CartPole supplies four real-valued observations and two actions, while Pong RAM
@@ -1197,8 +1201,8 @@ reporting only that an episode could not continue.
 
 Every message that comes back is checked against a
 {src "NN/Runtime/RL/Boundary/Core.lean"}[`rl.boundary.Contract`]
-before it becomes a `Transition`. The contract is data, not code, so each environment states what it
-is willing to believe. Here is what the three environment examples declare:
+before it becomes a `Transition`. A contract records the range, finiteness, and flag checks
+requested by its caller. The three environment examples declare:
 
 :::table +header
 *
@@ -1382,7 +1386,7 @@ intended dynamics requires a separate specification.
 
 CartPole and Pong RAM exercise the same collector with external environments.
 
-`ppo_cartpole` runs the same PPO loop against Gymnasium. Here is a real 30-update run with the
+`ppo_cartpole` runs the same PPO loop against Gymnasium. Here is a recorded 30-update run with the
 shipped hyperparameters, evaluating every fifth update over five episodes with a 200-step cap:
 
 ```terminal +output
@@ -1407,12 +1411,10 @@ ppo_cartpole: done
 ppo_cartpole: ok
 ```
 
-The return does not move. This evaluated greedy policy survives about ten steps both before and
-after training. With
-horizon $`64`, thirty updates collect roughly two thousand environment steps. This run establishes
-limited learning at those settings, not a diagnosis that more steps alone would solve it. The
-example
-exists to exercise the bridge and the contract end to end, and it does that.
+The evaluated greedy policy survives about ten steps both before and after training. With
+horizon $`64`, thirty updates collect roughly two thousand environment steps. The collector and
+updates completed, but the measured return shows little improvement. That observation alone
+does not tell us whether collecting more steps would improve this policy.
 
 For CartPole, `avg_return` is capped by `--eval-max-steps`: an episode that survives all eight
 steps under an eight-step cap reports `8.000000`. That measurement cannot distinguish policies that
@@ -1461,9 +1463,10 @@ capacity. The Pong failure occurs earlier still, before the environment can prov
 
 # Off-Policy Data: Replay Buffers And DQN
 
-PPO throws its data away after each update. Value-based methods keep it, which is what made DQN work
-on Atari {Informal.citep dqn2015}[]: a ring buffer of past transitions, sampled in minibatches, so
-consecutive gradient steps see decorrelated data and each transition is used more than once.
+PPO reuses a collected rollout for its optimization epochs, then collects another rollout.
+DQN retains past transitions for later updates {Informal.citep dqn2015}[]. Drawing random
+minibatches from that buffer lets an update combine transitions collected at different times.
+The small example below uses a deterministic sampler whose selected entries we can inspect.
 
 A replay buffer must keep its size within its capacity. Pushing three transitions into a buffer of
 capacity two demonstrates the full-buffer case:
@@ -1487,8 +1490,8 @@ open Runtime.RL.Replay in
 (2, #[2.000000, 3.000000])
 ```
 
-The oldest transition is gone and the size stayed at the capacity. Python's standard answer behaves
-the same way:
+The oldest transition is gone and the size stayed at the capacity. A bounded Python `deque`
+has the same eviction behavior:
 
 ```
 # Compare oldest-first eviction with a capacity-two Python
@@ -1525,8 +1528,8 @@ which transitions were retained.
 
 The type also pins the transition down. `Transition Float [1] 2` fixes the observation shape and the
 action count, and the action field is a `Fin 2`, which is why the literal above needs `by decide`.
-A `deque` will hold anything you append, including a transition from a different environment, and
-you find out at gradient time.
+A `deque` does not check these fields when an item is appended; its callers must arrange those
+checks separately.
 
 The buffer stores oldest-first entries in a bounded FIFO array. Its capacity controls how much
 past experience remains available, while the sampling policy controls which retained entries
@@ -1753,11 +1756,10 @@ sync. Stating it as a lemma over $`\mathbb R` rather than over `Float` is delibe
 identity is false in floating point for extreme values, so an executable claim requires the
 binary32 treatment discussed earlier in this chapter.
 
-This is one algebraic identity about one scalar update. TorchLean has
-no DQN convergence theorem, no proof that the replay distribution is what the analysis assumes, and
-no error bound for the deadly triad of bootstrapping, off-policy data, and function approximation.
-What it has is a typed buffer with proved capacity invariants, TD targets whose terminal branch is
-inspectable, and losses you can recompute by hand.
+This identity concerns one scalar update. The buffer capacity invariants, terminal TD targets, and
+hand-computed losses above give us specific checks on the implementation. A DQN convergence argument
+would additionally have to address the replay distribution and the interaction of bootstrapping,
+off-policy data, and function approximation; the scalar identity does not supply those results.
 
 The target network serves as a temporarily fixed source of bootstrap values. Its delayed update
 prevents the target of every regression step from moving immediately with the online prediction.
@@ -1813,7 +1815,7 @@ sections state these contracts beside the corresponding code.
 # Contract Exercises
 
 1. Run `torchlean ppo_gridworld --updates 40 --eval-episodes 1 --eval-max-steps 8
-   --log-json /tmp/rl.json --path /tmp/rl-path.json`. Recompute the final return from that path
+   --log /tmp/rl.json --path /tmp/rl-path.json`. Recompute the final return from that path
    and the shaped reward, rather than assuming it follows the one-update path shown above.
 2. Change the discount in the `rlGrid` definition above to $`1` and see which hypothesis of
    `toFiniteStochasticMDP_valid` fails, and what the error message says.

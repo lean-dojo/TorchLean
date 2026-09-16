@@ -19,6 +19,10 @@ Most users should import `NN.Proofs.RuntimeApprox.Graph.NumericalCertificate`.
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+
 namespace Proofs
 namespace RuntimeApprox
 namespace NumericalCertificate
@@ -27,8 +31,6 @@ open NN
 open NN.Backend
 open NN.IR
 open Spec TorchLean
-open TorchLean.Floats.IEEE754
-
 /-! ## Backend-linked graph certificates -/
 
 /-- Untrusted certificate data.
@@ -79,7 +81,7 @@ instance : Repr RegistryCheckedCertificate where
 intermediate value against a registry-replayed range trace. -/
 structure RangeCheckedExecution where
   certificate : RegistryCheckedCertificate
-  values : Array (Spec.SomeTensor IEEE32Exec)
+  values : Array (Spec.SomeTensor (ExecFloat.Binary 8 23))
   withinRanges : executionWithinRanges certificate.ranges values = true
 
 /-- Convert an accepted kernel plan and checked range trace into raw certificate data. -/
@@ -164,15 +166,16 @@ def generateCheckedWith (registry : GraphRangeRegistry) (profile : BackendProfil
   let raw <- generateWith registry profile graph sources
   checkWith registry profile graph raw
 
-/-- Execute a graph under `IEEE32Exec` and check all intermediate tensors against the certificate.
+/-- Execute a graph under `ExecFloat.Binary 8 23` and check all intermediate tensors against the
+certificate.
 
 This reference replay path gives imported runtime artifacts a bit-level oracle. The backend audit
 records the capsules and numerical policies
 selected when the graph is replanned. The audit is not runtime provenance and does not prove that
 those kernels produced the imported values.
 -/
-def executeIEEE32 (payload : NN.IR.Payload IEEE32Exec)
-    (input : Spec.SomeTensor IEEE32Exec) (certificate : RegistryCheckedCertificate) :
+def executeIEEE32 (payload : NN.IR.Payload (ExecFloat.Binary 8 23))
+    (input : Spec.SomeTensor (ExecFloat.Binary 8 23)) (certificate : RegistryCheckedCertificate) :
     Except String RangeCheckedExecution := do
   let values <- certificate.graph.denoteAll payload input
   if h : executionWithinRanges certificate.ranges values then

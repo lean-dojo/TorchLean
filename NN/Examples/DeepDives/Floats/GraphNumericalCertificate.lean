@@ -40,6 +40,11 @@ graphs use the same artifact-generation and replay path.
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofBits32)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 open Proofs.RuntimeApprox.NumericalCertificate
 open Spec TorchLean
 open TorchLean
@@ -66,7 +71,7 @@ the certificate an exact artifact: no decimal-to-binary conversion sits between 
 and what the checker sees.
 -/
 def interval (lo hi : UInt32) : IEEE32Exec.Interval32 :=
-  { lo := IEEE32Exec.ofBits lo, hi := IEEE32Exec.ofBits hi }
+  { lo := ofBits32 lo, hi := ofBits32 hi }
 
 /-- Did an executable certificate operation return a checked value? -/
 def accepted {α : Type} : Except String α -> Bool
@@ -85,18 +90,18 @@ def checked : Except String RegistryCheckedCertificate :=
 
 /-- Concrete payload used for bit-level replay. The constant is `0.75`, which lies in the declared
 constant range $[0.5,1]$. -/
-def payload : NN.IR.Payload IEEE32Exec where
+def payload : NN.IR.Payload (Binary 8 23) where
   const? := fun nodeId =>
     if nodeId = 1 then
       some
         { n := 1
-          v := [IEEE32Exec.ofBits 0x3f400000] }
+          v := [ofBits32 0x3f400000] }
     else
       none
 
 /-- A concrete input (`1.25`) inside the declared input interval. -/
-def input : Spec.SomeTensor IEEE32Exec :=
-  Spec.SomeTensor.ofTensor (Tensor.full [] (IEEE32Exec.ofBits 0x3fa00000))
+def input : Spec.SomeTensor (Binary 8 23) :=
+  Spec.SomeTensor.ofTensor (Tensor.full [] (ofBits32 0x3fa00000))
 
 /-- Replay the same graph using the bit-level IEEE32 interpreter and check every intermediate. -/
 def replay : Except String RangeCheckedExecution := do
@@ -175,28 +180,28 @@ def mlpSources : Array SourceRange := #[
 /-! Constant payloads use the IR's canonical flat storage ABI; node shapes recover the typed matrix
 view during evaluation. The explicit order below is row-major. -/
 
-def mlpFirstWeightFlat : Tensor IEEE32Exec [6] :=
-  [ IEEE32Exec.ofBits 0x3f000000
-  , IEEE32Exec.ofBits 0xbe800000
-  , IEEE32Exec.ofBits 0x3f400000
-  , IEEE32Exec.ofBits 0xbf000000
-  , IEEE32Exec.posOne
-  , IEEE32Exec.ofBits 0x3e800000 ]
+def mlpFirstWeightFlat : Tensor (Binary 8 23) [6] :=
+  [ ofBits32 0x3f000000
+  , ofBits32 0xbe800000
+  , ofBits32 0x3f400000
+  , ofBits32 0xbf000000
+  , (1 : Binary 8 23)
+  , ofBits32 0x3e800000 ]
 
 /-- First bias, flat. -/
-def mlpHiddenBiasFlat : Tensor IEEE32Exec [3] :=
-  [IEEE32Exec.ofBits 0x3e000000, IEEE32Exec.ofBits 0xbe000000, IEEE32Exec.posZero]
+def mlpHiddenBiasFlat : Tensor (Binary 8 23) [3] :=
+  [ofBits32 0x3e000000, ofBits32 0xbe000000, (Binary.zero false : Binary 8 23)]
 
 /-- Second weight matrix `[3, 1]`, flat. -/
-def mlpSecondWeightFlat : Tensor IEEE32Exec [3] :=
-  [IEEE32Exec.ofBits 0x3f000000, IEEE32Exec.ofBits 0xbf400000, IEEE32Exec.posOne]
+def mlpSecondWeightFlat : Tensor (Binary 8 23) [3] :=
+  [ofBits32 0x3f000000, ofBits32 0xbf400000, (1 : Binary 8 23)]
 
 /-- Output bias, a single value. -/
-def mlpOutputBiasFlat : Tensor IEEE32Exec [1] :=
-  [IEEE32Exec.ofBits 0x3d800000]
+def mlpOutputBiasFlat : Tensor (Binary 8 23) [1] :=
+  [ofBits32 0x3d800000]
 
 /-- Concrete parameters are payloads of the constant nodes, not special fields in the checker. -/
-def mlpPayload : NN.IR.Payload IEEE32Exec where
+def mlpPayload : NN.IR.Payload (Binary 8 23) where
   const? := fun nodeId =>
     match nodeId with
     | 1 => some { n := 6, v := mlpFirstWeightFlat }
@@ -206,9 +211,9 @@ def mlpPayload : NN.IR.Payload IEEE32Exec where
     | _ => none
 
 /-- The concrete `[1, 2]` input the full-model replay runs on. -/
-def mlpInput : Spec.SomeTensor IEEE32Exec :=
-  let value : Tensor IEEE32Exec [1, 2] :=
-    [[IEEE32Exec.ofBits 0x3f000000, IEEE32Exec.negOne]]
+def mlpInput : Spec.SomeTensor (Binary 8 23) :=
+  let value : Tensor (Binary 8 23) [1, 2] :=
+    [[ofBits32 0x3f000000, (-1 : Binary 8 23)]]
   Spec.SomeTensor.ofTensor value
 
 /-- Generate the operation-local range trace and bind it to the checked CPU capsule plan. -/

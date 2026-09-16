@@ -40,18 +40,11 @@ Over real-valued inputs, the second line ranges over an uncountable set. Samplin
 counterexample, but checking sampled predictions alone does not establish the universal claim.
 A verifier needs a description of the region and a way to bound the network everywhere inside it.
 
-To establish that claim, the verifier must analyze the intended function, input region, and
-arithmetic. The examples below examine each dependency, then derive an interval bound and prove
-its scope. Named Lean blocks and their output are checked when the guide builds. Shell and
-Python transcripts are separate examples to
-rerun in the stated environment; they are not checked by the guide compiler.
-
 # Attention Masking
 
-Before trying to certify a network, we have to know which function we are certifying. Shape types
-remove many accidental interpretations, but they cannot decide the meaning of every well-shaped
-operation. Attention masking is a useful case because the incorrect version can look convincing in
-ordinary tests.
+An attention mask should give a blocked key zero weight. Subtracting a large constant from its
+score often produces that result in tests, yet the subtraction can leave almost all the attention
+on the blocked key.
 
 For query $`i`, let $`s_{ij}` be its score for key $`j`, and let $`A_i` be the keys that are
 allowed to receive attention. When there is at least one allowed key, a hard mask means
@@ -106,8 +99,8 @@ def moShortcut (s : Tensor Float [3]) : Tensor Float [3] :=
 ```
 
 {lean}`Spec.hardMaskedSoftmaxVecSpec moScores moMask` is TorchLean's specification applied to those
-scores: the hard-mask equation, written directly. {lean}`moShortcut moScores` is the shortcut,
-written the way it is usually written in practice. On these scores the two do not agree at all.
+scores: the hard-mask equation, written directly. {lean}`moShortcut moScores` subtracts the finite
+penalty before softmax:
 
 ```lean (name := moMaskEval)
 -- Compare exclusion from normalization with merely
@@ -131,9 +124,7 @@ a score of one hundred, much larger than either allowed score. Normalization the
 the weight to the very position meant to be excluded. The problem is therefore already present in
 the forward equation, before gradients, training, or backend selection enter the picture.
 
-The hard mask gives the blocked key zero weight. In the shortcut result, that key receives all
-the weight at the displayed precision. Replacing its large score with a moderate one gives a very
-different comparison:
+Lower the blocked score to `0.5`, and the displayed results agree:
 
 ```lean (name := moTameEval)
 -- Lower only the blocked score: this easier input can hide
@@ -188,15 +179,11 @@ tensor([0.2689, 0.7311, 0.0000])
 tensor([0., 0., 1.])
 ```
 
-Both implementations accept the same tensor shapes, and moderate scores can make their outputs
-indistinguishable. The discrepancy concerns the meaning of masking, which a shape check does not
-establish.
-
-TorchLean's specification uses the hard-mask equation: blocked entries have zero numerator. Runtime
-providers need a contract relating their implementation to that meaning. The
-{ref "tensors-shapes"}[shape interfaces] check the dimensions; the
-{ref "spec-layer"}[specification layer] supplies the function those implementations are meant to
-compute.
+Both implementations accept the same tensor shapes. The
+{ref "tensors-shapes"}[shape interfaces] cannot distinguish them; the
+{ref "spec-layer"}[specification layer] can, because it defines the hard-mask function with zero
+numerators for blocked entries. A runtime provider needs a contract relating its computation to
+that function.
 
 ## Limits Of Bounded Random Testing
 
@@ -233,12 +220,10 @@ when a blocked exponential is nonzero:
 0.000000
 ```
 
-Read the Boolean pair as two separate questions: the exponential at minus 745 is still nonzero,
-whereas the one at minus 746 has rounded to zero. The large number on the next line translates an
-exponent threshold back through the finite mask penalty. It is an illustration of why a fixed
-penalty depends on the scale of its inputs, not a universal cutoff for a softmax row. Softmax also
-subtracts a row maximum. The final grid check only explores the moderate scores chosen in the code;
-it cannot establish what happens for every score the model might produce.
+The Boolean pair shows that the exponential at minus 745 is still nonzero, whereas the one at
+minus 746 has rounded to zero. The next number translates an exponent threshold back through the
+finite mask penalty. It is not a universal cutoff for a softmax row: the stability shift also
+depends on the row maximum. The final check samples a grid of moderate scores.
 
 For the moderate allowed scores used here, a blocked score must approach $`10^9` before its
 exponential survives the masking and stability shifts. Scores in $`[-10,10]` underflow with room to
@@ -293,13 +278,10 @@ def moNormBox (lo hi : Float) : Float × Float :=
 0.324570
 ```
 
-The standard deviation here is positive, so normalization preserves endpoint order. Subtracting
-the mean moves the center; dividing by the standard deviation changes both the center and the
-width. For a perturbation, the mean cancels between the original and perturbed inputs, leaving the
-radius divided by `moSigma`. A raw radius of 0.1 is therefore substantially larger than 0.1 in these
-normalized coordinates. These displayed Float calculations help identify the correct domain.
-A certified numerical enclosure would additionally need to account for how its endpoints are
-rounded.
+The positive standard deviation preserves endpoint order. For a perturbation, the mean cancels
+between the original and perturbed inputs, leaving the radius divided by `moSigma`. These Float
+calculations identify the change of coordinates; a certified numerical enclosure would also need
+to account for endpoint rounding.
 
 A verifier that starts after normalization needs the first pair as its pixel bounds. Using
 $`[0,1]` there would describe a different region: the transformed interval is more than three
@@ -435,17 +417,15 @@ the later comparison of encodings concerns that separate numerical question.
 
 Taken together, {lean}`moEnclosure`, {lean}`moLowerCorner`, and {lean}`moUpperCorner` say that
 $`[1.904,2.256]` is the exact range of this network over this box. Exactness depends on the
-structure
-of this example: dependency loss can make intervals
-overapproximate, especially across multiple layers. A crossing ReLU or mixed weight signs alone
-do not force a loose result. Later chapters measure that
-looseness and show what CROWN-style relaxations buy
+structure of this example. Dependency loss can make intervals overapproximate, especially across
+multiple layers; a crossing ReLU or mixed weight signs alone do not force a loose result.
+Affine relaxations can retain relationships that separate intervals discard
 {Informal.citep crown2018}[]{Informal.citep autolirpa2020}[].
 
 This theorem concerns $`\mathbb{R}`, while the command above ran in binary32. Connecting the
-two is a separate obligation, addressed in
-of {ref "fp32-soundness"}[the soundness chapter]. We will return to the executable endpoints after
-examining a different source of looseness: dependencies between intermediate values.
+two requires the arithmetic argument developed in
+{ref "fp32-soundness"}[the soundness chapter]. First, consider a source of looseness that arises
+even with exact arithmetic: dependencies between intermediate values.
 
 # Dependency Loss And Affine Relaxations
 
@@ -510,7 +490,7 @@ correct, and $`[0,1]+[0,1]=[0,2]` is the correct interval sum. What is lost is t
 cannot both be $`1`. Interval arithmetic drops the dependency between them the moment it replaces
 each one by a box, and that loss is systematic rather than a rounding artifact.
 
-CROWN-style relaxations retain some of this dependency by bounding each ReLU with a line in the
+A CROWN relaxation retains some of this dependency by bounding each ReLU with a line in the
 input. On this interval, the line joining the endpoints of the ReLU graph gives the upper bound
 
 $$`\operatorname{ReLU}(x)\leq\frac{x+1}{2}
@@ -605,16 +585,11 @@ def moOff (bits : UInt32) (exact : Float) : Float :=
 (518.798828, 280.380249)
 ```
 
-The signs are as informative as the magnitudes. Both reported lower endpoints lie below the
-comparison value, and both upper endpoints lie above it. That is the direction an enclosing
-calculation needs in this particular example. Multiplication by a billion merely makes the offsets
-readable; it does not increase the precision of the original endpoints. The comparison value is
-itself supplied as a `Float`, so this diagnostic should be read together with the separate real
-calculation, rather than treated as a proof of outward rounding for the native implementation.
-
 The first component of each pair is the native run, the second is the IEEE reference run.
-`moOff` computes in host binary64, including its decimal reference value; these printed offsets
-are numerical diagnostics, not exact real identities.
+Both lower endpoints lie below the comparison value and both upper endpoints above it.
+Multiplication by a billion makes the offsets readable but adds no precision: `moOff` computes
+in host binary64, including its decimal reference value. These are numerical diagnostics, not
+exact real identities or a proof of outward rounding for the native implementation.
 
 :::table +header
 *
@@ -679,11 +654,6 @@ Each arrow carries one piece of the argument.
 - Did the checker interpret each graph operation with the intended scalar arithmetic?
 - Does acceptance imply the property written in the theorem?
 
-The masking example changes the function being analyzed; the normalization example changes the
-input region. The two-backend table illustrates the arithmetic obligation: matching graphs and
-parameters need not produce identical numerical endpoints. Shape checks alone do not settle any
-of these questions.
-
 ## Stale Parameter Payloads
 
 The first connection can fail when parameters change after verification. Take the network whose
@@ -725,19 +695,11 @@ still in the box  = false
 ```
 
 At the upper corner, the third hidden activation is 1.14. Increasing its readout coefficient by
-0.05 therefore adds 0.057 to the prediction, explaining the jump from 2.256 to 2.313. Nothing about
-that change alters the graph's dimensions. The earlier theorem remains a theorem about the earlier
-coefficients; it does not become false when another model is deployed. What fails is the attempted
-application of its conclusion to a different payload. A release process must establish that the
-artifact being checked and the parameters being executed are the same ones.
-
-The certificate is still true. {lean}`moEnclosure` is a theorem about the function whose weights it
-names, and moving a weight does not make a proved statement false. What breaks is the identification
-of that function with the one that runs: the graph is identical node for node, the shapes are
-identical, the checker would accept the same artifact, and the deployed network leaves the certified
-box at a corner the analysis already visited, overshooting the certified endpoint by $`0.057`, about
-a third of the box's own radius. A verification pipeline must therefore track the values of the
-parameters it analyzed through to deployment, even when the architecture is unchanged.
+0.05 raises the prediction from 2.256 to 2.313, overshooting the old bound by $`0.057`, about a
+third of the box's radius. The graph structure and shapes have not changed.
+{lean}`moEnclosure` remains true for the weights it names; applying it to the new payload fails
+because it describes a different function. A verification pipeline must track the parameter values
+it analyzed through to deployment, even when the architecture is unchanged.
 
 This is why {name}`Spec.hardMaskedSoftmaxVecSpec` and its relatives take their parameters as
 arguments, and why `denote` in {ref "graphs-and-ir"}[the IR chapter] takes a payload rather than
@@ -783,8 +745,7 @@ shows the executable verification workflows in the current checkout, one line ea
   twostage-torchlean-cegis-van   -- all-in-Lean two-stage refinement
 ```
 
-The real output is longer and prints each tool's default artifact path as well. We will run several
-of these later and open the theorem behind each checker.
+The full output also prints each tool's default artifact path.
 
 # Floating-Point Arithmetic
 
@@ -818,18 +779,12 @@ false
 The two integer encodings differ by one, even though decimal formatting hides the distinction.
 Each parenthesization chooses a different intermediate sum to round. Real associativity therefore
 cannot justify replacing one execution order by the other without an additional numerical argument.
-This matters for a network because reductions repeatedly make the same choice: a sequence of
-partial sums, a tree reduction, and a fused multiply-add may all implement the same real formula
-while following different rounding paths. A proof about that formula must say which relationship
-to the executable path is being claimed.
-
-Both sides print as `0.600000`, but differ in the last bit. A comparison against a threshold can
-expose that difference even when the printed values agree. Fused
+Both sides print as `0.600000`; a comparison against a threshold can expose the difference. Fused
 multiply-add, reduction order, subnormal handling, NaNs, and overflow introduce further
 distinctions; {ref "floating-point-literature"}[the literature chapter] traces how Flocq and its
 relatives handle the same questions in Rocq {Informal.citep flocq2011}[].
 
-TorchLean therefore gives several numerical interpretations distinct names:
+The arithmetic named in the statement matters:
 
 - exact real-valued specifications;
 - configurable rounded-real arithmetic with checked positive format precision;
@@ -840,8 +795,7 @@ TorchLean therefore gives several numerical interpretations distinct names:
 
 A real-valued enclosure theorem cannot be silently relabeled as a theorem about every GPU execution.
 A bridge theorem or an explicit backend contract must carry the result across that boundary. The
-{ref "floats"}[floating-point chapter] develops these layers in detail. The important habit is to
-ask which arithmetic appears in the statement.
+{ref "floats"}[floating-point chapter] develops these relationships in detail.
 
 A change in formula can also reduce overflow risk while preserving the real-valued function.
 For smooth-max pooling, let $`\beta` be a nonzero scale and choose a shift $`p` from the extreme
@@ -900,9 +854,8 @@ addresses the first; a numerical error statement is still needed for the second.
 
 TorchLean uses the same shifted weights in the forward and derivative paths, and executable entry
 points reject zero or non-finite $`\beta`. The real identity explains the transformation; the
-validation and backend tests address the executable boundary. The specification over
-$`\mathbb{R}` explains which function is intended; the executable form controls how its evaluation
-behaves in the selected format. A theorem must say which of these it covers.
+specification over $`\mathbb{R}` fixes the intended function. Validation and backend tests check
+its executable form in the selected format.
 
 # Proof Dependencies And Executable Examples
 
@@ -915,9 +868,6 @@ The named Lean output blocks provide another check: the guide build reruns the b
 checks the two bit patterns of `0.6`. Shell transcripts such as the IBP workflow and Python examples
 still need separate execution, and prose claims need review. Executable documentation catches
 drift in the examples it actually runs.
-
-Applying a soundness theorem then requires supplying its hypotheses about the graph, payload,
-region, and arithmetic. The claim can be traced back to those specific objects.
 
 # References
 

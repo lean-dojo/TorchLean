@@ -9,6 +9,8 @@ module
 public import NN.Examples.Quickstart.TensorBasics
 public import NN.Examples.Quickstart.AutogradBasics
 public import NN.Examples.Quickstart.SimpleMlpTrain
+public import NN.Examples.Quickstart.Precision
+public import NN.Examples.Quickstart.TypedTraining
 public import NN.Examples.Quickstart.Proofs
 public import NN.Examples.Quickstart.Widgets
 
@@ -23,6 +25,8 @@ examples:
 - typed tensors and runtime arithmetic,
 - one tensor-function and one model-state gradient,
 - an end-to-end MLP training command,
+- typed model execution at a caller-selected binary precision,
+- an explicit typed SGD loop that preserves the selected precision,
 - small proofs over TorchLean definitions, and
 - optional editor widgets.
 

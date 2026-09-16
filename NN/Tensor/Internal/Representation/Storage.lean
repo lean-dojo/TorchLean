@@ -119,7 +119,7 @@ private theorem nativeFinFoldl_loop_eq_finRange
             value)
     ?_ ?_ index value hIndex
   · intro index value hIndexLt inductionHypothesis hIndexLe
-    rw [nativeFinFoldlLoop.eq_1, dif_pos hIndexLt]
+    rw [nativeFinFoldlLoop.eq_1, dite_eq_left hIndexLt]
     have hIndexNat : index.toNat < length := by
       have := USize.lt_iff_toNat_lt.mp hIndexLt
       lia
@@ -137,7 +137,7 @@ private theorem nativeFinFoldl_loop_eq_finRange
     rw [hNextNat]
     congr 1
   · intro index value hIndexNotLt hIndexLe
-    rw [nativeFinFoldlLoop.eq_1, dif_neg hIndexNotLt]
+    rw [nativeFinFoldlLoop.eq_1, dite_eq_right hIndexNotLt]
     have hIndexNatNotLt : ¬index.toNat < length := by
       intro hIndexNat
       apply hIndexNotLt

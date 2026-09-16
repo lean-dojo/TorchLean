@@ -46,11 +46,11 @@ theorem softplus_envelope_real (x : ℝ) :
       Activation.Math.softplusSpec x ≤ max x 0 + 1 := by
   simp only [Activation.Math.softplusSpec, MathFunctions.log, MathFunctions.exp]
   by_cases hx : x > 0
-  · simp only [if_pos hx, max_eq_left (le_of_lt hx)]
+  · simp only [ite_eq_left hx, max_eq_left (le_of_lt hx)]
     have htail := softplus_tail_bounds_real (neg_nonpos.mpr (le_of_lt hx))
     constructor <;> linarith
   · have hnonpos : x ≤ 0 := le_of_not_gt hx
-    simpa only [if_neg hx, max_eq_right hnonpos, zero_add] using
+    simpa only [ite_eq_right hx, max_eq_right hnonpos, zero_add] using
       softplus_tail_bounds_real hnonpos
 
 /-- Every successful real softplus transfer encloses the source operation. -/
@@ -90,7 +90,7 @@ theorem safeLogBounds_sound_real {lo hi epsilonLo epsilonHi outLo outHi x epsilo
   dsimp only [Bind.bind, Option.bind] at hB
   split at hB
   next hpos =>
-    simp only [NonlinearBoundOps.logBounds, if_pos hpos] at hB
+    simp only [NonlinearBoundOps.logBounds, ite_eq_left hpos] at hB
     obtain ⟨rfl, rfl⟩ := Prod.mk.inj (Option.some.inj hB)
     have hsoft := softplus_envelope_real x
     have hlo : max lo 0 + epsilonLo ≤ Activation.Math.softplusSpec x + epsilon :=

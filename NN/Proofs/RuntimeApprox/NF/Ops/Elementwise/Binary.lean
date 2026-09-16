@@ -26,22 +26,23 @@ noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 open Proofs.RuntimeRoundingApprox
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /--
 `approxTensor` bound for elementwise addition (`addSpec`) over arbitrary tensor shapes.
 
 The output epsilon is computed as `linf_norm (add_bound_tensor epsx epsy xR yR)`, which combines the
 input epsilons and one rounding-ULP term per element.
 -/
-theorem approxTensor_add_spec {s : Shape} [NeuralValidRndToNearest rnd] :
+theorem approxTensor_add_spec {s : Shape} [ValidRndToNearest rnd] :
     ∀ {xS yS : SpecTensor s} {xR yR : Tensor R s} {epsx epsy : ℝ},
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR epsx →
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) yS yR epsy →
@@ -55,7 +56,7 @@ theorem approxTensor_add_spec {s : Shape} [NeuralValidRndToNearest rnd] :
       (s := s)
       (fS := fun a b => a + b) (fR := fun a b => a + b)
       (bnd := fun a b epsx epsy =>
-        epsx + epsy + neuralUlp β fexp (a + b) / 2)
+        epsx + epsy + ulp β fexp (a + b) / 2)
       (xS := xS) (yS := yS) (xR := xR) (yR := yR)
       (epsx := epsx) (epsy := epsy)
       hx hy (by
@@ -85,7 +86,7 @@ theorem approxTensor_sub_spec {s : Shape} :
       (s := s)
       (fS := fun a b => a - b) (fR := fun a b => a - b)
       (bnd := fun a b epsx epsy =>
-        epsx + epsy + neuralUlp β fexp (a - b) / 2)
+        epsx + epsy + ulp β fexp (a - b) / 2)
       (xS := xS) (yS := yS) (xR := xR) (yR := yR) (epsx := epsx) (epsy := epsy)
       hx hy (by
         intro x y xR yR hx hy
@@ -94,14 +95,14 @@ theorem approxTensor_sub_spec {s : Shape} :
             yR) hx hy))
   simpa [subSpec, subBoundTensor] using h
 
-omit [NeuralValidRndToNearest rnd] in
+omit [ValidRndToNearest rnd] in
 /--
 `approxTensor` bound for elementwise multiplication (`mulSpec`) over arbitrary tensor shapes.
 
 The scalar core is `approx_mul_nf`, lifted componentwise; the resulting bound is packaged as
 `mulBoundTensor` and reduced with `linfNorm`.
 -/
-theorem approxTensor_mul_spec {s : Shape} [NeuralValidRndToNearest rnd] :
+theorem approxTensor_mul_spec {s : Shape} [ValidRndToNearest rnd] :
     ∀ {xS yS : SpecTensor s} {xR yR : Tensor R s} {epsx epsy : ℝ},
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR epsx →
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) yS yR epsy →
@@ -116,7 +117,7 @@ theorem approxTensor_mul_spec {s : Shape} [NeuralValidRndToNearest rnd] :
       (fS := fun a b => a * b) (fR := fun a b => a * b)
       (bnd := fun a b epsx epsy =>
         (abs a + epsx) * epsy + (abs b + epsy) * epsx +
-          neuralUlp β fexp (a * b) / 2)
+          ulp β fexp (a * b) / 2)
       (xS := xS) (yS := yS) (xR := xR) (yR := yR)
       (epsx := epsx) (epsy := epsy)
       hx hy (by

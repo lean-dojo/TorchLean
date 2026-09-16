@@ -31,9 +31,9 @@ The first affine layer produces the hidden preactivations, ReLU clamps their neg
 zero, and the second affine layer produces the output. TorchLean's `NN.Spec` library expresses
 this sequence as Lean definitions, independently of the buffers and kernels used to evaluate it.
 
-The distinction is important because executable ML code changes form constantly. A linear layer may
-be evaluated by a reference Lean loop, a native CPU loop, cuBLAS, or an ATen kernel. The
-specification gives all of those implementations one statement to satisfy.
+A reference Lean loop, a native CPU loop, cuBLAS, and an ATen kernel can all evaluate a linear
+layer. The specification gives them one statement to satisfy, even though they store and combine
+the values differently.
 
 We can run the algebraic part of this specification with exact rational arithmetic. Most of the
 spec layer is parametric in the scalar type, and `ℚ` supplies the operations needed by this MLP.
@@ -139,17 +139,16 @@ zero, matching TorchLean's selected derivative at the kink. Boolean equality sel
 away from zero, the definition uses the maximum operation.
 
 Neither signature asserts algebraic or order laws for those operations. Changing the scalar
-instances
-changes how those operations are evaluated, so the same linear-layer definition can be used over
-integers, intervals, or binary32 bit patterns. Algebraic laws about those operations need their own
-hypotheses.
+instances changes how those operations are evaluated, so the same linear-layer definition can be
+used over integers, intervals, or binary32 bit patterns. Algebraic laws about those operations need
+their own hypotheses.
 
 TorchLean packages the common operations in `Context α`, so the same tensor definition can be
 interpreted over reals, rounded formats, interval endpoints, or executable binary32. This
 polymorphism requires care when stating hypotheses. A proof of a softmax identity over
 `ℝ` may use properties of the real exponential that an arbitrary `Context α` does not provide.
 
-The usual progression is:
+The hypotheses depend on what we want to prove:
 
 :::table +header
 *
@@ -172,17 +171,11 @@ The usual progression is:
   * agreement with one selected provider and reduction policy
 :::
 
-These levels require different hypotheses; native execution also introduces provider contracts. A
-theorem should not inherit a stronger numerical meaning
-because the same operation name appears at every level.
-
-The operation constraints explain why this specification can serve more than one purpose.
-Addition, multiplication, and zero suffice to evaluate a linear layer; a field or an ordered
-field would be unnecessarily strong requirements for that definition. A derivative theorem over
-the reals can later use the stronger analytic structure of that particular scalar system. Thus
-reusing a definition at several scalar types does not transport all theorems between them. It
-transports the operation sequence, and the laws available for interpreting that sequence depend
-on the chosen instances.
+A field would be an unnecessarily strong requirement just to define the linear formula.
+A derivative theorem over the reals can ask for the analytic structure it needs later.
+Reusing the definition at another scalar type preserves the operation sequence; the laws available
+for reasoning about it depend on the chosen instances. Native execution also needs a contract
+relating that sequence to the provider's implementation.
 
 # Linear Layer Forward And Backward Rules
 
@@ -271,12 +264,9 @@ executable VJP rules with these definitions.
 {ref "autograd-proofs"}[The autograd proofs chapter] states the agreement theorems and their
 assumptions.
 
-The backward output separates three roles. The weight cotangent is the upstream seed multiplied
-by each input feature, the bias cotangent is the seed itself, and the input cotangent uses the
-transpose of the weight map. Here the seed is one because the layer has one scalar output. With
-seed two, every returned cotangent would double over the rationals. This dependence on the seed
-is what makes a VJP compositional: an earlier layer receives the cotangent produced by a later
-layer, rather than assuming that every layer's output is independently seeded with one.
+We chose seed one to inspect the derivative of this scalar output. With seed two, every returned
+cotangent would double over the rationals. In a composed model, an earlier layer receives the
+cotangent produced by a later layer; it cannot assume that its own output is seeded with one.
 
 # MLP Forward Semantics
 
@@ -323,8 +313,7 @@ open scoped Spec.RationalAlgebraic in
 [(1 : Rat)/5]
 ```
 
-Expanding the chain gives the formula at the start of the chapter, and here it is expanded by hand,
-one stage at a time, so the intermediate values are visible:
+We can also evaluate the three stages separately:
 
 ```lean (name := slStages)
 -- Display the linear result, the selected ReLU branch, and
@@ -352,15 +341,10 @@ zero, and the output is the second bias alone: exactly $`\tfrac15`. That the com
 hand expansion print the same fraction is a small but real check that `Module.Chain` wiring means
 what the formula says.
 
-No graph traversal or runtime state is hidden inside any of this. The values are rationals and the
-evaluation is Lean's, not a backend's.
-
-The intermediate outputs explain the MLP result more clearly than the final fraction alone. Both
-hidden preactivations are negative, so the activation sends both to zero. The second matrix
-therefore contributes nothing at this input, and its bias is the whole output. This also predicts
-which local parameter changes can affect the result: a sufficiently small perturbation that leaves
-both hidden values negative cannot expose the hidden matrix to the output. Crossing an activation
-boundary changes that conclusion, which the later bias perturbation demonstrates explicitly.
+These rational evaluations also predict which parameter changes can affect the output.
+As long as both hidden preactivations remain negative, changing the first layer or the second
+weight matrix leaves the output unchanged. Crossing an activation boundary opens a path through
+the hidden layer, as the bias perturbation below will show.
 
 ## The selected backward rule at zero
 
@@ -397,11 +381,11 @@ difference; the local backward contract would still need to record the discrepan
 
 ## Difference Quotients
 
-Exact arithmetic also changes what a derivative check *is*. A finite-difference check in floating
-point has to pick a step size and live with the error curve that comes with it, as
+Exact arithmetic lets us separate branch behavior from rounding in a derivative check.
+A finite-difference check in floating point has to pick a step size and live with the error curve
+that comes with it, as
 {ref "running-example"}[the running example] shows in detail. Over `ℚ` the second layer is affine,
-so the step cancels algebraically and the quotient is the derivative for every nonzero step
-whatsoever:
+so the step cancels algebraically and the quotient is the derivative for every nonzero step:
 
 ```lean (name := slQuot)
 -- Affine difference quotients are exact at every nonzero
@@ -450,14 +434,6 @@ For every positive step the quotient is one; for every negative step it is zero.
 persists as the step approaches zero, so ReLU has no derivative there. The library's backward rule
 selects the subgradient `0` from $`[0,1]`. Exact arithmetic makes the source of the disagreement
 visible: it comes from the two branches of ReLU.
-
-The exact difference quotients should be read according to the function being tested. For an
-affine function, subtracting the value at the base point cancels the constant term, and division
-by any nonzero step recovers the coefficient exactly. That explains why changing the step by many
-orders of magnitude leaves these rational outputs unchanged. ReLU at zero has a different
-structure: positive and negative steps approach through different affine pieces. The two quotient
-values expose the failure of a two-sided derivative rather than a numerical failure to estimate
-one. Choosing zero for the runtime backward rule is a convention at that point.
 
 # Runtime And Specification Comparison
 
@@ -574,17 +550,13 @@ Native execution adds another boundary: a capsule records the planned provider a
 obligations, and execution checks establish which provider actually ran. The capsule's evidence
 determines what is known about that provider's agreement with the specification.
 
-The batch output contains one application of the same affine map per row. No reduction across
-rows is implied by `projectLast`: the first row's value does not depend on the second row's
-features. The equality check against `0.6` then asks a stronger question than whether the printed
-row looks like six tenths. A formatter can display both nearby floating-point values identically
-and even print their small difference as zero. The Boolean comparison operates on the stored
-values, so the two outputs are consistent rather than contradictory.
+The batch axes have a separate role from the feature axis: `projectLast` applies the affine map
+independently to each row. It introduces no reduction across rows, so the first row's value does
+not depend on the second row's features.
 
 # Bias Perturbation And ReLU
 
-The formula can be inspected without training, and this is where exact arithmetic earns its keep.
-Change only the first bias, from $`0` to $`0.6`. The first hidden preactivation moves from
+Now change only the first bias, from $`0` to $`0.6`. The first hidden preactivation moves from
 $`-\tfrac12` to $`\tfrac1{10}`, so it survives ReLU, and the output becomes
 
 $$`0.8\cdot0.1+0.2=0.28=\tfrac{7}{25}.`
@@ -620,12 +592,9 @@ we must determine which preactivation intervals stay on one side of zero and whi
 That is part of the analysis that
 {ref "verification"}[the verification chapter] formalizes.
 
-Changing the first bias makes one hidden value positive while leaving the other path inactive.
-The new output is consequently the old output bias plus one active hidden contribution. This is
-a useful way to inspect a model specification: keep the parameter change small and local, then
-account for the result at each stage. The calculation also identifies where an analytic proof
-would need a branch condition. Within either fixed activation region the model is affine; at the
-boundary the selected backward rule needs to be distinguished from ordinary differentiability.
+Within either fixed activation region the model is affine. An analytic proof can use that
+formula once it has established the branch conditions. At the boundary, it must distinguish
+the selected backward rule from ordinary differentiability.
 
 # Scalar Polymorphism
 
@@ -646,7 +615,7 @@ TorchLean reuses the tensor structure at several scalar interpretations:
   * `FP32`
   * binary32-precision, gradual-underflow rounded-real values with no upper exponent cutoff
 *
-  * `IEEE32Exec`
+  * FloatLib binary32
   * executable binary32 bit patterns, including signed zero, infinity, and NaN
 *
   * interval contexts
@@ -656,11 +625,11 @@ TorchLean reuses the tensor structure at several scalar interpretations:
   * Lean's native executable floating-point value
 :::
 
-The rational interpretation illustrates why scalar polymorphism needs care. `Context ℚ` is a
-*scoped* instance in {src "NN/Spec/Core/Context/Rational.lean"}[`Context/Rational.lean`], which is
+`Context ℚ` is a *scoped* instance in
+{src "NN/Spec/Core/Context/Rational.lean"}[`Context/Rational.lean`], which is
 why the MLP evaluation above had to write `open scoped Spec.RationalAlgebraic` to get at it. The
-reason is that `ℚ` has no rational exponential, so the scoped backend defines the transcendentals
-as zero:
+real exponential does not in general return a rational, so this algebraic context supplies zero
+placeholders for the transcendental operations:
 
 ```lean (name := slQExp)
 -- The scoped rational context supplies placeholders for
@@ -692,27 +661,19 @@ hold for these placeholder operations. The scoped instance requires a file to op
 rational algebraic interpretation; callers still need to restrict its use to the supported
 algebraic fragment.
 
-Softmax is the standard example:
+With the real exponential, softmax has the formula
 
 $$`\operatorname{softmax}(x)_i=
 \frac{\exp(x_i-m)}{\sum_j\exp(x_j-m)},\qquad m=\max_jx_j`
 
-is a clean real-valued formula. For finite binary32 inputs, `max` selects an existing value without
-rounding.
-Subtraction, exponential approximation, summation, and division can introduce error. A CUDA
-reduction may also choose
-a different summation tree. {ref "floats"}[The floating-point chapter] and
+For finite binary32 inputs, `max` selects an existing value without rounding. Subtraction,
+exponential approximation, summation, and division can introduce error. A CUDA reduction may also
+choose a different summation tree. {ref "floats"}[The floating-point chapter] and
 {ref "runtime-approximation"}[the runtime-approximation chapter] state the conditions under which
 one interpretation encloses or approximates another; {Informal.citet flocq2011}[] and
-{Informal.citet boldo2015}[] are the Rocq-side precedent for that style of formalization.
-
-The rational exponential and softmax outputs show why typeclass availability is not a mathematical
-correctness theorem. The scoped context lets algebraic examples use a broad interface, including
-names for operations that are not meaningful transcendental implementations over rationals. Its
-zero outputs are therefore evidence about that supplied context, not values of the real
-exponential or a probability distribution. For analytic softmax claims, the real context and its
-exponential laws matter. For an executable approximation, the chosen scalar implementation needs
-its own relation to those real operations.
+{Informal.citet boldo2015}[] develop related formal accounts of rounding and numerical error in
+Rocq. An executable softmax needs a relation between its scalar operations and the real operations
+in this formula.
 
 ## Summation Order
 
@@ -763,10 +724,9 @@ normalization, dropout, embeddings, recurrent cells, selective scan, and scaled 
 attention. Model definitions under `NN.Spec.Models` compose these operations into families such as
 CNNs, transformers, recurrent networks, and state-space models.
 
-That inventory is a semantics inventory, not a runtime support matrix. An operation can have a pure
-definition before it has an eager tape rule, typed graph lowering, a CUDA kernel, or an end-to-end
-correctness theorem. The relevant runtime and lowering chapters name those smaller supported
-fragments explicitly.
+An operation can have a pure definition before it has an eager tape rule, typed graph lowering,
+a CUDA kernel, or an end-to-end correctness theorem. The runtime and lowering chapters identify
+the operations supported by each route.
 
 # Shapes And Element Types
 
@@ -807,12 +767,9 @@ tuned under one may need rescaling under the other, which is why the reduction l
 definition and not
 in a training script.
 
-The MSE output is exact because this example uses a single rational residual. With several
-coordinates, the choice of mean rather than sum introduces a factor equal to the reciprocal of
-the number of entries. That factor also appears in the gradient. A forward comparison can look
-plausible despite a reduction mismatch on one specially chosen input, so the loss specification
-must identify which axes and how many coordinates participate. The name of a loss alone does not
-settle its scaling in a training step.
+Our one-coordinate example cannot distinguish mean from sum: dividing by the number of entries
+divides by one. A comparison intended to check the reduction needs several entries, and the
+specification must identify which axes participate.
 
 ## Attention masks
 
@@ -945,14 +902,6 @@ $`0/0`, matching PyTorch's scaled dot-product attention and TorchLean's CUDA pro
 {Informal.citet flashattention2022}[] relies on exactly this structure when it reorders the softmax
 denominator across tiles, since a hard zero is invariant under any summation order.
 
-The causal example normalizes each row over its permitted columns. In the first row there is only
-one allowed entry, so its probability is one regardless of that entry's score. Later rows have
-more allowed entries and therefore a different denominator. A finite score penalty changes that
-denominator instead of deleting a term from it, which is why a sufficiently large blocked score
-can reclaim probability mass in the leakage examples. The all-blocked case needs its own rule
-because there is no allowed denominator to normalize; the declared zero row makes that behavior
-explicit.
-
 The mask here is fixed data describing which coordinates may interact. A derivative theorem with
 respect to scores differentiates the function with that mask held fixed. It does not define a
 derivative with respect to a Boolean choice, and a theorem about a finite additive score bias
@@ -1016,13 +965,6 @@ With an explicit mask, the output is determined by the arguments shown in the de
 can first reason about that fixed mask, then add a distributional assumption when an expectation is
 needed. A stateful specification can also be formalized, but must include the generator state in
 its contract.
-
-The dropout example conditions on one particular mask. A kept entry is multiplied by the keep
-scale and a dropped entry becomes zero, so the displayed vector can be checked coordinate by
-coordinate. A probabilistic claim about expectations would additionally need a distribution over
-masks and the matching keep probability. The deterministic tensor equation alone does not supply
-that distribution. Inference mode takes a different route altogether: it is the identity, which
-is why the inference example returns the original four entries without rescaling them.
 
 ## Invalid windows
 
@@ -1102,12 +1044,9 @@ separately determines whether the configuration may be executed and rejects thes
 native code is reached. A computed shape can thus be used in a type without implying that every
 configuration producing it is admitted by the runtime.
 
-Returning zero from the spatial size formula makes it a total function on natural-number inputs.
-It does not certify that every such configuration is acceptable to a convolution runtime. A
-stride of zero and a kernel larger than the available padded extent can therefore be described by
-shape arithmetic while still being rejected by an execution API. When using a convolution theorem,
-the accompanying well-formedness or positive-stride hypotheses identify the intended operating
-region; the computed output length is only one part of that contract.
+When applying a convolution theorem, check its well-formedness and positive-stride hypotheses
+alongside the computed output length. Those hypotheses identify the configurations to which the
+theorem applies.
 
 # MLP Specification Equivalence
 

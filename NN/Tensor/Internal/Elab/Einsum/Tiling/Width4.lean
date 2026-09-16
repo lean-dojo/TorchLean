@@ -272,12 +272,12 @@ private theorem nativeFinSum4Loop_eq_nativeFinFoldlLoop
     ?_ ?_ index total0 total1 total2 total3
   · intro index total0 total1 total2 total3
       hIndex _hIndexNat inductionHypothesis
-    rw [nativeFinSum4Loop.eq_1, dif_pos hIndex]
-    rw [nativeFinFoldlLoop.eq_1, dif_pos hIndex]
+    rw [nativeFinSum4Loop.eq_1, dite_eq_left hIndex]
+    rw [nativeFinFoldlLoop.eq_1, dite_eq_left hIndex]
     simpa [updateTile4] using inductionHypothesis
   · intro index total0 total1 total2 total3 hIndex
-    rw [nativeFinSum4Loop.eq_1, dif_neg hIndex]
-    rw [nativeFinFoldlLoop.eq_1, dif_neg hIndex]
+    rw [nativeFinSum4Loop.eq_1, dite_eq_right hIndex]
+    rw [nativeFinFoldlLoop.eq_1, dite_eq_right hIndex]
 
 /--
 The four-scalar native loop is exactly the ordinary native fold using
@@ -337,12 +337,12 @@ theorem nativeFinSum4Push_eq_pushTile4
     ?_ ?_ 0 initial initial initial initial
   · intro index total0 total1 total2 total3
       hIndex _hIndexNat inductionHypothesis
-    rw [nativeFinSum4PushLoop.eq_1, dif_pos hIndex]
-    rw [nativeFinSum4Loop.eq_1, dif_pos hIndex]
+    rw [nativeFinSum4PushLoop.eq_1, dite_eq_left hIndex]
+    rw [nativeFinSum4Loop.eq_1, dite_eq_left hIndex]
     exact inductionHypothesis
   · intro index total0 total1 total2 total3 hIndex
-    rw [nativeFinSum4PushLoop.eq_1, dif_neg hIndex]
-    rw [nativeFinSum4Loop.eq_1, dif_neg hIndex]
+    rw [nativeFinSum4PushLoop.eq_1, dite_eq_right hIndex]
+    rw [nativeFinSum4Loop.eq_1, dite_eq_right hIndex]
     rfl
 
 /--
@@ -447,12 +447,12 @@ theorem nativeFinSum4FinalizePush_eq_pushTile4
     ?_ ?_ 0 initial initial initial initial
   · intro index total0 total1 total2 total3
       hIndex _hIndexNat inductionHypothesis
-    rw [nativeFinSum4FinalizePushLoop.eq_1, dif_pos hIndex]
-    rw [nativeFinSum4Loop.eq_1, dif_pos hIndex]
+    rw [nativeFinSum4FinalizePushLoop.eq_1, dite_eq_left hIndex]
+    rw [nativeFinSum4Loop.eq_1, dite_eq_left hIndex]
     exact inductionHypothesis
   · intro index total0 total1 total2 total3 hIndex
-    rw [nativeFinSum4FinalizePushLoop.eq_1, dif_neg hIndex]
-    rw [nativeFinSum4Loop.eq_1, dif_neg hIndex]
+    rw [nativeFinSum4FinalizePushLoop.eq_1, dite_eq_right hIndex]
+    rw [nativeFinSum4Loop.eq_1, dite_eq_right hIndex]
     simp [pushTile4, selectTile4]
 
 end TorchLean.Tensor.Internal.Elab.Impl

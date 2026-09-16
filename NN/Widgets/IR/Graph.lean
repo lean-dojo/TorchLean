@@ -12,7 +12,6 @@ import Mathlib.Tactic.Finiteness.Attr
 import Mathlib.Tactic.SetLike
 public meta import NN.Widgets.Core.UI
 public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
 public meta import NN.Spec.Core.Shape -- shake: keep
 
 /-!
@@ -116,6 +115,6 @@ def irHtml (g : Graph) (maxDotChars : Nat := 6000) : ProofWidgets.Html :=
 syntax (name := irViewCmd) "#ir_view " term : command
 
 macro "#ir_view " g:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (irHtml $g))
+  UI.canonicalCommand <$> `(#html (irHtml $g))
 
 end NN.Widgets

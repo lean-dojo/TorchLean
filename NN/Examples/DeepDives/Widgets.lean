@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
-import NN.Floats.IEEEExec.Exec32
+import FloatLib.Floats.Formats.BinaryInterchange.Configured
+import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
+import FloatLib.Floats.Formats.IEEE754.Native
 import NN.IR.Graph
 import NN.IR.Semantics
 import NN.MLTheory.CROWN.Graph
@@ -29,7 +31,6 @@ without leaving Lean. They are available through the dedicated widget entrypoint
 
 open Spec TorchLean
 open NN.IR
-open TorchLean.Floats.IEEE754
 open Runtime.Autograd
 
 /-!
@@ -38,6 +39,11 @@ open Runtime.Autograd
 These compact panels are useful when iterating on RL specs and proofs: they let you inspect
 state encodings, policies, and rollout traces in the infoview.
 -/
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofBits32 ofModel toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 namespace GridWorldWidgets
 
@@ -152,22 +158,25 @@ def floatTensor : Tensor Float [4] :=
 /--
 The same four values in the bit-level binary32 model, where the rounding is visible in the fields.
 -/
-def ieeeTensor : Tensor IEEE32Exec [4] :=
-  [ IEEE32Exec.posOne
-  , IEEE32Exec.ofFloat 2.0
-  , IEEE32Exec.ofFloat decimalTenth
-  , IEEE32Exec.ofFloat oneThirdFloat ]
+def ieeeTensor : Tensor (Binary 8 23) [4] :=
+  [ (1 : Binary 8 23)
+  , (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat x))) : Binary 8 23))
+    2.0
+  , (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat decimalTenth))) : Binary 8 23)
+  , (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat oneThirdFloat))) : Binary 8
+    23) ]
 
 /--
 A rank-three binary32 tensor whose entries are divided by seven, guaranteeing a nonterminating
 binary expansion and therefore an interesting fraction field in every cell.
 -/
-def ieeeCube : Tensor IEEE32Exec [2, 2, 3] :=
+def ieeeCube : Tensor (Binary 8 23) [2, 2, 3] :=
   Tensor.generate [2, 2, 3] fun coordinates =>
     -- Small tensor whose values make the bit patterns interesting.
     let base : Float := Float.ofNat
       (coordinates.getD 0 0 * 100 + coordinates.getD 1 0 * 10 + coordinates.getD 2 0)
-    IEEE32Exec.ofFloat ((base + decimalTenth) / 7.0)
+    (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat ((base + decimalTenth) /
+      7.0)))) : Binary 8 23)
 
 /-- A small integer matrix, to show the viewer with no rounding to worry about. -/
 def sampleMatrix : Tensor Int [2, 4] :=
@@ -226,12 +235,12 @@ def samplePayload : NN.IR.Payload Float :=
         none }
 
 /-- `1.0` in binary32, by bit pattern. -/
-def one : IEEE32Exec :=
-  IEEE32Exec.ofBits (0x3f800000 : UInt32)
+def one : Binary 8 23 :=
+  ofBits32 (0x3f800000 : UInt32)
 
 /-- A quiet NaN, so the float widget's non-finite rendering path gets exercised. -/
-def qnan : IEEE32Exec :=
-  IEEE32Exec.ofBits (0x7fc00000 : UInt32)
+def qnan : Binary 8 23 :=
+  ofBits32 (0x7fc00000 : UInt32)
 
 /--
 A CROWN propagation state for `sampleGraph`: the input ranges over `[-1, 1]` in both coordinates,
@@ -291,7 +300,7 @@ def sampleTape : Tape Float :=
 #shape_infer_view sampleGraph
 #graph_rewrite_view sampleGraph, sampleGraphSub
 #float32_view one
-#float32_view (1 : IEEE32Exec)
+#float32_view (1 : Binary 8 23)
 #float32_view qnan
 #float32_compare_view one, qnan
 #anytensor_view anyMat

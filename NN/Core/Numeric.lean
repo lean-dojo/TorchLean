@@ -6,62 +6,46 @@ Authors: TorchLean Team
 
 module
 
+public import FloatLib.Numerics.Capabilities.Elementary
+
 /-!
 # Foundational Numeric Interfaces
 
-This module contains the small scalar interfaces shared by TorchLean's floating-point library and
-its tensor specifications. It deliberately knows nothing about tensors, models, runtimes, or
-verification.
+This module re-exports FloatLib's elementary-function interface and supplies TorchLean's native
+binary32 instance and natural-number casts. It knows nothing about tensors, models, or runtimes.
 
 `MathFunctions` names the transcendental operations used by numerical code. Integer and rational
 constants use the standard numerical interfaces. The broader neural-model interface, `Context`,
 lives in `NN.Spec.Core.Context`.
 
-Nothing here depends on Mathlib. That is deliberate: most of the library is scalar-polymorphic or
-runs on `Float`, and only the specification layer ever needs the exact reals. The `ℝ` instances
-therefore live in `NN.Core.Numeric.Real`, so that modules which never mention `ℝ` do not pay for
-loading the real-analysis hierarchy.
+FloatLib owns the single `MathFunctions` class and its `Float` and `ℝ` instances. Its elementary
+capability module imports real analysis; this facade does not define a second class or duplicate
+those instances.
 -/
 
 @[expose] public section
 
-/-- Scalar transcendental functions shared by numerical and model code. -/
-class MathFunctions (α : Type) where
-  exp : α → α
-  tanh : α → α
-  cosh : α → α
-  sqrt : α → α
-  abs : α → α
-  log : α → α
-  pi : α
-  cos : α → α
-  sin : α → α
-  sinh : α → α
+export FloatLib.Numerics (MathFunctions)
+
+namespace MathFunctions
+
+export FloatLib.Numerics.MathFunctions (exp tanh cosh sqrt abs log pi cos sin sinh)
+
+end MathFunctions
 
 namespace TorchLean
 
-/-- Default normalization stabilizer, `1e-5`, evaluated in the selected scalar arithmetic.
+/-- Default normalization stabilizer, obtained by casting the exact rational `1e-5` once.
 
-The natural denominator is cast once, then division uses the backend. Arbitrary coarse grids need
-not agree with repeated multiplication by ten or with rounding the exact real value `1e-5` once.
+Native and configured binary contexts round the fraction without first casting its denominator.
+This preserves the representable binary16 tolerance even though `100000` itself overflows there.
+The result can still be zero in a format that cannot represent a nearby positive value; callers
+using such a format must choose an explicit positive tolerance.
 -/
-def normalizationEpsilon {α : Type} [One α] [NatCast α] [Div α] : α :=
-  1 / ((100000 : Nat) : α)
+def normalizationEpsilon {α : Type} [RatCast α] : α :=
+  Rat.cast (1 / 100000 : Rat)
 
 end TorchLean
-
-/-- Host implementations of the scalar transcendental interface. -/
-instance : MathFunctions Float where
-  exp := Float.exp
-  tanh := Float.tanh
-  cosh := Float.cosh
-  sqrt := Float.sqrt
-  abs := Float.abs
-  log := Float.log
-  pi := 3.14159265358979323846
-  cos := Float.cos
-  sin := Float.sin
-  sinh := Float.sinh
 
 /-- Native binary32 implementations of the scalar transcendental interface. -/
 instance : MathFunctions Float32 where

@@ -150,7 +150,7 @@ theorem apply_scalar_at
       | cons coordinate coordinates =>
           simp only [apply, Spec.get_spec_dim_cons, Tensor.unstack_dim]
           by_cases h : coordinate < extent
-          · simp only [dif_pos h]
+          · simp only [dite_eq_left h]
             simpa [List.append_assoc] using
               ih (coordinatePrefix := coordinatePrefix ++ [coordinate])
                 (Tensor.unstack x ⟨coordinate, h⟩) coordinates

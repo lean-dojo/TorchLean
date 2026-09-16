@@ -111,7 +111,7 @@ def withState
             finally
               sess.resetTape
               if options.usesCuda then
-                Torch.Internal.EagerSession.collectCudaAllocator))
+                Runtime.Autograd.Cuda.Buffer.collectGarbage))
   pure { evaluate := evaluate }
 
 end Evaluator

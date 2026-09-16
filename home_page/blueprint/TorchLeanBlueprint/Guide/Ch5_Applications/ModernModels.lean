@@ -16,21 +16,18 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 tag := "modern-models"
 %%%
 
-A two-layer perceptron introduces typed tensors and reverse-mode differentiation along a single
-chain of operations. The architectures in this chapter add branches, state, masks, patch grids, and
-spectral transforms. Their implementations must agree on how branches align, how state advances,
-and what each tensor axis represents.
+A batch of eight examples should share one set of model parameters. A residual addition needs
+both branches to produce the same shape. These are small requirements, but they are good places
+to start reading a model: we can inspect the parameter list or try to construct mismatched
+branches and see exactly what the API requires.
 
-Each architecture in this chapter makes a different convention explicit. A residual network has to
-align two branches. A vision Transformer has to turn a patch grid into a token sequence. A recurrent
-model has to expose its state, a causal model has to expose its mask, and a neural operator has to
-say which Fourier modes it keeps.
+I will keep that level of detail as the models become more involved. For a vision Transformer,
+we can follow the pixels that survive patch extraction; for causal attention and a recurrent
+scan, we can append tokens and inspect the earlier outputs. Shapes identify the objects in these
+calculations, while the mask and scan definitions determine which inputs can affect them.
 
-Inputs, outputs, and parameter layout are
-typed; the forward program names its runtime; specifications and proofs refer to identifiable
-objects rather than to an opaque training log; and a dataset, environment, or external kernel stays
-visible where it enters the run. Every shape in this chapter is computed
-by Lean rather than typed by hand, and the corresponding PyTorch shapes are printed by PyTorch
+The Lean blocks compute shapes from the model configurations. The accompanying PyTorch
+transcripts show shapes obtained by executing the corresponding operations
 {Informal.citep pytorch2019}[].
 
 The reusable constructors live under {srcDir "NN/API/Models"}[`NN/API/Models`] and the runnable
@@ -145,9 +142,8 @@ cannot hide behind an implicit leading axis; {ref "torchlean_vs_pytorch"}[TorchL
 shows a real batched-versus-sliced discrepancy of that kind. The cost is that the batch axis has to
 be named, and `nn.mapLeading` is where you name it.
 
-The type checker removes one class of invalid programs before any runtime is reached. The runtime
-still performs ordinary matrix multiplication, bias addition, and activation evaluation. What
-changes as architectures get less linear is only which shape equation has to be made explicit.
+The batch model fixes how these affine maps and activations compose. Adding a residual branch
+introduces another requirement: the two paths must agree on the shape at their join.
 
 # Residual Networks
 
@@ -331,8 +327,8 @@ operations with different purposes, even though both are summarized by a short s
 Open {src "NN/Examples/Models/Vision/ResNet.lean"}[`NN/Examples/Models/Vision/ResNet.lean`] and
 inspect `config`. The command uses an $`8\times8` crop and four hidden channels. Changing the hidden
 width changes both residual branches and the classifier input at once, because all three come from
-the same configuration. Removing the projection that keeps the branch shapes aligned is not a late
-runtime error: as the `mmClash` block above shows, the residual composition no longer elaborates.
+the same configuration. When constructing branches separately, we must preserve that agreement:
+the `mmClash` block above fails to elaborate because its two output widths differ.
 
 # Vision Transformers
 
@@ -709,7 +705,7 @@ and values move. The first query can still see only slot zero, but that slot now
 that used to be last. A causal mask supplies an order-dependent visibility rule; positional
 embeddings supply position-dependent features. Both can make a token's position affect its output.
 
-PyTorch reproduces both rows, in double precision, and adds one detail worth keeping:
+The double-precision PyTorch output also shows what happens in the last displayed digits:
 
 ```
 # Compare unrestricted permutation symmetry with the
@@ -767,11 +763,9 @@ general: stable softmax subtracts the row maximum, and an all-sentinel row becom
 before exponentiation, producing uniform weights rather than an all-zero masked row.
 
 The specification layer states its causality theorem over $`\mathbb{R}`, where the exponential
-of any
-real number is strictly positive. A finite sentinel therefore gives positive strict-future weights;
+of any real number is strictly positive. A finite sentinel therefore gives positive strict-future weights;
 their size depends on the sentinel and the other logits. An exact-zero theorem cannot apply.
-TorchLean therefore forms the
-softmax numerators directly, taking blocked entries to be zero by definition, which makes the
+TorchLean forms the softmax numerators directly, taking blocked entries to be zero by definition, which makes the
 statement exact:
 
 ```lean (name := mmCausalThm)
@@ -940,8 +934,8 @@ def mmOut (xs : Array (Tensor Float [1])) :
 `runArray` returns both the final state and the outputs. `mmOut` selects the outputs so that we can
 compare the emitted sequence before and after appending tokens.
 
-The zero gate projection is what keeps the numbers clean: the gate is $`\sigma(0)=\tfrac12` at every
-step, so each readout is halved. Following the first token through, the input projects to
+I set the gate projection to zero so the gate is $`\sigma(0)=\tfrac12` at every
+step and we can halve each readout by hand. Following the first token through, the input projects to
 $`(1,1)`, the state becomes $`A\odot 0+B\odot(1,1)=(1,1)`, the readout is
 $`C\odot(1,1)=(1,2)`, halving gives $`(0.5,1)`, and the output projection sums the two channels to
 $`1.5`. The second token is a zero, so the state decays to $`(0.5,-0.5)`, the readout is
@@ -1006,7 +1000,7 @@ therefore determines which frequencies the spectral branch can change.
 
 The configuration in {src "NN/API/Models/FNO.lean"}[`NN.API.Models.FNO`] is again parameterized by
 spatial rank, and the field-to-field boundary is visible in its shapes: a grid of sixty-four points
-with twelve retained modes, a latent width of thirty-two, and four blocks maps a sampled field to a
+with a mode-band width of twelve, a latent width of thirty-two, and four blocks maps a sampled field to a
 sampled field of the same extent.
 
 ```lean (name := mmFnoShapes)

@@ -14,18 +14,13 @@ tag := "training-from-scratch"
 file := "Training___-One-State-Transition-At-A-Time"
 %%%
 
-Training repeatedly transforms parameters, optimizer memory, data order, and runtime state.
-TorchLean's high-level trainer packages that transition, while the lower manual API exposes each
-piece.
-
-The useful unit to follow is one update. A sample enters the current model, the objective reduces
-its prediction to a scalar, and reverse mode produces one gradient tensor for each trainable state
+Follow one update of the running $`2\to8\to1` MLP. A sample enters the current model, the objective
+reduces its prediction to a scalar, and reverse mode produces one gradient tensor for each trainable state
 tensor. The optimizer consumes those gradients together with its own memory and installs the next
-parameters. Reading the chapter in that order explains why choosing a model is only the first part
-of a training program, and why a saved prediction alone cannot tell us how the next update will
-behave.
+parameters. With Adam, saving those parameters is enough to recover a prediction, but recovering
+the next update also requires the optimizer's moments and step counter.
 
-We will train the running $`2\to8\to1` MLP and then inspect its state transitions. Named Lean
+I'll first train the model, then open the loop to inspect what changes at each step. Named Lean
 blocks and their outputs are checked during the guide build. Command-line and Python transcripts
 are separately recorded runs, with commands supplied for reproduction.
 
@@ -92,9 +87,6 @@ these entries:
 - `untrained(heldout)` and `trained(heldout)` are the same held-out input `(0.25, -0.75)` before and
   after: `-0.088261` moves to `0.228325` against a target of `0.200000`.
 
-The loss values are measurements from this run. The model and optimizer definitions, by contrast,
-are reusable objects that can appear in theorem statements or another runtime profile.
-
 # Model Architecture
 
 ```lean (name := tfModelDef)
@@ -120,15 +112,8 @@ Lean reports both the seeded construction stage and the model's input/output sha
 tfModel : nn.Builder (nn.Sequential [2] [1])
 ```
 
-`nn.Builder` is the seed-consuming half and `nn.Sequential [2] [1]` is the checked model. At this
-point we have:
-
-- input and output shapes;
-- layer structure;
-- parameter shapes;
-- seeded initialization actions.
-
-We do not yet have a loss, optimizer, concrete parameter values, or device.
+`nn.Builder` waits for a seed to construct the `nn.Sequential [2] [1]` model. Its architecture is
+already fixed; the loss, optimizer, and device are still separate choices.
 
 The intermediate width eight belongs to the architecture even though only `[2]` and `[1]` appear
 at the outer boundary. It determines both the number of hidden activations for each sample and the
@@ -194,8 +179,7 @@ the loss definition: it fixes the scale of the gradients passed to Adam. Changin
 would therefore change more than the number printed in the log, even if the model and target tensors
 were otherwise identical.
 
-The optimizer is a small record, and it can print itself back in the syntax you would use to
-construct it:
+The optimizer can print its configuration in the syntax you would use to construct it:
 
 ```lean (name := tfOptim)
 -- Print the Adam configuration, including defaults omitted
@@ -204,8 +188,10 @@ construct it:
 ```
 
 ```leanOutput tfOptim (whitespace := lax)
-"optim.adam { learningRate := 0.030000, beta1 := 0.900000,
-  beta2 := 0.999000, epsilon := 1.000000e-8 }"
+"optim.adam { learningRate := 2.9999999999999999e-2,
+  beta1 := 9.0000000000000002e-1,
+  beta2 := 9.9900000000000000e-1,
+  epsilon := 1.0000000000000000e-8 }"
 ```
 
 The moment coefficients and epsilon match PyTorch's defaults. The corresponding PyTorch
@@ -215,9 +201,10 @@ configuration prints:
 lr, betas, eps = 0.03 (0.9, 0.999) 1e-08
 ```
 
-The exponent notation in `epsilon := 1.000000e-8` preserves a distinction that fixed six-decimal
-formatting would hide. Printing this value as `0.000000` would suggest a different update rule.
-`describe` uses exponent form below `1e-4`, so small configuration values remain visible in logs.
+FloatLib supplies the scientific decimal text. `describe` checks it with Lean's literal decoder
+and compares the reconstructed binary64 bits before returning it. When the check fails, it emits
+a `Float.ofBits` expression instead. This protects small stabilizers and coefficients near one
+from changing when their descriptions are copied.
 
 Adam is {Informal.citet adam2015}[]; the single-sample step underneath it is older than deep
 learning and goes back to {Informal.citet robbins1951}[].
@@ -463,11 +450,9 @@ time that it is
 state into a type where `get 3` is meaningful. This is the same check a checkpoint loader performs,
 and it is why a checkpoint for a wider model cannot be quietly accepted here.
 
-The displayed output-bias change isolates one coordinate of a much larger update. It does not
-attribute the loss reduction to that bias: both matrices and the hidden bias have been trainable
-throughout the forty steps. The shape check establishes how to interpret the returned pack, while
-the printed numbers show the values found there in this run. Keeping those two roles separate makes
-state inspection useful without treating a single changed coordinate as an explanation of training.
+The displayed output-bias change isolates one coordinate of a much larger update. Both matrices
+and the hidden bias have also been trainable throughout the forty steps, so this coordinate alone
+cannot explain the loss reduction.
 
 # Gradient Descent Updates
 
@@ -584,8 +569,8 @@ needs the full output tensor.
 
 # Training State
 
-It is tempting to describe training as repeated calls to `backward`, but the value passed from one
-update to the next is larger than a gradient. For a reproducible run we need to account for:
+The next Adam update depends on its accumulated moments and step counter as well as the current
+parameters. Changing the next sample or dropout mask changes the gradient it will consume:
 
 :::table +header
 *
@@ -913,14 +898,9 @@ lake -R -K cuda=true exe torchlean quickstart_mlp \
   --device cuda --steps 20 --seed 2026 --show-backend
 ```
 
-Execution validation rejects CUDA when the native runtime is unavailable. The profile lookup
-above is intentionally weaker than opening an executable session.
-
-Read the two successful lookup rows as configuration results. They return a run configuration with
-a maintained device profile attached; they have not allocated a tensor on that device or executed a
-kernel. This distinction lets configuration code remain usable on a CPU-only documentation build.
-The later session boundary is where a CUDA request must meet the capabilities of the linked runtime,
-so a successful lookup does not replace checking whether the requested execution can actually start.
+The two successful lookup rows attach device profiles without allocating tensors or executing
+kernels. Opening a session validates execution and rejects CUDA when the native runtime is
+unavailable.
 `--show-backend` prints the selected implementation for each operation; the
 {ref "backend-selection"}[backend chapter] explains the profile, provider, VJP, and evidence fields
 in that report.
@@ -936,24 +916,22 @@ The common executable selections are:
 --arithmetic ieee
 ```
 
-Native arithmetic uses Lean's builtin `Float32` operations. IEEE arithmetic uses TorchLean's
-independent raw-bit binary32 reference and is much slower, but exposes precise finite and
-exceptional behavior. On this run the two agree to the last printed digit, and only the label
-changes:
+Native arithmetic uses Lean's builtin `Float32` operations; `.ieee` now uses FloatLib binary32,
+including its finite and exceptional cases. These recorded results predate that migration and
+retain their original labels. On that run the two agree to the last printed digit:
 
 ```
 steps=20 arithmetic=native scalar=Float32 loss=0.495227 -> 0.401184
 steps=20 arithmetic=ieee scalar=IEEE32Exec loss=0.495227 -> 0.401184
 ```
 
-That is the outcome we want and not one we are entitled to assume: the bit-level reference is a
-separate implementation of binary32, so the displayed agreement is a regression check for this
-workload; it does not establish
-bit equality or identify the implementation of each operation. Proof-level `Real` and rounded-real
+The two implementations agree at the printed precision on this workload. Comparing their bits
+would require more than these decimal loss values. Proof-level `Real` and rounded-real
 `FP32` are not executable trainer choices.
 `FP32` has binary32 precision and gradual-underflow parameters, but no upper exponent bound, NaN,
 infinity, or signed zero; bridge theorems therefore require finite and no-overflow hypotheses when
-relating it to `IEEE32Exec`. {ref "floats"}[The floating-point chapter] is where those boundaries
+relating it to FloatLib binary32. {ref "floats"}[The floating-point chapter] is where those
+boundaries
 are drawn.
 
 A loss curve without its arithmetic semantics is incomplete. The same architecture and seed may
@@ -1018,11 +996,8 @@ initial state. `steps=0` says the restored result performed no updates. The two 
 restored report are both `0.125425`, which equals the trained run's final loss, because
 `Trainer.load` evaluates the supplied dataset once rather than copying a number it was handed.
 
-The equality of these two predictions checks a different property from loss reduction. It checks
-that the saved state, reloaded into the same architecture, produces the displayed forward value.
-The restoring seed is deliberately different so that retaining the fresh initialization would be
-visible. It does not resume update forty-one of the old Adam process: the report's zero step count
-and the model-only checkpoint boundary leave the optimizer history outside this round trip.
+The restored model reproduces the displayed prediction. Resuming update forty-one of the old Adam
+process would also require its optimizer history, which this model checkpoint does not contain.
 
 The supervised training paths wire the `loadCheckpoint?` and `saveCheckpoint?` fields of
 `Trainer.TrainOptions` into the checkpoint format selected by the runtime arithmetic. For example:
@@ -1115,12 +1090,9 @@ Use it when the program needs a custom accumulation policy, multiple losses, gen
 reinforcement-learning interaction, or detailed instrumentation. Generated batches simply become
 the samples passed to `step`; PINN collocation points and simulator batches fit this directly.
 
-If `Trainer.new`, objective selection, and `trainer.train` can express the workflow, keep the
-high-level API. A session is the same trainer with the loop handed over, not a second training
-style: `trainer.train` itself is `open`, a loop of `step`, and `finish`.
-
-The session does not change the model or autograd semantics. It exposes the live parameters that
-`trainer.train` normally manages, and `finish` packages them as the same `Trainer.Result`.
+`trainer.train` itself opens a session, loops over `step`, and calls `finish`. Writing that loop
+gives us access to the live parameters between updates, with the same model and autograd semantics.
+`finish` packages them as the usual `Trainer.Result`.
 
 Loading into an existing session has a different lifecycle from constructing a restored result.
 `Session.load` replaces the model parameters and buffers but keeps that session's optimizer history
@@ -1399,7 +1371,7 @@ capsules are selected and whether any trusted external provider appears.
 
 # Training Evidence And Limits
 
-A successful run establishes that one configured pipeline executed:
+Each loss in the log comes from a particular traversal of this pipeline:
 
 ```
 -- The log records this configured execution; each arrow
@@ -1407,28 +1379,16 @@ A successful run establishes that one configured pipeline executed:
 data -> forward -> loss -> reverse pass -> optimizer -> parameters
 ```
 
-It can produce valuable evidence:
+The seed experiment shows sensitivity over a fixed number of updates; it leaves asymptotic
+convergence open. The six-step session measures visited-sample and dataset losses, with no
+unseen-data evaluation. To ask about convergence for all initializations or robustness throughout
+an input region, we need the statements and hypotheses developed in
+{ref "optimization-theory"}[the optimization chapter] and
+{ref "certificates"}[the certificate chapters].
 
-- loss and prediction traces;
-- exact parameter artifacts;
-- capsule audit rows;
-- reproducible configuration;
-- runtime errors or successful completion.
-
-It does not automatically prove:
-
-- convergence for all initializations;
-- generalization to unseen data;
-- robustness to an input region;
-- equality of eager, typed graph, CUDA, and LibTorch paths;
-- correctness of every native instruction.
-
-The seed experiment demonstrates finite-run sensitivity, not failure of asymptotic convergence.
-The six-step session illustrates the distinction between visited-sample losses and dataset loss;
-it does not evaluate unseen-data generalization. Neither is a substitute for a statement with a
-proof, which is
-what {ref "optimization-theory"}[the optimization chapter] and
-{ref "certificates"}[the certificate chapters] are for.
+The saved parameters and backend audit rows identify what ran. Establishing equality of eager,
+typed graph, CUDA, and LibTorch execution would require relating their operations; a successful
+training run alone cannot establish that relation or the correctness of every native instruction.
 
 For a useful comparison, decide which quantity is being held fixed before interpreting a smaller
 loss. The accumulation example fixes update count but changes samples consumed; the optimizer
@@ -1436,6 +1396,3 @@ example fixes samples and updates but changes the rule and its memory; the seed 
 starting parameters. Their logs answer those particular comparisons. None supplies a timing
 measurement, and a displayed held-out prediction is one evaluation point rather than an estimate of
 performance over a held-out population.
-
-TorchLean gives the run enough structure for a theorem, numerical bound, backend contract, or
-verification certificate to refer to the same model without erasing the boundary between them.

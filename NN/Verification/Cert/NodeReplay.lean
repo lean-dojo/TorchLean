@@ -36,6 +36,10 @@ exactly.
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+
 namespace NN.Verification.Cert.NodeReplay
 
 open NN.MLTheory.CROWN
@@ -46,8 +50,6 @@ open Import.PyTorch
 open _root_.Spec _root_.TorchLean
 open _root_.TorchLean.Tensor
 open Lean Data Json
-open TorchLean.Floats.IEEE754
-
 /-- Whether every entry of a fixed-size vector is finite. -/
 def finiteVec (n : Nat) (v : Fin n → Float) : Bool :=
   (List.finRange n).all fun i => (v i).isFinite
@@ -57,13 +59,14 @@ def finiteMatrix (rows cols : Nat) (A : Fin rows → Fin cols → Float) : Bool 
   (List.finRange rows).all fun i => (List.finRange cols).all fun j => (A i j).isFinite
 
 /-- Bitwise equality for shape-indexed binary32 tensors. -/
-def exactEqTensor : {s : Shape} → Tensor IEEE32Exec s → Tensor IEEE32Exec s → Bool
+def exactEqTensor : {s : Shape} → Tensor (ExecFloat.Binary 8 23) s → Tensor (ExecFloat.Binary 8 23)
+  s → Bool
   | .scalar, left, right => decide (left.item = right.item)
   | .dim n _, left, right =>
       (List.finRange n).all fun i => exactEqTensor (left.unstack i) (right.unstack i)
 
 /-- A successful bitwise tensor comparison proves equality at every rank. -/
-theorem exactEqTensor_eq_true {s : Shape} {t u : Tensor IEEE32Exec s}
+theorem exactEqTensor_eq_true {s : Shape} {t u : Tensor (ExecFloat.Binary 8 23) s}
     (h : exactEqTensor t u = true) : t = u := by
   induction s with
   | scalar =>
@@ -82,10 +85,10 @@ This deliberately has no tolerance. A lower endpoint may be rounded farther down
 endpoint farther up, but a serialized certificate may never move either endpoint inward. This is
 the relation used for interval claims.
 -/
-def flatBoxContains (outer inner : FlatBox IEEE32Exec) : Bool :=
+def flatBoxContains (outer inner : FlatBox (ExecFloat.Binary 8 23)) : Bool :=
   if h : outer.dim = inner.dim then
-    let innerLo := castDimScalar (α := IEEE32Exec) h.symm inner.lo
-    let innerHi := castDimScalar (α := IEEE32Exec) h.symm inner.hi
+    let innerLo := castDimScalar (α := (ExecFloat.Binary 8 23)) h.symm inner.lo
+    let innerHi := castDimScalar (α := (ExecFloat.Binary 8 23)) h.symm inner.hi
     (List.finRange outer.dim).all fun i =>
       decide (outer.lo.getScalar i <= innerLo.getScalar i) &&
         decide (innerHi.getScalar i <= outer.hi.getScalar i)
@@ -93,11 +96,11 @@ def flatBoxContains (outer inner : FlatBox IEEE32Exec) : Bool :=
     false
 
 /-- Bitwise equality for affine vectors, componentwise on matrix `A` and offset `c`. -/
-def exactEqAffineVec {n m : Nat} (a b : AffineVec IEEE32Exec n m) : Bool :=
+def exactEqAffineVec {n m : Nat} (a b : AffineVec (ExecFloat.Binary 8 23) n m) : Bool :=
   exactEqTensor a.A b.A && exactEqTensor a.c b.c
 
 /-- A successful bitwise affine-vector comparison proves equality of both affine components. -/
-theorem exactEqAffineVec_eq_true {n m : Nat} {a b : AffineVec IEEE32Exec n m}
+theorem exactEqAffineVec_eq_true {n m : Nat} {a b : AffineVec (ExecFloat.Binary 8 23) n m}
     (h : exactEqAffineVec a b = true) : a = b := by
   simp only [exactEqAffineVec, Bool.and_eq_true] at h
   cases a with
@@ -111,7 +114,7 @@ theorem exactEqAffineVec_eq_true {n m : Nat} {a b : AffineVec IEEE32Exec n m}
           rfl
 
 /-- Bitwise equality for flattened affine lower/upper bounds. -/
-def exactEqFlatAffineBounds (B1 B2 : FlatAffineBounds IEEE32Exec) : Bool :=
+def exactEqFlatAffineBounds (B1 B2 : FlatAffineBounds (ExecFloat.Binary 8 23)) : Bool :=
   if hin : B1.inDim = B2.inDim then
     if hout : B1.outDim = B2.outDim then
       match B1, B2 with
@@ -129,7 +132,7 @@ A successful bitwise affine-bound comparison proves equality of the dependent re
 their input and output dimensions.
 -/
 theorem exactEqFlatAffineBounds_eq_true
-    {B1 B2 : FlatAffineBounds IEEE32Exec}
+    {B1 B2 : FlatAffineBounds (ExecFloat.Binary 8 23)}
     (h : exactEqFlatAffineBounds B1 B2 = true) : B1 = B2 := by
   unfold exactEqFlatAffineBounds at h
   split at h
@@ -154,7 +157,7 @@ theorem exactEqFlatAffineBounds_eq_true
 
 /-- Bitwise equality for optional affine bounds, used by the pure replay checker. -/
 def exactEqOptionalAffineBounds
-    (a b : Option (FlatAffineBounds IEEE32Exec)) : Bool :=
+    (a b : Option (FlatAffineBounds (ExecFloat.Binary 8 23))) : Bool :=
   match a, b with
   | none, none => true
   | some a, some b => exactEqFlatAffineBounds a b
@@ -162,7 +165,7 @@ def exactEqOptionalAffineBounds
 
 /-- Successful optional comparison proves equality of the optional affine bounds. -/
 theorem exactEqOptionalAffineBounds_eq_true
-    {a b : Option (FlatAffineBounds IEEE32Exec)}
+    {a b : Option (FlatAffineBounds (ExecFloat.Binary 8 23))}
     (h : exactEqOptionalAffineBounds a b = true) : a = b := by
   cases a with
   | none => cases b <;> simp_all [exactEqOptionalAffineBounds]
@@ -191,9 +194,9 @@ local-replay component whose proposition-level meaning is `CrownCertLocalOK`.
 -/
 def crownLocalReplayAccepts
     (g : Graph)
-    (step : Array (Option (FlatAffineBounds IEEE32Exec)) → Nat →
-      Option (FlatAffineBounds IEEE32Exec))
-    (cert : Array (Option (FlatAffineBounds IEEE32Exec))) : Bool :=
+    (step : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) → Nat →
+      Option (FlatAffineBounds (ExecFloat.Binary 8 23)))
+    (cert : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23)))) : Bool :=
   if hsize : cert.size = g.nodes.size then
     (List.finRange g.nodes.size).all fun i =>
       exactEqOptionalAffineBounds
@@ -205,9 +208,9 @@ def crownLocalReplayAccepts
 /-- Successful pure replay constructs the local-consistency hypothesis used by CROWN soundness. -/
 theorem crownLocalReplayAccepts_eq_true
     (g : Graph)
-    (step : Array (Option (FlatAffineBounds IEEE32Exec)) → Nat →
-      Option (FlatAffineBounds IEEE32Exec))
-    (cert : Array (Option (FlatAffineBounds IEEE32Exec)))
+    (step : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) → Nat →
+      Option (FlatAffineBounds (ExecFloat.Binary 8 23)))
+    (cert : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))))
     (haccept : crownLocalReplayAccepts g step cert = true) :
     NN.MLTheory.CROWN.Graph.CrownCertSoundness.CrownCertLocalOK
       (g := g) (step := step) cert := by
@@ -230,18 +233,18 @@ supplies the proposition-level local CROWN consistency condition.
 -/
 def crownCertificateAccepts
     (g : Graph)
-    (step : Array (Option (FlatAffineBounds IEEE32Exec)) → Nat →
-      Option (FlatAffineBounds IEEE32Exec))
-    (cert : Array (Option (FlatAffineBounds IEEE32Exec)))
+    (step : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) → Nat →
+      Option (FlatAffineBounds (ExecFloat.Binary 8 23)))
+    (cert : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))))
     (diagnosticsOk : Bool) : Bool :=
   diagnosticsOk && crownLocalReplayAccepts g step cert
 
 /-- The complete Boolean acceptance decision implies local CROWN consistency. -/
 theorem crownCertificateAccepts_eq_true
     (g : Graph)
-    (step : Array (Option (FlatAffineBounds IEEE32Exec)) → Nat →
-      Option (FlatAffineBounds IEEE32Exec))
-    (cert : Array (Option (FlatAffineBounds IEEE32Exec)))
+    (step : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) → Nat →
+      Option (FlatAffineBounds (ExecFloat.Binary 8 23)))
+    (cert : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))))
     (diagnosticsOk : Bool)
     (haccept : crownCertificateAccepts g step cert diagnosticsOk = true) :
     NN.MLTheory.CROWN.Graph.CrownCertSoundness.CrownCertLocalOK
@@ -250,7 +253,7 @@ theorem crownCertificateAccepts_eq_true
   exact crownLocalReplayAccepts_eq_true g step cert haccept.2
 
 /-- Parse a flat interval box (two arrays of floats) from JSON. -/
-def parseFlatBox? (dim : Nat) (j : Json) : IO (Option (FlatBox IEEE32Exec)) := do
+def parseFlatBox? (dim : Nat) (j : Json) : IO (Option (FlatBox (ExecFloat.Binary 8 23))) := do
   match j with
   | .null => pure none
   | _ =>
@@ -265,10 +268,14 @@ def parseFlatBox? (dim : Nat) (j : Json) : IO (Option (FlatBox IEEE32Exec)) := d
         throw <| IO.userError "Invalid ibp[i]: interval bounds must be finite"
       unless (List.finRange dim).all (fun i => decide (loVec i <= hiVec i)) do
         throw <| IO.userError "Invalid ibp[i]: every lower bound must be <= its upper bound"
-      let loT : Tensor IEEE32Exec [dim] :=
-        TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn loVec)
-      let hiT : Tensor IEEE32Exec [dim] :=
-        TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn hiVec)
+      let loT : Tensor (ExecFloat.Binary 8 23) [dim] :=
+        TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary64
+          FloatFormat.binary32 (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))) :
+          ExecFloat.Binary 8 23)) (TorchLean.Tensor.ofFn loVec)
+      let hiT : Tensor (ExecFloat.Binary 8 23) [dim] :=
+        TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary64
+          FloatFormat.binary32 (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))) :
+          ExecFloat.Binary 8 23)) (TorchLean.Tensor.ofFn hiVec)
       pure (some { dim := dim, lo := loT, hi := hiT })
 
 /--
@@ -279,7 +286,7 @@ We enforce that contract at the JSON boundary, so a malformed external certifica
 accepted by executable checking while relying on proof hypotheses that are false.
 -/
 def parseAlphaVec? (dim : Nat) (j : Json) (ctx : String := "alpha[i]") :
-    IO (Option (FlatTensor IEEE32Exec)) := do
+    IO (Option (FlatTensor (ExecFloat.Binary 8 23))) := do
   match j with
   | .null => pure none
   | _ =>
@@ -290,13 +297,15 @@ def parseAlphaVec? (dim : Nat) (j : Json) (ctx : String := "alpha[i]") :
         if !a.isFinite || a < 0.0 || a > 1.0 then
           throw <| IO.userError
             s!"Invalid {ctx}[{k.val}]: α-CROWN requires 0 ≤ alpha ≤ 1, got {a}"
-      let t : Tensor IEEE32Exec [dim] :=
-        TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn v)
+      let t : Tensor (ExecFloat.Binary 8 23) [dim] :=
+        TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary64
+          FloatFormat.binary32 (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))) :
+          ExecFloat.Binary 8 23)) (TorchLean.Tensor.ofFn v)
       pure (some { n := dim, v := t })
 
 /-- Parse flattened affine bounds (lower/upper) from JSON. -/
 def parseAffineBounds? (inDim outDim : Nat) (j : Json) :
-    IO (Option (FlatAffineBounds IEEE32Exec)) := do
+    IO (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) := do
   match j with
   | .null => pure none
   | _ =>
@@ -316,12 +325,20 @@ def parseAffineBounds? (inDim outDim : Nat) (j : Json) :
       unless finiteMatrix outDim inDim loA && finiteMatrix outDim inDim hiA &&
           finiteVec outDim loC && finiteVec outDim hiC do
         throw <| IO.userError "Invalid crown[i]: affine bounds must be finite"
-      let loAff : AffineVec IEEE32Exec inDim outDim :=
-        { A := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.matrix loA)
-          c := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn loC) }
-      let hiAff : AffineVec IEEE32Exec inDim outDim :=
-        { A := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.matrix hiA)
-          c := TorchLean.Tensor.map IEEE32Exec.ofFloat (TorchLean.Tensor.ofFn hiC) }
+      let loAff : AffineVec (ExecFloat.Binary 8 23) inDim outDim :=
+        { A := TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast
+          FloatFormat.binary64 FloatFormat.binary32 (ExecFloat.Binary.toModel
+          (ExecFloat.Binary.ofFloat x))) : ExecFloat.Binary 8 23)) (TorchLean.Tensor.matrix loA)
+          c := TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast
+            FloatFormat.binary64 FloatFormat.binary32 (ExecFloat.Binary.toModel
+            (ExecFloat.Binary.ofFloat x))) : ExecFloat.Binary 8 23)) (TorchLean.Tensor.ofFn loC) }
+      let hiAff : AffineVec (ExecFloat.Binary 8 23) inDim outDim :=
+        { A := TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast
+          FloatFormat.binary64 FloatFormat.binary32 (ExecFloat.Binary.toModel
+          (ExecFloat.Binary.ofFloat x))) : ExecFloat.Binary 8 23)) (TorchLean.Tensor.matrix hiA)
+          c := TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast
+            FloatFormat.binary64 FloatFormat.binary32 (ExecFloat.Binary.toModel
+            (ExecFloat.Binary.ofFloat x))) : ExecFloat.Binary 8 23)) (TorchLean.Tensor.ofFn hiC) }
       pure (some { inDim := inDim, outDim := outDim, loAff := loAff, hiAff := hiAff })
 
 /--
@@ -334,11 +351,11 @@ structure CROWNNodeCoreCertificate where
   /-- Affine-propagation context, including the chosen input node and flattened input dimension. -/
   ctx : AffineCtx
   /-- Optional per-node interval bounds used by nonlinear CROWN steps. -/
-  ibp : Array (Option (FlatBox IEEE32Exec))
+  ibp : Array (Option (FlatBox (ExecFloat.Binary 8 23)))
   /-- Optional per-node affine lower/upper bounds. -/
-  crown : Array (Option (FlatAffineBounds IEEE32Exec))
+  crown : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23)))
   /-- Optional per-node α values for ReLU lower relaxations. -/
-  alpha : Array (Option (FlatTensor IEEE32Exec))
+  alpha : Array (Option (FlatTensor (ExecFloat.Binary 8 23)))
 
 /--
 Parse the fields shared by α-CROWN and α/β-CROWN node certificates.
@@ -364,9 +381,11 @@ def parseCROWNNodeCoreCertificate (g : Graph) (topObj : Json) :
   if hIbpSize : ibpArr.size = g.nodes.size then
     if hCrownSize : crownArr.size = g.nodes.size then
       if hAlphaSize : alphaArr.size = g.nodes.size then
-        let mut ibp : Array (Option (FlatBox IEEE32Exec)) := Array.mkEmpty g.nodes.size
-        let mut crown : Array (Option (FlatAffineBounds IEEE32Exec)) := Array.mkEmpty g.nodes.size
-        let mut alpha : Array (Option (FlatTensor IEEE32Exec)) := Array.mkEmpty g.nodes.size
+        let mut ibp : Array (Option (FlatBox (ExecFloat.Binary 8 23))) := Array.mkEmpty g.nodes.size
+        let mut crown : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) := Array.mkEmpty
+          g.nodes.size
+        let mut alpha : Array (Option (FlatTensor (ExecFloat.Binary 8 23))) := Array.mkEmpty
+          g.nodes.size
 
         for i in List.finRange g.nodes.size do
           let node := g.nodes[i.val]'i.isLt
@@ -412,8 +431,8 @@ def parentsOk {β : Type} (g : Graph) (cert : Array (Option β)) (id : Nat) : Bo
           false)
 
 /-- Safe lookup for optional flat boxes used by certificate-side shape checks. -/
-def getFlatBox? (cert : Array (Option (FlatBox IEEE32Exec))) (id : Nat) :
-    Option (FlatBox IEEE32Exec) :=
+def getFlatBox? (cert : Array (Option (FlatBox (ExecFloat.Binary 8 23)))) (id : Nat) :
+    Option (FlatBox (ExecFloat.Binary 8 23)) :=
   match cert[id]? with
   | some box? => box?
   | none => none
@@ -424,7 +443,7 @@ node output. This closes the hole where a malformed certificate could make the r
 the left box on a dimension mismatch.
 -/
 def binaryElementwiseBoxesMatchOutput
-    (g : Graph) (cert : Array (Option (FlatBox IEEE32Exec))) (id : Nat) : Bool :=
+    (g : Graph) (cert : Array (Option (FlatBox (ExecFloat.Binary 8 23)))) (id : Nat) : Bool :=
   match g.nodes[id]? with
   | none => false
   | some node =>
@@ -437,31 +456,33 @@ def binaryElementwiseBoxesMatchOutput
       | _ => false
 
 /-- Check whether a flat box is entirely inside the positive domain needed by true `log`. -/
-def flatBoxStrictlyAbove (B : FlatBox IEEE32Exec) (eps : IEEE32Exec) : Bool :=
+def flatBoxStrictlyAbove (B : FlatBox (ExecFloat.Binary 8 23)) (eps : ExecFloat.Binary 8 23) : Bool
+  :=
   match B with
   | ⟨n, lo, hi⟩ =>
-      let flo := getDimScalarFn (α := IEEE32Exec) lo
-      let fhi := getDimScalarFn (α := IEEE32Exec) hi
+      let flo := getDimScalarFn (α := (ExecFloat.Binary 8 23)) lo
+      let fhi := getDimScalarFn (α := (ExecFloat.Binary 8 23)) hi
       (List.finRange n).all (fun i =>
         match flo i, fhi i with
         | .scalar l, .scalar u => l > eps && u > eps)
 
 /-- Check that every coordinate interval lies strictly on one side of zero. -/
-def flatBoxExcludesZero (B : FlatBox IEEE32Exec) : Bool :=
+def flatBoxExcludesZero (B : FlatBox (ExecFloat.Binary 8 23)) : Bool :=
   match B with
   | ⟨n, lo, hi⟩ =>
-      let flo := getDimScalarFn (α := IEEE32Exec) lo
-      let fhi := getDimScalarFn (α := IEEE32Exec) hi
+      let flo := getDimScalarFn (α := (ExecFloat.Binary 8 23)) lo
+      let fhi := getDimScalarFn (α := (ExecFloat.Binary 8 23)) hi
       (List.finRange n).all (fun i =>
         match flo i, fhi i with
-        | .scalar l, .scalar u => l > IEEE32Exec.posZero || u < IEEE32Exec.posZero)
+        | .scalar l, .scalar u => l > (ExecFloat.Binary.zero false : ExecFloat.Binary 8 23) || u <
+          (ExecFloat.Binary.zero false : ExecFloat.Binary 8 23))
 
 /--
 Domain and shape preconditions that must hold before a node-wise certificate checker replays a
 bound step. These executable checks mirror the side conditions that the mathematical rules need.
 -/
 def ibpNodePreconditionsOk
-    (g : Graph) (cert : Array (Option (FlatBox IEEE32Exec))) (id : Nat) : Bool :=
+    (g : Graph) (cert : Array (Option (FlatBox (ExecFloat.Binary 8 23)))) (id : Nat) : Bool :=
   match g.nodes[id]? with
   | none => false
   | some node =>
@@ -485,11 +506,11 @@ def ibpNodePreconditionsOk
       | _ => true
 
 /-- Pretty-printer for a flat box, used in certificate mismatch messages. -/
-def prettyFlatBox (B : FlatBox IEEE32Exec) : String :=
+def prettyFlatBox (B : FlatBox (ExecFloat.Binary 8 23)) : String :=
   s!"dim={B.dim}, lo={Spec.pretty B.lo}, hi={Spec.pretty B.hi}"
 
 /-- Pretty-printer for affine bounds, used in certificate mismatch messages. -/
-def prettyAffineBounds (B : FlatAffineBounds IEEE32Exec) : String :=
+def prettyAffineBounds (B : FlatAffineBounds (ExecFloat.Binary 8 23)) : String :=
   s!"inDim={B.inDim}, outDim={B.outDim}, loA={Spec.pretty B.loAff.A}, loC={Spec.pretty B.loAff.c}"
 
 /--
@@ -501,12 +522,12 @@ exact binary32 transcript equality, and diagnostic messages.
 -/
 def checkCROWNLikeNode
     (label : String) (g : Graph)
-    (authoritativeIbp : Array (Option (FlatBox IEEE32Exec)))
-    (authoritativeCrown : Array (Option (FlatAffineBounds IEEE32Exec)))
-    (certCrown : Array (Option (FlatAffineBounds IEEE32Exec)))
+    (authoritativeIbp : Array (Option (FlatBox (ExecFloat.Binary 8 23))))
+    (authoritativeCrown : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))))
+    (certCrown : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))))
     (ctx : AffineCtx)
     (id : Nat)
-    (computed? : Option (FlatAffineBounds IEEE32Exec)) : IO Bool := do
+    (computed? : Option (FlatAffineBounds (ExecFloat.Binary 8 23))) : IO Bool := do
   let some node := g.nodes[id]?
     | IO.eprintln s!"[{label}] node {id}: out of bounds for graph with {g.nodes.size} nodes"
       pure false

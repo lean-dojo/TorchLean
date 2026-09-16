@@ -1,6 +1,6 @@
 import VersoManual
 import NN.API
-import NN.Floats.Float32
+import FloatLib
 import NN.Proofs.Tensor.Algebra
 import NN.Proofs.Tensor.Basic
 import TorchLeanBlueprint.Bib
@@ -9,6 +9,7 @@ import TorchLeanBlueprint.Roles
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 open TorchLean
+open FloatLib.Floats (ExecFloat)
 
 -- Verso compares `leanOutput` blocks against the real compiler message. Two of the
 -- signatures below are wider than this file's 100-column limit, so those blocks ask
@@ -27,16 +28,10 @@ runs; PyTorch is the reference point for that design {Informal.citep pytorch2019
 carries the shape in the Lean type. A function that accepts a length-four vector cannot
 accidentally receive a $`2\times 2` matrix, even though both contain four scalar values.
 
-That choice is the foundation for the rest of the library. Layers become checked maps between
-shapes, parameter packs remember the layout expected by a model, and theorem statements do not
-need a side condition saying that every intermediate tensor happened to have the right dimensions.
-
-Consider the boundary of a classifier. A feature vector and a matrix of several feature vectors
-may contain the same number of scalars, yet the classifier should treat them differently. Writing
-the dimensions in the type makes that choice visible to its caller. It also gives intermediate
-definitions useful names: a function returning `Tensor α [batch, classes]` has already specified
-which axis indexes examples and which axis holds their scores. The names `batch` and `classes`
-come from our program; the tensor type enforces their sizes and order.
+For a classifier's output, `Tensor α [batch, classes]` puts examples on the first axis and scores
+on the second. The names `batch` and `classes` come from our program; the tensor type enforces their
+sizes and order. A later layer must accept that shape, or we must explicitly reshape, reduce, or
+rearrange it.
 
 The marked Lean code blocks are elaborated while this page is built, and `leanOutput` blocks
 check the displayed compiler results. Shell commands and unmarked reproduction snippets are
@@ -86,7 +81,7 @@ open TorchLean
 
 These imports cover the application examples. The theorem examples later in the chapter also
 require `NN.Proofs.Tensor.Algebra` and `NN.Proofs.Tensor.Basic`; the explicit float example uses
-`NN.Floats.Float32`.
+`FloatLib`. We write `ExecFloat` for `FloatLib.Floats.ExecFloat`.
 
 # Tensor Type
 
@@ -115,7 +110,7 @@ example : Type := Tensor Float [4, 2]
 example : Type := Tensor ℝ [4, 2]
 
 -- Explicit binary32 bit-level execution.
-example : Type := Tensor Floats.IEEE32Exec [4, 2]
+example : Type := Tensor (ExecFloat.Binary 8 23) [4, 2]
 
 -- A rank-zero `Float` tensor.
 example : Type := Tensor Float []
@@ -132,7 +127,7 @@ dtype. Lean obtains the element type from `Tensor`'s first argument, or infers i
 the right-hand side when the annotation is omitted.
 
 The trainer's arithmetic choice selects the instantiated executable element type and its arithmetic
-semantics. For example, `arithmetic := .native` instantiates the model at Lean 4.33's native
+semantics. For example, `arithmetic := .native` instantiates the model at Lean 4.34's native
 `Float32`; it does not
 reinterpret an already constructed `Tensor Float [4, 2]`. Device storage is a further backend
 contract: TorchLean's CUDA path stores native `Float32` model values as contiguous binary32 data.
@@ -237,11 +232,9 @@ result. The result shape is therefore fixed before any values are evaluated, and
 can disagree with it. `Tensor.map` traverses the contiguous buffer once and preserves the certified
 shape.
 
-The two `Storage` arguments above allow the input and output scalars to have different physical
-representations. For each coordinate, `map` reads an `α`, applies `f`, and stores a `β` at the same
-coordinate. The shared `shape` in the argument and result is the part that cannot change. This is
-the right operation for a numeric conversion or a coordinatewise formula; moving entries to
-different coordinates requires a shape operation instead.
+The two `Storage` arguments allow different physical representations on input and output. At each
+coordinate, `map` reads an `α`, applies `f`, and stores a `β`. A numeric conversion can therefore
+change the storage without changing which coordinate an entry occupies.
 
 # Tensor Literals And Shape Checking
 
@@ -306,9 +299,7 @@ last index changes fastest, so the flat order here is `1.2, 1.9, 3.0, 4.3`. `Ten
 accepts `List Float` and `Vector Float (Spec.Shape.size [2, 2])`; a vector's length is part of its
 type, so the target states the tensor's certified element count. Packed targets are available when
 their element type matches: `FloatArray` for `Float` and `ByteArray` for `UInt8`. The target type is
-an ordinary Lean argument rather than a family of tensor-specific names such as `toArray` and
-`toList`. One operation with a type argument is easier to extend than one name per container, and
-it puts the reader's intent in the source text.
+an ordinary Lean argument: choose the container the receiving API expects.
 
 Rank-zero tensors are the one case that does not need brackets:
 
@@ -458,9 +449,9 @@ weights * features          # tensor([ 2., -3.,  2.])
 torch.dot(weights, features) # tensor(1.)
 ```
 
-Two differences are worth naming. First, `torch.dot` raises at run time if either argument is not
+`torch.dot` raises at run time if either argument is not
 one-dimensional, while `Tensor.dotSpec` accepts any shape and rejects a mismatch between the two
-arguments during elaboration. Second, the reduction order is part of TorchLean's definition:
+arguments during elaboration. The reduction order is also part of TorchLean's definition:
 `Tensor.sum` folds left to right over the row-major coordinates. Floating-point addition is not
 associative {Informal.citep goldberg1991}[], so a different fold order is a different function, and
 pinning it down is what lets the floating-point chapter state error bounds about this exact sum.
@@ -599,13 +590,6 @@ These two representations support different arguments. The fold form fixes the e
 used in floating-point analysis; the recursive form exposes the structure used in inductive
 proofs. The bridge lemma proves their agreement once so later proofs can use either form.
 
-The hypotheses are what license that change of representation. Over `ℝ`, finite sums can be
-rearranged using the semiring laws, so an induction-friendly definition can replace the ordered
-fold inside the proof. The same rewrite would require justification for rounded arithmetic:
-changing parentheses or summation order can change a result there. Sharing a tensor shape and an
-operation name is enough to reuse the statement's structure, but the algebraic instances
-determine which proof steps are available.
-
 The neighbouring lemmas in the same file are the ones an application proof usually needs:
 `dot_scale_left` and `dot_scale_right` for scalar multiples, `dot_add_left` and `dot_add_right` for
 linearity, `dot_full_zero_right` for the zero tensor, `dot_vec_eq_sum` to reach an ordinary finite
@@ -730,12 +714,6 @@ through the tensor's type.
 Only the parser or loader needs the failure branch. Once it has established the scalar count, the
 ordinary `Tensor.from` and zero-copy `reshape` operations finish construction.
 
-In the successful result, `.ok` contains the tensor that later model code can consume. In the
-failure result, there is only an error message, so there is no incorrectly shaped tensor for the
-caller to accidentally use. The equality proof does not supply missing values or discard extras;
-it transports the already checked four values into the requested type. This also explains why
-the check belongs before reshaping rather than after a model has started computing.
-
 This is a recurring TorchLean pattern:
 
 ```
@@ -769,13 +747,16 @@ These tensors have the same shape and different semantics:
   * `Real` or `ℝ`
   * proof-level exact reals
 *
-  * `TorchLean.Floats.IEEE32Exec`
-  * executable bit-level binary32
+  * `ExecFloat.Binary 8 23`
+  * FloatLib's configured executable binary32
+*
+  * `FloatLib.Floats.ExecFloat.Binary e f`
+  * executable configured binary arithmetic with `e` exponent bits and `f` fraction bits
 *
   * `TorchLean.Floats.FP32`
   * rounded-real binary32-precision proof model; no upper exponent bound or IEEE special values
 *
-  * `TorchLean.Complex TorchLean.Floats.IEEE32Exec`
+  * `TorchLean.Complex (ExecFloat.Binary 8 23)`
   * executable complex scalar with binary32 real and imaginary components
 :::
 
@@ -783,32 +764,127 @@ The trainer's `arithmetic` field selects executable arithmetic for the run. Proo
 tensors over `ℝ` or `Floats.FP32` directly; those noncomputable types do not appear as command-line
 runtime choices. The generic runtime can execute complex scalar programs, but the supervised trainer
 only offers its two real modes. Complex training needs a real-valued loss, conjugate-aware
-gradients, and a result boundary that preserves complex predictions. The executable binary32
-reference uses the same tensor construction API. Convert the element type explicitly:
+gradients, and a result boundary that preserves complex predictions. FloatLib formats use the same
+tensor construction API. Select binary32 and construct the decimals directly in that format:
 
 ```lean
--- Convert each binary64 input value to the explicit
--- binary32 representation, keeping all axes.
-def decimals : Tensor Float [3] := [0.1, 0.2, 0.3]
-
-def binary32 : Tensor Floats.IEEE32Exec [3] :=
-  Tensor.map Floats.IEEE754.IEEE32Exec.ofFloat decimals
+-- Each decimal is rounded into binary32 directly.
+def binary32 : Tensor (ExecFloat.Binary 8 23) [3] :=
+  [0.1, 0.2, 0.3]
 ```
 
 ```lean (name := binary32Eval)
--- The printed entries reflect the converted binary32
--- values, not exact decimal fractions.
-#eval binary32
+-- Decode the encodings explicitly; the scalar's internal
+-- representation is not the display contract.
+#eval binary32.data.map ExecFloat.Binary.toBits32
 ```
 ```leanOutput binary32Eval
-[{ bits := 1036831949 }, { bits := 1045220557 }, { bits := 1050253722 }]
+#[1036831949, 1045220557, 1050253722]
 ```
 
-`IEEE32Exec` exposes the stored bit patterns, making the rounding in the conversion visible.
+FloatLib exposes the stored bit patterns, making the rounding in the conversion visible.
 The first entry,
 `1036831949`, is `0x3DCCCCCD`, and the real number it denotes is $`0.100000001490116119384765625`,
-not $`0.1`. The floating-point chapter starts from this gap and shows what can still be proved once
-it is admitted rather than hidden.
+not $`0.1`. The floating-point chapter uses this gap to introduce rounding error.
+
+## Choosing Precision For A Tensor And Model
+
+The element type can also select a wider software format. For example, binary128 uses 15 exponent
+bits and 112 stored fraction bits. A normal value has 113 significant bits, including the implicit
+leading bit. Shapes and precision answer different questions: `[1]` says there is one coordinate;
+`Binary128` says how arithmetic on that coordinate rounds.
+
+```lean
+abbrev TensorBinary128 :=
+  FloatLib.Floats.ExecFloat.Binary
+    (exponentBits := 15) (fractionBits := 112)
+
+def wideAffine : nn.Sequential [1] [1] :=
+  nn.build 0 (nn.linear 1 1)
+```
+
+Give the weight and bias the same value $`a=1+2^{-100}`. This makes the model
+$`x\mapsto ax+a`. At $`x=2` its output is $`3a` and its derivative with respect to the input is
+$`a`. All these values fit in binary128. Binary64 would round the chosen parameter to 1 before
+the model started, so this example also checks the input boundary.
+
+The typed graph API accepts a state whose scalar type we choose directly. The model determines
+its parameter shapes. Constructing `nn.State.full a` fills both the weight and bias with `a`;
+it does not call an initializer that first generates native `Float` values.
+
+```lean (name := wideChecks)
+def wideForwardAndDerivative : IO (Bool × Bool × Bool) := do
+  let exact : Rat := 1 + 1 / (2 ^ 100 : Nat)
+  let a : TensorBinary128 := Rat.cast exact
+  let input : Tensor TensorBinary128 [1] :=
+    Tensor.full [1] 2
+  let state :
+      nn.State TensorBinary128
+        (nn.stateShapes wideAffine) :=
+    nn.State.full a
+  let graph ←
+    nn.lowerToTypedGraph wideAffine (α := TensorBinary128)
+  let output := nn.TypedGraphModel.forward graph state input
+  -- Zero parameter tangent, unit input tangent:
+  -- differentiate with respect to x.
+  let inputJvp :=
+    nn.TypedGraphModel.jvp graph state nn.State.zeros
+      input (Tensor.full [1] 1)
+  let (_, inputVjp) :=
+    nn.TypedGraphModel.vjp graph state input
+      (Tensor.full [1] 1)
+  let decode : TensorBinary128 → Option Rat :=
+    FloatLib.Floats.ExecFloat.Binary.toRat?
+  pure (
+    decode (Tensor.getScalar output ⟨0, by decide⟩) ==
+      some (3 * exact),
+    decode (Tensor.getScalar inputJvp ⟨0, by decide⟩) ==
+      some exact,
+    decode (Tensor.getScalar inputVjp ⟨0, by decide⟩) ==
+      some exact)
+
+#eval wideForwardAndDerivative
+```
+
+```leanOutput wideChecks
+(true, true, true)
+```
+
+The three comparisons check the forward output, input JVP, and input VJP against the elementary
+calculation above. They decode finite results as exact rationals, avoiding a final conversion to
+`Float` that could hide the extra precision. They test this model and input; a derivative theorem
+for a family of models is a separate statement.
+
+The same state and VJP can support a training step. Keep the sample $`x=2`, choose target zero,
+and use half squared error, $`L(w,b)=(2w+b)^2/2`. At $`w=b=a`, the prediction is $`3a`, so the
+parameter gradients are $`6a` and $`3a`. With learning rate $`1/8`, one SGD update gives
+$`w'=a/4`, $`b'=5a/8`, and prediction $`9a/8`. These dyadic values still fit in binary128.
+
+Pass the prediction residual to `nn.TypedGraphModel.vjp` to obtain the state gradient, then call
+`nn.sgdStep wideAffine learningRate state gradient`. The result has type
+`Except String (nn.State TensorBinary128 (nn.stateShapes wideAffine))`: handle a model-validation
+error or continue with the new immutable state. The learning rate is a `TensorBinary128`, so this
+update need not pass through a native `Float`. The maintained typed training
+[code](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Quickstart/TypedTraining.lean)
+implements this loop for half squared error. The update preserves frozen state entries and
+rejects models with buffer-update hooks, including BatchNorm, whose running statistics need a
+separate update.
+
+This workflow runs through typed CPU operations. The `NN.API.Precision` import, included in
+`NN.API`, supplies the configured scalar instances. A wider element type does not supply a CUDA
+kernel or widen the supervised trainer's `Float` datasets, initializer, checkpoints, and reports.
+For a computation that needs the extra digits throughout, construct its inputs and state in the
+chosen type and keep that type through the result boundary. The
+{ref "floats"}[floating-point chapter] explains exact input conversion, format limits, and which
+arithmetic operations have refinement or error theorems.
+
+For small formats, check constants as well as inputs. Layer normalization's default tolerance
+rounds the exact rational $`10^{-5}` into the selected scalar. With three exponent bits and two
+fraction bits, it becomes zero; a constant row can then encounter a zero denominator.
+`nn.layerNorm` accepts an explicit rational `eps` before graph lowering. For this particular
+format, $`1/16` is a representable positive choice. Its suitability for a model is a separate
+numerical decision. Shape checking and format validity do not prove that a tolerance survives
+conversion or that the resulting computation stays finite.
 
 # Mixed Element Types
 
@@ -840,11 +916,11 @@ buffer is built. TorchLean's built-in promotion order is
 `ElementCast` and `ElementPromotion` instances. Use `tensor.cast TargetScalar` when conversion is
 the operation you intend rather than a consequence of binary arithmetic.
 
-The notation `+`, `-`, `*`, and `/` uses the same promotion machinery. This promotion chain covers
-the registered real numeric scalar families. Proof-oriented or domain-specific scalars such as
-`Real`, `IEEE32Exec`, and `Complex α` remain fully valid homogeneous tensor elements, but mixed
-arithmetic for a new pair requires an explicit promotion instance so TorchLean never invents
-numerical semantics.
+This promotion chain covers the registered real numeric scalar families. Proof-oriented or
+domain-specific scalars such as `Real`, configured FloatLib binary formats, and `Complex α` remain
+valid homogeneous tensor
+elements, but mixed arithmetic for a new pair requires an explicit promotion instance so TorchLean
+never invents numerical semantics.
 
 Current model programs and `NN.IR.Semantics` select one numeric `α` for learned parameters,
 activations, and outputs. Scalar polymorphism means the same definition can be interpreted again
@@ -1184,9 +1260,8 @@ Hint: Type class instance resolution failures can be inspected
 with the `set_option trace.Meta.synthInstance true` command.
 ```
 
-`Shape.EndsWith 4 [2, 4, 3]` is a readable statement of the actual requirement: the input shape
-would have to end in four for that weight to apply, and it ends in three. No runtime shape probe
-and no direct call to `Spec.linearSpec` belongs in an ordinary executable example.
+`Shape.EndsWith 4 [2, 4, 3]` identifies the mismatch: the weight requires a final input width of
+four, while the activations have width three.
 
 The same check applies one level up. Change the second linear layer in the quickstart MLP from
 `nn.linear 8 1` to `nn.linear 7 1` without changing the preceding layer, and the sequential model
@@ -1249,12 +1324,8 @@ Converting back with `Tensor.to grid (Array Float)` materializes a boxed array; 
 `FloatArray` instead exposes the packed buffer directly. CUDA remains a separate device
 representation connected by checked upload and download operations.
 
-The two displays deliberately show the same storage order through different interfaces.
-`grid` exposes the two-dimensional indexing needed by matrix code, while `gridArray` exposes the
-linear sequence needed by an array consumer. Neither interface gives permission to ignore the
-other's contract: a consumer receiving the flat array must be told the intended dimensions, and
-a backend receiving a shaped tensor must still respect its layout. The zero-copy reshape is
-possible precisely because it changes the coordinate interpretation without changing that sequence.
+`grid` provides matrix coordinates; converting it to an array provides a flat sequence. An array
+consumer needs the dimensions separately if it is to reconstruct those coordinates.
 
 # Cost And Representation Notes
 
@@ -1303,7 +1374,7 @@ and optimizer state can dominate even when individual tensor kernels are fast.
 
 # Common Tensor Declarations
 
-These are the names I reach for most often when reading or writing a small example:
+The examples above use these declarations for construction, coordinate access, and arithmetic:
 
 :::table +header
 *
@@ -1401,10 +1472,6 @@ Shape safety does not, by itself, prove:
 - that a CUDA kernel wrote within bounds;
 - that an arithmetic operation is numerically correct;
 - that training converges.
-
-Each property needs its own evidence. A shape-correct model can still use the wrong axis
-convention or disagree numerically with a native kernel; the later chapters state the additional
-contracts needed for those questions.
 
 # Model Construction
 

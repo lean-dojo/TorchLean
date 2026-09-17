@@ -201,9 +201,21 @@ def build_abcrown_leaf_artifact(
     root_lo: Sequence[float] | None = None,
     root_hi: Sequence[float] | None = None,
 ) -> dict[str, Any]:
-    """Build a TorchLean `abcrown_leaf_artifact_v0_1` object from a raw leaf dump."""
+    """Build a TorchLean `abcrown_leaf_artifact_v0_1` object from a raw leaf dump.
 
-    if isinstance(raw, dict) and raw.get("format") == FORMAT:
+    A dump that already carries the TorchLean format tag is returned unchanged, so re-exporting an
+    artifact is a no-op.  That shortcut cannot honour a caller-supplied root box, so it is skipped
+    whenever one is given: the root then has to be rebuilt from the leaves, which the ordinary path
+    already does.  Silently keeping the artifact's own root would discard the property domain the
+    caller passed in, and that domain is what a robustness claim is about.
+    """
+
+    if (root_lo is None) != (root_hi is None):
+        raise ArtifactExportError(
+            "root override requires both bounds; pass root_lo and root_hi together"
+        )
+
+    if isinstance(raw, dict) and raw.get("format") == FORMAT and root_lo is None:
         return dict(raw)
 
     if isinstance(raw, list):

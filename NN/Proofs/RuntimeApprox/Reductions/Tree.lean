@@ -7,13 +7,7 @@ Authors: TorchLean Team
 module
 
 public import Mathlib.Basic.Real.Basic
-import Mathlib.Tactic.Abel
-import Mathlib.Data.Rat.Cast.Order
-import Mathlib.Tactic.Linarith.Frontend
-import Mathlib.Tactic.NormNum.Abs
-import Mathlib.Tactic.NormNum.DivMod
-import Mathlib.Tactic.NormNum.OfScientific
-import Mathlib.Tactic.Ring.RingNF
+import FloatLib.Numerics.Reduction.Error
 
 /-!
 # Reduction-tree error enclosure
@@ -21,6 +15,7 @@ import Mathlib.Tactic.Ring.RingNF
 A binary tree records the parenthesization of a rounded sum. Under the explicit local
 `RelativeLocalAddBound` hypothesis, every such tree satisfies the same leaf-count and
 absolute-leaf-scale error enclosure. The argument is independent of a floating-point format.
+We retain the array-facing schedule API and use FloatLib's generic reduction-tree error bound.
 
 Binary32 does not satisfy the usual relative bound globally: gradual underflow needs an
 absolute-error term. The executable specializations retain the local-bound hypothesis and
@@ -74,10 +69,6 @@ theorem leafCount_pos (t : SumTree α) : 0 < t.leafCount := by
       -- `0 < a + b` since `0 < a`.
       simpa [leafCount] using Nat.add_pos_left ihA (leafCount b)
 
-/-- A reduction tree has $\mathtt{leafCount}\ge 1$ (as a `Nat` inequality). -/
-theorem leafCount_ge_one (t : SumTree α) : 1 ≤ t.leafCount :=
-  Nat.succ_le_iff.mp (leafCount_pos t)
-
 end SumTree
 
 namespace ReductionBound
@@ -85,18 +76,6 @@ namespace ReductionBound
 /-- Growth factor `(1+u)^(n-1)` for a reduction with `n` leaves. -/
 noncomputable def growth (u : ℝ) (n : Nat) : ℝ :=
   (1 + u) ^ (n - 1)
-
-/--
-Monotonicity of the growth factor in the number of leaves.
-
-When $u\ge 0$ (which is the only meaningful regime for an error parameter), longer reductions have
-larger or equal worst-case amplification.
--/
-theorem growth_mono (u : ℝ) (hu : 0 ≤ u) : Monotone (fun n => growth u n) := by
-  intro m n hmn
-  dsimp [growth]
-  have hbase : (1 : ℝ) ≤ 1 + u := by linarith
-  exact pow_le_pow_right₀ hbase (Nat.sub_le_sub_right hmn 1)
 
 end ReductionBound
 
@@ -128,34 +107,6 @@ def sumAbs (leafVal : α → ℝ) : SumTree α → ℝ
   | .leaf x => _root_.abs (leafVal x)
   | .node a b => sumAbs leafVal a + sumAbs leafVal b
 
-/-- `sumAbs leafVal t` is always nonnegative. -/
-theorem sumAbs_nonneg (leafVal : α → ℝ) (t : SumTree α) : 0 ≤ sumAbs leafVal t := by
-  induction t with
-  | leaf x => simp [sumAbs]
-  | node a b ihA ihB => simpa [sumAbs] using add_nonneg ihA ihB
-
-/--
-Triangle-inequality bound: the absolute value of the exact sum is at most the sum of absolute
-values.
-
-This is the standard inequality
-$\left|\sum_i a_i\right|\le\sum_i|a_i|$, proved by induction on the tree shape.
--/
-theorem abs_exactSum_le_sumAbs (leafVal : α → ℝ) (t : SumTree α) :
-    _root_.abs (exactSum leafVal t) ≤ sumAbs leafVal t := by
-  induction t with
-  | leaf x => simp [exactSum, sumAbs]
-  | node a b ihA ihB =>
-      have h1 :
-          _root_.abs (exactSum leafVal a + exactSum leafVal b) ≤
-            _root_.abs (exactSum leafVal a) + _root_.abs (exactSum leafVal b) := by
-        simpa using abs_add_le (exactSum leafVal a) (exactSum leafVal b)
-      have h2 :
-          _root_.abs (exactSum leafVal a) + _root_.abs (exactSum leafVal b) ≤
-            sumAbs leafVal a + sumAbs leafVal b := by
-        exact add_le_add ihA ihB
-      simpa [exactSum, sumAbs] using h1.trans h2
-
 /--
 Relative local rounded-addition assumption for reductions.
 
@@ -173,6 +124,42 @@ normal-range intermediate sums or replaced by an absolute/mixed analysis.
 def RelativeLocalAddBound (roundAdd : ℝ → ℝ → ℝ) (u : ℝ) : Prop :=
   ∀ a b : ℝ, _root_.abs (roundAdd a b - (a + b)) ≤ u * (_root_.abs a + _root_.abs b)
 
+-- Keep the array-facing schedule API while sharing FloatLib's error analysis.
+private def toReductionTree : SumTree α → FloatLib.Numerics.ReductionTree α
+  | .leaf x => .leaf x
+  | .node a b => .node (toReductionTree a) (toReductionTree b)
+
+private theorem eval_toReductionTree (t : SumTree α)
+    (combine : ℝ → ℝ → ℝ) (value : α → ℝ) :
+    (toReductionTree t).eval combine value = evalRound combine value t := by
+  induction t with
+  | leaf x => rfl
+  | node a b ha hb =>
+    simp only [toReductionTree, FloatLib.Numerics.ReductionTree.eval, evalRound, ha, hb]
+
+private theorem nodeCount_toReductionTree (t : SumTree α) :
+    (toReductionTree t).nodeCount = t.leafCount - 1 := by
+  induction t with
+  | leaf x => rfl
+  | node a b ha hb =>
+    simp only [toReductionTree, FloatLib.Numerics.ReductionTree.nodeCount, SumTree.leafCount,
+      ha, hb]
+    have := a.leafCount_pos
+    have := b.leafCount_pos
+    omega
+
+private theorem evalRound_add (value : α → ℝ) (t : SumTree α) :
+    evalRound (· + ·) value t = exactSum value t := by
+  induction t with
+  | leaf x => rfl
+  | node a b ha hb => simp only [evalRound, exactSum, ha, hb]
+
+private theorem exactSum_abs (value : α → ℝ) (t : SumTree α) :
+    exactSum (fun x => |value x|) t = sumAbs value t := by
+  induction t with
+  | leaf x => rfl
+  | node a b ha hb => simp only [exactSum, sumAbs, ha, hb]
+
 /--
 Order-independent enclosure for any reduction tree evaluated with `roundAdd`.
 
@@ -187,165 +174,16 @@ theorem evalRound_enclosure_of_relativeLocalAddBound
       _root_.abs (evalRound roundAdd leafVal t - exactSum leafVal t) ≤
         (growth u t.leafCount - 1) * sumAbs leafVal t := by
   intro t
-  induction t with
-  | leaf x =>
-      simp [evalRound, exactSum, sumAbs, SumTree.leafCount, growth]
-  | node a b ihA ihB =>
-      -- Proof strategy:
-      --
-      -- 1) Use the local bound `H` to control the fresh rounding error at the root node.
-      -- 2) Use the inductive hypotheses to control the accumulated errors in each subtree.
-      -- 3) Relate intermediate values to the leaf-scale `Aa`/`Ab` via triangle inequalities.
-      -- 4) Algebraically combine coefficients, producing the clean factor `(1+u)^(n-1) - 1`.
-      set ra := evalRound roundAdd leafVal a
-      set rb := evalRound roundAdd leafVal b
-      set Sa := exactSum leafVal a
-      set Sb := exactSum leafVal b
-      set Aa := sumAbs leafVal a
-      set Ab := sumAbs leafVal b
-      have hAa : 0 ≤ Aa := sumAbs_nonneg leafVal a
-      have hAb : 0 ≤ Ab := sumAbs_nonneg leafVal b
-      have hnA : 1 ≤ a.leafCount := SumTree.leafCount_ge_one a
-      have hnB : 1 ≤ b.leafCount := SumTree.leafCount_ge_one b
-      have hn2 : 2 ≤ (a.leafCount + b.leafCount) := by
-        simpa using Nat.add_le_add hnA hnB
-      set n : Nat := a.leafCount + b.leafCount
-      have hn : (SumTree.leafCount (SumTree.node a b)) = n := by rfl
-
-      have hmono : Monotone (fun k => growth u k) := growth_mono (u := u) (hu := hu)
-      have hga : growth u a.leafCount ≤ growth u (n - 1) := by
-        -- `a.leafCount ≤ n - 1` because `b.leafCount ≥ 1`.
-        have : a.leafCount ≤ n - 1 := by
-          have : a.leafCount + 1 ≤ n := by
-            simpa [n] using Nat.add_le_add_left hnB a.leafCount
-          exact Nat.le_pred_of_lt (Nat.lt_of_lt_of_le (Nat.lt_succ_self a.leafCount) this)
-        exact hmono this
-      have hgb : growth u b.leafCount ≤ growth u (n - 1) := by
-        have : b.leafCount ≤ n - 1 := by
-          have : b.leafCount + 1 ≤ n := by
-            simpa [n, Nat.add_comm, Nat.add_left_comm, Nat.add_assoc] using
-              Nat.add_le_add_right hnA b.leafCount
-          exact Nat.le_pred_of_lt (Nat.lt_of_lt_of_le (Nat.lt_succ_self b.leafCount) this)
-        exact hmono this
-
-      have hEa : _root_.abs (ra - Sa) ≤ (growth u a.leafCount - 1) * Aa := by
-        simpa [ra, Sa, Aa] using ihA
-      have hEb : _root_.abs (rb - Sb) ≤ (growth u b.leafCount - 1) * Ab := by
-        simpa [rb, Sb, Ab] using ihB
-
-      have hra : _root_.abs ra ≤ growth u (n - 1) * Aa := by
-        -- `|ra| ≤ |Sa| + |ra-Sa| ≤ Aa + (growth-1)Aa = growth*Aa`, then monotone growth.
-        have hSa : _root_.abs Sa ≤ Aa := abs_exactSum_le_sumAbs leafVal a
-        have htri : _root_.abs ra ≤ _root_.abs Sa + _root_.abs (ra - Sa) := by
-          have h : Sa + (ra - Sa) = ra := by abel
-          simpa [h] using (abs_add_le Sa (ra - Sa))
-        have hab : _root_.abs Sa + _root_.abs (ra - Sa) ≤ Aa + ((growth u a.leafCount - 1) * Aa) :=
-          add_le_add hSa hEa
-        have hgA : (growth u a.leafCount) * Aa ≤ (growth u (n - 1)) * Aa :=
-          mul_le_mul_of_nonneg_right hga hAa
-        calc
-          _root_.abs ra ≤ _root_.abs Sa + _root_.abs (ra - Sa) := htri
-          _ ≤ Aa + ((growth u a.leafCount - 1) * Aa) := hab
-          _ = (growth u a.leafCount) * Aa := by ring
-          _ ≤ (growth u (n - 1)) * Aa := hgA
-      have hrb : _root_.abs rb ≤ growth u (n - 1) * Ab := by
-        have hSb : _root_.abs Sb ≤ Ab := abs_exactSum_le_sumAbs leafVal b
-        have htri : _root_.abs rb ≤ _root_.abs Sb + _root_.abs (rb - Sb) := by
-          have h : Sb + (rb - Sb) = rb := by abel
-          simpa [h] using (abs_add_le Sb (rb - Sb))
-        have hab : _root_.abs Sb + _root_.abs (rb - Sb) ≤ Ab + ((growth u b.leafCount - 1) * Ab) :=
-          add_le_add hSb hEb
-        have hgB : (growth u b.leafCount) * Ab ≤ (growth u (n - 1)) * Ab :=
-          mul_le_mul_of_nonneg_right hgb hAb
-        calc
-          _root_.abs rb ≤ _root_.abs Sb + _root_.abs (rb - Sb) := htri
-          _ ≤ Ab + ((growth u b.leafCount - 1) * Ab) := hab
-          _ = (growth u b.leafCount) * Ab := by ring
-          _ ≤ (growth u (n - 1)) * Ab := hgB
-
-      have hround : _root_.abs (roundAdd ra rb - (ra + rb)) ≤ u * (_root_.abs ra + _root_.abs rb) :=
-        H ra rb
-
-      have hdecomp :
-          roundAdd ra rb - (Sa + Sb) = (roundAdd ra rb - (ra + rb)) + ((ra - Sa) + (rb - Sb)) := by
-        abel
-
-      have hEab : _root_.abs (ra - Sa) + _root_.abs (rb - Sb) ≤ (growth u (n - 1) - 1) * (Aa + Ab)
-        := by
-        have hEa' : _root_.abs (ra - Sa) ≤ (growth u (n - 1) - 1) * Aa := by
-          have : (growth u a.leafCount - 1) * Aa ≤ (growth u (n - 1) - 1) * Aa := by
-            have : growth u a.leafCount - 1 ≤ growth u (n - 1) - 1 := by linarith [hga]
-            exact mul_le_mul_of_nonneg_right this hAa
-          exact hEa.trans this
-        have hEb' : _root_.abs (rb - Sb) ≤ (growth u (n - 1) - 1) * Ab := by
-          have : (growth u b.leafCount - 1) * Ab ≤ (growth u (n - 1) - 1) * Ab := by
-            have : growth u b.leafCount - 1 ≤ growth u (n - 1) - 1 := by linarith [hgb]
-            exact mul_le_mul_of_nonneg_right this hAb
-          exact hEb.trans this
-        have hab : _root_.abs (ra - Sa) + _root_.abs (rb - Sb) ≤
-            (growth u (n - 1) - 1) * Aa + (growth u (n - 1) - 1) * Ab :=
-          add_le_add hEa' hEb'
-        simpa [mul_add] using hab.trans_eq (by ring : (growth u (n - 1) - 1) * Aa + (growth u (n -
-          1) - 1) * Ab =
-          (growth u (n - 1) - 1) * (Aa + Ab))
-
-      have hR : _root_.abs ra + _root_.abs rb ≤ growth u (n - 1) * (Aa + Ab) := by
-        have hab : _root_.abs ra + _root_.abs rb ≤ (growth u (n - 1) * Aa) + (growth u (n - 1) * Ab)
-          :=
-          add_le_add hra hrb
-        simpa [mul_add] using hab.trans_eq (by ring : growth u (n - 1) * Aa + growth u (n - 1) * Ab
-          =
-          growth u (n - 1) * (Aa + Ab))
-
-      have hcoef :
-          u * growth u (n - 1) + (growth u (n - 1) - 1) = (growth u n - 1) := by
-        -- `growth u n = (1+u)^(n-1) = (1+u)^(n-2) * (1+u) = growth u (n-1) * (1+u)`
-        have hn_ge2 : 2 ≤ n := by simpa [n] using hn2
-        have hn1 : n - 1 = (n - 2) + 1 := by
-          obtain ⟨d, hd⟩ := Nat.exists_eq_add_of_le hn_ge2
-          -- Rewrite `n = 2 + d` and compute the truncated subtractions.
-          rw [hd]
-          simp [Nat.add_comm]
-        -- turn `growth u n` into `growth u (n-1) * (1+u)`
-        have : growth u n = growth u (n - 1) * (1 + u) := by
-          -- both sides are `(1+u)^(n-2) * (1+u)` when `n ≥ 2`
-          simp [growth, hn1, pow_succ]
-        -- now finish by algebra
-        calc
-          u * growth u (n - 1) + (growth u (n - 1) - 1)
-              = growth u (n - 1) * (1 + u) - 1 := by ring
-          _ = growth u n - 1 := by simp [this]
-
-      -- Finish.
-      calc
-        _root_.abs (evalRound roundAdd leafVal (SumTree.node a b) - exactSum leafVal (SumTree.node a
-          b))
-            = _root_.abs (roundAdd ra rb - (Sa + Sb)) := by
-                simp [evalRound, exactSum, ra, rb, Sa, Sb]
-        _ = _root_.abs ((roundAdd ra rb - (ra + rb)) + ((ra - Sa) + (rb - Sb))) := by
-              simp [hdecomp]
-        _ ≤ _root_.abs (roundAdd ra rb - (ra + rb)) + _root_.abs ((ra - Sa) + (rb - Sb)) := by
-              simpa using abs_add_le (roundAdd ra rb - (ra + rb)) ((ra - Sa) + (rb - Sb))
-        _ ≤ u * (_root_.abs ra + _root_.abs rb) + (_root_.abs (ra - Sa) + _root_.abs (rb - Sb)) :=
-          by
-              -- bound the rounding error and split the sub-error sum
-              have habsErr : _root_.abs ((ra - Sa) + (rb - Sb)) ≤ _root_.abs (ra - Sa) + _root_.abs
-                (rb - Sb) := by
-                simpa using abs_add_le (ra - Sa) (rb - Sb)
-              exact add_le_add hround habsErr
-        _ ≤ (u * (growth u (n - 1) * (Aa + Ab))) + ((growth u (n - 1) - 1) * (Aa + Ab)) := by
-              have hmul :
-                  u * (_root_.abs ra + _root_.abs rb) ≤ u * (growth u (n - 1) * (Aa + Ab)) :=
-                mul_le_mul_of_nonneg_left hR hu
-              exact add_le_add hmul hEab
-        _ = (growth u n - 1) * (Aa + Ab) := by
-              -- apply the coefficient identity
-              calc
-                u * (growth u (n - 1) * (Aa + Ab)) + (growth u (n - 1) - 1) * (Aa + Ab)
-                    = (u * growth u (n - 1) + (growth u (n - 1) - 1)) * (Aa + Ab) := by ring
-                _ = (growth u n - 1) * (Aa + Ab) := by simp [hcoef]
-        _ = (growth u (SumTree.leafCount (SumTree.node a b)) - 1) * sumAbs leafVal (SumTree.node a
-          b) := by
-              simp [SumTree.leafCount, sumAbs, n, Aa, Ab]
+  have localBound (r : FloatLib.Numerics.ReductionTree α) :
+      r.AllNodes roundAdd leafVal
+        (fun a b => |roundAdd a b - (a + b)| ≤ u * (|a| + |b|)) := by
+    induction r with
+    | leaf x => trivial
+    | node a b ha hb => exact ⟨ha, hb, H _ _⟩
+  have bound := (toReductionTree t).abs_eval_sub_exact_le_geometric
+    roundAdd leafVal id u hu (localBound _)
+  simpa only [id_eq, Function.id_comp, FloatLib.Numerics.ReductionTree.sumAbs,
+    eval_toReductionTree, nodeCount_toReductionTree, evalRound_add, exactSum_abs,
+    growth] using bound
 
 end TorchLean.Floats.IEEE754

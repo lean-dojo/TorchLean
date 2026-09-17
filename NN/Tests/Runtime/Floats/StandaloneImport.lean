@@ -27,14 +27,14 @@ namespace Tests.Floats.StandaloneImport
 
 open TorchLean.Floats
 open TorchLean.Floats.IEEE754
-open TorchLean.Floats.Quantization
+open FloatLib.Numerics.Quantization
 open FloatLib.Numerics
 open FloatLib.Floats.Formats.Flocq
 open FloatLib.Floats.ExecFloat.Binary (tanh sin cos)
 open FloatLib.Floats.Formats.BinaryInterchange
 
 /-- Scalar affine quantization is available without TorchLean's tensor layer. -/
-noncomputable def int8Quantizer : AffineQuantizer where
+noncomputable def int8Quantizer : RealAffineQuantizer where
   scale := 1 / 10
   zeroPoint := 0
   qmin := -128

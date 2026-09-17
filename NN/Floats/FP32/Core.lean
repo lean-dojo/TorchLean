@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.NeuralFloat.Metadata
+public import FloatLib.Floats.Formats.BinaryInterchange.Format.Catalog
+public import FloatLib.Floats.Formats.Flocq
 
 import Mathlib.Algebra.Order.Algebra
 
@@ -34,6 +35,7 @@ back to `FP32` on the finite/no-overflow fragment.
 @[expose] public section
 
 open FloatLib.Numerics FloatLib.Floats.Formats.Flocq
+open FloatLib.Floats.Formats.BinaryInterchange (FloatFormat)
 
 
 namespace TorchLean.Floats
@@ -150,14 +152,14 @@ gradual underflow but no upper exponent bound.  Executable IEEE binary32 operati
 this bound before transferring a finite result into the rounded-real model.
 -/
 noncomputable def ieeeMaxFinite : ℝ :=
-  (binaryRadix.toReal - NeuralPrecision.machineEpsilon NeuralPrecision.ieeeSingle) *
-    bpow binaryRadix (2^(NeuralPrecision.expBits NeuralPrecision.ieeeSingle - 1) - 1)
+  (binaryRadix.toReal - (2 : ℝ) ^ (-(FloatFormat.binary32.fracWidth : ℤ))) *
+    bpow binaryRadix FloatFormat.binary32.maxNormalExponent
 
 /-- Mantissa/exponent form of the largest finite binary32 magnitude. -/
 theorem ieeeMaxFinite_eq :
     ieeeMaxFinite = (((2 ^ 24 - 1 : Nat) : ℝ) * bpow binaryRadix 104) := by
-  norm_num [ieeeMaxFinite, NeuralPrecision.machineEpsilon, NeuralPrecision.mantissaBits,
-    NeuralPrecision.expBits, bpow, binaryRadix, Radix.toReal]
+  change (2 - (2 : ℝ) ^ (-23 : ℤ)) * bpow binaryRadix 127 = _
+  norm_num [bpow, binaryRadix, Radix.toReal]
 
 /-- The largest finite binary32 value lies strictly below `2^128`. -/
 theorem ieeeMaxFinite_lt_bpow_128 :
@@ -171,11 +173,11 @@ Subnormals exist below this; this constant is mainly useful when you want to dis
 “normal-range” arguments from “subnormal-range” arguments in proofs.
 -/
 noncomputable def minNormal : ℝ :=
-  bpow binaryRadix (-(2^(NeuralPrecision.expBits NeuralPrecision.ieeeSingle - 1) : ℤ) + 2)
+  bpow binaryRadix FloatFormat.binary32.minNormalExponent
 
 /-- The binary32 minimum normal value is $2^{-126}$. -/
 @[simp] theorem minNormal_eq_bpow : minNormal = bpow binaryRadix (-126) := by
-  norm_num [minNormal, NeuralPrecision.expBits]
+  rfl
 
 end FP32
 

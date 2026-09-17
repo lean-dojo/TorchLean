@@ -147,7 +147,7 @@ theorem exactIntervalImage_constant {d : Nat} (c : F) (hc : ExecFloat.Binary.isF
     dsimp [γI, Icc]
     change Model.Interval.mem (Interval32.toModel (Interval32.point c))
       (ExecFloat.Binary.toModel x) ↔ (c ≤ x ∧ x ≤ c)
-    rw [Interval32.toModel_point]
+    simp only [Interval32.toModel, ExecFloat.Binary.Interval.toModel_point]
     change (Model.le (ExecFloat.Binary.toModel c) (ExecFloat.Binary.toModel x) ∧
       Model.le (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel c)) ↔ (c ≤ x ∧ x ≤ c)
     simp only [FloatLib.Floats.ExecFloat.Binary.le_iff_le_toModel]

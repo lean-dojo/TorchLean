@@ -10,7 +10,7 @@ redirect_from:
 If you want to try TorchLean on a laptop, start with the CPU build. It does not require PyTorch,
 CUDA, or a GPU. The repository pins its Lean version in `lean-toolchain`, so Elan will select the
 right compiler for you: Lean 4.34.0. Mathlib uses the matching release, and `lakefile.lean` pins
-FloatLib to commit `40301cd44f253a4ac6ccd34a0eb6c221e185e25c`.
+FloatLib to commit `52ab504bfcd8e5395b29a4f64b617b401e5d16ac`.
 
 ## A Five-Minute CPU Install
 

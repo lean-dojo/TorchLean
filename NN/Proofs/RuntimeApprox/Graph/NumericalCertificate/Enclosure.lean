@@ -147,7 +147,8 @@ theorem add_realEncloses {a b : IEEE32Exec.Interval32} {x y : Real}
     RealEncloses (a.add b) (x + y) := by
   apply realEncloses_of_eReal_bounds hout
   change Model.Interval.ERealMem (a.add b).toModel ((x + y : Real) : EReal)
-  rw [IEEE32Exec.Interval32.toModel_add]
+  simp only [IEEE32Exec.Interval32.toModel, IEEE32Exec.Interval32.add,
+    ExecFloat.Binary.Interval.toModel_add]
   exact Model.Interval.add_sound a.toModel b.toModel (by decide) ha hb hx hy
 
 /-- Sound real enclosure for the canonical subtraction transfer. -/
@@ -157,7 +158,8 @@ theorem sub_realEncloses {a b : IEEE32Exec.Interval32} {x y : Real}
     RealEncloses (a.sub b) (x - y) := by
   apply realEncloses_of_eReal_bounds hout
   change Model.Interval.ERealMem (a.sub b).toModel ((x - y : Real) : EReal)
-  rw [IEEE32Exec.Interval32.toModel_sub]
+  simp only [IEEE32Exec.Interval32.toModel, IEEE32Exec.Interval32.sub,
+    ExecFloat.Binary.Interval.toModel_sub]
   exact Model.Interval.sub_sound a.toModel b.toModel (by decide) ha hb hx hy
 
 /-- Sound real enclosure for the canonical multiplication transfer. -/
@@ -167,7 +169,8 @@ theorem mul_realEncloses {a b : IEEE32Exec.Interval32} {x y : Real}
     RealEncloses (a.mul b) (x * y) := by
   apply realEncloses_of_eReal_bounds hout
   change Model.Interval.ERealMem (a.mul b).toModel ((x * y : Real) : EReal)
-  rw [IEEE32Exec.Interval32.toModel_mul]
+  simp only [IEEE32Exec.Interval32.toModel, IEEE32Exec.Interval32.mul,
+    ExecFloat.Binary.Interval.toModel_mul]
   exact Model.Interval.mul_sound a.toModel b.toModel (by decide) ha hb hx hy
 
 /-- Sound real enclosure for the canonical reciprocal transfer. -/
@@ -176,7 +179,8 @@ theorem inv_realEncloses {a : IEEE32Exec.Interval32} {x : Real}
     RealEncloses a.inv x⁻¹ := by
   apply realEncloses_of_eReal_bounds hout
   change Model.Interval.ERealMem a.inv.toModel ((x⁻¹ : Real) : EReal)
-  rw [IEEE32Exec.Interval32.toModel_inv]
+  simp only [IEEE32Exec.Interval32.toModel, IEEE32Exec.Interval32.inv,
+    ExecFloat.Binary.Interval.toModel_inv]
   simpa only [one_div] using Model.Interval.inv_sound a.toModel (by decide) ha hx
 
 /-- Every scalar entry of a shape-indexed real tensor lies in one interval. -/
@@ -228,7 +232,8 @@ theorem relu_realEncloses {a : IEEE32Exec.Interval32} {x : Real}
     (ha : a.Valid) (hx : RealEncloses a x) :
     RealEncloses a.relu (max x 0) := by
   change Model.Interval.RealMem a.relu.toModel (max x 0)
-  rw [IEEE32Exec.Interval32.toModel_relu]
+  simp only [IEEE32Exec.Interval32.toModel, IEEE32Exec.Interval32.relu,
+    ExecFloat.Binary.Interval.toModel_relu]
   change Model.toReal (Model.maximum a.toModel.lo (Model.zero _ false)) ≤ max x 0 ∧
     max x 0 ≤ Model.toReal (Model.maximum a.toModel.hi (Model.zero _ false))
   rw [Model.toReal_maximum_eq_max_of_isFinite _ _ ha.1 (by decide),
@@ -240,7 +245,8 @@ theorem abs_realEncloses {a : IEEE32Exec.Interval32} {x : Real}
     (ha : a.Valid) (hx : RealEncloses a x) :
     RealEncloses a.abs |x| := by
   change Model.Interval.RealMem a.abs.toModel |x|
-  rw [IEEE32Exec.Interval32.toModel_abs]
+  simp only [IEEE32Exec.Interval32.toModel, IEEE32Exec.Interval32.abs,
+    ExecFloat.Binary.Interval.toModel_abs]
   change Model.Interval.RealMem a.toModel x at hx
   by_cases hneg : Model.Interval.leB a.toModel.hi (Model.zero _ true) = true
   · have hhiNonpos : Model.toReal a.toModel.hi ≤ 0 := by

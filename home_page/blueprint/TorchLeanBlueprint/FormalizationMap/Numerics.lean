@@ -63,12 +63,12 @@ The proof applies {uses "nearest_integer_rounding"}[the half-integer error bound
 mantissa, then rescales it at the exponent used by {uses "generic_grid_rounding"}[the grid rounder].
 :::
 
-:::definition "affine_quantizer" (parent := "generic_numerics") (lean := "TorchLean.Floats.Quantization.AffineQuantizer")
+:::definition "affine_quantizer" (parent := "generic_numerics") (lean := "FloatLib.Numerics.Quantization.RealAffineQuantizer")
 A bounded affine quantizer records its positive scale, zero point, and nonempty integer code range.
 Its `quantize` operation accepts the integer rounding rule separately.
 :::
 
-:::theorem "affine_quantization_accuracy" (parent := "generic_numerics") (lean := "TorchLean.Floats.Quantization.AffineQuantizer.dequantize_quantize_error_le")
+:::theorem "affine_quantization_accuracy" (parent := "generic_numerics") (lean := "FloatLib.Floats.Formats.Flocq.affine_dequantize_quantize_error_le_half")
 An unclipped value passed through the {uses "affine_quantizer"}[affine quantizer] reconstructs
 within half a scale step when its integer rule satisfies
 {uses "nearest_integer_rounding"}[the nearest-rounding contract].

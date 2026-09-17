@@ -251,15 +251,17 @@ agreement through native export for every configured input. The finite-input add
 allows overflow in the result. These are logical-model theorems; they do not certify compiled
 CPU or CUDA instructions.
 
-TorchLean retains `NN.Floats.FP32` and its tensor connections. Rounded binary32 reduction-tree
-theorems are imported through
+TorchLean retains `NN.Floats.FP32` and its tensor connections. FloatLib supplies generic reduction
+trees and their error bounds; `NN.Proofs.RuntimeApprox.Reductions.Tree` connects TorchLean's
+schedules to those proofs. Rounded binary32 reduction theorems are imported through
 `NN.Proofs.RuntimeApprox.Reductions.IEEE32`. FloatLib's
-`FloatLib.Floats.Formats.BinaryInterchange.Configured.Reduction` instead describes exact
-accumulation followed by one rounding; it does not replace theorems about rounding at every node.
+`FloatLib.Floats.Formats.BinaryInterchange.Configured.Reduction` separately describes exact
+accumulation followed by one rounding; this differs from rounding at every node.
 
 For quantization, `FloatLib.Numerics.Quantization.Affine` supplies executable rational
-nearest-even quantization. The real-scale quantizer remains in `NN.Floats.Quantization`, with
-tensor lifts in `NN.Spec.Quantization` and `NN.Spec.Quantization.Rational`.
+nearest-even quantization. `FloatLib.Numerics.Quantization.Affine.Real` supplies real scales and
+caller-chosen rounding. TorchLean re-exports these through `NN.Floats.Quantization`, with tensor
+lifts in `NN.Spec.Quantization` and `NN.Spec.Quantization.Rational`.
 
 ## Repository Map
 

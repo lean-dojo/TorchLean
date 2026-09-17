@@ -19,7 +19,7 @@ toolchain:
 numeric_dependency:
   name: FloatLib
   repository: "https://github.com/lean-dojo/FloatLib"
-  revision: "40301cd44f253a4ac6ccd34a0eb6c221e185e25c"
+  revision: "52ab504bfcd8e5395b29a4f64b617b401e5d16ac"
   description: >
     Shared floating-point formats, executable software arithmetic, rounding
     theory, interval semantics, and native logical-model bridges. TorchLean

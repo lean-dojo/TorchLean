@@ -8,6 +8,7 @@ module
 
 public import NN.Proofs.RuntimeApprox.NF.Linalg
 public import NN.Proofs.RuntimeApprox.NF.SoftmaxAxis
+import FloatLib.Floats.Formats.Flocq.Theory.Rounding.Order
 
 /-!
 # Rounded scaled dot-product attention

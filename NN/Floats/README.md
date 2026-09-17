@@ -32,9 +32,10 @@ Here `Flocq` is `FloatLib.Floats.Formats.Flocq`, and `ExecFloat` is
 `FP32/Error.lean` its error corollaries, and `FP32/Sterbenz.lean` exact-subtraction results.
 The interval APIs are `FloatLib.Floats.Interval` and `BinaryInterchange.Model.Interval`.
 
-`NeuralFloat/Metadata.lean` retains TorchLean's precision metadata. The former generic
-`NeuralFloat` format, rounding, scalar, and analysis implementations are supplied by FloatLib;
-new consumers should use its namespaces directly.
+Format widths and exponent bounds come from FloatLib's `FloatFormat` descriptors, including
+`FloatFormat.binary32` for the `FP32` bridge constants. The former `NeuralFloat` format, rounding,
+scalar, and analysis implementations are supplied by FloatLib; new consumers should use its
+namespaces directly.
 
 The former `NN.Floats.Calc` implementation is now supplied by
 `FloatLib.Floats.Formats.Flocq.Calculation.Round`, `.Operations`, `.Arithmetic`, and `.Bracket`.
@@ -123,10 +124,10 @@ their generic foundations now come from FloatLib. Required TorchLean refinements
 proof adapters and `Bridge/Finite.lean`. This is not a claim that every old convenience theorem
 has an identically named upstream replacement.
 
-Arbitrary rounded reduction trees live in `NN.Proofs.RuntimeApprox.Reductions.Tree`, with the
-binary32 specialization in `NN.Proofs.RuntimeApprox.Reductions.IEEE32`. Those enclosures retain
-rounding at each tree node. FloatLib's exact accumulator followed by one final rounding has a
-different evaluation order and does not replace these bounds.
+`NN.Proofs.RuntimeApprox.Reductions.Tree` keeps the array-facing reduction API and uses FloatLib's
+generic reduction-tree error bound. The binary32 execution refinement remains in
+`NN.Proofs.RuntimeApprox.Reductions.IEEE32`. These bounds account for rounding at each chosen
+tree node; FloatLib's exact sum and dot-product accumulators round only once at the end.
 
 The nested derivative quotient repair also remains TorchLean code, in
 `NN.Core.Numeric.Quotient` and `NN.Runtime.Autograd.Model.Dual`. FloatLib supplies exact finite
@@ -137,10 +138,10 @@ promise a finite encoded result for an unrepresentable derivative.
 
 ## Intervals, quantization, and external enclosures
 
-The configured interval adapter converts its endpoints to FloatLib's model interval and delegates
-outward arithmetic to that implementation. `Interval/FP32.lean` specializes rounded-real enclosures.
-`NN.Spec.Quantization` lifts the scalar affine quantizer to shaped tensors; integer code ranges
-specify int8, uint8, int4, or custom quantizers independently of tensor layout.
+`Interval32` selects binary32 endpoints from FloatLib's generic configured interval API; its
+arithmetic and conversion proofs come from FloatLib. `Interval/FP32.lean` specializes rounded-real
+enclosures. `NN.Spec.Quantization` lifts FloatLib's `RealAffineQuantizer` to shaped tensors;
+integer code ranges specify int8, uint8, int4, or custom quantizers independently of tensor layout.
 
 `NN.Floats` imports the Arb interface, but importing it does not run an oracle. Actual requests
 cross the Python/Arb/FLINT process boundary. `Interval/IEEEExec32ArbTrans.lean` is a separate

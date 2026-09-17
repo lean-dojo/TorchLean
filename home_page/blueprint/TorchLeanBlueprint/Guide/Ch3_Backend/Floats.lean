@@ -48,7 +48,7 @@ interface. The selected type can also be the element type of TorchLean's typed C
 model graphs. CUDA providers currently use native binary32 or binary64.
 
 The scalar examples only need FloatLib. TorchLean imports its definitions and proofs directly,
-at revision `40301cd44f253a4ac6ccd34a0eb6c221e185e25c`.
+at revision `52ab504bfcd8e5395b29a4f64b617b401e5d16ac`.
 
 The `lean` blocks in the rest of this chapter are elaborated while the page is built; their
 `leanOutput` blocks are checked against Lean messages. Plain-text sketches illustrate the
@@ -1280,9 +1280,10 @@ bounds accumulation error
 relative to the exact sum of already-rounded products. Bounding the earlier product errors is
 another step; the accumulation theorem does not discard them.
 
-Affine quantization also uses the generic rounding layer. An `AffineQuantizer` has a positive scale
-$`s`, zero point $`z`, and integer code bounds. Encoding divides by the scale, rounds to an integer,
-shifts by the zero point, and clamps to those bounds. Decoding reverses the shift and scale:
+Affine quantization also uses the generic rounding layer. A `RealAffineQuantizer` has a positive
+scale $`s`, zero point $`z`, and integer code bounds. Encoding divides by the scale, rounds to an
+integer, shifts by the zero point, and clamps to those bounds. Decoding reverses the shift and
+scale:
 
 $$`q(x)=\operatorname{clamp}
   \left(\operatorname{round}\left(\frac{x}{s}\right)+z\right)`,
@@ -1293,7 +1294,8 @@ Here $`q(x)` is the stored integer code and $`\widehat{x}(q)` is its reconstruct
 Clamping explains why the reconstruction-error theorem needs a no-saturation hypothesis: outside
 the code range, distance to the nearest grid point alone cannot bound the error.
 
-The scalar definition and its arithmetic theorems live in `NN.Floats.Quantization`. The separate
+The scalar definition and its arithmetic theorems live in FloatLib and are re-exported by
+`NN.Floats.Quantization`. The separate
 `NN.Spec.Quantization` adapter applies the same equations at every coordinate of a shape-indexed
 tensor. Together they prove code range, monotonicity, and in-range code round trips. The half-step
 reconstruction bound additionally requires nearest rounding and inactive saturation. Later runtime
@@ -1381,7 +1383,14 @@ To follow one of these calculations into the source, start with the operation it
 * `FloatLib.Floats.Formats.Flocq` contains the generic format, rounding, and error theory. Its
   `Calculation.Round` and `Calculation.Operations` modules supply the rounding calculations.
 * `FloatLib.Floats.Formats.IEEE754` connects configured operations to Lean's native logical models.
-* `FloatLib.Floats.Interval` supplies generic interval arithmetic.
+* `FloatLib.Numerics.Enclosure.Interval.Runtime` supplies format-independent outward interval
+  arithmetic, with containment proofs in `Interval.Proof` and real bounds in `Interval.Real`.
+  `ExecFloat.Binary.Interval` adds configured binary operations for arbitrary formats, storage
+  plans, and codecs. Decimal and posit endpoints use the corresponding `OutwardRounding` adapters.
+
+TorchLean's numerical graph certificates keep their binary32 endpoint contract. Their `Interval32`
+type specializes `FloatLib.Numerics.Interval` to those endpoints; a generic scalar interval does
+not by itself supply a graph certificate for another format.
 
 The tensor arguments live in TorchLean. `NN.Floats.FP32` selects binary32's gradual-underflow
 grid; `NN.Proofs.RuntimeApprox.FP32` carries its error bounds through tensor operations.

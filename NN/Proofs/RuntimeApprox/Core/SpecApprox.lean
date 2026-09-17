@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.NeuralFloat.Metadata
 public import NN.MLTheory.LearningTheory.Robustness.Spec
 public import NN.Proofs.RuntimeApprox.Core.Tolerance
 public import NN.Spec.Core.Scalar
@@ -40,16 +39,11 @@ https://pytorch.org/docs/stable/generated/torch.allclose.html
 
 @[expose] public section
 
-open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
-open Flocq
-
-
 namespace Proofs
 namespace RuntimeApprox
 
 open Spec TorchLean
 open NN.MLTheory.Robustness.Spec
-open TorchLean.Floats
 
 noncomputable section
 
@@ -187,22 +181,6 @@ structure Witness (α : Type) [TorchLean.Storage α] (s : Shape) where
   eps : SpecScalar
   /-- Checked approximation statement connecting `spec` and `runtime`. -/
   bound : approxWith (α := α) (toSpec := toSpec) (norm := linfNorm) spec runtime eps
-
-/-- Map annotated NeuralFloat tensors to spec scalars. -/
-def neuralTensorToReal {β : Radix} {s : Shape} (t : Tensor (AnnotatedNeuralFloat β) s) :
-    SpecTensor s :=
-  TorchLean.Tensor.map AnnotatedNeuralFloat.toReal t
-
-/-- Linf bound over annotated NeuralFloat error markers. -/
-def neuralTensorErrorBound {β : Radix} {s : Shape} (t : Tensor (AnnotatedNeuralFloat β) s) :
-    SpecScalar :=
-  linfNorm (TorchLean.Tensor.map (fun x => x.metadata.errorBound) t)
-
-/-- Annotated NeuralFloat runtime approximation to the spec with explicit epsilon bound. -/
-def neuralRuntimeApprox {β : Radix} {s : Shape}
-    (spec : SpecTensor s) (runtime : Tensor (AnnotatedNeuralFloat β) s) : Prop :=
-  tensorDistance (α := SpecScalar) linfNorm spec (neuralTensorToReal runtime)
-    ≤ neuralTensorErrorBound runtime
 
 end
 

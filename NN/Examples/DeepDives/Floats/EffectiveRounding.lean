@@ -33,7 +33,7 @@ open Spec TorchLean
 open TorchLean.Floats
 open TorchLean.Floats.IEEE754
 open TorchLean.Floats.IEEE754.IEEE32Exec
-open TorchLean.Floats.Quantization
+open FloatLib.Numerics.Quantization
 open FloatLib.Numerics FloatLib.Floats.Formats.Flocq
 
 open FloatLib.Floats.Formats.BinaryInterchange
@@ -274,7 +274,7 @@ theorem sqrt_enclosure :
 
 /-- A signed affine code set with quarter-unit spacing. The construction is not tied to a tensor
 layout or storage width; those choices only determine the integer code bounds. -/
-noncomputable def signedQuarterQuantizer : AffineQuantizer where
+noncomputable def signedQuarterQuantizer : RealAffineQuantizer where
   scale := 1 / 4
   zeroPoint := 0
   qmin := -128
@@ -287,7 +287,7 @@ theorem signedQuarterQuantizer_roundtrip {code : ℤ}
     (hlo : -128 ≤ code) (hhi : code ≤ 127) :
     signedQuarterQuantizer.quantize nearestEven
         (signedQuarterQuantizer.dequantize code) = code := by
-  exact signedQuarterQuantizer.quantize_dequantize nearestEven hlo hhi
+  exact affine_quantize_dequantize signedQuarterQuantizer nearestEven hlo hhi
 
 /-- When saturation is inactive, nearest-even reconstruction is within half a quantization step. -/
 theorem signedQuarterQuantizer_error (x : ℝ)
@@ -298,9 +298,9 @@ theorem signedQuarterQuantizer_error (x : ℝ)
     abs (signedQuarterQuantizer.dequantize
       (signedQuarterQuantizer.quantize nearestEven x) - x) ≤ 1 / 8 := by
   have h :=
-    signedQuarterQuantizer.dequantize_quantize_error_le nearestEven x hlo hhi
-  convert h using 1
-  all_goals norm_num [signedQuarterQuantizer]
+    affine_dequantize_quantize_error_le_half signedQuarterQuantizer nearestEven x hlo hhi
+  simpa only [RealAffineQuantizer.roundedValue, signedQuarterQuantizer,
+    show (1 / 4 : ℝ) / 2 = 1 / 8 by norm_num] using h
 
 /-- Four valid codes, represented with the same shape-indexed tensor used by TorchLean models. -/
 def quarterCodes : Tensor ℤ vectorShape :=

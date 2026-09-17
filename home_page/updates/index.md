@@ -47,6 +47,13 @@ addition and subtraction require finite operands, while square root covers every
 NaN-canonicalizing native export. The old local bridge files have been removed. These logical
 results remain separate from compiler and hardware conformance.
 
+We also moved the shared interval, affine-quantization, and reduction-tree mathematics into
+FloatLib, then replaced TorchLean's copies with imports and adapters. Users can choose the grouping
+and input order of a reduction tree, use a real quantization scale with their own rounding rule,
+or construct interval bounds with binary, decimal, or posit endpoints. TorchLean keeps the tensor
+lifts and backend contracts. Its numerical graph certificates still use binary32 endpoints; the
+broader scalar interval API does not change that certificate format.
+
 The [installation page]({{ '/installation/' | relative_url }}) records the current dependency pin,
 and the [floating-point chapter]({{ '/blueprint/Floating-Point-and-Native-Boundaries/Floating-Point-Semantics/' | relative_url }})
 explains the public scalar API and its proof boundaries. Earlier timeline entries describe the
@@ -517,8 +524,9 @@ attributing autograd semantics to a forward-only lowering.
 
 ### Tensor Quantization
 
-Uniform affine quantization has one scalar definition under `NN.Floats.Quantization` and one
-rank-polymorphic tensor adapter under `NN.Spec.Quantization`. The proofs cover code-range
+Uniform affine quantization uses FloatLib's scalar definitions, re-exported by
+`NN.Floats.Quantization`, with a rank-polymorphic tensor adapter under `NN.Spec.Quantization`.
+The proofs cover code-range
 preservation, monotonicity, exact dequantize/quantize round trips for in-range integer tensors, and
 the half-step reconstruction bound when saturation is inactive. Layout and storage width are not
 part of the arithmetic: int8, uint8, int4, and custom code sets differ through their integer bounds

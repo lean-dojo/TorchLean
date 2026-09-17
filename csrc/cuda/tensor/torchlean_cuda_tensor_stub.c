@@ -211,6 +211,59 @@ LEAN_EXPORT uint64_t torchlean_cuda_allocator_device_total_bytes(uint32_t u) {
   return 0u;
 }
 
+// There is no device in this build, so device identity is the same empty answer a CUDA build gives
+// on a host with no reachable card: "" and zeroes. A caller therefore prints one line under either
+// flavour, and reads the absence off the fields rather than off the build it happens to be in.
+LEAN_EXPORT lean_obj_res torchlean_cuda_compiled_arch_list(uint32_t u) {
+  (void)u;
+  return lean_mk_string("");
+}
+
+LEAN_EXPORT lean_obj_res torchlean_cuda_device_name(uint32_t u) {
+  (void)u;
+  return lean_mk_string("");
+}
+
+LEAN_EXPORT uint32_t torchlean_cuda_device_index(uint32_t u) {
+  (void)u;
+  return 0u;
+}
+
+LEAN_EXPORT uint32_t torchlean_cuda_device_capability(uint32_t u) {
+  (void)u;
+  return 0u;
+}
+
+LEAN_EXPORT uint32_t torchlean_cuda_device_sm_count(uint32_t u) {
+  (void)u;
+  return 0u;
+}
+
+LEAN_EXPORT uint32_t torchlean_cuda_device_clock_khz(uint32_t u) {
+  (void)u;
+  return 0u;
+}
+
+LEAN_EXPORT uint32_t torchlean_cuda_device_mem_clock_khz(uint32_t u) {
+  (void)u;
+  return 0u;
+}
+
+LEAN_EXPORT uint32_t torchlean_cuda_device_mem_bus_width(uint32_t u) {
+  (void)u;
+  return 0u;
+}
+
+LEAN_EXPORT uint32_t torchlean_cuda_driver_version(uint32_t u) {
+  (void)u;
+  return 0u;
+}
+
+LEAN_EXPORT uint32_t torchlean_cuda_runtime_version(uint32_t u) {
+  (void)u;
+  return 0u;
+}
+
 // The CPU stub frees dropped buffers immediately and keeps no reuse cache, so there is nothing to
 // cap and no cached bytes to report.
 LEAN_EXPORT uint64_t torchlean_cuda_allocator_cache_bytes(uint32_t u) {

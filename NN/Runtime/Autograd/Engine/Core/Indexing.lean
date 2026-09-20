@@ -7,7 +7,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Engine.Core.Shape
+public import NN.Runtime.Autograd.Engine.Core.Base
 
 /-!
 # Core Tape Indexing Operations
@@ -21,13 +21,13 @@ operations, and the backward rules route upstream gradients back to the selected
 namespace Runtime
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Tape
 
 /-- Select one bounded coordinate from any tensor axis. -/
-def select {α : Type} [Zero α] [DecidableEq Shape]
+def select {α : Type} [TorchLean.Storage α] [Zero α]
     {s : Shape} (t : Tape α) (xId : Nat) (axis : Nat)
     [Shape.AxisInBounds axis s] (index : Fin (Shape.axisSize s axis)) :
     Result (Tape α × Nat) := do
@@ -44,7 +44,7 @@ def select {α : Type} [Zero α] [DecidableEq Shape]
         pure #[(xId, Spec.SomeTensor.ofTensor dx)] }
   pure (t.addNode node)
 /-- Select several bounded coordinates from any tensor axis. -/
-def indexSelect {α : Type} [Add α] [Zero α] [DecidableEq Shape]
+def indexSelect {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {s : Shape} (t : Tape α) (xId : Nat) (axis count : Nat)
     [Shape.AxisInBounds axis s]
     (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape α × Nat) := do
@@ -57,13 +57,13 @@ def indexSelect {α : Type} [Add α] [Zero α] [DecidableEq Shape]
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s.replaceAxis axis count) dLdyAny
-        let zero := fill (0 : α) s
+        let zero := Tensor.full s (0 : α)
         let dx := Tensor.scatterAddSpec axis zero indices dLdy
         pure #[(xId, Spec.SomeTensor.ofTensor dx)] }
   pure (t.addNode node)
 
 /-- Add indexed source slices into any tensor axis. -/
-def scatterAdd {α : Type} [Add α] [Zero α] [DecidableEq Shape]
+def scatterAdd {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {s : Shape} (t : Tape α) (baseId sourceId : Nat) (axis count : Nat)
     [Shape.AxisInBounds axis s]
     (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape α × Nat) := do

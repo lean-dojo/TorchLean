@@ -56,10 +56,11 @@ scripts/checks/cuda_sanitize_tests.sh --all-tools
 The CUDA sanitizer run is expensive, but it is the right evidence for memory and synchronization
 hazards at the native boundary. A Lean proof about the spec does not replace that native check.
 
-For public command or website changes:
+For public command changes, run the affected command with a small input after compiling
+the examples. For website changes, rebuild the site:
 
 ```bash
-scripts/checks/example_regression.sh --skip-help
+lake build NNExamples
 cd home_page
 bundle _2.3.14_ exec jekyll build --config _config.yml,_config_dev.yml
 ```

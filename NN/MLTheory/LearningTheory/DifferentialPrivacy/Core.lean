@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Analysis.SpecialFunctions.Exp
 public import Mathlib.MeasureTheory.Measure.ProbabilityMeasure
 
 /-!
@@ -42,7 +41,7 @@ measurability side-conditions explicit.
 We also include a couple of basic structural lemmas that are easy to reuse downstream (and that
 are often needed to compose DP facts through a larger construction):
 
-- monotonicity in `δ`, and
+- monotonicity in `δ` and in `ε`, and
 - post-processing (measurable mapping of outputs preserves DP).
 
 ## Typical instantiations
@@ -52,8 +51,8 @@ are often needed to compose DP facts through a larger construction):
 - `M` is a randomized training procedure / query mechanism.
 
 In this repository, the stability development (see `NN.MLTheory.LearningTheory.Stability.Core`) uses
-datasets of the form `Fin n → Z` for a fixed “sample size” `n`. For DP, one often uses a similar
-encoding and defines `Adj` in terms of replacing one coordinate.
+datasets `Tensor Z [n]`, with a `Fin n → Z` view, for a fixed sample size `n`. For DP, one can
+define `Adj` in terms of replacing one coordinate.
 
 ## References
 
@@ -102,6 +101,8 @@ $$
 $$
 
 We write probabilities as measures `(M a : Measure β) S` so the inequality lives in `ENNReal`.
+The predicate imposes no symmetry on `Adj`, no nonnegativity condition on `ε`, and no upper bound
+on `δ`; callers supply the adjacency and budget restrictions needed for their application.
 -/
 def DifferentialPrivacy (Adj : α → α → Prop) [MeasurableSpace β]
     (M : Mechanism α β) (ε : ℝ) (δ : ENNReal) : Prop :=
@@ -121,7 +122,8 @@ $\delta_1\leq\delta_2$, then it is also $(\varepsilon,\delta_2)$-DP.
 This small lemma is useful when you:
 
 - prove DP with a “clean” bound, then
-- want to reuse it under a slightly looser $\delta$ (e.g. after taking a `sup`, or adding a slack term).
+- want to reuse it under a slightly looser $\delta$ (e.g. after taking a `sup`, or adding a slack
+  term).
 -/
 theorem differentialPrivacy_mono_delta {Adj : α → α → Prop} [MeasurableSpace β]
     {M : Mechanism α β} {ε : ℝ} {δ₁ δ₂ : ENNReal} (hδ : δ₁ ≤ δ₂) :
@@ -133,6 +135,26 @@ theorem differentialPrivacy_mono_delta {Adj : α → α → Prop} [MeasurableSpa
     -- `add_le_add_left` produces the inequality with `δ` on the left; rewrite by commutativity.
     simpa [add_comm, add_left_comm, add_assoc] using
       add_le_add_left hδ ((ENNReal.ofReal (Real.exp ε)) * (M a' : Measure β) S))
+
+/--
+$\varepsilon$-monotonicity: privacy at a smaller $\varepsilon$ implies privacy at a larger one.
+
+Together with `differentialPrivacy_mono_delta` this says the predicate is monotone in the whole
+budget $(\varepsilon,\delta)$. That is what lets a pipeline advertise one budget for a step that was
+actually proved private at a tighter one, which happens constantly once several mechanisms are
+composed and their budgets are rounded to a common value.
+
+The mathematical content is only monotonicity of `Real.exp` together with monotonicity of
+multiplication on `ENNReal`; we record it as a lemma so callers do not repeat that rewriting inline.
+-/
+theorem differentialPrivacy_mono_eps {Adj : α → α → Prop} [MeasurableSpace β]
+    {M : Mechanism α β} {ε₁ ε₂ : ℝ} {δ : ENNReal} (hε : ε₁ ≤ ε₂) :
+    DifferentialPrivacy (α := α) (β := β) Adj M ε₁ δ →
+      DifferentialPrivacy (α := α) (β := β) Adj M ε₂ δ := by
+  intro hdp a a' hadj S hS
+  refine le_trans (hdp a a' hadj S hS) ?_
+  -- `gcongr` does both monotonicity steps: `Real.exp` in the exponent, then the `ENNReal` product.
+  gcongr
 
 /-! ## Post-processing -/
 
@@ -147,7 +169,8 @@ Formally, `postprocess M f` is the pushforward measure `(M a).map f` for each in
 -/
 def postprocess [MeasurableSpace β] [MeasurableSpace γ]
     (M : Mechanism α β) (f : β → γ) (hf : Measurable f) : Mechanism α γ :=
-  fun a => (M a).map hf.aemeasurable
+  fun a => ⟨(M a : Measure β).map f,
+    (Measure.isProbabilityMeasure_map_iff hf.aemeasurable).mpr inferInstance⟩
 
 /--
 Post-processing theorem: measurable mappings of outputs preserve DP.
@@ -165,9 +188,9 @@ theorem differentialPrivacy_postprocess {Adj : α → α → Prop} [MeasurableSp
         := by
   intro hdp a a' hadj S hS
   -- Reduce the event on the post-processed output to a preimage event on the original output.
-  have hpre : MeasurableSet (f ⁻¹' S) := hf hS
-  have h := hdp a a' hadj (f ⁻¹' S) hpre
-  -- Rewrite both sides via `ProbabilityMeasure.map_apply'` (ENNReal-level).
-  simpa [postprocess, ProbabilityMeasure.map_apply', hS, hpre, hf] using h
+  change ((M a).map f : Measure γ) S ≤
+    (ENNReal.ofReal (Real.exp ε)) * ((M a').map f : Measure γ) S + δ
+  rw [(M a).map_apply' hf.aemeasurable hS, (M a').map_apply' hf.aemeasurable hS]
+  exact hdp a a' hadj (f ⁻¹' S) (hf hS)
 
 end NN.MLTheory.LearningTheory

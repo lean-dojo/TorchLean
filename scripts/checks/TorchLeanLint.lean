@@ -30,7 +30,7 @@ open IO
 Run a subprocess and fail if it exits nonzero.
 
 This helper is used by the `torchlean_lint` executable entrypoint, so it must not be `private`
-under `backward.privateInPublic := false`.
+because the executable entrypoint references it from the generated module.
 -/
 def runChecked (cmd : String) (args : Array String) : IO Unit := do
   let out ← IO.Process.output { cmd := cmd, args := args }
@@ -39,7 +39,8 @@ def runChecked (cmd : String) (args : Array String) : IO Unit := do
   if !out.stderr.isEmpty then
     IO.eprint out.stderr
   if out.exitCode != 0 then
-    throw <| IO.userError s!"command failed ({out.exitCode}): {cmd} {String.intercalate " " args.toList}"
+    throw <| IO.userError
+      s!"command failed ({out.exitCode}): {cmd} {String.intercalate " " args.toList}"
 
 /-- `lake lint` entrypoint. -/
 def main (_args : List String) : IO Unit := do

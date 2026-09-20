@@ -6,11 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.Group.MinMax
-public import Mathlib.Algebra.Ring.Basic
-public import Mathlib.Data.Fintype.BigOperators
-public import Mathlib.Data.List.FinRange
 public import Mathlib.Data.List.Fold
+public import Mathlib.Algebra.BigOperators.Group.Finset.Defs
+public import Mathlib.Algebra.Ring.Defs
+public import Mathlib.Data.Fintype.Basic
 
 /-!
 # List Utils
@@ -29,7 +28,7 @@ namespace List
 
 If the initial accumulator and every `f i` are `≤ eps`, then the folded maximum is also `≤ eps`.
 -/
-lemma foldl_max_le_of_le {ι β : Type} [LinearOrder β] (l : List ι) (f : ι → β) {acc eps : β}
+theorem foldl_max_le_of_le {ι β : Type} [LinearOrder β] (l : List ι) (f : ι → β) {acc eps : β}
     (hacc : acc ≤ eps) (hf : ∀ i ∈ l, f i ≤ eps) :
     l.foldl (fun a i => max a (f i)) acc ≤ eps := by
   induction l generalizing acc with
@@ -48,7 +47,7 @@ Lower bound helper for `foldl max`.
 
 The folded maximum is always at least as large as the initial accumulator.
 -/
-lemma le_foldl_max_init {ι β : Type} [LinearOrder β] (l : List ι) (f : ι → β) (acc : β) :
+theorem le_foldl_max_init {ι β : Type} [LinearOrder β] (l : List ι) (f : ι → β) (acc : β) :
     acc ≤ l.foldl (fun a i => max a (f i)) acc := by
   induction l generalizing acc with
   | nil =>
@@ -64,7 +63,7 @@ Membership helper for `foldl max`.
 
 If `i ∈ l`, then `f i` is `≤` the folded maximum.
 -/
-lemma le_foldl_max_of_mem {ι β : Type} [LinearOrder β] (l : List ι) (f : ι → β) {acc : β} {i : ι}
+theorem le_foldl_max_of_mem {ι β : Type} [LinearOrder β] (l : List ι) (f : ι → β) {acc : β} {i : ι}
     (hi : i ∈ l) :
     f i ≤ l.foldl (fun a j => max a (f j)) acc := by
   induction l generalizing acc with
@@ -82,7 +81,7 @@ lemma le_foldl_max_of_mem {ι β : Type} [LinearOrder β] (l : List ι) (f : ι 
 visited. This complements the order bounds above with the attainment fact needed by stable
 softmax: the computed maximum is an actual input coordinate, so one max-shifted exponential is
 exactly `exp 0 = 1`. -/
-lemma foldl_max_eq_init_or_mem {ι β : Type} [LinearOrder β] (l : List ι) (f : ι → β) (acc : β) :
+theorem foldl_max_eq_init_or_mem {ι β : Type} [LinearOrder β] (l : List ι) (f : ι → β) (acc : β) :
     l.foldl (fun a i => max a (f i)) acc = acc ∨
       ∃ i ∈ l, l.foldl (fun a j => max a (f j)) acc = f i := by
   induction l generalizing acc with
@@ -108,17 +107,13 @@ Pointwise congruence for left folds of the shape `acc + f x`.
 Many tensor and autograd proofs use executable folds for sums; this lemma lets them rewrite the
 per-coordinate summand without re-proving a list induction locally.
 -/
-lemma foldl_add_congr {α β : Type} [Add α] (l : List β) (f g : β → α) (a : α)
+theorem foldl_add_congr {α β : Type} [Add α] (l : List β) (f g : β → α) (a : α)
     (h : ∀ x, f x = g x) :
     l.foldl (fun s x => s + f x) a = l.foldl (fun s x => s + g x) a := by
-  induction l generalizing a with
-  | nil =>
-      simp
-  | cons hd tl ih =>
-      simp [List.foldl, h hd, ih]
+  rw [funext h]
 
 /-- Folding `(+ 0)` over a list leaves the accumulator unchanged. -/
-lemma foldl_add_const_zero {α β : Type} [AddMonoid α] (l : List β) (a : α) :
+theorem foldl_add_const_zero {α β : Type} [AddMonoid α] (l : List β) (a : α) :
     l.foldl (fun s _ => s + (0 : α)) a = a := by
   induction l generalizing a with
   | nil =>
@@ -131,22 +126,14 @@ Turn `foldl (fun a x => a + f x) acc` into `acc + foldl (fun a x => a + f x) 0`.
 
 This is the standard "peel off the initial accumulator" lemma for left folds over `+`.
 -/
-lemma foldl_add_init {α β : Type} [AddMonoid β] (l : List α) (f : α → β) (acc : β) :
+theorem foldl_add_init {α β : Type} [AddMonoid β] (l : List α) (f : α → β) (acc : β) :
     l.foldl (fun a x => a + f x) acc = acc + l.foldl (fun a x => a + f x) 0 := by
-  induction l generalizing acc with
-  | nil =>
-      simp
-  | cons x xs ih =>
-      -- Use the IH twice: once for `acc + f x`, once for `f x`.
-      have h1 :
-          xs.foldl (fun a y => a + f y) (acc + f x) =
-            (acc + f x) + xs.foldl (fun a y => a + f y) 0 := ih (acc := acc + f x)
-      have h2 :
-          xs.foldl (fun a y => a + f y) (f x) =
-            (f x) + xs.foldl (fun a y => a + f y) 0 := ih (acc := f x)
-      simp [List.foldl, h1, h2, add_assoc]
+  simpa only [List.foldl_map, add_zero] using
+    (List.foldl_assoc (op := (· + ·)) (ha := ⟨add_assoc⟩)
+      (l := l.map f) (a₁ := acc) (a₂ := 0))
 
-lemma add_foldl_add0 {α β : Type} [AddMonoid β] (l : List α) (f : α → β) (acc : β) :
+/-- `foldl_add_init` read right to left, which is the direction `rw` usually needs. -/
+theorem add_foldl_add0 {α β : Type} [AddMonoid β] (l : List α) (f : α → β) (acc : β) :
     acc + l.foldl (fun a x => a + f x) 0 = l.foldl (fun a x => a + f x) acc := by
   simpa using (foldl_add_init (l := l) (f := f) (acc := acc)).symm
 
@@ -155,7 +142,7 @@ Distribute a fold of `g1 x + g2 x` into the sum of two folds.
 
 This is the list-level form of “finite sum distributes over addition”.
 -/
-lemma foldl_add_distrib2 {α β : Type} [AddCommMonoid α] (l : List β) (g1 g2 : β → α) :
+theorem foldl_add_distrib2 {α β : Type} [AddCommMonoid α] (l : List β) (g1 g2 : β → α) :
     ∀ a1 a2,
       l.foldl (fun s x => s + (g1 x + g2 x)) (a1 + a2) =
         l.foldl (fun s x => s + g1 x) a1 + l.foldl (fun s x => s + g2 x) a2 := by
@@ -172,16 +159,10 @@ lemma foldl_add_distrib2 {α β : Type} [AddCommMonoid α] (l : List β) (g1 g2 
         (ih (a1 := a1 + g1 hd) (a2 := a2 + g2 hd))
 
 /-- Pull multiplication by a fixed scalar through an additive left fold. -/
-lemma foldl_add_mul_right {α β : Type} [Semiring α] (l : List β) (g : β → α) (a k : α) :
+theorem foldl_add_mul_right {α β : Type} [Semiring α] (l : List β) (g : β → α) (a k : α) :
     l.foldl (fun acc x => acc + g x * k) (a * k) =
       (l.foldl (fun acc x => acc + g x) a) * k := by
-  induction l generalizing a with
-  | nil =>
-      simp
-  | cons hd tl ih =>
-      have hstart : a * k + g hd * k = (a + g hd) * k := by
-        simp [add_mul]
-      simpa [List.foldl, hstart] using (ih (a := a + g hd))
+  exact List.foldl_hom (fun x => x * k) (fun x y => (add_mul x (g y) k).symm)
 
 /--
 Length of the second component when a left fold prepends exactly one output per input.
@@ -190,7 +171,7 @@ This captures the common "right-to-left scan implemented as `reverse.foldl`" pro
 return/advantage computations: the first accumulator evolves by `step`, while the second accumulator
 records one new value with `::` at every iteration.
 -/
-lemma foldl_cons_snd_length {α β : Type} (l : List β) (step : α → β → α)
+theorem foldl_cons_snd_length {α β : Type} (l : List β) (step : α → β → α)
     (accScalar : α) (accList : List α) :
     (((l.foldl
       (fun (acc : α × List α) x =>
@@ -209,25 +190,14 @@ Rewrite the canonical `List.finRange` addition fold into a `Finset.univ` sum.
 Specs use `List.foldl` because it computes well; proofs usually want `Finset.sum` so standard
 big-operator lemmas apply.
 -/
-lemma finRange_foldl_add_eq_finset_sum {β : Type} [AddCommMonoid β] {n : Nat} (f : Fin n → β) :
+theorem finRange_foldl_add_eq_finset_sum {β : Type} [AddCommMonoid β] {n : Nat} (f : Fin n → β) :
     (List.finRange n).foldl (fun s i => s + f i) 0 = (Finset.univ : Finset (Fin n)).sum f := by
   classical
-  have hmap :
-      (List.finRange n).foldl (fun s i => s + f i) 0 =
-        List.foldl (fun s x => s + x) 0 ((List.finRange n).map f) := by
-    simpa using
-      (List.foldl_map (f := f) (g := fun s x => s + x) (l := List.finRange n)
-        (init := (0 : β))).symm
-  have hfold :
-      List.foldl (fun s x : β => s + x) 0 ((List.finRange n).map f) =
-        ((List.finRange n).map f).sum := by
-    simpa [List.sum] using
-      (List.foldl_eq_foldr (f := fun s x : β => s + x) (a := (0 : β))
-        (l := (List.finRange n).map f))
-  have hsum :
-      (Finset.univ : Finset (Fin n)).sum f = ((List.finRange n).map f).sum := by
-    simp [Finset.sum, Finset.val_univ_fin, Multiset.map_coe, Multiset.sum_coe]
-  exact hmap.trans (hfold.trans hsum.symm)
+  calc
+    _ = ((List.finRange n).map f).sum := by
+      rw [List.sum_eq_foldl, List.foldl_map]
+    _ = _ := by
+      simp only [Finset.sum, Finset.val_univ_fin, Multiset.map_coe, Multiset.sum_coe]
 
 /--
 Accumulator form of `finRange_foldl_add_eq_finset_sum`.
@@ -235,11 +205,9 @@ Accumulator form of `finRange_foldl_add_eq_finset_sum`.
 This avoids re-proving "peel off the initial accumulator, then rewrite the zero fold" in large
 finite-sum proofs.
 -/
-lemma finRange_foldl_add_acc {β : Type} [AddCommMonoid β] {n : Nat} (f : Fin n → β) (acc : β) :
+theorem finRange_foldl_add_acc {β : Type} [AddCommMonoid β] {n : Nat} (f : Fin n → β) (acc : β) :
     (List.finRange n).foldl (fun s i => s + f i) acc =
       acc + (Finset.univ : Finset (Fin n)).sum f := by
-  have h1 := foldl_add_init (l := List.finRange n) (f := f) (acc := acc)
-  have h2 := finRange_foldl_add_eq_finset_sum (n := n) (f := f)
-  simpa [h2] using h1
+  rw [foldl_add_init, finRange_foldl_add_eq_finset_sum]
 
 end List

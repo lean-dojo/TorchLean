@@ -3,10 +3,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+LAKE="${LAKE:-$ROOT/scripts/lake.sh}"
 cd "$ROOT"
 
 echo "==> Building Lean modules"
-lake build
+"$LAKE" build
 
 echo "==> Building DocGen API reference"
 # DocGen can try to render equations for every imported definition, including Lean and Mathlib
@@ -23,7 +24,7 @@ if [ "${SKIP_DOCGEN:-0}" = "1" ]; then
   echo "    Reusing .lake/build/doc"
 else
   rm -rf .lake/build/doc .lake/build/doc-data .lake/build/api-docs.db
-  DISABLE_EQUATIONS=1 lake build TorchLeanDocs:docs
+  DISABLE_EQUATIONS=1 "$LAKE" build TorchLeanDocs:docs
 fi
 
 echo "==> Copying DocGen output"
@@ -39,20 +40,20 @@ rm -rf home_page/manual
 
 echo "==> Building Verso Guide (Blueprint Package)"
 rm -rf _out/blueprint
-(cd blueprint && lake exe vbp build --output ../_out/blueprint)
-(cd blueprint && lake exe vbp check --site ../_out/blueprint)
+TORCHLEAN_PACKAGE_ROOT="$ROOT/home_page/blueprint" \
+  "$LAKE" exe vbp build --output ../../_out/blueprint
+TORCHLEAN_PACKAGE_ROOT="$ROOT/home_page/blueprint" \
+  "$LAKE" exe vbp check --site ../../_out/blueprint
 test -s _out/blueprint/html-multi/-verso-data/blueprint-manifest.json
 test -s _out/blueprint/html-multi/-verso-data/blueprint-html-cache.json
 # Verso does not automatically copy arbitrary guide assets in every local build
 # mode, so mirror the guide asset directory before polishing the generated HTML.
-if [ -d blueprint/TorchLeanBlueprint/Guide/Assets ]; then
+if [ -d home_page/blueprint/TorchLeanBlueprint/Guide/Assets ]; then
   mkdir -p _out/blueprint/html-multi/Guide/Assets
-  cp -r blueprint/TorchLeanBlueprint/Guide/Assets/* _out/blueprint/html-multi/Guide/Assets/
+  cp -r home_page/blueprint/TorchLeanBlueprint/Guide/Assets/* _out/blueprint/html-multi/Guide/Assets/
 fi
 python3 scripts/docs/polish_verso_guide.py --guide _out/blueprint/html-multi
-rm -rf home_page/blueprint
-mkdir -p home_page/blueprint
-cp -r _out/blueprint/html-multi/* home_page/blueprint/
+python3 scripts/docs/check_verso_layout.py --guide _out/blueprint/html-multi
 
 echo "==> Building dependency graph audit"
 # The Graphs page reads this JSON to populate the import explorer.
@@ -65,7 +66,7 @@ echo "==> Building interactive import graph HTML"
 # The import graph is generated from Lean imports after the library build, so it
 # reflects the same module graph users get from the current checkout.
 mkdir -p home_page/importgraph
-lake exe graph --to NN home_page/importgraph/index.html
+"$LAKE" exe graph --to NN home_page/importgraph/index.html
 python3 scripts/docs/postprocess_importgraph.py home_page/importgraph/index.html
 
 echo "==> Installing Jekyll bundle"
@@ -82,6 +83,8 @@ fi
 
 echo "==> Building Jekyll site"
 (cd home_page && rm -rf _site && "${BUNDLE_CMD[@]}" exec jekyll build --config _config.yml,_config_dev.yml)
+mkdir -p home_page/_site/blueprint
+cp -r _out/blueprint/html-multi/. home_page/_site/blueprint/
 jekyll_content_pages=0
 while IFS= read -r -d '' page; do
   if grep -Fq "<main" "$page"; then
@@ -132,7 +135,8 @@ for page in site.rglob("*.html"):
 PY
 
 echo "==> Checking generated links and anchors"
-python3 scripts/docs/check_site_links.py home_page/_site
+python3 scripts/docs/check_site_links.py home_page/_site \
+  --site-url https://lean-dojo.github.io/TorchLean
 
 cat <<'EOF'
 

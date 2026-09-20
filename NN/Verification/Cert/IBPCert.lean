@@ -6,12 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph
 public import NN.Runtime.PyTorch.Import.Core
-public import NN.Spec.Core.Tensor
-public import NN.Verification.Util.FloatApprox
 public import NN.Verification.Util.Json
 public import NN.Verification.Util.Tensor
+public import NN.MLTheory.CROWN.Graph.Engine.Refinement
 
 /-!
 # IBPCert
@@ -52,8 +50,8 @@ namespace NN.Verification.IBPCert
 open NN.MLTheory.CROWN.Graph
 open NN.MLTheory.CROWN
 open NN.Verification.Util
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open Lean
 open Json
 open Import.PyTorch
@@ -64,16 +62,35 @@ Run IBP on `(g, ps)` and compare the output box at `outId` against the JSON cert
 
 Returns `true` iff the serialized bounds contain the recomputed bounds componentwise.
 On mismatch, prints both Lean and JSON bounds for debugging.
+
+`refinement := some (inputId, splitBudget)` optionally subdivides the chosen graph input before
+comparing bounds. Every branch is included; the default keeps the original single-pass behavior.
 -/
-def check (g : Graph) (ps : ParamStore Float) (outId : Nat) (path : String) : IO Bool := do
-  let boxes := runIBP (α := Float) g ps
+def check (g : Graph) (ps : ParamStore Float) (outId : Nat) (path : String)
+    (refinement : Option (Nat × Nat) := none) : IO Bool := do
+  unless validIBPInputs g ps do
+    throw <| IO.userError "Lean IBP received missing, malformed, or invalid input bounds"
+  let some outNode := g.nodes[outId]?
+    | throw <| IO.userError "Lean IBP output node is missing"
+  let result :=
+    match refinement with
+    | none => NN.MLTheory.CROWN.Graph.outputBox? (runIBP (α := Float) g ps) outId
+    | some (inputId, budget) =>
+      match refinedIBPOutput? g ps inputId outId budget with
+      | some box => .ok box
+      | none => .error
+        "refinement produced no output box; check input selection and supported transfers"
   let outB ←
-    match NN.MLTheory.CROWN.Graph.outputBox? boxes outId with
+    match result with
     | .ok outB => pure outB
     | .error msg => throw <| IO.userError s!"Lean IBP produced no output box: {msg}"
 
+  unless outB.dim == outNode.outShape.size && Refinement.valid outB do
+    throw <| IO.userError
+      "Lean IBP produced invalid output bounds (unordered or reversed endpoints)"
+
   let topObj ← readJsonObjectFile path
-  let resultObj ← expectFieldObj topObj "result" "top-level"
+  let resultObj ← expectFieldObject topObj "result" "top-level"
   let loJ ← expectField resultObj "lo" "result"
   let hiJ ← expectField resultObj "hi" "result"
 
@@ -83,17 +100,10 @@ def check (g : Graph) (ps : ParamStore Float) (outId : Nat) (path : String) : IO
   unless (List.finRange n).all (fun i => (loVec i).isFinite && (hiVec i).isFinite) do
     throw <| IO.userError "Invalid result bounds: every value must be finite"
 
-  let (leanLo, leanHi) := NN.Verification.Util.Tensor.flatBoxBoundsToArrays outB
-  let okLo :=
-    (List.finRange n).all (fun i =>
-      match leanLo[i.val]? with
-      | some v => loVec i <= v
-      | none => false)
-  let okHi :=
-    (List.finRange n).all (fun i =>
-      match leanHi[i.val]? with
-      | some v => v <= hiVec i
-      | none => false)
+  let claimedLo := TorchLean.Tensor.dim (fun i => TorchLean.Tensor.scalar (loVec i))
+  let claimedHi := TorchLean.Tensor.dim (fun i => TorchLean.Tensor.scalar (hiVec i))
+  let okLo := NN.Verification.Util.Tensor.boundsOrdered claimedLo outB.lo
+  let okHi := NN.Verification.Util.Tensor.boundsOrdered outB.hi claimedHi
   if okLo && okHi then
     IO.println "IBP certificate verified: serialized bounds enclose Lean recomputation."
     pure true
@@ -115,8 +125,9 @@ Run `check` and raise a readable error on mismatch.
 Verification examples use this entrypoint when the surrounding artifact should fail loudly rather
 than returning a Boolean that a caller might ignore.
 -/
-def checkOrThrow (g : Graph) (ps : ParamStore Float) (outId : Nat) (path : String) : IO Unit := do
-  let ok ← check g ps outId path
+def checkOrThrow (g : Graph) (ps : ParamStore Float) (outId : Nat) (path : String)
+    (refinement : Option (Nat × Nat) := none) : IO Unit := do
+  let ok ← check g ps outId path refinement
   if !ok then
     throw <| IO.userError s!"IBP certificate mismatch: {path}"
 

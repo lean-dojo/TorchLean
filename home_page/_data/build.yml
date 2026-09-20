@@ -1,5 +1,5 @@
 # Static build metadata for the website footer.
 #
 # CI can overwrite this file, but having defaults keeps local previews readable.
-lean: "v4.33.0"
-mathlib: "v4.33.0"
+lean: "v4.34.0"
+mathlib: "v4.34.0"

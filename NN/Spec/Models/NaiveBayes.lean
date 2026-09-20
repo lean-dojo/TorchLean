@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Context
-import Std.Data.HashMap.AdditionalOperations
+public import NN.Tensor.Internal.Representation.Storage
 
 /-!
 # Multinomial Naive Bayes
@@ -30,8 +30,12 @@ dataset. The API keeps fitting and inference separate, so examples can show exac
 are learned and where predictions are made.
 
 The API exposes an explicit `fit` step that produces a `Model`, plus:
-- `predictModel` for inference using the fitted counts
+- `predict` for inference using the fitted counts
 - `negLogLikelihood` as a standard training objective (useful for evaluation/comparison)
+
+## Implementation status
+
+No neural API builder implements this model, and no model-correctness theorem is proved here.
 -/
 
 public section
@@ -41,12 +45,24 @@ open Std
 
 namespace NaiveBayes
 
+/-- Inputs for which the fitted count tables do not define the requested posterior. -/
+inductive Error where
+  /-- Fitting needs at least one labeled example. Feature bags themselves may be empty. -/
+  | emptyTrainingData
+  /-- A manually constructed model has no class labels. -/
+  | noLabels
+  /-- Evaluation requested a class outside the fitted label support. -/
+  | unknownLabel (label : String)
+  /-- Inference supplied a token outside the fitted vocabulary. -/
+  | unknownFeature (feature : String)
+  deriving Repr, BEq
+
 -- A training example is a bag of features (multiset) and a label
 /-- One training example: a bag-of-words feature multiset and a class label. -/
 structure Example where
-  /-- features. -/
+  /-- The feature tokens of the example; duplicates are kept so it acts as a multiset. -/
   features : Array String  -- multiset-like: allows duplicates
-  /-- Label. -/
+  /-- The class label of the example. -/
   label : String
 deriving Repr
 
@@ -96,30 +112,35 @@ This stores raw counts plus a little derived bookkeeping (`labels`, `vocab`, `to
 Scoring functions turn these counts into Laplace-smoothed log probabilities on demand.
 -/
 structure Model where
-  /-- label Counts. -/
+  /-- Number of training examples seen for each label. -/
   labelCounts : HashMap String Nat
-  /-- feature Counts. -/
+  /-- For each label, the number of occurrences of each feature token. -/
   featureCounts : HashMap String (HashMap String Nat)
-  /-- total Counts. -/
+  /-- For each label, the total number of feature tokens across its examples. -/
   totalCounts : HashMap String Nat
-  /-- labels. -/
+  /-- The distinct labels seen during fitting. -/
   labels : Array String
-  /-- vocab. -/
+  /-- The distinct feature tokens seen during fitting. -/
   vocab : Array String
-  /-- total Examples. -/
+  /-- The total number of training examples. -/
   totalExamples : Nat
 
-/-- Fit a naive Bayes model by collecting counts from the dataset. -/
-def fit (data : Array Example) : Model :=
+/-- Collect counts from a nonempty training set.
+
+An empty bag of words is legal: its prediction depends only on the class priors. An empty
+training set is different, since it supplies no classes and therefore defines no posterior.
+-/
+def fit (data : Array Example) : Except Error Model :=
+  if data.isEmpty then .error .emptyTrainingData else
   let labelCounts := countLabels data
   let featureCounts := countFeaturesPerLabel data
   let totalCounts := totalFeatureCounts featureCounts
   let labels := labelCounts.keysArray
   let vocab := distinctFeatures data
-  { labelCounts, featureCounts, totalCounts, labels, vocab, totalExamples := data.size }
+  .ok { labelCounts, featureCounts, totalCounts, labels, vocab, totalExamples := data.size }
 
 /-- Vocabulary size (number of distinct features). -/
-private def vocabSize (m : Model) : Nat := m.vocab.size
+private def vocabularySize (m : Model) : Nat := m.vocab.size
 /-- Number of distinct labels. -/
 private def nLabels (m : Model) : Nat := m.labels.size
 
@@ -129,41 +150,77 @@ private def nLabels (m : Model) : Nat := m.labels.size
 We use the standard multinomial NB scoring rule (with Laplace smoothing):
 
 - prior: `(count(label)+1) / (N + nLabels)`
-- conditional: `(count(feature,label)+1) / (totalFeatures(label) + vocabSize)`
+- conditional: `(count(feature,label)+1) / (totalFeatures(label) + vocabularySize)`
 
 Scores are in log space. For prediction we only need relative ordering.
 -/
 
 /-- Log prior probability `log P(lbl)` with Laplace smoothing. -/
-private def logPrior {α : Type} [Context α] (m : Model) (lbl : String) : α :=
+private def logPrior {α : Type} [TorchLean.Storage α] [Context α] (m : Model) (lbl : String) : α :=
   MathFunctions.log (((m.labelCounts.getD lbl 0 + 1) : α) /
     ((m.totalExamples + nLabels m) : α))
 
 /-- Log conditional probability `log P(f | lbl)` with Laplace smoothing. -/
-private def logCond {α : Type} [Context α] (m : Model) (lbl : String) (f : String) : α :=
+private def logCond {α : Type} [TorchLean.Storage α] [Context α] (m : Model) (lbl : String)
+    (f : String) : α :=
   let countF := m.featureCounts.getD lbl {} |>.getD f 0
   let totalF := m.totalCounts.getD lbl 0
-  MathFunctions.log (((countF + 1) : α) / ((totalF + vocabSize m) : α))
+  MathFunctions.log (((countF + 1) : α) / ((totalF + vocabularySize m) : α))
 
 /-- Unnormalized log score `log P(lbl) + Σ log P(f|lbl)` for a bag of features. -/
-def score {α : Type} [Context α] (m : Model) (input : Array String) (lbl : String) : α :=
+private def scoreUnchecked {α : Type} [TorchLean.Storage α] [Context α]
+    (m : Model) (input : Array String)
+    (lbl : String) : α :=
   let prior := logPrior (α := α) m lbl
-  let cond := input.foldl (fun acc f => acc + logCond (α := α) m lbl f) 0
+  -- A repeated word contributes its count times the same log probability. Count first,
+  -- then add that contribution once, so a long document does not accumulate one rounding
+  -- error for every occurrence. Distinct words retain their first-occurrence order.
+  let counts : HashMap String Nat := input.foldl (fun acc f =>
+    acc.insert f (acc.getD f 0 + 1)) {}
+  let (_, cond) := input.foldl (fun (seen, sum) f =>
+    if seen.contains f then (seen, sum)
+    else (seen.insert f (), sum + (counts.getD f 0 : α) * logCond (α := α) m lbl f))
+    (({} : HashMap String Unit), (0 : α))
   prior + cond
 
-/-- Predict a label using a trained Naive Bayes model. -/
-def predictModel
+private def predictUnchecked
   (m : Model)
   (input : Array String)
-  (α : Type) [Context α] : String :=
+  (α : Type) [TorchLean.Storage α] [Context α] : String :=
   match m.labels[0]? with
   | none => ""
   | some lbl0 =>
-      let initScore := score (α := α) m input lbl0
+      let initScore := scoreUnchecked (α := α) m input lbl0
       m.labels.foldl (fun (bestLbl, bestScore) lbl =>
-        let sc := score (α := α) m input lbl
+        let sc := scoreUnchecked (α := α) m input lbl
         if Context.gtBool sc bestScore then (lbl, sc) else (bestLbl, bestScore)
       ) (lbl0, initScore) |>.fst
+
+/-- Check the fixed vocabulary before converting counts into probabilities.
+
+Unknown tokens are rejected explicitly. They cannot be assigned a smoothed probability while
+leaving the vocabulary size unchanged, since that would use a different event space.
+-/
+private def validateInput (m : Model) (input : Array String) : Except Error Unit := do
+  if m.labels.isEmpty then throw .noLabels
+  for feature in input do
+    unless m.vocab.contains feature do throw (.unknownFeature feature)
+
+/-- Compute a log score for a fitted class and a bag of known feature tokens. -/
+def score {α : Type} [TorchLean.Storage α] [Context α]
+    (m : Model) (input : Array String) (label : String) : Except Error α := do
+  validateInput m input
+  unless m.labels.contains label do throw (.unknownLabel label)
+  return scoreUnchecked m input label
+
+/-- Predict a fitted label, reporting an unfitted model or an unknown token explicitly.
+
+The empty string remains a valid class label; it is never used to signal failure.
+-/
+def predict (m : Model) (input : Array String)
+    (α : Type) [TorchLean.Storage α] [Context α] : Except Error String := do
+  validateInput m input
+  return predictUnchecked m input α
 
 /-!
 ## Training objective (negative log-likelihood)
@@ -184,7 +241,7 @@ private def arraySum {α : Type} [Add α] [Zero α] (xs : Array α) : α :=
   xs.foldl (fun acc x => acc + x) 0
 
 /-- Numerically stable `log (sum_i exp xs[i])`. -/
-private def logSumExp {α : Type} [Context α] (xs : Array α) : α :=
+private def logSumExp {α : Type} [TorchLean.Storage α] [Context α] (xs : Array α) : α :=
   -- Numerically-stable log-sum-exp:
   --   log Σ exp(x_i) = m + log Σ exp(x_i - m), where m = max_i x_i.
   match xs[0]? with
@@ -195,16 +252,25 @@ private def logSumExp {α : Type} [Context α] (xs : Array α) : α :=
       let s := arraySum (xs.map (fun x => MathFunctions.exp (x - m)))
       m + MathFunctions.log s
 
-/-- Negative log-likelihood of the dataset under the trained Naive Bayes model. -/
-def negLogLikelihood {α : Type} [Context α] (m : Model) (data : Array Example) : α :=
-  data.foldl (fun acc ex =>
-    if m.labels.isEmpty then
-      acc
-    else
-      let logits := m.labels.map (fun lbl => score (α := α) m ex.features lbl)
-      let logZ := logSumExp (α := α) logits
-      let trueLogit := score (α := α) m ex.features ex.label
-      acc + (logZ - trueLogit)
-  ) 0
+/-- Negative log-likelihood over fitted classes and known feature tokens.
+
+Every target label belongs to the same class support used in the normalization. Unknown
+targets are rejected, rather than producing a value that can be negative. Empty evaluation
+data has loss zero for a model with at least one fitted class.
+-/
+def negLogLikelihood {α : Type} [TorchLean.Storage α] [Context α] (m : Model)
+    (data : Array Example) : Except Error α := do
+  if m.labels.isEmpty then throw .noLabels
+  let mut loss := 0
+  for ex in data do
+    validateInput m ex.features
+    unless m.labels.contains ex.label do throw (.unknownLabel ex.label)
+    let logits := m.labels.map (fun lbl => scoreUnchecked (α := α) m ex.features lbl)
+    let trueLogit := scoreUnchecked (α := α) m ex.features ex.label
+    -- Normalize relative to the true class before log-sum-exp. Adding a large common
+    -- document score and subtracting it again would erase a small posterior loss.
+    let relativeLogits := logits.map (fun logit => logit - trueLogit)
+    loss := loss + logSumExp (α := α) relativeLogits
+  return loss
 
 end NaiveBayes

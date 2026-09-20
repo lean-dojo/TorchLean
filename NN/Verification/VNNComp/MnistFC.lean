@@ -6,12 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.CLI
-public import NN.MLTheory.CROWN.Graph
 public import NN.Runtime.PyTorch.Import.Core
-public import NN.Verification.Util.Json
-public import NN.Verification.Util.Tensor
 public import NN.Verification.VNNComp.Spec
+public import NN.API.CLI.Parser
+public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Run
 
 /-!
 # VNN-COMP MNIST-FC Checker
@@ -35,7 +33,7 @@ Run (Lean):
 namespace NN.Verification.VNNComp.MnistFC
 
 open Lean
-open _root_.Spec
+open _root_.Spec _root_.TorchLean
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph
 open NN.Verification.Json
@@ -89,7 +87,7 @@ Command-line options for the MNIST-FC VNN-COMP mini-suite verifier.
 
 The defaults point at ignored local artifact paths under `_external/vnncomp/mnist_fc/`.
 -/
-structure MnistFCOpts where
+structure Options where
   /-- Path to exported weights (`model_weights.json`). -/
   weights : String := defaultWeightsPath
   /-- Path to exported instance suite (`suite.json`). -/
@@ -125,21 +123,29 @@ def usage : String :=
     "--weights=... and --suite=... explicitly if you store them elsewhere."
   ]
 
-/-- Parse CLI flags into `MnistFCOpts`. -/
-def parseArgs (args : List String) : Except String MnistFCOpts := do
+/-- Parse CLI flags into `Options`. -/
+def parseArgs (args : List String) : Except String Options := do
   let args := TorchLean.CLI.dropDashDash args
   if TorchLean.CLI.hasHelp args then
     throw usage
-  let (weights, args) ← TorchLean.CLI.takeFlagValueDefault args "weights" defaultWeightsPath
-  let (suite, args) ← TorchLean.CLI.takeFlagValueDefault args "suite" defaultSuitePath
-  let (max, args) ← TorchLean.CLI.takeNatFlagDefault args "max" 30
-  let (mode, args) ← TorchLean.CLI.takeParsedFlagDefault args "mode" "ibp" Mode.parse
-  let (alphas, args) ← TorchLean.CLI.takeFlagValueDefault args "alphas" ""
+  let (weights, args) ← TorchLean.CLI.takeFlagValue args "weights" (default := defaultWeightsPath)
+  let (suite, args) ← TorchLean.CLI.takeFlagValue args "suite" (default := defaultSuitePath)
+  let (max, args) ← TorchLean.CLI.takeNatFlag args "max" (default := 30)
+  let (mode, args) ← TorchLean.CLI.takeParsedFlag args "mode" (default := "ibp") Mode.parse
+  let (alphas, args) ← TorchLean.CLI.takeFlagValue args "alphas" (default := "")
   TorchLean.CLI.checkNoArgs args
   pure { weights := weights, suite := suite, max := max, mode := mode, alphas := alphas }
 
-/-- Fail early with a helpful message when an external artifact is missing. -/
-def requireFile (label path : String) : IO Unit := do
+/--
+Fail early with a helpful message when an external artifact is missing.
+
+Why not `Data.requireFile`? Two reasons, and both are worth writing down because this looks like a
+copy. First, the policies differ: this one always appends the full `usage` text, because a missing
+VNN-COMP snapshot is almost always a "you have not exported the artifacts yet" mistake rather than a
+typo. Second, `Data.requireFile` lives in `NN.API.Data.Sources`, and importing that here would put
+the CSV/`.npy` loader stack on this checker's import path for the sake of four lines.
+-/
+def requireArtifact (label path : String) : IO Unit := do
   unless (← (path : System.FilePath).pathExists) do
     throw <| IO.userError
       s!"missing {label}: {path}\n\n{usage}"
@@ -155,9 +161,9 @@ structure LayerWB where
   /-- Output dimension for this layer. -/
   outDim : Nat
   /-- Weight matrix, shape `(outDim × inDim)`. -/
-  w : _root_.Spec.Tensor Float [outDim, inDim]
+  w : _root_.TorchLean.Tensor Float [outDim, inDim]
   /-- Bias vector, shape `(outDim)`. -/
-  b : _root_.Spec.Tensor Float [outDim]
+  b : _root_.TorchLean.Tensor Float [outDim]
 
 /-- State-dict keys for the `i`-th linear layer exported by the Python script. -/
 def keysForLayer (i : Nat) : (String × String) :=
@@ -248,9 +254,9 @@ def loadAlphas (path : String) : IO (Array AlphaEntry) := do
   let instArr ← expectFieldArray top "instances" "top-level"
   let mut out : Array AlphaEntry := #[]
   for ex in instArr do
-    let exo ← expectObj ex "alpha instance"
+    let exo ← expectObject ex "alpha instance"
     let id ← expectFieldNat exo "id" "alpha instance"
-    let alphaObj ← expectFieldObj exo "alpha" "alpha instance"
+    let alphaObj ← expectFieldObject exo "alpha" "alpha instance"
     let a2J ← expectField alphaObj "2" "alpha"
     let a4J ← expectField alphaObj "4" "alpha"
     let a2 ← NN.Verification.Json.expectFiniteFloatMatrix a2J "alpha.2"
@@ -312,24 +318,24 @@ def buildGraphAndParams (layers : Array LayerWB) : IO (Graph × ParamStore Float
   pure (g, ps, inDim, outDim, outId)
 
 /-- Compute an output interval box using IBP (fast, loose). -/
-def outputBoxIBP (g : Graph) (ps : ParamStore Float) (outId : Nat) : IO (Array Float × Array Float)
+def outputBoxIBP (g : Graph) (ps : ParamStore Float) (outId : Nat) : IO (FlatBox Float)
   := do
   let ibp := runIBP (α := Float) g ps
   let outB ←
     match NN.MLTheory.CROWN.Graph.outputBox? ibp outId with
     | .ok outB => pure outB
     | .error msg => throw <| IO.userError s!"IBP produced no output box: {msg}"
-  pure <| NN.Verification.Util.Tensor.flatBoxBoundsToArrays outB
+  pure outB
 
 /-- Compute an output interval box by running forward CROWN and evaluating the affine bounds on the
   input box. -/
 def outputBoxCROWN (g : Graph) (ps : ParamStore Float) (xB : FlatBox Float)
-    (inId outId inDim : Nat) : IO (Array Float × Array Float) := do
+    (inId outId inDim : Nat) : IO (FlatBox Float) := do
   let outB ←
     match NN.MLTheory.CROWN.Graph.outputBoxCROWN? g ps xB inId outId inDim with
     | .ok outB => pure outB
     | .error msg => throw <| IO.userError msg
-  pure <| NN.Verification.Util.Tensor.flatBoxBoundsToArrays outB
+  pure outB
 
 /--
 Compute per-node interval boxes to be used by the backward objective pass.
@@ -400,10 +406,8 @@ strictly greater than `rhs`, then the constraint `rowᵀ y <= rhs` cannot hold.
 def refutesRowByCROWNObjective
     (g : Graph) (ps : ParamStore Float) (xB : FlatBox Float)
     (ibp : Array (Option (FlatBox Float))) (ctx : AffineCtx)
-    (outId _inDim outDim : Nat) (row : Array Float) (rhs : Float) : IO Bool := do
-  let some rowT := NN.Verification.Util.Tensor.vecOfArray outDim row
-    | throw <| IO.userError "spec row dim mismatch"
-  let obj : FlatTensor Float := { n := outDim, v := rowT }
+    (outId _inDim outDim : Nat) (row : Tensor Float [outDim]) (rhs : Float) : IO Bool := do
+  let obj : FlatTensor Float := { n := outDim, v := row }
   let outB ←
     match backwardObjectiveBox? (α := Float) g ps ctx ibp xB outId obj with
     | .ok outB => pure outB
@@ -420,11 +424,9 @@ reference implementation.
 def refutesRowByCROWNObjectiveWithReluAlpha
     (g : Graph) (ps : ParamStore Float) (xB : FlatBox Float)
     (ibp : Array (Option (FlatBox Float))) (inId outId inDim outDim : Nat)
-    (row : Array Float) (rhs : Float)
+    (row : Tensor Float [outDim]) (rhs : Float)
     (reluAlpha : Array (Option (FlatTensor Float))) : IO Bool := do
-  let some rowT := NN.Verification.Util.Tensor.vecOfArray outDim row
-    | throw <| IO.userError "spec row dim mismatch"
-  let obj : FlatTensor Float := { n := outDim, v := rowT }
+  let obj : FlatTensor Float := { n := outDim, v := row }
   let ctx : AffineCtx := { inputId := inId, inputDim := inDim }
   let some loAff := runCROWNBackwardObjectiveLowerWithReluAlpha (α := Float) g ps ctx ibp outId obj
     reluAlpha
@@ -448,18 +450,11 @@ def vnnlibRefutedByCROWNObjectives
   let ibp ← boxesForObjective g ps xB inId inDim
   let ctx : AffineCtx := { inputId := inId, inputDim := inDim }
   for term in spec do
-    let mat := term.fst
-    let rhs := term.snd
-    if hRhs : rhs.size = mat.size then
+    if hCols : term.cols = outDim then
       let mut termRefuted := false
-      for i in List.finRange mat.size do
-        let row := mat[i.val]'i.isLt
-        if row.size != outDim then
-          return false
-        let h : i.val < rhs.size := by
-          rw [hRhs]
-          exact i.isLt
-        let rhsVal := rhs[i.val]'h
+      for i in List.finRange term.rows do
+        let row : Tensor Float [outDim] := hCols ▸ term.mat.unstack i
+        let rhsVal := term.rhs.getScalar i
         let ok ← refutesRowByCROWNObjective g ps xB ibp ctx outId inDim outDim row rhsVal
         if ok then
           termRefuted := true
@@ -484,9 +479,7 @@ def vnnlibRefutedByCROWNObjectivesAlpha
   let ibp ← boxesForObjective g ps xB inId inDim
   for termIdx in List.finRange spec.size do
     let term := spec[termIdx.val]'termIdx.isLt
-    let mat := term.fst
-    let rhs := term.snd
-    if hRhs : rhs.size = mat.size then
+    if hCols : term.cols = outDim then
     -- Build per-node α vector for this disjunct term (objective index = termIdx).
       let a2Row? := alphas.alpha2[termIdx.val]?
       let a4Row? := alphas.alpha4[termIdx.val]?
@@ -509,14 +502,9 @@ def vnnlibRefutedByCROWNObjectivesAlpha
         throw <| IO.userError s!"Missing alphas for instance {alphas.id} termIdx={termIdx.val}"
 
       let mut termRefuted := false
-      for i in List.finRange mat.size do
-        let row := mat[i.val]'i.isLt
-        if row.size != outDim then
-          return false
-        let h : i.val < rhs.size := by
-          rw [hRhs]
-          exact i.isLt
-        let rhsVal := rhs[i.val]'h
+      for i in List.finRange term.rows do
+        let row : Tensor Float [outDim] := hCols ▸ term.mat.unstack i
+        let rhsVal := term.rhs.getScalar i
         let ok ← refutesRowByCROWNObjectiveWithReluAlpha g ps xB ibp inId outId inDim outDim row
           rhsVal reluAlpha
         if ok then
@@ -541,45 +529,41 @@ def main (args : List String) : IO Unit := do
   if TorchLean.CLI.hasHelp args then
     IO.println usage
     return
-  let opts ←
+  let options ←
     match parseArgs args with
     | .ok o => pure o
     | .error msg => throw <| IO.userError msg
-  requireFile "weights JSON" opts.weights
-  requireFile "suite JSON" opts.suite
-  if opts.mode = .crownObjAlpha then
-    if opts.alphas.isEmpty then
+  requireArtifact "weights JSON" options.weights
+  requireArtifact "suite JSON" options.suite
+  if options.mode = .crownObjAlpha then
+    if options.alphas.isEmpty then
       throw <| IO.userError "--alphas is required for --mode=crownobj-alpha"
-    requireFile "alpha-slope JSON" opts.alphas
+    requireArtifact "alpha-slope JSON" options.alphas
   IO.println "== TorchLean VNN-COMP mini-suite: MNIST-FC (vnncomp2022) =="
-  let layers ← loadWeights opts.weights
-  let instances0 ← NN.Verification.VNNComp.VNNLib.loadSuite opts.suite
-  let instances := instances0.take opts.max
+  let layers ← loadWeights options.weights
+  let instances0 ← NN.Verification.VNNComp.VNNLib.loadSuite options.suite
+  let instances := instances0.take options.max
   let alphaDB? ←
-    if opts.mode = .crownObjAlpha then
-      pure (some (← loadAlphas opts.alphas))
+    if options.mode = .crownObjAlpha then
+      pure (some (← loadAlphas options.alphas))
     else
       pure none
   let (g, baseParams, inDim, outDim, outId) ← buildGraphAndParams layers
   let inId := 0
   IO.println s!"[mnist_fc] layers={layers.size} nodes={g.nodes.size} inDim={inDim} outDim={outDim}"
-  IO.println s!"[mnist_fc] instances={instances.size} mode={opts.mode}"
+  IO.println s!"[mnist_fc] instances={instances.size} mode={options.mode}"
 
   let mut numericallyRefuted : Nat := 0
   let mut unknown : Nat := 0
   for inst in instances do
-    if inst.inputLo.size != inDim || inst.inputHi.size != inDim then
+    if inst.input.dim != inDim then
       throw <| IO.userError s!"Instance {inst.id}: input dim mismatch"
-    let some loT := NN.Verification.Util.Tensor.vecOfArray inDim inst.inputLo
-      | throw <| IO.userError s!"Instance {inst.id}: bad input_lo"
-    let some hiT := NN.Verification.Util.Tensor.vecOfArray inDim inst.inputHi
-      | throw <| IO.userError s!"Instance {inst.id}: bad input_hi"
-    let xB : FlatBox Float := { dim := inDim, lo := loT, hi := hiT }
+    let xB := inst.input
     let ps : ParamStore Float := baseParams.seedInputBox inId xB
     let isRefuted ←
-      if opts.mode = .crownObj then
+      if options.mode = .crownObj then
         vnnlibRefutedByCROWNObjectives g ps xB inId outId inDim outDim inst.spec
-      else if opts.mode = .crownObjAlpha then
+      else if options.mode = .crownObjAlpha then
         let some alphaDB := alphaDB?
           | throw <| IO.userError "internal: alphaDB missing"
         let entry? : Option AlphaEntry :=
@@ -596,12 +580,12 @@ def main (args : List String) : IO Unit := do
         vnnlibRefutedByCROWNObjectivesAlpha g ps xB inId outId inDim outDim inst.spec entry hid1
           hid2
       else
-        let (yLo, yHi) ←
-          if opts.mode = .crown then
+        let box ←
+          if options.mode = .crown then
             outputBoxCROWN g ps xB inId outId inDim
           else
             outputBoxIBP g ps outId
-        pure (NN.Verification.VNNComp.VNNLib.refutedByOutputBox yLo yHi inst.spec)
+        pure (NN.Verification.VNNComp.VNNLib.refutedByOutputBox box inst.spec)
     if isRefuted then
       numericallyRefuted := numericallyRefuted + 1
     else
@@ -609,6 +593,6 @@ def main (args : List String) : IO Unit := do
 
   IO.println <|
     (s!"[mnist_fc] numerically_refuted={numericallyRefuted} unknown={unknown} " ++
-      s!"(mode={opts.mode}; outward-rounded host Float; not a Lean safety theorem)")
+      s!"(mode={options.mode}; outward-rounded host Float; not a Lean safety theorem)")
 
 end NN.Verification.VNNComp.MnistFC

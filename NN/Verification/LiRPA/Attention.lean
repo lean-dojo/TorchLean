@@ -38,24 +38,28 @@ namespace NN.Verification.LiRPA.Attention
 
 open NN.MLTheory.CROWN.Graph
 open NN.MLTheory.CROWN
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /-- Small fixed graph with one `softmax` node, used to exercise certificate checking. -/
 def buildGraph : Graph :=
-  let inputNode : Node := { id := 0, parents := #[], kind := .input, outShape := .dim 4 .scalar }
-  let scoreNode : Node := { id := 1, parents := #[0], kind := .matmul, outShape := .dim 5 .scalar }
+  let inputNode : Node := { id := 0, parents := #[], kind := .input, outShape := [4] }
+  let scoreNode : Node := { id := 1, parents := #[0], kind := .matmul, outShape := [5] }
   let softmaxNode : Node :=
-    { id := 2, parents := #[1], kind := .softmax (axis := 0), outShape := .dim 5 .scalar }
-  let valueProjectionNode : Node := { id := 3, parents := #[2], kind := .matmul, outShape := .dim 3 .scalar }
+    { id := 2, parents := #[1], kind := .softmax (axis := 0), outShape := [5] }
+  let valueProjectionNode : Node := { id := 3, parents := #[2], kind := .matmul, outShape := [3] }
   { nodes := #[inputNode, scoreNode, softmaxNode, valueProjectionNode] }
 
 /-- Seed deterministic weights for the two matmul nodes in `buildGraph`. -/
 def seedParamsFloat : ParamStore Float :=
   let scoreWeight : Tensor Float [5, 4] :=
-    Tensor.dim (fun i => Tensor.dim (fun j => Tensor.scalar (Float.ofNat (1 + (i.val + 2*j.val)))))
+    Tensor.generate [5, 4] fun
+      | [i, j] => Float.ofNat (1 + i + 2 * j)
+      | _ => 0.0
   let valueWeight : Tensor Float [3, 5] :=
-    Tensor.dim (fun i => Tensor.dim (fun j => Tensor.scalar (Float.ofNat (2 + (i.val + j.val)))))
+    Tensor.generate [3, 5] fun
+      | [i, j] => Float.ofNat (2 + i + j)
+      | _ => 0.0
   let emptyStore : ParamStore Float := {}
   let withScoreWeight :=
     { emptyStore with
@@ -65,10 +69,6 @@ def seedParamsFloat : ParamStore Float :=
       matmulW := withScoreWeight.matmulW.insert 3 ({ m := 3, n := 5, w := valueWeight }) }
   withValueWeight
 
-/-- Insert an $L^\infty$ input box of radius `eps` around a fixed center point. -/
-def seedInputFloat (ps : ParamStore Float) (eps : Float) : ParamStore Float :=
-  NN.Verification.LiRPA.ExampleInputs.seedNaturalInputBox 0 4 eps ps
-
 /--
 Check an IBP certificate JSON against this attention graph.
 
@@ -76,7 +76,9 @@ This is wired into `lake exe verify -- lirpa-attention [path]`.
 -/
 def verifyCert (path : String) : IO Unit := do
   let g := buildGraph
-  let ps := seedInputFloat (seedParamsFloat) (eps := (0.5))
+  -- Every input coordinate gets the box $[x_i - \varepsilon, x_i + \varepsilon]$; the
+  -- graph has 4 inputs, ids `0 .. 3`.
+  let ps := ExampleInputs.seedNaturalInputBox 0 4 0.5 seedParamsFloat
   NN.Verification.IBPCert.checkOrThrow g ps (outId := 3) path
 
 end NN.Verification.LiRPA.Attention

@@ -10,10 +10,11 @@ public import NN.MLTheory.LearningTheory.Stability.RidgeRegression1D.IEEE32Exec.
 public import NN.MLTheory.LearningTheory.Stability.RidgeRegression1D.IEEE32Exec.ExampleDataset
 
 /-!
-# 1D ridge regression under `IEEE32Exec` (option A bridge)
+# 1D ridge regression under `ExecFloat.Binary 8 23` (option A bridge)
 
 This module provides an *executable* 1D ridge-regression implementation using the bit-level
-IEEE-754 binary32 kernel `IEEE32Exec`, and a refinement statement to the proof-level `FP32`
+IEEE-754 binary32 kernel `ExecFloat.Binary 8 23`, and a refinement statement to the proof-level
+`FP32`
 rounding model.
 
 Implementation details live in:
@@ -26,8 +27,9 @@ This is the “Option A” bridge:
 
 1. Prove the learning-theory theorem over `ℝ` (see
   `NN.MLTheory.LearningTheory.Stability.RidgeRegression1D`).
-2. Provide an executable `IEEE32Exec` implementation.
-3. Connect `IEEE32Exec` execution to a proof-level float32 rounding semantics (`FP32`) via a bridge.
+2. Provide an executable `ExecFloat.Binary 8 23` implementation.
+3. Connect `ExecFloat.Binary 8 23` execution to a proof-level float32 rounding semantics (`FP32`)
+via a bridge.
 
 ## Scope of this bridge
 
@@ -35,7 +37,7 @@ This file proves the executable-to-rounding-semantics bridge. A full floating-po
 theorem additionally needs hypotheses and a numerical analysis layer bounding the gap between:
 
 - the real-valued ridge solution `ŵ : ℝ`, and
-- the computed float32 value produced by `IEEE32Exec`.
+- the computed float32 value produced by `ExecFloat.Binary 8 23`.
 
 Instead, this file establishes the first correctness link in that pipeline:
 
@@ -45,6 +47,9 @@ Instead, this file establishes the first correctness link in that pipeline:
 The bridge lemma is local: it shows that `toReal` of the executable IEEE run agrees with the
 `FP32`-style “round-after-each-primitive” semantics, under an explicit finiteness assumption
 (`FiniteEval`) ruling out NaN/Inf and division-by-zero.
+It applies specifically to `RidgeIEEEBridge.ridgeFit1DExecExpr`. The separately defined
+fold-based `ridgeFit1DExec` has the same intended arithmetic order, but this file does not prove
+an equality between those two implementations.
 
 ## Why this file exists
 
@@ -58,7 +63,7 @@ algorithm in finite precision. This file is the first piece of the numerics brid
 
 This file reuses the stability dataset type from `Stability.Core`:
 
-`Dataset N Z := Spec.Tensor Z [N]`
+`Dataset N Z := TorchLean.Tensor Z [N]`
 
 so our executable ridge regression runs on the same tensor-based dataset representation as the rest
 of the learning-theory layer.

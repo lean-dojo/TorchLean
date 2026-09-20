@@ -7,14 +7,13 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Seeded
-public import NN.Tensor
 
 /-!
 # Generative Models
 
 Config-style constructors for runnable generative examples.
 
-These models act on a trailing feature axis and preserve any leading dimensions. Examples may
+These models act on a trailing feature axis and preserve the caller's `batchShape`. Examples may
 flatten structured observations before applying them, while convolutional or operator-based
 models can use their own shape-specific constructors.
 -/
@@ -24,117 +23,126 @@ models can use their own shape-specific constructors.
 namespace TorchLean
 
 
-open Spec Tensor
+open Spec TorchLean TorchLean.Tensor
 
 namespace nn
 namespace models
 
-namespace DenseGenerative
+namespace Generative
 
 /-- Widths shared by dense generative models. -/
 structure Config where
   /-- Width of the data feature axis. -/
-  dataDim : Nat
+  dataWidth : Nat
   /-- Width of the hidden layers. -/
-  hiddenDim : Nat
+  hiddenWidth : Nat
   /-- Width of the latent representation. -/
-  latentDim : Nat
+  latentWidth : Nat
 deriving Repr
 
-/-- Data shape with arbitrary leading dimensions. -/
-abbrev Config.dataShape (cfg : Config)
-    (leading : List Nat := []) : List Nat :=
-  leading ++ [cfg.dataDim]
+namespace Internal
 
-/-- Latent shape with arbitrary leading dimensions. -/
-abbrev Config.latentShape (cfg : Config)
-    (leading : List Nat := []) : List Nat :=
-  leading ++ [cfg.latentDim]
+/-- Validate shared dense-model widths while naming the public constructor being built. -/
+def validateConfig (kind : String) (config : Config) : Except String Unit := do
+  if config.dataWidth = 0 then
+    throw s!"{kind}: data width must be positive"
+  if config.hiddenWidth = 0 then
+    throw s!"{kind}: hidden width must be positive"
+  if config.latentWidth = 0 then
+    throw s!"{kind}: latent width must be positive"
+
+end Internal
+
+namespace Config
+
+/-- Validate every feature width before constructing or seeding a generative model. -/
+def validate (config : Config) : Except String Unit :=
+  Internal.validateConfig "Generative" config
+
+end Config
+
+/-- Data tensor shape with an arbitrary batch shape. -/
+abbrev Config.data (config : Config)
+    (batchShape : Shape := []) : Shape :=
+  batchShape.appendDim config.dataWidth
+
+/-- Latent tensor shape with an arbitrary batch shape. -/
+abbrev Config.latent (config : Config)
+    (batchShape : Shape := []) : Shape :=
+  batchShape.appendDim config.latentWidth
+
+/-- Scalar-score tensor shape with an arbitrary batch shape. -/
+abbrev Config.score (_config : Config)
+    (batchShape : Shape := []) : Shape :=
+  batchShape.appendDim 1
 
 /--
-Output shape for supervised reconstruction with two auxiliary latent-statistic vectors.
+Autoencoder backbone: `x -> hidden -> latent -> hidden -> reconstruction`.
 
-Rows contain a reconstruction of length `dataDim`, followed by two vectors of length `latentDim`.
-The constructor does not prescribe probabilistic semantics for those auxiliary values.
+The reconstruction is unconstrained. Append an output activation such as `nn.sigmoid` when the
+data domain requires one.
 -/
-abbrev Config.reconstructionStatisticsShape (cfg : Config)
-    (leading : List Nat := []) : List Nat :=
-  leading ++ [cfg.dataDim + 2 * cfg.latentDim]
+def autoencoder (config : Config) (batchShape : Shape := []) :
+    nn.Builder (nn.Sequential (config.data batchShape) (config.data batchShape)) :=
+  match Internal.validateConfig "Autoencoder" config with
+  | .error message =>
+      pure <| nn.Internal.invalidConfiguration
+        (config.data batchShape) (config.data batchShape) "Autoencoder" message
+  | .ok () =>
+      nn.Sequential![
+        linear config.dataWidth config.hiddenWidth (batchShape := batchShape),
+        relu,
+        linear config.hiddenWidth config.latentWidth (batchShape := batchShape),
+        relu,
+        linear config.latentWidth config.hiddenWidth (batchShape := batchShape),
+        relu,
+        linear config.hiddenWidth config.dataWidth (batchShape := batchShape)
+      ]
 
-/-- Scalar-score shape with arbitrary leading dimensions. -/
-abbrev Config.scoreShape (_cfg : Config)
-    (leading : List Nat := []) : List Nat :=
-  leading ++ [1]
+/--
+Generator backbone `z -> x`.
 
-/-- Autoencoder: `x -> hidden -> latent -> hidden -> reconstruction`. -/
-def autoencoder (cfg : Config) (leading : List Nat := []) :
-    nn.Builder (nn.Sequential (cfg.dataShape leading) (cfg.dataShape leading)) :=
-  nn.Sequential![
-    linear cfg.dataDim cfg.hiddenDim (leading := leading),
-    relu,
-    linear cfg.hiddenDim cfg.latentDim (leading := leading),
-    relu,
-    linear cfg.latentDim cfg.hiddenDim (leading := leading),
-    relu,
-    linear cfg.hiddenDim cfg.dataDim (leading := leading),
-    nn.sigmoid
-  ]
+The generated values are unconstrained. Choose an output activation at the call site to match the
+training data and objective.
+-/
+def generator (config : Config) (batchShape : Shape := []) :
+    nn.Builder (nn.Sequential (config.latent batchShape) (config.data batchShape)) :=
+  match Internal.validateConfig "Generator" config with
+  | .error message =>
+      pure <| nn.Internal.invalidConfiguration
+        (config.latent batchShape) (config.data batchShape) "Generator" message
+  | .ok () =>
+      nn.Sequential![
+        linear config.latentWidth config.hiddenWidth (batchShape := batchShape),
+        relu,
+        linear config.hiddenWidth config.hiddenWidth (batchShape := batchShape),
+        relu,
+        linear config.hiddenWidth config.dataWidth (batchShape := batchShape)
+      ]
 
-/-- Supervised bottleneck network producing a reconstruction and two auxiliary latent vectors. -/
-def reconstructionWithLatentStatistics (cfg : Config) (leading : List Nat := []) :
-    nn.Builder
-      (nn.Sequential (cfg.dataShape leading) (cfg.reconstructionStatisticsShape leading)) :=
-  nn.Sequential![
-    linear cfg.dataDim cfg.hiddenDim (leading := leading),
-    relu,
-    linear cfg.hiddenDim cfg.latentDim (leading := leading),
-    relu,
-    linear cfg.latentDim cfg.hiddenDim (leading := leading),
-    relu,
-    linear cfg.hiddenDim (cfg.dataDim + 2 * cfg.latentDim)
-      (leading := leading)
-  ]
+/--
+Discriminator `x -> logits`.
 
-/-- Autoencoder with a narrow continuous bottleneck bounded by `tanh`. -/
-def tanhBottleneckAutoencoder (cfg : Config) (leading : List Nat := []) :
-    nn.Builder (nn.Sequential (cfg.dataShape leading) (cfg.dataShape leading)) :=
-  nn.Sequential![
-    linear cfg.dataDim cfg.hiddenDim (leading := leading),
-    relu,
-    linear cfg.hiddenDim cfg.latentDim (leading := leading),
-    nn.tanh,
-    linear cfg.latentDim cfg.hiddenDim (leading := leading),
-    relu,
-    linear cfg.hiddenDim cfg.dataDim (leading := leading),
-    nn.sigmoid
-  ]
+Returning logits keeps the model compatible with numerically stable objectives such as
+`TorchLean.Loss.bceWithLogits`. Append `nn.sigmoid` only when probabilities are required.
+-/
+def discriminator (config : Config)
+    (batchShape : Shape := []) :
+    nn.Builder (nn.Sequential (config.data batchShape) (config.score batchShape)) :=
+  match Internal.validateConfig "Discriminator" config with
+  | .error message =>
+      pure <| nn.Internal.invalidConfiguration
+        (config.data batchShape) (config.score batchShape) "Discriminator" message
+  | .ok () =>
+      nn.Sequential![
+        linear config.dataWidth config.hiddenWidth (batchShape := batchShape),
+        relu,
+        linear config.hiddenWidth config.hiddenWidth (batchShape := batchShape),
+        relu,
+        linear config.hiddenWidth 1 (batchShape := batchShape)
+      ]
 
-/-- Generator `z -> x`. -/
-def ganGenerator (cfg : Config) (leading : List Nat := []) :
-    nn.Builder (nn.Sequential (cfg.latentShape leading) (cfg.dataShape leading)) :=
-  nn.Sequential![
-    linear cfg.latentDim cfg.hiddenDim (leading := leading),
-    relu,
-    linear cfg.hiddenDim cfg.hiddenDim (leading := leading),
-    relu,
-    linear cfg.hiddenDim cfg.dataDim (leading := leading),
-    nn.sigmoid
-  ]
-
-/-- Discriminator/critic `x -> score`. -/
-def ganDiscriminator (cfg : Config)
-    (leading : List Nat := []) :
-    nn.Builder (nn.Sequential (cfg.dataShape leading) (cfg.scoreShape leading)) :=
-  nn.Sequential![
-    linear cfg.dataDim cfg.hiddenDim (leading := leading),
-    relu,
-    linear cfg.hiddenDim cfg.hiddenDim (leading := leading),
-    relu,
-    linear cfg.hiddenDim 1 (leading := leading),
-    nn.sigmoid
-  ]
-
-end DenseGenerative
+end Generative
 end models
 end nn
 

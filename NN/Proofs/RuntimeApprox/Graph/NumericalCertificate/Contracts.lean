@@ -18,6 +18,10 @@ trace construction. Most users should import
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+
 namespace Proofs
 namespace RuntimeApprox
 namespace NumericalCertificate
@@ -25,7 +29,7 @@ namespace NumericalCertificate
 open NN
 open NN.Backend
 open NN.IR
-open Spec
+open Spec TorchLean
 open TorchLean.Floats.IEEE754
 
 /-! ## Canonical local transfer rules -/
@@ -74,7 +78,8 @@ instance : Repr CheckedNodeRange where
   reprPrec r _ := repr r.toNodeRange
 
 /-- Check a dynamic graph value against the declared shape and interval of one certificate row. -/
-def dvalWithinRange (range : CheckedNodeRange) (value : Spec.SomeTensor IEEE32Exec) : Bool :=
+def dvalWithinRange (range : CheckedNodeRange) (value : Spec.SomeTensor (ExecFloat.Binary 8 23)) :
+  Bool :=
   if h : value.shape = range.outShape then
     tensorWithinRange range.enclosure (h ▸ value.tensor)
   else
@@ -89,7 +94,7 @@ def SomeTensorEnclosed (range : CheckedNodeRange) (value : Spec.SomeTensor Real)
 /-- Pointwise approximation relation for real and IEEE dynamic graph values at one certificate
 row. -/
 def SomeTensorErrorLe (range : CheckedNodeRange) (exact : Spec.SomeTensor Real)
-    (computed : Spec.SomeTensor IEEE32Exec) : Prop :=
+    (computed : Spec.SomeTensor (ExecFloat.Binary 8 23)) : Prop :=
   ∃ hexact : exact.shape = range.outShape,
     ∃ hcomputed : computed.shape = range.outShape,
       TensorErrorLe (intervalWidth range.enclosure)
@@ -98,7 +103,7 @@ def SomeTensorErrorLe (range : CheckedNodeRange) (exact : Spec.SomeTensor Real)
 /-- One successful dynamic replay row yields a pointwise error bound whenever the corresponding
 real graph value has the proved enclosure. -/
 theorem dval_error_le_of_range_check {range : CheckedNodeRange}
-    {exact : Spec.SomeTensor Real} {computed : Spec.SomeTensor IEEE32Exec}
+    {exact : Spec.SomeTensor Real} {computed : Spec.SomeTensor (ExecFloat.Binary 8 23)}
     (hexact : SomeTensorEnclosed range exact)
     (hcomputed : dvalWithinRange range computed = true) :
     SomeTensorErrorLe range exact computed := by
@@ -112,7 +117,7 @@ theorem dval_error_le_of_range_check {range : CheckedNodeRange}
 
 /-- Check every value produced by `IR.Graph.denoteAll` against the corresponding certificate row. -/
 def executionWithinRanges (ranges : Array CheckedNodeRange)
-    (values : Array (Spec.SomeTensor IEEE32Exec)) : Bool :=
+    (values : Array (Spec.SomeTensor (ExecFloat.Binary 8 23))) : Bool :=
   decide (ranges.size = values.size) &&
     (Array.zipWith dvalWithinRange ranges values).all id
 
@@ -124,7 +129,7 @@ def ArraysRelated {α β : Type} (relation : α → β → Prop)
 
 /-- A successful replay check is exactly a size match plus a successful check at every node. -/
 theorem executionWithinRanges_eq_true_iff
-    (ranges : Array CheckedNodeRange) (values : Array (Spec.SomeTensor IEEE32Exec)) :
+    (ranges : Array CheckedNodeRange) (values : Array (Spec.SomeTensor (ExecFloat.Binary 8 23))) :
     executionWithinRanges ranges values = true ↔
       ArraysRelated (fun range value => dvalWithinRange range value = true) ranges values := by
   constructor
@@ -148,7 +153,7 @@ theorem executionWithinRanges_eq_true_iff
 /-- Graph-wide pointwise approximation evidence, one row per intermediate value. -/
 def ExecutionErrorTrace (ranges : Array CheckedNodeRange)
     (exact : Array (Spec.SomeTensor Real))
-    (computed : Array (Spec.SomeTensor IEEE32Exec)) : Prop :=
+    (computed : Array (Spec.SomeTensor (ExecFloat.Binary 8 23))) : Prop :=
   ranges.size = exact.size ∧ ranges.size = computed.size ∧
     ∀ (i : Nat) (hrange : i < ranges.size) (hexact : i < exact.size)
       (hcomputed : i < computed.size),
@@ -157,7 +162,7 @@ def ExecutionErrorTrace (ranges : Array CheckedNodeRange)
 /-- Compose real enclosure proofs and successful IEEE replay checks into an error trace. -/
 theorem execution_error_trace_of_check
     {ranges : Array CheckedNodeRange} {exact : Array (Spec.SomeTensor Real)}
-    {computed : Array (Spec.SomeTensor IEEE32Exec)}
+    {computed : Array (Spec.SomeTensor (ExecFloat.Binary 8 23))}
     (hexact : ArraysRelated SomeTensorEnclosed ranges exact)
     (hcomputed : executionWithinRanges ranges computed = true) :
     ExecutionErrorTrace ranges exact computed := by
@@ -196,12 +201,13 @@ point interval at positive zero matches `Tensor.sumSpec`. -/
 def sumLeftRange (count : Nat) (range : IEEE32Exec.Interval32) : IEEE32Exec.Interval32 :=
   (List.range count).foldl
     (fun acc _ => IEEE32Exec.Interval32.add acc range)
-    (IEEE32Exec.Interval32.point IEEE32Exec.posZero)
+    (IEEE32Exec.Interval32.point (ExecFloat.Binary.zero false : ExecFloat.Binary 8 23))
 
-/-- Left-fold mean range, using the same binary32 conversion of the divisor as the tensor context. -/
+/-- Left-fold mean range, using the same binary32 conversion of the divisor as the tensor
+context. -/
 def meanLeftRange (count : Nat) (range : IEEE32Exec.Interval32) : IEEE32Exec.Interval32 :=
   IEEE32Exec.Interval32.div (sumLeftRange count range)
-    (IEEE32Exec.Interval32.point (count : IEEE32Exec))
+    (IEEE32Exec.Interval32.point (count : ExecFloat.Binary 8 23))
 
 /-- Numerical policy selected for a runtime-relevant graph node. -/
 def nodeNumericalPolicy (plan : AcceptedGraphKernelPlan) (nodeId : Nat) : Option NumericalPolicy :=
@@ -210,16 +216,19 @@ def nodeNumericalPolicy (plan : AcceptedGraphKernelPlan) (nodeId : Nat) : Option
 
 /-- Reductions are propagated only when the selected capsule promises the same fixed left fold as
 the canonical tensor semantics. Other schedules need the order-independent reduction bound from
-`NN.Floats.IEEEExec.Reductions` and are rejected here rather than mislabeled as deterministic. -/
+`NN.Proofs.RuntimeApprox.Reductions.IEEE32` and are rejected here rather than mislabeled as
+deterministic. -/
 def requireFixedLeftReduction (plan : AcceptedGraphKernelPlan) (node : Node) : Except String Unit :=
   match nodeNumericalPolicy plan node.id with
   | some policy =>
       if policy.reduction = .fixedLeft then
         pure ()
       else
-        throw s!"numerical certificate: node {node.id} ({node.kind.describe}) uses reduction policy {repr policy.reduction}; fixedLeft is required by this transfer"
+        throw (s!"numerical certificate: node {node.id} ({node.kind.describe}) uses reduction " ++
+          s!"policy {repr policy.reduction}; fixedLeft is required by this transfer")
   | none =>
-      throw s!"numerical certificate: node {node.id} ({node.kind.describe}) has no backend numerical policy"
+      throw (s!"numerical certificate: node {node.id} ({node.kind.describe}) has no backend " ++
+        "numerical policy")
 
 /-- Inner accumulation length for the rank-2 and batched rank-3 matrix products implemented by
 `IR.Graph.denoteAll`. The graph shape checker has already validated matching dimensions; retaining
@@ -283,9 +292,12 @@ def numericalOpKey : OpKind -> NumericalOpKey
   | .detach => .structural
   | .sum => .wholeSum
   | .maxPool config =>
-      if config.padding.toList.any (fun padding => padding != 0) then .maxPoolPad else .maxPool
+      if (Tensor.to config.padding (List Nat)).any (fun padding => padding != 0) then
+        .maxPoolPad
+      else
+        .maxPool
   | .avgPool config =>
-      if config.padding.toList.any (fun padding => padding != 0) then
+      if (Tensor.to config.padding (List Nat)).any (fun padding => padding != 0) then
         .averagePoolPad
       else
         .averagePool
@@ -335,7 +347,8 @@ def register (registry : GraphRangeRegistry) (contract : GraphRangeContract) :
     Except String GraphRangeRegistry :=
   match registry.find? contract.key with
   | some previous =>
-      throw s!"numerical contract: duplicate key {repr contract.key} ({previous.name}, {contract.name})"
+      throw (s!"numerical contract: duplicate key {repr contract.key} " ++
+        s!"({previous.name}, {contract.name})")
   | none => pure { registry with contracts := registry.contracts.push contract }
 
 /-- Build a registry while checking key uniqueness. -/
@@ -379,11 +392,13 @@ def requireNumericalCoverage (registry : GraphRangeRegistry) (graph : Graph) :
   if report.missing.isEmpty then
     pure report
   else
-    throw s!"numerical certificate: registry {registry.name} does not cover graph nodes {repr report.missing}"
+    throw (s!"numerical certificate: registry {registry.name} does not cover graph nodes " ++
+      s!"{repr report.missing}")
 
 /-- Standard diagnostic for a contract whose graph arity does not match its operation. -/
 def arityError (contractName : String) (node : Node) (expected : String) : String :=
-  s!"numerical contract {contractName}: node {node.id} ({node.kind.describe}) expected {expected}, got {node.parents.size} parent(s)"
+  s!"numerical contract {contractName}: node {node.id} ({node.kind.describe}) " ++
+    s!"expected {expected}, got {node.parents.size} parent(s)"
 
 /-- Shared source-node contract. The source interval remains an explicit certificate assumption. -/
 def sourceContract : GraphRangeContract where
@@ -458,7 +473,7 @@ def maxPoolPadContract : GraphRangeContract where
     | #[parent] => do
         let input <- parentRange context.ranges parent
         let enclosure := IEEE32Exec.Interval32.hull input
-          (IEEE32Exec.Interval32.point IEEE32Exec.posZero)
+          (IEEE32Exec.Interval32.point (ExecFloat.Binary.zero false : ExecFloat.Binary 8 23))
         pure (.hullZero parent, enclosure)
     | _ => throw (arityError "padded max pool" node "one parent")
 
@@ -472,14 +487,14 @@ def averagePoolContract (padded : Bool) : GraphRangeContract where
     | .avgPool config, #[parent] => do
         requireFixedLeftReduction context.plan node
         let input <- parentRange context.ranges parent
-        let count := config.kernel.toList.foldl (fun size extent => size * extent) 1
+        let count := (Tensor.to config.kernel (List Nat)).foldl (fun size extent => size * extent) 1
         if count = 0 then
           throw s!"numerical certificate: node {node.id} has an empty average-pooling window"
-        let hasPadding := config.padding.toList.any (fun padding => padding != 0)
+        let hasPadding := (Tensor.to config.padding (List Nat)).any (fun padding => padding != 0)
         let source :=
           if hasPadding then
             IEEE32Exec.Interval32.hull input
-              (IEEE32Exec.Interval32.point IEEE32Exec.posZero)
+              (IEEE32Exec.Interval32.point (ExecFloat.Binary.zero false : ExecFloat.Binary 8 23))
           else
             input
         pure (.averageWindowLeft parent count hasPadding, meanLeftRange count source)
@@ -522,14 +537,16 @@ def axisReductionContract (mean : Bool) : GraphRangeContract where
         let input <- parentNodeRange context.ranges parent
         let count <- match input.outShape.getDim axis with
           | some count => pure count
-          | none => throw s!"numerical certificate: node {node.id} has invalid reduction axis {axis}"
+          | none =>
+              throw s!"numerical certificate: node {node.id} has invalid reduction axis {axis}"
         pure (.sumLeft parent count, sumLeftRange count input.enclosure)
     | .reduceMean axis, #[parent] => do
         requireFixedLeftReduction context.plan node
         let input <- parentNodeRange context.ranges parent
         let count <- match input.outShape.getDim axis with
           | some count => pure count
-          | none => throw s!"numerical certificate: node {node.id} has invalid reduction axis {axis}"
+          | none =>
+              throw s!"numerical certificate: node {node.id} has invalid reduction axis {axis}"
         if count = 0 then
           throw s!"numerical certificate: node {node.id} cannot certify a mean over an empty axis"
         pure (.meanLeft parent count, meanLeftRange count input.enclosure)
@@ -568,7 +585,8 @@ def mseContract : GraphRangeContract where
         let squared := (IEEE32Exec.Interval32.mul residual residual).relu
         let count := y.outShape.size
         let enclosure :=
-          if count = 0 then IEEE32Exec.Interval32.point IEEE32Exec.posZero
+          if count = 0 then IEEE32Exec.Interval32.point (ExecFloat.Binary.zero false :
+            ExecFloat.Binary 8 23)
           else meanLeftRange count squared
         pure (.mseLeft prediction target count, enclosure)
     | _ => throw (arityError "mean squared error" node "two parents")
@@ -593,7 +611,7 @@ def layerNormContract : GraphRangeContract where
         let centered := IEEE32Exec.Interval32.sub input.enclosure mean
         let squared := (IEEE32Exec.Interval32.mul centered centered).relu
         let variance := meanLeftRange normalizedSize squared
-        let epsilon : IEEE32Exec := Numbers.normalizationEpsilon
+        let epsilon : ExecFloat.Binary 8 23 := TorchLean.normalizationEpsilon
         let stabilized := IEEE32Exec.Interval32.add variance
           (IEEE32Exec.Interval32.point epsilon)
         if nonnegativeEndpoint stabilized.lo && nonnegativeEndpoint stabilized.hi then
@@ -715,7 +733,8 @@ def deriveNodeRangeWith (registry : GraphRangeRegistry)
   let contract <- match registry.find? key with
     | some contract => pure contract
     | none =>
-        throw s!"numerical certificate: node {node.id} ({node.kind.describe}) has no registered numerical contract"
+        throw (s!"numerical certificate: node {node.id} ({node.kind.describe}) " ++
+          "has no registered numerical contract")
   contract.derive { sources, plan, ranges } node
 
 /-- Compute one node range using TorchLean's built-in registry. -/
@@ -743,7 +762,8 @@ def buildRangeTraceWith (registry : GraphRangeRegistry)
           enclosure
           valid := (validInterval_eq_true_iff enclosure).mp h }
     else
-      throw s!"numerical certificate: node {node.id} ({node.kind.describe}) produced a non-finite or unordered enclosure"
+      throw (s!"numerical certificate: node {node.id} ({node.kind.describe}) produced a " ++
+        "non-finite or unordered enclosure")
   pure ranges
 
 /-- Construct and validate the canonical range trace using TorchLean's built-in contracts. -/

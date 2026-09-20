@@ -6,10 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.IR.OpContracts
-public import NN.Spec.Core.Tensor.SomeTensor
 public import NN.Spec.Layers.Conv
-public import NN.Spec.Layers.Normalization
+public import NN.IR.Graph
+public import NN.Tensor.Conversion
 
 /-!
 # IR Payloads
@@ -25,8 +24,8 @@ formats such as ONNX keep graph structure separate from initializers.
 
 namespace NN.IR
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 
 /--
 Payload record for a `const` node.
@@ -34,7 +33,7 @@ Payload record for a `const` node.
 Constants are stored in a flat representation so backends can use one vector container and let IR
 evaluation reshape the data to the node's declared output shape.
 -/
-structure ConstFlat (α : Type) [Context α] where
+structure ConstFlat (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Number of scalar entries stored in the flat constant payload. -/
   n : Nat
   /-- Constant values stored as a vector before evaluation reshapes them to the IR node shape. -/
@@ -46,7 +45,7 @@ Payload record for a `linear` node: weight matrix `W` and bias vector `b`.
 The node's input `x` comes from the graph edge; `W,b` live in the external `Payload`, similar to
 ONNX initializers or a PyTorch `state_dict`.
 -/
-structure LinearWB (α : Type) [Context α] where
+structure LinearWB (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Output dimension. -/
   outDim : Nat
   /-- Input dimension. -/
@@ -57,7 +56,7 @@ structure LinearWB (α : Type) [Context α] where
   b : Tensor α [outDim]
 
 /-- Payload for an arbitrary-dimensional convolution node. -/
-structure ConvParams (α : Type) [Context α] where
+structure ConvParams (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Number of spatial axes. -/
   spatialRank : Nat
   /-- Input channels. -/
@@ -65,21 +64,19 @@ structure ConvParams (α : Type) [Context α] where
   /-- Output channels. -/
   outChannels : Nat
   /-- Per-axis kernel extents. -/
-  kernel : Spec.Tensor Nat [spatialRank]
+  kernel : TorchLean.Tensor Nat [spatialRank]
   /-- Per-axis strides. -/
-  stride : Spec.Tensor Nat [spatialRank]
+  stride : TorchLean.Tensor Nat [spatialRank]
   /-- Zero padding before each spatial axis. -/
-  padding : Spec.Tensor Nat [spatialRank]
+  padding : TorchLean.Tensor Nat [spatialRank]
   /-- Spacing between adjacent kernel samples. -/
-  dilation : Spec.Tensor Nat [spatialRank] := Spec.fill 1 [spatialRank]
+  dilation : TorchLean.Tensor Nat [spatialRank] := Tensor.full [spatialRank] 1
   /-- Zero padding after each spatial axis. `padding` is the padding before the input. -/
-  paddingAfter : Spec.Tensor Nat [spatialRank] := padding
+  paddingAfter : TorchLean.Tensor Nat [spatialRank] := padding
   /-- Number of independent channel groups. -/
   groups : Nat := 1
   /-- Spatial shape of one input sample. -/
-  inputSpatial : Spec.Tensor Nat [spatialRank]
-  /-- The input channel count is nonzero. -/
-  inChannelsNonzero : inChannels ≠ 0
+  inputSpatial : TorchLean.Tensor Nat [spatialRank]
   /-- Every kernel extent is nonzero. -/
   kernelNonzero : ∀ i : Fin spatialRank, kernel.getScalar i ≠ 0
   /-- Every stride is nonzero. -/
@@ -90,32 +87,38 @@ structure ConvParams (α : Type) [Context α] where
 namespace ConvParams
 
 /-- Whether a convolution payload implements the geometry declared by an IR node. -/
-def matchesConfig {α : Type} [Context α] (params : ConvParams α) (config : ConvConfig) : Bool :=
+def matchesConfig {α : Type} [TorchLean.Storage α] [Context α]
+    (params : ConvParams α) (config : ConvConfig) : Bool :=
   params.spatialRank == config.spatialRank &&
     params.inChannels == config.inChannels &&
     params.outChannels == config.outChannels &&
-    params.kernel.toList == config.kernel.toList &&
-    params.stride.toList == config.stride.toList &&
-    params.padding.toList == config.padding.toList &&
-    params.paddingAfter.toList == config.paddingAfter.toList &&
-    params.dilation.toList == config.dilation.toList &&
+    Tensor.to params.kernel (List Nat) == Tensor.to config.kernel (List Nat) &&
+    Tensor.to params.stride (List Nat) == Tensor.to config.stride (List Nat) &&
+    Tensor.to params.padding (List Nat) == Tensor.to config.padding (List Nat) &&
+    Tensor.to params.paddingAfter (List Nat) == Tensor.to config.paddingAfter (List Nat) &&
+    Tensor.to params.dilation (List Nat) == Tensor.to config.dilation (List Nat) &&
     params.groups == config.groups
 
 /-- Input shape expected by a convolution payload after preserving the graph's leading axes. -/
-def inputShape {α : Type} [Context α] (params : ConvParams α) (leading : Shape) : Shape :=
-  leading.concat (Shape.ofList (params.inChannels :: params.inputSpatial.toList))
+def input {α : Type} [TorchLean.Storage α] [Context α]
+    (params : ConvParams α) (leading : Shape) : Shape :=
+  leading.concat
+    (Shape.ofList (params.inChannels :: Tensor.to params.inputSpatial (List Nat)))
 
 /-- Output shape produced by the typed convolution payload for the given leading axes. -/
-def outputShape {α : Type} [Context α] (params : ConvParams α) (leading : Shape) : Shape :=
+def output {α : Type} [TorchLean.Storage α] [Context α]
+    (params : ConvParams α) (leading : Shape) : Shape :=
   leading.concat <| Shape.ofList <|
     params.outChannels ::
-      (Spec.convOutSpatialDilated params.inputSpatial params.kernel params.stride params.dilation
-        params.padding params.paddingAfter).toList
+      Tensor.to
+        (Spec.convOutSpatialDilated params.inputSpatial params.kernel params.stride params.dilation
+          params.padding params.paddingAfter)
+        (List Nat)
 
 end ConvParams
 
 /-- Payload for eval-mode BatchNorm along a channel axis selected by the graph node. -/
-structure BatchNormEvalParams (α : Type) [Context α] where
+structure BatchNormEvalParams (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Channel count. -/
   c : Nat
   /-- Affine scale. -/
@@ -130,7 +133,7 @@ structure BatchNormEvalParams (α : Type) [Context α] where
   eps : α
 
 /-- Affine parameters and epsilon for LayerNorm over an arbitrary normalized suffix. -/
-structure LayerNormParams (α : Type) [Context α] where
+structure LayerNormParams (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Shape of the suffix normalized by the corresponding node. -/
   normalizedShape : Shape
   /-- Learned elementwise scale over `normalizedShape`. -/
@@ -146,7 +149,7 @@ External parameter payloads keyed by IR node id.
 This is focused on denotational IR evaluation. Runtime backends may store tensors differently, but
 their proof layer semantics pass through this shape-indexed boundary.
 -/
-structure Payload (α : Type) [Context α] where
+structure Payload (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Flat constants keyed by the `const` node id. -/
   const?  : Nat → Option (ConstFlat α) := fun _ => none
   /-- Linear weights and bias keyed by the `linear` node id. -/

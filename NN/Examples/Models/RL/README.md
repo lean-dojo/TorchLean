@@ -1,11 +1,7 @@
 # Reinforcement-Learning Model Examples
 
-This folder contains runnable RL commands selected through `lake exe torchlean ...`. The examples
-exercise TorchLean's actor/critic models, PPO/DQN helper code, rollout data, Gymnasium boundary,
-Lean-native environments, CUDA runtime, and widget-friendly artifacts.
-
-The companion viewer files live in `NN/Examples/RL/`. Pure RL specs live in `NN/Spec/RL/`, runtime
-sessions live in `NN/Runtime/RL/`, and proof hooks live in `NN/Proofs/RL/`.
+This folder contains runnable RL commands and the views for their saved artifacts. Pure RL specs
+live in `NN/Spec/RL/`, runtime sessions in `NN/Runtime/RL/`, and proof hooks in `NN/Proofs/RL/`.
 
 ## Files
 
@@ -17,6 +13,8 @@ sessions live in `NN/Runtime/RL/`, and proof hooks live in `NN/Proofs/RL/`.
   not part of the default quick-check tier.
 - `DQNReplay.lean`: small replay-buffer and DQN minibatch-loss example using hand-written Q
   functions rather than a full trainable neural DQN.
+- `Views/`: editor widgets for training logs, policies, episode paths, and checked external
+  rollouts.
 
 ## Commands
 
@@ -50,8 +48,8 @@ lake -R -K cuda=true exe torchlean ppo_pong_ram --device cuda --updates 1
 
 ## Artifacts
 
-PPO commands write JSON artifacts under `data/rl/` by default: training logs, policies, and episode
-paths. Open the viewer files in `NN/Examples/RL/` to inspect them in the Lean infoview.
+PPO commands write JSON artifacts under `data/rl/` by default. Open the corresponding file in
+`Views/` and place the cursor on its widget command to inspect the artifact in the Lean infoview.
 
 ## What Is Checked
 

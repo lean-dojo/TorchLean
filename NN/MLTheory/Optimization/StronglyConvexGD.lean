@@ -8,10 +8,6 @@ module
 
 public import NN.MLTheory.Optimization.GDLinearConvergence
 
-import Mathlib.Logic.Function.Iterate
-import Mathlib.Algebra.Order.GroupWithZero.Basic
-import Mathlib.Tactic.Linarith
-import Mathlib.Tactic.Ring
 
 /-!
 # Gradient Descent Linear Convergence (Operator Form)
@@ -35,12 +31,15 @@ $$
 contracts distances to any root $x^\star$ of $g$, i.e. a point with $g(x^\star)=0$.
 
 For gradients, the usual instantiation is $g=\nabla f$. When $f$ is $\mu$-strongly convex and
-$L$-smooth, one can prove that $\nabla f$ is $\mu$-strongly monotone and $L$-Lipschitz.
-This file focuses on the convergence argument itself, keeping the assumptions minimal and reusable.
+$L$-smooth, $\nabla f$ is $\mu$-strongly monotone and $L$-Lipschitz. Of these two facts,
+`SmoothStrongConvexBridge` proves the strong-monotonicity half from first-order strong convexity;
+the Lipschitz half is taken as a hypothesis there. This file focuses on the convergence argument
+itself, keeping the assumptions minimal and reusable. The step-size lemmas at the end of the `GD`
+namespace show when the contraction factor `q` lies in `[0, 1)`.
 
-The final `ScalarGD` namespace keeps the one-dimensional quadratic facts as a compact reference case:
-they show the same contraction mechanism in the smallest possible setting and connect plain SGD,
-L2 regularization, and decoupled weight decay algebraically.
+The final `ScalarGD` namespace keeps the one-dimensional quadratic facts as a compact reference
+case: they show the same contraction mechanism in the smallest possible setting and connect plain
+SGD, L2 regularization, and decoupled weight decay algebraically.
 -/
 
 @[expose] public section
@@ -57,6 +56,7 @@ variable {E : Type} [NormedAddCommGroup E] [InnerProductSpace ℝ E]
 def q (η μ : ℝ) (L : NNReal) : ℝ :=
   1 - 2 * η * μ + (η ^ 2) * (L : ℝ) ^ 2
 
+/-- One-step contraction of the squared distance to a root `xStar` of `g`. -/
 theorem step_dist_sq_le (η μ : ℝ) (hη : 0 ≤ η) {L : NNReal} (g : E → E)
     (hmono : StrongMonotone (E := E) μ g) (hlip : LipschitzWith L g)
     {xStar x : E} (hxStar : g xStar = 0) :
@@ -102,28 +102,100 @@ theorem dist_sq_iterate_le_of_q_nonneg (η μ : ℝ) (hη : 0 ≤ η) {L : NNRea
       simpa [pow_succ, mul_assoc, mul_left_comm, mul_comm, Function.iterate_succ_apply'] using this
 
 /--
-Linear convergence phrased as an exponentially decaying upper bound.
+Linear convergence: the squared distance to a root of `g` decays like `q ^ k`.
 
-This is just `dist_sq_iterate_le_of_q_nonneg` plus the assumption $q<1$, which makes the
-right-hand side shrink with $k$.
+This is `dist_sq_iterate_le_of_q_nonneg` restated for the regime `0 ≤ q < 1`. The extra hypothesis
+`q < 1` is what makes the right-hand side shrink geometrically in `k`; it is not used by the proof,
+which is the same iterated contraction. Use `q_lt_one_of_mul_sq_lt` and `q_nonneg_of_le` to
+discharge the two hypotheses on `q` from a step-size condition.
 -/
 theorem dist_sq_iterate_le_of_q_lt_one (η μ : ℝ) (hη : 0 ≤ η) {L : NNReal} (g : E → E)
     (hmono : StrongMonotone (E := E) μ g) (hlip : LipschitzWith L g)
-    {xStar x : E} (hxStar : g xStar = 0) (hq : 0 ≤ q η μ L) (hq1 : q η μ L < 1) (k : Nat) :
-    ‖(step η g)^[k] x - xStar‖ ^ 2 ≤ ‖x - xStar‖ ^ 2 := by
-  -- We use the iterate bound and the fact that `0 ≤ q < 1` implies `q^k ≤ 1`.
-  have hpow : (q η μ L) ^ k ≤ (1 : ℝ) := by
-    have hqle : q η μ L ≤ 1 := le_of_lt hq1
-    -- Use the `a ≤ 1` monotonicity lemma with `m = 0`, `n = k`.
-    simpa using (pow_le_pow_of_le_one (a := q η μ L) hq hqle (m := 0) (n := k) (by simp))
-  have hmain :=
-    dist_sq_iterate_le_of_q_nonneg (E := E) (η := η) (μ := μ) (hη := hη) (L := L) (g := g)
-      hmono hlip (xStar := xStar) (x := x) hxStar hq k
-  -- Chain with `q^k ≤ 1`.
-  have : (q η μ L) ^ k * ‖x - xStar‖ ^ 2 ≤ (1 : ℝ) * ‖x - xStar‖ ^ 2 := by
-    exact mul_le_mul_of_nonneg_right hpow (sq_nonneg ‖x - xStar‖)
-  have := le_trans hmain this
-  simpa using this
+    {xStar x : E} (hxStar : g xStar = 0) (hq : 0 ≤ q η μ L) (_hq1 : q η μ L < 1) (k : Nat) :
+    ‖(step η g)^[k] x - xStar‖ ^ 2 ≤ (q η μ L) ^ k * ‖x - xStar‖ ^ 2 :=
+  dist_sq_iterate_le_of_q_nonneg (E := E) (η := η) (μ := μ) (hη := hη) (L := L) (g := g)
+    hmono hlip (xStar := xStar) (x := x) hxStar hq k
+
+/--
+The contraction factor is strictly below one when `0 < η` and `η * L ^ 2 < 2 * μ`.
+
+Since `q - 1 = η * (η * L ^ 2 - 2 * μ)`, this is exactly the condition for `q < 1` once `η > 0`.
+For `L > 0` it reads `η < 2 * μ / L ^ 2`; see `q_lt_one_of_lt_div`.
+-/
+theorem q_lt_one_of_mul_sq_lt (η μ : ℝ) (L : NNReal) (hη : 0 < η)
+    (hstep : η * (L : ℝ) ^ 2 < 2 * μ) :
+    q η μ L < 1 := by
+  have hneg : η * (η * (L : ℝ) ^ 2 - 2 * μ) < 0 :=
+    mul_neg_of_pos_of_neg hη (by linarith)
+  have hq : q η μ L = 1 + η * (η * (L : ℝ) ^ 2 - 2 * μ) := by
+    simp only [q]
+    ring
+  linarith
+
+/--
+Step-size form of `q_lt_one_of_mul_sq_lt`: for `L > 0`, any `η` with `0 < η < 2 * μ / L ^ 2`
+gives `q η μ L < 1`.
+-/
+theorem q_lt_one_of_lt_div (η μ : ℝ) (L : NNReal) (hL : 0 < (L : ℝ)) (hη : 0 < η)
+    (hstep : η < 2 * μ / (L : ℝ) ^ 2) :
+    q η μ L < 1 := by
+  apply q_lt_one_of_mul_sq_lt η μ L hη
+  have hL2 : 0 < (L : ℝ) ^ 2 := by positivity
+  exact (lt_div_iff₀ hL2).mp hstep
+
+/--
+The contraction factor is nonnegative whenever `0 ≤ μ ≤ L`.
+
+This follows from the identity `q = (1 - η * μ) ^ 2 + η ^ 2 * (L ^ 2 - μ ^ 2)`, in which both
+summands are nonnegative. No sign condition on `η` is needed.
+-/
+theorem q_nonneg_of_le (η μ : ℝ) (L : NNReal) (hμ : 0 ≤ μ) (hμL : μ ≤ (L : ℝ)) :
+    0 ≤ q η μ L := by
+  have hq : q η μ L = (1 - η * μ) ^ 2 + η ^ 2 * ((L : ℝ) ^ 2 - μ ^ 2) := by
+    simp only [q]
+    ring
+  have hsq : μ ^ 2 ≤ (L : ℝ) ^ 2 := pow_le_pow_left₀ hμ hμL 2
+  have h2 : 0 ≤ η ^ 2 * ((L : ℝ) ^ 2 - μ ^ 2) := mul_nonneg (sq_nonneg η) (by linarith)
+  rw [hq]
+  exact add_nonneg (sq_nonneg _) h2
+
+/--
+A strongly monotone and Lipschitz operator on a space with two distinct points has `μ ≤ L`.
+
+This is the usual observation that the strong-monotonicity constant can never exceed the Lipschitz
+constant; it lets `q_nonneg_of_le` be applied without assuming `μ ≤ L` separately.
+-/
+theorem StrongMonotone.le_lipschitz {μ : ℝ} {L : NNReal} {g : E → E}
+    (hmono : StrongMonotone (E := E) μ g) (hlip : LipschitzWith L g)
+    {x y : E} (hxy : x ≠ y) :
+    μ ≤ (L : ℝ) := by
+  have hpos : 0 < ‖x - y‖ := norm_pos_iff.mpr (sub_ne_zero.mpr hxy)
+  have h1 : μ * ‖x - y‖ ^ 2 ≤ ⟪x - y, g x - g y⟫ := hmono x y
+  have h2 : ⟪x - y, g x - g y⟫ ≤ ‖x - y‖ * ‖g x - g y‖ := real_inner_le_norm _ _
+  have h3 : ‖g x - g y‖ ≤ (L : ℝ) * ‖x - y‖ := by
+    simpa [dist_eq_norm] using hlip.dist_le_mul x y
+  have h4 : μ * ‖x - y‖ ^ 2 ≤ (L : ℝ) * ‖x - y‖ ^ 2 := by
+    have h5 : ‖x - y‖ * ‖g x - g y‖ ≤ ‖x - y‖ * ((L : ℝ) * ‖x - y‖) :=
+      mul_le_mul_of_nonneg_left h3 (norm_nonneg _)
+    have h6 : ‖x - y‖ * ((L : ℝ) * ‖x - y‖) = (L : ℝ) * ‖x - y‖ ^ 2 := by ring
+    linarith
+  have hsq : 0 < ‖x - y‖ ^ 2 := by positivity
+  exact le_of_mul_le_mul_right h4 hsq
+
+/--
+Linear convergence of gradient descent under an explicit step-size condition.
+
+Assuming `0 ≤ μ ≤ L`, `0 < η`, and `η * L ^ 2 < 2 * μ`, the contraction factor satisfies
+`0 ≤ q η μ L < 1` and the iterates converge linearly to any root `xStar` of `g`.
+-/
+theorem dist_sq_iterate_le_of_step_size (η μ : ℝ) {L : NNReal} (g : E → E)
+    (hmono : StrongMonotone (E := E) μ g) (hlip : LipschitzWith L g)
+    {xStar x : E} (hxStar : g xStar = 0)
+    (hμ : 0 ≤ μ) (hμL : μ ≤ (L : ℝ)) (hη : 0 < η) (hstep : η * (L : ℝ) ^ 2 < 2 * μ) (k : Nat) :
+    ‖(step η g)^[k] x - xStar‖ ^ 2 ≤ (q η μ L) ^ k * ‖x - xStar‖ ^ 2 ∧ q η μ L < 1 :=
+  ⟨dist_sq_iterate_le_of_q_nonneg (E := E) (η := η) (μ := μ) (hη := le_of_lt hη) (L := L)
+      (g := g) hmono hlip (xStar := xStar) (x := x) hxStar (q_nonneg_of_le η μ L hμ hμL) k,
+    q_lt_one_of_mul_sq_lt η μ L hη hstep⟩
 
 end GD
 
@@ -178,8 +250,8 @@ def stepL2 {α : Type} [Sub α] [Mul α] [Add α] (lr lambda grad x : α) : α :
 For plain SGD, L2 regularization and decoupled weight decay coincide at the update level.
 
 This scalar statement is the common fact behind the regularization note: adding $\lambda x$ to the
-gradient produces the same update as multiplying parameters by $1-\mathrm{lr}\lambda$ and then taking the
-plain gradient step. Adaptive optimizers need separate treatment; AdamW is checked in
+gradient produces the same update as multiplying parameters by $1-\mathrm{lr}\lambda$ and then
+taking the plain gradient step. Adaptive optimizers need separate treatment; AdamW is checked in
 `Optimization.FirstOrder`.
 -/
 theorem stepL2_eq_decoupledWeightDecay {α : Type} [CommRing α]

@@ -8,7 +8,6 @@ module
 
 public import NN.Proofs.Tensor.Algebra
 public import NN.Spec.Autograd.Ops
-public import NN.Spec.Core.TensorReductionShape
 
 /-!
 # SemiringCorrectness
@@ -35,11 +34,12 @@ their reverse-mode rules can be proved from algebraic identities alone. This fil
 “pure algebra” portion so it can be instantiated for exact backends (e.g. `ℚ`) without pulling in
 real-analytic structure.
 
-Ops that require extra structure (e.g. ReLU needs an order/max, MSE needs division by `Spec.Shape.size`)
-appear here only under the corresponding extra typeclass assumptions.
+Ops that require extra structure (e.g. ReLU needs an order/max, MSE needs division by
+`Spec.Shape.size`) appear here only under the corresponding extra typeclass assumptions.
 
-If you only care about real-valued training semantics, prefer `NN.Proofs.Autograd.Core.RealCorrectness`. If you
-want proofs that can be instantiated for exact backends (`ℚ`, etc.), prefer this file.
+If you only care about real-valued training semantics, prefer
+`NN.Proofs.Autograd.Core.RealCorrectness`. If you want proofs that can be instantiated for exact
+backends (`ℚ`, etc.), prefer this file.
 
 ## PyTorch correspondence / citations
 This is the proof-level analogue of the “VJP correctness” property implicitly relied upon by
@@ -54,14 +54,14 @@ namespace Proofs
 namespace Autograd
 namespace Algebra
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open TensorAlgebra
 
 noncomputable section
 
 /-- VJP/JVP adjointness for a unary op `σ → τ`. -/
-def VJPCorrect {α : Type} [CommSemiring α] {σ τ : Shape}
+def VJPCorrect {α : Type} [TorchLean.Storage α] [CommSemiring α] {σ τ : Shape}
   (_forward : Tensor α σ → Tensor α τ)
   (jvp     : Tensor α σ → Tensor α σ → Tensor α τ)
   (vjp     : Tensor α σ → Tensor α τ → Tensor α σ) : Prop :=
@@ -73,12 +73,13 @@ An `OpSpec` together with a matching JVP and a proof of VJP/JVP adjointness.
 This is the backend-generic analogue of `Proofs.Autograd.OpSpecCorrect` from
 `NN.Proofs.Autograd.Core.RealCorrectness`.
 -/
-structure OpSpecCorrect (α : Type) [CommSemiring α] (σ τ : Shape) where
-  /-- op. -/
+structure OpSpecCorrect (α : Type) [TorchLean.Storage α] [CommSemiring α] (σ τ : Shape) where
+  /-- The operation being certified, forward and backward together. -/
   op : Spec.OpSpec α σ τ
-  /-- jvp. -/
+  /-- Forward-mode derivative at a basepoint, applied to a tangent. -/
   jvp : Tensor α σ → Tensor α σ → Tensor α τ
-  /-- correct. -/
+  /-- The adjointness proof. Bundling it with the operation is what makes a value of this type a
+  certificate: you cannot obtain one without having shown the backward pass is the transpose. -/
   correct : VJPCorrect (α := α) op.forward jvp op.backward
 
 namespace OpSpecCorrect
@@ -91,7 +92,7 @@ $\langle\operatorname{JVP},\cdot\rangle
 =\langle\cdot,\operatorname{VJP}\rangle$,
 then so does $g\circ f$, with the obvious composed JVP and VJP.
 -/
-def compose {α : Type} [CommSemiring α] {σ τ υ : Shape}
+def compose {α : Type} [TorchLean.Storage α] [CommSemiring α] {σ τ υ : Shape}
   (f : OpSpecCorrect (α := α) σ τ) (g : OpSpecCorrect (α := α) τ υ) :
   OpSpecCorrect (α := α) σ υ :=
 {
@@ -113,42 +114,45 @@ Informally,
 $\langle dx\odot df,\delta\rangle=\langle dx,df\odot\delta\rangle$.
 This is the main identity used to justify elementwise backward rules in a backend-generic way.
 -/
-private theorem dot_elemwise_adjoint {α : Type} [CommSemiring α] {s : Shape}
+private theorem dot_elemwise_adjoint {α : Type} [TorchLean.Storage α] [CommSemiring α] {s : Shape}
   (dx df δ : Tensor α s) :
   dot (α := α) (mulSpec dx df) δ = dot (α := α) dx (mulSpec df δ) := by
   induction s with
   | scalar =>
-    cases dx; cases df; cases δ
-    simp [mulSpec, map2Spec, mul_assoc]
+      simpa [TensorAlgebra.dot, mulSpec, map2Spec, Tensor.item] using
+        (mul_assoc dx.item df.item δ.item)
   | dim n s ih =>
-    cases dx with
-    | dim fdx =>
-      cases df with
-      | dim fdf =>
-        cases δ with
-        | dim fδ =>
-          have hterm :
-              ∀ i : Fin n,
-                dot (α := α) (mulSpec (fdx i) (fdf i)) (fδ i) =
-                  dot (α := α) (fdx i) (mulSpec (fdf i) (fδ i)) := by
-            intro i
-            simpa using (ih (dx := fdx i) (df := fdf i) (δ := fδ i))
-          have hfold :=
-            List.foldl_add_congr (l := List.finRange n)
-              (f := fun i => dot (α := α) (mulSpec (fdx i) (fdf i)) (fδ i))
-              (g := fun i => dot (α := α) (fdx i) (mulSpec (fdf i) (fδ i)))
-              (a := (0 : α)) hterm
-          simpa [TensorAlgebra.dot, mulSpec, map2Spec] using hfold
+      have hterm :
+          ∀ i : Fin n,
+            dot (α := α) (mulSpec (dx.unstack i) (df.unstack i)) (δ.unstack i) =
+              dot (α := α) (dx.unstack i) (mulSpec (df.unstack i) (δ.unstack i)) := by
+        intro i
+        exact ih (dx := dx.unstack i) (df := df.unstack i) (δ := δ.unstack i)
+      have hfold :=
+        List.foldl_add_congr (l := List.finRange n)
+          (f := fun i => dot (α := α) (mulSpec (dx.unstack i) (df.unstack i)) (δ.unstack i))
+          (g := fun i => dot (α := α) (dx.unstack i) (mulSpec (df.unstack i) (δ.unstack i)))
+          (a := (0 : α)) hterm
+      have hdxdf : ∀ i : Fin n,
+          (mulSpec dx df).unstack i = mulSpec (dx.unstack i) (df.unstack i) := by
+        intro i
+        exact (TorchLean.Tensor.Internal.Rep.zipWith_unstack (· * ·) dx df i).symm
+      have hdfδ : ∀ i : Fin n,
+          (mulSpec df δ).unstack i = mulSpec (df.unstack i) (δ.unstack i) := by
+        intro i
+        exact (TorchLean.Tensor.Internal.Rep.zipWith_unstack (· * ·) df δ i).symm
+      simp only [TensorAlgebra.dot, hdxdf, hdfδ]
+      exact hfold
 
 /--
 Correctness of ReLU’s backward rule, stated generically over `α`.
 
-We assume the extra structure needed to *define* ReLU and its derivative (`Max`, order, and
-decidable comparison).
+We assume the extra structure needed to define ReLU and its derivative: maximum, scalar equality,
+order, and decidable comparison.
 PyTorch analogue: `torch.relu` / `torch.nn.functional.relu`.
 -/
-def reluCorrect {α : Type} [CommSemiring α]
-  [Max α] [LT α] [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape} :
+def reluCorrect {α : Type} [TorchLean.Storage α] [CommSemiring α]
+  [Max α] [BEq α] [LT α] [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape} :
   OpSpecCorrect (α := α) s s :=
 {
   op := Spec.reluOp (α := α) (s := s)
@@ -168,7 +172,7 @@ This is purely algebraic: it relies only on semiring laws and the adjointness le
 multiplication in `TensorAlgebra`.
 PyTorch analogue: the affine map implemented by `torch.nn.Linear`.
 -/
-def linearCorrect {α : Type} [CommSemiring α]
+def linearCorrect {α : Type} [TorchLean.Storage α] [CommSemiring α]
   {inDim outDim : Nat} (m : Spec.LinearSpec α inDim outDim) :
   OpSpecCorrect (α := α) (.dim inDim .scalar) (.dim outDim .scalar) :=
 {
@@ -195,7 +199,7 @@ Correctness of scaling by a constant: forward and backward are both $x\mapsto cx
 
 PyTorch analogue: $cx$ (with broadcasting aligned to shape).
 -/
-def scaleCorrect {α : Type} [CommSemiring α] {s : Shape} (c : α) :
+def scaleCorrect {α : Type} [TorchLean.Storage α] [CommSemiring α] {s : Shape} (c : α) :
   OpSpecCorrect (α := α) s s :=
 {
   op :=
@@ -215,7 +219,7 @@ Correctness of pointwise multiplication by a fixed tensor `rhs`.
 
 PyTorch analogue: $x\odot\operatorname{rhs}$ (elementwise).
 -/
-def mulCorrect {α : Type} [CommSemiring α] {s : Shape} (rhs : Tensor α s) :
+def mulCorrect {α : Type} [TorchLean.Storage α] [CommSemiring α] {s : Shape} (rhs : Tensor α s) :
   OpSpecCorrect (α := α) s s :=
 {
   op :=
@@ -230,13 +234,14 @@ def mulCorrect {α : Type} [CommSemiring α] {s : Shape} (rhs : Tensor α s) :
 
 section
 
-variable {α : Type} [CommSemiring α] [Sub α] [Div α] [Coe Nat α]
+variable {α : Type} [TorchLean.Storage α] [CommSemiring α] [Sub α] [Div α]
 
 /--
 Correctness of mean-squared error loss (MSE) as an `OpSpecCorrect`.
 
 The MSE correctness declaration assumes extra operations (`Sub`, `Div`, and coercions from
-naturals) because the MSE definition uses subtraction and division by `Spec.meanDenom`.
+naturals) because the MSE definition uses subtraction and division by the totalized element count
+`TorchLean.Tensor.meanDenominator`.
 PyTorch analogue: `torch.nn.functional.mse_loss(reduction="mean")` (up to normalization
   conventions).
 -/
@@ -251,22 +256,27 @@ def mseLossCorrect {s : Shape} (target : Tensor α s) :
     }
   jvp := fun yhat dyhat =>
     let grad := Spec.mseDerivSpec (α := α) yhat target
-    Tensor.scalar (dot (α := α) (s := s) dyhat grad)
+    Tensor.scalar (dot (α := α) (shape := s) dyhat grad)
   correct := by
     intro yhat dyhat δ
-    cases δ with
-    | scalar g =>
-      set grad := Spec.mseDerivSpec (α := α) yhat target
-      have hscale :=
-        TensorAlgebra.dot_scale_right (α := α) (s := s) (a := dyhat) (b := grad) (k := g)
-      -- LHS: ⟪⟪dyhat, grad⟫, g⟫ = (⟪dyhat, grad⟫) * g
-      -- RHS: ⟪dyhat, g • grad⟫ = (⟪dyhat, grad⟫) * g
-      calc
-        dot (α := α) (Tensor.scalar (dot (α := α) (s := s) dyhat grad)) (Tensor.scalar g)
-            = dot (α := α) (s := s) dyhat grad * g := by
-                simp [TensorAlgebra.dot]
-        _ = dot (α := α) (s := s) dyhat (scaleSpec (α := α) (s := s) grad g) := by
-                simpa using hscale.symm
+    change
+      dot (α := α)
+          (Tensor.scalar (dot (α := α) (shape := s) dyhat
+            (Spec.mseDerivSpec (α := α) yhat target))) δ =
+        dot (α := α) (shape := s) dyhat
+          (scaleSpec (α := α) (s := s) (Spec.mseDerivSpec (α := α) yhat target) δ.item)
+    set g := δ.item
+    set grad := Spec.mseDerivSpec (α := α) yhat target
+    have hscale :=
+      TensorAlgebra.dot_scale_right (α := α) (s := s) (a := dyhat) (b := grad) (k := g)
+    -- LHS: ⟪⟪dyhat, grad⟫, g⟫ = (⟪dyhat, grad⟫) * g
+    -- RHS: ⟪dyhat, g • grad⟫ = (⟪dyhat, grad⟫) * g
+    calc
+      dot (α := α) (Tensor.scalar (dot (α := α) (shape := s) dyhat grad)) δ
+          = dot (α := α) (shape := s) dyhat grad * g := by
+              simp [TensorAlgebra.dot, g]
+      _ = dot (α := α) (shape := s) dyhat (scaleSpec (α := α) (s := s) grad g) := by
+              exact hscale.symm
 }
 
 end

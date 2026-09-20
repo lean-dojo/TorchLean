@@ -31,6 +31,8 @@ structure PositionSchedule (seqLen : Nat) where
 Append one decode step using the canonical next position `seqLen`.
 
 Existing positions are preserved, and the new final token is assigned the next sequence index.
+This is the zero-based, unshifted convention; an offset or sliding-window schedule needs a
+different append rule. No rotation kernel is evaluated or verified by this function.
 -/
 def appendNextPosition {seqLen : Nat} (sched : PositionSchedule seqLen) :
     PositionSchedule (seqLen + 1) where

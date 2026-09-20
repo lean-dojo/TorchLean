@@ -17,7 +17,7 @@ This is the runtime umbrella for TorchLean's typed graph execution path.
 The typed graph path is the middle layer between:
 
 - the low-level dynamic tape engine in `NN.Runtime.Autograd.Engine`, and
-- the user-facing TorchLean session/model API in `NN.Runtime.Autograd.TorchLean`.
+- the user-facing TorchLean session/model API in `NN.Runtime.Autograd.Model`.
 
 It has two pieces:
 

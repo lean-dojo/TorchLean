@@ -6,11 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import Lean.Data.Json
-public import NN.Spec.Core.Tensor
 public import NN.Tensor
 public import NN.Core.ExternalProcess
-public import Std
+public import NN.Tests.Utils
 
 /-!
 # Floats Utils
@@ -24,28 +22,20 @@ the same tensor accessors and approximate equality checks.
 @[expose] public section
 
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Lean
 
 namespace Tests
 namespace Floats
 namespace Utils
 
-/-- Approximate equality for runtime checks over `Float`. -/
-def assertApprox (msg : String) (x y : Float) (tol : Float := 1e-5) : IO Unit := do
-  if Float.abs (x - y) > tol then
-    throw <| IO.userError s!"{msg}: got {x}, expected {y} (tol={tol})"
-
-/-- Reject `NaN` and infinities in a runtime check. -/
-def assertFinite (msg : String) (x : Float) : IO Unit := do
-  if x.isNaN || x.isInf then
-    throw <| IO.userError s!"{msg}: expected finite, got {x}"
-
-/-- Check that a value lies in $[0,1]$ up to a small tolerance. -/
-def assertIn01 (msg : String) (x : Float) : IO Unit := do
-  if x < -1e-6 || x > 1.0 + 1e-6 then
-    throw <| IO.userError s!"{msg}: expected in [0,1], got {x}"
+/-!
+`assertApprox` and `assertFinite` are not defined here. Both are in `Tests.Utils`, which the CUDA
+suites can also reach, and this module's `1e-5` default moved there unchanged, so the `assertApprox`
+calls in this directory mean exactly what they meant before. Files that `open Tests.Floats.Utils`
+for the bare spelling now open `Tests.Utils` alongside it.
+-/
 
 /-- Approximate equality for same-length float arrays. -/
 def assertArrayApprox (label : String) (got expected : Array Float) (tol : Float := 2e-5) :
@@ -53,7 +43,7 @@ def assertArrayApprox (label : String) (got expected : Array Float) (tol : Float
   unless got.size = expected.size do
     throw (IO.userError s!"{label}: length mismatch {got.size} vs {expected.size}")
   for i in [0:got.size] do
-    assertApprox s!"{label}[{i}]" got[i]! expected[i]! tol
+    Tests.Utils.assertApprox s!"{label}[{i}]" got[i]! expected[i]! tol
 
 /-- Parse a JSON field containing a flat array of floats. -/
 def jsonFloatArrayField (j : Json) (key : String) : Except String (Array Float) := do
@@ -71,8 +61,7 @@ def pythonHasTorch : IO Bool := do
 
 /-- Read the scalar payload from a scalar tensor. -/
 def scalarVal (t : Tensor Float Shape.scalar) : Float :=
-  match t with
-  | Tensor.scalar v => v
+  t.item
 
 /-- Read one coordinate from a vector tensor. -/
 def vecVal {n : Nat} (t : Tensor Float [n]) (i : Fin n) : Float :=

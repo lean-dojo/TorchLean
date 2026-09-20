@@ -26,12 +26,14 @@ reference forward and backward functions.
 @[expose] public section
 
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 open Spec.Module
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 namespace Rnn
 
@@ -48,13 +50,14 @@ PyTorch analogue: applying `nn.RNN` (or a custom recurrent cell) followed by a `
 time step.
 -/
 def sequence
-  {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+  {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {seqLen inputSize hiddenSize outputSize : Nat}
   (rnnSpec : RNNSpec α inputSize hiddenSize)
   (linearSpec : LinearSpec α hiddenSize outputSize) :
   Spec.Module.Chain α ([seqLen, inputSize]) ([seqLen, outputSize]) :=
   let rnnModule := Spec.Module.rnn rnnSpec
-  let linearModule := Spec.Module.mapEach (Spec.Module.linear linearSpec)
+  let linearModule := Spec.Module.liftLeading (Spec.Module.linear linearSpec)
   Spec.Module.Chain.single rnnModule
     |>.append linearModule
 
@@ -68,7 +71,8 @@ PyTorch analogue: `nn.RNN` (or `nn.GRU`/`nn.LSTM`) feeding a `nn.linear` head, t
 hidden/output.
 -/
 def classifier
-  {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+  {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {seqLen inputSize hiddenSize numClasses : Nat}
   (rnnSpec : RNNSpec α inputSize hiddenSize)
   (classifierHead : LinearSpec α hiddenSize numClasses)
@@ -88,7 +92,8 @@ A two-layer RNN encoder with a per-step linear projection, expressed as a `Spec.
 The second recurrent layer consumes the hidden stream of the first.
 -/
 def stacked
-  {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+  {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {seqLen inputSize hiddenSize outputSize : Nat}
   (firstSpec : RNNSpec α inputSize hiddenSize)
   (secondSpec : RNNSpec α hiddenSize hiddenSize)
@@ -96,7 +101,7 @@ def stacked
   Spec.Module.Chain α ([seqLen, inputSize]) ([seqLen, outputSize]) :=
   let firstModule := Spec.Module.rnn firstSpec
   let secondModule := Spec.Module.rnn secondSpec
-  let linearModule := Spec.Module.mapEach (Spec.Module.linear linearSpec)
+  let linearModule := Spec.Module.liftLeading (Spec.Module.linear linearSpec)
   Spec.Module.Chain.single firstModule
     |>.append secondModule
     |>.append linearModule
@@ -105,20 +110,21 @@ def stacked
 A simple RNN language model spec: "embedding" linear map, RNN core, and output projection.
 
 This file treats embedding/projection as `LinearSpec`s. A common spec-level usage is that tokens
-are one-hot vectors of length `vocabSize`, so the embedding is just a matrix multiply.
+are one-hot vectors of length `vocabularySize`, so the embedding is just a matrix multiply.
 
 PyTorch analogue: `nn.Embedding` (conceptually) + `nn.RNN` + `nn.linear` vocabulary projection.
 -/
 def languageModel
-  {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
-  {seqLen vocabSize hiddenSize : Nat}
-  (embeddingSpec : LinearSpec α vocabSize hiddenSize)
+  {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
+  {seqLen vocabularySize hiddenSize : Nat}
+  (embeddingSpec : LinearSpec α vocabularySize hiddenSize)
   (rnnSpec : RNNSpec α hiddenSize hiddenSize)
-  (outputSpec : LinearSpec α hiddenSize vocabSize) :
-  Spec.Module.Chain α ([seqLen, vocabSize]) ([seqLen, vocabSize]) :=
-  let embeddingModule := Spec.Module.mapEach (Spec.Module.linear embeddingSpec)
+  (outputSpec : LinearSpec α hiddenSize vocabularySize) :
+  Spec.Module.Chain α ([seqLen, vocabularySize]) ([seqLen, vocabularySize]) :=
+  let embeddingModule := Spec.Module.liftLeading (Spec.Module.linear embeddingSpec)
   let rnnModule := Spec.Module.rnn rnnSpec
-  let outputModule := Spec.Module.mapEach (Spec.Module.linear outputSpec)
+  let outputModule := Spec.Module.liftLeading (Spec.Module.linear outputSpec)
   Spec.Module.Chain.single embeddingModule
     |>.append rnnModule
     |>.append outputModule
@@ -126,25 +132,26 @@ def languageModel
 /--
 Bundle of parameters for a simple single-layer RNN model with a linear output head.
 
-This is a "record of specs" representation, as opposed to the `Spec.Module.Chain` representation used
-above.
+This is a "record of specs" representation, as opposed to the `Spec.Module.Chain` representation
+used above.
 -/
-structure Model (α : Type) (inputSize hiddenSize outputSize : Nat) where
+structure Model (α : Type) [TorchLean.Storage α]
+    (inputSize hiddenSize outputSize : Nat) where
   /-- Recurrent cell parameters. -/
   rnn : RNNSpec α inputSize hiddenSize
   /-- Linear output projection. -/
   outputLayer : LinearSpec α hiddenSize outputSize
 
-/-- Parameter gradients for a recurrent model and its linear output head. -/
-structure Grads (α : Type) (inputSize hiddenSize outputSize : Nat) where
-  /-- Gradient of the recurrent weight matrix. -/
-  rnnWeight : Tensor α [hiddenSize, inputSize + hiddenSize]
-  /-- Gradient of the recurrent bias. -/
-  rnnBias : Tensor α [hiddenSize]
-  /-- Gradient of the output projection weight. -/
-  outputWeight : Tensor α [outputSize, hiddenSize]
-  /-- Gradient of the output projection bias. -/
-  outputBias : Tensor α [outputSize]
+/-- Parameter gradients for a recurrent model and its linear output head.
+
+Both halves reuse the gradient records of the layers they belong to, so a caller that already knows
+how to read `Spec.RNNParameterGradients` needs to learn nothing new here. -/
+structure Grads (α : Type) [TorchLean.Storage α]
+    (inputSize hiddenSize outputSize : Nat) where
+  /-- Gradients of the recurrent cell parameters. -/
+  rnn : RNNParameterGradients α inputSize hiddenSize
+  /-- Gradients of the linear output projection. -/
+  output : LinearParameterGradients α hiddenSize outputSize
 
 /--
 Bundle of parameters for a multi-layer RNN model.
@@ -152,7 +159,8 @@ Bundle of parameters for a multi-layer RNN model.
 `layers` is indexed by `Fin numLayers` and selects the appropriate input size for the first layer
 versus subsequent layers.
 -/
-structure StackedModel (α : Type) (inputSize hiddenSize outputSize numLayers : Nat) where
+structure StackedModel (α : Type) [TorchLean.Storage α]
+    (inputSize hiddenSize outputSize numLayers : Nat) where
   /-- Layer stack. -/
   layers :
     (i : Fin numLayers) →
@@ -165,7 +173,8 @@ Bundle of parameters for a many-to-one RNN classifier.
 
 The classifier head is a linear layer applied to the final hidden state.
 -/
-structure Classifier (α : Type) (inputSize hiddenSize numClasses : Nat) where
+structure Classifier (α : Type) [TorchLean.Storage α]
+    (inputSize hiddenSize numClasses : Nat) where
   /-- Recurrent cell parameters. -/
   rnn : RNNSpec α inputSize hiddenSize
   /-- Linear classifier head. -/
@@ -176,20 +185,22 @@ Bundle of parameters for a many-to-many RNN generator (language-model style).
 
 This includes a (linear) embedding, recurrent core, and output projection back to vocabulary.
 -/
-structure Generator (α : Type) (vocabSize hiddenSize : Nat) where
+structure Generator (α : Type) [TorchLean.Storage α]
+    (vocabularySize hiddenSize : Nat) where
   /-- Token projection used by this one-hot specification. -/
-  embedding : LinearSpec α vocabSize hiddenSize
+  embedding : LinearSpec α vocabularySize hiddenSize
   /-- Recurrent cell parameters. -/
   rnn : RNNSpec α hiddenSize hiddenSize
   /-- Projection from hidden states to vocabulary logits. -/
-  outputProjection : LinearSpec α hiddenSize vocabSize
+  outputProjection : LinearSpec α hiddenSize vocabularySize
 
 /--
 Bundle of parameters for a bidirectional RNN model with an output head.
 
 The output head consumes the concatenation of forward and backward hidden states.
 -/
-structure BidirectionalModel (α : Type) (inputSize hiddenSize outputSize : Nat) where
+structure BidirectionalModel (α : Type) [TorchLean.Storage α]
+    (inputSize hiddenSize outputSize : Nat) where
   /-- Recurrent cell for the original sequence order. -/
   forwardRnn : RNNSpec α inputSize hiddenSize
   /-- Recurrent cell for the reversed sequence order. -/
@@ -224,7 +235,7 @@ def Model.forwardSequence {seqLen inputSize hiddenSize outputSize : Nat}
   (initialHidden : Tensor α [hiddenSize]) (h : 0 < seqLen) :
   (Tensor α [seqLen, outputSize] × Tensor α [hiddenSize])  :=
   let hiddenStates := rnnSequenceSpec model.rnn inputs initialHidden
-  let outputs := Tensor.mapEach ([seqLen])
+  let outputs := Tensor.mapLeading ([seqLen])
     (linearSpec model.outputLayer) hiddenStates
   have hLast : seqLen - 1 < seqLen := by
     simpa [Nat.pred_eq_sub_one] using Nat.pred_lt (Nat.ne_of_gt h)
@@ -254,14 +265,14 @@ Forward pass for an `Rnn.Generator` (many-to-many).
 This applies an "embedding" linear map to each token, runs the RNN, and projects each hidden state
 back into vocabulary space.
 -/
-def Generator.forward {seqLen vocabSize hiddenSize : Nat}
-  (model : Generator α vocabSize hiddenSize)
-  (inputTokens : Tensor α [seqLen, vocabSize])
+def Generator.forward {seqLen vocabularySize hiddenSize : Nat}
+  (model : Generator α vocabularySize hiddenSize)
+  (inputTokens : Tensor α [seqLen, vocabularySize])
   (initialHidden : Tensor α [hiddenSize]) (h : 0 < seqLen) :
-  (Tensor α [seqLen, vocabSize] × Tensor α [hiddenSize]) :=
-  let embedded := Tensor.mapEach ([seqLen]) (linearSpec model.embedding) inputTokens
+  (Tensor α [seqLen, vocabularySize] × Tensor α [hiddenSize]) :=
+  let embedded := Tensor.mapLeading ([seqLen]) (linearSpec model.embedding) inputTokens
   let hiddenStates := rnnSequenceSpec model.rnn embedded initialHidden
-  let outputs := Tensor.mapEach ([seqLen])
+  let outputs := Tensor.mapLeading ([seqLen])
     (linearSpec model.outputProjection) hiddenStates
   have hLast : seqLen - 1 < seqLen := by
     simpa [Nat.pred_eq_sub_one] using Nat.pred_lt (Nat.ne_of_gt h)
@@ -287,13 +298,14 @@ def BidirectionalModel.forward {seqLen inputSize hiddenSize outputSize : Nat}
   let combinedStates := Tensor.zipEach ([seqLen])
     ([(hiddenSize + hiddenSize)])
     (Tensor.concatAxisSpec .scalar) forwardStates backwardStates
-  Tensor.mapEach ([seqLen]) (linearSpec model.outputLayer) combinedStates
+  Tensor.mapLeading ([seqLen]) (linearSpec model.outputLayer) combinedStates
 
 -- One-step helper used by some compact examples (single cell update + output projection).
 /--
 One-step helper: run a single RNN cell update and apply an output projection.
 
-This is used by some compact examples that do not build a full `Spec.Module.Chain` or multi-layer bundle.
+This is used by some compact examples that do not build a full `Spec.Module.Chain` or multi-layer
+bundle.
 -/
 def cellWithHead {inputSize hiddenSize outputSize : Nat}
   (cell : RNNSpec α inputSize hiddenSize)
@@ -321,7 +333,7 @@ def Model.backward {seqLen inputSize hiddenSize outputSize : Nat}
   Grads α inputSize hiddenSize outputSize ×
     Tensor α [seqLen, inputSize] :=
 
-  let gradHiddenFromOutput := Tensor.mapEach ([seqLen])
+  let gradHiddenFromOutput := Tensor.mapLeading ([seqLen])
     (fun gradOutput => linearInputDerivSpec model.outputLayer.weights gradOutput) gradOutputs
   let gradOutputWeights := Tensor.reduceSum 0
     (Tensor.zipEach ([seqLen])
@@ -331,15 +343,15 @@ def Model.backward {seqLen inputSize hiddenSize outputSize : Nat}
   let gradOutputBias := Tensor.reduceSum 0 gradOutputs
     (Shape.hasNonemptyAxisZeroOfNe h.ne').proof
 
-  let initialHidden := fill 0 ([hiddenSize])
-  let (gradRnnWeights, gradRnnBias, gradInputs, _gradInitialHidden) :=
+  let initialHidden := Tensor.full ([hiddenSize]) 0
+  let rnnBackward :=
     rnnSequenceBackwardSpec model.rnn inputs initialHidden hiddenStates gradHiddenFromOutput
 
-  ( { rnnWeight := gradRnnWeights
-      rnnBias := gradRnnBias
-      outputWeight := gradOutputWeights
-      outputBias := gradOutputBias },
-    gradInputs )
+  ( { rnn := rnnBackward.parameters
+      output :=
+        { weightGradient := gradOutputWeights
+          biasGradient := gradOutputBias } },
+    rnnBackward.inputs )
 
 namespace Internal
 
@@ -353,9 +365,8 @@ def mapSequence2 {seqLen dim1 dim2 : Nat}
   (leftSeq : Tensor α [seqLen, dim1])
   (rightSeq : Tensor α [seqLen, dim2]) :
   Tensor α [seqLen] :=
-  match leftSeq, rightSeq with
-  | Tensor.dim func, Tensor.dim rightFn =>
-    Tensor.dim (fun i => Tensor.scalar (f (func i) (rightFn i)))
+  Tensor.dim (fun i =>
+    Tensor.scalar (f (Tensor.unstack leftSeq i) (Tensor.unstack rightSeq i)))
 
 end Internal
 
@@ -385,10 +396,12 @@ def Model.toModule {seqLen inputSize hiddenSize outputSize : Nat}
   Spec.Module α ([seqLen, inputSize]) ([seqLen, outputSize]) :=
 {
   forward := fun inputs =>
-    let initialHidden := fill 0 ([hiddenSize])
+    let initialHidden := Tensor.full ([hiddenSize]) 0
     (model.forwardSequence inputs initialHidden h).1,
   kind := "SimpleRNN",
-  pythonExpr := s!"SimpleRNN(input_size={inputSize}, hidden_size={hiddenSize}, output_size={outputSize})"
+  pythonExpr :=
+    s!"SimpleRNN(input_size={inputSize}, hidden_size={hiddenSize}, " ++
+      s!"output_size={outputSize})"
 }
 
 /--
@@ -401,10 +414,12 @@ def Classifier.toModule {seqLen inputSize hiddenSize numClasses : Nat}
   Spec.Module α ([seqLen, inputSize]) ([numClasses]) :=
 {
   forward := fun inputs =>
-    let initialHidden := fill 0 ([hiddenSize])
+    let initialHidden := Tensor.full ([hiddenSize]) 0
     model.forward inputs initialHidden h,
   kind := "RNNClassifier",
-  pythonExpr := s!"RNNClassifier(input_size={inputSize}, hidden_size={hiddenSize}, num_classes={numClasses})"
+  pythonExpr :=
+    s!"RNNClassifier(input_size={inputSize}, hidden_size={hiddenSize}, " ++
+      s!"num_classes={numClasses})"
 }
 
 end Rnn

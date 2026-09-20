@@ -21,9 +21,9 @@ This file provides a small inference-oriented `Spec.Module` wrapper so it can be
 
 namespace Spec.Module
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Seq2Seq inference module wrapper (one-hot input, greedy decoding). -/
 def seq2seq {srcVocabSize tgtVocabSize embedDim hiddenDim srcSeqLen tgtSeqLen : Nat}

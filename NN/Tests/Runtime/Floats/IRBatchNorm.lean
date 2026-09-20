@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.IR.Check
-public import NN.IR.Semantics
 public import NN.MLTheory.CROWN.Graph.Engine
 public import NN.Runtime.Autograd.IRExec
 public import NN.Runtime.PyTorch.Export.IRPyTorch
@@ -26,11 +24,12 @@ namespace Tests
 namespace Floats
 namespace IRBatchNorm
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.IR
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph
+open Tests.Utils
 open Tests.Floats.Utils
 
 abbrev n : Nat := 2
@@ -48,10 +47,10 @@ def input : Tensor Float inputShape :=
     let base := Float.ofNat (ni * 8 + ci * 4 + hi * 2 + wi + 1)
     if ci = 0 then base else -base
 
-def gamma : Tensor Float [c] := tensor! [1.0, 0.5]
-def beta : Tensor Float [c] := tensor! [0.0, 0.1]
-def mean : Tensor Float [c] := tensor! [2.0, -3.0]
-def var : Tensor Float [c] := tensor! [4.0, 9.0]
+def gamma : Tensor Float [c] := [1.0, 0.5]
+def beta : Tensor Float [c] := [0.0, 0.1]
+def mean : Tensor Float [c] := [2.0, -3.0]
+def var : Tensor Float [c] := [4.0, 9.0]
 def bnEps : Float := 1e-5
 
 def graph : NN.IR.Graph :=
@@ -71,8 +70,7 @@ def expected (x gamma beta mean var eps : Float) : Float :=
   ((x - mean) / Float.sqrt (max var 0.0 + eps)) * gamma + beta
 
 def flatVal {n : Nat} (t : Tensor Float [n]) (i : Fin n) : Float :=
-  match get t i with
-  | .scalar v => v
+  (get t i).item
 
 def expectSome {α : Type} (label : String) : Option α → IO α
   | some x => pure x
@@ -93,7 +91,8 @@ def unitObjective : FlatTensor Float :=
   { n := Spec.Shape.size inputShape
     v := Tensor.ofFn fun i => if decide (i.val = 0) then 1.0 else 0.0 }
 
-def expectInputShape (label : String) (v : Spec.SomeTensor Float) : IO (Tensor Float inputShape) := do
+def expectInputShape (label : String) (v : Spec.SomeTensor Float) :
+    IO (Tensor Float inputShape) := do
   match v with
   | ⟨s, t⟩ =>
       if hs : s = inputShape then

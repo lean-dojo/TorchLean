@@ -19,7 +19,16 @@ This file defines a 2-layer MLP by composing `Spec.Module.Chain`s from module sp
 
 The file is organized around module wiring rather than re-implementing matrix multiplications
 directly. `Linear` and `ReLU` come from the spec layer and are composed through `Spec.Module` /
-`Spec.Module.Chain`, matching the usual PyTorch workflow: define a few modules, then run a forward pass.
+`Spec.Module.Chain`, matching the usual PyTorch workflow: define a few modules, then run a forward
+pass.
+
+## Implementation status
+
+There is no dedicated `nn.models` builder; the API composes `nn.linear` and `nn.relu` directly.
+The relating theorem is `mlp_interp_eq_spec_mlp_forward` in
+`NN/GraphSpec/Models/MlpSpecEquivalence.lean`, which shows the typed-graph interpretation of the
+MLP equals this spec's forward pass; `NN/Proofs/Models/Mlp.lean` and
+`NN/Tests/Runtime/Floats/TorchLeanSpecMlpEquivCheck.lean` exercise it further.
 -/
 
 @[expose] public section
@@ -27,8 +36,8 @@ directly. `Linear` and `ReLU` come from the spec layer and are composed through 
 
 namespace Examples
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Spec.Module
 open Activation
 
@@ -39,7 +48,7 @@ open Activation
 PyTorch analogy: `nn.Sequential(nn.Linear(inDim, hidDim), nn.ReLU(), nn.Linear(hidDim, outDim))`.
 -/
 def mlpSpec
-  {α : Type} [Context α]
+  {α : Type} [TorchLean.Storage α] [Context α]
   {inDim hidDim outDim : Nat}
   (l1 : Spec.LinearSpec α inDim hidDim)
   (l2 : Spec.LinearSpec α hidDim outDim) :
@@ -59,7 +68,7 @@ Note: this is a *shape-safe* softmax spec (applied along the last dimension). In
 choose `dim` at runtime; here the shape index already tells us what "the last dim" is.
 -/
 def mlpWithSoftmaxSpec
-  {α : Type} [Context α]
+  {α : Type} [TorchLean.Storage α] [Context α]
   {inDim hidDim outDim : Nat}
   (l1 : Spec.LinearSpec α inDim hidDim)
   (l2 : Spec.LinearSpec α hidDim outDim) :
@@ -75,7 +84,7 @@ def mlpWithSoftmaxSpec
 
 /-- Run the MLP forward on a single input vector. -/
 def mlpForward
-  {α : Type} [Context α]
+  {α : Type} [TorchLean.Storage α] [Context α]
   {inDim hidDim outDim : Nat}
   (l1 : Spec.LinearSpec α inDim hidDim)
   (l2 : Spec.LinearSpec α hidDim outDim)
@@ -88,7 +97,7 @@ def mlpForward
 Returns (∂L/∂W1, ∂L/∂b1, ∂L/∂W2, ∂L/∂b2, ∂L/∂x).
 -/
 def mlpBackward
-  {α : Type} [Context α]
+  {α : Type} [TorchLean.Storage α] [Context α]
   {inDim hidDim outDim : Nat}
   (l1 : Spec.LinearSpec α inDim hidDim)
   (l2 : Spec.LinearSpec α hidDim outDim)
@@ -128,7 +137,7 @@ This lemma states that evaluating the composed chain equals the sequential compu
 /-- The composed `Spec.Module.Chain` forward equals the hand-written `Linear → ReLU → Linear`
 computation. -/
 theorem mlp_spec_forward_eq
-  {α : Type} [Context α]
+  {α : Type} [TorchLean.Storage α] [Context α]
   {inDim hidDim outDim : Nat}
   (l1 : Spec.LinearSpec α inDim hidDim)
   (l2 : Spec.LinearSpec α hidDim outDim)
@@ -152,7 +161,7 @@ This packaging is convenient for symbolic gradient checks: `OpSpec` pairs a forw
 an explicit reverse-mode definition, and it composes cleanly.
 -/
 def mlpOpspec
-  {α : Type} [Context α]
+  {α : Type} [TorchLean.Storage α] [Context α]
   {inDim hidDim outDim : Nat}
   (l1 : Spec.LinearSpec α inDim hidDim)
   (l2 : Spec.LinearSpec α hidDim outDim) :
@@ -166,7 +175,7 @@ def mlpOpspec
 
 /-- Composed backward of the MLP using the OpSpec chain. -/
 def mlpOpspecBackward
-  {α : Type} [Context α]
+  {α : Type} [TorchLean.Storage α] [Context α]
   {inDim hidDim outDim : Nat}
   (l1 : Spec.LinearSpec α inDim hidDim)
   (l2 : Spec.LinearSpec α hidDim outDim)

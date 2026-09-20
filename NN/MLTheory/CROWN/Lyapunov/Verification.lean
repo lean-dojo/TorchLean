@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Lyapunov.Certificate
+public import NN.Spec.Core.Context.Real
 
 /-!
 # Consequences of valid Lyapunov bounds
@@ -30,10 +31,10 @@ discharged by simple order transitivity (`0 < V_lo` and `V_lo ≤ V(x)`).
 
 namespace NN.MLTheory.CROWN.Lyapunov
 
-open _root_.Spec
+open Spec TorchLean
 open NN.MLTheory.CROWN
 
-variable {α : Type} [Context α] {n : Nat}
+variable {α : Type} [TorchLean.Storage α] [Context α] {n : Nat}
 
 /-- `V` is bounded below on the certified region. -/
 theorem v_bounded_below (lyap : NeuralLyapunov α n) (cert : LyapunovCert α n)
@@ -84,7 +85,7 @@ supports the required transitivity arguments.
 
 namespace NN.MLTheory.CROWN.Lyapunov
 
-open _root_.Spec
+open Spec TorchLean
 
 /-- Concrete real-valued certificate format for JSON/importer-facing workflows. -/
 structure RealCert (n : Nat) where
@@ -117,7 +118,7 @@ end NN.MLTheory.CROWN.Lyapunov
 
 namespace NN.MLTheory.CROWN.Lyapunov.Real
 
-open _root_.Spec
+open Spec TorchLean
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Lyapunov
 

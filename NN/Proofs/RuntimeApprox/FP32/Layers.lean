@@ -6,18 +6,23 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.FP32
 public import NN.Proofs.RuntimeApprox.NF.Linalg
-public import NN.Spec.Layers.Activation
 public import NN.Spec.Layers.Linear
-public import NN.Spec.Core.Tensor.SomeTensor
+public import NN.Floats.FP32.Core
+public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Binary
 
 /-!
 # FP32 Layer Approximation
 
 This module specializes the backend-generic runtime-approximation framework
-(`NN.Proofs.RuntimeApprox`) to the concrete float32 rounding model `TorchLean.Floats.FP32`
-(round-to-nearest-even with an IEEE-754 binary32-style exponent function).
+(`NN.Proofs.RuntimeApprox`) to the rounded-real float32 model
+`TorchLean.Floats.FP32 := NF binaryRadix fexp32 rnd32` (round-to-nearest-even with the IEEE-754
+binary32 exponent function). Every theorem in this directory, including those whose names end in
+`_fp32`, is a statement about that rounded-real model. None of them is a statement about Lean's
+`Float32` type or about the bit-level `ExecFloat.Binary 8 23` model. Finite binary32 add/mul
+refinements are in
+`NN/Floats/IEEEExec/Bridge/Finite.lean`; further arithmetic refinements are in
+`NN/Proofs/RuntimeApprox/IEEE32/Arithmetic.lean`.
 
 The lemmas here are *compositional*: they let you relate a real-valued spec computation
 to its float32 execution under an explicit error budget, so that larger network theorems can be
@@ -30,11 +35,14 @@ condition that execution stays finite (no NaN/Inf/overflow in an IEEE-754 hardwa
 
 @[expose] public section
 
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
+
 
 namespace NN.Proofs.RuntimeApprox.FP32
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 
 open _root_.Proofs
 open _root_.Proofs.RuntimeApprox
@@ -47,7 +55,7 @@ noncomputable section
 abbrev R : Type := TorchLean.Floats.FP32
 
 /-- Radix for the `FP32` rounding model (binary). -/
-abbrev β : NeuralRadix := binaryRadix
+abbrev β : Radix := binaryRadix
 /-- Exponent function used by the `FP32` rounding model. -/
 abbrev fexp : ℤ → ℤ := TorchLean.Floats.fexp32
 /-- Round-to-nearest-even function used by the `FP32` rounding model. -/

@@ -17,7 +17,7 @@ TorchLean's shape-indexed tensors.
 
 @[expose] public section
 
-open Spec
+open Spec TorchLean
 
 namespace NN.MLTheory.Robustness.Spec
 
@@ -27,8 +27,8 @@ namespace NN.MLTheory.Robustness.Spec
 This file defines reusable vocabulary for specifying **robustness properties** of tensor-valued
 functions.
 
-All definitions are **scalar-polymorphic** in `α` via `[Context α]`, so the same spec can be
-instantiated for:
+All definitions are **scalar-polymorphic** in `α` via `[TorchLean.Storage α] [Context α]`, so the
+same spec can be instantiated for:
 
 - `ℝ` (paper-style theorems),
 - `Float` (fast, executable consistency checks),
@@ -52,7 +52,7 @@ Verified bounds/certificates are proved in dedicated developments (e.g. Lipschit
 - Lipschitz-based viewpoints (one entry point): Hein & Andriushchenko (2017).
 -/
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-! ## Norms on spec tensors -/
 
@@ -63,13 +63,11 @@ If you flatten the tensor entries into a vector $t_i$, this is $\max_i |t_i|$.
 -/
 def tensorLinfNorm {s : Shape} (t : Tensor α s) : α :=
   match s with
-  | .scalar => match t with
-    | .scalar x => MathFunctions.abs x
-  | .dim n _inner_s => match t with
-    | .dim f =>
-      (List.finRange n).foldl
-        (fun acc i => max acc (tensorLinfNorm (f i)))
-        0
+  | .scalar => MathFunctions.abs t.item
+  | .dim n _inner_s =>
+    (List.finRange n).foldl
+      (fun acc i => max acc (tensorLinfNorm (t.unstack i)))
+      0
 
 /--
 $L^2$ (Euclidean) norm of a shape-indexed tensor.
@@ -78,17 +76,15 @@ If you flatten the tensor entries into a vector $t_i$, this is
 $\sqrt{\sum_i t_i^2}$.
 -/
 def tensorL2Norm {s : Shape} (t : Tensor α s) : α :=
-  MathFunctions.sqrt (tensor_l2_norm_squared t)
+  MathFunctions.sqrt (tensorL2NormSquared t)
 where
-  tensor_l2_norm_squared {s : Shape} (t : Tensor α s) : α :=
+  tensorL2NormSquared {s : Shape} (t : Tensor α s) : α :=
     match s with
-    | .scalar => match t with
-      | .scalar x => x * x
-    | .dim n _inner_s => match t with
-      | .dim f =>
-        (List.finRange n).foldl
-          (fun acc i => acc + tensor_l2_norm_squared (f i))
-          0
+    | .scalar => t.item * t.item
+    | .dim n _inner_s =>
+      (List.finRange n).foldl
+        (fun acc i => acc + tensorL2NormSquared (t.unstack i))
+        0
 
 /-! ## Distances and balls -/
 
@@ -101,34 +97,22 @@ $$
 -/
 def tensorDistance (norm : ∀ {s : Shape}, Tensor α s → α) {s : Shape}
     (t1 t2 : Tensor α s) : α :=
-  norm (tensor_sub t1 t2)
+  norm (tensorSub t1 t2)
 where
-  tensor_sub {s : Shape} : Tensor α s → Tensor α s → Tensor α s
-    | .scalar x, .scalar y => .scalar (x - y)
-    | .dim f1, .dim f2 => .dim (fun i => tensor_sub (f1 i) (f2 i))
+  tensorSub {s : Shape} (t1 t2 : Tensor α s) : Tensor α s :=
+    TorchLean.Tensor.subSpec t1 t2
 
+/-- The compatibility subtraction helper delegates to the shared tensor subtraction. -/
 @[simp] theorem tensor_distance_tensor_sub_eq_sub_spec {s : Shape} (t1 t2 : Tensor α s) :
-    tensorDistance.tensor_sub t1 t2 = Spec.Tensor.subSpec t1 t2 := by
-  induction s with
-  | scalar =>
-    cases t1 with
-    | scalar x =>
-      cases t2 with
-      | scalar y =>
-        rfl
-  | dim n inner ih =>
-    cases t1 with
-    | dim f1 =>
-      cases t2 with
-      | dim f2 =>
-        -- Reduce to pointwise equality of the recursive calls.
-        apply congrArg Tensor.dim
-        funext i
-        exact ih (t1 := f1 i) (t2 := f2 i)
+    tensorDistance.tensorSub t1 t2 = TorchLean.Tensor.subSpec t1 t2 := by
+  rfl
 
+/--
+Distance is the norm of the library difference: the form every downstream robustness proof uses.
+-/
 @[simp] theorem tensor_distance_eq_norm_sub_spec (norm : ∀ {s : Shape}, Tensor α s → α) {s : Shape}
     (t1 t2 : Tensor α s) :
-    tensorDistance (α := α) norm t1 t2 = norm (Spec.Tensor.subSpec t1 t2) := by
+    tensorDistance (α := α) norm t1 t2 = norm (TorchLean.Tensor.subSpec t1 t2) := by
   simp [tensorDistance]
 
 /--
@@ -145,7 +129,7 @@ def tensorBall (norm : ∀ {s : Shape}, Tensor α s → α) {s : Shape}
 /-! ## Continuity / robustness specifications -/
 
 /--
-Lipschitz continuity (global), phrased using `tensor_distance`.
+Lipschitz continuity (global), phrased using `tensorDistance`.
 
 If $f$ is $L$-Lipschitz and $d_1(x_0,x)\leq\varepsilon$, then
 $d_2(f(x_0),f(x))\leq L\varepsilon$.
@@ -161,7 +145,7 @@ def isLipschitzContinuous {s₁ s₂ : Shape}
 /--
 Local Lipschitz continuity within the $\varepsilon$-ball around $x_0$.
 -/
-def isLocallyLipschitz {s₁ s₂ : Shape}
+def IsLocallyLipschitz {s₁ s₂ : Shape}
     (f : Tensor α s₁ → Tensor α s₂)
     (norm₁ : ∀ {s : Shape}, Tensor α s → α)
     (norm₂ : ∀ {s : Shape}, Tensor α s → α)
@@ -176,7 +160,7 @@ Adversarial robustness at a point $x_0$.
 $f$ is $(\varepsilon,\delta)$-robust at $x_0$ if every input within distance $\varepsilon$ of
 $x_0$ maps to an output within distance $\delta$ of $f(x_0)$.
 -/
-def isAdversariallyRobust {s₁ s₂ : Shape}
+def IsAdversariallyRobust {s₁ s₂ : Shape}
     (f : Tensor α s₁ → Tensor α s₂)
     (norm₁ : ∀ {s : Shape}, Tensor α s → α)
     (norm₂ : ∀ {s : Shape}, Tensor α s → α)
@@ -191,7 +175,7 @@ $\varepsilon$-ball around $x_0$.
 
 For neural networks, `classifier` is typically `argmax` on a logits tensor.
 -/
-def isCertifiedRobust {s : Shape}
+def IsCertifiedRobust {s : Shape}
     (classifier : Tensor α s → Nat)
     (norm : ∀ {s : Shape}, Tensor α s → α)
     (x₀ : Tensor α s) (ε : α) : Prop :=
@@ -201,12 +185,12 @@ def isCertifiedRobust {s : Shape}
       classifier x = classifier x₀
 
 /-- Uniform adversarial robustness over a finite array of inputs. -/
-def isUniformlyRobust {s₁ s₂ : Shape}
+def IsUniformlyRobust {s₁ s₂ : Shape}
     (f : Tensor α s₁ → Tensor α s₂)
     (norm₁ : ∀ {s : Shape}, Tensor α s → α)
     (norm₂ : ∀ {s : Shape}, Tensor α s → α)
     (dataset : Array (Tensor α s₁)) (ε δ : α) : Prop :=
-  ∀ x₀ ∈ dataset, isAdversariallyRobust f norm₁ norm₂ x₀ ε δ
+  ∀ x₀ ∈ dataset, IsAdversariallyRobust f norm₁ norm₂ x₀ ε δ
 
 /--
 Contraction mapping under a norm: $f$ shrinks distances by a factor $c<1$.
@@ -217,9 +201,9 @@ fixed points.
 def isContractive {s : Shape}
     (f : Tensor α s → Tensor α s)
     (norm : ∀ {s : Shape}, Tensor α s → α)
-    (contraction_factor : α) : Prop :=
-  contraction_factor < 1 ∧
-  isLipschitzContinuous f norm norm contraction_factor
+    (contractionFactor : α) : Prop :=
+  contractionFactor < 1 ∧
+  isLipschitzContinuous f norm norm contractionFactor
 
 /--
 Sensitivity ratio for a specific additive perturbation.
@@ -236,9 +220,9 @@ def sensitivity {s₁ s₂ : Shape}
     (norm₁ : ∀ {s : Shape}, Tensor α s → α)
     (norm₂ : ∀ {s : Shape}, Tensor α s → α)
     (x : Tensor α s₁) (perturbation : Tensor α s₁) : α :=
-  let output_change := tensorDistance norm₂ (f x) (f (Spec.Tensor.addSpec x perturbation))
-  let input_change := norm₁ perturbation
-  output_change / input_change
+  let outputChange := tensorDistance norm₂ (f x) (f (TorchLean.Tensor.addSpec x perturbation))
+  let inputChange := norm₁ perturbation
+  outputChange / inputChange
 
 
 

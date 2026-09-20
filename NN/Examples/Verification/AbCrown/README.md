@@ -1,27 +1,27 @@
-# Alpha-Beta-CROWN Leaf Artifacts
+# Check an alpha-beta-CROWN leaf report
 
-This example is the boundary between an external alpha-beta-CROWN-style search and a Lean side
-artifact checker. The external verifier is allowed to search, split domains, optimize relaxations,
-and decide which terminal leaves it wants to report. TorchLean checks the finite leaf artifact that
-the external run exports: the search procedure remains the named external producer.
-
-The reusable Lean checker lives in `NN/Verification/Cert/AbCrownLeafCert.lean`. It checks the schema
-and the local leaf conditions represented in the artifact: input lower/upper boxes, output lower
-bounds, thresholds, labels, and metadata needed to interpret the terminal domain. The bundled files
-are deliberately small enough to review in a pull request:
-
-- `sample_abcrown_leaf_artifact_v0_1.json`: TorchLean's checked artifact format.
-- `example_raw_leaf_dump.json`: a compact raw dump shaped like what an external verifier might
-  produce before conversion.
-
-Run the checked bundled artifact with:
+Run this small, offline format check from the repository root:
 
 ```bash
 lake exe verify -- abcrown-leaf
 ```
 
-To exercise the producer/checker path, convert the raw dump into TorchLean's schema and then invoke
-the Lean checker:
+The bundled report describes the box `[-1, 1] × [-1, 1]`, claims a lower bound of `1`, and gives
+an unsafe threshold of `0`. The checker confirms that the leaf stays inside the root box,
+`1 > 0`, and the reported margin equals `1 - 0`. The expected summary is
+`Checked 1 leaves: ok=1, bad=0`.
+
+This example teaches an **export/import sanity check**. It loads no network and does not recompute
+the claimed lower bound. It also does not check that a collection of leaves covers the whole input
+region. A made-up bound can pass these checks, so acceptance alone is not a robustness proof.
+For a model-to-bound workflow, start with `lake exe verify -- torchlean-ibp` instead.
+
+The two fixtures show the format boundary:
+
+- `example_raw_leaf_dump.json` uses the field names an external search might export.
+- `sample_abcrown_leaf_artifact_v0_1.json` uses TorchLean's checked schema.
+
+Convert the raw fixture and run the same checker:
 
 ```bash
 python3 scripts/verification/abcrown/export_leaf_artifact.py \
@@ -30,20 +30,7 @@ python3 scripts/verification/abcrown/export_leaf_artifact.py \
   --check
 ```
 
-For a real external verifier run, instrument the verifier to dump the terminal verified leaves, then
-convert that dump into `abcrown_leaf_artifact_v0_1`. The converter accepts common raw field names
-such as `x_L`, `x_U`, `lower_bounds`, and `thresholds`. If the verifier is already running inside a
-Python process, import `scripts.verification.abcrown.export_leaf_artifact.write_abcrown_leaf_artifact`;
-that helper writes to `ABCROWN_ARTIFACT_OUT` when no explicit output path is passed.
-
-The intended claim shape is:
-
-```text
-external search produced leaves
-  -> TorchLean converted the leaf dump
-  -> Lean checked the finite leaf artifact
-  -> accepted leaves may be cited as checked evidence for the stated local property
-```
-
-The search strategy, GPU kernels, and alpha/beta optimization loop remain external unless they are
-separately formalized. The checked object is the exported leaf artifact.
+The converter accepts aliases such as `x_L`, `x_U`, `lower_bounds`, and `thresholds`; vanilla
+alpha-beta-CROWN does not directly emit TorchLean's schema. Real runs must export their terminal
+leaf data before conversion. The checker implementation is
+`NN/Verification/Cert/AbCrownLeafCert.lean`.

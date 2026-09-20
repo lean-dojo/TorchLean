@@ -9,11 +9,28 @@ computation no longer means what the user intended. BugZoo turns those cases int
 shape contract, a mask theorem, a cache invariant, a tokenizer boundary, a Float32 bridge, or a
 compiler-preservation obligation.
 
-## Why These Bugs Matter
+Build all fifteen case studies from the repository root with:
 
-The useful TorchLean point is not "Python cannot run neural nets." Python can run them very well.
-The problem is that many serious ML bugs still return tensors, losses, logits, or tokens.
-They are semantic bugs: the code runs, but it is no longer the math people think they deployed.
+```bash
+lake build NN.Examples.BugZoo.All
+```
+
+Then open an individual file in Lean's Infoview to inspect its definitions and theorem statements.
+These are checked case studies rather than training executables. The geometry checker also runs
+with `lake exe verify -- camera-box3d-cert`; `verify -- all` runs the broader registered
+verification suite, not every BugZoo file.
+
+With PyTorch installed, compare native normalization results against the constant-slice reference:
+
+```bash
+python3 scripts/verification/normalization_contract_probe.py --device cpu
+```
+
+The probe prints version metadata and residuals for outputs and gradients across two dtypes and
+four input magnitudes. Use `--device cuda` to inspect a GPU implementation. These are measurements
+of the installed provider, separate from the Lean theorems.
+
+## Bug Families And Contracts
 
 | BugZoo file | Real bug family | What Lean makes explicit |
 | --- | --- | --- |
@@ -22,38 +39,16 @@ They are semantic bugs: the code runs, but it is no longer the math people think
 | `BatchInvariance.lean` | Production LLM inference can change outputs when dynamic batching changes reduction behavior, even with randomness disabled. | The reference theorem states that selecting one example from a batched run equals evaluating that example alone. Runtime kernels can be checked against this target. |
 | `KVCache.lean` | LLM engines have real cache management bugs: shifted caches, wrong positions, shape/config mismatches, and resource/cache scheduling faults. | Cache append specs prove the newly appended key/value is exactly the final cache entry. |
 | `RoPEPosition.lean` | LLM inference engine studies report RoPE/position mismatches alongside cache and tokenizer/config bugs. | Decode positions are explicit schedules; appending a token assigns the next position by theorem, not by ambient mutable state. |
-| `TokenizerBoundary.lean` | Tokenizer/config mismatches can silently disagree about vocabulary size or special token IDs before tensors ever reach the model. | Token IDs are represented as `Fin vocabSize`, making out of vocabulary IDs unrepresentable inside the verified fragment. |
-| `CompilerBoundary.lean` | DL compiler studies and a PyTorch compiler study report silent wrong outputs from optimized graphs without crashes or warnings. | Import/export boundaries become contracts: accepted backends must preserve source op semantics, shapes, dtypes, weights, and buffers. |
+| `TokenizerBoundary.lean` | Tokenizer/config mismatches can silently disagree about vocabulary size or special token IDs before tensors ever reach the model. | Token IDs are represented as `Fin vocabularySize`, making out of vocabulary IDs unrepresentable inside the verified fragment. |
+| `CompilerBoundary.lean` | DL compiler studies and a PyTorch compiler study report silent wrong outputs from optimized graphs without crashes or warnings. | Successful supported IR lowering preserves reference node denotations, assuming no raw logarithm nodes; external compilers need separate conformance evidence. |
 | `ShapeAndBroadcast.lean` | Tensor shape faults are common, and many wrong broadcasts do not crash. | Shape indexed tensors make intended axes part of the type/spec instead of relying on late runtime checks. |
 | `StableLoss.lean` | TensorFuzz targeted rare numerical failures and broken losses; numerical studies repeatedly find bad domains for `log`, `sqrt`, division, and reductions. | Stable loss and domain sensitive ops become named specs with stated finite value obligations. |
 | `IgnoredLabelLoss.lean` | PyTorch issue #75181 reported `CrossEntropyLoss(ignore_index=...)` returning `nan` for an all-ignored target case. | Ignored labels become explicit zero contributions, and the empty-reduction policy is named instead of hidden in a backend kernel. |
-| `AutogradDomain.lean` | PyTorch's autograd docs show that masking after `x / 0` can still leave `nan` gradients because the undefined division remains in the backward graph. | The safe domain graph records epsilon protected division before masking, so importers can distinguish it from "divide first, mask later." |
-| `FloatBoundary.lean` | Floating-point verification attacks show why real-valued proofs need an explicit bridge before they describe deployed `Float32` behavior. | Lean exposes the logical `Float32.Model`; TorchLean proves its core arithmetic agrees with `IEEE32Exec`, while native execution remains a provider boundary. |
+| `AutogradDomain.lean` | PyTorch's autograd docs show that masking after `x / 0` can still leave `nan` gradients because the undefined division remains in the backward graph. | The reference expression shifts the denominator by epsilon before masking; nonzero denominators and finite runtime values remain obligations. |
+| `FloatBoundary.lean` | Floating-point verification attacks show why real-valued proofs need an explicit bridge before they describe deployed `Float32` behavior. | FloatLib proves agreement with configured software arithmetic for Lean's logical `Float32.Model`: addition/subtraction on finite operands and square root modulo NaN canonicalization. Compiled CPU and CUDA execution require separate conformance evidence. |
 | `LayerNormDegenerateAxis.lean` | Backend LayerNorm kernels can mishandle the `normalized_shape=(1,)` case even though the math is a constant function. | The one-feature LayerNorm contract says the output is the bias, with zero input gradient and zero scale gradient; the repro script checks PyTorch against this contract. |
 | `ConstantNormalizationSlice.lean` | GroupNorm, InstanceNorm, and BatchNorm kernels can suffer cancellation on large constant slices even when their saved mean/rstd imply zero normalized activation. | The constant-slice normalization theorem says affine normalization returns the bias and has zero scale-gradient contribution. |
 | `Geometry3DProjection.lean` | 3D perception glue fails through camera convention mismatches, negative depth, swapped `xyxy`/axis layouts, malformed corner tensors, and projected 3D boxes that do not actually enclose their 2D claims. | The Geometry3D checker recomputes tensor native projection, checks positive depth and bbox enclosure, includes a theorem for homogeneous projection intervals, and renders accepted/rejected PNG overlays for human inspection. |
-
-## Contract Shapes
-
-| Bug family | Contract shape |
-| --- | --- |
-| Causal attention | future positions receive zero attention weight |
-| KV cache | appended key/value appears at the final cache slot |
-| RoPE position | appended token receives the next position |
-| Tokenizer boundary | token ids inhabit `Fin vocabSize` |
-| Batch invariance | selecting a row from batched evaluation equals evaluating that row alone |
-| Compiler boundary | target graph output equals source graph output |
-| Float boundary | classification is proved; arithmetic agreement between the two Lean models is explicit |
-| Stable loss | logits loss uses the stable log-softmax path |
-| One-feature LayerNorm | output equals bias and gradients with respect to input/scale are zero |
-| Constant normalization slice | output equals bias and the scale-gradient contribution is zero |
-| Geometry3D projection | projected 3D corners have positive depth and enclose the claimed 2D box |
-
-The checked scope here is the semantic contract for each failure mode: masks, caches, positions,
-token ids, batching, normalization, stable losses, compiler boundaries, Float32 bridges, and 3D
-projection envelopes. Distributed training setups, NCCL/collective semantics, paged attention
-allocators, mixed quantization, and arbitrary CUDA kernels belong in separate boundary examples with
-their own contracts.
 
 ## Source Trail
 
@@ -98,15 +93,3 @@ The case studies are motivated by published bug studies and systems reports:
   [BlenderProc #1150](https://github.com/DLR-RM/BlenderProc/issues/1150):
   camera conventions, tensor layouts, and bbox projection checks are a real boundary problem,
   not a synthetic TorchLean only example.
-
-## Reading guide
-
-BugZoo files should read like small case studies. Each file should answer, in order:
-
-- what real bug family is being modeled;
-- what the bad framework side pattern looks like;
-- what exact TorchLean object is the trusted contract;
-- what the theorem proves, and which runtime or producer assumptions remain.
-
-That keeps the prose explanation close to the checked Lean artifact without claiming more than the
-example proves.

@@ -6,13 +6,12 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec
+public import NN.API.Neural.State
 public import NN.API.Sample
 public import NN.MLTheory.CROWN.Graph
-public import NN.MLTheory.CROWN.Lyapunov.TwoStage.Core
 public import NN.MLTheory.CROWN.Lyapunov.TwoStage.Execution
-public import NN.Runtime.Autograd.TorchLean.Autodiff
-public import NN.Verification.TorchLean.Lowering
+public import NN.Runtime.Autograd.Model.Autodiff
+public import NN.Verification.Builtin.Lowering
 
 /-!
 # Lowered Loss Analysis for Two-Stage Lyapunov Workflows
@@ -23,18 +22,21 @@ ascent on the lowered loss and an IBP/CROWN check of that loss over an input box
 
 @[expose] public section
 
-open Spec
-open Tensor
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace NN.MLTheory.CROWN.Lyapunov.TwoStage.LossAnalysis
 
-open _root_.TorchLean.Floats.IEEE754
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph
 open NN.MLTheory.CROWN.Lyapunov.TwoStage
 
 /-- Executable float32 semantics used by both lowered two-stage pipelines. -/
-abbrev Scalar : Type := IEEE32Exec
+abbrev Scalar : Type := (ExecFloat.Binary 8 23)
 
 /-- Shapes supplied to the lowered scalar loss: parameters followed by one state vector. -/
 abbrev LossInputs (width : Nat) : List Shape := Core.paramShapes width ++ [Core.xShape]
@@ -47,36 +49,40 @@ the coordinate box `[-radius, radius]`.
 -/
 def projectedGradientStep
     (width : Nat)
-    (lossGraph : _root_.Runtime.Autograd.Torch.TypedScalarGraph Scalar (LossInputs width))
-    (parameters : _root_.TorchLean.TensorPack Scalar (Core.paramShapes width))
+    (lossGraph : Runtime.Autograd.Torch.TypedScalarGraph Scalar (LossInputs width))
+    (parameters : TorchLean.nn.State Scalar (Core.paramShapes width))
     (state : Tensor Scalar Core.xShape)
     (stepSize radius : Scalar) : Tensor Scalar Core.xShape :=
-  let arguments : _root_.TorchLean.TensorPack Scalar (LossInputs width) :=
+  let arguments : TorchLean.TensorPack Scalar (LossInputs width) :=
     TorchLean.TensorPack.append (α := Scalar)
-      (ss₁ := Core.paramShapes width) (ss₂ := [Core.xShape]) parameters (.cons state .nil)
-  let allGradients : _root_.TorchLean.TensorPack Scalar (LossInputs width) :=
-    _root_.Runtime.Autograd.Torch.TypedScalarGraph.backward
+      (ss₁ := Core.paramShapes width) (ss₂ := [Core.xShape])
+      (TorchLean.nn.State.Internal.toTensorPack parameters)
+      (TorchLean.TensorPack.singleton state)
+  let allGradients : TorchLean.TensorPack Scalar (LossInputs width) :=
+    Runtime.Autograd.Torch.TypedScalarGraph.backward
       (α := Scalar) (Γ := LossInputs width) lossGraph arguments
-  let stateGradients : _root_.TorchLean.TensorPack Scalar [Core.xShape] :=
-    (TorchLean.TensorPack.split (α := Scalar)
-      (ss₁ := Core.paramShapes width) (ss₂ := [Core.xShape]) allGradients).2
-  let .cons gradient .nil := stateGradients
+  let stateGradients : TorchLean.TensorPack Scalar [Core.xShape] :=
+    let (_, stateGradients) := TorchLean.TensorPack.split (α := Scalar)
+      (ss₁ := Core.paramShapes width) (ss₂ := [Core.xShape]) allGradients
+    stateGradients
+  let gradient := TorchLean.TensorPack.get stateGradients ⟨0, by decide⟩
   let updated := Tensor.addSpec state (Tensor.scaleSpec gradient stepSize)
   Execution.clampStateTensor (-radius) radius updated
 
 /-- Lower the Lyapunov loss while keeping its large polymorphic program out of callers' code. -/
 @[noinline] def lowerLossToIR
     (width : Nat)
-    (parameters : _root_.TorchLean.TensorPack Scalar (Core.paramShapes width)) :
-    Except String (NN.Verification.TorchLean.LoweredIR Scalar) :=
-  NN.Verification.TorchLean.lowerForwardToIR
+    (parameters : TorchLean.nn.State Scalar (Core.paramShapes width)) :
+    Except String (NN.Verification.Builtin.LoweredIR Scalar) :=
+  NN.Verification.Builtin.lowerForwardToIR
     (α := Scalar) (paramShapes := Core.paramShapes width)
-    (inShape := Core.xShape) (outShape := Shape.scalar)
-    (Core.lossProgram width (β := Scalar)) parameters
+    (inShape := Core.xShape) (outShape := [])
+    (Core.lossProgram width (β := Scalar))
+    (TorchLean.nn.State.Internal.toTensorPack parameters)
 
 /-- Run and print the IBP bound for an already lowered loss graph. -/
 @[noinline] def reportIBP
-    (lowered : NN.Verification.TorchLean.LoweredIR Scalar)
+    (lowered : NN.Verification.Builtin.LoweredIR Scalar)
     (parameterStore : ParamStore Scalar) : IO Unit := do
   let intervalBounds := runIBP (α := Scalar) lowered.graph parameterStore
   let outputBounds ← lowered.outputBoxOrThrow intervalBounds
@@ -84,7 +90,7 @@ def projectedGradientStep
 
 /-- Run and print the CROWN bound for an already lowered loss graph. -/
 @[noinline] def reportCROWN
-    (lowered : NN.Verification.TorchLean.LoweredIR Scalar)
+    (lowered : NN.Verification.Builtin.LoweredIR Scalar)
     (inputBox : FlatBox Scalar) (parameterStore : ParamStore Scalar) : IO Unit := do
   match outputBoxCROWN? lowered.graph parameterStore inputBox
       lowered.inputId lowered.outputId Core.xDim with
@@ -99,7 +105,7 @@ Lower the shared scalar loss and report its IBP and CROWN bounds on an origin-ce
 -/
 def checkLossBox
     (width : Nat)
-    (parameters : _root_.TorchLean.TensorPack Scalar (Core.paramShapes width))
+    (parameters : TorchLean.nn.State Scalar (Core.paramShapes width))
     (epsilon : Scalar) : IO Unit := do
   IO.println "Stage 2 check: IBP + CROWN on the scalar loss over a small box"
   let lowered ←
@@ -109,7 +115,7 @@ def checkLossBox
 
   IO.println s!"lowered IR nodes: {lowered.graph.nodes.size}"
 
-  let origin : Tensor Scalar Core.xShape := Spec.zeros (α := Scalar) Core.xShape
+  let origin : Tensor Scalar Core.xShape := Tensor.zeros (α := Scalar) Core.xShape
   let inputBox : FlatBox Scalar := FlatBox.lInfBall (α := Scalar) origin epsilon
   let parameterStore : ParamStore Scalar := lowered.seedInputBox inputBox
 

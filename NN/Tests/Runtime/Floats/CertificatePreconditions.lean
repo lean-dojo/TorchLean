@@ -7,15 +7,12 @@ Authors: TorchLean Team
 module
 
 public import NN.Tests.Runtime.Floats.Utils
-public import NN.Verification.Cert.NodeReplay
 public import NN.Verification.Cert.CROWNNodeCert
-public import NN.Verification.Cert.IBPNodeCert
 public import NN.Verification.ODE.Parse
 public import NN.Verification.PINN.Core
 public import NN.Verification.PINN.PdeParse
 public import NN.Verification.Robustness.MarginCert
 public import NN.Verification.VNNComp.Spec
-public import Lean.Data.Json
 
 /-!
 # CertificatePreconditions
@@ -30,12 +27,16 @@ their documented power/negation semantics, and interval comparisons must reject 
 
 @[expose] public section
 
-open Spec
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofModel toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+open Spec TorchLean
 open Lean
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph
 open NN.Verification.Cert.NodeReplay
-open TorchLean.Floats.IEEE754
 
 namespace Tests
 namespace Floats
@@ -73,13 +74,13 @@ def parseInputRegion! (source : String) : IO NN.Verification.Json.BoxRegion := d
     match inputResult with
     | .ok input => pure input
     | .error e => throw <| IO.userError s!"input-region parser rejected a valid fixture: {e}"
-  match NN.Verification.Json.expectBoxRegionE "input" input with
+  match NN.Verification.Json.parseBoxRegion "input" input with
   | .ok region => pure region
   | .error e => throw <| IO.userError s!"input-region parser rejected a valid fixture: {e}"
 
 /-- Whether a JSON value passes the complete PINN certificate schema checks. -/
 def pinnCertificateAccepted (json : Json) : Bool :=
-  match NN.Verification.PINN.parseCert json with
+  match NN.Verification.PINN.parseCertificate json with
   | .ok _ => true
   | .error _ => false
 
@@ -105,27 +106,31 @@ def evalPDEAtTwo (source : String) : Option (Float × Float) := do
     { u := some (2.0, 2.0), duX := none, duY := none, d2uX := none, d2uY := none }
     expr
 
-def flatBox (lo hi : Fin 2 → Float) : FlatBox IEEE32Exec :=
+def flatBox (lo hi : Fin 2 → Float) : FlatBox (Binary 8 23) :=
   { dim := 2
-    lo := Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.ofFn lo)
-    hi := Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.ofFn hi) }
+    lo := TorchLean.Tensor.map (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel
+      (Binary.ofFloat x))) : Binary 8 23)) (TorchLean.Tensor.ofFn lo)
+    hi := TorchLean.Tensor.map (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel
+      (Binary.ofFloat x))) : Binary 8 23)) (TorchLean.Tensor.ofFn hi) }
 
-def flatBox3 : FlatBox IEEE32Exec :=
+def flatBox3 : FlatBox (Binary 8 23) :=
   { dim := 3
-    lo := Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.ofFn (fun _ : Fin 3 => 0.0))
-    hi := Spec.Tensor.map IEEE32Exec.ofFloat (Spec.Tensor.ofFn (fun _ : Fin 3 => 1.0)) }
+    lo := TorchLean.Tensor.map (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel
+      (Binary.ofFloat x))) : Binary 8 23)) (TorchLean.Tensor.ofFn (fun _ : Fin 3 => 0.0))
+    hi := TorchLean.Tensor.map (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel
+      (Binary.ofFloat x))) : Binary 8 23)) (TorchLean.Tensor.ofFn (fun _ : Fin 3 => 1.0)) }
 
-def inputNode (id dim : Nat) : _root_.NN.IR.Node :=
+def inputNode (id dim : Nat) : NN.IR.Node :=
   { id := id, parents := #[], kind := .input, outShape := [dim] }
 
-def addGraph : _root_.NN.IR.Graph :=
+def addGraph : NN.IR.Graph :=
   { nodes := #[
       inputNode 0 2,
       inputNode 1 3,
       { id := 2, parents := #[0, 1], kind := .add, outShape := [2] }
     ] }
 
-def logGraph : _root_.NN.IR.Graph :=
+def logGraph : NN.IR.Graph :=
   { nodes := #[
       inputNode 0 2,
       { id := 1, parents := #[0], kind := .log, outShape := [2] }
@@ -158,9 +163,39 @@ def run : IO Unit := do
     parseInputRegion! "{\"input\":{\"lo\":[0.0],\"hi\":[1.0],\"eps\":0.5}}"
 
   expect "VNN-COMP accepted a reversed input box" <|
-    !NN.Verification.VNNComp.VNNLib.inputBoxValid #[1.0, 0.0] #[0.0, 1.0]
+    !NN.Verification.Util.Tensor.boundsOrdered ([1.0, 0.0] : TorchLean.Tensor Float [2])
+      [0.0, 1.0]
   expect "VNN-COMP rejected a well-formed input box" <|
-    NN.Verification.VNNComp.VNNLib.inputBoxValid #[-1.0, 0.0] #[1.0, 2.0]
+    NN.Verification.Util.Tensor.boundsOrdered ([-1.0, 0.0] : TorchLean.Tensor Float [2])
+      [1.0, 2.0]
+
+  let lower : Tensor Float [2] := [0.0, 1.0]
+  let threshold : Tensor Float [2] := [0.0, 0.0]
+  expect "threshold refutation missed the second coordinate" <|
+    NN.Verification.Util.Tensor.refutesThreshold lower threshold
+  expect "threshold witness silently fell back to another coordinate" <|
+    !NN.Verification.Util.Tensor.refutesThresholdAt lower threshold 0
+  expect "threshold witness accepted an out-of-range index" <|
+    !NN.Verification.Util.Tensor.refutesThresholdAt lower threshold 2
+  let nan : Float := Float.ofBits 0x7ff8000000000000
+  expect "threshold witness accepted NaN" <|
+    !NN.Verification.Util.Tensor.refutesThresholdAt ([nan] : Tensor Float [1]) [0.0] 0
+  expect "bound ordering accepted NaN" <|
+    !NN.Verification.Util.Tensor.boundsOrdered ([nan] : Tensor Float [1]) [0.0]
+  expect "vector decoding accepted a mismatched length" <|
+    (NN.Verification.Util.Tensor.vecOfArray 2 #[1.0]).isNone
+  expect "matrix decoding accepted a ragged row" <|
+    (NN.Verification.Util.Tensor.matOfArray 2 2 #[#[1.0, 0.0], #[1.0]]).isNone
+  let term : NN.Verification.VNNComp.VNNLib.Term :=
+    { rows := 1, cols := 2, mat := [[2.0, -3.0]], rhs := [-5.0] }
+  let box : FlatBox Float := { dim := 2, lo := [1.0, 1.0], hi := [2.0, 2.0] }
+  expect "outward row bound failed to refute a separated threshold" <|
+    NN.Verification.VNNComp.VNNLib.termRefutedByOutputBox box term
+  expect "outward row bound accepted equality as a strict refutation" <|
+    !NN.Verification.VNNComp.VNNLib.termRefutedByOutputBox box { term with rhs := [-4.0] }
+  expect "output spec accepted a dimension mismatch" <|
+    !NN.Verification.VNNComp.VNNLib.termRefutedByOutputBox
+      { dim := 1, lo := [1.0], hi := [2.0] } term
 
   let reversedMarginEntry ← parseJson! <|
     "{\"label\":0,\"logits_lo\":[2.0,0.0],\"logits_hi\":[1.0,0.5]}"
@@ -241,6 +276,28 @@ def run : IO Unit := do
     (evalPDEAtTwo "--u") (2.0, 2.0)
 
   let floatNaN := Float.ofBits 0x7ff8000000000000
+  let labelLower : Tensor Float [3] := [1, 0, 0]
+  let labelUpper : Tensor Float [3] := [1, floatNaN, 0]
+  expect "top-label check hid an unordered competitor while taking a maximum"
+    (!NN.Verification.Robustness.TopLabel.certifiesLabelFromTensorBounds labelLower labelUpper 0)
+  let unitBox : NN.MLTheory.CROWN.Box Float .scalar :=
+    ⟨Tensor.scalar 0, Tensor.scalar 1⟩
+  expect "box containment accepted a NaN value"
+    (!unitBox.containsBool (Tensor.scalar floatNaN))
+  expect "box containment accepted a NaN lower endpoint"
+    (!(NN.MLTheory.CROWN.Box.containsBool
+      { unitBox with lo := Tensor.scalar floatNaN } (Tensor.scalar 0)))
+  expect "box containment accepted a NaN upper endpoint"
+    (!(NN.MLTheory.CROWN.Box.containsBool
+      { unitBox with hi := Tensor.scalar floatNaN } (Tensor.scalar 0)))
+  expect "box containment rejected its lower endpoint"
+    (unitBox.containsBool (Tensor.scalar 0))
+  expect "box containment rejected its upper endpoint"
+    (unitBox.containsBool (Tensor.scalar 1))
+  expect "box comparison accepted native binary32 NaN"
+    (!NN.MLTheory.CROWN.Box.leBool (Float32.ofBits 0x7fc00000) (0 : Float32))
+  expect "box comparison accepted configured binary32 NaN"
+    (!NN.MLTheory.CROWN.Box.leBool (Binary.canonicalNaN : Binary 8 23) 0)
   expect "Float NaN was accepted as <= a finite value"
     (!(NN.Verification.ODE.Ival.leBool floatNaN 0.0))
   expect "a finite Float was accepted as <= NaN"
@@ -253,19 +310,24 @@ def run : IO Unit := do
   expect "interval maximum hid a non-finite Float endpoint"
     (!(NN.Verification.ODE.Ival.max2 0.0 floatInf).isFinite)
 
-  expect "IEEE32Exec NaN was accepted as <= a finite value"
-    (!(NN.Verification.ODE.Ival.leBool IEEE32Exec.canonicalNaN IEEE32Exec.posZero))
-  expect "a finite IEEE32Exec value was accepted as <= NaN"
-    (!(NN.Verification.ODE.Ival.leBool IEEE32Exec.posZero IEEE32Exec.canonicalNaN))
-  expect "IEEE32Exec infinity was accepted as an ordered finite endpoint"
-    (!(NN.Verification.ODE.Ival.leBool IEEE32Exec.posInf IEEE32Exec.posZero))
-  expect "interval minimum hid a non-finite IEEE32Exec endpoint"
-    (!(IEEE32Exec.isFinite <| NN.Verification.ODE.Ival.min2 IEEE32Exec.posInf IEEE32Exec.posZero))
-  expect "interval maximum hid a non-finite IEEE32Exec endpoint"
-    (!(IEEE32Exec.isFinite <| NN.Verification.ODE.Ival.max2 IEEE32Exec.posZero IEEE32Exec.posInf))
+  expect "configured binary32 NaN was accepted as <= a finite value"
+    (!(NN.Verification.ODE.Ival.leBool (Binary.canonicalNaN : Binary 8 23) (Binary.zero false :
+      Binary 8 23)))
+  expect "a finite configured binary32 value was accepted as <= NaN"
+    (!(NN.Verification.ODE.Ival.leBool (Binary.zero false : Binary 8 23) (Binary.canonicalNaN :
+      Binary 8 23)))
+  expect "configured binary32 infinity was accepted as an ordered finite endpoint"
+    (!(NN.Verification.ODE.Ival.leBool (Binary.infinity false : Binary 8 23) (Binary.zero false :
+      Binary 8 23)))
+  expect "interval minimum hid a non-finite configured binary32 endpoint"
+    (!(Binary.isFinite <| NN.Verification.ODE.Ival.min2 (Binary.infinity false : Binary 8 23)
+      (Binary.zero false : Binary 8 23)))
+  expect "interval maximum hid a non-finite configured binary32 endpoint"
+    (!(Binary.isFinite <| NN.Verification.ODE.Ival.max2 (Binary.zero false : Binary 8 23)
+      (Binary.infinity false : Binary 8 23)))
 
   let b2 := flatBox (fun _ => 0.0) (fun _ => 1.0)
-  let mismatchCert : Array (Option (FlatBox IEEE32Exec)) := #[some b2, some flatBox3, some b2]
+  let mismatchCert : Array (Option (FlatBox (Binary 8 23))) := #[some b2, some flatBox3, some b2]
   expect "binary elementwise dimension mismatch was accepted"
     (!(ibpNodePreconditionsOk addGraph mismatchCert 2))
 
@@ -276,15 +338,15 @@ def run : IO Unit := do
   expect "positive log input was rejected"
     (ibpNodePreconditionsOk logGraph #[some positive, some positive] 1)
 
-  let emptyStore : ParamStore IEEE32Exec := {}
+  let emptyStore : ParamStore (Binary 8 23) := {}
   let nonPositiveRun := runIBP logGraph (emptyStore.seedInputBox 0 nonPositive)
   let positiveRun := runIBP logGraph (emptyStore.seedInputBox 0 positive)
   expect "IBP evaluated raw log across its nonpositive domain boundary"
     (nonPositiveRun[1]!.isNone)
-  expect "IEEE32Exec log was accepted without a directed transcendental implementation"
+  expect "configured binary32 log was accepted without a directed transcendental implementation"
     (positiveRun[1]!.isNone)
 
-  let inputGraph : _root_.NN.IR.Graph := { nodes := #[inputNode 0 2] }
+  let inputGraph : NN.IR.Graph := { nodes := #[inputNode 0 2] }
   let authoritative := flatBox (fun _ => 0.0) (fun _ => 1.0)
   let inward := flatBox (fun _ => 0.0) (fun _ => 0.999999)
   let outward := flatBox (fun _ => -0.000001) (fun _ => 1.000001)
@@ -299,7 +361,7 @@ def run : IO Unit := do
   let crownCert : CROWNNodeCoreCertificate :=
     { ctx := ctx
       ibp := #[some authoritative]
-      crown := #[some (boundsIdentity (α := IEEE32Exec) 2)]
+      crown := #[some (boundsIdentity (α := (Binary 8 23)) 2)]
       alpha := #[none] }
   expect "a complete exact alpha-CROWN replay was rejected"
     (NN.Verification.CROWNNodeCert.certificateAccepts crownCert inputGraph emptyStore

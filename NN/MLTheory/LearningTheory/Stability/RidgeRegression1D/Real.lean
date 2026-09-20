@@ -6,14 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-public import Mathlib.Algebra.Order.BigOperators.Group.Finset
-public import Mathlib.Algebra.Order.Ring.Abs
-public import Mathlib.Analysis.SpecialFunctions.Pow.Real
 public import NN.MLTheory.LearningTheory.Stability.Core
-import Mathlib.Tactic.FieldSimp
-import Mathlib.Tactic.Linarith
-import Mathlib.Tactic.Ring
 
 /-!
 # 1D ridge regression: replace-one uniform stability (squared loss)
@@ -58,7 +51,7 @@ operations are most convenient in that convention in our `Dataset` library.
 
 ## Datasets as tensors
 
-In `Stability.Core`, a dataset `Dataset N Z` is a tensor of shape `[N]` (`Spec.Tensor Z [N]`).
+In `Stability.Core`, a dataset `Dataset N Z` is a tensor of shape `[N]` (`TorchLean.Tensor Z [N]`).
 We use `Dataset.get S i` to access the `i`-th example.
 
 ## Stability statement (informal)
@@ -70,9 +63,9 @@ $|\ell(\widehat w(S),z)-\ell(\widehat w(S'),z)|$,
 
 where $\ell(w,(x,y))=(wx-y)^2$.
 
-The final bound is explicit (a rational expression in $X,Y,\lambda,N$) and matches the expected
-scaling for strongly convex regularized ERM: it is $O(1/(\lambda N))$ up to problem-dependent
-constants.
+The final bound is $4X^2Y^2(\lambda+X^2)^2/(\lambda^3 N)$. It scales as $1/N$ for fixed
+$X,Y,\lambda>0$; its dependence on $\lambda$ includes inverse-cubic terms, so it is not a
+uniform $O(1/(\lambda N))$ estimate as $\lambda$ tends to zero.
 
 This is intended as a small, fully proved example that can be cited in documentation/papers.
 
@@ -117,6 +110,7 @@ We keep `BoundedExample` as a subtype so bounds are carried as hypotheses in the
 reused uniformly throughout the proof (instead of repeating assumptions).
 -/
 
+/-- The `x` coordinate of a bounded example. -/
 @[simp] def x (z : BoundedExample X Y) : ℝ := z.1.1
 /-- The `y` coordinate of a bounded example. -/
 @[simp] def y (z : BoundedExample X Y) : ℝ := z.1.2
@@ -179,7 +173,7 @@ written as a single-term difference.
 This is a standard “finite sum perturbation” identity and is the main combinatorial input needed
 to control `sumXX` and `sumXY` under replace-one.
 -/
-private lemma sum_replaceAt_sub {Z : Type} (φ : Z → ℝ)
+private theorem sum_replaceAt_sub {Z : Type} (φ : Z → ℝ)
     (S : Dataset (n + 1) Z) (i : Fin (n + 1)) (z' : Z) :
     (∑ j ∈ (Finset.univ : Finset (Fin (n + 1))), φ (Dataset.get S j)) -
         (∑ j ∈ (Finset.univ : Finset (Fin (n + 1))), φ (Dataset.get (replaceAt S i z') j)) =
@@ -236,14 +230,15 @@ The section exposes the headline theorem while keeping intermediate constants an
 local to the proof.
 -/
 
+/-- The sample size `n + 1` as a real number, so the averaging denominators stay readable. -/
 def N : ℝ := ((n + 1 : Nat) : ℝ)
 
 /-! $N=n+1$ is positive as a real number. -/
-lemma N_pos : 0 < N (n := n) := by
+theorem N_pos : 0 < N (n := n) := by
   simpa [N] using (Nat.cast_pos.mpr (Nat.succ_pos n))
 
 /-! `sumXX` is nonnegative (it is a sum of squares). -/
-private lemma sumXX_nonneg (S : Dataset (n + 1) (BoundedExample X Y)) :
+private theorem sumXX_nonneg (S : Dataset (n + 1) (BoundedExample X Y)) :
     0 ≤ sumXX (n := n) S := by
   classical
   refine Finset.sum_nonneg ?_
@@ -256,7 +251,7 @@ The ridge denominator $\operatorname{sumXX}(S)+\lambda N$ is positive when $\lam
 
 This ensures the closed-form ratio is well-defined and lets us use order properties of division.
 -/
-private lemma denom_pos (hlam : 0 < lam) (S : Dataset (n + 1) (BoundedExample X Y)) :
+private theorem denom_pos (hlam : 0 < lam) (S : Dataset (n + 1) (BoundedExample X Y)) :
     0 < sumXX (n := n) S + lam * N (n := n) := by
   have h1 : 0 ≤ sumXX (n := n) S := sumXX_nonneg (n := n) (X := X) (Y := Y) S
   have h2 : 0 < lam * N (n := n) := mul_pos hlam (N_pos (n := n))
@@ -268,7 +263,7 @@ $\lambda N\le\operatorname{sumXX}(S)+\lambda N$.
 
 We use this to replace the (dataset-dependent) denominator with a uniform lower bound.
 -/
-private lemma denom_lower (S : Dataset (n + 1) (BoundedExample X Y)) :
+private theorem denom_lower (S : Dataset (n + 1) (BoundedExample X Y)) :
     lam * N (n := n) ≤ sumXX (n := n) S + lam * N (n := n) := by
   have h1 : 0 ≤ sumXX (n := n) S := sumXX_nonneg (n := n) (X := X) (Y := Y) S
   linarith
@@ -278,7 +273,7 @@ Absolute bound on the cross-term sum `sumXY`.
 
 This is a simple consequence of the bounds $|x|\le X$ and $|y|\le Y$.
 -/
-private lemma abs_sumXY_le (S : Dataset (n + 1) (BoundedExample X Y)) :
+private theorem abs_sumXY_le (S : Dataset (n + 1) (BoundedExample X Y)) :
     |sumXY (n := n) S| ≤ N (n := n) * X * Y := by
   classical
   have hterm :
@@ -315,7 +310,7 @@ Replacing one example changes `sumXY` by at most $2XY$.
 
 This is the “numerator perturbation” bound for the ridge closed form.
 -/
-private lemma abs_sumXY_sub_replaceAt_le (S : Dataset (n + 1) (BoundedExample X Y)) (i : Fin (n +
+private theorem abs_sumXY_sub_replaceAt_le (S : Dataset (n + 1) (BoundedExample X Y)) (i : Fin (n +
   1))
     (z' : BoundedExample X Y) :
     |sumXY (n := n) S - sumXY (n := n) (replaceAt S i z')| ≤ 2 * X * Y := by
@@ -355,7 +350,7 @@ Replacing one example changes `sumXX` by at most $2X^2$.
 
 This is the “denominator perturbation” bound for the ridge closed form.
 -/
-private lemma abs_sumXX_sub_replaceAt_le (S : Dataset (n + 1) (BoundedExample X Y)) (i : Fin (n +
+private theorem abs_sumXX_sub_replaceAt_le (S : Dataset (n + 1) (BoundedExample X Y)) (i : Fin (n +
   1))
     (z' : BoundedExample X Y) :
     |sumXX (n := n) S - sumXX (n := n) (replaceAt S i z')| ≤ 2 * X ^ 2 := by
@@ -399,7 +394,7 @@ Bound the magnitude of the fitted ridge weight.
 
 This is a coarse bound of the form $|\widehat w(S)|\le XY/\lambda$.
 -/
-private lemma abs_w_le (hlam : 0 < lam) (S : Dataset (n + 1) (BoundedExample X Y)) :
+private theorem abs_w_le (hlam : 0 < lam) (S : Dataset (n + 1) (BoundedExample X Y)) :
     |ridgeFit1D (n := n) (X := X) (Y := Y) lam S| ≤ (X * Y) / lam := by
   classical
   set D : ℝ := sumXX (n := n) (X := X) (Y := Y) S + lam * N (n := n)
@@ -434,7 +429,7 @@ Bound the residual $|\widehat w(S)x-y|$ at a test point.
 This is another coarse bound used at the very end when bounding the loss change via
 $(e-e')(e+e')$ for $e=wx-y$.
 -/
-private lemma abs_residual_le (hlam : 0 < lam) (S : Dataset (n + 1) (BoundedExample X Y)) (z :
+private theorem abs_residual_le (hlam : 0 < lam) (S : Dataset (n + 1) (BoundedExample X Y)) (z :
   BoundedExample X Y) :
     |ridgeFit1D (n := n) (X := X) (Y := Y) lam S * z.x - z.y| ≤
       Y * (lam + X ^ 2) / lam := by
@@ -473,8 +468,9 @@ and prediction-loss bounds established above.
 **Uniform stability of 1D ridge regression (bounded inputs, squared loss).**
 
 Assume $\lambda>0$. Then the ridge estimator `ridgeFit1D λ` is uniformly stable in the replace-one
-sense for the squared loss, with an explicit bound $\beta$ that scales like $1/(\lambda N)$, where
-$N=n+1$.
+sense for the squared loss, with bound
+$\beta=4X^2Y^2(\lambda+X^2)^2/(\lambda^3 N)$, where $N=n+1$.
+Training, replacement, and test examples all carry the same bounds $|x|\le X$, $|y|\le Y$.
 
 The stability notion used here is `UniformStableReplace` from `Stability.Core`.
 -/

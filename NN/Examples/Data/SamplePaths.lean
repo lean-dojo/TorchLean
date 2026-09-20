@@ -29,41 +29,14 @@ namespace Examples
 namespace Data
 namespace SamplePaths
 
-/-- Default relative directory containing generated tutorial datasets. -/
+/--
+Default relative directory containing generated tutorial datasets.
+
+Tutorials that accept `--data-dir` read it with
+`TorchLean.CLI.takePathFlag args "data-dir" (default := defaultDataDir)`.
+-/
 def defaultDataDir : System.FilePath :=
   "NN/Examples/Data"
-
-/--
-Parse an optional `--data-dir PATH` flag (defaults to `defaultDataDir`).
-
-Tutorials use this when they load generated CSV/NPY files from disk.
--/
-def takeDataDir (args : List String) (default : System.FilePath := defaultDataDir) :
-    Except String (System.FilePath × List String) := do
-  TorchLean.CLI.takePathFlagDefault args "data-dir" default
-
-/-- Resolved `--x` / `--y` dataset paths for sample-data tutorials. -/
-structure XyPaths where
-  /-- Feature or image tensor path. -/
-  xPath : System.FilePath
-  /-- Label or target tensor path. -/
-  yPath : System.FilePath
-deriving Repr
-
-/--
-Parse optional `--x` / `--y` overrides and fall back to the supplied sample-data defaults.
-
-Tutorials that load paired `.npy` files use this instead of re-implementing the same
-`takePathFlagOnce` / `getD` boilerplate in every example.
--/
-def takeXyPaths
-    (args : List String)
-    (defaultX defaultY : System.FilePath) :
-    Except String (XyPaths × List String) := do
-  let (xPath, args) ← TorchLean.CLI.takePathFlagDefault args "x" defaultX
-  let (yPath, args) ← TorchLean.CLI.takePathFlagDefault args "y" defaultY
-  pure ({ xPath := xPath
-          yPath := yPath }, args)
 
 /-- `small_regression.csv` (2D regression). -/
 def regressionCsv (dataDir : System.FilePath := defaultDataDir) : System.FilePath :=

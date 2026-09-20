@@ -25,18 +25,11 @@ handler whose operation, provider, and device must agree with the selected contr
 namespace NN
 namespace Backend
 
-universe u v
-
-/-- A source file inside the TorchLean checkout that supports a backend contract. -/
-structure SourceRef where
-  path : String
-  deriving DecidableEq, BEq, Repr
-
 /--
 Reference to a native/FFI symbol used by a backend capsule.
 
-The linter checks that `path` exists, that `symbol` occurs in that source file, and that
-`buildTarget?`, when present, names a Lake target in `lakefile.lean`.
+The repository linter checks that `path` exists, that `symbol` occurs in that source file, and
+that `buildTarget?`, when present, names a Lake target in `lakefile.lean`.
 -/
 structure NativeSymbolRef where
   path : String
@@ -46,9 +39,7 @@ structure NativeSymbolRef where
 
 /-- Source-level provenance for a contract descriptor. Provenance is not correctness evidence. -/
 inductive ContractProvenance where
-  | sourceFile (ref : SourceRef)
   | nativeSymbol (ref : NativeSymbolRef)
-  | note (text : String)
   deriving DecidableEq, BEq, Repr
 
 /-- Concrete tensor-layout convention named by a backend contract. -/
@@ -59,6 +50,14 @@ inductive TensorLayout where
   | flatRowMajor
   /-- A contiguous CUDA tensor view owned by LibTorch. -/
   | libTorchCudaView
+  deriving DecidableEq, Repr
+
+/-- The four contract fields carried by every kernel capsule. -/
+inductive ContractObligation where
+  | shape
+  | layout
+  | value
+  | vjp
   deriving DecidableEq, Repr
 
 /-- A structured backend obligation, independent of how evidence for it is obtained. -/
@@ -78,26 +77,30 @@ inductive ContractClaim where
 /-- How a capsule justifies one part of its contract.
 
 These constructors record engineering evidence and explicit trust boundaries. They do not turn a
-foreign implementation into a proved refinement. A future proof-bearing kernel interface must tie
-its theorem to a typed implementation semantics rather than attach an unrelated proposition here.
+foreign implementation into a proved refinement.
 -/
 inductive ContractEvidence where
   | runtimeGuard (name : String)
   | testSuite (name : String)
-  | fuzzOracle (name : String)
   | trustedBoundary (reason : String)
   | notApplicable
-  | notProvided
   deriving DecidableEq
 
 instance : Repr ContractEvidence where
   reprPrec evidence _ := Std.Format.text <| match evidence with
     | .runtimeGuard name => s!"runtimeGuard({name})"
     | .testSuite name => s!"testSuite({name})"
-    | .fuzzOracle name => s!"fuzzOracle({name})"
     | .trustedBoundary reason => s!"trustedBoundary({reason})"
     | .notApplicable => "notApplicable"
-    | .notProvided => "notProvided"
+
+namespace AssurancePolicy
+
+/-- Whether the policy admits contract evidence of this kind. -/
+def acceptsEvidence (policy : AssurancePolicy) : ContractEvidence → Bool
+  | .trustedBoundary _ => policy.allowTrustedExternal
+  | .runtimeGuard _ | .testSuite _ | .notApplicable => true
+
+end AssurancePolicy
 
 /-- A structured contract claim together with its evidence and human-readable explanation. -/
 structure ContractDescriptor where
@@ -137,125 +140,38 @@ def vjpUnavailable (op : BackendOp) (summary : String)
 
 end ContractDescriptor
 
-/-! ## Numerical execution policy
+/-- Ordering contract for reductions. Different valid orders need not be bitwise equal.
 
-These fields describe floating-point choices that are invisible at the tensor-shape level but
-matter to numerical certificates. They are metadata, not correctness evidence: the ordinary value
-and VJP contracts still state what a capsule refines and how that claim is justified.
+The fixed-left graph certificate propagates a reduction only when the selected capsule promises
+the same left fold as the canonical tensor semantics.
 -/
-
-/-- Rounding behavior advertised by a backend capsule. -/
-inductive RoundingPolicy where
-  | scalarContext
-  | nearestEven
-  | directed
-  | implementationDefined
-  | unspecified
-  deriving DecidableEq, Repr
-
-/-- Treatment of subnormal values at the backend boundary. -/
-inductive SubnormalPolicy where
-  | gradualUnderflow
-  | flushToZero
-  | implementationDefined
-  | unspecified
-  deriving DecidableEq, Repr
-
-/-- Whether multiplication and addition may be contracted into one fused operation. -/
-inductive ContractionPolicy where
-  | separate
-  | fused
-  | implementationDefined
-  | notApplicable
-  | unspecified
-  deriving DecidableEq, Repr
-
-/-- Ordering contract for reductions. Different valid orders need not be bitwise equal. -/
 inductive ReductionPolicy where
   | fixedLeft
-  | fixedTree
   | implementationDefined
   | notApplicable
-  | unspecified
   deriving DecidableEq, Repr
-
-/-- Floating-point choices attached to one kernel capsule. -/
-structure NumericalPolicy where
-  rounding : RoundingPolicy := .unspecified
-  subnormals : SubnormalPolicy := .unspecified
-  contraction : ContractionPolicy := .unspecified
-  reduction : ReductionPolicy := .unspecified
-  deriving DecidableEq, Repr
-
-namespace RoundingPolicy
-
-/-- Stable report label for rounding behavior. -/
-def label : RoundingPolicy -> String
-  | .scalarContext => "scalar-context"
-  | .nearestEven => "nearest-even"
-  | .directed => "directed"
-  | .implementationDefined => "implementation-defined"
-  | .unspecified => "unspecified"
-
-end RoundingPolicy
-
-namespace SubnormalPolicy
-
-/-- Stable report label for subnormal handling. -/
-def label : SubnormalPolicy -> String
-  | .gradualUnderflow => "gradual-underflow"
-  | .flushToZero => "flush-to-zero"
-  | .implementationDefined => "implementation-defined"
-  | .unspecified => "unspecified"
-
-end SubnormalPolicy
-
-namespace ContractionPolicy
-
-/-- Stable report label for multiply-add contraction. -/
-def label : ContractionPolicy -> String
-  | .separate => "separate"
-  | .fused => "fused"
-  | .implementationDefined => "implementation-defined"
-  | .notApplicable => "n/a"
-  | .unspecified => "unspecified"
-
-end ContractionPolicy
 
 namespace ReductionPolicy
 
 /-- Stable report label for reduction order. -/
-def label : ReductionPolicy -> String
+def label : ReductionPolicy → String
   | .fixedLeft => "fixed-left"
-  | .fixedTree => "fixed-tree"
   | .implementationDefined => "implementation-defined"
   | .notApplicable => "n/a"
-  | .unspecified => "unspecified"
 
 end ReductionPolicy
 
-namespace NumericalPolicy
-
-/-- Compact representation used in execution audits. -/
-def reportLabel (policy : NumericalPolicy) : String :=
-  s!"round={policy.rounding.label},subnormal={policy.subnormals.label}," ++
-    s!"contract={policy.contraction.label},reduce={policy.reduction.label}"
-
-end NumericalPolicy
-
-/-- The four contract fields carried by every kernel capsule. -/
-inductive ContractObligationKind where
-  | shape
-  | layout
-  | value
-  | vjp
+/-- Floating-point choices attached to one kernel capsule that numerical certificates consume. -/
+structure NumericalPolicy where
+  /-- The order a reduction may use, which fixes whether summation is reproducible. -/
+  reduction : ReductionPolicy
   deriving DecidableEq, Repr
 
 namespace ContractClaim
 
 /-- Whether a claim has the expected kind and operation for a capsule contract field. -/
 def matchesObligation (op : BackendOp) (vjpMode : VJPMode) :
-    ContractObligationKind → ContractClaim → Bool
+    ContractObligation → ContractClaim → Bool
   | .shape, .shapeSafety claimOp => claimOp == op
   | .layout, .layoutCompatibility claimOp _ => claimOp == op
   | .value, .valueRefinement claimOp => claimOp == op
@@ -290,18 +206,16 @@ structure KernelCapsule where
   valueContract : ContractDescriptor
   /-- Reverse-mode refinement claim and its evidence. -/
   vjpContract : ContractDescriptor
-  /-- Floating-point behavior advertised for numerical audits. -/
-  numericalPolicy : NumericalPolicy := {}
-  /-- Optional human-readable details not used by selection. -/
-  notes : String := ""
-  deriving Repr
+  /-- Floating-point behavior consumed by numerical certificates. -/
+  numericalPolicy : NumericalPolicy
+  deriving DecidableEq, Repr
 
 /--
 An executable implementation for one backend operation.
 
 The result type is local to the call site, so this structure also accommodates operations whose
-Lean signatures differ. The capsule argument gives specialized handlers access to numerical and
-VJP policy after the common identity checks have succeeded.
+Lean signatures differ. The capsule argument gives specialized handlers access to the provider and
+VJP mode after the common identity checks have succeeded.
 -/
 structure KernelHandler (β : Type) where
   name : String
@@ -347,7 +261,8 @@ def contractsAligned (c : KernelCapsule) : Bool :=
   c.valueContract.claim.matchesObligation c.op c.vjpMode .value &&
   c.vjpContract.claim.matchesObligation c.op c.vjpMode .vjp
 
-/-- Stable identity used when adjacent graph nodes select the same registered capsule. -/
+/-- Compare registration identity only. This ignores contracts and numerical policy;
+use full capsule equality when grouping kernels or comparing assurance evidence. -/
 def sameIdentity (a b : KernelCapsule) : Bool :=
   a.name == b.name && a.op == b.op && a.provider == b.provider && a.device == b.device
 
@@ -384,15 +299,15 @@ def bind {β : Type} (c : KernelCapsule) (handler : KernelHandler β) :
         throw <| s!"handler `{handler.name}` targets `{handler.device.cliName}`, but capsule " ++
           s!"`{c.name}` targets `{c.device.cliName}`"
     else
-      throw <| s!"handler `{handler.name}` uses provider `{reprStr handler.provider}`, but capsule " ++
-        s!"`{c.name}` selects `{reprStr c.provider}`"
+      throw <| s!"handler `{handler.name}` uses provider `{reprStr handler.provider}`, but " ++
+        s!"capsule `{c.name}` selects `{reprStr c.provider}`"
   else
     throw <| s!"handler `{handler.name}` implements `{handler.op.name}`, but capsule `{c.name}` " ++
       s!"implements `{c.op.name}`"
 
-/-- Whether the assurance policy admits this capsule. -/
+/-- Whether the assurance policy admits this capsule's trust level. -/
 def allowedBy (policy : KernelPolicy) (c : KernelCapsule) : Bool :=
-  c.trustLevel != .verified && policy.assurance.acceptsTrust c.trustLevel
+  policy.assurance.acceptsTrust c.trustLevel
 
 /-- Whether the provider preference admits this capsule. -/
 def matchesPreference (policy : KernelPolicy) (c : KernelCapsule) : Bool :=
@@ -429,33 +344,6 @@ def admissible (policy : KernelPolicy) (c : KernelCapsule) : Bool :=
 
 end KernelCapsule
 
-/--
-A kernel implementation accompanied by a proof of its typed semantics.
-
-`specification` is an explicit parameter of the type, so the refinement theorem cannot be detached
-from the function it justifies. The operation tag is a planner identity; the equality below states
-the exact Lean semantics that have actually been proved. The input and output types may describe a
-forward result alone or a bundle containing both a forward value and a VJP.
-
-Extracting `capsule` deliberately loses the proof. Metadata-only planning therefore rejects
-capsules marked `verified`; consumers that require verified execution must retain the complete
-`ProofCarryingKernel` value through the typed verified planner.
--/
-structure ProofCarryingKernel (ι : Type u) (ο : Type v) (op : BackendOp)
-    (specification : ι → ο) where
-  /-- Metadata used by ordinary backend reports and device selection. -/
-  capsule : KernelCapsule
-  /-- Typed implementation whose semantics are proved below. -/
-  implementation : ι → ο
-  /-- The metadata names the operation indexed by this proof object. -/
-  operation_matches : capsule.op = op
-  /-- The capsule advertises the trust level supplied by this proof object. -/
-  trust_verified : capsule.trustLevel = .verified
-  /-- Each metadata descriptor states the obligation belonging to its field. -/
-  contracts_aligned : capsule.contractsAligned = true
-  /-- Pointwise refinement of the implementation to the canonical specification. -/
-  refines : ∀ input, implementation input = specification input
-
 namespace ExecutableKernel
 
 /-- Invoke the handler bound to a selected capsule. -/
@@ -463,32 +351,6 @@ def run {β : Type} (kernel : ExecutableKernel β) : IO β :=
   kernel.handler.execute kernel.capsule
 
 end ExecutableKernel
-
-namespace ProofCarryingKernel
-
-/-- Evaluate a proof-carrying kernel without crossing an additional runtime boundary. -/
-def run {ι : Type u} {ο : Type v} {op : BackendOp} {specification : ι → ο}
-    (kernel : ProofCarryingKernel ι ο op specification) (input : ι) : ο :=
-  kernel.implementation input
-
-/-- Evaluation of a proof-carrying kernel agrees with its indexed specification. -/
-theorem run_eq_specification {ι : Type u} {ο : Type v} {op : BackendOp}
-    {specification : ι → ο}
-    (kernel : ProofCarryingKernel ι ο op specification) (input : ι) :
-    kernel.run input = specification input :=
-  kernel.refines input
-
-/-- Whether this proof-bearing kernel matches a proof-oriented execution request. -/
-def selectable {ι : Type u} {ο : Type v} {op : BackendOp} {specification : ι → ο}
-    (policy : KernelPolicy) (kernel : ProofCarryingKernel ι ο op specification) : Bool :=
-  policy.assurance == AssurancePolicy.verified &&
-    kernel.capsule.supportsForward &&
-    kernel.capsule.contractsAligned &&
-    kernel.capsule.matchesPreference policy &&
-    kernel.capsule.matchesDevice policy &&
-    kernel.capsule.matchesVJP policy
-
-end ProofCarryingKernel
 
 /--
 Pick an admissible capsule for a typed operation.

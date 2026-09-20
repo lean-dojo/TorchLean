@@ -35,38 +35,48 @@ Trainer.new alreadyBuiltModel ...
 
 The seed is consumed only by the builder case. Already-built models pass through unchanged.
 -/
-class ToModel (model : Type u)
-    (inputShape outputShape : outParam (List Nat)) where
+class ToModel (Model : Type u)
+    (input output : outParam Shape) where
   /-- Materialize the model, using the seed only when the value still needs initialization. -/
-  build : Nat → model → TorchLean.nn.Sequential inputShape outputShape
+  build : Nat → Model → TorchLean.nn.Sequential input output
 
-instance {inputShape outputShape : Shape} :
-    ToModel (TorchLean.nn.Sequential inputShape outputShape)
-      inputShape.toList outputShape.toList where
-  build _ model := by
-    simpa using model
+instance {σ τ : Shape} :
+    ToModel (TorchLean.nn.Sequential σ τ) σ τ where
+  build _ model := model
 
-instance {inputShape outputShape : List Nat} :
-    ToModel (TorchLean.nn.Builder (TorchLean.nn.Sequential inputShape outputShape))
-      inputShape outputShape where
+instance {σ τ : Shape} :
+    ToModel (TorchLean.nn.Builder (TorchLean.nn.Sequential σ τ)) σ τ where
   build seed model := TorchLean.nn.build seed model
 
-/-- Build a trainer from a sequential model or seedable model builder. -/
-def new {model : Type u} {inputShape outputShape : List Nat}
-    [ToModel model inputShape outputShape] (m : model)
-    (cfg : Config inputShape outputShape := {}) :
-    TorchLean.Trainer inputShape outputShape :=
-  let built := ToModel.build cfg.seed m
-  { model := built
-    task := cfg.task
-    runtime :=
-      { optimizer := cfg.optimizer
-        scalar := cfg.scalar
-        execution := cfg.execution
-        device := cfg.device
-        backendProfile? := cfg.backendProfile?
-        showBackend := cfg.showBackend }
-    seed := cfg.seed }
+/--
+Build a trainer from a sequential model or seedable model builder.
+
+Example:
+```lean
+-- A trainer pairs a model with the loss, the optimizer, and the runtime it trains under.
+def model : nn.Builder (nn.Sequential [2] [1]) :=
+  nn.Sequential![nn.linear 2 8, nn.relu, nn.linear 8 1]
+
+def trainer : TorchLean.Trainer [2] [1] :=
+  Trainer.new model
+    { objective := .meanSquaredError
+      optimizer := optim.adam { learningRate := 0.03 }
+      seed := 7 }
+
+-- An already-built model is accepted too, and then the seed has nothing left to decide.
+def fromBuiltModel : TorchLean.Trainer [2] [1] :=
+  Trainer.new (nn.build 7 model)
+```
+-/
+def new {Model : Type u} {σ τ : Shape}
+    [ToModel Model σ τ] (model : Model)
+    (config : Config σ τ := {}) :
+    TorchLean.Trainer σ τ :=
+  let builtModel := ToModel.build config.seed model
+  { model := builtModel
+    objective := config.objective
+    runtime := config.toRunConfig
+    seed := config.seed }
 
 end Trainer
 

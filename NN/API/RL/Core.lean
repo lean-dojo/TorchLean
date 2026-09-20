@@ -4,20 +4,18 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+-- This module supplies public namespace exports used by downstream consumers. Import shaking
+-- cannot see those downstream lookups, so keep the marked imports.
+module -- shake: keep-downstream
 
-public import NN.API.Runtime
-public import NN.Spec.RL.Core
-public import NN.Spec.RL.Environment
-public import NN.Spec.RL.MDP
-public import NN.Spec.RL.MarkovMDP
-public import NN.Spec.RL.FiniteStochasticMDP
-public import NN.Runtime.RL.Algorithms
-public import NN.Runtime.RL.Core
-public import NN.Runtime.RL.Eval
-public import NN.Runtime.RL.PolicyGradient.Autograd
-public import NN.Runtime.RL.Replay
-public import NN.Runtime.Training.Log
+public import NN.API.Runtime -- shake: keep
+public import NN.Spec.RL.FiniteStochasticMDP -- shake: keep
+public import NN.Runtime.RL.Algorithms -- shake: keep
+public import NN.Runtime.RL.DQN.Autograd -- shake: keep
+public import NN.Runtime.RL.Eval -- shake: keep
+public import NN.Runtime.RL.PolicyGradient.Autograd -- shake: keep
+public import NN.Runtime.RL.Replay -- shake: keep
+public import NN.Runtime.Training.Log -- shake: keep
 
 /-!
 # Reinforcement Learning
@@ -39,63 +37,52 @@ namespace TorchLean
 namespace rl
 
 namespace env
-export _root_.Spec.RL
+export Spec.RL
   (StepResult ObservedTransition Env SafeEnv
    reset stepGym stateAfter evolve evolveFrom
    states statesFrom rollout rolloutFrom)
-export _root_.Spec.RL.StepResult (done)
-export _root_.Spec.RL.SafeEnv (actionPathOk)
+export Spec.RL.StepResult (done)
+export Spec.RL.SafeEnv (actionPathOk)
 end env
 
 namespace core
-export _root_.Spec.RL
-  (AdvantageStep
-   continueMask discountedBackup tdTarget tdResidual
-   discountedReturns discountedReturnsFrom discountedReturnsDone
-   generalizedAdvantageEstimation returnsFromAdvantages)
-export _root_.Runtime.RL.Core
-  (Transition IndexedTransition
-   discountedReturnsTensorFrom discountedReturnsTensor discountedReturnsTensorDone
-   generalizedAdvantageEstimationTensor returnsFromAdvantagesTensor
+export Spec.RL
+  (continueMask discountedBackup tdTarget tdResidual)
+export Runtime.RL.Core
+  (Transition
+   discountedReturnsFrom discountedReturns discountedReturnsDone
+   generalizedAdvantageEstimation returnsFromAdvantages
    squaredError huberLoss)
 end core
 
 namespace mdp
-export _root_.Spec.RL
+export Spec.RL
   (ValueFunction Policy FiniteMDP
    valueAt stateActionValue actionValues
    bellmanPolicy bellmanOptimality)
-export _root_.Spec.RL.FiniteMDP (toEnv)
+export Spec.RL.FiniteMDP (toEnv)
 end mdp
 
-namespace markov
-export _root_.Spec.RL.Markov
-  (ValueFunction Policy MDP Valid
-   transitionMeasure
-   expectedNextValue actionValue
-   bellmanPolicy bellmanOptimality)
-end markov
-
 namespace finiteStochastic
-export _root_.Spec.RL.FiniteStochastic
+export Spec.RL.FiniteStochastic
   (MDP Valid
    expectedNextValue actionValue actionValues
    bellmanPolicy bellmanOptimality)
 end finiteStochastic
 
 namespace bandits
-export _root_.Runtime.RL.Bandits
+export Runtime.RL.Bandits
   (ValueState PreferenceState
    greedyAction? epsilonGreedyAction?
    sampleAverageStep totalPulls
    ucb1Bonus ucb1Scores ucb1Action?
    gradientPolicy gradientBanditStep)
-export _root_.Runtime.RL.Bandits.ValueState (init)
-export _root_.Runtime.RL.Bandits.PreferenceState (init)
+export Runtime.RL.Bandits.ValueState (init)
+export Runtime.RL.Bandits.PreferenceState (init)
 end bandits
 
 namespace tabular
-export _root_.Runtime.RL.Tabular
+export Runtime.RL.Tabular
   (actionRow maxActionValue greedyAction? expectedActionValue
    td0Update
    sarsaTarget expectedSarsaTarget qLearningTarget doubleQTarget
@@ -104,7 +91,7 @@ export _root_.Runtime.RL.Tabular
 end tabular
 
 namespace value
-export _root_.Runtime.RL.ValueLearning
+export Runtime.RL.ValueLearning
   (chosenActionValue maxQValue
    dqnTarget doubleDqnTarget
    dqnResidual dqnMSELoss dqnHuberLoss doubleDqnResidual
@@ -113,28 +100,37 @@ export _root_.Runtime.RL.ValueLearning
 end value
 
 namespace replay
-export _root_.Runtime.RL.Replay (Transition Buffer)
-export _root_.Runtime.RL.Replay.Buffer
+export Runtime.RL.Replay (Transition Buffer)
+export Runtime.RL.Replay.Buffer
   (empty size isEmpty isFull push pushMany getModulo? sampleContiguous sampleRandom)
 end replay
 
 namespace dqn
-export _root_.Runtime.RL.DQN
-  (meanArray
-   transitionMSELoss transitionHuberLoss transitionDoubleHuberLoss
+export Runtime.RL.DQN
+  (transitionMSELoss transitionHuberLoss transitionDoubleHuberLoss
    minibatchMSELoss minibatchHuberLoss minibatchDoubleHuberLoss
    softUpdateScalar)
+
+namespace autograd
+/-!
+Differentiable DQN losses over TorchLean backend references.
+
+These helpers build scalar semi-gradient losses for eager or typed graph autograd. Targets and
+action indicators are detached; the selected online Q values receive the loss gradient.
+-/
+export Runtime.RL.DQN.Autograd (huberTDLoss actionHuberLossBatch)
+end autograd
 end dqn
 
 namespace policy
-export _root_.Runtime.RL.PolicyGradient
+export Runtime.RL.PolicyGradient
   (actionPolicy actionProbability actionLogProbability entropyBonus
    reinforceLoss actorLoss criticLoss actorCriticLoss
    a2cLoss
    importanceRatio categoricalKL categoricalKLFromLogits
    trpoSurrogateFromRatio klPenalizedPolicyLoss sacCategoricalActorLoss
    ppoClippedObjectiveFromRatio ppoClippedObjective ppoLoss)
-export _root_.Runtime.RL.PolicyGradient
+export Runtime.RL.PolicyGradient
   (sampleCategorical sampleActionFromLogits)
 
 namespace autograd
@@ -145,17 +141,16 @@ The pure exports above are algebra over concrete spec tensors. These helpers are
 counterpart: they build scalar losses from backend refs, so the same formulas can run through eager
 or typed graph autograd.
 -/
-export _root_.Runtime.RL.PolicyGradient.Autograd
+export Runtime.RL.PolicyGradient.Autograd
   (actionLogProbOneHotBatch
    entropyMean
    ppoClippedObjectiveBatch
-   ppoLossBatch
-   ppoActorCriticObjectiveDef)
+   ppoLossBatch)
 end autograd
 end policy
 
 namespace eval
-export _root_.Runtime.RL.Eval
+export Runtime.RL.Eval
   (greedyActionFromLogits episodeTotalReward episodeSessPath averageEpisodeTotalReward)
 end eval
 

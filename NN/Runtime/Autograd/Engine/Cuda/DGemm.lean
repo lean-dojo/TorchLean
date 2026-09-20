@@ -35,6 +35,10 @@ namespace Runtime
 namespace Autograd
 namespace Cuda
 
+/-- cuBLAS `dgemm` on row-major host arrays: `A` is `m × n`, `B` is `n × p`, result is `m × p`.
+
+Double precision, so unlike the float32 kernels there is no widening step to reason about; the
+reference semantics is plain `Matrix.mul` over Lean `Float`. -/
 @[extern "torchlean_dgemm_cuda"]
 opaque torchleanDgemmCuda (A : @& FloatArray) (B : @& FloatArray)
                           (m n p : UInt32) : FloatArray

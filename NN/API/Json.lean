@@ -24,53 +24,49 @@ namespace TorchLean.Json
 open Lean
 open Lean.Json
 
-/-- Throw an `Except String` parse error. -/
-def fail {α : Type} (msg : String) : Except String α :=
-  throw msg
-
 /-- Parse a JSON value as an object. -/
-def expectObjE (ctx : String) (j : Lean.Json) :
+def expectObject (context : String) (value : Lean.Json) :
     Except String (Std.TreeMap.Raw String Lean.Json compare) := do
-  match Lean.Json.getObj? j with
-  | .ok o => pure o
-  | .error e => fail s!"{ctx}: expected object ({e})"
+  match Lean.Json.getObj? value with
+  | .ok object => pure object
+  | .error message => throw s!"{context}: expected object ({message})"
 
 /-- Extract a required field from a JSON object. -/
-def expectFieldE (ctx key : String) (j : Lean.Json) : Except String Lean.Json := do
-  let o ← expectObjE ctx j
-  match Std.TreeMap.Raw.get? o key with
-  | some v => pure v
-  | none => fail s!"{ctx}: missing field `{key}`"
+def expectField (context key : String) (value : Lean.Json) : Except String Lean.Json := do
+  let object ← expectObject context value
+  match Std.TreeMap.Raw.get? object key with
+  | some fieldValue => pure fieldValue
+  | none => throw s!"{context}: missing field `{key}`"
 
-/-- Require a JSON string and report `ctx` in the error message on mismatch. -/
-def expectStringE (ctx : String) (j : Lean.Json) : Except String String := do
-  match Lean.Json.getStr? j with
-  | .ok s => pure s
-  | .error e => fail s!"{ctx}: expected string ({e})"
+/-- Require a JSON string and report `context` in the error message on mismatch. -/
+def expectString (context : String) (value : Lean.Json) : Except String String := do
+  match Lean.Json.getStr? value with
+  | .ok text => pure text
+  | .error message => throw s!"{context}: expected string ({message})"
 
 /-- Parse a JSON natural number, accepting either a JSON number or a decimal string. -/
-def expectNatE (ctx : String) (j : Lean.Json) : Except String Nat := do
-  match Lean.Json.getNat? j with
+def expectNat (context : String) (value : Lean.Json) : Except String Nat := do
+  match Lean.Json.getNat? value with
   | .ok n => pure n
   | .error _ =>
-      match j with
-      | .str s =>
-          match s.toNat? with
+      match value with
+      | .str text =>
+          match text.toNat? with
           | some n => pure n
-          | none => fail s!"{ctx}: expected natural number"
-      | _ => fail s!"{ctx}: expected natural number"
+          | none => throw s!"{context}: expected natural number"
+      | _ => throw s!"{context}: expected natural number"
 
 /-- Require a JSON array and return its entries. -/
-def expectArrayE (ctx : String) (j : Lean.Json) : Except String (Array Lean.Json) := do
-  match j with
-  | .arr xs => pure xs
-  | _ => fail s!"{ctx}: expected array"
+def expectArray (context : String) (value : Lean.Json) : Except String (Array Lean.Json) := do
+  match value with
+  | .arr entries => pure entries
+  | _ => throw s!"{context}: expected array"
 
-/-- Parse a JSON file from disk. -/
-def parseFile (path : System.FilePath) : IO Lean.Json := do
-  let s ← IO.FS.readFile path
-  match Lean.Json.parse s with
-  | .ok j => pure j
-  | .error e => throw <| IO.userError s!"{path}: invalid JSON: {e}"
+/-- Read and parse a JSON file from disk. -/
+def readFile (path : System.FilePath) : IO Lean.Json := do
+  let contents ← IO.FS.readFile path
+  match Lean.Json.parse contents with
+  | .ok value => pure value
+  | .error message => throw <| IO.userError s!"{path}: invalid JSON: {message}"
 
 end TorchLean.Json

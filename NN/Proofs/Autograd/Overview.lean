@@ -6,10 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Core.RealCorrectness
 public import NN.Proofs.Autograd.Coverage
 public import NN.Proofs.Autograd.Runtime.Link
-public import NN.Proofs.Autograd.Tape.Core.Soundness
 
 /-!
 # Autograd proofs: overview and map to PyTorch
@@ -28,9 +26,13 @@ autograd engine, written in a way that stays close to the structure of PyTorch A
 
 2. **Correctness layer (`NN/Proofs/Autograd/Core/RealCorrectness.lean` and
    `NN/Proofs/Autograd/Core/SemiringCorrectness.lean`)**
-   - Proves the core adjointness law (VJP/JVP duality) for those `OpSpec`s:
+   - Proves the core adjointness law (VJP/JVP duality) for selected `OpSpec`s:
      `⟪JVP(x, dx), δ⟫ = ⟪dx, VJP(x, δ)⟫`.
-   - This is enough to justify the reverse-mode chain rule over a graph/tape.
+   - Adjointness is preserved when local JVPs and VJPs are composed through a graph/tape.
+     To conclude that the reverse pass computes the adjoint of the forward map's Fréchet
+     derivative, we also need a proof that each local JVP differentiates its forward map at the
+     relevant point. Those derivative facts belong to the analytic layer and carry the required
+     domain hypotheses.
 
 3. **Tape/graph soundness (`NN/Proofs/Autograd/Tape/*`)**
    - Models a dynamic SSA/DAG tape: nodes can reference any previously produced values, matching

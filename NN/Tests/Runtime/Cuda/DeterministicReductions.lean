@@ -6,11 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Engine.Cuda.Buffer
 public import NN.Runtime.Autograd.Engine.Cuda.Kernels
 public import NN.Runtime.Autograd.Engine.Cuda.ConvPool
 public import NN.Tests.Runtime.Cuda.Utils
-public import Std
 
 /-!
 # CUDA Deterministic Reductions Mode
@@ -33,22 +31,15 @@ namespace DeterministicReductions
 
 open Runtime.Autograd.Cuda
 
-def assertFloatArrayEq (msg : String) (a b : FloatArray) : IO Unit := do
-  if a.size != b.size then
-    throw <| IO.userError s!"{msg}: size mismatch ({a.size} vs {b.size})"
-  for i in [:a.size] do
-    let x := a.get! i
-    let y := b.get! i
-    if x != y then
-      throw <| IO.userError s!"{msg}[{i}]: got {x}, expected {y}"
+-- Exact numerical buffer comparison, shared with `Stress` through `Cuda.Utils`.
+-- Signed-zero preservation is checked separately through `toBits`.
+open Tests.Cuda.Utils (assertFloatArrayEq)
 
 def runScatterAddTwice : IO Unit := do
   IO.println "== deterministic scatter_add: exact repeatability =="
 
   -- Enable deterministic mode via Lean side API.
-  let enabled := Buffer.setDeterministicReductionsChecked true
-  if !enabled then
-    throw <| IO.userError "deterministic mode: expected flag to be enabled"
+  Buffer.setDeterministicReductions true
 
   -- Construct a values buffer with a large leading element + many ones, and scatter-add all
   -- updates into a single output index. This is a worst-case accumulator for non-associativity.
@@ -56,7 +47,7 @@ def runScatterAddTwice : IO Unit := do
   let one : UInt32 := 1
   let n : UInt32 := 1
 
-  let x := Buffer.zeros n
+  let x ← Buffer.zerosIO n
   let big := Buffer.full one 1.0e8
   let ones := Buffer.full (k - one) 1.0
   let values := Buffer.concatBuffers big ones one (k - one)
@@ -68,15 +59,29 @@ def runScatterAddTwice : IO Unit := do
   assertFloatArrayEq "scatterAdd deterministic run1 vs run2"
     (Buffer.toFloatArray y1) (Buffer.toFloatArray y2)
 
+/-- Deterministic scatter starts its left fold at the base value, including its signed zero. -/
+def runScatterAddBaseOrder : IO Unit := do
+  Buffer.setDeterministicReductions true
+  let base := Buffer.ofFloatArray (FloatArray.mk #[1.0e8, -0.0])
+  let values := Buffer.ofFloatArray (FloatArray.mk #[-1.0e8, 1.0])
+  let result := Buffer.scatterAdd base values 2 #[0, 0] 2
+  assertFloatArrayEq "scatterAdd includes base before updates"
+    (Buffer.toFloatArray result) (FloatArray.mk #[1.0, -0.0])
+  unless ((Buffer.toFloatArray result).get! 1).toBits == (-0.0 : Float).toBits do
+    throw <| IO.userError "scatterAdd changed an untouched negative zero"
+  let rows := Buffer.ofFloatArray (FloatArray.mk #[1.0e8, 1.0e8])
+  let rowValues := Buffer.ofFloatArray (FloatArray.mk #[-1.0e8, -1.0e8, 1.0, 1.0])
+  let rowResult := Buffer.scatterAddRows rows rowValues 1 2 #[0, 0] 2
+  assertFloatArrayEq "scatterAddRows includes base before updates"
+    (Buffer.toFloatArray rowResult) (FloatArray.mk #[1.0, 1.0])
+
 def outDim (inDim k stride padding : Nat) : Nat :=
   Spec.Shape.slidingWindowOutDim inDim k stride padding
 
 def runAvgPoolBwdTwice : IO Unit := do
   IO.println "== deterministic avg_pool backward: exact repeatability =="
 
-  let enabled := Buffer.setDeterministicReductionsChecked true
-  if !enabled then
-    throw <| IO.userError "deterministic mode: expected flag to be enabled"
+  Buffer.setDeterministicReductions true
 
   -- A small overlapping-window case (stride=1) so the backward pass needs accumulation.
   let inC : UInt32 := 1
@@ -89,7 +94,7 @@ def runAvgPoolBwdTwice : IO Unit := do
   let outW : Nat := outDim 17 3 1 1
   let outElems : UInt32 := UInt32.ofNat (inC.toNat * outH * outW)
 
-  let gradOutput := Buffer.randUniform outElems 12345
+  let gradOutput ← Buffer.randUniformIO outElems 12345
   let y1 := torchleanAvgPoolBwdCuda gradOutput inSpatial kernel stride padding inC
   let y2 := torchleanAvgPoolBwdCuda gradOutput inSpatial kernel stride padding inC
 
@@ -100,8 +105,9 @@ def runAvgPoolBwdTwice : IO Unit := do
 def run : IO Unit := do
   IO.println "== CUDA deterministic reductions =="
   runScatterAddTwice
+  runScatterAddBaseOrder
   runAvgPoolBwdTwice
-  let _ := Buffer.setDeterministicReductionsChecked false
+  Buffer.setDeterministicReductions false
   IO.println "== CUDA deterministic reductions: OK =="
 
 end DeterministicReductions

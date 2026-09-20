@@ -18,6 +18,8 @@ pooled axis. All leading axes are preserved, including any number of batch dimen
 Shape inference, denotational evaluation, and executable lowering share `OpContracts.PoolPlan`.
 Consequently, successful lowering records exactly the rank split and positivity evidence consumed
 by the typed pooling specification; there are no separate padded or two-dimensional proof paths.
+The lowered closure applies the typed pooling specification to the plan directly, so the proof only
+has to show that the IR evaluator computes the same `Tensor.mapLeading` term.
 -/
 
 @[expose] public section
@@ -26,15 +28,17 @@ namespace Runtime
 namespace Autograd
 namespace IRExec
 
-open Spec
-open Tensor
+open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
+-- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
+-- `Idx` and `getIdx` are defined.
+open Proofs (Idx getIdx)
 
 /-- Lowering arbitrary-rank max pooling preserves the IR denotation. -/
 theorem buildFrom_denoteAllFrom_maxPool
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) {inShape : Shape} {ss : List Shape}
     (gd : ForwardData α [inShape] ss) (i : Nat) (st' : State α inShape)
     (x : Tensor α inShape) (n : NN.IR.Node) (config : WindowConfig)
@@ -59,7 +63,7 @@ theorem buildFrom_denoteAllFrom_maxPool
   let ctx := ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil)
   unfold buildFrom at hBuild
   simp [hi, hN] at hBuild
-  simp (config := { failIfUnchanged := false }) [hk] at hBuild
+  simp (config := { failIfUnchanged := false }) [hk, lowerMaxPool] at hBuild
   cases hp : unaryParent? n.parents with
   | none => exact False.elim <| throw_bind_ne_ok (by simpa [hp] using hBuild)
   | some pId =>
@@ -78,9 +82,19 @@ theorem buildFrom_denoteAllFrom_maxPool
                       · simp [hp, hParent, parentShape, hIdx, hPlan, expected, hOut] at hBuild
                         let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                           mkForwardNode (fun context =>
-                            let parent := getIdx (α := α) (xs := context) parentIdx
-                            packedResultOrPanic (α := α) n.outShape <|
-                              NN.IR.Graph.evalMaxPool config (Spec.SomeTensor.ofTensor parent))
+                            let input : Tensor α
+                                (plan.leading.concat
+                                  (Shape.ofList (Tensor.to plan.spatial (List Nat)))) :=
+                              Tensor.castShape (getIdx (α := α) (xs := context) parentIdx)
+                                plan.concat_eq.symm
+                            let layer : Spec.MaxPoolSpec config.spatialRank config.kernel
+                                config.stride config.padding plan.kernelNonzero
+                                plan.strideNonzero := {}
+                            let output : Tensor α plan.outShape :=
+                              Tensor.mapLeading plan.leading
+                                (Spec.maxPoolSpatialSpec (α := α) (inSpatial := plan.spatial) layer)
+                                input
+                            Tensor.castShape output hOut)
                         let st1 : State α inShape :=
                           ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                         have hRec :
@@ -94,36 +108,33 @@ theorem buildFrom_denoteAllFrom_maxPool
                             (denoteAllState_get_mkIdx? (inShape := inShape) (ss := ss)
                               (gd := gd) (x := x) (pid := pId) (s := parentShape)
                               (idx := parentIdx) hIdx)
-                        let parent := getIdx (α := α) (xs := ctx) parentIdx
                         let input : Tensor α
-                            (plan.leading.concat (Shape.ofList plan.spatial.toList)) :=
-                          plan.concat_eq.symm ▸ parent
+                            (plan.leading.concat
+                              (Shape.ofList (Tensor.to plan.spatial (List Nat)))) :=
+                          Tensor.castShape (getIdx (α := α) (xs := ctx) parentIdx)
+                            plan.concat_eq.symm
                         let layer : Spec.MaxPoolSpec config.spatialRank config.kernel config.stride
                             config.padding plan.kernelNonzero plan.strideNonzero := {}
-                        let output := Tensor.mapEach plan.leading
+                        let output : Tensor α plan.outShape := Tensor.mapLeading plan.leading
                           (Spec.maxPoolSpatialSpec (α := α) (inSpatial := plan.spatial) layer) input
                         have hPool :
                             NN.IR.Graph.evalMaxPool config
-                                (Spec.SomeTensor.mk (α := α) parentShape parent) =
-                              .ok (Spec.SomeTensor.ofTensor output) := by
-                          simp [NN.IR.Graph.evalMaxPool, hPlan, input, layer, output]
-                        have hOutputShape : (Spec.SomeTensor.ofTensor output).shape = expected := by
+                                (Spec.SomeTensor.mk (α := α) parentShape
+                                  (getIdx (α := α) (xs := ctx) parentIdx)) =
+                              .ok (Spec.SomeTensor.mk (α := α) plan.outShape output) := by
+                          simp [NN.IR.Graph.evalMaxPool, hPlan, input, layer, output,
+                            Tensor.eqRec_eq_cast_shape]
                           rfl
-                        have hResultShape : (Spec.SomeTensor.ofTensor output).shape = n.outShape :=
-                          hOutputShape.trans hOut
+                        have hNorm := normalizeNodeOutput_mk_of_eq (α := α) i n output hOut
                         have hEval :
                             NN.IR.Graph.evalAt (α := α) (g := g) (payload := payload)
                                 (input := Spec.SomeTensor.mk (α := α) inShape x)
                                 (vals := vals0) (i := i) =
                               .ok (Spec.SomeTensor.mk (α := α) n.outShape
                                 (nodeData.eval ctx)) := by
-                          simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode,
-                            NN.IR.Graph.normalizeNodeOutput, hN, hk, hp, hGet, hPool,
-                            nodeData, parent, packedResultOrPanic]
-                          split
-                          · simp_all
-                            congr 2
-                          · simp_all
+                          simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, hN, hk, hp, hGet, hPool]
+                          rw [hNorm]
+                          rfl
                         apply buildFrom_denoteAllFrom_nodeData_exact (α := α) (g := g)
                           (payload := payload) (gd := gd) (i := i) (st' := st') (x := x)
                           (hi := hi) (nodeData := nodeData)
@@ -134,7 +145,7 @@ theorem buildFrom_denoteAllFrom_maxPool
 
 /-- Lowering arbitrary-rank average pooling preserves the IR denotation. -/
 theorem buildFrom_denoteAllFrom_avgPool
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) {inShape : Shape} {ss : List Shape}
     (gd : ForwardData α [inShape] ss) (i : Nat) (st' : State α inShape)
     (x : Tensor α inShape) (n : NN.IR.Node) (config : WindowConfig)
@@ -159,7 +170,7 @@ theorem buildFrom_denoteAllFrom_avgPool
   let ctx := ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil)
   unfold buildFrom at hBuild
   simp [hi, hN] at hBuild
-  simp (config := { failIfUnchanged := false }) [hk] at hBuild
+  simp (config := { failIfUnchanged := false }) [hk, lowerAvgPool] at hBuild
   cases hp : unaryParent? n.parents with
   | none => exact False.elim <| throw_bind_ne_ok (by simpa [hp] using hBuild)
   | some pId =>
@@ -178,9 +189,19 @@ theorem buildFrom_denoteAllFrom_avgPool
                       · simp [hp, hParent, parentShape, hIdx, hPlan, expected, hOut] at hBuild
                         let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                           mkForwardNode (fun context =>
-                            let parent := getIdx (α := α) (xs := context) parentIdx
-                            packedResultOrPanic (α := α) n.outShape <|
-                              NN.IR.Graph.evalAvgPool config (Spec.SomeTensor.ofTensor parent))
+                            let input : Tensor α
+                                (plan.leading.concat
+                                  (Shape.ofList (Tensor.to plan.spatial (List Nat)))) :=
+                              Tensor.castShape (getIdx (α := α) (xs := context) parentIdx)
+                                plan.concat_eq.symm
+                            let layer : Spec.AvgPoolSpec config.spatialRank config.kernel
+                                config.stride config.padding plan.kernelNonzero
+                                plan.strideNonzero := {}
+                            let output : Tensor α plan.outShape :=
+                              Tensor.mapLeading plan.leading
+                                (Spec.avgPoolSpatialSpec (α := α) (inSpatial := plan.spatial) layer)
+                                input
+                            Tensor.castShape output hOut)
                         let st1 : State α inShape :=
                           ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                         have hRec :
@@ -194,36 +215,33 @@ theorem buildFrom_denoteAllFrom_avgPool
                             (denoteAllState_get_mkIdx? (inShape := inShape) (ss := ss)
                               (gd := gd) (x := x) (pid := pId) (s := parentShape)
                               (idx := parentIdx) hIdx)
-                        let parent := getIdx (α := α) (xs := ctx) parentIdx
                         let input : Tensor α
-                            (plan.leading.concat (Shape.ofList plan.spatial.toList)) :=
-                          plan.concat_eq.symm ▸ parent
+                            (plan.leading.concat
+                              (Shape.ofList (Tensor.to plan.spatial (List Nat)))) :=
+                          Tensor.castShape (getIdx (α := α) (xs := ctx) parentIdx)
+                            plan.concat_eq.symm
                         let layer : Spec.AvgPoolSpec config.spatialRank config.kernel config.stride
                             config.padding plan.kernelNonzero plan.strideNonzero := {}
-                        let output := Tensor.mapEach plan.leading
+                        let output : Tensor α plan.outShape := Tensor.mapLeading plan.leading
                           (Spec.avgPoolSpatialSpec (α := α) (inSpatial := plan.spatial) layer) input
                         have hPool :
                             NN.IR.Graph.evalAvgPool config
-                                (Spec.SomeTensor.mk (α := α) parentShape parent) =
-                              .ok (Spec.SomeTensor.ofTensor output) := by
-                          simp [NN.IR.Graph.evalAvgPool, hPlan, input, layer, output]
-                        have hOutputShape : (Spec.SomeTensor.ofTensor output).shape = expected := by
+                                (Spec.SomeTensor.mk (α := α) parentShape
+                                  (getIdx (α := α) (xs := ctx) parentIdx)) =
+                              .ok (Spec.SomeTensor.mk (α := α) plan.outShape output) := by
+                          simp [NN.IR.Graph.evalAvgPool, hPlan, input, layer, output,
+                            Tensor.eqRec_eq_cast_shape]
                           rfl
-                        have hResultShape : (Spec.SomeTensor.ofTensor output).shape = n.outShape :=
-                          hOutputShape.trans hOut
+                        have hNorm := normalizeNodeOutput_mk_of_eq (α := α) i n output hOut
                         have hEval :
                             NN.IR.Graph.evalAt (α := α) (g := g) (payload := payload)
                                 (input := Spec.SomeTensor.mk (α := α) inShape x)
                                 (vals := vals0) (i := i) =
                               .ok (Spec.SomeTensor.mk (α := α) n.outShape
                                 (nodeData.eval ctx)) := by
-                          simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode,
-                            NN.IR.Graph.normalizeNodeOutput, hN, hk, hp, hGet, hPool,
-                            nodeData, parent, packedResultOrPanic]
-                          split
-                          · simp_all
-                            congr 2
-                          · simp_all
+                          simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, hN, hk, hp, hGet, hPool]
+                          rw [hNorm]
+                          rfl
                         apply buildFrom_denoteAllFrom_nodeData_exact (α := α) (g := g)
                           (payload := payload) (gd := gd) (i := i) (st' := st') (x := x)
                           (hi := hi) (nodeData := nodeData)

@@ -42,12 +42,12 @@ static inline int input_index_from_window(
     size_t* inIdxOut) {
   size_t inIdx = (size_t)c;
   for (int ax = 0; ax < rank; ++ax) {
-    int64_t pos = (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] -
-                  (int64_t)padding[ax];
-    if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
+    uint32_t pos;
+    if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                            inSpatial[ax], &pos)) {
       return 0;
     }
-    inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)(uint32_t)pos;
+    inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)pos;
   }
   *inIdxOut = inIdx;
   return 1;
@@ -130,13 +130,13 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_conv_fwd(
           int ok = 1;
           size_t inIdx = (size_t)ic;
           for (int ax = 0; ax < rank; ++ax) {
-            int64_t pos = (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] -
-                          (int64_t)padding[ax];
-            if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
+            uint32_t pos;
+            if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                    inSpatial[ax], &pos)) {
               ok = 0;
               break;
             }
-            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)(uint32_t)pos;
+            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)pos;
           }
           if (!ok) continue;
 
@@ -237,13 +237,13 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_conv_bwd(
           int ok = 1;
           size_t inIdx = (size_t)ic;
           for (int ax = 0; ax < rank; ++ax) {
-            int64_t pos = (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] -
-                          (int64_t)padding[ax];
-            if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
+            uint32_t pos;
+            if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                    inSpatial[ax], &pos)) {
               ok = 0;
               break;
             }
-            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)(uint32_t)pos;
+            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)pos;
           }
           if (!ok) continue;
 
@@ -342,23 +342,13 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_convtranspose_fwd(
           int ok = 1;
           size_t inIdx = (size_t)ic;
           for (int ax = 0; ax < rank; ++ax) {
-            int64_t num =
-                (int64_t)outCoord[ax] + (int64_t)padding[ax] - (int64_t)kCoord[ax];
-            if (num < 0) {
+            uint32_t pos;
+            if (!window_output_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                     inSpatial[ax], &pos)) {
               ok = 0;
               break;
             }
-            int64_t s = (int64_t)stride[ax];
-            if ((num % s) != 0) {
-              ok = 0;
-              break;
-            }
-            int64_t pos = num / s;
-            if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
-              ok = 0;
-              break;
-            }
-            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)(uint32_t)pos;
+            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)pos;
           }
           if (!ok) continue;
 
@@ -463,23 +453,13 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_convtranspose_bwd(
           int ok = 1;
           size_t inIdx = (size_t)ic;
           for (int ax = 0; ax < rank; ++ax) {
-            int64_t num =
-                (int64_t)outCoord[ax] + (int64_t)padding[ax] - (int64_t)kCoord[ax];
-            if (num < 0) {
+            uint32_t pos;
+            if (!window_output_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                     inSpatial[ax], &pos)) {
               ok = 0;
               break;
             }
-            int64_t s = (int64_t)stride[ax];
-            if ((num % s) != 0) {
-              ok = 0;
-              break;
-            }
-            int64_t pos = num / s;
-            if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
-              ok = 0;
-              break;
-            }
-            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)(uint32_t)pos;
+            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)pos;
           }
           if (!ok) continue;
 
@@ -700,13 +680,13 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_maxpool_bwd(
 
               int ok = 1;
               for (int ax = 0; ax < rank; ++ax) {
-                int64_t pos = (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] -
-                              (int64_t)padding[ax];
-                if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
+                uint32_t pos;
+                if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                        inSpatial[ax], &pos)) {
                   ok = 0;
                   break;
                 }
-                candCoord[ax] = (uint32_t)pos;
+                candCoord[ax] = pos;
               }
 
               if (ok) {
@@ -764,13 +744,13 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_maxpool_bwd(
 
           int ok = 1;
           for (int ax = 0; ax < rank; ++ax) {
-            int64_t pos = (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] -
-                          (int64_t)padding[ax];
-            if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
+            uint32_t pos;
+            if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                    inSpatial[ax], &pos)) {
               ok = 0;
               break;
             }
-            candCoord[ax] = (uint32_t)pos;
+            candCoord[ax] = pos;
           }
 
           if (ok) {
@@ -1095,13 +1075,13 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_smooth_maxpool_fwd(
         int ok = 1;
         size_t inIdx = (size_t)c;
         for (int ax = 0; ax < rank; ++ax) {
-          int64_t pos = (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] -
-                        (int64_t)padding[ax];
-          if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
+          uint32_t pos;
+          if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                  inSpatial[ax], &pos)) {
             ok = 0;
             break;
           }
-          inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)(uint32_t)pos;
+          inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)pos;
         }
 
         float v = 0.0f;
@@ -1118,13 +1098,13 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_smooth_maxpool_fwd(
         int ok = 1;
         size_t inIdx = (size_t)c;
         for (int ax = 0; ax < rank; ++ax) {
-          int64_t pos = (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] -
-                        (int64_t)padding[ax];
-          if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
+          uint32_t pos;
+          if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                  inSpatial[ax], &pos)) {
             ok = 0;
             break;
           }
-          inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)(uint32_t)pos;
+          inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)pos;
         }
 
         float v = 0.0f;
@@ -1263,13 +1243,13 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_smooth_maxpool_bwd(
               int ok = 1;
               size_t inIdx = (size_t)c;
               for (int ax = 0; ax < rank; ++ax) {
-                int64_t pos = (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] -
-                              (int64_t)padding[ax];
-                if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
+                uint32_t pos;
+                if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                        inSpatial[ax], &pos)) {
                   ok = 0;
                   break;
                 }
-                inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)(uint32_t)pos;
+                inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)pos;
               }
 
               float v = 0.0f;
@@ -1286,13 +1266,13 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_smooth_maxpool_bwd(
               int ok = 1;
               size_t inIdx = (size_t)c;
               for (int ax = 0; ax < rank; ++ax) {
-                int64_t pos = (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] -
-                              (int64_t)padding[ax];
-                if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
+                uint32_t pos;
+                if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                        inSpatial[ax], &pos)) {
                   ok = 0;
                   break;
                 }
-                inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)(uint32_t)pos;
+                inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)pos;
               }
 
               float v = 0.0f;
@@ -1333,13 +1313,13 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_smooth_maxpool_bwd(
           int ok = 1;
           size_t inIdx = (size_t)c;
           for (int ax = 0; ax < rank; ++ax) {
-            int64_t pos = (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] -
-                          (int64_t)padding[ax];
-            if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
+            uint32_t pos;
+            if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                    inSpatial[ax], &pos)) {
               ok = 0;
               break;
             }
-            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)(uint32_t)pos;
+            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)pos;
           }
 
           float v = 0.0f;
@@ -1356,13 +1336,13 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_smooth_maxpool_bwd(
           int ok = 1;
           size_t inIdx = (size_t)c;
           for (int ax = 0; ax < rank; ++ax) {
-            int64_t pos = (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] -
-                          (int64_t)padding[ax];
-            if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
+            uint32_t pos;
+            if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                    inSpatial[ax], &pos)) {
               ok = 0;
               break;
             }
-            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)(uint32_t)pos;
+            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)pos;
           }
 
           float v = 0.0f;
@@ -1378,13 +1358,13 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_smooth_maxpool_bwd(
           int ok = 1;
           size_t inIdx = (size_t)c;
           for (int ax = 0; ax < rank; ++ax) {
-            int64_t pos = (int64_t)outCoord[ax] * (int64_t)stride[ax] + (int64_t)kCoord[ax] -
-                          (int64_t)padding[ax];
-            if (pos < 0 || (uint32_t)pos >= inSpatial[ax]) {
+            uint32_t pos;
+            if (!window_input_coord(outCoord[ax], kCoord[ax], stride[ax], padding[ax],
+                                    inSpatial[ax], &pos)) {
               ok = 0;
               break;
             }
-            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)(uint32_t)pos;
+            inIdx = inIdx * (size_t)inSpatial[ax] + (size_t)pos;
           }
           if (!ok) continue;
 

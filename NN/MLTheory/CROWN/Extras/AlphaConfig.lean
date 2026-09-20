@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Core
-public import NN.Spec.Core.Context
-public import NN.Spec.Core.Tensor
 
 /-!
 # α-CROWN configuration
@@ -38,11 +36,11 @@ References:
 
 namespace NN.MLTheory.CROWN.alpha
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.MLTheory.CROWN
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Per-neuron optimizable alpha parameters. -/
 structure NeuronAlpha (α : Type) where
@@ -52,14 +50,14 @@ structure NeuronAlpha (α : Type) where
   upper : α
 
 /-- Layer-wise alpha configuration. -/
-structure LayerAlpha (α : Type) [Context α] where
+structure LayerAlpha (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Number of neurons in this activation layer. -/
   dim : Nat
   /-- Per-neuron α parameters, indexed by the layer dimension. -/
   alphas : Tensor (NeuronAlpha α) [dim]
 
 /-- Full network alpha configuration. -/
-structure NetworkAlpha (α : Type) [Context α] where
+structure NetworkAlpha (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Number of activation layers (not counting input/output) -/
   numLayers : Nat
   /-- Per-layer alpha values -/
@@ -75,11 +73,11 @@ inductive NeuronStatus where
 
 /-- Determine neuron status from bounds. -/
 def neuronStatus (l u : α) : NeuronStatus :=
-  if u < Numbers.zero then
+  if u < 0 then
     .inactive
-  else if l > Numbers.zero then
+  else if l > 0 then
     .active
-  else if l < Numbers.zero ∧ u > Numbers.zero then
+  else if l < 0 ∧ u > 0 then
     .crossing
   else
     .unknown
@@ -88,18 +86,18 @@ def neuronStatus (l u : α) : NeuronStatus :=
 
 The default lower slope is `0`, the conservative lower envelope `y ≥ 0`. -/
 def defaultReLUAlpha : NeuronAlpha α :=
-  { lower := Numbers.zero
-  , upper := Numbers.one }
+  { lower := 0
+  , upper := 1 }
 
 /-- Initialize alpha for active neuron (no relaxation needed). -/
 def activeAlpha : NeuronAlpha α :=
-  { lower := Numbers.one
-  , upper := Numbers.one }
+  { lower := 1
+  , upper := 1 }
 
 /-- Initialize alpha for inactive neuron. -/
 def inactiveAlpha : NeuronAlpha α :=
-  { lower := Numbers.zero
-  , upper := Numbers.zero }
+  { lower := 0
+  , upper := 0 }
 
 /-- Initialize alpha based on pre-activation bounds [l, u]. -/
 def initAlpha (l u : α) : NeuronAlpha α :=
@@ -111,20 +109,17 @@ def initAlpha (l u : α) : NeuronAlpha α :=
 
 /-- Initialize layer alpha from pre-activation bounds box. -/
 def initLayerAlpha (n : Nat) (preB : Box α (.dim n .scalar)) : LayerAlpha α :=
-  match preB.lo, preB.hi with
-  | .dim lo, .dim hi =>
-    let alphas := Tensor.dim (fun i : Fin n =>
-      match lo i, hi i with
-      | .scalar l, .scalar u => Tensor.scalar (initAlpha (α:=α) l u))
-    { dim := n, alphas := alphas }
+  let alphas := Tensor.dim (fun i : Fin n =>
+    Tensor.scalar (initAlpha (α := α) (preB.lo.getScalar i) (preB.hi.getScalar i)))
+  { dim := n, alphas := alphas }
 
 /-- Project alpha to valid range [0, 1] for ReLU. -/
 def projectReLUAlpha (a : NeuronAlpha α) : NeuronAlpha α :=
-  let lo := if a.lower < Numbers.zero then Numbers.zero
-            else if a.lower > Numbers.one then Numbers.one
+  let lo := if a.lower < 0 then 0
+            else if a.lower > 1 then 1
             else a.lower
-  let hi := if a.upper < Numbers.zero then Numbers.zero
-            else if a.upper > Numbers.one then Numbers.one
+  let hi := if a.upper < 0 then 0
+            else if a.upper > 1 then 1
             else a.upper
   { lower := lo, upper := hi }
 
@@ -136,7 +131,7 @@ should pair this executable rule with the usual α-range condition for the chose
 def reluLowerWithAlpha (_l _u alphaLo : α) : α × α :=
   -- Lower bound: y = α·x
   -- Slope = α, bias = 0
-  (alphaLo, Numbers.zero)
+  (alphaLo, 0)
 
 /-- Compute the fixed triangular ReLU upper bound.
 
@@ -153,9 +148,9 @@ def reluUpperFixed (l u : α) : α × α :=
 def reluWithAlpha (l u : α) (alphas : NeuronAlpha α) : α × α × α × α :=
   match neuronStatus l u with
   | .inactive =>
-    (Numbers.zero, Numbers.zero, Numbers.zero, Numbers.zero)
+    (0, 0, 0, 0)
   | .active =>
-    (Numbers.one, Numbers.zero, Numbers.one, Numbers.zero)
+    (1, 0, 1, 0)
   | .crossing =>
     let (slo, blo) := reluLowerWithAlpha (α:=α) l u alphas.lower
     let (shi, bhi) := reluUpperFixed (α:=α) l u
@@ -168,7 +163,7 @@ def reluWithAlpha (l u : α) (alphas : NeuronAlpha α) : α × α × α × α :=
     else
       -- The only valid ordered interval in this branch is `[0,0]`. Avoid the `0/0`
       -- denominator in the secant formula and use the exact zero map.
-      (Numbers.zero, Numbers.zero, Numbers.zero, Numbers.zero)
+      (0, 0, 0, 0)
 
 /-- Gradient of output bounds with respect to $\alpha$.
 
@@ -182,7 +177,7 @@ structure AlphaGradient (α : Type) where
   grad_upper : α
 
 /-- Layer-wise alpha gradients. -/
-structure LayerAlphaGrad (α : Type) [Context α] where
+structure LayerAlphaGrad (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Number of neurons in the activation layer. -/
   dim : Nat
   /-- Per-neuron gradients of the bound objective with respect to α parameters. -/
@@ -200,7 +195,7 @@ structure AlphaOptConfig where
   optimizeUpper : Bool := false
 
 /-- Result of alpha optimization. -/
-structure OptimizedAlpha (α : Type) [Context α] where
+structure OptimizedAlpha (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Optimized network alpha configuration -/
   alphas : NetworkAlpha α
   /-- Final bound achieved -/

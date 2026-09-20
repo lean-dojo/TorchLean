@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Finset.Lattice.Fold
-public import NN.Spec.Core.TensorOps
 public import NN.Spec.RL.Core
 public import NN.Spec.RL.Environment
 
@@ -45,16 +43,19 @@ Naming note:
 
 @[expose] public section
 
+open TorchLean
+
 namespace Spec
 namespace RL
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type}
+variable {α : Type} [TorchLean.Storage α]
 variable {nStates nActions : Nat}
 
 /-- Value function over a finite state space. -/
-abbrev ValueFunction (α : Type) (nStates : Nat) := Tensor α [nStates]
+abbrev ValueFunction (α : Type) [TorchLean.Storage α] (nStates : Nat) :=
+  Tensor α [nStates]
 
 /-- Deterministic policy over a finite state / action space. -/
 abbrev Policy (nStates nActions : Nat) := Fin nStates → Fin nActions
@@ -94,15 +95,15 @@ def actionValues [Zero α] [One α] [Add α] [Mul α]
     (mdp : FiniteMDP α nStates nActions)
     (values : ValueFunction α nStates)
     (state : Fin nStates) : Tensor α [nActions] :=
-  Tensor.dim (fun action => Tensor.scalar (stateActionValue (α := α) mdp values state action))
+  Tensor.ofFn (fun action => stateActionValue (α := α) mdp values state action)
 
 /-- Bellman operator for a deterministic policy. -/
 def bellmanPolicy [Zero α] [One α] [Add α] [Mul α]
     (mdp : FiniteMDP α nStates nActions)
     (policy : Policy nStates nActions)
     (values : ValueFunction α nStates) : ValueFunction α nStates :=
-  Tensor.dim (fun state =>
-    Tensor.scalar (stateActionValue (α := α) mdp values state (policy state)))
+  Tensor.ofFn (fun state =>
+    stateActionValue (α := α) mdp values state (policy state))
 
 /-- Bellman optimality operator for a finite action space. -/
 def bellmanOptimality [Zero α] [One α] [Add α] [Mul α] [LinearOrder α]
@@ -110,10 +111,9 @@ def bellmanOptimality [Zero α] [One α] [Add α] [Mul α] [LinearOrder α]
     (mdp : FiniteMDP α nStates nActions)
     (values : ValueFunction α nStates) : ValueFunction α nStates :=
   let _ : Nonempty (Fin nActions) := ⟨⟨0, Fact.out⟩⟩
-  Tensor.dim (fun state =>
-    Tensor.scalar
-      ((Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty
-        (stateActionValue (α := α) mdp values state)))
+  Tensor.ofFn (fun state =>
+    (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty
+      (stateActionValue (α := α) mdp values state))
 
 end RL
 end Spec

@@ -7,9 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.LearningTheory.Robustness.Spec
-public import NN.Spec.Core.Tensor
-public import NN.Spec.Core.Tensor.Constructors
-public import NN.Spec.Core.TensorOps
+public import NN.Tensor.Conversion
 
 /-!
 # `NN.MLTheory.Robustness.Runtime`
@@ -20,7 +18,7 @@ Executable Float-specialized utilities for the robustness specifications in
 
 @[expose] public section
 
-open Spec
+open Spec TorchLean
 
 namespace NN.MLTheory.Robustness.Runtime
 
@@ -53,12 +51,12 @@ Runtime `L2` norm, defined by specializing the polymorphic spec to `Float`.
 def tensorL2NormFloat {s : Shape} (t : Tensor Float s) : Float :=
   NN.MLTheory.Robustness.Spec.tensorL2Norm (α := Float) (s := s) t
 
-/-- `L2` distance (specialization of `Robustness.Spec.tensor_distance`). -/
+/-- `L2` distance (specialization of `Robustness.Spec.tensorDistance`). -/
 def tensorL2DistanceFloat {s : Shape} (t1 t2 : Tensor Float s) : Float :=
   NN.MLTheory.Robustness.Spec.tensorDistance
     (α := Float) (norm := tensorL2NormFloat) (s := s) t1 t2
 
-/-- `L∞` distance (specialization of `Robustness.Spec.tensor_distance`). -/
+/-- `L∞` distance (specialization of `Robustness.Spec.tensorDistance`). -/
 def tensorLinfDistanceFloat {s : Shape} (t1 t2 : Tensor Float s) : Float :=
   NN.MLTheory.Robustness.Spec.tensorDistance
     (α := Float) (norm := tensorLinfNormFloat) (s := s) t1 t2
@@ -128,7 +126,7 @@ namespace Sampling
 /-!
 ## Sampling design (why these helpers look “complicated”)
 
-The spec tensor representation `Spec.Tensor α s` is **shape-indexed** and is represented
+The spec tensor representation `TorchLean.Tensor α s` is **shape-indexed** and is represented
 functionally (`Fin n → ...`). That is great for proofs, but it is not the easiest shape to work
 with when you want to build *concrete perturbations* of a fixed length at runtime.
 
@@ -141,7 +139,7 @@ For sampling, we therefore go through a standard interop path:
 Correctness (what is and is not guaranteed):
 
 - Every point returned by `sampleL2Ball` **provably satisfies** the predicate
-  `in_l2_ball_float center ε` because we *filter* candidates using that very predicate.
+  `inL2BallFloat center ε` because we *filter* candidates using that very predicate.
 - The sampler is **deterministic** (no `IO` randomness). You control variability via the `seed`
   input (here derived from the loop index).
 - The sampler is **not** intended to approximate a uniform distribution on the ball, and it does
@@ -182,13 +180,13 @@ def normalizeArray (xs : Array Float) : Array Float :=
   if n > 0.0 then xs.map (fun x => x / n) else xs
 
 /--
-Unflatten a flat array of length `numel s` into a `Spec.Tensor Float s`.
+Unflatten a flat array of length `numel s` into a `TorchLean.Tensor Float s`.
 
 The length proof is part of the interface to avoid “silent truncation/padding”.
 -/
 def unflattenToTensor {s : Shape} (xs : Array Float)
     (h : xs.size = s.size) : Tensor Float s :=
-  Tensor.ofFlatArrayExact s xs h
+  (Tensor.from xs).reshape s (by simpa [Shape.size] using h)
 
 /--
 Build a perturbation tensor of (approximately) the given `radius`, deterministically from `seed`.
@@ -229,7 +227,7 @@ We generate `numSamples` candidates, each constructed as:
 $\mathrm{center}+\delta_k$, where $\delta_k$ is a direction derived from $k$ and then scaled to a
 radius in $[0,\varepsilon]$.
 
-We then **filter** candidates using `in_l2_ball_float center ε` to ensure that every returned
+We then **filter** candidates using `inL2BallFloat center ε` to ensure that every returned
 element satisfies the predicate under the same runtime distance function.
 
 This “generate + filter” style is deliberate: it makes the only factual guarantee we claim
@@ -244,18 +242,18 @@ def sampleL2Ball {s : Shape} (center : Tensor Float s) (ε : Float) (numSamples 
     --
     -- The exact schedule is not semantically important; what matters is that:
     -- - candidates are easy to reproduce, and
-    -- - every returned element is checked with `in_l2_ball_float`.
+    -- - every returned element is checked with `inL2BallFloat`.
     let radius := ε * (Float.ofNat (k + 1) / Float.ofNat (numSamples + 1))
     let δ := perturbationTensor (s := s) radius k
-    let x := Spec.Tensor.addSpec center δ
+    let x := TorchLean.Tensor.addSpec center δ
     if inL2BallFloat center ε x then acc.push x else acc) #[]
 
 /--
-Turn a nonempty array `#[x₀,x₁,…,x_{m-1}]` into adjacent pairs
+Turn an array with at least two elements `#[x₀,x₁,…,x_{m-1}]` into adjacent pairs
 `[(x₀,x₁),(x₁,x₂),…,(x_{m-1},x₀)]`.
 
 This is a small combinator that is useful when you want to turn a sample array into a set of
-“nearby pairs” for empirical ratio computations.
+“nearby pairs” for empirical ratio computations. Empty and singleton arrays return no pairs.
 -/
 def adjacentPairs {α : Type} [Inhabited α] (xs : Array α) : Array (α × α) :=
   if xs.size < 2 then #[]

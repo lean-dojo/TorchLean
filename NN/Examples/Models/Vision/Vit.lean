@@ -10,14 +10,12 @@ Real-data CUDA example:
 This is a real-data ViT-style CIFAR-10 minibatch run:
 - patch embedding via the generic convolution operation over two spatial axes,
 - reshape + transpose to tokens,
-- one Transformer encoder block,
-- flatten + linear head.
+- two Transformer encoder blocks,
+- learned class-token pooling and a linear head.
 -/
 
 module
 
-
-public import NN.API
 public import NN.Examples.Models.Common.RealData
 
 /-!
@@ -36,12 +34,7 @@ lake -R -K cuda=true exe torchlean vit --device cuda --n-total 1 --steps 1
 ```
 
 This command is a small runtime check. Larger image-token runs belong in runtime profiling work,
-not the default quick path:
-
-```bash
-lake -R -K cuda=true build
-lake -R -K cuda=true exe torchlean vit --device cuda --n-total 1 --steps 1
-```
+not the default quick path.
 -/
 
 @[expose] public section
@@ -51,10 +44,10 @@ open TorchLean
 namespace NN.Examples.Models.Vision.Vit
 
 /-- CLI subcommand name used in terminal banners and parser errors. -/
-def exeName : String := "torchlean vit"
+def exeName : String := "vit"
 
 /-- Default JSON loss-curve path for this command. -/
-def defaultLogJson : System.FilePath := ModelZoo.trainLogPath "vit"
+def defaultLogPath : System.FilePath := Support.trainLogPath "vit"
 
 /--
 Static minibatch size for the ViT example.
@@ -62,22 +55,22 @@ Static minibatch size for the ViT example.
 The batch axis is part of the checked model type, so changing this value changes the input and
 output shapes at compile time.
 -/
-def batch : Nat := 1
+def batchSize : Nat := 1
 
 /-- CIFAR image channels. -/
-def inC : Nat := 3
+def inputChannels : Nat := RealData.cifarChannels
 
 /-- Height of the CIFAR crop used by this runnable ViT command. -/
-def inH : Nat := 2
+def cropHeight : Nat := 4
 
 /-- Width of the CIFAR crop used by this runnable ViT command. -/
-def inW : Nat := 2
+def cropWidth : Nat := 4
 
 /-- Patch height used by the convolutional patch embedding. -/
-def patchH : Nat := 2
+def patchHeight : Nat := 2
 
 /-- Patch width used by the convolutional patch embedding. -/
-def patchW : Nat := 2
+def patchWidth : Nat := 2
 
 /-- Patch stride; equal to patch size here, so patches do not overlap. -/
 def stride : Nat := 2
@@ -86,49 +79,50 @@ def stride : Nat := 2
 def padding : Nat := 0
 
 /--
-Transformer feature width.
-
-CIFAR rows are cropped before training. A 2×2 patch covers the whole crop here, so the command
-exercises the ViT path with one image token and a small classifier head.
+Transformer feature width. The `4×4` crop yields four `2×2` image patches, plus the learned class
+token used by the classifier.
 -/
-def dModel : Nat := 1
+def modelWidth : Nat := 4
 
 /-- CIFAR class count, hence the output-logit width. -/
-def outDim : Nat := RealData.cifarClasses
+def classCount : Nat := RealData.cifarClasses
 
 /-- Number of attention heads in each encoder block. -/
-def numHeads : Nat := 1
+def attentionHeads : Nat := 2
 
-/-- Per-head feature width; $\mathtt{numHeads}\cdot\mathtt{headDim}=\mathtt{dModel}$. -/
-def headDim : Nat := 1
+/-- Per-head feature width; `attentionHeads * attentionHeadWidth = modelWidth`. -/
+def attentionHeadWidth : Nat := 2
 
 /-- Feed-forward hidden width inside the encoder block. -/
-def ffnHidden : Nat := 2
+def feedForwardWidth : Nat := 8
+
+/-- Number of Transformer encoder blocks. -/
+def transformerLayers : Nat := 2
 
 /-- Shared ViT configuration used by shapes and the reusable public model constructor. -/
-def cfg : nn.models.VitConfig 2 :=
-  { inChannels := inC
-    spatial := tensor! [inH, inW]
-    patch :=
-      { outChannels := dModel
-        kernel := tensor! [patchH, patchW]
-        stride := tensor! [stride, stride]
-        padding := tensor! [padding, padding]
-        kernelNonzero := by intro i; fin_cases i <;> decide
-        strideNonzero := by intro i; fin_cases i <;> simp [stride] }
-    outDim := outDim
-    numHeads := numHeads
-    headDim := headDim
-    ffnHidden := ffnHidden
-    numLayers := 2
+abbrev modelConfig : nn.models.ViT.Config 2 :=
+  { inputChannels := inputChannels
+    spatial := [cropHeight, cropWidth]
+    patchEmbedding :=
+      { outChannels := modelWidth
+        kernelSize := [patchHeight, patchWidth]
+        stride := [stride, stride]
+        padding := [padding, padding] }
+    classCount := classCount
+    headCount := attentionHeads
+    headWidth := attentionHeadWidth
+    feedForwardWidth := feedForwardWidth
+    layerCount := transformerLayers
     pooling := .cls }
 
-/-- Leading sample axis used by this batched training example. -/
-abbrev batchShape : List Nat := [batch]
+/-- Batch shape used by this training example. -/
+abbrev batch : Shape := [batchSize]
 
-abbrev σ : List Nat := [batch, inC, inH, inW]
+/-- Batched image shape derived from `modelConfig`. -/
+abbrev input : Shape := modelConfig.input batch
 
-abbrev τ : List Nat := [batch, outDim]
+/-- Batched classifier output derived from `modelConfig`. -/
+abbrev output : Shape := modelConfig.output batch
 
 /--
 Compact ViT-style classifier from the public model API.
@@ -136,35 +130,37 @@ Compact ViT-style classifier from the public model API.
 The constructor builds patch embedding, token reshape, positional embeddings, the configured
 encoder stack, token pooling, and the classifier head.
 -/
-def model : nn.Builder (nn.Sequential σ τ) :=
-  nn.models.vit cfg batchShape
-    (hInChannels := by decide)
-    (hModel := by decide)
+def model : nn.Builder (nn.Sequential input output) :=
+  nn.models.vit modelConfig batch
 
 /-- Train the CIFAR ViT with the public `Trainer` surface. -/
-def train (opts : Options) (flags : RealData.CifarModelTrainFlags) :
-    IO Trainer.TrainSummary := do
+def train (runtime : Runtime.Config) (flags : RealData.CifarModelTrainFlags) :
+    IO Trainer.Report := do
   let batches ←
-    RealData.loadCifarBatches exeName batch flags.nRows flags.seed flags.xPath flags.yPath
-  let batches := batches.map (RealData.cropCifarBatch batch inH inW (by decide) (by decide))
+    RealData.loadCifarBatches exeName batchSize flags.data.nRows flags.data.seed
+      flags.data.xPath flags.data.yPath
+  let batches ← batches.mapM fun sample =>
+    CLI.orThrow exeName <|
+      RealData.cropCifarBatch batchSize cropHeight cropWidth sample
   let trainer :=
     Trainer.new model <|
-      Trainer.Config.fromRunConfig
-        (Trainer.RunConfig.ofRuntimeOptions opts { optimizer := optim.adam { lr := flags.lr } })
+      Trainer.RunConfig.forObjective
+        (Trainer.RunConfig.fromRuntime runtime
+          { optimizer := optim.adam { learningRate := flags.training.learningRate } })
         (.oneHotCrossEntropy 1)
-        (seed := flags.seed)
+        (seed := flags.data.seed)
   let trained ← trainer.train
-    (Data.floatSamples batches)
-    (CLI.Training.OptimizerOptions.toTrainerOptions flags.toOptimizerOptions
-      (title := "ViT CIFAR training")
-      (notes := RealData.cifarClassifierNotes batch flags))
+    (Data.fromSamples batches)
+    (flags.training.trainOptions
+      (logTitle := "ViT CIFAR training")
+      (logNotes := RealData.cifarClassifierNotes batchSize flags))
   pure trained.report
 
-/-- CLI entrypoint for CIFAR ViT training; CUDA is the maintained validation path. -/
+/-- CLI entrypoint for CIFAR ViT training on the selected runtime device. -/
 def main (args : List String) : IO UInt32 :=
   TrainCommand.classificationNpy exeName args
-    (fun rest => RealData.CifarModelTrainFlags.parse exeName rest defaultLogJson 1 1e-3)
-    (ModelZoo.bannerWithDevice exeName "ViT CIFAR training")
+    (fun rest => RealData.CifarModelTrainFlags.parse exeName rest defaultLogPath 1 1e-3)
+    (Support.bannerWithDevice exeName "ViT CIFAR training")
     train
 
 end NN.Examples.Models.Vision.Vit

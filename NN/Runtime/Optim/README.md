@@ -15,8 +15,11 @@ named optimizer to the projected gradient.
 
 - `Optimizers.lean`: per-tensor update equations for SGD, momentum SGD, AdaGrad, RMSProp, Adam,
   AdamW, Adadelta, Muon-style orthogonalized momentum, and GaLore-style projected updates.
-- `Schedulers.lean`: deterministic learning-rate schedules, including constant, step, exponential,
-  cosine, cyclic, one-cycle, and PyTorch-compatible variants where step-count conventions matter.
+- `Schedulers.lean` and `Schedulers/`: deterministic learning-rate schedules. `Native.lean` holds
+  constant, step, exponential, cosine, cyclic, and one-cycle schedules; `PyTorch.lean` holds the
+  `CosineAnnealing` and `OneCycle` variants whose step-count conventions follow PyTorch, reached
+  from training code as `torchCosineAnnealing` and `torchOneCycle`. A separate PyTorch step decay
+  no longer exists because it computed the same schedule as the native `StepDecay`.
 
 ## Public API
 

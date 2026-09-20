@@ -29,31 +29,34 @@ namespace Proofs
 namespace Autograd
 namespace Algebra
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open TensorAlgebra
 
 noncomputable section
 
 namespace NodeData
 
-/-- Build an executable unary node from a spec `OpSpec`, storing the VJP in a sparse `_root_.TorchLean.TensorPack`. -/
-def ofOpSpec {α : Type} {Δ : Type} [Zero α] {Γ : List Shape} {σ τ : Shape}
+/-- Build an executable unary node from a spec `OpSpec`, storing the VJP in a sparse
+`TorchLean.TensorPack`. -/
+def ofOpSpec {α : Type} {Δ : Type} [TorchLean.Storage α] [Zero α]
+    {Γ : List Shape} {σ τ : Shape}
     (idx : Idx Γ σ) (op : Spec.OpSpec α σ τ) : NodeData α Δ Γ τ :=
   { forward := fun ctx _d => op.forward (getIdx (xs := ctx) idx)
     -- This executable node uses only its stored VJP. The zero tangent keeps the unused JVP field
     -- total; `NodeData` does not claim that either map is a derivative of `forward`.
-    jvp := fun _ctx _dctx _d => Spec.fill (0 : α) τ
-    vjp := fun ctx _d δ => TensorPack.single (α := α) (Γ := Γ) idx (op.backward (getIdx (xs := ctx) idx)
-      δ) }
+    jvp := fun _ctx _dctx _d => Tensor.full τ (0 : α)
+    vjp := fun ctx _d δ =>
+      TensorPack.single (α := α) (Γ := Γ) idx (op.backward (getIdx (xs := ctx) idx) δ) }
 
 /-- Executable binary add node (two parents of the same shape). -/
-def add {α : Type} {Δ : Type} [Zero α] [Add α] {Γ : List Shape} {s : Shape}
+def add {α : Type} {Δ : Type} [TorchLean.Storage α] [Zero α] [Add α]
+    {Γ : List Shape} {s : Shape}
     (a b : Idx Γ s) : NodeData α Δ Γ s :=
   { forward := fun ctx _d => addSpec (getIdx (xs := ctx) a) (getIdx (xs := ctx) b)
     jvp := fun _ctx dctx _d => addSpec (getIdx (xs := dctx) a) (getIdx (xs := dctx) b)
     vjp := fun _ctx _d δ =>
-      _root_.TorchLean.TensorPack.add (α := α) (ss := Γ)
+      TorchLean.TensorPack.add (α := α) (ss := Γ)
         (TensorPack.single (α := α) (Γ := Γ) a δ)
         (TensorPack.single (α := α) (Γ := Γ) b δ) }
 
@@ -62,13 +65,14 @@ end NodeData
 namespace Node
 
 /-- Build a proof-carrying unary node from an `OpSpecCorrect`. -/
-def ofOpSpecCorrect {α : Type} {Δ : Type} [CommSemiring α] {Γ : List Shape} {σ τ : Shape}
+def ofOpSpecCorrect {α : Type} {Δ : Type} [TorchLean.Storage α] [CommSemiring α]
+    {Γ : List Shape} {σ τ : Shape}
     (idx : Idx Γ σ) (op : OpSpecCorrect (α := α) σ τ) : Node (α := α) (Δ := Δ) Γ τ :=
   { toNodeData :=
       { forward := fun ctx _d => op.op.forward (getIdx (xs := ctx) idx)
         jvp := fun ctx dctx _d => op.jvp (getIdx (xs := ctx) idx) (getIdx (xs := dctx) idx)
-        vjp := fun ctx _d δ => TensorPack.single (α := α) (Γ := Γ) idx (op.op.backward (getIdx (xs :=
-          ctx) idx) δ) }
+        vjp := fun ctx _d δ =>
+          TensorPack.single (α := α) (Γ := Γ) idx (op.op.backward (getIdx (xs := ctx) idx) δ) }
     correct := by
       intro ctx dctx d δ
       -- Reduce to the per-op adjointness law and the `TensorPack.single` dot lemma.
@@ -77,8 +81,8 @@ def ofOpSpecCorrect {α : Type} {Δ : Type} [CommSemiring α] {Γ : List Shape} 
       have hop := op.correct x dx δ
       have hsingle :
           dot (α := α) dx (op.op.backward x δ) =
-            TensorPack.dotList (α := α) dctx (TensorPack.single (α := α) (Γ := Γ) idx (op.op.backward x δ)) :=
-              by
+            TensorPack.dotList (α := α) dctx
+              (TensorPack.single (α := α) (Γ := Γ) idx (op.op.backward x δ)) := by
         simpa using (TensorPack.dotList_single (α := α) (Γ := Γ) (dx := dctx) (idx := idx)
           (v := op.op.backward x δ)).symm
       -- `hop` gives `dot (jvp ...) δ = dot dx (backward ...)`.
@@ -86,26 +90,32 @@ def ofOpSpecCorrect {α : Type} {Δ : Type} [CommSemiring α] {Γ : List Shape} 
       simpa [x, dx] using hop.trans hsingle }
 
 /-- Proof-carrying binary add node (two parents of the same shape). -/
-def add {α : Type} {Δ : Type} [CommSemiring α] {Γ : List Shape} {s : Shape} (a b : Idx Γ s) :
+def add {α : Type} {Δ : Type} [TorchLean.Storage α] [CommSemiring α]
+    {Γ : List Shape} {s : Shape} (a b : Idx Γ s) :
     Node (α := α) (Δ := Δ) Γ s :=
   { toNodeData := NodeData.add (α := α) (Δ := Δ) (Γ := Γ) (s := s) a b
     correct := by
       intro ctx dctx d δ
-      -- Reduce to dot distribution and the fact that `TensorPack.single` is the adjoint of `getIdx`.
+      -- Reduce to dot distribution and the fact that `TensorPack.single` is the adjoint of
+      -- `getIdx`.
       let da := getIdx (xs := dctx) a
       let db := getIdx (xs := dctx) b
       have hsplit :
           dot (α := α) (addSpec da db) δ = dot (α := α) da δ + dot (α := α) db δ := by
         simpa [da, db] using TensorAlgebra.dot_add_left (α := α) (a := da) (b := db) (c := δ)
       have hsingleA :
-          TensorPack.dotList (α := α) dctx (TensorPack.single (α := α) (Γ := Γ) a δ) = dot (α := α) da δ := by
-        simpa [da] using (TensorPack.dotList_single (α := α) (Γ := Γ) (dx := dctx) (idx := a) (v := δ))
+          TensorPack.dotList (α := α) dctx (TensorPack.single (α := α) (Γ := Γ) a δ) =
+            dot (α := α) da δ := by
+        simpa [da] using
+          (TensorPack.dotList_single (α := α) (Γ := Γ) (dx := dctx) (idx := a) (v := δ))
       have hsingleB :
-          TensorPack.dotList (α := α) dctx (TensorPack.single (α := α) (Γ := Γ) b δ) = dot (α := α) db δ := by
-        simpa [db] using (TensorPack.dotList_single (α := α) (Γ := Γ) (dx := dctx) (idx := b) (v := δ))
+          TensorPack.dotList (α := α) dctx (TensorPack.single (α := α) (Γ := Γ) b δ) =
+            dot (α := α) db δ := by
+        simpa [db] using
+          (TensorPack.dotList_single (α := α) (Γ := Γ) (dx := dctx) (idx := b) (v := δ))
       have hadd :
           TensorPack.dotList (α := α) dctx
-              (_root_.TorchLean.TensorPack.add (α := α) (ss := Γ)
+              (TorchLean.TensorPack.add (α := α) (ss := Γ)
                 (TensorPack.single (α := α) (Γ := Γ) a δ)
                 (TensorPack.single (α := α) (Γ := Γ) b δ))
             =
@@ -132,7 +142,7 @@ end Node
 
 namespace GraphData
 
-variable {α : Type}
+variable {α : Type} [TorchLean.Storage α]
 variable {Δ : Type}
 variable {Γ : List Shape}
 
@@ -146,7 +156,7 @@ end GraphData
 
 namespace Graph
 
-variable {α : Type} [CommSemiring α]
+variable {α : Type} [TorchLean.Storage α] [CommSemiring α]
 variable {Δ : Type}
 variable {Γ : List Shape}
 

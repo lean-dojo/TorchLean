@@ -6,248 +6,82 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Autograd
-public import NN.API.Seeded
-public import NN.API.Scalar
+public import NN.API
 
 /-!
-# Quickstart: Autograd Basics
+# Quickstart: Autograd
 
-Tour of the public autograd APIs beyond ordinary training:
+Use `autograd.grad` for scalar tensor functions and `autograd.model.grad` when model state is also
+being differentiated. Add `value := true` when the scalar value is needed with the gradient.
 
-- `autograd.model.*` for model-level VJP, Jacobian, and loss gradients.
-- `autograd.model.OutputLoss.*` for reusable scalar losses on model outputs.
-- `autograd.func.*` for Jacobian / Hessian APIs on single-input tensor functions.
-- `nn.functional.detach` for stop-gradient behavior.
+Jacobians, Hessians, JVPs, VJPs, and gradient stopping live in
+`NN.Examples.DeepDives.AutogradTransforms`.
 
 Run:
-  `lake exe torchlean quickstart_autograd`
+
+```bash
+scripts/lake.sh exe torchlean quickstart_autograd
+```
 -/
 
 @[expose] public section
-
 
 namespace NN.Examples.Quickstart.AutogradBasics
 
 open TorchLean
 
-abbrev XShape : List Nat := [2]
-abbrev YShape : List Nat := [3]
-abbrev WShape : List Nat := [3, 2]
-abbrev BShape : List Nat := [3]
+/-- Subcommand name, kept in one place so the usage text and the error messages agree. -/
+def exeName : String := "quickstart_autograd"
 
-/-!
-The tour stays on the public Float autodiff surface. It avoids:
-
-- runtime tape/session code,
-- hand-written parameter-shape bookkeeping,
-- runtime scalar dispatch.
-
-Instead, it uses `TorchLean.autograd.*` directly on a tiny fixed payload.
--/
-
-def model : nn.Sequential XShape YShape :=
-  -- One Linear layer: y = x ↦ W*x + b.
-  nn.Internal.linear 2 3 0 1
-
-def mseLoss : autograd.model.OutputLoss YShape YShape :=
-  -- Reusable scalar loss on model outputs: MSE(pred, target).
-  autograd.model.OutputLoss.mse
-
-def detachedMSELoss : autograd.model.OutputLoss YShape YShape :=
-  -- Same forward value as `mseLoss`, but all gradients are zero (stop-gradient / detach).
-  autograd.model.OutputLoss.detach mseLoss
-
-def squareFn : autograd.func.TensorFunction XShape XShape :=
-  fun x => nn.functional.square x
-
-def sumsqFn : autograd.func.TensorFunction XShape ([] : List Nat) :=
+/-- Mean squared magnitude of one tensor. -/
+def meanSquare : autograd.Function [3] [] :=
   fun x => do
-    let y ← nn.functional.square x
-    -- `mean` is a convenient scalar reduction, like `torch.mean`.
-    nn.functional.mean y
+    let squared ← nn.functional.square x
+    nn.functional.mean squared
 
-namespace Internal
+/-- A single affine model, `y = W x + b`. -/
+def model : nn.Sequential [2] [1] :=
+  nn.build 0 (nn.linear 2 1)
 
-/--
-Deterministic model/sample payload for the autograd walkthrough.
-
-The example stays small: one Linear layer, one input vector, one target vector, and one
-fixed parameter-direction for JVP/HVP queries.
--/
-structure DemoPayload (α : Type) where
-  W : Tensor α WShape
-  b : Tensor α BShape
-  x : Tensor α XShape
-  y : Tensor α YShape
-  vW : Tensor α WShape
-  vb : Tensor α BShape
-
-/-- Fixed Float tensors used by the walkthrough. -/
-def demoPayloadF : DemoPayload Float :=
-  { W := tensor! [[0.2, -0.1], [0.0, 0.3], [-0.4, 0.1]]
-    b := tensor! [0.01, -0.02, 0.03]
-    x := tensor! [0.5, -1.2]
-    y := tensor! [0.7, 0.1, -0.5]
-    vW := Tensor.full [3, 2] 0.1
-    vb := Tensor.full [3] (-0.2) }
-
-/-- Parameter pack for the single Linear layer in `model`. -/
-def modelParams {α : Type} (payload : DemoPayload α) :
-    autograd.model.State model α :=
-  .cons payload.W (.cons payload.b .nil)
-
-/-- Direction vector in parameter space used for JVP/HVP examples. -/
-def paramDirection {α : Type} (payload : DemoPayload α) :
-    autograd.model.State model α :=
-  .cons payload.vW (.cons payload.vb .nil)
-
-/-- Unpack this tutorial's single Linear-layer parameter pack. -/
-def unpackLinearParams {α : Type} (params : autograd.model.State model α) :
-    Tensor α WShape × Tensor α BShape :=
-  match params with
-  | .cons weight (.cons bias .nil) => (weight, bias)
-
-/-- Run the Float autograd walkthrough. -/
+/-- Run the two common differentiation paths. -/
 def runDemo : IO Unit := do
-  let payload := demoPayloadF
-  let params := modelParams payload
-  let vState := paramDirection payload
+  IO.println "== Differentiate a tensor function =="
+  let x : Tensor Float [3] := [1.0, 2.0, 3.0]
+  let (gradient, value) ← autograd.grad meanSquare x (value := true)
+  IO.println s!"mean(x^2) = {value}"
+  IO.println s!"d/dx       = {reprStr gradient}"
 
-  -- ------------------------------------------------------------
-  -- 1) Tensor-output typed graph: VJP with an explicit output seed
-  -- ------------------------------------------------------------
-  --
-  -- `vjpState` computes a vector-Jacobian product (reverse-mode) for a tensor-output model.
-  -- You provide an explicit output cotangent `seedOut` and get cotangents for the parameters.
-  --
-  -- Here the model output has shape `[3]`, and we choose `seedOut = ones`.
-  -- Intuition: we backprop `sum(y)` w.r.t. parameters.
-  let seedOut : Tensor Float YShape := Tensor.full [3] 1.0
-  let vjpState ←
-    autograd.model.vjpState (α := Float) model params payload.x seedOut
+  IO.println ""
+  IO.println "== Differentiate a model loss =="
+  let state : autograd.model.State model Float :=
+    autograd.model.initialState model
+  let input : Tensor Float [2] := [0.5, -1.0]
+  let target : Tensor Float [1] := [0.25]
+  let (gradient, loss) ←
+    autograd.model.grad
+      model autograd.model.Loss.meanSquaredError state input target (value := true)
+  IO.println s!"loss     = {loss}"
+  IO.println s!"gradient = {reprStr gradient}"
 
-  let (dW, db) := unpackLinearParams vjpState
-  IO.println s!"vjpOutParams (seed=ones) dW = {Tensor.pretty dW}"
-  IO.println s!"vjpOutParams (seed=ones) db = {Tensor.pretty db}"
-
-  -- `jacrevState` returns the full Jacobian of the model output w.r.t. parameters:
-  -- one row per output coordinate. Each row is itself a typed list matching the parameter
-  -- structure.
-  let jacRows ←
-    autograd.model.jacrevState (α := Float) model params payload.x
-  IO.println s!"jacrevOutParams rows = {jacRows.size} (should be size(out)=3)"
-  for i in List.finRange jacRows.size do
-    let row := jacRows[i.1]'i.2
-    let (dWi, dbi) := unpackLinearParams row
-    IO.println s!"  row[{i.1}] dW = {Tensor.pretty dWi}; db = {Tensor.pretty dbi}"
-
-  -- ------------------------------------------------------------
-  -- 2) Reverse-mode grad for scalar loss
-  -- ------------------------------------------------------------
-  --
-  -- This is the "PyTorch-style training" case: differentiate a scalar loss.
-  -- `valueAndGradStateScalar` is the one-liner: it runs forward+backward and returns:
-  -- - the scalar loss value
-  -- - parameter gradients (same typed-list structure/order as `params`)
-  let (lossMSE, gParams) ←
-    autograd.model.valueAndGradStateScalar (α := Float) model mseLoss params payload.x payload.y
-  let (gW, gb) := unpackLinearParams gParams
-  IO.println s!"loss(mse) = {lossMSE}"
-  IO.println s!"gradState (mse) gW = {Tensor.pretty gW}"
-  IO.println s!"gradState (mse) gb = {Tensor.pretty gb}"
-
-  -- ------------------------------------------------------------
-  -- 3) Detach semantics: same forward value, zero gradient
-  -- ------------------------------------------------------------
-  --
-  -- This matches PyTorch `detach()`: stop-gradient on the loss computation.
-  let (lossDetached, gParamsDetached) ←
-    autograd.model.valueAndGradStateScalar
-      (α := Float) model detachedMSELoss params payload.x payload.y
-  let (gW0, gb0) := unpackLinearParams gParamsDetached
-  IO.println s!"loss(mse ∘ detach) = {lossDetached}"
-  IO.println s!"gradState (mse ∘ detach) gW = {Tensor.pretty gW0}"
-  IO.println s!"gradState (mse ∘ detach) gb = {Tensor.pretty gb0}"
-
-  -- ------------------------------------------------------------
-  -- 4) Forward-mode JVP of the scalar loss along a parameter direction
-  -- ------------------------------------------------------------
-  --
-  -- JVP = Jacobian-vector product (forward-mode). Here we compute the directional derivative
-  -- of the scalar loss along a parameter perturbation direction `vState`.
-  let dl ←
-    autograd.model.jvpState (α := Float) model mseLoss params payload.x payload.y vState
-  IO.println s!"jvpLossParams dl = {dl}"
-
-  -- ------------------------------------------------------------
-  -- 5) Hessian-vector product (HVP) w.r.t. parameters
-  -- ------------------------------------------------------------
-  --
-  -- HVP = (Hessian of loss) applied to a direction vector, without materializing the full
-  -- Hessian.
-  let hvp ←
-    autograd.model.hvpState (α := Float) model mseLoss params payload.x payload.y vState
-  let (hW, hb) := unpackLinearParams hvp
-  IO.println s!"hvpState hW = {Tensor.pretty hW}"
-  IO.println s!"hvpState hb = {Tensor.pretty hb}"
-
-  -- ------------------------------------------------------------
-  -- 6) jacfwd/jacrev/hessian for a function of a single tensor input
-  -- ------------------------------------------------------------
-  let jacCols ← autograd.func.jacfwd (α := Float) squareFn payload.x
-  IO.println s!"jacfwdInput(square) cols = {jacCols.size} (should be size(in)=2)"
-  for i in List.finRange jacCols.size do
-    let col := jacCols[i.1]'i.2
-    IO.println s!"  col[{i.1}] = {Tensor.pretty col}"
-
-  let hessCols ← autograd.func.hessian (α := Float) sumsqFn payload.x
-  IO.println s!"hessianInput(mean(x^2)) cols = {hessCols.size} (should be size(in)=2)"
-  for i in List.finRange hessCols.size do
-    let col := hessCols[i.1]'i.2
-    IO.println s!"  H*e[{i.1}] = {Tensor.pretty col}"
-
-  -- ------------------------------------------------------------
-  -- 7) One-liners: vjp / jacrev / grad / valueAndGrad
-  -- ------------------------------------------------------------
-  --
-  -- These entrypoints cover the common case of a single tensor input.
-  let seedSq : Tensor Float XShape := Tensor.full [2] 1.0
-  let vjpSq ← autograd.func.vjp (α := Float) squareFn payload.x seedSq
-  IO.println s!"vjp(square, seed=ones) = {Tensor.pretty vjpSq}"
-
-  let jacRowsSq ← autograd.func.jacrev (α := Float) squareFn payload.x
-  IO.println s!"jacrev1(square) rows = {jacRowsSq.size} (should be size(out)=2)"
-  for i in List.finRange jacRowsSq.size do
-    let row := jacRowsSq[i.1]'i.2
-    IO.println s!"  row[{i.1}] = {Tensor.pretty row}"
-
-  let gSumsq ← autograd.func.grad (α := Float) sumsqFn payload.x
-  IO.println s!"grad1(mean(x^2)) = {Tensor.pretty gSumsq}"
-
-  let (valSumsq, gSumsq2) ← autograd.func.valueAndGradScalar (α := Float) sumsqFn payload.x
-  IO.println s!"valueAndGradScalar(mean(x^2)) value = {valSumsq}, grad = {Tensor.pretty gSumsq2}"
-
-end Internal
-
-/-- Command-line help for the Float autograd quickstart. -/
+/-- Help text; this demo takes no flags of its own. -/
 def usage : String :=
   String.intercalate "\n"
     [ "TorchLean autograd quickstart"
     , ""
     , "Usage:"
-    , "  lake exe torchlean quickstart_autograd"
-    , ""
-    , "This demo has no tutorial-specific flags."
+    , "  scripts/lake.sh exe torchlean quickstart_autograd"
     ]
 
-/-- CLI entrypoint for the Float autograd quickstart. -/
+/--
+Entry point. `CLI.dropDashDash` lets the runner pass `--` through, and `requireNoArgs` rejects
+stray flags rather than silently ignoring them.
+-/
 def main (args : List String) : IO Unit := do
   let args := CLI.dropDashDash args
   if CLI.hasHelp args then
     IO.println usage
     return
-  CLI.requireNoArgs "quickstart_autograd" args
-  Internal.runDemo
+  CLI.requireNoArgs exeName args
+  runDemo
 
 end NN.Examples.Quickstart.AutogradBasics

@@ -6,137 +6,191 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Neural.Leading
+public import NN.API.Neural.Builders -- shake: keep
 
 /-!
 # Convolution
 
-Arbitrary-rank convolution geometry, configuration, and layer constructors.
+Arbitrary-rank convolution geometry and configuration records.
 -/
 
 @[expose] public section
 
 namespace TorchLean
 namespace nn
-namespace Internal
 
 /-- Kernel, stride, and padding shared by convolutional layers with different channel widths. -/
-structure ConvGeometry (d : Nat) where
+structure Convolution.Geometry (d : Nat) where
   /-- Kernel extent along each spatial axis. -/
-  kernel : Tensor Nat [d]
+  kernelSize : Tensor Nat [d]
   /-- Step along each spatial axis. -/
-  stride : Tensor Nat [d] := Spec.fill 1 [d]
+  stride : Tensor Nat [d] := Tensor.ones [d]
   /-- Symmetric zero-padding along each spatial axis. -/
-  padding : Tensor Nat [d] := Spec.fill 0 [d]
-  /-- Every kernel extent is positive. -/
-  kernelNonzero : ∀ i : Fin d, kernel.getScalar i ≠ 0
-  /-- Every stride is positive. -/
-  strideNonzero : ∀ i : Fin d, stride.getScalar i ≠ 0
+  padding : Tensor Nat [d] := Tensor.zeros [d]
 
-namespace ConvGeometry
+namespace Convolution.Geometry
 
-/-- Spatial extent produced by this geometry. -/
-def outSpatial {d : Nat} (geometry : ConvGeometry d) (input : Tensor Nat [d]) : Tensor Nat [d] :=
-  Spec.convOutSpatial input geometry.kernel geometry.stride geometry.padding
+/-- Output grid produced by this convolution geometry. -/
+def output {d : Nat} (geometry : Convolution.Geometry d)
+    (input : Tensor Nat [d]) : Tensor Nat [d] :=
+  Spec.convOutSpatial input
+    geometry.kernelSize
+    geometry.stride
+    geometry.padding
+
+/-- Output grid produced when this geometry is used for transpose convolution. -/
+def transposedOutput {d : Nat} (geometry : Convolution.Geometry d)
+    (input : Tensor Nat [d]) : Tensor Nat [d] :=
+  Spec.convTransposeOutSpatial input
+    geometry.kernelSize
+    geometry.stride
+    geometry.padding
 
 /--
 Unit-stride geometry with an odd kernel along each axis and padding equal to the kernel radius.
 -/
-def samePadding {d : Nat} (radius : Tensor Nat [d]) : ConvGeometry d :=
-  { kernel := radius.map fun p => 2 * p + 1
-    stride := Spec.fill 1 [d]
-    padding := radius
-    kernelNonzero := by intro i; simp
-    strideNonzero := by intro i; simp }
+def samePadding {d : Nat} (radius : Tensor Nat [d]) : Convolution.Geometry d :=
+  { kernelSize := radius.map (fun extent => 2 * extent + 1)
+    stride := Tensor.ones [d]
+    padding := radius }
 
-/-- Same-padding geometry preserves every positive spatial extent. -/
-theorem outSpatial_samePadding {d : Nat} (spatial radius : Tensor Nat [d])
-    (hSpatial : ∀ i : Fin d, spatial.getScalar i ≠ 0) :
-    (samePadding radius).outSpatial spatial = spatial := by
-  simpa [outSpatial, samePadding] using Spec.convOutSpatial_same spatial radius hSpatial
+/-- Same-padding geometry preserves every input extent. -/
+theorem output_samePadding {d : Nat} (input radius : Tensor Nat [d]) :
+    (samePadding radius).output input = input := by
+  rw [output]
+  exact Spec.convOutSpatial_same input radius
 
-end ConvGeometry
+end Convolution.Geometry
 
 /-- Configuration shared by arbitrary-dimensional convolution layers. -/
-structure Conv (d : Nat) where
-  /-- Number of output channels. -/
+structure Convolution.Config (d : Nat) where
+  /-- Number of output channels. Must be positive when the layer is validated. -/
   outChannels : Nat
   /-- Kernel extent along each spatial axis. -/
-  kernel : Tensor Nat [d]
+  kernelSize : Tensor Nat [d]
   /-- Step along each spatial axis. -/
-  stride : Tensor Nat [d] := Spec.fill 1 [d]
+  stride : Tensor Nat [d] := Tensor.ones [d]
   /-- Symmetric zero-padding along each spatial axis. -/
-  padding : Tensor Nat [d] := Spec.fill 0 [d]
-  /-- Every kernel extent is positive. -/
-  kernelNonzero : ∀ i : Fin d, kernel.getScalar i ≠ 0
-  /-- Every stride is positive. -/
-  strideNonzero : ∀ i : Fin d, stride.getScalar i ≠ 0
+  padding : Tensor Nat [d] := Tensor.zeros [d]
   /-- Initialization scheme for the kernel weights. -/
-  kernelInit : _root_.Runtime.Autograd.Torch.Init.Scheme := .uniform (-0.1) 0.1
+  weightInitialization : Init.Scheme := .uniform (-0.1) 0.1
+
+/-- Output grid produced from an input grid by this convolution configuration. -/
+def Convolution.Config.output {d : Nat} (config : Convolution.Config d)
+    (input : Tensor Nat [d]) : Tensor Nat [d] :=
+  Spec.convOutSpatial input
+    config.kernelSize
+    config.stride
+    config.padding
+
+/-- Shared convolution checks using the output geometry computed by the caller. -/
+def Internal.validateConvolution {d : Nat}
+    (inputChannels outputChannels : Nat) (input kernelSize stride output : Tensor Nat [d])
+    (initialization : Init.Scheme) (kind : String) : Except String Unit := do
+  if inputChannels = 0 then
+    throw s!"{kind}: input channel count must be positive"
+  if outputChannels = 0 then
+    throw s!"{kind}: output channel count must be positive"
+  if input.prod = 0 then
+    throw s!"{kind}: input spatial dimensions must be positive"
+  if !decide (∀ axis : Fin d, kernelSize.getScalar axis ≠ 0) then
+    throw s!"{kind}: kernel size entries must be positive"
+  if !decide (∀ axis : Fin d, stride.getScalar axis ≠ 0) then
+    throw s!"{kind}: stride entries must be positive"
+  if output.prod = 0 then
+    throw s!"{kind}: geometry produced an empty spatial grid"
+  initialization.validate
+
+namespace Convolution.Config
+
+/-- Validate channel widths, spatial geometry, and kernel initialization. -/
+def validate {d : Nat} (config : Convolution.Config d)
+    (inputChannels : Nat) (input : Tensor Nat [d])
+    (kind : String := "Conv") : Except String Unit :=
+  Internal.validateConvolution inputChannels config.outChannels input
+    config.kernelSize config.stride (config.output input) config.weightInitialization kind
+
+end Convolution.Config
 
 /-- Build a convolution configuration by adding an output-channel width to shared geometry. -/
-def ConvGeometry.toConv {d : Nat} (geometry : ConvGeometry d) (outChannels : Nat) : Conv d :=
+def Convolution.Geometry.convolution {d : Nat} (geometry : Convolution.Geometry d)
+    (outChannels : Nat) : Convolution.Config d :=
   { outChannels
-    kernel := geometry.kernel
+    kernelSize := geometry.kernelSize
     stride := geometry.stride
-    padding := geometry.padding
-    kernelNonzero := geometry.kernelNonzero
-    strideNonzero := geometry.strideNonzero }
+    padding := geometry.padding }
 
-/--
-Apply an arbitrary-dimensional convolution to the channel and spatial suffix of a tensor.
+/-- Adding an output width to a geometry keeps that width. -/
+@[simp] theorem Convolution.Geometry.convolution_outChannels {d : Nat}
+    (geometry : Convolution.Geometry d)
+    (outChannels : Nat) :
+    (geometry.convolution outChannels).outChannels = outChannels :=
+  rfl
 
-The input suffix is `(inChannels, spatial...)`. Any axes in `leading` are preserved; internally
-they are flattened into one runtime batch and restored after the convolution.
--/
-def conv (leading : List Nat := []) {d inChannels : Nat} (spatial : Tensor Nat [d])
-    (cfg : Conv d) (seedKernel seedBias : Nat := 0) [NeZero inChannels] :
-    Sequential
-      (leading ++ inChannels :: spatial.toList)
-      (leading ++ cfg.outChannels ::
-        (Spec.convOutSpatial spatial cfg.kernel cfg.stride cfg.padding).toList) := by
-  simpa only [Spec.Shape.ofList_append] using
-    (nn.of <| adaptLeadingShape (Spec.Shape.ofList leading) <|
-      _root_.Runtime.Autograd.TorchLean.NN.conv
-        (Spec.Shape.size (Spec.Shape.ofList leading)) d inChannels cfg.outChannels
-        cfg.kernel cfg.stride cfg.padding spatial
-        (hInC := NeZero.ne _) (hKernel := cfg.kernelNonzero) (hStride := cfg.strideNonzero)
-        seedKernel seedBias cfg.kernelInit)
+/-- The spatial grid is the geometry's, so a shape proof can be discharged from the geometry alone
+without unfolding the configuration the builder produced. -/
+@[simp] theorem Convolution.Geometry.convolution_output {d : Nat}
+    (geometry : Convolution.Geometry d)
+    (outChannels : Nat) (input : Tensor Nat [d]) :
+    (geometry.convolution outChannels).output input = geometry.output input :=
+  rfl
 
-/-- Configuration shared by arbitrary-dimensional transpose-convolution layers. -/
-structure ConvTranspose (d : Nat) where
-  /-- Number of output channels. -/
+/-- Configuration shared by arbitrary-dimensional transposed-convolution layers. -/
+structure TransposedConvolution.Config (d : Nat) where
+  /-- Number of output channels. Must be positive when the layer is validated. -/
   outChannels : Nat
   /-- Kernel extent along each spatial axis. -/
-  kernel : Tensor Nat [d]
+  kernelSize : Tensor Nat [d]
   /-- Step along each spatial axis. -/
-  stride : Tensor Nat [d] := Spec.fill 1 [d]
+  stride : Tensor Nat [d] := Tensor.ones [d]
   /-- Symmetric zero-padding along each spatial axis. -/
-  padding : Tensor Nat [d] := Spec.fill 0 [d]
-  /-- Every kernel extent is positive. -/
-  kernelNonzero : ∀ i : Fin d, kernel.getScalar i ≠ 0
-  /-- Every stride is positive. -/
-  strideNonzero : ∀ i : Fin d, stride.getScalar i ≠ 0
+  padding : Tensor Nat [d] := Tensor.zeros [d]
   /-- Initialization scheme for the kernel weights. -/
-  kernelInit : _root_.Runtime.Autograd.Torch.Init.Scheme := .uniform (-0.1) 0.1
+  weightInitialization : Init.Scheme := .uniform (-0.1) 0.1
 
-/--
-Apply an arbitrary-dimensional transpose convolution to the channel and spatial suffix.
+/-- Output grid produced from an input grid by this transpose-convolution configuration. -/
+def TransposedConvolution.Config.output {d : Nat}
+    (config : TransposedConvolution.Config d)
+    (input : Tensor Nat [d]) : Tensor Nat [d] :=
+  Spec.convTransposeOutSpatial input
+    config.kernelSize
+    config.stride
+    config.padding
 
-The input suffix is `(inChannels, spatial...)`. Any axes in `leading` are mapped independently and
-restored after the operation.
--/
-def convTranspose (leading : List Nat := []) {d inChannels : Nat}
-    (spatial : Tensor Nat [d]) (cfg : ConvTranspose d)
-    (seedKernel seedBias : Nat := 0) [NeZero inChannels] :
-    Sequential
-      (leading ++ inChannels :: spatial.toList)
-      (leading ++ cfg.outChannels ::
-        (Spec.convTransposeOutSpatial spatial cfg.kernel cfg.stride cfg.padding).toList) := by
-  simpa only [Spec.Shape.ofList_append] using
-    (nn.of <| adaptLeadingShape (Spec.Shape.ofList leading) <|
-      _root_.Runtime.Autograd.TorchLean.NN.convTranspose
-        (Spec.Shape.size (Spec.Shape.ofList leading)) d inChannels cfg.outChannels
-        cfg.kernel cfg.stride cfg.padding spatial
-        (hInC := NeZero.ne _) (hKernel := cfg.kernelNonzero)
-        seedKernel seedBias cfg.kernelInit)
+namespace TransposedConvolution.Config
+
+/-- Validate channel widths, spatial geometry, and kernel initialization. -/
+def validate {d : Nat} (config : TransposedConvolution.Config d)
+    (inputChannels : Nat) (input : Tensor Nat [d])
+    (kind : String := "ConvTranspose") : Except String Unit :=
+  Internal.validateConvolution inputChannels config.outChannels input
+    config.kernelSize config.stride (config.output input) config.weightInitialization kind
+
+end TransposedConvolution.Config
+
+/-- Build a transpose-convolution configuration from shared geometry. -/
+def Convolution.Geometry.transposedConvolution {d : Nat}
+    (geometry : Convolution.Geometry d)
+    (outChannels : Nat) : TransposedConvolution.Config d :=
+  { outChannels
+    kernelSize := geometry.kernelSize
+    stride := geometry.stride
+    padding := geometry.padding }
+
+/-- Same for the transpose direction: the requested output width survives. -/
+@[simp] theorem Convolution.Geometry.transposedConvolution_outChannels {d : Nat}
+    (geometry : Convolution.Geometry d) (outChannels : Nat) :
+    (geometry.transposedConvolution outChannels).outChannels = outChannels :=
+  rfl
+
+/-- Reusing one geometry for both directions is only sound if each direction keeps its own output
+rule, and it does: the transpose configuration's grid is `Geometry.transposedOutput`, never the
+forward `Geometry.output`. -/
+@[simp] theorem Convolution.Geometry.transposedConvolution_output {d : Nat}
+    (geometry : Convolution.Geometry d) (outChannels : Nat) (input : Tensor Nat [d]) :
+    (geometry.transposedConvolution outChannels).output input =
+      geometry.transposedOutput input :=
+  rfl
+
+end nn
+end TorchLean

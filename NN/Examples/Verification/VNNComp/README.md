@@ -8,7 +8,9 @@ VNN-COMP uses standard benchmark packages, network formats, property files, time
 reporting rules. TorchLean currently converts a benchmark instance into explicit JSON objects, then
 runs a Lean checker over the exported weights, properties, and optional verifier metadata.
 
-Expected local layout:
+This is an advanced external-input workflow. The files below are not bundled, so the command will
+not run from a fresh checkout alone. Start with `lake exe verify -- torchlean-ibp` for a self-contained
+example. Once you have converted benchmark inputs, use this local layout:
 
 ```text
 _external/vnncomp/mnist_fc/model_weights.json
@@ -34,7 +36,5 @@ responsible for converting the original benchmark files into this JSON shape. Fu
 large model files, and solver outputs belong in `_external/` or another local data directory rather
 than in git.
 
-The long-term direction is a native Lean verifier path that can read standard benchmark objects
-more directly. This example is the small, reviewable bridge: VNN-COMP-style problem data enters
-TorchLean as explicit artifacts, and Lean checks the part of the property represented in those
-artifacts.
+Acceptance concerns the supplied JSON representation. It does not check whether an external
+converter faithfully translated the original network and property files.

@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Torch.TypedGraphSession.Neural
+public import NN.Runtime.Autograd.Torch.TypedGraphSession.GraphOps
+public import NN.Runtime.Autograd.TypedGraph.GraphM.Convolution
+public import NN.Runtime.Autograd.TypedGraph.GraphM.Neural
 
 /-!
 # Typed Graph Session: Convolution and Attention Operations
@@ -18,8 +20,8 @@ namespace Runtime
 namespace Autograd
 namespace Torch
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Internal
 
@@ -32,27 +34,27 @@ Kernel layout is `(outC, inC, kernelSpatial...)`, bias is `(outC)`.
 
 PyTorch comparison: `torch.nn.functional.conv{d}d` specialized to a single sample.
 -/
-def conv {α : Type} (s : TypedGraphSession α) [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)] [DecidableEq Shape]
+def conv {α : Type} [TorchLean.Storage α] (s : TypedGraphSession α) [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {d inC outC : Nat}
-  {kernel stride padding : Spec.Tensor Nat [d]}
-  {inSpatial : Spec.Tensor Nat [d]}
-  {hInC : inC ≠ 0} {hKernel : ∀ i : Fin d, kernel.getScalar i ≠ 0}
-  (w : TensorRef α (Shape.ofList (outC :: inC :: kernel.toList)))
+  {kernel stride padding : TorchLean.Tensor Nat [d]}
+  {inSpatial : TorchLean.Tensor Nat [d]}
+  (w : TensorRef α (Shape.ofList (outC :: inC :: Tensor.to kernel (List Nat))))
   (b : TensorRef α [outC])
-  (x : TensorRef α (Shape.ofList (inC :: inSpatial.toList))) :
+  (x : TensorRef α (Shape.ofList (inC :: Tensor.to inSpatial (List Nat)))) :
   IO (TensorRef α
-    (Shape.ofList (outC :: (Spec.convOutSpatial inSpatial kernel stride padding).toList))) :=
+    (Shape.ofList (outC ::
+      Tensor.to (Spec.convOutSpatial inSpatial kernel stride padding) (List Nat)))) :=
   commitGraphM (α := α) s
     (β := TensorRef α
-      (Shape.ofList (outC :: (Spec.convOutSpatial inSpatial kernel stride padding).toList)))
+      (Shape.ofList (outC ::
+        Tensor.to (Spec.convOutSpatial inSpatial kernel stride padding) (List Nat))))
     (refs := #[w.identity?, b.identity?, x.identity?])
     (fun {Γ} {ss} xv nat g => do
       let (v, st') ← runGraphM (α := α) (Γ := Γ)
         (Runtime.Autograd.TypedGraph.GraphM.conv (α := α) (Γ := Γ)
           (d := d) (inC := inC) (outC := outC)
           (kernel := kernel) (stride := stride) (padding := padding) (inSpatial := inSpatial)
-          (hInC := hInC) (hKernel := hKernel)
           { id := w.id } { id := b.id } { id := x.id })
         ss g
       let ⟨ss', g'⟩ := st'
@@ -66,28 +68,28 @@ Kernel layout is `(inC, outC, kernelSpatial...)` (PyTorch convention), bias is `
 
 PyTorch comparison: `torch.nn.functional.conv_transpose{d}d` specialized to a single sample.
 -/
-def convTranspose {α : Type} (s : TypedGraphSession α) [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)] [DecidableEq Shape]
+def convTranspose {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {d inC outC : Nat}
-  {kernel stride padding : Spec.Tensor Nat [d]}
-  {inSpatial : Spec.Tensor Nat [d]}
-  {hInC : inC ≠ 0} {hKernel : ∀ i : Fin d, kernel.getScalar i ≠ 0}
-  (w : TensorRef α (Shape.ofList (inC :: outC :: kernel.toList)))
+  {kernel stride padding : TorchLean.Tensor Nat [d]}
+  {inSpatial : TorchLean.Tensor Nat [d]}
+  (w : TensorRef α (Shape.ofList (inC :: outC :: Tensor.to kernel (List Nat))))
   (b : TensorRef α [outC])
-  (x : TensorRef α (Shape.ofList (inC :: inSpatial.toList))) :
+  (x : TensorRef α (Shape.ofList (inC :: Tensor.to inSpatial (List Nat)))) :
   IO (TensorRef α
     (Shape.ofList (outC ::
-      (Spec.convTransposeOutSpatial inSpatial kernel stride padding).toList))) :=
+      Tensor.to (Spec.convTransposeOutSpatial inSpatial kernel stride padding) (List Nat)))) :=
   commitGraphM (α := α) s
     (β := TensorRef α
-      (Shape.ofList (outC :: (Spec.convTransposeOutSpatial inSpatial kernel stride padding).toList)))
+      (Shape.ofList (outC ::
+        Tensor.to (Spec.convTransposeOutSpatial inSpatial kernel stride padding) (List Nat))))
     (refs := #[w.identity?, b.identity?, x.identity?])
     (fun {Γ} {ss} xv nat g => do
       let (v, st') ← runGraphM (α := α) (Γ := Γ)
         (Runtime.Autograd.TypedGraph.GraphM.convTranspose (α := α) (Γ := Γ)
           (d := d) (inC := inC) (outC := outC)
           (kernel := kernel) (stride := stride) (padding := padding) (inSpatial := inSpatial)
-          (hInC := hInC) (hKernel := hKernel)
           { id := w.id } { id := b.id } { id := x.id })
         ss g
       let ⟨ss', g'⟩ := st'
@@ -106,8 +108,9 @@ This is a shape-specialized attention primitive used by transformer-style exampl
 PyTorch comparison: similar to `torch.nn.MultiheadAttention` / scaled dot-product attention, but
 encoded in a fully typed graph for lowering and later semantic analysis.
 -/
-def multiHeadAttention {α : Type} (s : TypedGraphSession α) [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)] [DecidableEq Shape]
+def multiHeadAttention {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {n numHeads dModel headDim : Nat} (h1 : n ≠ 0)
   (wq : TensorRef α [dModel, numHeads * headDim])
   (wk : TensorRef α [dModel, numHeads * headDim])

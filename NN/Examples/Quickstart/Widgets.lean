@@ -7,9 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Widgets
-public import NN.Floats.IEEEExec.Exec32
-public import NN.IR.Graph
-public import NN.Tensor
 public import NN.API.Trainer.Reporting
 
 /-!
@@ -20,10 +17,10 @@ without changing runtime semantics or proofs.
 
 Try these commands in the editor:
 
-- put the cursor on a `#tensor_view`, `#float32_view`, `#ir_view`, or `#train_log_view` command;
-- put the cursor on `#pytorch_translate_file` to preview a PyTorch-to-TorchLean skeleton;
+- put the cursor on a `#tensor_view`, `#float32_view`, or `#train_log_view` command;
 - Lean's infoview renders an interactive panel;
-- if you want the full gallery, open `NN.Examples.DeepDives.Widgets`.
+- graph, rewrite, translator, verification, and RL widgets live in
+  `NN.Examples.DeepDives.Widgets`.
 
 This quickstart keeps only the smallest useful examples; the full widget gallery lives in
 `NN.Examples.DeepDives.Widgets`.
@@ -31,33 +28,30 @@ This quickstart keeps only the smallest useful examples; the full widget gallery
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofModel toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 namespace NN.Examples.Quickstart.Widgets
 
 open TorchLean
-open TorchLean.Floats.IEEE754
 
 /-- A small vector, built with the same typed tensor constructor used in ordinary code. -/
 def vector : Tensor Float [4] :=
-  tensor! [1.0, 2.0, 3.0, 4.0]
+  [1.0, 2.0, 3.0, 4.0]
 
 /-- A small matrix where the shape is visible both in the type and in the widget. -/
 def matrix : Tensor Int [2, 3] :=
-  tensor! [
+  [
     [1, 2, 3],
     [4, 5, 6]
   ]
 
 /-- A binary32 value; the widget shows sign/exponent/fraction fields and classification flags. -/
-def one32 : IEEE32Exec :=
-  IEEE32Exec.ofFloat 1.0
-
-/-- A small IR graph: input plus constant, then an add node. -/
-def addGraph : NN.IR.Graph :=
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input, outShape := [2] },
-      { id := 1, parents := #[], kind := .const [2], outShape := [2] },
-      { id := 2, parents := #[0, 1], kind := .add, outShape := [2] }
-    ] }
+def one32 : Binary 8 23 :=
+  (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat x))) : Binary 8 23))
+    1.0
 
 /-- A minimal training log; runtime examples can write the same structure as JSON. -/
 def tinyTrainLog : Training.TrainLog :=
@@ -69,8 +63,8 @@ def tinyTrainLog : Training.TrainLog :=
     notes := #["editor-only visualization; runtime training logs use the same schema"] }
 
 /-!
-The commands below render editor panels through ProofWidgets. Deleting them leaves the same
-tensors, graphs, logs, Python source files, and proofs behind.
+The commands below render editor panels through ProofWidgets. They inspect existing values and do
+not change runtime behavior or proof status.
 -/
 
 #tensor_view vector
@@ -79,16 +73,6 @@ tensors, graphs, logs, Python source files, and proofs behind.
 
 #float32_view one32
 #float32_round_view (0.1 : Float)
-
-#ir_view addGraph
-#shape_infer_view addGraph
-
-/-!
-The translator widget is placed next to the IR/shape widgets. It is a bounded-scope
-preview for "what would this PyTorch layer stack look like in TorchLean?" The checked graph-capture
-path is still the `torch.export` importer, which parses and validates explicit IR JSON.
--/
-#pytorch_translate_file "NN/Examples/Quickstart/pytorch_translator_mlp.py"
 
 #train_log_view tinyTrainLog
 

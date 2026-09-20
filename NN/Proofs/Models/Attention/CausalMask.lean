@@ -7,7 +7,10 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Layers.Attention
-public import NN.Proofs.Tensor.Basic
+public import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
+public import Mathlib.Data.Sym.Sym2.Init
+import Mathlib.Tactic.NormNum.GCD
+public import NN.Spec.Core.Context.Real
 
 /-!
 # Causal attention mask laws
@@ -29,8 +32,8 @@ References:
 
 namespace NN.Proofs.Models.Attention
 
-open _root_.Spec
-open Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /-!
 ## Pointwise access
@@ -43,12 +46,12 @@ without unfolding the tensor constructors each time.
 /-- Reading `causalMask n` at row `i`, column `j` returns exactly `j ≤ i`. -/
 @[simp] theorem causalMask_get2 {n : Nat} (i j : Fin n) :
     Spec.get2 (Spec.causalMask n) i j = decide (j.val ≤ i.val) := by
-  rfl
+  simp [Spec.causalMask, Spec.get2]
 
 /-- Reading `futureMask n` at row `i`, column `j` returns exactly `i < j`. -/
 @[simp] theorem futureMask_get2 {n : Nat} (i j : Fin n) :
     Spec.get2 (Spec.futureMask n) i j = decide (i.val < j.val) := by
-  rfl
+  simp [Spec.futureMask, Spec.get2]
 
 /--
 Elementwise binary maps commute with matrix indexing.
@@ -58,21 +61,11 @@ This small tensor lemma is useful for attention proofs because masking is implem
 -/
 @[simp] theorem get2_map2Spec_matrix {α β γ : Type} {m n : Nat}
     (f : α → β → γ)
-    (A : Spec.Tensor α [m, n])
-    (B : Spec.Tensor β [m, n])
+    (A : TorchLean.Tensor α [m, n])
+    (B : TorchLean.Tensor β [m, n])
     (i : Fin m) (j : Fin n) :
     Spec.get2 (map2Spec f A B) i j = f (Spec.get2 A i j) (Spec.get2 B i j) := by
-  cases A with
-  | dim rowsA =>
-    cases B with
-    | dim rowsB =>
-      cases hA : rowsA i with
-      | dim colsA =>
-        cases hB : rowsB i with
-        | dim colsB =>
-          cases hcA : colsA j
-          cases hcB : colsB j
-          simp [Spec.get2, Spec.get, map2Spec, hA, hB, hcA, hcB]
+  exact TorchLean.Tensor.get2_map2Spec A B i j
 
 /-!
 ## Causal blocking and past visibility
@@ -112,64 +105,35 @@ non-interference proofs.
 /-- Any blocked coordinate of a hard-masked softmax vector has exactly zero weight. -/
 theorem hardMaskedSoftmaxVecSpec_blocked_eq_zero
     {n : Nat}
-    (scores : Spec.Tensor ℝ [n])
-    (mask : Spec.Tensor Bool [n])
+    (scores : TorchLean.Tensor ℝ [n])
+    (mask : TorchLean.Tensor Bool [n])
     (j : Fin n)
-    (hblocked : Spec.Tensor.getScalar mask j = false) :
-    Spec.Tensor.getScalar (Spec.hardMaskedSoftmaxVecSpec scores mask) j = 0 := by
-  cases scores with
-  | dim scoreRows =>
-    cases mask with
-    | dim maskRows =>
-      cases hscore : scoreRows j with
-      | scalar score =>
-        cases hmask : maskRows j with
-        | scalar allowed =>
-          have hallowed : allowed = false := by
-            simpa [Spec.Tensor.getScalar, Spec.get, hmask] using hblocked
-          change Spec.Tensor.item
-              (Spec.get
-                (Spec.hardMaskedSoftmaxVecSpec (Spec.Tensor.dim scoreRows)
-                  (Spec.Tensor.dim maskRows)) j) = 0
-          cases hmax : Spec.hardMaskedMax? (Spec.Tensor.dim scoreRows)
-              (Spec.Tensor.dim maskRows) with
-          | none =>
-              simp [Spec.hardMaskedSoftmaxVecSpec, hmax, Spec.get,
-                Spec.replicate, Spec.Tensor.item]
-          | some rowMax =>
-              simp [Spec.hardMaskedSoftmaxVecSpec, hmax, Spec.get,
-                map2Spec, divSpec, Spec.replicate, Spec.Tensor.item, hscore, hmask, hallowed]
+    (hblocked : TorchLean.Tensor.getScalar mask j = false) :
+    TorchLean.Tensor.getScalar (Spec.hardMaskedSoftmaxVecSpec scores mask) j = 0 := by
+  have hblocked' : mask (j, PUnit.unit) = false := by
+    simpa [TorchLean.Tensor.getScalar_eq_apply] using hblocked
+  unfold Spec.hardMaskedSoftmaxVecSpec
+  split
+  · simp [Spec.replicate]
+  · simp [TorchLean.Tensor.getScalar_eq_apply, divSpec, map2Spec, Spec.replicate, hblocked']
 
 /-- Any blocked coordinate of a row-wise hard-masked softmax matrix has exactly zero weight. -/
 theorem hardMaskedSoftmaxSpec_blocked_eq_zero
     {nQ nK : Nat}
-    (scores : Spec.Tensor ℝ [nQ, nK])
-    (mask : Spec.Tensor Bool [nQ, nK])
+    (scores : TorchLean.Tensor ℝ [nQ, nK])
+    (mask : TorchLean.Tensor Bool [nQ, nK])
     (i : Fin nQ) (j : Fin nK)
     (hblocked : Spec.get2 mask i j = false) :
     Spec.get2 (Spec.hardMaskedSoftmaxSpec scores mask) i j = 0 := by
-  cases scores with
-  | dim scoreRows =>
-    cases mask with
-    | dim maskRows =>
-      cases hscoreRow : scoreRows i with
-      | dim scoreCols =>
-        cases hmaskRow : maskRows i with
-        | dim maskCols =>
-          have hblockedVec :
-              Spec.Tensor.getScalar (Spec.Tensor.dim maskCols) j = false := by
-            rw [Spec.get2_eq_getScalar_get, Spec.get_dim, hmaskRow] at hblocked
-            exact hblocked
-          have hvec := hardMaskedSoftmaxVecSpec_blocked_eq_zero
-            (Spec.Tensor.dim scoreCols) (Spec.Tensor.dim maskCols) j hblockedVec
-          rw [Spec.get2_eq_getScalar_get]
-          simp only [Spec.hardMaskedSoftmaxSpec, Spec.get_dim]
-          simpa [hscoreRow, hmaskRow] using hvec
+  rw [Spec.get2_eq_getScalar_get]
+  simp only [Spec.hardMaskedSoftmaxSpec, Spec.get_dim]
+  apply hardMaskedSoftmaxVecSpec_blocked_eq_zero
+  exact hblocked
 
 /-- In exact hard-masked causal softmax, every strict-future attention weight is exactly zero. -/
 theorem hardMaskedSoftmaxSpec_causal_future_zero
     {n : Nat}
-    (scores : Spec.Tensor ℝ [n, n])
+    (scores : TorchLean.Tensor ℝ [n, n])
     (i j : Fin n) (hij : i.val < j.val) :
     Spec.get2 (Spec.hardMaskedSoftmaxSpec scores (Spec.causalMask n)) i j = 0 := by
   exact hardMaskedSoftmaxSpec_blocked_eq_zero

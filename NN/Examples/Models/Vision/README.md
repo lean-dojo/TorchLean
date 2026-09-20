@@ -6,12 +6,12 @@ and pooling consume a declared spatial suffix and preserve any leading axes.
 
 ## Files
 
-- `Cnn.lean`: compact convolutional CIFAR-10 classifier. It uses a small crop so the command is a
-  practical CUDA regression target while still exercising real convolution/pooling-style data flow.
-- `ResNet.lean`: residual classifier with configurable convolution geometry and global average
-  pooling over every spatial axis.
+- `Cnn.lean`: compact convolutional CIFAR-10 classifier. It uses a small crop so the command remains
+  a practical runtime check while exercising real convolution and pooling data flow.
+- `ResNet.lean`: residual classifier over an `8 × 8` crop, with global average pooling over both
+  spatial axes. Architecture dimensions are source-level configuration values.
 - `Vit.lean`: compact ViT-style CIFAR-10 classifier. It uses convolutional patch embedding,
-  token reshape, a configurable encoder stack, learned positions, and class-slot pooling.
+  token reshape, an encoder stack configured in the source, learned positions, and class-slot pooling.
 
 ## Data
 
@@ -28,15 +28,14 @@ runs.
 ## Commands
 
 ```bash
-lake -R -K cuda=true exe torchlean cnn --device cuda --n-total 1 --steps 1
-lake -R -K cuda=true exe torchlean resnet --device cuda --n-total 1 --steps 1
-lake -R -K cuda=true exe torchlean vit --device cuda --n-total 1 --steps 1
+lake exe torchlean cnn --n-total 1 --steps 1
+lake exe torchlean resnet --n-total 1 --steps 1
+lake exe torchlean vit --n-total 1 --steps 1
 ```
 
-For runtime profiling or fast kernels:
+The same commands can target CUDA when TorchLean was built with CUDA support:
 
 ```bash
-lake -R -K cuda=true build
 lake -R -K cuda=true exe torchlean cnn --device cuda --n-total 1 --steps 1
 lake -R -K cuda=true exe torchlean resnet --device cuda --n-total 1 --steps 1
 lake -R -K cuda=true exe torchlean vit --device cuda --n-total 1 --steps 1
@@ -49,7 +48,7 @@ These examples own the image-classification training path. Useful outputs are:
 - the training loss and accuracy trace;
 - the `TrainLog` JSON if `--log PATH` is passed;
 - the typed image shapes in the Lean source;
-- CUDA parity and regression evidence when changing image kernels.
+- CPU/CUDA parity and regression evidence when changing image kernels.
 
 For 3D detector certificates or projection verification, use `NN/Examples/Verification` and the
 Geometry3D workflow. That path exports detector tensors as certificate artifacts, checks the camera

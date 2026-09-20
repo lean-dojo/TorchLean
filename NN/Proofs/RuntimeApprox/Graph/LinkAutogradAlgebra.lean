@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Tape.Algebra.Soundness
 public import NN.Proofs.RuntimeApprox.Graph.BackwardApprox
 
 /-!
@@ -34,8 +33,8 @@ evaluation/backprop.
 namespace Proofs
 namespace RuntimeApprox
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -54,7 +53,7 @@ We take `Δ := Unit` (no extra environment) and ignore the JVP input, since this
 used for forward evaluation and VJP-based backprop.
 -/
 def toNodeData {Γ : List Shape} {τ : Shape}
-    (node : _root_.Proofs.RuntimeApprox.RevNode (α := α) toSpec Γ τ) :
+    (node : Proofs.RuntimeApprox.RevNode (α := α) toSpec Γ τ) :
     NodeData α Unit Γ τ :=
   { forward := fun ctxA _d => node.forwardRuntime ctxA
     jvp := fun ctxA _dctxA _d => node.forwardRuntime ctxA
@@ -72,7 +71,7 @@ Erase a `RuntimeApprox.RevGraph` into executable `Autograd.Algebra.GraphData` (w
 This forgets all spec/bound metadata and keeps only the runtime `forward` and `vjp` closures.
 -/
 def toGraphData {Γ : List Shape} {ss : List Shape}
-    (g : _root_.Proofs.RuntimeApprox.RevGraph (α := α) toSpec Γ ss) : GraphData α Unit Γ ss :=
+    (g : Proofs.RuntimeApprox.RevGraph (α := α) toSpec Γ ss) : GraphData α Unit Γ ss :=
   match g with
   | .nil => .nil
   | .snoc g node => .snoc (toGraphData (ss := _) g) (RevNode.toNodeData (α := α) (toSpec := toSpec)
@@ -86,21 +85,21 @@ evaluate to the same runtime context.
 -/
 theorem evalRuntime_of_toGraphData {Γ : List Shape} :
     {ss : List Shape} →
-    (g : _root_.Proofs.RuntimeApprox.RevGraph (α := α) toSpec Γ ss) →
-    (xR : _root_.TorchLean.TensorPack α Γ) →
+    (g : Proofs.RuntimeApprox.RevGraph (α := α) toSpec Γ ss) →
+    (xR : TorchLean.TensorPack α Γ) →
       GraphData.eval (α := α) (Δ := Unit) (Γ := Γ) (ss := ss)
           (g := toGraphData (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) g) xR ()
         =
-      _root_.Proofs.RuntimeApprox.RevGraph.evalRuntime (α := α) (toSpec := toSpec) (Γ := Γ) (ss :=
+      Proofs.RuntimeApprox.RevGraph.evalRuntime (α := α) (toSpec := toSpec) (Γ := Γ) (ss :=
         ss) g xR := by
   intro ss g xR
   induction g with
   | nil =>
-      simp [toGraphData, GraphData.eval, _root_.Proofs.RuntimeApprox.RevGraph.evalRuntime,
-        _root_.Proofs.RuntimeApprox.RevGraph.toFwdGraph, FwdGraph.evalRuntime]
+      simp [toGraphData, GraphData.eval, Proofs.RuntimeApprox.RevGraph.evalRuntime,
+        Proofs.RuntimeApprox.RevGraph.toFwdGraph, FwdGraph.evalRuntime]
   | snoc g node ih =>
-      simp [toGraphData, GraphData.eval, _root_.Proofs.RuntimeApprox.RevGraph.evalRuntime,
-        _root_.Proofs.RuntimeApprox.RevGraph.toFwdGraph, FwdGraph.evalRuntime, RevNode.toNodeData,
+      simp [toGraphData, GraphData.eval, Proofs.RuntimeApprox.RevGraph.evalRuntime,
+        Proofs.RuntimeApprox.RevGraph.toFwdGraph, FwdGraph.evalRuntime, RevNode.toNodeData,
           ih]
 
 /--
@@ -111,24 +110,24 @@ Informally: the executable `GraphData.backpropCtx` computes the same reverse-mod
 -/
 theorem backpropRuntime_of_toGraphData {Γ : List Shape} [Add α] :
     {ss : List Shape} →
-    (g : _root_.Proofs.RuntimeApprox.RevGraph (α := α) toSpec Γ ss) →
-    (xR : _root_.TorchLean.TensorPack α Γ) →
-    (seedR : _root_.TorchLean.TensorPack α (Γ ++ ss)) →
+    (g : Proofs.RuntimeApprox.RevGraph (α := α) toSpec Γ ss) →
+    (xR : TorchLean.TensorPack α Γ) →
+    (seedR : TorchLean.TensorPack α (Γ ++ ss)) →
       GraphData.backpropCtx (α := α) (Δ := Unit) (Γ := Γ) (ss := ss)
           (g := toGraphData (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) g) xR () seedR
         =
-      _root_.Proofs.RuntimeApprox.RevGraph.backpropRuntime (α := α) (toSpec := toSpec) (Γ := Γ) (ss
+      Proofs.RuntimeApprox.RevGraph.backpropRuntime (α := α) (toSpec := toSpec) (Γ := Γ) (ss
         := ss) g xR seedR := by
   intro ss g xR seedR
   induction g with
   | nil =>
       simp [toGraphData, GraphData.backpropCtx,
-        _root_.Proofs.RuntimeApprox.RevGraph.backpropRuntime]
+        Proofs.RuntimeApprox.RevGraph.backpropRuntime]
   | snoc g node ih =>
       have hEval :=
         evalRuntime_of_toGraphData (α := α) (toSpec := toSpec) (Γ := Γ) (ss := _) g xR
       simp [toGraphData, GraphData.backpropCtx,
-        _root_.Proofs.RuntimeApprox.RevGraph.backpropRuntime,
+        Proofs.RuntimeApprox.RevGraph.backpropRuntime,
         RevNode.toNodeData, ih, hEval]
 
 end RevGraph

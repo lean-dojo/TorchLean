@@ -260,8 +260,6 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_release_then(
 LEAN_EXPORT uint32_t torchlean_runtime_collect_allocator(uint32_t force) {
   const bool force_collect = force != 0;
   mi_collect(force_collect);
-  mi_heap_collect(mi_heap_get_default(), force_collect);
-  mi_collect_reduce(0);
   return 1;
 }
 
@@ -273,6 +271,11 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_zeros(uint32_t n) {
   return torchlean_cuda_buffer_box(out);
 }
 
+// The CPU stub preserves successful IO sequencing; host OOM follows the existing host policy.
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_zeros_io(uint32_t n) {
+  return lean_io_result_mk_ok(torchlean_cuda_buffer_zeros(n));
+}
+
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_full(uint32_t n, double v) {
   torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc((size_t)n);
   float fv = (float)v;
@@ -282,10 +285,8 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_full(uint32_t n, double v) {
   return torchlean_cuda_buffer_box(out);
 }
 
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_full_with_token(
-    uint32_t n, double v, uint32_t token) {
-  (void)token;
-  return torchlean_cuda_buffer_full(n, v);
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_full_io(uint32_t n, double v) {
+  return lean_io_result_mk_ok(torchlean_cuda_buffer_full(n, v));
 }
 
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_uniform(uint32_t n, uint64_t key) {
@@ -298,6 +299,10 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_uniform(uint32_t n, uint64_t
     out->data[i] = (float)(((double)u) / denom);
   }
   return torchlean_cuda_buffer_box(out);
+}
+
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_uniform_io(uint32_t n, uint64_t key) {
+  return lean_io_result_mk_ok(torchlean_cuda_buffer_rand_uniform(n, key));
 }
 
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_normal(
@@ -316,15 +321,18 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_normal(
 
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_bernoulli_mask(uint32_t n, double keepProb, uint64_t key) {
   torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc((size_t)n);
-  const double denom = 4294967296.0;  // 2^32
   float kp = (float)keepProb;
   for (size_t i = 0; i < (size_t)n; ++i) {
     uint64_t z = torchlean_splitmix64(key + (uint64_t)i);
     uint32_t u = (uint32_t)z;
-    float u01 = (float)(((double)u) / denom);
-    out->data[i] = (kp > u01) ? 1.0f : 0.0f;
+    out->data[i] = torchlean_bernoulli_keep_f32(kp, u);
   }
   return torchlean_cuda_buffer_box(out);
+}
+
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_bernoulli_mask_io(
+    uint32_t n, double keepProb, uint64_t key) {
+  return lean_io_result_mk_ok(torchlean_cuda_buffer_bernoulli_mask(n, keepProb, key));
 }
 
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float_array(b_lean_obj_arg AObj) {
@@ -339,10 +347,8 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float_array(b_lean_obj_arg AOb
   return torchlean_cuda_buffer_box(out);
 }
 
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float_array_with_token(
-    b_lean_obj_arg AObj, uint32_t token) {
-  (void)token;
-  return torchlean_cuda_buffer_of_float_array(AObj);
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float_array_io(b_lean_obj_arg AObj) {
+  return lean_io_result_mk_ok(torchlean_cuda_buffer_of_float_array(AObj));
 }
 
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_to_float_array(b_lean_obj_arg BObj) {
@@ -465,7 +471,9 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_sqrt(b_lean_obj_arg BObj) {
   torchlean_cuda_buffer* b = torchlean_cuda_buffer_unbox(BObj);
   torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(b->size);
   for (size_t i = 0; i < b->size; ++i) {
-    out->data[i] = sqrtf(b->data[i]);
+    // Match the GPU kernel and Tensor.sqrtSpec, including signed zero and NaN behavior.
+    const float v = b->data[i];
+    out->data[i] = sqrtf(v <= 0.0f ? 0.0f : v);
   }
   return torchlean_cuda_buffer_box(out);
 }
@@ -477,6 +485,7 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_sqrt_bwd(b_lean_obj_arg XObj, b_l
   torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(x->size);
   for (size_t i = 0; i < x->size; ++i) {
     float v = x->data[i];
+    // Use the original input for the same zero derivative at and below zero as the GPU path.
     if (v > 0.0f) {
       out->data[i] = g->data[i] * (1.0f / (2.0f * sqrtf(v)));
     } else {
@@ -491,6 +500,25 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_exp(b_lean_obj_arg BObj) {
   torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(b->size);
   for (size_t i = 0; i < b->size; ++i) {
     out->data[i] = expf(b->data[i]);
+  }
+  return torchlean_cuda_buffer_box(out);
+}
+
+// Match the float32, radians-based CUDA entrypoints in builds that use host-memory buffers.
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_sin(b_lean_obj_arg BObj) {
+  torchlean_cuda_buffer* b = torchlean_cuda_buffer_unbox(BObj);
+  torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(b->size);
+  for (size_t i = 0; i < b->size; ++i) {
+    out->data[i] = sinf(b->data[i]);
+  }
+  return torchlean_cuda_buffer_box(out);
+}
+
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_cos(b_lean_obj_arg BObj) {
+  torchlean_cuda_buffer* b = torchlean_cuda_buffer_unbox(BObj);
+  torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(b->size);
+  for (size_t i = 0; i < b->size; ++i) {
+    out->data[i] = cosf(b->data[i]);
   }
   return torchlean_cuda_buffer_box(out);
 }

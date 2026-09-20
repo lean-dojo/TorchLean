@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL.Boundary.Json
-import Lean.Data.Json
 
 /-!
 # Gymnasium Bridge (Client)
@@ -27,9 +26,11 @@ Startup performs a `describe` handshake, checking that the external environment'
 match the Lean side expectations (`obsShape`, `nActions`).
 
 References:
-- Gymnasium API reference (`reset`/`step`, `terminated` vs `truncated`): https://gymnasium.farama.org/
+- Gymnasium API reference (`reset`/`step`, `terminated` vs `truncated`):
+  https://gymnasium.farama.org/
 - The original Gym API paper (background on the env interface): https://arxiv.org/abs/1606.01540
-- Gymnasium source repository (implementation reference): https://github.com/Farama-Foundation/Gymnasium
+- Gymnasium source repository (implementation reference):
+  https://github.com/Farama-Foundation/Gymnasium
 - Trust-boundary rationale and contract definition: `NN.Runtime.RL.Boundary`.
 -/
 
@@ -39,8 +40,8 @@ namespace Runtime
 namespace RL
 namespace Gymnasium
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Lean
 open Json
 
@@ -109,7 +110,9 @@ def requestObj {obsShape : Shape} {nActions : Nat}
     let msg ←
       match o.get? "error" with
       | some (.str s) => pure s
-      | _ => throw <| IO.userError "Gymnasium: response had ok=false but missing string field `error`"
+      | _ =>
+        throw <| IO.userError
+          "Gymnasium: response had ok=false but missing string field `error`"
     throw <| IO.userError s!"Gymnasium server error: {msg}"
 
   pure o
@@ -166,7 +169,8 @@ def spawn {obsShape : Shape} {nActions : Nat}
       | .ok n => pure n
       | .error e => throw <| IO.userError e
     unless nActions' == nActions do
-      throw <| IO.userError s!"Gymnasium: server reports n_actions={nActions'}, expected nActions={nActions}"
+      throw <| IO.userError
+        s!"Gymnasium: server reports n_actions={nActions'}, expected nActions={nActions}"
 
     let obsShapeList ←
       match obsShapeJ with
@@ -181,7 +185,8 @@ def spawn {obsShape : Shape} {nActions : Nat}
     unless obsShapeList == expectedObs do
       throw <|
         IO.userError
-          s!"Gymnasium: server reports obs_shape={obsShapeList}, expected obsShape={expectedObs} (i.e. {Shape.pretty obsShape})"
+          (s!"Gymnasium: server reports obs_shape={obsShapeList}, "
+            ++ s!"expected obsShape={expectedObs} (i.e. {Shape.pretty obsShape})")
 
     pure g
   catch e =>
@@ -204,7 +209,8 @@ def reset {obsShape : Shape} {nActions : Nat}
     match Boundary.parseTensorE (field := "obs") obsShape obsJ with
     | .ok t => pure t
     | .error e => throw <| IO.userError e
-  match Boundary.checkObservation (obsShape := obsShape) (nActions := nActions) g.contract (obs := obs) with
+  match Boundary.checkObservation (obsShape := obsShape) (nActions := nActions) g.contract
+      (obs := obs) with
   | .ok () => pure obs
   | .error e => throw <| IO.userError e
 

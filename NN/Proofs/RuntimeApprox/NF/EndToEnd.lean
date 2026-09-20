@@ -7,8 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.Graph.LinkAutogradAlgebra
-public import NN.Proofs.RuntimeApprox.NF.BackwardOps
-public import NN.Proofs.RuntimeApprox.NF.Optimizers
+public import NN.Proofs.RuntimeApprox.NF.BackwardOps.Main
+public import NN.Proofs.RuntimeApprox.Optimizer
 
 /-!
 # NF End-To-End GraphData Bridge
@@ -33,8 +33,8 @@ namespace Proofs
 namespace RuntimeApprox
 namespace NFBackend
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
 
 open LinkAutogradAlgebra
@@ -42,15 +42,16 @@ open Proofs.Autograd.Algebra
 
 noncomputable section
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 open Proofs.RuntimeRoundingApprox
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
-omit [NeuralValidExp fexp] [NeuralValidRndToNearest rnd] in
+omit [ValidExp fexp] [ValidRndToNearest rnd] in
 /--
 Executable forward-pass soundness for an NF `RevGraph` erased to `GraphData`.
 
@@ -60,7 +61,7 @@ applies to the executable representation.
 -/
 theorem eval_approx_graphData {Γ : List Shape} {ss : List Shape}
     (g : RevGraph (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) Γ ss) :
-    ∀ (xS : _root_.TorchLean.TensorPack SpecScalar Γ) (xR : _root_.TorchLean.TensorPack R Γ) (epsIn : EList Γ),
+    ∀ (xS : TorchLean.TensorPack SpecScalar Γ) (xR : TorchLean.TensorPack R Γ) (epsIn : EList Γ),
       approxCtx (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR epsIn →
       approxCtx (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
         (RevGraph.evalSpec g xS)
@@ -92,8 +93,9 @@ approximates the real-spec reverse-mode result with the bound computed by the NF
 -/
 theorem backprop_approx_graphData {Γ : List Shape} {ss : List Shape}
     (g : RevGraph (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) Γ ss) :
-    ∀ (xS : _root_.TorchLean.TensorPack SpecScalar Γ) (xR : _root_.TorchLean.TensorPack R Γ) (epsIn : EList Γ)
-      (seedS : _root_.TorchLean.TensorPack SpecScalar (Γ ++ ss)) (seedR : _root_.TorchLean.TensorPack R (Γ ++ ss)) (epsSeed : EList (Γ ++ ss)),
+    ∀ (xS : TorchLean.TensorPack SpecScalar Γ) (xR : TorchLean.TensorPack R Γ) (epsIn : EList Γ)
+      (seedS : TorchLean.TensorPack SpecScalar (Γ ++ ss))
+      (seedR : TorchLean.TensorPack R (Γ ++ ss)) (epsSeed : EList (Γ ++ ss)),
       approxCtx (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR epsIn →
       approxCtx (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) seedS seedR epsSeed
         →
@@ -129,16 +131,16 @@ theorem backprop_gradient_approx_graphData {Γ : List Shape} {ss : List Shape}
     (g : RevGraph (α := R)
       (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) Γ ss)
     (i : Fin Γ.length)
-    (xS : _root_.TorchLean.TensorPack SpecScalar Γ) (xR : _root_.TorchLean.TensorPack R Γ) (epsIn : EList Γ)
-    (seedS : _root_.TorchLean.TensorPack SpecScalar (Γ ++ ss)) (seedR : _root_.TorchLean.TensorPack R (Γ ++ ss))
+    (xS : TorchLean.TensorPack SpecScalar Γ) (xR : TorchLean.TensorPack R Γ) (epsIn : EList Γ)
+    (seedS : TorchLean.TensorPack SpecScalar (Γ ++ ss)) (seedR : TorchLean.TensorPack R (Γ ++ ss))
     (epsSeed : EList (Γ ++ ss))
     (hx : approxCtx (α := R)
       (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR epsIn)
     (hseed : approxCtx (α := R)
       (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) seedS seedR epsSeed) :
     approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-      (_root_.TorchLean.TensorPack.get (RevGraph.backpropSpec g xS seedS) i)
-      (_root_.TorchLean.TensorPack.get
+      (TorchLean.TensorPack.get (RevGraph.backpropSpec g xS seedS) i)
+      (TorchLean.TensorPack.get
         (GraphData.backpropCtx (α := R) (Δ := Unit) (Γ := Γ) (ss := ss)
           (g := LinkAutogradAlgebra.RevGraph.toGraphData (α := R)
             (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
@@ -162,24 +164,24 @@ tensors apply the same theorem to each entry of the typed parameter context.
 
 /-- Executable reverse mode followed by any valid numerical optimizer contract is sound.
 
-The theorem is shape-polymorphic and optimizer-polymorphic. `stepDataValid` is trivial for globally
-sound updates such as SGD and records domain conditions for updates such as AdamW whose square root
-and division must stay away from singularities. No optimizer needs a separate graph theorem.
-Models with several parameter tensors instantiate this theorem at each typed index. -/
+The theorem is shape-polymorphic and optimizer-polymorphic. `assumptionsHold` is trivial for
+globally sound updates such as SGD and records domain conditions for updates such as AdamW whose
+square root and division must stay away from singularities. No optimizer needs a separate graph
+theorem. Models with several parameter tensors instantiate this theorem at each typed index. -/
 theorem backprop_optimizer_update_approx_graphData {Γ : List Shape} {ss : List Shape}
     (g : RevGraph (α := R)
       (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) Γ ss)
     (i : Fin Γ.length)
     (contract : Proofs.RuntimeApprox.Optimizer.NumericalStepContract R
       (toSpec (β := β) (fexp := fexp) (rnd := rnd)))
-    (xS : _root_.TorchLean.TensorPack SpecScalar Γ) (xR : _root_.TorchLean.TensorPack R Γ) (epsIn : EList Γ)
-    (seedS : _root_.TorchLean.TensorPack SpecScalar (Γ ++ ss)) (seedR : _root_.TorchLean.TensorPack R (Γ ++ ss))
+    (xS : TorchLean.TensorPack SpecScalar Γ) (xR : TorchLean.TensorPack R Γ) (epsIn : EList Γ)
+    (seedS : TorchLean.TensorPack SpecScalar (Γ ++ ss)) (seedR : TorchLean.TensorPack R (Γ ++ ss))
     (epsSeed : EList (Γ ++ ss))
     (paramsS : Tensor ℝ (Γ.get i)) (paramsR : Tensor R (Γ.get i)) (paramsError : ℝ)
-    (stateS : contract.StateSpec (Γ.get i))
-    (stateR : contract.StateRuntime (Γ.get i))
-    (stateError : contract.StateBound (Γ.get i))
-    (stepData : contract.StepData (Γ.get i))
+    (stateS : contract.ExactState (Γ.get i))
+    (stateR : contract.RuntimeState (Γ.get i))
+    (stateError : contract.StateError (Γ.get i))
+    (assumptions : contract.StepAssumptions (Γ.get i))
     (hx : approxCtx (α := R)
       (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR epsIn)
     (hseed : approxCtx (α := R)
@@ -188,38 +190,46 @@ theorem backprop_optimizer_update_approx_graphData {Γ : List Shape} {ss : List 
       (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
       paramsS paramsR paramsError)
     (hstate : contract.stateApprox stateS stateR stateError)
-    (hstepData :
-      let gradsS := RevGraph.backpropSpec g xS seedS
-      let gradsR := GraphData.backpropCtx (α := R) (Δ := Unit) (Γ := Γ) (ss := ss)
+    (hAssumptions :
+      let exactGradients := RevGraph.backpropSpec g xS seedS
+      let runtimeGradients := GraphData.backpropCtx (α := R) (Δ := Unit) (Γ := Γ) (ss := ss)
         (g := LinkAutogradAlgebra.RevGraph.toGraphData (α := R)
           (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
           (Γ := Γ) (ss := ss) g) xR () seedR
-      let gradError := EList.get
+      let gradientError := EList.get
         (RevGraph.backpropBounds g epsIn xR epsSeed seedR
           (ctxAddBound (β := β) (fexp := fexp) (rnd := rnd))) i
-      contract.stepDataValid stateS stateR stateError paramsS paramsR paramsError
-        (_root_.TorchLean.TensorPack.get gradsS i) (_root_.TorchLean.TensorPack.get gradsR i) gradError stepData) :
-    let gradsS := RevGraph.backpropSpec g xS seedS
-    let gradsR := GraphData.backpropCtx (α := R) (Δ := Unit) (Γ := Γ) (ss := ss)
+      contract.assumptionsHold stateS stateR stateError paramsS paramsR paramsError
+        (TorchLean.TensorPack.get exactGradients i)
+        (TorchLean.TensorPack.get runtimeGradients i)
+        gradientError assumptions) :
+    let exactGradients := RevGraph.backpropSpec g xS seedS
+    let runtimeGradients := GraphData.backpropCtx (α := R) (Δ := Unit) (Γ := Γ) (ss := ss)
       (g := LinkAutogradAlgebra.RevGraph.toGraphData (α := R)
         (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
         (Γ := Γ) (ss := ss) g) xR () seedR
-    let gradError := EList.get
+    let gradientError := EList.get
       (RevGraph.backpropBounds g epsIn xR epsSeed seedR
         (ctxAddBound (β := β) (fexp := fexp) (rnd := rnd))) i
-    let nextBound := contract.updateBound stateError paramsError gradError
-      stateR paramsR (_root_.TorchLean.TensorPack.get gradsR i) stepData
+    let nextError := contract.nextError stateError paramsError gradientError
+      stateR paramsR (TorchLean.TensorPack.get runtimeGradients i) assumptions
     contract.stateApprox
-        (contract.updateSpec stateS paramsS (_root_.TorchLean.TensorPack.get gradsS i)).1
-        (contract.updateRuntime stateR paramsR (_root_.TorchLean.TensorPack.get gradsR i)).1 nextBound.state ∧
+        (contract.updateExact
+          stateS paramsS (TorchLean.TensorPack.get exactGradients i)).optimizerState
+        (contract.updateRuntime
+          stateR paramsR (TorchLean.TensorPack.get runtimeGradients i)).optimizerState
+        nextError.optimizerStateError ∧
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-        (contract.updateSpec stateS paramsS (_root_.TorchLean.TensorPack.get gradsS i)).2
-        (contract.updateRuntime stateR paramsR (_root_.TorchLean.TensorPack.get gradsR i)).2 nextBound.params := by
+        (contract.updateExact
+          stateS paramsS (TorchLean.TensorPack.get exactGradients i)).parameters
+        (contract.updateRuntime
+          stateR paramsR (TorchLean.TensorPack.get runtimeGradients i)).parameters
+        nextError.parameterError := by
   dsimp only
-  exact contract.updateSound stateS stateR stateError paramsS paramsR paramsError _ _ _ stepData
+  exact contract.updateApprox stateS stateR stateError paramsS paramsR paramsError _ _ _ assumptions
     hstate hparams
     (backprop_gradient_approx_graphData (β := β) (fexp := fexp) (rnd := rnd)
-      g i xS xR epsIn seedS seedR epsSeed hx hseed) hstepData
+      g i xS xR epsIn seedS seedR epsSeed hx hseed) hAssumptions
 
 /-! ## Architecture-independent reporting -/
 
@@ -230,20 +240,20 @@ lowering, but propagation itself does not inspect whether the graph came from an
 transformer, or another model family.
 -/
 structure TrainingStepTrace where
-  optimizer : String
+  optimizerName : String
   parameterIndex : Nat
-  forwardBounds : Array ℝ
-  backwardBounds : Array ℝ
-  gradientBound : ℝ
-  parameterBound : ℝ
-  optimizerStateBounds : Array (String × ℝ)
-  stepData : Array (String × ℝ)
+  forwardErrors : Array ℝ
+  backwardErrors : Array ℝ
+  gradientError : ℝ
+  parameterError : ℝ
+  optimizerStateErrors : Array (String × ℝ)
+  assumptions : Array (String × ℝ)
 
 /-- Compute the report consumed by CLI, file, or InfoView front ends.
 
 This function is intentionally proof-free: `backprop_optimizer_update_approx_graphData` is the
 theorem establishing its interpretation when the input, seed, parameter, optimizer-state, and
-step-data hypotheses hold.
+step assumptions hold.
 -/
 def trainingStepTrace {Γ : List Shape} {ss : List Shape}
     (g : RevGraph (α := R)
@@ -251,30 +261,30 @@ def trainingStepTrace {Γ : List Shape} {ss : List Shape}
     (i : Fin Γ.length)
     (contract : Proofs.RuntimeApprox.Optimizer.NumericalStepContract R
       (toSpec (β := β) (fexp := fexp) (rnd := rnd)))
-    (xR : _root_.TorchLean.TensorPack R Γ) (epsIn : EList Γ)
-    (seedR : _root_.TorchLean.TensorPack R (Γ ++ ss)) (epsSeed : EList (Γ ++ ss))
+    (xR : TorchLean.TensorPack R Γ) (epsIn : EList Γ)
+    (seedR : TorchLean.TensorPack R (Γ ++ ss)) (epsSeed : EList (Γ ++ ss))
     (paramsR : Tensor R (Γ.get i)) (paramsError : ℝ)
-    (stateR : contract.StateRuntime (Γ.get i))
-    (stateError : contract.StateBound (Γ.get i))
-    (stepData : contract.StepData (Γ.get i)) : TrainingStepTrace :=
-  let forwardBounds := RevGraph.evalBounds g epsIn xR
-  let backwardBounds := RevGraph.backpropBounds g epsIn xR epsSeed seedR
+    (stateR : contract.RuntimeState (Γ.get i))
+    (stateError : contract.StateError (Γ.get i))
+    (assumptions : contract.StepAssumptions (Γ.get i)) : TrainingStepTrace :=
+  let forwardErrors := RevGraph.evalBounds g epsIn xR
+  let backwardErrors := RevGraph.backpropBounds g epsIn xR epsSeed seedR
     (ctxAddBound (β := β) (fexp := fexp) (rnd := rnd))
-  let gradsR := GraphData.backpropCtx (α := R) (Δ := Unit) (Γ := Γ) (ss := ss)
+  let runtimeGradients := GraphData.backpropCtx (α := R) (Δ := Unit) (Γ := Γ) (ss := ss)
     (g := LinkAutogradAlgebra.RevGraph.toGraphData (α := R)
       (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
       (Γ := Γ) (ss := ss) g) xR () seedR
-  let gradientBound := EList.get backwardBounds i
-  let nextBound := contract.updateBound stateError paramsError gradientBound
-    stateR paramsR (_root_.TorchLean.TensorPack.get gradsR i) stepData
-  { optimizer := contract.name
+  let gradientError := EList.get backwardErrors i
+  let nextError := contract.nextError stateError paramsError gradientError
+    stateR paramsR (TorchLean.TensorPack.get runtimeGradients i) assumptions
+  { optimizerName := contract.name
     parameterIndex := i.val
-    forwardBounds := forwardBounds.toArray
-    backwardBounds := backwardBounds.toArray
-    gradientBound
-    parameterBound := nextBound.params
-    optimizerStateBounds := contract.stateBoundReport nextBound.state
-    stepData := contract.stepDataReport stepData }
+    forwardErrors := forwardErrors.toArray
+    backwardErrors := backwardErrors.toArray
+    gradientError
+    parameterError := nextError.parameterError
+    optimizerStateErrors := contract.stateErrorReport nextError.optimizerStateError
+    assumptions := contract.assumptionReport assumptions }
 
 end
 end NFBackend

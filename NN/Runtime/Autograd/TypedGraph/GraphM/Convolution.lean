@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.TypedGraph.GraphM.Neural
+public import NN.Runtime.Autograd.TypedGraph.GraphM.Core
+public import NN.Tensor.Conversion
+public import NN.Spec.Layers.Conv
 
 /-!
 # GraphM Convolution Ops
@@ -21,10 +23,12 @@ namespace Autograd
 namespace TypedGraph
 namespace GraphM
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Proofs.Autograd.Algebra
-open Runtime.Autograd.TorchLean
+-- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
+-- `Idx` and `getIdx` are defined.
+open Proofs (Idx getIdx)
 
 /--
 N-dimensional convolution (channels-first) on a single sample tensor.
@@ -35,25 +39,23 @@ bias shape is `(outC)`. The output spatial sizes use the PyTorch-style floor-div
 The JVP follows bilinearity:
 `d(conv(k,b,x)) = conv(k,0,dx) + conv(dk,db,x)`.
 -/
-def conv {α : Type} {Δ : Type} [Context α] [DecidableEq Shape]
+def conv {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
   {Γ : List Shape} {d inC outC : Nat}
-  {kernel stride padding : Spec.Tensor Nat [d]}
-  {inSpatial : Spec.Tensor Nat [d]}
-  {hInC : inC ≠ 0} {hKernel : ∀ i : Fin d, kernel.getScalar i ≠ 0}
-  (w : Var (Shape.ofList (outC :: inC :: kernel.toList)))
+  {kernel stride padding : TorchLean.Tensor Nat [d]}
+  {inSpatial : TorchLean.Tensor Nat [d]}
+  (w : Var (Shape.ofList (outC :: inC :: Tensor.to kernel (List Nat))))
   (b : Var (.dim outC .scalar))
-  (x : Var (Shape.ofList (inC :: inSpatial.toList))) :
-  MWith α Δ Γ (Var (Shape.ofList (outC :: (Spec.convOutSpatial inSpatial kernel stride padding).toList))) := do
-  have _ := hInC
-  have _ := hKernel
-  let ⟨ss, g⟩ ← get
+  (x : Var (Shape.ofList (inC :: Tensor.to inSpatial (List Nat)))) :
+  MWith α Δ Γ (Var (Shape.ofList
+    (outC :: Tensor.to (Spec.convOutSpatial inSpatial kernel stride padding) (List Nat)))) := do
+  let ⟨ss, g, _⟩ ← get
   let iw ← liftM (mkIdx (_α := α) (Γ := Γ) ss w)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss b)
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
 
-  let outSpatial : Spec.Tensor Nat [d] :=
+  let outSpatial : TorchLean.Tensor Nat [d] :=
     Spec.convOutSpatial inSpatial kernel stride padding
-  let outS : Shape := Shape.ofList (outC :: outSpatial.toList)
+  let outS : Shape := Shape.ofList (outC :: Tensor.to outSpatial (List Nat))
   let node : NodeData α Δ (Γ ++ ss) outS :=
     { forward := fun ctx _d =>
         let wv := getIdx (α := α) (xs := ctx) iw
@@ -68,7 +70,7 @@ def conv {α : Type} {Δ : Type} [Context α] [DecidableEq Shape]
         let dW := getIdx (α := α) (xs := dctx) iw
         let dB := getIdx (α := α) (xs := dctx) ib
         let dX := getIdx (α := α) (xs := dctx) ix
-        let zeroBias : Tensor α [outC] := fill (0 : α) (.dim outC .scalar)
+        let zeroBias : Tensor α [outC] := Tensor.full (.dim outC .scalar) (0 : α)
         let layerX : Spec.ConvSpec d inC outC kernel stride padding α :=
           { kernel := wv, bias := zeroBias }
         let layerParams : Spec.ConvSpec d inC outC kernel stride padding α :=
@@ -80,15 +82,18 @@ def conv {α : Type} {Δ : Type} [Context α] [DecidableEq Shape]
         let xv := getIdx (α := α) (xs := ctx) ix
         let layer : Spec.ConvSpec d inC outC kernel stride padding α :=
           { kernel := wv, bias := bv }
-        let (dW, dB, dX) := Spec.convBackwardSpec (layer := layer) xv dLdy
+        let gradients := Spec.convBackwardSpec (layer := layer) xv dLdy
         let z0 :=
-          _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+          TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
             (TensorPack.single (α := α) (Γ := Γ ++ ss)
-              (s := Shape.ofList (outC :: inC :: kernel.toList)) iw dW)
-            (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim outC .scalar) ib dB)
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z0
+              (s := Shape.ofList (outC :: inC :: Tensor.to kernel (List Nat))) iw
+              gradients.kernelGradient)
+            (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim outC .scalar) ib
+              gradients.biasGradient)
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z0
           (TensorPack.single (α := α) (Γ := Γ ++ ss)
-            (s := Shape.ofList (inC :: inSpatial.toList)) ix dX) }
+            (s := Shape.ofList (inC :: Tensor.to inSpatial (List Nat))) ix
+            gradients.inputGradient) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := outS) g node
 
 /--
@@ -106,25 +111,24 @@ PyTorch comparison: `torch.nn.functional.conv_transpose{d}d`, specialized to a s
 Forward-mode JVP uses bilinearity:
 `d(convTranspose(k,b,x)) = convTranspose(k,0,dx) + convTranspose(dk,db,x)`.
 -/
-def convTranspose {α : Type} {Δ : Type} [Context α] [DecidableEq Shape]
+def convTranspose {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
   {Γ : List Shape} {d inC outC : Nat}
-  {kernel stride padding : Spec.Tensor Nat [d]}
-  {inSpatial : Spec.Tensor Nat [d]}
-  {hInC : inC ≠ 0} {hKernel : ∀ i : Fin d, kernel.getScalar i ≠ 0}
-  (w : Var (Shape.ofList (inC :: outC :: kernel.toList)))
+  {kernel stride padding : TorchLean.Tensor Nat [d]}
+  {inSpatial : TorchLean.Tensor Nat [d]}
+  (w : Var (Shape.ofList (inC :: outC :: Tensor.to kernel (List Nat))))
   (b : Var (.dim outC .scalar))
-  (x : Var (Shape.ofList (inC :: inSpatial.toList))) :
-  MWith α Δ Γ (Var (Shape.ofList (outC :: (Spec.convTransposeOutSpatial inSpatial kernel stride padding).toList))) := do
-  have _ := hInC
-  have _ := hKernel
-  let ⟨ss, g⟩ ← get
+  (x : Var (Shape.ofList (inC :: Tensor.to inSpatial (List Nat)))) :
+  MWith α Δ Γ (Var (Shape.ofList
+    (outC :: Tensor.to
+      (Spec.convTransposeOutSpatial inSpatial kernel stride padding) (List Nat)))) := do
+  let ⟨ss, g, _⟩ ← get
   let iw ← liftM (mkIdx (_α := α) (Γ := Γ) ss w)
   let ib ← liftM (mkIdx (_α := α) (Γ := Γ) ss b)
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
 
-  let outSpatial : Spec.Tensor Nat [d] :=
+  let outSpatial : TorchLean.Tensor Nat [d] :=
     Spec.convTransposeOutSpatial inSpatial kernel stride padding
-  let outS : Shape := Shape.ofList (outC :: outSpatial.toList)
+  let outS : Shape := Shape.ofList (outC :: Tensor.to outSpatial (List Nat))
   let node : NodeData α Δ (Γ ++ ss) outS :=
     { forward := fun ctx _d =>
         let wv := getIdx (α := α) (xs := ctx) iw
@@ -139,7 +143,7 @@ def convTranspose {α : Type} {Δ : Type} [Context α] [DecidableEq Shape]
         let dW := getIdx (α := α) (xs := dctx) iw
         let dB := getIdx (α := α) (xs := dctx) ib
         let dX := getIdx (α := α) (xs := dctx) ix
-        let zeroBias : Tensor α [outC] := fill (0 : α) (.dim outC .scalar)
+        let zeroBias : Tensor α [outC] := Tensor.full (.dim outC .scalar) (0 : α)
         let layerX : Spec.ConvTransposeSpec d inC outC kernel stride padding α :=
           { kernel := wv, bias := zeroBias }
         let layerParams : Spec.ConvTransposeSpec d inC outC kernel stride padding α :=
@@ -152,15 +156,18 @@ def convTranspose {α : Type} {Δ : Type} [Context α] [DecidableEq Shape]
         let xv := getIdx (α := α) (xs := ctx) ix
         let layer : Spec.ConvTransposeSpec d inC outC kernel stride padding α :=
           { kernel := wv, bias := bv }
-        let (dW, dB, dX) := Spec.convTransposeBackwardSpec (layer := layer) xv dLdy
+        let gradients := Spec.convTransposeBackwardSpec (layer := layer) xv dLdy
         let z0 :=
-          _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
+          TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss)
             (TensorPack.single (α := α) (Γ := Γ ++ ss)
-              (s := Shape.ofList (inC :: outC :: kernel.toList)) iw dW)
-            (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim outC .scalar) ib dB)
-        _root_.TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z0
+              (s := Shape.ofList (inC :: outC :: Tensor.to kernel (List Nat))) iw
+              gradients.kernelGradient)
+            (TensorPack.single (α := α) (Γ := Γ ++ ss) (s := .dim outC .scalar) ib
+              gradients.biasGradient)
+        TorchLean.TensorPack.add (α := α) (ss := Γ ++ ss) z0
           (TensorPack.single (α := α) (Γ := Γ ++ ss)
-            (s := Shape.ofList (inC :: inSpatial.toList)) ix dX) }
+            (s := Shape.ofList (inC :: Tensor.to inSpatial (List Nat))) ix
+            gradients.inputGradient) }
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := outS) g node
 
 end GraphM

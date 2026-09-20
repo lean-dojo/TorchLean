@@ -19,6 +19,57 @@ from html.parser import HTMLParser
 
 
 TORCHLEAN_CSS = """
+/* Shell input and recorded transcripts have their own presentation. */
+main .tl-terminal {
+  margin: 1.2rem 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #172437;
+  color: #f1f5f9;
+}
+main .tl-terminal-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .5rem 1rem;
+  font: 600 .78rem system-ui, sans-serif;
+  border-bottom: 1px solid #ffffff26;
+}
+main .tl-terminal pre {
+  margin: 0;
+  padding: 1rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+main .tl-terminal[data-output="true"] {
+  background: #f4f6f8;
+  color: #243247;
+}
+main .tl-terminal[data-output="true"] > .tl-terminal-heading {
+  border-bottom-color: #dbe1e8;
+}
+main .tl-terminal > .tl-terminal {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid #cbd5e1;
+  border-radius: 0;
+}
+main .tl-copy-command {
+  padding: .2rem .5rem;
+  border: 1px solid #94a3b8;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
 
 /* TorchLean guide polish: reference-style reading shell. */
 :root {
@@ -40,6 +91,13 @@ body {
 
 body {
   scroll-padding-top: 3.4rem;
+}
+
+/* Chapter anchors target whole sections, not individual Lean declarations. */
+main section:is(.bp_decl_target, .bp_decl_target_block) {
+  background: transparent;
+  box-shadow: none;
+  animation: none;
 }
 
 body.tl-progress-mounted {
@@ -219,6 +277,41 @@ main pre.syntax-error {
   font-size: 0.92rem;
   line-height: 1.52;
   tab-size: 2;
+}
+
+/* A checked example keeps its code and messages in one panel. */
+main .tl-lean-example {
+  margin: 1rem 0;
+  border: 1px solid var(--tl-code-border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--tl-code-bg);
+  min-width: 0;
+}
+.tl-example-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem;
+  color: #42566c;
+  font: 600 0.78rem/1.5 var(--verso-text-font-family), sans-serif;
+}
+main .tl-lean-example > code.hl.lean.block,
+main .tl-lean-example > pre.lean-output {
+  display: block;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 0.5rem 1rem 1rem;
+}
+.tl-example-heading.tl-output-heading {
+  border-top: 1px solid var(--tl-code-border);
+  background: rgba(255,255,255,0.55);
+}
+main .tl-lean-example > pre.lean-output {
+  background: rgba(255,255,255,0.55);
 }
 
 main details.bp_code_block {
@@ -454,6 +547,18 @@ main code:is(.math, .bp_math).display > .katex-display {
   max-width: none;
   margin: 0;
   padding: 0.25rem 0.5rem;
+}
+
+.docstring .tl-docstring-math {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.docstring .tl-docstring-math > .katex-display {
+  width: max-content;
+  min-width: 100%;
+  padding: 0.25rem 0;
 }
 
 mjx-container[display="true"] {
@@ -721,6 +826,46 @@ TORCHLEAN_JS_BODY = r"""
   const script = document.currentScript;
   const rootUrl = new URL(".", script ? script.src : window.location.href);
 
+  function installDocstringMath() {
+    if (!window.marked || !window.katex) return;
+    // Imported declarations use Markdown docstrings, rendered at window.load.
+    // Tokenize math before Markdown consumes TeX escapes or underscores.
+    const rules = [
+      {
+        name: "torchleanDisplayMath",
+        level: "block",
+        pattern: /^\$\$[ \t]*\n([\s\S]+?)\n\$\$[ \t]*(?:\n|$)/,
+        displayMode: true,
+      },
+      {
+        name: "torchleanInlineMath",
+        level: "inline",
+        pattern: /^\$(?!\$)((?:\\.|[^$\\\n])+?)\$(?!\$)/,
+        displayMode: false,
+      },
+    ];
+    window.marked.use({extensions: rules.map((rule) => ({
+      name: rule.name,
+      level: rule.level,
+      start(src) {
+        return rule.displayMode ? src.search(/^\$\$[ \t]*\n/m) : src.indexOf("$");
+      },
+      tokenizer(src) {
+        const match = rule.pattern.exec(src);
+        if (match) return {type: rule.name, raw: match[0], text: match[1]};
+      },
+      renderer(token) {
+        const rendered = window.katex.renderToString(token.text, {
+          throwOnError: false,
+          displayMode: rule.displayMode,
+        });
+        return rule.displayMode
+          ? '<div class="tl-docstring-math">' + rendered + "</div>"
+          : rendered;
+      },
+    }))});
+  }
+
   function normalizedCurrentPage() {
     const here = new URL(window.location.href);
     const rootPath = rootUrl.pathname.endsWith("/") ? rootUrl.pathname : rootUrl.pathname + "/";
@@ -967,9 +1112,102 @@ TORCHLEAN_JS_BODY = r"""
     });
   }
 
+  function groupLeanExamples() {
+    const heading = (text, output = false) => {
+      const el = document.createElement("div");
+      el.className = "tl-example-heading" + (output ? " tl-output-heading" : "");
+      const label = document.createElement("span");
+      label.textContent = text;
+      el.appendChild(label);
+      return el;
+    };
+    const appendOutput = (panel, output) => {
+      const label = output.classList.contains("error") ? "Error output"
+        : output.classList.contains("warning") ? "Warning output" : "Output";
+      panel.appendChild(heading(label, true));
+      panel.appendChild(output);
+    };
+    document.querySelectorAll("main code.hl.lean.block").forEach((code) => {
+      if (code.closest(".tl-lean-example, details.bp_code_block")) return;
+      const panel = document.createElement("div");
+      panel.className = "tl-lean-example";
+      code.before(panel);
+      const title = heading("Code");
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "tl-code-action";
+      copy.textContent = "Copy code";
+      copy.addEventListener("click", async () => {
+        const source = code.cloneNode(true);
+        source.querySelectorAll(".hover-container").forEach((el) => el.remove());
+        try {
+          await navigator.clipboard.writeText(source.textContent || "");
+          copy.textContent = "Copied";
+        } catch (_) {
+          copy.textContent = "Copy unavailable";
+        }
+        window.setTimeout(() => { copy.textContent = "Copy code"; }, 1100);
+      });
+      title.appendChild(copy);
+      panel.appendChild(title);
+      panel.appendChild(code);
+      while (panel.nextElementSibling?.matches("pre.lean-output")) {
+        appendOutput(panel, panel.nextElementSibling);
+      }
+    });
+    // Some chapters discuss a result before displaying it. Label these in place;
+    // moving them across prose would change the chapter's reading order.
+    document.querySelectorAll("main pre.lean-output").forEach((output) => {
+      if (output.closest(".tl-lean-example")) return;
+      const panel = document.createElement("div");
+      panel.className = "tl-lean-example";
+      output.before(panel);
+      appendOutput(panel, output);
+    });
+  }
+
+  function simplifyPageNavigation() {
+    const page = normalizedCurrentPage();
+    if (!page || page.split("/").length < 3) return;
+    const panels = document.querySelectorAll("#toc .split-toc");
+    const local = panels[panels.length - 1];
+    if (local && local.querySelector(".title .current")) local.remove();
+  }
+
+  function enhanceTerminals() {
+    document.querySelectorAll('main .tl-terminal[data-output="false"]').forEach((panel) => {
+      const pre = panel.querySelector(":scope > pre");
+      const heading = panel.querySelector(":scope > .tl-terminal-heading");
+      if (!pre || !heading) return;
+      const next = panel.nextElementSibling;
+      if (next && next.matches('.tl-terminal[data-output="true"]')) panel.appendChild(next);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "tl-copy-command";
+      button.textContent = "Copy command";
+      button.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(pre.textContent);
+          button.textContent = "Copied";
+        } catch (_) {
+          const selection = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(pre);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          button.textContent = "Command selected";
+        }
+        window.setTimeout(() => { button.textContent = "Copy command"; }, 1100);
+      });
+      heading.appendChild(button);
+    });
+  }
+
   function addCopyButtons() {
     document.querySelectorAll("main pre").forEach((pre) => {
-      if (pre.closest(".tl-code-wrap")) return;
+      // Imported docstrings become prose at window.load, after this pass.
+      if (pre.closest(".tl-code-wrap, .tl-lean-example, .tl-terminal")
+          || pre.matches(".lean-output, .docstring")) return;
       const wrap = document.createElement("div");
       wrap.className = "tl-code-wrap";
       pre.parentNode.insertBefore(wrap, pre);
@@ -1083,7 +1321,7 @@ TORCHLEAN_JS_BODY = r"""
 
   function addHeadingAnchors() {
     document.querySelectorAll("main h1[id], main h2[id], main h3[id], main h4[id], main h5[id], main h6[id]").forEach((heading) => {
-      if (heading.querySelector(".tl-heading-anchor")) return;
+      if (heading.querySelector(".tl-heading-anchor, .permalink-widget")) return;
       const a = document.createElement("a");
       a.className = "tl-heading-anchor";
       a.href = "#" + heading.id;
@@ -1097,6 +1335,7 @@ TORCHLEAN_JS_BODY = r"""
   // sentence punctuation into display math before Verso's KaTeX listener runs,
   // so it stays beside the equation instead of becoming a detached text line.
   moveDisplayMathPunctuation();
+  installDocstringMath();
 
   document.addEventListener("DOMContentLoaded", () => {
     mountGuideNav();
@@ -1106,6 +1345,9 @@ TORCHLEAN_JS_BODY = r"""
     externalLinksOpenInNewTabs();
     enhanceRouteLists();
     wrapTables();
+    groupLeanExamples();
+    simplifyPageNavigation();
+    enhanceTerminals();
     addCopyButtons();
     openLeanCodePanels();
     addLeanCodePanelActions();
@@ -1147,7 +1389,7 @@ def inject_script(root: Path) -> None:
     script_re = re.compile(r'\s*<script defer src="[^"]*torchlean-guide-polish\.js(?:\?v=[^"]*)?"></script>\n?')
     # Verso emits a <base> tag on every generated page. A bare script URL is
     # therefore resolved relative to the guide root, even from nested pages.
-    tag = '    <script defer src="torchlean-guide-polish.js?v=20260725-graph"></script>\n'
+    tag = '    <script defer src="torchlean-guide-polish.js?v=20260916-docstring-math"></script>\n'
     for path in root.rglob("*.html"):
         html = path.read_text()
         if marker in html:
@@ -1159,6 +1401,31 @@ def inject_script(root: Path) -> None:
             continue
         # Extension-specific styles may leave the closing tag on the same line
         # as `</style>`, so injection must not depend on surrounding whitespace.
+        path.write_text(html.replace("</head>", tag + "  </head>", 1))
+
+
+def inject_favicon(root: Path) -> None:
+    """Use the main TorchLean mark for every generated guide page."""
+    marker = "data-torchlean-favicon"
+    icon_re = re.compile(
+        r'\s*<link\s+[^>]*data-torchlean-favicon[^>]*>\n?',
+        flags=re.IGNORECASE,
+    )
+    # Verso's <base> points at the guide root, so this reaches the Jekyll
+    # asset both locally and under GitHub Pages' /TorchLean project prefix.
+    tag = (
+        '    <link rel="icon" href="../assets/media/brand/torchlean-logo.png" '
+        'type="image/png" data-torchlean-favicon>\n'
+    )
+    for path in root.rglob("*.html"):
+        html = path.read_text()
+        if marker in html:
+            new_html = icon_re.sub("\n" + tag, html, count=1)
+            if new_html != html:
+                path.write_text(new_html)
+            continue
+        if "</head>" not in html:
+            continue
         path.write_text(html.replace("</head>", tag + "  </head>", 1))
 
 
@@ -1208,7 +1475,7 @@ def select_formalization_group_view(root: Path) -> None:
 def rewrite_repository_links(root: Path) -> None:
     """Turn repository-relative links into public API or source links.
 
-    The guide source is written inside `blueprint/TorchLeanBlueprint`, so links
+    The guide source is written inside `home_page/blueprint/TorchLeanBlueprint`, so links
     like `../../NN/...` are convenient while editing. In the generated website
     those paths point outside the published guide. This post-build pass rewrites them. Lean modules
     with generated DocGen pages go to the API
@@ -1223,7 +1490,7 @@ def rewrite_repository_links(root: Path) -> None:
         "NN.lean",
         "csrc/",
         "scripts/",
-        "blueprint/",
+        "docs/",
         "home_page/",
         ".github/",
         "README",
@@ -1236,19 +1503,18 @@ def rewrite_repository_links(root: Path) -> None:
         "lean-toolchain",
     )
 
-    def api_href_for(path: Path, normalized: str) -> str | None:
-        """Return a relative DocGen URL for a Lean source path when one exists."""
+    def api_href_for(normalized: str) -> str | None:
+        """Return a DocGen URL relative to Verso's guide-root base URL."""
         if not normalized.endswith(".lean"):
             return None
         doc_rel = normalized[:-5] + ".html"
         if not (docs_root / doc_rel).exists():
             return None
-        rel_page = path.relative_to(root)
-        source_dir = posixpath.join("blueprint", rel_page.parent.as_posix())
-        target = posixpath.join("docs", doc_rel)
-        return posixpath.relpath(target, source_dir)
+        # Every generated page's <base> resolves to /blueprint/, regardless of page depth.
+        # Computing from the page directory instead escapes a project site's /TorchLean prefix.
+        return "../docs/" + doc_rel
 
-    def rewrite_href(path: Path, match: re.Match[str]) -> str:
+    def rewrite_href(match: re.Match[str]) -> str:
         """Rewrite one `href=` attribute from generated guide HTML."""
         quote = match.group(1)
         href = match.group(2)
@@ -1262,10 +1528,13 @@ def rewrite_repository_links(root: Path) -> None:
         if normalized.startswith("./"):
             normalized = normalized[2:]
 
+        if normalized.startswith("docs/NN/"):
+            return f'href={quote}../{normalized}{sep}{frag}{quote}'
+
         if not normalized.startswith(repo_prefixes):
             return match.group(0)
 
-        api_href = api_href_for(path, normalized)
+        api_href = api_href_for(normalized)
         if api_href is not None:
             return f'href={quote}{api_href}{quote}'
 
@@ -1288,6 +1557,9 @@ def rewrite_repository_links(root: Path) -> None:
     anchor_re = re.compile(r'<a\b([^>]*\bhref=([\"\'])([^\"\']+)\2[^>]*)>')
     inline_module_re = re.compile(r"<code>(NN/[A-Za-z0-9_./-]+\.lean)</code>")
     inline_tree_re = re.compile(r"<code>(NN/[A-Za-z0-9_./-]+)/\*</code>")
+    linked_or_block_re = re.compile(
+        r"(<a\b[^>]*>.*?</a>|<pre\b[^>]*>.*?</pre>)", re.DOTALL
+    )
 
     def clean_api_label(match: re.Match[str]) -> str:
         """Replace noisy source-file link labels with stable module API labels."""
@@ -1299,10 +1571,10 @@ def rewrite_repository_links(root: Path) -> None:
         module_label = module.replace("/", ".") + " API"
         return f"<a{attrs}>{module_label}</a>"
 
-    def link_inline_module(path: Path, match: re.Match[str]) -> str:
+    def link_inline_module(match: re.Match[str]) -> str:
         """Turn inline `NN/...lean` code spans into API links when DocGen has them."""
         normalized = match.group(1)
-        api_href = api_href_for(path, normalized)
+        api_href = api_href_for(normalized)
         if api_href is None:
             return match.group(0)
         module_label = normalized[:-5].replace("/", ".") + " API"
@@ -1331,10 +1603,15 @@ def rewrite_repository_links(root: Path) -> None:
 
     for path in root.rglob("*.html"):
         html = path.read_text()
-        rewritten = href_re.sub(lambda match: rewrite_href(path, match), html)
+        rewritten = href_re.sub(rewrite_href, html)
         rewritten = api_link_re.sub(clean_api_label, rewritten)
-        rewritten = inline_module_re.sub(lambda match: link_inline_module(path, match), rewritten)
-        rewritten = inline_tree_re.sub(link_inline_tree, rewritten)
+        # A source link can already contain a path in <code>. Keep that destination
+        # instead of inserting a second anchor inside it; leave code blocks literal.
+        pieces = linked_or_block_re.split(rewritten)
+        for index in range(0, len(pieces), 2):
+            pieces[index] = inline_module_re.sub(link_inline_module, pieces[index])
+            pieces[index] = inline_tree_re.sub(link_inline_tree, pieces[index])
+        rewritten = "".join(pieces)
         rewritten = anchor_re.sub(add_blank_target, rewritten)
         if rewritten != html:
             path.write_text(rewritten)
@@ -1415,6 +1692,20 @@ def add_fragment_aliases(root: Path) -> None:
             target_page = parse(target)
             if frag not in target_page.ids:
                 aliases.setdefault(target, set()).add(frag)
+
+    # The root title may have no static incoming link. Search and cross-reference
+    # data still expose its fragment, as they do for chapter and page titles.
+    xref_path = root / "xref.json"
+    if xref_path.exists():
+        xref = json.loads(xref_path.read_text())
+        sections = xref.get("Verso.Genre.Manual.section", {}).get("contents", {})
+        for entries in sections.values():
+            for entry in entries:
+                if len(entry["data"]["context"]) > 3:
+                    continue
+                target, frag = resolve(root / "index.html", entry["address"] + "#" + entry["id"])
+                if target is not None and frag is not None and frag not in parse(target).ids:
+                    aliases.setdefault(target, set()).add(frag)
 
     for path, ids in aliases.items():
         if not ids:
@@ -1518,6 +1809,7 @@ def main() -> int:
     rewrite_repository_links(args.guide)
     add_fragment_aliases(args.guide)
     remove_stale_search_shards(args.guide)
+    inject_favicon(args.guide)
     inject_script(args.guide)
     validate_math_runtime(args.guide)
     return 0

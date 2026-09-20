@@ -13,11 +13,12 @@ TorchLean website.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
 from pathlib import Path
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlsplit
 
 
 # `append_style` is idempotent: it removes everything after this marker before
@@ -150,7 +151,8 @@ def rewrite_dependency_links(docs: Path) -> None:
             url = match.group(1)
             if (
                 not url
-                or url.startswith(("#", "http://", "https://", "mailto:", "javascript:", "data:"))
+                or url.startswith("#")
+                or urlsplit(url).scheme
             ):
                 return match.group(0)
 
@@ -184,6 +186,48 @@ def rewrite_dependency_links(docs: Path) -> None:
         updated = HREF_RE.sub(repl, text)
         if updated != text:
             path.write_text(updated, encoding="utf-8")
+
+
+def rewrite_search_links(docs: Path) -> None:
+    """Keep dependency search, instance lists, and import links usable after pruning."""
+    index_path = docs / "declarations" / "declaration-data.bmp"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    for collection, field in [("declarations", "docLink"), ("modules", "url")]:
+        for entry in index[collection].values():
+            url = entry[field]
+            parsed = urlsplit(url)
+            if parsed.scheme or parsed.netloc:
+                continue
+            relative = parsed.path.removeprefix("./")
+            root = relative.split("/", 1)[0].removesuffix(".html")
+            if root in DOCGEN_DEPENDENCY_MODULES:
+                entry[field] = UPSTREAM_DOCGEN_BASE + url.removeprefix("./")
+    index_path.write_text(json.dumps(index, separators=(",", ":")), encoding="utf-8")
+
+    # DocGen prefixes every index URL with SITE_ROOT. Absolute upstream URLs need
+    # URL resolution instead, both on the landing page and in nested modules.
+    base = "new URL(SITE_ROOT, window.location.href)"
+    replacements = {
+        "search.js": [("SITE_ROOT + result[j].docLink",
+                       f"new URL(result[j].docLink, {base}).href")],
+        "find/find.js": [("SITE_ROOT + result.docLink",
+                          f"new URL(result.docLink, {base}).href"),
+                         ("window.location.replace(result.link)",
+                          "window.location.replace(result.docLink)")],
+        "instances.js": [("${SITE_ROOT}${instanceLink}",
+                          f"${{new URL(instanceLink, {base}).href}}")],
+        "importedBy.js": [("${SITE_ROOT}${moduleLink}",
+                           f"${{new URL(moduleLink, {base}).href}}")],
+        "how-about.js": [("a.href = docLink;", f"a.href = new URL(docLink, {base}).href;")],
+    }
+    for filename, edits in replacements.items():
+        path = docs / filename
+        source = path.read_text(encoding="utf-8")
+        for old, new in edits:
+            if old not in source and new not in source:
+                raise SystemExit(f"DocGen URL handling changed in {path}; update the polish step")
+            source = source.replace(old, new)
+        path.write_text(source, encoding="utf-8")
 
 
 def _nearest_existing_doc_page(docs: Path, target: Path) -> Path | None:
@@ -233,7 +277,8 @@ def rewrite_missing_nn_links(docs: Path) -> None:
             url = match.group(1)
             if (
                 not url
-                or url.startswith(("#", "http://", "https://", "mailto:", "javascript:", "data:"))
+                or url.startswith("#")
+                or urlsplit(url).scheme
             ):
                 return match.group(0)
 
@@ -262,6 +307,22 @@ def rewrite_missing_nn_links(docs: Path) -> None:
         updated = HREF_RE.sub(repl, text)
         if updated != text:
             path.write_text(updated, encoding="utf-8")
+
+
+def rewrite_floatlib_profile_link(docs: Path) -> None:
+    """Repair one misresolved prose link only when its precise module page exists."""
+    page = docs / "FloatLib/Floats/Formats/BinaryInterchange/Transcendentals.html"
+    target = page.parent / "Info/Profile.html"
+    if not page.is_file() or not target.is_file():
+        return
+
+    text = page.read_text(encoding="utf-8")
+    updated = text.replace(
+        'href="../../../.././Info/Profile.html"',
+        'href="./Info/Profile.html"',
+    )
+    if updated != text:
+        page.write_text(updated, encoding="utf-8")
 
 
 def write_index(docs: Path) -> None:
@@ -350,9 +411,9 @@ def write_index(docs: Path) -> None:
         <p>The registered certificate and verification command surface.</p>
       </a>
       <a class="tl-api-card" href="./NN/Floats.html">
-        <strong>Audit Float32 execution</strong>
-        <span>NN.Floats.IEEEExec</span>
-        <p>Executable IEEE-754 binary32 semantics used in float audits.</p>
+        <strong>Use FloatLib formats</strong>
+        <span>NN.Floats</span>
+        <p>TorchLean adapters for FloatLib's configured binary formats and rounded-real models.</p>
       </a>
     </section>
 
@@ -366,7 +427,7 @@ def write_index(docs: Path) -> None:
         <a href="./NN/GraphSpec.html">GraphSpec</a>
         <a href="./NN/Proofs.html">Proofs</a>
         <a href="./NN/Verification.html">Verification</a>
-        <a href="./NN/Examples/Zoo.html">Examples</a>
+        <a href="./NN/Examples.html">Examples</a>
       </div>
     </section>
 
@@ -478,12 +539,17 @@ header h1 {
   align-items: center;
   gap: 0.35rem;
   min-width: 0;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 header .header_filename {
   color: color-mix(in srgb, var(--text-color) 66%, transparent);
   font-size: 0.92rem;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #search_form {
@@ -534,6 +600,14 @@ header .header_filename {
   color: var(--tl-teal);
   background: var(--tl-teal-soft);
   text-decoration: none;
+}
+
+/* Leave room for the module drawer and search before the header links crowd
+   those controls. */
+@media (max-width: 1200px) {
+  .tl-docsite-links {
+    display: none;
+  }
 }
 
 .tl-doc-theme-toggle {
@@ -995,6 +1069,7 @@ label[for="nav_toggle"]::before {
 #nav_toggle:checked ~ .nav {
   display: block;
   left: 1rem;
+  margin-left: 0;
   width: min(28rem, calc(100vw - 2rem));
   max-width: min(28rem, calc(100vw - 2rem));
   z-index: 20;
@@ -1130,7 +1205,14 @@ code {
   font-size: 0.92em;
 }
 
-body:not(.tl-docs-index) main,
+/* DocGen places the declaration sidebar beside its content column. Keep that
+   column's width when allowing long Lean declarations to scroll; expanding main
+   to the full viewport would put the text underneath the fixed sidebar. */
+body:not(.tl-docs-index) main {
+  min-width: 0;
+  overflow-x: auto;
+}
+
 body:not(.tl-docs-index) .mod_doc,
 body:not(.tl-docs-index) .def,
 body:not(.tl-docs-index) .theorem,
@@ -1176,6 +1258,11 @@ body:not(.tl-docs-index) :not(pre) > code {
 @media (max-width: 700px) {
   .tl-docs-index {
     --content-width: calc(100vw - 1.25rem);
+  }
+
+  .tl-docs-index:has(#nav_toggle:checked) {
+    display: block;
+    padding: 0;
   }
 
   .tl-docs-index header {
@@ -1435,10 +1522,12 @@ def main() -> None:
         raise SystemExit(f"DocGen output directory does not exist: {docs}")
     prune_dependency_pages(docs)
     rewrite_dependency_links(docs)
+    rewrite_search_links(docs)
     write_index(docs)
     append_style(docs)
     add_nav_hint(docs)
     rename_docgen_header(docs)
+    rewrite_floatlib_profile_link(docs)
     rewrite_missing_nn_links(docs)
     configure_math_runtime(docs)
     validate_math_runtime(docs)

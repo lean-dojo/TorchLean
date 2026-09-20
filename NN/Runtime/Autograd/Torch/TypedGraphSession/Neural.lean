@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Torch.TypedGraphSession.ShapeIndex
+public import NN.Runtime.Autograd.Torch.TypedGraphSession.GraphOps
+public import NN.Runtime.Autograd.TypedGraph.GraphM.Neural
 
 /-!
 # Typed Graph Session: Neural-Network Operations
@@ -18,8 +19,8 @@ namespace Runtime
 namespace Autograd
 namespace Torch
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Internal
 
@@ -30,7 +31,8 @@ Record elementwise logistic sigmoid.
 
 PyTorch comparison: `torch.sigmoid(x)`.
 -/
-def sigmoid {α : Type} (s : TypedGraphSession α) [Context α] [DecidableEq Shape] {sh : Shape}
+def sigmoid {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Context α] {sh : Shape}
   (x : TensorRef α sh) : IO (TensorRef α sh) :=
   commitGraphM (α := α) s (β := TensorRef α sh) (refs := #[x.identity?])
       (fun {Γ} {ss} xv nat g => do
@@ -46,7 +48,8 @@ Record elementwise hyperbolic tangent.
 
 PyTorch comparison: `torch.tanh(x)`.
 -/
-def tanh {α : Type} (s : TypedGraphSession α) [Context α] [DecidableEq Shape] {sh : Shape}
+def tanh {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Context α] {sh : Shape}
   (x : TensorRef α sh) : IO (TensorRef α sh) :=
   commitGraphM (α := α) s (β := TensorRef α sh) (refs := #[x.identity?])
       (fun {Γ} {ss} xv nat g => do
@@ -58,7 +61,8 @@ def tanh {α : Type} (s : TypedGraphSession α) [Context α] [DecidableEq Shape]
     pure ({ id := v.id }, st1))
 
 /-- Record softmax along an explicitly selected tensor dimension. -/
-def softmax {α : Type} (s : TypedGraphSession α) [Context α] [DecidableEq Shape]
+def softmax {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Context α]
     {sh : Shape} (axis : Nat) [Shape.AxisInBounds axis sh]
     (x : TensorRef α sh) : IO (TensorRef α sh) :=
   commitGraphM (α := α) s (β := TensorRef α sh) (refs := #[x.identity?])
@@ -72,7 +76,8 @@ def softmax {α : Type} (s : TypedGraphSession α) [Context α] [DecidableEq Sha
     pure ({ id := v.id }, st1))
 
 /-- Record stable log-softmax along an explicitly selected tensor dimension. -/
-def logSoftmax {α : Type} (s : TypedGraphSession α) [Context α] [DecidableEq Shape]
+def logSoftmax {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Context α]
     {sh : Shape} (axis : Nat) [Shape.AxisInBounds axis sh]
     (x : TensorRef α sh) : IO (TensorRef α sh) :=
   commitGraphM (α := α) s (β := TensorRef α sh) (refs := #[x.identity?])
@@ -90,7 +95,8 @@ Record elementwise softplus.
 
 PyTorch comparison: `torch.nn.functional.softplus(x)`.
 -/
-def softplus {α : Type} (s : TypedGraphSession α) [Context α] [DecidableEq Shape] {sh : Shape}
+def softplus {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Context α] {sh : Shape}
   (x : TensorRef α sh) : IO (TensorRef α sh) :=
   commitGraphM (α := α) s (β := TensorRef α sh) (refs := #[x.identity?])
       (fun {Γ} {ss} xv nat g => do
@@ -106,7 +112,8 @@ Record elementwise exponential.
 
 PyTorch comparison: `torch.exp(x)`.
 -/
-def exp {α : Type} (s : TypedGraphSession α) [Context α] [DecidableEq Shape] {sh : Shape}
+def exp {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Context α] {sh : Shape}
   (x : TensorRef α sh) : IO (TensorRef α sh) :=
   commitGraphM (α := α) s (β := TensorRef α sh) (refs := #[x.identity?])
       (fun {Γ} {ss} xv nat g => do
@@ -117,12 +124,39 @@ def exp {α : Type} (s : TypedGraphSession α) [Context α] [DecidableEq Shape] 
     let st1 : TypedGraphSessionState α := { Γ := Γ, x := xv, nat := nat, ss := ss', g := g' }
     pure ({ id := v.id }, st1))
 
+/-- Record sine of angles in radians, retaining its JVP and VJP in the typed graph. -/
+def sin {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Context α] {sh : Shape}
+    (x : TensorRef α sh) : IO (TensorRef α sh) :=
+  commitGraphM (α := α) s (β := TensorRef α sh) (refs := #[x.identity?])
+      (fun {Γ} {ss} xv nat g => do
+    let (v, st') ← runGraphM (α := α) (Γ := Γ)
+      (Runtime.Autograd.TypedGraph.GraphM.sin (α := α) (Γ := Γ) (s := sh) { id := x.id })
+      ss g
+    let ⟨ss', g'⟩ := st'
+    let st1 : TypedGraphSessionState α := { Γ := Γ, x := xv, nat := nat, ss := ss', g := g' }
+    pure ({ id := v.id }, st1))
+
+/-- Record cosine of angles in radians, with derivative `-sin(x)` at the original input. -/
+def cos {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Context α] {sh : Shape}
+    (x : TensorRef α sh) : IO (TensorRef α sh) :=
+  commitGraphM (α := α) s (β := TensorRef α sh) (refs := #[x.identity?])
+      (fun {Γ} {ss} xv nat g => do
+    let (v, st') ← runGraphM (α := α) (Γ := Γ)
+      (Runtime.Autograd.TypedGraph.GraphM.cos (α := α) (Γ := Γ) (s := sh) { id := x.id })
+      ss g
+    let ⟨ss', g'⟩ := st'
+    let st1 : TypedGraphSessionState α := { Γ := Γ, x := xv, nat := nat, ss := ss', g := g' }
+    pure ({ id := v.id }, st1))
+
 /--
 Record elementwise natural logarithm.
 
 PyTorch comparison: `torch.log(x)`.
 -/
-def log {α : Type} (s : TypedGraphSession α) [Context α] [DecidableEq Shape] {sh : Shape}
+def log {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Context α] {sh : Shape}
   (x : TensorRef α sh) : IO (TensorRef α sh) :=
   commitGraphM (α := α) s (β := TensorRef α sh) (refs := #[x.identity?])
       (fun {Γ} {ss} xv nat g => do
@@ -139,8 +173,9 @@ Record elementwise log with epsilon guard.
 This is intended for numerically stable losses; it corresponds approximately to `log(max(x, ε))`.
 PyTorch comparison: `torch.log(torch.clamp(x, min=ε))`.
 -/
-def safeLog {α : Type} (s : TypedGraphSession α) [Context α] [DecidableEq Shape] {sh : Shape}
-  (x : TensorRef α sh) (ε : α := Numbers.epsilon) : IO (TensorRef α sh) :=
+def safeLog {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Context α] {sh : Shape}
+  (x : TensorRef α sh) (ε : α := Context.defaultEpsilon) : IO (TensorRef α sh) :=
   commitGraphM (α := α) s (β := TensorRef α sh) (refs := #[x.identity?])
       (fun {Γ} {ss} xv nat g => do
     let (v, st') ← runGraphM (α := α) (Γ := Γ)
@@ -156,7 +191,8 @@ Sum-reduce all elements to a scalar.
 
 PyTorch comparison: `x.sum()`.
 -/
-def sum {α : Type} (s : TypedGraphSession α) [Context α] [DecidableEq Shape] {sh : Shape}
+def sum {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Context α] {sh : Shape}
   (x : TensorRef α sh) : IO (TensorRef α Shape.scalar) :=
   commitGraphM (α := α) s (β := TensorRef α Shape.scalar) (refs := #[x.identity?])
       (fun {Γ} {ss} xv nat g => do
@@ -173,7 +209,8 @@ Record a fully-connected linear layer: `y = w • x + b`.
 Type-level shapes enforce `w : (outDim, inDim)`, `b : (outDim,)`, and `x : (inDim,)`.
 PyTorch comparison: `torch.nn.functional.linear(x, weight=w, bias=b)` (with the same weight layout).
 -/
-def linear {α : Type} (s : TypedGraphSession α) [Add α] [Mul α] [Zero α] [DecidableEq Shape]
+def linear {α : Type} [TorchLean.Storage α]
+    (s : TypedGraphSession α) [Add α] [Mul α] [Zero α]
   {inDim outDim : Nat}
   (w : TensorRef α [outDim, inDim])
   (b : TensorRef α [outDim])
@@ -193,8 +230,8 @@ Mean-squared-error loss returning a scalar.
 
 PyTorch comparison: `torch.nn.functional.mse_loss(yhat, target, reduction="mean")`.
 -/
-def mseLoss {α : Type} (s : TypedGraphSession α)
-  [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [Coe Nat α] [DecidableEq Shape]
+def mseLoss {α : Type} [TorchLean.Storage α] (s : TypedGraphSession α)
+  [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [NatCast α]
   {sh : Shape} (yhat target : TensorRef α sh) : IO (TensorRef α Shape.scalar) :=
   commitGraphM (α := α) s (β := TensorRef α Shape.scalar)
       (refs := #[yhat.identity?, target.identity?]) (fun {Γ} {ss} xv nat g => do
@@ -214,32 +251,34 @@ dimensions for numerical stability and well-formedness.
 PyTorch comparison: `torch.nn.LayerNorm(embedDim)` (applied per token), or
 `torch.nn.functional.layer_norm`.
 -/
-def layerNorm {α : Type} (s : TypedGraphSession α) [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)] [DecidableEq Shape]
+def layerNorm {α : Type} [TorchLean.Storage α] (s : TypedGraphSession α) [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {seqLen embedDim : Nat} (h_seq_pos : seqLen > 0) (h_embed_pos : embedDim > 0)
   (x : TensorRef α [seqLen, embedDim])
   (gamma : TensorRef α [embedDim])
-  (beta : TensorRef α [embedDim]) : IO (TensorRef α [seqLen, embedDim]) :=
+  (beta : TensorRef α [embedDim])
+  (epsilon : α := TorchLean.normalizationEpsilon) : IO (TensorRef α [seqLen, embedDim]) :=
   commitGraphM (α := α) s (β := TensorRef α [seqLen, embedDim])
       (refs := #[x.identity?, gamma.identity?, beta.identity?]) (fun {Γ} {ss} xv nat g => do
     let (v, st') ← runGraphM (α := α) (Γ := Γ)
       (Runtime.Autograd.TypedGraph.GraphM.layerNorm (α := α) (Γ := Γ)
         (seqLen := seqLen) (embedDim := embedDim) (h_seq_pos := h_seq_pos) (h_embed_pos :=
           h_embed_pos)
-        { id := x.id } { id := gamma.id } { id := beta.id })
+        { id := x.id } { id := gamma.id } { id := beta.id } (epsilon := epsilon))
       ss g
     let ⟨ss', g'⟩ := st'
     let st1 : TypedGraphSessionState α := { Γ := Γ, x := xv, nat := nat, ss := ss', g := g' }
     pure ({ id := v.id }, st1))
 
 /-- Batch normalization over every spatial axis of a channel-first tensor. -/
-def batchNorm {α : Type} (s : TypedGraphSession α) [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)] [DecidableEq Shape]
+def batchNorm {α : Type} [TorchLean.Storage α] (s : TypedGraphSession α) [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {channels : Nat} {sSpatial : Shape}
   (hWellFormed : (Shape.dim channels sSpatial).wellFormed)
   (x : TensorRef α (.dim channels sSpatial))
   (gamma : TensorRef α [channels])
-  (beta : TensorRef α [channels]) :
+  (beta : TensorRef α [channels])
+  (epsilon : α := TorchLean.normalizationEpsilon) :
   IO (TensorRef α (.dim channels sSpatial)) :=
   commitGraphM (α := α) s (β := TensorRef α (.dim channels sSpatial))
     (refs := #[x.identity?, gamma.identity?, beta.identity?])
@@ -247,7 +286,7 @@ def batchNorm {α : Type} (s : TypedGraphSession α) [Context α]
     let (v, st') ← runGraphM (α := α) (Γ := Γ)
       (Runtime.Autograd.TypedGraph.GraphM.batchNorm (α := α) (Γ := Γ)
         (channels := channels) (sSpatial := sSpatial) hWellFormed
-        { id := x.id } { id := gamma.id } { id := beta.id })
+        { id := x.id } { id := gamma.id } { id := beta.id } (epsilon := epsilon))
       ss g
     let ⟨ss', g'⟩ := st'
     let st1 : TypedGraphSessionState α := { Γ := Γ, x := xv, nat := nat, ss := ss', g := g' }

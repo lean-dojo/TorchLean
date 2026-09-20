@@ -7,7 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.Backend.Attention
-public import NN.Runtime.Autograd.Engine.Cuda.Ops.NormSoftmax
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Core
+public import Mathlib.Algebra.GroupWithZero.Nat
+public import NN.Runtime.Autograd.Engine.Cuda.Convert
 
 /-!
 # CUDA Tape Operations: Attention
@@ -19,8 +21,8 @@ namespace Runtime
 namespace Autograd
 namespace Cuda
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Tape
 

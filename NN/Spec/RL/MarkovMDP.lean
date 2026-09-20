@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import Mathlib.MeasureTheory.Integral.Bochner.Basic
-public import Mathlib.MeasureTheory.Measure.Typeclasses.Probability
 public import Mathlib.Probability.Kernel.Defs
 public import NN.Spec.RL.Core
 
@@ -46,8 +45,8 @@ References:
 Naming note:
 
 - The names in this file live under `Spec.RL.Markov`. A reference to `Markov.MDP` is the
-  measurable-space Markov-kernel object, while `Spec.RL.FiniteMDP` and `Spec.RL.FiniteStochastic.MDP`
-  are the finite tensor layers.
+  measurable-space Markov-kernel object, while `Spec.RL.FiniteMDP` and
+  `Spec.RL.FiniteStochastic.MDP` are the finite tensor layers.
 - We keep `Policy`, `ValueFunction`, and `Valid` short inside the namespace because they are the
   standard mathematical words for this layer, and the namespace carries the disambiguating
   context.

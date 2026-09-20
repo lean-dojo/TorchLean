@@ -6,7 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Train.Core
+public import Aesop.BuiltinRules
+public import Mathlib.Data.Finset.Attr
+import Mathlib.Tactic.Bound.Init
+import Mathlib.Tactic.Finiteness.Attr
+import Mathlib.Tactic.SetLike
+import Mathlib.Tactic.ToAdditive
+import Mathlib.Tactic.ToDual
 
 /-!
 # Trainer API with metrics and logging
@@ -79,21 +85,36 @@ def renderReports {a : Type} [ToString a] (reports : Array (StepReport a)) : Arr
 This is a light wrapper around a "step" function that returns a new state and an output.
 It is still useful for very small tests that do not need full metrics.
 -/
+
+/-- The state and output produced by one stateful step. -/
+structure StepResult (State Output : Type) where
+  /-- State to pass to the next step. -/
+  nextState : State
+  /-- Output produced by this step. -/
+  output : Output
+
+/-- The final state and collected outputs from a fixed-length run. -/
+structure RunResult (State Output : Type) where
+  /-- State after every requested step has completed. -/
+  finalState : State
+  /-- Outputs in execution order. -/
+  outputs : Array Output
+
 /--
 Run a monadic step function for a fixed number of steps, collecting the per-step outputs.
 
 This is a generic utility (not Torch-specific): it threads a `state` value and accumulates an
 `out` value per step.
 -/
-def runStepsM {m : Type -> Type} [Monad m] {state out : Type}
-  (steps : Nat) (init : state) (step : state -> m (Prod state out)) :
-  m (Prod state (Array out)) := by
-  let rec go : Nat -> state -> Array out -> m (Prod state (Array out))
-    | 0, s, outputs => pure (s, outputs)
-    | n + 1, s, outputs => do
-        let (s', out) ← step s
-        go n s' (outputs.push out)
-  exact go steps init #[]
+def runSteps {m : Type -> Type} [Monad m] {State Output : Type}
+    (steps : Nat) (initialState : State)
+    (step : State -> m (StepResult State Output)) : m (RunResult State Output) := by
+  let rec go : Nat -> State -> Array Output -> m (RunResult State Output)
+    | 0, state, outputs => pure { finalState := state, outputs := outputs }
+    | n + 1, state, outputs => do
+        let result ← step state
+        go n result.nextState (outputs.push result.output)
+  exact go steps initialState #[]
 
 /-!
 ## Trainer structure
@@ -109,41 +130,44 @@ matches how training scripts typically print "after-update" metrics.
 -/
 structure Trainer (m : Type -> Type) (state : Type) (a : Type) where
   /-- Initial training state. -/
-  init : state
+  initialState : state
   /-- A single training step: update state and produce a report. -/
-  step : state -> m (Prod state (StepReport a))
+  step : state -> m (StepResult state (StepReport a))
   /-- Optional logger hook called after each step. -/
   logger : Nat -> state -> StepReport a -> m Unit
 
 namespace Trainer
 
 /-- Construct a `Trainer` with a no-op logger and collected step reports. -/
-def noLog {m : Type -> Type} [Monad m] {state a : Type}
-  (init : state) (step : state -> m (Prod state (StepReport a))) :
-  Trainer m state a :=
-  { init := init
+def withoutLogging {m : Type -> Type} [Monad m] {state a : Type}
+    (initialState : state) (step : state -> m (StepResult state (StepReport a))) :
+    Trainer m state a :=
+  { initialState := initialState
     step := step
     logger := fun _ _ _ => pure () }
 
 /-- Run a trainer for `steps` steps, returning the final state and the collected reports. -/
 def run {m : Type -> Type} [Monad m] {state a : Type}
-  (steps : Nat) (t : Trainer m state a) :
-  m (Prod state (Array (StepReport a))) := by
+    (steps : Nat) (trainer : Trainer m state a) :
+    m (RunResult state (StepReport a)) := by
   let rec go : Nat -> Nat -> state -> Array (StepReport a) ->
-      m (Prod state (Array (StepReport a)))
-    | 0, _, s, reports => pure (s, reports)
-    | n + 1, stepIdx, s, reports => do
-        let (s', report) ← t.step s
-        t.logger stepIdx s' report
-        go n (stepIdx + 1) s' (reports.push report)
-  exact go steps 0 t.init #[]
+      m (RunResult state (StepReport a))
+    | 0, _, currentState, reports =>
+        pure { finalState := currentState, outputs := reports }
+    | n + 1, stepIndex, currentState, reports => do
+        let result ← trainer.step currentState
+        trainer.logger stepIndex result.nextState result.output
+        go n (stepIndex + 1) result.nextState (reports.push result.output)
+  exact go steps 0 trainer.initialState #[]
 
 /-- Run a trainer and project the report stream to per-step losses. -/
 def runLosses {m : Type -> Type} [Monad m] {state a : Type}
-  (steps : Nat) (t : Trainer m state a) :
-  m (Prod state (Array a)) := do
-  let (s, reports) ← run (steps := steps) t
-  pure (s, reports.map (fun r => r.loss))
+    (steps : Nat) (trainer : Trainer m state a) :
+    m (RunResult state a) := do
+  let result ← run (steps := steps) trainer
+  pure
+    { finalState := result.finalState
+      outputs := result.outputs.map (fun report => report.loss) }
 
 end Trainer
 

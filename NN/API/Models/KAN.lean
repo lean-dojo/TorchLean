@@ -16,7 +16,7 @@ that structure visible: an edge family first expands every scalar input into bas
 KAN layer learns one coefficient per `(output, input, basis)` edge.
 
 The built-in family uses triangular piecewise-linear hats. Another family consists of a basis
-dimension and a TorchLean model from `[inDim]` to `[inDim * basisDim]`.
+size and a TorchLean model from `[inputWidth]` to `[inputWidth * basisSize]`.
 
 References:
 
@@ -29,26 +29,30 @@ References:
 namespace TorchLean
 
 
-open Spec Tensor
+open Spec TorchLean TorchLean.Tensor
 
 namespace nn
 namespace models
+namespace KAN
 
 /--
 Backend-compatible KAN edge family.
 
-An edge family turns each scalar input coordinate into `basisDim` features. A KAN layer then applies
-a learned linear map to all expanded features. The basis is a TorchLean model fragment, not an
-arbitrary Lean callback, so the resulting KAN can run in eager, typed graph, CPU, and CUDA training
-paths supported by the underlying operations.
+An edge family turns each scalar input coordinate into `basisSize` features. A KAN layer then
+applies a learned linear map to all expanded features. The basis is a TorchLean model fragment, not
+an arbitrary Lean callback, so the resulting KAN can run in eager, typed graph, CPU, and CUDA
+training paths supported by the underlying operations.
 -/
-structure KanEdgeFamily where
+structure EdgeFamily where
   /-- Short label shown in model summaries and training metadata. -/
   name : String
-  /-- Number of basis features produced per scalar input coordinate. -/
-  basisDim : Nat
-  /-- Basis expansion for an unbatched vector of length `inDim`. -/
-  basis : (inDim : Nat) → nn.Sequential [inDim] [inDim * basisDim]
+  /-- Number of basis features produced per scalar input coordinate. Must be positive. -/
+  basisSize : Nat
+  /-- Basis model for an unbatched feature vector. -/
+  basis : (inputWidth : Nat) →
+    nn.Sequential [inputWidth] [inputWidth * basisSize]
+
+namespace PiecewiseLinear
 
 /--
 Configuration for triangular piecewise-linear KAN edge bases.
@@ -56,22 +60,26 @@ Configuration for triangular piecewise-linear KAN edge bases.
 The basis functions are hats centered at the integer knots
 $0,\ldots,\mathrm{gridSize}-1$. The input is multiplied by `inputScale` before the hats are
 evaluated. For normalized data in $[0,1]$, setting
-$\mathrm{inputScale}=\mathrm{gridSize}-1$ spreads the grid across the full interval.
+$\mathrm{inputScale}=\mathrm{gridSize}-1$ spreads the grid across the full interval. The built-in
+family uses a nonnegative integer scale so the same definition works for every TorchLean scalar
+backend through `Context`'s natural-number conversion.
 -/
-structure KanPiecewiseLinear where
-  /-- Number of knots, hence the number of basis functions per scalar coordinate. -/
+structure Config where
+  /--
+  Number of knots, hence the number of basis functions per scalar coordinate. Must be positive.
+  -/
   gridSize : Nat
-  /-- Scale applied before basis evaluation; use $\mathrm{gridSize}-1$ for normalized $[0,1]$
-  inputs. -/
+  /--
+  Nonnegative integer scale applied before basis evaluation; use $\mathrm{gridSize}-1$ for
+  normalized $[0,1]$ inputs.
+  -/
   inputScale : Nat := 1
 deriving Repr
 
-namespace KanPiecewiseLinear
-
 /--
-Expand a tensor of shape `[inDim]` to all triangular basis features.
+Expand a tensor of shape `[inputWidth]` to all triangular basis features.
 
-The output is flattened row-major from a `(gridSize × inDim)` table:
+The output is flattened row-major from a `(gridSize × inputWidth)` table:
 $[\operatorname{basis}_0(x_0),\ldots,\operatorname{basis}_0(x_n),
 \operatorname{basis}_1(x_0),\ldots]$.
 
@@ -79,122 +87,163 @@ Each basis value is
 $\operatorname{ReLU}(1-|\mathrm{inputScale}\,x_i-k|)$, expressed directly in the ordinary
 TorchLean op language rather than through an opaque spline evaluator.
 -/
-def basisLayer (cfg : KanPiecewiseLinear) (inDim : Nat) :
-    nn.Sequential [inDim] [inDim * cfg.gridSize] :=
-  nn.of
-    { kind := s!"KANPiecewiseLinear(grid={cfg.gridSize},scale={cfg.inputScale})"
+def layer (config : Config) (inputWidth : Nat) :
+    nn.Sequential [inputWidth] [inputWidth * config.gridSize] :=
+  nn.Sequential.fromLayer
+    { kind := s!"KAN.PiecewiseLinear(grid={config.gridSize},scale={config.inputScale})"
       stateShapes := []
       initState := .nil
       requiresGrad := #[]
+      validateConfig := do
+        if inputWidth = 0 then
+          throw "KAN.PiecewiseLinear: input width must be positive"
+        if config.gridSize = 0 then
+          throw "KAN.PiecewiseLinear: grid size must be positive"
       forward := fun _ {α} _ _ =>
         fun {m} _ _ =>
           fun x =>
             ((do
-              let zeros : Tensor α [cfg.gridSize, inDim] :=
-                Spec.fill (0 : α) [cfg.gridSize, inDim]
-              let xBasis ← _root_.Runtime.Autograd.Torch.scale (m := m) (α := α) x
-                ((cfg.inputScale : Nat) : α)
-              let out0 ← _root_.Runtime.Autograd.Torch.const (m := m) (α := α) zeros
-              let out ← (List.finRange cfg.gridSize).foldlM (init := out0) (fun acc k => do
-                let centerT : Tensor α [inDim] :=
-                  Spec.fill ((k.val : Nat) : α) [inDim]
-                let oneT : Tensor α [inDim] :=
-                  Spec.fill (1 : α) [inDim]
-                let c ← _root_.Runtime.Autograd.Torch.const (m := m) (α := α) centerT
-                let ones ← _root_.Runtime.Autograd.Torch.const (m := m) (α := α) oneT
-                let shifted ← _root_.Runtime.Autograd.Torch.sub (m := m) (α := α) xBasis c
-                let dist ← _root_.Runtime.Autograd.Torch.abs (m := m) (α := α) shifted
-                let raw ← _root_.Runtime.Autograd.Torch.sub (m := m) (α := α) ones dist
-                let basis ← _root_.Runtime.Autograd.Torch.relu (m := m) (α := α) raw
-                let basisRow ← _root_.Runtime.Autograd.Torch.reshape (m := m) (α := α)
-                  (s₁ := [inDim]) (s₂ := [1, inDim]) basis (by simp [Spec.Shape.size])
-                let index : Tensor (Fin cfg.gridSize) [1] :=
-                  Spec.Tensor.ofFn (fun _ : Fin 1 => k)
-                _root_.Runtime.Autograd.Torch.scatterAdd (m := m) (α := α)
-                  (s := [cfg.gridSize, inDim]) 0 1 acc basisRow
-                  (_root_.Runtime.Autograd.Torch.dataConst (m := m) (α := α) index))
-              let flat ← _root_.Runtime.Autograd.Torch.reshape (m := m) (α := α)
-                (s₁ := [cfg.gridSize, inDim])
-                (s₂ := [cfg.gridSize * inDim])
+              let zeros : Tensor α [config.gridSize, inputWidth] :=
+                Tensor.full [config.gridSize, inputWidth] (0 : α)
+              let xBasis ← Runtime.Autograd.Torch.scale (m := m) (α := α) x
+                ((config.inputScale : Nat) : α)
+              let out0 ← Runtime.Autograd.Torch.const (m := m) (α := α) zeros
+              let out ← (List.finRange config.gridSize).foldlM (init := out0) (fun acc k => do
+                let centerT : Tensor α [inputWidth] :=
+                  Tensor.full [inputWidth] ((k.val : Nat) : α)
+                let oneT : Tensor α [inputWidth] :=
+                  Tensor.full [inputWidth] (1 : α)
+                let c ← Runtime.Autograd.Torch.const (m := m) (α := α) centerT
+                let ones ← Runtime.Autograd.Torch.const (m := m) (α := α) oneT
+                let shifted ← Runtime.Autograd.Torch.sub (m := m) (α := α) xBasis c
+                let dist ← Runtime.Autograd.Torch.abs (m := m) (α := α) shifted
+                let raw ← Runtime.Autograd.Torch.sub (m := m) (α := α) ones dist
+                let basis ← Runtime.Autograd.Torch.relu (m := m) (α := α) raw
+                let basisRow ← Runtime.Autograd.Torch.reshape (m := m) (α := α)
+                  (s₁ := [inputWidth]) (s₂ := [1, inputWidth]) basis
+                  (by simp [Spec.Shape.size])
+                let index : Tensor (Fin config.gridSize) [1] :=
+                  TorchLean.Tensor.ofFn (fun _ : Fin 1 => k)
+                Runtime.Autograd.Torch.scatterAdd (m := m) (α := α)
+                  (s := [config.gridSize, inputWidth]) 0 1 acc basisRow
+                  (Runtime.Autograd.Torch.dataConst (m := m) (α := α) index))
+              let flat ← Runtime.Autograd.Torch.reshape (m := m) (α := α)
+                (s₁ := [config.gridSize, inputWidth])
+                (s₂ := [config.gridSize * inputWidth])
                 out (by
                   simp [Spec.Shape.size, Nat.mul_comm])
-              _root_.Runtime.Autograd.Torch.reshape (m := m) (α := α)
-                (s₁ := [cfg.gridSize * inDim])
-                (s₂ := [inDim * cfg.gridSize])
+              Runtime.Autograd.Torch.reshape (m := m) (α := α)
+                (s₁ := [config.gridSize * inputWidth])
+                (s₂ := [inputWidth * config.gridSize])
                 flat (by
                   simp [Spec.Shape.size, Nat.mul_comm])
-            ) : m (_root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α)
-              [inDim * cfg.gridSize]))
+            ) : m (Runtime.Autograd.Model.RefTy (m := m) (α := α)
+              [inputWidth * config.gridSize]))
     }
 
 /-- Turn piecewise-linear triangular bases into a general KAN edge family. -/
-def edgeFamily (cfg : KanPiecewiseLinear) : KanEdgeFamily :=
-  { name := s!"piecewise-linear(grid={cfg.gridSize},scale={cfg.inputScale})"
-    basisDim := cfg.gridSize
-    basis := basisLayer cfg }
+def edgeFamily (config : Config) : EdgeFamily :=
+  { name := s!"KAN.PiecewiseLinear(grid={config.gridSize},scale={config.inputScale})"
+    basisSize := config.gridSize
+    basis := layer config }
 
-end KanPiecewiseLinear
+end PiecewiseLinear
 
 /-- Architecture of a Kolmogorov-Arnold network over feature vectors. -/
-structure KanConfig where
-  /-- Number of scalar input coordinates. -/
-  inDim : Nat
-  /-- Hidden KAN widths. Each entry creates one KAN layer followed by `tanh`. -/
-  hidden : List Nat := []
-  /-- Number of output coordinates/classes. -/
-  outDim : Nat
+structure Config where
+  /-- Number of scalar input coordinates. Must be positive. -/
+  inputWidth : Nat
+  /-- Hidden KAN widths. Each must be positive and creates one KAN layer followed by `tanh`. -/
+  hiddenWidths : List Nat := []
+  /-- Number of output coordinates/classes. Must be positive. -/
+  outputWidth : Nat
   /-- Edge basis family. The default is a compact triangular piecewise-linear basis. -/
-  edge : KanEdgeFamily := KanPiecewiseLinear.edgeFamily { gridSize := 8 }
+  edge : EdgeFamily := PiecewiseLinear.edgeFamily { gridSize := 8 }
 
-namespace KanConfig
+namespace Config
 
-/-- Input shape with arbitrary leading dimensions. -/
-abbrev inputShape (cfg : KanConfig) (leading : List Nat := []) : List Nat :=
-  leading ++ [cfg.inDim]
+/-- Validate every architecture width and the selected edge family before construction. -/
+def validate (config : Config) : Except String Unit := do
+  if config.inputWidth = 0 then
+    throw "KAN: input width must be positive"
+  if ∃ width ∈ config.hiddenWidths, width = 0 then
+    throw "KAN: hidden widths must be positive"
+  if config.outputWidth = 0 then
+    throw "KAN: output width must be positive"
+  if config.edge.basisSize = 0 then
+    throw "KAN: edge basis size must be positive"
 
-/-- Output shape with the same leading dimensions as the input. -/
-abbrev outputShape (cfg : KanConfig) (leading : List Nat := []) : List Nat :=
-  leading ++ [cfg.outDim]
+/-- Typed input boundary with arbitrary batch axes. -/
+abbrev input (config : Config) (batchShape : Shape := []) : Shape :=
+  batchShape.appendDim config.inputWidth
 
-end KanConfig
+/-- Typed output boundary with the same batch axes as the input. -/
+abbrev output (config : Config) (batchShape : Shape := []) : Shape :=
+  batchShape.appendDim config.outputWidth
+
+end Config
 
 /--
 One KAN layer over a feature vector.
 
 The layer first applies the selected edge basis to every input coordinate, then learns coefficients
-with an ordinary linear map from the expanded features to `outDim`.
+with an ordinary linear map from the expanded features to `outputWidth`.
 -/
-def kanLayer (inDim outDim : Nat) (edge : KanEdgeFamily) :
-  nn.Builder (nn.Sequential [inDim] [outDim]) :=
-  nn.Sequential![
-    pure (edge.basis inDim),
-    nn.linear (inDim * edge.basisDim) outDim
-  ]
+def layer (inputWidth outputWidth : Nat) (edge : EdgeFamily) :
+  nn.Builder (nn.Sequential [inputWidth] [outputWidth]) :=
+  if inputWidth = 0 then
+    pure <| nn.Internal.invalidConfiguration [inputWidth] [outputWidth]
+      "KAN" "KAN: input width must be positive"
+  else if outputWidth = 0 then
+    pure <| nn.Internal.invalidConfiguration [inputWidth] [outputWidth]
+      "KAN" "KAN: output width must be positive"
+  else if edge.basisSize = 0 then
+    pure <| nn.Internal.invalidConfiguration [inputWidth] [outputWidth]
+      "KAN" "KAN: edge basis size must be positive"
+  else
+    nn.Sequential![
+      pure (edge.basis inputWidth),
+      nn.linear (inputWidth * edge.basisSize) outputWidth
+    ]
 
 namespace Internal
 
 /-- Recursive KAN stack over one feature vector. Hidden layers use `tanh`. -/
-def kanStack (edge : KanEdgeFamily) :
-    (inDim : Nat) → (hidden : List Nat) → (outDim : Nat) →
-      nn.Builder (nn.Sequential [inDim] [outDim])
-  | inDim, [], outDim => kanLayer inDim outDim edge
-  | inDim, h :: hs, outDim =>
-      nn.Sequential![kanLayer inDim h edge, nn.tanh, kanStack edge h hs outDim]
+def stack (edge : EdgeFamily) :
+    (inputWidth : Nat) → (hiddenWidths : List Nat) → (outputWidth : Nat) →
+      nn.Builder (nn.Sequential [inputWidth] [outputWidth])
+  | inputWidth, .nil, outputWidth => layer inputWidth outputWidth edge
+  | inputWidth, .cons hiddenWidth remainingWidths, outputWidth =>
+      nn.Sequential![
+        layer inputWidth hiddenWidth edge,
+        nn.tanh,
+        stack edge hiddenWidth remainingWidths outputWidth
+      ]
 
 end Internal
 
+end KAN
+
 /--
-Build a KAN over arbitrary leading dimensions.
+Build a KAN over any `batchShape`.
 
 Task semantics are deliberately not baked into the model name: use `Trainer.new` with
-`task := .regression`, `.oneHotCrossEntropy axis`, or `.custom ...` with the same KAN
+`objective := .meanSquaredError`, `.oneHotCrossEntropy axis`, or `.custom ...` with the same KAN
 constructor.
 -/
-def kan (cfg : KanConfig) (leading : List Nat := []) :
-    nn.Builder (nn.Sequential (cfg.inputShape leading) (cfg.outputShape leading)) :=
-  do
-    let sample ← Internal.kanStack cfg.edge cfg.inDim cfg.hidden cfg.outDim
-    nn.mapEach leading sample
+def kan (config : KAN.Config) (batchShape : Shape := []) :
+    nn.Builder (nn.Sequential (config.input batchShape) (config.output batchShape)) :=
+  match config.validate with
+  | .error message =>
+      pure <| nn.Internal.invalidConfiguration
+        (config.input batchShape) (config.output batchShape) "KAN" message
+  | .ok () => do
+      let sample ←
+        KAN.Internal.stack config.edge config.inputWidth config.hiddenWidths
+          config.outputWidth
+      pure (by
+        simpa [KAN.Config.input, KAN.Config.output, Shape.appendDim_eq_concat] using
+          nn.mapLeading batchShape sample)
 
 end models
 end nn

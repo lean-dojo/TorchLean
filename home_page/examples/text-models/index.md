@@ -24,22 +24,16 @@ corpus” flag or an explicit `--data-file` path.
 
 ## Tokenization: Bytes First, BPE When Requested
 
-The main tutorial path tokenizes bytes directly. Every UTF-8 byte is a token, so the vocabulary is
-fixed and tiny (256). That choice is practical:
+The main tutorial path tokenizes bytes directly. `text.Tokenizer.byte` maps every UTF-8 byte to
+one token id in `[0, 256)`, so its `vocabularySize` is fixed. That choice is practical:
 
 - there is no external BPE model file to keep in sync,
 - there is no “which tokenizer version did you mean?” ambiguity,
 - it makes boundary mistakes easy to spot (and easy to turn into case studies).
 
-The code-level version is:
-
-```lean
-def vocab : Nat := text.Tokenizer.byte.vocabSize
-```
-
-That line is from `NN.Examples.Models.Sequence.Gpt2`. It means the tutorial model is not silently
-depending on a tokenizer JSON, BPE merge table, or Hugging Face cache entry. The byte tokenizer is
-small enough that the input and target tensors can be written down directly.
+The runnable GPT example uses all 256 byte ids. Training and generation therefore share the same
+vocabulary, and generated ids can be decoded by the byte tokenizer without a lossy modulo mapping.
+The model width and context length keep the example small.
 
 The larger `text_gpt2` command can also use GPT-2 BPE files:
 
@@ -64,8 +58,8 @@ The training data is represented directly as typed supervised samples. The examp
 For GPT-2, the sample is a one-hot matrix for causal language modeling:
 
 ```lean
-abbrev σ : List Nat := [batch, seqLen, vocab]
-abbrev τ : List Nat := σ
+abbrev input : Shape := [batchSize, contextLength, vocabularySize]
+abbrev output : Shape := input
 ```
 
 The function `Data.CausalLM.oneHotSample` converts a token tensor whose final axis has length
@@ -75,10 +69,10 @@ target. The leading shape determines whether the sample is batched.
 The Lean sample constructor is explicit:
 
 ```lean
-def mkSampleFromTokenIds (toks : Tensor Nat [seqLen + 1]) :
-    Sample.Supervised Float σ τ :=
-  Data.CausalLM.oneHotSample (α := Float) [batch] seqLen vocab
-    (Tensor.repeatAxis 0 batch (toks.map byteBucket))
+def batchSampleFromTokenIds (idsByBatch : Tensor Nat [batchSize, contextLength + 1]) :
+    Sample.Supervised Float input output :=
+  Data.CausalLM.oneHotSample (α := Float) [batchSize] contextLength vocabularySize
+    (idsByBatch.map byteIndex)
 ```
 
 The tutorial keeps the dataloader convention visible: a supervised example is a pair of typed
@@ -95,31 +89,40 @@ but it is still large enough to learn short structure from Tiny Shakespeare.
 The model declaration is a normal Lean value:
 
 ```lean
-def model : nn.Builder (nn.Sequential σ τ) :=
+def model : nn.Builder (nn.Sequential input output) :=
   nn.models.CausalTransformer.oneHot
-    { seqLen := seqLen
-      vocab := vocab
-      numHeads := numHeads
-      headDim := headDim
-      ffnHidden := ffnHidden
-      layers := layers }
-    [batch]
+    { sequenceLength := contextLength
+      vocabularySize := vocabularySize
+      headCount := attentionHeads
+      headWidth := attentionHeadWidth
+      feedForwardWidth := feedForwardWidth
+      layerCount := transformerLayers }
+    (batchShape := [batchSize])
 ```
 
-The configuration describes the Transformer itself. The final argument supplies the leading batch
-shape for this particular training run; the same constructor also accepts an unbatched sequence or
-several leading collection axes.
+The configuration describes the Transformer itself. The `batchShape` argument supplies the leading
+batch shape for this particular training run; the same constructor also accepts an unbatched
+sequence or several leading collection axes.
 
 The training loop stays on the same public API used by the simpler quickstarts:
 
 ```lean
-let trainer := Trainer.new model <|
-  Trainer.Config.fromRunConfig run (.oneHotCrossEntropy 2)
-let trained ← trainer.train data train.options probes
+let run := Trainer.RunConfig.fromRuntime runtime
+  { optimizer := optim.adam { learningRate := options.training.learningRate } }
+let objective : Trainer.Objective output := .oneHotCrossEntropy 2
+let trainer := Trainer.new model (Trainer.RunConfig.forObjective run objective)
+let trained ← trainer.train (Data.fromSamples samples)
+  { steps := options.training.steps
+    samplesPerStep := options.training.batchSize
+    loadCheckpoint? := options.checkpoint.loadCheckpoint?
+    saveCheckpoint? := options.checkpoint.saveCheckpoint? }
 trained.printSummary
 ```
 
-The surrounding code builds a bank of token windows from the corpus, reports before/after
+`Trainer.RunConfig.fromRuntime` turns the parsed `--device`, `--arithmetic`, and `--execution`
+flags into a run configuration, and `forObjective` attaches the loss. `TrainOptions.steps` is
+required; `samplesPerStep` is the number of dataset items whose gradients are averaged before one
+update. The surrounding code builds a bank of token windows from the corpus, reports before/after
 predictions, saves checkpoints when requested, and samples text from the trained prediction closure.
 
 Sampling is also explicit: the example computes logits, applies temperature and top-k filtering, and
@@ -132,7 +135,7 @@ Try the short CUDA run:
 lake -R -K cuda=true exe torchlean gpt2 --device cuda --tiny-shakespeare \
   --steps 300 --windows 32 --lr 0.001 --prompt "ROMEO:" --generate 220 \
   --temperature 0.85 --top-k 24 --repeat-penalty 1.25 --repeat-window 24 \
-  --sample-seed 11 --log data/model_zoo/gpt2_trainlog.json
+  --sample-seed 11 --log data/examples/gpt2_trainlog.json
 ```
 
 For a tiny runtime check, keep the same CUDA path and shrink the workload:
@@ -169,19 +172,25 @@ logits out, cross-entropy loss, optimizer step, JSON log.
 The Mamba example has the same tutorial shape:
 
 ```lean
-abbrev σ : List Nat := nn.models.Mamba.inputShape cfg seqLen
-abbrev τ : List Nat := nn.models.Mamba.outputShape cfg seqLen
+abbrev modelConfig : nn.models.Mamba.Config :=
+  { vocabularySize := vocabularySize
+    modelWidth := stateWidth }
 
-def model : nn.Builder (nn.Sequential σ τ) :=
-  nn.models.Mamba.textLM cfg seqLen
+abbrev input : Shape := modelConfig.input contextLength
+abbrev output : Shape := modelConfig.output contextLength
+
+def model : nn.Builder (nn.Sequential input output) :=
+  nn.models.Mamba.languageModel modelConfig contextLength
 ```
 
 and the training body is still an ordinary trainer call:
 
 ```lean
+let run := Trainer.RunConfig.fromRuntime runtime
+  { optimizer := optim.adam { learningRate := options.training.learningRate } }
 let trainer := Trainer.new model <|
-  Trainer.Config.fromRunConfig run (.oneHotCrossEntropy 1)
-let trained ← trainer.train data train.options probes
+  Trainer.RunConfig.forObjective run (.oneHotCrossEntropy 1)
+let trained ← trainer.train (Data.fromSamples samples) (options.training.trainOptions)
 trained.printSummary
 ```
 

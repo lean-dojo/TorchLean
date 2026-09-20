@@ -7,14 +7,16 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Tape.Nodes.Reductions
+public import NN.Proofs.Autograd.Tape.Nodes.Softmax
+public import Mathlib.Analysis.InnerProductSpace.Calculus
 
 @[expose] public section
 
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -34,7 +36,7 @@ Forward:
 `-(1/m) * ⟪target, log_softmax_last(logits)⟫`
 
 This matches the common PyTorch `cross_entropy` convention with one-hot targets,
-using `log_softmax` on logits (numerically stable versus `log(softmax)` for floats; here
+using `logSoftmax` on logits (numerically stable versus `log(softmax)` for floats; here
 $\mathbb R$).
 -/
 def crossEntropyOneHotLast {Γ : List Shape} {m n : Nat}
@@ -87,8 +89,8 @@ def crossEntropyOneHotLast {Γ : List Shape} {m n : Nat}
       let dLogits : Vec (m * n) := scale • LogSoftmaxLastAxis.vjpMN (m := m) (n := n) xMN tMN
       let dTarget : Vec (m * n) := scale • logp
       have hL :
-          inner ℝ (vecOfFun (n := Spec.Shape.size Shape.scalar) (fun _ => (-c) * (inner ℝ tMN dlogp +
-            inner ℝ dtMN logp))) δV
+          inner ℝ (vecOfFun (n := Spec.Shape.size Shape.scalar)
+            (fun _ => (-c) * (inner ℝ tMN dlogp + inner ℝ dtMN logp))) δV
             =
           ((-c) * (inner ℝ tMN dlogp + inner ℝ dtMN logp)) * δ0 := by
         convert
@@ -138,8 +140,8 @@ def crossEntropyOneHotLast {Γ : List Shape} {m n : Nat}
       -- combine
       calc
         inner ℝ
-            (vecOfFun (n := Spec.Shape.size Shape.scalar) (fun _ => (-c) * (inner ℝ tMN dlogp + inner ℝ
-              dtMN logp)))
+            (vecOfFun (n := Spec.Shape.size Shape.scalar)
+              (fun _ => (-c) * (inner ℝ tMN dlogp + inner ℝ dtMN logp)))
             δV
             =
           ((-c) * (inner ℝ tMN dlogp + inner ℝ dtMN logp)) * δ0 := hL
@@ -164,7 +166,7 @@ def crossEntropyOneHotLast {Γ : List Shape} {m n : Nat}
             -- fold back through `CtxVec.single` and `inner_add_right`
             simp [inner_add_right, hA, hB])
 
-/-- `NodeFDerivCorrect` for `cross_entropy_one_hot_last` (one-hot targets; last-axis reduction). -/
+/-- `NodeFDerivCorrect` for `crossEntropyOneHotLast` (one-hot targets; last-axis reduction). -/
 def crossEntropyOneHotLastFderiv {Γ : List Shape} {m n : Nat}
     (logits target : Idx Γ (.dim m (.dim n .scalar))) :
     NodeFDerivCorrect (crossEntropyOneHotLast (Γ := Γ) (m := m) (n := n) logits target) := by

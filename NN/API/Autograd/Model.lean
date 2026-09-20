@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Sample
 public import NN.API.Neural.Builders
+public import NN.API.Sample -- shake: keep
 
 /-!
 # Model Automatic Differentiation
@@ -25,311 +25,282 @@ namespace autograd
 namespace model
 
 /-
-Model-shaped autograd: a TorchLean `NN.Seq` plus an `OutputLoss` over its output.
+Model-shaped autograd: a TorchLean `NN.Seq` plus a `Loss` over its output.
 
 This covers the common training use case.
 -/
 
 /-- Complete model state, indexed by its statically known tensor shapes. -/
-abbrev State {inputShape outputShape : List Nat}
-    (model : nn.Sequential inputShape outputShape) (α : Type) :=
-  _root_.TorchLean.TensorPack α
-    (_root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes model)
+abbrev State {σ τ : Shape}
+    (model : nn.Sequential σ τ) (α : Type) [TorchLean.Storage α] :=
+  nn.State α (Runtime.Autograd.Model.Layers.Seq.stateShapes model)
 
-/-- A scalar loss computed from a model output and its target. -/
-abbrev OutputLoss (outputShape targetShape : List Nat) :=
-  ∀ {α : Type}, [Context α] → [DecidableEq Shape] →
-    {m : Type → Type} → [Monad m] →
-      [_root_.Runtime.Autograd.Torch.Ops (m := m) (α := α)] →
-      _root_.TorchLean.Runtime.ValueRef (m := m) (α := α) outputShape →
-      _root_.TorchLean.Runtime.ValueRef (m := m) (α := α) targetShape →
-      m (_root_.TorchLean.Runtime.ValueRef
-        (m := m) (α := α) ([] : List Nat))
+/-- Construct a model-shaped state whose every tensor contains `value`. -/
+def fullState {σ τ : Shape}
+    (model : nn.Sequential σ τ)
+    {α : Type} [TorchLean.Storage α] (value : α) : State model α :=
+  nn.State.full value
 
-/-- Cast a model's initial `Float` state into another scalar representation. -/
-def initStateWith {inputShape outputShape : List Nat}
-    (model : nn.Sequential inputShape outputShape)
-    {α : Type} (cast : Float → α) : State model α :=
-  _root_.Runtime.Autograd.TorchLean.Module.castPack cast
-    (_root_.Runtime.Autograd.TorchLean.NN.Seq.initState model)
+/-- A checked scalar loss computed from a model output and its target. -/
+structure Loss (τ υ : Shape) : Type 1 where
+  /-- Operation-polymorphic loss program. -/
+  forward : ∀ {α : Type}, [TorchLean.Storage α] → [Context α] → {m : Type → Type} → [Monad m] →
+      [Runtime.Autograd.Torch.Ops (m := m) (α := α)] →
+      TorchLean.Runtime.ValueRef (m := m) (α := α) τ →
+      TorchLean.Runtime.ValueRef (m := m) (α := α) υ →
+      m (TorchLean.Runtime.ValueRef
+        (m := m) (α := α) [])
+  /-- Configuration checks performed before lowering or execution. -/
+  validate : Except String Unit := pure ()
 
-/-- Initialize model state in a scalar representation that accepts host `Float` values. -/
-def initState {inputShape outputShape : List Nat}
-    (model : nn.Sequential inputShape outputShape)
-    {α : Type} [Runtime.FromFloat α] : State model α :=
-  initStateWith model (Runtime.ofFloat (α := α))
+/-- Initialize model state in an element type that accepts host `Float` values. -/
+def initialState {σ τ : Shape}
+    (model : nn.Sequential σ τ)
+    {α : Type} [TorchLean.Storage α] [Runtime.FromFloat α] : State model α :=
+  nn.State.Internal.fromTensorPack <|
+    Runtime.Autograd.Model.Module.castPack (Runtime.ofFloat (α := α))
+      (Runtime.Autograd.Model.Layers.Seq.initState model)
 
-namespace OutputLoss
+namespace Loss
 
 /-- Mean-squared error between a model output and its target. -/
-def mse {outputShape : List Nat}
-    (reduction : _root_.TorchLean.Loss.Reduction := .mean) :
-    model.OutputLoss outputShape outputShape :=
-  fun {α} _ _ => fun {m} _ _ output target =>
-    _root_.TorchLean.Loss.mse
-      (m := m) (α := α) (s := Shape.ofList outputShape) output target
-      (reduction := reduction)
+def meanSquaredError {τ : Shape}
+    (reduction : TorchLean.Loss.Reduction := .mean) :
+    model.Loss τ τ :=
+  { forward := fun {α} _ _ => fun {m} _ _ output target =>
+      TorchLean.Loss.mse
+        (m := m) (α := α) (s := τ) output target
+        (reduction := reduction) }
 
 /-- Cross-entropy between logits and one-hot targets along the selected class dimension. -/
-def oneHotCrossEntropy {outputShape : List Nat}
-    (axis : Nat) [Shape.AxisInBounds axis (Shape.ofList outputShape)]
-    (reduction : _root_.TorchLean.Loss.Reduction := .mean) :
-    model.OutputLoss outputShape outputShape :=
-  fun {α} _ _ => fun {m} _ _ logits target =>
-    _root_.TorchLean.Loss.oneHotCrossEntropy
-      (m := m) (α := α) (s := Shape.ofList outputShape) axis logits target
-      (reduction := reduction)
+def oneHotCrossEntropy {τ : Shape}
+    (axis : Nat)
+    (reduction : TorchLean.Loss.Reduction := .mean) :
+    model.Loss τ τ :=
+  if axisInBounds : axis < τ.rank then
+    letI : Spec.Shape.AxisInBounds axis τ :=
+      Spec.Shape.AxisInBounds.ofRank axisInBounds
+    { forward := fun {elementType} _ _ => fun {m} _ _ logits target =>
+        TorchLean.Loss.oneHotCrossEntropy
+          (m := m) (α := elementType) (s := τ) axis logits target
+          (reduction := reduction) }
+  else
+    { forward := fun {elementType} _ _ => fun {m} _ _ logits _target =>
+        TorchLean.Loss.mse
+          (m := m) (α := elementType) (s := τ) logits logits
+          (reduction := .sum)
+      validate :=
+        .error s!"OneHotCrossEntropy: axis {axis} is out of bounds for rank {τ.rank}" }
 
 /-- Stop gradients through the model output before evaluating `loss`. -/
-def detach {outputShape targetShape : List Nat}
-    (loss : model.OutputLoss outputShape targetShape) :
-    model.OutputLoss outputShape targetShape :=
-  fun {α} _ _ => fun {m} _ _ output target => do
-    let output' ← _root_.Runtime.Autograd.TorchLean.F.detach
-      (m := m) (α := α) (s := Shape.ofList outputShape) output
-    loss (α := α) (m := m) output' target
+def detach {τ υ : Shape}
+    (loss : model.Loss τ υ) :
+    model.Loss τ υ :=
+  { forward := fun {α} _ _ => fun {m} _ _ output target => do
+      let detachedOutput ← Runtime.Autograd.Model.F.detach
+        (m := m) (α := α) (s := τ) output
+      loss.forward (α := α) (m := m) detachedOutput target
+    validate := loss.validate }
 
-end OutputLoss
+end Loss
 
-/-- Lower `loss (model state input) target` to a scalar typed graph. -/
-def lossProgram {inputShape outputShape targetShape : List Nat}
-    (model : nn.Sequential inputShape outputShape)
-    (loss : OutputLoss outputShape targetShape) :
-    ∀ {α : Type}, [Context α] → [DecidableEq Shape] →
-      _root_.Runtime.Autograd.TorchLean.Program α
-        (_root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes model ++
-          [Shape.ofList inputShape, Shape.ofList targetShape])
-        ([] : List Nat) :=
+/-- Lower `loss (model state input) target` to the typed scalar program used by autograd. -/
+def Internal.lossProgram {σ τ υ : Shape}
+    (model : nn.Sequential σ τ)
+    (loss : Loss τ υ) :
+    ∀ {α : Type}, [TorchLean.Storage α] → [Context α] → Runtime.Autograd.Model.Program α
+        (Runtime.Autograd.Model.Layers.Seq.stateShapes model ++
+          [σ, υ])
+        [] :=
   fun {α} _ _ => fun {m} _ _ =>
-    _root_.Runtime.Autograd.Torch.CurriedRef.curry
-      (Ref := fun s => _root_.TorchLean.Runtime.ValueRef (m := m) (α := α) s)
-      (ss := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes model ++
-        [Shape.ofList inputShape, Shape.ofList targetShape])
-      (β := m (_root_.TorchLean.Runtime.ValueRef
-        (m := m) (α := α) ([] : List Nat)))
-      (fun args => do
+    Runtime.Autograd.Torch.CurriedRef.curry
+      (Ref := fun s => TorchLean.Runtime.ValueRef (m := m) (α := α) s)
+      (ss := Runtime.Autograd.Model.Layers.Seq.stateShapes model ++
+        [σ, υ])
+      (β := m (TorchLean.Runtime.ValueRef
+        (m := m) (α := α) []))
+      (fun arguments => do
         let (state, inputs) :=
-          _root_.Runtime.Autograd.Torch.RefList.split
-            (Ref := fun s => _root_.TorchLean.Runtime.ValueRef
+          Runtime.Autograd.Torch.RefList.split
+            (Ref := fun s => TorchLean.Runtime.ValueRef
               (m := m) (α := α) s)
-            (ss₁ := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes model)
-            (ss₂ := [Shape.ofList inputShape, Shape.ofList targetShape]) args
+            (ss₁ := Runtime.Autograd.Model.Layers.Seq.stateShapes model)
+            (ss₂ := [σ, υ]) arguments
         let (input, target) := match inputs with
           | .cons input (.cons target .nil) => (input, target)
         let output ←
-          _root_.Runtime.Autograd.Torch.CurriedRef.uncurry
-            (Ref := fun s => _root_.TorchLean.Runtime.ValueRef
+          Runtime.Autograd.Torch.CurriedRef.uncurry
+            (Ref := fun s => TorchLean.Runtime.ValueRef
               (m := m) (α := α) s)
-            (ss := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes model ++
-              [Shape.ofList inputShape])
-            (β := m (_root_.TorchLean.Runtime.ValueRef
-              (m := m) (α := α) (Shape.ofList outputShape)))
-            (_root_.Runtime.Autograd.TorchLean.NN.Seq.forward model (α := α))
-            (_root_.Runtime.Autograd.Torch.RefList.append state (.cons input .nil))
-        loss (α := α) (m := m) output target)
+            (ss := Runtime.Autograd.Model.Layers.Seq.stateShapes model ++
+              [σ])
+            (β := m (TorchLean.Runtime.ValueRef
+              (m := m) (α := α) τ))
+            (Runtime.Autograd.Model.Layers.Seq.forward model (α := α))
+            (Runtime.Autograd.Torch.RefList.append state (.cons input .nil))
+        loss.forward (α := α) (m := m) output target)
+
+/-- Reject an invalid model or loss before lowering an autograd program. -/
+def Internal.validateLoss {σ τ υ : Shape}
+    (model : nn.Sequential σ τ) (loss : Loss τ υ) : IO Unit := do
+  match nn.validate model with
+  | .ok () => pure ()
+  | .error message => throw <| IO.userError message
+  match loss.validate with
+  | .ok () => pure ()
+  | .error message => throw <| IO.userError message
 
 /--
-Gradient of a model loss with respect to every tensor in the model state.
+Differentiate a model loss with respect to every tensor in the model state.
 
-The result has the same shape-indexed layout as `State model α`. For models with persistent buffers,
-this computes mathematical sensitivities for those entries as well; `nn.requiresGrad` separately
+The result has the same shape-indexed layout as `State model α`. Set `value := true` to return
+`(grad, lossValue)` from the same evaluation. For models with persistent buffers, this
+computes mathematical sensitivities for those entries as well; `nn.requiresGrad` separately
 controls which state tensors an optimizer updates.
 -/
-def gradState {inputShape outputShape targetShape : List Nat}
-    (model : nn.Sequential inputShape outputShape) (loss : OutputLoss outputShape targetShape)
-    {α : Type} [_root_.Context α] [DecidableEq Shape]
+def grad {σ τ υ : Shape}
+    (model : nn.Sequential σ τ) (loss : Loss τ υ)
+    {α : Type} [TorchLean.Storage α] [Context α]
     (state : State model α)
-    (x : Tensor α inputShape) (target : Tensor α targetShape) :
-    IO (State model α) :=
-  _root_.Runtime.Autograd.TorchLean.Autodiff.gradParams
-    (α := α)
-    (paramShapes := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes model)
-    (inputShapes := [Shape.ofList inputShape, Shape.ofList targetShape])
-    (lossProgram model loss) state (.cons x (.cons target .nil))
+    (input : Tensor α σ) (target : Tensor α υ)
+    (value : Bool := false) :
+    IO (match value with
+      | false => State model α
+      | true => State model α × Tensor α []) := by
+  cases value with
+  | false =>
+      exact do
+        Internal.validateLoss model loss
+        let (grad, _) ← Runtime.Autograd.Model.Autodiff.gradients
+          (α := α)
+          (paramShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes model)
+          (inputShapes := [σ, υ])
+          (Internal.lossProgram model loss)
+          (nn.State.Internal.toTensorPack state)
+          (TorchLean.TensorPack.pair input target)
+        pure (nn.State.Internal.fromTensorPack grad)
+  | true =>
+      exact do
+        Internal.validateLoss model loss
+        let stateShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes model
+        let graph ←
+          Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph (α := α)
+            (paramShapes := stateShapes)
+            (inputShapes := [σ, υ])
+            (Internal.lossProgram model loss)
 
-/-- Gradient of the loss w.r.t. the inputs (`x` and `target`). -/
-def gradInputs {inputShape outputShape targetShape : List Nat}
-    (model : nn.Sequential inputShape outputShape) (loss : OutputLoss outputShape targetShape)
-    {α : Type} [_root_.Context α] [DecidableEq Shape]
-    (state : State model α)
-    (x : Tensor α inputShape) (target : Tensor α targetShape) :
-    IO (_root_.TorchLean.TensorPack α
-      [Shape.ofList inputShape, Shape.ofList targetShape]) :=
-  _root_.Runtime.Autograd.TorchLean.Autodiff.gradInputs
-    (α := α)
-    (paramShapes := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes model)
-    (inputShapes := [Shape.ofList inputShape, Shape.ofList targetShape])
-    (lossProgram model loss) state (.cons x (.cons target .nil))
+        let arguments : TorchLean.TensorPack α
+            (stateShapes ++ [σ, υ]) :=
+          TorchLean.TensorPack.append (ss₁ := stateShapes)
+            (ss₂ := [σ, υ])
+            (nn.State.Internal.toTensorPack state)
+            (TorchLean.TensorPack.pair input target)
+
+        let (allGradients, lossValue) ←
+          Runtime.Autograd.Model.Autodiff.Impl.vjpWithValue
+            graph arguments (Tensor.scalar (1 : α))
+
+        let (grad, _) :=
+          TorchLean.TensorPack.split (α := α) (ss₁ := stateShapes)
+            (ss₂ := [σ, υ]) allGradients
+        pure (nn.State.Internal.fromTensorPack grad, lossValue)
 
 /--
-Forward+backward result for a scalar loss built from a model output.
+Vector-Jacobian product with respect to the model and its input.
 
-PyTorch comparison: this is the "compute loss + backward" payload, but with shapes tracked.
+The returned pair is `(stateGrad, inputGrad)`. Both values come from one reverse pass.
 -/
-structure ValueAndGrads {inputShape outputShape targetShape : List Nat}
-    (model : nn.Sequential inputShape outputShape) (α : Type) where
-  /-- Value at the current point. -/
-  value : Tensor α ([] : List Nat)
-  /-- Gradients with respect to the complete model state. -/
-  dState : State model α
-  /-- Gradient w.r.t. input. -/
-  dx : Tensor α inputShape
-  /-- Gradient w.r.t. target. -/
-  dtarget : Tensor α targetShape
-
-/--
-Run `loss(model(state, x), target)` and compute gradients w.r.t:
-
-- model state,
-- `x`,
-- `target`.
-
-This hides the `TypedScalarGraph`/argument-pack boilerplate for the common "one sample" case.
--/
-def valueAndGrads {inputShape outputShape targetShape : List Nat}
-    (model : nn.Sequential inputShape outputShape) (loss : OutputLoss outputShape targetShape)
-    {α : Type} [_root_.Context α] [DecidableEq Shape]
+def vjp {σ τ : Shape} (model : nn.Sequential σ τ)
+    {α : Type} [TorchLean.Storage α] [Context α]
     (state : State model α)
-    (x : Tensor α inputShape) (target : Tensor α targetShape) :
-    IO (ValueAndGrads (model := model) (α := α)
-      (inputShape := inputShape) (targetShape := targetShape)) := do
-  let stateShapes := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes model
-  let c ←
-    _root_.Runtime.Autograd.TorchLean.Autodiff.lowerScalarToTypedGraph (α := α)
-      (paramShapes := stateShapes)
-      (inputShapes := [Shape.ofList inputShape, Shape.ofList targetShape])
-      (lossProgram model loss)
-
-  let args : _root_.TorchLean.TensorPack α
-      (stateShapes ++ [Shape.ofList inputShape, Shape.ofList targetShape]) :=
-    _root_.TorchLean.TensorPack.append (ss₁ := stateShapes)
-      (ss₂ := [Shape.ofList inputShape, Shape.ofList targetShape]) state
-      (.cons x (.cons target .nil))
-
-  let value : Tensor α ([] : List Nat) :=
-    _root_.Runtime.Autograd.Torch.TypedScalarGraph.forward (α := α)
-      (Γ := stateShapes ++ [Shape.ofList inputShape, Shape.ofList targetShape]) c args
-
-  let gAll : _root_.TorchLean.TensorPack α
-      (stateShapes ++ [Shape.ofList inputShape, Shape.ofList targetShape]) :=
-    _root_.Runtime.Autograd.Torch.TypedScalarGraph.backward (α := α)
-      (Γ := stateShapes ++ [Shape.ofList inputShape, Shape.ofList targetShape]) c args
-
-  let (dps, dxys) :=
-    _root_.TorchLean.TensorPack.split (α := α) (ss₁ := stateShapes)
-      (ss₂ := [Shape.ofList inputShape, Shape.ofList targetShape]) gAll
-
+    (input : Tensor α σ) (outputGradient : Tensor α τ) :
+    IO (State model α × Tensor α σ) := do
+  IO.ofExcept (nn.validate model)
+  let (stateGrad, inputGrads) ← Runtime.Autograd.Model.Autodiff.vjp
+    (α := α)
+    (paramShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes model)
+    (inputShapes := [σ]) (τ := τ)
+    (fun {β} _ _ =>
+      Runtime.Autograd.Model.Layers.Seq.forward model (α := β))
+    (nn.State.Internal.toTensorPack state)
+    (TorchLean.TensorPack.singleton input) outputGradient
   pure
-    { value := value
-      dState := dps
-      dx := _root_.TorchLean.TensorPack.get dxys ⟨0, by simp⟩
-      dtarget := _root_.TorchLean.TensorPack.get dxys ⟨1, by simp⟩ }
-
-/-- Return the scalar loss and gradients for the complete model state. -/
-def valueAndGradStateScalar {inputShape outputShape targetShape : List Nat}
-    (model : nn.Sequential inputShape outputShape) (loss : OutputLoss outputShape targetShape)
-    {α : Type} [_root_.Context α] [DecidableEq Shape]
-    (state : State model α)
-    (x : Tensor α inputShape) (target : Tensor α targetShape) :
-    IO (α × State model α) := do
-  let out ← valueAndGrads (model := model) (loss := loss) (α := α) state x target
-  pure (Spec.Tensor.item out.value, out.dState)
-
-/--
-Vector-Jacobian product (VJP) with respect to the complete model state.
-
-Use it for custom losses or analysis tooling when you already have an output cotangent
-`seedOut : Tensor α τ`.
--/
-def vjpState {inputShape outputShape : List Nat} (model : nn.Sequential inputShape outputShape)
-    {α : Type} [_root_.Context α] [DecidableEq Shape]
-    (state : State model α)
-    (x : Tensor α inputShape) (seedOut : Tensor α outputShape) :
-    IO (State model α) :=
-  _root_.Runtime.Autograd.TorchLean.Autodiff.vjpOutParams
-    (α := α)
-    (paramShapes := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes model)
-    (inputShapes := [Shape.ofList inputShape]) (τ := Shape.ofList outputShape)
-    (fun {β} _ _ =>
-      _root_.Runtime.Autograd.TorchLean.NN.Seq.forward model (α := β))
-    state (.cons x .nil) seedOut
-
-/-- Vector-Jacobian product with respect to the single model input tensor. -/
-def vjpInput {inputShape outputShape : List Nat} (model : nn.Sequential inputShape outputShape)
-    {α : Type} [_root_.Context α] [DecidableEq Shape]
-    (state : State model α)
-    (x : Tensor α inputShape) (seedOut : Tensor α outputShape) :
-    IO (Tensor α inputShape) := do
-  let dxs ← _root_.Runtime.Autograd.TorchLean.Autodiff.vjpOutInputs
-    (α := α)
-    (paramShapes := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes model)
-    (inputShapes := [Shape.ofList inputShape]) (τ := Shape.ofList outputShape)
-    (fun {β} _ _ =>
-      _root_.Runtime.Autograd.TorchLean.NN.Seq.forward model (α := β))
-    state (.cons x .nil) seedOut
-  pure (_root_.TorchLean.TensorPack.get dxs ⟨0, by simp⟩)
+    (nn.State.Internal.fromTensorPack stateGrad,
+      TorchLean.TensorPack.head inputGrads)
 
 /--
 Reverse-mode Jacobian (`jacrev`) of the model output with respect to model state.
 
-Returns an array of state-structured gradients: one entry per output coordinate.
-This mirrors the usual "jacrev returns a stack of per-output gradients" shape.
+Returns one Jacobian tensor per state tensor. Each has the output axes followed by that state
+tensor's axes, so parameter shapes stay distinct without an outer array of gradient states.
 -/
-def jacrevState {inputShape outputShape : List Nat}
-    (model : nn.Sequential inputShape outputShape)
-    {α : Type} [_root_.Context α] [DecidableEq Shape]
+def jacrev {σ τ : Shape}
+    (model : nn.Sequential σ τ)
+    {α : Type} [TorchLean.Storage α] [Context α]
     (state : State model α)
-    (x : Tensor α inputShape) :
-    IO (Array (State model α)) :=
-  _root_.Runtime.Autograd.TorchLean.Autodiff.jacrevOutParams
+    (input : Tensor α σ) :
+    IO (nn.State α ((nn.stateShapes model).map τ.concat)) := do
+  IO.ofExcept (nn.validate model)
+  let rows ← Runtime.Autograd.Model.Autodiff.jacrevOutParams
     (α := α)
-    (paramShapes := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes model)
-    (inputShapes := [Shape.ofList inputShape]) (τ := Shape.ofList outputShape)
+    (paramShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes model)
+    (inputShapes := [σ]) (τ := τ)
     (fun {β} _ _ =>
-      _root_.Runtime.Autograd.TorchLean.NN.Seq.forward model (α := β))
-    state (.cons x .nil)
+      Runtime.Autograd.Model.Layers.Seq.forward model (α := β))
+    (nn.State.Internal.toTensorPack state)
+    (TorchLean.TensorPack.singleton input)
+  pure (nn.State.Internal.fromTensorPack rows)
 
 /--
 Jacobian-vector product (JVP) of a scalar loss with respect to model state.
 
-Directional derivative in the direction `vState`. Conceptually:
+Directional derivative in the direction `stateDirection`. Conceptually:
 
 $$
 \left.\frac{d}{dt}
-\operatorname{loss}(\mathrm{state}+t\,\mathrm{vState},x,\mathrm{target})
+\operatorname{loss}(\mathrm{state}+t\,\mathrm{stateDirection},x,\mathrm{target})
 \right|_{t=0}.
 $$
 -/
-def jvpState {inputShape outputShape targetShape : List Nat}
-    (model : nn.Sequential inputShape outputShape) (loss : OutputLoss outputShape targetShape)
-    {α : Type} [_root_.Context α] [DecidableEq Shape]
+def jvp {σ τ υ : Shape}
+    (model : nn.Sequential σ τ) (loss : Loss τ υ)
+    {α : Type} [TorchLean.Storage α] [Context α]
     (state : State model α)
-    (x : Tensor α inputShape) (target : Tensor α targetShape)
-    (vState : State model α) :
-    IO α :=
-  _root_.Runtime.Autograd.TorchLean.Autodiff.jvpLossParams
+    (input : Tensor α σ) (target : Tensor α υ)
+    (stateDirection : State model α) :
+    IO (Tensor α []) := do
+  Internal.validateLoss model loss
+  Runtime.Autograd.Model.Autodiff.jvpLossParams
     (α := α)
-    (paramShapes := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes model)
-    (inputShapes := [Shape.ofList inputShape, Shape.ofList targetShape])
-    (lossProgram model loss) state (.cons x (.cons target .nil)) vState
+    (paramShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes model)
+    (inputShapes := [σ, υ])
+    (Internal.lossProgram model loss)
+    (nn.State.Internal.toTensorPack state)
+    (TorchLean.TensorPack.pair input target)
+    (nn.State.Internal.toTensorPack stateDirection)
 
 /--
 Hessian-vector product (HVP) of a scalar loss with respect to model state.
 
-Returns a tensor pack with the same shape layout as `state`.
+Returns model state with the same shape layout as `state`.
 -/
-def hvpState {inputShape outputShape targetShape : List Nat}
-    (model : nn.Sequential inputShape outputShape) (loss : OutputLoss outputShape targetShape)
-    {α : Type} [_root_.Context α] [DecidableEq Shape]
+def hvp {σ τ υ : Shape}
+    (model : nn.Sequential σ τ) (loss : Loss τ υ)
+    {α : Type} [TorchLean.Storage α] [Context α]
     (state : State model α)
-    (x : Tensor α inputShape) (target : Tensor α targetShape)
-    (vState : State model α) :
-    IO (State model α) :=
-  _root_.Runtime.Autograd.TorchLean.Autodiff.hvpParams
+    (input : Tensor α σ) (target : Tensor α υ)
+    (stateDirection : State model α) :
+    IO (State model α) := do
+  Internal.validateLoss model loss
+  let result ← Runtime.Autograd.Model.Autodiff.hvpParams
     (α := α)
-    (paramShapes := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes model)
-    (inputShapes := [Shape.ofList inputShape, Shape.ofList targetShape])
-    (lossProgram model loss) state (.cons x (.cons target .nil)) vState
+    (paramShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes model)
+    (inputShapes := [σ, υ])
+    (Internal.lossProgram model loss)
+    (nn.State.Internal.toTensorPack state)
+    (TorchLean.TensorPack.pair input target)
+    (nn.State.Internal.toTensorPack stateDirection)
+  pure (nn.State.Internal.fromTensorPack result)
 end model
 
 end autograd

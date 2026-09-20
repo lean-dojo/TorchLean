@@ -22,9 +22,7 @@ namespace Runtime
 namespace Autograd
 namespace Torch
 
-open Spec
-open Tensor
-open Proofs.Autograd.Algebra
+open Spec TorchLean TorchLean.Tensor
 
 namespace Internal
 
@@ -33,7 +31,8 @@ namespace EagerSession
 /-!
 ## Tensor ops (eager tape wrappers)
 
-The following definitions are the eager front-end for `Runtime.Autograd.Tape.*` primitives. Each one:
+The following definitions are the eager front-end for `Runtime.Autograd.Tape.*` primitives.
+Each one:
 - reads the current tape from `s.tape`,
 - appends a new node/leaf via a `Tape.*` constructor,
 - writes the updated tape back, and
@@ -49,7 +48,7 @@ Dispatch an eager operation through its selected CPU or CUDA capsule.
 is bound to the matching handler before any implementation runs. Returning `none` still means that
 the operation has no implementation in this CUDA runtime; there is no per-operation CPU fallback.
 -/
-def dispatchCudaCapsuleOpt {α : Type} {sh : Shape} (s : EagerSession α)
+def dispatchCudaCapsuleOpt {α : Type} [TorchLean.Storage α] {sh : Shape} (s : EagerSession α)
     (op : NN.Backend.BackendOp) (refs : Array (Option RefIdentity))
     (cudaProviders : Array NN.Backend.Provider) (cpu : IO (TensorRef α sh))
     (cuda : NN.Backend.KernelCapsule → IO (Option (TensorRef α sh))) : IO (TensorRef α sh) := do
@@ -78,7 +77,8 @@ def dispatchCudaCapsuleOpt {α : Type} {sh : Shape} (s : EagerSession α)
 /--
 Dispatch an eager operation implemented by the reference CPU and TorchLean native CUDA runtimes.
 -/
-def dispatchCudaOpt {α : Type} {sh : Shape} (s : EagerSession α) (op : NN.Backend.BackendOp)
+def dispatchCudaOpt {α : Type} [TorchLean.Storage α] {sh : Shape} (s : EagerSession α)
+    (op : NN.Backend.BackendOp)
     (refs : Array (Option RefIdentity)) (cpu : IO (TensorRef α sh))
     (cuda : IO (Option (TensorRef α sh))) : IO (TensorRef α sh) :=
   dispatchCudaCapsuleOpt s op refs #[.nativeCuda] cpu (fun _ => cuda)

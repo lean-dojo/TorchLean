@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760"
+     role="img" aria-labelledby="title description">
+  <title id="title">Configured binary formats in FloatLib</title>
+  <desc id="description">
+    ExecFloat.Binary selects a format by exponent and fraction widths. IEEE binary32 has
+    one sign bit, eight exponent bits, and twenty-three fraction bits, giving twenty-four
+    significant bits for normal values. IEEE binary128 uses one, fifteen, and one hundred
+    twelve bits respectively, giving one hundred thirteen significant bits for normal values.
+    The field diagrams are not to scale. Literal and rational inputs can retain the chosen
+    precision without passing through a native Float.
+  </desc>
+  <defs>
+    <style>
+      text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; fill: #102b4e; }
+      .title { font-size: 34px; font-weight: 700; }
+      .label { font-size: 28px; font-weight: 650; }
+      .body { font-size: 25px; }
+      .small { font-size: 22px; fill: #49627c; }
+      .mono { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 26px; }
+      .sign { fill: #d9f0ed; stroke: #73bcb3; }
+      .exponent { fill: #dfebfa; stroke: #86addd; }
+      .fraction { fill: #ece5f8; stroke: #b09ad4; }
+    </style>
+  </defs>
+  <rect width="1200" height="760" rx="28" fill="#f8fbff"/>
+  <rect x="30" y="30" width="1140" height="700" rx="24" fill="#ffffff" stroke="#cad9e9"/>
+  <text x="66" y="93" class="title">One scalar API, a chosen binary format</text>
+  <text x="66" y="140" class="mono">FloatLib.Floats.ExecFloat.Binary e f</text>
+
+  <text x="66" y="208" class="label">IEEE binary32</text>
+  <text x="1132" y="208" text-anchor="end" class="mono">e = 8, f = 23</text>
+  <rect x="66" y="230" width="192" height="94" rx="12" class="sign"/>
+  <rect x="270" y="230" width="312" height="94" rx="12" class="exponent"/>
+  <rect x="594" y="230" width="540" height="94" rx="12" class="fraction"/>
+  <text x="162" y="270" text-anchor="middle" class="body">Sign</text>
+  <text x="162" y="304" text-anchor="middle" class="small">1 bit</text>
+  <text x="426" y="270" text-anchor="middle" class="body">Exponent</text>
+  <text x="426" y="304" text-anchor="middle" class="small">8 bits</text>
+  <text x="864" y="270" text-anchor="middle" class="body">Fraction</text>
+  <text x="864" y="304" text-anchor="middle" class="small">23 bits</text>
+  <text x="66" y="363" class="body">Normal significand precision: 24 bits, including the implicit leading bit.</text>
+
+  <text x="66" y="430" class="label">IEEE binary128</text>
+  <text x="1132" y="430" text-anchor="end" class="mono">e = 15, f = 112</text>
+  <rect x="66" y="452" width="192" height="94" rx="12" class="sign"/>
+  <rect x="270" y="452" width="312" height="94" rx="12" class="exponent"/>
+  <rect x="594" y="452" width="540" height="94" rx="12" class="fraction"/>
+  <text x="162" y="492" text-anchor="middle" class="body">Sign</text>
+  <text x="162" y="526" text-anchor="middle" class="small">1 bit</text>
+  <text x="426" y="492" text-anchor="middle" class="body">Exponent</text>
+  <text x="426" y="526" text-anchor="middle" class="small">15 bits</text>
+  <text x="864" y="492" text-anchor="middle" class="body">Fraction</text>
+  <text x="864" y="526" text-anchor="middle" class="small">112 bits</text>
+  <text x="66" y="585" class="body">Normal significand precision: 113 bits, including the implicit leading bit.</text>
+
+  <line x1="66" y1="616" x2="1134" y2="616" stroke="#d8e3ee"/>
+  <text x="66" y="655" class="body">Use exact literals or rationals to preserve precision at input.</text>
+  <text x="66" y="696" class="small">Field widths drawn for readability, not to scale. Other valid widths are supported.</text>
+</svg>

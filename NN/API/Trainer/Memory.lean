@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.TorchLean
+public import NN.Runtime.Autograd.Model -- shake: keep
 
 /-!
 # Training Memory Monitoring
@@ -18,62 +18,63 @@ CUDA allocator sampling and drift warnings shared by TorchLean training loops.
 
 namespace TorchLean
 namespace Trainer
-namespace Manual
-namespace CUDAMemory
+namespace Memory
 
 /-- State carried by the CUDA-memory drift detector used by sustained training runs. -/
 structure State where
   firstStep : Nat
-  firstFreeBytes : Nat
+  /-- Driver-free bytes plus reclaimable cached bytes at the first sample. -/
+  firstAvailableBytes : Nat
   warned : Bool
 deriving Repr
 
 /-- Resolve an explicit CUDA-memory cadence, or enable periodic sampling for very long runs. -/
-def cadence (opts : _root_.Runtime.Autograd.Torch.Options)
+def cadence (options : Runtime.Autograd.Torch.Config)
     (steps requested : Nat) : Nat :=
   if requested != 0 then
     requested
-  else if opts.usesCuda && steps >= 1000 then
+  else if options.usesCuda && steps >= 1000 then
     Nat.max 1 (steps / 10)
   else
     0
 
 /--
-Sample the CUDA allocator and warn when sustained free-memory loss projects exhaustion before the
-requested run completes.
+Sample the CUDA allocator and warn when sustained loss of usable memory projects exhaustion before
+the requested run completes. Unused tensor buffers and kernel workspaces are reclaimable, so cache
+growth alone should not look like a loss of memory available for later allocations.
 -/
-def sample (opts : _root_.Runtime.Autograd.Torch.Options)
+def sample (options : Runtime.Autograd.Torch.Config)
     (watchEvery totalSteps done : Nat) (state? : Option State) : IO (Option State) := do
-  if !opts.usesCuda || watchEvery = 0 || (done != 0 && done % watchEvery != 0) then
+  if !options.usesCuda || watchEvery = 0 || (done != 0 && done % watchEvery != 0) then
     pure state?
   else
-    let stats ← _root_.Runtime.Autograd.Cuda.Buffer.allocatorStatsWithToken (UInt32.ofNat done)
+    let stats ← Runtime.Autograd.Cuda.Buffer.allocatorStats
     IO.println s!"  cuda_mem step={done}: {stats.format}"
-    let freeNow := stats.deviceFreeBytes.toNat
+    let availableNow := stats.deviceFreeBytes.toNat + stats.cacheBytes.toNat
     match state? with
     | none =>
-        pure (some { firstStep := done, firstFreeBytes := freeNow, warned := false })
+        pure (some { firstStep := done, firstAvailableBytes := availableNow, warned := false })
     | some st =>
-        if st.warned || done <= st.firstStep || st.firstFreeBytes <= freeNow then
+        if st.warned || done <= st.firstStep || st.firstAvailableBytes <= availableNow then
           pure (some st)
         else
           let span := done - st.firstStep
-          let drop := st.firstFreeBytes - freeNow
+          let drop := st.firstAvailableBytes - availableNow
           let dropPerStep := drop / Nat.max 1 span
           if dropPerStep = 0 then
             pure (some st)
           else
-            let projectedFailure := done + freeNow / dropPerStep
+            let projectedFailure := done + availableNow / dropPerStep
             if projectedFailure < totalSteps then
               IO.println <|
-                s!"  cuda_mem warning: free device memory is dropping by ~{dropPerStep} " ++
-                  s!"bytes/step; projected allocation failure before requested step count " ++
+                "  cuda_mem warning: driver-free plus reclaimable cached memory " ++
+                  s!"is dropping by ~{dropPerStep} bytes/step; projected exhaustion " ++
+                  "before requested step count " ++
                   s!"(around step {projectedFailure})."
               pure (some { st with warned := true })
             else
               pure (some st)
 
-end CUDAMemory
-end Manual
+end Memory
 end Trainer
 end TorchLean

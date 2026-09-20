@@ -16,7 +16,7 @@ replace the ordinary scalar-polymorphic RL equations; they add checked execution
 where we want explicit floating-point semantics or interval-style diagnostics.
 
 Current contents:
-- `NN.Runtime.RL.Numerics.Float32.Types`: checked `Float → IEEE32Exec` casting.
+- `NN.Runtime.RL.Numerics.Float32.Types`: checked `Float → configured binary32` casting.
 - `NN.Runtime.RL.Numerics.Float32.Returns`: explicit binary32 discounted backups and returns.
 - `NN.Runtime.RL.Numerics.Float32.Advantage`: TD residuals, GAE, and normalization with
   finite-intermediate checks.

@@ -6,15 +6,14 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Fin.Tuple.Basic
-public import Mathlib.Data.Set.Image
-public import NN.Floats.IEEEExec.Bridge.FP32Total
 public import NN.Floats.Interval.IEEEExec32
+public import NN.MLTheory.Proofs.Approximation.FloatInterval.Semantics
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-!
 # Constant rounded targets over `Interval32`
 
-Exact interval-image theorem for constant rounded targets over `IEEE32Exec`.
+Exact interval-image theorem for constant rounded targets over `ExecFloat.Binary 8 23`.
 
 This file packages the finite-float base case for the concrete `IEEE32Exec.Interval32` interval
 type: a constant rounded target has exact interval semantics given by the point interval `[c,c]` on
@@ -28,27 +27,32 @@ direct `Interval32` statement used at the low-level rounded-target boundary, whi
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 
 namespace NN.MLTheory.Proofs.UniversalApproximation
 
 open TorchLean.Floats.IEEE754
+open FloatLib.Floats.Formats.BinaryInterchange
 
 namespace FloatIntervalApprox.ConstantTarget
 
 open IEEE32Exec
 
+-- The scalar type and the extremum vocabulary are the companion file's; only the interval type
+-- differs here, because this file works over the concrete `Interval32` rather than the abstract
+-- domain. Borrowing them keeps one definition of "minimum on a set" for the whole development.
+open FloatIntervalApprox (F)
+open FloatIntervalApprox.ExactImage (Icc IsMinOn IsMaxOn)
+
 noncomputable section
 
-/-- Shorthand for the float32 executable type `IEEE32Exec`. -/
-abbrev F : Type := IEEE32Exec
 /-- Shorthand for the float32 interval type `IEEE32Exec.Interval32`. -/
 abbrev I : Type := IEEE32Exec.Interval32
 
 /-- Product box of float32 intervals. -/
 abbrev Box (d : Nat) : Type := Fin d → I
-
-/-- Float interval set `{x | a ≤ x ∧ x ≤ b}` (avoids requiring `Preorder`). -/
-def Icc (a b : F) : Set F := fun x => a ≤ x ∧ x ≤ b
 
 /-- Concretization of a float32 interval to a set of float32 values. -/
 def γI (J : I) : Set F := fun x => x ∈ J
@@ -61,15 +65,7 @@ def BoxValid {d : Nat} (B : Box d) : Prop := ∀ i, Interval32.Valid (B i)
 
 /-- `B` is a box contained in `[-1,1]^d`. -/
 def BoxInCube {d : Nat} (B : Box d) : Prop :=
-  ∀ i, (Numbers.negOne : F) ≤ (B i).lo ∧ (B i).hi ≤ (Numbers.one : F)
-
-/-- `m` is a minimum of `g` on the set `S`, stated without choosing a canonical `min`. -/
-def IsMinOn {X : Type} (g : X → F) (S : Set X) (m : F) : Prop :=
-  (∃ x, x ∈ S ∧ g x = m) ∧ ∀ y, (∃ x, x ∈ S ∧ g x = y) → m ≤ y
-
-/-- `M` is a maximum of `g` on the set `S`, stated without choosing a canonical `max`. -/
-def IsMaxOn {X : Type} (g : X → F) (S : Set X) (M : F) : Prop :=
-  (∃ x, x ∈ S ∧ g x = M) ∧ ∀ y, (∃ x, x ∈ S ∧ g x = y) → y ≤ M
+  ∀ i, ((-1) : F) ≤ (B i).lo ∧ (B i).hi ≤ (1 : F)
 
 /--
 Exact interval-image property, phrased as:
@@ -88,11 +84,11 @@ def ExactIntervalImage {d : Nat} (g : (Fin d → F) → F) (_ν : (Fin d → F) 
       γI (nuInt B) = Icc m M
 
 /--
-Generic exact-interval-image statement shape for `IEEE32Exec` rounded targets.
+Generic exact-interval-image statement shape for `ExecFloat.Binary 8 23` rounded targets.
 -/
 def RoundedTargetExactIntervalImageStatement (d : Nat) : Prop :=
   ∀ (fHat : (Fin d → F) → F),
-    (∀ x, isNaN (fHat x) = false) →
+    (∀ x, ExecFloat.Binary.isNaN (fHat x) = false) →
     ∃ (_ν : (Fin d → F) → F) (nuInt : Box d → I),
       (∀ B, BoxValid B → BoxInCube (d := d) B →
         ∃ m M,
@@ -100,27 +96,30 @@ def RoundedTargetExactIntervalImageStatement (d : Nat) : Prop :=
           IsMaxOn fHat (γ (d := d) B) M ∧
           γI (nuInt B) = Icc m M)
 
-theorem le_refl_of_isFinite (x : F) (hx : isFinite x = true) : x ≤ x := by
-  have hcmp : compare x x = some .eq := by
-    have h :=
-      (compare_eq_some_eq_iff_toReal_eq_of_isFinite (x := x) (y := x) hx hx)
-    exact h.mpr rfl
-  change IEEE32Exec.le x x
-  simp [IEEE32Exec.le, hcmp]
+/-- Float comparison is reflexive on finite values. Not a `Preorder` instance, because `NaN` is not
+comparable to itself and IEEE 754 order is genuinely partial. -/
+theorem le_refl_of_isFinite (x : F) (hx : ExecFloat.Binary.isFinite x = true) : x ≤ x := by
+  apply FloatLib.Floats.ExecFloat.Binary.le_iff_le_toModel.mpr
+  exact (Model.Interval.le_iff_toReal_le_of_isFinite
+    (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel x) hx hx).mpr le_rfl
 
+/-- A valid box is nonempty, witnessed by its own lower corner.
+
+The exact-image statements quantify over nonempty concretizations, so this is what discharges that
+hypothesis for any box the checker actually produces. -/
 theorem gamma_nonempty_of_BoxValid {d : Nat} {B : Box d} (hB : BoxValid B) :
     (γ (d := d) B).Nonempty := by
   refine ⟨fun i => (B i).lo, ?_⟩
   intro i
   have hv : Interval32.Valid (B i) := hB i
   have hlelo : (B i).lo ≤ (B i).lo := le_refl_of_isFinite (x := (B i).lo) hv.1
-  exact And.intro hlelo hv.2.2
+  exact And.intro (FloatLib.Floats.ExecFloat.Binary.le_iff_le_toModel.mp hlelo) hv.2.2
 
 /--
-Base case: a constant target `g(x) = c` has an exact interval-image witness given by the constant network and the
-point interval `[c,c]`.
+Base case: a constant target `g(x) = c` has an exact interval-image witness given by the constant
+network and the point interval `[c,c]`.
 -/
-theorem exactIntervalImage_constant {d : Nat} (c : F) (hc : isFinite c = true) :
+theorem exactIntervalImage_constant {d : Nat} (c : F) (hc : ExecFloat.Binary.isFinite c = true) :
     ExactIntervalImage (d := d) (g := fun _ => c) (_ν := fun _ => c)
       (nuInt := fun _ => Interval32.point c) := by
   intro B hB
@@ -146,11 +145,12 @@ theorem exactIntervalImage_constant {d : Nat} (c : F) (hc : isFinite c = true) :
   · -- `γ([c,c]) = Icc c c`
     ext x
     dsimp [γI, Icc]
-    dsimp [Interval32.point]
-    change IEEE32Exec.Interval32.mem { lo := c, hi := c } x ↔ (c ≤ x ∧ x ≤ c)
-    dsimp [IEEE32Exec.Interval32.mem]
-    change (IEEE32Exec.le c x ∧ IEEE32Exec.le x c) ↔ (IEEE32Exec.le c x ∧ IEEE32Exec.le x c)
-    exact Iff.rfl
+    change Model.Interval.mem (Interval32.toModel (Interval32.point c))
+      (ExecFloat.Binary.toModel x) ↔ (c ≤ x ∧ x ≤ c)
+    simp only [Interval32.toModel, ExecFloat.Binary.Interval.toModel_point]
+    change (Model.le (ExecFloat.Binary.toModel c) (ExecFloat.Binary.toModel x) ∧
+      Model.le (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel c)) ↔ (c ≤ x ∧ x ≤ c)
+    simp only [FloatLib.Floats.ExecFloat.Binary.le_iff_le_toModel]
 
 end
 

@@ -4,7 +4,7 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+module -- shake: keep-all (These imports define the CI build coverage.)
 
 import NN.MLTheory.API
 import NN.MLTheory.CROWN.Extras.FP32
@@ -18,6 +18,8 @@ import NN.MLTheory.CROWN.Tactics.CertificateWorkflow
 import NN.MLTheory.LearningTheory.Stability.RidgeRegression1D.IEEE32Exec
 import NN.Proofs
 import NN.Proofs.Autograd.Overview
+import NN.MLTheory.CROWN.Graph.Engine.Enclosure
+import NN.API.RL.Markov
 
 /-!
 # Additional Theory Modules

@@ -44,8 +44,8 @@ runtime backward pass is the Fréchet derivative of the forward pass; those resu
 
 namespace Proofs
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 /--
 Spec identity: weight gradient for a linear layer.
@@ -61,11 +61,7 @@ theorem linearWeightsDerivSpec_eq_outerProductSpec
   {inDim outDim : Nat}
   (x : Tensor ℝ [inDim])
   (δ : Tensor ℝ [outDim]) :
-  Spec.linearWeightsDerivSpec x δ = outerProductSpec δ x := by
-  unfold Spec.linearWeightsDerivSpec outerProductSpec
-  cases δ with | dim δ_vals =>
-  cases x with | dim x_vals =>
-  rfl
+  Spec.linearWeightsDerivSpec x δ = outerProductSpec δ x := rfl
 
 /--
 Spec identity: input gradient for a linear layer.
@@ -90,6 +86,7 @@ theorem linearBiasDerivSpec_eq
   {inDim outDim : Nat}
   (x : Tensor ℝ [inDim])
   (δ : Tensor ℝ [outDim]) :
-  Spec.linearBiasDerivSpec (Inhabited.default) δ x = δ := rfl
+  Spec.linearBiasDerivSpec
+      (Tensor.default : Tensor ℝ [outDim, inDim]) δ x = δ := rfl
 
 end Proofs

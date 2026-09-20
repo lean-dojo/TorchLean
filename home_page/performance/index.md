@@ -28,9 +28,9 @@ making fine-grained runtime claims.
   <section class="performance-panel" aria-labelledby="performance-latest-title">
     <div class="performance-section-head">
       <div>
-        <h2 id="performance-latest-title">Latest successful run</h2>
+        <h2 id="performance-latest-title">Latest run in selected workflow</h2>
         <p class="performance-panel-intro">
-          Wall-clock time for the named steps in TorchLean's standard CI workflow.
+          Wall-clock time for the named steps in the workflow selected below.
         </p>
       </div>
       <div class="performance-latest" id="performance-latest"></div>
@@ -45,20 +45,33 @@ making fine-grained runtime claims.
       <div>
         <h2 id="performance-history-title">Recent history</h2>
         <p class="performance-panel-intro">
-          Successful pushes to <code>main</code>, ordered by commit date.
+          Successful pushes to <code>main</code>, ordered by run start time.
         </p>
       </div>
+      <label for="performance-scope">
+        Workflow
+        <select id="performance-scope">
+          <option value="native">Current workflow</option>
+          <option value="current">Earlier maintained modules build</option>
+          <option value="maintained">Earlier combined build</option>
+          <option value="legacy">Earlier workflow</option>
+        </select>
+      </label>
       <label for="performance-metric">
         Metric
         <select id="performance-metric">
-          <option value="build">Library build</option>
+          <option value="native">Modules and native commands build</option>
+          <option value="current">Earlier maintained modules build</option>
+          <option value="maintained">Earlier combined build</option>
+          <option value="build">Legacy library build</option>
           <option value="tests">Test suite</option>
-          <option value="broad">Broad CI import</option>
+          <option value="broad">Legacy broad CI import</option>
           <option value="lint">Repository lint</option>
           <option value="total">Complete CI job</option>
         </select>
       </label>
     </div>
+    <p class="performance-panel-intro" id="performance-scope-description"></p>
     <div class="performance-chart" id="performance-chart">
       <div class="performance-loading">Loading chart…</div>
     </div>
@@ -73,8 +86,8 @@ making fine-grained runtime claims.
           <tr>
             <th scope="col">Commit</th>
             <th scope="col">Date</th>
-            <th scope="col">Library build</th>
-            <th scope="col">Broad CI</th>
+            <th scope="col" id="performance-build-heading">Build step</th>
+            <th scope="col">Lint</th>
             <th scope="col">Tests</th>
             <th scope="col">Complete job</th>
           </tr>
@@ -94,7 +107,7 @@ making fine-grained runtime claims.
   const repository = "lean-dojo/TorchLean";
   const workflow = "ci.yml";
   const maximumRuns = 8;
-  const cacheKey = "torchlean-ci-performance-v1";
+  const cacheKey = "torchlean-ci-performance-v3";
   const cacheLifetimeMs = 30 * 60 * 1000;
   const apiRoot = `https://api.github.com/repos/${repository}`;
   // A cold page load makes one run-list request and at most eight job requests.
@@ -102,13 +115,52 @@ making fine-grained runtime claims.
     `?branch=main&event=push&status=success&per_page=${maximumRuns}`;
 
   const metrics = {
-    build: { label: "Library build", step: "Build curated library surface" },
+    native: {
+      label: "Modules and native commands build",
+      step: "Build library, CI, examples, tests, and native commands",
+    },
+    current: {
+      label: "Earlier maintained modules build",
+      step: "Build library, CI, examples, and tests",
+    },
+    maintained: {
+      label: "Earlier combined build",
+      step: "Build maintained library, CI, example, and test modules",
+    },
+    build: { label: "Legacy library build", step: "Build curated library surface" },
     tests: { label: "Test suite", step: "Run curated test suite" },
-    broad: { label: "Broad CI import", step: "Build broad CI import surface" },
+    broad: { label: "Legacy broad CI import", step: "Build broad CI import surface" },
     lint: { label: "Repository lint", step: "Repo lint (TorchLean policies)" },
     total: { label: "Complete CI job", step: null },
   };
-  const cardMetrics = ["build", "tests", "broad", "total"];
+  const scopes = {
+    native: {
+      buildMetric: "native",
+      description: "Current workflow: one build step covers the maintained library, CI, " +
+        "examples, tests, and native commands. Earlier workloads are shown separately.",
+    },
+    current: {
+      buildMetric: "current",
+      description: "Earlier maintained modules build: one step covered the library, CI, " +
+        "examples, and tests, before native commands were added to that build step.",
+    },
+    maintained: {
+      buildMetric: "maintained",
+      description: "Earlier combined build: this workload also included the now-removed " +
+        "timing programs. Its timings are kept separate from the current workload.",
+    },
+    legacy: {
+      buildMetric: "build",
+      description: "Earlier workflow: the library build and broad CI import were separate steps. " +
+        "Select Legacy broad CI import to view that step. Trends stay within this workflow.",
+    },
+  };
+  const recordScope = record => record.scope ||
+    (Number.isFinite(record.durations.native) ? "native" :
+      Number.isFinite(record.durations.current) ? "current" :
+      Number.isFinite(record.durations.maintained) ? "maintained" :
+      (Number.isFinite(record.durations.build) || Number.isFinite(record.durations.broad) ?
+        "legacy" : null));
 
   const notice = document.getElementById("performance-notice");
   const cards = document.getElementById("performance-cards");
@@ -117,6 +169,10 @@ making fine-grained runtime claims.
   const chartCaption = document.getElementById("performance-chart-caption");
   const metricSelect = document.getElementById("performance-metric");
   const runsBody = document.getElementById("performance-runs");
+  const scopeSelect = document.getElementById("performance-scope");
+  const scopeDescription = document.getElementById("performance-scope-description");
+  const buildHeading = document.getElementById("performance-build-heading");
+  let preferredScope = null;
   let currentRecords = [];
 
   const durationSeconds = (start, finish) => {
@@ -210,6 +266,11 @@ making fine-grained runtime claims.
         url: run.html_url,
         startedAt: job.started_at || run.run_started_at,
         durations,
+        scope: (job.steps || []).some(step => step.name === metrics.native.step) ? "native" :
+          (job.steps || []).some(step => step.name === metrics.current.step) ? "current" :
+          (job.steps || []).some(step => step.name === metrics.maintained.step) ?
+          "maintained" : (job.steps || []).some(step =>
+            [metrics.build.step, metrics.broad.step].includes(step.name)) ? "legacy" : null,
       };
     }));
     return records
@@ -229,11 +290,11 @@ making fine-grained runtime claims.
     };
   };
 
-  const renderCards = records => {
+  const renderCards = (records, buildMetric) => {
     const latest = records.at(-1);
     const previous = records.at(-2);
     cards.replaceChildren();
-    for (const key of cardMetrics) {
+    for (const key of [buildMetric, "tests", "lint", "total"]) {
       const card = document.createElement("div");
       card.className = "performance-card";
 
@@ -357,7 +418,7 @@ making fine-grained runtime claims.
       `${metrics[metricKey].label} wall-clock time. Lower values mean the CI step finished sooner.`;
   };
 
-  const renderTable = records => {
+  const renderTable = (records, buildMetric) => {
     runsBody.replaceChildren();
     for (const record of [...records].reverse()) {
       const row = document.createElement("tr");
@@ -371,8 +432,8 @@ making fine-grained runtime claims.
 
       const values = [
         formatDate(record.startedAt),
-        formatDuration(record.durations.build),
-        formatDuration(record.durations.broad),
+        formatDuration(record.durations[buildMetric]),
+        formatDuration(record.durations.lint),
         formatDuration(record.durations.tests),
         formatDuration(record.durations.total),
       ];
@@ -385,23 +446,63 @@ making fine-grained runtime claims.
     }
   };
 
-  const render = records => {
-    if (!records.length) throw new Error("No successful main-branch CI runs were found");
-    currentRecords = records;
-    renderCards(records);
+  const selectedRecords = () =>
+    currentRecords.filter(record => recordScope(record) === scopeSelect.value);
+
+  const renderSelectedScope = () => {
+    const scope = scopes[scopeSelect.value];
+    const records = selectedRecords();
+    for (const option of metricSelect.options) {
+      option.disabled = ["native", "current", "maintained", "build", "broad"].includes(option.value) &&
+        option.value !== scope.buildMetric &&
+        !(scopeSelect.value === "legacy" && option.value === "broad");
+    }
+    if (metricSelect.selectedOptions[0].disabled) metricSelect.value = scope.buildMetric;
+    scopeDescription.textContent = scope.description;
+    buildHeading.textContent = metrics[scope.buildMetric].label;
+    renderCards(records, scope.buildMetric);
     renderChart(records, metricSelect.value);
-    renderTable(records);
+    renderTable(records, scope.buildMetric);
   };
 
-  metricSelect.addEventListener("change", () => renderChart(currentRecords, metricSelect.value));
+  const render = records => {
+    if (!records.length) throw new Error("No successful main-branch CI runs were found");
+    // Reject malformed cached records before retaining them as the offline fallback.
+    for (const record of records) {
+      if (!record || !record.durations || !scopes[recordScope(record)] ||
+          typeof record.sha !== "string" || typeof record.url !== "string" ||
+          !Number.isFinite(Date.parse(record.startedAt))) {
+        throw new Error("Invalid CI timing record");
+      }
+    }
+    currentRecords = records;
+    const available = new Set(records.map(recordScope));
+    for (const option of scopeSelect.options) option.disabled = !available.has(option.value);
+    scopeSelect.value = available.has(preferredScope) ? preferredScope :
+      (available.has("native") ? "native" :
+        available.has("current") ? "current" :
+        available.has("maintained") ? "maintained" : "legacy");
+    renderSelectedScope();
+  };
 
-  const cache = readCache();
+  scopeSelect.addEventListener("change", () => {
+    preferredScope = scopeSelect.value;
+    renderSelectedScope();
+  });
+  metricSelect.addEventListener("change", () => renderChart(selectedRecords(), metricSelect.value));
+
+  let cache = readCache();
   if (cache) {
     try {
       render(cache.records);
       setNotice("");
     } catch (_error) {
-      localStorage.removeItem(cacheKey);
+      cache = null;
+      try {
+        localStorage.removeItem(cacheKey);
+      } catch (_storageError) {
+        // A storage policy must not prevent fetching fresh timing data.
+      }
     }
   }
 

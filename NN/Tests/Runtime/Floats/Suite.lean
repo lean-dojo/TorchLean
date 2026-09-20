@@ -6,11 +6,15 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Tests.Runtime.ParameterAliases
 public import NN.Tests.Runtime.Floats.AllAutogradTests
 public import NN.Tests.Runtime.Floats.CertificatePreconditions
+public import NN.Tests.Runtime.Floats.CifarCrop
+public import NN.Tests.Runtime.Floats.DualQuotient
 public import NN.Tests.Runtime.Floats.IRBatchNorm
 public import NN.Tests.Runtime.Floats.ONNXBridge
 public import NN.Tests.Runtime.Floats.PINNDerivResidual
+public import NN.Tests.Runtime.Floats.ProbabilityContracts
 public import NN.Tests.Runtime.Floats.PyTorchRoundtripParity
 public import NN.Tests.Runtime.Floats.RankPolymorphicLayerOps
 public import NN.Tests.Runtime.Floats.RLCheck
@@ -39,11 +43,15 @@ namespace Floats
 
 /-- Unified Float test entrypoint (called by `NN/Tests/Suite.lean`). -/
 def run : IO Unit := do
+  NN.Tests.Runtime.ParameterAliases.runCpu
   Tests.Floats.runAllAutogradTests
   Tests.Floats.CertificatePreconditions.run
+  Tests.Floats.CifarCrop.run
+  Tests.Floats.DualQuotient.run
   Tests.Floats.IRBatchNorm.run
   Tests.Floats.ONNXBridge.run
   Tests.Floats.PyTorchRoundtripParity.run
+  Tests.Floats.ProbabilityContracts.run
   Tests.Floats.RankPolymorphicLayerOps.run
   Tests.Floats.RLCheck.run
   Tests.Floats.SessionRefIdentity.run

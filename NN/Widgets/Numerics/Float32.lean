@@ -6,11 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public meta import NN.Floats.IEEEExec.Exec32
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured
+public import FloatLib.Floats.Formats.IEEE754.Native
 public meta import NN.Widgets.Core.Tensor
-public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
+public meta import FloatLib.Floats.Formats.BinaryInterchange.Configured -- shake: keep
+public import NN.Widgets.Core.Tensor
+import NN.Spec.Core.Tensor
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # Float32
@@ -18,54 +20,43 @@ public meta import ProofWidgets.Demos.Macro
 Float32 viewer widget (executable IEEE-754 backend).
 
 Commands:
-- `#float32_view x` renders an `IEEE32Exec` value as bits + fields + basic classification flags.
-- `#float32_round_view x` shows how a Lean `Float` (binary64) rounds to `IEEE32Exec` (binary32).
+- `#float32_view x` renders an `ExecFloat.Binary 8 23` value as bits + fields + basic classification
+flags.
+- `#float32_round_view x` shows how a Lean `Float` (binary64) rounds to `ExecFloat.Binary 8 23`
+(binary32).
 
 These widgets are meant for debugging/teaching, not for proof scripts.
 
 ## Main definitions
 
-- `float32Html`: inspect class/fields/bits for one `IEEE32Exec` value.
+- `float32Html`: inspect class/fields/bits for one `ExecFloat.Binary 8 23` value.
 - `float32RoundHtml`: show `Float64 -> Float32` rounding behavior.
 - `float32CompareHtml`: side-by-side bit-level comparison.
 - `#float32_view`, `#float32_round_view`, `#float32_compare_view`: command entry points.
-
-## Implementation notes
-
-- Explicit sign/exp/frac bit pills are easier to read than one long bit
-  string when debugging rounding and special values.
-- We include both classification badges and raw field values: in practice users want both the
-  high-level class and exact bit-level evidence.
-- We keep this widget purely informational; no arithmetic semantics are changed here.
-
-## References
-
-- [IEEE 754 floating-point standard overview](https://en.wikipedia.org/wiki/IEEE_754)
-- [ProofWidgets](https://github.com/leanprover-community/ProofWidgets4)
-- [Lean community documentation style](https://leanprover-community.github.io/contribute/doc.html)
-
-## Tags
-
-float32, ieee754, rounding, bits, proofwidgets
 -/
 
 public meta section
 
 open scoped ProofWidgets.Jsx
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 namespace NN.Widgets
 
-open TorchLean.Floats.IEEE754
 open UI
 
 namespace Float32Internal
 
+/-- Compact rendering of a 32-bit word for the bit-pattern pills. -/
 def u32Hex (u : UInt32) : String :=
-  -- `UInt32`'s `repr` is a compact debugging view (hex-like when printed in Lean).
-  reprStr u
+  "0x" ++ u.toBitVec.toHex
 
+/--
+The 64-bit counterpart, used when a widget shows a binary64 input alongside its float32 result.
+-/
 def u64Hex (u : UInt64) : String :=
-  reprStr u
+  "0x" ++ u.toBitVec.toHex
 
 /-- Render exactly `width` low-order bits of `n` as a binary string. -/
 def bitsFixed (width : Nat) (n : Nat) : String :=
@@ -78,6 +69,11 @@ def bitsFixed (width : Nat) (n : Nat) : String :=
         go i (c :: acc)
   String.ofList (go width []).reverse
 
+/-- One labelled, colour-coded run of bits: the sign, exponent and fraction fields each get one.
+
+Colours are given as `rgba` overlays rather than solid fills so the widget stays readable against
+both
+light and dark editor themes. -/
 def bitPill (label bits : String) (bg : String) : ProofWidgets.Html :=
   let styleObj : Lean.Json :=
     Lean.Json.mkObj [
@@ -98,38 +94,44 @@ def bitPill (label bits : String) (bg : String) : ProofWidgets.Html :=
   </span>
 
 /-- Classify an IEEE32 value into normal/subnormal/zero/inf/nan variants. -/
-def classify (x : IEEE32Exec) : String :=
-  if IEEE32Exec.isNaN x then
-    if IEEE32Exec.isSNaN x then "sNaN" else "qNaN"
-  else if IEEE32Exec.isInf x then
-    if IEEE32Exec.signBit x then "-Inf" else "+Inf"
-  else if IEEE32Exec.isZero x then
-    if IEEE32Exec.signBit x then "-0" else "+0"
-  else if IEEE32Exec.expField x == 0 then
+def classify (x : ExecFloat.Binary 8 23) : String :=
+  if ExecFloat.Binary.isNaN x then
+    if ExecFloat.Binary.isSignalingNaN x then "sNaN" else "qNaN"
+  else if ExecFloat.Binary.isInfinite x then
+    if ExecFloat.Binary.signBit x then "-Inf" else "+Inf"
+  else if ExecFloat.Binary.isZero x then
+    if ExecFloat.Binary.signBit x then "-0" else "+0"
+  else if (ExecFloat.Binary.toModel x).expField == 0 then
     "subnormal"
   else
     "normal"
 
-def dyadicString (d : IEEE32Exec.Dyadic) : String :=
-  let sign := if d.sign then "-" else "+"
-  s!"{sign}{d.mant} * 2^{d.exp}"
+/-- Render a dyadic rational as `±mantissa * 2^exponent`.
+
+This is the exact value of a finite float, written the way Flocq and Coq's `Fappli_IEEE` write it,
+so
+what the widget shows can be compared directly against the proofs. -/
+def dyadicString (d : FloatLib.Numerics.Dyadic) : String :=
+  let sign := if d.negative then "-" else "+"
+  s!"{sign}{d.significand} * 2^{d.exponent}"
 
 end Float32Internal
 
 open Float32Internal
 
-/-- Render an executable float32 (`IEEE32Exec`) as HTML. -/
-def float32Html (x : IEEE32Exec) : ProofWidgets.Html :=
-  let b := IEEE32Exec.toBits x
-  let s := IEEE32Exec.signBit x
-  let e := IEEE32Exec.expField x
-  let f := IEEE32Exec.fracField x
+/-- Render an executable float32 (`ExecFloat.Binary 8 23`) as HTML. -/
+def float32Html (x : ExecFloat.Binary 8 23) : ProofWidgets.Html :=
+  let b := ExecFloat.Binary.toBits32 x
+  let s := ExecFloat.Binary.signBit x
+  let e := (ExecFloat.Binary.toModel x).expField
+  let f := (ExecFloat.Binary.toModel x).fracField
   let cls := classify x
-  let f64 := IEEE32Exec.toFloat x
-  let dyadic? := IEEE32Exec.toDyadic? x
+  let f64 := ExecFloat.Binary.toFloat <| ExecFloat.Binary.ofModel <|
+    Model.cast FloatFormat.binary32 FloatFormat.binary64 (ExecFloat.Binary.toModel x)
+  let dyadic? := (ExecFloat.Binary.toModel x).toDyadic?
   let signBits := if s then "1" else "0"
-  let expBits := bitsFixed 8 e.toNat
-  let fracBits := bitsFixed 23 f.toNat;
+  let expBits := bitsFixed 8 e
+  let fracBits := bitsFixed 23 f;
   <div style={json% {
     "display": "block",
     "padding": "10px",
@@ -140,7 +142,7 @@ def float32Html (x : IEEE32Exec) : ProofWidgets.Html :=
   }}>
     <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom":
       "10px"}}>
-      {pill "IEEE32Exec"} {pill s!"class={cls}"} {pill s!"bits={u32Hex b}"} {pill
+      {pill "FloatLib binary32"} {pill s!"class={cls}"} {pill s!"bits={u32Hex b}"} {pill
         s!"asFloat={toString f64}"}
     </div>
     <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom":
@@ -150,19 +152,21 @@ def float32Html (x : IEEE32Exec) : ProofWidgets.Html :=
       {bitPill "frac" fracBits "rgba(0, 200, 120, 0.14)"}
     </div>
     <div style={json% {"display": "flex", "gap": "6px", "flex-wrap": "wrap"}}>
-      {flagBadge "NaN" (IEEE32Exec.isNaN x)} {flagBadge "Inf" (IEEE32Exec.isInf x)}
-      {flagBadge "Zero" (IEEE32Exec.isZero x)} {flagBadge "Finite" (IEEE32Exec.isFinite x)}
-      {flagBadge "qNaN" (IEEE32Exec.isQNaN x)} {flagBadge "sNaN" (IEEE32Exec.isSNaN x)}
+      {flagBadge "NaN" (ExecFloat.Binary.isNaN x)} {flagBadge "Inf" (ExecFloat.Binary.isInfinite x)}
+      {flagBadge "Zero" (ExecFloat.Binary.isZero x)} {flagBadge "Finite" (ExecFloat.Binary.isFinite
+        x)}
+      {flagBadge "qNaN" (ExecFloat.Binary.isQuietNaN x)} {flagBadge "sNaN"
+        (ExecFloat.Binary.isSignalingNaN x)}
     </div>
     <details style={json% {"margin-top": "10px"}} «open»={false}>
       <summary>{.text "Raw fields"}</summary>
       <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "6px",
         "margin-top": "8px"}}>
-        <div><b>toBits:</b> {monospace (reprStr (IEEE32Exec.toBits x))}</div>
-        <div><b>signBit:</b> {monospace (reprStr (IEEE32Exec.signBit x))}</div>
-        <div><b>expField:</b> {monospace (reprStr (IEEE32Exec.expField x))}</div>
-        <div><b>fracField:</b> {monospace (reprStr (IEEE32Exec.fracField x))}</div>
-        <div><b>quietBit:</b> {monospace (reprStr ((IEEE32Exec.toBits x &&& IEEE32Exec.quietBit) !=
+        <div><b>toBits:</b> {monospace (reprStr (ExecFloat.Binary.toBits32 x))}</div>
+        <div><b>signBit:</b> {monospace (reprStr (ExecFloat.Binary.signBit x))}</div>
+        <div><b>expField:</b> {monospace (reprStr ((ExecFloat.Binary.toModel x).expField))}</div>
+        <div><b>fracField:</b> {monospace (reprStr ((ExecFloat.Binary.toModel x).fracField))}</div>
+        <div><b>quietBit:</b> {monospace (reprStr ((ExecFloat.Binary.toBits32 x &&& 0x00400000) !=
           0))}</div>
       </div>
     </details>
@@ -177,30 +181,31 @@ def float32Html (x : IEEE32Exec) : ProofWidgets.Html :=
   </div>
 
 /--
-Element renderer for `IEEE32Exec` used by `#tensor_view`.
+Element renderer for `ExecFloat.Binary 8 23` used by `#tensor_view`.
 
 Renders the float value, with a tooltip that includes a small classification and the raw bit
 pattern.
 -/
-instance : TensorElemView IEEE32Exec :=
+instance : TensorElemView (ExecFloat.Binary 8 23) :=
   ⟨fun x =>
-    let b := IEEE32Exec.toBits x
+    let b := ExecFloat.Binary.toBits32 x
     let cls := Float32Internal.classify x
-    let v := IEEE32Exec.toFloat x
+    let v := ExecFloat.Binary.toFloat <| ExecFloat.Binary.ofModel <|
+      Model.cast FloatFormat.binary32 FloatFormat.binary64 (ExecFloat.Binary.toModel x)
     let title := s!"class={cls}\nbits={Float32Internal.u32Hex b}\nasFloat={toString v}";
     <span title={title}>{monospace (toString v)}</span>⟩
 
 namespace Float32Internal
 
-/-- Compare two `IEEE32Exec` values at the bit level and render the results as HTML. -/
-def float32CompareHtml (x y : IEEE32Exec) : ProofWidgets.Html :=
-  let bx := IEEE32Exec.toBits x
-  let byBits := IEEE32Exec.toBits y
+/-- Compare two `ExecFloat.Binary 8 23` values at the bit level and render the results as HTML. -/
+def float32CompareHtml (x y : ExecFloat.Binary 8 23) : ProofWidgets.Html :=
+  let bx := ExecFloat.Binary.toBits32 x
+  let byBits := ExecFloat.Binary.toBits32 y
   let diff := bx ^^^ byBits
   let same := decide (bx = byBits);
   <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
     <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap"}}>
-      {pill "IEEE32Exec compare"} {pill s!"sameBits={same}"} {pill s!"xor={u32Hex diff}"}
+      {pill "binary32 compare"} {pill s!"sameBits={same}"} {pill s!"xor={u32Hex diff}"}
     </div>
     <div style={json% {"display": "grid", "grid-template-columns": "1fr 1fr", "gap": "10px"}}>
       <div>
@@ -214,15 +219,19 @@ def float32CompareHtml (x y : IEEE32Exec) : ProofWidgets.Html :=
     </div>
   </div>
 
-/-- Show how a Lean `Float` (binary64) rounds to an executable float32 (`IEEE32Exec`, binary32). -/
+/-- Show how a Lean `Float` (binary64) rounds to an executable float32 (`ExecFloat.Binary 8 23`,
+binary32). -/
 def float32RoundHtml (x : Float) : ProofWidgets.Html :=
   let b64 : UInt64 := x.toBits
-  let x32 : IEEE32Exec := IEEE32Exec.ofFloat x
-  let y : Float := IEEE32Exec.toFloat x32
+  let x32 : ExecFloat.Binary 8 23 := ExecFloat.Binary.ofModel <|
+    Model.cast FloatFormat.binary64 FloatFormat.binary32
+      (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))
+  let y := ExecFloat.Binary.toFloat <| ExecFloat.Binary.ofModel <|
+    Model.cast FloatFormat.binary32 FloatFormat.binary64 (ExecFloat.Binary.toModel x32)
   let err : Float := y - x;
   <span style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
     <span style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap"}}>
-      {pill "Float -> IEEE32Exec"}
+      {pill "Float → binary32"}
       {pill s!"input(Float64)={toString x}"}
       {pill s!"inputBits={u64Hex b64}"}
       {pill s!"rounded(Float32)={toString y}"}
@@ -240,16 +249,16 @@ end Float32Internal
 syntax (name := float32ViewCmd) "#float32_view " term : command
 
 macro "#float32_view " x:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (float32Html $x))
+  UI.canonicalCommand <$> `(#html (float32Html $x))
 
 syntax (name := float32RoundViewCmd) "#float32_round_view " term : command
 
 macro "#float32_round_view " x:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (Float32Internal.float32RoundHtml $x))
+  UI.canonicalCommand <$> `(#html (Float32Internal.float32RoundHtml $x))
 
 syntax (name := float32CompareViewCmd) "#float32_compare_view " term ", " term : command
 
 macro "#float32_compare_view " x:term ", " y:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (Float32Internal.float32CompareHtml $x $y))
+  UI.canonicalCommand <$> `(#html (Float32Internal.float32CompareHtml $x $y))
 
 end NN.Widgets

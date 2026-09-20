@@ -6,230 +6,313 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Context
 public import NN.Spec.Core.Tensor.Core
+import Mathlib.Tactic.Bound.Init
 
 /-!
 # Tensor constructors (spec layer)
 
-These are small, **total** constructors for building `Spec.Tensor` values directly.
+These are small, **total** constructors for building `TorchLean.Tensor` values directly.
 
 They are used heavily inside the spec layer (models/layers) and in proofs, where we want:
 
 - straightforward definitional unfolding, and
 - no dependence on `IO` or dynamic shape checks.
 
-If you want a PyTorch-style user experience for examples (dynamic dims, runtime errors, and
-Float-literal casting), prefer `NN/Tensor.lean` instead.
+For ordinary literals, in-memory conversion, reshape, and scalar casts, import `NN.Tensor`.
 
 Design choice (why these are "total"):
 
 - In the spec layer we would rather make edge cases explicit than throw runtime exceptions.
 - If something is shape-invalid, we want Lean to reject it at elaboration time.
-- Dynamic storage is admitted only through constructors that either carry an exact size proof or
-  return an explicit failure. The resizing constructors near the end of this file are named as
-  such and are not used implicitly.
+- Existing in-memory collections enter through the total `Tensor.from` conversion boundary.
+- External parsers validate untrusted dimensions before constructing a tensor.
 -/
 
 @[expose] public section
 
 
-namespace Spec
+open TorchLean
 
-/-- Fill a tensor of shape `s` with a constant value.
+open Spec TorchLean
+
+namespace TorchLean.Tensor
+
+/-! ## Constant tensors -/
+
+/-- Fill a tensor of arbitrary shape with one value.
 
 PyTorch analogy: `torch.full(shape, value)`.
 -/
-def fill {α : Type} (value : α): (s : Shape) → Tensor α s
-  | Shape.scalar => Tensor.scalar value
-  | Shape.dim _ s' => Tensor.dim (fun _ => fill value s')
+def full {α : Type} [TorchLean.Storage α]
+    (shape : Shape) (value : α) : Tensor α shape :=
+  TorchLean.Tensor.Internal.Rep.const value
 
-/-- Flattening a filled tensor produces one copy of the value for every scalar position. -/
-@[simp] theorem Tensor.toList_fill {α : Type} (value : α) (shape : Shape) :
-    (fill value shape).toList = List.replicate shape.size value := by
-  induction shape with
-  | scalar => rfl
-  | dim n shape ih =>
-      simp only [fill, Tensor.toList, ih, Shape.size]
-      induction n with
-      | zero => simp
-      | succ n hn =>
-          rw [List.finRange_succ]
-          simp only [List.flatMap_cons, List.flatMap_map]
-          rw [show (List.finRange n).flatMap
-              (fun _ => List.replicate shape.size value) =
-              List.replicate (n * shape.size) value by exact hn]
-          rw [← List.replicate_add]
-          congr 1
-          simp [Nat.succ_mul, Nat.add_comm]
+/-- Construct an all-zero tensor of arbitrary shape. Reducible, so lemmas about `full` apply. -/
+abbrev zeros {α : Type} [TorchLean.Storage α] [Zero α]
+    (shape : Shape) : Tensor α shape :=
+  full shape 0
+
+/-- Construct an all-one tensor of arbitrary shape. Reducible, so lemmas about `full` apply. -/
+abbrev ones {α : Type} [TorchLean.Storage α] [One α]
+    (shape : Shape) : Tensor α shape :=
+  full shape 1
+
+/-- Every coordinate of a filled tensor contains its fill value. -/
+@[simp] theorem full_apply {α : Type} [TorchLean.Storage α]
+    (shape : Shape) (value : α) (coordinate : shape.Coord) :
+    full shape value coordinate = value := by
+  exact TorchLean.Tensor.Internal.Rep.const_apply value coordinate
+
+/-- Reading a scalar filled tensor returns its fill value. -/
+@[simp] theorem item_full_scalar {α : Type} [TorchLean.Storage α] (value : α) :
+    (full .scalar value).item = value := by
+  simp [Tensor.item]
+
+/-- The item of an internally constant scalar tensor is the constant. -/
+@[simp] theorem item_rep_const {α : Type} [TorchLean.Storage α] (value : α) :
+    Tensor.item (TorchLean.Tensor.Internal.Rep.const value : Tensor α .scalar) = value :=
+  TorchLean.Tensor.Internal.Rep.const_apply value PUnit.unit
+
+/-- Every entry of an internally constant vector is the constant. -/
+@[simp] theorem getScalar_rep_const {α : Type} [TorchLean.Storage α] {n : Nat}
+    (value : α) (i : Fin n) :
+    Tensor.getScalar (TorchLean.Tensor.Internal.Rep.const value : Tensor α [n]) i = value := by
+  rw [Tensor.getScalar_eq_apply]
+  exact TorchLean.Tensor.Internal.Rep.const_apply (s := [n]) value (i, PUnit.unit)
+
+/-- Replicating a scalar tensor observes that scalar at every target coordinate. -/
+@[simp] theorem replicate_scalar_apply {α : Type} [TorchLean.Storage α]
+    (value : α) (shape : Shape) (coordinate : shape.Coord) :
+    replicate (shape := shape) (Tensor.scalar value) coordinate = value := by
+  cases shape <;> simp [replicate]
+
+end TorchLean.Tensor
+
+namespace Spec
 
 /-- Every outer coordinate of a filled tensor is the corresponding filled subtensor. -/
-@[simp] theorem get_fill {α : Type} (value : α) (n : Nat) (s : Shape) (i : Fin n) :
-    get (fill value (.dim n s)) i = fill value s := by
-  rfl
+@[simp] theorem get_full {α : Type} [TorchLean.Storage α]
+    (n : Nat) (s : Shape) (value : α) (i : Fin n) :
+    get (TorchLean.Tensor.full (.dim n s) value) i = TorchLean.Tensor.full s value := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simp [get, Tensor.unstack, TorchLean.Tensor.full]
 
 /-- Every coordinate of a filled matrix contains its fill value. -/
-@[simp] theorem get2_fill {α : Type} (value : α) (m n : Nat) (i : Fin m) (j : Fin n) :
-    get2 (fill value (.dim m (.dim n .scalar))) i j = value := by
-  rfl
+@[simp] theorem get2_full {α : Type} [TorchLean.Storage α]
+    (m n : Nat) (value : α) (i : Fin m) (j : Fin n) :
+    get2 (TorchLean.Tensor.full (.dim m (.dim n .scalar)) value) i j = value := by
+  simp only [get2, get_full, Tensor.getScalar, Tensor.item]
+  exact Tensor.full_apply .scalar value PUnit.unit
 
-namespace Tensor
+end Spec
+
+open Spec TorchLean
+
+namespace TorchLean.Tensor
 
 /--
 Construct an arbitrary-rank tensor from a coordinate function.
 
-The dimension list is outermost first. At each coordinate, `f` receives one natural-number index
-per dimension. The indices are in bounds by construction; the list representation keeps callers
-independent of the recursive implementation of `Shape` and `Tensor`.
+At each coordinate, `f` receives one natural-number index per dimension,
+outermost first. The indices are in bounds by construction.
 
 For example, `Tensor.generate [2, 3] f` has shape `[2, 3]`, and its entry at row `i` and column `j`
 is `f [i, j]`.
 -/
-def generate {α : Type} (dims : List Nat) (f : List Nat → α) : Tensor α (Shape.ofList dims) :=
-  match dims with
-  | [] => Tensor.scalar (f [])
-  | _ :: rest => Tensor.dim (fun i => generate rest (fun is => f (i.val :: is)))
+def generate {α : Type} [TorchLean.Storage α]
+    (shape : Shape) (f : List Nat → α) : Tensor α shape :=
+  TorchLean.Tensor.Internal.Rep.ofFn fun coordinate =>
+    f (Shape.Coord.toList shape coordinate)
 
-/-- Construct a vector from its coordinate function.
+/--
+The buffer is filled directly from the index function, without building one scalar tensor per
+entry.
 
 PyTorch analogy: `torch.tensor([...])` with shape `(n,)`, but our input is a function, not a list.
+
+Example:
+```lean
+-- `torch.tensor([0.0, 1.0, 2.0, 3.0])`, except the entries arrive from a function on `Fin n` and
+-- the length is part of the type.
+def ramp : Tensor Float [4] := Tensor.ofFn fun index => index.val.toFloat
+```
 -/
-def ofFn {α : Type} {n : Nat} (values : Fin n → α) : Tensor α [n] :=
-  Tensor.dim (fun i => Tensor.scalar (values i))
+def ofFn {α : Type} [TorchLean.Storage α]
+    {n : Nat} (values : Fin n → α) : Tensor α [n] :=
+  TorchLean.Tensor.Internal.Rep.ofFn fun coordinate => values coordinate.1
+
+/-- Evaluating `ofFn` at a coordinate returns the value supplied at its index. -/
+@[simp] theorem ofFn_apply {α : Type} [TorchLean.Storage α]
+    {n : Nat} (values : Fin n → α) (coordinate : Shape.Coord [n]) :
+    ofFn values coordinate = values coordinate.1 :=
+  TorchLean.Tensor.Internal.Rep.get_ofFn _ coordinate
+
+/-- Every entry of `ofFn` is the scalar tensor of the supplied value. -/
+@[simp] theorem unstack_ofFn {α : Type} [TorchLean.Storage α]
+    {n : Nat} (values : Fin n → α) (i : Fin n) :
+    Tensor.unstack (ofFn values) i = Tensor.scalar (values i) := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  cases coordinate
+  simp [Tensor.unstack]
+
+/-- Reading a scalar entry of an internally generated vector evaluates the generator. -/
+@[simp] theorem getScalar_rep_ofFn {α : Type} [TorchLean.Storage α] {n : Nat}
+    (values : Shape.Coord [n] → α) (i : Fin n) :
+    Tensor.getScalar (TorchLean.Tensor.Internal.Rep.ofFn values : Tensor α [n]) i =
+      values (i, PUnit.unit) := by
+  rw [Tensor.getScalar_eq_apply]
+  exact TorchLean.Tensor.Internal.Rep.get_ofFn values (i, PUnit.unit)
+
+/-- The item of an internally generated scalar tensor is the generator's value. -/
+@[simp] theorem item_rep_ofFn {α : Type} [TorchLean.Storage α]
+    (values : Shape.Coord .scalar → α) :
+    Tensor.item (TorchLean.Tensor.Internal.Rep.ofFn values : Tensor α .scalar) =
+      values PUnit.unit :=
+  TorchLean.Tensor.Internal.Rep.get_ofFn values PUnit.unit
+
+/-- Slicing an internally generated tensor fixes the leading coordinate of the generator. -/
+@[simp] theorem unstack_rep_ofFn {α : Type} [TorchLean.Storage α] {n : Nat} {shape : Shape}
+    (values : Shape.Coord (.dim n shape) → α) (i : Fin n) :
+    Tensor.unstack (TorchLean.Tensor.Internal.Rep.ofFn values : Tensor α (.dim n shape)) i =
+      TorchLean.Tensor.Internal.Rep.ofFn fun coordinate => values (i, coordinate) := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simp [Tensor.unstack]
+
+/-- `ofFn` is extensionally the stack of its scalar entries. -/
+theorem ofFn_eq_dim_scalar {α : Type} [TorchLean.Storage α]
+    {n : Nat} (values : Fin n → α) :
+    ofFn values = Tensor.dim (fun i => Tensor.scalar (values i)) := by
+  rw [← Tensor.dim_unstack (ofFn values)]
+  congr 1
+  funext i
+  exact unstack_ofFn values i
 
 /-- Reading a coordinate from `ofFn` returns the value supplied at that coordinate. -/
-@[simp] theorem getScalar_ofFn {α : Type} {n : Nat} (values : Fin n → α) (i : Fin n) :
+@[simp] theorem getScalar_ofFn {α : Type} [TorchLean.Storage α]
+    {n : Nat} (values : Fin n → α) (i : Fin n) :
     (ofFn values).getScalar i = values i := by
-  rfl
+  simp [Tensor.getScalar, Spec.get]
 
 /-- Rebuilding a vector from all of its coordinates returns the original vector. -/
-@[simp] theorem ofFn_getScalar {α : Type} {n : Nat} (t : Tensor α [n]) :
+@[simp] theorem ofFn_getScalar {α : Type} [TorchLean.Storage α]
+    {n : Nat} (t : Tensor α [n]) :
     ofFn (fun i => t.getScalar i) = t := by
   apply Tensor.ext_vector
   intro i
   simp
 
-/-- Build a vector from an array whose length is known statically. -/
-def ofArrayExact {α : Type} {n : Nat} (values : Array α) (h : values.size = n) :
-    Tensor α [n] :=
-  ofFn fun i => values[i.val]'(h.symm ▸ i.2)
-
-/-- Indexing an exact-length vector reads the corresponding array entry. -/
-@[simp] theorem getScalar_ofArrayExact {α : Type} {n : Nat} (values : Array α)
-    (h : values.size = n) (i : Fin n) :
-    (ofArrayExact values h).getScalar i = values[i.val]'(h.symm ▸ i.2) := by
-  rfl
-
-/-- Flattening an exact array constructor preserves the original row-major values. -/
-@[simp] theorem toList_ofArrayExact {α : Type} {n : Nat} (values : Array α)
-    (h : values.size = n) :
-    (ofArrayExact values h).toList = values.toList := by
-  subst n
-  simp only [ofArrayExact, ofFn, Tensor.toList]
-  rw [← List.map_eq_flatMap, ← List.ofFn_eq_map, ← Array.toList_ofFn]
-  simp
-
-/--
-Build an arbitrary-rank tensor from flat row-major data whose length matches the shape.
-
-This is the checked boundary between dynamic array storage and TorchLean's canonical tensor type.
-After the size proof is available, numerical code should use the resulting `Tensor α shape`.
--/
-def ofFlatArrayExact {α : Type} :
-    (shape : Shape) → (values : Array α) → values.size = shape.size → Tensor α shape
-  | .scalar, values, hSize => by
-      have hLength : values.size = 1 := by
-        simpa [Shape.size] using hSize
-      exact .scalar (values[0]'(by simp [hLength]))
-  | .dim n tail, values, hSize => by
-      let chunkSize := tail.size
-      have hLength : values.size = n * chunkSize := by
-        simpa [Shape.size, chunkSize] using hSize
-      refine .dim fun i => ?_
-      let chunk : Array α := Array.ofFn fun j : Fin chunkSize =>
-        values[i.val * chunkSize + j.val]'(by
-          have hOffset : i.val * chunkSize + j.val < (i.val + 1) * chunkSize := by
-            rw [Nat.add_mul, Nat.one_mul]
-            exact Nat.add_lt_add_left j.2 (i.val * chunkSize)
-          have hChunkEnd : (i.val + 1) * chunkSize ≤ n * chunkSize :=
-            Nat.mul_le_mul_right chunkSize (Nat.succ_le_of_lt i.2)
-          simpa [hLength] using hOffset.trans_le hChunkEnd)
-      have hChunk : chunk.size = tail.size := by simp [chunk, chunkSize]
-      exact ofFlatArrayExact tail chunk hChunk
-
 /-- Construct a matrix from its row and column coordinate function.
 
 PyTorch analogy: `torch.tensor([...]).reshape(m, n)` (again, function input rather than a list).
 -/
-def matrix {α : Type} {m n : Nat} (values : Fin m → Fin n → α) :
+def matrix {α : Type} [TorchLean.Storage α]
+    {m n : Nat} (values : Fin m → Fin n → α) :
     Tensor α [m, n] :=
   Tensor.dim (fun i => ofFn (fun j => values i j))
 
-end Tensor
+end TorchLean.Tensor
+
+open Spec TorchLean
+
+namespace TorchLean.Tensor
 
 /-- Every coordinate of a filled vector contains the fill value. -/
-@[simp] theorem Tensor.getScalar_fill {α : Type} (value : α) (n : Nat) (i : Fin n) :
-    (fill value (.dim n .scalar)).getScalar i = value := by
-  rfl
+@[simp] theorem getScalar_full {α : Type} [TorchLean.Storage α]
+    (n : Nat) (value : α) (i : Fin n) :
+    (full (.dim n .scalar) value).getScalar i = value := by
+  simp only [Tensor.getScalar, get_full, Tensor.item]
+  exact Tensor.full_apply .scalar value PUnit.unit
+
+end TorchLean.Tensor
+
+namespace Spec
 
 /-- A singleton vector.
 
 PyTorch analogy: `x.unsqueeze(0)` for a scalar `x`.
 -/
-def singleton {α : Type} (x : α) : Tensor α [1] :=
+def singleton {α : Type} [TorchLean.Storage α] (x : α) : Tensor α [1] :=
   Tensor.dim (fun _ => Tensor.scalar x)
 
 /--
 Pad a tensor with `n` leading dimensions of size 1.
 
-This is the tensor-level companion of `Shape.padLeft`. It is useful for broadcasting-style
-normalization: if you need a tensor to have extra leading batch dimensions of size `1`, this does
-so without changing any underlying values.
+This is the tensor-level companion of `Shape.padLeft`. The row-major buffer is unchanged, so the
+padding is a zero-copy reinterpretation of the static shape. Broadcasting uses it to align ranks
+before expanding singleton axes.
 
-PyTorch analogy: repeated `unsqueeze(0)` (or viewing a tensor as having extra leading singleton
-  dims).
+PyTorch analogy: repeated `unsqueeze(0)`.
 -/
-def padLeft {α : Type} [Context α]
-  {n : Nat} {s : Shape} (x : Tensor α s)
-  : Tensor α (Shape.padLeft n s) :=
-  match n with
-  | 0 => x
-  | Nat.succ _ =>
-    let inner := padLeft x
-    .dim (fun _ => inner)  -- Only 1 element along new dim
+def padLeft {α : Type} [TorchLean.Storage α]
+    {n : Nat} {s : Shape} (x : Tensor α s) : Tensor α (Shape.padLeft n s) :=
+  TorchLean.Tensor.Internal.Rep.reshape (by simp only [Shape.internalSize_eq, Shape.size_padLeft]) x
 
-/-- Build one tensor dimension from an array of inner tensors.
+/-- Padding with zero axes is the identity. -/
+@[simp] theorem padLeft_zero {α : Type} [TorchLean.Storage α]
+    {s : Shape} (x : Tensor α s) : padLeft (n := 0) x = x :=
+  TorchLean.Tensor.Internal.Rep.reshape_rfl x
+
+/-- Padding one more axis stacks the padded tensor along a new singleton axis. -/
+theorem padLeft_succ {α : Type} [TorchLean.Storage α]
+    {n : Nat} {s : Shape} (x : Tensor α s) :
+    padLeft (n := n + 1) x = Tensor.dim fun _ => padLeft (n := n) x := by
+  have h₁ : TorchLean.Tensor.Internal.Shape.size s.toList =
+      TorchLean.Tensor.Internal.Shape.size (Shape.padLeft n s).toList := by
+    simp only [Shape.internalSize_eq, Shape.size_padLeft]
+  have h₂ : TorchLean.Tensor.Internal.Shape.size (Shape.padLeft n s).toList =
+      TorchLean.Tensor.Internal.Shape.size (1 :: (Shape.padLeft n s).toList) := by
+    simp
+  exact TorchLean.Tensor.Internal.Rep.reshape_one_cons h₂
+    (TorchLean.Tensor.Internal.Rep.reshape h₁ x)
+
+end Spec
+
+namespace TorchLean.Tensor
+
+/-- Stack an array of equal-shaped tensors along a new leading dimension.
 
 The explicit size proof prevents silent truncation or padding. Taking tensors as array elements
 makes this constructor independent of rank: use scalar tensors for a vector, vectors for a matrix,
 or arbitrary inner tensors for higher-rank values.
 -/
-def Tensor.ofArray {α : Type} {n : Nat} {s : Shape}
+def stackArray {α : Type} [TorchLean.Storage α] {n : Nat} {s : Shape}
     (xs : Array (Tensor α s)) (_h : n = xs.size) : Tensor α (.dim n s) :=
   Tensor.dim (fun i : Fin n =>
     xs[i.val]'(by simpa [_h] using i.2))
 
-/-! ## Constant and dynamic-data constructors -/
+end TorchLean.Tensor
 
-/-- A zero-filled tensor of shape `s`. -/
-def zeros (α : Type) [Zero α] (s : Shape) : Tensor α s :=
-  fill (0 : α) s
+open Spec TorchLean
 
-/-- A one-filled tensor of shape `s`. -/
-def ones (α : Type) [One α] (s : Shape) : Tensor α s :=
-  fill (1 : α) s
+namespace TorchLean.Tensor
 
 /-- A filled tensor satisfies every pointwise property satisfied by its value. -/
-theorem Tensor.forall_fill {α : Type} {p : α → Prop} {s : Shape} {x : α}
-    (hx : p x) : Tensor.Forall p (Spec.fill x s) := by
+theorem forall_full {α : Type} [TorchLean.Storage α]
+    {p : α → Prop} {s : Shape} {x : α}
+    (hx : p x) : Tensor.Forall p (full s x) := by
   induction s with
-  | scalar => exact hx
+  | scalar =>
+      change p ((full .scalar x).item)
+      change p (full .scalar x PUnit.unit)
+      rw [Tensor.full_apply]
+      exact hx
   | dim _ _ ih =>
-      intro _
+      intro index
+      change Tensor.Forall p (get (full _ x) index)
+      rw [get_full]
       exact ih
 
+end TorchLean.Tensor
+
+namespace Spec
+
 /-- Build a matrix when every row has the same length; reject ragged input. -/
-def matrixFromRows? {α : Type} (rows : List (List α)) :
+def matrixFromRows? {α : Type} [TorchLean.Storage α]
+    (rows : List (List α)) :
     Option (Tensor α [rows.length, Option.getD (rows.head?.map List.length) 0]) :=
   match rows with
   | [] => some (Tensor.dim fun i => nomatch i)

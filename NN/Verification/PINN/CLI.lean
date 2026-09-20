@@ -6,11 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.CLI
 public import NN.Verification.PINN.Core
 public import NN.Verification.PINN.PdeParse
-public import NN.Verification.PINN.PyTorch
-public import NN.Verification.Util.Json
+public import NN.API.CLI -- shake: keep
+public import NN.Verification.PINN.PyTorch -- shake: keep
 
 /-!
 # PINN CLI
@@ -58,9 +57,8 @@ open NN.Verification.PINN
 open NN.Verification.PINN.PdeAst
 open NN.Verification.PINN.PdeParse
 open NN.Verification.PINN.ResidualAffine
-open _root_.Spec
-open _root_.Spec.Tensor
-open TorchLean.Floats
+open Spec TorchLean
+open TorchLean.Tensor
 
 /-- Backend selection for the PINN CLI. -/
 inductive Backend where
@@ -74,52 +72,7 @@ def parseBackendVal (s : String) : Option Backend :=
 
 /-- Parse a decimal Float literal used by CLI flags. -/
 def parseFloat : String → Option Float :=
-  TorchLean.CLI.parseFloatLit
-
-/-- Parse a non-scientific decimal string into a generic numeric α using Numbers and Context.
-  Supports optional leading '-' and a single '.'. -/
-def parseAlphaDecimal {α : Type} [Context α] (s : String) : Option α :=
-  let rec pow10 (k : Nat) : α :=
-    match k with
-    | 0 => Numbers.one
-    | Nat.succ k' => Numbers.ten * pow10 k'
-  let mk (neg : Bool) (intPart fracPart : String) : Option α :=
-    let intVal : α := (
-      (intPart.toList.foldl (fun (acc : α × Bool) ch =>
-        let (accv, seen) := acc
-        if seen then (accv, true) else
-          if ch = '0' then (accv * Numbers.ten, false)
-          else if ch ≥ '0' ∧ ch ≤ '9' then
-            (accv * Numbers.ten + ((ch.toNat - '0'.toNat) : Nat), false)
-          else (accv, true)
-      ) (Numbers.zero, false)).fst)
-    let fracVal? : Option α :=
-      if fracPart.isEmpty then some Numbers.zero else
-      let digits := fracPart.toList
-      let numDen := digits.foldl (fun (acc : α × Nat × Bool) ch =>
-        let (n, d, bad) := acc
-        if bad then (n, d, bad) else
-          if ch ≥ '0' ∧ ch ≤ '9' then
-            (n * Numbers.ten + ((ch.toNat - '0'.toNat) : Nat), d + 1, false)
-          else (n, d, true)
-      ) (Numbers.zero, 0, false)
-      let (num, denK, bad) := numDen
-      if bad then none else
-        some (num / (pow10 denK))
-    match fracVal? with
-    | some fracVal =>
-      let v := intVal + fracVal
-      some (if neg then (-v) else v)
-    | none => none
-  let s := s.trimAscii.toString
-  if s.isEmpty then none else
-  let neg := s.front = '-'
-  let body : String := if neg then (s.drop 1).toString else s
-  match body.splitOn "." with
-  | [intPart] => mk neg intPart ""
-  | [intPart, fracPart] => mk neg intPart fracPart
-  | _ => none
-
+  TorchLean.CLI.parseFloatLit?
 
 
 /-- Select interval-only, forward CROWN, or backward CROWN bounds for the PINN output value. -/
@@ -139,8 +92,8 @@ def computePrimsAt (g : Graph) (ps : ParamStore Float) (uMethod : UBoundsMethod 
     match NN.MLTheory.CROWN.Graph.outputBox? ibp outId with
     | .ok outB => pure outB
     | .error msg => throw <| IO.userError s!"IBP failed at output: {msg}"
-  let uLo := Spec.Tensor.sumSpec outB.lo
-  let uHi := Spec.Tensor.sumSpec outB.hi
+  let uLo := TorchLean.Tensor.sumSpec outB.lo
+  let uHi := TorchLean.Tensor.sumSpec outB.hi
   -- Determine input dimension from graph's input node shape
   let inDim : Nat ←
     match g.nodes[0]? with
@@ -149,40 +102,25 @@ def computePrimsAt (g : Graph) (ps : ParamStore Float) (uMethod : UBoundsMethod 
       | .dim n .scalar => pure n
       | _ => throw <| IO.userError "PINN input node must have a one-dimensional vector shape"
     | none => throw <| IO.userError "PINN graph has no input node"
-  -- First/second derivative along X (dir 0)
-  let seedX ←
-    if h : 0 < inDim then
-      pure <| FlatBox.ofTensor (TorchLean.Tensor.oneHot (α := Float) inDim ⟨0, h⟩)
-    else
-      throw <| IO.userError "PINN input dimension must be positive"
-  let d1x := runDirectionalDerivative (α:=Float) g ps ibp seedX
-  let d2x := runScalarSecondDerivative (α:=Float) g ps ibp d1x
-  let d1xOpt := (NN.MLTheory.CROWN.Graph.outputBox? d1x outId).toOption
-  let d2xOpt := (NN.MLTheory.CROWN.Graph.outputBox? d2x outId).toOption
-  let (duX, d2uX) :=
-    match d1xOpt, d2xOpt with
-    | some dxB, some d2xB =>
-      (some (Spec.Tensor.sumSpec dxB.lo, Spec.Tensor.sumSpec dxB.hi),
-       some (Spec.Tensor.sumSpec d2xB.lo, Spec.Tensor.sumSpec d2xB.hi))
-    | _, _ => (none, none)
-  -- First/second derivative along Y (dir 1) if available
-  let duY : Option (Float × Float) :=
-    if h : 1 < inDim then
-      let seedY := FlatBox.ofTensor (TorchLean.Tensor.oneHot (α := Float) inDim ⟨1, h⟩)
-      let d1y := runDirectionalDerivative (α:=Float) g ps ibp seedY
-      match NN.MLTheory.CROWN.Graph.outputBox? d1y outId with
-      | .ok dyB => some (Spec.Tensor.sumSpec dyB.lo, Spec.Tensor.sumSpec dyB.hi)
-      | .error _ => none
+  -- Every axis is bounded the same way, so ask `Core` once per axis. Getting the first and second
+  -- derivative back from one call matters here: the earlier version of this function ran the
+  -- first-derivative sweep along `y` twice, once for `duY` and again as the seed for `d2uY`.
+  -- The two components are also reported independently now, so a first derivative survives a
+  -- second-derivative sweep that the propagator cannot finish.
+  let boundsAlong (index : Nat) : Option (Option FloatInterval × Option FloatInterval) :=
+    if h : index < inDim then
+      some (axisDerivativeBounds g ps ibp inDim ⟨index, h⟩)
     else none
-  let d2uY : Option (Float × Float) :=
-    if h : 1 < inDim then
-      let seedY := FlatBox.ofTensor (TorchLean.Tensor.oneHot (α := Float) inDim ⟨1, h⟩)
-      let d1y := runDirectionalDerivative (α:=Float) g ps ibp seedY
-      let d2y := runScalarSecondDerivative (α:=Float) g ps ibp d1y
-      match NN.MLTheory.CROWN.Graph.outputBox? d2y outId with
-      | .ok d2yB => some (Spec.Tensor.sumSpec d2yB.lo, Spec.Tensor.sumSpec d2yB.hi)
-      | .error _ => none
-    else none
+  let endpoints (iv? : Option FloatInterval) : Option (Float × Float) :=
+    iv?.map fun iv => (iv.lower, iv.upper)
+  let (duX, d2uX) ←
+    match boundsAlong 0 with
+    | some (first, second) => pure (endpoints first, endpoints second)
+    | none => throw <| IO.userError "PINN input dimension must be positive"
+  let (duY, d2uY) :=
+    match boundsAlong 1 with
+    | some (first, second) => (endpoints first, endpoints second)
+    | none => (none, none)
   let base : Prims := { u := some (uLo, uHi), duX := duX, duY := duY, d2uX := d2uX, d2uY := d2uY }
   match uMethod with
   | .ibp => pure base
@@ -253,7 +191,7 @@ def parseMethodVal (s : String) : Option Method :=
   | _ => none
 
 /-- Parsed options for the PINN residual CLI. -/
-structure Opts where
+structure Options where
   /-- Bound propagation method used for the output interval. -/
   method : Method := .ibp
   /-- Runtime backend used for interval evaluation. -/
@@ -264,21 +202,22 @@ structure Opts where
   splitDepth : Nat := 0
 
 /-- Parse recognized flags and return the remaining positional arguments. -/
-def parseFlags (args : List String) : Except String (Opts × List String) := do
+def parseFlags (args : List String) : Except String (Options × List String) := do
   let args := TorchLean.CLI.dropDashDash args
-  let (weights?, args) ← TorchLean.CLI.takeFlagValueOnce args "weights"
-  let (splitDepth, args) ← TorchLean.CLI.takeNatFlagDefault args "split-depth" 0
+  let (weights?, args) ← TorchLean.CLI.takeFlagValue? args "weights"
+  let (splitDepth, args) ← TorchLean.CLI.takeNatFlag args "split-depth" (default := 0)
   let (method, args) ←
-    TorchLean.CLI.takeParsedFlagDefault args "method" "ibp" fun s =>
+    TorchLean.CLI.takeParsedFlag args "method" (default := "ibp") fun s =>
       match parseMethodVal s with
       | some method => pure method
       | none => throw s!"--method: expected ibp, crown, crown-fwd, or crown-bwd; got `{s}`"
   let (backend, args) ←
-    TorchLean.CLI.takeParsedFlagDefault args "backend" "float" fun s =>
+    TorchLean.CLI.takeParsedFlag args "backend" (default := "float") fun s =>
       match parseBackendVal s with
       | some backend => pure backend
       | none => throw s!"--backend: expected float; got `{s}`"
-  pure ({ method := method, backend := backend, weights? := weights?, splitDepth := splitDepth }, args)
+  pure ({ method := method, backend := backend, weights? := weights?, splitDepth := splitDepth },
+    args)
 
 /--
 Entry point for the PINN residual-bounding CLI.
@@ -296,14 +235,14 @@ or (2D):
 `lake exe verify -- pinn-cli -- [flags] "<PDE>" x y eps`
 -/
 def main (args : List String) : IO Unit := do
-  let (opts, rest) ←
+  let (options, rest) ←
     match parseFlags args with
     | .ok parsed => pure parsed
     | .error e => throw <| IO.userError e
-  let method := opts.method
-  let backend := opts.backend
-  let weights? := opts.weights?
-  let splitDepth := opts.splitDepth
+  let method := options.method
+  let backend := options.backend
+  let weights? := options.weights?
+  let splitDepth := options.splitDepth
   let uMethod : UBoundsMethod :=
     match method with
     | .ibp => .ibp
@@ -335,8 +274,8 @@ def main (args : List String) : IO Unit := do
       let hi12 := if h1 > h2 then h1 else h2
       let hi34 := if h3 > h4 then h3 else h4
       pure (if lo12 < lo34 then lo12 else lo34, if hi12 > hi34 then hi12 else hi34)
-  match rest.toArray with
-  | #[pdeStr, xStr, epsStr] =>
+  match rest with
+  | .cons pdeStr (.cons xStr (.cons epsStr .nil)) =>
     match backend with
     | .float =>
       let x? := parseFloat xStr
@@ -355,8 +294,8 @@ def main (args : List String) : IO Unit := do
           loadWeightsOrDefault weights? 1 (buildReferenceGraph 1) (referenceParams 1)
         let evalAt : Float → Float → IO (Float × Float) :=
           fun xc epsc => do
-            let center : Spec.Tensor Float [1] :=
-              Spec.Tensor.dim fun _ => Spec.Tensor.scalar xc
+            let center : TorchLean.Tensor Float [1] :=
+              TorchLean.Tensor.dim fun _ => TorchLean.Tensor.scalar xc
             let ps := seedInput baseParams center epsc
             let prims ← computePrimsAt g ps uMethod backend
             match eval prims expr with
@@ -382,7 +321,7 @@ def main (args : List String) : IO Unit := do
             s!"splitDepth={splitDepth}: residual ∈ [{lo},{hi}]")
       | _, _ =>
         IO.eprintln s!"invalid float input(s): x={xStr}, eps={epsStr}"
-  | #[pdeStr, xStr, yStr, epsStr] =>
+  | .cons pdeStr (.cons xStr (.cons yStr (.cons epsStr .nil))) =>
     match backend with
     | .float =>
       let x? := parseFloat xStr
@@ -402,8 +341,8 @@ def main (args : List String) : IO Unit := do
           loadWeightsOrDefault weights? 2 (buildReferenceGraph 2) (referenceParams 2)
         let evalAt : Float → Float → Float → IO (Float × Float) :=
           fun xc yc epsc => do
-            let center : Spec.Tensor Float [2] :=
-              Spec.Tensor.dim fun i => Spec.Tensor.scalar <| if i.val = 0 then xc else yc
+            let center : TorchLean.Tensor Float [2] :=
+              TorchLean.Tensor.dim fun i => TorchLean.Tensor.scalar <| if i.val = 0 then xc else yc
             let ps := seedInput baseParams center epsc
             let prims ← computePrimsAt g ps uMethod backend
             match eval prims expr with

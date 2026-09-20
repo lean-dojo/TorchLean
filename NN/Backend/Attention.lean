@@ -61,15 +61,7 @@ def torchLeanComposed : KernelCapsule :=
         ("TorchLean tape VJP through the composed expression, summing shared weight gradients " ++
           "over the leading batch.")
         "Runtime autograd attention tests"
-    numericalPolicy :=
-      { rounding := .nearestEven
-        subnormals := .implementationDefined
-        contraction := .implementationDefined
-        reduction := .implementationDefined }
-    notes :=
-      "This is the checked CUDA default: masked entries have zero softmax numerator and " ++
-        "TorchLean owns the local VJP. cuBLAS supplies the dense contractions inside the " ++
-        "composed operation." }
+    numericalPolicy := { reduction := .implementationDefined } }
 
 /--
 Direct native CUDA reference path.
@@ -105,14 +97,7 @@ def nativeDirectAttention : KernelCapsule :=
         (.vjpRefinement .scaledDotProductAttention .backendVJP)
         "CUDA VJP kernels return dQ, dK, and dV for the fused operator."
         "NN.Tests.Runtime.Cuda.Attention"
-    numericalPolicy :=
-      { rounding := .nearestEven
-        subnormals := .implementationDefined
-        contraction := .fused
-        reduction := .implementationDefined }
-    notes :=
-      "A direct reference implementation retained for parity checks and small inputs; it is not " ++
-      "the checked CUDA default." }
+    numericalPolicy := { reduction := .implementationDefined } }
 
 /-- LibTorch SDPA forward provider while TorchLean keeps the graph/tape boundary. -/
 def libTorchSDPAForward : KernelCapsule :=
@@ -147,14 +132,7 @@ def libTorchSDPAForward : KernelCapsule :=
         (.vjpRefinement .scaledDotProductAttention .torchLeanTape)
         "TorchLean records the node and keeps the backward boundary inside TorchLean."
         "backend profile requires vjpMode=torchLeanTape"
-    numericalPolicy :=
-      { rounding := .implementationDefined
-        subnormals := .implementationDefined
-        contraction := .implementationDefined
-        reduction := .implementationDefined }
-    notes :=
-      "LibTorch provides the forward value; TorchLean records the node and evaluates its local " ++
-        "VJP." }
+    numericalPolicy := { reduction := .implementationDefined } }
 
 /-- Built-in attention capsules in default planner order. Optional external providers register
 their own capsules in their provider modules. -/

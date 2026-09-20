@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Engine.Core
 public import NN.Runtime.Autograd.Engine.Cuda.Ops
 public import NN.Tensor
 public import NN.Tests.Runtime.Cuda.Utils
@@ -28,8 +27,8 @@ namespace Tests
 namespace Cuda
 namespace ConvTranspose
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Runtime.Autograd
 
 -- Regression for output-size arithmetic with padding and a one-cell input.
@@ -51,51 +50,45 @@ abbrev padding2 : Nat := 0
 abbrev inH2 : Nat := 3
 abbrev inW2 : Nat := 3
 
-theorem hInC2 : inC2 ≠ 0 := by decide
+def kernel2Dims : TorchLean.Tensor Nat [d2] :=
+  [kH, kW]
 
-def kernel2Dims : Spec.Tensor Nat [d2] :=
-  tensor! [kH, kW]
+def stride2Dims : TorchLean.Tensor Nat [d2] :=
+  [stride2, stride2]
 
-def stride2Dims : Spec.Tensor Nat [d2] :=
-  tensor! [stride2, stride2]
+def padding2Dims : TorchLean.Tensor Nat [d2] :=
+  [padding2, padding2]
 
-def padding2Dims : Spec.Tensor Nat [d2] :=
-  tensor! [padding2, padding2]
+def inSpatial2Dims : TorchLean.Tensor Nat [d2] :=
+  [inH2, inW2]
 
-def inSpatial2Dims : Spec.Tensor Nat [d2] :=
-  tensor! [inH2, inW2]
-
-theorem hKernel2 : ∀ i : Fin d2, kernel2Dims.getScalar i ≠ 0 := by
-  intro i
-  fin_cases i <;> simp [kernel2Dims]
-
-def outSpatial2Dims : Spec.Tensor Nat [d2] :=
+def outSpatial2Dims : TorchLean.Tensor Nat [d2] :=
   Spec.convTransposeOutSpatial inSpatial2Dims kernel2Dims stride2Dims padding2Dims
 
 def outShape2 : Shape :=
-  Shape.ofList (outC2 :: outSpatial2Dims.toList)
+  Shape.ofList (outC2 :: Tensor.to outSpatial2Dims (List Nat))
 
 def kernelShape2 : Shape :=
-  Shape.ofList (inC2 :: outC2 :: kernel2Dims.toList)
+  Shape.ofList (inC2 :: outC2 :: Tensor.to kernel2Dims (List Nat))
 
 def inputShape2 : Shape :=
-  Shape.ofList (inC2 :: inSpatial2Dims.toList)
+  Shape.ofList (inC2 :: Tensor.to inSpatial2Dims (List Nat))
 
 def kernel2 : Tensor Float kernelShape2 :=
-  tensorOfArray! [inC2, outC2, kH, kW] #[
+  (Tensor.from #[
     0.2, -0.1,
     0.3, 0.4
-  ]
+  ]).reshape [inC2, outC2, kH, kW] (by dsimp; decide)
 
 def bias2 : Tensor Float [outC2] :=
-  tensorOfArray! [outC2] #[0.05]
+  (Tensor.from #[0.05]).reshape [outC2] (by dsimp; decide)
 
 def input2 : Tensor Float inputShape2 :=
-  tensorOfArray! [inC2, inH2, inW2] #[
+  (Tensor.from #[
     1.0, 2.0, 3.0,
     4.0, 5.0, 6.0,
     7.0, 8.0, 9.0
-  ]
+  ]).reshape [inC2, inH2, inW2] (by dsimp; decide)
 
 def runPlanarFixture : IO Unit := do
   IO.println "== conv_transpose (d=2) =="
@@ -112,7 +105,8 @@ def runPlanarFixture : IO Unit := do
       (inSpatial := inSpatial2Dims)
       kId bId xId (name := "conv_transpose[d=2]"))
   let yCpu ← Utils.cpuValue (s := outShape2) t4 yId
-  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (fill (1.0 : Float) outShape2)
+  let seedCpu : Spec.SomeTensor Float :=
+    Spec.SomeTensor.ofTensor (Tensor.full outShape2 (1.0 : Float))
   let gradsCpu ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t4) yId seedCpu)
   let dKCpu ← Utils.cpuGrad (s := kernelShape2) gradsCpu kId
   let dBCpu ← Utils.cpuGrad (s := [outC2]) gradsCpu bId
@@ -131,7 +125,7 @@ def runPlanarFixture : IO Unit := do
       (d := d2) (inC := inC2) (outC := outC2)
       (kernel := kernel2Dims) (stride := stride2Dims) (padding := padding2Dims)
       (inSpatial := inSpatial2Dims)
-      kIdc bIdc xIdc (hInC := hInC2) (hKernel := hKernel2))
+      kIdc bIdc xIdc)
   let yCuda ← Utils.cudaValue (s := outShape2) t4c yIdc
   let seedCuda : Runtime.Autograd.Cuda.AnyBuffer :=
     { s := outShape2
@@ -143,9 +137,11 @@ def runPlanarFixture : IO Unit := do
   let dXCuda ← Utils.cudaGrad (s := inputShape2) gradsCuda xIdc
 
   Utils.assertTensorApprox (s := outShape2) "conv_transpose[d=2] forward" yCuda yCpu (tol := 5e-3)
-  Utils.assertTensorApprox (s := kernelShape2) "conv_transpose[d=2] dKernel" dKCuda dKCpu (tol := 5e-3)
+  Utils.assertTensorApprox (s := kernelShape2) "conv_transpose[d=2] dKernel" dKCuda dKCpu
+    (tol := 5e-3)
   Utils.assertTensorApprox (s := [outC2]) "conv_transpose[d=2] dBias" dBCuda dBCpu (tol := 5e-3)
-  Utils.assertTensorApprox (s := inputShape2) "conv_transpose[d=2] dInput" dXCuda dXCpu (tol := 5e-3)
+  Utils.assertTensorApprox (s := inputShape2) "conv_transpose[d=2] dInput" dXCuda dXCpu
+    (tol := 5e-3)
 
 /-!
 ## Volumetric fixture ($d=3$)
@@ -164,55 +160,49 @@ abbrev k0 : Nat := 2
 abbrev k1 : Nat := 2
 abbrev k2 : Nat := 2
 
-theorem hInC3 : inC3 ≠ 0 := by decide
+def kernel3Dims : TorchLean.Tensor Nat [d3] :=
+  [k0, k1, k2]
 
-def kernel3Dims : Spec.Tensor Nat [d3] :=
-  tensor! [k0, k1, k2]
+def stride3Dims : TorchLean.Tensor Nat [d3] :=
+  [1, 1, 1]
 
-def stride3Dims : Spec.Tensor Nat [d3] :=
-  tensor! [1, 1, 1]
+def padding3Dims : TorchLean.Tensor Nat [d3] :=
+  [0, 0, 0]
 
-def padding3Dims : Spec.Tensor Nat [d3] :=
-  tensor! [0, 0, 0]
+def inSpatial3Dims : TorchLean.Tensor Nat [d3] :=
+  [inD0, inD1, inD2]
 
-def inSpatial3Dims : Spec.Tensor Nat [d3] :=
-  tensor! [inD0, inD1, inD2]
-
-theorem hKernel3 : ∀ i : Fin d3, kernel3Dims.getScalar i ≠ 0 := by
-  intro i
-  fin_cases i <;> simp [kernel3Dims]
-
-def outSpatial3Dims : Spec.Tensor Nat [d3] :=
+def outSpatial3Dims : TorchLean.Tensor Nat [d3] :=
   Spec.convTransposeOutSpatial inSpatial3Dims kernel3Dims stride3Dims padding3Dims
 
 def outShape3 : Shape :=
-  Shape.ofList (outC3 :: outSpatial3Dims.toList)
+  Shape.ofList (outC3 :: Tensor.to outSpatial3Dims (List Nat))
 
 def kernelShape3 : Shape :=
-  Shape.ofList (inC3 :: outC3 :: kernel3Dims.toList)
+  Shape.ofList (inC3 :: outC3 :: Tensor.to kernel3Dims (List Nat))
 
 def inputShape3 : Shape :=
-  Shape.ofList (inC3 :: inSpatial3Dims.toList)
+  Shape.ofList (inC3 :: Tensor.to inSpatial3Dims (List Nat))
 
 def kernel3 : Tensor Float kernelShape3 :=
-  tensorOfArray! [inC3, outC3, k0, k1, k2] #[
+  (Tensor.from #[
     0.2, -0.1,
     0.3, 0.4,
     -0.25, 0.15,
     0.05, -0.35
-  ]
+  ]).reshape [inC3, outC3, k0, k1, k2] (by dsimp; decide)
 
 def bias3 : Tensor Float [outC3] :=
-  tensorOfArray! [outC3] #[0.01]
+  (Tensor.from #[0.01]).reshape [outC3] (by dsimp; decide)
 
 def input3 : Tensor Float inputShape3 :=
-  tensorOfArray! [inC3, inD0, inD1, inD2] #[
+  (Tensor.from #[
     1.0, 2.0,
     3.0, 4.0,
 
     5.0, 6.0,
     7.0, 8.0
-  ]
+  ]).reshape [inC3, inD0, inD1, inD2] (by dsimp; decide)
 
 def runVolumetricFixture : IO Unit := do
   IO.println "== conv_transpose (d=3) =="
@@ -229,7 +219,8 @@ def runVolumetricFixture : IO Unit := do
       (inSpatial := inSpatial3Dims)
       kId bId xId (name := "conv_transpose[d=3]"))
   let yCpu ← Utils.cpuValue (s := outShape3) t4 yId
-  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (fill (1.0 : Float) outShape3)
+  let seedCpu : Spec.SomeTensor Float :=
+    Spec.SomeTensor.ofTensor (Tensor.full outShape3 (1.0 : Float))
   let gradsCpu ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t4) yId seedCpu)
   let dKCpu ← Utils.cpuGrad (s := kernelShape3) gradsCpu kId
   let dBCpu ← Utils.cpuGrad (s := [outC3]) gradsCpu bId
@@ -248,7 +239,7 @@ def runVolumetricFixture : IO Unit := do
       (d := d3) (inC := inC3) (outC := outC3)
       (kernel := kernel3Dims) (stride := stride3Dims) (padding := padding3Dims)
       (inSpatial := inSpatial3Dims)
-      kIdc bIdc xIdc (hInC := hInC3) (hKernel := hKernel3))
+      kIdc bIdc xIdc)
   let yCuda ← Utils.cudaValue (s := outShape3) t4c yIdc
   let seedCuda : Runtime.Autograd.Cuda.AnyBuffer :=
     { s := outShape3
@@ -260,48 +251,45 @@ def runVolumetricFixture : IO Unit := do
   let dXCuda ← Utils.cudaGrad (s := inputShape3) gradsCuda xIdc
 
   Utils.assertTensorApprox (s := outShape3) "conv_transpose[d=3] forward" yCuda yCpu (tol := 1e-2)
-  Utils.assertTensorApprox (s := kernelShape3) "conv_transpose[d=3] dKernel" dKCuda dKCpu (tol := 1e-2)
+  Utils.assertTensorApprox (s := kernelShape3) "conv_transpose[d=3] dKernel" dKCuda dKCpu
+    (tol := 1e-2)
   Utils.assertTensorApprox (s := [outC3]) "conv_transpose[d=3] dBias" dBCuda dBCpu (tol := 1e-2)
-  Utils.assertTensorApprox (s := inputShape3) "conv_transpose[d=3] dInput" dXCuda dXCpu (tol := 1e-2)
+  Utils.assertTensorApprox (s := inputShape3) "conv_transpose[d=3] dInput" dXCuda dXCpu
+    (tol := 1e-2)
 
 /-- Excessive padding saturates transpose-convolution output size only after adding the kernel. -/
 def runSaturatedOutputGeometry : IO Unit := do
   IO.println "== conv_transpose saturated output geometry =="
-  let input : Tensor Float [1, 1, 1] := tensorOfArray! [1, 1, 1] #[2.0]
+  let input : Tensor Float [1, 1, 1] := (Tensor.from #[2.0]).reshape [1, 1, 1] (by dsimp; decide)
   let kernel : Tensor Float [1, 1, 3, 3] :=
-    tensorOfArray! [1, 1, 3, 3] #[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
-  let bias : Tensor Float [1] := tensorOfArray! [1] #[0.0]
+    (Tensor.from #[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]).reshape [1, 1, 3, 3]
+      (by dsimp; decide)
+  let bias : Tensor Float [1] := (Tensor.from #[0.0]).reshape [1] (by dsimp; decide)
   let (t1, kernelId) := Runtime.Autograd.Cuda.Tape.empty.leaf (Utils.tensorToAnyBuffer kernel)
   let (t2, biasId) := t1.leaf (Utils.tensorToAnyBuffer bias)
   let (t3, inputId) := t2.leaf (Utils.tensorToAnyBuffer input)
-  let inSpatial : Spec.Tensor Nat [2] := tensor! [1, 1]
-  let kernelDims : Spec.Tensor Nat [2] := tensor! [3, 3]
-  let strideDims : Spec.Tensor Nat [2] := tensor! [1, 1]
-  let paddingDims : Spec.Tensor Nat [2] := tensor! [2, 2]
-  let hKernel : ∀ i : Fin 2, kernelDims.getScalar i ≠ 0 := by
-    intro i
-    fin_cases i <;> simp [kernelDims]
+  let inSpatial : TorchLean.Tensor Nat [2] := [1, 1]
+  let kernelDims : TorchLean.Tensor Nat [2] := [3, 3]
+  let strideDims : TorchLean.Tensor Nat [2] := [1, 1]
+  let paddingDims : TorchLean.Tensor Nat [2] := [2, 2]
   let (t4, outputId) ← Utils.okOrThrow
     (Runtime.Autograd.Cuda.Tape.convTranspose (t := t3)
       (d := 2) (inC := 1) (outC := 1) (inSpatial := inSpatial)
       (kernel := kernelDims) (stride := strideDims) (padding := paddingDims)
-      kernelId biasId inputId (hInC := by decide) (hKernel := hKernel))
+      kernelId biasId inputId)
   let emptyShape : Shape := [1, 0, 0]
   let output ← Utils.okOrThrow <|
     Runtime.Autograd.Cuda.Tape.requireValue t4 outputId emptyShape
   unless Runtime.Autograd.Cuda.Buffer.size output = 0 do
     throw <| IO.userError "conv_transpose excessive padding produced a nonempty buffer"
 
-  let inSpatial1 : Spec.Tensor Nat [1] := tensor! [1]
-  let kernelDims1 : Spec.Tensor Nat [1] := tensor! [3]
-  let strideDims1 : Spec.Tensor Nat [1] := tensor! [1]
-  let paddingDims1 : Spec.Tensor Nat [1] := tensor! [2]
-  let hKernel1 : ∀ i : Fin 1, kernelDims1.getScalar i ≠ 0 := by
-    intro i
-    fin_cases i
-    simp [kernelDims1]
-  let inputNd : Tensor Float [1, 1] := tensorOfArray! [1, 1] #[2.0]
-  let kernelNd : Tensor Float [1, 1, 3] := tensorOfArray! [1, 1, 3] #[1.0, 1.0, 1.0]
+  let inSpatial1 : TorchLean.Tensor Nat [1] := [1]
+  let kernelDims1 : TorchLean.Tensor Nat [1] := [3]
+  let strideDims1 : TorchLean.Tensor Nat [1] := [1]
+  let paddingDims1 : TorchLean.Tensor Nat [1] := [2]
+  let inputNd : Tensor Float [1, 1] := (Tensor.from #[2.0]).reshape [1, 1] (by dsimp; decide)
+  let kernelNd : Tensor Float [1, 1, 3] :=
+    (Tensor.from #[1.0, 1.0, 1.0]).reshape [1, 1, 3] (by dsimp; decide)
   let (tn1, kernelNdId) :=
     Runtime.Autograd.Cuda.Tape.empty.leaf (Utils.tensorToAnyBuffer kernelNd)
   let (tn2, biasNdId) := tn1.leaf (Utils.tensorToAnyBuffer bias)
@@ -309,8 +297,7 @@ def runSaturatedOutputGeometry : IO Unit := do
   let (tn4, outputNdId) ← Utils.okOrThrow
     (Runtime.Autograd.Cuda.Tape.convTranspose (t := tn3)
       (d := 1) (inC := 1) (outC := 1) (inSpatial := inSpatial1) (kernel := kernelDims1)
-      (stride := strideDims1) (padding := paddingDims1) kernelNdId biasNdId inputNdId
-      (hInC := by decide) (hKernel := hKernel1))
+      (stride := strideDims1) (padding := paddingDims1) kernelNdId biasNdId inputNdId)
   let emptyNdShape : Shape := Shape.ofList [1, 0]
   let outputNd ← Utils.okOrThrow <|
     Runtime.Autograd.Cuda.Tape.requireValue tn4 outputNdId emptyNdShape

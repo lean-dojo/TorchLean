@@ -15,7 +15,7 @@ public import NN.Spec.Layers.Gnn
 Spec-layer graph neural-network model definitions.
 
 The layer-level message-passing math lives in `NN.Spec.Layers.Gnn`, in particular
-`Spec.GCNLayerSpec`, `Spec.gcn_layer_spec`, and `Spec.gcn_layer_backward_spec`. This module wires
+`Spec.GCNLayerSpec`, `Spec.gcnLayerSpec`, and `Spec.gcnLayerBackwardSpec`. This module wires
 those layers into a two-layer GCN with graph-level mean pooling and records the end-to-end shapes.
 
 Reference (GCN):
@@ -27,6 +27,11 @@ PyTorch ecosystem analogies:
 
 - `torch_geometric.nn.GCNConv` for the layer-level GCN operator,
 - global mean pooling as in `torch_geometric.nn.global_mean_pool`.
+
+## Implementation status
+
+No API builder implements this model (`nn.*` has no graph layers), no runtime code imports it,
+and no theorem relates it to anything else. It is a standalone reference specification.
 -/
 
 @[expose] public section
@@ -34,12 +39,12 @@ PyTorch ecosystem analogies:
 
 namespace Models
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Shape
 open Activation
 
-variable {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+variable {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
 
 /-!
 ## 2-layer GCN with gradients
@@ -62,7 +67,7 @@ X : (n × inDim)
 
 Backward mirrors this structure:
 - "mean nodes" broadcasts the `outDim` gradient back to `n×outDim` and scales by `1/n`,
-- each GCN layer uses the matrix-calculus rules in `Spec.gcn_layer_backward_spec`,
+- each GCN layer uses the matrix-calculus rules in `Spec.gcnLayerBackwardSpec`,
 - ReLU gates gradients by `ReLU'`.
 -/
 
@@ -71,7 +76,7 @@ Backward mirrors this structure:
 `GCNLayerSpec` packages the per-layer parameters (including the adjacency/normalization choice),
 so the model here is just two such layers composed with a nonlinearity and a readout.
 -/
-structure GCN2Spec (n inDim hidDim outDim : Nat) (α : Type) where
+structure GCN2Spec (n inDim hidDim outDim : Nat) (α : Type) [TorchLean.Storage α] where
   /-- First GCN layer: `inDim → hidDim`. -/
   inputLayer : Spec.GCNLayerSpec n inDim hidDim α
   /-- Second GCN layer: `hidDim → outDim`. -/
@@ -104,27 +109,12 @@ def GCN2Spec.forward
     Shape.hasNonemptyAxisZeroOfNe hn0
   reduceMean 0 outputFeatures hLeadingAxis.proof
 
-/-- Per-layer gradients returned by `GCNLayerSpec` backward.
-
-This mirrors the tuple returned by `Spec.gcn_layer_backward_spec`:
-- `dA`: gradient w.r.t. the adjacency-like operator used by the layer,
-- `dW`: gradient w.r.t. the weight matrix,
-- `db`: gradient w.r.t. the bias vector.
--/
-structure GCNLayerGrads (n inDim outDim : Nat) (α : Type) where
-  /-- d A. -/
-  dA : Tensor α [n, n]
-  /-- d W. -/
-  dW : Tensor α [inDim, outDim]
-  /-- db. -/
-  db : Tensor α [outDim]
-
 /-- Gradients for both layers of `GCN2Spec`. -/
-structure GCN2Grads (n inDim hidDim outDim : Nat) (α : Type) where
+structure GCN2Grads (n inDim hidDim outDim : Nat) (α : Type) [TorchLean.Storage α] where
   /-- Gradients for the `inDim → hidDim` input GCN layer. -/
-  inputLayer : GCNLayerGrads n inDim hidDim α
+  inputLayer : Spec.GCNLayerParameterGradients n inDim hidDim α
   /-- Gradients for the `hidDim → outDim` output GCN layer. -/
-  outputLayer : GCNLayerGrads n hidDim outDim α
+  outputLayer : Spec.GCNLayerParameterGradients n hidDim outDim α
 
 /-- Backward/VJP for `GCN2Spec.forward`.
 
@@ -140,7 +130,7 @@ def GCN2Spec.backward
   {n inDim hidDim outDim : Nat}
   (m : GCN2Spec n inDim hidDim outDim α)
   (x : Tensor α [n, inDim])
-  (grad_output : Tensor α [outDim])
+  (gradOutput : Tensor α [outDim])
   (h_n : n > 0) :
   (GCN2Grads n inDim hidDim outDim α ×
    Tensor α [n, inDim]) :=
@@ -162,32 +152,26 @@ def GCN2Spec.backward
     exact Shape.CanBroadcastTo.scalar
 
   let outputFeatureGrad : Tensor α [n, outDim] :=
-    scaleSpec (broadcastTo hB grad_output) (1 / (n : α))
+    scaleSpec (broadcastTo hB gradOutput) (1 / (n : α))
 
   -- Output layer backward.
-  let (outputAdjacencyGrad, outputWeightGrad, outputBiasGrad, hiddenFeatureGrad) :=
+  let outputLayerGrads :=
     Spec.gcnLayerBackwardSpec (α := α) (n := n) (inDim := hidDim) (outDim := outDim)
       m.outputLayer hiddenFeatures outputFeatureGrad hn0
 
   -- ReLU backward: dZ = dH ⊙ ReLU'(Z).
   let hiddenPreActivationGrad : Tensor α [n, hidDim] :=
-    mulSpec hiddenFeatureGrad (reluDerivSpec hiddenPreActivation)
+    mulSpec outputLayerGrads.inputGradient (reluDerivSpec hiddenPreActivation)
 
   -- Input layer backward.
-  let (inputAdjacencyGrad, inputWeightGrad, inputBiasGrad, inputGrad) :=
+  let inputLayerGrads :=
     Spec.gcnLayerBackwardSpec (α := α) (n := n) (inDim := inDim) (outDim := hidDim)
       m.inputLayer x hiddenPreActivationGrad hn0
 
   let grads : GCN2Grads n inDim hidDim outDim α :=
-    { inputLayer :=
-        { dA := inputAdjacencyGrad
-          dW := inputWeightGrad
-          db := inputBiasGrad }
-      outputLayer :=
-        { dA := outputAdjacencyGrad
-          dW := outputWeightGrad
-          db := outputBiasGrad } }
+    { inputLayer := inputLayerGrads.parameters
+      outputLayer := outputLayerGrads.parameters }
 
-  (grads, inputGrad)
+  (grads, inputLayerGrads.inputGradient)
 
 end Models

@@ -11,14 +11,6 @@ public import NN.Proofs.Autograd.Core.Vectorization
 public import NN.Proofs.Autograd.Notation
 public import NN.Proofs.Gradients.Activation
 
-public import Mathlib.Analysis.Calculus.FDeriv.Add
-public import Mathlib.Analysis.Calculus.FDeriv.Comp
-public import Mathlib.Analysis.Calculus.FDeriv.Congr
-public import Mathlib.Analysis.Calculus.FDeriv.Linear
-public import Mathlib.Analysis.InnerProductSpace.Adjoint
-public import Mathlib.Analysis.InnerProductSpace.PiL2
-public import Mathlib.Analysis.Normed.Module.FiniteDimension
-public import Mathlib.LinearAlgebra.Matrix.ToLin
 
 /-!
 # FDeriv Core
@@ -52,8 +44,8 @@ Notes:
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec _root_.TorchLean
+open _root_.TorchLean _root_.TorchLean.Tensor
 open Activation
 open scoped BigOperators
 open scoped _root_.Autograd
@@ -70,71 +62,64 @@ To connect `OpSpecCorrect` (stated with the tensor dot product) to `fderiv` and 
 with Euclidean inner products), we prove that `Spec.dot` agrees with `inner` after vectorization.
 -/
 
-/-- `getScalarE` is defined via `EuclideanSpace.equiv`; this lemma exposes the underlying coordinates.
-  -/
-@[simp] lemma euclideanEquiv_getScalarE {n : Nat} (t : Tensor ℝ [n]) :
-    euclideanEquiv n (getScalarE t) = Spec.Tensor.getScalar t := by
+/-- `getScalarE` is defined via `EuclideanSpace.equiv`; this lemma exposes the underlying
+coordinates. -/
+@[simp] theorem euclideanEquiv_getScalarE {n : Nat} (t : Tensor ℝ [n]) :
+    euclideanEquiv n (getScalarE t) = TorchLean.Tensor.getScalar t := by
   simpa [getScalarE, euclideanEquiv] using
-    (ContinuousLinearEquiv.apply_symm_apply (euclideanEquiv n) (Spec.Tensor.getScalar t))
+    (ContinuousLinearEquiv.apply_symm_apply (euclideanEquiv n) (TorchLean.Tensor.getScalar t))
 
 /--
 For 1D scalar tensors, `Spec.dot` agrees with the Euclidean inner product on `Vec n`
 after converting via `getScalarE`.
 -/
-lemma dot_eq_inner_vec {n : Nat} (a b : Tensor ℝ [n]) :
+theorem dot_eq_inner_vec {n : Nat} (a b : Tensor ℝ [n]) :
     Spec.dot a b = inner ℝ (getScalarE a) (getScalarE b) := by
   classical
-  have hdot : Spec.dot a b = ∑ i : Fin n, Spec.Tensor.getScalar a i * Spec.Tensor.getScalar b i := by
+  have hdot :
+      Spec.dot a b =
+        ∑ i : Fin n, TorchLean.Tensor.getScalar a i * TorchLean.Tensor.getScalar b i := by
     simpa using (Spec.dot_vec_eq_sum (a := a) (b := b))
   have hinter :
       inner ℝ (getScalarE a) (getScalarE b) = ∑ i : Fin n, (getScalarE a) i * (getScalarE b) i :=
     inner_eq_sum_mul (x := getScalarE a) (y := getScalarE b)
   calc
-    Spec.dot a b = ∑ i : Fin n, Spec.Tensor.getScalar a i * Spec.Tensor.getScalar b i := hdot
+    Spec.dot a b
+        = ∑ i : Fin n, TorchLean.Tensor.getScalar a i * TorchLean.Tensor.getScalar b i := hdot
     _ = inner ℝ (getScalarE a) (getScalarE b) := by
       simpa [getScalarE] using hinter.symm
 
-/-- Coordinate formula for tensor addition under `Spec.Tensor.getScalar`. -/
-lemma getScalar_add_spec_apply {n : Nat} (a b : Tensor ℝ [n]) (i : Fin n) :
-    Spec.Tensor.getScalar (addSpec a b) i = Spec.Tensor.getScalar a i + Spec.Tensor.getScalar b i := by
-  cases a with
-  | dim fa =>
-    cases b with
-    | dim fb =>
-      cases ha : fa i with
-      | scalar x =>
-        cases hb : fb i with
-        | scalar y =>
-          simp [addSpec, Spec.Tensor.addSpec, Spec.Tensor.map2Spec, Spec.Tensor.getScalar, ha, hb]
+/-- Coordinate formula for tensor addition under `TorchLean.Tensor.getScalar`. -/
+theorem getScalar_add_spec_apply {n : Nat} (a b : Tensor ℝ [n]) (i : Fin n) :
+    TorchLean.Tensor.getScalar (addSpec a b) i
+      = TorchLean.Tensor.getScalar a i + TorchLean.Tensor.getScalar b i := by
+  exact congrFun (Spec.getScalar_add_spec a b) i
 
 /-- Vectorization commutes with tensor addition. -/
-lemma getScalarE_add_spec {n : Nat} (a b : Tensor ℝ [n]) :
+theorem getScalarE_add_spec {n : Nat} (a b : Tensor ℝ [n]) :
     getScalarE (addSpec a b) = getScalarE a + getScalarE b := by
   ext i
   simp [getScalarE_ofLp, getScalar_add_spec_apply]
 
 /--
 Vectorization commutes with elementwise mapping: `getScalarE (map_spec f t)` is `f` applied to each
-coordinate of `Spec.Tensor.getScalar t`.
+coordinate of `TorchLean.Tensor.getScalar t`.
 -/
-lemma getScalarE_map_spec {n : Nat} (f : ℝ → ℝ) (t : Tensor ℝ [n]) :
+theorem getScalarE_map_spec {n : Nat} (f : ℝ → ℝ) (t : Tensor ℝ [n]) :
     getScalarE (mapSpec (s := .dim n .scalar) f t) =
-      (euclideanEquiv n).symm fun i => f (Spec.Tensor.getScalar t i) := by
+      (euclideanEquiv n).symm fun i => f (TorchLean.Tensor.getScalar t i) := by
   ext i
-  cases t with
-  | dim ft =>
-    cases ht : ft i with
-    | scalar x =>
-      simp [getScalarE_ofLp, mapSpec, Spec.Tensor.mapSpec, Spec.Tensor.getScalar, ht]
+  simp [getScalarE_ofLp, mapSpec]
 
 /--
-Vectorization of `relu_deriv_spec`: the derivative mask is ReLU’s scalar derivative applied
+Vectorization of `reluDerivSpec`: the derivative mask is ReLU’s scalar derivative applied
 coordinatewise.
 -/
-lemma getScalarE_relu_deriv_spec {n : Nat} (t : Tensor ℝ [n]) :
+theorem getScalarE_relu_deriv_spec {n : Nat} (t : Tensor ℝ [n]) :
     getScalarE (Activation.reluDerivSpec (α := ℝ) (s := .dim n .scalar) t)
       =
-    (euclideanEquiv n).symm fun i => Activation.Math.reluDerivSpec (Spec.Tensor.getScalar t i) := by
+    (euclideanEquiv n).symm
+      fun i => Activation.Math.reluDerivSpec (TorchLean.Tensor.getScalar t i) := by
   simpa [Activation.reluDerivSpec] using
     (getScalarE_map_spec (n := n) Activation.Math.reluDerivSpec t)
 
@@ -154,7 +139,7 @@ def tensorToMatrix {m n : Nat} (W : Tensor ℝ [m, n]) : Matrix (Fin m) (Fin n) 
 /--
 The matrix–vector multiplication map as a continuous linear map on Euclidean vectors.
 
-This is the Euclidean-space version of the tensor op `mat_vec_mul_spec`.
+This is the Euclidean-space version of the tensor op `matVecMulSpec`.
 -/
 def matCLM {m n : Nat} (W : Matrix (Fin m) (Fin n) ℝ) : (Vec n) →L[ℝ] (Vec m) := by
   classical
@@ -168,7 +153,7 @@ def matCLM {m n : Nat} (W : Matrix (Fin m) (Fin n) ℝ) : (Vec n) →L[ℝ] (Vec
 Vectorization commutes with matrix–vector multiplication:
 `getScalarE (mat_vec_mul_spec A v) = (matCLM (tensorToMatrix A)) (getScalarE v)`.
 -/
-lemma getScalarE_mat_vec_mul_spec {m n : Nat}
+theorem getScalarE_mat_vec_mul_spec {m n : Nat}
     (A : Tensor ℝ [m, n]) (v : Tensor ℝ [n]) :
     getScalarE (Spec.matVecMulSpec A v) =
       (matCLM (m := m) (n := n) (tensorToMatrix A)) (getScalarE v) := by
@@ -184,7 +169,7 @@ lemma getScalarE_mat_vec_mul_spec {m n : Nat}
 /--
 Affine map `x ↦ W x + b` on Euclidean vectors.
 
-This is the vector-space analogue of `Spec.linear_spec`.
+This is the vector-space analogue of `Spec.linearSpec`.
 -/
 def affine {inDim outDim : Nat}
     (W : Matrix (Fin outDim) (Fin inDim) ℝ) (b : Vec outDim) :
@@ -193,7 +178,7 @@ def affine {inDim outDim : Nat}
 
 /-- `affine` is Fréchet-differentiable with derivative `W` (as a CLM), since it is linear +
   constant. -/
-lemma hasFDerivAt_affine {inDim outDim : Nat}
+theorem hasFDerivAt_affine {inDim outDim : Nat}
     (W : Matrix (Fin outDim) (Fin inDim) ℝ) (b : Vec outDim) (x : Vec inDim) :
     HasFDerivAt (affine (inDim := inDim) (outDim := outDim) W b)
       (matCLM (m := outDim) (n := inDim) W) x := by
@@ -207,9 +192,9 @@ lemma hasFDerivAt_affine {inDim outDim : Nat}
   simpa using hlin.add_const b
 
 /--
-Vectorization of `Spec.linear_spec` is the Euclidean affine map built from the same weights/bias.
+Vectorization of `Spec.linearSpec` is the Euclidean affine map built from the same weights/bias.
 -/
-lemma getScalarE_linear_spec {inDim outDim : Nat}
+theorem getScalarE_linear_spec {inDim outDim : Nat}
     (l : Spec.LinearSpec ℝ inDim outDim) (x : Tensor ℝ [inDim]) :
     getScalarE (Spec.linearSpec (α := ℝ) l x)
       =
@@ -252,7 +237,7 @@ def reluDerivCLM {n : Nat} (x : Vec n) : Vec n →L[ℝ] Vec n :=
 ReLU is not differentiable at 0. We therefore assume a “no kinks” hypothesis that every coordinate
 of `x` is nonzero.
 -/
-lemma hasFDerivAt_reluVec {n : Nat} (x : Vec n) (hx : ∀ i : Fin n, x i ≠ 0) :
+theorem hasFDerivAt_reluVec {n : Nat} (x : Vec n) (hx : ∀ i : Fin n, x i ≠ 0) :
     HasFDerivAt (reluVec (n := n)) (reluDerivCLM (n := n) x) x := by
   classical
   let xF : Fin n → ℝ := (euclideanEquiv n) x
@@ -364,7 +349,7 @@ Fréchet differentiability of the 2-layer MLP (Linear → ReLU → Linear) under
 
 Because ReLU is not differentiable at 0, we assume all pre-activation coordinates `z1ᵢ` are nonzero.
 -/
-lemma hasFDerivAt_mlpVec {inDim hidDim outDim : Nat}
+theorem hasFDerivAt_mlpVec {inDim hidDim outDim : Nat}
     (l1 : Spec.LinearSpec ℝ inDim hidDim)
     (l2 : Spec.LinearSpec ℝ hidDim outDim)
     (x : Vec inDim)
@@ -442,14 +427,14 @@ def mlpCorrect {inDim hidDim outDim : Nat}
 Identify the `OpSpecCorrect` JVP for the MLP with the analytic derivative `mlpDeriv`,
 after vectorizing tensors to Euclidean vectors.
 -/
-lemma getScalar_mlp_jvp {inDim hidDim outDim : Nat}
+theorem getScalar_mlp_jvp {inDim hidDim outDim : Nat}
     (l1 : Spec.LinearSpec ℝ inDim hidDim)
     (l2 : Spec.LinearSpec ℝ hidDim outDim)
     (x dx : Tensor ℝ [inDim]) :
     getScalarE ((mlpCorrect (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2).jvp x dx)
       =
-    (mlpDeriv (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2 (getScalarE x)) (getScalarE dx)
-      := by
+    (mlpDeriv (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2 (getScalarE x))
+      (getScalarE dx) := by
   classical
   -- Name the intermediate pre-activation and its Euclidean version.
   let z1T : Tensor ℝ [hidDim] := Spec.linearSpec (α := ℝ) l1 x
@@ -487,19 +472,19 @@ lemma getScalar_mlp_jvp {inDim hidDim outDim : Nat}
           ((matCLM (m := hidDim) (n := inDim) W1) dxV) := by
     ext j
     have hdx1 :
-        Spec.Tensor.getScalar (Spec.matVecMulSpec l1.weights dx) j =
+        TorchLean.Tensor.getScalar (Spec.matVecMulSpec l1.weights dx) j =
           ((matCLM (m := hidDim) (n := inDim) W1) dxV).ofLp j := by
       have h :=
         congrArg (fun v : Vec hidDim => v.ofLp j)
           (getScalarE_mat_vec_mul_spec (m := hidDim) (n := inDim) (A := l1.weights) (v := dx))
       simpa [W1, dxV, getScalarE_ofLp] using h
 
-    have hz1j : Spec.Tensor.getScalar z1T j = z1V.ofLp j := by
+    have hz1j : TorchLean.Tensor.getScalar z1T j = z1V.ofLp j := by
       have h := congrArg (fun v : Vec hidDim => v.ofLp j) hz1
       simpa [getScalarE_ofLp] using h
 
     have hrelu' :
-        Spec.Tensor.getScalar
+        TorchLean.Tensor.getScalar
             (Activation.reluDerivSpec
               ((Spec.linearOp (α := ℝ) (inDim := inDim) (outDim := hidDim) l1).forward x)) j
           =
@@ -509,7 +494,8 @@ lemma getScalar_mlp_jvp {inDim hidDim outDim : Nat}
           (getScalarE_relu_deriv_spec
             (n := hidDim)
             (t := ((Spec.linearOp (α := ℝ) (inDim := inDim) (outDim := hidDim) l1).forward x)))
-      -- Replace `Spec.Tensor.getScalar (linear_spec l1 x) j` by the corresponding coordinate of `z1V`.
+      -- Replace `TorchLean.Tensor.getScalar (linear_spec l1 x) j` by the corresponding
+      -- coordinate of `z1V`.
       simpa [Spec.linearOp, z1T, getScalarE_ofLp, hz1j] using h
 
     have hR :
@@ -540,7 +526,8 @@ lemma getScalar_mlp_jvp {inDim hidDim outDim : Nat}
     getScalarE ((mlpCorrect (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2).jvp x dx)
         = (matCLM (m := outDim) (n := hidDim) W2) (getScalarE innerT) := by
             simpa [hjvp', W2] using
-              (getScalarE_mat_vec_mul_spec (m := outDim) (n := hidDim) (A := l2.weights) (v := innerT))
+              (getScalarE_mat_vec_mul_spec (m := outDim) (n := hidDim) (A := l2.weights)
+                (v := innerT))
     _ =
         (matCLM (m := outDim) (n := hidDim) W2)
           ((reluDerivCLM (n := hidDim) z1V) ((matCLM (m := hidDim) (n := inDim) W1) dxV)) := by
@@ -569,8 +556,8 @@ theorem mlp_backward_eq_adjoint_fderiv {inDim hidDim outDim : Nat}
     ∀ δ : Tensor ℝ [outDim],
       getScalarE ((mlpOp (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2).backward x δ)
         =
-      VJP[mlpVec (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2, getScalarE x] (getScalarE δ)
-        := by
+      VJP[mlpVec (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2, getScalarE x]
+        (getScalarE δ) := by
   intro δ
   classical
   let f := mlpVec (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2
@@ -610,8 +597,9 @@ theorem mlp_backward_eq_adjoint_fderiv {inDim hidDim outDim : Nat}
             (getScalarE δ)
           =
         inner ℝ (getScalarE (ofFnE dxV))
-            (getScalarE ((mlpOp (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2).backward x
-              δ)) := by
+            (getScalarE
+              ((mlpOp (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2).backward x δ))
+        := by
       simpa [dot_eq_inner_vec] using hdot'
     -- Rewrite the JVP vector using `getScalar_mlp_jvp` and simplify `getScalarE (ofFnE dxV) = dxV`.
     have hjvpVec :
@@ -621,7 +609,8 @@ theorem mlp_backward_eq_adjoint_fderiv {inDim hidDim outDim : Nat}
         (mlpDeriv (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2 xV) dxV := by
       -- `getScalar_mlp_jvp` expects a tensor `dx`; apply it to `dx := ofFnE dxV`.
       simpa [xV] using
-        (getScalar_mlp_jvp (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2 x (ofFnE dxV))
+        (getScalar_mlp_jvp (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2 x
+          (ofFnE dxV))
     have hinner'' := hinner'
     -- Replace the JVP vector, then simplify `getScalarE (ofFnE dxV)`.
     rw [hjvpVec] at hinner''
@@ -662,15 +651,15 @@ theorem mlp_backward_eq_adjoint_fderiv {inDim hidDim outDim : Nat}
   have :
       getScalarE ((mlpOp (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2).backward x δ)
         =
-      (mlpDeriv (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2 xV).adjoint (getScalarE δ)
-        := by
+      (mlpDeriv (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2 xV).adjoint
+        (getScalarE δ) := by
     -- Let `e := u - v` and take `dxV := e`.
     set u :=
       getScalarE ((mlpOp (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2).backward x δ)
         with hu
     set v :=
-      (mlpDeriv (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2 xV).adjoint (getScalarE δ)
-        with hv
+      (mlpDeriv (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2 xV).adjoint
+        (getScalarE δ) with hv
     have h0 : inner ℝ (u - v) (u - v) = 0 := by
       have hEq := hforall (dxV := (u - v))
       -- Move to a `sub = 0` form and expand `inner (u-v) (u-v)` using bilinearity.
@@ -694,11 +683,12 @@ theorem mlp_backward_eq_adjoint_fderiv {inDim hidDim outDim : Nat}
   calc
     getScalarE ((mlpOp (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2).backward x δ)
         =
-      (mlpDeriv (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2 xV).adjoint (getScalarE δ)
-        := this
+      (mlpDeriv (inDim := inDim) (hidDim := hidDim) (outDim := outDim) l1 l2 xV).adjoint
+        (getScalarE δ) := this
     _ =
       (fderiv ℝ f xV).adjoint (getScalarE δ) := by
-        simpa using congrArg (fun D : Vec inDim →L[ℝ] Vec outDim => D.adjoint (getScalarE δ)) hfderiv'
+        simpa using
+          congrArg (fun D : Vec inDim →L[ℝ] Vec outDim => D.adjoint (getScalarE δ)) hfderiv'
 
 end
 end Autograd

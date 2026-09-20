@@ -42,12 +42,15 @@ def jepaLoss {n : Nat} {Context Target Pred : Type}
     (repLoss : Target → Pred → Nat) : Nat :=
   maskedLoss targetIdxs (fun i => repLoss (target i) (predict context i))
 
+/-- Predicting no targets costs nothing. -/
 @[simp] theorem jepaLoss_nil {n : Nat} {Context Target Pred : Type}
     (context : Context) (target : Fin n → Target) (predict : Context → Fin n → Pred)
     (repLoss : Target → Pred → Nat) :
     jepaLoss (#[] : Array (Fin n)) context target predict repLoss = 0 := by
   simp [jepaLoss]
 
+/-- The natural-valued JEPA loss is additive under concatenating target-index arrays. This identity
+does not assert equality between different floating-point reduction orders. -/
 theorem jepaLoss_append {n : Nat} {Context Target Pred : Type}
     (xs ys : Array (Fin n)) (context : Context) (target : Fin n → Target)
     (predict : Context → Fin n → Pred) (repLoss : Target → Pred → Nat) :
@@ -65,10 +68,9 @@ theorem jepaLoss_reverse {n : Nat} {Context Target Pred : Type}
   simp [jepaLoss, maskedLoss_reverse]
 
 /--
-Stop-gradient is modeled at the objective boundary: the target representation is an ordinary value
-passed into the loss, not an output of the online predictor.  This theorem states the corresponding
-extensional property: if two target branches agree on the selected indices, the JEPA loss is the
-same.
+If two target branches agree on the selected indices, the JEPA loss is the same. Targets are
+ordinary values here; this extensional identity does not specify stop-gradient or differentiate
+either branch.
 -/
 theorem jepaLoss_target_ext {n : Nat} {Context Target Pred : Type}
     (idxs : Array (Fin n)) (context : Context)

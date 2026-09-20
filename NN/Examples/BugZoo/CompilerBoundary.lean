@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-import NN.Spec.Core.Tensor
+public import NN.Runtime.Autograd.IRExec.Correctness.SemanticEquivalence
 
 /-!
 # BugZoo: compiler and export semantic mismatches
@@ -38,47 +38,38 @@ correctness bugs where compiled models return incorrect outputs without an excep
   https://arxiv.org/abs/2604.08720
 
 TorchLean's answer is a semantic boundary. For the supported IR fragment, successful lowering to
-the executable typed graph is justified by a theorem that executable evaluation agrees with the
+the executable typed graph is justified by the theorem below: executable evaluation agrees with the
 denotational source semantics. External compilers and GPU kernels still need their own conformance
-evidence; this file spells out the contract shape so that “we tested it once” is not confused with a
-semantic guarantee.
-
-The full TorchLean lowering-correctness chapter contains the stronger IR-specific theorem. This
-example stays local so that importing the examples chapter does not force every heavy lowering
-proof to elaborate.
+evidence; this theorem does not silently extend across those boundaries.
 -/
 
 @[expose] public section
 
+open TorchLean
+
 namespace NN.Examples.BugZoo.CompilerBoundary
 
 /--
-The semantic contract at compiler/export/backend boundaries.
+Successful lowering preserves the denotation of every node for every input.
 
-`sourceEval` is the reference semantics, `targetEval` is the compiled/exported/backend semantics,
-and `preserves` says the target agrees with the source on every input. This compact structure is not a
-replacement for the IR-specific compiler proof; it is the reusable shape of the claim that NNSmith-
-style and FreeFuzz-style bugs violate.
+The one fragment hypothesis excludes raw logarithm nodes, whose source semantics rejects
+nonpositive inputs while the executable graph totalizes them. The executable graph is a Lean
+reference evaluator; native kernels and external compilers remain separate conformance boundaries.
 -/
-structure SemanticBoundary
-    (Source Target Input Output : Type) where
-  /-- Reference/source semantics. -/
-  sourceEval : Source → Input → Output
-  /-- Target/backend semantics. -/
-  targetEval : Target → Input → Output
-  /-- Relation saying that `target` was produced from or is meant to implement `source`. -/
-  implements : Source → Target → Prop
-  /-- Semantic preservation required for an accepted implementation. -/
-  preserves :
-    ∀ {source : Source} {target : Target},
-      implements source target → ∀ input, targetEval target input = sourceEval source input
-
-example
-    {Source Target Input Output : Type}
-    (boundary : SemanticBoundary Source Target Input Output)
-    {source : Source} {target : Target}
-    (h : boundary.implements source target) :
-    ∀ input, boundary.targetEval target input = boundary.sourceEval source input :=
-  boundary.preserves h
+theorem successfulLowering_preservesDenotation
+    {α : Type} [Storage α] [Context α]
+    (graph : NN.IR.Graph)
+    (payload : NN.IR.Payload α)
+    (executable : Runtime.Autograd.IRExec.ForwardGraph α)
+    (hNoRawLog : Runtime.Autograd.IRExec.NoRawLog graph)
+    (hLowered :
+      Runtime.Autograd.IRExec.lowerToForwardGraph (α := α) graph payload = .ok executable) :
+    ∀ input : Tensor α executable.inShape,
+      NN.IR.Graph.denoteAll (α := α) (g := graph) (payload := payload)
+          (input := Spec.SomeTensor.mk (α := α) executable.inShape input) =
+        .ok (Runtime.Autograd.IRExec.ForwardGraph.denoteAll
+          (α := α) (e := executable) input) :=
+  Runtime.Autograd.IRExec.denoteAll_eq_of_lowerToForwardGraph
+    graph payload executable hNoRawLog hLowered
 
 end NN.Examples.BugZoo.CompilerBoundary

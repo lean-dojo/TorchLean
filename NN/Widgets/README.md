@@ -1,111 +1,35 @@
-# TorchLean Widgets
+# Widgets
 
-TorchLean widgets are optional Lean infoview panels for inspecting tensors, IR graphs, runtime
-state, training logs, verification artifacts, and small reinforcement-learning objects.
+Optional Lean infoview panels for inspecting library objects. Import `NN.Widgets` for all panels
+or a specific module such as `NN.Widgets.Core.Tensor`. Rendering an object does not validate it;
+the panel identifies any checker it runs.
 
-They are not part of the trusted mathematical kernel and they are not required for ordinary training
-or verification. They are developer tools: small, inspectable views that make the library easier to
-learn and debug from inside an editor.
-
-Widgets matter because formal artifacts are hard to debug when they are invisible. A graph node,
-tensor shape, affine bound, Float32 bit pattern, tape cotangent, or training log is much easier to
-understand when it appears next to the Lean code that produced it.
-
-## Imports
-
-Use the umbrella entrypoint for normal work:
-
-```lean
-import NN.Widgets
-```
-
-Use direct imports when you only want one family:
-
-```lean
-import NN.Widgets.Core.Tensor
-import NN.Widgets.IR.Graph
-import NN.Widgets.Interop.PyTorchTranslator
-import NN.Widgets.Runtime.Training
-import NN.Widgets.Verification.CROWN
-```
-
-## Widget Families
-
-| Widget family | What it helps inspect |
+| Directory | Views |
 | --- | --- |
-| Tensor | small typed tensors and summaries |
-| IR | node ids, parents, op tags, shape inference, execution traces |
-| Runtime | autograd tapes, gradients, runtime contexts |
-| Numerics | IEEE32 bit layouts and rounding views |
-| Verification | IBP/CROWN states and bound tightness |
-| Training | loss curves, metrics, confusion matrices |
-| RL | GridWorld, PPO, and rollout artifacts |
-| Models | model-specific panels, currently including GPT-style sequence views |
+| `Core` | Tensors, docstrings, shared UI helpers |
+| `IR` | Graph structure, shape inference, rewrites, execution traces |
+| `Runtime` | Autograd tapes, training logs, confusion matrices |
+| `Numerics` | Binary32 values, bits, and rounding |
+| `Verification` | CROWN/IBP diagnostic state and bounds |
+| `RL` | GridWorld policies/paths, PPO rollouts, transition contracts |
+| `Interop` | PyTorch constructor recognition and model sketches |
 
-## Layout
+Start with `NN/Examples/Quickstart/Widgets.lean` or `NN/Examples/DeepDives/Widgets.lean`.
+File-backed views show an error panel for missing or malformed artifacts.
 
-- `Core`: shared UI helpers, tensor rendering, and docstring panels.
-- `IR`: graph structure, shape inference, graph rewrite diffs, and execution traces.
-- `Interop`: PyTorch-to-TorchLean assistant panels and import/export diagnostics.
-- `Runtime`: autograd tape, runtime context, and training log panels.
-- `Numerics`: floating point inspection widgets such as binary32 bit views.
-- `Verification`: CROWN/IBP certificate and bound propagation panels.
-- `RL`: GridWorld and PPO rollout visualizers.
-- `Models`: model-specific views that do not belong to the generic tensor/IR families.
+Training and text models share `#train_log_view` and `#train_log_file_view`; multiline notes retain
+prompts and generated samples. Run training through the model CLI and inspect the saved log.
+Confusion-matrix clipping affects displayed cells only; statistics include every class.
 
-## Examples
-
-Open these files in an editor with the Lean infoview enabled:
-
-- `NN/Examples/DeepDives/Widgets.lean`
-- `NN/Examples/RL/PPOGridWorldView.lean`
-- `NN/Examples/RL/PPOCartPoleView.lean`
-- `NN/Examples/RL/PPOPongRamView.lean`
-- `NN/Examples/Quickstart/Widgets.lean`, including `#pytorch_translate_file` for the supported
-  PyTorch-to-TorchLean assistant.
-
-The examples are compact and editor friendly. File backed viewers render an error panel
-when an artifact is missing instead of making the Lean build fail.
-
-## What Widgets Do Not Prove
-
-A widget can show the object that a theorem, checker, or runtime produced. It does not make that
-object correct by rendering it. For example:
-
-- an IR widget can show malformed graph structure, but the graph checker is what accepts or rejects
-  the artifact;
-- a CROWN widget can show interval widths, but the certificate theorem or checker is what supports
-  a bound claim;
-- a Float32 widget can show bits and rounding choices, but the `IEEE32Exec`/`FP32` bridge files are
-  where semantic claims live.
-
-This keeps widgets useful without making them part of the trusted proof boundary.
-
-## PyTorch Translator Widget
-
-`NN.Widgets.Interop.PyTorchTranslator` is the file-based translator widget for the workflow:
-
-```text
-PyTorch file -> recognized layer report -> TorchLean skeleton -> trust-boundary notes
-```
-
-It is a supported-subset assistant for common `nn.Sequential`-style models such as MLPs
-and simple CNN blocks. Arbitrary Python modules and PyTorch execution semantics belong to the
-`torch.export` JSON bridge and Lean graph importer; the widget helps users see whether their model
-is close to TorchLean's supported subset before they run the full capture/import path.
-
-In Lean files, the practical command is:
+## PyTorch sketches
 
 ```lean
-#pytorch_translate_file "NN/Examples/Quickstart/pytorch_translator_mlp.py"
+#pytorch_translate_file "NN/Examples/Interop/PyTorch/MLP/train_mlp.py"
 ```
 
-The lower-level `#pytorch_translate_view someString` command exists for tests and future editor
-integrations that already have selected text in memory.
-
-## Design Inspiration
-
-The widgets follow the style of Lean's ProofWidgets ecosystem: render structured mathematical or
-runtime objects close to the code that produced them. Graph panels include GraphViz DOT snippets
-because DOT remains a common language for graph debugging, while training log panels use
-TensorBoard-like curves without requiring a separate web server.
+The analyzer recognizes constructor lines with literal scalar dimensions and common elementwise
+calls. Unsupported options, symbolic sizes, or tuple-valued kernels are reported. It produces a
+starting sketch, not an analysis of Python control flow or a proof of equivalent execution.
+CNN rows describe shapes; they do not automatically produce an executable CNN.
+Use the `torch.export` JSON bridge for model capture and structural validation.
+`#pytorch_translate_view text` accepts a snippet already held in memory.

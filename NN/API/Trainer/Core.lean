@@ -6,14 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Shape
-public import NN.API.Module
-public import NN.API.Trainer.Manual.Core
-public import NN.API.Optim
-public import NN.API.Loss
-public import NN.API.Trainer.Reporting
-public import NN.API.Trainer.Summary
 public import NN.API.Neural.Summary
+public import NN.Runtime.Autograd.Model -- shake: keep
+public import NN.API.Module -- shake: keep
+public import NN.API.Loss -- shake: keep
+public import NN.API.Trainer.Summary -- shake: keep
 
 /-!
 # Trainer
@@ -22,18 +19,26 @@ Create a trainer from a checked model, choose its loss and optimizer, then train
 
 ```lean
 let trainer := Trainer.new model
-  { task := .regression
-    optimizer := optim.adam { lr := 0.03 } }
+  { objective := .meanSquaredError
+    optimizer := optim.adam { learningRate := 0.03 } }
 let y0 ← trainer.predict x
-let trained ← trainer.train data { steps := 200, batchSize := 16, logEvery := 25 }
+let trained ← trainer.train data { steps := 200, samplesPerStep := 16, logEvery := 25 }
 trained.printSummary
+trained.save "model.state"
 ```
 
-`Trainer.Manual` provides direct access to runtime modules, tensor packs, and callbacks for custom
-loops.
+Inputs, targets, and predictions cross the API as `Tensor Float`. Training itself never runs in
+binary64: `.native` arithmetic uses `Float32` and `.ieee` uses `ExecFloat.Binary 8 23`, both
+binary32. The
+`Float` values are converted at the boundary, and `Result.report` records which scalar ran.
+
+`trainer.open` returns a `Trainer.Session` for programs that drive the optimizer loop themselves.
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 namespace TorchLean
 
@@ -41,44 +46,102 @@ namespace Trainer
 
 universe u
 
-/-- Runtime, device, scalar, and optimizer settings for a trainer or one training call. -/
+/--
+Runtime, device, arithmetic, and optimizer settings for a trainer or one training call.
+
+Example:
+```lean
+-- The defaults train on the CPU in Lean's `Float32`. `.ieee` swaps in the bit-level reference
+-- semantics, which is the setting to reach for when a result looks like a rounding artifact.
+def settings : Trainer.RunConfig :=
+  { optimizer := optim.sgd { learningRate := 0.01, momentum := 0.9 }
+    arithmetic := .native
+    execution := .eager
+    device := .cpu }
+```
+-/
 structure RunConfig where
   /-- Optimizer used unless a training call supplies another run configuration. -/
-  optimizer : optim.Optimizer := optim.sgd { lr := 0.01 }
-  /-- Scalar semantics used for the run. -/
-  scalar : Runtime.ScalarMode := .float32
+  optimizer : optim.Optimizer := optim.sgd { learningRate := 0.01 }
+  /--
+  Arithmetic semantics used for the run.
+
+  `.native` trains in Lean's `Float32` and `.ieee` in the bit-level `ExecFloat.Binary 8 23`
+  reference. Both
+  are binary32; the `Tensor Float` values in the public signatures are converted at the boundary.
+  Supervised training rejects `.complex`.
+  -/
+  arithmetic : Runtime.Arithmetic := .native
   /-- Immediate tape execution or reusable typed-graph execution. -/
   execution : Runtime.ExecutionMode := .eager
   /-- Device used for execution. -/
   device : Runtime.Device := .cpu
   /-- Optional advanced override for provider, assurance, and VJP policy. -/
-  backendProfile? : Option _root_.NN.Backend.BackendProfile := none
+  backendProfile? : Option NN.Backend.BackendProfile := none
   /-- Print each accepted backend capsule when it is first used. -/
   showBackend : Bool := false
 
 /--
 Loss used to train a model.
 
-The output shape belongs to the model. The task only decides how `(prediction, target)` becomes a
-scalar objective; it does not need a separate input-shape index.
+The output shape belongs to the model. The objective only decides how `(prediction, target)`
+becomes a scalar objective; it does not need a separate input-shape index.
+
+Example:
+```lean
+-- Regression scores a prediction against a target tensor.
+def regression : Trainer.Objective [1] := .meanSquaredError
+
+-- Classification needs the axis the logits live on, here the only axis of a ten-class output.
+def classification : Trainer.Objective [10] := .oneHotCrossEntropy 0
+```
 -/
-inductive Task (outputShape : List Nat) where
+inductive Objective (output : Shape) where
   /-- Mean-squared-error supervised regression. -/
-  | regression (reduction : Loss.Reduction := .mean)
+  | meanSquaredError (reduction : Loss.Reduction := .mean)
   /-- One-hot cross entropy over a class or structured logit tensor. -/
   | oneHotCrossEntropy (axis : Nat)
-      [axisInBounds : _root_.Spec.Shape.AxisInBounds axis (Shape.ofList outputShape)]
       (reduction : Loss.Reduction := .mean)
   /-- A checked TorchLean loss program supplied by the caller. -/
   | custom
-      (loss : ∀ {α : Type}, [_root_.Context α] → [DecidableEq Shape] →
-        _root_.Runtime.Autograd.TorchLean.Program α
-          [Shape.ofList outputShape, Shape.ofList outputShape] ([] : List Nat))
+      (loss : ∀ {α : Type}, [TorchLean.Storage α] → [Context α] →
+        Runtime.Autograd.Model.Program α
+          [output, output] ([] : Shape))
 
-/-- Model-independent options accepted by `Trainer.new`. -/
-structure Config (inputShape outputShape : List Nat) extends RunConfig where
-  /-- Task loss attached to this trainer. -/
-  task : Task outputShape := .regression
+namespace Objective
+
+/--
+Lower an objective for a checked model into the runtime module definition that the trainer
+instantiates.
+
+Training mode is the default; `.eval` builds the graph that stateful layers use for inference.
+-/
+def definition {σ τ : Shape} (objective : Objective τ)
+    (model : TorchLean.nn.Sequential σ τ) (mode : nn.Mode := .train) :
+    TorchLean.Module.ObjectiveDefinition Unit (TorchLean.nn.stateShapes model) [σ, τ] :=
+  match objective with
+  | .meanSquaredError reduction =>
+      Runtime.Autograd.Model.Layers.Seq.Objective.meanSquaredError
+        (model := model) (reduction := reduction) (mode := mode)
+  | .oneHotCrossEntropy axis reduction =>
+      Runtime.Autograd.Model.Layers.Seq.Objective.oneHotCrossEntropy
+        (model := model) axis (reduction := reduction) (mode := mode)
+  | .custom loss =>
+      Runtime.Autograd.Model.Layers.Seq.Objective.fromLoss model loss mode
+
+end Objective
+
+/--
+Model-independent options accepted by `Trainer.new`.
+
+The `RunConfig` fields select the optimizer and runtime. Although the trainer's public signatures
+use `Tensor Float`, training runs in the binary32 scalar chosen by `arithmetic`: `Float32` for
+`.native` and `ExecFloat.Binary 8 23` for `.ieee`. Trained parameters are read back to `Float`
+exactly.
+-/
+structure Config (input output : Shape) extends RunConfig where
+  /-- Training objective attached to this trainer. -/
+  objective : Objective output := .meanSquaredError
   /-- Seed used when the model is still a seedable `TorchLean.nn.Builder` builder. -/
   seed : Nat := 0
 
@@ -90,11 +153,11 @@ A checked model together with its loss, runtime settings, and initialization see
 Construct trainers with `Trainer.new`. The resulting value supports prediction, training, and model
 inspection directly through dot notation.
 -/
-structure Trainer (inputShape outputShape : List Nat) where
+structure Trainer (input output : Shape) where
   /-- Checked TorchLean model. -/
-  model : TorchLean.nn.Sequential inputShape outputShape
+  model : TorchLean.nn.Sequential input output
   /-- Supervised objective used by `train`. -/
-  task : Trainer.Task outputShape
+  objective : Trainer.Objective output
   /-- Runtime, backend-contract, and optimizer choices carried by this trainer. -/
   runtime : Trainer.RunConfig := {}
   /-- Seed used to build this trainer when the input was a `TorchLean.nn.Builder` model builder. -/
@@ -102,66 +165,19 @@ structure Trainer (inputShape outputShape : List Nat) where
 
 namespace Trainer
 
-/-- Checked model summary for this trainer. -/
-def info {inputShape outputShape : List Nat}
-    (trainer : TorchLean.Trainer inputShape outputShape) : String :=
-  nn.info trainer.model
+/-- Structured checked-model summary for this trainer. -/
+def summary {σ τ : Shape}
+    (trainer : TorchLean.Trainer σ τ) : Except String nn.ModelSummary :=
+  nn.summary trainer.model
 
-/-- Print the checked model summary under the heading `model`. -/
-def printInfo {inputShape outputShape : List Nat}
-    (trainer : TorchLean.Trainer inputShape outputShape) : IO Unit := do
-  IO.println "model:"
-  IO.println trainer.info
-
-/-- Print the checked model summary with a caller-chosen heading. -/
-def printInfoAs {inputShape outputShape : List Nat}
-    (trainer : TorchLean.Trainer inputShape outputShape) (label : String) : IO Unit := do
+/-- Print the checked-model summary under a caller-chosen heading. -/
+def printSummary {σ τ : Shape}
+    (trainer : TorchLean.Trainer σ τ)
+    (label : String := "model") : IO Unit := do
   IO.println s!"{label}:"
-  IO.println trainer.info
-
-namespace Internal
-
-/--
-Internal selection of a checked model, its concrete runtime task, and its state-layout equality.
-
-Regression and one-hot cross entropy differ only in how they construct `task`; the runtime runner,
-state, and prediction machinery is otherwise identical.
--/
-structure SelectedTask (inputShape outputShape : List Nat) where
-  /-- The checked model selected for execution. -/
-  model : TorchLean.nn.Sequential inputShape outputShape
-  /-- Concrete supervised task passed to the manual runner. -/
-  task : TorchLean.Trainer.Manual.SeqTask
-    (Shape.ofList inputShape) (Shape.ofList outputShape)
-  /-- Runtime settings inherited from the public trainer. -/
-  runtime : RunConfig := {}
-  /-- The selected task uses exactly the model's parameter and buffer layout. -/
-  stateShapes_eq : task.stateShapes = nn.stateShapes model
-
-namespace SelectedTask
-
-/-- Select mean-squared-error training from a public trainer. -/
-def regression {inputShape outputShape : List Nat}
-    (trainer : TorchLean.Trainer inputShape outputShape) (reduction : Loss.Reduction) :
-    SelectedTask inputShape outputShape :=
-  { model := trainer.model
-    task := TorchLean.Trainer.Manual.SeqTask.mse trainer.model reduction
-    runtime := trainer.runtime
-    stateShapes_eq := by rfl }
-
-/-- Select one-hot cross-entropy training from a public trainer. -/
-def oneHotCrossEntropy {inputShape outputShape : List Nat}
-    (trainer : TorchLean.Trainer inputShape outputShape) (axis : Nat)
-    [validAxis : _root_.Spec.Shape.AxisInBounds axis (Shape.ofList outputShape)]
-    (reduction : Loss.Reduction) : SelectedTask inputShape outputShape :=
-  { model := trainer.model
-    task := TorchLean.Trainer.Manual.SeqTask.oneHotCrossEntropy trainer.model axis reduction
-    runtime := trainer.runtime
-    stateShapes_eq := by rfl }
-
-end SelectedTask
-
-end Internal
+  match trainer.summary with
+  | .ok details => IO.println details
+  | .error message => throw <| IO.userError message
 
 end Trainer
 

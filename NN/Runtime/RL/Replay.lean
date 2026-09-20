@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL.Core
-public import NN.Runtime.Autograd.TorchLean.Random
+public import NN.Spec.Core.Random
 
 /-!
 # Experience Replay Buffers
@@ -41,14 +41,15 @@ namespace Runtime
 namespace RL
 namespace Replay
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {obsShape : Shape} {nActions : Nat}
 
 /-- Typed replay transition for tensor-valued observations and finite actions. -/
-abbrev Transition (α : Type) (obsShape : Shape) (nActions : Nat) :=
+abbrev Transition (α : Type) [TorchLean.Storage α]
+    (obsShape : Shape) (nActions : Nat) :=
   Core.Transition α obsShape nActions
 
 /--
@@ -56,7 +57,8 @@ Bounded FIFO replay buffer.
 
 `capacity = 0` is allowed and represents a disabled buffer; pushes then leave the buffer empty.
 -/
-structure Buffer (α : Type) (obsShape : Shape) (nActions : Nat) where
+structure Buffer (α : Type) [TorchLean.Storage α]
+    (obsShape : Shape) (nActions : Nat) where
   /-- Maximum number of transitions retained. -/
   capacity : Nat
   /-- Stored transitions, oldest first. -/
@@ -135,8 +137,8 @@ def sampleContiguous (b : Buffer α obsShape nActions) (start batchSize : Nat) :
 Deterministic pseudo-random sample from `(seed, counter)`.
 
 The sampler intentionally returns the next counter rather than hiding mutation. It draws indices via
-TorchLean's keyed uniform helper, then wraps them modulo the current buffer size. Empty buffers return
-an empty batch and leave the counter unchanged.
+TorchLean's keyed uniform helper, then wraps them modulo the current buffer size. Empty buffers
+return an empty batch and leave the counter unchanged.
 -/
 def sampleRandom (b : Buffer α obsShape nActions) (seed counter batchSize : Nat) :
     Nat × Array (Transition α obsShape nActions) :=
@@ -147,10 +149,10 @@ def sampleRandom (b : Buffer α obsShape nActions) (seed counter batchSize : Nat
       let mut out := #[]
       let mut c := counter
       for _ in [0:batchSize] do
-        let key := _root_.Runtime.Autograd.TorchLean.Random.keyOf seed c
+        let key := Spec.Random.keyOf seed c
         let u : Float :=
           Tensor.item
-            (_root_.Runtime.Autograd.TorchLean.Random.uniform (α := Float) key (s := Shape.scalar))
+            (Spec.Random.uniform (α := Float) key (s := Shape.scalar))
         let idx := ((u * Float.ofNat b.items.size).floor.toUInt64.toNat) % b.items.size
         match b.items[idx]? with
         | some t => out := out.push t

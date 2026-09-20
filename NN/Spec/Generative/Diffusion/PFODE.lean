@@ -8,6 +8,7 @@ module
 
 public import NN.Spec.Dynamics.System
 public import NN.Spec.Generative.Diffusion.Core
+public import NN.Spec.Core.Context.Real
 
 /-!
 # Probability-flow ODE (spec layer)
@@ -21,8 +22,10 @@ Why include this in the spec layer:
   IBP/CROWN bounds on the RHS, etc.).
 
 We keep the implementation scalar-polymorphic (`Context α`) so it can be:
-- executed with `Float` / `IEEE32Exec` / `NeuralFloat`, and
-- reasoned about with `ℝ`.
+- executed with `Float`, `Float32`, or the configured binary32 type `ExecFloat.Binary 8 23`;
+- run in CPU software at a chosen precision with `FloatLib.Floats.ExecFloat.Binary`; and
+- reasoned about with `ℝ` or the noncomputable rounded-real model
+  `FloatLib.Floats.Formats.Flocq.NF`.
 
 References (informal pointers):
 - Song et al. (2021), "Score-Based Generative Modeling through Stochastic Differential Equations".
@@ -33,14 +36,14 @@ References (informal pointers):
 
 namespace Generative.Diffusion
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Continuous-time linear VP schedule on $t\in[0,1]$:
 $\beta(t)=\beta_0+t(\beta_1-\beta_0)$. -/
-structure VPLinearSchedule (α : Type) [Context α] where
+structure VPLinearSchedule (α : Type) [TorchLean.Storage α] [Context α] where
   /-- $\beta(0)$. -/
   beta0 : α
   /-- $\beta(1)$. -/
@@ -62,7 +65,7 @@ $$
 $$
 -/
 def alphaBar (sch : VPLinearSchedule α) (t : α) : α :=
-  let half : α := Numbers.half
+  let half : α := (1 / 2)
   -- Use `t*t` instead of `t^2` to avoid relying on numeral coercions into arbitrary backends.
   let intBeta : α := sch.beta0 * t + half * (sch.beta1 - sch.beta0) * (t * t)
   MathFunctions.exp (-intBeta)
@@ -105,9 +108,9 @@ def pfOdeRhs (sch : VPLinearSchedule α) (model : EpsModel α s) (x : Tensor α 
   let β : α := sch.beta t
   let σ : α := sch.sigma t
   let epsHat : Tensor α s := model.eps x t
-  let drift_x : Tensor α s := Tensor.scaleSpec x (Numbers.negHalf * β)
+  let drift_x : Tensor α s := Tensor.scaleSpec x ((-1 / 2) * β)
   let drift_eps : Tensor α s :=
-    Tensor.scaleSpec epsHat (Numbers.half * safeDiv β σ)
+    Tensor.scaleSpec epsHat ((1 / 2) * safeDiv β σ)
   drift_x + drift_eps
 
 /--
@@ -150,15 +153,16 @@ def pfOdeSampleEuler (sch : VPLinearSchedule α) (model : EpsModel α s)
 Real-valued probability-flow Euler step as a `DynamicalSystem`.
 
 This is the formal hook used by trajectory/fixed-point/contraction lemmas in
-`NN.Spec.Dynamics.System`: at a fixed time and step size, Euler integration is an autonomous
+`Spec.Dynamics.System`: at a fixed time and step size, Euler integration is an autonomous
 discrete update on the current sample.
 -/
-noncomputable def pfOdeEulerSystem (sch : VPLinearSchedule SpecScalar) (model : EpsModel SpecScalar s)
-    (t dt : SpecScalar) : NN.Spec.Dynamics.DynamicalSystem s where
+noncomputable def pfOdeEulerSystem (sch : VPLinearSchedule SpecScalar)
+    (model : EpsModel SpecScalar s) (t dt : SpecScalar) : Spec.Dynamics.DynamicalSystem s where
   step := fun x =>
     eulerStep (α := SpecScalar) (s := s)
       (pfOdeRhs (α := SpecScalar) (s := s) sch model) x t dt
 
+/-- The probability-flow ODE system steps by one explicit Euler step of its right-hand side. -/
 @[simp] theorem pfOdeEulerSystem_step (sch : VPLinearSchedule SpecScalar)
     (model : EpsModel SpecScalar s) (t dt : SpecScalar) (x : SpecTensor s) :
     (pfOdeEulerSystem (s := s) sch model t dt).step x =

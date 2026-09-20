@@ -7,6 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.Optimization.Muon.Certificates
+public import NN.MLTheory.Optimization.Muon.NewtonSchulz
+public import NN.Proofs.Tensor.Basic.FactorizationsOrthonormal
+public import NN.Proofs.Tensor.Basic.LinearAlgebra
 
 /-!
 # QR Muon Backend
@@ -19,80 +22,48 @@ supplies to Muon updates.
 
 namespace Optim
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Muon
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- QR/Gram-Schmidt orthogonalizer: return the `Q` factor of the fresh matrix buffer. -/
 noncomputable def qrOrthogonalizer {m n : Nat} :
     Orthogonalizer ℝ (.dim m (.dim n .scalar)) :=
   { apply := fun buffer => qrQSpec buffer }
 
-/-- The success condition for TorchLean's executable QR orthogonalizer. -/
+/-- Positive pivots of the real-valued QR specification; no native QR claim is made. -/
 def HasPositiveQRPivots {m n : Nat} (buffer : MatrixTensor ℝ m n) : Prop :=
   ∀ j : Fin n, 0 < get2 (qrRSpec buffer) j j
 
-lemma get2_identityTensorSpec_real {n : Nat} (i j : Fin n) :
+/-- Entries of the identity matrix over `ℝ`, in the `get2` form the QR proofs consume. -/
+theorem get2_identityTensorSpec_real {n : Nat} (i j : Fin n) :
     get2 (identityTensorSpec (α := ℝ) n) i j = if i = j then 1 else 0 := by
-  cases n with
-  | zero => exact Fin.elim0 i
-  | succ n =>
-      by_cases h : i = j
-      · subst j
-        simp [identityTensorSpec, get2_eq, get_eq]
-      · have hval : i.val ≠ j.val := by
-          intro hv
-          exact h (Fin.ext hv)
-        simp [identityTensorSpec, get2_eq, get_eq, h, hval]
+  by_cases h : i = j
+  · subst j
+    simp [identityTensorSpec, get2, Tensor.getScalar, Spec.get, Tensor.unstack,
+      Tensor.item]
+  · have hval : i.val ≠ j.val := fun hval => h (Fin.ext hval)
+    simp [identityTensorSpec, get2, Tensor.getScalar, Spec.get, Tensor.unstack,
+      Tensor.item, h, hval]
 
 /-- Entry rule for matrix-shaped tensor addition over $\mathbb{R}$. -/
-lemma get2_addSpec_real {m n : Nat} (A B : MatrixTensor ℝ m n) (i : Fin m) (j : Fin n) :
+theorem get2_addSpec_real {m n : Nat} (A B : MatrixTensor ℝ m n) (i : Fin m) (j : Fin n) :
     get2 (addSpec A B) i j = get2 A i j + get2 B i j := by
-  cases A with
-  | dim rowsA =>
-    cases B with
-    | dim rowsB =>
-      cases hA : rowsA i with
-      | dim colsA =>
-        cases hB : rowsB i with
-        | dim colsB =>
-          cases hAj : colsA j with
-          | scalar a =>
-            cases hBj : colsB j with
-            | scalar b =>
-              simp [addSpec, map2Spec, get2_eq, get_eq, hA, hB, hAj, hBj]
+  simp [addSpec]
 
 /-- Entry rule for matrix-shaped tensor scaling over $\mathbb{R}$. -/
-lemma get2_scaleSpec_real {m n : Nat} (A : MatrixTensor ℝ m n) (c : ℝ)
+theorem get2_scaleSpec_real {m n : Nat} (A : MatrixTensor ℝ m n) (c : ℝ)
     (i : Fin m) (j : Fin n) :
     get2 (scaleSpec A c) i j = get2 A i j * c := by
-  cases A with
-  | dim rows =>
-    cases hrow : rows i with
-    | dim cols =>
-      cases hcol : cols j with
-      | scalar a =>
-        simp [scaleSpec, mapSpec, get2_eq, get_eq, hrow, hcol]
+  simp [scaleSpec]
 
 /-- Entry rule for matrix-shaped tensor subtraction over $\mathbb{R}$. -/
-lemma get2_subSpec_real {m n : Nat} (A B : MatrixTensor ℝ m n) (i : Fin m) (j : Fin n) :
+theorem get2_subSpec_real {m n : Nat} (A B : MatrixTensor ℝ m n) (i : Fin m) (j : Fin n) :
     get2 (subSpec A B) i j = get2 A i j - get2 B i j := by
-  cases A with
-  | dim rowsA =>
-    cases B with
-    | dim rowsB =>
-      cases hA : rowsA i with
-      | dim colsA =>
-        cases hB : rowsB i with
-        | dim colsB =>
-          cases hAj : colsA j with
-          | scalar a =>
-            cases hBj : colsB j with
-            | scalar b =>
-              simp [subSpec, map2Spec, get2_eq, get_eq, hA, hB, hAj, hBj]
+  simp [subSpec]
 
 /-- Right multiplication by the identity matrix leaves a real matrix unchanged. -/
 theorem matMul_right_identity_real {m n : Nat} (A : MatrixTensor ℝ m n) :
@@ -161,7 +132,7 @@ theorem scale_hasExactColumnGram_of_square_eq_one {m n : Nat}
   unfold HasExactColumnGram columnGram
   apply matrix_ext
   intro i j
-  have hgram' : matMulSpec (Spec.Tensor.swapAdjacentAxes Q 0) Q =
+  have hgram' : matMulSpec (TorchLean.Tensor.swapAdjacentAxes Q 0) Q =
       identityTensorSpec (α := ℝ) n := by
     simpa [HasExactColumnGram, columnGram] using hgram
   have hentry :
@@ -169,15 +140,15 @@ theorem scale_hasExactColumnGram_of_square_eq_one {m n : Nat}
         get2 (identityTensorSpec (α := ℝ) n) i j := by
     calc
       (∑ r : Fin m, get2 Q r i * get2 Q r j)
-          = get2 (matMulSpec (Spec.Tensor.swapAdjacentAxes Q 0) Q) i j := by
+          = get2 (matMulSpec (TorchLean.Tensor.swapAdjacentAxes Q 0) Q) i j := by
             symm
             calc
-              get2 (matMulSpec (Spec.Tensor.swapAdjacentAxes Q 0) Q) i j
+              get2 (matMulSpec (TorchLean.Tensor.swapAdjacentAxes Q 0) Q) i j
                   = ∑ r : Fin m,
-                      get2 (Spec.Tensor.swapAdjacentAxes Q 0) i r * get2 Q r j := by
+                      get2 (TorchLean.Tensor.swapAdjacentAxes Q 0) i r * get2 Q r j := by
                     simpa using
                       (get2_mat_mul_spec
-                        (A := Spec.Tensor.swapAdjacentAxes Q 0) (B := Q) (i := i) (j := j))
+                        (A := TorchLean.Tensor.swapAdjacentAxes Q 0) (B := Q) (i := i) (j := j))
               _ = ∑ r : Fin m, get2 Q r i * get2 Q r j := by
                     refine Finset.sum_congr rfl ?_
                     intro r _
@@ -186,13 +157,13 @@ theorem scale_hasExactColumnGram_of_square_eq_one {m n : Nat}
             exact congrArg (fun M => get2 M i j) hgram'
   calc
     get2
-        (matMulSpec (Spec.Tensor.swapAdjacentAxes (scaleSpec Q k) 0) (scaleSpec Q k)) i j
+        (matMulSpec (TorchLean.Tensor.swapAdjacentAxes (scaleSpec Q k) 0) (scaleSpec Q k)) i j
         = ∑ r : Fin m,
-            get2 (Spec.Tensor.swapAdjacentAxes (scaleSpec Q k) 0) i r *
+            get2 (TorchLean.Tensor.swapAdjacentAxes (scaleSpec Q k) 0) i r *
               get2 (scaleSpec Q k) r j := by
           simpa using
             (get2_mat_mul_spec
-              (A := Spec.Tensor.swapAdjacentAxes (scaleSpec Q k) 0) (B := scaleSpec Q k)
+              (A := TorchLean.Tensor.swapAdjacentAxes (scaleSpec Q k) 0) (B := scaleSpec Q k)
               (i := i) (j := j))
     _ = ∑ r : Fin m, (get2 Q r i * k) * (get2 Q r j * k) := by
           refine Finset.sum_congr rfl ?_
@@ -220,7 +191,7 @@ theorem scale_hasApproxColumnGram_of_exact_column_gram_of_square_error {m n : Na
     (heps : 0 ≤ eps) :
     HasApproxColumnGram eps (scaleSpec Q k) := by
   intro i j
-  have hgram' : matMulSpec (Spec.Tensor.swapAdjacentAxes Q 0) Q =
+  have hgram' : matMulSpec (TorchLean.Tensor.swapAdjacentAxes Q 0) Q =
       identityTensorSpec (α := ℝ) n := by
     simpa [HasExactColumnGram, columnGram] using hgram
   have hentry :
@@ -228,15 +199,15 @@ theorem scale_hasApproxColumnGram_of_exact_column_gram_of_square_error {m n : Na
         get2 (identityTensorSpec (α := ℝ) n) i j := by
     calc
       (∑ r : Fin m, get2 Q r i * get2 Q r j)
-          = get2 (matMulSpec (Spec.Tensor.swapAdjacentAxes Q 0) Q) i j := by
+          = get2 (matMulSpec (TorchLean.Tensor.swapAdjacentAxes Q 0) Q) i j := by
             symm
             calc
-              get2 (matMulSpec (Spec.Tensor.swapAdjacentAxes Q 0) Q) i j
+              get2 (matMulSpec (TorchLean.Tensor.swapAdjacentAxes Q 0) Q) i j
                   = ∑ r : Fin m,
-                      get2 (Spec.Tensor.swapAdjacentAxes Q 0) i r * get2 Q r j := by
+                      get2 (TorchLean.Tensor.swapAdjacentAxes Q 0) i r * get2 Q r j := by
                     simpa using
                       (get2_mat_mul_spec
-                        (A := Spec.Tensor.swapAdjacentAxes Q 0) (B := Q) (i := i) (j := j))
+                        (A := TorchLean.Tensor.swapAdjacentAxes Q 0) (B := Q) (i := i) (j := j))
               _ = ∑ r : Fin m, get2 Q r i * get2 Q r j := by
                     refine Finset.sum_congr rfl ?_
                     intro r _
@@ -249,15 +220,15 @@ theorem scale_hasApproxColumnGram_of_exact_column_gram_of_square_error {m n : Na
     calc
       get2 (columnGram (scaleSpec Q k)) i j
           = get2
-              (matMulSpec (Spec.Tensor.swapAdjacentAxes (scaleSpec Q k) 0) (scaleSpec Q k))
+              (matMulSpec (TorchLean.Tensor.swapAdjacentAxes (scaleSpec Q k) 0) (scaleSpec Q k))
               i j := by
             rfl
       _ = ∑ r : Fin m,
-            get2 (Spec.Tensor.swapAdjacentAxes (scaleSpec Q k) 0) i r *
+            get2 (TorchLean.Tensor.swapAdjacentAxes (scaleSpec Q k) 0) i r *
               get2 (scaleSpec Q k) r j := by
             simpa using
               (get2_mat_mul_spec
-                (A := Spec.Tensor.swapAdjacentAxes (scaleSpec Q k) 0) (B := scaleSpec Q k)
+                (A := TorchLean.Tensor.swapAdjacentAxes (scaleSpec Q k) 0) (B := scaleSpec Q k)
                 (i := i) (j := j))
       _ = ∑ r : Fin m, (get2 Q r i * k) * (get2 Q r j * k) := by
             refine Finset.sum_congr rfl ?_
@@ -373,7 +344,8 @@ theorem newtonSchulzFixedPointCheckedExact_success_of_coeff_sum_one {m n : Nat}
     (hsum : coeffs.a + coeffs.b + coeffs.c = 1) :
     (newtonSchulzFixedPointCheckedExactOrthogonalizer
       (α := ℝ) (m := m) (n := n) coeffs steps).Success buffer := by
-  exact ⟨hgram, newtonSchulzFixedPoint_of_exact_column_gram_of_coeff_sum_one coeffs buffer hgram hsum⟩
+  exact ⟨hgram,
+    newtonSchulzFixedPoint_of_exact_column_gram_of_coeff_sum_one coeffs buffer hgram hsum⟩
 
 /--
 For real coefficients with $a+b+c=1$, exact column Gram of the fresh momentum buffer is
@@ -381,35 +353,36 @@ enough to certify a Newton-Schulz Muon update exactly.
 -/
 theorem update_has_exact_certified_step_newtonSchulz_exact_gram_checked {m n : Nat}
     (coeffs : NewtonSchulzCoeffs ℝ) (steps : Nat)
-    (lr momentum : ℝ) (buf params grads : MatrixTensor ℝ m n)
+    (learningRate momentum : ℝ) (momentumBuffer parameters gradients : MatrixTensor ℝ m n)
     (hgram :
       HasExactColumnGram
         (update
-          ({ lr := lr, momentum := momentum, buf := buf,
+          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer :=
               newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps } :
             State ℝ (.dim m (.dim n .scalar)))
-          params grads).1.buf)
+          parameters gradients).optimizerState.momentumBuffer)
     (hsum : coeffs.a + coeffs.b + coeffs.c = 1) :
     ∃ direction : MatrixTensor ℝ m n,
       ExactCertifiedStep
-        ({ lr := lr, momentum := momentum, buf := buf,
+        ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
            orthogonalizer :=
             newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps } :
           State ℝ (.dim m (.dim n .scalar)))
-        params grads direction := by
+        parameters gradients direction := by
   exact exactCertifiedStep_of_checkedBackend
     (backend := newtonSchulzFixedPointCheckedExactOrthogonalizer
       (α := ℝ) (m := m) (n := n) coeffs steps)
-    (lr := lr) (momentum := momentum) (buf := buf) (params := params) (grads := grads)
+    (learningRate := learningRate) (momentum := momentum) (momentumBuffer := momentumBuffer)
+    (parameters := parameters) (gradients := gradients)
     (newtonSchulzFixedPointCheckedExact_success_of_coeff_sum_one
       coeffs steps
       (update
-        ({ lr := lr, momentum := momentum, buf := buf,
+        ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
            orthogonalizer :=
             newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps } :
           State ℝ (.dim m (.dim n .scalar)))
-        params grads).1.buf hgram hsum)
+        parameters gradients).optimizerState.momentumBuffer hgram hsum)
 
 /--
 For real coefficients with $a+b+c=1$, exact column Gram of the fresh momentum buffer gives
@@ -417,36 +390,37 @@ $Q^\mathsf{T}Q=I$ for the actual Newton-Schulz update direction.
 -/
 theorem update_newtonSchulz_exact_gram_direction_has_exact_column_gram_checked {m n : Nat}
     (coeffs : NewtonSchulzCoeffs ℝ) (steps : Nat)
-    (lr momentum : ℝ) (buf params grads : MatrixTensor ℝ m n)
+    (learningRate momentum : ℝ) (momentumBuffer parameters gradients : MatrixTensor ℝ m n)
     (hgram :
       HasExactColumnGram
         (update
-          ({ lr := lr, momentum := momentum, buf := buf,
+          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer :=
               newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps } :
             State ℝ (.dim m (.dim n .scalar)))
-          params grads).1.buf)
+          parameters gradients).optimizerState.momentumBuffer)
     (hsum : coeffs.a + coeffs.b + coeffs.c = 1) :
     HasExactColumnGram
       ((newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps).apply
         (update
-          ({ lr := lr, momentum := momentum, buf := buf,
+          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer :=
               newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps } :
             State ℝ (.dim m (.dim n .scalar)))
-          params grads).1.buf) := by
+          parameters gradients).optimizerState.momentumBuffer) := by
   exact checkedBackend_updateDirection_hasExactColumnGram
     (backend := newtonSchulzFixedPointCheckedExactOrthogonalizer
       (α := ℝ) (m := m) (n := n) coeffs steps)
-    (lr := lr) (momentum := momentum) (buf := buf) (params := params) (grads := grads)
+    (learningRate := learningRate) (momentum := momentum) (momentumBuffer := momentumBuffer)
+    (parameters := parameters) (gradients := gradients)
     (newtonSchulzFixedPointCheckedExact_success_of_coeff_sum_one
       coeffs steps
       (update
-        ({ lr := lr, momentum := momentum, buf := buf,
+        ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
            orthogonalizer :=
             newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps } :
           State ℝ (.dim m (.dim n .scalar)))
-        params grads).1.buf hgram hsum)
+        parameters gradients).optimizerState.momentumBuffer hgram hsum)
 
 /--
 Initialized version: exact column Gram of the first fresh momentum buffer and $a+b+c=1$
@@ -454,33 +428,34 @@ certify the first Newton-Schulz Muon step exactly.
 -/
 theorem init_has_exact_certified_step_newtonSchulz_exact_gram_checked {m n : Nat}
     (coeffs : NewtonSchulzCoeffs ℝ) (steps : Nat)
-    (lr momentum : ℝ) (params grads : MatrixTensor ℝ m n)
+    (learningRate momentum : ℝ) (parameters gradients : MatrixTensor ℝ m n)
     (hgram :
       HasExactColumnGram
         (update
-          (init lr momentum
+          (init learningRate momentum
             (newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps)
-            params)
-          params grads).1.buf)
+            parameters)
+          parameters gradients).optimizerState.momentumBuffer)
     (hsum : coeffs.a + coeffs.b + coeffs.c = 1) :
     ∃ direction : MatrixTensor ℝ m n,
       ExactCertifiedStep
-        (init lr momentum
+        (init learningRate momentum
           (newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps)
-          params)
-        params grads direction := by
+          parameters)
+        parameters gradients direction := by
   exact exactCertifiedStep_of_checkedBackend
     (backend := newtonSchulzFixedPointCheckedExactOrthogonalizer
       (α := ℝ) (m := m) (n := n) coeffs steps)
-    (lr := lr) (momentum := momentum)
-    (buf := fill 0 (.dim m (.dim n .scalar))) (params := params) (grads := grads)
+    (learningRate := learningRate) (momentum := momentum)
+    (momentumBuffer := Tensor.full (.dim m (.dim n .scalar)) 0) (parameters := parameters)
+    (gradients := gradients)
     (newtonSchulzFixedPointCheckedExact_success_of_coeff_sum_one
       coeffs steps
       (update
-        (init lr momentum
+        (init learningRate momentum
           (newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps)
-          params)
-        params grads).1.buf hgram hsum)
+          parameters)
+        parameters gradients).optimizerState.momentumBuffer hgram hsum)
 
 /--
 The QR orthogonalizer satisfies the exact Muon direction contract whenever the executable QR pivots
@@ -494,12 +469,12 @@ theorem qrOrthogonalizer_exact_of_positive_pivots {m n : Nat}
   apply matrix_ext
   intro i j
   calc
-    get2 (matMulSpec (Spec.Tensor.swapAdjacentAxes (qrQSpec buffer) 0) (qrQSpec buffer)) i j
-        = ∑ k : Fin m, get2 (Spec.Tensor.swapAdjacentAxes (qrQSpec buffer) 0) i k *
+    get2 (matMulSpec (TorchLean.Tensor.swapAdjacentAxes (qrQSpec buffer) 0) (qrQSpec buffer)) i j
+        = ∑ k : Fin m, get2 (TorchLean.Tensor.swapAdjacentAxes (qrQSpec buffer) 0) i k *
             get2 (qrQSpec buffer) k j := by
           simpa using
             (get2_mat_mul_spec
-              (A := Spec.Tensor.swapAdjacentAxes (qrQSpec buffer) 0)
+              (A := TorchLean.Tensor.swapAdjacentAxes (qrQSpec buffer) 0)
               (B := qrQSpec buffer) (i := i) (j := j))
     _ = ∑ k : Fin m, get2 (qrQSpec buffer) k i * get2 (qrQSpec buffer) k j := by
           refine Finset.sum_congr rfl ?_
@@ -523,23 +498,24 @@ Concrete QR-backed Muon step theorem: if the fresh momentum buffer has positive 
 executable Muon update has a certified exact step.
 -/
 theorem update_has_exact_certified_step_qr {m n : Nat}
-    (lr momentum : ℝ) (buf params grads : MatrixTensor ℝ m n)
+    (learningRate momentum : ℝ) (momentumBuffer parameters gradients : MatrixTensor ℝ m n)
     (hpivots :
       HasPositiveQRPivots
         (update
-          ({ lr := lr, momentum := momentum, buf := buf,
+          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := qrOrthogonalizer (m := m) (n := n) } :
             State ℝ (.dim m (.dim n .scalar)))
-          params grads).1.buf) :
+          parameters gradients).optimizerState.momentumBuffer) :
     ∃ direction : MatrixTensor ℝ m n,
       ExactCertifiedStep
-        ({ lr := lr, momentum := momentum, buf := buf,
+        ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
            orthogonalizer := qrOrthogonalizer (m := m) (n := n) } :
           State ℝ (.dim m (.dim n .scalar)))
-        params grads direction := by
+        parameters gradients direction := by
   exact exactCertifiedStep_of_checkedBackend
     (backend := qrCheckedExactOrthogonalizer (m := m) (n := n))
-    (lr := lr) (momentum := momentum) (buf := buf) (params := params) (grads := grads)
+    (learningRate := learningRate) (momentum := momentum) (momentumBuffer := momentumBuffer)
+    (parameters := parameters) (gradients := gradients)
     hpivots
 
 /--
@@ -547,24 +523,25 @@ Concrete QR-backed direction theorem: if the fresh momentum buffer has positive 
 actual direction used by the Muon update has column Gram $I$.
 -/
 theorem update_qr_direction_has_exact_column_gram {m n : Nat}
-    (lr momentum : ℝ) (buf params grads : MatrixTensor ℝ m n)
+    (learningRate momentum : ℝ) (momentumBuffer parameters gradients : MatrixTensor ℝ m n)
     (hpivots :
       HasPositiveQRPivots
         (update
-          ({ lr := lr, momentum := momentum, buf := buf,
+          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := qrOrthogonalizer (m := m) (n := n) } :
             State ℝ (.dim m (.dim n .scalar)))
-          params grads).1.buf) :
+          parameters gradients).optimizerState.momentumBuffer) :
     HasExactColumnGram
       ((qrOrthogonalizer (m := m) (n := n)).apply
         (update
-          ({ lr := lr, momentum := momentum, buf := buf,
+          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := qrOrthogonalizer (m := m) (n := n) } :
             State ℝ (.dim m (.dim n .scalar)))
-          params grads).1.buf) := by
+          parameters gradients).optimizerState.momentumBuffer) := by
   exact checkedBackend_updateDirection_hasExactColumnGram
     (backend := qrCheckedExactOrthogonalizer (m := m) (n := n))
-    (lr := lr) (momentum := momentum) (buf := buf) (params := params) (grads := grads)
+    (learningRate := learningRate) (momentum := momentum) (momentumBuffer := momentumBuffer)
+    (parameters := parameters) (gradients := gradients)
     hpivots
 
 /--
@@ -572,20 +549,21 @@ Initialized QR-backed Muon step theorem: if the first fresh momentum buffer has 
 the first initialized Muon update has a certified exact step.
 -/
 theorem init_has_exact_certified_step_qr {m n : Nat}
-    (lr momentum : ℝ) (params grads : MatrixTensor ℝ m n)
+    (learningRate momentum : ℝ) (parameters gradients : MatrixTensor ℝ m n)
     (hpivots :
       HasPositiveQRPivots
         (update
-          (init lr momentum (qrOrthogonalizer (m := m) (n := n)) params)
-          params grads).1.buf) :
+          (init learningRate momentum (qrOrthogonalizer (m := m) (n := n)) parameters)
+          parameters gradients).optimizerState.momentumBuffer) :
     ∃ direction : MatrixTensor ℝ m n,
       ExactCertifiedStep
-        (init lr momentum (qrOrthogonalizer (m := m) (n := n)) params)
-        params grads direction := by
+        (init learningRate momentum (qrOrthogonalizer (m := m) (n := n)) parameters)
+        parameters gradients direction := by
   exact exactCertifiedStep_of_checkedBackend
     (backend := qrCheckedExactOrthogonalizer (m := m) (n := n))
-    (lr := lr) (momentum := momentum)
-    (buf := fill 0 (.dim m (.dim n .scalar))) (params := params) (grads := grads)
+    (learningRate := learningRate) (momentum := momentum)
+    (momentumBuffer := Tensor.full (.dim m (.dim n .scalar)) 0) (parameters := parameters)
+    (gradients := gradients)
     hpivots
 
 /--
@@ -593,21 +571,22 @@ Initialized QR-backed direction theorem: if the first fresh momentum buffer has 
 the first initialized Muon update direction has column Gram $I$.
 -/
 theorem init_qr_direction_has_exact_column_gram {m n : Nat}
-    (lr momentum : ℝ) (params grads : MatrixTensor ℝ m n)
+    (learningRate momentum : ℝ) (parameters gradients : MatrixTensor ℝ m n)
     (hpivots :
       HasPositiveQRPivots
         (update
-          (init lr momentum (qrOrthogonalizer (m := m) (n := n)) params)
-          params grads).1.buf) :
+          (init learningRate momentum (qrOrthogonalizer (m := m) (n := n)) parameters)
+          parameters gradients).optimizerState.momentumBuffer) :
     HasExactColumnGram
       ((qrOrthogonalizer (m := m) (n := n)).apply
         (update
-          (init lr momentum (qrOrthogonalizer (m := m) (n := n)) params)
-          params grads).1.buf) := by
+          (init learningRate momentum (qrOrthogonalizer (m := m) (n := n)) parameters)
+          parameters gradients).optimizerState.momentumBuffer) := by
   exact checkedBackend_updateDirection_hasExactColumnGram
     (backend := qrCheckedExactOrthogonalizer (m := m) (n := n))
-    (lr := lr) (momentum := momentum)
-    (buf := fill 0 (.dim m (.dim n .scalar))) (params := params) (grads := grads)
+    (learningRate := learningRate) (momentum := momentum)
+    (momentumBuffer := Tensor.full (.dim m (.dim n .scalar)) 0) (parameters := parameters)
+    (gradients := gradients)
     hpivots
 
 end Muon

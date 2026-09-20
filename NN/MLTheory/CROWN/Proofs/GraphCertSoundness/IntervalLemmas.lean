@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.CertificateStep
+public import NN.MLTheory.CROWN.BoundOps.Lawful
+public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Semantics
 
 /-!
 # Interval Soundness Lemmas
@@ -19,8 +20,8 @@ induction.
 
 namespace NN.MLTheory.CROWN.Graph
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.MLTheory.CROWN
 
 namespace CertSoundness
@@ -44,8 +45,7 @@ This proof reuses the following existing components:
 theorem relu_mono_real : ∀ {a b : ℝ}, a ≤ b →
     Activation.Math.reluSpec (α := ℝ) a ≤ Activation.Math.reluSpec (α := ℝ) b := by
   intro a b hab
-  -- `relu_spec x = max x 0`
-  simpa [Activation.Math.reluSpec] using max_le_max hab (le_rfl : (0:ℝ) ≤ 0)
+  simpa only [Activation.Math.reluSpec_eq_max] using max_le_max hab (le_rfl : (0 : ℝ) ≤ 0)
 
 /-- Addition is monotone in both operands. -/
 theorem add_mono_real : ∀ {a b c d : ℝ}, a ≤ b → c ≤ d → a + c ≤ b + d := by
@@ -59,21 +59,30 @@ theorem sub_mono_real : ∀ {a b c d : ℝ}, a ≤ b → d ≤ c → a - c ≤ b
   have : a + (-c) ≤ b + (-d) := add_le_add hab hneg
   simpa [sub_eq_add_neg] using this
 
-lemma if_lt_eq_min (a b : ℝ) :
+/-- The runtime `if a < b then a else b` is `min`. -/
+theorem if_lt_eq_min (a b : ℝ) :
     (if a < b then a else b) = min a b := by
   by_cases h : a < b
   · simp [h, min_eq_left (le_of_lt h)]
   · have h' : b ≤ a := le_of_not_gt h
     simp [h, min_eq_right h']
 
-lemma if_gt_eq_max (a b : ℝ) :
+/-- The runtime `if a > b then a else b` is `max`.
+
+The implementations branch on a comparison rather than calling `min`/`max`, so these two lemmas are
+what let the interval proofs use the Mathlib lattice lemmas at all. -/
+theorem if_gt_eq_max (a b : ℝ) :
     (if a > b then a else b) = max a b := by
   by_cases h : a > b
   · simp [h, max_eq_left (le_of_lt h)]
   · have h' : a ≤ b := le_of_not_gt h
     simp [h, max_eq_right h']
 
-lemma mul_const_bounds {a ly uy y : ℝ} (hy : ly ≤ y) (hy' : y ≤ uy) :
+/-- Multiplying an interval by a constant: the product lies between the two endpoint products.
+
+Stated with `min`/`max` instead of a case split on the sign of `a`, so the caller never has to know
+which endpoint is which. -/
+theorem mul_const_bounds {a ly uy y : ℝ} (hy : ly ≤ y) (hy' : y ≤ uy) :
     min (a * ly) (a * uy) ≤ a * y ∧ a * y ≤ max (a * ly) (a * uy) := by
   by_cases ha : 0 ≤ a
   · have hlo : a * ly ≤ a * y := mul_le_mul_of_nonneg_left hy ha
@@ -84,7 +93,8 @@ lemma mul_const_bounds {a ly uy y : ℝ} (hy : ly ≤ y) (hy' : y ≤ uy) :
     have hhi : a * y ≤ a * ly := mul_le_mul_of_nonpos_left hy ha'
     refine ⟨le_trans (min_le_right _ _) hlo, le_trans hhi (le_max_left _ _)⟩
 
-lemma mul_var_bounds {lx ux x y : ℝ} (hx : lx ≤ x) (hx' : x ≤ ux) :
+/-- The same, with the interval on the left and the constant on the right. -/
+theorem mul_var_bounds {lx ux x y : ℝ} (hx : lx ≤ x) (hx' : x ≤ ux) :
     min (lx * y) (ux * y) ≤ x * y ∧ x * y ≤ max (lx * y) (ux * y) := by
   by_cases hy : 0 ≤ y
   · have hlo : lx * y ≤ x * y := mul_le_mul_of_nonneg_right hx hy
@@ -95,7 +105,12 @@ lemma mul_var_bounds {lx ux x y : ℝ} (hx : lx ≤ x) (hx' : x ≤ ux) :
     have hhi : x * y ≤ lx * y := mul_le_mul_of_nonpos_right hx hy'
     refine ⟨le_trans (min_le_right _ _) hlo, le_trans hhi (le_max_left _ _)⟩
 
-lemma interval_mul_bounds
+/-- Interval multiplication: the product of two bounded values lies between the min and the max of
+the four endpoint products.
+
+This is the classical four-corner rule. All four products are needed because signs can differ, and
+taking min and max of the corners is exactly tight for real multiplication. -/
+theorem interval_mul_bounds
     {lx ux ly uy x y : ℝ} (hx : lx ≤ x) (hx' : x ≤ ux) (hy : ly ≤ y) (hy' : y ≤ uy) :
     min (min (lx * ly) (lx * uy)) (min (ux * ly) (ux * uy)) ≤ x * y ∧
       x * y ≤ max (max (lx * ly) (lx * uy)) (max (ux * ly) (ux * uy)) := by
@@ -127,21 +142,26 @@ lemma interval_mul_bounds
   b)`.
 For `ℝ` these coincide with `min/max`. -/
 
-lemma min2_eq_min (a b : ℝ) : NN.MLTheory.CROWN.BoundOps.min2 a b = min a b := by
+theorem min2_eq_min (a b : ℝ) : NN.MLTheory.CROWN.BoundOps.min2 a b = min a b := by
   by_cases h : a > b
   · have hab : b ≤ a := le_of_lt h
     simp [NN.MLTheory.CROWN.BoundOps.min2, h, min_eq_right hab]
   · have hab : a ≤ b := le_of_not_gt h
     simp [NN.MLTheory.CROWN.BoundOps.min2, h, min_eq_left hab]
 
-lemma max2_eq_max (a b : ℝ) : NN.MLTheory.CROWN.BoundOps.max2 a b = max a b := by
+/-- The bound-arithmetic `max2` is `max` over `ℝ`. -/
+theorem max2_eq_max (a b : ℝ) : NN.MLTheory.CROWN.BoundOps.max2 a b = max a b := by
   by_cases h : a > b
   · have hab : b ≤ a := le_of_lt h
     simp [NN.MLTheory.CROWN.BoundOps.max2, h, max_eq_left hab]
   · have hab : a ≤ b := le_of_not_gt h
     simp [NN.MLTheory.CROWN.BoundOps.max2, h, max_eq_right hab]
 
-theorem box_mul_elem_sound_real (n : Nat)
+/-- Elementwise interval multiplication of two boxes is sound.
+
+Coordinatewise this is `interval_mul_bounds`; the box wrapper adds the dimension check, which is why
+the conclusion is about whatever box `boxMulElem` actually returned. -/
+theorem box_mulElem_sound_real (n : Nat)
     (lo1 hi1 lo2 hi2 x y : Tensor ℝ [n])
     (hx : encloses { dim := n, lo := lo1, hi := hi1 } x)
     (hy : encloses { dim := n, lo := lo2, hi := hi2 } y) :
@@ -151,56 +171,21 @@ theorem box_mul_elem_sound_real (n : Nat)
           { dim := n, lo := lo2, hi := hi2 } = some B →
         EnclosesBox B ⟨n, Tensor.mulSpec (α := ℝ) x y⟩ := by
   classical
-  cases lo1 with
-  | dim l1 =>
-    cases hi1 with
-    | dim u1 =>
-      cases lo2 with
-      | dim l2 =>
-        cases hi2 with
-        | dim u2 =>
-          cases x with
-          | dim fx =>
-            cases y with
-            | dim fy =>
-              intro B hB
-              unfold boxMulElem at hB
-              simp at hB
-              symm at hB
-              rw [hB]
-              refine ⟨rfl, ?_⟩
-              dsimp [encloses, NN.MLTheory.CROWN.Graph.Theorems.Semantics.encloses, getDimScalarFn,
-                castDimScalar]
-              intro i
-              have hx_i := hx i
-              have hy_i := hy i
-              cases hLx : l1 i with
-              | scalar lx =>
-                cases hUx : u1 i with
-                | scalar ux =>
-                  cases hLy : l2 i with
-                  | scalar ly =>
-                    cases hUy : u2 i with
-                    | scalar uy =>
-                      cases hX : fx i with
-                      | scalar xv =>
-                        cases hY : fy i with
-                        | scalar yv =>
-                          have hx' : lx ≤ xv ∧ xv ≤ ux := by
-                            simpa [encloses, NN.MLTheory.CROWN.Graph.Theorems.Semantics.encloses,
-                              getDimScalarFn,
-                              hLx, hUx, hX] using hx_i
-                          have hy' : ly ≤ yv ∧ yv ≤ uy := by
-                            simpa [encloses, NN.MLTheory.CROWN.Graph.Theorems.Semantics.encloses,
-                              getDimScalarFn,
-                              hLy, hUy, hY] using hy_i
-                          have hMul :=
-                            interval_mul_bounds (lx := lx) (ux := ux) (ly := ly) (uy := uy)
-                              (x := xv) (y := yv) (hx := hx'.1) (hx' := hx'.2) (hy := hy'.1) (hy' :=
-                                hy'.2)
-                          simpa [Tensor.mulSpec, Tensor.map2Spec, min2_eq_min, max2_eq_max,
-                            BoundOps.mulDown, BoundOps.mulUp, hLx, hUx, hLy, hUy, hX, hY]
-                            using hMul
+  intro B hB
+  unfold boxMulElem at hB
+  simp only [↓reduceDIte] at hB
+  rw [← Option.some.inj hB]
+  refine ⟨rfl, ?_⟩
+  intro i
+  have hMul :=
+    interval_mul_bounds
+      (lx := lo1.getScalar i) (ux := hi1.getScalar i)
+      (ly := lo2.getScalar i) (uy := hi2.getScalar i)
+      (x := x.getScalar i) (y := y.getScalar i)
+      (hx := (hx i).1) (hx' := (hx i).2)
+      (hy := (hy i).1) (hy' := (hy i).2)
+  simpa [Tensor.mulSpec, min2_eq_min, max2_eq_max, BoundOps.mulDown, BoundOps.mulUp]
+    using hMul
 
 /-!
 ### Casting lemmas (avoid `cases` on `B.dim = v.n`)
@@ -215,7 +200,7 @@ Instead, we keep such equalities as *data* and move tensors/boxes across them us
 `B.dim = v.n` directly.
  -/
 
-lemma castDimScalar_trans {n n' n'' : Nat}
+theorem castDimScalar_trans {n n' n'' : Nat}
     (h₁ : n = n') (h₂ : n' = n'') (t : Tensor ℝ [n]) :
     castDimScalar (α := ℝ) (Eq.trans h₁ h₂) t
       = castDimScalar (α := ℝ) h₂ (castDimScalar (α := ℝ) h₁ t) := by
@@ -223,42 +208,49 @@ lemma castDimScalar_trans {n n' n'' : Nat}
   cases h₂
   rfl
 
-lemma castDimScalar_map_spec {n n' : Nat}
+/-- Dimension casts commute with elementwise maps. -/
+theorem castDimScalar_map_spec {n n' : Nat}
     (h : n = n') (f : ℝ → ℝ) (t : Tensor ℝ [n]) :
     castDimScalar (α := ℝ) h (Tensor.mapSpec (α := ℝ) f t)
       = Tensor.mapSpec (α := ℝ) f (castDimScalar (α := ℝ) h t) := by
   cases h
   rfl
 
-lemma castDimScalar_add_spec {n n' : Nat}
+/-- Dimension casts commute with addition. -/
+theorem castDimScalar_add_spec {n n' : Nat}
     (h : n = n') (x y : Tensor ℝ [n]) :
     castDimScalar (α := ℝ) h (Tensor.addSpec (α := ℝ) x y)
       = Tensor.addSpec (α := ℝ) (castDimScalar (α := ℝ) h x) (castDimScalar (α := ℝ) h y) := by
   cases h
   rfl
 
-lemma castDimScalar_sub_spec {n n' : Nat}
+/-- Dimension casts commute with subtraction. -/
+theorem castDimScalar_sub_spec {n n' : Nat}
     (h : n = n') (x y : Tensor ℝ [n]) :
     castDimScalar (α := ℝ) h (Tensor.subSpec (α := ℝ) x y)
       = Tensor.subSpec (α := ℝ) (castDimScalar (α := ℝ) h x) (castDimScalar (α := ℝ) h y) := by
   cases h
   rfl
 
-lemma castDimScalar_mul_spec {n n' : Nat}
+/-- Dimension casts commute with elementwise multiplication. -/
+theorem castDimScalar_mul_spec {n n' : Nat}
     (h : n = n') (x y : Tensor ℝ [n]) :
     castDimScalar (α := ℝ) h (Tensor.mulSpec (α := ℝ) x y)
       = Tensor.mulSpec (α := ℝ) (castDimScalar (α := ℝ) h x) (castDimScalar (α := ℝ) h y) := by
   cases h
   rfl
 
-lemma contains_castBoxDim_iff {n n' : Nat}
+/-- Casting a box and a point along the same equality does not change containment. -/
+theorem contains_castBoxDim_iff {n n' : Nat}
     (h : n = n') (B : Box ℝ (.dim n .scalar)) (x : Tensor ℝ [n]) :
     Box.contains (α := ℝ) (castBoxDim (α := ℝ) h B) (castDimScalar (α := ℝ) h x)
       ↔ Box.contains (α := ℝ) B x := by
   cases h
   simp [castBoxDim, castDimScalar]
 
-lemma encloses_castDim {B : FlatBox ℝ} {n' : Nat}
+/-- Enclosure survives a dimension cast, which is how a box proved for one layer width is reused at
+the next one without ever eliminating the equality itself. -/
+theorem encloses_castDim {B : FlatBox ℝ} {n' : Nat}
     (h : B.dim = n') (x : Tensor ℝ [B.dim]) :
     encloses B x →
       encloses { dim := n'
@@ -270,53 +262,18 @@ lemma encloses_castDim {B : FlatBox ℝ} {n' : Nat}
   convert hx using 1 <;>
     simp only [NN.MLTheory.CROWN.Graph.castDimScalar_self]
 
+/-- `Box.contains` implies `encloses` on the flattened box; the two are definitionally the same, and
+the lemma exists so proofs can change vocabulary without unfolding. -/
 theorem encloses_of_contains {n : Nat}
     (B : Box ℝ (.dim n .scalar)) (x : Tensor ℝ [n]) :
     Box.contains (α := ℝ) B x → encloses (toFlatBox (α := ℝ) n B) x := by
-  intro hx
-  cases B with
-  | mk lo hi =>
-    cases lo with
-    | dim flo =>
-      cases hi with
-      | dim fhi =>
-        cases x with
-        | dim fx =>
-          dsimp only [encloses, NN.MLTheory.CROWN.Graph.Theorems.Semantics.encloses]
-          rw [NN.MLTheory.CROWN.Box.contains.eq_def] at hx
-          intro i
-          have hx_i := hx i
-          cases hL : flo i with
-          | scalar l =>
-            cases hU : fhi i with
-            | scalar u =>
-              cases hX : fx i with
-              | scalar v =>
-                simpa [toFlatBox, getDimScalarFn, Box.contains, hL, hU, hX] using hx_i
+  exact fun hx => hx
 
+/-- The converse direction, for the same reason. -/
 theorem contains_of_encloses
     (B : FlatBox ℝ) (x : Tensor ℝ [B.dim]) :
     encloses B x → Box.contains (α := ℝ) (ofFlatBox (α := ℝ) B) x := by
-  intro hx
-  cases B with
-  | mk n' lo hi =>
-    cases lo with
-    | dim flo =>
-      cases hi with
-      | dim fhi =>
-        cases x with
-        | dim fx =>
-          rw [encloses] at hx
-          rw [NN.MLTheory.CROWN.Box.contains.eq_def]
-          intro i
-          have hx_i := hx i
-          cases hL : flo i with
-          | scalar l =>
-            cases hU : fhi i with
-            | scalar u =>
-              cases hX : fx i with
-              | scalar v =>
-                simpa [ofFlatBox, getDimScalarFn, Box.contains, hL, hU, hX] using hx_i
+  exact fun hx => hx
 
 /-!
 ### Point Boxes Always Enclose Their Point
@@ -327,14 +284,7 @@ This is used in the `.const` case, where a constant node certifies a point box
 
 theorem encloses_point_self_real {n : Nat} (x : Tensor ℝ [n]) :
     NN.MLTheory.CROWN.Graph.Theorems.Semantics.encloses (α := ℝ) { dim := n, lo := x, hi := x } x :=
-      by
-  cases x with
-  | dim fx =>
-      rw [NN.MLTheory.CROWN.Graph.Theorems.Semantics.encloses]
-      intro i
-      cases h : fx i with
-      | scalar v =>
-          simp [NN.MLTheory.CROWN.Graph.getDimScalarFn, h]
+      fun _ => ⟨le_rfl, le_rfl⟩
 
 end
 

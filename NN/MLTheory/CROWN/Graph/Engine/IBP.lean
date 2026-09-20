@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.IR.HardMask
 public import NN.MLTheory.CROWN.Graph.Engine.Base
 
 /-!
@@ -21,26 +20,25 @@ public section
 
 namespace NN.MLTheory.CROWN.Graph
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 open NN.MLTheory.CROWN
 open NN.IR
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable [BoundOps α]
 variable [NonlinearBoundOps α]
 
 open BoundOps
 
-/-- IBP propagation for one node using `ParamStore`.
+/-- IBP propagation for one node, with the node record passed explicitly.
 
-This executable function expects parents to have already been processed. The proof layer makes that
-precondition explicit via `TopoSorted`; callers that execute graphs directly should use graphs whose
-parents appear before their children.
+`propagateIBPNode` instantiates `node` with `nodes[id]!`. Taking the record as an argument lets the
+proof layer rewrite it to a literal and evaluate the array-pattern matches below definitionally,
+which is how the step is identified with its safe counterpart `CertSoundness.certStepNode?`.
 -/
-def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (Option (FlatBox α)))
-  (id : Nat) : Array (Option (FlatBox α)) :=
-  let node := nodes[id]!
+@[expose] def propagateIBPNodeAt (nodes : Array Node) (ps : ParamStore α)
+    (boxes : Array (Option (FlatBox α))) (id : Nat) (node : Node) : Array (Option (FlatBox α)) :=
   let get! (pid : Nat) := (boxes[pid]!).get!
   match node.kind with
   | .input =>
@@ -59,8 +57,8 @@ def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (O
     -- Stochastic nodes are treated as *nondeterministic-but-bounded* for verification.
     -- Sound enclosure: U[0,1) ⊆ [0,1], Bernoulli mask ⊆ [0,1].
     let d := node.outShape.size
-    let lo := Spec.fill (α := α) Numbers.zero (.dim d .scalar)
-    let hi := Spec.fill (α := α) Numbers.one (.dim d .scalar)
+    let lo := Tensor.full (α := α) (.dim d .scalar) 0
+    let hi := Tensor.full (α := α) (.dim d .scalar) 1
     boxes.set! id (some { dim := d, lo := lo, hi := hi })
   | .add =>
     match node.parents with
@@ -175,7 +173,7 @@ def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (O
                           let bLo := getAtOrZero B.lo [kk * n + j]
                           let bHi := getAtOrZero B.hi [kk * n + j]
                           let (pLo, pHi) := intervalMul (α:=α) aLo aHi bLo bHi
-                          (accLo + pLo, accHi + pHi)
+                          (addDown accLo pLo, addUp accHi pHi)
                         ) (0, 0)
                       Tensor.scalar sumLo)
                   let hiT : Tensor α [outDim] :=
@@ -191,7 +189,7 @@ def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (O
                           let bLo := getAtOrZero B.lo [kk * n + j]
                           let bHi := getAtOrZero B.hi [kk * n + j]
                           let (pLo, pHi) := intervalMul (α:=α) aLo aHi bLo bHi
-                          (accLo + pLo, accHi + pHi)
+                          (addDown accLo pLo, addUp accHi pHi)
                         ) (0, 0)
                       Tensor.scalar sumHi)
                   some { dim := outDim, lo := loT, hi := hiT }
@@ -231,7 +229,7 @@ def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (O
                               let bLo := getAtOrZero B.lo [baseB + kk * n + j]
                               let bHi := getAtOrZero B.hi [baseB + kk * n + j]
                               let (pLo, pHi) := intervalMul (α:=α) aLo aHi bLo bHi
-                              (accLo + pLo, accHi + pHi)
+                              (addDown accLo pLo, addUp accHi pHi)
                             ) (0, 0)
                           Tensor.scalar sumLo)
                       let hiT : Tensor α [outDim] :=
@@ -251,7 +249,7 @@ def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (O
                               let bLo := getAtOrZero B.lo [baseB + kk * n + j]
                               let bHi := getAtOrZero B.hi [baseB + kk * n + j]
                               let (pLo, pHi) := intervalMul (α:=α) aLo aHi bLo bHi
-                              (accLo + pLo, accHi + pHi)
+                              (addDown accLo pLo, addUp accHi pHi)
                             ) (0, 0)
                           Tensor.scalar sumHi)
                       some { dim := outDim, lo := loT, hi := hiT }
@@ -297,8 +295,10 @@ def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (O
         let sFlat : Shape := .dim Xin.dim .scalar
         have hsize : sFlat.size = sIn.size := by
           simp [sFlat, sIn, Spec.Shape.size, hdim]
-        let xLo : Tensor α sIn := Tensor.reshapeSpec (α:=α) (s₁:=sFlat) (s₂:=sIn) Xin.lo hsize
-        let xHi : Tensor α sIn := Tensor.reshapeSpec (α:=α) (s₁:=sFlat) (s₂:=sIn) Xin.hi hsize
+        let xLo : Tensor α sIn :=
+          Tensor.reshapeSpec (α := α) (source := sFlat) (target := sIn) Xin.lo hsize
+        let xHi : Tensor α sIn :=
+          Tensor.reshapeSpec (α := α) (source := sFlat) (target := sIn) Xin.hi hsize
         match permuteSomeTensor? (α := α) (v := ⟨sIn, xLo⟩) perm,
             permuteSomeTensor? (α := α) (v := ⟨sIn, xHi⟩) perm with
         | some yLoV, some yHiV =>
@@ -320,7 +320,7 @@ def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (O
       else
         boxes
     | _ => boxes
-  | .mul_elem =>
+  | .mulElem =>
     match node.parents with
     | #[p1, p2] =>
       match boxMulElem (α:=α) (get! p1) (get! p2) with
@@ -360,8 +360,8 @@ def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (O
     match node.parents with
     | #[p1] =>
       match ps.batchNormEval[id]? with
-      | some cfg =>
-        match batchNormEvalLinear? (α := α) nodes[p1]!.outShape channelAxis cfg with
+      | some config =>
+        match batchNormEvalLinear? (α := α) nodes[p1]!.outShape channelAxis config with
         | some p =>
           let Xin := get! p1
           match ibpLinearParams (α := α) p Xin with
@@ -387,8 +387,7 @@ def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (O
       -- no valid transfer result; callers can use the explicitly totalized safe-log operator when
       -- epsilon clamping is intended.
       if (List.finRange Xin.dim).all (fun i =>
-          match flo i with
-          | .scalar v => decide (Numbers.zero < v)) then
+          decide (0 < Tensor.item (flo i))) then
         match boxUnaryEnclosure? (α := α) NonlinearBoundOps.logBounds Xin with
         | some B => boxes.set! id (some B)
         | none => boxes
@@ -422,14 +421,18 @@ def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (O
     if !crownNodeSemanticsSupported (α := α) nodes ps id then
       boxes
     else
-      -- Only payload-free normalization over the last axis is currently supported.
+      -- Payloads retain their affine parameters and epsilon through the directed row transfer.
       match node.parents with
       | #[p1] =>
         let Xin := get! p1
         let s := node.outShape
         if axis = Spec.Shape.rank s - 1 then
           if hdim : Xin.dim = s.size then
-            match ibpLayerNormRange? (α := α) s Xin.dim with
+            let result :=
+              match ps.layerNorm[id]? with
+              | none => ibpLayerNormBox? (α := α) s Xin
+              | some parameters => ibpLayerNormPayloadBox? (α := α) s axis parameters Xin
+            match result with
             | some B => boxes.set! id (some B)
             | none => boxes
           else boxes
@@ -462,9 +465,9 @@ def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (O
             have hsize : sFlat.size = s.size := by
               simp [sFlat, Spec.Shape.size, hdim]
             let xLo : Tensor α s :=
-              Tensor.reshapeSpec (α := α) (s₁ := sFlat) (s₂ := s) Xin.lo hsize
+              Tensor.reshapeSpec (α := α) (source := sFlat) (target := s) Xin.lo hsize
             let xHi : Tensor α s :=
-              Tensor.reshapeSpec (α := α) (s₁ := sFlat) (s₂ := s) Xin.hi hsize
+              Tensor.reshapeSpec (α := α) (source := sFlat) (target := s) Xin.hi hsize
             let (yLo, yHi) :=
               ibpHardMaskedSoftmaxLastTensor (α := α) xLo xHi allowed
             boxes.set! id <| some
@@ -490,6 +493,20 @@ def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (O
     match boxUnaryEnclosure? (α := α) NonlinearBoundOps.sigmoidBounds Xin with
     | some B => boxes.set! id (some B)
     | none => boxes
+  | .softplus =>
+    match node.parents with
+    | #[p1] =>
+      match boxSoftplus? (α := α) (get! p1) with
+      | some B => boxes.set! id (some B)
+      | none => boxes
+    | _ => boxes
+  | .safeLog =>
+    match node.parents with
+    | #[p1, p2] =>
+      match boxSafeLog? (α := α) (get! p1) (get! p2) with
+      | some B => boxes.set! id (some B)
+      | none => boxes
+    | _ => boxes
   | .sin =>
     let Xin :=
       match node.parents with
@@ -507,8 +524,20 @@ def propagateIBPNode (nodes : Array Node) (ps : ParamStore α) (boxes : Array (O
     | some B => boxes.set! id (some B)
     | none => boxes
 
-/-- Run an IBP pass over the whole graph. Caller seeds inputs via ParamStore.inputBoxes. -/
-def runIBP (g : Graph) (ps : ParamStore α) : Array (Option (FlatBox α)) :=
+/-- IBP propagation for one node using `ParamStore`.
+
+This executable function expects parents to have already been processed. The proof layer makes that
+precondition explicit via `TopoSorted`; callers that execute graphs directly should use graphs whose
+parents appear before their children.
+-/
+@[expose] def propagateIBPNode (nodes : Array Node) (ps : ParamStore α)
+    (boxes : Array (Option (FlatBox α))) (id : Nat) : Array (Option (FlatBox α)) :=
+  propagateIBPNodeAt (α := α) nodes ps boxes id nodes[id]!
+
+/-- Run an IBP pass over the whole graph. Caller seeds inputs via ParamStore.inputBoxes.
+
+The body is exposed so that the proof layer can relate this pass to `CertSoundness.runIBP?`. -/
+@[expose] def runIBP (g : Graph) (ps : ParamStore α) : Array (Option (FlatBox α)) :=
   let init := Array.replicate g.nodes.size none
   if crownGraphSemanticsSupported (α := α) g ps then
     (List.finRange g.nodes.size).foldl (fun acc i => propagateIBPNode (α:=α) g.nodes ps acc i)

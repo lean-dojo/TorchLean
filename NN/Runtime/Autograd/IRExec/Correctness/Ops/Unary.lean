@@ -16,14 +16,14 @@ IR-to-forward-graph runtime bridge.
 
 The proof pattern is deliberately explicit: we check the one-parent contract, recover the typed
 parent index, build the forward-graph closure, prove that IR evaluation produces the same value,
-and then hand the tail of the graph to the shared semantic-equivalence finishing lemma. Keeping these
-branches named avoids a single monolithic recursive proof and gives reviewers stable theorem names
-for each primitive operator.
+and then hand the tail of the graph to the shared semantic-equivalence finishing lemma. Keeping
+these branches named avoids a single monolithic recursive proof and gives reviewers stable theorem
+names for each primitive operator.
 
 Build note: the unary branches are proof-heavy for the same reason as activations: Lean checks the
-runtime shape cast, parent lookup, `Except` failure branches, and final `Spec.SomeTensor` equality all in one
-goal. The common unary skeleton belongs in `SemanticEquivalenceCommon`, keeping
-this file as a short list of operator instances.
+runtime shape cast, parent lookup, `Except` failure branches, and final `Spec.SomeTensor` equality
+all in one goal. The common unary skeleton belongs in `SemanticEquivalenceCommon`, keeping this
+file as a short list of operator instances.
 -/
 
 @[expose] public section
@@ -32,15 +32,17 @@ namespace Runtime
 namespace Autograd
 namespace IRExec
 
-open Spec
-open Tensor
+open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
+-- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
+-- `Idx` and `getIdx` are defined.
+open Proofs (Idx getIdx)
 
 /-- Semantic-preservation lemma for `.abs` lowering. -/
 theorem buildFrom_denoteAllFrom_abs
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) {inShape : Shape} {ss : List Shape}
     (gd : ForwardData α [inShape] ss) (i : Nat) (st' : State α inShape)
     (x : Tensor α inShape) (n : NN.IR.Node)
@@ -62,12 +64,12 @@ theorem buildFrom_denoteAllFrom_abs
       .ok (denoteAllState (α := α) inShape st' x) := by
   let vals0 : Array (Spec.SomeTensor α) :=
     denoteAllState (α := α) inShape (st := (⟨ss, gd⟩ : State α inShape)) x
-  let ctx : _root_.TorchLean.TensorPack α ([inShape] ++ ss) :=
+  let ctx : TorchLean.TensorPack α ([inShape] ++ ss) :=
     ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil)
   let input : Spec.SomeTensor α := Spec.SomeTensor.mk (α := α) inShape x
 
   unfold buildFrom at hBuild
-  simp (config := { failIfUnchanged := false }) [hi, hN, hk] at hBuild
+  simp (config := { failIfUnchanged := false }) [hi, hN, hk, lowerAbs] at hBuild
   cases hp : unaryParent? n.parents with
   | none =>
       simp [hp] at hBuild
@@ -90,7 +92,9 @@ theorem buildFrom_denoteAllFrom_abs
                 simpa [st1, nodeData] using hBuild
               have hTail := ih st1 hRec
               have hGet :
-                  vals0[pId]? = some (Spec.SomeTensor.mk (α := α) n.outShape (getIdx (α := α) (xs := ctx) ip)) := by
+                  vals0[pId]? =
+                    some (Spec.SomeTensor.mk (α := α) n.outShape
+                      (getIdx (α := α) (xs := ctx) ip)) := by
                 simpa [vals0, ctx] using
                   (denoteAllState_get_mkIdx? (inShape := inShape) (ss := ss)
                     (gd := gd) (x := x) (pid := pId) (s := n.outShape) (idx := ip) hIdx)
@@ -98,16 +102,15 @@ theorem buildFrom_denoteAllFrom_abs
                   NN.IR.Graph.evalAt (α := α) (g := g) (payload := payload)
                       (input := input) (vals := vals0) (i := i) =
                     .ok (Spec.SomeTensor.mk (α := α) n.outShape (nodeData.eval ctx)) := by
-                simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, NN.IR.Graph.normalizeNodeOutput, hN, hk, hp, hGet,
-                  nodeData, mkForwardNode,
-                  throw_eq_error]
+                simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, NN.IR.Graph.normalizeNodeOutput,
+                  hN, hk, hp, hGet, nodeData, mkForwardNode, throw_eq_error, Pure.pure, Except.pure]
               exact buildFrom_denoteAllFrom_nodeData_exact (α := α) (g := g) (payload := payload)
                 (gd := gd) (i := i) (st' := st') (x := x) (hi := hi)
                 (τ := n.outShape) (nodeData := nodeData) hTail hEval
 
 /-- Semantic-preservation lemma for `.sqrt` lowering. -/
 theorem buildFrom_denoteAllFrom_sqrt
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) {inShape : Shape} {ss : List Shape}
     (gd : ForwardData α [inShape] ss) (i : Nat) (st' : State α inShape)
     (x : Tensor α inShape) (n : NN.IR.Node)
@@ -129,12 +132,12 @@ theorem buildFrom_denoteAllFrom_sqrt
       .ok (denoteAllState (α := α) inShape st' x) := by
   let vals0 : Array (Spec.SomeTensor α) :=
     denoteAllState (α := α) inShape (st := (⟨ss, gd⟩ : State α inShape)) x
-  let ctx : _root_.TorchLean.TensorPack α ([inShape] ++ ss) :=
+  let ctx : TorchLean.TensorPack α ([inShape] ++ ss) :=
     ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil)
   let input : Spec.SomeTensor α := Spec.SomeTensor.mk (α := α) inShape x
 
   unfold buildFrom at hBuild
-  simp (config := { failIfUnchanged := false }) [hi, hN, hk] at hBuild
+  simp (config := { failIfUnchanged := false }) [hi, hN, hk, lowerSqrt] at hBuild
   cases hp : unaryParent? n.parents with
   | none =>
       simp [hp] at hBuild
@@ -157,7 +160,9 @@ theorem buildFrom_denoteAllFrom_sqrt
                 simpa [st1, nodeData] using hBuild
               have hTail := ih st1 hRec
               have hGet :
-                  vals0[pId]? = some (Spec.SomeTensor.mk (α := α) n.outShape (getIdx (α := α) (xs := ctx) ip)) := by
+                  vals0[pId]? =
+                    some (Spec.SomeTensor.mk (α := α) n.outShape
+                      (getIdx (α := α) (xs := ctx) ip)) := by
                 simpa [vals0, ctx] using
                   (denoteAllState_get_mkIdx? (inShape := inShape) (ss := ss)
                     (gd := gd) (x := x) (pid := pId) (s := n.outShape) (idx := ip) hIdx)
@@ -165,16 +170,15 @@ theorem buildFrom_denoteAllFrom_sqrt
                   NN.IR.Graph.evalAt (α := α) (g := g) (payload := payload)
                       (input := input) (vals := vals0) (i := i) =
                     .ok (Spec.SomeTensor.mk (α := α) n.outShape (nodeData.eval ctx)) := by
-                simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, NN.IR.Graph.normalizeNodeOutput, hN, hk, hp, hGet,
-                  nodeData, mkForwardNode,
-                  throw_eq_error]
+                simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, NN.IR.Graph.normalizeNodeOutput,
+                  hN, hk, hp, hGet, nodeData, mkForwardNode, throw_eq_error, Pure.pure, Except.pure]
               exact buildFrom_denoteAllFrom_nodeData_exact (α := α) (g := g) (payload := payload)
                 (gd := gd) (i := i) (st' := st') (x := x) (hi := hi)
                 (τ := n.outShape) (nodeData := nodeData) hTail hEval
 
 /-- Semantic-preservation lemma for `.inv` lowering. -/
 theorem buildFrom_denoteAllFrom_inv
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) {inShape : Shape} {ss : List Shape}
     (gd : ForwardData α [inShape] ss) (i : Nat) (st' : State α inShape)
     (x : Tensor α inShape) (n : NN.IR.Node)
@@ -196,12 +200,12 @@ theorem buildFrom_denoteAllFrom_inv
       .ok (denoteAllState (α := α) inShape st' x) := by
   let vals0 : Array (Spec.SomeTensor α) :=
     denoteAllState (α := α) inShape (st := (⟨ss, gd⟩ : State α inShape)) x
-  let ctx : _root_.TorchLean.TensorPack α ([inShape] ++ ss) :=
+  let ctx : TorchLean.TensorPack α ([inShape] ++ ss) :=
     ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil)
   let input : Spec.SomeTensor α := Spec.SomeTensor.mk (α := α) inShape x
 
   unfold buildFrom at hBuild
-  simp (config := { failIfUnchanged := false }) [hi, hN, hk] at hBuild
+  simp (config := { failIfUnchanged := false }) [hi, hN, hk, lowerInv] at hBuild
   cases hp : unaryParent? n.parents with
   | none =>
       simp [hp] at hBuild
@@ -224,7 +228,9 @@ theorem buildFrom_denoteAllFrom_inv
                 simpa [st1, nodeData] using hBuild
               have hTail := ih st1 hRec
               have hGet :
-                  vals0[pId]? = some (Spec.SomeTensor.mk (α := α) n.outShape (getIdx (α := α) (xs := ctx) ip)) := by
+                  vals0[pId]? =
+                    some (Spec.SomeTensor.mk (α := α) n.outShape
+                      (getIdx (α := α) (xs := ctx) ip)) := by
                 simpa [vals0, ctx] using
                   (denoteAllState_get_mkIdx? (inShape := inShape) (ss := ss)
                     (gd := gd) (x := x) (pid := pId) (s := n.outShape) (idx := ip) hIdx)
@@ -232,9 +238,8 @@ theorem buildFrom_denoteAllFrom_inv
                   NN.IR.Graph.evalAt (α := α) (g := g) (payload := payload)
                       (input := input) (vals := vals0) (i := i) =
                     .ok (Spec.SomeTensor.mk (α := α) n.outShape (nodeData.eval ctx)) := by
-                simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, NN.IR.Graph.normalizeNodeOutput, hN, hk, hp, hGet,
-                  nodeData, mkForwardNode,
-                  throw_eq_error]
+                simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, NN.IR.Graph.normalizeNodeOutput,
+                  hN, hk, hp, hGet, nodeData, mkForwardNode, throw_eq_error, Pure.pure, Except.pure]
               exact buildFrom_denoteAllFrom_nodeData_exact (α := α) (g := g) (payload := payload)
                 (gd := gd) (i := i) (st' := st') (x := x) (hi := hi)
                 (τ := n.outShape) (nodeData := nodeData) hTail hEval

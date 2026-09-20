@@ -15,9 +15,8 @@ TorchLean's runnable RL examples write small JSON artifacts to `data/rl/` by def
 - optional policy snapshots, and
 - optional episode path snapshots.
 
-Both the executable trainers (under `NN/Examples/Models/RL`) and the editor-side viewers (under
-`NN/Examples/RL`) need to agree on these defaults. Keeping the strings here gives both sides one
-shared path convention.
+The executable trainers and editor-side views under `NN/Examples/Models/RL` need to agree on these
+defaults. Keeping the strings here gives both sides one shared path convention.
 
 Users can always override these paths with the corresponding CLI flags (e.g. `--log`, `--policy`,
 `--path`).
@@ -46,7 +45,9 @@ def ppoGridWorldTrainLog : System.FilePath :=
 def ppoGridWorldPolicy : System.FilePath :=
   ("data/rl/ppo_gridworld_policy.json" : System.FilePath)
 
-/-- Default episode-path snapshot path written by `torchlean ppo_gridworld` (override with `--path`). -/
+/--
+Default episode-path snapshot path written by `torchlean ppo_gridworld` (override with `--path`).
+-/
 def ppoGridWorldPath : System.FilePath :=
   ("data/rl/ppo_gridworld_path.json" : System.FilePath)
 

@@ -26,8 +26,8 @@ python3 scripts/datasets/download_example_data.py --cifar10
 
 lake -R -K cuda=true exe torchlean diffusion --device cuda \
   --dataset cifar10 --n-total 800 --steps 50 --hidden-c 8 \
-  --log data/model_zoo/diffusion_trainlog.json \
-  --sample-ppm data/model_zoo/diffusion_sample.ppm
+  --log data/examples/diffusion_trainlog.json \
+  --sample-ppm data/examples/diffusion_sample.ppm
 ```
 
 The command is small enough to run locally, but it still exercises the full path: data conversion,
@@ -55,12 +55,15 @@ Inside the example, the loader path is straightforward:
 3. Create a shuffled batch loader.
 4. Map pixel values from $[0,1]$ into the diffusion range $[-1,1]$.
 
-That last step is a single line in the example code:
+That last step is a single call in the example code, applied to the typed minibatch after
+cropping:
 
 ```lean
-def toTrainingImage (unitImage : Tensor Float [c, h, w]) : Tensor Float [c, h, w] :=
-  diffusion.unitToSignedUnit unitImage
+pure (diffusion.unitToSignedUnit unitImage)
 ```
+
+`diffusion.unitToSignedUnit` keeps the tensor shape and only rescales values from $[0,1]$ to
+$[-1,1]$.
 
 ## The Spec Layer: What We Mean By “Diffusion”
 
@@ -75,7 +78,7 @@ definition so the runtime command and proof modules use the same vocabulary.
 At the center is an interface for an epsilon-prediction denoiser:
 
 ```lean
-structure EpsModel (α : Type) (s : Shape) [Context α] where
+structure EpsModel (α : Type) (s : Shape) [TorchLean.Storage α] [Context α] where
   eps : Tensor α s → α → Tensor α s
 ```
 
@@ -123,8 +126,8 @@ neural network and then uses the public data API to build training samples.
 Two choices matter in the example:
 
 1. The epsilon predictor is a residual CNN that preserves resolution
-   (`epsResidualConvNet`). The training, sampling, and visualization path stays easy to run
-   on a local checkout.
+   (`nn.models.Diffusion.NoisePredictor.residual`). The training, sampling, and visualization
+   path stays easy to run on a local checkout.
 2. Time is fed to the model as an extra channel: when the data has $c$ channels, the input has
    $c+1$ channels. The last channel is the normalized timestep broadcast across spatial positions.
 
@@ -132,21 +135,34 @@ That “append time as a channel” trick is defined once in the public API. Cal
 leading dimensions and spatial extents; the helper returns a tensor with one additional channel:
 
 ```lean
-let conditioned := diffusion.appendTimeChannel leading spatial noisy tNorm
+let modelInput :=
+  diffusion.appendTimeChannel [batchSize] ([h, w] : Tensor Nat [2]) x_t tNorm
 ```
 
-The model is a same-resolution residual CNN sized to run as an example. Its public constructor
-owns the convolution geometry, residual blocks, and seeded initialization:
+The model is a same-resolution residual CNN sized to run as an example. The example fixes a
+configuration for one image size and hands it to the public constructor, which owns the
+convolution geometry, residual blocks, and seeded initialization:
 
 ```lean
-def epsResidualConvNet (cfg : EpsConvNetConfig d) (leading : List Nat := []) :
-    nn.Builder (nn.Sequential (cfg.inputShape leading) (cfg.outputShape leading)) :=
-  nn.models.epsResidualConvNet cfg leading
+def config (c h w hiddenChannels : Nat) :
+    nn.models.Diffusion.NoisePredictor.Config 2 :=
+  { dataChannels := c
+    spatial := [h, w]
+    hiddenChannels := hiddenChannels
+    kernelRadius := [1, 1] }
+
+def model (c h w hiddenChannels : Nat) :
+    nn.Builder (nn.Sequential (input c h w) (output c h w)) :=
+  nn.models.Diffusion.NoisePredictor.residual
+    (config c h w hiddenChannels) (batchShape := [batchSize])
 ```
 
-The contract is dimension-general: the input has arbitrary leading axes, one channel axis, and an
-arbitrary number of spatial axes. The runnable image example instantiates this with batch, channel,
-height, and width axes. Its output predicts noise with the original data shape.
+The `2` is the spatial rank, and a kernel radius of one means every convolution is a `3 x 3`
+same-padding kernel. The contract is dimension-general: the input has arbitrary leading axes, one
+channel axis, and any number of spatial axes. The runnable image example instantiates this with
+batch, channel, height, and width axes. Its output predicts noise with the original data shape.
+The source wraps the call in a short `rw`/`simpa` step so that the constructor's computed shapes
+line up with the example's `input` and `output` abbreviations.
 
 ## Training: What Gets Optimized
 
@@ -164,16 +180,20 @@ constructs $x_t$ from $x_0$ and $\varepsilon$ is
 `qSample` in the spec layer.
 
 The helper performs the schedule lookup, noising formula, time-channel append, and supervised-pair
-construction:
+construction. `diffusion.noisedSample` draws the noise from a seed; `noisedSampleFromNoise` takes
+the noise tensor as an argument:
 
 ```lean
 let sample :=
-  diffusion.noisedSampleFromNoise leading spatial alphaBars x0 eps step
+  diffusion.noisedSample [batchSize] ([h, w] : Tensor Nat [2]) schedule x0
+    (seed := runtime.seed) (step := step)
+let sampleFromNoise :=
+  diffusion.noisedSampleFromNoise [batchSize] ([h, w] : Tensor Nat [2]) schedule x0 eps step
 ```
 
-The schedule length is part of the type. A coefficient vector for `T` diffusion steps cannot be
-used with a different timestep count, and the runnable command rejects `T = 0` before constructing
-its first sample. The noise seed controls only the sampled noise; the `step` argument selects the
+The schedule length is part of the type. A `Schedule T` for `T` diffusion steps cannot be used
+with a different timestep count, and the runnable command rejects `T = 0` before constructing its
+first sample. The noise seed controls only the sampled noise; the `step` argument selects the
 schedule coefficient.
 
 ## Sampling: DDIM Replay In Lean

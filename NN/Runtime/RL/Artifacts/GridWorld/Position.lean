@@ -6,14 +6,14 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Training.Log
+public import NN.Runtime.Training.Log -- shake: keep
 
 /-!
 # GridWorld Artifact Positions
 
-Shared JSON encoding for GridWorld coordinates used by policy/path visualization artifacts. Positions
-are stored as `[row, col]` pairs because that format is compact, readable, and easy for the
-widgets to consume.
+Shared JSON encoding for GridWorld coordinates used by policy/path visualization artifacts.
+Positions are stored as `[row, col]` pairs because that format is compact, readable, and easy for
+the widgets to consume.
 -/
 
 @[expose] public section

@@ -6,11 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.RL.Numerics.Float32.Types
-public import NN.Runtime.RL.Numerics.Float32.Returns
 public import NN.Runtime.RL.Numerics.Float32.Advantage
-public import NN.Runtime.RL.Numerics.Float32.PPO
 public import NN.Runtime.RL.Numerics.Float32.Intervals
+public import NN.Runtime.RL.Numerics.Float32.PPO
+public import NN.Runtime.RL.Numerics.Float32.Returns
+public import NN.Runtime.RL.Numerics.Float32.Types
 
 /-!
 # RL Float32 Numeric Checks (Umbrella)
@@ -18,7 +18,8 @@ public import NN.Runtime.RL.Numerics.Float32.Intervals
 Umbrella import for TorchLean's explicit binary32 RL diagnostics. The implementation is split by
 concern:
 
-- `Types`: `IEEE32Exec`/`Interval32` aliases, boundary casts, and checked scalar primitives;
+- `Types`: `ExecFloat.Binary 8 23`/`Interval32` aliases, boundary casts, and checked scalar
+primitives;
 - `Returns`: checked discounted backups and fixed-horizon returns;
 - `Advantage`: checked TD residuals, $\operatorname{GAE}(\lambda)$, and advantage normalization;
 - `PPO`: checked importance ratios and clipped PPO objective pieces;

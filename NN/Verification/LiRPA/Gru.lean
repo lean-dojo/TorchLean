@@ -40,19 +40,19 @@ namespace NN.Verification.LiRPA.Gru
 
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
-/-- Small nonlinear graph exercising `sigmoid`, `tanh`, and `mul_elem`. -/
+/-- Small nonlinear graph exercising `sigmoid`, `tanh`, and `mulElem`. -/
 def buildGraph : Graph :=
   let n := 3
-  let inputNode : Node := { id := 0, parents := #[], kind := .input, outShape := .dim n .scalar }
-  let gateLinearNode : Node := { id := 1, parents := #[0], kind := .linear, outShape := .dim n .scalar }
-  let sigmoidGateNode : Node := { id := 2, parents := #[1], kind := .sigmoid, outShape := .dim n .scalar }
-  let candidateLinearNode : Node := { id := 3, parents := #[0], kind := .linear, outShape := .dim n .scalar }
-  let candidateTanhNode : Node := { id := 4, parents := #[3], kind := .tanh, outShape := .dim n .scalar }
+  let inputNode : Node := { id := 0, parents := #[], kind := .input, outShape := [n] }
+  let gateLinearNode : Node := { id := 1, parents := #[0], kind := .linear, outShape := [n] }
+  let sigmoidGateNode : Node := { id := 2, parents := #[1], kind := .sigmoid, outShape := [n] }
+  let candidateLinearNode : Node := { id := 3, parents := #[0], kind := .linear, outShape := [n] }
+  let candidateTanhNode : Node := { id := 4, parents := #[3], kind := .tanh, outShape := [n] }
   let gatedCandidateNode : Node :=
-    { id := 5, parents := #[2, 4], kind := .mul_elem, outShape := .dim n .scalar }
+    { id := 5, parents := #[2, 4], kind := .mulElem, outShape := [n] }
   { nodes := #[inputNode, gateLinearNode, sigmoidGateNode, candidateLinearNode,
       candidateTanhNode, gatedCandidateNode] }
 
@@ -60,8 +60,13 @@ def buildGraph : Graph :=
 def seedParamsFloat : ParamStore Float :=
   let n := 3
   let weight : Tensor Float [n, n] :=
-    Tensor.dim (fun i => Tensor.dim (fun j => Tensor.scalar (Float.ofNat (1 + (i.val + j.val)))))
-  let bias : Tensor Float [n] := Tensor.dim (fun i => Tensor.scalar (Float.ofNat (i.val)))
+    Tensor.generate [n, n] fun
+      | [i, j] => Float.ofNat (1 + i + j)
+      | _ => 0.0
+  let bias : Tensor Float [n] :=
+    Tensor.generate [n] fun
+      | [i] => Float.ofNat i
+      | _ => 0.0
   let emptyStore : ParamStore Float := {}
   let withGateLinear :=
     { emptyStore with
@@ -71,10 +76,6 @@ def seedParamsFloat : ParamStore Float :=
       linearWB := withGateLinear.linearWB.insert 3 ({ m := n, n := n, w := weight, b := bias }) }
   withCandidateLinear
 
-/-- Insert an $L^\infty$ input box of radius `eps` around a fixed center point. -/
-def seedInputFloat (ps : ParamStore Float) (eps : Float) : ParamStore Float :=
-  NN.Verification.LiRPA.ExampleInputs.seedNaturalInputBox 0 3 eps ps
-
 /--
 Check an IBP certificate JSON against this GRU-fragment graph.
 
@@ -82,7 +83,9 @@ This is wired into `lake exe verify -- lirpa-gru [path]`.
 -/
 def verifyCert (path : String) : IO Unit := do
   let g := buildGraph
-  let ps := seedInputFloat seedParamsFloat (eps := 0.5)
+  -- Every input coordinate gets the box $[x_i - \varepsilon, x_i + \varepsilon]$; the
+  -- graph has 3 inputs, ids `0 .. 2`.
+  let ps := ExampleInputs.seedNaturalInputBox 0 3 0.5 seedParamsFloat
   NN.Verification.IBPCert.checkOrThrow g ps (outId := 5) path
 
 end NN.Verification.LiRPA.Gru

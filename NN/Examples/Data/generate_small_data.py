@@ -16,14 +16,13 @@ import numpy as np
 
 
 def make_regression() -> tuple[np.ndarray, np.ndarray]:
-    xs: list[list[float]] = []
-    ys: list[list[float]] = []
-    for x1 in np.linspace(-1.0, 1.0, 5, dtype=np.float32):
-        for x2 in np.linspace(-1.0, 1.0, 5, dtype=np.float32):
-            y = 0.7 * float(x1) - 0.4 * float(x2) + 0.5 * float(x1) * float(x2)
-            xs.append([float(x1), float(x2)])
-            ys.append([y])
-    return np.asarray(xs, dtype=np.float32), np.asarray(ys, dtype=np.float32)
+    axis = np.linspace(-1.0, 1.0, 5, dtype=np.float32)
+    first, second = np.meshgrid(axis, axis, indexing="ij")
+    features = np.stack((first, second), axis=-1).reshape(-1, 2)
+    # Preserve the original binary64 arithmetic before the final float32 file conversion.
+    x1, x2 = features.astype(np.float64).T
+    target = 0.7 * x1 - 0.4 * x2 + 0.5 * x1 * x2
+    return features, target.astype(np.float32)[:, None]
 
 
 def write_regression(out_dir: Path) -> None:
@@ -45,18 +44,20 @@ def write_tabular_regression(out_dir: Path) -> None:
     with (out_dir / "small_tabular_regression.csv").open("w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([f"x{i}" for i in range(1, 8)] + ["y"])
-        for row in range(10):
-            features = [np.float32((row + column) % 10) / np.float32(9) for column in range(7)]
-            target = np.float32(sum(float(value) for value in features) / len(features))
-            writer.writerow([float(value) for value in features] + [float(target)])
+        rows = np.arange(10)[:, None]
+        columns = np.arange(7)[None, :]
+        features = ((rows + columns) % 10).astype(np.float32) / np.float32(9)
+        targets = features.mean(axis=1, dtype=np.float64).astype(np.float32)
+        writer.writerows(np.column_stack((features, targets)).tolist())
     print(f"wrote {out_dir / 'small_tabular_regression.csv'} rows=10")
 
 
 def write_forecast(out_dir: Path, n_rows: int = 4, seq_len: int = 24) -> None:
     """Write deterministic one-feature time-series windows for recurrent-model checks."""
     base = np.linspace(0.0, 1.0, seq_len + 1, dtype=np.float32)
-    X = np.stack([base[:-1] + np.float32(row) / n_rows for row in range(n_rows)])[:, :, None]
-    y = np.stack([base[1:] + np.float32(row) / n_rows for row in range(n_rows)])[:, :, None]
+    offsets = np.arange(n_rows, dtype=np.float32)[:, None] / np.float32(n_rows)
+    X = (base[None, :-1] + offsets)[:, :, None]
+    y = (base[None, 1:] + offsets)[:, :, None]
     np.save(out_dir / "small_forecast_X.npy", X)
     np.save(out_dir / "small_forecast_y.npy", y)
     print(f"wrote {out_dir / 'small_forecast_X.npy'} shape={X.shape} dtype={X.dtype}")
@@ -108,9 +109,8 @@ def write_cifar10like(out_dir: Path, n_per_class: int, seed: int) -> None:
 def write_fno1d(out_dir: Path, n_rows: int = 4, grid: int = 32) -> None:
     """Write a deterministic periodic operator-learning fixture for FNO smoke tests."""
     x_grid = np.linspace(0.0, 2.0 * np.pi, grid, endpoint=False, dtype=np.float32)
-    X = np.stack(
-        [np.sin(x_grid + np.float32(i) / np.float32(n_rows)) for i in range(n_rows)]
-    ).astype(np.float32)
+    phases = np.arange(n_rows, dtype=np.float32)[:, None] / np.float32(n_rows)
+    X = np.sin(x_grid[None, :] + phases)
     y = (
         np.float32(0.75) * X
         + np.float32(0.1) * np.sin(np.float32(2.0) * x_grid)
@@ -126,10 +126,13 @@ def main() -> None:
     parser.add_argument("--out-dir", type=Path, default=Path(__file__).resolve().parent)
     parser.add_argument("--n-per-class", type=int, default=20)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--regression-only", action="store_true")
-    parser.add_argument("--cifar-only", action="store_true")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--regression-only", action="store_true")
+    modes.add_argument("--cifar-only", action="store_true")
     args = parser.parse_args()
 
+    if args.n_per_class <= 0:
+        parser.error("--n-per-class must be positive")
     args.out_dir.mkdir(parents=True, exist_ok=True)
     if not args.cifar_only:
         write_regression(args.out_dir)

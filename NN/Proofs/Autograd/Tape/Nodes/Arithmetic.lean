@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Tape.Nodes.Elementwise
+public import NN.Proofs.Autograd.Tape.Nodes.Context
+public import NN.Proofs.Autograd.FDeriv.Elementwise
 
 /-!
 # Arithmetic and stochastic tape nodes
@@ -21,8 +22,8 @@ that can be differentiated directly.
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -538,18 +539,23 @@ def divFderivAt {Γ : List Shape} {s : Shape} (a b : Idx Γ s) (xV : CtxVec Γ)
       have ha : HasFDerivAt (fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) a x i) aCLM xV := by
         have h0 : HasFDerivAt (fun x : CtxVec Γ => aCLM x) aCLM xV := aCLM.hasFDerivAt (x := xV)
         have hEq :
-            (fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) a x i) = (fun x : CtxVec Γ => aCLM x) := by
+            (fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) a x i)
+              = (fun x : CtxVec Γ => aCLM x) := by
           funext x
           simp [aCLM, ContinuousLinearMap.comp_apply, evalCLM_apply]
-          exact (congrArg (fun v : Vec n => v.ofLp i) (CtxVec.getCLM_apply (Γ := Γ) (s := s) a x)).symm
+          exact (congrArg (fun v : Vec n => v.ofLp i)
+            (CtxVec.getCLM_apply (Γ := Γ) (s := s) a x)).symm
         exact h0.congr_of_eventuallyEq hEq.eventuallyEq
-      have hbder : HasFDerivAt (fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) b x i) bCLM xV := by
+      have hbder :
+          HasFDerivAt (fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) b x i) bCLM xV := by
         have h0 : HasFDerivAt (fun x : CtxVec Γ => bCLM x) bCLM xV := bCLM.hasFDerivAt (x := xV)
         have hEq :
-            (fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) b x i) = (fun x : CtxVec Γ => bCLM x) := by
+            (fun x : CtxVec Γ => CtxVec.get (Γ := Γ) (s := s) b x i)
+              = (fun x : CtxVec Γ => bCLM x) := by
           funext x
           simp [bCLM, ContinuousLinearMap.comp_apply, evalCLM_apply]
-          exact (congrArg (fun v : Vec n => v.ofLp i) (CtxVec.getCLM_apply (Γ := Γ) (s := s) b x)).symm
+          exact (congrArg (fun v : Vec n => v.ofLp i)
+            (CtxVec.getCLM_apply (Γ := Γ) (s := s) b x)).symm
         exact h0.congr_of_eventuallyEq hEq.eventuallyEq
       have hinv :
           HasFDerivAt (fun x : CtxVec Γ => (CtxVec.get (Γ := Γ) (s := s) b x i)⁻¹)

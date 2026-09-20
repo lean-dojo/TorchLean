@@ -27,7 +27,7 @@ What this file does **not** contain:
 - CUDA / PyTorch fused optimizer kernels.
 
 Those are separate on purpose. The high-level runtime bridge in
-`NN.Runtime.Autograd.TorchLean.Optim` lifts these pure single-tensor equations to parameter lists,
+`NN.Runtime.Autograd.Model.Optim` lifts these pure single-tensor equations to parameter lists,
 and `NN.API.Runtime` exposes user-facing optimizer configs. Proofs, tests, and runtime code all use
 these pure update formulas.
 -/

@@ -24,7 +24,8 @@ This is the main entry point used by executable RL workflows: it is small, typed
 trust-boundary validation in one place.
 
 References:
-- Gymnasium API reference (`reset`/`step`, `terminated` vs `truncated`): https://gymnasium.farama.org/
+- Gymnasium API reference (`reset`/`step`, `terminated` vs `truncated`):
+  https://gymnasium.farama.org/
 - The original Gym API paper (background on the env interface): https://arxiv.org/abs/1606.01540
 - Trust-boundary contract definition: `NN.Runtime.RL.Boundary`.
 -/
@@ -35,8 +36,8 @@ namespace Runtime
 namespace RL
 namespace Gymnasium
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 /-!
 ## Stateful session (validated transitions)
@@ -92,8 +93,8 @@ def stepChecked {obsShape : Shape} {nActions : Nat}
   let obs := s.observation
   let (obs', reward, terminated, truncated) ← Client.Internal.step s.client action.1
   let tr ←
-    match Boundary.checkTransitionFin (obsShape := obsShape) (nActions := nActions) s.client.contract
-        obs obs' action reward terminated truncated with
+    match Boundary.checkTransitionFin (obsShape := obsShape) (nActions := nActions)
+        s.client.contract obs obs' action reward terminated truncated with
     | .ok t => pure t
     | .error e => throw <| IO.userError e
   let done : Bool := Boundary.Transition.done tr

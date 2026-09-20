@@ -6,80 +6,106 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API.Trainer.Manual.Core
-public import NN.API.Trainer.Manual.Loops
+public import NN.API.Data.Training
+public import NN.API.Trainer.Constructor
+public import NN.API.Trainer.Train
 
 /-!
 # Gradient Accumulation
 
-These checks cover mean-gradient updates, loader scheduler cadence, native-hook selection, and
-partial loader batches. The probe optimizer records which route each update used without coupling
-the test to a particular backend implementation.
+These checks cover mean-gradient updates, native-hook selection, and partial batches on the
+trainer's internal runner. The probe optimizer records which route each update used without
+coupling the test to a particular backend implementation.
 -/
 
 @[expose] public section
 
 namespace NN.Tests.API.GradientAccumulation
 
-open TorchLean.Trainer.Manual
+open TorchLean.Trainer.Internal
 
-def vector1 (x : Float) : Spec.Tensor Float [1] :=
-  Spec.Tensor.ofFn fun _ => x
+def vector1 (x : Float) : TorchLean.Tensor Float [1] :=
+  TorchLean.Tensor.ofFn fun _ => x
 
-def model :=
-  _root_.Runtime.Autograd.TorchLean.NN.singleLayer <|
-    _root_.Runtime.Autograd.TorchLean.NN.linear 1 1 17 29
+def vector1Value (x : TorchLean.Tensor Float [1]) : Float :=
+  TorchLean.Tensor.item (TorchLean.Tensor.get x (0 : Fin 1))
 
-def task : SeqTask [1] [1] :=
-  SeqTask.mse model
+def model : TorchLean.nn.Sequential [1] [1] :=
+  Runtime.Autograd.Model.Layers.Seq.fromLayer <|
+    Runtime.Autograd.Model.Layers.linear 1 1 17
+
+def objective : TorchLean.Trainer.Objective [1] := .meanSquaredError
+
+/-- Concrete state layout of the single affine layer used by this test. -/
+theorem taskStateShapes :
+    TorchLean.nn.stateShapes model = [([1, 1] : Spec.Shape), ([1] : Spec.Shape)] := by
+  rfl
 
 def sample (x y : Float) :
-    TorchLean.TensorPack Float [[1], [1]] :=
-  .cons (vector1 x) (.cons (vector1 y) .nil)
+    TorchLean.Sample.Supervised Float [1] [1] :=
+  { input := vector1 x
+    target := vector1 y }
+
+def dropoutModel : TorchLean.nn.Sequential [1] [1] :=
+  TorchLean.nn.build 23 (TorchLean.nn.dropout (shape := [1]) 1.0)
+
+def dropoutSample : TorchLean.Sample.Supervised Float [1] [1] :=
+  { input := vector1 2.0
+    target := vector1 0.0 }
 
 def readLinearParams
-    (ps : TorchLean.TensorPack Float (SeqTask.stateShapes task)) :
+    (state : TorchLean.nn.State Float (TorchLean.nn.stateShapes model)) :
     Float × Float :=
-  match ps with
-  | .cons weight (.cons bias .nil) =>
-      ( Spec.Tensor.item (Spec.Tensor.get (Spec.Tensor.get weight 0) 0)
-      , Spec.Tensor.item (Spec.Tensor.get bias 0) )
+  let state := state.cast taskStateShapes
+  let weight := state.get 0
+  let bias := state.get 1
+  ( TorchLean.Tensor.item <|
+      TorchLean.Tensor.get
+        (TorchLean.Tensor.get weight (0 : Fin 1)) (0 : Fin 1)
+  , TorchLean.Tensor.item (TorchLean.Tensor.get bias (0 : Fin 1)) )
 
 def close (x y : Float) : Bool :=
   Float.abs (x - y) ≤ 1e-5
 
 /-- One-channel image used by the BatchNorm buffer regression. -/
 def constantImage (value : Float) :
-    Spec.Tensor Float [1, 1, 2] :=
-  Spec.Tensor.generate [1, 1, 2] fun _ => value
+    TorchLean.Tensor Float [1, 1, 2] :=
+  TorchLean.Tensor.generate [1, 1, 2] fun _ => value
 
 def batchNormModel :
-    _root_.Runtime.Autograd.TorchLean.NN.Seq
+    Runtime.Autograd.Model.Layers.Seq
       [1, 1, 2]
       [1, 1, 2] :=
-  _root_.Runtime.Autograd.TorchLean.NN.singleLayer <|
-    _root_.Runtime.Autograd.TorchLean.NN.batchNorm 1 1 [2]
+  Runtime.Autograd.Model.Layers.Seq.fromLayer <|
+    Runtime.Autograd.Model.Layers.batchNorm 1 1 [2]
       (by decide) (momentum := 0.5)
 
-def batchNormTask :
-    SeqTask [1, 1, 2] [1, 1, 2] :=
-  SeqTask.mse batchNormModel
+/-- Concrete parameter-and-buffer layout of the BatchNorm layer used by this test. -/
+theorem batchNormStateShapes :
+    TorchLean.nn.stateShapes batchNormModel =
+      [ ([1] : Spec.Shape)
+      , ([1] : Spec.Shape)
+      , ([1] : Spec.Shape)
+      , ([1] : Spec.Shape)
+      , ([] : Spec.Shape) ] := by
+  rfl
 
 def batchNormSample (value : Float) :
-    TorchLean.TensorPack Float
-      [[1, 1, 2], [1, 1, 2]] :=
-  .cons (constantImage value) (.cons (constantImage 0.0) .nil)
+    TorchLean.Sample.Supervised Float [1, 1, 2] [1, 1, 2] :=
+  { input := constantImage value
+    target := constantImage 0.0 }
 
 def readBatchNormBuffers
-    (ps : TorchLean.TensorPack Float (SeqTask.stateShapes batchNormTask)) :
+    (state : TorchLean.nn.State Float (TorchLean.nn.stateShapes batchNormModel)) :
     Float × Float :=
-  match ps with
-  | .cons _gamma (.cons _beta (.cons mean (.cons variance (.cons _momentum .nil)))) =>
-      ( Spec.Tensor.item (Spec.Tensor.get mean 0)
-      , Spec.Tensor.item (Spec.Tensor.get variance 0) )
+  let state := state.cast batchNormStateShapes
+  let mean := state.get 2
+  let variance := state.get 3
+  ( TorchLean.Tensor.item (TorchLean.Tensor.get mean (0 : Fin 1))
+  , TorchLean.Tensor.item (TorchLean.Tensor.get variance (0 : Fin 1)) )
 
 def noOpOptimizer (shapes : List Spec.Shape) :
-    _root_.Runtime.Autograd.TorchLean.Optim.Optimizer Float shapes where
+    Runtime.Autograd.Model.Optim.Optimizer Float shapes where
   State := Unit
   init := fun _ => pure ()
   step := fun _ _ _ => pure ()
@@ -89,42 +115,30 @@ structure ProbeCounters where
   nativeSteps : IO.Ref Nat
   lossSteps : IO.Ref Nat
   genericSteps : IO.Ref Nat
-  scheduledValues : IO.Ref (Array Nat)
-
-/-- Optimizer state used to verify that a schedule value remains fixed across an epoch. -/
-structure ProbeState where
-  scheduleValue : Nat
-  counters : ProbeCounters
 
 def newProbeCounters : IO ProbeCounters := do
   pure {
     nativeSteps := ← IO.mkRef 0
     lossSteps := ← IO.mkRef 0
     genericSteps := ← IO.mkRef 0
-    scheduledValues := ← IO.mkRef #[]
   }
-
-def recordProbeStep (state : ProbeState) (counter : IO.Ref Nat) : IO Unit := do
-  counter.modify (· + 1)
-  state.counters.scheduledValues.modify (·.push state.scheduleValue)
 
 /--
 Optimizer that records native, loss-returning, and generic dispatch separately.
 
 The no-loss hook completes the update itself. The loss hook returns `none` after recording the
-attempt, allowing the normal same-tape fallback to produce the scalar when a test enables logging.
+attempt, allowing the normal same-tape fallback to produce the scalar when a caller asks for it.
 -/
 def probeOptimizer (counters : ProbeCounters) :
-    _root_.Runtime.Autograd.TorchLean.Optim.Optimizer Float (SeqTask.stateShapes task) where
-  State := ProbeState
-  init := fun _ => pure { scheduleValue := 0, counters }
-  step := fun state _ _ => do
-    recordProbeStep state counters.genericSteps
-    pure state
-  trainerStep? := fun _ state _ _ => do
-    recordProbeStep state counters.nativeSteps
-    pure (some state)
-  trainerStepWithLoss? := fun _ _state _ _ => do
+    Runtime.Autograd.Model.Optim.Optimizer Float (TorchLean.nn.stateShapes model) where
+  State := Unit
+  init := fun _ => pure ()
+  step := fun _ _ _ => do
+    counters.genericSteps.modify (· + 1)
+  trainerStep? := fun _ _ _ _ => do
+    counters.nativeSteps.modify (· + 1)
+    pure (some ())
+  trainerStepWithLoss? := fun _ _ _ _ => do
     counters.lossSteps.modify (· + 1)
     pure none
 
@@ -132,9 +146,58 @@ def expectNat (label : String) (actual expected : Nat) : IO Unit :=
   unless actual == expected do
     throw <| IO.userError s!"{label}: got {actual}, expected {expected}"
 
+def expectFailure {α : Type} (label : String) (action : IO α) : IO Unit := do
+  let failed ← try
+    let _ ← action
+    pure false
+  catch _ =>
+    pure true
+  unless failed do
+    throw <| IO.userError s!"{label}: expected failure"
+
+def expectAccepted (label : String) (result : Except String Unit) : IO Unit :=
+  match result with
+  | .ok () => pure ()
+  | .error message =>
+      throw <| IO.userError s!"{label}: unexpectedly rejected: {message}"
+
+def expectRejected (label : String) (result : Except String Unit) : IO Unit :=
+  match result with
+  | .error _ => pure ()
+  | .ok () =>
+      throw <| IO.userError s!"{label}: unexpectedly accepted"
+
+def newRunner : IO (Runner Float model) :=
+  Runner.instantiate model objective { execution := .typedGraph } (α := Float)
+
+/--
+Evaluation helpers select `.eval` for one call without mutating the mode used by subsequent
+training work. Full-probability dropout makes the train/eval distinction deterministic.
+-/
+def checkEvaluationModeIsolation : IO Unit := do
+  let runner ← Runner.instantiate dropoutModel .meanSquaredError
+    { execution := .typedGraph } (α := Float)
+  runner.train
+  let trainingPrediction ← runner.forward dropoutSample.input
+  let evaluationPrediction ← runner.predict dropoutSample.input
+  unless close (vector1Value trainingPrediction) 0.0 do
+    throw <| IO.userError "training-mode dropout did not zero its input"
+  unless close (vector1Value evaluationPrediction) 2.0 do
+    throw <| IO.userError "evaluation-mode dropout was not the identity"
+  unless (← runner.mode) == .train do
+    throw <| IO.userError "evaluation prediction changed the runner's training mode"
+  let trainingLoss ← runner.sampleLoss dropoutSample
+  let evaluationLoss ← runner.sampleLossWithMode .eval dropoutSample
+  unless close trainingLoss 0.0 && close evaluationLoss 4.0 do
+    throw <| IO.userError <|
+      s!"dropout loss mode mismatch: training={trainingLoss}, evaluation={evaluationLoss}"
+  unless (← runner.mode) == .train do
+    throw <| IO.userError "evaluation loss changed the runner's training mode"
+
+/-- A two-sample batch step applies the closed-form mean gradient once. -/
 def checkClosedFormMeanGradient : IO Unit := do
-  let runner ← Runner.instantiateFloat64 task { execution := .typedGraph }
-  let (weight, bias) := readLinearParams (← Runner.state runner)
+  let runner ← newRunner
+  let (weight, bias) := readLinearParams (← runner.state)
   let x₁ := 1.0
   let y₁ := 0.0
   let x₂ := 3.0
@@ -144,13 +207,9 @@ def checkClosedFormMeanGradient : IO Unit := do
   let gradWeight := (2.0 * residual₁ * x₁ + 2.0 * residual₂ * x₂) / 2.0
   let gradBias := (2.0 * residual₁ + 2.0 * residual₂) / 2.0
   let lr := 0.1
-  let _ ← trainSamples runner
-    { steps := 1
-      batchSize := 2
-      optimizer := .sgd lr
-      logEvery := 0 }
-    #[sample x₁ y₁, sample x₂ y₂]
-  let (weight', bias') := readLinearParams (← Runner.state runner)
+  let stepper ← runner.stepper (TorchLean.optim.sgd { learningRate := lr })
+  let _ ← stepper.stepBatch #[sample x₁ y₁, sample x₂ y₂]
+  let (weight', bias') := readLinearParams (← runner.state)
   unless close weight' (weight - lr * gradWeight) && close bias' (bias - lr * gradBias) do
     throw <| IO.userError <|
       s!"minibatch update mismatch: got ({weight'}, {bias'}), expected "
@@ -160,11 +219,11 @@ def checkClosedFormMeanGradient : IO Unit := do
 def checkWarmupCosineSchedule : IO Unit := do
   let schedule := TorchLean.Trainer.Scheduler.warmupCosine 1.0 0.1 2 6
   let observed :=
-    [ TorchLean.Trainer.Scheduler.lrAt schedule 0
-    , TorchLean.Trainer.Scheduler.lrAt schedule 1
-    , TorchLean.Trainer.Scheduler.lrAt schedule 2
-    , TorchLean.Trainer.Scheduler.lrAt schedule 4
-    , TorchLean.Trainer.Scheduler.lrAt schedule 6
+    [ TorchLean.Trainer.Scheduler.learningRateAt schedule 0
+    , TorchLean.Trainer.Scheduler.learningRateAt schedule 1
+    , TorchLean.Trainer.Scheduler.learningRateAt schedule 2
+    , TorchLean.Trainer.Scheduler.learningRateAt schedule 4
+    , TorchLean.Trainer.Scheduler.learningRateAt schedule 6
     ]
   let expected := [0.5, 1.0, 1.0, 0.55, 0.1]
   unless List.all (List.zipWith close observed expected) id do
@@ -172,78 +231,99 @@ def checkWarmupCosineSchedule : IO Unit := do
       s!"warmup/cosine schedule mismatch: got {observed}, expected {expected}"
   let clamped := TorchLean.Trainer.Scheduler.warmupCosine 1.0 0.1 10 4
   let clampedObserved :=
-    [ TorchLean.Trainer.Scheduler.lrAt clamped 0
-    , TorchLean.Trainer.Scheduler.lrAt clamped 3
-    , TorchLean.Trainer.Scheduler.lrAt clamped 4
+    [ TorchLean.Trainer.Scheduler.learningRateAt clamped 0
+    , TorchLean.Trainer.Scheduler.learningRateAt clamped 3
+    , TorchLean.Trainer.Scheduler.learningRateAt clamped 4
     ]
   let clampedExpected := [0.25, 1.0, 0.1]
   unless List.all (List.zipWith close clampedObserved clampedExpected) id do
     throw <| IO.userError <|
       s!"clamped warm-up mismatch: got {clampedObserved}, expected {clampedExpected}"
   let empty := TorchLean.Trainer.Scheduler.warmupCosine 1.0 0.1 0 0
-  unless close (TorchLean.Trainer.Scheduler.lrAt empty 0) 0.1 do
+  unless close (TorchLean.Trainer.Scheduler.learningRateAt empty 0) 0.1 do
     throw <| IO.userError "zero-step warmup/cosine schedule did not remain at its floor"
 
-/-- A batch size of one keeps the native no-loss route when progress logging is disabled. -/
+/-- Schedules reject invalid numerical domains before optimizer state is allocated. -/
+def checkSchedulerValidation : IO Unit := do
+  let validate := TorchLean.Trainer.Scheduler.validate
+  expectAccepted "constant scheduler" <| validate (.constant 0.1)
+  expectAccepted "step scheduler" <| validate (.step 0.1 2 0.5)
+  expectAccepted "exponential scheduler" <| validate (.exponential 0.1 0.9)
+  expectAccepted "warmup scheduler" <| validate (.warmupCosine 0.1 0.01 2 10)
+  expectRejected "negative learning rate" <| validate (.constant (-0.1))
+  expectRejected "NaN learning rate" <| validate (.constant (0.0 / 0.0))
+  expectRejected "infinite learning rate" <| validate (.constant (1.0 / 0.0))
+  expectRejected "zero step size" <| validate (.step 0.1 0 0.5)
+  expectRejected "negative decay" <| validate (.step 0.1 2 (-0.1))
+  expectRejected "step decay above one" <| validate (.step 0.1 2 1.1)
+  expectRejected "exponential decay above one" <| validate (.exponential 0.1 1.1)
+  expectRejected "warmup minimum above peak" <| validate (.warmupCosine 0.1 0.2 2 10)
+
+/-- Steppers reject empty batches and count one update per nonempty batch. -/
+def checkStepperBatchBoundary : IO Unit := do
+  let runner ← newRunner
+  let stepper ← runner.stepper
+    (TorchLean.optim.sgd { learningRate := 0.01 })
+  let _ ← stepper.stepBatch #[sample 1.0 0.0, sample 2.0 1.0]
+  expectNat "batched step count" (← stepper.steps) 1
+  expectFailure "empty stepper batch" <| stepper.stepBatch #[]
+  expectFailure "empty silent batch" <| stepper.update #[]
+  expectNat "rejected batch must not advance the counter" (← stepper.steps) 1
+  stepper.update #[sample 3.0 1.0]
+  expectNat "silent update advances the counter" (← stepper.steps) 2
+
+/-- Invalid training configurations fail before a sample or optimizer update is consumed. -/
+def checkTrainingValidation : IO Unit := do
+  let trainer := TorchLean.Trainer.new model
+    { optimizer := TorchLean.optim.sgd { learningRate := 0.01 } }
+  let data := TorchLean.Data.fromSamples #[sample 1.0 0.0]
+  expectFailure "zero samples per step" <|
+    trainer.train data { steps := 1, samplesPerStep := 0 }
+
+  let optimizerRunner ← newRunner
+  expectFailure "invalid optimizer" <|
+    optimizerRunner.stepper
+      (TorchLean.optim.sgd { learningRate := -0.01 })
+
+  let schedulerRunner ← newRunner
+  expectFailure "invalid scheduler" <|
+    schedulerRunner.stepper
+      (TorchLean.optim.sgd { learningRate := 0.01 })
+      (some (.step 0.01 0))
+
+  let invalidTrainer := TorchLean.Trainer.new model
+    { optimizer := TorchLean.optim.sgd { learningRate := -0.01 } }
+  expectFailure "session rejects an invalid optimizer" invalidTrainer.open
+
+/-- A singleton batch keeps the native no-loss route unless the loss is requested. -/
 def checkNoLossFastPath : IO Unit := do
-  let runner ← Runner.instantiateFloat64 task { execution := .typedGraph }
+  let runner ← newRunner
   let counters ← newProbeCounters
   let opt := probeOptimizer counters
-  let state ← _root_.Runtime.Autograd.TorchLean.Module.Objective.initOptimizer runner.module opt
-  let batches ← IO.mkRef #[#[sample 1.0 0.0]]
-  let nextBatch := do
-    let remaining ← batches.get
-    match remaining[0]? with
-    | some batch =>
-        batches.set (remaining.drop 1)
-        pure batch
-    | none =>
-        throw <| IO.userError "no-loss probe exhausted"
-  Internal.runSampleSteps runner
-    { steps := 1, batchSize := 1, logEvery := 0 }
-    nextBatch (fun _ => pure ()) opt state (fun _ current => current)
+  let state ← runner.initOptimizer opt
+  runner.train
+  let state ← stepBatch runner opt state true #[sample 1.0 0.0]
   expectNat "native no-loss steps" (← counters.nativeSteps.get) 1
   expectNat "loss-returning steps" (← counters.lossSteps.get) 0
   expectNat "generic steps" (← counters.genericSteps.get) 0
+  let _ ← stepBatch runner opt state true #[sample 1.0 0.0] (loss := true)
+  expectNat "loss-returning attempt" (← counters.lossSteps.get) 1
+  expectNat "native no-loss steps after loss request" (← counters.nativeSteps.get) 1
 
 /--
-A loader with multi-sample batches keeps every update on the generic optimizer state, including a
-final singleton batch.
+Multi-sample batches keep every update on the generic optimizer state, including a trailing
+singleton batch when the native singleton route is disabled.
 -/
 def checkPartialBatchStateRoute : IO Unit := do
-  let runner ← Runner.instantiateFloat64 task { execution := .typedGraph }
+  let runner ← newRunner
   let counters ← newProbeCounters
   let opt := probeOptimizer counters
-  let state ← _root_.Runtime.Autograd.TorchLean.Module.Objective.initOptimizer runner.module opt
-  let loader : _root_.TorchLean.Data.EpochLoader
-      (TorchLean.TensorPack Float [[1], [1]]) :=
-    _root_.TorchLean.Data.EpochLoader.create
-      (_root_.TorchLean.Data.SampleStream.ofArray
-        #[sample 1.0 0.0, sample 2.0 0.0, sample 3.0 0.0]) 2
-  let _ ← Internal.runLoaderEpochs runner
-    { epochs := 1, logEvery := 0 }
-    loader opt state (fun _ current => current)
-  expectNat "partial-loader native steps" (← counters.nativeSteps.get) 0
-  expectNat "partial-loader generic steps" (← counters.genericSteps.get) 2
-
-/-- Loader schedules advance once per epoch while logging keeps a global update counter. -/
-def checkEpochSchedulerCadence : IO Unit := do
-  let runner ← Runner.instantiateFloat64 task { execution := .typedGraph }
-  let counters ← newProbeCounters
-  let opt := probeOptimizer counters
-  let state ← _root_.Runtime.Autograd.TorchLean.Module.Objective.initOptimizer runner.module opt
-  let loader : _root_.TorchLean.Data.EpochLoader
-      (TorchLean.TensorPack Float [[1], [1]]) :=
-    _root_.TorchLean.Data.EpochLoader.create
-      (_root_.TorchLean.Data.SampleStream.ofArray
-        #[sample 1.0 0.0, sample 2.0 0.0, sample 3.0 0.0, sample 4.0 0.0]) 2
-  let _ ← Internal.runLoaderEpochs runner
-    { epochs := 2, logEvery := 0 }
-    loader opt state (fun epoch (current : ProbeState) => { current with scheduleValue := epoch })
-  let observed ← counters.scheduledValues.get
-  unless observed == #[0, 0, 1, 1] do
-    throw <| IO.userError
-      s!"loader scheduler cadence: got {observed}, expected [0, 0, 1, 1]"
+  let state ← runner.initOptimizer opt
+  runner.train
+  let state ← stepBatch runner opt state false #[sample 1.0 0.0, sample 2.0 0.0]
+  let _ ← stepBatch runner opt state false #[sample 3.0 0.0]
+  expectNat "partial-batch native steps" (← counters.nativeSteps.get) 0
+  expectNat "partial-batch generic steps" (← counters.genericSteps.get) 2
 
 /--
 BatchNorm buffers advance once per accumulated item, and requesting a logged loss does not apply a
@@ -251,21 +331,20 @@ second buffer update.
 -/
 def checkBatchNormBuffers : IO Unit := do
   let batch := #[batchNormSample 2.0, batchNormSample 4.0]
-  let runner ← Runner.instantiateFloat64 batchNormTask { execution := .typedGraph }
-  Runner.train runner
-  let opt := noOpOptimizer (SeqTask.stateShapes batchNormTask)
-  let state ← _root_.Runtime.Autograd.TorchLean.Module.Objective.initOptimizer runner.module opt
-  let _ ← Internal.stepBatch runner opt state false batch
-  let noLossBuffers := readBatchNormBuffers
-    (← TorchLean.Trainer.Manual.Runner.state runner)
+  let runner ← Runner.instantiate batchNormModel .meanSquaredError
+    { execution := .typedGraph } (α := Float)
+  runner.train
+  let opt := noOpOptimizer (TorchLean.nn.stateShapes batchNormModel)
+  let state ← runner.initOptimizer opt
+  let _ ← stepBatch runner opt state false batch
+  let noLossBuffers := readBatchNormBuffers (← runner.state)
 
-  let loggedRunner ← Runner.instantiateFloat64 batchNormTask { execution := .typedGraph }
-  Runner.train loggedRunner
-  let loggedState ←
-    _root_.Runtime.Autograd.TorchLean.Module.Objective.initOptimizer loggedRunner.module opt
-  let _ ← Internal.stepBatchAndLoss loggedRunner opt loggedState false batch
-  let loggedBuffers := readBatchNormBuffers
-    (← TorchLean.Trainer.Manual.Runner.state loggedRunner)
+  let loggedRunner ← Runner.instantiate batchNormModel .meanSquaredError
+    { execution := .typedGraph } (α := Float)
+  loggedRunner.train
+  let loggedState ← loggedRunner.initOptimizer opt
+  let _ ← stepBatch loggedRunner opt loggedState false batch (loss := true)
+  let loggedBuffers := readBatchNormBuffers (← loggedRunner.state)
 
   unless close noLossBuffers.1 2.5 && close noLossBuffers.2 0.25 do
     throw <| IO.userError <|
@@ -276,11 +355,14 @@ def checkBatchNormBuffers : IO Unit := do
       s!"BatchNorm logging changed buffer updates: no-loss={noLossBuffers}, logged={loggedBuffers}"
 
 def run : IO Unit := do
+  checkEvaluationModeIsolation
   checkClosedFormMeanGradient
   checkWarmupCosineSchedule
+  checkSchedulerValidation
+  checkStepperBatchBoundary
+  checkTrainingValidation
   checkNoLossFastPath
   checkPartialBatchStateRoute
-  checkEpochSchedulerCadence
   checkBatchNormBuffers
 
 end NN.Tests.API.GradientAccumulation

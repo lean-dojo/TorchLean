@@ -6,37 +6,20 @@ Authors: TorchLean Team
 
 module
 
-public import NN.GraphSpec.DAG
+public import NN.GraphSpec.DAG.Model
+public import NN.GraphSpec.DAG.Primitives.Core
 
 /-!
 # Residual Linear Block
 
-This is the smallest “ResNet-like” example in the directory, and it is intentionally chosen to be
-easy to read.
+A small DAG model for `x ↦ ReLU(Wx + b + x)`. The weight and bias have shapes
+`[d, d]` and `[d]`; both start at zero, so the initial model computes `ReLU(x)`.
 
-It shows the structural reason we need the DAG IR without dragging in convolution arithmetic:
+The input variable appears in both the linear branch and the skip branch. A `let1`
+binds the linear result before the addition. Reusing an environment variable does
+not recompute a preceding input expression.
 
-$$
-\begin{aligned}
-y &= \operatorname{Linear}(x),\\
-\mathrm{out} &= \operatorname{ReLU}(y+x).
-\end{aligned}
-$$
-
-Because `x` is consumed by both the main path and the skip path, a pure chain would have to
-recompute the input path or hide sharing inside a special-purpose combinator. In `GraphSpec.DAG` we
-express the sharing directly with `let1`.
-
-This file is best read as a “hello world” for DAG-authored GraphSpec examples:
-
-- one explicit parameter ABI,
-- one shared intermediate,
-- one multi-input primitive (`add`),
-- one final nonlinearity.
-
-References / citations:
-- He et al. (2016), “Deep Residual Learning for Image Recognition” (ResNets).
-- `NN.GraphSpec.DAG.Core` for the term language and semantics.
+Read this alongside `NN.GraphSpec.DAG.Core` for typed variables and `let1` semantics.
 -/
 
 @[expose] public section
@@ -46,9 +29,8 @@ namespace NN
 namespace GraphSpec
 namespace Models
 
-open _root_.Spec
-open Spec.Tensor
-open _root_.TorchLean.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.GraphSpec.DAG
 
 /--
@@ -73,8 +55,7 @@ $$
 x\mapsto\operatorname{ReLU}(Wx+b+x).
 $$
 
-This is a good first DAG example because the only genuinely DAG-specific feature is sharing the
-input between the main branch and the skip branch.
+The same input variable is used by the linear operation and the residual addition.
 -/
 def residualLinear (d : Nat) :
     DAG.Model (ps := ResidualLinearParams d) (ins := [[d]]) (τ := [d]) :=
@@ -91,8 +72,8 @@ def residualLinear (d : Nat) :
       (DAG.Args.cons w (DAG.Args.cons b (DAG.Args.cons x (DAG.Args.nil))))
   { initParams :=
       -- Deterministic, simple init: all zeros.
-      let W0 : Spec.Tensor Float [d, d] := Spec.zeros (α := Float) [d, d]
-      let b0 : Spec.Tensor Float [d] := Spec.zeros (α := Float) [d]
+      let W0 : TorchLean.Tensor Float [d, d] := Tensor.zeros (α := Float) [d, d]
+      let b0 : TorchLean.Tensor Float [d] := Tensor.zeros (α := Float) [d]
       .cons W0 (.cons b0 .nil)
     body :=
       DAG.Term.let1 y <|

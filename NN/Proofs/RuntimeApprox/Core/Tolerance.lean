@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.NNReal.Defs
+public import Mathlib.Basic.NNReal.Defs
 
 /-!
 # Tolerance
@@ -39,11 +39,12 @@ open scoped Real NNReal
 
 /-- Absolute/relative tolerance with an extra nonnegative slack factor. -/
 structure ApproxTol where
-  /-- abs. -/
+  /-- Absolute part of the bound, which is what keeps the tolerance meaningful near zero. -/
   abs : ℝ≥0
-  /-- rel. -/
+  /-- Relative part, multiplied by the maximum magnitude of the compared values. -/
   rel : ℝ≥0
-  /-- slack. -/
+  /-- Extra nonnegative headroom. Composing two tolerated steps generally produces a bound slightly
+  worse than either, and this field absorbs that without having to widen `abs` or `rel`. -/
   slack : ℝ≥0
 
 namespace ApproxTol
@@ -72,19 +73,30 @@ def approxBound (t : ApproxTol) (x y : ℝ) : ℝ :=
 def approxR (x y : ℝ) (t : ApproxTol) : Prop :=
   abs (y - x) ≤ approxBound t x y
 
-lemma approxBound_inner_nonneg (t : ApproxTol) (x y : ℝ) :
+/-- The absolute-plus-relative part of the budget is never negative.
+
+All three tolerance fields are `NNReal`, so this is really just bookkeeping, but it is needed
+separately from `approxBound_nonneg` because the slack factor is peeled off first in the
+monotonicity
+proof below. -/
+theorem approxBound_inner_nonneg (t : ApproxTol) (x y : ℝ) :
     0 ≤ (t.abs : ℝ) + (t.rel : ℝ) * max (abs x) (abs y) := by
   nlinarith [t.abs.coe_nonneg, t.rel.coe_nonneg, le_max_left (abs x) (abs y),
     le_max_right (abs x) (abs y), abs_nonneg x, abs_nonneg y]
 
-lemma approxBound_nonneg (t : ApproxTol) (x y : ℝ) : 0 ≤ approxBound t x y := by
+/-- The full error budget is never negative, so `approxR` is always satisfiable at equality. -/
+theorem approxBound_nonneg (t : ApproxTol) (x y : ℝ) : 0 ≤ approxBound t x y := by
   have hinner : 0 ≤ (t.abs : ℝ) + (t.rel : ℝ) * max (abs x) (abs y) :=
     approxBound_inner_nonneg t x y
   have : 0 ≤ (t.slack : ℝ) * ((t.abs : ℝ) + (t.rel : ℝ) * max (abs x) (abs y)) :=
     mul_nonneg t.slack.coe_nonneg hinner
   simpa [approxBound] using this
 
-lemma approxBound_mono {t₁ t₂ : ApproxTol} (habs : t₁.abs ≤ t₂.abs) (hrel : t₁.rel ≤ t₂.rel)
+/-- The budget grows when any of the three tolerance fields grows.
+
+Monotonicity in every field is what lets a composite bound be stated with one loose tolerance rather
+than tracking the exact tolerance each sub-proof happened to produce. -/
+theorem approxBound_mono {t₁ t₂ : ApproxTol} (habs : t₁.abs ≤ t₂.abs) (hrel : t₁.rel ≤ t₂.rel)
     (hslack : t₁.slack ≤ t₂.slack) (x y : ℝ) :
     approxBound t₁ x y ≤ approxBound t₂ x y := by
   have hslack' : (t₁.slack : ℝ) ≤ (t₂.slack : ℝ) := by exact_mod_cast hslack
@@ -109,21 +121,33 @@ lemma approxBound_mono {t₁ t₂ : ApproxTol} (habs : t₁.abs ≤ t₂.abs) (h
     mul_le_mul_of_nonneg_left hinner t₂.slack.coe_nonneg
   exact le_trans (by simpa [approxBound] using h1) (by simpa [approxBound] using h2)
 
-lemma approxR_mono {x y : ℝ} {t₁ t₂ : ApproxTol} (habs : t₁.abs ≤ t₂.abs) (hrel : t₁.rel ≤ t₂.rel)
+/-- Approximation is preserved when the tolerance is weakened. -/
+theorem approxR_mono {x y : ℝ} {t₁ t₂ : ApproxTol} (habs : t₁.abs ≤ t₂.abs) (hrel : t₁.rel ≤ t₂.rel)
     (hslack : t₁.slack ≤ t₂.slack) (h : approxR x y t₁) : approxR x y t₂ :=
   le_trans h (approxBound_mono (t₁ := t₁) (t₂ := t₂) habs hrel hslack x y)
 
-@[simp] lemma approxBound_absOnly (eps x y : ℝ) :
+/-- With no relative term the budget is the constant `eps`, independent of the compared values. -/
+@[simp] theorem approxBound_absOnly (eps x y : ℝ) :
     approxBound (ApproxTol.absOnly eps) x y = (Real.toNNReal eps : ℝ) := by
   simp [approxBound, ApproxTol.absOnly, ApproxTol.ofReal]
 
-lemma approxR_absOnly_iff {x y eps : ℝ} (heps : 0 ≤ eps) :
+/-- For a nonnegative `eps`, absolute-only approximation is plain `|y - x| ≤ eps`.
+
+The nonnegativity hypothesis is not decoration: `ApproxTol` stores `Real.toNNReal eps`, which clamps
+a negative input to zero, and the clamped statement would be strictly stronger than intended. -/
+theorem approxR_absOnly_iff {x y eps : ℝ} (heps : 0 ≤ eps) :
     approxR x y (ApproxTol.absOnly eps) ↔ abs (y - x) ≤ eps := by
   have hcoe : (Real.toNNReal eps : ℝ) = eps := by
     simp [Real.toNNReal_of_nonneg heps]
   simp [approxR, approxBound_absOnly, hcoe]
 
-lemma approxR_absOnly_trans {x y z eps₁ eps₂ : ℝ} (h₁ : 0 ≤ eps₁) (h₂ : 0 ≤ eps₂)
+/-- Absolute errors add along a chain, by the triangle inequality.
+
+This is the shape of every end-to-end runtime bound in this directory: each layer contributes its
+own
+`eps`, and the network's error is the sum. There is no analogous clean rule for the relative term,
+which is why the composition lemmas stay absolute-only. -/
+theorem approxR_absOnly_trans {x y z eps₁ eps₂ : ℝ} (h₁ : 0 ≤ eps₁) (h₂ : 0 ≤ eps₂)
     (hxy : approxR x y (ApproxTol.absOnly eps₁)) (hyz : approxR y z (ApproxTol.absOnly eps₂)) :
     approxR x z (ApproxTol.absOnly (eps₁ + eps₂)) := by
   have hxy' : abs (y - x) ≤ eps₁ := (approxR_absOnly_iff (x := x) (y := y) (eps := eps₁) h₁).1 hxy
@@ -136,7 +160,8 @@ lemma approxR_absOnly_trans {x y z eps₁ eps₂ : ℝ} (h₁ : 0 ≤ eps₁) (h
   exact (approxR_absOnly_iff (x := x) (y := z) (eps := eps₁ + eps₂) h12).2 (by simpa [abs_sub_comm]
     using hzx)
 
-@[simp] lemma approxR_refl (x : ℝ) (t : ApproxTol) : approxR x x t := by
+/-- Every value approximates itself, at any tolerance. -/
+@[simp] theorem approxR_refl (x : ℝ) (t : ApproxTol) : approxR x x t := by
   have hinner : 0 ≤ (t.abs : ℝ) + (t.rel : ℝ) * abs x := by
     nlinarith [t.abs.coe_nonneg, t.rel.coe_nonneg, abs_nonneg x]
   have hbound : 0 ≤ approxBound t x x := by
@@ -146,7 +171,11 @@ lemma approxR_absOnly_trans {x y z eps₁ eps₂ : ℝ} (h₁ : 0 ≤ eps₁) (h
     simpa [approxBound, max_self] using this
   simpa [approxR, sub_self] using hbound
 
-lemma approxR_symm (x y : ℝ) (t : ApproxTol) : approxR x y t ↔ approxR y x t := by
+/-- The relation is symmetric, because the scale is `max |x| |y|` rather than `|x|`.
+
+That choice is deliberate. Scaling by one argument only would make the relation asymmetric and would
+force every proof to fix which side is the reference value. -/
+theorem approxR_symm (x y : ℝ) (t : ApproxTol) : approxR x y t ↔ approxR y x t := by
   constructor <;> intro h
   · simpa [approxR, approxBound, abs_sub_comm, max_comm] using h
   · simpa [approxR, approxBound, abs_sub_comm, max_comm] using h

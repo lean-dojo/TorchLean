@@ -106,6 +106,42 @@ static inline void torchlean_cuda_require_same_size3(
   }
 }
 
+// A broadcast inserts output axes and expands singleton input axes. Every input
+// axis must occur exactly once: missing axes can hide an empty input dimension,
+// and repeated axes disagree between forward indexing and deterministic VJPs.
+// Keep this check shared by CUDA and CPU stubs, before any buffer is accessed.
+static inline void torchlean_cuda_require_broadcast_map(
+    const uint32_t* axis_map,
+    size_t input_rank,
+    size_t output_rank,
+    const char* fn) {
+  size_t mapped_axes = 0;
+  for (size_t axis = 0; axis < output_rank; ++axis) {
+    const uint32_t mapped = axis_map[axis];
+    if (mapped == 0) {
+      continue;
+    }
+    if ((size_t)mapped > input_rank) {
+      char msg[224];
+      snprintf(msg, sizeof(msg), "%s: axisMap out of range", fn);
+      lean_internal_panic(msg);
+    }
+    for (size_t previous = 0; previous < axis; ++previous) {
+      if (axis_map[previous] == mapped) {
+        char msg[224];
+        snprintf(msg, sizeof(msg), "%s: axisMap repeats input axis", fn);
+        lean_internal_panic(msg);
+      }
+    }
+    ++mapped_axes;
+  }
+  if (mapped_axes != input_rank) {
+    char msg[224];
+    snprintf(msg, sizeof(msg), "%s: axisMap omits input axis", fn);
+    lean_internal_panic(msg);
+  }
+}
+
 // Deterministic reductions toggle.
 //
 // Some kernels use `atomicAdd`, which is fast but can be non-deterministic. When enabled, TorchLean

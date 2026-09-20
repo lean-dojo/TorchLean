@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Context
+public import NN.Core.Numeric.Real
+public import Mathlib.Analysis.SpecialFunctions.Pow.Real
 
 /-!
 # `MathFunctions` helper lemmas
@@ -24,18 +25,18 @@ helpers across modules.
 namespace Proofs
 
 /-- `MathFunctions.exp` is definitional equal to `Real.exp` for `ℝ`. -/
-lemma mathfunc_exp_eq_rexp (x : ℝ) : MathFunctions.exp x = Real.exp x := rfl
+theorem mathfunc_exp_eq_rexp (x : ℝ) : MathFunctions.exp x = Real.exp x := rfl
 
 /-- `MathFunctions.sinh` is definitional equal to `Real.sinh` for `ℝ`. -/
-lemma mathfunc_sinh_eq_rsinh (x : ℝ) : MathFunctions.sinh x = Real.sinh x := rfl
+theorem mathfunc_sinh_eq_rsinh (x : ℝ) : MathFunctions.sinh x = Real.sinh x := rfl
 
 /-- `MathFunctions.cosh` is definitional equal to `Real.cosh` for `ℝ`. -/
-lemma mathfunc_cosh_eq_rcosh (x : ℝ) : MathFunctions.cosh x = Real.cosh x := rfl
+theorem mathfunc_cosh_eq_rcosh (x : ℝ) : MathFunctions.cosh x = Real.cosh x := rfl
 
 /-- `MathFunctions.tanh` is definitional equal to `Real.tanh` for `ℝ`. -/
-lemma mathfunc_tanh_eq_rtanh (x : ℝ) : MathFunctions.tanh x = Real.tanh x := rfl
+theorem mathfunc_tanh_eq_rtanh (x : ℝ) : MathFunctions.tanh x = Real.tanh x := rfl
 
 /-- `MathFunctions.sqrt` is definitional equal to `Real.sqrt` for `ℝ`. -/
-lemma mathfunc_sqrt_eq_rsqrt (x : ℝ) : MathFunctions.sqrt x = Real.sqrt x := rfl
+theorem mathfunc_sqrt_eq_rsqrt (x : ℝ) : MathFunctions.sqrt x = Real.sqrt x := rfl
 
 end Proofs

@@ -18,8 +18,9 @@ binary directly. What we can do well is factor the interface into three layers:
 
 1. **Pure Lean kernel specs** in this file: row-major indexing, elementwise maps, fixed-order
    reductions, gather/scatter, and batched matmul are ordinary Lean functions over finite indices.
-2. **Scalar float32 facts** from `Float32Contract`: if native result bits match `IEEE32Exec`, then
-   the existing `IEEE32Exec → FP32-on-ℝ` theorems apply.
+2. **Scalar float32 facts** from `Float32Contract`: if native result bits match `ExecFloat.Binary 8
+23`, then
+   the existing `configured binary32 → FP32-on-ℝ` theorems apply.
 3. **Native validation / trust boundary**: CUDA C, libdevice, cuBLAS, compiler flags, GPU hardware,
    and driver behavior are validated by tests and documented assumptions, not proved by Lean.
 
@@ -40,6 +41,11 @@ External references for the assumptions named here:
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 namespace Runtime
 namespace Autograd
@@ -65,14 +71,14 @@ abbrev FlatBuffer (n : Nat) := Fin n → RefScalar
 /-- A native-result buffer represented only by raw binary32 bits. -/
 abbrev NativeBitsBuffer (n : Nat) := Fin n → UInt32
 
-/-- Extensionality for the thin `IEEE32Exec` wrapper, phrased through native bits. -/
-private theorem ref_ext {x y : RefScalar} (h : toNativeBits x = toNativeBits y) : x = y := by
-  cases x
-  cases y
-  cases h
-  rfl
-
-/-- Reinterpret a native bit buffer as reference `IEEE32Exec` values. -/
+/-!
+`ref_ext` is the `RefScalar` extensionality lemma from `Float32Contract`, which point 2 of the
+module docstring above already names as this file's source of scalar float32 facts. It had a
+private copy here with the same statement and the same proof, so the copy is gone and the lemma
+is opened instead.
+-/
+open Float32Contract (ref_ext)
+/-- Reinterpret a native bit buffer as reference `ExecFloat.Binary 8 23` values. -/
 def fromNativeBitsBuffer {n : Nat} (xs : NativeBitsBuffer n) : FlatBuffer n :=
   fun i => fromNativeBits (xs i)
 
@@ -83,17 +89,20 @@ Well-formed kernel preconditions should make the in-bounds branch fire. The fall
 total in Lean, and later layout proofs can discharge the bounds separately.
 -/
 def getD {n : Nat} (x : FlatBuffer n) (i : Nat) : RefScalar :=
-  if h : i < n then x ⟨i, h⟩ else IEEE32Exec.posZero
+  if h : i < n then x ⟨i, h⟩ else (Binary.zero false : Binary 8 23)
 
 /-- Extract reference bits pointwise. -/
 def toNativeBitsBuffer {n : Nat} (xs : FlatBuffer n) : NativeBitsBuffer n :=
   fun i => toNativeBits (xs i)
 
+/-- A buffer of reference scalars survives a round trip through its bits. -/
 @[simp] theorem fromNativeBitsBuffer_toNativeBitsBuffer {n : Nat} (xs : FlatBuffer n) :
     fromNativeBitsBuffer (toNativeBitsBuffer xs) = xs := by
   funext i
   simp [fromNativeBitsBuffer, toNativeBitsBuffer]
 
+/-- And a buffer of bits survives a round trip through reference scalars, so kernel specs may be
+stated on whichever side reads better and transported to the other. -/
 @[simp] theorem toNativeBitsBuffer_fromNativeBitsBuffer {n : Nat} (xs : NativeBitsBuffer n) :
     toNativeBitsBuffer (fromNativeBitsBuffer xs) = xs := by
   funext i
@@ -112,19 +121,19 @@ def map2Spec {n : Nat} (f : RefScalar → RefScalar → RefScalar)
 
 /-- Elementwise addition reference spec. -/
 def addSpec {n : Nat} : FlatBuffer n → FlatBuffer n → FlatBuffer n :=
-  map2Spec IEEE32Exec.add
+  map2Spec ExecFloat.add
 
 /-- Elementwise multiplication reference spec. -/
 def mulSpec {n : Nat} : FlatBuffer n → FlatBuffer n → FlatBuffer n :=
-  map2Spec IEEE32Exec.mul
+  map2Spec ExecFloat.mul
 
 /-- Elementwise division reference spec. -/
 def divSpec {n : Nat} : FlatBuffer n → FlatBuffer n → FlatBuffer n :=
-  map2Spec IEEE32Exec.div
+  map2Spec ExecFloat.div
 
 /-- Elementwise square-root reference spec. -/
 def sqrtSpec {n : Nat} : FlatBuffer n → FlatBuffer n :=
-  mapSpec IEEE32Exec.sqrt
+  mapSpec (Binary.sqrt (rounding := .nearestEven))
 
 /--
 If every native result bit agrees with reference addition, the whole native elementwise-add buffer
@@ -132,7 +141,7 @@ agrees extensionally with `addSpec`.
 -/
 theorem fromNativeBitsBuffer_eq_addSpec_of_bits
     {n : Nat} {bits : NativeBitsBuffer n} {x y : FlatBuffer n}
-    (hbits : ∀ i, bits i = toNativeBits (IEEE32Exec.add (x i) (y i))) :
+    (hbits : ∀ i, bits i = toNativeBits (ExecFloat.add (x i) (y i))) :
     fromNativeBitsBuffer bits = addSpec x y := by
   funext i
   apply ref_ext
@@ -143,7 +152,7 @@ Elementwise multiplication version of `fromNativeBitsBuffer_eq_addSpec_of_bits`.
 -/
 theorem fromNativeBitsBuffer_eq_mulSpec_of_bits
     {n : Nat} {bits : NativeBitsBuffer n} {x y : FlatBuffer n}
-    (hbits : ∀ i, bits i = toNativeBits (IEEE32Exec.mul (x i) (y i))) :
+    (hbits : ∀ i, bits i = toNativeBits (ExecFloat.mul (x i) (y i))) :
     fromNativeBitsBuffer bits = mulSpec x y := by
   funext i
   apply ref_ext
@@ -154,7 +163,7 @@ Elementwise division version of `fromNativeBitsBuffer_eq_addSpec_of_bits`.
 -/
 theorem fromNativeBitsBuffer_eq_divSpec_of_bits
     {n : Nat} {bits : NativeBitsBuffer n} {x y : FlatBuffer n}
-    (hbits : ∀ i, bits i = toNativeBits (IEEE32Exec.div (x i) (y i))) :
+    (hbits : ∀ i, bits i = toNativeBits (ExecFloat.div (x i) (y i))) :
     fromNativeBitsBuffer bits = divSpec x y := by
   funext i
   apply ref_ext
@@ -165,83 +174,104 @@ Elementwise square-root version of `fromNativeBitsBuffer_eq_addSpec_of_bits`.
 -/
 theorem fromNativeBitsBuffer_eq_sqrtSpec_of_bits
     {n : Nat} {bits : NativeBitsBuffer n} {x : FlatBuffer n}
-    (hbits : ∀ i, bits i = toNativeBits (IEEE32Exec.sqrt (x i))) :
+    (hbits : ∀ i, bits i = toNativeBits ((Binary.sqrt (rounding := .nearestEven)) (x i))) :
     fromNativeBitsBuffer bits = sqrtSpec x := by
   funext i
   apply ref_ext
   simp [fromNativeBitsBuffer, sqrtSpec, mapSpec, hbits i]
 
-/--
-Pointwise real-error bound inherited by a native elementwise-add buffer after bit agreement.
--/
+/-- Reference operations as native bits, for reuse of the scalar agreement contract. -/
+private def referenceBits : NativePrimitiveBits where
+  addBits x y := toNativeBits (ExecFloat.add x y)
+  mulBits x y := toNativeBits (ExecFloat.mul x y)
+  divBits x y := toNativeBits (ExecFloat.div x y)
+  fmaBits x y z := toNativeBits ((Binary.fma (rounding := .nearestEven)) x y z)
+  sqrtBits x := toNativeBits ((Binary.sqrt (rounding := .nearestEven)) x)
+
+private theorem referenceAgreement : NativePrimitiveAgreement referenceBits where
+  add_bits _ _ := Or.inl rfl
+  mul_bits _ _ := Or.inl rfl
+  div_bits _ _ := Or.inl rfl
+  fma_bits _ _ _ := Or.inl rfl
+  sqrt_bits _ := Or.inl rfl
+
+/-- Pointwise real-error bound inherited by an elementwise-add buffer after bit agreement. -/
 theorem native_add_pointwise_abs_error_of_bits
     {n : Nat} {bits : NativeBitsBuffer n} {x y : FlatBuffer n}
-    (hbits : ∀ i, bits i = toNativeBits (IEEE32Exec.add (x i) (y i)))
+    (hbits : ∀ i, bits i = toNativeBits (ExecFloat.add (x i) (y i)))
     (i : Fin n)
-    (hfin : IEEE32Exec.isFinite (fromNativeBits (bits i)) = true) :
-    _root_.abs
-        (IEEE32Exec.toReal (fromNativeBits (bits i)) -
-          (IEEE32Exec.toReal (x i) + IEEE32Exec.toReal (y i))) ≤
-      eps32 (IEEE32Exec.toReal (x i) + IEEE32Exec.toReal (y i)) := by
-  have hx : fromNativeBits (bits i) = IEEE32Exec.add (x i) (y i) := by
+    (hfin : Binary.isFinite (fromNativeBits (bits i)) = true) :
+    abs
+        ((toModel (fromNativeBits (bits i))).toReal -
+          ((toModel (x i)).toReal + (toModel (y i)).toReal)) ≤
+      eps32 ((toModel (x i)).toReal + (toModel (y i)).toReal) := by
+  have hx : fromNativeBits (bits i) = ExecFloat.add (x i) (y i) := by
     apply ref_ext
     simp [hbits i]
   rw [hx] at hfin ⊢
-  exact IEEE32Exec.toReal_add_abs_error_of_isFinite (x i) (y i) hfin
+  simpa only [referenceBits, fromNativeBits_toNativeBits] using
+    native_add_abs_error_of_isFinite referenceAgreement (x i) (y i)
+      (by simpa only [referenceBits, fromNativeBits_toNativeBits] using hfin)
 
 /--
 Pointwise real-error bound inherited by a native elementwise-multiply buffer after bit agreement.
 -/
 theorem native_mul_pointwise_abs_error_of_bits
     {n : Nat} {bits : NativeBitsBuffer n} {x y : FlatBuffer n}
-    (hbits : ∀ i, bits i = toNativeBits (IEEE32Exec.mul (x i) (y i)))
+    (hbits : ∀ i, bits i = toNativeBits (ExecFloat.mul (x i) (y i)))
     (i : Fin n)
-    (hfin : IEEE32Exec.isFinite (fromNativeBits (bits i)) = true) :
-    _root_.abs
-        (IEEE32Exec.toReal (fromNativeBits (bits i)) -
-          (IEEE32Exec.toReal (x i) * IEEE32Exec.toReal (y i))) ≤
-      eps32 (IEEE32Exec.toReal (x i) * IEEE32Exec.toReal (y i)) := by
-  have hx : fromNativeBits (bits i) = IEEE32Exec.mul (x i) (y i) := by
+    (hfin : Binary.isFinite (fromNativeBits (bits i)) = true) :
+    abs
+        ((toModel (fromNativeBits (bits i))).toReal -
+          ((toModel (x i)).toReal * (toModel (y i)).toReal)) ≤
+      eps32 ((toModel (x i)).toReal * (toModel (y i)).toReal) := by
+  have hx : fromNativeBits (bits i) = ExecFloat.mul (x i) (y i) := by
     apply ref_ext
     simp [hbits i]
   rw [hx] at hfin ⊢
-  exact IEEE32Exec.toReal_mul_abs_error_of_isFinite (x i) (y i) hfin
+  simpa only [referenceBits, fromNativeBits_toNativeBits] using
+    native_mul_abs_error_of_isFinite referenceAgreement (x i) (y i)
+      (by simpa only [referenceBits, fromNativeBits_toNativeBits] using hfin)
 
 /--
 Pointwise real-error bound inherited by a native elementwise-division buffer after bit agreement.
 -/
 theorem native_div_pointwise_abs_error_of_bits
     {n : Nat} {bits : NativeBitsBuffer n} {x y : FlatBuffer n}
-    (hbits : ∀ i, bits i = toNativeBits (IEEE32Exec.div (x i) (y i)))
+    (hbits : ∀ i, bits i = toNativeBits (ExecFloat.div (x i) (y i)))
     (i : Fin n)
-    (hfin : IEEE32Exec.isFinite (fromNativeBits (bits i)) = true) :
-    _root_.abs
-        (IEEE32Exec.toReal (fromNativeBits (bits i)) -
-          (IEEE32Exec.toReal (x i) / IEEE32Exec.toReal (y i))) ≤
-      eps32 (IEEE32Exec.toReal (x i) / IEEE32Exec.toReal (y i)) := by
-  have hx : fromNativeBits (bits i) = IEEE32Exec.div (x i) (y i) := by
+    (hfin : Binary.isFinite (fromNativeBits (bits i)) = true) :
+    abs
+        ((toModel (fromNativeBits (bits i))).toReal -
+          ((toModel (x i)).toReal / (toModel (y i)).toReal)) ≤
+      eps32 ((toModel (x i)).toReal / (toModel (y i)).toReal) := by
+  have hx : fromNativeBits (bits i) = ExecFloat.div (x i) (y i) := by
     apply ref_ext
     simp [hbits i]
   rw [hx] at hfin ⊢
-  exact IEEE32Exec.toReal_div_abs_error_of_isFinite (x i) (y i) hfin
+  simpa only [referenceBits, fromNativeBits_toNativeBits] using
+    native_div_abs_error_of_isFinite referenceAgreement (x i) (y i)
+      (by simpa only [referenceBits, fromNativeBits_toNativeBits] using hfin)
 
 /--
 Pointwise real-error bound inherited by a native elementwise-square-root buffer after bit agreement.
 -/
 theorem native_sqrt_pointwise_abs_error_of_bits
     {n : Nat} {bits : NativeBitsBuffer n} {x : FlatBuffer n}
-    (hbits : ∀ i, bits i = toNativeBits (IEEE32Exec.sqrt (x i)))
+    (hbits : ∀ i, bits i = toNativeBits ((Binary.sqrt (rounding := .nearestEven)) (x i)))
     (i : Fin n)
-    (hfin : IEEE32Exec.isFinite (fromNativeBits (bits i)) = true) :
-    _root_.abs
-        (IEEE32Exec.toReal (fromNativeBits (bits i)) -
-          _root_.Real.sqrt (IEEE32Exec.toReal (x i))) ≤
-      eps32 (_root_.Real.sqrt (IEEE32Exec.toReal (x i))) := by
-  have hx : fromNativeBits (bits i) = IEEE32Exec.sqrt (x i) := by
+    (hfin : Binary.isFinite (fromNativeBits (bits i)) = true) :
+    abs
+        ((toModel (fromNativeBits (bits i))).toReal -
+          Real.sqrt ((toModel (x i)).toReal)) ≤
+      eps32 (Real.sqrt ((toModel (x i)).toReal)) := by
+  have hx : fromNativeBits (bits i) = (Binary.sqrt (rounding := .nearestEven)) (x i) := by
     apply ref_ext
     simp [hbits i]
   rw [hx] at hfin ⊢
-  exact IEEE32Exec.toReal_sqrt_abs_error_of_isFinite (x i) hfin
+  simpa only [referenceBits, fromNativeBits_toNativeBits] using
+    native_sqrt_abs_error_of_isFinite referenceAgreement (x i)
+      (by simpa only [referenceBits, fromNativeBits_toNativeBits] using hfin)
 
 /-! ## Fixed-order reductions -/
 
@@ -253,14 +283,14 @@ only refine this spec under an additional ordering/agreement assumption. TorchLe
 reduction mode is intended to make that assumption true for tested reduction paths.
 -/
 def reduceSumLeftSpec {n : Nat} (x : FlatBuffer n) : RefScalar :=
-  (List.finRange n).foldl (fun acc i => IEEE32Exec.add acc (x i)) IEEE32Exec.posZero
+  (List.finRange n).foldl (fun acc i => ExecFloat.add acc (x i)) (Binary.zero false : Binary 8 23)
 
 /--
 Explicit assumption package for a native reduction implementation.
 
-Use this when a native CUDA reduction has been configured or validated to use the same fixed order as
-`reduceSumLeftSpec`. Non-deterministic `atomicAdd` reductions should not claim this contract unless
-the runtime mode or kernel implementation fixes the accumulation order.
+Use this when a native CUDA reduction has been configured or validated to use the same fixed order
+as `reduceSumLeftSpec`. Non-deterministic `atomicAdd` reductions should not claim this contract
+unless the runtime mode or kernel implementation fixes the accumulation order.
 -/
 structure NativeReduceAgreement {n : Nat} (nativeBits : UInt32) (x : FlatBuffer n) : Prop where
   bits_eq_left_fold : nativeBits = toNativeBits (reduceSumLeftSpec x)
@@ -275,10 +305,6 @@ theorem native_reduce_eq_leftSpec
 
 /-! ## Gather/scatter indexing -/
 
-/-- Gather `k` elements from a length-`n` vector using proof-carrying indices. -/
-def gatherVecSpec {n k : Nat} (x : FlatBuffer n) (idx : Fin k → Fin n) : FlatBuffer k :=
-  fun j => x (idx j)
-
 /--
 Scatter-add a length-`k` value buffer into a length-`n` input buffer.
 
@@ -290,13 +316,8 @@ def scatterAddSpec {n k : Nat} (x : FlatBuffer n) (values : FlatBuffer k)
     (idx : Fin k → Fin n) : FlatBuffer n :=
   fun i =>
     (List.finRange k).foldl
-      (fun acc j => if idx j = i then IEEE32Exec.add acc (values j) else acc)
+      (fun acc j => if idx j = i then ExecFloat.add acc (values j) else acc)
       (x i)
-
-/-- A gather followed by scatter-add to zeros accumulates each selected source position. -/
-def gatherThenScatterToZeroSpec {n k : Nat} (x : FlatBuffer n) (idx : Fin k → Fin n) :
-    FlatBuffer n :=
-  scatterAddSpec (fun _ => IEEE32Exec.posZero) (gatherVecSpec x idx) idx
 
 /-! ## Batched row-major matrix multiplication -/
 
@@ -307,10 +328,6 @@ def bmmAIndex (m n : Nat) (b i k : Nat) : Nat :=
 /-- Linear row-major index for `B[b, k, j]` with shape `(batch, n, p)`. -/
 def bmmBIndex (n p : Nat) (b k j : Nat) : Nat :=
   (b * n + k) * p + j
-
-/-- Linear row-major index for `C[b, i, j]` with shape `(batch, m, p)`. -/
-def bmmCIndex (m p : Nat) (b i j : Nat) : Nat :=
-  (b * m + i) * p + j
 
 /-- Decode a flat row-major output index for shape `(batch, m, p)`. -/
 def bmmDecodeC (m p : Nat) (q : Nat) : Nat × Nat × Nat :=
@@ -324,8 +341,8 @@ def bmmDecodeC (m p : Nat) (q : Nat) : Nat × Nat × Nat :=
 /--
 Pure row-major batched matrix multiplication spec.
 
-For each output element `C[b,i,j]`, this folds over `k = 0..n-1` using `IEEE32Exec.mul` followed by
-`IEEE32Exec.add`. This fixes a *specific* accumulation order. cuBLAS may use a different
+For each output element `C[b,i,j]`, this folds over `k = 0..n-1` using `ExecFloat.mul` followed by
+`ExecFloat.add`. This fixes a *specific* accumulation order. cuBLAS may use a different
 tree/FMA strategy, so bit-for-bit agreement with this spec is an explicit native contract, not a
 free theorem.
 -/
@@ -338,14 +355,15 @@ def bmmSpec (batch m n p : Nat)
       (fun acc k =>
         let a := getD A (bmmAIndex m n b i k.val)
         let bVal := getD B (bmmBIndex n p b k.val j)
-        IEEE32Exec.add acc (IEEE32Exec.mul a bVal))
-      IEEE32Exec.posZero
+        ExecFloat.add acc (ExecFloat.mul a bVal))
+      (Binary.zero false : Binary 8 23)
 
 /--
 Agreement assumption for a native BMM implementation.
 
 The scalar result bits must match `bmmSpec` at every output element. This is stronger
-than "numerically close": it is the bitwise contract needed to reuse exact `IEEE32Exec` proofs.
+than "numerically close": it is the bitwise contract needed to reuse exact `ExecFloat.Binary 8 23`
+proofs.
 
 For cuBLAS-backed kernels this assumption includes:
 - row-major TorchLean buffers are interpreted consistently around cuBLAS's column-major GEMM API;

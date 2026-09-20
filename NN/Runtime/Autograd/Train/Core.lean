@@ -6,8 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Engine.Core
-public import NN.Runtime.Optim.Optimizers
+public import NN.Runtime.Autograd.Engine.Core.Base
 
 /-!
 # Core training helpers
@@ -23,8 +22,8 @@ namespace Runtime
 namespace Autograd
 namespace Train
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 /--
 Prefix an error message with a caller-provided tag.
@@ -48,7 +47,7 @@ Read a typed gradient tensor `Tensor a s` from a gradient map keyed by node id.
 The eager tape engine stores gradients in a shape-erased form (`Spec.SomeTensor a`), so this
 helper performs the dynamic shape check and returns a typed tensor on success.
 -/
-def requireGradTensor {a : Type} [DecidableEq Shape] {s : Shape}
+def requireGradTensor {a : Type} [TorchLean.Storage a] {s : Shape}
   (tag : String) (grads : Std.HashMap Nat (Spec.SomeTensor a)) (id : Nat) :
   Result (Tensor a s) := by
   match grads.get? id with
@@ -66,7 +65,7 @@ Read a typed forward value `Tensor a s` from a tape node id.
 This is the value-side analogue of `requireGradTensor`: it checks the shape stored in the packed
 tensor before recovering a statically shaped value.
 -/
-def requireValueTensor {a : Type} [DecidableEq Shape] {s : Shape}
+def requireValueTensor {a : Type} [TorchLean.Storage a] {s : Shape}
   (tag : String) (t : Tape a) (id : Nat) : Result (Tensor a s) := by
   match t.getValue? id with
   | none =>
@@ -82,7 +81,7 @@ Read a scalar forward value from a tape node id.
 
 This is a common pattern in training scripts where the loss is a scalar node.
 -/
-def requireScalarValue {a : Type} [DecidableEq Shape]
+def requireScalarValue {a : Type} [TorchLean.Storage a]
   (tag : String) (t : Tape a) (id : Nat) : Result a := do
   let tScalar : Tensor a .scalar ←
     requireValueTensor (tag := tag) (s := Shape.scalar) t id

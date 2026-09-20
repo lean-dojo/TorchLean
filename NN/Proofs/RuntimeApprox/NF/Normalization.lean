@@ -35,20 +35,21 @@ References:
 namespace Proofs
 namespace RuntimeApprox
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
 
 noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 /-- Stage-by-stage infinity-norm budget for an affine normalization.
 
@@ -83,7 +84,7 @@ def normalizeCoreErrorTrace
   let varianceBroadcastR := broadcastTo cbVar varianceR
   let gammaBroadcastR := broadcastTo cbGamma gammaR
   let betaBroadcastR := broadcastTo cbBeta betaR
-  let epsilonFillR := fill epsilonR s
+  let epsilonFillR := Tensor.full s epsilonR
   let centeredR := subSpec xR meanBroadcastR
   let stabilizedR := addSpec varianceBroadcastR epsilonFillR
   let centeredError :=
@@ -148,7 +149,7 @@ theorem approxTensor_normalizeCore
       abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) epsilonR - epsilonS) ≤ epsEpsilon)
     (hstabilized :
       Tensor.Forall (fun z : ℝ => η ≤ z)
-        (addSpec (broadcastTo cbVar varianceS) (fill epsilonS s))) :
+        (addSpec (broadcastTo cbVar varianceS) (Tensor.full s epsilonS))) :
     let trace := normalizeCoreErrorTrace (β := β) (fexp := fexp) (rnd := rnd)
       cbMean cbVar cbGamma cbBeta epsilonR xR meanR varianceR gammaR betaR
       epsX epsMean epsVariance epsGamma epsBeta epsEpsilon η
@@ -170,8 +171,8 @@ theorem approxTensor_normalizeCore
   let gammaBroadcastR := broadcastTo cbGamma gammaR
   let betaBroadcastS := broadcastTo cbBeta betaS
   let betaBroadcastR := broadcastTo cbBeta betaR
-  let epsilonFillS := fill epsilonS s
-  let epsilonFillR := fill epsilonR s
+  let epsilonFillS := Tensor.full s epsilonS
+  let epsilonFillR := Tensor.full s epsilonR
   let centeredS := subSpec xS meanBroadcastS
   let centeredR := subSpec xR meanBroadcastR
   let stabilizedS := addSpec varianceBroadcastS epsilonFillS
@@ -209,7 +210,7 @@ theorem approxTensor_normalizeCore
     (β := β) (fexp := fexp) (rnd := rnd) cbGamma hgamma
   have hbetaBroadcast := approxTensor_broadcastTo
     (β := β) (fexp := fexp) (rnd := rnd) cbBeta hbeta
-  have hepsilonFill := approxTensor_fill_const
+  have hepsilonFill := approxTensor_full_const
     (β := β) (fexp := fexp) (rnd := rnd) hepsilon (s := s)
   have hcentered := approxTensor_sub_spec
     (β := β) (fexp := fexp) (rnd := rnd) hx hmeanBroadcast

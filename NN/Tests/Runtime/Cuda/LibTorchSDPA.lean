@@ -6,11 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Engine.Cuda.Kernels
 public import NN.Runtime.Autograd.Torch.Core.Session
-public import NN.Tensor
 public import NN.Tests.Runtime.Cuda.Attention
-public import NN.Tests.Runtime.Cuda.Utils
 
 /-!
 # CUDA Kernel Coverage: LibTorch SDPA
@@ -30,7 +27,7 @@ namespace Tests
 namespace Cuda
 namespace LibTorchSDPA
 
-open Spec
+open Spec TorchLean
 
 abbrev batch : Nat := 2
 abbrev n : Nat := 2
@@ -40,45 +37,45 @@ abbrev s : Shape := [batch, n, d]
 abbrev maskShape : Shape := [batch, n, n]
 
 def q : Tensor Float s :=
-  tensorOfArray! [batch, n, d] #[
+  (Tensor.from #[
     0.10, -0.20,
     0.30,  0.05,
    -0.15,  0.25,
     0.40, -0.10
-  ]
+  ]).reshape [batch, n, d] (by dsimp; decide)
 
 def k : Tensor Float s :=
-  tensorOfArray! [batch, n, d] #[
+  (Tensor.from #[
     0.05,  0.20,
    -0.10,  0.30,
     0.15, -0.25,
     0.35,  0.10
-  ]
+  ]).reshape [batch, n, d] (by dsimp; decide)
 
 def v : Tensor Float s :=
-  tensorOfArray! [batch, n, d] #[
+  (Tensor.from #[
     0.20, -0.05,
     0.10,  0.30,
    -0.20,  0.15,
     0.05, -0.10
-  ]
+  ]).reshape [batch, n, d] (by dsimp; decide)
 
 def dOut : Tensor Float s :=
-  tensorOfArray! [batch, n, d] #[
+  (Tensor.from #[
     1.00, 0.50,
    -0.25, 0.75,
     0.30, 1.20,
    -0.60, 0.40
-  ]
+  ]).reshape [batch, n, d] (by dsimp; decide)
 
 /-- `1` marks an allowed key. The last query row is fully blocked. -/
 def hardMask : Tensor Float maskShape :=
-  tensorOfArray! [batch, n, n] #[
+  (Tensor.from #[
     1.0, 0.0,
     1.0, 1.0,
     1.0, 0.0,
     0.0, 0.0
-  ]
+  ]).reshape [batch, n, n] (by dsimp; decide)
 
 def run : IO Unit := do
   IO.println "=== CUDA kernel coverage: LibTorch SDPA ==="
@@ -91,7 +88,7 @@ def run : IO Unit := do
     (Runtime.Autograd.Cuda.Convert.flattenFloat (s := s) v)
   let dOutBuf := Runtime.Autograd.Cuda.Buffer.ofFloatArray
     (Runtime.Autograd.Cuda.Convert.flattenFloat (s := s) dOut)
-  let emptyMask := Runtime.Autograd.Cuda.Buffer.zeros 0
+  let emptyMask ← Runtime.Autograd.Cuda.Buffer.zerosIO 0
 
   let batch32 := UInt32.ofNat batch
   let n32 := UInt32.ofNat n
@@ -160,8 +157,8 @@ def run : IO Unit := do
   -- Exercise the actual capsule route, not only the raw FFI. LibTorch computes the forward value;
   -- the CUDA tape records the node and evaluates the composed TorchLean VJP during backward.
   let profileOpts :=
-    Runtime.Autograd.Torch.Options.withBackendProfile
-      ({} : Runtime.Autograd.Torch.Options) NN.Backend.BackendProfile.libTorchForwardCuda
+    Runtime.Autograd.Torch.Config.withBackendProfile
+      ({} : Runtime.Autograd.Torch.Config) NN.Backend.BackendProfile.libTorchForwardCuda
   let profileSession ← Runtime.Autograd.Torch.Internal.EagerSession.new (α := Float)
     profileOpts
   let selectedAttention ← profileSession.selectedCapsule
@@ -183,14 +180,14 @@ def run : IO Unit := do
   let libTorchTapeResult ← Runtime.Autograd.Cuda.Tape.multiHeadAttention (t := base5)
     (n := Tests.Cuda.Attention.n) (numHeads := Tests.Cuda.Attention.numHeads)
     (dModel := Tests.Cuda.Attention.dModel) (headDim := Tests.Cuda.Attention.headDim)
-    (h1 := Tests.Cuda.Attention.hN) wqId wkId wvId woId xId
+    (h1 := Tests.Cuda.Attention.n_ne_zero) wqId wkId wvId woId xId
     (mask := some Tests.Cuda.Attention.mask)
     (attentionCapsule := selectedAttention)
   let (libTorchTape, libTorchOutId) ← Tests.Cuda.Utils.okOrThrow libTorchTapeResult
   let composedTapeResult ← Runtime.Autograd.Cuda.Tape.multiHeadAttention (t := base5)
     (n := Tests.Cuda.Attention.n) (numHeads := Tests.Cuda.Attention.numHeads)
     (dModel := Tests.Cuda.Attention.dModel) (headDim := Tests.Cuda.Attention.headDim)
-    (h1 := Tests.Cuda.Attention.hN) wqId wkId wvId woId xId
+    (h1 := Tests.Cuda.Attention.n_ne_zero) wqId wkId wvId woId xId
     (mask := some Tests.Cuda.Attention.mask)
     (attentionCapsule := NN.Backend.Attention.torchLeanComposed)
   let (composedTape, composedOutId) ← Tests.Cuda.Utils.okOrThrow composedTapeResult
@@ -219,7 +216,7 @@ def run : IO Unit := do
   Tests.Cuda.Utils.assertTensorApprox (s := modelOutShape)
     "libtorch-forward capsule TorchLean backward" libTorchDx composedDx (tol := 2e-2)
 
-  let shortQ := Runtime.Autograd.Cuda.Buffer.zeros 1
+  let shortQ ← Runtime.Autograd.Cuda.Buffer.zerosIO 1
   let rejected ← try
     let _ ← Runtime.Autograd.Cuda.Buffer.libTorchSDPAFwd
       shortQ kBuf vBuf emptyMask 0 batch32 n32 d32 scale

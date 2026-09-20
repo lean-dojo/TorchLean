@@ -6,19 +6,14 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Autograd.AutogradSpec
-public import NN.Spec.Autograd.Ops
-
 public import NN.Runtime.Autograd.TypedGraph
 public import NN.Runtime.Autograd.IRExec
 public import NN.Runtime.Autograd.Engine
 public import NN.Runtime.Autograd.Torch
-public import NN.Runtime.Autograd.TorchLean
+public import NN.Runtime.Autograd.Model
 public import NN.Runtime.Autograd.Train
-
 public import NN.Runtime.External
 public import NN.Runtime.PyTorch
-
 public import NN.Runtime.Optim
 public import NN.Runtime.RL
 
@@ -30,7 +25,7 @@ building, training, importing, exporting, or checking runnable models:
 
 - the eager and typed graph autograd engines;
 - the lower-level `Runtime.Autograd.Torch` session operations;
-- the higher-level `Runtime.Autograd.TorchLean` front-end used by `NN.API.Runtime`;
+- the higher-level `Runtime.Autograd.Model` front-end used by `NN.API.Runtime`;
 - deterministic dataset/training utilities;
 - optional external-process helpers for untrusted producer / trusted checker workflows;
 - pure optimizer and scheduler equations;

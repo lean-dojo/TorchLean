@@ -7,8 +7,10 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Analysis.Softmax
-public import NN.Proofs.Tensor.Basic
 public import NN.Spec.Layers.Attention
+public import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
+public import Mathlib.Data.Sym.Sym2.Init
+import Mathlib.Tactic.NormNum.GCD
 
 /-!
 # Permutation Equivariance of Self-Attention (No Positional Encoding)
@@ -21,7 +23,7 @@ If we reorder the input tokens, the output is reordered in the same way.
 This file formalizes that statement for TorchLean’s spec-layer `Spec.selfAttention` over `ℝ`.
 
 The helper reindexing operations below are intentionally proof-local. They describe how this proof
-permutes tensor axes, but they are not part of the general `Spec.Tensor` API; reusable tensor
+permutes tensor axes, but they are not part of the general `TorchLean.Tensor` API; reusable tensor
 operations should live under `NN.Spec`, while model theorems and their proof scaffolding live here.
 -/
 
@@ -31,11 +33,8 @@ noncomputable section
 
 namespace NN.Proofs.Models.Attention
 
-open _root_.Spec
-open Spec.Tensor
-
-abbrev Shape := Spec.Shape
-abbrev Tensor := Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open TorchLean.Tensor
 
 /-!
 ## Token reindexing
@@ -45,45 +44,52 @@ outer axis.
 -/
 
 /-- Reindex the outermost axis of a tensor by a permutation. -/
-def reindexOuter {α : Type} {n : Nat} {s : Shape} (σ : Equiv.Perm (Fin n)) :
-    Tensor α (.dim n s) → Tensor α (.dim n s)
-  | .dim f => .dim (fun i => f (σ i))
+def reindexOuter {α : Type} [TorchLean.Storage α] {n : Nat} {s : Shape} (σ : Equiv.Perm (Fin n)) :
+    Tensor α (.dim n s) → Tensor α (.dim n s) :=
+  fun tensor => Tensor.dim (fun i => tensor.unstack (σ i))
 
-@[simp] theorem get_reindexOuter {α : Type} {n : Nat} {s : Shape}
+/-- Reindexing composes with lookup: slice `i` of the permuted tensor is slice `σ i` of the
+original.
+
+Spec tensors are functions out of `Fin n`, so a token permutation costs nothing to define and this
+lemma is a `rfl`-level fact. That is precisely why the equivariance proofs below stay short. -/
+@[simp] theorem get_reindexOuter {α : Type} [TorchLean.Storage α] {n : Nat} {s : Shape}
     (σ : Equiv.Perm (Fin n)) (t : Tensor α (.dim n s)) (i : Fin n) :
     Spec.get (reindexOuter (α := α) (n := n) (s := s) σ t) i = Spec.get t (σ i) := by
-  cases t with
-  | dim _ => rfl
+  simp [reindexOuter, Spec.get]
 
 /-- Reindex the *column* axis of a matrix by a permutation. -/
-def reindexCols {α : Type} {m n : Nat} (σ : Equiv.Perm (Fin n)) :
-    Tensor α [m, n] → Tensor α [m, n]
-  | .dim rows =>
-      .dim (fun i => reindexOuter (α := α) (n := n) (s := .scalar) σ (rows i))
+def reindexCols {α : Type} [TorchLean.Storage α] {m n : Nat} (σ : Equiv.Perm (Fin n)) :
+    Tensor α [m, n] → Tensor α [m, n] :=
+  fun matrix =>
+    Tensor.dim (fun i =>
+      reindexOuter (α := α) (n := n) (s := .scalar) σ (matrix.unstack i))
 
-@[simp] theorem get2_reindexOuter {α : Type} {m n : Nat}
+/-- Matrix form: permuting the outer axis permutes rows. -/
+@[simp] theorem get2_reindexOuter {α : Type} [TorchLean.Storage α] {m n : Nat}
     (σ : Equiv.Perm (Fin m)) (A : Tensor α [m, n]) (i : Fin m) (j : Fin n) :
     Spec.get2 (reindexOuter (α := α) (n := m) (s := .dim n .scalar) σ A) i j =
       Spec.get2 A (σ i) j := by
-  cases A with
-  | dim _ => rfl
+  simp [Spec.get2]
 
-@[simp] theorem get2_reindexCols {α : Type} {m n : Nat}
+/-- And permuting the inner axis permutes columns. -/
+@[simp] theorem get2_reindexCols {α : Type} [TorchLean.Storage α] {m n : Nat}
     (σ : Equiv.Perm (Fin n)) (A : Tensor α [m, n]) (i : Fin m) (j : Fin n) :
     Spec.get2 (reindexCols (α := α) (m := m) (n := n) σ A) i j =
       Spec.get2 A i (σ j) := by
-  cases A with
-  | dim rows =>
-      cases hrow : rows i with
-      | dim cols =>
-          simp [reindexCols, reindexOuter, Spec.get2, Spec.get, hrow]
+  simp [reindexCols, reindexOuter, Spec.get2, Spec.get, TorchLean.Tensor.getScalar]
 
 /-- Simultaneously permute rows and columns of an `n×n` matrix by the same permutation. -/
-def permMatrix {α : Type} {n : Nat} (σ : Equiv.Perm (Fin n)) (A : Tensor α [n, n]) :
-    Tensor α [n, n] :=
-  reindexOuter (α := α) (n := n) (s := .dim n .scalar) σ (reindexCols (α := α) (m := n) (n := n) σ A)
+def permMatrix {α : Type} [TorchLean.Storage α] {n : Nat} (σ : Equiv.Perm (Fin n))
+    (A : Tensor α [n, n]) : Tensor α [n, n] :=
+  reindexOuter (α := α) (n := n) (s := .dim n .scalar) σ
+    (reindexCols (α := α) (m := n) (n := n) σ A)
 
-@[simp] theorem get2_permMatrix {α : Type} {n : Nat}
+/-- Entries of a simultaneously permuted matrix: `(σ i, σ j)` of the original.
+
+This is the form attention scores take under a token permutation, since both the query index and the
+key index move with the same `σ`. -/
+@[simp] theorem get2_permMatrix {α : Type} [TorchLean.Storage α] {n : Nat}
     (σ : Equiv.Perm (Fin n)) (A : Tensor α [n, n]) (i j : Fin n) :
     Spec.get2 (permMatrix (α := α) (n := n) σ A) i j = Spec.get2 A (σ i) (σ j) := by
   simp [permMatrix]
@@ -91,98 +97,27 @@ def permMatrix {α : Type} {n : Nat} (σ : Equiv.Perm (Fin n)) (A : Tensor α [n
 /-!
 ## Softmax equivariance
 
-TorchLean's spec softmax on vectors is implemented in a stabilized way (`x ↦ exp(x - m) / Σ exp(x - m)`),
-but over `ℝ` it agrees with the plain `exp(x) / Σ exp(x)` formula. This lets us prove permutation
-equivariance without reasoning about how the stabilizing shift `m` is chosen.
+TorchLean's spec softmax on vectors is implemented in a stabilized way
+(`x ↦ exp(x - m) / Σ exp(x - m)`), but over `ℝ` it agrees with the plain `exp(x) / Σ exp(x)`
+formula (`Proofs.getScalar_softmaxVecSpec_eq_exp_div`). This lets us prove permutation equivariance
+without reasoning about how the stabilizing shift `m` is chosen.
 -/
 
 namespace SoftmaxEquivariance
 
-/-- Read the value of a scalar tensor. -/
-private abbrev scalarVal (t : Tensor ℝ .scalar) : ℝ :=
-  Spec.Tensor.item t
-
 /-- Plain (unstabilized) softmax on a vector tensor. Proof helper. -/
 private def softmaxVecPlain {n : Nat} (t : Tensor ℝ [n]) : Tensor ℝ [n] :=
-  match t with
-  | .dim f =>
-      let x : Fin n → ℝ := fun i => scalarVal (f i)
-      let denom : ℝ := ∑ j : Fin n, Real.exp (x j)
-      .dim (fun i => .scalar (Real.exp (x i) / denom))
+  let x : Fin n → ℝ := fun i => t.getScalar i
+  let denom : ℝ := ∑ j : Fin n, Real.exp (x j)
+  Tensor.dim (fun i => Tensor.scalar (Real.exp (x i) / denom))
 
-/-- The stabilized spec `softmax_vec_spec` agrees with `softmaxVecPlain` over `ℝ`. -/
+/-- The stabilized spec `softmaxVecSpec` agrees with `softmaxVecPlain` over `ℝ`. -/
 private theorem softmax_vec_spec_eq_plain {n : Nat} (t : Tensor ℝ [Nat.succ n]) :
     Activation.softmaxVecSpec (α := ℝ) (n := Nat.succ n) t = softmaxVecPlain t := by
-  classical
-  cases t with
-  | dim f =>
-      let x : Fin (Nat.succ n) → ℝ := fun i => scalarVal (f i)
-      -- The internal shift used by the stabilized definition (we do not use any "max" properties).
-      let first : ℝ := x ⟨0, Nat.succ_pos n⟩
-      -- Define `m` in the same shape as the spec definition (folding over indices with a `match`).
-      let m : ℝ :=
-        (List.finRange (Nat.succ n)).foldl
-          (fun acc i => max acc (scalarVal (f i)))
-          first
-      -- Denominators: shifted vs plain.
-      let denomPlain : ℝ := ∑ j : Fin (Nat.succ n), Real.exp (x j)
-      let denomShift : ℝ := ∑ j : Fin (Nat.succ n), Real.exp (x j - m)
-      have hdenomShift :
-          denomShift = denomPlain * Real.exp (-m) := by
-        -- Rewrite each term `exp(x - m) = exp(x) * exp(-m)` and factor out the constant.
-        calc
-          denomShift
-              = ∑ j : Fin (Nat.succ n), Real.exp (x j) * Real.exp (-m) := by
-                  refine Finset.sum_congr rfl ?_
-                  intro j _
-                  simp [sub_eq_add_neg, Real.exp_add]
-          _ = (∑ j : Fin (Nat.succ n), Real.exp (x j)) * Real.exp (-m) := by
-                -- `∑ (a_j * c) = (∑ a_j) * c`.
-                simpa [denomPlain] using (Finset.sum_mul (s := (Finset.univ : Finset (Fin (Nat.succ n))))
-                  (f := fun j => Real.exp (x j)) (a := Real.exp (-m))).symm
-      -- Now show coordinatewise equality: the `exp(-m)` factor cancels.
-      apply congrArg Spec.Tensor.dim
-      funext i
-      have hmne : Real.exp (-m) ≠ 0 := Real.exp_ne_zero _
-      -- The stabilized output is `exp(x_i - m) / denomShift`.
-      -- The plain output is `exp(x_i) / denomPlain`.
-      -- Use `mul_div_mul_right` to cancel the shared factor `exp(-m)`.
-      have hcancel :
-          Real.exp (x i - m) / denomShift = Real.exp (x i) / denomPlain := by
-        -- Rewrite numerator and denominator into `(* exp(-m))` form, then cancel.
-        calc
-          Real.exp (x i - m) / denomShift
-              = (Real.exp (x i) * Real.exp (-m)) / (denomPlain * Real.exp (-m)) := by
-                  simp [hdenomShift, sub_eq_add_neg, Real.exp_add]
-          _ = Real.exp (x i) / denomPlain := by
-                simpa [mul_assoc] using (mul_div_mul_right (Real.exp (x i)) denomPlain hmne)
-      -- Expose the present tensor reduction through its extensional sum theorem. This proof no
-      -- longer depends on whether `sumSpec` is implemented by a list fold or a recursive loop.
-      have hshiftedCoord : ∀ j : Fin (Nat.succ n),
-          Spec.Tensor.getScalar (Activation.maxShiftedExpVecSpec (Spec.Tensor.dim f)) j =
-            Real.exp (x j - m) := by
-        intro j
-        cases hj : f j with
-        | scalar xj =>
-            simp [Activation.maxShiftedExpVecSpec, Activation.maxVecSpec, Spec.replicate,
-              Spec.Tensor.expSpec, Spec.Tensor.subSpec,
-              Spec.Tensor.map2Spec, Spec.Tensor.getScalar, m, first, x, scalarVal, hj,
-              Proofs.mathfunc_exp_eq_rexp]
-      have hsumShift :
-          Spec.Tensor.sumSpec (Activation.maxShiftedExpVecSpec (Spec.Tensor.dim f)) =
-            denomShift := by
-        rw [Spec.sum_spec_vec]
-        exact Finset.sum_congr rfl (fun j _ => hshiftedCoord j)
-      have hsoft :
-          Spec.Tensor.getScalar
-              (Activation.softmaxVecSpec (α := ℝ) (n := Nat.succ n) (Spec.Tensor.dim f)) i =
-            Real.exp (x i - m) / denomShift := by
-        rw [Proofs.getScalar_softmaxVecSpec, hshiftedCoord, hsumShift]
-      apply (Spec.Tensor.scalarEquiv ℝ).injective
-      change Spec.Tensor.getScalar
-          (Activation.softmaxVecSpec (α := ℝ) (n := Nat.succ n) (Spec.Tensor.dim f)) i =
-        Real.exp (x i) / denomPlain
-      exact hsoft.trans hcancel
+  apply TorchLean.Tensor.ext_vector
+  intro i
+  rw [Proofs.getScalar_softmaxVecSpec_eq_exp_div]
+  simp [softmaxVecPlain]
 
 /-- Plain softmax commutes with reindexing (permuting coordinates). -/
 private theorem softmaxVecPlain_reindexOuter {n : Nat} (σ : Equiv.Perm (Fin n))
@@ -191,18 +126,17 @@ private theorem softmaxVecPlain_reindexOuter {n : Nat} (σ : Equiv.Perm (Fin n))
       =
     reindexOuter (α := ℝ) (n := n) (s := .scalar) σ (softmaxVecPlain t) := by
   classical
-  cases t with
-  | dim f =>
-      apply congrArg Spec.Tensor.dim
-      funext i
-      let x : Fin n → ℝ := fun j => scalarVal (f j)
-      have hden :
-          (∑ j : Fin n, Real.exp (x (σ j))) = ∑ j : Fin n, Real.exp (x j) := by
-        simpa using (Equiv.sum_comp σ (fun j => Real.exp (x j)))
-      change Spec.Tensor.scalar (Real.exp (x (σ i)) / ∑ j, Real.exp (x (σ j))) =
-        Spec.Tensor.scalar (Real.exp (x (σ i)) / ∑ j, Real.exp (x j))
-      exact congrArg Spec.Tensor.scalar
-        (congrArg (fun denominator => Real.exp (x (σ i)) / denominator) hden)
+  let x : Fin n → ℝ := fun j => t.getScalar j
+  have hden :
+      (∑ j : Fin n, Real.exp (x (σ j))) = ∑ j : Fin n, Real.exp (x j) := by
+    simpa using (Equiv.sum_comp σ (fun j => Real.exp (x j)))
+  have hden' :
+      (∑ j : Fin n, Real.exp (t.unstack (σ j)).item) =
+        ∑ j : Fin n, Real.exp (t.unstack j).item := by
+    simpa [x, TorchLean.Tensor.getScalar, Spec.get] using hden
+  apply TorchLean.Tensor.ext_vector
+  intro i
+  simp [softmaxVecPlain, reindexOuter, TorchLean.Tensor.getScalar, Spec.get, hden']
 
 /-- Spec vector softmax commutes with reindexing, including for an empty vector. -/
 theorem softmax_vec_spec_reindexOuter {n : Nat} (σ : Equiv.Perm (Fin n))
@@ -220,17 +154,44 @@ theorem softmax_vec_spec_reindexOuter {n : Nat} (σ : Equiv.Perm (Fin n))
 
 /-- Matrix axis-`1` softmax commutes with simultaneous row/column permutations. -/
 theorem softmax_spec_permMatrix {n : Nat} (σ : Equiv.Perm (Fin n))
-    (A : Spec.Tensor ℝ [n, n]) :
+    (A : TorchLean.Tensor ℝ [n, n]) :
     Activation.softmaxSpec (α := ℝ) (s := [n, n]) 1
         (permMatrix (α := ℝ) (n := n) σ A)
       =
     permMatrix (α := ℝ) (n := n) σ
       (Activation.softmaxSpec (α := ℝ) (s := [n, n]) 1 A) := by
-  cases A with
-  | dim rows =>
-      apply congrArg Spec.Tensor.dim
-      funext i
-      simp [Activation.Internal.softmaxInnermostSpec, softmax_vec_spec_reindexOuter]
+  let rows := A.unstack
+  rw [← Tensor.dim_unstack A]
+  change
+    Activation.softmaxSpec 1
+        (permMatrix σ (Tensor.dim rows)) =
+      permMatrix σ (Activation.softmaxSpec 1 (Tensor.dim rows))
+  have hswaps :
+      Shape.moveAxisToInnermostSwaps (Shape.rank [n, n]) 1 = [] := by
+    rfl
+  have hsoftmax (matrix : Tensor ℝ [n, n]) :
+      Activation.softmaxSpec (α := ℝ) (s := [n, n]) 1 matrix =
+        Activation.Internal.softmaxInnermostSpec matrix := by
+    unfold Activation.softmaxSpec
+    rw [hswaps]
+    simp only [TorchLean.Tensor.permuteByAdjacentSwaps, List.reverse_nil]
+    rfl
+  rw [hsoftmax, hsoftmax]
+  apply Spec.matrix_ext
+  intro i j
+  rw [get2_permMatrix]
+  change
+    TorchLean.Tensor.getScalar
+        ((Activation.Internal.softmaxInnermostSpec
+          (permMatrix σ (Tensor.dim rows))).unstack i) j =
+      TorchLean.Tensor.getScalar
+        ((Activation.Internal.softmaxInnermostSpec (Tensor.dim rows)).unstack (σ i)) (σ j)
+  rw [Activation.unstack_softmaxInnermostSpec_matrix]
+  rw [Activation.unstack_softmaxInnermostSpec_matrix]
+  have h := congrArg (fun vector : Tensor ℝ [n] => vector.getScalar j)
+    (softmax_vec_spec_reindexOuter σ (rows (σ i)))
+  simpa [permMatrix, reindexOuter, reindexCols, Spec.get,
+    TorchLean.Tensor.getScalar] using h
 
 end SoftmaxEquivariance
 
@@ -286,10 +247,10 @@ permutation of `Q Kᵀ`.
 -/
 theorem matrix_transpose_reindexOuter {m n : Nat}
     (σ : Equiv.Perm (Fin m)) (A : Tensor ℝ [m, n]) :
-    Spec.Tensor.swapAdjacentAxes
+    TorchLean.Tensor.swapAdjacentAxes
         (reindexOuter (α := ℝ) (n := m) (s := .dim n .scalar) σ A) 0
       =
-    reindexCols (α := ℝ) (m := n) (n := m) σ (Spec.Tensor.swapAdjacentAxes A 0) := by
+    reindexCols (α := ℝ) (m := n) (n := m) σ (TorchLean.Tensor.swapAdjacentAxes A 0) := by
   classical
   apply Spec.matrix_ext
   intro i j
@@ -307,21 +268,15 @@ token-permutation proof move the scale step past the score-matrix conjugation.
 -/
 theorem scale_spec_permMatrix {n : Nat} (σ : Equiv.Perm (Fin n))
     (A : Tensor ℝ [n, n]) (c : ℝ) :
-    Spec.Tensor.scaleSpec (permMatrix (α := ℝ) (n := n) σ A) c
+    TorchLean.Tensor.scaleSpec (permMatrix (α := ℝ) (n := n) σ A) c
       =
-    permMatrix (α := ℝ) (n := n) σ (Spec.Tensor.scaleSpec A c) := by
+    permMatrix (α := ℝ) (n := n) σ (TorchLean.Tensor.scaleSpec A c) := by
   classical
   -- Helper: extract a `scale_spec` entry.
   have get2_scale_spec {m n : Nat}
       (M : Tensor ℝ [m, n]) (c : ℝ) (i : Fin m) (j : Fin n) :
-      get2 (Spec.Tensor.scaleSpec M c) i j = (get2 M i j) * c := by
-    cases M with
-    | dim rows =>
-        cases hrow : rows i with
-        | dim cols =>
-            cases hcol : cols j with
-            | scalar v =>
-                simp [Spec.Tensor.scaleSpec, Spec.Tensor.mapSpec, get2, Spec.get, hrow, hcol]
+      get2 (TorchLean.Tensor.scaleSpec M c) i j = (get2 M i j) * c := by
+    simp [TorchLean.Tensor.scaleSpec]
   apply Spec.matrix_ext
   intro i j
   -- Both sides reduce to `(A[σ i, σ j]) * c`.
@@ -425,57 +380,58 @@ theorem selfAttention_reindexOuter
         have hScores :
             matMulSpec
                 (reindexOuter (α := ℝ) (n := Nat.succ n') (s := .dim projDim .scalar) σ Q)
-                (Spec.Tensor.swapAdjacentAxes
+                (TorchLean.Tensor.swapAdjacentAxes
                   (reindexOuter (α := ℝ) (n := Nat.succ n') (s := .dim projDim .scalar) σ K) 0)
               =
             permMatrix (α := ℝ) (n := Nat.succ n') σ
-              (matMulSpec Q (Spec.Tensor.swapAdjacentAxes K 0)) := by
+              (matMulSpec Q (TorchLean.Tensor.swapAdjacentAxes K 0)) := by
           -- Push `σ` through transpose (rows → cols), then apply the matmul permutation lemma.
           calc
             _ =
               matMulSpec
                 (reindexOuter (α := ℝ) (n := Nat.succ n') (s := .dim projDim .scalar) σ Q)
                 (reindexCols (α := ℝ) (m := projDim) (n := Nat.succ n') σ
-                  (Spec.Tensor.swapAdjacentAxes K 0)) := by
+                  (TorchLean.Tensor.swapAdjacentAxes K 0)) := by
                     simp [matrix_transpose_reindexOuter]
             _ =
               reindexOuter (α := ℝ) (n := Nat.succ n') (s := .dim (Nat.succ n') .scalar) σ
                 (reindexCols (α := ℝ) (m := Nat.succ n') (n := Nat.succ n') σ
-                  (matMulSpec Q (Spec.Tensor.swapAdjacentAxes K 0))) := by
+                  (matMulSpec Q (TorchLean.Tensor.swapAdjacentAxes K 0))) := by
                     simpa using
                       (mat_mul_reindexOuter_reindexCols (σ := σ) (τ := σ) (A := Q)
-                        (B := Spec.Tensor.swapAdjacentAxes K 0))
+                        (B := TorchLean.Tensor.swapAdjacentAxes K 0))
             _ = _ := rfl
 
         -- scale commutes with `permMatrix`.
         have hScaledScores :
-            Spec.Tensor.scaleSpec
+            TorchLean.Tensor.scaleSpec
                 (permMatrix (α := ℝ) (n := Nat.succ n') σ
-                  (matMulSpec Q (Spec.Tensor.swapAdjacentAxes K 0)))
+                  (matMulSpec Q (TorchLean.Tensor.swapAdjacentAxes K 0)))
                 (Spec.attentionScaleDenom (α := ℝ) projDim)⁻¹
               =
             permMatrix (α := ℝ) (n := Nat.succ n') σ
-              (Spec.Tensor.scaleSpec (matMulSpec Q (Spec.Tensor.swapAdjacentAxes K 0))
+              (TorchLean.Tensor.scaleSpec (matMulSpec Q (TorchLean.Tensor.swapAdjacentAxes K 0))
                 (Spec.attentionScaleDenom (α := ℝ) projDim)⁻¹) := by
           simpa using
             (scale_spec_permMatrix (σ := σ)
-              (A := matMulSpec Q (Spec.Tensor.swapAdjacentAxes K 0))
+              (A := matMulSpec Q (TorchLean.Tensor.swapAdjacentAxes K 0))
               (c := (Spec.attentionScaleDenom (α := ℝ) projDim)⁻¹))
 
         -- softmax commutes with `permMatrix`.
         have hWeights :
             Activation.softmaxSpec (α := ℝ) (s := [Nat.succ n', Nat.succ n']) 1
                 (permMatrix (α := ℝ) (n := Nat.succ n') σ
-                  (Spec.Tensor.scaleSpec (matMulSpec Q (Spec.Tensor.swapAdjacentAxes K 0))
+                  (TorchLean.Tensor.scaleSpec (matMulSpec Q (TorchLean.Tensor.swapAdjacentAxes K 0))
                     (Spec.attentionScaleDenom (α := ℝ) projDim)⁻¹))
               =
             permMatrix (α := ℝ) (n := Nat.succ n') σ
               (Activation.softmaxSpec (α := ℝ) (s := [Nat.succ n', Nat.succ n']) 1
-                (Spec.Tensor.scaleSpec (matMulSpec Q (Spec.Tensor.swapAdjacentAxes K 0))
+                (TorchLean.Tensor.scaleSpec (matMulSpec Q (TorchLean.Tensor.swapAdjacentAxes K 0))
                   (Spec.attentionScaleDenom (α := ℝ) projDim)⁻¹)) := by
           simpa using
             (SoftmaxEquivariance.softmax_spec_permMatrix (n := Nat.succ n') (σ := σ)
-              (A := Spec.Tensor.scaleSpec (matMulSpec Q (Spec.Tensor.swapAdjacentAxes K 0))
+              (A := TorchLean.Tensor.scaleSpec
+                (matMulSpec Q (TorchLean.Tensor.swapAdjacentAxes K 0))
                 (Spec.attentionScaleDenom (α := ℝ) projDim)⁻¹))
 
         -- final matmul with `V` turns the conjugation into an outer reindexing.
@@ -483,20 +439,21 @@ theorem selfAttention_reindexOuter
             matMulSpec
                 (permMatrix (α := ℝ) (n := Nat.succ n') σ
                   (Activation.softmaxSpec (α := ℝ) (s := [Nat.succ n', Nat.succ n']) 1
-                    (Spec.Tensor.scaleSpec (matMulSpec Q (Spec.Tensor.swapAdjacentAxes K 0))
+                    (TorchLean.Tensor.scaleSpec
+                      (matMulSpec Q (TorchLean.Tensor.swapAdjacentAxes K 0))
                       (Spec.attentionScaleDenom (α := ℝ) projDim)⁻¹)))
                 (reindexOuter (α := ℝ) (n := Nat.succ n') (s := .dim projDim .scalar) σ V)
               =
             reindexOuter (α := ℝ) (n := Nat.succ n') (s := .dim projDim .scalar) σ
               (matMulSpec
                 (Activation.softmaxSpec (α := ℝ) (s := [Nat.succ n', Nat.succ n']) 1
-                  (Spec.Tensor.scaleSpec (matMulSpec Q (Spec.Tensor.swapAdjacentAxes K 0))
+                  (TorchLean.Tensor.scaleSpec (matMulSpec Q (TorchLean.Tensor.swapAdjacentAxes K 0))
                     (Spec.attentionScaleDenom (α := ℝ) projDim)⁻¹))
                 V) := by
           simpa using
             (mat_mul_permMatrix_reindexOuter (σ := σ)
               (A := Activation.softmaxSpec (α := ℝ) (s := [Nat.succ n', Nat.succ n']) 1
-                (Spec.Tensor.scaleSpec (matMulSpec Q (Spec.Tensor.swapAdjacentAxes K 0))
+                (TorchLean.Tensor.scaleSpec (matMulSpec Q (TorchLean.Tensor.swapAdjacentAxes K 0))
                   (Spec.attentionScaleDenom (α := ℝ) projDim)⁻¹))
               (B := V))
 

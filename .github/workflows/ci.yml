@@ -7,33 +7,116 @@ on:
     branches: ["main"]
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: read
 
 jobs:
-  build_and_test:
+  changes:
     runs-on: ubuntu-latest
+    outputs:
+      lean: ${{ steps.select.outputs.lean }}
+      citation: ${{ steps.select.outputs.citation }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select checks
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+
+          event = os.environ['EVENT']
+          before = os.environ['BEFORE']
+          full = event == 'workflow_dispatch' or (
+              event == 'push' and (not before or set(before) == {'0'})
+          )
+          paths = []
+          if not full:
+              base = os.environ['BASE'] if event == 'pull_request' else before
+              paths = subprocess.check_output([
+                  'git', 'diff', '--name-only', '--no-renames', '-z',
+                  base, os.environ['HEAD'],
+              ]).decode().rstrip('\0').split('\0')
+
+          def lightweight(path):
+              return (
+                  path == 'CITATION.cff'
+                  or path.endswith('.md')
+                  or path in {
+                      'scripts/verification/abcrown/export_leaf_artifact.py',
+                      'scripts/verification/abcrown/test_export_leaf_artifact.py',
+                  }
+              )
+
+          lean = full or any(path and not lightweight(path) for path in paths)
+          citation = full or 'CITATION.cff' in paths
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'lean={str(lean).lower()}\n')
+              output.write(f'citation={str(citation).lower()}\n')
+          print(f'Full Lean build: {lean}; citation validation: {citation}')
+          PY
+
+  build_and_test:
+    needs: changes
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    # A metadata-only push must not cancel a source build that is still running.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ needs.changes.outputs.lean }}
+      cancel-in-progress: true
+    steps:
+      - name: Require successful change detection
+        if: needs.changes.result != 'success'
+        run: exit 1
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Repo lint (TorchLean policies)
+        run: python3 scripts/checks/repo_lint.py --fail-on-warn
+
+      - name: Test leaf artifact exporter
+        run: python3 -B -m unittest discover -s scripts/verification/abcrown -p 'test_*.py'
+
+      - name: Validate citation metadata
+        if: needs.changes.outputs.citation == 'true'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/citation-check"
+          "$RUNNER_TEMP/citation-check/bin/pip" install cffconvert==2.0.0
+          "$RUNNER_TEMP/citation-check/bin/cffconvert" --validate -i CITATION.cff
+
       - name: Install elan
-        run: curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+        if: needs.changes.outputs.lean == 'true'
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Get Mathlib cache
-        run: ~/.elan/bin/lake exe cache get || true
+        if: needs.changes.outputs.lean == 'true'
+        run: scripts/lake.sh exe cache get || true
 
-      - name: Repo lint (TorchLean policies)
-        run: ~/.elan/bin/lake lint
-
-      - name: Clean curated library build artifacts
-        run: ~/.elan/bin/lake clean
-
-      - name: Build maintained library, CI, example, and test modules
-        run: ~/.elan/bin/lake build NN NNCI NNExamples NNTests
+      - name: Build library, CI, examples, tests, and native commands
+        if: needs.changes.outputs.lean == 'true'
+        run: |
+          scripts/lake.sh build NN NNCI NNExamples NNTests \
+            torchlean verify native_float32_parity pytorch_export_check
 
       - name: Run curated test suite
-        run: ~/.elan/bin/lake test
+        if: needs.changes.outputs.lean == 'true'
+        run: scripts/lake.sh test
+
+      - name: Check native commands
+        if: needs.changes.outputs.lean == 'true'
+        run: |
+          scripts/lake.sh exe torchlean quickstart_tensors
+          scripts/lake.sh exe verify -- list
+          scripts/lake.sh exe native_float32_parity

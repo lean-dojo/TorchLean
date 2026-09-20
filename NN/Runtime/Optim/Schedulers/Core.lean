@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Context
+public import NN.Tensor.Internal.Representation.Storage -- shake: keep
 
 /-!
 # Scheduler Arithmetic
@@ -23,8 +24,8 @@ TorchLean keeps schedulers explicit and pure so:
 - proofs and specs can refer to the exact schedule that was used.
 
 Step counter convention:
-- `currentStep` is **0-indexed**. The first call to `getLr` uses `currentStep = 0`.
-- `step` increments the counter by 1.
+- `currentStep` is **0-indexed**. The first call to `current` uses `currentStep = 0`.
+- `advance` increments the counter by 1.
 
 This module contains the shared scalar operations used by native and PyTorch-compatible schedules.
 
@@ -42,13 +43,14 @@ PyTorch references:
 
 
 namespace Optim
+namespace Scheduler
 
-variable {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+variable {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
 
 open MathFunctions
 
 /-! ## Shared utilities -/
-namespace SchedulerUtils
+namespace Internal
 
 /-- Clamp `value` to the closed interval `[lo, hi]`. -/
 def clamp (value : α) (lo : α) (hi : α) : α :=
@@ -107,6 +109,7 @@ def cosineInterpolationUnclamped (startValue : α) (endValue : α) (factor : α)
   let cosOut := cos (pi * factor) + 1
   endValue + (startValue - endValue) / (1 + 1) * cosOut
 
-end SchedulerUtils
+end Internal
 
+end Scheduler
 end Optim

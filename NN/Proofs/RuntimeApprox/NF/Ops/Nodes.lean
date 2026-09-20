@@ -6,7 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise
+public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Binary
+public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Softmax
+public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Unary
+public import NN.Proofs.RuntimeApprox.NF.Ops.Sum
 
 /-!
 # NF Forward Graph Nodes
@@ -20,21 +23,22 @@ bound computation, and soundness theorem so larger SSA/DAG graphs can compose th
 namespace Proofs
 namespace RuntimeApprox
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
 
 noncomputable section
 
 namespace NFBackend
 
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 open Proofs.RuntimeRoundingApprox
 
-variable {β : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 -- ---------------------------------------------------------------------------
 -- `FwdNode` constructors for `NF` ops (for building SSA/DAG forward bounds)
@@ -309,7 +313,7 @@ by
       (eps := getIdxEps (Γ := Γ) (s := s) eps a) ha)
 
 /--
-`FwdNode` for the smooth `safe_log` activation.
+`FwdNode` for the smooth `safeLog` activation.
 
 Requires `hε : 0 < ε` and wraps `approxTensor_safe_log_spec`.
 -/
@@ -322,7 +326,8 @@ by
         mapSpec (s := s) (fun x => Activation.Math.safeLogSpec (α := ℝ) x ε) (getIdx (α :=
           SpecScalar) ctx a)
     , forwardRuntime := fun ctx =>
-        mapSpec (s := s) (safeLogSoftplusR (β := β) (fexp := fexp) (rnd := rnd) ε) (getIdx (α := R) ctx a)
+        mapSpec (s := s) (safeLogSoftplusR (β := β) (fexp := fexp) (rnd := rnd) ε)
+          (getIdx (α := R) ctx a)
     , bound := fun eps ctx =>
         linfNorm (safeLogSoftplusBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
           (s := s) ε (getIdxEps (Γ := Γ) (s := s) eps a) (getIdx (α := R) ctx a))
@@ -342,9 +347,9 @@ by
   classical
   refine
     { forwardSpec := fun ctx =>
-        mapSpec (s := s) MathFunctions.tanh (getIdx (α := SpecScalar) ctx a)
+        mapSpec (s := s) Numerics.MathFunctions.tanh (getIdx (α := SpecScalar) ctx a)
     , forwardRuntime := fun ctx =>
-        mapSpec (s := s) MathFunctions.tanh (getIdx (α := R) ctx a)
+        mapSpec (s := s) Numerics.MathFunctions.tanh (getIdx (α := R) ctx a)
     , bound := fun eps ctx =>
         linfNorm (tanhBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
           (s := s) (getIdxEps (Γ := Γ) (s := s) eps a) (getIdx (α := R) ctx a))
@@ -424,9 +429,9 @@ by
       (eps := getIdxEps (Γ := Γ) (s := s) eps a) ha)
 
 /--
-`FwdNode` for sum reduction (`sum_spec`).
+`FwdNode` for sum reduction (`sumSpec`).
 
-This reduces a tensor to a scalar and uses `approxTensor_sum_spec` with the accumulated `sum_bound`.
+This reduces a tensor to a scalar and uses `approxTensor_sum_spec` with the accumulated `sumBound`.
 -/
 def sumNode {Γ : List Shape} {s : Shape} (a : Idx Γ s) :
     FwdNode (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) Γ Shape.scalar :=

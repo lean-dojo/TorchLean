@@ -7,14 +7,16 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Tape.Nodes.Reductions
+public import Mathlib.Analysis.InnerProductSpace.Calculus
+public import NN.Proofs.Autograd.FDeriv.Elementwise
 
 @[expose] public section
 
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -208,7 +210,7 @@ def bceWithLogits {Γ : List Shape} {s : Shape}
                 CtxVec.single (Γ := Γ) (s := s) target dTarget) := by
             simp [inner_add_right])
 
-/-- `NodeFDerivCorrect` for `bce_with_logits` (binary cross-entropy with logits). -/
+/-- `NodeFDerivCorrect` for `bceWithLogits` (binary cross-entropy with logits). -/
 def bceWithLogitsFderiv {Γ : List Shape} {s : Shape} (logits target : Idx Γ s) :
     NodeFDerivCorrect (bceWithLogits (Γ := Γ) (s := s) logits target) := by
   classical

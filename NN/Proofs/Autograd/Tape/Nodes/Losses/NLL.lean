@@ -7,14 +7,15 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Tape.Nodes.Reductions
+public import Mathlib.Analysis.InnerProductSpace.Calculus
 
 @[expose] public section
 
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -33,7 +34,7 @@ Negative log-likelihood for one-hot targets when the input is already log-probab
 Forward:
 `-(1/m) * ⟪target, logProbs⟫`
 
-This is the natural primitive loss that `cross_entropy` reduces to after `log_softmax`.
+This is the natural primitive loss that `crossEntropy` reduces to after `logSoftmax`.
 -/
 def nllOneHotLast {Γ : List Shape} {m n : Nat}
     (logProbs target : Idx Γ (.dim m (.dim n .scalar))) : Node Γ Shape.scalar :=
@@ -143,7 +144,7 @@ def nllOneHotLast {Γ : List Shape} {m n : Nat}
                 CtxVec.single (Γ := Γ) (s := s) target (castVec hsz.symm dTarget)) := by
             simp [inner_add_right, hA, hB])
 
-/-- `NodeFDerivCorrect` for `nll_one_hot_last` (negative log-likelihood with one-hot targets). -/
+/-- `NodeFDerivCorrect` for `nllOneHotLast` (negative log-likelihood with one-hot targets). -/
 def nllOneHotLastFderiv {Γ : List Shape} {m n : Nat}
     (logProbs target : Idx Γ (.dim m (.dim n .scalar))) :
     NodeFDerivCorrect (nllOneHotLast (Γ := Γ) (m := m) (n := n) logProbs target) := by

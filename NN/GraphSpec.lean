@@ -14,14 +14,10 @@ public import NN.GraphSpec.Models.MlpSpecEquivalence
 public import NN.GraphSpec.Primitives
 public import NN.GraphSpec.Primitives.Embedding
 public import NN.GraphSpec.ToSequential
-
 /-!
 # Graph Specifications
-
 Curated umbrella import for GraphSpec.
-
 Use this import when working with GraphSpec models, primitives, lowering, and bridge theorems:
-
 ```lean
 import NN.GraphSpec
 ```
@@ -35,7 +31,7 @@ It gives you:
   (`NN.GraphSpec.Chain.toProgram`),
 - sequential and DAG primitive packs,
 - the GraphSpec example architectures (`NN.GraphSpec.Models`),
-- the optional lowering to `TorchLean.NN.Seq` when primitives provide `toLayerM?`,
+- the optional lowering to `Runtime.Autograd.Model.Layers.Seq` when primitives provide `toLayerM?`,
 - and the model/primitive bridge theorems that connect GraphSpec syntax to Spec references.
 
 Umbrella re-export; the implementation lives in the imported modules.
@@ -64,14 +60,14 @@ namespace Model
 
 @[inherit_doc DAG.Model.specFwd]
 abbrev specFwd {ps ins : List Spec.Shape} {τ : Spec.Shape} (m : Model ps ins τ)
-    {α : Type 0} [Context α] :
-    TorchLean.TensorPack α ps → TorchLean.TensorPack α ins → Spec.Tensor α τ :=
+    {α : Type 0} [TorchLean.Storage α] [Context α] :
+    TorchLean.TensorPack α ps → TorchLean.TensorPack α ins → TorchLean.Tensor α τ :=
   DAG.Model.specFwd (ps := ps) (ins := ins) (τ := τ) m
 
 @[inherit_doc DAG.Model.toProgram]
 abbrev toProgram {ps ins : List Spec.Shape} {τ : Spec.Shape} (m : Model ps ins τ)
-    {α : Type 0} [Context α] [DecidableEq Spec.Shape] :
-    Runtime.Autograd.TorchLean.Program α (ps ++ ins) τ :=
+    {α : Type 0} [TorchLean.Storage α] [Context α] :
+    Runtime.Autograd.Model.Program α (ps ++ ins) τ :=
   DAG.Model.toProgram (ps := ps) (ins := ins) (τ := τ) m
 
 end Model

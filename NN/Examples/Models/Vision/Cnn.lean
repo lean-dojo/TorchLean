@@ -10,8 +10,6 @@ Real-data CUDA example:
 
 module
 
-
-public import NN.API
 public import NN.Examples.Models.Common.RealData
 
 /-!
@@ -20,9 +18,9 @@ public import NN.Examples.Models.Common.RealData
 Runnable `torchlean cnn` example. It trains a small convolutional classifier on a prepared CIFAR-10
 minibatch.
 
-The reusable model wiring lives behind the public `TorchLean.nn.models.cnn` constructor. The command
-adds the pieces around it: CLI parsing, dataset selection, step-limited loader training, and TrainLog
-artifact writing.
+The reusable model wiring lives behind the public `TorchLean.nn.models.cnn` constructor. The
+command adds the pieces around it: CLI parsing, dataset selection, step-limited loader training, and
+TrainLog artifact writing.
 
 ```bash
 python3 scripts/datasets/download_example_data.py --cifar10
@@ -37,10 +35,10 @@ open TorchLean
 namespace NN.Examples.Models.Vision.Cnn
 
 /-- CLI subcommand name used in terminal banners and parser errors. -/
-def exeName : String := "torchlean cnn"
+def exeName : String := "cnn"
 
 /-- Default JSON loss-curve path for this command. -/
-def defaultLogJson : System.FilePath := ModelZoo.trainLogPath "cnn"
+def defaultLogPath : System.FilePath := Support.trainLogPath "cnn"
 
 /--
 Static minibatch size for the compact CIFAR run.
@@ -48,43 +46,39 @@ Static minibatch size for the compact CIFAR run.
 The model owns the batch axis, so this value appears in both the input/output shapes and the
 classifier trainer type.
 -/
-def batch : Nat := 1
+def batchSize : Nat := 1
 
 /-- CIFAR image channels. -/
-def inC : Nat := 3
+def inputChannels : Nat := RealData.cifarChannels
 
 /-- Height of the CIFAR crop used by this runnable CNN command. -/
-def inH : Nat := 8
+def cropHeight : Nat := 8
 
 /-- Width of the CIFAR crop used by this runnable CNN command. -/
-def inW : Nat := 8
+def cropWidth : Nat := 8
 
 /-- CIFAR class count, hence the output-logit width. -/
-def outDim : Nat := RealData.cifarClasses
+def classCount : Nat := RealData.cifarClasses
 
-/-- Shared CNN configuration used by shapes and the reusable public model constructor. -/
-def cfg : nn.models.CnnConfig 2 :=
-  { inChannels := inC
-    spatial := tensor! [inH, inW]
-    outDim := outDim
-    conv :=
+/-- Shared CNN configuration used by both the model and its checked tensor shapes. -/
+abbrev modelConfig : nn.models.CNN.Config 2 :=
+  { inputChannels := inputChannels
+    spatial := [cropHeight, cropWidth]
+    convolution :=
       { outChannels := 4
-        kernel := tensor! [3, 3]
-        stride := tensor! [2, 2]
-        padding := tensor! [1, 1]
-        kernelNonzero := by intro i; fin_cases i <;> decide
-        strideNonzero := by intro i; fin_cases i <;> decide }
-    pool :=
-      { kernel := tensor! [2, 2]
-        stride := tensor! [2, 2]
-        kernelNonzero := by intro i; fin_cases i <;> decide
-        strideNonzero := by intro i; fin_cases i <;> decide } }
+        kernelSize := [3, 3]
+        stride := [2, 2]
+        padding := [1, 1] }
+    pooling :=
+      { kernelSize := [2, 2]
+        stride := [2, 2] }
+    classCount := classCount }
 
 /-- Input shape: a minibatch of CIFAR images in channel-first layout. -/
-abbrev σ : List Nat := [batch, inC, inH, inW]
+abbrev input : Shape := modelConfig.input [batchSize]
 
 /-- Output shape: one row of class logits per image. -/
-abbrev τ : List Nat := [batch, outDim]
+abbrev output : Shape := modelConfig.output [batchSize]
 
 /--
 Small convolutional classifier from the public model API.
@@ -92,36 +86,37 @@ Small convolutional classifier from the public model API.
 The command chooses the CIFAR paths and runtime flags; the model itself stays an ordinary
 `nn.Sequential` value built from the public API.
 -/
-def model : nn.Builder (nn.Sequential σ τ) :=
-  by
-    simpa [σ, τ, cfg, nn.models.CnnConfig.inputShape, nn.models.CnnConfig.outputShape,
-      Spec.Shape.ofList, Spec.Shape.concat, Spec.Shape.appendDim] using
-      nn.models.cnn cfg [batch]
+def model : nn.Builder (nn.Sequential input output) :=
+  nn.models.cnn modelConfig [batchSize]
 
 /-- Train the CIFAR CNN with the public `Trainer` surface. -/
-def train (opts : Options) (flags : RealData.CifarModelTrainFlags) :
-    IO Trainer.TrainSummary := do
+def train (runtime : Runtime.Config) (flags : RealData.CifarModelTrainFlags) :
+    IO Trainer.Report := do
   let batches ←
-    RealData.loadCifarBatches exeName batch flags.nRows flags.seed flags.xPath flags.yPath
-  let batches := batches.map (RealData.cropCifarBatch batch inH inW (by decide) (by decide))
+    RealData.loadCifarBatches exeName batchSize flags.data.nRows flags.data.seed
+      flags.data.xPath flags.data.yPath
+  let batches ← batches.mapM fun sample =>
+    CLI.orThrow exeName <|
+      RealData.cropCifarBatch batchSize cropHeight cropWidth sample
   let trainer :=
     Trainer.new model <|
-      Trainer.Config.fromRunConfig
-        (Trainer.RunConfig.ofRuntimeOptions opts { optimizer := optim.adam { lr := flags.lr } })
+      Trainer.RunConfig.forObjective
+        (Trainer.RunConfig.fromRuntime runtime
+          { optimizer := optim.adam { learningRate := flags.training.learningRate } })
         (.oneHotCrossEntropy 1)
-        (seed := flags.seed)
+        (seed := flags.data.seed)
   let trained ← trainer.train
-    (Data.floatSamples batches)
-    (CLI.Training.OptimizerOptions.toTrainerOptions flags.toOptimizerOptions
-      (title := "CNN training")
-      (notes := RealData.cifarClassifierNotes batch flags))
+    (Data.fromSamples batches)
+    (flags.training.trainOptions
+      (logTitle := "CNN training")
+      (logNotes := RealData.cifarClassifierNotes batchSize flags))
   pure trained.report
 
-/-- CLI entrypoint for CIFAR CNN training; CUDA is the maintained validation path. -/
+/-- CLI entrypoint for CIFAR CNN training on the selected runtime device. -/
 def main (args : List String) : IO UInt32 :=
   TrainCommand.classificationNpy exeName args
-    (fun rest => RealData.CifarModelTrainFlags.parse exeName rest defaultLogJson 1 1e-3)
-    (ModelZoo.bannerWithDevice exeName "CNN training")
+    (fun rest => RealData.CifarModelTrainFlags.parse exeName rest defaultLogPath 1 1e-3)
+    (Support.bannerWithDevice exeName "CNN training")
     train
 
 end NN.Examples.Models.Vision.Cnn

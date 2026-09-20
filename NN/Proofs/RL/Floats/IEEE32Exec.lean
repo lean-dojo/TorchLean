@@ -7,23 +7,22 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.RL.Core
-public import NN.Floats.IEEEExec.Bridge.FP32Total
-public import NN.Proofs.RL.Tactics
+public import NN.Proofs.RuntimeApprox.IEEE32.Arithmetic
 
 /-!
 # RL Float32 Semantics (IEEE32Exec)
 
 TorchLean provides multiple “views” of float32:
 
-- `IEEE32Exec`: executable, bit-level IEEE-754 binary32 (can run inside Lean),
+- `ExecFloat.Binary 8 23`: executable, bit-level IEEE-754 binary32 (can run inside Lean),
 - `FP32`: proof-oriented “round-on-$\mathbb R$” float32 model (finite-only).
 
 The IEEE32Exec bridge files prove that, on the **finite path**, executable float32 arithmetic
 refines the standard mathematical model: compute the real operation and round to float32 at each
 primitive operation.
 
-This module packages that theorem pattern for one of the most common RL formulas: the one-step discounted
-backup and TD residual used by TD learning, value iteration, and advantage estimation.
+This module packages that theorem pattern for one of the most common RL formulas: the one-step
+discounted backup and TD residual used by TD learning, value iteration, and advantage estimation.
 
 Practical takeaway:
 
@@ -35,11 +34,15 @@ References:
 - IEEE 754-2019 (binary32 arithmetic): https://doi.org/10.1109/IEEESTD.2019.8766229
 - Goldberg, “What Every Computer Scientist Should Know About Floating-Point Arithmetic” (1991):
   https://doi.org/10.1145/103162.103163
-- Sutton and Barto, *Reinforcement Learning: An Introduction* (2nd ed., discounted backups/TD learning):
-  http://incompleteideas.net/book/the-book-2nd.html
+- Sutton and Barto, *Reinforcement Learning: An Introduction* (2nd ed., discounted backups and
+  TD learning): http://incompleteideas.net/book/the-book-2nd.html
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 
 namespace Proofs
 namespace RL
@@ -62,32 +65,27 @@ This is a useful building block for connecting executable RL code (IEEE32Exec) t
 reasoning and error bounds phrased over `ℝ` + rounding.
 -/
 theorem toReal_discountedBackup_eq_fp32Round_chain_of_isFinite
-    (reward gamma bootstrap : IEEE32Exec) (done : Bool)
-    (h₁ : isFinite (mul gamma (continueMask (α := IEEE32Exec) done)) = true)
-    (h₂ : isFinite (mul (mul gamma (continueMask (α := IEEE32Exec) done)) bootstrap) = true)
+    (reward gamma bootstrap : ExecFloat.Binary 8 23) (done : Bool)
+    (h₁ : ExecFloat.Binary.isFinite (ExecFloat.mul gamma (continueMask (α := (ExecFloat.Binary 8
+      23)) done)) = true)
+    (h₂ : ExecFloat.Binary.isFinite (ExecFloat.mul (ExecFloat.mul gamma (continueMask (α :=
+      (ExecFloat.Binary 8 23)) done)) bootstrap) = true)
     (h₃ :
-      isFinite (add reward (mul (mul gamma (continueMask (α := IEEE32Exec) done)) bootstrap)) = true) :
-    toReal (discountedBackup (α := IEEE32Exec) reward gamma bootstrap done) =
+      ExecFloat.Binary.isFinite (ExecFloat.add reward (ExecFloat.mul (ExecFloat.mul gamma
+        (continueMask (α := (ExecFloat.Binary 8 23)) done)) bootstrap))
+        = true) :
+    (ExecFloat.Binary.toModel (discountedBackup (α := (ExecFloat.Binary 8 23)) reward gamma
+      bootstrap done)).toReal =
       fp32Round
-        (toReal reward +
-          fp32Round (fp32Round (toReal gamma * toReal (continueMask (α := IEEE32Exec) done)) * toReal bootstrap)) := by
-  -- Unfold the RL definition and apply the per-op bridge lemmas (`*_of_isFinite`) from BridgeFP32Total.
-  simp_rl
-  set mask : IEEE32Exec := continueMask (α := IEEE32Exec) done
-  have ht1 :
-      toReal (mul gamma mask) = fp32Round (toReal gamma * toReal mask) :=
-    toReal_mul_eq_fp32Round_of_isFinite (x := gamma) (y := mask) h₁
-  have ht2 :
-      toReal (mul (mul gamma mask) bootstrap) =
-        fp32Round (toReal (mul gamma mask) * toReal bootstrap) :=
-    toReal_mul_eq_fp32Round_of_isFinite (x := (mul gamma mask)) (y := bootstrap) h₂
-  have hout :
-      toReal (add reward (mul (mul gamma mask) bootstrap)) =
-        fp32Round (toReal reward + toReal (mul (mul gamma mask) bootstrap)) :=
-    toReal_add_eq_fp32Round_of_isFinite (x := reward) (y := (mul (mul gamma mask) bootstrap)) h₃
-  -- Substitute the intermediate refinement equations to expose the nested rounding structure.
-  simpa [mask, ht1, ht2, HAdd.hAdd, HMul.hMul, Add.add, Mul.mul, IEEE32Exec.instAdd,
-    IEEE32Exec.instMul] using hout
+        ((ExecFloat.Binary.toModel reward).toReal +
+          fp32Round
+            (fp32Round ((ExecFloat.Binary.toModel gamma).toReal * (ExecFloat.Binary.toModel
+              (continueMask (α := (ExecFloat.Binary 8 23)) done)).toReal) *
+              (ExecFloat.Binary.toModel bootstrap).toReal)) := by
+  change (ExecFloat.Binary.toModel (ExecFloat.add reward (ExecFloat.mul (ExecFloat.mul gamma
+    (continueMask (α := (ExecFloat.Binary 8 23)) done)) bootstrap))).toReal = _
+  rw [toReal_add_eq_fp32Round_of_isFinite h₃,
+    toReal_mul_eq_fp32Round_of_isFinite h₂, toReal_mul_eq_fp32Round_of_isFinite h₁]
 
 /--
 Refinement theorem for the TD residual / Bellman error in executable float32 semantics.
@@ -100,52 +98,66 @@ residual agrees with the standard “real op + round-to-float32” model (`fp32R
 primitive operation.
 -/
 theorem toReal_tdResidual_eq_fp32Round_chain_of_isFinite
-    (value reward gamma nextValue : IEEE32Exec) (done : Bool)
-    (h₁ : isFinite (mul gamma (continueMask (α := IEEE32Exec) done)) = true)
-    (h₂ : isFinite (mul (mul gamma (continueMask (α := IEEE32Exec) done)) nextValue) = true)
+    (value reward gamma nextValue : ExecFloat.Binary 8 23) (done : Bool)
+    (h₁ : ExecFloat.Binary.isFinite (ExecFloat.mul gamma (continueMask (α := (ExecFloat.Binary 8
+      23)) done)) = true)
+    (h₂ : ExecFloat.Binary.isFinite (ExecFloat.mul (ExecFloat.mul gamma (continueMask (α :=
+      (ExecFloat.Binary 8 23)) done)) nextValue) = true)
     (h₃ :
-      isFinite (add reward (mul (mul gamma (continueMask (α := IEEE32Exec) done)) nextValue)) = true)
-    (hval : isFinite value = true)
+      ExecFloat.Binary.isFinite (ExecFloat.add reward (ExecFloat.mul (ExecFloat.mul gamma
+        (continueMask (α := (ExecFloat.Binary 8 23)) done)) nextValue))
+        = true)
+    (hval : ExecFloat.Binary.isFinite value = true)
     (hsub :
-      isFinite (sub (discountedBackup (α := IEEE32Exec) reward gamma nextValue done) value) = true) :
-    toReal (tdResidual (α := IEEE32Exec) value reward gamma nextValue done) =
+      ExecFloat.Binary.isFinite (ExecFloat.sub (discountedBackup (α := (ExecFloat.Binary 8 23))
+        reward gamma nextValue done) value)
+        = true) :
+    (ExecFloat.Binary.toModel (tdResidual (α := (ExecFloat.Binary 8 23)) value reward gamma
+      nextValue done)).toReal =
       fp32Round
         (fp32Round
-            (toReal reward +
+            ((ExecFloat.Binary.toModel reward).toReal +
               fp32Round
-                (fp32Round (toReal gamma * toReal (continueMask (α := IEEE32Exec) done)) *
-                  toReal nextValue)) -
-          toReal value) := by
+                (fp32Round ((ExecFloat.Binary.toModel gamma).toReal * (ExecFloat.Binary.toModel
+                  (continueMask (α := (ExecFloat.Binary 8 23)) done)).toReal) *
+                  (ExecFloat.Binary.toModel nextValue).toReal)) -
+          (ExecFloat.Binary.toModel value).toReal) := by
   -- First, refine the discounted backup part.
   have hbackup :
-      toReal (discountedBackup (α := IEEE32Exec) reward gamma nextValue done) =
+      (ExecFloat.Binary.toModel (discountedBackup (α := (ExecFloat.Binary 8 23)) reward gamma
+        nextValue done)).toReal =
         fp32Round
-          (toReal reward +
+          ((ExecFloat.Binary.toModel reward).toReal +
             fp32Round
-              (fp32Round (toReal gamma * toReal (continueMask (α := IEEE32Exec) done)) *
-                toReal nextValue)) :=
+              (fp32Round ((ExecFloat.Binary.toModel gamma).toReal * (ExecFloat.Binary.toModel
+                (continueMask (α := (ExecFloat.Binary 8 23)) done)).toReal) *
+                (ExecFloat.Binary.toModel nextValue).toReal)) :=
     toReal_discountedBackup_eq_fp32Round_chain_of_isFinite
       (reward := reward) (gamma := gamma) (bootstrap := nextValue) (done := done)
       (h₁ := h₁) (h₂ := h₂) (h₃ := h₃)
 
   -- Then apply the subtraction refinement for the final TD residual step.
   have hbackupFin :
-      isFinite (discountedBackup (α := IEEE32Exec) reward gamma nextValue done) = true := by
-    simpa [discountedBackup, HAdd.hAdd, HMul.hMul, Add.add, Mul.mul, IEEE32Exec.instAdd,
-      IEEE32Exec.instMul] using h₃
+      ExecFloat.Binary.isFinite (discountedBackup (α := (ExecFloat.Binary 8 23)) reward gamma
+        nextValue done) = true := by
+    exact h₃
   have hsubReal :
-      toReal (sub (discountedBackup (α := IEEE32Exec) reward gamma nextValue done) value) =
+      (ExecFloat.Binary.toModel (ExecFloat.sub (discountedBackup (α := (ExecFloat.Binary 8 23))
+        reward gamma nextValue done) value)).toReal =
         fp32Round
-          (toReal (discountedBackup (α := IEEE32Exec) reward gamma nextValue done) - toReal value) :=
+          ((ExecFloat.Binary.toModel (discountedBackup (α := (ExecFloat.Binary 8 23)) reward gamma
+            nextValue done)).toReal -
+            (ExecFloat.Binary.toModel value).toReal) :=
     toReal_sub_eq_fp32Round_of_isFinite
-      (x := discountedBackup (α := IEEE32Exec) reward gamma nextValue done) (y := value)
+      (x := discountedBackup (α := (ExecFloat.Binary 8 23)) reward gamma nextValue done) (y :=
+        value)
       hbackupFin hval hsub
 
   -- Unfold the RL definition and substitute the refined discounted-backup real meaning.
   -- `tdResidual = tdTarget - value` and `tdTarget = discountedBackup`.
-  simpa [Spec.RL.tdResidual, Spec.RL.tdTarget, hbackup, HSub.hSub, Sub.sub,
-    IEEE32Exec.instSub, sub_eq_add_neg]
-    using hsubReal
+  change (ExecFloat.Binary.toModel (ExecFloat.sub (discountedBackup reward gamma nextValue done)
+    value)).toReal = _
+  rw [hsubReal, hbackup]
 
 end Float32Exec
 end RL

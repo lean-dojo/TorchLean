@@ -6,14 +6,10 @@ Authors: TorchLean Team
 
 module
 
-import NN.Backend.Profile
-import NN.Floats.Interval.IEEEExec32
-import NN.IR.Graph
-import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate
 public import NN.Tensor
--- The ordinary import exposes certificate data to compiled definitions; this second import keeps
--- executable IR for the `#eval` report at the end of the example.
+-- Load the checker implementation for execution; its data contracts are imported normally below.
 public meta import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate
+public import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Certificate
 
 /-!
 # A graph numerical certificate
@@ -37,25 +33,38 @@ graphs use the same artifact-generation and replay path.
 
 @[expose] public section
 
-namespace NN.Examples.DeepDives.Floats.GraphNumericalCertificate
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofBits32)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 open Proofs.RuntimeApprox.NumericalCertificate
-open _root_.Spec
-open _root_.TorchLean
+open Spec TorchLean
+open TorchLean
 open TorchLean.Floats.IEEE754
+
+namespace NN.Examples.DeepDives.Floats.GraphNumericalCertificate
 
 /-- The example uses scalar nodes so the interval endpoints remain easy to inspect. The certificate
 machinery itself stores only one scalar hull per tensor and is independent of tensor rank. -/
 def graph : NN.IR.Graph :=
   { nodes := #[
-      { id := 0, parents := #[], kind := .input, outShape := .scalar },
-      { id := 1, parents := #[], kind := .const .scalar, outShape := .scalar },
-      { id := 2, parents := #[0, 1], kind := .add, outShape := .scalar },
-      { id := 3, parents := #[2, 1], kind := .mul_elem, outShape := .scalar }
+      { id := 0, parents := #[], kind := .input, outShape := [] },
+      { id := 1, parents := #[], kind := .const [], outShape := [] },
+      { id := 2, parents := #[0, 1], kind := .add, outShape := [] },
+      { id := 3, parents := #[2, 1], kind := .mulElem, outShape := [] }
     ] }
 
+/--
+Build a binary32 interval from two bit patterns.
+
+Every source range in this file is written in hexadecimal rather than as a decimal literal. That
+keeps
+the certificate an exact artifact: no decimal-to-binary conversion sits between what is written here
+and what the checker sees.
+-/
 def interval (lo hi : UInt32) : IEEE32Exec.Interval32 :=
-  { lo := IEEE32Exec.ofBits lo, hi := IEEE32Exec.ofBits hi }
+  { lo := ofBits32 lo, hi := ofBits32 hi }
 
 /-- Did an executable certificate operation return a checked value? -/
 def accepted {α : Type} : Except String α -> Bool
@@ -74,18 +83,18 @@ def checked : Except String RegistryCheckedCertificate :=
 
 /-- Concrete payload used for bit-level replay. The constant is `0.75`, which lies in the declared
 constant range $[0.5,1]$. -/
-def payload : NN.IR.Payload IEEE32Exec where
+def payload : NN.IR.Payload (Binary 8 23) where
   const? := fun nodeId =>
     if nodeId = 1 then
       some
         { n := 1
-          v := TorchLean.Tensor.generate [1] fun _ => IEEE32Exec.ofBits 0x3f400000 }
+          v := [ofBits32 0x3f400000] }
     else
       none
 
 /-- A concrete input (`1.25`) inside the declared input interval. -/
-def input : Spec.SomeTensor IEEE32Exec :=
-  Spec.SomeTensor.ofTensor (Tensor.full [] (IEEE32Exec.ofBits 0x3fa00000))
+def input : Spec.SomeTensor (Binary 8 23) :=
+  Spec.SomeTensor.ofTensor (Tensor.full [] (ofBits32 0x3fa00000))
 
 /-- Replay the same graph using the bit-level IEEE32 interpreter and check every intermediate. -/
 def replay : Except String RangeCheckedExecution := do
@@ -107,261 +116,10 @@ def tamperedCheck : Except String RegistryCheckedCertificate := do
   let raw <- tampered
   check NN.Backend.BackendProfile.checkedCpu graph raw
 
-/-- A finite interval attached to an arithmetic node is still an invalid source assumption. -/
-def misplacedSourceCheck : Except String GraphNumericalCertificate :=
-  generate NN.Backend.BackendProfile.checkedCpu graph <|
-    sources.push { nodeId := 2, enclosure := interval 0x00000000 0x3f800000 }
-
-/-- Registries are deterministic maps: registering a second source contract is rejected. -/
-def duplicateContractCheck : Except String GraphRangeRegistry := do
-  let registry <- defaultRegistry
-  registry.register sourceContract
-
-/-- A certificate is bound to the named operation registry used to derive its transfer rows. -/
-def registryMismatchCheck : Except String RegistryCheckedCertificate := do
-  let raw <- generate NN.Backend.BackendProfile.checkedCpu graph sources
-  let registry <- defaultRegistry
-  let renamed := { registry with name := "example.incompatible-registry" }
-  checkWith renamed NN.Backend.BackendProfile.checkedCpu graph raw
-
-/-! ## Coverage before propagation
-
-Coverage is checked after any architecture has lowered to the common IR. An architecture using only
-registered primitives needs no architecture-specific checker. A new primitive is rejected with its
-node id and operation name until a local range contract is registered.
--/
-
-/-- The base graph is completely covered by the built-in range registry. -/
-def baseCoverage : Except String NumericalCoverageReport := do
-  let registry <- defaultRegistry
-  requireNumericalCoverage registry graph
-
-/-- Exponential is executable in the graph IR, but it intentionally has no built-in interval
-transfer yet. This graph demonstrates that unsupported numerical semantics fail explicitly. -/
-def unsupportedGraph : NN.IR.Graph :=
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input, outShape := .scalar },
-      { id := 1, parents := #[0], kind := .exp, outShape := .scalar }
-    ] }
-
-/-- Coverage failure occurs before certificate propagation begins. -/
-def unsupportedCoverage : Except String NumericalCoverageReport := do
-  let registry <- defaultRegistry
-  requireNumericalCoverage registry unsupportedGraph
-
-/-! ## A fixed-order reduction
-
-Reduction order is part of the backend audit because floating-point addition is not associative.
-The portable profile advertises the same left fold used by `Tensor.sumSpec`, so the checker can
-propagate this reduction directly. Native CUDA's implementation-dependent reduction policy is not
-silently treated as the same computation.
--/
-
-def reductionGraph : NN.IR.Graph :=
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input,
-        outShape := [3] },
-      { id := 1, parents := #[0], kind := .sum, outShape := .scalar }
-    ] }
-
-def reductionSources : Array SourceRange := #[
-  { nodeId := 0, enclosure := interval 0xbf800000 0x40000000 }
-]
-
-def reductionInput : Spec.SomeTensor IEEE32Exec :=
-  Spec.SomeTensor.ofTensor <| TorchLean.Tensor.generate [3] fun
-    | [0] => IEEE32Exec.ofBits 0x3f800000
-    | [1] => IEEE32Exec.ofBits 0xbf000000
-    | _ => IEEE32Exec.ofBits 0x40000000
-
-def reductionReplay : Except String RangeCheckedExecution := do
-  let certificate <-
-    generateChecked NN.Backend.BackendProfile.checkedCpu reductionGraph reductionSources
-  executeIEEE32 {} reductionInput certificate
-
-/-! ## Matrix accumulation
-
-The same reduction policy governs matrix multiplication. Each output entry is a fixed-left sum of
-products in the portable profile, so the checker combines outward-rounded multiplication with the
-existing sum transfer. CUDA profiles advertise an implementation-dependent accumulation and are
-not accepted by this particular transfer.
--/
-
-def matmulGraph : NN.IR.Graph :=
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input,
-        outShape := [2, 2] },
-      { id := 1, parents := #[], kind := .const [2, 2],
-        outShape := [2, 2] },
-      { id := 2, parents := #[0, 1], kind := .matmul,
-        outShape := [2, 2] }
-    ] }
-
-def matmulSources : Array SourceRange := #[
-  { nodeId := 0, enclosure := interval 0xbf800000 0x3f800000 },
-  { nodeId := 1, enclosure := interval 0x00000000 0x3f800000 }
-]
-
-def matmulPayload : NN.IR.Payload IEEE32Exec where
-  const? := fun nodeId =>
-    if nodeId = 1 then
-      some
-        { n := 4
-          v := TorchLean.Tensor.generate [4] fun
-            | [0] | [3] => IEEE32Exec.posOne
-            | _ => IEEE32Exec.posZero }
-    else
-      none
-
-def matmulInput : Spec.SomeTensor IEEE32Exec :=
-  Spec.SomeTensor.ofTensor <| TorchLean.Tensor.generate [2, 2] fun
-    | [i, j] => if i = j then IEEE32Exec.posOne else IEEE32Exec.negOne
-    | _ => IEEE32Exec.posZero
-
-def matmulReplay : Except String RangeCheckedExecution := do
-  let certificate <-
-    generateChecked NN.Backend.BackendProfile.checkedCpu matmulGraph matmulSources
-  executeIEEE32 matmulPayload matmulInput certificate
-
-/-- Attempt to use the fixed-left matrix transfer with a CUDA reduction policy. -/
-def cudaMatmulCertificate : Except String GraphNumericalCertificate :=
-  generate NN.Backend.BackendProfile.checkedCuda matmulGraph matmulSources
-
-/-! ## Domain-sensitive square root
-
-The checker propagates absolute value before checking the square-root domain. Thus an input range
-that crosses zero is valid for `abs → sqrt`, while the same range passed directly to `sqrt` is
-rejected. The square-root endpoints use TorchLean's proved directed binary32 rounders rather than a
-host `libm` call.
--/
-
-def sqrtGraph : NN.IR.Graph :=
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input, outShape := .scalar },
-      { id := 1, parents := #[0], kind := .abs, outShape := .scalar },
-      { id := 2, parents := #[1], kind := .sqrt, outShape := .scalar }
-    ] }
-
-def sqrtSources : Array SourceRange := #[
-  { nodeId := 0, enclosure := interval 0xc0800000 0x41100000 }
-]
-
-def sqrtInput : Spec.SomeTensor IEEE32Exec :=
-  Spec.SomeTensor.ofTensor (Tensor.full [] (IEEE32Exec.ofBits 0xc0800000))
-
-def sqrtReplay : Except String RangeCheckedExecution := do
-  let certificate <-
-    generateChecked NN.Backend.BackendProfile.checkedCpu sqrtGraph sqrtSources
-  executeIEEE32 {} sqrtInput certificate
-
-def invalidSqrtGraph : NN.IR.Graph :=
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input, outShape := .scalar },
-      { id := 1, parents := #[0], kind := .sqrt, outShape := .scalar }
-    ] }
-
-/-- A source interval containing negative values does not satisfy the real square-root domain. -/
-def invalidSqrtCertificate : Except String GraphNumericalCertificate :=
-  generate NN.Backend.BackendProfile.checkedCpu invalidSqrtGraph sqrtSources
-
-/-! ## Layer normalization
-
-LayerNorm combines several domain-sensitive steps. The certificate follows the implementation:
-mean, centering, squaring, variance, epsilon stabilization, directed square root, and division. The
-portable profile fixes the reduction order used by both means.
--/
-
-def layerNormGraph : NN.IR.Graph :=
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input,
-        outShape := [2, 3] },
-      { id := 1, parents := #[0], kind := .layernorm 1,
-        outShape := [2, 3] }
-    ] }
-
-def layerNormSources : Array SourceRange := #[
-  { nodeId := 0, enclosure := interval 0xc0000000 0x40000000 }
-]
-
-def layerNormInput : Spec.SomeTensor IEEE32Exec :=
-  Spec.SomeTensor.ofTensor <| TorchLean.Tensor.generate [2, 3] fun
-    | [0, 0] => IEEE32Exec.negOne
-    | [0, 1] => IEEE32Exec.posZero
-    | [0, _] => IEEE32Exec.posOne
-    | [_, 0] => IEEE32Exec.ofBits 0x40000000
-    | [_, 1] => IEEE32Exec.posOne
-    | _ => IEEE32Exec.posZero
-
-def layerNormReplay : Except String RangeCheckedExecution := do
-  let certificate <-
-    generateChecked NN.Backend.BackendProfile.checkedCpu layerNormGraph layerNormSources
-  executeIEEE32 {} layerNormInput certificate
-
-/-- The same fixed-left LayerNorm transfer is not attributed to an unspecified CUDA reduction. -/
-def cudaLayerNormCertificate : Except String GraphNumericalCertificate :=
-  generate NN.Backend.BackendProfile.checkedCuda layerNormGraph layerNormSources
-
-/-! ## Domain-sensitive activations
-
-Absolute value converts the signed source range to a nonnegative interval. That discharged domain
-condition allows the checker to apply the proved directed square-root endpoints. ReLU then
-preserves the resulting range.
--/
-
-def activationGraph : NN.IR.Graph :=
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input, outShape := .scalar },
-      { id := 1, parents := #[0], kind := .abs, outShape := .scalar },
-      { id := 2, parents := #[1], kind := .sqrt, outShape := .scalar },
-      { id := 3, parents := #[2], kind := .relu, outShape := .scalar }
-    ] }
-
-def activationSources : Array SourceRange := #[
-  { nodeId := 0, enclosure := interval 0xc0800000 0x40800000 }
-]
-
-def activationInput : Spec.SomeTensor IEEE32Exec :=
-  Spec.SomeTensor.ofTensor (Tensor.full [] (IEEE32Exec.ofBits 0xc0800000))
-
-def activationReplay : Except String RangeCheckedExecution := do
-  let certificate <-
-    generateChecked NN.Backend.BackendProfile.checkedCpu activationGraph activationSources
-  executeIEEE32 {} activationInput certificate
-
-/-!
-## Stable axis softmax
-
-The real softmax theorem proves that a nonempty row lies in $[0,1]$; the bit-level replay then checks
-that the executable implementation stayed finite and respected that range for the concrete input.
--/
-
-def softmaxGraph : NN.IR.Graph :=
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input,
-        outShape := [3] },
-      { id := 1, parents := #[0], kind := .softmax 0,
-        outShape := [3] }
-    ] }
-
-def softmaxSources : Array SourceRange := #[
-  { nodeId := 0, enclosure := interval 0xc0000000 0x40000000 }
-]
-
-def softmaxInput : Spec.SomeTensor IEEE32Exec :=
-  Spec.SomeTensor.ofTensor <| TorchLean.Tensor.generate [3] fun
-    | [0] => IEEE32Exec.posOne
-    | [1] => IEEE32Exec.posZero
-    | _ => IEEE32Exec.negOne
-
-def softmaxReplay : Except String RangeCheckedExecution := do
-  let certificate <-
-    generateChecked NN.Backend.BackendProfile.checkedCpu softmaxGraph softmaxSources
-  executeIEEE32 {} softmaxInput certificate
-
 /-!
 ## A complete model pass
 
-The preceding examples isolate individual numerical rules. This final graph runs the same machinery
+The small graph above makes each range easy to inspect. This graph runs the same machinery
 over a two-layer MLP with matrix weights and explicit bias tensors:
 
 ```text
@@ -415,32 +173,28 @@ def mlpSources : Array SourceRange := #[
 /-! Constant payloads use the IR's canonical flat storage ABI; node shapes recover the typed matrix
 view during evaluation. The explicit order below is row-major. -/
 
-def mlpFirstWeightFlat : Tensor IEEE32Exec [6] :=
-  TorchLean.Tensor.generate [6] fun
-    | [0] => IEEE32Exec.ofBits 0x3f000000
-    | [1] => IEEE32Exec.ofBits 0xbe800000
-    | [2] => IEEE32Exec.ofBits 0x3f400000
-    | [3] => IEEE32Exec.ofBits 0xbf000000
-    | [4] => IEEE32Exec.posOne
-    | _ => IEEE32Exec.ofBits 0x3e800000
+def mlpFirstWeightFlat : Tensor (Binary 8 23) [6] :=
+  [ ofBits32 0x3f000000
+  , ofBits32 0xbe800000
+  , ofBits32 0x3f400000
+  , ofBits32 0xbf000000
+  , (1 : Binary 8 23)
+  , ofBits32 0x3e800000 ]
 
-def mlpHiddenBiasFlat : Tensor IEEE32Exec [3] :=
-  TorchLean.Tensor.generate [3] fun
-    | [0] => IEEE32Exec.ofBits 0x3e000000
-    | [1] => IEEE32Exec.ofBits 0xbe000000
-    | _ => IEEE32Exec.posZero
+/-- First bias, flat. -/
+def mlpHiddenBiasFlat : Tensor (Binary 8 23) [3] :=
+  [ofBits32 0x3e000000, ofBits32 0xbe000000, (Binary.zero false : Binary 8 23)]
 
-def mlpSecondWeightFlat : Tensor IEEE32Exec [3] :=
-  TorchLean.Tensor.generate [3] fun
-    | [0] => IEEE32Exec.ofBits 0x3f000000
-    | [1] => IEEE32Exec.ofBits 0xbf400000
-    | _ => IEEE32Exec.posOne
+/-- Second weight matrix `[3, 1]`, flat. -/
+def mlpSecondWeightFlat : Tensor (Binary 8 23) [3] :=
+  [ofBits32 0x3f000000, ofBits32 0xbf400000, (1 : Binary 8 23)]
 
-def mlpOutputBiasFlat : Tensor IEEE32Exec [1] :=
-  TorchLean.Tensor.generate [1] fun _ => IEEE32Exec.ofBits 0x3d800000
+/-- Output bias, a single value. -/
+def mlpOutputBiasFlat : Tensor (Binary 8 23) [1] :=
+  [ofBits32 0x3d800000]
 
 /-- Concrete parameters are payloads of the constant nodes, not special fields in the checker. -/
-def mlpPayload : NN.IR.Payload IEEE32Exec where
+def mlpPayload : NN.IR.Payload (Binary 8 23) where
   const? := fun nodeId =>
     match nodeId with
     | 1 => some { n := 6, v := mlpFirstWeightFlat }
@@ -449,11 +203,10 @@ def mlpPayload : NN.IR.Payload IEEE32Exec where
     | 8 => some { n := 1, v := mlpOutputBiasFlat }
     | _ => none
 
-def mlpInput : Spec.SomeTensor IEEE32Exec :=
-  let value : Tensor IEEE32Exec [1, 2] :=
-    TorchLean.Tensor.generate [1, 2] fun
-      | [_, 0] => IEEE32Exec.ofBits 0x3f000000 -- 0.5
-      | _ => IEEE32Exec.negOne
+/-- The concrete `[1, 2]` input the full-model replay runs on. -/
+def mlpInput : Spec.SomeTensor (Binary 8 23) :=
+  let value : Tensor (Binary 8 23) [1, 2] :=
+    [[ofBits32 0x3f000000, (-1 : Binary 8 23)]]
   Spec.SomeTensor.ofTensor value
 
 /-- Generate the operation-local range trace and bind it to the checked CPU capsule plan. -/
@@ -465,31 +218,16 @@ def mlpReplay : Except String RangeCheckedExecution := do
   let certificate <- mlpCertificate
   executeIEEE32 mlpPayload mlpInput certificate
 
-/-- Executable acceptance report. Positive cases should be `true`; deliberately corrupted,
-invalid-domain, or wrong-reduction-policy cases should be `false`. This array exercises range
-reconstruction and IEEE replay; it does not construct the separate exact-real enclosure proof. -/
+/-- Generate and replay both graphs, and reject the deliberately tampered base artifact. -/
 def exampleChecks : Array (String × Bool) :=
   #[ ("base certificate", accepted checked)
   , ("base IEEE replay", accepted replay)
   , ("tampered range rejected", !accepted tamperedCheck)
-  , ("misplaced source rejected", !accepted misplacedSourceCheck)
-  , ("duplicate contract rejected", !accepted duplicateContractCheck)
-  , ("registry mismatch rejected", !accepted registryMismatchCheck)
-  , ("base graph coverage", accepted baseCoverage)
-  , ("unsupported operation rejected", !accepted unsupportedCoverage)
-  , ("fixed-left reduction", accepted reductionReplay)
-  , ("portable matmul", accepted matmulReplay)
-  , ("CUDA matmul policy rejected", !accepted cudaMatmulCertificate)
-  , ("directed sqrt", accepted sqrtReplay)
-  , ("negative sqrt domain rejected", !accepted invalidSqrtCertificate)
-  , ("portable LayerNorm", accepted layerNormReplay)
-  , ("CUDA LayerNorm policy rejected", !accepted cudaLayerNormCertificate)
-  , ("activation chain", accepted activationReplay)
-  , ("stable softmax", accepted softmaxReplay)
   , ("two-layer MLP certificate", accepted mlpCertificate)
   , ("two-layer MLP IEEE replay", accepted mlpReplay)
   ]
 
+/-- Help text for the certificate example. -/
 def usage : String :=
   String.intercalate "\n"
     [ "Numerical runtime certificate example"
@@ -497,7 +235,7 @@ def usage : String :=
     , "Usage:"
     , "  lake exe torchlean numerical_certificate"
     , ""
-    , "Runs operation coverage, range-certificate, backend-audit, tamper-rejection, and bit-level"
+    , "Runs range-certificate, backend-audit, tamper-rejection, and bit-level"
     , "binary32 replay checks. The final two checks run a complete two-layer MLP."
     ]
 

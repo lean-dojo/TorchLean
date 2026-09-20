@@ -8,6 +8,7 @@ module
 
 public import NN.Spec.Models.Gan
 public import NN.MLTheory.Generative.Latent.Objective
+public import NN.Spec.Core.Context.Real
 
 /-!
 # GAN theory
@@ -19,7 +20,10 @@ public spec surface while still capturing the generator/discriminator game:
 - the generator tries to make generated samples score as real.
 
 These lemmas expose the exact composition and loss decomposition used by examples and downstream
-verification work.
+verification work. The two `rfl`-level unfoldings that belong to the spec itself (fake scores as
+discriminator-after-generator, and the two-term discriminator objective) live with the spec in
+`NN.Spec.Models.Gan`; repeating them here would only put a second copy of the same `simp` lemma in
+the default simp set.
 
 The mathematical reason this file is more compact than the VAE/VQ-VAE theory files is that the
 public spec deliberately chooses the LSGAN square-loss objective rather than the original minimax
@@ -39,23 +43,17 @@ analytic side conditions into a total spec.
 
 namespace NN.MLTheory.Generative.Latent.GAN
 
-open _root_.Spec
+open _root_.Spec _root_.TorchLean
 open _root_.Generative.GAN
 open NN.MLTheory.Generative.Latent.Objective
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {latent obs : Shape}
 
 /-- Generated samples are obtained by applying the generator to latent noise. -/
 @[simp] theorem generate_eq_generator
     (model : Model α latent obs) (z : Tensor α latent) :
     generate model z = model.generator.forward z := by
-  rfl
-
-/-- Fake scores are discriminator scores on generated samples. -/
-@[simp] theorem fakeScore_is_discriminator_after_generator
-    (model : Model α latent obs) (z : Tensor α latent) :
-    fakeScore model z = model.discriminator.forward (model.generator.forward z) := by
   rfl
 
 /--
@@ -70,31 +68,16 @@ the discriminator's "fake" target; it tries to move generated samples onto the r
       Spec.mseSpec (s := .scalar) (fakeScore model z) (realTarget (α := α)) := by
   rfl
 
-/--
-LSGAN discriminator loss splits into real-score and fake-score regression terms.
-
-The first term pushes $D(x_{\mathrm{real}})$ toward $1$; the second pushes $D(G(z))$ toward $0$.
-Keeping this
-as a named theorem gives downstream examples and proof files a stable reference point for the game
-semantics, instead of requiring them to unfold the spec directly.
--/
-@[simp] theorem discriminatorLoss_eq_real_fake_terms
-    (model : Model α latent obs) (xReal : Tensor α obs) (z : Tensor α latent) :
-    discriminatorLoss model xReal z =
-      Spec.mseSpec (s := .scalar) (realScore model xReal) (realTarget (α := α)) +
-        Spec.mseSpec (s := .scalar) (fakeScore model z) (fakeTarget (α := α)) := by
-  rfl
-
 /-! ## Connection to shared objective algebra and equilibrium checks -/
 
 /-- Score-regression MSE is zero when the scalar prediction equals the scalar target. -/
 private theorem mse_scalar_self_zero (x : Tensor ℝ .scalar) :
     Spec.mseSpec (s := .scalar) x x = 0 := by
-  cases x with
-  | scalar a =>
-      simp [Spec.mseSpec, Spec.toScalarSpec, Tensor.subSpec, Tensor.mulSpec,
-        Tensor.map2Spec, Tensor.sumSpec, Tensor.tensorFoldlSpec, Spec.meanOver,
-        Spec.meanDenom, Spec.Shape.size]
+  have hdiff : Tensor.subSpec x x = Tensor.scalar 0 := by
+    apply Tensor.ext_scalar
+    simp [Tensor.subSpec]
+  simp [Spec.mseSpec, hdiff, Spec.toScalarSpec, Tensor.mulSpec,
+    Spec.meanOver, TorchLean.Tensor.meanDenominator, Spec.Shape.size]
 
 /-- Package the LSGAN generator objective as a two-term objective with no regularizer. -/
 noncomputable def generatorObjectiveTerms

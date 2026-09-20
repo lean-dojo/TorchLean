@@ -7,10 +7,14 @@ Authors: TorchLean Team
 module
 
 public meta import NN.IR.Infer
-public meta import NN.IR.Pretty
+public import NN.Spec.Core.Shape
 public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
+public meta import NN.IR.Pretty -- shake: keep
+public import NN.Widgets.Core.UI
+import Mathlib.Algebra.Order.Algebra
+import Mathlib.Analysis.SpecialFunctions.Pow.Real
+import NN.Spec.Core.Tensor
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # ShapeInfer
@@ -33,22 +37,6 @@ Main command:
 - `inferRows`: perform sequential shape inference and collect row diagnostics.
 - `shapeInferHtml`: render declared vs inferred shapes in a status table.
 - `#shape_infer_view`: command entry point.
-
-## Implementation notes
-
-- A per-node row model exposes inference and mismatch details directly.
-- Inference stops after the first hard failure, and later rows are marked as "stopped"; this
-  mirrors real debugging sessions where one upstream error explains many downstream unknowns.
-- Status badges distinguish "mismatch" (inferred but different) from "error" (could not infer).
-
-## References
-
-- [ProofWidgets](https://github.com/leanprover-community/ProofWidgets4)
-- [Lean community documentation style](https://leanprover-community.github.io/contribute/doc.html)
-
-## Tags
-
-shape-inference, ir, diagnostics, proofwidgets
 -/
 
 public meta section
@@ -57,16 +45,23 @@ open scoped ProofWidgets.Jsx
 
 namespace NN.Widgets
 
-open _root_.Spec
+open _root_.Spec _root_.TorchLean
 open NN.IR
 open UI
 
+/-- One row of the shape-inference table: what the node declared against what it inferred. -/
 private structure Row where
+  /-- Node id. -/
   id : Nat
+  /-- Op tag, as the IR spells it. -/
   op : String
+  /-- Parent node ids. -/
   parents : Array Nat
+  /-- Output shape the node declares. -/
   declared : Shape
+  /-- Output shape inference derived, `none` when inference gave up here. -/
   inferred? : Option Shape
+  /-- Message explaining why inference gave up, when it did. -/
   err? : Option String
 
 /-- Infer node output shapes left-to-right and record mismatches/errors as rows. -/
@@ -84,7 +79,7 @@ private def inferRows (g : Graph) : Except String (Array Row) := do
       }
     else
       let parentShapes := n.parents.map (fun pid => inferred[pid]!)
-      match Infer.inferNodeOutShape n parentShapes with
+      match Infer.nodeOutShape n parentShapes with
       | .ok out =>
           let err? :=
             if out = n.outShape then none
@@ -190,6 +185,6 @@ def shapeInferHtml (g : Graph) : ProofWidgets.Html :=
 syntax (name := shapeInferViewCmd) "#shape_infer_view " term : command
 
 macro "#shape_infer_view " g:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (shapeInferHtml $g))
+  UI.canonicalCommand <$> `(#html (shapeInferHtml $g))
 
 end NN.Widgets

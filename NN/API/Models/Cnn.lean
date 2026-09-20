@@ -11,69 +11,76 @@ public import NN.API.Seeded
 /-!
 # Convolutional Classifier
 
-The classifier is polymorphic in both its leading dimensions and the number of spatial axes.
-Convolution and pooling use the same vector-valued configuration for signals, images, volumes,
-and higher-dimensional data.
+The classifier accepts any `batchShape` and number of spatial axes. Convolution and pooling use the
+same vector-valued configuration for signals, images, volumes, and higher-dimensional data.
 -/
 
 @[expose] public section
 
 namespace TorchLean
 
+open Spec
+
 namespace nn
 namespace models
 
-/-- Configuration for a compact convolutional classifier. -/
-structure CnnConfig (d : Nat) where
+/-- Configuration for a convolutional classifier over `d` spatial axes. -/
+structure CNN.Config (d : Nat) where
   /-- Number of channels in each input sample. -/
-  inChannels : Nat
+  inputChannels : Nat
   /-- Extent of each spatial axis. -/
   spatial : Tensor Nat [d]
-  /-- Number of classifier outputs per sample. -/
-  outDim : Nat
-  /-- Convolution stage. -/
-  conv : Conv d
-  /-- Max-pooling stage. -/
-  pool : Pool d
+  /-- Convolution applied before activation and pooling. -/
+  convolution : Convolution.Config d
+  /-- Pooling applied after the convolutional activation. -/
+  pooling : Pooling.Config d
+  /-- Number of classifier logits per sample. -/
+  classCount : Nat
 
-/-- Spatial extent after convolution. -/
-def CnnConfig.afterConv {d : Nat} (cfg : CnnConfig d) : Tensor Nat [d] :=
-  Spec.convOutSpatial cfg.spatial cfg.conv.kernel cfg.conv.stride cfg.conv.padding
+namespace CNN.Config
 
-/-- Spatial extent after pooling. -/
-def CnnConfig.afterPool {d : Nat} (cfg : CnnConfig d) : Tensor Nat [d] :=
-  Spec.poolOutSpatialPad cfg.afterConv cfg.pool.kernel cfg.pool.stride cfg.pool.padding
+/-- Validate the complete classifier geometry before allocating convolution or head parameters. -/
+def validate {d : Nat} (config : CNN.Config d) : Except String Unit := do
+  config.convolution.validate config.inputChannels config.spatial (kind := "CNN")
+  let afterConv := config.convolution.output config.spatial
+  config.pooling.validate config.convolution.outChannels afterConv (kind := "CNN")
+  if config.classCount = 0 then
+    throw "CNN: class count must be positive"
 
-/-- Number of features presented to the classifier head. -/
-def CnnConfig.featureCount {d : Nat} (cfg : CnnConfig d) : Nat :=
-  (cfg.conv.outChannels :: cfg.afterPool.toList).prod
+end CNN.Config
 
-namespace CnnConfig
+/-- Input tensor shape after prepending an arbitrary batch shape. -/
+abbrev CNN.Config.input {d : Nat} (config : CNN.Config d)
+    (batchShape : Shape := []) : Shape :=
+  batchShape.concat ((config.spatial.to Shape).prependDim config.inputChannels)
 
-/-- Input shape with arbitrary leading dimensions. -/
-def inputShape {d : Nat} (cfg : CnnConfig d) (leading : List Nat := []) : List Nat :=
-  leading ++ cfg.inChannels :: cfg.spatial.toList
-
-/-- Classifier output shape with the same leading dimensions as the input. -/
-def outputShape {d : Nat} (cfg : CnnConfig d) (leading : List Nat := []) : List Nat :=
-  leading ++ [cfg.outDim]
-
-end CnnConfig
+/-- Classifier output shape with the same batch shape as the input. -/
+abbrev CNN.Config.output {d : Nat} (config : CNN.Config d)
+    (batchShape : Shape := []) : Shape :=
+  batchShape.appendDim config.classCount
 
 /-- Build `convolution -> activation -> max pool -> flatten -> linear`. -/
-def cnn {d : Nat} (cfg : CnnConfig d) (leading : List Nat := [])
-    (hInChannels : cfg.inChannels ≠ 0 := by decide) :
-    Builder (Sequential (cfg.inputShape leading) (cfg.outputShape leading)) :=
-  letI : NeZero cfg.inChannels := ⟨hInChannels⟩
-  let convolution := conv (leading := leading) cfg.spatial cfg.conv
-  let pooling := maxPool (leading := leading) cfg.afterConv cfg.pool
-  nn.Sequential![
-    convolution,
-    relu,
-    pooling,
-    flattenAfter leading,
-    linear cfg.featureCount cfg.outDim (leading := leading)
-  ]
+def cnn {d : Nat} (config : CNN.Config d) (batchShape : Shape := []) :
+    Builder (Sequential (config.input batchShape) (config.output batchShape)) :=
+  match config.validate with
+  | .error message =>
+      pure <| nn.Internal.invalidConfiguration
+        (config.input batchShape) (config.output batchShape) "CNN" message
+  | .ok () =>
+      let afterConv := config.convolution.output config.spatial
+      let afterPool := config.pooling.output afterConv
+      let featureShape := (afterPool.to Shape).prependDim config.convolution.outChannels
+      let featureCount := featureShape.size
+      let convolution := conv config.spatial config.convolution (batchShape := batchShape)
+        (inputChannels := config.inputChannels)
+      let pooling := maxPool afterConv config.pooling (batchShape := batchShape)
+      nn.Sequential![
+        convolution,
+        relu,
+        pooling,
+        flattenAfter batchShape (shape := featureShape),
+        linear featureCount config.classCount (batchShape := batchShape)
+      ]
 
 end models
 end nn

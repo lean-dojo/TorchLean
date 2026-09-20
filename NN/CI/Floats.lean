@@ -4,18 +4,17 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+module -- shake: keep-all (These imports define the CI build coverage.)
 
-import NN.Floats
-import NN.Floats.Arb
-import NN.Floats.Interval.IEEEExec32ArbTrans
+import FloatLib
+import FloatLib.Floats.Formats.BinaryInterchange.Configured.Transcendentals
 import NN.Proofs.RuntimeApprox.FP32
 
 /-!
 # Additional Floating-Point Modules
 
-The public floating-point umbrella omits the optional Arb oracle and a few proof-heavy integration
-modules. Ordinary CI imports them here so they cannot first fail during documentation generation.
+Ordinary CI checks the shared FloatLib interface, its optional binary elementary functions, and
+TorchLean's runtime approximation proofs before documentation generation.
 -/
 
 @[expose] public section

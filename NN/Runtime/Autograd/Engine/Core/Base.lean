@@ -7,11 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Tensor.SomeTensor
-public import NN.Spec.Layers.Attention
-public import NN.Spec.Layers.Conv
-public import NN.Spec.Layers.Linear
-public import NN.Spec.Layers.Normalization
-public import NN.Spec.Layers.Pooling
 
 /-!
 # Engine Core
@@ -45,8 +40,8 @@ References (PyTorch / background reading):
 namespace Runtime
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 /-!
 ## Core Types
@@ -84,11 +79,11 @@ Accumulate two packed tensors by elementwise addition, with a dynamic shape chec
 This is the heart of DAG support: if two different paths contribute gradients to the same parent,
 we sum the contributions.
 -/
-def add {α : Type} [Add α] [DecidableEq Shape]
+def add {α : Type} [TorchLean.Storage α] [Add α]
   (a b : Spec.SomeTensor α) : Result (Spec.SomeTensor α) := by
   if h : a.shape = b.shape then
     let b' : Tensor α a.shape := b.cast h.symm
-    exact .ok ((Spec.SomeTensor.ofTensor (addSpec a.tensor b')).materialize)
+    exact .ok (Spec.SomeTensor.ofTensor (addSpec a.tensor b'))
   else
     exact .error "autograd: gradient shape mismatch during accumulation"
 
@@ -106,7 +101,7 @@ Fields:
 PyTorch comparison: analogous to an autograd `Function` instance + saved tensors, but here we store
 the backward closure directly.
 -/
-structure Node (α : Type) where
+structure Node (α : Type) [TorchLean.Storage α] where
   /-- Optional node name used for debugging and pretty-printing. -/
   name : Option String := none
   /-- Forward value computed at this node (shape-erased). -/
@@ -134,7 +129,7 @@ Autograd tape: a grow-only array of nodes.
 Node ids are array indices (`Nat`). All ops append exactly one node and return its id.
 This makes it easy to implement reverse-mode by traversing ids in reverse order.
 -/
-structure Tape (α : Type) where
+structure Tape (α : Type) [TorchLean.Storage α] where
   /--
   Tape nodes in evaluation order.
 
@@ -153,7 +148,7 @@ If you prefer an implicit tape-threading style, see `NN.Runtime.Autograd.Engine.
 
 namespace Tape
 
-variable {α : Type}
+variable {α : Type} [TorchLean.Storage α]
 
 /-- Empty tape (no nodes). -/
 def empty : Tape α := {}
@@ -176,8 +171,7 @@ Invariant: the returned id is `t.size`, the pre-append size of the tape.
 -/
 def addNode (t : Tape α) (node : Node α) : Tape α × Nat :=
   let id := t.nodes.size
-  let node' := { node with value := node.value.materialize }
-  ({ nodes := t.nodes.push node' }, id)
+  ({ nodes := t.nodes.push node }, id)
 
 /-- `addNode` returns the current tape size as the fresh node id. -/
 @[simp] theorem addNode_id (t : Tape α) (node : Node α) :
@@ -194,7 +188,7 @@ Add a leaf node (no parents).
 
 PyTorch comparison: a tensor that enters the graph as a leaf (e.g. input or parameter value).
 -/
-def leaf {α : Type} {s : Shape}
+def leaf {α : Type} [TorchLean.Storage α] {s : Shape}
   (t : Tape α) (value : Tensor α s) (name : Option String := none) (requiresGrad : Bool := true) :
   Tape α × Nat :=
   t.addNode {
@@ -212,7 +206,7 @@ This is the main "dynamic check" boundary in the eager runtime:
 - fails if the id is invalid, or
 - fails if the stored runtime shape doesn't match the expected dependent shape `s`.
 -/
-def requireValue {α : Type} [DecidableEq Shape] {s : Shape}
+def requireValue {α : Type} [TorchLean.Storage α] {s : Shape}
   (t : Tape α) (id : Nat) : Result (Tensor α s) := by
   match t.getValue? id with
   | none => exact .error "autograd: invalid node id"
@@ -228,7 +222,7 @@ Read a typed upstream gradient tensor from a packed tensor.
 This is the backward analogue of `Tape.requireValue`: it checks that the upstream gradient has the
 expected shape `τ` and then performs the dependent cast.
 -/
-def requireGrad {α : Type} [DecidableEq Shape] {τ : Shape}
+def requireGrad {α : Type} [TorchLean.Storage α] {τ : Shape}
     (dLdyAny : Spec.SomeTensor α) : Result (Tensor α τ) := by
   if h : dLdyAny.shape = τ then
     exact .ok (dLdyAny.cast h)
@@ -245,7 +239,7 @@ You provide:
 The returned node stores the forward value and a backward closure that checks the upstream
 gradient's shape and returns the parent contribution.
 -/
-def unary {α : Type} [DecidableEq Shape] {σ τ : Shape}
+def unary {α : Type} [TorchLean.Storage α] {σ τ : Shape}
   (t : Tape α) (opName : String) (xId : Nat)
   (forward : Tensor α σ → Tensor α τ)
   (backward : Tensor α σ → Tensor α τ → Tensor α σ) :

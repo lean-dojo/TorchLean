@@ -7,9 +7,13 @@ back to.
 The same spec can be instantiated in several scalar worlds:
 
 - `ℝ` for clean mathematical statements;
-- `FP32`/`NeuralFloat` for rounded-real proof models;
-- `IEEE32Exec` for executable binary32 semantics;
+- `FloatLib.Floats.Formats.Flocq.NF` and its `FP32` specialization for noncomputable
+  rounded-real proofs;
+- `FloatLib.Floats.ExecFloat.Binary` for CPU software arithmetic at a chosen precision;
 - runtime scalar backends where explicit bridges state what is assumed.
+
+Configured precision does not select arbitrary-precision CUDA kernels. See `NN/API/Precision.lean`
+for the typed tensor/model entrypoints and their numerical limits.
 
 The practical goal is to avoid a gap between the network we run and the network we reason about:
 define the reference behavior once, then make runtime, graph, and verifier layers say how they
@@ -23,10 +27,11 @@ spec-focused and should avoid importing the full public API.
 - `Core/`
   - `Shape.lean`: type-level tensor shapes, axis utilities, and broadcasting evidence.
   - `Context.lean`: `Context α`, the numeric backend interface for spec code.
-  - `Tensor/Core.lean`: the `Spec.Tensor` datatype.
+  - `Tensor/Core.lean`: proof-facing operations and laws for the canonical `TorchLean.Tensor`.
   - `TensorOps.lean`, `TensorReductionShape.lean`: elementwise ops, reductions, reshapes,
     broadcasts, concat/slice, and axis manipulation.
   - `Complex.lean` and `TensorGrad.lean`: FFT/FNO support and gradient helper specs.
+  - `Random.lean`: deterministic `Spec.Random` key and sampling helpers.
 - `Layers/`: forward and backward specs for common layers: linear, convolution, attention,
   FlashAttention-style fused attention, normalization, pooling, embeddings, recurrent layers,
   selective scan, dropout, and losses.
@@ -35,7 +40,10 @@ spec-focused and should avoid importing the full public API.
 - `Module/`: module records that package layer specs with input/output shapes and export metadata.
 - `Models/`: model compositions such as MLP, CNN, Transformer, ResNet, ViT, Seq2Seq, UNet, GNN,
   linear/logistic regression, gradient boosted trees, HMM/GMM/PCA, and state-space models.
-- `Dynamics/`: pure dynamical-system and state-space recurrence specs.
+- `Dynamics/`: pure dynamical-system and state-space recurrence specs (namespace
+  `Spec.Dynamics`).
+- `Generative/`: diffusion and latent-variable objective specs.
+- `Quantization.lean`: the scalar affine quantizer from `NN.Floats` lifted pointwise to tensors.
 - `RL/`: Bellman backups, returns, MDPs, Gymnasium-style environment contracts, and GridWorld specs.
 - `NN/Examples/`: executable examples that exercise the specs through the public trainer and CLI.
 

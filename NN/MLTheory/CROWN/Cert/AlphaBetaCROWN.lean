@@ -50,12 +50,12 @@ ReLU transfer rule (slope $0$ or $1$).
 
 namespace NN.MLTheory.CROWN.Cert
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-!
 ## ReLU phase encoding
@@ -69,10 +69,17 @@ At runtime, a certificate provides an `Array Int` with entries in $\{-1,0,1\}$, 
 using `ReLUPhase.ofInt?`.
 -/
 
+/-- Which side of the origin a certificate claims a pre-activation stays on.
+
+`unstable` is the honest "do not know", and it is the only phase that forces the relaxation to
+spend an α parameter. -/
 inductive ReLUPhase where
-  | inactive  -- z ≤ 0
-  | unstable  -- no constraint
-  | active    -- 0 ≤ z
+  /-- The pre-activation is claimed nonpositive, so the ReLU output is zero. -/
+  | inactive
+  /-- No claim: the pre-activation may cross zero. -/
+  | unstable
+  /-- The pre-activation is claimed nonnegative, so the ReLU acts as the identity. -/
+  | active
   deriving DecidableEq, Repr
 
 /-- Encode a `ReLUPhase` as the certificate integer convention `{-1, 0, 1}`. -/
@@ -118,7 +125,8 @@ def phaseRelaxUpperScalar (l u : α) (ph : ReLUPhase) : NN.MLTheory.CROWN.Runtim
   | .unstable => NN.MLTheory.CROWN.Runtime.Ops.ReLU.relaxScalar (α := α) l u
 
 /-- Phase-aware **lower** (under-approx) linear relaxation for ReLU. -/
-def phaseRelaxLowerScalar (l u a : α) (ph : ReLUPhase) : NN.MLTheory.CROWN.Runtime.Ops.ReLURelax α :=
+def phaseRelaxLowerScalar (l u a : α) (ph : ReLUPhase) :
+    NN.MLTheory.CROWN.Runtime.Ops.ReLURelax α :=
   match ph with
   | .inactive => { slope := 0, bias := 0 }
   | .active   => { slope := 1, bias := 0 }
@@ -165,41 +173,31 @@ def phaseRelaxVec?
     -- Check length first.
     if hlen : phases.size = n then
       -- Check consistency of each scalar constraint.
-      match lo with
-      | .dim flo =>
-        match hi with
-        | .dim fhi =>
-          match αv with
-          | .dim fa =>
-            let phaseAt : Fin n → Int := fun i =>
-              betaAt phases (↑i)
-            let ok :=
-              (List.finRange n).all (fun i =>
-                match flo i, fhi i, fa i, ReLUPhase.ofInt? (phaseAt i) with
-                | .scalar l, .scalar u, .scalar a, some ph =>
-                  match phaseConsistentScalar? (α := α) l u ph with
-                  | some _ => true
-                  | none => false
-                | _, _, _, _ => false)
-            if ok then
-              let relaxHi : Tensor (NN.MLTheory.CROWN.Runtime.Ops.ReLURelax α) [n] :=
-                Tensor.dim (fun i =>
-                  match flo i, fhi i, ReLUPhase.ofInt? (phaseAt i) with
-                  | .scalar l, .scalar u, some ph =>
-                    Tensor.scalar (phaseRelaxUpperScalar (α := α) l u ph)
-                  | _, _, _ => Tensor.scalar { slope := 0, bias := 0 })
-              let relaxLo : Tensor (NN.MLTheory.CROWN.Runtime.Ops.ReLURelax α) [n] :=
-                Tensor.dim (fun i =>
-                  match flo i, fhi i, fa i, ReLUPhase.ofInt? (phaseAt i) with
-                  | .scalar l, .scalar u, .scalar a, some ph =>
-                    Tensor.scalar (phaseRelaxLowerScalar (α := α) l u a ph)
-                  | _, _, _, _ => Tensor.scalar { slope := 0, bias := 0 })
-              some (relaxLo, relaxHi)
-            else
-              none
-          | _ => none
-        | _ => none
-      | _ => none
+      let phaseAt : Fin n → Int := fun i => betaAt phases i
+      let ok :=
+        (List.finRange n).all fun i =>
+          match ReLUPhase.ofInt? (phaseAt i) with
+          | some ph => (phaseConsistentScalar? (α := α)
+              (lo.getScalar i) (hi.getScalar i) ph).isSome
+          | none => false
+      if ok then
+        let relaxHi : Tensor (NN.MLTheory.CROWN.Runtime.Ops.ReLURelax α) [n] :=
+          Tensor.dim fun i =>
+            Tensor.scalar <|
+              match ReLUPhase.ofInt? (phaseAt i) with
+              | some ph => phaseRelaxUpperScalar (α := α)
+                  (lo.getScalar i) (hi.getScalar i) ph
+              | none => { slope := 0, bias := 0 }
+        let relaxLo : Tensor (NN.MLTheory.CROWN.Runtime.Ops.ReLURelax α) [n] :=
+          Tensor.dim fun i =>
+            Tensor.scalar <|
+              match ReLUPhase.ofInt? (phaseAt i) with
+              | some ph => phaseRelaxLowerScalar (α := α)
+                  (lo.getScalar i) (hi.getScalar i) (αv.getScalar i) ph
+              | none => { slope := 0, bias := 0 }
+        some (relaxLo, relaxHi)
+      else
+        none
     else
       none
 
@@ -248,8 +246,8 @@ def alphaBetaCrownStepNode?
                     else none
                   else none
               | some xin, some preB, none =>
-                  -- No alpha provided: follow AlphaCROWN's default lower relaxation, but still enforce β
-                  -- consistency.
+                  -- No alpha provided: follow AlphaCROWN's default lower relaxation, but still
+                  -- enforce β consistency.
                   if hout : xin.outDim = preB.dim then
                     let xLo : AffineVec α xin.inDim preB.dim := by simpa [hout] using xin.loAff
                     let xHi : AffineVec α xin.inDim preB.dim := by simpa [hout] using xin.hiAff
@@ -270,5 +268,73 @@ def alphaBetaCrownStepNode?
           | none => none
   | _ =>
       alphaCrownStepNode? (α := α) nodes ps ibp alpha cert ctx id
+
+/-!
+## Automatic graph execution
+
+The certificate step above accepts explicit α and β evidence. The helpers below provide the
+ordinary executable path used by TorchLean's high-level verifier: α uses the checker's default
+relaxation, while β records every ReLU phase already proved stable by IBP. Crossing intervals remain
+unconstrained. This is a fixed-relaxation α/β-CROWN pass, not the external branch-and-bound search
+performed by full Alpha-Beta-CROWN implementations.
+-/
+
+/-- Infer the strongest phase justified directly by one pre-activation interval. -/
+def inferredPhase (lo hi : α) : ReLUPhase :=
+  if hi > 0 then
+    if lo < 0 then .unstable else .active
+  else
+    .inactive
+
+/-- Infer an IBP-justified β vector for one ReLU node. -/
+def inferredBetaForNode?
+    (nodes : Array Node) (ibp : Array (Option (FlatBox α))) (id : Nat) :
+    Option (Array Int) := do
+  let node ← nodes[id]?
+  match node.kind with
+  | .relu => pure ()
+  | _ => none
+  let parent ← NN.IR.unaryParent? node.parents
+  let preactivation ← ibp[parent]?
+  let box ← preactivation
+  pure <| (List.finRange box.dim).toArray.map fun i =>
+    (inferredPhase (α := α) (box.lo.getScalar i) (box.hi.getScalar i)).toInt
+
+/-- Infer all β phase vectors that are already justified by the IBP pass. -/
+def inferredBeta
+    (nodes : Array Node) (ibp : Array (Option (FlatBox α))) :
+    Array (Option (Array Int)) :=
+  (List.finRange nodes.size).toArray.map fun id =>
+    inferredBetaForNode? (α := α) nodes ibp id.val
+
+/--
+Run the fixed-relaxation α/β-CROWN graph pass.
+
+Stable ReLU phases come from IBP and are checked again by `alphaBetaCrownStepNode?`. Unstable
+neurons use the default α-CROWN lower relaxation.
+-/
+def runAlphaBetaCROWN
+    (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)
+    (ibp : Array (Option (FlatBox α))) :
+    Array (Option (FlatAffineBounds α)) :=
+  let alpha : Array (Option (FlatTensor α)) := Array.replicate g.nodes.size none
+  let beta := inferredBeta (α := α) g.nodes ibp
+  let initial : Array (Option (FlatAffineBounds α)) := Array.replicate g.nodes.size none
+  (List.finRange g.nodes.size).foldl
+    (fun bounds id =>
+      bounds.set! id <|
+        alphaBetaCrownStepNode? (α := α)
+          g.nodes ps ibp alpha beta bounds ctx id)
+    initial
+
+/-- Evaluate the automatic α/β-CROWN pass at the graph output. -/
+def outputBoxAlphaBetaCROWN?
+    [BoundOps α] [NonlinearBoundOps α]
+    (g : Graph) (ps : ParamStore α) (xB : FlatBox α)
+    (inputId outputId inputDim : Nat) : Except String (FlatBox α) := do
+  let ibp := Graph.runIBP (α := α) g ps
+  let ctx : AffineCtx := { inputId := inputId, inputDim := inputDim }
+  let bounds := runAlphaBetaCROWN (α := α) g ps ctx ibp
+  Graph.evalCROWNOutputBox? (α := α) bounds xB outputId inputDim
 
 end NN.MLTheory.CROWN.Cert

@@ -22,12 +22,14 @@ class PageScan(HTMLParser):
         attributes = dict(attrs)
         if identifier := attributes.get("id"):
             self.ids.add(identifier)
+        if tag == "a" and (name := attributes.get("name")):
+            self.ids.add(name)
         if tag == "base" and (base := attributes.get("href")):
             self.base = base
         if tag in {"a", "link"}:
             if target := attributes.get("href"):
                 self.links.append((tag, target))
-        elif tag in {"img", "script", "source"}:
+        elif tag in {"img", "script", "source", "iframe", "audio", "video"}:
             if target := attributes.get("src"):
                 self.links.append((tag, target))
 
@@ -52,25 +54,43 @@ def local_target(site: Path, url_path: str) -> Path:
     target = site / unquote(url_path).lstrip("/")
     if target.is_dir() or (not target.exists() and target.suffix == ""):
         target /= "index.html"
-    return target
+    return target.resolve()
 
 
-def check_site(site: Path) -> list[str]:
+def check_site(site: Path, baseurl: str = "", site_url: str = "") -> list[str]:
     """Return every unresolved local target or anchor in ``site``."""
 
     pages = {page: scan_page(page) for page in site.rglob("*.html")}
+    if not pages:
+        return ["no HTML pages found in the generated site"]
+    prefix = "/" + baseurl.strip("/") if baseurl.strip("/") else ""
+    deployed = urlsplit(site_url)
+    deployed_prefix = deployed.path.rstrip("/")
     errors: list[str] = []
 
     for page, scan in list(pages.items()):
         relative_page = page.relative_to(site)
-        base = urljoin(page_url(site, page), scan.base or "")
+        url = page_url(site, page).replace("http://torchlean.local/", f"http://torchlean.local{prefix}/")
+        base = urljoin(url, scan.base or "")
         for tag, raw_target in scan.links:
             if raw_target.startswith(("data:", "javascript:", "mailto:")):
                 continue
             resolved = urlsplit(urljoin(base, raw_target))
-            if resolved.netloc != "torchlean.local":
+            is_deployed = bool(deployed.netloc) and resolved.netloc == deployed.netloc and (
+                resolved.path == deployed_prefix
+                or resolved.path.startswith(deployed_prefix + "/")
+            )
+            if resolved.netloc != "torchlean.local" and not is_deployed:
                 continue
-            target = local_target(site, resolved.path)
+            target_path = resolved.path
+            if is_deployed:
+                target_path = target_path[len(deployed_prefix):] or "/"
+            elif prefix:
+                if target_path != prefix and not target_path.startswith(prefix + "/"):
+                    errors.append(f"{relative_page}: `{raw_target}` is outside base URL `{prefix}`")
+                    continue
+                target_path = target_path[len(prefix):] or "/"
+            target = local_target(site, target_path)
             try:
                 relative_target = target.relative_to(site)
             except ValueError:
@@ -100,12 +120,14 @@ def check_site(site: Path) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("site", type=Path, help="generated site root")
+    parser.add_argument("--baseurl", default="", help="deployment path prefix, e.g. /TorchLean")
+    parser.add_argument("--site-url", default="", help="also check absolute links under this public URL")
     args = parser.parse_args()
     site = args.site.resolve()
     if not site.is_dir():
         parser.error(f"site directory does not exist: {site}")
 
-    errors = check_site(site)
+    errors = check_site(site, args.baseurl, args.site_url)
     if errors:
         for error in errors:
             print(f"ERROR: {error}")

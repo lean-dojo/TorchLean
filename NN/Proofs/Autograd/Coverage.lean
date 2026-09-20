@@ -6,31 +6,20 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.FDeriv.Elementwise
-public import NN.Proofs.Autograd.Tape.Nodes
-public import NN.Proofs.Autograd.Tape.Nodes.Batched
-public import NN.Proofs.Autograd.Tape.Nodes.Shape
-public import NN.Proofs.Autograd.Tape.Ops.Attention.MultiHeadSelfAttention
+-- The roadmap prose below is about these modules, not the constants in them, so `lake shake` sees
+-- no use and wants them gone. They stay: this curated surface is what puts the composite-op
+-- proofs (attention, transformer blocks, the Elman cell) into a typecheck target.
 public import NN.Proofs.Autograd.Tape.Ops.Attention.MaskedScaledDotProduct
-public import NN.Proofs.Autograd.Tape.Ops.Attention.MaskedMultiHeadSelfAttention
-public import NN.Proofs.Autograd.Tape.Ops.Attention.ScaledDotProduct
-public import NN.Proofs.Autograd.Tape.Ops.Conv.FDeriv
-public import NN.Proofs.Autograd.Tape.Ops.Embedding.GatherRows
-public import NN.Proofs.Autograd.Tape.Ops.Norm.BatchNorm
-public import NN.Proofs.Autograd.Tape.Ops.Norm.LayerNorm
 public import NN.Proofs.Autograd.Tape.Ops.Recurrent.ElmanCell
-public import NN.Proofs.Autograd.Tape.Ops.Transformer.FeedForward
-public import NN.Proofs.Autograd.Tape.Ops.Transformer.EncoderBlock
 public import NN.Proofs.Autograd.Tape.Ops.Transformer.DecoderBlock
-public import NN.Proofs.Autograd.Tape.Ops.Transformer.PostNorm
-public import NN.Proofs.Autograd.Tape.Ops.Transformer.ResidualAttention
+public import NN.Proofs.Autograd.Tape.Ops.Transformer.EncoderBlock
 
 /-!
 # Autograd Proof Coverage
 
-This module is a curated import surface and roadmap for TorchLean's proved reverse-mode
-autograd library. It does not introduce new theorems; it gathers the pieces users should import when
-working with the proof-level layer rather than only executable training.
+This module is a curated import surface and roadmap for TorchLean's proved reverse-mode autograd
+library. It does not introduce new theorems; it gathers the pieces users should import when working
+with the proof-level layer rather than only executable training.
 
 ## Primitive coverage
 
@@ -119,17 +108,39 @@ The larger block proofs are built by composing the tape-node theorems:
   arbitrary-length BPTT chain-rule induction over differentiable recurrent transition builders;
 * finite-index gather-row / embedding lookup adjointness (`gather` VJP is scatter-add).
 
+## Runtime link coverage
+
+`NN.Proofs.Autograd.Runtime.Link` connects the executable tape engine to the proved reverse-mode
+model. It is precise about which backward variant each theorem covers:
+
+* `backwardDenseFrom_lowerGraphToTape_eq_backpropAllCtx` (`Link.BackwardGraph`) and
+  `backwardDenseFrom_lowerGraphToTape_adjoint_fderiv` (`Link.FDeriv`) are about
+  `Tape.backwardDenseFrom`, the total sweep that runs every node's VJP;
+* `backwardDenseAll_eq_backwardDenseFrom` (`Link.BackwardDense`) shows that the sweep the eager
+  trainer executes, `Tape.backwardDenseAll` (which skips nodes that never receive a cotangent and
+  zero-fills them), returns exactly the `backwardDenseFrom` result from the one-hot seed array on
+  any `ZeroPreserving` tape, errors included;
+* `lowerGraphToTape_zeroPreserving` (`Link.BackwardDenseGraph`) discharges that hypothesis for
+  every lowered proof-carrying graph, using only the local adjointness law (`node_vjp_full_zero`),
+  so `backwardDenseAll_lowerGraphToTape_eq_backpropAllCtx` and, over `ℝ`,
+  `backwardDenseAll_lowerGraphToTape_adjoint_fderiv` state the executed backward pass equals the
+  proved backpropagation and the adjoint of the Fréchet derivative.
+
+These are theorems about the exact tape model at the stated carrier (`ℚ`, `ℝ`, or any commutative
+semiring). The `Float` and CUDA executions of the same algorithm remain approximation and
+engineering concerns.
+
 ## Remaining model-level proof work
 
-The runtime/API model zoo is broader than the current end-to-end proof zoo. The reusable pieces
-above are intentionally the hard foundations, but the following model-level theorems are still open
-work rather than already-proved claims:
+The runtime/API model collection is broader than the current end-to-end proof collection. The
+reusable pieces above are intentionally the hard foundations, but the following model-level theorems
+are still open work rather than already-proved claims:
 
 * one runtime-layout lowering theorem connecting the concrete encoder-block SSA graph here to each
-  executable model-zoo Transformer wrapper;
+  executable Transformer example wrapper;
 * a concrete SSA graph for a GPT decoder block. The block-level theorem and additive-bias attention
   composition theorem are proved; the remaining lowering step is to instantiate the abstract
-  `maskedAttentionPack` with the model-zoo decoder's projection/split/merge/residual graph;
+  `maskedAttentionPack` with the example decoder's projection/split/merge/residual graph;
 * full ViT/GPT encoder or decoder stacks, including embeddings and classifier/language-model heads;
 * full recurrent/state-space sequence theorems (`RNN`, `GRU`, `LSTM`,
   Mamba/selective-scan-style recurrences). We cover the one-step tanh/Elman cell and the two-step
@@ -144,10 +155,10 @@ work rather than already-proved claims:
 
 ## Trust boundary
 
-These are source-level mathematical theorems about TorchLean specs and the proof tape. CUDA kernels,
-cuBLAS/cuDNN/cuFFT, and compiler backends remain engineering trust boundaries. The intended bridge is:
-prove the spec/VJP rule here, then test and contract-check each executable fast path against that
-spec.
+These are source-level mathematical theorems about TorchLean specs and the proof tape. CUDA
+kernels, cuBLAS/cuDNN/cuFFT, and compiler backends remain engineering trust boundaries. The intended
+bridge is: prove the spec/VJP rule here, then test and contract-check each executable fast path
+against that spec.
 
 ## References
 

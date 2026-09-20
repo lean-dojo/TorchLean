@@ -6,9 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import Init.Data.Float.Float32
-public import Init.Data.Rat
 public import NN.Floats.Interval.IEEEExec32
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-!
 # Comparison helpers for executable interval examples
@@ -17,15 +16,20 @@ This module contains small, reusable baselines for numerical-audit examples:
 
 - `Float32Interval.IntervalF32`: a deliberately naive runtime-`Float32` interval model;
 - `RealInterval.IntervalRat`: exact rational interval arithmetic for small reference checks;
-- conversions from finite `IEEE32Exec` / runtime `Float32` endpoints into rational intervals.
+- conversions from finite `ExecFloat.Binary 8 23` / runtime `Float32` endpoints into rational
+intervals.
 
 The important design point is separation: examples should print comparisons, not quietly define a
 second interval library. The primary TorchLean interval implementation is
-`IEEE32Exec.Interval32`; this module only provides baselines that make examples and regression tests easier
-to read.
+`IEEE32Exec.Interval32`; this module provides baselines that make examples and regression tests
+easier to read.
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 
 namespace TorchLean.Floats.Interval.Comparison
 
@@ -34,7 +38,12 @@ open TorchLean.Floats.IEEE754.IEEE32Exec
 
 /-- Pretty-print an executable `IEEE32Exec.Interval32`, including endpoint bits. -/
 def showInterval32 (I : Interval32) : String :=
-  s!"[{IEEE32Exec.toFloat I.lo} (bits={I.lo.bits}), {IEEE32Exec.toFloat I.hi} (bits={I.hi.bits})]"
+  let lo := ExecFloat.Binary.toFloat <| ExecFloat.Binary.ofModel <|
+    Model.cast FloatFormat.binary32 FloatFormat.binary64 (ExecFloat.Binary.toModel I.lo)
+  let hi := ExecFloat.Binary.toFloat <| ExecFloat.Binary.ofModel <|
+    Model.cast FloatFormat.binary32 FloatFormat.binary64 (ExecFloat.Binary.toModel I.hi)
+  s!"[{lo} (bits={ExecFloat.Binary.toBits32 I.lo}), " ++
+    s!"{hi} (bits={ExecFloat.Binary.toBits32 I.hi})]"
 
 /-- Pretty-print a runtime `Float32`, including its raw IEEE-754 bit pattern. -/
 def showFloat32 (x : Float32) : String :=
@@ -199,13 +208,13 @@ open RealInterval
 
 /-- Exact rational endpoint interval for a finite `IEEE32Exec.Interval32`; `none` for NaN/Inf. -/
 def interval32ToRat? (I : Interval32) : Option IntervalRat := do
-  let lo ← IEEE32Exec.toRat? I.lo
-  let hi ← IEEE32Exec.toRat? I.hi
+  let lo ← ExecFloat.Binary.toRat? I.lo
+  let hi ← ExecFloat.Binary.toRat? I.hi
   pure ⟨lo, hi⟩
 
 /-- Exact rational value of a finite runtime `Float32`; `none` for NaN/Inf. -/
 def float32ToRat? (x : Float32) : Option Rat :=
-  IEEE32Exec.toRat? (IEEE32Exec.ofBits x.toBits)
+  ExecFloat.Binary.toRat? (ExecFloat.Binary.ofBits32 x.toBits)
 
 /-- Exact rational endpoint interval for a finite runtime-`Float32` interval. -/
 def intervalF32ToRat? (I : Float32Interval.IntervalF32) : Option IntervalRat := do
@@ -214,15 +223,16 @@ def intervalF32ToRat? (I : Float32Interval.IntervalF32) : Option IntervalRat := 
   pure ⟨lo, hi⟩
 
 /--
-Endpoint-evaluate a unary function over an `IEEE32Exec` interval.
+Endpoint-evaluate a unary function over an `ExecFloat.Binary 8 23` interval.
 
 This is not a sound transcendental interval rule in general; it is a comparison
 baseline for examples.
 -/
-def intervalUnaryEndpoints (f : IEEE32Exec → IEEE32Exec) (lo hi : IEEE32Exec) : Interval32 :=
+def intervalUnaryEndpoints (f : ExecFloat.Binary 8 23 → (ExecFloat.Binary 8 23)) (lo hi :
+  ExecFloat.Binary 8 23) : Interval32 :=
   let a := f lo
   let b := f hi
-  ⟨IEEE32Exec.minimum a b, IEEE32Exec.maximum a b⟩
+  ⟨min a b, max a b⟩
 
 /--
 Endpoint-evaluate a unary function over a runtime-`Float32` interval.

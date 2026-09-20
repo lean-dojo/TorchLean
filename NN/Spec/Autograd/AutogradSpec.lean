@@ -47,11 +47,13 @@ When you want "a real graph", use those. When you want "the spec of an op", use 
 @[expose] public section
 
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type}
+variable {α : Type} [TorchLean.Storage α]
 
 /-- Atomic operation specification (forward + VJP/backward).
 
@@ -65,16 +67,17 @@ Why this signature:
 - We pass `x` to `backward` because many derivatives depend on the input value. At the spec level we
   don’t force a “store intermediates vs recompute” strategy; the runtime system can choose.
 -/
-structure OpSpec (α : Type) (σ τ : Shape) where
-  /-- forward. -/
+structure OpSpec (α : Type) [TorchLean.Storage α] (σ τ : Shape) where
+  /-- The forward map from an input of shape `σ` to an output of shape `τ`. -/
   forward  : Tensor α σ → Tensor α τ
-  /-- backward. -/
+  /-- The vector-Jacobian product: given the input `x` and the upstream gradient `dL/dy`,
+  return `dL/dx`. -/
   backward : Tensor α σ → Tensor α τ → Tensor α σ
 
 namespace OpSpec
 
 /-- The identity `OpSpec` (forward is identity; backward returns the upstream gradient). -/
-def id (α : Type) (σ : Shape) : OpSpec α σ σ :=
+def id (α : Type) [TorchLean.Storage α] (σ : Shape) : OpSpec α σ σ :=
 { forward := fun x => x
 , backward := fun _x dLdy => dLdy
 }

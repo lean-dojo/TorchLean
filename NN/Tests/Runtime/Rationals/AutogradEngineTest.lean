@@ -9,6 +9,8 @@ module
 public import NN.Runtime.Autograd.Train
 public import NN.Spec.Models.Mlp
 public import NN.Tensor
+public import NN.Tests.Utils
+public import NN.Spec.Core.Context.Rational
 
 /-!
 # AutogradEngineTest
@@ -16,16 +18,16 @@ public import NN.Tensor
 Regression tests for `Runtime.Autograd` dynamic tape over `ℚ`.
 
 We check that for a simple 2-layer MLP, the tape-based gradients match the existing
-hand-derived `Examples.mlp_backward`.
+hand-derived `Examples.mlpBackward`.
 -/
 
-open scoped NN.Spec.RationalAlgebraic
+open scoped Spec.RationalAlgebraic
 
 @[expose] public section
 
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Examples
 
 namespace Tests
@@ -41,16 +43,8 @@ abbrev outDim := 1
 -- Small tag used for readable error messages.
 abbrev tag : String := "autograd_engine_test (Rat)"
 
--- Parameter node ids we want to read gradients for.
-structure ParamIds where
-  /-- w 1 Id. -/
-  hiddenWeightId : Nat
-  /-- b 1 Id. -/
-  hiddenBiasId : Nat
-  /-- w 2 Id. -/
-  outputWeightId : Nat
-  /-- b 2 Id. -/
-  outputBiasId : Nat
+-- The parameter-id record is shared with the `Float` transpose of this test; see `Tests.Utils`.
+open Tests.Utils (ParamIds)
 
 /-!
 ## Fixed inputs and parameters
@@ -58,22 +52,24 @@ structure ParamIds where
 We use a small deterministic 2-layer MLP so the gradients are stable.
 -/
 def hiddenWeight : Tensor ℚ [hidDim, inDim] :=
-  tensorOfArray! [hidDim, inDim] #[0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+  (Tensor.from #[(1 : ℚ) / 10, 2 / 10, 3 / 10, 4 / 10, 5 / 10, 6 / 10]).reshape
+    [hidDim, inDim] (by dsimp; decide)
 
 def hiddenBias : Tensor ℚ [hidDim] :=
-  tensorOfArray! [hidDim] #[0.1, 0.2, 0.3]
+  (Tensor.from #[(1 : ℚ) / 10, 2 / 10, 3 / 10]).reshape [hidDim] (by dsimp; decide)
 
 def outputWeight : Tensor ℚ [outDim, hidDim] :=
-  tensorOfArray! [outDim, hidDim] #[0.7, 0.8, 0.9]
+  (Tensor.from #[(7 : ℚ) / 10, 8 / 10, 9 / 10]).reshape
+    [outDim, hidDim] (by dsimp; decide)
 
 def outputBias : Tensor ℚ [outDim] :=
-  tensorOfArray! [outDim] #[0.4]
+  (Tensor.from #[(4 : ℚ) / 10]).reshape [outDim] (by dsimp; decide)
 
 def x : Tensor ℚ [inDim] :=
-  tensorOfArray! [inDim] #[0.5, 0.8]
+  (Tensor.from #[(5 : ℚ) / 10, 8 / 10]).reshape [inDim] (by dsimp; decide)
 
 def dLdy : Tensor ℚ [outDim] :=
-  tensorOfArray! [outDim] #[1.0]
+  (Tensor.from #[(1 : ℚ)]).reshape [outDim] (by dsimp; decide)
 
 def hiddenLayer : Spec.LinearSpec ℚ inDim hidDim := { weights := hiddenWeight, bias := hiddenBias }
 def outputLayer : Spec.LinearSpec ℚ hidDim outDim := { weights := outputWeight, bias := outputBias }
@@ -106,7 +102,9 @@ def checkMlpGrads :
     let t ← TapeM.getTape
     let grads ← liftM (Tape.backward (t:=t) yId (Spec.SomeTensor.ofTensor dLdy))
 
-    let ids : ParamIds := { hiddenWeightId := hiddenWeightId, hiddenBiasId := hiddenBiasId, outputWeightId := outputWeightId, outputBiasId := outputBiasId }
+    let ids : ParamIds :=
+      { hiddenWeightId := hiddenWeightId, hiddenBiasId := hiddenBiasId,
+        outputWeightId := outputWeightId, outputBiasId := outputBiasId }
     pure (ids, grads)
 
   let ((ids, grads), _) ← TapeM.run t0 m

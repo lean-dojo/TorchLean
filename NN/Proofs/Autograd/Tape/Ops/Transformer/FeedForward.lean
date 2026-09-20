@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Tape.Nodes.GraphComposition
-public import NN.Proofs.Autograd.Tape.Util.Idx
+public import NN.Proofs.Autograd.Tape.Nodes.Arithmetic
 
 /-!
 # Transformer Feed-Forward Sublayer VJP
@@ -32,7 +32,7 @@ namespace Proofs
 namespace Autograd
 namespace Transformer
 
-open Spec
+open Spec TorchLean
 open TapeNodes
 open DGraph
 

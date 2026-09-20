@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.GraphSpec.Chain.Lowering
-public import NN.GraphSpec.Chain.Primitives
-public import NN.GraphSpec.Chain.Semantics
 public import NN.GraphSpec.Chain.ToDAG
 
 /-!

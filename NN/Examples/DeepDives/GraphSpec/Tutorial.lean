@@ -43,8 +43,8 @@ lake exe torchlean graphspec --execution eager
 lake exe torchlean graphspec --execution typed-graph
 ```
 
-You can also pass the standard TorchLean runtime flags such as `--scalar ieee32-exec`, `--execution eager`,
-or `--execution typed-graph`.
+You can also pass the standard TorchLean runtime flags such as `--arithmetic ieee`,
+`--execution eager`, or `--execution typed-graph`.
 -/
 
 @[expose] public section
@@ -52,10 +52,11 @@ or `--execution typed-graph`.
 
 namespace NN.Examples.DeepDives.GraphSpec.Tutorial
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open TorchLean
 open TorchLean.Tensor
-open _root_.TorchLean
+
+/-- Command name used in diagnostics and by the top-level example runner. -/
+def exeName : String := "graphspec"
 
 /-- Command-line help for the GraphSpec tutorial. -/
 def usage : String :=
@@ -66,7 +67,7 @@ def usage : String :=
     , "  lake exe torchlean graphspec [options]"
     , ""
     , "Options:"
-    , "  --scalar float32|ieee32-exec"
+    , "  --arithmetic native|ieee"
     , "  --execution eager|typed-graph"
     , "  --device auto|cpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external"
     , "  --show-backend                    print backend capsules as they execute"
@@ -80,12 +81,12 @@ The smallest sequential GraphSpec model.
 Parameter ABI:
 `[[3, 2], [3], [1, 3], [1]]`.
 -/
-def tutorialMlp :
+def mlp :
     NN.GraphSpec.Chain
       [ [3, 2], [3]
       , [1, 3], [1] ]
       [2] [1] :=
-  NN.GraphSpec.Models.mlp (inDim := 2) (hidDim := 3) (outDim := 1)
+  NN.GraphSpec.Models.mlp (inputWidth := 2) (hiddenWidth := 3) (outputWidth := 1)
 
 /--
 A small CNN graph, included here so the tutorial is visibly not “just MLP”.
@@ -94,15 +95,11 @@ This is still a sequential graph: convolution, ReLU, pooling, convolution, ReLU,
 linear head. The ugly-looking type is the point: the parameter shapes and intermediate spatial
 arithmetic are checked before the model can be used.
 -/
-def tutorialCnn :=
+def cnn :=
   NN.GraphSpec.Models.twoConvCnn
     (inChannels := 1) (firstChannels := 2) (secondChannels := 3) (outputSize := 4)
-    tensor! [8, 8] tensor! [3, 3] tensor! [1, 1] tensor! [1, 1] tensor! [1, 1] tensor! [1, 1]
-    tensor! [2, 2] tensor! [2, 2] tensor! [0, 0] tensor! [2, 2] tensor! [0, 0]
-    (hInChannels := by decide) (hFirstChannels := by decide)
-    (hKernel := by intro i; fin_cases i <;> decide)
-    (hConvStride₁ := by intro i; fin_cases i <;> decide)
-    (hConvStride₂ := by intro i; fin_cases i <;> decide)
+    [8, 8] [3, 3] [1, 1] [1, 1] [1, 1] [1, 1]
+    [2, 2] [2, 2] [0, 0] [2, 2] [0, 0]
     (hPoolKernel := by intro i; fin_cases i <;> decide)
     (hPoolStride₁ := by intro i; fin_cases i <;> decide)
     (hPoolStride₂ := by intro i; fin_cases i <;> decide)
@@ -117,7 +114,7 @@ $$
 This is not a plain chain: representing it that way would either duplicate the input path or hide
 sharing in a special layer. That is the pedagogical reason `GraphSpec.DAG` exists.
 -/
-def tutorialResidual :=
+def residual :=
   NN.GraphSpec.Models.residualLinear (d := 4)
 
 /-- Print the architecture ladder this tutorial is checking. -/
@@ -129,45 +126,52 @@ def printCatalog : IO Unit := do
   IO.println ""
 
 /-- Tiny one-sample dataset for the lowered GraphSpec MLP training path. -/
-def tutorialDataset : Trainer.Dataset [2] [1] :=
-  let xF : Tensor Float [2] := Spec.Tensor.map id (tensorOfArray! (ty := Float) [2] #[0.5, 0.8])
-  let yF : Tensor Float [1] := Spec.Tensor.map id (tensorOfArray! (ty := Float) [1] #[1.0])
-  let XFloat : TorchLean.Tensor Float [1, 2] :=
-    TorchLean.Tensor.stack 0 (count := 1) fun _ => xF
-  let YFloat : TorchLean.Tensor Float [1, 1] :=
-    TorchLean.Tensor.stack 0 (count := 1) fun _ => yF
-  Data.tensorDataset XFloat YFloat
+def dataset : Trainer.Dataset [2] [1] :=
+  let input : Tensor Float [2] := [0.5, 0.8]
+  let target : Tensor Float [1] := [1.0]
+  let inputs : Tensor Float [1, 2] :=
+    Tensor.stack 0 (count := 1) fun _ => input
+  let targets : Tensor Float [1, 1] :=
+    Tensor.stack 0 (count := 1) fun _ => target
+  Data.fromTensors inputs targets
 
 /-- Run the compact MLP lowering/training path. -/
 def runMlpTrainingPath (args : List String) : IO Unit := do
-  let inDim : Nat := 2
-  let hidDim : Nat := 3
-  let outDim : Nat := 1
+  let inputWidth : Nat := 2
+  let hiddenWidth : Nat := 3
+  let outputWidth : Nat := 1
 
-  let xShape : Spec.Shape := [inDim]
-  let yShape : Spec.Shape := [outDim]
+  let input : Shape := [inputWidth]
+  let output : Shape := [outputWidth]
 
   -- GraphSpec is the source architecture. This exact graph also has pure semantics and an
   -- executable program view; here we ask for the additional `nn.Sequential` training view.
-  let g := NN.GraphSpec.Models.mlp (inDim := inDim) (hidDim := hidDim) (outDim := outDim)
+  let graph :=
+    NN.GraphSpec.Models.mlp
+      (inputWidth := inputWidth) (hiddenWidth := hiddenWidth) (outputWidth := outputWidth)
 
-  match NN.GraphSpec.ToSequential.toSeq (σ := xShape) (τ := yShape) g with
+  match NN.GraphSpec.ToSequential.toSeq (σ := input) (τ := output) graph with
   | .error msg =>
       throw <| IO.userError s!"GraphSpec.ToSequential.toSeq failed: {msg}"
   | .ok seqR =>
-      let seq : nn.Sequential [inDim] [outDim] := by
+      let network : nn.Sequential [inputWidth] [outputWidth] := by
         -- `nn.Sequential` is the public API name for the same runtime `Seq` type.
         simpa using seqR
-      let run ← Trainer.RunConfig.parseRuntimeArgsOrThrow "GraphSpecTutorial"
+      let runConfig ← TorchLean.CLI.Trainer.parseCommandLine exeName
         (CLI.dropDashDash args)
-        { optimizer := optim.sgd { lr := 0.1 } }
-      let trainer := Trainer.new (inputShape := [inDim]) (outputShape := [outDim]) seq <|
-        Trainer.Config.fromRunConfig run .regression
-      trainer.printInfo
-      let trained ← trainer.train tutorialDataset { steps := 3, title := "GraphSpec tutorial" }
+        { optimizer := optim.sgd { learningRate := 0.1 } }
+      let trainer :=
+        Trainer.new network <|
+        Trainer.RunConfig.forObjective runConfig .meanSquaredError
+      trainer.printSummary
+      let trained ←
+        trainer.train dataset { steps := 3, logTitle := "GraphSpec tutorial" }
       IO.println "forward: GraphSpec MLP lowered to TorchLean and executed"
       trained.printSummary
 
+/--
+Entry point: print the operation catalogue, then lower a GraphSpec MLP and train it for a few steps.
+-/
 def main (args : List String) : IO Unit := do
   let args := CLI.dropDashDash args
   if CLI.hasHelp args then

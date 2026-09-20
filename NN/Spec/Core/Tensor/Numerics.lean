@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.TensorReductionShape
+public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
 
 /-!
 # Tensor Numerical Algorithms
@@ -21,7 +21,7 @@ Reference implementations shared by classical models, graph specifications, and 
 
 These definitions prioritize:
 - **mathematical clarity**, and
-- **shape safety** (via `Spec.Tensor`),
+- **shape safety** (via `TorchLean.Tensor`),
 over performance.
 
 In particular, `determinantSpec` uses Laplace expansion, which is exponentially expensive and is
@@ -32,16 +32,18 @@ large-scale linear algebra, use the runtime layer with array-backed kernels.
 @[expose] public section
 
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 -- Matrix operations used by classical model specifications.
 
 /-- The index in `Fin n` corresponding to `i : Fin (n - 1)` after skipping one position. -/
-lemma minorIndex_lt {n : ℕ} (skip : Fin n) (i : Fin (n - 1)) :
+theorem minorIndex_lt {n : ℕ} (skip : Fin n) (i : Fin (n - 1)) :
     (if i.val < skip.val then i.val else i.val + 1) < n := by
   by_cases h : i.val < skip.val <;> simp [h]
   · exact Nat.lt_of_lt_of_le i.isLt (Nat.pred_le n)
@@ -52,7 +54,7 @@ Matrix minor: delete `row` and `col` from an `n × n` matrix, producing an `(n-1
 
 This is used by `determinantSpec` (Laplace expansion) and the adjugate-based inverse below.
 -/
-def matrixMinorSpec {α : Type} {n : Nat}
+def matrixMinorSpec {α : Type} [TorchLean.Storage α] {n : Nat}
     (matrix : Tensor α [n, n])
     (row col : Fin n) :
     Tensor α [n - 1, n - 1] :=
@@ -76,29 +78,19 @@ This uses Laplace expansion (cofactor expansion) along the first row, with speci
 for `n = 0, 1, 2`. It is mathematically clear but exponentially slow, so it is intended only for
 very small `n` and/or proof-oriented reference code.
 -/
-def determinantSpec {α : Type} [Context α] :
+def determinantSpec {α : Type} [TorchLean.Storage α] [Context α] :
   ∀ {n : Nat}, Tensor α [n, n] → Tensor α .scalar
 | 0, _ => Tensor.scalar 1
 | 1, A =>
-  match A with
-  | Tensor.dim rows =>
-    match rows ⟨0, Nat.zero_lt_succ 0⟩ with
-    | Tensor.dim cols =>
-      match cols ⟨0, Nat.zero_lt_succ 0⟩ with
-      | Tensor.scalar val => Tensor.scalar val
+  Tensor.scalar (get2 A ⟨0, Nat.zero_lt_succ 0⟩ ⟨0, Nat.zero_lt_succ 0⟩)
 | 2, A =>
-  match A with
-  | Tensor.dim rows =>
-    match rows ⟨0, Nat.zero_lt_succ 1⟩, rows ⟨1, Nat.succ_lt_succ (Nat.zero_lt_succ 0)⟩ with
-    | Tensor.dim row0, Tensor.dim row1 =>
-      match row0 ⟨0, Nat.zero_lt_succ 1⟩, row0 ⟨1, Nat.succ_lt_succ (Nat.zero_lt_succ 0)⟩,
-            row1 ⟨0, Nat.zero_lt_succ 1⟩, row1 ⟨1, Nat.succ_lt_succ (Nat.zero_lt_succ 0)⟩ with
-      | Tensor.scalar a, Tensor.scalar b, Tensor.scalar c, Tensor.scalar d =>
-        Tensor.scalar (a * d - b * c)
+  let zero : Fin 2 := ⟨0, Nat.zero_lt_succ 1⟩
+  let one : Fin 2 := ⟨1, Nat.succ_lt_succ (Nat.zero_lt_succ 0)⟩
+  Tensor.scalar (get2 A zero zero * get2 A one one - get2 A zero one * get2 A one zero)
 | n+2, A =>
   let laplaceTerm (j : Fin (n+2)) :=
     let minor := matrixMinorSpec A ⟨0, Nat.zero_lt_succ (n + 1)⟩ j
-    let cofactor := if j.val % 2 = 0 then 1 else Numbers.negOne
+    let cofactor : α := if j.val % 2 = 0 then 1 else -1
     let element := get2 A ⟨0, Nat.zero_lt_succ (n+1)⟩ j
     cofactor * element * Tensor.item (determinantSpec minor)
   let sum := (List.finRange (n+2)).foldl (fun acc j => acc + laplaceTerm j) 0
@@ -157,9 +149,7 @@ def powerIterationLeadingEigenpairSpec {n : Nat}
       let norm := MathFunctions.sqrt (sumSpec (squareSpec Av))
       let normalized := if norm > 0 then
         Tensor.dim (fun i =>
-          match get Av i with
-          | Tensor.scalar val => Tensor.scalar (val / norm)
-        )
+          Tensor.scalar (getScalar Av i / norm))
       else v
       powerIteration normalized (iter - 1)
 
@@ -184,9 +174,24 @@ PyTorch analogue: `torch.linalg.vector_norm(x - y)` or `torch.cdist` (batched).
 def euclideanDistanceSpec {nFeatures : Nat}
   (x y : Tensor α [nFeatures]) : α :=
   let diff := subSpec x y
-  let squaredDiff := squareSpec diff
-  let sumSquared := sumSpec squaredDiff
-  MathFunctions.sqrt sumSquared
+  let sumSquared := sumSpec (squareSpec diff)
+  let finiteDifferences := foldlSpec (fun finite value =>
+    finite && value - value == 0) true diff
+  -- Preserve nonfinite differences before considering a scale: an overflowing subtraction
+  -- must remain an infinite distance, and a NaN must not become an exact match.
+  if !finiteDifferences || (sumSquared - sumSquared == 0 && !(sumSquared == 0)) then
+    MathFunctions.sqrt sumSquared
+  else
+    -- Finite differences can lose their norm when squaring overflows or rounds to zero.
+    -- Dividing by the largest magnitude keeps each square at most one; restore the scale
+    -- after the square root. Coincident inputs retain the original square-root convention.
+    let scale := foldlSpec (fun largest value => max largest (MathFunctions.abs value)) 0 diff
+    if scale == 0 then MathFunctions.sqrt sumSquared
+    else
+      let scaledSum := foldlSpec (fun total value =>
+        let ratio := value / scale
+        total + ratio * ratio) 0 diff
+      scale * MathFunctions.sqrt scaledSum
 
 /-- Squared Euclidean distance (avoids the final square root). -/
 def squaredEuclideanDistanceSpec {nFeatures : Nat}
@@ -244,9 +249,7 @@ def normalizeByPositiveSumSpec {n : Nat} (values : Tensor α [n]) :
   let total := sumSpec values
   if total > 0 then
     Tensor.dim (fun i =>
-      match get values i with
-      | Tensor.scalar p => Tensor.scalar (p / total)
-    )
+      Tensor.scalar (getScalar values i / total))
   else
     Tensor.dim (fun _ => Tensor.scalar (1 / n))
 
@@ -260,9 +263,7 @@ def normalizeL2Spec {n : Nat} (vector : Tensor α [n]) :
   let norm := MathFunctions.sqrt (sumSpec (squareSpec vector))
   if norm > 0 then
     Tensor.dim (fun i =>
-      match get vector i with
-      | Tensor.scalar v => Tensor.scalar (v / norm)
-    )
+      Tensor.scalar (getScalar vector i / norm))
   else
     vector
 
@@ -285,25 +286,28 @@ def normalizeL2RegularizedSpec {n : Nat}
   Tensor.mapSpec (fun value => value / norm) vector
 
 /--
-Z-score normalization: subtract mean and divide by standard deviation.
+Z-score normalization: subtract the mean and divide by the population standard deviation.
 
-If the standard deviation is `0`, this returns the mean-centered vector.
+Zero denominators follow the same convention as `normalizeL2Spec` and
+`normalizeByPositiveSumSpec`: each denominator is tested before it is used. When `n = 0` there is
+nothing to normalize and the empty input is returned without ever forming `sum / n`. When the
+standard deviation is `0`, the mean-centered vector is returned.
 -/
 def normalizeZscoreSpec {n : Nat} (vector : Tensor α [n]) :
   Tensor α [n] :=
-  let mean := sumSpec vector / n
-  let centered := Tensor.dim (fun i =>
-    match get vector i with
-    | Tensor.scalar v => Tensor.scalar (v - mean)
-  )
-  let variance := sumSpec (squareSpec centered) / n
-  let std := MathFunctions.sqrt variance
-  if std > 0 then
-    Tensor.dim (fun i =>
-      match get centered i with
-      | Tensor.scalar v => Tensor.scalar (v / std)
-    )
+  if n = 0 then
+    vector
   else
-    centered
+    let count : α := (n : α)
+    let mean := sumSpec vector / count
+    let centered := Tensor.dim (fun i =>
+      Tensor.scalar (getScalar vector i - mean))
+    let variance := sumSpec (squareSpec centered) / count
+    let std := MathFunctions.sqrt variance
+    if std > 0 then
+      Tensor.dim (fun i =>
+        Tensor.scalar (getScalar centered i / std))
+    else
+      centered
 
 end Spec

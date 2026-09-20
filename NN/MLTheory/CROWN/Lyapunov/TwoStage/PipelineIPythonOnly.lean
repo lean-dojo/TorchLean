@@ -35,7 +35,7 @@ Everything after that is ordinary real arithmetic.
 @[expose] public section
 
 
-open Spec
+open Spec TorchLean
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Lyapunov
 
@@ -125,7 +125,9 @@ def main (args : List String) : IO Unit := do
         match restRev.reverse with
         | [] => "."
         | xs => String.intercalate "/" xs
-  let _ ← (← IO.Process.spawn { cmd := "mkdir", args := #["-p", outDir], stdout := .inherit, stderr := .inherit }).wait
+  let mkdirProc ← IO.Process.spawn
+    { cmd := "mkdir", args := #["-p", outDir], stdout := .inherit, stderr := .inherit }
+  let _ ← mkdirProc.wait
 
   let script : String := "NN/MLTheory/CROWN/Tactics/crown_verifier.py"
   let baseArgs : Array String :=
@@ -135,7 +137,8 @@ def main (args : List String) : IO Unit := do
   let forwarded : Array String :=
     (TorchLean.CLI.stripFlagValues args ["out", "format", "lean-namespace"]).toArray
 
-  let proc := (← IO.Process.spawn { cmd := "python3", args := baseArgs ++ forwarded, stdout := .piped, stderr := .inherit })
+  let proc ← IO.Process.spawn
+    { cmd := "python3", args := baseArgs ++ forwarded, stdout := .piped, stderr := .inherit }
   let out ← proc.stdout.readToEnd
   let code := (← proc.wait)
   if code != 0 then

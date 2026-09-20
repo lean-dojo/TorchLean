@@ -25,10 +25,14 @@ This module proves the next runtime layer boundary:
 `residual_stream ↦ LayerNorm(residual_stream, gamma, beta)`.
 
 That is the exact post-norm sublayer shape used by classical Transformer encoder blocks
-(`LayerNorm(x + Sublayer(x))`). We deliberately keep this proof factored at the residual-stream
-interface. It avoids treating LayerNorm's pointwise domain hypotheses as globally smooth,
-and it gives later full-block proofs a clean seam: compose a globally smooth residual graph with
-this pointwise post-norm graph once the context-threading adapter for unused parameters is in place.
+(`LayerNorm(x + Sublayer(x))`). Attention and feed-forward sublayers reach the *same* boundary, so
+`postNorm_backpropVec_eq_adjoint_fderiv_at` serves both of them; there is no separate per-sublayer
+theorem to keep in sync.
+
+We deliberately keep this proof factored at the residual-stream interface. It avoids treating
+LayerNorm's pointwise domain hypotheses as globally smooth, and it gives later full-block proofs a
+clean seam: compose a globally smooth residual graph with this pointwise post-norm graph once the
+context-threading adapter for unused parameters is in place.
 
 References:
 
@@ -45,7 +49,7 @@ namespace Proofs
 namespace Autograd
 namespace Transformer
 
-open Spec
+open Spec TorchLean
 
 universe u
 
@@ -71,7 +75,7 @@ abbrev ssMHAWithPostNorm (seqLen dModel numHeads headDim : Nat) : List Shape :=
 /-- Gamma parameter for the post-norm LayerNorm, weakened through any saved tensors. -/
 def idxMhaPostNormGamma {seqLen dModel numHeads headDim : Nat} {ss : List Shape} :
     Idx (ΓMHAWithNorm seqLen dModel numHeads headDim ++ ss) (LayerNorm.VecShape dModel) :=
-  _root_.Proofs.Autograd.Idx.weaken
+  Proofs.Idx.weaken
     (Γ := ΓMHAWithNorm seqLen dModel numHeads headDim)
     (s := LayerNorm.VecShape dModel)
     ⟨⟨5, by simp [ΓMHAWithNorm, MultiHeadAttention.ΓMHA]⟩,
@@ -81,7 +85,7 @@ def idxMhaPostNormGamma {seqLen dModel numHeads headDim : Nat} {ss : List Shape}
 /-- Beta parameter for the post-norm LayerNorm, weakened through any saved tensors. -/
 def idxMhaPostNormBeta {seqLen dModel numHeads headDim : Nat} {ss : List Shape} :
     Idx (ΓMHAWithNorm seqLen dModel numHeads headDim ++ ss) (LayerNorm.VecShape dModel) :=
-  _root_.Proofs.Autograd.Idx.weaken
+  Proofs.Idx.weaken
     (Γ := ΓMHAWithNorm seqLen dModel numHeads headDim)
     (s := LayerNorm.VecShape dModel)
     ⟨⟨6, by simp [ΓMHAWithNorm, MultiHeadAttention.ΓMHA]⟩,
@@ -154,48 +158,7 @@ Pointwise correctness for the single-graph residual-MHA post-norm sublayer.
 def mhaPostNormGraphFDerivCorrectAt
     {seqLen dModel numHeads headDim : Nat} (c ε : ℝ)
     (xV : CtxVec (ΓMHAWithNorm seqLen dModel numHeads headDim))
-    (hVarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        0 < CtxVec.get
-          (Γ := LayerNorm.ΓLN seqLen dModel ++ LayerNorm.ssPrefix6 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxVarEps (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := LayerNorm.ΓLN seqLen dModel)
-            (ss := LayerNorm.ssPrefix6 seqLen dModel)
-            (LayerNorm.layerNormPrefix6 (m := seqLen) (n := dModel) ε)
-            ((LayerNorm.packInputsCLM
-              (Γ := ΓMHAWithNorm seqLen dModel numHeads headDim ++
-                ssMHAResidual seqLen dModel numHeads headDim)
-              (m := seqLen) (n := dModel)
-              (mhaPostNormInputs (seqLen := seqLen) (dModel := dModel)
-                (numHeads := numHeads) (headDim := headDim)))
-              (Graph.evalVec
-                (Γ := ΓMHAWithNorm seqLen dModel numHeads headDim)
-                (ss := ssMHAResidual seqLen dModel numHeads headDim)
-                (mhaResidualWithNormParamsDGraph (seqLen := seqLen) (dModel := dModel)
-                  (numHeads := numHeads) (headDim := headDim) c).g xV))) i)
-    (hStdNe0 :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        CtxVec.get
-          (Γ := LayerNorm.ΓLN seqLen dModel ++ LayerNorm.ssPrefix7 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxStd (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := LayerNorm.ΓLN seqLen dModel)
-            (ss := LayerNorm.ssPrefix7 seqLen dModel)
-            (LayerNorm.layerNormPrefix7 (m := seqLen) (n := dModel) ε)
-            ((LayerNorm.packInputsCLM
-              (Γ := ΓMHAWithNorm seqLen dModel numHeads headDim ++
-                ssMHAResidual seqLen dModel numHeads headDim)
-              (m := seqLen) (n := dModel)
-              (mhaPostNormInputs (seqLen := seqLen) (dModel := dModel)
-                (numHeads := numHeads) (headDim := headDim)))
-              (Graph.evalVec
-                (Γ := ΓMHAWithNorm seqLen dModel numHeads headDim)
-                (ss := ssMHAResidual seqLen dModel numHeads headDim)
-                (mhaResidualWithNormParamsDGraph (seqLen := seqLen) (dModel := dModel)
-                  (numHeads := numHeads) (headDim := headDim) c).g xV))) i ≠ 0) :
+    (hε : 0 < ε) :
     GraphFDerivCorrectAt
       (Γ := ΓMHAWithNorm seqLen dModel numHeads headDim)
       (ss := ssMHAWithPostNorm seqLen dModel numHeads headDim)
@@ -218,7 +181,7 @@ def mhaPostNormGraphFDerivCorrectAt
         (Γ := ΓMHAWithNorm seqLen dModel numHeads headDim)
         (ss := ssMHAResidual seqLen dModel numHeads headDim)
         dgPrefix.g xV)
-      hVarEpsPos hStdNe0
+      hε
 
 /--
 End-to-end VJP theorem for the single-graph residual-MHA post-norm sublayer.
@@ -229,48 +192,7 @@ theorem mhaPostNorm_backpropVec_eq_adjoint_fderiv_at
     (seedV :
       CtxVec (ΓMHAWithNorm seqLen dModel numHeads headDim ++
         ssMHAWithPostNorm seqLen dModel numHeads headDim))
-    (hVarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        0 < CtxVec.get
-          (Γ := LayerNorm.ΓLN seqLen dModel ++ LayerNorm.ssPrefix6 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxVarEps (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := LayerNorm.ΓLN seqLen dModel)
-            (ss := LayerNorm.ssPrefix6 seqLen dModel)
-            (LayerNorm.layerNormPrefix6 (m := seqLen) (n := dModel) ε)
-            ((LayerNorm.packInputsCLM
-              (Γ := ΓMHAWithNorm seqLen dModel numHeads headDim ++
-                ssMHAResidual seqLen dModel numHeads headDim)
-              (m := seqLen) (n := dModel)
-              (mhaPostNormInputs (seqLen := seqLen) (dModel := dModel)
-                (numHeads := numHeads) (headDim := headDim)))
-              (Graph.evalVec
-                (Γ := ΓMHAWithNorm seqLen dModel numHeads headDim)
-                (ss := ssMHAResidual seqLen dModel numHeads headDim)
-                (mhaResidualWithNormParamsDGraph (seqLen := seqLen) (dModel := dModel)
-                  (numHeads := numHeads) (headDim := headDim) c).g xV))) i)
-    (hStdNe0 :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        CtxVec.get
-          (Γ := LayerNorm.ΓLN seqLen dModel ++ LayerNorm.ssPrefix7 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxStd (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := LayerNorm.ΓLN seqLen dModel)
-            (ss := LayerNorm.ssPrefix7 seqLen dModel)
-            (LayerNorm.layerNormPrefix7 (m := seqLen) (n := dModel) ε)
-            ((LayerNorm.packInputsCLM
-              (Γ := ΓMHAWithNorm seqLen dModel numHeads headDim ++
-                ssMHAResidual seqLen dModel numHeads headDim)
-              (m := seqLen) (n := dModel)
-              (mhaPostNormInputs (seqLen := seqLen) (dModel := dModel)
-                (numHeads := numHeads) (headDim := headDim)))
-              (Graph.evalVec
-                (Γ := ΓMHAWithNorm seqLen dModel numHeads headDim)
-                (ss := ssMHAResidual seqLen dModel numHeads headDim)
-                (mhaResidualWithNormParamsDGraph (seqLen := seqLen) (dModel := dModel)
-                  (numHeads := numHeads) (headDim := headDim) c).g xV))) i ≠ 0) :
+    (hε : 0 < ε) :
     Graph.backpropVec
         (Γ := ΓMHAWithNorm seqLen dModel numHeads headDim)
         (ss := ssMHAWithPostNorm seqLen dModel numHeads headDim)
@@ -293,7 +215,7 @@ theorem mhaPostNorm_backpropVec_eq_adjoint_fderiv_at
         (headDim := headDim) c ε)
       xV seedV
       (mhaPostNormGraphFDerivCorrectAt (seqLen := seqLen) (dModel := dModel)
-        (numHeads := numHeads) (headDim := headDim) c ε xV hVarEpsPos hStdNe0)
+        (numHeads := numHeads) (headDim := headDim) c ε xV hε)
 
 /-!
 ## Sequence feed-forward plus post-norm
@@ -318,7 +240,7 @@ abbrev ssSeqFFNWithPostNorm (seqLen dModel dFF : Nat) : List Shape :=
 /-- Gamma parameter for the FFN post-norm LayerNorm. -/
 def idxSeqFfnPostNormGamma {seqLen dModel : Nat} {ss : List Shape} :
     Idx (ΓSeqFFNWithNorm seqLen dModel ++ ss) (LayerNorm.VecShape dModel) :=
-  _root_.Proofs.Autograd.Idx.weaken
+  Proofs.Idx.weaken
     (Γ := ΓSeqFFNWithNorm seqLen dModel)
     (s := LayerNorm.VecShape dModel)
     ⟨⟨1, by simp [ΓSeqFFNWithNorm, ΓSeqFFN]⟩, by simp⟩
@@ -327,7 +249,7 @@ def idxSeqFfnPostNormGamma {seqLen dModel : Nat} {ss : List Shape} :
 /-- Beta parameter for the FFN post-norm LayerNorm. -/
 def idxSeqFfnPostNormBeta {seqLen dModel : Nat} {ss : List Shape} :
     Idx (ΓSeqFFNWithNorm seqLen dModel ++ ss) (LayerNorm.VecShape dModel) :=
-  _root_.Proofs.Autograd.Idx.weaken
+  Proofs.Idx.weaken
     (Γ := ΓSeqFFNWithNorm seqLen dModel)
     (s := LayerNorm.VecShape dModel)
     ⟨⟨2, by simp [ΓSeqFFNWithNorm, ΓSeqFFN]⟩, by simp⟩
@@ -407,44 +329,7 @@ def seqFfnPostNormGraphFDerivCorrectAt
     (b2 : Vec (Spec.Shape.size (SeqFFNModelShape seqLen dModel)))
     (ε : ℝ)
     (xV : CtxVec (ΓSeqFFNWithNorm seqLen dModel))
-    (hVarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        0 < CtxVec.get
-          (Γ := LayerNorm.ΓLN seqLen dModel ++ LayerNorm.ssPrefix6 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxVarEps (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := LayerNorm.ΓLN seqLen dModel)
-            (ss := LayerNorm.ssPrefix6 seqLen dModel)
-            (LayerNorm.layerNormPrefix6 (m := seqLen) (n := dModel) ε)
-            ((LayerNorm.packInputsCLM
-              (Γ := ΓSeqFFNWithNorm seqLen dModel ++ ssSeqFFNResidual seqLen dModel dFF)
-              (m := seqLen) (n := dModel)
-              (seqFfnPostNormInputs (seqLen := seqLen) (dModel := dModel) (dFF := dFF)))
-              (Graph.evalVec
-                (Γ := ΓSeqFFNWithNorm seqLen dModel)
-                (ss := ssSeqFFNResidual seqLen dModel dFF)
-                (seqFfnResidualWithNormParamsDGraph (seqLen := seqLen) (dModel := dModel)
-                  (dFF := dFF) fc1 b1 fc2 b2).g xV))) i)
-    (hStdNe0 :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        CtxVec.get
-          (Γ := LayerNorm.ΓLN seqLen dModel ++ LayerNorm.ssPrefix7 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxStd (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := LayerNorm.ΓLN seqLen dModel)
-            (ss := LayerNorm.ssPrefix7 seqLen dModel)
-            (LayerNorm.layerNormPrefix7 (m := seqLen) (n := dModel) ε)
-            ((LayerNorm.packInputsCLM
-              (Γ := ΓSeqFFNWithNorm seqLen dModel ++ ssSeqFFNResidual seqLen dModel dFF)
-              (m := seqLen) (n := dModel)
-              (seqFfnPostNormInputs (seqLen := seqLen) (dModel := dModel) (dFF := dFF)))
-              (Graph.evalVec
-                (Γ := ΓSeqFFNWithNorm seqLen dModel)
-                (ss := ssSeqFFNResidual seqLen dModel dFF)
-                (seqFfnResidualWithNormParamsDGraph (seqLen := seqLen) (dModel := dModel)
-                  (dFF := dFF) fc1 b1 fc2 b2).g xV))) i ≠ 0) :
+    (hε : 0 < ε) :
     GraphFDerivCorrectAt
       (Γ := ΓSeqFFNWithNorm seqLen dModel)
       (ss := ssSeqFFNWithPostNorm seqLen dModel dFF)
@@ -465,7 +350,7 @@ def seqFfnPostNormGraphFDerivCorrectAt
         (Γ := ΓSeqFFNWithNorm seqLen dModel)
         (ss := ssSeqFFNResidual seqLen dModel dFF)
         dgPrefix.g xV)
-      hVarEpsPos hStdNe0
+      hε
 
 /-- End-to-end VJP theorem for the single-graph residual-FFN post-norm sublayer. -/
 theorem seqFfnPostNorm_backpropVec_eq_adjoint_fderiv_at
@@ -481,44 +366,7 @@ theorem seqFfnPostNorm_backpropVec_eq_adjoint_fderiv_at
     (ε : ℝ)
     (xV : CtxVec (ΓSeqFFNWithNorm seqLen dModel))
     (seedV : CtxVec (ΓSeqFFNWithNorm seqLen dModel ++ ssSeqFFNWithPostNorm seqLen dModel dFF))
-    (hVarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        0 < CtxVec.get
-          (Γ := LayerNorm.ΓLN seqLen dModel ++ LayerNorm.ssPrefix6 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxVarEps (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := LayerNorm.ΓLN seqLen dModel)
-            (ss := LayerNorm.ssPrefix6 seqLen dModel)
-            (LayerNorm.layerNormPrefix6 (m := seqLen) (n := dModel) ε)
-            ((LayerNorm.packInputsCLM
-              (Γ := ΓSeqFFNWithNorm seqLen dModel ++ ssSeqFFNResidual seqLen dModel dFF)
-              (m := seqLen) (n := dModel)
-              (seqFfnPostNormInputs (seqLen := seqLen) (dModel := dModel) (dFF := dFF)))
-              (Graph.evalVec
-                (Γ := ΓSeqFFNWithNorm seqLen dModel)
-                (ss := ssSeqFFNResidual seqLen dModel dFF)
-                (seqFfnResidualWithNormParamsDGraph (seqLen := seqLen) (dModel := dModel)
-                  (dFF := dFF) fc1 b1 fc2 b2).g xV))) i)
-    (hStdNe0 :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        CtxVec.get
-          (Γ := LayerNorm.ΓLN seqLen dModel ++ LayerNorm.ssPrefix7 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxStd (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := LayerNorm.ΓLN seqLen dModel)
-            (ss := LayerNorm.ssPrefix7 seqLen dModel)
-            (LayerNorm.layerNormPrefix7 (m := seqLen) (n := dModel) ε)
-            ((LayerNorm.packInputsCLM
-              (Γ := ΓSeqFFNWithNorm seqLen dModel ++ ssSeqFFNResidual seqLen dModel dFF)
-              (m := seqLen) (n := dModel)
-              (seqFfnPostNormInputs (seqLen := seqLen) (dModel := dModel) (dFF := dFF)))
-              (Graph.evalVec
-                (Γ := ΓSeqFFNWithNorm seqLen dModel)
-                (ss := ssSeqFFNResidual seqLen dModel dFF)
-                (seqFfnResidualWithNormParamsDGraph (seqLen := seqLen) (dModel := dModel)
-                  (dFF := dFF) fc1 b1 fc2 b2).g xV))) i ≠ 0) :
+    (hε : 0 < ε) :
     Graph.backpropVec
         (Γ := ΓSeqFFNWithNorm seqLen dModel)
         (ss := ssSeqFFNWithPostNorm seqLen dModel dFF)
@@ -541,7 +389,7 @@ theorem seqFfnPostNorm_backpropVec_eq_adjoint_fderiv_at
         fc1 b1 fc2 b2 ε)
       xV seedV
       (seqFfnPostNormGraphFDerivCorrectAt (seqLen := seqLen) (dModel := dModel)
-        (dFF := dFF) fc1 b1 fc2 b2 ε xV hVarEpsPos hStdNe0)
+        (dFF := dFF) fc1 b1 fc2 b2 ε xV hε)
 
 /--
 The post-norm graph itself.
@@ -557,37 +405,18 @@ def postNormGraph {seqLen dModel : Nat} (ε : ℝ) :
 /--
 Pointwise correctness for the post-norm Transformer boundary.
 
-The two hypotheses are exactly LayerNorm's differentiability side conditions at the runtime point:
-the variance-plus-epsilon branch is positive, and the standard deviation denominator is nonzero.
+The only hypothesis is `0 < ε`. LayerNorm's differentiability side conditions at the runtime point
+(positive variance-plus-epsilon, nonzero standard deviation) follow from it.
 -/
 def postNormGraphFderivCorrectAt
     {seqLen dModel : Nat} (ε : ℝ) (xV : CtxVec (ΓPostNorm seqLen dModel))
-    (hVarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        0 < CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix6 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxVarEps (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix6 seqLen dModel)
-            (LayerNorm.layerNormPrefix6 (m := seqLen) (n := dModel) ε) xV) i)
-    (hStdNe0 :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix7 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxStd (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix7 seqLen dModel)
-            (LayerNorm.layerNormPrefix7 (m := seqLen) (n := dModel) ε) xV) i ≠ 0) :
+    (hε : 0 < ε) :
     GraphFDerivCorrectAt
       (Γ := ΓPostNorm seqLen dModel)
       (ss := ssPostNorm seqLen dModel)
       (postNormGraph (seqLen := seqLen) (dModel := dModel) ε) xV :=
   LayerNorm.layerNormGraphFderivCorrectAt
-    (m := seqLen) (n := dModel) ε xV hVarEpsPos hStdNe0
+    (m := seqLen) (n := dModel) ε xV hε
 
 /--
 VJP theorem for the post-norm Transformer boundary.
@@ -599,26 +428,7 @@ theorem postNorm_backpropVec_eq_adjoint_fderiv_at
     {seqLen dModel : Nat} (ε : ℝ)
     (xV : CtxVec (ΓPostNorm seqLen dModel))
     (seedV : CtxVec (ΓPostNorm seqLen dModel ++ ssPostNorm seqLen dModel))
-    (hVarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        0 < CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix6 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxVarEps (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix6 seqLen dModel)
-            (LayerNorm.layerNormPrefix6 (m := seqLen) (n := dModel) ε) xV) i)
-    (hStdNe0 :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix7 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxStd (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix7 seqLen dModel)
-            (LayerNorm.layerNormPrefix7 (m := seqLen) (n := dModel) ε) xV) i ≠ 0) :
+    (hε : 0 < ε) :
     Graph.backpropVec
         (Γ := ΓPostNorm seqLen dModel)
         (ss := ssPostNorm seqLen dModel)
@@ -630,7 +440,7 @@ theorem postNorm_backpropVec_eq_adjoint_fderiv_at
           (ss := ssPostNorm seqLen dModel)
           (postNormGraph (seqLen := seqLen) (dModel := dModel) ε)) xV).adjoint seedV :=
   LayerNorm.backprop_eq_adjoint_fderiv_layerNorm_at
-    (m := seqLen) (n := dModel) ε xV seedV hVarEpsPos hStdNe0
+    (m := seqLen) (n := dModel) ε xV seedV hε
 
 /--
 Calculus bridge for a residual block followed by post-norm LayerNorm.
@@ -641,8 +451,7 @@ Suppose some residual-producing map
 `residualPack : E → [residual_stream, gamma, beta]`
 
 is differentiable at `x`. It may come from residual attention, residual feed-forward, or any future
-block that produces the same LayerNorm context. If the LayerNorm domain hypotheses hold at
-`residualPack x`, then the composed post-norm map
+block that produces the same LayerNorm context. If `0 < ε`, then the composed post-norm map
 
 `x ↦ LayerNorm(residualPack x)`
 
@@ -658,26 +467,7 @@ theorem residualThenPostNorm_hasFDerivAt
     (DresidualPack : E →L[ℝ] CtxVec (ΓPostNorm seqLen dModel))
     (x : E)
     (hResidual : HasFDerivAt residualPack DresidualPack x)
-    (hVarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        0 < CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix6 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxVarEps (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix6 seqLen dModel)
-            (LayerNorm.layerNormPrefix6 (m := seqLen) (n := dModel) ε) (residualPack x)) i)
-    (hStdNe0 :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix7 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxStd (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix7 seqLen dModel)
-            (LayerNorm.layerNormPrefix7 (m := seqLen) (n := dModel) ε) (residualPack x)) i ≠ 0) :
+    (hε : 0 < ε) :
     HasFDerivAt
       (fun z : E =>
         Graph.evalVec
@@ -699,7 +489,7 @@ theorem residualThenPostNorm_hasFDerivAt
         (ss := ssPostNorm seqLen dModel)
         g (residualPack x) :=
     postNormGraphFderivCorrectAt
-      (seqLen := seqLen) (dModel := dModel) ε (residualPack x) hVarEpsPos hStdNe0
+      (seqLen := seqLen) (dModel := dModel) ε (residualPack x) hε
   rcases Graph.hasFDerivAt_evalVec_and_jvp_at
       (Γ := ΓPostNorm seqLen dModel)
       (ss := ssPostNorm seqLen dModel)
@@ -734,9 +524,8 @@ post-norm encoder block has two domain-sensitive LayerNorms:
    `[norm₁ + FFN(norm₁), gamma₂, beta₂]`;
 3. the second LayerNorm produces the block output.
 
-The theorem says that if the two residual-pack maps are differentiable and both LayerNorm calls
-satisfy their local denominator hypotheses, then the whole two-sublayer block is differentiable by
-ordinary Fréchet chain rule.
+The theorem says that if the two residual-pack maps are differentiable and both LayerNorm epsilons
+are positive, then the whole two-sublayer block is differentiable by ordinary Fréchet chain rule.
 
 The concrete graph-level VJP theorems for each sublayer are `mhaPostNorm_*` and `seqFfnPostNorm_*`.
 This bridge is the public mathematical composition point for Transformer, ViT, and GPT-style
@@ -755,62 +544,14 @@ theorem twoSublayerPostNormBlock_hasFDerivAt
         CtxVec (ΓPostNorm seqLen dModel))
     (x : E)
     (hAttnPack : HasFDerivAt attnPack DattnPack x)
-    (hNorm1VarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        0 < CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix6 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxVarEps (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix6 seqLen dModel)
-            (LayerNorm.layerNormPrefix6 (m := seqLen) (n := dModel) ε₁) (attnPack x)) i)
-    (hNorm1StdNe0 :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix7 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxStd (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix7 seqLen dModel)
-            (LayerNorm.layerNormPrefix7 (m := seqLen) (n := dModel) ε₁) (attnPack x)) i ≠ 0)
+    (hε₁ : 0 < ε₁)
     (hFfnPack :
       HasFDerivAt ffnPack DffnPack
         (Graph.evalVec
           (Γ := ΓPostNorm seqLen dModel)
           (ss := ssPostNorm seqLen dModel)
           (postNormGraph (seqLen := seqLen) (dModel := dModel) ε₁) (attnPack x)))
-    (hNorm2VarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        0 < CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix6 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxVarEps (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix6 seqLen dModel)
-            (LayerNorm.layerNormPrefix6 (m := seqLen) (n := dModel) ε₂)
-            (ffnPack
-              (Graph.evalVec
-                (Γ := ΓPostNorm seqLen dModel)
-                (ss := ssPostNorm seqLen dModel)
-                (postNormGraph (seqLen := seqLen) (dModel := dModel) ε₁) (attnPack x)))) i)
-    (hNorm2StdNe0 :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix7 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxStd (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix7 seqLen dModel)
-            (LayerNorm.layerNormPrefix7 (m := seqLen) (n := dModel) ε₂)
-            (ffnPack
-              (Graph.evalVec
-                (Γ := ΓPostNorm seqLen dModel)
-                (ss := ssPostNorm seqLen dModel)
-                (postNormGraph (seqLen := seqLen) (dModel := dModel) ε₁) (attnPack x)))) i ≠ 0) :
+    (hε₂ : 0 < ε₂) :
     HasFDerivAt
       (fun z : E =>
         Graph.evalVec
@@ -858,7 +599,7 @@ theorem twoSublayerPostNormBlock_hasFDerivAt
         x :=
     residualThenPostNorm_hasFDerivAt
       (seqLen := seqLen) (dModel := dModel) ε₁
-      attnPack DattnPack x hAttnPack hNorm1VarEpsPos hNorm1StdNe0
+      attnPack DattnPack x hAttnPack hε₁
   have hFfnAfterNorm1 :
       HasFDerivAt (fun z : E => ffnPack (norm1 z))
         (DffnPack.comp
@@ -881,94 +622,7 @@ theorem twoSublayerPostNormBlock_hasFDerivAt
             (ss := ssPostNorm seqLen dModel)
             (postNormGraph (seqLen := seqLen) (dModel := dModel) ε₁))
           (attnPack x)).comp DattnPack))
-      x hFfnAfterNorm1 hNorm2VarEpsPos hNorm2StdNe0
-
-/--
-Named theorem for the post-normalized residual-attention interface.
-
-The residual attention graph proves production of the first input in this context:
-`residual_stream = x + MHA(x)`. This theorem proves the LayerNorm pass once that residual stream is
-the current tensor.
--/
-theorem residualAttentionPostNorm_backpropVec_eq_adjoint_fderiv_at
-    {seqLen dModel : Nat} (ε : ℝ)
-    (xV : CtxVec (ΓPostNorm seqLen dModel))
-    (seedV : CtxVec (ΓPostNorm seqLen dModel ++ ssPostNorm seqLen dModel))
-    (hVarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        0 < CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix6 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxVarEps (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix6 seqLen dModel)
-            (LayerNorm.layerNormPrefix6 (m := seqLen) (n := dModel) ε) xV) i)
-    (hStdNe0 :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix7 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxStd (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix7 seqLen dModel)
-            (LayerNorm.layerNormPrefix7 (m := seqLen) (n := dModel) ε) xV) i ≠ 0) :
-    Graph.backpropVec
-        (Γ := ΓPostNorm seqLen dModel)
-        (ss := ssPostNorm seqLen dModel)
-        (postNormGraph (seqLen := seqLen) (dModel := dModel) ε) xV seedV
-      =
-    (fderiv ℝ
-        (Graph.evalVec
-          (Γ := ΓPostNorm seqLen dModel)
-          (ss := ssPostNorm seqLen dModel)
-          (postNormGraph (seqLen := seqLen) (dModel := dModel) ε)) xV).adjoint seedV :=
-  postNorm_backpropVec_eq_adjoint_fderiv_at
-    (seqLen := seqLen) (dModel := dModel) ε xV seedV hVarEpsPos hStdNe0
-
-/--
-Named theorem for the post-normalized residual feed-forward interface.
-
-The position-wise FFN proof establishes the smooth residual update. This theorem is the common
-LayerNorm boundary used after that update in post-norm encoder blocks.
--/
-theorem residualFeedForwardPostNorm_backpropVec_eq_adjoint_fderiv_at
-    {seqLen dModel : Nat} (ε : ℝ)
-    (xV : CtxVec (ΓPostNorm seqLen dModel))
-    (seedV : CtxVec (ΓPostNorm seqLen dModel ++ ssPostNorm seqLen dModel))
-    (hVarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        0 < CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix6 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxVarEps (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix6 seqLen dModel)
-            (LayerNorm.layerNormPrefix6 (m := seqLen) (n := dModel) ε) xV) i)
-    (hStdNe0 :
-      ∀ i : Fin (Spec.Shape.size (LayerNorm.VecShape seqLen)),
-        CtxVec.get
-          (Γ := ΓPostNorm seqLen dModel ++ LayerNorm.ssPrefix7 seqLen dModel)
-          (s := LayerNorm.VecShape seqLen)
-          (LayerNorm.idxStd (m := seqLen) (n := dModel))
-          (Graph.evalVec
-            (Γ := ΓPostNorm seqLen dModel)
-            (ss := LayerNorm.ssPrefix7 seqLen dModel)
-            (LayerNorm.layerNormPrefix7 (m := seqLen) (n := dModel) ε) xV) i ≠ 0) :
-    Graph.backpropVec
-        (Γ := ΓPostNorm seqLen dModel)
-        (ss := ssPostNorm seqLen dModel)
-        (postNormGraph (seqLen := seqLen) (dModel := dModel) ε) xV seedV
-      =
-    (fderiv ℝ
-        (Graph.evalVec
-          (Γ := ΓPostNorm seqLen dModel)
-          (ss := ssPostNorm seqLen dModel)
-          (postNormGraph (seqLen := seqLen) (dModel := dModel) ε)) xV).adjoint seedV :=
-  postNorm_backpropVec_eq_adjoint_fderiv_at
-    (seqLen := seqLen) (dModel := dModel) ε xV seedV hVarEpsPos hStdNe0
+      x hFfnAfterNorm1 hε₂
 
 end
 

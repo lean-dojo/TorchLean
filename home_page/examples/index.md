@@ -74,10 +74,10 @@ behind it.
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/blueprint/Floating-Point-and-Native-Boundaries/Floating-Point-Semantics/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/float32-ieee-new.png' | relative_url }}" alt="Float32 and IEEE-754 checks example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/floatlib-binary-formats.svg' | relative_url }}" alt="FloatLib configured binary32 and binary128 formats: sign, exponent, fraction, and normal significand precision."/>
     <span class="showcase-body">
-      <span class="showcase-title">Float32 and IEEE-754</span>
-      <span class="showcase-text">Compare real specifications, rounded <code>FP32</code> models, executable IEEE bit semantics, and runtime <code>Float32</code> bridge assumptions.</span>
+      <span class="showcase-title">Floating-Point Formats and Proofs</span>
+      <span class="showcase-text">Compare FloatLib's executable binary arithmetic with rounded <code>FP32</code> models and TorchLean's proofs of agreement with Lean's logical <code>Float32</code> operations.</span>
       <span class="showcase-link">Open floating-point guide</span>
     </span>
   </a>

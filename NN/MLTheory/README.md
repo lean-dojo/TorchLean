@@ -88,8 +88,9 @@ Current coverage includes ordinary first-order optimizers and newer optimizer-ad
 
 For Muon, the main handles are grouped by role:
 
-- `OptimizerLaws.lean` gives the generic optimizer interface and reusable step/stream laws.
-- `Muon.lean` gives the orthogonalizer contracts, Muon update equations, QR/Gram-Schmidt exact
+- `Optimization/OptimizerLaws.lean` gives the generic optimizer interface and reusable
+  step/stream laws.
+- `Optimization/Muon.lean` and `Optimization/Muon/` give the orthogonalizer contracts, Muon update equations, QR/Gram-Schmidt exact
   certificates, and Newton-Schulz residual-checked certificates.
 - `NN/Examples/Optimization/MuonCertificates.lean` shows how a downstream proof consumes the
   packaged exact or approximate certificate.
@@ -99,7 +100,10 @@ but the theorem-level claim is made through a residual condition on the produced
 keeps CUDA or other fast backends honest: they should target the same checked exact/approximate
 backend record rather than changing Muon's semantics.
 
-The convergence theorems in this directory are exact `ℝ` statements. Applying them to executable
+The convergence theorems in this directory are exact `ℝ` statements. For strongly convex
+gradient descent, `Optimization/StronglyConvexGD.lean` states the contraction with the explicit
+`q^k` factor (`dist_sq_iterate_le_of_q_lt_one`) and derives the step-size form
+(`dist_sq_iterate_le_of_step_size`). Applying them to executable
 Float32 operations, CUDA kernels, or a particular trained model requires a separate refinement
 argument with explicit floating-point error accounting.
 
@@ -114,8 +118,10 @@ The generative files state the algebra that later examples cite:
 
 The self-supervised files follow the same style. MAE, JEPA, VICReg, Barlow-style terms, masking, and
 view-alignment predicates are stated as finite mathematical objects. The Lean claim names
-the objective, mask, view graph, or anti-collapse condition that the example uses; representation
-quality and generalization claims can then be layered on top with their own assumptions.
+the objective, mask, view graph, or anti-collapse condition that the example uses. Masked losses
+count array occurrences, including duplicate indices. A positive collapse penalty does not alone
+exclude a collapsed minimizer or prove representation quality. JEPA target extensionality is a
+value-level identity, not a stop-gradient theorem.
 
 ## Learning Theory And Floating-Point Bridges
 
@@ -123,9 +129,17 @@ quality and generalization claims can then be layered on top with their own assu
 statements live over exact real numbers. Others use executable IEEE32-style semantics to make the
 finite path explicit.
 
-The ridge-regression bridge is deliberately local. It relates a small executable binary32 program to
-a semantics that rounds after each primitive, under finiteness assumptions. Broader `Float` or CUDA
-claims should point to the runtime bridge or trust boundary used for that execution path.
+The real ridge theorem assumes positive regularization and bounded training, replacement, and
+test examples. Its explicit bound is `4 * X^2 * Y^2 * (λ + X^2)^2 / (λ^3 * N)`, so it decays
+as `1/N` with the other parameters fixed. The separate binary32 bridge relates expression
+evaluation to semantics that round after each primitive, under a `FiniteEval` hypothesis. It does
+not transfer the real stability bound to floating-point training.
+
+Expected-loss stability predicates use totalized Bochner integrals; finite-expectation readings
+require integrability assumptions. The dynamics ISS predicate states the trajectory inequality
+without class-K/class-KL conditions, and the real stability margin is a supremum rather than a
+proved largest invariant radius. The privacy layer proves budget monotonicity and measurable
+post-processing, not a privacy guarantee for a concrete training procedure.
 
 ## Adding Theory
 

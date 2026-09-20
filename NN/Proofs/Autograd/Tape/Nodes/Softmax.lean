@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Tape.Nodes.Matrix
+public import NN.Proofs.Autograd.Tape.Nodes.Context
+public import NN.Proofs.Autograd.FDeriv.LogSoftmax
 
 /-!
 # Last-axis softmax and log-softmax tape nodes
@@ -20,8 +21,8 @@ Softmax and log-softmax over matrix rows, together with their Jacobian/VJP lemma
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -50,14 +51,20 @@ def unrows {m n : Nat} (r : Fin m → Vec n) : Vec (MNSize m n) :=
     let p : Fin m × Fin n := (finProdFinEquiv : Fin m × Fin n ≃ Fin (m * n)).symm ip
     r p.1 p.2
 
-@[simp] lemma divNat_finProdFinEquiv {m n : Nat} (p : Fin m × Fin n) :
+/-- Row recovered from a flat index built by `finProdFinEquiv`.
+
+Together with `modNat_finProdFinEquiv` this is the row-major convention spelled out: pairing then
+dividing gets you back where you started. Both are `simp` lemmas so `rows`/`unrows` round-trip
+without any manual index juggling. -/
+@[simp] theorem divNat_finProdFinEquiv {m n : Nat} (p : Fin m × Fin n) :
     (finProdFinEquiv (m := m) (n := n) p).divNat = p.1 := by
   have h := congrArg Prod.fst
     ((finProdFinEquiv : Fin m × Fin n ≃ Fin (m * n)).left_inv p)
   -- `finProdFinEquiv.symm` is `(divNat, modNat)`.
   simpa [finProdFinEquiv] using h
 
-@[simp] lemma modNat_finProdFinEquiv {m n : Nat} (p : Fin m × Fin n) :
+/-- Column recovered from a flat index built by `finProdFinEquiv`. -/
+@[simp] theorem modNat_finProdFinEquiv {m n : Nat} (p : Fin m × Fin n) :
     (finProdFinEquiv (m := m) (n := n) p).modNat = p.2 := by
   have h := congrArg Prod.snd
     ((finProdFinEquiv : Fin m × Fin n ≃ Fin (m * n)).left_inv p)
@@ -781,7 +788,7 @@ def logSoftmaxLast {Γ : List Shape} {m n : Nat}
                 (castVec hsz.symm (LogSoftmaxLastAxis.vjpMN (m := m) (n := n) xMN δMN))) :=
                   hctx.symm )
 
-/-- `NodeFDerivCorrect` for `softmax_last` (rowwise softmax). -/
+/-- `NodeFDerivCorrect` for `softmaxLast` (rowwise softmax). -/
 def softmaxLastFderiv {Γ : List Shape} {m n : Nat}
     (idx : Idx Γ (.dim m (.dim n .scalar))) :
     NodeFDerivCorrect (softmaxLast (Γ := Γ) (m := m) (n := n) idx) := by
@@ -866,7 +873,7 @@ def softmaxLastFderiv {Γ : List Shape} {m n : Nat}
         ((outCast.comp ((SoftmaxLastAxis.derivMN (m := m) (n := n) xMN).comp getMNCLM)) dxV) ip :=
           hR.symm
 
-/-- `NodeFDerivCorrect` for `log_softmax_last` (rowwise log-softmax). -/
+/-- `NodeFDerivCorrect` for `logSoftmaxLast` (rowwise log-softmax). -/
 def logSoftmaxLastFderiv {Γ : List Shape} {m n : Nat}
     (idx : Idx Γ (.dim m (.dim n .scalar))) :
     NodeFDerivCorrect (logSoftmaxLast (Γ := Γ) (m := m) (n := n) idx) := by

@@ -6,9 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Lean.Data.Json
 public import NN.Core.ExternalProcess
-import Lean
 
 /-!
 # Julia subprocess integration (optional)
@@ -61,16 +59,6 @@ def resolveJuliaCmd (juliaCmd : String := "julia") : IO String := do
 -/
 
 /--
-Check whether Julia is available by running `julia --version`.
-
-This is conservative by design: any exception (including “executable not found”) is treated as
-“not available”.
--/
-def isAvailable (juliaCmd : String := "julia") : IO Bool := do
-  let cmd ← resolveJuliaCmd juliaCmd
-  TorchLean.External.Process.isCmdAvailable cmd #["--version"]
-
-/--
 Require Julia to be available and return the resolved command.
 
 This is suitable for example runners that want a friendly error message when Julia is missing.
@@ -93,7 +81,8 @@ integrations.
 def run (args : Array String) (cwd : Option String := some ".") (juliaCmd : String := "julia") :
     IO String := do
   let cmd ← ensureAvailable juliaCmd
-  TorchLean.External.Process.runStdoutChecked (ctx := "Julia") (cmd := cmd) (args := args) (cwd := cwd)
+  TorchLean.External.Process.runStdoutChecked (ctx := "Julia") (cmd := cmd) (args := args)
+    (cwd := cwd)
 
 /--
 Run Julia and parse `stdout` as JSON.

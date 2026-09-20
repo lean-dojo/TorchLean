@@ -7,7 +7,11 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.RL.Environment
-public import NN.Tensor
+public import Mathlib.Algebra.Order.Field.Basic
+import Mathlib.Tactic.NormNum.Inv
+import Mathlib.Tactic.NormNum.Pow
+import Mathlib.Tactic.Positivity.Finset
+public import NN.Spec.Core.Tensor.Core
 
 /-!
 # RL Trust Boundary (External Rollouts)
@@ -33,7 +37,8 @@ lets downstream training code share one common input type for both:
 
 - Gymnasium API (`reset`/`step`, `terminated` vs `truncated`): https://gymnasium.farama.org/
 - The original Gym API paper (background on the env interface): https://arxiv.org/abs/1606.01540
-- Schulman et al., "Proximal Policy Optimization Algorithms" (2017): https://arxiv.org/abs/1707.06347
+- Schulman et al., "Proximal Policy Optimization Algorithms" (2017):
+  https://arxiv.org/abs/1707.06347
 - Trust-boundary pattern used elsewhere in TorchLean (e.g. the Arb oracle): `NN.Floats.Arb`.
 -/
 
@@ -43,8 +48,8 @@ namespace Runtime
 namespace RL
 namespace Boundary
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 /-!
 ## Basic numeric checks
@@ -58,11 +63,9 @@ def isFiniteFloat (x : Float) : Bool :=
   !(x.isNaN || x.isInf)
 
 /-- Apply a scalar boolean predicate to every entry of a tensor. -/
-def tensorAll {α : Type} {s : Shape} (p : α → Bool) : Tensor α s → Bool
-  | Tensor.scalar x => p x
-  | Tensor.dim (n := n) (s := s') f =>
-      let idxs : Array (Fin n) := Array.ofFn (fun i => i)
-      idxs.foldl (fun ok i => ok && tensorAll (α := α) (s := s') p (f i)) true
+def tensorAll {α : Type} [TorchLean.Storage α] {s : Shape}
+    (p : α → Bool) (tensor : Tensor α s) : Bool :=
+  TorchLean.Tensor.Internal.Rep.foldl (fun ok value => ok && p value) true tensor
 
 /-- `true` iff every entry of the tensor is finite. -/
 def tensorFinite {s : Shape} (t : Tensor Float s) : Bool :=
@@ -195,7 +198,8 @@ def checkDoneFlags {obsShape : Shape} {nActions : Nat}
     (terminated truncated : Bool) :
     Except String Unit := do
   if c.requireExclusiveDoneFlags && terminated && truncated then
-    throw s!"RL boundary: both `terminated` and `truncated` are true (contract requires exclusivity)."
+    throw ("RL boundary: both `terminated` and `truncated` are true "
+      ++ "(contract requires exclusivity).")
 
 /--
 Validate a transition when the action is already range-checked (`Fin nActions`).
@@ -211,8 +215,10 @@ def checkTransitionFin {obsShape : Shape} {nActions : Nat}
     Except String (Transition obsShape nActions) := do
   checkDoneFlags (obsShape := obsShape) (nActions := nActions) c terminated truncated
   checkReward (obsShape := obsShape) (nActions := nActions) c reward
-  checkObservation (obsShape := obsShape) (nActions := nActions) c (field := "observation") observation
-  checkObservation (obsShape := obsShape) (nActions := nActions) c (field := "nextObservation") nextObservation
+  checkObservation (obsShape := obsShape) (nActions := nActions) c (field := "observation")
+    observation
+  checkObservation (obsShape := obsShape) (nActions := nActions) c (field := "nextObservation")
+    nextObservation
   pure
     { observation := observation
       action := action
@@ -230,8 +236,8 @@ def checkTransition {obsShape : Shape} {nActions : Nat}
     (terminated truncated : Bool) :
     Except String (Transition obsShape nActions) := do
   let action ← checkAction nActions action
-  checkTransitionFin (obsShape := obsShape) (nActions := nActions) c observation nextObservation action reward
-    terminated truncated
+  checkTransitionFin (obsShape := obsShape) (nActions := nActions) c observation nextObservation
+    action reward terminated truncated
 
 /-!
 ## Proposition-level contract
@@ -285,11 +291,14 @@ def DoneFlagsHolds (c : Contract obsShape nActions) (terminated truncated : Bool
 `ContractHolds c t` means the external transition `t` satisfies the Prop-level trust-boundary
 contract induced by `c`.
 -/
-structure ContractHolds (c : Contract obsShape nActions) (t : Transition obsShape nActions) : Prop where
-  doneFlags : DoneFlagsHolds (obsShape := obsShape) (nActions := nActions) c t.terminated t.truncated
+structure ContractHolds (c : Contract obsShape nActions) (t : Transition obsShape nActions) :
+    Prop where
+  doneFlags :
+    DoneFlagsHolds (obsShape := obsShape) (nActions := nActions) c t.terminated t.truncated
   reward : RewardHolds (obsShape := obsShape) (nActions := nActions) c t.reward
   observation : ObservationHolds (obsShape := obsShape) (nActions := nActions) c t.observation
-  nextObservation : ObservationHolds (obsShape := obsShape) (nActions := nActions) c t.nextObservation
+  nextObservation :
+    ObservationHolds (obsShape := obsShape) (nActions := nActions) c t.nextObservation
 
 end PropContract
 

@@ -42,33 +42,34 @@ namespace NN.Verification.LiRPA.TransformerEncoder
 
 open NN.MLTheory.CROWN.Graph
 open NN.MLTheory.CROWN
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /-- Small fixed graph with residual + layernorm + FFN (see module doc). -/
 def buildGraph : Graph :=
   let nModel := 4
   let scoresDim := 5
   let nHidden := 6
-  let inputNode : Node := { id := 0, parents := #[], kind := .input, outShape := .dim nModel .scalar }
-  let scoreNode : Node := { id := 1, parents := #[0], kind := .linear, outShape := .dim scoresDim .scalar }
+  let inputNode : Node := { id := 0, parents := #[], kind := .input, outShape := [nModel] }
+  let scoreNode : Node := { id := 1, parents := #[0], kind := .linear, outShape := [scoresDim] }
   let softmaxNode : Node :=
-    { id := 2, parents := #[1], kind := .softmax (axis := 0), outShape := .dim scoresDim .scalar }
-  let attentionValueNode : Node := { id := 3, parents := #[2], kind := .matmul, outShape := .dim nModel .scalar }
+    { id := 2, parents := #[1], kind := .softmax (axis := 0), outShape := [scoresDim] }
+  let attentionValueNode : Node :=
+    { id := 3, parents := #[2], kind := .matmul, outShape := [nModel] }
   let attentionResidualNode : Node :=
-    { id := 4, parents := #[0, 3], kind := .add, outShape := .dim nModel .scalar }
+    { id := 4, parents := #[0, 3], kind := .add, outShape := [nModel] }
   let firstLayerNormNode : Node :=
-    { id := 5, parents := #[4], kind := .layernorm (axis := 0), outShape := .dim nModel .scalar }
+    { id := 5, parents := #[4], kind := .layernorm (axis := 0), outShape := [nModel] }
   let feedForwardHiddenNode : Node :=
-    { id := 6, parents := #[5], kind := .linear, outShape := .dim nHidden .scalar }
+    { id := 6, parents := #[5], kind := .linear, outShape := [nHidden] }
   let feedForwardReluNode : Node :=
-    { id := 7, parents := #[6], kind := .relu, outShape := .dim nHidden .scalar }
+    { id := 7, parents := #[6], kind := .relu, outShape := [nHidden] }
   let feedForwardOutputNode : Node :=
-    { id := 8, parents := #[7], kind := .linear, outShape := .dim nModel .scalar }
+    { id := 8, parents := #[7], kind := .linear, outShape := [nModel] }
   let feedForwardResidualNode : Node :=
-    { id := 9, parents := #[5, 8], kind := .add, outShape := .dim nModel .scalar }
+    { id := 9, parents := #[5, 8], kind := .add, outShape := [nModel] }
   let finalLayerNormNode : Node :=
-    { id := 10, parents := #[9], kind := .layernorm (axis := 0), outShape := .dim nModel .scalar }
+    { id := 10, parents := #[9], kind := .layernorm (axis := 0), outShape := [nModel] }
   { nodes :=
       #[ inputNode
        , scoreNode
@@ -86,21 +87,33 @@ def buildGraph : Graph :=
 def seedParamsFloat : ParamStore Float :=
   let nModel := 4; let scoresDim := 5; let nHidden := 6
   let scoreWeight : Tensor Float [scoresDim, nModel] :=
-    Tensor.dim (fun i => Tensor.dim (fun j => Tensor.scalar (Float.ofNat (1 + (i.val + 2*j.val)))))
-  let scoreBias : Tensor Float [scoresDim] := Tensor.dim (fun i => Tensor.scalar (0.1 *
-    Float.ofNat i.val))
+    Tensor.generate [scoresDim, nModel] fun
+      | [i, j] => Float.ofNat (1 + i + 2 * j)
+      | _ => 0.0
+  let scoreBias : Tensor Float [scoresDim] :=
+    Tensor.generate [scoresDim] fun
+      | [i] => 0.1 * Float.ofNat i
+      | _ => 0.0
   let valueWeight : Tensor Float [nModel, scoresDim] :=
-    Tensor.dim (fun i => Tensor.dim (fun j => Tensor.scalar (Float.ofNat (2 + (i.val + j.val)))))
+    Tensor.generate [nModel, scoresDim] fun
+      | [i, j] => Float.ofNat (2 + i + j)
+      | _ => 0.0
   let feedForwardHiddenWeight : Tensor Float [nHidden, nModel] :=
-    Tensor.dim (fun i => Tensor.dim (fun j => Tensor.scalar (Float.ofNat (1 + ((i.val + j.val) %
-      3)))))
-  let feedForwardHiddenBias : Tensor Float [nHidden] := Tensor.dim (fun i => Tensor.scalar (0.05 *
-    Float.ofNat i.val))
+    Tensor.generate [nHidden, nModel] fun
+      | [i, j] => Float.ofNat (1 + ((i + j) % 3))
+      | _ => 0.0
+  let feedForwardHiddenBias : Tensor Float [nHidden] :=
+    Tensor.generate [nHidden] fun
+      | [i] => 0.05 * Float.ofNat i
+      | _ => 0.0
   let feedForwardOutputWeight : Tensor Float [nModel, nHidden] :=
-    Tensor.dim (fun i => Tensor.dim (fun j => Tensor.scalar (Float.ofNat (2 + ((i.val + j.val) %
-      4)))))
-  let feedForwardOutputBias : Tensor Float [nModel] := Tensor.dim (fun i => Tensor.scalar (0.02 *
-    Float.ofNat i.val))
+    Tensor.generate [nModel, nHidden] fun
+      | [i, j] => Float.ofNat (2 + ((i + j) % 4))
+      | _ => 0.0
+  let feedForwardOutputBias : Tensor Float [nModel] :=
+    Tensor.generate [nModel] fun
+      | [i] => 0.02 * Float.ofNat i
+      | _ => 0.0
   let emptyStore : ParamStore Float := {}
   let withScoreLinear :=
     { emptyStore with
@@ -119,17 +132,15 @@ def seedParamsFloat : ParamStore Float :=
     { withValueProjection with
       linearWB :=
         withValueProjection.linearWB.insert 6
-          ({ m := nHidden, n := nModel, w := feedForwardHiddenWeight, b := feedForwardHiddenBias }) }
+          ({ m := nHidden, n := nModel, w := feedForwardHiddenWeight,
+             b := feedForwardHiddenBias }) }
   let withFeedForwardOutput :=
     { withFeedForwardHidden with
       linearWB :=
         withFeedForwardHidden.linearWB.insert 8
-          ({ m := nModel, n := nHidden, w := feedForwardOutputWeight, b := feedForwardOutputBias }) }
+          ({ m := nModel, n := nHidden, w := feedForwardOutputWeight,
+             b := feedForwardOutputBias }) }
   withFeedForwardOutput
-
-/-- Insert an $L^\infty$ input box of radius `eps` around a fixed center point. -/
-def seedInputFloat (ps : ParamStore Float) (eps : Float) : ParamStore Float :=
-  NN.Verification.LiRPA.ExampleInputs.seedNaturalInputBox 0 4 eps ps
 
 /--
 Check an IBP certificate JSON against this transformer-encoder graph.
@@ -138,7 +149,9 @@ This is wired into `lake exe verify -- lirpa-encoder [path]`.
 -/
 def verifyCert (path : String) : IO Unit := do
   let g := buildGraph
-  let ps := seedInputFloat (seedParamsFloat) (eps := (0.5))
+  -- Every input coordinate gets the box $[x_i - \varepsilon, x_i + \varepsilon]$; the
+  -- graph has 4 inputs, ids `0 .. 3`.
+  let ps := ExampleInputs.seedNaturalInputBox 0 4 0.5 seedParamsFloat
   NN.Verification.IBPCert.checkOrThrow g ps (outId := 10) path
 
 end NN.Verification.LiRPA.TransformerEncoder

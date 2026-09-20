@@ -17,11 +17,13 @@ This file stays on the *mathematical* side of training:
 
 - `Graph.scalarLoss_grad_correct` specializes the tape/DAG backprop theorem to the scalar-loss
   convention used by training loops.
-- `SGD.step` lifts the single-tensor SGD equation to a heterogeneous `_root_.TorchLean.TensorPack` of parameters.
+- `SGD.step` lifts the single-tensor SGD equation to a heterogeneous `TorchLean.TensorPack` of
+  parameters.
 
 It is not another runtime optimizer implementation. Runtime files such as
-`Runtime.Autograd.Torch.ParamList.sgdStep{,Fast}` and CUDA eager `sgdStepAllCuda` mutate `IO.Ref`s or
-device buffers; their intended mathematical update is the pure context equation stated here.
+`Runtime.Autograd.Torch.ParamList.sgdStep{,Fast}` and CUDA eager `sgdStepAllCudaMap` mutate
+`IO.Ref`s or device buffers; their intended mathematical update is the pure context equation
+stated here.
 
 ## PyTorch correspondence / citations
 - “Scalar loss” convention: backprop starts with upstream gradient 1.
@@ -37,8 +39,8 @@ namespace Proofs
 namespace Autograd
 namespace Algebra
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open TensorAlgebra
 
 noncomputable section
@@ -57,12 +59,12 @@ nodes, and the final scalar loss. Reverse-mode training seeds all non-output cot
 and the scalar-loss output cotangent with `1`, matching `loss.backward()` in PyTorch.
 -/
 def seedScalarLoss {ss : List Shape} (_g : Graph (α := α) Δ Γ (ss ++ [Shape.scalar]))
-    (_x : _root_.TorchLean.TensorPack α Γ) : _root_.TorchLean.TensorPack α (Γ ++ (ss ++ [Shape.scalar])) :=
-  let zPrev : _root_.TorchLean.TensorPack α (Γ ++ ss) := _root_.TorchLean.TensorPack.zero (α := α) (ss := Γ ++ ss)
+    (_x : TorchLean.TensorPack α Γ) : TorchLean.TensorPack α (Γ ++ (ss ++ [Shape.scalar])) :=
+  let zPrev : TorchLean.TensorPack α (Γ ++ ss) := TorchLean.TensorPack.zero (α := α) (ss := Γ ++ ss)
   let one : Tensor α .scalar := Tensor.scalar (1 : α)
-  let seed' : _root_.TorchLean.TensorPack α ((Γ ++ ss) ++ [Shape.scalar]) := _root_.TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ :=
-    Shape.scalar) zPrev one
-  _root_.TorchLean.TensorPack.cast (α := α) (h := List.append_assoc Γ ss [Shape.scalar]) seed'
+  let seed' : TorchLean.TensorPack α ((Γ ++ ss) ++ [Shape.scalar]) :=
+    TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ := Shape.scalar) zPrev one
+  TorchLean.TensorPack.cast (α := α) (h := List.append_assoc Γ ss [Shape.scalar]) seed'
 
 /--
 Scalar-loss specialization of `Graph.backprop_correct`.
@@ -75,11 +77,11 @@ backprop is the cotangent for the scalar loss”.
 theorem scalarLoss_grad_correct {ss : List Shape} (g : Graph (α := α) Δ Γ (ss ++ [Shape.scalar])) :
     ∀ x dx d,
       let seed := seedScalarLoss (α := α) (Γ := Γ) (ss := ss) g x
-      TensorPack.dotList (α := α) (jvpCtx (α := α) (Δ := Δ) (Γ := Γ) (ss := ss ++ [Shape.scalar]) g x dx
-        d) seed
+      TensorPack.dotList (α := α)
+        (jvpCtx (α := α) (Δ := Δ) (Γ := Γ) (ss := ss ++ [Shape.scalar]) g x dx d) seed
         =
-      TensorPack.dotList (α := α) dx (backpropCtx (α := α) (Δ := Δ) (Γ := Γ) (ss := ss ++ [Shape.scalar])
-        g x d seed) := by
+      TensorPack.dotList (α := α) dx
+        (backpropCtx (α := α) (Δ := Δ) (Γ := Γ) (ss := ss ++ [Shape.scalar]) g x d seed) := by
   intro x dx d seed
   simpa using (Graph.backprop_correct (α := α) (Δ := Δ) (Γ := Γ) (ss := ss ++ [Shape.scalar]) g x dx
     d seed)
@@ -100,12 +102,15 @@ This is the context-level version of the ordinary tensor update
 references, materializing tensors eagerly, or launching CUDA kernels; this definition is the
 side-effect-free algebraic target those implementations are meant to realize.
 -/
-def step {Γ : List Shape} (params grads : _root_.TorchLean.TensorPack α Γ) (lr : α) : _root_.TorchLean.TensorPack α Γ :=
-  _root_.TorchLean.TensorPack.sub (α := α) (ss := Γ) params (_root_.TorchLean.TensorPack.scale (α := α) (ss := Γ) lr grads)
+def step {Γ : List Shape} (params grads : TorchLean.TensorPack α Γ) (lr : α) :
+    TorchLean.TensorPack α Γ :=
+  TorchLean.TensorPack.sub (α := α) (ss := Γ) params
+    (TorchLean.TensorPack.scale (α := α) (ss := Γ) lr grads)
 
 /-- The empty parameter context is unchanged by an SGD step. -/
 @[simp] theorem step_nil (lr : α) :
-    step (α := α) (Γ := []) _root_.TorchLean.TensorPack.nil _root_.TorchLean.TensorPack.nil lr = _root_.TorchLean.TensorPack.nil := by
+    step (α := α) (Γ := []) TorchLean.TensorPack.nil TorchLean.TensorPack.nil lr
+      = TorchLean.TensorPack.nil := by
   rfl
 
 /--
@@ -115,9 +120,10 @@ This lemma is compact but useful as documentation: the head tensor update is exa
 `subSpec p (scaleSpec g lr)`, and the tail recursively receives the same learning rate.
 -/
 @[simp] theorem step_cons {s : Shape} {Γ : List Shape} (p g : Tensor α s)
-    (ps gs : _root_.TorchLean.TensorPack α Γ) (lr : α) :
-    step (α := α) (Γ := s :: Γ) (_root_.TorchLean.TensorPack.cons p ps) (_root_.TorchLean.TensorPack.cons g gs) lr =
-      _root_.TorchLean.TensorPack.cons (subSpec (α := α) p (scaleSpec (α := α) g lr))
+    (ps gs : TorchLean.TensorPack α Γ) (lr : α) :
+    step (α := α) (Γ := s :: Γ) (TorchLean.TensorPack.cons p ps) (TorchLean.TensorPack.cons g gs)
+        lr =
+      TorchLean.TensorPack.cons (subSpec (α := α) p (scaleSpec (α := α) g lr))
         (step (α := α) (Γ := Γ) ps gs lr) := by
   rfl
 

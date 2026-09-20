@@ -8,7 +8,7 @@ module
 
 public import NN.Spec.Models.VqVae
 public import NN.MLTheory.Generative.Latent.Objective
-public import Mathlib.Algebra.Order.BigOperators.Group.Finset
+public import NN.Spec.Core.Context.Real
 
 /-!
 # VQ-VAE theory
@@ -16,7 +16,9 @@ public import Mathlib.Algebra.Order.BigOperators.Group.Finset
 VQ-VAE has one mathematically delicate implementation choice: nearest-neighbor code assignment.
 TorchLean's spec keeps that assignment explicit as a `Fin numCodes`, so the core codebook semantics
 are total and easy to audit.  Runtime code may compute the index using a CUDA, Python, or Lean
-argmin; once the index is supplied, the following facts are definitional.
+argmin; once the index is supplied, the following facts are definitional. The two purely
+definitional ones (codebook lookup and the three-term loss split) are proved next to the spec in
+`NN.Spec.Models.VqVae`, so this file starts where that leaves off.
 
 We also prove the real-valued nearest-code optimality lemma used by vector quantization: if an
 index is selected as an argmin of squared Euclidean distance to the encoder output, then the
@@ -31,19 +33,13 @@ Reference:
 
 namespace NN.MLTheory.Generative.Latent.VQVAE
 
-open _root_.Spec
+open _root_.Spec _root_.TorchLean
 open _root_.Generative.VQVAE
 open NN.MLTheory.Generative.Latent.Objective
 open BigOperators
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {obs latent : Shape} {numCodes : Nat}
-
-/-- Quantization with an explicit code index is codebook lookup. -/
-@[simp] theorem quantized_is_codebook_lookup
-    (model : Model α obs latent numCodes) (idx : Fin numCodes) :
-    quantized model idx = model.codebook.embedding idx := by
-  rfl
 
 /-- VQ-VAE reconstruction decodes the selected codebook vector. -/
 @[simp] theorem forward_eq_decoder_codebook
@@ -51,17 +47,10 @@ variable {obs latent : Shape} {numCodes : Nat}
     forward model x idx = model.decoder.forward (model.codebook.embedding idx) := by
   rfl
 
-/-- The VQ-VAE loss splits into reconstruction, codebook, and commitment terms. -/
-@[simp] theorem vqvae_loss_decomposition
-    (model : Model α obs latent numCodes) (beta : α) (x : Tensor α obs) (idx : Fin numCodes) :
-    loss model beta x idx =
-      reconstructionLoss model x idx + codebookLoss model x idx +
-        beta * commitmentLoss model x idx := by
-  rfl
-
 /-! ## Connection to the shared latent-objective algebra -/
 
-/-- Package VQ-VAE reconstruction, codebook, and commitment terms as a weighted three-term objective. -/
+/-- Package VQ-VAE reconstruction, codebook, and commitment terms as a weighted three-term
+objective. -/
 noncomputable def vqvaeObjectiveTerms
     [DecidableRel ((· > ·) : ℝ → ℝ → Prop)]
     (model : Model ℝ obs latent numCodes) (x : Tensor ℝ obs) (idx : Fin numCodes) :

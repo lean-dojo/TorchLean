@@ -13,14 +13,12 @@ public import NN.Verification.PINN.CLI
 public import NN.Verification.PINN.Certificate
 public import NN.Verification.PINN.DatasetCheck
 public import NN.Verification.ODE.Verify
-public import NN.Verification.TorchLean.IBPWorkflow
-public import NN.Verification.TorchLean.CrownOpsWorkflow
-public import NN.Verification.TorchLean.TransformerIBPWorkflow
-public import NN.Verification.TorchLean.MlpTrainVerifyWorkflow
+public import NN.Verification.Builtin.IBPWorkflow
+public import NN.Verification.Builtin.CrownOpsWorkflow
+public import NN.Verification.Builtin.TransformerIBPWorkflow
+public import NN.Verification.Builtin.MlpTrainVerifyWorkflow
 public import NN.Verification.Robustness.Digits
-public import NN.Verification.Robustness.MarginCert
 public import NN.Verification.Robustness.MarginCertCLI
-public import NN.Verification.Robustness.TorchLean
 public import NN.Verification.Splines.PiecewiseLinearCLI
 public import NN.Verification.VNNComp.MnistFC
 public import NN.MLTheory.CROWN.Lyapunov.TwoStage.PipelineIPythonOnly
@@ -103,7 +101,7 @@ def usage (tools : List Tool) : String :=
 /-- Extract a single optional path argument, falling back to a default path. -/
 def getPathOrDefault (args : List String) (defaultPath : String) : Except String String := do
   let args := TorchLean.CLI.dropDashDash args
-  let (path, rest) ← TorchLean.CLI.takePositionalDefault args defaultPath
+  let (path, rest) ← TorchLean.CLI.takePositional args (default := defaultPath)
   TorchLean.CLI.checkNoArgs rest
   pure path
 
@@ -169,31 +167,26 @@ def otherTools : List Tool :=
       defaultArg := some NN.Verification.Robustness.MarginCertCLI.defaultPath
       run := fun args =>
         NN.Verification.Robustness.MarginCertCLI.run args }
-  , { name := "torchlean-robustness"
-      description := "TorchLean → IR margin certification workflow"
-      includeInAll := false
-      run := fun args =>
-        NN.Verification.Robustness.TorchLean.main args }
   , { name := "torchlean-ibp"
       description := "TorchLean → IR → IBP workflow (MLP)"
       includeInAll := false
       run := fun args =>
-        NN.Verification.TorchLean.IBPWorkflow.main args }
+        NN.Verification.Builtin.IBPWorkflow.main args }
   , { name := "torchlean-transformer-ibp"
       description := "TorchLean → IR → IBP workflow (attention/encoder; optional --with-crown)"
       includeInAll := false
       run := fun args =>
-        NN.Verification.TorchLean.TransformerIBPWorkflow.main args }
+        NN.Verification.Builtin.TransformerIBPWorkflow.main args }
   , { name := "torchlean-crown-ops"
       description := "TorchLean → IR → IBP+CROWN workflow (softmax/mse_loss ops)"
       includeInAll := false
       run := fun args =>
-        NN.Verification.TorchLean.CrownOpsWorkflow.main args }
+        NN.Verification.Builtin.CrownOpsWorkflow.main args }
   , { name := "torchlean-mlp-workflow"
-      description := "TorchLean MLP: train with typed graph execution, then run IBP+CROWN"
+      description := "train a classifier, then check robustness with Alpha-Beta-CROWN"
       includeInAll := false
       run := fun args =>
-        NN.Verification.TorchLean.MlpTrainVerifyWorkflow.main args }
+        NN.Verification.Builtin.MlpTrainVerifyWorkflow.main args }
   , { name := "pinn-dataset-check"
       description := "PINN dataset pointwise interval containment check"
       defaultArg := some NN.Verification.PINN.DatasetCheck.defaultDatasetPath
@@ -260,7 +253,7 @@ def dispatch (args : List String) : IO Unit := do
     | _ => args
   let help := usage tools
   match args with
-  | [] =>
+  | List.nil =>
       IO.println help
   | "list" :: _ =>
       IO.println help

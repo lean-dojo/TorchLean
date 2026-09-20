@@ -20,12 +20,14 @@ namespace NN.Verification.LiRPA.ExampleInputs
 
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /-- Center vector `[1, 2, ..., dim]`, used by the small deterministic LiRPA examples. -/
 def naturalCenter (dim : Nat) : Tensor Float [dim] :=
-  Tensor.dim (fun i => Tensor.scalar (Float.ofNat (i.val + 1)))
+  Tensor.generate [dim] fun
+    | [i] => Float.ofNat (i + 1)
+    | _ => 0.0
 
 /-- Insert an $L^\infty$ input box around `center` into a graph parameter store. -/
 def seedInputBox (inputId dim : Nat)

@@ -6,9 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.RuntimeApprox.Graph.BackwardApprox
-public import NN.Proofs.RuntimeApprox.NF.Linalg
-public import NN.Proofs.RuntimeApprox.NF.Ops
+public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
+public import NN.Proofs.RuntimeApprox.Graph.ForwardApprox
 
 /-!
 # Sparse VJP Contexts
@@ -23,8 +22,8 @@ cases avoid unnecessary rounded additions.
 namespace Proofs
 namespace RuntimeApprox
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
 open Proofs.Autograd.Algebra
 
@@ -34,46 +33,49 @@ noncomputable section
 
 namespace SparseContext
 
-/-- A `_root_.TorchLean.TensorPack` filled with zeros (shape-wise), used to build sparse contexts for local VJPs. -/
-def zeros {α : Type} [Zero α] : {ss : List Shape} → _root_.TorchLean.TensorPack α ss
+/-- A `TorchLean.TensorPack` filled with zeros (shape-wise), used to build sparse contexts for
+local VJPs. -/
+def zeros {α : Type} [TorchLean.Storage α] [Zero α] : {ss : List Shape} → TorchLean.TensorPack α ss
   | [] => .nil
-  | s :: ss => .cons (Spec.fill (0 : α) s) (zeros (ss := ss))
+  | s :: ss => .cons (Tensor.full s (0 : α)) (zeros (ss := ss))
 
-/-- Set a single `Idx` position in a `_root_.TorchLean.TensorPack`, filling all other entries with zeros. -/
-def setIdx {α : Type} [Zero α] : {Γ : List Shape} → {s : Shape} → Idx Γ s → Tensor α s → _root_.TorchLean.TensorPack α Γ
+/-- Set a single `Idx` position in a `TorchLean.TensorPack`, filling all other entries with
+zeros. -/
+def setIdx {α : Type} [TorchLean.Storage α] [Zero α] :
+    {Γ : List Shape} → {s : Shape} → Idx Γ s → Tensor α s → TorchLean.TensorPack α Γ
   | [], _, idx, _t => nomatch idx.i
   | s0 :: Γ, s, ⟨⟨0, _⟩, hshape⟩, t =>
       let t0 : Tensor α s0 :=
-        Spec.tensorCast (α := α) (s := s) (t := s0) (by simpa using hshape.symm) t
+        Spec.tensorCast (α := α) (source := s) s0 (by simpa using hshape.symm) t
       .cons t0 (zeros (α := α) (ss := Γ))
   | s0 :: Γ, s, ⟨⟨Nat.succ i, hi⟩, hshape⟩, t =>
-      .cons (Spec.fill (0 : α) s0)
+      .cons (Tensor.full s0 (0 : α))
         (setIdx (α := α) (Γ := Γ) (s := s)
           ⟨⟨i, Nat.lt_of_succ_lt_succ hi⟩, by simpa using hshape⟩ t)
 
 /-- Set two indices; if they coincide, add the contributions at that position. -/
-def set2Idx {α : Type} [Zero α] [Add α] :
+def set2Idx {α : Type} [TorchLean.Storage α] [Zero α] [Add α] :
     {Γ : List Shape} → {s₁ s₂ : Shape} →
-      Idx Γ s₁ → Tensor α s₁ → Idx Γ s₂ → Tensor α s₂ → _root_.TorchLean.TensorPack α Γ
+      Idx Γ s₁ → Tensor α s₁ → Idx Γ s₂ → Tensor α s₂ → TorchLean.TensorPack α Γ
   | [], _, _, idx, _t₁, _jdx, _t₂ => nomatch idx.i
   | s0 :: Γ, s₁, s₂, ⟨⟨0, _⟩, h₁⟩, t₁, ⟨⟨0, _⟩, h₂⟩, t₂ =>
       let t₁0 : Tensor α s0 :=
-        Spec.tensorCast (α := α) (s := s₁) (t := s0) (by simpa using h₁.symm) t₁
+        Spec.tensorCast (α := α) (source := s₁) s0 (by simpa using h₁.symm) t₁
       let t₂0 : Tensor α s0 :=
-        Spec.tensorCast (α := α) (s := s₂) (t := s0) (by simpa using h₂.symm) t₂
+        Spec.tensorCast (α := α) (source := s₂) s0 (by simpa using h₂.symm) t₂
       .cons (addSpec t₁0 t₂0) (zeros (α := α) (ss := Γ))
   | s0 :: Γ, s₁, s₂, ⟨⟨0, _⟩, h₁⟩, t₁, ⟨⟨Nat.succ j, hj⟩, h₂⟩, t₂ =>
       let t₁0 : Tensor α s0 :=
-        Spec.tensorCast (α := α) (s := s₁) (t := s0) (by simpa using h₁.symm) t₁
+        Spec.tensorCast (α := α) (source := s₁) s0 (by simpa using h₁.symm) t₁
       .cons t₁0
         (setIdx (α := α) (Γ := Γ) (s := s₂) ⟨⟨j, Nat.lt_of_succ_lt_succ hj⟩, by simpa using h₂⟩ t₂)
   | s0 :: Γ, s₁, s₂, ⟨⟨Nat.succ i, hi⟩, h₁⟩, t₁, ⟨⟨0, _⟩, h₂⟩, t₂ =>
       let t₂0 : Tensor α s0 :=
-        Spec.tensorCast (α := α) (s := s₂) (t := s0) (by simpa using h₂.symm) t₂
+        Spec.tensorCast (α := α) (source := s₂) s0 (by simpa using h₂.symm) t₂
       .cons t₂0
         (setIdx (α := α) (Γ := Γ) (s := s₁) ⟨⟨i, Nat.lt_of_succ_lt_succ hi⟩, by simpa using h₁⟩ t₁)
   | s0 :: Γ, s₁, s₂, ⟨⟨Nat.succ i, hi⟩, h₁⟩, t₁, ⟨⟨Nat.succ j, hj⟩, h₂⟩, t₂ =>
-      .cons (Spec.fill (0 : α) s0)
+      .cons (Tensor.full s0 (0 : α))
         (set2Idx (α := α) (Γ := Γ) (s₁ := s₁) (s₂ := s₂)
           ⟨⟨i, Nat.lt_of_succ_lt_succ hi⟩, by simpa using h₁⟩ t₁
           ⟨⟨j, Nat.lt_of_succ_lt_succ hj⟩, by simpa using h₂⟩ t₂)
@@ -118,13 +120,13 @@ namespace SparseContext
 
 This avoids any context-wise addition: only the three targeted positions are written,
 and all others are `0`. This is important for NF, where even `x + 0` would incur rounding. -/
-def set3IdxNe {α : Type} [Zero α] [Add α] :
+def set3IdxNe {α : Type} [TorchLean.Storage α] [Zero α] [Add α] :
     {Γ : List Shape} → {s₁ s₂ s₃ : Shape} →
       (a : Idx Γ s₁) → Tensor α s₁ →
       (b : Idx Γ s₂) → Tensor α s₂ →
       (c : Idx Γ s₃) → Tensor α s₃ →
       a.i ≠ b.i → a.i ≠ c.i → b.i ≠ c.i →
-      _root_.TorchLean.TensorPack α Γ
+      TorchLean.TensorPack α Γ
   | [], _, _, _, a, _t₁, _b, _t₂, _c, _t₃, _hab, _hac, _hbc => nomatch a.i
   | s0 :: Γ, s₁, s₂, s₃, ⟨⟨0, _⟩, h₁⟩, t₁, ⟨⟨0, _⟩, _h₂⟩, _t₂, _c, _t₃, hab, _hac, _hbc =>
       False.elim (hab rfl)
@@ -135,7 +137,7 @@ def set3IdxNe {α : Type} [Zero α] [Add α] :
       ⟨⟨Nat.succ k, hk⟩, h₃⟩, t₃,
       _hab, _hac, _hbc =>
       let t₁0 : Tensor α s0 :=
-        Spec.tensorCast (α := α) (s := s₁) (t := s0) (by simpa using h₁.symm) t₁
+        Spec.tensorCast (α := α) (source := s₁) s0 (by simpa using h₁.symm) t₁
       let bTail : Idx Γ s₂ := ⟨⟨j, Nat.lt_of_succ_lt_succ hj⟩, by simpa using h₂⟩
       let cTail : Idx Γ s₃ := ⟨⟨k, Nat.lt_of_succ_lt_succ hk⟩, by simpa using h₃⟩
       .cons t₁0 (set2Idx (α := α) (Γ := Γ) (s₁ := s₂) (s₂ := s₃) bTail t₂ cTail t₃)
@@ -146,14 +148,14 @@ def set3IdxNe {α : Type} [Zero α] [Add α] :
       ⟨⟨Nat.succ k, hk⟩, h₃⟩, t₃,
       _hab, _hac, _hbc =>
       let t₂0 : Tensor α s0 :=
-        Spec.tensorCast (α := α) (s := s₂) (t := s0) (by simpa using h₂.symm) t₂
+        Spec.tensorCast (α := α) (source := s₂) s0 (by simpa using h₂.symm) t₂
       let aTail : Idx Γ s₁ := ⟨⟨i, Nat.lt_of_succ_lt_succ hi⟩, by simpa using h₁⟩
       let cTail : Idx Γ s₃ := ⟨⟨k, Nat.lt_of_succ_lt_succ hk⟩, by simpa using h₃⟩
       .cons t₂0 (set2Idx (α := α) (Γ := Γ) (s₁ := s₁) (s₂ := s₃) aTail t₁ cTail t₃)
   | s0 :: Γ, s₁, s₂, s₃, ⟨⟨Nat.succ i, hi⟩, h₁⟩, t₁, ⟨⟨Nat.succ j, hj⟩, h₂⟩, t₂, ⟨⟨0, _⟩, h₃⟩, t₃,
       hab, _hac, _hbc =>
       let t₃0 : Tensor α s0 :=
-        Spec.tensorCast (α := α) (s := s₃) (t := s0) (by simpa using h₃.symm) t₃
+        Spec.tensorCast (α := α) (source := s₃) s0 (by simpa using h₃.symm) t₃
       let aTail : Idx Γ s₁ := ⟨⟨i, Nat.lt_of_succ_lt_succ hi⟩, by simpa using h₁⟩
       let bTail : Idx Γ s₂ := ⟨⟨j, Nat.lt_of_succ_lt_succ hj⟩, by simpa using h₂⟩
       have habTail : aTail.i ≠ bTail.i := by
@@ -167,7 +169,7 @@ def set3IdxNe {α : Type} [Zero α] [Add α] :
       ⟨⟨Nat.succ j, hj⟩, h₂⟩, t₂,
       ⟨⟨Nat.succ k, hk⟩, h₃⟩, t₃,
       hab, hac, hbc =>
-      .cons (Spec.fill (0 : α) s0)
+      .cons (Tensor.full s0 (0 : α))
         (set3IdxNe (α := α) (Γ := Γ) (s₁ := s₁) (s₂ := s₂) (s₃ := s₃)
           ⟨⟨i, Nat.lt_of_succ_lt_succ hi⟩, by simpa using h₁⟩ t₁
           ⟨⟨j, Nat.lt_of_succ_lt_succ hj⟩, by simpa using h₂⟩ t₂

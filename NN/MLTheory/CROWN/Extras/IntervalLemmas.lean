@@ -5,12 +5,10 @@ Authors: TorchLean Team
 -/
 module
 
-public import Mathlib.Analysis.Calculus.Deriv.MeanValue
-public import Mathlib.Analysis.SpecialFunctions.Pow.Real
 public import Mathlib.Analysis.SpecialFunctions.Sigmoid
 public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
-public import NN.Floats.Interval.RealBounds
-public import NN.MLTheory.CROWN.BoundOps
+public import FloatLib.Floats.Interval.RealBounds
+public import NN.MLTheory.CROWN.BoundOps.Lawful
 
 /-!
 # Interval arithmetic lemmas (ℝ)
@@ -24,6 +22,9 @@ It is primarily intended as a small toolbox for proof scripts and examples; it l
 -/
 
 @[expose] public section
+
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
 
 namespace NN.MLTheory.CROWN.IntervalLemmas
@@ -75,9 +76,12 @@ theorem monotone_real_tanh : Monotone Real.tanh :=
 /-- A value is in an interval [lo, hi] -/
 def inInterval (x lo hi : ℝ) : Prop := lo ≤ x ∧ x ≤ hi
 
+/-- Every value lies in the degenerate interval `[x, x]`. -/
 theorem inInterval_refl (x : ℝ) : inInterval x x x :=
   ⟨le_refl x, le_refl x⟩
 
+/-- Introduction rule: two inequalities give membership. Having this as a named lemma keeps the
+downstream proofs from unfolding `inInterval` just to build an `And`. -/
 theorem inInterval_of_bounds {x lo hi : ℝ}
     (hlo : lo ≤ x) (hhi : x ≤ hi) : inInterval x lo hi := ⟨hlo, hhi⟩
 
@@ -222,7 +226,7 @@ theorem interval_abs_sound {x l u : ℝ} (h : inInterval x l u) :
 
 section Directed
 
-variable {α : Type} [Context α] [BoundOps α] [LawfulBoundOps α]
+variable {α : Type} [TorchLean.Storage α] [Context α] [BoundOps α] [LawfulBoundOps α]
 
 /-- Exact real meaning of an endpoint supplied by its lawful directed-arithmetic instance. -/
 abbrev semanticValue (x : α) : ℝ := LawfulBoundOps.toReal x
@@ -290,7 +294,7 @@ theorem directed_mul_sound {x y a b c d : α}
       (semanticValue (BoundOps.max2
         (BoundOps.max2 (BoundOps.mulUp a c) (BoundOps.mulUp a d))
         (BoundOps.max2 (BoundOps.mulUp b c) (BoundOps.mulUp b d)))) := by
-  have hExact := TorchLean.Floats.Interval.mul_bounds_Icc
+  have hExact := FloatLib.Floats.Interval.mul_bounds_Icc
     (semanticValue a) (semanticValue b) (semanticValue c) (semanticValue d)
     (semanticValue x) (semanticValue y) hx hy
   constructor
@@ -308,12 +312,12 @@ theorem directed_mul_sound {x y a b c d : α}
           (min_le_min (LawfulBoundOps.mulDown_le a c) (LawfulBoundOps.mulDown_le a d))
           (min_le_min (LawfulBoundOps.mulDown_le b c) (LawfulBoundOps.mulDown_le b d))
       _ ≤ semanticValue x * semanticValue y := by
-        simpa [TorchLean.Floats.Interval.minOfFourReal] using hExact.1
+        simpa [FloatLib.Floats.Interval.minOfFour] using hExact.1
   · rw [value_max2, value_max2, value_max2]
     refine (show semanticValue x * semanticValue y ≤
       max (max (semanticValue a * semanticValue c) (semanticValue a * semanticValue d))
         (max (semanticValue b * semanticValue c) (semanticValue b * semanticValue d)) by
-        simpa [TorchLean.Floats.Interval.maxOfFourReal] using hExact.2).trans
+        simpa [FloatLib.Floats.Interval.maxOfFour] using hExact.2).trans
       (max_le_max (max_le_max ?_ ?_) (max_le_max ?_ ?_))
     · exact LawfulBoundOps.le_mulUp a c
     · exact LawfulBoundOps.le_mulUp a d
@@ -362,13 +366,13 @@ noncomputable instance instLawfulNonlinearBoundOpsReal : LawfulNonlinearBoundOps
         have hz : 0 < bLo ∨ bHi < 0 := by
           simpa using hAvoidsZero
         exact hz.elim Or.inr Or.inl
-      have hExact := TorchLean.Floats.Interval.div_bounds_Icc
+      have hExact := FloatLib.Floats.Interval.div_bounds_Icc
         aLo aHi bLo bHi x y ⟨hxLo, hxHi⟩ ⟨hyLo, hyHi⟩ hside
       change
         min (min (aLo / bLo) (aLo / bHi)) (min (aHi / bLo) (aHi / bHi)) ≤ x / y ∧
           x / y ≤ max (max (aLo / bLo) (aLo / bHi)) (max (aHi / bLo) (aHi / bHi))
-      simpa only [TorchLean.Floats.Interval.minOfFourReal,
-        TorchLean.Floats.Interval.maxOfFourReal] using hExact
+      simpa only [Set.mem_Icc, FloatLib.Floats.Interval.minOfFour,
+        FloatLib.Floats.Interval.maxOfFour] using hExact
     next hIncludesZero => simp at hout
   expBounds_enclosure := by
     change UnaryEnclosure (α := ℝ) Real.exp (fun lo hi ↦ some (Real.exp lo, Real.exp hi))

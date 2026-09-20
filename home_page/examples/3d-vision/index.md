@@ -77,7 +77,10 @@ detector pipeline, so it is better as an end-to-end example than as a first runt
 ```bash
 python3 -m pip install -r scripts/verification/geometry3d/requirements-wilddet3d.txt
 python3 -m pip install --no-deps utils3d
-python3 scripts/verification/regenerate_assets.py --group geometry3d-wilddet3d --run
+python3 scripts/verification/geometry3d/export_wilddet3d_box3d_cert.py \
+  --text-prompt cat \
+  --out _external/geometry3d/wilddet3d/wilddet3d_cat_box3d_cert.json \
+  --verify --overlay
 ```
 
 The command exports and checks:
@@ -109,8 +112,8 @@ or another detector/exporter that emits the camera and box fields.
 ```json
 {
   "format": "torchlean.camera.box3d.v1",
-  "width": 640.0,
-  "height": 480.0,
+  "image_width": 640.0,
+  "image_height": 480.0,
   "tol": 1.0,
   "camera_P": [1.0, 0.0, 320.0, 0.0, 0.0, 1.0, 240.0, 0.0, 0.0, 0.0, 1.0, 0.0],
   "corners3d": [0.0, 0.0, 8.0, 1.0, 0.0, 8.0, 1.0, 1.0, 8.0, 0.0, 1.0, 8.0,
@@ -131,17 +134,17 @@ python3 scripts/verification/geometry3d/export_omni3d_box3d_cert.py \
 
 ## Negative Cases
 
-The example also includes bad certificates motivated by real glue failures: swapped box layouts,
-negative depth, wrong projection matrix layout, and 2D boxes that do not enclose projected 3D
-corners.
+Use the detector's own 2D box to inspect a strict projection claim:
 
 ```bash
-python3 scripts/verification/regenerate_assets.py --group geometry3d-visual --run
+python3 scripts/verification/geometry3d/export_wilddet3d_box3d_cert.py \
+  --text-prompt cat --bbox-source model2d \
+  --out _external/geometry3d/wilddet3d/wilddet3d_cat_model2d_strict_box3d_cert.json \
+  --overlay
 ```
 
-Green overlays correspond to certificates accepted by Lean. Red overlays correspond to rejected
-certificates. The checker reads the exported camera and box tensors directly; the visualization is
-there to help a human see what happened.
+The renderer runs the Lean checker and marks accepted and rejected artifacts. A model-box
+mismatch remains visible in this diagnostic; it is not repaired by changing the claimed box.
 
 The Bug Zoo wrapper re-exports the theorem under a tutorial-facing name:
 

@@ -10,19 +10,14 @@ public import NN.Verification.Cert.AbCrownLeafCert
 public import NN.Verification.ODE.Verify
 public import NN.Verification.PINN.CLI
 public import NN.Verification.PINN.Certificate
-public import NN.Verification.PINN.Core
 public import NN.Verification.PINN.DatasetCheck
-public import NN.Verification.PINN.PdeAst
-public import NN.Verification.PINN.PdeParse
-public import NN.Verification.PINN.ResidualAffine
 public import NN.Verification.Robustness.Digits
 public import NN.Verification.Robustness.MarginCertCLI
-public import NN.Verification.Robustness.TorchLean
 public import NN.Verification.Splines.PiecewiseLinearCLI
-public import NN.Verification.TorchLean.CrownOpsWorkflow
-public import NN.Verification.TorchLean.IBPWorkflow
-public import NN.Verification.TorchLean.MlpTrainVerifyWorkflow
-public import NN.Verification.TorchLean.TransformerIBPWorkflow
+public import NN.Verification.Builtin.CrownOpsWorkflow
+public import NN.Verification.Builtin.IBPWorkflow
+public import NN.Verification.Builtin.MlpTrainVerifyWorkflow
+public import NN.Verification.Builtin.TransformerIBPWorkflow
 public import NN.Verification.VNNComp.MnistFC
 
 /-!

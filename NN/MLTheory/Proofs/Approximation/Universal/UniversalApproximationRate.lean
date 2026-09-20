@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.Proofs.Approximation.Universal.UniversalApproximation
-import Mathlib.Algebra.Order.Archimedean.Real.Basic
-import Mathlib.Tactic.Linarith
 
 /-!
 # Universal approximation (1D, explicit rate)
@@ -38,8 +36,8 @@ such as Yarotsky's quantitative bounds.
 
 namespace NN.MLTheory.Proofs.UniversalApproximation
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 open Examples
 
 noncomputable section
@@ -49,7 +47,7 @@ def reluApproximationWidth (L a b ε : ℝ) : ℕ :=
   Nat.ceil (2 * L * (b - a) / ε) + 1
 
 /-- The explicit ReLU approximation width is always positive. -/
-lemma relu_approximation_width_pos (L a b ε : ℝ) : 0 < reluApproximationWidth L a b ε := by
+theorem relu_approximation_width_pos (L a b ε : ℝ) : 0 < reluApproximationWidth L a b ε := by
   simp [reluApproximationWidth]
 
 /--
@@ -58,7 +56,7 @@ The chosen width makes the mesh-size error term smaller than the target accuracy
 This is the arithmetic heart of the explicit-rate theorem: the ceiling construction ensures
 $N>2L(b-a)/\varepsilon$, hence $2L(b-a)/N<\varepsilon$.
 -/
-lemma two_mul_mul_sub_div_relu_approximation_width_lt {L a b ε : ℝ} (hε : 0 < ε) :
+theorem two_mul_mul_sub_div_relu_approximation_width_lt {L a b ε : ℝ} (hε : 0 < ε) :
     (2 * L * (b - a)) / (reluApproximationWidth L a b ε : ℝ) < ε := by
   classical
   let N : ℕ := reluApproximationWidth L a b ε
@@ -170,7 +168,7 @@ theorem relu_universal_approximation_Icc_hinge_rate {f : ℝ → ℝ} {a b L : �
         exact Nat.le_of_not_gt this
       have hgi : grid (k + 1) ≤ grid i := grid_mono hik'
       have hxle : x ≤ grid i := le_trans hx1 hgi
-      simp [F, relu_sub_eq_zero_of_le (x := x) (t := grid i) hxle]
+      simp only [F, relu_sub_eq_zero_of_le (x := x) (t := grid i) hxle, mul_zero]
     have hGzero : ∀ i ∈ Finset.range N, i ∉ Finset.range (k + 1) → G i = 0 := by
       intro i hiN hik
       have hik' : k + 1 ≤ i := by
@@ -180,7 +178,7 @@ theorem relu_universal_approximation_Icc_hinge_rate {f : ℝ → ℝ} {a b L : �
       have hgi : grid k ≤ grid i := by
         have : k ≤ i := le_trans (Nat.le_succ k) hik'
         exact grid_mono this
-      simp [G, relu_sub_eq_zero_of_le (x := grid k) (t := grid i) hgi]
+      simp only [G, relu_sub_eq_zero_of_le (x := grid k) (t := grid i) hgi, mul_zero]
     have sumF : (∑ i ∈ Finset.range N, F i) = (∑ i ∈ Finset.range (k + 1), F i) := by
       symm
       exact Finset.sum_subset hsub hFzero
@@ -188,20 +186,20 @@ theorem relu_universal_approximation_Icc_hinge_rate {f : ℝ → ℝ} {a b L : �
       symm
       exact Finset.sum_subset hsub hGzero
     have gx : g x = f a + ∑ i ∈ Finset.range (k + 1), F i := by
-      simp [g, F, sumF]
+      exact congrArg (fun y : ℝ => f a + y) sumF
     have gk : g (grid k) = f a + ∑ i ∈ Finset.range (k + 1), G i := by
-      simp [g, G, sumG]
+      exact congrArg (fun y : ℝ => f a + y) sumG
     have hF' : ∀ i ∈ Finset.range (k + 1), F i = cNat i * (x - grid i) := by
       intro i hi
       have hi' : i ≤ k := Nat.le_of_lt_succ (Finset.mem_range.mp hi)
       have hgi : grid i ≤ grid k := grid_mono hi'
       have : grid i ≤ x := le_trans hgi hx0
-      simp [F, relu_sub_eq_of_le (x := x) (t := grid i) this]
+      simp only [F, relu_sub_eq_of_le (x := x) (t := grid i) this]
     have hG' : ∀ i ∈ Finset.range (k + 1), G i = cNat i * (grid k - grid i) := by
       intro i hi
       have hi' : i ≤ k := Nat.le_of_lt_succ (Finset.mem_range.mp hi)
       have : grid i ≤ grid k := grid_mono hi'
-      simp [G, relu_sub_eq_of_le (x := grid k) (t := grid i) this]
+      simp only [G, relu_sub_eq_of_le (x := grid k) (t := grid i) this]
     have gx' : g x = f a + ∑ i ∈ Finset.range (k + 1), cNat i * (x - grid i) := by
       refine gx.trans ?_
       congr 1
@@ -264,8 +262,8 @@ theorem relu_universal_approximation_Icc_hinge_rate {f : ℝ → ℝ} {a b L : �
         refine Finset.sum_eq_zero ?_
         intro i hi
         have : a ≤ grid i := ha_le i hi
-        simp [relu_sub_eq_zero_of_le (x := a) (t := grid i) this]
-      simp [g, hgrid0, hsum]
+        simp only [relu_sub_eq_zero_of_le (x := a) (t := grid i) this, mul_zero]
+      simp only [g, hgrid0, hsum, add_zero]
     | succ k ih =>
       have hkN : k + 1 ≤ N := hk
       have hk_le : k ≤ N := le_trans (Nat.le_succ k) hkN

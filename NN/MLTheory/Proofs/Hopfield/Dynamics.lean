@@ -25,12 +25,13 @@ be built on top of these monotonicity facts.
 namespace NN.MLTheory.Proofs.Hopfield
 
 open scoped BigOperators
-open _root_.Spec
+open Spec TorchLean
 
 open Spec.Hopfield
 
 variable {n : Nat}
 
+/-- Energy is nonincreasing along any update sequence, one step at a time. -/
 theorem energy_seqStates_succ_le (p : Params ℝ n)
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     (useq : Nat → Fin n) (s0 : State n) (k : Nat) :
@@ -41,6 +42,9 @@ theorem energy_seqStates_succ_le (p : Params ℝ n)
   simp [Spec.Hopfield.seqStates]
   exact energy_updateAt_le (n := n) p hsym hdiag _ _
 
+/-- Hence energy never exceeds its starting value, for any schedule of units.
+
+The schedule is an arbitrary `Nat → Fin n`, so this covers random and cyclic orders alike. -/
 theorem energy_seqStates_le_start (p : Params ℝ n)
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     (useq : Nat → Fin n) (s0 : State n) :

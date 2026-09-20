@@ -6,21 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Order.BigOperators.Group.Finset
-public import Mathlib.Data.Real.Basic
-public import Mathlib.Order.Bounds.Basic
-public import NN.MLTheory.LearningTheory.Robustness.Spec
-public import NN.Proofs.Analysis.Lipschitz
-public import NN.Proofs.Tensor.Basic
-public import NN.Spec.Core.Tensor.SomeTensor
-public import NN.Spec.Core.Context
-public import NN.Spec.Core.Tensor
-public import NN.Spec.Core.TensorOps
-public import NN.Spec.Core.TensorReductionShape
 public import NN.Spec.Models.Mlp
-public import NN.Spec.Module.Activation
-public import NN.Spec.Module.Linear
-import Mathlib.Tactic.Linarith
+public import NN.Proofs.Analysis.Lipschitz.Network
 
 /-!
 # MLP robustness: basic analytic lemmas
@@ -42,8 +29,8 @@ Contents:
 
 namespace NN.MLTheory.Proofs
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 open scoped BigOperators
 
 /-! ## Basic Lipschitz lemmas -/
@@ -117,12 +104,12 @@ theorem relu_comp_preserves (f : ℝ → ℝ) (h : ∀ x y, |f x - f y| ≤ |x -
 
 /-- Definition: A non-zero tensor has at least one non-zero entry -/
 def tensorNonzeroHasNonzeroEntry {m n : ℕ} (W : Tensor ℝ [m, n]) : Prop :=
-  W ≠ fill (0 : ℝ) (.dim m (.dim n .scalar)) →
+  W ≠ Tensor.full (.dim m (.dim n .scalar)) (0 : ℝ) →
   ∃ i : Fin m, ∃ j : Fin n, get2 W i j ≠ 0
 
 /-- A non-zero tensor has positive L2 norm -/
 theorem tensor_l2_norm_pos_of_ne_zero {s : Shape} (t : Tensor ℝ s) :
-  t ≠ fill (0 : ℝ) s → 0 < Proofs.tensorL2Norm t := by
+  t ≠ Tensor.full s (0 : ℝ) → 0 < Proofs.tensorL2Norm t := by
   intro h_ne_zero
   have h_norm_ne_zero : Proofs.tensorL2Norm t ≠ 0 := by
     intro h_eq
@@ -135,12 +122,20 @@ noncomputable def linearLayerFrobeniusBound {inDim outDim : ℕ}
     (layer : Spec.LinearSpec ℝ inDim outDim) : ℝ :=
   Proofs.matrixFrobeniusNorm layer.weights
 
+/-- Adding the same bias to two linear outputs does not change their L2 distance. -/
+private theorem tensorL2Dist_linearSpec_eq_matVecMulSpec {inDim outDim : ℕ}
+    (layer : Spec.LinearSpec ℝ inDim outDim) (x y : Tensor ℝ [inDim]) :
+    Proofs.tensorL2Dist (Spec.linearSpec layer x) (Spec.linearSpec layer y) =
+      Proofs.tensorL2Dist (matVecMulSpec layer.weights x) (matVecMulSpec layer.weights y) := by
+  unfold Proofs.tensorL2Dist Spec.linearSpec
+  rw [Spec.sub_spec_bias_cancel]
+
 /--
 Linear layers are Lipschitz continuous with the Frobenius norm as a valid, possibly loose, bound.
 -/
 theorem linear_layer_lipschitz_bound {inDim outDim : ℕ}
     (layer : Spec.LinearSpec ℝ inDim outDim)
-    (h_weights_nonzero : layer.weights ≠ fill (0 : ℝ) _) :
+    (h_weights_nonzero : layer.weights ≠ Tensor.full _ (0 : ℝ)) :
     ∃ L : ℝ, L > 0 ∧ ∀ x y : Tensor ℝ [inDim],
       Proofs.tensorL2Dist (Spec.linearSpec layer x) (Spec.linearSpec layer y) ≤
       L * Proofs.tensorL2Dist x y := by
@@ -168,7 +163,7 @@ theorem linear_layer_lipschitz_bound {inDim outDim : ℕ}
               Spec.tensorNormSquared (Spec.get layer.weights i) := by
           refine Finset.sum_nonneg ?_
           intro i _
-          exact Spec.tensor_norm_squared_nonneg (t := Spec.get layer.weights i)
+          exact Spec.tensor_norm_squared_nonneg (tensor := Spec.get layer.weights i)
         simpa using this
 
       have hsum0 :
@@ -185,7 +180,7 @@ theorem linear_layer_lipschitz_bound {inDim outDim : ℕ}
           ∀ i ∈ (Finset.univ : Finset (Fin outDim)),
             0 ≤ Spec.tensorNormSquared (Spec.get layer.weights i) := by
         intro i _
-        exact Spec.tensor_norm_squared_nonneg (t := Spec.get layer.weights i)
+        exact Spec.tensor_norm_squared_nonneg (tensor := Spec.get layer.weights i)
 
       have hterms0_mem :
           ∀ i ∈ (Finset.univ : Finset (Fin outDim)),
@@ -198,22 +193,17 @@ theorem linear_layer_lipschitz_bound {inDim outDim : ℕ}
 
       have hrows0 :
           ∀ i : Fin outDim,
-            Spec.get layer.weights i = fill (0 : ℝ) (.dim inDim .scalar) := by
+            Spec.get layer.weights i = Tensor.full (.dim inDim .scalar) (0 : ℝ) := by
         intro i
         have hi0 : Spec.tensorNormSquared (Spec.get layer.weights i) = 0 :=
           hterms0_mem i (by simp)
-        exact (Spec.tensor_norm_squared_zero_iff (t := Spec.get layer.weights i)).1 hi0
+        exact (Spec.tensor_norm_squared_zero_iff (tensor := Spec.get layer.weights i)).1 hi0
 
-      have hw0 : layer.weights = fill (0 : ℝ) (.dim outDim (.dim inDim .scalar)) := by
-        -- Convert per-row equality into matrix equality.
-        cases hW : layer.weights with
-        | dim rows =>
-          have hrows : rows = fun _ : Fin outDim => fill (0 : ℝ) (.dim inDim .scalar) := by
-            funext i
-            have hi : Spec.get layer.weights i = fill (0 : ℝ) (.dim inDim .scalar) := hrows0 i
-            simpa [hW, Spec.get] using hi
-          -- Rewrite both sides into `Tensor.dim` form.
-          simp [Spec.fill, hrows]
+      have hw0 : layer.weights = Tensor.full (.dim outDim (.dim inDim .scalar)) (0 : ℝ) := by
+        apply Spec.matrix_ext
+        intro i j
+        have hi := congrArg (fun row : Tensor ℝ [inDim] => row.getScalar j) (hrows0 i)
+        simpa [Spec.get2] using hi
 
       exact h_weights_nonzero hw0
 
@@ -225,44 +215,42 @@ theorem linear_layer_lipschitz_bound {inDim outDim : ℕ}
   -- Since bias cancels out in the difference, we can use the matrix operation bound
   have h_linear_eq : Proofs.tensorL2Dist (Spec.linearSpec layer x) (Spec.linearSpec layer y) =
     Proofs.tensorL2Dist (matVecMulSpec layer.weights x) (matVecMulSpec layer.weights y) :=
-      by
-    unfold Spec.linearSpec Proofs.tensorL2Dist Proofs.tensorL2Norm Spec.tensorNormSquared
-    -- linear_spec layer x = add_spec (mat_vec_mul_spec layer.weights x) layer.bias
-    -- linear_spec layer y = add_spec (mat_vec_mul_spec layer.weights y) layer.bias
-    -- When we subtract them: sub_spec (linear x) (linear y) = sub_spec (add_spec Wx b) (add_spec Wy
-    -- b)
-    -- This simplifies to: sub_spec Wx Wy (since the bias b cancels out)
-    congr 1
-    -- Apply bias cancellation lemma properly
-    rw [Spec.sub_spec_bias_cancel]
+    tensorL2Dist_linearSpec_eq_matVecMulSpec layer x y
 
   rw [h_linear_eq]
   exact Proofs.linear_op_norm_bound layer.weights x y
 
+/-- ReLU is 1-Lipschitz in the L2 distance, so activations never amplify an input perturbation. -/
 theorem relu_activation_lipschitz {n : ℕ} (x y : Tensor ℝ [n]) :
     Proofs.tensorL2Dist (Activation.reluSpec x) (Activation.reluSpec y) ≤ Proofs.tensorL2Dist
       x y := by
   -- This follows directly from the existing relu_lipschitz_general theorem
   exact Proofs.relu_lipschitz_general x y
 
+/-- A two-layer MLP is Lipschitz, with a positive constant obtained as the product of the layer
+constants.
+
+The constant here is the naive product of operator norms, which is what makes it cheap: it needs no
+information about the input region. That is also why it is loose compared to the CROWN bounds in
+`NN.MLTheory.CROWN`, and the contrast is the reason both developments are kept. -/
 theorem mlp_lipschitz_complete_analysis {inDim hidDim outDim : ℕ}
     (l1 : Spec.LinearSpec ℝ inDim hidDim)
     (l2 : Spec.LinearSpec ℝ hidDim outDim)
-    (h1_nonzero : l1.weights ≠ fill (0 : ℝ) _)
-    (h2_nonzero : l2.weights ≠ fill (0 : ℝ) _) :
-    ∃ lipschitz_constant : ℝ, lipschitz_constant > 0 ∧
+    (h1_nonzero : l1.weights ≠ Tensor.full _ (0 : ℝ))
+    (h2_nonzero : l2.weights ≠ Tensor.full _ (0 : ℝ)) :
+    ∃ lipschitzConstant : ℝ, lipschitzConstant > 0 ∧
       ∀ x y : Tensor ℝ [inDim],
         Proofs.tensorL2Dist (Examples.mlpForward l1 l2 x) (Examples.mlpForward l1 l2 y) ≤
-        lipschitz_constant * Proofs.tensorL2Dist x y := by
+        lipschitzConstant * Proofs.tensorL2Dist x y := by
 
   -- Get Lipschitz constants for each layer
   obtain ⟨L1, h1_pos, h1_bound⟩ := linear_layer_lipschitz_bound l1 h1_nonzero
   obtain ⟨L2, h2_pos, h2_bound⟩ := linear_layer_lipschitz_bound l2 h2_nonzero
 
   -- The Lipschitz constant is the product L1 * L2
-  let lipschitz_constant := L1 * L2
+  let lipschitzConstant := L1 * L2
 
-  use lipschitz_constant
+  use lipschitzConstant
   constructor
   · -- Need to prove L1 * L2 > 0
     exact mul_pos h1_pos h2_pos
@@ -275,21 +263,13 @@ theorem mlp_lipschitz_complete_analysis {inDim hidDim outDim : ℕ}
   -- First, establish that linear_spec is equivalent to mat_vec_mul + bias for distance purposes
   have linear_equiv_1 : Proofs.tensorL2Dist (Spec.linearSpec l1 x) (Spec.linearSpec l1 y) =
     Proofs.tensorL2Dist (matVecMulSpec l1.weights x) (matVecMulSpec l1.weights y) := by
-    -- Use the same reasoning as in linear_layer_lipschitz_bound
-    unfold Spec.linearSpec Proofs.tensorL2Dist Proofs.tensorL2Norm Spec.tensorNormSquared
-    congr 1
-    -- Apply bias cancellation lemma properly
-    rw [Spec.sub_spec_bias_cancel]
+    exact tensorL2Dist_linearSpec_eq_matVecMulSpec l1 x y
 
   have linear_equiv_2_pre : ∀ a b, Proofs.tensorL2Dist (Spec.linearSpec l2 a) (Spec.linearSpec
     l2 b) =
     Proofs.tensorL2Dist (matVecMulSpec l2.weights a) (matVecMulSpec l2.weights b) := by
     intro a b
-    -- Apply the same reasoning
-    unfold Spec.linearSpec Proofs.tensorL2Dist Proofs.tensorL2Norm Spec.tensorNormSquared
-    congr 1
-    -- Apply bias cancellation lemma properly
-    rw [Spec.sub_spec_bias_cancel]
+    exact tensorL2Dist_linearSpec_eq_matVecMulSpec l2 a b
 
   have h1' : Proofs.tensorL2Dist (Spec.linearSpec l1 x) (Spec.linearSpec l1 y) ≤ L1 *
     Proofs.tensorL2Dist x y :=
@@ -321,10 +301,10 @@ theorem mlp_lipschitz_complete_analysis {inDim hidDim outDim : ℕ}
     _ ≤ L2 * (L1 * Proofs.tensorL2Dist x y) := by
         exact mul_le_mul_of_nonneg_left h1' L2_nonneg
     _ = (L2 * L1) * Proofs.tensorL2Dist x y := by ring
-    _ = lipschitz_constant * Proofs.tensorL2Dist x y := by ring
+    _ = lipschitzConstant * Proofs.tensorL2Dist x y := by ring
 
 /--
-Repackage `mlp_lipschitz_complete_analysis` as a robustness-spec `is_lipschitz_continuous` fact.
+Repackage `mlp_lipschitz_complete_analysis` as a robustness-spec `isLipschitzContinuous` fact.
 
 This is the form expected by the certified-robustness lemmas in
 `NN.MLTheory.Proofs.Verification.Robustness.LipschitzCertified`.
@@ -332,8 +312,8 @@ This is the form expected by the certified-robustness lemmas in
 theorem mlp_is_lipschitz_continuous_l2 {inDim hidDim outDim : ℕ}
     (l1 : Spec.LinearSpec ℝ inDim hidDim)
     (l2 : Spec.LinearSpec ℝ hidDim outDim)
-    (h1_nonzero : l1.weights ≠ fill (0 : ℝ) _)
-    (h2_nonzero : l2.weights ≠ fill (0 : ℝ) _) :
+    (h1_nonzero : l1.weights ≠ Tensor.full _ (0 : ℝ))
+    (h2_nonzero : l2.weights ≠ Tensor.full _ (0 : ℝ)) :
     ∃ L : ℝ, L > 0 ∧
       NN.MLTheory.Robustness.Spec.isLipschitzContinuous
         (f := fun x => Examples.mlpForward l1 l2 x)
@@ -351,15 +331,15 @@ theorem mlp_is_lipschitz_continuous_l2 {inDim hidDim outDim : ℕ}
 theorem mlp_output_drift_bound_on_ball {inDim hidDim outDim : ℕ}
     (l1 : Spec.LinearSpec ℝ inDim hidDim)
     (l2 : Spec.LinearSpec ℝ hidDim outDim)
-    (h1_nonzero : l1.weights ≠ fill (0 : ℝ) _)
-    (h2_nonzero : l2.weights ≠ fill (0 : ℝ) _)
-    (x₀ : Tensor ℝ [inDim]) (perturbation_radius : ℝ) :
-    perturbation_radius > 0 →
-    ∃ robustness_guarantee : ℝ, robustness_guarantee > 0 ∧
+    (h1_nonzero : l1.weights ≠ Tensor.full _ (0 : ℝ))
+    (h2_nonzero : l2.weights ≠ Tensor.full _ (0 : ℝ))
+    (x₀ : Tensor ℝ [inDim]) (perturbationRadius : ℝ) :
+    perturbationRadius > 0 →
+    ∃ robustnessGuarantee : ℝ, robustnessGuarantee > 0 ∧
       ∀ x : Tensor ℝ [inDim],
-        Proofs.tensorL2Dist x₀ x ≤ perturbation_radius →
+        Proofs.tensorL2Dist x₀ x ≤ perturbationRadius →
         Proofs.tensorL2Dist (Examples.mlpForward l1 l2 x₀) (Examples.mlpForward l1 l2 x) ≤
-        robustness_guarantee * perturbation_radius := by
+        robustnessGuarantee * perturbationRadius := by
 
   intro h_radius_pos
   obtain ⟨L, h_L_pos, h_network_lipschitz⟩ := mlp_lipschitz_complete_analysis l1 l2 h1_nonzero
@@ -369,7 +349,7 @@ theorem mlp_output_drift_bound_on_ball {inDim hidDim outDim : ℕ}
 
   calc Proofs.tensorL2Dist (Examples.mlpForward l1 l2 x₀) (Examples.mlpForward l1 l2 x)
     ≤ L * Proofs.tensorL2Dist x₀ x := h_network_lipschitz x₀ x
-    _ ≤ L * perturbation_radius := mul_le_mul_of_nonneg_left h_perturbation (le_of_lt h_L_pos)
+    _ ≤ L * perturbationRadius := mul_le_mul_of_nonneg_left h_perturbation (le_of_lt h_L_pos)
 
 end NN.MLTheory.Proofs
 /-!

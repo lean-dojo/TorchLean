@@ -44,7 +44,7 @@ contract operationally and remains a runtime trust boundary, like the other CUDA
 The definitions below are the mathematical contract for FlashAttention. They do not claim to verify
 the native CUDA source. Instead, they make the important theorem explicit:
 
-`onlineSoftmaxTiledAttention cfg ctx = scaledDotProductAttention ctx`.
+`onlineSoftmaxTiledAttention config ctx = scaledDotProductAttention ctx`.
 
 That is the theorem a compiler rewrite or fused backend relies on. A production IO-tiled CUDA kernel
 can be swapped in under the same contract once it is tested/refined.
@@ -61,13 +61,15 @@ References:
 
 @[expose] public section
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Shape
+
+open TorchLean
 
 namespace Spec
 
-variable {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+variable {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
 
 /-- Runtime tiling metadata for a FlashAttention-style fused implementation.
 
@@ -104,8 +106,8 @@ contract rather than only at an opaque fused primitive:
 3. compute the same row-wise normalized weights that a correct online summary must produce;
 4. multiply by values.
 
-This is schedule-polymorphic: `cfg.blockQ` and `cfg.blockK` describe how a runtime may tile the
-work, but they do not alter the denotation.
+This is schedule-polymorphic: `config.blockQ` and `config.blockK` describe how a runtime may tile
+the work, but they do not alter the denotation.
 -/
 
 /-- Unmasked attention scores `QKᵀ`. -/
@@ -134,13 +136,13 @@ This definition is the **denotation** that a FlashAttention implementation must 
 formal model of Dao-style tile loops or SRAM/HBM traffic.
 -/
 def onlineSoftmaxWeights
-    (cfg : FlashAttentionConfig)
+    (config : FlashAttentionConfig)
     {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
     (ctx : AttentionContext α nQ nK dModel h1 h2) :
     Tensor α [nQ, nK] :=
   -- Tile metadata is relevant to the runtime schedule, not to the exact normalized weights.
-  let _blockQ := cfg.blockQ
-  let _blockK := cfg.blockK
+  let _blockQ := config.blockQ
+  let _blockK := config.blockK
   let scores := scaledAttentionScores (α := α) ctx
   match ctx.mask with
   | none => Activation.softmaxSpec (α := α) 1 scores
@@ -152,11 +154,11 @@ This is the mathematical result of the online/tiled schedule: row-wise softmax w
 `V`. Runtime kernels may avoid storing the full weights, but they must refine this value.
 -/
 def onlineSoftmaxTiledAttention
-    (cfg : FlashAttentionConfig)
+    (config : FlashAttentionConfig)
     {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
     (ctx : AttentionContext α nQ nK dModel h1 h2) :
     Tensor α [nQ, dModel] :=
-  matMulSpec (onlineSoftmaxWeights (α := α) cfg ctx) ctx.V
+  matMulSpec (onlineSoftmaxWeights (α := α) config ctx) ctx.V
 
 /--
 The proof layer FlashAttention denotation equals standard SDPA.
@@ -165,12 +167,12 @@ This theorem is useful for graph-rewrite semantics, but should not be read as a 
 particular CUDA implementation.
 -/
 @[simp] theorem onlineSoftmaxTiledAttention_eq_scaledDotProductAttention
-    (cfg : FlashAttentionConfig)
+    (config : FlashAttentionConfig)
     {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
     (ctx : AttentionContext α nQ nK dModel h1 h2) :
-    onlineSoftmaxTiledAttention (α := α) cfg ctx =
+    onlineSoftmaxTiledAttention (α := α) config ctx =
       scaledDotProductAttention (α := α) ctx := by
-  cases cfg
+  cases config
   rfl
 
 /-- Semantic FlashAttention forward operator.
@@ -180,13 +182,13 @@ implementations may use tiling, online softmax summaries, or a fused CUDA kernel
 refine this denotation to be considered correct.
 -/
 def flashAttention
-    (cfg : FlashAttentionConfig)
+    (config : FlashAttentionConfig)
     {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
     (ctx : AttentionContext α nQ nK dModel h1 h2) :
     Tensor α [nQ, dModel] :=
   -- The config is kept in the signature so graph rewrites and runtimes can record the intended
   -- schedule. At the denotational level, schedules must not change the mathematical result.
-  onlineSoftmaxTiledAttention (α := α) cfg ctx
+  onlineSoftmaxTiledAttention (α := α) config ctx
 
 /-- Semantic FlashAttention backward/VJP operator.
 
@@ -196,7 +198,7 @@ matrix, but the returned adjoints must match this spec-level VJP up to the chose
 error envelope.
 -/
 def flashAttentionBackward
-    (cfg : FlashAttentionConfig)
+    (config : FlashAttentionConfig)
     {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
     (ctx : AttentionContext α nQ nK dModel h1 h2)
     (dOut : Tensor α [nQ, dModel]) :
@@ -205,27 +207,27 @@ def flashAttentionBackward
      Tensor α [nK, dModel]) :=
   -- As with the forward operator, the tile metadata belongs to the implementation schedule.
   -- The proof layer VJP is the same local derivative contract as standard SDPA.
-  let _blockQ := cfg.blockQ
-  let _blockK := cfg.blockK
+  let _blockQ := config.blockQ
+  let _blockK := config.blockK
   scaledDotProductAttentionBackward (α := α) ctx dOut
 
 /-- Forward semantic correctness of the fused FlashAttention spec. -/
 @[simp] theorem flashAttention_eq_scaledDotProductAttention
-    (cfg : FlashAttentionConfig)
+    (config : FlashAttentionConfig)
     {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
     (ctx : AttentionContext α nQ nK dModel h1 h2) :
-    flashAttention (α := α) cfg ctx = scaledDotProductAttention (α := α) ctx := by
+    flashAttention (α := α) config ctx = scaledDotProductAttention (α := α) ctx := by
   simp [flashAttention]
 
 /-- Backward/VJP semantic correctness of the fused FlashAttention spec. -/
 @[simp] theorem flashAttentionBackward_eq_scaledDotProductAttentionBackward
-    (cfg : FlashAttentionConfig)
+    (config : FlashAttentionConfig)
     {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
     (ctx : AttentionContext α nQ nK dModel h1 h2)
     (dOut : Tensor α [nQ, dModel]) :
-    flashAttentionBackward (α := α) cfg ctx dOut =
+    flashAttentionBackward (α := α) config ctx dOut =
       scaledDotProductAttentionBackward (α := α) ctx dOut := by
-  cases cfg
+  cases config
   rfl
 
 end Spec

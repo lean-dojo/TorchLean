@@ -6,14 +6,15 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Tape.Nodes.Piecewise
+public import NN.Proofs.Autograd.Tape.Nodes.Elementwise
+public import NN.Proofs.Autograd.Tape.Nodes.Reductions
 
 /-!
 # Differentiable graph composition
 
 The `DGraph` wrapper packages a tape graph together with node-local `NodeFDerivCorrect` proofs.
-Composition lemmas here let us build large model-level VJP theorems from proved primitive nodes rather
-than reproving backprop correctness for each architecture from scratch.
+Composition lemmas here let us build large model-level VJP theorems from proved primitive nodes
+rather than reproving backprop correctness for each architecture from scratch.
 -/
 
 @[expose] public section
@@ -21,8 +22,8 @@ than reproving backprop correctness for each architecture from scratch.
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -39,6 +40,7 @@ and then immediately use `backpropVec_eq_adjoint_fderiv` without separately thre
 object.
 -/
 
+/-- A tape graph bundled with the proof that every one of its nodes is analytically correct. -/
 structure DGraph (Γ : List Shape) (ss : List Shape) where
   /-- The underlying tape/DAG graph. -/
   g : Graph Γ ss
@@ -104,7 +106,12 @@ def dropMiddleCLM (Γ extra ss : List Shape) :
   (Graph.castCLM (h := (ctxSize_append Γ ss).symm)).comp
     ((Graph.appendCLM (ctxSize Γ) (ctxSize ss)).comp (base.prod saved))
 
-@[simp] lemma dropMiddleCLM_apply {Γ extra ss : List Shape}
+/-- Unfolds the middle-dropping projection into its take, append and cast components.
+
+Composing two tapes leaves the inner tape's private saved values in the middle of the context; this
+map
+is what discards them, keeping the caller's context and the composed outputs. -/
+@[simp] theorem dropMiddleCLM_apply {Γ extra ss : List Shape}
     (x : CtxVec ((Γ ++ extra) ++ ss)) :
     dropMiddleCLM Γ extra ss x =
       castVec (ctxSize_append Γ ss).symm
@@ -306,8 +313,8 @@ theorem weakenContext_backpropVec_eq_adjoint_fderiv
 VJP theorem for appended proof-carrying graphs.
 
 This is just `Graph.backpropVec_eq_adjoint_fderiv` specialized to `append`, but the named theorem
-makes model proofs read like the construction we are formalizing: prove block A, prove block B over A's
-extended context, append them, and immediately get the end-to-end reverse-mode theorem.
+makes model proofs read like the construction we are formalizing: prove block A, prove block B over
+A's extended context, append them, and immediately get the end-to-end reverse-mode theorem.
 -/
 theorem append_backpropVec_eq_adjoint_fderiv
     {Γ : List Shape} {ss₁ ss₂ : List Shape}

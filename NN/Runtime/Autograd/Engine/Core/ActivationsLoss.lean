@@ -7,15 +7,15 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Engine.Core.Neural
+public import NN.Runtime.Autograd.Engine.Core.Base
 public import NN.Spec.Layers.Loss
 
 /-!
 # Core Tape Activations and Losses
 
 This file implements activation and loss tape nodes for the backend-independent autograd engine.
-Each node records the spec-layer forward value and a backward closure that computes the corresponding
-VJP contribution.
+Each node records the spec-layer forward value and a backward closure that computes the
+corresponding VJP contribution.
 -/
 
 @[expose] public section
@@ -23,22 +23,22 @@ VJP contribution.
 namespace Runtime
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Tape
 
 /--
 Elementwise logistic sigmoid activation.
 
- This builds a tape node whose forward pass is `Activation.sigmoid_spec`, and whose backward pass
- multiplies the upstream gradient by `Activation.sigmoid_deriv_spec` (i.e. `σ(x) * (1 - σ(x))`,
+ This builds a tape node whose forward pass is `Activation.sigmoidSpec`, and whose backward pass
+ multiplies the upstream gradient by `Activation.sigmoidDerivSpec` (i.e. `σ(x) * (1 - σ(x))`,
  pointwise).
 
  PyTorch comparison: `torch.sigmoid` / `torch.nn.functional.sigmoid`.
  Reference: https://pytorch.org/docs/stable/generated/torch.sigmoid.html
  -/
-def sigmoid {α : Type} [Context α] [DecidableEq Shape]
+def sigmoid {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
   let x ← requireValue (α:=α) (t:=t) (s:=s) xId
   let y := Activation.sigmoidSpec (α:=α) x
@@ -57,13 +57,13 @@ def sigmoid {α : Type} [Context α] [DecidableEq Shape]
 /--
  Elementwise hyperbolic tangent activation.
 
- Forward uses `Activation.tanh_spec`; backward uses `Activation.tanh_deriv_spec` (pointwise
+ Forward uses `Activation.tanhSpec`; backward uses `Activation.tanhDerivSpec` (pointwise
  derivative, usually `1 - tanh(x)^2`).
 
  PyTorch comparison: `torch.tanh`.
  Reference: https://pytorch.org/docs/stable/generated/torch.tanh.html
  -/
-def tanh {α : Type} [Context α] [DecidableEq Shape]
+def tanh {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
   let x ← requireValue (α:=α) (t:=t) (s:=s) xId
   let y := Activation.tanhSpec (α:=α) x
@@ -86,7 +86,7 @@ The tape records GELU as one semantic operation. Its backward closure uses the d
 `NN.Proofs.Gradients.Activation`; runtime backends may fuse the corresponding pointwise work
 without changing this tape-level rule.
 -/
-def gelu {α : Type} [Context α] [DecidableEq Shape]
+def gelu {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
   let x ← requireValue (α := α) (t := t) (s := s) xId
   let y := Activation.geluSpec (α := α) x
@@ -111,7 +111,7 @@ def gelu {α : Type} [Context α] [DecidableEq Shape]
  PyTorch comparison: `torch.softmax(x, dim=-1)`.
  Reference: https://pytorch.org/docs/stable/generated/torch.softmax.html
  -/
-def softmaxLast {α : Type} [Context α] [DecidableEq Shape]
+def softmaxLast {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
   let x ← requireValue (α:=α) (t:=t) (s:=s) xId
   let y := Activation.Internal.softmaxInnermostSpec (α := α) x
@@ -134,7 +134,7 @@ Unlike `log (softmax x)`, this uses the max-shifted
 `x - max(x) - log(sum(exp(x - max(x))))` formulation.  That matches the numerical contract of
 `torch.nn.functional.log_softmax` and is the right primitive for cross-entropy on logits.
 -/
-def logSoftmaxLast {α : Type} [Context α] [DecidableEq Shape]
+def logSoftmaxLast {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
   let x ← requireValue (α:=α) (t:=t) (s:=s) xId
   let y := Activation.Internal.logSoftmaxInnermostSpec (α := α) x
@@ -154,12 +154,12 @@ def logSoftmaxLast {α : Type} [Context α] [DecidableEq Shape]
 /--
  Elementwise softplus activation.
 
- Forward uses `Activation.softplus_spec`; backward uses `Activation.softplus_deriv_spec`.
+ Forward uses `Activation.softplusSpec`; backward uses `Activation.softplusDerivSpec`.
 
  PyTorch comparison: `torch.nn.functional.softplus`.
  Reference: https://pytorch.org/docs/stable/generated/torch.nn.functional.softplus.html
  -/
-def softplus {α : Type} [Context α] [DecidableEq Shape]
+def softplus {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
   let x ← requireValue (α:=α) (t:=t) (s:=s) xId
   let y := Activation.softplusSpec (α:=α) x
@@ -178,12 +178,12 @@ def softplus {α : Type} [Context α] [DecidableEq Shape]
 /--
  Elementwise exponential.
 
- Forward uses `exp_spec`; backward multiplies by `exp(x)` (pointwise), i.e. `d/dx exp(x) = exp(x)`.
+ Forward uses `expSpec`; backward multiplies by `exp(x)` (pointwise), i.e. `d/dx exp(x) = exp(x)`.
 
  PyTorch comparison: `torch.exp`.
  Reference: https://pytorch.org/docs/stable/generated/torch.exp.html
  -/
-def exp {α : Type} [Context α] [DecidableEq Shape]
+def exp {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
   let x ← requireValue (α:=α) (t:=t) (s:=s) xId
   let y := expSpec (α:=α) x
@@ -201,20 +201,21 @@ def exp {α : Type} [Context α] [DecidableEq Shape]
 /--
  Elementwise natural logarithm.
 
- Forward uses `log_spec`; backward multiplies by `1/x` (pointwise), i.e. `d/dx log(x) = 1/x`
+ Forward uses `logSpec`; backward multiplies by `1/x` (pointwise), i.e. `d/dx log(x) = 1/x`
  (on its mathematical domain; this runtime does not model NaNs/Infs explicitly).
 
  PyTorch comparison: `torch.log`.
  Reference: https://pytorch.org/docs/stable/generated/torch.log.html
  -/
-def log {α : Type} [Context α] [DecidableEq Shape]
+def log {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
   let x ← requireValue (α:=α) (t:=t) (s:=s) xId
   -- `log` is only defined on positive inputs (and `d/dx log(x) = 1/x` blows up as `x → 0⁺`).
   -- Rather than implicitly relying on backend NaN/Inf behavior, we make the precondition explicit
   -- and ask users to opt into `safe_log` when they want epsilon protection.
   if !(allSpec (α := α) (s := s) (fun v => decide (v > (0 : α))) x) then
-    throw "autograd: log: input contains values <= 0 (or NaN); use `safe_log` if you want epsilon protection"
+    throw "autograd: log: input contains values <= 0 (or NaN); \
+      use `safe_log` if you want epsilon protection"
   let y := logSpec (α:=α) x
   let node : Node α :=
     { name := some "log"
@@ -235,7 +236,7 @@ def log {α : Type} [Context α] [DecidableEq Shape]
  PyTorch comparison: `torch.reciprocal`.
  Reference: https://pytorch.org/docs/stable/generated/torch.reciprocal.html
  -/
-def inv {α : Type} [Context α] [DecidableEq Shape]
+def inv {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
   let x ← requireValue (α:=α) (t:=t) (s:=s) xId
   let y := invSpec (α := α) x
@@ -257,15 +258,16 @@ def inv {α : Type} [Context α] [DecidableEq Shape]
 /--
  Elementwise "safe log" that protects against `log(0)` by adding a small `ε` internally.
 
- This uses `Activation.safe_log_spec` and `Activation.safe_log_deriv_spec`. The exact behavior is
+ This uses `Activation.safeLogSpec` and `Activation.safeLogDerivSpec`. The exact behavior is
  controlled by the spec-layer definition; conceptually it is similar to `log(x + ε)` used in
  numerically-stable losses.
 
  PyTorch comparison: commonly written as `torch.log(x + eps)` in user code (there is no single
  dedicated `torch.safe_log` primitive).
  -/
-def safeLog {α : Type} [Context α] [DecidableEq Shape]
-  {s : Shape} (t : Tape α) (xId : Nat) (ε : α := Numbers.epsilon) : Result (Tape α × Nat) := do
+def safeLog {α : Type} [TorchLean.Storage α] [Context α]
+  {s : Shape} (t : Tape α) (xId : Nat) (ε : α := Context.defaultEpsilon) :
+    Result (Tape α × Nat) := do
   let x ← requireValue (α:=α) (t:=t) (s:=s) xId
   let y := Activation.safeLogSpec (α:=α) x ε
   let node : Node α :=
@@ -289,7 +291,7 @@ def safeLog {α : Type} [Context α] [DecidableEq Shape]
  PyTorch comparison: `torch.sum(x)` with `dim=None`.
  Reference: https://pytorch.org/docs/stable/generated/torch.sum.html
  -/
-def sum {α : Type} [Add α] [Zero α] [DecidableEq Shape]
+def sum {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
   {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
   let x ← requireValue (α:=α) (t:=t) (s:=s) xId
   let y : Tensor α .scalar := Tensor.scalar (sumSpec (α:=α) x)
@@ -300,7 +302,7 @@ def sum {α : Type} [Add α] [Zero α] [DecidableEq Shape]
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := Shape.scalar) dLdyAny
-        pure #[(xId, Spec.SomeTensor.ofTensor (replicate (α := α) (s := s) dLdy))]
+        pure #[(xId, Spec.SomeTensor.ofTensor (replicate (α := α) (shape := s) dLdy))]
     }
   pure (t.addNode node)
 
@@ -313,8 +315,8 @@ def sum {α : Type} [Add α] [Zero α] [DecidableEq Shape]
  PyTorch comparison: `torch.nn.functional.mse_loss`.
  Reference: https://pytorch.org/docs/stable/generated/torch.nn.functional.mse_loss.html
  -/
-def mseLoss {α : Type}
-  [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [Coe Nat α] [DecidableEq Shape]
+def mseLoss {α : Type} [TorchLean.Storage α]
+  [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [NatCast α]
   {s : Shape} (t : Tape α) (yhatId targetId : Nat) : Result (Tape α × Nat) := do
   let yhat ← requireValue (α:=α) (t:=t) (s:=s) yhatId
   let target ← requireValue (α:=α) (t:=t) (s:=s) targetId
@@ -329,7 +331,8 @@ def mseLoss {α : Type}
         let g : α := Tensor.item dLdy
         let dYhat :=
           scaleSpec (α := α) (s := s) (Spec.mseDerivSpec (α := α) yhat target) g
-        let dTarget : Tensor α s := subSpec (fill (0 : α) s) dYhat
-        pure #[(yhatId, Spec.SomeTensor.ofTensor dYhat), (targetId, Spec.SomeTensor.ofTensor dTarget)]
+        let dTarget : Tensor α s := subSpec (Tensor.full s (0 : α)) dYhat
+        pure #[(yhatId, Spec.SomeTensor.ofTensor dYhat),
+          (targetId, Spec.SomeTensor.ofTensor dTarget)]
     }
   pure (t.addNode node)

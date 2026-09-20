@@ -18,10 +18,10 @@ It is useful for:
 
 - rigorous enclosures of real-valued expressions (ball arithmetic),
 - tight bounds for monotone nonlinearities,
-- cross-checking TorchLean’s native float backends (`IEEE32Exec`, `FP32`/`NF`).
+- cross-checking TorchLean’s numeric models (`ExecFloat.Binary 8 23`, `FP32`/`NF`).
 
-Trust boundary: the Python/Arb toolchain is an oracle. This module parses and packages its output; it
-does not by itself prove the Arb enclosure certificate inside Lean.
+Trust boundary: the Python/Arb toolchain is an oracle. This module parses and packages its output;
+it does not by itself prove the Arb enclosure certificate inside Lean.
 -/
 
 @[expose] public section

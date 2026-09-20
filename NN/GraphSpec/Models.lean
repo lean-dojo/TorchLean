@@ -6,11 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Models
 public import NN.GraphSpec.Models.Mlp
 public import NN.GraphSpec.Models.Cnn
 public import NN.GraphSpec.Models.ResidualLinear
-public import NN.GraphSpec.Models.TorchLean
 
 /-!
 # GraphSpec Model Catalog
@@ -28,8 +26,6 @@ We still keep the source files split by semantic layer:
 - `NN.GraphSpec.Models.*` contains graph-authored models whose structure is itself a typed
   `Chain`/`DAG.Model`, so we can lower the same architecture to TorchLean and reason about the
   graph shape.
-- `NN.GraphSpec.Models.TorchLean.*` contains executable TorchLean constructors for models that are
-  already useful as reusable autograd programs.
 - `NN.Examples.Models.*` contains runnable scripts and training examples.
 
 That split avoids circular dependencies. This umbrella is the architecture-facing import that
@@ -53,8 +49,8 @@ which GraphSpec surface syntax they were authored in.
 Included examples:
 - `NN.GraphSpec.Models.mlp` (minimal sequential MLP) and
   `NN.GraphSpec.Models.mlpDAGModelZeroInit` (the same chain lowered to DAG),
-- `NN.GraphSpec.Models.twoConvCnn` (sequential chain) and `NN.GraphSpec.Models.twoConvCnnDAGModelZeroInit`
-  (the same model, lowered to DAG),
+- `NN.GraphSpec.Models.twoConvCnn` (sequential chain) and
+  `NN.GraphSpec.Models.twoConvCnnDAGModelZeroInit` (the same model, lowered to DAG),
 - the DAG-native `NN.GraphSpec.Models.residualLinear` model.
 
 See also:

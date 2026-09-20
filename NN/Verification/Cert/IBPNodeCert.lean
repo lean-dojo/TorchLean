@@ -6,10 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph
-public import NN.Spec.Core.Tensor
 public import NN.Verification.Cert.NodeReplay
-public import Lean.Data.Json
 
 /-!
 # IBPNodeCert
@@ -43,6 +40,9 @@ Trust boundary note:
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 
 namespace NN.Verification.IBPNodeCert
 
@@ -51,18 +51,16 @@ open NN.MLTheory.CROWN
 open NN.Verification.Json
 open NN.Verification.Cert.NodeReplay
 open Import.PyTorch
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open Lean Data Json
-open TorchLean.Floats.IEEE754
-
 /-- Read an IBP node certificate from JSON on disk. -/
 def readIBPNodeCertificate (g : Graph) (path : String) :
-    IO (Array (Option (FlatBox IEEE32Exec))) := do
+    IO (Array (Option (FlatBox (ExecFloat.Binary 8 23)))) := do
   let topObj ← readJsonObjectFile path
   let arr ← expectFieldArray topObj "ibp" "top-level"
   if hSize : arr.size = g.nodes.size then
-    let mut out : Array (Option (FlatBox IEEE32Exec)) := Array.mkEmpty g.nodes.size
+    let mut out : Array (Option (FlatBox (ExecFloat.Binary 8 23))) := Array.mkEmpty g.nodes.size
     for i in List.finRange g.nodes.size do
       let node := g.nodes[i.val]'i.isLt
       let hArr : i.val < arr.size := by
@@ -77,13 +75,15 @@ def readIBPNodeCertificate (g : Graph) (path : String) :
 
 /-- Check one artifact entry against the authoritative Lean IBP trace. -/
 def checkIBPNode (g : Graph)
-    (authoritative cert : Array (Option (FlatBox IEEE32Exec))) (id : Nat) : IO Bool := do
+    (authoritative cert : Array (Option (FlatBox (ExecFloat.Binary 8 23)))) (id : Nat) : IO Bool :=
+      do
   let some node := g.nodes[id]?
     | IO.eprintln s!"[IBPNodeCert] node {id}: out of bounds for graph with {g.nodes.size} nodes"
       pure false
   if !(ibpNodePreconditionsOk g authoritative id) then
     IO.eprintln
-      s!"[IBPNodeCert] node {id}: authoritative trace violates shape/domain preconditions for {repr node.kind}"
+      (s!"[IBPNodeCert] node {id}: authoritative trace violates shape/domain preconditions " ++
+        s!"for {repr node.kind}")
     return false
   let certBox? :=
     match cert[id]? with
@@ -123,10 +123,11 @@ Check a per-node IBP certificate against Lean's graph IBP propagation rules.
 Returns `true` iff every node's certificate interval contains the interval recomputed from trusted
 inputs and parameters.
 -/
-def checkIBPNodeCertificate (g : Graph) (ps : ParamStore IEEE32Exec) (path : String) : IO Bool :=
+def checkIBPNodeCertificate (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23)) (path : String) :
+  IO Bool :=
   do
   let cert ← readIBPNodeCertificate g path
-  let authoritative := runIBP (α := IEEE32Exec) g ps
+  let authoritative := runIBP (α := (ExecFloat.Binary 8 23)) g ps
   let mut ok := true
   for id in [0:g.nodes.size] do
     let okNode ← checkIBPNode g authoritative cert id

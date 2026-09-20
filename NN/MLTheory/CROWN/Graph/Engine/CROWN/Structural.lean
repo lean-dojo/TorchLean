@@ -12,12 +12,12 @@ public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Activations
 
 namespace NN.MLTheory.CROWN.Graph
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 open NN.MLTheory.CROWN
 open NN.IR
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable [BoundOps α]
 
 open BoundOps
@@ -25,16 +25,14 @@ open BoundOps
 /-!
 # CROWN Structural Operators
 
-Affine propagation through permutations, normalization, softmax, and elementwise products.
+Affine propagation through permutations, matrix products, and elementwise products.
 -/
 
 /-- Permute the output coordinates of an affine bound when the output shape permutation is valid. -/
 def permuteAffineOut {inDim outDim : Nat}
   (perm : Fin outDim → Fin outDim) (aff : AffineVec α inDim outDim) : AffineVec α inDim outDim :=
-  match aff.A, aff.c with
-  | .dim rows, .dim cvec =>
-    { A := Tensor.dim (fun i => rows (perm i))
-      c := Tensor.dim (fun i => cvec (perm i)) }
+  { A := Tensor.matrix fun i j => Spec.get2 aff.A (perm i) j
+    c := Tensor.ofFn fun i => Tensor.getScalar aff.c (perm i) }
 
 /-- Exactly transport affine bounds through a valid axis permutation. -/
 def permuteFlatAffineBounds? (sourceShape : Shape) (perm : Array Nat)
@@ -45,241 +43,6 @@ def permuteFlatAffineBounds? (sourceShape : Shape) (perm : Array Nat)
       outDim := bounds.outDim
       loAff := permuteAffineOut (α := α) flatPerm bounds.loAff
       hiAff := permuteAffineOut (α := α) flatPerm bounds.hiAff }
-
-/-- Conservative CROWN-style affine bounds for softmax along the last tensor axis. -/
-def propagateSoftmaxBoundsLastAxis
-  (s : Shape) (preB : FlatBox α) (xB : FlatAffineBounds α) (hout : xB.outDim = preB.dim) :
-  FlatAffineBounds α :=
-  let xLo : AffineVec α xB.inDim preB.dim :=
-    castAffineOut (α := α) (n := xB.inDim) (m := xB.outDim) (m' := preB.dim) hout xB.loAff
-  let xHi : AffineVec α xB.inDim preB.dim :=
-    castAffineOut (α := α) (n := xB.inDim) (m := xB.outDim) (m' := preB.dim) hout xB.hiAff
-  let m := lastDimLen s
-  if m = 0 then
-    { inDim := xB.inDim, outDim := preB.dim, loAff := xLo, hiAff := xHi }
-  else if m = 1 then
-    -- Each last-axis slice has length 1, so softmax is identically 1.
-    let ones : Tensor α [preB.dim] := Spec.fill (α := α) Numbers.one (.dim preB.dim
-      .scalar)
-    boundsConst (α := α) (inputDim := xB.inDim) (outDim := preB.dim) ones ones
-  else
-    let dim := preB.dim
-    if dim % m = 0 then
-      let expLo : Tensor α [dim] := Tensor.expSpec preB.lo
-      let expHi : Tensor α [dim] := Tensor.expSpec preB.hi
-      let groups : Nat := dim / m
-      let totalExpLo : Tensor α [groups] :=
-        Tensor.dim (fun g =>
-          let base := g.val * m
-          let sum : α := (List.range m).foldl (fun acc j => acc + getAtOrZero expLo [base + j]) 0
-          Tensor.scalar sum)
-      let totalExpHi : Tensor α [groups] :=
-        Tensor.dim (fun g =>
-          let base := g.val * m
-          let sum : α := (List.range m).foldl (fun acc j => acc + getAtOrZero expHi [base + j]) 0
-          Tensor.scalar sum)
-      let flo := getDimScalarFn (α := α) preB.lo
-      let fhi := getDimScalarFn (α := α) preB.hi
-      -- Upper bound via logistic with C = Σ_{j≠i} exp(lo_j)
-      let slopes_hi : Tensor α [dim] :=
-        Tensor.dim (fun i =>
-          let g := i.val / m
-          match flo i, fhi i with
-          | .scalar l, .scalar u =>
-            let tot := getAtOrZero totalExpLo [g]
-            let eLi := getAtOrZero expLo [i.val]
-            let c := tot - eLi
-            if c > Numbers.epsilon then
-              let logC := MathFunctions.log c
-              let (_aLo, _bLo, aHi, _bHi) := sigmoidLineBounds (α := α) (l - logC) (u - logC)
-              Tensor.scalar aHi
-            else
-              Tensor.scalar Numbers.zero)
-      let bias_hi : Tensor α [dim] :=
-        Tensor.dim (fun i =>
-          let g := i.val / m
-          match flo i, fhi i with
-          | .scalar l, .scalar u =>
-            let tot := getAtOrZero totalExpLo [g]
-            let eLi := getAtOrZero expLo [i.val]
-            let c := tot - eLi
-            if c > Numbers.epsilon then
-              let logC := MathFunctions.log c
-              let (_aLo, _bLo, aHi, bHi) := sigmoidLineBounds (α := α) (l - logC) (u - logC)
-              Tensor.scalar (bHi - aHi * logC)
-            else
-              Tensor.scalar Numbers.one)
-      -- Lower bound via logistic with C = Σ_{j≠i} exp(hi_j)
-      let slopes_lo : Tensor α [dim] :=
-        Tensor.dim (fun i =>
-          let g := i.val / m
-          match flo i, fhi i with
-          | .scalar l, .scalar u =>
-            let tot := getAtOrZero totalExpHi [g]
-            let eUi := getAtOrZero expHi [i.val]
-            let c := tot - eUi
-            if c > Numbers.epsilon then
-              let logC := MathFunctions.log c
-              let (aLo, _bLo, _aHi, _bHi) := sigmoidLineBounds (α := α) (l - logC) (u - logC)
-              Tensor.scalar aLo
-            else
-              Tensor.scalar Numbers.zero)
-      let bias_lo : Tensor α [dim] :=
-        Tensor.dim (fun i =>
-          let g := i.val / m
-          match flo i, fhi i with
-          | .scalar l, .scalar u =>
-            let tot := getAtOrZero totalExpHi [g]
-            let eUi := getAtOrZero expHi [i.val]
-            let c := tot - eUi
-            if c > Numbers.epsilon then
-              let logC := MathFunctions.log c
-              let (aLo, bLo, _aHi, _bHi) := sigmoidLineBounds (α := α) (l - logC) (u - logC)
-              Tensor.scalar (bLo - aLo * logC)
-            else
-              Tensor.scalar Numbers.zero)
-      let loAff := affApplyDiag (α := α) (inDim := xB.inDim) (outDim := dim) slopes_lo bias_lo xLo
-      let hiAff := affApplyDiag (α := α) (inDim := xB.inDim) (outDim := dim) slopes_hi bias_hi xHi
-      { inDim := xB.inDim, outDim := dim, loAff := loAff, hiAff := hiAff }
-    else
-      -- Shape mismatch: fall back to trivial [0,1] bounds.
-      let zeros : Tensor α [dim] := Spec.fill (α := α) Numbers.zero (.dim dim .scalar)
-      let ones : Tensor α [dim] := Spec.fill (α := α) Numbers.one (.dim dim .scalar)
-      boundsConst (α := α) (inputDim := xB.inDim) (outDim := dim) zeros ones
-
-/-- Conservative affine bounds for layer normalization over the last tensor axis. -/
-def propagateLayernormBoundsLastAxis
-  (s : Shape) (preB : FlatBox α) (xB : FlatAffineBounds α) (hout : xB.outDim = preB.dim) :
-  FlatAffineBounds α :=
-  let xLo : AffineVec α xB.inDim preB.dim :=
-    castAffineOut (α := α) (n := xB.inDim) (m := xB.outDim) (m' := preB.dim) hout xB.loAff
-  let xHi : AffineVec α xB.inDim preB.dim :=
-    castAffineOut (α := α) (n := xB.inDim) (m := xB.outDim) (m' := preB.dim) hout xB.hiAff
-  let m := lastDimLen s
-  if m = 0 then
-    { inDim := xB.inDim, outDim := preB.dim, loAff := xLo, hiAff := xHi }
-  else if m = 1 then
-    -- Each slice has length 1: (x - mean)/sqrt(var+eps) = 0.
-    let zeros : Tensor α [preB.dim] := Spec.fill (α := α) Numbers.zero (.dim preB.dim
-      .scalar)
-    boundsConst (α := α) (inputDim := xB.inDim) (outDim := preB.dim) zeros zeros
-  else
-    let dim := preB.dim
-    if dim % m = 0 then
-      let groups : Nat := dim / m
-      let mA : α := (m : Nat)
-      let denLo : α := MathFunctions.sqrt Numbers.epsilon
-      let muLoG : Tensor α [groups] :=
-        Tensor.dim (fun g =>
-          let base := g.val * m
-          let sumLo : α := (List.range m).foldl (fun acc j => acc + getAtOrZero preB.lo [base +
-            j]) 0
-          Tensor.scalar (sumLo / mA))
-      let muHiG : Tensor α [groups] :=
-        Tensor.dim (fun g =>
-          let base := g.val * m
-          let sumHi : α := (List.range m).foldl (fun acc j => acc + getAtOrZero preB.hi [base +
-            j]) 0
-          Tensor.scalar (sumHi / mA))
-      let denHiG : Tensor α [groups] :=
-        Tensor.dim (fun g =>
-          let base := g.val * m
-          let muLo := getAtOrZero muLoG [g.val]
-          let muHi := getAtOrZero muHiG [g.val]
-          let loSlice : Tensor α [m] :=
-            Tensor.dim (fun j => Tensor.scalar (getAtOrZero preB.lo [base + j.val]))
-          let hiSlice : Tensor α [m] :=
-            Tensor.dim (fun j => Tensor.scalar (getAtOrZero preB.hi [base + j.val]))
-          let varHi := idealLayerNormVarianceUpper (α := α) loSlice hiSlice muLo muHi
-          Tensor.scalar (MathFunctions.sqrt (varHi + Numbers.epsilon)))
-      let flo := getDimScalarFn (α := α) preB.lo
-      let fhi := getDimScalarFn (α := α) preB.hi
-      let slopes_hi : Tensor α [dim] :=
-        Tensor.dim (fun i =>
-          let g := i.val / m
-          let muLo := getAtOrZero muLoG [g]
-          let denHi := getAtOrZero denHiG [g]
-          match flo i, fhi i with
-          | .scalar l, .scalar u =>
-            let uL :=
-              let num := l - muLo
-              let den := if decide (l > muLo) then denLo else denHi
-              num / den
-            let uU :=
-              let num := u - muLo
-              let den := if decide (u > muLo) then denLo else denHi
-              num / den
-            let denx := u - l
-            let a := if denx > Numbers.epsilon then (uU - uL) / denx else Numbers.zero
-            Tensor.scalar a)
-      let bias_hi : Tensor α [dim] :=
-        Tensor.dim (fun i =>
-          let g := i.val / m
-          let muLo := getAtOrZero muLoG [g]
-          let denHi := getAtOrZero denHiG [g]
-          match flo i, fhi i with
-          | .scalar l, .scalar u =>
-            let uL :=
-              let num := l - muLo
-              let den := if decide (l > muLo) then denLo else denHi
-              num / den
-            let uU :=
-              let num := u - muLo
-              let den := if decide (u > muLo) then denLo else denHi
-              num / den
-            let denx := u - l
-            if denx > Numbers.epsilon then
-              let a := (uU - uL) / denx
-              Tensor.scalar (uL - a * l)
-            else
-              Tensor.scalar (if uL > uU then uL else uU))
-      let slopes_lo : Tensor α [dim] :=
-        Tensor.dim (fun i =>
-          let g := i.val / m
-          let muHi := getAtOrZero muHiG [g]
-          let denHi := getAtOrZero denHiG [g]
-          match flo i, fhi i with
-          | .scalar l, .scalar u =>
-            let lL :=
-              let num := l - muHi
-              let den := if decide (l > muHi) then denHi else denLo
-              num / den
-            let lU :=
-              let num := u - muHi
-              let den := if decide (u > muHi) then denHi else denLo
-              num / den
-            let denx := u - l
-            let a := if denx > Numbers.epsilon then (lU - lL) / denx else Numbers.zero
-            Tensor.scalar a)
-      let bias_lo : Tensor α [dim] :=
-        Tensor.dim (fun i =>
-          let g := i.val / m
-          let muHi := getAtOrZero muHiG [g]
-          let denHi := getAtOrZero denHiG [g]
-          match flo i, fhi i with
-          | .scalar l, .scalar u =>
-            let lL :=
-              let num := l - muHi
-              let den := if decide (l > muHi) then denHi else denLo
-              num / den
-            let lU :=
-              let num := u - muHi
-              let den := if decide (u > muHi) then denHi else denLo
-              num / den
-            let denx := u - l
-            if denx > Numbers.epsilon then
-              let a := (lU - lL) / denx
-              Tensor.scalar (lL - a * l)
-            else
-              Tensor.scalar (if lL < lU then lL else lU))
-      let loAff := affApplyDiag (α := α) (inDim := xB.inDim) (outDim := dim) slopes_lo bias_lo xLo
-      let hiAff := affApplyDiag (α := α) (inDim := xB.inDim) (outDim := dim) slopes_hi bias_hi xHi
-      { inDim := xB.inDim, outDim := dim, loAff := loAff, hiAff := hiAff }
-    else
-      -- Shape mismatch: conservative constant bounds from IBP on this op.
-      let (flatLo, flatHi) :=
-        idealLayerNormLastTensor (α := α) (s := .dim dim .scalar) preB.lo preB.hi
-      boundsConst (α := α) (inputDim := xB.inDim) (outDim := dim) flatLo flatHi
 
 namespace Internal
 
@@ -295,7 +58,7 @@ def propagateMatmulBounds
     let bHi : AffineVec α inDim bB.outDim :=
       castAffineIn (α:=α) (n:=bB.inDim) (n':=inDim) (m:=bB.outDim) hin.symm bB.hiAff
     let split (a : α) : α × α :=
-      if a > Numbers.zero then (a, Numbers.zero) else (Numbers.zero, a)
+      if a > 0 then (a, 0) else (0, a)
     let dims? : Option (Nat × Nat × Nat × Nat) :=
       match sA, sB with
       | .dim m (.dim k .scalar), .dim k' (.dim n .scalar) =>
@@ -331,8 +94,8 @@ def propagateMatmulBounds
             let ux := getAtOrZero Bx.hi [aIdx]
             let ly := getAtOrZero By.lo [bIdx]
             let uy := getAtOrZero By.hi [bIdx]
-            let cx := (lx + ux) * Numbers.half
-            let cy := (ly + uy) * Numbers.half
+            let cx := (lx + ux) * (1 / 2)
+            let cy := (ly + uy) * (1 / 2)
             let u1 := ux * cy + ly * cx - ux * ly
             let u2 := lx * cy + uy * cx - lx * uy
             let aX := if u1 < u2 then ly else uy
@@ -350,8 +113,8 @@ def propagateMatmulBounds
             let ux := getAtOrZero Bx.hi [aIdx]
             let ly := getAtOrZero By.lo [bIdx]
             let uy := getAtOrZero By.hi [bIdx]
-            let cx := (lx + ux) * Numbers.half
-            let cy := (ly + uy) * Numbers.half
+            let cx := (lx + ux) * (1 / 2)
+            let cy := (ly + uy) * (1 / 2)
             let u1 := ux * cy + ly * cx - ux * ly
             let u2 := lx * cy + uy * cx - lx * uy
             let aX := if u1 < u2 then ly else uy
@@ -370,8 +133,8 @@ def propagateMatmulBounds
             let ux := getAtOrZero Bx.hi [aIdx]
             let ly := getAtOrZero By.lo [bIdx]
             let uy := getAtOrZero By.hi [bIdx]
-            let cx := (lx + ux) * Numbers.half
-            let cy := (ly + uy) * Numbers.half
+            let cx := (lx + ux) * (1 / 2)
+            let cy := (ly + uy) * (1 / 2)
             let l1 := lx * cy + ly * cx - lx * ly
             let l2 := ux * cy + uy * cx - ux * uy
             let aX := if l1 > l2 then ly else uy
@@ -389,8 +152,8 @@ def propagateMatmulBounds
             let ux := getAtOrZero Bx.hi [aIdx]
             let ly := getAtOrZero By.lo [bIdx]
             let uy := getAtOrZero By.hi [bIdx]
-            let cx := (lx + ux) * Numbers.half
-            let cy := (ly + uy) * Numbers.half
+            let cx := (lx + ux) * (1 / 2)
+            let cy := (ly + uy) * (1 / 2)
             let l1 := lx * cy + ly * cx - lx * ly
             let l2 := ux * cy + uy * cx - ux * uy
             let aX := if l1 > l2 then ly else uy
@@ -478,7 +241,8 @@ def propagateMatmulBounds
 
 end Internal
 
-/-- Propagate affine bounds through componentwise multiplication using per-coordinate product planes. -/
+/-- Propagate affine bounds through componentwise multiplication using per-coordinate product
+planes. -/
 def propagateMulElemBounds
   (Bx By : FlatBox α)
   (xB yB : FlatAffineBounds α)
@@ -509,86 +273,80 @@ def propagateMulElemBounds
           castAffineIn (α:=α) (n:=yB.inDim) (n':=xB.inDim) (m:=n) hin.symm yHi0
 
         -- Helper to split a scalar coefficient into (pos, neg).
-        let split (a : α) : α × α := if a > Numbers.zero then (a, Numbers.zero) else (Numbers.zero,
+        let split (a : α) : α × α := if a > 0 then (a, 0) else (0,
           a)
 
         -- Build row-wise A/c for upper and lower using a single selected McCormick plane per
         -- component.
-        let A_hi :=
-          match xLo.A, xHi.A, yLo.A, yHi.A, Bx.lo, Bx.hi, ByLo, ByHi with
-          | .dim AxL, .dim AxU, .dim AyL, .dim AyU, .dim lxF, .dim uxF, .dim lyF, .dim uyF =>
-            Tensor.dim (fun i =>
-              match lxF i, uxF i, lyF i, uyF i, AxL i, AxU i, AyL i, AyU i with
-              | .scalar lx, .scalar ux, .scalar ly, .scalar uy,
-                .dim rowXL, .dim rowXU, .dim rowYL, .dim rowYU =>
-                -- Choose min of two upper planes at the interval center.
-                let cx := (lx + ux) * Numbers.half
-                let cy := (ly + uy) * Numbers.half
-                let u1 := ux * cy + ly * cx - ux * ly
-                let u2 := lx * cy + uy * cx - lx * uy
-                let aX := if u1 < u2 then ly else uy     -- coeff for x
-                let aY := if u1 < u2 then ux else lx     -- coeff for y
-                let (aXpos, aXneg) := split aX
-                let (aYpos, aYneg) := split aY
-                Tensor.dim (fun j =>
-                  match rowXL j, rowXU j, rowYL j, rowYU j with
-                  | .scalar xl, .scalar xu, .scalar yl, .scalar yu =>
-                    Tensor.scalar (aXpos * xu + aXneg * xl + aYpos * yu + aYneg * yl)))
-        let c_hi :=
-          match xLo.c, xHi.c, yLo.c, yHi.c, Bx.lo, Bx.hi, ByLo, ByHi with
-          | .dim cxL, .dim cxU, .dim cyL, .dim cyU, .dim lxF, .dim uxF, .dim lyF, .dim uyF =>
-            Tensor.dim (fun i =>
-              match lxF i, uxF i, lyF i, uyF i, cxL i, cxU i, cyL i, cyU i with
-              | .scalar lx, .scalar ux, .scalar ly, .scalar uy,
-                .scalar cxl, .scalar cxu, .scalar cyl, .scalar cyu =>
-                let cx := (lx + ux) * Numbers.half
-                let cy := (ly + uy) * Numbers.half
-                let u1 := ux * cy + ly * cx - ux * ly
-                let u2 := lx * cy + uy * cx - lx * uy
-                let aX := if u1 < u2 then ly else uy
-                let aY := if u1 < u2 then ux else lx
-                let off := if u1 < u2 then (-(ux * ly)) else (-(lx * uy))
-                let (aXpos, aXneg) := split aX
-                let (aYpos, aYneg) := split aY
-                Tensor.scalar (aXpos * cxu + aXneg * cxl + aYpos * cyu + aYneg * cyl + off))
-        let A_lo :=
-          match xLo.A, xHi.A, yLo.A, yHi.A, Bx.lo, Bx.hi, ByLo, ByHi with
-          | .dim AxL, .dim AxU, .dim AyL, .dim AyU, .dim lxF, .dim uxF, .dim lyF, .dim uyF =>
-            Tensor.dim (fun i =>
-              match lxF i, uxF i, lyF i, uyF i, AxL i, AxU i, AyL i, AyU i with
-              | .scalar lx, .scalar ux, .scalar ly, .scalar uy,
-                .dim rowXL, .dim rowXU, .dim rowYL, .dim rowYU =>
-                -- Choose max of two lower planes at the interval center.
-                let cx := (lx + ux) * Numbers.half
-                let cy := (ly + uy) * Numbers.half
-                let l1 := ux * cy + uy * cx - ux * uy
-                let l2 := lx * cy + ly * cx - lx * ly
-                let aX := if l1 > l2 then uy else ly     -- coeff for x
-                let aY := if l1 > l2 then ux else lx     -- coeff for y
-                let (aXpos, aXneg) := split aX
-                let (aYpos, aYneg) := split aY
-                Tensor.dim (fun j =>
-                  match rowXL j, rowXU j, rowYL j, rowYU j with
-                  | .scalar xl, .scalar xu, .scalar yl, .scalar yu =>
-                    -- For lower bound, negative coeffs use the *upper* input bound.
-                    Tensor.scalar (aXpos * xl + aXneg * xu + aYpos * yl + aYneg * yu)))
-        let c_lo :=
-          match xLo.c, xHi.c, yLo.c, yHi.c, Bx.lo, Bx.hi, ByLo, ByHi with
-          | .dim cxL, .dim cxU, .dim cyL, .dim cyU, .dim lxF, .dim uxF, .dim lyF, .dim uyF =>
-            Tensor.dim (fun i =>
-              match lxF i, uxF i, lyF i, uyF i, cxL i, cxU i, cyL i, cyU i with
-              | .scalar lx, .scalar ux, .scalar ly, .scalar uy,
-                .scalar cxl, .scalar cxu, .scalar cyl, .scalar cyu =>
-                let cx := (lx + ux) * Numbers.half
-                let cy := (ly + uy) * Numbers.half
-                let l1 := ux * cy + uy * cx - ux * uy
-                let l2 := lx * cy + ly * cx - lx * ly
-                let aX := if l1 > l2 then uy else ly
-                let aY := if l1 > l2 then ux else lx
-                let off := if l1 > l2 then (-(ux * uy)) else (-(lx * ly))
-                let (aXpos, aXneg) := split aX
-                let (aYpos, aYneg) := split aY
-                Tensor.scalar (aXpos * cxl + aXneg * cxu + aYpos * cyl + aYneg * cyu + off))
+        let A_hi : Tensor α [n, xB.inDim] :=
+          Tensor.matrix fun i j =>
+            let lx := Tensor.getScalar Bx.lo i
+            let ux := Tensor.getScalar Bx.hi i
+            let ly := Tensor.getScalar ByLo i
+            let uy := Tensor.getScalar ByHi i
+            -- Choose the tighter upper plane at the interval center.
+            let cx := (lx + ux) * (1 / 2)
+            let cy := (ly + uy) * (1 / 2)
+            let u1 := ux * cy + ly * cx - ux * ly
+            let u2 := lx * cy + uy * cx - lx * uy
+            let aX := if u1 < u2 then ly else uy
+            let aY := if u1 < u2 then ux else lx
+            let (aXpos, aXneg) := split aX
+            let (aYpos, aYneg) := split aY
+            aXpos * Spec.get2 xHi.A i j + aXneg * Spec.get2 xLo.A i j +
+              aYpos * Spec.get2 yHi.A i j + aYneg * Spec.get2 yLo.A i j
+        let c_hi : Tensor α [n] :=
+          Tensor.ofFn fun i =>
+            let lx := Tensor.getScalar Bx.lo i
+            let ux := Tensor.getScalar Bx.hi i
+            let ly := Tensor.getScalar ByLo i
+            let uy := Tensor.getScalar ByHi i
+            let cx := (lx + ux) * (1 / 2)
+            let cy := (ly + uy) * (1 / 2)
+            let u1 := ux * cy + ly * cx - ux * ly
+            let u2 := lx * cy + uy * cx - lx * uy
+            let aX := if u1 < u2 then ly else uy
+            let aY := if u1 < u2 then ux else lx
+            let off := if u1 < u2 then (-(ux * ly)) else (-(lx * uy))
+            let (aXpos, aXneg) := split aX
+            let (aYpos, aYneg) := split aY
+            aXpos * Tensor.getScalar xHi.c i + aXneg * Tensor.getScalar xLo.c i +
+              aYpos * Tensor.getScalar yHi.c i + aYneg * Tensor.getScalar yLo.c i + off
+        let A_lo : Tensor α [n, xB.inDim] :=
+          Tensor.matrix fun i j =>
+            let lx := Tensor.getScalar Bx.lo i
+            let ux := Tensor.getScalar Bx.hi i
+            let ly := Tensor.getScalar ByLo i
+            let uy := Tensor.getScalar ByHi i
+            -- Choose the tighter lower plane at the interval center.
+            let cx := (lx + ux) * (1 / 2)
+            let cy := (ly + uy) * (1 / 2)
+            let l1 := ux * cy + uy * cx - ux * uy
+            let l2 := lx * cy + ly * cx - lx * ly
+            let aX := if l1 > l2 then uy else ly
+            let aY := if l1 > l2 then ux else lx
+            let (aXpos, aXneg) := split aX
+            let (aYpos, aYneg) := split aY
+            -- Negative coefficients select the upper affine input bound.
+            aXpos * Spec.get2 xLo.A i j + aXneg * Spec.get2 xHi.A i j +
+              aYpos * Spec.get2 yLo.A i j + aYneg * Spec.get2 yHi.A i j
+        let c_lo : Tensor α [n] :=
+          Tensor.ofFn fun i =>
+            let lx := Tensor.getScalar Bx.lo i
+            let ux := Tensor.getScalar Bx.hi i
+            let ly := Tensor.getScalar ByLo i
+            let uy := Tensor.getScalar ByHi i
+            let cx := (lx + ux) * (1 / 2)
+            let cy := (ly + uy) * (1 / 2)
+            let l1 := ux * cy + uy * cx - ux * uy
+            let l2 := lx * cy + ly * cx - lx * ly
+            let aX := if l1 > l2 then uy else ly
+            let aY := if l1 > l2 then ux else lx
+            let off := if l1 > l2 then (-(ux * uy)) else (-(lx * ly))
+            let (aXpos, aXneg) := split aX
+            let (aYpos, aYneg) := split aY
+            aXpos * Tensor.getScalar xLo.c i + aXneg * Tensor.getScalar xHi.c i +
+              aYpos * Tensor.getScalar yLo.c i + aYneg * Tensor.getScalar yHi.c i + off
 
         some
           { inDim := xB.inDim

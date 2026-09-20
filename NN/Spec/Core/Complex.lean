@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Context
+public import NN.Core.Numeric.Angle
 
 /-!
 # Complex scalar (`TorchLean.Complex α`)
@@ -18,18 +19,13 @@ Mathlib’s `ℂ` is specialized to `ℝ` and intentionally has no order instanc
 `Context` includes order-like operations (`LT/LE`, `max/min`) for ReLU/argmax-style code paths.
 
 To avoid changing mathlib’s global behavior (and to support runtime-friendly backends like
-`IEEE32Exec`), we provide a small parametric complex scalar:
+`ExecFloat.Binary 8 23`), we provide a small parametric complex scalar:
 
 `TorchLean.Complex α := α × α` with fields `re` and `im`.
 
-The provided `Context` instance is designed to be:
-- sufficient for TorchLean's tensor and model operations (arithmetic and common transcendental functions),
-- runtime-friendly when `α` is runtime-friendly, and
-- conservative for operations whose meaning depends on angles or branches (`log`, `sqrt`):
-  we pick a simple real-part-based approximation that is exact on real inputs (imag part `0`).
-
-This is *not* meant to be a full replacement for complex analysis; for deep analytic theorems, use
-mathlib’s `ℂ` directly.
+Complex square roots use the principal branch. Complex logarithms retain the polar angle through
+`Atan2 α`; a backend must supply that real-coordinate operation to obtain the complex `Context`.
+Arithmetic operations inherit the rounding and exceptional-value behavior of the component type.
 
 The `Context` instance supports explicit complex forward programs. It does not turn the ordinary
 real-valued trainer into a complex optimizer: that requires real losses on complex tensors,
@@ -55,13 +51,17 @@ variable {α : Type}
 /-- Embed a real scalar as a complex scalar with zero imaginary part. -/
 def ofReal [Zero α] (a : α) : Complex α := ⟨a, 0⟩
 
+/-- The real part of a real embedded as a complex number is itself. -/
 @[simp] theorem re_ofReal [Zero α] (a : α) : (ofReal a).re = a := rfl
+/-- A real embedded as a complex number has zero imaginary part. -/
 @[simp] theorem im_ofReal [Zero α] (a : α) : (ofReal a).im = 0 := rfl
 
 /-- Imaginary unit `i`. -/
 def I [Zero α] [One α] : Complex α := ⟨0, 1⟩
 
+/-- `i` has zero real part. -/
 @[simp] theorem re_I [Zero α] [One α] : (I (α := α)).re = 0 := rfl
+/-- `i` has imaginary part one. -/
 @[simp] theorem im_I [Zero α] [One α] : (I (α := α)).im = 1 := rfl
 
 /-! ## Basic algebraic structure -/
@@ -108,38 +108,28 @@ instance [ToString α] : ToString (Complex α) where
 
 /-! ## Numeric literals and constants -/
 
-instance [Context α] : Coe Nat (Complex α) where
-  coe n := ofReal (n : α)
-
-instance [Numbers α] [Zero α] : Numbers (Complex α) where
-  negHalf := ofReal Numbers.negHalf
-  negOne := ofReal Numbers.negOne
-  oneTenth := ofReal Numbers.oneTenth
-  half := ofReal Numbers.half
-  one := ofReal Numbers.one
-  zero := ofReal Numbers.zero
-  two := ofReal Numbers.two
-  three := ofReal Numbers.three
-  four := ofReal Numbers.four
-  five := ofReal Numbers.five
-  ten := ofReal Numbers.ten
-  lnTen := ofReal Numbers.lnTen
-  lnTenThousand := ofReal Numbers.lnTenThousand
-  epsilon := ofReal Numbers.epsilon
+instance [Context α] : NatCast (Complex α) where
+  natCast n := ofReal (n : α)
 
 /-! ## Transcendentals -/
 
 namespace Internal
 
-/-- Squared magnitude $\operatorname{re}^2+\operatorname{im}^2$ (helper for `abs`/`log`). -/
-def normSq [Mul α] [Add α] (z : Complex α) : α := z.re * z.re + z.im * z.im
+/-- Real magnitude evaluated with scaling to avoid unnecessary overflow from squaring.
 
-/-- Real magnitude `sqrt(normSq z)`. -/
-def absReal [Context α] (z : Complex α) : α := MathFunctions.sqrt (normSq z)
+This is mathematically `sqrt(re² + im²)` for real coordinates; floating-point evaluation can differ
+in the last bits from the unscaled expression. No IEEE complex special-value contract is asserted.
+-/
+def absReal [Context α] (z : Complex α) : α :=
+  let scale := Max.max (MathFunctions.abs z.re) (MathFunctions.abs z.im)
+  if scale == 0 then 0 else
+    let a := z.re / scale
+    let b := z.im / scale
+    scale * MathFunctions.sqrt (a * a + b * b)
 
 end Internal
 
-instance [Context α] : MathFunctions (Complex α) where
+instance [Context α] [Atan2 α] : MathFunctions (Complex α) where
   exp z :=
     -- exp(a+bi) = exp(a) * (cos(b) + i sin(b))
     let ea := MathFunctions.exp z.re
@@ -158,20 +148,32 @@ instance [Context α] : MathFunctions (Complex α) where
     ⟨MathFunctions.cosh z.re * MathFunctions.cos z.im,
       MathFunctions.sinh z.re * MathFunctions.sin z.im⟩
   sqrt z :=
-    -- A small branch choice:
-    -- - exact for real inputs (`im = 0`): sqrt(x) for x>=0, i*sqrt(-x) for x<0
-    -- - otherwise: return sqrt(|z|) as a real (imag=0) approximation
     if z.im == 0 then
       if z.re > 0 then
         ofReal (MathFunctions.sqrt z.re)
       else
-        ⟨0, MathFunctions.sqrt (MathFunctions.abs z.re)⟩
+        let magnitude := MathFunctions.sqrt (MathFunctions.abs z.re)
+        ⟨0, if Atan2.atan2 z.im z.re < 0 then -magnitude else magnitude⟩
     else
-      ofReal (MathFunctions.sqrt (Internal.absReal z))
+      -- Scaling avoids squaring large components or subtracting nearly equal magnitudes.
+      let scale := Max.max (MathFunctions.abs z.re) (MathFunctions.abs z.im)
+      let a := z.re / scale
+      let b := z.im / scale
+      let radius := MathFunctions.sqrt (a * a + b * b)
+      let t := MathFunctions.sqrt scale *
+        MathFunctions.sqrt ((radius + MathFunctions.abs a) / (2 : α))
+      if z.re > 0 then
+        ⟨t, (z.im / t) / (2 : α)⟩
+      else
+        ⟨(MathFunctions.abs z.im / t) / (2 : α), if z.im < 0 then -t else t⟩
   abs z := ofReal (Internal.absReal z)
   log z :=
-    -- We intentionally ignore the complex argument; this is exact on positive reals.
-    ofReal (MathFunctions.log (Internal.absReal z))
+    let scale := Max.max (MathFunctions.abs z.re) (MathFunctions.abs z.im)
+    let magnitudeLog := if scale == 0 then MathFunctions.log scale else
+      let a := z.re / scale
+      let b := z.im / scale
+      MathFunctions.log scale + MathFunctions.log (a * a + b * b) / (2 : α)
+    ⟨magnitudeLog, Atan2.atan2 z.im z.re⟩
   pi := ofReal MathFunctions.pi
   cos z :=
     -- cos(a+bi) = cos(a)cosh(b) - i sin(a)sinh(b)
@@ -194,12 +196,16 @@ instance [Context α] : Max (Complex α) where
 instance [Context α] : Min (Complex α) where
   min x y := if x.re > y.re then y else x
 
-instance [Context α] : Pow (Complex α) (Complex α) where
+instance [Context α] [Atan2 α] : Pow (Complex α) (Complex α) where
   pow x y := MathFunctions.exp (y * MathFunctions.log x)
 
 /-- Lift a scalar `Context` to TorchLean complex scalars. -/
-instance [Context α] : Context (Complex α) where
+instance [Context α] [Atan2 α] : Context (Complex α) where
+  defaultEpsilon := ofReal (Context.defaultEpsilon (α := α))
   decidableGT := fun x y => (Context.decidableGT) x.re y.re
+  stopGradient? := (Context.stopGradient? (α := α)).map fun clear z =>
+    ⟨clear z.re, clear z.im⟩
+  ratCast value := ofReal (value : α)
 
 end Complex
 

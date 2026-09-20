@@ -145,6 +145,15 @@ LEAF_THRESHOLD_FIELDS = ("threshold", "thresholds", "rhs", "unsafe_threshold")
 LEAF_LIST_FIELDS = ("leaves", "domains", "verified_domains", "terminal_domains")
 
 
+def _has_box_fields(obj: Mapping[str, Any]) -> bool:
+    """Return whether `obj` carries both endpoints of an input box under any accepted alias."""
+
+    return (
+        any(name in obj for name in LEAF_LO_FIELDS)
+        and any(name in obj for name in LEAF_HI_FIELDS)
+    )
+
+
 def normalize_leaf(
     leaf: Mapping[str, Any],
     *,
@@ -192,9 +201,21 @@ def build_abcrown_leaf_artifact(
     root_lo: Sequence[float] | None = None,
     root_hi: Sequence[float] | None = None,
 ) -> dict[str, Any]:
-    """Build a TorchLean `abcrown_leaf_artifact_v0_1` object from a raw leaf dump."""
+    """Build a TorchLean `abcrown_leaf_artifact_v0_1` object from a raw leaf dump.
 
-    if isinstance(raw, dict) and raw.get("format") == FORMAT:
+    A dump that already carries the TorchLean format tag is returned unchanged, so re-exporting an
+    artifact is a no-op.  That shortcut cannot honour a caller-supplied root box, so it is skipped
+    whenever one is given: the root then has to be rebuilt from the leaves, which the ordinary path
+    already does.  Silently keeping the artifact's own root would discard the property domain the
+    caller passed in, and that domain is what a robustness claim is about.
+    """
+
+    if (root_lo is None) != (root_hi is None):
+        raise ArtifactExportError(
+            "root override requires both bounds; pass root_lo and root_hi together"
+        )
+
+    if isinstance(raw, dict) and raw.get("format") == FORMAT and root_lo is None:
         return dict(raw)
 
     if isinstance(raw, list):
@@ -202,14 +223,23 @@ def build_abcrown_leaf_artifact(
         top: Mapping[str, Any] = {}
     else:
         top = _as_object(raw, "top-level")
-        if any(name in top for name in LEAF_LO_FIELDS) and any(name in top for name in LEAF_HI_FIELDS):
-            leaves_raw = [top]
-            top = {}
-        else:
-            leaves_value = _get_any(top, LEAF_LIST_FIELDS, "top-level")
+        leaves_value = _get_optional(top, LEAF_LIST_FIELDS)
+        if leaves_value is not None:
+            # A dump that carries a domain list is a branch-and-bound run, even when the top
+            # level also carries x_L/x_U: those are the root box, which is exactly what we want
+            # to read from there.  Checking the list first matters because alpha-beta-CROWN
+            # writes both, and the single-leaf reading would silently drop every domain.
             if not isinstance(leaves_value, list):
                 raise ArtifactExportError("top-level leaves/domains field must be a list")
             leaves_raw = [_as_object(item, f"leaf[{i}]") for i, item in enumerate(leaves_value)]
+        elif _has_box_fields(top):
+            leaves_raw = [top]
+            top = {}
+        else:
+            # Neither a domain list nor a leaf box.  Name the list aliases, since that is the
+            # field a producer is most likely to have called something else.
+            joined = ", ".join(LEAF_LIST_FIELDS)
+            raise ArtifactExportError(f"top-level: expected one of fields: {joined}")
 
     if root_lo is None or root_hi is None:
         root_obj = _get_optional(top, ("root", "input_box"))

@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.MeasureTheory.Measure.Typeclasses.Probability
 public import Mathlib.Probability.Distributions.Gaussian.Multivariate
 
 /-!
@@ -27,9 +26,9 @@ In the DDPM/VP setting, the usual coefficients are:
 - $c_0 = \sqrt{\bar{\alpha}_t}$
 - $c_1 = \sqrt{1-\bar{\alpha}_t}$
 
-At the spec layer (`NN.Spec.Generative.Diffusion.ForwardProcess`), we treat the noise $\varepsilon$ as an
-explicit tensor input. This file provides the probability-theory side: when that noise is sampled
-from `stdGaussian`, the resulting distribution is Gaussian.
+At the spec layer (`NN.Spec.Generative.Diffusion.ForwardProcess`), we treat the noise
+$\varepsilon$ as an explicit tensor input. This file provides the probability-theory side: when
+that noise is sampled from `stdGaussian`, the resulting distribution is Gaussian.
 
 The result gives the exact law-level fact used by VP/DDPM forward processes: affine noising of a
 fixed data point by standard Gaussian noise produces another Gaussian probability measure. We keep
@@ -70,14 +69,11 @@ def forwardGaussian (c0 c1 : ℝ) (x0 : E) : Measure E :=
 
 instance (c0 c1 : ℝ) (x0 : E) : IsProbabilityMeasure (forwardGaussian (ι := ι) c0 c1 x0) := by
   -- We use that `stdGaussian` is a probability measure and measurable push-forwards preserve mass.
-  let ν : Measure E := (stdGaussian E).map (c1 • (ContinuousLinearMap.id ℝ E))
-  have : IsProbabilityMeasure ν := by
-    dsimp [ν]
-    exact Measure.isProbabilityMeasure_map (μ := stdGaussian E)
-      (f := (c1 • (ContinuousLinearMap.id ℝ E) : E → E)) (by fun_prop)
-  change IsProbabilityMeasure (ν.map (fun y : E => y + c0 • x0))
-  exact Measure.isProbabilityMeasure_map (μ := ν) (f := fun y : E => y + c0 • x0) (by fun_prop)
+  unfold forwardGaussian
+  infer_instance
 
+/-- Affine noising of a fixed point has a Gaussian law. This closure theorem does not identify
+the marginal of a separately defined multistep diffusion chain. -/
 theorem forwardGaussian_isGaussian (c0 c1 : ℝ) (x0 : E) :
     IsGaussian (forwardGaussian (ι := ι) c0 c1 x0) := by
   -- Gaussian laws are closed under continuous linear maps and translations.

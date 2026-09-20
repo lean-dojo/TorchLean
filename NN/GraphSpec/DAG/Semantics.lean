@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.GraphSpec.DAG.Syntax
-import Mathlib.Algebra.Order.Algebra
 
 /-!
 # Pure semantics of GraphSpec DAGs
@@ -22,22 +21,23 @@ namespace NN
 namespace GraphSpec
 namespace DAG
 
-open _root_.Spec
-open Spec.Tensor
-open _root_.TorchLean.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 namespace Env
 
 open Runtime.Autograd.Torch
 
 /-- Typed environment lookup for pure tensors. -/
-def tget {α : Type} : {Γ : List Shape} → {s : Shape} → _root_.TorchLean.TensorPack α Γ → Var Γ s →
-    Spec.Tensor α s
+def tget {α : Type} [TorchLean.Storage α] :
+    {Γ : List Shape} → {s : Shape} → TorchLean.TensorPack α Γ → Var Γ s →
+      TorchLean.Tensor α s
   | _ :: _, _, .cons x _, .head => x
   | _ :: _, _, .cons _ xs, .tail i => tget xs i
 
 /-- Looking up a programmatically selected variable agrees with typed-list lookup. -/
-@[simp] theorem tget_ofFin {α : Type} {Γ : List Shape} (env : _root_.TorchLean.TensorPack α Γ)
+@[simp] theorem tget_ofFin {α : Type} [TorchLean.Storage α] {Γ : List Shape}
+    (env : TorchLean.TensorPack α Γ)
     (i : Fin Γ.length) :
     tget env (Var.ofFin i) = TorchLean.TensorPack.get env i := by
   induction Γ with
@@ -52,8 +52,9 @@ def tget {α : Type} : {Γ : List Shape} → {s : Shape} → _root_.TorchLean.Te
             exact ih rest j
 
 /-- Appending a value does not change the meaning of an existing variable. -/
-@[simp] theorem tget_append_weakenRight {α : Type} {Γ : List Shape} {s t : Shape}
-    (env : _root_.TorchLean.TensorPack α Γ) (value : Spec.Tensor α t) (i : Var Γ s) :
+@[simp] theorem tget_append_weakenRight {α : Type} [TorchLean.Storage α]
+    {Γ : List Shape} {s t : Shape}
+    (env : TorchLean.TensorPack α Γ) (value : TorchLean.Tensor α t) (i : Var Γ s) :
     tget (TorchLean.TensorPack.append env (.cons value .nil))
         (Var.weakenRight i) = tget env i := by
   induction i with
@@ -63,8 +64,9 @@ def tget {α : Type} : {Γ : List Shape} → {s : Shape} → _root_.TorchLean.Te
       | cons _ rest => exact ih rest
 
 /-- Looking up a variable embedded from the left reads the original left environment. -/
-@[simp] theorem tget_append_inLeft {α : Type} {Γ Δ : List Shape} {s : Shape}
-    (left : _root_.TorchLean.TensorPack α Γ) (right : _root_.TorchLean.TensorPack α Δ) (v : Var Γ s) :
+@[simp] theorem tget_append_inLeft {α : Type} [TorchLean.Storage α]
+    {Γ Δ : List Shape} {s : Shape}
+    (left : TorchLean.TensorPack α Γ) (right : TorchLean.TensorPack α Δ) (v : Var Γ s) :
     tget (TorchLean.TensorPack.append left right) (Var.inLeft Δ v) = tget left v := by
   induction v with
   | head => cases left; rfl
@@ -73,8 +75,9 @@ def tget {α : Type} : {Γ : List Shape} → {s : Shape} → _root_.TorchLean.Te
       | cons _ rest => exact ih rest
 
 /-- Looking up a variable embedded from the right reads the appended right environment. -/
-@[simp] theorem tget_append_inRight {α : Type} {Γ Δ : List Shape} {s : Shape}
-    (left : _root_.TorchLean.TensorPack α Γ) (right : _root_.TorchLean.TensorPack α Δ) (v : Var Δ s) :
+@[simp] theorem tget_append_inRight {α : Type} [TorchLean.Storage α]
+    {Γ Δ : List Shape} {s : Shape}
+    (left : TorchLean.TensorPack α Γ) (right : TorchLean.TensorPack α Δ) (v : Var Δ s) :
     tget (TorchLean.TensorPack.append left right) (Var.inRight Γ v) = tget right v := by
   induction Γ with
   | nil => cases left; rfl
@@ -83,8 +86,9 @@ def tget {α : Type} : {Γ : List Shape} → {s : Shape} → _root_.TorchLean.Te
       | cons _ rest => exact ih rest
 
 /-- Looking up the final variable returns the value most recently appended to an environment. -/
-@[simp] theorem tget_append_last {α : Type} {Γ : List Shape} {s : Shape}
-    (env : _root_.TorchLean.TensorPack α Γ) (value : Spec.Tensor α s) :
+@[simp] theorem tget_append_last {α : Type} [TorchLean.Storage α]
+    {Γ : List Shape} {s : Shape}
+    (env : TorchLean.TensorPack α Γ) (value : TorchLean.Tensor α s) :
     tget (TorchLean.TensorPack.append env (.cons value .nil)) (Var.last Γ) = value := by
   induction Γ with
   | nil => cases env; rfl
@@ -106,9 +110,9 @@ mutual
     -/
   def evalArgs
       {Γ : List Shape} {ins : List Shape}
-      {α : Type 0} [Context α]
-      (env : _root_.TorchLean.TensorPack α Γ) :
-      Args Γ ins → _root_.TorchLean.TensorPack α ins
+      {α : Type 0} [TorchLean.Storage α] [Context α]
+      (env : TorchLean.TensorPack α Γ) :
+      Args Γ ins → TorchLean.TensorPack α ins
     | .nil => .nil
     | .cons t ts => .cons (eval (Γ := Γ) (α := α) env t) (evalArgs (Γ := Γ) (α := α) env ts)
 
@@ -116,7 +120,7 @@ mutual
   Pure evaluation of a DAG term.
 
   This is the “math-first” semantics: we interpret a term as a pure function on tensors.
-  No monads, no mutation, no autograd tape — just the Spec definitions of primitives.
+  No monads, no mutation, no autograd tape, just the Spec definitions of primitives.
 
   The key runtime discipline is the environment discipline:
 
@@ -126,9 +130,9 @@ mutual
   -/
   def eval
       {Γ : List Shape} {τ : Shape}
-      {α : Type 0} [Context α]
-      (env : _root_.TorchLean.TensorPack α Γ) :
-      Term Γ τ → Spec.Tensor α τ
+      {α : Type 0} [TorchLean.Storage α] [Context α]
+      (env : TorchLean.TensorPack α Γ) :
+      Term Γ τ → TorchLean.Tensor α τ
     | .var i => Env.tget (α := α) env i
     | .cast t h =>
         match h with
@@ -144,21 +148,23 @@ mutual
         p.specFwd (α := α) xs
     | .let1 (σ := σ) t body =>
         let v := eval (Γ := Γ) (α := α) env t
-        let env' : _root_.TorchLean.TensorPack α (Γ ++ [σ]) :=
+        let env' : TorchLean.TensorPack α (Γ ++ [σ]) :=
           TorchLean.TensorPack.append (α := α) (ss₁ := Γ) (ss₂ := [σ]) env (.cons v .nil)
         eval (Γ := Γ ++ [σ]) (α := α) env' body
 end
 
 /-- Evaluating an operation node first evaluates its typed arguments, then applies the
 primitive's pure semantics. -/
-@[simp] theorem eval_op {Γ ins : List Shape} {τ : Shape} {α : Type 0} [Context α]
-    (env : _root_.TorchLean.TensorPack α Γ) (primitive : PrimOp ins τ) (args : Args Γ ins) :
+@[simp] theorem eval_op {Γ ins : List Shape} {τ : Shape} {α : Type 0} [TorchLean.Storage α]
+    [Context α]
+    (env : TorchLean.TensorPack α Γ) (primitive : PrimOp ins τ) (args : Args Γ ins) :
     eval env (.op primitive args) = primitive.specFwd (evalArgs env args) := by
   rfl
 
 /-- Evaluating an output-shape cast transports the value along the same shape equality. -/
-@[simp] theorem eval_cast {Γ : List Shape} {σ τ : Shape} {α : Type 0} [Context α]
-    (env : _root_.TorchLean.TensorPack α Γ) (term : Term Γ σ) (h : σ = τ) :
+@[simp] theorem eval_cast {Γ : List Shape} {σ τ : Shape} {α : Type 0} [TorchLean.Storage α]
+    [Context α]
+    (env : TorchLean.TensorPack α Γ) (term : Term Γ σ) (h : σ = τ) :
     eval env (.cast term h) = h ▸ eval env term := by
   cases h
   rfl
@@ -170,18 +176,19 @@ end Term
 namespace Env
 
 /-- A variable renaming preserves an environment when every renamed lookup has the same value. -/
-def RenamingSound {α : Type} {Γ Δ : List Shape}
+def RenamingSound {α : Type} [TorchLean.Storage α] {Γ Δ : List Shape}
     (envΓ : TorchLean.TensorPack α Γ)
     (envΔ : TorchLean.TensorPack α Δ)
     (ρ : {s : Shape} → Var Γ s → Var Δ s) : Prop :=
   ∀ {s : Shape} (v : Var Γ s), tget envΔ (ρ v) = tget envΓ v
 
 /-- A sound renaming remains sound when the same value is appended to both environments. -/
-theorem RenamingSound.liftRight {α : Type} {Γ Δ : List Shape} {t : Shape}
+theorem RenamingSound.lift_right {α : Type} [TorchLean.Storage α]
+    {Γ Δ : List Shape} {t : Shape}
     {envΓ : TorchLean.TensorPack α Γ}
     {envΔ : TorchLean.TensorPack α Δ}
     {ρ : {s : Shape} → Var Γ s → Var Δ s}
-    (hρ : RenamingSound envΓ envΔ ρ) (value : Spec.Tensor α t) :
+    (hρ : RenamingSound envΓ envΔ ρ) (value : TorchLean.Tensor α t) :
     RenamingSound
       (TorchLean.TensorPack.append envΓ (.cons value .nil))
       (TorchLean.TensorPack.append envΔ (.cons value .nil))
@@ -237,7 +244,7 @@ end
 mutual
   /-- Pure evaluation commutes with a sound renaming of an operation's arguments. -/
   theorem evalArgs_rename
-      {Γ Δ ins : List Shape} {α : Type 0} [Context α]
+      {Γ Δ ins : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
       (envΓ : TorchLean.TensorPack α Γ)
       (envΔ : TorchLean.TensorPack α Δ)
       (ρ : {s : Shape} → Var Γ s → Var Δ s)
@@ -251,11 +258,11 @@ mutual
           evalArgs_rename envΓ envΔ ρ hρ rest]
   termination_by args => argsComplexity args
 
-  decreasing_by all_goals simp [argsComplexity]
+  decreasing_by all_goals (simp only [argsComplexity]; omega)
 
   /-- Pure evaluation commutes with any variable renaming that preserves environment lookup. -/
   theorem eval_rename
-      {Γ Δ : List Shape} {s : Shape} {α : Type 0} [Context α]
+      {Γ Δ : List Shape} {s : Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
       (envΓ : TorchLean.TensorPack α Γ)
       (envΔ : TorchLean.TensorPack α Δ)
       (ρ : {t : Shape} → Var Γ t → Var Δ t)
@@ -276,14 +283,14 @@ mutual
             (.cons (eval envΓ value) .nil))
           (TorchLean.TensorPack.append envΔ
             (.cons (eval envΓ value) .nil))
-          (Var.liftRight ρ) (hρ.liftRight (eval envΓ value)) body
+          (Var.liftRight ρ) (hρ.lift_right (eval envΓ value)) body
   termination_by term => complexity term
-  decreasing_by all_goals simp [complexity]
+  decreasing_by all_goals (simp only [complexity]; omega)
 end
 
 /-- Renaming arguments into the left side of an appended environment preserves their values. -/
 @[simp] theorem evalArgs_rename_inLeft
-    {Γ Δ ins : List Shape} {α : Type 0} [Context α]
+    {Γ Δ ins : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
     (left : TorchLean.TensorPack α Γ)
     (right : TorchLean.TensorPack α Δ) (args : Args Γ ins) :
     evalArgs (TorchLean.TensorPack.append left right)
@@ -294,7 +301,7 @@ end
 
 /-- Renaming arguments into the right side of an appended environment preserves their values. -/
 @[simp] theorem evalArgs_rename_inRight
-    {Γ Δ ins : List Shape} {α : Type 0} [Context α]
+    {Γ Δ ins : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
     (left : TorchLean.TensorPack α Γ)
     (right : TorchLean.TensorPack α Δ) (args : Args Δ ins) :
     evalArgs (TorchLean.TensorPack.append left right)
@@ -305,7 +312,7 @@ end
 
 /-- Renaming a term into the left side of an appended environment preserves its value. -/
 @[simp] theorem eval_rename_inLeft
-    {Γ Δ : List Shape} {s : Shape} {α : Type 0} [Context α]
+    {Γ Δ : List Shape} {s : Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
     (left : TorchLean.TensorPack α Γ)
     (right : TorchLean.TensorPack α Δ) (term : Term Γ s) :
     eval (TorchLean.TensorPack.append left right)
@@ -316,7 +323,7 @@ end
 
 /-- Appending an arbitrary typed environment does not change a weakened term's value. -/
 @[simp] theorem eval_weakenAppend
-    {Γ Δ : List Shape} {s : Shape} {α : Type 0} [Context α]
+    {Γ Δ : List Shape} {s : Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
     (left : TorchLean.TensorPack α Γ)
     (right : TorchLean.TensorPack α Δ) (term : Term Γ s) :
     eval (TorchLean.TensorPack.append left right)
@@ -325,7 +332,7 @@ end
 
 /-- Renaming a term into the right side of an appended environment preserves its value. -/
 @[simp] theorem eval_rename_inRight
-    {Γ Δ : List Shape} {s : Shape} {α : Type 0} [Context α]
+    {Γ Δ : List Shape} {s : Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
     (left : TorchLean.TensorPack α Γ)
     (right : TorchLean.TensorPack α Δ) (term : Term Δ s) :
     eval (TorchLean.TensorPack.append left right)
@@ -336,8 +343,8 @@ end
 
 /-- Appending an unrelated value does not change a term's pure meaning. -/
 @[simp] theorem eval_weakenRight
-    {Γ : List Shape} {s t : Shape} {α : Type 0} [Context α]
-    (env : TorchLean.TensorPack α Γ) (value : Spec.Tensor α t)
+    {Γ : List Shape} {s t : Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
+    (env : TorchLean.TensorPack α Γ) (value : TorchLean.Tensor α t)
     (term : Term Γ s) :
     eval (TorchLean.TensorPack.append env (.cons value .nil))
       (Term.weakenRight term) = eval env term := by
@@ -349,8 +356,8 @@ end
 
 /-- The final variable in an extended environment denotes the value that was just appended. -/
 @[simp] theorem eval_var_last_append
-    {Γ : List Shape} {t : Shape} {α : Type 0} [Context α]
-    (env : TorchLean.TensorPack α Γ) (value : Spec.Tensor α t) :
+    {Γ : List Shape} {t : Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
+    (env : TorchLean.TensorPack α Γ) (value : TorchLean.Tensor α t) :
     eval (TorchLean.TensorPack.append env (.cons value .nil))
       (Term.var (Var.last Γ)) = value := by
   simpa only [eval] using Env.tget_append_last env value
@@ -361,19 +368,19 @@ namespace Env
 
 /-- A term substitution represents an environment when every assigned term evaluates to the
 value stored at the corresponding source variable. -/
-def SubstitutionSound {α : Type} [Context α] {Γ Δ : List Shape}
+def SubstitutionSound {α : Type} [TorchLean.Storage α] [Context α] {Γ Δ : List Shape}
     (envΓ : TorchLean.TensorPack α Γ)
     (envΔ : TorchLean.TensorPack α Δ)
     (σ : Substitution Γ Δ) : Prop :=
   ∀ {s : Shape} (v : Var Γ s), Term.eval envΔ (σ v) = Env.tget envΓ v
 
 /-- A sound substitution remains sound across the value introduced by a `let` binding. -/
-theorem SubstitutionSound.liftRight {α : Type} [Context α]
+theorem SubstitutionSound.lift_right {α : Type} [TorchLean.Storage α] [Context α]
     {Γ Δ : List Shape} {t : Shape}
     {envΓ : TorchLean.TensorPack α Γ}
     {envΔ : TorchLean.TensorPack α Δ}
     {σ : Substitution Γ Δ} (hσ : SubstitutionSound envΓ envΔ σ)
-    (value : Spec.Tensor α t) :
+    (value : TorchLean.Tensor α t) :
     SubstitutionSound
       (TorchLean.TensorPack.append envΓ (.cons value .nil))
       (TorchLean.TensorPack.append envΔ (.cons value .nil))
@@ -407,7 +414,7 @@ namespace Term
 mutual
   /-- Pure evaluation commutes with a sound substitution of operation arguments. -/
   theorem evalArgs_substitute
-      {Γ Δ inputs : List Shape} {α : Type 0} [Context α]
+      {Γ Δ inputs : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
       (envΓ : TorchLean.TensorPack α Γ)
       (envΔ : TorchLean.TensorPack α Δ)
       (σ : Substitution Γ Δ) (hσ : Env.SubstitutionSound envΓ envΔ σ) :
@@ -419,11 +426,11 @@ mutual
         rw [eval_substitute envΓ envΔ σ hσ term,
           evalArgs_substitute envΓ envΔ σ hσ rest]
   termination_by args => argsComplexity args
-  decreasing_by all_goals simp [argsComplexity]
+  decreasing_by all_goals (simp only [argsComplexity]; omega)
 
   /-- Pure evaluation commutes with any term substitution representing the source environment. -/
   theorem eval_substitute
-      {Γ Δ : List Shape} {s : Shape} {α : Type 0} [Context α]
+      {Γ Δ : List Shape} {s : Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
       (envΓ : TorchLean.TensorPack α Γ)
       (envΔ : TorchLean.TensorPack α Δ)
       (σ : Substitution Γ Δ) (hσ : Env.SubstitutionSound envΓ envΔ σ) :
@@ -443,14 +450,15 @@ mutual
             (.cons (eval envΓ value) .nil))
           (TorchLean.TensorPack.append envΔ
             (.cons (eval envΓ value) .nil))
-          (Substitution.liftRight σ) (hσ.liftRight (eval envΓ value)) body
+          (Substitution.liftRight σ) (hσ.lift_right (eval envΓ value)) body
   termination_by term => complexity term
-  decreasing_by all_goals simp [complexity]
+  decreasing_by all_goals (simp only [complexity]; omega)
 end
 
 /-- Evaluating an argument selected by a typed variable agrees with lookup in the evaluated
 argument environment. -/
-@[simp] theorem eval_get {Γ Δ : List Shape} {s : Shape} {α : Type 0} [Context α]
+@[simp] theorem eval_get {Γ Δ : List Shape} {s : Shape} {α : Type 0} [TorchLean.Storage α]
+    [Context α]
     (env : TorchLean.TensorPack α Δ) (args : Args Δ Γ) (v : Var Γ s) :
     eval env (Args.get args v) = Env.tget (evalArgs env args) v := by
   induction v with
@@ -462,7 +470,7 @@ argument environment. -/
 /-- Pure evaluation of an inlined term equals evaluation of the original term under the supplied
 argument values. -/
 theorem eval_instantiate
-    {Γ Δ : List Shape} {s : Shape} {α : Type 0} [Context α]
+    {Γ Δ : List Shape} {s : Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
     (env : TorchLean.TensorPack α Δ) (args : Args Δ Γ) (term : Term Γ s) :
     eval env (term.instantiate args) = eval (evalArgs env args) term := by
   apply eval_substitute (evalArgs env args) env (Args.get args)
@@ -471,7 +479,7 @@ theorem eval_instantiate
 
 /-- Evaluating concatenated graph arguments concatenates their tensor values in the same order. -/
 theorem evalArgs_append
-    {Γ left right : List Shape} {α : Type 0} [Context α]
+    {Γ left right : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
     (env : TorchLean.TensorPack α Γ) :
     (leftArgs : Args Γ left) → (rightArgs : Args Γ right) →
       evalArgs env (Args.append leftArgs rightArgs) =
@@ -484,7 +492,7 @@ theorem evalArgs_append
 
 /-- Evaluating a statically split argument list agrees with splitting its evaluated values. -/
 theorem evalArgs_splitAppend
-    {Γ left right : List Shape} {α : Type 0} [Context α]
+    {Γ left right : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
     (env : TorchLean.TensorPack α Γ) (args : Args Γ (left ++ right)) :
     let argumentParts := Args.splitAppend args
     let valueParts := TorchLean.TensorPack.split (evalArgs env args)
@@ -503,7 +511,7 @@ theorem evalArgs_splitAppend
 
 /-- Evaluating the left part of a typed argument split returns the corresponding value prefix. -/
 theorem evalArgs_splitAppend_fst
-    {Γ left right : List Shape} {α : Type 0} [Context α]
+    {Γ left right : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
     (env : TorchLean.TensorPack α Γ) (args : Args Γ (left ++ right)) :
     evalArgs env (Args.splitAppend args).1 =
       (TorchLean.TensorPack.split (evalArgs env args)).1 := by
@@ -511,7 +519,7 @@ theorem evalArgs_splitAppend_fst
 
 /-- Evaluating the right part of a typed argument split returns the corresponding value suffix. -/
 theorem evalArgs_splitAppend_snd
-    {Γ left right : List Shape} {α : Type 0} [Context α]
+    {Γ left right : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
     (env : TorchLean.TensorPack α Γ) (args : Args Γ (left ++ right)) :
     evalArgs env (Args.splitAppend args).2 =
       (TorchLean.TensorPack.split (evalArgs env args)).2 := by
@@ -519,8 +527,8 @@ theorem evalArgs_splitAppend_snd
 
 /-- Prepending an unrelated value does not change a term's pure meaning. -/
 @[simp] theorem eval_weakenLeft
-    {Γ : List Shape} {s t : Shape} {α : Type 0} [Context α]
-    (env : TorchLean.TensorPack α Γ) (value : Spec.Tensor α t)
+    {Γ : List Shape} {s t : Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
+    (env : TorchLean.TensorPack α Γ) (value : TorchLean.Tensor α t)
     (term : Term Γ s) :
     eval (.cons value env) (Term.weakenLeft term) = eval env term := by
   apply eval_rename env (.cons value env) (fun v => .tail v)
@@ -530,8 +538,8 @@ theorem evalArgs_splitAppend_snd
 
 /-- Prepending an unrelated value does not change a typed argument list's pure meaning. -/
 @[simp] theorem evalArgs_weakenLeft
-    {Γ ins : List Shape} {t : Shape} {α : Type 0} [Context α]
-    (env : TorchLean.TensorPack α Γ) (value : Spec.Tensor α t) :
+    {Γ ins : List Shape} {t : Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
+    (env : TorchLean.TensorPack α Γ) (value : TorchLean.Tensor α t) :
     (args : Args Γ ins) →
       evalArgs (.cons value env) (Args.weakenLeft args) = evalArgs env args
   | .nil => rfl
@@ -539,11 +547,11 @@ theorem evalArgs_splitAppend_snd
       simp only [Args.weakenLeft, evalArgs, eval_weakenLeft,
         evalArgs_weakenLeft env value rest]
 termination_by args => argsComplexity args
-decreasing_by simp [argsComplexity]
+decreasing_by (simp only [argsComplexity]; omega)
 
 /-- Evaluating all variables of an environment returns that environment in order. -/
 @[simp] theorem evalArgs_vars
-    {Γ : List Shape} {α : Type 0} [Context α]
+    {Γ : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
     (env : TorchLean.TensorPack α Γ) :
     evalArgs env (Args.vars Γ) = env := by
   induction Γ with
@@ -566,28 +574,28 @@ def castOutputs {Γ outputs outputs' : List Shape} (h : outputs = outputs') :
   | block => h ▸ block
 
 /-- Evaluate a multi-output block, preserving sharing introduced by `let1`. -/
-def eval {Γ outs : List Shape} {α : Type 0} [Context α]
-    (env : _root_.TorchLean.TensorPack α Γ) : Block Γ outs → _root_.TorchLean.TensorPack α outs
+def eval {Γ outs : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
+    (env : TorchLean.TensorPack α Γ) : Block Γ outs → TorchLean.TensorPack α outs
   | .ret results => Term.evalArgs (Γ := Γ) (α := α) env results
   | .let1 (σ := σ) value body =>
       let result := Term.eval (Γ := Γ) (α := α) env value
-      let env' : _root_.TorchLean.TensorPack α (Γ ++ [σ]) :=
+      let env' : TorchLean.TensorPack α (Γ ++ [σ]) :=
         TorchLean.TensorPack.append
           (α := α) (ss₁ := Γ) (ss₂ := [σ]) env (.cons result .nil)
       eval (Γ := Γ ++ [σ]) (α := α) env' body
 
 /-- Casting a block's output shapes casts its evaluated typed result by the same equality. -/
 @[simp] theorem eval_castOutputs
-    {Γ outputs outputs' : List Shape} {α : Type 0} [Context α]
-    (env : _root_.TorchLean.TensorPack α Γ) (h : outputs = outputs') (block : Block Γ outputs) :
+    {Γ outputs outputs' : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
+    (env : TorchLean.TensorPack α Γ) (h : outputs = outputs') (block : Block Γ outputs) :
     eval env (castOutputs h block) = h ▸ eval env block := by
   subst outputs'
   rfl
 
 /-- Substituting terms into a block preserves its pure multi-output semantics whenever the
 substitution denotes the original environment. -/
-theorem eval_substitute {Γ Δ outs : List Shape} {α : Type 0} [Context α]
-    (envΓ : _root_.TorchLean.TensorPack α Γ) (envΔ : _root_.TorchLean.TensorPack α Δ)
+theorem eval_substitute {Γ Δ outs : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
+    (envΓ : TorchLean.TensorPack α Γ) (envΔ : TorchLean.TensorPack α Δ)
     (σ : Substitution Γ Δ) (hσ : Env.SubstitutionSound envΓ envΔ σ) :
     (block : Block Γ outs) → eval envΔ (block.substitute σ) = eval envΓ block
   | .ret results => by
@@ -601,13 +609,13 @@ theorem eval_substitute {Γ Δ outs : List Shape} {α : Type 0} [Context α]
           (.cons (Term.eval envΓ value) .nil))
         (TorchLean.TensorPack.append envΔ
           (.cons (Term.eval envΓ value) .nil))
-        (Substitution.liftRight σ) (hσ.liftRight (Term.eval envΓ value)) body
+        (Substitution.liftRight σ) (hσ.lift_right (Term.eval envΓ value)) body
 
 /-- Evaluating an inlined block is the same as evaluating its original body under the supplied
 typed argument values. -/
 theorem eval_instantiate
-    {Γ Δ outs : List Shape} {α : Type 0} [Context α]
-    (env : _root_.TorchLean.TensorPack α Δ) (args : Args Δ Γ) (block : Block Γ outs) :
+    {Γ Δ outs : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
+    (env : TorchLean.TensorPack α Δ) (args : Args Δ Γ) (block : Block Γ outs) :
     eval env (block.instantiate args) = eval (Term.evalArgs env args) block := by
   apply eval_substitute (Term.evalArgs env args) env (Args.get args)
   intro shape termVar
@@ -615,9 +623,9 @@ theorem eval_instantiate
 
 /-- Pure evaluation of block composition is ordinary typed environment extension. -/
 theorem eval_andThenWithRenaming
-    {Γ middle outputs : List Shape} {α : Type 0} [Context α]
-    (envΓ : _root_.TorchLean.TensorPack α Γ) (second : Block (Γ ++ middle) outputs) :
-    ∀ {Δ : List Shape} (first : Block Δ middle) (envΔ : _root_.TorchLean.TensorPack α Δ)
+    {Γ middle outputs : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
+    (envΓ : TorchLean.TensorPack α Γ) (second : Block (Γ ++ middle) outputs) :
+    ∀ {Δ : List Shape} (first : Block Δ middle) (envΔ : TorchLean.TensorPack α Δ)
       (ρ : {s : Shape} → Var Γ s → Var Δ s),
       Env.RenamingSound envΓ envΔ ρ →
       eval envΔ (andThenWithRenaming ρ first second) =
@@ -637,8 +645,9 @@ theorem eval_andThenWithRenaming
           (fun v => Var.weakenRight (ρ v)) hρ'
 
 /-- Composing two blocks evaluates the first once and appends its typed outputs for the second. -/
-theorem eval_andThen {Γ middle outputs : List Shape} {α : Type 0} [Context α]
-    (env : _root_.TorchLean.TensorPack α Γ) (first : Block Γ middle) (second : Block (Γ ++ middle) outputs) :
+theorem eval_andThen {Γ middle outputs : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
+    (env : TorchLean.TensorPack α Γ) (first : Block Γ middle)
+    (second : Block (Γ ++ middle) outputs) :
     eval env (first.andThen second) =
       eval (TorchLean.TensorPack.append env (eval env first)) second := by
   unfold andThen

@@ -17,45 +17,32 @@ autograd, runtime approximation, and model proofs.
 
 @[expose] public section
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 open scoped BigOperators
 
-/-- `sum_spec` on a 1D tensor equals the `Finset` sum of its coordinates (`getScalar`). -/
-lemma sum_spec_vec {n : Nat} (v : Tensor ℝ [n]) :
+/-- `sumSpec` on a 1D tensor equals the `Finset` sum of its coordinates (`getScalar`). -/
+theorem sum_spec_vec {n : Nat} (v : Tensor ℝ [n]) :
   sumSpec v = ∑ i : Fin n, getScalar v i := by
   classical
-  cases v with
-  | dim values =>
-      -- `sum_spec_dim` reduces a vector sum to a sum of scalar `sum_spec`.
-      have h :=
-        (sum_spec_dim (t := (Tensor.dim values : Tensor ℝ [n])) (s := .scalar))
-      -- Turn each scalar `sum_spec` into the corresponding coordinate.
-      refine h.trans ?_
-      refine Finset.sum_congr rfl ?_
-      intro i _
-      cases hval : values i with
-      | scalar x =>
-          simp [get_eq, getScalar, sumSpec, tensorFoldlSpec, hval]
+  rw [sum_spec_dim]
+  apply Finset.sum_congr rfl
+  intro i _
+  rw [sum_spec_eq_coord_sum]
+  simp [getScalar_eq_apply, get, Tensor.unstack]
 
 -- Pointwise product of vectors under `getScalar`.
-/-- `getScalar` of `mul_spec` is pointwise multiplication of coordinate functions. -/
-lemma getScalar_mul_spec {n : Nat} (a b : Tensor ℝ [n]) (i : Fin n) :
+/-- `getScalar` of `mulSpec` is pointwise multiplication of coordinate functions. -/
+theorem getScalar_mul_spec {n : Nat} (a b : Tensor ℝ [n]) (i : Fin n) :
   getScalar (mulSpec a b) i = getScalar a i * getScalar b i := by
-  cases a with
-  | dim fa =>
-    cases b with
-    | dim fb =>
-      cases ha : fa i with
-      | scalar x =>
-        cases hb : fb i with
-        | scalar y =>
-          simp [mulSpec, map2Spec, getScalar, ha, hb]
+  simp [getScalar_eq_apply, mulSpec, map2Spec]
 
 -- Dot product of vectors as a `Finset` sum over coordinates.
 /-- Dot product of vectors is the coordinate-wise sum `∑ i, a[i] * b[i]`. -/
-lemma dot_vec_eq_sum {n : Nat} (a b : Tensor ℝ [n]) :
+theorem dot_vec_eq_sum {n : Nat} (a b : Tensor ℝ [n]) :
   dot a b = ∑ i : Fin n, getScalar a i * getScalar b i := by
   calc
     dot a b = Proofs.TensorAlgebra.dot (α := ℝ) a b := by
@@ -64,9 +51,9 @@ lemma dot_vec_eq_sum {n : Nat} (a b : Tensor ℝ [n]) :
       simpa using Proofs.TensorAlgebra.dot_vec_eq_sum (α := ℝ) (a := a) (b := b)
 
 -- Converting the spec-level `List.finRange` fold for `vec_mat_mul_spec` into a `Finset.univ` sum.
-/-- Coordinate formula for `vec_mat_mul_spec` as a `Finset` sum: `(v @ A)[j] = ∑ i, v[i] * A[i,j]`.
+/-- Coordinate formula for `vecMatMulSpec` as a `Finset` sum: `(v @ A)[j] = ∑ i, v[i] * A[i,j]`.
   -/
-lemma getScalar_vec_mat_mul_spec {m n : Nat}
+theorem getScalar_vec_mat_mul_spec {m n : Nat}
   (v : Tensor ℝ [m])
   (A : Tensor ℝ [m, n]) (j : Fin n) :
   getScalar (vecMatMulSpec v A) j = ∑ i : Fin m, (getScalar v i) * (get2 A i j) := by
@@ -102,82 +89,47 @@ theorem dot_mat_linear_adjoint
 This is a small bridge for proofs that move between value-level shape computations and type-indexed
 tensor operations.
 -/
-theorem shapeOf_eq_shape {α : Type} {s : Shape} (t : Tensor α s) :
+theorem shapeOf_eq_shape {α : Type} [TorchLean.Storage α]
+    {s : Shape} (t : Tensor α s) :
   shapeOf t = s := by
-  induction s with
-  | scalar =>
-    match t with
-    | Tensor.scalar _ => rfl
-  | dim n s ih =>
-    match t with
-    | Tensor.dim f =>
-      match n with
-      | 0 => rfl
-      | Nat.succ n' =>
-        -- apply induction hypothesis to first element
-        have h := ih (f ⟨0, Nat.zero_lt_succ n'⟩)
-        simpa [shapeOf, h]
+  rfl
 
 
 /-- Indexing the outer dimension of a tensor exposes a subtensor with the declared inner shape. -/
 theorem get_preserves_inner_shape {n : Nat} {s : Shape}
   (t : Tensor ℝ (.dim n s)) (i : Fin n) :
   shapeOf (get t i) = s := by
-  cases t with
-  | dim f =>
-    simp only [get]
-    exact shapeOf_eq_shape (f i)
+  rfl
 
 /-! ## Map and elementwise operation laws -/
 
-/-- Functor identity law for `map_spec`: mapping `id` is a no-op. -/
+/-- Functor identity law for `mapSpec`: mapping `id` is a no-op. -/
 theorem map_spec_id {s : Shape} (t : Tensor ℝ s) :
   mapSpec id t = t := by
-  induction s with
-  | scalar => cases t; rfl
-  | dim n s ih =>
-    cases t with | dim f =>
-    simp [mapSpec]
-    funext i
-    exact ih (f i)
+  exact TorchLean.Tensor.Internal.Rep.map_id t
 
-/-- Functor law for `map_spec`: mapping `g` then `f` equals mapping `f ∘ g`. -/
+/-- Functor law for `mapSpec`: mapping `g` then `f` equals mapping `f ∘ g`. -/
 theorem map_spec_comp {s : Shape} (f g : ℝ → ℝ) (t : Tensor ℝ s) :
   mapSpec f (mapSpec g t) = mapSpec (f ∘ g) t := by
-  induction s with
-  | scalar => cases t; rfl
-  | dim n s ih =>
-    cases t with | dim h =>
-    simp [mapSpec]
-    funext i
-    exact ih (h i)
+  exact TorchLean.Tensor.Internal.Rep.map_map f g t
 
-/-- A scalar additivity law lifts pointwise through `map_spec` and `add_spec`. -/
+/-- A scalar additivity law lifts pointwise through `mapSpec` and `addSpec`. -/
 theorem map_spec_add_distrib {s : Shape} (f : ℝ → ℝ) (a b : Tensor ℝ s)
   (h : ∀ x y, f (x + y) = f x + f y) :
   mapSpec f (addSpec a b) = addSpec (mapSpec f a) (mapSpec f b) := by
-  induction s with
-  | scalar =>
-    cases a; cases b
-    simp [mapSpec, addSpec, map2Spec]
-    exact h _ _
-  | dim n s ih =>
-    cases a; cases b; rename_i fa fb
-    simp [mapSpec, addSpec, map2Spec]
-    funext i
-    exact ih (fa i) (fb i)
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simp only [mapSpec, Tensor.map, addSpec, map2Spec,
+    TorchLean.Tensor.Internal.Rep.map_apply, TorchLean.Tensor.Internal.Rep.zipWith_apply]
+  exact h _ _
 
 /-- Commutativity transfer: if `f` is commutative, then `map2_spec f` is commutative on tensors. -/
 theorem map2_spec_comm {s : Shape} (f : ℝ → ℝ → ℝ) (a b : Tensor ℝ s)
   (h : ∀ x y, f x y = f y x) :
   map2Spec f a b = map2Spec f b a := by
-  induction s with
-  | scalar => cases a; cases b; simp [map2Spec]; exact h _ _
-  | dim n s ih =>
-    cases a; cases b; rename_i fa fb
-    simp [map2Spec]
-    funext i
-    exact ih (fa i) (fb i)
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simp [map2Spec, h]
 
 /-! ## Matrix and vector algebra -/
 
@@ -277,48 +229,21 @@ theorem mat_vec_assoc {m n p : Nat}
   -- `ofFn (getScalar t) = t` for vectors.
   simpa [ofFn_getScalar] using h
 
-/-- Coordinate rule for `matrix_transpose_spec`: `(Aᵀ)[i,j] = A[j,i]`. -/
-lemma get2_matrix_transpose_spec {m n : Nat}
+/-- Coordinate rule for the matrix transpose `swapAdjacentAxes A 0`: `(Aᵀ)[i,j] = A[j,i]`. -/
+theorem get2_matrix_transpose_spec {m n : Nat}
   (A : Tensor ℝ [m, n]) (i : Fin n) (j : Fin m) :
   get2 (swapAdjacentAxes A 0) i j = get2 A j i := by
   rw [swapAdjacentAxes_zero]
-  cases A with
-  | dim rows =>
-    cases hrow : rows j with
-    | dim cols =>
-      cases hcol : cols i with
-      | scalar value =>
-        simp [get2_eq, hrow, hcol]
+  simp [get2, get, Tensor.getScalar]
 
 /-- Matrix extensionality: matrices are equal when all their entries are equal. -/
-lemma matrix_ext {m n : Nat} {A B : Tensor ℝ [m, n]} :
+theorem matrix_ext {m n : Nat} {A B : Tensor ℝ [m, n]} :
   (∀ i : Fin m, ∀ j : Fin n, get2 A i j = get2 B i j) → A = B := by
   intro h
-  cases A with
-  | dim rowsA =>
-    cases B with
-    | dim rowsB =>
-      apply congrArg Tensor.dim
-      funext i
-
-      -- Prove row equality via `getScalar` and then lift back with `ofFn`.
-      have hto : getScalar (rowsA i) = getScalar (rowsB i) := by
-        funext j
-        cases hrowA : rowsA i with
-        | dim colsA =>
-          cases hrowB : rowsB i with
-          | dim colsB =>
-            cases hcolA : colsA j with
-            | scalar a =>
-              cases hcolB : colsB j with
-              | scalar b =>
-                have hij : get2 (Tensor.dim rowsA) i j = get2 (Tensor.dim rowsB) i j := h i j
-                have hab : a = b := by
-                  simpa [get2_eq, get_eq, hrowA, hrowB, hcolA, hcolB] using hij
-                simp [getScalar, hcolA, hcolB, hab]
-
-      have hrow := congrArg ofFn hto
-      simpa [ofFn_getScalar] using hrow
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  rcases coordinate with ⟨i, j, ⟨⟩⟩
+  simpa [get2, get, Tensor.getScalar, Tensor.unstack, Tensor.item] using h i j
 
 /-- Matrix transpose is an involution. -/
 theorem matrix_transpose_involution {m n : Nat}
@@ -365,51 +290,21 @@ theorem matrix_transpose_mul {m n p : Nat}
 -- ---------------------------------------------------------------------------
 
 /-- Expand the matrix dot-product as a double sum over entries (Frobenius inner product). -/
-lemma dot_mat_eq_sum {m n : Nat}
+theorem dot_mat_eq_sum {m n : Nat}
   (A B : Tensor ℝ [m, n]) :
   dot A B = ∑ i : Fin m, ∑ j : Fin n, (get2 A i j) * (get2 B i j) := by
   classical
-  cases A with
-  | dim rowsA =>
-    cases B with
-    | dim rowsB =>
-      -- Unfold `dot` to `sum_spec (mul_spec ...)` and sum over the outer dimension.
-      have hout :
-          dot (Tensor.dim rowsA) (Tensor.dim rowsB)
-            =
-          ∑ i : Fin m, sumSpec (mulSpec (rowsA i) (rowsB i)) := by
-        -- `mul_spec` is rowwise, and `sum_spec_dim` unfolds the outer fold.
-        simpa [dot, mulSpec, map2Spec, get_eq] using
-          (sum_spec_dim (t := mulSpec (Tensor.dim rowsA) (Tensor.dim rowsB)))
-      -- Unfold each row sum as a coordinate sum.
-      calc
-        dot (Tensor.dim rowsA) (Tensor.dim rowsB)
-            = ∑ i : Fin m, sumSpec (mulSpec (rowsA i) (rowsB i)) := hout
-        _ = ∑ i : Fin m, ∑ j : Fin n,
-              (get2 (Tensor.dim rowsA) i j) * (get2 (Tensor.dim rowsB) i j) := by
-              refine Finset.sum_congr rfl ?_
-              intro i _
-              cases hA : rowsA i with
-              | dim colsA =>
-                cases hB : rowsB i with
-                | dim colsB =>
-                  -- Rowwise: reduce to the vector lemma `sum_spec_vec`.
-                  have hsum :
-                      sumSpec (mulSpec (Tensor.dim colsA) (Tensor.dim colsB))
-                        =
-                      ∑ j : Fin n, getScalar (mulSpec (Tensor.dim colsA) (Tensor.dim colsB)) j := by
-                      simpa using (sum_spec_vec (v := mulSpec (Tensor.dim colsA) (Tensor.dim
-                        colsB)))
-                  -- Rewrite via `sum_spec_vec`, then compare summands coordinatewise.
-                  rw [hsum]
-                  refine Finset.sum_congr rfl ?_
-                  intro j _
-                  -- Everything is definitional on scalar entries.
-                  cases hcolA : colsA j with
-                  | scalar a =>
-                    cases hcolB : colsB j with
-                    | scalar b =>
-                      simp [getScalar, mulSpec, map2Spec, get2_eq, get_eq, hA, hB, hcolA, hcolB]
+  rw [dot, sum_spec_dim]
+  apply Finset.sum_congr rfl
+  intro i _
+  rw [sum_spec_vec]
+  apply Finset.sum_congr rfl
+  intro j _
+  have hRow :
+      get (mulSpec A B) i = mulSpec (get A i) (get B i) := by
+    simp [mulSpec]
+  rw [hRow, getScalar_mul_spec]
+  rfl
 
 /-- Right-adjointness of matrix multiplication under the Frobenius dot-product.
 
@@ -437,7 +332,7 @@ theorem dot_mat_mul_right_adjoint
       (f := fun j k => get2 A i k * (get2 C i j * get2 B k j)))
 
 /-- Transpose invariance of the Frobenius dot-product: `⟪Aᵀ, Bᵀ⟫ = ⟪A, B⟫`. -/
-lemma dot_mat_transpose {m n : Nat}
+theorem dot_mat_transpose {m n : Nat}
   (A B : Tensor ℝ [m, n]) :
   dot (swapAdjacentAxes A 0) (swapAdjacentAxes B 0) = dot A B := by
   classical
@@ -519,20 +414,10 @@ theorem outer_product_transpose {m n : Nat}
   (a : Tensor ℝ [m])
   (b : Tensor ℝ [n]) :
   swapAdjacentAxes (outerProductSpec a b) 0 = outerProductSpec b a := by
-  rw [swapAdjacentAxes_zero]
-  cases a with | dim fa =>
-  cases b with | dim fb =>
-  simp only [outerProductSpec]
-  -- extensionality on the outer/inner indices
-  apply congrArg Tensor.dim
-  funext i
-  apply congrArg Tensor.dim
-  funext j
-  cases hfa : fa j with
-  | scalar x =>
-    cases hfb : fb i with
-    | scalar y =>
-      simp [hfa, hfb, mul_comm]
+  apply matrix_ext
+  intro i j
+  rw [get2_matrix_transpose_spec]
+  simp [mul_comm]
 
 /-! ## Reductions and aggregation -/
 

@@ -20,9 +20,9 @@ Notes:
 
 module
 
-
-public import NN.Spec.Core.Tensor.SomeTensor
 public import NN.Runtime.Autograd.Engine.Cuda.Buffer
+import Mathlib.Tactic.Bound.Init
+public import NN.Spec.Core.Shape
 
 /-!
 # CUDA Autograd Tape
@@ -38,7 +38,7 @@ namespace Runtime
 namespace Autograd
 namespace Cuda
 
-open Spec
+open Spec TorchLean
 
 /-- Pure error monad for the CUDA tape. Mirrors `Engine/Core`. -/
 abbrev Result (α : Type) := Except String α
@@ -90,7 +90,8 @@ def validate (value : AnyBuffer) : Result AnyBuffer := do
     pure value
   else
     throw
-      s!"autograd: CUDA buffer size mismatch (shape elements={expected.toNat}, native elements={actual.toNat})"
+      s!"autograd: CUDA buffer size mismatch \
+         (shape elements={expected.toNat}, native elements={actual.toNat})"
 
 /--
 Accumulate two `AnyBuffer` values by elementwise addition, with a dynamic shape check.
@@ -131,6 +132,13 @@ structure Node where
   name : Option String := none
   /-- Forward value computed at this node. -/
   value : AnyBuffer
+  /--
+  Whether this node owns its forward allocation.
+
+  Shape views and detached references borrow a parent's buffer. Releasing a borrowed value would
+  also invalidate the parent, including parameter mirrors that must survive a tape reset.
+  -/
+  ownsValue : Bool := true
   /-- Whether reverse-mode propagation should visit this node. -/
   requiresGrad : Bool := true
   /-- Parent node ids (dependencies) in the tape. -/
@@ -199,8 +207,8 @@ This low-level constructor records `value` without validating its external buffe
 an externally supplied `Buffer` must call `AnyBuffer.validate` first; tape operations validate
 their operands again when they retrieve values.
 -/
-def leaf (t : Tape) (value : AnyBuffer) (name : Option String := none) (requiresGrad : Bool := true) :
-    Tape × Nat :=
+def leaf (t : Tape) (value : AnyBuffer) (name : Option String := none)
+    (requiresGrad : Bool := true) : Tape × Nat :=
   t.addNode
     { name := name
       value := value
@@ -251,13 +259,15 @@ Shapes are explicit and checked dynamically.
 def unary
     (t : Tape) (opName : String) (xId : Nat) (σ τ : Shape)
     (forward : Buffer → Buffer)
-    (backward : Buffer → Buffer → Buffer) :
+    (backward : Buffer → Buffer → Buffer)
+    (ownsValue : Bool := true) :
     Result (Tape × Nat) := do
   let x ← requireValue (t := t) xId σ
   let y := forward x
   let node : Node :=
     { name := some opName
       value := { s := τ, buf := y }
+      ownsValue := ownsValue
       requiresGrad := true
       parents := #[xId]
       backward := fun dLdyAny => do
@@ -351,7 +361,8 @@ def addGradAll (t : Tape) (grads : Array AnyBuffer) (id : Nat) (g : AnyBuffer) :
       if existingSize != expectedU32 then
         throw
           s!"autograd: native accumulated gradient size mismatch \
-             (parent id={id}, parent name={node.name}, shape elements={expected}, got={existingSize.toNat})"
+             (parent id={id}, parent name={node.name}, shape elements={expected}, \
+             got={existingSize.toNat})"
       let summedRaw ← AnyBuffer.add existing' g'
       let summed : AnyBuffer :=
         { s := summedRaw.s
@@ -372,8 +383,8 @@ The incoming array is total: every tape node has a gradient buffer, initialized 
 later node has already contributed to it. That total representation is convenient for the CUDA
 runtime because every slot has a concrete device buffer that can be released deterministically.
 -/
-def backwardDenseFromStep (t : Tape) (acc : Array AnyBuffer) (id : Nat) : Result (Array AnyBuffer) :=
-  do
+def backwardDenseFromStep (t : Tape) (acc : Array AnyBuffer) (id : Nat) :
+    Result (Array AnyBuffer) := do
     let node ← match t.getNode? id with
       | some n => pure n
       | none => throw "autograd: internal error (node missing)"
@@ -622,8 +633,8 @@ def backwardSparse (t : Tape) (outId : Nat) (seed : AnyBuffer)
               if actualSize != expectedSize then
                 let nodeName := node.name.getD "<unnamed>"
                 throw <| IO.userError
-                  s!"autograd: sparse CUDA gradient buffer size mismatch at node {id} ({nodeName}): \
-                     expected {expectedSize}, got {actualSize}"
+                  s!"autograd: sparse CUDA gradient buffer size mismatch \
+                     at node {id} ({nodeName}): expected {expectedSize}, got {actualSize}"
               let contributions ← match node.backward upstream with
                 | .ok contributions => pure contributions
                 | .error msg => throw <| IO.userError msg

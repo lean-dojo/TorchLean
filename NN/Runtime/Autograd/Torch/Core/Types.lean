@@ -6,21 +6,15 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.TypedGraph.Core
-public import NN.Runtime.Autograd.TypedGraph.GraphM
 public import NN.Runtime.Autograd.Engine.Cuda.Tape
-public import NN.Runtime.Autograd.Engine.Cuda.Kernels
-public import NN.Runtime.Autograd.Engine.Cuda.ConvPool
-public import NN.Runtime.Autograd.Engine.Cuda.Ops
-public import NN.Runtime.Autograd.Engine.Cuda.Shape
 public import NN.Backend.Profile
-import Mathlib.Algebra.Order.Algebra
+public import NN.Spec.Core.Tensor.SomeTensor
 
 /-!
 # Torch Runtime Types
 
-Public handles and options for the Torch-style front-end. This file contains no eager
-operation implementations; it defines the objects the other runtime modules share.
+Public handles and options shared by the Torch runtime. Operation modules import their own
+backends, so using a handle does not require the typed-graph recorder or CUDA operation catalog.
 -/
 
 
@@ -30,9 +24,7 @@ namespace Runtime
 namespace Autograd
 namespace Torch
 
-open Spec
-open Tensor
-open Proofs.Autograd.Algebra
+open Spec TorchLean TorchLean.Tensor
 
 /--
 Execution mode for the Torch-style front-end.
@@ -44,7 +36,7 @@ Execution mode for the Torch-style front-end.
 The second mode changes the representation used for execution. It is not an optimizing compiler,
 and graph construction alone does not prove the stored derivative rules correct.
 
-This is not a CUDA Graph selector. CUDA is controlled by `Options.device` on the
+This is not a CUDA Graph selector. CUDA is controlled by `Config.device` on the
 eager execution path; CUDA Graph capture/replay will require a distinct persistent-buffer mode.
 -/
 inductive ExecutionMode where
@@ -53,17 +45,18 @@ inductive ExecutionMode where
 deriving Repr, DecidableEq
 
 /--
-Options controlling the behavior of the Torch-style front-end.
+Configuration controlling the behavior of the Torch-style front-end.
 
 PyTorch comparison: these are approximately session/global settings, such as the default
 `requiresGrad` value and requested execution device.
 -/
-structure Options where
+structure Config where
   /-- Choose immediate tape execution or shape-indexed typed graph execution. -/
   execution : ExecutionMode := .eager
   /-- Device requested for execution. -/
   device : NN.Backend.Device := .cpu
-  /-- Default `requiresGrad` value for parameters whose constructor omits it. Inputs default to false. -/
+  /-- Default `requiresGrad` value for parameters whose constructor omits it. Inputs default to
+  false. -/
   requiresGradByDefault : Bool := true
   /--
   Global deterministic seed for runtime randomness.
@@ -100,84 +93,91 @@ structure Options where
 deriving Repr
 
 /- Convenience API for device and backend-contract selection. -/
-namespace Options
+namespace Config
 
 /-- Select a maintained execution device or explain that it needs a caller-supplied profile. -/
-def withDevice (opts : Options) (device : NN.Backend.Device) : Except String Options := do
+def withDevice (config : Config) (device : NN.Backend.Device) : Except String Config := do
   match NN.Backend.BackendProfile.maintainedForDevice? device with
-  | some _ => pure { opts with device := device, backendProfile? := none }
+  | some _ => pure { config with device := device, backendProfile? := none }
   | none =>
-      throw s!"device `{device.cliName}` has no maintained runtime profile; provide a backend profile with executable capsules"
+      throw (s!"device `{device.cliName}` has no maintained runtime profile; "
+        ++ "provide a backend profile with executable capsules")
 
 /-- Select a complete backend profile, including its device and contract policy. -/
-def withBackendProfile (opts : Options) (profile : NN.Backend.BackendProfile) : Options :=
-  { opts with device := profile.policy.device, backendProfile? := some profile }
+def withBackendProfile (config : Config) (profile : NN.Backend.BackendProfile) : Config :=
+  { config with device := profile.policy.device, backendProfile? := some profile }
 
 /-- Resolve the backend profile selected by `device` and an optional advanced override. -/
-def resolveBackendProfile (opts : Options) : Except String NN.Backend.BackendProfile := do
-  match opts.backendProfile? with
+def resolveBackendProfile (config : Config) : Except String NN.Backend.BackendProfile := do
+  match config.backendProfile? with
   | some profile =>
-      if profile.policy.device == opts.device then
+      if profile.policy.device == config.device then
         pure profile
       else
-        throw s!"backend profile `{profile.name}` targets `{profile.policy.device.cliName}`, but the runtime requested `{opts.device.cliName}`"
+        throw (s!"backend profile `{profile.name}` targets `{profile.policy.device.cliName}`, "
+          ++ s!"but the runtime requested `{config.device.cliName}`")
   | none =>
-      match NN.Backend.BackendProfile.maintainedForDevice? opts.device with
+      match NN.Backend.BackendProfile.maintainedForDevice? config.device with
       | some profile => pure profile
       | none =>
-          throw s!"device `{opts.device.cliName}` has no maintained runtime profile; provide a backend profile with executable capsules"
+          throw (s!"device `{config.device.cliName}` has no maintained runtime profile; "
+            ++ "provide a backend profile with executable capsules")
 
 /-- Explain why a profile has no implementation catalog for its selected device. -/
 def unsupportedProfileMessage (profile : NN.Backend.BackendProfile) : String :=
   s!"backend profile `{profile.name}` has no capsule for device `{profile.policy.device.cliName}`"
 
 /-- Whether the effective runtime device is CUDA. -/
-def usesCuda (opts : Options) : Bool :=
-  opts.device == .cuda
+def usesCuda (config : Config) : Bool :=
+  config.device == .cuda
 
 /-- Reject unresolved profiles and profiles with no registered capsule for their selected device. -/
-def validateDevice (opts : Options) : Except String Unit := do
-  let profile ← opts.resolveBackendProfile
+def validateDevice (config : Config) : Except String Unit := do
+  let profile ← config.resolveBackendProfile
   if profile.hasDeviceCapsule then
     pure ()
   else
     throw <| unsupportedProfileMessage profile
 
 /-- Validate both the named device and the linked native runtime before executing user code. -/
-def validateForExecution (opts : Options) : IO Unit := do
-  match opts.validateDevice with
+def validateForExecution (config : Config) : IO Unit := do
+  match config.validateDevice with
   | .ok () => pure ()
   | .error msg => throw <| IO.userError msg
-  if opts.usesCuda then
-    Runtime.Autograd.Cuda.Buffer.requireNativeRuntime
+  match config.device with
+  | .cpu => pure ()
+  | .cuda => Runtime.Autograd.Cuda.Buffer.requireNativeRuntime
+  | device =>
+      throw <| IO.userError
+        s!"device `{device.cliName}` has no linked TorchLean execution runtime"
 
 /-- CLI/log spelling for the effective runtime device. -/
-def deviceName (opts : Options) : String :=
-  opts.device.cliName
+def deviceName (config : Config) : String :=
+  config.device.cliName
 
 /-- Effective backend-contract profile after applying inference-only VJP policy. -/
-def effectiveBackendProfile (opts : Options) : Except String NN.Backend.BackendProfile := do
-  let profile ← opts.resolveBackendProfile
-  pure <| if opts.gradEnabled then
+def effectiveBackendProfile (config : Config) : Except String NN.Backend.BackendProfile := do
+  let profile ← config.resolveBackendProfile
+  pure <| if config.gradEnabled then
     profile
   else
     { profile with policy := { profile.policy with vjpMode := .none } }
 
-/-- Select a backend capsule for one operation under this options record. -/
-def planBackendOp (opts : Options) (op : NN.Backend.BackendOp) :
+/-- Select a backend capsule for one operation under this runtime configuration. -/
+def planBackendOp (config : Config) (op : NN.Backend.BackendOp) :
     Except String NN.Backend.AcceptedKernel := do
-  let profile ← opts.effectiveBackendProfile
+  let profile ← config.effectiveBackendProfile
   let plan ← profile.planOps #[op]
   match plan.kernels[0]? with
   | some k =>
-      match k.accept profile.policy.assurance with
+      match k.accept profile.policy with
       | .error failures =>
           .error s!"backend profile {profile.name} rejected `{op.name}`: {repr failures}"
       | .ok accepted => .ok accepted
   | none =>
       .error s!"backend profile {profile.name} returned no capsule for {op.name}"
 
-end Options
+end Config
 
 /-- Runtime identity attached to a session-owned handle.
 
@@ -227,7 +227,8 @@ shape index `s` makes shape mismatches explicit at compile time.
 structure TensorRef (α : Type) (s : Shape) where
   /-- Node/leaf identifier in the owning session tape. -/
   id : Nat
-  /-- Owning session and recording generation; absent only on internal, not-yet-committed handles. -/
+  /-- Owning session and recording generation; absent only on internal, not-yet-committed
+  handles. -/
   identity? : Option RefIdentity := none
 deriving Repr
 
@@ -250,7 +251,7 @@ Trainable parameter: a mutable tensor value plus metadata.
 PyTorch comparison: analogous to `torch.nn.Parameter`, except the parameter becomes part of the
 autograd graph only when you `use` it in a particular session/tape.
 -/
-structure Param (α : Type) (s : Shape) where
+structure Param (α : Type) [Storage α] (s : Shape) where
   /-- Optional user-facing name for logging/debugging. -/
   name : Option String := none
   /-- Value at the current point. -/
@@ -274,13 +275,22 @@ structure Param (α : Type) (s : Shape) where
   /-- Whether this parameter receives accumulated gradients and optimizer updates. -/
   requiresGrad : Bool := true
 
+/-- Allocate fresh host storage with no device mirror and an initially current host value. -/
+def Param.Internal.create {α : Type} [Storage α] {shape : Shape}
+    (initial : Tensor α shape) (name : Option String := none) (requiresGrad : Bool := true) :
+    IO (Param α shape) := do
+  let value ← IO.mkRef initial
+  let cudaValue ← IO.mkRef (none : Option Runtime.Autograd.Cuda.AnyBuffer)
+  let hostCurrent ← IO.mkRef true
+  pure { name, value, cudaValue, hostCurrent, requiresGrad }
+
 /--
 Type-erased parameter wrapper.
 
 This exists so session code can store heterogeneous parameter shapes in a single `HashMap` keyed
 by leaf id (used for SGD updates).
 -/
-structure AnyParam (α : Type) where
+structure AnyParam (α : Type) [Storage α] where
   /-- Runtime shape of the erased parameter. -/
   s : Shape
   /-- Whether the underlying parameter receives optimizer updates. -/
@@ -289,7 +299,13 @@ structure AnyParam (α : Type) where
   get : IO (Spec.SomeTensor α)
   /-- Overwrite the current parameter value, checking shape at the call site. -/
   set : Spec.SomeTensor α → IO Unit
-  /-- Store a CUDA buffer mirror without forcing an immediate host download. -/
+  /-- Store a CUDA buffer mirror without forcing an immediate host download.
+
+  The supplied buffer can be shared through Lean references, but another owner must not
+  force-release it while the parameter or a recorded snapshot still uses it. A scope-owned tape
+  intermediate needs an independent copy or a transfer of that scope's release responsibility before
+  installation.
+  -/
   setCuda : Runtime.Autograd.Cuda.AnyBuffer → IO Unit
 
 namespace AnyParam
@@ -308,19 +324,16 @@ def observeCudaCleanupFlag (released : UInt32) : IO Unit :=
   else
     pure ()
 
-/-- Atomically clear and release a cached CUDA mirror, if one exists.
+/-- Remove the parameter's reference to its cached CUDA mirror.
 
-CUDA buffers are external objects whose native finalizer tolerates repeated cleanup attempts, but
-parameter updates know exactly when an old device mirror is no longer the current value. Releasing
-that mirror here keeps eager CUDA sessions explicit about ownership. The cache is cleared before
-native release, so no caller can subsequently observe the released handle through `cudaValue`.
+A recorded leaf keeps the buffer that held the parameter's value when `use` was called. Replacing
+the parameter must preserve that snapshot, including when another session still refers to it.
+Dropping the cache reference lets Lean's external-object finalizer reclaim the allocation once
+the cache, recorded values, and backward closures have all stopped referring to it. An explicit
+`Buffer.releaseIO` here would invalidate those other references immediately.
 -/
-def releaseCachedCudaValue {α : Type} {s : Shape} (p : Param α s) : IO Unit := do
-  match ← p.cudaValue.swap none with
-  | none => pure ()
-  | some any =>
-      let released ← Runtime.Autograd.Cuda.Buffer.releaseIO any.buf
-      observeCudaCleanupFlag released
+def releaseCachedCudaValue {α : Type} [Storage α] {s : Shape} (p : Param α s) : IO Unit :=
+  p.cudaValue.set none
 
 /--
 Package a typed `Param α s` as an `AnyParam α`, checking shape on `set`.
@@ -328,7 +341,7 @@ Package a typed `Param α s` as an `AnyParam α`, checking shape on `set`.
 This is the bridge that allows generic optimizers/update routines to operate over heterogeneous
 parameter packs.
 -/
-def ofParam {α : Type} {s : Shape} (p : Param α s) : AnyParam α :=
+def ofParam {α : Type} [Storage α] {s : Shape} (p : Param α s) : AnyParam α :=
   { s := s
     requiresGrad := p.requiresGrad
     get := do
@@ -338,19 +351,19 @@ def ofParam {α : Type} {s : Shape} (p : Param α s) : AnyParam α :=
       if h : v.shape = s then
         releaseCachedCudaValue p
         p.value.set (v.cast h)
-        p.cudaValue.set none
         p.hostCurrent.set true
       else
-        throw <| IO.userError
-          s!"torch: param update shape mismatch (expected {Shape.pretty s}, got {Shape.pretty v.shape})"
+        throw <| IO.userError <|
+          s!"torch: param update shape mismatch "
+            ++ s!"(expected {Shape.pretty s}, got {Shape.pretty v.shape})"
     setCuda := fun v => do
       if _h : v.s = s then
-        releaseCachedCudaValue p
         p.cudaValue.set (some { s := s, buf := v.buf })
         p.hostCurrent.set false
       else
-        throw <| IO.userError
-          s!"torch: CUDA param update shape mismatch (expected {Shape.pretty s}, got {Shape.pretty v.s})"
+        throw <| IO.userError <|
+          s!"torch: CUDA param update shape mismatch "
+            ++ s!"(expected {Shape.pretty s}, got {Shape.pretty v.s})"
           }
 
 end AnyParam

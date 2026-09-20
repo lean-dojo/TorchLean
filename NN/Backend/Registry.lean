@@ -6,9 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Backend.Planner
-public import NN.Backend.Target
-public import NN.Backend.Attention
 public import NN.Backend.NativeCUDA
 public import NN.Backend.Reference
 public import NN.Backend.LibTorch
@@ -40,7 +37,7 @@ structure CapsuleModule where
 def flatten (modules : Array CapsuleModule) : Array KernelCapsule :=
   modules.flatMap (·.capsules)
 
-/-- First repeated module name, if the registry contains two contributions with the same identity. -/
+/-- First repeated module name, if the registry contains two contributions with the same name. -/
 def firstDuplicateModuleName? (modules : Array CapsuleModule) : Option String :=
   modules.findSome? fun module =>
     if 1 < (modules.filter fun candidate => candidate.name == module.name).size then

@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.TorchLean.Loss
-public import NN.Runtime.Autograd.TorchLean.Metrics
+public import NN.Runtime.Autograd.Model.Loss -- shake: keep
+public import NN.Runtime.Autograd.Model.Metrics -- shake: keep
 
 /-!
 # Losses and Metrics

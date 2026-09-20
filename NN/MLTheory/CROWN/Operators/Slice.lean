@@ -7,10 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Core
-public import NN.MLTheory.CROWN.Flatbox
-public import NN.Spec.Core.Context
-public import NN.Spec.Core.Tensor
-public import NN.Spec.Core.TensorOps
 
 /-!
 # Slice / gather / split operator bounds
@@ -28,16 +24,15 @@ graph (i.e. no PyTorch-style `LongTensor` indexing/gather/scatter driven by data
 
 namespace NN.MLTheory.CROWN.Operators.Slice
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.MLTheory.CROWN
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
-  /-- View a `(.dim n .scalar)` tensor as its underlying `Fin n → Tensor α .scalar` function. -/
-  def getDimScalarFn {n : Nat} (t : Tensor α [n]) : Fin n → Tensor α .scalar :=
-    match t with
-    | .dim f => f
+/-- View a vector tensor through its leading-axis slices. -/
+def getDimScalarFn {n : Nat} (t : Tensor α [n]) : Fin n → Tensor α .scalar :=
+  fun i => TorchLean.Tensor.unstack t i
 
 /-- IBP for Slice: extract elements [start, stop) from a flattened vector.
     Slice is a linear operation, so bounds propagate exactly.
@@ -52,13 +47,13 @@ def ibpSlice? (xB : FlatBox α) (start stop : Nat) : Option (FlatBox α) :=
       if hidx : idx < xB.dim then
         flo ⟨idx, hidx⟩
       else
-        Tensor.scalar Numbers.zero)
+        Tensor.scalar 0)
     let outHi := Tensor.dim (fun i : Fin outDim =>
       let idx := start + i.val
       if hidx : idx < xB.dim then
         fhi ⟨idx, hidx⟩
       else
-        Tensor.scalar Numbers.zero)
+        Tensor.scalar 0)
     some { dim := outDim, lo := outLo, hi := outHi }
   else
     none
@@ -76,13 +71,13 @@ def ibpGather? (xB : FlatBox α) (indices : Array Nat) : Option (FlatBox α) :=
     let outLo := Tensor.dim (fun j : Fin outDim =>
       match indices[j.val]? with
       | some idx =>
-        if hidx : idx < xB.dim then flo ⟨idx, hidx⟩ else Tensor.scalar Numbers.zero
-      | none => Tensor.scalar Numbers.zero)
+        if hidx : idx < xB.dim then flo ⟨idx, hidx⟩ else Tensor.scalar 0
+      | none => Tensor.scalar 0)
     let outHi := Tensor.dim (fun j : Fin outDim =>
       match indices[j.val]? with
       | some idx =>
-        if hidx : idx < xB.dim then fhi ⟨idx, hidx⟩ else Tensor.scalar Numbers.zero
-      | none => Tensor.scalar Numbers.zero)
+        if hidx : idx < xB.dim then fhi ⟨idx, hidx⟩ else Tensor.scalar 0
+      | none => Tensor.scalar 0)
     some { dim := outDim, lo := outLo, hi := outHi }
   else
     none
@@ -104,13 +99,13 @@ def ibpSplit? (xB : FlatBox α) (splitSizes : Array Nat) : Option (Array (FlatBo
           if hidx : idx < xB.dim then
             flo ⟨idx, hidx⟩
           else
-            Tensor.scalar Numbers.zero)
+            Tensor.scalar 0)
         hi := Tensor.dim (fun i : Fin size =>
           let idx := offset + i.val
           if hidx : idx < xB.dim then
             fhi ⟨idx, hidx⟩
           else
-            Tensor.scalar Numbers.zero)
+            Tensor.scalar 0)
       }
       (boxes.push box, offset + size)) (#[], 0)
   if splitSizes.foldl (· + ·) 0 = xB.dim then some buildSplits.1 else none
@@ -122,22 +117,19 @@ If the input represents $y=Ax+c$, slicing selects the corresponding rows of $A$ 
 def affSlice? {inDim outDim : Nat} (start sliceSize : Nat)
     (aff : AffineVec α inDim outDim) : Option (AffineVec α inDim sliceSize) :=
   if start + sliceSize ≤ outDim then
-    match aff.A, aff.c with
-    | .dim rows, .dim cv =>
-      let A' := Tensor.dim (fun i : Fin sliceSize =>
-        let srcIdx := start + i.val
-        if hsrc : srcIdx < outDim then
-          rows ⟨srcIdx, hsrc⟩
-        else
-          -- Out of bounds: return zero row
-          Tensor.dim (fun _ : Fin inDim => Tensor.scalar Numbers.zero))
-      let c' := Tensor.dim (fun i : Fin sliceSize =>
-        let srcIdx := start + i.val
-        if hsrc : srcIdx < outDim then
-          cv ⟨srcIdx, hsrc⟩
-        else
-          Tensor.scalar Numbers.zero)
-      some { A := A', c := c' }
+    let A' := Tensor.dim (fun i : Fin sliceSize =>
+      let srcIdx := start + i.val
+      if hsrc : srcIdx < outDim then
+        TorchLean.Tensor.unstack aff.A ⟨srcIdx, hsrc⟩
+      else
+        Tensor.dim (fun _ : Fin inDim => Tensor.scalar 0))
+    let c' := Tensor.dim (fun i : Fin sliceSize =>
+      let srcIdx := start + i.val
+      if hsrc : srcIdx < outDim then
+        TorchLean.Tensor.unstack aff.c ⟨srcIdx, hsrc⟩
+      else
+        Tensor.scalar 0)
+    some { A := A', c := c' }
   else
     none
 
@@ -145,20 +137,19 @@ def affSlice? {inDim outDim : Nat} (start sliceSize : Nat)
 def affGather? {inDim outDim : Nat} (indices : Array Nat)
     (aff : AffineVec α inDim outDim) : Option (AffineVec α inDim indices.size) :=
   if indices.all (· < outDim) then
-    match aff.A, aff.c with
-    | .dim rows, .dim cv =>
-      let A' := Tensor.dim (fun j : Fin indices.size =>
-        match indices[j.val]? with
-        | some idx =>
-          if hidx : idx < outDim then rows ⟨idx, hidx⟩
-          else Tensor.dim (fun _ : Fin inDim => Tensor.scalar Numbers.zero)
-        | none => Tensor.dim (fun _ : Fin inDim => Tensor.scalar Numbers.zero))
-      let c' := Tensor.dim (fun j : Fin indices.size =>
-        match indices[j.val]? with
-        | some idx =>
-          if hidx : idx < outDim then cv ⟨idx, hidx⟩ else Tensor.scalar Numbers.zero
-        | none => Tensor.scalar Numbers.zero)
-      some { A := A', c := c' }
+    let A' := Tensor.dim (fun j : Fin indices.size =>
+      match indices[j.val]? with
+      | some idx =>
+        if hidx : idx < outDim then TorchLean.Tensor.unstack aff.A ⟨idx, hidx⟩
+        else Tensor.dim (fun _ : Fin inDim => Tensor.scalar 0)
+      | none => Tensor.dim (fun _ : Fin inDim => Tensor.scalar 0))
+    let c' := Tensor.dim (fun j : Fin indices.size =>
+      match indices[j.val]? with
+      | some idx =>
+        if hidx : idx < outDim then TorchLean.Tensor.unstack aff.c ⟨idx, hidx⟩
+        else Tensor.scalar 0
+      | none => Tensor.scalar 0)
+    some { A := A', c := c' }
   else
     none
 
@@ -179,21 +170,19 @@ def ibpConcat (boxes : Array (FlatBox α)) : FlatBox α :=
       let flo := getDimScalarFn b.lo
       let fhi := getDimScalarFn b.hi
       let newLo := (Array.finRange b.dim).foldl (fun arr i =>
-        match flo i with
-        | .scalar v => arr.push v
+        arr.push (flo i).item
       ) loArr
       let newHi := (Array.finRange b.dim).foldl (fun arr i =>
-        match fhi i with
-        | .scalar v => arr.push v
+        arr.push (fhi i).item
       ) hiArr
       (newLo, newHi)
-    ) (#[], #[])
+    ) ((#[] : Array α), (#[] : Array α))
     let (loArr, hiArr) := buildConcat
     { dim := totalDim
     , lo := Tensor.dim (fun i : Fin totalDim =>
-        Tensor.scalar (if h : i.val < loArr.size then loArr[i.val] else Numbers.zero))
+        Tensor.scalar (if h : i.val < loArr.size then loArr[i.val] else 0))
     , hi := Tensor.dim (fun i : Fin totalDim =>
-        Tensor.scalar (if h : i.val < hiArr.size then hiArr[i.val] else Numbers.zero))
+        Tensor.scalar (if h : i.val < hiArr.size then hiArr[i.val] else 0))
     }
   else
     { dim := 0

@@ -43,8 +43,8 @@ Optional flags (tutorial-specific):
 Public API used here:
 
 - `Data.readNpy` (metadata)
-- `Data.supervisedDataset`
-- `Data.batchDataset`
+- `Data.fromSupervisedSource`
+- `Data.batch`
 - `Trainer.new`
 - `Trainer.RunConfig`
 - `Trainer.TrainOptions`
@@ -53,18 +53,52 @@ Public API used here:
 
 @[expose] public section
 
-
 namespace NN.Examples.Data.Loaders.Npy
 
 open TorchLean
 
-def nSamples : Nat := 25
-def inDim : Nat := 2
-def outDim : Nat := 1
+/-- Command name used in diagnostics and by the top-level example runner. -/
+def exeName : String := "data_npy"
+
+/-- Two input features, matching the generated `.npy` arrays. -/
+def inputWidth : Nat := 2
+/-- Hidden width, kept the same as the CSV tutorial so the two can be compared directly. -/
+def hiddenWidth : Nat := 8
+/-- One regression target. -/
+def outputWidth : Nat := 1
 
 /-- A small 2-layer batched MLP `2 -> 8 -> 1`. -/
-def mkModel {batch : Nat} : nn.Builder (nn.Sequential [batch, inDim] [batch, outDim]) :=
-  nn.blocks.mlp inDim outDim { hidden := [8] } [batch]
+def model {batchSize : Nat} :
+    nn.Builder (nn.Sequential [batchSize, inputWidth] [batchSize, outputWidth]) :=
+  nn.mlp inputWidth outputWidth { hiddenWidths := [hiddenWidth] } [batchSize]
+
+/-- Read exactly two matrix dimensions from untrusted NPY metadata. -/
+def Internal.matrixDimensions? (shape : Array Nat) : Option (Nat × Nat) := do
+  let rows ← shape[0]?
+  let columns ← shape[1]?
+  if shape.size = 2 then
+    pure (rows, columns)
+  else
+    none
+
+/-- Validate the two NPY shapes and return their shared leading-axis size. -/
+def rowCountFromMetadata
+    (xShape yShape : Array Nat) :
+    Except String Nat :=
+  match Internal.matrixDimensions? xShape, Internal.matrixDimensions? yShape with
+  | some (xRows, xWidth), some (yRows, yWidth) =>
+    if xWidth != inputWidth then
+      .error s!"X.npy: expected shape (N,{inputWidth}), got {xShape}"
+    else if yWidth != outputWidth then
+      .error s!"y.npy: expected shape (N,{outputWidth}), got {yShape}"
+    else if xRows != yRows then
+      .error s!"NPY row mismatch: X has {xRows} rows, y has {yRows}"
+    else
+      .ok xRows
+  | _, _ =>
+    .error <|
+      s!"expected X.npy shape (N,{inputWidth}) and y.npy shape (N,{outputWidth}); " ++
+      s!"got {xShape} and {yShape}"
 
 /-- Command-line help for the NPY loader tutorial. -/
 def usage : String :=
@@ -81,57 +115,61 @@ def usage : String :=
     , "  --seed N"
     , "  --batch N"
     , "  --steps N"
-    , "  --scalar float32|ieee32-exec"
+    , "  --arithmetic native|ieee"
     , "  --execution eager|typed-graph"
     , "  --device auto|cpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external"
     , "  --show-backend                    print backend capsules as they execute"
     ]
 
+/-- Entry point: load the NumPy arrays, then train the same MLP the CSV tutorial trains. -/
 def main (args : List String) : IO Unit := do
   let args := CLI.dropDashDash args
   if CLI.hasHelp args then
     IO.println usage
     return
 
-  let label := "Data.Loaders.Npy"
-  let (dataDir, args) ← CLI.orThrow label <| _root_.NN.Examples.Data.SamplePaths.takeDataDir args
-  let (seed, args) ← CLI.orThrow label <| CLI.takeSeed args 0
-  let (steps, args) ← CLI.orThrow label <| CLI.takeStepsFlagDefault args 20
-  let (batch, args) ← CLI.orThrow label <| CLI.takePositiveNatFlag args label "batch" 5
-  let (paths, args) ← CLI.orThrow label <|
-    _root_.NN.Examples.Data.SamplePaths.takeXyPaths args
-      (_root_.NN.Examples.Data.SamplePaths.regressionXNpy dataDir)
-      (_root_.NN.Examples.Data.SamplePaths.regressionYNpy dataDir)
-  let xPath := paths.xPath
-  let yPath := paths.yPath
+  let (dataDir, args) ← CLI.orThrow exeName <| TorchLean.CLI.takePathFlag args "data-dir"
+    (default := NN.Examples.Data.SamplePaths.defaultDataDir)
+  let (seed, args) ← CLI.orThrow exeName <| CLI.takeSeed args (default := 0)
+  let (steps, args) ← CLI.orThrow exeName <| CLI.takeNatFlag args "steps" (default := 20)
+  let (batchSize, args) ←
+    CLI.orThrow exeName <| CLI.takePositiveNatFlag args exeName "batch" (default := 5)
+  let (xPath, args) ← CLI.orThrow exeName <| CLI.takePathFlag args "x"
+    (default := NN.Examples.Data.SamplePaths.regressionXNpy dataDir)
+  let (yPath, args) ← CLI.orThrow exeName <| CLI.takePathFlag args "y"
+    (default := NN.Examples.Data.SamplePaths.regressionYNpy dataDir)
 
-  let model := mkModel (batch := batch)
-  let run ← Trainer.RunConfig.parseRuntimeArgsOrThrow label args
-    { optimizer := optim.adam { lr := 0.05 } }
-  let trainer := Trainer.new model <|
-    Trainer.Config.fromRunConfig run .regression (seed := seed)
+  let network := model (batchSize := batchSize)
+  let run ← TorchLean.CLI.Trainer.parseCommandLine exeName args
+    { optimizer := optim.adam { learningRate := 0.05 } }
+  let trainer := Trainer.new network <|
+    Trainer.RunConfig.forObjective run .meanSquaredError (seed := seed)
 
   IO.println "== NPY loader training tutorial =="
-  trainer.printInfo
+  trainer.printSummary
   IO.println s!"data_dir = {dataDir}"
   IO.println s!"x_path   = {xPath}"
   IO.println s!"y_path   = {yPath}"
   IO.println s!"seed     = {seed}"
-  IO.println (s!"train    = Adam(lr=0.05), steps={steps}, batch_size={batch}, " ++
-    s!"shuffle=true, drop_last=true")
-  let xMeta ← CLI.orThrow label <| (← Data.readNpy xPath)
-  let yMeta ← CLI.orThrow label <| (← Data.readNpy yPath)
+  IO.println
+    (s!"train    = Adam(lr=0.05), steps={steps}, batch_size={batchSize}, " ++
+      s!"shuffle=true, drop_last=true")
+  let xMeta ← CLI.orThrow exeName <| (← Data.readNpy xPath)
+  let yMeta ← CLI.orThrow exeName <| (← Data.readNpy yPath)
   IO.println s!"X.npy dtype={xMeta.dtype} shape={xMeta.shape}"
   IO.println s!"y.npy dtype={yMeta.dtype} shape={yMeta.shape}"
+  let rowCount ← CLI.orThrow exeName <|
+    rowCountFromMetadata xMeta.shape yMeta.shape
 
   let src : Data.SupervisedSource :=
-    Data.SupervisedSource.ofPaths .npy xPath yPath nSamples [inDim] [outDim]
-  let data0 := Data.supervisedDataset src
-  let data := Data.batchDataset batch data0 (shuffle := true) (seed := seed)
+    Data.SupervisedSource.fromFiles xPath yPath rowCount [inputWidth] [outputWidth]
+  let samples := Data.fromSupervisedSource src
+  let data := Data.batch batchSize samples
+    (shuffle := true) (seed := seed)
   let trained ← trainer.train data { steps := steps }
   trained.printSummary
-  let heldout : Tensor Float [batch, inDim] :=
-    Tensor.full [batch, inDim] 0.25
+  let heldout : Tensor Float [batchSize, inputWidth] :=
+    Tensor.full [batchSize, inputWidth] 0.25
   trained.printPrediction "predict(batch=heldout)" heldout
 
 end NN.Examples.Data.Loaders.Npy

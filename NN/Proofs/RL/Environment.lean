@@ -43,7 +43,8 @@ theorem statesFrom_length
 theorem states_length
     (env : Env State Action Observation Reward) (actions : Array Action) :
     (states env actions).size = actions.size + 1 := by
-  simpa [states] using statesFrom_length (env := env) (state := env.initialState) (actions := actions)
+  simpa [states] using
+    statesFrom_length (env := env) (state := env.initialState) (actions := actions)
 
 /-- `rolloutFrom` emits exactly one observed transition per action. -/
 theorem rolloutFrom_length
@@ -55,7 +56,8 @@ theorem rolloutFrom_length
 theorem rollout_length
     (env : Env State Action Observation Reward) (actions : Array Action) :
     (rollout env actions).size = actions.size := by
-  simpa [rollout] using rolloutFrom_length (env := env) (state := env.initialState) (actions := actions)
+  simpa [rollout] using
+    rolloutFrom_length (env := env) (state := env.initialState) (actions := actions)
 
 /-- An action-valid prefix preserves the environment invariant. -/
 private theorem stateAfter_safe
@@ -88,7 +90,8 @@ theorem evolve_safe
     (hOk : env.actionPathOk env.toEnv.initialState actions) :
     env.Invariant (evolve env.toEnv actions) := by
   simpa [evolve] using
-    evolveFrom_safe (env := env) (state := env.toEnv.initialState) (actions := actions) env.init_safe hOk
+    evolveFrom_safe (env := env) (state := env.toEnv.initialState) (actions := actions)
+      env.init_safe hOk
 
 /-- Every state in `statesFrom` satisfies the invariant along a valid action path. -/
 theorem statesFrom_safe
@@ -109,7 +112,8 @@ theorem states_safe
     (hOk : env.actionPathOk env.toEnv.initialState actions) :
     ∀ state ∈ states env.toEnv actions, env.Invariant state := by
   simpa [states] using
-    statesFrom_safe (env := env) (state := env.toEnv.initialState) (actions := actions) env.init_safe hOk
+    statesFrom_safe (env := env) (state := env.toEnv.initialState) (actions := actions)
+      env.init_safe hOk
 
 end Environment
 end RL

@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Tensor
-public import NN.Spec.Core.Tensor.SomeTensor
+public import NN.Spec.Core.Context
+public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Flattened interval bounds (`FlatBox`)
@@ -25,17 +25,17 @@ operator-level transfer rules that operate on flattened vectors (e.g. slice/redu
 
 namespace NN.MLTheory.CROWN
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /--
 Flattened interval bounds.
 
 `dim` is the flattened size (number of scalar components).
 -/
-structure FlatBox (α : Type) [Context α] where
+structure FlatBox (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Flattened output dimension. -/
   dim : Nat
   /-- Lower bound vector (shape `.dim dim .scalar`). -/
@@ -53,7 +53,7 @@ box predicates in the same scalar universe as the executable operators.
 -/
 def Valid (B : FlatBox α) : Prop :=
   ∀ i : Fin B.dim,
-    Spec.Tensor.getScalar (α := α) B.lo i ≤ Spec.Tensor.getScalar (α := α) B.hi i
+    TorchLean.Tensor.getScalar (α := α) B.lo i ≤ TorchLean.Tensor.getScalar (α := α) B.hi i
 
 /--
 Build a singleton `FlatBox` from an exact vector tensor `t` (set `lo = hi = t`).

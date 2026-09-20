@@ -103,7 +103,8 @@ def ofJsonE (j : Json) : Except String PathDiff := do
     | Except.ok xs => xs
     | Except.error _ => #[]
 
-  let p : PathDiff := { width := width, height := height, before := before, after := after, notes := notes }
+  let p : PathDiff :=
+    { width := width, height := height, before := before, after := after, notes := notes }
   validateE p
   pure p
 

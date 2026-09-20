@@ -6,527 +6,683 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.Group.Defs
-public import Mathlib.Algebra.Group.Pi.Basic
-public import Mathlib.Algebra.Group.TransferInstance
-public import Mathlib.Logic.Equiv.Defs
-public import NN.Spec.Core.Shape
+public import NN.Tensor.Coordinate
+public import NN.Tensor.Internal.Representation.Basic.Reindex
 
 /-!
-# Core tensor datatype (`Spec.Tensor`)
+# Core tensor datatype (`TorchLean.Tensor`)
 
-This file defines the foundational, shape-indexed tensor type used throughout TorchLean's **spec**
-layer:
+TorchLean has one shape-indexed tensor representation for proofs and execution:
+`Tensor α shape`.
 
-`Tensor α s`
+Every tensor owns one contiguous row-major buffer. The scalar type selects the
+physical buffer through `Storage`: arbitrary proof scalar types such as
+`Real` use `Array`, while executable types with specialized instances use
+packed storage (`FloatArray` for `Float`, `ByteArray` for `UInt8`).
 
-## Why an inductive / functional representation?
-
-Instead of storing a flat array plus a shape, the spec tensor is a *function from indices*:
-
-- a scalar is `α`
-- an axis of extent `n` is represented by `Fin n → ...`
-
-This has three practical benefits:
-
-1) **Shape safety is enforced by the type.**
-2) **Proofs are natural:** you reason by recursion on the `Shape` / `Tensor` constructors.
-3) **No layout commitment:** the spec layer doesn’t bake in row-major vs column-major storage.
-
-For long executable runs, repeated functional updates can create “closure chains”. Use
-`Tensor.materialize` (documented below) to rebuild a tensor into an array-backed normal form.
+The `scalar` and `dim` functions preserve TorchLean's proof-facing construction
+API. They are smart constructors over packed storage, not physical recursive
+constructors. Proofs eliminate tensors through typed lookup, `scalarEquiv`,
+`dimEquiv`, and extensionality.
 -/
 
 @[expose] public section
 
-
-namespace Spec
+namespace TorchLean
 
 /--
-Shape-indexed tensor datatype for the spec layer.
+The single tensor representation used by TorchLean proofs and execution.
 
-This is a *functional* representation:
-- a scalar tensor contains one `α`,
-- an outer axis of extent `n` is a function `Fin n → Tensor α s`.
-
-Fixed shapes should normally be written with dimension-list syntax, as in `Tensor α [4, 2]`.
-The recursive `.dim` constructor is useful inside proofs and operations whose remaining rank is not
-known statically; it is not a second user-facing tensor representation.
-
-The spec layer does not commit to a concrete memory layout.
+The public shape is `Spec.Shape`, which is the same type as the shape carried by the buffer, so
+this alias only reorders arguments. The implementation is one certified contiguous row-major buffer
+selected by `Storage`.
 -/
-inductive Tensor (α : Type) : Shape → Type where
-  /-- Construct a rank-zero tensor from one scalar value. -/
-  | scalar : α → Tensor α .scalar
-  /-- Construct an outer dimension from its shape-indexed entries. -/
-  | dim : ∀ {n s}, (Fin n → Tensor α s) → Tensor α (.dim n s)
+abbrev Tensor (α : Type) (shape : Spec.Shape) [Storage α] :=
+  Tensor.Internal.Rep α shape
+
+end TorchLean
+
+open Lean PrettyPrinter Delaborator SubExpr
+
+/-- Recognize a statically explicit dimension list in an internal tensor type. -/
+private meta partial def explicitTensorShape : Expr → Bool
+  | shape =>
+      if shape.isAppOfArity ``List.nil 1 then
+        true
+      else if shape.isAppOfArity ``List.cons 3 then
+        explicitTensorShape shape.getAppArgs[2]!
+      else
+        false
+
+/--
+Render executable internal tensors with explicit dimensions through the
+canonical public type name in editor information and `#check` output.
+
+Universe-polymorphic proof tensors and genuinely computed shape expressions
+retain their exact internal spelling.
+-/
+@[app_delab TorchLean.Tensor.Internal.Rep]
+meta def TorchLean.delabTensorRep : Delab := do
+  withOverApp 3 do
+    let expression ← getExpr
+    let arguments := expression.getAppArgs
+    guard <| arguments.size = 3
+    guard <| (← Meta.getDecLevel arguments[0]!) == .zero
+    guard <| explicitTensorShape arguments[1]!
+    let scalar ← withNaryArg 0 delab
+    let shape ← withNaryArg 1 delab
+    pure <| Syntax.mkApp (mkIdent ``TorchLean.Tensor) #[scalar, shape]
+
+open Spec TorchLean
+
+namespace TorchLean.Tensor
+
+/-- Construct a rank-zero tensor from one scalar value. -/
+def scalar {α : Type} [TorchLean.Storage α] (value : α) :
+    Tensor α .scalar :=
+  TorchLean.Tensor.Internal.Rep.ofFn fun _ => value
+
+/-- Construct an outer dimension from its shape-indexed entries. -/
+def dim {α : Type} [TorchLean.Storage α] {n : Nat} {shape : Shape}
+    (values : Fin n → Tensor α shape) : Tensor α (.dim n shape) :=
+  TorchLean.Tensor.Internal.Rep.stack values
 
 /-- Return the value stored in a scalar tensor. -/
-def Tensor.item {α : Type} : Tensor α .scalar → α
-  | .scalar value => value
+def item {α : Type} [TorchLean.Storage α]
+    (tensor : Tensor α .scalar) : α :=
+  tensor PUnit.unit
 
-/-- Extracting the value of a scalar constructor returns that value. -/
-@[simp] theorem Tensor.item_scalar {α : Type} (value : α) :
-    (Tensor.scalar value).item = value := rfl
+/-- Reading back the value a scalar tensor was built from returns that value. -/
+@[simp] theorem item_scalar {α : Type} [TorchLean.Storage α] (value : α) :
+    (scalar value).item = value := by
+  exact TorchLean.Tensor.Internal.Rep.get_ofFn (fun _ => value) PUnit.unit
 
-/-!
-## Runtime note: materialization
+/-- A scalar tensor evaluates to its sole scalar value. -/
+@[simp] theorem scalar_apply {α : Type} [TorchLean.Storage α] (value : α) :
+    (scalar value : Tensor α .scalar) PUnit.unit = value := by
+  simpa [item] using item_scalar value
 
-`Tensor α s` is a *functional* representation (`Fin n → ...`). This is excellent for proofs, but
-repeated updates (for example, many SGD steps) can build deep chains of closures
-(`fun i => ... (old (old (old i))) ...`). Evaluating those chains later becomes progressively more
-expensive.
+/-- Select one leading-axis slice from a tensor. -/
+def unstack {α : Type} [TorchLean.Storage α]
+    {n : Nat} {shape : Shape} (tensor : Tensor α (.dim n shape))
+    (index : Fin n) : Tensor α shape :=
+  TorchLean.Tensor.Internal.Rep.unstack tensor index
 
-`Tensor.materialize` rebuilds a tensor into an array-backed normal form (at every dimension), which
-keeps long-running training loops from degrading.
+/-- Tensors with equal row-major data arrays are equal.
 
-It is extensionally the identity (the same mathematical tensor), but it is much friendlier to the
-runtime evaluator.
--/
-
-/-- Rebuild a tensor into an array-backed normal form (performance helper). -/
-def Tensor.materialize {α : Type} : ∀ {s : Shape}, Tensor α s → Tensor α s
-  | .scalar, t => t
-  | .dim n s', Tensor.dim f =>
-      let arr : Array (Tensor α s') := Array.ofFn (fun i : Fin n => Tensor.materialize (f i))
-      Tensor.dim (fun i =>
-        -- `arr` has size `n`, so this index is always in-bounds.
-        let hn : arr.size = n := by
-          simp [arr]
-        let hi : i.1 < arr.size :=
-          -- Avoid `simp` on `Fin.isLt` goals; transport along `hn.symm` directly.
-          Eq.ndrec (motive := fun m => i.1 < m) i.2 hn.symm
-        arr[i.1]'hi)
-
-/-- `Tensor.materialize` preserves tensor values (it is extensionally the identity). -/
-@[simp]
-theorem Tensor.materialize_eq {α : Type} : ∀ {s : Shape} (t : Tensor α s), Tensor.materialize t = t
-  := by
-  intro s t
-  induction t with
-  | scalar x =>
+The packed representation is a storage buffer together with a size proof, and buffers are
+determined by their array observation (`Storage.toArray_injective`). -/
+theorem eq_of_data_eq {α : Type} [TorchLean.Storage α] {s : Shape}
+    {a b : TorchLean.Tensor α s} (h : a.data = b.data) : a = b := by
+  cases a with
+  | mk aBuf _ =>
+    cases b with
+    | mk bBuf _ =>
+      have hBuf : aBuf = bBuf := TorchLean.Storage.toArray_injective h
+      subst hBuf
       rfl
-  | @dim n s f ih =>
-      -- Unfold `materialize` and show the inner index function agrees with `f`.
-      simp [Tensor.materialize]
-      funext i
-      simpa using ih i
 
-/-- Default tensor value for any shape (uses `Inhabited.default` at scalars). -/
-def Tensor.default {α : Type} [Inhabited α] : ∀ {s : Shape}, Tensor α s
-  | .scalar => scalar (@Inhabited.default α _)
-  | .dim _ _ => dim (fun _ => default)
+/-- Slicing the outer axis of a stacked tensor returns the slice that was stacked. -/
+@[simp] theorem unstack_dim {α : Type} [TorchLean.Storage α]
+    {n : Nat} {shape : Shape} (values : Fin n → Tensor α shape)
+    (index : Fin n) :
+    unstack (dim values) index = values index := by
+  exact TorchLean.Tensor.Internal.Rep.unstack_stack values index
 
-/-- Make `Tensor α s` inhabited for any shape `s`. -/
-@[reducible, instance]
-def Tensor.inhabited {α : Type} [Inhabited α] : ∀ {s : Shape}, Inhabited (Tensor α s)
-  | _ => ⟨Tensor.default⟩
+/-- Restacking every slice of a tensor returns the tensor.
 
-/-- Recover the (data) shape from a tensor value. -/
-def shapeOf {α : Type} : ∀ {s : Shape}, Tensor α s → Shape
-  | .scalar, _ => .scalar
-  | .dim 0 s', _ => .dim 0 s'            -- empty dimension
-  | .dim (n'+1) _, .dim f => .dim (n'+1) (shapeOf (f ⟨0, Nat.zero_lt_succ n'⟩))
+Together with `unstack_dim` this is what makes `dim` and `unstack` an isomorphism rather than merely
+a pair of functions, which is why proofs can eliminate a tensor by `rw [← dim_unstack]` and then
+reason slice by slice. -/
+@[simp] theorem dim_unstack {α : Type} [TorchLean.Storage α]
+    {n : Nat} {shape : Shape} (tensor : Tensor α (.dim n shape)) :
+    dim (unstack tensor) = tensor := by
+  exact TorchLean.Tensor.Internal.Rep.stack_unstack tensor
+
+/-- Default tensor value for any shape. -/
+def default {α : Type} [TorchLean.Storage α] [Inhabited α]
+    {shape : Shape} : Tensor α shape :=
+  TorchLean.Tensor.Internal.Rep.const Inhabited.default
+
+/-- Every shape is inhabited when the scalar type is: take the all-default tensor. -/
+@[reducible, instance] def inhabited {α : Type}
+    [TorchLean.Storage α] [Inhabited α] {shape : Shape} :
+    Inhabited (Tensor α shape) :=
+  ⟨Tensor.default⟩
 
 /-- Rebuilding a scalar tensor from its item returns the original tensor. -/
-@[simp] theorem Tensor.scalar_item {α : Type} (x : Tensor α .scalar) :
-    Tensor.scalar x.item = x := by
-  cases x
-  rfl
+@[simp] theorem scalar_item {α : Type} [TorchLean.Storage α]
+    (tensor : Tensor α .scalar) :
+    scalar tensor.item = tensor := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  cases coordinate
+  exact TorchLean.Tensor.Internal.Rep.get_ofFn (fun _ => tensor.item) PUnit.unit
 
-/-- Scalar tensors are equal when their stored values are equal. -/
-@[ext] theorem Tensor.ext_scalar {α : Type} {x y : Tensor α .scalar}
-    (h : x.item = y.item) : x = y := by
-  cases x
-  cases y
-  simpa using h
+/-- Two scalar tensors agreeing on their item are equal. -/
+@[ext] theorem ext_scalar {α : Type} [TorchLean.Storage α]
+    {left right : Tensor α .scalar}
+    (h : left.item = right.item) : left = right := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  cases coordinate
+  exact h
 
-/-- Equivalence between `Tensor α .scalar` and `α` (useful to reuse algebra instances). -/
-def Tensor.scalarEquiv (α : Type) : Tensor α .scalar ≃ α where
-  toFun := Tensor.item
-  invFun := Tensor.scalar
-  left_inv := Tensor.scalar_item
-  right_inv := Tensor.item_scalar
+/-- Scalar tensors and scalar values are equivalent. -/
+def scalarEquiv (α : Type) [TorchLean.Storage α] :
+    Tensor α .scalar ≃ α where
+  toFun := item
+  invFun := scalar
+  left_inv := scalar_item
+  right_inv := item_scalar
 
-/-- An outer tensor axis is equivalent to a coordinate function into the remaining tensor shape. -/
-def Tensor.dimEquiv {α : Type} (n : Nat) (s : Shape) :
-    Tensor α (.dim n s) ≃ (Fin n → Tensor α s) where
-  toFun
-    | .dim values => values
-  invFun := Tensor.dim
-  left_inv tensor := by cases tensor; rfl
-  right_inv _ := rfl
+/-- An outer axis is equivalent to a finite family of inner tensors. -/
+def dimEquiv {α : Type} [TorchLean.Storage α] (n : Nat) (shape : Shape) :
+    Tensor α (.dim n shape) ≃ (Fin n → Tensor α shape) where
+  toFun := unstack
+  invFun := dim
+  left_inv := dim_unstack
+  right_inv values := by
+    funext index
+    exact unstack_dim values index
 
-/-- Tensor addition is pointwise at every rank. -/
-@[instance_reducible] def Tensor.addCommMonoid {α : Type} [AddCommMonoid α] :
-    (s : Shape) → AddCommMonoid (Tensor α s)
-  | .scalar => Equiv.addCommMonoid (Tensor.scalarEquiv α)
-  | .dim n s =>
-      letI : AddCommMonoid (Tensor α s) := Tensor.addCommMonoid s
-      Equiv.addCommMonoid (Tensor.dimEquiv n s)
+/--
+Proof-facing eliminator for the familiar scalar/dimension cases.
 
-/-- Every tensor shape inherits pointwise additive structure from its scalar type. -/
-instance {α : Type} [AddCommMonoid α] {s : Shape} : AddCommMonoid (Tensor α s) :=
-  Tensor.addCommMonoid s
+`View` does not own tensor data and is not a second tensor representation. It
+only exposes the outer shape of an already packed tensor.
+-/
+inductive View (α : Type) [TorchLean.Storage α] : Shape → Type
+  | scalar (value : α) : View α .scalar
+  | dim {n : Nat} {shape : Shape}
+      (values : Fin n → Tensor α shape) : View α (.dim n shape)
 
-/-- Equivalence between vectors and coordinate functions `Fin n → α`. -/
-def Tensor.vectorEquiv {α : Type} (n : Nat) : Tensor α [n] ≃ (Fin n → α) :=
-Equiv.mk
-  (fun t i => match t with
-              | Tensor.dim f => Tensor.item (f i))
-  (fun f => Tensor.dim (fun i => Tensor.scalar (f i)))
-  (by
-    intro t
-    cases t
-    simp)
-  (by
-    intro f
-    funext i
-    simp)
-
-namespace Tensor
-
-/-- Cast a tensor along an equality of shapes. -/
-def castShape {α : Type} {s₁ s₂ : Shape} (t : Tensor α s₁) (h : s₁ = s₂) : Tensor α s₂ :=
-  Eq.mp (congrArg (Tensor α) h) t
+/-- Observe the outer constructor of a packed tensor for shape-recursive proofs. -/
+def view {α : Type} [TorchLean.Storage α] :
+    {shape : Shape} → Tensor α shape → View α shape
+  | .scalar, tensor => .scalar tensor.item
+  | .dim _ _, tensor => .dim (unstack tensor)
 
 /-!
-### Cast lemmas
+## Pointwise algebra
 
-In dependently-typed proofs (especially graph/tape correctness proofs), the same cast may arise
-with different proof terms. Since equality proofs are proof-irrelevant, we provide a few small
-normalization lemmas for `Tensor.cast_shape`.
+Every algebraic operation on tensors is the corresponding scalar operation applied coordinatewise.
+The instances (`Zero`, `Add`, `Neg`, `Sub`, `SMul`, `AddCommMonoid`, `AddCommGroup`, `Module`) live
+on the native representation in `NN.Tensor.Internal.Representation.Basic.Pointwise`, so they apply
+uniformly to `Tensor α shape` whether the shape is a variable or a literal such as `[n]`. The
+coordinate lemmas below are the simp normal forms; `add_apply` is restated here under the public
+tensor namespace.
 -/
 
-/-- Casting a tensor along `rfl` is the identity. -/
-@[simp] theorem cast_shape_rfl {α : Type} {s : Shape} (t : Tensor α s) :
-    castShape (t := t) (h := rfl) = t := by
+/-- Tensor addition is coordinatewise scalar addition. -/
+@[simp] theorem add_apply {α : Type} [TorchLean.Storage α] [Add α] {shape : Shape}
+    (x y : Tensor α shape) (i : shape.Coord) : (x + y) i = x i + y i :=
+  TorchLean.Tensor.Internal.Rep.zipWith_apply (· + ·) x y i
+
+/-- Vectors and finite scalar functions are equivalent. -/
+def vectorEquiv {α : Type} [TorchLean.Storage α]
+    (n : Nat) : Tensor α [n] ≃ (Fin n → α) :=
+  (dimEquiv n .scalar).trans (Equiv.piCongrRight fun _ => scalarEquiv α)
+
+/-- Cast a tensor along an equality of shapes. -/
+def castShape {α : Type} [TorchLean.Storage α] {source target : Shape}
+    (tensor : Tensor α source) (h : source = target) : Tensor α target := by
+  cases h
+  exact tensor
+
+/-- Casting along `rfl` is the identity, and holds by `rfl` itself. -/
+@[simp] theorem cast_shape_rfl {α : Type} [TorchLean.Storage α]
+    {shape : Shape} (tensor : Tensor α shape) :
+    castShape tensor rfl = tensor :=
   rfl
 
-/-- Casting a tensor along a reflexive equality proof is the identity. -/
-@[simp] theorem cast_shape_self {α : Type} {s : Shape} (t : Tensor α s) (h : s = s) :
-    castShape (t := t) h = t := by
+/-- Casting along any proof of `shape = shape` is the identity.
+
+`cast_shape_rfl` does not cover this: after `Shape.ofList` normalization the proof in hand is often
+some derived term rather than the literal `rfl`, and simp needs to discharge those too. -/
+@[simp] theorem cast_shape_self {α : Type} [TorchLean.Storage α]
+    {shape : Shape} (tensor : Tensor α shape) (h : shape = shape) :
+    castShape tensor h = tensor := by
   cases h
   rfl
 
-/-- `Tensor.cast_shape` composes associatively (cast-by-eq is just `Eq.rec`). -/
-@[simp] theorem cast_shape_trans {α : Type} {s₁ s₂ s₃ : Shape}
-    (t : Tensor α s₁) (h₁₂ : s₁ = s₂) (h₂₃ : s₂ = s₃) :
-    castShape (t := castShape (t := t) h₁₂) h₂₃ =
-      castShape (t := t) (h₁₂.trans h₂₃) := by
+/-- Two casts in a row collapse into one along the composed equality. -/
+@[simp] theorem cast_shape_trans {α : Type} [TorchLean.Storage α]
+    {s₁ s₂ s₃ : Shape} (tensor : Tensor α s₁)
+    (h₁₂ : s₁ = s₂) (h₂₃ : s₂ = s₃) :
+    castShape (castShape tensor h₁₂) h₂₃ =
+      castShape tensor (h₁₂.trans h₂₃) := by
   cases h₁₂
   cases h₂₃
   rfl
 
-/-- Proof-irrelevance for `Tensor.cast_shape`. -/
-theorem cast_shape_proof_irrel {α : Type} {s₁ s₂ : Shape}
-    (t : Tensor α s₁) {p q : s₁ = s₂} :
-    castShape (t := t) p = castShape (t := t) q := by
-  have : p = q := Subsingleton.elim _ _
-  cases this
+/-- The cast does not depend on which proof of the shape equality is used.
+
+Shape equalities are proofs in a subsingleton, so this is provable rather than an axiom, and it is
+what lets two developments that derived the same equality differently share a lemma. -/
+theorem cast_shape_proof_irrel {α : Type} [TorchLean.Storage α]
+    {source target : Shape} (tensor : Tensor α source)
+    {p q : source = target} :
+    castShape tensor p = castShape tensor q := by
+  cases Subsingleton.elim p q
   rfl
 
-/-- Rewrite `Eq.rec` (`h ▸ t`) as `Tensor.cast_shape` for uniformity in larger proofs. -/
-theorem eqRec_eq_cast_shape {α : Type} {s₁ s₂ : Shape}
-    (t : Tensor α s₁) (h : s₁ = s₂) :
-    (h ▸ t) = castShape (t := t) h := by
+/-- The `▸` rewrite and `castShape` are the same function.
+
+Lean inserts `▸` on its own when a shape is rewritten in a tactic block, so without this bridge the
+`castShape` simp set would silently fail to fire on goals the elaborator produced. -/
+theorem eqRec_eq_cast_shape {α : Type} [TorchLean.Storage α]
+    {source target : Shape} (tensor : Tensor α source)
+    (h : source = target) :
+    (h ▸ tensor) = castShape tensor h := by
   cases h
   rfl
 
-/-- Proof-irrelevance for `Eq.rec` casts of tensors. -/
-theorem eqRec_proof_irrel {α : Type} {s₁ s₂ : Shape}
-    (t : Tensor α s₁) {p q : s₁ = s₂} :
-    (p ▸ t) = (q ▸ t) := by
-  have : p = q := Subsingleton.elim _ _
-  cases this
+/-- `cast_shape_proof_irrel` in `▸` form, for goals the elaborator produced. -/
+theorem eqRec_proof_irrel {α : Type} [TorchLean.Storage α]
+    {source target : Shape} (tensor : Tensor α source)
+    {p q : source = target} :
+    (p ▸ tensor) = (q ▸ tensor) := by
+  cases Subsingleton.elim p q
   rfl
 
--- Tell `grind` about the standard cast normalization lemmas.
 attribute [grind =] cast_shape_rfl cast_shape_self cast_shape_trans eqRec_eq_cast_shape
 
-end Tensor
+end TorchLean.Tensor
 
--- Core tensor access operations
+namespace Spec
 
-/-! ### Indexing helpers -/
+/-- Recover the statically known shape from a tensor value. -/
+def shapeOf {α : Type} [TorchLean.Storage α]
+    {shape : Shape} (_ : Tensor α shape) : Shape :=
+  shape
 
-/-!
-Indexing design notes:
+/-! ## Indexing -/
 
-- `get_spec` takes a runtime multi-index (`List Nat`) and returns `Option α`.
-  This permissive, frontend-friendly path is useful for debugging, JSON import/export checks, and
-  any place you want to *try* an index without committing to proofs.
-- For proof-driven code, you usually want `Fin n` indices and the `get`/`get2` helpers.
+/-- Try to read a scalar using a runtime list of coordinates. -/
+def getSpec {α : Type} [TorchLean.Storage α] {shape : Shape}
+    (tensor : Tensor α shape) (indices : List Nat) : Option α :=
+  (Shape.Coord.ofList? shape indices).map tensor
 
-PyTorch analogy:
-- `get_spec t [i,j,k]` is like `t[i,j,k]` but returns `none` instead of throwing.
-- `get t i` is like slicing the first dimension: `t[i]`.
-  (TorchLean also supports Lean’s indexing syntax: `t[i]` elaborates to `Spec.get t i`.)
-- `get2 A i j` is like `A[i,j]`.
-  (And `A[(i, j)]` elaborates to `Spec.get2 A i j` for matrix-shaped scalar tensors.)
--/
+/-- The empty coordinate list reads the item of a rank-zero tensor. -/
+@[simp] theorem get_spec_scalar_nil {α : Type} [TorchLean.Storage α]
+    (tensor : Tensor α (Shape.ofList [])) :
+    getSpec tensor [] = some tensor.item := by
+  simp [getSpec, Shape.Coord.ofList?, Tensor.item]
 
-/-- Get a scalar by a multi‑index (list of Nats). -/
-def getSpec {α : Type} {s : Shape} (t : Tensor α s) : List Nat → Option α :=
-  match t with
-  | .scalar value =>
-      fun
-      | [] => some value
-      | _ :: _ => none
-  | .dim (n := n) values =>
-      fun
-      | i :: is =>
-          if h : i < n then
-            getSpec (values ⟨i, h⟩) is
-          else
-            none
-      | [] => none
+/-- A rank-zero tensor has no axis to index, so any nonempty coordinate list fails. -/
+@[simp] theorem get_spec_scalar_cons {α : Type} [TorchLean.Storage α]
+    (tensor : Tensor α (Shape.ofList [])) (index : Nat) (indices : List Nat) :
+    getSpec tensor (index :: indices) = none := by
+  simp [getSpec, Shape.Coord.ofList?]
 
-@[simp] lemma get_spec_scalar_nil {α : Type} (value : α) :
-    getSpec (Tensor.scalar value) [] = some value := rfl
+/-- A tensor with an axis is not a scalar, so the empty coordinate list fails. -/
+@[simp] theorem get_spec_dim_nil {α : Type} [TorchLean.Storage α]
+    {n : Nat} {shape : Shape} (tensor : Tensor α (.dim n shape)) :
+    getSpec tensor [] = none := by
+  simp [getSpec, Shape.Coord.ofList?]
 
-@[simp] lemma get_spec_scalar_cons {α : Type} (value : α) (i : Nat) (is : List Nat) :
-    getSpec (Tensor.scalar value) (i :: is) = none := rfl
+/-- One step of runtime lookup: check the leading index against the axis, then recurse into the
+slice. This is the equation that turns `getSpec` on a literal coordinate list into a chain of
+`unstack`s, which is how the executable and proof-facing readings are kept in step. -/
+@[simp] theorem get_spec_dim_cons {α : Type} [TorchLean.Storage α]
+    {n : Nat} {shape : Shape} (tensor : Tensor α (.dim n shape))
+    (index : Nat) (indices : List Nat) :
+    getSpec tensor (index :: indices) =
+      if h : index < n then getSpec (Tensor.unstack tensor ⟨index, h⟩) indices else none := by
+  by_cases hIndex : index < n
+  · cases hCoordinate : Shape.Coord.ofList? shape indices with
+    | none =>
+        simp [getSpec, Shape.Coord.ofList?, hIndex, hCoordinate]
+    | some coordinate =>
+        simp [getSpec, Shape.Coord.ofList?, Tensor.unstack, hIndex, hCoordinate]
+  · simp [getSpec, Shape.Coord.ofList?, hIndex]
 
-@[simp] lemma get_spec_dim_nil {α : Type} {n : Nat} {s : Shape}
-    (values : Fin n → Tensor α s) :
-    getSpec (Tensor.dim values) [] = none := by
-  simp [getSpec]
-
-@[simp] lemma get_spec_dim_cons {α : Type} {n : Nat} {s : Shape}
-    (values : Fin n → Tensor α s) (i : Nat) (is : List Nat) :
-    getSpec (Tensor.dim values) (i :: is) =
-      if h : i < n then getSpec (values ⟨i, h⟩) is else none := by
-  simp [getSpec]
-
-/-- Transporting a tensor across an equal shape does not change coordinate lookup. -/
-@[simp] theorem get_spec_castShape {α : Type} {shape shape' : Shape}
-    (tensor : Tensor α shape) (h : shape = shape') (index : List Nat) :
+/-- A shape cast does not move any data, so runtime lookup sees straight through it. -/
+@[simp] theorem get_spec_castShape {α : Type} [TorchLean.Storage α]
+    {source target : Shape} (tensor : Tensor α source)
+    (h : source = target) (index : List Nat) :
     getSpec (Tensor.castShape tensor h) index = getSpec tensor index := by
   cases h
   rfl
 
 attribute [grind =] get_spec_scalar_nil get_spec_scalar_cons get_spec_dim_nil get_spec_dim_cons
 
-namespace Tensor
+end Spec
 
-/-- Select one coordinate along an arbitrary tensor axis. The selected axis is removed. -/
-def selectSpec {α : Type} :
-    (axis : Nat) → {s : Shape} → (tensor : Tensor α s) →
-      [_h : Shape.AxisInBounds axis s] →
-      Fin (Shape.axisSize s axis) → Tensor α (s.eraseAxis axis)
-  | 0, .dim _ _, .dim values, _, i => values i
-  | axis + 1, .dim _ rest, .dim values, h, i =>
-      .dim fun outer =>
-        @selectSpec α axis rest (values outer)
+namespace TorchLean.Tensor
+
+/-- Select one coordinate along an arbitrary axis and remove that axis. -/
+def selectSpec {α : Type} [TorchLean.Storage α] :
+    (axis : Nat) → {shape : Shape} → (tensor : Tensor α shape) →
+      [_h : Shape.AxisInBounds axis shape] →
+      Fin (Shape.axisSize shape axis) → Tensor α (shape.eraseAxis axis)
+  | 0, .dim _ _, tensor, _, index => unstack tensor index
+  | axis + 1, .dim _ rest, tensor, h, index =>
+      dim fun outer =>
+        @selectSpec α _ axis rest (unstack tensor outer)
           ⟨by
             have := h.proof
             simp only [Shape.rank] at this
             grind⟩
-          (Fin.cast (by rfl) i)
+          (Fin.cast (by rfl) index)
 
-/-- Selecting axis zero from a tensor built by `Tensor.dim` returns the chosen entry. -/
-@[simp] theorem selectSpec_zero_dim {α : Type} {n : Nat} {s : Shape}
-    (values : Fin n → Tensor α s) (i : Fin n) :
-    selectSpec 0 (Tensor.dim values) i = values i := by
-  rfl
+/-- Selecting along axis zero is exactly the outer-axis slice. -/
+@[simp] theorem selectSpec_zero_dim {α : Type} [TorchLean.Storage α]
+    {n : Nat} {shape : Shape} (values : Fin n → Tensor α shape)
+    (index : Fin n) :
+    selectSpec 0 (dim values) index = values index := by
+  exact unstack_dim values index
 
-end Tensor
+end TorchLean.Tensor
 
-/-- Select one coordinate from the outermost tensor axis. -/
-def get {α : Type} {n s} (t : Tensor α (.dim n s)) (i : Fin n) : Tensor α s :=
-  Tensor.selectSpec 0 t i
+namespace Spec
 
-/-- Indexing a tensor built from an outer coordinate function returns that coordinate. -/
-@[simp] theorem get_dim {α : Type} {n : Nat} {s : Shape}
-    (values : Fin n → Tensor α s) (i : Fin n) :
-    get (Tensor.dim values) i = values i := by
-  rfl
+/-- Select one entry from the outermost tensor axis. -/
+def get {α : Type} [TorchLean.Storage α] {n : Nat} {shape : Shape}
+    (tensor : Tensor α (.dim n shape)) (index : Fin n) : Tensor α shape :=
+  Tensor.unstack tensor index
 
-/--
-Enable Lean’s indexing syntax for spec tensors.
-
-After this instance, you can write `t[i]` as notation for `Spec.get t i`.
-
-We use the domain condition `True` because the index is already a `Fin n`, so it is always
-in-bounds by construction.
--/
-instance {α : Type} {n : Nat} {s : Shape} :
-    GetElem (Tensor α (.dim n s)) (Fin n) (Tensor α s) (fun _ _ => True) where
-  getElem t i _ := _root_.Spec.get t i
-
-namespace Tensor
-
-/-- Two tensors of the same shape are equal when every coordinate lookup agrees. -/
-@[ext] theorem ext_getSpec {α : Type} {shape : Shape} {x y : Tensor α shape}
-    (h : ∀ index, getSpec x index = getSpec y index) : x = y := by
-  induction shape with
-  | scalar =>
-      cases x with
-      | scalar x =>
-          cases y with
-          | scalar y =>
-              congr
-              simpa using h []
-  | dim n shape ih =>
-      cases x with
-      | dim x =>
-          cases y with
-          | dim y =>
-              congr
-              funext i
-              apply ih
-              intro index
-              simpa [i.isLt] using h (i.val :: index)
-
-/-- Extract a scalar from a vector at a statically valid coordinate. -/
-def getScalar {α : Type} {n : Nat} (x : Tensor α [n]) (i : Fin n) : α :=
-  Tensor.item (_root_.Spec.get x i)
-
-/-- Scalar lookup from an outer tensor constructor exposes the selected scalar entry. -/
-@[simp] theorem getScalar_dim_entry {α : Type} {n : Nat}
-    (values : Fin n → Tensor α .scalar) (i : Fin n) :
-    getScalar (Tensor.dim values) i = (values i).item := by
-  rw [getScalar, _root_.Spec.get_dim]
-
-/-- The coordinate-function view of a vector agrees with scalar indexing. -/
-@[simp] theorem vectorEquiv_apply {α : Type} {n : Nat}
-    (x : Tensor α [n]) (i : Fin n) :
-    Tensor.vectorEquiv n x i = getScalar x i := by
-  cases x
-  rfl
-
-/-- Reading a vector constructed coordinatewise returns the selected scalar. -/
-@[simp] theorem getScalar_dim {α : Type} {n : Nat} (values : Fin n → α) (i : Fin n) :
-    getScalar (Tensor.dim (fun j => Tensor.scalar (values j))) i = values i := by
-  rfl
-
-/-- Two vectors are equal when all corresponding scalar entries are equal. -/
-@[ext] theorem ext_vector {α : Type} {n : Nat} {x y : Tensor α [n]}
-    (h : ∀ i : Fin n, getScalar x i = getScalar y i) : x = y := by
-  cases x with
-  | dim xs =>
-      cases y with
-      | dim ys =>
-          congr
-          funext i
-          apply Tensor.ext_scalar
-          simpa [getScalar, _root_.Spec.get] using h i
-
-end Tensor
-
-/-- Matrix element access: `get2 A i j` returns `A[i, j]` as a scalar. -/
-def get2 {α : Type} {m n : ℕ}
-    (A : Tensor α [m, n]) (i : Fin m) (j : Fin n) : α :=
-  match get A i with
-  | Tensor.dim row => match row j with
-    | Tensor.scalar v => v
-
-/-- Matrix indexing agrees with scalar indexing after selecting the requested row. -/
-theorem get2_eq_getScalar_get {α : Type} {m n : Nat}
-    (A : Tensor α [m, n]) (i : Fin m) (j : Fin n) :
-    get2 A i j = Tensor.getScalar (get A i) j := by
-  cases A with
-  | dim rows =>
-      cases hrow : rows i
-      case dim values =>
-        cases hvalue : values j
-        simp [get2, Tensor.getScalar, get, hrow, hvalue]
-
-/-- Reading a matrix constructed coordinatewise returns the selected scalar. -/
-@[simp] theorem get2_dim {α : Type} {m n : Nat} (values : Fin m → Fin n → α)
-    (i : Fin m) (j : Fin n) :
-    get2 (Tensor.dim (fun row => Tensor.dim (fun column =>
-      Tensor.scalar (values row column)))) i j = values i j := by
-  rfl
+/-- Indexing a stacked tensor returns the entry that was stacked. -/
+@[simp] theorem get_dim {α : Type} [TorchLean.Storage α]
+    {n : Nat} {shape : Shape} (values : Fin n → Tensor α shape)
+    (index : Fin n) :
+    get (Tensor.dim values) index = values index :=
+  Tensor.unstack_dim values index
 
 /--
-Enable Lean’s indexing syntax for matrix-shaped scalar tensors.
+Vector indexing returns a scalar directly.
 
-After this instance, you can write `A[(i, j)]` as notation for `Spec.get2 A i j`.
+This higher-priority instance also makes chained indexing natural:
+`matrix[row][column]` returns an entry, while the first lookup still returns
+the statically shaped row tensor.
 -/
-instance {α : Type} {m n : Nat} :
+instance (priority := high) {α : Type} [TorchLean.Storage α] {n : Nat} :
+    GetElem (TorchLean.Tensor.Internal.Rep α [n]) (Fin n) α
+      (fun _ _ => True) where
+  getElem tensor index _ := tensor (index, PUnit.unit)
+
+instance {α : Type} [TorchLean.Storage α] {n : Nat} {shape : List Nat} :
+    GetElem (TorchLean.Tensor.Internal.Rep α (n :: shape)) (Fin n)
+      (Tensor α (Shape.ofList shape)) (fun _ _ => True) where
+  getElem tensor index _ :=
+    TorchLean.Tensor.Internal.Rep.unstack (s := shape) tensor index
+
+/--
+Natural-number indexing of a vector returns one scalar and asks `GetElem` to
+discharge the static bound.
+-/
+instance (priority := high) {α : Type} [TorchLean.Storage α] {n : Nat} :
+    GetElem (TorchLean.Tensor.Internal.Rep α [n]) Nat α
+      (fun _ index => index < n) where
+  getElem tensor index hIndex :=
+    tensor (⟨index, hIndex⟩, PUnit.unit)
+
+/--
+Natural-number indexing selects one slice along the outermost tensor axis.
+
+Literal indices are checked during elaboration, so ordinary code can write
+`matrix[0]` without constructing a `Fin` value explicitly.
+-/
+instance {α : Type} [TorchLean.Storage α] {n : Nat} {shape : List Nat} :
+    GetElem (TorchLean.Tensor.Internal.Rep α (n :: shape)) Nat
+      (Tensor α (Shape.ofList shape)) (fun _ index => index < n) where
+  getElem tensor index hIndex :=
+    TorchLean.Tensor.Internal.Rep.unstack (s := shape) tensor ⟨index, hIndex⟩
+
+end Spec
+
+namespace TorchLean.Tensor
+
+/-- Runtime-list lookup is extensional. -/
+@[ext] theorem ext_getSpec {α : Type} [TorchLean.Storage α]
+    {shape : Shape} {left right : Tensor α shape}
+    (h : ∀ index, getSpec left index = getSpec right index) :
+    left = right := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simpa [getSpec] using h (Shape.Coord.toList shape coordinate)
+
+/-- Extract one scalar from a vector. -/
+def getScalar {α : Type} [TorchLean.Storage α]
+    {n : Nat} (tensor : Tensor α [n]) (index : Fin n) : α :=
+  item (get tensor index)
+
+/-- Vector scalar lookup is ordinary coordinate evaluation. -/
+theorem getScalar_eq_apply {α : Type} [TorchLean.Storage α]
+    {n : Nat} (tensor : Tensor α [n]) (index : Fin n) :
+    getScalar tensor index = tensor (index, PUnit.unit) := by
+  unfold getScalar Spec.get unstack item
+  exact TorchLean.Tensor.Internal.Rep.unstack_apply tensor index PUnit.unit
+
+/-- Direct storage read used when compiling vector scalar lookup. -/
+@[inline] def Internal.getScalarDirect {α : Type} [TorchLean.Storage α]
+    {n : Nat} (tensor : Tensor α [n]) (index : Fin n) : α :=
+  tensor (index, PUnit.unit)
+
+/-- Compile scalar lookup without allocating the intermediate rank-zero slice. -/
+@[csimp] theorem getScalar_eq_getScalarDirect :
+    @getScalar = @Internal.getScalarDirect := by
+  funext α storage n tensor index
+  exact getScalar_eq_apply tensor index
+
+/-- Reading a vector filled by the packed constant constructor returns that constant. -/
+@[simp] theorem getScalar_const {α : Type} [TorchLean.Storage α]
+    {n : Nat} (value : α) (index : Fin n) :
+    getScalar
+        (TorchLean.Tensor.Internal.Rep.const value : Tensor α [n])
+        index =
+      value := by
+  rw [getScalar_eq_apply]
+  exact TorchLean.Tensor.Internal.Rep.const_apply
+    (s := [n]) value (index, PUnit.unit)
+
+/-- Scalar lookup on a rank-one literal returns the corresponding source entry. -/
+@[simp] theorem getScalar_ofList {α : Type} [TorchLean.Storage α]
+    (values : List α) (index : Fin values.length) :
+    getScalar (TorchLean.Tensor.Internal.Rep.ofList values) index =
+      values.get index := by
+  rw [getScalar_eq_apply]
+  exact TorchLean.Tensor.Internal.Rep.ofList_apply values index
+
+/-- Scalar lookup on a vector of scalar tensors reads the indexed entry. -/
+@[simp] theorem getScalar_dim_entry {α : Type} [TorchLean.Storage α]
+    {n : Nat} (values : Fin n → Tensor α .scalar) (index : Fin n) :
+    getScalar (dim values) index = (values index).item := by
+  simp [getScalar]
+
+/-- The `Tensor α [n] ≃ (Fin n → α)` equivalence is scalar lookup on the nose.
+
+Stating it keeps `vectorEquiv` usable in proofs without unfolding the two equivalences it is built
+from, and it is why a vector can be handed to Mathlib lemmas about functions on `Fin n`. -/
+@[simp] theorem vectorEquiv_apply {α : Type} [TorchLean.Storage α]
+    {n : Nat} (tensor : Tensor α [n]) (index : Fin n) :
+    vectorEquiv n tensor index = getScalar tensor index :=
+  rfl
+
+/-- Building a vector from a function and reading it back returns the function. -/
+@[simp] theorem getScalar_dim {α : Type} [TorchLean.Storage α]
+    {n : Nat} (values : Fin n → α) (index : Fin n) :
+    getScalar (dim (fun i => scalar (values i))) index = values index := by
+  simp [getScalar]
+
+/-- Vectors agreeing at every scalar index are equal. -/
+@[ext] theorem ext_vector {α : Type} [TorchLean.Storage α]
+    {n : Nat} {left right : Tensor α [n]}
+    (h : ∀ index : Fin n, getScalar left index = getScalar right index) :
+    left = right := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  rcases coordinate with ⟨index, ⟨⟩⟩
+  have hIndex := h index
+  unfold getScalar Spec.get unstack item at hIndex
+  convert hIndex using 1
+  · exact (TorchLean.Tensor.Internal.Rep.unstack_apply left index PUnit.unit).symm
+  · exact (TorchLean.Tensor.Internal.Rep.unstack_apply right index PUnit.unit).symm
+
+end TorchLean.Tensor
+
+namespace Spec
+
+/-- Matrix element access. -/
+def get2 {α : Type} [TorchLean.Storage α] {m n : Nat}
+    (tensor : Tensor α [m, n]) (row : Fin m) (column : Fin n) : α :=
+  Tensor.getScalar (get tensor row) column
+
+/-- Matrix access is a row slice followed by a scalar read.
+
+True by `rfl`, but worth a name: it is the rewrite that lets a matrix proof reuse every vector lemma
+about `getScalar` instead of duplicating them at rank two. -/
+theorem get2_eq_getScalar_get {α : Type} [TorchLean.Storage α]
+    {m n : Nat} (tensor : Tensor α [m, n])
+    (row : Fin m) (column : Fin n) :
+    get2 tensor row column = Tensor.getScalar (get tensor row) column :=
+  rfl
+
+/-- Matrix scalar lookup is one read at the corresponding two-axis coordinate. -/
+theorem get2_eq_apply {α : Type} [TorchLean.Storage α]
+    {m n : Nat} (tensor : Tensor α [m, n]) (row : Fin m) (column : Fin n) :
+    get2 tensor row column = tensor (row, column, PUnit.unit) := by
+  rw [get2, Tensor.getScalar_eq_apply]
+  exact TorchLean.Tensor.Internal.Rep.unstack_apply tensor row (column, PUnit.unit)
+
+/-- Direct storage read used when compiling matrix scalar lookup. -/
+@[inline] def Internal.get2Direct {α : Type} [TorchLean.Storage α]
+    {m n : Nat} (tensor : Tensor α [m, n]) (row : Fin m) (column : Fin n) : α :=
+  tensor (row, column, PUnit.unit)
+
+/-- Compile matrix lookup without allocating an intermediate row or scalar tensor. -/
+@[csimp] theorem get2_eq_get2Direct : @get2 = @Internal.get2Direct := by
+  funext α storage m n tensor row column
+  exact get2_eq_apply tensor row column
+
+/-- Reading back a matrix built from a two-argument function returns the function. -/
+@[simp] theorem get2_dim {α : Type} [TorchLean.Storage α]
+    {m n : Nat} (values : Fin m → Fin n → α)
+    (row : Fin m) (column : Fin n) :
+    get2 (Tensor.dim fun i => Tensor.dim fun j => Tensor.scalar (values i j))
+      row column = values row column := by
+  simp [get2]
+
+instance {α : Type} [TorchLean.Storage α] {m n : Nat} :
     GetElem (Tensor α [m, n]) (Fin m × Fin n) α (fun _ _ => True) where
-  getElem A ij _ := get2 A ij.1 ij.2
+  getElem tensor index _ := get2 tensor index.1 index.2
 
--- Helper to safely get a scalar from a multi-dimensional tensor
-/-!
-`get_at_or_zero` is a total variant of `get_spec` used in places where a default value is more
-convenient than `Option`.
+/-! ## Total indexing and shape operations -/
 
-We keep both `get_spec` and `get_at_or_zero` because they serve different roles:
-- `get_spec` is better when you want to distinguish "out of bounds" explicitly.
-- `get_at_or_zero` is better for formulas that naturally treat out-of-bounds as padding.
--/
-/-- Total tensor indexing: returns `0` when the index list is out of bounds. -/
-def getAtOrZero {α : Type} [Zero α] {s : Shape} (t : Tensor α s) : List Nat → α :=
-  match t with
-  | .scalar v =>
-      fun
-      | [] => v
-      | _ :: _ => 0
-  | .dim (n := n) f =>
-      fun
-      | i :: is =>
-          if h : i < n then
-            getAtOrZero (f ⟨i, h⟩) is
-          else
-            0
-      | [] => 0
+/-- Return zero when a runtime coordinate list is invalid. -/
+def getAtOrZero {α : Type} [TorchLean.Storage α] [Zero α]
+    {shape : Shape} (tensor : Tensor α shape) (indices : List Nat) : α :=
+  (getSpec tensor indices).getD 0
 
-@[simp] lemma get_at_or_zero_scalar_nil {α : Type} [Zero α] (v : α) :
-    getAtOrZero (Tensor.scalar v) [] = v := rfl
-
-@[simp] lemma get_at_or_zero_scalar_cons {α : Type} [Zero α] (v : α) (i : Nat) (is : List Nat) :
-    getAtOrZero (Tensor.scalar v) (i :: is) = 0 := rfl
-
-@[simp] lemma get_at_or_zero_dim_nil {α : Type} [Zero α] {n : Nat} {s : Shape}
-    (values : Fin n → Tensor α s) :
-    getAtOrZero (Tensor.dim values) [] = 0 := by
+/-- On a rank-zero tensor the empty coordinate list reads the item, no fallback needed. -/
+@[simp] theorem get_at_or_zero_scalar_nil {α : Type}
+    [TorchLean.Storage α] [Zero α] (tensor : Tensor α (Shape.ofList [])) :
+    getAtOrZero tensor [] = tensor.item := by
   simp [getAtOrZero]
 
-@[simp] lemma get_at_or_zero_dim_cons {α : Type} [Zero α] {n : Nat} {s : Shape}
-    (values : Fin n → Tensor α s) (i : Nat) (is : List Nat) :
-    getAtOrZero (Tensor.dim values) (i :: is) =
-      if h : i < n then getAtOrZero (values ⟨i, h⟩) is else 0 := by
+/-- An over-long coordinate list on a rank-zero tensor falls back to zero. -/
+@[simp] theorem get_at_or_zero_scalar_cons {α : Type}
+    [TorchLean.Storage α] [Zero α] (tensor : Tensor α (Shape.ofList []))
+    (index : Nat) (indices : List Nat) :
+    getAtOrZero tensor (index :: indices) = 0 := by
   simp [getAtOrZero]
 
-attribute [grind =] get_at_or_zero_scalar_nil get_at_or_zero_scalar_cons get_at_or_zero_dim_nil
-  get_at_or_zero_dim_cons
+/-- A too-short coordinate list falls back to zero. -/
+@[simp] theorem get_at_or_zero_dim_nil {α : Type}
+    [TorchLean.Storage α] [Zero α] {n : Nat} {shape : Shape}
+    (tensor : Tensor α (.dim n shape)) :
+    getAtOrZero tensor [] = 0 := by
+  simp [getAtOrZero]
 
-/-- Cast a tensor along an equality of shapes. -/
-def tensorCast {α : Type} {s : Shape} (t : Shape) (h : s = t) : Tensor α s → Tensor α t :=
-  fun x => Eq.mp (congrArg (Tensor α) h) x
+/-- One step of total lookup, with the out-of-range branch returning zero rather than failing.
 
-/-- `tensor_cast` is definitionally `Tensor.cast_shape` (a uniform cast normal form). -/
-@[simp] theorem tensor_cast_eq_cast_shape {α : Type} {s t : Shape} (h : s = t) (x : Tensor α s) :
-    tensorCast (α := α) (s := s) t h x = Tensor.castShape (t := x) h := by
+The zero is what makes this function total, and it is also the reason the `Zero α` hypothesis is
+there: no shape argument can rule out a bad runtime coordinate list. -/
+@[simp] theorem get_at_or_zero_dim_cons {α : Type}
+    [TorchLean.Storage α] [Zero α] {n : Nat} {shape : Shape}
+    (tensor : Tensor α (.dim n shape)) (index : Nat) (indices : List Nat) :
+    getAtOrZero tensor (index :: indices) =
+      if h : index < n then
+        getAtOrZero (Tensor.unstack tensor ⟨index, h⟩) indices
+      else
+        0 := by
+  by_cases hIndex : index < n
+  · simp [getAtOrZero, hIndex]
+  · simp [getAtOrZero, hIndex]
+
+attribute [grind =] get_at_or_zero_scalar_nil get_at_or_zero_scalar_cons
+  get_at_or_zero_dim_nil get_at_or_zero_dim_cons
+
+/-- Cast a tensor along a shape equality. -/
+def tensorCast {α : Type} [TorchLean.Storage α]
+    {source : Shape} (target : Shape) (h : source = target) :
+    Tensor α source → Tensor α target :=
+  fun tensor => Tensor.castShape tensor h
+
+/-- `tensorCast` is `castShape` with the target shape written first. -/
+@[simp] theorem tensor_cast_eq_cast_shape {α : Type}
+    [TorchLean.Storage α] {source target : Shape}
+    (h : source = target) (tensor : Tensor α source) :
+    tensorCast target h tensor = Tensor.castShape tensor h :=
   rfl
 
 attribute [grind =] tensor_cast_eq_cast_shape
 
 /-- Replicate a scalar tensor to any shape. -/
-def replicate {α : Type} : ∀ {s : Shape}, Tensor α .scalar → Tensor α s
-  | .scalar, t => t
-  | .dim n _, t =>
-    Tensor.dim (fun _ : Fin n => replicate t)
+def replicate {α : Type} [TorchLean.Storage α] :
+    {shape : Shape} → Tensor α .scalar → Tensor α shape
+  | _shape, tensor => TorchLean.Tensor.Internal.Rep.const tensor.item
 
-namespace Tensor
+/-- Every coordinate of a replicated tensor holds the source item. -/
+@[simp] theorem replicate_apply {α : Type} [TorchLean.Storage α]
+    {shape : Shape} (tensor : Tensor α .scalar) (coordinate : shape.Coord) :
+    replicate (shape := shape) tensor coordinate = tensor.item := by
+  exact TorchLean.Tensor.Internal.Rep.const_apply tensor.item coordinate
 
-/-- Keep a contiguous range of coordinates along an arbitrary tensor axis.
+/-- Replicating to rank zero returns the original scalar tensor. -/
+@[simp] theorem replicate_scalar_shape {α : Type} [TorchLean.Storage α]
+    (tensor : Tensor α .scalar) :
+    replicate (shape := .scalar) tensor = tensor := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  cases coordinate
+  rw [replicate_apply]
+  rfl
 
-The selected axis is replaced by `count`; every other axis is preserved. The range proof makes
-the operation total and rules out clipping. -/
-def sliceAxisRangeSpec {α : Type} :
-    (axis : Nat) → {s : Shape} → (tensor : Tensor α s) →
-      [_h : Shape.AxisInBounds axis s] →
-      (start count : Nat) → (start + count ≤ Shape.axisSize s axis) →
-      Tensor α (s.replaceAxis axis count)
-  | 0, .dim _ rest, .dim values, _, start, count, hRange =>
-      .dim fun i =>
-        values ⟨start + i.val,
-          Nat.lt_of_lt_of_le (Nat.add_lt_add_left i.isLt start) hRange⟩
-  | axis + 1, .dim _ rest, .dim values, hAxis, start, count, hRange =>
+/-- Every slice of a replicated tensor is the replication of the same item. -/
+@[simp] theorem unstack_replicate {α : Type} [TorchLean.Storage α]
+    {n : Nat} {shape : Shape} (tensor : Tensor α .scalar)
+    (index : Fin n) :
+    Tensor.unstack (replicate (shape := .dim n shape) tensor) index =
+      replicate (shape := shape) tensor := by
+  exact TorchLean.Tensor.Internal.Rep.unstack_const tensor.item index
+
+/-- Scalar lookup into a replicated vector returns the source item. -/
+@[simp] theorem getScalar_replicate {α : Type} [TorchLean.Storage α]
+    {n : Nat} (tensor : Tensor α .scalar) (index : Fin n) :
+    Tensor.getScalar (replicate (shape := [n]) tensor) index = tensor.item := by
+  rw [Tensor.getScalar_eq_apply]
+  exact replicate_apply (shape := [n]) tensor (index, PUnit.unit)
+
+end Spec
+
+namespace TorchLean.Tensor
+
+/-- Map an output coordinate of an axis slice back to its source coordinate. -/
+def sliceAxisRangeCoordinate :
+    (axis : Nat) → {shape : Shape} →
+      [_h : Shape.AxisInBounds axis shape] →
+      (start count : Nat) → (start + count ≤ Shape.axisSize shape axis) →
+      (shape.replaceAxis axis count).Coord → shape.Coord
+  | 0, .dim length _, _, start, count, hRange, coordinate =>
+      have hRange' : start + count ≤ length := by
+        simpa only [Shape.axisSize_zero] using hRange
+      (⟨start + coordinate.1.val,
+          Nat.lt_of_lt_of_le
+            (Nat.add_lt_add_left coordinate.1.isLt start) hRange'⟩,
+        coordinate.2)
+  | axis + 1, .dim _ rest, hAxis, start, count, hRange, coordinate =>
       let innerAxis : Shape.AxisInBounds axis rest :=
         ⟨by
           have := hAxis.proof
@@ -535,210 +691,252 @@ def sliceAxisRangeSpec {α : Type} :
       letI := innerAxis
       have hRange' : start + count ≤ Shape.axisSize rest axis := by
         simpa only [Shape.axisSize_succ] using hRange
-      .dim fun outer =>
-        @sliceAxisRangeSpec α axis rest (values outer) innerAxis start count hRange'
-
-end Tensor
+      (coordinate.1,
+        @sliceAxisRangeCoordinate axis rest innerAxis
+          start count hRange' coordinate.2)
 
 /--
-Slice a contiguous range along the first axis.
+Keep a contiguous coordinate range along an arbitrary axis.
 
-This is the spec-level analogue of `t[start : start+len]` in array/tensor libraries.
+The coordinate recursion above runs once per output element. The tensor itself is materialized in
+one packed pass, rather than recursively constructing and then restacking every outer slice.
 -/
-def sliceRangeSpec {α : Type} {n : Nat} {s : Shape}
-  (t : Tensor α (.dim n s)) (start : Nat) (len : Nat) (h : start + len ≤ n) :
-  Tensor α (.dim len s) :=
-  Tensor.sliceAxisRangeSpec 0 t start len (by simpa using h)
+def sliceAxisRangeSpec {α : Type} [TorchLean.Storage α]
+    (axis : Nat) {shape : Shape} (tensor : Tensor α shape)
+    [_h : Shape.AxisInBounds axis shape]
+    (start count : Nat) (hRange : start + count ≤ Shape.axisSize shape axis) :
+    Tensor α (shape.replaceAxis axis count) :=
+  TorchLean.Tensor.Internal.Rep.pull
+    (sliceAxisRangeCoordinate axis start count hRange) tensor
 
-/-- Construct the first valid index of `Fin n` from an explicit nonempty proof. -/
+/-- An axis slice reads the source coordinate selected by its checked range map. -/
+@[simp] theorem sliceAxisRangeSpec_apply {α : Type} [TorchLean.Storage α]
+    (axis : Nat) {shape : Shape} (tensor : Tensor α shape)
+    [_h : Shape.AxisInBounds axis shape]
+    (start count : Nat) (hRange : start + count ≤ Shape.axisSize shape axis)
+    (coordinate : (shape.replaceAxis axis count).Coord) :
+    sliceAxisRangeSpec axis tensor start count hRange coordinate =
+      tensor (sliceAxisRangeCoordinate axis start count hRange coordinate) := by
+  exact TorchLean.Tensor.Internal.Rep.pull_apply
+    (sliceAxisRangeCoordinate axis start count hRange) tensor coordinate
+
+end TorchLean.Tensor
+
+namespace Spec
+
+/-- Slice a contiguous range along the first axis. -/
+def sliceRangeSpec {α : Type} [TorchLean.Storage α]
+    {n : Nat} {shape : Shape} (tensor : Tensor α (.dim n shape))
+    (start length : Nat) (h : start + length ≤ n) :
+    Tensor α (.dim length shape) :=
+  Tensor.sliceAxisRangeSpec 0 tensor start length (by simpa using h)
+
+/-- The first index of a nonempty axis. -/
 def finZero {n : Nat} (h : 0 < n) : Fin n :=
   ⟨0, h⟩
 
-/-- Get the first outer-axis entry, returning `none` for an empty axis. -/
-def getHead {α : Type} {n : Nat} {s : Shape}
-    (t : Tensor α (.dim n s)) : Option (Tensor α s) :=
-  if h : 0 < n then some (get t (finZero h)) else none
+/-- First slice along the outer axis, or `none` when that axis is empty.
 
-/-- Drop the first outer-axis entry, returning `none` for an empty axis. -/
-def getTail {α : Type} {n : Nat} {s : Shape}
-    (t : Tensor α (.dim n s)) : Option (Tensor α (.dim (n - 1) s)) :=
+The `Option` is what an empty axis costs: `n` is a variable here, so no shape argument can promise
+there is a first slice, and returning `none` keeps the function total. -/
+def getHead {α : Type} [TorchLean.Storage α]
+    {n : Nat} {shape : Shape} (tensor : Tensor α (.dim n shape)) :
+    Option (Tensor α shape) :=
+  if h : 0 < n then some (get tensor (finZero h)) else none
+
+/-- Everything after the first slice, or `none` when the outer axis is empty. -/
+def getTail {α : Type} [TorchLean.Storage α]
+    {n : Nat} {shape : Shape} (tensor : Tensor α (.dim n shape)) :
+    Option (Tensor α (.dim (n - 1) shape)) :=
   if h : 0 < n then
-    some (Tensor.sliceAxisRangeSpec 0 t 1 (n - 1) (by
+    some (Tensor.sliceAxisRangeSpec 0 tensor 1 (n - 1) (by
       simp only [Shape.axisSize_zero]
       grind))
   else
     none
 
-/-! ## Scalar maps and pointwise predicates -/
+/-! ## Pointwise operations and predicates -/
 
-namespace Tensor
+end Spec
 
-/-- Map a scalar function across a tensor, preserving its shape. -/
-def map {α β : Type} : ∀ {s : Shape}, (α → β) → Tensor α s → Tensor β s
-  | .scalar, f, Tensor.scalar x => Tensor.scalar (f x)
-  | .dim _ _, f, Tensor.dim values => Tensor.dim fun i => map f (values i)
+namespace TorchLean.Tensor
 
-/-- Mapping a function over a scalar tensor applies it to the stored value. -/
-@[simp] theorem map_scalar {α β : Type} (f : α → β) (x : α) :
-    map f (Tensor.scalar x) = Tensor.scalar (f x) :=
-  rfl
+/-- Apply a scalar function pointwise while preserving the shape. -/
+def map {α β : Type} [TorchLean.Storage α]
+    [TorchLean.Storage β] {shape : Shape}
+    (f : α → β) (tensor : Tensor α shape) : Tensor β shape :=
+  TorchLean.Tensor.Internal.Rep.map f tensor
 
-/-- Mapping a function over a tensor dimension acts pointwise on its entries. -/
-@[simp] theorem map_dim {α β : Type} {n : Nat} {s : Shape} (f : α → β)
-    (values : Fin n → Tensor α s) :
-    map f (Tensor.dim values) = Tensor.dim (fun i => map f (values i)) :=
-  rfl
+/-- Mapping over a scalar tensor applies the function to its value. -/
+@[simp] theorem map_scalar {α β : Type}
+    [TorchLean.Storage α] [TorchLean.Storage β]
+    (f : α → β) (value : α) :
+    map f (scalar value) = scalar (f value) := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simp only [map, scalar, TorchLean.Tensor.Internal.Rep.map_apply,
+    TorchLean.Tensor.Internal.Rep.get_ofFn]
 
-/-- Scalar lookup commutes with mapping over a vector. -/
-@[simp] theorem getScalar_map {α β : Type} {n : Nat} (f : α → β)
-    (x : Tensor α [n]) (i : Fin n) :
-    (map f x).getScalar i = f (x.getScalar i) := by
-  cases x with
-  | dim values =>
-      change Tensor.item (map f (values i)) = f (Tensor.item (values i))
-      cases values i
-      rfl
+/-- Mapping commutes with stacking, so a map pushes into every slice. -/
+@[simp] theorem map_dim {α β : Type}
+    [TorchLean.Storage α] [TorchLean.Storage β]
+    {n : Nat} {shape : Shape} (f : α → β)
+    (values : Fin n → Tensor α shape) :
+    map f (dim values) = dim (fun index => map f (values index)) := by
+  exact TorchLean.Tensor.Internal.Rep.map_stack f values
 
-/-- `Forall p x` means that every scalar entry of `x` satisfies `p`. -/
-def Forall {α : Type} (p : α → Prop) : {s : Shape} → Tensor α s → Prop
-  | .scalar, Tensor.scalar x => p x
-  | .dim n s, Tensor.dim values => ∀ i : Fin n, Forall p (s := s) (values i)
+/-- The item of a mapped scalar tensor is the function applied to the item. -/
+@[simp] theorem item_map {α β : Type}
+    [TorchLean.Storage α] [TorchLean.Storage β]
+    (f : α → β) (tensor : Tensor α .scalar) :
+    (map f tensor).item = f tensor.item := by
+  simp [item, map, TorchLean.Tensor.Internal.Rep.map_apply]
 
-/-- `Forall₂ r x y` means that corresponding entries of `x` and `y` satisfy `r`. -/
-def Forall₂ {α β : Type} (r : α → β → Prop) :
-    {s : Shape} → Tensor α s → Tensor β s → Prop
-  | .scalar, Tensor.scalar x, Tensor.scalar y => r x y
-  | .dim n s, Tensor.dim xs, Tensor.dim ys =>
-      ∀ i : Fin n, Forall₂ r (s := s) (xs i) (ys i)
+/-- Slicing after a map is mapping after a slice. -/
+@[simp] theorem unstack_map {α β : Type}
+    [TorchLean.Storage α] [TorchLean.Storage β]
+    {n : Nat} {shape : Shape} (f : α → β)
+    (tensor : Tensor α (.dim n shape)) (index : Fin n) :
+    unstack (map f tensor) index = map f (unstack tensor index) := by
+  exact (TorchLean.Tensor.Internal.Rep.map_unstack f tensor index).symm
 
-@[simp] theorem forall_scalar {α : Type} {p : α → Prop} {x : α} :
-    Forall p (Tensor.scalar x) ↔ p x := Iff.rfl
+/-- Scalar lookup after a map is the function applied to the lookup. -/
+@[simp] theorem getScalar_map {α β : Type}
+    [TorchLean.Storage α] [TorchLean.Storage β]
+    {n : Nat} (f : α → β) (tensor : Tensor α [n]) (index : Fin n) :
+    getScalar (map f tensor) index = f (getScalar tensor index) := by
+  rw [← dim_unstack tensor, map_dim]
+  simp only [getScalar_dim_entry]
+  rw [← scalar_item (unstack tensor index), map_scalar]
+  rw [item_scalar]
+  exact congrArg f (item_scalar (unstack tensor index).item).symm
 
-@[simp] theorem forall_dim {α : Type} {p : α → Prop} {n : Nat} {s : Shape}
-    {values : Fin n → Tensor α s} :
-    Forall p (Tensor.dim values) ↔ ∀ i, Forall p (values i) := Iff.rfl
+/-- Every scalar entry satisfies `predicate`. -/
+def Forall {α : Type} [TorchLean.Storage α] (predicate : α → Prop) :
+    {shape : Shape} → Tensor α shape → Prop
+  | .scalar, tensor => predicate tensor.item
+  | .dim n shape, tensor =>
+      ∀ index : Fin n, Forall predicate (shape := shape) (unstack tensor index)
 
-@[simp] theorem forall₂_scalar {α β : Type} {r : α → β → Prop} {x : α} {y : β} :
-    Forall₂ r (Tensor.scalar x) (Tensor.scalar y) ↔ r x y := Iff.rfl
+/-- Corresponding scalar entries satisfy `relation`. -/
+def Forall₂ {α β : Type}
+    [TorchLean.Storage α] [TorchLean.Storage β]
+    (relation : α → β → Prop) :
+    {shape : Shape} → Tensor α shape → Tensor β shape → Prop
+  | .scalar, left, right => relation left.item right.item
+  | .dim n shape, left, right =>
+      ∀ index : Fin n,
+        Forall₂ relation (shape := shape) (unstack left index) (unstack right index)
 
-@[simp] theorem forall₂_dim {α β : Type} {r : α → β → Prop} {n : Nat} {s : Shape}
-    {xs : Fin n → Tensor α s} {ys : Fin n → Tensor β s} :
-    Forall₂ r (Tensor.dim xs) (Tensor.dim ys) ↔ ∀ i, Forall₂ r (xs i) (ys i) := Iff.rfl
+/-- `Forall` on a scalar tensor is the predicate on its value. -/
+@[simp] theorem forall_scalar {α : Type} [TorchLean.Storage α]
+    {predicate : α → Prop} {value : α} :
+    Forall predicate (scalar value) ↔ predicate value := by
+  simp [Forall]
 
-/-- The predicate that is always true holds at every tensor coordinate. -/
-theorem forall_true {α : Type} {s : Shape} (x : Tensor α s) :
-    Forall (fun _ => True) x := by
-  induction s with
+/-- `Forall` on a stacked tensor is `Forall` on every slice. -/
+@[simp] theorem forall_dim {α : Type} [TorchLean.Storage α]
+    {predicate : α → Prop} {n : Nat} {shape : Shape}
+    {values : Fin n → Tensor α shape} :
+    Forall predicate (dim values) ↔
+      ∀ index, Forall predicate (values index) := by
+  simp [Forall]
+
+/-- `Forall₂` on scalar tensors is the relation on the two values. -/
+@[simp] theorem forall₂_scalar {α β : Type}
+    [TorchLean.Storage α] [TorchLean.Storage β]
+    {relation : α → β → Prop} {left : α} {right : β} :
+    Forall₂ relation (scalar left) (scalar right) ↔ relation left right := by
+  simp [Forall₂]
+
+/-- `Forall₂` on stacked tensors is `Forall₂` slicewise. -/
+@[simp] theorem forall₂_dim {α β : Type}
+    [TorchLean.Storage α] [TorchLean.Storage β]
+    {relation : α → β → Prop} {n : Nat} {shape : Shape}
+    {left : Fin n → Tensor α shape} {right : Fin n → Tensor β shape} :
+    Forall₂ relation (dim left) (dim right) ↔
+      ∀ index, Forall₂ relation (left index) (right index) := by
+  simp [Forall₂]
+
+/-- The trivial predicate holds of every tensor, at every shape. -/
+theorem forall_true {α : Type} [TorchLean.Storage α]
+    {shape : Shape} (tensor : Tensor α shape) :
+    Forall (fun _ => True) tensor := by
+  induction shape with
+  | scalar => trivial
+  | dim _ _ inductionHypothesis =>
+      intro index
+      exact inductionHypothesis (unstack tensor index)
+
+/-- `Forall` transports along `map` when the function respects the two predicates.
+
+This is the workhorse for the numeric layers: a bound proved entrywise for the input survives an
+elementwise activation as long as the activation maps the input bound into the output one. -/
+theorem forall_map {α β : Type}
+    [TorchLean.Storage α] [TorchLean.Storage β]
+    {predicate : α → Prop} {resultPredicate : β → Prop}
+    {f : α → β} {shape : Shape} {tensor : Tensor α shape}
+    (hTensor : Forall predicate tensor)
+    (hMap : ∀ value, predicate value → resultPredicate (f value)) :
+    Forall resultPredicate (map f tensor) := by
+  induction shape with
   | scalar =>
-      cases x
-      trivial
-  | dim _ _ ih =>
-      cases x with
-      | dim values =>
-          intro i
-          exact ih (values i)
+      change predicate tensor.item at hTensor
+      rw [← scalar_item tensor, map_scalar]
+      simpa only [forall_scalar] using hMap tensor.item hTensor
+  | dim _ _ inductionHypothesis =>
+      have hTensor' :
+          ∀ index, Forall predicate (unstack tensor index) :=
+        hTensor
+      rw [← dim_unstack tensor, map_dim]
+      apply forall_dim.mpr
+      intro index
+      exact inductionHypothesis (hTensor' index)
 
-/-- Transport a pointwise property through a scalar map. -/
-theorem forall_map {α β : Type} {p : α → Prop} {q : β → Prop}
-    {f : α → β} {s : Shape} {x : Tensor α s}
-    (hx : Forall p x) (hf : ∀ a, p a → q (f a)) :
-    Forall q (map f x) := by
-  induction s with
+/-- A predicate true of one value is true entrywise of the tensor replicating it. -/
+theorem forall_replicate {α : Type} [TorchLean.Storage α]
+    {predicate : α → Prop} {shape : Shape} {value : α}
+    (hValue : predicate value) :
+    Forall predicate (Spec.replicate (shape := shape) (scalar value)) := by
+  change Forall predicate
+    (TorchLean.Tensor.Internal.Rep.const (scalar value).item)
+  rw [item_scalar]
+  induction shape with
   | scalar =>
-      cases x with
-      | scalar a => exact hf a (by simpa using hx)
-  | dim _ _ ih =>
-      cases x with
-      | dim values =>
-          intro i
-          exact ih (hx i)
+      change predicate
+        ((TorchLean.Tensor.Internal.Rep.const value : Tensor α .scalar)
+          PUnit.unit)
+      simpa using hValue
+  | dim n shape inductionHypothesis =>
+      intro index
+      have hSlice :
+          unstack
+              (TorchLean.Tensor.Internal.Rep.const value :
+                Tensor α (.dim n shape))
+              index =
+            (TorchLean.Tensor.Internal.Rep.const value : Tensor α shape) := by
+        apply TorchLean.Tensor.Internal.Rep.ext
+        intro coordinate
+        simp [unstack]
+      rw [hSlice]
+      exact inductionHypothesis
 
-/-- Replicating a scalar satisfying `p` produces a tensor satisfying `p` everywhere. -/
-theorem forall_replicate {α : Type} {p : α → Prop} {s : Shape} {x : α}
-    (hx : p x) : Forall p (Spec.replicate (s := s) (Tensor.scalar x)) := by
-  induction s with
-  | scalar => exact hx
-  | dim _ _ ih =>
-      intro _
-      exact ih
+/-- Multiply all vector entries in row-major order. -/
+def prod {α : Type} [TorchLean.Storage α] [Mul α] [One α]
+    {n : Nat} (tensor : Tensor α [n]) : α :=
+  tensor.foldl (· * ·) 1
 
-end Tensor
+end TorchLean.Tensor
 
-/-! ## Conversion to host values -/
-
-namespace Tensor
-
-/-- Flatten a tensor to a row-major list. -/
-def toList {α : Type} : ∀ {s : Shape}, Tensor α s → List α
-  | .scalar, Tensor.scalar x => [x]
-  | .dim n _, Tensor.dim values =>
-      (List.finRange n).flatMap fun i => toList (values i)
-
-/-- Flattening preserves the number of scalar entries recorded by the shape. -/
-@[simp] theorem toList_length {α : Type} {s : Shape} (x : Tensor α s) :
-    x.toList.length = s.size := by
-  induction s with
-  | scalar =>
-      cases x
-      rfl
-  | dim n rest ih =>
-      cases x with
-      | dim values =>
-          simp [toList, Shape.size, ih]
-
-/-- Flatten a tensor directly to a row-major array at a dynamic storage boundary. -/
-def toArray {α : Type} : ∀ {s : Shape}, Tensor α s → Array α
-  | .scalar, Tensor.scalar x => #[x]
-  | .dim n _, Tensor.dim values =>
-      (Array.finRange n).foldl (fun result i => result ++ toArray (values i)) #[]
-
-/-- The array and list views traverse tensor entries in the same row-major order. -/
-@[simp] theorem toArray_toList {α : Type} : ∀ {s : Shape} (x : Tensor α s),
-    x.toArray.toList = x.toList := by
-  intro s x
-  induction s with
-  | scalar => cases x; rfl
-  | dim n rest ih =>
-      cases x with
-      | dim values =>
-        simp only [toArray, toList]
-        rw [← Array.foldl_toList]
-        rw [Array.foldl_toList_eq_flatMap (G := fun i => (values i).toList)]
-        · simp [Array.finRange, List.finRange]
-        · intro acc i
-          simp [ih]
-
-/-- Multiply the entries of a vector. -/
-def prod {α : Type} [Mul α] [One α] {n : Nat} (x : Tensor α [n]) : α :=
-  x.toArray.foldl (· * ·) 1
-
-/-- The tensor product reduction agrees with the row-major array view. -/
-@[simp] theorem prod_eq_toArray_foldl {α : Type} [Mul α] [One α] {n : Nat}
-    (x : Tensor α [n]) :
-    x.prod = x.toArray.foldl (· * ·) 1 := by
-  rfl
-
-/-- Tensor multiplication agrees with multiplication over the structural shape view. -/
-theorem prod_eq_toList_prod {α : Type} [Monoid α] {n : Nat}
-    (x : Tensor α [n]) :
-    x.prod = x.toList.prod := by
-  have foldl_mul (values : List α) (acc : α) :
-      values.foldl (· * ·) acc = acc * values.prod := by
-    induction values generalizing acc with
-    | nil => simp
-    | cons value values ih => simp [ih, mul_assoc]
-  rw [prod_eq_toArray_foldl, ← Array.foldl_toList, toArray_toList, foldl_mul, one_mul]
-
-/-- Render a tensor through its row-major scalar array. -/
-instance {α : Type} {s : Shape} [Repr α] : Repr (Tensor α s) where
-  reprPrec x _ := repr x.toArray
-
-end Tensor
+namespace Spec
 
 /-- Render a tensor recursively using the scalar `ToString` instance. -/
-def pretty {α : Type} [ToString α] : ∀ {s : Shape}, Tensor α s → String
-  | .scalar, Tensor.scalar x => toString x
-  | .dim n _, Tensor.dim values =>
-      "[" ++ String.intercalate ", " ((List.finRange n).map fun i => pretty (values i)) ++ "]"
+def pretty {α : Type} [TorchLean.Storage α] [ToString α] :
+    {shape : Shape} → Tensor α shape → String
+  | .scalar, tensor => toString tensor.item
+  | .dim n shape, tensor =>
+      "[" ++ String.intercalate ", "
+        (List.ofFn fun index : Fin n =>
+          pretty (shape := shape) (Tensor.unstack tensor index)) ++ "]"
 
 end Spec

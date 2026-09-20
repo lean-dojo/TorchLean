@@ -6,10 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.TorchLean.Functional
-public import NN.Runtime.Autograd.TorchLean.Loss
-public import NN.Runtime.Autograd.TorchLean.Module
-public import NN.Runtime.Autograd.TorchLean.NN
+public import NN.Runtime.Autograd.Model.Layers.Seq
 
 /-!
 # Autograd Policy-Gradient Objectives
@@ -54,10 +51,10 @@ namespace RL
 namespace PolicyGradient
 namespace Autograd
 
-open Spec
-open _root_.Runtime.Autograd.TorchLean
+open Spec TorchLean
+open Runtime.Autograd.Model
 
-variable {α : Type} [Context α] [DecidableEq Shape]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-! ## Log-probabilities and entropy (batched, one-hot actions) -/
 
@@ -71,14 +68,16 @@ Input shapes:
 Output shape:
 - `logProb : (N)` where `logProb[i] = log π(a_i | s_i)`.
 
-Implementation note: this uses `log_softmax` and a reduce-sum over the action axis.
+Implementation note: this uses `logSoftmax` and a reduce-sum over the action axis.
 -/
 def actionLogProbOneHotBatch
-    {m : Type → Type} [Monad m] [_root_.Runtime.Autograd.Torch.Ops (m := m) (α := α)]
+    {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     {batch nActions : Nat} [NeZero batch] [NeZero nActions]
-    (logits : _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
-    (actionOneHot : _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar))) :
-    m (_root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch .scalar)) := do
+    (logits :
+      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
+    (actionOneHot :
+      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar))) :
+    m (Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch .scalar)) := do
   let s : Shape := .dim batch (.dim nActions .scalar)
   let _ : Shape.WellFormed s := by infer_instance
   let _ : Shape.HasNonemptyAxis 1 s :=
@@ -97,10 +96,11 @@ Output shape:
 - scalar entropy mean: `mean_i[ -Σ_a p_i(a) log p_i(a) ]`.
 -/
 def entropyMean
-    {m : Type → Type} [Monad m] [_root_.Runtime.Autograd.Torch.Ops (m := m) (α := α)]
+    {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     {batch nActions : Nat} [NeZero batch] [NeZero nActions]
-    (logits : _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar))) :
-    m (_root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) Shape.scalar) := do
+    (logits :
+      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar))) :
+    m (Runtime.Autograd.Model.RefTy (m := m) (α := α) Shape.scalar) := do
   let s : Shape := .dim batch (.dim nActions .scalar)
   let _ : Shape.WellFormed s := by infer_instance
   let _ : Shape.HasNonemptyAxis 1 s :=
@@ -110,7 +110,7 @@ def entropyMean
   let plogp ← mul (m := m) (α := α) (s := s) probs logp
   let sumActions ← reduceSum (m := m) (α := α) (s := s) (axis := 1) plogp
   let entropyVec ← scale (m := m) (α := α) (s := .dim batch .scalar) sumActions (-1)
-  _root_.Runtime.Autograd.TorchLean.F.mean (m := m) (α := α) (s := .dim batch .scalar) entropyVec
+  Runtime.Autograd.Model.F.mean (m := m) (α := α) (s := .dim batch .scalar) entropyVec
 
 /-! ## PPO (batched) -/
 
@@ -122,21 +122,24 @@ PPO clipped surrogate objective (the thing to maximize), computed per sample:
 where `r_i = exp(logπ_new(a_i|s_i) - logπ_old(a_i|s_i))`.
 -/
 def ppoClippedObjectiveBatch
-    {m : Type → Type} [Monad m] [_root_.Runtime.Autograd.Torch.Ops (m := m) (α := α)]
+    {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     {batch nActions : Nat} [NeZero batch] [NeZero nActions]
-    (newLogits : _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
-    (actionOneHot : _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
-    (oldLogProb : _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch .scalar))
-    (advantage : _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch .scalar))
+    (newLogits :
+      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
+    (actionOneHot :
+      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
+    (oldLogProb : Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch .scalar))
+    (advantage : Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch .scalar))
     (clipEps : α := (1 : α) / ((5 : Nat) : α)) :
-    m (_root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch .scalar)) := do
+    m (Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch .scalar)) := do
   let sVec : Shape := .dim batch .scalar
   let newLogProb ←
     actionLogProbOneHotBatch (m := m) (α := α) (batch := batch) (nActions := nActions)
       newLogits actionOneHot
   let diff ← sub (m := m) (α := α) (s := sVec) newLogProb oldLogProb
   let ratio ← exp (m := m) (α := α) (s := sVec) diff
-  let clippedRatio ← clamp (m := m) (α := α) (s := sVec) ratio ((1 : α) - clipEps) ((1 : α) + clipEps)
+  let clippedRatio ←
+    clamp (m := m) (α := α) (s := sVec) ratio ((1 : α) - clipEps) ((1 : α) + clipEps)
   let unclipped ← mul (m := m) (α := α) (s := sVec) ratio advantage
   let clipped ← mul (m := m) (α := α) (s := sVec) clippedRatio advantage
   min (m := m) (α := α) (s := sVec) unclipped clipped
@@ -149,23 +152,27 @@ PPO scalar loss to *minimize* (mean over batch):
 This is the standard discrete-action PPO loss used in many reference implementations.
 -/
 def ppoLossBatch
-    {m : Type → Type} [Monad m] [_root_.Runtime.Autograd.Torch.Ops (m := m) (α := α)]
+    {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     {batch nActions : Nat} [NeZero batch] [NeZero nActions]
-    (newLogits : _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
-    (actionOneHot : _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
-    (oldLogProb : _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch .scalar))
-    (advantage : _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch .scalar))
-    (valuePred valueTarget : _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) (.dim batch (.dim 1 .scalar)))
+    (newLogits :
+      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
+    (actionOneHot :
+      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
+    (oldLogProb : Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch .scalar))
+    (advantage : Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch .scalar))
+    (valuePred valueTarget :
+      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim 1 .scalar)))
     (clipEps : α := (1 : α) / ((5 : Nat) : α))
     (valueCoef : α := (1 : α) / ((2 : Nat) : α))
     (entropyCoef : α := (1 : α) / ((100 : Nat) : α)) :
-    m (_root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) Shape.scalar) := do
+    m (Runtime.Autograd.Model.RefTy (m := m) (α := α) Shape.scalar) := do
   let obj ←
     ppoClippedObjectiveBatch (m := m) (α := α) (batch := batch) (nActions := nActions)
       newLogits actionOneHot oldLogProb advantage (clipEps := clipEps)
-  let objMean ← _root_.Runtime.Autograd.TorchLean.F.mean (m := m) (α := α) (s := .dim batch .scalar) obj
+  let objMean ← Runtime.Autograd.Model.F.mean (m := m) (α := α) (s := .dim batch .scalar) obj
   let policyLoss ← scale (m := m) (α := α) (s := Shape.scalar) objMean (-1)
-  let valueLoss ← _root_.TorchLean.Loss.mse (m := m) (α := α) (s := .dim batch (.dim 1 .scalar)) valuePred valueTarget
+  let valueLoss ←
+    TorchLean.Loss.mse (m := m) (α := α) (s := .dim batch (.dim 1 .scalar)) valuePred valueTarget
   let valueLossScaled ← scale (m := m) (α := α) (s := Shape.scalar) valueLoss valueCoef
   let entropy ← entropyMean (m := m) (α := α) (batch := batch) (nActions := nActions) newLogits
   let entropyScaled ← scale (m := m) (α := α) (s := Shape.scalar) entropy entropyCoef
@@ -187,50 +194,56 @@ The model state is `actor.state ++ critic.state`, and one optimizer step updates
 -/
 def ppoActorCriticObjectiveDef
     {stateShape : Shape} {batch nActions : Nat} [NeZero batch] [NeZero nActions]
-    (actor : _root_.Runtime.Autograd.TorchLean.NN.Seq stateShape (.dim batch (.dim nActions .scalar)))
-    (critic : _root_.Runtime.Autograd.TorchLean.NN.Seq stateShape (.dim batch (.dim 1 .scalar))) :
-    _root_.Runtime.Autograd.TorchLean.Module.ObjectiveDef Unit
-      (_root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes actor ++
-        _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes critic)
+    (actor : Runtime.Autograd.Model.Layers.Seq stateShape (.dim batch (.dim nActions .scalar)))
+    (critic : Runtime.Autograd.Model.Layers.Seq stateShape (.dim batch (.dim 1 .scalar))) :
+    Runtime.Autograd.Model.Module.ObjectiveDef Unit
+      (Runtime.Autograd.Model.Layers.Seq.stateShapes actor ++
+        Runtime.Autograd.Model.Layers.Seq.stateShapes critic)
       [stateShape, (.dim batch (.dim nActions .scalar)), (.dim batch .scalar), (.dim batch .scalar),
         (.dim batch (.dim 1 .scalar))] :=
   { initState :=
       TorchLean.TensorPack.append (α := Float)
-        (ss₁ := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes actor)
-        (ss₂ := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes critic)
-        (_root_.Runtime.Autograd.TorchLean.NN.Seq.initState actor)
-        (_root_.Runtime.Autograd.TorchLean.NN.Seq.initState critic)
-    requiresGrad := _root_.Runtime.Autograd.TorchLean.NN.Seq.requiresGrad actor ++
-      _root_.Runtime.Autograd.TorchLean.NN.Seq.requiresGrad critic
+        (ss₁ := Runtime.Autograd.Model.Layers.Seq.stateShapes actor)
+        (ss₂ := Runtime.Autograd.Model.Layers.Seq.stateShapes critic)
+        (Runtime.Autograd.Model.Layers.Seq.initState actor)
+        (Runtime.Autograd.Model.Layers.Seq.initState critic)
+    requiresGrad := Runtime.Autograd.Model.Layers.Seq.requiresGrad actor ++
+      Runtime.Autograd.Model.Layers.Seq.requiresGrad critic
+    validate := do
+      Runtime.Autograd.Model.Layers.Seq.validate actor
+      Runtime.Autograd.Model.Layers.Seq.validate critic
     loss := fun {α} => by
       intro _ _; exact
         (fun {m} _ _ =>
-          _root_.Runtime.Autograd.Torch.CurriedRef.curry (Ref := fun sh => _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) sh)
-            (ss := (_root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes actor ++
-              _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes critic) ++
-              [stateShape, (.dim batch (.dim nActions .scalar)), (.dim batch .scalar), (.dim batch .scalar),
-                (.dim batch (.dim 1 .scalar))])
-            (β := m (_root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) Shape.scalar))
+          Runtime.Autograd.Torch.CurriedRef.curry
+            (Ref := fun sh => Runtime.Autograd.Model.RefTy (m := m) (α := α) sh)
+            (ss := (Runtime.Autograd.Model.Layers.Seq.stateShapes actor ++
+              Runtime.Autograd.Model.Layers.Seq.stateShapes critic) ++
+              [stateShape, (.dim batch (.dim nActions .scalar)), (.dim batch .scalar),
+                (.dim batch .scalar), (.dim batch (.dim 1 .scalar))])
+            (β := m (Runtime.Autograd.Model.RefTy (m := m) (α := α) Shape.scalar))
             (fun args => do
               let (ps, xs) :=
-                _root_.Runtime.Autograd.Torch.RefList.split (Ref := fun sh => _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) sh)
-                  (ss₁ := (_root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes actor ++
-                    _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes critic))
+                Runtime.Autograd.Torch.RefList.split
+                  (Ref := fun sh => Runtime.Autograd.Model.RefTy (m := m) (α := α) sh)
+                  (ss₁ := (Runtime.Autograd.Model.Layers.Seq.stateShapes actor ++
+                    Runtime.Autograd.Model.Layers.Seq.stateShapes critic))
                   (ss₂ := [stateShape, (.dim batch (.dim nActions .scalar)), (.dim batch .scalar),
                     (.dim batch .scalar), (.dim batch (.dim 1 .scalar))])
                   args
               let (psActor, psCritic) :=
-                _root_.Runtime.Autograd.Torch.RefList.split (Ref := fun sh => _root_.Runtime.Autograd.TorchLean.RefTy (m := m) (α := α) sh)
-                  (ss₁ := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes actor)
-                  (ss₂ := _root_.Runtime.Autograd.TorchLean.NN.Seq.stateShapes critic)
+                Runtime.Autograd.Torch.RefList.split
+                  (Ref := fun sh => Runtime.Autograd.Model.RefTy (m := m) (α := α) sh)
+                  (ss₁ := Runtime.Autograd.Model.Layers.Seq.stateShapes actor)
+                  (ss₂ := Runtime.Autograd.Model.Layers.Seq.stateShapes critic)
                   ps
-              let .cons states (.cons actionsOneHot (.cons oldLogProb (.cons advantages (.cons valueTarget .nil)))) :=
-                xs
+              let .cons states (.cons actionsOneHot (.cons oldLogProb
+                  (.cons advantages (.cons valueTarget .nil)))) := xs
               let logits ←
-                _root_.Runtime.Autograd.TorchLean.NN.Seq.forwardState
+                Runtime.Autograd.Model.Layers.Seq.forwardState
                   (model := actor) (α := α) (m := m) .train psActor states
               let values ←
-                _root_.Runtime.Autograd.TorchLean.NN.Seq.forwardState
+                Runtime.Autograd.Model.Layers.Seq.forwardState
                   (model := critic) (α := α) (m := m) .train psCritic states
               ppoLossBatch (m := m) (α := α) (batch := batch) (nActions := nActions)
                 logits actionsOneHot oldLogProb advantages values valueTarget))

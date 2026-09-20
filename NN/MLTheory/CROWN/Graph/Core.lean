@@ -7,11 +7,10 @@ Authors: TorchLean Team
 module
 
 public import NN.IR.Graph
-public import NN.MLTheory.CROWN.Extras.BoundOpsIEEE32Exec
-public import NN.MLTheory.CROWN.Flatbox
-public import NN.MLTheory.CROWN.Operators.Arithmetic
-public import NN.MLTheory.CROWN.Operators.Conv
-public import NN.Spec.Layers.Pooling
+public import NN.MLTheory.CROWN.Extras.BoundOpsIEEE32Exec -- shake: keep
+public import NN.MLTheory.CROWN.Operators.Arithmetic -- shake: keep
+public import NN.MLTheory.CROWN.Operators.Conv -- shake: keep
+public import NN.Spec.Layers.Pooling -- shake: keep
 
 /-!
 # CROWN Graph
@@ -53,8 +52,8 @@ PyTorch analogues (conceptual):
 
 namespace NN.MLTheory.CROWN
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 
 /-- Typed IR graph used by the CROWN/LiRPA engines. -/
 abbrev Graph := NN.IR.Graph
@@ -62,16 +61,16 @@ abbrev Graph := NN.IR.Graph
 namespace FlatBox
 
 /-- Flatten a shaped center/radius pair into the graph-level interval-box representation. -/
-def lInfBox {α : Type} [Context α] {s : Shape}
+def lInfBox {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
     (center radius : Tensor α s) : FlatBox α :=
   { dim := Spec.Shape.size s
     lo := Tensor.flattenSpec (α := α) <| Tensor.subSpec center radius
     hi := Tensor.flattenSpec (α := α) <| Tensor.addSpec center radius }
 
 /-- Uniform `ℓ∞` box around a shaped tensor. -/
-def lInfBall {α : Type} [Context α] {s : Shape}
+def lInfBall {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
     (center : Tensor α s) (eps : α) : FlatBox α :=
-  lInfBox (α := α) center (Spec.fill (α := α) eps s)
+  lInfBox (α := α) center (Tensor.full (α := α) s eps)
 
 end FlatBox
 
@@ -79,8 +78,8 @@ end NN.MLTheory.CROWN
 
 namespace NN.MLTheory.CROWN.Graph
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 open NN.MLTheory.CROWN
 open NN.IR
 open Std
@@ -95,7 +94,7 @@ Flattened affine form for a node output with respect to a fixed flattened input.
 
 This represents `y ≈ A*x + c` for a chosen input node `x`.
 -/
-structure FlatAffine (α : Type) [Context α] where
+structure FlatAffine (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Flattened input dimension. -/
   inDim  : Nat
   /-- Flattened output dimension. -/
@@ -104,7 +103,7 @@ structure FlatAffine (α : Type) [Context α] where
   aff    : AffineVec α inDim outDim
 
 /-- Flattened affine **lower and upper** bounds for a node output w.r.t. a fixed flattened input. -/
-structure FlatAffineBounds (α : Type) [Context α] where
+structure FlatAffineBounds (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Flattened input dimension. -/
   inDim  : Nat
   /-- Flattened output dimension. -/
@@ -116,7 +115,7 @@ structure FlatAffineBounds (α : Type) [Context α] where
 
 namespace FlatAffine
 
-variable {α : Type} [Context α] [BoundOps α]
+variable {α : Type} [TorchLean.Storage α] [Context α] [BoundOps α]
 
 /-- Evaluate a flattened affine form on a flattened input box after checking the input dimension. -/
 def evalOnFlatBox (aff : FlatAffine α) (xB : FlatBox α) (hIn : xB.dim = aff.inDim) :
@@ -135,7 +134,7 @@ end FlatAffine
 
 namespace FlatAffineBounds
 
-variable {α : Type} [Context α] [BoundOps α]
+variable {α : Type} [TorchLean.Storage α] [Context α] [BoundOps α]
 
 /--
 Evaluate lower/upper affine bounds on a flattened input box.
@@ -167,7 +166,7 @@ Per-node bound state (flattened).
 The option fields record which analyses have populated a node: an interval-only pass fills `ibp?`,
 while affine CROWN passes additionally fill `aff?`.
 -/
-structure NodeState (α : Type) [Context α] where
+structure NodeState (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Original (unflattened) tensor shape of the node output. -/
   shape : Shape
   /-- Interval bounds (IBP) if available. -/
@@ -176,7 +175,7 @@ structure NodeState (α : Type) [Context α] where
   aff?  : Option (FlatAffine α)  := none
 
 /-- Propagation workspace across the whole graph. -/
-structure PropState (α : Type) [Context α] where
+structure PropState (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Which node id is treated as the designated input for affine bounds. -/
   inputId   : Nat
   /-- Flattened input dimension. -/
@@ -189,7 +188,7 @@ Coverage map for propagation rules:
 
 Forward (IBP):
 - add/sub: interval add/sub componentwise
-- mul_elem: McCormick envelopes for elementwise product
+- mulElem: McCormick envelopes for elementwise product
 - matmul/linear/convolution: interval matrix multiplication as in `IBP.linear` and convolution IBP
 - relu/tanh/sigmoid/exp/log: elementwise monotone bounds (use activation-specific rules)
 - softmax/layernorm: conservative last-axis interval bounds
@@ -197,8 +196,8 @@ Forward (IBP):
 Backward (CROWN):
 - relu/tanh/sigmoid: per-neuron linear relaxations (like ReLU; tanh/sigmoid need convex hull)
 - matmul/linear/convolution: compose affine forms via matrix multiplication
-- mul_elem: bilinear relaxation via McCormick (introduces additional linear terms)
-- softmax/layernorm/mul_elem: conservative affine enclosures in the executable engine
+- mulElem: bilinear relaxation via McCormick (introduces additional linear terms)
+- softmax/layernorm/mulElem: conservative affine enclosures in the executable engine
 
 Sequence models (RNN/GRU/LSTM):
 - Unroll time steps as repeated nodes; gates are linear → nonlinearity → elementwise product

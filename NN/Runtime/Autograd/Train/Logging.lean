@@ -67,17 +67,9 @@ structure Logger (m : Type -> Type) where
 
 namespace Logger
 
-/-- A logger that discards every message. Useful as a default. -/
-def noOp {m : Type -> Type} [Monad m] : Logger m :=
-  { log := fun _ _ => pure () }
-
 /-- A simple `IO` logger that prints to stdout. -/
 def stdout : Logger IO :=
   { log := fun lvl msg => IO.println s!"[{LogLevel.render lvl}] {msg}" }
-
-/-- Log a pre-built `LogEntry`. -/
-def logEntry {m : Type -> Type} (logger : Logger m) (entry : LogEntry) : m Unit :=
-  logger.log entry.level entry.message
 
 /-- Emit an informational log message. -/
 def info {m : Type -> Type} (logger : Logger m) (msg : String) : m Unit :=
@@ -97,23 +89,6 @@ end Logger
 ## Trainer integration
 -/
 namespace Trainer
-
-/-- Attach an arbitrary logger hook to a `Trainer` (called once per step). -/
-def withLogger {m : Type -> Type} {state a : Type}
-  (t : Trainer m state a) (logger : Nat -> state -> StepReport a -> m Unit) :
-  Trainer m state a :=
-  { t with logger := logger }
-
-/--
-Attach a `Logger` to a `Trainer` by logging the pretty-printed `StepReport` each step.
-
-This is analogous to printing per-step metrics in an imperative training script (e.g. a PyTorch
-  loop).
--/
-def withReportLogger {m : Type -> Type} [Monad m] {state a : Type} [ToString a]
-  (t : Trainer m state a) (logger : Logger m) : Trainer m state a :=
-  { t with logger := fun step _ report =>
-      logger.log .info (renderReport step report) }
 
 end Trainer
 

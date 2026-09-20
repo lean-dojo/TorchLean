@@ -6,68 +6,70 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Exec32
 public import NN.MLTheory.CROWN.BoundOps
 public import NN.Spec.Core.FloatInstances
 
 /-!
-# `BoundOps` instance for `IEEE32Exec`
+# `BoundOps` instance for `ExecFloat.Binary 8 23`
 
-This instance plugs the executable float32 directed-rounding primitives from
-`NN/Floats/IEEEExec/Exec32.lean` into the IBP/CROWN endpoint propagation code.
+This instance plugs FloatLib's configured binary32 directed-rounding primitives into the
+IBP/CROWN endpoint propagation code.
 
-With this, any IBP code written in terms of `BoundOps` can be run with `α := IEEE32Exec` to get
+With this, IBP code written in terms of `BoundOps` can use `α := ExecFloat.Binary 8 23` to get
 float32-grid, outward-rounded interval propagation (subject to the usual finiteness preconditions).
 -/
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 
 namespace NN.MLTheory.CROWN
 
-open TorchLean.Floats.IEEE754
-
-/-- `BoundOps` for `IEEE32Exec`, using the executable directed-rounding endpoint primitives. -/
-instance (priority := 1000) : BoundOps IEEE32Exec where
-  addDown := IEEE32Exec.addDown
-  addUp   := IEEE32Exec.addUp
-  subDown := IEEE32Exec.subDown
-  subUp   := IEEE32Exec.subUp
-  mulDown := IEEE32Exec.mulDown
-  mulUp   := IEEE32Exec.mulUp
+/-- `BoundOps` for `ExecFloat.Binary 8 23`, using the executable directed-rounding endpoint
+primitives. -/
+instance (priority := 1000) : BoundOps (ExecFloat.Binary 8 23) where
+  addDown := (ExecFloat.Binary.add (rounding := .towardNegativeInfinity))
+  addUp   := (ExecFloat.Binary.add (rounding := .towardPositiveInfinity))
+  subDown := (ExecFloat.Binary.sub (rounding := .towardNegativeInfinity))
+  subUp   := (ExecFloat.Binary.sub (rounding := .towardPositiveInfinity))
+  mulDown := (ExecFloat.Binary.mul (rounding := .towardNegativeInfinity))
+  mulUp   := (ExecFloat.Binary.mul (rounding := .towardPositiveInfinity))
 
 /--
 Nonlinear enclosures backed by the proved directed binary32 division and square-root operations.
 
-The executable `IEEE32Exec.exp` implementation is a deterministic approximation, not yet a proved
+FloatLib's `ExecFloat.Binary.exp` is a deterministic approximation, not yet a proved
 enclosure of real exponentiation, so exponential and logarithmic transfers are intentionally absent.
 -/
-instance (priority := 1000) : NonlinearBoundOps IEEE32Exec where
+instance (priority := 1000) : NonlinearBoundOps (ExecFloat.Binary 8 23) where
   divBounds aLo aHi bLo bHi :=
     if NonlinearBoundOps.denominatorAvoidsZero bLo bHi then
-      let d1 := IEEE32Exec.divDown aLo bLo
-      let d2 := IEEE32Exec.divDown aLo bHi
-      let d3 := IEEE32Exec.divDown aHi bLo
-      let d4 := IEEE32Exec.divDown aHi bHi
-      let u1 := IEEE32Exec.divUp aLo bLo
-      let u2 := IEEE32Exec.divUp aLo bHi
-      let u3 := IEEE32Exec.divUp aHi bLo
-      let u4 := IEEE32Exec.divUp aHi bHi
+      let d1 := (ExecFloat.Binary.div (rounding := .towardNegativeInfinity)) aLo bLo
+      let d2 := (ExecFloat.Binary.div (rounding := .towardNegativeInfinity)) aLo bHi
+      let d3 := (ExecFloat.Binary.div (rounding := .towardNegativeInfinity)) aHi bLo
+      let d4 := (ExecFloat.Binary.div (rounding := .towardNegativeInfinity)) aHi bHi
+      let u1 := (ExecFloat.Binary.div (rounding := .towardPositiveInfinity)) aLo bLo
+      let u2 := (ExecFloat.Binary.div (rounding := .towardPositiveInfinity)) aLo bHi
+      let u3 := (ExecFloat.Binary.div (rounding := .towardPositiveInfinity)) aHi bLo
+      let u4 := (ExecFloat.Binary.div (rounding := .towardPositiveInfinity)) aHi bHi
       some (NonlinearBoundOps.min4 d1 d2 d3 d4, NonlinearBoundOps.max4 u1 u2 u3 u4)
     else
       none
   expBounds := fun _ _ => none
   logBounds := fun _ _ => none
   sqrtBounds lo hi :=
-    if hi < Numbers.zero then
+    if hi < 0 then
       none
     else
-      let lo' := if lo > Numbers.zero then lo else Numbers.zero
-      some (IEEE32Exec.sqrtDown lo', IEEE32Exec.sqrtUp hi)
-  sigmoidBounds := fun _ _ => some (Numbers.zero, Numbers.one)
-  tanhBounds := fun _ _ => some (Numbers.negOne, Numbers.one)
-  sinBounds := fun _ _ => some (Numbers.negOne, Numbers.one)
-  cosBounds := fun _ _ => some (Numbers.negOne, Numbers.one)
+      let lo' := if lo > 0 then lo else 0
+      some ((ExecFloat.Binary.sqrt (rounding := .towardNegativeInfinity)) lo',
+        (ExecFloat.Binary.sqrt (rounding := .towardPositiveInfinity)) hi)
+  sigmoidBounds := fun _ _ => some (0, 1)
+  tanhBounds := fun _ _ => some ((-1), 1)
+  sinBounds := fun _ _ => some ((-1), 1)
+  cosBounds := fun _ _ => some ((-1), 1)
   layerNormAbsBound := fun _ => none
   supportsIdealCoupledDerivatives := false
 

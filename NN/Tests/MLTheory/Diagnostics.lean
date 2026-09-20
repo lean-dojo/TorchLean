@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.LearningTheory.Robustness.Runtime
 public import NN.MLTheory.LearningTheory.Stability.Dynamics.Runtime
+public import NN.Tensor.Internal.Elab.TensorLiteral
 
 /-!
 # Empirical Diagnostic Regressions
@@ -20,7 +20,7 @@ empty or non-finite evidence.
 
 namespace NN.Tests.MLTheory.Diagnostics
 
-open _root_.Spec
+open Spec TorchLean
 open NN.MLTheory.Robustness.Runtime
 open NN.MLTheory.Stability.Runtime
 
@@ -35,10 +35,10 @@ def expectBool (label : String) (expected : Bool) : Except String Bool → IO Un
   | .error message => throw <| IO.userError s!"{label}: unexpected error: {message}"
 
 def run : IO Unit := do
-  let zero : Tensor Float .scalar := .scalar 0.0
-  let one : Tensor Float .scalar := .scalar 1.0
-  let inf : Tensor Float .scalar := .scalar (1.0 / 0.0)
-  let identity : Tensor Float .scalar → Tensor Float .scalar := fun x => x
+  let zero : Tensor Float [] := Tensor.scalar 0.0
+  let one : Tensor Float [] := Tensor.scalar 1.0
+  let inf : Tensor Float [] := Tensor.scalar (1.0 / 0.0)
+  let identity : Tensor Float [] → Tensor Float [] := fun x => x
 
   expectError "empty empirical Lipschitz evidence" <|
     Empirical.maxL2LipschitzRatio identity #[]

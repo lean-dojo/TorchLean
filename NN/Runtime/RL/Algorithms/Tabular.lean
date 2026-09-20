@@ -6,9 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.RL.Core
-public import NN.Runtime.Autograd.TorchLean.Metrics
-public import NN.Spec.Layers.Activation
+public import NN.Runtime.Autograd.Model.Metrics
+public import NN.Runtime.RL.Core -- shake: keep
 
 /-!
 # Tabular Reinforcement Learning
@@ -46,10 +45,10 @@ namespace Runtime
 namespace RL
 namespace Tabular
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Extract the action-value row `Q[s, :]`. -/
 def actionRow {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
@@ -60,14 +59,14 @@ def actionRow {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
 def maxActionValue {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
     (state : Fin nStates) : α :=
   let row := actionRow (α := α) q state
-  match _root_.TorchLean.Metrics.argmax? (α := α) row with
+  match TorchLean.Metrics.argmax? (α := α) row with
   | some action => Tensor.getScalar row (Fin.cast (by simp [Shape.size]) action)
   | none => 0
 
 /-- Greedy action at a state, if the action space is nonempty. -/
 def greedyAction? {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
     (state : Fin nStates) : Option (Fin nActions) :=
-  (_root_.TorchLean.Metrics.argmax? (α := α) (actionRow (α := α) q state)).map
+  (TorchLean.Metrics.argmax? (α := α) (actionRow (α := α) q state)).map
     (Fin.cast (by simp [Shape.size]))
 
 /-- Expected action value under an explicit policy over the next state. -/
@@ -88,8 +87,8 @@ def td0Update {nStates : Nat} (values : Tensor α [nStates])
 
 /-- SARSA target `r + γ Q(s', a')`. -/
 def sarsaTarget {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
-    (nextState : Fin nStates) (nextAction : Fin nActions) (reward gamma : α) (done : Bool := false) :
-    α :=
+    (nextState : Fin nStates) (nextAction : Fin nActions) (reward gamma : α)
+    (done : Bool := false) : α :=
   Core.tdTarget (α := α) reward gamma (get2 q nextState nextAction) done
 
 /-- Expected SARSA target

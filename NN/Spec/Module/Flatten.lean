@@ -6,13 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.TensorReductionShape
+public import NN.Spec.Core.TensorReductionShape.ShapeChange
 public import NN.Spec.Module.Core
 
 /-!
 # Flatten module wrapper
 
-`flatten_spec` converts a tensor of shape `s` into a vector of length `Spec.Shape.size s`.
+`flattenSpec` converts a tensor of shape `s` into a vector of length `Spec.Shape.size s`.
 
 Why is the output length computed at the type level?
 
@@ -29,15 +29,15 @@ If you're thinking in PyTorch: this is `nn.Flatten()` in its simplest form (coll
 
 namespace Spec.Module
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
 -- Flatten module specification wrapper
-/-- Wrap `flatten_spec` as an `Spec.Module` (`s -> (Spec.Shape.size s)`).
+/-- Wrap `flattenSpec` as an `Spec.Module` (`s -> (Spec.Shape.size s)`).
 
 The `dimensions` metadata field is not meaningful for flatten because the output length depends on
 the whole input shape; exporters should recompute the shape from the typed input.
 -/
-def flatten (α : Type) [Context α] (s : Shape) :
+def flatten (α : Type) [TorchLean.Storage α] [Context α] (s : Shape) :
   Spec.Module α s ([(Spec.Shape.size s)]) :=
 { forward := fun x => flattenSpec x, kind := "Flatten", pythonExpr := "nn.Flatten()" }
 

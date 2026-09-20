@@ -6,11 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public meta import NN.IR.Pretty
+public import NN.IR.Graph
 public meta import NN.Widgets.IR.Graph
-public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
+public import NN.Widgets.IR.Graph
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # GraphRewrite
@@ -31,24 +30,6 @@ Main command:
 - `diffRows`: align nodes by id for before/after comparison.
 - `graphRewriteHtml`: side-by-side graph panels plus id-wise diff table.
 - `#graph_rewrite_view`: command entry point.
-
-## Implementation notes
-
-- We compare by node id intentionally; for compiler/debug workflows this is usually the first
-  question ("what changed at node i?").
-- We surface op/parents/out-shape signatures because those capture most semantic rewrite mistakes.
-- Keeping full "before" and "after" graph panels next to the diff table makes compact visual checks
-  easier than reading only textual diffs.
-
-## References
-
-- [ProofWidgets](https://github.com/leanprover-community/ProofWidgets4)
-- [GraphViz DOT language](https://graphviz.org/doc/info/lang.html)
-- [Lean community documentation style](https://leanprover-community.github.io/contribute/doc.html)
-
-## Tags
-
-graph-rewrite, ir, compiler, diff, proofwidgets
 -/
 
 public meta section
@@ -60,9 +41,13 @@ namespace NN.Widgets
 open NN.IR
 open UI
 
+/-- One aligned row of a two-graph diff, holding whichever side has a node at this id. -/
 private structure DiffRow where
+  /-- Node id both sides are aligned on. -/
   id : Nat
+  /-- Node at this id in the left graph, if it has one. -/
   left? : Option Node
+  /-- Node at this id in the right graph, if it has one. -/
   right? : Option Node
 
 /-- Build aligned per-id rows for two graphs, clipped to `maxNodes`. -/
@@ -73,8 +58,12 @@ private def diffRows (g₁ g₂ : Graph) (maxNodes : Nat := 400) : Array DiffRow
 
 /-- Produce a compact structural signature for change detection. -/
 private def nodeSig (n : Node) : String :=
-  s!"{n.kind.tag} parents={n.parents} out={Spec.Shape.pretty n.outShape}"
+  let operation := match n.kind with
+    | .hardMaskedSoftmax mask => s!"{n.kind.describe} allowed={mask.allowed}"
+    | kind => kind.describe
+  s!"{operation} parents={n.parents} out={Spec.Shape.pretty n.outShape}"
 
+/-- Render one diff row, badged `same`, `changed`, `added`, or `removed`. -/
 private def diffRowHtml (r : DiffRow) : ProofWidgets.Html :=
   let status :=
     match r.left?, r.right? with
@@ -82,7 +71,7 @@ private def diffRowHtml (r : DiffRow) : ProofWidgets.Html :=
     | some _, none => warnBadge "removed"
     | none, some _ => warnBadge "added"
     | some a, some b =>
-        if a.kind.tag = b.kind.tag ∧ a.parents = b.parents ∧ a.outShape = b.outShape then
+        if a.id = b.id ∧ a.kind = b.kind ∧ a.parents = b.parents ∧ a.outShape = b.outShape then
           okBadge "same"
         else
           warnBadge "changed"
@@ -107,7 +96,8 @@ def graphRewriteHtml (g₁ g₂ : Graph) : ProofWidgets.Html :=
     rows.foldl (fun acc r =>
       match r.left?, r.right? with
       | some a, some b =>
-          if a.kind.tag = b.kind.tag ∧ a.parents = b.parents ∧ a.outShape = b.outShape then acc + 1
+          if a.id = b.id ∧ a.kind = b.kind ∧ a.parents = b.parents ∧ a.outShape = b.outShape then
+            acc + 1
             else acc
       | _, _ => acc) 0
   let changedCount := rows.size - sameCount
@@ -115,7 +105,7 @@ def graphRewriteHtml (g₁ g₂ : Graph) : ProofWidgets.Html :=
   <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
     <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap"}}>
       {pill "Graph rewrite"} {pill s!"left={g₁.size} nodes"} {pill s!"right={g₂.size} nodes"}
-      {pill s!"diffNodes={rows.size}"} {pill s!"changed≈{changedCount}"}
+      {pill s!"diffNodes={rows.size}"} {pill s!"changed in shown rows={changedCount}"}
     </div>
     <div style={json% {"display": "grid", "grid-template-columns": "1fr 1fr", "gap": "10px"}}>
       <div>
@@ -159,6 +149,6 @@ def graphRewriteHtml (g₁ g₂ : Graph) : ProofWidgets.Html :=
 syntax (name := graphRewriteViewCmd) "#graph_rewrite_view " term ", " term : command
 
 macro "#graph_rewrite_view " g1:term ", " g2:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (graphRewriteHtml $g1 $g2))
+  UI.canonicalCommand <$> `(#html (graphRewriteHtml $g1 $g2))
 
 end NN.Widgets

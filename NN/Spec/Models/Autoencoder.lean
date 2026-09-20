@@ -7,7 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Layers.Activation
-public import NN.Spec.Core.Sequence
+-- The encoder and decoder halves are linear layers, so their gradients reuse
+-- `Spec.LinearParameterGradients` rather than repeating the weight/bias pair here.
+public import NN.Spec.Layers.Linear
 
 /-!
 # Autoencoder (spec model)
@@ -27,16 +29,25 @@ intended to be instantiated over multiple scalar backends (`Float`, intervals, p
 
 The activation is represented by `Activation.Kind`, so a misspelled configuration cannot silently
 change the model into an identity activation.
+
+## Implementation status
+
+`nn.models.Generative.autoencoder` (`NN/API/Models/Generative.lean`) builds a different
+architecture, `x -> hidden -> latent -> hidden -> reconstruction`, and is not derived from this
+record. `NN/Spec/Module/Autoencoder.lean` wraps this file as a `Spec.Module`. No theorem relates
+either to the other.
 -/
 
 @[expose] public section
 
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-!
 ## Parameters
@@ -51,7 +62,7 @@ Shapes:
 - `decoderBias   : (inputDim)`
 -/
 /-- Parameters for a 1-hidden-layer fully-connected autoencoder. -/
-structure AutoencoderSpec (α : Type) (inputDim hiddenDim : Nat) where
+structure AutoencoderSpec (α : Type) [TorchLean.Storage α] (inputDim hiddenDim : Nat) where
   /-- Encoder weights with shape `(hiddenDim × inputDim)`. -/
   encoderWeight : Tensor α [hiddenDim, inputDim]
   /-- Encoder bias with shape `(hiddenDim)`. -/
@@ -105,7 +116,7 @@ def autoencoderForwardLeadingSpec (leading : Shape) {inputDim hiddenDim : Nat}
   (m : AutoencoderSpec α inputDim hiddenDim)
   (input : Tensor α (leading.concat [inputDim])) :
   Tensor α (leading.concat [inputDim]) :=
-  Tensor.mapEach leading (autoencoderForwardSpec m) input
+  Tensor.mapLeading leading (autoencoderForwardSpec m) input
 
 /-!
 ## Backward (manual VJP)
@@ -123,73 +134,76 @@ The key linear-algebra identities used are:
 def autoencoderEncoderWeightsDerivSpec {inputDim hiddenDim : Nat}
   (m : AutoencoderSpec α inputDim hiddenDim)
   (input : Tensor α [inputDim])
-  (grad_output : Tensor α [inputDim]) :
+  (gradOutput : Tensor α [inputDim]) :
   Tensor α [hiddenDim, inputDim] :=
   -- `dH = W_decᵀ dOut`.
-  let grad_hidden :=
-    matVecMulSpec (swapAdjacentAxes m.decoderWeight 0) grad_output
+  let gradHidden :=
+    matVecMulSpec (swapAdjacentAxes m.decoderWeight 0) gradOutput
   let linearOut := addSpec (matVecMulSpec m.encoderWeight input) m.encoderBias
-  let gradLinear := mulSpec grad_hidden (m.activation.derivSpec linearOut)
+  let gradLinear := mulSpec gradHidden (m.activation.derivSpec linearOut)
   outerProductSpec gradLinear input
 
 /-- Gradient w.r.t. encoder bias: `db_enc = dZ`. -/
 def autoencoderEncoderBiasDerivSpec {inputDim hiddenDim : Nat}
   (m : AutoencoderSpec α inputDim hiddenDim)
   (input : Tensor α [inputDim])
-  (grad_output : Tensor α [inputDim]) :
+  (gradOutput : Tensor α [inputDim]) :
   Tensor α [hiddenDim] :=
-  let grad_hidden :=
-    matVecMulSpec (swapAdjacentAxes m.decoderWeight 0) grad_output
+  let gradHidden :=
+    matVecMulSpec (swapAdjacentAxes m.decoderWeight 0) gradOutput
   let linearOut := addSpec (matVecMulSpec m.encoderWeight input) m.encoderBias
-  mulSpec grad_hidden (m.activation.derivSpec linearOut)
+  mulSpec gradHidden (m.activation.derivSpec linearOut)
 
 /-- Gradient w.r.t. decoder weights: `dW_dec = dOut ⊗ h`. -/
 def autoencoderDecoderWeightsDerivSpec {inputDim hiddenDim : Nat}
   (m : AutoencoderSpec α inputDim hiddenDim)
   (input : Tensor α [inputDim])
-  (grad_output : Tensor α [inputDim]) :
+  (gradOutput : Tensor α [inputDim]) :
   Tensor α [inputDim, hiddenDim] :=
   let hidden := autoencoderEncodeSpec m input
-  outerProductSpec grad_output hidden
+  outerProductSpec gradOutput hidden
 
 /-- Gradient w.r.t. decoder bias: `db_dec = dOut`. -/
 def autoencoderDecoderBiasDerivSpec {inputDim hiddenDim : Nat}
   (_m : AutoencoderSpec α inputDim hiddenDim)
-  (grad_output : Tensor α [inputDim]) :
+  (gradOutput : Tensor α [inputDim]) :
   Tensor α [inputDim] :=
-  grad_output
+  gradOutput
 
 /-- Gradient w.r.t. input: `dX = W_encᵀ dZ`. -/
 def autoencoderInputDerivSpec {inputDim hiddenDim : Nat}
   (m : AutoencoderSpec α inputDim hiddenDim)
   (input : Tensor α [inputDim])
-  (grad_output : Tensor α [inputDim]) :
+  (gradOutput : Tensor α [inputDim]) :
   Tensor α [inputDim] :=
-  let grad_hidden :=
-    matVecMulSpec (swapAdjacentAxes m.decoderWeight 0) grad_output
+  let gradHidden :=
+    matVecMulSpec (swapAdjacentAxes m.decoderWeight 0) gradOutput
   let linearOut := addSpec (matVecMulSpec m.encoderWeight input) m.encoderBias
-  let gradLinear := mulSpec grad_hidden (m.activation.derivSpec linearOut)
+  let gradLinear := mulSpec gradHidden (m.activation.derivSpec linearOut)
   matVecMulSpec (swapAdjacentAxes m.encoderWeight 0) gradLinear
 
-/-- Complete backward pass: returns
+/-- Gradients for a linear autoencoder: one bundle per half, plus the input gradient. -/
+structure AutoencoderGradients (α : Type) [TorchLean.Storage α] (inputDim hiddenDim : Nat) where
+  /-- Gradients for the encoder `inputDim -> hiddenDim`. -/
+  encoder : LinearParameterGradients α inputDim hiddenDim
+  /-- Gradients for the decoder `hiddenDim -> inputDim`. -/
+  decoder : LinearParameterGradients α hiddenDim inputDim
+  /-- Gradient with respect to the reconstructed input. -/
+  inputGradient : Tensor α [inputDim]
 
-`(dW_enc, db_enc, dW_dec, db_dec, dX)`.
--/
+/-- Complete backward pass for an autoencoder. -/
 def autoencoderBackwardSpec {inputDim hiddenDim : Nat}
   (m : AutoencoderSpec α inputDim hiddenDim)
   (input : Tensor α [inputDim])
-  (grad_output : Tensor α [inputDim]) :
-  (Tensor α [hiddenDim, inputDim] ×
-   Tensor α [hiddenDim] ×
-   Tensor α [inputDim, hiddenDim] ×
-   Tensor α [inputDim] ×
-   Tensor α [inputDim]) :=
-  let encoderWeight := autoencoderEncoderWeightsDerivSpec m input grad_output
-  let encoderBias := autoencoderEncoderBiasDerivSpec m input grad_output
-  let decoderWeight := autoencoderDecoderWeightsDerivSpec m input grad_output
-  let decoderBias := autoencoderDecoderBiasDerivSpec m grad_output
-  let inputGradient := autoencoderInputDerivSpec m input grad_output
-  (encoderWeight, encoderBias, decoderWeight, decoderBias, inputGradient)
+  (gradOutput : Tensor α [inputDim]) :
+  AutoencoderGradients α inputDim hiddenDim :=
+  { encoder :=
+      { weightGradient := autoencoderEncoderWeightsDerivSpec m input gradOutput
+        biasGradient := autoencoderEncoderBiasDerivSpec m input gradOutput }
+    decoder :=
+      { weightGradient := autoencoderDecoderWeightsDerivSpec m input gradOutput
+        biasGradient := autoencoderDecoderBiasDerivSpec m gradOutput }
+    inputGradient := autoencoderInputDerivSpec m input gradOutput }
 
 /-- Mean-squared reconstruction error (single example).
 
@@ -201,10 +215,10 @@ def autoencoderReconstructionErrorSpec {inputDim hiddenDim : Nat}
   α :=
   let reconstructed := autoencoderForwardSpec m input
   let error := subSpec input reconstructed
-  let squared_error := squareSpec error
+  let squaredError := squareSpec error
   have inst : Shape.HasNonemptyAxis 0 (Shape.dim inputDim Shape.scalar) := by
     apply Shape.hasNonemptyAxisZeroOfNe h
-  item (reduceSum 0 squared_error inst.proof) / inputDim
+  item (reduceSum 0 squaredError inst.proof) / inputDim
 
 /-- A compact helper used by examples: compression ratio as a `Float`.
 

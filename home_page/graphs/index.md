@@ -10,6 +10,10 @@ title: Graphs
 Search the Lean import graph by module name to inspect its dependencies, reverse dependencies, and
 the part of the source tree affected by a change.
 
+FloatLib supplies the generic scalar formats and numerical theory; `NN.Floats` contains
+TorchLean's adapters. External imports appear in the explorer, but their source trees are not
+expanded here.
+
 <div class="dep-dashboard" id="dep-dashboard">
   <section class="dep-panel dep-summary graph-overview">
     <div>
@@ -26,7 +30,9 @@ the part of the source tree affected by a change.
   <section class="dep-panel">
     <h2>Source Snapshot</h2>
     <p class="dep-panel-intro">
-      The site build reads these counts from the current Lean source tree.
+      The site build reads these counts from the TorchLean checkout, including tests and guide
+      sources. Dependency sources, including FloatLib, are excluded. Declaration headers measure
+      source size; they do not measure proof coverage.
     </p>
     <div class="dep-stat-grid" id="dep-code-cards">
       <div class="dep-loading">Loading source statistics…</div>
@@ -118,7 +124,7 @@ the part of the source tree affected by a change.
       ["Lean source lines", fmt(stats.total_lines)],
       ["Code lines", fmt(stats.code_lines)],
       ["Declaration headers", fmt(stats.declarations)],
-      ["Theorems and lemmas", fmt(stats.theorem_like_declarations)],
+      ["Theorem/lemma headers", fmt(stats.theorem_like_declarations)],
       ["Comment/blank lines", fmt(stats.blank_or_comment_lines)],
     ].map(([k, v]) => `
       <div class="dep-stat-card">

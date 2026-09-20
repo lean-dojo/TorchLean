@@ -8,6 +8,7 @@ module
 
 public import NN.Spec.Core.Sequence
 public import NN.Spec.Layers.Activation
+public import NN.Spec.Core.TensorReductionShape.ConcatSlice
 
 /-!
 # RNN (spec layer)
@@ -35,12 +36,14 @@ PyTorch analogy:
 @[expose] public section
 
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 open Activation
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-!
 ## Recurrent tensor shapes
@@ -63,7 +66,8 @@ This is equivalent to the common split-parameter form:
 
 just packaged to reuse the same tensor primitives elsewhere in TorchLean.
 -/
-structure RNNSpec (α : Type) (inputSize hiddenSize : Nat) where
+structure RNNSpec (α : Type) [TorchLean.Storage α]
+    (inputSize hiddenSize : Nat) where
   /-- Combined input-to-hidden and hidden-to-hidden weight matrix. -/
   weights : Tensor α [hiddenSize, inputSize + hiddenSize]
   /-- Hidden-state bias vector. -/
@@ -85,18 +89,68 @@ def rnnCellSpec {inputSize hiddenSize : Nat}
   -- Concatenate input and hidden state
   let concat := concatAxisSpec .scalar input hidden
   -- Apply linear transformation: Wx + b
-  let linear_out := addSpec (matVecMulSpec rnn.weights concat) rnn.bias
+  let linearOut := addSpec (matVecMulSpec rnn.weights concat) rnn.bias
   -- Apply tanh activation
-  tanhSpec linear_out
+  tanhSpec linearOut
 
 -- ============================================================================
 -- Backpropagation (BPTT)
 -- ============================================================================
 
+/--
+Parameter gradients for an `RNNSpec` cell.
+
+The cell holds a single weight matrix applied to `[x_t; h_{t-1}]` plus a bias, so this pair is the
+whole parameter gradient. The seq2seq baseline in `NN/Spec/Models/Seq2seq.lean` used to declare its
+own identical copy of this record; sharing one means an encoder gradient and a decoder gradient have
+the same type.
+
+PyTorch analogue: `(cell.weight_ih.grad, cell.weight_hh.grad)` fused into one matrix, plus the bias
+gradient.
+-/
+structure RNNParameterGradients (α : Type) [TorchLean.Storage α] (inputSize hiddenSize : Nat) where
+  /-- Gradient of the fused input/hidden weight matrix. -/
+  weightGradient : Tensor α [hiddenSize, inputSize + hiddenSize]
+  /-- Gradient of the bias. -/
+  biasGradient : Tensor α [hiddenSize]
+deriving Repr
+
+/-- All-zero parameter gradients: the starting point for accumulation over a sequence. -/
+def RNNParameterGradients.zero {inputSize hiddenSize : Nat} :
+  RNNParameterGradients α inputSize hiddenSize :=
+  { weightGradient := Tensor.full ([hiddenSize, inputSize + hiddenSize]) 0
+    biasGradient := Tensor.full ([hiddenSize]) 0 }
+
+/-- Add two parameter gradient bundles, which is what one BPTT step contributes. -/
+def RNNParameterGradients.add {inputSize hiddenSize : Nat}
+  (left right : RNNParameterGradients α inputSize hiddenSize) :
+  RNNParameterGradients α inputSize hiddenSize :=
+  { weightGradient := addSpec left.weightGradient right.weightGradient
+    biasGradient := addSpec left.biasGradient right.biasGradient }
+
+/-- Everything one RNN cell step sends backwards. -/
+structure RNNCellGradients (α : Type) [TorchLean.Storage α] (inputSize hiddenSize : Nat) where
+  /-- Gradients for the cell parameters. -/
+  parameters : RNNParameterGradients α inputSize hiddenSize
+  /-- Gradient with respect to the step input `x_t`. -/
+  input : Tensor α [inputSize]
+  /-- Gradient with respect to the incoming hidden state `h_{t-1}`. -/
+  previousHidden : Tensor α [hiddenSize]
+
+/-- Result of backpropagation through time for an RNN: parameter gradients summed over the
+sequence, one input gradient per timestep, and the gradient for the hidden state fed in at
+`t = 0`. -/
+structure RNNSequenceGradients (α : Type) [TorchLean.Storage α]
+    (seqLen inputSize hiddenSize : Nat) where
+  /-- Parameter gradients accumulated over every timestep. -/
+  parameters : RNNParameterGradients α inputSize hiddenSize
+  /-- Gradient with respect to the input sequence. -/
+  inputs : Tensor α [seqLen, inputSize]
+  /-- Gradient with respect to the initial hidden state. -/
+  initialHidden : Tensor α [hiddenSize]
+
 -- Single RNN cell backward pass.
 -- Forward: h_t = tanh(W @ [x_t; h_{t-1}] + b)
--- Backward returns:
---   dX_t, dH_{t-1}, dW, db
 /--
 Backward/VJP for a single RNN cell.
 
@@ -106,31 +160,32 @@ Inputs:
 - an upstream gradient `dL/dh_t`.
 
 Outputs:
-- `dL/dx_t`, `dL/dh_{t-1}`, and parameter gradients `(dL/dW, dL/db)`.
+- an `RNNCellGradients` record with `dL/dx_t`, `dL/dh_{t-1}`, and the parameter gradients.
 -/
 def rnnCellBackwardSpec {inputSize hiddenSize : Nat}
   (rnn : RNNSpec α inputSize hiddenSize)
   (input : Tensor α [inputSize])
-  (prev_hidden : Tensor α [hiddenSize])
+  (prevHidden : Tensor α [hiddenSize])
   (hidden : Tensor α [hiddenSize])
-  (grad_hidden : Tensor α [hiddenSize]) :
-  (Tensor α [inputSize] × Tensor α [hiddenSize] ×
-    Tensor α [hiddenSize, inputSize + hiddenSize] × Tensor α [hiddenSize]) :=
-  let concat := concatAxisSpec .scalar input prev_hidden
+  (gradHidden : Tensor α [hiddenSize]) :
+  RNNCellGradients α inputSize hiddenSize :=
+  let concat := concatAxisSpec .scalar input prevHidden
 
   -- tanh'(z) = 1 - tanh(z)^2, and tanh(z) = hidden
-  let tanh_deriv := subSpec (fill 1 (.dim hiddenSize .scalar)) (mulSpec hidden hidden)
-  let grad_preact := mulSpec grad_hidden tanh_deriv
+  let tanhDeriv := subSpec (Tensor.full (.dim hiddenSize .scalar) 1) (mulSpec hidden hidden)
+  let gradPreact := mulSpec gradHidden tanhDeriv
 
-  let grad_weights := outerProductSpec grad_preact concat
-  let grad_bias := grad_preact
+  let gradWeights := outerProductSpec gradPreact concat
+  let gradBias := gradPreact
 
-  -- dConcat = grad_preactᵀ * W  (shape: inputSize + hiddenSize)
-  let grad_concat := vecMatMulSpec grad_preact rnn.weights
-  let grad_input := sliceRangeSpec grad_concat 0 inputSize (by simp)
-  let grad_prev_hidden := sliceRangeSpec grad_concat inputSize hiddenSize (by simp)
+  -- dConcat = gradPreactᵀ * W  (shape: inputSize + hiddenSize)
+  let gradConcat := vecMatMulSpec gradPreact rnn.weights
+  let gradInput := sliceRangeSpec gradConcat 0 inputSize (by simp)
+  let gradPrevHidden := sliceRangeSpec gradConcat inputSize hiddenSize (by simp)
 
-  (grad_input, grad_prev_hidden, grad_weights, grad_bias)
+  { parameters := { weightGradient := gradWeights, biasGradient := gradBias }
+    input := gradInput
+    previousHidden := gradPrevHidden }
 
 -- RNN sequence forward pass: processes a sequence of inputs
 /--
@@ -141,9 +196,9 @@ Returns the sequence of hidden states `[h_0, ..., h_{seqLen-1}]`.
 def rnnSequenceSpec {seqLen inputSize hiddenSize : Nat}
   (rnn : RNNSpec α inputSize hiddenSize)
   (inputs : Tensor α [seqLen, inputSize])
-  (initial_hidden : Tensor α [hiddenSize]) :
+  (initialHidden : Tensor α [hiddenSize]) :
   Tensor α [seqLen, hiddenSize] :=
-  let (_, outputs) := Sequence.mapAccum seqLen initial_hidden fun i previous =>
+  let (_, outputs) := Sequence.mapAccum seqLen initialHidden fun i previous =>
     let hidden := rnnCellSpec rnn (get inputs i) previous
     (hidden, hidden)
   Tensor.dim outputs.getScalar
@@ -152,49 +207,47 @@ def rnnSequenceSpec {seqLen inputSize hiddenSize : Nat}
 def rnnBatchedSpec {batchSize seqLen inputSize hiddenSize : Nat}
   (rnn : RNNSpec α inputSize hiddenSize)
   (inputs : Tensor α [batchSize, seqLen, inputSize])
-  (initial_hidden : Tensor α [batchSize, hiddenSize]) :
+  (initialHidden : Tensor α [batchSize, hiddenSize]) :
   Tensor α [batchSize, seqLen, hiddenSize] :=
-  match inputs, initial_hidden with
-  | Tensor.dim batch_inputs, Tensor.dim batch_hidden =>
-    Tensor.dim (fun b =>
-      rnnSequenceSpec rnn (batch_inputs b) (batch_hidden b))
+  Tensor.dim (fun b =>
+    rnnSequenceSpec rnn (Tensor.unstack inputs b) (Tensor.unstack initialHidden b))
 
 /--
 Gradient w.r.t. weights from a full unroll, given per-step preactivation gradients.
 
 This helper is for analyses that already have preactivation gradients. It assumes:
 - the initial hidden state is `0`, and
-- `grad_outputs[t]` is already `dL/dz_t` (preactivation gradient).
+- `gradOutputs[t]` is already `dL/dz_t` (preactivation gradient).
 
 For end-to-end BPTT from `dL/dh_t`, prefer `rnnSequenceBackwardSpec`.
 -/
 def rnnWeightsDerivSpec {seqLen inputSize hiddenSize : Nat}
   (inputs : Tensor α [seqLen, inputSize])
   (hiddens : Tensor α [seqLen, hiddenSize])
-  (grad_outputs : Tensor α [seqLen, hiddenSize]) :
+  (gradOutputs : Tensor α [seqLen, hiddenSize]) :
   Tensor α [hiddenSize, inputSize + hiddenSize] :=
   -- Assumes initial hidden state is 0 (matches the default module wrappers).
-  -- Assumes `grad_outputs` is the preactivation gradient at each timestep.
+  -- Assumes `gradOutputs` is the preactivation gradient at each timestep.
   -- For full BPTT from post-activation gradients, use `rnnSequenceBackwardSpec`.
   let rec accumulate_grads (t : Nat) (acc : Tensor α [hiddenSize, inputSize + hiddenSize]) :
       Tensor α [hiddenSize, inputSize + hiddenSize] :=
     if h : t < seqLen then
-      let input_t := get inputs ⟨t, h⟩
-      let hidden_prev :=
+      let inputT := get inputs ⟨t, h⟩
+      let hiddenPrev :=
         if ht : t > 0 then
           have h_pred : t - 1 < t := by
             simpa [Nat.pred_eq_sub_one] using Nat.pred_lt (Nat.ne_of_gt ht)
           have h_t' : t - 1 < seqLen := lt_trans h_pred h
           get hiddens ⟨t - 1, h_t'⟩
         else
-          fill 0 (.dim hiddenSize .scalar)
-      let grad_preact_t := get grad_outputs ⟨t, h⟩
-      let concat_t := concatAxisSpec .scalar input_t hidden_prev
-      let grad_w_t := outerProductSpec grad_preact_t concat_t
-      accumulate_grads (t + 1) (addSpec acc grad_w_t)
+          Tensor.full (.dim hiddenSize .scalar) 0
+      let gradPreactT := get gradOutputs ⟨t, h⟩
+      let concatT := concatAxisSpec .scalar inputT hiddenPrev
+      let gradWT := outerProductSpec gradPreactT concatT
+      accumulate_grads (t + 1) (addSpec acc gradWT)
     else
       acc
-  accumulate_grads 0 (fill 0 (.dim hiddenSize (.dim (inputSize + hiddenSize) .scalar)))
+  accumulate_grads 0 (Tensor.full (.dim hiddenSize (.dim (inputSize + hiddenSize) .scalar)) 0)
 
 /--
 Gradient w.r.t. bias from per-step preactivation gradients.
@@ -202,12 +255,12 @@ Gradient w.r.t. bias from per-step preactivation gradients.
 This is `sum_t dL/dz_t` over the sequence dimension.
 -/
 def rnnBiasDerivSpec {seqLen hiddenSize : Nat}
-  (grad_outputs : Tensor α [seqLen, hiddenSize])
+  (gradOutputs : Tensor α [seqLen, hiddenSize])
   (h : seqLen ≠ 0) :
   Tensor α [hiddenSize] :=
-  -- Assumes `grad_outputs` is already the preactivation gradient.
+  -- Assumes `gradOutputs` is already the preactivation gradient.
   -- For full RNN backprop, prefer `rnnSequenceBackwardSpec`.
-  reduceSum 0 grad_outputs (Shape.hasNonemptyAxisZeroOfNe h).proof
+  reduceSum 0 gradOutputs (Shape.hasNonemptyAxisZeroOfNe h).proof
 
 /--
 Full BPTT backward pass through an RNN sequence.
@@ -246,32 +299,27 @@ Backprop through time (reverse):
 
 At each time step we combine two sources of gradient for `h_t`:
 
-- the gradient coming from the loss that touches `h_t` directly (`grad_hiddens[t]`),
+- the gradient coming from the loss that touches `h_t` directly (`gradHiddens[t]`),
 - plus the gradient flowing "from the future" through the recurrence (`dHidden_next`).
 
-Then we push `total_grad` through the single-step VJP (`rnn_cell_backward_spec`), producing:
+Then we push `total_grad` through the single-step VJP (`rnnCellBackwardSpec`), producing:
 
 - `dInput_t` and `dHidden_prev`,
-- and parameter gradients `dW_t`, `db_t` which are accumulated across time.
+- and parameter gradients which are accumulated across time.
 -/
 
 def rnnSequenceBackwardSpec {seqLen inputSize hiddenSize : Nat}
   (rnn : RNNSpec α inputSize hiddenSize)
   (inputs : Tensor α [seqLen, inputSize])
-  (initial_hidden : Tensor α [hiddenSize])
+  (initialHidden : Tensor α [hiddenSize])
   (hiddens : Tensor α [seqLen, hiddenSize])
-  (grad_hiddens : Tensor α [seqLen, hiddenSize]) :
-  ( Tensor α [hiddenSize, inputSize + hiddenSize] ×  -- dW
-    Tensor α [hiddenSize] ×                            -- db
-    Tensor α [seqLen, inputSize] ×                         -- dInputs
-    Tensor α [hiddenSize] ) :=                          -- dInitialHidden
+  (gradHiddens : Tensor α [seqLen, hiddenSize]) :
+  RNNSequenceGradients α seqLen inputSize hiddenSize :=
 
-  let initial :=
-    (fill 0 (.dim hiddenSize .scalar),
-      fill 0 (.dim hiddenSize (.dim (inputSize + hiddenSize) .scalar)),
-      fill 0 (.dim hiddenSize .scalar))
+  let initial : Tensor α [hiddenSize] × RNNParameterGradients α inputSize hiddenSize :=
+    (Tensor.full ([hiddenSize]) 0, RNNParameterGradients.zero)
   let (result, dInputs) := Sequence.mapAccumRight seqLen initial fun index state =>
-    let (dHiddenNext, accumulatedWeights, accumulatedBias) := state
+    let (dHiddenNext, accumulated) := state
     let input := get inputs index
     let hidden := get hiddens index
     let previous :=
@@ -279,12 +327,13 @@ def rnnSequenceBackwardSpec {seqLen inputSize hiddenSize : Nat}
         have hp : index.val - 1 < seqLen := by grind
         get hiddens ⟨index.val - 1, hp⟩
       else
-        initial_hidden
-    let totalGradient := addSpec (get grad_hiddens index) dHiddenNext
-    let (dInput, dHidden, dWeights, dBias) :=
-      rnnCellBackwardSpec rnn input previous hidden totalGradient
-    ((dHidden, addSpec accumulatedWeights dWeights, addSpec accumulatedBias dBias), dInput)
-  let (dInitialHidden, dWeights, dBias) := result
-  (dWeights, dBias, Tensor.dim dInputs.getScalar, dInitialHidden)
+        initialHidden
+    let totalGradient := addSpec (get gradHiddens index) dHiddenNext
+    let step := rnnCellBackwardSpec rnn input previous hidden totalGradient
+    ((step.previousHidden, accumulated.add step.parameters), step.input)
+  let (dInitialHidden, parameterGradients) := result
+  { parameters := parameterGradients
+    inputs := Tensor.dim dInputs.getScalar
+    initialHidden := dInitialHidden }
 
 end Spec

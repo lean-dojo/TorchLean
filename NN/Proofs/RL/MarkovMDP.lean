@@ -6,9 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Real.Basic
-public import Mathlib.MeasureTheory.Integral.Bochner.Basic
-public import Mathlib.MeasureTheory.Measure.Typeclasses.Probability
 public import NN.Proofs.RL.FinsetSup
 public import NN.Spec.RL.MarkovMDP
 
@@ -37,7 +34,8 @@ References:
   http://incompleteideas.net/book/the-book-2nd.html
 - mathlib: `ProbabilityTheory.Kernel` and `MeasureTheory` integration lemmas such as
   `abs_integral_le_integral_abs` and `integral_mono`.
-  Docs entry point: https://leanprover-community.github.io/mathlib4_docs/Mathlib/Probability/Kernel/Basic.html
+  Docs entry point:
+  https://leanprover-community.github.io/mathlib4_docs/Mathlib/Probability/Kernel/Basic.html
 -/
 
 @[expose] public section
@@ -122,7 +120,7 @@ section MarkovMDP
 
 variable {S A : Type} [MeasurableSpace S] [MeasurableSpace A]
 
-private lemma integrable_of_abs_bdd
+private theorem integrable_of_abs_bdd
     {μ : Measure S} [IsFiniteMeasure μ]
     (values : ValueFunction S)
     (hMeas : Measurable values)
@@ -178,7 +176,8 @@ theorem expectedNextValue_abs_sub_le [Nonempty S]
             fun nextState =>
               abs_sub_le_valueSupDist (S := S) (values₁ := values₁) (values₂ := values₂)
                 hBddDiff nextState
-          refine integral_mono (μ := μ) hintAbs (integrable_const (μ := μ) (valueSupDist values₁ values₂)) ?_
+          refine integral_mono (μ := μ) hintAbs
+            (integrable_const (μ := μ) (valueSupDist values₁ values₂)) ?_
           intro nextState
           exact hbound nextState
     _ = valueSupDist values₁ values₂ := by
@@ -206,7 +205,8 @@ theorem actionValue_abs_sub_le [Nonempty S]
         have hx : 0 ≤ |values₁ (Classical.choice (inferInstance : Nonempty S)) -
             values₂ (Classical.choice (inferInstance : Nonempty S))| := abs_nonneg _
         have hxle : |values₁ (Classical.choice (inferInstance : Nonempty S)) -
-            values₂ (Classical.choice (inferInstance : Nonempty S))| ≤ valueSupDist values₁ values₂ := by
+            values₂ (Classical.choice (inferInstance : Nonempty S))|
+              ≤ valueSupDist values₁ values₂ := by
           simpa using abs_sub_le_valueSupDist (S := S) (values₁ := values₁) (values₂ := values₂)
             hBddDiff (Classical.choice (inferInstance : Nonempty S))
         exact hx.trans hxle)
@@ -217,7 +217,8 @@ theorem actionValue_abs_sub_le [Nonempty S]
     have hrewrite :
         actionValue mdp values₁ state action - actionValue mdp values₂ state action =
           mdp.discount *
-            (expectedNextValue mdp values₁ state action - expectedNextValue mdp values₂ state action) := by
+            (expectedNextValue mdp values₁ state action -
+              expectedNextValue mdp values₂ state action) := by
       simp [actionValue, discountedBackup, continueMask, hdone]
       ring
     rw [hrewrite]
@@ -294,12 +295,12 @@ theorem bellmanOptimality_abs_sub_le [Nonempty S]
   have hs1 :
       (Finset.univ : Finset A).sup' Finset.univ_nonempty f
         ≤ (Finset.univ : Finset A).sup' Finset.univ_nonempty g + bound := by
-    exact _root_.Proofs.RL.sup'_le_add_const
+    exact Proofs.RL.sup'_le_add_const
       (Finset.univ : Finset A) Finset.univ_nonempty f g bound hfg
   have hs2 :
       (Finset.univ : Finset A).sup' Finset.univ_nonempty g
         ≤ (Finset.univ : Finset A).sup' Finset.univ_nonempty f + bound := by
-    exact _root_.Proofs.RL.sup'_le_add_const
+    exact Proofs.RL.sup'_le_add_const
       (Finset.univ : Finset A) Finset.univ_nonempty g f bound hgf
   have habs :
       |(Finset.univ : Finset A).sup' Finset.univ_nonempty f -
@@ -371,7 +372,8 @@ theorem bellmanPolicy_fixedPoint_unique [Nonempty S]
   have hsub : valueSupDist v w - mdp.discount * valueSupDist v w ≤ 0 :=
     sub_nonpos.mpr hle
   have hmul : (1 - mdp.discount) * valueSupDist v w ≤ 0 := by
-    have : (1 - mdp.discount) * valueSupDist v w = valueSupDist v w - mdp.discount * valueSupDist v w := by
+    have : (1 - mdp.discount) * valueSupDist v w
+        = valueSupDist v w - mdp.discount * valueSupDist v w := by
       ring
     simpa [this] using hsub
 
@@ -424,7 +426,8 @@ theorem bellmanOptimality_fixedPoint_unique [Nonempty S]
   have hsub : valueSupDist v w - mdp.discount * valueSupDist v w ≤ 0 :=
     sub_nonpos.mpr hle
   have hmul : (1 - mdp.discount) * valueSupDist v w ≤ 0 := by
-    have : (1 - mdp.discount) * valueSupDist v w = valueSupDist v w - mdp.discount * valueSupDist v w := by
+    have : (1 - mdp.discount) * valueSupDist v w
+        = valueSupDist v w - mdp.discount * valueSupDist v w := by
       ring
     simpa [this] using hsub
 

@@ -11,10 +11,19 @@ project:
   license: MIT
 
 toolchain:
-  lean: "leanprover/lean4:v4.33.0"
+  lean: "leanprover/lean4:v4.34.0"
   package_manager: Lake
   primary_package_file: lakefile.lean
-  documentation_package: blueprint/lakefile.toml
+  documentation_package: home_page/blueprint/lakefile.toml
+
+numeric_dependency:
+  name: FloatLib
+  repository: "https://github.com/lean-dojo/FloatLib"
+  revision: "52ab504bfcd8e5395b29a4f64b617b401e5d16ac"
+  description: >
+    Shared floating-point formats, executable software arithmetic, rounding
+    theory, interval semantics, and native logical-model bridges. TorchLean
+    supplies tensor/model contexts and application-specific proof adapters.
 
 paper:
   title: "TorchLean: Formalizing Neural Networks in Lean"
@@ -36,12 +45,13 @@ scope:
     - Graph IR, graph denotations, and verified graph/spec bridges.
     - Executable autograd, optimizers, training loops, and model examples.
     - IEEE-style finite-precision semantics and floating-point bridge contracts.
+    - FloatLib configured binary scalars for tensor and model specifications.
     - Robustness, IBP/CROWN, spline, and certificate-checking workflows.
     - Native CPU/CUDA runtime entrypoints with documented FFI assumptions.
   excludes:
     - A proof of CUDA, cuBLAS, cuFFT, compiler, driver, or GPU hardware correctness.
     - A proof that external Python, Julia, PyTorch, Arb, or CROWN producers are correct.
-    - A claim that every runnable model-zoo command is fully verified end to end.
+    - A claim that every runnable model command is fully verified end to end.
 
 status:
   formalization_stage: active
@@ -50,7 +60,7 @@ status:
   notes:
     - The repository currently has no Lean `sorry` or `admit` declarations outside dependencies.
     - Native runtime and oracle boundaries are documented explicitly rather than hidden behind proof names.
-    - Public claims should be read together with TRUST_BOUNDARIES.md.
+    - Public claims should be read together with docs/TRUST_BOUNDARIES.md.
 
 build_and_validation:
   standard_build:
@@ -65,7 +75,7 @@ build_and_validation:
   non_cuda_build:
     command: "lake build -R -K cuda=false"
   documentation_build:
-    working_directory: blueprint
+    working_directory: home_page/blueprint
     command: "lake build"
   repository_checks:
     - "python3 scripts/checks/repo_lint.py"
@@ -104,30 +114,35 @@ main_components:
     description: >
       Executable autograd, training loops, PyTorch import/export, native CPU/CUDA
       entrypoints, and external-runtime boundaries.
+  numeric_integration:
+    files:
+      - NN/Core/Numeric
+      - NN/Spec/Core/FloatInstances.lean
+      - NN/Floats
+    description: >
+      FloatLib scalar contexts, binary32 certificate adapters, rounded-real
+      model specializations, and numerical contracts for differentiation.
+      Configured binary scalars use software arithmetic; the native CUDA
+      tensor representation has its own supported precisions.
   examples:
     files:
       - NN/Examples
     description: >
-      Quickstarts, model-zoo commands, interoperability demos, and verification examples.
+      Quickstarts, model commands, interoperability demos, and verification examples.
   manual:
     files:
-      - blueprint/TorchLeanBlueprint/Guide
+      - home_page/blueprint/TorchLeanBlueprint/Guide
     description: >
       Lean-native Verso guide for the public documentation site.
 
 trust_boundaries:
-  source_of_truth: TRUST_BOUNDARIES.md
-  lean_axioms:
-    - name: Runtime.Autograd.Cuda.instNonemptyBuffer
-      purpose: >
-        Provides the nonemptiness witness Lean needs for opaque extern
-        declarations returning the CUDA buffer type; real buffers still come
-        from explicit FFI constructors/copy operations.
+  source_of_truth: docs/TRUST_BOUNDARIES.md
+  lean_axioms: []
   opaque_runtime_declarations:
     description: >
       CUDA buffers, kernel entrypoints, external oracles, and selected executable
       wrappers are opaque Lean declarations. They are treated as trust boundaries
-      and audited through TRUST_BOUNDARIES.md and scripts/checks/repo_lint.py.
+      and audited through docs/TRUST_BOUNDARIES.md and scripts/checks/repo_lint.py.
   external_producers:
     - PyTorch import/export and training scripts
     - Julia spline or PINN certificate producers
@@ -146,7 +161,7 @@ references:
     - "https://lean-dojo.github.io/TorchLean/docs/"
   source_files:
     - README.md
-    - TRUST_BOUNDARIES.md
-    - AI_USAGE.md
-    - THIRD_PARTY_NOTICES.md
-    - CONTRIBUTING.md
+    - docs/TRUST_BOUNDARIES.md
+    - docs/AI_USAGE.md
+    - docs/THIRD_PARTY_NOTICES.md
+    - docs/CONTRIBUTING.md

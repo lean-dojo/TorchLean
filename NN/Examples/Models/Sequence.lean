@@ -23,18 +23,20 @@ Runnable sequence-model examples, organized by workflow.
 
 Main entrypoints:
 
-- `CharGpt` (`torchlean chargpt`): Karpathy-style char-level GPT on a single text file (Tiny Shakespeare).
-  This is the teaching path for character tokenization; keep it to a 1-step quick check.
-- `Gpt2` (`torchlean gpt2`): byte-level GPT-2-style causal Transformer with a small, local-friendly config.
-  Use this when you want to see masked self-attention + LayerNorm + FFN wiring, and a save/reload path
-  via `Gpt2Saved`. This is the compact GPT-style 10-step check target.
-- `TextGpt2` (`torchlean text_gpt2`): CUDA-only corpus trainer (byte-level by default, optional GPT-2 BPE).
-  This is the “serious” trainer interface for bigger text runs.
+- `CharGpt` (`torchlean chargpt`): Karpathy-style char-level GPT on a single text file (Tiny
+  Shakespeare). This is the teaching path for character tokenization, with separate smoke and
+  lecture presets.
+- `Gpt2` (`torchlean gpt2`): byte-level GPT-2-style causal Transformer with a small, local-friendly
+  config. Use this when you want to see masked self-attention + LayerNorm + FFN wiring, and a
+  save/reload path via `Gpt2Saved`.
+- `TextGpt2` (`torchlean text_gpt2`): CUDA-only bounded corpus trainer with byte-level or GPT-2 BPE
+  tokenization. Its BPE path projects observed token IDs into a local output vocabulary.
 - `Mamba` (`torchlean mamba`): compact text walkthrough for the Mamba-style model.
 
 Other sequence examples:
 
-- `Rnn` and `Lstm`: compact real-text recurrent training checks over the shared corpus-data boundary.
+- `Rnn` and `Lstm`: compact real-text recurrent training checks over the shared corpus-data
+  boundary.
 - `Transformer`: one-block encoder example for attention/norm/FFN wiring.
 - `GptAdder`: synthetic algorithmic curriculum (addition), runnable as `torchlean gpt_adder`.
 

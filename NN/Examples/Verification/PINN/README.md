@@ -21,20 +21,24 @@ Python producers live under `scripts/verification/pinn/`:
 - `import_burgers_shock_mat.py`: converts the external viscous Burgers `.mat` reference dataset to
   JSON.
 
-Useful commands:
+Check the bundled residual fixture first; no training is required:
 
 ```bash
-python3 scripts/verification/regenerate_assets.py --group pinn-small --run
-python3 scripts/verification/regenerate_assets.py --group pinn-train --run
 lake exe verify -- pinn-cert
-lake exe verify -- pinn-dataset-check
 ```
 
-The split is intentional. Python can train a PINN, compute candidate residual data, or import a
-Burgers dataset. Lean checks the exported certificate shape and the residual/data predicates that
-are represented in the artifact. Generated checkpoints and trained weight dumps should live in
-`_external/`, `checkpoints/`, `/tmp`, or another local output directory. The checked fixtures here
-stay small enough to review directly.
+This recomputes the fixture's solution and residual intervals at its stated sample points and
+compares the reported intervals. It does not establish that an arbitrary trained network solves
+the PDE everywhere. `pinn-dataset-check` is a separate containment diagnostic: read the counts,
+or pass `--strict` when missed points should make the command fail.
+
+The producer commands are for recreating data, not prerequisites for the bundled check:
+
+```bash
+python3 scripts/verification/pinn/export_pinn_cert.py
+python3 scripts/verification/pinn/train_pinn_1d.py --steps 25
+python3 scripts/verification/pinn/train_pinn_2d.py --steps 25
+```
 
 For Burgers-style examples, the PDE has the form
 

@@ -6,101 +6,71 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Tensor
-public import NN.Tensor.Pack
+public import NN.API.Arguments
 
 /-!
 # Supervised Samples
 
-Typed input-target samples built from the canonical tensor-pack representation.
+Typed input-target records used by datasets and trainers.
 
-Main declarations:
-- `TorchLean.Sample.*`: supervised `(x, y)` samples and minibatch wrappers.
-
-Input and target dimensions are ordinary `List Nat` values and remain visible in every operation.
-The implementation uses `TensorPack`, the heterogeneous tensor collection defined in
-`NN.Tensor.Pack`.
+Application code works with the named `input` and `target` fields. The runtime conversion to its
+heterogeneous graph-argument representation is confined to `Sample.Internal`.
 -/
 
 @[expose] public section
 
 namespace TorchLean.Sample
 
-/-- A supervised sample containing an input tensor and its target tensor. -/
-abbrev Supervised (α : Type) (inputShape targetShape : List Nat) :=
-  TorchLean.TensorPack α [inputShape, targetShape]
+/-- A supervised input-target sample with both shapes tracked statically. -/
+structure Supervised (α : Type) [TorchLean.Storage α]
+    (σ τ : Spec.Shape) where
+  /-- Model input. -/
+  input : Tensor α σ
+  /-- Expected model output. -/
+  target : Tensor α τ
+deriving Repr
 
-/-- A fixed-size minibatch whose input and target tensors have leading dimension `n`. -/
-abbrev Batch (α : Type) (n : Nat) (inputShape targetShape : List Nat) :=
-  Supervised α (n :: inputShape) (n :: targetShape)
+/-- A fixed-size minibatch whose tensors share the leading dimension `n`. -/
+abbrev Batch (α : Type) [TorchLean.Storage α]
+    (n : Nat) (σ τ : Spec.Shape) :=
+  Supervised α (σ.prependDim n) (τ.prependDim n)
 
-/-- Build a supervised sample `(x, y)` as a two-tensor pack. -/
-def mk {α : Type} {inputShape targetShape : List Nat}
-    (x : Tensor α inputShape) (y : Tensor α targetShape) :
-    Supervised α inputShape targetShape :=
-  .cons x (.cons y .nil)
+/-- Map the input tensor, optionally changing its shape. -/
+def mapInput {α : Type} [TorchLean.Storage α]
+    {σ σ' τ : Spec.Shape}
+    (f : Tensor α σ → Tensor α σ')
+    (sample : Supervised α σ τ) :
+    Supervised α σ' τ :=
+  { input := f sample.input, target := sample.target }
 
-/-- Build a minibatch from input and target tensors sharing leading dimension `n`. -/
-def batch {α : Type} {n : Nat} {inputShape targetShape : List Nat}
-    (x : Tensor α (n :: inputShape)) (y : Tensor α (n :: targetShape)) :
-    Batch α n inputShape targetShape :=
-  mk x y
+/-- Map the target tensor, optionally changing its shape. -/
+def mapTarget {α : Type} [TorchLean.Storage α]
+    {σ τ τ' : Spec.Shape}
+    (f : Tensor α τ → Tensor α τ')
+    (sample : Supervised α σ τ) :
+    Supervised α σ τ' :=
+  { input := sample.input, target := f sample.target }
 
-/-- Extract the input tensor `x` from a supervised sample. -/
-def x {α : Type} {inputShape targetShape : List Nat}
-    (s : Supervised α inputShape targetShape) : Tensor α inputShape :=
-  TorchLean.TensorPack.get s ⟨0, by simp⟩
+/-- Map both tensors, optionally changing their element type and shapes. -/
+def map {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
+    {σ τ σ' τ' : Spec.Shape}
+    (mapInput : Tensor α σ → Tensor β σ')
+    (mapTarget : Tensor α τ → Tensor β τ')
+    (sample : Supervised α σ τ) :
+    Supervised β σ' τ' :=
+  { input := mapInput sample.input, target := mapTarget sample.target }
 
-/-- Extract the target tensor `y` from a supervised sample. -/
-def y {α : Type} {inputShape targetShape : List Nat}
-    (s : Supervised α inputShape targetShape) : Tensor α targetShape :=
-  TorchLean.TensorPack.get s ⟨1, by simp⟩
+namespace Internal
 
-/-- Unpack a supervised sample as the ordinary pair `(x, y)`. -/
-def toPair {α : Type} {inputShape targetShape : List Nat}
-    (s : Supervised α inputShape targetShape) :
-    Tensor α inputShape × Tensor α targetShape :=
-  (x s, y s)
+/-- Convert a supervised record to the generic argument representation used by graph runtimes. -/
+def arguments {α : Type} [TorchLean.Storage α]
+    {σ τ : Spec.Shape}
+    (sample : Supervised α σ τ) :
+    TorchLean.Arguments α [σ, τ] :=
+  TorchLean.Arguments.empty
+    |>.push sample.input
+    |>.push sample.target
 
-/-- `x` of a constructed supervised sample `mk x y` is `x`. -/
-@[simp] theorem x_mk {α : Type} {inputShape targetShape : List Nat}
-    (xT : Tensor α inputShape) (yT : Tensor α targetShape) :
-    x (mk (α := α) (inputShape := inputShape) (targetShape := targetShape) xT yT) = xT := by
-  rfl
-
-/-- `y` of a constructed supervised sample `mk x y` is `y`. -/
-@[simp] theorem y_mk {α : Type} {inputShape targetShape : List Nat}
-    (xT : Tensor α inputShape) (yT : Tensor α targetShape) :
-    y (mk (α := α) (inputShape := inputShape) (targetShape := targetShape) xT yT) = yT := by
-  rfl
-
-/-- Converting `mk x y` to a pair returns `(x, y)`. -/
-@[simp] theorem toPair_mk {α : Type} {inputShape targetShape : List Nat}
-    (xT : Tensor α inputShape) (yT : Tensor α targetShape) :
-    toPair (mk (α := α) (inputShape := inputShape) (targetShape := targetShape) xT yT) =
-      (xT, yT) := by
-  rfl
-
-/-- Map a function over the input tensor `x`, leaving the target `y` unchanged. -/
-def mapX {α : Type} {inputShape targetShape : List Nat}
-    (f : Tensor α inputShape → Tensor α inputShape)
-    (s : Supervised α inputShape targetShape) :
-    Supervised α inputShape targetShape :=
-  mk (f (x s)) (y s)
-
-/-- Map a function over the target tensor `y`, leaving the input `x` unchanged. -/
-def mapY {α : Type} {inputShape targetShape : List Nat}
-    (f : Tensor α targetShape → Tensor α targetShape)
-    (s : Supervised α inputShape targetShape) :
-    Supervised α inputShape targetShape :=
-  mk (x s) (f (y s))
-
-/-- Map functions over both `x` and `y` in a supervised sample. -/
-def mapXY {α : Type} {inputShape targetShape : List Nat}
-    (fx : Tensor α inputShape → Tensor α inputShape)
-    (fy : Tensor α targetShape → Tensor α targetShape)
-    (s : Supervised α inputShape targetShape) :
-    Supervised α inputShape targetShape :=
-  mk (fx (x s)) (fy (y s))
+end Internal
 
 end TorchLean.Sample

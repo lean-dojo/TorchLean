@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Tensor
 public import NN.Proofs
 
 /-!
@@ -34,23 +33,21 @@ therefore has type `Tensor Float [2]`. The commented shape mismatch below is the
 catches before runtime:
 
 ```lean
--- def badTensor : Tensor Float [3] := tensor! [1.0, 2.0]
+-- def badTensor : Tensor Float [3] := [1.0, 2.0]
 ```
 -/
 def twoTensor : Tensor Float [2] :=
-  tensor! [1.0, 2.0]
+  [1.0, 2.0]
 
 /-- ReLU fixes every nonnegative real number. -/
 theorem relu_eq_self_of_nonnegative (x : ℝ) (hx : 0 ≤ x) :
     Activation.Math.reluSpec x = x := by
-  unfold Activation.Math.reluSpec
-  exact max_eq_left hx
+  simpa only [Activation.Math.reluSpec_eq_max] using max_eq_left hx
 
 /-- ReLU clamps nonpositive real inputs to zero. -/
 theorem relu_eq_zero_of_nonpositive (x : ℝ) (hx : x ≤ 0) :
     Activation.Math.reluSpec x = 0 := by
-  unfold Activation.Math.reluSpec
-  exact max_eq_right hx
+  simpa only [Activation.Math.reluSpec_eq_max] using max_eq_right hx
 
 example : Activation.Math.reluSpec (3 : ℝ) = 3 := by
   exact relu_eq_self_of_nonnegative 3 (by norm_num)

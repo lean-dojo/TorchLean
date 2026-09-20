@@ -6,11 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.FDeriv.Params
-public import NN.Proofs.Autograd.Notation
-public import NN.Spec.Models.Mlp
-
 public import Mathlib.Analysis.InnerProductSpace.Calculus
+public import NN.Proofs.Autograd.FDeriv.Params
 
 /-!
 # MlpMse
@@ -46,8 +43,8 @@ Notes:
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec _root_.TorchLean
+open _root_.TorchLean _root_.TorchLean.Tensor
 open scoped BigOperators
 open scoped _root_.Autograd
 
@@ -69,7 +66,7 @@ def toMatE {m n : Nat} (W : Tensor ℝ [m, n]) : Mat m n :=
       Spec.get2 W i j
 
 /-- `toMatE` agrees with the coordinate-level view `tensorToMatrix` used by the FDeriv core. -/
-lemma toMatrix_toMatE {m n : Nat} (W : Tensor ℝ [m, n]) :
+theorem toMatrix_toMatE {m n : Nat} (W : Tensor ℝ [m, n]) :
     toMatrix (m := m) (n := n) (toMatE W) = tensorToMatrix (m := m) (n := n) W := by
   funext i j
   simp [toMatE, toMatrix, tensorToMatrix]
@@ -79,7 +76,7 @@ lemma toMatrix_toMatE {m n : Nat} (W : Tensor ℝ [m, n]) :
 -- ---------------------------------------------------------------------------
 
 /-- Coordinate formula for `reluDerivCLM`: it scales each coordinate by `relu'(xᵢ)`. -/
-lemma reluDerivCLM_apply {n : Nat} (x dx : Vec n) (i : Fin n) :
+theorem reluDerivCLM_apply {n : Nat} (x dx : Vec n) (i : Fin n) :
     (reluDerivCLM (n := n) x) dx i = dx i * Activation.Math.reluDerivSpec (x i) := by
   -- `reluDerivCLM` is implemented by transporting the pointwise derivative map through
   -- `EuclideanSpace.equiv`.
@@ -96,14 +93,14 @@ ReLU derivative map is self-adjoint w.r.t. the Euclidean inner product.
 
 This is because it is a diagonal scaling map on `ℝⁿ`.
 -/
-lemma reluDerivCLM_inner {n : Nat} (x dx δ : Vec n) :
+theorem reluDerivCLM_inner {n : Nat} (x dx δ : Vec n) :
     inner ℝ ((reluDerivCLM (n := n) x) dx) δ = inner ℝ dx ((reluDerivCLM (n := n) x) δ) := by
   classical
   -- Expand inner products into coordinate sums and commute scalars.
   simp [inner_eq_sum_mul, reluDerivCLM_apply, mul_assoc, mul_left_comm, mul_comm]
 
 /-- The adjoint of `reluDerivCLM` equals itself (self-adjoint operator). -/
-lemma reluDerivCLM_adjoint_apply {n : Nat} (x δ : Vec n) :
+theorem reluDerivCLM_adjoint_apply {n : Nat} (x δ : Vec n) :
     (reluDerivCLM (n := n) x).adjoint δ = (reluDerivCLM (n := n) x) δ := by
   classical
   let A := reluDerivCLM (n := n) x
@@ -139,7 +136,7 @@ The spec-level “input derivative” for a linear layer agrees with the Euclide
 In words: the tensor expression for `∂(W x)/∂x` applied to an upstream `δ` is `Wᵀ δ`, and this is
 exactly the adjoint of the CLM `x ↦ W x`.
 -/
-lemma getScalarE_linear_input_deriv_spec_eq_adjoint
+theorem getScalarE_linear_input_deriv_spec_eq_adjoint
     {inDim outDim : Nat}
     (W : Tensor ℝ [outDim, inDim])
     (δ : Tensor ℝ [outDim]) :
@@ -210,8 +207,8 @@ def affineMat {inDim outDim : Nat} (W : Mat outDim inDim) (b : Vec outDim) : Vec
 /--
 2-layer MLP in Euclidean `Vec` form, parameterized by `Mat` weights and `Vec` biases.
 
-This is the same computation as `NN.Proofs.Autograd.FDeriv.Core`’s `mlpVec`, but set up for parameter-gradient
-proofs where the parameter space is a Hilbert space.
+This is the same computation as `NN.Proofs.Autograd.FDeriv.Core`’s `mlpVec`, but set up for
+parameter-gradient proofs where the parameter space is a Hilbert space.
 -/
 def mlpVecMat {inDim hidDim outDim : Nat}
     (W1 : Mat hidDim inDim) (b1 : Vec hidDim)
@@ -238,7 +235,7 @@ def mseGrad {n : Nat} (y t : Vec n) : Vec n :=
   (2 / (n : ℝ)) • (y - t)
 
 /-- Fréchet derivative of MSE, packaged as a continuous linear map `Vec n →L ℝ`. -/
-lemma hasFDerivAt_mse {n : Nat} (t y : Vec n) :
+theorem hasFDerivAt_mse {n : Nat} (t y : Vec n) :
     HasFDerivAt (mse (n := n) t) ((2 / (n : ℝ)) • (innerSL ℝ (y - t))) y := by
   have hsub : HasFDerivAt (fun y : Vec n => y - t) (1 : Vec n →L[ℝ] Vec n) y := by
     change HasFDerivAt (fun y : Vec n => y - t) (ContinuousLinearMap.id ℝ (Vec n)) y
@@ -275,7 +272,7 @@ The VJP of MSE at `y` with upstream seed `1` equals the usual gradient `mseGrad 
 
 This is the scalar-loss specialization: for scalar loss `ℓ`, the gradient is `(fderiv ℓ)† 1`.
 -/
-lemma mseGrad_eq_adjoint_fderiv {n : Nat} (t y : Vec n) :
+theorem mseGrad_eq_adjoint_fderiv {n : Nat} (t y : Vec n) :
     VJP[mse (n := n) t, y] (1 : ℝ) = mseGrad (n := n) y t := by
   have hf : fderiv ℝ (mse (n := n) t) y = (2 / (n : ℝ)) • innerSL ℝ (y - t) := by
     simpa using (hasFDerivAt_mse (n := n) t y).fderiv
@@ -297,7 +294,7 @@ Convenience lemma: adjoint of the derivative of a scalar composition, applied to
 
 For scalar loss `g ∘ f`, this is the reverse-mode “chain rule” in adjoint form.
 -/
-lemma adjoint_fderiv_comp_apply_one
+theorem adjoint_fderiv_comp_apply_one
     {E F : Type} [NormedAddCommGroup E] [InnerProductSpace ℝ E] [CompleteSpace E]
     [NormedAddCommGroup F] [InnerProductSpace ℝ F] [CompleteSpace F]
     {f : E → F} {g : F → ℝ}
@@ -349,7 +346,7 @@ Fréchet derivative of the network output with respect to the second-layer weigh
 
 Informally: `∂y/∂W2` is the linear map `dW2 ↦ dW2 a1`.
 -/
-lemma hasFDerivAt_mlp_wrt_W2 :
+theorem hasFDerivAt_mlp_wrt_W2 :
     HasFDerivAt (fun W2 : Mat outDim hidDim => mlpVecMat (inDim := inDim) (hidDim := hidDim) (outDim
       := outDim) W1 b1 W2 b2 x)
       (matApplyLin (m := outDim) (n := hidDim) (a1 (inDim := inDim) (hidDim := hidDim) W1 b1 x)) W2
@@ -377,7 +374,7 @@ Closed-form gradient of scalar loss `mse t (mlpVecMat …)` with respect to `W2`
 
 Result: `∂L/∂W2 = (∂L/∂y) ⊗ a1`, i.e. outer product of the output gradient and hidden activation.
 -/
-lemma grad_W2_mse :
+theorem grad_W2_mse :
     (fderiv ℝ (fun W2 : Mat outDim hidDim =>
         mse (n := outDim) t (mlpVecMat (inDim := inDim) (hidDim := hidDim) (outDim := outDim) W1 b1
           W2 b2 x)) W2).adjoint
@@ -404,7 +401,7 @@ lemma grad_W2_mse :
     -- `fderiv (mse t) y = (2/outDim) • innerSL (y - t)`.
     have : fderiv ℝ (mse (n := outDim) t) y = (2 / (outDim : ℝ)) • innerSL ℝ (y - t) := by
       simpa using (hasFDerivAt_mse (n := outDim) t y).fderiv
-    simpa [Proofs.Autograd.vjp, Proofs.Autograd.jacobian, this] using
+    simpa [Proofs.Autograd.vjp, this] using
       (mseGrad_eq_adjoint_fderiv (n := outDim) t y)
   calc
     (fderiv ℝ (fun W2 => mse (n := outDim) t (f W2)) W2).adjoint (1 : ℝ)
@@ -428,7 +425,7 @@ Closed-form gradient of the scalar loss with respect to the second-layer bias `b
 
 Result: `∂L/∂b2 = ∂L/∂y`.
 -/
-lemma grad_b2_mse :
+theorem grad_b2_mse :
     (fderiv ℝ (fun b2 : Vec outDim =>
         mse (n := outDim) t (mlpVecMat (inDim := inDim) (hidDim := hidDim) (outDim := outDim) W1 b1
           W2 b2 x)) b2).adjoint
@@ -459,7 +456,7 @@ lemma grad_b2_mse :
     := by
     have : fderiv ℝ (mse (n := outDim) t) y = (2 / (outDim : ℝ)) • innerSL ℝ (y - t) := by
       simpa using (hasFDerivAt_mse (n := outDim) t y).fderiv
-    simpa [Proofs.Autograd.vjp, Proofs.Autograd.jacobian, this] using
+    simpa [Proofs.Autograd.vjp, this] using
       (mseGrad_eq_adjoint_fderiv (n := outDim) t y)
   calc
     (fderiv ℝ (fun b2 => mse (n := outDim) t (f b2)) b2).adjoint (1 : ℝ)
@@ -481,7 +478,7 @@ under the ReLU “no kinks” hypothesis.
 
 Informally: `∂y/∂b1 = W2 ∘ ReLU'(z1)`.
 -/
-lemma hasFDerivAt_mlp_wrt_b1 (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidDim) W1 b1
+theorem hasFDerivAt_mlp_wrt_b1 (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidDim) W1 b1
   x) i ≠ 0) :
     HasFDerivAt (fun b1 : Vec hidDim => mlpVecMat (inDim := inDim) (hidDim := hidDim) (outDim :=
       outDim) W1 b1 W2 b2 x)
@@ -534,7 +531,8 @@ lemma hasFDerivAt_mlp_wrt_b1 (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hid
 Closed-form gradient of the scalar loss with respect to the first-layer bias `b1`
 (under the ReLU “no kinks” hypothesis).
 -/
-lemma grad_b1_mse (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidDim) W1 b1 x) i ≠ 0) :
+theorem grad_b1_mse
+    (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidDim) W1 b1 x) i ≠ 0) :
     (fderiv ℝ (fun b1 : Vec hidDim =>
         mse (n := outDim) t (mlpVecMat (inDim := inDim) (hidDim := hidDim) (outDim := outDim) W1 b1
           W2 b2 x)) b1).adjoint
@@ -559,7 +557,7 @@ lemma grad_b1_mse (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidD
     := by
     have : fderiv ℝ (mse (n := outDim) t) y = (2 / (outDim : ℝ)) • innerSL ℝ (y - t) := by
       simpa using (hasFDerivAt_mse (n := outDim) t y).fderiv
-    simpa [Proofs.Autograd.vjp, Proofs.Autograd.jacobian, this] using
+    simpa [Proofs.Autograd.vjp, this] using
       (mseGrad_eq_adjoint_fderiv (n := outDim) t y)
   calc
     (fderiv ℝ (fun b1 => mse (n := outDim) t (f b1)) b1).adjoint (1 : ℝ)
@@ -586,8 +584,8 @@ under the ReLU “no kinks” hypothesis.
 
 Informally: `∂y/∂x = W2 ∘ ReLU'(z1) ∘ W1`.
 -/
-lemma hasFDerivAt_mlp_wrt_x (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidDim) W1 b1 x)
-  i ≠ 0) :
+theorem hasFDerivAt_mlp_wrt_x
+    (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidDim) W1 b1 x) i ≠ 0) :
     HasFDerivAt (mlpVecMat (inDim := inDim) (hidDim := hidDim) (outDim := outDim) W1 b1 W2 b2)
       ((matCLM (m := outDim) (n := hidDim) (toMatrix W2)).comp
         ((reluDerivCLM (n := hidDim) (z1 (inDim := inDim) (hidDim := hidDim) W1 b1 x)).comp
@@ -625,7 +623,7 @@ lemma hasFDerivAt_mlp_wrt_x (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidD
 Closed-form gradient of the scalar loss with respect to the input `x`,
 under the ReLU “no kinks” hypothesis.
 -/
-lemma grad_x_mse (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidDim) W1 b1 x) i ≠ 0) :
+theorem grad_x_mse (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidDim) W1 b1 x) i ≠ 0) :
     (fderiv ℝ (fun x : Vec inDim =>
         mse (n := outDim) t (mlpVecMat (inDim := inDim) (hidDim := hidDim) (outDim := outDim) W1 b1
           W2 b2 x)) x).adjoint
@@ -652,7 +650,7 @@ lemma grad_x_mse (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidDi
     := by
     have : fderiv ℝ (mse (n := outDim) t) y = (2 / (outDim : ℝ)) • innerSL ℝ (y - t) := by
       simpa using (hasFDerivAt_mse (n := outDim) t y).fderiv
-    simpa [Proofs.Autograd.vjp, Proofs.Autograd.jacobian, this] using
+    simpa [Proofs.Autograd.vjp, this] using
       (mseGrad_eq_adjoint_fderiv (n := outDim) t y)
   calc
     (fderiv ℝ (fun x => mse (n := outDim) t (f x)) x).adjoint (1 : ℝ)
@@ -678,7 +676,7 @@ under the ReLU “no kinks” hypothesis.
 The derivative is linear in `W1` through the slice `dW1 ↦ dW1 x`, then propagated through
 `ReLU'` and `W2`.
 -/
-lemma hasFDerivAt_mlp_wrt_W1 (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidDim) W1 b1
+theorem hasFDerivAt_mlp_wrt_W1 (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidDim) W1 b1
   x) i ≠ 0) :
     HasFDerivAt (fun W1 : Mat hidDim inDim => mlpVecMat (inDim := inDim) (hidDim := hidDim) (outDim
       := outDim) W1 b1 W2 b2 x)
@@ -721,7 +719,8 @@ Closed-form gradient of the scalar loss with respect to `W1`
 
 Result has the expected “outer product” form with backpropagated hidden gradient and input `x`.
 -/
-lemma grad_W1_mse (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidDim) W1 b1 x) i ≠ 0) :
+theorem grad_W1_mse
+    (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidDim) W1 b1 x) i ≠ 0) :
     (fderiv ℝ (fun W1 : Mat hidDim inDim =>
         mse (n := outDim) t (mlpVecMat (inDim := inDim) (hidDim := hidDim) (outDim := outDim) W1 b1
           W2 b2 x)) W1).adjoint
@@ -749,7 +748,7 @@ lemma grad_W1_mse (hx : ∀ i : Fin hidDim, (z1 (inDim := inDim) (hidDim := hidD
     := by
     have : fderiv ℝ (mse (n := outDim) t) y = (2 / (outDim : ℝ)) • innerSL ℝ (y - t) := by
       simpa using (hasFDerivAt_mse (n := outDim) t y).fderiv
-    simpa [Proofs.Autograd.vjp, Proofs.Autograd.jacobian, this] using
+    simpa [Proofs.Autograd.vjp, this] using
       (mseGrad_eq_adjoint_fderiv (n := outDim) t y)
   calc
     (fderiv ℝ (fun W1 => mse (n := outDim) t (f W1)) W1).adjoint (1 : ℝ)

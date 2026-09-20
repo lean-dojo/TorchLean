@@ -6,9 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.Optimization.OptimizerLaws
-public import NN.Proofs.Tensor.Basic.FactorizationsOrthonormal
-public import NN.Proofs.Tensor.Basic.LinearAlgebra
+public import Mathlib.Analysis.SpecialFunctions.Pow.NNReal
+public import Mathlib.Data.Sym.Sym2.Init
+import Mathlib.Tactic.NormNum.GCD
+public import NN.Runtime.Optim.Optimizers
+public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
 
 /-!
 # Muon Orthogonalization Contracts
@@ -32,21 +34,21 @@ of these contracts, the direction used in the parameter update is certified at t
 
 namespace Optim
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Muon
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- A matrix-shaped TorchLean tensor. -/
-abbrev MatrixTensor (α : Type) (m n : Nat) :=
+abbrev MatrixTensor (α : Type) [TorchLean.Storage α] (m n : Nat) :=
   Tensor α [m, n]
 
 /-- The column Gram matrix $Q^\mathsf{T}Q$. -/
 def columnGram {m n : Nat} (Q : MatrixTensor α m n) :
     MatrixTensor α n n :=
-  matMulSpec (Spec.Tensor.swapAdjacentAxes Q 0) Q
+  matMulSpec (TorchLean.Tensor.swapAdjacentAxes Q 0) Q
 
 /-- Exact column orthogonality for a matrix-shaped update direction. -/
 def HasExactColumnGram {m n : Nat} (Q : MatrixTensor α m n) : Prop :=
@@ -74,7 +76,13 @@ def HasApproxColumnGram {m n : Nat} (eps : α) (Q : MatrixTensor α m n) : Prop 
   ∀ i : Fin n, ∀ j : Fin n,
     MathFunctions.abs (get2 (columnGramResidual Q) i j) ≤ eps
 
-/-- A backend approximately orthogonalizes one specified momentum buffer. -/
+/--
+A backend approximately orthogonalizes one specified momentum buffer.
+
+This is also the lightest sound checker boundary we can put on an approximate backend: after it
+returns a direction, prove or check that the direction's Gram residual is bounded by
+$\varepsilon$, and nothing more. `residualCheckedApproxOrthogonalizer` uses it exactly that way.
+-/
 def ApproxOrthogonalizesBuffer {m n : Nat} (eps : α)
     (orthogonalizer : Orthogonalizer α (.dim m (.dim n .scalar)))
     (buffer : MatrixTensor α m n) : Prop :=
@@ -101,10 +109,11 @@ def ApproxMatrixOrthogonalizer {m n : Nat} (eps : α)
 /--
 Unconditionally certified exact Muon backend.
 
-Use this when the orthogonalizer is known to return an exact $Q^\mathsf{T}Q=I$ direction for every buffer
-of a fixed matrix shape.
+Use this when the orthogonalizer is known to return an exact $Q^\mathsf{T}Q=I$ direction for every
+buffer of a fixed matrix shape.
 -/
-structure ExactCertifiedOrthogonalizer (α : Type) [Context α] (m n : Nat) where
+structure ExactCertifiedOrthogonalizer (α : Type) [TorchLean.Storage α] [Context α]
+    (m n : Nat) where
   /-- Executable orthogonalizer used by Muon. -/
   orthogonalizer : Orthogonalizer α (.dim m (.dim n .scalar))
   /-- The backend returns an exactly orthogonalized direction for every buffer. -/
@@ -116,7 +125,8 @@ Unconditionally certified approximate Muon backend.
 Use this when the orthogonalizer is known to return a direction whose Gram residual is bounded by
 $\varepsilon$ for every buffer of a fixed matrix shape.
 -/
-structure ApproxCertifiedOrthogonalizer (α : Type) [Context α] (m n : Nat) (eps : α) where
+structure ApproxCertifiedOrthogonalizer (α : Type) [TorchLean.Storage α] [Context α]
+    (m n : Nat) (eps : α) where
   /-- Executable orthogonalizer used by Muon. -/
   orthogonalizer : Orthogonalizer α (.dim m (.dim n .scalar))
   /-- The backend returns an approximately orthogonalized direction for every buffer. -/
@@ -129,7 +139,8 @@ This is the practical interface for algorithms whose correctness has preconditio
 being orthogonalized. The QR backend below is the first instance: its success predicate is positive
 executable `R` pivots.
 -/
-structure CheckedExactOrthogonalizer (α : Type) [Context α] (m n : Nat) where
+structure CheckedExactOrthogonalizer (α : Type) [TorchLean.Storage α] [Context α]
+    (m n : Nat) where
   /-- Executable orthogonalizer used by Muon. -/
   orthogonalizer : Orthogonalizer α (.dim m (.dim n .scalar))
   /-- Backend-specific success/certification condition for an input buffer. -/
@@ -145,7 +156,8 @@ This is the intended proof shape for Newton-Schulz/CUDA-style backends: the kern
 approximate, but the exported proof or checker must establish `Success buffer`, which then gives the
 entrywise $Q^\mathsf{T}Q-I$ bound.
 -/
-structure CheckedApproxOrthogonalizer (α : Type) [Context α] (m n : Nat) (eps : α) where
+structure CheckedApproxOrthogonalizer (α : Type) [TorchLean.Storage α] [Context α]
+    (m n : Nat) (eps : α) where
   /-- Executable orthogonalizer used by Muon. -/
   orthogonalizer : Orthogonalizer α (.dim m (.dim n .scalar))
   /-- Backend-specific success/certification condition for an input buffer. -/

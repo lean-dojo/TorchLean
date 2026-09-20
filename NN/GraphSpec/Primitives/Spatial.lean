@@ -6,8 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.GraphSpec.Core
-import Mathlib.Algebra.Order.Algebra
+public import NN.GraphSpec.Chain.Syntax
+public import NN.Runtime.Autograd.Model.Layers.Activations
 
 /-!
 # GraphSpec Spatial Primitives
@@ -69,8 +69,8 @@ interface for model parameters.
 namespace NN
 namespace GraphSpec
 
-open _root_.Spec
-open Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open TorchLean.Tensor
 open _root_.TorchLean.Tensor
 
 namespace Primitive
@@ -89,31 +89,28 @@ The output has shape `(outChannels, convOutSpatial spatial kernel stride padding
  -/
 def conv
     {d : Nat} (inC outC : Nat)
-    (kernel stride padding spatial : Spec.Tensor Nat [d])
-    {hInC : inC ≠ 0}
-    {hKernel : ∀ i : Fin d, kernel.getScalar i ≠ 0}
-    {_hStride : ∀ i : Fin d, stride.getScalar i ≠ 0} :
+    (kernel stride padding spatial : TorchLean.Tensor Nat [d]) :
     Primitive
-      [Shape.ofList (outC :: inC :: kernel.toList), [outC]]
-      (Shape.ofList (inC :: spatial.toList))
-      (Shape.ofList (outC :: (Spec.convOutSpatial spatial kernel stride padding).toList)) :=
+      [Shape.ofList (outC :: inC :: (Tensor.to kernel (List Nat))), [outC]]
+      (Shape.ofList (inC :: (Tensor.to spatial (List Nat))))
+      (Shape.ofList
+        (outC :: (Tensor.to (Spec.convOutSpatial spatial kernel stride padding) (List Nat)))) :=
   { name := s!"conv(rank={d},in={inC},out={outC})"
-    specFwd := fun {α} _ctx params x =>
+    specFwd := fun {α} _storage _ctx params x =>
       match params with
       | .cons k (.cons b .nil) =>
           let layer : Spec.ConvSpec d inC outC kernel stride padding α :=
             { kernel := k, bias := b }
           Spec.convSpec (α := α) (inSpatial := spatial) layer x
-    program := fun {α} _ctx _deq =>
+    program := fun {α} _storage _ctx =>
       fun {m} _ _ =>
         fun k b x =>
           _root_.Runtime.Autograd.Torch.conv (m := m) (α := α)
             (d := d) (inC := inC) (outC := outC)
             (kernel := kernel) (stride := stride) (padding := padding) (inSpatial := spatial)
-            (hInC := hInC) (hKernel := hKernel)
             k b x
     toLayerM? := some (fun i =>
-      let kernelShape := Shape.ofList (outC :: inC :: kernel.toList)
+      let kernelShape := Shape.ofList (outC :: inC :: (Tensor.to kernel (List Nat)))
       let biasShape : Shape := [outC]
       let kernelInit : Tensor Float kernelShape :=
         Runtime.Autograd.Torch.Init.tensor (s := kernelShape)
@@ -124,15 +121,20 @@ def conv
           stateShapes := [kernelShape, biasShape]
           initState := .cons kernelInit (.cons biasInit .nil)
           runtimeInit := some
-            (.cons (Runtime.Autograd.TorchLean.Module.RuntimeInit.FloatInit.ofScheme
+            (.cons (Runtime.Autograd.Model.Module.RuntimeInit.FloatInit.ofScheme
               (.uniform (-0.1) 0.1) (2 * i)) (.cons .zeros .nil))
           requiresGrad := #[true, true]
+          validateConfig := do
+            if inC = 0 then
+              throw "Conv: in_channels must be positive"
+            if outC = 0 then
+              throw "Conv: out_channels must be positive"
           forward := fun _ {α} _ _ =>
             fun {m} _ _ => fun k b x =>
               _root_.Runtime.Autograd.Torch.conv (m := m) (α := α)
                 (d := d) (inC := inC) (outC := outC)
                 (kernel := kernel) (stride := stride) (padding := padding) (inSpatial := spatial)
-                (hInC := hInC) (hKernel := hKernel) k b x }
+                k b x }
       , by rfl ⟩)
     countsAsLayer := true
   }
@@ -146,24 +148,24 @@ Each spatial axis uses the corresponding kernel, stride, and padding entry.
  -/
 def maxPool
     {d : Nat} (channels : Nat)
-    (kernel stride padding spatial : Spec.Tensor Nat [d])
+    (kernel stride padding spatial : TorchLean.Tensor Nat [d])
     {hKernel : ∀ i : Fin d, kernel.getScalar i ≠ 0}
     {hStride : ∀ i : Fin d, stride.getScalar i ≠ 0} :
     Primitive []
-      (Shape.ofList (channels :: spatial.toList))
+      (Shape.ofList (channels :: (Tensor.to spatial (List Nat))))
       (Shape.ofList (channels ::
-        (Spec.poolOutSpatialPad spatial kernel stride padding).toList)) :=
+        (Tensor.to (Spec.poolOutSpatialPad spatial kernel stride padding) (List Nat)))) :=
   { name := s!"max_pool(rank={d})"
-    specFwd := fun {α} _ctx _params x =>
+    specFwd := fun {α} _storage _ctx _params x =>
       let layer : Spec.MaxPoolSpec d kernel stride padding hKernel hStride := {}
       Spec.maxPoolSpec (layer := layer) x
-    program := fun {α} _ctx _deq =>
+    program := fun {α} _storage _ctx =>
       fun {m} _ _ =>
         fun x =>
           _root_.Runtime.Autograd.Torch.maxPool (m := m) (α := α)
             (d := d) (C := channels) (inSpatial := spatial)
             (kernel := kernel) (stride := stride) (padding := padding)
-            (hKernel := hKernel) x
+            x
     toLayerM? := some (fun _i =>
       ⟨ { kind := s!"MaxPool(rank={d})"
           stateShapes := []
@@ -174,7 +176,7 @@ def maxPool
               _root_.Runtime.Autograd.Torch.maxPool (m := m) (α := α)
                 (d := d) (C := channels) (inSpatial := spatial)
                 (kernel := kernel) (stride := stride) (padding := padding)
-                (hKernel := hKernel) x }
+                x }
       , by rfl ⟩)
     countsAsLayer := false
   }
@@ -192,12 +194,12 @@ PyTorch analogy: `torch.flatten(x)`.
  -/
 def flatten (s : Shape) : Primitive [] s [Spec.Shape.size s] :=
   { name := "flatten"
-    specFwd := fun {α} _ctx _params x =>
-      Spec.Tensor.flattenSpec (α := α) (s := s) x
-    program := fun {α} _ctx _deq =>
+    specFwd := fun {α} _storage _ctx _params x =>
+      TorchLean.Tensor.flattenSpec (α := α) (shape := s) x
+    program := fun {α} _storage _ctx =>
       fun {m} _ _ =>
-        fun x => Runtime.Autograd.TorchLean.flatten (m := m) (α := α) (s := s) x
-    toLayerM? := some (fun _i => ⟨Runtime.Autograd.TorchLean.NN.flatten (s := s), by rfl⟩)
+        fun x => Runtime.Autograd.Model.flatten (m := m) (α := α) (s := s) x
+    toLayerM? := some (fun _i => ⟨Runtime.Autograd.Model.Layers.flatten (s := s), by rfl⟩)
     countsAsLayer := false
   }
 
@@ -212,12 +214,12 @@ def batchNorm (channels : Nat) (spatial : Shape)
     Primitive [[channels], [channels]]
       (.dim channels spatial) (.dim channels spatial) :=
   { name := s!"batch_norm(channels={channels},rank={Shape.rank spatial})"
-    specFwd := fun {α} _ctx params x =>
+    specFwd := fun {α} _storage _ctx params x =>
       match params with
       | .cons gamma (.cons beta .nil) =>
           letI : Shape.WellFormed (.dim channels spatial) := ⟨hWellFormed⟩
           Spec.batchNorm (α := α) x gamma beta
-    program := fun {α} _ctx _deq =>
+    program := fun {α} _storage _ctx =>
       fun {m} _ _ =>
         fun gamma beta x =>
           _root_.Runtime.Autograd.Torch.batchNorm (m := m) (α := α)
@@ -248,26 +250,23 @@ namespace Chain
 /-- Chain constructor for `Primitive.conv`. -/
 def conv
     {d : Nat} (inC outC : Nat)
-    (kernel stride padding spatial : Spec.Tensor Nat [d])
-    {hInC : inC ≠ 0}
-    {hKernel : ∀ i : Fin d, kernel.getScalar i ≠ 0}
-    {hStride : ∀ i : Fin d, stride.getScalar i ≠ 0} :
+    (kernel stride padding spatial : TorchLean.Tensor Nat [d]) :
     Chain
-      [Shape.ofList (outC :: inC :: kernel.toList), [outC]]
-      (Shape.ofList (inC :: spatial.toList))
-      (Shape.ofList (outC :: (Spec.convOutSpatial spatial kernel stride padding).toList)) :=
-  .prim (Primitive.conv (inC := inC) (outC := outC) kernel stride padding spatial
-    (hInC := hInC) (hKernel := hKernel) (_hStride := hStride))
+      [Shape.ofList (outC :: inC :: (Tensor.to kernel (List Nat))), [outC]]
+      (Shape.ofList (inC :: (Tensor.to spatial (List Nat))))
+      (Shape.ofList
+        (outC :: (Tensor.to (Spec.convOutSpatial spatial kernel stride padding) (List Nat)))) :=
+  .prim (Primitive.conv (inC := inC) (outC := outC) kernel stride padding spatial)
 
 /-- Chain constructor for `Primitive.maxPool`. -/
 def maxPool
     {d : Nat} (channels : Nat)
-    (kernel stride padding spatial : Spec.Tensor Nat [d])
+    (kernel stride padding spatial : TorchLean.Tensor Nat [d])
     {hKernel : ∀ i : Fin d, kernel.getScalar i ≠ 0}
     {hStride : ∀ i : Fin d, stride.getScalar i ≠ 0} :
-    Chain [] (Shape.ofList (channels :: spatial.toList))
+    Chain [] (Shape.ofList (channels :: (Tensor.to spatial (List Nat))))
       (Shape.ofList (channels ::
-        (Spec.poolOutSpatialPad spatial kernel stride padding).toList)) :=
+        (Tensor.to (Spec.poolOutSpatialPad spatial kernel stride padding) (List Nat)))) :=
   .prim (Primitive.maxPool (channels := channels) kernel stride padding spatial
     (hKernel := hKernel) (hStride := hStride))
 

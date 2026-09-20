@@ -37,7 +37,7 @@ References:
 
 namespace NN.IR
 
-open Spec
+open Spec TorchLean
 
 namespace Node
 
@@ -89,12 +89,12 @@ def toDot (g : Graph) : String :=
     --
     -- In DOT, `\n` inside a quoted label produces a line break. We rely on that to keep each node
     -- readable without making the graph extremely wide.
-    s!"{n.id}: {n.kind.describe}\\nout={Shape.pretty n.outShape}"
+    s!"{n.id}: {n.kind.describe}\nout={Shape.pretty n.outShape}"
   let dotEscape (s : String) : String :=
     -- Dot-quoted string escaping.
     --
     -- We escape:
-    -- - backslashes (so `\n` in labels stays meaningful),
+    -- - literal backslashes,
     -- - quotes (since we emit `label=\"...\"`),
     -- - and newlines (DOT expects `\n` inside quoted labels).
     s.replace "\\" "\\\\" |>.replace "\"" "\\\"" |>.replace "\n" "\\n"

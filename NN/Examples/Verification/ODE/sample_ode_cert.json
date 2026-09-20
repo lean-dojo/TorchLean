@@ -14,7 +14,7 @@
     "minWidth": 0.1,
     "slack": 0.0,
     "verbose": false,
-    "modelBackend": "direct"
+    "modelBackend": "direct",
+    "arithmetic": "ieee"
   }
 }
-

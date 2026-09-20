@@ -69,6 +69,8 @@ runtime operations.
 
 The library proves that:
 
+- `LowerToDAG.Chain.eval_toDAGTerm` equates the converted DAG evaluation with `Interp.spec`
+  for every chain, parameter pack, and input, including custom primitives;
 - evaluation commutes with variable renaming and typed substitution;
 - instantiating a term evaluates as supplying its argument environment;
 - `Block.andThen` evaluates as typed block composition;
@@ -76,13 +78,17 @@ The library proves that:
 - inlining a `MultiModel` preserves every output and shared intermediate.
 
 These theorems let a large model be assembled from proved blocks. They do not require unfolding the
-entire architecture for every later result.
+entire architecture for every later result. The chain-to-DAG theorem reuses primitive `specFwd`
+functions on both sides; it does not assert agreement with their executable `program` fields or
+with native kernels. Import `NN.GraphSpec.Chain.ToDAG` for the conversion and theorem, or the
+focused `NN.GraphSpec.Chain.ToDAG.Semantics` module for its proof interface.
 
 ## Files
 
 | File | Contents |
 | --- | --- |
 | `Core.lean` | sequential chain syntax and composition |
+| `Chain/ToDAG/Semantics.lean` | general pure semantic preservation for chain-to-DAG conversion |
 | `DAG/Core.lean` | typed variables, terms, blocks, substitutions, semantics, and lowering |
 | `DAG/Term.lean` | reusable term combinators |
 | `DAG/Primitives/Core.lean` | primitive operation interface and basic operations |
@@ -91,7 +97,7 @@ entire architecture for every later result.
 | `DAG/Primitives/Normalization.lean` | normalization operations |
 | `DAG/Primitives/Shape.lean` | reshape, broadcast, concat, slicing, and axis operations |
 | `Primitives/Spatial.lean` | rank-polymorphic convolution, pooling, and spatial normalization |
-| `ToSequential.lean` | conversion of the supported layer-stack subset to `TorchLean.NN.Seq` |
+| `ToSequential.lean` | conversion of the supported layer-stack subset to `Runtime.Autograd.Model.Layers.Seq` |
 | `Models/` | MLP, CNN, residual, and TorchLean lowering examples |
 
 ## Adding A Primitive
@@ -119,6 +125,9 @@ end NN.GraphSpec.Primitive
 Unary sequential primitives can be embedded in DAG syntax with
 `LowerToDAG.Primitive.toDAGPrimOp`. A genuinely multi-input operation should define a
 `DAG.PrimOp inputs output` directly.
+
+The shape indices align `specFwd` and `program` inputs and outputs. They do not prove that
+arbitrary implementations of those fields compute the same values.
 
 Add semantic lemmas next to the primitive. Model-specific proofs can then simplify through the
 primitive interface rather than unfold its implementation.

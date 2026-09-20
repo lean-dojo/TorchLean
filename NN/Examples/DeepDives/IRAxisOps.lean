@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API
-public import NN.API.Module.Command
-public import NN.IR.Check
 public import NN.Runtime.Autograd.IRExec
 
 /-!
@@ -16,7 +14,7 @@ public import NN.Runtime.Autograd.IRExec
 
 IR axis-ops runtime tutorial.
 
-This example is a small regression guard for three ops where TorchLean’s IR uses an explicit `axis`:
+This tutorial constructs and evaluates three IR operations with an explicit `axis`:
 
 - `softmax axis` (PyTorch: `torch.softmax(x, dim=axis)`)
 - `concat axis` (PyTorch: `torch.cat(xs, dim=axis)`)
@@ -30,7 +28,7 @@ cases explicitly.
 
 Run:
 
-`lake exe torchlean ir_axis_ops --scalar float32 --execution eager`
+`lake exe torchlean ir_axis_ops --execution eager`
 -/
 
 @[expose] public section
@@ -51,16 +49,16 @@ def usage : String :=
     , "  lake exe torchlean ir_axis_ops [options]"
     , ""
     , "Options:"
-    , "  --scalar float32|ieee32-exec|complex64"
+    , "  --arithmetic native|ieee|complex"
     , "  --execution eager|typed-graph"
     , "  --device auto|cpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external"
     , "  --show-backend                    print backend capsules as they execute"
     ]
 
 /-!
-## Test Shapes
+## Tensor Shapes
 
-We keep shapes compact while still exercising the “axis is not last / not 0” code paths.
+These shapes illustrate an axis that is neither first nor last.
 -/
 
 abbrev baseTensorShape : Shape := [2, 3, 4]
@@ -77,135 +75,105 @@ def softmaxMiddleAxisGraph : NN.IR.Graph :=
     , { id := 1, parents := #[0], kind := .softmax (axis := 1), outShape := baseTensorShape }
     ] }
 
+/--
+LayerNorm over axis 1 of a rank-three tensor, the interesting case because the normalized axis is
+neither the first nor the last.
+-/
 def layerNormMiddleAxisGraph : NN.IR.Graph :=
   { nodes := #[
       { id := 0, parents := #[], kind := .input, outShape := baseTensorShape }
     , { id := 1, parents := #[0], kind := .layernorm (axis := 1), outShape := baseTensorShape }
     ] }
 
+/-- Concatenation along axis 1, joining a `[2, 3, 4]` and a `[2, 5, 4]` tensor into `[2, 8, 4]`. -/
 def concatMiddleAxisGraph : NN.IR.Graph :=
   -- The concat example uses `rand_uniform` sources, so the input node only fixes the graph's
   -- single-input interface for the shared runner.
   { nodes := #[
-      { id := 0, parents := #[], kind := .input, outShape := Spec.Shape.scalar }
+      { id := 0, parents := #[], kind := .input, outShape := [] }
     , { id := 1, parents := #[], kind := .randUniform (seed := 0), outShape := baseTensorShape }
-    , { id := 2, parents := #[], kind := .randUniform (seed := 1), outShape := widerMiddleAxisShape }
-    , { id := 3, parents := #[1, 2], kind := .concat (axis := 1), outShape := concatenatedMiddleAxisShape }
+    , { id := 2, parents := #[], kind := .randUniform (seed := 1),
+        outShape := widerMiddleAxisShape }
+    , { id := 3, parents := #[1, 2], kind := .concat (axis := 1),
+        outShape := concatenatedMiddleAxisShape }
     ] }
 
 /-!
 ## Runner Helpers
 -/
 
-def checkIR (tag : String) (g : NN.IR.Graph) : IO Unit := do
-  CLI.orThrow s!"{tag}:checkWellFormed" <| g.checkWellFormed
-  CLI.orThrow s!"{tag}:checkShapes" <| NN.IR.Graph.checkShapes g
+/-- Print a compact preview of a tensor. -/
+def firstScalars {α : Type} [Storage α] [ToString α] {σ : Shape}
+    (tensor : Tensor α σ) : String :=
+  let xs := Tensor.to tensor (Array α)
+  let ys := xs.extract 0 8
+  let body := String.intercalate ", " (ys.toList.map toString)
+  "[" ++ body ++ (if xs.size > ys.size then ", ..." else "") ++ "]"
 
-def firstScalars {α : Type} [ToString α] (xs : Array α) : String :=
-  if xs.isEmpty then
-    "[]"
-  else
-    let ys := xs.extract 0 8
-    let body := ys.foldl (fun acc x => if acc.isEmpty then toString x else acc ++ ", " ++ toString x) ""
-    "[" ++ body ++ (if xs.size > ys.size then ", ..." else "") ++ "]"
+/-- Evaluate an example graph through the runtime API and print its selected output. -/
+def printEvaluation
+    {α : Type} {σ : Shape} [Storage α] [Context α] [ToString α]
+    (tag : String) (g : NN.IR.Graph) (payload : NN.IR.Payload α)
+    (x : Tensor α σ) (outputId : Fin g.nodes.size) : IO Unit := do
+  let ⟨shape, output⟩ ← CLI.orThrow tag <|
+    Runtime.Autograd.IRExec.evaluate g payload x outputId
+  IO.println s!"[{tag}] output shape: {repr shape}"
+  IO.println s!"[{tag}] first scalars: {firstScalars output}"
 
-def runOne
-    {α : Type} [_root_.Context α] [DecidableEq Shape] [ToString α] [Runtime.FromFloat α]
-    (tag : String)
-    (g : NN.IR.Graph)
-    (payload : NN.IR.Payload α)
-    (inputShape : Shape)
-    (x : Spec.Tensor α inputShape)
-    (outputId : Fin g.nodes.size)
-    (runForward : Bool := true) : IO Unit := do
-  checkIR tag g
+/--
+Run every axis-op example at scalar type `α`.
 
-  -- Spec semantics (denotational model).
-  let input : Spec.SomeTensor α := Spec.SomeTensor.ofTensor x
-  let outSpec ← CLI.orThrow s!"{tag}:spec" <|
-    NN.IR.Graph.denote (α := α) (g := g) (payload := payload) (input := input) (outputId :=
-      outputId)
-  let ⟨sSpec, tSpec⟩ := outSpec
-  IO.println s!"[{tag}] spec outShape: {repr sSpec}"
-  IO.println s!"[{tag}] spec first scalars: {firstScalars (Spec.Tensor.toArray tSpec)}"
-
-  if !runForward then
-    IO.println s!"[{tag}] forward graph execution skipped by the caller."
-    return ()
-
-  -- Lower the IR to its forward-only executable graph, then evaluate it.
-  let eg ← CLI.orThrow s!"{tag}:forward-graph" <|
-    Runtime.Autograd.IRExec.lowerToForwardGraph (α := α) (g := g) (payload := payload)
-  let xExec : Spec.Tensor α eg.inShape ←
-    if hIn : inputShape = eg.inShape then
-      pure <| Spec.Tensor.castShape (t := x) hIn
-    else
-      -- Well-formed tutorials keep these shapes aligned; this branch keeps the error readable if a
-      -- graph edit and the `inputShape` argument drift apart.
-      throw <| IO.userError
-        s!"{tag}: inputShape mismatch: arg={repr inputShape}, graph={repr eg.inShape}"
-  let valsExec := Runtime.Autograd.IRExec.ForwardGraph.denoteAll (α := α) eg xExec
-  let outExec ←
-    if hOut : outputId.1 < valsExec.size then
-      pure <| valsExec[outputId.1]'hOut
-    else
-      throw <| IO.userError
-        s!"{tag}: forward graph output index out of bounds: index={outputId.1}, size={valsExec.size}"
-  let ⟨sExec, tExec⟩ := outExec
-  IO.println s!"[{tag}] forward graph outShape: {repr sExec}"
-  IO.println s!"[{tag}] forward graph first scalars: {firstScalars (Spec.Tensor.toArray tExec)}"
-
-  if sExec = sSpec then
-    pure ()
-  else
-    throw <| IO.userError
-      s!"{tag}: spec/forward-graph outShape mismatch: spec={repr sSpec}, forwardGraph={repr sExec}"
-
+Generic in `α` so the tutorial can be run under native `Float` or under the bit-level IEEE model
+with no change to the graphs.
+-/
 def runOnce
-    {α : Type} [_root_.Context α] [DecidableEq Shape] [ToString α] [Runtime.FromFloat α]
+    {α : Type} [Storage α] [Context α] [ToString α]
+    [Runtime.FromFloat α]
     : IO Unit := do
   let payload : NN.IR.Payload α := {}
 
   -- A small but nontrivial 2×3×4 input tensor.
-  let x234 : Spec.Tensor α baseTensorShape :=
-    Tensor.generateFromFloat (α := α) Runtime.ofFloat [2, 3, 4] (fun i =>
-      (Float.ofNat i) / 10.0 - 1.0)
+  let inputTensor : Tensor α baseTensorShape :=
+    Tensor.generateFlat [2, 3, 4] (fun i =>
+      Runtime.ofFloat ((Float.ofNat i) / 10.0 - 1.0))
 
   IO.println ""
   IO.println "== IR axis ops tutorial =="
-  IO.println "This checks shape validation and compares the spec semantics with forward-graph execution."
+  IO.println "The runtime validates each graph and evaluates its selected output."
 
   IO.println ""
   IO.println "-- softmax axis=1 on shape [2,3,4]"
-  runOne (α := α) (tag := "softmax_middle_axis") (g := softmaxMiddleAxisGraph) (payload := payload)
-    (inputShape := baseTensorShape) (x := x234) (outputId := ⟨1, by decide⟩)
+  printEvaluation (α := α) (tag := "softmax_middle_axis") (g := softmaxMiddleAxisGraph)
+    (payload := payload) (x := inputTensor) (outputId := ⟨1, by decide⟩)
 
   IO.println ""
   IO.println "-- layernorm axis=1 on shape [2,3,4]"
   IO.println "PyTorch meaning: normalized_shape = x.shape[axis:] = [3,4]"
-  runOne (α := α) (tag := "layernorm_middle_axis") (g := layerNormMiddleAxisGraph) (payload := payload)
-    (inputShape := baseTensorShape) (x := x234) (outputId := ⟨1, by decide⟩) (runForward := false)
+  printEvaluation (α := α) (tag := "layernorm_middle_axis") (g := layerNormMiddleAxisGraph)
+    (payload := payload) (x := inputTensor) (outputId := ⟨1, by decide⟩)
 
   IO.println ""
   IO.println "-- concat axis=1: [2,3,4] ++ [2,5,4] -> [2,8,4]"
-  let x0 : Spec.Tensor α Spec.Shape.scalar :=
+  let scalarInput : Tensor α [] :=
     Tensor.full [] (Runtime.ofFloat (α := α) 0.0)
-  runOne (α := α) (tag := "concat_middle_axis") (g := concatMiddleAxisGraph) (payload := payload)
-    (inputShape := Spec.Shape.scalar) (x := x0) (outputId := ⟨3, by decide⟩)
+  printEvaluation (α := α) (tag := "concat_middle_axis") (g := concatMiddleAxisGraph)
+    (payload := payload) (x := scalarInput) (outputId := ⟨3, by decide⟩)
 
 /-- Runtime-selected entrypoint body for the axis-ops tutorial. -/
 def runSelected
-    {α : Type} [_root_.Context α] [DecidableEq Shape] [ToString α] [Runtime.FromFloat α]
+    {α : Type} [Storage α] [Context α] [ToString α]
+    [Runtime.FromFloat α]
     (rest : List String) : IO Unit := do
   CLI.requireNoArgs "ir_axis_ops" rest
   runOnce (α := α)
 
+/-- Entry point; `--arithmetic` picks the scalar type the whole tutorial runs at. -/
 def main (args : List String) : IO Unit := do
   let args := CLI.dropDashDash args
   if CLI.hasHelp args then
     IO.println usage
     return
-  Module.withRuntime args
+  Module.withSelectedRuntime args
     (fun {α} _ _ _ _ _cast _opts rest => runSelected (α := α) rest)
 
 end NN.Examples.DeepDives.IRAxisOps

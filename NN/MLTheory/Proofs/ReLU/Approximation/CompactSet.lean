@@ -6,13 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.BigOperators.Ring.Finset
-public import Mathlib.Algebra.MvPolynomial.Eval
-public import Mathlib.Algebra.Ring.GeomSum
-public import Mathlib.Data.Finsupp.Multiset
-public import Mathlib.Data.Fintype.Perm
 public import Mathlib.Data.Multiset.Fintype
-public import Mathlib.Topology.Compactness.Compact
 public import NN.MLTheory.Proofs.Approximation.Universal.StoneWeierstrass
 public import NN.MLTheory.Proofs.ReLU.Approx.ReLUMulApprox
 
@@ -37,7 +31,7 @@ Dependencies:
 
 
 namespace NN.MLTheory.Proofs.ReLU.Approximation.CompactSet
-open _root_.Spec
+open _root_.Spec _root_.TorchLean
 open Examples
 
 open NN.MLTheory.Proofs.UniversalApproximation
@@ -63,7 +57,7 @@ theorem zero {n : Nat} (D : Set (Tensor ℝ [n])) :
   intro x hx
   have : mlpEval (n := n) (hidDim := 2)
         (affineIdLayer1 (n := n) (w := fun _ => (0 : ℝ)) (b := 0)) affineIdLayer2 x = 0 := by
-    simp [mlp_eval_affine_id, dot]
+    simp [mlp_eval_affine_id, ReLUMlpBridge.dot]
   simpa [this] using hε
 
 /-- If `f` and `g` are uniformly approximable on `D`, then so is `f + g`. -/
@@ -160,7 +154,7 @@ theorem smul {n : Nat} {D : Set (Tensor ℝ [n])}
     rw [mlp_eval_nd_eq_bias_sum (l1 := l1) (l2 := l2') (x := x)]
     rw [mlp_eval_nd_eq_bias_sum (l1 := l1) (l2 := l2) (x := x)]
     -- Compute the scaled bias and weights.
-    simp [l2', singleRowMatrix_get_matrix, extractScalarOutput, Tensor.ofFn, Tensor.item,
+    simp [l2', singleRowMatrix_get_matrix, extractScalarOutput, Tensor.ofFn,
       mul_add, Finset.mul_sum, mul_left_comm, mul_comm]
   -- Bound `|c*f - c*mlp|` by factoring out the output-layer scale.
   have :
@@ -207,7 +201,7 @@ theorem zero {n : Nat} (K : Set (Tensor ℝ [n])) :
   intro x
   have : mlpEval (n := n) (hidDim := 2)
         (affineIdLayer1 (n := n) (w := fun _ => (0 : ℝ)) (b := 0)) affineIdLayer2 x.1 = 0 := by
-    simp [mlp_eval_affine_id, dot]
+    simp [mlp_eval_affine_id, ReLUMlpBridge.dot]
   simpa [this] using hε
 
 /-- If `f` and `g` are uniformly approximable on `K`, then so is `f + g`. -/
@@ -289,7 +283,7 @@ theorem smul {n : Nat} {K : Set (Tensor ℝ [n])}
       classical
       rw [mlp_eval_nd_eq_bias_sum (l1 := l1) (l2 := l2') (x := x.1)]
       rw [mlp_eval_nd_eq_bias_sum (l1 := l1) (l2 := l2) (x := x.1)]
-      simp [l2', singleRowMatrix_get_matrix, extractScalarOutput, Tensor.ofFn, Tensor.item,
+      simp [l2', singleRowMatrix_get_matrix, extractScalarOutput, Tensor.ofFn,
         mul_add, Finset.mul_sum, mul_left_comm, mul_comm]
     have habs :
         |c * f x - mlpEval (n := n) (hidDim := m) l1 l2' x.1|
@@ -386,20 +380,20 @@ noncomputable def signedSum {d : Nat} (ε : Fin d → Bool) (u : Fin d → ℝ) 
   ∑ i : Fin d, sgn (ε i) * u i
 
 /-- Closed form for `∑ b : Bool, (sgn b)^k`. -/
-lemma sum_bool_sgn_pow (k : ℕ) : (∑ b : Bool, (sgn b) ^ k) = (1 : ℝ) + (-1 : ℝ) ^ k := by
+theorem sum_bool_sgn_pow (k : ℕ) : (∑ b : Bool, (sgn b) ^ k) = (1 : ℝ) + (-1 : ℝ) ^ k := by
   classical
   -- `Fintype.sum_bool` expands the sum over the two Bool values.
   simp [sgn]
 
 /-- For even exponents, `∑ b : Bool, (sgn b)^k = 2`. -/
-lemma sum_bool_sgn_pow_even (k : ℕ) (hk : Even k) : (∑ b : Bool, (sgn b) ^ k) = (2 : ℝ) := by
+theorem sum_bool_sgn_pow_even (k : ℕ) (hk : Even k) : (∑ b : Bool, (sgn b) ^ k) = (2 : ℝ) := by
   have h : (∑ b : Bool, (sgn b) ^ k) = (1 : ℝ) + (1 : ℝ) := by
     simpa [sum_bool_sgn_pow, hk.neg_one_pow] using (sum_bool_sgn_pow (k := k))
   -- `1 + 1 = 2`
   nlinarith
 
 /-- For odd exponents, `∑ b : Bool, (sgn b)^k = 0`. -/
-lemma sum_bool_sgn_pow_odd (k : ℕ) (hk : Odd k) : (∑ b : Bool, (sgn b) ^ k) = (0 : ℝ) := by
+theorem sum_bool_sgn_pow_odd (k : ℕ) (hk : Odd k) : (∑ b : Bool, (sgn b) ^ k) = (0 : ℝ) := by
   simpa [sum_bool_sgn_pow, hk.neg_one_pow] using (sum_bool_sgn_pow (k := k))
 
 -- Fiber cardinality as a finite `Nat` count.
@@ -410,7 +404,7 @@ noncomputable def fiberCount {d : Nat} (p : Fin d → Fin d) (j : Fin d) : ℕ :
 /--
 Rewrite `∏ i, sgn (ε (p i))` as a product over fibers of `p`, i.e. as powers of `sgn (ε j)`.
 -/
-lemma prod_sgn_comp_eq_prod_pow_fiberCount {d : Nat} (p : Fin d → Fin d) (ε : Fin d → Bool) :
+theorem prod_sgn_comp_eq_prod_pow_fiberCount {d : Nat} (p : Fin d → Fin d) (ε : Fin d → Bool) :
     (Finset.univ.prod fun i : Fin d => sgn (ε (p i)))
       =
     Finset.univ.prod fun j : Fin d => (sgn (ε j)) ^ (fiberCount (d := d) p j) := by
@@ -451,7 +445,7 @@ noncomputable def signCoeff {d : Nat} (p : Fin d → Fin d) : ℝ :=
       (Finset.univ.prod fun i : Fin d => sgn (ε (p i)))
 
 /-- Product-of-sums form for `signCoeff`, expressed in terms of fiber cardinalities of `p`. -/
-lemma signCoeff_eq_prod_sum_pow {d : Nat} (p : Fin d → Fin d) :
+theorem signCoeff_eq_prod_sum_pow {d : Nat} (p : Fin d → Fin d) :
     signCoeff (d := d) p
       =
     ∏ j : Fin d, (∑ b : Bool, (sgn b) ^ (fiberCount (d := d) p j + 1)) := by
@@ -574,7 +568,7 @@ For a function `p : Fin d → Fin d`, all fiber cardinalities are odd iff `p` is
 
 Since `Fin d` is finite of size `d`, odd fibers force every fiber to have size `1`.
 -/
-lemma allOdd_fiberCount_iff_bijective {d : Nat} (p : Fin d → Fin d) :
+theorem allOdd_fiberCount_iff_bijective {d : Nat} (p : Fin d → Fin d) :
     (∀ j : Fin d, Odd (fiberCount (d := d) p j)) ↔ Function.Bijective p := by
   classical
   cases d with
@@ -691,11 +685,11 @@ theorem signCoeff_eq_two_pow_iff_bijective {d : Nat} (p : Fin d → Fin d) :
   have h := signCoeff_eq_two_pow_iff_allOdd (d := d) p
   by_cases hb : Function.Bijective p
   · -- reduce the goal with `hb`, then use the all-odd characterization.
-    rw [if_pos hb]
+    rw [ite_eq_left hb]
     have hall : ∀ j : Fin d, Odd (fiberCount (d := d) p j) :=
       (allOdd_fiberCount_iff_bijective (d := d) p).2 hb
     simpa [hall] using h
-  · rw [if_neg hb]
+  · rw [ite_eq_right hb]
     have hall : ¬ (∀ j : Fin d, Odd (fiberCount (d := d) p j)) := by
       intro hall
       exact hb ((allOdd_fiberCount_iff_bijective (d := d) p).1 hall)
@@ -751,14 +745,14 @@ theorem polarization_prod {d : Nat} (u : Fin d → ℝ) :
       have hprod : (∏ i : Fin d, u (p i)) = ∏ i : Fin d, u i := by
         simpa using (Function.Bijective.prod_comp (e := p) hb (g := u))
       -- left side
-      rw [signCoeff_eq_two_pow_iff_bijective (d := d) p, if_pos hb]
+      rw [signCoeff_eq_two_pow_iff_bijective (d := d) p, ite_eq_left hb]
       -- right side
-      rw [if_pos hb]
+      rw [ite_eq_left hb]
       -- rewrite the `u`-product and commute.
       simp [hprod, mul_comm]
     · -- non-bijective: `signCoeff = 0` and the RHS is `0`.
-      rw [signCoeff_eq_two_pow_iff_bijective (d := d) p, if_neg hb]
-      rw [if_neg hb]
+      rw [signCoeff_eq_two_pow_iff_bijective (d := d) p, ite_eq_right hb]
+      rw [ite_eq_right hb]
       simp
 
   rw [hrewrite]
@@ -861,12 +855,12 @@ end Polarization
 
 /-- The box `[-M,M]^n` as a subset of `Tensor ℝ [n]`. -/
 noncomputable def boxN (n : Nat) (M : ℝ) : Set (Tensor ℝ [n]) :=
-  fun x => ∀ i : Fin n, Spec.Tensor.getScalar x i ∈ Set.Icc (-M) M
+  fun x => ∀ i : Fin n, TorchLean.Tensor.getScalar x i ∈ Set.Icc (-M) M
 
 /-- A coordinate of `x ∈ boxN n M` lies in the interval `[-M, M]`. -/
-lemma coord_mem_Icc {n : Nat} {M : ℝ} {x : Tensor ℝ [n]} (hx : x ∈ boxN n M) (i : Fin
+theorem coord_mem_Icc {n : Nat} {M : ℝ} {x : Tensor ℝ [n]} (hx : x ∈ boxN n M) (i : Fin
   n) :
-    Spec.Tensor.getScalar x i ∈ Set.Icc (-M) M :=
+    TorchLean.Tensor.getScalar x i ∈ Set.Icc (-M) M :=
   hx i
 
 /-- The weight vector `e_i + e_j` (sum of two standard basis vectors). -/
@@ -878,20 +872,22 @@ noncomputable def wMinus {n : Nat} (i j : Fin n) : Fin n → ℝ :=
   fun k => stdBasis (n := n) i k - stdBasis (n := n) j k
 
 /-- Linearity of `dot` in the weight argument: `dot (w1+w2) = dot w1 + dot w2`. -/
-lemma dot_add {n : Nat} (w1 w2 : Fin n → ℝ) (x : Tensor ℝ [n]) :
-    dot (fun k => w1 k + w2 k) x = dot w1 x + dot w2 x := by
+theorem dot_add {n : Nat} (w1 w2 : Fin n → ℝ) (x : Tensor ℝ [n]) :
+    ReLUMlpBridge.dot (fun k => w1 k + w2 k) x =
+      ReLUMlpBridge.dot w1 x + ReLUMlpBridge.dot w2 x := by
   classical
-  simp [dot, add_mul, Finset.sum_add_distrib]
+  simp [ReLUMlpBridge.dot, add_mul, Finset.sum_add_distrib]
 
 /-- Negation law for `dot`: `dot (-w) = - dot w`. -/
-lemma dot_neg {n : Nat} (w : Fin n → ℝ) (x : Tensor ℝ [n]) :
-    dot (fun k => -w k) x = - dot w x := by
+theorem dot_neg {n : Nat} (w : Fin n → ℝ) (x : Tensor ℝ [n]) :
+    ReLUMlpBridge.dot (fun k => -w k) x = - ReLUMlpBridge.dot w x := by
   classical
-  simp [dot, Finset.sum_neg_distrib]
+  simp [ReLUMlpBridge.dot, Finset.sum_neg_distrib]
 
 /-- `dot (e_i + e_j) x = x_i + x_j` for rank-one tensor coordinates. -/
-lemma dot_wPlus {n : Nat} (i j : Fin n) (x : Tensor ℝ [n]) :
-    dot (wPlus (n := n) i j) x = Spec.Tensor.getScalar x i + Spec.Tensor.getScalar x j := by
+theorem dot_wPlus {n : Nat} (i j : Fin n) (x : Tensor ℝ [n]) :
+    dot (wPlus (n := n) i j) x =
+      TorchLean.Tensor.getScalar x i + TorchLean.Tensor.getScalar x j := by
   classical
   have hadd :
       dot (wPlus (n := n) i j) x =
@@ -904,8 +900,9 @@ lemma dot_wPlus {n : Nat} (i j : Fin n) (x : Tensor ℝ [n]) :
   simp [hadd, dot_stdBasis]
 
 /-- `dot (e_i - e_j) x = x_i - x_j` for rank-one tensor coordinates. -/
-lemma dot_wMinus {n : Nat} (i j : Fin n) (x : Tensor ℝ [n]) :
-    dot (wMinus (n := n) i j) x = Spec.Tensor.getScalar x i - Spec.Tensor.getScalar x j := by
+theorem dot_wMinus {n : Nat} (i j : Fin n) (x : Tensor ℝ [n]) :
+    dot (wMinus (n := n) i j) x =
+      TorchLean.Tensor.getScalar x i - TorchLean.Tensor.getScalar x j := by
   classical
   have hadd :
       dot (wMinus (n := n) i j) x =
@@ -925,31 +922,31 @@ lemma dot_wMinus {n : Nat} (i j : Fin n) (x : Tensor ℝ [n]) :
   simp [hadd, hneg, dot_stdBasis, sub_eq_add_neg]
 
 /-- If `x ∈ [-M,M]^n`, then `x_i + x_j ∈ [-2M, 2M]`. -/
-lemma sum_mem_Icc {n : Nat} {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [n]} (hx : x ∈ boxN n
+theorem sum_mem_Icc {n : Nat} {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [n]} (hx : x ∈ boxN n
   M) (i j : Fin n) :
     dot (wPlus (n := n) i j) x ∈ Set.Icc (-2*M) (2*M) := by
   have hxi := coord_mem_Icc (n := n) (M := M) hx i
   have hxj := coord_mem_Icc (n := n) (M := M) hx j
-  have hxi_l : -M ≤ Spec.Tensor.getScalar x i := hxi.1
-  have hxi_u : Spec.Tensor.getScalar x i ≤ M := hxi.2
-  have hxj_l : -M ≤ Spec.Tensor.getScalar x j := hxj.1
-  have hxj_u : Spec.Tensor.getScalar x j ≤ M := hxj.2
-  have hl : -(2*M) ≤ Spec.Tensor.getScalar x i + Spec.Tensor.getScalar x j := by linarith
-  have hu : Spec.Tensor.getScalar x i + Spec.Tensor.getScalar x j ≤ 2*M := by linarith
+  have hxi_l : -M ≤ TorchLean.Tensor.getScalar x i := hxi.1
+  have hxi_u : TorchLean.Tensor.getScalar x i ≤ M := hxi.2
+  have hxj_l : -M ≤ TorchLean.Tensor.getScalar x j := hxj.1
+  have hxj_u : TorchLean.Tensor.getScalar x j ≤ M := hxj.2
+  have hl : -(2*M) ≤ TorchLean.Tensor.getScalar x i + TorchLean.Tensor.getScalar x j := by linarith
+  have hu : TorchLean.Tensor.getScalar x i + TorchLean.Tensor.getScalar x j ≤ 2*M := by linarith
   simpa [dot_wPlus] using And.intro hl hu
 
 /-- If `x ∈ [-M,M]^n`, then `x_i - x_j ∈ [-2M, 2M]`. -/
-lemma diff_mem_Icc {n : Nat} {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [n]} (hx : x ∈ boxN n
+theorem diff_mem_Icc {n : Nat} {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [n]} (hx : x ∈ boxN n
   M) (i j : Fin n) :
     dot (wMinus (n := n) i j) x ∈ Set.Icc (-2*M) (2*M) := by
   have hxi := coord_mem_Icc (n := n) (M := M) hx i
   have hxj := coord_mem_Icc (n := n) (M := M) hx j
-  have hxi_l : -M ≤ Spec.Tensor.getScalar x i := hxi.1
-  have hxi_u : Spec.Tensor.getScalar x i ≤ M := hxi.2
-  have hxj_l : -M ≤ Spec.Tensor.getScalar x j := hxj.1
-  have hxj_u : Spec.Tensor.getScalar x j ≤ M := hxj.2
-  have hl : -(2*M) ≤ Spec.Tensor.getScalar x i - Spec.Tensor.getScalar x j := by linarith
-  have hu : Spec.Tensor.getScalar x i - Spec.Tensor.getScalar x j ≤ 2*M := by linarith
+  have hxi_l : -M ≤ TorchLean.Tensor.getScalar x i := hxi.1
+  have hxi_u : TorchLean.Tensor.getScalar x i ≤ M := hxi.2
+  have hxj_l : -M ≤ TorchLean.Tensor.getScalar x j := hxj.1
+  have hxj_u : TorchLean.Tensor.getScalar x j ≤ M := hxj.2
+  have hl : -(2*M) ≤ TorchLean.Tensor.getScalar x i - TorchLean.Tensor.getScalar x j := by linarith
+  have hu : TorchLean.Tensor.getScalar x i - TorchLean.Tensor.getScalar x j ≤ 2*M := by linarith
   simpa [dot_wMinus] using And.intro hl hu
 
 /--
@@ -961,8 +958,9 @@ approximated on `boxN n M` by a single-hidden-layer ReLU MLP.
 theorem relu_mul_coord_universal_approximation_box
     {n : Nat} {M : ℝ} (hM : 0 < M) (i j : Fin n) :
     ∀ ε > 0, ∃ (hidDim : ℕ) (l1 : LinearSpec ℝ n hidDim) (l2 : LinearSpec ℝ hidDim 1),
-      ∀ x ∈ boxN n M, |(Spec.Tensor.getScalar x i * Spec.Tensor.getScalar x j) - mlpEval (n := n) (hidDim := hidDim) l1 l2 x| <
-        ε := by
+      ∀ x ∈ boxN n M,
+        |(TorchLean.Tensor.getScalar x i * TorchLean.Tensor.getScalar x j) -
+          mlpEval (n := n) (hidDim := hidDim) l1 l2 x| < ε := by
   classical
   intro ε hε
   have hM0 : 0 ≤ M := le_of_lt hM
@@ -1024,14 +1022,14 @@ theorem relu_mul_coord_universal_approximation_box
     hSq (dot (wMinus (n := n) i j) x) hx_minus
   -- Finish with `uv = ((u+v)^2 - (u-v)^2)/4` and the same triangle bound as the 2D proof.
   have hmul :
-      (Spec.Tensor.getScalar x i * Spec.Tensor.getScalar x j)
+      (TorchLean.Tensor.getScalar x i * TorchLean.Tensor.getScalar x j)
         = ((dot (wPlus (n := n) i j) x) * (dot (wPlus (n := n) i j) x)
             - (dot (wMinus (n := n) i j) x) * (dot (wMinus (n := n) i j) x)) / 4 := by
-    have := mul_identity (Spec.Tensor.getScalar x i) (Spec.Tensor.getScalar x j)
+    have := mul_identity (TorchLean.Tensor.getScalar x i) (TorchLean.Tensor.getScalar x j)
     simpa [dot_wPlus, dot_wMinus, sub_eq_add_neg, add_assoc, add_comm, add_left_comm] using this
   -- Main error bound
-  have : |(Spec.Tensor.getScalar x i * Spec.Tensor.getScalar x j) - mlpEval (n := n) (hidDim := hidSq + hidSq) l1Prod l2Prod x|
-    < ε := by
+  have : |(TorchLean.Tensor.getScalar x i * TorchLean.Tensor.getScalar x j) -
+      mlpEval (n := n) (hidDim := hidSq + hidSq) l1Prod l2Prod x| < ε := by
     rw [hmul, hcomb, hplus_eval, hminus_eval]
     set e1 := (dot (wPlus (n := n) i j) x) * (dot (wPlus (n := n) i j) x)
         - mlpEvalScalar hidSq l1Sq l2Sq (dot (wPlus (n := n) i j) x) with he1
@@ -1068,7 +1066,8 @@ theorem relu_mul_coord_universal_approximation_box
     have : |((dot (wPlus (n := n) i j) x) * (dot (wPlus (n := n) i j) x)
               - (dot (wMinus (n := n) i j) x) * (dot (wMinus (n := n) i j) x)) / 4
             - ((1 / 4 : ℝ) * mlpEvalScalar hidSq l1Sq l2Sq (dot (wPlus (n := n) i j) x) +
-                (-1 / 4 : ℝ) * mlpEvalScalar hidSq l1Sq l2Sq (dot (wMinus (n := n) i j) x))| < ε := by
+                (-1 / 4 : ℝ) * mlpEvalScalar hidSq l1Sq l2Sq (dot (wMinus (n := n) i j) x))| <
+          ε := by
       have hrew' :
           ((dot (wPlus (n := n) i j) x) * (dot (wPlus (n := n) i j) x)
                 - (dot (wMinus (n := n) i j) x) * (dot (wMinus (n := n) i j) x)) / 4
@@ -1091,7 +1090,7 @@ Lipschitz bound for the power function on a bounded interval.
 For `x,y ∈ [-R,R]`, the map `u ↦ u^d` is Lipschitz with constant `d * R^(d-1)` (with the
 convention that the `d=0` case is constant).
 -/
-lemma pow_lipschitz_Icc {R : ℝ} (hR : 0 ≤ R) :
+theorem pow_lipschitz_Icc {R : ℝ} (hR : 0 ≤ R) :
     ∀ d : ℕ, ∀ x ∈ Set.Icc (-R) R, ∀ y ∈ Set.Icc (-R) R,
       |x ^ d - y ^ d| ≤ (d * R ^ (d - 1)) * |x - y| := by
   intro d
@@ -1216,15 +1215,15 @@ noncomputable def linFormC (K : Set (Tensor ℝ [n])) (w : Fin n → ℝ) : C(K,
 
 omit [CompactSpace K] in
 /-- Evaluate `linFormC` as the dot product `w ⋅ x` on the underlying tensor vector. -/
-lemma linFormC_apply (w : Fin n → ℝ) (x : K) :
-    linFormC K w x = dot w x.1 := by
+theorem linFormC_apply (w : Fin n → ℝ) (x : K) :
+    linFormC K w x = ReLUMlpBridge.dot w x.1 := by
   classical
-  simp only [linFormC, StoneWeierstrass.coord, dot, ContinuousMap.sum_apply,
+  simp only [linFormC, StoneWeierstrass.coord, ReLUMlpBridge.dot, ContinuousMap.sum_apply,
     ContinuousMap.smul_apply, smul_eq_mul]
   apply Finset.sum_congr rfl
   intro i _
-  change w i * Tensor.vectorEquiv n x.1 i = w i * Spec.Tensor.getScalar x.1 i
-  rw [Spec.Tensor.vectorEquiv_apply]
+  change w i * Tensor.vectorEquiv n x.1 i = w i * TorchLean.Tensor.getScalar x.1 i
+  rw [TorchLean.Tensor.vectorEquiv_apply]
 
 -- Approximate `x ↦ (w⋅x)^d` on a compact set, using the 1D power approximation and ridge lifting.
 /-- Uniform approximation of the continuous function `x ↦ (w ⋅ x)^d` on `K` by a 2-layer ReLU MLP.
@@ -1273,58 +1272,67 @@ noncomputable def wSigned {d : Nat} (idx : Fin d → Fin n) (ε : Fin d → Bool
   fun j : Fin n => ∑ i : Fin d, sgn (ε i) * stdBasis (n := n) (idx i) j
 
 /-- `dot (wSigned idx ε) x` computes the signed sum of the selected coordinates of `x`. -/
-lemma dot_wSigned_eq_signedSum {d : Nat} (idx : Fin d → Fin n) (ε : Fin d → Bool)
+theorem dot_wSigned_eq_signedSum {d : Nat} (idx : Fin d → Fin n) (ε : Fin d → Bool)
     (x : Tensor ℝ [n]) :
-    dot (wSigned (n := n) idx ε) x =
-      signedSum (d := d) ε (fun i : Fin d => Spec.Tensor.getScalar x (idx i)) := by
+    ReLUMlpBridge.dot (wSigned (n := n) idx ε) x =
+      signedSum (d := d) ε (fun i : Fin d => TorchLean.Tensor.getScalar x (idx i)) := by
   classical
   -- Expand `dot` and rearrange into a sum of basis-vector dots.
-  unfold dot wSigned signedSum
-  -- First distribute the `Spec.Tensor.getScalar x j` multiplier across the inner sum.
+  unfold ReLUMlpBridge.dot wSigned signedSum
+  -- First distribute the `TorchLean.Tensor.getScalar x j` multiplier across the inner sum.
   have hdist :
-      (∑ j : Fin n, (∑ i : Fin d, sgn (ε i) * stdBasis (n := n) (idx i) j) * Spec.Tensor.getScalar x j)
+      (∑ j : Fin n, (∑ i : Fin d, sgn (ε i) * stdBasis (n := n) (idx i) j) *
+          TorchLean.Tensor.getScalar x j)
         =
-      ∑ j : Fin n, ∑ i : Fin d, (sgn (ε i) * stdBasis (n := n) (idx i) j) * Spec.Tensor.getScalar x j := by
+      ∑ j : Fin n, ∑ i : Fin d, (sgn (ε i) * stdBasis (n := n) (idx i) j) *
+        TorchLean.Tensor.getScalar x j := by
     refine Fintype.sum_congr _ _ (fun j => ?_)
     -- `(∑ i, a i) * b = ∑ i, a i * b` on `Finset.univ`.
     simpa using
       (Finset.sum_mul (s := (Finset.univ : Finset (Fin d)))
         (f := fun i : Fin d => sgn (ε i) * stdBasis (n := n) (idx i) j)
-        (a := Spec.Tensor.getScalar x j))
+        (a := TorchLean.Tensor.getScalar x j))
   -- Swap the two sums.
   have hswap :
-      (∑ j : Fin n, ∑ i : Fin d, (sgn (ε i) * stdBasis (n := n) (idx i) j) * Spec.Tensor.getScalar x j)
+      (∑ j : Fin n, ∑ i : Fin d, (sgn (ε i) * stdBasis (n := n) (idx i) j) *
+          TorchLean.Tensor.getScalar x j)
         =
-      ∑ i : Fin d, ∑ j : Fin n, (sgn (ε i) * stdBasis (n := n) (idx i) j) * Spec.Tensor.getScalar x j := by
+      ∑ i : Fin d, ∑ j : Fin n, (sgn (ε i) * stdBasis (n := n) (idx i) j) *
+        TorchLean.Tensor.getScalar x j := by
     -- This is the standard `Finset.sum_comm` over `Finset.univ`.
     exact Finset.sum_comm
   -- Simplify the inner sum using `dot_stdBasis`.
   have hinner :
       ∀ i : Fin d,
-        (∑ j : Fin n, (sgn (ε i) * stdBasis (n := n) (idx i) j) * Spec.Tensor.getScalar x j)
+        (∑ j : Fin n, (sgn (ε i) * stdBasis (n := n) (idx i) j) * TorchLean.Tensor.getScalar x j)
           =
-        sgn (ε i) * Spec.Tensor.getScalar x (idx i) := by
+        sgn (ε i) * TorchLean.Tensor.getScalar x (idx i) := by
     intro i
     -- Factor out the constant `sgn (ε i)` and recognize `dot (stdBasis (idx i)) x`.
     have :
-        (∑ j : Fin n, (sgn (ε i) * stdBasis (n := n) (idx i) j) * Spec.Tensor.getScalar x j)
+        (∑ j : Fin n, (sgn (ε i) * stdBasis (n := n) (idx i) j) * TorchLean.Tensor.getScalar x j)
           =
-        sgn (ε i) * (∑ j : Fin n, stdBasis (n := n) (idx i) j * Spec.Tensor.getScalar x j) := by
+        sgn (ε i) *
+          (∑ j : Fin n, stdBasis (n := n) (idx i) j * TorchLean.Tensor.getScalar x j) := by
       -- `∑ j, (c * a j) * b j = c * ∑ j, a j * b j`
       simp [mul_assoc, Finset.mul_sum]
     have hdotbasis :
-        (∑ j : Fin n, stdBasis (n := n) (idx i) j * Spec.Tensor.getScalar x j) = Spec.Tensor.getScalar x (idx i) := by
-      simpa [dot] using (dot_stdBasis (n := n) (i := idx i) (x := x))
+        (∑ j : Fin n, stdBasis (n := n) (idx i) j * TorchLean.Tensor.getScalar x j) =
+          TorchLean.Tensor.getScalar x (idx i) := by
+      simpa [ReLUMlpBridge.dot] using (dot_stdBasis (n := n) (i := idx i) (x := x))
     calc
-      (∑ j : Fin n, (sgn (ε i) * stdBasis (n := n) (idx i) j) * Spec.Tensor.getScalar x j)
-          = sgn (ε i) * (∑ j : Fin n, stdBasis (n := n) (idx i) j * Spec.Tensor.getScalar x j) := this
-      _ = sgn (ε i) * Spec.Tensor.getScalar x (idx i) := by simp [hdotbasis]
+      (∑ j : Fin n, (sgn (ε i) * stdBasis (n := n) (idx i) j) * TorchLean.Tensor.getScalar x j)
+          = sgn (ε i) *
+              (∑ j : Fin n, stdBasis (n := n) (idx i) j * TorchLean.Tensor.getScalar x j) := this
+      _ = sgn (ε i) * TorchLean.Tensor.getScalar x (idx i) := by simp [hdotbasis]
   -- Put everything together.
   calc
-    (∑ j : Fin n, (∑ i : Fin d, sgn (ε i) * stdBasis (n := n) (idx i) j) * Spec.Tensor.getScalar x j)
-        = ∑ i : Fin d, ∑ j : Fin n, (sgn (ε i) * stdBasis (n := n) (idx i) j) * Spec.Tensor.getScalar x j := by
+    (∑ j : Fin n, (∑ i : Fin d, sgn (ε i) * stdBasis (n := n) (idx i) j) *
+        TorchLean.Tensor.getScalar x j)
+        = ∑ i : Fin d, ∑ j : Fin n, (sgn (ε i) * stdBasis (n := n) (idx i) j) *
+            TorchLean.Tensor.getScalar x j := by
           simpa [hdist] using hswap
-    _ = ∑ i : Fin d, sgn (ε i) * Spec.Tensor.getScalar x (idx i) := by
+    _ = ∑ i : Fin d, sgn (ε i) * TorchLean.Tensor.getScalar x (idx i) := by
           refine Fintype.sum_congr _ _ (fun i => ?_)
           simpa using hinner i
 
@@ -1360,14 +1368,16 @@ theorem approx_coordProd_fin {d : Nat} (idx : Fin d → Fin n) :
       rhs = (∏ i : Fin d, StoneWeierstrass.coord (K := K) (idx i)) := by
     ext x
     -- reduce to a pointwise real identity and apply `polarization_prod`.
-    have hpol := polarization_prod (d := d) (u := fun i : Fin d => Spec.Tensor.getScalar x.1 (idx i))
+    have hpol := polarization_prod (d := d)
+      (u := fun i : Fin d => TorchLean.Tensor.getScalar x.1 (idx i))
     -- rewrite the RHS evaluation into the polarization sum
     have hterm_eval :
         (∑ ε : (Fin d → Bool), term ε) x
           =
         ∑ ε : (Fin d → Bool),
           (signedProd (d := d) ε) *
-            (signedSum (d := d) ε (fun i : Fin d => Spec.Tensor.getScalar x.1 (idx i))) ^ d := by
+            (signedSum (d := d) ε
+              (fun i : Fin d => TorchLean.Tensor.getScalar x.1 (idx i))) ^ d := by
       -- evaluate `term` and rewrite the lifted linear form as the signed sum.
       simp [term, linFormC_apply (K := K), dot_wSigned_eq_signedSum (n := n) (idx := idx),
         ]
@@ -1377,16 +1387,17 @@ theorem approx_coordProd_fin {d : Nat} (idx : Fin d → Fin n) :
       have hpolC :
           (∑ ε : (Fin d → Bool),
               (signedProd (d := d) ε) *
-                (signedSum (d := d) ε (fun i : Fin d => Spec.Tensor.getScalar x.1 (idx i))) ^ d)
-            = C * (∏ i : Fin d, Spec.Tensor.getScalar x.1 (idx i)) := by
+                (signedSum (d := d) ε
+                  (fun i : Fin d => TorchLean.Tensor.getScalar x.1 (idx i))) ^ d)
+            = C * (∏ i : Fin d, TorchLean.Tensor.getScalar x.1 (idx i)) := by
         simpa [C, mul_assoc, mul_left_comm, mul_comm] using hpol
       -- compute the coordinate product pointwise
       have hprod :
-          (∏ i : Fin d, StoneWeierstrass.coord (K := K) (idx i) x) = ∏ i : Fin d, Spec.Tensor.getScalar x.1 (idx i)
-            := by
+          (∏ i : Fin d, StoneWeierstrass.coord (K := K) (idx i) x) =
+            ∏ i : Fin d, TorchLean.Tensor.getScalar x.1 (idx i) := by
         apply Finset.prod_congr rfl
         intro i _
-        exact Spec.Tensor.vectorEquiv_apply x.1 (idx i)
+        exact TorchLean.Tensor.vectorEquiv_apply x.1 (idx i)
       -- simplify `rhs x`
       -- Keep `C` folded so `simp` can cancel using `hCne`.
       simp [rhs, ContinuousMap.smul_apply, hterm_eval, hprod, hpolC, hCne]
@@ -1455,7 +1466,7 @@ variable {n : Nat} (K : Set (Tensor ℝ [n])) [CompactSpace K]
 -- `∏ x : m, f (x : α)` (as a fintype product over the multiset coerced to a type) is exactly the
 -- multiset product of `m.map f`.
 /-- Re-express a fintype product over a multiset as the corresponding multiset product. -/
-lemma prod_over_multiset_eq_multiset_prod {α β : Type} [DecidableEq α] [CommMonoid β]
+theorem prod_over_multiset_eq_multiset_prod {α β : Type} [DecidableEq α] [CommMonoid β]
     (m : Multiset α) (f : α → β) :
     (∏ x : m, f (x : α)) = (m.map f).prod := by
   classical
@@ -1472,7 +1483,7 @@ Re-express a `Finsupp` exponent-vector product as a product over `toMultiset`.
 This is a small bookkeeping lemma: `d.prod (fun a n => (g a)^n)` is the same as multiplying `g a`
 once for each occurrence of `a` in the multiset `d.toMultiset`.
 -/
-lemma finsupp_prod_pow_eq_prod_toMultiset {α β : Type} [DecidableEq α] [CommMonoid β]
+theorem finsupp_prod_pow_eq_prod_toMultiset {α β : Type} [DecidableEq α] [CommMonoid β]
     (d : α →₀ ℕ) (g : α → β) :
     (d.prod fun a n => (g a) ^ n) = ∏ x : d.toMultiset, g (x : α) := by
   classical
@@ -1757,7 +1768,7 @@ end ReLUStoneWeierstrassBridgeFull
 
 /-! ## Two-dimensional multiplication from the general coordinate theorem -/
 
-lemma planeBox_iff_coordinateBox (M : ℝ) (x : Tensor ℝ [2]) :
+theorem planeBox_iff_coordinateBox (M : ℝ) (x : Tensor ℝ [2]) :
     x ∈ boxN 2 M ↔ x ∈ ReLUMulApprox.box M := by
   constructor
   · intro hx
@@ -1768,7 +1779,7 @@ lemma planeBox_iff_coordinateBox (M : ℝ) (x : Tensor ℝ [2]) :
       simpa [ReLUMulApprox.box, ReLUMulApprox.secondCoordinate] using this
   · intro hx
     -- Convert a two-coordinate box proof into the corresponding pair of interval facts.
-    change ∀ i : Fin 2, Spec.Tensor.getScalar x i ∈ Set.Icc (-M) M
+    change ∀ i : Fin 2, TorchLean.Tensor.getScalar x i ∈ Set.Icc (-M) M
     refine (Fin.forall_fin_two).2 ?_
     refine And.intro ?_ ?_
     · simpa [ReLUMulApprox.box, ReLUMulApprox.firstCoordinate] using hx.1
@@ -1792,6 +1803,7 @@ theorem relu_mul_universal_approximation_plane_box_via_nd
   refine ⟨hidDim, l1, l2, ?_⟩
   intro x hx
   have hxN : x ∈ boxN 2 M := (planeBox_iff_coordinateBox (M := M) (x := x)).2 hx
-  simpa [ReLUMulApprox.mulFun, ReLUMulApprox.firstCoordinate, ReLUMulApprox.secondCoordinate] using h x hxN
+  simpa [ReLUMulApprox.mulFun, ReLUMulApprox.firstCoordinate, ReLUMulApprox.secondCoordinate]
+    using h x hxN
 
 end NN.MLTheory.Proofs.ReLU.Approximation.CompactSet

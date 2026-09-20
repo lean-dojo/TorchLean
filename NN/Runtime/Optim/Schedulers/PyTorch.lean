@@ -18,14 +18,20 @@ store, inspect, and reason about the exact scheduler state without calling PyTor
 `Schedulers.Core` documents the zero-indexed counter convention, shared scalar operations, and
 literature. The `Native` module provides simpler total schedules when compatibility is not the
 contract.
+
+Only schedules whose semantics differ from the native ones live here. `StepLR` is not duplicated:
+the native `Scheduler.StepDecay` already computes `base_lr * gamma ^ (step / step_size)` with the
+same zero-indexed counter, so it is the PyTorch-compatible step schedule as well.
 -/
 
 @[expose] public section
 
 
 namespace Optim
+namespace Scheduler
+namespace PyTorch
 
-variable {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+variable {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
 
 open MathFunctions
 
@@ -38,108 +44,62 @@ The schedulers below use formulas and step-count conventions chosen to match PyT
 Important convention note (PyTorch `last_epoch`):
 - In modern PyTorch, schedulers effectively start at `last_epoch = 0` right after construction
   (fresh run with `last_epoch = -1` in the constructor triggers an initial internal step).
-- We model that behavior by using a `current_step : Nat := 0` counter.
-  Think: `current_step` corresponds to PyTorch's `last_epoch` after construction.
+- We model that behavior by using a `currentStep : Nat := 0` counter.
+  Think: `currentStep` corresponds to PyTorch's `last_epoch` after construction.
 
 These schedulers are *LR-only* (they do not mutate optimizer momentum/betas). If you need the full
 PyTorch OneCycle momentum behavior, consider adding a separate momentum schedule and stepping both
 in lockstep.
 -/
 
-/-! ### StepLR -/
-
-/--
-PyTorch-compatible `StepLR`.
-
-Semantics:
-- `current_step = 0` yields `base_lr`.
-- Every `step_size` steps, multiply LR by `gamma`.
-- When `step_size = 0`, this degenerates to a constant schedule (total, no exceptions).
-
-PyTorch reference: `torch.optim.lr_scheduler.StepLR`.
--/
-structure StepLR (α : Type) where
-  /-- Base learning rate (what PyTorch calls `base_lrs[i]`). -/
-  baseLr : α
-  /-- Step interval (`step_size`). -/
-  stepSize : Nat
-  /-- Multiplicative decay factor (`gamma`). -/
-  gamma : α
-  /-- Step counter matching PyTorch `last_epoch` after construction (0-indexed). -/
-  currentStep : Nat := 0
-
-/-- Current learning rate for `StepLR` at `current_step`. -/
-def StepLR.getLr (scheduler : StepLR α) : α :=
-  if scheduler.stepSize = 0 then
-    scheduler.baseLr
-  else
-    let decayCount := scheduler.currentStep / scheduler.stepSize
-    scheduler.baseLr * (scheduler.gamma ^ (decayCount : α))
-
-omit [DecidableRel ((· > ·) : α → α → Prop)] in
-/-- The PyTorch-compatible `StepLR` is also totalized to a constant when `step_size = 0`. -/
-theorem StepLR.getLr_zero_stepSize
-    (baseLr gamma : α) (currentStep : Nat) :
-    StepLR.getLr
-      { baseLr := baseLr
-        stepSize := 0
-        gamma := gamma
-        currentStep := currentStep } = baseLr := by
-  simp [StepLR.getLr]
-
-/-- Advance `StepLR` by one step. -/
-def StepLR.step (scheduler : StepLR α) : StepLR α :=
-  { scheduler with currentStep := scheduler.currentStep + 1 }
-
-/-- Constructor for `StepLR` starting at `current_step = 0`. -/
-def stepLr (baseLr : α) (stepSize : Nat) (gamma : α) : StepLR α :=
-  { baseLr := baseLr, stepSize := stepSize, gamma := gamma }
-
 /-! ### CosineAnnealingLR -/
 
 /--
 PyTorch-compatible `CosineAnnealingLR`.
 
-Key behavior difference from TorchLean's `CosineAnnealingScheduler` above:
+Key behavior difference from TorchLean's native `Scheduler.CosineAnnealing`:
 - PyTorch's `CosineAnnealingLR` continues the cosine curve past `T_max` (it is periodic with period
   `2*T_max`), rather than clamping to `eta_min`.
 
 PyTorch reference: `torch.optim.lr_scheduler.CosineAnnealingLR`.
 -/
-structure CosineAnnealingLR (α : Type) where
+structure CosineAnnealing (α : Type) where
   /-- Base learning rate (`base_lrs[i]`). -/
-  baseLr : α
+  baseLearningRate : α
   /-- Maximum number of steps in a half-cycle (`T_max`). -/
-  tMax : Nat
+  halfCycleSteps : Nat
   /-- Minimum learning rate (`eta_min`). -/
-  etaMin : α
+  minimumLearningRate : α
   /-- Step counter matching PyTorch `last_epoch` after construction (0-indexed). -/
   currentStep : Nat := 0
 
-/-- Current learning rate for `CosineAnnealingLR` at `current_step`. -/
-def CosineAnnealingLR.getLr (scheduler : CosineAnnealingLR α) : α :=
-  if scheduler.tMax = 0 then
-    scheduler.baseLr
+/-- Current learning rate for PyTorch-compatible cosine annealing. -/
+def CosineAnnealing.current (scheduler : CosineAnnealing α) : α :=
+  if scheduler.halfCycleSteps = 0 then
+    scheduler.baseLearningRate
   else
-    scheduler.etaMin
-      + (scheduler.baseLr - scheduler.etaMin)
-          * (1 + cos ((pi : α) * (scheduler.currentStep : α) / (scheduler.tMax : α)))
+    scheduler.minimumLearningRate
+      + (scheduler.baseLearningRate - scheduler.minimumLearningRate)
+          * (1 + cos ((pi : α) * (scheduler.currentStep : α) /
+            (scheduler.halfCycleSteps : α)))
           / (1 + 1)
 
-/-- Advance `CosineAnnealingLR` by one step. -/
-def CosineAnnealingLR.step (scheduler : CosineAnnealingLR α) : CosineAnnealingLR α :=
+/-- Advance PyTorch-compatible cosine annealing by one step. -/
+def CosineAnnealing.advance (scheduler : CosineAnnealing α) : CosineAnnealing α :=
   { scheduler with currentStep := scheduler.currentStep + 1 }
 
-/-- Constructor for `CosineAnnealingLR` starting at `current_step = 0`. -/
-def cosineAnnealingLR (baseLr : α) (tMax : Nat) (etaMin : α := Numbers.zero) :
-    CosineAnnealingLR α :=
-  { baseLr := baseLr, tMax := tMax, etaMin := etaMin }
+/-- Create PyTorch-compatible cosine annealing at step zero. -/
+def CosineAnnealing.create (baseLearningRate : α) (halfCycleSteps : Nat)
+    (minimumLearningRate : α := 0) : CosineAnnealing α :=
+  { baseLearningRate := baseLearningRate
+    halfCycleSteps := halfCycleSteps
+    minimumLearningRate := minimumLearningRate }
 
 /-! ### OneCycleLR (LR-only) -/
 
 /-- Anneal strategy used by `OneCycleLR` (matches PyTorch `"cos"` or `"linear"`). -/
-inductive OneCycleAnnealStrategy
-  | cos
+inductive AnnealingStrategy
+  | cosine
   | linear
   deriving Repr, DecidableEq
 
@@ -161,80 +121,90 @@ Notes:
 
 PyTorch reference: `torch.optim.lr_scheduler.OneCycleLR`.
 -/
-structure OneCycleLR (α : Type) where
+structure OneCycle (α : Type) where
   /-- Peak learning rate (`max_lr`). -/
-  maxLr : α
+  maximumLearningRate : α
   /-- Total number of steps (`total_steps`). -/
   totalSteps : Nat
   /-- Fraction of steps spent increasing LR (`pct_start`). -/
-  pctStart : α
+  increasingFraction : α
   /-- `div_factor` used to derive `initial_lr = max_lr / div_factor`. -/
-  divFactor : α
+  divisionFactor : α
   /-- `final_div_factor` used to derive `min_lr = initial_lr / final_div_factor`. -/
-  finalDivFactor : α
+  finalDivisionFactor : α
   /-- Anneal strategy (`cos` or `linear`). -/
-  annealStrategy : OneCycleAnnealStrategy := .cos
+  annealingStrategy : AnnealingStrategy := .cosine
   /-- Use PyTorch's `three_phase` variant when `true`. -/
   threePhase : Bool := false
   /-- Step counter matching PyTorch `last_epoch` after construction (0-indexed). -/
   currentStep : Nat := 0
 
-namespace OneCycleLR
+namespace OneCycle
 
 /-- Derived initial LR (`max_lr / div_factor`). -/
-def initialLr (s : OneCycleLR α) : α :=
-  s.maxLr / s.divFactor
+def initialLearningRate (scheduler : OneCycle α) : α :=
+  scheduler.maximumLearningRate / scheduler.divisionFactor
 
 /-- Derived minimum LR (`initial_lr / final_div_factor`). -/
-def minLr (s : OneCycleLR α) : α :=
-  initialLr s / s.finalDivFactor
+def minimumLearningRate (scheduler : OneCycle α) : α :=
+  scheduler.initialLearningRate / scheduler.finalDivisionFactor
 
 /-- PyTorch-compatible anneal helper (no clamping). -/
-def anneal (s : OneCycleLR α) (startLR endLR pct : α) : α :=
-  match s.annealStrategy with
-  | .cos => SchedulerUtils.cosineInterpolationUnclamped startLR endLR pct
-  | .linear => SchedulerUtils.linearInterpolationUnclamped startLR endLR pct
+def anneal (scheduler : OneCycle α) (startingLearningRate endingLearningRate fraction : α) : α :=
+  match scheduler.annealingStrategy with
+  | .cosine =>
+      Internal.cosineInterpolationUnclamped startingLearningRate endingLearningRate fraction
+  | .linear =>
+      Internal.linearInterpolationUnclamped startingLearningRate endingLearningRate fraction
 
-end OneCycleLR
+end OneCycle
 
-/-- Current learning rate for `OneCycleLR` at `current_step` (LR-only). -/
-def OneCycleLR.getLr (s : OneCycleLR α) : α :=
-  let initLR := OneCycleLR.initialLr (α := α) s
-  let minLR := OneCycleLR.minLr (α := α) s
-  if s.totalSteps = 0 then
-    initLR
+/-- Current learning rate for PyTorch-compatible one-cycle scheduling (LR-only). -/
+def OneCycle.current (scheduler : OneCycle α) : α :=
+  let initialLearningRate := scheduler.initialLearningRate
+  let minimumLearningRate := scheduler.minimumLearningRate
+  if scheduler.totalSteps = 0 then
+    initialLearningRate
   else
     -- PyTorch raises when `step_num > total_steps`. We clamp to keep the function total.
-    let stepNat := if s.currentStep ≤ s.totalSteps then s.currentStep else s.totalSteps
-    let stepNum : α := stepNat
-    let total : α := s.totalSteps
-    if s.threePhase then
-      let end1 : α := s.pctStart * total - 1
-      let end2 : α := (Numbers.two : α) * s.pctStart * total - (Numbers.two : α)
-      let end3 : α := (s.totalSteps - 1 : Nat)
-      if stepNum > end1 then
-        if stepNum > end2 then
-          let pct := SchedulerUtils.safeDiv (stepNum - end2) (end3 - end2)
-          OneCycleLR.anneal (α := α) s initLR minLR pct
+    let boundedStep :=
+      if scheduler.currentStep ≤ scheduler.totalSteps then
+        scheduler.currentStep
+      else
+        scheduler.totalSteps
+    let step : α := boundedStep
+    let total : α := scheduler.totalSteps
+    if scheduler.threePhase then
+      let increasingPhaseEnd : α := scheduler.increasingFraction * total - 1
+      let decreasingPhaseEnd : α :=
+        (2 : α) * scheduler.increasingFraction * total - (2 : α)
+      let finalPhaseEnd : α := (scheduler.totalSteps - 1 : Nat)
+      if step > increasingPhaseEnd then
+        if step > decreasingPhaseEnd then
+          let fraction :=
+            Internal.safeDiv (step - decreasingPhaseEnd) (finalPhaseEnd - decreasingPhaseEnd)
+          scheduler.anneal initialLearningRate minimumLearningRate fraction
         else
-          let pct := SchedulerUtils.safeDiv (stepNum - end1) (end2 - end1)
-          OneCycleLR.anneal (α := α) s s.maxLr initLR pct
+          let fraction :=
+            Internal.safeDiv (step - increasingPhaseEnd) (decreasingPhaseEnd - increasingPhaseEnd)
+          scheduler.anneal scheduler.maximumLearningRate initialLearningRate fraction
       else
-        let pct := SchedulerUtils.safeDiv stepNum (end1 - 0)
-        OneCycleLR.anneal (α := α) s initLR s.maxLr pct
+        let fraction := Internal.safeDiv step (increasingPhaseEnd - 0)
+        scheduler.anneal initialLearningRate scheduler.maximumLearningRate fraction
     else
-      let end1 : α := s.pctStart * total - 1
-      let end2 : α := (s.totalSteps - 1 : Nat)
-      if stepNum > end1 then
-        let pct := SchedulerUtils.safeDiv (stepNum - end1) (end2 - end1)
-        OneCycleLR.anneal (α := α) s s.maxLr minLR pct
+      let increasingPhaseEnd : α := scheduler.increasingFraction * total - 1
+      let finalPhaseEnd : α := (scheduler.totalSteps - 1 : Nat)
+      if step > increasingPhaseEnd then
+        let fraction := Internal.safeDiv (step - increasingPhaseEnd)
+          (finalPhaseEnd - increasingPhaseEnd)
+        scheduler.anneal scheduler.maximumLearningRate minimumLearningRate fraction
       else
-        let pct := SchedulerUtils.safeDiv stepNum (end1 - 0)
-        OneCycleLR.anneal (α := α) s initLR s.maxLr pct
+        let fraction := Internal.safeDiv step (increasingPhaseEnd - 0)
+        scheduler.anneal initialLearningRate scheduler.maximumLearningRate fraction
 
-/-- Advance `OneCycleLR` by one step. -/
-def OneCycleLR.step (s : OneCycleLR α) : OneCycleLR α :=
-  { s with currentStep := s.currentStep + 1 }
+/-- Advance PyTorch-compatible one-cycle scheduling by one step. -/
+def OneCycle.advance (scheduler : OneCycle α) : OneCycle α :=
+  { scheduler with currentStep := scheduler.currentStep + 1 }
 
 /--
 Constructor for `OneCycleLR` starting at `current_step = 0` (LR-only).
@@ -245,15 +215,18 @@ This mirrors the PyTorch parameterization:
 - phase endpoints computed as `pct_start * total_steps - 1` and `total_steps - 1` (with the optional
   `three_phase` middle phase).
 -/
-def oneCycleLR (maxLr : α) (totalSteps : Nat) (pctStart : α) (divFactor : α)
-    (finalDivFactor : α) (annealStrategy : OneCycleAnnealStrategy := .cos)
-    (threePhase : Bool := false) : OneCycleLR α :=
-  { maxLr := maxLr
+def OneCycle.create (maximumLearningRate : α) (totalSteps : Nat) (increasingFraction : α)
+    (divisionFactor : α) (finalDivisionFactor : α)
+    (annealingStrategy : AnnealingStrategy := .cosine)
+    (threePhase : Bool := false) : OneCycle α :=
+  { maximumLearningRate := maximumLearningRate
     totalSteps := totalSteps
-    pctStart := pctStart
-    divFactor := divFactor
-    finalDivFactor := finalDivFactor
-    annealStrategy := annealStrategy
+    increasingFraction := increasingFraction
+    divisionFactor := divisionFactor
+    finalDivisionFactor := finalDivisionFactor
+    annealingStrategy := annealingStrategy
     threePhase := threePhase }
 
+end PyTorch
+end Scheduler
 end Optim

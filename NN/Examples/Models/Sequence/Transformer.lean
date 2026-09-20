@@ -10,19 +10,16 @@ Real-data CUDA example:
 
 module
 
-
-public import NN.API
 public import NN.Examples.Models.Common.RealData
 
 /-!
-# Transformer Text Example
+# Causal Transformer Text Example
 
-Runnable `torchlean transformer` example. It reads a local text corpus, builds a short sequence
-reconstruction sample, and trains one transformer encoder block on that real text window.
+Runnable `torchlean transformer` example. It reads a local text corpus, builds a shifted next-byte
+feature sample, and trains a compact causal Transformer on that real text window.
 
-The reusable model wiring is exposed as `TorchLean.nn.models.transformerEncoder`. This command stays
-small so attention, normalization, the optimizer, logging, and CUDA execution remain easy to test
-regularly.
+This command uses the same public causal model family as the GPT examples. Future tokens are masked,
+so a position cannot read the byte it is being trained to predict.
 
 ```bash
 python3 scripts/datasets/download_example_data.py --tiny-shakespeare
@@ -37,82 +34,85 @@ open TorchLean
 namespace NN.Examples.Models.Sequence.Transformer
 
 /-- CLI subcommand name used in terminal banners and error messages. -/
-def exeName : String := "torchlean transformer"
+def exeName : String := "transformer"
 
 /-- Default JSON loss-curve path for this command. -/
-def defaultLogJson : System.FilePath := ModelZoo.trainLogPath "transformer"
+def defaultLogPath : System.FilePath := Support.trainLogPath "transformer"
 
-/-- Number of rows in the typed encoder batch. -/
-def batch : Nat := 1
-
-/-- Short reconstruction window for the quick encoder training run. -/
-def seqLen : Nat := 1
+/-- Short multi-token window for the quick encoder training run. -/
+def contextLength : Nat := 4
 /-- Transformer feature width. -/
-def dModel : Nat := 2
+def modelWidth : Nat := 4
+/-- Default number of distinct corpus windows exposed to the trainer. -/
+def defaultWindows : Nat := 16
 
-/-- Toy byte bucketing: encode byte id `b` as `b % 2`; collisions are intentional. -/
-def byteBucket (id : Nat) : Fin dModel :=
-  ⟨id % dModel, Nat.mod_lt _ (by decide)⟩
+local instance : NeZero modelWidth := ⟨by decide⟩
+
+/-- Compact byte vocabulary: encode byte id `b` as `b % 4`; collisions are intentional. -/
+def byteBucket (id : Nat) : Fin modelWidth :=
+  Fin.ofNat modelWidth id
 /-- Number of attention heads. -/
-def numHeads : Nat := 1
-/-- Per-head width; $\mathtt{numHeads}\cdot\mathtt{headDim}$ matches `dModel`. -/
-def headDim : Nat := 2
+def attentionHeads : Nat := 2
+/-- Per-head width; `attentionHeads * attentionHeadWidth = modelWidth`. -/
+def attentionHeadWidth : Nat := 2
 /-- Feed-forward hidden width inside the encoder block. -/
-def ffnHidden : Nat := 4
+def feedForwardWidth : Nat := 8
 
-/-- API-level encoder configuration shared by shapes and the constructor. -/
-def cfg : nn.models.TransformerEncoderConfig :=
-  { seqLen := seqLen
-    dModel := dModel
-    numHeads := numHeads
-    headDim := headDim
-    ffnHidden := ffnHidden }
+/-- Causal language-model configuration. -/
+abbrev modelConfig : nn.models.CausalTransformer.Config :=
+  { sequenceLength := contextLength
+    vocabularySize := modelWidth
+    headCount := attentionHeads
+    headWidth := attentionHeadWidth
+    feedForwardWidth := feedForwardWidth
+    layerCount := 1 }
 
-/-- Input shape: a batch of sequence rows with `dModel` features per token. -/
-abbrev σ :=
-  cfg.shape [batch]
+/-- Input shape: batched one-hot byte buckets. -/
+abbrev input : Shape :=
+  modelConfig.vocabulary
 
-/-- Output shape matches the input because this command trains a reconstruction objective. -/
-abbrev τ :=
-  σ
+/-- Output shape: one next-byte logit row per token position. -/
+abbrev output : Shape :=
+  modelConfig.vocabulary
 
-/-- One reusable transformer encoder block from the public model API. -/
-def model : nn.Builder (nn.Sequential σ τ) :=
-  nn.models.transformerEncoder cfg [batch] (by decide) (by decide)
+/-- Compact causal Transformer used by the runnable text example. -/
+def model : nn.Builder (nn.Sequential input output) :=
+  nn.models.CausalTransformer.oneHot modelConfig
 
-/-- Build one reconstruction sample from the loaded corpus prefix. -/
-def sample (corpus : String) : Sample.Supervised Float σ τ :=
-  let s := Data.CausalLM.byteBatch (α := Float) batch seqLen dModel
-    byteBucket (corpus.take (seqLen + 1)).toString
-  Sample.mk (Spec.Tensor.materialize (Sample.x s)) (Spec.Tensor.materialize (Sample.y s))
+/-- Build a finite next-byte dataset from evenly spaced corpus windows. -/
+def samples (corpus : String) (windows : Nat) :
+    Data.SampleStream (Sample.Supervised Float input output) :=
+  Data.CausalLM.byteSamples
+    (α := Float) contextLength modelWidth byteBucket windows corpus
 
-/-- Train the Transformer encoder with the public `Trainer` surface. -/
-def train (opts : Options) (corpusFlags : RealData.TextCorpusFlags)
+/-- Train the causal Transformer with the public `Trainer` surface. -/
+def train (runtime : Runtime.Config) (data : RealData.TextWindowFlags)
     (flags : CLI.Training.OptimizerOptions) : IO Unit := do
-  let corpus ← RealData.TextCorpusFlags.read exeName corpusFlags
+  let corpus ← RealData.TextWindowFlags.read exeName data
   let trainer :=
     Trainer.new model <|
-      Trainer.Config.fromRunConfig
-        (Trainer.RunConfig.ofRuntimeOptions opts { optimizer := optim.sgd { lr := flags.lr } })
-        .regression
-  let trainData := Data.floatSamples #[sample corpus]
+      Trainer.RunConfig.forObjective
+        (Trainer.RunConfig.fromRuntime runtime
+          { optimizer := optim.sgd { learningRate := flags.learningRate } })
+        (.oneHotCrossEntropy 1) (seed := runtime.seed)
+  let trainData := Data.fromStream (samples corpus data.windows)
   let trained ← trainer.train
     trainData
-    (CLI.Training.OptimizerOptions.toTrainerOptions flags
-      (title := "Transformer text training")
-      (notes := #[s!"corpus={corpusFlags.path}"]))
+    (flags.trainOptions
+      (logTitle := "Transformer next-byte training")
+      (logNotes := #[s!"corpus={data.corpus.path}", s!"windows={data.windows}"]))
   trained.printSummary
 
-/-- CLI entrypoint for the Transformer encoder text command. -/
+/-- CLI entrypoint for the causal Transformer text command. -/
 def main (args : List String) : IO UInt32 := do
-  TrainCommand.run
+  CLI.Training.Command.run
     { exeName := exeName
-      defaultLogJson := defaultLogJson
+      defaultLogPath := defaultLogPath
       defaultSteps := 1
-      defaultLr := 1e-4
-      description := "Transformer encoder"
-      dataOptions := RealData.TextCorpusFlags.help
-      parseData := RealData.TextCorpusFlags.parse
+      defaultLearningRate := 1e-4
+      description := "Causal Transformer next-byte model"
+      dataOptions := RealData.TextWindowFlags.help defaultWindows
+      parseData := RealData.TextWindowFlags.parse exeName defaultWindows
       train := train }
     args
 

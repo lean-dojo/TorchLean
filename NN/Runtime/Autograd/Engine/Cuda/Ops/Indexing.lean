@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Engine.Cuda.Ops.Linear
+public import NN.Runtime.Autograd.Engine.Cuda.Kernels
+public import NN.Runtime.Autograd.Engine.Cuda.Tape
+public import NN.Spec.Core.Tensor.Core
 
 /-!
 # CUDA Tape Operations: Concatenation, Slicing, and Indexing
@@ -18,8 +20,8 @@ namespace Runtime
 namespace Autograd
 namespace Cuda
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Tape
 
@@ -143,11 +145,7 @@ def releasePermutedThen (steps : List SwapStep) (permuted keep : Buffer) : Buffe
 /-- Convert bounded tensor indices to the host array expected by CUDA row kernels. -/
 def finTensorToIndexArray {n count : Nat}
     (indices : Tensor (Fin n) [count]) : Array Nat :=
-  match indices with
-  | .dim f =>
-      Array.ofFn fun i : Fin count =>
-        match f i with
-        | .scalar index => index.val
+  Array.ofFn fun i : Fin count => (Tensor.getScalar indices i).val
 
 end Indexing
 

@@ -16,10 +16,10 @@ Validation helpers for `NN.IR.Graph`.
 There are two validation levels:
 - `Graph.checkWellFormed` lives in `NN.IR.Graph` and checks only graph structure: id discipline,
   parent arity, and topological ordering.
-- `Graph.checkShapes` lives here and checks the declared `Node.outShape`s against the shared shape
-  inference rules from `NN.IR.Infer`.
+- `Graph.checkShapes` lives in `NN.IR.Infer` and checks declared `Node.outShape`s
+  against the shared shape inference rules from `NN.IR.Infer`.
 
-`Infer.inferNodeOutShape` states the per-operation shape rules, and `Graph.checkShapes` validates
+`Infer.nodeOutShape` states the per-operation shape rules, and `Graph.checkShapes` validates
 graph nodes through those rules.
 -/
 

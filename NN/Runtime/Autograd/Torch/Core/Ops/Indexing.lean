@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Torch.Core.Ops.Dispatch
+public import NN.Runtime.Autograd.Engine.Core.Indexing
+public import NN.Runtime.Autograd.Engine.Cuda.Ops.Indexing
 
 /-!
 # Eager Tensor Operations
@@ -22,9 +24,7 @@ namespace Runtime
 namespace Autograd
 namespace Torch
 
-open Spec
-open Tensor
-open Proofs.Autograd.Algebra
+open Spec TorchLean TorchLean.Tensor
 
 namespace Internal
 
@@ -33,7 +33,7 @@ namespace EagerSession
 /-! ## Indexing operations -/
 
 /-- Select one bounded coordinate from an arbitrary tensor axis. -/
-def select {α : Type} (session : EagerSession α) [Zero α] [DecidableEq Shape]
+def select {α : Type} [TorchLean.Storage α] (session : EagerSession α) [Zero α]
     {shape : Shape} (axis : Nat) [Shape.AxisInBounds axis shape]
     (x : TensorRef α shape) (index : Fin (Shape.axisSize shape axis)) :
     IO (TensorRef α (shape.eraseAxis axis)) := do
@@ -52,8 +52,8 @@ def select {α : Type} (session : EagerSession α) [Zero α] [DecidableEq Shape]
   dispatchCudaOpt (α := α) session .gather #[x.identity?] cpu cuda
 
 /-- Select several bounded coordinates from an arbitrary tensor axis. -/
-def indexSelect {α : Type} (session : EagerSession α) [Add α] [Zero α]
-    [DecidableEq Shape] {shape : Shape} (axis count : Nat)
+def indexSelect {α : Type} [TorchLean.Storage α] (session : EagerSession α) [Add α] [Zero α]
+    {shape : Shape} (axis count : Nat)
     [Shape.AxisInBounds axis shape] (x : TensorRef α shape)
     (indices : Tensor (Fin (Shape.axisSize shape axis)) [count]) :
     IO (TensorRef α (shape.replaceAxis axis count)) := do
@@ -72,8 +72,8 @@ def indexSelect {α : Type} (session : EagerSession α) [Add α] [Zero α]
   dispatchCudaOpt (α := α) session .gather #[x.identity?] cpu cuda
 
 /-- Add source slices into an arbitrary tensor axis at bounded coordinates. -/
-def scatterAdd {α : Type} (session : EagerSession α) [Add α] [Zero α]
-    [DecidableEq Shape] {shape : Shape} (axis count : Nat)
+def scatterAdd {α : Type} [TorchLean.Storage α] (session : EagerSession α) [Add α] [Zero α]
+    {shape : Shape} (axis count : Nat)
     [Shape.AxisInBounds axis shape] (base : TensorRef α shape)
     (source : TensorRef α (shape.replaceAxis axis count))
     (indices : Tensor (Fin (Shape.axisSize shape axis)) [count]) : IO (TensorRef α shape) := do

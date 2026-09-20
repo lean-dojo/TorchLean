@@ -25,7 +25,6 @@ messages instead of silently defaulting.
 
 @[expose] public section
 
-
 namespace NN.Verification.Json
 
 open Lean
@@ -44,45 +43,45 @@ Use this at checker boundaries instead of repeating `IO.FS.readFile` and `Json.p
 tool. The file path is included in parse errors.
 -/
 def readJsonFile (path : String) : IO Json :=
-  TorchLean.Json.parseFile (System.FilePath.mk path)
+  TorchLean.Json.readFile (System.FilePath.mk path)
 
 /-- Ensure a JSON value is an object. -/
-def expectObj (j : Json) (ctx : String) : IO Json := do
-  match TorchLean.Json.expectObjE ctx j with
+def expectObject (j : Json) (ctx : String) : IO Json := do
+  match TorchLean.Json.expectObject ctx j with
   | .ok _ => pure j
   | .error e => throw <| IO.userError e
 
 /-- Extract a required field from a JSON object. -/
 def expectField (j : Json) (k : String) (ctx : String) : IO Json := do
-  match TorchLean.Json.expectFieldE ctx k j with
+  match TorchLean.Json.expectField ctx k j with
   | .ok v => pure v
   | .error e => throw <| IO.userError e
 
 /-- Read a JSON artifact and require the top-level value to be an object. -/
 def readJsonObjectFile (path : String) (ctx : String := "top-level") : IO Json := do
   let j ← readJsonFile path
-  expectObj j ctx
+  expectObject j ctx
 
 /-- Extract an optional field from a JSON object. -/
 def optionalField? (j : Json) (k : String) (ctx : String) : IO (Option Json) := do
-  let o ← fromExcept <| TorchLean.Json.expectObjE ctx j
+  let o ← fromExcept <| TorchLean.Json.expectObject ctx j
   pure <| Std.TreeMap.Raw.get? o k
 
 /-- Require a JSON string in an `IO` parser, preserving contextual error messages. -/
 def expectString (j : Json) (ctx : String) : IO String :=
-  fromExcept <| TorchLean.Json.expectStringE ctx j
+  fromExcept <| TorchLean.Json.expectString ctx j
 
 /-- Require a natural number, accepting either JSON numeric syntax or a decimal string. -/
 def expectNat (j : Json) (ctx : String) : IO Nat :=
-  fromExcept <| TorchLean.Json.expectNatE ctx j
+  fromExcept <| TorchLean.Json.expectNat ctx j
 
 /-- Require a JSON array and return its entries. -/
 def expectArray (j : Json) (ctx : String) : IO (Array Json) :=
-  fromExcept <| TorchLean.Json.expectArrayE ctx j
+  fromExcept <| TorchLean.Json.expectArray ctx j
 
 /-- Parse a `Nat` from a JSON number or decimal string. -/
 def asNat? (j : Json) : Option Nat :=
-  match TorchLean.Json.expectNatE "Nat" j with
+  match TorchLean.Json.expectNat "Nat" j with
   | .ok n => some n
   | .error _ => none
 
@@ -104,22 +103,22 @@ def asFiniteFloat? (j : Json) : Option Float := do
   else
     none
 
-/-- Require a floating-point value in an `Except` parser. -/
-def expectFloatE (ctx : String) (j : Json) : Except String Float :=
+/-- Parse a floating-point value with contextual errors. -/
+def parseFloat (ctx : String) (j : Json) : Except String Float :=
   match asFloat? j with
   | some x => pure x
   | none => throw s!"{ctx}: expected float"
 
-/-- Require a finite floating-point value in an `Except` parser. -/
-def expectFiniteFloatE (ctx : String) (j : Json) : Except String Float :=
+/-- Parse a finite floating-point value with contextual errors. -/
+def parseFiniteFloat (ctx : String) (j : Json) : Except String Float :=
   match asFiniteFloat? j with
   | some x => pure x
   | none => throw s!"{ctx}: expected finite float"
 
-/-- Parse a JSON array of finite floats in an `Except` parser. -/
-def expectFiniteFloatArrayE (ctx : String) (j : Json) : Except String (Array Float) := do
-  let xs ← TorchLean.Json.expectArrayE ctx j
-  xs.mapIdxM fun i x => expectFiniteFloatE s!"{ctx}[{i}]" x
+/-- Parse a JSON array of finite floats with contextual errors. -/
+def parseFiniteFloatArray (ctx : String) (j : Json) : Except String (Array Float) := do
+  let xs ← TorchLean.Json.expectArray ctx j
+  xs.mapIdxM fun i x => parseFiniteFloat s!"{ctx}[{i}]" x
 
 /-- A finite axis-aligned region parsed from a verification artifact. -/
 structure BoxRegion where
@@ -155,23 +154,23 @@ non-finite values, incomplete schemas, and intervals whose lower endpoint exceed
 Keeping these checks here gives certificate consumers one well-formed region type instead of
 several subtly different parsers.
 -/
-def expectBoxRegionE (ctx : String) (j : Json) : Except String BoxRegion := do
-  let obj <- TorchLean.Json.expectObjE ctx j
+def parseBoxRegion (ctx : String) (j : Json) : Except String BoxRegion := do
+  let obj <- TorchLean.Json.expectObject ctx j
   let declaredDim? <- match Std.TreeMap.Raw.get? obj "dim" with
     | none => pure none
-    | some dimJson => some <$> TorchLean.Json.expectNatE s!"{ctx}.dim" dimJson
+    | some dimJson => some <$> TorchLean.Json.expectNat s!"{ctx}.dim" dimJson
   let lo? := Std.TreeMap.Raw.get? obj "lo"
   let hi? := Std.TreeMap.Raw.get? obj "hi"
   let center? := Std.TreeMap.Raw.get? obj "center"
   let eps? := Std.TreeMap.Raw.get? obj "eps"
   let region <- match lo?, hi?, center?, eps? with
   | some loJson, some hiJson, none, none =>
-      let lo ← expectFiniteFloatArrayE s!"{ctx}.lo" loJson
-      let hi ← expectFiniteFloatArrayE s!"{ctx}.hi" hiJson
+      let lo ← parseFiniteFloatArray s!"{ctx}.lo" loJson
+      let hi ← parseFiniteFloatArray s!"{ctx}.hi" hiJson
       pure { dim := declaredDim?.getD lo.size, lo, hi }
   | none, none, some centerJson, some epsJson =>
-      let center ← expectFiniteFloatArrayE s!"{ctx}.center" centerJson
-      let radius ← expectFiniteFloatE s!"{ctx}.eps" epsJson
+      let center ← parseFiniteFloatArray s!"{ctx}.center" centerJson
+      let radius ← parseFiniteFloat s!"{ctx}.eps" epsJson
       pure
         { dim := declaredDim?.getD center.size
           lo := center.map (· - radius)
@@ -192,35 +191,25 @@ def expectBoxRegionE (ctx : String) (j : Json) : Except String BoxRegion := do
   pure region
 
 /-- Parse the exact endpoint schema `{lo, hi}`, with an optional matching `dim` field. -/
-def expectEndpointBoxRegionE (ctx : String) (j : Json) : Except String BoxRegion := do
-  let obj ← TorchLean.Json.expectObjE ctx j
+def parseEndpointBoxRegion (ctx : String) (j : Json) : Except String BoxRegion := do
+  let obj ← TorchLean.Json.expectObject ctx j
   if (Std.TreeMap.Raw.get? obj "center").isSome || (Std.TreeMap.Raw.get? obj "eps").isSome then
     throw s!"{ctx}: expected endpoint fields (`lo`, `hi`), not `center` or `eps`"
-  expectBoxRegionE ctx j
+  parseBoxRegion ctx j
 
-/-- Extract a floating-point-valued field in an `Except` parser. -/
-def expectFieldFloatE (ctx key : String) (j : Json) : Except String Float := do
-  expectFloatE s!"{ctx}.{key}" (← TorchLean.Json.expectFieldE ctx key j)
+/-- Parse a finite floating-point-valued field with contextual errors. -/
+def parseFieldFiniteFloat (ctx key : String) (j : Json) : Except String Float := do
+  parseFiniteFloat s!"{ctx}.{key}" (← TorchLean.Json.expectField ctx key j)
 
-/-- Extract a finite floating-point-valued field in an `Except` parser. -/
-def expectFieldFiniteFloatE (ctx key : String) (j : Json) : Except String Float := do
-  expectFiniteFloatE s!"{ctx}.{key}" (← TorchLean.Json.expectFieldE ctx key j)
-
-/-- Extract a string-valued field in an `Except` parser. -/
-def expectFieldStringE (ctx key : String) (j : Json) : Except String String := do
-  TorchLean.Json.expectStringE s!"{ctx}.{key}" (← TorchLean.Json.expectFieldE ctx key j)
+/-- Parse a string-valued field with contextual errors. -/
+def parseFieldString (ctx key : String) (j : Json) : Except String String := do
+  TorchLean.Json.expectString s!"{ctx}.{key}" (← TorchLean.Json.expectField ctx key j)
 
 /-- Decode a JSON boolean if the value is exactly `true` or `false`. -/
 def parseBool? (j : Json) : Option Bool :=
   match j with
   | .bool b => some b
   | _ => none
-
-/-- Require a floating-point value, accepting JSON numbers and string-encoded numbers. -/
-def expectFloat (j : Json) (ctx : String) : IO Float := do
-  match asFloat? j with
-  | some x => pure x
-  | none => throw <| IO.userError s!"{ctx}: expected float"
 
 /-- Require a finite floating-point value, accepting JSON numbers and string-encoded numbers. -/
 def expectFiniteFloat (j : Json) (ctx : String) : IO Float := do
@@ -246,22 +235,11 @@ def parseFloatMatrix (j : Json) : Option (Array (Array Float)) := do
   | .arr rows => rows.mapM parseFloatArray
   | _ => none
 
-/-- Parse a JSON array of floats with contextual errors. -/
-def expectFloatArray (j : Json) (ctx : String) : IO (Array Float) := do
-  match parseFloatArray j with
-  | some xs => pure xs
-  | none => throw <| IO.userError s!"{ctx}: expected float array"
-
 /-- Parse a JSON array of finite floats with contextual errors. -/
 def expectFiniteFloatArray (j : Json) (ctx : String) : IO (Array Float) := do
   let xs ← expectArray j ctx
   xs.mapIdxM fun i x => expectFiniteFloat x s!"{ctx}[{i}]"
 
-/-- Parse a JSON matrix of floats with contextual errors. -/
-def expectFloatMatrix (j : Json) (ctx : String) : IO (Array (Array Float)) := do
-  match parseFloatMatrix j with
-  | some rows => pure rows
-  | none => throw <| IO.userError s!"{ctx}: expected array of float arrays"
 
 /-- Parse a JSON matrix whose entries are all finite floats. -/
 def expectFiniteFloatMatrix (j : Json) (ctx : String) : IO (Array (Array Float)) := do
@@ -269,9 +247,9 @@ def expectFiniteFloatMatrix (j : Json) (ctx : String) : IO (Array (Array Float))
   rows.mapIdxM fun i row => expectFiniteFloatArray row s!"{ctx}[{i}]"
 
 /-- Extract an object-valued field. -/
-def expectFieldObj (j : Json) (k : String) (ctx : String) : IO Json := do
+def expectFieldObject (j : Json) (k : String) (ctx : String) : IO Json := do
   let v ← expectField j k ctx
-  expectObj v s!"{ctx}.{k}"
+  expectObject v s!"{ctx}.{k}"
 
 /-- Extract a string-valued field. -/
 def expectFieldString (j : Json) (k : String) (ctx : String) : IO String := do
@@ -285,38 +263,18 @@ def expectFieldNat (j : Json) (k : String) (ctx : String) : IO Nat := do
 def expectFieldArray (j : Json) (k : String) (ctx : String) : IO (Array Json) := do
   expectArray (← expectField j k ctx) s!"{ctx}.{k}"
 
-/-- Extract an optional array-valued field in an `Except` parser, using `#[]` when absent/null. -/
-def optionalFieldArrayD (ctx key : String) (j : Json) : Except String (Array Json) := do
-  let o ← TorchLean.Json.expectObjE ctx j
+/-- Extract an array field, using `#[]` when it is absent or null. -/
+def fieldArrayOrEmpty (ctx key : String) (j : Json) : Except String (Array Json) := do
+  let o ← TorchLean.Json.expectObject ctx j
   match Std.TreeMap.Raw.get? o key with
   | none => pure #[]
   | some .null => pure #[]
   | some (.arr xs) => pure xs
   | some _ => throw s!"{ctx}.{key}: expected array"
 
-/-- Extract a float-array-valued field. -/
-def expectFieldFloatArray (j : Json) (k : String) (ctx : String) : IO (Array Float) := do
-  expectFloatArray (← expectField j k ctx) s!"{ctx}.{k}"
-
 /-- Extract a finite-float-array-valued field. -/
 def expectFieldFiniteFloatArray (j : Json) (k : String) (ctx : String) : IO (Array Float) := do
   expectFiniteFloatArray (← expectField j k ctx) s!"{ctx}.{k}"
-
-/-- Extract a float-matrix-valued field. -/
-def expectFieldFloatMatrix (j : Json) (k : String) (ctx : String) :
-    IO (Array (Array Float)) := do
-  expectFloatMatrix (← expectField j k ctx) s!"{ctx}.{k}"
-
-/-- Extract a finite-float-matrix-valued field. -/
-def expectFieldFiniteFloatMatrix (j : Json) (k : String) (ctx : String) :
-    IO (Array (Array Float)) := do
-  expectFiniteFloatMatrix (← expectField j k ctx) s!"{ctx}.{k}"
-
-/-- Extract an optional string-valued field. -/
-def optionalFieldString? (j : Json) (k : String) (ctx : String) : IO (Option String) := do
-  match ← optionalField? j k ctx with
-  | none => pure none
-  | some v => some <$> expectString v s!"{ctx}.{k}"
 
 /-- Extract an optional natural-number-valued field. -/
 def optionalFieldNat? (j : Json) (k : String) (ctx : String) : IO (Option Nat) := do
@@ -346,31 +304,5 @@ def expectFormat (j : Json) (expected : String) (ctx : String := "top-level") : 
   let fmt ← expectFieldString j "format" ctx
   if fmt != expected then
     throw <| IO.userError s!"{ctx}.format: unsupported format `{fmt}` (expected `{expected}`)"
-
-/-- Pointwise `all` on two float arrays of equal length. -/
-def allPairwise (a b : Array Float) (p : Float → Float → Bool) : Bool :=
-  if hSize : a.size = b.size then
-    (List.finRange a.size).all (fun (i : Fin a.size) =>
-      let bi :=
-        have h : i.1 < b.size := by
-          rw [← hSize]
-          exact i.2
-        b[i.1]'h
-      p (a[i.1]'i.2) bi)
-  else
-    false
-
-/-- Pointwise `any` on two float arrays of equal length. -/
-def anyPairwise (a b : Array Float) (p : Float → Float → Bool) : Bool :=
-  if hSize : a.size = b.size then
-    (List.finRange a.size).any (fun (i : Fin a.size) =>
-      let bi :=
-        have h : i.1 < b.size := by
-          rw [← hSize]
-          exact i.2
-        b[i.1]'h
-      p (a[i.1]'i.2) bi)
-  else
-    false
 
 end NN.Verification.Json

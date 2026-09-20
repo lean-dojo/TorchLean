@@ -4,7 +4,7 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+module -- shake: keep-all (These imports define the CI build coverage.)
 
 import NN.API.Data
 import NN.API.Init
@@ -13,6 +13,8 @@ import NN.API.Trainer.Scheduler
 import NN.GraphSpec
 import NN.IR
 import NN.Spec
+import NN.Tensor.Internal.Laws.DualNumberReduction
+import NN.Tensor.Internal.Laws.Matrix
 
 /-!
 # Additional Foundation Modules

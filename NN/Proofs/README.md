@@ -40,6 +40,7 @@ runtime approximation relation, an imported certificate, or a trusted native bou
 | `RL/` | MDP, environment, replay-buffer, Gymnasium-boundary, DQN/PPO-adjacent, and checked-runtime RL facts. |
 | `Verification/ODE/` | ODE enclosure and corridor facts used by learned sub/supersolution checkers. |
 | `Probability/` | Probability and diffusion-forward helper facts. |
+| `Utils/` | List and real-function helper lemmas shared by the other folders. |
 
 ## Autograd Proofs
 
@@ -54,7 +55,24 @@ successful run as evidence. The core pieces are:
 - training-step algebra that lets optimizer and gradient facts be stated without hiding state
   updates in an opaque callback.
 
-Start with `Autograd/Overview.lean` when navigating this area.
+Start with `Autograd/Overview.lean` when navigating this area. The runtime link is under
+`Autograd/Runtime/Link/`. `Core.lean` lowers the proof-layer `Graph` to the executable
+`Runtime.Autograd.Tape`; `BackwardDense.lean` shows that the executed sweep
+`Tape.backwardDenseAll` agrees with the proved sweep `Tape.backwardDenseFrom` on every
+`ZeroPreserving` tape (`backwardDenseAll_eq_backwardDenseFrom`); `BackwardDenseGraph.lean`
+discharges that hypothesis for lowered tapes (`lowerGraphToTape_zeroPreserving`) and states the
+corollaries `backwardDenseAll_lowerGraphToTape_eq_backpropAllCtx` and, over `ℝ`,
+`backwardDenseAll_lowerGraphToTape_adjoint_fderiv`: the executed backward pass returns the adjoint
+of the Fréchet derivative of the forward map. The per-node case analysis is shared through
+`BackwardLeaves.lean` and `BackwardSnoc.lean`. These are statements about the exact tape model
+at the given carrier and say nothing about `Float` rounding or CUDA.
+
+Analytic derivative facts sit under `Autograd/FDeriv/` (`SoftmaxSpec.lean` gives
+`hasFDerivAt_softmaxSpec_vec`, `softmaxFDerivCorrect`, `softmaxBackwardSpec_eq_vjp`, and the
+log-softmax analogues) and `Autograd/Tape/Ops/` (attention:
+`backpropVec_eq_adjoint_fderiv_scaledDotProductAttention`; normalization:
+`layerNormJvp_layerNormBackward_adjoint`, `hasFDerivAt_batchNorm`,
+`fderiv_batchNorm_eq_batchNormJvp`; the LayerNorm theorems assume `0 < ε`).
 
 ## Runtime Approximation
 
@@ -68,6 +86,12 @@ This is the right place for facts that are weaker than exact equality but strong
 - a backward graph approximates the expected adjoint computation,
 - a normal-form operator such as convolution or softmax-axis preserves an approximation relation,
 - an FP32/CROWN bridge carries finite arithmetic assumptions into a bound statement.
+
+The `NF` rounded-real bounds for sigmoid, logistic, and mean are built on `divPosErrorBound`,
+with `sigmoid_bound_scalar_le_one` and `mean_row_bound_of_exact` as regression theorems. The FP32
+MLP and CROWN theorems are named `approxTensor_reluTwoLayerMlp_fp32` and
+`ibpBound_contains_reluTwoLayerMlp_fp32`; the `_fp32` suffix records that they are about the
+rounded-real `FP32 := NF ...` model, not Lean's `Float32`.
 
 CUDA, libtorch, and other native paths remain external unless a theorem explicitly connects the
 native behavior to one of these approximation relations.
@@ -93,7 +117,8 @@ kind of evidence they are presenting and where the stronger statement lives.
 ## Tensor And Linear Algebra Proofs
 
 The tensor proofs provide the quiet infrastructure used everywhere else: pointwise algebra, folds,
-norm/bound facts, and finite matrix facts. The factorization files contain reconstruction and
+norm/bound facts, and finite matrix facts. `Tensor/Euclidean.lean` equips `Rep ℝ s` with an
+`InnerProductSpace ℝ` instance, and the norm lemmas in `Basic/` are derived from it. The factorization files contain reconstruction and
 orthonormality facts used by optimizer and linear-algebra developments, including Muon-style
 orthogonalization certificates in `NN/MLTheory/Optimization`.
 

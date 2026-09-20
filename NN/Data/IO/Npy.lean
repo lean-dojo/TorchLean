@@ -53,6 +53,26 @@ structure NpyData where
   /-- Flattened numeric payload, converted to Lean `Float` values. -/
   values : Array Float
 
+/--
+Validated NPY metadata, without reading or allocating the numeric payload.
+
+Dimensions and the element count fit an addressable `Array Float`. Payload availability is checked
+separately by full or prefix readers; a valid header alone does not certify a complete file.
+-/
+structure NpyHeader where
+  /-- Supported dtype descriptor, either `"<f4"` or `"<f8"`. -/
+  dtype : String
+  /-- Logical array shape from the header. -/
+  shape : Array Nat
+  /-- Whether the on-disk payload is Fortran-ordered. -/
+  fortran : Bool
+  /-- Byte offset where the numeric payload begins. -/
+  dataStart : Nat
+  /-- Number of bytes occupied by one on-disk element. -/
+  elementBytes : Nat
+  /-- Product of the validated dimensions; scalar arrays contain one element. -/
+  elementCount : Nat
+
 namespace Internal
 
 /--
@@ -92,6 +112,8 @@ def idxFortranOfCIdx (shape : Array Nat) (idxC : Nat) : Nat := Id.run do
 def reorderFortranToC
     (tag : String) (shape : Array Nat) (raw : Array Float) : Except String (Array Float) := do
   let count := shape.foldl (fun acc n => acc * n) 1
+  unless raw.size = count do
+    throw <| formatError tag s!"shape requires {count} elements, got {raw.size}"
   let values ← (Array.range count).mapM fun i =>
     let idxF := idxFortranOfCIdx shape i
     match raw[idxF]? with
@@ -143,21 +165,21 @@ def readUInt64LE (bs : ByteArray) (i : Nat) : Option UInt64 :=
   | _, _, _, _, _, _, _, _ => none
 
 /-- Parse a shape tuple like `(3, 4)` or `(3,)` from a NumPy header fragment. -/
-def parseShapeValue (s : String) : Option (Array Nat) :=
-  let cs := dropUntil (fun c => c = '(') (s.trimAsciiStart).toString.toList
-  match cs with
+def parseShapeValue (s : String) : Option (Array Nat) := do
+  match (s.trimAsciiStart).toString.toList with
   | '(' :: rest =>
-      let (inside, _) := takeUntilChar ')' rest
-      let parts := (String.ofList inside).splitOn ","
-      let dims := parts.map (fun p => (p.trimAscii).toString) |>.filter (fun x => x != "")
-      let rec parseAll (xs : List String) (acc : Array Nat) : Option (Array Nat) :=
-        match xs with
-        | [] => some acc
-        | x :: xs =>
-            match parseNatValue x with
-            | some n => parseAll xs (acc.push n)
-            | none => none
-      parseAll dims #[]
+      let (inside, remaining) := rest.span (fun c => c != ')')
+      match remaining with
+      | [] => none
+      | _ :: tail =>
+          if !isHeaderValueEnd tail then return ← none
+          let contents := (String.ofList inside).trimAscii.toString
+          if contents.isEmpty then return #[]
+          let parts := contents.splitOn ","
+          if parts.length = 1 then return ← none
+          let dims := if contents.endsWith "," then parts.dropLast else parts
+          let values ← dims.mapM parseNatValue
+          return values.toArray
   | _ => none
 
 /--
@@ -176,19 +198,11 @@ def parseHeader (tag : String) (hdr : String) :
   | some descr, some fortran, some shape => .ok (descr, fortran, shape)
   | _, _, _ => .error (formatError tag "failed to parse NPY header")
 
-/-- Parsed `.npy` metadata needed before reading the numeric payload. -/
-structure NpyHeaderMeta where
-  /-- Dtype descriptor from the header, for example `"<f4"` or `"<f8"`. -/
-  descr : String
-  /-- Whether the on-disk payload is Fortran-ordered. -/
-  fortran : Bool
-  /-- Logical array shape from the header. -/
-  shape : Array Nat
-  /-- Byte offset where the numeric payload begins. -/
-  dataStart : Nat
+/-- Bound header allocation before interpreting an untrusted version-2 header length. -/
+def maxNpyHeaderBytes : Nat := 1024 * 1024
 
-/-- Read and validate the NumPy magic/version/header block shared by all NPY loaders. -/
-def parseNpyHeaderMeta (tag : String) (bs : ByteArray) : Except String NpyHeaderMeta := do
+/-- Validate the magic and version, returning the header offset and its bounded byte length. -/
+def npyHeaderLayout (tag : String) (bs : ByteArray) : Except String (Nat × Nat) := do
   if bs.size < 10 then
     .error (formatError tag "file too small")
   else
@@ -203,8 +217,9 @@ def parseNpyHeaderMeta (tag : String) (bs : ByteArray) : Except String NpyHeader
       .error (formatError tag "invalid NPY magic header")
     else
       let major := (byteAt? bs 6).map (fun b => b.toNat) |>.getD 0
-      if !(major = 1 || major = 2) then
-        .error (formatError tag s!"unsupported NPY version: {major}")
+      let minor := (byteAt? bs 7).map (fun b => b.toNat) |>.getD 0
+      if !(major = 1 || major = 2) || minor != 0 then
+        .error (formatError tag s!"unsupported NPY version: {major}.{minor}")
       else
         let headerLenOpt :=
           if major = 1 then
@@ -215,17 +230,10 @@ def parseNpyHeaderMeta (tag : String) (bs : ByteArray) : Except String NpyHeader
         | none => .error (formatError tag "invalid NPY header length")
         | some headerLen =>
             let headerStart := if major = 1 then 10 else 12
-            let headerEnd := headerStart + headerLen
-            if headerEnd > bs.size then
-              .error (formatError tag "NPY header out of bounds")
+            if headerLen > maxNpyHeaderBytes then
+              .error (formatError tag s!"NPY header exceeds {maxNpyHeaderBytes} bytes")
             else
-              let headerBytes := bs.extract headerStart headerEnd
-              let headerStr :=
-                match String.fromUTF8? headerBytes with
-                | some s => s
-                | none => ""
-              let (descr, fortran, shape) <- parseHeader tag headerStr
-              .ok { descr := descr, fortran := fortran, shape := shape, dataStart := headerEnd }
+              .ok (headerStart, headerLen)
 
 /-- Byte width for the dtypes supported by TorchLean's NPY loader. -/
 def npyElementBytes (tag descr : String) : Except String Nat :=
@@ -235,6 +243,34 @@ def npyElementBytes (tag descr : String) : Except String Nat :=
     .ok 4
   else
     .error (formatError tag s!"unsupported dtype: {descr}")
+
+/-- Bound each dimension and the shape product before allocating a decoded `Array Float`. -/
+def npyElementCount (tag : String) (shape : Array Nat) : Except String Nat := do
+  let limit := (USize.size - 1) / 8
+  for dim in shape do
+    if dim > limit then
+      throw <| formatError tag "NPY dimension exceeds addressable array size"
+  if shape.contains 0 then return 0
+  let mut count := 1
+  for dim in shape do
+    if count > limit / dim then
+      throw <| formatError tag "NPY shape exceeds addressable array size"
+    count := count * dim
+  return count
+
+/-- Parse and validate the metadata shared by in-memory and file-backed NPY readers. -/
+def parseNpyHeaderMeta (tag : String) (bs : ByteArray) : Except String NpyHeader := do
+  let (headerStart, headerLen) ← npyHeaderLayout tag bs
+  let headerEnd := headerStart + headerLen
+  if headerEnd > bs.size then
+    throw <| formatError tag "NPY header out of bounds"
+  let headerBytes := bs.extract headerStart headerEnd
+  let some headerStr := String.fromUTF8? headerBytes
+    | throw <| formatError tag "invalid NPY header encoding"
+  let (dtype, fortran, shape) ← parseHeader tag headerStr
+  let elementBytes ← npyElementBytes tag dtype
+  let elementCount ← npyElementCount tag shape
+  return { dtype, fortran, shape, dataStart := headerEnd, elementBytes, elementCount }
 
 /-- Read one supported numeric element from an NPY payload. -/
 def readNpyElement (tag descr : String) (bs : ByteArray) (off : Nat) : Except String Float :=
@@ -249,29 +285,88 @@ def readNpyElement (tag descr : String) (bs : ByteArray) (off : Nat) : Except St
   else
     .error (formatError tag s!"unsupported dtype: {descr}")
 
+/-- Validate a C-order leading prefix and retain only its requested shape and element count. -/
+def npyPrefixHeader (tag : String) (hdr : NpyHeader) (expectedShape : Array Nat) :
+    Except String NpyHeader := do
+  if hdr.fortran then
+    throw <| formatError tag "prefix row loading requires C-order NPY arrays"
+  match expectedShape[0]?, hdr.shape[0]? with
+  | some expectedN, some actualN =>
+      let expectedTail := expectedShape.extract 1 expectedShape.size
+      let actualTail := hdr.shape.extract 1 hdr.shape.size
+      if actualTail != expectedTail then
+        throw <| formatError tag
+          s!"shape mismatch: expected trailing dims {expectedTail}, got {actualTail}"
+      if actualN < expectedN then
+        throw <| formatError tag s!"expected at least {expectedN} rows, got {actualN}"
+      let elementCount ← npyElementCount tag expectedShape
+      return { hdr with shape := expectedShape, elementCount }
+  | none, none =>
+      throw <| formatError tag
+        "prefix row loading requires a leading axis; scalar arrays have none"
+  | _, _ =>
+      throw <| formatError tag s!"shape mismatch: expected {expectedShape}, got {hdr.shape}"
+
+/-- Decode a validated full or prefix payload, checking its byte range before reserving values. -/
+def decodeNpyPayload (tag : String) (hdr : NpyHeader) (bs : ByteArray) :
+    Except String NpyData := do
+  if hdr.dataStart + hdr.elementCount * hdr.elementBytes > bs.size then
+    throw <| formatError tag "NPY data truncated"
+  let mut raw : Array Float := Array.mkEmpty hdr.elementCount
+  for i in [0:hdr.elementCount] do
+    let value ← readNpyElement tag hdr.dtype bs (hdr.dataStart + i * hdr.elementBytes)
+    raw := raw.push value
+  let values ← if hdr.fortran then reorderFortranToC tag hdr.shape raw else pure raw
+  return { dtype := hdr.dtype, shape := hdr.shape, fortran := false, values }
+
+/--
+Read exactly the requested bytes using bounded allocations, rejecting an early end of file.
+
+The buffer grows only with bytes actually read. An untrusted element count never becomes the
+capacity of a read buffer before the corresponding file contents have been observed.
+-/
+partial def readNpyBytes (handle : _root_.IO.FS.Handle) (count : Nat) :
+    _root_.IO (Except String ByteArray) := do
+  let rec loop (remaining : Nat) (bytes : ByteArray) :
+      _root_.IO (Except String ByteArray) := do
+    if remaining = 0 then return .ok bytes
+    let chunk ← handle.read (min remaining 65536).toUSize
+    if chunk.isEmpty then return .error (formatError "npy" "NPY data truncated")
+    loop (remaining - chunk.size) (bytes ++ chunk)
+  loop count ByteArray.empty
+
+/-- Read only the bounded NPY preamble and header, leaving the handle at the numeric payload. -/
+def readNpyHeaderFromHandle (handle : _root_.IO.FS.Handle) :
+    _root_.IO (Except String NpyHeader) := ExceptT.run do
+  let initial ← ExceptT.mk (readNpyBytes handle 10)
+  let preamble ←
+    if byteAt? initial 6 == some 2 then
+      let extra ← ExceptT.mk (readNpyBytes handle 2)
+      pure (initial ++ extra)
+    else pure initial
+  let (_, headerLen) ← npyHeaderLayout "npy" preamble
+  let header ← ExceptT.mk (readNpyBytes handle headerLen)
+  return ← parseNpyHeaderMeta "npy" (preamble ++ header)
+
+/-- Read and decode the validated payload at the handle's current position. -/
+def readNpyPayload (handle : _root_.IO.FS.Handle) (hdr : NpyHeader) :
+    _root_.IO (Except String NpyData) := ExceptT.run do
+  let bytes ← ExceptT.mk (readNpyBytes handle (hdr.elementCount * hdr.elementBytes))
+  return ← decodeNpyPayload "npy" { hdr with dataStart := 0 } bytes
+
 end Internal
 
 /--
 Parse the bytes of a `.npy` file into `NpyData`.
 
-The parser rejects unsupported dtypes, malformed headers, and truncated payloads.
+The parser rejects unsupported dtypes, missing or malformed required header fields, and truncated
+payloads. Header parsing recognizes the three required fields; it is not a general Python parser.
 That makes loader failures explicit at the trust boundary instead of silently producing tensors with
 the wrong shape or partial data.
 -/
 def parseNpy (tag : String) (bs : ByteArray) : Except String NpyData := do
-  let hdr <- parseNpyHeaderMeta tag bs
-  let bytesPer <- npyElementBytes tag hdr.descr
-  let count := hdr.shape.foldl (fun acc n => acc * n) 1
-  let dataBytes := count * bytesPer
-  if hdr.dataStart + dataBytes > bs.size then
-    .error (formatError tag "NPY data truncated")
-  else
-    let mut raw : Array Float := Array.mkEmpty count
-    for i in [0:count] do
-      let v ← readNpyElement tag hdr.descr bs (hdr.dataStart + i * bytesPer)
-      raw := raw.push v
-    let values ← if hdr.fortran then reorderFortranToC tag hdr.shape raw else pure raw
-    .ok { dtype := hdr.descr, shape := hdr.shape, fortran := false, values := values }
+  let hdr ← parseNpyHeaderMeta tag bs
+  decodeNpyPayload tag hdr bs
 
 /--
 Parse only the requested leading rows of a C-order `.npy` array.
@@ -281,7 +376,8 @@ and trailing dimensions must match exactly; only the leading axis may be larger 
 
 The implementation shares header and dtype parsing with `parseNpy`, then decodes only the requested
 prefix. This avoids building a full `Array Float` when a command asks for a small leading slice of a
-real image or sequence dataset.
+real image or sequence dataset. Only the requested range must be present; unused trailing rows are
+not checked for truncation.
 
 Why C-order only?  In row-major NPY files, the first `n` rows are physically contiguous, so the
 prefix is exactly the first `n * trailingSize` elements.  In Fortran-order files the same logical
@@ -291,55 +387,38 @@ array to C-order first.
 -/
 def parseNpyLeadingAxisPrefix
     (tag : String) (expectedShape : Array Nat) (bs : ByteArray) : Except String NpyData := do
-  let hdr <- parseNpyHeaderMeta tag bs
-  let bytesPer <- npyElementBytes tag hdr.descr
-  if hdr.fortran then
-    .error (formatError tag "prefix row loading requires C-order NPY arrays")
-  else
-    match expectedShape[0]?, hdr.shape[0]? with
-    | some expectedN, some actualN =>
-        let expectedTail := expectedShape.extract 1 expectedShape.size
-        let actualTail := hdr.shape.extract 1 hdr.shape.size
-        if actualTail != expectedTail then
-          .error (formatError tag
-            s!"shape mismatch: expected trailing dims {expectedTail}, got {actualTail}")
-        else if actualN < expectedN then
-          .error (formatError tag s!"expected at least {expectedN} rows, got {actualN}")
-        else
-          let expectedCount := expectedShape.foldl (fun acc n => acc * n) 1
-          let actualCount := hdr.shape.foldl (fun acc n => acc * n) 1
-          if hdr.dataStart + actualCount * bytesPer > bs.size then
-            .error (formatError tag "NPY data truncated")
-          else if hdr.dataStart + expectedCount * bytesPer > bs.size then
-            .error (formatError tag "NPY prefix data truncated")
-          else
-            let mut raw : Array Float := Array.mkEmpty expectedCount
-            for i in [0:expectedCount] do
-              let v ← readNpyElement tag hdr.descr bs (hdr.dataStart + i * bytesPer)
-              raw := raw.push v
-            .ok { dtype := hdr.descr, shape := expectedShape, fortran := false, values := raw }
-    | none, none =>
-        .ok { dtype := hdr.descr, shape := #[], fortran := false, values := #[] }
-    | _, _ =>
-        .error (formatError tag s!"shape mismatch: expected {expectedShape}, got {hdr.shape}")
-
-/-- Read a `.npy` file from disk and parse it as `NpyData`. -/
-def readNpy (path : System.FilePath) : IO (Except String NpyData) := do
-  let bs <- IO.FS.readBinFile path
-  pure (parseNpy (tag := "npy") bs)
+  let hdr ← parseNpyHeaderMeta tag bs
+  let selected ← npyPrefixHeader tag hdr expectedShape
+  decodeNpyPayload tag selected bs
 
 /--
-Read a `.npy` file but decode only the requested leading rows.
+Read validated metadata without reading the payload.
 
-This is the file-system wrapper around `parseNpyLeadingAxisPrefix`.  It still reads the file bytes into
-memory, but it avoids building a full `Array Float` for rows the run did not ask to use.  The
-public `API.Data` layer uses this when a dataset source says "load the first `n` examples" from a
-larger exported NPY tensor.
+Supports version 1 and 2 headers up to one MiB. Dtype, storage-order syntax, dimensions, and shape
+products are validated; payload completeness belongs to `readNpy` or `readNpyLeadingAxisPrefix`.
+-/
+def readNpyHeader (path : System.FilePath) : IO (Except String NpyHeader) :=
+  _root_.IO.FS.withFile path .read readNpyHeaderFromHandle
+
+/-- Read the full declared NPY payload, rejecting truncation and converting Fortran to C order. -/
+def readNpy (path : System.FilePath) : IO (Except String NpyData) := do
+  _root_.IO.FS.withFile path .read fun handle => ExceptT.run do
+    let hdr ← ExceptT.mk (readNpyHeaderFromHandle handle)
+    ExceptT.mk (readNpyPayload handle hdr)
+
+/--
+Read only the header and requested leading rows of a C-order `.npy` file.
+
+Unrequested rows are neither read nor decoded. The requested range must be complete, and rank and
+trailing dimensions must match exactly. Reads use bounded chunks so a malformed claimed size cannot
+trigger a correspondingly large allocation before any bytes have been read.
 -/
 def readNpyLeadingAxisPrefix
     (path : System.FilePath) (expectedShape : Array Nat) : IO (Except String NpyData) := do
-  let bs <- IO.FS.readBinFile path
-  pure (parseNpyLeadingAxisPrefix (tag := "npy") expectedShape bs)
+  _root_.IO.FS.withFile path .read fun handle => ExceptT.run do
+    let hdr ← ExceptT.mk (readNpyHeaderFromHandle handle)
+    let selected ← npyPrefixHeader "npy" hdr expectedShape
+    ExceptT.mk (readNpyPayload handle selected)
 
 end IO
 end Data

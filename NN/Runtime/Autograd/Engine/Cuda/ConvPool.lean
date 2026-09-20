@@ -24,8 +24,7 @@ Notes:
 
 module
 
-
-public import NN.Runtime.Autograd.Engine.Cuda.Buffer
+public import NN.Runtime.Autograd.Engine.Cuda.Trusted
 
 /-!
 # CUDA Conv/Pool FFI

@@ -17,6 +17,10 @@ Most users should import `NN.Proofs.RuntimeApprox.Graph.NumericalCertificate`.
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+
 namespace Proofs
 namespace RuntimeApprox
 namespace NumericalCertificate
@@ -24,9 +28,7 @@ namespace NumericalCertificate
 open NN
 open NN.Backend
 open NN.IR
-open Spec
-open TorchLean.Floats.IEEE754
-
+open Spec TorchLean
 /-! ## Backend-linked graph certificates -/
 
 /-- Untrusted certificate data.
@@ -77,13 +79,14 @@ instance : Repr RegistryCheckedCertificate where
 intermediate value against a registry-replayed range trace. -/
 structure RangeCheckedExecution where
   certificate : RegistryCheckedCertificate
-  values : Array (Spec.SomeTensor IEEE32Exec)
+  values : Array (Spec.SomeTensor (ExecFloat.Binary 8 23))
   withinRanges : executionWithinRanges certificate.ranges values = true
 
 /-- Convert an accepted kernel plan and checked range trace into raw certificate data. -/
 def ofCheckedTrace (profile : BackendProfile) (registry : GraphRangeRegistry)
     (sources : Array SourceRange)
-    (ranges : Array CheckedNodeRange) (plan : AcceptedGraphKernelPlan) : GraphNumericalCertificate :=
+    (ranges : Array CheckedNodeRange) (plan : AcceptedGraphKernelPlan) :
+    GraphNumericalCertificate :=
   { profileName := profile.name
     registryName := registry.name
     sources
@@ -91,11 +94,13 @@ def ofCheckedTrace (profile : BackendProfile) (registry : GraphRangeRegistry)
     audit := plan.audit }
 
 /-- Obtain an accepted kernel plan or report the acceptance-gate failures. -/
-def acceptedPlan (profile : BackendProfile) (graph : Graph) : Except String AcceptedGraphKernelPlan := do
+def acceptedPlan (profile : BackendProfile) (graph : Graph) :
+    Except String AcceptedGraphKernelPlan := do
   match <- profile.acceptGraph graph with
   | .accepted plan => pure plan
   | .rejected _ failures =>
-      throw s!"numerical certificate: backend profile {profile.name} rejected the graph: {repr failures}"
+      throw (s!"numerical certificate: backend profile {profile.name} rejected the graph: " ++
+        s!"{repr failures}")
 
 /-- Generate a canonical certificate using an explicit numerical operation registry. -/
 def generateWith (registry : GraphRangeRegistry) (profile : BackendProfile)
@@ -117,9 +122,11 @@ def checkWith (registry : GraphRangeRegistry) (profile : BackendProfile)
     (graph : Graph) (raw : GraphNumericalCertificate) :
     Except String RegistryCheckedCertificate := do
   if raw.profileName != profile.name then
-    throw s!"numerical certificate: profile mismatch; artifact names {raw.profileName}, checker uses {profile.name}"
+    throw (s!"numerical certificate: profile mismatch; artifact names {raw.profileName}, " ++
+      s!"checker uses {profile.name}")
   if raw.registryName != registry.name then
-    throw s!"numerical certificate: registry mismatch; artifact names {raw.registryName}, checker uses {registry.name}"
+    throw (s!"numerical certificate: registry mismatch; artifact names {raw.registryName}, " ++
+      s!"checker uses {registry.name}")
   let sources <- checkSources raw.sources
   let plan <- acceptedPlan profile graph
   let ranges <- buildRangeTraceWith registry graph sources plan
@@ -157,15 +164,16 @@ def generateCheckedWith (registry : GraphRangeRegistry) (profile : BackendProfil
   let raw <- generateWith registry profile graph sources
   checkWith registry profile graph raw
 
-/-- Execute a graph under `IEEE32Exec` and check all intermediate tensors against the certificate.
+/-- Execute a graph under `ExecFloat.Binary 8 23` and check all intermediate tensors against the
+certificate.
 
 This reference replay path gives imported runtime artifacts a bit-level oracle. The backend audit
 records the capsules and numerical policies
 selected when the graph is replanned. The audit is not runtime provenance and does not prove that
 those kernels produced the imported values.
 -/
-def executeIEEE32 (payload : NN.IR.Payload IEEE32Exec)
-    (input : Spec.SomeTensor IEEE32Exec) (certificate : RegistryCheckedCertificate) :
+def executeIEEE32 (payload : NN.IR.Payload (ExecFloat.Binary 8 23))
+    (input : Spec.SomeTensor (ExecFloat.Binary 8 23)) (certificate : RegistryCheckedCertificate) :
     Except String RangeCheckedExecution := do
   let values <- certificate.graph.denoteAll payload input
   if h : executionWithinRanges certificate.ranges values then
@@ -194,7 +202,7 @@ namespace RangeCheckedExecution
 
 /-- Pair a checked IEEE replay with a proved real enclosure trace to obtain a graph-wide,
 pointwise error trace. Each node's error budget is the width of its checked outward interval. -/
-theorem errorTrace (execution : RangeCheckedExecution)
+theorem error_trace (execution : RangeCheckedExecution)
     (exact : ProvedRealEnclosure execution.certificate) :
     ExecutionErrorTrace execution.certificate.ranges exact.values execution.values :=
   execution_error_trace_of_check exact.enclosed execution.withinRanges

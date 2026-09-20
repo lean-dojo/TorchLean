@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API
 public import NN.Examples.Models.Common.RealData
 
 /-!
@@ -16,13 +15,14 @@ Runnable byte-level language-model training with the public Mamba API constructo
 
 The model is trainable end-to-end:
 
-`mamba(seqLen, vocab, stateDim) → linear(stateDim → vocab)`
+`mamba(contextLength, vocabularySize, stateWidth) → linear(stateWidth → vocabularySize)`
 
 and the same code runs on CPU or CUDA through TorchLean autograd.
 
 ```bash
 python3 scripts/datasets/download_example_data.py --tiny-shakespeare
-lake -R -K cuda=true exe torchlean mamba --device cuda --tiny-shakespeare --steps 1 --windows 1 --generate 0
+lake -R -K cuda=true exe torchlean mamba --device cuda --tiny-shakespeare --steps 1 --windows 1 \
+  --generate 0
 ```
 -/
 
@@ -33,14 +33,14 @@ open TorchLean
 namespace NN.Examples.Models.Sequence.Mamba
 
 /-- CLI subcommand name used in terminal banners and error messages. -/
-def exeName : String := "torchlean mamba"
+def exeName : String := "mamba"
 
 /-- Default JSON loss-curve path for this command. -/
-def defaultLogJson : System.FilePath := ModelZoo.trainLogPath "mamba"
+def defaultLogPath : System.FilePath := Support.trainLogPath "mamba"
 
 /-- Complete command help, including the text and training flags parsed after runtime selection. -/
 def usage : String :=
-  Module.Command.usage exeName ++ "\n" ++ String.intercalate "\n"
+  Module.Command.usage s!"lake exe torchlean {exeName}" ++ "\n" ++ String.intercalate "\n"
     [ "Text data:"
     , "  --data-file PATH | --tiny-shakespeare | --tinystories-valid"
     , ""
@@ -57,153 +57,173 @@ def usage : String :=
     ]
 
 /-- Training and generation context length for the Mamba text example. -/
-def seqLen : Nat := 2
+def contextLength : Nat := 4
 
 /-- Byte tokenizer used by this sequence model. -/
 def tokenizer : text.Tokenizer := text.Tokenizer.byte
 
-/-- Mamba text-model configuration shared by shapes and the constructor. -/
-def cfg : nn.models.Mamba.Config :=
-  { vocab := 32
-    stateDim := 4 }
+/-- Number of byte-token classes. -/
+def vocabularySize : Nat := 256
 
-/-- Toy byte bucketing: encode byte id `b` as `b % 32`; collisions are intentional. -/
-def byteBucket (id : Nat) : Fin cfg.vocab :=
-  ⟨id % cfg.vocab, Nat.mod_lt _ (by decide)⟩
+/-- Width of each token embedding and of the Mamba block's output. -/
+def modelWidth : Nat := 4
+
+/-- Byte value used to pad short text windows. -/
+def paddingByte : Nat := 32
+
+/-- Mamba text-model configuration shared by shapes and the constructor. -/
+abbrev modelConfig : nn.models.Mamba.Config :=
+  { vocabularySize := vocabularySize
+    modelWidth := modelWidth }
+
+local instance : NeZero vocabularySize := ⟨by decide⟩
+
+/-- Embed a byte id in the complete 256-entry byte vocabulary. -/
+def byteIndex (id : Nat) : Fin vocabularySize :=
+  Fin.ofNat vocabularySize id
 
 /-- Input shape: one sequence of one-hot byte tokens. -/
-abbrev σ : List Nat := [seqLen, cfg.vocab]
+abbrev input : Shape := modelConfig.input contextLength
 
 /-- Output shape: one vocabulary-logit row per input position. -/
-abbrev τ : List Nat := [seqLen, cfg.vocab]
+abbrev output : Shape := modelConfig.output contextLength
 
 /-- Public Mamba language-model constructor specialized to the example config. -/
-def model : nn.Builder (nn.Sequential σ τ) :=
-  nn.models.Mamba.textLM cfg seqLen
+def model : nn.Builder (nn.Sequential input output) :=
+  nn.models.Mamba.languageModel modelConfig contextLength
 
 /-- Command-local training, sampling, and corpus-window controls. -/
-structure TrainOptions extends
-    CLI.Training.OptimizerOptions, text.GenerationOptions, text.WindowOptions where
+structure Options where
+  /-- Optimizer, step, batching, and logging controls. -/
+  training : CLI.Training.OptimizerOptions
+  /-- Prompt and token-sampling policy. -/
+  generation : text.GenerationOptions
+  /-- Number of corpus windows exposed to training. -/
+  window : text.WindowOptions
 deriving Repr
 
-namespace TrainOptions
+namespace Options
 
 /-- Parse the Mamba command's training and sampling flags. -/
-def parse (args : List String) : Except String (TrainOptions × List String) := do
+def parse (args : List String) : Except String (Options × List String) := do
   let (training, args) ←
-    CLI.Training.OptimizerOptions.parse exeName args defaultLogJson 1 0.002
+    CLI.Training.OptimizerOptions.parse exeName args defaultLogPath
+      (defaultSteps := 1) (defaultLearningRate := 0.002)
   let (window, args) ← text.WindowOptions.parse exeName args 1
   let (generation, args) ← text.GenerationOptions.parse exeName args
     { prompt := "First Citizen:"
-      generate := 0
+      newTokenCount := 0
       temperature := 0.9
       topK := 16
       repeatPenalty := 1.0
       repeatWindow := 0
       seed := 0
       asciiOnly := false }
-  pure ({ toOptimizerOptions := training
-          toGenerationOptions := generation
-          toWindowOptions := window }, args)
+  pure ({ training, generation, window }, args)
 
-end TrainOptions
+end Options
 
 /-- Convert a token window into the one-hot next-token sample consumed by the Mamba model. -/
-def sampleFromTokenIds (ids : Tensor Nat [seqLen + 1]) : Sample.Supervised Float σ τ :=
-  let (xF, yF) := Data.CausalLM.oneHotPair (α := Float) []
-    (seqLen := seqLen) (vocab := cfg.vocab) (ids.map byteBucket)
-  Sample.mk xF yF
+def sampleFromTokenIds (ids : Tensor Nat [contextLength + 1]) :
+    Sample.Supervised Float input output :=
+  Data.CausalLM.oneHotSample (α := Float) []
+    (sequenceLength := contextLength)
+    (vocabularySize := vocabularySize)
+    (ids.map byteIndex)
 
-/-- Build a finite cyclic training set from corpus text, biased toward the prompt when present. -/
-def samplesFromCorpus (input _prompt : String) (windows : Nat) :
-    Array (Sample.Supervised Float σ τ) :=
-  let toks := tokenizer.encode input
-  let offsets :=
-    text.Corpus.evenlySpacedOffsets toks.size seqLen windows
-  offsets.map (fun off =>
-    -- Slice real corpus text into a tiny next-token window. Larger `--windows` values give a more
-    -- interesting training run, but the default stays small so the command is a reliable quick check.
-    let ids := text.tokenWindow tokenizer (seqLen + 1) input (offset := off) (padId := 32)
-    sampleFromTokenIds ids)
+/-- Build a finite training set from approximately evenly spaced corpus windows. -/
+def samplesFromCorpus (corpus : String) (windows : Nat) :
+    Data.SampleStream (Sample.Supervised Float input output) :=
+  Data.CausalLM.byteSamples contextLength vocabularySize byteIndex windows corpus paddingByte
 
 /-- Print the current argmax prediction beside the prompt and shifted target text. -/
-def printPredictionReport (label prompt : String) (logits : Tensor Float τ) : IO Unit := do
-  IO.println s!"  {label} pred={text.escapeForDisplay (text.decodeArgmaxLogits tokenizer logits)}"
-  IO.println s!"  prompt={text.escapeForDisplay (text.decodeWindow tokenizer seqLen prompt (padId := 32))}"
-  IO.println s!"  target={text.escapeForDisplay (text.decodeWindow tokenizer seqLen prompt (offset := 1) (padId := 32))}"
+def printPredictionReport (label prompt : String) (logits : Tensor Float output) : IO Unit := do
+  IO.println
+    s!"  {label} pred={text.escape (text.decodeArgmaxLogits tokenizer logits)}"
+  IO.println s!"  prompt={
+    text.escape (text.decodeWindow tokenizer contextLength prompt
+      (paddingTokenId := paddingByte))}"
+  IO.println s!"  target={
+    text.escape (text.decodeWindow tokenizer contextLength prompt
+      (offset := 1) (paddingTokenId := paddingByte))}"
 
 /-- Convert a prompt window into the typed one-hot input tensor used during generation. -/
-def inputTensorFromIds (ids : Tensor Nat [seqLen]) : Tensor Float σ :=
-  TorchLean.Tensor.oneHotIndices (α := Float) cfg.vocab (ids.map byteBucket)
+def inputTensorFromIds (ids : Tensor Nat [contextLength]) : Tensor Float input :=
+  Tensor.oneHotIndices (α := Float) vocabularySize (ids.map byteIndex)
 
 /-- Autoregressively extend a prompt using the trained Mamba parameters. -/
 partial def generateSampled
-    (predict : Tensor Float σ → IO (Tensor Float τ))
-    (prompt : String) (steps : Nat) (temperature : Float) (topK seed : Nat) : IO String := do
-  let gen : text.GenerationOptions :=
-    { prompt := prompt
-      generate := steps
-      temperature := temperature
-      topK := topK
-      repeatPenalty := 0.0
-      repeatWindow := 0
-      seed := seed
-      asciiOnly := false }
+    (predict : Tensor Float input → IO (Tensor Float output))
+    (generation : text.GenerationOptions) : IO String := do
+  let allowToken :=
+    if generation.asciiOnly then text.isPrintableAscii else fun _ => true
   let ids ←
-    text.autoregressiveTokenIds seqLen 32 (tokenizer.encode prompt) gen
+    text.autoregressiveTokenIds contextLength paddingByte
+      (Tensor.from (tokenizer.encode generation.prompt)) generation
       (fun padded predPos => do
         let logits ← predict (inputTensorFromIds padded)
         pure (text.logitScoresAt logits predPos))
-  pure (tokenizer.decode ids)
+      (allowToken := fun i => allowToken i.val)
+  pure (tokenizer.decode (ids.to (Array Nat)))
 
 /-- Train the Mamba language model and print before/after prediction and generation reports. -/
-def trainOnText (opts : Options) (input : String)
-    (train : TrainOptions) :
+def trainOnText (runtime : Runtime.Config) (corpus : String)
+    (options : Options) :
     IO (Float × Float) := do
-  let samples := samplesFromCorpus input train.prompt train.windows
-  let reportSample := sampleFromTokenIds (text.tokenWindow tokenizer (seqLen + 1) train.prompt
-    (padId := 32))
-  let run := Trainer.RunConfig.ofRuntimeOptions opts { optimizer := optim.adam { lr := train.lr } }
+  let samples := samplesFromCorpus corpus options.window.windowCount
+  let reportSample := sampleFromTokenIds <|
+    text.tokenWindow tokenizer (contextLength + 1) options.generation.prompt
+      (paddingTokenId := paddingByte)
+  let run := Trainer.RunConfig.fromRuntime runtime
+    { optimizer := optim.adam { learningRate := options.training.learningRate } }
   let trainer := Trainer.new model <|
-    Trainer.Config.fromRunConfig run (.oneHotCrossEntropy 1)
-  let cudaMemWatch := Trainer.Manual.CUDAMemory.cadence opts train.steps train.cudaMemWatch
+    Trainer.RunConfig.forObjective run (.oneHotCrossEntropy 1) (seed := runtime.seed)
+  let cudaMemorySampleEvery :=
+    Trainer.Memory.cadence runtime options.training.steps options.training.cudaMemorySampleEvery
+  let beforeLogits ← trainer.predict reportSample.input
+  printPredictionReport "before" options.generation.prompt beforeLogits
   let trained ← trainer.train
-    (Data.floatSamples samples)
-    (CLI.Training.OptimizerOptions.toTrainerOptions train.toOptimizerOptions
-      (title := "Mamba text training")
-      (notes := #[ModelZoo.deviceNote opts, s!"windows={train.windows}",
-        s!"cuda_mem_watch={cudaMemWatch}"])).disableLog
-  let afterLogits ← trained.predict (Sample.x reportSample)
-  printPredictionReport "after " train.prompt afterLogits
-  let (beforeLoss, afterLoss) ←
-    Trainer.TrainSummary.printFloatLosses exeName trained.report
-      (steps? := some train.steps) (lr? := some train.lr)
-  let generated ← generateSampled trained.predict train.prompt train.generate
-    train.temperature train.topK train.seed
-  IO.println s!"  generated={text.escapeForDisplay generated}"
-  IO.println s!"  corpus_bytes={input.toByteArray.size} windows={samples.size}"
-  IO.println s!"  sampling=top_k({train.topK}), temperature={train.temperature}, seed={train.seed}"
-  pure (beforeLoss, afterLoss)
+    (Data.fromStream samples)
+    (options.training.trainOptions
+      (enableLog := false)
+      (logTitle := "Mamba text training")
+      (logNotes := #[Support.deviceNote runtime, s!"windows={options.window.windowCount}",
+        s!"cuda_mem_watch={cudaMemorySampleEvery}"]))
+  let afterLogits ← trained.predict reportSample.input
+  printPredictionReport "after " options.generation.prompt afterLogits
+  trained.printSummary
+  let lossBefore := trained.report.loss.before
+  let lossAfter := trained.report.loss.after
+  let generated ← generateSampled trained.predict options.generation
+  IO.println s!"  generated={text.escape generated}"
+  IO.println s!"  corpus_bytes={corpus.toByteArray.size} windows={samples.size}"
+  IO.println s!"  sampling=top_k({options.generation.topK}), temperature={
+    options.generation.temperature}, seed={options.generation.seed}"
+  pure (lossBefore, lossAfter)
 
 /-- CLI entrypoint for the Mamba text command. -/
 def main (args : List String) : IO UInt32 := do
-  Module.Command.runFloat32 exeName args
-    (banner := ModelZoo.bannerWithDevice exeName "Mamba text training")
-    (usage? := some usage)
-    (k := fun opts rest => do
-      let (corpus, rest) ← ModelZoo.orThrow exeName <| RealData.TextCorpusFlags.parse rest
-      let (train, rest) ← ModelZoo.orThrow exeName <|
-        TrainOptions.parse rest
+  Module.Command.run
+    (config := {
+      banner? := some <| Support.bannerWithDevice exeName "Mamba text training"
+      usage? := some usage
+      printSuccess := true })
+    exeName args
+    (.native fun runtime rest => do
+      let (corpus, rest) ← CLI.orThrow exeName <| RealData.TextCorpusFlags.parse rest
+      let (train, rest) ← CLI.orThrow exeName <|
+        Options.parse rest
       CLI.requireNoArgs exeName rest
-      let input ← RealData.TextCorpusFlags.read exeName corpus
-      let (beforeLoss, afterLoss) ← trainOnText opts input train
+      let corpusText ← RealData.TextCorpusFlags.read exeName corpus
+      let (lossBefore, lossAfter) ← trainOnText runtime corpusText train
       let extraNotes :=
-        #[s!"data={corpus.path}", ModelZoo.deviceNote opts,
-          s!"windows={train.windows}", s!"lr={train.lr}",
-          ModelZoo.cudaMemoryNote opts train.steps train.cudaMemWatch]
-      text.writeGenerationTrainLog
-        train.log "Mamba text training" train.steps beforeLoss afterLoss
-        train.toGenerationOptions none extraNotes
+        #[s!"data={corpus.path}", Support.deviceNote runtime,
+          s!"windows={train.window.windowCount}", s!"lr={train.training.learningRate}",
+          Support.cudaMemoryNote runtime train.training.steps train.training.cudaMemorySampleEvery]
+      text.Log.writeGeneration
+        train.training.logDestination
+          "Mamba text training" train.training.steps lossBefore lossAfter
+        train.generation none extraNotes
     )
 
 end NN.Examples.Models.Sequence.Mamba

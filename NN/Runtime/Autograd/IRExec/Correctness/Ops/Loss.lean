@@ -30,7 +30,8 @@ makes no claim about generalization, training convergence, or the statistical pr
 ## Implementation notes
 
 - We keep this theorem in a dedicated file because it is heavier than most per-op steps.
-- The proof structure follows the lowering pass's guard sequence, including the dependent shape checks.
+- The proof structure follows the lowering pass's guard sequence, including the dependent shape
+  checks.
 - This file can build slowly because MSE touches two parents, a scalar output shape, and a sequence
   of lowering guards. Repeated guard eliminations belong in focused helper lemmas, leaving the
   theorem focused on the loss equation itself.
@@ -51,15 +52,17 @@ namespace Runtime
 namespace Autograd
 namespace IRExec
 
-open Spec
-open Tensor
+open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
+-- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
+-- `Idx` and `getIdx` are defined.
+open Proofs (Idx getIdx)
 
 /-- Correctness lemma for the `.mse_loss` node lowering pass. -/
 theorem buildFrom_denoteAllFrom_mse_loss
-    {α : Type} [Context α] [DecidableEq Shape]
+    {α : Type} [TorchLean.Storage α] [Context α]
     (g : NN.IR.Graph) (payload : Payload α) {inShape : Shape} {ss : List Shape}
     (gd : ForwardData α [inShape] ss) (i : Nat) (st' : State α inShape)
     (x : Tensor α inShape) (n : NN.IR.Node)
@@ -81,7 +84,7 @@ theorem buildFrom_denoteAllFrom_mse_loss
       .ok (denoteAllState (α := α) inShape st' x) := by
   let vals0 : Array (Spec.SomeTensor α) :=
     denoteAllState (α := α) inShape (st := (⟨ss, gd⟩ : State α inShape)) x
-  let ctx : _root_.TorchLean.TensorPack α ([inShape] ++ ss) :=
+  let ctx : TorchLean.TensorPack α ([inShape] ++ ss) :=
     ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil)
   let input : Spec.SomeTensor α := Spec.SomeTensor.mk (α := α) inShape x
   rcases n with ⟨nId, nParents, nKind, nOutShape⟩
@@ -98,10 +101,10 @@ theorem buildFrom_denoteAllFrom_mse_loss
     at hBuild0
   cases hp : binaryParents? nParents with
   | none =>
-      exact False.elim <| throw_bind_ne_ok (h := (by simpa [hp] using hBuild0))
+      exact False.elim <| throw_bind_ne_ok (h := (by simpa [hp, lowerMseLoss] using hBuild0))
   | some parentIds =>
       rcases parentIds with ⟨yId, tId⟩
-      simp (config := { failIfUnchanged := false }) [hp] at hBuild0
+      simp (config := { failIfUnchanged := false }) [hp, lowerMseLoss] at hBuild0
       cases hY : g.getNode yId with
       | error msg =>
           simp [hY] at hBuild0
@@ -144,7 +147,7 @@ theorem buildFrom_denoteAllFrom_mse_loss
                               let sq := Tensor.mulSpec (α := α) diff diff
                               let total : α := Tensor.sumSpec (α := α) sq
                               let y0 : Tensor α .scalar :=
-                                Tensor.scalar (total / (↑(NN.IR.Graph.meanDenom s) : α))
+                                Tensor.scalar (total / (↑(TorchLean.Tensor.meanDenominator s) : α))
                               Tensor.castShape y0 hOut)
                           let st1 : State α inShape :=
                             ⟨ss ++ [nOutShape], .snoc (ss := ss) gd nodeData⟩
@@ -206,8 +209,12 @@ theorem buildFrom_denoteAllFrom_mse_loss
                             (i := i) (x := x) (hi := hi) (τ := nOutShape)
                             (nodeData := nodeData) (st1 := st1) (st' := st')
                             (ctx := ctx) (vals0 := vals0) (input := input) hTail hEval hStep
-                · exact False.elim <| throw_bind_ne_ok (h := (by simpa [dif_neg hOut] using hBuild2))
-              · exact False.elim <| throw_bind_ne_ok (h := (by simpa [if_neg hShape] using hBuild1))
+                · -- `simp` normalizes the guard to `nOutShape = []` (via `List.nil_eq`), so the
+                  -- `dite_eq_right` witness has to be stated in that orientation too.
+                  exact False.elim <|
+                    throw_bind_ne_ok (h := (by simpa [dite_eq_right (Ne.symm hOut)] using hBuild2))
+              · exact False.elim <|
+                  throw_bind_ne_ok (h := (by simpa [ite_eq_right hShape] using hBuild1))
 
 end IRExec
 end Autograd

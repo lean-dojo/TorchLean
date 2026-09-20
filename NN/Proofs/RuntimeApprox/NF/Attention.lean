@@ -8,7 +8,7 @@ module
 
 public import NN.Proofs.RuntimeApprox.NF.Linalg
 public import NN.Proofs.RuntimeApprox.NF.SoftmaxAxis
-public import NN.Spec.Layers.Attention
+import FloatLib.Floats.Formats.Flocq.Theory.Rounding.Order
 
 /-!
 # Rounded scaled dot-product attention
@@ -40,37 +40,38 @@ namespace Proofs
 namespace RuntimeApprox
 namespace Attention
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
 noncomputable section
 
-variable {β : NeuralRadix} {fexp : ℤ -> ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ -> ℤ} [NeuralValidRndToNearest rnd]
+variable {β : Radix} {fexp : ℤ -> ℤ} [ValidExp fexp]
+variable {rnd : ℝ -> ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF β fexp rnd
+local notation "R" => NF β fexp rnd
 
 /-! ## The canonical `1 / sqrt(d)` coefficient -/
 
 /-- Rounding budget for embedding the positive feature dimension into `NF`. -/
 def dimensionCastError (d : Nat) : ℝ :=
-  neuralUlp β fexp (Nat.succ d : ℝ) / 2
+  ulp β fexp (Nat.succ d : ℝ) / 2
 
 /-- Error budget for the rounded square root of the embedded feature dimension. -/
 def dimensionSqrtError (d : Nat) : ℝ :=
   let dR : R := (Nat.succ d : Nat)
   dimensionCastError (β := β) (fexp := fexp) d / Real.sqrt 1 +
-    neuralUlp β fexp (Real.sqrt (NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd) dR)) / 2
+    ulp β fexp (Real.sqrt (NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd) dR)) / 2
 
 /-- End-to-end error budget for constructing `1 / sqrt(d)` in the rounded backend. -/
 def canonicalScaleErrorBound (d : Nat) : ℝ :=
   let oneR : R := 1
   let dR : R := (Nat.succ d : Nat)
-  let sqrtR : R := MathFunctions.sqrt dR
+  let sqrtR : R := Numerics.MathFunctions.sqrt dR
   NFBackend.divPosErrorBound (β := β) (fexp := fexp) 1
-    (neuralUlp β fexp 1 / 2)
+    (ulp β fexp 1 / 2)
     (dimensionSqrtError (β := β) (fexp := fexp) (rnd := rnd) d)
     (NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd) oneR)
     (NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd) sqrtR)
@@ -91,21 +92,21 @@ theorem approx_canonicalAttentionScale (d : Nat)
   let dS : ℝ := (Nat.succ d : ℝ)
   let dR : R := (Nat.succ d : Nat)
   let epsD := dimensionCastError (β := β) (fexp := fexp) d
-  let sqrtR : R := MathFunctions.sqrt dR
+  let sqrtR : R := Numerics.MathFunctions.sqrt dR
   let epsSqrt := dimensionSqrtError (β := β) (fexp := fexp) (rnd := rnd) d
   let oneR : R := 1
-  let epsOne := neuralUlp β fexp 1 / 2
+  let epsOne := ulp β fexp 1 / 2
   have hdLower : (1 : ℝ) ≤ dS := by
     dsimp [dS]
     exact_mod_cast Nat.succ_le_succ (Nat.zero_le d)
   have hcast :
       abs (NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd) dR - dS) ≤ epsD := by
-    simpa [dR, dS, epsD, dimensionCastError, TorchLean.Floats.NF.instCoeNat] using
+    simpa [dR, dS, epsD, dimensionCastError, NF.instNatCast] using
       (NFBackend.approx_ofReal_nf (β := β) (fexp := fexp) (rnd := rnd) dS)
   have hdR0 : 0 ≤ NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd) dR := by
-    dsimp [dR, NFBackend.toSpec, TorchLean.Floats.NF.toReal, TorchLean.Floats.NF.instCoeNat,
-      TorchLean.Floats.NF.ofReal, TorchLean.Floats.NF.roundR]
-    exact neuralRound_nonneg rnd (by positivity)
+    dsimp [dR, NFBackend.toSpec, NF.toReal, NF.instNatCast,
+      NF.ofReal, NF.roundR]
+    exact round_nonneg rnd (by positivity)
   have hsqrt :
       abs (NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd) sqrtR - Real.sqrt dS) ≤
         epsSqrt := by
@@ -118,7 +119,7 @@ theorem approx_canonicalAttentionScale (d : Nat)
   have hone :
       abs (NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd) oneR - (1 : ℝ)) ≤ epsOne := by
     have honeEq : oneR =
-        TorchLean.Floats.NF.ofReal (β := β) (fexp := fexp) (rnd := rnd) (1 : ℝ) := by
+        NF.ofReal (β := β) (fexp := fexp) (rnd := rnd) (1 : ℝ) := by
       rfl
     rw [honeEq]
     simpa [epsOne] using
@@ -131,14 +132,14 @@ theorem approx_canonicalAttentionScale (d : Nat)
   have hscaleR :
       1 / Spec.attentionScaleDenom (α := R) (Nat.succ d) = oneR / sqrtR := by
     unfold Spec.attentionScaleDenom
-    simp only [if_neg (Nat.succ_ne_zero d)]
-    change 1 / MathFunctions.sqrt dR = oneR / sqrtR
+    simp only [ite_eq_right (Nat.succ_ne_zero d)]
+    change 1 / Numerics.MathFunctions.sqrt dR = oneR / sqrtR
     rfl
   have hscaleS :
       1 / Spec.attentionScaleDenom (α := ℝ) (Nat.succ d) = (1 : ℝ) / Real.sqrt dS := by
     unfold Spec.attentionScaleDenom
-    simp only [if_neg (Nat.succ_ne_zero d)]
-    change 1 / MathFunctions.sqrt dS = (1 : ℝ) / Real.sqrt dS
+    simp only [ite_eq_right (Nat.succ_ne_zero d)]
+    change 1 / Numerics.MathFunctions.sqrt dS = (1 : ℝ) / Real.sqrt dS
     rfl
   rw [hscaleR, hscaleS]
   simpa [dR, sqrtR, oneR, epsOne, epsSqrt, canonicalScaleErrorBound,

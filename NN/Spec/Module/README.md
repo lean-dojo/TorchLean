@@ -4,7 +4,7 @@
 are part of the type, so Lean rejects a composition whose intermediate shapes do not agree.
 
 ```lean
-def block : Spec.Module Float inputShape outputShape :=
+def block : Spec.Module Float input output :=
   Spec.Module.Chain.single first
     |>.append second
 ```

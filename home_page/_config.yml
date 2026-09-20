@@ -14,3 +14,13 @@ remote_theme: pages-themes/cayman@v0.2.0
 plugins:
   - jekyll-remote-theme
   - jekyll-redirect-from
+
+# The Lean guide is compiled separately and copied into the final site.
+exclude:
+  - blueprint
+  - vendor
+  - Gemfile
+  - Gemfile.lock
+  - README.md
+keep_files:
+  - blueprint

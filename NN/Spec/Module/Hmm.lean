@@ -24,9 +24,9 @@ provide that bridge and package the resulting behavior as `Spec.Module`s.
 
 namespace Spec.Module
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Decode a single observation vector into a discrete symbol by taking `argmax`. -/
 def decodeObservation
@@ -41,7 +41,7 @@ def decodeObservations
   {seqLen nObservations : Nat} (hObservations : nObservations > 0)
   (scores : Tensor α [seqLen, nObservations]) :
   Tensor (Fin nObservations) [seqLen] :=
-  Spec.Tensor.ofFn fun t => decodeObservation hObservations (get scores t)
+  TorchLean.Tensor.ofFn fun t => decodeObservation hObservations (get scores t)
 
 /-- A one-step HMM module: map an observation distribution to a filtered state distribution. -/
 def hmm {nStates nObservations : Nat}
@@ -106,8 +106,7 @@ def hmmStateProbabilities {seqLen nStates nObservations : Nat}
       let total := sumSpec message
       if total > 0 then
         Tensor.dim (fun s =>
-          match get message s with
-          | Tensor.scalar val => Tensor.scalar (val / total)
+          Tensor.scalar (message.getScalar s / total)
         )
       else
         Tensor.dim (fun _ => Tensor.scalar (1 / nStates))
@@ -116,19 +115,16 @@ def hmmStateProbabilities {seqLen nStates nObservations : Nat}
   pythonExpr := "UnsupportedLayer(\"HMMStateProbabilities\", \"torch.distributions.Categorical\")"
 }
 
-/-- Sequence module: apply the one-step update independently at each timestep. -/
+/-- Apply `hmm` independently at each timestep, using the initial distribution for every row.
+
+Each row is decoded with `argmax`, as in the one-step module. The output contains filtered state
+probabilities, with the same totalization for impossible observations as `hmm`.
+-/
 def hmmIndependent {seqLen nStates nObservations : Nat}
   (hObservations : nObservations > 0) (m : HMMSpec α nStates nObservations) :
   Spec.Module α ([seqLen, nObservations]) ([seqLen, nStates]) :=
 {
-  forward := fun scores =>
-    Tensor.dim (fun t =>
-      let observation := decodeObservation hObservations (get scores t)
-      let oneObservation : ObservationSeq nObservations 1 :=
-        Tensor.ofFn fun _ => observation
-      let likelihood := hmmForwardSpec (α := α) m oneObservation
-      Tensor.dim (fun _s => Tensor.scalar likelihood)
-    ),
+  forward := (liftLeading (n := seqLen) (hmm hObservations m)).forward,
   kind := "HMMIndependent",
   pythonExpr := "UnsupportedLayer(\"HMMIndependent\", \"torch.distributions.Categorical\")"
 }

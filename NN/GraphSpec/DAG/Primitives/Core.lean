@@ -6,8 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.GraphSpec.DAG.Core
-public import NN.GraphSpec.Primitives
+public import NN.GraphSpec.Chain.Primitives
+public import NN.GraphSpec.Chain.ToDAG.Core
+public import NN.GraphSpec.Primitives.Spatial
 
 /-!
 # Core DAG Primitives
@@ -21,8 +22,8 @@ namespace NN
 namespace GraphSpec
 namespace DAG
 
-open _root_.Spec
-open Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open TorchLean.Tensor
 open _root_.TorchLean.Tensor
 
 namespace PrimOp
@@ -32,27 +33,27 @@ namespace PrimOp
 /-- Produce the all-zero tensor of a statically known shape. -/
 def zero (s : Shape) : PrimOp [] s :=
   { name := "zero"
-    specFwd := fun {_α} _ xs =>
+    specFwd := fun {_α} _storage _ctx xs =>
       match xs with
-      | .nil => _root_.Spec.fill 0 s
+      | .nil => _root_.TorchLean.Tensor.full s 0
     program := fun {α} _ _ =>
       fun {m} _ _ =>
-        Runtime.Autograd.TorchLean.const (m := m) (α := α) (_root_.Spec.fill 0 s) }
+        Runtime.Autograd.Model.const (m := m) (α := α) (_root_.TorchLean.Tensor.full s 0) }
 
 /-- The zero DAG node denotes the all-zero tensor of its declared shape. -/
-@[simp] theorem zero_specFwd (s : Shape) {α : Type} [Context α] :
-    (zero s).specFwd (α := α) .nil = _root_.Spec.fill 0 s := by
+@[simp] theorem zero_specFwd (s : Shape) {α : Type} [TorchLean.Storage α] [Context α] :
+    (zero s).specFwd (α := α) .nil = _root_.TorchLean.Tensor.full s 0 := by
   rfl
 
 /-- Produce the all-one tensor of a statically known shape. -/
 def one (s : Shape) : PrimOp [] s :=
   { name := "one"
-    specFwd := fun {_α} _ xs =>
+    specFwd := fun {_α} _storage _ctx xs =>
       match xs with
-      | .nil => _root_.Spec.fill 1 s
+      | .nil => _root_.TorchLean.Tensor.full s 1
     program := fun {α} _ _ =>
       fun {m} _ _ =>
-        Runtime.Autograd.TorchLean.const (m := m) (α := α) (_root_.Spec.fill 1 s) }
+        Runtime.Autograd.Model.const (m := m) (α := α) (_root_.TorchLean.Tensor.full s 1) }
 
 /--
 Dense linear layer in DAG form.
@@ -73,7 +74,7 @@ def linear (inDim outDim : Nat) :
 /--
 Flatten a tensor to a rank-one tensor in DAG form.
 
-Input: `[x : Spec.Tensor s]`.
+Input: `[x : TorchLean.Tensor s]`.
 Output: `Tensor α [Spec.Shape.size s]`.
 
 This is the DAG embedding of `Primitive.flatten`, so it has exactly the same row-major view
@@ -107,80 +108,77 @@ directly because the sequential surface is unary, while residual addition is gen
 -/
 def add (s : Shape) : PrimOp [s, s] s :=
   { name := "add"
-    specFwd := fun {α} _ctx xs =>
+    specFwd := fun {α} _storage _ctx xs =>
       match xs with
-      | .cons a (.cons b .nil) => _root_.Spec.Tensor.addSpec (α := α) a b
-    program := fun {α} _ctx _deq =>
+      | .cons a (.cons b .nil) => _root_.TorchLean.Tensor.addSpec (α := α) a b
+    program := fun {α} _storage _ctx =>
       fun {m} _ _ =>
-        fun a b => Runtime.Autograd.TorchLean.add (m := m) (α := α) (s := s) a b
+        fun a b => Runtime.Autograd.Model.add (m := m) (α := α) (s := s) a b
   }
 
 /-- The pure meaning of the DAG addition node is pointwise tensor addition. -/
-@[simp] theorem add_specFwd {α : Type} [Context α] {s : Shape}
-    (left right : _root_.Spec.Tensor α s) :
+@[simp] theorem add_specFwd {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+    (left right : _root_.TorchLean.Tensor α s) :
     (add s).specFwd (.cons left (.cons right .nil)) =
-      _root_.Spec.Tensor.addSpec left right := by
+      _root_.TorchLean.Tensor.addSpec left right := by
   rfl
 
 /-- Subtract two tensors of the same shape. -/
 def sub (s : Shape) : PrimOp [s, s] s :=
   { name := "sub"
-    specFwd := fun {α} _ xs =>
+    specFwd := fun {α} _ _ xs =>
       match xs with
-      | .cons a (.cons b .nil) => _root_.Spec.Tensor.subSpec (α := α) a b
+      | .cons a (.cons b .nil) => _root_.TorchLean.Tensor.subSpec (α := α) a b
     program := fun {α} _ _ =>
       fun {m} _ _ => fun a b =>
-        Runtime.Autograd.TorchLean.sub (m := m) (α := α) a b }
+        Runtime.Autograd.Model.sub (m := m) (α := α) a b }
 
 /-- The pure meaning of the DAG subtraction node is pointwise tensor subtraction. -/
-@[simp] theorem sub_specFwd {α : Type} [Context α] {s : Shape}
-    (left right : _root_.Spec.Tensor α s) :
+@[simp] theorem sub_specFwd {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+    (left right : _root_.TorchLean.Tensor α s) :
     (sub s).specFwd (.cons left (.cons right .nil)) =
-      _root_.Spec.Tensor.subSpec left right := by
+      _root_.TorchLean.Tensor.subSpec left right := by
   rfl
 
 /-- Multiply two tensors coordinatewise. -/
 def mul (s : Shape) : PrimOp [s, s] s :=
   { name := "mul"
-    specFwd := fun {α} _ xs =>
+    specFwd := fun {α} _ _ xs =>
       match xs with
-      | .cons a (.cons b .nil) => _root_.Spec.Tensor.mulSpec (α := α) a b
+      | .cons a (.cons b .nil) => _root_.TorchLean.Tensor.mulSpec (α := α) a b
     program := fun {α} _ _ =>
       fun {m} _ _ => fun a b =>
-        Runtime.Autograd.TorchLean.mul (m := m) (α := α) a b }
+        Runtime.Autograd.Model.mul (m := m) (α := α) a b }
 
 /-- The pure meaning of the DAG multiplication node is pointwise tensor multiplication. -/
-@[simp] theorem mul_specFwd {α : Type} [Context α] {s : Shape}
-    (left right : _root_.Spec.Tensor α s) :
+@[simp] theorem mul_specFwd {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+    (left right : _root_.TorchLean.Tensor α s) :
     (mul s).specFwd (.cons left (.cons right .nil)) =
-      _root_.Spec.Tensor.mulSpec left right := by
+      _root_.TorchLean.Tensor.mulSpec left right := by
   rfl
 
 
 /-- Arbitrary-rank convolution in DAG form, with inputs ordered as `[kernel, bias, x]`. -/
 def conv
     {d : Nat} (inC outC : Nat)
-    (kernel stride padding spatial : Spec.Tensor Nat [d])
-    {hInC : inC ≠ 0}
-    {hKernel : ∀ i : Fin d, kernel.getScalar i ≠ 0}
-    {hStride : ∀ i : Fin d, stride.getScalar i ≠ 0} :
+    (kernel stride padding spatial : TorchLean.Tensor Nat [d]) :
     PrimOp
-      [Shape.ofList (outC :: inC :: kernel.toList), [outC],
-        Shape.ofList (inC :: spatial.toList)]
-      (Shape.ofList (outC :: (Spec.convOutSpatial spatial kernel stride padding).toList)) :=
+      [Shape.ofList (outC :: inC :: (Tensor.to kernel (List Nat))), [outC],
+        Shape.ofList (inC :: (Tensor.to spatial (List Nat)))]
+      (Shape.ofList (outC :: Tensor.to (Spec.convOutSpatial spatial kernel stride padding)
+        (List Nat))) :=
   (LowerToDAG.Primitive.toDAGPrimOp
-      (Primitive.conv (inC := inC) (outC := outC) kernel stride padding spatial
-        (hInC := hInC) (hKernel := hKernel) (_hStride := hStride)) : PrimOp _ _)
+      (Primitive.conv (inC := inC) (outC := outC) kernel stride padding spatial) : PrimOp _ _)
 
 /-- Arbitrary-rank max pooling in DAG form. -/
 def maxPool
     {d : Nat} (channels : Nat)
-    (kernel stride padding spatial : Spec.Tensor Nat [d])
+    (kernel stride padding spatial : TorchLean.Tensor Nat [d])
     {hKernel : ∀ i : Fin d, kernel.getScalar i ≠ 0}
     {hStride : ∀ i : Fin d, stride.getScalar i ≠ 0} :
-    PrimOp [Shape.ofList (channels :: spatial.toList)]
+    PrimOp [Shape.ofList (channels :: (Tensor.to spatial (List Nat)))]
       (Shape.ofList (channels ::
-        (Spec.poolOutSpatialPad spatial kernel stride padding).toList)) :=
+        Tensor.to (Spec.poolOutSpatialPad spatial kernel stride padding) (List Nat))) :=
   (LowerToDAG.Primitive.toDAGPrimOp
       (Primitive.maxPool (channels := channels) kernel stride padding spatial
         (hKernel := hKernel) (hStride := hStride)) : PrimOp _ _)

@@ -23,8 +23,8 @@ dimension permutations (e.g. Multi-Head Attention head splitting/combining).
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -63,7 +63,8 @@ We implement it as a `Node` to keep the DAG theorem applicable.
 /--
 `reshape` node: reinterpret the same underlying coordinates as a different shape.
 
-This is only definable when `Spec.Shape.size s₁ = Spec.Shape.size s₂`; at the vector level it is a cast.
+This is only definable when `Spec.Shape.size s₁ = Spec.Shape.size s₂`; at the vector level it is
+a cast.
 
 PyTorch analogue: `view`/`reshape` operations that do not change the total number of elements.
 https://pytorch.org/docs/stable/tensor_view.html
@@ -119,12 +120,14 @@ https://pytorch.org/docs/stable/generated/torch.flatten.html
 -/
 def flatten {Γ : List Shape} {s : Shape} (idx : Idx Γ s) :
     Node Γ (.dim (Spec.Shape.size s) .scalar) :=
-  reshape (Γ := Γ) (s₁ := s) (s₂ := .dim (Spec.Shape.size s) .scalar) idx (by simp [Spec.Shape.size])
+  reshape (Γ := Γ) (s₁ := s) (s₂ := .dim (Spec.Shape.size s) .scalar) idx
+    (by simp [Spec.Shape.size])
 
 /-- `NodeFDerivCorrect` for `flatten`. -/
 def flattenFderiv {Γ : List Shape} {s : Shape} (idx : Idx Γ s) :
     NodeFDerivCorrect (flatten (Γ := Γ) (s := s) idx) :=
-  reshapeFderiv (Γ := Γ) (s₁ := s) (s₂ := .dim (Spec.Shape.size s) .scalar) idx (by simp [Spec.Shape.size])
+  reshapeFderiv (Γ := Γ) (s₁ := s) (s₂ := .dim (Spec.Shape.size s) .scalar) idx
+    (by simp [Spec.Shape.size])
 
 -- ---------------------------------------------------------------------------
 -- Generic coordinate reindexing (`Vec n` ↔ `Vec m`) via a `Fin` equivalence

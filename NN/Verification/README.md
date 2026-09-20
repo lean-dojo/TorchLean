@@ -9,10 +9,14 @@ PINN/scientific ML checks, ODE and spline certificates, and graph-level IBP/CROW
 
 ## What Lives Here
 
-- `TorchLean/`: lowering and semantic glue for connecting TorchLean model fragments to the
-  verifier graph IR, plus proof-backed fragments for supported forward programs.
+- `Builtin/`: the built-in verifier workflows (`IBPWorkflow`, `CrownOpsWorkflow`,
+  `TransformerIBPWorkflow`, `MlpTrainVerifyWorkflow`), the lowering from TorchLean model fragments
+  to the verifier graph IR, and the `Proved/` subtree of theorem-backed lowering and evaluator
+  fragments for supported forward programs.
 - `Cert/`: JSON certificate formats and executable recomputation checkers, including IBP, CROWN,
   alpha-CROWN, and alpha-beta-CROWN-style local node artifacts.
+- `Monotonicity`: exact nonnegative-weight certificates for linear/ReLU chains, with a theorem
+  from JSON text acceptance to global componentwise monotonicity over real inputs.
 - `Robustness/`: dataset-backed robustness workflows, including certified accuracy for small
   sklearn digits models and VNN-COMP-style MNIST fully connected examples.
 - `PINN/`: PDE expression parsing, graph builders, residual interval helpers, certificate replay,
@@ -42,10 +46,10 @@ TorchLean verification work has five recurring shapes.
    where a checked artifact becomes part of a formal claim, with the Lean hypotheses and remaining
    producer assumptions visible at the call site.
 
-5. A domain-specific checker takes a structured artifact and proves a smaller local claim: a 3D
-   projection box contains the image of a cuboid, an ODE corridor encloses a trajectory, a PINN
-   residual stays inside a stated interval, or a VNN-COMP-style classifier margin is nonnegative on
-   an input box.
+5. A domain-specific checker tests a smaller artifact predicate: projected-corner containment,
+   ODE corridor inequalities, PINN residual bounds, or a classifier margin derived from computed
+   bounds. A guarantee about a trajectory or every input additionally needs the corresponding
+   semantic soundness theorem.
 
 The common pattern is intentionally plain: parse a small artifact, check shape and schema fields,
 recompute the claim in Lean, and name the assumptions that remain outside Lean.
@@ -70,7 +74,7 @@ by the PyTorch/ONNX path.
 
 For payload-backed imported ops, the bridge records both the helper evaluator contract and the
 actual one-step `Graph.evalAt` success path. The
-`NN.Verification.TorchLean.Proved.Correctness.Eval` import collects the concrete evaluator modules
+`NN.Verification.Builtin.Proved.Correctness.Eval` import collects the concrete evaluator modules
 for elementwise, shape, reduction, permutation, linear-algebra, softmax, payload, and lowering
 facts. The imported theorems, rather than a separate coverage declaration, are the current record
 of proved evaluator support.
@@ -80,6 +84,9 @@ of proved evaluator support.
 - `NN.Verification`: reusable verification APIs and public handles to proof-backed
   certificate soundness statements.
 - `NN.Verification.Cert`: executable certificate checker API.
+- `NN.Verification.Cert.CROWNQuery.Json`: exact dense/ReLU CROWN output-query checker and
+  acceptance-to-safety theorems.
+- `NN.Verification.Monotonicity.Json`: exact monotonicity decoder, checker, and soundness theorems.
 - `NN.Verification.LiRPA`: compact LiRPA-style artifact checkers and shared certificate utilities.
 - `NN.Verification.ODE`: ODE corridor verifier API.
 - `NN.Verification.Splines`: spline and piecewise-polynomial certificate checker API.
@@ -90,6 +97,79 @@ of proved evaluator support.
 - `NN.Verification.CLI`: runnable CLI registry used by `lake exe verify`.
 
 ## Commands To Try
+
+### Exact CROWN output queries
+
+Import `NN.Verification.Cert.CROWNQuery.Json` and call
+`NN.Verification.CROWNQuery.acceptsText` on a document such as:
+
+```json
+{
+  "format": "crown_query_v1",
+  "input_dim": 1,
+  "input": {"lo": ["-1"], "hi": ["1"]},
+  "layers": [
+    {"kind": "linear", "weights": [["1"], ["-1"]], "bias": ["0", "0"]},
+    {"kind": "relu", "alpha": ["1/2", "1/2"]},
+    {"kind": "linear", "weights": [["1", "1"]], "bias": ["0"]}
+  ],
+  "query": {"weights": [["1"]], "bias": ["-3/2"], "strict": true}
+}
+```
+
+This asks whether `relu(x) + relu(-x) < 3/2` for every real `x` in `[-1, 1]`.
+Each query row means `weights * output + bias < 0`, or `≤ 0` when `strict` is false;
+all rows must hold. The checker retains affine dependence on the original input, recomputes
+linear sign-split and α-ReLU transfers using existing CROWN operations, and bounds the final
+query over the input box. It checks each proposed α lies in `[0, 1]`.
+
+Parameters and endpoints are exact integer/fraction strings. Unsupported operations, malformed
+dimensions, invalid fractions, reversed boxes, empty input/output/query dimensions, and invalid
+α values reject. No external affine bounds are trusted. Failure means the checker did not prove
+the query; it need not mean the property is false.
+
+`Query.check_sound`, `acceptsJson_sound`, and `acceptsText_sound` prove that acceptance implies
+every decoded output inequality for every real input in the decoded box. The model uses existing
+`Spec.Module.linear`, `Spec.Module.relu`, and `Spec.Module.Chain` semantics; its evaluation is
+total. These theorems require no producer-soundness, local-transfer, or graph-coverage hypothesis.
+`NN.Tests.MLTheory.CROWNQuery` includes a concrete kernel-checked safety theorem and runtime
+acceptance/rejection tests in `nn_tests_suite`.
+
+This new format is separate from the binary32 node-replay JSON format. It does not certify ONNX
+translation, floating-point deployment, β dual variables, cuts, or branch-tree coverage. A model
+producer still has to establish that the decoded network is the model it intends to verify.
+
+### Exact monotonicity certificates
+
+Import `NN.Verification.Monotonicity.Json` and use
+`NN.Verification.Monotonicity.acceptsText` on a document such as:
+
+```json
+{
+  "format": "monotonicity_v1",
+  "input_dim": 2,
+  "layers": [
+    {"kind": "linear", "weights": [["1/3", "0"]], "bias": ["-7"]},
+    {"kind": "relu"}
+  ]
+}
+```
+
+Each weight and bias is an exact integer or fraction string. The decoder checks all layer
+dimensions; malformed rational strings, numeric JSON parameters, and unsupported operations reject.
+The weight check accepts nonnegative entries and allows arbitrary biases. It is sufficient but
+incomplete: some monotone networks contain negative weights and will be rejected.
+
+`acceptsText_sound` proves that every accepted text decodes to a `Spec.Module.Chain ℝ` whose
+outputs preserve componentwise order for every ordered pair of real inputs. `check_sound` is the
+corresponding theorem for typed certificates. Neither requires a producer-soundness or local-transfer
+hypothesis. This is a theorem about the model recorded in the document; correspondence to an ONNX
+file, deployment arithmetic, and CROWN/branch-and-bound certificates are outside this format.
+
+`NN.Tests.MLTheory.Monotonicity` contains a concrete kernel-checked model theorem and parser tests,
+included in `nn_tests_suite`.
+
+### Other verification workflows
 
 Run the curated verification suite:
 
@@ -102,13 +182,14 @@ Run TorchLean-native graph workflows:
 ```bash
 lake exe verify -- torchlean-ibp
 lake exe verify -- torchlean-crown-ops
-lake exe verify -- torchlean-robustness
-lake exe verify -- torchlean-mlp-workflow --scalar float32
+lake exe verify -- torchlean-mlp-workflow
 ```
 
 These commands lower or build small TorchLean models, attach input regions, and run native bound
-passes over the graph-shaped object. Use them when changing graph lowering, bound propagation,
-typed graph execution, or the verification API.
+passes. The MLP workflow trains a classifier and calls
+`trained.verify center (radius := 0.10) (norm := .inf) (property := .topLabel 0)`; its graph and
+Alpha-Beta-CROWN state stay internal. Use these commands when changing graph lowering, bound
+propagation, typed graph execution, or the verification API.
 
 Run a compact PINN certificate and residual-expression check:
 
@@ -144,10 +225,13 @@ lake exe verify -- lirpa-encoder
 These fixtures are small JSON artifacts for supported network fragments. They exercise the artifact
 parser and replay predicate without depending on a live external verifier.
 
-Run the small VNN-COMP-style MNIST fully connected workflow:
+The VNN-COMP-style MNIST workflow requires externally prepared weights and suite files; they are
+not bundled. Follow [the artifact setup](../Examples/Verification/VNNComp/README.md), then run:
 
 ```bash
-lake exe verify -- vnncomp-mnistfc
+lake exe verify -- vnncomp-mnistfc \
+  --weights=_external/vnncomp/mnist_fc/model_weights.json \
+  --suite=_external/vnncomp/mnist_fc/suite.json
 ```
 
 Run a 3D projection certificate check:

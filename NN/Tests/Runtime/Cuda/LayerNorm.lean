@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Engine.Core
 public import NN.Runtime.Autograd.Engine.Cuda.Ops
 public import NN.Tensor
 public import NN.Tests.Runtime.Cuda.Utils
@@ -23,27 +22,27 @@ namespace Tests
 namespace Cuda
 namespace LayerNorm
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Runtime.Autograd
 
 abbrev seqLen : Nat := 2
 abbrev embedDim : Nat := 4
 
-theorem hSeq : seqLen > 0 := by decide
-theorem hEmb : embedDim > 0 := by decide
+theorem seqLen_pos : seqLen > 0 := by decide
+theorem embedDim_pos : embedDim > 0 := by decide
 
 def x : Tensor Float [seqLen, embedDim] :=
-  tensorOfArray! [seqLen, embedDim] #[
+  (Tensor.from #[
     0.10, 0.20, 0.00, -0.10,
     -0.30, 0.50, 0.20, 0.10
-  ]
+  ]).reshape [seqLen, embedDim] (by dsimp; decide)
 
 def gamma : Tensor Float [embedDim] :=
-  tensorOfArray! [embedDim] #[1.0, 0.9, 1.1, 1.0]
+  (Tensor.from #[1.0, 0.9, 1.1, 1.0]).reshape [embedDim] (by dsimp; decide)
 
 def beta : Tensor Float [embedDim] :=
-  tensorOfArray! [embedDim] #[0.0, 0.1, -0.1, 0.0]
+  (Tensor.from #[0.0, 0.1, -0.1, 0.0]).reshape [embedDim] (by dsimp; decide)
 
 def run : IO Unit := do
   IO.println "=== CUDA kernel coverage: layer_norm ==="
@@ -57,9 +56,10 @@ def run : IO Unit := do
   let (t3, bId) := Tape.leaf (t := t2) beta (name := some "beta")
   let (t4, yId) ← Utils.okOrThrow
     (Tape.layerNorm (α := Float) (t := t3) (seqLen := seqLen) (embedDim := embedDim)
-      (h_seq_pos := hSeq) (h_embed_pos := hEmb) xId gId bId)
+      (h_seq_pos := seqLen_pos) (h_embed_pos := embedDim_pos) xId gId bId)
   let yCpu ← Utils.cpuValue (s := outShape) t4 yId
-  let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (fill (1.0 : Float) outShape)
+  let seedCpu : Spec.SomeTensor Float :=
+    Spec.SomeTensor.ofTensor (Tensor.full outShape (1.0 : Float))
   let gradsCpu ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t4) yId seedCpu)
   let dxCpu ← Utils.cpuGrad (s := outShape) gradsCpu xId
   let dGammaCpu ← Utils.cpuGrad (s := [embedDim]) gradsCpu gId
@@ -75,10 +75,11 @@ def run : IO Unit := do
     (name := some "beta")
   let (t4c, yIdc) ← Utils.okOrThrow
     (Runtime.Autograd.Cuda.Tape.layerNorm (t := t3c) (seqLen := seqLen) (embedDim := embedDim)
-      (h_seq_pos := hSeq) (h_embed_pos := hEmb) xIdc gIdc bIdc)
+      (h_seq_pos := seqLen_pos) (h_embed_pos := embedDim_pos) xIdc gIdc bIdc)
   let yCuda ← Utils.cudaValue (s := outShape) t4c yIdc
   let seedCuda : Runtime.Autograd.Cuda.AnyBuffer :=
-    { s := outShape, buf := Runtime.Autograd.Cuda.Buffer.full (UInt32.ofNat (Spec.Shape.size outShape)) 1.0 }
+    { s := outShape,
+      buf := Runtime.Autograd.Cuda.Buffer.full (UInt32.ofNat (Spec.Shape.size outShape)) 1.0 }
   let gradsCuda ← Utils.okOrThrow
     (Runtime.Autograd.Cuda.Tape.backwardDenseAll (t := t4c) yIdc seedCuda)
   let dxCuda ← Utils.cudaGrad (s := outShape) gradsCuda xIdc

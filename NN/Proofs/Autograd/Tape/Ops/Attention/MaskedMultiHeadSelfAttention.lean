@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Tape.Ops.Attention.MultiHeadSelfAttention
-public import NN.Proofs.Autograd.Tape.Ops.Attention.MaskedScaledDotProduct
 
 /-!
 # Additive-Bias Multi-Head Attention Core
@@ -28,7 +27,7 @@ softmax numerator. This file is for intentional finite additive score biases.
 namespace Proofs
 namespace Autograd
 
-open Spec
+open Spec TorchLean
 
 open scoped BigOperators
 
@@ -296,7 +295,8 @@ theorem projectedMaskedAttention_hasFDerivAt
     (projectPack : E → CtxVec (ΓMaskedCore n numHeads headDim))
     (DprojectPack : E →L[ℝ] CtxVec (ΓMaskedCore n numHeads headDim))
     (mergePack : CtxVec (ΓMaskedCore n numHeads headDim ++ ssMaskedCore n numHeads headDim) → F)
-    (DmergePack : CtxVec (ΓMaskedCore n numHeads headDim ++ ssMaskedCore n numHeads headDim) →L[ℝ] F)
+    (DmergePack :
+      CtxVec (ΓMaskedCore n numHeads headDim ++ ssMaskedCore n numHeads headDim) →L[ℝ] F)
     (x : E)
     (hProject : HasFDerivAt projectPack DprojectPack x)
     (hMerge :

@@ -7,10 +7,12 @@ Authors: TorchLean Team
 module
 
 public import NN
-public import NN.Examples.Zoo
-public import NN.Examples.Models.Runner
+public import NN.API.Trainer.FixedSample
+public import NN.Examples
+public import NN.Examples.Runner
 public import NN.Verification.CLI
 public import NN.CI.SlowProofs
+public import NN.MLTheory.CROWN.Proofs.GraphRefinement
 
 /-!
 # TorchLean documentation surface

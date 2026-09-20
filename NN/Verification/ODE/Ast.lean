@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Tensor
+public import NN.Spec.Core.Context
+public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Ast
@@ -34,7 +35,7 @@ the checker mode being used.
 
 namespace NN.Verification.ODE
 
-open _root_.Spec
+open Spec TorchLean
 
 /--
 `Expr` is an AST for ODE right-hand sides $f(t,u)$.
@@ -74,7 +75,7 @@ structure Env (α : Type) where
 Interval primitives used by `eval`.
 
 These operations are written against the abstract scalar interface `Context α` so we can evaluate
-the same expression under `Float` or `IEEE32Exec` (or other executable scalars).
+the same expression under `Float` or `ExecFloat.Binary 8 23` (or other executable scalars).
 -/
 namespace Ival
 
@@ -83,14 +84,14 @@ direct, inspectable enclosures over clever rewrites so that each arithmetic case
 against the mathematical interval rule it implements. -/
 
 /--
-Whether a checker scalar is finite under the supported `Float` and `IEEE32Exec` backends.
+Whether a checker scalar is finite under the supported `Float` and `ExecFloat.Binary 8 23` backends.
 
 Both backends produce NaN for $\infty-\infty$ and for $\mathrm{NaN}-\mathrm{NaN}$, whereas every
 finite value subtracts
 from itself to zero. Expressing the guard through `Context` keeps the interval evaluator generic
 without relying on a backend-specific bit decoder.
 -/
-@[noinline] def isFiniteBool {α : Type} [Context α] (x : α) : Bool :=
+@[noinline] def isFiniteBool {α : Type} [TorchLean.Storage α] [Context α] (x : α) : Bool :=
   x - x == (0 : α)
 
 /--
@@ -100,35 +101,35 @@ Writing this as $\neg(x>y)$ would treat unordered values as less than or equal t
 host `Float` comparisons also use a total implementation order, so the explicit finite guards are
 part of the certificate check rather than an optimization.
 -/
-@[noinline] def leBool {α : Type} [Context α] (x y : α) : Bool :=
+@[noinline] def leBool {α : Type} [TorchLean.Storage α] [Context α] (x y : α) : Bool :=
   isFiniteBool x && isFiniteBool y && (Context.gtBool y x || x == y)
 
 /-- Minimum of two scalar endpoints, propagating a non-finite operand so later checks reject it. -/
-@[inline] def min2 {α : Type} [Context α] (a b : α) : α :=
+@[inline] def min2 {α : Type} [TorchLean.Storage α] [Context α] (a b : α) : α :=
   if !isFiniteBool a then a
   else if !isFiniteBool b then b
   else if leBool a b then a else b
 
 /-- Maximum of two scalar endpoints, propagating a non-finite operand so later checks reject it. -/
-@[inline] def max2 {α : Type} [Context α] (a b : α) : α :=
+@[inline] def max2 {α : Type} [TorchLean.Storage α] [Context α] (a b : α) : α :=
   if !isFiniteBool a then a
   else if !isFiniteBool b then b
   else if leBool a b then b else a
 
 /-- Add two closed intervals endpointwise. -/
-@[inline] def add {α : Type} [Context α] (x y : α × α) : α × α :=
+@[inline] def add {α : Type} [TorchLean.Storage α] [Context α] (x y : α × α) : α × α :=
   let (xl, xh) := x; let (yl, yh) := y; (xl + yl, xh + yh)
 
 /-- Subtract closed intervals using the standard outward endpoint formula. -/
-@[inline] def sub {α : Type} [Context α] (x y : α × α) : α × α :=
+@[inline] def sub {α : Type} [TorchLean.Storage α] [Context α] (x y : α × α) : α × α :=
   let (xl, xh) := x; let (yl, yh) := y; (xl - yh, xh - yl)
 
 /-- Negate a closed interval by swapping and negating endpoints. -/
-@[inline] def neg {α : Type} [Context α] (x : α × α) : α × α :=
+@[inline] def neg {α : Type} [TorchLean.Storage α] [Context α] (x : α × α) : α × α :=
   let (xl, xh) := x; (-xh, -xl)
 
 /-- Interval multiplication using the standard four-product enclosure. -/
-@[inline] def mul {α : Type} [Context α] (x y : α × α) : α × α :=
+@[inline] def mul {α : Type} [TorchLean.Storage α] [Context α] (x y : α × α) : α × α :=
   -- Standard interval product: compute four products and take min/max.
   let (xl, xh) := x; let (yl, yh) := y
   let p1 := xl * yl
@@ -144,26 +145,26 @@ Interval reciprocal.
 
 Returns `none` if the interval contains `0`, because `1/x` is not interval-safe across a pole.
 -/
-@[inline] def inv {α : Type} [Context α] (y : α × α) : Option (α × α) :=
+@[inline] def inv {α : Type} [TorchLean.Storage α] [Context α] (y : α × α) : Option (α × α) :=
   let (yl, yh) := y
-  let z := Numbers.zero
+  let z := 0
   -- If 0 ∈ [yl,yh], reciprocal is not interval-safe.
   if leBool yl z && leBool z yh then
     none
   else if Context.gtBool yl z then
     -- 1/x is decreasing on (0,∞).
-    some (Numbers.one / yh, Numbers.one / yl)
+    some (1 / yh, 1 / yl)
   else
     -- yl < 0 and yh < 0, decreasing on (-∞,0).
-    some (Numbers.one / yh, Numbers.one / yl)
+    some (1 / yh, 1 / yl)
 
 /-- Interval division, returning `none` if the denominator interval contains `0`. -/
-@[inline] def div {α : Type} [Context α] (x y : α × α) : Option (α × α) := do
+@[inline] def div {α : Type} [TorchLean.Storage α] [Context α] (x y : α × α) : Option (α × α) := do
   let iy ← inv y
   pure (mul x iy)
 
 /-- Interval exponential (monotone, so endpoints map to endpoints). -/
-@[inline] def exp {α : Type} [Context α] (x : α × α) : α × α :=
+@[inline] def exp {α : Type} [TorchLean.Storage α] [Context α] (x : α × α) : α × α :=
   let (xl, xh) := x
   (MathFunctions.exp xl, MathFunctions.exp xh)
 
@@ -172,9 +173,9 @@ Interval logarithm.
 
 Returns `none` unless the interval is strictly positive.
 -/
-@[inline] def log {α : Type} [Context α] (x : α × α) : Option (α × α) :=
+@[inline] def log {α : Type} [TorchLean.Storage α] [Context α] (x : α × α) : Option (α × α) :=
   let (xl, xh) := x
-  if Context.gtBool xl Numbers.zero then
+  if Context.gtBool xl 0 then
     some (MathFunctions.log xl, MathFunctions.log xh)
   else
     none
@@ -184,16 +185,16 @@ Interval sine enclosure.
 
 We use a 1‑Lipschitz enclosure around the midpoint and clamp to `[-1, 1]`.
 -/
-@[inline] def sin {α : Type} [Context α] (x : α × α) : α × α :=
+@[inline] def sin {α : Type} [TorchLean.Storage α] [Context α] (x : α × α) : α × α :=
   -- 1‑Lipschitz enclosure around midpoint, clamped to [-1,1].
   let (l, u) := x
-  let m := (l + u) * Numbers.half
-  let r := (u - l) * Numbers.half
+  let m := (l + u) * (1 / 2)
+  let r := (u - l) * (1 / 2)
   let base := MathFunctions.sin m
   let lo0 := base - r
   let hi0 := base + r
-  let lo := max2 lo0 Numbers.negOne
-  let hi := min2 hi0 Numbers.one
+  let lo := max2 lo0 (-1)
+  let hi := min2 hi0 1
   (lo, hi)
 
 /--
@@ -201,16 +202,16 @@ Interval cosine enclosure.
 
 Same strategy as `sin`: 1‑Lipschitz around the midpoint, clamped to `[-1, 1]`.
 -/
-@[inline] def cos {α : Type} [Context α] (x : α × α) : α × α :=
+@[inline] def cos {α : Type} [TorchLean.Storage α] [Context α] (x : α × α) : α × α :=
   -- Same 1‑Lipschitz enclosure as `sin`, clamped to [-1,1].
   let (l, u) := x
-  let m := (l + u) * Numbers.half
-  let r := (u - l) * Numbers.half
+  let m := (l + u) * (1 / 2)
+  let r := (u - l) * (1 / 2)
   let base := MathFunctions.cos m
   let lo0 := base - r
   let hi0 := base + r
-  let lo := max2 lo0 Numbers.negOne
-  let hi := min2 hi0 Numbers.one
+  let lo := max2 lo0 (-1)
+  let hi := min2 hi0 1
   (lo, hi)
 
 end Ival
@@ -221,9 +222,8 @@ Interval evaluation for `Expr`.
 `evalWithFuel` uses a fuel parameter so the evaluator is total even for malformed/self-referential
 expressions (though `Expr` itself has no recursion).
 -/
-def evalWithFuel {α : Type} [Context α] (ofFloat : Float → α) (fuel : Nat) (env : Env α) (e : Expr)
-  :
-    Option (α × α) :=
+def evalWithFuel {α : Type} [TorchLean.Storage α] [Context α] (ofFloat : Float → α) (fuel : Nat)
+    (env : Env α) (e : Expr) : Option (α × α) :=
   match fuel with
   | 0 => none
   | fuel + 1 =>
@@ -271,7 +271,8 @@ def evalWithFuel {α : Type} [Context α] (ofFloat : Float → α) (fuel : Nat) 
       | none => none
 
 /-- Evaluate an ODE expression with the default recursion fuel used by certificate checking. -/
-def eval {α : Type} [Context α] (ofFloat : Float → α) (env : Env α) (e : Expr) : Option (α × α) :=
+def eval {α : Type} [TorchLean.Storage α] [Context α] (ofFloat : Float → α) (env : Env α)
+    (e : Expr) : Option (α × α) :=
   evalWithFuel ofFloat 512 env e
 
 end NN.Verification.ODE

@@ -29,7 +29,7 @@ We package the statement for a **full cyclic sweep** over coordinates:
 namespace NN.MLTheory.Proofs.Hopfield
 
 open scoped BigOperators
-open _root_.Spec
+open Spec TorchLean
 
 open Spec.Hopfield
 
@@ -43,7 +43,7 @@ section
 
 variable (p : Params ℝ n)
 
-private lemma energy_foldl_le
+private theorem energy_foldl_le
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p) :
     ∀ l : List (Fin n), ∀ s : State n,
       energy (α := ℝ) p (l.foldl (fun s u => updateAt (α := ℝ) p s u) s)
@@ -67,6 +67,7 @@ private lemma energy_foldl_le
         IH (s := updateAt (α := ℝ) p s u)
       simpa [List.foldl] using le_trans h2 h1
 
+/-- A full sweep over all units never increases the energy, by composing the single-unit bound. -/
 theorem energy_cycleUpdate_le
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     (s : State n) :
@@ -74,7 +75,7 @@ theorem energy_cycleUpdate_le
   classical
   simpa [cycleUpdate] using energy_foldl_le (n := n) (p := p) hsym hdiag (List.finRange n) s
 
-private lemma pluses_updateAt_gt_of_energy_eq_of_ne
+private theorem pluses_updateAt_gt_of_energy_eq_of_ne
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     (s : State n) (u : Fin n)
     (hE : energy (α := ℝ) p (updateAt (α := ℝ) p s u) = energy (α := ℝ) p s)
@@ -114,7 +115,7 @@ private lemma pluses_updateAt_gt_of_energy_eq_of_ne
         hnet)
     exact False.elim (hlt.ne hE)
 
-private lemma pluses_updateAt_ge_of_energy_eq
+private theorem pluses_updateAt_ge_of_energy_eq
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     (s : State n) (u : Fin n)
     (hE : energy (α := ℝ) p (updateAt (α := ℝ) p s u) = energy (α := ℝ) p s) :
@@ -128,7 +129,7 @@ private lemma pluses_updateAt_ge_of_energy_eq
   · exact le_of_lt (pluses_updateAt_gt_of_energy_eq_of_ne (n := n) (p := p) hsym hdiag s u hE
     hchange)
 
-private lemma pluses_foldl_ge_of_energy_eq
+private theorem pluses_foldl_ge_of_energy_eq
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p) :
     ∀ l : List (Fin n), ∀ s : State n,
       (energy (α := ℝ) p (l.foldl (fun s u => updateAt (α := ℝ) p s u) s) = energy (α := ℝ) p s) →
@@ -162,7 +163,7 @@ private lemma pluses_foldl_ge_of_energy_eq
         IH (s := s1) hErest
       exact le_trans hGe1 hGeRest
 
-private lemma pluses_foldl_gt_of_energy_eq_of_ne
+private theorem pluses_foldl_gt_of_energy_eq_of_ne
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p) :
     ∀ l : List (Fin n), ∀ s : State n,
       (energy (α := ℝ) p (l.foldl (fun s u => updateAt (α := ℝ) p s u) s) = energy (α := ℝ) p s) →
@@ -263,6 +264,11 @@ private lemma pluses_foldl_gt_of_energy_eq_of_ne
           pluses_foldl_ge_of_energy_eq (p := p) hsym hdiag l s1 hErest
         exact lt_of_lt_of_le hHeadLt hTailGe
 
+/-- Every sweep that changes the state makes progress: either the energy strictly drops, or it stays
+equal and the number of active units strictly rises.
+
+This lexicographic measure is what `Convergence.lean` turns into termination. Energy alone is not
+enough, because a unit sitting exactly at its threshold can flip without changing the energy. -/
 theorem cycleUpdate_progress
     (hsym : SymmetricW (n := n) p) (hdiag : DiagonalZero (n := n) p)
     (s : State n) (hchange : cycleUpdate (n := n) p s ≠ s) :

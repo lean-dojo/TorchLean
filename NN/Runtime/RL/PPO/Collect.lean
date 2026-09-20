@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL.PPO.Rollout
-public import NN.Runtime.RL.Gymnasium
 public import NN.Runtime.RL.Session
 public import NN.Runtime.RL.Algorithms.PolicyGradient
 
@@ -25,7 +24,8 @@ The unified session interface lives in `NN.Runtime.RL.Session` (`Session.Checked
 The lower-level Gymnasium subprocess protocol is implemented in `NN.Runtime.RL.Gymnasium`.
 
 References:
-- Schulman et al., "Proximal Policy Optimization Algorithms" (2017): https://arxiv.org/abs/1707.06347
+- Schulman et al., "Proximal Policy Optimization Algorithms" (2017):
+  https://arxiv.org/abs/1707.06347
 - Schulman et al., "High-Dimensional Continuous Control Using Generalized Advantage Estimation"
   (2015): https://arxiv.org/abs/1506.02438
 - Gymnasium API reference (reset/step, `terminated` vs `truncated`): https://gymnasium.farama.org/
@@ -37,10 +37,10 @@ namespace Runtime
 namespace RL
 namespace PPO
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α] [DecidableEq Shape]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-!
 ## Rollout collection (ergonomic core API)
@@ -55,19 +55,19 @@ The caller provides:
 - `start`: how to initialize the session (often `reset`),
 - `observe`: how to read the current observation from the session,
 - `stepChecked`: one checked step returning an observed transition and the updated session,
-- `castObs` to inject host `Float` observations into the chosen scalar backend `α`,
+- `castObservation` to inject host `Float` observations into the chosen scalar backend `α`,
 - `castReward` to inject host `Float` rewards into the chosen scalar backend `α`,
 - `predictLogits` for the current actor,
 - `predictValue` for the current critic (returns a scalar `α`).
 
 The API supports the “typed graph + parameters” calling convention used throughout TorchLean.
 -/
-def collectRolloutSessionWith {obsShape : Shape} {nActions horizon : Nat} {Sess : Type}
+def collectRolloutFromCallbacks {obsShape : Shape} {nActions horizon : Nat} {Sess : Type}
     [NeZero horizon] [NeZero nActions]
     (start : IO Sess)
     (observe : Sess → Tensor Float obsShape)
     (stepChecked : Sess → Fin nActions → IO (Boundary.Transition obsShape nActions × Sess))
-    (castObs : Float → α)
+    (castObservation : Float → α)
     (castReward : Float → α)
     (predictLogits : Tensor α obsShape → Tensor α [nActions])
     (predictValue : Tensor α obsShape → α)
@@ -81,7 +81,7 @@ def collectRolloutSessionWith {obsShape : Shape} {nActions horizon : Nat} {Sess 
 
   for _t in [0:horizon] do
     let obsF := observe sess
-    let obs : Tensor α obsShape := Spec.Tensor.map castObs obsF
+    let obs : Tensor α obsShape := TorchLean.Tensor.map castObservation obsF
 
     let logits : Tensor α [nActions] := predictLogits obs
     let (counter', a) :=
@@ -96,7 +96,7 @@ def collectRolloutSessionWith {obsShape : Shape} {nActions horizon : Nat} {Sess 
     sess := sess'
 
     let done : Bool := tr.terminated || tr.truncated
-    let nextObs : Tensor α obsShape := Spec.Tensor.map castObs tr.nextObservation
+    let nextObs : Tensor α obsShape := TorchLean.Tensor.map castObservation tr.nextObservation
     let nv : α := predictValue nextObs
 
     steps := steps.push
@@ -106,14 +106,16 @@ def collectRolloutSessionWith {obsShape : Shape} {nActions horizon : Nat} {Sess 
         reward := castReward tr.reward
         done := done
         value := v
-        nextValue := nv }
+        nextValue := nv
+        terminated := tr.terminated }
 
   if h : steps.size = horizon then
     pure ({ steps := steps, steps_size_eq_horizon := h }, counter)
   else
     throw <|
       IO.userError
-        s!"PPO.collectRolloutSessionWith: internal error (steps.size={steps.size}, horizon={horizon})"
+        (s!"PPO.collectRolloutFromCallbacks: internal error (steps.size={steps.size}, "
+          ++ s!"horizon={horizon})")
 
 /-!
 ## Rollout collection from a checked session
@@ -122,19 +124,20 @@ def collectRolloutSessionWith {obsShape : Shape} {nActions horizon : Nat} {Sess 
 /--
 Collect a fixed-horizon rollout from a unified `Runtime.RL.Session.CheckedSession`.
 -/
-def collectRolloutCheckedSessionWith {obsShape : Shape} {nActions horizon : Nat}
+def collectRolloutFromSession {obsShape : Shape} {nActions horizon : Nat}
     [NeZero horizon] [NeZero nActions]
     (sess : Session.CheckedSession obsShape nActions)
-    (castObs : Float → α)
+    (castObservation : Float → α)
     (castReward : Float → α)
     (predictLogits : Tensor α obsShape → Tensor α [nActions])
     (predictValue : Tensor α obsShape → α)
     (rngSeed rngCounter : Nat) :
     IO (Rollout α obsShape nActions horizon × Nat) :=
-  collectRolloutSessionWith (α := α) (obsShape := obsShape) (nActions := nActions) (horizon := horizon)
+  collectRolloutFromCallbacks (α := α) (obsShape := obsShape) (nActions := nActions)
+    (horizon := horizon)
     (Sess := sess.Sess)
     (start := sess.start) (observe := sess.observe) (stepChecked := sess.stepChecked)
-    castObs castReward predictLogits predictValue rngSeed rngCounter
+    castObservation castReward predictLogits predictValue rngSeed rngCounter
 
 /-!
 ## Rollout collection from Gymnasium (subprocess bridge)
@@ -143,11 +146,11 @@ def collectRolloutCheckedSessionWith {obsShape : Shape} {nActions horizon : Nat}
 /--
 Collect a fixed-horizon rollout from a Gymnasium subprocess environment.
 
-This specializes `collectRolloutSessionWith` to `Gymnasium.Session`.
+This specializes `collectRolloutFromCallbacks` to `Gymnasium.Session`.
 -/
-def collectRolloutWith {obsShape : Shape} {nActions horizon : Nat}
+def collectRolloutFromGymnasium {obsShape : Shape} {nActions horizon : Nat}
     [NeZero horizon] [NeZero nActions]
-    (castObs : Float → α)
+    (castObservation : Float → α)
     (castReward : Float → α)
     (gym : Gymnasium.Client obsShape nActions)
     (predictLogits : Tensor α obsShape → Tensor α [nActions])
@@ -158,8 +161,9 @@ def collectRolloutWith {obsShape : Shape} {nActions horizon : Nat}
   let sess : Session.CheckedSession obsShape nActions :=
     Session.CheckedSession.gymnasium (obsShape := obsShape) (nActions := nActions) gym
       (seed? := some resetSeed) (resetOnDone := true)
-  collectRolloutCheckedSessionWith (α := α) (obsShape := obsShape) (nActions := nActions) (horizon := horizon)
-    sess castObs castReward predictLogits predictValue rngSeed rngCounter
+  collectRolloutFromSession (α := α) (obsShape := obsShape) (nActions := nActions)
+    (horizon := horizon)
+    sess castObservation castReward predictLogits predictValue rngSeed rngCounter
 
 end PPO
 end RL

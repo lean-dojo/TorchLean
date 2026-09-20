@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.TensorReductionShape
+public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
 
 /-!
 # Embeddings
@@ -33,14 +33,17 @@ References / analogies:
 @[expose] public section
 
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- A trainable table with `vocab` rows of width `embedDim`. -/
-structure Embedding (vocab embedDim : Nat) (α : Type) where
+structure Embedding (vocab embedDim : Nat) (α : Type)
+    [TorchLean.Storage α] where
   /-- Embedding table, stored row-major by executable backends. -/
   weight : Tensor α [vocab, embedDim]
 
@@ -55,8 +58,9 @@ validate them before interpreting them as indices into this table.
 -/
 def lookup {vocab embedDim : Nat} (embedding : Embedding vocab embedDim α) :
     {shape : Shape} → Tensor (Fin vocab) shape → Tensor α (shape.appendDim embedDim)
-  | .scalar, .scalar index => get embedding.weight index
-  | .dim _ _, .dim values => Tensor.dim (fun i => lookup embedding (values i))
+  | .scalar, indices => get embedding.weight indices.item
+  | .dim _ _, indices =>
+      Tensor.dim fun i => lookup embedding (Tensor.unstack indices i)
 
 /--
 Embed a batch/sequence of one-hot vectors:

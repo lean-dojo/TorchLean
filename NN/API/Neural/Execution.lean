@@ -4,11 +4,11 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+-- This module supplies public namespace exports used by downstream consumers. Import shaking
+-- cannot see those downstream lookups, so keep the marked imports.
+module -- shake: keep-downstream
 
-public import NN.API.Neural.Builders
-public import NN.API.Runtime
-public import NN.Tensor
+public import NN.API.Neural.Builders -- shake: keep
 
 /-!
 # Executing Sequential Models
@@ -23,52 +23,58 @@ namespace TorchLean
 
 namespace nn
 
-export _root_.Runtime.Autograd.TorchLean.NN.Seq (forward lowerToTypedGraph)
+export Runtime.Autograd.Model.Layers.Seq (forward lowerToTypedGraph)
 
 /-- A typed graph whose inputs are model state followed by one model input. -/
-abbrev TypedGraphModel (stateShapes : List Shape) (σ τ : Shape) (α : Type) :=
-  _root_.Runtime.Autograd.Torch.TypedGraph α (stateShapes ++ [σ]) τ
+abbrev TypedGraphModel (stateShapes : List Shape) (σ τ : Shape) (α : Type)
+    [TorchLean.Storage α] :=
+  Runtime.Autograd.Torch.TypedGraph α (stateShapes ++ [σ]) τ
 
 namespace TypedGraphModel
 
 /-- Evaluate a lowered model with explicit model state and one input tensor. -/
-def forward {σ τ : Shape} {α : Type}
+def forward {σ τ : Shape} {α : Type} [TorchLean.Storage α]
     {stateShapes : List Shape}
     (model : TypedGraphModel stateShapes σ τ α)
-    (state : TensorPack α stateShapes)
-    (x : Tensor α σ) : Tensor α τ :=
-  _root_.Runtime.Autograd.Torch.TypedGraph.forward model <|
-    TensorPack.append (ss₁ := stateShapes) (ss₂ := [σ]) state (.cons x .nil)
+    (state : State α stateShapes)
+    (input : Tensor α σ) : Tensor α τ :=
+  Runtime.Autograd.Torch.TypedGraph.forward model <|
+    TensorPack.append (ss₁ := stateShapes) (ss₂ := [σ])
+      (State.Internal.toTensorPack state) (TensorPack.singleton input)
 
 /--
 Evaluate a Jacobian-vector product with separate tangents for the model state and input.
 -/
-def jvp {σ τ : Shape} {α : Type}
+def jvp {σ τ : Shape} {α : Type} [TorchLean.Storage α]
     {stateShapes : List Shape}
     (model : TypedGraphModel stateShapes σ τ α)
-    (state stateTangent : TensorPack α stateShapes)
-    (x inputTangent : Tensor α σ) : Tensor α τ :=
-  _root_.Runtime.Autograd.Torch.TypedGraph.jvp model
-    (TensorPack.append (ss₁ := stateShapes) (ss₂ := [σ]) state (.cons x .nil))
-    (TensorPack.append (ss₁ := stateShapes) (ss₂ := [σ]) stateTangent
-      (.cons inputTangent .nil))
+    (state stateTangent : State α stateShapes)
+    (input inputTangent : Tensor α σ) : Tensor α τ :=
+  Runtime.Autograd.Torch.TypedGraph.jvp model
+    (TensorPack.append (ss₁ := stateShapes) (ss₂ := [σ])
+      (State.Internal.toTensorPack state) (TensorPack.singleton input))
+    (TensorPack.append (ss₁ := stateShapes) (ss₂ := [σ])
+      (State.Internal.toTensorPack stateTangent)
+      (TensorPack.singleton inputTangent))
 
 /--
-Evaluate a vector-Jacobian product, returning the state and input cotangents separately.
+Evaluate a vector-Jacobian product.
+
+The returned pair is `(stateGrad, inputGrad)`.
 -/
-def vjpWithSeed {σ τ : Shape} {α : Type} [Add α] [Zero α]
+def vjp {σ τ : Shape} {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {stateShapes : List Shape}
     (model : TypedGraphModel stateShapes σ τ α)
-    (state : TensorPack α stateShapes)
-    (x : Tensor α σ) (outputCotangent : Tensor α τ) :
-    TensorPack α stateShapes × Tensor α σ :=
-  let cotangents := _root_.Runtime.Autograd.Torch.TypedGraph.vjpWithSeed model
-    (TensorPack.append (ss₁ := stateShapes) (ss₂ := [σ]) state (.cons x .nil))
-    outputCotangent
-  let split := TensorPack.split
-    (α := α) (ss₁ := stateShapes) (ss₂ := [σ]) cotangents
-  match split.2 with
-  | .cons dx .nil => (split.1, dx)
+    (state : State α stateShapes)
+    (input : Tensor α σ) (outputGradient : Tensor α τ) :
+    State α stateShapes × Tensor α σ :=
+  let gradients := Runtime.Autograd.Torch.TypedGraph.vjpWithSeed model
+    (TensorPack.append (ss₁ := stateShapes) (ss₂ := [σ])
+      (State.Internal.toTensorPack state) (TensorPack.singleton input))
+    outputGradient
+  let (stateGrad, inputGrads) := TensorPack.split
+    (α := α) (ss₁ := stateShapes) (ss₂ := [σ]) gradients
+  (State.Internal.fromTensorPack stateGrad, TensorPack.head inputGrads)
 
 end TypedGraphModel
 

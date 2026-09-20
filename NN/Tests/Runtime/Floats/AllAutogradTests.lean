@@ -7,13 +7,11 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.TypedGraph.GraphM
-public import NN.Runtime.Autograd.Torch.Core.TypedGraph
 public import NN.API.Neural.Execution
 public import NN.API.Optim
 public import NN.Runtime.Autograd.Train
-public import NN.Spec.Core.Tensor
 public import NN.Spec.Models.Mlp
-public import NN.Tensor
+public import NN.Tests.Utils
 
 /-!
 # Consolidated Float Runtime Autograd Tests
@@ -30,11 +28,11 @@ This file collects runtime tests that exercise the *dynamic autograd tape*.
 Regression tests for `Runtime.Autograd` dynamic tape.
 
 We check that for a simple 2-layer MLP, the tape-based gradients match the existing
-hand-derived `Examples.mlp_backward`.
+hand-derived `Examples.mlpBackward`.
 -/
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open Examples
 
 namespace Tests
@@ -50,16 +48,8 @@ abbrev outDim := 1
 -- Small tag used for readable error messages.
 abbrev tag : String := "autograd_engine_test"
 
--- Parameter node ids we want to read gradients for.
-structure ParamIds where
-  /-- w 1 Id. -/
-  hiddenWeightId : Nat
-  /-- b 1 Id. -/
-  hiddenBiasId : Nat
-  /-- w 2 Id. -/
-  outputWeightId : Nat
-  /-- b 2 Id. -/
-  outputBiasId : Nat
+-- The parameter-id record is shared with the `ℚ` transpose of this test; see `Tests.Utils`.
+open Tests.Utils (ParamIds)
 
 /-!
 ## Fixed inputs and parameters
@@ -67,25 +57,27 @@ structure ParamIds where
 We use a small deterministic 2-layer MLP so the gradients are stable.
 -/
 def hiddenWeight : Tensor Float [hidDim, inDim] :=
-  tensorOfArray! [hidDim, inDim] #[0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+  (Tensor.from #[0.1, 0.2, 0.3, 0.4, 0.5, 0.6]).reshape [hidDim, inDim] (by dsimp; decide)
 
 def hiddenBias : Tensor Float [hidDim] :=
-  tensorOfArray! [hidDim] #[0.1, 0.2, 0.3]
+  (Tensor.from #[0.1, 0.2, 0.3]).reshape [hidDim] (by dsimp; decide)
 
 def outputWeight : Tensor Float [outDim, hidDim] :=
-  tensorOfArray! [outDim, hidDim] #[0.7, 0.8, 0.9]
+  (Tensor.from #[0.7, 0.8, 0.9]).reshape [outDim, hidDim] (by dsimp; decide)
 
 def outputBias : Tensor Float [outDim] :=
-  tensorOfArray! [outDim] #[0.4]
+  (Tensor.from #[0.4]).reshape [outDim] (by dsimp; decide)
 
 def x : Tensor Float [inDim] :=
-  tensorOfArray! [inDim] #[0.5, 0.8]
+  (Tensor.from #[0.5, 0.8]).reshape [inDim] (by dsimp; decide)
 
 def dLdy : Tensor Float [outDim] :=
-  tensorOfArray! [outDim] #[1.0]
+  (Tensor.from #[1.0]).reshape [outDim] (by dsimp; decide)
 
-def hiddenLayer : Spec.LinearSpec Float inDim hidDim := { weights := hiddenWeight, bias := hiddenBias }
-def outputLayer : Spec.LinearSpec Float hidDim outDim := { weights := outputWeight, bias := outputBias }
+def hiddenLayer : Spec.LinearSpec Float inDim hidDim :=
+  { weights := hiddenWeight, bias := hiddenBias }
+def outputLayer : Spec.LinearSpec Float hidDim outDim :=
+  { weights := outputWeight, bias := outputBias }
 
 def expected :=
   Examples.mlpBackward hiddenLayer outputLayer x dLdy
@@ -115,7 +107,9 @@ def checkMlpGrads :
     let t ← TapeM.getTape
     let grads ← liftM (Tape.backward (t:=t) yId (Spec.SomeTensor.ofTensor dLdy))
 
-    let ids : ParamIds := { hiddenWeightId := hiddenWeightId, hiddenBiasId := hiddenBiasId, outputWeightId := outputWeightId, outputBiasId := outputBiasId }
+    let ids : ParamIds :=
+      { hiddenWeightId := hiddenWeightId, hiddenBiasId := hiddenBiasId,
+        outputWeightId := outputWeightId, outputBiasId := outputBiasId }
     pure (ids, grads)
 
   let ((ids, grads), _) ← TapeM.run t0 m
@@ -131,11 +125,14 @@ def checkMlpGrads :
   let db2_dyn ← Train.requireGradTensor (tag := tag)
     (s := [outDim]) grads ids.outputBiasId
 
-  let ok1 := decide (pretty dW1_dyn = pretty dW1_exp)
-  let ok2 := decide (pretty db1_dyn = pretty db1_exp)
-  let ok3 := decide (pretty dW2_dyn = pretty dW2_exp)
-  let ok4 := decide (pretty db2_dyn = pretty db2_exp)
-  pure (ok1 && ok2 && ok3 && ok4)
+  -- Compare the coordinates directly; formatted tensors can hide small gradient errors.
+  let close {s : Shape} (actual expected : Tensor Float s) : Bool :=
+    let left := actual.to (Array Float)
+    let right := expected.to (Array Float)
+    left.size == right.size && (left.zip right).all fun (x, y) =>
+      x.isFinite && y.isFinite && decide (Float.abs (x - y) ≤ 1e-12)
+  pure (close dW1_dyn dW1_exp && close db1_dyn db1_exp &&
+    close dW2_dyn dW2_exp && close db2_dyn db2_exp)
 
 def run : IO Unit := do
   match checkMlpGrads with
@@ -147,30 +144,13 @@ end AutogradEngine
 end Floats
 end Tests
 
-/-! ## autograd_linear_regression_test.lean -/
-
 /-!
-# Autograd linear regression (Float)
-
-This file is a small, end-to-end training regression test for the *dynamic autograd tape*.
-
-We fit a 1D linear model to a small dataset:
-
-$$
-y=2x+1
-$$
-
-using SGD on the mean-squared-error (MSE) loss.
-
-Key things to notice when reading the code:
-* The forward pass is written in the `TapeM` style, so the tape is threaded implicitly.
-* Dataset inputs/targets are created with `requiresGrad = false` (they are constants).
-* After the forward pass, we call `backwardScalar` to get a gradient map `id -> grad`.
-* Parameters are updated with a simple tensor-level SGD update rule.
+Dynamic-tape training with AdamW, linear warmup, and evaluation over a finite sample stream.
+The checks below exercise the low-level trainer and evaluation APIs together.
 -/
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 namespace Tests
 namespace Floats
@@ -197,118 +177,113 @@ def dataset : Array Sample :=
 
 -- Expose the examples through the reusable finite stream abstraction.
 def testDataset : TorchLean.Data.SampleStream Sample :=
-  TorchLean.Data.SampleStream.ofArray dataset
+  TorchLean.Data.SampleStream.fromArray dataset
 
 -- Model parameters (W, b) for y = W * x + b
-structure Params where
-  /-- W. -/
+structure Parameters where
+  /-- Weight matrix of the scalar affine model. -/
   W : Tensor Float [outDim, inDim]
-  /-- b. -/
+  /-- Bias of the scalar affine model. -/
   b : Tensor Float [outDim]
 
 -- Initial parameters (not too close to the target).
-def initParams : Params :=
-  { W := fill (0.5 : Float) [outDim, inDim]
-  , b := fill (0.0 : Float) [outDim]
+def initialParameters : Parameters :=
+  { W := Tensor.full [outDim, inDim] (0.5 : Float)
+  , b := Tensor.full [outDim] (0.0 : Float)
   }
 
 -- Optimizer config: ids are stable because we create W then b each step.
-def lrScheduler : Train.LRScheduler Float :=
-  .linearWarmup (Optim.linearWarmupScheduler (initialLr := 0.2) (warmupSteps := 2)
-    (startLr := 0.05))
+def learningRateScheduler : Train.LearningRateScheduler Float :=
+  .linearWarmup (Optim.Scheduler.LinearWarmup.create
+    (initialLearningRate := 0.2) (warmupSteps := 2) (startingLearningRate := 0.05))
 
 def initialOptimizerState : Train.OptimizerState Float :=
-  { kind := .adamw
-  , groups :=
-      #[{ params := #[0, 1]
-        , lr := 0.2
+  { algorithm := .adamw
+  , parameterGroups :=
+      #[{ parameterIds := #[0, 1]
+        , learningRate := 0.2
         , weightDecay := 0.0
-        , scheduler := some lrScheduler
+        , scheduler := some learningRateScheduler
         }]
   }
 
 -- Training state for the trainer API.
 structure TrainState where
-  /-- params. -/
-  params : Params
-  /-- opt. -/
-  opt : Train.OptimizerState Float
+  /-- Current model parameters. -/
+  parameters : Parameters
+  /-- Current optimizer state. -/
+  optimizerState : Train.OptimizerState Float
 
-def initState : TrainState := { params := initParams, opt := initialOptimizerState }
+def initialState : TrainState :=
+  { parameters := initialParameters, optimizerState := initialOptimizerState }
 
 -- Single-sample loss using the tape.
-def sampleLoss (WId bId : Nat) (sample : Sample) :
+def sampleLoss (weightId biasId : Nat) (sample : Sample) :
   Runtime.Autograd.TapeM Float Nat := do
-  let xVal : Tensor Float [inDim] := fill sample.fst [inDim]
-  let yVal : Tensor Float [outDim] := fill sample.snd [outDim]
-  let xId ← Train.TapeM.const xVal (name := some "x")
-  let yId ← Train.TapeM.const yVal (name := some "y")
-  let yHatId ← TapeM.linear (inDim:=inDim) (outDim:=outDim) WId bId xId
-  let lossId ← TapeM.mseLoss (s := [outDim]) yHatId yId
+  let input : Tensor Float [inDim] := Tensor.full [inDim] sample.fst
+  let target : Tensor Float [outDim] := Tensor.full [outDim] sample.snd
+  let inputId ← Train.TapeM.const input (name := some "x")
+  let targetId ← Train.TapeM.const target (name := some "y")
+  let predictionId ←
+    TapeM.linear (inDim := inDim) (outDim := outDim) weightId biasId inputId
+  let lossId ← TapeM.mseLoss (s := [outDim]) predictionId targetId
   pure lossId
 
 -- One optimizer-backed training step over a batch of samples.
 def trainStep
-  (s : TrainState) (batch : Array Sample) :
-  Runtime.Autograd.Result (Prod TrainState Float) := do
-  let t0 : Tape Float := Tape.empty
-  let m : TapeM Float _ := do
-    let wId ← Train.TapeM.param s.params.W (name := some "W")
-    let bId ← Train.TapeM.param s.params.b (name := some "b")
-    let lossId ← Train.TapeM.meanScalarOver (tag := tag) batch (fun sample => sampleLoss wId bId
-      sample)
-    let t ← TapeM.getTape
-    let lossVal ← liftM (Train.requireScalarValue (tag := tag) t lossId)
-    let grads ← liftM (Tape.backwardScalar (t:=t) lossId)
-    pure (wId, bId, lossVal, grads)
+  (state : TrainState) (batch : Array Sample) :
+  Runtime.Autograd.Result (Train.StepResult TrainState Float) := do
+  let initialTape : Tape Float := Tape.empty
+  let computation : TapeM Float _ := do
+    let weightId ← Train.TapeM.param state.parameters.W (name := some "W")
+    let biasId ← Train.TapeM.param state.parameters.b (name := some "b")
+    let lossId ← Train.TapeM.meanScalarOver (tag := tag) batch
+      (fun sample => sampleLoss weightId biasId sample)
+    let tape ← TapeM.getTape
+    let loss ← liftM (Train.requireScalarValue (tag := tag) tape lossId)
+    let gradients ← liftM (Tape.backwardScalar (t := tape) lossId)
+    pure (weightId, biasId, loss, gradients)
 
-  let ((wId, bId, lossVal, grads), _) ← TapeM.run t0 m
+  let ((weightId, biasId, loss, gradients), _) ← TapeM.run initialTape computation
 
-  let paramTable : Train.ParamTable Float :=
-    #[Train.ParamEntry.ofTensor wId s.params.W (name := some "W")
-    , Train.ParamEntry.ofTensor bId s.params.b (name := some "b")
+  let parameterTable : Train.ParameterTable Float :=
+    #[Train.Parameter.create weightId state.parameters.W (name := some "W")
+    , Train.Parameter.create biasId state.parameters.b (name := some "b")
     ]
 
-  let (opt', paramTable') ← Train.Optim.step s.opt paramTable grads
+  let optimizerStep ←
+    Train.Optimizer.step state.optimizerState parameterTable gradients
 
-  let newW ← Train.ParamTable.getTensor (tag := tag)
-    (s := [outDim, inDim]) paramTable' wId
-  let newb ← Train.ParamTable.getTensor (tag := tag)
-    (s := [outDim]) paramTable' bId
+  let newW ← Train.ParameterTable.get (tag := tag)
+    (s := [outDim, inDim]) optimizerStep.parameters weightId
+  let newb ← Train.ParameterTable.get (tag := tag)
+    (s := [outDim]) optimizerStep.parameters biasId
 
-  let newParams : Params := { W := newW, b := newb }
-  pure ({ params := newParams, opt := opt' }, lossVal)
+  let parameters : Parameters := { W := newW, b := newb }
+  pure
+    { nextState :=
+        { parameters := parameters, optimizerState := optimizerStep.optimizerState }
+      output := loss }
 
 -- One trainer step over the fixed dataset.
-def step (s : TrainState) :
-  Runtime.Autograd.Result (Prod TrainState (Train.StepReport Float)) := do
-  let (s', loss) ← trainStep s dataset
-  pure (s', { loss := loss, metrics := #[] })
+def step (state : TrainState) :
+  Runtime.Autograd.Result (Train.StepResult TrainState (Train.StepReport Float)) := do
+  let result ← trainStep state dataset
+  pure
+    { nextState := result.nextState
+      output := { loss := result.output, metrics := #[] } }
 
 def trainer : Train.Trainer Runtime.Autograd.Result TrainState Float :=
-  Train.Trainer.noLog initState step
+  Train.Trainer.withoutLogging initialState step
 
-/-!
-## Training
-
-Run a small number of epochs and report the per-epoch loss.
--/
-def train (epochs : Nat) :
-  Runtime.Autograd.Result (Prod Params (Array Float)) := do
-  let (s, losses) ← Train.Trainer.runLosses (steps := epochs) trainer
-  pure (s.params, losses)
-
-/-!
-## Evaluation
-
-This runs a forward pass only (no backprop) and averages loss over a dataset.
--/
-def evalSample (p : Params) : Sample -> Runtime.Autograd.Result (Train.StepReport Float)
+/-- Evaluate one sample using constant parameters on a fresh tape. -/
+def evalSample (parameters : Parameters) :
+    Sample -> Runtime.Autograd.Result (Train.StepReport Float)
   | sample => do
       let t0 : Tape Float := Tape.empty
       let m : TapeM Float _ := do
-        let wId ← Train.TapeM.const p.W (name := some "W")
-        let bId ← Train.TapeM.const p.b (name := some "b")
+        let wId ← Train.TapeM.const parameters.W (name := some "W")
+        let bId ← Train.TapeM.const parameters.b (name := some "b")
         let lossId ← sampleLoss wId bId sample
         let t ← TapeM.getTape
         let lossVal ← liftM (Train.requireScalarValue (tag := tag) t lossId)
@@ -316,40 +291,32 @@ def evalSample (p : Params) : Sample -> Runtime.Autograd.Result (Train.StepRepor
       let (lossVal, _) ← TapeM.run t0 m
       pure { loss := lossVal, metrics := #[] }
 
-def evalDataset (p : Params) : Runtime.Autograd.Result (Train.StepReport Float) :=
-  Train.Eval.evalDataset (tag := tag) testDataset (evalSample p)
+def evalDataset (parameters : Parameters) : Runtime.Autograd.Result (Train.StepReport Float) :=
+  Train.Eval.evalDataset (tag := tag) testDataset (evalSample parameters)
 
 def run : IO Unit := do
   let res :=
-    (Train.Trainer.run (steps := 5) trainer) >>= fun (s, reports) => do
-      let evalReport ← evalDataset s.params
-      pure (Train.renderReports reports, Train.renderReport 0 evalReport,
-        pretty s.params.W, pretty s.params.b)
+    (Train.Trainer.run (steps := 5) trainer) >>= fun result => do
+      let evalReport ← evalDataset result.finalState.parameters
+      pure (result.outputs, evalReport)
   match res with
   | .error msg => throw <| IO.userError s!"autograd_linear_regression_test (Float): {msg}"
-  | .ok (reports, evalReport, wStr, bStr) =>
-    IO.println "=== Autograd linear regression (Float) ==="
-    for line in reports do
-      IO.println line
-    IO.println evalReport
-    IO.println s!"W: {wStr}"
-    IO.println s!"b: {bStr}"
+  | .ok (reports, evalReport) =>
+    for report in reports do
+      Tests.Utils.assertFinite "linear regression training loss" report.loss
+    Tests.Utils.assertFinite "linear regression evaluation loss" evalReport.loss
+    IO.println "autograd_linear_regression_test (Float): OK"
 
 end AutogradLinearRegression
 end Floats
 end Tests
 
-/-! ## autograd_train_test.lean -/
-
 /-!
-End-to-end training runtime check using the dynamic autograd tape.
-
-This mirrors the hand-written SGD loop in `mlp_test.lean`, but gradients are produced
-via the dynamic tape (`Runtime.Autograd.Tape.backwardScalar`).
+Dynamic-tape MLP training through `Train.runSteps` and direct SGD parameter updates.
 -/
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 namespace Tests
 namespace Floats
@@ -364,12 +331,8 @@ abbrev outDim := 1
 -- Small tag used for readable error messages.
 abbrev tag : String := "autograd_train_test"
 
-/-!
-## Parameter record
-
-We keep parameters in a small structure so we can update them together after each step.
--/
-structure Params where
+/-- The four parameter tensors updated together by each MLP training step. -/
+structure Parameters where
   /-- Weight matrix for layer 1. -/
   hiddenWeight : Tensor Float [hidDim, inDim]
   /-- Bias for layer 1. -/
@@ -380,91 +343,100 @@ structure Params where
   outputBias : Tensor Float [outDim]
 
 -- A fixed initialization so the test is deterministic.
-def initParams : Params :=
+def initialParameters : Parameters :=
   {
-    hiddenWeight := tensorOfArray! [hidDim, inDim] #[0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
-    hiddenBias := tensorOfArray! [hidDim] #[0.1, 0.2, 0.3],
-    outputWeight := tensorOfArray! [outDim, hidDim] #[0.7, 0.8, 0.9],
-    outputBias := tensorOfArray! [outDim] #[0.4]
+    hiddenWeight :=
+      (Tensor.from #[0.1, 0.2, 0.3, 0.4, 0.5, 0.6]).reshape [hidDim, inDim] (by dsimp; decide),
+    hiddenBias := (Tensor.from #[0.1, 0.2, 0.3]).reshape [hidDim] (by dsimp; decide),
+    outputWeight := (Tensor.from #[0.7, 0.8, 0.9]).reshape [outDim, hidDim] (by dsimp; decide),
+    outputBias := (Tensor.from #[0.4]).reshape [outDim] (by dsimp; decide)
   }
 
 def x : Tensor Float [inDim] :=
-  tensorOfArray! [inDim] #[0.5, 0.8]
+  (Tensor.from #[0.5, 0.8]).reshape [inDim] (by dsimp; decide)
 
 def yTarget : Tensor Float [outDim] :=
-  tensorOfArray! [outDim] #[1.0]
+  (Tensor.from #[1.0]).reshape [outDim] (by dsimp; decide)
 
-/-!
-## One training step
-
-We explicitly build the tape with `Tape.*` operations, then call `backwardScalar`.
--/
-def trainStep (p : Params) (lr : Float := 0.1) : Runtime.Autograd.Result (Prod Params Float) := do
+/-- Build the loss tape, obtain all four parameter gradients, and apply one SGD update. -/
+def trainStep (parameters : Parameters) (learningRate : Float := 0.1) :
+    Runtime.Autograd.Result (Train.StepResult Parameters Float) := do
   let t0 : Tape Float := Tape.empty
-  let (t1, hiddenWeightId) := Tape.leaf (t:=t0) p.hiddenWeight (name := some "hiddenWeight")
-  let (t2, hiddenBiasId) := Tape.leaf (t:=t1) p.hiddenBias (name := some "hiddenBias")
-  let (t3, outputWeightId) := Tape.leaf (t:=t2) p.outputWeight (name := some "outputWeight")
-  let (t4, outputBiasId) := Tape.leaf (t:=t3) p.outputBias (name := some "outputBias")
+  let (t1, hiddenWeightId) :=
+    Tape.leaf (t := t0) parameters.hiddenWeight (name := some "hiddenWeight")
+  let (t2, hiddenBiasId) :=
+    Tape.leaf (t := t1) parameters.hiddenBias (name := some "hiddenBias")
+  let (t3, outputWeightId) :=
+    Tape.leaf (t := t2) parameters.outputWeight (name := some "outputWeight")
+  let (t4, outputBiasId) :=
+    Tape.leaf (t := t3) parameters.outputBias (name := some "outputBias")
   let (t5, xId)  := Tape.leaf (t:=t4) x (name := some "x") (requiresGrad := false)
   let (t6, yId)  := Tape.leaf (t:=t5) yTarget (name := some "y") (requiresGrad := false)
 
   -- Forward pass: linear -> relu -> linear -> mse_loss
-  let (t7, z1Id) ← Tape.linear (t:=t6) (inDim:=inDim) (outDim:=hidDim) hiddenWeightId hiddenBiasId xId
+  let (t7, z1Id) ←
+    Tape.linear (t:=t6) (inDim:=inDim) (outDim:=hidDim) hiddenWeightId hiddenBiasId xId
   let (t8, a1Id) ← Tape.relu (t := t7) (s := [hidDim]) z1Id
-  let (t9, yhatId) ← Tape.linear (t:=t8) (inDim:=hidDim) (outDim:=outDim) outputWeightId outputBiasId a1Id
+  let (t9, yhatId) ←
+    Tape.linear (t:=t8) (inDim:=hidDim) (outDim:=outDim) outputWeightId outputBiasId a1Id
   let (t10, lossId) ← Tape.mseLoss (t := t9) (s := [outDim]) yhatId yId
 
   -- Read loss and backpropagate from the scalar loss node.
   let lossVal ← Train.requireScalarValue (tag := tag) t10 lossId
-  let grads ← Tape.backwardScalar (t:=t10) lossId
+  let gradients ← Tape.backwardScalar (t := t10) lossId
 
   -- Extract typed gradients and apply SGD updates.
   let hiddenWeightGrad ← Train.requireGradTensor (tag := tag)
-    (s := [hidDim, inDim]) grads hiddenWeightId
+    (s := [hidDim, inDim]) gradients hiddenWeightId
   let hiddenBiasGrad ← Train.requireGradTensor (tag := tag)
-    (s := [hidDim]) grads hiddenBiasId
+    (s := [hidDim]) gradients hiddenBiasId
   let outputWeightGrad ← Train.requireGradTensor (tag := tag)
-    (s := [outDim, hidDim]) grads outputWeightId
+    (s := [outDim, hidDim]) gradients outputWeightId
   let outputBiasGrad ← Train.requireGradTensor (tag := tag)
-    (s := [outDim]) grads outputBiasId
+    (s := [outDim]) gradients outputBiasId
 
-  let updatedHiddenWeight := Optim.SGD.update { lr := lr } p.hiddenWeight hiddenWeightGrad
-  let updatedHiddenBias := Optim.SGD.update { lr := lr } p.hiddenBias hiddenBiasGrad
-  let updatedOutputWeight := Optim.SGD.update { lr := lr } p.outputWeight outputWeightGrad
-  let updatedOutputBias := Optim.SGD.update { lr := lr } p.outputBias outputBiasGrad
+  let hiddenWeightStep :=
+    Optim.SGD.update { learningRate := learningRate } parameters.hiddenWeight hiddenWeightGrad
+  let hiddenBiasStep :=
+    Optim.SGD.update { learningRate := learningRate } parameters.hiddenBias hiddenBiasGrad
+  let outputWeightStep :=
+    Optim.SGD.update { learningRate := learningRate } parameters.outputWeight outputWeightGrad
+  let outputBiasStep :=
+    Optim.SGD.update { learningRate := learningRate } parameters.outputBias outputBiasGrad
 
-  pure ({ hiddenWeight := updatedHiddenWeight, hiddenBias := updatedHiddenBias, outputWeight := updatedOutputWeight, outputBias := updatedOutputBias }, lossVal)
+  pure
+    { nextState :=
+        { hiddenWeight := hiddenWeightStep.parameters
+          hiddenBias := hiddenBiasStep.parameters
+          outputWeight := outputWeightStep.parameters
+          outputBias := outputBiasStep.parameters }
+      output := lossVal }
 
-/-!
-## Training loop
-
-Run a small fixed number of epochs and collect the per-epoch loss.
--/
-def train (epochs : Nat) (lr : Float := 0.1) :
+/-- Run the low-level step driver and retain each loss for the finite-value checks. -/
+def train (epochs : Nat) (learningRate : Float := 0.1) :
   Runtime.Autograd.Result (Array Float) := do
-  let (_, losses) ← Train.runStepsM (m := Runtime.Autograd.Result) epochs initParams
-    (fun p => trainStep p lr)
-  pure losses
+  let result ← Train.runSteps (m := Runtime.Autograd.Result) epochs initialParameters
+    (fun parameters => trainStep parameters learningRate)
+  pure result.outputs
 
 def run : IO Unit := do
   match train 6 0.1 with
   | .ok losses =>
-    IO.println "=== Autograd train runtime check (Float) ==="
-    IO.println s!"losses: {losses}"
+    for loss in losses do
+      Tests.Utils.assertFinite "MLP training loss" loss
+    IO.println "autograd_train_test (Float): OK"
   | .error msg => throw <| IO.userError s!"autograd_train_test (Float): {msg}"
 
 end AutogradTrain
 end Floats
 end Tests
 
-/-! ## autograd_layernorm_test.lean -/
-
 /-!
-Small layer norm gradient runtime check using the dynamic tape.
+CPU LayerNorm tape execution, including lookup and finite-value checks for all three gradients.
 -/
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 namespace Tests
 namespace Floats
@@ -476,16 +448,18 @@ abbrev seqLen := 2
 abbrev embedDim := 3
 
 def x : Tensor Float [seqLen, embedDim] :=
-  tensorOfArray! [seqLen, embedDim] #[0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+  (Tensor.from #[0.1, 0.2, 0.3, 0.4, 0.5, 0.6]).reshape [seqLen, embedDim] (by dsimp; decide)
 
 def gamma : Tensor Float [embedDim] :=
-  tensorOfArray! [embedDim] #[1.0, 0.9, 1.1]
+  (Tensor.from #[1.0, 0.9, 1.1]).reshape [embedDim] (by dsimp; decide)
 
 def beta : Tensor Float [embedDim] :=
-  tensorOfArray! [embedDim] #[0.0, 0.1, -0.1]
+  (Tensor.from #[0.0, 0.1, -0.1]).reshape [embedDim] (by dsimp; decide)
 
 def checkLayerNormGrads :
-  Runtime.Autograd.Result (String × String × String) := do
+  Runtime.Autograd.Result
+    (Float × Tensor Float [seqLen, embedDim] × Tensor Float [embedDim] ×
+      Tensor Float [embedDim]) := do
   let t0 : Tape Float := Tape.empty
   let m : TapeM Float _ := do
     let xId ← Train.TapeM.param x (name := some "x")
@@ -508,30 +482,31 @@ def checkLayerNormGrads :
   let dBeta ← Train.requireGradTensor (tag := "layer_norm")
     (s := [embedDim]) grads betaId
 
-  pure (s!"loss={lossVal}", pretty dGamma, pretty dBeta)
+  pure (lossVal, dX, dGamma, dBeta)
 
 def run : IO Unit := do
   match checkLayerNormGrads with
   | .error msg => throw <| IO.userError s!"autograd_layernorm_test (Float): {msg}"
-  | .ok (lossStr, dGammaStr, dBetaStr) =>
-    IO.println "=== Autograd layer norm grad runtime check (Float) ==="
-    IO.println lossStr
-    IO.println s!"dGamma: {dGammaStr}"
-    IO.println s!"dBeta: {dBetaStr}"
+  | .ok (loss, dX, dGamma, dBeta) =>
+    Tests.Utils.assertFinite "LayerNorm loss" loss
+    for value in Tensor.to dX (Array Float) do
+      Tests.Utils.assertFinite "LayerNorm input gradient" value
+    for value in Tensor.to dGamma (Array Float) do
+      Tests.Utils.assertFinite "LayerNorm scale gradient" value
+    for value in Tensor.to dBeta (Array Float) do
+      Tests.Utils.assertFinite "LayerNorm bias gradient" value
+    IO.println "autograd_layernorm_test (Float): OK"
 
 end AutogradLayerNorm
 end Floats
 end Tests
 
-/-! ## Convolution gradient check -/
-
 /-!
-Gradient runtime check for the rank-polymorphic convolution operation, instantiated here with two
-spatial axes.
+CPU convolution tape execution with two spatial axes and finite kernel/bias gradients.
 -/
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 namespace Tests
 namespace Floats
@@ -556,24 +531,25 @@ def outH : Nat := Spec.Shape.slidingWindowOutDim inH kH stride padding
 def outW : Nat := Spec.Shape.slidingWindowOutDim inW kW stride padding
 
 def kernel : Tensor Float [outC, inC, kH, kW] :=
-  tensorOfArray! [outC, inC, kH, kW] #[0.2, -0.1, 0.3, 0.4]
+  (Tensor.from #[0.2, -0.1, 0.3, 0.4]).reshape [outC, inC, kH, kW] (by dsimp; decide)
 
 def bias : Tensor Float [outC] :=
-  tensorOfArray! [outC] #[0.05]
+  (Tensor.from #[0.05]).reshape [outC] (by dsimp; decide)
 
 def input : Tensor Float [inC, inH, inW] :=
-  tensorOfArray! [inC, inH, inW] #[1.0, 2.0, 3.0, 4.0]
+  (Tensor.from #[1.0, 2.0, 3.0, 4.0]).reshape [inC, inH, inW] (by dsimp; decide)
 
 def checkConvGrads :
-  Runtime.Autograd.Result (String × String) := do
+  Runtime.Autograd.Result
+    (Tensor Float [outC, inC, kH, kW] × Tensor Float [outC]) := do
   let t0 : Tape Float := Tape.empty
   let m : TapeM Float _ := do
     let kId ← Train.TapeM.param kernel (name := some "kernel")
     let bId ← Train.TapeM.param bias (name := some "bias")
     let xId ← Train.TapeM.const input (name := some "input")
     let yId ← TapeM.conv (d := 2) (inC := inC) (outC := outC)
-      (kernel := tensor! [kH, kW]) (stride := tensor! [stride, stride])
-      (padding := tensor! [padding, padding]) (inSpatial := tensor! [inH, inW]) kId bId xId
+      (kernel := [kH, kW]) (stride := [stride, stride])
+      (padding := [padding, padding]) (inSpatial := [inH, inW]) kId bId xId
     let lossId ← TapeM.sum (s := [outC, outH, outW]) yId
     let t ← TapeM.getTape
     let grads ← liftM (Tape.backwardScalar (t := t) lossId)
@@ -584,15 +560,17 @@ def checkConvGrads :
     (s := [outC, inC, kH, kW]) grads kId
   let dB ← Train.requireGradTensor (tag := "conv")
     (s := [outC]) grads bId
-  pure (pretty dK, pretty dB)
+  pure (dK, dB)
 
 def run : IO Unit := do
   match checkConvGrads with
   | .error msg => throw <| IO.userError s!"autograd_conv_test (Float): {msg}"
-  | .ok (dKStr, dBStr) =>
-    IO.println "=== Autograd convolution gradient runtime check (Float) ==="
-    IO.println s!"dK: {dKStr}"
-    IO.println s!"dB: {dBStr}"
+  | .ok (dK, dB) =>
+    for value in Tensor.to dK (Array Float) do
+      Tests.Utils.assertFinite "convolution kernel gradient" value
+    for value in Tensor.to dB (Array Float) do
+      Tests.Utils.assertFinite "convolution bias gradient" value
+    IO.println "autograd_conv_test (Float): OK"
 
 end AutogradConv
 end Floats
@@ -604,8 +582,8 @@ namespace Tests
 namespace Floats
 namespace TypedGraphLogSoftmaxJvp
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /-- Check that typed graph log-softmax uses its JVP rather than its distinct reverse-mode VJP. -/
 def run : IO Unit := do
@@ -621,8 +599,9 @@ def run : IO Unit := do
         (α := Float) (Γ := [vectorShape]) (τ := vectorShape) build with
     | .ok c => pure c
     | .error e => throw <| IO.userError s!"typed graph log-softmax JVP: lowering failed: {e}"
-  let logits : Tensor Float vectorShape := tensorOfArray! [2] #[0.0, Float.log 2.0]
-  let tangent : Tensor Float vectorShape := tensorOfArray! [2] #[1.0, 0.0]
+  let logits : Tensor Float vectorShape :=
+    (Tensor.from #[0.0, Float.log 2.0]).reshape [2] (by dsimp; decide)
+  let tangent : Tensor Float vectorShape := (Tensor.from #[1.0, 0.0]).reshape [2] (by dsimp; decide)
   let inputs : TorchLean.TensorPack Float [vectorShape] := .cons logits .nil
   let tangents : TorchLean.TensorPack Float [vectorShape] := .cons tangent .nil
   let got := Runtime.Autograd.Torch.TypedGraph.jvp graph inputs tangents
@@ -643,8 +622,8 @@ namespace Tests
 namespace Floats
 namespace TypedGraphOutputReference
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /--
 Typed graph lowering accepts an input as the output, even when no node is recorded or later nodes
@@ -698,19 +677,17 @@ def run : IO Unit := do
   checkGraph "typed graph earlier output" earlierOutput
 
   let publicModel : TorchLean.nn.TypedGraphModel [] Shape.scalar Shape.scalar Float := identity
-  let noParams : TorchLean.TensorPack Float [] := .nil
+  let noParams : TorchLean.nn.State Float [] := TorchLean.nn.State.empty
   let publicOutput := Tensor.item <|
     TorchLean.nn.TypedGraphModel.forward publicModel noParams (Tensor.scalar 3.0)
   let publicTangent := Tensor.item <|
     TorchLean.nn.TypedGraphModel.jvp publicModel noParams noParams
       (Tensor.scalar 3.0) (Tensor.scalar 2.0)
-  let (publicParamGrads, publicInputGrad) :=
-    TorchLean.nn.TypedGraphModel.vjpWithSeed publicModel noParams
+  let (_, publicInputGradient) :=
+    TorchLean.nn.TypedGraphModel.vjp publicModel noParams
       (Tensor.scalar 3.0) (Tensor.scalar 5.0)
-  let publicInputGradient := Tensor.item publicInputGrad
-  let noPublicParamGrads := match publicParamGrads with
-    | .nil => true
-  unless noPublicParamGrads && publicOutput == 3.0 && publicTangent == 2.0 &&
+  let publicInputGradient := Tensor.item publicInputGradient
+  unless publicOutput == 3.0 && publicTangent == 2.0 &&
       publicInputGradient == 5.0 do
     throw <| IO.userError <|
       s!"typed graph public API: got forward={publicOutput}, jvp={publicTangent}, " ++
@@ -727,17 +704,18 @@ namespace Tests
 namespace Floats
 namespace TypedGraphSmoothMaxDomain
 
-open _root_.Spec
+open Spec TorchLean
 
 /-- Typed `GraphM` rejects an undefined zero inverse temperature while building the graph. -/
 def run : IO Unit := do
   let inputShape : Shape := [1, 1, 2]
-  let spatial : Spec.Tensor Nat [2] := tensor! [1, 2]
-  let kernel : Spec.Tensor Nat [2] := tensor! [1, 2]
-  let stride : Spec.Tensor Nat [2] := tensor! [1, 1]
-  let padding : Spec.Tensor Nat [2] := tensor! [0, 0]
+  let spatial : TorchLean.Tensor Nat [2] := [1, 2]
+  let kernel : TorchLean.Tensor Nat [2] := [1, 2]
+  let stride : TorchLean.Tensor Nat [2] := [1, 1]
+  let padding : TorchLean.Tensor Nat [2] := [0, 0]
   let outputShape : Shape :=
-    Shape.ofList (1 :: (Spec.poolOutSpatialPad spatial kernel stride padding).toList)
+    Shape.ofList
+      (1 :: Tensor.to (Spec.poolOutSpatialPad spatial kernel stride padding) (List Nat))
   let build :
       Runtime.Autograd.TypedGraph.GraphM.M Float [inputShape]
         (Runtime.Autograd.TypedGraph.GraphM.Var outputShape) := do
@@ -745,8 +723,7 @@ def run : IO Unit := do
       (α := Float) (Γ := [inputShape]) 0 inputShape
     Runtime.Autograd.TypedGraph.GraphM.smoothMaxPool
       (d := 2) (C := 1) (inSpatial := spatial) (kernel := kernel)
-      (stride := stride) (padding := padding)
-      (hKernel := by intro i; fin_cases i <;> simp [kernel]) x 0.0
+      (stride := stride) (padding := padding) x 0.0
   match Runtime.Autograd.Torch.lowerToTypedGraph
       (α := Float) (Γ := [inputShape]) (τ := outputShape) build with
   | .error _ => IO.println "typed_graph_smooth_max_domain_test (Float): OK"
@@ -762,8 +739,8 @@ namespace Tests
 namespace Floats
 namespace DisconnectedDenseGradient
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open Runtime.Autograd
 
 /-- A disconnected reciprocal at zero must not turn an unrelated leaf gradient into `NaN`. -/
@@ -807,81 +784,94 @@ open Runtime.Autograd
 def close (x y : Float) (tol : Float := 1e-5) : Bool :=
   x.isFinite && y.isFinite && (x - y).abs ≤ tol
 
-/-- Construct one scalar parameter entry for a compact optimizer test. -/
-def scalarParam (id : Nat) (x : Float) : Train.ParamEntry Float :=
-  Train.ParamEntry.ofTensor id (Tensor.scalar x)
+/-- Construct one scalar parameter for a compact optimizer test. -/
+def scalarParameter (id : Nat) (value : Float) : Train.Parameter Float :=
+  Train.Parameter.create id (Tensor.scalar value)
 
 /-- Construct a one-entry scalar gradient map. -/
-def scalarGrad (id : Nat) (x : Float) : Std.HashMap Nat (Spec.SomeTensor Float) :=
+def scalarGradient (id : Nat) (value : Float) : Std.HashMap Nat (Spec.SomeTensor Float) :=
   ({} : Std.HashMap Nat (Spec.SomeTensor Float)).insert id
-    (Spec.SomeTensor.ofTensor (Tensor.scalar x))
+    (Spec.SomeTensor.ofTensor (Tensor.scalar value))
 
 /-- Read a scalar parameter while preserving the runtime's error reporting. -/
-def getScalar (tag : String) (params : Train.ParamTable Float) (id : Nat) :
+def scalarParameterValue (tag : String) (parameters : Train.ParameterTable Float) (id : Nat) :
     Runtime.Autograd.Result Float := do
-  let value ← Train.ParamTable.getTensor (tag := tag) (s := .scalar) params id
-  match value with
-  | .scalar x => pure x
+  let value ← Train.ParameterTable.get (tag := tag) (s := .scalar) parameters id
+  pure value.item
 
 /-- Adam bias correction advances only when that particular parameter receives a gradient. -/
 def checkSparseAdamSteps : Runtime.Autograd.Result Bool := do
-  let opt0 : Train.OptimizerState Float :=
-    { kind := .adam
-      groups := #[{ params := #[0, 1], lr := 0.1, beta1 := 0.9, beta2 := 0.999,
-                    epsilon := 1e-8 }] }
-  let params0 : Train.ParamTable Float := #[scalarParam 0 1.0, scalarParam 1 1.0]
-  let (opt1, params1) ← Train.Optim.step opt0 params0 (scalarGrad 0 1.0)
-  let (opt2, params2) ← Train.Optim.step opt1 params1 (scalarGrad 1 1.0)
-  let p0 ← getScalar "sparse Adam" params2 0
-  let p1 ← getScalar "sparse Adam" params2 1
-  let restored := Train.OptimizerState.ofStateDict opt2.toStateDict
+  let initialOptimizerState : Train.OptimizerState Float :=
+    { algorithm := .adam
+      parameterGroups :=
+        #[{ parameterIds := #[0, 1]
+            learningRate := 0.1
+            beta1 := 0.9
+            beta2 := 0.999
+            epsilon := 1e-8 }] }
+  let initialParameters : Train.ParameterTable Float :=
+    #[scalarParameter 0 1.0, scalarParameter 1 1.0]
+  let firstStep ← Train.Optimizer.step initialOptimizerState initialParameters
+    (scalarGradient 0 1.0)
+  let secondStep ← Train.Optimizer.step firstStep.optimizerState firstStep.parameters
+    (scalarGradient 1 1.0)
+  let firstParameter ← scalarParameterValue "sparse Adam" secondStep.parameters 0
+  let secondParameter ← scalarParameterValue "sparse Adam" secondStep.parameters 1
+  let restored := Train.OptimizerState.restore secondStep.optimizerState.snapshot
   pure <|
-    close p0 0.9 && close p1 0.9 && opt2.step == 2 &&
-      opt2.parameterSteps.get? 0 == some 1 && opt2.parameterSteps.get? 1 == some 1 &&
-      restored.parameterSteps.get? 0 == some 1 && restored.parameterSteps.get? 1 == some 1
+    close firstParameter 0.9 && close secondParameter 0.9 &&
+      secondStep.optimizerState.stepCount == 2 &&
+      secondStep.optimizerState.parameterStepCount? 0 == some 1 &&
+      secondStep.optimizerState.parameterStepCount? 1 == some 1 &&
+      restored.parameterStepCount? 0 == some 1 &&
+      restored.parameterStepCount? 1 == some 1
 
 /-- Momentum dampening does not scale the first buffer, matching the standard SGD convention. -/
 def checkMomentumInitialization : Runtime.Autograd.Result Bool := do
-  let opt0 : Train.OptimizerState Float :=
-    { kind := .momentum
-      groups := #[{ params := #[0], lr := 0.1, momentum := 0.9, dampening := 0.5 }] }
-  let params0 : Train.ParamTable Float := #[scalarParam 0 1.0]
-  let (opt1, params1) ← Train.Optim.step opt0 params0 (scalarGrad 0 2.0)
-  let first ← getScalar "momentum initialization" params1 0
-  let (_, params2) ← Train.Optim.step opt1 params1 (scalarGrad 0 2.0)
-  let second ← getScalar "momentum initialization" params2 0
+  let initialOptimizerState : Train.OptimizerState Float :=
+    { algorithm := .momentum
+      parameterGroups :=
+        #[{ parameterIds := #[0]
+            learningRate := 0.1
+            momentum := 0.9
+            dampening := 0.5 }] }
+  let initialParameters : Train.ParameterTable Float := #[scalarParameter 0 1.0]
+  let firstStep ← Train.Optimizer.step initialOptimizerState initialParameters
+    (scalarGradient 0 2.0)
+  let first ← scalarParameterValue "momentum initialization" firstStep.parameters 0
+  let secondStep ← Train.Optimizer.step firstStep.optimizerState firstStep.parameters
+    (scalarGradient 0 2.0)
+  let second ← scalarParameterValue "momentum initialization" secondStep.parameters 0
   pure (close first 0.8 && close second 0.52)
 
 /-- Adadelta's update accumulator stores the unscaled update, independently of the learning rate. -/
 def checkAdadeltaAccumulator : Bool :=
-  let params : Tensor Float .scalar := Tensor.scalar 10.0
-  let grads : Tensor Float .scalar := Tensor.scalar 2.0
-  let state := _root_.Optim.Adadelta.init 0.5 0.0 1.0 params
-  let (nextState, nextParams) := _root_.Optim.Adadelta.update state params grads
-  match nextState.u, nextParams with
-  | .scalar updateSquare, .scalar parameter =>
-      close updateSquare 0.8 && close parameter (10.0 - 1.0 / Float.sqrt 5.0)
+  let parameters : Tensor Float .scalar := Tensor.scalar 10.0
+  let gradients : Tensor Float .scalar := Tensor.scalar 2.0
+  let state := Optim.Adadelta.init 0.5 0.0 1.0 parameters
+  let result := Optim.Adadelta.update state parameters gradients
+  close result.optimizerState.squaredUpdateAverage.item 0.8 &&
+    close result.parameters.item (10.0 - 1.0 / Float.sqrt 5.0)
 
 /-- Warmup-cosine decay remains at zero after its finite schedule has ended. -/
 def checkWarmupCosineStops : Bool :=
-  let base : _root_.Optim.WarmupCosineScheduler Float :=
-    _root_.Optim.warmupCosineScheduler 1.0 2 10
+  let base : Optim.Scheduler.WarmupCosine Float :=
+    Optim.Scheduler.WarmupCosine.create 1.0 2 10
   let atEnd := { base with currentStep := 10 }
   let afterEnd := { base with currentStep := 20 }
-  _root_.Optim.WarmupCosineScheduler.getLr atEnd == 0.0 &&
-    _root_.Optim.WarmupCosineScheduler.getLr afterEnd == 0.0
+  atEnd.current == 0.0 && afterEnd.current == 0.0
 
 /-- Public optimizer configurations reject domains that make their updates undefined. -/
 def checkPublicOptimizerValidation : Bool :=
   let rejected : Except String Unit -> Bool
     | .error _ => true
     | .ok () => false
-  (TorchLean.optim.adam { lr := 1e-3 }).validate.isOk &&
-    rejected (TorchLean.optim.adam { lr := 1e-3, beta1 := 1.0 }).validate &&
-    rejected (TorchLean.optim.adamW { lr := 1e-3, weightDecay := -0.1 }).validate &&
-    rejected (TorchLean.optim.rmsprop { lr := 1e-3, epsilon := 0.0 }).validate &&
+  (TorchLean.optim.adam { learningRate := 1e-3 }).validate.isOk &&
+    rejected (TorchLean.optim.adam { learningRate := 1e-3, beta1 := 1.0 }).validate &&
+    rejected (TorchLean.optim.adamW { learningRate := 1e-3, weightDecay := -0.1 }).validate &&
+    rejected (TorchLean.optim.rmsProp { learningRate := 1e-3, epsilon := 0.0 }).validate &&
     rejected (TorchLean.optim.sgd
-      { lr := 0.1, momentum := Float.ofBits 0x7ff8000000000000 }).validate
+      { learningRate := 0.1, momentum := Float.ofBits 0x7ff8000000000000 }).validate
 
 /-- Run the optimizer and scheduler edge-case regressions. -/
 def run : IO Unit := do

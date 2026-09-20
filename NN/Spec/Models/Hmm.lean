@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Sequence
+public import NN.Spec.Core.TensorReductionShape.Reductions
 
 /-!
 # Hidden Markov Model (HMM) (spec model)
@@ -57,16 +58,24 @@ PyTorch analogy:
 In practice, PyTorch users often reach for a dedicated HMM library (e.g. `hmmlearn`) or implement
 HMMs in log-space with `logsumexp`; TorchLean keeps the spec in a simple, explicit form that is
 good for reading and proofs.
+
+## Implementation status
+
+No API builder implements this model. `NN/Spec/Module/Hmm.lean` wraps it as a `Spec.Module`, and
+`NN/Tests/Runtime/Floats/TorchLeanOpsCheck.lean` checks it numerically; no theorem is proved about
+it.
 -/
 
 public section
 
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- A discrete-observation HMM.
 
@@ -74,7 +83,8 @@ We do not enforce probabilistic validity (nonnegativity or rows summing to $1$) 
 that is a modeling assumption, similar to how PyTorch will happily store unconstrained tensors
 until you feed them to a distribution or a loss.
 -/
-structure HMMSpec (α : Type) (nStates nObservations : Nat) where
+structure HMMSpec (α : Type) [TorchLean.Storage α]
+    (nStates nObservations : Nat) where
   /-- Initial distribution $\pi$. -/
   initial : Tensor α [nStates]
   /-- Transition matrix $A$. -/
@@ -94,10 +104,7 @@ def getEmissionProbDiscrete
   (m : HMMSpec α nStates nObservations)
   (state : Fin nStates)
   (obs : Fin nObservations) : α :=
-  match get m.emission state with
-  | Tensor.dim emit_vals =>
-    match emit_vals obs with
-    | Tensor.scalar prob => prob
+  (Tensor.unstack m.emission state).getScalar obs
 
 /-!
 ## Baum–Welch (EM) training
@@ -165,7 +172,7 @@ def normalizeVec {n : Nat} (v : Tensor α [n]) : (Tensor α [n] × α) :=
 
 /-- Sum logarithms of positive scale factors. A nonpositive factor represents zero likelihood. -/
 private def logScales? {length : Nat} (scales : Tensor α [length]) : Option α :=
-  scales.toArray.foldl
+  scales.data.foldl
     (fun acc c =>
       match acc with
       | none => none
@@ -181,27 +188,26 @@ def emissionVec {nStates nObservations : Nat}
 /--
 One forward step (unnormalized) of the scaled forward algorithm.
 
-Given the previous normalized forward message `prev_alpha` and the next observation `obs`, compute
+Given the previous normalized forward message `prevAlpha` and the next observation `obs`, compute
 the next unnormalized message `alphaTilde`.
 -/
 private def forwardStep {nStates nObservations : Nat}
   (m : HMMSpec α nStates nObservations)
-  (prev_alpha : Tensor α [nStates])
+  (prevAlpha : Tensor α [nStates])
   (obs : Fin nObservations) : Tensor α [nStates] :=
   -- One forward update (without scaling): apply transitions, then reweight by emissions.
-  let emission_probs := emissionVec (α := α) m obs
+  let emissionProbs := emissionVec (α := α) m obs
   Tensor.dim (fun s =>
     let trans_sum := Tensor.dim (fun s' =>
-      match get prev_alpha s', get m.transition s' with
-      | Tensor.scalar alpha_val, Tensor.dim trans_vals =>
-        match trans_vals s with
-        | Tensor.scalar trans_val => Tensor.scalar (alpha_val * trans_val))
-    let trans_total := sumSpec trans_sum
-    match get emission_probs s with
-    | Tensor.scalar emit_val => Tensor.scalar (emit_val * trans_total))
+      let alpha_val := prevAlpha.getScalar s'
+      let transVal := (Tensor.unstack m.transition s').getScalar s
+      Tensor.scalar (alpha_val * transVal))
+    let transTotal := sumSpec trans_sum
+    Tensor.scalar (emissionProbs.getScalar s * transTotal))
 
 /-- One timestep of a scaled HMM forward trace. -/
-structure HMMForwardStep (α : Type) (nStates nObservations : Nat) where
+structure HMMForwardStep (α : Type) [TorchLean.Storage α]
+    (nStates nObservations : Nat) where
   /-- Observation consumed at this timestep. -/
   observation : Fin nObservations
   /-- Normalized forward message $\alpha_t$. -/
@@ -247,7 +253,7 @@ private def hmmBackwardScaled
   (m : HMMSpec α nStates nObservations)
   (steps : Tensor (HMMForwardStep α nStates nObservations) [length]) :
   Tensor (Tensor α [nStates]) [length] :=
-  let betaLast : Tensor α [nStates] := fill 1 [nStates]
+  let betaLast : Tensor α [nStates] := Tensor.full [nStates] 1
   let initial : Option (Tensor α [nStates] × HMMForwardStep α nStates nObservations) :=
     none
   (Sequence.mapAccumRight length initial fun index next =>
@@ -261,9 +267,8 @@ private def hmmBackwardScaled
           Tensor.dim (fun i =>
             let sumOverJ : Tensor α [nStates] :=
               Tensor.dim (fun j =>
-                match get (get m.transition i) j, get emitNext j, get betaNext j with
-                | Tensor.scalar aij, Tensor.scalar bj, Tensor.scalar bnext =>
-                    Tensor.scalar (aij * bj * bnext))
+                let aij := (Tensor.unstack m.transition i).getScalar j
+                Tensor.scalar (aij * emitNext.getScalar j * betaNext.getScalar j))
             Tensor.scalar (sumSpec sumOverJ))
         let beta :=
           if nextStep.scale > 0 then
@@ -304,15 +309,15 @@ private def xiAt {nStates nObservations : Nat}
   (m : HMMSpec α nStates nObservations)
   (alpha_t : Tensor α [nStates])
   (beta_next : Tensor α [nStates])
-  (obs_next : Fin nObservations) : Tensor α [nStates, nStates] :=
-  let emitNext := emissionVec (α := α) m obs_next
+  (obsNext : Fin nObservations) : Tensor α [nStates, nStates] :=
+  let emitNext := emissionVec (α := α) m obsNext
   -- Unnormalized ξ(i,j) = α_t(i) * A(i,j) * B(j, obs_{t+1}) * β_{t+1}(j)
   let xiRaw :=
     Tensor.dim (fun i =>
       Tensor.dim (fun j =>
-        match get alpha_t i, get (get m.transition i) j, get emitNext j, get beta_next j with
-        | Tensor.scalar ai, Tensor.scalar aij, Tensor.scalar bj, Tensor.scalar bnext =>
-            Tensor.scalar (ai * aij * bj * bnext)))
+        let aij := (Tensor.unstack m.transition i).getScalar j
+        Tensor.scalar
+          (alpha_t.getScalar i * aij * emitNext.getScalar j * beta_next.getScalar j)))
   -- Normalize so each ξ_t sums to 1 (helps control roundoff).
   let s := sumSpec xiRaw
   if s > 0 then scaleSpec xiRaw (1 / s) else xiRaw
@@ -323,8 +328,7 @@ private def sumXi
   (xis : Array (Tensor α [nStates, nStates]))
   (i : Fin nStates) (j : Fin nStates) : α :=
   xis.foldl (fun acc xi =>
-    match get (get xi i) j with
-    | Tensor.scalar v => acc + v) 0
+    acc + (Tensor.unstack xi i).getScalar j) 0
 
  /--
 Sum $\gamma_t(\mathtt{state})$ over timesteps where the observation equals a given symbol.
@@ -339,8 +343,7 @@ private def sumGammaWhereObs
   (state : Fin nStates) (sym : Fin nObservations) : α :=
   (Array.finRange length).foldl (fun acc t =>
     if observations.getScalar t = sym then
-      match get (gammas.getScalar t) state with
-      | Tensor.scalar v => acc + v
+      acc + (gammas.getScalar t).getScalar state
     else
       acc) 0
 
@@ -375,16 +378,16 @@ private def expectedCounts
   -- - expected emission counts (for B),
   -- - scaled log-likelihood Σ log c_t.
   if hLength : length = 0 then
-      (fill (0 : α) (.dim nStates .scalar),
-       fill (0 : α) (.dim nStates (.dim nStates .scalar)),
-       fill (0 : α) (.dim nStates (.dim nObservations .scalar)),
+      (Tensor.full (.dim nStates .scalar) (0 : α),
+       Tensor.full (.dim nStates (.dim nStates .scalar)) (0 : α),
+       Tensor.full (.dim nStates (.dim nObservations .scalar)) (0 : α),
        let s := sumSpec m.initial
        if s > 0 then some (MathFunctions.log s) else none)
   else
       let steps := hmmForwardScaled (α := α) m observations
       let betas := hmmBackwardScaled (α := α) m steps
       let gammas : Tensor (Tensor α [nStates]) [length] :=
-        Spec.Tensor.ofFn fun t =>
+        TorchLean.Tensor.ofFn fun t =>
           gammaAt (α := α) (steps.getScalar t).message (betas.getScalar t)
       let xis :=
         (Array.finRange length).foldl (fun xis current =>
@@ -429,9 +432,9 @@ def baumWelchEpochSpec
   (m : HMMSpec α nStates nObservations)
   (dataset : Tensor (Fin nObservations) [batch, length]) :
   (HMMSpec α nStates nObservations × Option α) :=
-  let init0 := fill (0 : α) (.dim nStates .scalar)
-  let trans0 := fill (0 : α) (.dim nStates (.dim nStates .scalar))
-  let emit0 := fill (0 : α) (.dim nStates (.dim nObservations .scalar))
+  let init0 := Tensor.full (.dim nStates .scalar) (0 : α)
+  let trans0 := Tensor.full (.dim nStates (.dim nStates .scalar)) (0 : α)
+  let emit0 := Tensor.full (.dim nStates (.dim nObservations .scalar)) (0 : α)
   let (initSum, transSum, emitSum, ll) :=
     (Array.finRange batch).foldl (fun (acc : Tensor α [nStates] ×
                         Tensor α [nStates, nStates] ×
@@ -467,7 +470,7 @@ def hmmForwardSpec
     sumSpec m.initial
   else
       let steps := hmmForwardScaled (α := α) m observations
-      steps.toArray.foldl (fun acc step => acc * step.scale) 1
+      steps.data.foldl (fun acc step => acc * step.scale) 1
 
 /-- Batched forward pass with statically matched batch and sequence dimensions. -/
 def hmmBatchedForwardSpec {nStates nObservations batch length : Nat}

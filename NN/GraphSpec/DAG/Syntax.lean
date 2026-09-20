@@ -6,8 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.TorchLean.Program
-import Mathlib.Algebra.Order.Algebra
+public import NN.Runtime.Autograd.Model.Program
 
 /-!
 # Typed GraphSpec DAG syntax
@@ -22,9 +21,8 @@ namespace NN
 namespace GraphSpec
 namespace DAG
 
-open _root_.Spec
-open Spec.Tensor
-open _root_.TorchLean.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /-! ## Primitives (arbitrary arity) -/
 
@@ -43,11 +41,11 @@ structure PrimOp (ins : List Shape) (τ : Shape) where
   /-- Debug name for error messages / inspection. -/
   name : String
   /-- Pure reference semantics (`ins` arguments packed as a typed list). -/
-  specFwd : ∀ {α : Type 0}, [Context α] → TorchLean.TensorPack α ins → Spec.Tensor α τ
+  specFwd : ∀ {α : Type 0}, [TorchLean.Storage α] → [Context α] →
+    TorchLean.TensorPack α ins → TorchLean.Tensor α τ
   /-- Executable TorchLean program with arguments of shapes `ins`. -/
   program :
-    ∀ {α : Type 0}, [Context α] → [DecidableEq Shape] →
-      Runtime.Autograd.TorchLean.Program α ins τ
+    ∀ {α : Type 0}, [TorchLean.Storage α] → [Context α] → Runtime.Autograd.Model.Program α ins τ
 
 /-! ## Typed variables -/
 
@@ -68,8 +66,8 @@ namespace Var
 /-- Convert a numeric environment position to a shape-indexed variable. -/
 def ofFin {Γ : List Shape} (i : Fin Γ.length) : Var Γ (Γ.get i) :=
   match Γ with
-  | [] => nomatch i
-  | _ :: _ => Fin.cases .head (fun j => .tail (ofFin j)) i
+  | .nil => nomatch i
+  | .cons _ _ => Fin.cases .head (fun j => .tail (ofFin j)) i
 
 /-- Preserve a variable when one value is appended to its environment. -/
 def weakenRight {Γ : List Shape} {s t : Shape} : Var Γ s → Var (Γ ++ [t]) s
@@ -84,25 +82,25 @@ def inLeft {Γ : List Shape} (right : List Shape) {s : Shape} : Var Γ s → Var
 /-- Embed a variable from the right side of an appended environment. -/
 def inRight (left : List Shape) {Γ : List Shape} {s : Shape} : Var Γ s → Var (left ++ Γ) s :=
   match left with
-  | [] => fun v => v
-  | _ :: rest => fun v => .tail (inRight rest v)
+  | .nil => fun v => v
+  | .cons _ rest => fun v => .tail (inRight rest v)
 
 /-- The final variable in an environment extended by one value. -/
 def last (Γ : List Shape) {s : Shape} : Var (Γ ++ [s]) s :=
   match Γ with
-  | [] => .head
-  | _ :: rest => .tail (last rest)
+  | .nil => .head
+  | .cons _ rest => .tail (last rest)
 
 /-- Extend a shape-preserving variable renaming across one value appended to both environments. -/
 def liftRight {Γ Δ : List Shape} {t : Shape}
     (ρ : {s : Shape} → Var Γ s → Var Δ s) {s : Shape}
     (v : Var (Γ ++ [t]) s) : Var (Δ ++ [t]) s :=
   match Γ with
-  | [] =>
+  | .nil =>
       match v with
       | .head => last Δ
       | .tail impossible => nomatch impossible
-  | _ :: _ =>
+  | .cons _ _ =>
       match v with
       | .head => weakenRight (ρ .head)
       | .tail inherited => liftRight (fun v => ρ (.tail v)) inherited
@@ -221,8 +219,8 @@ shape retained by the type checker.
 -/
 def splitAppend {Γ : List Shape} : {left right : List Shape} →
     Args Γ (left ++ right) → Args Γ left × Args Γ right
-  | [], _right, args => (.nil, args)
-  | _shape :: left, right, .cons term rest =>
+  | .nil, _right, args => (.nil, args)
+  | .cons _shape left, right, .cons term rest =>
       let parts := splitAppend (left := left) (right := right) rest
       (.cons term parts.1, parts.2)
 
@@ -256,8 +254,8 @@ The result preserves the order and shape indices of `Γ`.  Large graph definitio
 pattern-match once on `vars Γ` instead of selecting every input by a numeric index and separately
 proving that the selected position has the expected shape. -/
 def vars : (Γ : List Shape) → Args Γ Γ
-  | [] => .nil
-  | _ :: rest => .cons (.var .head) (Args.weakenLeft (vars rest))
+  | .nil => .nil
+  | .cons _ rest => .cons (.var .head) (Args.weakenLeft (vars rest))
 
 /-- Selecting from renamed arguments renames the selected term. -/
 @[simp] theorem get_rename {Γ Δ ss : List Shape} {s : Shape}
@@ -307,11 +305,11 @@ namespace Substitution
 def liftRight {Γ Δ : List Shape} {t : Shape}
     (σ : Substitution Γ Δ) : Substitution (Γ ++ [t]) (Δ ++ [t]) :=
   match Γ with
-  | [] => fun v =>
+  | .nil => fun v =>
       match v with
       | .head => .var (Var.last Δ)
       | .tail impossible => nomatch impossible
-  | _ :: rest => fun v =>
+  | .cons _ rest => fun v =>
       match v with
       | .head => Term.weakenRight (σ .head)
       | .tail inherited =>

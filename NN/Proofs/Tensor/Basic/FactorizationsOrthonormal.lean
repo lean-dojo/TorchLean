@@ -6,9 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Tensor.Basic.FactorizationsReconstruction
 public import Mathlib.Analysis.InnerProductSpace.GramSchmidtOrtho
-public import Mathlib.Analysis.InnerProductSpace.PiL2
+public import NN.Proofs.Tensor.Basic.FactorizationsReconstruction
 
 /-!
 # Orthonormality of the executable Gram–Schmidt `Q` factor (`Qᵀ Q = 1`)
@@ -17,15 +16,15 @@ This file closes the one finite-fold property left open by
 `NN.Proofs.Tensor.Basic.FactorizationsReconstruction`: the orthonormality of the `Q` factor produced
 by the executable classical Gram–Schmidt `gramSchmidtFn`.
 
-The strategy is to **unify the executable variant with Mathlib's `gramSchmidt`** rather than re-derive
-the orthogonality induction by hand. Reading the columns of `A` as vectors of
+The strategy is to **unify the executable variant with Mathlib's `gramSchmidt`** rather than
+re-derive the orthogonality induction by hand. Reading the columns of `A` as vectors of
 `EuclideanSpace ℝ (Fin m)`, the `j`-th executable `Q` column equals Mathlib's `gramSchmidtNormed ℝ`
 of the column map (`Qcol_bridge`), so the orthonormality follows from Mathlib's
 `gramSchmidtNormed_orthonormal'`.
 
 ## Main results
 
-* `Qcol_bridge`: `WithLp.toLp 2 (Qcol A k) = gramSchmidtNormed ℝ (gsCol A) k` — the executable `Q`
+* `Qcol_bridge`: `WithLp.toLp 2 (Qcol A k) = gramSchmidtNormed ℝ (gsCol A) k`, so the executable `Q`
   column is Mathlib's normalized Gram–Schmidt vector, proved by strong induction on `k`.
 * `Q_orthonormal`: `dotFn (Qcol A a) (Qcol A b) = if a = b then 1 else 0` under positive `R` pivots.
 * `QT_mul_Q_eq_one` and `isQR_of_pos`: the matrix-level `Qᵀ Q = 1` and the full
@@ -160,7 +159,8 @@ theorem gsV_bridge (A : Fin m → Fin n → ℝ) (k : Fin n)
   rfl
 
 /-- **Normalized-column bridge.** The executable `Q` column at index `k` equals Mathlib's
-`gramSchmidtNormed`. Proved by strong induction on `k`, under positive `R` pivots (full column rank). -/
+`gramSchmidtNormed`. Proved by strong induction on `k`, under positive `R` pivots (full column
+rank). -/
 theorem Qcol_bridge (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < Rmat A j j) :
     ∀ k : Fin n,
       (WithLp.toLp 2 (Qcol A k) : EuclideanSpace ℝ (Fin m)) = gramSchmidtNormed ℝ (gsCol A) k := by
@@ -235,12 +235,16 @@ theorem isQR_of_pos (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < Rm
 
 /-- **Tensor-level orthonormality.** For a tensor `A` with positive `qrRSpec` pivots, the `Q` factor
 `qrQSpec A` has orthonormal columns: `Σ_i Q[i,a]·Q[i,b] = δₐᵦ`. -/
-theorem qrSpec_orthonormal (A : Spec.Tensor ℝ [m, n])
+theorem qrSpec_orthonormal (A : TorchLean.Tensor ℝ [m, n])
     (hrank : ∀ j : Fin n, 0 < Spec.get2 (Spec.qrRSpec A) j j) (a b : Fin n) :
     (∑ i, Spec.get2 (Spec.qrQSpec A) i a * Spec.get2 (Spec.qrQSpec A) i b)
       = if a = b then 1 else 0 := by
-  have hQ : ∀ x y, Spec.get2 (Spec.qrQSpec A) x y = Qmat (Spec.toMatFn A) x y := fun _ _ => rfl
-  have hR : ∀ x y, Spec.get2 (Spec.qrRSpec A) x y = Rmat (Spec.toMatFn A) x y := fun _ _ => rfl
+  have hQ : ∀ x y, Spec.get2 (Spec.qrQSpec A) x y = Qmat (Spec.toMatFn A) x y := by
+    intro x y
+    simp [Spec.qrQSpec, Spec.Factorization.get2_matrix, Qmat]
+  have hR : ∀ x y, Spec.get2 (Spec.qrRSpec A) x y = Rmat (Spec.toMatFn A) x y := by
+    intro x y
+    simp [Spec.qrRSpec, Spec.Factorization.get2_matrix, Rmat]
   simp only [hQ]
   rw [show (∑ i, Qmat (Spec.toMatFn A) i a * Qmat (Spec.toMatFn A) i b)
         = Spec.dotFn (Qcol (Spec.toMatFn A) a) (Qcol (Spec.toMatFn A) b) from by

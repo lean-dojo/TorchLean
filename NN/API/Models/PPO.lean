@@ -22,7 +22,7 @@ advantage computation, and optimizer loops stay in the examples/runtime modules.
 namespace TorchLean
 
 
-open Spec Tensor
+open Spec TorchLean TorchLean.Tensor
 
 namespace nn
 namespace models
@@ -30,40 +30,80 @@ namespace PPO
 
 /-- Configuration for a simple PPO actor/critic pair over vector observations. -/
 structure Config where
-  obsDim : Nat
-  hiddenDim : Nat
-  nActions : Nat
+  /-- Number of features in each environment observation. -/
+  observationWidth : Nat
+  /-- Width of the actor and critic hidden layers. -/
+  hiddenWidth : Nat
+  /-- Number of discrete actions represented by the actor logits. -/
+  actionCount : Nat
 deriving Repr
 
-/-- Observation shape with arbitrary leading axes. -/
-abbrev inputShape (cfg : Config) (leading : List Nat := []) : List Nat :=
-  leading ++ [cfg.obsDim]
+namespace Internal
 
-/-- Action-logit shape with the same leading axes as the observations. -/
-abbrev actorOutputShape (cfg : Config) (leading : List Nat := []) : List Nat :=
-  leading ++ [cfg.nActions]
+/-- Validate dimensions used by both PPO networks. -/
+def validateNetwork (kind : String) (config : Config) : Except String Unit := do
+  if config.observationWidth = 0 then
+    throw s!"{kind}: observation width must be positive"
+  if config.hiddenWidth = 0 then
+    throw s!"{kind}: hidden width must be positive"
 
-/-- Value-estimate shape with the same leading axes as the observations. -/
-abbrev criticOutputShape (_cfg : Config) (leading : List Nat := []) : List Nat :=
-  leading ++ [1]
+/-- Validate the actor, including its action-logit width. -/
+def validateActor (config : Config) : Except String Unit := do
+  validateNetwork "PPO.actor" config
+  if config.actionCount = 0 then
+    throw "PPO.actor: action count must be positive"
+
+end Internal
+
+namespace Config
+
+/-- Validate the complete actor-critic configuration. -/
+def validate (config : Config) : Except String Unit := do
+  Internal.validateNetwork "PPO" config
+  if config.actionCount = 0 then
+    throw "PPO: action count must be positive"
+
+/-- Observation tensor shape with an arbitrary batch shape. -/
+abbrev input (config : Config) (batchShape : Shape := []) : Shape :=
+  batchShape.appendDim config.observationWidth
+
+/-- Actor-logit tensor shape with the same batch shape as the observations. -/
+abbrev actorOutput (config : Config) (batchShape : Shape := []) : Shape :=
+  batchShape.appendDim config.actionCount
+
+/-- Critic-value tensor shape with the same batch shape as the observations. -/
+abbrev criticOutput (_config : Config) (batchShape : Shape := []) : Shape :=
+  batchShape.appendDim 1
+
+end Config
 
 /-- Actor MLP mapping observations to action logits. -/
-def actor (cfg : Config) (leading : List Nat := []) :
-    nn.Builder (nn.Sequential (inputShape cfg leading) (actorOutputShape cfg leading)) :=
-  nn.Sequential![
-    linear cfg.obsDim cfg.hiddenDim (leading := leading),
-    nn.tanh,
-    linear cfg.hiddenDim cfg.nActions (leading := leading)
-  ]
+def actor (config : Config) (batchShape : Shape := []) :
+    nn.Builder (nn.Sequential (config.input batchShape) (config.actorOutput batchShape)) :=
+  match Internal.validateActor config with
+  | .error message =>
+      pure <| nn.Internal.invalidConfiguration
+        (config.input batchShape) (config.actorOutput batchShape) "PPO.actor" message
+  | .ok () =>
+      nn.Sequential![
+        linear config.observationWidth config.hiddenWidth (batchShape := batchShape),
+        nn.tanh,
+        linear config.hiddenWidth config.actionCount (batchShape := batchShape)
+      ]
 
 /-- Critic MLP mapping observations to a scalar value estimate. -/
-def critic (cfg : Config) (leading : List Nat := []) :
-    nn.Builder (nn.Sequential (inputShape cfg leading) (criticOutputShape cfg leading)) :=
-  nn.Sequential![
-    linear cfg.obsDim cfg.hiddenDim (leading := leading),
-    nn.tanh,
-    linear cfg.hiddenDim 1 (leading := leading)
-  ]
+def critic (config : Config) (batchShape : Shape := []) :
+    nn.Builder (nn.Sequential (config.input batchShape) (config.criticOutput batchShape)) :=
+  match Internal.validateNetwork "PPO.critic" config with
+  | .error message =>
+      pure <| nn.Internal.invalidConfiguration
+        (config.input batchShape) (config.criticOutput batchShape) "PPO.critic" message
+  | .ok () =>
+      nn.Sequential![
+        linear config.observationWidth config.hiddenWidth (batchShape := batchShape),
+        nn.tanh,
+        linear config.hiddenWidth 1 (batchShape := batchShape)
+      ]
 
 end PPO
 end models

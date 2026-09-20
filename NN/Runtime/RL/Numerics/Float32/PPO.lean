@@ -12,9 +12,10 @@ public import NN.Runtime.RL.Numerics.Float32.Returns
 # Checked Float32 PPO Objective Helpers
 
 PPO is usually run with ordinary host floats, but these helpers make the scalar objective pieces
-executable under the explicit `IEEE32Exec` model and reject non-finite intermediates. They are useful
-for regression tests, debugging numerically fragile runs, and connecting runtime checks to proof layer
-finite hypotheses.
+executable under the explicit `ExecFloat.Binary 8 23` model and reject non-finite intermediates.
+They are
+useful for regression tests, debugging numerically fragile runs, and connecting runtime checks to
+proof layer finite hypotheses.
 
 Reference: Schulman et al., "Proximal Policy Optimization Algorithms" (2017).
 -/
@@ -26,15 +27,15 @@ namespace RL
 namespace Numerics
 namespace Float32
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Spec.RL
 
 open TorchLean.Floats
 open TorchLean.Floats.IEEE754
 
 /--
-Checked importance ratio `exp(newLogProb - oldLogProb)`, specialized to `IEEE32Exec`.
+Checked importance ratio `exp(newLogProb - oldLogProb)`, specialized to `ExecFloat.Binary 8 23`.
 
 This is the float32-semantics variant of `Runtime.RL.PolicyGradient.importanceRatio`.
 -/
@@ -51,7 +52,8 @@ Checked PPO clipped surrogate objective from a precomputed importance ratio:
 This avoids re-doing the softmax/log-prob computation when you already have ratios.
 
 Reference:
-- Schulman et al., "Proximal Policy Optimization Algorithms" (2017): https://arxiv.org/abs/1707.06347
+- Schulman et al., "Proximal Policy Optimization Algorithms" (2017):
+  https://arxiv.org/abs/1707.06347
 -/
 def ppoClippedObjectiveFromRatioChecked
     (ratio advantage clipEps : Float32Exec) :

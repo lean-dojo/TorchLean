@@ -8,9 +8,8 @@ module
 
 public import NN.Spec.Models.Vae
 public import NN.MLTheory.Generative.Latent.Objective
-public import Mathlib.Analysis.SpecialFunctions.Exp
-public import Mathlib.Algebra.Order.BigOperators.Group.Finset
 public import Mathlib.Probability.Distributions.Gaussian.Real
+public import NN.Spec.Core.Context.Real
 
 /-!
 # VAE theory
@@ -18,15 +17,18 @@ public import Mathlib.Probability.Distributions.Gaussian.Real
 This file records the executable-theory facts for TorchLean's VAE spec.
 
 The full VAE theory involves an evidence lower bound (ELBO), expectations over posterior samples,
-and measure-theoretic assumptions. We keep those assumptions explicit while proving the deterministic
-and real-valued facts that are stable across implementations: encoder/reparameterization/decoder
-factorization, β-VAE loss decomposition, diagonal-Gaussian KL nonnegativity, and the scalar
-Gaussian reparameterization law.
+and measure-theoretic assumptions. We keep those assumptions explicit while proving the
+deterministic and real-valued facts that are stable across implementations:
+encoder/reparameterization/decoder factorization, diagonal-Gaussian KL nonnegativity, and the
+scalar Gaussian reparameterization law. The β-VAE loss decomposition itself is a `rfl` fact about
+the spec, so it is proved with the spec in `NN.Spec.Models.Vae` and only used here.
 
 The extra real-valued lemmas below formalize the mathematical spine behind the implementation:
 the diagonal-Gaussian KL term is nonnegative and vanishes exactly at the standard-normal posterior
-parameters; scalar VAE reparameterization preserves Gaussian laws; and the TorchLean β-VAE loss is
-the negative-ELBO objective once reconstruction negative log-likelihood and KL terms are identified.
+parameters; scalar VAE reparameterization preserves Gaussian laws; and identifying two scalar
+terms gives the β-weighted negative-ELBO expression (the ordinary negative ELBO at β = 1).
+The ELBO bookkeeping theorem assumes those scalar identifications; it does not prove an
+evidence lower bound or identify the tensor loss with a probabilistic expectation.
 
 References:
 - Diederik P. Kingma and Max Welling, "Auto-Encoding Variational Bayes", ICLR 2014.
@@ -38,7 +40,7 @@ References:
 
 namespace NN.MLTheory.Generative.Latent.VAE
 
-open _root_.Spec
+open _root_.Spec _root_.TorchLean
 open _root_.Generative.VAE
 open _root_.Generative.Latent
 open NN.MLTheory.Generative.Latent.Objective
@@ -46,7 +48,7 @@ open BigOperators
 open MeasureTheory ProbabilityTheory
 open scoped NNReal
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {obs latent : Shape}
 
 /-- VAE latent sampling is exactly diagonal-Gaussian reparameterization of encoder outputs. -/
@@ -60,12 +62,6 @@ variable {obs latent : Shape}
 @[simp] theorem forward_eq_decoder_sampleLatent
     (model : Model α obs latent) (x : Tensor α obs) (eps : Tensor α latent) :
     forward model x eps = model.decoder.forward (sampleLatent model x eps) := by
-  rfl
-
-/-- The β-VAE objective is a reconstruction term plus β-weighted KL regularization. -/
-@[simp] theorem betaVae_loss_decomposition
-    (model : Model α obs latent) (beta : α) (x : Tensor α obs) (eps : Tensor α latent) :
-    loss model beta x eps = reconstructionLoss model x eps + beta * klLoss model x := by
   rfl
 
 /-! ## Connection to the shared latent-objective algebra -/

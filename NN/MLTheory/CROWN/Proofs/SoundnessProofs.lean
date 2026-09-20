@@ -8,11 +8,7 @@ Soundness proofs for CROWN affine bounds and LiRPA verification.
 
 module
 
-public import Mathlib.Data.Real.Basic
-public import NN.MLTheory.CROWN.Core
 public import NN.MLTheory.CROWN.Models.Mlp
-public import NN.Spec.Core.TensorOps
-public import NN.Spec.Layers.Activation
 
 /-!
 # Soundness of affine relaxations (CROWN / LiRPA)
@@ -25,7 +21,7 @@ The main result in this file is an end-to-end soundness statement for a small ML
 - soundness of affine images of scalar intervals,
 - soundness of the ReLU triangular upper relaxation,
 - soundness of affine composition through linear layers,
-- an IBP-style fallback used by `bound_affine` (so the end-to-end theorem is sound but not tight).
+- an IBP-style fallback used by `boundAffine` (so the end-to-end theorem is sound but not tight).
 
 For certificate-checking theorems over the graph dialect (the form used by TorchLean verification
 examples), see:
@@ -48,11 +44,11 @@ examples), see:
 
 namespace NN.MLTheory.CROWN.Soundness
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.MLTheory.CROWN
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /--
 If $x\in[\ell,h]$, then the affine function $f(x)=ax+b$ satisfies
@@ -177,7 +173,7 @@ If $x\in x_B$, then
 $\operatorname{forward}(\mathrm{net},x)\in\operatorname{boundAffine}(\mathrm{net},x_B)$.
 
 This is the key soundness theorem for CROWN: it shows that the affine relaxation
-computed by `bound_affine` is indeed an overapproximation of the true network output.
+computed by `boundAffine` is indeed an overapproximation of the true network output.
 -/
 theorem crown_affine_twoLayerMlp_sound {inDim hidDim outDim : Nat}
     (net : TwoLayerMLP ℝ inDim hidDim outDim)

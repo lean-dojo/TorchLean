@@ -6,29 +6,25 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.Arb.Oracle
 public import NN.Floats.Interval.IEEEExec32ArbTrans
 public import NN.Floats.Interval.Comparison
 public import NN.API.CLI
 public import Std
-
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Transcendentals
 /-!
-# Arb vs IEEE32Exec interval tutorial
-
+# Arb vs configured binary32 interval tutorial
 This tutorial prints side-by-side enclosures for a few unary functions over a one-dimensional input
 interval:
-
 - **Arb** (`python-flint` / Arb ball arithmetic): rigorous real enclosures at chosen precision.
-- **IEEE32Exec**: executable float32 evaluation on the endpoints (not a proved outward-rounded
+- **configured binary32**: executable float32 evaluation on the endpoints (not a proved
+outward-rounded
   interval rule for transcendentals).
 - **Float32 baseline**: ordinary runtime `Float32` endpoint arithmetic, included to show why
   directed rounding matters.
 - **Rational baseline**: exact `Rat` interval arithmetic for small polynomial/reference checks.
-
 NumPy / PyTorch analogue:
-
 ```python
-public import numpy as np
+import numpy as np
 
 lo, hi = np.float32(-0.5), np.float32(0.5)
 endpoint_box = (np.tanh(lo), np.tanh(hi))   # common fast check, not a rigorous enclosure
@@ -47,15 +43,21 @@ Run:
 lake exe torchlean floats_arb_ieee_compare
 ```
 
-If Arb is not installed, the tutorial still prints the IEEE32Exec side and reports the Arb failure.
+If Arb is not installed, the tutorial still prints the configured binary32 side and reports the Arb
+failure.
 -/
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Floats.ExecFloat.Binary (ofBits32 ofModel toModel)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
 
 open Std
 
-namespace TorchLean.Floats.Interval.ComparisonTutorial
+namespace NN.Examples.DeepDives.Floats.ArbIEEEExecCompare
 
 open TorchLean.Floats.Arb
 open TorchLean.Floats.IEEE754
@@ -93,15 +95,15 @@ Run one tutorial comparison.
 The output has four conceptual rows:
 
 - `Arb`: rigorous real interval from the external oracle when available;
-- `IEEE32Exec`: endpoint evaluation using TorchLean's deterministic binary32 executable model;
+- `ExecFloat.Binary 8 23`: endpoint evaluation using FloatLib's configured binary32 arithmetic;
 - `Float32`: ordinary runtime endpoint evaluation;
-- `IEEE32Exec+Arb`: Arb real enclosure rounded outward to binary32 endpoints.
+- `configured binary32+Arb`: Arb real enclosure rounded outward to binary32 endpoints.
 -/
 def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := do
   let loF32 := Float.toFloat32 lo
   let hiF32 := Float.toFloat32 hi
-  let lo32 := IEEE32Exec.ofBits loF32.toBits
-  let hi32 := IEEE32Exec.ofBits hiF32.toBits
+  let lo32 := ofBits32 loF32.toBits
+  let hi32 := ofBits32 hiF32.toBits
 
   IO.println s!"func={func}, x∈[{lo}, {hi}] (as Float32 bits: lo={loF32.toBits}, hi={hiF32.toBits})"
 
@@ -128,7 +130,7 @@ def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := 
     catch e =>
       IO.println s!"  Arb:      (failed) {e.toString}"
 
-  -- IEEE32Exec (endpoint evaluation).
+  -- configured binary32 (endpoint evaluation).
   if func = "tanh" ∨ func = "exp" ∨ func = "log" ∨ func = "sqrt" then
     /-
     PyTorch / NumPy analogue:
@@ -142,12 +144,12 @@ def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := 
     -/
     let I :=
       match func with
-      | "tanh" => intervalUnaryEndpoints IEEE32Exec.tanh lo32 hi32
-      | "exp"  => intervalUnaryEndpoints IEEE32Exec.exp  lo32 hi32
-      | "log"  => intervalUnaryEndpoints IEEE32Exec.log  lo32 hi32
-      | "sqrt" => intervalUnaryEndpoints IEEE32Exec.sqrt lo32 hi32
-      | _      => ⟨IEEE32Exec.canonicalNaN, IEEE32Exec.canonicalNaN⟩
-    IO.println s!"  IEEE32Exec:{showInterval32 I}"
+      | "tanh" => intervalUnaryEndpoints FloatLib.Floats.ExecFloat.Binary.tanh lo32 hi32
+      | "exp"  => intervalUnaryEndpoints FloatLib.Floats.ExecFloat.Binary.exp lo32 hi32
+      | "log"  => intervalUnaryEndpoints FloatLib.Floats.ExecFloat.Binary.log lo32 hi32
+      | "sqrt" => intervalUnaryEndpoints (Binary.sqrt (rounding := .nearestEven)) lo32 hi32
+      | _      => ⟨(Binary.canonicalNaN : Binary 8 23), (Binary.canonicalNaN : Binary 8 23)⟩
+    IO.println s!"  configured binary32:{showInterval32 I}"
 
     -- Native runtime Float32 (endpoint evaluation).
     let If32 :=
@@ -159,7 +161,8 @@ def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := 
       | _      => ⟨Float32Interval.IntervalF32.posZero, Float32Interval.IntervalF32.posZero⟩
     IO.println s!"  Float32:  {showIntervalF32 If32}"
 
-    -- IEEE32Exec endpoints, but with Arb-provided *rigorous* real enclosure rounded outward to
+    -- configured binary32 endpoints, but with Arb-provided *rigorous* real enclosure rounded
+    -- outward to
     -- float32.
     let X : Interval32 := ⟨lo32, hi32⟩
     try
@@ -169,23 +172,25 @@ def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := 
         | "exp"  => IEEE32Exec.Interval32.expArb  X (precBits := precBits) (digits := digits)
         | "log"  => IEEE32Exec.Interval32.logArb  X (precBits := precBits) (digits := digits)
         | "sqrt" => IEEE32Exec.Interval32.sqrtArb X (precBits := precBits) (digits := digits)
-        | _      => pure ⟨IEEE32Exec.canonicalNaN, IEEE32Exec.canonicalNaN⟩
-      IO.println s!"  IEEE32Exec+Arb:{showInterval32 Iarb}"
+        | _      => pure ⟨(Binary.canonicalNaN : Binary 8 23), (Binary.canonicalNaN : Binary 8 23)⟩
+      IO.println s!"  configured binary32+Arb:{showInterval32 Iarb}"
 
       -- Check whether endpoint-evaluation enclosures contain the Arb-rounded outward enclosure.
       match interval32ToRat? I, interval32ToRat? Iarb with
       | some Ir, some Iar =>
         IO.println
-          s!"  contains(IEEE32Exec endpoints ⊇ IEEE32Exec+Arb)? {IntervalRat.contains Ir Iar}"
+          s!"  contains(binary32 endpoints ⊇ binary32+Arb)? {IntervalRat.contains Ir Iar}"
       | _, _ =>
-        IO.println s!"  contains(IEEE32Exec endpoints ⊇ IEEE32Exec+Arb)? (n/a: non-finite)"
+        IO.println
+          s!"  contains(configured binary32 endpoints ⊇ configured binary32+Arb)? (n/a: non-finite)"
       match intervalF32ToRat? If32, interval32ToRat? Iarb with
       | some Ir, some Iar =>
-        IO.println s!"  contains(Float32 endpoints ⊇ IEEE32Exec+Arb)? {IntervalRat.contains Ir Iar}"
+        IO.println
+          s!"  contains(Float32 endpoints ⊇ configured binary32+Arb)? {IntervalRat.contains Ir Iar}"
       | _, _ =>
-        IO.println s!"  contains(Float32 endpoints ⊇ IEEE32Exec+Arb)? (n/a: non-finite)"
+        IO.println s!"  contains(Float32 endpoints ⊇ configured binary32+Arb)? (n/a: non-finite)"
     catch e =>
-      IO.println s!"  IEEE32Exec+Arb:(failed) {e.toString}"
+      IO.println s!"  configured binary32+Arb:(failed) {e.toString}"
 
   -- A small polynomial using executable directed-rounding interval arithmetic (add/mul only).
   if func = "poly" then
@@ -201,8 +206,10 @@ def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := 
     The exact-rational row is a small reference check for this polynomial case.
     -/
     let X : Interval32 := ⟨lo32, hi32⟩
-    let c01 : Interval32 := Interval32.point (IEEE32Exec.ofFloat 0.1)
-    let c05 : Interval32 := Interval32.point (IEEE32Exec.ofFloat 0.5)
+    let c01 : Interval32 := Interval32.point ((fun x => (ofModel (Model.cast .binary64 .binary32
+      (toModel (Binary.ofFloat x))) : Binary 8 23)) 0.1)
+    let c05 : Interval32 := Interval32.point ((fun x => (ofModel (Model.cast .binary64 .binary32
+      (toModel (Binary.ofFloat x))) : Binary 8 23)) 0.5)
     -- p(x) = x*x + 0.1*x - 0.5
     let x2 := Interval32.mul X X
     let t1 := Interval32.mul c01 X
@@ -240,9 +247,9 @@ def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := 
       let prR := pr
       match interval32ToRat? p with
       | some pR =>
-        IO.println s!"  contains(IEEE32Exec IA ⊇ RealIA)? {IntervalRat.contains pR prR}"
+        IO.println s!"  contains(configured binary32 IA ⊇ RealIA)? {IntervalRat.contains pR prR}"
       | none =>
-        IO.println s!"  contains(IEEE32Exec IA ⊇ RealIA)? (n/a: non-finite)"
+        IO.println s!"  contains(configured binary32 IA ⊇ RealIA)? (n/a: non-finite)"
       match intervalF32ToRat? pf with
       | some pR =>
         IO.println s!"  contains(Float32 IA ⊇ RealIA)? {IntervalRat.contains pR prR}"
@@ -251,6 +258,14 @@ def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := 
 
   IO.println ""
 
+/--
+The classic round-to-nearest-even tie: `1 + 2^-24` in binary32.
+
+The exact sum needs 25 significand bits, so it sits exactly halfway between `1` and the next float.
+Round-to-nearest-even therefore returns `1`, not the next value up. Comparing the naive interval
+arithmetic against the directed `addDown`/`addUp` pair here is the point: only the directed version
+still encloses the exact rational sum.
+-/
 def runAddTie : IO Unit := do
   let one : Float32 := Float.toFloat32 1.0
   -- Exact `2^-24` as a float32 bit pattern.
@@ -259,18 +274,19 @@ def runAddTie : IO Unit := do
   let B : Float32Interval.IntervalF32 := ⟨halfUlp, halfUlp⟩
   let sumF32 := Float32Interval.IntervalF32.add A B
 
-  let one32 : IEEE32Exec := IEEE32Exec.ofBits one.toBits
-  let halfUlp32 : IEEE32Exec := IEEE32Exec.ofBits halfUlp.toBits
+  let one32 : Binary 8 23 := ofBits32 one.toBits
+  let halfUlp32 : Binary 8 23 := ofBits32 halfUlp.toBits
   let A32 : Interval32 := ⟨one32, one32⟩
   let B32 : Interval32 := ⟨halfUlp32, halfUlp32⟩
   let sum32 : Interval32 := Interval32.add A32 B32
 
   IO.println "func=add_tie (round-to-nearest-even stress)"
-  IO.println "  PyTorch analogue: torch.tensor(1.0, dtype=torch.float32) + torch.tensor(2**-24, dtype=torch.float32)"
+  IO.println ("  PyTorch analogue: torch.tensor(1.0, dtype=torch.float32) "
+    ++ "+ torch.tensor(2**-24, dtype=torch.float32)")
   IO.println s!"  a=[{showFloat32 one}, {showFloat32 one}]"
   IO.println s!"  b=[{showFloat32 halfUlp}, {showFloat32 halfUlp}]"
   IO.println s!"  Float32 add (naive IA): {showIntervalF32 sumF32}"
-  IO.println s!"  IEEE32Exec addDown/addUp: {showInterval32 sum32}"
+  IO.println s!"  configured binary32 addDown/addUp: {showInterval32 sum32}"
 
   -- Real reference: exact dyadic sum a + b.
   let ref? : Option IntervalRat := do
@@ -286,11 +302,18 @@ def runAddTie : IO Unit := do
     | some sR => IO.println s!"  contains(Float32 naive ⊇ Real ref)? {IntervalRat.contains sR ref}"
     | none => IO.println s!"  contains(Float32 naive ⊇ Real ref)? (n/a)"
     match interval32ToRat? sum32 with
-    | some sR => IO.println s!"  contains(IEEE32Exec dir ⊇ Real ref)? {IntervalRat.contains sR ref}"
-    | none => IO.println s!"  contains(IEEE32Exec dir ⊇ Real ref)? (n/a)"
+    | some sR =>
+        IO.println s!"  contains(configured binary32 dir ⊇ Real ref)? {IntervalRat.contains sR ref}"
+    | none => IO.println s!"  contains(configured binary32 dir ⊇ Real ref)? (n/a)"
 
   IO.println ""
 
+/--
+Division by negative zero, which IEEE 754 defines as `-∞` rather than an error.
+
+The sign of zero is observable precisely through operations like this one, which is why the float32
+model keeps `+0` and `-0` distinct instead of collapsing them.
+-/
 def runSignedZeroDiv : IO Unit := do
   let one : Float32 := Float.toFloat32 1.0
   let negZ : Float32 := Float32Interval.IntervalF32.negZero
@@ -299,19 +322,23 @@ def runSignedZeroDiv : IO Unit := do
   let qF32 := Float32Interval.IntervalF32.div numer denom
   let qPoint := Float32.div one negZ
 
-  let one32 : IEEE32Exec := IEEE32Exec.ofBits one.toBits
-  let negZ32 : IEEE32Exec := IEEE32Exec.ofBits negZ.toBits
+  let one32 : Binary 8 23 := ofBits32 one.toBits
+  let negZ32 : Binary 8 23 := ofBits32 negZ.toBits
   let denom32 : Interval32 := ⟨negZ32, negZ32⟩
   let numer32 : Interval32 := ⟨one32, one32⟩
   let q32 := Interval32.div numer32 denom32
-  let qPoint32 := IEEE32Exec.div one32 negZ32
+  let qPoint32 := ExecFloat.div one32 negZ32
+  let hostQuotient := Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel qPoint32)))
 
   IO.println "func=div_signed_zero (widening from signed-zero containment)"
-  IO.println "  PyTorch analogue: torch.tensor(1.0, dtype=torch.float32) / torch.tensor(-0.0, dtype=torch.float32)"
+  IO.println ("  PyTorch analogue: torch.tensor(1.0, dtype=torch.float32) "
+    ++ "/ torch.tensor(-0.0, dtype=torch.float32)")
   IO.println s!"  point Float32: 1/(-0.0) = {showFloat32 qPoint}"
-  IO.println s!"  point IEEE32Exec: 1/(-0.0) = {IEEE32Exec.toFloat qPoint32} (bits={qPoint32.bits})"
+  IO.println
+    s!"  point configured binary32: 1/(-0.0) = {hostQuotient} \
+      (bits={Binary.toBits32 qPoint32})"
   IO.println s!"  Float32 IA div: {showIntervalF32 qF32}"
-  IO.println s!"  IEEE32Exec IA div: {showInterval32 q32}"
+  IO.println s!"  configured binary32 IA div: {showInterval32 q32}"
   IO.println ""
 
 /-- Run a small fixed set of comparisons (unary funcs + a polynomial + some edge cases). -/
@@ -319,8 +346,8 @@ def run : IO UInt32 := do
   let precBits := 200
   let digits := 50
 
-  IO.println "Arb vs IEEE32Exec comparison (unary funcs + one polynomial)"
-  IO.println "(Arb is rigorous; IEEE32Exec is endpoint evaluation for transcendentals.)"
+  IO.println "Arb vs configured binary32 comparison (unary funcs + one polynomial)"
+  IO.println "(Arb is rigorous; configured binary32 is endpoint evaluation for transcendentals.)"
   IO.println ""
 
   -- Choose dyadic-friendly endpoints so the float32 endpoints are exact.
@@ -334,14 +361,10 @@ def run : IO UInt32 := do
   runSignedZeroDiv
   pure 0
 
-end TorchLean.Floats.Interval.ComparisonTutorial
-
-namespace NN.Examples.DeepDives.Floats.ArbIEEEExecCompare
-
 /-- Command-line help for the Arb-vs-IEEE32 interval tutorial. -/
 def usage : String :=
   String.intercalate "\n"
-    [ "TorchLean Arb vs IEEE32Exec interval tutorial"
+    [ "TorchLean Arb vs configured binary32 interval tutorial"
     , ""
     , "Usage:"
     , "  lake exe torchlean floats_arb_ieee_compare"
@@ -349,15 +372,13 @@ def usage : String :=
     , "This command runs a fixed set of interval comparisons. It has no tutorial-specific flags."
     ]
 
-/-- Entrypoint: run the Arb-vs-`IEEE32Exec` interval tutorial. -/
+/-- Entrypoint: run the Arb-vs-`ExecFloat.Binary 8 23` interval tutorial. -/
 def main (args : List String) : IO UInt32 := do
-  let args := _root_.TorchLean.CLI.dropDashDash args
-  if _root_.TorchLean.CLI.hasHelp args then
+  let args := TorchLean.CLI.dropDashDash args
+  if TorchLean.CLI.hasHelp args then
     IO.println usage
     return 0
-  match _root_.TorchLean.CLI.checkNoArgs args with
-  | .ok () => pure ()
-  | .error e => throw <| IO.userError s!"floats_arb_ieee_compare: {e}"
-  TorchLean.Floats.Interval.ComparisonTutorial.run
+  TorchLean.CLI.requireNoArgs "floats_arb_ieee_compare" args
+  run
 
 end NN.Examples.DeepDives.Floats.ArbIEEEExecCompare

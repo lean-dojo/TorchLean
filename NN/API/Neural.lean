@@ -10,10 +10,13 @@ module
 
 public import NN.API.Seeded
 public import NN.API.Neural.Execution
+public import NN.API.Neural.Layers
+public import NN.API.Neural.State
 public import NN.API.Neural.Summary
+public import NN.API.Neural.Training
 
 /-!
 # Neural Networks
 
-Shape-typed layers, model builders, parameter packs, summaries, and typed graph execution.
+Shape-typed layers, model builders, model state, summaries, and typed graph execution.
 -/

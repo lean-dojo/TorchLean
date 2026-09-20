@@ -7,13 +7,15 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Tape.Nodes.GraphComposition
-public import NN.Proofs.Autograd.Tape.Util.Idx
+public import NN.Proofs.Autograd.Tape.Nodes.Arithmetic
+public import NN.Proofs.Autograd.Tape.Nodes.Matrix
+public import NN.Proofs.Autograd.Tape.Nodes.Softmax
 
 /-!
 # ScaledDotProduct
 
 End-to-end `fderiv`/backprop correctness for a **scaled dot-product attention** graph,
-built out of the proven tape nodes (`matmul`, `matrix_transpose`, `scale`, `softmax_last`).
+built out of the proven tape nodes (`matmul`, `matrixTranspose`, `scale`, `softmaxLast`).
 
 This is spec-level over `ℝ`. It is a corollary of the general graph theorem once each node
 used by the graph has a `NodeFDerivCorrect` instance.
@@ -31,7 +33,7 @@ used by the graph has a `NodeFDerivCorrect` instance.
 namespace Proofs
 namespace Autograd
 
-open Spec
+open Spec TorchLean
 
 open scoped BigOperators
 
@@ -60,121 +62,130 @@ def idxK {m d : Nat} {ss : List Shape} : Idx (ΓQKV m d ++ ss) (QKVShape m d) :=
 def idxV {m d : Nat} {ss : List Shape} : Idx (ΓQKV m d ++ ss) (QKVShape m d) :=
   ⟨⟨2, by simp [ΓQKV]⟩, by simp [ΓQKV]⟩
 
+/-- Saved tensors of the attention graph: `Kᵀ`, logits, scaled logits, probabilities, output. -/
+abbrev ssScaledDotProduct (m d : Nat) : List Shape :=
+  [ .dim d (.dim m .scalar)
+  , .dim m (.dim m .scalar)
+  , .dim m (.dim m .scalar)
+  , .dim m (.dim m .scalar)
+  , .dim m (.dim d .scalar) ]
+
+/-- Node 1: `Kᵀ`. -/
+abbrev nodeKt (m d : Nat) : Node (ΓQKV m d) (.dim d (.dim m .scalar)) :=
+  TapeNodes.matrixTranspose (Γ := ΓQKV m d) (m := m) (n := d) (A := idxK (m := m) (d := d))
+
+/-- Node 2: logits `Q Kᵀ`. -/
+abbrev nodeLogits (m d : Nat) :
+    Node (ΓQKV m d ++ [.dim d (.dim m .scalar)]) (.dim m (.dim m .scalar)) :=
+  TapeNodes.matmul (Γ := ΓQKV m d ++ [.dim d (.dim m .scalar)]) (m := m) (n := d) (p := m)
+    (A := idxQ (m := m) (d := d) (ss := [.dim d (.dim m .scalar)]))
+    (B := Idx.last (Γ := ΓQKV m d) (ss := []) (τ := .dim d (.dim m .scalar)))
+
+/-- Node 3: scaled logits `c * (Q Kᵀ)`. -/
+abbrev nodeScaled (m d : Nat) (c : ℝ) :
+    Node (ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar)])
+      (.dim m (.dim m .scalar)) :=
+  TapeNodes.scale (Γ := ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar)])
+    (s := .dim m (.dim m .scalar))
+    (idx := Idx.last (Γ := ΓQKV m d) (ss := [.dim d (.dim m .scalar)])
+      (τ := .dim m (.dim m .scalar)))
+    c
+
+/-- Node 4: row-wise softmax probabilities. -/
+abbrev nodeProbs (m d : Nat) :
+    Node (ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar)])
+      (.dim m (.dim m .scalar)) :=
+  TapeNodes.softmaxLast
+    (Γ := ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar)])
+    (m := m) (n := m)
+    (idx := Idx.last (Γ := ΓQKV m d) (ss := [.dim d (.dim m .scalar), .dim m (.dim m .scalar)])
+      (τ := .dim m (.dim m .scalar)))
+
+/-- Node 5: output `probs * V`. -/
+abbrev nodeOut (m d : Nat) :
+    Node (ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar),
+      .dim m (.dim m .scalar)]) (.dim m (.dim d .scalar)) :=
+  TapeNodes.matmul
+    (Γ := ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar),
+      .dim m (.dim m .scalar)])
+    (m := m) (n := m) (p := d)
+    (A := Idx.last (Γ := ΓQKV m d)
+      (ss := [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar)])
+      (τ := .dim m (.dim m .scalar)))
+    (B := idxV (m := m) (d := d)
+      (ss := [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar),
+        .dim m (.dim m .scalar)]))
+
+/-- Attention graph prefix through `Kᵀ`. -/
+abbrev graphKt (m d : Nat) : Graph (ΓQKV m d) [.dim d (.dim m .scalar)] :=
+  Graph.snoc (ss := []) Graph.nil (nodeKt m d)
+
+/-- Attention graph prefix through the logits. -/
+abbrev graphLogits (m d : Nat) :
+    Graph (ΓQKV m d) [.dim d (.dim m .scalar), .dim m (.dim m .scalar)] :=
+  Graph.snoc (ss := [.dim d (.dim m .scalar)]) (graphKt m d) (nodeLogits m d)
+
+/-- Attention graph prefix through the scaled logits. -/
+abbrev graphScaled (m d : Nat) (c : ℝ) :
+    Graph (ΓQKV m d) [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar)] :=
+  Graph.snoc (ss := [.dim d (.dim m .scalar), .dim m (.dim m .scalar)]) (graphLogits m d)
+    (nodeScaled m d c)
+
+/-- Attention graph prefix through the softmax probabilities. -/
+abbrev graphProbs (m d : Nat) (c : ℝ) :
+    Graph (ΓQKV m d) [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar),
+      .dim m (.dim m .scalar)] :=
+  Graph.snoc (ss := [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar)])
+    (graphScaled m d c) (nodeProbs m d)
+
+/--
+Scaled dot-product attention as an explicit tape graph.
+
+Computes `Q K V ↦ softmax(c * (Q * Kᵀ)) * V` and records intermediate values needed by backprop.
+The graph is a plain `Graph.snoc` chain so that `Graph.evalVec` can be computed node by node when
+relating the tape to the specification forward pass.
+-/
+def scaledDotProductGraph {m d : Nat} (c : ℝ) : Graph (ΓQKV m d) (ssScaledDotProduct m d) :=
+  Graph.snoc (ss := [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar),
+      .dim m (.dim m .scalar)])
+    (graphProbs m d c) (nodeOut m d)
+
 /--
 Scaled dot-product attention as a proved-correct `DGraph`.
 
-Computes `Q K V ↦ softmax(c * (Q * Kᵀ)) * V` and records intermediate values needed by backprop.
+Every node of `scaledDotProductGraph` carries its `NodeFDerivCorrect` certificate.
 -/
-def scaledDotProductDGraph {m d : Nat} (c : ℝ) :
-    DGraph (ΓQKV m d)
-      [ .dim d (.dim m .scalar)           -- Kᵀ
-      , .dim m (.dim m .scalar)           -- Q*Kᵀ
-      , .dim m (.dim m .scalar)           -- scaled logits
-      , .dim m (.dim m .scalar)           -- softmax probs
-      , .dim m (.dim d .scalar)           -- output
-      ] := by
-  classical
-
-  -- Start with an empty graph.
-  let dg0 : DGraph (ΓQKV m d) [] := DGraph.nil
-
-  -- 1) Kᵀ
-  let nodeKt : Node (ΓQKV m d) (.dim d (.dim m .scalar)) :=
-    TapeNodes.matrixTranspose (Γ := ΓQKV m d) (m := m) (n := d) (A := idxK (m := m) (d := d))
-  let dg1 :=
-    DGraph.snoc (dg := dg0) (node := nodeKt)
-      (hn := TapeNodes.matrixTransposeFderiv (Γ := ΓQKV m d) (m := m) (n := d) (A := idxK (m := m)
-        (d := d)))
-
-  -- 2) logits := Q * Kᵀ
-  let idxKt : Idx (ΓQKV m d ++ [.dim d (.dim m .scalar)]) (.dim d (.dim m .scalar)) :=
-    Idx.last (Γ := ΓQKV m d) (ss := []) (τ := .dim d (.dim m .scalar))
-  let nodeLogits :
-      Node (ΓQKV m d ++ [.dim d (.dim m .scalar)]) (.dim m (.dim m .scalar)) :=
-    TapeNodes.matmul (Γ := ΓQKV m d ++ [.dim d (.dim m .scalar)])
-      (m := m) (n := d) (p := m)
-      (A := idxQ (m := m) (d := d) (ss := [.dim d (.dim m .scalar)]))
-      (B := idxKt)
-  let dg2 :=
-    DGraph.snoc (dg := dg1) (node := nodeLogits)
-      (hn := TapeNodes.matmulFderiv (Γ := ΓQKV m d ++ [.dim d (.dim m .scalar)])
-        (m := m) (n := d) (p := m)
+def scaledDotProductDGraph {m d : Nat} (c : ℝ) : DGraph (ΓQKV m d) (ssScaledDotProduct m d) :=
+  ⟨scaledDotProductGraph c,
+    ⟨⟨⟨⟨⟨PUnit.unit,
+      TapeNodes.matrixTransposeFderiv (Γ := ΓQKV m d) (m := m) (n := d)
+        (A := idxK (m := m) (d := d))⟩,
+      TapeNodes.matmulFderiv (Γ := ΓQKV m d ++ [.dim d (.dim m .scalar)]) (m := m) (n := d) (p := m)
         (A := idxQ (m := m) (d := d) (ss := [.dim d (.dim m .scalar)]))
-        (B := idxKt))
-
-  -- 3) scaled := scale logits c
-  let idxLogits :
-      Idx (ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar)]) (.dim m (.dim m .scalar))
-        :=
-    Idx.last (Γ := ΓQKV m d) (ss := [.dim d (.dim m .scalar)]) (τ := .dim m (.dim m .scalar))
-  let nodeScaled :
-      Node (ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar)]) (.dim m (.dim m
-        .scalar)) :=
-    TapeNodes.scale (Γ := ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar)])
-      (s := .dim m (.dim m .scalar)) (idx := idxLogits) c
-  let dg3 :=
-    DGraph.snoc (dg := dg2) (node := nodeScaled)
-      (hn := TapeNodes.scaleFderiv (Γ := ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m
-        .scalar)])
-        (s := .dim m (.dim m .scalar)) (idx := idxLogits) (c := c))
-
-  -- 4) probs := softmax_last scaled
-  let idxScaled :
-      Idx (ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar)])
-        (.dim m (.dim m .scalar)) :=
-    Idx.last (Γ := ΓQKV m d) (ss := [.dim d (.dim m .scalar), .dim m (.dim m .scalar)]) (τ := .dim m
-      (.dim m .scalar))
-  let nodeProbs :
-      Node (ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar)])
-        (.dim m (.dim m .scalar)) :=
-    TapeNodes.softmaxLast (Γ := ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim
-      m (.dim m .scalar)])
-      (m := m) (n := m) (idx := idxScaled)
-  let dg4 :=
-    DGraph.snoc (dg := dg3) (node := nodeProbs)
-      (hn := TapeNodes.softmaxLastFderiv
-        (Γ := ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m
-          .scalar)])
-        (m := m) (n := m) (idx := idxScaled))
-
-  -- 5) out := probs * V
-  let idxProbs :
-      Idx
-        (ΓQKV m d ++
-          [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m
-            .scalar)])
-        (.dim m (.dim m .scalar)) :=
-    Idx.last (Γ := ΓQKV m d)
-      (ss := [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar)])
-      (τ := .dim m (.dim m .scalar))
-  let nodeOut :
-      Node
-        (ΓQKV m d ++
-          [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m
-            .scalar)])
-        (.dim m (.dim d .scalar)) :=
-    TapeNodes.matmul
-      (Γ := ΓQKV m d ++
-        [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m
-          .scalar)])
-      (m := m) (n := m) (p := d)
-      (A := idxProbs)
-      (B := idxV (m := m) (d := d)
-        (ss := [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar), .dim m
-          (.dim m .scalar)]))
-  let dg5 :=
-    DGraph.snoc (dg := dg4) (node := nodeOut)
-      (hn := TapeNodes.matmulFderiv
+        (B := Idx.last (Γ := ΓQKV m d) (ss := []) (τ := .dim d (.dim m .scalar)))⟩,
+      TapeNodes.scaleFderiv
+        (Γ := ΓQKV m d ++ [.dim d (.dim m .scalar), .dim m (.dim m .scalar)])
+        (s := .dim m (.dim m .scalar))
+        (idx := Idx.last (Γ := ΓQKV m d) (ss := [.dim d (.dim m .scalar)])
+          (τ := .dim m (.dim m .scalar)))
+        (c := c)⟩,
+      TapeNodes.softmaxLastFderiv
         (Γ := ΓQKV m d ++
-          [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m
-            .scalar)])
+          [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar)])
+        (m := m) (n := m)
+        (idx := Idx.last (Γ := ΓQKV m d) (ss := [.dim d (.dim m .scalar), .dim m (.dim m .scalar)])
+          (τ := .dim m (.dim m .scalar)))⟩,
+      TapeNodes.matmulFderiv
+        (Γ := ΓQKV m d ++
+          [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar),
+            .dim m (.dim m .scalar)])
         (m := m) (n := m) (p := d)
-        (A := idxProbs)
+        (A := Idx.last (Γ := ΓQKV m d)
+          (ss := [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar)])
+          (τ := .dim m (.dim m .scalar)))
         (B := idxV (m := m) (d := d)
-          (ss := [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar), .dim m
-            (.dim m .scalar)])))
-
-  simpa using dg5
+          (ss := [.dim d (.dim m .scalar), .dim m (.dim m .scalar), .dim m (.dim m .scalar),
+            .dim m (.dim m .scalar)]))⟩⟩
 
 /--
 Corollary of the general DAG theorem: backprop equals `(fderiv eval)†` for the attention graph.

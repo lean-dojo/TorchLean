@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Tape.Nodes.Arithmetic
+public import NN.Proofs.Autograd.Tape.Nodes.Elementwise
 
 /-!
 # Matrix tape nodes
@@ -20,8 +20,8 @@ stated at the vectorized tape level.
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -45,7 +45,7 @@ abbrev matSize (m n : Nat) : Nat :=
 abbrev vecSize (n : Nat) : Nat :=
   Spec.Shape.size (.dim n .scalar)
 
-  @[simp] lemma vecSize_eq (n : Nat) : vecSize n = n := by
+  @[simp] theorem vecSize_eq (n : Nat) : vecSize n = n := by
     simp [vecSize, Spec.Shape.size]
 
   /-- Convert `(i,j)` coordinates into a flattened index for an `m×n` matrix vectorization. -/
@@ -56,99 +56,68 @@ abbrev vecSize (n : Nat) : Nat :=
     finProdFinEquiv (i, Fin.cast hn.symm j)
 
   /-- Casting a column index through `vecSize n = n` leaves its flattened index unchanged. -/
-  private lemma idxMN_cast_vecSize {m n : Nat} (i : Fin m) (j : Fin (vecSize n))
+  private theorem idxMN_cast_vecSize {m n : Nat} (i : Fin m) (j : Fin (vecSize n))
       (h : vecSize n = n) :
       idxMN i (Fin.cast h j) = finProdFinEquiv (i, j) := by
     apply Fin.ext
     simp [idxMN]
 
   /-- Relate the tensor vectorization `tensorToVec` to `Spec.get2` at a matrix coordinate. -/
-  private lemma tensorToVec_get2 {m n : Nat} (A : Tensor ℝ [m, n]) (i : Fin m) (j :
+  private theorem tensorToVec_get2 {m n : Nat} (A : Tensor ℝ [m, n]) (i : Fin m) (j :
     Fin n) :
       tensorToVec (t := A) (idxMN (m := m) (n := n) i j) = Spec.get2 A i j := by
-    cases n with
-    | zero =>
-        exact (Fin.elim0 j)
-    | succ n =>
-        cases A with
-        | dim rows =>
-            let hn : vecSize (Nat.succ n) = Nat.succ n := by simp [vecSize, Spec.Shape.size]
-            let j' : Fin (vecSize (Nat.succ n)) := Fin.cast hn.symm j
-            have hmpos : 0 < vecSize (Nat.succ n) := by simp [vecSize, Spec.Shape.size]
-            have houter :=
-              tensorToVec_dim_apply (n := m) (s := .dim (Nat.succ n) .scalar) (hmpos := hmpos) (f := rows)
-                (p := (i, j'))
-            cases hrow : rows i with
-            | dim cols =>
-                let k0 : Fin 1 := 0
-                have hinnerPos : 0 < Spec.Shape.size Shape.scalar := by simp [Spec.Shape.size]
-                have hinner :=
-                  tensorToVec_dim_apply (n := Nat.succ n) (s := Shape.scalar) (hmpos := hinnerPos) (f :=
-                    cols)
-                    (p := (j, k0))
-                have hjidx : finProdFinEquiv (j, k0) = j' := by
-                  apply Fin.ext
-                  simp [j', k0, finProdFinEquiv]
-                cases hx : cols j with
-                | scalar x =>
-                    have hscalar : tensorToVec (t := (Tensor.scalar x : Tensor ℝ .scalar)) k0 = x :=
-                      by
-                      exact tensorToVec_scalar x k0
-                    have hidx : idxMN (m := m) (n := Nat.succ n) i j = finProdFinEquiv (i, j') := by
-                      apply Fin.ext
-                      simp [idxMN, j', hn]
-                    have houter' :
-                        tensorToVec (t := Tensor.dim rows) (idxMN (m := m) (n := Nat.succ n) i j) =
-                          tensorToVec (t := rows i) j' := by
-                      simpa [hidx] using houter
-                    have hrowCoord : tensorToVec (t := rows i) j' = x := by
-                      have hconv :
-                          tensorToVec (t := Tensor.dim cols) (finProdFinEquiv (j, k0)) =
-                            tensorToVec (t := Tensor.dim cols) j' :=
-                        congrArg (fun z => tensorToVec (t := Tensor.dim cols) z) hjidx
-                      have hinner' : tensorToVec (t := Tensor.dim cols) j' = tensorToVec (t := cols j) k0 :=
-                        hconv.symm.trans hinner
-                      have hinner'' :
-                          tensorToVec (t := Tensor.dim cols) j' = tensorToVec (t := (Tensor.scalar x : Tensor ℝ
-                            .scalar)) k0 := by
-                        simpa [hx] using hinner'
-                      simpa [hrow] using (hinner''.trans hscalar)
-                    -- `get2` picks out exactly this scalar entry.
-                    simpa [Spec.get2, Spec.get, hrow, hx, houter', hrowCoord]
-                      using (houter'.trans hrowCoord)
+    change
+      TorchLean.Tensor.getScalar (TorchLean.Tensor.flattenSpec A)
+          (idxMN (m := m) (n := n) i j) =
+        Spec.get2 A i j
+    rw [TorchLean.Tensor.getScalar_eq_apply]
+    unfold TorchLean.Tensor.flattenSpec Spec.get2 TorchLean.Tensor.getScalar Spec.get
+      TorchLean.Tensor.unstack TorchLean.Tensor.item
+    rw [TorchLean.Tensor.Internal.Rep.reshape_apply_coordEquiv]
+    rw [TorchLean.Tensor.Internal.Rep.unstack_apply,
+      TorchLean.Tensor.Internal.Rep.unstack_apply]
+    apply congrArg A
+    apply TorchLean.Tensor.Internal.Coord.linearize_injective
+    apply Fin.ext
+    rw [TorchLean.Tensor.reshapeCoordEquiv_linearize_val]
+    rw [TorchLean.Tensor.vectorCoordinate_linearize_val]
+    have hlinearize :
+        (TorchLean.Tensor.Internal.Coord.linearize (s := [m, n])
+          (i, j, PUnit.unit)).val =
+          j.val + n * i.val := by
+      calc
+        _ =
+            (TorchLean.Tensor.Internal.Coord.linearize (s := [n])
+              (j, PUnit.unit)).val +
+              TorchLean.Tensor.Internal.Shape.size [n] * i.val :=
+          TorchLean.Tensor.Internal.Coord.linearize_cons_val (s := [n]) i (j, PUnit.unit)
+        _ = j.val + n * i.val := by
+          rw [TorchLean.Tensor.vectorCoordinate_linearize_val]
+          simp
+    rw [hlinearize]
+    simp [idxMN, finProdFinEquiv_apply_val]
 
-  /-- `Spec.get2` of an `vecToTensor`-constructed matrix reads back the corresponding flattened entry. -/
-  private lemma get2_vecToTensor {m n : Nat} (v : Vec (matSize m n)) (i : Fin m) (j : Fin n) :
-      Spec.get2 (vecToTensor (s := .dim m (.dim n .scalar)) v) i j = v (idxMN (m := m) (n := n) i j) :=
-        by
+  /-- `Spec.get2` of a `vecToTensor`-constructed matrix reads back the corresponding flattened
+  entry. -/
+  private theorem get2_vecToTensor {m n : Nat} (v : Vec (matSize m n)) (i : Fin m) (j : Fin n) :
+      Spec.get2 (vecToTensor (s := .dim m (.dim n .scalar)) v) i j =
+        v (idxMN (m := m) (n := n) i j) := by
     have htv :
-        tensorToVec (t := vecToTensor (s := .dim m (.dim n .scalar)) v) (idxMN (m := m) (n := n) i j) = v (idxMN
-          (m := m) (n := n) i j) := by
+        tensorToVec (t := vecToTensor (s := .dim m (.dim n .scalar)) v)
+            (idxMN (m := m) (n := n) i j)
+          = v (idxMN (m := m) (n := n) i j) := by
       simp
     exact (tensorToVec_get2 (A := vecToTensor (s := .dim m (.dim n .scalar)) v) i j).symm.trans htv
 
   /-- Entrywise formula for matrix addition: `(A + B)[i,j] = A[i,j] + B[i,j]`. -/
-  private lemma get2_add_spec {m n : Nat} (A B : Tensor ℝ [m, n]) (i : Fin m) (j
+  private theorem get2_add_spec {m n : Nat} (A B : Tensor ℝ [m, n]) (i : Fin m) (j
     : Fin n) :
       Spec.get2 (addSpec A B) i j = Spec.get2 A i j + Spec.get2 B i j := by
-    cases A with
-    | dim rowsA =>
-        cases B with
-        | dim rowsB =>
-            cases hrowA : rowsA i with
-            | dim colsA =>
-                cases hrowB : rowsB i with
-                | dim colsB =>
-                    cases hA : colsA j with
-                    | scalar a =>
-                        cases hB : colsB j with
-                        | scalar b =>
-                            simp [addSpec, Spec.Tensor.addSpec, Spec.Tensor.map2Spec, Spec.get2,
-                              Spec.get,
-                              hrowA, hrowB, hA, hB]
+    simp [addSpec]
 
-  /-- Vectorization commutes with matrix addition: `tensorToVec (A + B) = tensorToVec A + tensorToVec B`. -/
-  lemma tensorToVec_add_spec_mat {m n : Nat} (A B : Tensor ℝ [m, n]) :
+  /-- Vectorization commutes with matrix addition:
+  `tensorToVec (A + B) = tensorToVec A + tensorToVec B`. -/
+  theorem tensorToVec_add_spec_mat {m n : Nat} (A B : Tensor ℝ [m, n]) :
       tensorToVec (t := addSpec A B) = tensorToVec (t := A) + tensorToVec (t := B) := by
     classical
     ext ip
@@ -189,7 +158,13 @@ def matmulVec {m n p : Nat} (a : Vec (matSize m n)) (b : Vec (matSize n p)) : Ve
     let k : Fin p := Fin.cast hp k'
     ∑ j : Fin n, a (idxMN (m := m) (n := n) i j) * b (idxMN (m := n) (n := p) j k)
 
-@[simp] lemma matmulVec_apply {m n p : Nat} (a : Vec (matSize m n)) (b : Vec (matSize n p))
+/-- Entry `(i, k)` of a matrix product is the usual sum over the contracted index.
+
+The `let`s in the statement are the flat-index arithmetic: a single `Fin (m * p)` is split into a
+row
+by `divNat` and a column by `modNat`. Keeping them in the statement rather than in a side condition
+means `simp` can use this lemma on a goal phrased purely in flat coordinates. -/
+@[simp] theorem matmulVec_apply {m n p : Nat} (a : Vec (matSize m n)) (b : Vec (matSize n p))
     (ip : Fin (matSize m p)) :
     matmulVec (m := m) (n := n) (p := p) a b ip =
       let hp : vecSize p = p := vecSize_eq p
@@ -403,16 +378,20 @@ def matmulBilin {m n p : Nat} :
   -- curry the bounded bilinear map into a `→L →L` map
   exact hf.toContinuousLinearMap
 
-@[simp] lemma matmulBilin_apply {m n p : Nat} (a : Vec (matSize m n)) (b : Vec (matSize n p)) :
+/-- The bounded bilinear packaging of matrix multiplication computes `matmulVec`.
+
+`matmulBilin` exists only so the differentiability proofs can reuse Mathlib's bilinear-map API; this
+lemma is what lets every other proof forget that packaging. -/
+@[simp] theorem matmulBilin_apply {m n p : Nat} (a : Vec (matSize m n)) (b : Vec (matSize n p)) :
     matmulBilin (m := m) (n := n) (p := p) a b = matmulVec (m := m) (n := n) (p := p) a b := by
   classical
   -- Unfold to the bounded bilinear map and use `toContinuousLinearMap_apply`.
   simp [matmulBilin]
 
-/-- `Spec.mat_mul_spec` agrees with `matmulVec` after flattening both inputs/outputs. -/
-lemma forward_eq_matmulVec {m n p : Nat} (aV : Vec (matSize m n)) (bV : Vec (matSize n p)) :
-    tensorToVec (t := Spec.matMulSpec (vecToTensor (s := .dim m (.dim n .scalar)) aV) (vecToTensor (s := .dim n
-      (.dim p .scalar)) bV))
+/-- `Spec.matMulSpec` agrees with `matmulVec` after flattening both inputs/outputs. -/
+theorem forward_eq_matmulVec {m n p : Nat} (aV : Vec (matSize m n)) (bV : Vec (matSize n p)) :
+    tensorToVec (t := Spec.matMulSpec (vecToTensor (s := .dim m (.dim n .scalar)) aV)
+        (vecToTensor (s := .dim n (.dim p .scalar)) bV))
       =
     matmulVec (m := m) (n := n) (p := p) aV bV := by
   classical
@@ -449,11 +428,13 @@ lemma forward_eq_matmulVec {m n p : Nat} (aV : Vec (matSize m n)) (bV : Vec (mat
       (A := vecToTensor (s := .dim m (.dim n .scalar)) aV)
       (B := vecToTensor (s := .dim n (.dim p .scalar)) bV)
       (i := i) (j := k)
-  have hA : ∀ j : Fin n, Spec.get2 (vecToTensor (s := .dim m (.dim n .scalar)) aV) i j = aV (idxMN (m :=
-    m) (n := n) i j) :=
+  have hA : ∀ j : Fin n,
+      Spec.get2 (vecToTensor (s := .dim m (.dim n .scalar)) aV) i j =
+        aV (idxMN (m := m) (n := n) i j) :=
     fun j => get2_vecToTensor (v := aV) i j
-  have hB : ∀ j : Fin n, Spec.get2 (vecToTensor (s := .dim n (.dim p .scalar)) bV) j k = bV (idxMN (m :=
-    n) (n := p) j k) :=
+  have hB : ∀ j : Fin n,
+      Spec.get2 (vecToTensor (s := .dim n (.dim p .scalar)) bV) j k =
+        bV (idxMN (m := n) (n := p) j k) :=
     fun j => get2_vecToTensor (v := bV) j k
   calc
     tensorToVec
@@ -483,7 +464,7 @@ namespace MatTranspose
 open Matmul
 
 /-- Helper: `matSize m n` is definitionally `m * n`. -/
-lemma matSize_eq_mul (m n : Nat) : Matmul.matSize m n = m * n := by
+theorem matSize_eq_mul (m n : Nat) : Matmul.matSize m n = m * n := by
   simp [Matmul.matSize, Spec.Shape.size]
 
 /-- Equivalence implementing matrix transpose on flattened indices. -/
@@ -491,7 +472,7 @@ def transposeEquiv (m n : Nat) : Fin (m * n) ≃ Fin (n * m) :=
   (finProdFinEquiv.symm.trans (Equiv.prodComm (Fin m) (Fin n))).trans finProdFinEquiv
 
 /-- The transpose index equivalence is symmetric up to swapping `m` and `n`. -/
-private lemma transposeEquiv_symm (m n : Nat) :
+private theorem transposeEquiv_symm (m n : Nat) :
     (transposeEquiv m n).symm = transposeEquiv n m := by
   ext k; simp [transposeEquiv, Equiv.prodComm_symm]
 
@@ -502,8 +483,8 @@ def transposeVec {m n : Nat} (a : Vec (Matmul.matSize m n)) : Vec (Matmul.matSiz
       (castVec (matSize_eq_mul m n) a) ((transposeEquiv m n).symm k))
 
 /-- Adjointness of `transposeVec` with respect to the standard inner product on vectors. -/
-private lemma inner_transposeVec {m n : Nat} (x : Vec (Matmul.matSize m n)) (y : Vec (Matmul.matSize
-  n m)) :
+private theorem inner_transposeVec {m n : Nat} (x : Vec (Matmul.matSize m n))
+    (y : Vec (Matmul.matSize n m)) :
     inner ℝ (transposeVec (m := m) (n := n) x) y =
       inner ℝ x (transposeVec (m := n) (n := m) y) := by
   classical
@@ -615,7 +596,7 @@ def matrixTranspose {Γ : List Shape} {m n : Nat}
                 (MatTranspose.transposeVec (m := n) (n := m) δV)) := by
             simpa using hCtx.symm)
 
-/-- `NodeFDerivCorrect` for `matrix_transpose` (it is linear/isometric). -/
+/-- `NodeFDerivCorrect` for `matrixTranspose` (it is linear/isometric). -/
 def matrixTransposeFderiv {Γ : List Shape} {m n : Nat}
     (A : Idx Γ (.dim m (.dim n .scalar))) :
     NodeFDerivCorrect (matrixTranspose (Γ := Γ) (m := m) (n := n) A) := by
@@ -670,10 +651,10 @@ def matmul {Γ : List Shape} {m n p : Nat}
         .scalar)) A xV)
       let bT := vecToTensor (s := .dim n (.dim p .scalar)) (CtxVec.get (Γ := Γ) (s := .dim n (.dim p
         .scalar)) B xV)
-      let daT := vecToTensor (s := .dim m (.dim n .scalar)) (CtxVec.get (Γ := Γ) (s := .dim m (.dim n
-        .scalar)) A dxV)
-      let dbT := vecToTensor (s := .dim n (.dim p .scalar)) (CtxVec.get (Γ := Γ) (s := .dim n (.dim p
-        .scalar)) B dxV)
+      let daT := vecToTensor (s := .dim m (.dim n .scalar))
+        (CtxVec.get (Γ := Γ) (s := .dim m (.dim n .scalar)) A dxV)
+      let dbT := vecToTensor (s := .dim n (.dim p .scalar))
+        (CtxVec.get (Γ := Γ) (s := .dim n (.dim p .scalar)) B dxV)
       tensorToVec (t := addSpec (Spec.matMulSpec daT bT) (Spec.matMulSpec aT dbT)))
     (vjp := fun xV δV =>
       let aT := vecToTensor (s := .dim m (.dim n .scalar)) (CtxVec.get (Γ := Γ) (s := .dim m (.dim n
@@ -693,10 +674,10 @@ def matmul {Γ : List Shape} {m n p : Nat}
         .scalar)) A xV)
       let bT := vecToTensor (s := .dim n (.dim p .scalar)) (CtxVec.get (Γ := Γ) (s := .dim n (.dim p
         .scalar)) B xV)
-      let daT := vecToTensor (s := .dim m (.dim n .scalar)) (CtxVec.get (Γ := Γ) (s := .dim m (.dim n
-        .scalar)) A dxV)
-      let dbT := vecToTensor (s := .dim n (.dim p .scalar)) (CtxVec.get (Γ := Γ) (s := .dim n (.dim p
-        .scalar)) B dxV)
+      let daT := vecToTensor (s := .dim m (.dim n .scalar))
+        (CtxVec.get (Γ := Γ) (s := .dim m (.dim n .scalar)) A dxV)
+      let dbT := vecToTensor (s := .dim n (.dim p .scalar))
+        (CtxVec.get (Γ := Γ) (s := .dim n (.dim p .scalar)) B dxV)
       let δT := vecToTensor (s := .dim m (.dim p .scalar)) δV
       let dC := addSpec (Spec.matMulSpec daT bT) (Spec.matMulSpec aT dbT)
       let dA := Spec.matMulSpec δT (swapAdjacentAxes bT 0)
@@ -714,27 +695,31 @@ def matmul {Γ : List Shape} {m n p : Nat}
             =
           dot daT dA + dot dbT dB := by
         have hA' :
-            inner ℝ dxV (CtxVec.single (Γ := Γ) (s := .dim m (.dim n .scalar)) A (tensorToVec (t := dA)))
+            inner ℝ dxV
+                (CtxVec.single (Γ := Γ) (s := .dim m (.dim n .scalar)) A (tensorToVec (t := dA)))
               =
-            inner ℝ (CtxVec.get (Γ := Γ) (s := .dim m (.dim n .scalar)) A dxV) (tensorToVec (t := dA)) :=
-              by
+            inner ℝ (CtxVec.get (Γ := Γ) (s := .dim m (.dim n .scalar)) A dxV)
+              (tensorToVec (t := dA)) := by
           simpa using
-            (CtxVec.inner_get_single (Γ := Γ) (s := .dim m (.dim n .scalar)) A dxV (tensorToVec (t :=
-              dA)))
+            (CtxVec.inner_get_single (Γ := Γ) (s := .dim m (.dim n .scalar)) A dxV
+              (tensorToVec (t := dA)))
         have hB' :
-            inner ℝ dxV (CtxVec.single (Γ := Γ) (s := .dim n (.dim p .scalar)) B (tensorToVec (t := dB)))
+            inner ℝ dxV
+                (CtxVec.single (Γ := Γ) (s := .dim n (.dim p .scalar)) B (tensorToVec (t := dB)))
               =
-            inner ℝ (CtxVec.get (Γ := Γ) (s := .dim n (.dim p .scalar)) B dxV) (tensorToVec (t := dB)) :=
-              by
+            inner ℝ (CtxVec.get (Γ := Γ) (s := .dim n (.dim p .scalar)) B dxV)
+              (tensorToVec (t := dB)) := by
           simpa using
-            (CtxVec.inner_get_single (Γ := Γ) (s := .dim n (.dim p .scalar)) B dxV (tensorToVec (t :=
-              dB)))
+            (CtxVec.inner_get_single (Γ := Γ) (s := .dim n (.dim p .scalar)) B dxV
+              (tensorToVec (t := dB)))
         have hdotA :
-            inner ℝ (CtxVec.get (Γ := Γ) (s := .dim m (.dim n .scalar)) A dxV) (tensorToVec (t := dA)) =
+            inner ℝ (CtxVec.get (Γ := Γ) (s := .dim m (.dim n .scalar)) A dxV)
+                (tensorToVec (t := dA)) =
               dot daT dA := by
           simp [dot_eq_inner_tensorToVec, daT, tensorToVec_vecToTensor]
         have hdotB :
-            inner ℝ (CtxVec.get (Γ := Γ) (s := .dim n (.dim p .scalar)) B dxV) (tensorToVec (t := dB)) =
+            inner ℝ (CtxVec.get (Γ := Γ) (s := .dim n (.dim p .scalar)) B dxV)
+                (tensorToVec (t := dB)) =
               dot dbT dB := by
           simp [dot_eq_inner_tensorToVec, dbT, tensorToVec_vecToTensor]
         calc
@@ -742,16 +727,19 @@ def matmul {Γ : List Shape} {m n p : Nat}
               (CtxVec.single (Γ := Γ) (s := .dim m (.dim n .scalar)) A (tensorToVec (t := dA)) +
                 CtxVec.single (Γ := Γ) (s := .dim n (.dim p .scalar)) B (tensorToVec (t := dB)))
               =
-              inner ℝ dxV (CtxVec.single (Γ := Γ) (s := .dim m (.dim n .scalar)) A (tensorToVec (t :=
-                dA))) +
-                inner ℝ dxV (CtxVec.single (Γ := Γ) (s := .dim n (.dim p .scalar)) B (tensorToVec (t :=
-                  dB))) := by
+              inner ℝ dxV
+                  (CtxVec.single (Γ := Γ) (s := .dim m (.dim n .scalar)) A
+                    (tensorToVec (t := dA))) +
+                inner ℝ dxV
+                  (CtxVec.single (Γ := Γ) (s := .dim n (.dim p .scalar)) B
+                    (tensorToVec (t := dB))) := by
                 simp [inner_add_right]
           _ =
-              inner ℝ (CtxVec.get (Γ := Γ) (s := .dim m (.dim n .scalar)) A dxV) (tensorToVec (t := dA))
+              inner ℝ (CtxVec.get (Γ := Γ) (s := .dim m (.dim n .scalar)) A dxV)
+                  (tensorToVec (t := dA))
                 +
-                inner ℝ (CtxVec.get (Γ := Γ) (s := .dim n (.dim p .scalar)) B dxV) (tensorToVec (t :=
-                  dB)) := by
+                inner ℝ (CtxVec.get (Γ := Γ) (s := .dim n (.dim p .scalar)) B dxV)
+                  (tensorToVec (t := dB)) := by
                 simp [hA', hB']
           _ = dot daT dA + dot dbT dB := by
                 simp [hdotA, hdotB]
@@ -786,7 +774,7 @@ def matmul {Γ : List Shape} {m n p : Nat}
 /--
 `NodeFDerivCorrect` for the matrix-matrix multiplication node.
 
-This packages the product rule and the dot/adjointness lemmas for `Spec.mat_mul_spec`.
+This packages the product rule and the dot/adjointness lemmas for `Spec.matMulSpec`.
 -/
 def matmulFderiv {Γ : List Shape} {m n p : Nat}
     (A : Idx Γ (.dim m (.dim n .scalar))) (B : Idx Γ (.dim n (.dim p .scalar))) :
@@ -837,14 +825,15 @@ by
 
   · intro xV dxV
     -- Rewrite the node JVP into the bilinear derivative formula.
-    -- We use that `tensorToVec` respects matrix addition and that `tensorToVec (mat_mul_spec (vecToTensor a)
-    -- (vecToTensor b))`
-    -- is exactly `Matmul.matmulVec a b`.
+    -- We use that `tensorToVec` respects matrix addition and that
+    -- `tensorToVec (mat_mul_spec (vecToTensor a) (vecToTensor b))` is exactly
+    -- `Matmul.matmulVec a b`.
     ext ip
     -- After expanding, the two bilinear terms may appear in the opposite order.
     simp [matmul, Node.jvpVec_ofFn, fA, fB, Bmul, Matmul.tensorToVec_add_spec_mat,
       Matmul.forward_eq_matmulVec, ContinuousLinearMap.comp_apply,
-      CtxVec.getCLM_apply, add_comm]
+      CtxVec.getCLM_apply]
+    ring
 
 -- ---------------------------------------------------------------------------
 -- Matrix broadcasts and row-wise reductions (linear)
@@ -952,7 +941,7 @@ def broadcastRow {Γ : List Shape} {m n : Nat}
             (x := getVec (Γ := Γ) (n := m) idx dxV) (y := δV)).symm
       exact hadj.trans hctx.symm)
 
-/-- `NodeFDerivCorrect` for `broadcast_row` (linear op). -/
+/-- `NodeFDerivCorrect` for `broadcastRow` (linear op). -/
 def broadcastRowFderiv {Γ : List Shape} {m n : Nat}
     (idx : Idx Γ (.dim m .scalar)) :
     NodeFDerivCorrect (broadcastRow (Γ := Γ) (m := m) (n := n) idx) :=
@@ -1008,7 +997,7 @@ def broadcastCol {Γ : List Shape} {m n : Nat}
             (x := getVec (Γ := Γ) (n := n) idx dxV) (y := δV)).symm
       exact hadj.trans hctx.symm)
 
-/-- `NodeFDerivCorrect` for `broadcast_col` (linear op). -/
+/-- `NodeFDerivCorrect` for `broadcastCol` (linear op). -/
 def broadcastColFderiv {Γ : List Shape} {m n : Nat}
     (idx : Idx Γ (.dim n .scalar)) :
     NodeFDerivCorrect (broadcastCol (Γ := Γ) (m := m) (n := n) idx) :=
@@ -1095,7 +1084,7 @@ def rowMean {Γ : List Shape} {m n : Nat}
       -- combine
       exact (hLcast.trans hadj).trans hctx.symm)
 
-/-- `NodeFDerivCorrect` for `row_mean` (reduce-mean along the last axis). -/
+/-- `NodeFDerivCorrect` for `rowMean` (reduce-mean along the last axis). -/
 def rowMeanFderiv {Γ : List Shape} {m n : Nat}
     (idx : Idx Γ (.dim m (.dim n .scalar))) :
     NodeFDerivCorrect (rowMean (Γ := Γ) (m := m) (n := n) idx) :=

@@ -6,8 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import Lean.Data.Json
-import Lean
+public import Lean.Data.Json.Parser
 
 /-!
 # External Process Helpers
@@ -118,8 +117,9 @@ def ensureCmdAvailable (toolName : String) (cmd : String)
 /--
 Run a subprocess and return its captured `stdout`.
 
-On nonzero exit code, raises `IO.userError` including `stderr`. Any exception thrown by the
-process runner (e.g. executable not found) is propagated to the caller.
+On nonzero exit code, raises `IO.userError` including `stderr`. An exception thrown by the process
+runner (e.g. executable not found) is wrapped in `IO.userError` with the context, command, and
+arguments.
 -/
 def runStdoutChecked (ctx : String)
     (cmd : String) (args : Array String) (cwd : Option String := some ".") : IO String := do

@@ -18,8 +18,8 @@ Umbrella import for TorchLean's RL trust-boundary layer. The boundary has two pa
 - `NN.Runtime.RL.Boundary.Json`: a small JSON rollout schema plus parser/validator for external
   producers such as Gymnasium scripts.
 
-Use this umbrella when you want the full runtime boundary API. Proof modules that do not parse JSON can
-import `Boundary.Core` directly.
+Use this umbrella when you want the full runtime boundary API. Proof modules that do not parse JSON
+can import `Boundary.Core` directly.
 -/
 
 @[expose] public section

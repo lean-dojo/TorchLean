@@ -7,10 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.Verification.Util.Json
-public import NN.Spec.Core.Tensor.Constructors
-public import NN.Floats.IEEEExec.Exec32
+public import NN.Tensor.Conversion
 public import NN.Floats.Interval.IEEEExec32ArbTrans
-import Lean.Data.Json
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-!
 # Piecewise polynomial certificates
@@ -27,7 +26,8 @@ tolerance.
 
 Optionally, you can also run an *executable float32* cross-check via `checkJsonIEEE32ExecExact`:
 if every rational in the certificate is exactly representable as a finite IEEE-754 binary32
-(`IEEE32Exec`), we re-run the endpoint equalities under `IEEE32Exec` arithmetic. This is useful
+(`ExecFloat.Binary 8 23`), we re-run the endpoint equalities under `ExecFloat.Binary 8 23`
+arithmetic. This is useful
 when the producer is actually operating in float32 and you want to confirm the certificate’s
 equalities hold under the same semantics.
 
@@ -51,12 +51,16 @@ References (background):
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+
 namespace NN.Verification.Splines.PiecewisePolyCert
 
 open Lean
 open Json
 open NN.Verification.Json
-open _root_.Spec
+open Spec TorchLean
 
 /-!
 ## Utilities: exact rationals in JSON
@@ -155,7 +159,7 @@ $$
 a_0+a_1t+a_2t^2+\cdots+a_dt^d.
 $$
 
-This helper is generic so we can reuse it for `Rat` (exact checking) and for `IEEE32Exec`
+This helper is generic so we can reuse it for `Rat` (exact checking) and for `ExecFloat.Binary 8 23`
 (executable float32 semantics).
 -/
 def evalPolyHorner {α : Type} [Zero α] [Add α] [Mul α] (coeffs : Array α) (t : α) : α :=
@@ -175,7 +179,7 @@ def parseRatArray (ctx : String) (j : Json) : IO (Array Rat) := do
 
 /-- Parse one polynomial segment from the certificate JSON object. -/
 def parsePolynomialPiece (ctx : String) (j : Json) : IO PolynomialPiece := do
-  let o ← expectObj j ctx
+  let o ← expectObject j ctx
   let loJ ← expectField o "lo" ctx
   let hiJ ← expectField o "hi" ctx
   let coeffsJ ← expectField o "coeffs" ctx
@@ -194,7 +198,7 @@ def requireArrayEntry {α : Type} (ctx : String) (xs : Array α) (i : Nat) : IO 
 
 /-- Parse the `piecewise_poly_v0` JSON payload into a structured certificate. -/
 def parsePiecewisePolyCertificate (j : Json) : IO PiecewisePolyCertificate := do
-  let top ← expectObj j "top-level"
+  let top ← expectObject j "top-level"
   expectFormat top "piecewise_poly_v0"
   let degree ← expectFieldNat top "degree" "top-level"
 
@@ -212,13 +216,12 @@ def parsePiecewisePolyCertificate (j : Json) : IO PiecewisePolyCertificate := do
   if hYsSize : ysArr.size = n then
     if pieces.size != n - 1 then
       throw <|
-        IO.userError s!"pieces length mismatch: pieces.size={pieces.size}, expected {n - 1} (=xs.size-1)"
+        IO.userError
+          s!"pieces length mismatch: pieces.size={pieces.size}, expected {n - 1} (=xs.size-1)"
 
     -- Validate the dynamic arrays once, then enter the canonical shape-indexed tensor API.
-    let xs : Tensor Rat [n] :=
-      Tensor.ofFlatArrayExact (.dim n .scalar) xsArr (by simp [n, Shape.size])
-    let ys : Tensor Rat [n] :=
-      Tensor.ofFlatArrayExact (.dim n .scalar) ysArr (by simpa [n, Shape.size] using hYsSize)
+    let xs : Tensor Rat [n] := Tensor.from xsArr
+    let ys : Tensor Rat [n] := hYsSize ▸ Tensor.from ysArr
 
     pure { degree, n, xs, ys, pieces }
   else
@@ -236,8 +239,8 @@ tolerances, so a passing check means the certificate's equalities hold exactly a
 -/
 def checkCertificateRat (cert : PiecewisePolyCertificate) : IO Unit := do
   let n := cert.n
-  let xs := cert.xs.toArray
-  let ys := cert.ys.toArray
+  let xs := Tensor.to cert.xs (Array ℚ)
+  let ys := Tensor.to cert.ys (Array ℚ)
 
   for i in [0:n - 1] do
     let a ← requireArrayEntry "xs" xs i
@@ -279,41 +282,47 @@ def checkJson (j : Json) : IO Unit := do
   IO.println "Piecewise polynomial certificate verified."
 
 /--
-Attempt to convert a rational to an *exact* finite `IEEE32Exec` value.
+Attempt to convert a rational to an *exact* finite `ExecFloat.Binary 8 23` value.
 
 This is used for optional “float32 semantics” checking: we only accept values that are exactly
 representable on the binary32 grid, so equality checks are meaningful at the executable IEEE level.
 
 Implementation note:
-- We reuse TorchLean’s existing `Rat → IEEE32Exec` outward-rounding helpers
-  (`roundRatQDown/roundRatQUp`), and we accept only when the lower/upper rounding coincide.
+- FloatLib rounds the rational outward in its binary32 model; packing that model preserves its
+  bits. We accept only when the lower and upper rounding compare equal.
 -/
-def ratToIEEE32ExecExact (ctx : String) (q : Rat) : IO TorchLean.Floats.IEEE754.IEEE32Exec := do
-  let lo := TorchLean.Floats.IEEE754.IEEE32Exec.roundRatQDown q
-  let hi := TorchLean.Floats.IEEE754.IEEE32Exec.roundRatQUp q
+def ratToIEEE32ExecExact (ctx : String) (q : Rat) : IO (ExecFloat.Binary 8 23) := do
+  let lo : ExecFloat.Binary 8 23 := ExecFloat.Binary.ofModel <|
+    FloatLib.Floats.Formats.BinaryInterchange.Model.roundRatQDown
+      FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary32 q
+  let hi : ExecFloat.Binary 8 23 := ExecFloat.Binary.ofModel <|
+    FloatLib.Floats.Formats.BinaryInterchange.Model.roundRatQUp
+      FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary32 q
   unless lo == hi do
     throw <|
       IO.userError
         (s!"{ctx}: rational is not exactly representable as binary32 (lo={lo}, hi={hi}).\n" ++
-         "If you intend a float32-valued certificate, prefer dyadic rationals (n/2^k) or emit raw bits.")
-  unless TorchLean.Floats.IEEE754.IEEE32Exec.isFinite lo do
+         "If you intend a float32-valued certificate, prefer dyadic rationals (n/2^k) " ++
+         "or emit raw bits.")
+  unless ExecFloat.Binary.isFinite lo do
     throw <| IO.userError s!"{ctx}: value is not finite in binary32 semantics (NaN/Inf)."
   pure lo
 
 /--
-Check the same endpoint equalities as `checkCertificateRat`, but under `IEEE32Exec` arithmetic.
+Check the same endpoint equalities as `checkCertificateRat`, but under `ExecFloat.Binary 8 23`
+arithmetic.
 
 This is an *additional* (optional) check that answers: “if we interpret the certificate data as
 binary32 values and run the polynomial evaluation with executable IEEE-754 ops, do we still hit
 the claimed endpoints?”
 
 The check is deliberately strict:
-- every rational in the cert must be exactly representable as a finite `IEEE32Exec`,
+- every rational in the cert must be exactly representable as a finite `ExecFloat.Binary 8 23`,
 - comparisons use IEEE-style `BEq` (so `+0 == -0`, and NaNs never compare equal).
 -/
 def checkCertificateIEEE32ExecExact (cert : PiecewisePolyCertificate) : IO Unit := do
-  let xsQ := cert.xs.toArray
-  let ysQ := cert.ys.toArray
+  let xsQ := Tensor.to cert.xs (Array ℚ)
+  let ysQ := Tensor.to cert.ys (Array ℚ)
 
   let xs ← xsQ.mapIdxM (fun i q => ratToIEEE32ExecExact (ctx := s!"xs[{i}]") q)
   let ys ← ysQ.mapIdxM (fun i q => ratToIEEE32ExecExact (ctx := s!"ys[{i}]") q)
@@ -328,22 +337,27 @@ def checkCertificateIEEE32ExecExact (cert : PiecewisePolyCertificate) : IO Unit 
     let coeffs32 ←
       p.coeffs.mapIdxM (fun k q => ratToIEEE32ExecExact (ctx := s!"pieces[{i}].coeffs[{k}]") q)
 
-    let tHi32 : TorchLean.Floats.IEEE754.IEEE32Exec := hi32 - lo32
+    let tHi32 : ExecFloat.Binary 8 23 := hi32 - lo32
     let pLo32 := evalPolyHorner coeffs32 0
     let pHi32 := evalPolyHorner coeffs32 tHi32
 
     unless pLo32 == yLo32 do
       throw <|
         IO.userError
-          s!"IEEE32Exec endpoint mismatch at i={i}: p(lo)={pLo32} ≠ y={yLo32} (bits {pLo32.bits} vs {yLo32.bits})"
+          (s!"IEEE32Exec endpoint mismatch at i={i}: p(lo)={pLo32} ≠ y={yLo32} " ++
+            s!"(bits {ExecFloat.Binary.toBits32 pLo32} vs " ++
+            s!"{ExecFloat.Binary.toBits32 yLo32})")
     unless pHi32 == yHi32 do
       throw <|
         IO.userError
-          s!"IEEE32Exec endpoint mismatch at i={i}: p(hi)={pHi32} ≠ yNext={yHi32} (bits {pHi32.bits} vs {yHi32.bits})"
+          (s!"IEEE32Exec endpoint mismatch at i={i}: p(hi)={pHi32} ≠ yNext={yHi32} " ++
+            s!"(bits {ExecFloat.Binary.toBits32 pHi32} vs " ++
+            s!"{ExecFloat.Binary.toBits32 yHi32})")
 
   IO.println "IEEE32Exec semantics check verified (exact representability + endpoint equalities)."
 
-/-- Check a piecewise-polynomial certificate stored as JSON, including `IEEE32Exec` semantics. -/
+/-- Check a piecewise-polynomial certificate stored as JSON, including `ExecFloat.Binary 8 23`
+semantics. -/
 def checkJsonIEEE32ExecExact (j : Json) : IO Unit := do
   let cert ← parsePiecewisePolyCertificate j
   checkCertificateRat cert

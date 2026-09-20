@@ -8,8 +8,9 @@ interfaces and proves facts about convergence, fallback cases, and optimizer ext
 
 - `FirstOrder.lean`: relations between executable first-order update rules.
 - `StronglyConvexGD.lean`: gradient-descent facts for strongly convex objectives.
-- `SmoothStrongConvexBridge.lean`: bridges between smoothness/strong-convexity assumptions and
-  gradient-descent-style conclusions.
+- `SmoothStrongConvexBridge.lean`: from `StrongConvexOn` or first-order strong convexity of `f` to
+  strong monotonicity of `∇ f`, and a linear-convergence corollary that additionally assumes the
+  gradient is Lipschitz. The Lipschitz-gradient half is not derived from smoothness of `f` here.
 - `GDLinearConvergence.lean`: linear-convergence statements for gradient descent under the stated
   hypotheses.
 - `OptimizerLaws.lean`: a generic `TensorOptimizer` interface over runtime optimizers, plus
@@ -21,8 +22,8 @@ interfaces and proves facts about convergence, fallback cases, and optimizer ext
 
 Muon is represented as momentum plus an explicit orthogonalizer backend. The runtime update can use
 an identity orthogonalizer, an exact orthogonalizer, or a future optimized backend. The proof layer
-states what must be true of the backend output, for example exact $Q^\mathsf{T}Q=I$ or an entrywise bound
-on the Gram residual.
+states what must be true of the backend output, for example exact $Q^\mathsf{T}Q=I$ or an entrywise
+bound on the Gram residual.
 
 GaLore-style code is treated as projected-gradient structure. The important theorem-level fallback
 is that the projected update reduces to ordinary SGD when the projector is the identity. That gives

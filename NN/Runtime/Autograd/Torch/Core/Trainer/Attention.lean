@@ -6,7 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Torch.Core.Functional
+public import NN.Runtime.Autograd.LeadingAxis
+public import NN.Runtime.Autograd.Torch.Core.Ops.Layers
+public import NN.Runtime.Autograd.Torch.Core.Ops.LinearAlgebra
+public import NN.Runtime.Autograd.Torch.Core.Ops.ShapeReduction
 
 /-!
 # Batch-Aware Attention For The Eager Trainer
@@ -20,8 +23,8 @@ CUDA path folds batch and head axes into one native launch while retaining Torch
 
 namespace Runtime.Autograd.Torch.Internal.EagerSession
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 /--
 CPU reference path for batch-aware attention.
@@ -30,8 +33,8 @@ It records the established single-sample attention node for each entry of the le
 CUDA path below can execute those samples together, while this definition fixes the exact
 per-sample forward and backward meaning.
 -/
-def batchedMultiHeadAttentionCpuFallback {α : Type} (s : EagerSession α) [Context α]
-    [TensorTransfer α] [DecidableEq Shape]
+def batchedMultiHeadAttentionCpuFallback {α : Type} [TorchLean.Storage α]
+    (s : EagerSession α) [Context α] [TensorTransfer α]
     {batch n numHeads dModel headDim : Nat} (h1 : n ≠ 0)
     (wq : TensorRef α [dModel, numHeads * headDim])
     (wk : TensorRef α [dModel, numHeads * headDim])
@@ -40,7 +43,7 @@ def batchedMultiHeadAttentionCpuFallback {α : Type} (s : EagerSession α) [Cont
     (x : TensorRef α [batch, n, dModel])
     (mask : Option (Tensor Bool [n, n]) := none) :
     IO (TensorRef α [batch, n, dModel]) :=
-  _root_.Runtime.Autograd.mapOuterAxisWith
+  Runtime.Autograd.mapOuterAxisWith
     (EagerSession.const s <| Tensor.dim (fun i : Fin 0 => Fin.elim0 i))
     (fun x start len h => EagerSession.sliceLeadingAxisRange s x start len h)
     (fun x h => EagerSession.reshape s x h)
@@ -54,8 +57,8 @@ Batch-aware eager attention with a TorchLean-owned local VJP.
 The CUDA executor folds `(batch, head)` into one BMM batch axis. Provider selection remains
 explicit, and the checked default uses TorchLean's hard-masked softmax and backward rule.
 -/
-def batchedMultiHeadAttention {α : Type} (s : EagerSession α) [Context α]
-    [TensorTransfer α] [DecidableEq Shape]
+def batchedMultiHeadAttention {α : Type} [TorchLean.Storage α] (s : EagerSession α)
+    [Context α] [TensorTransfer α]
     {batch n numHeads dModel headDim : Nat} (hBatch : batch ≠ 0) (h1 : n ≠ 0)
     (wq : TensorRef α [dModel, numHeads * headDim])
     (wk : TensorRef α [dModel, numHeads * headDim])

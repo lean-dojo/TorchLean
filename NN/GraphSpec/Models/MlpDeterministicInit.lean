@@ -36,9 +36,8 @@ namespace NN
 namespace GraphSpec
 namespace Models
 
-open _root_.Spec
-open Spec.Tensor
-open _root_.TorchLean.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /--
 Deterministic init for `Models.mlp` is exactly the concatenation of the two TorchLean `Linear`
@@ -46,20 +45,26 @@ initializers.
 
 Seed discipline:
 
-- first linear layer uses occurrence index `0`, hence seeds `(0, 1)`,
-- second linear layer uses occurrence index `1`, hence seeds `(2, 3)`.
+- the first linear weight uses occurrence index `0`,
+- the second linear weight uses occurrence index `1`,
+- both biases are initialized exactly to zero.
 -/
 theorem mlp_detInitParams_eq_torchlean_linear_inits
-    (inDim hidDim outDim : Nat) :
+    (inputWidth hiddenWidth outputWidth : Nat) :
     LowerToDAG.Chain.detInitParams?
-        (mlp (inDim := inDim) (hidDim := hidDim) (outDim := outDim))
+        (mlp
+          (inputWidth := inputWidth)
+          (hiddenWidth := hiddenWidth)
+          (outputWidth := outputWidth))
     =
     .ok
       (TorchLean.TensorPack.append (α := Float)
-        (ss₁ := [[hidDim, inDim], [hidDim]])
-        (ss₂ := [[outDim, hidDim], [outDim]])
-        (Runtime.Autograd.TorchLean.NN.linear inDim hidDim (seedW := 0) (seedB := 1)).initState
-        (Runtime.Autograd.TorchLean.NN.linear hidDim outDim (seedW := 2) (seedB := 3)).initState)
+        (ss₁ := [[hiddenWidth, inputWidth], [hiddenWidth]])
+        (ss₂ := [[outputWidth, hiddenWidth], [outputWidth]])
+        (Runtime.Autograd.Model.Layers.linear inputWidth hiddenWidth
+          (weightSeed := 0)).initState
+        (Runtime.Autograd.Model.Layers.linear hiddenWidth outputWidth
+          (weightSeed := 1)).initState)
           := by
   -- Unfold the MLP graph and the deterministic-init traversal.
   simp
@@ -71,7 +76,7 @@ theorem mlp_detInitParams_eq_torchlean_linear_inits
     ]
   -- Discharge the “ReLU contributes no params” bookkeeping.
   simp [TorchLean.TensorPack.append,
-    Runtime.Autograd.TorchLean.NN.relu]
+    Runtime.Autograd.Model.Layers.relu]
 
 end Models
 end GraphSpec

@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Core.ExternalProcess
 public import NN.Runtime.External.Julia
 
 /-!

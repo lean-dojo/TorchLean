@@ -6,9 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Generative.Diffusion.ForwardProcess
-
-import Mathlib.Data.List.FinRange
+public import NN.Spec.Generative.Diffusion.Core
+public import NN.Spec.Generative.Diffusion.Schedule
+public import NN.Spec.Core.TensorOps
 
 /-!
 # Reverse DDPM sampler (spec layer)
@@ -23,8 +23,9 @@ We expose:
 
 We keep everything scalar-polymorphic (`Context α`). The intended use is:
 
-- execute with `Float`/`IEEE32Exec`/`NeuralFloat` for concrete runs, and
-- reuse the same definitions with `ℝ` in proofs.
+- execute with `Float`, `Float32`, or the configured binary32 type `ExecFloat.Binary 8 23`;
+- run in CPU software at a chosen precision with `FloatLib.Floats.ExecFloat.Binary`; and
+- reuse the definitions with `ℝ` or noncomputable `FloatLib.Floats.Formats.Flocq.NF` in proofs.
 
 References (informal pointers):
 
@@ -35,31 +36,43 @@ References (informal pointers):
 
 namespace Generative.Diffusion
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {T : Nat} {s : Shape}
 
 /--
-Predict $x_0$ from $x_t$ and an $\varepsilon$-prediction model.
-
-Formula (ε-pred parameterization):
+Reconstruct $x_0$ from $x_t$ and an already computed noise prediction.
 
 $$
 x_0=\frac{x_t-\sqrt{1-\bar\alpha_t}\,\hat\varepsilon}
           {\sqrt{\bar\alpha_t}}.
 $$
+
+`safeDiv` adds the context's epsilon to the denominator, as in `x0Pred`. Passing the prediction
+explicitly lets DDIM use the same tensor for this reconstruction and the direction toward the
+previous sample.
 -/
-def x0Pred (sched : VPSchedule α T) (model : EpsModel α s) (x_t : Tensor α s) (t : Fin (T + 1)) :
-    Tensor α s :=
+def x0PredFromEps (sched : VPSchedule α T) (x_t epsHat : Tensor α s)
+    (t : Fin (T + 1)) : Tensor α s :=
   let αbar : α := sched.alphaBar t
-  let tScalar : α := VPSchedule.timeOfIndex (α := α) (T := T) t
-  let epsHat : Tensor α s := model.eps x_t tScalar
   let c1 : α := sqrtNonneg (1 - αbar)
   let c0 : α := sqrtNonneg αbar
   let num := x_t - Tensor.scaleSpec epsHat c1
   Tensor.scaleSpec num (safeDiv 1 c0)
+
+/--
+Predict $x_0$ by evaluating the denoiser at time `t / T` and applying `x0PredFromEps`.
+
+Call `x0PredFromEps` directly when another part of the sampler already needs the same denoiser
+output. Both entry points use the same coefficient arithmetic and denominator protection.
+-/
+def x0Pred (sched : VPSchedule α T) (model : EpsModel α s) (x_t : Tensor α s)
+    (t : Fin (T + 1)) : Tensor α s :=
+  let tScalar : α := VPSchedule.timeOfIndex (α := α) (T := T) t
+  let epsHat : Tensor α s := model.eps x_t tScalar
+  x0PredFromEps sched x_t epsHat t
 
 /--
 One reverse DDPM step $x_t\to x_{t-1}$ with explicit noise $z$ (intended as
@@ -110,6 +123,7 @@ Order note:
 -/
 def ddpmSample (sched : VPSchedule α T) (model : EpsModel α s)
     (x_T : Tensor α s) (noise : Fin T → Tensor α s) : Tensor α s :=
-  (List.finRange T).foldr (fun k x => ddpmStep (α := α) (T := T) (s := s) sched model k x (noise k)) x_T
+  (List.finRange T).foldr
+    (fun k x => ddpmStep (α := α) (T := T) (s := s) sched model k x (noise k)) x_T
 
 end Generative.Diffusion

@@ -8,8 +8,6 @@ module
 
 public import NN.Proofs.Autograd.FDeriv.OpSpec
 
-public import Mathlib.Analysis.Calculus.FDeriv.Pi
-
 /-!
 # Elementwise
 
@@ -26,8 +24,8 @@ vector-valued ops (sigmoid/tanh/softplus/…).
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open scoped BigOperators
 
 noncomputable section
@@ -39,7 +37,7 @@ noncomputable section
 /--
 Apply a scalar function `f : ℝ → ℝ` coordinatewise to a vector.
 
-This is the Euclidean-space analogue of the tensor-level `map_spec`.
+This is the Euclidean-space analogue of the tensor-level `mapSpec`.
 -/
 def elemwiseVec {n : Nat} (f : ℝ → ℝ) : Vec n → Vec n :=
   fun x => WithLp.toLp 2 fun i : Fin n => f (x.ofLp i)
@@ -58,7 +56,8 @@ def evalCLM {n : Nat} (i : Fin n) : Vec n →L[ℝ] ℝ := by
   refine { toLinearMap := fLin, cont := ?_ }
   exact LinearMap.continuous_of_finiteDimensional (f := fLin)
 
-@[simp] lemma evalCLM_apply {n : Nat} (i : Fin n) (x : Vec n) :
+/-- The coordinate evaluation functional reads coordinate `i`. -/
+@[simp] theorem evalCLM_apply {n : Nat} (i : Fin n) (x : Vec n) :
     evalCLM (n := n) i x = x.ofLp i := rfl
 
 /--
@@ -198,15 +197,15 @@ theorem hasFDerivAt_elemwiseVec_at {n : Nat} {f f' : ℝ → ℝ} (x : Vec n)
 Evaluation lemma: converting an elementwise-mapped tensor back to coordinates agrees with applying
 `f` to the corresponding Euclidean coordinate.
 -/
-@[simp] lemma getScalar_map_spec_ofFnE {n : Nat} (f : ℝ → ℝ) (xV : Vec n) (i : Fin n) :
-    Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) f (ofFnE xV)) i = f (xV i) := by
-  -- `getScalarE_map_spec` + `getScalarE_ofFnE` and then evaluate at `i`.
-  have h :=
-    congrArg (fun v : Vec n => v.ofLp i) (getScalarE_map_spec (n := n) f (t := ofFnE xV))
-  -- Left: use `getScalarE_ofLp`. Right: `ofLp` of `e.symm` is just function evaluation.
-  simpa [getScalarE_ofLp, getScalarE_ofFnE, ofFnE, Proofs.Autograd.euclideanEquiv] using h
+@[simp] theorem getScalar_map_spec_ofFnE {n : Nat} (f : ℝ → ℝ) (xV : Vec n) (i : Fin n) :
+    TorchLean.Tensor.getScalar (mapSpec (s := .dim n .scalar) f (ofFnE xV)) i = f (xV i) := by
+  simp [mapSpec, ofFnE]
 
-@[simp] lemma getScalarE_map_spec_ofFnE_eq_elemwiseVec {n : Nat} (f : ℝ → ℝ) (xV : Vec n) :
+/-- Vectorized form of the previous lemma: mapping `f` over a tensor is `elemwiseVec f` on vectors.
+
+This is the statement that lets an elementwise operation's derivative be proved once on
+`EuclideanSpace` and then transported to every tensor of vector shape. -/
+@[simp] theorem getScalarE_map_spec_ofFnE_eq_elemwiseVec {n : Nat} (f : ℝ → ℝ) (xV : Vec n) :
     getScalarE (mapSpec (s := .dim n .scalar) f (ofFnE xV)) =
       elemwiseVec (n := n) f xV := by
   ext i
@@ -244,12 +243,14 @@ def exp {n : Nat} : OpSpecFDerivCorrect n n :=
     have hL :
         getScalarE ((expCorrect (s := .dim n .scalar)).jvp (ofFnE xV) (ofFnE dxV)) i
           =
-        dxV i * Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) MathFunctions.exp (ofFnE xV)) i := by
+        dxV i *
+          TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) MathFunctions.exp (ofFnE xV)) i := by
       simp [expCorrect, Spec.expOp, expSpec,
-        getScalarE, ofFnE, Spec.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
+        getScalarE, ofFnE, TorchLean.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
     -- simplify the `map_spec` term.
     have hMap :
-        Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) MathFunctions.exp (ofFnE xV)) i =
+        TorchLean.Tensor.getScalar (mapSpec (s := .dim n .scalar) MathFunctions.exp (ofFnE xV)) i =
           MathFunctions.exp (xV i) := by
       simp
     -- RHS: apply the derivative CLM at coordinate `i`.
@@ -257,19 +258,20 @@ def exp {n : Nat} : OpSpecFDerivCorrect n n :=
         (elemwiseDerivCLM (n := n) (fun z => Real.exp z) xV) dxV i = dxV i * Real.exp (xV i) := by
       rfl
     -- Combine.
-    simpa [hMap] using (hL.trans hR.symm)
+    rw [hMap] at hL
+    exact hL.trans hR.symm
 }
 
 /-- `square` as an `OpSpecFDerivCorrect` instance (elementwise `x ↦ x^2`). -/
 def square {n : Nat} : OpSpecFDerivCorrect n n :=
 {
   correct := squareCorrect (s := .dim n .scalar)
-  deriv := fun xV => elemwiseDerivCLM (n := n) (fun z => (Numbers.two : ℝ) * z) xV
+  deriv := fun xV => elemwiseDerivCLM (n := n) (fun z => (2 : ℝ) * z) xV
   hasFDerivAt := by
     intro xV
     have h :=
       hasFDerivAt_elemwiseVec (n := n) (x := xV)
-        (f := fun z : ℝ => z * z) (f' := fun z => (Numbers.two : ℝ) * z)
+        (f := fun z : ℝ => z * z) (f' := fun z => (2 : ℝ) * z)
         (fun z => Proofs.square_deriv_correct (x := z))
     have hfun :
         (fun xV : Vec n =>
@@ -287,32 +289,35 @@ def square {n : Nat} : OpSpecFDerivCorrect n n :=
         getScalarE ((squareCorrect (s := .dim n .scalar)).jvp (ofFnE xV) (ofFnE dxV)) i
           =
         dxV i *
-          Spec.Tensor.getScalar (mulSpec (fill (Numbers.two : ℝ) (.dim n .scalar)) (ofFnE xV)) i := by
-      simp [squareCorrect, Spec.squareOp, getScalarE, ofFnE, Spec.Tensor.getScalar_ofFn,
+          TorchLean.Tensor.getScalar
+            (mulSpec (Tensor.full (.dim n .scalar) (2 : ℝ)) (ofFnE xV)) i := by
+      simp [squareCorrect, Spec.squareOp, getScalarE, ofFnE, TorchLean.Tensor.getScalar_ofFn,
         Spec.getScalar_mul_spec]
     have hMap :
-        Spec.Tensor.getScalar (mulSpec (fill (Numbers.two : ℝ) (.dim n .scalar)) (ofFnE xV)) i =
-          (Numbers.two : ℝ) * xV i := by
+        TorchLean.Tensor.getScalar
+            (mulSpec (Tensor.full (.dim n .scalar) (2 : ℝ)) (ofFnE xV)) i =
+          (2 : ℝ) * xV i := by
       calc
-        Spec.Tensor.getScalar (mulSpec (fill (Numbers.two : ℝ) (.dim n .scalar)) (ofFnE xV)) i
-            =
-          Spec.Tensor.getScalar (fill (Numbers.two : ℝ) (.dim n .scalar)) i *
-            Spec.Tensor.getScalar (ofFnE xV) i := by
-              exact Spec.getScalar_mul_spec (a := fill (Numbers.two : ℝ) (.dim n .scalar))
+        TorchLean.Tensor.getScalar
+              (mulSpec (Tensor.full (.dim n .scalar) (2 : ℝ)) (ofFnE xV)) i =
+          TorchLean.Tensor.getScalar (Tensor.full (.dim n .scalar) (2 : ℝ)) i *
+            TorchLean.Tensor.getScalar (ofFnE xV) i := by
+              exact Spec.getScalar_mul_spec (a := Tensor.full (.dim n .scalar) (2 : ℝ))
                 (b := ofFnE xV) (i := i)
-        _ = (Numbers.two : ℝ) * xV i := by
+        _ = (2 : ℝ) * xV i := by
               have hFill :
-                  Spec.Tensor.getScalar (fill (Numbers.two : ℝ) (.dim n .scalar)) i =
-                    (Numbers.two : ℝ) := by
-                simp [fill, Spec.Tensor.getScalar]
-              have hX : Spec.Tensor.getScalar (ofFnE xV) i = xV i := by
+                  TorchLean.Tensor.getScalar (Tensor.full (.dim n .scalar) (2 : ℝ)) i =
+                    (2 : ℝ) := by
+                exact TorchLean.Tensor.getScalar_full n (2 : ℝ) i
+              have hX : TorchLean.Tensor.getScalar (ofFnE xV) i = xV i := by
                 simp [ofFnE]
               rw [hFill, hX]
     have hR :
-        (elemwiseDerivCLM (n := n) (fun z => (Numbers.two : ℝ) * z) xV) dxV i =
-          dxV i * ((Numbers.two : ℝ) * xV i) := by
+        (elemwiseDerivCLM (n := n) (fun z => (2 : ℝ) * z) xV) dxV i =
+          dxV i * ((2 : ℝ) * xV i) := by
       rfl
-    simpa [hMap] using (hL.trans hR.symm)
+    rw [hMap] at hL
+    exact hL.trans hR.symm
 }
 
 /-- `sinh` as an `OpSpecFDerivCorrect` instance (elementwise). -/
@@ -342,17 +347,19 @@ def sinh {n : Nat} : OpSpecFDerivCorrect n n :=
     have hL :
         getScalarE ((sinhCorrect (s := .dim n .scalar)).jvp (ofFnE xV) (ofFnE dxV)) i
           =
-        dxV i * Spec.Tensor.getScalar (coshSpec (s := .dim n .scalar) (ofFnE xV)) i := by
+        dxV i * TorchLean.Tensor.getScalar (coshSpec (s := .dim n .scalar) (ofFnE xV)) i := by
       simp [sinhCorrect, Spec.sinhOp, coshSpec,
-        getScalarE, ofFnE, Spec.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
+        getScalarE, ofFnE, TorchLean.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
     have hMap :
-        Spec.Tensor.getScalar (coshSpec (s := .dim n .scalar) (ofFnE xV)) i = Real.cosh (xV i) := by
+        TorchLean.Tensor.getScalar (coshSpec (s := .dim n .scalar) (ofFnE xV)) i
+          = Real.cosh (xV i) := by
       simp [coshSpec, mathfunc_cosh_eq_rcosh]
     have hR :
         (elemwiseDerivCLM (n := n) (fun z => Real.cosh z) xV) dxV i =
           dxV i * Real.cosh (xV i) := by
       rfl
-    simpa [hMap] using (hL.trans hR.symm)
+    rw [hMap] at hL
+    exact hL.trans hR.symm
 }
 
 /-- `cosh` as an `OpSpecFDerivCorrect` instance (elementwise). -/
@@ -382,17 +389,19 @@ def cosh {n : Nat} : OpSpecFDerivCorrect n n :=
     have hL :
         getScalarE ((coshCorrect (s := .dim n .scalar)).jvp (ofFnE xV) (ofFnE dxV)) i
           =
-        dxV i * Spec.Tensor.getScalar (sinhSpec (s := .dim n .scalar) (ofFnE xV)) i := by
+        dxV i * TorchLean.Tensor.getScalar (sinhSpec (s := .dim n .scalar) (ofFnE xV)) i := by
       simp [coshCorrect, Spec.coshOp, sinhSpec,
-        getScalarE, ofFnE, Spec.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
+        getScalarE, ofFnE, TorchLean.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
     have hMap :
-        Spec.Tensor.getScalar (sinhSpec (s := .dim n .scalar) (ofFnE xV)) i = Real.sinh (xV i) := by
+        TorchLean.Tensor.getScalar (sinhSpec (s := .dim n .scalar) (ofFnE xV)) i
+          = Real.sinh (xV i) := by
       simp [sinhSpec, mathfunc_sinh_eq_rsinh]
     have hR :
         (elemwiseDerivCLM (n := n) (fun z => Real.sinh z) xV) dxV i =
           dxV i * Real.sinh (xV i) := by
       rfl
-    simpa [hMap] using (hL.trans hR.symm)
+    rw [hMap] at hL
+    exact hL.trans hR.symm
 }
 
 /-- `tanh` as an `OpSpecFDerivCorrect` instance (elementwise). -/
@@ -422,12 +431,15 @@ def tanh {n : Nat} : OpSpecFDerivCorrect n n :=
     have hL :
         getScalarE ((tanhCorrect (s := .dim n .scalar)).jvp (ofFnE xV) (ofFnE dxV)) i
           =
-        dxV i * Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) Activation.Math.tanhDerivSpec (ofFnE
-          xV)) i := by
+        dxV i *
+          TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) Activation.Math.tanhDerivSpec (ofFnE xV)) i := by
       simp [tanhCorrect, Spec.tanhOp, Spec.liftElementwise,
-        Activation.tanhDerivSpec, getScalarE, ofFnE, Spec.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
+        Activation.tanhDerivSpec, getScalarE, ofFnE,
+        TorchLean.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
     have hMap :
-        Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) Activation.Math.tanhDerivSpec (ofFnE xV)) i
+        TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) Activation.Math.tanhDerivSpec (ofFnE xV)) i
           =
         Activation.Math.tanhDerivSpec (xV i) := by
       simp
@@ -435,7 +447,8 @@ def tanh {n : Nat} : OpSpecFDerivCorrect n n :=
         (elemwiseDerivCLM (n := n) Activation.Math.tanhDerivSpec xV) dxV i =
           dxV i * Activation.Math.tanhDerivSpec (xV i) := by
       rfl
-    simpa [hMap] using (hL.trans hR.symm)
+    rw [hMap] at hL
+    exact hL.trans hR.symm
 }
 
 /-- `sigmoid` as an `OpSpecFDerivCorrect` instance (elementwise). -/
@@ -466,12 +479,14 @@ def sigmoid {n : Nat} : OpSpecFDerivCorrect n n :=
         getScalarE ((sigmoidCorrect (s := .dim n .scalar)).jvp (ofFnE xV) (ofFnE dxV)) i
           =
         dxV i *
-          Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) Activation.Math.sigmoidDerivSpec (ofFnE xV))
-            i := by
+          TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) Activation.Math.sigmoidDerivSpec (ofFnE xV)) i := by
       simp [sigmoidCorrect, Spec.sigmoidOp, Spec.liftElementwise,
-        Activation.sigmoidDerivSpec, getScalarE, ofFnE, Spec.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
+        Activation.sigmoidDerivSpec, getScalarE, ofFnE,
+        TorchLean.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
     have hMap :
-        Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) Activation.Math.sigmoidDerivSpec (ofFnE xV)) i
+        TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) Activation.Math.sigmoidDerivSpec (ofFnE xV)) i
           =
         Activation.Math.sigmoidDerivSpec (xV i) := by
       simp
@@ -479,7 +494,8 @@ def sigmoid {n : Nat} : OpSpecFDerivCorrect n n :=
         (elemwiseDerivCLM (n := n) Activation.Math.sigmoidDerivSpec xV) dxV i =
           dxV i * Activation.Math.sigmoidDerivSpec (xV i) := by
       rfl
-    simpa [hMap] using (hL.trans hR.symm)
+    rw [hMap] at hL
+    exact hL.trans hR.symm
 }
 
 /-- `softplus` as an `OpSpecFDerivCorrect` instance (elementwise). -/
@@ -510,13 +526,14 @@ def softplus {n : Nat} : OpSpecFDerivCorrect n n :=
         getScalarE ((softplusCorrect (s := .dim n .scalar)).jvp (ofFnE xV) (ofFnE dxV)) i
           =
         dxV i *
-          Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) Activation.Math.softplusDerivSpec (ofFnE
-            xV)) i := by
+          TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) Activation.Math.softplusDerivSpec (ofFnE xV)) i := by
       simp [softplusCorrect, Spec.softplusOp, Spec.liftElementwise,
-        Activation.softplusDerivSpec, getScalarE, ofFnE, Spec.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
+        Activation.softplusDerivSpec, getScalarE, ofFnE,
+        TorchLean.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
     have hMap :
-        Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) Activation.Math.softplusDerivSpec (ofFnE xV))
-          i
+        TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) Activation.Math.softplusDerivSpec (ofFnE xV)) i
           =
         Activation.Math.softplusDerivSpec (xV i) := by
       simp
@@ -524,7 +541,8 @@ def softplus {n : Nat} : OpSpecFDerivCorrect n n :=
         (elemwiseDerivCLM (n := n) Activation.Math.softplusDerivSpec xV) dxV i =
           dxV i * Activation.Math.softplusDerivSpec (xV i) := by
       rfl
-    simpa [hMap] using (hL.trans hR.symm)
+    rw [hMap] at hL
+    exact hL.trans hR.symm
 }
 
 /-- SiLU as an `OpSpecFDerivCorrect` instance (elementwise). -/
@@ -555,12 +573,14 @@ def silu {n : Nat} : OpSpecFDerivCorrect n n :=
         getScalarE ((siluCorrect (s := .dim n .scalar)).jvp (ofFnE xV) (ofFnE dxV)) i
           =
         dxV i *
-          Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) Activation.Math.swishDerivSpec (ofFnE xV))
-            i := by
+          TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) Activation.Math.swishDerivSpec (ofFnE xV)) i := by
       simp [siluCorrect, Spec.siluOp,
-        Activation.swishDerivSpec, getScalarE, ofFnE, Spec.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
+        Activation.swishDerivSpec, getScalarE, ofFnE,
+        TorchLean.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
     have hMap :
-        Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) Activation.Math.swishDerivSpec (ofFnE xV)) i
+        TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) Activation.Math.swishDerivSpec (ofFnE xV)) i
           =
         Activation.Math.swishDerivSpec (xV i) := by
       simp
@@ -568,7 +588,8 @@ def silu {n : Nat} : OpSpecFDerivCorrect n n :=
         (elemwiseDerivCLM (n := n) Activation.Math.swishDerivSpec xV) dxV i =
           dxV i * Activation.Math.swishDerivSpec (xV i) := by
       rfl
-    simpa [hMap] using (hL.trans hR.symm)
+    rw [hMap] at hL
+    exact hL.trans hR.symm
 }
 
 /-- Tanh-approximate GELU as an `OpSpecFDerivCorrect` instance (elementwise). -/
@@ -599,12 +620,14 @@ def gelu {n : Nat} : OpSpecFDerivCorrect n n :=
         getScalarE ((geluCorrect (s := .dim n .scalar)).jvp (ofFnE xV) (ofFnE dxV)) i
           =
         dxV i *
-          Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) Activation.Math.geluDerivSpec (ofFnE xV))
-            i := by
+          TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) Activation.Math.geluDerivSpec (ofFnE xV)) i := by
       simp [geluCorrect, Spec.geluOp,
-        Activation.geluDerivSpec, getScalarE, ofFnE, Spec.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
+        Activation.geluDerivSpec, getScalarE, ofFnE,
+        TorchLean.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
     have hMap :
-        Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) Activation.Math.geluDerivSpec (ofFnE xV)) i
+        TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) Activation.Math.geluDerivSpec (ofFnE xV)) i
           =
         Activation.Math.geluDerivSpec (xV i) := by
       simp
@@ -612,11 +635,12 @@ def gelu {n : Nat} : OpSpecFDerivCorrect n n :=
         (elemwiseDerivCLM (n := n) Activation.Math.geluDerivSpec xV) dxV i =
           dxV i * Activation.Math.geluDerivSpec (xV i) := by
       rfl
-    simpa [hMap] using (hL.trans hR.symm)
+    rw [hMap] at hL
+    exact hL.trans hR.symm
 }
 
 /--
-`safe_log` as an `OpSpecFDerivCorrect` instance (elementwise), assuming `ε > 0`.
+`safeLog` as an `OpSpecFDerivCorrect` instance (elementwise), assuming `ε > 0`.
 
 This is the differentiable calculus fact; the corresponding dot-level VJP correctness lives in
 `NN.Proofs.Autograd.Core.RealCorrectness`.
@@ -648,13 +672,16 @@ def safeLog {n : Nat} (ε : ℝ) (hε : 0 < ε) : OpSpecFDerivCorrect n n :=
         getScalarE ((safeLogCorrect (s := .dim n .scalar) ε).jvp (ofFnE xV) (ofFnE dxV)) i
           =
         dxV i *
-          Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) (fun x => Activation.Math.safeLogDerivSpec x
-            ε) (ofFnE xV)) i := by
+          TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) (fun x => Activation.Math.safeLogDerivSpec x ε)
+              (ofFnE xV)) i := by
       simp [safeLogCorrect, Spec.safeLogOp, Spec.liftElementwise,
-        Activation.safeLogDerivSpec, getScalarE, ofFnE, Spec.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
+        Activation.safeLogDerivSpec, getScalarE, ofFnE,
+        TorchLean.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
     have hMap :
-        Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) (fun x => Activation.Math.safeLogDerivSpec x
-          ε) (ofFnE xV)) i
+        TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) (fun x => Activation.Math.safeLogDerivSpec x ε)
+              (ofFnE xV)) i
           =
         Activation.Math.safeLogDerivSpec (xV i) ε := by
       simp
@@ -662,11 +689,12 @@ def safeLog {n : Nat} (ε : ℝ) (hε : 0 < ε) : OpSpecFDerivCorrect n n :=
         (elemwiseDerivCLM (n := n) (fun x => Activation.Math.safeLogDerivSpec x ε) xV) dxV i =
           dxV i * Activation.Math.safeLogDerivSpec (xV i) ε := by
       rfl
-    simpa [hMap] using (hL.trans hR.symm)
+    rw [hMap] at hL
+    exact hL.trans hR.symm
 }
 
 /--
-`smooth_abs` as an `OpSpecFDerivCorrect` instance (elementwise), assuming `ε > 0`.
+`smoothAbs` as an `OpSpecFDerivCorrect` instance (elementwise), assuming `ε > 0`.
 
 This is a differentiable approximation to `abs`.
 -/
@@ -698,13 +726,16 @@ def smoothAbs {n : Nat} (ε : ℝ) (hε : 0 < ε) : OpSpecFDerivCorrect n n :=
         getScalarE ((smoothAbsCorrect (s := .dim n .scalar) ε).jvp (ofFnE xV) (ofFnE dxV)) i
           =
         dxV i *
-          Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) (fun x => Activation.Math.smoothAbsDerivSpec
-            x ε) (ofFnE xV)) i := by
+          TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) (fun x => Activation.Math.smoothAbsDerivSpec x ε)
+              (ofFnE xV)) i := by
       simp [smoothAbsCorrect, Spec.smoothAbsOp, Spec.liftElementwise,
-        Activation.smoothAbsDerivSpec, getScalarE, ofFnE, Spec.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
+        Activation.smoothAbsDerivSpec, getScalarE, ofFnE,
+        TorchLean.Tensor.getScalar_ofFn, Spec.getScalar_mul_spec]
     have hMap :
-        Spec.Tensor.getScalar (mapSpec (s := .dim n .scalar) (fun x => Activation.Math.smoothAbsDerivSpec x
-          ε) (ofFnE xV)) i
+        TorchLean.Tensor.getScalar
+            (mapSpec (s := .dim n .scalar) (fun x => Activation.Math.smoothAbsDerivSpec x ε)
+              (ofFnE xV)) i
           =
         Activation.Math.smoothAbsDerivSpec (xV i) ε := by
       simp
@@ -712,7 +743,8 @@ def smoothAbs {n : Nat} (ε : ℝ) (hε : 0 < ε) : OpSpecFDerivCorrect n n :=
         (elemwiseDerivCLM (n := n) (fun x => Activation.Math.smoothAbsDerivSpec x ε) xV) dxV i =
           dxV i * Activation.Math.smoothAbsDerivSpec (xV i) ε := by
       rfl
-    simpa [hMap] using (hL.trans hR.symm)
+    rw [hMap] at hL
+    exact hL.trans hR.symm
 }
 
 end OpSpecFDerivCorrect

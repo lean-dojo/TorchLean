@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Context
-public import NN.Spec.Core.TensorOps
+public import NN.Spec.Core.Tensor.Core
 
 /-!
 # Diffusion core (spec layer)
@@ -20,8 +20,8 @@ This module defines the common vocabulary used by TorchLean's diffusion / flow s
 
 Design notes:
 
-- `EpsModel` is deliberately backbone-independent: it is a pure function of the current state `x` and a
-  scalar time parameter `t` (typically normalized into `[0,1]`).
+- `EpsModel` is deliberately backbone-independent: it is a pure function of the current state `x`
+  and a scalar time parameter `t` (typically normalized into `[0,1]`).
 - Schedules and samplers remain separate modules so we can reuse the same denoiser with:
   - discrete DDPM / DDIM-style samplers, and
   - continuous-time probability-flow ODE samplers.
@@ -37,10 +37,10 @@ References (informal pointers):
 
 namespace Generative.Diffusion
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- A safe square root used by diffusion schedules and samplers:
 $\sqrt{\max(x,0)}$.
@@ -59,7 +59,7 @@ def sqrtNonneg (x : α) : α :=
 This is primarily used to avoid $1/0$ in edge cases like $t=0$ or degenerate schedules.
 -/
 def safeDiv (x y : α) : α :=
-  x / (y + Numbers.epsilon)
+  x / (y + Context.defaultEpsilon)
 
 /-- Noise-prediction model interface: $\varepsilon_\theta(x,t)$.
 
@@ -73,7 +73,7 @@ Notes:
   closing over extra context in the `eps` function, or by defining a richer model record in user
   code.
 -/
-structure EpsModel (α : Type) (s : Shape) [Context α] where
+structure EpsModel (α : Type) (s : Shape) [TorchLean.Storage α] [Context α] where
   /-- Predict $\varepsilon$ from a noisy sample $x$ at scalar time $t$. -/
   eps : Tensor α s → α → Tensor α s
 

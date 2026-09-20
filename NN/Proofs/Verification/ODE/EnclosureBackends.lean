@@ -6,9 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.FP32
-public import NN.Floats.IEEEExec.Bridge.FP32
 public import NN.Proofs.Verification.ODE.Enclosure
+public import NN.Floats.FP32.Core
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured
+public import FloatLib.Floats.Formats.IEEE754.Native
 
 /-!
 # Backend Views for ODE Enclosures
@@ -30,6 +31,9 @@ while the ODE comparison theorem consumes the resulting real inequalities.
 -/
 
 @[expose] public section
+
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 
 namespace NN.Proofs.Verification.ODE.Enclosure
@@ -240,21 +244,21 @@ end ConstantExtension
 
 /-! ## IEEE32Exec wrappers -/
 
-open TorchLean.Floats.IEEE754
-
 /--
 Real interpretation of an executable IEEE-754 binary32 trajectory.
 
-This abbreviation is the real-valued view used after the caller has supplied the required rounding and error guarantees.
+This abbreviation is the real-valued view used after the caller has supplied the required rounding
+and error guarantees.
 -/
-abbrev ieee32RealView (g : ℝ → IEEE32Exec) : ℝ → ℝ := fun t => IEEE32Exec.toReal (g t)
+abbrev ieee32RealView (g : ℝ → (ExecFloat.Binary 8 23)) : ℝ → ℝ := fun t =>
+  (ExecFloat.Binary.toModel (g t)).toReal
 
 namespace LocalCorridor
 
 /-- Local corridor theorem specialized to the executable IEEE-754 binary32 backend. -/
 theorem forIEEE32Exec
     {T : ℝ} (hT : 0 ≤ T) {f : ℝ → ℝ → ℝ}
-    {u uL uU uL' uU' : ℝ → IEEE32Exec} {a : ℝ}
+    {u uL uU uL' uU' : ℝ → (ExecFloat.Binary 8 23)} {a : ℝ}
     (hu_cont : ContinuousOn (ieee32RealView u) (Icc 0 T))
     (hu_der :
       ∀ t ∈ Ico 0 T,
@@ -263,11 +267,13 @@ theorem forIEEE32Exec
             ((ieee32RealView u) t))) (Ici t) t)
     (hu0 : (ieee32RealView u) 0 = a)
     (hL_cont : ContinuousOn (ieee32RealView uL) (Icc 0 T))
-    (hL_der : ∀ t ∈ Ico 0 T, HasDerivWithinAt (ieee32RealView uL) ((ieee32RealView uL') t) (Ici t) t)
+    (hL_der : ∀ t ∈ Ico 0 T,
+      HasDerivWithinAt (ieee32RealView uL) ((ieee32RealView uL') t) (Ici t) t)
     (hL_sub : ∀ t ∈ Ico 0 T, (ieee32RealView uL') t ≤ f t ((ieee32RealView uL) t))
     (hL0 : (ieee32RealView uL) 0 ≤ a)
     (hU_cont : ContinuousOn (ieee32RealView uU) (Icc 0 T))
-    (hU_der : ∀ t ∈ Ico 0 T, HasDerivWithinAt (ieee32RealView uU) ((ieee32RealView uU') t) (Ici t) t)
+    (hU_der : ∀ t ∈ Ico 0 T,
+      HasDerivWithinAt (ieee32RealView uU) ((ieee32RealView uU') t) (Ici t) t)
     (hU_sup : ∀ t ∈ Ico 0 T, f t ((ieee32RealView uU) t) ≤ (ieee32RealView uU') t)
     (hU0 : a ≤ (ieee32RealView uU) 0)
     (hLU : ∀ t ∈ Icc 0 T, (ieee32RealView uL) t ≤ (ieee32RealView uU) t) :
@@ -289,7 +295,7 @@ namespace ConstantExtension
 /-- Constant-extension theorem specialized to the executable IEEE-754 binary32 backend. -/
 theorem forIEEE32Exec
     {T τ : ℝ} (hT : 0 ≤ T) (hτ : T ≤ τ) {f : ℝ → ℝ → ℝ}
-    {u uL uU uL' uU' : ℝ → IEEE32Exec} {a : ℝ}
+    {u uL uU uL' uU' : ℝ → (ExecFloat.Binary 8 23)} {a : ℝ}
     (hu_cont : ContinuousOn (ieee32RealView u) (Icc 0 τ))
     (hu_der : ∀ t ∈ Ico 0 τ,
       HasDerivWithinAt (ieee32RealView u)
@@ -298,11 +304,13 @@ theorem forIEEE32Exec
           (constantExtensionAfter T (ieee32RealView uU)) t ((ieee32RealView u) t))) (Ici t) t)
     (hu0 : (ieee32RealView u) 0 = a)
     (hL_cont : ContinuousOn (ieee32RealView uL) (Icc 0 T))
-    (hL_der : ∀ t ∈ Ico 0 T, HasDerivWithinAt (ieee32RealView uL) ((ieee32RealView uL') t) (Ici t) t)
+    (hL_der : ∀ t ∈ Ico 0 T,
+      HasDerivWithinAt (ieee32RealView uL) ((ieee32RealView uL') t) (Ici t) t)
     (hL_sub : ∀ t ∈ Ico 0 T, (ieee32RealView uL') t ≤ f t ((ieee32RealView uL) t))
     (hL0 : (ieee32RealView uL) 0 ≤ a)
     (hU_cont : ContinuousOn (ieee32RealView uU) (Icc 0 T))
-    (hU_der : ∀ t ∈ Ico 0 T, HasDerivWithinAt (ieee32RealView uU) ((ieee32RealView uU') t) (Ici t) t)
+    (hU_der : ∀ t ∈ Ico 0 T,
+      HasDerivWithinAt (ieee32RealView uU) ((ieee32RealView uU') t) (Ici t) t)
     (hU_sup : ∀ t ∈ Ico 0 T, f t ((ieee32RealView uU) t) ≤ (ieee32RealView uU') t)
     (hU0 : a ≤ (ieee32RealView uU) 0)
     (hLU : ∀ t ∈ Icc 0 T, (ieee32RealView uL) t ≤ (ieee32RealView uU) t)
@@ -311,7 +319,8 @@ theorem forIEEE32Exec
         0 ≤ f T ((ieee32RealView uL) T) ∧ f T ((ieee32RealView uL) T) ≤ f t ((ieee32RealView uL) T))
     (hUpper :
       ∀ t, T < t →
-        f t ((ieee32RealView uU) T) ≤ f T ((ieee32RealView uU) T) ∧ f T ((ieee32RealView uU) T) ≤ 0) :
+        f t ((ieee32RealView uU) T) ≤ f T ((ieee32RealView uU) T) ∧
+          f T ((ieee32RealView uU) T) ≤ 0) :
     (∀ t ∈ Icc 0 τ,
         constantExtensionAfter T (ieee32RealView uL) t ≤ (ieee32RealView u) t ∧
           (ieee32RealView u) t ≤ constantExtensionAfter T (ieee32RealView uU) t) ∧

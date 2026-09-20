@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Core.Numeric
-public import Mathlib.Logic.Basic
+public import NN.Core.Numeric.Quotient
 
 /-!
 # `Context α`: scalar interface for models + proofs
@@ -16,16 +16,17 @@ TorchLean is designed to be *scalar-polymorphic*: the same model/layer definitio
 instantiated over many numeric backends:
 
 - `Float` (fast binary64 execution with a logical model and a separate native boundary),
-- `TorchLean.Floats.IEEE754.IEEE32Exec` (executable bit-level IEEE-754 binary32),
-- interval enclosures for verification (see `NN/Floats/Interval/*`),
+- FloatLib configured binary values, with the exponent and fraction widths selected in their type
+  (import `NN.Spec.Core.FloatInstances` for their adapters),
+- interval enclosures for verification,
 - `ℝ` (proof-level mathematics).
 
 The scalar parameter serves several purposes:
 
 - We did not want separate "Float model code", "proof model code", and "verification model code"
   that slowly diverge and become inconsistent.
-- In practice, we iterate across phases: execute a compact model, state the proof-level contract, then
-  run verification bounds. Rewriting each model for each phase is error-prone.
+- In practice, we iterate across phases: execute a compact model, state the proof-level contract,
+  then run verification bounds. Rewriting each model for each phase is error-prone.
 - A scalar-polymorphic specification keeps the layer and model definitions shared while the scalar
   instance determines their numerical meaning.
 - Cross-checking happens at the scalar semantics layer, not inside duplicated model definitions.
@@ -61,6 +62,11 @@ transcendental functions (exp/tanh/log/sqrt) used by activations and losses.
 - For "paper theorems", the spec layer fixes `Spec.SpecScalar := ℝ` (see
   `NN/Spec/Core/Scalar.lean`).
 - `Context.decidableGT` is included so executable code can decide comparisons (e.g. ReLU / argmax).
+  The derived global `DecidableRel` instance has low priority so native decision procedures win.
+- `LawfulContext α` (below) records when a `Context` agrees with a Mathlib ordered field on `α`.
+- The `ℝ` context dictionary lives in `NN.Spec.Core.Context.Real` and the opt-in rational one in
+  `NN.Spec.Core.Context.Rational`. FloatLib's shared elementary-function class already imports real
+  analysis; selecting a context does not add an accuracy theorem for finite-precision arithmetic.
 - For executable examples, `Context.gtBool` converts `x > y` into a printable `Bool`.
 - For interval arithmetic, we override some order/comparison behavior (see `namespace Interval`
   below).
@@ -68,15 +74,38 @@ transcendental functions (exp/tanh/log/sqrt) used by activations and losses.
 
 @[expose] public section
 
-/-- The full scalar interface required by spec‑level tensors and models. -/
+/-- The full scalar interface required by spec-level tensors and models. -/
 class Context (α : Type) extends
   Inhabited α, One α, Zero α,
   Add α, Sub α, Mul α, Div α, Neg α, Pow α α, Max α, Min α,
   BEq α, LT α, LE α, -- For ordering
-  MathFunctions α, Numbers α,
-  Coe Nat α where -- For converting natural numbers to the type
+  MathFunctions α,
+  NatCast α, RatCast α, TorchLean.Numeric.QuotientArithmetic α where
+  /--
+  Convert a rational constant using the backend's arithmetic.
+
+  The default casts its numerator and denominator separately. Native `Float`, `Float32`, and
+  configured binary backends override this to round the exact fraction, avoiding overflow in
+  either intermediate integer cast.
+  -/
+  ratCast value :=
+    let numerator : α := match value.num with
+      | .ofNat n => (n : α)
+      | .negSucc n => -((n + 1 : Nat) : α)
+    numerator / (value.den : α)
+  /-- Backend-selected safeguard used by default in guarded formulas; not machine epsilon. -/
+  defaultEpsilon : α
   /-- Decision procedure for the scalar type's strict order. -/
   decidableGT : DecidableRel (· > · : α → α → Prop)
+  /--
+  Remove differentiation metadata from a scalar at a `detach` boundary.
+
+  Ordinary numeric carriers leave this as `none`, so detaching a tensor can reuse its storage.
+  A carrier such as `Dual α` supplies a map that keeps the primal value and clears its tangents.
+  This is needed when a reverse pass runs over dual numbers: cutting the tape edge alone would
+  leave the detached value's forward tangent available to later operations.
+  -/
+  stopGradient? : Option (α → α) := none
 
 namespace Context
 
@@ -85,100 +114,101 @@ def gtBool {α : Type} [Context α] (x y : α) : Bool :=
   let _ : Decidable (x > y) := (Context.decidableGT) x y
   decide (x > y)
 
+/-- Clear a scalar's differentiation metadata, if its carrier has any. -/
+def stopGradient {α : Type} [Context α] (x : α) : α :=
+  match Context.stopGradient? (α := α) with
+  | none => x
+  | some clear => clear x
+
 end Context
 
-/-- A `Context` includes a decidable `>` relation; expose it as a standard typeclass. -/
-instance {α : Type} [Context α] : DecidableRel ((· > ·) : α → α → Prop) :=
+/--
+A `Context` includes a decidable `>` relation; expose it as a standard typeclass.
+
+The instance has low priority so that a type's own decision procedure (`Real.decidableLT`,
+`Float.decLt`, ...) wins whenever one exists.
+-/
+instance (priority := low) {α : Type} [Context α] :
+    DecidableRel ((· > ·) : α → α → Prop) :=
   Context.decidableGT
 
 /-!
-## Rational Backend
+## Lawful contexts
 
-`Context` includes transcendental functions and real-valued exponentiation (`Pow α α`) because many
-models (softmax, tanh, etc.) need them when instantiated over `Float` / `ℝ` / interval scalars.
+`Context α` carries no laws: it only bundles operations. `LawfulContext α` records, for a scalar
+type that also carries a Mathlib ordered field structure, that the `Context` dictionary computes
+exactly the same operations. Generic proofs about scalar-polymorphic specifications can then
+rewrite the dictionary operations into the ordinary ring operations and finish with Mathlib.
 
-For `ℚ`, most transcendental functions do not map rationals to rationals, so there is no canonical
-exact interpretation. TorchLean therefore does **not** install the rational `Context` globally.
-Purely algebraic tests can opt in explicitly with:
-
-```lean
-open scoped NN.Spec.RationalAlgebraic
-```
-
-Current policy:
-- `abs` is exact.
-- `pow x y` is supported only when `y` is an integer rational (`y.den = 1`); otherwise it returns
-  `0`.
-- Other transcendental functions are defined as `0` only in this explicitly scoped algebraic
-  backend. This makes accidental softmax/GELU/tanh-over-`ℚ` use a typeclass error by default.
+Only exact facts are recorded. Transcendental constants (`lnTen`, `pi`, ...) and the total power
+operation are backend specific and stay unconstrained.
 -/
-
-namespace NN.Spec.RationalAlgebraic
 
 /--
-`Pow ℚ ℚ` instance used for the rational backend.
+Compatibility of a `Context` dictionary with a linearly ordered field structure on the same type.
 
-Policy: support `x^y` only when `y` is an integer rational (`y.den = 1`); otherwise return `0`.
-The instance is scoped so it is unavailable unless the caller explicitly opens
-`NN.Spec.RationalAlgebraic`.
+Each field equates a `Context` projection (written with the explicit instance path
+`Context.to*`) with the corresponding Mathlib operation.
 -/
-scoped instance instPowRatRat : Pow ℚ ℚ where
-  pow x y :=
-    if y.den = 1 then
-      x ^ y.num
-    else
-      0
+class LawfulContext (α : Type) [Context α] [Field α] [LinearOrder α]
+    [IsStrictOrderedRing α] : Prop where
+  /-- Dictionary addition is ring addition. -/
+  add_eq (x y : α) :
+    @HAdd.hAdd α α α (@instHAdd α Context.toAdd) x y =
+      @HAdd.hAdd α α α (@instHAdd α Distrib.toAdd) x y
+  /-- Dictionary multiplication is ring multiplication. -/
+  mul_eq (x y : α) :
+    @HMul.hMul α α α (@instHMul α Context.toMul) x y =
+      @HMul.hMul α α α (@instHMul α Distrib.toMul) x y
+  /-- Dictionary subtraction is ring subtraction. -/
+  sub_eq (x y : α) :
+    @HSub.hSub α α α (@instHSub α Context.toSub) x y =
+      @HSub.hSub α α α (@instHSub α SubNegMonoid.toSub) x y
+  /-- Dictionary division is field division. -/
+  div_eq (x y : α) :
+    @HDiv.hDiv α α α (@instHDiv α Context.toDiv) x y =
+      @HDiv.hDiv α α α (@instHDiv α DivisionRing.toDiv) x y
+  /-- Dictionary negation is ring negation. -/
+  neg_eq (x : α) :
+    @Neg.neg α Context.toNeg x = @Neg.neg α NegZeroClass.toNeg x
+  /-- The dictionary zero is the ring zero. -/
+  zero_eq : @Zero.zero α Context.toZero = @Zero.zero α MulZeroClass.toZero
+  /-- The dictionary one is the ring one. -/
+  one_eq : @One.one α Context.toOne = @One.one α Monoid.toOne
+  /-- The dictionary strict order is the field order. -/
+  lt_iff (x y : α) : @LT.lt α Context.toLT x y ↔ @LT.lt α Preorder.toLT x y
+  /-- The dictionary order is the field order. -/
+  le_iff (x y : α) : @LE.le α Context.toLE x y ↔ @LE.le α Preorder.toLE x y
+  /-- Dictionary `max` is the lattice maximum. -/
+  max_eq (x y : α) : @Max.max α Context.toMax x y = @Max.max α LinearOrder.toMax x y
+  /-- Dictionary `min` is the lattice minimum. -/
+  min_eq (x y : α) : @Min.min α Context.toMin x y = @Min.min α LinearOrder.toMin x y
+  /-- Boolean equality decides propositional equality. -/
+  beq_iff (x y : α) : (x == y) = true ↔ x = y
+  /-- The natural-number cast is the semiring cast. -/
+  natCast_eq (n : Nat) :
+    @Nat.cast α Context.toNatCast n = @Nat.cast α Semiring.toNatCast n
+  /-- The rational-number cast is the field cast. -/
+  ratCast_eq (value : Rat) :
+    @Rat.cast α Context.toRatCast value = @Rat.cast α DivisionRing.toRatCast value
+  /-- The dictionary absolute value is the lattice absolute value. -/
+  abs_eq (x : α) : MathFunctions.abs x = |x|
+  /-- The backend tolerance is strictly positive. -/
+  defaultEpsilon_pos : (0 : α) < Context.defaultEpsilon
 
-/--
-`MathFunctions ℚ` dictionary for the rational backend.
-
-Only `abs` is meaningful; other transcendental functions are defined as `0` in this scoped backend
-and should not be used for semantic claims. Keeping this scoped makes unsupported transcendental rational models fail at
-elaboration unless a file deliberately opts into the algebraic-test backend.
--/
-scoped instance instMathFunctionsRat : MathFunctions ℚ where
-  exp := fun _ => 0
-  tanh := fun _ => 0
-  cosh := fun _ => 0
-  sqrt := fun _ => 0
-  abs := fun x => if x < 0 then -x else x
-  log := fun _ => 0
-  pi := 0
-  cos := fun _ => 0
-  sin := fun _ => 0
-  sinh := fun _ => 0
-
-/--
-`Numbers ℚ` dictionary for the rational backend.
-
-The transcendentals (`lnTen`, etc.) are defined as `0` in this scoped backend; the basic rational
-literals are exact.
--/
-scoped instance instNumbersRat : Numbers ℚ where
-  negHalf := -1/2
-  negOne := -1
-  oneTenth := 1/10
-  half := 1/2
-  zero := 0
-  one := 1
-  two := 2
-  three := 3
-  four := 4
-  five := 5
-  ten := 10
-  lnTen := 0
-  lnTenThousand := 0
-  epsilon := 1/1000000
-
-/-- Full opt-in `Context` dictionary for exact rational algebraic fragments. -/
-scoped instance instContextRat : Context ℚ where
-  decidableGT := inferInstance
-
-end NN.Spec.RationalAlgebraic
+attribute [simp] LawfulContext.add_eq LawfulContext.mul_eq LawfulContext.sub_eq
+  LawfulContext.div_eq LawfulContext.neg_eq LawfulContext.zero_eq LawfulContext.one_eq
+  LawfulContext.lt_iff LawfulContext.le_iff LawfulContext.max_eq LawfulContext.min_eq
+  LawfulContext.beq_iff LawfulContext.natCast_eq LawfulContext.abs_eq
 
 /-- Full `Context` instance for `Float` (runtime backend). -/
-instance : Context Float := { decidableGT := inferInstance }
+@[inline] instance : Context Float where
+  defaultEpsilon := 1e-6
+  decidableGT := inferInstance
+  ratCast value := TorchLean.Numeric.QuotientArithmetic.roundFloat value
 /-- Full `Context` instance for native binary32 execution. -/
-instance : Context Float32 := { decidableGT := inferInstance }
-/-- Full `Context` instance for `ℝ` (proof backend, noncomputable). -/
-noncomputable instance : Context ℝ := { decidableGT := Classical.decRel _ }
+@[inline] instance : Context Float32 where
+  defaultEpsilon := (1e-6 : Float).toFloat32
+  decidableGT := inferInstance
+  ratCast value :=
+    TorchLean.Numeric.QuotientArithmetic.roundFloat32 value

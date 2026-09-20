@@ -22,9 +22,8 @@ Most downstream code should not import modules from this directory directly. Pre
 An ordinary training command follows this shape.
 
 1. A model is built from typed tensors, layers, parameters, and a loss.
-2. The public trainer chooses a scalar mode and execution path, such as eager Float32, typed graph
-   Float32, or
-   a CUDA-backed run.
+2. The public trainer chooses arithmetic semantics and an execution path, such as native eager,
+   native typed graph, or a CUDA-backed run.
 3. The autograd engine records the operations that need gradients and stores enough local data for
    the backward pass.
 4. The optimizer updates the parameter list using the same equations that appear in the optimizer
@@ -43,7 +42,9 @@ updates, and verification checkers.
 | --- | --- |
 | `Autograd/Engine` | The small eager reverse-mode tape, closest to the local backward rules for primitive tensor operations. |
 | `Autograd/TypedGraph` | Typed SSA graph execution that runs through the same runtime values instead of becoming a detached interpreter. |
-| `Autograd/TorchLean` | The TorchLean-native runtime used by the trainer, layer functions, tensor packs, backend options, and scalar modes. |
+| `Autograd/Model` | The TorchLean-native runtime used by the trainer: layer functions, modules, sessions, losses, metrics, training glue, and the `Runtime.Autograd.Model.Layers.Seq` model type. Random helpers are abbreviations for `Spec.Random` in `NN/Spec/Core/Random.lean`. |
+| `Autograd/IRExec` | Checked lowering from `NN.IR.Graph` to a forward-only shape-indexed `ForwardGraph`, with its correctness proofs under `IRExec/Correctness`. |
+| `Autograd/LeadingAxis.lean` | The shared recursion for mapping an operation over the outer axis of a shape-typed reference. |
 | `Autograd/Torch` | Lower-level imperative sessions used for PyTorch interop and typed graph recording. |
 | `Autograd/Train` | Deterministic datasets, step streams, loaders, losses, training loops, evaluation helpers, and optimizer integration. |
 | `Optim` | Executable optimizer equations and scheduler utilities. Public optimizer names are re-exported through `TorchLean.optim`. |
@@ -56,15 +57,15 @@ updates, and verification checkers.
 
 The public API should read like one model with different execution choices, not like several
 competing APIs. In ordinary code the user builds a trainer once and then selects the execution
-strategy, scalar semantics, and device:
+strategy, arithmetic semantics, and device:
 
 ```lean
 let trainer :=
   Trainer.new model
-    { task := .regression
+    { objective := .meanSquaredError
       execution := .typedGraph
-      scalar := .ieee32Exec
-      optimizer := optim.adam { lr := 0.001 } }
+      arithmetic := .ieee
+      optimizer := optim.adam { learningRate := 0.001 } }
 let trained ← trainer.train data { steps := 200 }
 let prediction ← trained.predict input
 ```
@@ -86,7 +87,7 @@ Runtime evidence and proof evidence are different, and both have a role.
 | --- | --- | --- |
 | Executable examples | `NN/Examples`, `lake exe torchlean ...` | The command runs, uses the intended backend, and produces the expected artifact shape. |
 | Runtime tests | `NN/Tests/Runtime` | The implementation agrees with closed forms, cross-backend checks, saved fixtures, or regression expectations. |
-| Formal proofs | `NN/Proofs`, `NN/MLTheory`, `NN/Verification/TorchLean/Proved` | A Lean theorem establishes a mathematical property of the specification, translation, bound, or checker. |
+| Formal proofs | `NN/Proofs`, `NN/MLTheory`, `NN/Verification/Builtin/Proved` | A Lean theorem establishes a mathematical property of the specification, translation, bound, or checker. |
 | Certificate checks | `NN/Verification` | An external or generated artifact is parsed and checked against a Lean side condition. The checker can be proved sound even when the artifact producer is not trusted. |
 
 ## Trust Boundaries

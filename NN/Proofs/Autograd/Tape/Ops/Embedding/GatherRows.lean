@@ -6,9 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Algebra.BigOperators.Fin
-public import Mathlib.Data.Fintype.Basic
-public import Mathlib.Data.Real.Basic
+public import Mathlib.Basic.Real.Basic
+public import Mathlib.Algebra.BigOperators.Ring.Finset
 
 /-!
 # Gather Rows / Embedding Lookup

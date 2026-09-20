@@ -6,26 +6,25 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Tensor.Linalg
-public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
+public import NN.Spec.Core.Context
+public import NN.Spec.Core.Tensor.Constructors
 
 /-!
 # Matrix factorizations (spec layer)
 
 This file provides **real**, shape-indexed reference implementations of the two *exact, finite*
-matrix factorizations that classical / scientific ML models (Gaussian processes, kernel ridge
-regression, PCA, least squares) depend on, and which were previously missing from the spec layer:
+matrix factorizations used by Gaussian processes, kernel ridge regression, PCA, and least squares:
 
-- `choleskySpec`   — Cholesky factorization $A=LL^\mathsf{T}$ (lower-triangular $L$), proved for
+- `choleskySpec`: Cholesky factorization $A=LL^\mathsf{T}$ (lower-triangular $L$), proved for
                      matrices with positive executable Cholesky pivots.
-- `qrSpec`         — QR factorization $A=QR$ via classical Gram–Schmidt; under positive executable
+- `qrSpec`: QR factorization $A=QR$ via classical Gram–Schmidt; under positive executable
                      $R$ pivots, $Q$ has orthonormal columns and $R$ is upper-triangular.
 
 It also provides the linear solves that ride on the Cholesky factor:
 
-- `triSolveLowerFn` / `triSolveUpperFn` — forward / back triangular substitution;
-- `cholSolveFn`    — solve $Ax=b$ from a Cholesky factor of $A$;
-- `solveRidgeSpec` — the Tikhonov / kernel-ridge solve $(K+\gamma I)x=b$.
+- `triSolveLowerFn` and `triSolveUpperFn`: forward and back triangular substitution;
+- `cholSolveFn`: solve $Ax=b$ from a Cholesky factor of $A$;
+- `solveRidgeSpec`: the Tikhonov / kernel-ridge solve $(K+\gamma I)x=b$.
 
 ## Verification scope
 
@@ -33,9 +32,9 @@ The **verified** contribution is the factorizations: `choleskySpec` / `qrSpec` c
 reconstruction and structural theorems (`IsCholesky` / `IsQR`, lower- and upper-triangularity,
 orthonormality) in `NN.Proofs.Tensor.Basic.Factorizations*`, under their stated positive-pivot
 success hypotheses. The triangular- and ridge-solve helpers above (`triSolveLowerFn`,
-`triSolveUpperFn`, `cholSolveFn`, `solveRidgeSpec`) are **executable APIs only**: this PR does *not*
-yet prove their correctness (no triangular-solve or `solveRidge` correctness theorem has
-landed). They follow the standard substitution formulas over the readable function representation
+`triSolveUpperFn`, `cholSolveFn`, `solveRidgeSpec`) are **executable APIs only**: their
+correctness has not been proved. They follow the standard substitution formulas over the
+readable function representation
 and are exercised by `#eval` examples, but should not be read as carrying a verified-correctness
 guarantee.
 
@@ -47,7 +46,7 @@ matrices and proof-oriented reference code. For large-scale numerics, use array-
 kernels.
 
 Internally the algorithms are written over the plain function representation
-`Fin n → Fin n → α` (matrices) and `Fin n → α` (vectors), then wrapped back into `Spec.Tensor`
+`Fin n → Fin n → α` (matrices) and `Fin n → α` (vectors), then wrapped back into `TorchLean.Tensor`
 at the boundary. This keeps the numerical formulas readable and keeps later correctness proofs
 working on ordinary functions rather than on nested `Tensor` `match`es.
 -/
@@ -55,13 +54,15 @@ working on ordinary functions rather than on nested `Tensor` `match`es.
 @[expose] public section
 
 
+open TorchLean
+
 namespace Spec
 
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
-/-! ## Boundary conversions between `Spec.Tensor` and plain functions -/
+/-! ## Boundary conversions between `TorchLean.Tensor` and plain functions -/
 
 /-- View a matrix tensor as a function `Fin m → Fin n → α`. -/
 def toMatFn {m n : Nat} (A : Tensor α [m, n]) : Fin m → Fin n → α :=
@@ -84,8 +85,8 @@ def normFn {p : Nat} (v : Fin p → α) : α :=
 /-! ## Cholesky factorization
 
 For an input whose executable Cholesky pivots are positive, compute the lower-triangular `L` with
-$A=LL^\mathsf{T}$. Symmetric positive-definiteness is the standard sufficient condition, but the theorem
-in this file family is stated against the executable positive-pivot success condition.
+$A=LL^\mathsf{T}$. Symmetric positive-definiteness is the standard sufficient condition, but the
+theorem in this file family is stated against the executable positive-pivot success condition.
 
 The columns are computed left to right. Column `j` uses only columns `0 .. j-1`:
 
@@ -96,9 +97,9 @@ The columns are computed left to right. Column `j` uses only columns `0 .. j-1`:
 ### Trust boundary: the `@[implemented_by]` performance hooks
 
 Several defs here (`choleskyColsFn`, `cholSolveFn`, `solveRidgeFn`) carry an `@[implemented_by]`
-attribute. The clean closure form is what the correctness proofs reason about; the internal companion
-is a strict, array-backed rewrite that the compiler runs instead, so `#eval` stays fast (the closure
-form re-evaluates prefixes exponentially in the interpreter).
+attribute. The clean closure form is what the correctness proofs reason about; the internal
+companion is a strict, array-backed rewrite that the compiler runs instead, so `#eval` stays fast
+(the closure form re-evaluates prefixes exponentially in the interpreter).
 
 **This substitution is a trusted runtime boundary.** Compiled `#eval` and runtime code execute the
 internal array-backed body while the proofs constrain the clean closure body. The two transcribe the
@@ -110,21 +111,22 @@ unverified hook.
 -/
 
 /--
-Strict, array-backed runtime implementation of `choleskyColsFn` (registered via `@[implemented_by]`).
-Each column is *materialized* into an `Array α`, so a back-reference `L[i,k]` is an `O(1)` lookup
-rather than a closure that re-evaluates the whole prefix. The closure form below is mathematically
-clean (and is what the proofs reason about), but reading the full factor `L` from it re-evaluates
-columns exponentially — ruinous in the interpreter (`#eval`). It is *intended* to compute the same
-factor strictly; this equivalence is **trusted, not proved** (see the trust-boundary note above), with
-the numeric examples ($A=LL^\mathsf{T}$ and ridge-solve residual $\approx0$) as evidence rather
-than a proof.
+Shared strict Cholesky recurrence used by factorization and ridge solving.
+Each column is materialized into an `Array α`, so a back-reference `L[i,k]`
+is an `O(1)` lookup rather than a closure that re-evaluates the whole prefix. The closure form below
+is mathematically clean (and is what the proofs reason about), but reading the full factor `L` from
+it re-evaluates columns exponentially, which is ruinous in the interpreter (`#eval`). It is
+*intended* to compute the same factor strictly; this equivalence is **trusted, not proved** (see the
+trust-boundary note above), with the numeric examples ($A=LL^\mathsf{T}$ and ridge-solve residual
+$\approx0$) as evidence rather than a proof.
 -/
-def Internal.choleskyCols {n : Nat} (A : Fin n → Fin n → α) : List (Fin n → α) :=
-  let cols : Array (Array α) := (List.finRange n).foldl (fun cols j =>
+def Internal.choleskyColumnsArray {n : Nat} (A : Fin n → Fin n → α) : Array (Array α) :=
+  (List.finRange n).foldl (fun cols j =>
     let jv := j.val
     -- Σ_{k<j} L[j,k]²  (previous columns at row `j`, read from the materialized arrays).
     let sumsq := (List.finRange n).foldl
-      (fun s k => if k.val < jv then s + (cols.getD k.val #[]).getD jv 0 * (cols.getD k.val #[]).getD jv 0
+      (fun s k =>
+        if k.val < jv then s + (cols.getD k.val #[]).getD jv 0 * (cols.getD k.val #[]).getD jv 0
         else s) 0
     let Ljj := MathFunctions.sqrt (A j j - sumsq)
     let colArr : Array α := Array.ofFn (fun i : Fin n =>
@@ -137,6 +139,10 @@ def Internal.choleskyCols {n : Nat} (A : Fin n → Fin n → α) : List (Fin n �
             acc + (cols.getD k.val #[]).getD i.val 0 * (cols.getD k.val #[]).getD jv 0 else acc) 0
         (A i j - s) / Ljj)
     cols.push colArr) #[]
+
+/-- View the strictly materialized Cholesky columns as finite functions. -/
+def Internal.choleskyCols {n : Nat} (A : Fin n → Fin n → α) : List (Fin n → α) :=
+  let cols := Internal.choleskyColumnsArray A
   (List.finRange n).map (fun j => fun i => (cols.getD j.val #[]).getD i.val 0)
 
 /--
@@ -207,31 +213,36 @@ def triSolveUpperFn {n : Nat} (U : Fin n → Fin n → α) (y : Fin n → α) : 
     (fun _ => 0)
 
 /--
-Strict, array-backed runtime implementation of `cholSolveFn` (registered via `@[implemented_by]`).
-It materializes `L` into a strict `Array (Array α)` once, then runs both triangular substitutions over
-`Array`s, so a back-reference is an `O(1)` lookup. The closure form below (`triSolveUpperFn` over
-`triSolveLowerFn`) is mathematically clean — and is what the correctness proofs reason about — but reads
-the `Function.update` accumulator chain on every step, which is ruinous in the interpreter (`#eval`) when
-`L` is itself an unmaterialized closure (e.g. `choleskyFn` of a kernel matrix). It is *intended* to
-compute the same solution strictly; this equivalence is **trusted, not proved** (see the trust-boundary
-note above), with the numeric examples (the ridge residual $\approx0$) as evidence rather than a
-proof. -/
-def Internal.cholSolve {n : Nat} (L : Fin n → Fin n → α) (b : Fin n → α) : Fin n → α :=
-  let La : Array (Array α) := Array.ofFn (fun i : Fin n => Array.ofFn (fun j : Fin n => L i j))
-  let Lent : Nat → Nat → α := fun i j => (La.getD i #[]).getD j 0
-  -- Forward solve `L · z = b`: `z[i] = (b[i] − Σ_{k<i} L[i,k]·z[k]) / L[i,i]`.
+Shared forward and backward substitution loops, given a constant-time factor entry reader.
+`Internal.cholSolve` supplies a materialized row array; `Internal.solveRidge` supplies the
+materialized columns from the shared Cholesky recurrence. The closure form below (`triSolveUpperFn`
+over `triSolveLowerFn`) is mathematically clean, and is what the correctness proofs reason about,
+but reads the `Function.update` accumulator chain on every step, which is ruinous in the interpreter
+(`#eval`) when `L` is itself an unmaterialized closure (e.g. `choleskyFn` of a kernel matrix). It is
+*intended* to compute the same solution strictly; this equivalence is **trusted, not proved** (see
+the trust-boundary note above), with the numeric examples (the ridge residual $\approx0$) as
+evidence rather than a proof. -/
+def Internal.solveCholeskyEntries (n : Nat) (entry : Nat → Nat → α)
+    (b : Fin n → α) : Fin n → α :=
+  -- Keep the full dot-product order from triSolveLowerFn, including zero-initialized entries.
+  -- Dropping those terms would change IEEE behavior for infinite coefficients and signed zeros.
   let z : Array α := (List.finRange n).foldl (fun z i =>
     let iv := i.val
     let s := (List.finRange n).foldl
-      (fun acc k => if k.val < iv then acc + Lent iv k.val * z.getD k.val 0 else acc) 0
-    z.push ((b i - s) / Lent iv iv)) #[]
+      (fun acc k => acc + entry iv k.val * z.getD k.val 0) 0
+    z.push ((b i - s) / entry iv iv)) #[]
   -- Back solve `Lᵀ · x = z`: `x[i] = (z[i] − Σ_{k>i} L[k,i]·x[k]) / L[i,i]`, `i = n−1 … 0`.
   let x : Array α := (List.finRange n).reverse.foldl (fun xs i =>
     let iv := i.val
     let s := (List.finRange n).foldl
-      (fun acc k => if iv < k.val then acc + Lent k.val iv * xs.getD k.val 0 else acc) 0
-    xs.set! iv ((z.getD iv 0 - s) / Lent iv iv)) (Array.replicate n 0)
+      (fun acc k => acc + entry k.val iv * xs.getD k.val 0) 0
+    xs.set! iv ((z.getD iv 0 - s) / entry iv iv)) (Array.replicate n 0)
   fun i => x.getD i.val 0
+
+/-- Materialize a Cholesky factor once, then use the shared strict substitution loops. -/
+def Internal.cholSolve {n : Nat} (L : Fin n → Fin n → α) (b : Fin n → α) : Fin n → α :=
+  let entries := Array.ofFn fun i : Fin n => Array.ofFn fun j : Fin n => L i j
+  Internal.solveCholeskyEntries n (fun i j => (entries.getD i #[]).getD j 0) b
 
 /-- Solve $Ax=b$ given a Cholesky factor $L$ of $A$ (so $A=LL^\mathsf{T}$): forward-solve
 $Lz=b$, then back-solve $L^\mathsf{T}x=z$.
@@ -251,45 +262,16 @@ def addScaledIdFn {n : Nat} (K : Fin n → Fin n → α) (γ : α) : Fin n → F
 
 /--
 Strict, array-backed runtime implementation of `solveRidgeFn` (registered via `@[implemented_by]`).
-It factors $K+\gamma I=LL^\mathsf{T}$ and runs both triangular substitutions entirely over
-`Array`s, so no step
-materializes the deep `Fin n → α` closures the functional definition builds — those re-evaluate
-columns / the substitution accumulator exponentially, which is ruinous in the interpreter (`#eval`).
-Intended to be the same linear solve; this equivalence is **trusted, not proved** (see the
-trust-boundary note above), with the numeric examples (residual $(K+\gamma I)x-b\approx0$) as evidence
-rather than a proof.
+It factors $K+\gamma I=LL^\mathsf{T}$ and runs both triangular substitutions entirely over `Array`s,
+so no step materializes the deep `Fin n → α` closures the functional definition builds; those
+re-evaluate columns / the substitution accumulator exponentially, which is ruinous in the
+interpreter (`#eval`). Intended to be the same linear solve; this equivalence is **trusted, not
+proved** (see the trust-boundary note above), with the numeric examples (residual $(K+\gamma
+I)x-b\approx0$) as evidence rather than a proof.
 -/
 def Internal.solveRidge {n : Nat} (K : Fin n → Fin n → α) (γ : α) (b : Fin n → α) : Fin n → α :=
-  let A : Fin n → Fin n → α := fun i j => K i j + (if i.val == j.val then γ else 0)
-  -- Cholesky columns, left to right: `cols[j][i] = L[i][j]` (strict arrays, `O(1)` back-reference).
-  let cols : Array (Array α) := (List.finRange n).foldl (fun cols j =>
-    let jv := j.val
-    let sumsq := (List.finRange n).foldl
-      (fun s k => if k.val < jv then let v := (cols.getD k.val #[]).getD jv 0; s + v * v else s) 0
-    let Ljj := MathFunctions.sqrt (A j j - sumsq)
-    cols.push (Array.ofFn (fun i : Fin n =>
-      if i.val < jv then 0
-      else if i.val == jv then Ljj
-      else
-        let s := (List.finRange n).foldl (fun acc k =>
-          if k.val < jv then
-            acc + (cols.getD k.val #[]).getD i.val 0 * (cols.getD k.val #[]).getD jv 0
-          else acc) 0
-        (A i j - s) / Ljj))) #[]
-  let Lent : Nat → Nat → α := fun i j => (cols.getD j #[]).getD i 0
-  -- Forward solve `L · z = b`: `z[i] = (b[i] − Σ_{k<i} L[i,k]·z[k]) / L[i,i]`.
-  let z : Array α := (List.finRange n).foldl (fun z i =>
-    let iv := i.val
-    let s := (List.finRange n).foldl
-      (fun acc k => if k.val < iv then acc + Lent iv k.val * z.getD k.val 0 else acc) 0
-    z.push ((b i - s) / Lent iv iv)) #[]
-  -- Back solve `Lᵀ · x = z`: `x[i] = (z[i] − Σ_{k>i} L[k,i]·x[k]) / L[i,i]`, `i = n−1 … 0`.
-  let x : Array α := (List.finRange n).reverse.foldl (fun xs i =>
-    let iv := i.val
-    let s := (List.finRange n).foldl
-      (fun acc k => if iv < k.val then acc + Lent k.val iv * xs.getD k.val 0 else acc) 0
-    xs.set! iv ((z.getD iv 0 - s) / Lent iv iv)) (Array.replicate n 0)
-  fun i => x.getD i.val 0
+  let columns := Internal.choleskyColumnsArray (addScaledIdFn K γ)
+  Internal.solveCholeskyEntries n (fun i j => (columns.getD j #[]).getD i 0) b
 
 /-- The Tikhonov-regularized (kernel-ridge) solve $(K+\gamma I)x=b$, via the Cholesky factorization
 of $K+\gamma I$.
@@ -346,8 +328,8 @@ def gramSchmidtFn {m n : Nat} (A : Fin m → Fin n → α) : GSState m n α :=
       else 0
     { qs := st.qs ++ [qj], rcols := st.rcols ++ [rcolj] }) { qs := [], rcols := [] }
 
-/-- The `Q` factor candidate of the QR factorization of `A`. Its columns are proved orthonormal under
-positive executable `R` pivots. -/
+/-- The `Q` factor candidate of the QR factorization of `A`. Its columns are proved orthonormal
+under positive executable `R` pivots. -/
 def qrQSpec {m n : Nat} (A : Tensor α [m, n]) :
     Tensor α [m, n] :=
   let st := gramSchmidtFn (toMatFn A)
@@ -368,6 +350,22 @@ PyTorch analogue: `torch.linalg.qr(A)`.
 -/
 def qrSpec {m n : Nat} (A : Tensor α [m, n]) :
     Tensor α [m, n] × Tensor α [n, n] :=
-  (qrQSpec A, qrRSpec A)
+  let st := gramSchmidtFn (toMatFn A)
+  let Q := Tensor.matrix (fun i j => (st.qs.getD j.val (fun _ => 0)) i)
+  let R := Tensor.matrix (fun k j => (st.rcols.getD j.val (fun _ => 0)) k)
+  (Q, R)
+
+/-- The first component of the QR pair is the orthonormal factor. -/
+@[simp] theorem qrSpec_fst {m n : Nat} (A : Tensor α [m, n]) :
+    (qrSpec A).1 = qrQSpec A := by
+  rfl
+
+/-- The second component is the upper-triangular factor.
+
+The pair is returned as a plain product rather than a structure, so these two projections are what
+callers rewrite with instead of destructuring it. -/
+@[simp] theorem qrSpec_snd {m n : Nat} (A : Tensor α [m, n]) :
+    (qrSpec A).2 = qrRSpec A := by
+  rfl
 
 end Spec

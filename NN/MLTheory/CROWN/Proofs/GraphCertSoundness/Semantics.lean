@@ -6,13 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph
-public import NN.MLTheory.CROWN.Models.Mlp
-
-public import Mathlib.Analysis.SpecialFunctions.Sigmoid
-public import Mathlib.Analysis.SpecialFunctions.Trigonometric.Bounds
-public import Mathlib.Analysis.SpecialFunctions.Trigonometric.Deriv
-public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
+public import Mathlib.Analysis.SpecialFunctions.Trigonometric.Arctan
+import Mathlib.Tactic.Measurability.Init
+public import NN.MLTheory.CROWN.Graph.Theorems
+public import NN.Spec.Core.Context.Real
+public import NN.Spec.Layers.Linear
 
 /-!
 # Graph Certificate Semantics
@@ -25,8 +23,8 @@ consistency predicate used by certificate soundness proofs.
 
 namespace NN.MLTheory.CROWN.Graph
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 open NN.MLTheory.CROWN
 
 namespace CertSoundness
@@ -41,6 +39,7 @@ The runtime checkers operate over `Float` (fast, executable), and can be used to
 Python-produced floating certificate to the *same* computations in Lean.
 -/
 
+/-- A value flowing along a graph edge in the semantics: a real flat tensor. -/
 abbrev Val := FlatTensor ℝ
 
 /-- Componentwise enclosure predicate for a tensor point inside a `FlatBox`. -/
@@ -123,7 +122,7 @@ def evalNode? (nodes : Array Node) (ps : ParamStore ℝ) (inputs : Std.HashMap N
                 none
           | _, _ => none
       | _ => none
-  | .mul_elem =>
+  | .mulElem =>
       match NN.IR.binaryParents? node.parents with
       | some (p1, p2) =>
           match getVal? vals p1, getVal? vals p2 with
@@ -171,6 +170,24 @@ def evalNode? (nodes : Array Node) (ps : ParamStore ℝ) (inputs : Std.HashMap N
           | some x => some { n := x.n, v := Activation.sigmoidSpec (α := ℝ) x.v }
           | none => none
       | _ => none
+  | .softplus =>
+      match NN.IR.unaryParent? node.parents with
+      | some p1 =>
+          match getVal? vals p1 with
+          | some x => some { n := x.n, v := Activation.softplusSpec (α := ℝ) x.v }
+          | none => none
+      | none => none
+  | .safeLog =>
+      match NN.IR.binaryParents? node.parents with
+      | some (p1, p2) =>
+          match getVal? vals p1, getVal? vals p2 with
+          | some x, some epsilon =>
+              if h : epsilon.n = 1 then
+                let scalar := castDimScalar (α := ℝ) h epsilon.v
+                some { n := x.n, v := Activation.safeLogSpec x.v (scalar.getScalar 0) }
+              else none
+          | _, _ => none
+      | none => none
   | .sin =>
       match NN.IR.unaryParent? node.parents with
       | some p1 =>
@@ -212,7 +229,7 @@ def evalNode? (nodes : Array Node) (ps : ParamStore ℝ) (inputs : Std.HashMap N
           | some x, some p =>
               if h : x.n = p.n then
                 let xv : Tensor ℝ [p.n] := castDimScalar (α := ℝ) h x.v
-                let z : Tensor ℝ [p.m] := Spec.fill (α := ℝ) 0 (.dim p.m .scalar)
+                let z : Tensor ℝ [p.m] := Tensor.full (α := ℝ) (.dim p.m .scalar) 0
                 let yv : Tensor ℝ [p.m] :=
                   Spec.linearSpec (α := ℝ) { weights := p.w, bias := z } xv
                 some { n := p.m, v := yv }
@@ -226,7 +243,7 @@ def evalNode? (nodes : Array Node) (ps : ParamStore ℝ) (inputs : Std.HashMap N
           match getVal? vals p1 with
           | some x =>
               let onesRow : Tensor ℝ [1, x.n] :=
-                Spec.fill (α := ℝ) 1 (.dim 1 (.dim x.n .scalar))
+                Tensor.full (α := ℝ) (.dim 1 (.dim x.n .scalar)) 1
               let y : Tensor ℝ [1] := Spec.matVecMulSpec (α := ℝ) onesRow x.v
               some { n := 1, v := y }
           | none => none
@@ -249,38 +266,23 @@ def evalNode? (nodes : Array Node) (ps : ParamStore ℝ) (inputs : Std.HashMap N
       | some (p1, p2) =>
           match getVal? vals p1, getVal? vals p2 with
           | some x, some y =>
-              match x.v, y.v with
-              | .dim fx, .dim fy =>
-                  let outDim := x.n + y.n
-                  let z : Tensor ℝ [outDim] :=
-                    Tensor.dim (fun i =>
-                      Fin.addCases (fun i1 => fx i1) (fun i2 => fy i2) i)
-                  some { n := outDim, v := z }
+              let outDim := x.n + y.n
+              let z : Tensor ℝ [outDim] :=
+                Tensor.dim fun i =>
+                  Fin.addCases (fun i1 => x.v.unstack i1) (fun i2 => y.v.unstack i2) i
+              some { n := outDim, v := z }
           | _, _ => none
       | _ => none
   | _ =>
       none
 
-/-- Evaluate an entire graph in node-id order using `evalNode?`. -/
-def evalGraph? (g : Graph) (ps : ParamStore ℝ) (inputs : Std.HashMap Nat Val) :
-    Array (Option Val) :=
-  let init := Array.replicate g.nodes.size none
-  (List.finRange g.nodes.size).foldl
-    (fun acc i => acc.set! i (evalNode? g.nodes ps inputs acc i))
-    init
-
 /-!
-Even though we provided an executable `evalGraph?`, the **main soundness theorem** below does not
-depend on it.
+The main soundness theorem does not fix a particular graph evaluator. It is stated for *any* array
+`vals` that is a local model of the semantics step: each node's value must equal `evalNode?`
+computed from its parents' values. Concrete total evaluators (`evalGraphRec` in
+`NN.MLTheory.CROWN.Proofs.GraphRunibpEndToEnd`) are then shown to satisfy this predicate.
 
-Reason: proving properties about the `foldl` evaluator would introduce a lot of “bookkeeping”
-lemmas about `Array.set!` and list folds.
-
-Instead, we state soundness for *any* array `vals` that is a **local model** of the semantics step:
-each node’s value must equal `evalNode?` computed from its parents’ values.
-
-This is a standard technique in proof engineering: separate “semantic consistency” from
-“the particular implementation of the evaluator”.
+This separates semantic consistency from the particular implementation of the evaluator.
 -/
 
 /-!
@@ -299,6 +301,11 @@ theorem in the reusable form: for any semantic interpretation `vals`, a locally-
 encloses it.
 -/
 
+/-- `vals` is a full semantic interpretation of `g`: one entry per node, each equal to what the
+node's own evaluation rule produces from its parents' entries.
+
+This is stated as a local condition rather than built by a recursive evaluator so the soundness
+theorem applies to any interpretation, however it was obtained. -/
 def SemLocalOK (g : Graph) (ps : ParamStore ℝ) (inputs : Std.HashMap Nat Val)
     (vals : Array (Option Val)) : Prop :=
   vals.size = g.nodes.size ∧

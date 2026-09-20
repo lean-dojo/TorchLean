@@ -8,9 +8,8 @@ module
 
 public import NN.Runtime.Autograd.Engine.Core
 public import NN.Runtime.Autograd.Engine.Cuda.Tape
-public import NN.Runtime.Autograd.Engine.Cuda.Buffer
 public import NN.Runtime.Autograd.Engine.Cuda.Convert
-public import Std
+public import NN.Tests.Utils
 
 /-!
 # CUDA Runtime Test Utils
@@ -31,20 +30,36 @@ namespace Tests
 namespace Cuda
 namespace Utils
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 /-- Convert any `Except String` into `IO` by throwing `IO.userError` on failure. -/
 def okOrThrow {α : Type} : Except String α → IO α
   | .ok a => pure a
   | .error e => throw <| IO.userError e
 
-/-- Approximate equality for `Float` runtime checks. -/
-def assertApprox (msg : String) (x y : Float) (tol : Float := 1e-3) : IO Unit := do
-  if x.isNaN || x.isInf || y.isNaN || y.isInf then
-    throw <| IO.userError s!"{msg}: expected finite values, got {x} and {y}"
-  if Float.abs (x - y) > tol then
-    throw <| IO.userError s!"{msg}: got {x}, expected {y} (tol={tol})"
+-- Scalar comparisons share `Tests.Utils.assertApprox`; CUDA tolerances are explicit at call sites.
+
+/-- Construct a raw float buffer from an array of values. -/
+def floatArray (xs : Array Float) : FloatArray :=
+  FloatArray.mk xs
+
+/-- Exact elementwise equality for two raw float buffers, naming the first index that differs. -/
+def assertFloatArrayEq (msg : String) (a b : FloatArray) : IO Unit := do
+  if a.size != b.size then
+    throw <| IO.userError s!"{msg}: size mismatch ({a.size} vs {b.size})"
+  for i in [:a.size] do
+    let x := a.get! i
+    let y := b.get! i
+    if x != y then
+      throw <| IO.userError s!"{msg}[{i}]: got {x}, expected {y}"
+
+/-- Compare finite buffer elements with an explicit absolute tolerance. -/
+def assertFloatArrayApprox (msg : String) (a b : FloatArray) (tol : Float) : IO Unit := do
+  if a.size != b.size then
+    throw <| IO.userError s!"{msg}: size mismatch ({a.size} vs {b.size})"
+  for i in [:a.size] do
+    Tests.Utils.assertApprox s!"{msg}[{i}]" (a.get! i) (b.get! i) tol
 
 /-- Convert a spec tensor to a CUDA buffer (row-major, cast to float32). -/
 def tensorToBuffer {s : Shape} (t : Tensor Float s) : Runtime.Autograd.Cuda.Buffer :=
@@ -80,7 +95,8 @@ def cudaValue {s : Shape} (t : Runtime.Autograd.Cuda.Tape) (id : Nat) : IO (Tens
   bufferToTensor (s := s) b
 
 /-- Extract a typed gradient tensor from the CPU dense-grad array (with a shape check). -/
-def cpuGrad {s : Shape} (grads : Array (Spec.SomeTensor Float)) (id : Nat) : IO (Tensor Float s) := do
+def cpuGrad {s : Shape} (grads : Array (Spec.SomeTensor Float)) (id : Nat) :
+    IO (Tensor Float s) := do
   let g ← match grads[id]? with
     | some g => pure g
     | none => throw <| IO.userError s!"cuda test: gradient id out of bounds: {id}"
@@ -90,7 +106,8 @@ def cpuGrad {s : Shape} (grads : Array (Spec.SomeTensor Float)) (id : Nat) : IO 
     throw <| IO.userError s!"cuda test: CPU grad shape mismatch at id {id}"
 
 /-- Extract a typed gradient tensor from the CUDA dense-grad array (with a shape check). -/
-def cudaGrad {s : Shape} (grads : Array Runtime.Autograd.Cuda.AnyBuffer) (id : Nat) : IO (Tensor Float s) := do
+def cudaGrad {s : Shape} (grads : Array Runtime.Autograd.Cuda.AnyBuffer) (id : Nat) :
+    IO (Tensor Float s) := do
   let g ← match grads[id]? with
     | some g => pure g
     | none => throw <| IO.userError s!"cuda test: gradient id out of bounds: {id}"
@@ -108,7 +125,7 @@ def assertTensorApprox {s : Shape} (msg : String) (x y : Tensor Float s) (tol : 
   if ax.size != ay.size then
     throw <| IO.userError s!"{msg}: size mismatch ({ax.size} vs {ay.size})"
   for i in [:ax.size] do
-    assertApprox s!"{msg}[{i}]" (ax.get! i) (ay.get! i) tol
+    Tests.Utils.assertApprox s!"{msg}[{i}]" (ax.get! i) (ay.get! i) tol
 
 end Utils
 end Cuda

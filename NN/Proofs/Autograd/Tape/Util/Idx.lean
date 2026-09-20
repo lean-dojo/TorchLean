@@ -6,18 +6,28 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Tape.Core.Soundness
+public import NN.Tensor.Pack
 
 /-!
-# Idx
+# Typed context indices
 
-Utilities for working with typed context indices (`Idx`) in tape-style graphs.
+A tape-style graph names its inputs and intermediates by position, so every node has to say "the
+`i`th saved tensor" without losing the shape invariant that makes the node typecheck. `Idx Γ s`
+is that name: a position in the context `Γ` bundled with a proof that the entry sitting there has
+shape `s`.
 
-Many graph-construction proofs need two basic operations:
-- **weaken** an index when the context is extended by more intermediates; and
-- refer to the **last** element of an appended shape list (`Γ ++ ss ++ [τ]`).
+The type carries no element type, which is why it lives here rather than beside any one soundness
+development. The real-valued tape proofs, the `CommSemiring`-generic ones, and the
+runtime-approximation graphs all index contexts the same way, and they used to do it through three
+byte-identical copies of this structure. One definition means a lemma about indices proved in one
+of those developments is usable in the others.
 
-We centralize them here to avoid repeating the same list-arithmetic boilerplate in every op graph
+Alongside the structure are the two operations every graph construction needs:
+
+- `Idx.weaken` extends the context with more intermediates and keeps the index valid;
+- `Idx.last` names the freshly appended entry of `Γ ++ ss ++ [τ]`.
+
+Both are pure list arithmetic, and centralizing them keeps that boilerplate out of every op graph
 (LayerNorm, BatchNorm, attention, …).
 -/
 
@@ -25,20 +35,40 @@ We centralize them here to avoid repeating the same list-arithmetic boilerplate 
 
 
 namespace Proofs
-namespace Autograd
 
-open Spec
+open Spec TorchLean
+
+/--
+A typed index into a heterogeneous context `Γ`, carrying a proof that the selected entry has the
+expected shape `s`.
+-/
+structure Idx (Γ : List Shape) (s : Shape) where
+  /-- Position in the heterogeneous context. -/
+  i : Fin Γ.length
+  /-- Proof that the selected context entry has shape `s`. -/
+  h : Γ.get i = s
+
+/--
+Read a tensor out of a context at a typed index, casting along the shape equality the index
+carries.
+
+The cast is what makes the result `Tensor α s` instead of `Tensor α (Γ.get idx.i)`, so callers
+never have to rewrite the ambient shape by hand.
+-/
+def getIdx {α : Type} [TorchLean.Storage α] {Γ : List Shape} {s : Shape}
+    (xs : TorchLean.TensorPack α Γ) (idx : Idx Γ s) : Tensor α s :=
+  Tensor.castShape (xs.get (α := α) idx.i) idx.h
 
 namespace Idx
 
-private lemma get_append_last {α : Type} (l : List α) (a : α) :
+private theorem get_append_last {α : Type} (l : List α) (a : α) :
     (l ++ [a]).get ⟨l.length, by simp⟩ = a := by
   induction l with
   | nil => simp
   | cons _ xs ih =>
       simp [List.length]
 
-private lemma get_append_left {α : Type} (l₁ l₂ : List α) (i : Fin l₁.length) :
+private theorem get_append_left {α : Type} (l₁ l₂ : List α) (i : Fin l₁.length) :
     (l₁ ++ l₂).get ⟨i.1, by
         -- `i.1 < l₁.length` and `l₁.length ≤ l₁.length + l₂.length`.
         simpa [List.length_append] using
@@ -89,5 +119,4 @@ def last {Γ : List Shape} {ss : List Shape} {τ : Shape} : Idx (Γ ++ ss ++ [τ
 
 end Idx
 
-end Autograd
 end Proofs

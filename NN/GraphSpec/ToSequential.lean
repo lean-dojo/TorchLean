@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.GraphSpec.Core
+public import NN.GraphSpec.Chain.Syntax
+public import NN.Runtime.Autograd.Model.Layers.Seq
 
 /-!
 # GraphSpec to Sequential Models
@@ -41,8 +42,8 @@ namespace NN
 namespace GraphSpec
 namespace ToSequential
 
-open _root_.Spec
-open _root_.TorchLean.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 namespace Internal
 
@@ -54,16 +55,16 @@ The index is incremented for primitives with `countsAsLayer = true`.
 def toSeqFrom
     {ps : List Shape} {σ τ : Shape}
     (g : Chain ps σ τ) (i : Nat) :
-    Except String (_root_.Runtime.Autograd.TorchLean.NN.Seq σ τ × Nat) :=
+    Except String (Runtime.Autograd.Model.Layers.Seq σ τ × Nat) :=
   match g with
   | .id s => do
       -- Identity becomes the identity sequential model.
-      return (_root_.Runtime.Autograd.TorchLean.NN.Seq.id s, i)
+      return (Runtime.Autograd.Model.Layers.Seq.id s, i)
   | .seq g₁ g₂ => do
       -- Sequential composition becomes sequential composition.
       let (s₁, i') ← toSeqFrom (ps := _) (σ := _) (τ := _) g₁ i
       let (s₂, i'') ← toSeqFrom (ps := _) (σ := _) (τ := _) g₂ i'
-      return (_root_.Runtime.Autograd.TorchLean.NN.Seq.comp s₁ s₂, i'')
+      return (Runtime.Autograd.Model.Layers.Seq.comp s₁ s₂, i'')
   | .prim p => do
       -- A primitive can only be lowered if it provides a `Layer`.
       match p.toLayerM? with
@@ -76,12 +77,12 @@ def toSeqFrom
           -- Thread a deterministic occurrence index for initialization.
           let i' := if p.countsAsLayer then i + 1 else i
           let ⟨l, _hps⟩ := mk i
-          return (_root_.Runtime.Autograd.TorchLean.NN.singleLayer l, i')
+          return (Runtime.Autograd.Model.Layers.Seq.fromLayer l, i')
 
 end Internal
 
 /--
-Try to lower a GraphSpec chain into a `TorchLean.NN.Seq`.
+Try to lower a GraphSpec chain into a `Runtime.Autograd.Model.Layers.Seq`.
 
 Use this when you specifically want the `Seq` wrapper for training ergonomics. If all you need
 is an executable program, prefer `Chain.toProgram`: it is the more general path and does not
@@ -90,7 +91,7 @@ require every primitive to have a `Layer` view.
 def toSeq
     {ps : List Shape} {σ τ : Shape}
     (g : Chain ps σ τ) :
-    Except String (_root_.Runtime.Autograd.TorchLean.NN.Seq σ τ) :=
+    Except String (Runtime.Autograd.Model.Layers.Seq σ τ) :=
   match Internal.toSeqFrom (ps := ps) (σ := σ) (τ := τ) g 0 with
   | .ok (s, _i) => .ok s
   | .error e => .error e

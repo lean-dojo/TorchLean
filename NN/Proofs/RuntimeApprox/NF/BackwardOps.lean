@@ -6,11 +6,10 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.RuntimeApprox.NF.BackwardOps.Sparse
 public import NN.Proofs.RuntimeApprox.NF.BackwardOps.Backend
-public import NN.Proofs.RuntimeApprox.NF.BackwardOps.Primitive
 public import NN.Proofs.RuntimeApprox.NF.BackwardOps.Linalg
 public import NN.Proofs.RuntimeApprox.NF.BackwardOps.Main
+public import NN.Proofs.RuntimeApprox.NF.BackwardOps.Sparse
 
 /-!
 # BackwardOps

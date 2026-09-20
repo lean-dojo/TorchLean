@@ -32,6 +32,26 @@ used by default so `lake build` works without a CUDA toolkit. Real CUDA builds a
 lake build -R -K cuda=true -K cuda_home=/usr/local/cuda
 ```
 
+The default `cuda_arch=all-major` asks the selected `nvcc` to include code for its supported major
+GPU architectures. For a known deployment target, select it explicitly. For example, an A100 build
+can use:
+
+```bash
+scripts/lake.sh -R -K cuda=true -K cuda_home=/usr/local/cuda \
+  -K cuda_arch=sm_80 build
+```
+
+The build machine needs the toolkit but need not have a visible GPU. `native` is rejected because
+its target depends on the builder's visible devices. Keep the same `cuda_home` and `cuda_arch`
+options on subsequent build, `exe`, and `env` commands.
+
+Lake includes the architecture and compiler identity in the native object build trace. It records
+the selected `nvcc`, host compiler, toolkit components, and `NVCC_PREPEND_FLAGS` /
+`NVCC_APPEND_FLAGS`. Select a different host compiler with `NVCC_CCBIN`. The two flag variables
+cannot override architecture or host-compiler selection, or introduce option files; use
+`cuda_arch` and `NVCC_CCBIN` for those choices. This keeps a cached object tied to the configuration
+that compiled it.
+
 ## CUDA Graph Status
 
 TorchLean's current CUDA path is eager: each autograd step records a Lean runtime tape and dispatches
@@ -76,25 +96,28 @@ Lean driven CUDA suite under NVIDIA Compute Sanitizer:
 scripts/checks/cuda_sanitize_tests.sh
 scripts/checks/cuda_sanitize_tests.sh --all-tools
 scripts/checks/cuda_sanitize_tests.sh --cuda-home /usr/local/cuda --tool memcheck
+scripts/checks/cuda_sanitize_tests.sh --cuda-arch sm_80 --all-tools
 ```
 
 The default tool is `memcheck`. `--all-tools` additionally runs `racecheck`, `initcheck`, and
 `synccheck`. This is separate from ordinary `lake test` because sanitizer runs are much slower and
 require a real CUDA installation.
+`--cuda-arch` is forwarded to both the build and the Lake environment that runs the sanitizer.
+With `--skip-build`, supply the architecture and toolkit used to build the existing executable.
 
 For performance work, pair the correctness suite with NVIDIA Nsight Systems for end-to-end runtime
 traces and Nsight Compute for individual kernel profiles. Those tools are not pass/fail tests, so
-they stay outside the default CI gate. The helper below writes reports under `data/profiles/cuda/`,
-which is treated as local output:
+they stay outside the default CI gate. Invoke them directly on the executable being investigated:
 
 ```bash
-scripts/checks/cuda_profile_tests.sh
-scripts/checks/cuda_profile_tests.sh --both
-scripts/checks/cuda_profile_tests.sh --compute
+scripts/lake.sh -R -K cuda=true build nn_tests_suite
+scripts/lake.sh -R -K cuda=true env nsys profile -t cuda,nvtx,osrt \
+  -o /tmp/torchlean-cuda .lake/build/bin/nn_tests_suite
+scripts/lake.sh -R -K cuda=true env ncu --section SpeedOfLight \
+  --section LaunchStats .lake/build/bin/nn_tests_suite
 ```
 
-Nsight Compute can be slow on the full suite because it profiles kernels in detail. For focused
-kernel work, pass a smaller executable with `--target` or forward test arguments after `--`.
+Nsight Compute can be slow on the full suite; use a focused executable for kernel-level work.
 
 ## CUDA Test Matrix
 

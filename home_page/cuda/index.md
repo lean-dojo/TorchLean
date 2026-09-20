@@ -23,10 +23,10 @@ Run a small CUDA example:
 lake -R -K cuda=true exe torchlean mlp --device cuda --steps 100
 ```
 
-Run a broader CUDA regression pass:
+Run the maintained numerical and native-boundary suite:
 
 ```bash
-scripts/checks/example_regression.sh --cuda
+scripts/lake.sh -R -K cuda=true test
 ```
 
 Run the CUDA sanitizer suite when changing native kernels:
@@ -48,8 +48,11 @@ not associative, atomic accumulation can be schedule-dependent. TorchLean also p
 deterministic reductions mode for the covered reduction, gather/scatter, and pooling-backward paths:
 
 ```lean
-let _ := Runtime.Autograd.Cuda.Buffer.setDeterministicReductionsChecked true
+Runtime.Autograd.Cuda.Buffer.setDeterministicReductions true
 ```
+
+`setDeterministicReductions : Bool → IO Unit` fails when the native runtime did not accept the
+setting. Use this IO setter from application code with `import NN.Runtime`.
 
 or:
 

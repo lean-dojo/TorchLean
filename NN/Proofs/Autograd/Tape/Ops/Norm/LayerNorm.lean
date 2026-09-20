@@ -6,11 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Layers.Normalization
-public import NN.Proofs.Autograd.Tape.Nodes.GraphComposition
-public import NN.Proofs.Autograd.Tape.Util.Idx
-
-public import Mathlib.Analysis.Calculus.Deriv.Add
+public import NN.Proofs.Autograd.Tape.Ops.Norm.LayerNormEval
+public import NN.Proofs.Autograd.Tape.Ops.Norm.RowNormalization
+public import NN.Proofs.Autograd.Tape.Ops.Norm.LayerNormAdjoint
 
 /-!
 # LayerNorm
@@ -24,10 +22,22 @@ over the sequence dimension. The runtime API and typed graph path both route thr
 definition; this file proves the corresponding reverse-mode graph rule.
 
 Because the proof graph uses the differentiable scalar nodes `sqrt (max x 0)` and `inv`, the main
-theorem is pointwise (`GraphFDerivCorrectAt`) with explicit domain assumptions. Away from the clamp
-kink and zero denominator, backprop is the adjoint of the Fréchet derivative. The executable
+theorem is pointwise (`GraphFDerivCorrectAt`). The `_of_domain` variants take the two domain
+assumptions (positive `var + ε`, nonzero `std`) at the execution point; the main statements take
+only `0 < ε`, since the row variance is a mean of squares and therefore nonnegative
+(`LayerNormEval.varEps_pos_of_eps_pos`, `LayerNormEval.std_ne_zero_of_eps_pos`). Away from the
+clamp kink and zero denominator, backprop is the adjoint of the Fréchet derivative. The executable
 `Spec.layerNorm` additionally clamps the raw variance before adding epsilon as a numerical guard;
 over exact real variance this is the same contract on the positive branch used by the proof.
+
+The last section connects the graph to the spec. `outputCLM_evalVec_layerNormGraph` shows that the
+output block of the graph evaluation is `tensorToVec (Spec.layerNorm X gamma beta)` for the packed
+inputs, so `hasFDerivAt_specLayerNormVec` and `backpropVec_single_eq_adjoint_specLayerNorm` state
+differentiability and the adjoint rule for the spec function itself. The adjointness of
+`Spec.layerNormJvp` and `Spec.layerNormBackward` is proved in
+`NN.Proofs.Autograd.Tape.Ops.Norm.LayerNormAdjoint`. The companion `LayerNormFDeriv` module
+identifies that JVP with the actual derivative and proves that the primitive backward rule
+returns the same cotangents as this graph.
 
 ## PyTorch correspondence / citations
 - Conceptually corresponds to `torch.nn.LayerNorm` (without batching/running stats): normalize along
@@ -35,13 +45,14 @@ over exact real variance this is the same contract on the positive branch used b
   https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html
 -/
 
+
 @[expose] public section
 
 
 namespace Proofs
 namespace Autograd
 
-open Spec
+open Spec TorchLean
 
 open scoped BigOperators
 
@@ -51,310 +62,18 @@ namespace LayerNorm
 
 open TapeNodes
 
-/-- Matrix shape `m×n`. -/
-abbrev MatShape (m n : Nat) : Shape := .dim m (.dim n .scalar)
-/-- Rank-one tensor shape `k`. -/
-abbrev VecShape (k : Nat) : Shape := .dim k .scalar
-
-/-- Input context shapes: `[X, gamma, beta]` for layer norm over the last axis. -/
-abbrev ΓLN (m n : Nat) : List Shape := [MatShape m n, VecShape n, VecShape n]
-
-/-- First 6 intermediates in the LayerNorm computation (up to `var_eps`). -/
-abbrev ssPrefix6 (m n : Nat) : List Shape :=
-  [ VecShape m   -- mean
-  , MatShape m n -- mean_b
-  , MatShape m n -- centered
-  , MatShape m n -- centered_sq
-  , VecShape m   -- var
-  , VecShape m   -- var_eps
-  ]
-
-/-- Prefix intermediates up to `std` (adds one more vector). -/
-abbrev ssPrefix7 (m n : Nat) : List Shape := ssPrefix6 m n ++ [VecShape m] -- std
-
-/-- Full list of intermediates for the LayerNorm graph in this file. -/
-abbrev ssLayerNorm (m n : Nat) : List Shape :=
-  ssPrefix7 m n ++
-    [ VecShape m   -- inv_std
-    , MatShape m n -- inv_std_b
-    , MatShape m n -- normalized
-    , MatShape m n -- gamma_b
-    , MatShape m n -- scaled
-    , MatShape m n -- beta_b
-    , MatShape m n -- y
-    ]
-
-/-- Index of the input matrix `X` in the base LayerNorm context `ΓLN m n ++ ss`. -/
-def idxX {m n : Nat} {ss : List Shape} : Idx (ΓLN m n ++ ss) (MatShape m n) :=
-  ⟨⟨0, by simp [ΓLN]⟩, by simp [ΓLN]⟩
-
-/-- Index of the scale vector `gamma` in the base LayerNorm context `ΓLN m n ++ ss`. -/
-def idxGamma {m n : Nat} {ss : List Shape} : Idx (ΓLN m n ++ ss) (VecShape n) :=
-  ⟨⟨1, by simp [ΓLN]⟩, by simp [ΓLN]⟩
-
-/-- Index of the shift vector `beta` in the base LayerNorm context `ΓLN m n ++ ss`. -/
-def idxBeta {m n : Nat} {ss : List Shape} : Idx (ΓLN m n ++ ss) (VecShape n) :=
-  ⟨⟨2, by simp [ΓLN]⟩, by simp [ΓLN]⟩
-
--- ---------------------------------------------------------------------------
--- LayerNorm graph (explicit `snoc` chain; no `let`-blocked reducibility)
--- ---------------------------------------------------------------------------
-
--- Prefix nodes (mean/variance + epsilon)
-
-/-- Mean over the last axis: `mean : ℝ^{m×n} → ℝ^{m}`. -/
-def nodeMean {m n : Nat} : Node (ΓLN m n) (VecShape m) :=
-  rowMean (Γ := ΓLN m n) (m := m) (n := n) (idx := idxX (m := m) (n := n) (ss := []))
-
-/-- Graph prefix producing `[mean]`. -/
-def g1 {m n : Nat} : Graph (ΓLN m n) [VecShape m] :=
-  .snoc (.nil) (nodeMean (m := m) (n := n))
-
-/-- Index of `mean` in the extended context `ΓLN ++ [mean]`. -/
-def idxMean {m n : Nat} : Idx (ΓLN m n ++ [VecShape m]) (VecShape m) :=
-  Idx.last (Γ := ΓLN m n) (ss := []) (τ := VecShape m)
-
-/-- Broadcast `mean` back to `m×n` (row-wise). -/
-def nodeMeanB {m n : Nat} : Node (ΓLN m n ++ [VecShape m]) (MatShape m n) :=
-  broadcastRow (Γ := ΓLN m n ++ [VecShape m]) (m := m) (n := n) (idx := idxMean (m := m) (n := n))
-
-/-- Graph prefix producing `[mean, mean_b]`. -/
-def g2 {m n : Nat} : Graph (ΓLN m n) [VecShape m, MatShape m n] :=
-  .snoc (g1 (m := m) (n := n)) (nodeMeanB (m := m) (n := n))
-
-/-- Index of `mean_b` in `ΓLN ++ [mean, mean_b]`. -/
-def idxMeanB {m n : Nat} : Idx (ΓLN m n ++ [VecShape m, MatShape m n]) (MatShape m n) :=
-  Idx.last (Γ := ΓLN m n) (ss := [VecShape m]) (τ := MatShape m n)
-
-/-- Center: `centered := X - mean_b`. -/
-def nodeCentered {m n : Nat} : Node (ΓLN m n ++ [VecShape m, MatShape m n]) (MatShape m n) :=
-  sub (Γ := ΓLN m n ++ [VecShape m, MatShape m n]) (s := MatShape m n)
-    (a := idxX (m := m) (n := n) (ss := [VecShape m, MatShape m n]))
-    (b := idxMeanB (m := m) (n := n))
-
-/-- Graph prefix producing `[mean, mean_b, centered]`. -/
-def g3 {m n : Nat} : Graph (ΓLN m n) [VecShape m, MatShape m n, MatShape m n] :=
-  .snoc (g2 (m := m) (n := n)) (nodeCentered (m := m) (n := n))
-
-/-- Index of `centered` in `ΓLN ++ [mean, mean_b, centered]`. -/
-def idxCentered {m n : Nat} :
-    Idx (ΓLN m n ++ [VecShape m, MatShape m n, MatShape m n]) (MatShape m n) :=
-  Idx.last (Γ := ΓLN m n) (ss := [VecShape m, MatShape m n]) (τ := MatShape m n)
-
-/-- Square `centered`: `centered_sq := centered ⊙ centered`. -/
-def nodeCenteredSq {m n : Nat} : Node (ΓLN m n ++ [VecShape m, MatShape m n, MatShape m n])
-  (MatShape m n) :=
-  mul (Γ := ΓLN m n ++ [VecShape m, MatShape m n, MatShape m n]) (s := MatShape m n)
-    (a := idxCentered (m := m) (n := n)) (b := idxCentered (m := m) (n := n))
-
-/-- Graph prefix producing `[mean, mean_b, centered, centered_sq]`. -/
-def g4 {m n : Nat} : Graph (ΓLN m n) [VecShape m, MatShape m n, MatShape m n, MatShape m n] :=
-  .snoc (g3 (m := m) (n := n)) (nodeCenteredSq (m := m) (n := n))
-
-/-- Index of `centered_sq` in the extended context. -/
-def idxCenteredSq {m n : Nat} :
-    Idx (ΓLN m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n]) (MatShape m n) :=
-  Idx.last (Γ := ΓLN m n) (ss := [VecShape m, MatShape m n, MatShape m n]) (τ := MatShape m n)
-
-/-- Variance per row: `var := mean(centered_sq)` producing a length-`m` vector. -/
-def nodeVar {m n : Nat} :
-    Node (ΓLN m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n]) (VecShape m) :=
-  rowMean (Γ := ΓLN m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n])
-    (m := m) (n := n) (idx := idxCenteredSq (m := m) (n := n))
-
-/-- Graph prefix producing `[mean, mean_b, centered, centered_sq, var]`. -/
-def g5 {m n : Nat} : Graph (ΓLN m n) [VecShape m, MatShape m n, MatShape m n, MatShape m n, VecShape
-  m] :=
-  .snoc (g4 (m := m) (n := n)) (nodeVar (m := m) (n := n))
-
-/-- Index of `var` in the extended context. -/
-def idxVar {m n : Nat} :
-    Idx (ΓLN m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n, VecShape m]) (VecShape m)
-      :=
-  Idx.last (Γ := ΓLN m n) (ss := [VecShape m, MatShape m n, MatShape m n, MatShape m n]) (τ :=
-    VecShape m)
-
-/-- Add epsilon: `var_eps := var + ε`. -/
-def nodeVarEps {m n : Nat} (ε : ℝ) :
-    Node (ΓLN m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n, VecShape m]) (VecShape
-      m) :=
-  elemwise (Γ := ΓLN m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n, VecShape m])
-    (s := VecShape m) (idxVar (m := m) (n := n)) (fun z => z + ε) (fun _ => 1)
-
-/-- Graph prefix computing the first 6 intermediates (`ssPrefix6`). -/
-def layerNormPrefix6 {m n : Nat} (ε : ℝ) : Graph (ΓLN m n) (ssPrefix6 m n) :=
-  .snoc (g5 (m := m) (n := n)) (nodeVarEps (m := m) (n := n) ε)
-
-/-- Index of `var_eps` in `ΓLN ++ ssPrefix6`. -/
-def idxVarEps {m n : Nat} : Idx (ΓLN m n ++ ssPrefix6 m n) (VecShape m) :=
-  Idx.last (Γ := ΓLN m n)
-    (ss := [VecShape m, MatShape m n, MatShape m n, MatShape m n, VecShape m])
-    (τ := VecShape m)
-
-/--
-Standard deviation: `std := sqrt_clamp(var_eps)`.
-
-This is where the development becomes pointwise: differentiability depends on the (clamped) input.
--/
-def nodeStd {m n : Nat} : Node (ΓLN m n ++ ssPrefix6 m n) (VecShape m) :=
-  sqrtClamp (Γ := ΓLN m n ++ ssPrefix6 m n) (s := VecShape m) (idxVarEps (m := m) (n := n))
-
-/-- Graph prefix computing `ssPrefix7` (adds `std`). -/
-def layerNormPrefix7 {m n : Nat} (ε : ℝ) : Graph (ΓLN m n) (ssPrefix7 m n) :=
-  .snoc (layerNormPrefix6 (m := m) (n := n) ε) (nodeStd (m := m) (n := n))
-
--- Remaining nodes (normalize, scale, shift)
-
-/-- Index of `std` in `ΓLN ++ ssPrefix7`. -/
-def idxStd {m n : Nat} : Idx (ΓLN m n ++ ssPrefix7 m n) (VecShape m) :=
-  Idx.last (Γ := ΓLN m n) (ss := ssPrefix6 m n) (τ := VecShape m)
-
-/-- Inverse standard deviation: `inv_std := 1/std`. -/
-def nodeInvStd {m n : Nat} : Node (ΓLN m n ++ ssPrefix7 m n) (VecShape m) :=
-  inv (Γ := ΓLN m n ++ ssPrefix7 m n) (s := VecShape m) (idxStd (m := m) (n := n))
-
-/-- Graph prefix adding `inv_std`. -/
-def g8 {m n : Nat} (ε : ℝ) : Graph (ΓLN m n) (ssPrefix7 m n ++ [VecShape m]) :=
-  .snoc (layerNormPrefix7 (m := m) (n := n) ε) (nodeInvStd (m := m) (n := n))
-
-/-- Index of `inv_std` in the extended context. -/
-def idxInvStd {m n : Nat} : Idx (ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m])) (VecShape m) :=
-  Idx.last (Γ := ΓLN m n) (ss := ssPrefix7 m n) (τ := VecShape m)
-
-/-- Broadcast `inv_std` back to `m×n` (row-wise). -/
-def nodeInvStdB {m n : Nat} :
-    Node (ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m])) (MatShape m n) :=
-  broadcastRow (Γ := ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m]))
-    (m := m) (n := n) (idx := idxInvStd (m := m) (n := n))
-
-/-- Graph prefix adding `inv_std_b`. -/
-def g9 {m n : Nat} (ε : ℝ) : Graph (ΓLN m n) (ssPrefix7 m n ++ [VecShape m, MatShape m n]) :=
-  .snoc (g8 (m := m) (n := n) ε) (nodeInvStdB (m := m) (n := n))
-
-/-- Index of `centered` in the stage-`g9` context. -/
-def idxCentered9 {m n : Nat} :
-    Idx (ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n])) (MatShape m n) :=
-  Idx.weaken (Γ := ΓLN m n ++ [VecShape m, MatShape m n, MatShape m n]) (idxCentered (m := m) (n :=
-    n))
-    (rest := [MatShape m n, VecShape m, VecShape m, VecShape m, VecShape m, MatShape m n])
-
-/-- Index of `inv_std_b` in the stage-`g9` context. -/
-def idxInvStdB9 {m n : Nat} :
-    Idx (ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n])) (MatShape m n) :=
-  Idx.last (Γ := ΓLN m n) (ss := ssPrefix7 m n ++ [VecShape m]) (τ := MatShape m n)
-
-/-- Node computing `normalized := centered ⊙ inv_std_b`. -/
-def nodeNorm {m n : Nat} :
-    Node (ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n])) (MatShape m n) :=
-  mul (Γ := ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n])) (s := MatShape m n)
-    (a := idxCentered9 (m := m) (n := n)) (b := idxInvStdB9 (m := m) (n := n))
-
-/-- Graph prefix producing `normalized := centered ⊙ inv_std_b`. -/
-def g10 {m n : Nat} (ε : ℝ) : Graph (ΓLN m n) (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape
-  m n]) :=
-  .snoc (g9 (m := m) (n := n) ε) (nodeNorm (m := m) (n := n))
-
-/-- Broadcast `gamma` to `m×n` (column-wise). -/
-def nodeGammaB {m n : Nat} :
-    Node (ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n])) (MatShape m n) :=
-  broadcastCol
-    (Γ := ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n]))
-    (m := m) (n := n)
-    (idx := idxGamma (m := m) (n := n) (ss := ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m
-      n]))
-
-/-- Graph prefix adding `gamma_b`. -/
-def g11 {m n : Nat} (ε : ℝ) :
-    Graph (ΓLN m n) (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n]) :=
-  .snoc (g10 (m := m) (n := n) ε) (nodeGammaB (m := m) (n := n))
-
-/-- Index of `normalized` in the context at stage `g11`. -/
-def idxNorm11 {m n : Nat} :
-    Idx (ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n]))
-      (MatShape m n) :=
-  _root_.Proofs.Autograd.Idx.weaken (Γ := ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n,
-    MatShape m n]))
-    (Idx.last (Γ := ΓLN m n) (ss := ssPrefix7 m n ++ [VecShape m, MatShape m n]) (τ := MatShape m n))
-    (rest := [MatShape m n])
-
-/-- Index of `gamma_b` at stage `g11`. -/
-def idxGammaB11 {m n : Nat} :
-    Idx (ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n]))
-      (MatShape m n) :=
-  Idx.last (Γ := ΓLN m n) (ss := ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n]) (τ :=
-    MatShape m n)
-
-/-- Scale: `scaled := normalized ⊙ gamma_b`. -/
-def nodeScaled {m n : Nat} :
-    Node (ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n]))
-      (MatShape m n) :=
-  mul (Γ := ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n])) (s
-    := MatShape m n)
-    (a := idxNorm11 (m := m) (n := n)) (b := idxGammaB11 (m := m) (n := n))
-
-/-- Graph prefix adding `scaled`. -/
-def g12 {m n : Nat} (ε : ℝ) :
-    Graph (ΓLN m n) (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n,
-      MatShape m n]) :=
-  .snoc (g11 (m := m) (n := n) ε) (nodeScaled (m := m) (n := n))
-
-/-- Broadcast `beta` to `m×n` (column-wise). -/
-def nodeBetaB {m n : Nat} :
-    Node (ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n,
-      MatShape m n])) (MatShape m n) :=
-  broadcastCol
-    (Γ := ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n,
-      MatShape m n]))
-    (m := m) (n := n)
-    (idx := idxBeta (m := m) (n := n)
-      (ss := ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n, MatShape m n]))
-
-/-- Graph prefix adding `beta_b`. -/
-def g13 {m n : Nat} (ε : ℝ) :
-    Graph (ΓLN m n) (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n,
-      MatShape m n, MatShape m n]) :=
-  .snoc (g12 (m := m) (n := n) ε) (nodeBetaB (m := m) (n := n))
-
-/-- Index of `scaled` at stage `g13`. -/
-def idxScaled13 {m n : Nat} :
-    Idx (ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n,
-      MatShape m n, MatShape m n])) (MatShape m n) :=
-  _root_.Proofs.Autograd.Idx.weaken (Γ := ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n,
-    MatShape m n, MatShape m n, MatShape m n]))
-    (Idx.last (Γ := ΓLN m n) (ss := ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n,
-      MatShape m n]) (τ := MatShape m n))
-    (rest := [MatShape m n])
-
-/-- Index of `beta_b` at stage `g13`. -/
-def idxBetaB13 {m n : Nat} :
-    Idx (ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n,
-      MatShape m n, MatShape m n])) (MatShape m n) :=
-  Idx.last (Γ := ΓLN m n) (ss := ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m
-    n, MatShape m n]) (τ := MatShape m n)
-
-/-- Output: `y := scaled + beta_b`. -/
-def nodeY {m n : Nat} :
-    Node (ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n,
-      MatShape m n, MatShape m n])) (MatShape m n) :=
-  add (Γ := ΓLN m n ++ (ssPrefix7 m n ++ [VecShape m, MatShape m n, MatShape m n, MatShape m n,
-    MatShape m n, MatShape m n]))
-    (s := MatShape m n) (a := idxScaled13 (m := m) (n := n)) (b := idxBetaB13 (m := m) (n := n))
-
-/-- Full LayerNorm graph (as an explicit snoc chain). -/
-def layerNormGraph {m n : Nat} (ε : ℝ) : Graph (ΓLN m n) (ssLayerNorm m n) :=
-  .snoc (g13 (m := m) (n := n) ε) (nodeY (m := m) (n := n))
-
 -- ---------------------------------------------------------------------------
 -- Pointwise `GraphFDerivCorrectAt` for LayerNorm
 -- ---------------------------------------------------------------------------
 
 /--
-Pointwise proof that `layerNormGraph` satisfies `GraphFDerivCorrectAt`.
+Pointwise proof that `layerNormGraph` satisfies `GraphFDerivCorrectAt`, from explicit domain
+assumptions.
 
-The hypotheses `hVarEpsPos` and `hStdNe0` are explicit domain assumptions ensuring that `sqrt` and
-`inv` are differentiable at the execution point.
+The hypotheses `hVarEpsPos` and `hStdNe0` ensure that `sqrt` and `inv` are differentiable at the
+execution point. `layerNormGraphFderivCorrectAt` discharges both from `0 < ε`.
 -/
-def layerNormGraphFderivCorrectAt
+def layerNormGraphFderivCorrectAtOfDomain
     {m n : Nat} (ε : ℝ) (xV : CtxVec (ΓLN m n))
     (hVarEpsPos :
       ∀ i : Fin (Spec.Shape.size (VecShape m)),
@@ -530,13 +249,22 @@ def layerNormGraphFderivCorrectAt
           MatShape m n])
         (g13 (m := m) (n := n) ε) xV)
 
-/--
-Pointwise end-to-end result: backprop equals `(fderiv eval)†` for `layerNormGraph`.
+/-- Pointwise proof that `layerNormGraph` satisfies `GraphFDerivCorrectAt` whenever `0 < ε`. -/
+def layerNormGraphFderivCorrectAt
+    {m n : Nat} (ε : ℝ) (xV : CtxVec (ΓLN m n)) (hε : 0 < ε) :
+    GraphFDerivCorrectAt (Γ := ΓLN m n) (ss := ssLayerNorm m n) (layerNormGraph (m := m) (n := n) ε)
+      xV :=
+  layerNormGraphFderivCorrectAtOfDomain (m := m) (n := n) ε xV
+    (varEps_pos_of_eps_pos hε xV) (std_ne_zero_of_eps_pos hε xV)
 
-The hypotheses `hVarEpsPos` and `hStdNe0` are the explicit domain assumptions needed for
-differentiability of `sqrt` (after clamp) and `inv` at the actual execution point.
+/--
+Pointwise end-to-end result from explicit domain assumptions: backprop equals `(fderiv eval)†`
+for `layerNormGraph`.
+
+The hypotheses `hVarEpsPos` and `hStdNe0` are the domain assumptions needed for differentiability
+of `sqrt` (after clamp) and `inv` at the actual execution point.
 -/
-theorem backprop_eq_adjoint_fderiv_layerNorm_at
+theorem backprop_eq_adjoint_fderiv_layerNorm_at_of_domain
     {m n : Nat} (ε : ℝ)
     (xV : CtxVec (ΓLN m n))
     (seedV : CtxVec (ΓLN m n ++ ssLayerNorm m n))
@@ -561,10 +289,26 @@ theorem backprop_eq_adjoint_fderiv_layerNorm_at
   have hg :
       GraphFDerivCorrectAt (Γ := ΓLN m n) (ss := ssLayerNorm m n) (layerNormGraph (m := m) (n := n)
         ε) xV :=
-    layerNormGraphFderivCorrectAt (m := m) (n := n) ε xV hVarEpsPos hStdNe0
+    layerNormGraphFderivCorrectAtOfDomain (m := m) (n := n) ε xV hVarEpsPos hStdNe0
   exact
     Graph.backpropVec_eq_adjoint_fderiv_at (Γ := ΓLN m n) (ss := ssLayerNorm m n)
       (g := layerNormGraph (m := m) (n := n) ε) xV seedV hg
+
+/-- Pointwise end-to-end result: backprop equals `(fderiv eval)†` for `layerNormGraph` whenever
+`0 < ε`. -/
+theorem backprop_eq_adjoint_fderiv_layerNorm_at
+    {m n : Nat} (ε : ℝ)
+    (xV : CtxVec (ΓLN m n))
+    (seedV : CtxVec (ΓLN m n ++ ssLayerNorm m n)) (hε : 0 < ε) :
+    Graph.backpropVec (Γ := ΓLN m n) (ss := ssLayerNorm m n) (layerNormGraph (m := m) (n := n) ε) xV
+      seedV
+      =
+    (fderiv ℝ
+        (Graph.evalVec (Γ := ΓLN m n) (ss := ssLayerNorm m n) (layerNormGraph (m := m) (n := n) ε))
+        xV).adjoint seedV :=
+  Graph.backpropVec_eq_adjoint_fderiv_at (Γ := ΓLN m n) (ss := ssLayerNorm m n)
+    (g := layerNormGraph (m := m) (n := n) ε) xV seedV
+    (layerNormGraphFderivCorrectAt (m := m) (n := n) ε xV hε)
 
 -- ---------------------------------------------------------------------------
 -- Generic whole-node adapter
@@ -584,11 +328,6 @@ structure Inputs (Γ : List Shape) (m n : Nat) where
   gamma : Idx Γ (VecShape n)
   /-- Affine shift vector. -/
   beta : Idx Γ (VecShape n)
-
-/-- Index of the final LayerNorm output in `ΓLN ++ ssLayerNorm`. -/
-def idxY {m n : Nat} : Idx (ΓLN m n ++ ssLayerNorm m n) (MatShape m n) :=
-  ⟨⟨16, by simp [ΓLN, ssLayerNorm]⟩,
-    by simp [ΓLN, ssLayerNorm]⟩
 
 /--
 Linear map that packs arbitrary-context LayerNorm inputs into the canonical context
@@ -650,25 +389,11 @@ def wholeNode {Γ : List Shape} {m n : Nat} (inputs : Inputs Γ m n) (ε : ℝ) 
 /--
 Pointwise derivative certificate for `wholeNode`.
 
-The hypotheses are the same LayerNorm domain conditions as the detailed graph theorem, but evaluated
-after packing the arbitrary context into `[X, gamma, beta]`.
+Only `0 < ε` is needed: the row variance computed inside the packed LayerNorm graph is a mean of
+squares, so `var + ε` is positive and the clamped standard deviation is nonzero at every point.
 -/
 def wholeNodeFDerivCorrectAt {Γ : List Shape} {m n : Nat}
-    (inputs : Inputs Γ m n) (ε : ℝ) (xV : CtxVec Γ)
-    (hVarEpsPos :
-      ∀ i : Fin (Spec.Shape.size (VecShape m)),
-        0 < CtxVec.get (Γ := ΓLN m n ++ ssPrefix6 m n) (s := VecShape m)
-          (idxVarEps (m := m) (n := n))
-          (Graph.evalVec (Γ := ΓLN m n) (ss := ssPrefix6 m n)
-            (layerNormPrefix6 (m := m) (n := n) ε)
-            ((packInputsCLM (Γ := Γ) (m := m) (n := n) inputs) xV)) i)
-    (hStdNe0 :
-      ∀ i : Fin (Spec.Shape.size (VecShape m)),
-        CtxVec.get (Γ := ΓLN m n ++ ssPrefix7 m n) (s := VecShape m)
-          (idxStd (m := m) (n := n))
-          (Graph.evalVec (Γ := ΓLN m n) (ss := ssPrefix7 m n)
-            (layerNormPrefix7 (m := m) (n := n) ε)
-            ((packInputsCLM (Γ := Γ) (m := m) (n := n) inputs) xV)) i ≠ 0) :
+    (inputs : Inputs Γ m n) (ε : ℝ) (xV : CtxVec Γ) (hε : 0 < ε) :
     NodeFDerivCorrectAt (wholeNode (Γ := Γ) (m := m) (n := n) inputs ε) xV := by
   classical
   let pack := packInputsCLM (Γ := Γ) (m := m) (n := n) inputs
@@ -679,7 +404,7 @@ def wholeNodeFDerivCorrectAt {Γ : List Shape} {m n : Nat}
       out (Graph.evalVec (Γ := ΓLN m n) (ss := ssLayerNorm m n) g (pack z))
   have hgAt :
       GraphFDerivCorrectAt (Γ := ΓLN m n) (ss := ssLayerNorm m n) g (pack xV) :=
-    layerNormGraphFderivCorrectAt (m := m) (n := n) ε (pack xV) hVarEpsPos hStdNe0
+    layerNormGraphFderivCorrectAt (m := m) (n := n) ε (pack xV) hε
   let hEval := Graph.hasFDerivAt_evalVec_and_jvp_at
       (Γ := ΓLN m n) (ss := ssLayerNorm m n) (g := g) (xV := pack xV) hgAt
   let Dg := Classical.choose hEval
@@ -713,6 +438,253 @@ def wholeNodeFDerivCorrectAt {Γ : List Shape} {m n : Nat}
     simpa [wholeNode, f, pack, g, out] using hOut
   · intro dxV
     simp [wholeNode, f, pack, g, out]
+
+-- ---------------------------------------------------------------------------
+-- Bridge to `Spec.layerNorm`
+-- ---------------------------------------------------------------------------
+
+/-! ## The graph computes `Spec.layerNorm`
+
+The packed context `[X, gamma, beta]` determines three spec tensors. Evaluating the LayerNorm graph
+on it and reading the output block gives exactly `tensorToVec (Spec.layerNorm X gamma beta)`.
+Consequently the spec function is differentiable wherever the graph is, with the graph's backprop
+as the adjoint of its derivative. -/
+
+open TapeNodes.Matmul in
+/-- The input matrix of a packed LayerNorm context, as a spec tensor. -/
+def specX {m n : Nat} (xV : CtxVec (ΓLN m n)) : Tensor ℝ [m, n] :=
+  vecToTensor (s := MatShape m n) (valX xV)
+
+/-- The scale vector of a packed LayerNorm context, as a spec tensor. -/
+def specGamma {m n : Nat} (xV : CtxVec (ΓLN m n)) : Tensor ℝ [n] :=
+  vecToTensor (s := VecShape n) (CtxVec.get (Γ := ΓLN m n) (s := VecShape n) idxGamma0 xV)
+
+/-- The shift vector of a packed LayerNorm context, as a spec tensor. -/
+def specBeta {m n : Nat} (xV : CtxVec (ΓLN m n)) : Tensor ℝ [n] :=
+  vecToTensor (s := VecShape n) (CtxVec.get (Γ := ΓLN m n) (s := VecShape n) idxBeta0 xV)
+
+/-- `Spec.layerNorm` as a map on the packed context vector `[X, gamma, beta]`. -/
+def specLayerNormVec {m n : Nat} (hm : 0 < m) (hn : 0 < n) (ε : ℝ) (xV : CtxVec (ΓLN m n)) :
+    Vec (Spec.Shape.size (MatShape m n)) :=
+  tensorToVec (Spec.layerNorm (specX xV) (specGamma xV) (specBeta xV) hm hn ε)
+
+/-- Pack three spec tensors into a LayerNorm context vector. -/
+def packLN {m n : Nat} (X : Tensor ℝ [m, n]) (gamma beta : Tensor ℝ [n]) : CtxVec (ΓLN m n) :=
+  flattenCtx (Γ := ΓLN m n) (.cons X (.cons gamma (.cons beta .nil)))
+
+section EntryLemmas
+
+open TapeNodes.Matmul
+
+variable {m n : Nat}
+
+/-- Entries of the input block. -/
+theorem valX_idxMN (xV : CtxVec (ΓLN m n)) (i : Fin m) (j : Fin n) :
+    valX xV (idxMN (m := m) (n := n) i j) = Spec.get2 (specX xV) i j := by
+  rw [specX, ← Norm.tensorToVec_idxMN, tensorToVec_vecToTensor]
+
+/-- Entries of the scale block. -/
+theorem valGamma_apply (xV : CtxVec (ΓLN m n)) (j : Fin n) :
+    valGamma xV j = TorchLean.Tensor.getScalar (specGamma xV) j := by
+  simp only [valGamma, getVec, castVec_apply]
+  rw [show CtxVec.get (Γ := ΓLN m n) (s := VecShape n) idxGamma0 xV = tensorToVec (specGamma xV)
+    from (tensorToVec_vecToTensor _).symm, Norm.tensorToVec_vec]
+  rfl
+
+/-- Entries of the shift block. -/
+theorem valBeta_apply (xV : CtxVec (ΓLN m n)) (j : Fin n) :
+    valBeta xV j = TorchLean.Tensor.getScalar (specBeta xV) j := by
+  simp only [valBeta, getVec, castVec_apply]
+  rw [show CtxVec.get (Γ := ΓLN m n) (s := VecShape n) idxBeta0 xV = tensorToVec (specBeta xV)
+    from (tensorToVec_vecToTensor _).symm, Norm.tensorToVec_vec]
+  rfl
+
+/-- The mean block holds the spec row means. -/
+theorem valMean_apply (xV : CtxVec (ΓLN m n)) (i : Fin m) :
+    valMean xV (Fin.cast (vecShape_size m).symm i) = Norm.rowMeanE (specX xV) i := by
+  show TapeNodes.MatrixLinear.rowMeanCLM (m := m) (n := n) (valX xV) i = _
+  rw [RowNorm.rowMeanCLM_eq, RowNorm.rowMean, Norm.rowMeanE]
+  congr 1
+  exact Finset.sum_congr rfl fun j _ => valX_idxMN xV i j
+
+/-- The broadcast mean block. -/
+theorem valMeanB_idxMN (xV : CtxVec (ΓLN m n)) (i : Fin m) (j : Fin n) :
+    valMeanB xV (idxMN (m := m) (n := n) i j) = Norm.rowMeanE (specX xV) i := by
+  rw [valMeanB, RowNorm.broadcastRowCLM_idxMN, castVec_apply, valMean_apply]
+
+/-- The centered block. -/
+theorem valCentered_idxMN (xV : CtxVec (ΓLN m n)) (i : Fin m) (j : Fin n) :
+    valCentered xV (idxMN (m := m) (n := n) i j) =
+      Spec.get2 (specX xV) i j - Norm.rowMeanE (specX xV) i := by
+  simp only [valCentered, PiLp.sub_apply, valX_idxMN, valMeanB_idxMN]
+
+/-- The variance block holds the spec row variances. -/
+theorem valVar_apply (xV : CtxVec (ΓLN m n)) (i : Fin m) :
+    valVar xV (Fin.cast (vecShape_size m).symm i) = Norm.rowVarE (specX xV) i := by
+  show TapeNodes.MatrixLinear.rowMeanCLM (m := m) (n := n) (valCenteredSq xV) i = _
+  rw [RowNorm.rowMeanCLM_eq, RowNorm.rowMean, Norm.rowVarE]
+  congr 1
+  refine Finset.sum_congr rfl fun j _ => ?_
+  simp only [valCenteredSq, vecOfFun_apply, valCentered_idxMN]
+
+/-- The broadcast inverse standard deviation block. -/
+theorem valInvStdB_idxMN (xV : CtxVec (ΓLN m n)) (ε : ℝ) (i : Fin m) (j : Fin n) :
+    valInvStdB xV ε (idxMN (m := m) (n := n) i j) =
+      (Real.sqrt (max (Norm.rowVarE (specX xV) i + ε) 0))⁻¹ := by
+  rw [valInvStdB, RowNorm.broadcastRowCLM_idxMN, castVec_apply]
+  simp only [valInvStd, valStd, valVarEps, vecOfFun_apply, valVar_apply]
+
+/-- The output block, entrywise. -/
+theorem valY_idxMN (xV : CtxVec (ΓLN m n)) (ε : ℝ) (i : Fin m) (j : Fin n) :
+    valY xV ε (idxMN (m := m) (n := n) i j) =
+      (Spec.get2 (specX xV) i j - Norm.rowMeanE (specX xV) i) *
+          (Real.sqrt (max (Norm.rowVarE (specX xV) i + ε) 0))⁻¹ *
+            TorchLean.Tensor.getScalar (specGamma xV) j +
+        TorchLean.Tensor.getScalar (specBeta xV) j := by
+  simp only [valY, PiLp.add_apply, valScaled, valNorm, vecOfFun_apply, valGammaB, valBetaB,
+    RowNorm.broadcastColCLM_idxMN, valCentered_idxMN, valInvStdB_idxMN, valGamma_apply,
+    valBeta_apply]
+
+end EntryLemmas
+
+/-- The spec LayerNorm of the packed inputs is the closed form of the graph output. -/
+theorem specLayerNormVec_eq_valY {m n : Nat} (hm : 0 < m) (hn : 0 < n) (ε : ℝ)
+    (xV : CtxVec (ΓLN m n)) :
+    specLayerNormVec hm hn ε xV = valY xV ε := by
+  apply Norm.vec_ext_idxMN
+  intro i j
+  rw [specLayerNormVec, Norm.tensorToVec_idxMN, Norm.get2_layerNorm hm hn, valY_idxMN,
+    div_eq_mul_inv]
+
+/-- Forward bridge: the output block of the LayerNorm graph is `Spec.layerNorm` of the packed
+inputs. -/
+theorem outputCLM_evalVec_layerNormGraph {m n : Nat} (hm : 0 < m) (hn : 0 < n) (ε : ℝ)
+    (xV : CtxVec (ΓLN m n)) :
+    outputCLM (m := m) (n := n)
+        (Graph.evalVec (Γ := ΓLN m n) (ss := ssLayerNorm m n)
+          (layerNormGraph (m := m) (n := n) ε) xV) =
+      specLayerNormVec hm hn ε xV := by
+  rw [specLayerNormVec_eq_valY, outputCLM, CtxVec.getCLM_apply, get_idxY]
+
+/-- The spec LayerNorm map is the output projection of the graph evaluation. -/
+theorem specLayerNormVec_eq {m n : Nat} (hm : 0 < m) (hn : 0 < n) (ε : ℝ) :
+    specLayerNormVec (m := m) (n := n) hm hn ε =
+      fun xV =>
+        outputCLM (m := m) (n := n)
+          (Graph.evalVec (Γ := ΓLN m n) (ss := ssLayerNorm m n)
+            (layerNormGraph (m := m) (n := n) ε) xV) := by
+  funext xV
+  exact (outputCLM_evalVec_layerNormGraph hm hn ε xV).symm
+
+/-- `Spec.layerNorm` is differentiable in `[X, gamma, beta]` for `0 < ε`, with derivative the
+output projection of the graph derivative. -/
+theorem hasFDerivAt_specLayerNormVec {m n : Nat} (hm : 0 < m) (hn : 0 < n) {ε : ℝ}
+    (hε : 0 < ε) (xV : CtxVec (ΓLN m n)) :
+    HasFDerivAt (specLayerNormVec hm hn ε)
+      ((outputCLM (m := m) (n := n)).comp
+        (fderiv ℝ
+          (Graph.evalVec (Γ := ΓLN m n) (ss := ssLayerNorm m n)
+            (layerNormGraph (m := m) (n := n) ε)) xV))
+      xV := by
+  rw [specLayerNormVec_eq]
+  have hg := layerNormGraphFderivCorrectAt (m := m) (n := n) ε xV hε
+  rcases Graph.hasFDerivAt_evalVec_and_jvp_at (Γ := ΓLN m n) (ss := ssLayerNorm m n)
+    (g := layerNormGraph (m := m) (n := n) ε) xV hg with ⟨D, hD, _⟩
+  rw [hD.fderiv]
+  exact (outputCLM (m := m) (n := n)).hasFDerivAt.comp xV hD
+
+/-- `Spec.layerNorm` is differentiable in `[X, gamma, beta]` for `0 < ε`. -/
+theorem differentiableAt_specLayerNormVec {m n : Nat} (hm : 0 < m) (hn : 0 < n) {ε : ℝ}
+    (hε : 0 < ε) (xV : CtxVec (ΓLN m n)) :
+    DifferentiableAt ℝ (specLayerNormVec hm hn ε) xV :=
+  (hasFDerivAt_specLayerNormVec hm hn hε xV).differentiableAt
+
+/-- The adjoint of the output projection injects a cotangent into the output block. -/
+theorem adjoint_outputCLM {m n : Nat} (δ : Vec (Spec.Shape.size (MatShape m n))) :
+    (outputCLM (m := m) (n := n)).adjoint δ =
+      CtxVec.single (Γ := ΓLN m n ++ ssLayerNorm m n) (s := MatShape m n) (idxY (m := m) (n := n))
+        δ := by
+  apply ext_inner_left ℝ
+  intro w
+  rw [ContinuousLinearMap.adjoint_inner_right, CtxVec.inner_get_single, outputCLM,
+    CtxVec.getCLM_apply]
+
+/-- Reverse-mode bridge: backprop of the LayerNorm graph seeded on the output block is the adjoint
+derivative of `Spec.layerNorm` in `[X, gamma, beta]`. -/
+theorem backpropVec_single_eq_adjoint_specLayerNorm {m n : Nat} (hm : 0 < m) (hn : 0 < n)
+    {ε : ℝ} (hε : 0 < ε) (xV : CtxVec (ΓLN m n)) (δ : Vec (Spec.Shape.size (MatShape m n))) :
+    Graph.backpropVec (Γ := ΓLN m n) (ss := ssLayerNorm m n) (layerNormGraph (m := m) (n := n) ε)
+        xV
+        (CtxVec.single (Γ := ΓLN m n ++ ssLayerNorm m n) (s := MatShape m n)
+          (idxY (m := m) (n := n)) δ) =
+      (fderiv ℝ (specLayerNormVec hm hn ε) xV).adjoint δ := by
+  rw [backprop_eq_adjoint_fderiv_layerNorm_at (m := m) (n := n) ε xV _ hε,
+    (hasFDerivAt_specLayerNormVec hm hn hε xV).fderiv, ContinuousLinearMap.adjoint_comp,
+    ContinuousLinearMap.comp_apply, adjoint_outputCLM]
+
+/-! ### Packed tensors -/
+
+section Pack
+
+variable {m n : Nat}
+
+/-- The input block of a packed context. -/
+theorem valX_packLN (X : Tensor ℝ [m, n]) (gamma beta : Tensor ℝ [n]) :
+    valX (packLN X gamma beta) = tensorToVec X := by
+  apply PiLp.ext
+  intro j
+  simp only [valX, CtxVec.get, packLN, idxX0]
+  rw [CtxVec.getBlock_flattenCtx_zero]
+  rfl
+
+/-- The scale block of a packed context. -/
+theorem get_idxGamma0_packLN (X : Tensor ℝ [m, n]) (gamma beta : Tensor ℝ [n]) :
+    CtxVec.get (Γ := ΓLN m n) (s := VecShape n) idxGamma0 (packLN X gamma beta) =
+      tensorToVec gamma := by
+  apply PiLp.ext
+  intro j
+  simp only [CtxVec.get, packLN, idxGamma0]
+  rw [CtxVec.getBlock_flattenCtx_succ, CtxVec.getBlock_flattenCtx_zero]
+  rfl
+
+/-- The shift block of a packed context. -/
+theorem get_idxBeta0_packLN (X : Tensor ℝ [m, n]) (gamma beta : Tensor ℝ [n]) :
+    CtxVec.get (Γ := ΓLN m n) (s := VecShape n) idxBeta0 (packLN X gamma beta) =
+      tensorToVec beta := by
+  apply PiLp.ext
+  intro j
+  simp only [CtxVec.get, packLN, idxBeta0]
+  rw [CtxVec.getBlock_flattenCtx_succ, CtxVec.getBlock_flattenCtx_succ,
+    CtxVec.getBlock_flattenCtx_zero]
+  rfl
+
+/-- Packing and unpacking round-trip on the input matrix. -/
+theorem specX_packLN (X : Tensor ℝ [m, n]) (gamma beta : Tensor ℝ [n]) :
+    specX (packLN X gamma beta) = X := by
+  rw [specX, valX_packLN, vecToTensor_tensorToVec]
+
+/-- Packing and unpacking round-trip on the scale vector. -/
+theorem specGamma_packLN (X : Tensor ℝ [m, n]) (gamma beta : Tensor ℝ [n]) :
+    specGamma (packLN X gamma beta) = gamma := by
+  rw [specGamma, get_idxGamma0_packLN, vecToTensor_tensorToVec]
+
+/-- Packing and unpacking round-trip on the shift vector. -/
+theorem specBeta_packLN (X : Tensor ℝ [m, n]) (gamma beta : Tensor ℝ [n]) :
+    specBeta (packLN X gamma beta) = beta := by
+  rw [specBeta, get_idxBeta0_packLN, vecToTensor_tensorToVec]
+
+/-- Forward bridge in tensor form: evaluating the LayerNorm graph on packed spec tensors and
+reading the output block gives `Spec.layerNorm`. -/
+theorem outputCLM_evalVec_layerNormGraph_packLN (hm : 0 < m) (hn : 0 < n) (ε : ℝ)
+    (X : Tensor ℝ [m, n]) (gamma beta : Tensor ℝ [n]) :
+    outputCLM (m := m) (n := n)
+        (Graph.evalVec (Γ := ΓLN m n) (ss := ssLayerNorm m n)
+          (layerNormGraph (m := m) (n := n) ε) (packLN X gamma beta)) =
+      tensorToVec (Spec.layerNorm X gamma beta hm hn ε) := by
+  rw [outputCLM_evalVec_layerNormGraph hm hn ε, specLayerNormVec, specX_packLN, specGamma_packLN,
+    specBeta_packLN]
+
+end Pack
 
 end LayerNorm
 

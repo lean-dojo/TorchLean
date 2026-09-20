@@ -3,7 +3,7 @@ Train the MLP reference example and export its weights to JSON for TorchLean.
 
 The training run uses a fixed input/target pair and writes a JSON object that matches the importer in:
 
-  `NN/Examples/Interop/PyTorch/MLP/Import.lean` (`Import.MLPPyTorch.loadMlpStateDict`).
+  `NN/Runtime/PyTorch/Import/MLP.lean`.
 
 Run from the repo root:
 
@@ -49,20 +49,20 @@ def save_mlp_to_json(model: TestMLP, json_path: str):
     """Save MLP weights to JSON.
 
     Notes:
-    - `Import.MLPPyTorch` supports both named-module keys (`fc1.weight`/`fc2.bias`)
+    - The TorchLean importer supports both named-module keys (`fc1.weight`/`fc2.bias`)
       and sequential-module keys (`layers.0.weight`/`layers.2.bias`).
     - We emit the sequential-style keys to keep the file format stable across
       different PyTorch module naming conventions.
     """
     state_dict = model.state_dict()
-    
+
     # Convert PyTorch state dict to the TorchLean import key format (layers.X.weight/bias)
     new_format = {}
     new_format['layers.0.weight'] = state_dict['fc1.weight'].tolist()
     new_format['layers.0.bias'] = state_dict['fc1.bias'].tolist()
     new_format['layers.2.weight'] = state_dict['fc2.weight'].tolist()
     new_format['layers.2.bias'] = state_dict['fc2.bias'].tolist()
-    
+
     payload = {
         # `Import.PyTorch.loadWeights?` accepts `{...}` or `{ "params": {...} }`.
         "params": new_format,
@@ -77,23 +77,19 @@ def save_mlp_to_json(model: TestMLP, json_path: str):
         json.dump(payload, f, indent=2)
 
 def main():
-    # 1. Instantiate model
     model = TestMLP()
     init_deterministic_weights(model)
-    
-    # 2. Loss & optimizer
+
     criterion = nn.MSELoss()
     optimizer = optim.SGD(model.parameters(), lr=0.1)
-    
-    # 3. Training data
+
     # shape: (batch_size, input_dim=2)
     x_train = torch.tensor([[0.5, 0.8]], dtype=torch.float32)  # shape: (1, 2)
     y_train = torch.tensor([[1.0]], dtype=torch.float32)        # shape: (1, 1)
-    
+
     print(f"Model info: {model.get_model_info()}")
     print(f"Initial output: {model(x_train)}")
-    
-    # 4. Train loop
+
     print("\nStarting training...")
     for epoch in range(200):
         optimizer.zero_grad()
@@ -101,24 +97,22 @@ def main():
         loss = criterion(outputs, y_train)
         loss.backward()
         optimizer.step()
-        
+
         if epoch % 50 == 0:
             print(f"Epoch {epoch}, Loss: {loss.item():.6f}")
-    
+
     print(f"Final output: {model(x_train)}")
-    
-    # 5. Save trained weights to JSON in the TorchLean import key format
+
     # Write directly into this example folder so `Roundtrip.lean` can import it by a stable path.
     out_path = THIS_DIR / "mlp.json"
     save_mlp_to_json(model, str(out_path))
     print(f"Saved trained weights to {out_path}")
-    
-    # 6. Print a fresh-init baseline so the exported file has a stable comparison point.
+
     test_model = TestMLP()
     init_deterministic_weights(test_model)
     original_output = test_model(x_train)
     print(f"Original (fresh init) output: {original_output}")
-    print(f"Training improved output by: {abs(model(x_train).item() - original_output.item()):.6f}")
+    print(f"Output change from initialization: {abs(model(x_train).item() - original_output.item()):.6f}")
 
 if __name__ == "__main__":
     main()

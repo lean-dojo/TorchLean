@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.GraphSpec.Chain.ToDAG.Core
+public import NN.GraphSpec.DAG.Model
 
 /-!
 # DAG models from sequential GraphSpec chains
@@ -21,16 +22,16 @@ primitive layer conversion and can therefore fail.
 namespace NN
 namespace GraphSpec
 
-open _root_.Spec
+open Spec TorchLean
 
 namespace LowerToDAG
 
 /--
 Initialize a parameter list by filling every tensor with zeros, for proofs and shape-only examples.
 -/
-def zeroInitParams : (ps : List Shape) → _root_.TorchLean.TensorPack Float ps
-  | [] => .nil
-  | s :: ss => .cons (Spec.zeros (α := Float) s) (zeroInitParams ss)
+def zeroInitParams : (ps : List Shape) → TorchLean.TensorPack Float ps
+  | .nil => .nil
+  | .cons s ss => .cons (Tensor.zeros (α := Float) s) (zeroInitParams ss)
 
 /-!
 ### Deterministic initialization for chains

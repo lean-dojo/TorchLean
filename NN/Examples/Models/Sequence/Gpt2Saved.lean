@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.API
 public import NN.Examples.Models.Sequence.Gpt2
 
 /-!
@@ -20,14 +19,14 @@ This is the load-and-sample half of the byte-level GPT example.
 lake -R -K cuda=true build torchlean:exe
 lake -R -K cuda=true exe torchlean gpt2 --device cuda --tiny-shakespeare --steps 1 --windows 1 \
   --prompt "First Citizen:" --generate 0 \
-  --save-checkpoint data/model_zoo/gpt2_shakespeare.state.json
+  --save-checkpoint data/examples/gpt2_shakespeare.state.json
 ```
 
 2. Load the checkpoint and sample text (no training loop or optimizer state):
 
 ```bash
 lake -R -K cuda=true exe torchlean gpt2_saved --device cuda \
-  --checkpoint data/model_zoo/gpt2_shakespeare.state.json \
+  --checkpoint data/examples/gpt2_shakespeare.state.json \
   --prompt "First Citizen:" --generate 0
 ```
 
@@ -44,8 +43,8 @@ state shapes and reject stale or mismatched checkpoint files.
 
 ## Why This Is A Separate Example
 
-The inference-only workflow is direct: load a checkpoint, convert it into runtime
-runtime handles, and sample text without building a training loop.
+The inference-only workflow is direct: load a checkpoint, convert it into runtime handles, and
+sample text without building a training loop.
 -/
 
 @[expose] public section
@@ -55,13 +54,14 @@ open TorchLean
 namespace NN.Examples.Models.Sequence.Gpt2Saved
 
 /-- CLI subcommand name used in terminal banners and error messages. -/
-def exeName : String := "torchlean gpt2_saved"
+def exeName : String := "gpt2_saved"
 
 /-- Help text for checkpoint-only GPT-2 sampling. -/
 def usage : String :=
   String.intercalate "\n"
     [ "Usage:"
-    , "  lake -R -K cuda=true exe torchlean gpt2_saved --device cuda --checkpoint PATH [generation flags]"
+    , "  lake -R -K cuda=true exe torchlean gpt2_saved --device cuda --checkpoint PATH "
+        ++ "[generation flags]"
     , ""
     , "Required:"
     , "  --checkpoint PATH    model state written by `torchlean gpt2 --save-checkpoint`"
@@ -71,26 +71,28 @@ def usage : String :=
     , "  --generate N         number of bytes to generate"
     , "  --temperature X      sampling temperature"
     , "  --top-k N            top-k cutoff"
-    , "  --seed N             sampling seed"
+    , "  --sample-seed N      sampling seed"
     ]
 
 /-- Command-local options for loading one checkpoint and sampling from it. -/
-structure SavedOptions extends text.GenerationOptions where
+structure Options where
+  /-- Prompt and token-sampling policy. -/
+  generation : text.GenerationOptions
   /-- Model checkpoint loaded before sampling starts. -/
   checkpointPath : System.FilePath
 deriving Repr
 
-namespace SavedOptions
+namespace Options
 
 /-- Parse the checkpoint path followed by the shared generation flags. -/
 def parse (args : List String) (defaults : text.GenerationOptions) :
-    Except String (SavedOptions × List String) := do
+    Except String (Options × List String) := do
   let (checkpointPath, args) ←
-    CLI.takeRequiredPathFlag args "checkpoint" (exeName := exeName)
+    CLI.requirePathFlag args "checkpoint" (exeName := exeName)
   let (generation, args) ← text.GenerationOptions.parse exeName args defaults
-  pure ({ checkpointPath, toGenerationOptions := generation }, args)
+  pure ({ checkpointPath, generation }, args)
 
-end SavedOptions
+end Options
 
 /--
 Load model state from disk and run sampling with the fixed byte-level GPT architecture.
@@ -100,35 +102,41 @@ in `Gpt2.lean` changes (heads, width, layers, etc.), mismatched checkpoints fail
 before sampling starts.
 -/
 def sampleCheckpoint
-    (load : SavedOptions) :
+    (load : Options) (runtime : Runtime.Config := {}) :
     IO String := do
-  nn.withModel NN.Examples.Models.Sequence.Gpt2.model fun model => do
-    -- The checkpoint boundary is shape-indexed: stale files fail before sampling starts.
-    let state ← Checkpoint.loadModelState model load.checkpointPath
-    let graph ← nn.lowerToTypedGraph model (α := Float)
-    let predict : NN.Examples.Models.Sequence.Gpt2.Predictor :=
-      fun x => pure <| nn.TypedGraphModel.forward graph state x
-    let outIds ←
-      NN.Examples.Models.Sequence.Gpt2.generateSampled predict load.prompt load.generate
-        load.temperature load.topK load.seed load.repeatWindow load.repeatPenalty load.asciiOnly
-    let txt := text.escapeByteIdsForDisplay outIds
-    IO.println s!"  loaded={load.checkpointPath}"
-    IO.println s!"  prompt={text.escapeForDisplay load.prompt}"
-    IO.println s!"  sampled={txt}"
-    pure txt
+  let trainer := Trainer.new NN.Examples.Models.Sequence.Gpt2.model
+    (Trainer.RunConfig.forObjective (Trainer.RunConfig.fromRuntime runtime)
+      (seed := runtime.seed))
+  let session ← trainer.open
+  session.load load.checkpointPath
+  let predict : NN.Examples.Models.Sequence.Gpt2.Predictor := session.predict
+  let outIds ←
+    NN.Examples.Models.Sequence.Gpt2.generateSampled
+      predict load.generation.prompt load.generation.newTokenCount
+      load.generation.temperature load.generation.topK load.generation.seed
+      load.generation.repeatWindow load.generation.repeatPenalty
+      load.generation.asciiOnly
+  let txt := text.formatByteTokens outIds
+  IO.println s!"  loaded={load.checkpointPath}"
+  IO.println s!"  prompt={text.escape load.generation.prompt}"
+  IO.println s!"  sampled={txt}"
+  pure txt
 
 /-- CLI entrypoint for checkpoint sampling. -/
 def main (args : List String) : IO UInt32 := do
   if args.contains "--help" || args.contains "-h" then
     IO.println usage
     return 0
-  Module.Command.runFloat32 exeName args
-    (banner := fun _ => s!"{exeName}: sample from a model checkpoint")
-    (k := fun _opts rest => do
-      let (load, rest) ← ModelZoo.orThrow exeName <|
-        SavedOptions.parse rest
+  Module.Command.run
+    (config := {
+      banner? := some fun _ => s!"{exeName}: sample from a model checkpoint"
+      printSuccess := true })
+    exeName args
+    (.native fun runtime rest => do
+      let (load, rest) ← CLI.orThrow exeName <|
+        Options.parse rest
           { prompt := "First Citizen:"
-            generate := 96
+            newTokenCount := 96
             temperature := 0.85
             topK := 12
             repeatPenalty := 1.25
@@ -136,6 +144,6 @@ def main (args : List String) : IO UInt32 := do
             seed := 7
             asciiOnly := false }
       CLI.requireNoArgs exeName rest
-      let _ ← sampleCheckpoint load)
+      let _ ← sampleCheckpoint load runtime)
 
 end NN.Examples.Models.Sequence.Gpt2Saved

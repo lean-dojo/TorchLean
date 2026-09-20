@@ -17,7 +17,8 @@ multi-head wrapper.
 `Attention(Q,K,V) = softmax(Q Kᵀ / √d) V`
 
 TorchLean goal here is to mirror the math you see in deep learning libraries (especially PyTorch),
-but keep everything as pure functions on `Spec.Tensor` so the same definitions can be reused for:
+but keep everything as pure functions on `TorchLean.Tensor` so the same definitions can be reused
+for:
 
 - proofs (e.g. reasoning about shapes and gradients),
 - reference implementations (runtime extraction),
@@ -56,17 +57,19 @@ PyTorch analogy:
 @[expose] public section
 
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Shape
 open MathFunctions
-open Numbers
+
+open TorchLean
 
 namespace Spec
-open Tensor
+open TorchLean TorchLean.Tensor
 open Shape
 
-variable {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+variable {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
 
 /-!
 ## Scaled Dot-Product Attention
@@ -110,7 +113,7 @@ def causalMask (n : Nat) : Tensor Bool [n, n] :=
 
 /-- Future-only (upper-triangular) self-attention mask of shape `(n, n)`.
 
-This is the (strict) complement of `causal_mask`: `mask[i,j] = true` iff `i < j`.
+This is the (strict) complement of `causalMask`: `mask[i,j] = true` iff `i < j`.
 -/
 def futureMask (n : Nat) : Tensor Bool [n, n] :=
   Tensor.dim (fun i =>
@@ -118,7 +121,8 @@ def futureMask (n : Nat) : Tensor Bool [n, n] :=
       Tensor.scalar (decide (i.1 < j.1))))
 
 /-- Bundled inputs and mask needed for scaled dot-product attention. -/
-structure AttentionContext (α : Type) [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+structure AttentionContext (α : Type) [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   (nQ nK dModel : Nat) (h1 : nQ ≠ 0) (h2 : nK ≠ 0) where
   Q : Tensor α [nQ, dModel]
   K : Tensor α [nK, dModel]
@@ -152,17 +156,15 @@ defined to contain only zeros.
 def hardMaskedMax? {n : Nat}
     (scores : Tensor α [n])
     (mask : Tensor Bool [n]) : Option α :=
-  match scores, mask with
-  | Tensor.dim scoreValues, Tensor.dim maskValues =>
-      (List.finRange n).foldl (fun best i =>
-        match scoreValues i, maskValues i with
-        | Tensor.scalar score, Tensor.scalar allowed =>
-            if allowed then
-              match best with
-              | none => some score
-              | some current => some (if score > current then score else current)
-            else
-              best) none
+  (List.finRange n).foldl (fun best i =>
+    let score := Tensor.getScalar scores i
+    let allowed := Tensor.getScalar mask i
+    if allowed then
+      match best with
+      | none => some score
+      | some current => some (if score > current then score else current)
+    else
+      best) none
 
 /-- Hard-masked softmax on one vector.
 
@@ -190,11 +192,13 @@ def hardMaskedSoftmaxVecSpec {n : Nat}
 
 /-- Hard-masked softmax along the innermost axis of an arbitrary tensor. -/
 def hardMaskedSoftmaxSpec : {s : Shape} → Tensor α s → Tensor Bool s → Tensor α s
-  | .scalar, Tensor.scalar _score, Tensor.scalar allowed =>
-      Tensor.scalar (if allowed then 1 else 0)
+  | .scalar, _scores, mask =>
+      Tensor.scalar (if mask.item then 1 else 0)
   | .dim _ .scalar, scores, mask => hardMaskedSoftmaxVecSpec scores mask
-  | .dim n inner, Tensor.dim scores, Tensor.dim mask =>
-      Tensor.dim (fun i : Fin n => hardMaskedSoftmaxSpec (s := inner) (scores i) (mask i))
+  | .dim n inner, scores, mask =>
+      Tensor.dim (fun i : Fin n =>
+        hardMaskedSoftmaxSpec (s := inner)
+          (Tensor.unstack scores i) (Tensor.unstack mask i))
 
 /-- VJP/JVP helper for a softmax-like row-normalization when the forward weights are already known.
 
@@ -208,9 +212,10 @@ def softmaxBackwardFromWeightsSpec : {s : Shape} → Tensor α s → Tensor α s
   | .dim _n .scalar, weights, dWeights =>
       let rowDot : α := sumSpec (mulSpec dWeights weights)
       mulSpec weights (subSpec dWeights (replicate (Tensor.scalar rowDot)))
-  | .dim n inner, Tensor.dim weightRows, Tensor.dim dWeightRows =>
+  | .dim n inner, weights, dWeights =>
       Tensor.dim (fun i : Fin n =>
-        softmaxBackwardFromWeightsSpec (s := inner) (weightRows i) (dWeightRows i))
+        softmaxBackwardFromWeightsSpec (s := inner)
+          (Tensor.unstack weights i) (Tensor.unstack dWeights i))
 
 /-- Scaled dot-product attention (forward).
 
@@ -342,7 +347,8 @@ PyTorch analogy: this corresponds to the four linear maps used in attention bloc
 This spec keeps them as explicit matrices, without bias terms, so the parameterization remains
 visible in statements about the forward and derivative maps.
 -/
-  structure MultiHeadAttention (α : Type) (numHeads dModel headDim : Nat) where
+  structure MultiHeadAttention (α : Type) [TorchLean.Storage α]
+      (numHeads dModel headDim : Nat) where
     /-- Query projection from `dModel` to all attention heads. -/
     queryWeight : Tensor α [dModel, (numHeads * headDim)]
     /-- Key projection from `dModel` to all attention heads. -/
@@ -365,7 +371,7 @@ The feature coordinate is interpreted as `(head, coordinate-within-head)`: first
 `(numHeads, n, headDim)` would preserve the wrong row-major coordinate order.
 -/
   def splitHeadsSpec
-    {α : Type} [Context α]
+    {α : Type} [TorchLean.Storage α] [Context α]
     {n dModel : Nat}
   (x : Tensor α [n, dModel])
   (numHeads headDim : Nat)
@@ -390,7 +396,7 @@ Implementation detail:
 2. `reshapeSpec` flattens the final two axes into `(n, numHeads * headDim)`.
 -/
   def combineHeadsSpec
-    {α : Type} [Context α]
+    {α : Type} [TorchLean.Storage α] [Context α]
     {n numHeads headDim : Nat}
     (heads : Tensor α [numHeads, n, headDim]) :
     Tensor α [n, (numHeads * headDim)] :=
@@ -412,7 +418,8 @@ High-level structure:
 4. combine heads back and project with `Wo`
 -/
   def MultiHeadAttention.forward
-    {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+    {α : Type} [TorchLean.Storage α] [Context α]
+    [DecidableRel ((· > ·) : α → α → Prop)]
     {numHeads dModel headDim : Nat}
   (n : Nat) (h1 : n ≠ 0)
   (mha : MultiHeadAttention α numHeads dModel headDim)
@@ -420,29 +427,25 @@ High-level structure:
   (mask : Option (Tensor Bool [n, n])) :
   Tensor α [n, dModel] :=
 
-  let h : numHeads * headDim = numHeads * headDim := by rfl
-
   -- Project inputs to big Q, K, V.
   let Q := matMulSpec x mha.queryWeight
   let K := matMulSpec x mha.keyWeight
   let V := matMulSpec x mha.valueWeight
 
   -- Split heads: we represent heads as the outer axis `(numHeads, n, headDim)`.
-  let QHeads := splitHeadsSpec Q numHeads headDim h
-  let KHeads := splitHeadsSpec K numHeads headDim h
-  let VHeads := splitHeadsSpec V numHeads headDim h
+  let QHeads := splitHeadsSpec Q numHeads headDim rfl
+  let KHeads := splitHeadsSpec K numHeads headDim rfl
+  let VHeads := splitHeadsSpec V numHeads headDim rfl
 
   -- Compute attention per head as a tensor indexed by `Fin numHeads`.
   let attentionHeads : Tensor α [numHeads, n, headDim] :=
-    match QHeads, KHeads, VHeads with
-    | Tensor.dim qF, Tensor.dim kF, Tensor.dim vF =>
-        Tensor.dim (fun headIdx =>
-          let ctx : AttentionContext α n n headDim h1 h1 :=
-            { Q := qF headIdx
-              K := kF headIdx
-              V := vF headIdx
-              mask := mask }
-          scaledDotProductAttention ctx)
+    Tensor.dim (fun headIdx =>
+      let ctx : AttentionContext α n n headDim h1 h1 :=
+        { Q := Tensor.unstack QHeads headIdx
+          K := Tensor.unstack KHeads headIdx
+          V := Tensor.unstack VHeads headIdx
+          mask := mask }
+      scaledDotProductAttention ctx)
 
   -- Combine heads back to `(n, numHeads * headDim)`.
   let concatenated := combineHeadsSpec (α := α) (n := n) (numHeads := numHeads)
@@ -451,45 +454,69 @@ High-level structure:
   -- Project the concatenated heads back to the model dimension.
   matMulSpec concatenated mha.outputWeight
 
+/--
+Parameter gradients for multi-head attention: one per projection matrix.
+
+The record lives here, beside the backward pass that produces it, rather than in the transformer
+model file where it was originally declared. All four fields are named after the corresponding field
+of `MultiHeadAttention`, so `{ queryWeight, keyWeight, valueWeight, outputWeight }` works with the
+anonymous constructor at every call site.
+
+PyTorch analogue: the `.grad` of `nn.MultiheadAttention.in_proj_weight` split into its three blocks,
+plus `out_proj.weight.grad`.
+-/
+structure MultiHeadAttentionParameterGradients (numHeads dModel headDim : Nat) (α : Type)
+    [TorchLean.Storage α] where
+  /-- Gradient of the query projection matrix. -/
+  queryWeight : Tensor α [dModel, numHeads * headDim]
+  /-- Gradient of the key projection matrix. -/
+  keyWeight : Tensor α [dModel, numHeads * headDim]
+  /-- Gradient of the value projection matrix. -/
+  valueWeight : Tensor α [dModel, numHeads * headDim]
+  /-- Gradient of the output projection matrix. -/
+  outputWeight : Tensor α [numHeads * headDim, dModel]
+
+/-- Everything `multiHeadAttentionBackward` sends backwards: the four parameter gradients and the
+gradient with respect to the attended sequence. -/
+structure MultiHeadAttentionGradients (n numHeads dModel headDim : Nat) (α : Type)
+    [TorchLean.Storage α] where
+  /-- Gradients for the four projection matrices. -/
+  parameters : MultiHeadAttentionParameterGradients numHeads dModel headDim α
+  /-- Gradient with respect to the input sequence `x`. -/
+  input : Tensor α [n, dModel]
+
 /-- Multi-head attention backward pass.
 
 Returns gradients for input `x` and all projection matrices `(Wq,Wk,Wv,Wo)`.
 The forward intermediates are recomputed locally instead of relying on a global tape.
 -/
 def multiHeadAttentionBackward
-  {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+  {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {n numHeads dModel headDim : Nat} (h1 : n ≠ 0)
   (mha : MultiHeadAttention α numHeads dModel headDim)
   (x : Tensor α [n, dModel])
   (mask : Option (Tensor Bool [n, n]))
-  (grad_output : Tensor α [n, dModel]) :
-  ( Tensor α [n, dModel]                              -- ∂L/∂x
-  × Tensor α [dModel, numHeads * headDim]             -- ∂L/∂Wq
-  × Tensor α [dModel, numHeads * headDim]             -- ∂L/∂Wk
-  × Tensor α [dModel, numHeads * headDim]             -- ∂L/∂Wv
-  × Tensor α [numHeads * headDim, dModel]             -- ∂L/∂Wo
-  ) :=
+  (gradOutput : Tensor α [n, dModel]) :
+  MultiHeadAttentionGradients n numHeads dModel headDim α :=
 
   -- Forward recomputation for intermediate values.
   let Q := matMulSpec x mha.queryWeight
   let K := matMulSpec x mha.keyWeight
   let V := matMulSpec x mha.valueWeight
 
-  let h : numHeads * headDim = numHeads * headDim := by rfl
-  let QHeads := splitHeadsSpec Q numHeads headDim h
-  let KHeads := splitHeadsSpec K numHeads headDim h
-  let VHeads := splitHeadsSpec V numHeads headDim h
+  let QHeads := splitHeadsSpec Q numHeads headDim rfl
+  let KHeads := splitHeadsSpec K numHeads headDim rfl
+  let VHeads := splitHeadsSpec V numHeads headDim rfl
 
   let attentionHeads : Tensor α [numHeads, n, headDim] :=
-    match QHeads, KHeads, VHeads with
-    | Tensor.dim qF, Tensor.dim kF, Tensor.dim vF =>
-        Tensor.dim (fun headIdx =>
-          let ctx : AttentionContext α n n headDim h1 h1 :=
-            { Q := qF headIdx
-              K := kF headIdx
-              V := vF headIdx
-              mask := mask }
-          scaledDotProductAttention ctx)
+    Tensor.dim (fun headIdx =>
+      let ctx : AttentionContext α n n headDim h1 h1 :=
+        { Q := Tensor.unstack QHeads headIdx
+          K := Tensor.unstack KHeads headIdx
+          V := Tensor.unstack VHeads headIdx
+          mask := mask }
+      scaledDotProductAttention ctx)
 
   let concatenated := combineHeadsSpec (α := α) (n := n) (numHeads := numHeads)
     (headDim := headDim) attentionHeads
@@ -497,43 +524,31 @@ def multiHeadAttentionBackward
   -- Backpropagate through the output projection.
   let (gradConcat, gradOutputWeight) :=
     matmulBackwardSpec (Shape.CanBroadcastTo.refl .scalar)
-      (Shape.CanBroadcastTo.refl .scalar) concatenated mha.outputWeight grad_output
+      (Shape.CanBroadcastTo.refl .scalar) concatenated mha.outputWeight gradOutput
 
   -- Backpropagate through the reshape and axis swap used to combine heads.
-  let gradAttentionHeads := splitHeadsSpec gradConcat numHeads headDim h
+  let gradAttentionHeads := splitHeadsSpec gradConcat numHeads headDim rfl
 
   -- Backpropagate independently through each attention head.
   let (gradQHeads, gradKHeads, gradVHeads) :
       Tensor α [numHeads, n, headDim] ×
         Tensor α [numHeads, n, headDim] ×
         Tensor α [numHeads, n, headDim] :=
-    match QHeads, KHeads, VHeads, gradAttentionHeads with
-    | Tensor.dim qF, Tensor.dim kF, Tensor.dim vF, Tensor.dim dF =>
-        let gQ : Fin numHeads → Tensor α [n, headDim] :=
-          fun headIdx =>
-            let ctx : AttentionContext α n n headDim h1 h1 :=
-              { Q := qF headIdx
-                K := kF headIdx
-                V := vF headIdx
-                mask := mask }
-            (scaledDotProductAttentionBackward ctx (dF headIdx)).1
-        let gK : Fin numHeads → Tensor α [n, headDim] :=
-          fun headIdx =>
-            let ctx : AttentionContext α n n headDim h1 h1 :=
-              { Q := qF headIdx
-                K := kF headIdx
-                V := vF headIdx
-                mask := mask }
-            (scaledDotProductAttentionBackward ctx (dF headIdx)).2.1
-        let gV : Fin numHeads → Tensor α [n, headDim] :=
-          fun headIdx =>
-            let ctx : AttentionContext α n n headDim h1 h1 :=
-              { Q := qF headIdx
-                K := kF headIdx
-                V := vF headIdx
-                mask := mask }
-            (scaledDotProductAttentionBackward ctx (dF headIdx)).2.2
-        (Tensor.dim gQ, Tensor.dim gK, Tensor.dim gV)
+    let backwardHead (headIdx : Fin numHeads) :=
+      let ctx : AttentionContext α n n headDim h1 h1 :=
+        { Q := Tensor.unstack QHeads headIdx
+          K := Tensor.unstack KHeads headIdx
+          V := Tensor.unstack VHeads headIdx
+          mask := mask }
+      scaledDotProductAttentionBackward ctx
+        (Tensor.unstack gradAttentionHeads headIdx)
+    let gQ : Fin numHeads → Tensor α [n, headDim] :=
+      fun headIdx => (backwardHead headIdx).1
+    let gK : Fin numHeads → Tensor α [n, headDim] :=
+      fun headIdx => (backwardHead headIdx).2.1
+    let gV : Fin numHeads → Tensor α [n, headDim] :=
+      fun headIdx => (backwardHead headIdx).2.2
+    (Tensor.dim gQ, Tensor.dim gK, Tensor.dim gV)
 
   -- Undo the head split for Q, K, and V.
   let gradQ := combineHeadsSpec (α := α) (n := n) (numHeads := numHeads)
@@ -557,7 +572,12 @@ def multiHeadAttentionBackward
   -- Add the contributions to the input gradient from the Q, K, and V branches.
   let gradX := addSpec (addSpec gradXQuery gradXKey) gradXValue
 
-  (gradX, gradQueryWeight, gradKeyWeight, gradValueWeight, gradOutputWeight)
+  { parameters :=
+      { queryWeight := gradQueryWeight
+        keyWeight := gradKeyWeight
+        valueWeight := gradValueWeight
+        outputWeight := gradOutputWeight }
+    input := gradX }
 
 /-- Forward-mode JVP for multi-head attention.
 
@@ -572,7 +592,8 @@ Attention forward-mode AD is explicit at the specification layer rather than hid
 runtime-only implementation.
 -/
 def multiHeadAttentionJvp
-  {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+  {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {n numHeads dModel headDim : Nat} (h1 : n ≠ 0)
   (mha dmha : MultiHeadAttention α numHeads dModel headDim)
   (x dx : Tensor α [n, dModel])
@@ -587,36 +608,33 @@ def multiHeadAttentionJvp
   let dK := addSpec (matMulSpec dx mha.keyWeight) (matMulSpec x dmha.keyWeight)
   let dV := addSpec (matMulSpec dx mha.valueWeight) (matMulSpec x dmha.valueWeight)
 
-  let h : numHeads * headDim = numHeads * headDim := by rfl
-  let QHeads := splitHeadsSpec Q numHeads headDim h
-  let KHeads := splitHeadsSpec K numHeads headDim h
-  let VHeads := splitHeadsSpec V numHeads headDim h
-  let dQHeads := splitHeadsSpec dQ numHeads headDim h
-  let dKHeads := splitHeadsSpec dK numHeads headDim h
-  let dVHeads := splitHeadsSpec dV numHeads headDim h
+  let QHeads := splitHeadsSpec Q numHeads headDim rfl
+  let KHeads := splitHeadsSpec K numHeads headDim rfl
+  let VHeads := splitHeadsSpec V numHeads headDim rfl
+  let dQHeads := splitHeadsSpec dQ numHeads headDim rfl
+  let dKHeads := splitHeadsSpec dK numHeads headDim rfl
+  let dVHeads := splitHeadsSpec dV numHeads headDim rfl
 
   let attentionHeads : Tensor α [numHeads, n, headDim] :=
-    match QHeads, KHeads, VHeads with
-    | Tensor.dim qF, Tensor.dim kF, Tensor.dim vF =>
-        Tensor.dim (fun headIdx =>
-          let ctx : AttentionContext α n n headDim h1 h1 :=
-            { Q := qF headIdx
-              K := kF headIdx
-              V := vF headIdx
-              mask := mask }
-          scaledDotProductAttention ctx)
+    Tensor.dim (fun headIdx =>
+      let ctx : AttentionContext α n n headDim h1 h1 :=
+        { Q := Tensor.unstack QHeads headIdx
+          K := Tensor.unstack KHeads headIdx
+          V := Tensor.unstack VHeads headIdx
+          mask := mask }
+      scaledDotProductAttention ctx)
 
   let dAttentionHeads : Tensor α [numHeads, n, headDim] :=
-    match QHeads, KHeads, VHeads, dQHeads, dKHeads, dVHeads with
-    | Tensor.dim qF, Tensor.dim kF, Tensor.dim vF, Tensor.dim dqF, Tensor.dim dkF,
-        Tensor.dim dvF =>
-        Tensor.dim (fun headIdx =>
-          let ctx : AttentionContext α n n headDim h1 h1 :=
-            { Q := qF headIdx
-              K := kF headIdx
-              V := vF headIdx
-              mask := mask }
-          scaledDotProductAttentionJvp ctx (dqF headIdx) (dkF headIdx) (dvF headIdx))
+    Tensor.dim (fun headIdx =>
+      let ctx : AttentionContext α n n headDim h1 h1 :=
+        { Q := Tensor.unstack QHeads headIdx
+          K := Tensor.unstack KHeads headIdx
+          V := Tensor.unstack VHeads headIdx
+          mask := mask }
+      scaledDotProductAttentionJvp ctx
+        (Tensor.unstack dQHeads headIdx)
+        (Tensor.unstack dKHeads headIdx)
+        (Tensor.unstack dVHeads headIdx))
 
   let concatenated := combineHeadsSpec (α := α) (n := n) (numHeads := numHeads)
     (headDim := headDim) attentionHeads
@@ -635,7 +653,8 @@ PyTorch analogue: the core of `nn.MultiheadAttention` / `TransformerEncoderLayer
 batch axis).
 -/
 def selfAttention
-  {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+  {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {n dModel projDim : Nat}
   (x : Tensor α [n, dModel])
   (Wq : Tensor α [dModel, projDim])
@@ -658,7 +677,8 @@ def selfAttention
 PyTorch analogue: the attention block in a Transformer decoder layer (`nn.MultiheadAttention`
 with distinct query and key/value inputs).
 -/
-def crossAttention {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+def crossAttention {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {n1 n2 dModel projDim : Nat}
   (query : Tensor α [n1, dModel])
   (key : Tensor α [n2, dModel])
@@ -678,7 +698,8 @@ def crossAttention {α : Type} [Context α] [DecidableRel ((· > ·) : α → α
   matMulSpec attention Wo
 
 /-- Sparse attention using a Boolean attention pattern. -/
-def sparseAttention {α : Type} [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+def sparseAttention {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {n dModel projDim : Nat}
   (x : Tensor α [n, dModel])
   (sparsityPattern : Tensor Bool [n, n])

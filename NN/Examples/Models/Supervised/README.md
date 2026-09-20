@@ -8,7 +8,7 @@ plumbing.
 
 ## Files
 
-- `Mlp.lean`: tabular regression/classification-style training over the Auto MPG example data.
+- `Mlp.lean`: tabular regression over the Auto MPG example data.
 - `Kan.lean`: a compact KAN-style supervised model path using the same trainer API.
 - `LstmRegression.lean`: time-series forecasting from UCI household-power windows.
 
@@ -31,7 +31,7 @@ lake -R -K cuda=true exe torchlean lstm_regression --device cuda --steps 200 --w
 Pass `--log PATH` to preserve the training curve:
 
 ```bash
-lake exe torchlean mlp --device cpu --steps 50 --log data/model_zoo/mlp_trainlog.json
+lake exe torchlean mlp --device cpu --steps 50 --log data/examples/mlp_trainlog.json
 ```
 
 The log is the stable artifact for comparing runs. Printed predictions are useful for a quick read,
@@ -41,7 +41,7 @@ but the log records the run metadata, metric names, steps, and values.
 
 | Example | Data boundary | Main runtime path | Artifact to inspect |
 | --- | --- | --- | --- |
-| `Mlp.lean` | Auto MPG CSV or generated tabular tensors | public `Trainer` regression/classification path | `TrainLog`, before/after predictions |
+| `Mlp.lean` | Auto MPG CSV or generated tabular tensors | public `Trainer` regression path | `TrainLog`, before/after predictions |
 | `Kan.lean` | same tabular loader conventions | public trainer with KAN-style model structure | loss curve and parameter shapes |
 | `LstmRegression.lean` | household-power windows exported to `.npy` | CUDA-capable sequence layer used for supervised forecasting | forecast rows and `TrainLog` |
 
@@ -58,7 +58,7 @@ Supervised examples should keep the public path direct:
 - start from `import NN.API` and `open TorchLean`;
 - construct a model with `TorchLean.nn`;
 - load data through `TorchLean.Data`;
-- run through `Trainer.new`, `trainer.predict`, `trainer.train`, and the training result;
+- construct with `Trainer.new`, train with `trainer.train`, and predict with the trained result;
 - keep manual runtime hooks out of the tutorial path unless the example explicitly explains why.
 
 That consistency matters because these files exercise the application API. If a

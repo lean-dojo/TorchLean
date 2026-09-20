@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Real.Basic
 public import NN.Spec.RL.Envs.GridWorld
 
 /-!
@@ -87,12 +86,14 @@ Here we show this satisfies the standard “row-stochastic” assumptions used t
 finite-state proof development.
 -/
 
-/-- The one-hot `FiniteStochastic.MDP` view of GridWorld is valid assuming the discount is in `[0,1)`. -/
+/-- The one-hot `FiniteStochastic.MDP` view of GridWorld is valid assuming the discount is in
+`[0,1)`. -/
 theorem toFiniteStochasticMDP_valid
     (gw : Spec.RL.Envs.GridWorld width height)
     (hγ₀ : 0 ≤ gw.discount)
     (hγ₁ : gw.discount < 1) :
-    Valid (Spec.RL.Envs.GridWorld.toFiniteStochasticMDP (width := width) (height := height) gw) := by
+    Valid (Spec.RL.Envs.GridWorld.toFiniteStochasticMDP (width := width) (height := height) gw)
+      := by
   classical
   refine
     { transition_nonneg := ?_
@@ -103,13 +104,13 @@ theorem toFiniteStochasticMDP_valid
     -- Entries are `0` or `1` by construction.
     by_cases hx : nextState = (gw.toFiniteMDP.step state action).state
     · simp [Spec.RL.Envs.GridWorld.toFiniteStochasticMDP, Spec.RL.Envs.GridWorld.oneHot,
-        Spec.Tensor.getScalar, Spec.get, Spec.Tensor.item, hx]
+        TorchLean.Tensor.getScalar, Spec.get, TorchLean.Tensor.item, hx]
     · simp [Spec.RL.Envs.GridWorld.toFiniteStochasticMDP, Spec.RL.Envs.GridWorld.oneHot,
-        Spec.Tensor.getScalar, Spec.get, Spec.Tensor.item, hx]
+        TorchLean.Tensor.getScalar, Spec.get, TorchLean.Tensor.item, hx]
   · intro state action
     -- A one-hot row sums to `1`.
     simp [Spec.RL.Envs.GridWorld.toFiniteStochasticMDP, Spec.RL.Envs.GridWorld.oneHot,
-      Spec.Tensor.getScalar, Spec.get, Spec.Tensor.item,
+      TorchLean.Tensor.getScalar, Spec.get, TorchLean.Tensor.item,
       Finset.sum_ite_eq', Finset.mem_univ]
 
 /-!
@@ -140,7 +141,7 @@ theorem toFiniteStochasticMDP_expectedNextValue_eq_toFiniteMDP_successor
   simp [Spec.RL.FiniteStochastic.expectedNextValue,
     Spec.RL.Envs.GridWorld.toFiniteStochasticMDP,
     Spec.RL.Envs.GridWorld.oneHot,
-    Spec.Tensor.getScalar, Spec.get, Spec.Tensor.item,
+    TorchLean.Tensor.getScalar, Spec.get, TorchLean.Tensor.item,
     Finset.sum_ite_eq', Finset.mem_univ]
 
 /--

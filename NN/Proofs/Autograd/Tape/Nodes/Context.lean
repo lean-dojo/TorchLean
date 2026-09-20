@@ -6,27 +6,15 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.FDeriv.Elementwise
-public import NN.Proofs.Autograd.FDeriv.LogSoftmax
-public import NN.Proofs.Autograd.FDeriv.Softmax
 public import NN.Proofs.Autograd.Tape.Core.FDeriv
-
-public import Mathlib.Analysis.Calculus.Deriv.Abs
-public import Mathlib.Analysis.Calculus.FDeriv.Add
-public import Mathlib.Analysis.Calculus.FDeriv.Bilinear
-public import Mathlib.Analysis.Calculus.FDeriv.Comp
-public import Mathlib.Analysis.Calculus.FDeriv.Linear
-public import Mathlib.Analysis.Calculus.FDeriv.Mul
-public import Mathlib.Analysis.InnerProductSpace.Calculus
-public import Mathlib.Analysis.SpecialFunctions.Sqrt
-public import Mathlib.Data.Fintype.BigOperators
+public import NN.Proofs.Autograd.FDeriv.OpSpec
 
 /-!
 # Tape-node context primitives
 
-This module contains the low-level vectorized context operations used by the tape-node proof library:
-block projections, one-hot cotangent injections, and the bridge from generic `OpSpecFDerivCorrect`
-witnesses to `NodeFDerivCorrect` nodes.
+This module contains the low-level vectorized context operations used by the tape-node proof
+library: block projections, one-hot cotangent injections, and the bridge from generic
+`OpSpecFDerivCorrect` witnesses to `NodeFDerivCorrect` nodes.
 -/
 
 @[expose] public section
@@ -34,32 +22,50 @@ witnesses to `NodeFDerivCorrect` nodes.
 namespace Proofs
 namespace Autograd
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 noncomputable section
 
 open scoped BigOperators
 
-@[simp] lemma piLpContinuousLinearEquiv2_symm_apply {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
+/-!
+### Coordinate lemmas for the Euclidean identification
+
+Mathlib's `EuclideanSpace` is `PiLp 2`, a type synonym carrying a `WithLp` wrapper. The four lemmas
+below are the plumbing that lets us forget the wrapper: each says that reading coordinate `i` of a
+vector built from `f` gives `f i`, for the various shapes the wrapper takes. They are boring on
+purpose, and having them as `simp` lemmas is what keeps the real proofs in this file readable.
+-/
+
+/-- Coordinates of the inverse `PiLp` equivalence are the values of the underlying function. -/
+@[simp] theorem piLpContinuousLinearEquiv2_symm_apply {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
     ((PiLp.continuousLinearEquiv 2 ℝ (fun _ : Fin n => ℝ)).symm f) i = f i := by
   simp
 
-@[simp] lemma piLpContinuousLinearEquiv2_symm_clm_apply {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
+/-- The same, applied through the bundled continuous linear map. -/
+@[simp] theorem piLpContinuousLinearEquiv2_symm_clm_apply {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
     (((PiLp.continuousLinearEquiv 2 ℝ (fun _ : Fin n => ℝ)).symm.toContinuousLinearMap) f) i = f i
       := by
   simp
 
-@[simp] lemma piLpContinuousLinearEquiv2_symm_clm_apply_ofLp {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
+/-- The same again, with the `ofLp` projection made explicit. -/
+@[simp] theorem piLpContinuousLinearEquiv2_symm_clm_apply_ofLp {n : Nat} (f : Fin n → ℝ)
+    (i : Fin n) :
     (((PiLp.continuousLinearEquiv 2 ℝ (fun _ : Fin n => ℝ)).symm.toContinuousLinearMap) f).ofLp i =
       f i := by
   simp
 
-@[simp] lemma euclideanEquiv_symm_ofLp {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
+/-- And once more for `EuclideanSpace.equiv`, the spelling used by `vecOfFun`. -/
+@[simp] theorem euclideanEquiv_symm_ofLp {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
     ((EuclideanSpace.equiv (𝕜 := ℝ) (ι := Fin n)).symm f).ofLp i = f i := by
   simp [EuclideanSpace.equiv]
 
-@[simp] lemma inner_scalarVec_left (a : ℝ) (δ : Vec (Spec.Shape.size Shape.scalar)) :
+/-- Inner product against a one-dimensional constant vector collapses to a single product.
+
+Scalar tensors vectorize to `Vec 1`, so this is the lemma that turns the adjointness statement for a
+scalar node into ordinary multiplication instead of a sum over `Finset.univ`. -/
+@[simp] theorem inner_scalarVec_left (a : ℝ) (δ : Vec (Spec.Shape.size Shape.scalar)) :
     inner ℝ (vecOfFun (n := Spec.Shape.size Shape.scalar) fun _ => a) δ = a * δ.ofLp ⟨0, by simp
       [Spec.Shape.size]⟩ := by
   rw [inner_eq_sum_mul]
@@ -101,8 +107,8 @@ This is the adjoint of `getBlock` with respect to the Euclidean inner product.
 def singleBlock : {Γ : List Shape} → (i : Fin Γ.length) → Vec (Spec.Shape.size (Γ.get i)) → CtxVec Γ
   | [], i, _ => nomatch i
   | s :: ss, ⟨0, _⟩, v =>
-      appendVec (m := Spec.Shape.size s) (n := ctxSize ss) v (vecOfFun (n := ctxSize ss) fun _ => (0 :
-        ℝ))
+      appendVec (m := Spec.Shape.size s) (n := ctxSize ss) v
+        (vecOfFun (n := ctxSize ss) fun _ => (0 : ℝ))
   | s :: ss, ⟨Nat.succ k, hk⟩, v =>
       appendVec (m := Spec.Shape.size s) (n := ctxSize ss)
         (vecOfFun (n := Spec.Shape.size s) fun _ => (0 : ℝ))
@@ -124,10 +130,10 @@ theorem inner_getBlock_singleBlock :
       intro i x v
       classical
       -- decompose `x` as `(head, tail)` and use `inner_append`
-      let head : Vec (Spec.Shape.size s) := vecOfFun (n := Spec.Shape.size s) fun j => x (Fin.castAdd (ctxSize
-        ss) j)
-      let tail : Vec (ctxSize ss) := vecOfFun (n := ctxSize ss) fun j => x (Fin.natAdd (Spec.Shape.size
-        s) j)
+      let head : Vec (Spec.Shape.size s) :=
+        vecOfFun (n := Spec.Shape.size s) fun j => x (Fin.castAdd (ctxSize ss) j)
+      let tail : Vec (ctxSize ss) :=
+        vecOfFun (n := ctxSize ss) fun j => x (Fin.natAdd (Spec.Shape.size s) j)
       have hx : appendVec (m := Spec.Shape.size s) (n := ctxSize ss) head tail = x := by
         ext j
         have := congrArg (fun f : Fin (Spec.Shape.size s + ctxSize ss) → ℝ => f j)
@@ -145,8 +151,8 @@ theorem inner_getBlock_singleBlock :
               (c := v) (d := vecOfFun (n := ctxSize ss) fun _ => (0 : ℝ))
           have htail0 : inner ℝ tail (vecOfFun (n := ctxSize ss) fun _ => (0 : ℝ)) = 0 := by
             exact (inner_zero_right (𝕜 := ℝ) (x := tail))
-          have h' : inner ℝ x (appendVec (m := Spec.Shape.size s) (n := ctxSize ss) v (vecOfFun (n :=
-            ctxSize ss) fun _ => (0 : ℝ))) =
+          have h' : inner ℝ x (appendVec (m := Spec.Shape.size s) (n := ctxSize ss) v
+              (vecOfFun (n := ctxSize ss) fun _ => (0 : ℝ))) =
               inner ℝ head v := by
             -- rewrite `x` as an append and simplify away the tail/zero inner product
             calc
@@ -188,7 +194,8 @@ theorem inner_getBlock_singleBlock :
                   =
                 inner ℝ (appendVec (m := Spec.Shape.size s) (n := ctxSize ss) head tail)
                   (appendVec (m := Spec.Shape.size s) (n := ctxSize ss)
-                    (vecOfFun (n := Spec.Shape.size s) fun _ => (0 : ℝ)) (singleBlock (Γ := ss) k v)) := by
+                    (vecOfFun (n := Spec.Shape.size s) fun _ => (0 : ℝ))
+                    (singleBlock (Γ := ss) k v)) := by
                     rw [← hx]
                     rfl
               _ = inner ℝ head (vecOfFun (n := Spec.Shape.size s) fun _ => (0 : ℝ)) +
@@ -229,7 +236,8 @@ theorem inner_get_single {Γ : List Shape} {s : Shape} (idx : Idx Γ s)
       simp
     calc
       inner ℝ (castVec hsz (getBlock (Γ := Γ) idx.i x)) v
-          = inner ℝ (castVec hsz (getBlock (Γ := Γ) idx.i x)) (castVec hsz (castVec hsz.symm v)) := by
+          = inner ℝ (castVec hsz (getBlock (Γ := Γ) idx.i x))
+              (castVec hsz (castVec hsz.symm v)) := by
               simp [hv]
       _ = inner ℝ (getBlock (Γ := Γ) idx.i x) (castVec hsz.symm v) := by
             simpa using
@@ -255,7 +263,8 @@ def headCLM {s : Shape} {ss : List Shape} : CtxVec (s :: ss) →L[ℝ] Vec (Spec
   refine ⟨fLin, ?_⟩
   exact LinearMap.continuous_of_finiteDimensional (f := fLin)
 
-@[simp] lemma headCLM_apply {s : Shape} {ss : List Shape} (x : CtxVec (s :: ss)) (j : Fin
+/-- `headCLM` reads the leading block of coordinates, exactly as `flattenCtx_cons` lays them out. -/
+@[simp] theorem headCLM_apply {s : Shape} {ss : List Shape} (x : CtxVec (s :: ss)) (j : Fin
   (Spec.Shape.size s)) :
     headCLM (s := s) (ss := ss) x j = x (Fin.castAdd (ctxSize ss) j) := by
   simp [headCLM]
@@ -278,19 +287,26 @@ def tailCLM {s : Shape} {ss : List Shape} : CtxVec (s :: ss) →L[ℝ] CtxVec ss
   refine ⟨fLin, ?_⟩
   exact LinearMap.continuous_of_finiteDimensional (f := fLin)
 
-@[simp] lemma tailCLM_apply {s : Shape} {ss : List Shape} (x : CtxVec (s :: ss)) (j : Fin (ctxSize
+/-- `tailCLM` reads the trailing blocks. -/
+@[simp] theorem tailCLM_apply {s : Shape} {ss : List Shape} (x : CtxVec (s :: ss)) (j : Fin (ctxSize
   ss)) :
     tailCLM (s := s) (ss := ss) x j = x (Fin.natAdd (Spec.Shape.size s) j) := by
   simp [tailCLM]
 
 /-- `getBlock` as a continuous linear map, constructed recursively from `headCLM` and `tailCLM`. -/
-def getBlockCLM : {Γ : List Shape} → (i : Fin Γ.length) → CtxVec Γ →L[ℝ] Vec (Spec.Shape.size (Γ.get i))
+def getBlockCLM :
+    {Γ : List Shape} → (i : Fin Γ.length) → CtxVec Γ →L[ℝ] Vec (Spec.Shape.size (Γ.get i))
   | [], i => nomatch i
   | s :: ss, ⟨0, _⟩ => headCLM (s := s) (ss := ss)
   | s :: ss, ⟨Nat.succ k, hk⟩ =>
       (getBlockCLM (Γ := ss) ⟨k, Nat.lt_of_succ_lt_succ hk⟩).comp (tailCLM (s := s) (ss := ss))
 
-@[simp] lemma getBlockCLM_apply {Γ : List Shape} (i : Fin Γ.length) (x : CtxVec Γ) :
+/-- The bundled `getBlockCLM` computes the same thing as the plain `getBlock`.
+
+This is the payoff of building it recursively from `headCLM` and `tailCLM`: block selection comes
+out
+continuous and linear by construction, so nothing downstream has to prove it again. -/
+@[simp] theorem getBlockCLM_apply {Γ : List Shape} (i : Fin Γ.length) (x : CtxVec Γ) :
     getBlockCLM (Γ := Γ) i x = getBlock (Γ := Γ) i x := by
   induction Γ with
   | nil =>
@@ -312,19 +328,21 @@ def getBlockCLM : {Γ : List Shape} → (i : Fin Γ.length) → CtxVec Γ →L[�
                 ((getBlockCLM (Γ := ss) iTail)
                     (tailCLM (s := s) (ss := ss) x)).ofLp j =
                   (getBlock (Γ := ss) iTail
-                    (vecOfFun (n := ctxSize ss) fun j => x.ofLp (Fin.natAdd (Spec.Shape.size s) j))).ofLp j
+                    (vecOfFun (n := ctxSize ss) fun j =>
+                      x.ofLp (Fin.natAdd (Spec.Shape.size s) j))).ofLp j
               simpa [getBlockCLM, getBlock, tailCLM, tailCLM_apply, iTail] using this
 
 /-- `get` packaged as a continuous linear map. -/
 def getCLM {Γ : List Shape} {s : Shape} (idx : Idx Γ s) : CtxVec Γ →L[ℝ] Vec (Spec.Shape.size s) :=
   (Graph.castCLM (h := congrArg Spec.Shape.size idx.h)).comp (getBlockCLM (Γ := Γ) idx.i)
 
-@[simp] lemma getCLM_apply {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (x : CtxVec Γ) :
+/-- And the shape-indexed `getCLM` agrees with `get`. -/
+@[simp] theorem getCLM_apply {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (x : CtxVec Γ) :
     getCLM (Γ := Γ) (s := s) idx x = get (Γ := Γ) (s := s) idx x := by
   -- Unfold and reduce to `getBlockCLM_apply` under `castVec`.
   simp [getCLM, get, Graph.castCLM]
-  exact congrArg (castVec (congrArg Spec.Shape.size idx.h)) (getBlockCLM_apply (Γ := Γ) (i := idx.i) (x :=
-    x))
+  exact congrArg (castVec (congrArg Spec.Shape.size idx.h))
+    (getBlockCLM_apply (Γ := Γ) (i := idx.i) (x := x))
 
 end CtxVec
 
@@ -357,7 +375,8 @@ def ofFn {Γ : List Shape} {τ : Shape}
         inner ℝ (jvp x dx) δ = inner ℝ dx (vjp x δ)) :
     Node Γ τ :=
 { forward := fun ctx => vecToTensor (s := τ) (f (flattenCtx (Γ := Γ) ctx))
-  jvp := fun ctx dctx => vecToTensor (s := τ) (jvp (flattenCtx (Γ := Γ) ctx) (flattenCtx (Γ := Γ) dctx))
+  jvp := fun ctx dctx =>
+    vecToTensor (s := τ) (jvp (flattenCtx (Γ := Γ) ctx) (flattenCtx (Γ := Γ) dctx))
   vjp := fun ctx δ => unflattenCtx (Γ := Γ) (vjp (flattenCtx (Γ := Γ) ctx) (tensorToVec (t := δ)))
   correct := by
     intro ctx dctx δ
@@ -376,19 +395,23 @@ def ofFn {Γ : List Shape} {τ : Shape}
     simpa [xV, dxV, δV, hL, hR, tensorToVec_vecToTensor, flattenCtx_unflattenCtx] using hinner
 }
 
-@[simp] lemma forwardVec_ofFn {Γ : List Shape} {τ : Shape}
+/-- A node built by `ofFn` has the given forward map. -/
+@[simp] theorem forwardVec_ofFn {Γ : List Shape} {τ : Shape}
     (f) (jvp) (vjp) (h) :
     (Node.forwardVec (Γ := Γ) (τ := τ) (ofFn (Γ := Γ) (τ := τ) f jvp vjp h)) = f := by
   funext xV
   simp [Node.forwardVec, ofFn]
 
-@[simp] lemma jvpVec_ofFn {Γ : List Shape} {τ : Shape}
+/-- A node built by `ofFn` has the given forward-mode derivative. -/
+@[simp] theorem jvpVec_ofFn {Γ : List Shape} {τ : Shape}
     (f) (jvp) (vjp) (h) :
     (Node.jvpVec (Γ := Γ) (τ := τ) (ofFn (Γ := Γ) (τ := τ) f jvp vjp h)) = jvp := by
   funext xV dxV
   simp [Node.jvpVec, ofFn]
 
-@[simp] lemma vjpVec_ofFn {Γ : List Shape} {τ : Shape}
+/-- A node built by `ofFn` has the given reverse-mode derivative. Together the three projection
+lemmas mean a caller never has to unfold `ofFn`, only supply the soundness argument `h` once. -/
+@[simp] theorem vjpVec_ofFn {Γ : List Shape} {τ : Shape}
     (f) (jvp) (vjp) (h) :
     (Node.vjpVec (Γ := Γ) (τ := τ) (ofFn (Γ := Γ) (τ := τ) f jvp vjp h)) = vjp := by
   funext xV δV
@@ -408,7 +431,7 @@ open scoped BigOperators
 `OpSpecFDerivCorrect` instance for a linear layer.
 
 This is the analytic correctness lemma behind the tape node constructors: it identifies the JVP
-with the Fréchet derivative (a matrix multiplication) for `linear_spec`.
+with the Fréchet derivative (a matrix multiplication) for `linearSpec`.
 
 PyTorch analogue: the `torch.nn.Linear` forward map is affine, so its derivative is constant.
 https://pytorch.org/docs/stable/generated/torch.nn.Linear.html
@@ -423,7 +446,8 @@ def linear {inDim outDim : Nat} (m : Spec.LinearSpec ℝ inDim outDim) :
     -- The forward map is an affine function on Euclidean vectors.
     have hAffine :
         (fun xV : Vec inDim =>
-            getScalarE ((linearCorrect (inDim := inDim) (outDim := outDim) m).op.forward (ofFnE xV)))
+            getScalarE
+              ((linearCorrect (inDim := inDim) (outDim := outDim) m).op.forward (ofFnE xV)))
           =
         affine (inDim := inDim) (outDim := outDim)
           (tensorToMatrix (m := outDim) (n := inDim) m.weights) (getScalarE m.bias) := by
@@ -432,7 +456,8 @@ def linear {inDim outDim : Nat} (m : Spec.LinearSpec ℝ inDim outDim) :
         (getScalarE_linear_spec (inDim := inDim) (outDim := outDim) m (x := ofFnE xV))
     have h :=
       hasFDerivAt_affine (inDim := inDim) (outDim := outDim)
-        (W := tensorToMatrix (m := outDim) (n := inDim) m.weights) (b := getScalarE m.bias) (x := xV)
+        (W := tensorToMatrix (m := outDim) (n := inDim) m.weights) (b := getScalarE m.bias)
+        (x := xV)
     -- rewrite the goal function from `affine` to the `OpSpec` forward
     exact (hAffine.symm ▸ h)
   jvp_eq := by

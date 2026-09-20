@@ -6,6 +6,7 @@ Authors: TorchLean Team
 
 module
 
+public import NN.API.Text.Vocabulary
 
 public import NN.API.Text.Bpe
 public import NN.API.Text.Generation

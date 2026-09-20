@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Tensor.Core
+public import NN.IR.Operator
 
 /-!
 # IR Graph
@@ -14,19 +14,14 @@ public import NN.Spec.Core.Tensor.Core
 `NN.IR.Graph` is TorchLean’s canonical *op-tagged* DAG IR.
 
 Today it is used as the shared target for:
-- TorchLean to verifier lowering (`NN/Verification/TorchLean/Lowering.lean`),
+- TorchLean to verifier lowering (`NN/Verification/Builtin/Lowering.lean`),
 - bound-propagation / verification tooling (CROWN/LiRPA) (`NN/MLTheory/CROWN/Graph.lean`),
 - IR → PyTorch emission (`NN/Runtime/PyTorch/Export/IRPyTorch.lean`),
 - compact example graphs (e.g. `NN/Examples/DeepDives/GraphSpec/Tutorial.lean`).
 
-Longer-term, the intent is to use the same IR as a bridge target for:
-- spec-level graphs (lower a model spec to an IR graph),
-- runtime autograd traces (reify a runtime tape/graph into the same IR),
-- verifiers (IBP/CROWN/affine passes) and export tooling.
-
-What this file commits to is the graph *structure* (ops, dependencies, and shapes). Parameter
-payloads (weights/bias/const values) live in backend-specific stores keyed by node id. This split
-keeps one graph format usable across:
+`NN.IR.Operator` defines the operations and their static attributes. This file adds node identities,
+dependencies, and declared output shapes. Parameter payloads (weights, biases, and constants) live
+in backend-specific stores keyed by node id. This split keeps one graph format usable across:
 
 - verification (where parameters often carry additional metadata like bounds or perturbation sets),
 - export (where parameters may be emitted as PyTorch `nn.Parameter`s or ONNX initializers),
@@ -44,8 +39,8 @@ References / related systems:
 ## Conventions (important)
 
 - **Topo order**: a node only references parents with smaller ids.
-- **Id discipline**: in most builders, `node.id` is expected to equal its index in `Graph.nodes`.
-  (For example, TorchLean lowering uses `freshId := nodes.size` and then appends.)
+- **Id discipline**: checked graphs require `node.id` to equal its index in `Graph.nodes`.
+  TorchLean lowering uses `freshId := nodes.size` and then appends.
 - **External parameters**:
   - `OpKind.const` stores its `valueShape` here, but the constant value is stored externally
     (e.g. in a verifier `ParamStore` keyed by node id).
@@ -64,274 +59,11 @@ This file does **not** implement evaluation or shape inference. Those live in:
 
 namespace NN.IR
 
-open Spec
-
-/-- A row-major Boolean mask carried by an IR operation.
-
-The payload records its logical tensor shape separately from the flat array so graph validation can
-reject malformed serialized or programmatically constructed masks before evaluation. `true` means
-that the corresponding entry is allowed.
--/
-structure HardMask where
-  shape : Shape
-  allowed : Array Bool
-  deriving Repr
-
-/-- Per-axis geometry for pooling and convolution operators.
-
-All three lists describe the same spatial suffix of the input tensor. Keeping the geometry in one
-record prevents frontends from silently imposing a common stride or padding on every axis.
--/
-structure WindowConfig where
-  /-- Number of spatial axes. -/
-  spatialRank : Nat
-  /-- Window extent along each spatial axis. -/
-  kernel : Spec.Tensor Nat [spatialRank]
-  /-- Step along each spatial axis. -/
-  stride : Spec.Tensor Nat [spatialRank]
-  /-- Symmetric padding along each spatial axis. -/
-  padding : Spec.Tensor Nat [spatialRank]
-  deriving Repr
-
-/-- Shape metadata for an arbitrary-dimensional convolution.
-
-Axes before `channelAxis` are preserved and mapped independently. The channel axis is replaced by
-`outChannels`; every following axis is spatial and is governed by `window`.
--/
-structure ConvConfig extends WindowConfig where
-  /-- Spacing between kernel elements along each spatial axis. -/
-  dilation : Spec.Tensor Nat [spatialRank] := Spec.Tensor.dim fun _ => Spec.Tensor.scalar 1
-  /-- Zero padding after the input along each spatial axis.
-
-  The inherited `padding` field is the padding before the input. Keeping both sides explicit
-  represents asymmetric padding without introducing rank-specific convolution variants. -/
-  paddingAfter : Spec.Tensor Nat [spatialRank] := padding
-  /-- Number of channel groups. `1` is an ordinary dense convolution. -/
-  groups : Nat := 1
-  /-- Axis containing the input channels. -/
-  channelAxis : Nat
-  /-- Expected extent of the input-channel axis. -/
-  inChannels : Nat
-  /-- Extent of the output-channel axis. -/
-  outChannels : Nat
-  deriving Repr
-
-/-- Operation kinds in an op-tagged computation graph. -/
-inductive OpKind where
-  | input
-      -- Designated graph input (analogous to a PyTorch FX graph input).
-  | const (valueShape : Shape)
-      -- Constant tensor. We record the shape here, but keep the *value* in an external store
-      -- (e.g. verifier parameters, exporter initializers).
-  | permute (perm : Array Nat)
-      -- Permute axes (0-based). Similar to `torch.permute`.
-  | transpose (axis₁ axis₂ : Nat)
-      -- Swap two arbitrary axes (0-based). Similar to `torch.transpose`.
-  | detach
-      -- Identity in the forward pass; marks a gradient stop at runtime (analogous to
-      -- `Tensor.detach()`).
-  | randUniform (seed : Nat)
-      -- Deterministic U[0,1) tensor (seeded). We keep RNG explicit because verification needs a
-      -- stable, replayable source of “randomness”.
-  | bernoulliMask (seed : Nat)
-      -- Deterministic {0,1} mask (seeded); parent is keepProb : scalar.
-      -- This is the IR-level representation we use for dropout-style masks.
-  | add
-      -- Elementwise addition (broadcasting is explicit via `broadcastTo`).
-  | sub
-      -- Elementwise subtraction.
-  | mul_elem
-      -- Elementwise multiplication.
-  | abs
-      -- Elementwise absolute value.
-  | sqrt
-      -- Elementwise square root (ties to the scalar backend semantics).
-  | inv
-      -- Elementwise reciprocal (1/x).
-  | maxElem
-      -- Elementwise max.
-  | minElem
-      -- Elementwise min.
-  | maxPool (config : WindowConfig)
-      -- Max pool over the final `config.kernel.length` axes. Leading axes are preserved.
-  | avgPool (config : WindowConfig)
-      -- Average pool over the same spatial suffix, including zero padding in the divisor.
-  | broadcastTo (s₁ s₂ : Shape)
-      -- Broadcast parent from s₁→s₂ (analogous to `torch.broadcast_to` / `Tensor.expand`).
-  | reduceSum (axis : Nat)
-      -- Sum along an axis (axis must be valid).
-  | reduceMean (axis : Nat)
-      -- Mean along an axis (axis must be valid).
-  | sum
-      -- Sum reduction to scalar (convenience op used by some loss/verification code paths).
-  | matmul
-      -- Matrix multiply over the final two axes, preserving a shared leading shape.
-  | linear
-      -- Affine layer `y = W x + b`. Parameters live in an external store keyed by node id;
-      -- the sole parent is the activation input `x`.
-  | conv (config : ConvConfig)
-      -- Arbitrary-dimensional grouped convolution. Parameters live in an external store keyed by
-      -- node id.
-  | batchNormEval (channelAxis channels : Nat)
-      -- Eval-mode BatchNorm along an explicit channel axis. Affine parameters and running
-      -- statistics live in an external store keyed by node id.
-  | relu | tanh | sigmoid | exp | log | sin | cos
-      -- Common elementwise activations / nonlinearities.
-  | softmax (axis : Nat)
-      -- Softmax along an axis.
-  | hardMaskedSoftmax (mask : HardMask)
-      -- Stable last-axis softmax with exactly zero mass at blocked entries.
-  | layernorm (axis : Nat)
-      -- LayerNorm over the suffix of dimensions starting at `axis`.
-      -- PyTorch analogue: `F.layer_norm(x, normalized_shape=x.shape[axis:])`.
-      -- Note: this IR node is the *pure* normalization (gamma=1, beta=0); the common affine form
-      -- is typically represented by surrounding `mul_elem`/`add` nodes with broadcasted constants.
-  | reshape (inShape outShape : Shape)
-      -- Pure reshape (no data movement).
-  | flatten (s : Shape)
-      -- Flatten to a vector of length `Spec.Shape.size s`.
-  | concat (axis : Nat)
-      -- Concatenate along an axis (verifier/export may allow an arbitrary number of parents ≥ 2).
-  | mseLoss
-      -- Scalar mean squared error (used in some training/verification examples).
-  deriving Repr
-
-/-- Permitted parent-count interval for an IR operation. -/
-structure ParentArity where
-  /-- Minimum number of parents required by the operation. -/
-  min : Nat
-  /-- Maximum number of parents, or `none` when no finite upper bound is imposed. -/
-  max? : Option Nat
-  deriving DecidableEq, Repr
-
-/-- Structural metadata shared by all instances of an IR operation kind. -/
-structure OpMetadata where
-  /-- Short stable tag used in diagnostics and graph serialization. -/
-  tag : String
-  /-- Permitted number of parent nodes. -/
-  arity : ParentArity
-  deriving DecidableEq, Repr
-
-namespace OpKind
-
-/--
-Canonical structural metadata for an `OpKind`.
-
-The arity is a *structural* convention only. For example, `linear` has arity 1 because weights and
-biases are stored externally and keyed by node id; the graph records only its activation input.
--/
-def metadata : OpKind → OpMetadata
-  | .input => ⟨"input", ⟨0, some 0⟩⟩
-  | .const .. => ⟨"const", ⟨0, some 0⟩⟩
-  | .permute .. => ⟨"permute", ⟨1, some 1⟩⟩
-  | .transpose .. => ⟨"transpose", ⟨1, some 1⟩⟩
-  | .detach => ⟨"detach", ⟨1, some 1⟩⟩
-  | .randUniform .. => ⟨"rand_uniform", ⟨0, some 0⟩⟩
-  | .bernoulliMask .. => ⟨"bernoulli_mask", ⟨1, some 1⟩⟩
-  | .add => ⟨"add", ⟨2, some 2⟩⟩
-  | .sub => ⟨"sub", ⟨2, some 2⟩⟩
-  | .mul_elem => ⟨"mul_elem", ⟨2, some 2⟩⟩
-  | .abs => ⟨"abs", ⟨1, some 1⟩⟩
-  | .sqrt => ⟨"sqrt", ⟨1, some 1⟩⟩
-  | .inv => ⟨"inv", ⟨1, some 1⟩⟩
-  | .maxElem => ⟨"max_elem", ⟨2, some 2⟩⟩
-  | .minElem => ⟨"min_elem", ⟨2, some 2⟩⟩
-  | .maxPool .. => ⟨"max_pool", ⟨1, some 1⟩⟩
-  | .avgPool .. => ⟨"avg_pool", ⟨1, some 1⟩⟩
-  | .broadcastTo .. => ⟨"broadcastTo", ⟨1, some 1⟩⟩
-  | .reduceSum .. => ⟨"reduce_sum", ⟨1, some 1⟩⟩
-  | .reduceMean .. => ⟨"reduce_mean", ⟨1, some 1⟩⟩
-  | .sum => ⟨"sum", ⟨1, some 1⟩⟩
-  | .matmul => ⟨"matmul", ⟨2, some 2⟩⟩
-  | .linear => ⟨"linear", ⟨1, some 1⟩⟩
-  | .conv .. => ⟨"conv", ⟨1, some 1⟩⟩
-  | .batchNormEval .. => ⟨"batch_norm_eval", ⟨1, some 1⟩⟩
-  | .relu => ⟨"relu", ⟨1, some 1⟩⟩
-  | .tanh => ⟨"tanh", ⟨1, some 1⟩⟩
-  | .sigmoid => ⟨"sigmoid", ⟨1, some 1⟩⟩
-  | .exp => ⟨"exp", ⟨1, some 1⟩⟩
-  | .log => ⟨"log", ⟨1, some 1⟩⟩
-  | .sin => ⟨"sin", ⟨1, some 1⟩⟩
-  | .cos => ⟨"cos", ⟨1, some 1⟩⟩
-  | .softmax .. => ⟨"softmax", ⟨1, some 1⟩⟩
-  | .hardMaskedSoftmax .. => ⟨"hard_masked_softmax", ⟨1, some 1⟩⟩
-  | .layernorm .. => ⟨"layernorm", ⟨1, some 1⟩⟩
-  | .reshape .. => ⟨"reshape", ⟨1, some 1⟩⟩
-  | .flatten .. => ⟨"flatten", ⟨1, some 1⟩⟩
-  | .concat .. => ⟨"concat", ⟨2, none⟩⟩
-  | .mseLoss => ⟨"mse_loss", ⟨2, some 2⟩⟩
-
-/--
-The minimum number of parent nodes expected by an `OpKind`.
--/
-def minParents (kind : OpKind) : Nat := kind.metadata.arity.min
-
-/--
-An optional maximum number of parent nodes expected by an `OpKind`.
-
-For `concat`, the verifier permits an arbitrary number of inputs (at least 2), so this returns
-`none`.
--/
-def maxParents? (kind : OpKind) : Option Nat := kind.metadata.arity.max?
-
-/-- A short tag for error messages and debugging output. -/
-def tag (kind : OpKind) : String := kind.metadata.tag
-
-/--
-Human-facing operation description including operation-local parameters.
-
-`tag` is short and stable for grouping/log filtering. `describe` is for diagnostics:
-it prints axes, shapes, seeds, and convolution/pooling metadata so malformed graph dumps are useful
-without cross-referencing the original builder.
--/
-def describe : OpKind → String
-  | .input => "input"
-  | .const valueShape => s!"const(shape={repr valueShape})"
-  | .permute perm => s!"permute(perm={repr perm})"
-  | .transpose axis₁ axis₂ => s!"transpose(axis1={axis₁}, axis2={axis₂})"
-  | .detach => "detach"
-  | .randUniform seed => s!"rand_uniform(seed={seed})"
-  | .bernoulliMask seed => s!"bernoulli_mask(seed={seed})"
-  | .add => "add"
-  | .sub => "sub"
-  | .mul_elem => "mul_elem"
-  | .abs => "abs"
-  | .sqrt => "sqrt"
-  | .inv => "inv"
-  | .maxElem => "max_elem"
-  | .minElem => "min_elem"
-  | .maxPool config => s!"max_pool(config={repr config})"
-  | .avgPool config => s!"avg_pool(config={repr config})"
-  | .broadcastTo s₁ s₂ => s!"broadcastTo(from={repr s₁}, to={repr s₂})"
-  | .reduceSum axis => s!"reduce_sum(axis={axis})"
-  | .reduceMean axis => s!"reduce_mean(axis={axis})"
-  | .sum => "sum"
-  | .matmul => "matmul"
-  | .linear => "linear(payload=node_id)"
-  | .conv config => s!"conv(config={repr config}, payload=node_id)"
-  | .batchNormEval channelAxis channels =>
-      s!"batch_norm_eval(channelAxis={channelAxis}, channels={channels}, payload=node_id)"
-  | .relu => "relu"
-  | .tanh => "tanh"
-  | .sigmoid => "sigmoid"
-  | .exp => "exp"
-  | .log => "log"
-  | .sin => "sin"
-  | .cos => "cos"
-  | .softmax axis => s!"softmax(axis={axis})"
-  | .hardMaskedSoftmax mask =>
-      s!"hard_masked_softmax(maskShape={repr mask.shape})"
-  | .layernorm axis => s!"layernorm(axis={axis})"
-  | .reshape inShape outShape => s!"reshape(from={repr inShape}, to={repr outShape})"
-  | .flatten s => s!"flatten(shape={repr s})"
-  | .concat axis => s!"concat(axis={axis})"
-  | .mseLoss => "mse_loss"
-
-end OpKind
+open Spec TorchLean
 
 /-- Node in the graph. Edges are implicit via parent indices. -/
 structure Node where
-  /-- Node id. By convention this is also the node's index in `Graph.nodes`. -/
+  /-- Node id. Structural validation requires this to equal the index in `Graph.nodes`. -/
   id       : Nat
   /-- Parent node ids, i.e. data dependencies. Each parent must be smaller than `id`. -/
   parents  : Array Nat
@@ -413,7 +145,8 @@ theorem snd_mem_of_binaryParents?_eq_some {parents : Array Nat} {left right : Na
 
 /-- Entire graph as an array of nodes. Parents must have smaller ids (topo order). -/
 structure Graph where
-  /-- nodes. -/
+  /-- The nodes, in topological order: every parent id is strictly smaller than the index of the
+  node referencing it. Evaluation is then a single left-to-right pass with no scheduling step. -/
   nodes : Array Node
   deriving Repr
 
@@ -457,10 +190,6 @@ theorem getNode_id_eq {g : Graph} {id : Nat} {node : Node}
       injection h with hNode
       subst node
       exact hn
-
-/-- Safe outShape lookup by id. -/
-def outShape? (g : Graph) (id : Nat) : Option Shape :=
-  (getNode? g id).map (·.outShape)
 
 /--
 Explain why `Node.hasValidArity` failed.

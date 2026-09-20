@@ -7,9 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Core
-public import NN.Spec.Core.Context
-public import NN.Spec.Core.Tensor
-public import NN.Spec.Core.TensorOps
 
 /-!
 # BatchNorm operator bounds (IBP + affine)
@@ -38,14 +35,14 @@ References:
 
 namespace NN.MLTheory.CROWN.Operators.BatchNorm
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open NN.MLTheory.CROWN
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Parameters for BatchNorm layer (frozen at inference). -/
-structure BatchNormParams (α : Type) [Context α] where
+structure BatchNormParams (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Number of channels/features -/
   dim : Nat
   /-- Running mean μ -/
@@ -61,23 +58,21 @@ structure BatchNormParams (α : Type) [Context α] where
 
 /-- Compute the equivalent affine scale: `γ / sqrt(max(σ², 0) + ε)`. -/
 def computeScale (params : BatchNormParams α) : Tensor α [params.dim] :=
-  match params.running_var, params.gamma with
-  | .dim var, .dim gam =>
-    Tensor.dim (fun i =>
-      match var i, gam i with
-      | .scalar v, .scalar g =>
-        let denom := MathFunctions.sqrt (max v Numbers.zero + params.eps)
-        Tensor.scalar (g / denom))
+  Tensor.dim (fun i =>
+    let v := params.running_var.getScalar i
+    let g := params.gamma.getScalar i
+    let denom := MathFunctions.sqrt (max v 0 + params.eps)
+    Tensor.scalar (g / denom))
 
 /-- Compute the equivalent affine offset: `β - γ * μ / sqrt(max(σ², 0) + ε)`. -/
 def computeOffset (params : BatchNormParams α) : Tensor α [params.dim] :=
-  match params.running_mean, params.running_var, params.gamma, params.beta with
-  | .dim mu, .dim var, .dim gam, .dim bet =>
-    Tensor.dim (fun i =>
-      match mu i, var i, gam i, bet i with
-      | .scalar m, .scalar v, .scalar g, .scalar b =>
-        let denom := MathFunctions.sqrt (max v Numbers.zero + params.eps)
-        Tensor.scalar (b - g * m / denom))
+  Tensor.dim (fun i =>
+    let m := params.running_mean.getScalar i
+    let v := params.running_var.getScalar i
+    let g := params.gamma.getScalar i
+    let b := params.beta.getScalar i
+    let denom := MathFunctions.sqrt (max v 0 + params.eps)
+    Tensor.scalar (b - g * m / denom))
 
 /-- IBP for BatchNorm. Since BatchNorm is affine, its bounds are exact.
 
@@ -92,21 +87,19 @@ def ibpBatchNorm (params : BatchNormParams α)
     (xB : Box α (.dim params.dim .scalar)) : Box α (.dim params.dim .scalar) :=
   let scale := computeScale params
   let offset := computeOffset params
-  match xB.lo, xB.hi, scale, offset with
-  | .dim xlo, .dim xhi, .dim sc, .dim off =>
-    let outLo := Tensor.dim (fun i =>
-      match xlo i, xhi i, sc i, off i with
-      | .scalar xl, .scalar xh, .scalar s, .scalar o =>
-        -- If scale >= 0, use xl for lo; else use xh
-        let lo := if s > Numbers.zero then s * xl + o else s * xh + o
-        Tensor.scalar lo)
-    let outHi := Tensor.dim (fun i =>
-      match xlo i, xhi i, sc i, off i with
-      | .scalar xl, .scalar xh, .scalar s, .scalar o =>
-        -- If scale >= 0, use xh for hi; else use xl
-        let hi := if s > Numbers.zero then s * xh + o else s * xl + o
-        Tensor.scalar hi)
-    { lo := outLo, hi := outHi }
+  let outLo := Tensor.dim (fun i =>
+    let xl := xB.lo.getScalar i
+    let xh := xB.hi.getScalar i
+    let s := scale.getScalar i
+    let o := offset.getScalar i
+    Tensor.scalar (if s > 0 then s * xl + o else s * xh + o))
+  let outHi := Tensor.dim (fun i =>
+    let xl := xB.lo.getScalar i
+    let xh := xB.hi.getScalar i
+    let s := scale.getScalar i
+    let o := offset.getScalar i
+    Tensor.scalar (if s > 0 then s * xh + o else s * xl + o))
+  { lo := outLo, hi := outHi }
 
 /-- Affine bounds for BatchNorm propagation.
 
@@ -126,21 +119,12 @@ def affBatchNorm {inDim : Nat} (params : BatchNormParams α)
     (aff : AffineVec α inDim params.dim) : AffineVec α inDim params.dim :=
   let scale := computeScale params
   let offset := computeOffset params
-  match aff.A, aff.c, scale, offset with
-  | .dim rows, .dim cv, .dim sc, .dim off =>
-    -- Scale each row of A by corresponding scale[i]
-    let A' := Tensor.dim (fun i =>
-      match rows i, sc i with
-      | .dim cols, .scalar si =>
-        Tensor.dim (fun j =>
-          match cols j with
-          | .scalar aij => Tensor.scalar (si * aij)))
-    -- Scale bias and add offset
-    let c' := Tensor.dim (fun i =>
-      match cv i, sc i, off i with
-      | .scalar ci, .scalar si, .scalar oi =>
-        Tensor.scalar (si * ci + oi))
-    { A := A', c := c' }
+  let A' := Tensor.dim (fun i =>
+    let si := scale.getScalar i
+    Tensor.dim (fun j => Tensor.scalar (si * get2 aff.A i j)))
+  let c' := Tensor.dim (fun i =>
+    Tensor.scalar (scale.getScalar i * aff.c.getScalar i + offset.getScalar i))
+  { A := A', c := c' }
 
 /-- Derivative bounds for BatchNorm. Since BatchNorm is affine,
 $\frac{d}{dx}\operatorname{BN}(x)=s$ is constant. Input bounds
@@ -149,17 +133,17 @@ $s[d_{\mathrm{lo}},d_{\mathrm{hi}}]$. -/
 def derivBatchNorm (params : BatchNormParams α)
     (dB : Box α (.dim params.dim .scalar)) : Box α (.dim params.dim .scalar) :=
   let scale := computeScale params
-  match dB.lo, dB.hi, scale with
-  | .dim dlo, .dim dhi, .dim sc =>
-    let outLo := Tensor.dim (fun i =>
-      match dlo i, dhi i, sc i with
-      | .scalar dl, .scalar dh, .scalar s =>
-        Tensor.scalar (if s > Numbers.zero then s * dl else s * dh))
-    let outHi := Tensor.dim (fun i =>
-      match dlo i, dhi i, sc i with
-      | .scalar dl, .scalar dh, .scalar s =>
-        Tensor.scalar (if s > Numbers.zero then s * dh else s * dl))
-    { lo := outLo, hi := outHi }
+  let outLo := Tensor.dim (fun i =>
+    let dl := dB.lo.getScalar i
+    let dh := dB.hi.getScalar i
+    let s := scale.getScalar i
+    Tensor.scalar (if s > 0 then s * dl else s * dh))
+  let outHi := Tensor.dim (fun i =>
+    let dl := dB.lo.getScalar i
+    let dh := dB.hi.getScalar i
+    let s := scale.getScalar i
+    Tensor.scalar (if s > 0 then s * dh else s * dl))
+  { lo := outLo, hi := outHi }
 
 /--
 Propagate second-derivative bounds through inference-time BatchNorm.

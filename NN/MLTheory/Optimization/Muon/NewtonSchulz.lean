@@ -18,12 +18,12 @@ Polynomial orthogonalizers, residual checks, and fixed-point conditions used by 
 
 namespace Optim
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Muon
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /--
 Coefficients for the odd Newton-Schulz polynomial used by Muon-style orthogonalization.
@@ -43,11 +43,12 @@ structure NewtonSchulzCoeffs (α : Type) where
 
 /-- Left Gram matrix $XX^\mathsf{T}$, useful for row-oriented rectangular Newton-Schulz updates. -/
 def leftGram {m n : Nat} (X : MatrixTensor α m n) : MatrixTensor α m m :=
-  matMulSpec X (Spec.Tensor.swapAdjacentAxes X 0)
+  matMulSpec X (TorchLean.Tensor.swapAdjacentAxes X 0)
 
-/-- Right/column Gram matrix $X^\mathsf{T}X$, matching TorchLean's column-orthogonality certificate. -/
+/-- Right/column Gram matrix $X^\mathsf{T}X$, matching TorchLean's column-orthogonality
+certificate. -/
 def rightGram {m n : Nat} (X : MatrixTensor α m n) : MatrixTensor α n n :=
-  matMulSpec (Spec.Tensor.swapAdjacentAxes X 0) X
+  columnGram X
 
 /-- One row-oriented Newton-Schulz polynomial step using $XX^\mathsf{T}$. -/
 def newtonSchulzLeftStep {m n : Nat} (coeffs : NewtonSchulzCoeffs α)
@@ -90,17 +91,6 @@ def newtonSchulzOrthogonalizer {m n : Nat}
   { apply := fun buffer => newtonSchulzIter coeffs steps buffer }
 
 /--
-Residual-check success predicate for approximate Muon backends.
-
-This is the lightest sound checker boundary: after a backend returns a direction, prove or check that
-the direction's Gram residual is bounded by $\varepsilon$.
--/
-def ResidualApproxSuccess {m n : Nat} (eps : α)
-    (orthogonalizer : Orthogonalizer α (.dim m (.dim n .scalar)))
-    (buffer : MatrixTensor α m n) : Prop :=
-  HasApproxColumnGram eps (orthogonalizer.apply buffer)
-
-/--
 Turn any orthogonalizer into a checked approximate backend by using the Gram-residual bound itself
 as the success predicate.
 -/
@@ -108,7 +98,7 @@ def residualCheckedApproxOrthogonalizer {m n : Nat} (eps : α)
     (orthogonalizer : Orthogonalizer α (.dim m (.dim n .scalar))) :
     CheckedApproxOrthogonalizer α m n eps :=
   { orthogonalizer := orthogonalizer
-    Success := ResidualApproxSuccess eps orthogonalizer
+    Success := ApproxOrthogonalizesBuffer eps orthogonalizer
     certified := fun _ hresidual => hresidual }
 
 /--

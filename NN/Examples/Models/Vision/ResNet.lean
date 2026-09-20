@@ -10,7 +10,6 @@ Run:
 
 module
 
-public import NN.API
 public import NN.Examples.Models.Common.RealData
 
 /-!
@@ -29,83 +28,80 @@ open TorchLean
 namespace NN.Examples.Models.Vision.ResNet
 
 /-- CLI subcommand name used in terminal banners and parser errors. -/
-def exeName : String := "torchlean resnet"
+def exeName : String := "resnet"
 
 /-- Default JSON training-log path. -/
-def defaultLogJson : System.FilePath := ModelZoo.trainLogPath "resnet"
+def defaultLogPath : System.FilePath := Support.trainLogPath "resnet"
 
 /-- Static minibatch size carried by the checked model shape. -/
-def batch : Nat := 1
+def batchSize : Nat := 1
 
 /-- CIFAR input channels. -/
-def inChannels : Nat := RealData.cifarChannels
+def inputChannels : Nat := RealData.cifarChannels
 
 /-- Height of the compact CIFAR crop. -/
-def height : Nat := 8
+def cropHeight : Nat := 8
 
 /-- Width of the compact CIFAR crop. -/
-def width : Nat := 8
+def cropWidth : Nat := 8
 
 /-- Channel width of the residual trunk. -/
 def hiddenChannels : Nat := 4
 
-/-- A three-point stencil along each spatial axis, with unit stride and same padding. -/
-def blockGeometry : nn.ConvGeometry 2 :=
-  nn.ConvGeometry.samePadding tensor! [1, 1]
+/--
+Complete residual-classifier architecture.
 
-/-- Configuration shared by the model constructor and its typed input/output shapes. -/
-def cfg : nn.models.ResNetConfig 2 :=
-  { inChannels := inChannels
-    spatial := tensor! [height, width]
-    spatialNonzero := by intro i; fin_cases i <;> decide
+`spatial := [8, 8]` fixes the checked input grid, while `kernelRadius := [1, 1]` selects a `3 x 3`
+same-padding kernel. The model constructor derives all intermediate and output tensor types from
+this one value.
+-/
+abbrev modelConfig : nn.models.ResNet.Config 2 :=
+  { inputChannels := inputChannels
+    spatial := [cropHeight, cropWidth]
     hiddenChannels := hiddenChannels
-    block := blockGeometry
-    blockPreservesSpatial := by
-      simpa [nn.ConvGeometry.outSpatial, blockGeometry] using
-        nn.ConvGeometry.outSpatial_samePadding tensor! [height, width] tensor! [1, 1]
-          (by intro i; fin_cases i <;> decide)
-    numClasses := RealData.cifarClasses }
+    kernelRadius := [1, 1]
+    classCount := RealData.cifarClasses }
 
-/-- Batched channel-first input shape. -/
-abbrev σ : List Nat := [batch, inChannels, height, width]
+/-- Batched channel-first input type derived from `modelConfig`. -/
+abbrev input : Shape := modelConfig.input [batchSize]
 
-/-- One row of class logits per input sample. -/
-abbrev τ : List Nat := [batch, RealData.cifarClasses]
+/-- One row of class logits per input sample, also derived from `modelConfig`. -/
+abbrev output : Shape := modelConfig.output [batchSize]
 
 /-- Residual classifier from the public model API. -/
-def model : nn.Builder (nn.Sequential σ τ) :=
-  by
-    simpa [σ, τ, cfg, nn.models.ResNetConfig.inputShape,
-      nn.models.ResNetConfig.outputShape, Spec.Shape.ofList, Spec.Shape.concat,
-      Spec.Shape.appendDim] using
-      nn.models.resnet cfg [batch]
-        (hInChannels := by decide) (hHiddenChannels := by decide)
+def model : nn.Builder (nn.Sequential input output) :=
+  nn.models.resnet modelConfig [batchSize]
 
 /-- Train the residual classifier with the public classification trainer. -/
-def train (opts : Options) (flags : RealData.CifarModelTrainFlags) :
-    IO Trainer.TrainSummary := do
+def train (runtime : Runtime.Config) (flags : RealData.CifarModelTrainFlags) :
+    IO Trainer.Report := do
   let batches ←
-    RealData.loadCifarBatches exeName batch flags.nRows flags.seed flags.xPath flags.yPath
-  let batches := batches.map (RealData.cropCifarBatch batch height width (by decide) (by decide))
+    RealData.loadCifarBatches exeName batchSize flags.data.nRows flags.data.seed
+      flags.data.xPath flags.data.yPath
+  let batches ← batches.mapM fun sample =>
+    CLI.orThrow exeName <|
+      RealData.cropCifarBatch batchSize cropHeight cropWidth sample
   let trainer :=
     Trainer.new model <|
-      Trainer.Config.fromRunConfig
-        (Trainer.RunConfig.ofRuntimeOptions opts { optimizer := optim.adam { lr := flags.lr } })
+      Trainer.RunConfig.forObjective
+        (Trainer.RunConfig.fromRuntime runtime
+          { optimizer := optim.adam { learningRate := flags.training.learningRate } })
         (.oneHotCrossEntropy 1)
-        (seed := flags.seed)
+        (seed := flags.data.seed)
   let trained ← trainer.train
-    (Data.floatSamples batches)
-    (CLI.Training.OptimizerOptions.toTrainerOptions flags.toOptimizerOptions
-      (title := "ResNet CIFAR training")
-      (notes := RealData.cifarClassifierNotes batch flags
-        #[s!"spatial={height}x{width}", s!"hiddenChannels={hiddenChannels}"]))
+    (Data.fromSamples batches)
+    (flags.training.trainOptions
+      (logTitle := "ResNet CIFAR training")
+      (logNotes := RealData.cifarClassifierNotes batchSize flags
+        #[s!"spatial={cropHeight}x{cropWidth}",
+          s!"hiddenChannels={hiddenChannels}"]))
   pure trained.report
 
 /-- CLI entrypoint for the CIFAR residual-classifier training path. -/
 def main (args : List String) : IO UInt32 :=
   TrainCommand.classificationNpy exeName args
-    (fun rest => RealData.CifarModelTrainFlags.parse exeName rest defaultLogJson 1 1e-3)
-    (ModelZoo.bannerWithDevice exeName "ResNet CIFAR training")
+    (fun rest => RealData.CifarModelTrainFlags.parse exeName rest defaultLogPath 1 1e-3)
+    (Support.bannerWithDevice exeName "ResNet CIFAR training")
     train
 
 end NN.Examples.Models.Vision.ResNet

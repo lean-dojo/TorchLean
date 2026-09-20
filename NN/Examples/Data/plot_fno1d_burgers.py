@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import pathlib
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,22 +19,20 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    xs: list[float] = []
-    u0: list[float] = []
-    target: list[float] = []
-    pred: list[float] = []
-    with args.csv.open() as f:
-        for row in csv.DictReader(f):
-            xs.append(float(row["x"]))
-            u0.append(float(row.get("u0", row["input"])))
-            target.append(float(row["target"]))
-            pred.append(float(row["prediction"]))
+    data = np.genfromtxt(args.csv, delimiter=",", names=True, dtype=np.float64, ndmin=1)
+    columns = set(data.dtype.names or ())
+    input_column = "u0" if "u0" in columns else "input"
+    required = {"x", input_column, "target", "prediction"}
+    if not required.issubset(columns):
+        raise ValueError(f"Missing CSV columns: {sorted(required - columns)}")
+    if data.size == 0 or any(not np.isfinite(data[name]).all() for name in required):
+        raise ValueError("Prediction CSV must contain finite, nonempty numeric columns")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     plt.figure(figsize=(8, 4.5))
-    plt.plot(xs, u0, label="u0(x)", linewidth=1.5, alpha=0.75)
-    plt.plot(xs, target, label="target u(x,T)", linewidth=2.0)
-    plt.plot(xs, pred, label="TorchLean FNO prediction", linewidth=2.0, linestyle="--")
+    plt.plot(data["x"], data[input_column], label="u0(x)", linewidth=1.5, alpha=0.75)
+    plt.plot(data["x"], data["target"], label="target u(x,T)", linewidth=2.0)
+    plt.plot(data["x"], data["prediction"], label="TorchLean FNO prediction", linewidth=2.0, linestyle="--")
     plt.xlabel("x")
     plt.ylabel("u")
     plt.title("1D Burgers: native TorchLean FNO")

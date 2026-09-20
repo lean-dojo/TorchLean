@@ -4,7 +4,7 @@ Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 -/
 
-module
+module -- shake: keep-all (These imports define the CI build coverage.)
 
 import NN.Runtime
 import NN.Runtime.Autograd.IRExec.Correctness

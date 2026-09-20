@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Tensor
+import Mathlib.Tactic.Bound.Init
+public import NN.Spec.Core.Tensor -- shake: keep
 
 /-!
 # Import Core
@@ -39,7 +40,8 @@ The public helpers are organized as follows:
 
 - `parseTensor` is the core JSON-to-tensor conversion.
 - `loadWeights?` and `unwrapParams` handle the two JSON layouts we accept.
-- `getTensor?` / `getTensorE` are the main lookup helpers used by the model-specific importers.
+- `getTensor?` and `getTensorFirst?` are the main lookup helpers used by the model-specific
+  importers.
 -/
 
 @[expose] public section
@@ -48,8 +50,8 @@ The public helpers are organized as follows:
 namespace Import
 namespace PyTorch
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open Shape
 open Lean
 open Data
@@ -189,6 +191,19 @@ def getTensor? (o : StateDict) (k : String) (s : Shape) : Option (Tensor Float s
   let j ← getJson? o k
   parseTensor s j
 
+/--
+Try a list of state-dict keys in order and return the first tensor matching the expected shape.
+
+This supports importers that accept both a compact interchange name and a framework-native module
+path for the same parameter.
+-/
+def getTensorFirst? (o : StateDict) (keys : List String) (s : Shape) :
+    Option (Tensor Float s) :=
+  match keys with
+  | [] => none
+  | key :: remaining =>
+      getTensor? o key s <|> getTensorFirst? o remaining s
+
 /-!
 ## Error-reporting variants (ergonomics)
 
@@ -197,32 +212,6 @@ more precise failures, especially when distinguishing a missing key from a wrong
 
 The helpers below provide small `Except String` wrappers around the `Option`-based core.
 -/
-
-/--
-Load weights from JSON with an error message on failure.
-
-This is the `Except` analogue of `loadWeights?`.
--/
-def loadWeightsE (j : Json) : Except String StateDict :=
-  match loadWeights? j with
-  | some o => .ok o
-  | none =>
-      .error
-        "PyTorch import: expected a JSON object `{...}` or a wrapper `{ \"params\": {...} }`."
-
-/--
-Look up a tensor by key, returning a human-friendly error on failure.
-
-This is the `Except` analogue of `getTensor?`.
--/
-def getTensorE (o : StateDict) (k : String) (s : Shape) : Except String (Tensor Float s) :=
-  match getTensor? o k s with
-  | some t => .ok t
-  | none =>
-      match o.get? k with
-      | none => .error s!"PyTorch import: missing key `{k}`."
-      | some _ =>
-          .error s!"PyTorch import: key `{k}` is present, but did not match the expected shape."
 
 /-!
 ## Small parsing helpers used by shape-inferring importers

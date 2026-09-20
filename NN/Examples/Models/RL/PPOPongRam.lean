@@ -9,7 +9,7 @@ End-to-end PPO example: train an actor-critic on Atari Pong (ALE) using TorchLea
 module
 
 public import NN.API
-public import NN.Examples.ModelZoo
+public import NN.Examples.Support
 public import NN.Runtime.RL.Artifacts.DefaultPaths
 
 /-!
@@ -47,27 +47,22 @@ python3 -m pip install --user 'gymnasium>=1.0' ale-py
 - `--eval-max-steps <n>`: maximum steps per evaluation episode.
 - `--log <path>`: write the widget log JSON to a custom path.
 
-This module is optional. It depends on a compatible external ALE/Gymnasium installation and is not
-part of the default `torchlean` runner quick-check list.
-
-Dependency setup:
-
-```bash
-python3 -m pip install --user 'gymnasium>=1.0' ale-py
-```
+This command is optional in the sense that it depends on a compatible external ALE/Gymnasium
+installation. It is available through the runner but is not part of the default quick-check list.
 
 Artifacts:
 - Writes `data/rl/ppo_pong_ram_trainlog.json` by default (override with `--log`).
-- Visualize it in the editor via `NN/Examples/RL/PPOPongRamView.lean`.
+- Visualize it in the editor via `NN/Examples/Models/RL/Views/PPOPongRam.lean`.
 
 References (primary):
-- Schulman et al., "Proximal Policy Optimization Algorithms" (2017): https://arxiv.org/abs/1707.06347
-- Schulman et al., "High-Dimensional Continuous Control Using Generalized Advantage Estimation" (2015):
-  https://arxiv.org/abs/1506.02438
-- Williams, "Simple statistical gradient-following algorithms for connectionist reinforcement learning"
-  (REINFORCE, 1992): https://doi.org/10.1007/BF00992696
-- Machado et al., "Revisiting the Arcade Learning Environment: Evaluation Protocols and Open Problems"
-  (2018): https://arxiv.org/abs/1709.06009
+- Schulman et al., "Proximal Policy Optimization Algorithms" (2017):
+  https://arxiv.org/abs/1707.06347
+- Schulman et al., "High-Dimensional Continuous Control Using Generalized Advantage Estimation"
+  (2015): https://arxiv.org/abs/1506.02438
+- Williams, "Simple statistical gradient-following algorithms for connectionist reinforcement
+  learning" (REINFORCE, 1992): https://doi.org/10.1007/BF00992696
+- Machado et al., "Revisiting the Arcade Learning Environment: Evaluation Protocols and Open
+  Problems" (2018): https://arxiv.org/abs/1709.06009
 - ALE docs (environment catalogue and versioned `ALE/...-v5` ids): https://ale.farama.org/
 - Gymnasium API reference (reset/step, `terminated` vs `truncated`): https://gymnasium.farama.org/
 -/
@@ -78,8 +73,8 @@ open TorchLean
 
 namespace NN.Examples.Models.RL.PPOPongRam
 
-/-- Name used in CLI error messages and banners when the optional runner is wired in. -/
-def exeName : String := "torchlean ppo_pong_ram"
+/-- Name used in CLI error messages and banners. -/
+def exeName : String := "ppo_pong_ram"
 
 /-- Help text for the optional ALE/Pong RAM PPO runner. -/
 def usage : String :=
@@ -114,53 +109,55 @@ Pong RAM observation dimension.
 
 Gymnasium exposes RAM as `Box(0, 255, (128,), uint8)` when `obs_type="ram"`.
 -/
-def stateDim : Nat := 128
+def observationWidth : Nat := 128
 
 /-- Number of discrete actions in Pong under ALE's reduced action set. -/
-def nActions : Nat := 6
+def actionCount : Nat := 6
 
 /-- Width of the hidden layer in the actor and critic MLPs. -/
-def hiddenDim : Nat := 64
+def hiddenWidth : Nat := 64
 
 /-- PPO rollout horizon (also the training batch size for this run). -/
 def horizon : Nat := 128
 
 /-- Discount factor used in returns / GAE. -/
-def gamma : Float := 0.99
+def discountFactor : Float := 0.99
 
 /-- GAE(λ) parameter controlling the bias/variance tradeoff of advantage estimates. -/
-def lam : Float := 0.95
+def gaeLambda : Float := 0.95
 
 /-- Adam learning rate used for the Pong RAM actor-critic update. -/
-def lr : Float := 2.5e-4
+def learningRate : Float := 2.5e-4
 
 /-- Number of PPO optimization epochs per collected rollout batch. -/
 def updateEpochs : Nat := 1
 
 /-- Default maximum number of PPO updates (override with `--updates`). -/
-def updatesMax : Nat := 2000
+def maxUpdates : Nat := 2000
 
 /-- Default evaluation checkpoint interval (override with `--eval-every`). -/
-def evalEvery : Nat := 100
+def defaultEvaluationInterval : Nat := 100
 
 /-- Default evaluation episodes per checkpoint (override with `--eval-episodes`). -/
-def evalEpisodes : Nat := 5
+def defaultEvaluationEpisodes : Nat := 5
 
 instance : NeZero horizon := ⟨by decide⟩
-instance : NeZero nActions := ⟨by decide⟩
+instance : NeZero actionCount := ⟨by decide⟩
 
-/-- The observation tensor shape used by this run: `[..., stateDim]`. -/
-def obsShape : List Nat := [stateDim]
+/-- The observation tensor shape used by this run: `[..., observationWidth]`. -/
+def observation : Shape := [observationWidth]
 
-def pfxBatch : List Nat := [horizon]
-def sStateBatch : Shape := rl.ppo.StateBatchShape horizon obsShape
-def sLogitsBatch : Shape := rl.ppo.LogitsBatchShape horizon nActions
-def sScalarBatch : Shape := rl.ppo.ScalarBatchShape horizon
-def sValueBatch : Shape := rl.ppo.ValueBatchShape horizon
+def rollout : Shape := [horizon]
+def rolloutStates : Shape := rl.ppo.StateBatchShape horizon observation
+/-- Logits for a whole rollout: one row of action logits per timestep. -/
+def rolloutLogits : Shape := rl.ppo.LogitsBatchShape horizon actionCount
+/-- Value estimates for a whole rollout, one per timestep. -/
+def rolloutValues : Shape := rl.ppo.ValueBatchShape horizon
 
-def stateShape : List Nat := obsShape
-def logitsShape : List Nat := [nActions]
-def valueShape : List Nat := [1]
+/-- Action logits at a single timestep. -/
+def actionLogits : Shape := [actionCount]
+/-- A single value estimate, shaped `[1]` so it composes with the batched shapes above. -/
+def value : Shape := [1]
 
 /-!
 ## Model (Actor + Critic)
@@ -169,20 +166,22 @@ We use MLPs over RAM. Pixel observations can instead use the arbitrary-rank conv
 from `TorchLean.nn.models.cnn` after applying the appropriate Atari preprocessing.
 -/
 
-def modelCfg : nn.models.PPO.Config :=
-  { obsDim := stateDim, hiddenDim := hiddenDim, nActions := nActions }
+abbrev modelConfig : nn.models.PPO.Config :=
+  { observationWidth := observationWidth
+    hiddenWidth := hiddenWidth
+    actionCount := actionCount }
 
 /-- Construct the actor network as an MLP mapping RAM observations to action logits. -/
-def actorMk (leading : List Nat) :
-    nn.Builder (nn.Sequential (nn.models.PPO.inputShape modelCfg leading)
-      (nn.models.PPO.actorOutputShape modelCfg leading)) :=
-  nn.models.PPO.actor modelCfg leading
+def actor (batchShape : Shape := []) :
+    nn.Builder (nn.Sequential (modelConfig.input batchShape)
+      (modelConfig.actorOutput batchShape)) :=
+  nn.models.PPO.actor modelConfig batchShape
 
 /-- Construct the critic network as an MLP mapping RAM observations to a scalar value estimate. -/
-def criticMk (leading : List Nat) :
-    nn.Builder (nn.Sequential (nn.models.PPO.inputShape modelCfg leading)
-      (nn.models.PPO.criticOutputShape modelCfg leading)) :=
-  nn.models.PPO.critic modelCfg leading
+def critic (batchShape : Shape := []) :
+    nn.Builder (nn.Sequential (modelConfig.input batchShape)
+      (modelConfig.criticOutput batchShape)) :=
+  nn.models.PPO.critic modelConfig batchShape
 
 /-!
 ## Gymnasium / ALE bridge
@@ -194,7 +193,15 @@ We request RAM observations by passing `{"obs_type": "ram"}` to `gym.make` throu
 def makeKwargs : Array (String × Lean.Json) :=
   #[("obs_type", .str "ram")]
 
-def contract : rl.boundary.Contract obsShape nActions :=
+/--
+What Lean insists on before it will believe anything the Python environment sends.
+
+Every observation and reward must be finite, and RAM bytes must lie in `[0, 255]`. That last check
+is
+not about the emulator, which cannot produce anything else; it is about the protocol and the adapter
+between them, where a byte-order or dtype mistake would show up as out-of-range values.
+-/
+def contract : rl.boundary.Contract observation actionCount :=
   { checkObsFinite := true
     checkRewardFinite := true
     -- RAM bytes live in `[0,255]` by construction. This range check guards
@@ -212,14 +219,16 @@ Lean side boundary contract as the full PPO runner, without collecting a 128-ste
 def checkEnvOnly : IO Unit := do
   IO.eprintln s!"  starting env: {envId} (obs_type=ram)"
   let gym ←
-    rl.gym.client.spawn (obsShape := obsShape) (nActions := nActions) gymServerScript envId contract
+    rl.gym.client.spawn
+      (obsShape := observation) (nActions := actionCount) gymServerScript envId contract
       (makeKwargs := makeKwargs)
   try
-    let _obs ← rl.gym.client.reset gym (seed? := some 0)
-    let (_obs', reward, terminated, truncated) ←
-      Runtime.RL.Gymnasium.Client.Internal.step gym 0
-    IO.println
-      s!"{exeName}: env check ok reward={reward} terminated={terminated} truncated={truncated}"
+    let session ← rl.gym.session.start gym (seed? := some 0)
+    let (transition, _) ←
+      rl.gym.session.stepChecked session 0 (resetOnDone := false)
+    IO.println <|
+      s!"{exeName}: env check ok reward={transition.reward} " ++
+      s!"terminated={transition.terminated} truncated={transition.truncated}"
   finally
     rl.gym.client.close gym
 
@@ -234,46 +243,57 @@ def main (args : List String) : IO UInt32 := do
   if args.contains "--check-env-only" then
     let args := args.erase "--check-env-only"
     return ←
-      Module.Command.runFloat32 exeName args
-        (banner := ModelZoo.bannerWithDeviceDetails
-          exeName
-          s!"PPO on {envId} (obs=ram, env check only)"
-          "  env: Python Gymnasium subprocess (ALE) + Lean boundary contract")
-        (k := fun _opts rest => do
-          ModelZoo.orThrow exeName <| CLI.checkNoArgs rest
+      Module.Command.run
+        (config := {
+          banner? := some <| Support.bannerWithDeviceDetails
+            exeName
+            s!"PPO on {envId} (obs=ram, env check only)"
+            "  env: Python Gymnasium subprocess (ALE) + Lean boundary contract"
+          printSuccess := true })
+        exeName args
+        (.native fun _opts rest => do
+          CLI.orThrow exeName <| CLI.checkNoArgs rest
           checkEnvOnly)
-  Module.Command.runFloat32 exeName args
-    (banner := ModelZoo.bannerWithDeviceDetails
-      exeName
-      s!"PPO on {envId} (obs=ram, horizon={horizon})"
-      "  env: Python Gymnasium subprocess (ALE) + Lean boundary contract")
-    (k := fun opts rest => do
-      let (ppo, rest) ← ModelZoo.orThrow exeName <|
-        rl.cli.parsePpoFlags exeName rest Runtime.RL.Artifacts.DefaultPaths.ppoPongRamTrainLog
-          updatesMax evalEvery evalEpisodes 10000
-      ModelZoo.orThrow exeName <| CLI.checkNoArgs rest
+  Module.Command.run
+    (config := {
+      banner? := some <| Support.bannerWithDeviceDetails
+        exeName
+        s!"PPO on {envId} (obs=ram, horizon={horizon})"
+        "  env: Python Gymnasium subprocess (ALE) + Lean boundary contract"
+      printSuccess := true })
+    exeName args
+    (.native fun runtime rest => do
+      let (ppo, rest) ← CLI.orThrow exeName <|
+        rl.cli.PPOOptions.parse
+          exeName rest Runtime.RL.Artifacts.DefaultPaths.ppoPongRamTrainLog
+          (defaultUpdateCount := maxUpdates)
+          (defaultEvaluationInterval := defaultEvaluationInterval)
+          (defaultEvaluationEpisodes := defaultEvaluationEpisodes)
+          (defaultMaximumEvaluationSteps := 10000)
+      CLI.orThrow exeName <| CLI.checkNoArgs rest
 
-      let updates : Nat := ppo.updates
-      let evalEvery : Nat := ppo.evalEvery
-      let evalEpisodes : Nat := ppo.evalEpisodes
-      let evalMaxSteps : Nat := ppo.evalMaxSteps
+      let updateCount : Nat := ppo.updateCount
+      let evaluationInterval : Nat := ppo.evaluationInterval
+      let evaluationEpisodes : Nat := ppo.evaluationEpisodes
+      let maximumEvaluationSteps : Nat := ppo.maximumEvaluationSteps
 
       IO.eprintln s!"  starting env: {envId} (obs_type=ram)"
       let gym ←
-        rl.gym.client.spawn (obsShape := obsShape) (nActions := nActions) gymServerScript envId contract
+        rl.gym.client.spawn
+          (obsShape := observation) (nActions := actionCount) gymServerScript envId contract
           (makeKwargs := makeKwargs)
       try
         IO.eprintln "  building actor/critic..."
         let seedActor ← rand.nextSeedGlobal
         let seedCritic ← rand.nextSeedGlobal
-        let actorObs : nn.Sequential stateShape logitsShape :=
-          nn.build seedActor (actorMk [])
-        let criticObs : nn.Sequential stateShape valueShape :=
-          nn.build seedCritic (criticMk [])
-        let actorRollout : nn.Sequential sStateBatch sLogitsBatch :=
-          nn.build seedActor (actorMk pfxBatch)
-        let criticRollout : nn.Sequential sStateBatch sValueBatch :=
-          nn.build seedCritic (criticMk pfxBatch)
+        let actorObs : nn.Sequential observation actionLogits :=
+          nn.build seedActor (actor [])
+        let criticObs : nn.Sequential observation value :=
+          nn.build seedCritic (critic [])
+        let actorRollout : nn.Sequential rolloutStates rolloutLogits :=
+          nn.build seedActor (actor rollout)
+        let criticRollout : nn.Sequential rolloutStates rolloutValues :=
+          nn.build seedCritic (critic rollout)
 
         IO.eprintln "  lowering actor/critic to typed graphs..."
         let actorGraph ← nn.lowerToTypedGraph actorObs
@@ -281,23 +301,24 @@ def main (args : List String) : IO UInt32 := do
 
         IO.eprintln "  initializing module + optimizer..."
         let m ← rl.ppo.instantiateActorCritic
-          (α := Float) (opts := opts)
-          (batch := horizon) (nActions := nActions)
+          (α := Float) (options := runtime)
+          (batch := horizon) (nActions := actionCount)
           actorRollout criticRollout
         IO.eprintln "  module ready"
 
         let stepSample ←
-          rl.ppo.makeOptimizerStep m (.adam lr 0.9 0.999 1e-8 : optim.Optimizer)
+          rl.ppo.trainingStep m
+            (optim.adam { learningRate := learningRate })
         IO.eprintln "  optimizer ready"
 
-        let mut rngSeed : Nat := opts.seed
-        let mut rngCounter : Nat := 0
 
         let mut curve : Training.Curve := {}
 
-        let mkSession : Nat → rl.session.CheckedSession obsShape nActions :=
+        let evaluationSessionAt :
+            Nat → rl.session.CheckedSession observation actionCount :=
           fun seed =>
-            rl.session.gymnasium (obsShape := obsShape) (nActions := nActions) gym
+            rl.session.gymnasium
+              (obsShape := observation) (nActions := actionCount) gym
               (seed? := some seed) (resetOnDone := false)
 
         -- Evaluate once before training (step=0).
@@ -305,66 +326,71 @@ def main (args : List String) : IO UInt32 := do
           IO.eprintln "  evaluating initial policy..."
           let psAll0 ← rl.ppo.state (α := Float) m
           let policy0 := rl.ppo.actorPolicy actorGraph actorRollout criticRollout psAll0
-          let policyLogits0 : Tensor Float obsShape → Tensor Float logitsShape :=
+          let policyLogits0 :
+              Tensor Float observation → Tensor Float actionLogits :=
             fun obs => policy0 (Tensor.map (fun x => x / 255.0) obs)
           let avg0 ←
-            rl.eval.averageEpisodeTotalReward (obsShape := obsShape) (nActions := nActions)
-              mkSession policyLogits0 (baseSeed := 9000) (episodes := evalEpisodes)
-              (maxSteps := evalMaxSteps)
+            rl.eval.averageEpisodeTotalReward
+              (obsShape := observation) (nActions := actionCount)
+              evaluationSessionAt policyLogits0 (baseSeed := 9000)
+              (episodes := evaluationEpisodes)
+              (maxSteps := maximumEvaluationSteps)
           curve := curve.push 0 avg0
           IO.eprintln s!"  eval(step=0) avg_return={avg0}"
 
-        for update in [0:updates] do
-          let psAll ← rl.ppo.state (α := Float) m
-          let predictLogits : Tensor Float obsShape → Tensor Float logitsShape :=
-            rl.ppo.actorPolicy actorGraph actorRollout criticRollout psAll
-          let predictValue : Tensor Float obsShape → Float :=
-            rl.ppo.criticValue criticGraph actorRollout criticRollout psAll
+        curve ← rl.ppo.train discountFactor gaeLambda
+          { updates := updateCount, epochs := updateEpochs,
+            evaluationEvery := evaluationInterval, seed := runtime.seed }
+          (fun update rngSeed rngCounter => do
+              let psAll ← rl.ppo.state (α := Float) m
+              let predictLogits :
+                  Tensor Float observation → Tensor Float actionLogits :=
+                rl.ppo.actorPolicy actorGraph actorRollout criticRollout psAll
+              let predictValue : Tensor Float observation → Float :=
+                rl.ppo.criticValue criticGraph actorRollout criticRollout psAll
 
-          let (rollout, rngCounter') ←
-            rl.ppo.collectRolloutWith (α := Float) (obsShape := obsShape) (nActions := nActions)
-              (horizon := horizon)
-              (castObs := fun x => x / 255.0) (castReward := id)
-              gym predictLogits predictValue
-              (rngSeed := rngSeed) (rngCounter := rngCounter) (resetSeed := update)
-          rngCounter := rngCounter'
-
-          let sample ←
-            rollout.toActorCriticSample (α := Float) (obsShape := obsShape) (nActions := nActions)
-              (horizon := horizon) gamma lam
-          for _e in [0:updateEpochs] do
-            stepSample sample
-
-          if update % evalEvery == 0 then
-            let psAll' ← rl.ppo.state (α := Float) m
-            let policy := rl.ppo.actorPolicy actorGraph actorRollout criticRollout psAll'
-            let policyLogits : Tensor Float obsShape → Tensor Float logitsShape :=
-              fun obs => policy (Tensor.map (fun x => x / 255.0) obs)
-            let avg ←
-              rl.eval.averageEpisodeTotalReward (obsShape := obsShape) (nActions := nActions)
-                mkSession policyLogits (baseSeed := 9000 + update) (episodes := evalEpisodes)
-                (maxSteps := evalMaxSteps)
-            curve := curve.push (update + 1) avg
-            IO.eprintln s!"  update={update} avg_return={avg}"
-
-          rngSeed := rand.nextSeed rngSeed update
-
-        ModelZoo.writeCurveTrainLog
-          ppo.log
-          s!"PPO {envId} (RAM, TorchLean)"
+              let (rollout, rngCounter') ←
+                rl.ppo.collectRolloutFromGymnasium
+                  (α := Float) (obsShape := observation) (nActions := actionCount)
+                  (horizon := horizon)
+                  (castObservation := fun x => x / 255.0) (castReward := id)
+                  gym predictLogits predictValue
+                  (rngSeed := rngSeed) (rngCounter := rngCounter) (resetSeed := update)
+              pure (rollout, rngCounter'))
+          stepSample
+          (fun completedUpdates => do
+              let psAll' ← rl.ppo.state (α := Float) m
+              let policy := rl.ppo.actorPolicy actorGraph actorRollout criticRollout psAll'
+              let policyLogits :
+                  Tensor Float observation → Tensor Float actionLogits :=
+                fun obs => policy (Tensor.map (fun x => x / 255.0) obs)
+              let avg ←
+                rl.eval.averageEpisodeTotalReward
+                  (obsShape := observation) (nActions := actionCount)
+                  evaluationSessionAt policyLogits (baseSeed := 9000 + completedUpdates)
+                    (episodes := evaluationEpisodes)
+                  (maxSteps := maximumEvaluationSteps)
+              IO.eprintln s!"  update={completedUpdates} avg_return={avg}"
+              pure (avg, false))
           curve
+
+        Training.Curve.writeLog curve
+          ppo.logDestination
+          s!"PPO {envId} (RAM, TorchLean)"
           "avg_return"
-          "#f28e2b"
+          (color := "#f28e2b")
           #[
             s!"env_id={envId}",
             s!"obs_type=ram",
             s!"horizon={horizon}",
-            s!"gamma={gamma}",
-            s!"lambda={lam}",
-            s!"lr={lr}",
-            s!"eval_every={evalEvery}",
-            s!"eval_episodes={evalEpisodes}",
-            ModelZoo.deviceNote opts
+            s!"gamma={discountFactor}",
+            s!"lambda={gaeLambda}",
+            s!"lr={learningRate}",
+            s!"updates={updateCount}",
+            s!"eval_every={evaluationInterval}",
+            s!"eval_episodes={evaluationEpisodes}",
+            s!"eval_max_steps={maximumEvaluationSteps}",
+            Support.deviceNote runtime
           ]
         IO.eprintln s!"{exeName}: done"
       finally

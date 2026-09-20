@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.Context
+public import NN.Tensor.Internal.Representation.Storage
 
 /-!
 # Directed-rounding primitives for interval propagation
@@ -18,7 +19,8 @@ endpoint operations (directed rounding).
 Intuition:
 - For pure real/interval backends, using ordinary `+`/`*` is already enclosure-safe (because the
   scalar itself is an interval type with outward rounding).
-- For finite-precision backends with discrete grids (e.g. `IEEE32Exec`), we want *directed rounding*
+- For finite-precision backends with discrete grids (e.g. `ExecFloat.Binary 8 23`), we want
+*directed rounding*
   primitives like `addDown/addUp` and `mulDown/mulUp` so that interval propagation encloses the
   corresponding exact real operation.
 
@@ -37,14 +39,14 @@ obligation, recorded by `LawfulNonlinearBoundOps`.
 
 The intended usage is:
 
-- Keep graphs/layers scalar-polymorphic over `[Context α]`.
+- Keep graphs/layers scalar-polymorphic over `[TorchLean.Storage α] [Context α]`.
 - When a routine *propagates bounds* (IBP/affine/CROWN), also require `[BoundOps α]` and use
   `addDown/addUp/subDown/subUp/mulDown/mulUp` at the endpoints.
 
 Concretely:
 
 - `NN/MLTheory/CROWN/Core.lean`
-  - `AffineVec.eval_on_box`: min/max over products and accumulation use `BoundOps`.
+  - `AffineVec.evalOnBox`: min/max over products and accumulation use `BoundOps`.
   - `IBP.linear`: interval linear layer propagation uses `BoundOps`.
 - `NN.MLTheory.CROWN.Graph`
   - `boxAdd`, `boxSub`, `boxMulElem`: endpoint propagation uses `BoundOps`.
@@ -56,10 +58,9 @@ the corresponding node unresolved instead of treating an ordinary library call a
 
 @[expose] public section
 
-
 namespace NN.MLTheory.CROWN
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-!
 ## `BoundOps α`
@@ -70,7 +71,7 @@ primitives that appear in IBP for affine/linear layers and basic arithmetic node
 If you want to swap in a quantized backend, the key is to provide an instance of `BoundOps` for
 your scalar type.
 -/
-class BoundOps (α : Type) [Context α] where
+class BoundOps (α : Type) [TorchLean.Storage α] [Context α] where
   addDown : α → α → α
   addUp   : α → α → α
   subDown : α → α → α
@@ -79,33 +80,6 @@ class BoundOps (α : Type) [Context α] where
   mulUp   : α → α → α
   /-- Whether ordinary scalar algebra may be reassociated without a rounding error. -/
   supportsExactAffineReassociation : Bool := false
-
-/--
-Real-semantic enclosure laws for `BoundOps`.
-
-The executable interface above is intentionally available without this class: a backend may be
-useful for diagnostics before its arithmetic has been connected to a proof.  Sound CROWN theorems
-require `LawfulBoundOps` in addition to `BoundOps`. The interpretation `toReal` says what a scalar
-endpoint means mathematically, and the laws compare each directed operation with exact arithmetic
-on those real values. This is stronger than merely surrounding the backend's ordinary rounded
-operation.
-
-There is a global instance for `ℝ`.  There is deliberately no global instance for Lean `Float` or
-for all `IEEE32Exec` bit patterns.  Host `Float` is a trusted runtime boundary, while IEEE-754 NaNs,
-infinities, and overflow require finite-path hypotheses; those facts are stated at the IEEE
-semantics layer rather than hidden in an invalid ordered-ring instance.
--/
-class LawfulBoundOps (α : Type) [Context α] [BoundOps α] where
-  /-- Mathematical value represented by an endpoint. -/
-  toReal : α → ℝ
-  /-- Executable endpoint comparisons agree with the mathematical order. -/
-  lt_iff (a b : α) : a < b ↔ toReal a < toReal b
-  addDown_le (a b : α) : toReal (BoundOps.addDown a b) ≤ toReal a + toReal b
-  le_addUp (a b : α) : toReal a + toReal b ≤ toReal (BoundOps.addUp a b)
-  subDown_le (a b : α) : toReal (BoundOps.subDown a b) ≤ toReal a - toReal b
-  le_subUp (a b : α) : toReal a - toReal b ≤ toReal (BoundOps.subUp a b)
-  mulDown_le (a b : α) : toReal (BoundOps.mulDown a b) ≤ toReal a * toReal b
-  le_mulUp (a b : α) : toReal a * toReal b ≤ toReal (BoundOps.mulUp a b)
 
 namespace BoundOps
 
@@ -132,73 +106,33 @@ for the concrete implementations used by checked workflows; an external instance
 instance remains part of the backend trust boundary.
 -/
 
-class NonlinearBoundOps (α : Type) [Context α] where
+/-- Interval enclosures for the nonlinear scalar operations a bound-propagation pass needs.
+
+Each method takes the endpoints of the input interval (division takes both operands' endpoints) and
+returns the endpoints of an enclosure of the image, or `none` when the backend declines to bound
+that input, for example a logarithm on an interval reaching zero. -/
+class NonlinearBoundOps (α : Type) [TorchLean.Storage α] [Context α] where
+  /-- Enclose `x / y` from the endpoints of `x` and then of `y`. -/
   divBounds : α → α → α → α → Option (α × α)
+  /-- Enclose `exp x` on `[l, u]`. -/
   expBounds : α → α → Option (α × α)
+  /-- Enclose `log x` on `[l, u]`. -/
   logBounds : α → α → Option (α × α)
+  /-- Enclose `sqrt x` on `[l, u]`. -/
   sqrtBounds : α → α → Option (α × α)
+  /-- Enclose `sigmoid x` on `[l, u]`. -/
   sigmoidBounds : α → α → Option (α × α)
+  /-- Enclose `tanh x` on `[l, u]`. -/
   tanhBounds : α → α → Option (α × α)
+  /-- Enclose `sin x` on `[l, u]`. -/
   sinBounds : α → α → Option (α × α)
+  /-- Enclose `cos x` on `[l, u]`. -/
   cosBounds : α → α → Option (α × α)
   /-- Uniform absolute bound for one last-axis layer-normalization row. -/
   layerNormAbsBound : Nat → Option α
-  /-- Whether coupled softmax/layer-normalization derivative formulas use exact scalar arithmetic. -/
+  /-- Whether coupled softmax/layer-normalization derivative formulas use exact scalar
+  arithmetic. -/
   supportsIdealCoupledDerivatives : Bool
-
-/--
-Soundness predicate for a unary interval transfer.
-
-Returning `none` is always permitted. If the transfer returns endpoints, every real input between
-the interpreted input endpoints must map between the interpreted output endpoints.
--/
-def UnaryEnclosure [BoundOps α] [LawfulBoundOps α]
-    (f : ℝ → ℝ) (transfer : α → α → Option (α × α)) : Prop :=
-  ∀ {lo hi outLo outHi : α} {x : ℝ}, transfer lo hi = some (outLo, outHi) →
-    LawfulBoundOps.toReal lo ≤ x → x ≤ LawfulBoundOps.toReal hi →
-    LawfulBoundOps.toReal outLo ≤ f x ∧ f x ≤ LawfulBoundOps.toReal outHi
-
-/-- Soundness predicate for a binary interval transfer. -/
-def BinaryEnclosure [BoundOps α] [LawfulBoundOps α]
-    (f : ℝ → ℝ → ℝ) (transfer : α → α → α → α → Option (α × α)) : Prop :=
-  ∀ {aLo aHi bLo bHi outLo outHi : α} {x y : ℝ},
-    transfer aLo aHi bLo bHi = some (outLo, outHi) →
-    LawfulBoundOps.toReal aLo ≤ x → x ≤ LawfulBoundOps.toReal aHi →
-    LawfulBoundOps.toReal bLo ≤ y → y ≤ LawfulBoundOps.toReal bHi →
-    LawfulBoundOps.toReal outLo ≤ f x y ∧ f x y ≤ LawfulBoundOps.toReal outHi
-
-/--
-Real-semantic enclosure laws for `NonlinearBoundOps`.
-
-This class is deliberately separate from the executable transfer table. A backend may implement a
-transfer for testing before proving it; sound verification entrypoints can require this class and
-therefore cannot silently promote an unchecked implementation into a theorem.
--/
-class LawfulNonlinearBoundOps (α : Type) [Context α] [BoundOps α] [LawfulBoundOps α]
-    [NonlinearBoundOps α] : Prop where
-  divBounds_enclosure :
-    BinaryEnclosure (α := α) (· / ·) (NonlinearBoundOps.divBounds (α := α))
-  expBounds_enclosure :
-    UnaryEnclosure (α := α) Real.exp (NonlinearBoundOps.expBounds (α := α))
-  logBounds_enclosure :
-    UnaryEnclosure (α := α) Real.log (NonlinearBoundOps.logBounds (α := α))
-  sqrtBounds_enclosure :
-    UnaryEnclosure (α := α) Real.sqrt (NonlinearBoundOps.sqrtBounds (α := α))
-  sigmoidBounds_enclosure :
-    UnaryEnclosure (α := α) (fun x : ℝ => 1 / (1 + Real.exp (-x)))
-      (NonlinearBoundOps.sigmoidBounds (α := α))
-  tanhBounds_enclosure :
-    UnaryEnclosure (α := α) Real.tanh (NonlinearBoundOps.tanhBounds (α := α))
-  sinBounds_enclosure :
-    UnaryEnclosure (α := α) Real.sin (NonlinearBoundOps.sinBounds (α := α))
-  cosBounds_enclosure :
-    UnaryEnclosure (α := α) Real.cos (NonlinearBoundOps.cosBounds (α := α))
-  layerNormAbsBound_sound {n : Nat} {radius : α} :
-    NonlinearBoundOps.layerNormAbsBound (α := α) n = some radius →
-      Real.sqrt n ≤ LawfulBoundOps.toReal radius
-  coupledDerivatives_exact :
-    NonlinearBoundOps.supportsIdealCoupledDerivatives (α := α) →
-      BoundOps.supportsExactAffineReassociation (α := α)
 
 namespace NonlinearBoundOps
 
@@ -212,7 +146,36 @@ def max4 (a b c d : α) : α :=
 
 /-- The denominator interval avoids zero. -/
 def denominatorAvoidsZero (lo hi : α) : Bool :=
-  decide (lo > Numbers.zero) || decide (Numbers.zero > hi)
+  decide (lo > 0) || decide (0 > hi)
+
+/-- A coarse softplus enclosure that stays finite without evaluating an exponential.
+
+For a real input, `max x 0 ≤ softplus x ≤ max x 0 + 1`: after the sign branch, the
+remaining logarithm lies between zero and `log 2 < 1`. Directed addition therefore gives an
+enclosure even when an endpoint is too large for an exponential-based transfer. The graph checker
+can use this range as a constant affine bound on every backend that supplies directed arithmetic. -/
+def softplusBounds [BoundOps α] (lo hi : α) : Option (α × α) :=
+  some (BoundOps.max2 lo 0, BoundOps.addUp (BoundOps.max2 hi 0) 1)
+
+/-- Enclose safeLog using the complete input and epsilon intervals.
+
+The lower endpoint of `softplus(x) + epsilon` must be positive. This checks the supplied epsilon,
+including values smaller than the context default. A backend's logarithm transfer gives the first
+choice of bounds. If it is unavailable, `1 - 1/z ≤ log z ≤ z - 1` supplies a coarser enclosure
+using directed reciprocal and subtraction. Neither route evaluates an unbounded exponential. -/
+def safeLogBounds [BoundOps α] [NonlinearBoundOps α]
+    (lo hi epsilonLo epsilonHi : α) : Option (α × α) := do
+  let (softLo, softHi) ← softplusBounds lo hi
+  let sumLo := BoundOps.addDown softLo epsilonLo
+  let sumHi := BoundOps.addUp softHi epsilonHi
+  if sumLo > 0 then
+    match logBounds sumLo sumHi with
+    | some bounds => pure bounds
+    | none => do
+        let (_, reciprocalHi) ← divBounds 1 1 sumLo sumHi
+        pure (BoundOps.subDown 1 reciprocalHi, BoundOps.subUp sumHi 1)
+  else
+    none
 
 end NonlinearBoundOps
 
@@ -227,59 +190,12 @@ instance (priority := 100) instNonlinearBoundOpsConservative : NonlinearBoundOps
   expBounds := fun _ _ => none
   logBounds := fun _ _ => none
   sqrtBounds := fun _ _ => none
-  sigmoidBounds := fun _ _ => some (Numbers.zero, Numbers.one)
-  tanhBounds := fun _ _ => some (Numbers.negOne, Numbers.one)
-  sinBounds := fun _ _ => some (Numbers.negOne, Numbers.one)
-  cosBounds := fun _ _ => some (Numbers.negOne, Numbers.one)
+  sigmoidBounds := fun _ _ => some (0, 1)
+  tanhBounds := fun _ _ => some ((-1), 1)
+  sinBounds := fun _ _ => some ((-1), 1)
+  cosBounds := fun _ _ => some ((-1), 1)
   layerNormAbsBound := fun _ => none
   supportsIdealCoupledDerivatives := false
-
-/-!
-Exact real arithmetic needs no rounding, so its lower and upper operations coincide.
--/
-noncomputable instance instBoundOpsReal : BoundOps ℝ where
-  addDown := (· + ·)
-  addUp   := (· + ·)
-  subDown := (· - ·)
-  subUp   := (· - ·)
-  mulDown := (· * ·)
-  mulUp   := (· * ·)
-  supportsExactAffineReassociation := true
-
-/-- Exact real endpoint arithmetic satisfies the directed-operation enclosure laws. -/
-noncomputable instance instLawfulBoundOpsReal : LawfulBoundOps ℝ where
-  toReal := id
-  lt_iff _ _ := Iff.rfl
-  addDown_le _ _ := le_rfl
-  le_addUp _ _ := le_rfl
-  subDown_le _ _ := le_rfl
-  le_subUp _ _ := le_rfl
-  mulDown_le _ _ := le_rfl
-  le_mulUp _ _ := le_rfl
-
-/-- Exact nonlinear interval transfers over the real numbers. -/
-noncomputable instance instNonlinearBoundOpsReal : NonlinearBoundOps ℝ where
-  divBounds aLo aHi bLo bHi :=
-    if bLo > 0 || 0 > bHi then
-      let p1 := aLo / bLo
-      let p2 := aLo / bHi
-      let p3 := aHi / bLo
-      let p4 := aHi / bHi
-      some (min (min p1 p2) (min p3 p4), max (max p1 p2) (max p3 p4))
-    else
-      none
-  expBounds lo hi := some (Real.exp lo, Real.exp hi)
-  logBounds lo hi :=
-    if lo > 0 then some (Real.log lo, Real.log hi) else none
-  sqrtBounds lo hi :=
-    if hi < 0 then none else some (Real.sqrt (max lo 0), Real.sqrt hi)
-  sigmoidBounds lo hi :=
-    some ((1 : ℝ) / (1 + Real.exp (-lo)), (1 : ℝ) / (1 + Real.exp (-hi)))
-  tanhBounds lo hi := some (Real.tanh lo, Real.tanh hi)
-  sinBounds := fun _ _ => some (-1, 1)
-  cosBounds := fun _ _ => some (-1, 1)
-  layerNormAbsBound n := some (Real.sqrt n)
-  supportsIdealCoupledDerivatives := true
 
 /-!
 ## Host binary64 endpoints
@@ -287,14 +203,20 @@ noncomputable instance instNonlinearBoundOpsReal : NonlinearBoundOps ℝ where
 Lean's `Float` operations round to nearest on the host binary64 format. For executable checking we
 widen every finite result by one adjacent representable value. This is deliberately an explicit
 instance rather than a generic fallback: its soundness depends on the host IEEE-754 arithmetic
-boundary documented by Lean, whereas `instBoundOpsReal` is exact and the `IEEE32Exec` instance is
+boundary documented by Lean, whereas `instBoundOpsReal` is exact and the `ExecFloat.Binary 8 23`
+instance is
 connected to TorchLean's bit-level binary32 proofs.
 -/
 
 namespace HostFloat
 
+/-- Sign bit of a binary64 word: clearing it gives the magnitude, testing it gives the sign. -/
 def signMask : UInt64 := 0x8000000000000000
+
+/-- Bit pattern of `+∞` in binary64. Stepping up from here has to stay put. -/
 def posInfBits : UInt64 := 0x7ff0000000000000
+
+/-- Bit pattern of `-∞` in binary64. Stepping down from here has to stay put. -/
 def negInfBits : UInt64 := 0xfff0000000000000
 
 /-- Adjacent binary64 value above `x`, with the usual IEEE behavior at infinities and zeros. -/
@@ -327,7 +249,8 @@ end HostFloat
 Outward-widened host binary64 operations.
 
 This instance is suitable for executable certificate replay under the trusted host-Float boundary.
-Use `IEEE32Exec` when the binary32 endpoint calculation itself must be connected to Lean proofs.
+Use `ExecFloat.Binary 8 23` when the binary32 endpoint calculation itself must be connected to Lean
+proofs.
 -/
 instance instBoundOpsFloat : BoundOps Float where
   addDown a b := HostFloat.nextDown (a + b)
@@ -358,16 +281,16 @@ instance instNonlinearBoundOpsFloat : NonlinearBoundOps Float where
   expBounds := fun _ _ => none
   logBounds := fun _ _ => none
   sqrtBounds lo hi :=
-    if hi < Numbers.zero then
+    if hi < 0 then
       none
     else
-      let lo' := if lo > Numbers.zero then lo else Numbers.zero
+      let lo' := if lo > 0 then lo else 0
       some (HostFloat.nextDown (MathFunctions.sqrt lo'),
         HostFloat.nextUp (MathFunctions.sqrt hi))
-  sigmoidBounds := fun _ _ => some (Numbers.zero, Numbers.one)
-  tanhBounds := fun _ _ => some (Numbers.negOne, Numbers.one)
-  sinBounds := fun _ _ => some (Numbers.negOne, Numbers.one)
-  cosBounds := fun _ _ => some (Numbers.negOne, Numbers.one)
+  sigmoidBounds := fun _ _ => some (0, 1)
+  tanhBounds := fun _ _ => some ((-1), 1)
+  sinBounds := fun _ _ => some ((-1), 1)
+  cosBounds := fun _ _ => some ((-1), 1)
   layerNormAbsBound := fun n =>
     some (HostFloat.nextUp (MathFunctions.sqrt (Float.ofNat n)))
   supportsIdealCoupledDerivatives := false
@@ -382,8 +305,13 @@ result into an outward endpoint.
 
 namespace HostFloat32
 
+/-- Sign bit of a binary32 word, the `Float32` counterpart of `HostFloat.signMask`. -/
 def signMask : UInt32 := 0x80000000
+
+/-- Bit pattern of `+∞` in binary32. -/
 def posInfBits : UInt32 := 0x7f800000
+
+/-- Bit pattern of `-∞` in binary32. -/
 def negInfBits : UInt32 := 0xff800000
 
 /-- Adjacent binary32 value above `x`, preserving NaNs and positive infinity. -/

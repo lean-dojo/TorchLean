@@ -14,7 +14,6 @@ public import NN.Runtime.Autograd.Engine.Cuda.Float32Contract
 public import NN.Runtime.Autograd.Engine.Cuda.Fno1dRfftFused
 public import NN.Runtime.Autograd.Engine.Cuda.KernelSpec
 public import NN.Runtime.Autograd.Engine.Cuda.Kernels
-public import NN.Runtime.Autograd.Engine.Cuda.NativeSources
 public import NN.Runtime.Autograd.Engine.Cuda.Ops
 public import NN.Runtime.Autograd.Engine.Cuda.Shape
 public import NN.Runtime.Autograd.Engine.Cuda.Tape
@@ -31,7 +30,8 @@ The modules here are split by trust boundary by trust boundary:
 - `Kernels`, `ConvPool`, and `DGemm` declare native CUDA/CPU-stub kernel entrypoints.
 - `Tape` and `Ops` build the CUDA reverse-mode tape over those buffers.
 - `Float32Contract` and `KernelSpec` state the proof layer reference contracts for native bits.
-- `NativeSources` documents which C/CUDA files implement the external symbols.
+- `Trusted` also carries the map from `csrc/cuda` translation units to the Lean modules that
+  call them.
 
 The compiled CUDA binary is a native trust boundary. Lean proves the pure specs and graph-level
 connections around this boundary, while runtime tests validate the native implementation path.

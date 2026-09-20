@@ -12,10 +12,9 @@ module
 Small vocabulary for backend selection and trust boundaries.
 
 TorchLean owns the spec, graph, and proof-facing contracts. Backends are execution providers for
-parts of that graph: a Lean reference path, the TorchLean runtime, native CUDA kernels, LibTorch,
-ATen, cuBLAS/cuDNN/cuFFT, TPU/XLA, AWS Neuron/Trainium, or future platform-specific providers. This
-file deliberately contains only data. It should stay cheap to import from specs, runtime wrappers,
-docs generators, and tests.
+parts of that graph: a Lean reference path, the TorchLean runtime, native CUDA kernels, or LibTorch.
+This file deliberately contains only data. It should stay cheap to import from specs, runtime
+wrappers, docs generators, and tests.
 -/
 
 @[expose] public section
@@ -69,7 +68,8 @@ def parse (value : String) : Except String Device :=
   match parse? value with
   | some device => pure device
   | none =>
-      throw s!"unknown device {value} (known targets: cpu | cuda | rocm | metal | wasm | tpu | trainium | custom | external)"
+      throw <| s!"unknown device {value} (known targets: cpu | cuda | rocm | metal | wasm | tpu " ++
+        "| trainium | custom | external)"
 
 end Device
 
@@ -147,85 +147,57 @@ inductive BackendOp where
   | scaledDotProductAttention
   deriving DecidableEq, BEq, Repr
 
-/-- Broad semantic category used to summarize a backend-visible operation.
-
-This classification is descriptive metadata. Backend support, numerical policy, trust, and
-executable behavior remain properties of individual kernel capsules.
--/
-inductive OpClass where
-  | source
-  | pointwise
-  | reduction
-  | accumulation
-  | view
-  | selection
-  | composite
-  deriving DecidableEq, Repr
-
-/-- Backend-invariant metadata for one operation. -/
-structure OpSchema where
-  /-- Stable spelling used in reports, capsule names, and CLI diagnostics. -/
-  name : String
-  /-- Broad semantic category of the operation. -/
-  opClass : OpClass
-  /-- Whether differentiating through the operation requires a registered local VJP. -/
-  requiresVJP : Bool
-  deriving DecidableEq, Repr
-
 namespace BackendOp
 
-/-- Canonical backend-invariant metadata for an operation. -/
-def schema : BackendOp → OpSchema
-  | .randUniform => ⟨"rand_uniform", .source, false⟩
-  | .bernoulliMask => ⟨"bernoulli_mask", .source, false⟩
-  | .add => ⟨"add", .pointwise, true⟩
-  | .sub => ⟨"sub", .pointwise, true⟩
-  | .mul => ⟨"mul", .pointwise, true⟩
-  | .scale => ⟨"scale", .pointwise, true⟩
-  | .abs => ⟨"abs", .pointwise, true⟩
-  | .sqrt => ⟨"sqrt", .pointwise, true⟩
-  | .clamp => ⟨"clamp", .pointwise, true⟩
-  | .max => ⟨"max", .pointwise, true⟩
-  | .min => ⟨"min", .pointwise, true⟩
-  | .relu => ⟨"relu", .pointwise, true⟩
-  | .gelu => ⟨"gelu", .pointwise, true⟩
-  | .sigmoid => ⟨"sigmoid", .pointwise, true⟩
-  | .tanh => ⟨"tanh", .pointwise, true⟩
-  | .softplus => ⟨"softplus", .pointwise, true⟩
-  | .exp => ⟨"exp", .pointwise, true⟩
-  | .log => ⟨"log", .pointwise, true⟩
-  | .sin => ⟨"sin", .pointwise, true⟩
-  | .cos => ⟨"cos", .pointwise, true⟩
-  | .inv => ⟨"inv", .pointwise, true⟩
-  | .safeLog => ⟨"safe_log", .pointwise, true⟩
-  | .logSoftmax => ⟨"log_softmax", .accumulation, true⟩
-  | .softmax => ⟨"softmax", .accumulation, true⟩
-  | .hardMaskedSoftmax => ⟨"hard_masked_softmax", .accumulation, true⟩
-  | .reduceSum => ⟨"reduce_sum", .reduction, true⟩
-  | .reduceMean => ⟨"reduce_mean", .reduction, true⟩
-  | .reshape => ⟨"reshape", .view, true⟩
-  | .permute => ⟨"permute", .view, true⟩
-  | .broadcast => ⟨"broadcast", .view, true⟩
-  | .concat => ⟨"concat", .view, true⟩
-  | .slice => ⟨"slice", .selection, true⟩
-  | .gather => ⟨"gather", .selection, true⟩
-  | .scatterAdd => ⟨"scatter_add", .accumulation, true⟩
-  | .matmul => ⟨"matmul", .accumulation, true⟩
-  | .linear => ⟨"linear", .accumulation, true⟩
-  | .mseLoss => ⟨"mse_loss", .reduction, true⟩
-  | .layerNorm => ⟨"layer_norm", .composite, true⟩
-  | .batchNorm => ⟨"batch_norm", .composite, true⟩
-  | .conv => ⟨"conv", .accumulation, true⟩
-  | .convTranspose => ⟨"conv_transpose", .accumulation, true⟩
-  | .maxPool => ⟨"max_pool", .selection, true⟩
-  | .smoothMaxPool => ⟨"smooth_max_pool", .accumulation, true⟩
-  | .avgPool => ⟨"avg_pool", .accumulation, true⟩
-  | .fftFno => ⟨"fft_fno", .composite, true⟩
-  | .selectiveScan => ⟨"selective_scan", .composite, true⟩
-  | .scaledDotProductAttention => ⟨"scaled_dot_product_attention", .composite, true⟩
-
 /-- Stable spelling used in reports, capsule names, and CLI diagnostics. -/
-def name (op : BackendOp) : String := op.schema.name
+def name : BackendOp → String
+  | .randUniform => "rand_uniform"
+  | .bernoulliMask => "bernoulli_mask"
+  | .add => "add"
+  | .sub => "sub"
+  | .mul => "mul"
+  | .scale => "scale"
+  | .abs => "abs"
+  | .sqrt => "sqrt"
+  | .clamp => "clamp"
+  | .max => "max"
+  | .min => "min"
+  | .relu => "relu"
+  | .gelu => "gelu"
+  | .sigmoid => "sigmoid"
+  | .tanh => "tanh"
+  | .softplus => "softplus"
+  | .exp => "exp"
+  | .log => "log"
+  | .sin => "sin"
+  | .cos => "cos"
+  | .inv => "inv"
+  | .safeLog => "safe_log"
+  | .logSoftmax => "log_softmax"
+  | .softmax => "softmax"
+  | .hardMaskedSoftmax => "hard_masked_softmax"
+  | .reduceSum => "reduce_sum"
+  | .reduceMean => "reduce_mean"
+  | .reshape => "reshape"
+  | .permute => "permute"
+  | .broadcast => "broadcast"
+  | .concat => "concat"
+  | .slice => "slice"
+  | .gather => "gather"
+  | .scatterAdd => "scatter_add"
+  | .matmul => "matmul"
+  | .linear => "linear"
+  | .mseLoss => "mse_loss"
+  | .layerNorm => "layer_norm"
+  | .batchNorm => "batch_norm"
+  | .conv => "conv"
+  | .convTranspose => "conv_transpose"
+  | .maxPool => "max_pool"
+  | .smoothMaxPool => "smooth_max_pool"
+  | .avgPool => "avg_pool"
+  | .fftFno => "fft_fno"
+  | .selectiveScan => "selective_scan"
+  | .scaledDotProductAttention => "scaled_dot_product_attention"
 
 instance : ToString BackendOp where
   toString op := op.name
@@ -235,7 +207,9 @@ instance : ToString BackendOp where
 Random sources create values but are not themselves differentiated. Every other backend-visible
 operation must provide a compatible VJP whenever gradient tracking is requested.
 -/
-def requiresVJP (op : BackendOp) : Bool := op.schema.requiresVJP
+def requiresVJP : BackendOp → Bool
+  | .randUniform | .bernoulliMask => false
+  | _ => true
 
 end BackendOp
 
@@ -246,51 +220,31 @@ How much TorchLean knows about an implementation.
 of silently treating an industrial kernel as though Lean had verified its source.
 -/
 inductive TrustLevel where
-  | verified
   | checked
-  | fuzzed
   | trustedExternal
   deriving DecidableEq, Repr
 
 /--
-One policy for the complete assurance boundary of a kernel plan.
+Which trust boundaries a kernel plan may cross.
 
-The first three fields control which implementation trust levels the planner may select. The
-remaining fields control which kinds of evidence may discharge the selected capsule's shape,
-layout, value, and VJP obligations. Keeping these decisions in one record prevents a profile from
-selecting a capsule under one policy and auditing it under a contradictory second policy.
+The same record decides both which capsules the planner may select (by trust level) and which
+contract evidence the selected capsules may rely on (by evidence kind). Keeping the decision in one
+place prevents a profile from selecting a capsule under one policy and checking it under another.
 -/
 structure AssurancePolicy where
-  allowChecked : Bool := false
-  allowFuzzed : Bool := false
+  /-- Whether capsules and evidence that delegate to an external implementation are admitted. -/
   allowTrustedExternal : Bool := false
-  requireEvidence : Bool := true
-  allowRuntimeGuards : Bool := false
-  allowTestEvidence : Bool := false
   deriving DecidableEq, Repr
 
 namespace AssurancePolicy
 
 /--
-Proof-oriented policy reserved for typed, proof-carrying implementations.
-
-No maintained runtime capsule currently satisfies this policy: guards, tests, fuzzing, and trusted
-boundaries are all rejected. A future verified capsule must connect its implementation semantics to
-the operation contract directly instead of attaching an arbitrary proposition as metadata.
--/
-def verified : AssurancePolicy := {}
-
-/--
 Maintained TorchLean runtime policy.
 
-Checked implementations, runtime guards, regression evidence, and fuzz evidence are accepted, but
-trusted external implementations are not.
+Checked implementations backed by runtime guards and regression evidence are accepted; trusted
+external implementations are not.
 -/
-def checked : AssurancePolicy :=
-  { allowChecked := true
-    allowFuzzed := true
-    allowRuntimeGuards := true
-    allowTestEvidence := true }
+def checked : AssurancePolicy := {}
 
 /--
 Explicit external-provider policy.
@@ -299,13 +253,11 @@ This is the policy used when a caller deliberately delegates a numerical kernel 
 another external implementation. The selected boundary remains visible in the execution audit.
 -/
 def external : AssurancePolicy :=
-  { checked with allowTrustedExternal := true }
+  { allowTrustedExternal := true }
 
 /-- Whether the policy admits a capsule with the given implementation trust level. -/
 def acceptsTrust (policy : AssurancePolicy) : TrustLevel → Bool
-  | .verified => true
-  | .checked => policy.allowChecked
-  | .fuzzed => policy.allowFuzzed
+  | .checked => true
   | .trustedExternal => policy.allowTrustedExternal
 
 end AssurancePolicy

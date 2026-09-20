@@ -24,6 +24,7 @@ depending on the full repo-wide registry.
 
 namespace NN.MLTheory.CROWN.Lyapunov.TwoStage.Run
 
+/-- Help text listing the three TwoStage pipeline variants and how to invoke them. -/
 def usage : String :=
   String.intercalate "\n" [
     "Usage:",
@@ -44,7 +45,7 @@ def main (args : List String) : IO Unit := do
     | "--" :: rest => rest
     | _ => args
   match args with
-  | [] =>
+  | .nil =>
       IO.println usage
   | "allinlean" :: rest =>
       NN.MLTheory.CROWN.Lyapunov.TwoStage.PipelineIII.AllInLean.main rest
@@ -65,5 +66,6 @@ Lake executables expect an unqualified `main` at the module root.
 Keep the implementation namespaced and provide a small root-level wrapper for `lean --run`.
 -/
 
+/-- Root-level entry point Lake links against; forwards straight to the namespaced driver. -/
 def main (args : List String) : IO Unit :=
   NN.MLTheory.CROWN.Lyapunov.TwoStage.Run.main args

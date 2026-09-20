@@ -6,11 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public meta import NN.Runtime.Autograd.Engine.Core
+public import NN.Runtime.Autograd.Engine.Core.Base
 public meta import NN.Widgets.Core.Tensor
-public meta import NN.Widgets.Core.UI
-public meta import ProofWidgets.Component.HtmlDisplay
-public meta import ProofWidgets.Demos.Macro
+public meta import NN.Runtime.Autograd.Engine.Core -- shake: keep
+public import NN.Widgets.Core.Tensor
+import ProofWidgets.Component.HtmlDisplay
 
 /-!
 # Autograd
@@ -29,24 +29,6 @@ This module provides infoview panels for TorchLean’s eager-mode autograd tape:
 - `tapeGradsHtml`: run scalar reverse-mode and show gradient coverage/results.
 - `tapeTraceHtml`: step-by-step reverse-pass trace with per-parent VJP contributions.
 - `#tape_view`, `#tape_grads_view`, `#tape_trace_view`: command frontends.
-
-## Implementation notes
-
-- These widgets are intended for debugging and teaching. Proof scripts should cite the underlying
-  tape definitions and theorems directly.
-- DOT output is clipped for large tapes to keep infoview rendering responsive.
-- Reverse traces use `seed = 1` at the output node, matching `loss.backward()` intuition.
-
-## References
-
-- [Backpropagation and reverse-mode AD](https://en.wikipedia.org/wiki/Automatic_differentiation)
-- [GraphViz DOT language](https://graphviz.org/doc/info/lang.html)
-- [ProofWidgets](https://github.com/leanprover-community/ProofWidgets4)
-- [Lean community documentation style](https://leanprover-community.github.io/contribute/doc.html)
-
-## Tags
-
-autograd, reverse-mode, gradients, tape, widgets
 -/
 
 public meta section
@@ -55,23 +37,19 @@ open scoped ProofWidgets.Jsx
 
 namespace NN.Widgets
 
-open _root_.Spec
+open _root_.Spec _root_.TorchLean
 open Runtime
 open Runtime.Autograd
 open UI
 
-/-- Pretty-print a tensor shape for badge/table display. -/
-private def dimsString (s : Shape) : String :=
-  Spec.Shape.pretty s
-
 /-- Build an uncolored DOT view of the tape graph. -/
-private def tapeDot {α : Type} (t : Tape α) : String :=
+private def tapeDot {α : Type} [TorchLean.Storage α] (t : Tape α) : String :=
   let header := "digraph Tape {\n  rankdir=LR;\n  node [shape=box,fontname=\"monospace\"];\n"
   let pairs : List (Nat × Node α) := List.zip (List.range t.nodes.size) t.nodes.toList
   let nodes : List String :=
     pairs.map (fun (i, n) =>
       let name := n.name.getD ""
-      let label := if name = "" then s!"{i}" else s!"{i}: {name}"
+      let label := escapeDotLabel (if name = "" then s!"{i}" else s!"{i}: {name}")
       s!"  n{i} [label=\"{label}\"];")
   let edges : List String :=
     pairs.foldl (fun acc (i, n) =>
@@ -79,7 +57,7 @@ private def tapeDot {α : Type} (t : Tape α) : String :=
   header ++ String.intercalate "\n" (nodes ++ edges) ++ "\n}\n"
 
 /-- Build a colored DOT view where output/gradient coverage is highlighted. -/
-private def tapeDotColored {α : Type} (t : Tape α) (outId : Nat)
+private def tapeDotColored {α : Type} [TorchLean.Storage α] (t : Tape α) (outId : Nat)
     (hasGrad : Nat → Bool) : String :=
   let header :=
     "digraph Tape {\n" ++
@@ -107,12 +85,13 @@ private def tapeDotColored {α : Type} (t : Tape α) (outId : Nat)
   header ++ String.intercalate "\n" (nodes ++ edges) ++ "\n}\n"
 
 /-- Render one tape node with metadata and forward tensor preview. -/
-private def nodeHtml {α : Type} [ToString α] (id : Nat) (n : Node α) : ProofWidgets.Html :=
+private def nodeHtml {α : Type} [TorchLean.Storage α] [ToString α]
+    (id : Nat) (n : Node α) : ProofWidgets.Html :=
   <details style={json% {"margin": "6px 0"}}>
     <summary>
       {monospace (toString id ++ ": " ++ n.name.getD "(unnamed)")} {pill
         s!"requiresGrad={n.requiresGrad}"} {pill s!"parents={n.parents}"}
-      {pill s!"shape={dimsString n.value.shape}"}
+      {pill s!"shape={Spec.Shape.pretty n.value.shape}"}
     </summary>
     <div style={json% {"margin-top": "8px", "padding-left": "10px"}}>
       {packedTensorHtml (α := α) n.value}
@@ -120,7 +99,8 @@ private def nodeHtml {α : Type} [ToString α] (id : Nat) (n : Node α) : ProofW
   </details>
 
 /-- Render a tape as an HTML panel (nodes + DOT). -/
-def tapeHtml {α : Type} [ToString α] (t : Tape α) (maxDotChars : Nat := 6000) : ProofWidgets.Html :=
+def tapeHtml {α : Type} [TorchLean.Storage α] [ToString α]
+    (t : Tape α) (maxDotChars : Nat := 6000) : ProofWidgets.Html :=
   let dot := tapeDot t
   let dotPreview :=
     if dot.length <= maxDotChars then dot
@@ -157,7 +137,7 @@ def tapeHtml {α : Type} [ToString α] (t : Tape α) (maxDotChars : Nat := 6000)
   </div>
 
 /-- Render per-node gradient tensors from a completed backward pass. -/
-private def gradsTableHtml {α : Type} [ToString α] (t : Tape α)
+private def gradsTableHtml {α : Type} [TorchLean.Storage α] [ToString α] (t : Tape α)
     (grads : Std.HashMap Nat (Spec.SomeTensor α)) : ProofWidgets.Html :=
   let entries : Array (Nat × Spec.SomeTensor α) := grads.toArray;
   <div style={json% {"margin-top": "10px"}}>
@@ -169,7 +149,7 @@ private def gradsTableHtml {α : Type} [ToString α] (t : Tape α)
       {... entries.map (fun (id, g) =>
         <details style={json% {"margin": "6px 0"}}>
           <summary>
-            {monospace s!"node {id}"} {pill s!"shape={dimsString g.shape}"}
+            {monospace s!"node {id}"} {pill s!"shape={Spec.Shape.pretty g.shape}"}
             {match t.getNode? id with
               | none => errBadge "missing node"
               | some n => okBadge (n.name.getD "(unnamed)")}
@@ -188,7 +168,7 @@ private def listPreviewNat (maxElems : Nat) (xs : List Nat) : String :=
   "[" ++ String.intercalate ", " (head.map toString) ++ (if clipped then ", ..." else "") ++ "]"
 
 /-- Summarize gradient coverage over nodes that require gradients. -/
-private def gradCoverageHtml {α : Type} (t : Tape α) (outId : Nat)
+private def gradCoverageHtml {α : Type} [TorchLean.Storage α] (t : Tape α) (outId : Nat)
     (grads : Std.HashMap Nat (Spec.SomeTensor α)) : ProofWidgets.Html :=
   let pairs : List (Nat × Node α) := List.zip (List.range t.nodes.size) t.nodes.toList
   let req : List Nat := pairs.filter (fun (_, n) => n.requiresGrad) |>.map (·.1)
@@ -216,7 +196,7 @@ private def gradCoverageHtml {α : Type} (t : Tape α) (outId : Nat)
     </details>
 
 /-- Render gradients from a scalar output id (like `loss.backward()`). -/
-def tapeGradsHtml {α : Type} [ToString α] [Add α] [One α] [DecidableEq Shape]
+def tapeGradsHtml {α : Type} [TorchLean.Storage α] [ToString α] [Add α] [One α]
     (t : Tape α) (outId : Nat) : ProofWidgets.Html :=
   match Tape.backwardScalar (α := α) (t := t) outId with
   | .ok grads =>
@@ -270,7 +250,7 @@ This viewer runs reverse-mode and renders a step-by-step trace in reverse id ord
 -/
 
 /-- Render a reverse-pass trace for a tape, starting from a scalar output node `outId`. -/
-def tapeTraceHtml {α : Type} [ToString α] [Add α] [One α] [DecidableEq Shape]
+def tapeTraceHtml {α : Type} [TorchLean.Storage α] [ToString α] [Add α] [One α]
     (t : Tape α) (outId : Nat) : ProofWidgets.Html :=
   let seed : Spec.SomeTensor α := Spec.SomeTensor.ofTensor (Tensor.scalar (1 : α))
   match Tape.backwardDense (α := α) (t := t) outId seed with
@@ -304,13 +284,15 @@ def tapeTraceHtml {α : Type} [ToString α] [Add α] [One α] [DecidableEq Shape
             <details style={json% {"margin": "6px 0"}}>
               <summary>
                 {monospace s!"{id}: {node.name.getD "(unnamed)"}"} {pill s!"parents={node.parents}"}
-                  {pill s!"shape={dimsString node.value.shape}"} {status}
+                  {pill s!"shape={Spec.Shape.pretty node.value.shape}"} {status}
               </summary>
               <div style={json% {"margin-top": "8px", "padding-left": "10px", "display": "grid",
                 "grid-template-columns": "1fr", "gap": "10px"}}>
                 <div>
                   {pill "forward value"}
-                  <div style={json% {"margin-top": "6px"}}>{packedTensorHtml (α := α) node.value}</div>
+                  <div style={json% {"margin-top": "6px"}}>
+                    {packedTensorHtml (α := α) node.value}
+                  </div>
                 </div>
                 {match g? with
                   | none => ProofWidgets.Html.text ""
@@ -331,7 +313,7 @@ def tapeTraceHtml {α : Type} [ToString α] [Add α] [One α] [DecidableEq Shape
                             contribs.map (fun (pid, pg) =>
                               <details style={json% {"margin": "6px 0"}}>
                                 <summary>{monospace s!"parent {pid}"} {pill
-                                  s!"shape={dimsString pg.shape}"}</summary>
+                                  s!"shape={Spec.Shape.pretty pg.shape}"}</summary>
                                 <div style={json% {"margin-top": "6px", "padding-left": "10px"}}>
                                   {packedTensorHtml (α := α) pg}
                                 </div>
@@ -388,12 +370,12 @@ syntax (name := tapeGradsViewCmd) "#tape_grads_view " term ", " term : command
 syntax (name := tapeTraceViewCmd) "#tape_trace_view " term ", " term : command
 
 macro "#tape_view " t:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (tapeHtml $t))
+  UI.canonicalCommand <$> `(#html (tapeHtml $t))
 
 macro "#tape_grads_view " t:term ", " outId:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (tapeGradsHtml $t $outId))
+  UI.canonicalCommand <$> `(#html (tapeGradsHtml $t $outId))
 
 macro "#tape_trace_view " t:term ", " outId:term : command =>
-  Lean.TSyntax.mkInfoCanonical <$> `(#html (tapeTraceHtml $t $outId))
+  UI.canonicalCommand <$> `(#html (tapeTraceHtml $t $outId))
 
 end NN.Widgets

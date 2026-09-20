@@ -30,8 +30,8 @@ open Internal
 /--
 Options for the CSV parser in this module.
 
-Limitations (by design): no quoted fields, no escaped delimiters, and no locale-aware number
-parsing.
+The parser accepts unquoted numeric fields with literal delimiters and locale-independent
+number syntax.
 -/
 structure CsvOptions where
   /-- Delimiter character (default: `,`). -/
@@ -105,7 +105,10 @@ def parseFloatString (tag : String) (s : String) : Except String Float := do
           | Int.ofNat n => (false, n)
           | Int.negSucc n => (true, n.succ)
         let val := Float.ofScientific mantissa expSign expNat
-        .ok (if neg then -val else val)
+        if val.isFinite then
+          .ok (if neg then -val else val)
+        else
+          .error (formatError tag "numeric value is outside the finite Float range")
 
 end Internal
 
@@ -116,18 +119,18 @@ Parse one CSV line into an array of floats.
 
 Returns `none` for empty lines when `allowEmptyLines = true`.
 -/
-def parseCsvLine (tag : String) (opts : CsvOptions) (rowIdx : Nat) (line : String) :
+def parseCsvLine (tag : String) (options : CsvOptions) (rowIdx : Nat) (line : String) :
   Except String (Option (Array Float)) := do
-  let line := if opts.trimCells then (line.trimAscii).toString else line
+  let line := if options.trimCells then (line.trimAscii).toString else line
   if line.isEmpty then
-    if opts.allowEmptyLines then
+    if options.allowEmptyLines then
       pure none
     else
       .error (formatError tag s!"row {rowIdx}: empty line")
   else
-    let delim := String.singleton opts.delimiter
+    let delim := String.singleton options.delimiter
     let cells := line.splitOn delim
-    let cells := if opts.trimCells then cells.map (fun c => (c.trimAscii).toString) else cells
+    let cells := if options.trimCells then cells.map (fun c => (c.trimAscii).toString) else cells
     let floats <- (cells.zipIdx).mapM (fun pair => do
       let cell := pair.fst
       let colIdx := pair.snd + 1
@@ -143,16 +146,16 @@ Read a CSV file into an array of float rows.
 This helper is intended for compact example datasets and runtime checks, not a full CSV
 implementation.
 -/
-def readCsvFloatRows (path : System.FilePath) (opts : CsvOptions := {}) :
+def readCsvFloatRows (path : System.FilePath) (options : CsvOptions := {}) :
   IO (Except String (Array (Array Float))) := do
   let content <- IO.FS.readFile path
   let lines := content.splitOn "\n"
-  let lines := if opts.skipHeader then lines.drop 1 else lines
+  let lines := if options.skipHeader then lines.drop 1 else lines
   let res : Except String (Nat × Array (Array Float)) :=
     lines.foldlM (init := (0, #[])) (fun acc line => do
       let (i, rows) := acc
       let rowIdx := i + 1
-      match parseCsvLine (tag := "csv") opts rowIdx line with
+      match parseCsvLine (tag := "csv") options rowIdx line with
       | .error e => .error e
       | .ok none => .ok (rowIdx, rows)
       | .ok (some row) => .ok (rowIdx, rows.push row))

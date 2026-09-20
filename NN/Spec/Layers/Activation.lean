@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.TensorReductionShape
+public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
 
 /-!
 # Activation Specifications
@@ -31,8 +31,8 @@ The formulas and conventions follow these references:
 @[expose] public section
 
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Activation
 
@@ -42,16 +42,25 @@ This type is shared by model specifications and public model builders. Keeping t
 specification layer prevents configuration strings from silently selecting the wrong semantics.
 -/
 inductive Kind where
+  /-- Rectified linear unit, `max(0, x)`. -/
   | relu
+  /-- GELU in its tanh approximation (`Math.geluSpec`). This is PyTorch's
+  `nn.GELU(approximate='tanh')`, not the default erf-based `nn.GELU()`. -/
   | gelu
+  /-- SiLU/Swish, `x * sigmoid(x)`. -/
   | silu
+  /-- Hyperbolic tangent. -/
   | tanh
+  /-- Logistic sigmoid. -/
   | sigmoid
 deriving Repr, DecidableEq
 
+/-- Explicit spelling of the existing tanh GELU activation; `.gelu` remains compatible. -/
+abbrev Kind.geluTanh : Kind := .gelu
+
 namespace Math
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-! ## Scalar activations -/
 
@@ -61,9 +70,24 @@ PyTorch analogy: `torch.nn.functional.relu`.
 
 This is the simplest nonlinearity we use throughout TorchLean because it stays meaningful across
 many scalar backends (including ones that do not support `exp/log`).
+
+At zero we return the scalar zero directly. This matters for dual numbers: their equality compares
+primals, so this branch clears every tangent at the kink, matching `reluDerivSpec`. Elementwise
+maximum has a different convention and splits a tie equally. Every other input retains the
+backend's `max` result, including a floating-point NaN, which does not compare equal to zero.
 -/
-def reluSpec {α : Type} [Zero α] [Max α] (x : α) : α :=
-  Max.max x 0
+def reluSpec {α : Type} [Zero α] [Max α] [BEq α] (x : α) : α :=
+  if x == 0 then 0 else Max.max x 0
+
+/-- The explicit zero test preserves maximum on ordered scalars with ordinary equality. -/
+@[simp] theorem relu_zero_branch_eq_max {α : Type} [LinearOrder α] [Zero α] (x : α) :
+    (if x == 0 then (0 : α) else max x 0) = max x 0 := by
+  by_cases hx : x = 0 <;> simp [hx]
+
+/-- On an ordered scalar with ordinary equality, ReLU is the usual maximum with zero. -/
+@[simp] theorem reluSpec_eq_max {α : Type} [LinearOrder α] [Zero α] (x : α) :
+    reluSpec x = max x 0 :=
+  relu_zero_branch_eq_max x
 
 /-- A standard subgradient choice for ReLU:
 
@@ -78,21 +102,33 @@ def reluDerivSpec {α : Type} [Zero α] [One α] [LT α] [DecidableRel ((· > ·
   α) : α :=
   if x > 0 then 1 else 0
 
-/-- Logistic sigmoid:
+/-- Logistic sigmoid, evaluated with a nonpositive exponential argument:
 
 $\operatorname{sigmoid}(x)=1/(1+\exp(-x))$.
+
+For positive inputs we use this expression directly. For zero and negative inputs we use the
+equivalent ratio $\exp(x)/(1+\exp(x))$. Both denominators lie between `1` and `2` over the reals.
+In floating-point arithmetic this avoids forming `exp(-x)` when `x` is a large negative number.
+The same branch also matters for dual numbers: differentiating a quotient with an infinite
+denominator can produce `NaN`, even when the sigmoid value has rounded to zero.
 
 PyTorch analogy: `torch.nn.functional.sigmoid` (or `torch.sigmoid`).
 -/
 def sigmoidSpec (x : α) : α :=
-  1 / (1 + MathFunctions.exp (-x))
+  if x > 0 then
+    1 / (1 + MathFunctions.exp (-x))
+  else
+    let z := MathFunctions.exp x
+    z / (1 + z)
 
 /-- Derivative of sigmoid:
 
 $\operatorname{sigmoid}'(x)=\sigma(x)(1-\sigma(x))$.
 
-We write it this way (in terms of $\sigma(x)$) because that is the form used in most AD systems and it
-avoids re-expanding the exponential expression.
+The sigmoid value uses the stable branch above, so negative tails retain their small positive
+derivatives until the exponential itself underflows. On the positive side, the derivative becomes
+zero once the sigmoid value rounds to one; this is the output-based derivative used by the graph
+VJP as well.
 -/
 def sigmoidDerivSpec (x : α) : α :=
   let s := sigmoidSpec x
@@ -177,31 +213,33 @@ def eluDerivSpec {α : Type} [Zero α] [One α] [LT α] [DecidableRel ((· > ·)
   if x > 0 then 1 else alpha * MathFunctions.exp x
 
 /-- The rational coefficient `44715 / 1000000` in the standard tanh approximation to GELU. -/
-def geluTanhCoeff {α : Type} [Context α] : α :=
+def geluTanhCoeff {α : Type} [TorchLean.Storage α] [Context α] : α :=
   ((44715 : Nat) : α) / ((1000000 : Nat) : α)
 
 /-- GELU (approximate): the common tanh-based approximation used in many Transformer codebases.
 
-PyTorch analogy: `torch.nn.functional.gelu(x, approximate="tanh")`.
+PyTorch analogy: `torch.nn.functional.gelu(x, approximate="tanh")`. This is not PyTorch's default
+`nn.GELU()`, which uses the exact erf form; TorchLean has no erf primitive, so only the tanh
+approximation is specified.
 -/
-def geluSpec {α : Type} [Context α] (x : α) : α :=
+def geluSpec {α : Type} [TorchLean.Storage α] [Context α] (x : α) : α :=
   let two : α := (1 : α) + (1 : α)
   let pi : α := MathFunctions.pi
-  let sqrt_two_over_pi := MathFunctions.sqrt (two / pi)
+  let sqrtTwoOverPi := MathFunctions.sqrt (two / pi)
   let coeff : α := geluTanhCoeff
-  x * ((1 : α) + MathFunctions.tanh (sqrt_two_over_pi * (x + coeff * x * x * x))) / two
+  x * ((1 : α) + MathFunctions.tanh (sqrtTwoOverPi * (x + coeff * x * x * x))) / two
 
 /-- GELU derivative for the tanh-based approximation. -/
-def geluDerivSpec {α : Type} [Context α] (x : α) : α :=
+def geluDerivSpec {α : Type} [TorchLean.Storage α] [Context α] (x : α) : α :=
   let two : α := (1 : α) + (1 : α)
   let three : α := (1 : α) + (1 : α) + (1 : α)
   let pi : α := MathFunctions.pi
-  let sqrt_two_over_pi := MathFunctions.sqrt (two / pi)
+  let sqrtTwoOverPi := MathFunctions.sqrt (two / pi)
   let coeff : α := geluTanhCoeff
-  let tanh_term := MathFunctions.tanh (sqrt_two_over_pi * (x + coeff * x * x * x))
-  let sech_term := (1 : α) - tanh_term * tanh_term
-  let inner_deriv := sqrt_two_over_pi * ((1 : α) + three * coeff * x * x)
-  ((1 : α) + tanh_term + x * sech_term * inner_deriv) / two
+  let tanhTerm := MathFunctions.tanh (sqrtTwoOverPi * (x + coeff * x * x * x))
+  let sechTerm := (1 : α) - tanhTerm * tanhTerm
+  let innerDeriv := sqrtTwoOverPi * ((1 : α) + three * coeff * x * x)
+  ((1 : α) + tanhTerm + x * sechTerm * innerDeriv) / two
 
 /-- Swish / SiLU:
 
@@ -240,6 +278,9 @@ def softplusSpec (x : α) : α :=
 /-- Derivative of softplus:
 
 $\operatorname{softplus}'(x)=\operatorname{sigmoid}(x)$.
+
+Using the same stable sigmoid keeps the derivative finite in both tails. Evaluating this formula
+over dual scalars also propagates the softplus second derivative without a large exponential.
 -/
 def softplusDerivSpec (x : α) : α :=
   sigmoidSpec x
@@ -252,11 +293,11 @@ $\operatorname{safe\_log}(x;\varepsilon)
 We use this when we want something "log-like" without having to carry side conditions about the
 input being strictly positive.
 -/
-def safeLogSpec (x : α) (ε : α := Numbers.epsilon) : α :=
+def safeLogSpec (x : α) (ε : α := Context.defaultEpsilon) : α :=
   MathFunctions.log (softplusSpec x + ε)
 
 /-- Derivative of `safeLogSpec`. -/
-def safeLogDerivSpec (x : α) (ε : α := Numbers.epsilon) : α :=
+def safeLogDerivSpec (x : α) (ε : α := Context.defaultEpsilon) : α :=
   softplusDerivSpec x / (softplusSpec x + ε)
 
 /-- A smooth absolute value surrogate:
@@ -265,16 +306,16 @@ $\operatorname{smooth\_abs}(x;\varepsilon)=\sqrt{x^2+\varepsilon}$.
 
 Useful when you want an `abs`-like shape but keep differentiability at `0`.
 -/
-def smoothAbsSpec (x : α) (ε : α := Numbers.epsilon) : α :=
+def smoothAbsSpec (x : α) (ε : α := Context.defaultEpsilon) : α :=
   MathFunctions.sqrt (x * x + ε)
 
 /-- Derivative of `smoothAbsSpec`. -/
-def smoothAbsDerivSpec (x : α) (ε : α := Numbers.epsilon) : α :=
+def smoothAbsDerivSpec (x : α) (ε : α := Context.defaultEpsilon) : α :=
   x / smoothAbsSpec x ε
 
 end Math
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Tensor-level tanh (pointwise).
 
@@ -284,7 +325,8 @@ def tanhSpec {s : Shape} : Tensor α s → Tensor α s :=
   mapSpec Activation.Math.tanhSpec
 
 /-- Tensor-level ReLU (pointwise). -/
-def reluSpec {α : Type} [Zero α] [Max α] {s : Shape} (t : Tensor α s) : Tensor α s :=
+def reluSpec {α : Type} [TorchLean.Storage α] [Zero α] [Max α] [BEq α]
+    {s : Shape} (t : Tensor α s) : Tensor α s :=
   mapSpec Activation.Math.reluSpec t
 
 /-- Tensor-level sigmoid (pointwise). -/
@@ -293,8 +335,9 @@ def sigmoidSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
 
 /-- Tensor-level ReLU derivative (pointwise), using the scalar subgradient choice in
 `Activation.Math.reluDerivSpec`. -/
-def reluDerivSpec {α : Type} [Zero α] [One α] [LT α] [DecidableRel ((· > ·) : α → α → Prop)] {s :
-  Shape} (t : Tensor α s) : Tensor α s :=
+def reluDerivSpec {α : Type} [TorchLean.Storage α] [Zero α] [One α] [LT α]
+    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+    (t : Tensor α s) : Tensor α s :=
   mapSpec Activation.Math.reluDerivSpec t
 
 /-- Tensor-level sigmoid derivative (pointwise). -/
@@ -308,7 +351,7 @@ Recurrent layers save gate activations during the forward pass, so their backwar
 this shared helper instead of re-defining `s * (1 - s)` locally.
 -/
 def sigmoidOutputDerivSpec {s : Shape} (sigmoidOutput : Tensor α s) : Tensor α s :=
-  mulSpec sigmoidOutput (subSpec (fill 1 s) sigmoidOutput)
+  mulSpec sigmoidOutput (subSpec (Tensor.full s 1) sigmoidOutput)
 
 /-- Tensor-level tanh derivative (pointwise). -/
 def tanhDerivSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
@@ -344,14 +387,12 @@ result is one of the input coordinates for every linearly ordered scalar type. S
 log-softmax share this definition so their range-reduction convention cannot drift apart.
 -/
 def maxVecSpec {n : Nat} (t : Tensor α [Nat.succ n]) : Tensor α .scalar :=
-  match t with
-  | Tensor.dim values =>
-      let first : α := Tensor.item (values ⟨0, Nat.succ_pos n⟩)
-      let maximum : α :=
-        (List.finRange (Nat.succ n)).foldl
-          (fun acc i => max acc (Tensor.item (values i)))
-          first
-      Tensor.scalar maximum
+  let first : α := t.getScalar ⟨0, Nat.succ_pos n⟩
+  let maximum : α :=
+    (List.finRange (Nat.succ n)).foldl
+      (fun acc i => max acc (t.getScalar i))
+      first
+  Tensor.scalar maximum
 
 /-- Max-shifted exponentials shared by stable softmax and log-softmax. -/
 def maxShiftedExpVecSpec {n : Nat}
@@ -387,8 +428,18 @@ the outer structure and apply `softmaxVecSpec` at the last axis.
 def Internal.softmaxInnermostSpec : {s : Shape} → Tensor α s → Tensor α s
   | .scalar, _ => Tensor.scalar 1
   | .dim n .scalar, t => softmaxVecSpec (α := α) (n := n) t
-  | .dim n inner, Tensor.dim f =>
-      Tensor.dim (fun i : Fin n => Internal.softmaxInnermostSpec (s := inner) (f i))
+  | .dim n inner, tensor =>
+      Tensor.dim fun i : Fin n =>
+        Internal.softmaxInnermostSpec (s := inner) (Tensor.unstack tensor i)
+
+/-- Last-axis softmax on a matrix acts independently on each row. -/
+@[simp] theorem unstack_softmaxInnermostSpec_matrix {rows columns : Nat}
+    (tensor : Tensor α [rows, columns]) (row : Fin rows) :
+    Tensor.unstack (Internal.softmaxInnermostSpec tensor) row =
+      softmaxVecSpec (Tensor.unstack tensor row) := by
+  rw [show Internal.softmaxInnermostSpec tensor =
+    Tensor.dim (fun i => softmaxVecSpec (Tensor.unstack tensor i)) by rfl]
+  simp
 
 /-- Backward/VJP for last-axis softmax.
 
@@ -412,9 +463,10 @@ def Internal.softmaxInnermostBackwardSpec : {s : Shape} → Tensor α s → Tens
       let y := softmaxVecSpec (α := α) (n := n) x
       let s : α := sumSpec (mulSpec dY y)
       mulSpec y (subSpec dY (replicate (Tensor.scalar s)))
-  | .dim n inner, Tensor.dim xF, Tensor.dim dF =>
-      Tensor.dim (fun i : Fin n =>
-        Internal.softmaxInnermostBackwardSpec (s := inner) (xF i) (dF i))
+  | .dim n inner, x, dY =>
+      Tensor.dim fun i : Fin n =>
+        Internal.softmaxInnermostBackwardSpec (s := inner)
+          (Tensor.unstack x i) (Tensor.unstack dY i)
 
 /-- Numerically stable softmax along any tensor dimension.
 
@@ -443,7 +495,7 @@ def softmaxBackwardSpec {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
 /-
 ## Log-softmax (stable)
 
-`log_softmax` is often the numerically-preferred form for cross-entropy on logits:
+`logSoftmax` is often the numerically-preferred form for cross-entropy on logits:
 
 `CE(p, logits) = -mean_i p_i * log_softmax(logits)_i`.
 
@@ -467,8 +519,9 @@ def logSoftmaxVecSpec {n : Nat} (t : Tensor α [n]) : Tensor α [n] :=
 def Internal.logSoftmaxInnermostSpec : {s : Shape} → Tensor α s → Tensor α s
   | .scalar, _ => Tensor.scalar 0
   | .dim n .scalar, t => logSoftmaxVecSpec (α := α) (n := n) t
-  | .dim n inner, Tensor.dim f =>
-      Tensor.dim (fun i : Fin n => Internal.logSoftmaxInnermostSpec (s := inner) (f i))
+  | .dim n inner, tensor =>
+      Tensor.dim fun i : Fin n =>
+        Internal.logSoftmaxInnermostSpec (s := inner) (Tensor.unstack tensor i)
 
 /-- Forward-mode JVP for last-axis log-softmax.
 
@@ -486,9 +539,10 @@ def Internal.logSoftmaxInnermostJvpSpec : {s : Shape} → Tensor α s → Tensor
       let probs := expSpec y
       let directionalMean : α := dotSpec probs dx
       subSpec dx (replicate (Tensor.scalar directionalMean))
-  | .dim n inner, Tensor.dim yF, Tensor.dim dF =>
-      Tensor.dim (fun i : Fin n =>
-        Internal.logSoftmaxInnermostJvpSpec (s := inner) (yF i) (dF i))
+  | .dim n inner, y, dx =>
+      Tensor.dim fun i : Fin n =>
+        Internal.logSoftmaxInnermostJvpSpec (s := inner)
+          (Tensor.unstack y i) (Tensor.unstack dx i)
 
 /-- Backward/VJP for last-axis log-softmax.
 
@@ -512,9 +566,10 @@ def Internal.logSoftmaxInnermostBackwardSpec :
       let probs := expSpec y
       let rowSum : α := sumSpec dY
       subSpec dY (mulSpec probs (replicate (Tensor.scalar rowSum)))
-  | .dim n inner, Tensor.dim yF, Tensor.dim dF =>
-      Tensor.dim (fun i : Fin n =>
-        Internal.logSoftmaxInnermostBackwardSpec (s := inner) (yF i) (dF i))
+  | .dim n inner, y, dY =>
+      Tensor.dim fun i : Fin n =>
+        Internal.logSoftmaxInnermostBackwardSpec (s := inner)
+          (Tensor.unstack y i) (Tensor.unstack dY i)
 
 /-- Numerically stable log-softmax along any tensor dimension. -/
 def logSoftmaxSpec {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
@@ -546,32 +601,37 @@ def logSoftmaxBackwardSpec {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
   Shape.applyAdjacentSwaps_reverse s swaps ▸ restored
 
 /-- Tensor-level leaky ReLU (pointwise).  PyTorch analogy: `torch.nn.functional.leaky_relu`. -/
-def leakyReluSpec {α : Type} [Zero α] [Mul α] [LT α] [DecidableRel ((· > ·) : α → α → Prop)] {s :
-  Shape} (t : Tensor α s) (αₗ : α) : Tensor α s :=
+def leakyReluSpec {α : Type} [TorchLean.Storage α] [Zero α] [Mul α] [LT α]
+    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+    (t : Tensor α s) (αₗ : α) : Tensor α s :=
   mapSpec (Activation.Math.leakyReluSpec αₗ) t
 
 /-- Tensor-level derivative of leaky ReLU (pointwise). -/
-def leakyReluDerivSpec {α : Type} [Zero α] [One α] [LT α] [DecidableRel ((· > ·) : α → α → Prop)]
-  {s : Shape} (t : Tensor α s) (αₗ : α) : Tensor α s :=
+def leakyReluDerivSpec {α : Type} [TorchLean.Storage α] [Zero α] [One α] [LT α]
+    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+    (t : Tensor α s) (αₗ : α) : Tensor α s :=
   mapSpec (Activation.Math.leakyReluDerivSpec αₗ) t
 
 /-- Tensor-level ELU (pointwise).  PyTorch analogy: `torch.nn.functional.elu`. -/
-def eluSpec {α : Type} [Zero α] [One α] [LT α] [DecidableRel ((· > ·) : α → α → Prop)]
-  [MathFunctions α] [Sub α] [Mul α] {s : Shape} (t : Tensor α s) (alpha : α) : Tensor α s :=
+def eluSpec {α : Type} [TorchLean.Storage α] [Zero α] [One α] [LT α]
+    [DecidableRel ((· > ·) : α → α → Prop)] [MathFunctions α] [Sub α] [Mul α]
+    {s : Shape} (t : Tensor α s) (alpha : α) : Tensor α s :=
   mapSpec (Activation.Math.eluSpec alpha) t
 
 /-- Tensor-level derivative of ELU (pointwise). -/
-def eluDerivSpec {α : Type} [Zero α] [One α] [LT α] [DecidableRel ((· > ·) : α → α → Prop)]
-  [MathFunctions α] [Mul α] {s : Shape} (t : Tensor α s) (alpha : α) : Tensor α s :=
+def eluDerivSpec {α : Type} [TorchLean.Storage α] [Zero α] [One α] [LT α]
+    [DecidableRel ((· > ·) : α → α → Prop)] [MathFunctions α] [Mul α]
+    {s : Shape} (t : Tensor α s) (alpha : α) : Tensor α s :=
   mapSpec (Activation.Math.eluDerivSpec alpha) t
 
-/-- Tensor-level GELU (approximate, pointwise).  PyTorch analogy: `gelu(..., approximate="tanh")`.
-  -/
-def geluSpec {α : Type} [Context α] {s : Shape} (t : Tensor α s) : Tensor α s :=
+/-- Tensor-level GELU (approximate, pointwise). PyTorch analogy: `gelu(..., approximate="tanh")`. -/
+def geluSpec {α : Type} [TorchLean.Storage α] [Context α] {s : Shape} (t : Tensor α s) :
+    Tensor α s :=
   mapSpec Activation.Math.geluSpec t
 
 /-- Tensor-level derivative of tanh-approx GELU (pointwise). -/
-def geluDerivSpec {α : Type} [Context α] {s : Shape} (t : Tensor α s) : Tensor α s :=
+def geluDerivSpec {α : Type} [TorchLean.Storage α] [Context α] {s : Shape} (t : Tensor α s) :
+    Tensor α s :=
   mapSpec Activation.Math.geluDerivSpec t
 
 /-- Tensor-level Swish / SiLU (pointwise). -/
@@ -591,23 +651,22 @@ def softplusDerivSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
   mapSpec Activation.Math.softplusDerivSpec t
 
 /-- Tensor-level `safeLogSpec` (pointwise). -/
-def safeLogSpec {s : Shape} (t : Tensor α s) (ε : α := Numbers.epsilon) : Tensor α s :=
+def safeLogSpec {s : Shape} (t : Tensor α s) (ε : α := Context.defaultEpsilon) : Tensor α s :=
   mapSpec (fun x => Activation.Math.safeLogSpec (α := α) x ε) t
 
 /-- Tensor-level derivative of `safeLogSpec` (pointwise). -/
-def safeLogDerivSpec {s : Shape} (t : Tensor α s) (ε : α := Numbers.epsilon) : Tensor α s :=
+def safeLogDerivSpec {s : Shape} (t : Tensor α s) (ε : α := Context.defaultEpsilon) : Tensor α s :=
   mapSpec (fun x => Activation.Math.safeLogDerivSpec (α := α) x ε) t
 
 /-- Tensor-level `smoothAbsSpec` (pointwise). -/
-def smoothAbsSpec {s : Shape} (t : Tensor α s) (ε : α := Numbers.epsilon) : Tensor α s :=
+def smoothAbsSpec {s : Shape} (t : Tensor α s) (ε : α := Context.defaultEpsilon) : Tensor α s :=
   mapSpec (fun x => Activation.Math.smoothAbsSpec (α := α) x ε) t
 
 /-- Tensor-level derivative of `smoothAbsSpec` (pointwise). -/
-def smoothAbsDerivSpec {s : Shape} (t : Tensor α s) (ε : α := Numbers.epsilon) : Tensor α s :=
+def smoothAbsDerivSpec {s : Shape} (t : Tensor α s) (ε : α := Context.defaultEpsilon) :
+    Tensor α s :=
   mapSpec (fun x => Activation.Math.smoothAbsDerivSpec (α := α) x ε) t
 
--- Generic activation gradient computation
--- Applies the chain rule: ∂L/∂x = ∂L/∂f(x) * f'(x)
 /-- A generic pointwise activation VJP helper.
 
 Given:
@@ -624,11 +683,11 @@ $\frac{\partial L}{\partial x}
 This matches how most PyTorch elementwise ops behave in backward: multiply upstream gradients by
 the pointwise derivative mask/value.
 -/
-def activationGradientSpec {s : Shape}
-  (activation_deriv : Tensor α s → Tensor α s)
+def vjpSpec {s : Shape}
+  (activationDeriv : Tensor α s → Tensor α s)
   (input : Tensor α s)
-  (grad_output : Tensor α s) :
+  (gradOutput : Tensor α s) :
   Tensor α s :=
-  mulSpec grad_output (activation_deriv input)
+  mulSpec gradOutput (activationDeriv input)
 
 end Activation

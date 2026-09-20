@@ -23,4 +23,17 @@ TORCHLEAN_CUDA_RNG_INLINE uint64_t torchlean_splitmix64(uint64_t x) {
   return z3 ^ (z3 >> 31);
 }
 
+// Match Spec.Random.keepBit, including exact probability endpoints. A 32-bit draw divided by
+// 2^32 can round to 1.0f, so compare endpoints before converting the draw.
+TORCHLEAN_CUDA_RNG_INLINE float torchlean_bernoulli_keep_f32(float keep_prob, uint32_t draw) {
+  if (!(keep_prob > 0.0f)) {
+    return 0.0f;
+  }
+  if (!(1.0f > keep_prob)) {
+    return 1.0f;
+  }
+  const float unit_draw = (float)(((double)draw) / 4294967296.0);
+  return keep_prob > unit_draw ? 1.0f : 0.0f;
+}
+
 #undef TORCHLEAN_CUDA_RNG_INLINE

@@ -9,12 +9,12 @@ module
 public import NN.Examples.Factorization.Common
 public import NN.Examples.Factorization.Cholesky
 public import NN.Examples.Factorization.QR
+public import NN.Examples.Factorization.Check
 
 /-!
-# Matrix-factorization examples (Cholesky and QR)
+# Matrix Factorization Examples
 
-Executable `#eval` witnesses for the exact finite factorizations: Cholesky $A=LL^\mathsf{T}$ and QR
-$A=QR$ (with $Q^\mathsf{T}Q=I$). Each pairs a positive reconstruction/orthonormality check with a
-negative control,
-over `Float`, sorry/admit-free.
+Public `Tensor.cholesky` and `Tensor.qr` examples over `Float`. They check Cholesky reconstruction,
+square and wide reduced QR, full-rank orthonormality, and explicit negative controls. Run all checks
+with `lake exe torchlean factorizations`.
 -/

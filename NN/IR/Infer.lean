@@ -8,7 +8,7 @@ module
 
 public import NN.IR.HardMask
 public import NN.IR.OpContracts
-public import NN.Spec.Core.TensorReductionShape
+public import NN.Spec.Core.TensorReductionShape.Reductions
 
 /-!
 # Shape Inference
@@ -25,13 +25,15 @@ output shape of each node from:
 
 For parameterized ops whose output shape depends on external parameters (notably `OpKind.linear`),
 we treat the node's declared `outShape` as an input to the checker and validate the local contracts
-we can check (e.g. input/output are vectors).
+we can check (e.g. a linear layer preserves all leading input dimensions).
 
 `Graph.checkShapes` uses these rules directly. Adding a new `OpKind` should extend this match before
-the semantics, export, and verification passes rely on its shape contract.
+the semantics, export, and verification passes rely on its shape contract, and should route any
+nontrivial shape arithmetic through `NN.IR.OpContracts` so that `NN.IR.Semantics` computes the
+same shape; `NN.IR.ShapeSoundness` proves that agreement operation by operation.
 
 PyTorch analogy:
-- `inferNodeOutShape` corresponds to shape propagation used when validating an FX graph.
+- `nodeOutShape` corresponds to shape propagation used when validating an FX graph.
 - Where the true output shape depends on parameters, this module performs contract checking rather
   than attempting to read those parameters.
 
@@ -45,8 +47,8 @@ References / related systems:
 
 namespace NN.IR
 
-open _root_.Spec
-open _root_.Spec.Tensor
+open _root_.Spec _root_.TorchLean
+open _root_.TorchLean.Tensor
 
 namespace Infer
 
@@ -60,25 +62,25 @@ Most IR ops are “shape transparent” (elementwise, permute, etc.). A few need
 -/
 
 /-- Read the sole parent shape of a unary operation. -/
-def expectUnaryParent (tag : String) (parents : Array Shape) : Except String Shape := do
-  if parents.size = 1 then
-    pure parents[0]!
+def expectUnaryParent (tag : String) (parents : Array Shape) : Except String Shape :=
+  if h : parents.size = 1 then
+    .ok (parents[0]'(by simp [h]))
   else
-    throw s!"{tag}: expected 1 parent"
+    .error s!"{tag}: expected 1 parent"
 
 /-- Read both parent shapes of a binary operation. -/
-def expectBinaryParents (tag : String) (parents : Array Shape) : Except String (Shape × Shape) := do
-  if parents.size = 2 then
-    pure (parents[0]!, parents[1]!)
+def expectBinaryParents (tag : String) (parents : Array Shape) : Except String (Shape × Shape) :=
+  if h : parents.size = 2 then
+    .ok (parents[0]'(by simp [h]), parents[1]'(by simp [h]))
   else
-    throw s!"{tag}: expected 2 parents"
+    .error s!"{tag}: expected 2 parents"
 
 /--
 Infer the output shape of a node from its kind + parent shapes.
 
 This function is used by `Graph.checkShapes` below.
 -/
-def inferNodeOutShape (n : Node) (parentShapes : Array Shape) : Except String Shape := do
+def nodeOutShape (n : Node) (parentShapes : Array Shape) : Except String Shape := do
   match n.kind with
   | .input =>
       -- Nothing to infer: the input's shape is part of the graph interface.
@@ -101,35 +103,32 @@ def inferNodeOutShape (n : Node) (parentShapes : Array Shape) : Except String Sh
       match ← expectUnaryParent "bernoulli_mask" parentShapes with
       | .scalar => pure n.outShape
       | s => throw s!"bernoulli_mask: expected scalar keepProb parent, got {repr s}"
-  | .add | .sub | .mul_elem =>
+  | .add | .sub | .mulElem | .maxElem | .minElem =>
       let (a, b) ← expectBinaryParents n.kind.tag parentShapes
       if a = b then pure a
       else throw s!"{n.kind.tag}: shape mismatch: {repr a} vs {repr b}"
   | .abs | .sqrt =>
       expectUnaryParent n.kind.tag parentShapes
-  | .maxElem | .minElem =>
-      let (a, b) ← expectBinaryParents n.kind.tag parentShapes
-      if a = b then pure a
-      else throw s!"{n.kind.tag}: shape mismatch: {repr a} vs {repr b}"
   | .maxPool config =>
-      OpContracts.inferPoolOutShape "max_pool" config.kernel config.stride config.padding
+      OpContracts.inferWindowOutShape "max_pool" config
         (← expectUnaryParent "max_pool" parentShapes)
   | .avgPool config =>
-      OpContracts.inferPoolOutShape "avg_pool" config.kernel config.stride config.padding
+      OpContracts.inferWindowOutShape "avg_pool" config
         (← expectUnaryParent "avg_pool" parentShapes)
   | .broadcastTo s₁ s₂ =>
       let s ← expectUnaryParent "broadcastTo" parentShapes
       if s != s₁ then
         throw s!"broadcastTo: parent shape mismatch: expected {repr s₁}, got {repr s}"
-      match OpContracts.mkCanBroadcastTo? s₁ s₂ with
-      | some _ => pure s₂
-      | none => throw s!"broadcastTo: invalid broadcast from {repr s₁} to {repr s₂}"
+      if Spec.Shape.CanBroadcastTo s₁ s₂ then pure s₂
+      else throw s!"broadcastTo: invalid broadcast from {repr s₁} to {repr s₂}"
   | .reduceSum axis =>
       let s ← expectUnaryParent "reduce_sum" parentShapes
-      OpContracts.checkAxisValid axis s *> pure (Tensor.shapeAfterSum s axis)
+      let _ ← OpContracts.checkReductionAxis axis s
+      pure (Tensor.shapeAfterSum s axis)
   | .reduceMean axis =>
       let s ← expectUnaryParent "reduce_mean" parentShapes
-      OpContracts.checkAxisValid axis s *> pure (Tensor.shapeAfterSum s axis)
+      let _ ← OpContracts.checkReductionAxis axis s
+      pure (Tensor.shapeAfterSum s axis)
   | .sum =>
       let _ ← expectUnaryParent "sum" parentShapes
       pure .scalar
@@ -149,8 +148,8 @@ def inferNodeOutShape (n : Node) (parentShapes : Array Shape) : Except String Sh
             pure n.outShape
           else
             throw <|
-              s!"linear: leading dimensions must be preserved: input={repr s}, " ++
-              s!"outShape={repr n.outShape}"
+              s!"linear: leading dimensions must be preserved: input={repr s}, \
+              outShape={repr n.outShape}"
       | _, _ =>
           throw s!"linear: expected rank≥1 input/output, got input={repr s}, out={repr n.outShape}"
   | .conv config =>
@@ -159,11 +158,16 @@ def inferNodeOutShape (n : Node) (parentShapes : Array Shape) : Except String Sh
   | .batchNormEval channelAxis channels =>
       OpContracts.inferBatchNormEvalOutShape channelAxis channels
         (← expectUnaryParent "batch_norm_eval" parentShapes)
-  | .relu | .tanh | .sigmoid | .exp | .log | .inv | .sin | .cos =>
+  | .relu | .tanh | .sigmoid | .softplus | .exp | .log | .inv | .sin | .cos =>
       expectUnaryParent n.kind.tag parentShapes
+  | .safeLog =>
+      let (s, epsilonShape) ← expectBinaryParents "safe_log" parentShapes
+      if epsilonShape = .scalar then pure s
+      else throw s!"safe_log: epsilon must be scalar, got {repr epsilonShape}"
   | .softmax axis =>
       let s ← expectUnaryParent "softmax" parentShapes
-      OpContracts.checkAxisValid axis s *> pure s
+      let _ ← OpContracts.checkAxisValid axis s
+      pure s
   | .hardMaskedSoftmax mask =>
       let s ← expectUnaryParent "hard_masked_softmax" parentShapes
       let _ ← NN.IR.HardMask.validateAs mask s
@@ -196,23 +200,65 @@ end Infer
 namespace Graph
 
 /--
+Look up the already inferred shapes of a node's parents.
+
+Every parent id must index a shape that has already been inferred. On a well-formed graph the
+topological-order check guarantees this, and the lookup reports a readable error instead of
+indexing out of bounds if a caller skips that check.
+-/
+def lookupParentShapes (inferred : Array Shape) : List Nat → Option (List Shape)
+  | [] => some []
+  | pid :: rest => do
+      let shape ← inferred[pid]?
+      let shapes ← lookupParentShapes inferred rest
+      pure (shape :: shapes)
+
+/--
+Infer and check the declared output shapes of nodes `i, i+1, ...`, extending the table `inferred`
+of shapes already inferred for the nodes below `i`.
+
+The recursion is structural on the remaining node count so proofs can follow it in lockstep with
+`Graph.denoteAllFrom`; see `NN.IR.ShapeSoundness`.
+-/
+def inferShapesFrom (g : Graph) (i : Nat) (inferred : Array Shape) :
+    Except String (Array Shape) := do
+  if _h : i < g.nodes.size then
+    let n ← g.getNode i
+    let parentShapes ←
+      match lookupParentShapes inferred n.parents.toList with
+      | some shapes => pure shapes.toArray
+      | none => throw s!"IR graph: node {i}: parent id is not below the node id ({n.summary})"
+    let out ← Infer.nodeOutShape n parentShapes
+    if out = n.outShape then
+      inferShapesFrom g (i + 1) (inferred.push out)
+    else
+      throw <|
+        s!"IR graph: node {i}: outShape mismatch: inferred={repr out}, \
+          declared={repr n.outShape} ({n.summary})"
+  else
+    pure inferred
+termination_by g.nodes.size - i
+decreasing_by
+  exact Nat.sub_succ_lt_self _ _ _h
+
+/--
+Infer every node's output shape (in topo/id order) after checking structural well-formedness, and
+check that each `Node.outShape` matches. Returns the inferred shapes, one per node.
+-/
+def inferShapes (g : Graph) : Except String (Array Shape) := do
+  g.checkWellFormed
+  inferShapesFrom g 0 #[]
+
+/--
 Infer shapes for every node (in topo/id order) and check that `Node.outShape` matches.
 
 This is meant as a lowering/backend consistency check and as a clean IR invariant for the docs:
-well-formed graphs have *self-consistent declared shapes*.
+well-formed graphs have *self-consistent declared shapes*. `NN.IR.ShapeSoundness` proves that on a
+graph accepted here the reference semantics computes exactly the declared shapes.
 -/
 def checkShapes (g : Graph) : Except String Unit := do
-  g.checkWellFormed
-  let mut inferred : Array Shape := #[]
-  for i in [0:g.nodes.size] do
-    let n ← g.getNode i
-    let parentShapes := n.parents.map (fun pid => inferred[pid]!)
-    let out ← Infer.inferNodeOutShape n parentShapes
-    if out != n.outShape then
-      throw <|
-        s!"IR graph: node {i}: outShape mismatch: inferred={repr out}, " ++
-          s!"declared={repr n.outShape} ({n.summary})"
-    inferred := inferred.push out
+  let _ ← g.inferShapes
+  pure ()
 
 end Graph
 

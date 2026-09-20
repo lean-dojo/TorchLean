@@ -34,6 +34,10 @@ Build:
 
 - `lake build NN.Examples.Data.Loaders.Cifar10Images`
 
+Run this tutorial with `lake exe torchlean data_cifar10 --check-only` to validate the files,
+or omit `--check-only` to train and print a prediction for a blank image.
+The held-out split is reported here; this tutorial does not compute test accuracy.
+
 For command-line CIFAR training, use `torchlean cnn` or `torchlean vit` with
 `--x`, `--y`, and `--n-total`.
 
@@ -43,19 +47,19 @@ Optional flags (tutorial-specific):
 - `--real-cifar10` (use `data/real/cifar10/cifar10_train_*.npy`, as prepared by
   `scripts/datasets/download_example_data.py --cifar10`)
 - `--x PATH`, `--y PATH` (override the `.npy` files)
-- `--n-total N` (number of rows in the selected `.npy` files; default `200`)
+- `--n-total N` (number of leading rows to load; default `200`)
 - `--seed S` (controls split + shuffling + model initialization)
 - `--batch N`
 - `--epochs E`
 - `--lr LR` (default: `0.001`)
-- `--train-size N` (default: 160)
+- `--train-size N` (default: up to 160 rows, or up to 16 with `--check-only`)
 - `--check-only` (validate paths, tensor shapes, and dataset splitting without training)
 
 Why this tutorial matters:
 
 - it shows the public `Data` file-loading path rather than only in-memory tensors;
 - it keeps the model architecture familiar (Conv/ReLU/Pool stack + classifier head);
- - it shows the "offline artifact" workflow many PyTorch users already have, where arrays
+- it shows the "offline artifact" workflow many PyTorch users already have, where arrays
   have been pre-exported to `.npy` and training happens without any dataset download step.
 - it stays on the same public `Trainer` surface as the model examples instead of dropping to the
   callback runner API.
@@ -65,67 +69,63 @@ Why this tutorial matters:
 
 @[expose] public section
 
-
 namespace NN.Examples.Data.Loaders.Cifar10Images
 
 open TorchLean
 
-abbrev classes : Nat := 10
-abbrev channels : Nat := 3
-abbrev height : Nat := 32
-abbrev width : Nat := 32
-abbrev nTotal : Nat := 200
+/-- Command name used in diagnostics and by the top-level example runner. -/
+def exeName : String := "data_cifar10"
+
+/-- CIFAR-10 has ten classes. -/
+def classCount : Nat := 10
+/-- RGB input. -/
+def inputChannels : Nat := 3
+/-- CIFAR-10 images are 32 by 32. -/
+def imageHeight : Nat := 32
+/-- Width, matching `imageHeight`. -/
+def imageWidth : Nat := 32
+/-- Default number of leading images loaded from pre-generated or downloaded files. -/
+def defaultRowCount : Nat := 200
 
 /-- Small CNN (no BatchNorm): Conv -> ReLU -> Pool -> Conv -> ReLU -> Pool -> Linear(10). -/
-def mkModel {batch : Nat} :
-    nn.Builder (nn.Sequential [batch, channels, height, width] [batch, classes]) :=
-  let outC1 : Nat := 16
-  let outC2 : Nat := 32
-  let spatial0 : Tensor Nat [2] := tensor! [height, width]
-  let conv1 : nn.Conv 2 :=
-    { outChannels := outC1
-      kernel := tensor! [3, 3]
-      padding := tensor! [1, 1]
-      kernelNonzero := by intro i; fin_cases i <;> decide
-      strideNonzero := by intro i; fin_cases i <;> decide }
-  let conv2 : nn.Conv 2 :=
-    { outChannels := outC2
-      kernel := tensor! [3, 3]
-      padding := tensor! [1, 1]
-      kernelNonzero := by intro i; fin_cases i <;> decide
-      strideNonzero := by intro i; fin_cases i <;> decide }
-  let pool : nn.Pool 2 :=
-    { kernel := tensor! [2, 2]
-      stride := tensor! [2, 2]
-      kernelNonzero := by intro i; fin_cases i <;> decide
-      strideNonzero := by intro i; fin_cases i <;> decide }
-  let spatial1 := Spec.convOutSpatial spatial0 conv1.kernel conv1.stride conv1.padding
-  let spatial2 := Spec.poolOutSpatialPad spatial1 pool.kernel pool.stride pool.padding
-  let spatial3 := Spec.convOutSpatial spatial2 conv2.kernel conv2.stride conv2.padding
-  let spatial4 := Spec.poolOutSpatialPad spatial3 pool.kernel pool.stride pool.padding
+def model {batchSize : Nat} :
+    nn.Builder (nn.Sequential
+      [batchSize, inputChannels, imageHeight, imageWidth]
+      [batchSize, classCount]) :=
+  letI : NeZero inputChannels := ⟨by decide⟩
+  let firstHiddenChannels : Nat := 16
+  let secondHiddenChannels : Nat := 32
+  let spatial0 : Tensor Nat [2] := [imageHeight, imageWidth]
+  let conv1 : nn.Convolution.Config 2 :=
+    { outChannels := firstHiddenChannels
+      kernelSize := [3, 3]
+      padding := [1, 1] }
+  let conv2 : nn.Convolution.Config 2 :=
+    { outChannels := secondHiddenChannels
+      kernelSize := [3, 3]
+      padding := [1, 1] }
+  let pool : nn.Pooling.Config 2 :=
+    { kernelSize := [2, 2]
+      stride := [2, 2] }
+  let spatial1 := conv1.output spatial0
+  let spatial2 := pool.output spatial1
+  let spatial3 := conv2.output spatial2
+  let spatial4 := pool.output spatial3
   nn.Sequential![
-    nn.conv (leading := [batch]) (inChannels := channels) spatial0 conv1,
+    nn.conv spatial0 conv1 (batchShape := [batchSize]) (inputChannels := inputChannels),
     nn.relu,
-    nn.maxPool (leading := [batch]) (channels := outC1) spatial1 pool,
-    nn.conv (leading := [batch]) (inChannels := outC1) spatial2 conv2,
+    nn.maxPool spatial1 pool (batchShape := [batchSize]) (channels := firstHiddenChannels),
+    nn.conv spatial2 conv2 (batchShape := [batchSize]) (inputChannels := firstHiddenChannels),
     nn.relu,
-    nn.maxPool (leading := [batch]) (channels := outC2) spatial3 pool,
-    pure (nn.heads.classifier (leading := [batch])
-      (shape := outC2 :: spatial4.toList) classes)
+    nn.maxPool spatial3 pool (batchShape := [batchSize]) (channels := secondHiddenChannels),
+    nn.heads.classifier classCount (batchShape := [batchSize])
+      (featureShape := (spatial4.to Shape).prependDim secondHiddenChannels)
   ]
 
 /-- Shared offline CIFAR10-like tensor source used by this tutorial. -/
-def source (xPath yPath : System.FilePath) (nRows : Nat) : Data.LabeledSource :=
-  Data.LabeledSource.ofPaths .npy xPath yPath nRows [channels, height, width] classes
-
-def trainDataset (xPath yPath : System.FilePath) (nRows trainSize seed : Nat) :
-    Trainer.Dataset [channels, height, width] [classes] :=
-  (Data.randomSplitDataset trainSize (Data.labeledDataset (source xPath yPath nRows)) seed).1
-
-/-- Runtime-polymorphic test split used for `--check-only` reporting. -/
-def testDataset (xPath yPath : System.FilePath) (nRows trainSize seed : Nat) :
-    Trainer.Dataset [channels, height, width] [classes] :=
-  (Data.randomSplitDataset trainSize (Data.labeledDataset (source xPath yPath nRows)) seed).2
+def source (xPath yPath : System.FilePath) (rowCount : Nat) : Data.LabeledSource :=
+  Data.LabeledSource.fromFiles xPath yPath rowCount
+    [inputChannels, imageHeight, imageWidth] classCount
 
 /-- Command-line help for the CIFAR10-style NPY loader tutorial. -/
 def usage : String :=
@@ -147,12 +147,17 @@ def usage : String :=
     , "  --batch N"
     , "  --lr LR"
     , "  --check-only"
-    , "  --scalar float32|ieee32-exec"
+    , "  --arithmetic native|ieee"
     , "  --execution eager|typed-graph"
     , "  --device auto|cpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external"
     , "  --show-backend                    print backend capsules as they execute"
     ]
 
+/--
+Entry point. `--check-only` loads and validates the data and split without training.
+`--real-cifar10` selects prepared real-data paths; neither mode generates missing files.
+Both switches are stripped before the remaining flags reach the shared training-flag parser.
+-/
 def main (args : List String) : IO Unit := do
   let args0 := CLI.dropDashDash args
   if CLI.hasHelp args0 then
@@ -162,65 +167,66 @@ def main (args : List String) : IO Unit := do
   let realCifar10 := args0.contains "--real-cifar10"
   let args := args0.filter (fun a => a != "--check-only" && a != "--real-cifar10")
 
-  let label := "Data.Loaders.Cifar10Images"
-  let (dataDir, args) ← CLI.orThrow label <| _root_.NN.Examples.Data.SamplePaths.takeDataDir
-    args
-  let (seed, args) ← CLI.orThrow label <| CLI.takeSeed args 0
-  let (eb, args) ← CLI.orThrow label <| CLI.takePositiveEpochBatch args label 5 20
-  let (trainSize0, args) ← CLI.orThrow label <| CLI.takeNatFlagDefault args
-    "train-size" 0
-  let (nRows0, args) ← CLI.orThrow label <| CLI.takeNatFlagDefault args
-    "n-total" nTotal
-  let (lr, args) ← CLI.orThrow label <| CLI.takeFloatFlagDefault args "lr" 0.001
+  let (dataDir, args) ← CLI.orThrow exeName <| TorchLean.CLI.takePathFlag args "data-dir"
+    (default := NN.Examples.Data.SamplePaths.defaultDataDir)
+  let (seed, args) ← CLI.orThrow exeName <| CLI.takeSeed args (default := 0)
+  let (eb, args) ← CLI.orThrow exeName <|
+    CLI.takePositiveEpochBatch args exeName (defaultEpochs := 5) (defaultBatch := 20)
+  let (trainSize0, args) ← CLI.orThrow exeName <| CLI.takeNatFlag args
+    "train-size" (default := 0)
+  let (rowCountOption, args) ← CLI.orThrow exeName <| CLI.takeNatFlag args
+    "n-total" (default := defaultRowCount)
+  let (lr, args) ← CLI.orThrow exeName <|
+    CLI.takePositiveFloatFlag args exeName "lr" (default := 0.001)
   let defaultX :=
     if realCifar10 then
-      _root_.NN.Examples.Data.RealPaths.cifar10TrainX
+      NN.Examples.Data.RealPaths.cifar10TrainX
     else
-      _root_.NN.Examples.Data.SamplePaths.cifar10likeXNpy dataDir
+      NN.Examples.Data.SamplePaths.cifar10likeXNpy dataDir
   let defaultY :=
     if realCifar10 then
-      _root_.NN.Examples.Data.RealPaths.cifar10TrainY
+      NN.Examples.Data.RealPaths.cifar10TrainY
     else
-      _root_.NN.Examples.Data.SamplePaths.cifar10likeYNpy dataDir
-  let (paths, args) ← CLI.orThrow label <|
-    _root_.NN.Examples.Data.SamplePaths.takeXyPaths args defaultX defaultY
-  let xPath := paths.xPath
-  let yPath := paths.yPath
-  let nRows := nRows0
+      NN.Examples.Data.SamplePaths.cifar10likeYNpy dataDir
+  let (xPath, args) ← CLI.orThrow exeName <| CLI.takePathFlag args "x" (default := defaultX)
+  let (yPath, args) ← CLI.orThrow exeName <| CLI.takePathFlag args "y" (default := defaultY)
+  let rowCount := rowCountOption
   let trainSize :=
     if trainSize0 = 0 then
-      (if checkOnly then Nat.min 16 nRows else Nat.min 160 nRows)
+      (if checkOnly then Nat.min 16 rowCount else Nat.min 160 rowCount)
     else
       trainSize0
-  let trainSteps : Nat := eb.epochs * (trainSize / eb.batch)
-  let run ← Trainer.RunConfig.parseRuntimeArgsOrThrow label args
-    { optimizer := optim.adam { lr := lr } }
-  let trainer := Trainer.new (mkModel (batch := eb.batch)) <|
-    Trainer.Config.fromRunConfig run (.oneHotCrossEntropy 1) (seed := seed)
+  let trainSteps : Nat := eb.epochs * (trainSize / eb.batchSize)
+  let run ← TorchLean.CLI.Trainer.parseCommandLine exeName args
+    { optimizer := optim.adam { learningRate := lr } }
+  let trainer := Trainer.new (model (batchSize := eb.batchSize)) <|
+    Trainer.RunConfig.forObjective run
+      (.oneHotCrossEntropy 1)
+      (seed := seed)
 
   IO.println "== CIFAR10-style NPY CNN tutorial =="
   IO.println s!"data_dir   = {dataDir}"
   IO.println s!"x_path     = {xPath}"
   IO.println s!"y_path     = {yPath}"
-  IO.println s!"rows       = {nRows}"
+  IO.println s!"rows       = {rowCount}"
   IO.println s!"seed       = {seed}"
-  IO.println s!"train_size = {trainSize} / {nRows}"
-  trainer.printInfo
+  IO.println s!"train_size = {trainSize} / {rowCount}"
+  trainer.printSummary
   IO.println <|
     (s!"train      = Adam(lr={lr}), epochs={eb.epochs}, " ++
-      s!"batch_size={eb.batch}, shuffle=true, drop_last=true, steps={trainSteps}")
+      s!"batch_size={eb.batchSize}, shuffle=true, drop_last=true, steps={trainSteps}")
   if checkOnly then
     IO.println "mode       = --check-only (validate paths, tensor shapes, and dataset split)"
   (← IO.getStdout).flush
-  let dsAll ←
-    CLI.orThrow label <|
-      (← Data.LabeledSource.load (α := Float) (source xPath yPath nRows))
+  let dsAll ← Data.LabeledSource.load (α := Float) (source xPath yPath rowCount)
 
   if trainSize > dsAll.size then
     throw <| IO.userError
-      s!"{label}: --train-size {trainSize} exceeds dataset size {dsAll.size}"
+      s!"{exeName}: --train-size {trainSize} exceeds dataset size {dsAll.size}"
 
-  let (_seed', (dsTrain, dsTest)) := Data.SampleStream.randomSplitAt seed trainSize dsAll
+  let split := Data.SampleStream.randomSplitAt seed trainSize dsAll
+  let dsTrain := split.selected
+  let dsTest := split.remaining
 
   if checkOnly then
     IO.println s!"loaded     = {dsAll.size} image rows"
@@ -228,19 +234,22 @@ def main (args : List String) : IO Unit := do
     IO.println "check      = dataset shape/path runtime check passed"
     pure ()
   else
+    if trainSize < eb.batchSize then
+      throw <| IO.userError
+        s!"{exeName}: --train-size {trainSize} is smaller than --batch {eb.batchSize}"
     let trainData :=
-      Data.batchDataset eb.batch (trainDataset xPath yPath nRows trainSize seed)
-        (shuffle := true) (seed := seed) (dropLast := true)
+      Data.batch eb.batchSize (Data.fromSamples dsTrain.toArray)
+        (shuffle := true) (seed := seed)
     let trained ← trainer.train trainData
       { steps := trainSteps
-        title := "CIFAR10-style NPY CNN tutorial"
-        notes :=
-          #[s!"x={xPath}", s!"y={yPath}", s!"rows={nRows}",
+        logTitle := "CIFAR10-style NPY CNN tutorial"
+        logNotes :=
+          #[s!"x={xPath}", s!"y={yPath}", s!"rows={rowCount}",
             s!"train_size={trainSize}", s!"test_size={dsTest.size}",
-            s!"epochs={eb.epochs}", s!"batch={eb.batch}", s!"lr={lr}"] }
+            s!"epochs={eb.epochs}", s!"batch={eb.batchSize}", s!"lr={lr}"] }
     trained.printSummary
-    let blank : Tensor Float [channels, height, width] :=
-      Tensor.full [channels, height, width] 0.0
-    trained.printPrediction "blank" (Tensor.repeatAxis 0 eb.batch blank)
+    let blank : Tensor Float [inputChannels, imageHeight, imageWidth] :=
+      Tensor.full [inputChannels, imageHeight, imageWidth] 0.0
+    trained.printPrediction "blank" (Tensor.repeatAxis 0 eb.batchSize blank)
 
 end NN.Examples.Data.Loaders.Cifar10Images

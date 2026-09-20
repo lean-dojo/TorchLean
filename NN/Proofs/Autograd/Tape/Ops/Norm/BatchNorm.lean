@@ -6,9 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Layers.Normalization.BatchNorm
-public import NN.Proofs.Tensor.Basic
-public import NN.Proofs.Autograd.Tape.Core.FDeriv
+-- The companion module named in the docstring below. Its Fréchet-derivative proof is a
+-- prerequisite for reading this one, but nothing here cites it, so `lake shake` drops it.
+public import NN.Proofs.Autograd.Tape.Ops.Norm.BatchNormFDeriv
 
 /-!
 # Batch Normalization Backward Correctness
@@ -22,6 +22,11 @@ with the forward differential gives the same scalar as pairing the upstream grad
 The theorem is independent of a memory layout. The spatial shape is flattened only inside the
 BatchNorm definition, so the result covers vectors, images, volumes, and higher-rank tensors with
 one statement.
+
+The companion module `NN.Proofs.Autograd.Tape.Ops.Norm.BatchNormFDeriv` proves that
+`Spec.batchNormJvp` is the Fréchet derivative of `Spec.batchNorm` in `(x, gamma, beta)` whenever
+`0 < ε` (`hasFDerivAt_batchNorm`, `fderiv_batchNorm_eq_batchNormJvp`). Together with the
+adjointness below this identifies `Spec.batchNormBackward` as the adjoint of that derivative.
 -/
 
 @[expose] public section
@@ -30,25 +35,29 @@ namespace Proofs
 namespace Autograd
 namespace BatchNorm
 
-open Spec
-open Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 noncomputable section
 
 open scoped BigOperators
 
+/-- Batch norm sees its input as `channels` rows of `positions` scalars each. -/
 private abbrev Matrix (channels positions : Nat) :=
   Tensor ℝ [channels, positions]
 
+/-- One scalar per channel: the shape of the running statistics, the scale, and the shift. -/
 private abbrev ChannelTensor (channels : Nat) := Tensor ℝ [channels]
 
+/-- Scalar at a given channel and position. -/
 private abbrev entry {channels positions : Nat} (x : Matrix channels positions)
     (channel : Fin channels) (position : Fin positions) : ℝ :=
   get2 x channel position
 
+/-- Scalar of a per-channel vector. -/
 private abbrev channelEntry {channels : Nat} (x : ChannelTensor channels)
     (channel : Fin channels) : ℝ :=
-  Spec.Tensor.getScalar x channel
+  TorchLean.Tensor.getScalar x channel
 
 private theorem inner_getScalarE_cast {n m : Nat} (h : n = m)
     (a b : Tensor ℝ [n]) :
@@ -72,35 +81,32 @@ private theorem dot_reshapeSpec_left {s₁ s₂ : Shape} (a : Tensor ℝ s₁)
   rw [reshapeSpec_roundtrip] at hDot
   exact hDot
 
-private lemma entry_add {channels positions : Nat} (x y : Matrix channels positions)
+private theorem entry_add {channels positions : Nat} (x y : Matrix channels positions)
     (channel : Fin channels) (position : Fin positions) :
     entry (addSpec x y) channel position =
       entry x channel position + entry y channel position := by
   simp [entry, addSpec]
 
-private lemma entry_sub {channels positions : Nat} (x y : Matrix channels positions)
+private theorem entry_sub {channels positions : Nat} (x y : Matrix channels positions)
     (channel : Fin channels) (position : Fin positions) :
     entry (subSpec x y) channel position =
       entry x channel position - entry y channel position := by
   simp [entry, subSpec]
 
-private lemma entry_mul {channels positions : Nat} (x y : Matrix channels positions)
+private theorem entry_mul {channels positions : Nat} (x y : Matrix channels positions)
     (channel : Fin channels) (position : Fin positions) :
     entry (mulSpec x y) channel position =
       entry x channel position * entry y channel position := by
   simp [entry, mulSpec]
 
-private lemma entry_broadcastChannel {channels positions : Nat} (x : ChannelTensor channels)
+private theorem entry_broadcastChannel {channels positions : Nat} (x : ChannelTensor channels)
     (channel : Fin channels) (position : Fin positions) :
     entry (broadcastAfterSum (.dim channels (.dim positions .scalar)) 1 x) channel position =
       channelEntry x channel := by
-  cases x with
-  | dim values =>
-      cases hValue : values channel with
-      | scalar value =>
-          rfl
+  rw [← Tensor.dim_unstack x]
+  simp [entry, channelEntry, broadcastAfterSum, get2, TorchLean.Tensor.getScalar, Spec.get]
 
-private lemma channelEntry_reduceSum_axis_one {channels positions : Nat}
+private theorem channelEntry_reduceSum_axis_one {channels positions : Nat}
     (hPositions : 0 < positions)
     (x : Matrix channels positions) (channel : Fin channels) :
     channelEntry
@@ -112,21 +118,19 @@ private lemma channelEntry_reduceSum_axis_one {channels positions : Nat}
   cases positions with
   | zero => grind
   | succ positions =>
-      cases x with
-      | dim rows =>
-          simp only [reduceSum, reduceDim, Internal.reduceDimCore_dim_succ,
-            Internal.reduceDimCore_dim_zero, Internal.reduceOuterAxis_vector, shapeAfterSum,
-            channelEntry, Spec.Tensor.getScalar_dim]
-          rw [sum_spec_vec]
-          apply Finset.sum_congr rfl
-          intro position _
-          cases hRow : rows channel with
-          | dim values =>
-              cases hValue : values position with
-              | scalar value =>
-                  simp [Spec.Tensor.getScalar, entry, get2, hRow, hValue]
+      let rows := Tensor.unstack x
+      rw [show x = Tensor.dim rows from (Tensor.dim_unstack x).symm]
+      simp only [reduceSum, reduceDim,
+        TorchLean.Tensor.Reduction.Internal.reduceDimCore_dim_succ,
+        TorchLean.Tensor.Reduction.Internal.reduceDimCore_dim_zero,
+        TorchLean.Tensor.Reduction.Internal.reduceOuterAxis_vector, shapeAfterSum,
+        channelEntry, TorchLean.Tensor.getScalar_dim]
+      rw [sum_spec_vec]
+      apply Finset.sum_congr rfl
+      intro position _
+      simp [entry, get2]
 
-private lemma channelEntry_reduceMean_axis_one {channels positions : Nat}
+private theorem channelEntry_reduceMean_axis_one {channels positions : Nat}
     (hPositions : 0 < positions)
     (x : Matrix channels positions) (channel : Fin channels) :
     channelEntry
@@ -138,21 +142,19 @@ private lemma channelEntry_reduceMean_axis_one {channels positions : Nat}
   cases positions with
   | zero => grind
   | succ positions =>
-      cases x with
-      | dim rows =>
-          simp only [reduceMean, reduceSum, reduceDim, Internal.reduceDimCore_dim_succ,
-            Internal.reduceDimCore_dim_zero, Internal.reduceOuterAxis_vector, shapeAfterSum, mapSpec,
-            channelEntry, Spec.Tensor.getScalar_map, Spec.Tensor.getScalar_dim,
-            Shape.axisSize_succ, Shape.axisSize_zero]
-          rw [sum_spec_vec]
-          congr 1
-          apply Finset.sum_congr rfl
-          intro position _
-          cases hRow : rows channel with
-          | dim values =>
-              cases hValue : values position with
-              | scalar value =>
-                  simp [Spec.Tensor.getScalar, entry, get2, hRow, hValue]
+      let rows := Tensor.unstack x
+      rw [show x = Tensor.dim rows from (Tensor.dim_unstack x).symm]
+      simp only [reduceMean, reduceSum, reduceDim,
+        TorchLean.Tensor.Reduction.Internal.reduceDimCore_dim_succ,
+        TorchLean.Tensor.Reduction.Internal.reduceDimCore_dim_zero,
+        TorchLean.Tensor.Reduction.Internal.reduceOuterAxis_vector, shapeAfterSum, mapSpec,
+        channelEntry, TorchLean.Tensor.getScalar_map, TorchLean.Tensor.getScalar_dim,
+        Shape.axisSize_succ, Shape.axisSize_zero]
+      rw [sum_spec_vec]
+      congr 1
+      apply Finset.sum_congr rfl
+      intro position _
+      simp [entry, get2]
 
 private theorem channel_normalization_adjoint
     (positions : Nat) (hPositions : 0 < positions)
@@ -323,11 +325,13 @@ theorem batchNormJvp_batchNormBackward_adjoint
     {channels : Nat} {sSpatial : Shape}
     (x tangent gradOutput : Tensor ℝ (.dim channels sSpatial))
     (gamma dgamma beta dbeta : Tensor ℝ [channels])
-    (epsilon : ℝ := Numbers.normalizationEpsilon)
+    (epsilon : ℝ := TorchLean.normalizationEpsilon)
     [Shape.WellFormed (.dim channels sSpatial)] :
     dot (Spec.batchNormJvp x tangent gamma dgamma beta dbeta epsilon) gradOutput =
       let backward := Spec.batchNormBackward x gamma gradOutput epsilon
-      dot tangent backward.1 + dot dgamma backward.2.1 + dot dbeta backward.2.2 := by
+      dot tangent backward.inputGradient +
+        dot dgamma backward.scaleGradient +
+        dot dbeta backward.biasGradient := by
   unfold Spec.batchNormJvp Spec.batchNormBackward
   exact normalizedJvp_normalizedBackward_spatial_adjoint _ _ _ _ _ _ _ _ _
 

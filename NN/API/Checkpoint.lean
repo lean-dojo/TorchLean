@@ -6,10 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.TorchLean.StateIO
-public import NN.API.Module.Execution
+public import NN.Runtime.Autograd.Model.StateIO
 public import NN.API.Neural.Builders
-public import NN.API.Sample
+public import NN.API.Sample -- shake: keep
 
 /-!
 # Runtime Checkpoints
@@ -21,7 +20,7 @@ TorchLean examples often want the same simple workflow:
 3. restore that state before inference or further training.
 
 The implementation delegates binary encoding and device transfers to
-`Runtime.Autograd.TorchLean.StateIO`, while this module provides the checked runtime API used by
+`Runtime.Autograd.Model.StateIO`, while this module provides the checked runtime API used by
 trainers and data loaders.
 
 ## What Is Supported
@@ -36,6 +35,9 @@ Both checkpoint formats preserve the model's shape-indexed state layout:
 This is enough to checkpoint any TorchLean runtime model implemented as a
 `TorchLean.Module.Objective` over native `Float32` or binary64 `Float`, independent of
 architecture.
+
+Results of `Trainer.train` use `Checkpoint.State`: `trained.save path` writes the trained state as
+`Float` tensors and `trainer.load path data` restores it.
 -/
 
 @[expose] public section
@@ -43,132 +45,151 @@ architecture.
 namespace TorchLean
 namespace Checkpoint
 
-open Spec
+open Spec TorchLean
 
-export _root_.Runtime.Autograd.TorchLean.StateIO (readStateBits writeStateBits)
-
-/-- Scalar-dependent persistence for a shape-indexed runtime parameter list. -/
-class CheckpointScalar (α : Type) where
+/-- Checkpoint persistence supported by a tensor element type. -/
+class Checkpointable (α : Type) [TorchLean.Storage α] where
   /-- Write every parameter and persistent buffer in order. -/
   write : {shapes : List Shape} →
-    Bool → System.FilePath → _root_.Runtime.Autograd.Torch.ParamList α shapes → IO Unit
+    Bool → System.FilePath → Runtime.Autograd.Torch.ParamList α shapes → IO Unit
   /-- Validate and restore every parameter and persistent buffer in order. -/
   read : {shapes : List Shape} →
-    Bool → System.FilePath → _root_.Runtime.Autograd.Torch.ParamList α shapes → IO Unit
+    Bool → System.FilePath → Runtime.Autograd.Torch.ParamList α shapes → IO Unit
 
 /-- Binary64 `Float` checkpoints keep exact binary64 values on CPU and binary32 values on CUDA. -/
-instance : CheckpointScalar Float where
+instance : Checkpointable Float where
   write := fun {shapes} useCuda path state => do
     if useCuda then
-      _root_.Runtime.Autograd.TorchLean.StateIO.writeModuleStateFloat32
+      Runtime.Autograd.Model.StateIO.writeModuleStateFloat32
         Float.toFloat32 (shapes := shapes) path state
     else
-      let values ← _root_.Runtime.Autograd.Torch.ParamList.valuesSynced (α := Float)
+      let values ← Runtime.Autograd.Torch.ParamList.valuesSynced (α := Float)
         (ss := shapes) state
-      _root_.Runtime.Autograd.TorchLean.StateIO.writeStateBits (ss := shapes) path values
+      Runtime.Autograd.Model.StateIO.writeStateBits (ss := shapes) path values
   read := fun {shapes} useCuda path state => do
-    if ← _root_.Runtime.Autograd.TorchLean.StateIO.isModuleStateFloat32 path then
-      _root_.Runtime.Autograd.TorchLean.StateIO.readModuleStateFloat32Into
+    if ← Runtime.Autograd.Model.StateIO.isModuleStateFloat32 path then
+      Runtime.Autograd.Model.StateIO.readModuleStateFloat32Into
         Float32.toFloat path useCuda (shapes := shapes) state
     else
-      let result ← _root_.Runtime.Autograd.TorchLean.StateIO.readStateBits (ss := shapes) path
+      let result ← Runtime.Autograd.Model.StateIO.readStateBits (ss := shapes) path
       match result with
       | .error message => throw <| IO.userError s!"Checkpoint: load failed for {path}: {message}"
       | .ok values =>
-          _root_.Runtime.Autograd.Torch.ParamList.setValues (α := Float) (ss := shapes) state values
+          Runtime.Autograd.Torch.ParamList.setValues (α := Float) (ss := shapes) state values
 
 /-- Native `Float32` checkpoints preserve exact binary32 payloads on both CPU and CUDA. -/
-instance : CheckpointScalar Float32 where
+instance : Checkpointable Float32 where
   write := fun {shapes} _ path state =>
-    _root_.Runtime.Autograd.TorchLean.StateIO.writeModuleStateFloat32
+    Runtime.Autograd.Model.StateIO.writeModuleStateFloat32
       id (shapes := shapes) path state
   read := fun {shapes} useCuda path state => do
-    unless ← _root_.Runtime.Autograd.TorchLean.StateIO.isModuleStateFloat32 path do
+    unless ← Runtime.Autograd.Model.StateIO.isModuleStateFloat32 path do
       throw <| IO.userError
         s!"Checkpoint: {path} is not a native Float32 module checkpoint"
-    _root_.Runtime.Autograd.TorchLean.StateIO.readModuleStateFloat32Into
+    Runtime.Autograd.Model.StateIO.readModuleStateFloat32Into
       id path useCuda (shapes := shapes) state
 
 /--
 Save the current values of a TorchLean runtime module.
 
-The scalar type selects the checkpoint encoding through `CheckpointScalar`. Native `Float32`
-modules preserve exact binary32 payloads on CPU and CUDA. Binary64 `Float` modules preserve
-binary64 values on CPU and the runtime's binary32 values on CUDA.
+The module's element type determines its persistence implementation. Native
+`Float32` modules preserve exact binary32 payloads on CPU and CUDA. Binary64
+`Float` modules preserve binary64 values on CPU and the runtime's binary32
+values on CUDA.
 -/
-def saveModule {α β : Type} [_root_.Context α] [DecidableEq Shape] [CheckpointScalar α]
+def save {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
+    [Context α] [Checkpointable α]
     {stateShapes inputShapes dataInputShapes : List Shape}
-    (m : _root_.TorchLean.Module.Objective α β stateShapes inputShapes
+    (objective : TorchLean.Module.Objective α β stateShapes inputShapes
       dataInputShapes)
-    (path : System.FilePath) : IO Unit :=
-  CheckpointScalar.write m.opts.usesCuda path m.trainer.state
+    (path : System.FilePath) : IO Unit := do
+  let runtimeObjective := TorchLean.Module.Objective.Internal.runtime objective
+  Checkpointable.write runtimeObjective.runtime.usesCuda path runtimeObjective.trainer.state
 
 /--
-Load a scalar-compatible checkpoint into a module.
+Load a compatible checkpoint into a module.
 
 The reader checks the format header, state-tensor count, every shape, and every payload length
 before accepting the checkpoint.
 -/
-def loadModule {α β : Type} [_root_.Context α] [DecidableEq Shape] [CheckpointScalar α]
+def load {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
+    [Context α] [Checkpointable α]
     {stateShapes inputShapes dataInputShapes : List Shape}
-    (m : _root_.TorchLean.Module.Objective α β stateShapes inputShapes
-      dataInputShapes)
-    (path : System.FilePath) : IO Unit :=
-  CheckpointScalar.read m.opts.usesCuda path m.trainer.state
-
-/--
-Save optimizer state retained by the module's runtime backend.
-
-This currently applies to eager CUDA Adam and AdamW, whose moment buffers live on the device. The
-operation fails explicitly when the selected trainer has no backend-owned optimizer state instead
-of writing an incomplete resume checkpoint.
--/
-def saveOptimizerState
-    {β : Type}
-    {stateShapes inputShapes dataInputShapes : List Shape}
-    (m : _root_.TorchLean.Module.Objective Float β stateShapes inputShapes
+    (objective : TorchLean.Module.Objective α β stateShapes inputShapes
       dataInputShapes)
     (path : System.FilePath) : IO Unit := do
-  match m.trainer.optimizerStateCheckpoint? with
+  let runtimeObjective := TorchLean.Module.Objective.Internal.runtime objective
+  Checkpointable.read runtimeObjective.runtime.usesCuda path runtimeObjective.trainer.state
+
+namespace Optimizer
+
+/--
+Save optimizer state retained by a module's runtime backend.
+
+This currently applies to eager CUDA Adam and AdamW, whose moment buffers live
+on the device. The operation fails explicitly when the selected trainer has no
+backend-owned optimizer state instead of writing an incomplete resume
+checkpoint.
+-/
+def save
+    {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β] [Context α]
+    {stateShapes inputShapes dataInputShapes : List Shape}
+    (objective : TorchLean.Module.Objective α β stateShapes inputShapes
+      dataInputShapes)
+    (path : System.FilePath) : IO Unit := do
+  let runtimeObjective := TorchLean.Module.Objective.Internal.runtime objective
+  match runtimeObjective.trainer.optimizerStateCheckpoint? with
   | some checkpoint => checkpoint.save path
   | none =>
       throw <| IO.userError
         "Checkpoint: selected trainer does not expose backend-owned optimizer state"
 
 /-- Restore optimizer state retained by the module's runtime backend. -/
-def loadOptimizerState
-    {β : Type}
+def load
+    {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β] [Context α]
     {stateShapes inputShapes dataInputShapes : List Shape}
-    (m : _root_.TorchLean.Module.Objective Float β stateShapes inputShapes
+    (objective : TorchLean.Module.Objective α β stateShapes inputShapes
       dataInputShapes)
     (path : System.FilePath) : IO Unit := do
-  match m.trainer.optimizerStateCheckpoint? with
+  let runtimeObjective := TorchLean.Module.Objective.Internal.runtime objective
+  match runtimeObjective.trainer.optimizerStateCheckpoint? with
   | some checkpoint => checkpoint.load path
   | none =>
       throw <| IO.userError
         "Checkpoint: selected trainer does not expose backend-owned optimizer state"
 
+end Optimizer
+
+namespace State
+
+/-- Save an immutable model state pack after checking it against `model`. -/
+def save {σ τ : Shape}
+    (model : nn.Sequential σ τ)
+    (state : nn.State Float (nn.stateShapes model))
+    (path : System.FilePath) : IO Unit :=
+  Runtime.Autograd.Model.StateIO.writeStateBits
+    (ss := nn.stateShapes model) path
+    (nn.State.Internal.toTensorPack state)
+
 /--
-Load a JSON bits checkpoint as model state without mutating a module.
+Load immutable model state without mutating a runtime module.
 
-This is useful when you want to run typed graph inference directly and never instantiate a trainer.
+The model supplies the exact dependent state layout, so malformed, missing,
+extra, or incorrectly shaped tensors are rejected at the boundary.
 -/
-def loadStateBits
-    {stateShapes : List Shape}
-    (path : System.FilePath) : IO (_root_.TorchLean.TensorPack Float stateShapes) := do
-  let stateResult ← _root_.Runtime.Autograd.TorchLean.StateIO.readStateBits
-    (ss := stateShapes) path
+def load {σ τ : Shape}
+    (model : nn.Sequential σ τ)
+    (path : System.FilePath) :
+    IO (nn.State Float (nn.stateShapes model)) := do
+  let stateResult ← Runtime.Autograd.Model.StateIO.readStateBits
+    (ss := nn.stateShapes model) path
   match stateResult with
-  | Except.error e =>
-      throw <| IO.userError s!"Checkpoint: load failed for {path}: {e}"
-  | Except.ok ps =>
-      pure ps
+  | Except.error message =>
+      throw <| IO.userError s!"Checkpoint: load failed for {path}: {message}"
+  | Except.ok state =>
+      pure (nn.State.Internal.fromTensorPack state)
 
-/-- Load a bits checkpoint whose state layout is determined by `model`. -/
-def loadModelState {σ τ : Shape}
-    (model : nn.Sequential σ τ) (path : System.FilePath) :
-    IO (_root_.TorchLean.TensorPack Float (nn.stateShapes model)) :=
-  loadStateBits (stateShapes := nn.stateShapes model) path
+end State
 
 end Checkpoint
 end TorchLean

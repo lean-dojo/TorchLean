@@ -6,17 +6,18 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Data.Real.Basic
 public import NN.Runtime.RL.Algorithms.DQN
+public import NN.Spec.Core.Context.Real
 
 /-!
 # DQN Runtime Algebra Proofs
 
 This module proves small but high-value algebraic facts about the DQN runtime helpers.
 
-The main target is target-network soft updates. TorchLean's scalar runtime interface is intentionally
-law-light, so algebraic identities are stated over `ℝ`, where ring laws are available. This avoids
-claiming that arbitrary executable scalar backends satisfy mathematical ring axioms definitionally.
+The main target is target-network soft updates. TorchLean's element-arithmetic runtime interface
+is intentionally law-light, so algebraic identities are stated over `ℝ`, where ring laws are
+available. This avoids claiming that arbitrary executable arithmetic backends satisfy mathematical
+ring axioms definitionally.
 
 References:
 - Mnih et al., "Human-level control through deep reinforcement learning" (2015), target networks.

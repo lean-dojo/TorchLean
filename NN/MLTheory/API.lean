@@ -6,31 +6,22 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Lyapunov.Verification
+-- Read as an umbrella: this file names no constant from the modules below, so `lake shake` sees
+-- them as redundant. They stay because being importable under one name is the point, and because
+-- `NN.MLTheory.API` is how the theory layer reaches a typecheck target at all.
+public import NN.MLTheory.CROWN.Extras.AlphaConfig
+public import NN.MLTheory.CROWN.Operators
+public import NN.MLTheory.CROWN.Proofs.Distillation
+public import NN.MLTheory.CROWN.Proofs.LayerNormDirected
+public import NN.MLTheory.CROWN.Proofs.SoundnessProofs
 public import NN.MLTheory.Generative.Diffusion
 public import NN.MLTheory.Generative.Latent
 public import NN.MLTheory.LearningTheory
 public import NN.MLTheory.Optimization.FirstOrder
-public import NN.MLTheory.Optimization.GDLinearConvergence
-public import NN.MLTheory.Optimization.Muon
 public import NN.MLTheory.Optimization.OptimizerLaws
 public import NN.MLTheory.Optimization.SmoothStrongConvexBridge
-public import NN.MLTheory.Optimization.StronglyConvexGD
-public import NN.MLTheory.SelfSupervised
 public import NN.MLTheory.Proofs
-
-public import NN.MLTheory.CROWN.Core
-public import NN.MLTheory.CROWN.Extras.AlphaConfig
-public import NN.MLTheory.CROWN.Extras.IntervalLemmas
-public import NN.MLTheory.CROWN.Graph
-public import NN.MLTheory.CROWN.Models.Mlp
-public import NN.MLTheory.CROWN.Operators
-public import NN.MLTheory.CROWN.Operators.Conv
-public import NN.MLTheory.CROWN.Proofs.Distillation
-public import NN.MLTheory.CROWN.Proofs.SoundnessProofs
-public import NN.MLTheory.CROWN.Propagation.LinearSignsplit
-
-public import NN.Floats.NeuralFloat.Error.Bounds
+public import NN.MLTheory.SelfSupervised
 
 /-!
 Public entry point for machine-learning theory modules.
@@ -51,7 +42,7 @@ top-level umbrellas such as `NN.MLTheory.Optimization` or `NN.MLTheory.SelfSuper
 ## Optimization theory
 
 The optimization layer has three levels:
-- executable optimizer equations over TorchLean `Spec.Tensor`s;
+- executable optimizer equations over TorchLean `TorchLean.Tensor`s;
 - exact `ℝ` convergence theorems for gradient-descent-style operators;
 - a calculus bridge from strong convexity to strong monotonicity of `∇f`.
 
@@ -74,7 +65,8 @@ variance-floor guard assigns positive objective value to collapsed representatio
 dimension.
 
 These are objective semantics, not special-purpose layers: API training helpers can feed the same
-masked/reconstruction or joint-embedding targets into an MLP, CNN, ViT, Mamba block, or custom model.
+masked/reconstruction or joint-embedding targets into an MLP, CNN, ViT, Mamba block, or custom
+model.
 
 ## Verified-network integration
 

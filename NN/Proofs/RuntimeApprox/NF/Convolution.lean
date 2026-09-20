@@ -8,7 +8,8 @@ module
 
 public import NN.Proofs.Autograd.Tape.Ops.Conv.Index
 public import NN.Proofs.RuntimeApprox.NF.FoldLemmas
-public import NN.Proofs.RuntimeApprox.NF.Ops
+public import NN.Tensor.Conversion
+public import NN.Proofs.RuntimeApprox.NF.Ops.Scalar
 
 /-!
 # Rounded Convolution
@@ -22,24 +23,25 @@ associativity of rounded addition is assumed.
 
 namespace Proofs.RuntimeApprox.NFBackend
 
-open Spec
-open Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 open Spec.Conv.Internal
-open TorchLean.Floats
+open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
+open Flocq
 
 noncomputable section
 
-variable {beta : NeuralRadix} {fexp : ℤ → ℤ} [NeuralValidExp fexp]
-variable {rnd : ℝ → ℤ} [NeuralValidRndToNearest rnd]
+variable {beta : Radix} {fexp : ℤ → ℤ} [ValidExp fexp]
+variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
-local notation "R" => TorchLean.Floats.NF beta fexp rnd
+local notation "R" => NF beta fexp rnd
 
 /-! ## Ordered rounded sums -/
 
 /-- Error budget after one rounded addition. -/
 def accumulationError (acc term : R) (accError termError : ℝ) : ℝ :=
   accError + termError +
-    neuralUlp beta fexp
+    ulp beta fexp
       (toSpec (β := beta) (fexp := fexp) (rnd := rnd) acc +
         toSpec (β := beta) (fexp := fexp) (rnd := rnd) term) / 2
 
@@ -48,7 +50,7 @@ def productError (x y : R) (xError yError : ℝ) : ℝ :=
   let xValue := toSpec (β := beta) (fexp := fexp) (rnd := rnd) x
   let yValue := toSpec (β := beta) (fexp := fexp) (rnd := rnd) y
   (abs xValue + xError) * yError + (abs yValue + yError) * xError +
-    neuralUlp beta fexp (xValue * yValue) / 2
+    ulp beta fexp (xValue * yValue) / 2
 
 /-- Replay a rounded sum while carrying its absolute-error budget. -/
 def foldErrorState {iota : Type} (indices : List iota)
@@ -166,6 +168,12 @@ def enumerateIndices : List Nat → List (List Nat)
       (List.finRange n).flatMap fun index =>
         (enumerateIndices dims).map fun tail => index.val :: tail
 
+/-- The nested index loop equals a single fold over the flattened index list.
+
+This is the workhorse of the file. The implementation loops over dimensions recursively, whereas an
+error bound is much easier to state as one sum over coordinates; turning one into the other once,
+here,
+keeps every later bound free of nested inductions. -/
 theorem foldlIndices_eq_enumerateIndices {a : Type} (dims : List Nat)
     (initial : a) (step : a → List Nat → a) :
     foldlIndices dims initial step =
@@ -185,6 +193,7 @@ def enumerateChannelIndices (channels : Nat) (dims : List Nat) :
   (List.finRange channels).flatMap fun channel =>
     (enumerateIndices dims).map fun index => (channel, index)
 
+/-- Same flattening one level up, for the channel loop wrapped around the spatial loop. -/
 theorem foldChannelsIndices_eq_foldl {a : Type} (channels : Nat) (dims : List Nat)
     (initial : a) (step : a → Fin channels → List Nat → a) :
     (List.finRange channels).foldl
@@ -201,17 +210,19 @@ theorem foldChannelsIndices_eq_foldl {a : Type} (channels : Nat) (dims : List Na
 
 private theorem get_convCoreSpec
     {alpha : Type} [Context alpha]
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
-    (weights : Tensor alpha (Shape.ofList (outC :: inC :: kernel.toList)))
-    (input : Tensor alpha (Shape.ofList (inC :: inSpatial.toList)))
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
+    (weights : Tensor alpha (Shape.ofList (outC :: inC :: (Tensor.to kernel (List Nat)))))
+    (input : Tensor alpha (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat)))))
     (outChannel : Fin outC)
-    (outIndex : MultiIndex (convOutSpatial inSpatial kernel stride padding).toList) :
+    (outIndex :
+      MultiIndex (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))) :
     MultiIndex.get (convCoreSpec (stride := stride) (padding := padding) weights input)
         (outChannel, outIndex) =
       (List.finRange inC).foldl (fun acc inChannel =>
-        foldlIndices kernel.toList acc (fun acc kernelIndex =>
+        foldlIndices (Tensor.to kernel (List Nat)) acc (fun acc kernelIndex =>
           acc +
-            (match mkInputIdx? outIndex.toList kernelIndex stride.toList padding.toList with
+            (match mkInputIdx? outIndex.toList kernelIndex (Tensor.to stride (List Nat))
+                (Tensor.to padding (List Nat)) with
               | none => 0
               | some inputIndex => getAtOrZero input (inChannel.val :: inputIndex)) *
             getAtOrZero weights (outChannel.val :: inChannel.val :: kernelIndex))) 0 := by
@@ -221,9 +232,10 @@ private theorem get_convCoreSpec
 
 private theorem get_convBiasBroadcastSpec
     {alpha : Type} [Context alpha]
-    {d outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (bias : Tensor alpha [outC]) (outChannel : Fin outC)
-    (outIndex : MultiIndex (convOutSpatial inSpatial kernel stride padding).toList) :
+    (outIndex :
+      MultiIndex (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))) :
     MultiIndex.get
         (convBiasBroadcastSpec (kernel := kernel) (stride := stride)
           (padding := padding) (inSpatial := inSpatial) bias)
@@ -241,48 +253,54 @@ theorem approx_getAtOrZero {shape : Shape} {ideal : Tensor ℝ shape}
         (getAtOrZero rounded index) - getAtOrZero ideal index) ≤ error := by
   induction shape generalizing index with
   | scalar =>
-      cases ideal with
-      | scalar idealValue =>
-          cases rounded with
-          | scalar roundedValue =>
-              cases index with
-              | nil => simpa using (approxTensor_scalar_iff.mp h)
-              | cons _ _ =>
-                  simpa [toSpec_zero (β := beta) (fexp := fexp) (rnd := rnd)] using
-                    approxTensor_eps_nonneg h
+      cases index with
+      | nil =>
+          rw [← Tensor.scalar_item ideal, ← Tensor.scalar_item rounded] at h
+          simpa [getAtOrZero] using (approxTensor_scalar_iff.mp h)
+      | cons _ _ =>
+          simpa [getAtOrZero,
+            toSpec_zero (β := beta) (fexp := fexp) (rnd := rnd)] using
+              approxTensor_eps_nonneg h
   | dim n shape ih =>
-      cases ideal with
-      | dim idealValues =>
-          cases rounded with
-          | dim roundedValues =>
-              cases index with
-              | nil =>
-                  simpa [toSpec_zero (β := beta) (fexp := fexp) (rnd := rnd)] using
-                    approxTensor_eps_nonneg h
-              | cons i tail =>
-                  by_cases hi : i < n
-                  · simpa [getAtOrZero, hi] using
-                      ih (approxTensor_dim_get h ⟨i, hi⟩) tail
-                  · simpa [getAtOrZero, hi,
-                      toSpec_zero (β := beta) (fexp := fexp) (rnd := rnd)] using
-                      approxTensor_eps_nonneg h
+      cases index with
+      | nil =>
+          simpa [getAtOrZero,
+            toSpec_zero (β := beta) (fexp := fexp) (rnd := rnd)] using
+              approxTensor_eps_nonneg h
+      | cons i tail =>
+          by_cases hi : i < n
+          · simpa [getAtOrZero, hi] using
+              ih (approxTensor_dim_get h ⟨i, hi⟩) tail
+          · simpa [getAtOrZero, hi,
+              toSpec_zero (β := beta) (fexp := fexp) (rnd := rnd)] using
+                approxTensor_eps_nonneg h
 
 /-! ## Forward convolution -/
 
+/-- The input element a convolution reads for one output position and one `(channel, offset)` pair,
+or zero when the strided, padded index falls outside the input.
+
+Naming the read explicitly is what lets the approximation proof treat padding as an exact zero
+rather than as another rounded value. -/
 def convolutionInputValue
     {alpha : Type} [Context alpha]
-    {d inC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
-    (input : Tensor alpha (Shape.ofList (inC :: inSpatial.toList)))
-    (outIndex : MultiIndex (convOutSpatial inSpatial kernel stride padding).toList)
+    {d inC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
+    (input : Tensor alpha (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat)))))
+    (outIndex : MultiIndex (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat)))
     (index : Fin inC × List Nat) : alpha :=
-  match mkInputIdx? outIndex.toList index.2 stride.toList padding.toList with
+  match mkInputIdx? outIndex.toList index.2 (Tensor.to stride (List Nat))
+      (Tensor.to padding (List Nat)) with
   | none => 0
   | some inputIndex => getAtOrZero input (index.1.val :: inputIndex)
 
+/-- The weight a given input coordinate is multiplied by, as the implementation reads it.
+
+Named so the error bound can talk about the summands of the accumulation in the same order the code
+produces them, which is what makes the bound tight rather than merely valid. -/
 def convolutionWeightValue
     {alpha : Type} [Context alpha]
-    {d inC outC : Nat} {kernel : Spec.Tensor Nat [d]}
-    (weights : Tensor alpha (Shape.ofList (outC :: inC :: kernel.toList)))
+    {d inC outC : Nat} {kernel : TorchLean.Tensor Nat [d]}
+    (weights : Tensor alpha (Shape.ofList (outC :: inC :: (Tensor.to kernel (List Nat)))))
     (outChannel : Fin outC) (index : Fin inC × List Nat) : alpha :=
   getAtOrZero weights (outChannel.val :: index.1.val :: index.2)
 
@@ -293,13 +311,14 @@ The budget follows the implementation's multiplication and accumulation order, t
 the final bias addition.
 -/
 def convolutionPointError
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (layer : ConvSpec d inC outC kernel stride padding R)
-    (input : Tensor R (Shape.ofList (inC :: inSpatial.toList)))
+    (input : Tensor R (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat)))))
     (weightError biasError inputError : ℝ)
     (outChannel : Fin outC)
-    (outIndex : MultiIndex (convOutSpatial inSpatial kernel stride padding).toList) : ℝ :=
-  let indices := enumerateChannelIndices inC kernel.toList
+    (outIndex :
+      MultiIndex (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))) : ℝ :=
+  let indices := enumerateChannelIndices inC (Tensor.to kernel (List Nat))
   let inputValue := convolutionInputValue input outIndex
   let weightValue := convolutionWeightValue layer.kernel outChannel
   let sumValue := indices.foldl
@@ -311,11 +330,11 @@ def convolutionPointError
 
 /-- One coordinate of rounded convolution is enclosed by `convolutionPointError`. -/
 theorem approx_convSpec_coordinate
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     {idealLayer : ConvSpec d inC outC kernel stride padding ℝ}
     {roundedLayer : ConvSpec d inC outC kernel stride padding R}
-    {idealInput : Tensor ℝ (Shape.ofList (inC :: inSpatial.toList))}
-    {roundedInput : Tensor R (Shape.ofList (inC :: inSpatial.toList))}
+    {idealInput : Tensor ℝ (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat))))}
+    {roundedInput : Tensor R (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat))))}
     {weightError biasError inputError : ℝ}
     (hWeight : approxTensor
       (toSpec := toSpec (β := beta) (fexp := fexp) (rnd := rnd))
@@ -327,14 +346,15 @@ theorem approx_convSpec_coordinate
       (toSpec := toSpec (β := beta) (fexp := fexp) (rnd := rnd))
       idealInput roundedInput inputError)
     (outChannel : Fin outC)
-    (outIndex : MultiIndex (convOutSpatial inSpatial kernel stride padding).toList) :
+    (outIndex :
+      MultiIndex (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))) :
     abs
         (toSpec (β := beta) (fexp := fexp) (rnd := rnd)
             (MultiIndex.get (convSpec roundedLayer roundedInput) (outChannel, outIndex)) -
           MultiIndex.get (convSpec idealLayer idealInput) (outChannel, outIndex)) ≤
       convolutionPointError (beta := beta) (fexp := fexp) (rnd := rnd)
         roundedLayer roundedInput weightError biasError inputError outChannel outIndex := by
-  let indices := enumerateChannelIndices inC kernel.toList
+  let indices := enumerateChannelIndices inC (Tensor.to kernel (List Nat))
   let inputIdeal := convolutionInputValue idealInput outIndex
   let inputRounded := convolutionInputValue roundedInput outIndex
   let weightIdeal := convolutionWeightValue idealLayer.kernel outChannel
@@ -393,64 +413,65 @@ theorem approx_convSpec_coordinate
 
 private theorem get_convKernelDerivSpec
     {alpha : Type} [Context alpha]
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (layer : ConvSpec d inC outC kernel stride padding alpha)
-    (input : Tensor alpha (Shape.ofList (inC :: inSpatial.toList)))
+    (input : Tensor alpha (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat)))))
     (gradOutput : Tensor alpha
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList)))
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat)))))
     (outChannel : Fin outC) (inChannel : Fin inC)
-    (kernelIndex : MultiIndex kernel.toList) :
+    (kernelIndex : MultiIndex (Tensor.to kernel (List Nat))) :
     MultiIndex.get (convKernelDerivSpec layer input gradOutput)
         (outChannel, (inChannel, kernelIndex)) =
-      foldlIndices (convOutSpatial inSpatial kernel stride padding).toList 0
+      foldlIndices (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat)) 0
         (fun acc outIndex =>
           acc +
-            (match mkInputIdx? outIndex kernelIndex.toList stride.toList padding.toList with
+            (match mkInputIdx? outIndex kernelIndex.toList (Tensor.to stride (List Nat))
+                (Tensor.to padding (List Nat)) with
               | none => 0
               | some inputIndex => getAtOrZero input (inChannel.val :: inputIndex)) *
             getAtOrZero gradOutput (outChannel.val :: outIndex)) := by
-  change
-    MultiIndex.get
-        (Spec.Tensor.generate kernel.toList fun kIdx =>
-          foldlIndices (convOutSpatial inSpatial kernel stride padding).toList 0
-            (fun acc outIdx =>
-              acc +
-                (match mkInputIdx? outIdx kIdx stride.toList padding.toList with
-                  | none => 0
-                  | some inIdx => getAtOrZero input (inChannel.val :: inIdx)) *
-                getAtOrZero gradOutput (outChannel.val :: outIdx)))
-        kernelIndex = _
+  simp only [convKernelDerivSpec, MultiIndex.get, Tensor.unstack_dim]
   rw [MultiIndex.get_generate]
+  rfl
 
+/--
+The input value entering one term of the kernel-gradient accumulation, zero outside the padding.
+-/
 def kernelGradientInputValue
     {alpha : Type} [Context alpha]
-    {d inC : Nat} {kernel inSpatial : Spec.Tensor Nat [d]}
-    (stride padding : Spec.Tensor Nat [d])
-    (input : Tensor alpha (Shape.ofList (inC :: inSpatial.toList)))
-    (inChannel : Fin inC) (kernelIndex : MultiIndex kernel.toList)
+    {d inC : Nat} {kernel inSpatial : TorchLean.Tensor Nat [d]}
+    (stride padding : TorchLean.Tensor Nat [d])
+    (input : Tensor alpha (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat)))))
+    (inChannel : Fin inC) (kernelIndex : MultiIndex (Tensor.to kernel (List Nat)))
     (outIndex : List Nat) : alpha :=
-  match mkInputIdx? outIndex kernelIndex.toList stride.toList padding.toList with
+  match mkInputIdx? outIndex kernelIndex.toList (Tensor.to stride (List Nat))
+      (Tensor.to padding (List Nat)) with
   | none => 0
   | some inputIndex => getAtOrZero input (inChannel.val :: inputIndex)
 
+/-- The output-gradient value entering that same term. -/
 def kernelGradientOutputValue
     {alpha : Type} [Context alpha]
-    {d outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (gradOutput : Tensor alpha
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList)))
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat)))))
     (outChannel : Fin outC) (outIndex : List Nat) : alpha :=
   getAtOrZero gradOutput (outChannel.val :: outIndex)
 
 /-- Error budget for one coordinate of the rounded convolution kernel gradient. -/
 def convolutionKernelGradientPointError
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
-    (input : Tensor R (Shape.ofList (inC :: inSpatial.toList)))
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
+    (input : Tensor R (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat)))))
     (gradOutput : Tensor R
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList)))
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat)))))
     (inputError gradOutputError : ℝ)
     (outChannel : Fin outC) (inChannel : Fin inC)
-    (kernelIndex : MultiIndex kernel.toList) : ℝ :=
-  let indices := enumerateIndices (convOutSpatial inSpatial kernel stride padding).toList
+    (kernelIndex : MultiIndex (Tensor.to kernel (List Nat))) : ℝ :=
+  let indices :=
+    enumerateIndices (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))
   productFoldError (beta := beta) (fexp := fexp) (rnd := rnd) indices
     (kernelGradientInputValue stride padding input inChannel kernelIndex)
     (kernelGradientOutputValue gradOutput outChannel)
@@ -458,15 +479,17 @@ def convolutionKernelGradientPointError
 
 /-- Every coordinate of the rounded kernel gradient encloses its ideal real value. -/
 theorem approx_convKernelDerivSpec_coordinate
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     {idealLayer : ConvSpec d inC outC kernel stride padding ℝ}
     {roundedLayer : ConvSpec d inC outC kernel stride padding R}
-    {idealInput : Tensor ℝ (Shape.ofList (inC :: inSpatial.toList))}
-    {roundedInput : Tensor R (Shape.ofList (inC :: inSpatial.toList))}
+    {idealInput : Tensor ℝ (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat))))}
+    {roundedInput : Tensor R (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat))))}
     {idealGradOutput : Tensor ℝ
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList))}
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))))}
     {roundedGradOutput : Tensor R
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList))}
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))))}
     {inputError gradOutputError : ℝ}
     (hInput : approxTensor
       (toSpec := toSpec (β := beta) (fexp := fexp) (rnd := rnd))
@@ -475,7 +498,7 @@ theorem approx_convKernelDerivSpec_coordinate
       (toSpec := toSpec (β := beta) (fexp := fexp) (rnd := rnd))
       idealGradOutput roundedGradOutput gradOutputError)
     (outChannel : Fin outC) (inChannel : Fin inC)
-    (kernelIndex : MultiIndex kernel.toList) :
+    (kernelIndex : MultiIndex (Tensor.to kernel (List Nat))) :
     abs
         (toSpec (β := beta) (fexp := fexp) (rnd := rnd)
             (MultiIndex.get
@@ -488,7 +511,8 @@ theorem approx_convKernelDerivSpec_coordinate
         (beta := beta) (fexp := fexp) (rnd := rnd)
         roundedInput roundedGradOutput inputError gradOutputError
         outChannel inChannel kernelIndex := by
-  let indices := enumerateIndices (convOutSpatial inSpatial kernel stride padding).toList
+  let indices :=
+    enumerateIndices (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))
   let inputIdeal := kernelGradientInputValue stride padding idealInput inChannel kernelIndex
   let inputRounded := kernelGradientInputValue stride padding roundedInput inChannel kernelIndex
   let gradIdeal := kernelGradientOutputValue idealGradOutput outChannel
@@ -531,47 +555,46 @@ theorem approx_convKernelDerivSpec_coordinate
 
 private theorem get_convBiasDerivSpec
     {alpha : Type} [Context alpha]
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (layer : ConvSpec d inC outC kernel stride padding alpha)
-    (input : Tensor alpha (Shape.ofList (inC :: inSpatial.toList)))
+    (input : Tensor alpha (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat)))))
     (gradOutput : Tensor alpha
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList)))
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat)))))
     (outChannel : Fin outC) :
     MultiIndex.get (dims := [outC]) (convBiasDerivSpec layer input gradOutput)
         (outChannel, PUnit.unit) =
-      foldlIndices (convOutSpatial inSpatial kernel stride padding).toList 0
+      foldlIndices (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat)) 0
         (fun acc outIndex =>
           acc + getAtOrZero gradOutput (outChannel.val :: outIndex)) := by
-  change MultiIndex.get (dims := [])
-      (Tensor.scalar
-        (foldlIndices (convOutSpatial inSpatial kernel stride padding).toList 0
-          (fun acc outIndex =>
-            acc + getAtOrZero gradOutput (outChannel.val :: outIndex))))
-      PUnit.unit = _
-  rfl
+  simp [convBiasDerivSpec, MultiIndex.get]
 
 /-- Error budget for one coordinate of the rounded convolution bias gradient. -/
 def convolutionBiasGradientPointError
-    {d outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (gradOutput : Tensor R
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList)))
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat)))))
     (gradOutputError : ℝ) (outChannel : Fin outC) : ℝ :=
-  let indices := enumerateIndices (convOutSpatial inSpatial kernel stride padding).toList
+  let indices :=
+    enumerateIndices (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))
   foldError (beta := beta) (fexp := fexp) (rnd := rnd) indices
     (fun index => getAtOrZero gradOutput (outChannel.val :: index))
     (fun _ => gradOutputError)
 
 /-- Every coordinate of the rounded bias gradient encloses its ideal real value. -/
 theorem approx_convBiasDerivSpec_coordinate
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     {idealLayer : ConvSpec d inC outC kernel stride padding ℝ}
     {roundedLayer : ConvSpec d inC outC kernel stride padding R}
-    {idealInput : Tensor ℝ (Shape.ofList (inC :: inSpatial.toList))}
-    {roundedInput : Tensor R (Shape.ofList (inC :: inSpatial.toList))}
+    {idealInput : Tensor ℝ (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat))))}
+    {roundedInput : Tensor R (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat))))}
     {idealGradOutput : Tensor ℝ
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList))}
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))))}
     {roundedGradOutput : Tensor R
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList))}
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))))}
     {gradOutputError : ℝ}
     (hGradOutput : approxTensor
       (toSpec := toSpec (β := beta) (fexp := fexp) (rnd := rnd))
@@ -588,7 +611,8 @@ theorem approx_convBiasDerivSpec_coordinate
       convolutionBiasGradientPointError
         (beta := beta) (fexp := fexp) (rnd := rnd)
         roundedGradOutput gradOutputError outChannel := by
-  let indices := enumerateIndices (convOutSpatial inSpatial kernel stride padding).toList
+  let indices :=
+    enumerateIndices (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))
   let idealValue := fun index => getAtOrZero idealGradOutput (outChannel.val :: index)
   let roundedValue := fun index => getAtOrZero roundedGradOutput (outChannel.val :: index)
   have hValue : forall index, index ∈ indices ->
@@ -615,48 +639,42 @@ theorem approx_convBiasDerivSpec_coordinate
 
 private theorem get_convInputDerivSpec
     {alpha : Type} [Context alpha]
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (layer : ConvSpec d inC outC kernel stride padding alpha)
-    (input : Tensor alpha (Shape.ofList (inC :: inSpatial.toList)))
+    (input : Tensor alpha (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat)))))
     (gradOutput : Tensor alpha
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList)))
-    (inChannel : Fin inC) (inputIndex : MultiIndex inSpatial.toList) :
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat)))))
+    (inChannel : Fin inC) (inputIndex : MultiIndex (Tensor.to inSpatial (List Nat))) :
     MultiIndex.get (convInputDerivSpec layer input gradOutput)
         (inChannel, inputIndex) =
       (List.finRange outC).foldl (fun acc outChannel =>
-        foldlIndices kernel.toList acc (fun acc kernelIndex =>
+        foldlIndices (Tensor.to kernel (List Nat)) acc (fun acc kernelIndex =>
           acc +
             (match mkTransposeInputIdx? inputIndex.toList kernelIndex
-                stride.toList padding.toList with
+                (Tensor.to stride (List Nat)) (Tensor.to padding (List Nat)) with
               | none => 0
               | some outIndex =>
                   getAtOrZero gradOutput (outChannel.val :: outIndex) *
                     getAtOrZero layer.kernel
                       (outChannel.val :: inChannel.val :: kernelIndex)))) 0 := by
-  change MultiIndex.get
-      (Spec.Tensor.generate inSpatial.toList fun inIdx =>
-        (List.finRange outC).foldl (fun acc outChannel =>
-          foldlIndices kernel.toList acc (fun acc kernelIndex =>
-            acc +
-              (match mkTransposeInputIdx? inIdx kernelIndex
-                  stride.toList padding.toList with
-                | none => 0
-                | some outIndex =>
-                    getAtOrZero gradOutput (outChannel.val :: outIndex) *
-                      getAtOrZero layer.kernel
-                        (outChannel.val :: inChannel.val :: kernelIndex)))) 0)
-      inputIndex = _
+  simp only [convInputDerivSpec, MultiIndex.get_dim]
   rw [MultiIndex.get_generate]
+  rfl
 
+/-- One summand of the input-gradient accumulation: an output gradient times the kernel weight that
+connected them, or zero when the transposed index falls outside the input. -/
 def inputGradientTermValue
     {alpha : Type} [Context alpha]
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (layer : ConvSpec d inC outC kernel stride padding alpha)
     (gradOutput : Tensor alpha
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList)))
-    (inChannel : Fin inC) (inputIndex : MultiIndex inSpatial.toList)
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat)))))
+    (inChannel : Fin inC) (inputIndex : MultiIndex (Tensor.to inSpatial (List Nat)))
     (index : Fin outC × List Nat) : alpha :=
-  match mkTransposeInputIdx? inputIndex.toList index.2 stride.toList padding.toList with
+  match mkTransposeInputIdx? inputIndex.toList index.2 (Tensor.to stride (List Nat))
+      (Tensor.to padding (List Nat)) with
   | none => 0
   | some outIndex =>
       getAtOrZero gradOutput (index.1.val :: outIndex) *
@@ -664,18 +682,19 @@ def inputGradientTermValue
 
 /-- Error budget for one coordinate of the rounded convolution input gradient. -/
 def convolutionInputGradientPointError
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (layer : ConvSpec d inC outC kernel stride padding R)
     (gradOutput : Tensor R
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList)))
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat)))))
     (weightError gradOutputError : ℝ)
-    (inChannel : Fin inC) (inputIndex : MultiIndex inSpatial.toList) : ℝ :=
-  let indices := enumerateChannelIndices outC kernel.toList
+    (inChannel : Fin inC) (inputIndex : MultiIndex (Tensor.to inSpatial (List Nat))) : ℝ :=
+  let indices := enumerateChannelIndices outC (Tensor.to kernel (List Nat))
   foldError (beta := beta) (fexp := fexp) (rnd := rnd) indices
     (inputGradientTermValue layer gradOutput inChannel inputIndex)
     (fun index =>
       match mkTransposeInputIdx? inputIndex.toList index.2
-          stride.toList padding.toList with
+          (Tensor.to stride (List Nat)) (Tensor.to padding (List Nat)) with
       | none => 0
       | some outIndex =>
           productError (beta := beta) (fexp := fexp) (rnd := rnd)
@@ -685,15 +704,17 @@ def convolutionInputGradientPointError
 
 /-- Every coordinate of the rounded input gradient encloses its ideal real value. -/
 theorem approx_convInputDerivSpec_coordinate
-    {d inC outC : Nat} {kernel stride padding inSpatial : Spec.Tensor Nat [d]}
+    {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     {idealLayer : ConvSpec d inC outC kernel stride padding ℝ}
     {roundedLayer : ConvSpec d inC outC kernel stride padding R}
-    {idealInput : Tensor ℝ (Shape.ofList (inC :: inSpatial.toList))}
-    {roundedInput : Tensor R (Shape.ofList (inC :: inSpatial.toList))}
+    {idealInput : Tensor ℝ (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat))))}
+    {roundedInput : Tensor R (Shape.ofList (inC :: (Tensor.to inSpatial (List Nat))))}
     {idealGradOutput : Tensor ℝ
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList))}
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))))}
     {roundedGradOutput : Tensor R
-      (Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).toList))}
+      (Shape.ofList
+        (outC :: (Tensor.to (convOutSpatial inSpatial kernel stride padding) (List Nat))))}
     {weightError gradOutputError : ℝ}
     (hWeight : approxTensor
       (toSpec := toSpec (β := beta) (fexp := fexp) (rnd := rnd))
@@ -701,7 +722,7 @@ theorem approx_convInputDerivSpec_coordinate
     (hGradOutput : approxTensor
       (toSpec := toSpec (β := beta) (fexp := fexp) (rnd := rnd))
       idealGradOutput roundedGradOutput gradOutputError)
-    (inChannel : Fin inC) (inputIndex : MultiIndex inSpatial.toList) :
+    (inChannel : Fin inC) (inputIndex : MultiIndex (Tensor.to inSpatial (List Nat))) :
     abs
         (toSpec (β := beta) (fexp := fexp) (rnd := rnd)
             (MultiIndex.get
@@ -714,11 +735,12 @@ theorem approx_convInputDerivSpec_coordinate
         (beta := beta) (fexp := fexp) (rnd := rnd)
         roundedLayer roundedGradOutput weightError gradOutputError
         inChannel inputIndex := by
-  let indices := enumerateChannelIndices outC kernel.toList
+  let indices := enumerateChannelIndices outC (Tensor.to kernel (List Nat))
   let idealTerm := inputGradientTermValue idealLayer idealGradOutput inChannel inputIndex
   let roundedTerm := inputGradientTermValue roundedLayer roundedGradOutput inChannel inputIndex
   let termError := fun (index : Fin outC × List Nat) =>
-    match mkTransposeInputIdx? inputIndex.toList index.2 stride.toList padding.toList with
+    match mkTransposeInputIdx? inputIndex.toList index.2 (Tensor.to stride (List Nat))
+        (Tensor.to padding (List Nat)) with
     | none => 0
     | some outIndex =>
         productError (beta := beta) (fexp := fexp) (rnd := rnd)
@@ -731,11 +753,19 @@ theorem approx_convInputDerivSpec_coordinate
         idealTerm index) ≤ termError index := by
     intro index _
     cases hIndex : mkTransposeInputIdx? inputIndex.toList index.2
-        stride.toList padding.toList with
+        (Tensor.to stride (List Nat)) (Tensor.to padding (List Nat)) with
     | none =>
-        simp [roundedTerm, idealTerm, termError, inputGradientTermValue, hIndex,
+        have hIndexData :
+            mkTransposeInputIdx? inputIndex.toList index.2 stride.data.toList
+                padding.data.toList = none := by
+          simpa only [Tensor.to_list_eq_data] using hIndex
+        simp [roundedTerm, idealTerm, termError, inputGradientTermValue, hIndexData,
           toSpec_zero (β := beta) (fexp := fexp) (rnd := rnd)]
     | some outIndex =>
+        have hIndexData :
+            mkTransposeInputIdx? inputIndex.toList index.2 stride.data.toList
+                padding.data.toList = some outIndex := by
+          simpa only [Tensor.to_list_eq_data] using hIndex
         have hGrad := approx_getAtOrZero
           (beta := beta) (fexp := fexp) (rnd := rnd) hGradOutput
           (index.1.val :: outIndex)
@@ -743,7 +773,7 @@ theorem approx_convInputDerivSpec_coordinate
           (beta := beta) (fexp := fexp) (rnd := rnd) hWeight
           (index.1.val :: inChannel.val :: index.2)
         simpa [roundedTerm, idealTerm, termError, inputGradientTermValue,
-          hIndex, productError] using
+          hIndex, hIndexData, productError] using
           (approx_mul_nf (β := beta) (fexp := fexp) (rnd := rnd) hGrad hKernel)
   have hBound := approx_fold (beta := beta) (fexp := fexp) (rnd := rnd)
     indices idealTerm roundedTerm termError hTerm

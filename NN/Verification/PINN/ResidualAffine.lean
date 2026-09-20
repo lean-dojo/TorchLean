@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph
+public import NN.MLTheory.CROWN.Graph.Engine.CROWN.Run
 
 /-!
 # ResidualAffine
@@ -36,8 +36,8 @@ namespace NN.Verification.PINN.ResidualAffine
 
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph
-open _root_.Spec
-open _root_.Spec.Tensor
+open Spec TorchLean
+open TorchLean.Tensor
 
 /-- Forward CROWN/DeepPoly bounds for the scalar output `u` (or sum of outputs). -/
 def crownUBoundsForward (g : Graph) (ps : ParamStore Float)
@@ -50,8 +50,8 @@ def crownUBoundsForward (g : Graph) (ps : ParamStore Float)
     let outId : Nat := g.nodes.size - 1
     match evalCROWNOutputBox? (α := Float) crown inB outId inB.dim with
     | .ok outB =>
-        let ulo := Spec.Tensor.sumSpec outB.lo
-        let uhi := Spec.Tensor.sumSpec outB.hi
+        let ulo := TorchLean.Tensor.sumSpec outB.lo
+        let uhi := TorchLean.Tensor.sumSpec outB.hi
         some (ulo, uhi)
     | .error _ => none
 
@@ -68,13 +68,13 @@ def crownUBoundsBackward (g : Graph) (ps : ParamStore Float)
       match outputBox? ibp outId with
       | .ok B => B.dim
       | .error _ => 0
-    let objV : Tensor Float [outDim] := Spec.fill (α := Float) 1.0 (.dim outDim
-      .scalar)
+    let objV : Tensor Float [outDim] := Tensor.full (α := Float) (.dim outDim
+      .scalar) 1.0
     let obj : FlatTensor Float := { n := outDim, v := objV }
     match backwardObjectiveBox? (α := Float) g ps ctx ibp inB outId obj with
     | .ok outB =>
-        let ulo := Spec.Tensor.sumSpec outB.lo
-        let uhi := Spec.Tensor.sumSpec outB.hi
+        let ulo := TorchLean.Tensor.sumSpec outB.lo
+        let uhi := TorchLean.Tensor.sumSpec outB.hi
         some (ulo, uhi)
     | .error _ => none
 
@@ -128,27 +128,5 @@ def evalAffine2DOnBox (ax ay c ul uh vl vh : Float) : (Float × Float) :=
   let hi1 := if p1 > p2 then p1 else p2
   let hi2 := if p3 > p4 then p3 else p4
   ((if lo1 < lo2 then lo1 else lo2), (if hi1 > hi2 then hi1 else hi2))
-
-/-- Basic one-dimensional branch-and-bound over $[x-\varepsilon,x+\varepsilon]$.
-
-It recursively splits the box up to `maxDepth` or until its width is at most `minWidth`.
-On each sub-box it calls `boundOn`, which returns `(lo, hi)`. The result is the tightest
-global pair `(min lo, max hi)` across the sub-boxes.
--/
-def branchAndBound1D (x eps : Float) (maxDepth : Nat) (minWidth : Float)
-   (boundOn : Float → Float → IO (Float × Float)) : IO (Float × Float) := do
-  let rec go (a b : Float) (d : Nat) : IO (Float × Float) := do
-    match d with
-    | 0 =>
-      boundOn ((a + b) * 0.5) ((b - a) * 0.5)
-    | Nat.succ d' =>
-      if (b - a) ≤ minWidth then
-        boundOn ((a + b) * 0.5) ((b - a) * 0.5)
-      else
-        let mid := (a + b) * 0.5
-        let (l1, h1) ← go a mid d'
-        let (l2, h2) ← go mid b d'
-        pure (if l1 < l2 then l1 else l2, if h1 > h2 then h1 else h2)
-  go (x - eps) (x + eps) maxDepth
 
 end NN.Verification.PINN.ResidualAffine

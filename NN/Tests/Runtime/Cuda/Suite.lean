@@ -6,6 +6,7 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Tests.Runtime.ParameterAliases
 public import NN.Tests.Runtime.Cuda.Softmax
 public import NN.Tests.Runtime.Cuda.Elementwise
 public import NN.Tests.Runtime.Cuda.LayerNorm
@@ -23,6 +24,7 @@ public import NN.Tests.Runtime.Cuda.ViewsBroadcastReduce
 public import NN.Tests.Runtime.Cuda.LinearMseConcatSliceGather
 public import NN.Tests.Runtime.Cuda.ScaledProdExp
 public import NN.Tests.Runtime.Cuda.Stress
+public import NN.Tests.Runtime.Cuda.Trainer
 
 /-!
 # Suite
@@ -41,6 +43,7 @@ namespace Cuda
 
 /-- Unified CUDA test entrypoint (called by `NN/Tests/Suite.lean`). -/
 def run : IO Unit := do
+  NN.Tests.Runtime.ParameterAliases.runCuda
   IO.println "=== Runtime CUDA kernel coverage suite ==="
   Softmax.run
   Elementwise.run
@@ -59,6 +62,7 @@ def run : IO Unit := do
   LinearMseConcatSliceGather.run
   ScaledProdExp.run
   Stress.run
+  Trainer.run
   IO.println "=== CUDA kernel coverage suite completed ==="
 
 end Cuda

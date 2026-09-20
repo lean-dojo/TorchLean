@@ -8,10 +8,6 @@ module
 
 public import NN.Runtime.Autograd.Engine.Cuda.Tape
 public import NN.Runtime.Autograd.Engine.Cuda.Kernels
-public import NN.Runtime.Autograd.Engine.Cuda.ConvPool
-public import NN.Runtime.Autograd.Engine.Cuda.Convert
-public import NN.Runtime.Autograd.Engine.Cuda.Shape
-public import NN.Spec.Core.TensorReductionShape
 
 /-!
 # CUDA Tape Operations: Shared Helpers
@@ -23,8 +19,8 @@ namespace Runtime
 namespace Autograd
 namespace Cuda
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
 namespace Tape
 

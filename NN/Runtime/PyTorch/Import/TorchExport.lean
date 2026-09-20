@@ -9,6 +9,7 @@ module
 public import NN.IR.Check
 public import NN.IR.Payload
 public import NN.Runtime.PyTorch.Import.Core
+public import NN.Runtime.PyTorch.Wire
 
 /-!
 # `torch.export` / FX Graph JSON Import
@@ -42,6 +43,10 @@ downstream tools a useful guarantee: if `parseGraph` succeeds, the resulting gra
 acyclic, id-disciplined, arity-correct, and shape-consistent according to the shared IR inference
 rules.
 
+Op kind strings are not spelled here. They come from the shared table in
+`NN.Runtime.PyTorch.Wire`, which the Python-emitting exporters also use.
+The tag round trip is proved there.
+
 The matching Python-side emitter lives in `NN.Runtime.PyTorch.Export.TorchExport`.
 -/
 
@@ -53,8 +58,30 @@ namespace TorchExport
 
 open Lean
 open Json
-open Spec
+open Spec TorchLean
 open NN.IR
+open Interop.PyTorch
+
+/--
+Node ids whose payloads are synthesized while lowering one raw single-head MHA tuple node.
+
+Keeping this binding explicit prevents payload parsing from depending on incidental node-number
+offsets or reverse-engineering the generated subgraph.
+-/
+structure MhaPayloadBinding where
+  /-- Raw value-graph node that owns the serialized MHA parameters. -/
+  rawId : Nat
+  /-- Generated query projection node. -/
+  queryId : Nat
+  /-- Generated key projection node. -/
+  keyId : Nat
+  /-- Generated value projection node. -/
+  valueId : Nat
+  /-- Generated attention-score scale constant node. -/
+  scaleId : Nat
+  /-- Generated output projection node. -/
+  outputId : Nat
+  deriving Repr
 
 /-- A captured PyTorch graph lowered into TorchLean IR plus its designated interface node ids. -/
 structure CapturedGraph where
@@ -66,6 +93,8 @@ structure CapturedGraph where
   outputIds : Array Nat
   /-- Map from serialized FX value ids to lowered tensor IR ids. -/
   rawToTensor : Array (Option Nat)
+  /-- Payload ownership for subgraphs synthesized from raw MHA tuple nodes. -/
+  mhaPayloadBindings : Array MhaPayloadBinding
   deriving Repr
 
 namespace Internal
@@ -107,6 +136,7 @@ structure CapturedValueGraph where
 
 /-! ## Small JSON helpers -/
 
+/-- A uniform "wrong JSON shape" error, so import failures all read the same way. -/
 def typeError {α : Type} (ctx expected : String) (j : Json) : Except String α :=
   .error s!"PyTorch graph import: {ctx}: expected {expected}, got {j}"
 
@@ -196,10 +226,10 @@ def tensorField (ctx key : String) (shape : Shape) (o : StateDict) :
 
 /-- Read fixed-length tensor metadata, rejecting inconsistent serialized geometry. -/
 def natTensorField (ctx key : String) (rank : Nat) (o : StateDict) :
-    Except String (Spec.Tensor Nat [rank]) := do
+    Except String (TorchLean.Tensor Nat [rank]) := do
   let values ← natArrayField ctx key o
   if h : values.size = rank then
-    pure (Spec.Tensor.ofArrayExact values h)
+    pure (h ▸ TorchLean.Tensor.from values)
   else
     throw s!"PyTorch graph import: {ctx}.{key}: expected {rank} entries, got {values.size}"
 
@@ -237,42 +267,34 @@ def parseValueShape (ctx : String) (o : StateDict) : Except String ValueShape :=
 /--
 Parse a TorchLean IR op kind.
 
-The schema uses a stable string tag plus op-specific scalar fields. We avoid trying
-to parse raw PyTorch operator names here; the Python adapter is responsible for translating
-`torch.ops.aten.*` / FX targets into these TorchLean tags.
+The schema uses a stable string tag plus op-specific scalar fields. The tag is resolved through
+`Wire.parseOpTag?`, which recognizes the fixed v1 spellings. This function then reads the
+attributes each constructor needs. We avoid trying to parse raw PyTorch operator
+names here; the Python adapter is responsible for translating `torch.ops.aten.*` / FX targets into
+these TorchLean tags.
 -/
 def parseOpKind (ctx : String) (outShape : Shape) (o : StateDict) : Except String OpKind := do
-  let tag ← jsonString s!"{ctx}.kind" (← field ctx "kind" o)
+  let tagString ← jsonString s!"{ctx}.kind" (← field ctx "kind" o)
+  let some tag := Wire.parseOpTag? tagString
+    | throw s!"PyTorch graph import: {ctx}: unsupported TorchLean IR op kind `{tagString}`"
   match tag with
-  | "input" => pure .input
-  | "const" =>
+  | .const =>
       let valueShape ←
         match field? "value_shape" o with
         | some j => parseShape s!"{ctx}.value_shape" j
         | none => pure outShape
       pure (.const valueShape)
-  | "permute" => pure (.permute (← natArrayField ctx "perm" o))
-  | "transpose" => pure (.transpose (← natField ctx "axis1" o) (← natField ctx "axis2" o))
-  | "detach" => pure .detach
-  | "rand_uniform" => pure (.randUniform (← natField ctx "seed" o))
-  | "bernoulli_mask" => pure (.bernoulliMask (← natField ctx "seed" o))
-  | "add" => pure .add
-  | "sub" => pure .sub
-  | "mul_elem" => pure .mul_elem
-  | "abs" => pure .abs
-  | "sqrt" => pure .sqrt
-  | "inv" => pure .inv
-  | "max_elem" => pure .maxElem
-  | "min_elem" => pure .minElem
-  | "max_pool" => pure (.maxPool (← windowConfig ctx o))
-  | "avg_pool" => pure (.avgPool (← windowConfig ctx o))
-  | "broadcast_to" =>
+  | .permute => pure (.permute (← natArrayField ctx "perm" o))
+  | .transpose => pure (.transpose (← natField ctx "axis1" o) (← natField ctx "axis2" o))
+  | .randUniform => pure (.randUniform (← natField ctx "seed" o))
+  | .bernoulliMask => pure (.bernoulliMask (← natField ctx "seed" o))
+  | .maxPool => pure (.maxPool (← windowConfig ctx o))
+  | .avgPool => pure (.avgPool (← windowConfig ctx o))
+  | .broadcastTo =>
       pure (.broadcastTo (← shapeField ctx "from_shape" o) (← shapeField ctx "to_shape" o))
-  | "reduce_sum" | "reduce_mean" =>
+  | .reduceSum | .reduceMean =>
       throw s!"PyTorch graph import: {ctx}: reduction must be lowered from its axes configuration"
-  | "matmul" => pure .matmul
-  | "linear" => pure .linear
-  | "conv" =>
+  | .conv =>
       let window ← windowConfig ctx o
       pure (.conv
         { spatialRank := window.spatialRank
@@ -285,22 +307,21 @@ def parseOpKind (ctx : String) (outShape : Shape) (o : StateDict) : Except Strin
           channelAxis := ← natField ctx "channel_axis" o
           inChannels := ← natField ctx "in_channels" o
           outChannels := ← natField ctx "out_channels" o })
-  | "batch_norm_eval" =>
+  | .batchNormEval =>
       pure (.batchNormEval (← natField ctx "channel_axis" o) (← natField ctx "channels" o))
-  | "relu" => pure .relu
-  | "tanh" => pure .tanh
-  | "sigmoid" => pure .sigmoid
-  | "exp" => pure .exp
-  | "log" => pure .log
-  | "sin" => pure .sin
-  | "cos" => pure .cos
-  | "softmax" => pure (.softmax (← natField ctx "axis" o))
-  | "layernorm" => pure (.layernorm (← natField ctx "axis" o))
-  | "reshape" => pure (.reshape (← shapeField ctx "in_shape" o) (← shapeField ctx "out_shape" o))
-  | "flatten" => pure (.flatten (← shapeField ctx "value_shape" o))
-  | "concat" => pure (.concat (← natField ctx "axis" o))
-  | "mse_loss" => pure .mseLoss
-  | other => throw s!"PyTorch graph import: {ctx}: unsupported TorchLean IR op kind `{other}`"
+  | .softmax => pure (.softmax (← natField ctx "axis" o))
+  | .hardMaskedSoftmax =>
+      throw s!"PyTorch graph import: {ctx}: `{tagString}` has no artifact encoding for its mask yet"
+  | .layernorm => pure (.layernorm (← natField ctx "axis" o))
+  | .reshape => pure (.reshape (← shapeField ctx "in_shape" o) (← shapeField ctx "out_shape" o))
+  | .flatten => pure (.flatten (← shapeField ctx "value_shape" o))
+  | .concat => pure (.concat (← natField ctx "axis" o))
+  | .input | .detach | .add | .sub | .mulElem | .abs | .sqrt | .inv | .maxElem | .minElem | .sum
+  | .matmul | .linear | .relu | .tanh | .sigmoid | .softplus | .safeLog
+  | .exp | .log | .sin | .cos | .mseLoss =>
+      match tag.toKind? with
+      | some kind => pure kind
+      | none => throw s!"PyTorch graph import: {ctx}: internal error: `{tagString}` needs a payload"
 
 /-- Parse one raw PyTorch/FX value node. -/
 def parseValueNode (j : Json) : Except String CapturedValueNode := do
@@ -316,9 +337,9 @@ def parseValueNode (j : Json) : Except String CapturedValueNode := do
 def parseValueGraph (j : Json) : Except String CapturedValueGraph := do
   let o ← jsonObject "root" j
   match field? "format" o with
-  | some (.str "torchlean.ir.v1") => pure ()
-  | some (.str other) =>
-      throw s!"PyTorch graph import: unsupported format `{other}` (expected `torchlean.ir.v1`)"
+  | some (.str format) =>
+      if format != Wire.format then
+        throw s!"PyTorch graph import: unsupported format `{format}` (expected `{Wire.format}`)"
   | some bad => typeError "root.format" "string" bad
   | none => throw "PyTorch graph import: root: missing field `format`"
   let inputId ← natField "root" "input_id" o
@@ -361,12 +382,12 @@ def checkValueGraph (vg : CapturedValueGraph) : Except String Unit := do
       if parentId ≥ raw.id then
         throw <|
           s!"PyTorch graph import: node[{raw.id}]: parent id {parentId} is not < {raw.id}"
-    if raw.kind = "input" then
+    if raw.kind = Wire.opTag .input then
       inputCount := inputCount + 1
   if inputCount != 1 then
     throw s!"PyTorch graph import: expected exactly one input node, got {inputCount}"
   let input ← getValueNode vg vg.inputId
-  if input.kind != "input" then
+  if input.kind != Wire.opTag .input then
     throw <|
       s!"PyTorch graph import: input_id {vg.inputId} designates `{input.kind}`, not `input`"
   for outputId in vg.outputIds do
@@ -384,13 +405,14 @@ def lowerValueGraph (vg : CapturedValueGraph) : Except String CapturedGraph := d
   checkValueGraph vg
   let mut rawToTensor : Array (Option Nat) := Array.replicate vg.nodes.size none
   let mut tensorNodes : Array Node := #[]
+  let mut mhaPayloadBindings : Array MhaPayloadBinding := #[]
   for raw in vg.nodes do
     let ctx := s!"node[{raw.id}]"
     match raw.valueShape with
     | .tuple _items =>
         rawToTensor := rawToTensor.set! raw.id none
     | .tensor outShape =>
-        if raw.kind = "tuple_getitem" then
+        if raw.kind = Wire.tupleGetItem then
           let index ← natField ctx "index" raw.raw
           let parentId ←
             match raw.parents with
@@ -399,16 +421,15 @@ def lowerValueGraph (vg : CapturedValueGraph) : Except String CapturedGraph := d
           let parent ← getValueNode vg parentId
           match parent.valueShape with
           | .tuple items =>
-              if index ≥ items.size then
-                throw <|
-                  s!"PyTorch graph import: {ctx}: tuple index {index} is out of bounds for " ++
-                    s!"{items.size} components"
-              let selectedShape := items[index]!
+              let some selectedShape := items[index]?
+                | throw <|
+                    s!"PyTorch graph import: {ctx}: tuple index {index} is out of bounds for " ++
+                      s!"{items.size} components"
               if selectedShape != outShape then
                 throw <|
                   s!"PyTorch graph import: {ctx}: tuple component {index} has shape " ++
                     s!"{repr selectedShape}, but the projection declares {repr outShape}"
-              if parent.kind = "multihead_attention" then
+              if parent.kind = Wire.mhaTuple then
                 if index != 0 then
                   throw <|
                     s!"PyTorch graph import: {ctx}: `nn.MultiheadAttention` attention weights " ++
@@ -445,12 +466,18 @@ def lowerValueGraph (vg : CapturedValueGraph) : Except String CapturedGraph := d
                   match rawToTensor[xRawId]? with
                   | some (some tid) => pure tid
                   | some none =>
-                      throw s!"PyTorch graph import: {ctx}: MHA input raw node {xRawId} is not tensor-lowerable"
-                  | none => throw s!"PyTorch graph import: {ctx}: MHA input raw node {xRawId} out of bounds"
+                      throw <|
+                        s!"PyTorch graph import: {ctx}: MHA input raw node {xRawId} is not " ++
+                          "tensor-lowerable"
+                  | none =>
+                      throw <|
+                        s!"PyTorch graph import: {ctx}: MHA input raw node {xRawId} out of bounds"
                 let xNode ←
                   match tensorNodes[xId]? with
                   | some n => pure n
-                  | none => throw s!"PyTorch graph import: {ctx}: internal tensor node {xId} out of bounds"
+                  | none =>
+                      throw <|
+                        s!"PyTorch graph import: {ctx}: internal tensor node {xId} out of bounds"
                 let (batch, seqLen, actualEmbed) ←
                   match xNode.outShape with
                   | .dim b (.dim n (.dim d .scalar)) => pure (b, n, d)
@@ -492,23 +519,34 @@ def lowerValueGraph (vg : CapturedValueGraph) : Except String CapturedGraph := d
                 let scoresShape : Shape := .dim batch (.dim seqLen (.dim seqLen .scalar))
                 let scoresId := tensorNodes.size
                 tensorNodes := tensorNodes.push
-                  { id := scoresId, parents := #[qId, ktId], kind := .matmul, outShape := scoresShape }
+                  { id := scoresId, parents := #[qId, ktId], kind := .matmul,
+                    outShape := scoresShape }
                 let scaleId := tensorNodes.size
                 tensorNodes := tensorNodes.push
-                  { id := scaleId, parents := #[], kind := .const scoresShape, outShape := scoresShape }
+                  { id := scaleId, parents := #[], kind := .const scoresShape,
+                    outShape := scoresShape }
                 let scaledId := tensorNodes.size
                 tensorNodes := tensorNodes.push
-                  { id := scaledId, parents := #[scoresId, scaleId], kind := .mul_elem,
+                  { id := scaledId, parents := #[scoresId, scaleId], kind := .mulElem,
                     outShape := scoresShape }
                 let probsId := tensorNodes.size
                 tensorNodes := tensorNodes.push
-                  { id := probsId, parents := #[scaledId], kind := .softmax 2, outShape := scoresShape }
+                  { id := probsId, parents := #[scaledId], kind := .softmax 2,
+                    outShape := scoresShape }
                 let ctxId := tensorNodes.size
                 tensorNodes := tensorNodes.push
-                  { id := ctxId, parents := #[probsId, vId], kind := .matmul, outShape := xNode.outShape }
+                  { id := ctxId, parents := #[probsId, vId], kind := .matmul,
+                    outShape := xNode.outShape }
                 let outId := tensorNodes.size
                 tensorNodes := tensorNodes.push
                   { id := outId, parents := #[ctxId], kind := .linear, outShape := outShape }
+                mhaPayloadBindings := mhaPayloadBindings.push
+                  { rawId := parent.id
+                    queryId := qId
+                    keyId := kId
+                    valueId := vId
+                    scaleId := scaleId
+                    outputId := outId }
                 rawToTensor := rawToTensor.set! raw.id (some outId)
               else
                 throw <|
@@ -518,7 +556,7 @@ def lowerValueGraph (vg : CapturedValueGraph) : Except String CapturedGraph := d
                   "supported tensor ops, or add a real semantic lowering for that operation."
           | .tensor _ =>
               throw s!"PyTorch graph import: {ctx}: getitem on a tensor value is not tensor-lowered"
-        else if raw.kind = "reduce_sum" || raw.kind = "reduce_mean" then
+        else if raw.kind = Wire.opTag .reduceSum || raw.kind = Wire.opTag .reduceMean then
           let parentRawId ←
             match raw.parents with
             | #[p] => pure p
@@ -548,7 +586,8 @@ def lowerValueGraph (vg : CapturedValueGraph) : Except String CapturedGraph := d
             let dims := currentShape.toList
             let reducedShape := Shape.ofList (dims.take axis ++ dims.drop (axis + 1))
             let reducedId := tensorNodes.size
-            let kind := if raw.kind = "reduce_sum" then .reduceSum axis else .reduceMean axis
+            let kind :=
+              if raw.kind = Wire.opTag .reduceSum then .reduceSum axis else .reduceMean axis
             tensorNodes := tensorNodes.push
               { id := reducedId, parents := #[currentId], kind := kind, outShape := reducedShape }
             if keepDim then
@@ -596,7 +635,8 @@ def lowerValueGraph (vg : CapturedValueGraph) : Except String CapturedGraph := d
     { graph := { nodes := tensorNodes }
       inputId := inputId
       outputIds := outputIds
-      rawToTensor := rawToTensor }
+      rawToTensor := rawToTensor
+      mhaPayloadBindings := mhaPayloadBindings }
 
 /-- Parse the graph object and lower PyTorch/FX values to the tensor IR. -/
 def parseGraph (j : Json) : Except String CapturedGraph := do
@@ -628,10 +668,16 @@ def parseGraph (j : Json) : Except String CapturedGraph := do
               | .error e => .error e
               | .ok _ => .ok cg
 
-/-- Parse serialized affine normalization values into the node-keyed Float payload. -/
+/-- Parse serialized parameters into the node-keyed Float payload. -/
 def parsePayload (j : Json) : Except String (Payload Float) := do
   let valueGraph ← Internal.parseValueGraph j
   let captured ← parseGraph j
+  let mut constParams : Array (Option (ConstFlat Float)) :=
+    Array.replicate captured.graph.nodes.size none
+  let mut linearParams : Array (Option (LinearWB Float)) :=
+    Array.replicate captured.graph.nodes.size none
+  let mut convolutionParams : Array (Option (ConvParams Float)) :=
+    Array.replicate captured.graph.nodes.size none
   let mut layerNormParams : Array (Option (LayerNormParams Float)) :=
     Array.replicate captured.graph.nodes.size none
   let mut batchNormParams : Array (Option (BatchNormEvalParams Float)) :=
@@ -643,7 +689,56 @@ def parsePayload (j : Json) : Except String (Payload Float) := do
     | none => pure ()
     | some tensorId =>
         let ctx := s!"node[{raw.id}]"
-        if raw.kind = "layernorm" then
+        if raw.kind = Wire.opTag .linear then
+          let outDim ← Internal.natField ctx "out_dim" raw.raw
+          let inDim ← Internal.natField ctx "in_dim" raw.raw
+          let params : LinearWB Float :=
+            { outDim := outDim
+              inDim := inDim
+              W := ← Internal.tensorField ctx "weight" [outDim, inDim] raw.raw
+              b := ← Internal.tensorField ctx "bias" [outDim] raw.raw }
+          linearParams := linearParams.set! tensorId (some params)
+        else if raw.kind = Wire.opTag .conv then
+          let spatialRank ← Internal.natField ctx "spatial_rank" raw.raw
+          let inChannels ← Internal.natField ctx "in_channels" raw.raw
+          let outChannels ← Internal.natField ctx "out_channels" raw.raw
+          let kernel ← Internal.natTensorField ctx "kernel" spatialRank raw.raw
+          let stride ← Internal.natTensorField ctx "stride" spatialRank raw.raw
+          let padding ← Internal.natTensorField ctx "padding" spatialRank raw.raw
+          let dilation ← Internal.natTensorField ctx "dilation" spatialRank raw.raw
+          let paddingAfter ← Internal.natTensorField ctx "padding_after" spatialRank raw.raw
+          let inputSpatial ← Internal.natTensorField ctx "input_spatial" spatialRank raw.raw
+          let groups ← Internal.natField ctx "groups" raw.raw
+          if _hInChannels : inChannels ≠ 0 then
+            if hKernel : ∀ axis : Fin spatialRank, kernel.getScalar axis ≠ 0 then
+              if hStride : ∀ axis : Fin spatialRank, stride.getScalar axis ≠ 0 then
+                let spec :
+                    Spec.ConvSpec spatialRank inChannels outChannels kernel stride padding Float :=
+                  { kernel := ← Internal.tensorField ctx "weight"
+                      (Shape.ofList (outChannels :: inChannels :: kernel.data.toList)) raw.raw
+                    bias := ← Internal.tensorField ctx "bias" [outChannels] raw.raw }
+                let params : ConvParams Float :=
+                  { spatialRank := spatialRank
+                    inChannels := inChannels
+                    outChannels := outChannels
+                    kernel := kernel
+                    stride := stride
+                    padding := padding
+                    dilation := dilation
+                    paddingAfter := paddingAfter
+                    groups := groups
+                    inputSpatial := inputSpatial
+                    kernelNonzero := hKernel
+                    strideNonzero := hStride
+                    spec := spec }
+                convolutionParams := convolutionParams.set! tensorId (some params)
+              else
+                throw s!"PyTorch graph import: {ctx}: convolution stride extents must be nonzero"
+            else
+              throw s!"PyTorch graph import: {ctx}: convolution kernel extents must be nonzero"
+          else
+            throw s!"PyTorch graph import: {ctx}: convolution input channels must be nonzero"
+        else if raw.kind = Wire.opTag .layernorm then
           let outShape ←
             match raw.valueShape with
             | .tensor shape => pure shape
@@ -656,7 +751,7 @@ def parsePayload (j : Json) : Except String (Payload Float) := do
               beta := ← Internal.tensorField ctx "beta" normalizedShape raw.raw
               eps := ← Internal.floatField ctx "eps" raw.raw }
           layerNormParams := layerNormParams.set! tensorId (some params)
-        else if raw.kind = "batch_norm_eval" then
+        else if raw.kind = Wire.opTag .batchNormEval then
           let channels ← Internal.natField ctx "channels" raw.raw
           let channelShape : Shape := [channels]
           let params : BatchNormEvalParams Float :=
@@ -667,8 +762,42 @@ def parsePayload (j : Json) : Except String (Payload Float) := do
               var := ← Internal.tensorField ctx "var" channelShape raw.raw
               eps := ← Internal.floatField ctx "eps" raw.raw }
           batchNormParams := batchNormParams.set! tensorId (some params)
+  for binding in captured.mhaPayloadBindings do
+    let raw ←
+      match valueGraph.nodes[binding.rawId]? with
+      | some value => pure value
+      | none => throw s!"PyTorch graph import: missing raw MHA payload node {binding.rawId}"
+    let ctx := s!"node[{binding.rawId}]"
+    if raw.kind != Wire.mhaTuple then
+      throw s!"PyTorch graph import: {ctx}: MHA payload binding designates `{raw.kind}`"
+    let embedDim ← Internal.natField ctx "embed_dim" raw.raw
+    let linearParamsFor (fieldPrefix : String) : Except String (LinearWB Float) := do
+      pure
+        { outDim := embedDim
+          inDim := embedDim
+          W := ← Internal.tensorField ctx s!"{fieldPrefix}_weight" [embedDim, embedDim] raw.raw
+          b := ← Internal.tensorField ctx s!"{fieldPrefix}_bias" [embedDim] raw.raw }
+    linearParams := linearParams.set! binding.queryId
+      (some (← linearParamsFor "q"))
+    linearParams := linearParams.set! binding.keyId
+      (some (← linearParamsFor "k"))
+    linearParams := linearParams.set! binding.valueId
+      (some (← linearParamsFor "v"))
+    linearParams := linearParams.set! binding.outputId
+      (some (← linearParamsFor "out"))
+    let scaleNode ←
+      match captured.graph.nodes[binding.scaleId]? with
+      | some node => pure node
+      | none => throw s!"PyTorch graph import: missing generated MHA scale node {binding.scaleId}"
+    let scale ← Internal.floatField ctx "scale" raw.raw
+    let n := scaleNode.outShape.size
+    constParams := constParams.set! binding.scaleId
+      (some { n := n, v := Tensor.full (α := Float) [n] scale })
   pure
-    { layerNorm? := fun id => (layerNormParams[id]?).join
+    { const? := fun id => (constParams[id]?).join
+      linear? := fun id => (linearParams[id]?).join
+      conv? := fun id => (convolutionParams[id]?).join
+      layerNorm? := fun id => (layerNormParams[id]?).join
       batchNormEval? := fun id => (batchNormParams[id]?).join }
 
 /--

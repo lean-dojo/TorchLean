@@ -10,7 +10,7 @@ TorchLean model
   -> checked margin, bound, or diagnostic report
 ```
 
-Reusable workflow code belongs under `NN/Verification/TorchLean`. Reusable CROWN/LiRPA data
+Reusable workflow code belongs under `NN/Verification/Builtin`. Reusable CROWN/LiRPA data
 structures, transfer rules, and proof files belong under `NN/MLTheory/CROWN`.
 
 Run the maintained entry points through the unified verifier:
@@ -19,21 +19,31 @@ Run the maintained entry points through the unified verifier:
 lake exe verify -- torchlean-ibp
 lake exe verify -- torchlean-crown-ops
 lake exe verify -- torchlean-transformer-ibp
-lake exe verify -- torchlean-mlp-workflow --scalar float32
+lake exe verify -- torchlean-mlp-workflow
 ```
+
+The first three commands use bundled, fixed weights. The MLP workflow trains its own small model.
+In the printed reports, `lo` and `hi` are lower and upper output bounds over an input box, rather
+than predictions for one input. A positive lower bound on a class margin establishes that ordering
+within the checked region; a nonpositive bound leaves it unresolved. Loss bounds describe a range
+of possible losses and do not establish convergence or accuracy on a dataset.
+
+For example, the MSE case in `torchlean-crown-ops` varies each coordinate of `(0.3, -0.4)` by at most
+`0.05`. Its native run reports a loss enclosure of approximately `[0.234125, 0.345425]`.
+The transformer command runs IBP by default; `--with-crown` enables the slower experimental CROWN
+paths. Check each algorithm's report: an unsupported-path diagnostic is not a successful bound.
+Its LayerNorm interval follows the rounded normalization operations and can be very wide because
+the interval calculation loses relationships between repeated values. A large upper bound means
+this analysis is loose; it does not mean the model actually attains that loss.
 
 Implementation map:
 
-- `torchlean-ibp`: `NN.Verification.TorchLean.IBPWorkflow`
-- `torchlean-crown-ops`: `NN.Verification.TorchLean.CrownOpsWorkflow`
-- `torchlean-transformer-ibp`: `NN.Verification.TorchLean.TransformerIBPWorkflow`
-- `torchlean-mlp-workflow`: `NN.Verification.TorchLean.MlpTrainVerifyWorkflow`
+- `torchlean-ibp`: `NN.Verification.Builtin.IBPWorkflow`
+- `torchlean-crown-ops`: `NN.Verification.Builtin.CrownOpsWorkflow`
+- `torchlean-transformer-ibp`: `NN.Verification.Builtin.TransformerIBPWorkflow`
+- `torchlean-mlp-workflow`: trains a classifier, then calls
+  `trained.verify center (radius := 0.10) (norm := .inf) (property := .topLabel 0)`
+  with Alpha-Beta-CROWN internally
 
 The `Proved/` subtree contains theorem-backed lowering and evaluator fragments. Runtime reports and
 checker results remain separate from those theorems.
-
-The model training examples elsewhere in `NN/Examples/Models` cover ordinary eager, typed graph, and
-CUDA training. The workflows here are verifier workflows: after training, the parameters must be
-available as Lean tensors so the verifier can lower and check the graph. Keep generated runtime
-logs, checkpoints, and exported artifacts out of this directory; put them under an ignored
-`generated/`, `outputs/`, or `_external/` directory if needed.

@@ -50,9 +50,9 @@ re-proving bookkeeping facts locally.
 @[expose] public section
 
 
-namespace NN.Spec.Dynamics
+namespace Spec.Dynamics
 
-open _root_.Spec
+open _root_.Spec _root_.TorchLean
 
 /-- Discrete-time dynamical system on spec tensors. -/
 structure DynamicalSystem (s : Shape) where
@@ -105,40 +105,40 @@ def trajectory {s : Shape} (sys : DynamicalSystem s) (x0 : SpecTensor s) : Nat �
   simp [trajectory]
 
 /-- Iteration semantics for a driven system with an input stream. -/
-def iterateWithInput {s u : Shape} (sys : DrivenSystem s u) (input_seq : Nat → SpecTensor u) :
+def iterateWithInput {s u : Shape} (sys : DrivenSystem s u) (inputSeq : Nat → SpecTensor u) :
     Nat → SpecTensor s → SpecTensor s
   | 0, x => x
-  | n + 1, x => sys.step (iterateWithInput sys input_seq n x) (input_seq n)
+  | n + 1, x => sys.step (iterateWithInput sys inputSeq n x) (inputSeq n)
 
 /-- The trajectory (orbit) of a driven system under a fixed input stream. -/
 def drivenTrajectory {s u : Shape} (sys : DrivenSystem s u)
-    (input_seq : Nat → SpecTensor u) (x0 : SpecTensor s) : Nat → SpecTensor s :=
-  fun t => iterateWithInput sys input_seq t x0
+    (inputSeq : Nat → SpecTensor u) (x0 : SpecTensor s) : Nat → SpecTensor s :=
+  fun t => iterateWithInput sys inputSeq t x0
 
 /-- Zero driven steps leave the initial state unchanged. -/
 @[simp] theorem iterateWithInput_zero {s u : Shape} (sys : DrivenSystem s u)
-    (input_seq : Nat → SpecTensor u) (x : SpecTensor s) :
-    iterateWithInput sys input_seq 0 x = x := by
+    (inputSeq : Nat → SpecTensor u) (x : SpecTensor s) :
+    iterateWithInput sys inputSeq 0 x = x := by
   rfl
 
 /-- The first point of a driven trajectory is its initial condition. -/
 @[simp] theorem drivenTrajectory_zero {s u : Shape} (sys : DrivenSystem s u)
-    (input_seq : Nat → SpecTensor u) (x0 : SpecTensor s) :
-    drivenTrajectory sys input_seq x0 0 = x0 := by
+    (inputSeq : Nat → SpecTensor u) (x0 : SpecTensor s) :
+    drivenTrajectory sys inputSeq x0 0 = x0 := by
   rfl
 
 /-- A driven trajectory advances by applying the next input to the previous driven state. -/
 @[simp] theorem iterateWithInput_succ {s u : Shape} (sys : DrivenSystem s u)
-    (input_seq : Nat → SpecTensor u) (n : Nat) (x : SpecTensor s) :
-    iterateWithInput sys input_seq (n + 1) x =
-      sys.step (iterateWithInput sys input_seq n x) (input_seq n) := by
+    (inputSeq : Nat → SpecTensor u) (n : Nat) (x : SpecTensor s) :
+    iterateWithInput sys inputSeq (n + 1) x =
+      sys.step (iterateWithInput sys inputSeq n x) (inputSeq n) := by
   rfl
 
 /-- Successive driven trajectory points follow the driven transition and input stream. -/
 @[simp] theorem drivenTrajectory_succ {s u : Shape} (sys : DrivenSystem s u)
-    (input_seq : Nat → SpecTensor u) (x0 : SpecTensor s) (n : Nat) :
-    drivenTrajectory sys input_seq x0 (n + 1) =
-      sys.step (drivenTrajectory sys input_seq x0 n) (input_seq n) := by
+    (inputSeq : Nat → SpecTensor u) (x0 : SpecTensor s) (n : Nat) :
+    drivenTrajectory sys inputSeq x0 (n + 1) =
+      sys.step (drivenTrajectory sys inputSeq x0 n) (inputSeq n) := by
   rfl
 
 /-- Freeze a driven system at a fixed input, turning it into an autonomous system. -/
@@ -201,7 +201,7 @@ theorem fixedPoint_trajectory {s : Shape} {sys : DynamicalSystem s} {x : SpecTen
 def distance {s : Shape}
     (norm : ∀ {s : Shape}, SpecTensor s → SpecScalar)
     (x y : SpecTensor s) : SpecScalar :=
-  norm (Spec.Tensor.subSpec x y)
+  norm (TorchLean.Tensor.subSpec x y)
 
 /-- Contraction property for spec dynamics. -/
 def isContractive {s : Shape}
@@ -240,4 +240,4 @@ def isGloballyStable {s : Shape}
   ∀ x₀, ∀ ε > 0, ∃ N, ∀ n ≥ N,
     distance norm equilibrium (iterate sys n x₀) < ε
 
-end NN.Spec.Dynamics
+end Spec.Dynamics

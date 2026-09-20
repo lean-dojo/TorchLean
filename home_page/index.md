@@ -1,8 +1,19 @@
 ---
 # layout: home
+description: "Tensor computation, floating-point verification, and machine learning in Lean 4."
 ---
 
 <section class="home-intro">
+  <div class="home-intro-copy">
+    <p>
+      TorchLean brings tensor computation, machine learning, and formal verification together in
+      Lean 4. The cool part is that Lean is both a functional programming language and a theorem
+      prover, so you can write computations, build and train models, and prove mathematical
+      properties in the same language. You can start with tensors and linear algebra, use the
+      library for general numerical programming, or work directly with the specifications and proofs.
+    </p>
+  </div>
+
   <figure class="home-overview">
     <a
       href="{{ '/assets/media/figures/torchlean-layout.png' | relative_url }}"
@@ -15,61 +26,18 @@
     <figcaption>From a typed model to execution, analysis, and proof.</figcaption>
   </figure>
 
-  <div class="home-intro-copy">
-    <p>
-      TorchLean is the first unified deep-learning framework built in Lean 4. It brings model
-      construction, training, and formal reasoning into one library, so executable neural-network
-      code and the mathematics used to study it do not become separate projects.
-    </p>
-
-    <p>
-      You use it much like an ordinary ML library: define a model, load tensors, and train on CPU
-      or GPU. Tensor shapes are part of the types, so incompatible layers and malformed operations
-      are caught while the program is being written rather than during a training run.
-    </p>
-
-    <p>
-      A fixed model can be recorded as a shape-indexed SSA graph for execution and differentiation.
-      Supported forward programs can also be lowered to TorchLean's shared operation IR for
-      verification and export. Theorems about derivatives are stated separately from these executable
-      graph representations, and backend assumptions remain explicit.
-    </p>
-  </div>
-
-  <div class="home-actions" aria-label="Primary links">
-    <a class="primary-link" href="{{ '/blueprint/Introduction/' | relative_url }}">Start reading</a>
-    <a class="secondary-link" href="{{ '/examples/' | relative_url }}">View examples</a>
-    <a class="secondary-link" href="{{ '/performance/' | relative_url }}">Build performance</a>
-    <a class="secondary-link" href="https://arxiv.org/abs/2602.22631">Read the paper</a>
-  </div>
 </section>
 
-## Explore TorchLean
+<section class="home-highlights" markdown="1">
 
-<div class="workflow-list">
-  <a href="{{ '/blueprint/Runtime___-Autograd___-and-Interop/Differentiation-By-Example/' | relative_url }}">
-    <span>01</span>
-    <strong>Write and run models</strong>
-    <em>Define typed tensors and models, then train them with Lean-native autograd.</em>
-  </a>
-  <a href="{{ '/blueprint/Semantics-and-Graphs/The-Canonical-Graph-IR/' | relative_url }}">
-    <span>02</span>
-    <strong>Lower to graph IR</strong>
-    <em>Inspect operation nodes, shapes, payloads, semantics, and execution traces.</em>
-  </a>
-  <a href="{{ '/installation/#from-a-model-to-a-kernel' | relative_url }}">
-    <span>03</span>
-    <strong>Choose a backend</strong>
-    <em>Run on CPU or CUDA, with explicit contracts for native and external providers.</em>
-  </a>
-  <a href="{{ '/blueprint/Verification-and-Certificates/' | relative_url }}">
-    <span>04</span>
-    <strong>Check verification artifacts</strong>
-    <em>Replay robustness bounds and certificates against their Lean predicates.</em>
-  </a>
-  <a href="{{ '/examples/bug-zoo/' | relative_url }}">
-    <span>05</span>
-    <strong>Turn bugs into contracts</strong>
-    <em>See causal masks, stable losses, normalization, and KV-cache bugs reduced to precise claims.</em>
-  </a>
-</div>
+A few highlights we're excited about:
+
+- **Tensors that carry their shapes.** Lean checks that the dimensions fit when you compose tensor operations. You can use the [array and linear algebra library]({{ '/blueprint/Building-Models/Tensors-That-Remember-Their-Shapes/' | relative_url }}) on its own, without building a neural network.
+- **Build and train models in Lean.** Start with [regression or other classical models]({{ '/blueprint/Building-Models/The-TorchLean-API/#TorchLean--Building-Models--TorchLean-API--Classical-Models' | relative_url }}), train a [transformer or generative model]({{ '/blueprint/Examples-and-Applications/Modern-Models/' | relative_url }}), or develop a [reinforcement learning agent]({{ '/blueprint/Examples-and-Applications/Reinforcement-Learning/' | relative_url }}). The training tools include automatic differentiation, optimizers, and CPU and GPU execution.
+- **A shared graph for computation and proofs.** A typed computation graph records the operations in a model and the shapes of their inputs and outputs. We use it to describe the calculation, execute it, and state mathematical properties about it. The [formalization map]({{ '/blueprint/Formalization-Map/' | relative_url }}) connects the definitions to their proofs.
+- **Floating-point behavior is part of the mathematics.** Through [FloatLib](https://lean-dojo.github.io/FloatLib/), TorchLean supports configurable binary formats, executable arithmetic, and proofs about rounding and numerical error. The [floating-point guide]({{ '/blueprint/Floating-Point-and-Native-Boundaries/Floating-Point-Semantics/' | relative_url }}) explains the arithmetic models and how they relate to native execution.
+- **Ask questions about a whole range of inputs.** For a classifier, we can establish conditions under which its prediction stays the same throughout an input region. The [verification tools]({{ '/blueprint/Verification-and-Certificates/Neural-Network-Verification/' | relative_url }}) include interval bounds and certificate checking, with Lean proofs for the mathematical guarantees.
+
+The [guide]({{ '/blueprint/' | relative_url }}) walks through the library step by step. If you'd rather start by running something, try the [examples]({{ '/examples/' | relative_url }}).
+
+</section>

@@ -6,9 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph
-public import NN.IR.HardMask
 public import NN.Runtime.PyTorch.Export.Core
+public import NN.MLTheory.CROWN.Graph.Engine.Base
 
 /-!
 # IRPyTorch
@@ -51,8 +50,8 @@ public section
 namespace Export
 namespace IRPyTorch
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 open NN.IR
 open NN.MLTheory.CROWN.Graph
 open Std
@@ -119,8 +118,9 @@ def convKernelAttr (id : Nat) : String := s!"conv_{id}_kernel"
 def convBiasAttr (id : Nat) : String := s!"conv_{id}_bias"
 
 /-- Render a fixed-length natural-number vector as a Python tuple. -/
-def natTensorToPyTuple {n : Nat} (v : Spec.Tensor Nat [n]) : String :=
-  "(" ++ ", ".intercalate (v.toList.map toString) ++ (if n = 1 then "," else "") ++ ")"
+def natTensorToPyTuple {n : Nat} (v : TorchLean.Tensor Nat [n]) : String :=
+  "(" ++ ", ".intercalate ((Tensor.to v (List Nat)).map toString) ++
+    (if n = 1 then "," else "") ++ ")"
 
 /-- Attribute name for a BatchNorm scale tensor (`self.batchnorm_<id>_gamma`). -/
 def batchNormGammaAttr (id : Nat) : String := s!"batchnorm_{id}_gamma"
@@ -190,7 +190,7 @@ private def detectLayerNormAffineConstIds (g : NN.IR.Graph) : Std.HashSet Nat :=
       | .layernorm _ =>
           for mulN in g.nodes do
             match mulN.kind with
-            | .mul_elem =>
+            | .mulElem =>
                 match mulN.parents with
                 | #[a, b] =>
                     let gammaId? : Option Nat :=
@@ -226,7 +226,7 @@ Collect Python attribute bindings for all learnable parameters and constants.
 This returns a mapping from constant node identifiers to Python references and the generated
 `__init__` lines that materialize parameters and buffers.
 -/
-private def collectBindings (g : NN.IR.Graph) (ps : ParamStore Float) (opts : Options) :
+private def collectBindings (g : NN.IR.Graph) (ps : ParamStore Float) (options : Options) :
     Except String (ConstBindings × Array String) := do
   let mut bindings : ConstBindings := HashMap.emptyWithCapacity
   let mut initLines : Array String := #[]
@@ -244,18 +244,21 @@ private def collectBindings (g : NN.IR.Graph) (ps : ParamStore Float) (opts : Op
             let wFlat := tensorToPyFlat (s := wShape) lp.w
             let bFlat := tensorToPyFlat (s := bShape) lp.b
             initLines := initLines ++
-              #[ indentFour s!"self.{linearWAttr n.id} = nn.Parameter({pyTensorFromFlat wFlat wShape})"
-              , indentFour s!"self.{linearBAttr n.id} = nn.Parameter({pyTensorFromFlat bFlat bShape})"
+              #[ indentFour
+                s!"self.{linearWAttr n.id} = nn.Parameter({pyTensorFromFlat wFlat wShape})"
+              , indentFour
+                s!"self.{linearBAttr n.id} = nn.Parameter({pyTensorFromFlat bFlat bShape})"
               ]
     | .conv .. =>
         match ps.convCfg.get? n.id with
         | none => throw s!"IR→PyTorch: missing convolution params for node {n.id}"
-        | some cfg =>
+        | some config =>
             let kShape : Shape :=
-              .dim cfg.outChannels (.dim cfg.inChannels (Shape.ofList cfg.kernel.toList))
-            let bShape : Shape := .dim cfg.outChannels .scalar
-            let kFlat := tensorToPyFlat (s := kShape) cfg.spec.kernel
-            let bFlat := tensorToPyFlat (s := bShape) cfg.spec.bias
+              .dim config.outChannels
+                (.dim config.inChannels (Shape.ofList (Tensor.to config.kernel (List Nat))))
+            let bShape : Shape := .dim config.outChannels .scalar
+            let kFlat := tensorToPyFlat (s := kShape) config.spec.kernel
+            let bFlat := tensorToPyFlat (s := bShape) config.spec.bias
             initLines := initLines ++
               #[ indentFour
                 s!"self.{convKernelAttr n.id} = nn.Parameter({pyTensorFromFlat kFlat kShape})"
@@ -267,11 +270,15 @@ private def collectBindings (g : NN.IR.Graph) (ps : ParamStore Float) (opts : Op
         | none => throw s!"IR→PyTorch: missing BatchNorm parameters for node {n.id}"
         | some p =>
             let sC : Shape := .dim p.c .scalar
+            let gamma := pyTensorFromFlat (tensorToPyFlat (s := sC) p.gamma) sC
+            let beta := pyTensorFromFlat (tensorToPyFlat (s := sC) p.beta) sC
+            let mean := pyTensorFromFlat (tensorToPyFlat (s := sC) p.mean) sC
+            let var := pyTensorFromFlat (tensorToPyFlat (s := sC) p.var) sC
             initLines := initLines ++
-              #[ indentFour s!"self.{batchNormGammaAttr n.id} = nn.Parameter({pyTensorFromFlat (tensorToPyFlat (s := sC) p.gamma) sC})"
-              , indentFour s!"self.{batchNormBetaAttr n.id} = nn.Parameter({pyTensorFromFlat (tensorToPyFlat (s := sC) p.beta) sC})"
-              , indentFour s!"self.register_buffer(\"{batchNormMeanAttr n.id}\", {pyTensorFromFlat (tensorToPyFlat (s := sC) p.mean) sC})"
-              , indentFour s!"self.register_buffer(\"{batchNormVarAttr n.id}\", {pyTensorFromFlat (tensorToPyFlat (s := sC) p.var) sC})"
+              #[ indentFour s!"self.{batchNormGammaAttr n.id} = nn.Parameter({gamma})"
+              , indentFour s!"self.{batchNormBetaAttr n.id} = nn.Parameter({beta})"
+              , indentFour s!"self.register_buffer(\"{batchNormMeanAttr n.id}\", {mean})"
+              , indentFour s!"self.register_buffer(\"{batchNormVarAttr n.id}\", {var})"
               ]
     | _ => pure ()
 
@@ -283,11 +290,11 @@ private def collectBindings (g : NN.IR.Graph) (ps : ParamStore Float) (opts : Op
         | none => throw s!"IR→PyTorch: missing const value for node {n.id}"
         | some fv =>
             let flatListStr := tensorToPyString fv.v
-            let flatVals := Tensor.toArray fv.v
+            let flatVals := Tensor.to fv.v (Array Float)
             let uniform := allEq flatVals
             let forceLearn :=
-              opts.learnableConsts && forcedLearnableConsts.contains n.id
-            let shouldLearn := opts.learnableConsts && (forceLearn || !uniform)
+              options.learnableConsts && forcedLearnableConsts.contains n.id
+            let shouldLearn := options.learnableConsts && (forceLearn || !uniform)
             if shouldLearn then
               let attr := constAttr n.id
               initLines := initLines ++
@@ -296,7 +303,8 @@ private def collectBindings (g : NN.IR.Graph) (ps : ParamStore Float) (opts : Op
             else
               let attr := constAttr n.id
               initLines := initLines ++
-                #[ indentFour s!"self.register_buffer(\"{attr}\", {pyTensorFromFlat flatListStr s})" ]
+                #[ indentFour
+                  s!"self.register_buffer(\"{attr}\", {pyTensorFromFlat flatListStr s})" ]
               bindings := bindings.insert n.id (.bufferFull attr)
     | _ => pure ()
 
@@ -362,7 +370,7 @@ private def emitForwardBody (g : NN.IR.Graph) (ps : ParamStore Float) (bindings 
     | .sub =>
         let (a, b) ← expectBinary id n.parents
         lines := lines ++ #[indentFour s!"v{id} = v{a} - v{b}"]
-    | .mul_elem =>
+    | .mulElem =>
         let (a, b) ← expectBinary id n.parents
         lines := lines ++ #[indentFour s!"v{id} = v{a} * v{b}"]
     | .minElem =>
@@ -393,7 +401,8 @@ private def emitForwardBody (g : NN.IR.Graph) (ps : ParamStore Float) (bindings 
         | none => throw s!"IR→PyTorch: missing linear params for node {id}"
         | some _ =>
             lines := lines ++
-              #[ indentFour s!"v{id} = F.linear(v{xId}, self.{linearWAttr id}, self.{linearBAttr id})" ]
+              #[ indentFour
+                s!"v{id} = F.linear(v{xId}, self.{linearWAttr id}, self.{linearBAttr id})" ]
     | .conv config =>
         let xId ← expectUnary id n.parents
         match ps.convCfg.get? id with
@@ -403,13 +412,16 @@ private def emitForwardBody (g : NN.IR.Graph) (ps : ParamStore Float) (bindings 
               | 1 => pure "conv1d"
               | 2 => pure "conv2d"
               | 3 => pure "conv3d"
-              | rank => throw s!"IR→PyTorch: convolution rank {rank} has no direct PyTorch functional operator"
+              | rank =>
+                throw (s!"IR→PyTorch: convolution rank {rank} has no direct "
+                  ++ "PyTorch functional operator")
             let wName := convKernelAttr id
             let bName := convBiasAttr id
             let stride := natTensorToPyTuple config.stride
             let dilation := natTensorToPyTuple config.dilation
             let paddingPairs :=
-              (config.padding.toList.zip config.paddingAfter.toList).reverse
+              ((Tensor.to config.padding (List Nat)).zip
+                (Tensor.to config.paddingAfter (List Nat))).reverse
             let explicitPadding :=
               "(" ++ ", ".intercalate (paddingPairs.flatMap fun pair =>
                 [toString pair.1, toString pair.2]) ++ ")"
@@ -445,7 +457,7 @@ private def emitForwardBody (g : NN.IR.Graph) (ps : ParamStore Float) (bindings 
               , indentFour s!"_var = self.{batchNormVarAttr id}.reshape(_view)"
               , indentFour s!"_gamma = self.{batchNormGammaAttr id}.reshape(_view)"
               , indentFour s!"_beta = self.{batchNormBetaAttr id}.reshape(_view)"
-              , indentFour s!"_eps = {p.eps}"
+              , indentFour s!"_eps = {floatToPyString p.eps}"
               , indentFour s!"v{id} = (_x - _mean) * torch.rsqrt(_var + _eps) * _gamma + _beta"
               ]
     | .maxPool config =>
@@ -454,7 +466,8 @@ private def emitForwardBody (g : NN.IR.Graph) (ps : ParamStore Float) (bindings 
           | 1 => pure "max_pool1d"
           | 2 => pure "max_pool2d"
           | 3 => pure "max_pool3d"
-          | rank => throw s!"IR→PyTorch: max-pool rank {rank} has no direct PyTorch functional operator"
+          | rank =>
+            throw s!"IR→PyTorch: max-pool rank {rank} has no direct PyTorch functional operator"
         let kernel := natTensorToPyTuple config.kernel
         let stride := natTensorToPyTuple config.stride
         let padding := natTensorToPyTuple config.padding
@@ -472,7 +485,8 @@ private def emitForwardBody (g : NN.IR.Graph) (ps : ParamStore Float) (bindings 
           | 1 => pure "avg_pool1d"
           | 2 => pure "avg_pool2d"
           | 3 => pure "avg_pool3d"
-          | rank => throw s!"IR→PyTorch: average-pool rank {rank} has no direct PyTorch functional operator"
+          | rank =>
+            throw s!"IR→PyTorch: average-pool rank {rank} has no direct PyTorch functional operator"
         let kernel := natTensorToPyTuple config.kernel
         let stride := natTensorToPyTuple config.stride
         let padding := natTensorToPyTuple config.padding
@@ -481,7 +495,8 @@ private def emitForwardBody (g : NN.IR.Graph) (ps : ParamStore Float) (bindings 
           , indentFour s!"_prefix = list(_x.shape[:-{config.spatialRank}])"
           , indentFour s!"_spatial = list(_x.shape[-{config.spatialRank}:])"
           , indentFour "_x = _x.reshape((-1, 1, *_spatial))"
-          , indentFour s!"_y = F.{fn}(_x, kernel_size={kernel}, stride={stride}, padding={padding}, count_include_pad=True)"
+          , indentFour (s!"_y = F.{fn}(_x, kernel_size={kernel}, stride={stride}, "
+              ++ s!"padding={padding}, count_include_pad=True)")
           , indentFour s!"v{id} = _y.reshape((*_prefix, *_y.shape[2:]))"
           ]
     | .relu =>
@@ -499,6 +514,23 @@ private def emitForwardBody (g : NN.IR.Graph) (ps : ParamStore Float) (bindings 
     | .sigmoid =>
         let p ← expectUnary id n.parents
         lines := lines ++ #[indentFour s!"v{id} = torch.sigmoid(v{p})"]
+    | .softplus =>
+        let p ← expectUnary id n.parents
+        -- Select the exponent's argument before calling exp. Both tensor branches may be
+        -- evaluated by PyTorch, so selecting between two exponentials would still overflow.
+        lines := lines ++ #[
+          indentFour s!"_positive = v{p} > 0",
+          indentFour s!"_tail = torch.log(1 + torch.exp(torch.where(_positive, -v{p}, v{p})))",
+          indentFour s!"v{id} = torch.where(_positive, v{p} + _tail, _tail)"
+        ]
+    | .safeLog =>
+        let (p, epsilon) ← expectBinary id n.parents
+        lines := lines ++ #[
+          indentFour s!"_positive = v{p} > 0",
+          indentFour s!"_tail = torch.log(1 + torch.exp(torch.where(_positive, -v{p}, v{p})))",
+          indentFour s!"_softplus = torch.where(_positive, v{p} + _tail, _tail)",
+          indentFour s!"v{id} = torch.log(_softplus + v{epsilon})"
+        ]
     | .exp =>
         let p ← expectUnary id n.parents
         lines := lines ++ #[indentFour s!"v{id} = torch.exp(v{p})"]
@@ -587,14 +619,14 @@ This is the main entrypoint for IR exporters: it bundles:
 -/
 def emit
     (g : NN.IR.Graph) (ps : ParamStore Float) (inputId outputId : Nat)
-    (opts : Options := {}) :
+    (options : Options := {}) :
     Except String String := do
   let inNode ← getNode g inputId
   let outNode ← getNode g outputId
   let inputShape := inNode.outShape
   let outputShape := outNode.outShape
 
-  let (bindings, initParamLines) ← collectBindings g ps opts
+  let (bindings, initParamLines) ← collectBindings g ps options
   let forwardBody ← emitForwardBody g ps bindings inputId outputId
 
   let imports : Array String :=
@@ -605,10 +637,10 @@ def emit
     ]
 
   let classHeader : Array String :=
-    #[ s!"class {opts.className}(nn.Module):"
+    #[ s!"class {options.className}(nn.Module):"
     , indentTwo "def __init__(self):"
     , indentFour "super().__init__()"
-    , indentFour s!"dtype = {opts.dtypeExpr}"
+    , indentFour s!"dtype = {options.dtypeExpr}"
     ]
 
   let classForwardHeader : Array String :=
@@ -620,7 +652,7 @@ def emit
     classHeader ++ initParamLines ++ classForwardHeader ++ forwardBody
 
   let helpers : Array String :=
-    if !opts.includeTrainingSkeleton then
+    if !options.includeTrainingSkeleton then
       #[]
     else
       let outIsLoss : Bool :=
@@ -646,9 +678,9 @@ def emit
             , "if __name__ == '__main__':"
             , indentTwo "torch.manual_seed(0)"
             , indentTwo "device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')"
-            , indentTwo s!"model = {opts.className}().to(device)"
+            , indentTwo s!"model = {options.className}().to(device)"
             , indentTwo "opt = make_optimizer(model, kind='adam', lr=1e-3)"
-            , indentTwo s!"x = torch.randn({xTuple}, dtype={opts.dtypeExpr}, device=device)"
+            , indentTwo s!"x = torch.randn({xTuple}, dtype={options.dtypeExpr}, device=device)"
             , indentTwo "loss = train_step(model, x, opt)"
             , indentTwo "print('loss', loss)"
             ] )
@@ -669,10 +701,10 @@ def emit
             , "if __name__ == '__main__':"
             , indentTwo "torch.manual_seed(0)"
             , indentTwo "device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')"
-            , indentTwo s!"model = {opts.className}().to(device)"
+            , indentTwo s!"model = {options.className}().to(device)"
             , indentTwo "opt = make_optimizer(model, kind='adam', lr=1e-3)"
-            , indentTwo s!"x = torch.randn({xTuple}, dtype={opts.dtypeExpr}, device=device)"
-            , indentTwo s!"y = torch.randn({yTuple}, dtype={opts.dtypeExpr}, device=device)"
+            , indentTwo s!"x = torch.randn({xTuple}, dtype={options.dtypeExpr}, device=device)"
+            , indentTwo s!"y = torch.randn({yTuple}, dtype={options.dtypeExpr}, device=device)"
             , indentTwo "loss = train_step(model, x, y, opt)"
             , indentTwo "print('loss', loss)"
             ] )

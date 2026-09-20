@@ -6,9 +6,11 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.IEEEExec.Bridge.FP32Total
-public import NN.MLTheory.Proofs.ReLU.Bridge.ReLUMlpBridge
 public import NN.Spec.Core.FloatInstances
+import Mathlib.Tactic.NormNum.GCD
+-- Supplies the `ReLUMlpBridge` namespace opened below. `lake shake` cannot see an import that
+-- only feeds an `open`, so it needs the annotation.
+public import NN.MLTheory.Proofs.ReLU.Bridge.ReLUMlpBridge -- shake: keep
 
 /-!
 # Shared IEEE32Exec helpers for approximation theorems
@@ -18,7 +20,7 @@ theorems. We keep it independent of any one approximation construction (hinge su
 MLPs, convolutional models, or transformer-style models) and record the common semantic operations:
 
 - extracting the scalar output of a one-output network,
-- evaluating a two-layer ReLU MLP over the executable `IEEE32Exec` scalar type,
+- evaluating a two-layer ReLU MLP over the executable `ExecFloat.Binary 8 23` scalar type,
 - mapping executable IEEE binary32 values back to their real denotation, and
 - interpreting executable linear-layer parameters as real parameters.
 
@@ -32,36 +34,41 @@ real-valued MLP semantics used by the universal-approximation files.
 
 @[expose] public section
 
+open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+
 namespace NN.MLTheory.Proofs.UniversalApproximation
 namespace IEEE32ExecCore
 
-open _root_.Spec
+open _root_.Spec _root_.TorchLean
 open NN.MLTheory.Proofs.ReLUMlpBridge
-open TorchLean.Floats.IEEE754
 
 noncomputable section
 
 /--
-Extract the only scalar from a one-output `IEEE32Exec` tensor.
+Extract the only scalar from a one-output `ExecFloat.Binary 8 23` tensor.
 
 Most approximation statements end with scalar-valued targets.  Keeping this as a named helper makes
 the shape boundary explicit instead of hiding the `Fin 1` index proof at every call site.
 -/
-def extractScalarOutputIEEE32Exec (t : Tensor IEEE32Exec [1]) : IEEE32Exec :=
-  match t with
-  | .dim f => Tensor.item (f ⟨0, by decide⟩)
+def extractScalarOutputIEEE32Exec (t : Tensor (ExecFloat.Binary 8 23) [1]) : ExecFloat.Binary 8 23
+  :=
+  t.getScalar ⟨0, by decide⟩
 
 /--
 Evaluate a two-layer ReLU MLP over executable IEEE binary32 semantics.
 
 The corresponding real-valued evaluator is `mlpEval` from `ReLUMlpBridge`. Approximation
-theorems compare `IEEE32Exec.toReal (mlpEvalIEEE32Exec xI)` against that real evaluator applied to
+theorems compare `ExecFloat.Binary.toModel followed by Model.toReal (mlpEvalIEEE32Exec xI)` against
+that real evaluator applied to
 `tensorToReal xI`, thereby isolating the floating-point execution error from the approximation
 and quantization errors.
 -/
 noncomputable def mlpEvalIEEE32Exec {n hidDim : Nat}
-    (l1 : LinearSpec IEEE32Exec n hidDim) (l2 : LinearSpec IEEE32Exec hidDim 1)
-    (x : Tensor IEEE32Exec [n]) : IEEE32Exec :=
+    (l1 : LinearSpec (ExecFloat.Binary 8 23) n hidDim) (l2 : LinearSpec (ExecFloat.Binary 8 23)
+      hidDim 1)
+    (x : Tensor (ExecFloat.Binary 8 23) [n]) : ExecFloat.Binary 8 23 :=
   extractScalarOutputIEEE32Exec (Examples.mlpForward l1 l2 x)
 
 /--
@@ -71,9 +78,9 @@ Lean's dependent tensor shape is part of the type, so the map is recursive over 
 implemented as a runtime loop. Coercions such as `tensorToReal` stay definitionally transparent in
 downstream proofs.
 -/
-noncomputable def tensorMap {α β : Type} (f : α → β) : {s : Shape} → Tensor α s → Tensor β s
-  | .scalar, .scalar x => .scalar (f x)
-  | .dim n s, .dim g => .dim (fun i : Fin n => tensorMap f (s := s) (g i))
+noncomputable def tensorMap {α β : Type} (f : α → β) {s : Shape}
+    (tensor : Tensor α s) : Tensor β s :=
+  Tensor.map f tensor
 
 /--
 Interpret an executable IEEE tensor as the exact real tensor denoted by its entries.
@@ -81,8 +88,8 @@ Interpret an executable IEEE tensor as the exact real tensor denoted by its entr
 This is not a cast to mathematical reals with ideal arithmetic; it is the semantic interpretation
 of the concrete IEEE value after execution has already happened.
 -/
-noncomputable def tensorToReal {s : Shape} (t : Tensor IEEE32Exec s) : Tensor ℝ s :=
-  tensorMap IEEE32Exec.toReal t
+noncomputable def tensorToReal {s : Shape} (t : Tensor (ExecFloat.Binary 8 23) s) : Tensor ℝ s :=
+  tensorMap (Model.toReal ∘ ExecFloat.Binary.toModel) t
 
 /--
 Interpret executable linear-layer parameters as real-valued parameters entrywise.
@@ -91,7 +98,7 @@ This helper is used in three-term bounds:
 real approximation error + parameter quantization error + concrete execution error.
 -/
 noncomputable def linearSpecToReal {inDim outDim : Nat}
-    (m : LinearSpec IEEE32Exec inDim outDim) : LinearSpec ℝ inDim outDim :=
+    (m : LinearSpec (ExecFloat.Binary 8 23) inDim outDim) : LinearSpec ℝ inDim outDim :=
   { weights := tensorToReal m.weights
     bias := tensorToReal m.bias }
 

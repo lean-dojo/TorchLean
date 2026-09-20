@@ -6,8 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import Mathlib.Init
-
 /-!
 # Reinforcement-Learning Environments
 
@@ -87,7 +85,8 @@ def stepGym (env : Env State Action Observation Reward) (state : State) (action 
   let out := env.step state action
   (env.observe out.state, out.reward, out.terminated, out.truncated, out.state)
 
-/-- State reached after the first `n` actions, or after every available action when `n` is larger. -/
+/-- State reached after the first `n` actions, or after every available action when `n` is larger.
+-/
 def stateAfter (env : Env State Action Observation Reward) (initialState : State)
     (actions : Array Action) : Nat → State
   | 0 => initialState

@@ -23,20 +23,20 @@ The rest of the source map is:
 | Landing page | `home_page/index.md`, site CSS/JS/assets |
 | Getting started | `home_page/start/index.md` |
 | Examples pages | `home_page/examples/**/index.md` plus matching `NN/Examples/**` README/source |
-| Guide | `blueprint/TorchLeanBlueprint/Guide/**/*.lean` |
-| Formalization map | `blueprint/TorchLeanBlueprint/FormalizationMap/*.lean` |
+| Guide | `home_page/blueprint/TorchLeanBlueprint/Guide/**/*.lean` |
+| Formalization map | `home_page/blueprint/TorchLeanBlueprint/FormalizationMap/*.lean` |
 | API reference | `NN/**/*.lean` module docstrings and declaration docstrings |
 | Graph pages | `home_page/graphs/index.md`, `scripts/checks/dependency_audit.py`, generated graph JSON |
 | Performance page | `home_page/performance/index.md`, site CSS |
 | CUDA page | `home_page/cuda/index.md` plus the guide's CUDA/trust-boundary chapters |
-| Trust/provenance claims | `TRUST_BOUNDARIES.md`, `THIRD_PARTY_NOTICES.md`, relevant checker README |
+| Trust/provenance claims | `docs/TRUST_BOUNDARIES.md`, `docs/THIRD_PARTY_NOTICES.md`, relevant checker README |
 
-Avoid editing generated HTML by hand. Regenerate `home_page/docs`, `home_page/blueprint`,
+Avoid editing generated HTML by hand. Regenerate `home_page/docs`, `home_page/_site/blueprint`,
 `home_page/importgraph`, and `home_page/_site` from their sources.
 
 ## Local preview
 
-If you have Ruby + Bundler available:
+Use Ruby 3.2 or newer (below 4.0), as required by `Gemfile`, and Bundler 2.3.14:
 
 ```bash
 cd home_page
@@ -58,25 +58,26 @@ bundle _2.3.14_ exec jekyll serve --config _config.yml,_config_dev.yml --port 40
 The public website expects a few generated directories under `home_page/`:
 
 - `home_page/docs/` (DocGen4 HTML API reference)
-- `home_page/blueprint/` (Verso guide HTML)
+- `home_page/_site/blueprint/` (Verso guide HTML, copied after Jekyll builds)
 - the generated `dependency-audit.json` data used by the interactive graph explorer
 
-CI populates these via `.github/workflows/blueprint.yml`. To reproduce that locally:
+CI populates these via `.github/workflows/blueprint.yml`. Run the commands below from the
+repository root.
 
 ### API Reference (DocGen4)
 
 ```bash
-cd ..
 rm -rf .lake/build/doc .lake/build/doc-data .lake/build/api-docs.db
-DISABLE_EQUATIONS=1 lake build TorchLeanDocs:docs
+DISABLE_EQUATIONS=1 scripts/lake.sh build TorchLeanDocs:docs
 rm -rf home_page/docs
 cp -r .lake/build/doc home_page/docs
 find home_page/docs -name "*.trace" -delete
 find home_page/docs -name "*.hash" -delete
+python3 scripts/docs/polish_docgen.py --docs home_page/docs
 ```
 
 Native CUDA/C source notes are documented by the Lean module
-`NN.Runtime.Autograd.Engine.Cuda.NativeSources`, so they are generated as part of `/docs/`.
+`NN.Runtime.Autograd.Engine.Cuda.Trusted`, so they are generated as part of `/docs/`.
 
 `scripts/docs/polish_docgen.py` keeps the generated docs focused on TorchLean's `NN` modules. It
 removes local copies of Lean, Std, Mathlib, and other dependency pages, then rewrites dependency
@@ -94,19 +95,22 @@ for display math. Ordinary backticks are for code and stay monospace.
 
 ### Verso Guide (Blueprint Package)
 
+The Lean package lives in `home_page/blueprint/`, which Jekyll excludes. Run the following
+after building Jekyll; the final copy installs the guide at `/blueprint/`.
+
 ```bash
-cd ../blueprint
-lake exe vbp build --output ../_out/blueprint
-lake exe vbp check --site ../_out/blueprint
-cd ..
-if [ -d blueprint/TorchLeanBlueprint/Guide/Assets ]; then
+TORCHLEAN_PACKAGE_ROOT="$PWD/home_page/blueprint" \
+  scripts/lake.sh exe vbp build --output ../../_out/blueprint
+TORCHLEAN_PACKAGE_ROOT="$PWD/home_page/blueprint" \
+  scripts/lake.sh exe vbp check --site ../../_out/blueprint
+if [ -d home_page/blueprint/TorchLeanBlueprint/Guide/Assets ]; then
   mkdir -p _out/blueprint/html-multi/Guide/Assets
-  cp -r blueprint/TorchLeanBlueprint/Guide/Assets/* _out/blueprint/html-multi/Guide/Assets/
+  cp -r home_page/blueprint/TorchLeanBlueprint/Guide/Assets/* _out/blueprint/html-multi/Guide/Assets/
 fi
 python3 scripts/docs/polish_verso_guide.py --guide _out/blueprint/html-multi
-rm -rf home_page/blueprint
-mkdir -p home_page/blueprint
-cp -r _out/blueprint/html-multi/* home_page/blueprint/
+rm -rf home_page/_site/blueprint
+mkdir -p home_page/_site/blueprint
+cp -r _out/blueprint/html-multi/. home_page/_site/blueprint/
 ```
 
 The guide’s Formalization Map follows selected definitions and theorems across subsystems. The
@@ -119,7 +123,6 @@ source or proof dependencies.
 The `/graphs/` page reads a JSON snapshot generated from the current Lean imports.
 
 ```bash
-cd ..
 python3 scripts/checks/dependency_audit.py \
   --json home_page/graphs/dependency-audit.json \
   --fail-on-error
@@ -143,17 +146,17 @@ cd home_page
 bundle _2.3.14_ exec jekyll build --config _config.yml,_config_dev.yml
 ```
 
-For a lighter pass after editing only the Verso guide:
+For a lighter pass after editing only the Verso guide, run from the repository root:
 
 ```bash
-cd blueprint
-lake exe vbp build --output ../_out/blueprint
-lake exe vbp check --site ../_out/blueprint
-cd ..
+TORCHLEAN_PACKAGE_ROOT="$PWD/home_page/blueprint" \
+  scripts/lake.sh exe vbp build --output ../../_out/blueprint
+TORCHLEAN_PACKAGE_ROOT="$PWD/home_page/blueprint" \
+  scripts/lake.sh exe vbp check --site ../../_out/blueprint
 python3 scripts/docs/polish_verso_guide.py --guide _out/blueprint/html-multi
-rm -rf home_page/blueprint
-mkdir -p home_page/blueprint
-cp -r _out/blueprint/html-multi/* home_page/blueprint/
+rm -rf home_page/_site/blueprint
+mkdir -p home_page/_site/blueprint
+cp -r _out/blueprint/html-multi/. home_page/_site/blueprint/
 ```
 
 ## Site Review Checklist

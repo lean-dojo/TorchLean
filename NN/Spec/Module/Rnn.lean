@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Core.Sequence
 public import NN.Spec.Layers.Gru
 public import NN.Spec.Layers.Lstm
 public import NN.Spec.Module.Core
@@ -36,9 +35,9 @@ wrappers, with the initial hidden/state fixed to zeros.
 
 
 namespace Spec.Module
-open Tensor
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 -- RNN module specification wrapper
 /-- RNN sequence wrapper with a zero initial hidden state. -/
@@ -49,7 +48,7 @@ def rnn {seqLen inputSize hiddenSize : Nat}
     ([seqLen, hiddenSize]) :=
 {
   forward := fun x =>
-    let initialHidden := fill 0 ([hiddenSize])
+    let initialHidden := Tensor.full ([hiddenSize]) 0
     rnnSequenceSpec rnn x initialHidden,
   kind := "RNN",
   pythonExpr := s!"RNNOnlyOutput({inputSize}, {hiddenSize})"
@@ -65,8 +64,8 @@ def lstm {seqLen inputSize hiddenSize : Nat}
 {
   forward := fun x =>
     let initialState : LSTMState α hiddenSize := {
-      hidden := fill 0 ([hiddenSize]),
-      cell := fill 0 ([hiddenSize])
+      hidden := Tensor.full ([hiddenSize]) 0,
+      cell := Tensor.full ([hiddenSize]) 0
     }
     (lstmSequenceSpec lstm x initialState).1,
   kind := "LSTM",
@@ -82,7 +81,7 @@ def gru {seqLen inputSize hiddenSize : Nat}
     ([seqLen, hiddenSize]) :=
 {
   forward := fun x =>
-    let initialHidden := fill 0 ([hiddenSize])
+    let initialHidden := Tensor.full ([hiddenSize]) 0
     gruSequenceSpec gru x initialHidden,
   kind := "GRU",
   pythonExpr := s!"GRUOnlyOutput({inputSize}, {hiddenSize})"
@@ -98,8 +97,8 @@ def bidirectionalLstm {seqLen inputSize hiddenSize : Nat}
 {
   forward := fun x =>
     let initialState : LSTMState α hiddenSize := {
-      hidden := fill 0 ([hiddenSize]),
-      cell := fill 0 ([hiddenSize])
+      hidden := Tensor.full ([hiddenSize]) 0,
+      cell := Tensor.full ([hiddenSize]) 0
     }
     let (forwardOut, _) := lstmSequenceSpec forwardLstm x initialState
     let reversedInputs := Tensor.reverseAxis 0 x
@@ -112,7 +111,7 @@ def bidirectionalLstm {seqLen inputSize hiddenSize : Nat}
 }
 
 -- RNN Cell module (for single timestep processing)
-/-- Wrap `rnn_cell_spec` as an `Spec.Module` for a single timestep.
+/-- Wrap `rnnCellSpec` as an `Spec.Module` for a single timestep.
 
 Input convention: we take a single vector `[x; h]` (concatenated input and previous hidden state),
 so the module is shape-safe and easy to compose.
@@ -133,7 +132,7 @@ def rnnCell {inputSize hiddenSize : Nat}
 }
 
 -- LSTM Cell module (for single timestep processing)
-/-- Wrap `lstm_cell_spec` as an `Spec.Module` for a single timestep.
+/-- Wrap `lstmCellSpec` as an `Spec.Module` for a single timestep.
 
 Input convention: a single concatenated vector `[x; h; c]` (input, previous hidden, previous cell).
 Output convention: the concatenated new state `[h'; c']`.
@@ -158,7 +157,7 @@ def lstmCell {inputSize hiddenSize : Nat}
 }
 
 -- GRU Cell module (for single timestep processing)
-/-- Wrap `gru_cell_spec` as an `Spec.Module` for a single timestep, using input `[x; h]`. -/
+/-- Wrap `gruCellSpec` as an `Spec.Module` for a single timestep, using input `[x; h]`. -/
 def gruCell {inputSize hiddenSize : Nat}
   (gru : GRUSpec α inputSize hiddenSize) :
   Spec.Module α
@@ -187,7 +186,7 @@ def bidirectionalRnn {seqLen inputSize hiddenSize : Nat}
     ([seqLen, (hiddenSize + hiddenSize)]) :=
 {
   forward := fun x =>
-    let initialHidden := fill 0 ([hiddenSize])
+    let initialHidden := Tensor.full ([hiddenSize]) 0
     let forwardOut := rnnSequenceSpec forwardRnn x initialHidden
     let reversedInputs := Tensor.reverseAxis 0 x
     let reversedBackwardOut := rnnSequenceSpec backwardRnn reversedInputs initialHidden

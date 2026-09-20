@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL.Core
-public import NN.Runtime.Autograd.TorchLean.Metrics
+public import NN.Runtime.Autograd.Model.Metrics
 
 /-!
 # Deep Value-Learning Objectives
@@ -41,10 +41,10 @@ namespace Runtime
 namespace RL
 namespace ValueLearning
 
-open Spec
-open Tensor
+open Spec TorchLean
+open TorchLean TorchLean.Tensor
 
-variable {α : Type} [Context α]
+variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Extract `Q(s, a)` from a vector of action-values. -/
 def chosenActionValue {nActions : Nat} (qValues : Tensor α [nActions])
@@ -53,7 +53,7 @@ def chosenActionValue {nActions : Nat} (qValues : Tensor α [nActions])
 
 /-- Maximum Q-value in a vector, defaulting to `0` when `nActions = 0`. -/
 def maxQValue {nActions : Nat} (qValues : Tensor α [nActions]) : α :=
-  match _root_.TorchLean.Metrics.argmax? (α := α) qValues with
+  match TorchLean.Metrics.argmax? (α := α) qValues with
   | some action => Tensor.getScalar qValues (Fin.cast (by simp [Shape.size]) action)
   | none => 0
 
@@ -66,7 +66,7 @@ def dqnTarget {nActions : Nat} (reward gamma : α) (done : Bool)
 select with the online network, evaluate with the target network. -/
 def doubleDqnTarget {nActions : Nat} (reward gamma : α) (done : Bool)
     (nextQOnline nextQTarget : Tensor α [nActions]) : α :=
-  match _root_.TorchLean.Metrics.argmax? (α := α) nextQOnline with
+  match TorchLean.Metrics.argmax? (α := α) nextQOnline with
   | some action =>
       Core.tdTarget (α := α) reward gamma
         (Tensor.getScalar nextQTarget (Fin.cast (by simp [Shape.size]) action)) done

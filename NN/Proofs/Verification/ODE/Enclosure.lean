@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import Mathlib.Analysis.Calculus.MeanValue
-public import Mathlib.Topology.Order.OrderClosed
 
 /-!
 # ODE Corridor Enclosures
@@ -54,13 +53,13 @@ def clampToCorridor (uL uU : ℝ → ℝ) (t : ℝ) (u : ℝ) : ℝ :=
   max (uL t) (min (uU t) u)
 
 /-- If `u` is already within the corridor, clamping is a no-op. -/
-lemma clampToCorridor_eq_self {uL uU : ℝ → ℝ} {t u : ℝ}
+theorem clampToCorridor_eq_self {uL uU : ℝ → ℝ} {t u : ℝ}
     (hL : uL t ≤ u) (hU : u ≤ uU t) :
     clampToCorridor uL uU t u = u := by
   simp [clampToCorridor, min_eq_right hU, max_eq_right hL]
 
 /-- If `u` lies strictly above the corridor, clamping snaps to the upper wall. -/
-lemma clampToCorridor_eq_upper {uL uU : ℝ → ℝ} {t u : ℝ}
+theorem clampToCorridor_eq_upper {uL uU : ℝ → ℝ} {t u : ℝ}
     (hLU : uL t ≤ uU t) (hU : uU t < u) :
     clampToCorridor uL uU t u = uU t := by
   have hm : min (uU t) u = uU t := min_eq_left (le_of_lt hU)
@@ -68,7 +67,7 @@ lemma clampToCorridor_eq_upper {uL uU : ℝ → ℝ} {t u : ℝ}
   simp [clampToCorridor, hm, hM]
 
 /-- If `u` lies strictly below the corridor, clamping snaps to the lower wall. -/
-lemma clampToCorridor_eq_lower {uL uU : ℝ → ℝ} {t u : ℝ}
+theorem clampToCorridor_eq_lower {uL uU : ℝ → ℝ} {t u : ℝ}
     (hLU : uL t ≤ uU t) (hL : u < uL t) :
     clampToCorridor uL uU t u = uL t := by
   have hU : u ≤ uU t := le_trans (le_of_lt hL) hLU
@@ -91,12 +90,12 @@ We implement this by reducing to mathlib’s 1D *fencing theorem*
 -/
 
 /-- Helper: on $[0,T]$, we have $1+t>0$ (used to pick $\varepsilon$ scaled by $1+t$). -/
-private lemma one_add_pos_of_mem_Icc {T t : ℝ} (ht : t ∈ Icc 0 T) : 0 < (1 + t) := by
+private theorem one_add_pos_of_mem_Icc {T t : ℝ} (ht : t ∈ Icc 0 T) : 0 < (1 + t) := by
   have : 0 ≤ t := ht.1
   linarith
 
 /-- Helper: on `[0,T)`, we have `1 + t > 0` (used in the fencing boundary condition). -/
-private lemma one_add_pos_of_mem_Ico {T t : ℝ} (ht : t ∈ Ico 0 T) : 0 < (1 + t) := by
+private theorem one_add_pos_of_mem_Ico {T t : ℝ} (ht : t ∈ Ico 0 T) : 0 < (1 + t) := by
   have : 0 ≤ t := ht.1
   linarith
 
@@ -350,11 +349,11 @@ noncomputable def constantExtensionAfter (T : ℝ) (g : ℝ → ℝ) : ℝ → �
   fun t => if t ≤ T then g t else g T
 
 /-- On the left side of the switching time (`t ≤ T`), the extension agrees with `g`. -/
-@[simp] lemma constantExtensionAfter_of_le {T : ℝ} {g : ℝ → ℝ} {t : ℝ} (ht : t ≤ T) :
+@[simp] theorem constantExtensionAfter_of_le {T : ℝ} {g : ℝ → ℝ} {t : ℝ} (ht : t ≤ T) :
     constantExtensionAfter T g t = g t := by simp [constantExtensionAfter, ht]
 
 /-- On the right side of the switching time (`T < t`), the extension is constant `g T`. -/
-@[simp] lemma constantExtensionAfter_of_gt {T : ℝ} {g : ℝ → ℝ} {t : ℝ} (ht : T < t) :
+@[simp] theorem constantExtensionAfter_of_gt {T : ℝ} {g : ℝ → ℝ} {t : ℝ} (ht : T < t) :
     constantExtensionAfter T g t = g T := by simp [constantExtensionAfter, not_le_of_gt ht]
 
 /-!
@@ -364,7 +363,7 @@ The next two lemmas provide derivatives for `constantExtensionAfter T g`:
   when viewed within the right-derivative filter `𝓝[Ici t] t`).
 -/
 /-- Derivative of `constantExtensionAfter T g` strictly before `T` matches the derivative of `g`. -/
-private lemma hasDerivWithinAt_constantExtensionAfter_before
+private theorem hasDerivWithinAt_constantExtensionAfter_before
     {T : ℝ} {g g' : ℝ → ℝ} {t : ℝ} (ht : t < T)
     (hg : HasDerivWithinAt g (g' t) (Ici t) t) :
     HasDerivWithinAt (constantExtensionAfter T g) (g' t) (Ici t) t := by
@@ -382,7 +381,7 @@ private lemma hasDerivWithinAt_constantExtensionAfter_before
   exact hg.congr_of_eventuallyEq hEq (by simp [constantExtensionAfter, le_of_lt ht])
 
 /-- Derivative of `constantExtensionAfter T g` at/after `T` is zero in the right-derivative view. -/
-private lemma hasDerivWithinAt_constantExtensionAfter_after
+private theorem hasDerivWithinAt_constantExtensionAfter_after
     {T : ℝ} {g : ℝ → ℝ} {t : ℝ} (ht : T ≤ t) :
     HasDerivWithinAt (constantExtensionAfter T g) 0 (Ici t) t := by
   have hEq : ∀ x ∈ Ici t, constantExtensionAfter T g x = g T := by
@@ -496,10 +495,10 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
     · have htIco : t ∈ Ico 0 T := ⟨ht.1, htT⟩
       have := hasDerivWithinAt_constantExtensionAfter_before
         (T := T) (g := uL) (g' := uL') htT (hL_der t htIco)
-      simpa [uLext, uLext', if_pos htT] using this
+      simpa [uLext, uLext', ite_eq_left htT] using this
     · have htge : T ≤ t := le_of_not_gt htT
       have := hasDerivWithinAt_constantExtensionAfter_after (T := T) (g := uL) (t := t) htge
-      simpa [uLext, uLext', if_neg htT] using this
+      simpa [uLext, uLext', ite_eq_right htT] using this
 
   have hUext_der : ∀ t ∈ Ico 0 τ, HasDerivWithinAt uUext (uUext' t) (Ici t) t := by
     intro t ht
@@ -507,16 +506,17 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
     · have htIco : t ∈ Ico 0 T := ⟨ht.1, htT⟩
       have := hasDerivWithinAt_constantExtensionAfter_before
         (T := T) (g := uU) (g' := uU') htT (hU_der t htIco)
-      simpa [uUext, uUext', if_pos htT] using this
+      simpa [uUext, uUext', ite_eq_left htT] using this
     · have htge : T ≤ t := le_of_not_gt htT
       have := hasDerivWithinAt_constantExtensionAfter_after (T := T) (g := uU) (t := t) htge
-      simpa [uUext, uUext', if_neg htT] using this
+      simpa [uUext, uUext', ite_eq_right htT] using this
 
   have hLext_sub : ∀ t ∈ Ico 0 τ, uLext' t ≤ f t (uLext t) := by
     intro t ht
     by_cases htT : t < T
     · have htIco : t ∈ Ico 0 T := ⟨ht.1, htT⟩
-      simpa [uLext, uLext', constantExtensionAfter, le_of_lt htT, if_pos htT] using hL_sub t htIco
+      simpa [uLext, uLext', constantExtensionAfter, le_of_lt htT, ite_eq_left htT]
+        using hL_sub t htIco
     · have htgt : T < t ∨ T = t := lt_or_eq_of_le (le_of_not_gt htT)
       have hnonneg : 0 ≤ f t (uL T) := by
         cases htgt with
@@ -533,13 +533,14 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
           simp [uLext, this]
         · simp [uLext, constantExtensionAfter, htle]
       -- Here `uLext' t = 0`; reduce to `0 ≤ f t (uL T)`.
-      simpa [uLext, uLext', if_neg htT, huLext] using hnonneg
+      simpa [uLext, uLext', ite_eq_right htT, huLext] using hnonneg
 
   have hUext_sup : ∀ t ∈ Ico 0 τ, f t (uUext t) ≤ uUext' t := by
     intro t ht
     by_cases htT : t < T
     · have htIco : t ∈ Ico 0 T := ⟨ht.1, htT⟩
-      simpa [uUext, uUext', constantExtensionAfter, le_of_lt htT, if_pos htT] using hU_sup t htIco
+      simpa [uUext, uUext', constantExtensionAfter, le_of_lt htT, ite_eq_left htT]
+        using hU_sup t htIco
     · have htge : T ≤ t := le_of_not_gt htT
       have htgt : T < t ∨ T = t := lt_or_eq_of_le htge
       have hnonpos : f t (uU T) ≤ 0 := by
@@ -556,7 +557,7 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
           simp [uUext, this]
         · simp [uUext, constantExtensionAfter, htle]
       -- Here `uUext' t = 0`; reduce to `f t (uU T) ≤ 0`.
-      simpa [uUext, uUext', if_neg htT, huUext] using hnonpos
+      simpa [uUext, uUext', ite_eq_right htT, huUext] using hnonpos
 
   have hLext0 : uLext 0 ≤ a := by simpa [uLext, constantExtensionAfter, hT] using hL0
   have hUext0 : a ≤ uUext 0 := by simpa [uUext, constantExtensionAfter, hT] using hU0

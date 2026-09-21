@@ -699,6 +699,17 @@ complex-valued training API
 The shared parser recognizes names across commands. Each selected command still checks whether it
 supports the requested arithmetic, device, and execution mode.
 
+For complex training, the explicit-state example has its own command:
+
+```terminal
+scripts/lake.sh exe torchlean complex_regression 50 /tmp/complex-regression.state
+```
+
+It minimizes a real squared-residual loss over complex binary32 weights and bias, then prints a
+held-out complex prediction. The optional checkpoint is reloaded and checked without discarding
+either component. Its coordinate-forward gradient is intended for small models, not as a native
+complex GPU training benchmark.
+
 Device, arithmetic, and execution mode describe three choices: where tensor operations run,
 how scalar arithmetic is implemented, and how the program is evaluated. They are useful to
 record separately even when only some combinations are implemented. The two loss lines above

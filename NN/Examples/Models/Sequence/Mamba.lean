@@ -83,10 +83,10 @@ def byteIndex (id : Nat) : Fin vocabularySize :=
   Fin.ofNat vocabularySize id
 
 /-- Input shape: one sequence of one-hot byte tokens. -/
-abbrev input : Shape := modelConfig.input contextLength
+abbrev input : Shape := modelConfig.inputShape contextLength
 
 /-- Output shape: one vocabulary-logit row per input position. -/
-abbrev output : Shape := modelConfig.output contextLength
+abbrev output : Shape := modelConfig.outputShape contextLength
 
 /-- Public Mamba language-model constructor specialized to the example config. -/
 def model : nn.Builder (nn.Sequential input output) :=

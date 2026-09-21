@@ -15,6 +15,7 @@ public import NN.MLTheory
 public import NN.Proofs
 public import NN.Runtime
 public import NN.Spec
+public import NN.Tactic
 public import NN.Tensor
 public import NN.Verification
 public import NN.Widgets

@@ -56,17 +56,17 @@ def validate {d : Nat} (config : ResNet.Config d) : Except String Unit := do
     throw "ResNet: class count must be positive"
 
 /-- Input tensor shape with an arbitrary batch shape. -/
-abbrev input {d : Nat} (config : ResNet.Config d)
+abbrev inputShape {d : Nat} (config : ResNet.Config d)
     (batchShape : Shape := []) : Shape :=
   batchShape.concat ((config.spatial.to Shape).prependDim config.inputChannels)
 
 /-- Hidden activation shape shared by the residual branches. -/
-abbrev hidden {d : Nat} (config : ResNet.Config d)
+abbrev hiddenShape {d : Nat} (config : ResNet.Config d)
     (batchShape : Shape := []) : Shape :=
   batchShape.concat ((config.spatial.to Shape).prependDim config.hiddenChannels)
 
 /-- Classifier output shape with the same batch shape as the input. -/
-abbrev output {d : Nat} (config : ResNet.Config d)
+abbrev outputShape {d : Nat} (config : ResNet.Config d)
     (batchShape : Shape := []) : Shape :=
   batchShape.appendDim config.classCount
 
@@ -74,27 +74,27 @@ end ResNet.Config
 
 /-- Build a convolutional stem, two residual blocks, global pooling, and a linear classifier. -/
 def resnet {d : Nat} (config : ResNet.Config d) (batchShape : Shape := []) :
-    Builder (Sequential (config.input batchShape) (config.output batchShape)) :=
+    Builder (Sequential (config.inputShape batchShape) (config.outputShape batchShape)) :=
   match config.validate with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
-        (config.input batchShape) (config.output batchShape) "ResNet" message
+        (config.inputShape batchShape) (config.outputShape batchShape) "ResNet" message
   | .ok () =>
       let geometry := Convolution.Geometry.samePadding config.kernelRadius
-      have preservesSize : geometry.output config.spatial = config.spatial :=
-        Convolution.Geometry.output_samePadding config.spatial config.kernelRadius
+      have preservesSize : geometry.outputSpatial config.spatial = config.spatial :=
+        Convolution.Geometry.outputSpatial_samePadding config.spatial config.kernelRadius
       let builtStem := conv config.spatial (geometry.convolution config.hiddenChannels)
         (batchShape := batchShape) (inputChannels := config.inputChannels)
       let stem :
-          Builder (Sequential (config.input batchShape) (config.hidden batchShape)) := by
-        simpa [ResNet.Config.input, ResNet.Config.hidden,
+          Builder (Sequential (config.inputShape batchShape) (config.hiddenShape batchShape)) := by
+        simpa [ResNet.Config.inputShape, ResNet.Config.hiddenShape,
           preservesSize] using builtStem
       let builtHiddenConvolution :=
         conv config.spatial (geometry.convolution config.hiddenChannels)
           (batchShape := batchShape) (inputChannels := config.hiddenChannels)
       let hiddenConvolution :
-          Builder (Sequential (config.hidden batchShape) (config.hidden batchShape)) := by
-        simpa [ResNet.Config.hidden, preservesSize] using
+          Builder (Sequential (config.hiddenShape batchShape) (config.hiddenShape batchShape)) := by
+        simpa [ResNet.Config.hiddenShape, preservesSize] using
           builtHiddenConvolution
       let residualBranch := do
         let branch ← nn.Sequential![hiddenConvolution, relu, hiddenConvolution]

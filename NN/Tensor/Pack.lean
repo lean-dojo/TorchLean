@@ -162,6 +162,24 @@ def split : {ss₁ ss₂ : List Shape} →
           simp only [append, split]
           rw [ih xs]
 
+/-- Splitting preserves a shape-preserving conversion on each side of the boundary. -/
+@[simp] theorem split_map {ss₁ ss₂ : List Shape}
+    (f : ∀ {shape : Shape}, Tensor α shape → Tensor β shape)
+    (xs : TensorPack α (ss₁ ++ ss₂)) :
+    split (xs.map f) = ((split xs).1.map f, (split xs).2.map f) := by
+  induction ss₁ with
+  | nil => rfl
+  | cons shape shapes ih =>
+    cases xs with
+    | cons x xs => simp only [map, split, ih xs]
+
+/-- Reading the first tensor commutes with a pack conversion. -/
+@[simp] theorem head_map {shape : Shape} {shapes : List Shape}
+    (f : ∀ {s : Shape}, Tensor α s → Tensor β s) (xs : TensorPack α (shape :: shapes)) :
+    (xs.map f).head = f xs.head := by
+  cases xs
+  rfl
+
 /-- Construct the all-zero tensor pack. -/
 def zero [Zero α] : {ss : List Shape} → TensorPack α ss
   | [] => .nil

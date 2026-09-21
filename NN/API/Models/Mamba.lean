@@ -62,12 +62,12 @@ def validate (config : Config) (sequenceLength : Nat) : Except String Unit := do
   config.options.validate
 
 /-- One-hot input shape `batchShape × sequenceLength × vocabularySize`. -/
-abbrev input (config : Config) (sequenceLength : Nat)
+abbrev inputShape (config : Config) (sequenceLength : Nat)
     (batchShape : Shape := []) : Shape :=
   batchShape.concat [sequenceLength, config.vocabularySize]
 
 /-- Logit output shape `batchShape × sequenceLength × vocabularySize`. -/
-abbrev output (config : Config) (sequenceLength : Nat)
+abbrev outputShape (config : Config) (sequenceLength : Nat)
     (batchShape : Shape := []) : Shape :=
   batchShape.concat [sequenceLength, config.vocabularySize]
 
@@ -89,13 +89,13 @@ state and convolution history for streaming computations.
 def languageModel (config : Config) (sequenceLength : Nat) (batchShape : Shape := []) :
     nn.Builder
       (nn.Sequential
-        (config.input sequenceLength batchShape)
-        (config.output sequenceLength batchShape)) := by
+        (config.inputShape sequenceLength batchShape)
+        (config.outputShape sequenceLength batchShape)) := by
   match config.validate sequenceLength with
   | .error message =>
       exact pure <| nn.Internal.invalidConfiguration
-        (config.input sequenceLength batchShape)
-        (config.output sequenceLength batchShape)
+        (config.inputShape sequenceLength batchShape)
+        (config.outputShape sequenceLength batchShape)
         "Mamba.languageModel" message
   | .ok () =>
       have model := do
@@ -106,7 +106,8 @@ def languageModel (config : Config) (sequenceLength : Nat) (batchShape : Shape :
         let outputProjection ← linear config.modelWidth config.vocabularySize
           (batchShape := batchShape.appendDim sequenceLength)
         pure (recurrent >>> outputProjection)
-      simpa only [Config.input, Config.output, Shape.appendDim_appendDim_eq_concat] using model
+      simpa only [Config.inputShape, Config.outputShape,
+        Shape.appendDim_appendDim_eq_concat] using model
 
 end Mamba
 end models

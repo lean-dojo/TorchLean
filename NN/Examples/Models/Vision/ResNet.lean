@@ -63,10 +63,10 @@ abbrev modelConfig : nn.models.ResNet.Config 2 :=
     classCount := RealData.cifarClasses }
 
 /-- Batched channel-first input type derived from `modelConfig`. -/
-abbrev input : Shape := modelConfig.input [batchSize]
+abbrev input : Shape := modelConfig.inputShape [batchSize]
 
 /-- One row of class logits per input sample, also derived from `modelConfig`. -/
-abbrev output : Shape := modelConfig.output [batchSize]
+abbrev output : Shape := modelConfig.outputShape [batchSize]
 
 /-- Residual classifier from the public model API. -/
 def model : nn.Builder (nn.Sequential input output) :=

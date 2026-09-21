@@ -34,7 +34,7 @@ open TorchLean
 def exeName : String := "quickstart_autograd"
 
 /-- Mean squared magnitude of one tensor. -/
-def meanSquare : autograd.Function [3] [] :=
+def meanSquare {shape : Shape} : autograd.Function shape [] :=
   fun x => do
     let squared ← nn.functional.square x
     nn.functional.mean squared

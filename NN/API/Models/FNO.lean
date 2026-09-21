@@ -12,8 +12,8 @@ public import NN.Runtime.Autograd.Model.FnoRfft
 /-!
 # Fourier Neural Operators
 
-`fno` is polymorphic in spatial rank and uses a dense multidimensional DFT with separate real and
-imaginary tensors. `fnoRfft` uses learned nonnegative-frequency weights and can choose between a
+`fno` is polymorphic in spatial rank and uses separable FFTs or a dense multidimensional DFT with
+the same real/imaginary weights. `fnoRfft` uses learned nonnegative-frequency weights and chooses a
 dense reference and native cuFFT with the same checkpoint. Its default ReLU and parameter layout
 match the specialized CUDA Burgers model. The two constructors have different spectral weights;
 switching between them requires an explicit model conversion.
@@ -43,6 +43,8 @@ structure FNO.Config (d : Nat) where
   layerCount : Nat
   /-- Activation applied after each spectral residual block. -/
   activation : Activation.Kind := .tanh
+  /-- Per-axis FFT execution or the dense full-grid reference, with the same parameters. -/
+  spectralPath : Runtime.Autograd.Model.F.SpectralPath := .automatic
 
 namespace FNO.Config
 
@@ -56,27 +58,28 @@ def validate {d : Nat} (config : FNO.Config d) : Except String Unit := do
 end FNO.Config
 
 /-- Scalar-field input shape with an arbitrary batch shape. -/
-abbrev FNO.Config.input {d : Nat} (config : FNO.Config d)
+abbrev FNO.Config.inputShape {d : Nat} (config : FNO.Config d)
     (batchShape : Spec.Shape := []) : Spec.Shape :=
   batchShape.concat (config.spatial.to Spec.Shape)
 
 /-- Scalar-field output shape with the same batch shape as the input. -/
-abbrev FNO.Config.output {d : Nat} (config : FNO.Config d)
+abbrev FNO.Config.outputShape {d : Nat} (config : FNO.Config d)
     (batchShape : Spec.Shape := []) : Spec.Shape :=
   batchShape.concat (config.spatial.to Spec.Shape)
 
 /--
-Build the portable multidimensional FNO model.
+Build a multidimensional FNO model, independently of spatial rank and batch shape.
 
-The selected runtime may move its ordinary tensor operations between devices, but this constructor
-always denotes the dense full-DFT parameterization described above.
+`automatic` uses separable transforms, with cuFFT on supported eager CUDA interpreters and dense
+per-axis transforms otherwise. `denseReference` uses the full-grid DFT matrices. Both paths retain
+the full-spectrum parameterization, frequency mask, activation, and checkpoint layout.
 -/
 def fno {d : Nat} (config : FNO.Config d) (batchShape : Spec.Shape := []) :
-    nn.Builder (nn.Sequential (config.input batchShape) (config.output batchShape)) :=
+    nn.Builder (nn.Sequential (config.inputShape batchShape) (config.outputShape batchShape)) :=
   match config.validate with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
-        (config.input batchShape) (config.output batchShape) "FNO" message
+        (config.inputShape batchShape) (config.outputShape batchShape) "FNO" message
   | .ok () =>
       let grid := Runtime.Autograd.Model.Layers.FNO.gridSize config.spatial
       let field := Runtime.Autograd.Model.Layers.FNO.fieldShape config.spatial config.width
@@ -92,7 +95,7 @@ def fno {d : Nat} (config : FNO.Config d) (batchShape : Spec.Shape := []) :
                   let current :=
                     Runtime.Autograd.Model.Layers.FNO.block
                       config.spatial config.modes config.width config.activation
-                      spectralRealSeed spectralImagSeed skipWeightSeed
+                      spectralRealSeed spectralImagSeed skipWeightSeed (path := config.spectralPath)
                   pure <| Runtime.Autograd.Model.Layers.Seq.cons current rest
       nn.withSeed fun liftWeightSeed => do
         let operators ← buildBlocks config.layerCount

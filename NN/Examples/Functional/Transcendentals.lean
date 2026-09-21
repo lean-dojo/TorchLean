@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.API
-public import NN.Proofs.Autograd.FDeriv.Elementwise
+public import NN.Tactic.Autograd
 
 /-!
 # Differentiate three scalar functions
@@ -63,6 +63,11 @@ theorem expBackward_eq_adjoint_fderiv
   Proofs.Autograd.OpSpecFDerivCorrect.backward_eq_adjoint_fderiv expProofSurface x δ
 
 end
+
+-- The scalar formula is checked for every real input; the Float checks below sample execution.
+example (x : ℝ) : HasDerivAt (fun y : ℝ => Real.exp (-2 * y))
+    (-2 * Real.exp (-2 * x)) x := by
+  autograd
 
 /-! ## Functions under test (written once; gradients come from autograd) -/
 

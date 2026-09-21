@@ -7,13 +7,15 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Model.Layers.Core
+public import NN.Runtime.Autograd.Model.Functional.Fourier.Transform
 
 /-!
 # Fourier Neural Operators over Arbitrary Spatial Rank
 
-This module implements a dense, correctness-oriented Fourier layer over any finite collection of
-spatial axes. The transform phase is the sum of the per-axis phases, so this is the tensor-product
-multidimensional DFT rather than a one-dimensional DFT of flattened storage. Real and imaginary
+This module implements a Fourier layer over any finite collection of spatial axes. The transform
+uses separable per-axis FFTs or an explicit dense reference. Its phase is the sum of per-axis
+phases, so this is the tensor-product multidimensional DFT rather than a one-dimensional DFT of
+flattened storage. Real and imaginary
 parts are represented by separate tensors, allowing the model to run over ordinary real scalar
 backends. The spectral linear map is applied independently at every retained frequency.
 -/
@@ -270,7 +272,8 @@ inverse transform.
 -/
 def block {d : Nat} (spatial modes : TorchLean.Tensor Nat [d]) (width : Nat)
     (activation : Activation.Kind := .tanh)
-    (spectralRealSeed spectralImagSeed skipWeightSeed : Nat := 0) :
+    (spectralRealSeed spectralImagSeed skipWeightSeed : Nat := 0)
+    (path : F.SpectralPath := .automatic) :
     Layer (fieldShape spatial width) (fieldShape spatial width) :=
   let grid := gridSize spatial
   let field : Shape := fieldShape spatial width
@@ -303,21 +306,19 @@ def block {d : Nat} (spatial modes : TorchLean.Tensor Nat [d]) (width : Nat)
     forward := fun mode {α} _ _ => fun {m} _ _ => fun spectralReal spectralImag skip bias x =>
       (show m (RefTy (m := m) (α := α) field) from do
         let xMatrix ← (Internal.flattenSpatial spatial).forward mode (α := α) (m := m) x
-        let transformShape : Shape := matrixShape grid grid
-        let cosRef ← Runtime.Autograd.Model.const (m := m) (α := α) (s := transformShape)
-          (Internal.dftCosMatrix (α := α) spatial)
-        let negSinRef ← Runtime.Autograd.Model.const (m := m) (α := α) (s := transformShape)
-          (Internal.dftNegSinMatrix (α := α) spatial)
-        let inverseCosRef ← Runtime.Autograd.Model.const (m := m) (α := α) (s := transformShape)
-          (Internal.idftCosMatrix (α := α) spatial)
-        let inverseSinRef ← Runtime.Autograd.Model.const (m := m) (α := α) (s := transformShape)
-          (Internal.idftSinMatrix (α := α) spatial)
-        let xReal ← Runtime.Autograd.Model.matmul (m := m) (α := α)
-          (batchA := .scalar) (batchB := .scalar) (batch := .scalar)
-          (mDim := grid) (nDim := grid) (pDim := width) cosRef xMatrix
-        let xImag ← Runtime.Autograd.Model.matmul (m := m) (α := α)
-          (batchA := .scalar) (batchB := .scalar) (batch := .scalar)
-          (mDim := grid) (nDim := grid) (pDim := width) negSinRef xMatrix
+        have grid_eq : grid = (spatial.to (List Nat)).prod := Tensor.prod_eq_to_list_prod spatial
+        let (xReal, xImag) ← if positive : 0 < grid ∧ path = .automatic then do
+          let zero ← const (Tensor.zeros (α := α) flat)
+          let transformed ← F.fft (α := α) (m := m) (channels := width)
+            (spatial.to (List Nat)) (by simpa only [← grid_eq] using positive.1)
+            (by simpa only [← grid_eq] using xMatrix) (by simpa only [← grid_eq] using zero)
+          pure (by simpa only [← grid_eq] using transformed)
+        else do
+          let cosRef ← const (Internal.dftCosMatrix (α := α) spatial)
+          let negSinRef ← const (Internal.dftNegSinMatrix (α := α) spatial)
+          let realPart ← matmul (batchA := []) (batchB := []) (batch := []) cosRef xMatrix
+          let imagPart ← matmul (batchA := []) (batchB := []) (batch := []) negSinRef xMatrix
+          pure (realPart, imagPart)
         let xRealBatched ← (reshapeModesForMatmul grid width).forward mode
           (α := α) (m := m) xReal
         let xImagBatched ← (reshapeModesForMatmul grid width).forward mode
@@ -348,14 +349,22 @@ def block {d : Nat} (spatial modes : TorchLean.Tensor Nat [d]) (width : Nat)
           transformedReal maskRef
         let retainedImag ← Runtime.Autograd.Model.mul (m := m) (α := α) (s := flat)
           transformedImag maskRef
-        let inverseReal ← Runtime.Autograd.Model.matmul (m := m) (α := α)
-          (batchA := .scalar) (batchB := .scalar) (batch := .scalar)
-          (mDim := grid) (nDim := grid) (pDim := width) inverseCosRef retainedReal
-        let inverseImag ← Runtime.Autograd.Model.matmul (m := m) (α := α)
-          (batchA := .scalar) (batchB := .scalar) (batch := .scalar)
-          (mDim := grid) (nDim := grid) (pDim := width) inverseSinRef retainedImag
-        let spectralMatrix ← Runtime.Autograd.Model.sub (m := m) (α := α) (s := flat)
-          inverseReal inverseImag
+        let spectralMatrix ← if positive : 0 < grid ∧ path = .automatic then do
+          let (realPart, _) ← F.fft (α := α) (m := m) (channels := width)
+            (spatial.to (List Nat))
+            (by simpa only [← grid_eq] using positive.1)
+            (by simpa only [← grid_eq] using retainedReal)
+            (by simpa only [← grid_eq] using retainedImag)
+            (inverse := true)
+          pure (by simpa only [← grid_eq] using realPart)
+        else do
+          let inverseCosRef ← const (Internal.idftCosMatrix (α := α) spatial)
+          let inverseSinRef ← const (Internal.idftSinMatrix (α := α) spatial)
+          let realPart ← matmul (batchA := []) (batchB := []) (batch := [])
+            inverseCosRef retainedReal
+          let imagPart ← matmul (batchA := []) (batchB := []) (batch := [])
+            inverseSinRef retainedImag
+          sub realPart imagPart
         let spectralResult ← (Internal.restoreSpatial spatial).forward mode
           (α := α) (m := m) spectralMatrix
         let skipMatrix ← Runtime.Autograd.Model.matmul (m := m) (α := α)

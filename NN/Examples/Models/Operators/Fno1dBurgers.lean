@@ -26,7 +26,7 @@ scripts do the two jobs Lean should not own here: download and reshape the publi
 loop stay in TorchLean.
 
 This executable uses real-split Fourier arithmetic because the Burgers data are real-valued. The
-portable path evaluates the dense multidimensional DFT with separate real and imaginary tensors.
+portable path transforms each spatial axis with separate real and imaginary tensors.
 On CUDA, the command deliberately selects a specialized one-sided real-FFT model whose transforms
 run through cuFFT. The two paths share the typed field-to-field boundary and training task, but
 they do not share an identical spectral parameter layout.
@@ -83,10 +83,10 @@ abbrev modelConfig : nn.models.FNO.Config 1 :=
     layerCount := blocks }
 
 /-- Model input shape: one sampled initial condition on the fixed grid. -/
-abbrev input : Shape := modelConfig.input
+abbrev input : Shape := modelConfig.inputShape
 
 /-- Model output shape: one predicted terminal solution on the same grid. -/
-abbrev output : Shape := modelConfig.output
+abbrev output : Shape := modelConfig.outputShape
 
 /-- Directory where the preparation script writes Burgers tensors by default. -/
 def defaultDir : System.FilePath := "data/real/fno"
@@ -354,11 +354,10 @@ def run (config : Options) : IO Unit := do
 end FusedCuda
 
 /--
-Train and evaluate using the portable dense DFT operations.
+Train and evaluate using the portable full-spectrum model.
 
-This is the path that runs anywhere. The fused cuFFT path above is faster but needs CUDA, and
-keeping
-both in the file means the two can be compared on the same data with the same seed.
+The transforms have a dense per-axis fallback on CPU. The fused cuFFT path above uses a different
+one-sided parameter layout; both models can be trained on the same data with the same seed.
 -/
 def runPortable
     (runtime : Runtime.Config)
@@ -405,7 +404,7 @@ def runPortable
   writePrediction config.artifacts.plotCsv x y yhat
   let history ← histRef.get
   writeLog
-    config.training.logDestination history config "portable dense DFT ops"
+    config.training.logDestination history config "portable per-axis Fourier ops"
       (runtime.deviceName)
 
 /--
@@ -463,7 +462,7 @@ def main (args : List String) : IO UInt32 := do
         IO.println "  spectral path=fused cuFFT RFFT autograd op"
         FusedCuda.run config
       else
-        IO.println "  spectral path=portable dense multidimensional DFT"
+        IO.println "  spectral path=portable per-axis Fourier transforms"
         runPortable runtime config)
 
 end NN.Examples.Models.Operators.Fno1dBurgers

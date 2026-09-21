@@ -109,15 +109,15 @@ def validate (config : Config) : Except String Unit := do
 end Config
 
 /-- Bounded token-id tensor shape. -/
-abbrev Config.tokens (config : Config) (batchShape : Shape := []) : Shape :=
+abbrev Config.tokenShape (config : Config) (batchShape : Shape := []) : Shape :=
   batchShape.appendDim config.sequenceLength
 
 /-- Per-token vocabulary tensor shape used by one-hot inputs and output logits. -/
-abbrev Config.vocabulary (config : Config) (batchShape : Shape := []) : Shape :=
+abbrev Config.vocabularyShape (config : Config) (batchShape : Shape := []) : Shape :=
   batchShape.concat [config.sequenceLength, config.vocabularySize]
 
 /-- Embedded-token tensor shape. -/
-abbrev Config.embeddings (config : Config) (batchShape : Shape := []) : Shape :=
+abbrev Config.embeddingShape (config : Config) (batchShape : Shape := []) : Shape :=
   batchShape.concat [config.sequenceLength, config.modelWidth]
 
 /--
@@ -130,18 +130,18 @@ independent output head or reuse their token-embedding matrix.
 def hidden (config : Config) (batchShape : Shape := [])
     : nn.Builder
       (nn.Sequential
-        (config.embeddings batchShape)
-        (config.embeddings batchShape)) :=
+        (config.embeddingShape batchShape)
+        (config.embeddingShape batchShape)) :=
   match config.validateBody with
   | .error message =>
     pure <| nn.Internal.invalidConfiguration
-        (config.embeddings batchShape) (config.embeddings batchShape)
+        (config.embeddingShape batchShape) (config.embeddingShape batchShape)
         "CausalTransformer" message
   | .ok () =>
       if hWidth : config.modelWidth = 0 then
         pure <| nn.Internal.invalidConfiguration
-          (config.embeddings batchShape)
-          (config.embeddings batchShape)
+          (config.embeddingShape batchShape)
+          (config.embeddingShape batchShape)
           "CausalTransformer"
           "CausalTransformer: model width must be positive"
       else
@@ -171,9 +171,9 @@ def hidden (config : Config) (batchShape : Shape := [])
             { initialization := positionInitialization }
           let positionalEmbedding :
               nn.Sequential
-                (config.embeddings batchShape)
-                (config.embeddings batchShape) := by
-            simpa only [modelWidth, Config.embeddings, Config.modelWidth] using
+                (config.embeddingShape batchShape)
+                (config.embeddingShape batchShape) := by
+            simpa only [modelWidth, Config.embeddingShape, Config.modelWidth] using
               builtPositionalEmbedding
           let builtTransformerBlocks ← nn.transformerEncoderStack encoderConfig
             (batchShape := batchShape)
@@ -181,18 +181,18 @@ def hidden (config : Config) (batchShape : Shape := [])
             (mask := some (Spec.causalMask config.sequenceLength))
           let transformerBlocks :
               nn.Sequential
-                (config.embeddings batchShape)
-                (config.embeddings batchShape) := by
-            simpa only [modelWidth, Config.embeddings, Config.modelWidth] using
+                (config.embeddingShape batchShape)
+                (config.embeddingShape batchShape) := by
+            simpa only [modelWidth, Config.embeddingShape, Config.modelWidth] using
               builtTransformerBlocks
           let builtNormalization ←
             nn.layerNorm (batchShape.appendDim config.sequenceLength)
               (width := modelWidth)
           let normalization :
               nn.Sequential
-                (config.embeddings batchShape)
-                (config.embeddings batchShape) := by
-            simpa [modelWidth, Config.embeddings, Config.modelWidth,
+                (config.embeddingShape batchShape)
+                (config.embeddingShape batchShape) := by
+            simpa [modelWidth, Config.embeddingShape, Config.modelWidth,
               Shape.appendDim_appendDim_eq_concat] using builtNormalization
           pure (positionalEmbedding >>> transformerBlocks >>> normalization)
 
@@ -205,12 +205,12 @@ token-embedding/output matrix.
 def fromEmbeddings (config : Config) (batchShape : Shape := [])
     : nn.Builder
       (nn.Sequential
-        (config.embeddings batchShape)
-        (config.vocabulary batchShape)) :=
+        (config.embeddingShape batchShape)
+        (config.vocabularyShape batchShape)) :=
   match config.validate with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
-        (config.embeddings batchShape) (config.vocabulary batchShape)
+        (config.embeddingShape batchShape) (config.vocabularyShape batchShape)
         "CausalTransformer" message
   | .ok () => do
       let hidden ← hidden config batchShape
@@ -219,9 +219,9 @@ def fromEmbeddings (config : Config) (batchShape : Shape := [])
         (config := { weightInitialization? := config.parameterInitialization? })
       let outputProjection :
           nn.Sequential
-            (config.embeddings batchShape)
-            (config.vocabulary batchShape) := by
-        simpa [Config.embeddings, Config.vocabulary,
+            (config.embeddingShape batchShape)
+            (config.vocabularyShape batchShape) := by
+        simpa [Config.embeddingShape, Config.vocabularyShape,
           Shape.appendDim_appendDim_eq_concat] using builtOutputProjection
       pure (hidden >>> outputProjection)
 
@@ -234,12 +234,12 @@ composes with the rest of the API-layer model-building interface.
 def oneHot (config : Config) (batchShape : Shape := [])
     : nn.Builder
       (nn.Sequential
-        (config.vocabulary batchShape)
-        (config.vocabulary batchShape)) :=
+        (config.vocabularyShape batchShape)
+        (config.vocabularyShape batchShape)) :=
   match config.validate with
   | .error message =>
     pure <| nn.Internal.invalidConfiguration
-        (config.vocabulary batchShape) (config.vocabulary batchShape)
+        (config.vocabularyShape batchShape) (config.vocabularyShape batchShape)
         "CausalTransformer" message
   | .ok () =>
       let modelWidth := config.modelWidth
@@ -251,9 +251,9 @@ def oneHot (config : Config) (batchShape : Shape := [])
           (batchShape := batchShape.appendDim config.sequenceLength)
         let tokenEmbedding :
             nn.Sequential
-              (config.vocabulary batchShape)
-              (config.embeddings batchShape) := by
-          simpa [modelWidth, Config.vocabulary, Config.embeddings, Config.modelWidth,
+              (config.vocabularyShape batchShape)
+              (config.embeddingShape batchShape) := by
+          simpa [modelWidth, Config.vocabularyShape, Config.embeddingShape, Config.modelWidth,
             Shape.appendDim_appendDim_eq_concat] using builtTokenEmbedding
         let body ← fromEmbeddings config batchShape
         pure (tokenEmbedding >>> body)

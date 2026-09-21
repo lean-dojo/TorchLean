@@ -112,7 +112,7 @@ def lirpaTools : List Tool :=
       description := desc
       defaultArg := some defaultPath
       run := fun args => do
-        let path ← TorchLean.CLI.orThrowIO <| getPathOrDefault args defaultPath
+        let path ← IO.ofExcept <| getPathOrDefault args defaultPath
         k path }
   [
     mk "lirpa-mlp" "IBP cert: feed-forward MLP"
@@ -145,7 +145,7 @@ def otherTools : List Tool :=
       description := "PINN certificate recomputation check"
       defaultArg := some NN.Verification.PINN.Certificate.defaultCertPath
       run := fun args => do
-        let path ← TorchLean.CLI.orThrowIO <|
+        let path ← IO.ofExcept <|
           getPathOrDefault args NN.Verification.PINN.Certificate.defaultCertPath
         NN.Verification.PINN.Certificate.verifyCert path }
   , { name := "spline-cert"

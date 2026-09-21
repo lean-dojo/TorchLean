@@ -61,9 +61,9 @@ abbrev modelConfig : nn.models.KAN.Config :=
     edge := nn.models.KAN.PiecewiseLinear.edgeFamily { gridSize := 4, inputScale := 3 } }
 
 /-- Input shape for one batch, derived from the KAN config so the two cannot disagree. -/
-abbrev input := modelConfig.input [batchSize]
+abbrev input := modelConfig.inputShape [batchSize]
 /-- Output shape for one batch. -/
-abbrev output := modelConfig.output [batchSize]
+abbrev output := modelConfig.outputShape [batchSize]
 
 /-- Generic KAN model. Regression/classification is selected by `Trainer`, not by the model name. -/
 def model : nn.Builder (nn.Sequential input output) :=

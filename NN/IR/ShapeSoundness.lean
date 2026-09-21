@@ -132,7 +132,7 @@ end OkShape
 
 /-- Prove `OkShape s e` for a monadic `Except` computation all of whose success leaves are tagged
 with `s`, by walking binds, conditionals, and matches. -/
-macro "ok_shape" : tactic =>
+local macro "ok_shape" : tactic =>
   `(tactic| repeat (first
       | exact okShape_error _ _
       | exact okShape_ok _ _
@@ -148,7 +148,7 @@ macro "ok_shape" : tactic =>
 /-- Rewrite a monadic `Except` success hypothesis into the conjunction of its stages, discharging
 every branch that would have produced an error. Residual `match` expressions on opaque scrutinees
 are left for `split`. -/
-macro "peel_ok " h:ident : tactic =>
+local macro "peel_ok " h:ident : tactic =>
   `(tactic| simp only [bind_ok_iff, option_bind_some_iff, pure_eq_ok, throw_eq_error, ok_bind,
       error_bind, dite_eq_iff, ite_eq_iff, exists_false, false_or, or_false, and_false, false_and,
       Except.ok.injEq,

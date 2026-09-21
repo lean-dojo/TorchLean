@@ -9,6 +9,7 @@ import NN.Proofs.Autograd.Tape.Ops.Norm.BatchNorm
 import NN.Proofs.Autograd.Tape.Ops.Norm.LayerNorm
 import NN.Proofs.Autograd.Tape.Ops.Norm.LayerNormAdjoint
 import NN.Proofs.Models.Attention.HardMask
+import NN.Tactic.Autograd
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
 
@@ -117,11 +118,7 @@ coordinates fixed:
 example (a b c : ℝ) :
     HasDerivAt (fun t : ℝ => (t ^ 2 + b + c) / 3)
       (2 * a / 3) a := by
-  have h : HasDerivAt
-      (fun t : ℝ => t ^ 2 + b + c) (2 * a) a := by
-    simpa using
-      ((hasDerivAt_pow 2 a).add_const b).add_const c
-  simpa using h.div_const 3
+  autograd
 ```
 
 The second half of the demo is a single affine layer `y = W x + b` with two inputs, one output, and
@@ -143,22 +140,13 @@ example (w₁ w₂ b t x₁ x₂ : ℝ) :
     HasDerivAt
       (fun w : ℝ => (w * x₁ + w₂ * x₂ + b - t) ^ 2)
       (2 * (w₁ * x₁ + w₂ * x₂ + b - t) * x₁) w₁ := by
-  set y := w₁ * x₁ + w₂ * x₂ + b with hy
-  have h : HasDerivAt
-      (fun w : ℝ => w * x₁ + w₂ * x₂ + b - t) x₁ w₁ := by
-    simpa using
-      ((((hasDerivAt_id w₁).mul_const x₁).add_const
-        (w₂ * x₂)).add_const b).sub_const t
-  have hsq : (fun w : ℝ => (w * x₁ + w₂ * x₂ + b - t) ^ 2)
-      = fun w : ℝ =>
-        (w * x₁ + w₂ * x₂ + b - t)
-          * (w * x₁ + w₂ * x₂ + b - t) := by
-    funext w
-    ring
-  rw [hsq, show 2 * (y - t) * x₁
-      = x₁ * (y - t) + (y - t) * x₁ by ring]
-  exact h.mul h
+  autograd
 ```
+
+`autograd` composes mathlib's derivative rules and checks the resulting formula. It does not
+estimate a gradient from samples. Import `NN.Tactic.Autograd` to use it; `autograd?` shows the proof
+it found. For a named operation, register a proved derivative rule with `@[autograd]`, or expose
+an identity inside expressions with `@[autograd simp]`. Domain conditions remain proof obligations.
 
 This proves one component of the gradient for an affine layer. The graph theorem will assemble
 such local derivatives and account for parameters used along several paths, where the reverse pass

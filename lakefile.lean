@@ -440,7 +440,7 @@ lean_exe torchlean where
 
 -- Shared executable numerical formats and refinement proofs.
 require floatlib from git
-  "https://github.com/lean-dojo/FloatLib" @ "52ab504bfcd8e5395b29a4f64b617b401e5d16ac"
+  "https://github.com/lean-dojo/FloatLib" @ "main"
 
 -- Complete API documentation (HTML) via `lake build TorchLeanDocs:docs`.
 require «doc-gen4» from git

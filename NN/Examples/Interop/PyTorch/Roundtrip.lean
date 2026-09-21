@@ -138,10 +138,10 @@ private def cnnFirstPooling : nn.Pooling.Config 2 :=
     stride := [2, 2] }
 
 private def cnnAfterFirstConvolution : Tensor Nat [2] :=
-  cnnFirstConvolution.output cnnInputSpatial
+  cnnFirstConvolution.outputSpatial cnnInputSpatial
 
 private def cnnAfterFirstPooling : Tensor Nat [2] :=
-  cnnFirstPooling.output cnnAfterFirstConvolution
+  cnnFirstPooling.outputSpatial cnnAfterFirstConvolution
 
 private def cnnSecondConvolution : nn.Convolution.Config 2 :=
   { outChannels := cnnOutputChannels
@@ -154,10 +154,10 @@ private def cnnSecondPooling : nn.Pooling.Config 2 :=
     stride := [2, 2] }
 
 private def cnnAfterSecondConvolution : Tensor Nat [2] :=
-  cnnSecondConvolution.output cnnAfterFirstPooling
+  cnnSecondConvolution.outputSpatial cnnAfterFirstPooling
 
 private def cnnAfterSecondPooling : Tensor Nat [2] :=
-  cnnSecondPooling.output cnnAfterSecondConvolution
+  cnnSecondPooling.outputSpatial cnnAfterSecondConvolution
 
 private def cnnFlattenedWidth : Nat :=
   cnnOutputChannels * cnnAfterSecondPooling.prod

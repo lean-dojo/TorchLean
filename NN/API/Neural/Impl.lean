@@ -349,7 +349,7 @@ def conv (batchShape : Spec.Shape := []) {d : Nat} {inputChannels : Nat}
     Sequential
       (batchShape.concat ((spatial.to Spec.Shape).prependDim inputChannels))
       (batchShape.concat
-        (((config.output spatial).to Spec.Shape).prependDim config.outChannels)) :=
+        (((config.outputSpatial spatial).to Spec.Shape).prependDim config.outChannels)) :=
   nn.Sequential.fromLayer <| adaptLeadingShape batchShape <|
       Runtime.Autograd.Model.Layers.conv
         batchShape.size d
@@ -369,7 +369,7 @@ def convTranspose (batchShape : Spec.Shape := []) {d : Nat} {inputChannels : Nat
     Sequential
       (batchShape.concat ((spatial.to Spec.Shape).prependDim inputChannels))
       (batchShape.concat
-        (((config.output spatial).to Spec.Shape).prependDim config.outChannels)) :=
+        (((config.outputSpatial spatial).to Spec.Shape).prependDim config.outChannels)) :=
   nn.Sequential.fromLayer <| adaptLeadingShape batchShape <|
       Runtime.Autograd.Model.Layers.convTranspose
         batchShape.size d
@@ -383,7 +383,7 @@ def maxPool (batchShape : Spec.Shape := []) {d channels : Nat} (spatial : Tensor
     Sequential
       (batchShape.concat ((spatial.to Spec.Shape).prependDim channels))
       (batchShape.concat
-        (((config.output spatial).to Spec.Shape).prependDim channels)) :=
+        (((config.outputSpatial spatial).to Spec.Shape).prependDim channels)) :=
   nn.Sequential.fromLayer <| adaptLeadingShape batchShape <|
       Runtime.Autograd.Model.Layers.maxPool
         batchShape.size d channels
@@ -395,7 +395,7 @@ def avgPool (batchShape : Spec.Shape := []) {d channels : Nat} (spatial : Tensor
     Sequential
       (batchShape.concat ((spatial.to Spec.Shape).prependDim channels))
       (batchShape.concat
-        (((config.output spatial).to Spec.Shape).prependDim channels)) :=
+        (((config.outputSpatial spatial).to Spec.Shape).prependDim channels)) :=
   nn.Sequential.fromLayer <| adaptLeadingShape batchShape <|
       Runtime.Autograd.Model.Layers.avgPool
         batchShape.size d channels
@@ -945,10 +945,10 @@ def convBlock (batchShape : Spec.Shape := []) {d : Nat} {inputChannels : Nat}
     Sequential
       (batchShape.concat ((spatial.to Spec.Shape).prependDim inputChannels))
       (batchShape.concat
-        (((config.convolution.output spatial).to Spec.Shape)
+        (((config.convolution.outputSpatial spatial).to Spec.Shape)
           |>.prependDim config.convolution.outChannels)) := by
   let output := batchShape.concat
-    (((config.convolution.output spatial).to Spec.Shape)
+    (((config.convolution.outputSpatial spatial).to Spec.Shape)
       |>.prependDim config.convolution.outChannels)
   let actLayer : Sequential output output :=
     activation (s := output) config.activation
@@ -963,22 +963,6 @@ def convBlock (batchShape : Spec.Shape := []) {d : Nat} {inputChannels : Nat}
       let dropoutLayer : Sequential output output :=
         dropout (s := output) p (seed := dropoutSeed)
       nn.compose![core, dropoutLayer]
-
-/-- Build a rank-polymorphic convolution/activation/max-pooling block. -/
-def convPoolBlock (batchShape : Spec.Shape := []) {d : Nat} {inputChannels : Nat}
-    (spatial : Tensor Nat [d])
-    (config : ConvPoolBlock.Config d)
-    (kernelSeed dropoutSeed : Nat := 0) :
-    Sequential
-      (batchShape.concat ((spatial.to Spec.Shape).prependDim inputChannels))
-      (batchShape.concat
-        (((config.pooling.output
-          (config.block.convolution.output spatial)).to Spec.Shape)
-            |>.prependDim config.block.convolution.outChannels)) :=
-  let afterConv := config.block.convolution.output spatial
-  nn.compose![
-    convBlock batchShape spatial config.block kernelSeed dropoutSeed,
-    maxPool batchShape afterConv config.pooling]
 
 /--
 Transformer encoder block.
@@ -1074,20 +1058,9 @@ def transformerEncoderBlock (batchShape : Spec.Shape := []) {sequenceLength mode
         secondNormalization]
   simpa [modelShape, tokenBatchShape, Spec.Shape.appendDim_appendDim_eq_concat] using result
 
-/-- Classification head that preserves an arbitrary batch shape. -/
-def classifierHead (batchShape : Spec.Shape := []) {featureShape : Spec.Shape}
-    (classCount : Nat) (weightSeed : Nat := 0) :
-    Sequential
-      (batchShape.concat featureShape)
-      (batchShape.appendDim classCount) :=
-  nn.compose![
-    flattenAfter batchShape (shape := featureShape),
-    linear featureShape.size classCount
-      (weightSeed := weightSeed) (biasSeed := 0) (batchShape := batchShape)]
-
-/-- Regression head that preserves an arbitrary batch shape. -/
-def regressorHead (batchShape : Spec.Shape := []) {featureShape : Spec.Shape}
-    (outputWidth : Nat := 1) (weightSeed : Nat := 0) :
+/-- Flatten the feature suffix and apply an affine map, preserving every batch axis. -/
+def affineHead (batchShape : Spec.Shape := []) {featureShape : Spec.Shape}
+    (outputWidth : Nat) (weightSeed : Nat := 0) :
     Sequential
       (batchShape.concat featureShape)
       (batchShape.appendDim outputWidth) :=

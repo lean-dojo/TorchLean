@@ -8,7 +8,7 @@ module
 
 public import NN.Verification.Util.Json
 public import NN.Verification.ODE.Parse
-public import NN.API.CLI.Command
+public import NN.API.CLI.Parser
 public import NN.Verification.Builtin.Lowering.API
 public import NN.Verification.PINN.PyTorch.ParamStore
 
@@ -1063,7 +1063,7 @@ Parse CLI arguments and either:
 -/
 def runArgs (args : List String) : IO Unit := do
   let args := TorchLean.CLI.dropDashDash args
-  let (backendName?, args) ← TorchLean.CLI.orThrowIO <|
+  let (backendName?, args) ← IO.ofExcept <|
     TorchLean.CLI.takeFlagValue? args "model"
   let backendOverride ←
     match backendName? with
@@ -1072,7 +1072,7 @@ def runArgs (args : List String) : IO Unit := do
         match parseModelBackendNameE name with
         | .ok backend => pure (some backend)
         | .error message => throw <| IO.userError message
-  let (arithmeticName?, args) ← TorchLean.CLI.orThrowIO <|
+  let (arithmeticName?, args) ← IO.ofExcept <|
     TorchLean.CLI.takeFlagValue? args "arithmetic"
   let arithmeticOverride ←
     match arithmeticName? with
@@ -1081,33 +1081,33 @@ def runArgs (args : List String) : IO Unit := do
         match parseArithmeticNameE name with
         | .ok arithmetic => pure (some arithmetic)
         | .error message => throw <| IO.userError message
-  let (cert?, args) ← TorchLean.CLI.orThrowIO <| TorchLean.CLI.takeFlagValue? args "cert"
+  let (cert?, args) ← IO.ofExcept <| TorchLean.CLI.takeFlagValue? args "cert"
   match cert? with
   | some p => do
-      TorchLean.CLI.orThrowIO (TorchLean.CLI.checkNoArgs args)
+      IO.ofExcept (TorchLean.CLI.checkNoArgs args)
       runCertificate p backendOverride arithmeticOverride
   | none =>
-    let (rhsS, args) ← TorchLean.CLI.orThrowIO <|
+    let (rhsS, args) ← IO.ofExcept <|
       TorchLean.CLI.requireFlagValue args "rhs" (some "missing --rhs=<expr>")
-    let (t0, args) ← TorchLean.CLI.orThrowIO <|
+    let (t0, args) ← IO.ofExcept <|
       TorchLean.CLI.requireFloatFlag args "t0" (some "missing --t0=<float>")
-    let (t1, args) ← TorchLean.CLI.orThrowIO <|
+    let (t1, args) ← IO.ofExcept <|
       TorchLean.CLI.requireFloatFlag args "t1" (some "missing --t1=<float>")
-    let (initF, args) ← TorchLean.CLI.orThrowIO <|
+    let (initF, args) ← IO.ofExcept <|
       TorchLean.CLI.requireFloatFlag args "init" (some "missing --init=<float>")
-    let (lw, args) ← TorchLean.CLI.orThrowIO <|
+    let (lw, args) ← IO.ofExcept <|
       TorchLean.CLI.requireFlagValue args "lower" (some "missing --lower=<weights.json>")
-    let (uw, args) ← TorchLean.CLI.orThrowIO <|
+    let (uw, args) ← IO.ofExcept <|
       TorchLean.CLI.requireFlagValue args "upper" (some "missing --upper=<weights.json>")
-    let (maxDepth, args) ← TorchLean.CLI.orThrowIO <|
+    let (maxDepth, args) ← IO.ofExcept <|
       TorchLean.CLI.takeNatFlag args "maxDepth" (default := 18)
-    let (minWidth, args) ← TorchLean.CLI.orThrowIO <|
+    let (minWidth, args) ← IO.ofExcept <|
       TorchLean.CLI.takeFloatFlag args "minWidth" (default := 1e-3)
-    let (slack, args) ← TorchLean.CLI.orThrowIO <|
+    let (slack, args) ← IO.ofExcept <|
       TorchLean.CLI.takeFloatFlag args "slack" (default := 0.0)
-    let (verbose, args) ← TorchLean.CLI.orThrowIO <|
+    let (verbose, args) ← IO.ofExcept <|
       TorchLean.CLI.takeBoolValueFlag args "verbose" (default := false)
-    TorchLean.CLI.orThrowIO (TorchLean.CLI.checkNoArgs args)
+    IO.ofExcept (TorchLean.CLI.checkNoArgs args)
     let init := (initF, initF)
     let rhsAst ←
       match Parse.parseExpr rhsS with

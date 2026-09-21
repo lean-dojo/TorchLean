@@ -83,11 +83,11 @@ abbrev modelConfig : nn.models.Recurrent.Config :=
 
 /-- Input shape: one scalar observation at each timestep. -/
 abbrev input : Shape :=
-  modelConfig.input
+  modelConfig.inputShape
 
 /-- Target/prediction shape: one next-step scalar at each timestep. -/
 abbrev output : Shape :=
-  modelConfig.output
+  modelConfig.outputShape
 
 /--
 The actual forecaster.

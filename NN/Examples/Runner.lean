@@ -136,6 +136,10 @@ def commandGroups : List CommandGroup :=
             NN.Examples.Models.Generative.Diffusion.main (supportsDevice := true)
         , statusCommand "fno1d_burgers" "learn the one-dimensional Burgers operator"
             NN.Examples.Models.Operators.Fno1dBurgers.main (supportsDevice := true)
+        , unitCommand "pinn" "train a neural field from an equation and boundary conditions"
+            NN.Examples.Models.Operators.Pinn.main
+        , unitCommand "complex_regression" "fit complex parameters using a real loss"
+            NN.Examples.Models.Operators.ComplexRegression.main
         ] }
   , { title := "Reinforcement learning"
       commands :=

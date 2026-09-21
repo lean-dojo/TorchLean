@@ -94,9 +94,10 @@ TorchLean.Runtime.Arithmetic.complex : Runtime.Arithmetic
 ```
 
 The supervised trainer accepts two of these three constructors. As the errors below show, the lower
-dispatcher can execute complex binary32, but a complex training run needs a
-real-valued loss, conjugate-aware gradients, and a result type that preserves complex predictions.
-The current supervised interface does not provide that contract.
+dispatcher can execute complex binary32, but the supervised interface exchanges real data and
+results. Complex training instead uses an explicit real loss with `autograd.complex.grad`, followed
+by `nn.sgdStep` on complex state. The `complex_regression` command demonstrates this separate path;
+it preserves both components in predictions and checkpoints.
 
 The device vocabulary is the widest of the four:
 

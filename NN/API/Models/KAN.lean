@@ -174,11 +174,11 @@ def validate (config : Config) : Except String Unit := do
     throw "KAN: edge basis size must be positive"
 
 /-- Typed input boundary with arbitrary batch axes. -/
-abbrev input (config : Config) (batchShape : Shape := []) : Shape :=
+abbrev inputShape (config : Config) (batchShape : Shape := []) : Shape :=
   batchShape.appendDim config.inputWidth
 
 /-- Typed output boundary with the same batch axes as the input. -/
-abbrev output (config : Config) (batchShape : Shape := []) : Shape :=
+abbrev outputShape (config : Config) (batchShape : Shape := []) : Shape :=
   batchShape.appendDim config.outputWidth
 
 end Config
@@ -232,17 +232,17 @@ Task semantics are deliberately not baked into the model name: use `Trainer.new`
 constructor.
 -/
 def kan (config : KAN.Config) (batchShape : Shape := []) :
-    nn.Builder (nn.Sequential (config.input batchShape) (config.output batchShape)) :=
+    nn.Builder (nn.Sequential (config.inputShape batchShape) (config.outputShape batchShape)) :=
   match config.validate with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
-        (config.input batchShape) (config.output batchShape) "KAN" message
+        (config.inputShape batchShape) (config.outputShape batchShape) "KAN" message
   | .ok () => do
       let sample ←
         KAN.Internal.stack config.edge config.inputWidth config.hiddenWidths
           config.outputWidth
       pure (by
-        simpa [KAN.Config.input, KAN.Config.output, Shape.appendDim_eq_concat] using
+        simpa [KAN.Config.inputShape, KAN.Config.outputShape, Shape.appendDim_eq_concat] using
           nn.mapLeading batchShape sample)
 
 end models

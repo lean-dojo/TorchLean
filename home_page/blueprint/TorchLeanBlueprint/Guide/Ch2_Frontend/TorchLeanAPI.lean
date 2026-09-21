@@ -806,9 +806,14 @@ checkpoints;
 its `.ieee` setting does not select an arbitrary width.
 
 Proofs choose `ℝ` or `TorchLean.Floats.FP32` directly. They are not runtime modes because
-they are noncomputable. The high-level trainer accepts the real runtime modes. Genuine complex
-training needs a real-valued loss, conjugate-aware reverse mode, and complex prediction results, so
-the generic runtime's `.complex` mode is not presented as a supervised trainer option.
+they are noncomputable. The high-level trainer accepts the real runtime modes. For a real loss on
+complex parameters, use `autograd.complex.grad` and `nn.sgdStep` with explicit complex state.
+The gradient contains both real-coordinate derivatives; predictions and `Checkpoint.State` preserve
+both components. The reference algorithm takes two forward passes per complex parameter entry.
+It does not turn the trainer's real-data interface into a complex-data interface.
+
+Try `scripts/lake.sh exe torchlean complex_regression` for a complete complex binary32 example.
+It fits a weight and bias against a real squared-residual loss and prints a held-out prediction.
 
 The direct tensor calculations earlier in this chapter use the `Float` written in their
 annotations. They are not silently redirected through a trainer's `.native` setting. The same is

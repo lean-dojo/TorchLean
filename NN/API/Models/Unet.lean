@@ -53,8 +53,8 @@ structure UNet.Config (d : Nat) where
 namespace UNet.Config
 
 /-- Grid size after the downsampling stage. -/
-def pooled {d : Nat} (config : UNet.Config d) : Tensor Nat [d] :=
-  config.pooling.output config.spatial
+def pooledSpatial {d : Nat} (config : UNet.Config d) : Tensor Nat [d] :=
+  config.pooling.outputSpatial config.spatial
 
 /-- Validate every channel width and downsample/upsample geometry before construction. -/
 def validate {d : Nat} (config : UNet.Config d) : Except String Unit := do
@@ -67,18 +67,18 @@ def validate {d : Nat} (config : UNet.Config d) : Except String Unit := do
   config.pooling.validate config.baseChannels config.spatial (kind := "UNet")
   let doubledChannels := config.baseChannels + config.baseChannels
   let upsampling := config.upsampling.transposedConvolution config.baseChannels
-  upsampling.validate doubledChannels config.pooled (kind := "UNet")
-  if upsampling.output config.pooled != config.spatial then
-    throw s!"UNet: transpose convolution outputs {upsampling.output config.pooled} \
+  upsampling.validate doubledChannels config.pooledSpatial (kind := "UNet")
+  if upsampling.outputSpatial config.pooledSpatial != config.spatial then
+    throw s!"UNet: transpose convolution outputs {upsampling.outputSpatial config.pooledSpatial} \
       after pooling, but the input spatial shape is {config.spatial}"
 
 /-- Input shape with arbitrary batch axes. -/
-abbrev input {d : Nat} (config : UNet.Config d)
+abbrev inputShape {d : Nat} (config : UNet.Config d)
     (batchShape : Spec.Shape := []) : Spec.Shape :=
   batchShape.concat ((config.spatial.to Spec.Shape).prependDim config.inputChannels)
 
 /-- Output shape with the same batch axes as the input. -/
-abbrev output {d : Nat} (config : UNet.Config d)
+abbrev outputShape {d : Nat} (config : UNet.Config d)
     (batchShape : Spec.Shape := []) : Spec.Shape :=
   batchShape.concat ((config.spatial.to Spec.Shape).prependDim config.outputChannels)
 
@@ -91,27 +91,28 @@ Same-padding convolutions preserve both resolutions automatically. Model validat
 empty input or pooled grid, or a pooling/upsampling pair that does not restore the input grid.
 -/
 def unet {d : Nat} (config : UNet.Config d) (batchShape : Spec.Shape := []) :
-    Builder (Sequential (config.input batchShape) (config.output batchShape)) :=
+    Builder (Sequential (config.inputShape batchShape) (config.outputShape batchShape)) :=
   match config.validate with
   | .error message =>
     pure <| nn.Internal.invalidConfiguration
-        (config.input batchShape) (config.output batchShape) "UNet" message
+        (config.inputShape batchShape) (config.outputShape batchShape) "UNet" message
   | .ok () =>
     if hRestores :
-      config.upsampling.transposedOutput config.pooled = config.spatial then
+      config.upsampling.transposedOutputSpatial config.pooledSpatial = config.spatial then
       let doubledChannels := config.baseChannels + config.baseChannels
       let convolution := Convolution.Geometry.samePadding config.kernelRadius
-      have preservesSize : convolution.output config.spatial = config.spatial :=
-        Convolution.Geometry.output_samePadding config.spatial config.kernelRadius
-      have preservesPooled : convolution.output config.pooled = config.pooled :=
-        Convolution.Geometry.output_samePadding config.pooled config.kernelRadius
+      have preservesSize : convolution.outputSpatial config.spatial = config.spatial :=
+        Convolution.Geometry.outputSpatial_samePadding config.spatial config.kernelRadius
+      have preservesPooled :
+          convolution.outputSpatial config.pooledSpatial = config.pooledSpatial :=
+        Convolution.Geometry.outputSpatial_samePadding config.pooledSpatial config.kernelRadius
       do
         let builtFirstStemConvolution ←
           conv config.spatial (convolution.convolution config.baseChannels)
             (inputChannels := config.inputChannels)
-        let firstStemConvolution : Sequential (config.input [])
+        let firstStemConvolution : Sequential (config.inputShape [])
             ((config.spatial.to Spec.Shape).prependDim config.baseChannels) := by
-          simpa [UNet.Config.input, preservesSize] using builtFirstStemConvolution
+          simpa [UNet.Config.inputShape, preservesSize] using builtFirstStemConvolution
         let builtSecondStemConvolution ←
           conv config.spatial (convolution.convolution config.baseChannels)
             (inputChannels := config.baseChannels)
@@ -129,31 +130,31 @@ def unet {d : Nat} (config : UNet.Config d) (batchShape : Spec.Shape := []) :
         let downsample ←
           maxPool config.spatial config.pooling (channels := config.baseChannels)
         let builtFirstBottleneckConvolution ←
-          conv config.pooled (convolution.convolution doubledChannels)
+          conv config.pooledSpatial (convolution.convolution doubledChannels)
             (inputChannels := config.baseChannels)
         let firstBottleneckConvolution : Sequential
-            ((config.pooled.to Spec.Shape).prependDim config.baseChannels)
-            ((config.pooled.to Spec.Shape).prependDim doubledChannels) := by
+            ((config.pooledSpatial.to Spec.Shape).prependDim config.baseChannels)
+            ((config.pooledSpatial.to Spec.Shape).prependDim doubledChannels) := by
           simpa [preservesPooled] using builtFirstBottleneckConvolution
         let builtSecondBottleneckConvolution ←
-          conv config.pooled (convolution.convolution doubledChannels)
+          conv config.pooledSpatial (convolution.convolution doubledChannels)
             (inputChannels := doubledChannels)
         let secondBottleneckConvolution : Sequential
-            ((config.pooled.to Spec.Shape).prependDim doubledChannels)
-            ((config.pooled.to Spec.Shape).prependDim doubledChannels) := by
+            ((config.pooledSpatial.to Spec.Shape).prependDim doubledChannels)
+            ((config.pooledSpatial.to Spec.Shape).prependDim doubledChannels) := by
           simpa [preservesPooled] using builtSecondBottleneckConvolution
         let bottleneckActivation : Sequential
-            ((config.pooled.to Spec.Shape).prependDim doubledChannels)
-            ((config.pooled.to Spec.Shape).prependDim doubledChannels) ← relu
+            ((config.pooledSpatial.to Spec.Shape).prependDim doubledChannels)
+            ((config.pooledSpatial.to Spec.Shape).prependDim doubledChannels) ← relu
         let bottleneck :=
           nn.compose![firstBottleneckConvolution, bottleneckActivation,
             secondBottleneckConvolution, bottleneckActivation]
         let builtUpsampling ←
-          convTranspose config.pooled
+          convTranspose config.pooledSpatial
             (config.upsampling.transposedConvolution config.baseChannels)
             (inputChannels := doubledChannels)
         let upsample : Sequential
-            ((config.pooled.to Spec.Shape).prependDim doubledChannels)
+            ((config.pooledSpatial.to Spec.Shape).prependDim doubledChannels)
             ((config.spatial.to Spec.Shape).prependDim config.baseChannels) := by
           simpa [hRestores] using builtUpsampling
 
@@ -183,14 +184,14 @@ def unet {d : Nat} (config : UNet.Config d) (batchShape : Spec.Shape := []) :
           nn.compose![firstDecoderConvolution, fullResolutionActivation,
             secondDecoderConvolution, fullResolutionActivation, outputProjection]
 
-        let core : Sequential (config.input []) (config.output []) :=
+        let core : Sequential (config.inputShape []) (config.outputShape []) :=
           nn.compose![stem, merge, decoder]
         pure (mapLeading batchShape core)
     else
       pure <| nn.Internal.invalidConfiguration
-        (config.input batchShape) (config.output batchShape) "UNet"
+        (config.inputShape batchShape) (config.outputShape batchShape) "UNet"
         s!"UNet: transpose convolution outputs \
-          {config.upsampling.transposedOutput config.pooled} after pooling, \
+          {config.upsampling.transposedOutputSpatial config.pooledSpatial} after pooling, \
           but the input spatial shape is {config.spatial}"
 
 end models

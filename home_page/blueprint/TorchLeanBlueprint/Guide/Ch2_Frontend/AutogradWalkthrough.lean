@@ -62,17 +62,15 @@ lake exe torchlean autograd_transforms
 ```
 
 ```terminal +output
-Jacobian rows of x^2:
-  [1.000000, 0.000000]
-  [0.000000, -2.400000]
-Hessian columns of mean(x^2):
-  [1.000000, 0.000000]
-  [0.000000, 1.000000]
+Jacobian of x^2: [[1.000000, 0.000000], [0.000000, -2.400000]]
+Hessian of mean(x^2): [[1.000000, 0.000000], [0.000000, 1.000000]]
 loss directional derivative = 0.011629
 loss Hessian-vector product = [[3, 2]: [[0.010000, -0.024000],
   [0.010000, -0.024000], [0.010000, -0.024000]], [3]: [0.020000, 0.020000, 0.020000]]
 state gradient after detaching the model output = [[3, 2]: [[0.000000, 0.000000],
   [0.000000, 0.000000], [0.000000, 0.000000]], [3]: [0.000000, 0.000000, 0.000000]]
+mixed input derivative of tanh at zero: [0.000000, 0.000000] (expected [0, 0])
+third input derivative along [1, 0]: [-2.000000, 0.000000] (expected [-2, 0])
 ```
 
 Their sources are {src "NN/Examples/Quickstart/AutogradBasics.lean"}[`AutogradBasics.lean`] and
@@ -92,11 +90,15 @@ changes by exactly the perturbation applied to the input. The final zero pack be
 detached loss, so it should be compared with the ordinary model gradient, not with a zero forward
 loss. These distinctions matter when several derivative objects appear in one log.
 
-The retained transcript prints Jacobian rows and Hessian columns separately. The current
-`AutogradTransforms.lean` runner prints each complete tensor on one line; the mathematical
-objects are unchanged. Its initial model state is seeded, whereas `agState` below replaces that
-state with constants. This explains why its directional derivative is `0.011629` and the later
-fixed-state calculation gives `-0.004200`.
+The last two calls differentiate model inputs, not parameters. The model applies $`\tanh` to
+each coordinate independently, so its mixed derivative in the two coordinate directions is zero.
+Repeating the first direction three times gives $`\tanh'''(0)=-2` in the first output and zero
+in the second. `autograd.model.derivative` takes the directions as a list; its length chooses
+the derivative order.
+
+The affine model's initial state is seeded, whereas `agState` below replaces that state with
+constants. This explains why its directional derivative is `0.011629` and the later fixed-state
+calculation gives `-0.004200`.
 
 # The Differentiable Program Type
 

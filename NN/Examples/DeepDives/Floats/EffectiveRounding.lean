@@ -8,7 +8,6 @@ module
 
 public import NN.Floats.FP32.Sterbenz
 public import NN.Proofs.RuntimeApprox.Reductions.IEEE32
-public import FloatLib.Floats.Formats.BinaryInterchange.DirectedSemantics.SquareRoot
 public import NN.Spec.Quantization
 public import NN.Spec.Core.FloatInstances -- shake: keep
 

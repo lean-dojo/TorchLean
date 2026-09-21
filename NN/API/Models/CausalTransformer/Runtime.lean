@@ -31,8 +31,8 @@ namespace Internal
 abbrev tiedStateShapes (config : Config)
     {batchShape : Shape}
     (body : nn.Sequential
-      (config.embeddings batchShape)
-      (config.embeddings batchShape)) :
+      (config.embeddingShape batchShape)
+      (config.embeddingShape batchShape)) :
     List Shape :=
   [config.vocabularySize, config.modelWidth] :: nn.stateShapes body
 
@@ -45,43 +45,43 @@ def tiedForward
     (config : Config)
     {batchShape : Shape}
     (body : nn.Sequential
-      (config.embeddings batchShape)
-      (config.embeddings batchShape))
+      (config.embeddingShape batchShape)
+      (config.embeddingShape batchShape))
     (state : Runtime.Autograd.Torch.RefList
       (TorchLean.Runtime.ValueRef (m := m) (α := α))
       (tiedStateShapes config body))
     (tokens : Runtime.Autograd.Torch.DataRef
-      (m := m) (α := α) (Fin config.vocabularySize) (config.tokens batchShape)) :
+      (m := m) (α := α) (Fin config.vocabularySize) (config.tokenShape batchShape)) :
     m (TorchLean.Runtime.ValueRef
-      (m := m) (α := α) (config.vocabulary batchShape)) := do
+      (m := m) (α := α) (config.vocabularyShape batchShape)) := do
   let .cons tokenEmbedding bodyState := state
   let computedEmbeddings ← Runtime.Autograd.Model.F.embedding
     (m := m) (α := α) (vocabularySize := config.vocabularySize)
     (embeddingWidth := config.modelWidth) tokenEmbedding tokens
   let embeddings : TorchLean.Runtime.ValueRef
-      (m := m) (α := α) (config.embeddings batchShape) := by
-    simpa [Config.tokens, Config.embeddings, Shape.appendDim_appendDim_eq_concat] using
+      (m := m) (α := α) (config.embeddingShape batchShape) := by
+    simpa [Config.tokenShape, Config.embeddingShape, Shape.appendDim_appendDim_eq_concat] using
       computedEmbeddings
   let hidden ← Runtime.Autograd.Model.Layers.Seq.forwardState
     (model := body) (α := α) (m := m) mode bodyState embeddings
   let hiddenRows ← Runtime.Autograd.Torch.reshape (m := m) (α := α)
-    (s₁ := config.embeddings batchShape)
-    (s₂ := [(config.tokens batchShape).size, config.modelWidth])
+    (s₁ := config.embeddingShape batchShape)
+    (s₂ := [(config.tokenShape batchShape).size, config.modelWidth])
     hidden (by
-      simp [Config.embeddings, Config.tokens, Shape.size_concat, Shape.size_appendDim,
+      simp [Config.embeddingShape, Config.tokenShape, Shape.size_concat, Shape.size_appendDim,
         Shape.size, Nat.mul_assoc])
   let projection ← Runtime.Autograd.Torch.swapAdjacentAtDepth (m := m) (α := α)
     (s := [config.vocabularySize, config.modelWidth]) 0 tokenEmbedding
   let logitsRows ← Runtime.Autograd.Torch.matmul (m := m) (α := α)
     (batchA := []) (batchB := []) (batch := [])
-    (mDim := (config.tokens batchShape).size) (nDim := config.modelWidth)
+    (mDim := (config.tokenShape batchShape).size) (nDim := config.modelWidth)
     (pDim := config.vocabularySize)
     hiddenRows projection
   Runtime.Autograd.Torch.reshape (m := m) (α := α)
-    (s₁ := [(config.tokens batchShape).size, config.vocabularySize])
-    (s₂ := config.vocabulary batchShape) logitsRows
+    (s₁ := [(config.tokenShape batchShape).size, config.vocabularySize])
+    (s₂ := config.vocabularyShape batchShape) logitsRows
     (by
-      simp [Config.vocabulary, Config.tokens, Shape.size_concat, Shape.size_appendDim,
+      simp [Config.vocabularyShape, Config.tokenShape, Shape.size_concat, Shape.size_appendDim,
         Shape.size, Nat.mul_assoc])
 
 /-- Assemble a complete tied-weight indexed model from one table and one hidden body. -/
@@ -90,9 +90,9 @@ def tiedModel
     {batchShape : Shape}
     (table : nn.Embedding config.vocabularySize config.modelWidth)
     (body : nn.Sequential
-      (config.embeddings batchShape)
-      (config.embeddings batchShape)) :
-    nn.IndexedModel (config.tokens batchShape) (config.vocabulary batchShape)
+      (config.embeddingShape batchShape)
+      (config.embeddingShape batchShape)) :
+    nn.IndexedModel (config.tokenShape batchShape) (config.vocabularyShape batchShape)
       (Fin config.vocabularySize) :=
   let stateShapes := tiedStateShapes config body
   let initialState : nn.State Float stateShapes := by
@@ -115,9 +115,9 @@ def tiedModel
           (β := Runtime.Autograd.Torch.CurriedRef
             (fun s => Runtime.Autograd.Torch.DataRef
               (m := m) (α := α) (Fin config.vocabularySize) s)
-            [config.tokens batchShape]
+            [config.tokenShape batchShape]
             (m (TorchLean.Runtime.ValueRef
-              (m := m) (α := α) (config.vocabulary batchShape))))
+              (m := m) (α := α) (config.vocabularyShape batchShape))))
           (fun state => fun tokens =>
             tiedForward (m := m) (α := α) mode config body state tokens))
     (kind := "CausalTransformer.tied")
@@ -139,13 +139,13 @@ The returned model is the single value used by training, checkpointing, and pred
 def indexed (config : Config)
     (batchShape : Shape := []) :
     nn.Builder
-      (nn.IndexedModel (config.tokens batchShape) (config.vocabulary batchShape)
+      (nn.IndexedModel (config.tokenShape batchShape) (config.vocabularyShape batchShape)
         (Fin config.vocabularySize)) :=
   fun stream =>
     match config.validate with
     | .error message =>
         (nn.IndexedModel.Internal.invalidConfiguration
-          (config.tokens batchShape) (config.vocabulary batchShape)
+          (config.tokenShape batchShape) (config.vocabularyShape batchShape)
           "CausalTransformer.indexed" message, stream)
     | .ok () =>
         let embeddingInitialization :=
@@ -154,11 +154,11 @@ def indexed (config : Config)
           nn.embedding config.vocabularySize config.modelWidth
             { weightInitialization := embeddingInitialization } stream
         let lookup : nn.IndexedModel
-            (config.tokens batchShape) (config.embeddings batchShape)
+            (config.tokenShape batchShape) (config.embeddingShape batchShape)
             (Fin config.vocabularySize) := by
-          simpa [Config.tokens, Config.embeddings,
+          simpa [Config.tokenShape, Config.embeddingShape,
             Shape.appendDim_eq_concat, Shape.concat_assoc] using
-            nn.Embedding.model table (config.tokens batchShape)
+            nn.Embedding.model table (config.tokenShape batchShape)
         let (body, afterBody) :=
           fromEmbeddings config batchShape afterTable
         (lookup.andThen body, afterBody)
@@ -169,13 +169,13 @@ Build a complete causal Transformer with one matrix shared by token lookup and o
 def tied (config : Config)
     (batchShape : Shape := []) :
     nn.Builder
-      (nn.IndexedModel (config.tokens batchShape) (config.vocabulary batchShape)
+      (nn.IndexedModel (config.tokenShape batchShape) (config.vocabularyShape batchShape)
         (Fin config.vocabularySize)) :=
   fun stream =>
     match config.validate with
     | .error message =>
         (nn.IndexedModel.Internal.invalidConfiguration
-          (config.tokens batchShape) (config.vocabulary batchShape)
+          (config.tokenShape batchShape) (config.vocabularyShape batchShape)
           "CausalTransformer.tied" message, stream)
     | .ok () =>
         let embeddingInitialization :=
@@ -196,13 +196,13 @@ def objective
     (config : Config)
     {batchShape : Shape}
     (model : nn.IndexedModel
-      (config.tokens batchShape)
-      (config.vocabulary batchShape)
+      (config.tokenShape batchShape)
+      (config.vocabularyShape batchShape)
       (Fin config.vocabularySize))
     (reduction : TorchLean.Loss.Reduction := .mean)
     (mode : nn.Mode := .train) :
     TorchLean.Module.ObjectiveDefinition (Fin config.vocabularySize)
-      model.stateShapes [] [config.tokens batchShape, config.tokens batchShape] :=
+      model.stateShapes [] [config.tokenShape batchShape, config.tokenShape batchShape] :=
   { initState := nn.State.Internal.toTensorPack model.initialState
     runtimeInit := nn.IndexedModel.Internal.initializationPlan model
     requiresGrad := model.requiresGrad
@@ -219,7 +219,7 @@ def objective
           (β := Runtime.Autograd.Torch.CurriedRef
             (fun s => Runtime.Autograd.Torch.DataRef
               (m := m) (α := α) (Fin config.vocabularySize) s)
-            [config.tokens batchShape, config.tokens batchShape]
+            [config.tokenShape batchShape, config.tokenShape batchShape]
             (m (TorchLean.Runtime.ValueRef (m := m) (α := α) [])))
           (fun arguments => fun tokens => fun targets => (do
             let (state, empty) :=
@@ -234,23 +234,23 @@ def objective
               (β := Runtime.Autograd.Torch.CurriedRef
                 (fun s => Runtime.Autograd.Torch.DataRef
                   (m := m) (α := α) (Fin config.vocabularySize) s)
-                [config.tokens batchShape]
+                [config.tokenShape batchShape]
                 (m (TorchLean.Runtime.ValueRef
-                  (m := m) (α := α) (config.vocabulary batchShape))))
+                  (m := m) (α := α) (config.vocabularyShape batchShape))))
               (nn.IndexedModel.Internal.program model mode (α := α)) state
             let logits ← withInput tokens
             let logitsIndexed : TorchLean.Runtime.ValueRef (m := m) (α := α)
-                ((config.tokens batchShape).concat [config.vocabularySize]) := by
-              simpa [Config.vocabulary, Config.tokens,
+                ((config.tokenShape batchShape).concat [config.vocabularySize]) := by
+              simpa [Config.vocabularyShape, Config.tokenShape,
                 Shape.appendDim_eq_concat, Shape.concat_assoc] using logits
             let targetsIndexed : Runtime.Autograd.Torch.DataRef
                 (m := m) (α := α) (Fin config.vocabularySize)
-                ((config.tokens batchShape).concat []) := by
+                ((config.tokenShape batchShape).concat []) := by
               simpa using targets
             TorchLean.Loss.crossEntropy (m := m) (α := α)
-              (leading := config.tokens batchShape) (trailing := [])
+              (leading := config.tokenShape batchShape) (trailing := [])
               (classes := config.vocabularySize)
-              (config.tokens batchShape).rank rfl
+              (config.tokenShape batchShape).rank rfl
               logitsIndexed targetsIndexed (reduction := reduction) :
               m (TorchLean.Runtime.ValueRef (m := m) (α := α) []))) }
 

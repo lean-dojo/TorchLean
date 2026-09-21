@@ -6,8 +6,9 @@ Authors: TorchLean Team
 
 module
 
+public import Batteries.Lean.Except
 public import NN.Runtime.RL.Boundary.Core
-public import NN.Proofs.RL.Tactics
+public import NN.Tactic.Except
 
 /-!
 # RL Trust-Boundary Proofs

@@ -45,9 +45,7 @@ def fit {α : Type} [Storage α] [Context α]
     let prediction := nn.TypedGraphModel.forward graph state input
     let residual := Tensor.sub prediction target
     let (gradient, _) := nn.TypedGraphModel.vjp graph state input residual
-    state ← match nn.sgdStep model learningRate state gradient with
-      | .ok next => pure next
-      | .error message => throw <| IO.userError message
+    state ← IO.ofExcept (nn.sgdStep model learningRate state gradient)
   return state
 
 /-- Train from a coefficient that cannot be represented in binary64, then print exact rationals. -/

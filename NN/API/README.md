@@ -115,6 +115,11 @@ The public API uses names that describe the boundary being crossed:
 - `Tensor.to tensor TargetType` exports to a requested container type;
 - `Tensor.load path` checks an NPY or numeric CSV file against the expected tensor type;
 - supervised samples expose `sample.input` and `sample.target`;
+- model configurations expose `inputShape` and `outputShape`, not `input` and `output`:
+  these describe tensor dimensions, not tensor values;
+- intermediate shapes say what they describe: `hiddenShape`, `patchTokenShape`, and
+  `embeddingShape`. Convolution and pooling use `outputSpatial` for spatial extents alone,
+  without batch or channel dimensions;
 - model and autograd operations use direct names such as `gradient`, `inputGradient`, and
   `lossValue`;
 - completed training reports expose `report.loss.before` and `report.loss.after`.
@@ -124,6 +129,13 @@ to implementation code. Application examples use literals, records, and named op
 and tuple results are immediately bound to descriptive local names.
 Type-directed choices such as `.relu`, `.train`, `.cuda`, and `.mean` remain concise because their
 expected type already determines what the case means.
+
+When updating older model code, add the `Shape` suffix to configuration shape accessors.
+For causal transformers, use `tokenShape`, `vocabularyShape`, and `embeddingShape` for the
+three input representations. ViT's encoder uses `patchGrid` for spatial extents,
+`patchShape` for patch features, `patchTokenShape` before adding a class token, and
+`outputShape` for the encoded sequence. Parser results without an executable-name prefix
+now use Lean's `IO.ofExcept`; `CLI.orThrow` still adds that prefix when needed.
 
 Stateful objects use `state` to read their current tensors and `setState` to replace them in
 memory. `save` and `load` are reserved for checkpoint and external-data boundaries; for example:

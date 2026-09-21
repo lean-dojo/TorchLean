@@ -14,9 +14,13 @@ open TorchLean
 | `TensorBasics.lean` | Literals, shapes, element types, conversion, reshape. |
 | `AutogradBasics.lean` | `autograd.grad` for tensor functions, `autograd.model.grad` for models. |
 | `SimpleMlpTrain.lean` | Model, dataset, `Trainer.new`, `trainer.train`, prediction. |
-| `Proofs.lean` | Compile-time shape guarantees and small mathematical lemmas. |
+| `Proofs.lean` | Shapes, loss derivatives with `autograd`, and quadratic convergence with `converges`. |
 | `Widgets.lean` | Optional editor panels for tensors and training logs. |
 | `Common.lean` | Training quickstart flag parsing; not part of the API. |
+
+For explicit scalar formats, continue with `Precision.lean` and `TypedTraining.lean`. Open either
+file in Lean and evaluate its `run` definition with `#eval run` inside the example's namespace.
+The latter keeps one typed graph across SGD steps; it does not rebuild the graph for each gradient.
 
 The first three are commands. They run on CPU with in-memory data:
 
@@ -80,6 +84,33 @@ accumulation, device selection, logging, and checkpoints. Application training c
 
 Advanced transforms are isolated in `NN/Examples/DeepDives/AutogradTransforms.lean`.
 The public operation map is in `NN/API/Autograd/README.md`.
+
+## Proving a derivative
+
+`autograd.grad` computes a gradient. The `autograd` tactic proves a derivative statement using
+mathlib. These are different tasks, despite sharing a name:
+
+```lean
+import NN.Tactic.Autograd
+
+example (x : ℝ) : HasDerivAt (fun y : ℝ => Real.exp (y * y))
+    (2 * x * Real.exp (x * x)) x := by
+  autograd
+```
+
+`Proofs.lean` also defines a new smooth penalty, proves its derivative, and registers that rule
+with `@[local autograd]` for use in a composition. It includes a logarithm example whose nonzero
+hypothesis must be supplied. A numerical gradient alone does not establish either theorem.
+
+For input derivatives of a model, use `autograd.model.derivative`. Repeating a direction computes
+a higher derivative; different directions compute mixed derivatives. The deep dive runs both:
+
+```bash
+scripts/lake.sh exe torchlean autograd_transforms
+```
+
+`autograd.model.derivativeVjp` then differentiates through such a derivative with respect to
+parameters and inputs. The [PINN example](../Models/Operators/Pinn.lean) uses it for training.
 
 ## Continue From Here
 

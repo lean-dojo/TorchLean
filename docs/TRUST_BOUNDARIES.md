@@ -294,8 +294,8 @@ or a complete concurrency proof of mimalloc, its compiler output, or operating-s
 ## Executable Floating Point
 
 - FloatLib supplies the executable floating-point formats, software arithmetic, rounding theory,
-  and interval semantics. `lakefile.lean` pins the dependency to commit
-  `52ab504bfcd8e5395b29a4f64b617b401e5d16ac`, with Lean and mathlib 4.34.0.
+  and interval semantics. `lakefile.lean` tracks its `main` branch; `lake-manifest.json` locks the
+  checked-out revision, currently `c9a051f08f948ce473036b815b0669fafb61f601`, with Lean and mathlib 4.34.0.
   TorchLean's runtime and certificate interfaces use `ExecFloat.Binary 8 23` directly.
   The typed tensor/model API supports FloatLib's configured binary family, including custom
   precision with valid widths, bias, and storage plans. This does not supply tensor `Context`

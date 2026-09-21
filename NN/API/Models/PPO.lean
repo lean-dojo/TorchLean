@@ -64,26 +64,27 @@ def validate (config : Config) : Except String Unit := do
     throw "PPO: action count must be positive"
 
 /-- Observation tensor shape with an arbitrary batch shape. -/
-abbrev input (config : Config) (batchShape : Shape := []) : Shape :=
+abbrev inputShape (config : Config) (batchShape : Shape := []) : Shape :=
   batchShape.appendDim config.observationWidth
 
 /-- Actor-logit tensor shape with the same batch shape as the observations. -/
-abbrev actorOutput (config : Config) (batchShape : Shape := []) : Shape :=
+abbrev actorOutputShape (config : Config) (batchShape : Shape := []) : Shape :=
   batchShape.appendDim config.actionCount
 
 /-- Critic-value tensor shape with the same batch shape as the observations. -/
-abbrev criticOutput (_config : Config) (batchShape : Shape := []) : Shape :=
+abbrev criticOutputShape (_config : Config) (batchShape : Shape := []) : Shape :=
   batchShape.appendDim 1
 
 end Config
 
 /-- Actor MLP mapping observations to action logits. -/
 def actor (config : Config) (batchShape : Shape := []) :
-    nn.Builder (nn.Sequential (config.input batchShape) (config.actorOutput batchShape)) :=
+    nn.Builder (nn.Sequential
+      (config.inputShape batchShape) (config.actorOutputShape batchShape)) :=
   match Internal.validateActor config with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
-        (config.input batchShape) (config.actorOutput batchShape) "PPO.actor" message
+        (config.inputShape batchShape) (config.actorOutputShape batchShape) "PPO.actor" message
   | .ok () =>
       nn.Sequential![
         linear config.observationWidth config.hiddenWidth (batchShape := batchShape),
@@ -93,11 +94,12 @@ def actor (config : Config) (batchShape : Shape := []) :
 
 /-- Critic MLP mapping observations to a scalar value estimate. -/
 def critic (config : Config) (batchShape : Shape := []) :
-    nn.Builder (nn.Sequential (config.input batchShape) (config.criticOutput batchShape)) :=
+    nn.Builder (nn.Sequential
+      (config.inputShape batchShape) (config.criticOutputShape batchShape)) :=
   match Internal.validateNetwork "PPO.critic" config with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
-        (config.input batchShape) (config.criticOutput batchShape) "PPO.critic" message
+        (config.inputShape batchShape) (config.criticOutputShape batchShape) "PPO.critic" message
   | .ok () =>
       nn.Sequential![
         linear config.observationWidth config.hiddenWidth (batchShape := batchShape),

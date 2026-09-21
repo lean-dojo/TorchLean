@@ -370,6 +370,10 @@ end Tokenizer.Internal
 def Tokenizer.vocabularySize (tokenizer : Tokenizer) : Nat :=
   (Tokenizer.Internal.view tokenizer).vocabulary.size
 
+/-- Look up a complete vocabulary token, including special tokens, without splitting it as text. -/
+def Tokenizer.tokenId? (tokenizer : Tokenizer) (token : String) : Option Nat :=
+  Internal.tokenId? (Tokenizer.Internal.view tokenizer) token
+
 /-- Encode text using the loaded GPT-2 BPE files. -/
 def encode (tokenizer : Tokenizer) (text : String) : Except String (Array Nat) := do
   let representation := Tokenizer.Internal.view tokenizer

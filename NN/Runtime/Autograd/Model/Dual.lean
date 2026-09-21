@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Tensor.Pack
+public import NN.Core.Numeric.Angle
 
 /-!
 # Dual
@@ -264,6 +265,22 @@ instance {α : Type} [TorchLean.Storage α] [Context α] : Context (Dual α) whe
   decidableGT := fun x y => (Context.decidableGT) x.re y.re
   stopGradient? := some fun x => ⟨Context.stopGradient x.re, 0⟩
   ratCast value := ⟨(value : α), 0⟩
+
+/--
+Differentiate the polar angle in real coordinates away from the origin and branch cut.
+
+Scaling both coordinates avoids squaring a large magnitude. At the origin we select zero tangent,
+where the angle has no classical derivative. The primal retains the component backend's signed-zero
+and branch-cut convention.
+-/
+instance {α : Type} [TorchLean.Storage α] [Context α] [Atan2 α] : Atan2 (Dual α) where
+  atan2 y x :=
+    let scale := Max.max (MathFunctions.abs x.re) (MathFunctions.abs y.re)
+    let tangent := if scale == 0 then 0 else
+      let a := x.re / scale
+      let b := y.re / scale
+      (a * (y.du / scale) - b * (x.du / scale)) / (a * a + b * b)
+    ⟨Atan2.atan2 y.re x.re, tangent⟩
 
 end Dual
 

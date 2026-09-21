@@ -185,6 +185,10 @@ annotation is rejected before the program runs. Multi-input `einsum` and
 only when using the optional `-1` dimension inference. `parse_shape` returns
 ordinary named dimension data, here `[("row", 2), ("column", 3)]`.
 
+These are term elaborators: they construct tensor expressions. The separate `einops` proof tactic
+proves tensor identities, while `einops?` explains a transformation in the InfoView. Their proof
+and report engines live under `NN/Tactic/Einops`; `NN.Tensor` continues to expose both tactics.
+
 ## Reductions And Linear Algebra
 
 Scalar reductions and matrix factorizations stay on the ordinary tensor type:

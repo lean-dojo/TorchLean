@@ -18,12 +18,6 @@ Helpers for reporting pure parser failures through an executable's `IO` boundary
 
 namespace TorchLean.CLI
 
-/-- Lift a shared CLI parser result into `IO.userError`. -/
-def orThrowIO {α : Type} (x : Except String α) : IO α :=
-  match x with
-  | .ok value => pure value
-  | .error message => throw <| IO.userError message
-
 /--
 Lift a parser result into `IO`, prefixing failures with the executable name.
 

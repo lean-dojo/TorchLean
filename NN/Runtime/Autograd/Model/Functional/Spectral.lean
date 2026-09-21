@@ -25,14 +25,6 @@ namespace Runtime.Autograd.Model.F
 
 open Spec TorchLean
 
-/-- Choose an implementation without changing the one-sided spectral parameterization. -/
-inductive SpectralPath where
-  /-- Use a native spectral node when supported, otherwise the differentiable dense reference. -/
-  | automatic
-  /-- Always record the dense transforms and channel products using generic operations. -/
-  | denseReference
-  deriving BEq, Repr
-
 variable {α : Type} [Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
 

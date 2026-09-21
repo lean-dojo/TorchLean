@@ -120,8 +120,8 @@ def model (c h w hiddenChannels : Nat) :
     let built :=
       nn.models.Diffusion.NoisePredictor.residual
         (config c h w hiddenChannels) (batchShape := [batchSize])
-    rw [nn.models.Diffusion.NoisePredictor.Config.input,
-      nn.models.Diffusion.NoisePredictor.Config.output] at built
+    rw [nn.models.Diffusion.NoisePredictor.Config.inputShape,
+      nn.models.Diffusion.NoisePredictor.Config.outputShape] at built
     simpa [input, output, config,
       Shape.ofList, Shape.concat] using built
 

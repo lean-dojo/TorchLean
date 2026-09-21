@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Runtime.Link.BackwardGraphData
+import NN.Tactic.Except
 
 /-!
 # Typed Graph Core
@@ -113,23 +114,17 @@ theorem lowerToTapeChecked_eq {α Δ : Type} [TorchLean.Storage α]
       change Except.ok _ = Except.ok result at checked
       simpa only [Graph.lowerGraphDataToTape] using (Except.ok.inj checked).symm
   | snoc previous node ih =>
-      cases previousResult : lowerToTapeChecked previous inputs data with
-      | error message =>
-          simp only [lowerToTapeChecked, previousResult, Bind.bind, Except.bind] at checked
-          cases checked
-      | ok pair =>
-          obtain ⟨tape, context⟩ := pair
-          have same := ih (tape, context) previousResult
-          simp only [lowerToTapeChecked, previousResult, Bind.bind, Except.bind] at checked
-          cases validation : node.validate context data with
-          | error message =>
-              simp only [validation] at checked
-              cases checked
-          | ok done =>
-              cases done
-              simp only [validation, Pure.pure, Except.pure, Except.ok.injEq] at checked
-              subst result
-              simp only [Graph.lowerGraphDataToTape, ← same]
+      simp only [lowerToTapeChecked] at checked
+      except_cases previousResult : lowerToTapeChecked previous inputs data
+          using checked with pair =>
+        obtain ⟨tape, context⟩ := pair
+        have same := ih (tape, context) previousResult
+        simp only [previousResult, Bind.bind, Except.bind] at checked
+        except_cases validation : node.validate context data using checked with done =>
+          cases done
+          simp only [validation, Pure.pure, Except.pure, Except.ok.injEq] at checked
+          subst result
+          simp only [Graph.lowerGraphDataToTape, ← same]
 
 /-- Validate runtime domains while evaluating the primal and tangent contexts together. -/
 def jvpChecked {α Δ : Type} [TorchLean.Storage α]
@@ -165,24 +160,18 @@ theorem jvpChecked_eq {α Δ : Type} [TorchLean.Storage α]
       simpa only [Proofs.Autograd.Algebra.GraphData.eval,
         Proofs.Autograd.Algebra.GraphData.jvpCtx] using (Except.ok.inj checked).symm
   | snoc previous node ih =>
-      cases previousResult : jvpChecked previous inputs tangents data with
-      | error message =>
-          simp only [jvpChecked, previousResult, Bind.bind, Except.bind] at checked
-          cases checked
-      | ok pair =>
-          obtain ⟨context, tangentContext⟩ := pair
-          have same := ih (context, tangentContext) previousResult
-          simp only [jvpChecked, previousResult, Bind.bind, Except.bind] at checked
-          cases validation : node.validate context data with
-          | error message =>
-              simp only [validation] at checked
-              cases checked
-          | ok done =>
-              cases done
-              simp only [validation, Pure.pure, Except.pure, Except.ok.injEq] at checked
-              subst result
-              obtain ⟨rfl, rfl⟩ := Prod.mk.inj same
-              rfl
+      simp only [jvpChecked] at checked
+      except_cases previousResult : jvpChecked previous inputs tangents data
+          using checked with pair =>
+        obtain ⟨context, tangentContext⟩ := pair
+        have same := ih (context, tangentContext) previousResult
+        simp only [previousResult, Bind.bind, Except.bind] at checked
+        except_cases validation : node.validate context data using checked with done =>
+          cases done
+          simp only [validation, Pure.pure, Except.pure, Except.ok.injEq] at checked
+          subst result
+          obtain ⟨rfl, rfl⟩ := Prod.mk.inj same
+          rfl
 
 /--
 Run reverse-mode backpropagation from a typed output reference and cotangent seed.

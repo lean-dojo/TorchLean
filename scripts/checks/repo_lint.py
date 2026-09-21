@@ -273,12 +273,6 @@ PUBLIC_DOC_API_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         "for paired supervised or labeled data, and typed manual loops use `Data.Loader`.",
     ),
     (
-        re.compile(r"\b(?:inputShape|outputShape|targetShape)\b(?!\?)"),
-        "public tensor signatures use `input`, `output`, or `target`; use `σ`/`τ` for "
-        "invisible generic shape indices and reserve a `Shape` suffix for names that "
-        "distinguish multiple shapes.",
-    ),
-    (
         re.compile(r"\bdata/model_zoo/"),
         "example artifacts live under `data/examples`; the removed ModelZoo name must not "
         "reappear in public documentation.",
@@ -2649,30 +2643,6 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                         col,
                         "model examples store only their CLI subcommand in `exeName`; help text "
                         "adds `lake exe torchlean` at the rendering boundary.",
-                    )
-                )
-
-        if rel.startswith(
-            (
-                "NN/API/",
-                "NN/Examples/Models/",
-                "home_page/blueprint/TorchLeanBlueprint/Guide/",
-            )
-        ):
-            redundant_shape_name_re = re.compile(
-                r"\b(?:inputShape|outputShape|targetShape)\b(?!\?)"
-            )
-            for match in redundant_shape_name_re.finditer(masked):
-                line, col = _line_col(text, match.start())
-                findings.append(
-                    Finding(
-                        "ERROR",
-                        path,
-                        line,
-                        col,
-                        "public tensor signatures use `input`, `output`, or `target`; use `σ`/`τ` "
-                        "for invisible generic shape indices and reserve a `Shape` suffix for names "
-                        "that distinguish multiple shapes.",
                     )
                 )
 

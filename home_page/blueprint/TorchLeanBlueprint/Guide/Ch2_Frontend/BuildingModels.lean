@@ -634,7 +634,8 @@ and both steps are computable on their own:
 ```lean (name := bmGeom)
 -- Compute the spatial dimensions after convolution before
 -- flattening any activations.
-#eval bmCnnConfig.convolution.output bmCnnConfig.spatial
+#eval bmCnnConfig.convolution.outputSpatial
+  bmCnnConfig.spatial
 ```
 ```leanOutput bmGeom (whitespace := lax)
 [6, 6]
@@ -643,8 +644,9 @@ and both steps are computable on their own:
 ```lean (name := bmGeom2)
 -- Pooling consumes the convolution output dimensions, not
 -- the original image dimensions.
-#eval bmCnnConfig.pooling.output
-  (bmCnnConfig.convolution.output bmCnnConfig.spatial)
+#eval bmCnnConfig.pooling.outputSpatial
+  (bmCnnConfig.convolution.outputSpatial
+    bmCnnConfig.spatial)
 ```
 ```leanOutput bmGeom2 (whitespace := lax)
 [3, 3]

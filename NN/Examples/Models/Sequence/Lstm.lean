@@ -77,11 +77,11 @@ abbrev modelConfig : nn.models.Recurrent.Config :=
 
 /-- Input shape: one token vector per timestep. -/
 abbrev input :=
-  modelConfig.input
+  modelConfig.inputShape
 
 /-- Output shape: one prediction row per timestep. -/
 abbrev output :=
-  modelConfig.output
+  modelConfig.outputShape
 
 /-- LSTM followed by a time-distributed linear output head. -/
 def model : nn.Builder (nn.Sequential input output) :=

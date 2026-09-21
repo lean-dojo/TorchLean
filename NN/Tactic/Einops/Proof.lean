@@ -56,7 +56,7 @@ head without unfolding the lowering itself.
 
 Not private, even though everything else in this section is: the `einops?` report decoders in
 `Tactic/Report/` need the same traversal, and they used to get it from a byte-identical copy of
-these four lines in `NN/Tensor/Internal/Tactic/Report/Analysis/Common.lean`. `Report.Impl` is
+these four lines in `NN/Tactic/Einops/Report/Analysis/Common.lean`. `Report.Impl` is
 nested in this namespace, so the uses over there resolve to this definition without any
 qualification.
 -/

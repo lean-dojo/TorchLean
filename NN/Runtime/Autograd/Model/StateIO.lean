@@ -11,6 +11,7 @@ public import NN.Tensor.Conversion
 import Mathlib.Tactic.Positivity.Finset
 public import NN.Runtime.Autograd.Torch.Core.Trainer.Parameters
 public import NN.Tensor.Internal.Elab.TensorLiteral
+public import NN.Runtime.Autograd.Model.StateIO.Encoding
 
 /-!
 # Model State IO
@@ -20,16 +21,15 @@ State includes trainable parameters and persistent buffers; optimizer state has 
 
 Two formats are provided for runtime state packs.
 
-## Lean Float Format
+## Exact Scalar Format
 
-We encode each `Float` value by its IEEE-754 bit pattern (`Float.toBits : Float → UInt64`) and
-store those bits as JSON natural numbers. This format is specific to `Float` by definition: the
-payload is the binary64 bit pattern, so the codec below is not generic over the scalar type. The
-streamed float32 format further down is the scalar-generic one; it takes explicit `encode`/`decode`
-functions between `α` and `Float32`.
+`Checkpoint.Encoding` selects an exact scalar payload and a versioned format tag. Native and
+configured binary values use storage words; complex values store both component words. The `Float`
+instance retains the existing binary64 format, so old checkpoints remain readable. The streamed
+float32 format further down remains a separate device-oriented representation.
 
 This is:
-- exact (round-trips every NaN payload and subnormal),
+- exact for exported scalar encodings (including subnormals and configured NaN payloads),
 - stable across locales, and
 - easy to validate (length = `Spec.Shape.size`).
 
@@ -63,9 +63,6 @@ namespace StateIO
 
 open Spec TorchLean
 
-/-- Format tag stored in exact-bit model-state JSON files. -/
-def formatTag : String := "torchlean_state_bits_v1"
-
 /-- Versioned header for streamed runtime float32 state checkpoints. -/
 def float32StreamFormat : Torch.Internal.CheckpointIO.Format where
   name := "TorchLean float32 state checkpoint"
@@ -76,39 +73,30 @@ def float32StreamFormat : Torch.Internal.CheckpointIO.Format where
 def jsonNat (n : Nat) : Lean.Json :=
   Lean.Json.num (Lean.JsonNumber.fromInt (Int.ofNat n))
 
-/-- Encode a Float by writing its exact IEEE bit pattern as a JSON natural number. -/
-def floatToJsonBits (x : Float) : Lean.Json :=
-  jsonNat x.toBits.toNat
+section ExactEncoding
 
-/-- Decode a JSON natural number as the exact IEEE bit pattern of a Float. -/
-def jsonBitsToFloat (j : Lean.Json) : Except String Float := do
-  let n ← Lean.Json.getNat? j
-  let limit : Nat := (2 : Nat) ^ 64
-  if n >= limit then
-    throw s!"StateIO: float bits out of range (expected < 2^64, got {n})"
-  let bits : UInt64 := UInt64.ofNat n
-  pure (Float.ofBits bits)
+variable {α : Type} [Storage α] [Checkpoint.Encoding α]
 
-/-- Encode one Float tensor as shape metadata plus exact IEEE bit-pattern values. -/
-def tensorToJsonBits (s : Shape) (t : Tensor Float s) : Lean.Json :=
+/-- Encode one tensor as shape metadata plus exact scalar payloads. -/
+def tensorToJsonBits (s : Shape) (t : Tensor α s) : Lean.Json :=
   let dims : Lean.Json := Lean.Json.arr (Shape.toList s |>.toArray |>.map jsonNat)
   let values : Lean.Json :=
-    Lean.Json.arr ((Tensor.to t (Array Float)).map floatToJsonBits)
+    Lean.Json.arr ((Tensor.to t (Array α)).map Checkpoint.Encoding.encode)
   Lean.Json.mkObj [("shape", dims), ("values", values)]
 
-/-- Decode one shape-checked Float tensor from the exact-bit state format. -/
+/-- Decode one shape-checked tensor from the exact scalar state format. -/
 def tensorFromJsonBits (tag : String) (s : Shape) (j : Lean.Json) :
-    Except String (Tensor Float s) := do
+    Except String (Tensor α s) := do
   let o ← Lean.Json.getObj? j
-  let shapeJ := (o.get? "shape").getD Lean.Json.null
-  let valuesJ := (o.get? "values").getD (Lean.Json.arr #[])
+  let some shapeJ := o.get? "shape" | throw s!"{tag}: missing tensor shape"
+  let some valuesJ := o.get? "values" | throw s!"{tag}: missing tensor values"
   let dimsArr ← Lean.Json.getArr? shapeJ
   let dims : List Nat ←
     dimsArr.toList.mapM (fun d => Lean.Json.getNat? d)
   if Shape.ofList dims != s then
     throw s!"{tag}: shape mismatch (file={dims}, expected={Shape.toList s})"
   let valsArr ← Lean.Json.getArr? valuesJ
-  let vals : Array Float ← valsArr.mapM jsonBitsToFloat
+  let vals : Array α ← valsArr.mapM Checkpoint.Encoding.decode
   if hSize : vals.size = Shape.size s then
     pure <| (Tensor.from vals).reshape s (by simpa [Shape.size] using hSize)
   else
@@ -117,7 +105,7 @@ def tensorFromJsonBits (tag : String) (s : Shape) (j : Lean.Json) :
         s!"got {vals.size}"
 
 /-- Encode shape-indexed model state as the JSON array stored under `state`. -/
-def stateToJsonBits {ss : List Shape} : TorchLean.TensorPack Float ss → Lean.Json
+def stateToJsonBits {ss : List Shape} : TorchLean.TensorPack α ss → Lean.Json
   | .nil => Lean.Json.arr #[]
   | .cons (s := s) t ts =>
       match stateToJsonBits (ss := _) ts with
@@ -127,7 +115,7 @@ def stateToJsonBits {ss : List Shape} : TorchLean.TensorPack Float ss → Lean.J
 
 /-- Decode an expected state layout from a tensor array, starting at `offset`. -/
 def stateFromJsonBitsArray (tag : String) (xs : Array Lean.Json) :
-    {ss : List Shape} → (offset : Nat) → Except String (TorchLean.TensorPack Float ss)
+    {ss : List Shape} → (offset : Nat) → Except String (TorchLean.TensorPack α ss)
   | .nil, offset => do
       unless offset = xs.size do
         throw s!"{tag}: unexpected {xs.size - offset} trailing state tensor(s)"
@@ -142,22 +130,23 @@ def stateFromJsonBitsArray (tag : String) (xs : Array Lean.Json) :
 
 /-- Decode the `state` JSON array into the expected shape-indexed state pack. -/
 def stateFromJsonBits (tag : String) {ss : List Shape} (json : Lean.Json) :
-    Except String (TorchLean.TensorPack Float ss) := do
+    Except String (TorchLean.TensorPack α ss) := do
   let xs ← Lean.Json.getArr? json
   stateFromJsonBitsArray (tag := tag) xs (ss := ss) 0
 
-/-- Write Float model state using exact IEEE bit patterns rather than decimal floats. -/
+/-- Write model state using the scalar type's exact encoding and versioned format tag. -/
 def writeStateBits (path : System.FilePath) {ss : List Shape}
-    (state : TorchLean.TensorPack Float ss) (pretty : Bool := true) : IO Unit := do
+    (state : TorchLean.TensorPack α ss) (pretty : Bool := true) : IO Unit := do
   let top : Lean.Json :=
-    Lean.Json.mkObj [("format", Lean.Json.str formatTag), ("state", stateToJsonBits state)]
+    Lean.Json.mkObj [("format", Lean.Json.str (Checkpoint.Encoding.format (α := α))),
+      ("state", stateToJsonBits state)]
   let s := if pretty then top.pretty else top.compress
   Torch.Internal.CheckpointIO.writeAtomically path fun handle =>
     handle.write s.toUTF8
 
-/-- Read Float model state previously written by `writeStateBits`. -/
+/-- Read model state, rejecting incompatible scalar formats, shapes, and payload lengths. -/
 def readStateBits (path : System.FilePath) {ss : List Shape} :
-    IO (Except String (TorchLean.TensorPack Float ss)) := do
+    IO (Except String (TorchLean.TensorPack α ss)) := do
   let s ← IO.FS.readFile path
   match Lean.Json.parse s with
   | Except.error e =>
@@ -172,11 +161,13 @@ def readStateBits (path : System.FilePath) {ss : List Shape} :
           | Except.error _ =>
               pure (Except.error "StateIO: missing `format` string")
           | Except.ok t =>
-              if t != formatTag then
+              if t != Checkpoint.Encoding.format (α := α) then
                 pure (Except.error s!"StateIO: unsupported format: {t}")
               else
                 let stateJson := (o.get? "state").getD (Lean.Json.arr #[])
                 pure (stateFromJsonBits (tag := "StateIO") (ss := ss) stateJson)
+
+end ExactEncoding
 
 /-! ## Streaming float32 module checkpoints -/
 

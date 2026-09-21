@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.Optimization.Muon.Core
+public import NN.Tactic.Verify
 
 /-!
 # Muon Step Certificates
@@ -120,7 +121,7 @@ theorem approxCertifiedStep_of_buffer {m n : Nat} {eps : α}
 A checked exact backend certifies the concrete direction and equations of one Muon update whenever
 its success predicate holds on the fresh momentum buffer.
 -/
-theorem exactCertifiedStep_of_checkedBackend {m n : Nat}
+@[verify] theorem exactCertifiedStep_of_checkedBackend {m n : Nat}
     (backend : CheckedExactOrthogonalizer α m n)
     (learningRate momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
     (hsuccess :
@@ -146,7 +147,7 @@ theorem exactCertifiedStep_of_checkedBackend {m n : Nat}
 A checked approximate backend certifies one Muon update whenever its success predicate establishes
 the requested Gram-residual bound on the fresh momentum buffer.
 -/
-theorem approxCertifiedStep_of_checkedBackend {m n : Nat} {eps : α}
+@[verify] theorem approxCertifiedStep_of_checkedBackend {m n : Nat} {eps : α}
     (backend : CheckedApproxOrthogonalizer α m n eps)
     (learningRate momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
     (hsuccess :

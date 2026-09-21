@@ -1,8 +1,13 @@
 # Contributing to TorchLean
 
-Use the pinned Lean 4.34.0 toolchain and mathlib dependency, and keep changes focused. FloatLib is
-pinned by commit in `lakefile.lean`; update dependencies through Lake with the pinned toolchain.
+Use the pinned Lean 4.34.0 toolchain and mathlib dependency, and keep changes focused. FloatLib tracks
+`main` in `lakefile.lean`; `lake-manifest.json` locks the revision used by a checkout. Update it with
+`scripts/lake.sh update floatlib`, rebuild and test, and commit the updated manifest with any fixes.
 Paths below are relative to the repository root.
+
+The guide has its own manifest. After updating FloatLib, refresh its inherited dependencies with
+`TORCHLEAN_PACKAGE_ROOT="$PWD/home_page/blueprint" scripts/lake.sh update TorchLean` and check the
+guide build against the same revision.
 
 ## Build and Check
 
@@ -34,9 +39,11 @@ verification, and proofs. Neither imports executable examples or tests.
 | `NNSlowProofs` | Proof-heavy IR semantic equivalence |
 | `TorchLeanDocs:docs` | Generated API documentation |
 
-Use Lean's types and proofs for mathematical behavior. Keep permanent executable tests small,
-focusing on numerical and CUDA/FFI behavior outside those proofs. For ordinary refactors, run
-temporary checks and remove them after validation.
+Use Lean's types and proofs for mathematical behavior. Run development checks, tactic experiments,
+and broad input sweeps in temporary scratch files outside the repository, then remove them after
+validation. Keep a permanent test only for a specific numerical, parser, or CUDA/FFI gap not covered
+by the proofs or existing tests. Prefer extending an existing focused check over adding another
+test module. Useful teaching examples belong in `NN/Examples`, not duplicated in a test catalogue.
 
 ## Library and Examples
 
@@ -117,6 +124,14 @@ assumptions; see [trust boundaries](TRUST_BOUNDARIES.md). AI assistance is discl
   hypotheses or raising resource limits.
 
 Run `python3 scripts/checks/repo_lint.py --fail-on-warn` for source and API checks.
+
+Reusable proof automation lives under `NN/Tactic`; see the [tactic guide](../NN/Tactic/README.md).
+Extend `autograd` with a proved rule when adding a differentiable operation, rather than adding
+another expression representation or a model-specific proof solver.
+Tensor expression elaborators stay under `NN/Tensor/Internal/Elab`, model-building macros under
+`NN/API/Macros`, and widget commands under `NN/Widgets`. Those construct programs or displays;
+they are not proof tactics. Keep single-file proof helpers local rather than exporting them just
+to place every macro in one directory.
 
 ## Documentation
 

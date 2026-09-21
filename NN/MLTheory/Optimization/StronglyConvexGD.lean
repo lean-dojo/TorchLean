@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.Optimization.GDLinearConvergence
+public import Mathlib.Analysis.SpecificLimits.Basic
 
 
 /-!
@@ -196,6 +197,21 @@ theorem dist_sq_iterate_le_of_step_size (η μ : ℝ) {L : NNReal} (g : E → E)
   ⟨dist_sq_iterate_le_of_q_nonneg (E := E) (η := η) (μ := μ) (hη := le_of_lt hη) (L := L)
       (g := g) hmono hlip (xStar := xStar) (x := x) hxStar (q_nonneg_of_le η μ L hμ hμL) k,
     q_lt_one_of_mul_sq_lt η μ L hη hstep⟩
+
+/-- Gradient-descent iterates tend to a supplied root when the squared-distance factor lies in
+`[0, 1)`. No completeness assumption is needed: the limit is already given. -/
+theorem tendsto_iterate_of_q_lt_one (η μ : ℝ) (hη : 0 ≤ η) {L : NNReal} (g : E → E)
+    (hmono : StrongMonotone μ g) (hlip : LipschitzWith L g)
+    {xStar x : E} (hxStar : g xStar = 0) (hq : 0 ≤ q η μ L) (hq1 : q η μ L < 1) :
+    Filter.Tendsto (fun k : ℕ => (step η g)^[k] x) Filter.atTop (nhds xStar) := by
+  have hbound := (tendsto_pow_atTop_nhds_zero_of_lt_one hq hq1).mul_const (‖x - xStar‖ ^ 2)
+  have hs : Filter.Tendsto (fun k : ℕ => ‖(step η g)^[k] x - xStar‖ ^ 2)
+      Filter.atTop (nhds 0) :=
+    squeeze_zero (fun _ => sq_nonneg _)
+      (dist_sq_iterate_le_of_q_nonneg η μ hη g hmono hlip hxStar hq)
+      (by simpa using hbound)
+  rw [tendsto_iff_norm_sub_tendsto_zero]
+  simpa [Function.comp_def] using (Real.continuous_sqrt.tendsto 0).comp hs
 
 end GD
 

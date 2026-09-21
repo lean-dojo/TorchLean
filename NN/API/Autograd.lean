@@ -8,6 +8,8 @@ module
 
 public import NN.API.Autograd.Function
 public import NN.API.Autograd.Model
+public import NN.API.Autograd.Differential
+public import NN.API.Autograd.Complex
 
 /-!
 # Automatic Differentiation

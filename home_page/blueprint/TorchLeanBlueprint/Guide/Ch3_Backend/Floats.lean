@@ -47,8 +47,9 @@ Changing those two parameters selects a wider or custom format through the same 
 interface. The selected type can also be the element type of TorchLean's typed CPU tensors and
 model graphs. CUDA providers currently use native binary32 or binary64.
 
-The scalar examples only need FloatLib. TorchLean imports its definitions and proofs directly,
-at revision `52ab504bfcd8e5395b29a4f64b617b401e5d16ac`.
+The scalar examples only need FloatLib. TorchLean imports its definitions and proofs directly.
+Its dependency declaration follows FloatLib's `main` branch; the manifest records the exact
+revision used by a build. Updating FloatLib requires updating that manifest and rebuilding.
 
 The `lean` blocks in the rest of this chapter are elaborated while the page is built; their
 `leanOutput` blocks are checked against Lean messages. Plain-text sketches illustrate the

@@ -72,6 +72,13 @@ The main concepts are:
 Files that import `NN.Runtime`, `NN.Spec`, or `NN.Proofs` are intentionally teaching internals,
 formal semantics, or trust boundaries. They are not the template for ordinary training code.
 
+For proof examples, import `NN.Tactic.Autograd` and use `by autograd` to check derivative formulas.
+This is distinct from the `autograd` runtime namespace above, which computes gradients.
+The [proof quickstart](Quickstart/Proofs.lean) starts with scalar loss derivatives; the
+[autograd deep dive](DeepDives/AutogradTransforms.lean) connects recorded execution to mathlib at
+arbitrary derivative order. The [tactic guide](../Tactic/README.md) explains custom rules and the
+difference between tensor expression syntax and proof automation.
+
 ## Commands
 
 Use the command registries instead of searching the directory tree:

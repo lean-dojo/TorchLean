@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Examples.Models.Operators.ComplexRegression
 public import NN.Examples.Models.Operators.Fno1dBurgers
+public import NN.Examples.Models.Operators.Pinn
 
 /-!
 # Operator-Learning Examples

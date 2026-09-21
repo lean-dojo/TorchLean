@@ -10,8 +10,11 @@ public import NN.Tests.API.BufferUpdates
 public import NN.Tests.API.BuilderSeeds
 public import NN.Tests.API.CLI
 public import NN.Tests.API.Command
+public import NN.Tests.API.Complex
 public import NN.Tests.API.Data
 public import NN.Tests.API.Diffusion
+public import NN.Tests.API.Differential
+public import NN.Tests.API.Fourier
 public import NN.Tests.API.Optim
 public import NN.Tests.API.Precision
 public import NN.Tests.API.TypedTraining
@@ -85,8 +88,11 @@ def run : IO Unit := do
     NN.Tests.API.BuilderSeeds.run
     NN.Tests.API.CLI.run
     NN.Tests.API.Command.run
+    NN.Tests.API.Complex.run
     NN.Tests.API.Data.run
     NN.Tests.API.Diffusion.run
+    NN.Tests.API.Differential.run
+    NN.Tests.API.Fourier.run
     NN.Tests.API.Optim.run
     NN.Tests.API.Precision.run
     NN.Tests.API.TypedTraining.run

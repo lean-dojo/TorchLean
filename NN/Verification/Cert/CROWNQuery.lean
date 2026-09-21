@@ -10,6 +10,7 @@ public import NN.Verification.Cert.RationalReflection
 public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness
 public import NN.Spec.Module.Linear
 public import NN.Spec.Module.Activation
+public import NN.Tactic.Verify
 
 /-!
 # Exact CROWN output-query checks
@@ -289,7 +290,7 @@ def Query.Safe {n m : Nat} (q : Query n m) : Prop :=
       if q.strict then result.getScalar i < 0 else result.getScalar i ≤ 0
 
 /-- Acceptance implies query-level soundness with no unproved transfer or coverage premise. -/
-theorem Query.check_sound {n m : Nat} (q : Query n m) (h : q.check = true) : q.Safe := by
+@[verify] theorem Query.check_sound {n m : Nat} (q : Query n m) (h : q.check = true) : q.Safe := by
   simp only [check, Bool.and_eq_true] at h
   obtain ⟨_, hc⟩ := h
   cases hp : q.network.propagate (Bounds.identity n) q.input with

@@ -12,6 +12,7 @@ public import NN.API.Rand -- shake: keep
 public import NN.API.Neural.Impl -- shake: keep
 public import NN.Runtime.Autograd.Model.Functional.SelectiveScan
 public import NN.Runtime.Autograd.Model.Functional.Spectral
+public import NN.Runtime.Autograd.Model.Functional.Fourier.Transform
 
 @[expose] public section
 
@@ -46,7 +47,7 @@ export Runtime.Autograd.Model.F
    addB mulB
    embedding mean
    dropoutSeeded
-   rfft1d irfft1d selectiveScanDiag selectiveScanDiagVar spectralConv1dRfft SpectralPath)
+   fft rfft1d irfft1d selectiveScanDiag selectiveScanDiagVar spectralConv1dRfft SpectralPath)
 end functional
 
 open Spec TorchLean
@@ -142,7 +143,7 @@ def classifier {featureShape : Shape} (classCount : Nat)
       "Classifier: class count must be positive"
   else
     withSeed fun weightSeed =>
-      pure <| Impl.classifierHead batchShape classCount weightSeed
+      pure <| Impl.affineHead batchShape classCount weightSeed
 
 /-- Build a regression head that flattens the feature suffix and seeds its weight. -/
 def regressor {featureShape : Shape} (outputWidth : Nat := 1)
@@ -160,7 +161,7 @@ def regressor {featureShape : Shape} (outputWidth : Nat := 1)
       "Regressor: output width must be positive"
   else
     withSeed fun weightSeed =>
-      pure <| Impl.regressorHead batchShape outputWidth weightSeed
+      pure <| Impl.affineHead batchShape outputWidth weightSeed
 
 end heads
 
@@ -253,13 +254,13 @@ def maxPool {d channels : Nat} (spatial : Tensor Nat [d])
     Builder (Sequential
       (batchShape.concat ((spatial.to Shape).prependDim channels))
       (batchShape.concat
-        (((config.output spatial).to Shape).prependDim channels))) :=
+        (((config.outputSpatial spatial).to Shape).prependDim channels))) :=
   match config.validate channels spatial (kind := "MaxPool") with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
         (batchShape.concat ((spatial.to Shape).prependDim channels))
         (batchShape.concat
-          (((config.output spatial).to Shape).prependDim channels))
+          (((config.outputSpatial spatial).to Shape).prependDim channels))
         "MaxPool" message
   | .ok () =>
       pure (Impl.maxPool batchShape (channels := channels) spatial config)
@@ -270,13 +271,13 @@ def avgPool {d channels : Nat} (spatial : Tensor Nat [d])
     Builder (Sequential
       (batchShape.concat ((spatial.to Shape).prependDim channels))
       (batchShape.concat
-        (((config.output spatial).to Shape).prependDim channels))) :=
+        (((config.outputSpatial spatial).to Shape).prependDim channels))) :=
   match config.validate channels spatial (kind := "AvgPool") with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
         (batchShape.concat ((spatial.to Shape).prependDim channels))
         (batchShape.concat
-          (((config.output spatial).to Shape).prependDim channels))
+          (((config.outputSpatial spatial).to Shape).prependDim channels))
         "AvgPool" message
   | .ok () =>
       pure (Impl.avgPool batchShape (channels := channels) spatial config)
@@ -288,13 +289,13 @@ def convTranspose {d : Nat} {inputChannels : Nat}
     Builder (Sequential
       (batchShape.concat ((spatial.to Shape).prependDim inputChannels))
       (batchShape.concat
-        (((config.output spatial).to Shape).prependDim config.outChannels))) :=
+        (((config.outputSpatial spatial).to Shape).prependDim config.outChannels))) :=
   match config.validate inputChannels spatial (kind := "ConvTranspose") with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
         (batchShape.concat ((spatial.to Shape).prependDim inputChannels))
         (batchShape.concat
-          (((config.output spatial).to Shape).prependDim config.outChannels))
+          (((config.outputSpatial spatial).to Shape).prependDim config.outChannels))
         "ConvTranspose" message
   | .ok () =>
       withInitializationSeed config.weightInitialization fun kernelSeed =>
@@ -479,13 +480,13 @@ def conv {d : Nat} {inputChannels : Nat} (spatial : Tensor Nat [d])
     Builder (Sequential
       (batchShape.concat ((spatial.to Shape).prependDim inputChannels))
       (batchShape.concat
-        (((config.output spatial).to Shape).prependDim config.outChannels))) :=
+        (((config.outputSpatial spatial).to Shape).prependDim config.outChannels))) :=
   match config.validate inputChannels spatial (kind := "Conv") with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
         (batchShape.concat ((spatial.to Shape).prependDim inputChannels))
         (batchShape.concat
-          (((config.output spatial).to Shape).prependDim config.outChannels))
+          (((config.outputSpatial spatial).to Shape).prependDim config.outChannels))
         "Conv" message
   | .ok () =>
       withInitializationSeed config.weightInitialization fun kernelSeed =>
@@ -508,8 +509,8 @@ def pointwiseConv {d : Nat} {inputChannels : Nat}
       kernelSize := Tensor.ones [d]
       stride := Tensor.ones [d]
       padding := Tensor.zeros [d] }
-  have hOut : config.output spatial = spatial := by
-    rw [Convolution.Config.output]
+  have hOut : config.outputSpatial spatial = spatial := by
+    rw [Convolution.Config.outputSpatial]
     exact Spec.convOutSpatial_unit spatial
   let result :=
     conv spatial config (batchShape := batchShape) (inputChannels := inputChannels)
@@ -880,26 +881,20 @@ def convBlock {d : Nat} {inputChannels : Nat}
     Builder (Sequential
       (batchShape.concat ((spatial.to Shape).prependDim inputChannels))
       (batchShape.concat
-        (((config.convolution.output spatial).to Shape)
+        (((config.convolution.outputSpatial spatial).to Shape)
           |>.prependDim config.convolution.outChannels))) :=
   match config.validate inputChannels spatial (kind := "ConvBlock") with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
         (batchShape.concat ((spatial.to Shape).prependDim inputChannels))
         (batchShape.concat
-          (((config.convolution.output spatial).to Shape)
+          (((config.convolution.outputSpatial spatial).to Shape)
             |>.prependDim config.convolution.outChannels))
         "ConvBlock" message
   | .ok () =>
       withInitializationSeed config.convolution.weightInitialization fun kernelSeed =>
-        match config.dropout? with
-        | none =>
-            pure <| Impl.convBlock batchShape spatial config
-              kernelSeed
-        | some probability =>
-            withDropoutSeed probability fun dropoutSeed =>
-              pure <| Impl.convBlock batchShape spatial config
-                kernelSeed dropoutSeed
+        withOptionalDropoutSeed config.dropout? fun dropoutSeed =>
+          pure <| Impl.convBlock batchShape spatial config kernelSeed dropoutSeed
 
 /-- Build a seeded convolution/activation block followed by max pooling. -/
 def convPoolBlock {d : Nat} {inputChannels : Nat}
@@ -908,28 +903,22 @@ def convPoolBlock {d : Nat} {inputChannels : Nat}
     Builder (Sequential
       (batchShape.concat ((spatial.to Shape).prependDim inputChannels))
       (batchShape.concat
-        (((config.pooling.output
-          (config.block.convolution.output spatial)).to Shape)
+        (((config.pooling.outputSpatial
+          (config.block.convolution.outputSpatial spatial)).to Shape)
             |>.prependDim config.block.convolution.outChannels))) :=
   match config.validate inputChannels spatial (kind := "ConvPoolBlock") with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
         (batchShape.concat ((spatial.to Shape).prependDim inputChannels))
         (batchShape.concat
-          (((config.pooling.output
-            (config.block.convolution.output spatial)).to Shape)
+          (((config.pooling.outputSpatial
+            (config.block.convolution.outputSpatial spatial)).to Shape)
               |>.prependDim config.block.convolution.outChannels))
         "ConvPoolBlock" message
-  | .ok () =>
-      withInitializationSeed config.block.convolution.weightInitialization fun kernelSeed =>
-        match config.block.dropout? with
-        | none =>
-            pure <| Impl.convPoolBlock batchShape spatial config
-              kernelSeed
-        | some probability =>
-            withDropoutSeed probability fun dropoutSeed =>
-              pure <| Impl.convPoolBlock batchShape spatial config
-                kernelSeed dropoutSeed
+  | .ok () => do
+      let block ← convBlock spatial config.block batchShape
+      let pool ← maxPool (config.block.convolution.outputSpatial spatial) config.pooling batchShape
+      pure <| compose block pool
 
 /--
 Build a multilayer perceptron over any `batchShape`.

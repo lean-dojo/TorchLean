@@ -29,7 +29,7 @@ structure Pooling.Config (d : Nat) where
   padding : Tensor Nat [d] := Tensor.zeros [d]
 
 /-- Output grid produced from an input grid by this pooling configuration. -/
-def Pooling.Config.output {d : Nat} (config : Pooling.Config d)
+def Pooling.Config.outputSpatial {d : Nat} (config : Pooling.Config d)
     (input : Tensor Nat [d]) : Tensor Nat [d] :=
   Spec.poolOutSpatialPad input
     config.kernelSize
@@ -50,7 +50,7 @@ def validate {d : Nat} (config : Pooling.Config d)
     throw s!"{kind}: kernel size entries must be positive"
   if !decide (∀ axis : Fin d, config.stride.getScalar axis ≠ 0) then
     throw s!"{kind}: stride entries must be positive"
-  if (config.output input).prod = 0 then
+  if (config.outputSpatial input).prod = 0 then
     throw s!"{kind}: geometry produced an empty spatial grid"
 
 end Pooling.Config

@@ -375,8 +375,8 @@ def rlPpoCfg : nn.models.PPO.Config :=
   { observationWidth := 16, hiddenWidth := 32,
     actionCount := 4 }
 
-#eval (rlPpoCfg.input [], rlPpoCfg.actorOutput [],
-  rlPpoCfg.criticOutput [])
+#eval (rlPpoCfg.inputShape [], rlPpoCfg.actorOutputShape [],
+  rlPpoCfg.criticOutputShape [])
 ```
 
 ```leanOutput rlCfg (whitespace := lax)
@@ -386,8 +386,9 @@ def rlPpoCfg : nn.models.PPO.Config :=
 ```lean (name := rlCfgBatch)
 -- Add the rollout horizon as a shared leading axis for both
 -- models.
-#eval (rlPpoCfg.input [64], rlPpoCfg.actorOutput [64],
-  rlPpoCfg.criticOutput [64])
+#eval (rlPpoCfg.inputShape [64],
+  rlPpoCfg.actorOutputShape [64],
+  rlPpoCfg.criticOutputShape [64])
 ```
 
 ```leanOutput rlCfgBatch (whitespace := lax)

@@ -285,8 +285,8 @@ B\times C\times S,`
 
 The builders in
 {src "NN/API/Models/Diffusion.lean"}[`NN/API/Models/Diffusion.lean`] are indexed by the config, so
-`genConf.input [1]` and `genConf.output [1]` below compute this contract from the same configuration
-used to build the network.
+`genConf.inputShape [1]` and `genConf.outputShape [1]` below compute this contract from the same
+configuration used to build the network.
 
 The time channel gives the network information that the corrupted pixels cannot reliably
 supply on their own. The same observed pixel value can arise from a clean dark pixel with little
@@ -501,7 +501,7 @@ def genConf : nn.models.Diffusion.NoisePredictor.Config 2 :=
     hiddenChannels := 2
     kernelRadius := [1, 1] }
 
-#eval (genConf.input [1], genConf.output [1])
+#eval (genConf.inputShape [1], genConf.outputShape [1])
 ```
 ```leanOutput genConfShapes
 ([1, 4, 2, 2], [1, 3, 2, 2])
@@ -518,8 +518,8 @@ gives a parameter list that exposes the six convolutions:
 ```lean (name := genDenoiserShapes)
 -- Inspect convolution parameters separately from the image
 -- and batch dimensions.
-abbrev genIn : Shape := genConf.input [1]
-abbrev genOut : Shape := genConf.output [1]
+abbrev genIn : Shape := genConf.inputShape [1]
+abbrev genOut : Shape := genConf.outputShape [1]
 
 def genDenoiser : nn.Builder (nn.Sequential genIn genOut) :=
   nn.models.Diffusion.NoisePredictor.residual genConf [1]
@@ -695,8 +695,8 @@ Its batch argument is a `Shape`, and the widths become part of the built model's
 def genAeConf : nn.models.Generative.Config :=
   { dataWidth := 16, hiddenWidth := 8, latentWidth := 4 }
 
-#eval (genAeConf.data [1], genAeConf.latent [1],
-  genAeConf.score [1])
+#eval (genAeConf.dataShape [1], genAeConf.latentShape [1],
+  genAeConf.scoreShape [1])
 ```
 ```leanOutput genAeShapes
 ([1, 16], [1, 4], [1, 1])
@@ -1096,9 +1096,9 @@ from latent space and a discriminator is an encoder onto a single score:
 def genGanConf : nn.models.Generative.Config :=
   { dataWidth := 4, hiddenWidth := 4, latentWidth := 2 }
 
-abbrev genLat : Shape := genGanConf.latent [1]
-abbrev genData : Shape := genGanConf.data [1]
-abbrev genScore : Shape := genGanConf.score [1]
+abbrev genLat : Shape := genGanConf.latentShape [1]
+abbrev genData : Shape := genGanConf.dataShape [1]
+abbrev genScore : Shape := genGanConf.scoreShape [1]
 
 def genG : nn.Builder (nn.Sequential genLat genData) :=
   nn.models.Generative.generator genGanConf [1]

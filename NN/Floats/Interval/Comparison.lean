@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Floats.Interval.IEEEExec32
-import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
+public import FloatLib.Numerics.Enclosure.Rational.Runtime
 
 /-!
 # Comparison helpers for executable interval examples
@@ -15,7 +15,7 @@ import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 This module contains small, reusable baselines for numerical-audit examples:
 
 - `Float32Interval.IntervalF32`: a deliberately naive runtime-`Float32` interval model;
-- `RealInterval.IntervalRat`: exact rational interval arithmetic for small reference checks;
+- FloatLib's `RationalInterval`: exact rational endpoints for small reference checks;
 - conversions from finite `ExecFloat.Binary 8 23` / runtime `Float32` endpoints into rational
 intervals.
 
@@ -29,6 +29,7 @@ easier to read.
 
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+open FloatLib.Numerics (RationalInterval)
 
 
 namespace TorchLean.Floats.Interval.Comparison
@@ -144,70 +145,28 @@ end Float32Interval
 def showIntervalF32 (I : Float32Interval.IntervalF32) : String :=
   s!"[{showFloat32 I.lo}, {showFloat32 I.hi}]"
 
-namespace RealInterval
-
-/--
-Closed interval with exact rational endpoints.
-
-This is a compact reference domain for examples. It is compact: enough for corner-rule
-checks and containment comparisons, not a replacement for a full real-analysis interval library.
--/
-structure IntervalRat where
-  /-- Lower endpoint. -/
-  lo : Rat
-  /-- Upper endpoint. -/
-  hi : Rat
-  deriving Repr
-
-namespace IntervalRat
-
-/-- Degenerate rational interval `[x, x]`. -/
-@[inline] def point (x : Rat) : IntervalRat := ⟨x, x⟩
-
-/-- Minimum of four rationals. -/
-def minOfFour (a b c d : Rat) : Rat :=
-  min (min a b) (min c d)
-
-/-- Maximum of four rationals. -/
-def maxOfFour (a b c d : Rat) : Rat :=
-  max (max a b) (max c d)
-
-/-- Exact interval addition over rationals. -/
-@[inline] def add (A B : IntervalRat) : IntervalRat :=
-  ⟨A.lo + B.lo, A.hi + B.hi⟩
-
-/-- Exact interval negation: `-[lo, hi] = [-hi, -lo]`. -/
-@[inline] def neg (A : IntervalRat) : IntervalRat :=
-  ⟨-A.hi, -A.lo⟩
-
-/-- Exact interval subtraction over rationals. -/
-@[inline] def sub (A B : IntervalRat) : IntervalRat :=
-  ⟨A.lo - B.hi, A.hi - B.lo⟩
+namespace Rational
 
 /-- Classical four-corner multiplication over exact rationals. -/
-def mul (A B : IntervalRat) : IntervalRat :=
+def mul (A B : RationalInterval) : RationalInterval :=
   let p00 := A.lo * B.lo
   let p01 := A.lo * B.hi
   let p10 := A.hi * B.lo
   let p11 := A.hi * B.hi
-  ⟨minOfFour p00 p01 p10 p11, maxOfFour p00 p01 p10 p11⟩
+  ⟨min (min p00 p01) (min p10 p11), max (max p00 p01) (max p10 p11)⟩
 
 /-- Boolean check that `outer` contains `inner`. -/
-def contains (outer inner : IntervalRat) : Bool :=
+def contains (outer inner : RationalInterval) : Bool :=
   decide (outer.lo ≤ inner.lo ∧ inner.hi ≤ outer.hi)
 
-end IntervalRat
-
 /-- Pretty-print an exact rational interval. -/
-def showIntervalRat (I : IntervalRat) : String :=
+def format (I : RationalInterval) : String :=
   s!"[{I.lo}, {I.hi}]"
 
-end RealInterval
-
-open RealInterval
+end Rational
 
 /-- Exact rational endpoint interval for a finite `IEEE32Exec.Interval32`; `none` for NaN/Inf. -/
-def interval32ToRat? (I : Interval32) : Option IntervalRat := do
+def interval32ToRat? (I : Interval32) : Option RationalInterval := do
   let lo ← ExecFloat.Binary.toRat? I.lo
   let hi ← ExecFloat.Binary.toRat? I.hi
   pure ⟨lo, hi⟩
@@ -217,7 +176,7 @@ def float32ToRat? (x : Float32) : Option Rat :=
   ExecFloat.Binary.toRat? (ExecFloat.Binary.ofBits32 x.toBits)
 
 /-- Exact rational endpoint interval for a finite runtime-`Float32` interval. -/
-def intervalF32ToRat? (I : Float32Interval.IntervalF32) : Option IntervalRat := do
+def intervalF32ToRat? (I : Float32Interval.IntervalF32) : Option RationalInterval := do
   let lo ← float32ToRat? I.lo
   let hi ← float32ToRat? I.hi
   pure ⟨lo, hi⟩

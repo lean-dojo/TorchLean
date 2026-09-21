@@ -171,6 +171,13 @@ def run : IO Unit := do
   let longWord := String.ofList (List.replicate 20000 'a')
   expectEqual "GPT-2 consumes a long character run" [longWord] (pretokenize longWord)
   let parseVocabulary := text.GPT2BPE.Internal.parseVocabularyText
+  let specialVocabulary ← IO.ofExcept <| parseVocabulary "{\"<|endoftext|>\":0}"
+  let specialTokenizer := text.GPT2BPE.Tokenizer.Internal.create
+    (text.GPT2BPE.Internal.buildTokenizer specialVocabulary #[]) rfl
+  expectEqual "special token lookup does not pretokenize" (some 0)
+    (specialTokenizer.tokenId? "<|endoftext|>")
+  expectEqual "missing vocabulary token" (none : Option Nat)
+    (specialTokenizer.tokenId? "missing")
   for malformed in ["{\"a\":0} trailing", "{\"a\":0,}",
       "{\"a\":00}", "{\"\\uD800\":0}", "{\"\\uDC00\":0}",
       "{\"a\n\":0}", "{\"a\":0,\"a\":1}", "{\"a\":0,\"b\":0}",

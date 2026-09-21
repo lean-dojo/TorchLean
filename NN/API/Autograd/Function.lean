@@ -12,7 +12,10 @@ public import NN.Runtime.Autograd.Model.Autodiff
 /-!
 # Function Transforms
 
-Automatic differentiation transforms for pure one-argument tensor functions.
+Automatic differentiation transforms for one-argument tensor programs.
+Write programs against the differentiable operation interface, rather than extracting host
+values and computing outside the recorded graph. The same program can be interpreted with
+different scalar types; this is not source-code differentiation of an arbitrary Lean function.
 Import `NN.API.Autograd` for the complete public autograd API.
 -/
 
@@ -21,15 +24,6 @@ Import `NN.API.Autograd` for the complete public autograd API.
 namespace TorchLean
 
 namespace autograd
-
-/-
-Pure-function autograd: treat a pure function `f : Tensor σ -> Tensor τ` as the object of
-differentiation (no parameters).
--/
-
-/-!
-In PyTorch terms, this is the "functorch" style: differentiate plain functions, not modules.
--/
 
 /-- A scalar-polymorphic tensor function written against TorchLean's differentiable operations. -/
 abbrev Function (σ τ : Shape) :=

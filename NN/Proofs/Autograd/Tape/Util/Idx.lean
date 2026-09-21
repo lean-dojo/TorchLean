@@ -59,6 +59,21 @@ def getIdx {α : Type} [TorchLean.Storage α] {Γ : List Shape} {s : Shape}
     (xs : TorchLean.TensorPack α Γ) (idx : Idx Γ s) : Tensor α s :=
   Tensor.castShape (xs.get (α := α) idx.i) idx.h
 
+/-- A shape-preserving pack map commutes with typed tensor selection. -/
+@[simp] theorem getIdx_map {α β : Type} [Storage α] [Storage β] {shapes : List Shape}
+    (f : ∀ {s : Shape}, Tensor α s → Tensor β s) (xs : TensorPack α shapes)
+    {shape : Shape} (index : Idx shapes shape) :
+    getIdx (xs.map f) index = f (getIdx xs index) := by
+  obtain ⟨i, rfl⟩ := index
+  induction shapes with
+  | nil => exact Fin.elim0 i
+  | cons s ss ih =>
+    cases xs with
+    | cons x xs =>
+      cases i using Fin.cases with
+      | zero => rfl
+      | succ i => exact ih xs i
+
 namespace Idx
 
 private theorem get_append_last {α : Type} (l : List α) (a : α) :
@@ -120,3 +135,24 @@ def last {Γ : List Shape} {ss : List Shape} {τ : Shape} : Idx (Γ ++ ss ++ [τ
 end Idx
 
 end Proofs
+
+namespace TorchLean.TensorPack
+
+open Spec Proofs
+
+/-- Two packs agree when every typed tensor selection agrees. -/
+theorem ext_getIdx {α : Type} [Storage α] {shapes : List Shape}
+    {a b : TensorPack α shapes} (h : ∀ {shape : Shape} (index : Idx shapes shape),
+      getIdx a index = getIdx b index) : a = b := by
+  induction shapes with
+  | nil => cases a; cases b; rfl
+  | cons shape shapes ih =>
+    cases a with
+    | cons x xs =>
+      cases b with
+      | cons y ys =>
+        have head : x = y := h ⟨0, rfl⟩
+        have tail : xs = ys := ih (fun index => h ⟨index.i.succ, index.h⟩)
+        rw [head, tail]
+
+end TorchLean.TensorPack

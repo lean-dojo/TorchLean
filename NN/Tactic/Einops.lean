@@ -5,8 +5,8 @@ Authors: TorchLean contributors
 -/
 module
 
-public meta import NN.Tensor.Internal.Tactic.Report
-public import NN.Tensor.Internal.Tactic.Proof
+public meta import NN.Tactic.Einops.Report
+public import NN.Tactic.Einops.Proof
 import Mathlib.Algebra.Order.Field.Basic
 
 /-!

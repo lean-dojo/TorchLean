@@ -13,8 +13,13 @@ public import NN.Proofs.Autograd.Runtime.Link.BackwardGraph
 public import NN.Proofs.Autograd.Runtime.Link.BackwardGraphData
 public import NN.Proofs.Autograd.Runtime.Link.BackwardLeaves
 public import NN.Proofs.Autograd.Runtime.Link.BackwardSnoc
+public import NN.Proofs.Autograd.Runtime.Link.Checked
 public import NN.Proofs.Autograd.Runtime.Link.Core
 public import NN.Proofs.Autograd.Runtime.Link.FDeriv
+public import NN.Proofs.Autograd.Runtime.Link.GraphComposition
+public import NN.Proofs.Autograd.Runtime.Link.HigherOrder
+public import NN.Proofs.Autograd.Runtime.Link.HigherOrderFDeriv
+public import NN.Proofs.Autograd.Runtime.Link.HigherOrderReverse
 public import NN.Proofs.Autograd.Runtime.Link.Invariants
 
 /-!

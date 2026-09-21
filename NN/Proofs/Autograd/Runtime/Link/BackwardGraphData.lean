@@ -43,7 +43,7 @@ This is useful when a graph carries extra payload `Δ` (e.g. parameters/config) 
 backward closures.
 -/
 theorem backwardDenseFrom_lowerGraphDataToTape_eq_backpropAllCtx {α : Type} {Δ : Type}
-  [TorchLean.Storage α] [CommSemiring α]
+  [TorchLean.Storage α] [Add α]
     {Γ : List Shape} {ss : List Shape} (g : GraphData α Δ Γ ss)
     (x : TorchLean.TensorPack α Γ)
     (d0 : Δ) (seed : TorchLean.TensorPack α (Γ ++ ss)) :

@@ -10,6 +10,9 @@ public import NN.Proofs.Analysis
 public import NN.Proofs.Autograd.Core.RealCorrectness
 public import NN.Proofs.Autograd.Core.SemiringCorrectness
 public import NN.Proofs.Autograd.Coverage
+public import NN.Proofs.Autograd.Dual
+public import NN.Proofs.Autograd.Dual.Domain
+public import NN.Proofs.Autograd.DualTensor
 public import NN.Proofs.Autograd.FDeriv.Core
 public import NN.Proofs.Autograd.FDeriv.Elementwise
 public import NN.Proofs.Autograd.FDeriv.HardMaskedAttention
@@ -25,6 +28,7 @@ public import NN.Proofs.Autograd.FDeriv.Reindex
 public import NN.Proofs.Autograd.FDeriv.SoftmaxAxis
 public import NN.Proofs.Autograd.FDeriv.SoftmaxSpec
 public import NN.Proofs.Autograd.FDeriv.TensorCoordinates
+public import NN.Proofs.Autograd.Model
 public import NN.Proofs.Autograd.Runtime.Link
 public import NN.Proofs.Autograd.Tape.Algebra.Nodes
 public import NN.Proofs.Autograd.Tape.Algebra.Soundness

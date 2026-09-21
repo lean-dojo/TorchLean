@@ -72,7 +72,7 @@ def cnnConfig : nn.models.CNN.Config 1 :=
         stride := [2] }
     classCount := 3 }
 
-def cnn : nn.Sequential (cnnConfig.input [2]) (cnnConfig.output [2]) :=
+def cnn : nn.Sequential (cnnConfig.inputShape [2]) (cnnConfig.outputShape [2]) :=
   nn.build 1 (nn.models.cnn cnnConfig [2])
 
 def resnetConfig : nn.models.ResNet.Config 1 :=
@@ -81,7 +81,7 @@ def resnetConfig : nn.models.ResNet.Config 1 :=
     hiddenChannels := 2
     classCount := 3 }
 
-def resnet : nn.Sequential (resnetConfig.input [2]) (resnetConfig.output [2]) :=
+def resnet : nn.Sequential (resnetConfig.inputShape [2]) (resnetConfig.outputShape [2]) :=
   nn.build 2 (nn.models.resnet resnetConfig [2])
 
 def vitEncoderConfig (pooling : nn.models.ViT.Pooling) : nn.models.ViT.EncoderConfig 1 :=
@@ -99,10 +99,11 @@ def vitEncoderConfig (pooling : nn.models.ViT.Pooling) : nn.models.ViT.EncoderCo
 def vitConfig (pooling : nn.models.ViT.Pooling) : nn.models.ViT.Config 1 :=
   (vitEncoderConfig pooling).classifier 3
 
-def meanVit : nn.Sequential ((vitConfig .mean).input [2]) ((vitConfig .mean).output [2]) :=
+def meanVit : nn.Sequential
+    ((vitConfig .mean).inputShape [2]) ((vitConfig .mean).outputShape [2]) :=
   nn.build 3 (nn.models.vit (vitConfig .mean) [2])
 
-def classVit : nn.Sequential ((vitConfig .cls).input [2]) ((vitConfig .cls).output [2]) :=
+def classVit : nn.Sequential ((vitConfig .cls).inputShape [2]) ((vitConfig .cls).outputShape [2]) :=
   nn.build 4 (nn.models.vit (vitConfig .cls) [2])
 
 def maskedPatchConfig : nn.models.ViT.MaskedPatchReconstructor.Config 1 :=
@@ -110,7 +111,7 @@ def maskedPatchConfig : nn.models.ViT.MaskedPatchReconstructor.Config 1 :=
     reconstructionWidth := 3 }
 
 def maskedPatchReconstructor :
-    nn.Sequential (maskedPatchConfig.encoder.input [2]) (maskedPatchConfig.output [2]) :=
+    nn.Sequential (maskedPatchConfig.encoder.inputShape [2]) (maskedPatchConfig.outputShape [2]) :=
   nn.build 5 (nn.models.ViT.maskedPatchReconstructor maskedPatchConfig [2])
 
 def kanConfig : nn.models.KAN.Config :=
@@ -121,7 +122,7 @@ def kanConfig : nn.models.KAN.Config :=
       nn.models.KAN.PiecewiseLinear.edgeFamily
         { gridSize := 3, inputScale := 2 } }
 
-def kan : nn.Sequential (kanConfig.input [2]) (kanConfig.output [2]) :=
+def kan : nn.Sequential (kanConfig.inputShape [2]) (kanConfig.outputShape [2]) :=
   nn.build 6 (nn.models.kan kanConfig [2])
 
 def fnoConfig : nn.models.FNO.Config 1 :=
@@ -131,7 +132,7 @@ def fnoConfig : nn.models.FNO.Config 1 :=
     layerCount := 1
     activation := .gelu }
 
-def fno : nn.Sequential (fnoConfig.input [2]) (fnoConfig.output [2]) :=
+def fno : nn.Sequential (fnoConfig.inputShape [2]) (fnoConfig.outputShape [2]) :=
   nn.build 7 (nn.models.fno fnoConfig [2])
 
 def recurrentConfig : nn.models.Recurrent.Config :=
@@ -140,13 +141,13 @@ def recurrentConfig : nn.models.Recurrent.Config :=
     hiddenWidth := 2
     outputWidth := 1 }
 
-def rnn : nn.Sequential (recurrentConfig.input [2]) (recurrentConfig.output [2]) :=
+def rnn : nn.Sequential (recurrentConfig.inputShape [2]) (recurrentConfig.outputShape [2]) :=
   nn.build 8 (nn.models.rnn recurrentConfig [2])
 
-def gru : nn.Sequential (recurrentConfig.input [2]) (recurrentConfig.output [2]) :=
+def gru : nn.Sequential (recurrentConfig.inputShape [2]) (recurrentConfig.outputShape [2]) :=
   nn.build 9 (nn.models.gru recurrentConfig [2])
 
-def lstm : nn.Sequential (recurrentConfig.input [2]) (recurrentConfig.output [2]) :=
+def lstm : nn.Sequential (recurrentConfig.inputShape [2]) (recurrentConfig.outputShape [2]) :=
   nn.build 10 (nn.models.lstm recurrentConfig [2])
 
 def mambaConfig : nn.models.Mamba.Config :=
@@ -154,7 +155,7 @@ def mambaConfig : nn.models.Mamba.Config :=
     modelWidth := 2 }
 
 def mamba :
-    nn.Sequential (mambaConfig.input 2 [2]) (mambaConfig.output 2 [2]) :=
+    nn.Sequential (mambaConfig.inputShape 2 [2]) (mambaConfig.outputShape 2 [2]) :=
   nn.build 11 (nn.models.Mamba.languageModel mambaConfig 2 [2])
 
 def causalTransformerConfig : nn.models.CausalTransformer.Config :=
@@ -169,12 +170,12 @@ local instance : NeZero causalTransformerConfig.vocabularySize := ⟨by decide�
 
 def causalTransformer :
     nn.Sequential
-      (causalTransformerConfig.vocabulary [1])
-      (causalTransformerConfig.vocabulary [1]) :=
+      (causalTransformerConfig.vocabularyShape [1])
+      (causalTransformerConfig.vocabularyShape [1]) :=
   nn.build 12 (nn.models.CausalTransformer.oneHot causalTransformerConfig [1])
 
 def causalInput (second third : Fin causalTransformerConfig.vocabularySize) :
-    Tensor Float (causalTransformerConfig.vocabulary [1]) :=
+    Tensor Float (causalTransformerConfig.vocabularyShape [1]) :=
   let tokens : Tensor (Fin causalTransformerConfig.vocabularySize) [1, 3] :=
     Tensor.stack 0 fun _ =>
       Tensor.ofFn fun position =>
@@ -185,7 +186,7 @@ def causalInput (second third : Fin causalTransformerConfig.vocabularySize) :
         else
           third
   by
-    simpa [causalTransformerConfig, nn.models.CausalTransformer.Config.vocabulary] using
+    simpa [causalTransformerConfig, nn.models.CausalTransformer.Config.vocabularyShape] using
       TorchLean.Tensor.oneHotIndices
         (α := Float) causalTransformerConfig.vocabularySize tokens
 
@@ -218,15 +219,15 @@ def generativeConfig : nn.models.Generative.Config :=
     latentWidth := 2 }
 
 def autoencoder :
-    nn.Sequential (generativeConfig.data [2]) (generativeConfig.data [2]) :=
+    nn.Sequential (generativeConfig.dataShape [2]) (generativeConfig.dataShape [2]) :=
   nn.build 12 (nn.models.Generative.autoencoder generativeConfig [2])
 
 def generator :
-    nn.Sequential (generativeConfig.latent [2]) (generativeConfig.data [2]) :=
+    nn.Sequential (generativeConfig.latentShape [2]) (generativeConfig.dataShape [2]) :=
   nn.build 13 (nn.models.Generative.generator generativeConfig [2])
 
 def discriminator :
-    nn.Sequential (generativeConfig.data [2]) (generativeConfig.score [2]) :=
+    nn.Sequential (generativeConfig.dataShape [2]) (generativeConfig.scoreShape [2]) :=
   nn.build 14 (nn.models.Generative.discriminator generativeConfig [2])
 
 def diffusionConfig : nn.models.Diffusion.NoisePredictor.Config 1 :=
@@ -235,11 +236,11 @@ def diffusionConfig : nn.models.Diffusion.NoisePredictor.Config 1 :=
     hiddenChannels := 2 }
 
 def basicDiffusion :
-    nn.Sequential (diffusionConfig.input [2]) (diffusionConfig.output [2]) :=
+    nn.Sequential (diffusionConfig.inputShape [2]) (diffusionConfig.outputShape [2]) :=
   nn.build 15 (nn.models.Diffusion.NoisePredictor.basic diffusionConfig [2])
 
 def residualDiffusion :
-    nn.Sequential (diffusionConfig.input [2]) (diffusionConfig.output [2]) :=
+    nn.Sequential (diffusionConfig.inputShape [2]) (diffusionConfig.outputShape [2]) :=
   nn.build 16 (nn.models.Diffusion.NoisePredictor.residual diffusionConfig [2])
 
 def ppoConfig : nn.models.PPO.Config :=
@@ -247,10 +248,10 @@ def ppoConfig : nn.models.PPO.Config :=
     hiddenWidth := 2
     actionCount := 3 }
 
-def actor : nn.Sequential (ppoConfig.input [2]) (ppoConfig.actorOutput [2]) :=
+def actor : nn.Sequential (ppoConfig.inputShape [2]) (ppoConfig.actorOutputShape [2]) :=
   nn.build 17 (nn.models.PPO.actor ppoConfig [2])
 
-def critic : nn.Sequential (ppoConfig.input [2]) (ppoConfig.criticOutput [2]) :=
+def critic : nn.Sequential (ppoConfig.inputShape [2]) (ppoConfig.criticOutputShape [2]) :=
   nn.build 18 (nn.models.PPO.critic ppoConfig [2])
 
 def run : IO Unit := do

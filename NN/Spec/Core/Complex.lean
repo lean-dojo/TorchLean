@@ -27,9 +27,11 @@ Complex square roots use the principal branch. Complex logarithms retain the pol
 `Atan2 α`; a backend must supply that real-coordinate operation to obtain the complex `Context`.
 Arithmetic operations inherit the rounding and exceptional-value behavior of the component type.
 
-The `Context` instance supports explicit complex forward programs. It does not turn the ordinary
-real-valued trainer into a complex optimizer: that requires real losses on complex tensors,
-conjugate-aware reverse-mode rules, and result and checkpoint APIs that preserve both components.
+The `Context` instance supports explicit complex programs. For real-valued losses, the application
+API `autograd.complex.grad` differentiates both real coordinates by forward-mode seeding; its
+gradients work with `nn.sgdStep`, and `Checkpoint.State` preserves both components. The ordinary
+supervised trainer still has a real-valued data and result boundary. Complex-linear reverse rules
+must not be substituted for real-coordinate differentiation of a nonholomorphic loss.
 -/
 
 @[expose] public section
@@ -50,6 +52,12 @@ variable {α : Type}
 
 /-- Embed a real scalar as a complex scalar with zero imaginary part. -/
 def ofReal [Zero α] (a : α) : Complex α := ⟨a, 0⟩
+
+/-- Complex conjugation keeps the real coordinate and negates the imaginary coordinate. -/
+def conj [Neg α] (z : Complex α) : Complex α := ⟨z.re, -z.im⟩
+
+/-- Squared magnitude, returned in the real component type. -/
+def normSq [Mul α] [Add α] (z : Complex α) : α := z.re * z.re + z.im * z.im
 
 /-- The real part of a real embedded as a complex number is itself. -/
 @[simp] theorem re_ofReal [Zero α] (a : α) : (ofReal a).re = a := rfl
@@ -150,7 +158,8 @@ instance [Context α] [Atan2 α] : MathFunctions (Complex α) where
   sqrt z :=
     if z.im == 0 then
       if z.re > 0 then
-        ofReal (MathFunctions.sqrt z.re)
+        let root := MathFunctions.sqrt z.re
+        ⟨root, z.im / (2 * root)⟩
       else
         let magnitude := MathFunctions.sqrt (MathFunctions.abs z.re)
         ⟨0, if Atan2.atan2 z.im z.re < 0 then -magnitude else magnitude⟩

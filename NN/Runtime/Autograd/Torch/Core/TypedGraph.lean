@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.TypedGraph.GraphM.Core
+public import NN.Runtime.Autograd.TypedGraph.Core
 
 /-!
 # Typed Executable Graphs
@@ -88,6 +89,28 @@ def vjpWithSeed {α Δ : Type} [TorchLean.Storage α] [Add α] [Zero α]
     (x : TorchLean.TensorPack α Γ) (d : Δ) (seedOut : Tensor α τ) : TorchLean.TensorPack α Γ :=
   Proofs.Autograd.Algebra.GraphData.backpropCtx
     (α := α) (Δ := Δ) (Γ := Γ) (g := c.data) x d (TensorPack.single c.output seedOut)
+
+/-- Recover the input pullback from a previously checked forward tape. -/
+def vjpFromTape {α Δ : Type} [Storage α] [Add α] [Zero α]
+    {Γ : List Shape} {τ : Shape} (graph : TypedGraphWithData α Δ Γ τ)
+    (tape : Runtime.Autograd.Tape α) (seed : Tensor α τ) :
+    Runtime.Autograd.Result (TorchLean.TensorPack α Γ) := do
+  let gradients ← Runtime.Autograd.TypedGraph.backwardDenseAllFrom tape graph.output seed
+  TorchLean.TensorPack.ofShapeErasedArray gradients (shapes := Γ)
+
+/--
+Evaluate the output and its seeded input pullback, checking every node's runtime domain first.
+
+The returned pair is `(inputGradients, output)`. Auxiliary data is held fixed. The same tape is
+used for the forward value and reverse pass; validation or malformed gradient shapes return errors.
+-/
+def vjpChecked {α Δ : Type} [Storage α] [Add α] [Zero α]
+    {Γ : List Shape} {τ : Shape} (graph : TypedGraphWithData α Δ Γ τ)
+    (inputs : TorchLean.TensorPack α Γ) (data : Δ) (seed : Tensor α τ) :
+    Runtime.Autograd.Result (TorchLean.TensorPack α Γ × Tensor α τ) := do
+  let (tape, context) ← Runtime.Autograd.TypedGraph.lowerToTapeChecked graph.data inputs data
+  let gradients ← graph.vjpFromTape tape seed
+  pure (gradients, getIdx context graph.output)
 
 end TypedGraphWithData
 

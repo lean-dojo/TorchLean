@@ -74,26 +74,35 @@ theorem mem_toIndexedShapeErasedArray_lt :
 -- Tell `grind` about the most common cast/length normalization lemmas for these conversions.
 attribute [grind =] toShapeErasedArray_cast size_toShapeErasedArray
 
-/-- Recovering a typed pack after an untouched array prefix and shape erasure is lossless. -/
-@[simp] theorem ofShapeErasedArray_append_toShapeErasedArray
+/-- Recovering a typed pack ignores array entries before and after its encoded segment. -/
+theorem ofShapeErasedArray_surround (suffix : Array (Spec.SomeTensor α))
     : (pref : Array (Spec.SomeTensor α)) → {ss : List Shape} → (xs : TensorPack α ss) →
-      ofShapeErasedArray (α := α) (pref ++ toShapeErasedArray (α := α) xs) pref.size =
+      ofShapeErasedArray (α := α) (pref ++ toShapeErasedArray (α := α) xs ++ suffix) pref.size =
         .ok xs
   | _, [], .nil => by
       rfl
   | pref, _ :: ss, .cons x xs => by
       have hhead :
           ((pref ++ #[Spec.SomeTensor.ofTensor x]) ++
-              toShapeErasedArray (α := α) xs)[pref.size]? =
+              (toShapeErasedArray (α := α) xs ++ suffix))[pref.size]? =
             some (Spec.SomeTensor.ofTensor x) := by
         rw [Array.getElem?_append_left (by simp)]
         simp
-      have ih := ofShapeErasedArray_append_toShapeErasedArray
+      have ih := ofShapeErasedArray_surround suffix
         (pref ++ #[Spec.SomeTensor.ofTensor x]) (ss := ss) xs
-      simp only [toShapeErasedArray, ← Array.append_assoc]
+      simp only [toShapeErasedArray, Array.append_assoc]
+      rw [← Array.append_assoc (xs := pref) (ys := #[Spec.SomeTensor.ofTensor x])]
+      simp only [Array.append_assoc] at ih
       simp [Array.append_singleton] at ih
       rw [ofShapeErasedArray, hhead]
       simp [ih]
+
+/-- Recovering a typed pack after an untouched array prefix and shape erasure is lossless. -/
+@[simp] theorem ofShapeErasedArray_append_toShapeErasedArray
+    (pref : Array (Spec.SomeTensor α)) {ss : List Shape} (xs : TensorPack α ss) :
+    ofShapeErasedArray (α := α) (pref ++ toShapeErasedArray (α := α) xs) pref.size =
+      .ok xs := by
+  simpa using ofShapeErasedArray_surround (α := α) #[] pref xs
 
 /-- Recovering the expected typed pack immediately after shape erasure is lossless. -/
 @[simp] theorem ofShapeErasedArray_toShapeErasedArray
@@ -101,6 +110,27 @@ attribute [grind =] toShapeErasedArray_cast size_toShapeErasedArray
     ofShapeErasedArray (α := α) (toShapeErasedArray (α := α) xs) = .ok xs := by
   simpa using
     (ofShapeErasedArray_append_toShapeErasedArray (α := α) (pref := #[]) (ss := ss) xs)
+
+/-- Splitting a typed context splits its erased array at the same boundary. -/
+theorem toShapeErasedArray_split {left right : List Shape}
+    (xs : TensorPack α (left ++ right)) :
+    toShapeErasedArray xs =
+      toShapeErasedArray (split (ss₁ := left) xs).1 ++
+        toShapeErasedArray (split (ss₁ := left) xs).2 := by
+  induction left with
+  | nil => simp [split, toShapeErasedArray]
+  | cons shape left ih =>
+      cases xs with
+      | cons x xs => simp [split, toShapeErasedArray, ih xs, Array.append_assoc]
+
+/-- Recover just the typed input prefix of a complete runtime context. -/
+theorem ofShapeErasedArray_toShapeErasedArray_prefix {left right : List Shape}
+    (xs : TensorPack α (left ++ right)) :
+    ofShapeErasedArray (toShapeErasedArray xs) (shapes := left) =
+      .ok (split (ss₁ := left) xs).1 := by
+  rw [toShapeErasedArray_split (left := left)]
+  simpa using ofShapeErasedArray_surround (α := α)
+    (toShapeErasedArray (split (ss₁ := left) xs).2) #[] (split (ss₁ := left) xs).1
 
 /-!
 ### Shape-erasing conversions

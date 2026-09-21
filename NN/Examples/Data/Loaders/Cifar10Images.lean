@@ -107,10 +107,10 @@ def model {batchSize : Nat} :
   let pool : nn.Pooling.Config 2 :=
     { kernelSize := [2, 2]
       stride := [2, 2] }
-  let spatial1 := conv1.output spatial0
-  let spatial2 := pool.output spatial1
-  let spatial3 := conv2.output spatial2
-  let spatial4 := pool.output spatial3
+  let spatial1 := conv1.outputSpatial spatial0
+  let spatial2 := pool.outputSpatial spatial1
+  let spatial3 := conv2.outputSpatial spatial2
+  let spatial4 := pool.outputSpatial spatial3
   nn.Sequential![
     nn.conv spatial0 conv1 (batchShape := [batchSize]) (inputChannels := inputChannels),
     nn.relu,

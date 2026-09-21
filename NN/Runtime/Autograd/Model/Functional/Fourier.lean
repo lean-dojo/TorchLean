@@ -27,6 +27,14 @@ namespace Runtime.Autograd.Model.F
 
 open Spec TorchLean
 
+/-- Choose Fourier execution without changing normalization or spectral parameters. -/
+inductive SpectralPath where
+  /-- Use native FFT hooks when supported, otherwise differentiable reference operations. -/
+  | automatic
+  /-- Always use dense reference transforms. -/
+  | denseReference
+  deriving BEq, DecidableEq, Repr
+
 variable {α : Type} [Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
 

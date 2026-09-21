@@ -971,6 +971,27 @@ assemble a residual, using a closed-form field whose answers are known. Training
 adds a separate derivative through that residual with respect to its parameter state. The displayed
 Hessian is consequently a coordinate Hessian, not the Hessian of a training objective.
 
+For that training step, `autograd.model.derivative` evaluates repeated input-directional
+derivatives of a sequential model, and `autograd.model.derivativeVjp` pulls a residual cotangent
+back to the model parameters. A list `[dx, dx]` selects the second derivative in direction `dx`;
+`[dx, dt]` selects a mixed derivative. The directions can be any tensors of the input shape.
+The implementation nests dual scalars around the existing evaluator and reverse pass, keeping
+the directions and supplied cotangent constant.
+
+The runnable example trains a tanh MLP on $`u''=-2` over $`[-1,1]`, with zero values at both
+boundaries. It receives no solution labels:
+
+```terminal
+scripts/lake.sh exe torchlean pinn
+```
+
+Its loss is half the mean squared equation residual plus half the mean squared boundary residual.
+For each equation term, the pullback seed is the residual divided by the collocation count.
+The returned parameter gradients are added to the boundary gradients and passed to `nn.sgdStep`.
+The checked 1,500-step CPU run reduced this loss from `2.244093` to `0.006179`.
+The exact solution $`1-x^2` appears only in the final comparison; it does not supply training data.
+As before, these sampled residuals do not establish a uniform PDE guarantee.
+
 Its off-diagonal entries agree because both mixed derivatives of this smooth exponential equal
 `-2u`. Selecting `[0][0]` extracts `u_xx`; selecting another entry would define a different residual
 even though all entries have the same scalar type. The coordinate ordering established when the

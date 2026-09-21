@@ -99,7 +99,7 @@ def validate {d : Nat} (config : ConvPoolBlock.Config d)
     (kind : String := "ConvPoolBlock") : Except String Unit := do
   config.block.validate inputChannels input (kind := kind)
   config.pooling.validate config.block.convolution.outChannels
-    (config.block.convolution.output input) (kind := kind)
+    (config.block.convolution.outputSpatial input) (kind := kind)
 
 end ConvPoolBlock.Config
 

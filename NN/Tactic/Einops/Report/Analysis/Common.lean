@@ -5,10 +5,10 @@ Authors: TorchLean contributors
 -/
 module
 
-public meta import NN.Tensor.Internal.Tactic.Proof
+public meta import NN.Tactic.Einops.Proof
 public meta import NN.Tensor.Internal.Elab.Einsum.ParallelOutput -- shake: keep
 public import NN.Tensor.Internal.Check.ParseShape -- shake: keep
-public import NN.Tensor.Internal.Tactic.Proof
+public import NN.Tactic.Einops.Proof
 import Mathlib.Algebra.Order.Field.Basic
 
 /-!
@@ -26,7 +26,7 @@ open Lean Elab Tactic Meta
 
 /-!
 `instantiateOuterLets` is not defined here. It is `Tensor.Internal.instantiateOuterLets` from
-`NN/Tensor/Internal/Tactic/Proof.lean`, which this module already imports, and which had the
+`NN/Tactic/Einops/Proof.lean`, which this module already imports, and which had the
 identical four-line body.
 `Report.Impl` sits inside `Tensor.Internal`, so the uses below find it by walking outward.
 -/

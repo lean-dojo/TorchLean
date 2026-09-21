@@ -5,9 +5,18 @@ FloatLib supplies the generic formats, exact decoding, rounding algorithms, arit
 error theory, and interval operations. TorchLean retains rounded-real specializations,
 interval endpoint contracts, quantization, and the proofs needed by tensor and runtime consumers.
 
-The FloatLib revision is pinned in `lake-manifest.json`, using Lean and mathlib 4.34.0.
+The dependency follows FloatLib's `main` branch, with its resolved revision locked in
+`lake-manifest.json`, using Lean and mathlib 4.34.0. Run `scripts/lake.sh update floatlib` and
+rebuild to adopt upstream changes; ordinary builds use the locked revision.
 Import `NN.Floats` for the adapters, or import FloatLib directly when a program needs a generic
 scalar API.
+
+The current dependency includes certified word-accumulator implementations for division and
+square root, and a whole-word shift for compatible format widening. Existing configured scalar
+operations select these implementations when their format is eligible; TorchLean does not need
+another arithmetic wrapper. FloatLib also supplies the new exact-reduction results for signed
+zeros and exception flags. These are available through the upstream imports; they do not change
+the accumulation order of TorchLean's ordinary tensor sums or native GPU kernels.
 
 ```lean
 import NN.Floats

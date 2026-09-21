@@ -75,10 +75,10 @@ abbrev modelConfig : nn.models.CNN.Config 2 :=
     classCount := classCount }
 
 /-- Input shape: a minibatch of CIFAR images in channel-first layout. -/
-abbrev input : Shape := modelConfig.input [batchSize]
+abbrev input : Shape := modelConfig.inputShape [batchSize]
 
 /-- Output shape: one row of class logits per image. -/
-abbrev output : Shape := modelConfig.output [batchSize]
+abbrev output : Shape := modelConfig.outputShape [batchSize]
 
 /--
 Small convolutional classifier from the public model API.

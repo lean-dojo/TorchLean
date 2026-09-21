@@ -9,7 +9,7 @@ import Mathlib.Tactic.NormNum.Inv
 import Mathlib.Tactic.NormNum.Pow
 import Mathlib.Tactic.Positivity.Finset
 public meta import NN.Tensor.Internal.Elab -- shake: keep
-public meta import NN.Tensor.Internal.Tactic -- shake: keep
+public meta import NN.Tactic.Einops -- shake: keep
 public import NN.Tensor.Internal.Elab.Syntax
 public import NN.Tensor.Internal.Elab.TensorLiteral
 public import NN.Tensor.Internal.Language -- shake: keep

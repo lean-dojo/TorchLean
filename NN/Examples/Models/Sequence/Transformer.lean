@@ -69,11 +69,11 @@ abbrev modelConfig : nn.models.CausalTransformer.Config :=
 
 /-- Input shape: batched one-hot byte buckets. -/
 abbrev input : Shape :=
-  modelConfig.vocabulary
+  modelConfig.vocabularyShape
 
 /-- Output shape: one next-byte logit row per token position. -/
 abbrev output : Shape :=
-  modelConfig.vocabulary
+  modelConfig.vocabularyShape
 
 /-- Compact causal Transformer used by the runnable text example. -/
 def model : nn.Builder (nn.Sequential input output) :=

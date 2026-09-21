@@ -5,9 +5,9 @@ Authors: TorchLean contributors
 -/
 module
 
-public meta import NN.Tensor.Internal.Tactic.Report.Analysis
+public meta import NN.Tactic.Einops.Report.Analysis
 public meta import ProofWidgets.Component.HtmlDisplay
-public import NN.Tensor.Internal.Tactic.Report.Analysis.Render
+public import NN.Tactic.Einops.Report.Analysis.Render
 public import ProofWidgets.Component.HtmlDisplay
 
 /-!

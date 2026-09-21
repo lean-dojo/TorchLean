@@ -358,6 +358,24 @@ def checkCudaCheckpoint : IO Unit := IO.FS.withTempDir fun directory => do
     writeCudaAdamStateFloat32 restoredNext restoredSchema restoredConfig restoredState
     check "next checkpoint bytes"
       ((← IO.FS.readBinFile savedNext) == (← IO.FS.readBinFile restoredNext))
+    let stochastic := directory / "stochastic.bin"
+    let counter ← IO.mkRef 99
+    writeCudaAdamStateFloat32 stochastic schema config state (some 7)
+    readCudaAdamStateFloat32 stochastic restoredSchema restoredConfig restoredState (some counter)
+    check "checkpoint restores the next random invocation" ((← counter.get) == 7)
+    rejects "random checkpoint without a destination counter"
+      (readCudaAdamStateFloat32 stochastic restoredSchema restoredConfig restoredState)
+    rejects "random checkpoint with a retied destination"
+      (readCudaAdamStateFloat32 stochastic wrongSchema restoredConfig restoredState (some counter))
+    let truncated := directory / "truncated.bin"
+    let bytes ← IO.FS.readBinFile stochastic
+    IO.FS.writeBinFile truncated (bytes.extract 0 (bytes.size - 1))
+    rejects "truncated random checkpoint"
+      (readCudaAdamStateFloat32 truncated restoredSchema restoredConfig restoredState
+        (some counter))
+    check "rejected checkpoint preserves random counter" ((← counter.get) == 7)
+    check "rejected random checkpoint preserves moments"
+      (← sameCudaState (← state.get) (← restoredState.get))
   finally
     session.resetTape
     resumed.resetTape

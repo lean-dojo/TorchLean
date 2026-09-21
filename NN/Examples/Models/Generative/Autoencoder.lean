@@ -45,10 +45,10 @@ abbrev modelConfig : nn.models.Generative.Config :=
 def batchSize : Nat := 1
 
 /-- Input shape: a batch of flattened CIFAR image vectors. -/
-abbrev input := modelConfig.data [batchSize]
+abbrev input := modelConfig.dataShape [batchSize]
 
 /-- Target shape: the same flattened image-vector batch, because this is reconstruction. -/
-abbrev output := modelConfig.data [batchSize]
+abbrev output := modelConfig.dataShape [batchSize]
 
 /--
 Trainable dense autoencoder.

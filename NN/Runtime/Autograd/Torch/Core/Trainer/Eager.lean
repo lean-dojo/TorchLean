@@ -269,14 +269,14 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
   let optimizerStateCheckpoint? : Option OptimizerStateCheckpoint :=
     if options.usesCuda then
       some
-        { save := fun path =>
+        { save := fun path => do
             Internal.EagerSession.writeCudaAdamStateFloat32
-              path adamSchema adamConfigRef adamStateRef
+              path adamSchema adamConfigRef adamStateRef (some (← session.rngCounter.get))
           load := fun path => do
             -- Restored moments select the native history too. A failed load leaves the path alone.
             checkOptimizerPath .native
             Internal.EagerSession.readCudaAdamStateFloat32
-              path adamSchema adamConfigRef adamStateRef
+              path adamSchema adamConfigRef adamStateRef (some session.rngCounter)
             useOptimizerPath .native }
     else
       none

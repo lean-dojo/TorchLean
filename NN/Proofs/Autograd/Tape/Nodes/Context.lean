@@ -213,6 +213,36 @@ theorem inner_getBlock_singleBlock :
 def get {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (x : CtxVec Γ) : Vec (Spec.Shape.size s) :=
   castVec (congrArg Spec.Shape.size idx.h) (getBlock (Γ := Γ) idx.i x)
 
+/-- Selecting a block after vectorization agrees with selecting the original tensor. -/
+theorem getBlock_flattenCtx {Γ : List Shape} (xs : TensorPack ℝ Γ) (i : Fin Γ.length) :
+    getBlock i (flattenCtx xs) = tensorToVec (xs.get i) := by
+  induction xs with
+  | nil => exact nomatch i
+  | cons x xs ih =>
+    obtain ⟨i, hi⟩ := i
+    cases i with
+    | zero =>
+      rw [TorchLean.TensorPack.get_cons_zero]
+      apply PiLp.ext
+      intro j
+      simp [getBlock, flattenCtx_cons]
+    | succ i =>
+      rw [TorchLean.TensorPack.get_cons_succ]
+      change getBlock ⟨i, Nat.lt_of_succ_lt_succ hi⟩ (vecOfFun fun j =>
+        (flattenCtx (.cons x xs)) (Fin.natAdd _ j)) = _
+      rw [← ih ⟨i, Nat.lt_of_succ_lt_succ hi⟩]
+      congr 1
+      apply PiLp.ext
+      intro j
+      simp [flattenCtx_cons]
+
+/-- Typed tensor selection commutes with vectorization, including its shape cast. -/
+theorem get_flattenCtx {Γ : List Shape} {s : Shape}
+    (idx : Idx Γ s) (xs : TensorPack ℝ Γ) :
+    get idx (flattenCtx xs) = tensorToVec (getIdx xs idx) := by
+  obtain ⟨i, rfl⟩ := idx
+  simpa [get, getIdx, Tensor.castShape] using getBlock_flattenCtx xs i
+
 /-- Inject a block into a vectorized context at `idx`, filling other blocks with zeros. -/
 def single {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (v : Vec (Spec.Shape.size s)) : CtxVec Γ :=
   singleBlock (Γ := Γ) idx.i (castVec (congrArg Spec.Shape.size idx.h).symm v)

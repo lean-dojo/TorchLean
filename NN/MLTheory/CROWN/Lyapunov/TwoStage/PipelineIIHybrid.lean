@@ -177,17 +177,17 @@ deriving Repr
 def parseHybridCliOptions (width : Nat) (args : List String) : IO HybridCliOptions := do
   let defaultPath : String := s!"_external/van_stage1_w{width}_bits.json"
   let args := TorchLean.CLI.dropDashDash args
-  let (weightsFlag?, args) ← TorchLean.CLI.orThrowIO <| TorchLean.CLI.takeFlagValue? args "weights"
-  let (positionalWeights, args) ← TorchLean.CLI.orThrowIO <|
+  let (weightsFlag?, args) ← IO.ofExcept <| TorchLean.CLI.takeFlagValue? args "weights"
+  let (positionalWeights, args) ← IO.ofExcept <|
     TorchLean.CLI.takePositional args (default := defaultPath)
-  let (forceStage1, args) ← TorchLean.CLI.orThrowIO <| TorchLean.CLI.takeBoolFlag args "stage1"
-  let (stage1Steps, args) ← TorchLean.CLI.orThrowIO <|
+  let (forceStage1, args) ← IO.ofExcept <| TorchLean.CLI.takeBoolFlag args "stage1"
+  let (stage1Steps, args) ← IO.ofExcept <|
     TorchLean.CLI.takeNatFlag args "stage1-steps" (default := 10)
-  let (longRun, args) ← TorchLean.CLI.orThrowIO <| TorchLean.CLI.takeBoolFlag args "long"
-  let (paperRun, args) ← TorchLean.CLI.orThrowIO <| TorchLean.CLI.takeBoolFlag args "paper"
-  let (candidates, args) ← TorchLean.CLI.orThrowIO <|
+  let (longRun, args) ← IO.ofExcept <| TorchLean.CLI.takeBoolFlag args "long"
+  let (paperRun, args) ← IO.ofExcept <| TorchLean.CLI.takeBoolFlag args "paper"
+  let (candidates, args) ← IO.ofExcept <|
     TorchLean.CLI.takeNatFlag args "candidates" (default := 1)
-  TorchLean.CLI.orThrowIO <| TorchLean.CLI.checkNoArgs args
+  IO.ofExcept <| TorchLean.CLI.checkNoArgs args
   pure
     { weightsPath := weightsFlag?.getD positionalWeights
       forceStage1 := forceStage1

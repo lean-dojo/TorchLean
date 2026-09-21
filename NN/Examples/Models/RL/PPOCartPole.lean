@@ -169,14 +169,14 @@ abbrev modelConfig : nn.models.PPO.Config :=
 
 /-- Construct the actor network as an MLP mapping observations to action logits. -/
 def actor (batchShape : Shape := []) :
-    nn.Builder (nn.Sequential (modelConfig.input batchShape)
-      (modelConfig.actorOutput batchShape)) :=
+    nn.Builder (nn.Sequential (modelConfig.inputShape batchShape)
+      (modelConfig.actorOutputShape batchShape)) :=
   nn.models.PPO.actor modelConfig batchShape
 
 /-- Construct the critic network as an MLP mapping observations to a scalar value estimate. -/
 def critic (batchShape : Shape := []) :
-    nn.Builder (nn.Sequential (modelConfig.input batchShape)
-      (modelConfig.criticOutput batchShape)) :=
+    nn.Builder (nn.Sequential (modelConfig.inputShape batchShape)
+      (modelConfig.criticOutputShape batchShape)) :=
   nn.models.PPO.critic modelConfig batchShape
 
 /-!

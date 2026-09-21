@@ -329,6 +329,12 @@ theorem logistic_deriv_correct (x : ℝ) :
     (Activation.Math.logisticDerivSpec x) x
   exact hdiv''
 
+/-- Real tanh is smooth at every order because its cosh denominator never vanishes. -/
+@[fun_prop] theorem contDiff_tanh {n : WithTop ℕ∞} : ContDiff ℝ n Real.tanh := by
+  change ContDiff ℝ n (fun x => Real.tanh x)
+  simp only [Real.tanh_eq_sinh_div_cosh]
+  exact Real.contDiff_sinh.fun_div Real.contDiff_cosh (fun x => (Real.cosh_pos x).ne')
+
 /-- `tanh` in terms of `exp`, which is the form every derivative computation below wants.
 
 Mathlib defines `Real.tanh` through the complex hyperbolic functions, so getting to this elementary
@@ -445,6 +451,13 @@ theorem tanh_deriv_correct (x : ℝ) :
   exact HasDerivAt.congr_of_eventuallyEq
     (h_deriv.congr_deriv h_derivative_eq)
     h_func_eq
+
+/-- The real tanh chain rule, using the same derivative expression as the runtime. -/
+theorem _root_.HasDerivAt.tanh {f : ℝ → ℝ} {f' x : ℝ} (hf : HasDerivAt f f' x) :
+    HasDerivAt (fun y => Real.tanh (f y))
+      ((1 - Real.tanh (f x) * Real.tanh (f x)) * f') x := by
+  simpa only [Function.comp_def, Activation.Math.tanhSpec, Activation.Math.tanhDerivSpec,
+    Proofs.mathfunc_tanh_eq_rtanh] using (Proofs.tanh_deriv_correct (f x)).comp x hf
 
 /--
 Correctness of the tanh-approximate GELU derivative spec.

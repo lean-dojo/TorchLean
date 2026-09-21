@@ -119,10 +119,10 @@ abbrev modelConfig : nn.models.ViT.Config 2 :=
 abbrev batch : Shape := [batchSize]
 
 /-- Batched image shape derived from `modelConfig`. -/
-abbrev input : Shape := modelConfig.input batch
+abbrev input : Shape := modelConfig.inputShape batch
 
 /-- Batched classifier output derived from `modelConfig`. -/
-abbrev output : Shape := modelConfig.output batch
+abbrev output : Shape := modelConfig.outputShape batch
 
 /--
 Compact ViT-style classifier from the public model API.

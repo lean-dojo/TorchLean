@@ -62,17 +62,17 @@ def validate (config : Config) : Except String Unit :=
 end Config
 
 /-- Data tensor shape with an arbitrary batch shape. -/
-abbrev Config.data (config : Config)
+abbrev Config.dataShape (config : Config)
     (batchShape : Shape := []) : Shape :=
   batchShape.appendDim config.dataWidth
 
 /-- Latent tensor shape with an arbitrary batch shape. -/
-abbrev Config.latent (config : Config)
+abbrev Config.latentShape (config : Config)
     (batchShape : Shape := []) : Shape :=
   batchShape.appendDim config.latentWidth
 
 /-- Scalar-score tensor shape with an arbitrary batch shape. -/
-abbrev Config.score (_config : Config)
+abbrev Config.scoreShape (_config : Config)
     (batchShape : Shape := []) : Shape :=
   batchShape.appendDim 1
 
@@ -83,11 +83,11 @@ The reconstruction is unconstrained. Append an output activation such as `nn.sig
 data domain requires one.
 -/
 def autoencoder (config : Config) (batchShape : Shape := []) :
-    nn.Builder (nn.Sequential (config.data batchShape) (config.data batchShape)) :=
+    nn.Builder (nn.Sequential (config.dataShape batchShape) (config.dataShape batchShape)) :=
   match Internal.validateConfig "Autoencoder" config with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
-        (config.data batchShape) (config.data batchShape) "Autoencoder" message
+        (config.dataShape batchShape) (config.dataShape batchShape) "Autoencoder" message
   | .ok () =>
       nn.Sequential![
         linear config.dataWidth config.hiddenWidth (batchShape := batchShape),
@@ -106,11 +106,11 @@ The generated values are unconstrained. Choose an output activation at the call 
 training data and objective.
 -/
 def generator (config : Config) (batchShape : Shape := []) :
-    nn.Builder (nn.Sequential (config.latent batchShape) (config.data batchShape)) :=
+    nn.Builder (nn.Sequential (config.latentShape batchShape) (config.dataShape batchShape)) :=
   match Internal.validateConfig "Generator" config with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
-        (config.latent batchShape) (config.data batchShape) "Generator" message
+        (config.latentShape batchShape) (config.dataShape batchShape) "Generator" message
   | .ok () =>
       nn.Sequential![
         linear config.latentWidth config.hiddenWidth (batchShape := batchShape),
@@ -128,11 +128,11 @@ Returning logits keeps the model compatible with numerically stable objectives s
 -/
 def discriminator (config : Config)
     (batchShape : Shape := []) :
-    nn.Builder (nn.Sequential (config.data batchShape) (config.score batchShape)) :=
+    nn.Builder (nn.Sequential (config.dataShape batchShape) (config.scoreShape batchShape)) :=
   match Internal.validateConfig "Discriminator" config with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
-        (config.data batchShape) (config.score batchShape) "Discriminator" message
+        (config.dataShape batchShape) (config.scoreShape batchShape) "Discriminator" message
   | .ok () =>
       nn.Sequential![
         linear config.dataWidth config.hiddenWidth (batchShape := batchShape),

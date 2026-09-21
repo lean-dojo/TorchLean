@@ -47,26 +47,13 @@ def okOrThrow {α : Type} : Runtime.Autograd.Result α → IO α
   | .ok a => pure a
   | .error e => throw <| IO.userError e
 
-/-- Reuse a checked forward tape for one reverse-mode cotangent seed. -/
-def vjpFromTape {α : Type} [TorchLean.Storage α] [Context α]
-    {shapes : List Shape} {output : Shape}
-    (graph : Runtime.Autograd.Torch.TypedGraph α shapes output)
-    (tape : Runtime.Autograd.Tape α) (seed : Tensor α output) :
-    IO (TorchLean.TensorPack α shapes) := do
-  let gradients ← okOrThrow <|
-    Runtime.Autograd.TypedGraph.backwardDenseAllFrom tape graph.output seed
-  okOrThrow <| TorchLean.TensorPack.ofShapeErasedArray gradients (shapes := shapes)
-
-/-- Compute one checked reverse pass and return its primal output without reevaluation. -/
-def vjpWithValue {α : Type} [TorchLean.Storage α] [Context α]
+/-- Execute the checked graph pullback, reporting domain errors through the IO API. -/
+def vjpWithValue {α : Type} [Storage α] [Add α] [Zero α]
     {shapes : List Shape} {output : Shape}
     (graph : Runtime.Autograd.Torch.TypedGraph α shapes output)
     (inputs : TorchLean.TensorPack α shapes) (seed : Tensor α output) :
-    IO (TorchLean.TensorPack α shapes × Tensor α output) := do
-  let (tape, context) ← okOrThrow <|
-    Runtime.Autograd.TypedGraph.lowerToTapeChecked graph.data inputs ()
-  let inputGradients ← vjpFromTape graph tape seed
-  pure (inputGradients, Proofs.getIdx context graph.output)
+    IO (TorchLean.TensorPack α shapes × Tensor α output) :=
+  okOrThrow <| graph.vjpChecked inputs () seed
 
 end Impl
 
@@ -129,7 +116,7 @@ def jacrevOutParams {α : Type} [TorchLean.Storage α] [Context α]
     Runtime.Autograd.TypedGraph.lowerToTapeChecked c.data args ()
   TensorPack.stackLeadingM τ fun index => do
     let seedOut := (Tensor.oneHot (α := α) τ.size index).reshape τ (by simp [Spec.Shape.size])
-    let allGradients ← vjpFromTape c tape seedOut
+    let allGradients ← okOrThrow <| c.vjpFromTape tape seedOut
     pure (TorchLean.TensorPack.split
       (ss₁ := paramShapes) (ss₂ := inputShapes) allGradients).1
 
@@ -151,7 +138,7 @@ def jacrevOutInputs {α : Type} [TorchLean.Storage α] [Context α]
     Runtime.Autograd.TypedGraph.lowerToTapeChecked c.data args ()
   TensorPack.stackLeadingM τ fun index => do
     let seedOut := (Tensor.oneHot (α := α) τ.size index).reshape τ (by simp [Spec.Shape.size])
-    let allGradients ← vjpFromTape c tape seedOut
+    let allGradients ← okOrThrow <| c.vjpFromTape tape seedOut
     pure (TorchLean.TensorPack.split
       (ss₁ := paramShapes) (ss₂ := inputShapes) allGradients).2
 
@@ -202,7 +189,7 @@ def gradients {α : Type} [TorchLean.Storage α] [Context α]
   let Γ : List Shape := paramShapes ++ inputShapes
   let args : TorchLean.TensorPack α Γ :=
     TorchLean.TensorPack.append (α := α) (ss₁ := paramShapes) (ss₂ := inputShapes) params xs
-  let (gAll, _) ← vjpWithValue c args (Tensor.scalar (1 : α))
+  let (gAll, _) ← okOrThrow <| c.vjpChecked args () (Tensor.scalar (1 : α))
   pure (TorchLean.TensorPack.split (α := α)
     (ss₁ := paramShapes) (ss₂ := inputShapes) gAll)
 
@@ -224,7 +211,7 @@ def vjp {α : Type} [TorchLean.Storage α] [Context α]
   let Γ : List Shape := paramShapes ++ inputShapes
   let args : TorchLean.TensorPack α Γ :=
     TorchLean.TensorPack.append (α := α) (ss₁ := paramShapes) (ss₂ := inputShapes) params xs
-  let (gAll, _) ← vjpWithValue c args seedOut
+  let (gAll, _) ← okOrThrow <| c.vjpChecked args () seedOut
   pure (TorchLean.TensorPack.split (α := α)
     (ss₁ := paramShapes) (ss₂ := inputShapes) gAll)
 

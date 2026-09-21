@@ -124,10 +124,10 @@ def maskBlocks : Tensor (Option Nat) [3] :=
 abbrev batch : Shape := [batchSize]
 
 /-- Input shape: a real batched CIFAR image tensor. -/
-abbrev input := modelConfig.encoder.input batch
+abbrev input := modelConfig.encoder.inputShape batch
 
 /-- Output shape: flattened image reconstruction. -/
-abbrev output := modelConfig.output batch
+abbrev output := modelConfig.outputShape batch
 
 /--
 Construct the trainable model.
@@ -155,8 +155,8 @@ def maskedAutoencoderSample
       modelConfig.reconstructionWidth maskBlocks maskPeriod maskOffset b.input
   pure <| by
     simpa [input, output,
-      nn.models.ViT.MaskedPatchReconstructor.Config.output,
-      nn.models.ViT.EncoderConfig.input, batch, modelConfig] using sample
+      nn.models.ViT.MaskedPatchReconstructor.Config.outputShape,
+      nn.models.ViT.EncoderConfig.inputShape, batch, modelConfig] using sample
 
 /--
 Normalized reconstruction weights repeated across the batch.

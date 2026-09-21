@@ -269,8 +269,8 @@ abbrev mmResNet : nn.models.ResNet.Config 2 :=
     kernelRadius := [1, 1]
     classCount := 10 }
 
-#eval (mmResNet.input [8], mmResNet.hidden [8],
-  mmResNet.output [8])
+#eval (mmResNet.inputShape [8], mmResNet.hiddenShape [8],
+  mmResNet.outputShape [8])
 ```
 ```leanOutput mmResNetShapes (whitespace := lax)
 ([8, 3, 32, 32], [8, 16, 32, 32], [8, 10])
@@ -283,18 +283,19 @@ geometry helper comes with the preservation theorem the constructor uses interna
 ```lean (name := mmSamePadding)
 -- The equality quantifies over every input grid and kernel
 -- radius.
-#check @nn.Convolution.Geometry.output_samePadding
+#check @nn.Convolution.Geometry.outputSpatial_samePadding
 ```
 ```leanOutput mmSamePadding (whitespace := lax)
-@nn.Convolution.Geometry.output_samePadding :
+@nn.Convolution.Geometry.outputSpatial_samePadding :
   ∀ {d : ℕ} (input radius : Tensor ℕ [d]),
-    (nn.Convolution.Geometry.samePadding radius).output
+    (nn.Convolution.Geometry.samePadding radius).outputSpatial
         input =
       input
 ```
 
 That theorem is what lets the residual trunk typecheck without a hand-written shape proof at every
-block, because `geometry.output config.spatial` and `config.spatial` are provably the same shape.
+block, because `geometry.outputSpatial config.spatial` and `config.spatial` are provably the same
+spatial grid.
 The PyTorch example obtains the same three shapes by executing the layers:
 
 ```
@@ -371,7 +372,7 @@ abbrev mmVit : nn.models.ViT.Config 2 :=
     pooling := .cls
     classCount := 10 }
 
-#eval (mmVit.encoder.grid.to Shape,
+#eval (mmVit.encoder.patchGrid.to Shape,
   mmVit.encoder.patchCount, mmVit.encoder.sequenceLength)
 ```
 ```leanOutput mmVitConfig
@@ -385,8 +386,9 @@ tensor shapes follow, for a batch of eight:
 ```lean (name := mmVitStages)
 -- Track where spatial axes become a token axis and the
 -- class token is inserted.
-#eval (mmVit.encoder.patches [8], mmVit.encoder.tokens [8],
-  mmVit.encoder.encoded [8])
+#eval (mmVit.encoder.patchShape [8],
+  mmVit.encoder.patchTokenShape [8],
+  mmVit.encoder.outputShape [8])
 ```
 ```leanOutput mmVitStages (whitespace := lax)
 ([8, 64, 8, 8], [8, 64, 64], [8, 65, 64])
@@ -395,7 +397,7 @@ tensor shapes follow, for a batch of eight:
 ```lean (name := mmVitEnds)
 -- Classification removes the sequence axis and returns ten
 -- logits per image.
-#eval (mmVit.input [8], mmVit.output [8])
+#eval (mmVit.inputShape [8], mmVit.outputShape [8])
 ```
 ```leanOutput mmVitEnds
 ([8, 3, 32, 32], [8, 10])
@@ -429,7 +431,7 @@ print(tuple(torch.cat([cls, tokens], dim=1).shape))
 ```
 
 The intermediate shapes agree at every stage. `flatten(2).transpose(1, 2)` computes the token tensor
-at runtime, while `mmVit.encoder.tokens [8]` computes its shape without running the model.
+at runtime, while `mmVit.encoder.patchTokenShape [8]` computes its shape without running the model.
 Computing that shape does not run validation; the model constructor separately calls
 `ViT.EncoderConfig.validate` to reject an unusable patch grid.
 
@@ -449,7 +451,7 @@ abbrev mmVitOdd : nn.models.ViT.Config 2 :=
         stride := [5, 5]
         padding := [0, 0] } }
 
-#eval (mmVitOdd.encoder.grid.to Shape,
+#eval (mmVitOdd.encoder.patchGrid.to Shape,
   mmVitOdd.encoder.patchCount,
   mmVitOdd.encoder.sequenceLength)
 ```
@@ -844,7 +846,7 @@ abbrev mmMamba : nn.models.Mamba.Config :=
 
 #eval mmMamba.validate 0
 #eval mmMamba.validate 8
-#eval (mmMamba.input 8, mmMamba.output 8)
+#eval (mmMamba.inputShape 8, mmMamba.outputShape 8)
 ```
 ```leanOutput mmMambaConfig
 Except.error "Mamba: sequence length must be positive"
@@ -1013,7 +1015,7 @@ abbrev mmFno : nn.models.FNO.Config 1 :=
     width := 32
     layerCount := 4 }
 
-#eval (mmFno.input [8], mmFno.output [8])
+#eval (mmFno.inputShape [8], mmFno.outputShape [8])
 ```
 ```leanOutput mmFnoShapes
 ([8, 64], [8, 64])
@@ -1061,10 +1063,15 @@ uses. Comparing them reveals the asymmetric endpoint at negative four. It also e
 asking for six indices at each end of an eight-point axis keeps everything: the two sets cover
 the axis. This is set membership, so their overlap does not multiply a coefficient twice.
 
-The public constructor uses a dense multidimensional DFT. The CUDA Burgers command deliberately
-selects a separate one-dimensional real-FFT parameterization backed by cuFFT. Both models have the
-same typed field-to-field boundary, but they are not presented as numerically interchangeable
-implementations, and the spectral-block chapter in
+The public constructor transforms each spatial axis separately. With
+`spectralPath := .automatic`, eager CUDA execution uses cuFFT and other interpreters use dense
+per-axis operations. Setting `spectralPath := .denseReference` selects full-grid DFT matrices
+without changing the weights or checkpoint layout. Both paths compute the same full-spectrum
+model, up to floating-point differences in their transform algorithms.
+
+The CUDA Burgers command deliberately selects a separate one-dimensional real-FFT parameterization
+backed by cuFFT. It has the same typed field-to-field boundary, but its one-sided weights are not
+interchangeable with the full-spectrum model's weights. The spectral-block chapter in
 {ref "scientific-forward-models"}[Scientific Forward Models] says which parts are shared.
 
 The field shape $`[8,64]` records eight independent sampled fields, each with sixty-four spatial

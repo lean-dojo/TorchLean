@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured
-public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Interval
 public import FloatLib.Floats.Formats.IEEE754.Native
 
 /-!

@@ -176,8 +176,8 @@ abbrev modelConfig : nn.models.Mamba.Config :=
   { vocabularySize := vocabularySize
     modelWidth := stateWidth }
 
-abbrev input : Shape := modelConfig.input contextLength
-abbrev output : Shape := modelConfig.output contextLength
+abbrev input : Shape := modelConfig.inputShape contextLength
+abbrev output : Shape := modelConfig.outputShape contextLength
 
 def model : nn.Builder (nn.Sequential input output) :=
   nn.models.Mamba.languageModel modelConfig contextLength

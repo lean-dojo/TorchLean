@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Verification.Geometry3D.Box3D
-public import NN.API.CLI.Command
+public import NN.API.CLI.Parser
 
 /-!
 # Geometry3D CLI wrapper
@@ -40,7 +40,7 @@ def main (args : List String) : IO Unit := do
     match TorchLean.CLI.takeFlagValue args "cert" (default := defaultCertPath) with
     | .ok result => pure result
     | .error e => throw <| IO.userError e
-  TorchLean.CLI.orThrowIO <| TorchLean.CLI.checkNoArgs args
+  IO.ofExcept <| TorchLean.CLI.checkNoArgs args
   verifyCert path
 
 end NN.Verification.Geometry3D.CLI

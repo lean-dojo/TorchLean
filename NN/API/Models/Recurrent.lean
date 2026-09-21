@@ -67,12 +67,12 @@ def validate (config : Recurrent.Config) : Except String Unit :=
 end Recurrent.Config
 
 /-- Input tensor shape: `batchShape × sequenceLength × inputWidth`. -/
-abbrev Recurrent.Config.input (config : Recurrent.Config)
+abbrev Recurrent.Config.inputShape (config : Recurrent.Config)
     (batchShape : Shape := []) : Shape :=
   batchShape.concat [config.sequenceLength, config.inputWidth]
 
 /-- Output tensor shape: `batchShape × sequenceLength × outputWidth`. -/
-abbrev Recurrent.Config.output (config : Recurrent.Config)
+abbrev Recurrent.Config.outputShape (config : Recurrent.Config)
     (batchShape : Shape := []) : Shape :=
   batchShape.concat [config.sequenceLength, config.outputWidth]
 
@@ -82,11 +82,11 @@ Vanilla RNN core plus time-distributed linear head:
 `rnn(sequenceLength, inputWidth, hiddenWidth) → linear(hiddenWidth, outputWidth)`.
 -/
 def rnn (config : Recurrent.Config) (batchShape : Shape := []) :
-    nn.Builder (nn.Sequential (config.input batchShape) (config.output batchShape)) := by
+    nn.Builder (nn.Sequential (config.inputShape batchShape) (config.outputShape batchShape)) := by
   match Recurrent.Internal.validateConfig "RNN" config with
   | .error message =>
       exact pure <| nn.Internal.invalidConfiguration
-        (config.input batchShape) (config.output batchShape) "RNN" message
+        (config.inputShape batchShape) (config.outputShape batchShape) "RNN" message
   | .ok () =>
       have model := do
         let recurrent ←
@@ -95,7 +95,7 @@ def rnn (config : Recurrent.Config) (batchShape : Shape := []) :
         let outputProjection ← linear config.hiddenWidth config.outputWidth
           (batchShape := batchShape.appendDim config.sequenceLength)
         pure (recurrent >>> outputProjection)
-      simpa only [Recurrent.Config.input, Recurrent.Config.output,
+      simpa only [Recurrent.Config.inputShape, Recurrent.Config.outputShape,
         Shape.appendDim_appendDim_eq_concat] using model
 
 /--
@@ -138,11 +138,11 @@ final-state result, and hidden state is not carried between calls.
 -/
 def gru (config : Recurrent.Config) (batchShape : Shape := [])
     (convention : Spec.GRUConvention := .resetBefore) :
-    nn.Builder (nn.Sequential (config.input batchShape) (config.output batchShape)) := by
+    nn.Builder (nn.Sequential (config.inputShape batchShape) (config.outputShape batchShape)) := by
   match Recurrent.Internal.validateConfig "GRU" config with
   | .error message =>
       exact pure <| nn.Internal.invalidConfiguration
-        (config.input batchShape) (config.output batchShape) "GRU" message
+        (config.inputShape batchShape) (config.outputShape batchShape) "GRU" message
   | .ok () =>
       have model := do
         let recurrent ←
@@ -151,7 +151,7 @@ def gru (config : Recurrent.Config) (batchShape : Shape := [])
         let outputProjection ← linear config.hiddenWidth config.outputWidth
           (batchShape := batchShape.appendDim config.sequenceLength)
         pure (recurrent >>> outputProjection)
-      simpa only [Recurrent.Config.input, Recurrent.Config.output,
+      simpa only [Recurrent.Config.inputShape, Recurrent.Config.outputShape,
         Shape.appendDim_appendDim_eq_concat] using model
 
 /--
@@ -160,11 +160,11 @@ LSTM core plus time-distributed linear head:
 `lstm(sequenceLength, inputWidth, hiddenWidth) → linear(hiddenWidth, outputWidth)`.
 -/
 def lstm (config : Recurrent.Config) (batchShape : Shape := []) :
-    nn.Builder (nn.Sequential (config.input batchShape) (config.output batchShape)) := by
+    nn.Builder (nn.Sequential (config.inputShape batchShape) (config.outputShape batchShape)) := by
   match Recurrent.Internal.validateConfig "LSTM" config with
   | .error message =>
       exact pure <| nn.Internal.invalidConfiguration
-        (config.input batchShape) (config.output batchShape) "LSTM" message
+        (config.inputShape batchShape) (config.outputShape batchShape) "LSTM" message
   | .ok () =>
       have model := do
         let recurrent ←
@@ -173,7 +173,7 @@ def lstm (config : Recurrent.Config) (batchShape : Shape := []) :
         let outputProjection ← linear config.hiddenWidth config.outputWidth
           (batchShape := batchShape.appendDim config.sequenceLength)
         pure (recurrent >>> outputProjection)
-      simpa only [Recurrent.Config.input, Recurrent.Config.output,
+      simpa only [Recurrent.Config.inputShape, Recurrent.Config.outputShape,
         Shape.appendDim_appendDim_eq_concat] using model
 
 end models

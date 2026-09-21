@@ -38,6 +38,11 @@ architecture.
 
 Results of `Trainer.train` use `Checkpoint.State`: `trained.save path` writes the trained state as
 `Float` tensors and `trainer.load path data` restores it.
+
+Explicit immutable `nn.State α` checkpoints use `Checkpoint.Encoding α`. Instances preserve exact
+bits for `Float`, `Float32`, and configured binary formats, including arbitrary supported widths.
+The complex instance stores both coordinates using their component encoding. Loading checks the
+format tag as well as the state layout; it never silently casts between scalar formats.
 -/
 
 @[expose] public section
@@ -127,7 +132,8 @@ namespace Optimizer
 Save optimizer state retained by a module's runtime backend.
 
 This currently applies to eager CUDA Adam and AdamW, whose moment buffers live
-on the device. The operation fails explicitly when the selected trainer has no
+on the device. The checkpoint also preserves the eager session's random counter, so dropout
+continues with the next mask after a restore. The operation fails explicitly when the trainer has no
 backend-owned optimizer state instead of writing an incomplete resume
 checkpoint.
 -/
@@ -144,7 +150,8 @@ def save
       throw <| IO.userError
         "Checkpoint: selected trainer does not expose backend-owned optimizer state"
 
-/-- Restore optimizer state retained by the module's runtime backend. -/
+/-- Restore optimizer state and its random counter. Legacy files lacking the counter load with
+a warning: their moments are recoverable, but they cannot reproduce a stochastic continuation. -/
 def load
     {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β] [Context α]
     {stateShapes inputShapes dataInputShapes : List Shape}
@@ -162,10 +169,10 @@ end Optimizer
 
 namespace State
 
-/-- Save an immutable model state pack after checking it against `model`. -/
-def save {σ τ : Shape}
+/-- Save an immutable state pack in its scalar encoding, with the layout supplied by `model`. -/
+def save {σ τ : Shape} {α : Type} [Storage α] [Encoding α]
     (model : nn.Sequential σ τ)
-    (state : nn.State Float (nn.stateShapes model))
+    (state : nn.State α (nn.stateShapes model))
     (path : System.FilePath) : IO Unit :=
   Runtime.Autograd.Model.StateIO.writeStateBits
     (ss := nn.stateShapes model) path
@@ -177,10 +184,10 @@ Load immutable model state without mutating a runtime module.
 The model supplies the exact dependent state layout, so malformed, missing,
 extra, or incorrectly shaped tensors are rejected at the boundary.
 -/
-def load {σ τ : Shape}
+def load {σ τ : Shape} {α : Type} [Storage α] [Encoding α]
     (model : nn.Sequential σ τ)
     (path : System.FilePath) :
-    IO (nn.State Float (nn.stateShapes model)) := do
+    IO (nn.State α (nn.stateShapes model)) := do
   let stateResult ← Runtime.Autograd.Model.StateIO.readStateBits
     (ss := nn.stateShapes model) path
   match stateResult with

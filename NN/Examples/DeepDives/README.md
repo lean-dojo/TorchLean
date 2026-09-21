@@ -14,7 +14,7 @@ lake build NN.Examples.DeepDives
 
 | File | Command or action | What it shows |
 | --- | --- | --- |
-| `AutogradTransforms.lean` | `lake exe torchlean autograd_transforms` | Jacobians, Hessians, directional derivatives, and explicit gradient stopping. |
+| `AutogradTransforms.lean` | `scripts/lake.sh exe torchlean autograd_transforms` | Jacobians, Hessians, parameter and input directions, mixed and third derivatives, gradient stopping, and mathlib correctness proofs. |
 | `TensorOperations.lean` | build as part of `NN.Examples.DeepDives` | Indexing, reshaping, `einsum` (the tensor-pattern syntax needs `open TorchLean.Tensor`), elementwise operations, and tensor widgets. |
 | `Floats/Float32Semantics.lean` | `lake exe torchlean float32_semantics` | Native binary32 execution compared with the bit-level IEEE reference. |
 | `Floats/ArbIEEEExecCompare.lean` | `lake exe torchlean floats_arb_ieee_compare` | Arb/python-flint interval evidence compared with TorchLean's executable IEEE32 path. |

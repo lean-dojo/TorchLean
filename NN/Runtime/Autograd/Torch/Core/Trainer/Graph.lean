@@ -10,7 +10,6 @@ public import NN.Runtime.Autograd.Torch.Core.Trainer.Types
 public import NN.Runtime.Autograd.Torch.Core.Trainer.GraphOps
 public import NN.Runtime.Autograd.Torch.Core.Functional.GraphInputs
 public import NN.Runtime.Autograd.Torch.Core.TypedGraph
-public import NN.Runtime.Autograd.TypedGraph.Core
 
 /-!
 # Graph Trainer

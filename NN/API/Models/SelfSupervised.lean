@@ -58,7 +58,7 @@ def validate {d : Nat} (config : ViT.MaskedPatchReconstructor.Config d) :
 end ViT.MaskedPatchReconstructor.Config
 
 /-- Reconstruction output shape for the same batch shape as the input. -/
-abbrev ViT.MaskedPatchReconstructor.Config.output {d : Nat}
+abbrev ViT.MaskedPatchReconstructor.Config.outputShape {d : Nat}
     (config : ViT.MaskedPatchReconstructor.Config d)
     (batchShape : Shape := []) : Shape :=
   batchShape.appendDim config.reconstructionWidth
@@ -80,12 +80,12 @@ def ViT.maskedPatchReconstructor {d : Nat} (config : ViT.MaskedPatchReconstructo
     (batchShape : Shape := []) :
     nn.Builder
       (nn.Sequential
-        (config.encoder.input batchShape)
-        (config.output batchShape)) :=
+        (config.encoder.inputShape batchShape)
+        (config.outputShape batchShape)) :=
   match config.validate with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
-        (config.encoder.input batchShape) (config.output batchShape)
+        (config.encoder.inputShape batchShape) (config.outputShape batchShape)
         "ViT.MaskedPatchReconstructor" message
   | .ok () => do
       let encoder ← vitEncoder config.encoder batchShape

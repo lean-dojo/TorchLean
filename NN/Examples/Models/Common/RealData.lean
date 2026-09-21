@@ -396,7 +396,7 @@ Widths larger than the full image are rejected.
 -/
 def loadCifarFeatureBatch (batchSize : Nat) (config : nn.models.Generative.Config)
     (exeName : String) (xPath yPath : System.FilePath) (rowCount seed : Nat) :
-    IO (Tensor Float (config.data [batchSize])) := do
+    IO (Tensor Float (config.dataShape [batchSize])) := do
   let batchSample ← loadCifarBatch exeName batchSize rowCount seed xPath yPath
   if hData : config.dataWidth ≤ CifarImage.size then
     pure (Tensor.flattenThenTake [batchSize] config.dataWidth hData batchSample.input)
@@ -418,10 +418,10 @@ def cifarFeatureDataset {τ : Shape}
     (batchSize : Nat)
     (config : nn.models.Generative.Config)
     (exeName : String)
-    (sampleOfFeatures : Tensor Float (config.data [batchSize]) →
-      Sample.Supervised Float (config.data [batchSize]) τ)
+    (sampleOfFeatures : Tensor Float (config.dataShape [batchSize]) →
+      Sample.Supervised Float (config.dataShape [batchSize]) τ)
     (xPath yPath : System.FilePath) (rowCount seed : Nat) :
-    Trainer.Dataset (config.data [batchSize]) τ :=
+    Trainer.Dataset (config.dataShape [batchSize]) τ :=
   Data.defer do
     let x ← loadCifarFeatureBatch batchSize config exeName xPath yPath rowCount seed
     pure (sampleOfFeatures x)

@@ -201,10 +201,10 @@ def unetConfig : nn.models.UNet.Config 1 :=
       { kernelSize := [2]
         stride := [2] } }
 
-def unet : nn.Sequential (unetConfig.input) (unetConfig.output) :=
+def unet : nn.Sequential (unetConfig.inputShape) (unetConfig.outputShape) :=
   nn.build 19 (nn.models.unet unetConfig)
 
-def batchedUnet : nn.Sequential (unetConfig.input [2]) (unetConfig.output [2]) :=
+def batchedUnet : nn.Sequential (unetConfig.inputShape [2]) (unetConfig.outputShape [2]) :=
   nn.build 19 (nn.models.unet unetConfig [2])
 
 def paddedEmptyUnetConfig : nn.models.UNet.Config 1 :=
@@ -225,7 +225,7 @@ def paddedEmptyUnet :=
 /- These definitions intentionally use a config-derived shape. They are compile-time regression
 checks that public axis APIs accept model shapes without proof arguments or list conversion. -/
 abbrev classifierOutput : Spec.Shape :=
-  (vitConfig .mean).output [4]
+  (vitConfig .mean).outputShape [4]
 
 def classifierSoftmax : nn.Sequential classifierOutput classifierOutput :=
   nn.build 7 (nn.softmax (shape := classifierOutput) 1)
@@ -616,8 +616,8 @@ def run : IO Unit := do
     ((nn.requiresGrad unet).size == 16 && (nn.requiresGrad unet).all id)
 
   let unetGraph ← nn.lowerToTypedGraph (α := Float) unet
-  let unetInput : Tensor Float (unetConfig.input) :=
-    Tensor.zeros unetConfig.input
+  let unetInput : Tensor Float (unetConfig.inputShape) :=
+    Tensor.zeros unetConfig.inputShape
   let unetOutput :=
     nn.TypedGraphModel.forward unetGraph (nn.initialState unet) unetInput
   let unetValues := Tensor.to unetOutput (Array Float)
@@ -625,8 +625,8 @@ def run : IO Unit := do
     (unetValues.size == 4 && unetValues.all Float.isFinite)
 
   let batchedUnetGraph ← nn.lowerToTypedGraph (α := Float) batchedUnet
-  let batchedUnetInput : Tensor Float (unetConfig.input [2]) :=
-    Tensor.zeros (unetConfig.input [2])
+  let batchedUnetInput : Tensor Float (unetConfig.inputShape [2]) :=
+    Tensor.zeros (unetConfig.inputShape [2])
   let batchedUnetOutput :=
     nn.TypedGraphModel.forward batchedUnetGraph
       (nn.initialState batchedUnet) batchedUnetInput

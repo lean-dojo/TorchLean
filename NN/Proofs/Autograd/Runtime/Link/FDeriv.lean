@@ -382,6 +382,16 @@ def takeLeft {α : Type} [TorchLean.Storage α] :
   | [], _, _ => .nil
   | _ :: Γ, ss, .cons x xs => .cons x (takeLeft (Γ := Γ) (ss := ss) xs)
 
+/-- The proof context's input projection is the public tensor-pack split. -/
+theorem takeLeft_eq_split {α : Type} [TorchLean.Storage α] {Γ ss : List Shape}
+    (xs : TorchLean.TensorPack α (Γ ++ ss)) :
+    takeLeft xs = (TorchLean.TensorPack.split (ss₁ := Γ) xs).1 := by
+  induction Γ with
+  | nil => rfl
+  | cons shape Γ ih =>
+      cases xs with
+      | cons x xs => simp only [takeLeft, TorchLean.TensorPack.split, ih xs]
+
 /-- Push a `cast` along a `cons` cell. -/
 theorem cast_cons {α : Type} [TorchLean.Storage α] {s : Shape} {ss₁ ss₂ : List Shape}
     (h : s :: ss₁ = s :: ss₂) (h' : ss₁ = ss₂) (x : Tensor α s) (xs : TorchLean.TensorPack α ss₁) :

@@ -42,7 +42,7 @@ namespace CNN.Config
 /-- Validate the complete classifier geometry before allocating convolution or head parameters. -/
 def validate {d : Nat} (config : CNN.Config d) : Except String Unit := do
   config.convolution.validate config.inputChannels config.spatial (kind := "CNN")
-  let afterConv := config.convolution.output config.spatial
+  let afterConv := config.convolution.outputSpatial config.spatial
   config.pooling.validate config.convolution.outChannels afterConv (kind := "CNN")
   if config.classCount = 0 then
     throw "CNN: class count must be positive"
@@ -50,25 +50,25 @@ def validate {d : Nat} (config : CNN.Config d) : Except String Unit := do
 end CNN.Config
 
 /-- Input tensor shape after prepending an arbitrary batch shape. -/
-abbrev CNN.Config.input {d : Nat} (config : CNN.Config d)
+abbrev CNN.Config.inputShape {d : Nat} (config : CNN.Config d)
     (batchShape : Shape := []) : Shape :=
   batchShape.concat ((config.spatial.to Shape).prependDim config.inputChannels)
 
 /-- Classifier output shape with the same batch shape as the input. -/
-abbrev CNN.Config.output {d : Nat} (config : CNN.Config d)
+abbrev CNN.Config.outputShape {d : Nat} (config : CNN.Config d)
     (batchShape : Shape := []) : Shape :=
   batchShape.appendDim config.classCount
 
 /-- Build `convolution -> activation -> max pool -> flatten -> linear`. -/
 def cnn {d : Nat} (config : CNN.Config d) (batchShape : Shape := []) :
-    Builder (Sequential (config.input batchShape) (config.output batchShape)) :=
+    Builder (Sequential (config.inputShape batchShape) (config.outputShape batchShape)) :=
   match config.validate with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
-        (config.input batchShape) (config.output batchShape) "CNN" message
+        (config.inputShape batchShape) (config.outputShape batchShape) "CNN" message
   | .ok () =>
-      let afterConv := config.convolution.output config.spatial
-      let afterPool := config.pooling.output afterConv
+      let afterConv := config.convolution.outputSpatial config.spatial
+      let afterPool := config.pooling.outputSpatial afterConv
       let featureShape := (afterPool.to Shape).prependDim config.convolution.outChannels
       let featureCount := featureShape.size
       let convolution := conv config.spatial config.convolution (batchShape := batchShape)

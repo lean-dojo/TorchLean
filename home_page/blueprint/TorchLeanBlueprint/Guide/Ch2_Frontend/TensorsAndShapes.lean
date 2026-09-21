@@ -763,8 +763,9 @@ These tensors have the same shape and different semantics:
 The trainer's `arithmetic` field selects executable arithmetic for the run. Proofs instantiate
 tensors over `ℝ` or `Floats.FP32` directly; those noncomputable types do not appear as command-line
 runtime choices. The generic runtime can execute complex scalar programs, but the supervised trainer
-only offers its two real modes. Complex training needs a real-valued loss, conjugate-aware
-gradients, and a result boundary that preserves complex predictions. FloatLib formats use the same
+only offers its two real modes. Explicit complex training uses `autograd.complex.grad` for a real
+loss, with both components retained in the state, predictions, and checkpoints. FloatLib formats
+use the same
 tensor construction API. Select binary32 and construct the decimals directly in that format:
 
 ```lean

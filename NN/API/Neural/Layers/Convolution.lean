@@ -31,7 +31,7 @@ structure Convolution.Geometry (d : Nat) where
 namespace Convolution.Geometry
 
 /-- Output grid produced by this convolution geometry. -/
-def output {d : Nat} (geometry : Convolution.Geometry d)
+def outputSpatial {d : Nat} (geometry : Convolution.Geometry d)
     (input : Tensor Nat [d]) : Tensor Nat [d] :=
   Spec.convOutSpatial input
     geometry.kernelSize
@@ -39,7 +39,7 @@ def output {d : Nat} (geometry : Convolution.Geometry d)
     geometry.padding
 
 /-- Output grid produced when this geometry is used for transpose convolution. -/
-def transposedOutput {d : Nat} (geometry : Convolution.Geometry d)
+def transposedOutputSpatial {d : Nat} (geometry : Convolution.Geometry d)
     (input : Tensor Nat [d]) : Tensor Nat [d] :=
   Spec.convTransposeOutSpatial input
     geometry.kernelSize
@@ -55,9 +55,9 @@ def samePadding {d : Nat} (radius : Tensor Nat [d]) : Convolution.Geometry d :=
     padding := radius }
 
 /-- Same-padding geometry preserves every input extent. -/
-theorem output_samePadding {d : Nat} (input radius : Tensor Nat [d]) :
-    (samePadding radius).output input = input := by
-  rw [output]
+theorem outputSpatial_samePadding {d : Nat} (input radius : Tensor Nat [d]) :
+    (samePadding radius).outputSpatial input = input := by
+  rw [outputSpatial]
   exact Spec.convOutSpatial_same input radius
 
 end Convolution.Geometry
@@ -76,7 +76,7 @@ structure Convolution.Config (d : Nat) where
   weightInitialization : Init.Scheme := .uniform (-0.1) 0.1
 
 /-- Output grid produced from an input grid by this convolution configuration. -/
-def Convolution.Config.output {d : Nat} (config : Convolution.Config d)
+def Convolution.Config.outputSpatial {d : Nat} (config : Convolution.Config d)
     (input : Tensor Nat [d]) : Tensor Nat [d] :=
   Spec.convOutSpatial input
     config.kernelSize
@@ -108,7 +108,7 @@ def validate {d : Nat} (config : Convolution.Config d)
     (inputChannels : Nat) (input : Tensor Nat [d])
     (kind : String := "Conv") : Except String Unit :=
   Internal.validateConvolution inputChannels config.outChannels input
-    config.kernelSize config.stride (config.output input) config.weightInitialization kind
+    config.kernelSize config.stride (config.outputSpatial input) config.weightInitialization kind
 
 end Convolution.Config
 
@@ -129,10 +129,10 @@ def Convolution.Geometry.convolution {d : Nat} (geometry : Convolution.Geometry 
 
 /-- The spatial grid is the geometry's, so a shape proof can be discharged from the geometry alone
 without unfolding the configuration the builder produced. -/
-@[simp] theorem Convolution.Geometry.convolution_output {d : Nat}
+@[simp] theorem Convolution.Geometry.convolution_outputSpatial {d : Nat}
     (geometry : Convolution.Geometry d)
     (outChannels : Nat) (input : Tensor Nat [d]) :
-    (geometry.convolution outChannels).output input = geometry.output input :=
+    (geometry.convolution outChannels).outputSpatial input = geometry.outputSpatial input :=
   rfl
 
 /-- Configuration shared by arbitrary-dimensional transposed-convolution layers. -/
@@ -149,7 +149,7 @@ structure TransposedConvolution.Config (d : Nat) where
   weightInitialization : Init.Scheme := .uniform (-0.1) 0.1
 
 /-- Output grid produced from an input grid by this transpose-convolution configuration. -/
-def TransposedConvolution.Config.output {d : Nat}
+def TransposedConvolution.Config.outputSpatial {d : Nat}
     (config : TransposedConvolution.Config d)
     (input : Tensor Nat [d]) : Tensor Nat [d] :=
   Spec.convTransposeOutSpatial input
@@ -164,7 +164,7 @@ def validate {d : Nat} (config : TransposedConvolution.Config d)
     (inputChannels : Nat) (input : Tensor Nat [d])
     (kind : String := "ConvTranspose") : Except String Unit :=
   Internal.validateConvolution inputChannels config.outChannels input
-    config.kernelSize config.stride (config.output input) config.weightInitialization kind
+    config.kernelSize config.stride (config.outputSpatial input) config.weightInitialization kind
 
 end TransposedConvolution.Config
 
@@ -184,12 +184,12 @@ def Convolution.Geometry.transposedConvolution {d : Nat}
   rfl
 
 /-- Reusing one geometry for both directions is only sound if each direction keeps its own output
-rule, and it does: the transpose configuration's grid is `Geometry.transposedOutput`, never the
-forward `Geometry.output`. -/
-@[simp] theorem Convolution.Geometry.transposedConvolution_output {d : Nat}
+rule, and it does: the transpose configuration's grid is `Geometry.transposedOutputSpatial`, never
+the forward `Geometry.outputSpatial`. -/
+@[simp] theorem Convolution.Geometry.transposedConvolution_outputSpatial {d : Nat}
     (geometry : Convolution.Geometry d) (outChannels : Nat) (input : Tensor Nat [d]) :
-    (geometry.transposedConvolution outChannels).output input =
-      geometry.transposedOutput input :=
+    (geometry.transposedConvolution outChannels).outputSpatial input =
+      geometry.transposedOutputSpatial input :=
   rfl
 
 end nn

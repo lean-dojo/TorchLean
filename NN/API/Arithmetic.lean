@@ -23,8 +23,8 @@ Runtime commands may choose native binary32, reference IEEE binary32, or complex
 `Float` literals and scalar-specific rounding for parameter validation.
 
 The generic runtime dispatcher supports all three modes. The public supervised trainer accepts the
-two real modes; complex training needs a real-valued objective, conjugate-aware reverse mode, and a
-complex result boundary rather than treating a complex scalar objective as an ordinary real loss.
+two real modes. Explicit complex training uses `autograd.complex.grad` for a real objective and
+`nn.sgdStep` on complex state; its predictions and `Checkpoint.State` retain both components.
 
 Model definitions remain polymorphic over the existing `Context α` interface. The arithmetic choice
 does not replace that mathematical interface; it selects a concrete executable element

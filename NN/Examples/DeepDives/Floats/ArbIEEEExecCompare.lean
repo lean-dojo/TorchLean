@@ -63,7 +63,7 @@ open TorchLean.Floats.Arb
 open TorchLean.Floats.IEEE754
 open TorchLean.Floats.IEEE754.IEEE32Exec
 open TorchLean.Floats.Interval.Comparison
-open TorchLean.Floats.Interval.Comparison.RealInterval
+open FloatLib.Numerics (RationalInterval)
 
 /-- JSON expression for $x^2+0.1x-0.5$, in the safe Arb expression language. -/
 def polynomialExpr : Lean.Json :=
@@ -179,14 +179,14 @@ def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := 
       match interval32ToRat? I, interval32ToRat? Iarb with
       | some Ir, some Iar =>
         IO.println
-          s!"  contains(binary32 endpoints ⊇ binary32+Arb)? {IntervalRat.contains Ir Iar}"
+          s!"  contains(binary32 endpoints ⊇ binary32+Arb)? {Rational.contains Ir Iar}"
       | _, _ =>
         IO.println
           s!"  contains(configured binary32 endpoints ⊇ configured binary32+Arb)? (n/a: non-finite)"
       match intervalF32ToRat? If32, interval32ToRat? Iarb with
       | some Ir, some Iar =>
         IO.println
-          s!"  contains(Float32 endpoints ⊇ configured binary32+Arb)? {IntervalRat.contains Ir Iar}"
+          s!"  contains(Float32 endpoints ⊇ configured binary32+Arb)? {Rational.contains Ir Iar}"
       | _, _ =>
         IO.println s!"  contains(Float32 endpoints ⊇ configured binary32+Arb)? (n/a: non-finite)"
     catch e =>
@@ -217,20 +217,20 @@ def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := 
     IO.println s!"  poly(x)=x^2+0.1x-0.5: {showInterval32 p}"
 
     -- Real interval arithmetic baseline, using exact rationals (and exact `0.1 = 1/10`).
-    let Xr? : Option IntervalRat := do
+    let Xr? : Option RationalInterval := do
       let loR ← float32ToRat? loF32
       let hiR ← float32ToRat? hiF32
       pure ⟨loR, hiR⟩
-    let c01r : IntervalRat := IntervalRat.point (Rat.normalize 1 10)
-    let c05r : IntervalRat := IntervalRat.point (Rat.normalize 1 2)
+    let c01r : RationalInterval := RationalInterval.point (Rat.normalize 1 10)
+    let c05r : RationalInterval := RationalInterval.point (Rat.normalize 1 2)
     match Xr? with
     | none =>
       IO.println s!"  RealIA:   (n/a: non-finite input endpoints)"
     | some Xr =>
-      let x2r := IntervalRat.mul Xr Xr
-      let t1r := IntervalRat.mul c01r Xr
-      let pr := IntervalRat.sub (IntervalRat.add x2r t1r) c05r
-      IO.println s!"  RealIA:   {showIntervalRat pr}"
+      let x2r := Rational.mul Xr Xr
+      let t1r := Rational.mul c01r Xr
+      let pr := RationalInterval.sub (RationalInterval.add x2r t1r) c05r
+      IO.println s!"  RealIA:   {Rational.format pr}"
 
       -- Native Float32 interval arithmetic baseline (no directed rounding).
       let Xf : Float32Interval.IntervalF32 := ⟨loF32, hiF32⟩
@@ -247,12 +247,12 @@ def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := 
       let prR := pr
       match interval32ToRat? p with
       | some pR =>
-        IO.println s!"  contains(configured binary32 IA ⊇ RealIA)? {IntervalRat.contains pR prR}"
+        IO.println s!"  contains(configured binary32 IA ⊇ RealIA)? {Rational.contains pR prR}"
       | none =>
         IO.println s!"  contains(configured binary32 IA ⊇ RealIA)? (n/a: non-finite)"
       match intervalF32ToRat? pf with
       | some pR =>
-        IO.println s!"  contains(Float32 IA ⊇ RealIA)? {IntervalRat.contains pR prR}"
+        IO.println s!"  contains(Float32 IA ⊇ RealIA)? {Rational.contains pR prR}"
       | none =>
         IO.println s!"  contains(Float32 IA ⊇ RealIA)? (n/a: non-finite)"
 
@@ -289,21 +289,21 @@ def runAddTie : IO Unit := do
   IO.println s!"  configured binary32 addDown/addUp: {showInterval32 sum32}"
 
   -- Real reference: exact dyadic sum a + b.
-  let ref? : Option IntervalRat := do
+  let ref? : Option RationalInterval := do
     let aR ← float32ToRat? one
     let bR ← float32ToRat? halfUlp
-    pure <| IntervalRat.point (aR + bR)
+    pure <| RationalInterval.point (aR + bR)
   match ref? with
   | none =>
     IO.println s!"  Real ref: (n/a)"
   | some ref =>
-    IO.println s!"  Real ref: {showIntervalRat ref}"
+    IO.println s!"  Real ref: {Rational.format ref}"
     match intervalF32ToRat? sumF32 with
-    | some sR => IO.println s!"  contains(Float32 naive ⊇ Real ref)? {IntervalRat.contains sR ref}"
+    | some sR => IO.println s!"  contains(Float32 naive ⊇ Real ref)? {Rational.contains sR ref}"
     | none => IO.println s!"  contains(Float32 naive ⊇ Real ref)? (n/a)"
     match interval32ToRat? sum32 with
     | some sR =>
-        IO.println s!"  contains(configured binary32 dir ⊇ Real ref)? {IntervalRat.contains sR ref}"
+        IO.println s!"  contains(configured binary32 dir ⊇ Real ref)? {Rational.contains sR ref}"
     | none => IO.println s!"  contains(configured binary32 dir ⊇ Real ref)? (n/a)"
 
   IO.println ""

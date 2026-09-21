@@ -339,8 +339,8 @@ def main (args : List String) : IO UInt32 := do
             attentionOutputBias := true
             parameterInitialization? := some (.normal 0.0 0.02) }
         let model : nn.IndexedModel
-            (config.tokens [batchSize])
-            (config.vocabulary [batchSize])
+            (config.tokenShape [batchSize])
+            (config.vocabularyShape [batchSize])
             (Fin config.vocabularySize) :=
           nn.build runtime.seed <|
             nn.models.CausalTransformer.indexed config [batchSize]

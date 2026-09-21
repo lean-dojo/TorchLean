@@ -167,8 +167,9 @@ The indexed model uses that configuration with a batch of two windows:
 ```lean (name := dpGptDef)
 -- Each token is a bounded vocabulary index; each window
 -- produces a row of logits per position.
-def dpGpt : nn.IndexedModel (dpSmoke.tokens [2])
-    (dpSmoke.vocabulary [2]) (Fin dpSmoke.vocabularySize) :=
+def dpGpt : nn.IndexedModel (dpSmoke.tokenShape [2])
+    (dpSmoke.vocabularyShape [2])
+    (Fin dpSmoke.vocabularySize) :=
   nn.build 0 <|
     nn.models.CausalTransformer.indexed dpSmoke [2]
 ```
@@ -322,8 +323,9 @@ no optimizer updates {Informal.citep dropout2014}[]:
 def dpDrop : nn.models.CausalTransformer.Config :=
   { dpSmoke with dropout? := some 0.2 }
 
-def dpGptDrop : nn.IndexedModel (dpDrop.tokens [2])
-    (dpDrop.vocabulary [2]) (Fin dpDrop.vocabularySize) :=
+def dpGptDrop : nn.IndexedModel (dpDrop.tokenShape [2])
+    (dpDrop.vocabularyShape [2])
+    (Fin dpDrop.vocabularySize) :=
   nn.build 0 <|
     nn.models.CausalTransformer.indexed dpDrop [2]
 ```
@@ -875,7 +877,7 @@ lake exe torchlean fno1d_burgers --device cpu \
 ```
 
 ```
-  spectral path=portable dense multidimensional DFT
+  spectral path=portable per-axis Fourier transforms
 model:
 Sequential: [32] -> [32], layers=9, params=4193, state=4193
   [0] AddScalarChannel: [32] -> [32, 1] params=0
@@ -921,8 +923,20 @@ assembled from four real matrix products,
 
 $$`(a+bi)(c+di)=(ac-bd)+(ad+bc)i,`
 
-and the inverse transform recombines them with the cosine and sine matrices. This portable layer
-expresses the complex arithmetic through real tensor operations.
+and the inverse transform recombines them. This layer expresses complex arithmetic through real
+tensor operations. Its default `spectralPath := .automatic` transforms each spatial axis in turn:
+eager CUDA execution uses cuFFT, while CPU and typed-graph execution use dense per-axis operations.
+Choosing `spectralPath := .denseReference` instead constructs the full-grid cosine and sine
+matrices. The two choices use exactly the same state shapes and learned weights.
+
+For a grid with axis lengths $`n_1,\ldots,n_d`, the phase is
+
+$$`-2\pi i\sum_{a=1}^{d}\frac{k_a x_a}{n_a}.`
+
+Flattening the spatial coordinates makes a convenient tensor view, but a one-dimensional FFT of
+that flattened index would compute a different transform. The per-axis implementation preserves
+the multidimensional phase, including when axis lengths differ or are odd. Its normalized inverse
+divides by $`\prod_a n_a`.
 
 ## Fourier Mode Bands
 
@@ -970,7 +984,7 @@ channel map; this does not mix distinct frequency bins. The
 {src "NN/API/Models/FNO.lean"}[FNO configuration] uses the same rule when the requested bands
 overlap.
 
-## Portable DFT Cost
+## Spectral Storage And Transform Cost
 
 The portable layer masks the transformed field after the learned channel map. Discarded frequency
 slices therefore receive zero data-loss gradient when the intermediate arithmetic is finite.
@@ -984,9 +998,12 @@ An optimizer with weight decay or existing momentum can still change them; zero 
 not the same as immutable state.
 
 The fused CUDA path allocates weights for the retained real-FFT bins and has a smaller parameter
-vector. Its checkpoint layout therefore differs from the portable path. The portable construction
-supports any number of spatial axes with a uniform representation, at the cost of unused weight
-slices and a dense $`O(N^2)` transform. The CUDA path calls an $`O(N\log N)` FFT library.
+vector. Its checkpoint layout therefore differs from the full-spectrum model. The full-spectrum
+construction supports any number of spatial axes with a uniform representation, at the cost of
+unused weight slices. For $`N=\prod_a n_a` spatial points, its full-grid dense reference takes
+$`O(N^2)` transform work per channel. The automatic path takes
+$`O(N\sum_a n_a)` with dense per-axis transforms, or $`O(N\sum_a\log n_a)` with native FFTs.
+These costs describe the transforms, not the learned channel maps or the whole training step.
 
 The displayed spectral state contains two arrays of $`32\cdot8\cdot8=2048` scalars each.
 Together they account for 4,096 of the 4,193 stored scalars, so spectral storage dominates this
@@ -1006,7 +1023,7 @@ Setting the two runs side by side:
   * `--device cuda`
 *
   * spectral path
-  * portable dense multidimensional DFT
+  * portable per-axis Fourier transforms
   * fused cuFFT RFFT autograd op
 *
   * training loop

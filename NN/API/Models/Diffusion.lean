@@ -57,13 +57,13 @@ def validate {d : Nat} (config : Diffusion.NoisePredictor.Config d) :
     throw "Diffusion.NoisePredictor: hidden channel count must be positive"
 
 /-- Input shape, with one extra channel carrying diffusion time. -/
-abbrev input {d : Nat} (config : Diffusion.NoisePredictor.Config d)
+abbrev inputShape {d : Nat} (config : Diffusion.NoisePredictor.Config d)
     (batchShape : Shape := []) : Shape :=
   batchShape.concat
     ((config.spatial.to Shape).prependDim (config.dataChannels + 1))
 
 /-- Output shape matching the denoised data channels. -/
-abbrev output {d : Nat} (config : Diffusion.NoisePredictor.Config d)
+abbrev outputShape {d : Nat} (config : Diffusion.NoisePredictor.Config d)
     (batchShape : Shape := []) : Shape :=
   batchShape.concat ((config.spatial.to Shape).prependDim config.dataChannels)
 
@@ -86,8 +86,8 @@ def noisePredictorConvolution {d : Nat}
       "Diffusion.NoisePredictor: input spatial dimensions must be positive"
   else
     let geometry := Convolution.Geometry.samePadding config.kernelRadius
-    have preservesSize : geometry.output config.spatial = config.spatial :=
-      Convolution.Geometry.output_samePadding config.spatial config.kernelRadius
+    have preservesSize : geometry.outputSpatial config.spatial = config.spatial :=
+      Convolution.Geometry.outputSpatial_samePadding config.spatial config.kernelRadius
     simpa [preservesSize] using
       (nn.conv config.spatial (geometry.convolution outputChannels)
         (batchShape := batchShape) (inputChannels := inputChannels))
@@ -104,11 +104,11 @@ capacity than a bare two-layer network.
 def Diffusion.NoisePredictor.basic {d : Nat}
     (config : Diffusion.NoisePredictor.Config d) (batchShape : Shape := []) :
     nn.Builder
-      (nn.Sequential (config.input batchShape) (config.output batchShape)) :=
+      (nn.Sequential (config.inputShape batchShape) (config.outputShape batchShape)) :=
   match config.validate with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
-        (config.input batchShape) (config.output batchShape)
+        (config.inputShape batchShape) (config.outputShape batchShape)
         "Diffusion.NoisePredictor" message
   | .ok () =>
       nn.Sequential![
@@ -143,11 +143,11 @@ def Diffusion.NoisePredictor.residual {d : Nat}
     (config : Diffusion.NoisePredictor.Config d)
     (batchShape : Shape := []) :
     nn.Builder
-      (nn.Sequential (config.input batchShape) (config.output batchShape)) :=
+      (nn.Sequential (config.inputShape batchShape) (config.outputShape batchShape)) :=
   match config.validate with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
-        (config.input batchShape) (config.output batchShape)
+        (config.inputShape batchShape) (config.outputShape batchShape)
         "Diffusion.NoisePredictor" message
   | .ok () =>
       nn.Sequential![

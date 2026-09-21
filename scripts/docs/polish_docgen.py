@@ -317,10 +317,11 @@ def rewrite_floatlib_profile_link(docs: Path) -> None:
         return
 
     text = page.read_text(encoding="utf-8")
-    updated = text.replace(
-        'href="../../../.././Info/Profile.html"',
-        'href="./Info/Profile.html"',
-    )
+    # FloatLib has used both spellings in its prose. DocGen resolves them from the
+    # documentation root, but Profile is a sibling module beneath Info/.
+    updated = text
+    for link in ("Info/Profile.html", "BinaryInterchange/Info/Profile.html"):
+        updated = updated.replace(f'href="../../../.././{link}"', 'href="./Info/Profile.html"')
     if updated != text:
         page.write_text(updated, encoding="utf-8")
 

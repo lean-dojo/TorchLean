@@ -110,12 +110,16 @@ def softmax_range_interval(length: int) -> tuple[list[float], list[float]]:
 
 
 def layernorm_range_interval(length: int) -> tuple[list[float], list[float]]:
-    """Mirror TorchLean's uniform last-axis LayerNorm enclosure."""
+    """Mirror TorchLean's uniform last-axis LayerNorm enclosure.
+
+    ``ibpLayerNormRange?`` uses ``subDown 0 radius`` for the lower endpoint. The host-Float
+    instance widens this subtraction as well as the square root used to compute the radius.
+    """
 
     if length <= 1:
         return [0.0] * length, [0.0] * length
     radius = round_up(math.sqrt(float(length)))
-    return [-radius] * length, [radius] * length
+    return [round_down(0.0 - radius)] * length, [radius] * length
 
 
 def sigmoid_range_interval(length: int) -> tuple[list[float], list[float]]:

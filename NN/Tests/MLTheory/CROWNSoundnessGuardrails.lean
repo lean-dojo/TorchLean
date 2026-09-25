@@ -22,6 +22,7 @@ Check the boundary between valid IR configurations and malformed payloads. Inval
 geometry and mismatched LayerNorm payload shapes must return no bounds. Valid convolution and
 affine LayerNorm retain their value and derivative bounds. A rounded backend must reject imported
 ReLU slopes it cannot use, and the rounded IBP soundness theorem must apply to `FP32`.
+The real sum equation must agree with `Tensor.sumSpec` for every shape, even without an IBP row.
 -/
 
 @[expose] public section
@@ -267,6 +268,62 @@ def checkIBPForwardSupport : IO Unit := do
   let binaryMatmul : NN.IR.Node := { id := 2, parents := #[0, 1], kind := .matmul, outShape := [1] }
   if DirectedBackward.ibpForwardSupported (covered.push binaryMatmul) then
     throw <| IO.userError "rounded IBP support check accepted binary matmul"
+
+namespace SumEquationRegression
+
+open DirectedBackward
+
+noncomputable section
+
+/-- Summing two ones cannot give zero, even when no IBP parent row exists. -/
+theorem real_sum_rejects_wrong_value_without_row :
+    ¬ RealNodeEquation
+      #[{ id := 0, parents := #[], kind := .input, outShape := [2] },
+        { id := 1, parents := #[0], kind := .sum, outShape := .scalar }]
+      ({} : ParamStore FP32) #[] (fun id => if id = 0 then 2 else 1)
+      (fun id _ => if id = 0 then 1 else 0) 1 := by
+  norm_num [RealNodeEquation, unaryParent?]
+
+/-- The actual tensor sum satisfies the equation for every shape and any cached IBP rows. -/
+theorem actual_tensor_sum_equation {s : Shape} (t : Tensor ℝ s)
+    (ps : ParamStore FP32) (ibp : Array (Option (FlatBox FP32))) :
+    RealNodeEquation
+      #[{ id := 0, parents := #[], kind := .input, outShape := s },
+        { id := 1, parents := #[0], kind := .sum, outShape := .scalar }]
+      ps ibp (fun id => if id = 0 then s.size else 1)
+      (fun id coordinate => if id = 0 then
+        if h : coordinate < s.size then t (Shape.Coord.unlinearize ⟨coordinate, h⟩) else 0
+      else Tensor.sumSpec t) 1 := by
+  change ∀ p, unaryParent? #[0] = some p →
+    1 = 1 ∧ Tensor.sumSpec t =
+      ∑ i : Fin (if p = 0 then s.size else 1),
+        if p = 0 then
+          if h : i.val < s.size then t (Shape.Coord.unlinearize ⟨i.val, h⟩) else 0
+        else Tensor.sumSpec t
+  intro p hp
+  have hp0 : p = 0 := by simpa [unaryParent?] using hp.symm
+  subst p
+  constructor
+  · rfl
+  · change Tensor.sumSpec t = ∑ i : Fin s.size,
+      if h : i.val < s.size then t (Shape.Coord.unlinearize ⟨i.val, h⟩) else 0
+    have hsum : Tensor.sumSpec t =
+        ∑ i : Fin s.size, t (Shape.Coord.unlinearize i) := by
+      rw [Spec.sum_spec_eq_coord_sum]
+      let e : s.Coord ≃ Fin s.size :=
+        { toFun := Shape.Coord.linearize
+          invFun := Shape.Coord.unlinearize
+          left_inv := Shape.Coord.unlinearize_linearize
+          right_inv := Shape.Coord.linearize_unlinearize }
+      exact (e.symm.sum_comp (fun c => t c)).symm
+    rw [hsum]
+    apply Finset.sum_congr rfl
+    intro i _
+    simp only [dite_eq_left i.isLt]
+
+end
+
+end SumEquationRegression
 
 /-- The original core-family theorem remains available at the `FP32` model. -/
 example (g : NN.IR.Graph) (ps : ParamStore FP32) (dims : Nat → Nat) (v : Nat → Nat → ℝ)

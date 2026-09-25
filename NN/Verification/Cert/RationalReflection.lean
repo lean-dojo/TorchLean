@@ -50,6 +50,10 @@ noncomputable scoped instance instLawfulBoundOpsRat : LawfulBoundOps ℚ where
   mulDown_le a b := by simp [BoundOps.mulDown]
   le_mulUp a b := by simp [BoundOps.mulUp]
 
+/-- The rational backend's minimum agrees with its real interpretation. -/
+noncomputable scoped instance instLawfulMinBoundOpsRat : LawfulMinBoundOps ℚ where
+  toReal_min a b := Rat.cast_min a b
+
 end Spec.RationalAlgebraic
 
 namespace NN.Verification.Cert.RationalReflection

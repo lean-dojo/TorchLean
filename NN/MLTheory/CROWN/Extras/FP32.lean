@@ -132,6 +132,14 @@ noncomputable instance : LawfulBoundOps FP32 where
         ceilRound (a.val * b.val)
     exact le_round_ceil _
 
+/-- Minimum selects an existing endpoint, so it preserves the underlying real value. -/
+noncomputable instance : LawfulMinBoundOps FP32 where
+  toReal_min a b := by
+    change (min a b).val = min a.val b.val
+    rcases le_total a b with h | h
+    · rw [min_eq_left h, min_eq_left (show a.val ≤ b.val from h)]
+    · rw [min_eq_right h, min_eq_right (show b.val ≤ a.val from h)]
+
 /-- Embed a real endpoint after rounding it downward to the binary32 grid. -/
 noncomputable def roundDownEndpoint (x : ℝ) : FP32 :=
   ⟨FloatLib.Floats.Interval.roundDown

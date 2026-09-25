@@ -65,6 +65,18 @@ class LawfulBoundOps (α : Type) [TorchLean.Storage α] [Context α] [BoundOps �
   mulDown_le (a b : α) : toReal (BoundOps.mulDown a b) ≤ toReal a * toReal b
   le_mulUp (a b : α) : toReal a * toReal b ≤ toReal (BoundOps.mulUp a b)
 
+/-- The backend minimum denotes the real minimum.
+
+This supplements `LawfulBoundOps` for transfers that use the context's `min` operation.
+The comparison-based `BoundOps.min2` needs no additional law. Ordinary negation and absolute
+value may round on a backend, so their exactness is deliberately not assumed here.
+-/
+class LawfulMinBoundOps (α : Type) [TorchLean.Storage α] [Context α] [BoundOps α]
+    [LawfulBoundOps α] : Prop where
+  toReal_min (a b : α) :
+    LawfulBoundOps.toReal (min a b) =
+      min (LawfulBoundOps.toReal a) (LawfulBoundOps.toReal b)
+
 /--
 Soundness predicate for a unary interval transfer.
 
@@ -145,6 +157,10 @@ noncomputable instance instLawfulBoundOpsReal : LawfulBoundOps ℝ where
   le_subUp _ _ := le_rfl
   mulDown_le _ _ := le_rfl
   le_mulUp _ _ := le_rfl
+
+/-- The exact real backend preserves minimum. -/
+noncomputable instance instLawfulMinBoundOpsReal : LawfulMinBoundOps ℝ where
+  toReal_min _ _ := rfl
 
 /-- Exact nonlinear interval transfers over the real numbers. -/
 noncomputable instance instNonlinearBoundOpsReal : NonlinearBoundOps ℝ where

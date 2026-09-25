@@ -473,21 +473,17 @@ public def boxRelu (B : FlatBox α) : FlatBox α :=
     lo := Tensor.mapSpec (fun x => Activation.Math.reluSpec (α := α) x) B.lo
     hi := Tensor.mapSpec (fun x => Activation.Math.reluSpec (α := α) x) B.hi }
 
-/-- Componentwise absolute value bounds. Soundly encloses `abs` over each interval component. -/
-def boxAbs (B : FlatBox α) : FlatBox α :=
+/-- Componentwise absolute value bounds using directed negation at negative endpoints. -/
+@[expose] def boxAbs (B : FlatBox α) : FlatBox α :=
   let lo' := Tensor.ofFn fun i =>
     let l := B.lo.getScalar i
     let u := B.hi.getScalar i
-    let al := MathFunctions.abs l
-    let au := MathFunctions.abs u
     if l < 0 then
-      if 0 < u then 0 else (if al < au then al else au)
+      if 0 < u then 0 else BoundOps.subDown 0 u
     else
-      if al < au then al else au
+      l
   let hi' := Tensor.ofFn fun i =>
-    let al := MathFunctions.abs (B.lo.getScalar i)
-    let au := MathFunctions.abs (B.hi.getScalar i)
-    if al > au then al else au
+    BoundOps.max2 (BoundOps.subUp 0 (B.lo.getScalar i)) (B.hi.getScalar i)
   { dim := B.dim, lo := lo', hi := hi' }
 
 /-!
@@ -651,7 +647,7 @@ def flatAxisPermutation? (sourceShape : Shape) (perm : Array Nat) (n : Nat) :
       Fin.ofNat n (coordinatesFlatIndex sourceDims sourceCoordinates)
 
 /-- Componentwise max bounds: `max(x,y)` over interval boxes. -/
-def boxMaxElem (B1 B2 : FlatBox α) : FlatBox α :=
+@[expose] def boxMaxElem (B1 B2 : FlatBox α) : FlatBox α :=
   match B1, B2 with
   | ⟨n1, lo1, hi1⟩, ⟨n2, lo2, hi2⟩ =>
       if h : n1 = n2 then
@@ -664,7 +660,7 @@ def boxMaxElem (B1 B2 : FlatBox α) : FlatBox α :=
         { dim := n1, lo := lo1, hi := hi1 }
 
 /-- Componentwise min bounds: `min(x,y)` over interval boxes. -/
-def boxMinElem (B1 B2 : FlatBox α) : FlatBox α :=
+@[expose] def boxMinElem (B1 B2 : FlatBox α) : FlatBox α :=
   match B1, B2 with
   | ⟨n1, lo1, hi1⟩, ⟨n2, lo2, hi2⟩ =>
       if h : n1 = n2 then
@@ -935,7 +931,7 @@ length, including lengths that cannot be represented exactly by the scalar forma
     checkedFiniteBounds? result
 
 /-- Average a nonempty flat box, enclosing both the sum and the exact coordinate count. -/
-def boxMean? [NonlinearBoundOps α] (B : FlatBox α) : Option (FlatBox α) := do
+@[expose] def boxMean? [NonlinearBoundOps α] (B : FlatBox α) : Option (FlatBox α) := do
   let (lo, hi) ← directedRowMean? fun i => (B.lo.getScalar i, B.hi.getScalar i)
   pure { dim := 1, lo := Tensor.full [1] lo, hi := Tensor.full [1] hi }
 

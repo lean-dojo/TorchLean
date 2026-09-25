@@ -13,7 +13,7 @@ public import NN.Runtime.Autograd.IRExec.API
 
 Check the compiled lowering path against the independent IR evaluator, including every intermediate
 value, heterogeneous shapes, shared parents, deterministic random nodes, and a nonempty prefix.
-The dedicated scaling driver runs these checks with `--check`; no global test wiring is needed.
+The Float runtime suite runs these checks; the dedicated scaling driver also exposes `--check`.
 -/
 
 public section

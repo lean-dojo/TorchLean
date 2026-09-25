@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Tests.Runtime.ParameterAliases
+public import NN.Tests.Runtime.IRExecScalingRegression
 public import NN.Tests.Runtime.Floats.AllAutogradTests
 public import NN.Tests.Runtime.Floats.CertificatePreconditions
 public import NN.Tests.Runtime.Floats.CifarCrop
@@ -63,6 +64,7 @@ def run : IO Unit := do
   Tests.Floats.TorchLeanIndexShapeCheck.run
   Tests.Floats.TorchLeanSpecMLPEquivCheck.run
   Tests.Floats.TorchLeanIRExecEquivCheck.run
+  Tests.IRExecScalingRegression.check
 
 end Floats
 end Tests

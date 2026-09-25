@@ -102,7 +102,8 @@ private theorem directedAvgPoolTensor?_encloses
         have hmean := directedRowMean?_encloses (directedRowMean?_positive hi) _
           (fun j => getPaddedAverageInputVal x
             (flatCoordinates
-              (poolOutSpatialPad spatial config.kernel config.stride config.padding).data.toList.toArray
+              (poolOutSpatialPad spatial config.kernel config.stride
+                config.padding).data.toList.toArray
               i.val).toList
             (flatCoordinates config.kernel.data.toList.toArray j.val).toList
             config.stride.data.toList config.padding.data.toList)

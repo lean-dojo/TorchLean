@@ -8,8 +8,8 @@ module
 
 public import NN.MLTheory.CROWN.Models.Mlp
 public import NN.MLTheory.CROWN.Proofs.DirectedIBPFullSoundness
-public import NN.MLTheory.CROWN.Proofs.DirectedIBPNormalizationRegression
-public import NN.MLTheory.CROWN.Proofs.DirectedIBPPointwiseRegression
+public import NN.Tests.MLTheory.DirectedIBPNormalization
+public import NN.Tests.MLTheory.DirectedIBPPointwise
 public import NN.MLTheory.CROWN.Extras.FP32
 public import NN.Tests.MLTheory.Utils
 public import NN.Tests.Utils

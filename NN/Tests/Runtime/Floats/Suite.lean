@@ -8,6 +8,7 @@ module
 
 public import NN.Tests.Runtime.ParameterAliases
 public import NN.Tests.Runtime.IRExecScalingRegression
+public import NN.Tests.Floats.IEEE32IntervalBounds
 public import NN.Tests.Runtime.Floats.AllAutogradTests
 public import NN.Tests.Runtime.Floats.CertificatePreconditions
 public import NN.Tests.Runtime.Floats.CifarCrop
@@ -65,6 +66,7 @@ def run : IO Unit := do
   Tests.Floats.TorchLeanSpecMLPEquivCheck.run
   Tests.Floats.TorchLeanIRExecEquivCheck.run
   Tests.IRExecScalingRegression.check
+  NN.Tests.Floats.IEEE32IntervalBounds.run
 
 end Floats
 end Tests

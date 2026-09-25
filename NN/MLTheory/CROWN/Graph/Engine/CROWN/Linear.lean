@@ -69,7 +69,7 @@ The CROWN pass uses this when a convolution is linear in the selected input. Kee
 here lets convolution share the same affine machinery as linear and matmul nodes.
 
 -/
-def affOfConv (config : NN.IR.ConvParams α) (leading : Shape) :
+@[expose] def affOfConv (config : NN.IR.ConvParams α) (leading : Shape) :
     AffineVec α (config.input leading).size (config.output leading).size :=
   let outSpatial :=
     Spec.convOutSpatialDilated config.inputSpatial config.kernel config.stride config.dilation

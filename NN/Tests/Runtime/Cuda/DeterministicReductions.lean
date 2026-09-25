@@ -14,7 +14,7 @@ public import NN.Tests.Runtime.Cuda.Utils
 # Deterministic Reduction Regressions
 
 Native runs request strict deterministic execution through LibTorch and restore the previous
-settings afterward. CPU stubs run the same numerical cases without configuring LibTorch.
+settings afterward.
 
 The repeated calls compare outputs on the current build and device. These are runtime regressions,
 not proofs of a reduction order or reproducibility across implementations.
@@ -99,7 +99,7 @@ def run : IO Unit := do
     match Buffer.runtimeStatus with
     | .nativeAvailable =>
         pure (some (← LibTorch.getDeterministic, ← LibTorch.getCuDNNBenchmark))
-    | .cpuStub => pure none
+    | .notLinked => pure none
     | .nativeUnavailable =>
         throw <| IO.userError "deterministic reduction tests require a usable CUDA device"
   try

@@ -17,8 +17,7 @@ Compares CPU eager tape with CUDA eager tape for the same rank-polymorphic `conv
 operation at spatial ranks two and three.
 
 Both cases check forward output and gradients (including `dInput`) via `backwardDenseAll`.
-Inputs are small so stub-mode remains lightweight and float64/float32 roundoff differences stay
-limited.
+Inputs are small so float64/float32 roundoff differences stay limited.
 -/
 
 @[expose] public section

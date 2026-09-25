@@ -207,10 +207,10 @@ private def crownDot {α : Type} [TorchLean.Storage α] [Context α] [ToString �
             | some _, some _ => "#d7fff6"
       s!"  n{nid} [label=\"{escapeDotLabel label}\", fillcolor=\"{fill}\"];")
   let edges : List String :=
-    (List.range n).foldl (fun acc nid =>
+    (List.range n).flatMap (fun nid =>
       match g.nodes[nid]? with
-      | none => acc
-      | some nd => acc ++ (nd.parents.map (fun p => s!"  n{p} -> n{nid};")).toList) []
+      | none => []
+      | some nd => (nd.parents.map (fun p => s!"  n{p} -> n{nid};")).toList)
   header ++ String.intercalate "\n" (nodes ++ edges) ++ "\n}\n"
 
 /-- Render a compact table summary of per-node state availability and previews. -/

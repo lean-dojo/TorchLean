@@ -26,7 +26,7 @@ open Spec
 namespace Internal
 
 /-- Common recording and shape checks for the two diagonal-scan coefficient layouts. -/
-def diagonalScan (variableCoefficients : Bool) {seqLen state : Nat}
+@[inline] def diagonalScan (variableCoefficients : Bool) {seqLen state : Nat}
     (t : Tape) (aId bId xId initialId : Nat) : Result (Tape × Nat) := do
   let time32 ← AnyBuffer.natToU32Checked seqLen
   let state32 ← AnyBuffer.natToU32Checked state
@@ -62,12 +62,12 @@ def diagonalScan (variableCoefficients : Bool) {seqLen state : Nat}
 end Internal
 
 /-- Record the recurrence with coefficient vectors shared across time. -/
-def selectiveScanDiag {seqLen state : Nat} (t : Tape) (aId bId xId initialId : Nat) :
+@[inline] def selectiveScanDiag {seqLen state : Nat} (t : Tape) (aId bId xId initialId : Nat) :
     Result (Tape × Nat) :=
   Internal.diagonalScan false (seqLen := seqLen) (state := state) t aId bId xId initialId
 
 /-- Record the recurrence with independent coefficient rows for every token. -/
-def selectiveScanDiagVar {seqLen state : Nat} (t : Tape) (aId bId xId initialId : Nat) :
+@[inline] def selectiveScanDiagVar {seqLen state : Nat} (t : Tape) (aId bId xId initialId : Nat) :
     Result (Tape × Nat) :=
   Internal.diagonalScan true (seqLen := seqLen) (state := state) t aId bId xId initialId
 

@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Core.Numeric.Real
+public import NN.Core.Numeric
+public import NN.Core.Numeric.Angle.Real
 public import NN.Spec.Core.Context
 
 /-!

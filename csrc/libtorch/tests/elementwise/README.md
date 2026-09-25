@@ -1,12 +1,13 @@
 # Elementwise C ABI regression
 
-Configure, compile, generate the Lean reference, and run **only in the cluster**.
-This C++ executable links the production backend, selected ATen SDK, and Lean runtime.
+This C++ executable links the production backend, the selected ATen SDK, and the Lean runtime.
+It needs a Linux host with the LibTorch SDK used for the backend build; the CUDA checks also
+need a CUDA device.
 
 From the source root, after building the production LibTorch backend:
 
 ```bash
-# Set these to the same SDK/toolchain/artifact used by the production cluster build.
+# Set these to the same SDK, toolchain and artifact used by the production backend build.
 export TORCHLEAN_LIBTORCH_HOME=/path/to/torch
 export TORCHLEAN_LEAN_PREFIX=/path/to/lean
 export TORCHLEAN_BACKEND_LIBRARY=/absolute/path/to/libtorchlean_libtorch.so
@@ -24,7 +25,7 @@ add/mul/div/sqrt checks. The reference file must contain all five primitives.
 Native regressions require the CUDA SDK and a usable device.
 
 After building `nn_tests_suite` with the native LibTorch configuration, run the
-isolated Lean memory probes against that same executable in the cluster:
+isolated Lean memory probes against that same executable:
 
 ```bash
 for probe in accounting attention-context oom-recovery; do
@@ -38,8 +39,8 @@ check real readback, logical ownership versus native allocated/reserved/peak
 accounting, live tensors across `emptyCache`, saved attention inputs across
 release/backward, output-context finalization, and `resourceExhausted` recovery
 under a temporary allocator memory fraction. No assertion pins an SDK cache
-block size or an exact number of bytes returned to the driver. CPU parity builds
-check that native counters are zero and explicitly skip the GPU memory probes.
+block size or an exact number of bytes returned to the driver. Builds without
+LibTorch check that native counters are zero and skip the GPU memory probes.
 
 ## Coverage
 
@@ -122,4 +123,4 @@ lower neighbor for a true float32 FMA, but is lost by a binary64 add, which then
 rounds to the upper even neighbor.
 
 The source evidence applies to this SDK revision. SDK changes require a fresh source
-audit and cluster run with the same finite-bit assertions.
+audit and a new CUDA run with the same finite-bit assertions.

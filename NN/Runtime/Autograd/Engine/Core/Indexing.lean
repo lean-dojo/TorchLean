@@ -27,7 +27,7 @@ open TorchLean TorchLean.Tensor
 namespace Tape
 
 /-- Select one bounded coordinate from any tensor axis. -/
-def select {α : Type} [TorchLean.Storage α] [Zero α]
+@[inline] def select {α : Type} [TorchLean.Storage α] [Zero α]
     {s : Shape} (t : Tape α) (xId : Nat) (axis : Nat)
     [Shape.AxisInBounds axis s] (index : Fin (Shape.axisSize s axis)) :
     Result (Tape α × Nat) := do
@@ -44,7 +44,7 @@ def select {α : Type} [TorchLean.Storage α] [Zero α]
         pure #[(xId, Spec.SomeTensor.ofTensor dx)] }
   pure (t.addNode node)
 /-- Select several bounded coordinates from any tensor axis. -/
-def indexSelect {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
+@[inline] def indexSelect {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {s : Shape} (t : Tape α) (xId : Nat) (axis count : Nat)
     [Shape.AxisInBounds axis s]
     (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape α × Nat) := do
@@ -63,7 +63,7 @@ def indexSelect {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
   pure (t.addNode node)
 
 /-- Add indexed source slices into any tensor axis. -/
-def scatterAdd {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
+@[inline] def scatterAdd {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {s : Shape} (t : Tape α) (baseId sourceId : Nat) (axis count : Nat)
     [Shape.AxisInBounds axis s]
     (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape α × Nat) := do

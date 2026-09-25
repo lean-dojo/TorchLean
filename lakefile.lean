@@ -9,7 +9,7 @@ import Lake.Util.Proc
 open Lake DSL
 open System
 
-/-- Whether Lake should link the LibTorch CUDA backend instead of the portable C stubs. -/
+/-- Whether Lake should link the LibTorch CUDA backend instead of the unavailable-backend shim. -/
 private def cudaEnabled : Bool :=
   let value := (get_config? cuda).getD "false"
   value == "true" || value == "1"
@@ -26,9 +26,8 @@ private def nativeLinkArgs : Array String :=
     -- Windows and macOS provide libm via the default C runtime
     #[]
   else
-    -- CPU stubs call functions from `math.h`; Linux keeps these in `libm`.
-    -- Keep libstdc++ for mixed native objects when switching between CPU and CUDA builds.
-    #["-lm", "-lstdc++"]
+    -- The packed host tensor primitives call `math.h`; Linux keeps these in `libm`.
+    #["-lm"]
 
 package TorchLean where
   buildDir := FilePath.mk ((get_config? torchleanBuildDir).getD ".lake/build")
@@ -53,22 +52,9 @@ package TorchLean where
 
 `-K cuda=true` builds one LibTorch C++ library containing the numerical C ABI exports. CMake obtains
 the ABI, language standard, libraries, and runtime paths from the selected SDK. The default build
-uses the portable C stubs and requires neither LibTorch nor a CUDA toolkit.
+needs neither LibTorch nor a CUDA toolkit: it links a small C file that reports the backend as not
+linked and fails every GPU call with an explanation.
 -/
-
-/-- Include paths for the portable C stubs. -/
-private def nativeIncludeArgs (pkg : Package) : Array String :=
-  #[
-    "-I", (pkg.dir / "csrc/cuda/common").toString,
-    "-I", (pkg.dir / "csrc/cuda/conv_pool").toString
-  ]
-
-/-- Track project-owned native headers so a header-only edit invalidates every dependent object. -/
-private def nativeHeaderDeps (pkg : Package) : SpawnM (Job Unit) := do
-  let isHeader := fun path : FilePath => path.extension == some "h"
-  let common ← inputDir (pkg.dir / "csrc/cuda/common") true isHeader
-  let convPool ← inputDir (pkg.dir / "csrc/cuda/conv_pool") true isHeader
-  pure <| common.mix convPool
 
 /--
 Find the executable that will be passed to a native compile or link command.
@@ -106,7 +92,7 @@ target torchlean_libtorch pkg : FilePath := do
   let scriptJob ← inputFile (pkg.dir / "scripts/libtorch_build.py") false
   scriptJob.mapM fun scriptPath => do
     unless cudaEnabled do
-      error "torchlean_libtorch requires -Kcuda=true; the default build uses portable C stubs"
+      error "torchlean_libtorch requires -Kcuda=true; the default build does not link LibTorch"
     let mut args := #[scriptPath.toString, "--package-dir", pkg.dir.toString,
       "--build-dir", pkg.buildDir.toString, "--lean-include", lean.includeDir.toString]
     if let some home := libtorchHomeConfig then
@@ -150,37 +136,15 @@ target torchlean_tensor_cpu_shared pkg : Dynlib := do
   let libFile := pkg.sharedLibDir / nameToSharedLib libName
   buildLeanSharedLib libName libFile #[oJob] #[]
 
-/-- Compile a portable stub, tracking headers and compiler settings. -/
-private def buildNativeBackendStub (pkg : Package) (dir stem : String) :
-    FetchM (Job FilePath) := do
+/-- GPU ABI exports for builds without LibTorch: status reports "not linked", calls fail. -/
+target torchlean_libtorch_unavailable pkg : FilePath := do
   let lean ← getLeanInstall
-  let headerDeps ← nativeHeaderDeps pkg
-  let source := s!"{stem}_stub.c"
-  let srcJob ← inputFile (pkg.dir / "csrc/cuda" / dir / source) false
-  let srcJob := srcJob.zipWith (fun src _ => src) headerDeps
-  let objectStem := s!"{stem}_stub"
-  let oFile := pkg.buildDir / s!"{objectStem}.o"
-  let includes := #["-I", lean.includeDir.toString] ++ nativeIncludeArgs pkg
+  let srcJob ← inputFile (pkg.dir / "csrc/libtorch/unavailable.c") false
+  let oFile := pkg.buildDir / "torchlean_libtorch_unavailable.o"
   let compilerJob ← nativeCompilerJob "cc"
   let oJob ← compilerJob.bindM fun compiler =>
-    buildO oFile srcJob includes #["-O2", "-fPIC"] compiler getLeanTrace
-  buildStaticLib (pkg.buildDir / nameToStaticLib objectStem) #[oJob]
-
-/-- Portable matrix multiplication exports. -/
-target torchlean_dgemm_cuda_stub pkg : FilePath :=
-  buildNativeBackendStub pkg "blas" "torchlean_dgemm_cuda"
-
-/-- Portable numerical kernel exports. -/
-target torchlean_cuda_kernels_stub pkg : FilePath :=
-  buildNativeBackendStub pkg "kernels" "torchlean_cuda_kernels"
-
-/-- Portable convolution and pooling exports. -/
-target torchlean_cuda_conv_pool_stub pkg : FilePath :=
-  buildNativeBackendStub pkg "conv_pool" "torchlean_cuda_conv_pool"
-
-/-- Portable tensor buffer exports. -/
-target torchlean_cuda_tensor_stub pkg : FilePath :=
-  buildNativeBackendStub pkg "tensor" "torchlean_cuda_tensor"
+    buildO oFile srcJob #["-I", lean.includeDir.toString] #["-O2", "-fPIC"] compiler getLeanTrace
+  buildStaticLib (pkg.buildDir / nameToStaticLib "torchlean_libtorch_unavailable") #[oJob]
 
 /-- Repair large frees and delayed arena purging in the pinned Linux allocator. -/
 target torchlean_allocator pkg : FilePath := do
@@ -209,8 +173,7 @@ lean_lib NN where
       if cudaEnabled then
         (#[torchlean_libtorch] : TargetArray FilePath)
       else
-        (#[torchlean_dgemm_cuda_stub, torchlean_cuda_kernels_stub, torchlean_cuda_conv_pool_stub,
-          torchlean_cuda_tensor_stub] : TargetArray FilePath)
+        (#[torchlean_libtorch_unavailable] : TargetArray FilePath)
   -- The reusable library follows its canonical umbrella. Examples, tests, CI-only modules,
   -- documentation, and executable roots have separate targets below.
   roots := #[`NN]

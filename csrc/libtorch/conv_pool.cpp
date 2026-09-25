@@ -1,17 +1,65 @@
 #include "torchlean_libtorch.h"
-#include "../cuda/conv_pool/torchlean_cuda_conv_pool_common.h"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 #include <optional>
 #include <tuple>
 #include <vector>
 
-// ATen schemas checked against the cluster SDK's 0291f960b6 commit:
+// ATen schemas checked against the PyTorch 2.12 nightly 0291f960b6 and pip torch 2.13.0+cu130:
 // https://github.com/pytorch/pytorch/blob/0291f960b6/aten/src/ATen/native/native_functions.yaml
 // Backward calls return explicit cotangents to the Lean tape; they do not record autograd graphs.
 namespace torchlean::conv_pool {
+
+// TorchLean shapes use Nat subtraction, so negative intermediate lengths clamp at zero.
+constexpr size_t kMaxRank = 8;
+
+static uint32_t outDim(uint32_t in, uint32_t k, uint32_t stride, uint32_t padding) {
+  torchlean::require(stride != 0, "LibTorch conv/pool: stride must be > 0");
+  if (k == 0) return 0;
+  // Invalid geometry has no windows; do not turn saturated subtraction into a phantom window.
+  const uint64_t inPad = uint64_t{in} + 2 * uint64_t{padding};
+  if (inPad < k) return 0;
+  const uint64_t out = (inPad - k) / stride + 1;
+  torchlean::require(out <= UINT32_MAX, "LibTorch conv/pool: outDim overflow");
+  return static_cast<uint32_t>(out);
+}
+
+// N-D pooling follows `Spec.poolOutSpatialPad`: empty inputs and padding beyond half the kernel
+// are invalid axes, even when the generic sliding-window formula would produce a positive length.
+static uint32_t poolOutDim(uint32_t in, uint32_t k, uint32_t stride, uint32_t padding) {
+  if (in == 0 || k == 0 || padding > k / 2) return 0;
+  return outDim(in, k, stride, padding);
+}
+
+// Spec: ((in - 1) * stride + k) - 2 * padding in Nat, so the addition precedes the subtraction.
+static uint32_t outDimTranspose(uint32_t in, uint32_t k, uint32_t stride, uint32_t padding) {
+  torchlean::require(stride != 0, "LibTorch conv/pool: stride must be > 0");
+  if (in == 0 || k == 0) return 0;
+  const uint64_t t = uint64_t{in - 1} * stride + k;
+  const uint64_t sub = 2 * uint64_t{padding};
+  const uint64_t out = t >= sub ? t - sub : 0;
+  torchlean::require(out <= UINT32_MAX, "LibTorch conv/pool: outDimTranspose overflow");
+  return static_cast<uint32_t>(out);
+}
+
+// Validate after the ABI's binary64-to-binary32 conversion: a finite nonzero Lean `Float` may
+// overflow to infinity or underflow to zero as a float32.
+static float checked_smoothmax_beta(double beta, const char* msg) {
+  const float betaF = static_cast<float>(beta);
+  torchlean::require(std::isfinite(betaF) && betaF != 0.0f, msg);
+  return betaF;
+}
+
+// Floor and ceiling division for b > 0.
+static int64_t floor_div_i64(int64_t a, int64_t b) {
+  const int64_t q = a / b;
+  return (a % b != 0 && a < 0) ? q - 1 : q;
+}
+
+static int64_t ceil_div_i64(int64_t a, int64_t b) { return -floor_div_i64(-a, b); }
 
 using Shape = std::vector<int64_t>;
 using Gradients = std::tuple<at::Tensor, at::Tensor, at::Tensor>;
@@ -47,7 +95,7 @@ struct Geometry {
   Geometry(Shape in, Shape k, Shape s, Shape p, Kind kind)
       : input(std::move(in)), kernel(std::move(k)),
         stride(std::move(s)), padding(std::move(p)) {
-    require(!input.empty() && input.size() <= TORCHLEAN_CUDA_CONV_POOL_MAX_RANK,
+    require(!input.empty() && input.size() <= kMaxRank,
             "torchlean conv/pool: spatial rank must be between one and eight");
     require(kernel.size() == input.size() && stride.size() == input.size() &&
                 padding.size() == input.size(),

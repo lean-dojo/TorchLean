@@ -9,6 +9,7 @@ module
 public import NN.MLTheory.CROWN.Proofs.GraphConcatTensor
 public import NN.Tensor.Internal.Laws.Sequence
 public import NN.Verification.Builtin.Proved.Correctness.Eval.Concat
+public import NN.Proofs.Tensor.Basic.Core
 
 /-!
 # Flattening concatenated tensor families
@@ -338,14 +339,6 @@ theorem concatLayout?_family (leading trailing : List Nat)
     simp only [List.getElem_map, List.getElem_finRange]
     rfl
 
-/-- Successful IR shape inference also supplies a checked CROWN concat layout. -/
-theorem concatLayout?_exists_of_infer (axis : Nat) (parents : Array Shape) (output : Shape)
-    (h : NN.IR.OpContracts.inferConcatOutShape axis parents = .ok output) :
-    ∃ layout, concatLayout? axis parents output = some layout := by
-  obtain ⟨leading, trailing, first, second, lengths, rfl, rfl, rfl⟩ :=
-    inferConcatOutShape_family axis parents output h
-  exact ⟨_, concatLayout?_family leading trailing first second lengths⟩
-
 /-- Leading-axis concat evaluates to the same family tensor for any arity of at least two. -/
 theorem evalConcat_zero_family {α : Type} [TorchLean.Storage α] [Context α]
     (id : Nat) (node : Node) (trailing : Shape) (first second : Nat) (lengths : List Nat)
@@ -372,69 +365,16 @@ theorem evalConcat_zero_family {α : Type} [TorchLean.Storage α] [Context α]
   simpa [hout, Nat.add_assoc] using
     evalConcatLeadingAxisFold_family id trailing first (second :: lengths) values
 
-/-- A successful leading-axis runtime concat determines its checked layout and tensor family. -/
-theorem evalConcat_zero_family_of_ok {α : Type} [TorchLean.Storage α] [Context α]
-    (id : Nat) (node : Node) (parents : Array (SomeTensor α)) (result : SomeTensor α)
-    (heval : NN.IR.Graph.evalConcat id node 0 parents = .ok result) :
-    ∃ (layout : ConcatLayout)
-      (values : (parent : Fin layout.lengths.length) → Tensor α (layout.parentShape parent)),
-      concatLayout? 0 (parents.map SomeTensor.shape) node.outShape = some layout ∧
-      parents = Array.ofFn (fun parent => SomeTensor.ofTensor (values parent)) ∧
-      result = SomeTensor.ofTensor
-        (Tensor.Internal.Rep.concatenateAxes layout.leading layout.trailing layout.lengths
-          values) := by
-  cases hinfer : NN.IR.OpContracts.inferConcatOutShape 0 (parents.map SomeTensor.shape) with
-  | error message => simp [NN.IR.Graph.evalConcat, hinfer] at heval
-  | ok expected =>
-      have hout : expected = node.outShape := by
-        by_contra hne
-        simp [NN.IR.Graph.evalConcat, hinfer, hne] at heval
-      obtain ⟨leading, trailing, first, second, lengths, haxis, hshapes, houtput⟩ :=
-        inferConcatOutShape_family 0 (parents.map SomeTensor.shape) expected hinfer
-      have hleading : leading = [] := List.length_eq_zero_iff.mp haxis.symm
-      subst leading
-      simp only [List.nil_append] at hshapes houtput
-      let layout : ConcatLayout :=
-        { leading := [], trailing := trailing, lengths := first :: second :: lengths }
-      have hfamily :
-          parents.map SomeTensor.shape = Array.ofFn layout.parentShape := by
-        rw [hshapes, ← List.toArray_ofFn]
-        congr 1
-        symm
-        change (List.ofFn fun parent : Fin (first :: second :: lengths).length =>
-          (first :: second :: lengths).get parent :: trailing) = _
-        simpa only [List.map_ofFn, Function.comp_def, List.get_eq_getElem] using
-          congrArg (List.map fun length => length :: trailing)
-            (List.ofFn_getElem (xs := first :: second :: lengths))
-      obtain ⟨values, hvalues⟩ := exists_tensor_family_of_shapes layout.parentShape parents hfamily
-      refine ⟨layout, values, ?_, hvalues, ?_⟩
-      · rw [hshapes, ← hout, houtput]
-        exact concatLayout?_family [] trailing first second lengths
-      · have hnode : node.outShape = (first + second + lengths.sum) :: trailing :=
-          hout.symm.trans houtput
-        have hresult := evalConcat_zero_family id node trailing first second lengths values hnode
-        erw [← hvalues] at hresult
-        rw [heval] at hresult
-        exact Except.ok.inj hresult
-
 /-- A scalar in the flattened tensor is read at its row-major shaped coordinate. -/
 theorem getScalar_flattenSpec {α : Type} [TorchLean.Storage α]
     {shape : Shape} (tensor : Tensor α shape) (index : Fin shape.size) :
     Tensor.getScalar (Tensor.flattenSpec tensor) index =
       tensor (((Tensor.Internal.Coord.equivFin shape).trans
         (finCongr (Shape.internalSize_eq shape))).symm index) := by
-  rw [Tensor.getScalar_eq_apply, Tensor.flattenSpec,
-    Tensor.Internal.Rep.reshape_apply_coordEquiv]
-  congr 1
-  apply Tensor.Internal.Coord.linearize_injective
-  apply Fin.ext
-  rw [Tensor.reshapeCoordEquiv_linearize_val, Tensor.vectorCoordinate_linearize_val]
-  change index.val =
-    ((Tensor.Internal.Coord.equivFin shape)
-      ((Tensor.Internal.Coord.equivFin shape).symm
-        ((finCongr (Shape.internalSize_eq shape)).symm index))).val
-  rw [Equiv.apply_symm_apply]
-  rfl
+  obtain ⟨c, rfl⟩ := ((Tensor.Internal.Coord.equivFin shape).trans
+    (finCongr (Shape.internalSize_eq shape))).surjective index
+  rw [Equiv.symm_apply_apply]
+  exact Spec.getScalar_flattenSpec_linearize tensor c
 
 namespace ConcatLayout
 

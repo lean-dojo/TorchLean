@@ -857,7 +857,7 @@ Then deliberately break one condition:
 
 1. add an unsupported PyTorch operation and observe import rejection;
 2. change a JSON shape and observe `checkShapes` reject it;
-3. request CUDA from a stub build and observe runtime availability rejection;
+3. request CUDA from a build without LibTorch and observe runtime availability rejection;
 4. pass a wrong-size Q buffer to the LibTorch SDPA test and observe the Lean and native guard reject
    it.
 

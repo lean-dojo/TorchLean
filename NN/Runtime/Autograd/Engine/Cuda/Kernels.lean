@@ -6,11 +6,10 @@ Authors: TorchLean Team
 LibTorch FFI: additional ATen operations over `Cuda.Buffer` (float32).
 
 Notes:
-- `Cuda.Buffer` is an opaque contiguous float32 buffer (device memory when built with
-  `-K cuda=true`, otherwise a CPU stub buffer).
+- `Cuda.Buffer` is an opaque contiguous float32 buffer in CUDA device memory.
 - These operations keep their shape APIs explicit: dimensions are passed as `UInt32`.
-- Build with `lake -R -K cuda=true build` and a LibTorch SDK to dispatch upstream ATen CUDA
-  operations at runtime; otherwise the portable C implementation runs on CPU.
+- Build with `lake -R -K cuda=true build` and a LibTorch SDK; the default build links failing
+  placeholders for these symbols.
 - TorchLean owns the differentiation tape. The LibTorch bridge disables graph recording and
   calls ATen forward/backward operators directly.
 -/
@@ -162,10 +161,9 @@ Output:
 - length `batch*(n/2+1)*2`, interpreted as shape `(batch, n/2+1, 2)`;
 - the last channel stores `[real, imag]` for each nonredundant frequency bin.
 
-CUDA calls LibTorch's real FFT. The CPU stub uses a direct reference DFT, so this primitive
-remains available in non-CUDA builds for tests and portability. This is a low-level runtime
-primitive; differentiable tensor/autograd wrappers should spell out their backward convention
-separately because half-spectrum packing has normalization and conjugate-symmetry edge cases.
+CUDA calls LibTorch's real FFT. This is a low-level runtime primitive; differentiable
+tensor/autograd wrappers should spell out their backward convention separately because half-spectrum
+packing has normalization and conjugate-symmetry edge cases.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_rfft1d_packed"]
 opaque rfft1dPacked (x : @& Buffer) (batch n : UInt32) : Buffer

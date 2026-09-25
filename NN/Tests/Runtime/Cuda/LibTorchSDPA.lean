@@ -14,9 +14,9 @@ public import NN.Tests.Runtime.Cuda.Attention
 
 Tests for the checked paired attention API.
 
-The same ABI runs ATen kernels in LibTorch builds and portable C in CPU builds. An independent
-two-key reference and finite differences check values and gradients, including a hard boolean mask
-with a fully blocked row. TorchLean's global tape owns the attention node and its backward call.
+An independent two-key reference and finite differences check values and gradients, including a
+hard boolean mask with a fully blocked row. TorchLean's global tape owns the attention node and its
+backward call.
 -/
 
 @[expose] public section
@@ -158,7 +158,7 @@ def hardMask : Tensor Float maskShape :=
   let options := Runtime.Autograd.Torch.Config.withBackendProfile
     ({} : Runtime.Autograd.Torch.Config) profile
   match Runtime.Autograd.Cuda.Buffer.runtimeStatus with
-  | .cpuStub =>
+  | .notLinked =>
       let planned ← Tests.Cuda.Utils.okOrThrow <|
         options.planBackendOp .scaledDotProductAttention
       pure planned.capsule
@@ -271,9 +271,8 @@ def hardMask : Tensor Float maskShape :=
   #["No available kernel", "No viable backend", "needs the math SDPA pair"].any
     fun text => (message.splitOn text).length > 1
 
-@[no_expose] def checkProviderFixture (selection maskKind : String) (native : Bool) :
-    IO Unit := do
-  if native then configureProviders selection
+@[no_expose] def checkProviderFixture (selection maskKind : String) : IO Unit := do
+  configureProviders selection
   let qs := providerValues 7 3 29 32.0
   let ks := providerValues 11 5 31 32.0
   let vs := providerValues 13 7 23 16.0
@@ -296,14 +295,14 @@ def hardMask : Tensor Float maskShape :=
         1 8 32 scale
     match result with
     | .error message =>
-        if native && selection != "auto" && selection != "math" &&
+        if selection != "auto" && selection != "math" &&
             unsupportedProvider message then
           IO.println s!"UNSUPPORTED attention {selection}/float32/{maskKind}: {message}"
         else throw <| IO.userError message
     | .ok output =>
         try
           -- Eligibility flags affect future forwards, not an already saved backward pair.
-          if native then configureProviders "all-disabled"
+          configureProviders "all-disabled"
           for input in #[q, k, v, mask] do
             discard <| Buffer.releaseIO input
           let (dq, dk, dv) ← checked fun _ => Buffer.libTorchAttentionBwd output seed
@@ -364,12 +363,8 @@ def hardMask : Tensor Float maskShape :=
       selection do
     throw <| IO.userError s!"unknown attention provider selector: {selection}"
   match Buffer.runtimeStatus with
-  | .cpuStub =>
-      unless selection == "all" do
-        throw <| IO.userError "forced ATen provider tests require the native CUDA runtime"
-      for kind in #["unmasked", "causal", "masked-zero"] do
-        checkProviderFixture "portable" kind false
-      checkScaleRange
+  | .notLinked =>
+      throw <| IO.userError "attention provider tests require a LibTorch build (`-K cuda=true`)"
   | .nativeUnavailable =>
       throw <| IO.userError "attention provider tests require an available CUDA device"
   | .nativeAvailable =>
@@ -380,7 +375,7 @@ def hardMask : Tensor Float maskShape :=
         for provider in selections do
           unless provider == "all-disabled" do
             for kind in #["unmasked", "causal", "masked-zero"] do
-              checkProviderFixture provider kind true
+              checkProviderFixture provider kind
         configureProviders "math"
         checkScaleRange
 

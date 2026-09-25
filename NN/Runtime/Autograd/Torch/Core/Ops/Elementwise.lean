@@ -39,15 +39,12 @@ def add {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α]
   {sh : Shape}
   (a b : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.add (t := t0) (s := sh) a.id b.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.add (t := t0) (s := sh) a.id b.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.add (t := t0) (s := sh) a.id b.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .add #[a.identity?, b.identity?] cpu cuda
 
@@ -55,15 +52,12 @@ def add {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α]
 def sub {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Sub α] [Zero α] {sh : Shape}
   (a b : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.sub (t := t0) (s := sh) a.id b.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.sub (t := t0) (s := sh) a.id b.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.sub (t := t0) (s := sh) a.id b.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .sub #[a.identity?, b.identity?] cpu cuda
 
@@ -72,15 +66,12 @@ def mul {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Mul α]
   {sh : Shape}
   (a b : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.mul (t := t0) (s := sh) a.id b.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.mul (t := t0) (s := sh) a.id b.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.mul (t := t0) (s := sh) a.id b.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .mul #[a.identity?, b.identity?] cpu cuda
 
@@ -89,16 +80,13 @@ def scale {α : Type} [TorchLean.Storage α] [TensorTransfer α] (s : EagerSessi
   {sh : Shape}
   (x : TensorRef α sh) (c : α) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.scale (t := t0) (s := sh) x.id c)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.scale (t := t0) (s := sh) x.id c
     pure { id := id }
   let cuda := do
     let cF ← TensorTransfer.toFloat (α := α) c
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.scale (t := t0) (s := sh) x.id cF
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .scale #[x.identity?] cpu cuda
 
@@ -107,15 +95,12 @@ def abs {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.abs (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.abs (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.abs (t := t0) (s := sh) x.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .abs #[x.identity?] cpu cuda
 
@@ -124,15 +109,12 @@ def sqrt {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.sqrt (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.sqrt (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.sqrt (t := t0) (s := sh) x.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .sqrt #[x.identity?] cpu cuda
 
@@ -141,17 +123,14 @@ def clamp {α : Type} [TorchLean.Storage α] [TensorTransfer α] (s : EagerSessi
   [DecidableRel ((· > ·) : α → α → Prop)]
   {sh : Shape} (x : TensorRef α sh) (minVal maxVal : α) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.clamp (t := t0) (s := sh) x.id minVal maxVal)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.clamp (t := t0) (s := sh) x.id minVal maxVal
     pure { id := id }
   let cuda := do
     let lo ← TensorTransfer.toFloat (α := α) minVal
     let hi ← TensorTransfer.toFloat (α := α) maxVal
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.clamp (t := t0) (s := sh) x.id lo hi
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .clamp #[x.identity?] cpu cuda
 
@@ -160,15 +139,12 @@ def max {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {sh : Shape} (a b : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.max (t := t0) (s := sh) a.id b.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.max (t := t0) (s := sh) a.id b.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.max (t := t0) (s := sh) a.id b.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .max #[a.identity?, b.identity?] cpu cuda
 
@@ -177,15 +153,12 @@ def min {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {sh : Shape} (a b : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.min (t := t0) (s := sh) a.id b.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.min (t := t0) (s := sh) a.id b.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.min (t := t0) (s := sh) a.id b.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .min #[a.identity?, b.identity?] cpu cuda
 
@@ -195,15 +168,12 @@ def relu {α : Type} [TorchLean.Storage α] (s : EagerSession α)
   [DecidableRel ((· > ·) : α → α → Prop)]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.relu (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.relu (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.relu (t := t0) (s := sh) x.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .relu #[x.identity?] cpu cuda
 
@@ -211,14 +181,12 @@ def relu {α : Type} [TorchLean.Storage α] (s : EagerSession α)
 def sigmoid {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.sigmoid (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.sigmoid (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Cuda.Tape.sigmoid (t := t0) (s := sh) x.id)
-    s.cudaTape.set t1
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Cuda.Tape.sigmoid (t := t0) (s := sh) x.id
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .sigmoid #[x.identity?] cpu cuda
 
@@ -226,14 +194,12 @@ def sigmoid {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α
 def tanh {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.tanh (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.tanh (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Cuda.Tape.tanh (t := t0) (s := sh) x.id)
-    s.cudaTape.set t1
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Cuda.Tape.tanh (t := t0) (s := sh) x.id
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .tanh #[x.identity?] cpu cuda
 
@@ -241,14 +207,12 @@ def tanh {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
 def gelu {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.gelu (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.gelu (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Cuda.Tape.gelu (t := t0) (s := sh) x.id)
-    s.cudaTape.set t1
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Cuda.Tape.gelu (t := t0) (s := sh) x.id
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .gelu #[x.identity?] cpu cuda
 
@@ -261,14 +225,12 @@ PyTorch comparison: `torch.softmax(x, dim=...)` (dimension convention is chosen 
 def softmaxLast {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.softmaxLast (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.softmaxLast (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Cuda.Tape.softmaxLast (t := t0) (s := sh) x.id)
-    s.cudaTape.set t1
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Cuda.Tape.softmaxLast (t := t0) (s := sh) x.id
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .softmax #[x.identity?] cpu cuda
 
@@ -280,14 +242,12 @@ PyTorch comparison: `torch.nn.functional.log_softmax(x, dim=-1)`.
 def logSoftmaxLast {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.logSoftmaxLast (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.logSoftmaxLast (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Cuda.Tape.logSoftmaxLast (t := t0) (s := sh) x.id)
-    s.cudaTape.set t1
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Cuda.Tape.logSoftmaxLast (t := t0) (s := sh) x.id
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .logSoftmax #[x.identity?] cpu cuda
 
@@ -295,14 +255,12 @@ def logSoftmaxLast {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Con
 def softplus {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.softplus (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.softplus (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Cuda.Tape.softplus (t := t0) (s := sh) x.id)
-    s.cudaTape.set t1
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Cuda.Tape.softplus (t := t0) (s := sh) x.id
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .softplus #[x.identity?] cpu cuda
 
@@ -310,15 +268,12 @@ def softplus {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context �
 def exp {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.exp (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.exp (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.exp (t := t0) (s := sh) x.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .exp #[x.identity?] cpu cuda
 
@@ -326,14 +281,12 @@ def exp {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
 def sin {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
     {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.sin (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.sin (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Cuda.Tape.sin (t := t0) (s := sh) x.id)
-    s.cudaTape.set t1
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Cuda.Tape.sin (t := t0) (s := sh) x.id
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .sin #[x.identity?] cpu cuda
 
@@ -341,14 +294,12 @@ def sin {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
 def cos {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
     {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.cos (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.cos (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Cuda.Tape.cos (t := t0) (s := sh) x.id)
-    s.cudaTape.set t1
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Cuda.Tape.cos (t := t0) (s := sh) x.id
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .cos #[x.identity?] cpu cuda
 
@@ -356,15 +307,12 @@ def cos {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
 def log {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.log (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.log (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.log (t := t0) (s := sh) x.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .log #[x.identity?] cpu cuda
 
@@ -372,15 +320,12 @@ def log {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
 def inv {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.inv (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.inv (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.inv (t := t0) (s := sh) x.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .inv #[x.identity?] cpu cuda
 
@@ -395,16 +340,13 @@ def safeLog {α : Type} [TorchLean.Storage α] [TensorTransfer α] (s : EagerSes
   [Context α]
   {sh : Shape} (x : TensorRef α sh) (ε : α := Context.defaultEpsilon) : IO (TensorRef α sh) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.safeLog (t := t0) (s := sh) x.id (ε := ε))
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.safeLog (t := t0) (s := sh) x.id (ε := ε)
     pure { id := id }
   let cuda := do
     let epsF ← TensorTransfer.toFloat (α := α) ε
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.safeLog (t := t0) (s := sh) x.id epsF
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .safeLog #[x.identity?] cpu cuda
 

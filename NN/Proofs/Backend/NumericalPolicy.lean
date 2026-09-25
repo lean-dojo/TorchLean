@@ -12,9 +12,12 @@ public import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Contracts
 /-!
 # Numerical certificate policy guards
 
-Successful fixed-left transfers use the numerical policy of the actual selected node capsule.
-The lookup uses the first matching node id; the statements do not assume that ids are distinct.
-They establish the consumer's policy gate, not numerical correctness of a native implementation.
+Every fixed-left range transfer (matrix product, whole and axis sums and means, average pooling,
+mean squared error, and LayerNorm) succeeds only after the reduction guard accepts the node, and
+the guard reads the numerical policy of a selected capsule. The lookup takes the first kernel with
+a matching node id. `AcceptedGraphKernelPlan` does not require ids to be distinct, so a later
+kernel with the same id is not checked. The statements establish the consumer's policy gate, not
+numerical correctness of a native implementation.
 -/
 
 @[expose] public section
@@ -62,37 +65,95 @@ theorem requireFixedLeftReduction_selected_capsule
       · rw [heq]
         exact hreduction
 
+/-- A computation that starts with the fixed-left guard succeeds only if the guard succeeds. -/
+theorem requireFixedLeftReduction_of_bind_ok {β : Type} {plan : AcceptedGraphKernelPlan}
+    {node : Node} {rest : Unit → Except String β} {result : β}
+    (h : (requireFixedLeftReduction plan node >>= rest) = .ok result) :
+    requireFixedLeftReduction plan node = .ok () := by
+  cases hguard : requireFixedLeftReduction plan node with
+  | error err => rw [hguard] at h; cases h
+  | ok value => rfl
+
 /-- A successful matrix-product range transfer must have passed the fixed-left policy guard. -/
 theorem matmulContract_derive_requires_fixedLeft
     {context : NumericalRangeContext} {node : Node} {result : RangeTransferResult}
     (hderive : matmulContract.derive context node = .ok result) :
     requireFixedLeftReduction context.plan node = .ok () := by
   dsimp only [matmulContract] at hderive
-  generalize hparents : node.parents = parents at hderive
-  rcases parents with ⟨parents⟩
-  cases parents with
-  | nil =>
-      change Except.error _ = .ok result at hderive
-      cases hderive
-  | cons left parents =>
-      cases parents with
-      | nil =>
-          change Except.error _ = .ok result at hderive
-          cases hderive
-      | cons right parents =>
-          cases parents with
-          | nil =>
-              cases hguard : requireFixedLeftReduction context.plan node with
-              | error err =>
-                  rw [hguard] at hderive
-                  change Except.error err = .ok result at hderive
-                  cases hderive
-              | ok value =>
-                  cases value
-                  rfl
-          | cons next parents =>
-              change Except.error _ = .ok result at hderive
-              cases hderive
+  generalize node.parents = parents at hderive
+  rcases parents with ⟨_ | ⟨a, _ | ⟨b, _ | ⟨c, rest⟩⟩⟩⟩ <;>
+    first
+    | exact requireFixedLeftReduction_of_bind_ok hderive
+    | (change Except.error _ = .ok _ at hderive; cases hderive)
+
+
+/-- A successful whole-tensor sum transfer must have passed the fixed-left policy guard. -/
+theorem sumContract_derive_requires_fixedLeft
+    {context : NumericalRangeContext} {node : Node} {result : RangeTransferResult}
+    (hderive : sumContract.derive context node = .ok result) :
+    requireFixedLeftReduction context.plan node = .ok () := by
+  dsimp only [sumContract] at hderive
+  generalize node.parents = parents at hderive
+  rcases parents with ⟨_ | ⟨a, _ | ⟨b, _ | ⟨c, rest⟩⟩⟩⟩ <;>
+    first
+    | exact requireFixedLeftReduction_of_bind_ok hderive
+    | (change Except.error _ = .ok _ at hderive; cases hderive)
+
+
+/-- A successful mean-squared-error transfer must have passed the fixed-left policy guard. -/
+theorem mseContract_derive_requires_fixedLeft
+    {context : NumericalRangeContext} {node : Node} {result : RangeTransferResult}
+    (hderive : mseContract.derive context node = .ok result) :
+    requireFixedLeftReduction context.plan node = .ok () := by
+  dsimp only [mseContract] at hderive
+  generalize node.parents = parents at hderive
+  rcases parents with ⟨_ | ⟨a, _ | ⟨b, _ | ⟨c, rest⟩⟩⟩⟩ <;>
+    first
+    | exact requireFixedLeftReduction_of_bind_ok hderive
+    | (change Except.error _ = .ok _ at hderive; cases hderive)
+
+
+/-- A successful average-pooling transfer must have passed the fixed-left policy guard. -/
+theorem averagePoolContract_derive_requires_fixedLeft (padded : Bool)
+    {context : NumericalRangeContext} {node : Node} {result : RangeTransferResult}
+    (hderive : (averagePoolContract padded).derive context node = .ok result) :
+    requireFixedLeftReduction context.plan node = .ok () := by
+  dsimp only [averagePoolContract] at hderive
+  generalize node.kind = kind at hderive
+  generalize node.parents = parents at hderive
+  rcases parents with ⟨_ | ⟨a, _ | ⟨b, rest⟩⟩⟩ <;> cases kind <;>
+    first
+    | exact requireFixedLeftReduction_of_bind_ok hderive
+    | (change Except.error _ = .ok _ at hderive; cases hderive)
+
+
+/-- A successful axis sum or mean transfer must have passed the fixed-left policy guard. -/
+theorem axisReductionContract_derive_requires_fixedLeft (mean : Bool)
+    {context : NumericalRangeContext} {node : Node} {result : RangeTransferResult}
+    (hderive : (axisReductionContract mean).derive context node = .ok result) :
+    requireFixedLeftReduction context.plan node = .ok () := by
+  dsimp only [axisReductionContract] at hderive
+  generalize node.kind = kind at hderive
+  generalize node.parents = parents at hderive
+  rcases parents with ⟨_ | ⟨a, _ | ⟨b, rest⟩⟩⟩ <;> cases kind <;>
+    first
+    | exact requireFixedLeftReduction_of_bind_ok hderive
+    | (change Except.error _ = .ok _ at hderive; cases hderive)
+
+
+/-- A successful LayerNorm transfer must have passed the fixed-left policy guard. -/
+theorem layerNormContract_derive_requires_fixedLeft
+    {context : NumericalRangeContext} {node : Node} {result : RangeTransferResult}
+    (hderive : layerNormContract.derive context node = .ok result) :
+    requireFixedLeftReduction context.plan node = .ok () := by
+  dsimp only [layerNormContract] at hderive
+  generalize node.kind = kind at hderive
+  generalize node.parents = parents at hderive
+  rcases parents with ⟨_ | ⟨a, _ | ⟨b, rest⟩⟩⟩ <;> cases kind <;>
+    first
+    | exact requireFixedLeftReduction_of_bind_ok hderive
+    | (change Except.error _ = .ok _ at hderive; cases hderive)
+
 
 /-- The matrix-product range consumer inherits the selected capsule's accepted fixed-left policy. -/
 theorem matmulContract_derive_selected_capsule

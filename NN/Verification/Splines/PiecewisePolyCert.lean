@@ -66,39 +66,6 @@ open Spec TorchLean
 ## Utilities: exact rationals in JSON
 -/
 
-/--
-Parse a rational in the format emitted by TorchLean’s Arb helpers:
-
-- integer: `"5"`, `"-3"`
-- fraction: `"5/2"`, `"-7/10"`
-
-We avoid JSON numbers here because they are stored as `Scientific` and are not guaranteed to
-round-trip exactly for large integers.
--/
-def parseRatString (s : String) : Except String Rat := do
-  let s := s.trimAscii.toString
-  if s.isEmpty then
-    throw "empty rational string"
-  match s.splitOn "/" with
-  | [numStr] =>
-      match numStr.toInt? with
-      | some n => pure (Rat.ofInt n)
-      | none => throw s!"invalid integer rational: '{s}'"
-  | [numStr, denStr] =>
-      let n ←
-        match numStr.toInt? with
-        | some n => pure n
-        | none => throw s!"invalid numerator: '{numStr}'"
-      let d ←
-        match denStr.toNat? with
-        | some d => pure d
-        | none => throw s!"invalid denominator (expected Nat): '{denStr}'"
-      if d = 0 then
-        throw "invalid rational: denominator is 0"
-      pure (Rat.ofInt n / Rat.ofInt (Int.ofNat d))
-  | _ =>
-      throw s!"invalid rational (expected n or n/d): '{s}'"
-
 /-- Parse a `Rat` from a JSON string field with context. -/
 def parseRat (ctx : String) (j : Json) : IO Rat := do
   let kind : String :=

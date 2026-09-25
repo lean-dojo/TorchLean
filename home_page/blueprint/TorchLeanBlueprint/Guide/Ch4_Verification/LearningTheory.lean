@@ -679,10 +679,10 @@ The same machinery composes to a network, in
 ```
 
 The conclusion is existential, so using it in a certificate means obtaining a witness `L`
-and its Lipschitz proof. The constant it is built
-from is the product of the two Frobenius norms, and the proof shows that product works, but the
-statement does not export the formula. The nonzero-weight hypotheses are there because the proof
-produces a strictly positive constant, so the product-of-norms witness is positive. The margin lemma
+and its Lipschitz proof. The witness is the product of the two Frobenius norms, and
+`mlp_lipschitz_frobenius` in the same file states the inequality with that product written out
+and without the nonzero-weight hypotheses. Those hypotheses are there only because the existential
+form promises a strictly positive constant. The margin lemma
 itself only requires $`L\ge0`;
 its separate $`m>0` condition does not force $`L>0`. The ReLU in the middle is handled by
 `relu_activation_lipschitz`, which is the sharp
@@ -702,8 +702,9 @@ a proof that the number is positive, and a proof of the Lipschitz inequality. Th
 different pieces of information. The inequality can then be applied to any two inputs of shape
 `[inDim]`; the hidden dimension constrains the two layer types but disappears from the final
 input/output predicate. If a deployment needs a numerical radius, the proof must additionally
-relate the chosen witness to a concrete bound that can be evaluated or certified. Unpacking an
-existential alone does not print a decimal value for it.
+relate the chosen witness to a concrete bound that can be evaluated or certified, which is what
+the explicit `mlp_lipschitz_frobenius` form provides. Unpacking an existential alone does not
+print a decimal value for it.
 
 ## Runtime Margin Reports
 
@@ -735,8 +736,8 @@ The {src "NN/MLTheory/LearningTheory/Stability/Core.lean"}[algorithmic stability
 central representation choice: a dataset of size `n` is a `TorchLean.Tensor Z [n]`, so the sample
 size is part of the type rather than a list length that has to be remembered separately. The
 definitions on top of it are coordinate access, `replaceAt` and `removeAt`, deterministic learning
-maps `Dataset n Z → H`, real-valued losses, empirical error, true population error under a
-probability measure, and the standard stability predicates.
+maps `Dataset n Z → H`, real-valued losses, empirical error, i.i.d. sampling of datasets, and
+uniform replace-one stability (`UniformStableReplace`).
 
 For a dataset containing three examples, replacement preserves the size and removal reduces it:
 
@@ -1064,9 +1065,7 @@ Read these predicate names with their actual hypotheses. `IsInputToStateStable` 
 an inequality with supplied comparison functions but does not impose the usual class-K/class-KL
 conditions, and its input bound uses indices strictly before the current time. The real
 `stabilityMargin` uses a supremum; without nonemptiness and boundedness assumptions it need not
-represent an attained or usable radius. Expected learning-stability definitions also use total
-Bochner integrals, so their interpretation as finite probabilistic expectations needs the relevant
-integrability hypotheses.
+represent an attained or usable radius.
 
 This vocabulary is here because neural-network learning theory is not limited to static supervised
 learning: recurrent models, samplers, controllers, RL policies interacting with state, and learned

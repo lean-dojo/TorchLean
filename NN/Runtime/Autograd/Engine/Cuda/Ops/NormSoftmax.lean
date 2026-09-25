@@ -38,6 +38,7 @@ tensors remain internal to the primitive.
 `epsilon` is added to the variance before taking the square root. Backward reuses the normalized
 input and inverse standard deviation saved by forward, so both passes use the caller's value.
 -/
+@[inline]
 def layerNorm {seqLen embedDim : Nat} (h_seq_pos : seqLen > 0) (h_embed_pos : embedDim > 0)
   (t : Tape) (xId gammaId betaId : Nat)
   (epsilon : Float := TorchLean.normalizationEpsilon) : Result (Tape × Nat) := do
@@ -78,7 +79,7 @@ Batch normalization over every axis after the channel axis.
 The spatial shape is folded to one contiguous dimension for the CUDA reduction. This is a view of
 the storage layout, not a rank-specific implementation.
 -/
-def batchNorm {channels : Nat} {spatial : Shape}
+@[inline] def batchNorm {channels : Nat} {spatial : Shape}
     (hWellFormed : (Shape.dim channels spatial).wellFormed)
     (t : Tape) (xId gammaId betaId : Nat)
     (epsilon : Float := TorchLean.normalizationEpsilon) : Result (Tape × Nat) := do
@@ -167,7 +168,7 @@ This covers:
 -/
 
 /-- Record a last-axis softmax on the tape, returning the extended tape and the new node id. -/
-def softmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
+@[inline] def softmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   -- With no coordinates, both the result and its cotangent have the same empty shape.
   if Shape.size s == 0 then
     return ← unary t "softmax" xId s s Buffer.copy (fun _ gradient => Buffer.copy gradient)
@@ -203,7 +204,7 @@ def softmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
       pure (t.addNode node)
 
 /-- Stable log-softmax along the last axis, implemented directly on CUDA buffers. -/
-def logSoftmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
+@[inline] def logSoftmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   if Shape.size s == 0 then
     return ← unary t "log_softmax" xId s s Buffer.copy (fun _ gradient => Buffer.copy gradient)
   match s with

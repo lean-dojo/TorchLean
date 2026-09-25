@@ -14,7 +14,12 @@ PINN/scientific ML checks, ODE and spline certificates, and graph-level IBP/CROW
   to the verifier graph IR, and the `Proved/` subtree of theorem-backed lowering and evaluator
   fragments for supported forward programs.
 - `Cert/`: JSON certificate formats and executable recomputation checkers, including IBP, CROWN,
-  alpha-CROWN, and alpha-beta-CROWN-style local node artifacts.
+  alpha-CROWN, and alpha-beta-CROWN-style local node artifacts. The alpha-beta-CROWN node format
+  adds ReLU phases that must already follow from IBP, so it replays alpha-CROWN bounds; it has no
+  beta multipliers or branch splits. `Cert/FiniteArtifact` checks binary32 affine bounds for
+  linear/ReLU chains against exact rational transfers, and `FiniteArtifact.accepts_graph_sound`
+  proves the requested output inequalities for the original graph under the exact real values of
+  its binary32 parameters. It is a library API with no `lake exe verify` command.
 - `Monotonicity`: exact nonnegative-weight certificates for linear/ReLU chains, with a theorem
   from JSON text acceptance to global componentwise monotonicity over real inputs.
 - `Robustness/`: dataset-backed robustness workflows, including certified accuracy for small
@@ -107,8 +112,8 @@ and their relation to the graph soundness theorems.
 
 ### Exact CROWN output queries
 
-Import `NN.Verification.Cert.CROWNQuery.Json` and call
-`NN.Verification.CROWNQuery.acceptsText` on a document such as:
+Run `lake exe verify -- crown-query <query.json>`, or import `NN.Verification.Cert.CROWNQuery.Json`
+and call `NN.Verification.CROWNQuery.acceptsText`, on a document such as:
 
 ```json
 {
@@ -195,7 +200,8 @@ lake exe verify -- torchlean-mlp-workflow
 These commands lower or build small TorchLean models, attach input regions, and run native bound
 passes. The MLP workflow trains a classifier and calls
 `trained.verify center (radius := 0.10) (norm := .inf) (property := .topLabel 0)`; its graph and
-Alpha-Beta-CROWN state stay internal. Use these commands when changing graph lowering, bound
+bound state stay internal. The default algorithm, `.alphaBetaCrown`, is fixed-relaxation
+alpha-CROWN with ReLU phases inferred from IBP; it has no beta multipliers or branch splits. Use these commands when changing graph lowering, bound
 propagation, typed graph execution, or the verification API.
 
 Run a compact PINN certificate and residual-expression check:
@@ -213,11 +219,16 @@ lake exe verify -- pinn-dataset-check
 
 Use `--strict` on diagnostic commands when misses should turn into command failure.
 
-Run a compact alpha-beta-CROWN leaf certificate check:
+Run a compact consistency check of a converted alpha-beta-CROWN leaf artifact:
 
 ```bash
 lake exe verify -- abcrown-leaf
 ```
+
+The checker confirms that the leaf boxes lie inside the root and together cover it, and that each
+leaf's reported lower bound clears its threshold. The lower bounds are the producer's numbers;
+TorchLean does not recompute them, so a pass means the artifact is consistent, not that the
+network is verified.
 
 Run compact LiRPA-style fixture checks:
 
@@ -229,8 +240,12 @@ lake exe verify -- lirpa-gru
 lake exe verify -- lirpa-encoder
 ```
 
-These fixtures are small JSON artifacts for supported network fragments. They exercise the artifact
-parser and replay predicate without depending on a live external verifier.
+These fixtures are small JSON artifacts for supported network fragments. They are replay fixtures:
+the Python exporters in `scripts/verification/lirpa` reproduce Lean's own host-Float IBP pass
+operation for operation, so each certificate matches Lean's recomputation bit for bit and carries
+no independent evidence. A bound computed by auto_LiRPA itself would generally not pass. The checks
+exercise the artifact parser and replay predicate without depending on a live external verifier,
+and they rely on host `Float` arithmetic; no theorem covers them.
 
 The VNN-COMP-style MNIST workflow requires externally prepared weights and suite files; they are
 not bundled. Follow [the artifact setup](../Examples/Verification/VNNComp/README.md), then run:
@@ -248,10 +263,17 @@ lake exe verify -- camera-box3d-cert
 ```
 
 `BoxCameraCert.pointCount` fixes the number of supplied points; its tensor has shape
-`[pointCount, 3]`. The JSON parser infers the count from complete triples in `corners3d`, or
-checks it against an explicit `point_count`. The default count in the Lean record is eight.
-Acceptance checks projection, positive depth, and image/box containment for each supplied point.
-It does not establish that those points form a cuboid or correspond to an object in an image.
+`[pointCount, 3]`. A `torchlean.camera.box3d.v1` artifact carries exactly eight corners, with
+`point_count` omitted or set to `8`. A `torchlean.camera.box3d.v2` artifact must declare a positive
+`point_count` that matches the number of triples in `corners3d`. The parser rejects an artifact
+with no points in either format. Acceptance checks projection, positive depth, and image/box
+containment for each supplied point. It does not establish that those points form a cuboid or
+correspond to an object in an image.
+
+The checker runs on `BoxCameraCert Float`: the projection and every comparison use host binary64
+with round-to-nearest. The soundness theorems are generic in the scalar type, so for `Float` they
+say that the accepted Boolean checks held for the rounded values. Nothing is proved about the
+exact real projection; the artifact's `tol` is the only slack for rounding.
 
 Run the spline certificate checker:
 

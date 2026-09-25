@@ -24,8 +24,7 @@ Low-level stress coverage that goes beyond the small eager-tape tests:
 - large-buffer elementwise/reduction checks on direct `Cuda.Buffer` ops,
 - extra ATen matmul reference parity checks on rectangular inputs.
 
-CPU parity builds still run the backend-independent checks. Native memory/accounting/OOM probes
-explicitly skip CPU parity builds; only the LibTorch CUDA build exercises those contracts.
+Only the LibTorch CUDA build runs these checks.
 -/
 
 @[expose] public section
@@ -52,7 +51,7 @@ def buildFloatArray (n : Nat) (f : Nat → Float) : FloatArray :=
 
 def expectedUniformValue (key : UInt64) (i : Nat) : Float :=
   let z := Spec.Random.splitmix64 (key + UInt64.ofNat i)
-  -- This is the cross-backend contract: native CUDA, the CPU stub, and pure Lean all use
+  -- This is the cross-backend contract: the LibTorch backend and pure Lean both use
   -- `splitmix64(key + i) mod 2^32`, i.e. the low 32 bits.
   let u : Nat := z.toUInt32.toNat
   (u : Float) / (((2 : Nat) ^ 32 : Nat) : Float)
@@ -109,8 +108,8 @@ def runRngStress : IO Unit := do
   let nSmall : Nat := 64
   let nLarge : Nat := 4096
 
-  -- Exact prefix checks catch low-bits versus high-bits SplitMix64 mismatches between CPU-stub and
-  -- CUDA seeded buffers.
+  -- Exact prefix checks catch low-bits versus high-bits SplitMix64 mismatches between the Lean
+  -- reference and CUDA seeded buffers.
   let uSmall := Buffer.toFloatArray (← Buffer.randUniformIO (UInt32.ofNat nSmall) key)
   let uExpected := expectedUniformArray nSmall key
   assertFloatArrayApprox "randUniform exact prefix" uSmall uExpected (tol := 1e-7)
@@ -438,11 +437,11 @@ def runLargeBufferStressBody : IO Unit := do
     match Buffer.runtimeStatus with
     | .nativeAvailable =>
         pure (some (← LibTorch.getDeterministic, ← LibTorch.getCuDNNBenchmark))
-    | .cpuStub => pure none
+    | .notLinked => pure none
     | .nativeUnavailable =>
         throw <| IO.userError "large buffer stress requires a usable CUDA device"
-  -- CPU startup policy is checked by the subprocess runner. Native strict determinism is
-  -- requested through LibTorch; the accuracy assertions retain their explicit tolerances.
+  -- Strict determinism is requested through LibTorch; the accuracy assertions keep their
+  -- explicit tolerances.
   try
     if previousSettings.isSome then
       LibTorch.setDeterministic true
@@ -466,37 +465,10 @@ def runLargeBufferStressBody : IO Unit := do
     throw <| IO.userError s!"reduceMean empty size: expected 1, got {emptyMean.size}"
   assertFloatIsNaN "reduceMean empty result" (emptyMean.get! 0)
 
-/--
-CPU parity exercises its deterministic reduction path in a fresh process with an explicit startup
-policy. Native execution uses LibTorch controls; CPU stubs do not claim to support those controls.
--/
+/-- Large-buffer pointwise and reduction checks under strict LibTorch determinism. -/
 def runLargeBufferStress : IO Unit := do
   match Buffer.runtimeStatus with
-  | .cpuStub =>
-      if (← IO.getEnv "TORCHLEAN_CPU_REDUCTION_PROBE") == some "1" then
-        -- Float32 left-to-right accumulation loses the middle 1; the CPU deterministic
-        -- accumulator retains it. This checks the active path rather than just the environment.
-        let input ← Buffer.ofFloatArrayIO (FloatArray.mk #[100000000.0, 1.0, -100000000.0])
-        let result := Buffer.reduceSum input
-        assertFloatArrayEq "CPU deterministic reduction discriminator"
-          (← Buffer.toFloatArrayIO result) (FloatArray.mk #[1.0])
-        discard <| Buffer.releaseIO result
-        discard <| Buffer.releaseIO input
-        IO.println "  CPU deterministic reduction coverage; LibTorch controls unavailable"
-        runLargeBufferStressBody
-      else
-        let self ← IO.appPath
-        let result ← IO.Process.output {
-          cmd := self.toString
-          args := #[]
-          env := #[("TORCHLEAN_CPU_REDUCTION_PROBE", some "1"),
-            ("TORCHLEAN_CUDA_DETERMINISTIC_REDUCTIONS", some "1")]
-        }
-        if result.exitCode != 0 then
-          throw <| IO.userError
-            s!"CPU deterministic reduction probe failed (exit {result.exitCode}):\n\
-              {result.stdout}\n{result.stderr}"
-        IO.print result.stdout
+  | .notLinked => IO.println "  skipped: LibTorch is not linked"
   | .nativeAvailable => runLargeBufferStressBody
   | .nativeUnavailable => Buffer.requireNativeRuntime
 
@@ -781,13 +753,13 @@ other tests. No assertion depends on an exact cached block size or amount return
 def runMemoryTests : IO Unit := do
   IO.println "== LibTorch memory accounting and OOM (isolated processes) =="
   match Buffer.runtimeStatus with
-  | .cpuStub =>
+  | .notLinked =>
       let stats ← Buffer.allocatorStats
       if stats.allocatedBytes != 0 || stats.reservedBytes != 0 ||
           stats.peakAllocatedBytes != 0 || stats.peakReservedBytes != 0 ||
           stats.deviceFreeBytes != 0 || stats.deviceTotalBytes != 0 then
-        throw <| IO.userError "CPU parity build reported native CUDA memory accounting"
-      IO.println "  skipped: CPU parity build has no ATen CUDA memory/accounting/OOM coverage"
+        throw <| IO.userError "build without LibTorch reported native CUDA memory accounting"
+      IO.println "  skipped: LibTorch is not linked"
       return
   | .nativeUnavailable =>
       throw <| IO.userError "LibTorch memory tests require a usable CUDA device"

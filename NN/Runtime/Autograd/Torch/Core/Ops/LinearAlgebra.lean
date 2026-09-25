@@ -44,11 +44,9 @@ def matmul {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   (b : TensorRef α (batchB.concat [n, p])) :
   IO (TensorRef α (batch.concat [m, p])) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ←
-      okOrThrow (Runtime.Autograd.Tape.matmul (t := t0) (m := m) (n := n) (p := p) a.id b.id
-        (batchA := batchA) (batchB := batchB) (batch := batch))
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.matmul (t := t0) (m := m) (n := n) (p := p) a.id b.id
+        (batchA := batchA) (batchB := batchB) (batch := batch)
     pure { id := id }
   let cuda := do
     let t0 ← s.cudaTape.get
@@ -83,17 +81,13 @@ def concatLeadingAxis {α : Type} [TorchLean.Storage α] (s : EagerSession α)
   (b : TensorRef α (.dim m sh)) :
   IO (TensorRef α (.dim (n + m) sh)) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
       (Runtime.Autograd.Tape.concatLeadingAxis (α := α) (t := t0) (n := n) (m := m) (s := sh)
         a.id b.id)
-    s.tape.set t1
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.concatLeadingAxis (t := t0) (n := n) (m := m) (s := sh) a.id b.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .concat #[a.identity?, b.identity?] cpu cuda
 
@@ -103,17 +97,13 @@ def sliceLeadingAxisRange {α : Type} [TorchLean.Storage α] (s : EagerSession �
   (x : TensorRef α (.dim n sh)) (start len : Nat) (h : start + len ≤ n) :
   IO (TensorRef α (.dim len sh)) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
       (Runtime.Autograd.Tape.sliceLeadingAxisRange (α := α) (t := t0) (n := n) (s := sh)
         x.id start len h)
-    s.tape.set t1
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.sliceLeadingAxisRange (t := t0) (n := n) (s := sh) x.id start len h
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .slice #[x.identity?] cpu cuda
 

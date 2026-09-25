@@ -28,7 +28,6 @@ interpretation, and allowed operations are part of the object being specified.
 - `Tensor/Constructors.lean`: total builders, including checked flat-list and flat-array
   boundaries. `Tensor.full`, `Tensor.zeros`, and `Tensor.ones` are the canonical constant
   constructors.
-- `TensorGrad.lean`: gradient-related specs, including clipping helpers.
 - `Complex.lean`: small complex-number support used by FFT/FNO-style specifications.
 - `Random.lean`: the deterministic `Spec.Random` helpers (`splitmix64`, `keyOf`, `nextSeed`,
   `sampleNat`, uniform sampling, dropout keep bits) shared by the spec layer and the runtime.

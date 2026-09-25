@@ -38,16 +38,12 @@ def select {α : Type} [TorchLean.Storage α] (session : EagerSession α) [Zero 
     (x : TensorRef α shape) (index : Fin (Shape.axisSize shape axis)) :
     IO (TensorRef α (shape.eraseAxis axis)) := do
   let cpu := do
-    let tape ← session.tape.get
-    let (tape', id) ← okOrThrow <|
+    let id ← session.recordCpu fun tape => keepTapeOnError tape <|
       Runtime.Autograd.Tape.select (t := tape) x.id axis index
-    session.tape.set tape'
     pure { id }
   let cuda := do
-    let tape ← session.cudaTape.get
-    let (tape', id) ← okOrThrow <|
+    let id ← session.recordCuda fun tape => keepTapeOnError tape <|
       Runtime.Autograd.Cuda.Tape.select (t := tape) x.id axis index
-    session.cudaTape.set tape'
     pure (some { id := id })
   dispatchCudaOpt (α := α) session .gather #[x.identity?] cpu cuda
 
@@ -58,16 +54,12 @@ def indexSelect {α : Type} [TorchLean.Storage α] (session : EagerSession α) [
     (indices : Tensor (Fin (Shape.axisSize shape axis)) [count]) :
     IO (TensorRef α (shape.replaceAxis axis count)) := do
   let cpu := do
-    let tape ← session.tape.get
-    let (tape', id) ← okOrThrow <|
+    let id ← session.recordCpu fun tape => keepTapeOnError tape <|
       Runtime.Autograd.Tape.indexSelect (t := tape) x.id axis count indices
-    session.tape.set tape'
     pure { id }
   let cuda := do
-    let tape ← session.cudaTape.get
-    let (tape', id) ← okOrThrow <|
+    let id ← session.recordCuda fun tape => keepTapeOnError tape <|
       Runtime.Autograd.Cuda.Tape.indexSelect (t := tape) x.id axis count indices
-    session.cudaTape.set tape'
     pure (some { id := id })
   dispatchCudaOpt (α := α) session .gather #[x.identity?] cpu cuda
 
@@ -78,16 +70,12 @@ def scatterAdd {α : Type} [TorchLean.Storage α] (session : EagerSession α) [A
     (source : TensorRef α (shape.replaceAxis axis count))
     (indices : Tensor (Fin (Shape.axisSize shape axis)) [count]) : IO (TensorRef α shape) := do
   let cpu := do
-    let tape ← session.tape.get
-    let (tape', id) ← okOrThrow <|
+    let id ← session.recordCpu fun tape => keepTapeOnError tape <|
       Runtime.Autograd.Tape.scatterAdd (t := tape) base.id source.id axis count indices
-    session.tape.set tape'
     pure { id }
   let cuda := do
-    let tape ← session.cudaTape.get
-    let (tape', id) ← okOrThrow <|
+    let id ← session.recordCuda fun tape => keepTapeOnError tape <|
       Runtime.Autograd.Cuda.Tape.scatterAdd (t := tape) base.id source.id axis count indices
-    session.cudaTape.set tape'
     pure (some { id := id })
   dispatchCudaOpt (α := α) session .scatterAdd #[base.identity?, source.identity?] cpu cuda
 

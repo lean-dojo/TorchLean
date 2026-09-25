@@ -39,6 +39,10 @@ scoped instance instBoundOpsRat : BoundOps ℚ where
 noncomputable scoped instance instLawfulBoundOpsRat : LawfulBoundOps ℚ where
   toReal := fun q => (q : ℝ)
   lt_iff a b := by exact_mod_cast (Iff.rfl : a < b ↔ a < b)
+  toReal_zero := Rat.cast_zero
+  toReal_one := Rat.cast_one
+  toReal_max a b := Rat.cast_max a b
+  toReal_eq_of_beq h := by rw [beq_iff_eq.mp h]
   addDown_le a b := by simp [BoundOps.addDown]
   le_addUp a b := by simp [BoundOps.addUp]
   subDown_le a b := by simp [BoundOps.subDown]

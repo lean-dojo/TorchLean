@@ -28,6 +28,12 @@ relaxations for unstable neurons.
 
 Trust boundary: β is additional *evidence* verified against the trusted-for-this-theorem IBP bounds.
 
+Because a phase is accepted only when the IBP interval already proves it, the phases add no
+information beyond IBP. Plain CROWN already uses slope 1 or 0 on neurons that IBP proves stable,
+so this pass computes the same bounds as α-CROWN with the same slopes. There are no Lagrangian β
+multipliers and no branch splits. The name follows the certificate format, not the strength of the
+check.
+
 ## Background / citations
 
 This checker is kept narrow and certificate-friendly. Conceptually, β-phase
@@ -40,9 +46,9 @@ provably active/inactive ones.
 - β-CROWN (splitting / phase refinement): Wang et al., *Beta-CROWN: Efficient Bound Propagation
   with Provable Guarantees*, NeurIPS 2021 (and follow-up work).
 
-We do **not** attempt to formalize the full β-CROWN search/optimization loop here; the checker only
-verifies that the provided β phases are consistent with IBP and then uses the corresponding exact
-ReLU transfer rule (slope $0$ or $1$).
+We do **not** formalize the β-CROWN search or optimization loop here. The checker only verifies that
+the provided β phases are consistent with IBP and then uses the corresponding exact ReLU transfer
+rule (slope $0$ or $1$).
 -/
 
 @[expose] public section
@@ -133,19 +139,13 @@ def phaseRelaxLowerScalar (l u a : α) (ph : ReLUPhase) :
   | .unstable => alphaRelaxLowerScalar (α := α) l u a
 
 /--
-Opaque wrapper around `Array.get!` for β-phase vectors.
+Read the β phase of neuron `i`, with `0` (unconstrained) past the end of the array.
 
-Why this exists:
-* The executable definition `phaseRelaxVec?` indexes `phases` with `get!` after a
-  length check, to avoid threading bounds proofs through the code.
-* During proofs, `simp` can sometimes rewrite `get!` into the safe indexing `phases[i]` (which
-  carries a proof argument). Those proof terms are definitional artifacts and can make routine
-  simplification depend on irrelevant proof objects.
-
-Keeping the indexing step opaque prevents `simp` from introducing proof-carrying indices, while
-preserving executability.
+`phaseRelaxVec?` checks the array length before reading, so the default is never used there. The
+total read keeps the executable code free of bounds proofs, and the definition reduces in the
+kernel.
 -/
-opaque betaAt (phases : Array Int) (i : Nat) : Int := phases[i]!
+def betaAt (phases : Array Int) (i : Nat) : Int := phases.getD i 0
 
 /--
 Vectorized construction of ReLU relaxations under β-phase constraints.
@@ -308,10 +308,11 @@ def inferredBeta
     inferredBetaForNode? (α := α) nodes ibp id.val
 
 /--
-Run the fixed-relaxation α/β-CROWN graph pass.
+Run the fixed-relaxation α-CROWN graph pass with IBP phase annotations.
 
 Stable ReLU phases come from IBP and are checked again by `alphaBetaCrownStepNode?`. Unstable
-neurons use the default α-CROWN lower relaxation.
+neurons use the default α-CROWN lower relaxation. No β multipliers are optimized and no neuron is
+split.
 -/
 def runAlphaBetaCROWN
     (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)

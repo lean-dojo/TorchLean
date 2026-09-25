@@ -1104,14 +1104,18 @@ open Proofs.RL.FiniteStochastic Spec.RL.FiniteStochastic in
             mdp.discount ^ k * valueSupDist v vStar
 ```
 
-$`k` applications of the operator shrink the distance to a fixed point by $`\gamma^k`. The companion
-theorems prove that such a fixed point is unique for both operators, and related results appear
-for deterministic and stochastic settings: first for deterministic finite MDPs in
-{src "NN/Proofs/RL/MDP.lean"}[`NN.Proofs.RL.MDP`],
-once for stochastic ones in
-{src "NN/Proofs/RL/FiniteStochasticMDP.lean"}[`FiniteStochasticMDP`],
-and once more for general measurable state spaces in
-{src "NN/Proofs/RL/MarkovMDP.lean"}[`NN.Proofs.RL.MarkovMDP`].
+$`k` applications of the operator shrink the distance to a fixed point by $`\gamma^k`. The fixed
+point is not an extra assumption: `bellmanOptimality_existsUnique_fixedPoint` shows that exactly one
+exists, by Banach's fixed-point theorem on `Fin n → ℝ` with its sup metric, and
+`bellmanOptimality_valueIteration_tendsto` shows that value iteration reaches it from any starting
+table. The same holds for policy evaluation. Deterministic MDPs are handled in
+{src "NN/Proofs/RL/MDP.lean"}[`NN.Proofs.RL.MDP`]
+and stochastic ones in
+{src "NN/Proofs/RL/FiniteStochasticMDP.lean"}[`FiniteStochasticMDP`].
+For general measurable state spaces,
+{src "NN/Proofs/RL/MarkovMDP.lean"}[`NN.Proofs.RL.MarkovMDP`]
+proves the same contraction and gets a unique bounded measurable fixed point once the rewards are
+bounded and the policy is measurable.
 
 The sup distance asks for the largest error over all states. A stochastic transition row
 averages successor errors using nonnegative weights that sum to one, so this averaging cannot

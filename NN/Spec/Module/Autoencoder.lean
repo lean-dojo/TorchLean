@@ -35,7 +35,7 @@ def autoencoder {inputDim hiddenDim : Nat} (m : AutoencoderSpec α inputDim hidd
     let activation :=
       match m.activation with
       | .relu => "nn.ReLU()"
-      | .gelu => "nn.GELU()"
+      | .gelu => "nn.GELU(approximate='tanh')"
       | .silu => "nn.SiLU()"
       | .tanh => "nn.Tanh()"
       | .sigmoid => "nn.Sigmoid()"

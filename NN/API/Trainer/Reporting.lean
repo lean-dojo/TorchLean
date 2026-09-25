@@ -77,13 +77,6 @@ def Curve.endpoints (curve : Curve) (context : String := "training curve") : IO 
   | some endpoints => pure endpoints
   | none => throw <| IO.userError s!"{context}: empty training curve"
 
-/-- Print loss before and after the updates represented by a scalar training curve. -/
-def Curve.printLossSummary (curve : Curve) (steps : Nat) : IO Unit := do
-  let endpoints ← TorchLean.Training.Curve.endpoints curve "Curve.printLossSummary"
-  let lastStep := if curve.steps.isEmpty then steps else endpoints.lastStep
-  IO.println
-    s!"  steps={lastStep} loss={endpoints.firstValue} -> {endpoints.lastValue}"
-
 /-- Write a scalar curve to an enabled or disabled training-log destination. -/
 def Curve.writeLog (curve : Curve) (destination : LogDestination) (title : String)
     (seriesName : String := "loss") (notes : Array String := #[])

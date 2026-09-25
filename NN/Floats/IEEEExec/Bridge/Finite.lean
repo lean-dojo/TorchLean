@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.FP32.Core
+public import NN.Floats.FP32.Notation
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured
 public import FloatLib.Floats.Formats.IEEE754.Native
 public import FloatLib.Floats.ExecFloat.Proof.Arithmetic
@@ -138,14 +138,14 @@ private theorem model_finite_operands_of_mul (x y : Binary32Model)
             · simp only [hoverflow, Bool.false_eq_true] at hfin
           · simp only [hinvalid, Bool.false_eq_true] at hfin
 
-/-- Nearest-even real rounding with binary32 gradual underflow and no upper exponent bound. -/
-noncomputable abbrev fp32Round (x : ℝ) : ℝ :=
-  round (β := binaryRadix) (fexp := fexp32) rnd32 x
+/-- Nearest-even real rounding with binary32 gradual underflow and no upper exponent bound.
+This is `round32` under the name used by the executable bridge. -/
+noncomputable abbrev fp32Round (x : ℝ) : ℝ := round32 x
 
 /-- FloatLib's binary32 real rounding is TorchLean's gradual-underflow rounding grid. -/
 theorem roundAt_binary32 (x : ℝ) :
     Model.roundAt FloatFormat.binary32 x = fp32Round x := by
-  unfold Model.roundAt Model.fexpOf fp32Round fexp32 rnd32
+  unfold Model.roundAt Model.fexpOf fp32Round round32 fexp32 rnd32
   rfl
 
 /-- A finite executable sum is one binary32 rounding of the exact real sum. -/

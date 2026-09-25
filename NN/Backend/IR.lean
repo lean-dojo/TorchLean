@@ -103,14 +103,16 @@ def capsuleNames (p : GraphKernelPlan) : Array String :=
 
 end GraphKernelPlan
 
-/-- Plan a single IR node when it corresponds to runtime work. -/
-def planNode? (policy : KernelPolicy) (availability : Availability)
-    (registry : Array KernelCapsule) (n : NN.IR.Node) :
+/-- Plan a single IR node when it corresponds to runtime work.
+
+`available` is the capsule registry already restricted by `Availability.filterCapsules`, so a graph
+planner filters once rather than once per node. -/
+def planNode? (policy : KernelPolicy) (available : Array KernelCapsule) (n : NN.IR.Node) :
     Except String (Option PlannedNodeKernel) := do
   match nodeOp? n with
   | none => pure none
   | some op =>
-      let k ← planOp policy (availability.filterCapsules registry) op
+      let k ← planOp policy available op
       pure <| some
         { nodeId := n.id
           kind := n.kind
@@ -120,9 +122,10 @@ def planNode? (policy : KernelPolicy) (availability : Availability)
 /-- Plan every runtime-relevant node in graph order. -/
 def planGraph (policy : KernelPolicy) (availability : Availability)
     (registry : Array KernelCapsule) (g : NN.IR.Graph) : Except String GraphKernelPlan := do
+  let available := availability.filterCapsules registry
   let mut kernels : Array PlannedNodeKernel := #[]
   for n in g.nodes do
-    match (← planNode? policy availability registry n) with
+    match (← planNode? policy available n) with
     | none => pure ()
     | some k => kernels := kernels.push k
   pure { kernels }

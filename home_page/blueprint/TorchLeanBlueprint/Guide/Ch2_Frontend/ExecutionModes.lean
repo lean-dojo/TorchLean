@@ -646,8 +646,8 @@ bridge widens host `Float32` elements to `Float` staging values before packing t
 float32 buffer. This preserves finite binary32 values but adds transfer work. A capsule identifies
 the trusted native provider; it does not prove the kernel, compiler, driver, or device correct.
 
-A build without CUDA support rejects the request. CPU parity stubs allow the repository to build
-and test without a GPU, but do not satisfy a request for CUDA execution.
+A build without CUDA support rejects the request. The default build still compiles and tests
+everything else without a GPU.
 
 A common seed fixes initialization and the example sequence; it does not fix the order in which
 a backend adds partial sums. Updates can carry numerical differences into later steps, and a ReLU
@@ -1164,8 +1164,8 @@ error: torch eager session: CUDA was requested and
 this is a CUDA build, but no usable CUDA device is visible
 ```
 
-That last message distinguishes the two failure modes it could be reporting. A build linked against
-the CPU parity stubs says so and tells you to rebuild with `-K cuda=true`; a real CUDA build with no
+That last message distinguishes the two failure modes it could be reporting. A build without
+LibTorch says so and tells you to rebuild with `-K cuda=true`; a real CUDA build with no
 device says that instead. Both refuse. Notice also where the second message came from: the typed
 graph rejection happened after the banner line had already printed, because it is raised when the
 session opens rather than when the flags are parsed. Session validation checks programmatic

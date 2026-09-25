@@ -34,7 +34,8 @@ Layer normalization for `(seqLen, embedDim)` tensors.
 This records a single node whose backward returns gradients for `x`, `gamma`, and `beta`.
 PyTorch comparison: `torch.nn.LayerNorm(embedDim)` (applied per token) / `functional.layer_norm`.
 -/
-def layerNorm {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+@[inline] def layerNorm {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {seqLen embedDim : Nat} (h_seq_pos : seqLen > 0) (h_embed_pos : embedDim > 0)
   (t : Tape α) (xId gammaId betaId : Nat)
   (epsilon : α := TorchLean.normalizationEpsilon) : Result (Tape α × Nat) := do
@@ -67,7 +68,8 @@ def layerNorm {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((·
   pure (t.addNode node)
 
 /-- Batch normalization over every spatial axis of a channel-first tensor. -/
-def batchNorm {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+@[inline] def batchNorm {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {channels : Nat} {sSpatial : Shape}
   (hWellFormed : (Shape.dim channels sSpatial).wellFormed)
   (t : Tape α) (xId gammaId betaId : Nat)
@@ -106,7 +108,7 @@ optional boolean `(n,n)` mask and returns the attended output of shape `(n,dMode
 
 PyTorch comparison: similar to `torch.nn.MultiheadAttention` / scaled dot-product attention.
 -/
-def multiHeadAttention {α : Type} [TorchLean.Storage α] [Context α]
+@[inline] def multiHeadAttention {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {n numHeads dModel headDim : Nat} (h1 : n ≠ 0)
   (t : Tape α) (wqId wkId wvId woId xId : Nat)

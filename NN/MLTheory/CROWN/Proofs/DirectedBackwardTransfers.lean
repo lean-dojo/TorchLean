@@ -33,7 +33,7 @@ variable {α : Type} [Storage α] [Context α] [BoundOps α] [LawfulBoundOps α]
 local notation "value" => LawfulBoundOps.toReal (α := α)
 
 /-- A flat interval inner product encloses the ordinary real inner product. -/
-theorem dotBox_row_encloses (hzero : value (0 : α) = 0)
+theorem dotBox_row_encloses
     {n : Nat} {aB xB : FlatBox α} {a x : Nat → ℝ}
     (ha : RowEncloses aB n a) (hx : RowEncloses xB n x) {lo hi : α}
     (hresult : directedDotBox aB xB = some (lo, hi)) :
@@ -45,11 +45,11 @@ theorem dotBox_row_encloses (hzero : value (0 : α) = 0)
   dsimp only at haDim hxDim
   subst adim
   subst xdim
-  exact dotBox_encloses hzero alo ahi xlo xhi (fun i => a i.val) (fun i => x i.val)
+  exact dotBox_encloses alo ahi xlo xhi (fun i => a i.val) (fun i => x i.val)
     (by simpa only [read_fin] using ha) (by simpa only [read_fin] using hx) hresult
 
 /-- Discharging an enclosed node value either fails or adds its exact objective to the constant. -/
-theorem represents_consume (hzero : value (0 : α) = 0)
+theorem represents_consume
     {dims : Nat → Nat} {v : Nat → Nat → ℝ} {input k n : Nat}
     {st : DirectedBackwardState α} {z : ℝ}
     (h : Represents dims v input k st z) {aB xB : FlatBox α} {a x : Nat → ℝ}
@@ -65,7 +65,7 @@ theorem represents_consume (hzero : value (0 : α) = 0)
       right
       simp only [consumeDirectedObjective, hresult]
       exact represents_addConstant h lo hi (dot n a x)
-        (dotBox_row_encloses hzero ha hx hresult)
+        (dotBox_row_encloses ha hx hresult)
 
 /-- The exact coefficient produced by transposing a stored matrix. -/
 def transposedCoeff {m n : Nat} (W : Tensor α [m, n]) (a : Nat → ℝ) (j : Nat) : ℝ :=
@@ -76,7 +76,7 @@ def biasDot {m : Nat} (b : Tensor α [m]) (a : Nat → ℝ) : ℝ :=
   ∑ i : Fin m, a i.val * value (b.getScalar i)
 
 /-- The flat linear-transfer result encloses its transposed coefficient and bias contribution. -/
-theorem linear_row_encloses (hzero : value (0 : α) = 0)
+theorem linear_row_encloses
     {m n : Nat} {aB : FlatBox α} (W : Tensor α [m, n]) (b : Tensor α [m])
     {a : Nat → ℝ} (ha : RowEncloses aB m a)
     {aX : FlatBox α} {lo hi : α}
@@ -87,7 +87,7 @@ theorem linear_row_encloses (hzero : value (0 : α) = 0)
   obtain ⟨hdim, ha⟩ := ha
   dsimp only at hdim
   subst adim
-  have h := linear_encloses hzero alo ahi W b (fun i => a i.val)
+  have h := linear_encloses alo ahi W b (fun i => a i.val)
     (by simpa only [read_fin] using ha) hresult
   refine ⟨⟨h.1, ?_⟩, h.2.2⟩
   intro j
@@ -115,7 +115,7 @@ theorem dot_linear {m n : Nat} (W : Tensor α [m, n]) (b : Tensor α [m])
 
 /-- A successful linear transfer preserves the represented objective and the coefficient table
 size, including accumulation into an already-active parent. -/
-theorem represents_linear (hzero : value (0 : α) = 0)
+theorem represents_linear
     {dims : Nat → Nat} {v : Nat → Nat → ℝ} {input k m n : Nat}
     {st : DirectedBackwardState α} {z : ℝ}
     (h : Represents dims v input k st z) (pid : Nat)
@@ -130,7 +130,7 @@ theorem represents_linear (hzero : value (0 : α) = 0)
         (z + dot m a y) ∧
       (addDirectedConstant (addDirectedCoeff st pid aX) lo hi).failed = st.failed ∧
       (addDirectedConstant (addDirectedCoeff st pid aX) lo hi).coeffs.size = st.coeffs.size := by
-  have he := linear_row_encloses hzero W b ha hresult
+  have he := linear_row_encloses W b ha hresult
   have hr : RowEncloses aX (dims pid) (transposedCoeff W a) := by
     simpa only [hdim] using he.1
   have hadd := represents_add h pid hp hlive aX (transposedCoeff W a) hr

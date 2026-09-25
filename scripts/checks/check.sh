@@ -110,7 +110,7 @@ lake_flags=(-R -K cuda=false)
 # Repeat the backend and SDK options for every invocation, including custom LAKE commands
 # that do not provide scripts/lake.sh's automatic reconfiguration and profile selection.
 if [[ "$cuda" == true ]]; then
-  # A requested GPU check must also reject an accidentally linked CPU-stub executable.
+  # A requested GPU check must also reject an executable accidentally built without LibTorch.
   export TORCHLEAN_REQUIRE_CUDA=1
   lake_flags=(-R -K cuda=true)
   if [[ -n "$libtorch_home" ]]; then

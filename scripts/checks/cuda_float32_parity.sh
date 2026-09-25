@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and run only in the cluster. Every GPU operation comes from the selected ATen SDK.
+# Needs a CUDA host and the LibTorch SDK. Every GPU operation comes from the selected ATen SDK.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -15,7 +15,7 @@ usage() {
   cat <<'HELP'
 Usage: scripts/checks/cuda_float32_parity.sh [options]
 
-Run in the cluster against the already-built production LibTorch backend.
+Run on a CUDA host against the already-built production LibTorch backend.
 Compare add/mul/div/sqrt/fma with the existing Lean binary32 reference stream.
 Finite values and signed zeros must match exactly; both NaNs satisfy AgreeUpToNaN.
 NaN encoding differences are counted separately. A finite sweep is validation, not a proof.

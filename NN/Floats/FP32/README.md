@@ -24,8 +24,8 @@ Bit-level binary32 behavior, including special values, is defined by FloatLib's 
   `≈[t]`.
 - `Sterbenz.lean`: exact subtraction for nearby representable binary32 values.
 
-Interval enclosures live in `NN/Floats/Interval/FP32.lean` and are available through the separate
-`NN.Floats.Interval` umbrella.
+For the half-ulp enclosure of a rounded value, use FloatLib's `Model.roundAt_mem_Icc` at
+`FloatFormat.binary32`.
 
 ## Relationship To Runtime
 

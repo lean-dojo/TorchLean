@@ -42,6 +42,69 @@ def writeLeading {α : Type} [TorchLean.Storage α] [Context α]
   Runtime.Autograd.Model.scatterAdd (m := m) (α := α) (s := tail.prependDim rows) 0 1
     base source (Runtime.Autograd.Torch.dataConst (m := m) (α := α) indices)
 
+/--
+Stack `count` consecutive one-row tensors starting at `start` along the leading axis.
+
+Halves are joined pairwise, so each row is copied once per level of a balanced tree and the whole
+stack costs `O(count * log count)` copies instead of one full-output copy per row.
+-/
+def stackRows {α : Type} [TorchLean.Storage α] [Context α]
+    {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
+    {rows : Nat} {tail : Shape}
+    (row : Fin rows → Ref (m := m) (α := α) (tail.prependDim 1)) :
+    (start count : Nat) → start + count ≤ rows → 0 < count →
+      m (Ref (m := m) (α := α) (tail.prependDim count))
+  | start, 1, hRange, _ => pure (row ⟨start, by omega⟩)
+  | start, count + 2, hRange, _ => do
+      let half := (count + 2) / 2
+      let left ← stackRows row start half (by omega) (by omega)
+      let right ← stackRows row (start + half) (count + 2 - half) (by omega) (by omega)
+      let joined ← Runtime.Autograd.Model.concatLeadingAxis (m := m) (α := α)
+        (nDim := half) (mDim := count + 2 - half) (s := tail) left right
+      have hCount : half + (count + 2 - half) = count + 2 := by omega
+      pure (hCount ▸ joined)
+  termination_by _ count => count
+
+/-- Run `step` for each leading index in order and keep every reshaped result. -/
+def collectRows {α : Type} [TorchLean.Storage α] [Context α]
+    {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
+    {State : Type} {rows : Nat} {tail : Shape}
+    (step : Fin rows → State → m (State × Ref (m := m) (α := α) tail)) :
+    (index : Nat) → index ≤ rows → State →
+      (acc : Array (Ref (m := m) (α := α) (tail.prependDim 1))) → acc.size = index →
+      m { result : Array (Ref (m := m) (α := α) (tail.prependDim 1)) // result.size = rows }
+  | index, hIndex, state, acc, hAcc =>
+      if hLt : index < rows then do
+        let (next, value) ← step ⟨index, hLt⟩ state
+        let row ← Runtime.Autograd.Model.reshape (m := m) (α := α)
+          (s₁ := tail) (s₂ := tail.prependDim 1) value (by simp [Shape.size])
+        collectRows step (index + 1) hLt next (acc.push row) (by rw [Array.size_push, hAcc])
+      else
+        pure ⟨acc, by omega⟩
+  termination_by index => rows - index
+
+/--
+Unroll a recurrence over the leading axis and add the stacked step outputs to `base`.
+
+Row `t` of the result is `base[t] + value_t`, where `value_t` is the output of step `t`. This is
+the tensor that writing each step through `writeLeading` produces, built with one stack and one
+addition instead of one full-output scatter per step.
+-/
+def unrollLeading {α : Type} [TorchLean.Storage α] [Context α]
+    {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
+    {State : Type} {rows : Nat} {tail : Shape}
+    (base : Ref (m := m) (α := α) (tail.prependDim rows)) (initial : State)
+    (step : Fin rows → State → m (State × Ref (m := m) (α := α) tail)) :
+    m (Ref (m := m) (α := α) (tail.prependDim rows)) := do
+  let stepRows ← collectRows (m := m) (α := α) step 0 (Nat.zero_le rows) initial #[] rfl
+  if hRows : 0 < rows then
+    let stacked ← stackRows (m := m) (α := α) (rows := rows)
+      (fun index => stepRows.val[index.val]'(by rw [stepRows.property]; exact index.isLt))
+      0 rows (by omega) hRows
+    Runtime.Autograd.Model.add (m := m) (α := α) base stacked
+  else
+    pure base
+
 /-- Validate one positive architectural dimension. -/
 def requirePositive (kind field : String) (value : Nat) : Except String Unit := do
   if value = 0 then
@@ -131,8 +194,7 @@ def rnn (sequenceLength inputWidth hiddenWidth : Nat) (weightSeed : Nat := 0) :
           let h0 ← Runtime.Autograd.Model.const (m := m) (α := α) (s := [hiddenWidth]) h0T
           let out0 ← Runtime.Autograd.Model.const (m := m) (α := α)
             (s := [sequenceLength, hiddenWidth]) out0T
-          let (_, out) ← (List.finRange sequenceLength).foldlM (init := (h0, out0)) (fun st t => do
-            let (hPrev, outPrev) := st
+          Internal.unrollLeading (m := m) (α := α) out0 h0 (fun t hPrev => do
             let x_t ← Runtime.Autograd.Model.select (m := m) (α := α)
               (s := [sequenceLength, inputWidth]) 0 xs t
             let concat ← Runtime.Autograd.Model.concatLeadingAxis (m := m) (α := α) (s := .scalar)
@@ -141,9 +203,7 @@ def rnn (sequenceLength inputWidth hiddenWidth : Nat) (weightSeed : Nat := 0) :
               (inDim := inputWidth + hiddenWidth) (outDim := hiddenWidth)
               w b concat
             let h_t ← Runtime.Autograd.Model.tanh (m := m) (α := α) (s := [hiddenWidth]) pre
-            let outNext ← Internal.writeLeading (m := m) (α := α) outPrev h_t t
-            pure (h_t, outNext))
-          pure out
+            pure (h_t, h_t))
   }
 
 /--
@@ -231,8 +291,7 @@ def gru (sequenceLength inputWidth hiddenWidth : Nat)
           let out0 ← Runtime.Autograd.Model.const (m := m) (α := α)
             (s := [sequenceLength, hiddenWidth]) out0T
           let ones ← Runtime.Autograd.Model.const (m := m) (α := α) (s := [hiddenWidth]) onesT
-          let (_, out) ← (List.finRange sequenceLength).foldlM (init := (h0, out0)) (fun st t => do
-            let (hPrev, outPrev) := st
+          Internal.unrollLeading (m := m) (α := α) out0 h0 (fun t hPrev => do
             let x_t ← Runtime.Autograd.Model.select (m := m) (α := α)
               (s := [sequenceLength, inputWidth]) 0 xs t
             let concat ← Runtime.Autograd.Model.concatLeadingAxis (m := m) (α := α) (s := .scalar)
@@ -259,9 +318,7 @@ def gru (sequenceLength inputWidth hiddenWidth : Nat)
               z hPrev
             let h_t ← Runtime.Autograd.Model.add (m := m) (α := α) (s := [hiddenWidth])
               newContrib hiddenContrib
-            let outNext ← Internal.writeLeading (m := m) (α := α) outPrev h_t t
-            pure (h_t, outNext))
-          pure out
+            pure (h_t, h_t))
   }
 
 /--
@@ -346,34 +403,13 @@ def gruResetAfter (sequenceLength inputWidth hiddenWidth : Nat)
         let initial ← const (m := m) (α := α) (Tensor.zeros (α := α) [hiddenWidth])
         let output ← const (m := m) (α := α)
           (Tensor.zeros (α := α) [sequenceLength, hiddenWidth])
-        let (_, output) ← (List.finRange sequenceLength).foldlM
-          (init := (initial, output)) fun (previous, output) time => do
+        Internal.unrollLeading (m := m) (α := α) output initial fun time previous => do
             let input ← select (m := m) (α := α) (s := [sequenceLength, inputWidth])
               0 inputs time
             let hidden ← gruResetAfterCell (m := m) (α := α)
               (inputWidth := inputWidth) (hiddenWidth := hiddenWidth)
               inputWeight hiddenWeight inputBias hiddenBias input previous
-            let output ← Internal.writeLeading (m := m) (α := α) output hidden time
-            pure (hidden, output)
-        pure output }
-
-/--
-Build a reset-after sequence layer from a single PyTorch cell's copied parameters.
-
-The initialization override uses the supplied tensors directly. There is no random initializer
-left to replace them at runtime, and the two bias vectors remain separate trainable state slots.
--/
-def gruFromPyTorch (sequenceLength : Nat) {inputWidth hiddenWidth : Nat}
-    (parameters : Spec.GRUResetAfterSpec Float inputWidth hiddenWidth) :
-    Layer [sequenceLength, inputWidth] [sequenceLength, hiddenWidth] :=
-  { gruResetAfter sequenceLength inputWidth hiddenWidth with
-    stateShapes :=
-      [[3 * hiddenWidth, inputWidth], [3 * hiddenWidth, hiddenWidth],
-        [3 * hiddenWidth], [3 * hiddenWidth]]
-    initState :=
-      .cons parameters.inputWeight <| .cons parameters.hiddenWeight <|
-      .cons parameters.inputBias <| .cons parameters.hiddenBias .nil
-    runtimeInit := none }
+            pure (hidden, hidden) }
 
 /--
 LSTM layer (time-major sequence, no batch axis).
@@ -431,9 +467,8 @@ def lstm (sequenceLength inputWidth hiddenWidth : Nat)
           let c0 ← Runtime.Autograd.Model.const (m := m) (α := α) (s := [hiddenWidth]) h0T
           let out0 ← Runtime.Autograd.Model.const (m := m) (α := α)
             (s := [sequenceLength, hiddenWidth]) out0T
-          let (_, _, out) ← (List.finRange sequenceLength).foldlM (init := (h0, c0, out0))
-            (fun st t => do
-            let (hPrev, cPrev, outPrev) := st
+          Internal.unrollLeading (m := m) (α := α) out0 (h0, c0) (fun t st => do
+            let (hPrev, cPrev) := st
             let x_t ← Runtime.Autograd.Model.select (m := m) (α := α)
               (s := [sequenceLength, inputWidth]) 0 xs t
             let concat ← Runtime.Autograd.Model.concatLeadingAxis (m := m) (α := α) (s := .scalar)
@@ -459,9 +494,7 @@ def lstm (sequenceLength inputWidth hiddenWidth : Nat)
             let c_t ← Runtime.Autograd.Model.add (m := m) (α := α) (s := [hiddenWidth]) fc ig
             let tanhC ← Runtime.Autograd.Model.tanh (m := m) (α := α) (s := [hiddenWidth]) c_t
             let h_t ← Runtime.Autograd.Model.mul (m := m) (α := α) (s := [hiddenWidth]) o tanhC
-            let outNext ← Internal.writeLeading (m := m) (α := α) outPrev h_t t
-            pure (h_t, c_t, outNext))
-          pure out
+            pure ((h_t, c_t), h_t))
   }
 end Layers
 

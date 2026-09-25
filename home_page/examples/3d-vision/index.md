@@ -112,9 +112,10 @@ claim because projected 3D corners fall outside that box.
 ## What A JSON Artifact Looks Like
 
 The concrete JSON is kept plain so the same checker can read artifacts from WildDet3D, Omni3D,
-or another detector/exporter that emits the camera and box fields. The optional `point_count`
-must match the number of triples in `corners3d`. When omitted, the parser infers that count and
-rejects an incomplete triple.
+or another detector/exporter that emits the camera and box fields. A `torchlean.camera.box3d.v1`
+artifact carries exactly eight corners, with `point_count` omitted or set to `8`. A
+`torchlean.camera.box3d.v2` artifact must declare a positive `point_count` that matches the number
+of triples in `corners3d`.
 
 ```json
 {

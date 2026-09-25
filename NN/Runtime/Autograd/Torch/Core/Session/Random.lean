@@ -38,15 +38,13 @@ def randUniform {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfer 
     (seed : Nat) (name : Option String := none) : IO (TensorRef α sh) := do
   let cuda := do
     let key ← nextRandomKey s seed
-    let tape ← s.cudaTape.get
     let elementCount ← Runtime.Autograd.okOrThrow <|
       Runtime.Autograd.Cuda.AnyBuffer.natToU32Checked (Spec.Shape.size sh)
     let buf := Runtime.Autograd.Cuda.Buffer.randUniform elementCount key
     let any : Runtime.Autograd.Cuda.AnyBuffer := { s := sh, buf := buf }
-    let (nextTape, id) :=
+    let id ← s.recordCudaPure fun tape =>
       Runtime.Autograd.Cuda.Tape.leaf (t := tape) (value := any) (name := name)
         (requiresGrad := false)
-    s.cudaTape.set nextTape
     s.makeTensorRef id
   let cpu := do
     let key ← nextRandomKey s seed
@@ -63,16 +61,14 @@ def bernoulliMask {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfe
   let probability : α := Tensor.item probabilityTensor
   let cuda := do
     let key ← nextRandomKey s seed
-    let tape ← s.cudaTape.get
     let elementCount ← Runtime.Autograd.okOrThrow <|
       Runtime.Autograd.Cuda.AnyBuffer.natToU32Checked (Spec.Shape.size sh)
     let probabilityFloat ← TensorTransfer.toFloat (α := α) probability
     let buf := Runtime.Autograd.Cuda.Buffer.bernoulliMask elementCount probabilityFloat key
     let any : Runtime.Autograd.Cuda.AnyBuffer := { s := sh, buf := buf }
-    let (nextTape, id) :=
+    let id ← s.recordCudaPure fun tape =>
       Runtime.Autograd.Cuda.Tape.leaf (t := tape) (value := any) (name := name)
         (requiresGrad := false)
-    s.cudaTape.set nextTape
     s.makeTensorRef id
   let cpu := do
     let key ← nextRandomKey s seed

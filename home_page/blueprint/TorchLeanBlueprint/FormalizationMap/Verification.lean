@@ -17,6 +17,7 @@ import NN.Proofs.Autograd.Tape.Ops.Norm.BatchNormFDeriv
 import NN.Verification.Builtin.Proved.Correctness
 import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Main
 import NN.MLTheory.CROWN.Proofs.GraphRunibpEndToEnd
+import NN.MLTheory.CROWN.Proofs.DirectedBackwardEvaluation
 import NN.MLTheory.CROWN.Proofs.GraphRuntimeBridge
 import NN.MLTheory.CROWN.Proofs.GraphCrownCertSoundness
 import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Alpha
@@ -306,13 +307,44 @@ compute the same box once their parents agree.
 :::theorem "ibp_executable_engine_sound" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.CertSoundness.runIBP_encloses_evalGraphRec")
 Under `TopoSorted`, `EngineCore`, `IBPCovers`, and `InputsEnclosed`, every box produced by the
 executable `runIBP` over `ℝ` encloses the matching value of `evalGraphRec`. The theorem covers the
-executable IBP engine at the real scalar. Transcendental node kinds outside `EngineCore` and
-floating-point rounding require separate results.
+executable IBP engine at the real scalar. Transcendental node kinds outside `EngineCore` are
+not covered; {uses "ibp_rounded_engine_sound"}[the rounded theorem] handles directed endpoints.
 :::
 
 :::proof "ibp_executable_engine_sound"
 {uses "ibp_engine_matches_proof_pass"}[The engine equals the proof-side pass], and
 {uses "ibp_engine_end_to_end"}[the proof-side pass encloses the semantics].
+:::
+
+:::theorem "ibp_rounded_engine_sound" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.DirectedBackward.runIBP_encloses")
+For any endpoint type with `LawfulBoundOps` and `LawfulNonlinearBoundOps`, every box produced by
+the executable `runIBP` encloses the real value of its node. The hypotheses are that parents
+precede their consumers, the input boxes contain the real inputs, the real point satisfies the
+node equations `NodeEquation`, and every node kind passes `ibpForwardSupported`: inputs,
+constants, copies, `add`, `sub`, `mulElem`, `relu`, `linear`, unary `matmul`, `sum`, `exp`,
+`log`, `sqrt`, `inv`, `tanh`, `sigmoid`, `sin`, and `cos`. The rounded transfers for convolution,
+`concat`, `transpose`, `permute`, binary `matmul`, `abs`, `maxElem`, `minElem`, `softplus`,
+`safeLog`, pools, broadcasts, axis reductions, `mseLoss`, BatchNorm, LayerNorm, and the softmax
+kinds have no such proof yet.
+:::
+
+:::proof "ibp_rounded_engine_sound"
+Strong induction over node identifiers. Each entry of the final array is the transfer computed
+from the prefix before it, and each supported transfer is proved sound from the directed
+endpoint laws and the scalar enclosure laws.
+:::
+
+:::theorem "directed_crown_rounded_end_to_end" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.DirectedBackward.backwardObjectiveBox_encloses_runIBP")
+On the same supported graphs, the rounded CROWN objective workflow run on the boxes of `runIBP`
+returns an interval containing the real output objective. Forward IBP, the directed backward
+sweep, the interval fallbacks, and the final affine-bound evaluation are all covered, so no IBP
+enclosure hypothesis remains.
+:::
+
+:::proof "directed_crown_rounded_end_to_end"
+`GraphPoint.ofRunIBP` builds the graph point from
+{uses "ibp_rounded_engine_sound"}[the rounded IBP theorem], and the directed backward soundness
+theorem consumes it.
 :::
 
 :::theorem "ir_crown_node_bridge" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.CertSoundness.evalNode_bridge")
@@ -329,6 +361,20 @@ that the bound theorems above are stated against.
 :::proof "ir_crown_node_bridge"
 Case analysis over the bridged operation kinds, unfolding both evaluators and the flattening of
 {uses "shape_indexed_tensors"}[shape-tagged tensors] to flat values.
+:::
+
+:::theorem "ir_crown_trace_bridge" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.CertSoundness.denoteAll_semLocalOK")
+Under the hypotheses of {uses "ir_crown_node_bridge"}[the per-node bridge] at every node, and with
+parents preceding their children, a successful `Graph.denoteAll` run flattens to a value table that
+satisfies `SemLocalOK`. The certificate enclosure theorems above take exactly this premise, so they
+apply to runtime IR values on the bridged node kinds.
+:::
+
+:::proof "ir_crown_trace_bridge"
+Induction along the `denoteAllFrom` loop gives, for each node, the prefix table on which the
+runtime evaluated it. The per-node bridge equates that step with the CROWN node evaluator on the
+lifted prefix, and the CROWN evaluator reads only parent entries, which the prefix and the final
+table share.
 :::
 
 :::definition "crown_transfer_contract" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.CrownCertSoundness.CrownTransferSound")

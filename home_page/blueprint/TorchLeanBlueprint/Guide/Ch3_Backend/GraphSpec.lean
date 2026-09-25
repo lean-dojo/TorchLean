@@ -1034,15 +1034,17 @@ tensors, which is what a recurrent layer needs when it produces an updated state
 observable output. Keeping those as a typed list rather than flattening them into one buffer means
 the shared `let1` binding that computes the new state is still shared after the model is inlined
 into a larger graph, and `MultiModel.eval_inline` is the theorem that says inlining preserves every
-output.
+output. The terms passed in as parameters and inputs are copied into each use, so pass variables
+when an argument is expensive.
 
 # Convolution And Pooling Shapes
 
-The sequential vocabulary is not limited to dense layers. `NN.GraphSpec.Core` supplies `linear`,
-`relu`, and axis-wise `softmax`; {src "NN/GraphSpec/Primitives/Spatial.lean"}[`Primitives/Spatial`]
-adds spatial-rank-polymorphic convolution and max pooling, flattening, and BatchNorm with an
-explicit channel axis. Rank-polymorphic means the same definition applies to signals, images, and
-volumes: the spatial extents are a `Tensor Nat [d]` rather than a fixed pair.
+The sequential vocabulary is not limited to dense layers. `NN.GraphSpec.Chain.Primitives` supplies
+`linear`, `relu`, and axis-wise `softmax`;
+{src "NN/GraphSpec/Primitives/Spatial.lean"}[`Primitives/Spatial`] adds spatial-rank-polymorphic
+convolution and max pooling, flattening, and BatchNorm with an explicit channel axis.
+Rank-polymorphic means the same definition applies to signals, images, and volumes: the spatial
+extents are a `Tensor Nat [d]` rather than a fixed pair.
 
 The intermediate spatial arithmetic is part of the type. `Models.cnn` accepts a feature chain
 and attaches flattening and a linear head. The chain determines its own depth and spatial

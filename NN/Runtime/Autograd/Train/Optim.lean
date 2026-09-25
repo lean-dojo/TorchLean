@@ -179,8 +179,8 @@ inductive LearningRateScheduler (α : Type) where
   /--
   PyTorch `OneCycleLR` (learning rate only): fractional phase endpoints `pct_start * total - 1`,
   `min_lr = initial_lr / final_div_factor`, cosine or linear annealing, and the optional
-  three-phase variant. The native `oneCycle` uses linear ramps with a `max_lr / final_div_factor`
-  floor.
+  three-phase variant. The native `oneCycle` uses the same endpoint factors with linear ramps and
+  phase boundaries at `pct_start * total`.
   -/
   | torchOneCycle : Optim.Scheduler.PyTorch.OneCycle α -> LearningRateScheduler α
   /--

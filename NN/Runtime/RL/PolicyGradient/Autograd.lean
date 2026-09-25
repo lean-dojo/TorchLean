@@ -68,7 +68,12 @@ Input shapes:
 Output shape:
 - `logProb : (N)` where `logProb[i] = log π(a_i | s_i)`.
 
-Implementation note: this uses `logSoftmax` and a reduce-sum over the action axis.
+The log-softmax is clamped to `[-10^30, 10^30]` before it is multiplied by the one-hot mask. A
+logit of `-inf` has log-probability `-inf`, and without the clamp its unselected entry would
+contribute `0 * -inf = NaN` to the row sum. Log-probabilities are at most 0, so the clamp only
+changes values below `-10^30`, which a policy reaches only through infinite logits or logit gaps
+beyond `10^30`. Inside that range the clamp's derivative is 1, so gradients also agree with the
+unclamped formula.
 -/
 def actionLogProbOneHot
     {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
@@ -83,7 +88,9 @@ def actionLogProbOneHot
   let _ : Shape.HasNonemptyAxis 1 s :=
     Shape.inferNonemptyAxis (by simp [s, Shape.rank])
   let logp ← F.logSoftmax (m := m) (α := α) (s := s) 1 logits
-  let masked ← mul (m := m) (α := α) (s := s) actionOneHot logp
+  let bound : α := ((10 ^ 30 : Nat) : α)
+  let finiteLogp ← clamp (m := m) (α := α) (s := s) logp (-bound) bound
+  let masked ← mul (m := m) (α := α) (s := s) actionOneHot finiteLogp
   reduceSum (m := m) (α := α) (s := s) (axis := 1) masked
 
 /--

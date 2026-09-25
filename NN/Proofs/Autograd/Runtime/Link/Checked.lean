@@ -107,7 +107,7 @@ theorem vjpWithSeed_adjoint_fderiv {Δ : Type} {Γ : List Shape} {τ : Shape}
     intro x
     rw [ContinuousLinearMap.adjoint_inner_right, CtxVec.getCLM_apply,
       ← flattenCtx_unflattenCtx x, CtxVec.get_flattenCtx,
-      ← dotList_eq_inner_flattenCtx, dotList_eq_algebra_dotList,
+      ← dotList_eq_inner_flattenCtx, TensorPack.dotList_eq_algebra_dotList,
       Algebra.TensorPack.dotList_single, ← dot_eq_tensorAlgebra_dot,
       dot_eq_inner_tensorToVec]
   rw [(hasFDerivAt_forward graph proofGraph same inputs data correct).fderiv,

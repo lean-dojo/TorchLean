@@ -61,21 +61,16 @@ theorem checkedCuda_attention_plan
       rfl
 
 /--
-Default attention declares a backend local VJP compatible with the TorchLean tape request.
-Its numerical policy does not promise a fixed reduction order.
+The direct LibTorch attention capsule, which `checkedCuda_attention_choice` selects, declares a
+backend local VJP compatible with the TorchLean tape request. Its numerical policy does not
+promise a fixed reduction order.
 -/
-theorem checkedCuda_attention_contract
-    {selected : KernelCapsule}
-    (hselected :
-      chooseCapsuleFor? checkedCuda.policy .scaledDotProductAttention
-        (checkedCuda.availability.filterCapsules checkedCuda.registry) = some selected) :
-    selected.provider = .libTorch ∧
-      selected.vjpMode = .backendVJP ∧
+theorem checkedCuda_attention_contract :
+    Attention.libTorchDirectAttention.provider = .libTorch ∧
+      Attention.libTorchDirectAttention.vjpMode = .backendVJP ∧
       checkedCuda.policy.vjpMode = .torchLeanTape ∧
-      selected.matchesVJP checkedCuda.policy = true ∧
-      selected.numericalPolicy.reduction = .implementationDefined := by
-  rw [checkedCuda_attention_choice] at hselected
-  cases Option.some.inj hselected
+      Attention.libTorchDirectAttention.matchesVJP checkedCuda.policy = true ∧
+      Attention.libTorchDirectAttention.numericalPolicy.reduction = .implementationDefined := by
   decide
 
 end NN.Backend.BackendProfile

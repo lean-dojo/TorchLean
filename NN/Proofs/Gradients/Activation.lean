@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import Mathlib.Analysis.SpecialFunctions.Log.Deriv
+public import Mathlib.Analysis.SpecialFunctions.Sigmoid
 public import Mathlib.Analysis.SpecialFunctions.Sqrt
 public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 public import NN.Proofs.Utils.MathFunctions
@@ -222,34 +223,9 @@ PyTorch correspondence: `torch.sigmoid`.
 -/
 theorem sigmoid_deriv_correct (x : ℝ) :
   HasDerivAt Activation.Math.sigmoidSpec (Activation.Math.sigmoidDerivSpec x) x := by
-  have h_denom_ne_zero : 1 + Real.exp (-x) ≠ 0 := by
-    linarith [Real.exp_pos (-x)]
-
-  -- Work with the smooth reciprocal expression; the branch identity transfers the result back.
-  have h_inner : HasDerivAt (fun y ↦ 1 + Real.exp (-y)) (-Real.exp (-x)) x := by
-    apply HasDerivAt.const_add
-    have h_neg : HasDerivAt (fun y ↦ -y) (-1) x := hasDerivAt_neg x
-    have h_comp := (Real.hasDerivAt_exp (-x)).comp x h_neg
-    simpa [Function.comp_def] using h_comp
-
-  have h_main : HasDerivAt (fun y ↦ (1 + Real.exp (-y))⁻¹)
-                          (-((1 + Real.exp (-x))^2)⁻¹ * (-Real.exp (-x))) x := by
-    exact (hasDerivAt_inv h_denom_ne_zero).comp x h_inner
-
-  have h_simplified : -((1 + Real.exp (-x))^2)⁻¹ * (-Real.exp (-x)) =
-                     Real.exp (-x) / (1 + Real.exp (-x))^2 := by
-    field_simp
-
-  rw [h_simplified] at h_main
-
-  -- The reciprocal derivative is the output-based formula used by the VJP.
-  have h_deriv_target :
-      Real.exp (-x) / (1 + Real.exp (-x)) ^ 2 = Activation.Math.sigmoidDerivSpec x := by
-    rw [Activation.Math.sigmoidDerivSpec, sigmoid_eq_inv_exp]
-    field_simp [h_denom_ne_zero]
-    ring
-  exact (h_main.congr_deriv h_deriv_target).congr_of_eventuallyEq
-    (Filter.Eventually.of_forall (fun y => by rw [sigmoid_eq_inv_exp]))
+  have hs : (Activation.Math.sigmoidSpec : ℝ → ℝ) = Real.sigmoid :=
+    funext fun y => by rw [sigmoid_eq_inv_exp, Real.sigmoid_def]
+  simpa only [Activation.Math.sigmoidDerivSpec, hs] using Real.hasDerivAt_sigmoid x
 
 /-- Differentiating `σ(x)(1 - σ(x))` gives `σ'(x)(1 - 2σ(x))`.
 

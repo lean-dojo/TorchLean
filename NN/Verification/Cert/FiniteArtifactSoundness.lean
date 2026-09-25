@@ -253,9 +253,7 @@ theorem accepts_sound (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
   cases hd : decode g ps cert query with
   | none => simp [hd] at h
   | some decoded =>
-      have hc : decoded.check = true :=
-        (show decoded.check = true ∧ replayAccepts g ps cert = true by
-          simpa only [hd, Bool.and_eq_true] using h).1
+      have hc : decoded.check = true := by simpa only [hd] using h
       obtain ⟨hn, hm, hk⟩ := decoded.check_nonempty hc
       obtain ⟨hg, ho, _, hb⟩ := decode_coverage g ps cert query decoded hd
       exact ⟨decoded, rfl, hg, ho, hb, hn, hm, hk, decoded.check_sound hc⟩

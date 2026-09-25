@@ -17,7 +17,7 @@ module
 
 Foreign-function declaration for host `FloatArray` FP64 matrix multiplication. The CUDA build
 uploads the arrays to the selected device, calls ATen `matmul`, and downloads the result.
-The CPU build uses a stub implementation. The float32 buffer matmul path lives in
+Without LibTorch the call fails with a rebuild hint. The float32 buffer matmul path lives in
 `NN.Runtime.Autograd.Engine.Cuda.Kernels`.
 
 This lives in its own small module instead of `Cuda.Kernels`:

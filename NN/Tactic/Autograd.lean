@@ -45,8 +45,13 @@ public meta section
 
 open Proofs.Autograd
 
+namespace Proofs.Autograd.FoldCongr
+
 -- A fold only evaluates its update at visited entries, where domain hypotheses are available.
-attribute [congr] List.foldl_ext
+-- Scoped so that only the autograd rewrites below use this congruence.
+attribute [scoped congr] List.foldl_ext
+
+end Proofs.Autograd.FoldCongr
 
 -- Failed matches must not unfold concrete iterated derivatives or the adjoint implementation.
 attribute [aesop safe apply (transparency := reducible) (rule_sets := [Autograd])]
@@ -83,6 +88,7 @@ add_aesop_rules safe tactic (rule_sets := [Autograd]) (by
   fun_prop [Activation.Math.tanhSpec, Activation.Math.tanhDerivSpec, MathFunctions.tanh])
 
 add_aesop_rules safe tactic (rule_sets := [Autograd]) (by
+  open Proofs.Autograd.FoldCongr in
   simp (disch := first
     | assumption
     | fun_prop (disch :=
@@ -144,7 +150,7 @@ run_cmd do
             first | solve_by_elim |
               (simp only [TorchLean.Tensor.Internal.Rep.pull_apply]; solve_by_elim)))]
       apply congrArg Runtime.Autograd.Model.Dual.Nested.tangentTensor
-      try simp (disch := fun_prop (disch :=
+      try open Proofs.Autograd.FoldCongr in simp (disch := fun_prop (disch :=
         first | solve_by_elim |
           (simp only [TorchLean.Tensor.Internal.Rep.pull_apply]; solve_by_elim))) only
         [autograd_simps, Runtime.Autograd.Model.DualTensor.jet_matMulSpec_at,

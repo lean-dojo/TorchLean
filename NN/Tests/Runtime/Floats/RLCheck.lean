@@ -103,6 +103,20 @@ def checkCheckedScans : IO Unit := do
     | .error error => throw (IO.userError error)
   let expected : Tensor (Binary 8 23) [3] := [2, 2, 3]
   assertBool "terminal GAE step resets the future advantage" (advantages == expected)
+  -- A truncated step bootstraps from its next value but does not continue into the next episode.
+  let nextValues : Tensor (Binary 8 23) [3] := [5, 5, 5]
+  let noTermination : Tensor Bool [3] := [false, false, false]
+  let truncated ← IO.ofExcept <| generalizedAdvantageEstimationWithBoundariesChecked
+    (1 / 2) 1 rewards baseline nextValues noTermination dones
+  let expectedTruncated : Tensor (Binary 8 23) [3] := [5.75, 4.5, 5.5]
+  assertBool "truncated GAE step bootstraps from its next value" (truncated == expectedTruncated)
+  let terminal ← IO.ofExcept <| generalizedAdvantageEstimationWithBoundariesChecked
+    (1 / 2) 1 rewards baseline nextValues dones dones
+  let singleMask ← IO.ofExcept <| generalizedAdvantageEstimationChecked
+    (1 / 2) 1 rewards baseline nextValues dones
+  let expectedTerminal : Tensor (Binary 8 23) [3] := [4.5, 2, 5.5]
+  assertBool "terminal GAE step drops its next value" (terminal == expectedTerminal)
+  assertBool "single-mask GAE matches equal masks" (singleMask == terminal)
   let intervals := generalizedAdvantageEstimationIntervals
     (1 / 2) 1 rewards baseline baseline dones
   assertBool "terminal GAE interval enclosure" (returnsWithinIntervals advantages intervals)
@@ -115,6 +129,24 @@ def checkCheckedScans : IO Unit := do
   | .error error =>
       assertBool "rightmost overflow is reported before the earlier nonfinite reward"
         (error.contains "mul")
+
+open Runtime.RL.Numerics.Float32 in
+/-- The PPO objective interval encloses the exact clipped product when `1 ± clipEps` rounds. -/
+def checkPPOClipThresholdEnclosure : IO Unit := do
+  let toHostFloat (value : Binary 8 23) : Float :=
+    Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel value)))
+  -- `0.1` is not a binary32 value, and `1 ± eps` is exact in binary64 but not in binary32.
+  let eps ← IO.ofExcept <| ofFloatChecked 0.1
+  let two ← IO.ofExcept <| ofFloatChecked 2.0
+  let zero ← IO.ofExcept <| ofFloatChecked 0.0
+  let one ← IO.ofExcept <| ofFloatChecked 1.0
+  let contains (label : String) (I : Interval (Binary 8 23)) (exact : Float) : IO Unit :=
+    assertBool s!"{label}: [{toHostFloat I.lo}, {toHostFloat I.hi}] misses {exact}"
+      (toHostFloat I.lo ≤ exact && exact ≤ toHostFloat I.hi)
+  contains "upper clip threshold"
+    (ppoClippedObjectiveFromRatioInterval two one eps) (1.0 + toHostFloat eps)
+  contains "lower clip threshold"
+    (ppoClippedObjectiveFromRatioInterval zero one eps) (1.0 - toHostFloat eps)
 
 /-- Check the numerical transforms used by PPO advantage estimation. -/
 def checkAdvantages : IO Unit := do
@@ -238,6 +270,22 @@ def checkValueLearning : IO Unit := do
   let soft := Runtime.RL.DQN.softUpdateScalar (α := Float) 0.1 10.0 0.0
   assertApprox "soft target update" soft 1.0 1e-6
 
+  -- A time-limit truncation keeps the bootstrap term; only termination drops it.
+  let observed (terminated truncated : Bool) :
+      Spec.RL.ObservedTransition (Tensor Float [2]) (Fin 3) Float :=
+    { observation := obs2, action := ⟨1, by decide⟩, reward := 1.0
+      nextObservation := nextObs2, terminated := terminated, truncated := truncated }
+  let truncatedTr := Runtime.RL.Replay.ofObservedTransition (observed false true)
+  let terminatedTr := Runtime.RL.Replay.ofObservedTransition (observed true false)
+  assertBool "truncated replay transition should bootstrap" (!truncatedTr.done)
+  assertBool "terminated replay transition should not bootstrap" terminatedTr.done
+  assertApprox "truncated replay dqn loss"
+    (Runtime.RL.DQN.minibatchMSELoss (α := Float) onlineQ targetQ 0.9 #[truncatedTr])
+    dqnLoss 1e-6
+  assertApprox "terminated replay dqn loss"
+    (Runtime.RL.DQN.minibatchMSELoss (α := Float) onlineQ targetQ 0.9 #[terminatedTr])
+    ((2.0 - 1.0) * (2.0 - 1.0)) 1e-6
+
   let logits : Tensor Float [2] := [0.0, 1.0]
   let logp := Runtime.RL.PolicyGradient.actionLogProbability (α := Float) logits ⟨1, by decide⟩
   assertFinite "action log-probability" logp
@@ -284,6 +332,70 @@ def checkBoundary : IO Unit := do
   | .ok _ => throw <| IO.userError "boundary check should reject terminated && truncated"
   | .error _ => pure ()
 
+/-- Mean PPO clipped objective for a two-sample batch of three-action logits. -/
+def ppoMeanObjective :
+    ∀ {β : Type}, [TorchLean.Storage β] → [Context β] →
+      Runtime.Autograd.Model.Program β
+        [Shape.ofList [2, 3], Shape.ofList [2, 3], Shape.ofList [2], Shape.ofList [2]] [] :=
+  fun {β} _ _ => fun {m} _ _ => fun logits actions oldLogProb advantage =>
+    (do
+      let objective ← Runtime.RL.PolicyGradient.Autograd.ppoClippedObjective (m := m) (α := β)
+        (batch := 2) (nActions := 3) logits actions oldLogProb advantage
+      Runtime.Autograd.Model.F.mean (m := m) (α := β) (s := .dim 2 .scalar) objective :
+      m (Runtime.Autograd.Model.RefTy (m := m) (α := β) Shape.scalar))
+
+/-- Old log-probabilities recorded during collection must match the autograd objective's new
+log-probabilities, so the PPO ratio is exactly 1 at identical parameters. The second sample picks
+an action whose probability is far below the clamp used by `actionLogProbability`. -/
+def checkPPORatioAtIdenticalParams : IO Unit := do
+  let rows : Array (Array Float) := #[#[0.0, 1.0, -0.5], #[0.0, 30.0, -30.0]]
+  let chosen : Array (Fin 3) := #[⟨1, by decide⟩, ⟨2, by decide⟩]
+  let logits : Tensor Float [2, 3] :=
+    (Tensor.ofFn fun i : Fin 6 => (rows[i.val / 3]!)[i.val % 3]!).reshape [2, 3] (by decide)
+  let actions : Tensor Float [2, 3] :=
+    (Tensor.ofFn fun i : Fin 6 =>
+      if chosen[i.val / 3]!.val == i.val % 3 then (1 : Float) else 0).reshape [2, 3] (by decide)
+  let oldLogProb : Tensor Float [2] := Tensor.ofFn fun i =>
+    Runtime.RL.PolicyGradient.actionLogSoftmax (α := Float)
+      (Tensor.ofFn fun j : Fin 3 => (rows[i.val]!)[j.val]!) chosen[i.val]!
+  let advantage : Tensor Float [2] := Tensor.ofFn fun _ => 1
+  let graph ← Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph (α := Float)
+    (paramShapes := [Shape.ofList [2, 3]])
+    (inputShapes := [Shape.ofList [2, 3], Shape.ofList [2], Shape.ofList [2]]) ppoMeanObjective
+  let (_, objective) ← Runtime.Autograd.Model.Autodiff.Impl.vjpWithValue graph
+    (.cons logits (.cons actions (.cons oldLogProb (.cons advantage .nil))))
+    (Tensor.scalar (1 : Float))
+  -- With ratio 1 and unit advantages every per-sample objective is exactly 1.
+  let value := objective.getFlat ⟨0, by decide⟩
+  assertBool s!"PPO objective at identical parameters should be 1, got {value}" (value == 1)
+
+/-- A logit of `-inf` on an unselected action must not turn the one-hot log-probability into NaN.
+The objective stays exactly 1 at identical parameters and the logit gradient stays finite. -/
+def checkPPONegativeInfinityLogit : IO Unit := do
+  let negInf : Float := -1.0 / 0.0
+  let rows : Array (Array Float) := #[#[0.0, 1.0, negInf], #[negInf, 0.0, 2.0]]
+  let chosen : Array (Fin 3) := #[⟨1, by decide⟩, ⟨2, by decide⟩]
+  let logits : Tensor Float [2, 3] :=
+    (Tensor.ofFn fun i : Fin 6 => (rows[i.val / 3]!)[i.val % 3]!).reshape [2, 3] (by decide)
+  let actions : Tensor Float [2, 3] :=
+    (Tensor.ofFn fun i : Fin 6 =>
+      if chosen[i.val / 3]!.val == i.val % 3 then (1 : Float) else 0).reshape [2, 3] (by decide)
+  let oldLogProb : Tensor Float [2] := Tensor.ofFn fun i =>
+    Runtime.RL.PolicyGradient.actionLogSoftmax (α := Float)
+      (Tensor.ofFn fun j : Fin 3 => (rows[i.val]!)[j.val]!) chosen[i.val]!
+  let advantage : Tensor Float [2] := Tensor.ofFn fun _ => 1
+  let graph ← Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph (α := Float)
+    (paramShapes := [Shape.ofList [2, 3]])
+    (inputShapes := [Shape.ofList [2, 3], Shape.ofList [2], Shape.ofList [2]]) ppoMeanObjective
+  let (gradients, objective) ← Runtime.Autograd.Model.Autodiff.Impl.vjpWithValue graph
+    (.cons logits (.cons actions (.cons oldLogProb (.cons advantage .nil))))
+    (Tensor.scalar (1 : Float))
+  let value := objective.getFlat ⟨0, by decide⟩
+  assertBool s!"PPO objective with a -inf logit should be 1, got {value}" (value == 1)
+  let .cons logitGradient _ := gradients
+  assertBool "PPO logit gradient with a -inf logit should be finite"
+    (Tensor.allSpec (fun g : Float => g.isFinite) logitGradient)
+
 /-- Run the complete RL runtime check suite. -/
 def run : IO Unit := do
   IO.println "rl_check: begin"
@@ -292,6 +404,9 @@ def run : IO Unit := do
   checkAdvantages
   checkValueLearning
   checkBoundary
+  checkPPORatioAtIdenticalParams
+  checkPPONegativeInfinityLogit
+  checkPPOClipThresholdEnclosure
   DQN.run
   IO.println "rl_check: ok"
 

@@ -59,7 +59,8 @@ runtime.
 
 `Term.rename`, `Term.substitute`, and `Term.instantiate` provide the usual operations for open
 terms. Their types preserve every tensor shape. `Block.andThen` feeds all outputs of one block into
-another block without duplicating shared intermediates.
+another block. Its `let1` intermediates stay shared; the returned terms and inlined arguments are
+copied into each use, so return variables when a result is used more than once.
 
 ## Semantics And Lowering
 
@@ -80,16 +81,19 @@ The library proves that:
 These theorems let a large model be assembled from proved blocks. They do not require unfolding the
 entire architecture for every later result. The chain-to-DAG theorem reuses primitive `specFwd`
 functions on both sides; it does not assert agreement with their executable `program` fields or
-with native kernels. Import `NN.GraphSpec.Chain.ToDAG` for the conversion and theorem, or the
-focused `NN.GraphSpec.Chain.ToDAG.Semantics` module for its proof interface.
+with native kernels. Import `NN.GraphSpec.Chain.ToDAG.Model` for the conversion and model
+constructors, and `NN.GraphSpec.Chain.ToDAG.Semantics` for the theorem.
 
 ## Files
 
 | File | Contents |
 | --- | --- |
-| `Core.lean` | sequential chain syntax and composition |
+| `Chain/Syntax.lean`, `Chain/Primitives.lean` | sequential chain syntax, composition, and the small primitives |
+| `Chain/Semantics.lean`, `Chain/Lowering.lean` | chain Spec semantics and `Chain.toProgram` |
+| `Chain/ToDAG/Core.lean`, `Chain/ToDAG/Model.lean` | chain-to-DAG term conversion and model constructors |
 | `Chain/ToDAG/Semantics.lean` | general pure semantic preservation for chain-to-DAG conversion |
-| `DAG/Core.lean` | typed variables, terms, blocks, substitutions, semantics, and lowering |
+| `DAG/Syntax.lean`, `DAG/Semantics.lean` | typed variables, terms, blocks, substitutions, and semantics |
+| `DAG/Lowering.lean`, `DAG/Model.lean` | lowering to TorchLean programs and the model wrappers |
 | `DAG/Term.lean` | reusable term combinators |
 | `DAG/Primitives/Core.lean` | primitive operation interface and basic operations |
 | `DAG/Primitives/LinearAlgebra.lean` | broadcasted matrix and vector linear algebra |

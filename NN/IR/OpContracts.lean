@@ -17,8 +17,9 @@ Shared operation contracts for `NN.IR.Graph`.
 
 Several IR passes need to agree on the same small set of “shape contracts”:
 
-- `NN.IR.Infer`: recompute output shapes from op parameters + parent shapes.
-- `NN.IR.Check`: expose the documented `Graph.checkShapes` wrapper.
+- `NN.IR.Infer`: recompute output shapes from op parameters + parent shapes, and check declared
+  shapes with `Graph.checkShapes`.
+- `NN.IR.Check`: state `WellFormed` and `WellShaped` as propositions over those checkers.
 - `NN.IR.Semantics`: evaluate nodes and reject ill-shaped graphs with readable error messages.
 
 The point of this file is to keep shape arithmetic out of individual passes. If an op has nontrivial

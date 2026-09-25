@@ -196,7 +196,7 @@ lake build
 
 The remaining work is platform engineering: the native libraries must be compiled with a compatible
 Windows C/C++ toolchain; CUDA and LibTorch must be discovered as `.lib` and DLL artifacts; Linux
-linker options such as `-Wl,-rpath` must be replaced; and the CPU stubs and GPU runtime must be tested
+linker options such as `-Wl,-rpath` must be replaced; and the GPU runtime must be tested
 under the Windows loader and ABI. Once those pieces are wired, the existing device, provider, and
 capsule abstractions do not need to be redesigned. Until then, WSL2 is the supported route for both
 CPU and NVIDIA GPU execution on Windows.

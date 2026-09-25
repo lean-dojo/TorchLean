@@ -112,6 +112,8 @@ Lean reports:
 
 ```terminal +output
 [artifact] Checked 1 leaves: ok=1, bad=0
+[artifact] consistent: the leaves cover the root and every leaf clears its threshold.
+[artifact] The lower bounds are the producer's claims; TorchLean did not recompute them.
 ```
 
 This counts represented leaves. `ok=1` means that the one parsed leaf passed containment and
@@ -684,8 +686,11 @@ premise must be established throughout that region.
 
 With those hypotheses, each available engine box encloses the corresponding semantic value.
 The statement is over $`ℝ`. The demonstration above used `Float`; applying the real theorem to a
-rounded pass requires an arithmetic bridge. Using FloatLib binary32 in the node checkers fixes the
-reference binary32 operations for replay, but does not by itself provide that bridge. The
+rounded pass requires an arithmetic bridge. Backends with `LawfulBoundOps` and
+`LawfulNonlinearBoundOps`, such as `FP32`, instead have the rounded theorem `runIBP_encloses` on
+the node kinds that pass `ibpForwardSupported`. Host `Float` has no such instance. Using FloatLib
+binary32 in the node checkers fixes the reference binary32 operations for replay, but does not by
+itself provide that bridge. The
 {ref "fp32-soundness"}[floating-point soundness chapter] develops the relevant distinction.
 
 The {ref "certificates"}[leaf artifact described here] carries no graph or transfer evidence, so

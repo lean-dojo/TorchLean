@@ -26,6 +26,7 @@ open TorchLean
 
 Both sides are propagated internally so negative coefficients select the correct parent bound.
 Rounded backends use the directed coefficient propagation shared with backward CROWN.
+The result bounds each node from above only; a lower bound needs the lower form from `runCROWN`.
 -/
 def runAffine {α : Type} [Storage α] [Context α] [BoundOps α]
     (g : NN.IR.Graph) (ps : ParamStore α) (ctx : AffineCtx)

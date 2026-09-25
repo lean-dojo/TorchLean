@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Verification.Cert.AbCrownLeafCert
+public import NN.Verification.Cert.CROWNQuery.Json
 public import NN.Verification.Geometry3D.CLI
 public import NN.Verification.LiRPA
 public import NN.Verification.PINN.CLI
@@ -31,8 +32,9 @@ public import NN.MLTheory.CROWN.Lyapunov.TwoStage.PipelineIIIAllInLean
 Unified verification CLI registry.
 
 The repository exposes several verification entry points: LiRPA-style bound checks, PINN
-certificate recomputation, α,β-CROWN leaf artifact checks, logit-bound reports, ODE
-enclosure checks, and model-to-IR bound propagation workflows.
+certificate recomputation, exact CROWN output queries, consistency checks for converted
+α,β-CROWN leaf artifacts, logit-bound reports, ODE enclosure checks, and model-to-IR bound
+propagation workflows.
 
 This file defines a single dispatcher so users can run everything from:
   `lake exe verify -- <tool> [args...]`
@@ -159,9 +161,13 @@ def otherTools : List Tool :=
       run := fun args =>
         NN.Verification.PINN.CLI.main args }
   , { name := "abcrown-leaf"
-      description := "α,β-CROWN leaf artifact structural check"
+      description := "consistency check of a converted α,β-CROWN leaf artifact (no bound recheck)"
       defaultArg := some NN.Verification.Cert.AbCrownLeafCert.defaultArtifactPath
       run := fun args => NN.Verification.Cert.AbCrownLeafCert.run args }
+  , { name := "crown-query"
+      description := "exact rational CROWN output query (crown_query_v1) with a soundness theorem"
+      includeInAll := false
+      run := fun args => NN.Verification.CROWNQuery.run args }
   , { name := "margin-report"
       description := "check internal consistency of an exported logit-bound report"
       defaultArg := some NN.Verification.Robustness.MarginCertCLI.defaultPath
@@ -183,7 +189,7 @@ def otherTools : List Tool :=
       run := fun args =>
         NN.Verification.Builtin.CrownOpsWorkflow.main args }
   , { name := "torchlean-mlp-workflow"
-      description := "train a classifier, then check robustness with Alpha-Beta-CROWN"
+      description := "train a classifier, then check robustness with α-CROWN and IBP phases"
       includeInAll := false
       run := fun args =>
         NN.Verification.Builtin.MlpTrainVerifyWorkflow.main args }

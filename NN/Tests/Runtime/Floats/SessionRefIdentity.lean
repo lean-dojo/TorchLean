@@ -60,7 +60,8 @@ def checkCudaCacheClear : IO Unit := do
 def run : IO Unit := do
   checkExecutionMode .eager
   checkExecutionMode .typedGraph
-  checkCudaCacheClear
+  if Runtime.Autograd.Cuda.Buffer.runtimeStatus == .nativeAvailable then
+    checkCudaCacheClear
   for device in [NN.Backend.Device.cuda, .metal, .custom] do
     expectFailure "typed graph unsupported device" <|
       Session.new (α := Float) { execution := .typedGraph, device }

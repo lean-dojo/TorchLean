@@ -42,45 +42,6 @@ open Examples
 
 noncomputable section
 
-/-- Explicit hidden width for the 1D Lipschitz ReLU approximation construction. -/
-def reluApproximationWidth (L a b ε : ℝ) : ℕ :=
-  Nat.ceil (2 * L * (b - a) / ε) + 1
-
-/-- The explicit ReLU approximation width is always positive. -/
-theorem relu_approximation_width_pos (L a b ε : ℝ) : 0 < reluApproximationWidth L a b ε := by
-  simp [reluApproximationWidth]
-
-/--
-The chosen width makes the mesh-size error term smaller than the target accuracy.
-
-This is the arithmetic heart of the explicit-rate theorem: the ceiling construction ensures
-$N>2L(b-a)/\varepsilon$, hence $2L(b-a)/N<\varepsilon$.
--/
-theorem two_mul_mul_sub_div_relu_approximation_width_lt {L a b ε : ℝ} (hε : 0 < ε) :
-    (2 * L * (b - a)) / (reluApproximationWidth L a b ε : ℝ) < ε := by
-  classical
-  let N : ℕ := reluApproximationWidth L a b ε
-  have hNpos_nat : 0 < N := relu_approximation_width_pos L a b ε
-  have hNpos : 0 < (N : ℝ) := by exact_mod_cast hNpos_nat
-  have hr_lt : (2 * L * (b - a) / ε : ℝ) < (N : ℝ) := by
-    have hr_le :
-        (2 * L * (b - a) / ε : ℝ) ≤ (Nat.ceil (2 * L * (b - a) / ε) : ℝ) :=
-      Nat.le_ceil _
-    have : (2 * L * (b - a) / ε : ℝ) < (Nat.ceil (2 * L * (b - a) / ε) : ℝ) + 1 := by
-      linarith
-    simpa [N, reluApproximationWidth, Nat.cast_add, Nat.cast_one, add_assoc] using this
-  have hmul : ε * (2 * L * (b - a) / ε) < ε * (N : ℝ) := mul_lt_mul_of_pos_left hr_lt hε
-  have hεne : (ε : ℝ) ≠ 0 := ne_of_gt hε
-  have hleft : ε * (2 * L * (b - a) / ε) = 2 * L * (b - a) := by
-    calc
-      ε * (2 * L * (b - a) / ε) = ε * (2 * L * (b - a)) / ε := by
-        simp [mul_div_assoc']
-      _ = 2 * L * (b - a) := by
-        simpa using (mul_div_cancel_left₀ (2 * L * (b - a)) hεne)
-  have hnum : 2 * L * (b - a) < ε * (N : ℝ) := by
-    simpa [hleft] using hmul
-  exact (div_lt_iff₀ hNpos).2 (by simpa [mul_comm, mul_assoc] using hnum)
-
 /--
 Universal approximation (1D, hinge form) with an explicit width choice.
 
@@ -97,7 +58,7 @@ theorem relu_universal_approximation_Icc_hinge_rate {f : ℝ → ℝ} {a b L : �
           |f x - hingeFun (reluApproximationWidth L a b ε) t c (f a) x| < ε := by
   intro ε hε
   apply relu_hinge_approximation_Icc_of_mesh h_ab hL h_lip
-    (relu_approximation_width_pos L a b ε) hε
+    (relu_approximation_width_pos L a b ε)
   simpa [mul_div_assoc', mul_assoc] using
     (two_mul_mul_sub_div_relu_approximation_width_lt (L := L) (a := a) (b := b) hε)
 

@@ -40,6 +40,10 @@ Certificate JSON format:
 
 As with the α-CROWN checker, the certificate is accepted only if the provided binary32 affine
 bounds exactly match Lean recomputation.
+
+A phase is accepted only when the IBP pre-activation interval already proves it, so β carries no
+information beyond IBP. The replayed bounds are α-CROWN bounds, with no β multipliers and no branch
+splits.
 -/
 
 @[expose] public section
@@ -195,6 +199,9 @@ Check a per-node α/β-CROWN certificate against Lean's propagation rules.
 
 Returns `true` iff every supplied IBP box contains Lean's authoritative recomputation and every
 node's affine replay data agrees exactly with Lean's α/β-CROWN step.
+
+As in `checkCROWNNodeCertificate`, the per-node loop is part of the verdict and the pure replay runs
+only when it passes. The certificate's `ibp` boxes are only checked for containment.
 -/
 def checkAlphaBetaCROWNNodeCertificate (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23)) (path :
   String) :

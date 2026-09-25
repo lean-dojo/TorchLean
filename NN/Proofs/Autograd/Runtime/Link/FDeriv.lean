@@ -30,7 +30,8 @@ supplies it:
 
 * **The real, environment-free slice.** `Algebra.Node.toReal` / `Algebra.Graph.toReal` specialize an
   algebraic graph at `α := ℝ` and a fixed environment `d : Δ` to an analytic graph;
-  `Node.toAlgebra` / `Graph.toAlgebra` embed an analytic graph back as the `Δ := Unit` slice,
+  `Node.toAlgebra` / `Graph.toAlgebra` (from `NN.Proofs.Autograd.Tape.Core.Soundness`) embed an
+  analytic graph back as the `Δ := Unit` slice,
   and both round trips are identities on that slice (`toAlgebra_toReal` and
   `toReal_toAlgebra`). The analytic model is therefore exactly the environment-free `ℝ` slice of
   the algebraic model. The commutation lemmas
@@ -40,10 +41,10 @@ supplies it:
   full context, and `takeLeft_backpropAllCtx` (also in `GraphData` form) identifies the input
   block of the full backpropagation with the inputs-only `backpropCtx`, the missing lemma
   relating the runtime-facing `backpropAllCtx` to the proof-facing `backpropCtx`.
-* **Vectorization transport.** The `flattenCtx_*` lemmas commute context vectorization with
-  `cast`/`snoc`/`unsnoc`/`add`, so the `TensorPack`-level graph semantics coincide with the
-  Euclidean `CtxVec` semantics: `evalVec_flattenCtx`, `jvpVec_flattenCtx`,
-  `backpropVec_flattenCtx`.
+* **Vectorization transport.** The `flattenCtx_*` lemmas of `NN.Proofs.Autograd.Tape.Core.FDeriv`
+  commute context vectorization with `cast`/`snoc`/`unsnoc`/`add`, so the `TensorPack`-level
+  graph semantics coincide with the Euclidean `CtxVec` semantics: `evalVec_flattenCtx`,
+  `jvpVec_flattenCtx`, `backpropVec_flattenCtx`.
 * **The composed endpoints.** `backpropCtx_eq_adjoint_fderiv` upgrades the algebraic
   backpropagation at `ℝ` to the Fréchet-adjoint characterization, and
   `backwardDenseFrom_lowerGraphToTape_adjoint_fderiv` combines it with the runtime link: the tape
@@ -70,207 +71,8 @@ open TorchLean TorchLean.Tensor
 noncomputable section
 
 -- ---------------------------------------------------------------------------
--- The two dot products agree at `ℝ`
--- ---------------------------------------------------------------------------
-
-/--
-The analytic context inner product (`Spec.dot`-based) agrees with the algebraic one
-(`TensorAlgebra.dot`-based) at `ℝ`.
-
-Both recursions are the same sum of per-entry tensor dots; the entries agree by
-`dot_eq_tensorAlgebra_dot`.
--/
-theorem dotList_eq_algebra_dotList {Γ : List Shape} (x y : TorchLean.TensorPack ℝ Γ) :
-    TensorPack.dotList (ss := Γ) x y = Algebra.TensorPack.dotList (α := ℝ) x y := by
-  induction Γ with
-  | nil =>
-    cases x
-    cases y
-    rfl
-  | cons s Γ ih =>
-    cases x with
-    | cons xh xt =>
-      cases y with
-      | cons yh yt =>
-        simp [TensorPack.dotList, Algebra.TensorPack.dotList, dot_eq_tensorAlgebra_dot, ih]
-
--- ---------------------------------------------------------------------------
--- Vectorization transport: `flattenCtx` commutes with the context operations
--- ---------------------------------------------------------------------------
-
-/-- `flattenCtx` commutes with casting a context along a shape-list equality. -/
-theorem flattenCtx_cast {Γ₁ Γ₂ : List Shape} (h : Γ₁ = Γ₂) (xs : TorchLean.TensorPack ℝ Γ₁) :
-    flattenCtx (Γ := Γ₂) (TorchLean.TensorPack.cast h xs) =
-      castCtxVec (Γ₁ := Γ₁) (Γ₂ := Γ₂) h (flattenCtx xs) := by
-  cases h
-  simp
-
-/-- Vectorization is additive: `tensorToVec` maps `addSpec` to vector addition. -/
-theorem tensorToVec_addSpec {s : Shape} (a b : Tensor ℝ s) :
-    tensorToVec (t := addSpec a b) = tensorToVec (t := a) + tensorToVec (t := b) := by
-  refine ext_inner_right ℝ ?_
-  intro w
-  have hw : w = tensorToVec (t := vecToTensor (s := s) w) :=
-    (tensorToVec_vecToTensor (s := s) w).symm
-  rw [hw, ← dot_eq_inner_tensorToVec, inner_add_left, ← dot_eq_inner_tensorToVec,
-    ← dot_eq_inner_tensorToVec, dot_add_left]
-
-/-- The context inner product is additive in its left argument. -/
-private theorem dotList_add_left' {Γ : List Shape} (u v z : TorchLean.TensorPack ℝ Γ) :
-    TensorPack.dotList (TorchLean.TensorPack.add u v) z =
-      TensorPack.dotList u z + TensorPack.dotList v z := by
-  induction Γ with
-  | nil =>
-    cases u
-    cases v
-    cases z
-    simp [TensorPack.dotList, TorchLean.TensorPack.add]
-  | cons s Γ ih =>
-    cases u with
-    | cons uh ut =>
-      cases v with
-      | cons vh vt =>
-        cases z with
-        | cons zh zt =>
-          show TensorPack.dotList
-              (TorchLean.TensorPack.cons (addSpec uh vh) (TorchLean.TensorPack.add ut vt))
-              (TorchLean.TensorPack.cons zh zt)
-              = _
-          simp only [TensorPack.dotList, dot_add_left, ih]
-          ring
-
-/-- `flattenCtx` maps context addition to vector addition. -/
-theorem flattenCtx_add {Γ : List Shape} (u v : TorchLean.TensorPack ℝ Γ) :
-    flattenCtx (TorchLean.TensorPack.add u v) = flattenCtx u + flattenCtx v := by
-  refine ext_inner_right ℝ ?_
-  intro w
-  have hw : w = flattenCtx (unflattenCtx (Γ := Γ) w) :=
-    (flattenCtx_unflattenCtx (Γ := Γ) w).symm
-  rw [hw, ← dotList_eq_inner_flattenCtx, inner_add_left, ← dotList_eq_inner_flattenCtx,
-    ← dotList_eq_inner_flattenCtx]
-  exact dotList_add_left' u v _
-
-/-- `flattenCtx` maps `TorchLean.TensorPack.snoc` to `snocCtx`. -/
-theorem flattenCtx_snoc {Γ : List Shape} {τ : Shape} (xs : TorchLean.TensorPack ℝ Γ)
-    (y : Tensor ℝ τ) :
-    flattenCtx (Γ := Γ ++ [τ]) (TorchLean.TensorPack.snoc xs y)
-      = snocCtx (Γ := Γ) (τ := τ) (flattenCtx xs) (tensorToVec (t := y)) := by
-  induction Γ with
-  | nil =>
-    cases xs
-    change flattenCtx (TorchLean.TensorPack.cons y TorchLean.TensorPack.nil) = _
-    rw [flattenCtx_cons, flattenCtx_nil]
-    let h : ctxSize [] + τ.size = τ.size + ctxSize [] := by simp [ctxSize]
-    change appendVec (tensorToVec y) 0 = castVec h (appendVec 0 (tensorToVec y))
-    apply PiLp.ext
-    intro i
-    induction i using Fin.addCases with
-    | left i =>
-      rw [appendVec_ofLp_castAdd, castVec_ofLp]
-      have hidx :
-          Fin.cast h.symm (Fin.castAdd (ctxSize []) i) = Fin.natAdd (ctxSize []) i := by
-        apply Fin.ext
-        simpa only [ctxSize, Fin.val_natAdd, Nat.zero_add, Fin.val_castAdd] using
-          Fin.val_cast h.symm (Fin.castAdd (ctxSize []) i)
-      rw [hidx, appendVec_ofLp_natAdd]
-    | right i => exact i.elim0
-  | cons s Γ ih =>
-    cases xs with
-    | cons x xs =>
-      change flattenCtx (TorchLean.TensorPack.cons x (TorchLean.TensorPack.snoc xs y)) = _
-      rw [flattenCtx_cons, ih, flattenCtx_cons, appendVec_snocCtx]
-
-/-- `flattenCtx` maps `TorchLean.TensorPack.unsnoc` to `unsnocCtx`. -/
-theorem unsnocCtx_flattenCtx {Γ : List Shape} {τ : Shape} (w : TorchLean.TensorPack ℝ (Γ ++ [τ])) :
-    unsnocCtx (Γ := Γ) (τ := τ) (flattenCtx w)
-      = (flattenCtx (TorchLean.TensorPack.unsnoc w).1,
-          tensorToVec (t := (TorchLean.TensorPack.unsnoc w).2)) := by
-  conv_lhs => rw [← TorchLean.TensorPack.snoc_unsnoc (α := ℝ) (ss := Γ) (τ := τ) (xs := w)]
-  rw [flattenCtx_snoc, unsnocCtx_snocCtx]
-
-namespace Node
-
-/-- The vectorized forward map, evaluated on a flattened context. -/
-theorem forwardVec_flattenCtx {Γ : List Shape} {τ : Shape} (node : Node Γ τ)
-    (x : TorchLean.TensorPack ℝ Γ) :
-    node.forwardVec (Γ := Γ) (τ := τ) (flattenCtx x) = tensorToVec (t := node.forward x) := by
-  simp [Node.forwardVec]
-
-/-- The vectorized JVP, evaluated on flattened contexts. -/
-theorem jvpVec_flattenCtx {Γ : List Shape} {τ : Shape} (node : Node Γ τ)
-    (x dx : TorchLean.TensorPack ℝ Γ) :
-    node.jvpVec (Γ := Γ) (τ := τ) (flattenCtx x) (flattenCtx dx)
-      = tensorToVec (t := node.jvp x dx) := by
-  simp [Node.jvpVec]
-
-/-- The vectorized VJP, evaluated on a flattened context and a vectorized cotangent. -/
-theorem vjpVec_flattenCtx {Γ : List Shape} {τ : Shape} (node : Node Γ τ)
-    (x : TorchLean.TensorPack ℝ Γ) (δ : Tensor ℝ τ) :
-    node.vjpVec (Γ := Γ) (τ := τ) (flattenCtx x) (tensorToVec (t := δ))
-      = flattenCtx (node.vjp x δ) := by
-  simp [Node.vjpVec]
-
-end Node
-
-namespace Graph
-
-variable {Γ : List Shape}
-
-/-- The Euclidean graph evaluation is the flattening of the `TensorPack` evaluation. -/
-theorem evalVec_flattenCtx {ss : List Shape} (g : Graph Γ ss) (x : TorchLean.TensorPack ℝ Γ) :
-    evalVec (Γ := Γ) (ss := ss) g (flattenCtx x) = flattenCtx (eval (Γ := Γ) (ss := ss) g x) := by
-  induction g with
-  | nil =>
-    simp [evalVec, eval, flattenCtx_cast]
-  | snoc g node ih =>
-    simp [evalVec, eval, flattenCtx_cast, flattenCtx_snoc, ih, Node.forwardVec_flattenCtx]
-
-/-- The Euclidean graph JVP is the flattening of the `TensorPack` JVP. -/
-theorem jvpVec_flattenCtx {ss : List Shape} (g : Graph Γ ss) (x dx : TorchLean.TensorPack ℝ Γ) :
-    jvpVec (Γ := Γ) (ss := ss) g (flattenCtx x) (flattenCtx dx)
-      = flattenCtx (jvpCtx (Γ := Γ) (ss := ss) g x dx) := by
-  induction g with
-  | nil =>
-    simp [jvpVec, jvpCtx, flattenCtx_cast]
-  | snoc g node ih =>
-    simp [jvpVec, jvpCtx, flattenCtx_cast, flattenCtx_snoc, ih, evalVec_flattenCtx,
-      Node.jvpVec_flattenCtx]
-
-/-- The Euclidean reverse pass is the flattening of the `TensorPack` reverse pass. -/
-theorem backpropVec_flattenCtx {ss : List Shape} (g : Graph Γ ss) (x : TorchLean.TensorPack ℝ Γ)
-    (seed : TorchLean.TensorPack ℝ (Γ ++ ss)) :
-    backpropVec (Γ := Γ) (ss := ss) g (flattenCtx x) (flattenCtx seed)
-      = flattenCtx (backpropCtx (Γ := Γ) (ss := ss) g x seed) := by
-  induction g with
-  | nil =>
-    simp [backpropVec, backpropCtx, flattenCtx_cast]
-  | snoc g node ih =>
-    rename_i ss τ
-    simp only [backpropVec, backpropCtx]
-    rw [← flattenCtx_cast, unsnocCtx_flattenCtx, evalVec_flattenCtx,
-      Node.vjpVec_flattenCtx, ← flattenCtx_add, ih]
-
-end Graph
-
--- ---------------------------------------------------------------------------
 -- Embedding the analytic model as the `Δ := Unit` slice of the algebraic model
 -- ---------------------------------------------------------------------------
-
-/-- Embed an analytic node as an algebraic node over `ℝ` with a trivial environment. -/
-def Node.toAlgebra {Γ : List Shape} {τ : Shape} (node : Node Γ τ) :
-    Algebra.Node (α := ℝ) (Δ := Unit) (Γ := Γ) τ where
-  validate x _ := node.validate x
-  forward x _ := node.forward x
-  jvp x dx _ := node.jvp x dx
-  vjp x _ δ := node.vjp x δ
-  correct x dx _ δ := by
-    simpa [dot_eq_tensorAlgebra_dot, dotList_eq_algebra_dotList] using node.correct x dx δ
-
-/-- Embed an analytic graph as an algebraic graph over `ℝ` with a trivial environment. -/
-def Graph.toAlgebra {Γ : List Shape} :
-    {ss : List Shape} → Graph Γ ss → Algebra.Graph (α := ℝ) (Δ := Unit) (Γ := Γ) ss
-  | _, .nil => .nil
-  | _, .snoc g node => .snoc (Graph.toAlgebra g) node.toAlgebra
 
 namespace Algebra
 
@@ -289,7 +91,8 @@ def Node.toReal {Δ : Type} {Γ : List Shape} {τ : Shape}
   jvp x dx := node.jvp x dx d
   vjp x δ := node.vjp x d δ
   correct x dx δ := by
-    simpa [dot_eq_tensorAlgebra_dot, dotList_eq_algebra_dotList] using node.correct x dx d δ
+    simpa [dot_eq_tensorAlgebra_dot, TensorPack.dotList_eq_algebra_dotList] using
+      node.correct x dx d δ
 
 /-- Specialize an algebraic graph at carrier `ℝ` and a fixed environment to an analytic graph. -/
 def Graph.toReal {Δ : Type} {Γ : List Shape} :

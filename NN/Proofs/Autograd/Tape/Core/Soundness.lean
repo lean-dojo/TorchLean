@@ -13,6 +13,7 @@ public import NN.Proofs.Tensor.Basic.BoundsNorms
 -- Typed context indices are shared with the generic and runtime-approximation
 -- graph developments, so `Idx` and `getIdx` come from one module.
 public import NN.Proofs.Autograd.Tape.Util.Idx
+public import NN.Proofs.Autograd.Tape.Algebra.Soundness
 
 /-!
 # Soundness
@@ -61,208 +62,21 @@ def dotList : {ss : List Shape} → TorchLean.TensorPack ℝ ss → TorchLean.Te
   | [], .nil, .nil => 0
   | _ :: ss, .cons a as, .cons b bs => dot a b + dotList (ss := ss) as bs
 
-/-- A context cast can be moved from one side of the context dot product to the other.
-
-Casts appear whenever two tapes are composed and their context shape lists are only propositionally
-equal; without this lemma every adjointness proof would have to `cases` the equality by hand. -/
-theorem dotList_cast_left {ss₁ ss₂ : List Shape} (h : ss₁ = ss₂) (x : TorchLean.TensorPack ℝ ss₁)
-    (y : TorchLean.TensorPack ℝ ss₂) :
-    dotList (TorchLean.TensorPack.cast h x) y =
-      dotList x (TorchLean.TensorPack.cast h.symm y) := by
-  cases h
-  rfl
-
-private theorem dot_add_right {s : Shape} (a b c : Tensor ℝ s) :
-    dot a (addSpec b c) = dot a b + dot a c := by
-  calc
-    dot a (addSpec b c) = dot (addSpec b c) a := by
-      simpa using (dot_comm (a := a) (b := addSpec b c))
-    _ = dot b a + dot c a := by
-      simpa using (dot_add_left (a := b) (b := c) (c := a))
-    _ = dot a b + dot a c := by
-      simp [dot_comm]
-
-/--
-`dotList` is linear in its right argument with respect to `TorchLean.TensorPack.add`.
-
-Informally: `⟪x, y + z⟫ = ⟪x, y⟫ + ⟪x, z⟫` for contexts.
--/
-theorem dotList_add_right {ss : List Shape} (x y z : TorchLean.TensorPack ℝ ss) :
-    dotList x (TorchLean.TensorPack.add y z) = dotList x y + dotList x z := by
-  induction ss with
-  | nil =>
-    cases x; cases y; cases z; simp [dotList, TorchLean.TensorPack.add]
-  | cons s ss ih =>
-    cases x with
-    | cons xh xt =>
-      cases y with
-      | cons yh yt =>
-        cases z with
-        | cons zh zt =>
-          simp [dotList, TorchLean.TensorPack.add, dot_add_right, ih, add_assoc,
-            add_left_comm]
-
-/--
-`dotList` respects appending: dot of two `snoc`ed contexts splits into prefix + last entry.
-
-Informally: `⟪(x,a), (y,b)⟫ = ⟪x,y⟫ + ⟪a,b⟫`.
--/
-theorem dotList_snoc {ss : List Shape} {τ : Shape} (x y : TorchLean.TensorPack ℝ ss)
-    (a b : Tensor ℝ τ) :
-    dotList (TorchLean.TensorPack.snoc x a)
-      (TorchLean.TensorPack.snoc y b) = dotList x y + dot a b := by
-  revert x y
-  induction ss with
-  | nil =>
-    intro x y
-    cases x; cases y
-    simp [dotList, TorchLean.TensorPack.snoc]
-  | cons s ss ih =>
-    intro x y
-    cases x with
-    | cons xh xt =>
-      cases y with
-      | cons yh yt =>
-        simp [dotList, TorchLean.TensorPack.snoc, ih, add_left_comm, add_comm]
-
-private theorem full_eq_scale_one {s : Shape} (c : ℝ) :
-    Tensor.full s c = scaleSpec (α:=ℝ) (s:=s) (Tensor.full s (1 : ℝ)) c := by
-  apply TorchLean.Tensor.Internal.Rep.ext
-  intro coordinate
-  simp [Tensor.full, scaleSpec, mapSpec, Tensor.map]
-
-/--
-Dotting any tensor with a zero-filled tensor gives `0`.
-
-This is the tensor-level fact used to show that “one-hot” cotangents behave as expected.
--/
-theorem dot_full_zero_right {s : Shape} (a : Tensor ℝ s) :
-    dot a (Tensor.full s (0 : ℝ)) = 0 := by
-  have hfill : Tensor.full s (0 : ℝ) = scaleSpec (α:=ℝ) (s:=s) (Tensor.full s (1 : ℝ)) 0 := by
-    simpa using (full_eq_scale_one (s := s) (c := (0 : ℝ)))
-  calc
-    dot a (Tensor.full s (0 : ℝ))
-        = dot a (scaleSpec (α:=ℝ) (s:=s) (Tensor.full s (1 : ℝ)) 0) := by
-            simp [hfill]
-    _ = dot (scaleSpec (α:=ℝ) (s:=s) (Tensor.full s (1 : ℝ)) 0) a := by
-          simpa using (dot_comm (a := a) (b := scaleSpec (α:=ℝ) (s:=s) (Tensor.full s (1 : ℝ)) 0))
-    _ = 0 * dot (Tensor.full s (1 : ℝ)) a := by
-          simpa using (dot_scale_left (a := Tensor.full s (1 : ℝ)) (b := a) (k := (0 : ℝ)))
-    _ = 0 := by ring
-
-/-- `dotList x 0 = 0` for the all-zero context. -/
-theorem dotList_zero_right {ss : List Shape} (x : TorchLean.TensorPack ℝ ss) :
-    dotList x (TorchLean.TensorPack.zero (ss := ss)) = 0 := by
-  induction ss with
-  | nil =>
-    cases x
-    simp [dotList, TorchLean.TensorPack.zero]
-  | cons s ss ih =>
-    cases x with
-    | cons xh xt =>
-      simp [dotList, TorchLean.TensorPack.zero, dot_full_zero_right, ih]
-
-end TensorPack
-
-namespace TensorPack
-
-/--
-Build a sparse context with a single nonzero entry at `idx` and zeros elsewhere.
-
-This is used to express “one-hot” cotangents when proving local-to-global backprop correctness.
--/
-def single {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (v : Tensor ℝ s) :
-    TorchLean.TensorPack ℝ Γ :=
-  match Γ, idx with
-  | [], ⟨i, _h⟩ =>
-      match i with
-      | ⟨val, isLt⟩ => False.elim ((Nat.not_lt_zero val) isLt)
-  | s0 :: Γtail, ⟨i, h⟩ =>
-      match i with
-      | ⟨0, _⟩ =>
-          .cons (Tensor.castShape v h.symm)
-            (TorchLean.TensorPack.zero (ss := Γtail))
-      | ⟨Nat.succ j, hj⟩ =>
-          let iTail : Fin Γtail.length := ⟨j, Nat.lt_of_succ_lt_succ hj⟩
-          let hTail : Γtail.get iTail = s := by
-            simpa using h
-          .cons (Tensor.full s0 (0 : ℝ)) (single (Γ := Γtail) (s := s) ⟨iTail, hTail⟩ v)
-
-/--
-`single idx v` is the “one-hot” context with value `v` at `idx`, and zeros elsewhere.
-
-This lemma says the context dot product against `single idx v` picks out the corresponding entry
-of `dx`:
-
-`⟪dx, single idx v⟫ = ⟪dx[idx], v⟫`.
--/
-theorem dotList_single {Γ : List Shape} {s : Shape}
-    (dx : TorchLean.TensorPack ℝ Γ) (idx : Idx Γ s) (v : Tensor ℝ s) :
-    TensorPack.dotList dx (single idx v) = dot (getIdx dx idx) v := by
-  -- Structural recursion over the context list, tracking the index.
-  revert dx idx
+/-- At `ℝ` the context dot product agrees with the backend-generic one in `Algebra`, entry by entry
+through `dot_eq_tensorAlgebra_dot`. -/
+theorem dotList_eq_algebra_dotList {Γ : List Shape} (x y : TorchLean.TensorPack ℝ Γ) :
+    dotList (ss := Γ) x y = Algebra.TensorPack.dotList (α := ℝ) x y := by
   induction Γ with
   | nil =>
-    intro dx idx
-    cases idx with
-    | mk i _h =>
-      cases i with
-        | mk val isLt =>
-          exact False.elim ((Nat.not_lt_zero val) isLt)
-  | cons s0 Γtail ih =>
-      intro dx idx
-      cases dx with
-      | cons dx0 dxRest =>
-        cases idx with
-        | mk i h =>
-          cases i with
-          | mk val isLt =>
-            cases val with
-            | zero =>
-              -- head index
-              have hs0 : (s0 :: Γtail).get ⟨0, isLt⟩ = s0 := by
-                rfl
-              have hs : s0 = s := by
-                simpa [hs0] using h
-              cases hs
-              calc
-                TensorPack.dotList (.cons dx0 dxRest) (single ⟨⟨0, isLt⟩, rfl⟩ v) =
-                    dot dx0 v := by
-                  simp [TensorPack.dotList, single, Tensor.castShape, TensorPack.dotList_zero_right]
-                _ = dot (getIdx (.cons dx0 dxRest) ⟨⟨0, isLt⟩, rfl⟩) v := by
-                  dsimp [getIdx, Tensor.castShape]
-                  have hget0 :
-                      TorchLean.TensorPack.get (.cons dx0 dxRest)
-                        (0 : Fin (s :: Γtail).length) = dx0 := by
-                    rfl
-                  exact (congrArg (fun t => dot t v) hget0).symm
-            | succ j =>
-              -- tail index
-              have h0 : dot dx0 (Tensor.full s0 (0 : ℝ)) = 0 := dot_full_zero_right (a := dx0)
-              let iHead : Fin (s0 :: Γtail).length := ⟨Nat.succ j, isLt⟩
-              let iTail : Fin Γtail.length := ⟨j, Nat.lt_of_succ_lt_succ isLt⟩
-              let hTail : Γtail.get iTail = s := by
-                simpa using h
-              let idxTail : Idx Γtail s := ⟨iTail, hTail⟩
-              have hget : getIdx (.cons dx0 dxRest) ⟨iHead, h⟩ = getIdx dxRest idxTail := by
-                -- Reduce the `get` at a successor index, then discharge cast-proof mismatches by
-                -- proof-irrelevance.
-                dsimp [getIdx]
-                simp [iHead]
-                exact (Tensor.cast_shape_proof_irrel (dxRest.get iTail) :
-                  Tensor.castShape (tensor := dxRest.get iTail) _ =
-                    Tensor.castShape (tensor := dxRest.get iTail) _)
-              calc
-                TensorPack.dotList (.cons dx0 dxRest) (single ⟨iHead, h⟩ v)
-                    = dot dx0 (Tensor.full s0 (0 : ℝ)) +
-                        TensorPack.dotList dxRest (single idxTail v) := by
-                        simp [TensorPack.dotList, single, idxTail, iHead, iTail]
-                _ = TensorPack.dotList dxRest (single idxTail v) := by
-                      simp [h0]
-                _ = dot (getIdx dxRest idxTail) v := by
-                      simpa using (ih (dx := dxRest) (idx := idxTail))
-                _ = dot (getIdx (.cons dx0 dxRest) ⟨iHead, h⟩) v := by
-                      simp [hget]
+    cases x
+    cases y
+    rfl
+  | cons s Γ ih =>
+    cases x with
+    | cons xh xt =>
+      cases y with
+      | cons yh yt =>
+        simp [dotList, Algebra.TensorPack.dotList, dot_eq_tensorAlgebra_dot, ih]
 
 end TensorPack
 
@@ -339,6 +153,65 @@ def backpropCtx {ss : List Shape} (g : Graph Γ ss) (x : TorchLean.TensorPack �
       let seedPrev' := TorchLean.TensorPack.add seedPrev contrib
       backpropCtx (ss := ss) g x seedPrev'
 
+end Graph
+
+/-- Embed an analytic node as an algebraic node over `ℝ` with a trivial environment. -/
+def Node.toAlgebra {Γ : List Shape} {τ : Shape} (node : Node Γ τ) :
+    Algebra.Node (α := ℝ) (Δ := Unit) (Γ := Γ) τ where
+  validate x _ := node.validate x
+  forward x _ := node.forward x
+  jvp x dx _ := node.jvp x dx
+  vjp x _ δ := node.vjp x δ
+  correct x dx _ δ := by
+    simpa [dot_eq_tensorAlgebra_dot, TensorPack.dotList_eq_algebra_dotList] using
+      node.correct x dx δ
+
+/-- Embed an analytic graph as an algebraic graph over `ℝ` with a trivial environment. -/
+def Graph.toAlgebra {Γ : List Shape} :
+    {ss : List Shape} → Graph Γ ss → Algebra.Graph (α := ℝ) (Δ := Unit) (Γ := Γ) ss
+  | _, .nil => .nil
+  | _, .snoc g node => .snoc (Graph.toAlgebra g) node.toAlgebra
+
+namespace Graph
+
+variable {Γ : List Shape}
+
+/-- Embedding preserves evaluation. -/
+theorem eval_toAlgebra {ss : List Shape} (g : Graph Γ ss) (x : TorchLean.TensorPack ℝ Γ) :
+    Algebra.Graph.eval g.toAlgebra x () = eval g x := by
+  induction g with
+  | nil => rfl
+  | snoc g node ih =>
+    simp only [toAlgebra, Algebra.Graph.eval, Algebra.Graph.toData, Algebra.GraphData.eval,
+      eval] at ih ⊢
+    rw [ih]
+    rfl
+
+/-- Embedding preserves the JVP. -/
+theorem jvpCtx_toAlgebra {ss : List Shape} (g : Graph Γ ss) (x dx : TorchLean.TensorPack ℝ Γ) :
+    Algebra.Graph.jvpCtx g.toAlgebra x dx () = jvpCtx g x dx := by
+  induction g with
+  | nil => rfl
+  | snoc g node ih =>
+    have he := eval_toAlgebra g x
+    simp only [toAlgebra, Algebra.Graph.eval, Algebra.Graph.jvpCtx, Algebra.Graph.toData,
+      Algebra.GraphData.jvpCtx, jvpCtx] at ih he ⊢
+    rw [ih, he]
+    rfl
+
+/-- Embedding preserves the reverse pass. -/
+theorem backpropCtx_toAlgebra {ss : List Shape} (g : Graph Γ ss) (x : TorchLean.TensorPack ℝ Γ)
+    (seed : TorchLean.TensorPack ℝ (Γ ++ ss)) :
+    Algebra.Graph.backpropCtx g.toAlgebra x () seed = backpropCtx g x seed := by
+  induction g with
+  | nil => rfl
+  | snoc g node ih =>
+    have he := eval_toAlgebra g x
+    simp only [toAlgebra, Algebra.Graph.eval, Algebra.Graph.backpropCtx, Algebra.Graph.toData,
+      Algebra.GraphData.backpropCtx, backpropCtx] at ih he ⊢
+    rw [he]
+    exact ih _
+
 /--
 **Global tape soundness**: if each node satisfies a local JVP/VJP adjointness law, then the global
 reverse-mode accumulation algorithm (`backpropCtx`) is correct.
@@ -348,70 +221,20 @@ Informally: for any input perturbation `dx` and any output seed cotangent `seed`
 `⟪JVP(g, x, dx), seed⟫ = ⟪dx, backprop(g, x, seed)⟫`.
 
 This is the formal analogue of PyTorch’s guarantee that `backward()` computes vector–Jacobian
-products and accumulates them through a dynamic DAG/tape.
+products and accumulates them through a dynamic DAG/tape. It is the `ℝ`, `Δ := Unit` instance of
+`Algebra.Graph.backprop_correct`.
 -/
 theorem backprop_correct {ss : List Shape} (g : Graph Γ ss) :
     ∀ x dx seed,
       TensorPack.dotList (jvpCtx (ss := ss) g x dx) seed =
         TensorPack.dotList dx (backpropCtx (ss := ss) g x seed) := by
-  induction g with
-  | nil =>
-    intro x dx seed
-    -- `ss = []` so this is exactly the dotList/cast adjointness.
-    simpa [jvpCtx, backpropCtx] using
-      (TensorPack.dotList_cast_left (h := (List.append_nil Γ).symm) (x := dx) (y := seed))
-  | snoc g node ih =>
-    intro x dx seed
-    rename_i ss τ
-    let ctx := eval (ss := ss) g x
-    let dctx := jvpCtx (ss := ss) g x dx
-    let dy := node.jvp ctx dctx
-    let assoc : (Γ ++ ss) ++ [τ] = Γ ++ (ss ++ [τ]) := List.append_assoc Γ ss [τ]
-    let seed' : TorchLean.TensorPack ℝ ((Γ ++ ss) ++ [τ]) :=
-      TorchLean.TensorPack.cast (h := assoc.symm) seed
-    let seedPrev : TorchLean.TensorPack ℝ (Γ ++ ss) :=
-      (TorchLean.TensorPack.unsnoc (ss := Γ ++ ss) seed').1
-    let seedOut : Tensor ℝ τ := (TorchLean.TensorPack.unsnoc (ss := Γ ++ ss) seed').2
-    have hseed : TorchLean.TensorPack.snoc seedPrev seedOut = seed' := by
-      change TorchLean.TensorPack.snoc
-        (TorchLean.TensorPack.unsnoc seed').1
-        (TorchLean.TensorPack.unsnoc seed').2 = seed'
-      exact TorchLean.TensorPack.snoc_unsnoc seed'
-    have hjvp :
-        TensorPack.dotList (jvpCtx (ss := ss ++ [τ]) (Graph.snoc g node) x dx) seed =
-          TensorPack.dotList dctx seedPrev + dot dy seedOut := by
-      -- Move casts so we can use `dotList_snoc` on reassociated contexts.
-      have :
-          TensorPack.dotList (TorchLean.TensorPack.snoc dctx dy) seed' =
-            TensorPack.dotList dctx seedPrev + dot dy seedOut := by
-        simpa [hseed] using
-          (TensorPack.dotList_snoc (x := dctx) (y := seedPrev) (a := dy) (b := seedOut))
-      -- Unfold `jvpCtx` at the snoc node, then apply `dotList_cast_left`.
-      simpa [jvpCtx, ctx, dctx, dy, seed', assoc] using
-        (TensorPack.dotList_cast_left (h := assoc) (x := TorchLean.TensorPack.snoc dctx dy)
-          (y := seed) |>.trans this)
-    have hlocal : dot dy seedOut = TensorPack.dotList dctx (node.vjp ctx seedOut) := by
-      simpa [dy] using (node.correct ctx dctx seedOut)
-    have hadd :
-        TensorPack.dotList dctx seedPrev + TensorPack.dotList dctx (node.vjp ctx seedOut) =
-          TensorPack.dotList dctx (TorchLean.TensorPack.add seedPrev (node.vjp ctx seedOut)) := by
-      simpa using
-        (TensorPack.dotList_add_right (x := dctx) (y := seedPrev) (z := node.vjp ctx seedOut)).symm
-    calc
-      TensorPack.dotList (jvpCtx (ss := ss ++ [τ]) (Graph.snoc g node) x dx) seed
-          = TensorPack.dotList dctx seedPrev + dot dy seedOut := hjvp
-      _ = TensorPack.dotList dctx seedPrev + TensorPack.dotList dctx (node.vjp ctx seedOut) := by
-            simp [hlocal]
-      _ = TensorPack.dotList dctx (TorchLean.TensorPack.add seedPrev (node.vjp ctx seedOut)) := by
-            simp [hadd]
-      _ = TensorPack.dotList dx
-            (backpropCtx (ss := ss) g x
-              (TorchLean.TensorPack.add seedPrev (node.vjp ctx seedOut))) := by
-            simpa [dctx] using (ih x dx (TorchLean.TensorPack.add seedPrev (node.vjp ctx seedOut)))
-      _ = TensorPack.dotList dx (backpropCtx (ss := ss ++ [τ]) (Graph.snoc g node) x seed) := by
-            simp [backpropCtx, ctx, seed', seedPrev, seedOut]
+  intro x dx seed
+  rw [TensorPack.dotList_eq_algebra_dotList, TensorPack.dotList_eq_algebra_dotList,
+    ← jvpCtx_toAlgebra, ← backpropCtx_toAlgebra]
+  exact Algebra.Graph.backprop_correct g.toAlgebra x dx () seed
 
 end Graph
+
 
 end
 end Autograd

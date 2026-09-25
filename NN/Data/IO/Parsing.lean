@@ -37,13 +37,9 @@ def formatError (context message : String) : String :=
 ## Decimal scanning
 -/
 
-/-- ASCII digit test used by the numeric parser. -/
-def isDigit (c : Char) : Bool :=
-  c.isDigit
-
 /-- Convert a digit character to its numeric value, or return `none` if not a digit. -/
 def digitVal? (c : Char) : Option Nat :=
-  if isDigit c then
+  if c.isDigit then
     some (c.toNat - ('0' : Char).toNat)
   else
     none

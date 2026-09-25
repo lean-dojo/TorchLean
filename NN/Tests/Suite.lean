@@ -45,12 +45,15 @@ public import NN.Tests.MLTheory.Diagnostics
 public import NN.Tests.MLTheory.DirectedReductions
 public import NN.Tests.MLTheory.BatchNormBounds
 public import NN.Tests.Verification.CameraCertificates
+public import NN.Tests.Verification.CertificateParsing
+public import NN.Tests.Verification.DigitsCrown
 public import NN.Tests.Verification.FiniteArtifact
 public import NN.Tests.Verification.GraphNumericalCertificate
 public import NN.Tests.MLTheory.CROWNQuery
 public import NN.Tests.MLTheory.Monotonicity
 public import NN.Tests.MLTheory.SoftmaxDerivatives
 public import NN.Tests.Runtime.EinsumDynamic
+public import NN.Tests.Runtime.PerfFastPaths
 public import NN.Tests.Runtime.Floats.Suite
 public import NN.Tests.Runtime.Rationals.Suite
 public import NN.Tests.Runtime.Cuda.Suite
@@ -66,8 +69,8 @@ public import NN.Tests.Tensor.Storage
 Top-level executable test entrypoint for TorchLean.
 
 This regression suite complements the theorems in `NN/Proofs` by exercising runtime trust
-boundaries: native CUDA kernels, FFI buffers, floating-point execution, executable parsers, and API
-runtime checks.
+boundaries: the LibTorch CUDA backend, FFI buffers, floating-point execution, executable parsers,
+and API runtime checks.
 -/
 
 @[expose] public section
@@ -92,9 +95,6 @@ def usage : String :=
 def run : IO Unit := do
   if (← IO.getEnv "TORCHLEAN_REQUIRE_CUDA") == some "1" then
     Runtime.Autograd.Cuda.Buffer.requireNativeRuntime
-  if (← IO.getEnv "TORCHLEAN_CPU_REDUCTION_PROBE") == some "1" then
-    Tests.Cuda.Stress.runLargeBufferStress
-    return
   -- Fresh subprocesses isolate native memory accounting and restore allocator limits on exit.
   -- These probes are selected before the ordinary suite to avoid unrelated live GPU owners.
   match ← IO.getEnv "TORCHLEAN_LIBTORCH_MEMORY_PROBE" with
@@ -142,12 +142,15 @@ def run : IO Unit := do
     NN.Tests.MLTheory.DirectedReductions.run
     NN.Tests.MLTheory.BatchNormBounds.run
     NN.Tests.Verification.CameraCertificates.run
+    NN.Tests.Verification.CertificateParsing.run
+    NN.Tests.Verification.DigitsCrown.run
     NN.Tests.Verification.FiniteArtifact.run
     NN.Tests.Verification.GraphNumericalCertificate.run
     NN.Tests.MLTheory.CROWNQuery.run
     NN.Tests.MLTheory.Monotonicity.run
     NN.Tests.MLTheory.SoftmaxDerivatives.run
     NN.Tests.Runtime.EinsumDynamic.run
+    NN.Tests.Runtime.PerfFastPaths.run
     NN.Tests.Tensor.Lexer.run
     NN.Tests.Tensor.LinearAlgebra.run
     NN.Tests.Tensor.Operations.run
@@ -155,11 +158,8 @@ def run : IO Unit := do
     Tests.Floats.run
     Tests.Rationals.Suite.run
     match Runtime.Autograd.Cuda.Buffer.runtimeStatus with
-    | .cpuStub =>
-        Tests.Cuda.ConvPool.runWideGeometryChecks
-        Tests.Cuda.Stress.runLargeBufferStress
-        Tests.Cuda.Stress.runMemoryTests
-        IO.println "  CUDA kernels: skipped (CPU build)"
+    | .notLinked =>
+        IO.println "  CUDA kernels: skipped (LibTorch not linked)"
     | .nativeAvailable =>
         NN.Tests.API.BufferUpdates.checkStochasticBuffers (device := .cuda)
         NN.Tests.Runtime.EinsumDynamic.run .cuda

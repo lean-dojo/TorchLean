@@ -268,7 +268,7 @@ accumulation followed by one rounding; this differs from rounding at every node.
 
 For quantization, `FloatLib.Numerics.Quantization.Affine` supplies executable rational
 nearest-even quantization. `FloatLib.Numerics.Quantization.Affine.Real` supplies real scales and
-caller-chosen rounding. TorchLean re-exports these through `NN.Floats.Quantization`, with tensor
+caller-chosen rounding. TorchLean imports these from FloatLib and adds tensor
 lifts in `NN.Spec.Quantization` and `NN.Spec.Quantization.Rational`.
 
 ## Repository Map

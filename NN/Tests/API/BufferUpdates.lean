@@ -142,10 +142,10 @@ def checkLossModes : IO Unit := do
       { execution } (α := Float)
     let sample (value : Float) : Sample.Supervised Float [1, 64] [1, 64] :=
       { input := Tensor.full [1, 64] value, target := Tensor.zeros [1, 64] }
-    let _ ← runner.loss (mode := some .train) (sample 5.0)
+    let _ ← runner.loss (mode := .train) (sample 5.0)
     expectClose "training loss updates running mean" 2.5
       (((← runner.state).get ⟨2, by decide⟩).to (Array Float))[0]!
-    let _ ← runner.loss (mode := some .eval) (sample 9.0)
+    let _ ← runner.loss (mode := .eval) (sample 9.0)
     expectClose "evaluation loss preserves running mean" 2.5
       (((← runner.state).get ⟨2, by decide⟩).to (Array Float))[0]!
 
@@ -154,7 +154,7 @@ def checkMappedBuffers : IO Unit := do
   for execution in [Runtime.ExecutionMode.eager, .typedGraph] do
     let runner ← Trainer.Internal.Runner.instantiate model .mse
       { execution } (α := Float)
-    let _ ← runner.loss (mode := some .train)
+    let _ ← runner.loss (mode := .train)
       { input := Tensor.full [2, 1, 64] 5.0, target := Tensor.zeros [2, 1, 64] }
     let state ← runner.state
     if h : 2 < (nn.stateShapes model).length then

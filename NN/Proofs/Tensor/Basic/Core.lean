@@ -92,6 +92,29 @@ https://pytorch.org/docs/stable/generated/torch.Tensor.view.html
 def flattenR {s : Shape} (x : Tensor ℝ s) : Fin (Spec.Shape.size s) → ℝ :=
   getScalar (flattenSpec (α:=ℝ) x)
 
+/-- Row-major equivalence between the coordinates of a shape and flat indices. Its forward map is
+`Shape.Coord.linearize` and its inverse is `Shape.Coord.unlinearize`. -/
+def Shape.Coord.equivFin (s : Shape) : s.Coord ≃ Fin s.size where
+  toFun := Shape.Coord.linearize
+  invFun := Shape.Coord.unlinearize
+  left_inv := Shape.Coord.unlinearize_linearize
+  right_inv := Shape.Coord.linearize_unlinearize
+
+theorem Shape.Coord.equivFin_apply {s : Shape} (c : s.Coord) :
+    Shape.Coord.equivFin s c = Shape.Coord.linearize c := rfl
+
+/-- Reading a flattened tensor at the row-major position of a coordinate returns that entry. -/
+theorem getScalar_flattenSpec_linearize {α : Type} [Storage α] {s : Shape} (x : Tensor α s)
+    (c : s.Coord) : getScalar (flattenSpec x) (Shape.Coord.linearize c) = x c := by
+  rw [getScalar_eq_apply]
+  unfold flattenSpec
+  rw [TorchLean.Tensor.Internal.Rep.reshape_apply_coordEquiv]
+  congr 1
+  apply TorchLean.Tensor.Internal.Coord.linearize_injective
+  apply Fin.ext
+  rw [reshapeCoordEquiv_linearize_val, vectorCoordinate_linearize_val]
+  rfl
+
 /--
 Unflatten a 1D view `Fin (Spec.Shape.size s) → ℝ` back into a tensor of shape `s`.
 

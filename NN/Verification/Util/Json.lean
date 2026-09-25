@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Json
+public import NN.MLTheory.CROWN.BoundOps
 
 /-!
 # Json
@@ -120,6 +121,39 @@ def parseFiniteFloatArray (ctx : String) (j : Json) : Except String (Array Float
   let xs ← TorchLean.Json.expectArray ctx j
   xs.mapIdxM fun i x => parseFiniteFloat s!"{ctx}[{i}]" x
 
+/--
+Parse a rational in the format emitted by TorchLean’s Arb helpers:
+
+- integer: `"5"`, `"-3"`
+- fraction: `"5/2"`, `"-7/10"`
+
+We avoid JSON numbers here because they are stored as `Scientific` and are not guaranteed to
+round-trip exactly for large integers.
+-/
+def parseRatString (s : String) : Except String Rat := do
+  let s := s.trimAscii.toString
+  if s.isEmpty then
+    throw "empty rational string"
+  match s.splitOn "/" with
+  | [numStr] =>
+      match numStr.toInt? with
+      | some n => pure (Rat.ofInt n)
+      | none => throw s!"invalid integer rational: '{s}'"
+  | [numStr, denStr] =>
+      let n ←
+        match numStr.toInt? with
+        | some n => pure n
+        | none => throw s!"invalid numerator: '{numStr}'"
+      let d ←
+        match denStr.toNat? with
+        | some d => pure d
+        | none => throw s!"invalid denominator (expected Nat): '{denStr}'"
+      if d = 0 then
+        throw "invalid rational: denominator is 0"
+      pure (Rat.ofInt n / Rat.ofInt (Int.ofNat d))
+  | _ =>
+      throw s!"invalid rational (expected n or n/d): '{s}'"
+
 /-- A finite axis-aligned region parsed from a verification artifact. -/
 structure BoxRegion where
   /-- Declared dimension, or the inferred endpoint-array length when `dim` is absent. -/
@@ -149,7 +183,8 @@ end BoxRegion
 Parse either `{lo, hi}` or `{center, eps}` notation for a finite axis-aligned region.
 
 When `dim` is absent, it is inferred from the endpoint or center array. When present, it must be a
-natural number equal to the resulting endpoint lengths. The parser also rejects negative radii,
+natural number equal to the resulting endpoint lengths. The `{center, eps}` endpoints are rounded
+outward, so the parsed box contains the exact real box. The parser also rejects negative radii,
 non-finite values, incomplete schemas, and intervals whose lower endpoint exceeds the upper one.
 Keeping these checks here gives certificate consumers one well-formed region type instead of
 several subtly different parsers.
@@ -171,10 +206,12 @@ def parseBoxRegion (ctx : String) (j : Json) : Except String BoxRegion := do
   | none, none, some centerJson, some epsJson =>
       let center ← parseFiniteFloatArray s!"{ctx}.center" centerJson
       let radius ← parseFiniteFloat s!"{ctx}.eps" epsJson
+      unless radius ≥ 0 do
+        throw s!"{ctx}.eps: expected a nonnegative radius, got {radius}"
       pure
         { dim := declaredDim?.getD center.size
-          lo := center.map (· - radius)
-          hi := center.map (· + radius) }
+          lo := center.map (NN.MLTheory.CROWN.HostFloat.subDownTight · radius)
+          hi := center.map (NN.MLTheory.CROWN.HostFloat.addUpTight · radius) }
   | some _, none, _, _ =>
       throw s!"{ctx}: field `lo` requires a matching `hi` field"
   | none, some _, _, _ =>

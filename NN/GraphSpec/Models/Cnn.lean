@@ -30,6 +30,9 @@ Attach a linear classifier to an arbitrary feature chain.
 Parameters remain in feature-chain order, followed by the head's weight and bias. An identity
 feature chain gives a linear classifier on the flattened input. The general chain-to-DAG
 conversion applies to the resulting classifier without a model-specific wrapper.
+
+The name reflects the usual case of a convolutional feature chain. This definition adds no
+convolution itself; it is the flatten and linear head.
 -/
 def cnn {parameters : List Shape} {input featureShape : Shape}
     (features : Chain parameters input featureShape) (outputSize : Nat) :

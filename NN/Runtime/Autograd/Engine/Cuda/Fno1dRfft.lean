@@ -18,7 +18,8 @@ public import NN.Runtime.Autograd.Engine.Cuda.Ops.Shape
 # CUDA FNO1D (real RFFT)
 
 This file provides a CUDA forward and VJP runner for a real-valued FNO1D model using ATen
-operations. Its spectral convolution uses the same tape primitive as `nn.models.fnoRfft` on CUDA.
+operations. Its spectral convolution uses the `spectralConv1dRfft` tape primitive that
+`nn.spectralConv1dRfft` records on CUDA.
 The public constructor also offers a dense reference with identical one-sided weights.
 
 This runner keeps its explicit buffer lifetime and Adam handling for the Burgers example.
@@ -172,7 +173,7 @@ def addParamLeaf (t : Tape) (ps : Array Param) (paramBuffers : Array Buffer)
   pure (t', paramIds.push id, id)
 
 /-- Broadcast a vector of length `cols` across `grid` rows. -/
-def broadcastVecToMat (t : Tape) (grid cols : Nat) (xId : Nat) : Result (Tape × Nat) :=
+@[inline] def broadcastVecToMat (t : Tape) (grid cols : Nat) (xId : Nat) : Result (Tape × Nat) :=
   do
     let _ ← t.requireValue xId ([cols])
     Tape.broadcastTo (t := t) (s₁ := [cols]) (s₂ := [grid, cols]) Shape.BroadcastTo.proof xId

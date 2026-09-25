@@ -34,11 +34,12 @@ References:
 - PyTorch `nn.GRUCell` docs: https://docs.pytorch.org/docs/stable/generated/torch.nn.GRUCell.html
 - PyTorch `nn.GRU` docs: https://pytorch.org/docs/stable/generated/torch.nn.GRU.html
 
-PyTorch analogy: this corresponds to wiring `torch.nn.GRU` with linear heads and pooling over time
-(e.g. last hidden state for classification). This is an architectural comparison only. The
-recurrent core is the original Cho reset-before GRU from `NN.Spec.Layers.Gru`; PyTorch uses a
-reset-after candidate-state equation, so its checkpoints are not equation-compatible with these
-models without an explicit conversion.
+The wiring matches `torch.nn.GRU` with linear heads and pooling over time (e.g. last hidden
+state for classification), and each definition below names its wiring analogue. The comparison is
+architectural only. The recurrent core is the original Cho reset-before GRU (`GRUSpec`), while
+PyTorch uses the reset-after candidate equation (`GRUResetAfterSpec`). For general recurrent
+matrices these are different function families, so PyTorch GRU weights cannot be converted into
+these models.
 -/
 
 @[expose] public section
@@ -59,7 +60,7 @@ namespace Gru
 Pipeline:
 `GRU(seqLen, inputSize → hiddenSize)` then `Linear` applied at each timestep.
 
-PyTorch analogy: `nn.GRU(..., batch_first=False)` followed by an `nn.linear` on the output sequence.
+Wiring analogue: `nn.GRU(..., batch_first=False)` followed by an `nn.linear` on the output sequence.
 -/
 def sequence
   [DecidableRel ((· > ·) : α → α → Prop)]
@@ -74,7 +75,7 @@ def sequence
 
 /-- A many-to-one GRU classifier (use the last hidden state, then a linear head).
 
-PyTorch analogy: run `nn.GRU` over the sequence and feed the last output/hidden state into
+Wiring analogue: run `nn.GRU` over the sequence and feed the last output/hidden state into
 `nn.Linear(hiddenSize, numClasses)`.
 -/
 def classifier
@@ -107,7 +108,7 @@ def stacked
 `Linear` as the embedding/projection map, then GRU, then a per-timestep projection back to
 `vocabularySize`.
 
-PyTorch analogy: embedding (often `nn.Embedding`), `nn.GRU`, and `nn.Linear(hiddenSize,
+Wiring analogue: embedding (often `nn.Embedding`), `nn.GRU`, and `nn.Linear(hiddenSize,
 vocabularySize)`. We use `LinearSpec` here as a spec-friendly stand-in for a one-hot embedding
 matrix.
 -/
@@ -232,7 +233,7 @@ structure Generator (α : Type) [TorchLean.Storage α] (vocabularySize hiddenSiz
 Bundle of parameters for a bidirectional GRU model with an output head.
 
 The head consumes the concatenation of forward and backward hidden states.
-PyTorch analogue: `nn.GRU(..., bidirectional=true)` plus a linear projection.
+Wiring analogue: `nn.GRU(..., bidirectional=true)` plus a linear projection.
 -/
 structure BidirectionalModel (α : Type) [TorchLean.Storage α]
     (inputSize hiddenSize outputSize : Nat) where
@@ -264,7 +265,7 @@ structure LanguageModel (α : Type) [TorchLean.Storage α] (vocabularySize hidde
 Bundle of parameters for a GRU encoder-decoder model (seq2seq).
 
 This uses separate embeddings and GRU cores for encoder and decoder, plus an output projection.
-PyTorch analogue: an encoder `nn.GRU` and a decoder `nn.GRU` with teacher forcing.
+Wiring analogue: an encoder `nn.GRU` and a decoder `nn.GRU` with teacher forcing.
 -/
 structure EncoderDecoder (α : Type) [TorchLean.Storage α]
     (inputVocabSize hiddenSize outputVocabSize : Nat) where
@@ -296,7 +297,7 @@ def Model.forward {inputSize hiddenSize outputSize : Nat}
 
 Returns `(outputs, final_hidden)`. Empty sequences preserve the initial hidden state.
 
-PyTorch analogy: run `nn.GRU` over the sequence, then apply `nn.linear` at each timestep.
+Wiring analogue: run `nn.GRU` over the sequence, then apply `nn.linear` at each timestep.
 -/
 def Model.forwardSequence {seqLen inputSize hiddenSize outputSize : Nat}
   (model : Model α inputSize hiddenSize outputSize)
@@ -417,7 +418,7 @@ This is a small reference architecture:
 - decode `targetTokens` starting from that hidden state (teacher forcing),
 - project decoder states into output-vocabulary logits.
 
-PyTorch analogy: `nn.GRU` encoder + `nn.GRU` decoder with a linear output projection.
+Wiring analogue: `nn.GRU` encoder + `nn.GRU` decoder with a linear output projection.
 -/
 def EncoderDecoder.forward {srcSeqLen tgtSeqLen inputVocabSize hiddenSize outputVocabSize :
   Nat}
@@ -543,7 +544,7 @@ def Model.toModule {seqLen inputSize hiddenSize outputSize : Nat}
 /--
 Package `Gru.Classifier` as an `Spec.Module`.
 
-PyTorch analogue: `nn.GRU` feeding a `nn.linear` classifier head.
+Wiring analogue: `nn.GRU` feeding a `nn.linear` classifier head.
 -/
 def Classifier.toModule {seqLen inputSize hiddenSize numClasses : Nat}
   (model : Classifier α inputSize hiddenSize numClasses) (h : 0 < seqLen) :
@@ -561,7 +562,7 @@ def Classifier.toModule {seqLen inputSize hiddenSize numClasses : Nat}
 /--
 Package `Gru.BidirectionalModel` as an `Spec.Module`.
 
-PyTorch analogue: `nn.GRU(..., bidirectional=true)` feeding a per-timestep linear head.
+Wiring analogue: `nn.GRU(..., bidirectional=true)` feeding a per-timestep linear head.
 -/
 def BidirectionalModel.toModule {seqLen inputSize hiddenSize outputSize : Nat}
   (model : BidirectionalModel α inputSize hiddenSize outputSize) :
@@ -579,7 +580,7 @@ def BidirectionalModel.toModule {seqLen inputSize hiddenSize outputSize : Nat}
 /--
 Package `Gru.Generator` as an `Spec.Module`.
 
-PyTorch analogue: GRU language model (`nn.GRU` + vocabulary projection) producing a sequence of
+Wiring analogue: GRU language model (`nn.GRU` + vocabulary projection) producing a sequence of
 logits.
 -/
 def Generator.toModule {seqLen vocabularySize hiddenSize : Nat}

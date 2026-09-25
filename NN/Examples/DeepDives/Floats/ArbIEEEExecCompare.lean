@@ -168,10 +168,10 @@ def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := 
     try
       let Iarb ←
         match func with
-        | "tanh" => IEEE32Exec.Interval32.tanhArb X (precBits := precBits) (digits := digits)
-        | "exp"  => IEEE32Exec.Interval32.expArb  X (precBits := precBits) (digits := digits)
-        | "log"  => IEEE32Exec.Interval32.logArb  X (precBits := precBits) (digits := digits)
-        | "sqrt" => IEEE32Exec.Interval32.sqrtArb X (precBits := precBits) (digits := digits)
+        | "tanh" => IEEE32Exec.tanhArb X (precBits := precBits) (digits := digits)
+        | "exp"  => IEEE32Exec.expArb  X (precBits := precBits) (digits := digits)
+        | "log"  => IEEE32Exec.logArb  X (precBits := precBits) (digits := digits)
+        | "sqrt" => IEEE32Exec.sqrtArb X (precBits := precBits) (digits := digits)
         | _      => pure ⟨(Binary.canonicalNaN : Binary 8 23), (Binary.canonicalNaN : Binary 8 23)⟩
       IO.println s!"  configured binary32+Arb:{showInterval32 Iarb}"
 

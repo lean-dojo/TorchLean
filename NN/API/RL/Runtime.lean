@@ -37,54 +37,6 @@ export Runtime.RL.Boundary
    checkTransitionFin checkTransition
    parseTransitionJson)
 export Runtime.RL.Boundary.Transition (done)
-
-/-!
-## Casting to Other Scalar Backends
-
-The trust-boundary checker validates rollout JSON in host `Float`, because that is the interchange
-format. The functions below cast accepted rollouts into the element representation chosen for the
-proof or training path.
--/
-
-/-- Cast a `Float` observation tensor into a runtime element representation `α`. -/
-def castObservation {α : Type} [TorchLean.Storage α] [Runtime.FromFloat α] {obsShape : Shape}
-    (t : Tensor Float obsShape) : Tensor α obsShape :=
-  TorchLean.Tensor.map (Runtime.ofFloat (α := α)) t
-
-/-- Cast a validated `Float` transition into a runtime element representation `α`. -/
-def castTransition {α : Type} [TorchLean.Storage α] [Runtime.FromFloat α]
-    {obsShape : Shape} {nActions : Nat}
-    (tr : Transition obsShape nActions) :
-    Spec.RL.ObservedTransition (Tensor α obsShape) (Fin nActions) α :=
-  { observation := castObservation (α := α) tr.observation
-    action := tr.action
-    reward := Runtime.ofFloat (α := α) tr.reward
-    nextObservation := castObservation (α := α) tr.nextObservation
-    terminated := tr.terminated
-    truncated := tr.truncated }
-
-/-- Cast a whole rollout into a runtime element representation `α`. -/
-def castRollout {α : Type} [TorchLean.Storage α] [Runtime.FromFloat α]
-    {obsShape : Shape} {nActions : Nat}
-    (xs : Array (Transition obsShape nActions)) :
-    Array (Spec.RL.ObservedTransition (Tensor α obsShape) (Fin nActions) α) :=
-  xs.map (castTransition (α := α) (obsShape := obsShape) (nActions := nActions))
-
-/--
-Load and validate a rollout JSON file in the requested element type.
-
-Host `Float` is the default interchange representation. Select another executable or proof-facing
-representation with `(α := ...)`.
--/
-def loadRollout {obsShape : Shape} {nActions : Nat}
-    (path : String)
-    (c : Contract obsShape nActions)
-    (α : Type := Float)
-    [TorchLean.Storage α] [Runtime.FromFloat α] :
-    IO (Array (Spec.RL.ObservedTransition (Tensor α obsShape) (Fin nActions) α)) := do
-  let xs ← Runtime.RL.Boundary.loadRollout path c
-  pure (castRollout (α := α) xs)
-
 end boundary
 
 namespace numerics
@@ -94,6 +46,7 @@ export Runtime.RL.Numerics.Float32
    discountedBackupChecked discountedReturnsChecked
    tdResidualChecked
    generalizedAdvantageEstimationChecked
+   generalizedAdvantageEstimationWithBoundariesChecked
    normalizeZScoreChecked
    importanceRatioChecked
    ppoClippedObjectiveFromRatioChecked

@@ -305,10 +305,22 @@ def checkConvolution : IO Unit := do
         expect "GraphSpec convolution parameter count" (values.size == 2)
         expectValues "GraphSpec convolution kernel initialization" values[0]! <|
           (Runtime.Autograd.Torch.Init.tensor (s := [2, 1, 3])
-            (.uniform (-0.1) 0.1) (2 * occurrence)).to (Array Float)
+            (.uniform (-0.1) 0.1) occurrence).to (Array Float)
         expectValues "GraphSpec convolution bias initialization" values[1]! #[0.0, 0.0]
         expect "GraphSpec convolution runtime seed order"
-          (initializationSeeds? model == some #[some (2 * occurrence), none])
+          (initializationSeeds? model == some #[some occurrence, none])
+
+/-- Reading past a flat initializer payload reports an error instead of panicking. -/
+def checkFlatInitializerIndex : IO Unit := do
+  let init := Runtime.Autograd.Model.Module.RuntimeInit.FloatInit.flat (FloatArray.mk #[2.5])
+  expect "flat initializer in-range sample"
+    (match Runtime.Autograd.Model.Module.RuntimeInit.sampleAt init 0 with
+      | .ok value => value == 2.5
+      | .error _ => false)
+  expect "flat initializer out-of-range sample"
+    (match Runtime.Autograd.Model.Module.RuntimeInit.sampleAt init 1 with
+      | .ok _ => false
+      | .error message => message.contains "outside")
 
 def run : IO Unit := do
   checkEmptyLstmClassifier
@@ -317,6 +329,7 @@ def run : IO Unit := do
   checkGruSequence
   checkDiscriminator
   checkConvolution
+  checkFlatInitializerIndex
   IO.println "  Model boundary regressions: passed"
 
 end NN.Tests.API.ModelEdgeCases

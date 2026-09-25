@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 project(TorchLeanConvPoolRegression LANGUAGES CXX)
 
-# Configure, compile, and run only in the cluster, using the production build's SDK and Lean.
+# Configure against the same LibTorch SDK and Lean toolchain as the production backend build.
 foreach(required TORCHLEAN_LIBTORCH_HOME TORCHLEAN_LEAN_PREFIX)
   if(NOT DEFINED ${required})
     message(FATAL_ERROR "${required} is required.")
@@ -46,9 +46,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_executable(torchlean_conv_pool_regression conv_pool.cpp)
 target_compile_definitions(torchlean_conv_pool_regression PRIVATE TORCHLEAN_LIBTORCH)
 target_include_directories(torchlean_conv_pool_regression PRIVATE
-  "${TORCHLEAN_LEAN_PREFIX}/include"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../../cuda/common"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../../cuda/conv_pool")
+  "${TORCHLEAN_LEAN_PREFIX}/include")
 separate_arguments(torch_sdk_cxx_flags NATIVE_COMMAND "${TORCH_CXX_FLAGS}")
 target_compile_options(torchlean_conv_pool_regression PRIVATE ${torch_sdk_cxx_flags})
 target_link_libraries(torchlean_conv_pool_regression PRIVATE ${TORCH_LIBRARIES} "${LEAN_RUNTIME}")

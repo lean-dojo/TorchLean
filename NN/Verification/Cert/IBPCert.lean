@@ -9,6 +9,7 @@ module
 public import NN.Runtime.PyTorch.Import.Core
 public import NN.Verification.Util.Json
 public import NN.Verification.Util.Tensor
+public import NN.Verification.Util.DecimalRounding
 public import NN.MLTheory.CROWN.Graph.Engine.Refinement
 
 /-!
@@ -31,8 +32,10 @@ Certificate shape:
 
 Notes on trust boundaries:
 - The JSON is an *untrusted* artifact; we only accept it if Lean recomputation agrees.
-- Each serialized interval must contain the interval recomputed by TorchLean. An inward endpoint is
-  rejected; an outward endpoint is allowed.
+- Each serialized interval must contain the interval recomputed by TorchLean. Each decimal endpoint
+  is rounded once into binary64, the lower endpoint toward `-∞` and the upper toward `+∞`, and
+  containment is checked exactly on those values. An endpoint inward of Lean's by one binary64 ulp
+  or more is rejected; one that is closer reads as Lean's value.
 - This checker validates an exported artifact against Lean execution. The theorem-backed path is
   separate: use `NN.Verification` when you need a Lean theorem connecting checker
   hypotheses to semantic enclosure.
@@ -95,8 +98,12 @@ def check (g : Graph) (ps : ParamStore Float) (outId : Nat) (path : String)
   let hiJ ← expectField resultObj "hi" "result"
 
   let n := outB.dim
-  let some loVec := parseFloatVec n loJ | throw <| IO.userError "Missing/invalid result.lo"
-  let some hiVec := parseFloatVec n hiJ | throw <| IO.userError "Missing/invalid result.hi"
+  let some loNums := DecimalRounding.numbers? n loJ
+    | throw <| IO.userError "Missing/invalid result.lo"
+  let some hiNums := DecimalRounding.numbers? n hiJ
+    | throw <| IO.userError "Missing/invalid result.hi"
+  let loVec i := DecimalRounding.float .towardNegativeInfinity (loNums i)
+  let hiVec i := DecimalRounding.float .towardPositiveInfinity (hiNums i)
   unless (List.finRange n).all (fun i => (loVec i).isFinite && (hiVec i).isFinite) do
     throw <| IO.userError "Invalid result bounds: every value must be finite"
 

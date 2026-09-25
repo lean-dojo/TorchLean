@@ -31,7 +31,7 @@ variable {α : Type} [Storage α] [Context α] [BoundOps α] [LawfulBoundOps α]
 
 local notation "value" => LawfulBoundOps.toReal (α := α)
 
-private theorem linear_restores (hzero : value (0 : α) = 0)
+private theorem linear_restores
     {dims : Nat → Nat} {v : Nat → Nat → ℝ} {input k id p : Nat}
     {st : DirectedBackwardState α} {z : ℝ} {aB : FlatBox α} {a : Nat → ℝ}
     (h : Represents dims v input k st (z - dot (dims id) a (v id)))
@@ -50,7 +50,7 @@ private theorem linear_restores (hzero : value (0 : α) = 0)
       rcases result with ⟨aX, lo, hi⟩
       right
       have ha' : RowEncloses aB m a := by simpa only [heq.1] using ha
-      have hresult := represents_linear hzero h p hp hlive heq.2.1 ha' W b heq.2.2 hr
+      have hresult := represents_linear h p hp hlive heq.2.1 ha' W b heq.2.2 hr
       simpa only [← heq.1, sub_add_cancel] using hresult.1
 
 private theorem sum_restores
@@ -99,7 +99,7 @@ private theorem sum_restores
   simpa only [← hd, sub_add_cancel] using hr
 
 /-- Every executable directed node preserves the sweep invariant for a real graph point. -/
-theorem backwardNode_preserves (hzero : value (0 : α) = 0)
+theorem backwardNode_preserves
     {nodes : Array Node} {ps : ParamStore α} {ibp : Array (Option (FlatBox α))}
     {ctx : AffineCtx} {dims : Nat → Nat} {v : Nat → Nat → ℝ}
     (point : GraphPoint nodes ps ibp ctx dims v)
@@ -147,7 +147,7 @@ theorem backwardNode_preserves (hzero : value (0 : α) = 0)
         | none => exact Or.inl rfl
         | some box =>
             simpa only [sub_add_cancel] using
-              represents_consume hzero hbase ha (point.ibp_encloses k hk box hb)
+              represents_consume hbase ha (point.ibp_encloses k hk box hb)
       have hfail : st.fail.failed = true ∨ Represents dims v ctx.inputId k st.fail z :=
         Or.inl rfl
       have heq := point.equation k hk
@@ -168,7 +168,7 @@ theorem backwardNode_preserves (hzero : value (0 : α) = 0)
               rw [hsEq.1]
               intro i
               simp only [pointCoeffBox, read_fin, hsEq.2 i, le_refl, and_self]
-            simpa only [sub_add_cancel] using represents_consume hzero hbase ha hb
+            simpa only [sub_add_cancel] using represents_consume hbase ha hb
       case detach | reshape _ _ | flatten _ =>
         simp only [NodeEquation, hkind] at heq
         cases hp : unaryParent? nodes[k]!.parents with
@@ -201,7 +201,7 @@ theorem backwardNode_preserves (hzero : value (0 : α) = 0)
             obtain ⟨hdp, hdq, hy⟩ := heq p q hpq
             right
             simpa only [sub_add_cancel] using
-              represents_subParents hzero hbase hp.1 hq.1 hp.2 hq.2 ha hdp hdq hy
+              represents_subParents hbase hp.1 hq.1 hp.2 hq.2 ha hdp hdq hy
       case linear =>
         simp only [NodeEquation, hkind] at heq
         cases hp : unaryParent? nodes[k]!.parents with
@@ -211,7 +211,7 @@ theorem backwardNode_preserves (hzero : value (0 : α) = 0)
             | none => exact hfail
             | some config =>
                 have hp' := hparent p (mem_of_unaryParent?_eq_some hp)
-                exact linear_restores hzero hbase hp'.1 hp'.2 ha
+                exact linear_restores hbase hp'.1 hp'.2 ha
                   config.w config.b (heq p hp config hc)
       case matmul =>
         simp only [NodeEquation, hkind] at heq
@@ -222,7 +222,7 @@ theorem backwardNode_preserves (hzero : value (0 : α) = 0)
             | none => exact hfail
             | some config =>
                 have hp' := hparent p (mem_of_unaryParent?_eq_some hp)
-                exact linear_restores hzero hbase hp'.1 hp'.2 ha config.w
+                exact linear_restores hbase hp'.1 hp'.2 ha config.w
                   (Tensor.full (α := α) (.dim config.m .scalar) 0) (heq p hp config hc)
       case conv configuration =>
         simp only [NodeEquation, hkind] at heq
@@ -242,7 +242,7 @@ theorem backwardNode_preserves (hzero : value (0 : α) = 0)
                     | none => exact hfail
                     | some leading =>
                         have hp' := hparent p (mem_of_unaryParent?_eq_some hp)
-                        exact linear_restores hzero hbase hp'.1 hp'.2 ha
+                        exact linear_restores hbase hp'.1 hp'.2 ha
                           (affOfConv (α := α) config leading).A
                           (affOfConv (α := α) config leading).c
                           (heq p hp config hc parent hn leading hl)

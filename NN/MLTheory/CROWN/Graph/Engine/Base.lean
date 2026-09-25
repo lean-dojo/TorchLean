@@ -455,17 +455,13 @@ public def boxSub (B1 B2 : FlatBox α) : FlatBox α :=
       else
         { dim := n1, lo := lo1, hi := hi1 }
 
-/-- Directed lower and upper sums of all coordinates in a flat box. -/
-private def boxSumEndpoints (B : FlatBox α) : α × α :=
+/-- Sum all coordinates of a flat box with directed accumulation. -/
+@[expose]
+def boxSum (B : FlatBox α) : FlatBox α :=
   let lo := (List.finRange B.dim).foldl (fun acc i =>
     BoundOps.addDown acc (B.lo.getScalar i)) 0
   let hi := (List.finRange B.dim).foldl (fun acc i =>
     BoundOps.addUp acc (B.hi.getScalar i)) 0
-  (lo, hi)
-
-/-- Sum all coordinates of a flat box with directed accumulation. -/
-def boxSum (B : FlatBox α) : FlatBox α :=
-  let (lo, hi) := boxSumEndpoints (α := α) B
   { dim := 1
     lo := Tensor.full (α := α) (.dim 1 .scalar) lo
     hi := Tensor.full (α := α) (.dim 1 .scalar) hi }
@@ -546,6 +542,7 @@ def boxUnaryEnclosure? [NonlinearBoundOps α]
   pure { dim := B.dim, lo := lower, hi := upper }
 
 /-- Componentwise square-root bounds, failing when a coordinate interval reaches below zero. -/
+@[expose]
 def boxSqrt? [NonlinearBoundOps α] (B : FlatBox α) : Option (FlatBox α) :=
   boxUnaryEnclosure? (α := α) NonlinearBoundOps.sqrtBounds B
 

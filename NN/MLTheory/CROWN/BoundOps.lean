@@ -242,6 +242,26 @@ def nextDown (x : Float) : Float :=
   else
     Float.ofBits (bits + 1)
 
+/--
+`a + b` rounded toward `+∞`, without widening an exact sum.
+
+The Knuth two-sum error term is exact for finite operands under round-to-nearest, so the rounded
+sum steps up one ulp only when it lies below the exact sum. On overflow the error term is NaN and
+the infinite rounded sum is returned unchanged.
+-/
+def addUpTight (a b : Float) : Float :=
+  let s := a + b
+  let bv := s - a
+  let err := (a - (s - bv)) + (b - bv)
+  if err > 0 then nextUp s else s
+
+/-- `a - b` rounded toward `-∞`, without widening an exact difference; see `addUpTight`. -/
+def subDownTight (a b : Float) : Float :=
+  let s := a - b
+  let bv := s - a
+  let err := (a - (s - bv)) + (-b - bv)
+  if err < 0 then nextDown s else s
+
 end HostFloat
 
 /--

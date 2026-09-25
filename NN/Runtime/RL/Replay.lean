@@ -8,6 +8,7 @@ module
 
 public import NN.Runtime.RL.Core
 public import NN.Spec.Core.Random
+public import NN.Spec.RL.Environment
 
 /-!
 # Experience Replay Buffers
@@ -51,6 +52,23 @@ variable {obsShape : Shape} {nActions : Nat}
 abbrev Transition (α : Type) [TorchLean.Storage α]
     (obsShape : Shape) (nActions : Nat) :=
   Core.Transition α obsShape nActions
+
+/--
+Replay transition from a Gym-style observed step.
+
+`done` is set from `terminated` alone. A time-limit truncation still has a successor state whose
+value the TD target should bootstrap from, so a truncated step is stored with `done = false`. This
+is the same split the PPO rollout makes between its bootstrap and continuation masks. A validated
+`Runtime.RL.Boundary.Transition` is an `ObservedTransition` over `Float`, so it converts directly.
+-/
+def ofObservedTransition
+    (t : Spec.RL.ObservedTransition (Tensor α obsShape) (Fin nActions) α) :
+    Transition α obsShape nActions :=
+  { state := t.observation
+    action := t.action
+    reward := t.reward
+    nextState := t.nextObservation
+    done := t.terminated }
 
 /--
 Bounded FIFO replay buffer.

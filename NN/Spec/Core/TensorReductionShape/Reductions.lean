@@ -79,11 +79,6 @@ end foldlSpec
     foldlSpec.go_zero_eq_fin_foldl]
   rfl
 
-/-- Right fold over all tensor elements. -/
-def foldrSpec {α β : Type} [TorchLean.Storage α]
-    (f : α → β → β) (init : β) {s : Shape} (tensor : Tensor α s) : β :=
-  tensor.data.toList.foldr f init
-
 -- Reductions that collapse a tensor to scalar values.
 /-- Sum all elements of a tensor. -/
 def sumSpec {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
@@ -422,11 +417,6 @@ def reduceMean {s : Shape} (axis : Nat) (t : Tensor α s) (h : Shape.NonemptyAxi
   let summed := reduceSum axis t h
   letI : Shape.AxisInBounds axis s := h.toAxisInBounds
   mapSpec (fun x => x / (Shape.axisSize s axis : α)) summed
-
-/-- Sum of squares reduced along an axis (helper for variance). -/
-def reduceSumSquared {s : Shape} (axis : Nat) (t : Tensor α s) :
-    Tensor α (shapeAfterSum s axis) :=
-  reduceDim sumSpec axis (mapSpec (fun x => x * x) t)
 
 /-- Variance-reduction along a given axis (population variance, divides by `n`).
 

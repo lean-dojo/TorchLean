@@ -39,7 +39,7 @@ lets downstream training code share one common input type for both:
 - The original Gym API paper (background on the env interface): https://arxiv.org/abs/1606.01540
 - Schulman et al., "Proximal Policy Optimization Algorithms" (2017):
   https://arxiv.org/abs/1707.06347
-- Trust-boundary pattern used elsewhere in TorchLean (e.g. the Arb oracle): `NN.Floats.Arb`.
+- Trust-boundary pattern used elsewhere in TorchLean (e.g. the Arb oracle): `NN.Floats.Arb.Oracle`.
 -/
 
 @[expose] public section

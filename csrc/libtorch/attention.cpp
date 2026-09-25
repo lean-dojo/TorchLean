@@ -1,6 +1,6 @@
 // Paired ATen attention operators. TorchLean owns the only differentiation tape.
 //
-// Operator schemas checked against the cluster's PyTorch 2.12.0a0 (0291f960b6).
+// Operator schemas checked against PyTorch 2.12.0a0 (0291f960b6) and pip torch 2.13.0+cu130.
 // Upstream preprocessing and derivative references:
 //   aten/src/ATen/native/native_functions.yaml
 //   aten/src/ATen/native/transformers/attention.cpp

@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Graph.Engine -- shake: keep
-import NN.Tensor.Internal.Laws.PackIndex
 
 /-!
 # CROWN Graph Theorems
@@ -83,50 +82,6 @@ theorem concat_encloses (layout : ConcatLayout)
   intro index
   simpa only [concat, Tensor.getScalar_ofFn] using
     h (layout.flatEquiv.symm index).1 (layout.flatEquiv.symm index).2
-
-/--
-The selected axis lies between the shared leading and trailing coordinates in row-major order.
-No positivity assumption is needed: a zero-sized parent has no scalar coordinate.
--/
-theorem flatEquiv_val (layout : ConcatLayout) (parent : Fin layout.lengths.length)
-    (index : Fin (layout.parentShape parent).size) :
-    let coordinate :=
-      ((Tensor.Internal.Coord.equivFin (layout.parentShape parent)).trans
-        (finCongr (Shape.internalSize_eq (layout.parentShape parent)))).symm index
-    let separated := Tensor.Internal.Coord.appendEquiv layout.leading
-      (layout.lengths.get parent :: layout.trailing) coordinate
-    (layout.flatEquiv ⟨parent, index⟩).val =
-      (Tensor.Internal.Coord.linearize separated.2.2).val +
-        Tensor.Internal.Shape.size layout.trailing *
-          ((∑ previous : Fin parent,
-              layout.lengths.get (Fin.castLE parent.isLt.le previous)) +
-            separated.2.1.val +
-            layout.lengths.sum * (Tensor.Internal.Coord.linearize separated.1).val) := by
-  exact Tensor.Internal.concatenateAxesCoordinateEquiv_linearize_val
-    layout.leading layout.trailing layout.lengths parent
-    (((Tensor.Internal.Coord.equivFin (layout.parentShape parent)).trans
-      (finCongr (Shape.internalSize_eq (layout.parentShape parent)))).symm index)
-
-omit [BoundOps α] in
-/--
-An objective on concatenated values is the sum of its pulled-back objectives on parent occurrences.
-Repeated graph ids are accumulated after this identity; occurrences are never discarded.
--/
-theorem objective_concat [AddCommMonoid α] (layout : ConcatLayout)
-    (objective : Tensor α [layout.outputShape.size])
-    (values : (parent : Fin layout.lengths.length) →
-      Tensor α [(layout.parentShape parent).size]) :
-    (∑ index, Tensor.getScalar objective index *
-      Tensor.getScalar (layout.concat values) index) =
-      ∑ parent, ∑ index,
-        Tensor.getScalar (layout.split objective parent) index *
-          Tensor.getScalar (values parent) index := by
-  symm
-  rw [← Fintype.sum_sigma']
-  apply Fintype.sum_equiv layout.flatEquiv
-  intro source
-  rcases source with ⟨parent, index⟩
-  simp only [split, Tensor.getScalar_ofFn, concat_get]
 
 end ConcatLayout
 
@@ -271,54 +226,6 @@ theorem box_relu_sound (n : Nat)
   have hx_i := hx i
   simpa [Activation.reluSpec] using
     And.intro (relu_mono hx_i.1) (relu_mono hx_i.2)
-
-/- Enclosure for `box_square`: if x ∈ B then x ⊙ x ∈ box_square B. -/
-
-/-- Lower bound for `v * v` on `[l, u]`.
-
-Squaring is not monotone, so the sign matters here: an interval straddling zero attains `0`, and
-otherwise the minimum sits at the endpoint nearer the origin. -/
-def sqLower (l u : α) : α :=
-  let l2 := BoundOps.mulDown l l
-  let u2 := BoundOps.mulDown u u
-  if l < 0 then
-    if 0 < u then 0 else (if l2 < u2 then l2 else u2)
-  else (if l2 < u2 then l2 else u2)
-
-/-- Upper bound for `v * v` on `[l, u]`: the larger of the two squared endpoints.
-
-Unlike `sqLower` there is no case split on the sign, because squaring is maximized at whichever
-endpoint is farther from the origin whether or not the interval straddles zero. -/
-def sqUpper (l u : α) : α :=
-  let l2 := BoundOps.mulUp l l
-  let u2 := BoundOps.mulUp u u
-  if l2 > u2 then l2 else u2
-
-/-- Coordinatewise squaring of a box encloses the elementwise product of an enclosed tensor.
-
-The scalar bound is taken as a hypothesis rather than proved here, since it is the one step that
-depends on the ordered-field structure of `α`; every instance discharges it separately. -/
-theorem box_square_sound (B : FlatBox α)
-  (sq_bound : ∀ {l u v : α}, l ≤ v → v ≤ u → sqLower (α:=α) l u ≤ v * v ∧ v * v ≤ sqUpper (α:=α) l
-    u)
-  (x : Tensor α [B.dim])
-  (hx : encloses (α:=α) B x)
-  : encloses (α:=α) (boxSquare (α:=α) B)
-      (castDimScalar (α:=α) rfl (Tensor.mulSpec (α:=α) x x)) := by
-  cases B with
-  | mk n lo hi =>
-      rw [castDimScalar_self]
-      change ∀ i : Fin n,
-        Tensor.getScalar (Tensor.ofFn (fun i => sqLower (lo.getScalar i)
-          (hi.getScalar i))) i ≤
-            Tensor.getScalar (Tensor.mulSpec x x) i ∧
-          Tensor.getScalar (Tensor.mulSpec x x) i ≤
-            Tensor.getScalar (Tensor.ofFn (fun i => sqUpper (lo.getScalar i)
-              (hi.getScalar i))) i
-      intro i
-      have hx_i := hx i
-      have hbounds := sq_bound hx_i.1 hx_i.2
-      simpa [Tensor.mulSpec] using hbounds
 
 end Semantics
 

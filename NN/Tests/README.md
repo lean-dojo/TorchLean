@@ -92,7 +92,7 @@ scripts/lake.sh -R -K cuda=true build nn_tests_suite
 TORCHLEAN_REQUIRE_CUDA=1 scripts/lake.sh -R -K cuda=true test
 ```
 
-`TORCHLEAN_REQUIRE_CUDA=1` fails on CPU stubs or when no CUDA device is visible. Without required
+`TORCHLEAN_REQUIRE_CUDA=1` fails on builds without LibTorch or when no CUDA device is visible. Without required
 GPU mode, the CPU profile skips the CUDA suite. These GPU commands require a separate GPU-capable
 environment; the hosted CI job provides CPU coverage.
 

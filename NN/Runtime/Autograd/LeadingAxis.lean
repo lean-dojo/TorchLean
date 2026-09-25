@@ -28,6 +28,10 @@ Apply a reference-level operation independently to every entry of a leading axis
 The callbacks isolate the four structural operations needed by the recursion. Device backends may
 replace this reference traversal with a fused primitive when the fused operation has the same
 per-entry semantics.
+
+The axis is split in half and each half is mapped recursively, so `f` still runs on entries
+`0, ..., n - 1` in order while every entry is sliced and concatenated once per level of a balanced
+tree. Peeling one entry at a time would copy the remaining tail at every step.
 -/
 def mapOuterAxisWith {m : Type → Type} [Monad m] {Ref : Shape → Type} {σ τ : Shape}
     (empty : m (Ref (.dim 0 τ)))
@@ -39,15 +43,19 @@ def mapOuterAxisWith {m : Type → Type} [Monad m] {Ref : Shape → Type} {σ τ
     (f : Ref σ → m (Ref τ)) {n : Nat} (x : Ref (.dim n σ)) : m (Ref (.dim n τ)) :=
   match n with
   | 0 => empty
-  | k + 1 => do
-      let headBatch ← slice (n := k + 1) x 0 1 (by simp)
-      let head ← reshape (s₁ := .dim 1 σ) (s₂ := σ) headBatch (by simp [Shape.size])
+  | 1 => do
+      let head ← reshape (s₁ := .dim 1 σ) (s₂ := σ) x (by simp [Shape.size])
       let yHead ← f head
-      let yHeadBatch ← reshape (s₁ := τ) (s₂ := .dim 1 τ) yHead (by simp [Shape.size])
-      let tail ← slice (n := k + 1) x 1 k (by simp [Nat.add_comm])
-      let yTail ← mapOuterAxisWith empty slice reshape concat f (n := k) tail
-      let y ← concat (n := 1) (k := k) yHeadBatch yTail
-      pure (by simpa [Nat.one_add] using y)
+      reshape (s₁ := τ) (s₂ := .dim 1 τ) yHead (by simp [Shape.size])
+  | k + 2 => do
+      let half := (k + 2) / 2
+      let left ← slice (n := k + 2) x 0 half (by omega)
+      let right ← slice (n := k + 2) x half (k + 2 - half) (by omega)
+      let yLeft ← mapOuterAxisWith empty slice reshape concat f (n := half) left
+      let yRight ← mapOuterAxisWith empty slice reshape concat f (n := k + 2 - half) right
+      let y ← concat (n := half) (k := k + 2 - half) yLeft yRight
+      have hSize : half + (k + 2 - half) = k + 2 := by omega
+      pure (hSize ▸ y)
 termination_by n
 
 end Runtime.Autograd

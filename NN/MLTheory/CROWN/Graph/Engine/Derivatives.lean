@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Graph.Engine.IBP -- shake: keep
-public import NN.MLTheory.CROWN.Graph.Engine.DerivativeRules
 public import NN.MLTheory.CROWN.Graph.Engine.LayerNormDerivatives
 
 /-!
@@ -38,6 +37,24 @@ variable [BoundOps α]
 variable [NonlinearBoundOps α]
 
 open BoundOps
+
+/-- Apply the input differential of a convolution to a first or mixed-second derivative box.
+
+Convolution is affine in its input. With weights held fixed, every input derivative passes through
+the same convolution with zero bias. This keeps the original groups, dilation, padding, strides,
+and leading batch shape without materializing a dense matrix. -/
+@[expose] def convDerivativeBox? (nodes : Array Node) (ps : ParamStore α)
+    (derivatives : Array (Option (FlatBox α))) (id : Nat) (node : Node)
+    (configuration : NN.IR.ConvConfig) : Option (FlatBox α) := do
+  let parentId ← unaryParent? node.parents
+  let parent ← nodes[parentId]?
+  let direction ← (derivatives[parentId]?).join
+  let parameters ← ps.convCfg[id]?
+  let derivativeParameters :=
+    { parameters with
+      spec := { parameters.spec with bias := Tensor.full [parameters.outChannels] 0 } }
+  let derivativeStore := { ps with convCfg := ps.convCfg.insert id derivativeParameters }
+  ibpConvNode configuration parent.outShape node.outShape id derivativeStore direction
 
 /-- Global enclosure for the derivative of `tanh`. -/
 private def tanhDerivBox (dim : Nat) : FlatBox α :=

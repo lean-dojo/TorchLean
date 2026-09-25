@@ -147,26 +147,6 @@ theorem fderiv_fderiv_nrm {ε : ℝ} (hε : 0 < ε)
   exact fderiv_nrmD_comp hε id (fun _ => A) X (ContinuousLinearMap.id ℝ _)
     0 (hasFDerivAt_id X) (hasFDerivAt_const A X) i j B
 
-/-- Mixed chain rule for an actual composed row, with fixed left direction `u`. -/
-theorem fderiv_fderiv_nrm_comp {ε : ℝ} (hε : 0 < ε)
-    (X : E → Vec (matSize m n)) (p u v : E)
-    (hX : ∀ q, DifferentiableAt ℝ X q)
-    (DA : E →L[ℝ] Vec (matSize m n))
-    (hA : HasFDerivAt (fun q => fderiv ℝ X q u) DA p) (i : Fin m) (j : Fin n) :
-    fderiv ℝ (fun q => fderiv ℝ (fun y => nrm (X y) ε i j) q u) p v =
-      normalizedMixed (X p) (fderiv ℝ X p u) (fderiv ℝ X p v) (DA v) ε i j := by
-  have hfun :
-      (fun q => fderiv ℝ (fun y => nrm (X y) ε i j) q u) =
-        fun q => nrmD (X q) ε i j (fderiv ℝ X q u) := by
-    funext q
-    have hcomp : HasFDerivAt (fun y => nrm (X y) ε i j)
-        ((nrmD (X q) ε i j).comp (fderiv ℝ X q)) q :=
-      (hasFDerivAt_nrm hε (X q) i j).comp q (hX q).hasFDerivAt
-    exact congrArg (fun D : E →L[ℝ] ℝ => D u) hcomp.fderiv
-  rw [hfun]
-  exact fderiv_nrmD_comp hε X (fun q => fderiv ℝ X q u) p (fderiv ℝ X p) DA
-    (hX p).hasFDerivAt hA i j v
-
 /-- The actual affine row output has the same mixed derivative, multiplied by its fixed scale. -/
 theorem fderiv_fderiv_affine_nrm_comp {ε : ℝ} (hε : 0 < ε)
     (X : E → Vec (matSize m n)) (p left right : E)
@@ -193,6 +173,17 @@ theorem fderiv_fderiv_affine_nrm_comp {ε : ℝ} (hε : 0 < ε)
   rw [hfun, (hD.const_mul gamma).fderiv]
   change gamma * D right = _
   rw [hformula]
+
+/-- Mixed chain rule for an actual composed row, with fixed left direction `u`: the case
+`gamma = 1`, `beta = 0` of `fderiv_fderiv_affine_nrm_comp`. -/
+theorem fderiv_fderiv_nrm_comp {ε : ℝ} (hε : 0 < ε)
+    (X : E → Vec (matSize m n)) (p u v : E)
+    (hX : ∀ q, DifferentiableAt ℝ X q)
+    (DA : E →L[ℝ] Vec (matSize m n))
+    (hA : HasFDerivAt (fun q => fderiv ℝ X q u) DA p) (i : Fin m) (j : Fin n) :
+    fderiv ℝ (fun q => fderiv ℝ (fun y => nrm (X y) ε i j) q u) p v =
+      normalizedMixed (X p) (fderiv ℝ X p u) (fderiv ℝ X p v) (DA v) ε i j := by
+  simpa only [one_mul, add_zero] using fderiv_fderiv_affine_nrm_comp hε X p u v hX DA hA i j 1 0
 
 /-- A bound for `qL = 2 mean(z*a)` from centered magnitudes. -/
 def varianceFirstRadius (u a : Fin n → ℝ) : ℝ :=
@@ -230,18 +221,11 @@ private theorem abs_add_bound {x y a b : ℝ} (hx : |x| ≤ a) (hy : |y| ≤ b) 
     |x + y| ≤ a + b :=
   (abs_add_le _ _).trans (add_le_add hx hy)
 
-private theorem abs_mean_bound (f bounds : Fin n → ℝ) (h : ∀ k, |f k| ≤ bounds k) :
-    |(∑ k, f k) / n| ≤ (∑ k, bounds k) / n := by
-  rw [abs_div, abs_of_nonneg (Nat.cast_nonneg n : (0 : ℝ) ≤ n)]
-  exact div_le_div_of_nonneg_right
-    ((Finset.abs_sum_le_sum_abs _ _).trans (Finset.sum_le_sum fun k _ => h k))
-    (Nat.cast_nonneg n)
-
 theorem abs_varianceFirst_le (X A : Vec (matSize m n)) (i : Fin m)
     (u a : Fin n → ℝ) (hu : ∀ k, |centered X i k| ≤ u k)
     (ha : ∀ k, |centered A i k| ≤ a k) :
     |varianceFirst X A i| ≤ varianceFirstRadius u a := by
-  have h := abs_mean_bound _ _ (fun k => abs_mul_bound (hu k) (ha k))
+  have h := abs_sum_div_le _ _ (fun k => abs_mul_bound (hu k) (ha k))
   simpa only [varianceFirst, varianceFirstRadius, mul_div_assoc, abs_mul,
     abs_of_pos (by norm_num : (0 : ℝ) < 2)] using
     mul_le_mul_of_nonneg_left h (by norm_num : (0 : ℝ) ≤ 2)
@@ -251,7 +235,7 @@ theorem abs_varianceMixed_le (X A B C : Vec (matSize m n)) (i : Fin m)
     (ha : ∀ k, |centered A i k| ≤ a k) (hb : ∀ k, |centered B i k| ≤ b k)
     (hc : ∀ k, |centered C i k| ≤ c k) :
     |varianceMixed X A B C i| ≤ varianceMixedRadius u a b c := by
-  have h := abs_mean_bound _ _ fun k =>
+  have h := abs_sum_div_le _ _ fun k =>
     abs_add_bound (abs_mul_bound (ha k) (hb k)) (abs_mul_bound (hu k) (hc k))
   simpa only [varianceMixed, varianceMixedRadius, mul_div_assoc, abs_mul,
     abs_of_pos (by norm_num : (0 : ℝ) < 2)] using

@@ -9,6 +9,7 @@ module
 public import NN.MLTheory.CROWN.Proofs.GraphCrownCertSoundness
 public import NN.Runtime.PyTorch.Import.Core
 public import NN.Verification.Util.Json
+public import NN.Verification.Util.DecimalRounding
 public import NN.MLTheory.CROWN.Graph -- shake: keep
 public import NN.Verification.Util.FloatApprox -- shake: keep
 
@@ -27,8 +28,9 @@ format-level operations here so the individual checkers can focus on their propa
 
 The JSON artifact is always untrusted. These helpers only parse and compare data; acceptance still
 requires each checker to recompute the corresponding bound inside Lean. Interval claims are checked
-by outward containment, while affine replay transcripts must match the executable binary32 result
-exactly.
+by containment after rounding each decimal endpoint outward into binary32, while affine replay
+transcripts must match the executable binary32 result exactly after rounding each decimal
+coefficient to nearest.
 -/
 
 @[expose] public section
@@ -249,7 +251,32 @@ theorem crownCertificateAccepts_eq_true
   simp only [crownCertificateAccepts, Bool.and_eq_true] at haccept
   exact crownLocalReplayAccepts_eq_true g step cert haccept.2
 
-/-- Parse a flat interval box (two arrays of floats) from JSON. -/
+/--
+Read a length-`dim` JSON vector into binary32, rounding each exact decimal once with `mode`.
+The entries have already been validated as finite by the caller.
+-/
+def binary32Vec (ctx : String) (mode : Model.IEEERoundingMode) (dim : Nat) (j : Json) :
+    IO (Tensor (ExecFloat.Binary 8 23) [dim]) := do
+  let some t := DecimalRounding.binary32Vec? mode dim j
+    | throw <| IO.userError s!"Invalid {ctx}: expected numeric array length {dim}"
+  pure t
+
+/-- Read a `rows × cols` JSON matrix into binary32, rounding each exact decimal once. -/
+def binary32Matrix (ctx : String) (rows cols : Nat) (j : Json) :
+    IO (Tensor (ExecFloat.Binary 8 23) [rows, cols]) := do
+  let some t := DecimalRounding.binary32Matrix? .nearestEven rows cols j
+    | throw <| IO.userError s!"Invalid {ctx}: expected numeric matrix {rows}x{cols}"
+  pure t
+
+/--
+Parse a flat interval box (two arrays of floats) from JSON.
+
+Each decimal endpoint is rounded once into binary32: lower endpoints toward `-∞` and upper
+endpoints toward `+∞`. The parsed box is therefore the smallest binary32 box containing the decimal
+box the artifact states. Containment is then checked exactly on binary32 values, so a decimal
+endpoint that lies inward of Lean's endpoint by less than one binary32 ulp is read as Lean's value.
+Serializations that print the shortest round-trip decimal of each endpoint still check.
+-/
 def parseFlatBox? (dim : Nat) (j : Json) : IO (Option (FlatBox (ExecFloat.Binary 8 23))) := do
   match j with
   | .null => pure none
@@ -265,14 +292,8 @@ def parseFlatBox? (dim : Nat) (j : Json) : IO (Option (FlatBox (ExecFloat.Binary
         throw <| IO.userError "Invalid ibp[i]: interval bounds must be finite"
       unless (List.finRange dim).all (fun i => decide (loVec i <= hiVec i)) do
         throw <| IO.userError "Invalid ibp[i]: every lower bound must be <= its upper bound"
-      let loT : Tensor (ExecFloat.Binary 8 23) [dim] :=
-        TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary64
-          FloatFormat.binary32 (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))) :
-          ExecFloat.Binary 8 23)) (TorchLean.Tensor.ofFn loVec)
-      let hiT : Tensor (ExecFloat.Binary 8 23) [dim] :=
-        TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary64
-          FloatFormat.binary32 (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))) :
-          ExecFloat.Binary 8 23)) (TorchLean.Tensor.ofFn hiVec)
+      let loT ← binary32Vec "ibp[i].lo" .towardNegativeInfinity dim loJ
+      let hiT ← binary32Vec "ibp[i].hi" .towardPositiveInfinity dim hiJ
       pure (some { dim := dim, lo := loT, hi := hiT })
 
 /--
@@ -280,7 +301,9 @@ Parse an optional α vector for α-CROWN ReLU relaxations.
 
 The soundness theorem for the lower ReLU relaxation assumes every α component is in `[0, 1]`.
 We enforce that contract at the JSON boundary, so a malformed external certificate cannot be
-accepted by executable checking while relying on proof hypotheses that are false.
+accepted by executable checking while relying on proof hypotheses that are false. Each entry is
+rounded once to the nearest binary32 value; rounding is monotone and `0` and `1` are exact, so the
+range survives the conversion.
 -/
 def parseAlphaVec? (dim : Nat) (j : Json) (ctx : String := "alpha[i]") :
     IO (Option (FlatTensor (ExecFloat.Binary 8 23))) := do
@@ -294,13 +317,15 @@ def parseAlphaVec? (dim : Nat) (j : Json) (ctx : String := "alpha[i]") :
         if !a.isFinite || a < 0.0 || a > 1.0 then
           throw <| IO.userError
             s!"Invalid {ctx}[{k.val}]: α-CROWN requires 0 ≤ alpha ≤ 1, got {a}"
-      let t : Tensor (ExecFloat.Binary 8 23) [dim] :=
-        TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary64
-          FloatFormat.binary32 (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))) :
-          ExecFloat.Binary 8 23)) (TorchLean.Tensor.ofFn v)
+      let t ← binary32Vec ctx .nearestEven dim j
       pure (some { n := dim, v := t })
 
-/-- Parse flattened affine bounds (lower/upper) from JSON. -/
+/--
+Parse flattened affine bounds (lower/upper) from JSON.
+
+The affine transcript must equal Lean's binary32 replay bit for bit, so each decimal coefficient
+is read as the binary32 value nearest to it, with a single rounding from the exact decimal.
+-/
 def parseAffineBounds? (inDim outDim : Nat) (j : Json) :
     IO (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) := do
   match j with
@@ -323,19 +348,11 @@ def parseAffineBounds? (inDim outDim : Nat) (j : Json) :
           finiteVec outDim loC && finiteVec outDim hiC do
         throw <| IO.userError "Invalid crown[i]: affine bounds must be finite"
       let loAff : AffineVec (ExecFloat.Binary 8 23) inDim outDim :=
-        { A := TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast
-          FloatFormat.binary64 FloatFormat.binary32 (ExecFloat.Binary.toModel
-          (ExecFloat.Binary.ofFloat x))) : ExecFloat.Binary 8 23)) (TorchLean.Tensor.matrix loA)
-          c := TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast
-            FloatFormat.binary64 FloatFormat.binary32 (ExecFloat.Binary.toModel
-            (ExecFloat.Binary.ofFloat x))) : ExecFloat.Binary 8 23)) (TorchLean.Tensor.ofFn loC) }
+        { A := ← binary32Matrix "crown[i].loA" outDim inDim loAJ
+          c := ← binary32Vec "crown[i].loC" .nearestEven outDim loCJ }
       let hiAff : AffineVec (ExecFloat.Binary 8 23) inDim outDim :=
-        { A := TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast
-          FloatFormat.binary64 FloatFormat.binary32 (ExecFloat.Binary.toModel
-          (ExecFloat.Binary.ofFloat x))) : ExecFloat.Binary 8 23)) (TorchLean.Tensor.matrix hiA)
-          c := TorchLean.Tensor.map (fun x => (ExecFloat.Binary.ofModel (Model.cast
-            FloatFormat.binary64 FloatFormat.binary32 (ExecFloat.Binary.toModel
-            (ExecFloat.Binary.ofFloat x))) : ExecFloat.Binary 8 23)) (TorchLean.Tensor.ofFn hiC) }
+        { A := ← binary32Matrix "crown[i].hiA" outDim inDim hiAJ
+          c := ← binary32Vec "crown[i].hiC" .nearestEven outDim hiCJ }
       pure (some { inDim := inDim, outDim := outDim, loAff := loAff, hiAff := hiAff })
 
 /--

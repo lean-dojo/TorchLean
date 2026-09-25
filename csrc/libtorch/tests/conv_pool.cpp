@@ -1,5 +1,5 @@
 // Standalone regression executable: link ATen/LibTorch and the Lean runtime.
-// Run in the cluster, with an optional "cuda" argument to exercise the CUDA dispatcher.
+// Pass the optional "cuda" argument on a CUDA-capable host to exercise the CUDA dispatcher.
 // Include the implementation to compare its general-rank composition against upstream kernels.
 #define TORCHLEAN_CONV_POOL_TEST
 #include "../conv_pool.cpp"

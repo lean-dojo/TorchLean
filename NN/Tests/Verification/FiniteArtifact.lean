@@ -91,6 +91,17 @@ def run : IO Unit := do
     (accepts graph params certificate (query 1.5 true)) true
   expect "strict boundary" (accepts graph params certificate (query 1 true)) false
   expect "non-strict boundary" (accepts graph params certificate (query 1 false)) true
+  -- A producer whose output bound is looser than Lean's replay but still dominates is accepted.
+  let some output := certificate.crown[3]!
+    | throw <| IO.userError "finite binary32 artifact: replay produced no output bound"
+  let loosened := { certificate with
+    crown := certificate.crown.set! 3 (some { output with
+      hiAff := { output.hiAff with c := output.hiAff.c.map (· + 0.25) } }) }
+  expect "looser output bound is not a bit-identical replay"
+    (replayAccepts graph params loosened) false
+  expect "looser dominating output bound" (accepts graph params loosened (query 1.5 true)) true
+  expect "looser output bound no longer proves the tight margin"
+    (accepts graph params loosened (query 1 false)) false
   expect "unsafe requested margin" (accepts graph params certificate (query 0.5 false)) false
   expect "output points at an intermediate node"
     (accepts graph params certificate { query 2 true with outputId := 2 }) false

@@ -12,7 +12,9 @@ public import NN.MLTheory.CROWN.Proofs.DirectedBackwardFallback
 # Public rounded backward bounds
 
 The public objective result encloses its real objective whether it comes from the directed
-reverse sweep or from the output-box fallback.
+reverse sweep or from the output-box fallback. The forward IBP boxes enter through
+`GraphPoint.ibp_encloses`; `runCROWNBackwardObjective_encloses_runIBP` discharges it for the boxes
+of `runIBP`.
 -/
 
 @[expose] public section
@@ -53,8 +55,9 @@ theorem scalarBounds_enclose {n : Nat} {lower upper : AffineVec α n 1}
   exact h
 
 /-- The public rounded objective API returns a sound scalar affine enclosure, including its
-output-box fallback. The exact-reassociation branch has a separate arithmetic contract. -/
-theorem runCROWNBackwardObjective_encloses (hzero : value (0 : α) = 0)
+output-box fallback, provided the forward IBP boxes in `point` are sound. The exact-reassociation
+branch has a separate arithmetic contract. -/
+theorem runCROWNBackwardObjective_encloses
     (hrounded : BoundOps.supportsExactAffineReassociation (α := α) = false)
     {g : Graph} {ps : ParamStore α} {ibp : Array (Option (FlatBox α))}
     {ctx : AffineCtx} {dims : Nat → Nat} {v : Nat → Nat → ℝ}
@@ -74,7 +77,7 @@ theorem runCROWNBackwardObjective_encloses (hzero : value (0 : α) = 0)
         simp only [hr, Option.some.injEq] at hresult
         subst bounds
         exact ⟨rfl, rfl, scalarBounds_enclose
-          (runDirectedBackwardObjective_encloses hzero point output houtput obj hdim hr)⟩
+          (runDirectedBackwardObjective_encloses point output houtput obj hdim hr)⟩
     | none =>
         simp only [hr] at hresult
         cases hlo : objectiveFromOutputBox .lower ibp output ctx.inputDim obj with
@@ -89,9 +92,9 @@ theorem runCROWNBackwardObjective_encloses (hzero : value (0 : α) = 0)
                     RowEncloses box obj.n (v output) := by
                   rw [hdim]
                   exact point.ibp_encloses output houtput box hbox
-                have hl := objectiveFromOutputBox_encloses hzero .lower ibp output
+                have hl := objectiveFromOutputBox_encloses .lower ibp output
                   ctx.inputDim obj (v output) hb hlo (fun i => v ctx.inputId i.val)
-                have hu := objectiveFromOutputBox_encloses hzero .upper ibp output
+                have hu := objectiveFromOutputBox_encloses .upper ibp output
                   ctx.inputDim obj (v output) hb hhi (fun i => v ctx.inputId i.val)
                 dsimp only at hl hu
                 rw (occs := .pos [1]) [hdim] at hl hu

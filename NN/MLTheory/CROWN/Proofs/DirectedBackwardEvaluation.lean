@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Proofs.DirectedBackwardNodeBounds
+public import NN.MLTheory.CROWN.Proofs.DirectedIBPSoundness
 
 /-!
 # Directed evaluation of backward affine bounds
@@ -23,7 +23,6 @@ open Spec TorchLean NN.IR
 open TorchLean.Tensor
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph.Internal
-open LayerNormDirected (value_min2 value_max2)
 open scoped BigOperators
 
 noncomputable section
@@ -32,38 +31,8 @@ variable {α : Type} [Storage α] [Context α] [BoundOps α] [LawfulBoundOps α]
 
 local notation "value" => LawfulBoundOps.toReal (α := α)
 
-/-- Directed affine interval evaluation encloses each real affine row. -/
-theorem affineEvalOnBox_encloses (hzero : value (0 : α) = 0)
-    {n m : Nat} (aff : AffineVec α n m) (box : Box α (.dim n .scalar))
-    (x : Fin n → ℝ)
-    (hx : ∀ j, value (box.lo.getScalar j) ≤ x j ∧ x j ≤ value (box.hi.getScalar j))
-    (i : Fin m) :
-    value ((aff.evalOnBox box).lo.getScalar i) ≤
-        (∑ j, value (Spec.get2 aff.A i j) * x j) + value (aff.c.getScalar i) ∧
-      (∑ j, value (Spec.get2 aff.A i j) * x j) + value (aff.c.getScalar i) ≤
-        value ((aff.evalOnBox box).hi.getScalar i) := by
-  let lower (j : Fin n) := BoundOps.min2
-    (BoundOps.mulDown (Spec.get2 aff.A i j) (box.lo.getScalar j))
-    (BoundOps.mulDown (Spec.get2 aff.A i j) (box.hi.getScalar j))
-  let upper (j : Fin n) := BoundOps.max2
-    (BoundOps.mulUp (Spec.get2 aff.A i j) (box.lo.getScalar j))
-    (BoundOps.mulUp (Spec.get2 aff.A i j) (box.hi.getScalar j))
-  have ht (j : Fin n) :
-      value (lower j) ≤ value (Spec.get2 aff.A i j) * x j ∧
-        value (Spec.get2 aff.A i j) * x j ≤ value (upper j) := by
-    have h := intervalMul_encloses
-      (le_refl (value (Spec.get2 aff.A i j))) (le_refl (value (Spec.get2 aff.A i j)))
-      (hx j).1 (hx j).2
-    simpa only [directedIntervalMul, value_min2, value_max2, min_self, max_self,
-      lower, upper] using h
-  have hs := sum_encloses hzero lower upper
-    (fun j => value (Spec.get2 aff.A i j) * x j) ht
-  simp only [AffineVec.evalOnBox, Tensor.getScalar_dim]
-  exact ⟨(LawfulBoundOps.addDown_le _ _).trans (add_le_add hs.1 le_rfl),
-    (add_le_add hs.2 le_rfl).trans (LawfulBoundOps.le_addUp _ _)⟩
-
 /-- Evaluating a pair of real affine enclosures on an enclosing input box retains enclosure. -/
-theorem affineBoundsEval_encloses (hzero : value (0 : α) = 0)
+theorem affineBoundsEval_encloses
     (bounds : FlatAffineBounds α) (box : FlatBox α) (x y : Nat → ℝ)
     (hx : RowEncloses box bounds.inDim x) (hy : AffineRowsEnclose bounds x y) :
     RowEncloses
@@ -80,16 +49,16 @@ theorem affineBoundsEval_encloses (hzero : value (0 : α) = 0)
     simpa only [read_fin] using hx.2 j
   refine ⟨rfl, ?_⟩
   intro i
-  have hl := affineEvalOnBox_encloses hzero bounds.loAff
+  have hl := affineEvalOnBox_encloses bounds.loAff
     { lo := lo, hi := hi } (fun j => x j.val) hinput i
-  have hu := affineEvalOnBox_encloses hzero bounds.hiAff
+  have hu := affineEvalOnBox_encloses bounds.hiAff
     { lo := lo, hi := hi } (fun j => x j.val) hinput i
   simpa only [read_fin, FlatAffineBounds.evalOnFlatBox, FlatBox.getScalarBox,
     FlatBox.loAsDim, FlatBox.hiAsDim, Tensor.cast_shape_rfl] using
       And.intro (hl.1.trans (hy i).1) ((hy i).2.trans hu.2)
 
 /-- The public scalar-box evaluator encloses every point enclosed by its affine argument. -/
-theorem evalBackwardObjectiveBox_encloses (hzero : value (0 : α) = 0)
+theorem evalBackwardObjectiveBox_encloses
     (bounds : FlatAffineBounds α) (xB : FlatBox α) (inputDim : Nat)
     (x y : Nat → ℝ) (hx : RowEncloses xB bounds.inDim x)
     (hy : AffineRowsEnclose bounds x y) {result : FlatBox α}
@@ -101,7 +70,7 @@ theorem evalBackwardObjectiveBox_encloses (hzero : value (0 : α) = 0)
       · simp only [evalBackwardObjectiveBox?, hi, hxDim, ho, ↓reduceDIte] at hresult
         have he := Except.ok.inj hresult
         subst result
-        have h := affineBoundsEval_encloses hzero bounds xB x y hx hy
+        have h := affineBoundsEval_encloses bounds xB x y hx hy
         cases bounds with
         | mk n m lower upper =>
             dsimp only at ho
@@ -111,9 +80,11 @@ theorem evalBackwardObjectiveBox_encloses (hzero : value (0 : α) = 0)
     · simp [evalBackwardObjectiveBox?, hi, hxDim] at hresult
   · simp [evalBackwardObjectiveBox?, hi] at hresult
 
-/-- The complete rounded objective workflow returns an interval containing its real output
-objective, including all directed arithmetic in both propagation and final evaluation. -/
-theorem backwardObjectiveBox_encloses (hzero : value (0 : α) = 0)
+/-- The rounded objective workflow returns an interval containing its real output objective,
+including all directed arithmetic in both propagation and final evaluation, provided the forward
+IBP boxes in `point` are sound. `backwardObjectiveBox_encloses_runIBP` discharges that hypothesis
+for the boxes of `runIBP`. -/
+theorem backwardObjectiveBox_encloses
     (hrounded : BoundOps.supportsExactAffineReassociation (α := α) = false)
     {g : Graph} {ps : ParamStore α} {ibp : Array (Option (FlatBox α))}
     {ctx : AffineCtx} {dims : Nat → Nat} {v : Nat → Nat → ℝ}
@@ -129,10 +100,35 @@ theorem backwardObjectiveBox_encloses (hzero : value (0 : α) = 0)
   | none => simp [hb] at hresult
   | some bounds =>
       simp only [hb] at hresult
-      have hs := runCROWNBackwardObjective_encloses hzero hrounded point
+      have hs := runCROWNBackwardObjective_encloses hrounded point
         output houtput obj hdim hb
-      exact evalBackwardObjectiveBox_encloses hzero bounds xB ctx.inputDim _ _
+      exact evalBackwardObjectiveBox_encloses bounds xB ctx.inputDim _ _
         (by simpa only [hs.1] using hx) hs.2.2 hresult
+
+
+/-- The rounded objective workflow, run on the boxes of `runIBP`, returns an interval containing
+its real output objective. Forward IBP, the backward sweep, and the final evaluation are all
+covered, for graphs whose node kinds pass `ibpForwardSupported`. -/
+theorem backwardObjectiveBox_encloses_runIBP [NonlinearBoundOps α] [LawfulNonlinearBoundOps α]
+    (hrounded : BoundOps.supportsExactAffineReassociation (α := α) = false)
+    {g : Graph} {ps : ParamStore α} {ctx : AffineCtx} {dims : Nat → Nat} {v : Nat → Nat → ℝ}
+    (input_lt : ctx.inputId < g.nodes.size)
+    (input_dim : dims ctx.inputId = ctx.inputDim)
+    (input_kind : g.nodes[ctx.inputId]!.kind = .input)
+    (node_id : ∀ id, id < g.nodes.size → g.nodes[id]!.id = id)
+    (parent_lt : ∀ id, id < g.nodes.size → ∀ p ∈ g.nodes[id]!.parents, p < id)
+    (hsupported : ibpForwardSupported g.nodes = true)
+    (hinputs : InputsInBoxes g.nodes ps dims v)
+    (equation : ∀ id, id < g.nodes.size → NodeEquation g.nodes ps (runIBP g ps) dims v id)
+    (xB : FlatBox α) (hx : RowEncloses xB ctx.inputDim (v ctx.inputId))
+    (output : Nat) (houtput : output < g.nodes.size) (obj : FlatTensor α)
+    (hdim : obj.n = dims output) {result : FlatBox α}
+    (hresult : backwardObjectiveBox? g ps ctx (runIBP g ps) xB output obj = .ok result) :
+    RowEncloses result 1
+      (fun _ => dot (dims output) (fun i => value (getAtOrZero obj.v [i])) (v output)) :=
+  backwardObjectiveBox_encloses hrounded
+    (GraphPoint.ofRunIBP input_lt input_dim input_kind node_id parent_lt hsupported hinputs
+      equation) xB hx output houtput obj hdim hresult
 
 end
 

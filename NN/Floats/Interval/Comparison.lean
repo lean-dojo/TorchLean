@@ -9,6 +9,7 @@ module
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured
 public import FloatLib.Floats.Formats.IEEE754.Native
 public import FloatLib.Numerics.Enclosure.Rational.Runtime
+public import FloatLib.Floats.Interval.RealBounds
 
 /-!
 # Comparison helpers for executable interval examples
@@ -93,10 +94,6 @@ def maxOfFour (a b c d : Float32) : Float32 :=
 @[inline] def add (A B : IntervalF32) : IntervalF32 :=
   ⟨A.lo + B.lo, A.hi + B.hi⟩
 
-/-- Naive interval negation: `-[lo, hi] = [-hi, -lo]`. -/
-@[inline] def neg (A : IntervalF32) : IntervalF32 :=
-  ⟨-A.hi, -A.lo⟩
-
 /-- Naive endpoint subtraction; no directed rounding. -/
 @[inline] def sub (A B : IntervalF32) : IntervalF32 :=
   ⟨A.lo - B.hi, A.hi - B.lo⟩
@@ -152,7 +149,8 @@ def mul (A B : RationalInterval) : RationalInterval :=
   let p01 := A.lo * B.hi
   let p10 := A.hi * B.lo
   let p11 := A.hi * B.hi
-  ⟨min (min p00 p01) (min p10 p11), max (max p00 p01) (max p10 p11)⟩
+  ⟨FloatLib.Floats.Interval.minOfFour p00 p01 p10 p11,
+    FloatLib.Floats.Interval.maxOfFour p00 p01 p10 p11⟩
 
 /-- Boolean check that `outer` contains `inner`. -/
 def contains (outer inner : RationalInterval) : Bool :=
@@ -181,7 +179,7 @@ def intervalF32ToRat? (I : Float32Interval.IntervalF32) : Option RationalInterva
   pure ⟨lo, hi⟩
 
 /--
-Endpoint-evaluate a unary function over an `Binary 8 23` interval.
+Endpoint-evaluate a unary function over a `Binary 8 23` interval.
 
 This is not a sound transcendental interval rule in general; it is a comparison
 baseline for examples.

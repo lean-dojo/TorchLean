@@ -30,7 +30,7 @@ namespace Tape
 -/
 
 /-- Slice `len` entries from a one-dimensional CUDA buffer starting at `start`. -/
-def sliceBuffer {n start len : Nat} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
+@[inline] def sliceBuffer {n start len : Nat} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   if start + len ≤ n then
     let n32 ← AnyBuffer.natToU32Checked n
     let start32 ← AnyBuffer.natToU32Checked start
@@ -65,6 +65,7 @@ def sliceBuffer {n start len : Nat} (t : Tape) (xId : Nat) : Result (Tape × Nat
 -/
 
 /-- Concatenate along dim 0 for tensors with leading dimension (CPU tape name). -/
+@[inline]
 def concatLeadingAxis {n m : Nat} {s : Shape} (t : Tape) (aId bId : Nat) : Result (Tape × Nat) := do
   let inner : Nat := Spec.Shape.size s
   let nLen : Nat := n * inner
@@ -80,7 +81,7 @@ def concatLeadingAxis {n m : Nat} {s : Shape} (t : Tape) (aId bId : Nat) : Resul
       (dA, dB))
 
 /-- Slice along dim 0: `x[start:start+len]` (CPU tape name). -/
-def sliceLeadingAxisRange {n : Nat} {s : Shape} (t : Tape) (xId : Nat) (start len : Nat)
+@[inline] def sliceLeadingAxisRange {n : Nat} {s : Shape} (t : Tape) (xId : Nat) (start len : Nat)
     (_h : start + len ≤ n) : Result (Tape × Nat) := do
   let inner : Nat := Spec.Shape.size s
   let nTot : Nat := n * inner
@@ -150,7 +151,7 @@ def finTensorToIndexArray {n count : Nat}
 end Indexing
 
 /-- Select one bounded coordinate from any tensor axis. -/
-def select {s : Shape} (t : Tape) (xId : Nat) (axis : Nat)
+@[inline] def select {s : Shape} (t : Tape) (xId : Nat) (axis : Nat)
     [Shape.AxisInBounds axis s] (index : Fin (Shape.axisSize s axis)) :
     Result (Tape × Nat) := do
   let outShape := s.eraseAxis axis
@@ -181,7 +182,7 @@ def select {s : Shape} (t : Tape) (xId : Nat) (axis : Nat)
   pure (t.addNode node)
 
 /-- Select several bounded coordinates from any tensor axis. -/
-def indexSelect {s : Shape} (t : Tape) (xId : Nat) (axis count : Nat)
+@[inline] def indexSelect {s : Shape} (t : Tape) (xId : Nat) (axis count : Nat)
     [Shape.AxisInBounds axis s]
     (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape × Nat) := do
   let outShape := s.replaceAxis axis count
@@ -219,7 +220,7 @@ def indexSelect {s : Shape} (t : Tape) (xId : Nat) (axis count : Nat)
   pure (t.addNode node)
 
 /-- Add indexed source slices into any tensor axis. -/
-def scatterAdd {s : Shape} (t : Tape) (baseId sourceId : Nat) (axis count : Nat)
+@[inline] def scatterAdd {s : Shape} (t : Tape) (baseId sourceId : Nat) (axis count : Nat)
     [Shape.AxisInBounds axis s]
     (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape × Nat) := do
   let sourceShape := s.replaceAxis axis count

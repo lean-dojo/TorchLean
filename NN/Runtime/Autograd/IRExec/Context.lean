@@ -70,27 +70,14 @@ namespace ContextArray
 
 variable {α : Type} [Storage α] {shapes : List Shape}
 
-private def appendPack : {ss : List Shape} →
-    TensorPack α ss → Array (Spec.SomeTensor α) → Array (Spec.SomeTensor α)
-  | [], .nil, acc => acc
-  | _ :: _, .cons x xs, acc => appendPack xs (acc.push (Spec.SomeTensor.ofTensor x))
-
-private theorem appendPack_eq {ss : List Shape} (xs : TensorPack α ss)
-    (acc : Array (Spec.SomeTensor α)) :
-    appendPack xs acc = acc ++ xs.toShapeErasedArray := by
-  induction xs generalizing acc with
-  | nil => simp [appendPack, TensorPack.toShapeErasedArray]
-  | cons x xs ih =>
-      simp [appendPack, ih, TensorPack.toShapeErasedArray]
-
 /-- Copy the tensor references from a pack into an array in one pass. -/
 @[no_expose] def ofPack (xs : TensorPack α shapes) : ContextArray α shapes :=
-  ⟨appendPack xs #[], xs, by simp [appendPack_eq]⟩
+  ⟨xs.toShapeErasedArray, xs, rfl⟩
 
 /-- The one-pass pack conversion has the ordinary shape-erasure semantics. -/
 @[simp] theorem values_ofPack (xs : TensorPack α shapes) :
     (ofPack xs).values = xs.toShapeErasedArray := by
-  simp [ofPack, appendPack_eq]
+  rfl
 
 /-- An array context contains exactly one value per declared shape. -/
 theorem size_values (ctx : ContextArray α shapes) : ctx.values.size = shapes.length := by

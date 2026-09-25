@@ -394,6 +394,7 @@ def main (args : List String) : IO UInt32 := do
           pure losses.mean
         let lossBefore ← evalLoss
         IO.println s!"  step 0: val loss={lossBefore}"
+        let mut lastEval? : Option Float := none
         for step in [0:train.training.steps] do
           let sample := trainingBatchAt step
           trainStep sample.input sample.target
@@ -401,7 +402,12 @@ def main (args : List String) : IO UInt32 := do
           if evalEvery != 0 && (done % evalEvery == 0 || done == train.training.steps) then
             let loss ← evalLoss
             IO.println s!"  step {done}: val loss={loss}"
-        let lossAfter ← evalLoss
+            if done == train.training.steps then
+              lastEval? := some loss
+        let lossAfter ←
+          match lastEval? with
+          | some loss => pure loss
+          | none => evalLoss
         let predict ← module.indexedPredictor model
         let promptTokens ← CLI.orThrow exeName <|
           Tensor.checkIndices vocabularySize (Tensor.from (tok.encode train.generation.prompt))

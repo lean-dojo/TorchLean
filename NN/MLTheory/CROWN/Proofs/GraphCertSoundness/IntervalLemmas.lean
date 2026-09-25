@@ -6,6 +6,7 @@ Authors: TorchLean Team
 
 module
 
+public import FloatLib.Floats.Interval.RealBounds
 public import NN.MLTheory.CROWN.BoundOps.Lawful
 public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Semantics
 
@@ -47,96 +48,13 @@ theorem relu_mono_real : ∀ {a b : ℝ}, a ≤ b →
   intro a b hab
   simpa only [Activation.Math.reluSpec_eq_max] using max_le_max hab (le_rfl : (0 : ℝ) ≤ 0)
 
-/-- Addition is monotone in both operands. -/
-theorem add_mono_real : ∀ {a b c d : ℝ}, a ≤ b → c ≤ d → a + c ≤ b + d := by
-  intro a b c d hab hcd
-  exact add_le_add hab hcd
-
-/-- Subtraction is monotone in the minuend and antitone in the subtrahend. -/
-theorem sub_mono_real : ∀ {a b c d : ℝ}, a ≤ b → d ≤ c → a - c ≤ b - d := by
-  intro a b c d hab hdc
-  have hneg : -c ≤ -d := neg_le_neg hdc
-  have : a + (-c) ≤ b + (-d) := add_le_add hab hneg
-  simpa [sub_eq_add_neg] using this
-
-/-- The runtime `if a < b then a else b` is `min`. -/
-theorem if_lt_eq_min (a b : ℝ) :
-    (if a < b then a else b) = min a b := by
-  by_cases h : a < b
-  · simp [h, min_eq_left (le_of_lt h)]
-  · have h' : b ≤ a := le_of_not_gt h
-    simp [h, min_eq_right h']
-
-/-- The runtime `if a > b then a else b` is `max`.
-
-The implementations branch on a comparison rather than calling `min`/`max`, so these two lemmas are
-what let the interval proofs use the Mathlib lattice lemmas at all. -/
-theorem if_gt_eq_max (a b : ℝ) :
-    (if a > b then a else b) = max a b := by
-  by_cases h : a > b
-  · simp [h, max_eq_left (le_of_lt h)]
-  · have h' : a ≤ b := le_of_not_gt h
-    simp [h, max_eq_right h']
-
-/-- Multiplying an interval by a constant: the product lies between the two endpoint products.
-
-Stated with `min`/`max` instead of a case split on the sign of `a`, so the caller never has to know
-which endpoint is which. -/
-theorem mul_const_bounds {a ly uy y : ℝ} (hy : ly ≤ y) (hy' : y ≤ uy) :
-    min (a * ly) (a * uy) ≤ a * y ∧ a * y ≤ max (a * ly) (a * uy) := by
-  by_cases ha : 0 ≤ a
-  · have hlo : a * ly ≤ a * y := mul_le_mul_of_nonneg_left hy ha
-    have hhi : a * y ≤ a * uy := mul_le_mul_of_nonneg_left hy' ha
-    refine ⟨le_trans (min_le_left _ _) hlo, le_trans hhi (le_max_right _ _)⟩
-  · have ha' : a ≤ 0 := le_of_not_ge ha
-    have hlo : a * uy ≤ a * y := mul_le_mul_of_nonpos_left hy' ha'
-    have hhi : a * y ≤ a * ly := mul_le_mul_of_nonpos_left hy ha'
-    refine ⟨le_trans (min_le_right _ _) hlo, le_trans hhi (le_max_left _ _)⟩
-
-/-- The same, with the interval on the left and the constant on the right. -/
-theorem mul_var_bounds {lx ux x y : ℝ} (hx : lx ≤ x) (hx' : x ≤ ux) :
-    min (lx * y) (ux * y) ≤ x * y ∧ x * y ≤ max (lx * y) (ux * y) := by
-  by_cases hy : 0 ≤ y
-  · have hlo : lx * y ≤ x * y := mul_le_mul_of_nonneg_right hx hy
-    have hhi : x * y ≤ ux * y := mul_le_mul_of_nonneg_right hx' hy
-    refine ⟨le_trans (min_le_left _ _) hlo, le_trans hhi (le_max_right _ _)⟩
-  · have hy' : y ≤ 0 := le_of_not_ge hy
-    have hlo : ux * y ≤ x * y := mul_le_mul_of_nonpos_right hx' hy'
-    have hhi : x * y ≤ lx * y := mul_le_mul_of_nonpos_right hx hy'
-    refine ⟨le_trans (min_le_right _ _) hlo, le_trans hhi (le_max_left _ _)⟩
-
 /-- Interval multiplication: the product of two bounded values lies between the min and the max of
-the four endpoint products.
-
-This is the classical four-corner rule. All four products are needed because signs can differ, and
-taking min and max of the corners is exactly tight for real multiplication. -/
+the four endpoint products. This is FloatLib's `mul_bounds_Icc` with the bounds split out. -/
 theorem interval_mul_bounds
     {lx ux ly uy x y : ℝ} (hx : lx ≤ x) (hx' : x ≤ ux) (hy : ly ≤ y) (hy' : y ≤ uy) :
     min (min (lx * ly) (lx * uy)) (min (ux * ly) (ux * uy)) ≤ x * y ∧
-      x * y ≤ max (max (lx * ly) (lx * uy)) (max (ux * ly) (ux * uy)) := by
-  have h_lx : min (lx * ly) (lx * uy) ≤ lx * y ∧ lx * y ≤ max (lx * ly) (lx * uy) :=
-    mul_const_bounds (a := lx) hy hy'
-  have h_ux : min (ux * ly) (ux * uy) ≤ ux * y ∧ ux * y ≤ max (ux * ly) (ux * uy) :=
-    mul_const_bounds (a := ux) hy hy'
-  have h_x : min (lx * y) (ux * y) ≤ x * y ∧ x * y ≤ max (lx * y) (ux * y) :=
-    mul_var_bounds (lx := lx) (ux := ux) (x := x) (y := y) hx hx'
-  -- Lower bound: corners ≤ each endpoint product, hence ≤ min endpoint product, hence ≤ x*y.
-  have hC_lx : min (min (lx * ly) (lx * uy)) (min (ux * ly) (ux * uy)) ≤ lx * y := by
-    exact le_trans (min_le_left _ _) h_lx.1
-  have hC_ux : min (min (lx * ly) (lx * uy)) (min (ux * ly) (ux * uy)) ≤ ux * y := by
-    exact le_trans (min_le_right _ _) h_ux.1
-  have hC_to_min : min (min (lx * ly) (lx * uy)) (min (ux * ly) (ux * uy)) ≤ min (lx * y) (ux * y)
-    :=
-    le_min hC_lx hC_ux
-  have hlo : min (min (lx * ly) (lx * uy)) (min (ux * ly) (ux * uy)) ≤ x * y :=
-    le_trans hC_to_min h_x.1
-  -- Upper bound: x*y ≤ max endpoint product ≤ max corner maxes.
-  let C : ℝ := max (max (lx * ly) (lx * uy)) (max (ux * ly) (ux * uy))
-  have hmax_lx : lx * y ≤ C := le_trans h_lx.2 (le_max_left _ _)
-  have hmax_ux : ux * y ≤ C := le_trans h_ux.2 (le_max_right _ _)
-  have hmax_to_C : max (lx * y) (ux * y) ≤ C := max_le hmax_lx hmax_ux
-  have hhi : x * y ≤ C := le_trans h_x.2 hmax_to_C
-  simpa [C] using And.intro hlo hhi
+      x * y ≤ max (max (lx * ly) (lx * uy)) (max (ux * ly) (ux * uy)) :=
+  FloatLib.Floats.Interval.mul_bounds_Icc lx ux ly uy x y ⟨hx, hx'⟩ ⟨hy, hy'⟩
 
 /-! Helpers: our bound propagation uses `BoundOps.min2/max2`, which are defined via `decide (a >
   b)`.

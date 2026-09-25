@@ -18,6 +18,9 @@ Arb/python-flint supplies the external real-enclosure claim. Exact rational endp
 rounded outward by FloatLib's descriptor-generic software rounders. The theorems below are binary32
 transport corollaries of FloatLib's directed-rational bounds. No native floating-point conversion
 or software transcendental approximation participates in this endpoint conversion.
+
+These theorems cover the endpoint conversion only. No theorem here states that `arbUnary` returns
+an enclosure of the requested function, because that would rest on Arb's unchecked answer.
 -/
 
 @[expose] public section
@@ -97,8 +100,6 @@ theorem toEReal_roundRatQUp_ge (q : Rat) :
 
 /-! ## Arb-backed interval endpoints for transcendentals -/
 
-namespace Interval32
-
 /--
 Decode a float endpoint as an exact rational, failing if the value is NaN/Inf.
 
@@ -166,8 +167,6 @@ def arbUnary (func : String) (X : Interval (Binary 8 23)) (precBits digits : Nat
 @[inline] def sqrtArb (X : Interval (Binary 8 23)) (precBits digits : Nat := 200) :
     IO (Interval (Binary 8 23)) :=
   arbUnary "sqrt" X (precBits := precBits) (digits := digits)
-
-end Interval32
 
 end IEEE32Exec
 

@@ -25,7 +25,7 @@ field lifts FloatLib's model operation without converting through a native `Floa
 transcendentals are deterministic approximations; this dictionary adds no general accuracy or
 correct-rounding theorem for them.
 
-Configured values use CPU software arithmetic. They do not acquire a native CUDA tensor
+Configured values use CPU software arithmetic. They do not acquire a LibTorch CUDA tensor
 representation, a `LawfulContext`, or a trainer/checkpoint encoding from this instance.
 -/
 

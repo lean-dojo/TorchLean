@@ -17,9 +17,9 @@ Spec-only scalar conventions.
 These aliases fix their scalar to `ℝ` for mathematical reasoning. Typed tensors and model execution
 also support native `Float`/`Float32` and FloatLib configured binary scalars through `Context`.
 
-Because `SpecScalar` is `ℝ`, this is the module that brings in the real dictionary
-(`NN.Spec.Core.Context.Real`) and with it the real-analysis hierarchy. Anything that only needs
-`Float` or a general `[Context α]` should import `NN.Spec.Core.Context` instead and stay light.
+Because `SpecScalar` is `ℝ`, this module brings in Mathlib's real-analysis hierarchy. It does not
+provide the real `Context` instance; import `NN.Spec.Core.Context.Real` for that. Anything that only
+needs `Float` or a general `[Context α]` should import `NN.Spec.Core.Context` and stay light.
 
 References / context:
 - TorchLean paper (overall scalar-polymorphic architecture and trust boundary discussion):

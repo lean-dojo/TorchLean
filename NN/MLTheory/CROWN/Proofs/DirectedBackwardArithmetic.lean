@@ -25,7 +25,7 @@ open Spec TorchLean
 open TorchLean.Tensor
 open NN.MLTheory.CROWN
 open NN.MLTheory.CROWN.Graph.Internal
-open LayerNormDirected (value_min2 value_max2)
+open NN.MLTheory.CROWN.IntervalLemmas (intervalMul_encloses)
 open scoped BigOperators
 
 noncomputable section
@@ -33,42 +33,6 @@ noncomputable section
 variable {α : Type} [Storage α] [Context α] [BoundOps α] [LawfulBoundOps α]
 
 local notation "value" => LawfulBoundOps.toReal (α := α)
-
-private theorem real_scale_bounds {l u x : ℝ} (c : ℝ) (hl : l ≤ x) (hu : x ≤ u) :
-    min (l * c) (u * c) ≤ x * c ∧ x * c ≤ max (l * c) (u * c) := by
-  by_cases hc : 0 ≤ c
-  · exact ⟨(min_le_left _ _).trans (mul_le_mul_of_nonneg_right hl hc),
-      (mul_le_mul_of_nonneg_right hu hc).trans (le_max_right _ _)⟩
-  · have hc' := le_of_not_ge hc
-    exact ⟨(min_le_right _ _).trans (mul_le_mul_of_nonpos_right hu hc'),
-      (mul_le_mul_of_nonpos_right hl hc').trans (le_max_left _ _)⟩
-
-private theorem real_product_bounds {al au bl bu x y : ℝ}
-    (hal : al ≤ x) (hau : x ≤ au) (hbl : bl ≤ y) (hbu : y ≤ bu) :
-    min (min (al * bl) (al * bu)) (min (au * bl) (au * bu)) ≤ x * y ∧
-      x * y ≤ max (max (al * bl) (al * bu)) (max (au * bl) (au * bu)) := by
-  have hlo := real_scale_bounds al hbl hbu
-  have hhi := real_scale_bounds au hbl hbu
-  have hx := real_scale_bounds y hal hau
-  simp only [mul_comm bl, mul_comm bu, mul_comm y] at hlo hhi
-  exact ⟨(min_le_min hlo.1 hhi.1).trans hx.1,
-    hx.2.trans (max_le_max hlo.2 hhi.2)⟩
-
-/-- The actual four-corner product encloses products of arbitrary enclosed coefficients. -/
-theorem intervalMul_encloses {al au bl bu : α} {x y : ℝ}
-    (hal : value al ≤ x) (hau : x ≤ value au)
-    (hbl : value bl ≤ y) (hbu : y ≤ value bu) :
-    value (directedIntervalMul al au bl bu).1 ≤ x * y ∧
-      x * y ≤ value (directedIntervalMul al au bl bu).2 := by
-  dsimp only [directedIntervalMul]
-  simp only [value_min2, value_max2]
-  have h := real_product_bounds hal hau hbl hbu
-  exact ⟨(min_le_min
-      (min_le_min (LawfulBoundOps.mulDown_le al bl) (LawfulBoundOps.mulDown_le al bu))
-      (min_le_min (LawfulBoundOps.mulDown_le au bl) (LawfulBoundOps.mulDown_le au bu))).trans h.1,
-    h.2.trans (max_le_max
-      (max_le_max (LawfulBoundOps.le_mulUp al bl) (LawfulBoundOps.le_mulUp al bu))
-      (max_le_max (LawfulBoundOps.le_mulUp au bl) (LawfulBoundOps.le_mulUp au bu)))⟩
 
 /-- Directed accumulation encloses the mathematical sum, including a nonzero initial constant. -/
 theorem foldl_encloses {ι : Type} (indices : List ι) (lo hi : ι → α) (f : ι → ℝ)
@@ -94,7 +58,7 @@ theorem foldl_encloses {ι : Type} (indices : List ι) (lo hi : ι → α) (f : 
 For a box crossing zero, the correction uses the negative input endpoint. Its multiplication
 reverses the inequality for the coefficient width, hence the opposite direction on subtraction.
 -/
-theorem coeffAffine_encloses (hzero : value (0 : α) = 0)
+theorem coeffAffine_encloses
     {l u al au : α} {x a : ℝ}
     (hl : value l ≤ x) (hu : x ≤ value u)
     (hal : value al ≤ a) (hau : a ≤ value au) :
@@ -104,7 +68,7 @@ theorem coeffAffine_encloses (hzero : value (0 : α) = 0)
         value (directedCoeffAffine l u al au).2.2 := by
   by_cases hneg : l < (0 : α)
   · have hlneg : value l < 0 := by
-      simpa only [hzero] using (LawfulBoundOps.lt_iff l 0).mp hneg
+      simpa only [(LawfulBoundOps.toReal_zero (α := α))] using (LawfulBoundOps.lt_iff l 0).mp hneg
     by_cases hpos : (0 : α) < u
     · simp only [directedCoeffAffine, hneg, not_true_eq_false, decide_false,
         Bool.false_eq_true, ↓reduceIte, hpos]
@@ -120,16 +84,16 @@ theorem coeffAffine_encloses (hzero : value (0 : α) = 0)
       have halw := mul_nonneg (sub_nonneg.mpr hal) (neg_nonneg.mpr hlneg.le)
       constructor <;> nlinarith
     · have hunonpos : value u ≤ 0 := by
-        rw [← hzero]
+        rw [← (LawfulBoundOps.toReal_zero (α := α))]
         exact le_of_not_gt fun h => hpos ((LawfulBoundOps.lt_iff 0 u).mpr h)
       have hx := hu.trans hunonpos
-      simpa [directedCoeffAffine, hneg, hpos, hzero] using
+      simpa [directedCoeffAffine, hneg, hpos, (LawfulBoundOps.toReal_zero (α := α))] using
         And.intro (mul_le_mul_of_nonpos_right hau hx) (mul_le_mul_of_nonpos_right hal hx)
   · have hlnonneg : 0 ≤ value l := by
-      rw [← hzero]
+      rw [← (LawfulBoundOps.toReal_zero (α := α))]
       exact le_of_not_gt fun h => hneg ((LawfulBoundOps.lt_iff l 0).mpr h)
     have hx := hlnonneg.trans hl
-    simpa [directedCoeffAffine, hneg, hzero] using
+    simpa [directedCoeffAffine, hneg, (LawfulBoundOps.toReal_zero (α := α))] using
       And.intro (mul_le_mul_of_nonneg_right hal hx) (mul_le_mul_of_nonneg_right hau hx)
 
 omit [BoundOps α] [LawfulBoundOps α] in
@@ -139,7 +103,7 @@ theorem read_fin {n : Nat} (v : Tensor α [n]) (i : Fin n) :
   simp [get_at_or_zero_dim_cons, i.isLt, Tensor.getScalar, Spec.get]
 
 /-- Directed summation over all coordinates encloses the finite real sum. -/
-theorem sum_encloses (hzero : value (0 : α) = 0)
+theorem sum_encloses
     {n : Nat} (lo hi : Fin n → α) (f : Fin n → ℝ)
     (hterms : ∀ i, value (lo i) ≤ f i ∧ f i ≤ value (hi i)) :
     value ((List.finRange n).foldl (fun acc i => BoundOps.addDown acc (lo i)) 0) ≤
@@ -147,14 +111,15 @@ theorem sum_encloses (hzero : value (0 : α) = 0)
       ∑ i, f i ≤
         value ((List.finRange n).foldl (fun acc i => BoundOps.addUp acc (hi i)) 0) := by
   have h := foldl_encloses (List.finRange n) lo hi f 0 0 0
-    (by simp [hzero]) (by simp [hzero]) (fun i _ => hterms i)
+    (by simp [LawfulBoundOps.toReal_zero (α := α)]) (by simp [LawfulBoundOps.toReal_zero (α := α)])
+    (fun i _ => hterms i)
   have hsum : ((List.finRange n).map f).sum = ∑ i, f i := by
     rw [List.sum_eq_foldl, List.foldl_map]
     exact List.finRange_foldl_add_eq_finset_sum f
   simpa only [hsum, zero_add] using h
 
 /-- The executable interval dot product encloses the dot product of any two enclosed vectors. -/
-theorem dotBox_encloses (hzero : value (0 : α) = 0)
+theorem dotBox_encloses
     {n : Nat} (aLo aHi bLo bHi : Tensor α [n]) (a b : Fin n → ℝ)
     (ha : ∀ i, value (aLo.getScalar i) ≤ a i ∧ a i ≤ value (aHi.getScalar i))
     (hb : ∀ i, value (bLo.getScalar i) ≤ b i ∧ b i ≤ value (bHi.getScalar i))
@@ -162,12 +127,12 @@ theorem dotBox_encloses (hzero : value (0 : α) = 0)
     (hresult : directedDotBox { dim := n, lo := aLo, hi := aHi }
       { dim := n, lo := bLo, hi := bHi } = some (lo, hi)) :
     value lo ≤ ∑ i, a i * b i ∧ (∑ i, a i * b i) ≤ value hi := by
-  let term (i : Fin n) := directedIntervalMul
+  let term (i : Fin n) := intervalMul
     (aLo.getScalar i) (aHi.getScalar i) (bLo.getScalar i) (bHi.getScalar i)
   have hterms (i : Fin n) : value (term i).1 ≤ a i * b i ∧
       a i * b i ≤ value (term i).2 :=
     intervalMul_encloses (ha i).1 (ha i).2 (hb i).1 (hb i).2
-  have h := sum_encloses hzero (fun i => (term i).1) (fun i => (term i).2)
+  have h := sum_encloses (fun i => (term i).1) (fun i => (term i).2)
     (fun i => a i * b i) hterms
   simp only [directedDotBox, ↓reduceDIte, castDimScalar_self, read_fin,
     List.foldl_map, Option.some.injEq, Prod.mk.injEq] at hresult
@@ -184,7 +149,7 @@ private theorem foldl_pair {ι β γ : Type} (indices : List ι)
 
 /-- Each coefficient produced by the linear transfer encloses the exact transposed matrix
 product; its constant contribution encloses the exact bias dot product. -/
-theorem linear_encloses (hzero : value (0 : α) = 0)
+theorem linear_encloses
     {m n : Nat} (aLo aHi : Tensor α [m]) (W : Tensor α [m, n]) (b : Tensor α [m])
     (a : Fin m → ℝ)
     (ha : ∀ i, value (aLo.getScalar i) ≤ a i ∧ a i ≤ value (aHi.getScalar i))
@@ -208,21 +173,21 @@ theorem linear_encloses (hzero : value (0 : α) = 0)
     have hterm (i : Fin m) := intervalMul_encloses
       (ha i).1 (ha i).2
       (le_refl (value (Spec.get2 W i j))) (le_refl (value (Spec.get2 W i j)))
-    have hsum := sum_encloses hzero
-      (fun i => (directedIntervalMul (aLo.getScalar i) (aHi.getScalar i)
+    have hsum := sum_encloses
+      (fun i => (intervalMul (aLo.getScalar i) (aHi.getScalar i)
         (Spec.get2 W i j) (Spec.get2 W i j)).1)
-      (fun i => (directedIntervalMul (aLo.getScalar i) (aHi.getScalar i)
+      (fun i => (intervalMul (aLo.getScalar i) (aHi.getScalar i)
         (Spec.get2 W i j) (Spec.get2 W i j)).2)
       (fun i => a i * value (Spec.get2 W i j)) hterm
     have hfold := foldl_pair (List.finRange m)
       (fun acc i => BoundOps.addDown acc
-        (directedIntervalMul (aLo.getScalar i) (aHi.getScalar i)
+        (intervalMul (aLo.getScalar i) (aHi.getScalar i)
           (Spec.get2 W i j) (Spec.get2 W i j)).1)
       (fun acc i => BoundOps.addUp acc
-        (directedIntervalMul (aLo.getScalar i) (aHi.getScalar i)
+        (intervalMul (aLo.getScalar i) (aHi.getScalar i)
           (Spec.get2 W i j) (Spec.get2 W i j)).2) 0 0
     simpa only [read_fin, Tensor.getScalar_dim, hread, hfold] using hsum
-  · exact dotBox_encloses hzero aLo aHi b b a (fun i => value (b.getScalar i))
+  · exact dotBox_encloses aLo aHi b b a (fun i => value (b.getScalar i))
       ha (fun _ => ⟨le_rfl, le_rfl⟩) hc
 
 /-- Interpret a scalar affine form using exact real addition and multiplication. -/
@@ -231,7 +196,7 @@ def affineValue {n : Nat} (aff : AffineVec α n 1) (x : Fin n → ℝ) : ℝ :=
 
 /-- The engine's final affine conversion encloses every objective represented by its input
 coefficient intervals and accumulated constant. -/
-theorem inputAffines_encloses (hzero : value (0 : α) = 0)
+theorem inputAffines_encloses
     {n : Nat} (xLo xHi aLo aHi : Tensor α [n]) (cLo cHi : α)
     (x a : Fin n → ℝ) (c : ℝ)
     (hx : ∀ i, value (xLo.getScalar i) ≤ x i ∧ x i ≤ value (xHi.getScalar i))
@@ -249,11 +214,11 @@ theorem inputAffines_encloses (hzero : value (0 : α) = 0)
   have hselected (i : Fin n) :
       value (selected i).1.1 * x i + value (selected i).1.2 ≤ a i * x i ∧
         a i * x i ≤ value (selected i).2.1 * x i + value (selected i).2.2 :=
-    coeffAffine_encloses hzero (hx i).1 (hx i).2 (ha i).1 (ha i).2
-  have hcorrection := sum_encloses hzero
+    coeffAffine_encloses (hx i).1 (hx i).2 (ha i).1 (ha i).2
+  have hcorrection := sum_encloses
     (fun i => (selected i).1.2) (fun i => (selected i).1.2)
     (fun i => value (selected i).1.2) (fun _ => ⟨le_rfl, le_rfl⟩)
-  have hcorrection' := sum_encloses hzero
+  have hcorrection' := sum_encloses
     (fun i => (selected i).2.2) (fun i => (selected i).2.2)
     (fun i => value (selected i).2.2) (fun _ => ⟨le_rfl, le_rfl⟩)
   have hlo := (LawfulBoundOps.addDown_le cLo _).trans (add_le_add hc.1 hcorrection.1)

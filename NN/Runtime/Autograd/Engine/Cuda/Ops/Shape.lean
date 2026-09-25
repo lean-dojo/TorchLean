@@ -29,7 +29,7 @@ namespace Tape
 -/
 
 /-- Reduce-sum of all entries, producing a scalar. -/
-def sum {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
+@[inline] def sum {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   let x ← requireValue (t := t) xId s
   let y := Buffer.reduceSum x
   let node : Node :=
@@ -44,7 +44,7 @@ def sum {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   pure (t.addNode node)
 
 /-- Flatten `s` into a 1D vector of length `Spec.Shape.size s`. -/
-def flatten {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) :=
+@[inline] def flatten {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) :=
   unary (t := t) "flatten" xId s (.dim (Spec.Shape.size s) .scalar)
     (forward := fun x => x)
     (backward := fun _x dLdy => Buffer.copy dLdy)
@@ -55,6 +55,7 @@ Reshape a buffer while preserving number of elements.
 
 This is a no-copy view operation: it reuses the same contiguous buffer.
 -/
+@[inline]
 def reshape {s₁ s₂ : Shape} (t : Tape) (xId : Nat) (_h : Spec.Shape.size s₁ = Spec.Shape.size s₂) :
     Result (Tape × Nat) :=
   unary (t := t) "reshape" xId s₁ s₂
@@ -67,6 +68,7 @@ Swap adjacent axes at a given depth in an N-D buffer.
 
 If `depth` is out of range, this is treated as the identity (matches the spec-layer helper).
 -/
+@[inline]
 def swapAdjacentAtDepth {s : Shape} (t : Tape) (depth : Nat) (xId : Nat) : Result (Tape × Nat) := do
   let depth32 ← AnyBuffer.natToU32Checked depth
   let dimsIn : Array Nat := Shape.toArray s
@@ -91,7 +93,7 @@ Broadcast `x : s₁` to `s₂`.
 Forward: `broadcastTo`.
 Backward: sum-reduce broadcasted axes (`reduceFromBroadcastTo`).
 -/
-def broadcastTo {s₁ s₂ : Shape} (t : Tape) (cb : Shape.CanBroadcastTo s₁ s₂) (xId : Nat) :
+@[inline] def broadcastTo {s₁ s₂ : Shape} (t : Tape) (cb : Shape.CanBroadcastTo s₁ s₂) (xId : Nat) :
     Result (Tape × Nat) := do
   let inDims := Shape.toArray s₁
   let outDims := Shape.toArray s₂
@@ -101,7 +103,7 @@ def broadcastTo {s₁ s₂ : Shape} (t : Tape) (cb : Shape.CanBroadcastTo s₁ s
     (backward := fun _x dLdy => Buffer.reduceFromBroadcastTo dLdy inDims outDims axisMap)
 
 /-- Reduce-sum along `axis`. -/
-def reduceSum {s : Shape} (axis : Nat) [_valid : Shape.HasNonemptyAxis axis s]
+@[inline] def reduceSum {s : Shape} (axis : Nat) [_valid : Shape.HasNonemptyAxis axis s]
     [_wf : Shape.WellFormed s]
     (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   let axis32 ← AnyBuffer.natToU32Checked axis
@@ -114,7 +116,7 @@ def reduceSum {s : Shape} (axis : Nat) [_valid : Shape.HasNonemptyAxis axis s]
       Buffer.broadcastTo dLdy inDims outDims axisMap)
 
 /-- Reduce-mean along `axis`. -/
-def reduceMean {s : Shape} (axis : Nat) [valid : Shape.HasNonemptyAxis axis s]
+@[inline] def reduceMean {s : Shape} (axis : Nat) [valid : Shape.HasNonemptyAxis axis s]
     [_wf : Shape.WellFormed s]
     (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   let axis32 ← AnyBuffer.natToU32Checked axis

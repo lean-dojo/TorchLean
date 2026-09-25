@@ -30,8 +30,9 @@ inductive Algorithm where
   /-- Forward affine CROWN bounds. -/
   | crown
   /--
-  Fixed-relaxation Alpha-Beta-CROWN replay. Stable ReLU phases are inferred from IBP; this does
-  not run an external branch-and-bound optimizer.
+  Fixed-relaxation alpha-CROWN with ReLU phases taken from IBP. The constructor is named after
+  alpha-beta-CROWN, but a phase is accepted only when IBP already proves it, so no beta split and no
+  branch-and-bound search runs. Reports print it as `Alpha-CROWN (IBP phases)`.
   -/
   | alphaBetaCrown
   deriving DecidableEq, Repr
@@ -42,7 +43,7 @@ namespace Algorithm
 def name : Algorithm → String
   | .ibp => "IBP"
   | .crown => "CROWN"
-  | .alphaBetaCrown => "Alpha-Beta-CROWN"
+  | .alphaBetaCrown => "Alpha-CROWN (IBP phases)"
 
 instance : ToString Algorithm where
   toString := name

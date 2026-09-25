@@ -341,7 +341,10 @@ end
 
 namespace Term
 
-/-- Inline a term by supplying one typed argument term for each free variable. -/
+/-- Inline a term by supplying one typed argument term for each free variable.
+
+Each argument term is copied into every occurrence of its variable, so a non-variable argument is
+evaluated once per use. -/
 def instantiate {Γ Δ : List Shape} {s : Shape}
     (arguments : Args Δ Γ) (term : Term Γ s) : Term Δ s :=
   term.substitute (Args.get arguments)
@@ -378,7 +381,9 @@ def instantiate {Γ Δ outputs : List Shape}
 /-- Compose two multi-output blocks.
 
 The second block sees the original environment followed by every result of the first block. Any
-`let1` bindings inside the first block remain shared. This is the typed DAG analogue of binding a
+`let1` bindings inside the first block remain shared. The returned terms themselves are substituted
+into every use in `second`, so a result that is not a variable is recomputed at each use; bind it
+with `let1` and return the variable to share it. This is the typed DAG analogue of binding a
 tuple-valued computation and is the basic operation needed to compose recurrent cells, residual
 branches, and encoder-decoder stages.
 -/

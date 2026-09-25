@@ -193,8 +193,11 @@ def boundIbp {inDim hidDim outDim : Nat} [BoundOps α]
 The lower and upper affine CROWN forms for this two-layer ReLU MLP.
 
 The returned pair is `(lower, upper)`. `boundAffineCrown` evaluates these forms on the input box and
-takes the lower and upper endpoints. Exact backends use the two-layer algebraic formula;
-rounded backends share the graph engine's directed coefficient propagation.
+takes the lower and upper endpoints. Exact backends use the two-layer algebraic formula.
+Rounded backends share the graph engine's directed coefficient propagation, which has no
+coefficient transfer for ReLU: the hidden layer is consumed through its IBP box, so the input
+coefficients are zero and the result is the IBP bound of the output layer. No theorem covers the
+rounded branch.
 -/
 def affineCrownForms {inDim hidDim outDim : Nat} [BoundOps α]
   (net : TwoLayerMLP α inDim hidDim outDim)
@@ -289,8 +292,8 @@ def boundAffineCrown {inDim hidDim outDim : Nat} [BoundOps α]
 End-to-end bound API exposed by this file.
 
 This API returns the IBP bound. Its enclosure guarantee depends on the selected `BoundOps`
-implementation; `boundAffineCrown` additionally retains affine dependence on exact backends
-and uses directed graph propagation on rounded backends.
+implementation; `boundAffineCrown` additionally retains affine dependence on exact backends.
+On rounded backends it uses directed graph propagation, which reduces to IBP at the ReLU.
 -/
 def boundAffine {inDim hidDim outDim : Nat} [BoundOps α]
   (net : TwoLayerMLP α inDim hidDim outDim)
@@ -310,21 +313,6 @@ namespace Theorems
 open NN.MLTheory.CROWN
 
 /--
-Scalar ReLU relaxation soundness over `ℝ` (upper bound).
-
-If `x ∈ [l, u]` and `rp := ReLU.relaxScalar l u`, then:
-`relu(x) <= rp.slope * x + rp.bias`.
-
-This is the standard CROWN/DeepPoly upper chord construction (arXiv:1811.00866).
--/
-theorem relu_relax_scalar_upper_real
-  (l u x : ℝ)
-  (hlx : l ≤ x) (hxu : x ≤ u) :
-  let rp := ReLU.relaxScalar (α:=ℝ) l u
-  Activation.Math.reluSpec (α:=ℝ) x ≤ rp.slope * x + rp.bias := by
-  exact NN.MLTheory.CROWN.Proofs.relu_relax_scalar_upper_real_runtime l u x hlx hxu
-
-/--
 Vectorized ReLU relaxation (pointwise upper bound) over `ℝ`.
 
 If `x ∈ [lo, hi]` and `rp := ReLU.relax_vector lo hi`, then for every component `i` we have
@@ -342,7 +330,7 @@ theorem relu_relax_vector_pointwise_upper_real {n : Nat}
   by
   intro i
   have hcoord := hIn i
-  exact relu_relax_scalar_upper_real
+  exact NN.MLTheory.CROWN.Proofs.relu_relax_scalar_upper_real_runtime
     (l := Tensor.getScalar lo i) (u := Tensor.getScalar hi i)
     (x := Tensor.getScalar x i) hcoord.1 hcoord.2
 

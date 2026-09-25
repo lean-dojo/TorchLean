@@ -125,6 +125,11 @@ Check a per-node α-CROWN certificate against Lean's propagation rules.
 
 Returns `true` iff every supplied IBP box contains Lean's authoritative recomputation and every
 node's affine replay data agrees exactly with Lean's CROWN step.
+
+The per-node loop is part of the verdict: it checks IBP containment, parent coverage, shape and
+domain preconditions, and dimensions, which the pure replay in `certificateAccepts` does not. The
+pure replay runs only when the loop passes. The certificate's `ibp` boxes are only checked for
+containment; replay uses Lean's own IBP pass, so they add no information to the affine check.
 -/
 def checkCROWNNodeCertificate (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23)) (path : String)
   :

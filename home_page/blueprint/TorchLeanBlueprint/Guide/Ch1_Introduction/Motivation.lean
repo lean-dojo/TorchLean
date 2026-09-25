@@ -737,7 +737,7 @@ shows the executable verification workflows in the current checkout, one line ea
   lirpa-mlp [<path>]   -- IBP cert: feed-forward MLP
   lirpa-attention [<path>]   -- IBP cert: attention softmax block
   pinn-cert [<path>]   -- PINN certificate recomputation check
-  abcrown-leaf [<path>]   -- α,β-CROWN leaf artifact structural check
+  abcrown-leaf [<path>]   -- α,β-CROWN leaf artifact consistency check (no bound recheck)
   torchlean-ibp   -- TorchLean → IR → IBP workflow (MLP)
   torchlean-crown-ops   -- TorchLean → IR → IBP+CROWN workflow
   ode   -- ODE enclosure verification (sub/super NN bounds)

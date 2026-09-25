@@ -55,7 +55,7 @@ The BPE path reads explicit `vocab.json` and `merges.txt` files, then uses the s
 Local id zero is the unknown-token slot. Saved parameters are shape checked before sampling;
 their tensor dimensions must agree with the model's vocabulary and configuration.
 
-`chargpt` uses `CausalTransformer.Indexed`. Its batches contain
+`chargpt` uses `nn.models.CausalTransformer.indexed`. Its batches contain
 bounded `Tensor (Fin vocab) [batch, seqLen]` token IDs. Tokenizers may first produce
 `Tensor Nat [batch, seqLen]`; `Tensor.checkIndices` validates that boundary before the model runs.
 The embedding layer gathers table rows directly, and

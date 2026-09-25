@@ -68,6 +68,6 @@ lake -R -K cuda=true exe torchlean diffusion --device cuda \
 | `diffusion` | Predict injected noise at a sampled diffusion timestep | Training log JSON and optional reference, noisy, reconstructed, and sampled PPM images |
 
 A falling reconstruction or noise-prediction loss measures this training task. It does not certify
-image quality, generalization, or agreement between native CUDA kernels and a mathematical model.
+image quality, generalization, or agreement between the LibTorch CUDA backend and a mathematical model.
 These commands do not emit verification certificates; any later checked claim needs a separate
 artifact format and checker.

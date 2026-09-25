@@ -7,13 +7,19 @@ lake exe verify -- abcrown-leaf
 ```
 
 The bundled report describes the box `[-1, 1] × [-1, 1]`, claims a lower bound of `1`, and gives
-an unsafe threshold of `0`. The checker confirms that the leaf stays inside the root box,
-`1 > 0`, and the reported margin equals `1 - 0`. The expected summary is
-`Checked 1 leaves: ok=1, bad=0`.
+an unsafe threshold of `0`. The checker confirms that the leaf stays inside the root box, that the
+leaves cover the root, `1 > 0`, and that the reported margin equals `1 - 0`. The expected output
+is
 
-This example teaches an **export/import sanity check**. It loads no network and does not recompute
-the claimed lower bound. It also does not check that a collection of leaves covers the whole input
-region. A made-up bound can pass these checks, so acceptance alone is not a robustness proof.
+```text
+[artifact] Checked 1 leaves: ok=1, bad=0
+[artifact] consistent: the leaves cover the root and every leaf clears its threshold.
+[artifact] The lower bounds are the producer's claims; TorchLean did not recompute them.
+```
+
+This example teaches an **export/import consistency check**. It loads no network and does not
+recompute the claimed lower bounds. A made-up bound can pass these checks, so acceptance alone is
+not a robustness proof.
 For a model-to-bound workflow, start with `lake exe verify -- torchlean-ibp` instead.
 
 The two fixtures show the format boundary:

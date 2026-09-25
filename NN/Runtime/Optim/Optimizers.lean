@@ -155,6 +155,22 @@ def adaptiveLearningRate {α : Type} [TorchLean.Storage α] [Context α]
     (learningRate epsilon : α) (denominator : Tensor α s) : Tensor α s :=
   divSpec (Tensor.full s learningRate) (addSpec (sqrtSpec denominator) (Tensor.full s epsilon))
 
+/-- Single-pass form of `adaptiveLearningRate`. The reference definition builds two constant
+tensors and three intermediates per call; this one maps the scalar formula once. -/
+def adaptiveLearningRateFused {α : Type} [TorchLean.Storage α] [Context α]
+    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+    (learningRate epsilon : α) (denominator : Tensor α s) : Tensor α s :=
+  mapSpec (fun v => learningRate / (MathFunctions.sqrt (Max.max v 0) + epsilon)) denominator
+
+/-- Compiled code runs the single-pass form. Proofs keep unfolding the reference definition. -/
+@[csimp] theorem adaptiveLearningRate_eq_fused :
+    @adaptiveLearningRate = @adaptiveLearningRateFused := by
+  funext α storage context decide s learningRate epsilon denominator
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simp [adaptiveLearningRate, adaptiveLearningRateFused, divSpec, addSpec, sqrtSpec, mapSpec,
+    map2Spec, Tensor.map, Tensor.full]
+
 /-! ## SGD -/
 
 /--
@@ -536,9 +552,9 @@ def Adadelta.update {α : Type} [TorchLean.Storage α] [Context α]
     addSpec (scaleSpec state.squaredGradientAverage state.rho)
       (scaleSpec squaredGradients (1 - state.rho))
 
-  let epsT : Tensor α s := Tensor.full s state.epsilon
-  let gradientRms := sqrtSpec (addSpec nextSquaredGradientAverage epsT)
-  let updateRms := sqrtSpec (addSpec state.squaredUpdateAverage epsT)
+  let rms := fun v : α => MathFunctions.sqrt (Max.max (v + state.epsilon) 0)
+  let gradientRms := mapSpec rms nextSquaredGradientAverage
+  let updateRms := mapSpec rms state.squaredUpdateAverage
 
   let ratio := divSpec updateRms gradientRms
   let parameterUpdate := mulSpec ratio gradients

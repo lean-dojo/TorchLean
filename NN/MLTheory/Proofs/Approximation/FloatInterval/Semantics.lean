@@ -561,7 +561,7 @@ def IsMaxOn {X : Type} (g : X → F) (S : Set X) (M : F) : Prop :=
 For each box `B`, the abstract output interval is exactly the interval hull of the rounded target's
 direct image on `γ(B)`, expressed via existential min/max witnesses.
 -/
-def ExactIntervalImage {d : Nat} (g : (Fin d → F) → F) (_ν : (Fin d → F) → F)
+def ExactIntervalImage {d : Nat} (g : (Fin d → F) → F)
     (nuInt : I.Box d → I) : Prop :=
   ∀ B, (I.γ (d := d) B).Nonempty →
     ∃ m M,
@@ -574,7 +574,7 @@ def ExactIntervalImage {d : Nat} (g : (Fin d → F) → F) (_ν : (Fin d → F) 
 The easiest instance of the exactness property, and the one the constant-target construction of the
 paper needs; the nonemptiness hypothesis is what supplies the min and max witnesses. -/
 theorem exactIntervalImage_constant {d : Nat} (c : F) (hc : isNaN c = false) :
-    ExactIntervalImage (d := d) (g := fun _ => c) (_ν := fun _ => c)
+    ExactIntervalImage (d := d) (g := fun _ => c)
       (nuInt := fun _ => I.range c c) := by
   intro B hne
   refine ⟨c, c, ?_, ?_, ?_⟩

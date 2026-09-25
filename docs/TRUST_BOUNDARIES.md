@@ -250,8 +250,8 @@ selected local reverse rule, not that LibTorch owns differentiation.
   native boundary, as do configuration requests. Unknown setting IDs return errors. The bridge
   maps caught native out-of-memory and allocation exceptions to `IO.Error.resourceExhausted`;
   other caught standard exceptions become IO errors. Successful readback records runtime state,
-  not proof of numerical agreement. CPU stubs return zero for known settings and memory fraction,
-  reject unknown setting IDs, and reject configuration requests.
+  not proof of numerical agreement. Builds without LibTorch return zero for known settings and
+  memory fraction, reject unknown setting IDs, and reject configuration requests.
 - Attention retains its proof-facing denotation in `NN/Spec/Layers/FlashAttention.lean`. The
   composed route evaluates matrix products and hard-masked softmax through LibTorch primitives;
   the direct bridge returns forward values and local `dQ`, `dK`, and `dV`. Neither capsule promises

@@ -173,7 +173,8 @@ ordinary finite-scalar encoding of softmax with true `-∞` masked logits.
 
 The maximum and denominator are computed only over allowed entries. Subtracting the allowed-row
 maximum gives the usual numerically stable softmax formula. If every mask entry is false, the result
-is the zero vector, matching PyTorch SDPA and TorchLean's native CUDA providers.
+is the zero vector, matching PyTorch SDPA and the LibTorch CUDA attention bridge
+(`NN/Backend/Attention.lean`).
 -/
 def hardMaskedSoftmaxVecSpec {n : Nat}
     (scores : Tensor α [n])
@@ -457,10 +458,9 @@ High-level structure:
 /--
 Parameter gradients for multi-head attention: one per projection matrix.
 
-The record lives here, beside the backward pass that produces it, rather than in the transformer
-model file where it was originally declared. All four fields are named after the corresponding field
-of `MultiHeadAttention`, so `{ queryWeight, keyWeight, valueWeight, outputWeight }` works with the
-anonymous constructor at every call site.
+The record lives beside the backward pass that produces it. All four fields are named after the
+corresponding field of `MultiHeadAttention`, so `{ queryWeight, keyWeight, valueWeight,
+outputWeight }` works with the anonymous constructor at every call site.
 
 PyTorch analogue: the `.grad` of `nn.MultiheadAttention.in_proj_weight` split into its three blocks,
 plus `out_proj.weight.grad`.

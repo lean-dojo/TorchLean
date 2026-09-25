@@ -610,8 +610,8 @@ lake -R -K cuda=true exe torchlean chargpt --device cuda \
 ```
 
 Keep `-R` when changing a Lake configuration so affected native archives are rebuilt. Without
-`cuda=true`, TorchLean links portable CUDA stubs. The SDK, CUDA toolkit, and compiler must be
-compatible; {ref "gpu-and-cuda"}[GPU And CUDA] describes the native build.
+`cuda=true`, the CUDA symbols fail with a message to rebuild. The SDK, CUDA toolkit, and compiler
+must be compatible; {ref "gpu-and-cuda"}[GPU And CUDA] describes the native build.
 
 Add `--show-backend` to inspect what was selected:
 
@@ -923,7 +923,7 @@ lake exe verify -- list
 lake exe verify -- torchlean-ibp
 ```
 
-The registry currently holds 23 tools. Each row below is one `Tool` record in
+The registry currently holds 24 tools. Each row below is one `Tool` record in
 {src "NN/Verification/CLI.lean"}[`NN/Verification/CLI.lean`], and the last column is its
 `includeInAll` field:
 
@@ -966,8 +966,12 @@ The registry currently holds 23 tools. Each row below is one `Tool` record in
   * yes
 *
   * `abcrown-leaf`
-  * α,β-CROWN leaf artifact structure
+  * α,β-CROWN leaf artifact consistency
   * yes
+*
+  * `crown-query`
+  * exact rational CROWN output query
+  * no
 *
   * `margin-report`
   * consistency of an exported logit-bound report
@@ -1052,7 +1056,8 @@ output box hi: [2.256001]
 
 The workflow computes this box from its built-in model. An artifact checker such
 as `pinn-cert` or `abcrown-leaf` parses a file produced elsewhere and applies its declared
-checks. These differ: the α,β-CROWN leaf reader validates artifact structure, while a semantic
+checks. These differ: the α,β-CROWN leaf reader checks that the leaves cover the root and clear
+their thresholds without recomputing the bounds, while a semantic
 certificate checker must also establish the claimed bounds. This distinction matters for
 proof-carrying code
 {Informal.citep necula1997}[]: the producer may be untrusted as long as the consumer can check the
@@ -1067,7 +1072,7 @@ retroactively verify the process that produced the artifact.
 lake exe verify -- all
 ```
 
-runs 10 of the 23 tools, one after another:
+runs 10 of the 24 tools, one after another:
 
 ```terminal +output
 == lirpa-mlp ==
@@ -1078,6 +1083,8 @@ IBP certificate verified: serialized bounds enclose Lean recomputation.
 ...
 == abcrown-leaf ==
 [artifact] Checked 1 leaves: ok=1, bad=0
+[artifact] consistent: the leaves cover the root and every leaf clears its threshold.
+[artifact] The lower bounds are the producer's claims; TorchLean did not recompute them.
 
 == margin-report ==
 [margin report] examples=360
@@ -1085,13 +1092,13 @@ IBP certificate verified: serialized bounds enclose Lean recomputation.
 [margin report] positive_margin=318
 ```
 
-The 13 tools it skips are the ones marked `no` above: interactive, externally dependent, or
+The 14 tools it skips are the ones marked `no` above: interactive, externally dependent, or
 long-running. That list includes every `torchlean-*` in-memory workflow, so a green `all` is not
 evidence that model lowering and bound propagation still work. Run those explicitly.
 
 `margin-report` reports a positive margin for 318 of 360 examples, and `all` still exits `0`.
 The tool checks report consistency; it does not require every example to have a positive margin.
-Likewise, the leaf reader's `ok=1` records acceptance under its structural checks. Interpret each
+Likewise, the leaf reader's `ok=1` records acceptance under its consistency checks. Interpret each
 message against the tool's contract before treating it as evidence of a semantic bound.
 
 `verify all` runs each included tool

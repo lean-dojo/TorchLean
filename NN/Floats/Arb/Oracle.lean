@@ -220,12 +220,15 @@ def jsonToIntFromStringKey (o : Json) (k : String) : Except String Int := do
 /--
 Parse an Arb `mid_rad_10exp` object into `MidRad10Exp`.
 
-In words: this reads the exact integer encoding of an interval ball.
+In words: this reads the exact integer encoding of an interval ball. A negative radius is
+rejected, since it would describe a reversed interval.
 -/
 def parseMidRad10Exp (j : Json) : Except String MidRad10Exp := do
   let mid ← jsonToIntFromStringKey j "mid"
   let rad ← jsonToIntFromStringKey j "rad"
   let exp ← jsonToIntFromStringKey j "exp"
+  if rad < 0 then
+    throw s!"Expected a nonnegative Arb radius, got {rad}"
   pure { mid, rad, exp }
 
 /--

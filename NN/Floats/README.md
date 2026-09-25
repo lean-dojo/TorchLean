@@ -32,8 +32,8 @@ needs an equality of encodings instead. These models keep that distinction expli
 | Rounded reals and error bounds | `Flocq.NF` | `FP32/` |
 | Configurable encoded formats | `ExecFloat.Binary` | Direct FloatLib API |
 | Computed real rounding | Flocq calculation theorems | `FP32.round_eq_computed` |
-| Outward intervals | FloatLib interval models | `Interval/FP32.lean`, external Arb adapters |
-| Affine quantization | FloatLib rounding policies | `Quantization.lean` |
+| Intervals | FloatLib interval models | `Interval/`, external Arb adapter |
+| Affine quantization | FloatLib rounding policies | `NN/Spec/Quantization.lean` |
 | Native Lean float expressions | FloatLib `IEEE754.Native` proofs | Direct upstream imports |
 
 Here `Flocq` is `FloatLib.Floats.Formats.Flocq`, and `ExecFloat` is
@@ -56,8 +56,9 @@ configured-to-model conversion.
 
 `FP32` abbreviates `NF binaryRadix (fltExp (-149) 24) nearestEven`. It rounds each real operation
 to a grid with 24 significant bits and gradual underflow down to the binary32 subnormal scale.
-**Its exponent has no upper bound.** NaNs, infinities, and signed zeros are absent. Consequently,
-`FP32.ieeeMaxFinite` is a guard for transferring an IEEE result, not a largest element of `FP32`.
+**Its exponent has no upper bound.** NaNs, infinities, and signed zeros are absent, so `FP32`
+has no largest element. Transferring an executable IEEE result into this model needs a
+finiteness hypothesis on that result.
 
 For executable encoded arithmetic, use `ExecFloat.Binary 8 23` for binary32. The two parameters
 count exponent and stored fraction bits. FloatLib owns arithmetic, special-value behavior,
@@ -143,10 +144,10 @@ promise a finite encoded result for an unrepresentable derivative.
 Use `FloatLib.Numerics.Interval (FloatLib.Floats.ExecFloat.Binary 8 23)` directly for binary32
 endpoints, with arithmetic and conversion proofs from `ExecFloat.Binary.Interval`.
 TorchLean's numerical graph certificates use these binary32 endpoints; selecting another scalar
-format does not supply a graph certificate for that format. `Interval/FP32.lean` specializes
-rounded-real enclosures. `NN.Spec.Quantization` lifts FloatLib's `RealAffineQuantizer` to shaped
-tensors; integer code ranges specify int8, uint8, int4, or custom quantizers independently of
-tensor layout.
+format does not supply a graph certificate for that format. FloatLib's `Model.roundAt_mem_Icc`
+gives the half-ulp enclosure of a rounded real. `NN.Spec.Quantization` lifts FloatLib's
+`RealAffineQuantizer` to shaped tensors; integer code ranges specify int8, uint8, int4, or custom
+quantizers independently of tensor layout.
 
 `NN.Floats` imports the Arb interface, but importing it does not run an oracle. Actual requests
 cross the Python/Arb/FLINT process boundary. `Interval/IEEEExec32ArbTrans.lean` is a separate

@@ -25,6 +25,8 @@ public meta section
 macro "verify" : attr =>
   `(attr| aesop unsafe 90% apply (rule_sets := [$(Lean.mkIdent `Verify):ident]))
 
+-- Checker results are closed by kernel reduction, which has no heartbeat limit. A large decidable
+-- side condition can therefore run for a long time; keep checked evidence to executable checks.
 add_aesop_rules safe tactic (rule_sets := [Verify]) (by decide +kernel)
 
 /-- Prove a semantic guarantee using registered soundness rules and checked evidence.

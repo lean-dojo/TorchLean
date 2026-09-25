@@ -142,9 +142,10 @@ $$`N(L,a,b,\varepsilon)
   = \left\lceil\frac{2L(b-a)}{\varepsilon}\right\rceil+1.`
 
 In Lean this is
-{src "NN/MLTheory/Proofs/Approximation/Universal/UniversalApproximationRate.lean"}[
-`reluApproximationWidth`], and `relu_universal_approximation_Icc_rate` uses exactly that hidden
-dimension. The arithmetic lemma underneath it proves
+{src "NN/MLTheory/Proofs/Approximation/Universal/UniversalApproximation.lean"}[
+`reluApproximationWidth`]. The qualitative theorem uses it as its witness, and
+`relu_universal_approximation_Icc_rate` states the same hidden dimension explicitly. The
+arithmetic lemma underneath it proves
 
 $$`\frac{2L(b-a)}{N}<\varepsilon.`
 

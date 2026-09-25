@@ -57,10 +57,6 @@ def γ {d : Nat} (B : Box d) : Set (Fin d → F) := fun x => ∀ i, x i ∈ B i
 /-- Basic “well-formedness” predicate for product boxes. -/
 def BoxValid {d : Nat} (B : Box d) : Prop := ∀ i, Binary.Interval.Valid (B i)
 
-/-- `B` is a box contained in `[-1,1]^d`. -/
-def BoxInCube {d : Nat} (B : Box d) : Prop :=
-  ∀ i, ((-1) : F) ≤ (B i).lo ∧ (B i).hi ≤ (1 : F)
-
 /--
 Exact interval-image property, phrased as:
 for every valid input box `B`, the interval semantics `nuInt(B)`’s concretization is exactly the
@@ -69,7 +65,7 @@ float interval between the min/max of the target’s direct image on `γ(B)`.
 We phrase extrema relationally, rather than through a chosen float `min`/`max` operator, because
 NaN-aware binary32 orders need their edge cases stated explicitly.
 -/
-def ExactIntervalImage {d : Nat} (g : (Fin d → F) → F) (_ν : (Fin d → F) → F)
+def ExactIntervalImage {d : Nat} (g : (Fin d → F) → F)
     (nuInt : Box d → Interval F) : Prop :=
   ∀ B, BoxValid B →
     ∃ m M,
@@ -77,25 +73,9 @@ def ExactIntervalImage {d : Nat} (g : (Fin d → F) → F) (_ν : (Fin d → F) 
       IsMaxOn g (γ (d := d) B) M ∧
       γI (nuInt B) = Icc m M
 
-/--
-Generic exact-interval-image statement shape for `Binary 8 23` rounded targets.
--/
-def RoundedTargetExactIntervalImageStatement (d : Nat) : Prop :=
-  ∀ (fHat : (Fin d → F) → F),
-    (∀ x, ExecFloat.Binary.isNaN (fHat x) = false) →
-    ∃ (_ν : (Fin d → F) → F) (nuInt : Box d → Interval F),
-      (∀ B, BoxValid B → BoxInCube (d := d) B →
-        ∃ m M,
-          IsMinOn fHat (γ (d := d) B) m ∧
-          IsMaxOn fHat (γ (d := d) B) M ∧
-          γI (nuInt B) = Icc m M)
-
-/-- Float comparison is reflexive on finite values. Not a `Preorder` instance, because `NaN` is not
-comparable to itself and IEEE 754 order is genuinely partial. -/
-theorem le_refl_of_isFinite (x : F) (hx : ExecFloat.Binary.isFinite x = true) : x ≤ x := by
-  apply FloatLib.Floats.ExecFloat.Binary.le_iff_le_toModel.mpr
-  exact (Model.Interval.le_iff_toReal_le_of_isFinite
-    (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel x) hx hx).mpr le_rfl
+/-- Float comparison is reflexive on finite values. -/
+private theorem le_self_of_isFinite (x : F) (hx : ExecFloat.Binary.isFinite x = true) : x ≤ x :=
+  ExecLemmas.le_self_of_isNaN_false x (Model.isNaN_eq_false_of_isFinite_eq_true _ hx)
 
 /-- A valid box is nonempty, witnessed by its own lower corner.
 
@@ -106,7 +86,7 @@ theorem gamma_nonempty_of_BoxValid {d : Nat} {B : Box d} (hB : BoxValid B) :
   refine ⟨fun i => (B i).lo, ?_⟩
   intro i
   have hv : Binary.Interval.Valid (B i) := hB i
-  have hlelo : (B i).lo ≤ (B i).lo := le_refl_of_isFinite (x := (B i).lo) hv.1
+  have hlelo : (B i).lo ≤ (B i).lo := le_self_of_isFinite (x := (B i).lo) hv.1
   exact And.intro (FloatLib.Floats.ExecFloat.Binary.le_iff_le_toModel.mp hlelo) hv.2.2
 
 /--
@@ -114,7 +94,7 @@ Base case: a constant target `g(x) = c` has an exact interval-image witness give
 network and the point interval `[c,c]`.
 -/
 theorem exactIntervalImage_constant {d : Nat} (c : F) (hc : ExecFloat.Binary.isFinite c = true) :
-    ExactIntervalImage (d := d) (g := fun _ => c) (_ν := fun _ => c)
+    ExactIntervalImage (d := d) (g := fun _ => c)
       (nuInt := fun _ => Binary.Interval.point c) := by
   intro B hB
   refine ⟨c, c, ?_, ?_, ?_⟩
@@ -126,7 +106,7 @@ theorem exactIntervalImage_constant {d : Nat} (c : F) (hc : ExecFloat.Binary.isF
     · intro y hy
       rcases hy with ⟨x, hx, hgy⟩
       subst hgy
-      simpa using (le_refl_of_isFinite (x := c) hc)
+      simpa using (le_self_of_isFinite (x := c) hc)
   · -- `IsMaxOn`
     have hn : (γ (d := d) B).Nonempty := gamma_nonempty_of_BoxValid (d := d) hB
     rcases hn with ⟨x0, hx0⟩
@@ -135,7 +115,7 @@ theorem exactIntervalImage_constant {d : Nat} (c : F) (hc : ExecFloat.Binary.isF
     · intro y hy
       rcases hy with ⟨x, hx, hgy⟩
       subst hgy
-      simpa using (le_refl_of_isFinite (x := c) hc)
+      simpa using (le_self_of_isFinite (x := c) hc)
   · -- `γ([c,c]) = Icc c c`
     ext x
     dsimp [γI, Icc]

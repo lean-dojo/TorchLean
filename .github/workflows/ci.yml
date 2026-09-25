@@ -102,6 +102,9 @@ jobs:
       - name: Test leaf artifact exporter
         run: python3 -B -m unittest discover -s scripts/verification/abcrown -p 'test_*.py'
 
+      - name: Test LiRPA certificate regions
+        run: python3 -B -m unittest discover -s scripts/verification/lirpa -p 'test_*.py'
+
       - name: Test documentation links and dependency checks
         run: |
           python3 -B -m unittest discover -s scripts/docs -p 'test_*.py'

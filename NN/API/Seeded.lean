@@ -385,21 +385,6 @@ def gru (sequenceLength inputWidth hiddenWidth : Nat) (batchShape : Shape := [])
                 (Sequential.fromLayer <| Runtime.Autograd.Model.Layers.gruResetAfter
                   sequenceLength inputWidth hiddenWidth inputWeightSeed hiddenWeightSeed)
 
-/--
-Load one reset-after GRU cell's parameters and share it over every batch position.
-
-Pass `Spec.GRUResetAfterSpec.ofPyTorch weightIH weightHH biasIH biasHH`. The gate order and
-matrix layout are retained, and no initialization seeds are consumed.
--/
-def gruFromPyTorch (sequenceLength : Nat) {inputWidth hiddenWidth : Nat}
-    (parameters : Spec.GRUResetAfterSpec Float inputWidth hiddenWidth)
-    (batchShape : Shape := []) :
-    Builder (Sequential
-      ((batchShape.appendDim sequenceLength).appendDim inputWidth)
-      ((batchShape.appendDim sequenceLength).appendDim hiddenWidth)) :=
-  pure <| Impl.batchedRecurrent batchShape <| Sequential.fromLayer <|
-    Runtime.Autograd.Model.Layers.gruFromPyTorch sequenceLength parameters
-
 /-- Build a seeded selective Mamba layer, shared over every index in `batchShape`. -/
 def mamba (sequenceLength inputWidth hiddenWidth : Nat) (batchShape : Shape := [])
     (options : Runtime.Autograd.Model.Mamba.Options := {}) :

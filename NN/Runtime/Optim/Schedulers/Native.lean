@@ -512,7 +512,8 @@ One-cycle learning-rate schedule.
   `increasingFraction` of the steps,
 - then decrease to `finalLearningRate` over the rest.
 
-In the original 1cycle policy, momentum is also scheduled; we keep this runtime version LR-only.
+Both phases are linear. In the original 1cycle policy, momentum is also scheduled; we keep this
+runtime version LR-only.
 -/
 structure OneCycle (α : Type) where
   /-- Peak learning rate (reached at `increasingFraction` of the schedule). -/
@@ -523,8 +524,6 @@ structure OneCycle (α : Type) where
   initialLearningRate : α
   /-- Learning rate after the full schedule finishes. -/
   finalLearningRate : α
-  /-- Divides `maximumLearningRate` to get `initialLearningRate` in the factory constructor. -/
-  divisionFactor : α
   /-- Fraction of the schedule spent increasing LR (0..1). -/
   increasingFraction : α
   /-- Current step counter (0-indexed). -/
@@ -533,10 +532,11 @@ structure OneCycle (α : Type) where
 /--
 Get the learning rate for the one-cycle schedule at the current step.
 
-This ramps up to `maximumLearningRate` over the `increasingFraction` part of the schedule, then
-anneals down to `finalLearningRate`.
+This ramps up linearly to `maximumLearningRate` over the `increasingFraction` part of the
+schedule, then anneals linearly down to `finalLearningRate`.
 
-PyTorch analogy: `torch.optim.lr_scheduler.OneCycleLR`, restricted here to the learning-rate curve.
+PyTorch's `OneCycleLR` anneals with a cosine by default and places its phase boundaries at
+`pct_start * total_steps - 1`; `Scheduler.PyTorch.OneCycle` follows those conventions.
 -/
 def OneCycle.current (scheduler : OneCycle α) : α :=
   if scheduler.totalSteps = 0 then
@@ -564,21 +564,20 @@ def OneCycle.advance (scheduler : OneCycle α) : OneCycle α :=
   { scheduler with currentStep := scheduler.currentStep + 1 }
 
 /--
-Create a simplified 1cycle schedule starting at step `0`.
+Create a linear 1cycle schedule starting at step `0`.
 
-We derive `initial_lr := max_lr / div_factor` and `final_lr := max_lr / final_div_factor`.
-
-PyTorch analogy: `torch.optim.lr_scheduler.OneCycleLR(max_lr=..., total_steps=...)`.
+The endpoints use PyTorch's factor conventions: `initial_lr := max_lr / div_factor` and
+`final_lr := initial_lr / final_div_factor`. The curve itself is the linear one described at
+`OneCycle.current`, not PyTorch's default cosine; use `Scheduler.PyTorch.OneCycle` for that.
 -/
 def OneCycle.create (maximumLearningRate : α) (totalSteps : Nat) (divisionFactor : α)
     (increasingFraction : α) (finalDivisionFactor : α) : OneCycle α :=
   let initialLearningRate := maximumLearningRate / divisionFactor
-  let finalLearningRate := maximumLearningRate / finalDivisionFactor
+  let finalLearningRate := initialLearningRate / finalDivisionFactor
   { maximumLearningRate := maximumLearningRate
     totalSteps := totalSteps
     initialLearningRate := initialLearningRate
     finalLearningRate := finalLearningRate
-    divisionFactor := divisionFactor
     increasingFraction := increasingFraction }
 
 /-! ## LR finder -/

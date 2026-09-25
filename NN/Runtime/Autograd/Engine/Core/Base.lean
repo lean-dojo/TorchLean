@@ -241,7 +241,7 @@ You provide:
 The returned node inherits the parent's gradient flag and stores the forward value and a backward
 closure that checks the upstream gradient's shape and returns the parent contribution.
 -/
-def unary {α : Type} [TorchLean.Storage α] {σ τ : Shape}
+@[inline] def unary {α : Type} [TorchLean.Storage α] {σ τ : Shape}
   (t : Tape α) (opName : String) (xId : Nat)
   (forward : Tensor α σ → Tensor α τ)
   (backward : Tensor α σ → Tensor α τ → Tensor α σ) :

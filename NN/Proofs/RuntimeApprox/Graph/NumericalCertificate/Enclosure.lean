@@ -131,64 +131,42 @@ def RealEncloses (interval : Interval (Binary 8 23)) (value : Real) : Prop :=
   value ∈ Set.Icc ((ExecFloat.Binary.toModel interval.lo).toReal) ((ExecFloat.Binary.toModel
     interval.hi).toReal)
 
-/-- Convert the extended-real endpoint form used by the interval soundness library into an
-ordinary real interval when the output endpoints are finite. -/
-theorem realEncloses_of_eReal_bounds {interval : Interval (Binary 8 23)} {value : Real}
-    (valid : Binary.Interval.Valid interval)
-    (bounds : (ExecFloat.Binary.toModel interval.lo).toEReal <= (value : EReal) ∧
-      (value : EReal) <= (ExecFloat.Binary.toModel interval.hi).toEReal) :
-    RealEncloses interval value := by
-  exact (Model.Interval.eRealMem_coe_iff_of_valid valid value).mp bounds
-
 /-- Sound real enclosure for the canonical addition transfer. -/
 theorem add_realEncloses {a b : Interval (Binary 8 23)} {x y : Real}
     (ha : Binary.Interval.Valid a) (hb : Binary.Interval.Valid b)
     (hout : Binary.Interval.Valid (Binary.Interval.add a b))
     (hx : RealEncloses a x) (hy : RealEncloses b y) :
-    RealEncloses (Binary.Interval.add a b) (x + y) := by
-  apply realEncloses_of_eReal_bounds hout
-  change Model.Interval.ERealMem (Binary.Interval.toModel (Binary.Interval.add a b))
-    ((x + y : Real) : EReal)
-  simp only [Binary.Interval.toModel_add]
-  exact Model.Interval.add_sound
-    (Binary.Interval.toModel a) (Binary.Interval.toModel b) (by decide) ha hb hx hy
+    RealEncloses (Binary.Interval.add a b) (x + y) :=
+  (Binary.Interval.eRealMem_coe_iff_of_valid hout _).mp
+    (Binary.Interval.add_sound a b (by decide) ha hb hx hy)
 
 /-- Sound real enclosure for the canonical subtraction transfer. -/
 theorem sub_realEncloses {a b : Interval (Binary 8 23)} {x y : Real}
     (ha : Binary.Interval.Valid a) (hb : Binary.Interval.Valid b)
     (hout : Binary.Interval.Valid (Binary.Interval.sub a b))
     (hx : RealEncloses a x) (hy : RealEncloses b y) :
-    RealEncloses (Binary.Interval.sub a b) (x - y) := by
-  apply realEncloses_of_eReal_bounds hout
-  change Model.Interval.ERealMem (Binary.Interval.toModel (Binary.Interval.sub a b))
-    ((x - y : Real) : EReal)
-  simp only [Binary.Interval.toModel_sub]
-  exact Model.Interval.sub_sound
-    (Binary.Interval.toModel a) (Binary.Interval.toModel b) (by decide) ha hb hx hy
+    RealEncloses (Binary.Interval.sub a b) (x - y) :=
+  (Binary.Interval.eRealMem_coe_iff_of_valid hout _).mp
+    (Binary.Interval.sub_sound a b (by decide) ha hb hx hy)
 
 /-- Sound real enclosure for the canonical multiplication transfer. -/
 theorem mul_realEncloses {a b : Interval (Binary 8 23)} {x y : Real}
     (ha : Binary.Interval.Valid a) (hb : Binary.Interval.Valid b)
     (hout : Binary.Interval.Valid (Binary.Interval.mul a b))
     (hx : RealEncloses a x) (hy : RealEncloses b y) :
-    RealEncloses (Binary.Interval.mul a b) (x * y) := by
-  apply realEncloses_of_eReal_bounds hout
-  change Model.Interval.ERealMem (Binary.Interval.toModel (Binary.Interval.mul a b))
-    ((x * y : Real) : EReal)
-  simp only [Binary.Interval.toModel_mul]
-  exact Model.Interval.mul_sound
-    (Binary.Interval.toModel a) (Binary.Interval.toModel b) (by decide) ha hb hx hy
+    RealEncloses (Binary.Interval.mul a b) (x * y) :=
+  (Binary.Interval.eRealMem_coe_iff_of_valid hout _).mp
+    (Binary.Interval.mul_sound a b (by decide) ha hb hx hy)
 
 /-- Sound real enclosure for the canonical reciprocal transfer. -/
 theorem inv_realEncloses {a : Interval (Binary 8 23)} {x : Real}
     (ha : Binary.Interval.Valid a) (hout : Binary.Interval.Valid (Binary.Interval.inv a))
     (hx : RealEncloses a x) :
     RealEncloses (Binary.Interval.inv a) x⁻¹ := by
-  apply realEncloses_of_eReal_bounds hout
-  change Model.Interval.ERealMem (Binary.Interval.toModel (Binary.Interval.inv a))
-    ((x⁻¹ : Real) : EReal)
-  simp only [Binary.Interval.toModel_inv]
-  simpa only [one_div] using Model.Interval.inv_sound (Binary.Interval.toModel a) (by decide) ha hx
+  have h := (Binary.Interval.eRealMem_coe_iff_of_valid hout _).mp
+    (Binary.Interval.inv_sound a (by decide) ha hx)
+  rw [one_div] at h
+  exact h
 
 /-- Every scalar entry of a shape-indexed real tensor lies in one interval. -/
 def TensorEnclosed (interval : Interval (Binary 8 23)) :
@@ -295,77 +273,14 @@ private theorem nonnegativeEndpoint_toReal_nonneg {x : Binary 8 23}
     exact Model.toReal_nonneg_of_isFinite_of_signBit_eq_false
       (ExecFloat.Binary.toModel x) hfin hsign
 
-private theorem toModel_sqrtDown (x : Binary 8 23) :
-    ExecFloat.Binary.toModel ((ExecFloat.Binary.sqrt (rounding := .towardNegativeInfinity)) x) =
-      Model.sqrtDown (ExecFloat.Binary.toModel x) := by
-  exact FloatLib.Floats.ExecFloat.Binary.toModel_sqrt x .towardNegativeInfinity
-
-private theorem toModel_sqrtUp (x : Binary 8 23) :
-    ExecFloat.Binary.toModel ((ExecFloat.Binary.sqrt (rounding := .towardPositiveInfinity)) x) =
-      Model.sqrtUp (ExecFloat.Binary.toModel x) := by
-  exact FloatLib.Floats.ExecFloat.Binary.toModel_sqrt x .towardPositiveInfinity
-
-/-- A directed lower square-root endpoint lies below the exact real square root. FloatLib's
-nonnegative-input theorem includes both signed zeros. -/
-theorem toReal_sqrtDown_le {x : Binary 8 23}
-    (hfin : ExecFloat.Binary.isFinite x = true) (hdomain : nonnegativeEndpoint x = true)
-    (hout : ExecFloat.Binary.isFinite ((ExecFloat.Binary.sqrt (rounding := .towardNegativeInfinity))
-      x) = true) :
-    (ExecFloat.Binary.toModel ((ExecFloat.Binary.sqrt (rounding := .towardNegativeInfinity))
-      x)).toReal <= Real.sqrt ((ExecFloat.Binary.toModel x).toReal) := by
-  have h := Model.toEReal_sqrtDown_le_of_nonnegative (ExecFloat.Binary.toModel x) (by decide)
-    hfin (nonnegativeEndpoint_toReal_nonneg hfin hdomain)
-  rw [← toModel_sqrtDown,
-    Model.toEReal_eq_coe_toReal_of_isFinite (ExecFloat.Binary.toModel ((ExecFloat.Binary.sqrt
-      (rounding := .towardNegativeInfinity)) x)) hout] at h
-  exact EReal.coe_le_coe_iff.mp h
-
-/-- Upper counterpart of `toReal_sqrtDown_le`. -/
-theorem toReal_sqrtUp_ge {x : Binary 8 23}
-    (hfin : ExecFloat.Binary.isFinite x = true) (hdomain : nonnegativeEndpoint x = true)
-    (hout : ExecFloat.Binary.isFinite ((ExecFloat.Binary.sqrt (rounding := .towardPositiveInfinity))
-      x) = true) :
-    Real.sqrt ((ExecFloat.Binary.toModel x).toReal) <= (ExecFloat.Binary.toModel
-      ((ExecFloat.Binary.sqrt (rounding := .towardPositiveInfinity)) x)).toReal := by
-  have h := Model.le_toEReal_sqrtUp_of_nonnegative (ExecFloat.Binary.toModel x) (by decide)
-    hfin (nonnegativeEndpoint_toReal_nonneg hfin hdomain)
-  rw [← toModel_sqrtUp,
-    Model.toEReal_eq_coe_toReal_of_isFinite (ExecFloat.Binary.toModel ((ExecFloat.Binary.sqrt
-      (rounding := .towardPositiveInfinity)) x)) hout] at h
-  exact EReal.coe_le_coe_iff.mp h
-
-/-- Sound real enclosure for directed interval square root. -/
+/-- Sound real enclosure for directed interval square root. Only the lower endpoint needs a
+nonnegative sign; the upper one then follows from interval order. -/
 theorem sqrt_realEncloses {a : Interval (Binary 8 23)} {x : Real}
     (ha : Binary.Interval.Valid a) (hlo : nonnegativeEndpoint a.lo = true)
-    (hhi : nonnegativeEndpoint a.hi = true) (hout : Binary.Interval.Valid (Binary.Interval.sqrt a))
-    (hx : RealEncloses a x) : RealEncloses (Binary.Interval.sqrt a) (Real.sqrt x) := by
-  have hlow : (Binary.Interval.sqrt a).lo =
-      (ExecFloat.Binary.sqrt (rounding := .towardNegativeInfinity)) a.lo := by
-    apply FloatLib.Floats.ExecFloat.Binary.toModel_inj.mp
-    change ExecFloat.Binary.toModel (ExecFloat.Binary.ofModel
-      (Model.sqrtDown (ExecFloat.Binary.toModel a.lo))) =
-        ExecFloat.Binary.toModel ((ExecFloat.Binary.sqrt (rounding := .towardNegativeInfinity))
-          a.lo)
-    rw [ExecFloat.Binary.toModel_ofModel, toModel_sqrtDown]
-  have hhigh : (Binary.Interval.sqrt a).hi =
-      (ExecFloat.Binary.sqrt (rounding := .towardPositiveInfinity)) a.hi := by
-    apply FloatLib.Floats.ExecFloat.Binary.toModel_inj.mp
-    change ExecFloat.Binary.toModel (ExecFloat.Binary.ofModel
-      (Model.sqrtUp (ExecFloat.Binary.toModel a.hi))) =
-        ExecFloat.Binary.toModel ((ExecFloat.Binary.sqrt (rounding := .towardPositiveInfinity))
-          a.hi)
-    rw [ExecFloat.Binary.toModel_ofModel, toModel_sqrtUp]
-  constructor
-  · change (ExecFloat.Binary.toModel (Binary.Interval.sqrt a).lo).toReal ≤ Real.sqrt x
-    rw [hlow]
-    have hlowFinite : ExecFloat.Binary.isFinite (Binary.Interval.sqrt a).lo = true := hout.1
-    exact (toReal_sqrtDown_le ha.1 hlo (by simpa only [hlow] using hlowFinite)).trans
-      (Real.sqrt_le_sqrt hx.1)
-  · change Real.sqrt x ≤ (ExecFloat.Binary.toModel (Binary.Interval.sqrt a).hi).toReal
-    rw [hhigh]
-    have hhighFinite : ExecFloat.Binary.isFinite (Binary.Interval.sqrt a).hi = true := hout.2.1
-    exact (Real.sqrt_le_sqrt hx.2).trans
-      (toReal_sqrtUp_ge ha.2.1 hhi (by simpa only [hhigh] using hhighFinite))
+    (hout : Binary.Interval.Valid (Binary.Interval.sqrt a))
+    (hx : RealEncloses a x) : RealEncloses (Binary.Interval.sqrt a) (Real.sqrt x) :=
+  (Binary.Interval.eRealMem_coe_iff_of_valid hout _).mp
+    (Binary.Interval.sqrt_sound a (by decide) ha (nonnegativeEndpoint_toReal_nonneg ha.1 hlo) hx)
 
 /-- Lift a sound unary scalar transfer to tensors of arbitrary rank. -/
 theorem tensor_map_enclosed
@@ -400,11 +315,11 @@ theorem tensor_abs_enclosed {shape : Shape} {x : Tensor Real shape}
 /-- Tensor-level soundness of directed interval square root. -/
 theorem tensor_sqrt_enclosed {shape : Shape} {x : Tensor Real shape}
     {a : Interval (Binary 8 23)} (ha : Binary.Interval.Valid a)
-    (hlo : nonnegativeEndpoint a.lo = true) (hhi : nonnegativeEndpoint a.hi = true)
+    (hlo : nonnegativeEndpoint a.lo = true)
     (hout : Binary.Interval.Valid (Binary.Interval.sqrt a)) (hx : TensorEnclosed a x) :
     TensorEnclosed (Binary.Interval.sqrt a) (Tensor.mapSpec Real.sqrt x) :=
   tensor_map_enclosed Real.sqrt a (Binary.Interval.sqrt a)
-    (fun hx' => sqrt_realEncloses ha hlo hhi hout hx') hx
+    (fun hx' => sqrt_realEncloses ha hlo hout hx') hx
 
 /-- Lift a sound binary scalar transfer to tensors of arbitrary rank. -/
 theorem tensor_map2_enclosed

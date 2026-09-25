@@ -55,27 +55,6 @@ def rmsNormSemantics {α : Type} [TorchLean.Storage α] [Context α] (leading : 
   | .dim _ rest => fun input =>
       Tensor.dim fun i => rmsNormSemantics rest hWidth gamma (input.unstack i)
 
-/-- Apply RMS normalization with a pointwise scale over an arbitrary leading shape. -/
-def rmsNormElementwiseSemantics {α : Type} [TorchLean.Storage α] [Context α] (leading : Shape)
-    {width : Nat} (hWidth : 0 < width) :
-    TorchLean.Tensor α (leading.appendDim width) →
-      TorchLean.Tensor α (leading.appendDim width) →
-      TorchLean.Tensor α (leading.appendDim width) :=
-  match leading with
-  | .scalar => fun input gamma => Internal.rmsNormVectorSemantics hWidth input gamma
-  | .dim _ rest => fun input gamma =>
-      Tensor.dim fun i =>
-        rmsNormElementwiseSemantics rest hWidth (input.unstack i) (gamma.unstack i)
-
-/-- Batch axes distribute over RMS normalization: each slice is normalized on its own. -/
-@[simp] theorem rmsNormElementwiseSemantics_dim {α : Type} [TorchLean.Storage α] [Context α]
-    {count width : Nat} {rest : Shape} (hWidth : 0 < width)
-    (inputs gammas : Fin count → TorchLean.Tensor α (rest.appendDim width)) :
-    rmsNormElementwiseSemantics (.dim count rest) hWidth (.dim inputs) (.dim gammas) =
-      .dim (fun index => rmsNormElementwiseSemantics rest hWidth
-        (inputs index) (gammas index)) := by
-  simp [rmsNormElementwiseSemantics]
-
 /-- Root-mean-square normalization along the final axis of an arbitrary tensor. -/
 def rmsNorm (leading : Shape) (width : Nat) (hWidth : 0 < width) :
     PrimOp [leading.appendDim width, [width]] (leading.appendDim width) :=
@@ -97,34 +76,6 @@ def rmsNorm (leading : Shape) (width : Nat) (hWidth : 0 < width) :
     (gamma : TorchLean.Tensor α [width]) :
     (rmsNorm leading width hWidth).specFwd (.cons input (.cons gamma .nil)) =
       rmsNormSemantics leading hWidth gamma input := by
-  rfl
-
-/-- RMS normalization with a separate final-axis scale at every leading coordinate. -/
-def rmsNormElementwise (leading : Shape) (width : Nat) (hWidth : 0 < width) :
-    PrimOp [leading.appendDim width, leading.appendDim width] (leading.appendDim width) :=
-  { name := s!"rmsNormElementwise({width})"
-    specFwd := fun {_α} _storage _ctx xs =>
-      match xs with
-      | .cons input (.cons gamma .nil) =>
-          rmsNormElementwiseSemantics leading hWidth input gamma
-    program := fun {α} _ _ =>
-      fun {m} _ _ => fun input gamma =>
-        (do
-          let ones ← Runtime.Autograd.Model.const (m := m) (α := α)
-            (Tensor.full ([width] : Shape) 1)
-          let normalized ← Runtime.Autograd.Model.Norm.rmsNorm (m := m) (α := α)
-            (leading := leading) (width := width) hWidth input ones
-          Runtime.Autograd.Model.mul (m := m) (α := α)
-            (s := leading.appendDim width) normalized gamma :
-          m (Runtime.Autograd.Model.RefTy (m := m) (α := α)
-            (leading.appendDim width))) }
-
-/-- Pure evaluation of final-axis RMS normalization with pointwise scale. -/
-@[simp] theorem rmsNormElementwise_specFwd {leading : Shape} {width : Nat}
-    (hWidth : 0 < width) {α : Type} [TorchLean.Storage α] [Context α]
-    (input gamma : TorchLean.Tensor α (leading.appendDim width)) :
-    (rmsNormElementwise leading width hWidth).specFwd (.cons input (.cons gamma .nil)) =
-      rmsNormElementwiseSemantics leading hWidth input gamma := by
   rfl
 
 /-- Apply regularized L2 normalization over the final axis of an arbitrary tensor. -/
@@ -152,6 +103,9 @@ def l2NormalizeSemantics {α : Type} [TorchLean.Storage α] [Context α] (leadin
   simp [l2NormalizeSemantics]
 
 /-- Normalize the final axis by `sqrt(sum (x * x) + epsilon)`.
+
+This is not `torch.nn.functional.normalize`, which divides by `max(‖x‖, epsilon)`. The two agree
+only when `epsilon = 0` and `x` is nonzero.
 
 The stabilizer is a scalar graph input rather than a declaration parameter. This keeps the exact
 numerical convention visible in captured graphs and permits architectures to select their own

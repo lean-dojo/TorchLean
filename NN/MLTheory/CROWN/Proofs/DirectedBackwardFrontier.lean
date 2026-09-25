@@ -34,6 +34,11 @@ local notation "value" => LawfulBoundOps.toReal (α := α)
 /-- A finite real inner product, indexed by natural-number coordinates. -/
 def dot (n : Nat) (a x : Nat → ℝ) : ℝ := ∑ i : Fin n, a i.val * x i.val
 
+/-- `dot` is Mathlib's `dotProduct` on the first `n` coordinates, so the `dotProduct_*` lemmas
+apply after this rewrite. -/
+theorem dot_eq_dotProduct (n : Nat) (a x : Nat → ℝ) :
+    dot n a x = dotProduct (fun i : Fin n => a i) (fun i => x i) := rfl
+
 /-- The designated input remains live after its position has passed in the reverse sweep. -/
 def pending (input k : Nat) : Finset Nat := insert input (Finset.range k)
 

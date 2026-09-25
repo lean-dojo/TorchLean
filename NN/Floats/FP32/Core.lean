@@ -114,60 +114,9 @@ theorem add_toReal_eq_computed (a b : FP32) :
   change round (β := binaryRadix) (fexp := fexp32) rnd32 (a.val + b.val) = _
   exact round_eq_computed (a.val + b.val)
 
-/-- Effective representation of FP32 subtraction. -/
-theorem sub_toReal_eq_computed (a b : FP32) :
-    toReal (a - b) =
-      FloatLib.Floats.Formats.Flocq.toReal (β := binaryRadix) {
-        mantissa := nearestEvenMantissa
-          (scaledMantissa binaryRadix fexp32 (a.val - b.val))
-        exponent := cexp binaryRadix fexp32 (a.val - b.val) } := by
-  change round (β := binaryRadix) (fexp := fexp32) rnd32 (a.val - b.val) = _
-  exact round_eq_computed (a.val - b.val)
-
-/-- Effective representation of FP32 multiplication. -/
-theorem mul_toReal_eq_computed (a b : FP32) :
-    toReal (a * b) =
-      FloatLib.Floats.Formats.Flocq.toReal (β := binaryRadix) {
-        mantissa := nearestEvenMantissa
-          (scaledMantissa binaryRadix fexp32 (a.val * b.val))
-        exponent := cexp binaryRadix fexp32 (a.val * b.val) } := by
-  change round (β := binaryRadix) (fexp := fexp32) rnd32 (a.val * b.val) = _
-  exact round_eq_computed (a.val * b.val)
-
-/-- Effective representation of FP32 division. -/
-theorem div_toReal_eq_computed (a b : FP32) :
-    toReal (a / b) =
-      FloatLib.Floats.Formats.Flocq.toReal (β := binaryRadix) {
-        mantissa := nearestEvenMantissa
-          (scaledMantissa binaryRadix fexp32 (a.val / b.val))
-        exponent := cexp binaryRadix fexp32 (a.val / b.val) } := by
-  change round (β := binaryRadix) (fexp := fexp32) rnd32 (a.val / b.val) = _
-  exact round_eq_computed (a.val / b.val)
-
 /--
-The largest finite IEEE-754 binary32 magnitude, $(2-2^{-23})2^{127}$.
-
-This is a bridge guard, not a maximum of `FP32`: the proof-oriented `fltExp (-149) 24` model has
-gradual underflow but no upper exponent bound.  Executable IEEE binary32 operations must establish
-this bound before transferring a finite result into the rounded-real model.
--/
-noncomputable def ieeeMaxFinite : ℝ :=
-  (binaryRadix.toReal - (2 : ℝ) ^ (-(FloatFormat.binary32.fracWidth : ℤ))) *
-    bpow binaryRadix FloatFormat.binary32.maxNormalExponent
-
-/-- Mantissa/exponent form of the largest finite binary32 magnitude. -/
-theorem ieeeMaxFinite_eq :
-    ieeeMaxFinite = (((2 ^ 24 - 1 : Nat) : ℝ) * bpow binaryRadix 104) := by
-  change (2 - (2 : ℝ) ^ (-23 : ℤ)) * bpow binaryRadix 127 = _
-  norm_num [bpow, binaryRadix, Radix.toReal]
-
-/-- The largest finite binary32 value lies strictly below `2^128`. -/
-theorem ieeeMaxFinite_lt_bpow_128 :
-    ieeeMaxFinite < bpow binaryRadix 128 := by
-  norm_num [ieeeMaxFinite_eq, bpow, binaryRadix, Radix.toReal]
-
-/--
-Convenience constant: the smallest positive normal binary32 number (approximately $2^{-126}$).
+Convenience constant: the smallest positive normal binary32 number, exactly $2^{-126}$
+(`minNormal_eq_bpow`).
 
 Subnormals exist below this; this constant is mainly useful when you want to distinguish
 “normal-range” arguments from “subnormal-range” arguments in proofs.

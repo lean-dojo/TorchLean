@@ -411,49 +411,6 @@ def groupNorm
   reshapeSpec outputFlat hFlatSize.symm
 
 /-
-  Normalize along a specific dimension
--/
-/--
-Normalize along a chosen axis `dim` of a tensor `x`, using per-element affine parameters `gamma`
-and `beta` of the same shape as `x`.
-
-This is a "generic building block" that is handy in specs; it is closer to the raw math than to a
-single PyTorch module. Most named normalizations (LayerNorm, GroupNorm, BatchNorm) are special
-cases of this pattern with a specific choice of axis set and parameter shape.
--/
-def normalizeAlongDim
-  {s : Shape}
-  (x : Tensor α s)
-  (gamma : Tensor α s)
-  (beta : Tensor α s)
-  (dim : Nat)
-  (h_valid : Shape.HasNonemptyAxis dim s)
-  (_h_wf : Shape.WellFormed s)
-  (epsilon : α := TorchLean.normalizationEpsilon)
-  : Tensor α s :=
-
-  -- mean shape: shape_after_sum s dimension
-  let mean := reduceMean dim x h_valid.proof
-
-  let mean_broadcast := broadcastAfterSum s dim mean
-  -- center x by subtracting mean (broadcasted)
-  let centered := subSpec x mean_broadcast
-
-  -- variance shape: shape_after_sum s dimension (same shape as mean)
-  let variance := reduceVar dim centered h_valid.proof
-
-  -- broadcast variance to s for addition of epsilon and sqrt
-  let varianceBroadcast := broadcastAfterSum s dim variance
-
-  -- compute std = sqrt(variance + epsilon)
-  let std := sqrtSpec (addSpec varianceBroadcast (Tensor.full s epsilon))
-  -- normalize centered by dividing by std (broadcasted)
-  let normalized := divSpec centered std
-  -- multiply by gamma (shape s) and add beta (shape s)
-  let result := addSpec (mulSpec normalized gamma) beta
-  result
-
-/-
   RMS Normalization
   Normalizes using RMS instead of mean/variance
 -/
@@ -501,56 +458,6 @@ def rmsNorm {seqLen embedDim : Nat}
 
   -- Scale
   let gammaBroadcast := broadcastTo h_gamma_broadcast gamma
-  let result := mulSpec normalized gammaBroadcast
-  result
-
-/-
-  Weight Normalization
-  Normalizes the weight matrix
--/
-/--
-WeightNorm for a dense weight matrix `(outDim, inDim)`.
-
-This implements the "normalize weight vectors then scale" idea:
-
-- normalize each output row by its L2 norm,
-- then rescale by `gamma` (one scalar per output row).
-
-PyTorch analogy: weight normalization is typically applied as a parametrization of a module's
-weights rather than as a standalone tensor operator.
--/
-def weightNorm {inDim outDim : Nat}
-  (weight : Tensor α [outDim, inDim])
-  (gamma : Tensor α [outDim])
-  (h_out_pos : outDim > 0 := by norm_num)
-  (h_in_pos : inDim > 0 := by norm_num)
-  (epsilon : α := TorchLean.normalizationEpsilon) :
-  Tensor α [outDim, inDim] :=
-
-  -- Compute L2 norm of each row
-  let squared := squareSpec weight
-
-  -- Register well-formedness and axis
-
-  let s := Shape.dim outDim (Shape.dim inDim Shape.scalar)
-  let _ : Shape.WellFormed s := ⟨⟨h_out_pos, ⟨h_in_pos, trivial⟩⟩⟩
-
-  -- The selected innermost axis is statically known to be nonempty.
-  let h_rank : Spec.Shape.rank s > 0 := by simp [s, Spec.Shape.rank]
-  let hAxis : Shape.HasNonemptyAxis (Spec.Shape.rank s - 1) s :=
-    Shape.inferNonemptyAxis (Nat.sub_lt h_rank Nat.zero_lt_one)
-
-  -- Sum each row along its `inDim` axis.
-  let rowSums := reduceSum (Spec.Shape.rank s - 1) squared hAxis.proof
-  let rowNorms := sqrtSpec (addSpec rowSums (Tensor.full (.dim outDim .scalar) epsilon))
-  -- shape: [outDim]
-
-  -- Normalize weights
-  let rowNormsBroadcast := broadcastAfterSum s (Spec.Shape.rank s - 1) rowNorms
-  let normalized := divSpec weight rowNormsBroadcast
-
-  -- Scale
-  let gammaBroadcast := broadcastAfterSum s (Spec.Shape.rank s - 1) gamma
   let result := mulSpec normalized gammaBroadcast
   result
 

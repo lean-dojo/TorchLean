@@ -55,6 +55,8 @@ open Runtime.Autograd.Torch
 
 The result is still an ordinary DAG term: no primitive boundary is introduced, and subsequent
 lowering, differentiation, or numerical analysis can inspect every operation of the model.
+Each parameter and input term is copied into every use in the body, so pass variables (or
+`let1`-bound values) when an argument is expensive or used more than once.
 -/
 def inline {Γ ps ins : List Shape} {τ : Shape} (model : Model ps ins τ)
     (params : Args Γ ps) (inputs : Args Γ ins) : Term Γ τ :=
@@ -121,7 +123,8 @@ open Runtime.Autograd.Torch
 /-- Inline a multi-output model into a larger graph.
 
 Shared `let` bindings in the original block remain shared after substitution, so recurrent state
-updates are not duplicated when both the state and a derived output are returned.
+updates are not duplicated when both the state and a derived output are returned. The parameter
+and input terms are copied into every use, as in `Model.inline`.
 -/
 def inline {Γ ps ins outs : List Shape} (model : MultiModel ps ins outs)
     (params : Args Γ ps) (inputs : Args Γ ins) : Block Γ outs :=

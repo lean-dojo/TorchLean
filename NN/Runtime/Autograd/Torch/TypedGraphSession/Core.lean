@@ -97,6 +97,10 @@ structure TypedGraphSession (α : Type) [TorchLean.Storage α] where
   referenceOwner : Nat
   /-- Current recording generation for session references. -/
   referenceGeneration : IO.Ref Nat
+  /-- Counter bumped by `setState`, used to key `valueCache`. -/
+  stateVersion : IO.Ref Nat
+  /-- Evaluated context values for the state version they were computed from. -/
+  valueCache : IO.Ref (Option (Nat × Array (Spec.SomeTensor α)))
 
 namespace TypedGraphSession
 
@@ -114,7 +118,18 @@ def new {α : Type} [TorchLean.Storage α] (options : Config := {}) : IO (TypedG
   let parametersByLeaf ← IO.mkRef (Std.HashMap.emptyWithCapacity)
   let referenceOwner ← RefIdentity.freshOwner
   let referenceGeneration ← IO.mkRef 0
-  pure { options, state, parametersByLeaf, referenceOwner, referenceGeneration }
+  let stateVersion ← IO.mkRef 0
+  let valueCache ← IO.mkRef none
+  pure
+    { options, state, parametersByLeaf, referenceOwner, referenceGeneration, stateVersion
+      valueCache }
+
+/-- Replace the session snapshot. Every write goes through here so cached values stay current. -/
+def setState {α : Type} [TorchLean.Storage α] (s : TypedGraphSession α)
+    (st : TypedGraphSessionState α) : IO Unit := do
+  s.state.set st
+  s.stateVersion.modify (· + 1)
+  s.valueCache.set none
 
 /-- Capture the current owner and generation for a newly recorded handle. -/
 def currentRefIdentity {α : Type} [TorchLean.Storage α]
@@ -166,7 +181,7 @@ Important invariant: this session requires that **all leaves are created before 
 `resetTape` is the intended boundary between training steps/forwards.
 -/
 def resetTape {α : Type} [TorchLean.Storage α] (s : TypedGraphSession α) : IO Unit := do
-  s.state.set (TypedGraphSessionState.empty (α := α))
+  s.setState (TypedGraphSessionState.empty (α := α))
   s.parametersByLeaf.set (Std.HashMap.emptyWithCapacity)
   s.referenceGeneration.modify (fun generation => generation + 1)
 
@@ -219,7 +234,7 @@ def addLeaf {α : Type} [TorchLean.Storage α]
       nat := st0.nat
       ss := []
       g := .nil }
-  s.state.set st1
+  s.setState st1
   s.makeTensorRef id
 
 /--
@@ -266,7 +281,7 @@ def inputNat {α : Type} [TorchLean.Storage α]
   let st0 ← s.state.get
   ensureNoNodes st0
   let id := st0.nat.size
-  s.state.set { st0 with nat := st0.nat.push v }
+  s.setState { st0 with nat := st0.nat.push v }
   s.makeNatRef id
 
 /-- Read a previously recorded `NatRef`. -/
@@ -286,7 +301,7 @@ def setNat {α : Type} [TorchLean.Storage α]
   let st0 ← s.state.get
   if h : r.id < st0.nat.size then
     let i : Fin st0.nat.size := ⟨r.id, h⟩
-    s.state.set { st0 with nat := st0.nat.set i v }
+    s.setState { st0 with nat := st0.nat.set i v }
   else
     throw <| IO.userError "torch(TypedGraphSession): invalid nat id"
 
@@ -313,20 +328,37 @@ def mkIdxOrThrow {_α : Type} {Γ ss : List Shape} (id : Nat) (s : Shape) :
 /--
 Evaluate the recorded graph and return the value of a `TensorRef`.
 
-This uses `lowerToTapeChecked` to validate and evaluate the graph at the recorded leaf values and
-nat-environment. It constructs a runtime tape, discards that tape, and reads the value from the
-resulting context. It does not run backward or mutate session state.
+The first read after a change to the session evaluates the graph with `lowerToTapeChecked` at the
+recorded leaf values and nat-environment, keeps the resulting context values, and discards the
+tape. Later reads of the same snapshot use those values. It does not run backward.
 -/
 def getValue {α : Type} [TorchLean.Storage α]
     (s : TypedGraphSession α) {sh : Shape}
   (x : TensorRef α sh) : IO (Tensor α sh) := do
   s.validateTensorRef x
+  let version ← s.stateVersion.get
   let st0 ← s.state.get
-  -- Validate and evaluate the recorded graph, retaining only its value context.
-  let (_, ctx) ← okOrThrow <|
-    Runtime.Autograd.TypedGraph.lowerToTapeChecked st0.g st0.x st0.nat
-  let idx ← okOrThrow (mkIdxOrThrow (_α := α) (Γ := st0.Γ) (ss := st0.ss) x.id sh)
-  pure (Proofs.getIdx (α := α) (xs := ctx) idx)
+  let values ← match ← s.valueCache.get with
+    | some (cached, values) =>
+        if cached == version then pure values
+        else evaluate st0 version
+    | none => evaluate st0 version
+  let _ ← okOrThrow (mkIdxOrThrow (_α := α) (Γ := st0.Γ) (ss := st0.ss) x.id sh)
+  match values[x.id]? with
+  | some value =>
+      if h : value.shape = sh then pure (value.cast h)
+      else throw <| IO.userError "torch(TypedGraphSession): cached value has the wrong shape"
+  | none => throw <| IO.userError "torch(TypedGraphSession): cached context is too short"
+where
+  /-- Validate and evaluate the recorded graph, retaining only its value context. -/
+  evaluate (st0 : TypedGraphSessionState α) (version : Nat) :
+      IO (Array (Spec.SomeTensor α)) := do
+    let (_, ctx) ← okOrThrow <|
+      Runtime.Autograd.TypedGraph.lowerToTapeChecked st0.g st0.x st0.nat
+    let values := ctx.toShapeErasedArray
+    s.valueCache.set (some (version, values))
+    pure values
+
 end TypedGraphSession
 
 end Internal

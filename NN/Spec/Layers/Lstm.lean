@@ -78,79 +78,6 @@ structure LSTMState (α : Type) [TorchLean.Storage α] (hiddenSize : Nat) where
   /-- Internal memory/cell state `c_t`. -/
   cell   : Tensor α [hiddenSize]  -- c_t
 
-/-- One LSTM cell step: update `(h_{t-1}, c_{t-1})` given `x_t` and parameters. -/
-def lstmCellSpec {inputSize hiddenSize : Nat}
-  (lstm : LSTMSpec α inputSize hiddenSize)
-  (input : Tensor α [inputSize])
-  (prevState : LSTMState α hiddenSize) :
-  LSTMState α hiddenSize :=
-  -- We follow the standard LSTM equations (same layout as in the PyTorch docs):
-  --
-  --   f_t = sigmoid(W_f [x_t; h_{t-1}] + b_f)      (forget gate)
-  --   i_t = sigmoid(W_i [x_t; h_{t-1}] + b_i)      (input gate)
-  --   g_t = tanh   (W_g [x_t; h_{t-1}] + b_g)      (candidate / cell proposal)
-  --   o_t = sigmoid(W_o [x_t; h_{t-1}] + b_o)      (output gate)
-  --   c_t = f_t ⊙ c_{t-1} + i_t ⊙ g_t              (cell state update)
-  --   h_t = o_t ⊙ tanh(c_t)                        (exposed hidden state)
-  --
-  -- The `cell` component is what lets information persist over long ranges.
-  let concat := concatAxisSpec .scalar input prevState.hidden
-
-  -- Forget gate: f_t = σ(W_f @ [x_t; h_{t-1}] + b_f)
-  let forgetGate := sigmoidSpec (addSpec (matVecMulSpec lstm.forgetWeight concat)
-    lstm.forgetBias)
-
-  -- Input gate: i_t = σ(W_i @ [x_t; h_{t-1}] + b_i)
-  let inputGate := sigmoidSpec (addSpec (matVecMulSpec lstm.inputWeight concat)
-    lstm.inputBias)
-
-  -- Candidate values: ĉ_t = tanh(W_c @ [x_t; h_{t-1}] + b_c)
-  let candidate := tanhSpec (addSpec (matVecMulSpec lstm.candidateWeight concat)
-    lstm.candidateBias)
-
-  -- Output gate: o_t = σ(W_o @ [x_t; h_{t-1}] + b_o)
-  let outputGate := sigmoidSpec (addSpec (matVecMulSpec lstm.outputWeight concat)
-    lstm.outputBias)
-
-  -- Cell state: c_t = f_t ⊙ c_{t-1} + i_t ⊙ ĉ_t
-  let newCell := addSpec (mulSpec forgetGate prevState.cell) (mulSpec inputGate candidate)
-
-  -- Hidden state: h_t = o_t ⊙ tanh(c_t)
-  let newHidden := mulSpec outputGate (tanhSpec newCell)
-
-  ⟨newHidden, newCell⟩
-
-/-- Run an LSTM cell over a length-`seqLen` input sequence, returning outputs and final state. -/
-def lstmSequenceSpec {seqLen inputSize hiddenSize : Nat}
-  (lstm : LSTMSpec α inputSize hiddenSize)
-  (inputs : Tensor α [seqLen, inputSize])
-  (initialState : LSTMState α hiddenSize) :
-  (Tensor α [seqLen, hiddenSize] × LSTMState α hiddenSize) :=
-  let (finalState, outputs) := Sequence.mapAccum seqLen initialState fun i previous =>
-    let state := lstmCellSpec lstm (get inputs i) previous
-    (state, state.hidden)
-  (Tensor.dim outputs.getScalar, finalState)
-
-/-- Batched wrapper around `lstmSequenceSpec` (runs one sequence per batch element). -/
-def lstmBatchedSpec {batchSize seqLen inputSize hiddenSize : Nat}
-  (lstm : LSTMSpec α inputSize hiddenSize)
-  (inputs : Tensor α [batchSize, seqLen, inputSize])
-    (initialHiddens : Tensor α [batchSize, hiddenSize]) :
-    (Tensor α [batchSize, seqLen, hiddenSize] × Tensor α [batchSize, hiddenSize]) :=
-  -- In PyTorch both `h_0` and `c_0` are inputs. This wrapper takes `h_0` and uses zero `c_0`.
-  let initialState (batch : Fin batchSize) : LSTMState α hiddenSize :=
-    { hidden := Tensor.unstack initialHiddens batch
-      cell := Tensor.full [hiddenSize] 0 }
-  let outputs := Tensor.dim (fun batch =>
-    (lstmSequenceSpec lstm (Tensor.unstack inputs batch) (initialState batch)).1)
-  let finalHiddens := Tensor.dim (fun batch =>
-    (lstmSequenceSpec lstm (Tensor.unstack inputs batch) (initialState batch)).2.hidden)
-  (outputs, finalHiddens)
-
--- ============================================================================
--- Backpropagation (BPTT)
--- ============================================================================
-
 /--
 Forward pass for one LSTM cell that also returns the gate activations.
 
@@ -165,6 +92,16 @@ def lstmCellSpecWithIntermediates {inputSize hiddenSize : Nat}
    Tensor α [hiddenSize] ×             -- input gate i_t
    Tensor α [hiddenSize] ×             -- candidate g_t
    Tensor α [hiddenSize]) :=           -- output gate o_t
+  -- We follow the standard LSTM equations (same layout as in the PyTorch docs):
+  --
+  --   f_t = sigmoid(W_f [x_t; h_{t-1}] + b_f)      (forget gate)
+  --   i_t = sigmoid(W_i [x_t; h_{t-1}] + b_i)      (input gate)
+  --   g_t = tanh   (W_g [x_t; h_{t-1}] + b_g)      (candidate / cell proposal)
+  --   o_t = sigmoid(W_o [x_t; h_{t-1}] + b_o)      (output gate)
+  --   c_t = f_t ⊙ c_{t-1} + i_t ⊙ g_t              (cell state update)
+  --   h_t = o_t ⊙ tanh(c_t)                        (exposed hidden state)
+  --
+  -- The `cell` component is what lets information persist over long ranges.
   let concat := concatAxisSpec .scalar input prevState.hidden
   let f := sigmoidSpec (addSpec (matVecMulSpec lstm.forgetWeight concat) lstm.forgetBias)
   let i := sigmoidSpec (addSpec (matVecMulSpec lstm.inputWeight concat) lstm.inputBias)
@@ -173,6 +110,31 @@ def lstmCellSpecWithIntermediates {inputSize hiddenSize : Nat}
   let c := addSpec (mulSpec f prevState.cell) (mulSpec i g)
   let h := mulSpec o (tanhSpec c)
   (⟨h, c⟩, f, i, g, o)
+
+/-- One LSTM cell step: update `(h_{t-1}, c_{t-1})` given `x_t` and parameters.
+
+This is the state component of `lstmCellSpecWithIntermediates`, so the two cannot drift apart. -/
+def lstmCellSpec {inputSize hiddenSize : Nat}
+  (lstm : LSTMSpec α inputSize hiddenSize)
+  (input : Tensor α [inputSize])
+  (prevState : LSTMState α hiddenSize) :
+  LSTMState α hiddenSize :=
+  (lstmCellSpecWithIntermediates lstm input prevState).1
+
+/-- Run an LSTM cell over a length-`seqLen` input sequence, returning outputs and final state. -/
+def lstmSequenceSpec {seqLen inputSize hiddenSize : Nat}
+  (lstm : LSTMSpec α inputSize hiddenSize)
+  (inputs : Tensor α [seqLen, inputSize])
+  (initialState : LSTMState α hiddenSize) :
+  (Tensor α [seqLen, hiddenSize] × LSTMState α hiddenSize) :=
+  let (finalState, outputs) := Sequence.mapAccum seqLen initialState fun i previous =>
+    let state := lstmCellSpec lstm (get inputs i) previous
+    (state, state.hidden)
+  (Tensor.dim outputs.getScalar, finalState)
+
+-- ============================================================================
+-- Backpropagation (BPTT)
+-- ============================================================================
 
 /--
 Gate-wise parameter gradients for an LSTM cell.

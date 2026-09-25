@@ -8,6 +8,7 @@ module
 
 
 public import NN.Floats.FP32.Notation
+public import FloatLib.Floats.Formats.BinaryInterchange.Analysis.Sterbenz
 
 /-!
 # Exact Binary32 Subtraction
@@ -35,10 +36,9 @@ theorem round32_sub_exact_of_sterbenz {u v : ℝ}
     (hu : genericFormat binaryRadix fexp32 u)
     (hv : genericFormat binaryRadix fexp32 v)
     (hupos : 0 < u) (hvpos : 0 < v) (huv : u ≤ 2 * v) (hvu : v ≤ 2 * u) :
-    round32 (u - v) = u - v := by
-  have hfmt : genericFormat binaryRadix fexp32 (u - v) :=
-    generic_format_FLT_sterbenz (-149) 24 (by decide) hupos hvpos huv hvu hu hv
-  exact round_preserves_generic (β := binaryRadix) (fexp := fexp32) rnd32 (u - v) hfmt
+    round32 (u - v) = u - v :=
+  FloatLib.Floats.Formats.BinaryInterchange.Model.roundAt_sub_eq_of_sterbenz
+    FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary32 hu hv hupos hvpos huv hvu
 
 namespace FP32
 

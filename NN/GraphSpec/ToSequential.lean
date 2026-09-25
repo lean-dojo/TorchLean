@@ -26,7 +26,7 @@ that index to derive stable per-layer seeds; the index is not part of GraphSpec'
 semantics.
 
 Related modules:
-- `NN.GraphSpec.Core` for the core DSL and its general `Chain.toProgram` translation.
+- `NN.GraphSpec.Chain.Lowering` for the core DSL and its general `Chain.toProgram` translation.
 - `NN/GraphSpec/README.md` for the relationship between GraphSpec and the runtime model API.
 
 For `g : Chain ps σ τ`:

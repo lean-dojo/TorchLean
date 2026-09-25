@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.TensorOps
+public import NN.Spec.Layers.Conv
 
 @[expose] public section
 
@@ -88,16 +89,6 @@ def poolOutDim (input kernel stride padding : Nat) : Nat :=
   else
     Shape.slidingWindowOutDim input kernel stride padding
 
-/--
-Output spatial sizes without padding.
-
-An invalid axis (empty input, zero kernel, zero stride, or a kernel larger than the input) has size
-zero.
--/
-def poolOutSpatial {d : Nat} (inSpatial kernel stride : Tensor Nat [d]) : Tensor Nat [d] :=
-  Tensor.ofFn (fun i =>
-    poolOutDim (inSpatial.getScalar i) (kernel.getScalar i) (stride.getScalar i) 0)
-
 /-- Apply `poolOutDim` independently to each spatial axis. -/
 def poolOutSpatialPad {d : Nat} (inSpatial kernel stride padding : Tensor Nat [d]) :
     Tensor Nat [d] :=
@@ -115,42 +106,12 @@ theorem poolOutSpatialPad_global {d : Nat} (spatial : Tensor Nat [d])
   have hNonzero : spatial.getScalar i ≠ 0 := hSpatial i
   simp [poolOutSpatialPad, poolOutDim, Shape.slidingWindowOutDim, hNonzero]
 
-/-- Output shape for single-channel arbitrary-rank pooling (no padding). -/
-def poolOutShape {d : Nat} (inSpatial kernel stride : Tensor Nat [d]) : Shape :=
-  Shape.ofList (poolOutSpatial inSpatial kernel stride).data.toList
-
-/-- Output shape for channels-first arbitrary-rank pooling (no padding; channels preserved). -/
-def poolMultiOutShape {d : Nat} (inC : Nat) (inSpatial kernel stride : Tensor Nat [d]) : Shape :=
-  Shape.ofList (inC :: (poolOutSpatial inSpatial kernel stride).data.toList)
-
-/-- Output shape for single-channel arbitrary-rank pooling with symmetric padding. -/
-def poolOutShapePad {d : Nat} (inSpatial kernel stride padding : Tensor Nat [d]) : Shape :=
-  Shape.ofList (poolOutSpatialPad inSpatial kernel stride padding).data.toList
-
-/-- Output shape for channels-first arbitrary-rank pooling with symmetric padding (channels
-preserved). -/
-def poolMultiOutShapePad {d : Nat} (inC : Nat) (inSpatial kernel stride padding : Tensor Nat [d])
-    : Shape :=
-  Shape.ofList (inC :: (poolOutSpatialPad inSpatial kernel stride padding).data.toList)
-
 namespace Pooling
 namespace Internal
 
 /-- Choose the input-space pivot whose scaled value is maximal. -/
 def smoothMaxPivotStep (beta current candidate : α) : α :=
   if beta > 0 then Max.max current candidate else Min.min current candidate
-
-/-- Fold over every coordinate of a rectangular index box given by `dims`.
-
-Pooling walks a window whose rank is only known at runtime, so the walk is a fold over a list of
-extents rather than nested `Fin` loops. The accumulator sees each coordinate list once, in row-major
-order. -/
-def foldlIndices' {β : Type} (dims : List Nat) (init : β) (f : β → List Nat → β) : β :=
-  match dims with
-  | [] => f init []
-  | n :: ns =>
-      (List.range n).foldl (fun acc i =>
-        foldlIndices' ns acc (fun acc' is => f acc' (i :: is))) init
 
 /-- Coordinate of a window cell in the padded input, or `none` on a rank mismatch.
 
@@ -300,7 +261,7 @@ def adaptiveAvgPoolValue
     (outSpatial : Tensor Nat [d]) (outIdxs : List Nat) : α :=
   let starts := adaptiveStarts inSpatial.data.toList outSpatial.data.toList outIdxs
   let window := adaptiveWindowDims inSpatial.data.toList outSpatial.data.toList outIdxs
-  let sum := foldlIndices' window (0 : α) (fun acc offset =>
+  let sum := Conv.Internal.foldlIndices window (0 : α) (fun acc offset =>
     acc + getAtOrZero input (addCoords starts offset))
   sum / (kernelProd window : Nat)
 
@@ -314,7 +275,7 @@ def adaptiveMaxPoolValue
     (outSpatial : Tensor Nat [d]) (outIdxs : List Nat) : α :=
   let starts := adaptiveStarts inSpatial.data.toList outSpatial.data.toList outIdxs
   let window := adaptiveWindowDims inSpatial.data.toList outSpatial.data.toList outIdxs
-  let best? := foldlIndices' window none (fun best offset =>
+  let best? := Conv.Internal.foldlIndices window none (fun best offset =>
     let value := getAtOrZero input (addCoords starts offset)
     match best with
     | none => some value
@@ -331,7 +292,7 @@ def maxPoolValue
     (input : Tensor α (Shape.ofList inSpatial.data.toList))
     (outIdxs : List Nat)
     (kernel stride padding : List Nat) : α :=
-  let best? := foldlIndices' kernel none (fun best winIdxs =>
+  let best? := Conv.Internal.foldlIndices kernel none (fun best winIdxs =>
     match getPaddedMaxInputVal? (d := d) (inSpatial := inSpatial)
       (input := input) (outIdxs := outIdxs) (winIdxs := winIdxs) (stride := stride)
       (padding := padding), best with
@@ -352,7 +313,7 @@ def maxPoolSelectedTangentValue
     (input tangent : Tensor α (Shape.ofList inSpatial.data.toList))
     (outIdxs : List Nat)
     (kernel stride padding : List Nat) : α :=
-  let best? := foldlIndices' kernel none (fun best winIdxs =>
+  let best? := Conv.Internal.foldlIndices kernel none (fun best winIdxs =>
     match getPaddedMaxInputVal? (d := d) (inSpatial := inSpatial)
       (input := input) (outIdxs := outIdxs) (winIdxs := winIdxs) (stride := stride)
       (padding := padding), best with
@@ -382,7 +343,7 @@ def avgPoolValue
     (input : Tensor α (Shape.ofList inSpatial.data.toList))
     (outIdxs : List Nat)
     (kernel stride padding : List Nat) : α :=
-  let sum := foldlIndices' kernel (0 : α) (fun acc winIdxs =>
+  let sum := Conv.Internal.foldlIndices kernel (0 : α) (fun acc winIdxs =>
     acc + getPaddedAverageInputVal (d := d) (inSpatial := inSpatial)
       (input := input) (outIdxs := outIdxs) (winIdxs := winIdxs) (stride := stride)
       (padding := padding))
@@ -400,7 +361,7 @@ def smoothMaxPoolPivot
   let first := getPaddedAverageInputVal (d := d) (inSpatial := inSpatial)
     (input := input) (outIdxs := outIdxs) (winIdxs := firstIdx) (stride := stride)
     (padding := padding)
-  foldlIndices' kernel first (fun pivot winIdxs =>
+  Conv.Internal.foldlIndices kernel first (fun pivot winIdxs =>
     let x := getPaddedAverageInputVal (d := d) (inSpatial := inSpatial)
       (input := input) (outIdxs := outIdxs) (winIdxs := winIdxs) (stride := stride)
       (padding := padding)
@@ -415,7 +376,7 @@ def smoothMaxPoolValue
     (kernel stride padding : List Nat) : α :=
   let pivot := smoothMaxPoolPivot (d := d) (inSpatial := inSpatial) beta input outIdxs
     kernel stride padding
-  let sumExp := foldlIndices' kernel (0 : α) (fun acc winIdxs =>
+  let sumExp := Conv.Internal.foldlIndices kernel (0 : α) (fun acc winIdxs =>
     let x := getPaddedAverageInputVal (d := d) (inSpatial := inSpatial)
       (input := input) (outIdxs := outIdxs) (winIdxs := winIdxs) (stride := stride)
       (padding := padding)
@@ -438,12 +399,12 @@ def smoothMaxPoolJvpValue
     (kernel stride padding : List Nat) : α :=
   let pivot := smoothMaxPoolPivot (d := d) (inSpatial := inSpatial) beta input outIdxs
     kernel stride padding
-  let sumExp := foldlIndices' kernel (0 : α) (fun acc winIdxs =>
+  let sumExp := Conv.Internal.foldlIndices kernel (0 : α) (fun acc winIdxs =>
     let x := getPaddedAverageInputVal (d := d) (inSpatial := inSpatial)
       (input := input) (outIdxs := outIdxs) (winIdxs := winIdxs) (stride := stride)
       (padding := padding)
     acc + MathFunctions.exp (beta * (x - pivot)))
-  foldlIndices' kernel (0 : α) (fun acc winIdxs =>
+  Conv.Internal.foldlIndices kernel (0 : α) (fun acc winIdxs =>
     let x := getPaddedAverageInputVal (d := d) (inSpatial := inSpatial)
       (input := input) (outIdxs := outIdxs) (winIdxs := winIdxs) (stride := stride)
       (padding := padding)
@@ -560,9 +521,9 @@ def maxPoolSpatialBackwardSpec
   let gradInit : Tensor α (Shape.ofList inSpatial.data.toList) :=
     Tensor.generate inSpatial.data.toList (fun _ => 0)
 
-  Pooling.Internal.foldlIndices' outDims gradInit (fun accGrad outIdxs =>
+  Conv.Internal.foldlIndices outDims gradInit (fun accGrad outIdxs =>
     let best? : Option (List Nat × α) :=
-      Pooling.Internal.foldlIndices' kernelL none (fun best winIdxs =>
+      Conv.Internal.foldlIndices kernelL none (fun best winIdxs =>
         match Pooling.Internal.getPaddedMaxInputVal? (d := d) (inSpatial := inSpatial)
           (input := input) (outIdxs := outIdxs) (winIdxs := winIdxs) (stride := strideL)
           (padding := paddingL), best with
@@ -610,9 +571,9 @@ def avgPoolSpatialBackwardSpec
   let gradInit : Tensor α (Shape.ofList inSpatial.data.toList) :=
     Tensor.generate inSpatial.data.toList (fun _ => 0)
 
-  Pooling.Internal.foldlIndices' outDims gradInit (fun accGrad outIdxs =>
+  Conv.Internal.foldlIndices outDims gradInit (fun accGrad outIdxs =>
     let gOut : α := getAtOrZero gradOutput outIdxs
-    Pooling.Internal.foldlIndices' kernelL accGrad (fun acc winIdxs =>
+    Conv.Internal.foldlIndices kernelL accGrad (fun acc winIdxs =>
       match Pooling.Internal.paddedCoords? outIdxs winIdxs strideL with
       | none => acc
       | some padded =>
@@ -880,19 +841,19 @@ def smoothMaxPoolSpatialBackwardSpec
   let gradInit : Tensor α (Shape.ofList inSpatial.data.toList) :=
     Tensor.generate inSpatial.data.toList (fun _ => 0)
 
-  Pooling.Internal.foldlIndices' outDims gradInit (fun accGrad outIdxs =>
+  Conv.Internal.foldlIndices outDims gradInit (fun accGrad outIdxs =>
     let pivot : α :=
       Pooling.Internal.smoothMaxPoolPivot (d := d) (inSpatial := inSpatial) beta input outIdxs
         kernelL strideL paddingL
     let sumExp : α :=
-      Pooling.Internal.foldlIndices' kernelL (0 : α) (fun acc winIdxs =>
+      Conv.Internal.foldlIndices kernelL (0 : α) (fun acc winIdxs =>
         let x :=
           Pooling.Internal.getPaddedAverageInputVal (d := d) (inSpatial := inSpatial)
             (input := input) (outIdxs := outIdxs) (winIdxs := winIdxs)
             (stride := strideL) (padding := paddingL)
         acc + MathFunctions.exp (beta * (x - pivot)))
     let gOut : α := getAtOrZero gradOutput outIdxs
-    Pooling.Internal.foldlIndices' kernelL accGrad (fun acc winIdxs =>
+    Conv.Internal.foldlIndices kernelL accGrad (fun acc winIdxs =>
       match Pooling.Internal.paddedCoords? outIdxs winIdxs strideL with
       | none => acc
       | some padded =>

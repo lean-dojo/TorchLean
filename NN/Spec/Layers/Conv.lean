@@ -24,7 +24,10 @@ PyTorch analogy: the grouped, dilated core corresponds to `torch.nn.Conv{d}d` wi
 
 For each axis `a : Fin d`:
 
-`out[a] = (in[a] + 2*padding[a] - kernel[a]) / stride[a] + 1`
+`out[a] = (in[a] + padBefore[a] + padAfter[a] - (dilation[a]*(kernel[a]-1) + 1)) / stride[a] + 1`
+
+(`Shape.slidingWindowOutDimDilated`), and `0` when the padded input is shorter than the dilated
+kernel extent. Unlike PyTorch, a dilation of `0` is accepted and gives kernel extent `1`.
 
 The weight tensor has shape `(outC × inC × kernel[0] × ... × kernel[d-1])` and the bias has
 shape `(outC)`.
@@ -54,8 +57,8 @@ namespace Internal
 /-- Fold over every coordinate of the rectangular index box `dims`.
 
 Convolution sums over a kernel whose rank is a variable, so the sum is a fold over a list of extents
-rather than nested `Fin` loops. The pooling spec has its own copy for the same reason; keeping them
-apart lets each one use the index order its own definitions were written against. -/
+rather than nested `Fin` loops. Pooling windows use the same fold. Coordinates are visited in
+row-major order. -/
 def foldlIndices {β : Type} (dims : List Nat) (init : β) (f : β → List Nat → β) : β :=
   match dims with
   | [] => f init []
@@ -161,19 +164,6 @@ def mkTransposeInputIdx?
             none
   | _, _, _, _ => none
 
-/-- Whether an output coordinate and kernel offset land on a given input coordinate.
-
-The per-axis condition is `out * stride + k = in + padding`, which is the correlation index relation
-PyTorch implements. Writing it as a decidable test on coordinate lists is what makes the gradient
-specs sums over "the taps that hit this input" without inverting the relation. -/
-def matchesInputPos
-    (outIdx kIdx stride padding inIdx : List Nat) : Bool :=
-  match outIdx, kIdx, stride, padding, inIdx with
-  | [], [], [], [], [] => true
-  | o :: os, k :: ks, s :: ss, p :: ps, i :: is =>
-      decide (o * s + k = i + p) && matchesInputPos os ks ss ps is
-  | _, _, _, _, _ => false
-
 end Internal
 end Conv
 
@@ -250,11 +240,6 @@ theorem convOutSpatial_same {d : Nat} (spatial radius : Tensor Nat [d]) :
 /-- Output spatial shape `Shape.ofList [out0, ..., out(d-1)]`. -/
 def convOutShape {d : Nat} (inSpatial kernel stride padding : Tensor Nat [d]) : Shape :=
   Shape.ofList (convOutSpatial inSpatial kernel stride padding).data.toList
-
-/-- Output shape including channels: `Shape.ofList (outC :: [out0, ..., out(d-1)])`. -/
-def convMultiOutShape {d : Nat} (_inC outC : Nat) (inSpatial kernel stride padding : Tensor Nat [d])
-    : Shape :=
-  Shape.ofList (outC :: (convOutSpatial inSpatial kernel stride padding).data.toList)
 
 /-- The grouped bilinear contraction shared by arbitrary-rank convolutions. -/
 def Conv.Internal.convCoreWith
@@ -776,15 +761,6 @@ def convTransposeOutSpatial {d : Nat} (inSpatial kernel stride padding : Tensor 
   Tensor.ofFn (fun a =>
     convTransposeOutDim (inSpatial.getScalar a) (kernel.getScalar a) (stride.getScalar a)
       (padding.getScalar a))
-
-/-- Output spatial shape `Shape.ofList [out0, ..., out(d-1)]` (transpose convolution). -/
-def convTransposeOutShape {d : Nat} (inSpatial kernel stride padding : Tensor Nat [d]) : Shape :=
-  Shape.ofList (convTransposeOutSpatial inSpatial kernel stride padding).data.toList
-
-/-- Output shape including channels: `Shape.ofList (outC :: [out0, ..., out(d-1)])`. -/
-def convTransposeMultiOutShape {d : Nat} (_inC outC : Nat)
-    (inSpatial kernel stride padding : Tensor Nat [d]) : Shape :=
-  Shape.ofList (outC :: (convTransposeOutSpatial inSpatial kernel stride padding).data.toList)
 
 /--
 Arbitrary-rank transpose convolution on a single channels-first input (no batch dimension).

@@ -558,17 +558,17 @@ def log {α : Type} [TorchLean.Storage α] [Context α]
           .ok ()
         else
           .error "autograd: log: input contains values <= 0 (or NaN); \
-            use `safe_log` if you want epsilon protection"
+            `safe_log` computes log(softplus(x) + eps) and accepts every input"
       forward := fun ctx _d =>
         let xval := getIdx (α := α) (xs := ctx) ix
         -- This typed graph closure is pure, so it cannot return the eager engine's `Except`
-        -- error. A bad raw-log domain reaches a runtime panic; use `safe_log` for total epsilon
-        -- protection.
+        -- error. A bad raw-log domain reaches a runtime panic; `safe_log`, which computes
+        -- `log(softplus(x) + eps)`, is total.
         if Tensor.allSpec (α := α) (s := s) (fun v => decide (v > (0 : α))) xval then
           logSpec (α := α) (s := s) xval
         else
           panic! "GraphM: log: input contains values <= 0 (or NaN); \
-            use `safe_log` if you want epsilon protection"
+            `safe_log` computes log(softplus(x) + eps) and accepts every input"
       jvp := fun ctx dctx _d =>
         let xval := getIdx (α := α) (xs := ctx) ix
         let dx := getIdx (α := α) (xs := dctx) ix

@@ -25,6 +25,7 @@ namespace NN.MLTheory.CROWN.Graph.LayerNormDirected
 
 open Spec TorchLean TorchLean.Tensor
 open NN.MLTheory.CROWN BoundOps
+open NN.MLTheory.CROWN.IntervalLemmas (value_max2)
 open _root_.Proofs.Autograd.Norm
 open scoped BigOperators
 
@@ -51,7 +52,7 @@ variable [TorchLean.Storage α] [BoundOps α] [LawfulBoundOps α]
 local notation "value" => LawfulBoundOps.toReal (α := α)
 
 /-- The executable four-accumulator fold encloses both the sum and the exact count. -/
-theorem sum_count_fold_encloses (hone : value (1 : α) = 1) {ι : Type}
+theorem sum_count_fold_encloses {ι : Type}
     (bounds : ι → α × α) (f : ι → ℝ)
     (hb : ∀ i, value (bounds i).1 ≤ f i ∧ f i ≤ value (bounds i).2)
     (indices : List ι) (acc : α × α × α × α) (sum count : ℝ)
@@ -73,22 +74,22 @@ theorem sum_count_fold_encloses (hone : value (1 : α) = 1) {ι : Type}
     · calc
         value (addDown acc.2.2.1 1) ≤ value acc.2.2.1 + value (1 : α) :=
           LawfulBoundOps.addDown_le _ _
-        _ = value acc.2.2.1 + 1 := by rw [hone]
+        _ = value acc.2.2.1 + 1 := by rw [(LawfulBoundOps.toReal_one (α := α))]
         _ ≤ count + 1 := add_le_add hacc.2.2.1 le_rfl
     · calc
         count + 1 ≤ value acc.2.2.2 + 1 := add_le_add hacc.2.2.2 le_rfl
-        _ = value acc.2.2.2 + value (1 : α) := by rw [hone]
+        _ = value acc.2.2.2 + value (1 : α) := by rw [(LawfulBoundOps.toReal_one (α := α))]
         _ ≤ value (addUp acc.2.2.2 1) := LawfulBoundOps.le_addUp _ _
 
 /-- The denominator is the exact natural count, enclosed by the directed fold of ones. -/
 theorem directedRowMean?_encloses [NonlinearBoundOps α] [LawfulNonlinearBoundOps α]
-    (hzero : value (0 : α) = 0) (hone : value (1 : α) = 1) {n : Nat}
+    {n : Nat}
     (hn : 0 < n) (bounds : Fin n → α × α) (f : Fin n → ℝ)
     (hb : ∀ i, value (bounds i).1 ≤ f i ∧ f i ≤ value (bounds i).2)
     {outLo outHi : α} (hout : directedRowMean? bounds = some (outLo, outHi)) :
     value outLo ≤ (∑ i, f i) / n ∧ (∑ i, f i) / n ≤ value outHi := by
-  have hfold := sum_count_fold_encloses hone bounds f hb (List.finRange n)
-    (0, 0, 0, 0) 0 0 (by simp [hzero])
+  have hfold := sum_count_fold_encloses bounds f hb (List.finRange n)
+    (0, 0, 0, 0) 0 0 (by simp [(LawfulBoundOps.toReal_zero (α := α))])
   simp only [List.finRange_foldl_add_eq_finset_sum, Finset.sum_const,
     Finset.card_univ, Fintype.card_fin, nsmul_eq_mul, mul_one] at hfold
   simp only [directedRowMean?, hn.ne', ↓reduceIte] at hout
@@ -107,10 +108,10 @@ theorem sub_encloses {aLo aHi bLo bHi : α} {a b : ℝ}
     (sub_le_sub ha.2 hb.1).trans (LawfulBoundOps.le_subUp _ _)⟩
 
 /-- Clamping both endpoints at zero encloses the clamped real value. -/
-theorem max_zero_encloses (hzero : value (0 : α) = 0)
+theorem max_zero_encloses
     {lo hi : α} {x : ℝ} (h : value lo ≤ x ∧ x ≤ value hi) :
     value (max2 lo 0) ≤ max x 0 ∧ max x 0 ≤ value (max2 hi 0) := by
-  simpa only [value_max2, hzero] using
+  simpa only [value_max2, (LawfulBoundOps.toReal_zero (α := α))] using
     And.intro (max_le_max h.1 le_rfl) (max_le_max h.2 le_rfl)
 
 /--
@@ -122,7 +123,6 @@ The statement assumes only the input enclosure and the existing scalar operation
 -/
 theorem directedLayerNormRow?_encloses [NonlinearBoundOps α]
     [LawfulNonlinearBoundOps α]
-    (hzero : value (0 : α) = 0) (hone : value (1 : α) = 1)
     {m n : Nat} (hm : 0 < m) (hn : 0 < n)
     (lo hi gamma beta : Tensor α [n]) (epsilon : α)
     (x : Tensor ℝ [m, n]) (row : Fin m)
@@ -141,7 +141,7 @@ theorem directedLayerNormRow?_encloses [NonlinearBoundOps α]
   · contradiction
   · obtain ⟨_, _, hout⟩ := Option.bind_eq_some_iff.mp hout
     obtain ⟨⟨meanLo, meanHi⟩, hmean, hout⟩ := Option.bind_eq_some_iff.mp hout
-    have hmeanBounds := directedRowMean?_encloses hzero hone hn _ _ hx hmean
+    have hmeanBounds := directedRowMean?_encloses hn _ _ hx hmean
     change value meanLo ≤ rowMeanE x row ∧ rowMeanE x row ≤ value meanHi at hmeanBounds
     dsimp only at hout
     set centeredLo := Tensor.ofFn (fun j => subDown (lo.getScalar j) meanHi)
@@ -154,8 +154,7 @@ theorem directedLayerNormRow?_encloses [NonlinearBoundOps α]
     obtain ⟨_, _, hout⟩ := Option.bind_eq_some_iff.mp hout
     obtain ⟨⟨centerMeanLo, centerMeanHi⟩, hcenterMean, hout⟩ :=
       Option.bind_eq_some_iff.mp hout
-    have hcenterMeanBounds := directedRowMean?_encloses
-      hzero hone hn _ _ hcentered hcenterMean
+    have hcenterMeanBounds := directedRowMean?_encloses hn _ _ hcentered hcenterMean
     rw [sum_sub_rowMeanE hn, zero_div] at hcenterMeanBounds
     dsimp only at hout
     set recenteredLo :=
@@ -171,12 +170,12 @@ theorem directedLayerNormRow?_encloses [NonlinearBoundOps α]
     obtain ⟨⟨varianceLo, varianceHi⟩, hvariance, hout⟩ :=
       Option.bind_eq_some_iff.mp hout
     have hsquared (j : Fin n) :=
-      square_encloses hzero (hrecentered j).1 (hrecentered j).2
-    have hvarianceBounds := directedRowMean?_encloses hzero hone hn _ _
+      square_encloses (hrecentered j).1 (hrecentered j).2
+    have hvarianceBounds := directedRowMean?_encloses hn _ _
       (fun j => by simpa only [Tensor.getScalar_ofFn] using hsquared j) hvariance
     change value varianceLo ≤ rowVarE x row ∧ rowVarE x row ≤ value varianceHi
       at hvarianceBounds
-    have hclamped := max_zero_encloses hzero hvarianceBounds
+    have hclamped := max_zero_encloses hvarianceBounds
     rw [max_eq_left (rowVarE_nonneg x row)] at hclamped
     have hstabilized := shift_encloses (bias := epsilon) hclamped.1 hclamped.2
     obtain ⟨stabilized, hstabilizedCheck, hout⟩ := Option.bind_eq_some_iff.mp hout
@@ -184,7 +183,7 @@ theorem directedLayerNormRow?_encloses [NonlinearBoundOps α]
     subst stabilized
     obtain ⟨⟨denominatorLo, denominatorHi⟩, hdenominator, hout⟩ :=
       Option.bind_eq_some_iff.mp hout
-    have hsqrtInput := max_zero_encloses hzero hstabilized
+    have hsqrtInput := max_zero_encloses hstabilized
     have hdenominatorBounds := LawfulNonlinearBoundOps.sqrtBounds_enclosure
       (checkedFiniteBounds?_bind_eq_some hdenominator) hsqrtInput.1 hsqrtInput.2
     split at hout
@@ -222,7 +221,7 @@ theorem directedLayerNormRow?_encloses_real {m n : Nat} (hm : 0 < m) (hn : 0 < n
     ∀ j, outLo.getScalar j ≤ Spec.get2 (Spec.layerNorm x gamma beta hm hn epsilon) row j ∧
       Spec.get2 (Spec.layerNorm x gamma beta hm hn epsilon) row j ≤ outHi.getScalar j := by
   simpa only [LawfulBoundOps.toReal, id_eq, Tensor.ofFn_getScalar] using
-    directedLayerNormRow?_encloses (α := ℝ) rfl rfl hm hn lo hi gamma beta epsilon x row hx hout
+    directedLayerNormRow?_encloses (α := ℝ) hm hn lo hi gamma beta epsilon x row hx hout
 
 end
 

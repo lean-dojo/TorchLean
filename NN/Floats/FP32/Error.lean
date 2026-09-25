@@ -9,6 +9,7 @@ module
 
 import Mathlib.Algebra.Order.Algebra
 public import NN.Floats.FP32.Notation
+public import FloatLib.Floats.Formats.BinaryInterchange.Analysis.Error
 
 /-!
 # `FP32` per-op error bounds
@@ -73,23 +74,18 @@ Informal: if `fl32(x)` denotes rounding `x : ℝ` to the binary32 grid, then
 $|\operatorname{fl}_{32}(x)-x|\le\varepsilon_{32}(x)$.
 -/
 theorem round_abs_error (x : ℝ) :
-    abs (round32 x - x) ≤ eps32 x := by
-  simpa [round32, rnd32] using
-    (error_bound_ulp (β := binaryRadix) (fexp := fexp32) (rnd := rnd32) x)
+    abs (round32 x - x) ≤ eps32 x :=
+  FloatLib.Floats.Formats.BinaryInterchange.Model.abs_roundAt_sub_le
+    FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary32 x
 
 /-- Normal binary32 rounding has relative error at most the unit roundoff $2^{-24}$. -/
 theorem round_relative_error_of_normal (x : ℝ) (hx : x ≠ 0)
     (hnormal : minNormal ≤ abs x) :
     ErrorBounds.relativeError x (round32 x) hx ≤ bpow binaryRadix (-24) := by
-  have h := relative_error_round_FLT_normal
-    (β := binaryRadix) (-149) 24 (by norm_num) rnd32 x hx
-    (by simpa using hnormal)
-  calc
-    ErrorBounds.relativeError x (round32 x) hx ≤
-        bpow binaryRadix (1 - 24) / 2 := by
-      simpa [round32, fexp32, rnd32] using h
-    _ = bpow binaryRadix (-24) := by
-      norm_num [bpow, binaryRadix, Radix.toReal, zpow_negSucc]
+  refine (FloatLib.Floats.Formats.BinaryInterchange.Model.relativeError_roundAt_le_of_normal
+    FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary32 x hx hnormal).trans_eq ?_
+  norm_num [FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary32, bpow, binaryRadix,
+    Radix.toReal, zpow_negSucc]
 
 /--
 Addition: `FP32` adds in `ℝ` and then rounds once.
@@ -105,19 +101,6 @@ theorem add_abs_error (a b : FP32) :
   -- By definition, `a + b` rounds the exact real sum.
   simpa [HAdd.hAdd, Add.add, NF.ofReal, NF.roundR, round32, rnd32] using
     (round_abs_error (x := a.val + b.val))
-
-/--
-The exact residual left by FP32 addition is itself representable when both operands lie on the
-binary32 grid. This structural fact is used by error-free transformations and is stronger than the
-accompanying half-ULP inequality.
--/
-theorem add_residual_isRepresentable (a b : FP32)
-    (ha : NF.IsRepresentable a) (hb : NF.IsRepresentable b) :
-    genericFormat binaryRadix fexp32
-      ((a + b).val - (a.val + b.val)) := by
-  let _ : MonotoneExp fexp32 := fltMonotoneExp (-149) 24
-  simpa [HAdd.hAdd, Add.add, NF.ofReal, NF.roundR, rnd32] using
-    (add_round_error_generic (β := binaryRadix) (fexp := fexp32) ha hb)
 
 /--
 Subtraction: one real subtraction followed by one rounding step.

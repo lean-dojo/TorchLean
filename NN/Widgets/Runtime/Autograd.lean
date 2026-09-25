@@ -52,8 +52,7 @@ private def tapeDot {α : Type} [TorchLean.Storage α] (t : Tape α) : String :=
       let label := escapeDotLabel (if name = "" then s!"{i}" else s!"{i}: {name}")
       s!"  n{i} [label=\"{label}\"];")
   let edges : List String :=
-    pairs.foldl (fun acc (i, n) =>
-      acc ++ (n.parents.map (fun p => s!"  n{p} -> n{i};")).toList) []
+    pairs.flatMap (fun (i, n) => (n.parents.map (fun p => s!"  n{p} -> n{i};")).toList)
   header ++ String.intercalate "\n" (nodes ++ edges) ++ "\n}\n"
 
 /-- Build a colored DOT view where output/gradient coverage is highlighted. -/
@@ -80,8 +79,7 @@ private def tapeDotColored {α : Type} [TorchLean.Storage α] (t : Tape α) (out
           "#f7f7f7"
       s!"  n{i} [label=\"{label}\", fillcolor=\"{fill}\"];")
   let edges : List String :=
-    pairs.foldl (fun acc (i, n) =>
-      acc ++ (n.parents.map (fun p => s!"  n{p} -> n{i};")).toList) []
+    pairs.flatMap (fun (i, n) => (n.parents.map (fun p => s!"  n{p} -> n{i};")).toList)
   header ++ String.intercalate "\n" (nodes ++ edges) ++ "\n}\n"
 
 /-- Render one tape node with metadata and forward tensor preview. -/

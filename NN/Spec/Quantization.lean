@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.Quantization
+public import FloatLib.Floats.Formats.Flocq.Theory.Rounding.Affine
 public import NN.Spec.Quantization.Rational
 
 /-!
@@ -15,6 +15,15 @@ public import NN.Spec.Quantization.Rational
 This module lifts FloatLib's `RealAffineQuantizer` pointwise over
 TorchLean's shape-indexed tensors. The real-domain specification retains arbitrary valid rounding
 rules. The rational tensor API imports FloatLib's executable affine quantizer directly.
+
+FloatLib's `RealAffineQuantizer` supplies a real-valued scale, bounded integer codes, and a
+caller-chosen rounding rule. Its `AffineQuantizer` supplies executable rational nearest-even
+quantization, and the Flocq adapter proves agreement with the real specification. Scalar
+definitions and rounding proofs stay in FloatLib so tensor clients use the same grids and error
+bounds.
+
+The equations follow Jacob et al., "Quantization and Training of Neural Networks for Efficient
+Integer-Arithmetic-Only Inference," CVPR 2018, doi:10.1109/CVPR.2018.00286.
 -/
 
 @[expose] public section

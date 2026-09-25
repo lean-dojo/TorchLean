@@ -17,7 +17,9 @@ The certificate soundness theorems are stated against the proof-side evaluator
 `CertSoundness.evalNode?` (flat, `Option`-valued, over `ℝ`). The executable runtime evaluates the
 same IR with `NN.IR.Graph.evalNode` (shaped `SomeTensor`, `Except`-valued). This file shows that,
 at `α := ℝ`, a successful runtime evaluation of a node is reproduced by `evalNode?` once the
-runtime values are flattened.
+runtime values are flattened. The statement is per node, under explicit hypotheses on the id
+discipline, parameters, inputs, and parent shapes. `denoteAll_semLocalOK` composes it over a whole
+successful `Graph.denoteAll` run, so the flattened runtime table satisfies `SemLocalOK`.
 
 ## What is bridged
 
@@ -754,8 +756,8 @@ Hypotheses: the node record `n` sits at index `i` with `n.id = i` (the id discip
 `Graph.denoteAll` checks), the parameter stores agree (`PayloadMatches`), the proof-side inputs are
 the flattened runtime input (`InputsLift`), present parents have their declared shapes
 (`ParentShapesMatch`), the node kind is bridged, and a `linear` node has a vector-shaped parent.
-The conclusion is exact equality of flat values, so this theorem can be used
-to establish `SemLocalOK` for the flattened runtime trace.
+The conclusion is exact equality of flat values for one node. `denoteAll_semLocalOK` below is the
+trace-level induction that turns it into `SemLocalOK` for the flattened runtime table.
 -/
 theorem evalNode_bridge
     (nodes : Array Node) (payload : NN.IR.Payload ℝ) (ps : ParamStore ℝ)
@@ -805,6 +807,123 @@ theorem evalNode_bridge
         { id := nid, parents := parents, kind := .concat axis, outShape := outShape } t axis hn rfl
         hshapes heval
   | _ => simp [Bridged] at hkind
+
+/-! ## Whole-trace composition -/
+
+/-- Optional traversal depends only on the callback values at array members. -/
+private theorem array_mapM_congr {α β : Type} {f g : α → Option β} (xs : Array α)
+    (h : ∀ x ∈ xs, f x = g x) : xs.mapM f = xs.mapM g := by
+  have hlist : ∀ ys : List α, (∀ x ∈ ys, f x = g x) → ys.mapM f = ys.mapM g := by
+    intro ys
+    induction ys with
+    | nil => intro _; rfl
+    | cons y ys ih =>
+        intro hys
+        simp only [List.mapM_cons, hys y (by simp),
+          ih fun x hx => hys x (by simp [hx])]
+  rw [Array.mapM_eq_mapM_toList, Array.mapM_eq_mapM_toList,
+    hlist xs.toList fun x hx => h x (Array.mem_toList_iff.mp hx)]
+
+/-- On bridged kinds, `evalNode?` reads the value table only at the node's parents. -/
+private theorem evalNode?_congr (nodes : Array Node) (ps : ParamStore ℝ)
+    (inputs : Std.HashMap Nat Val) (vals₁ vals₂ : Array (Option Val)) (id : Nat)
+    (hkind : Bridged (nodes[id]!).kind)
+    (h : ∀ p ∈ (nodes[id]!).parents, getVal? vals₁ p = getVal? vals₂ p) :
+    evalNode? nodes ps inputs vals₁ id = evalNode? nodes ps inputs vals₂ id := by
+  have hu : ∀ {p}, NN.IR.unaryParent? (nodes[id]!).parents = some p →
+      getVal? vals₁ p = getVal? vals₂ p :=
+    fun hp => h _ (NN.IR.mem_of_unaryParent?_eq_some hp)
+  have hb : ∀ {pq : Nat × Nat}, NN.IR.binaryParents? (nodes[id]!).parents = some pq →
+      getVal? vals₁ pq.1 = getVal? vals₂ pq.1 ∧ getVal? vals₁ pq.2 = getVal? vals₂ pq.2 :=
+    fun hp => ⟨h _ (NN.IR.fst_mem_of_binaryParents?_eq_some hp),
+      h _ (NN.IR.snd_mem_of_binaryParents?_eq_some hp)⟩
+  cases hk : (nodes[id]!).kind <;> simp only [Bridged, hk] at hkind
+  case concat axis =>
+    simp only [evalNode?, hk, array_mapM_congr (nodes[id]!).parents h]
+  all_goals
+    cases hp : NN.IR.unaryParent? (nodes[id]!).parents <;>
+    cases hq : NN.IR.binaryParents? (nodes[id]!).parents with
+    | none => simp_all [evalNode?]
+    | some pq =>
+        obtain ⟨h₁, h₂⟩ := hb hq
+        simp_all [evalNode?]
+
+/-- Every step of a successful `denoteAllFrom` run evaluates a checked node on the prefix of the
+final table. -/
+private theorem denoteAllFrom_step (graph : NN.IR.Graph) (payload : NN.IR.Payload ℝ)
+    (input : SomeTensor ℝ) (i : Nat) (vals out : Array (SomeTensor ℝ))
+    (heval : graph.denoteAllFrom payload input i vals = .ok out) (hsize : vals.size = i) :
+    ∀ j, i ≤ j → j < graph.nodes.size →
+      ∃ pre : Array (SomeTensor ℝ), pre.size = j ∧
+        graph.denoteAllFrom payload input j pre = .ok out ∧
+        ∃ n t, graph.getNode j = .ok n ∧
+          NN.IR.Graph.evalNode (α := ℝ) payload input pre j n = .ok t ∧ out[j]? = some t := by
+  intro j hij hj
+  have hi : i < graph.nodes.size := Nat.lt_of_le_of_lt hij hj
+  have heval' := heval
+  unfold NN.IR.Graph.denoteAllFrom at heval'
+  rw [dite_eq_left hi] at heval'
+  obtain ⟨v, hv, hrec⟩ := bind_eq_ok heval'
+  rcases Nat.eq_or_lt_of_le hij with rfl | hlt
+  · unfold NN.IR.Graph.evalAt at hv
+    obtain ⟨n, hn, ht⟩ := bind_eq_ok hv
+    refine ⟨vals, hsize, heval, n, v, hn, ht, ?_⟩
+    subst hsize
+    simpa using NN.IR.Graph.denoteAllFrom_prefix graph payload input _ (vals.push v) out hrec
+      vals.size (by simp)
+  · exact denoteAllFrom_step graph payload input (i + 1) (vals.push v) out hrec
+      (by simp [hsize]) j hlt hj
+termination_by graph.nodes.size - i
+decreasing_by omega
+
+/--
+Trace-level bridge: a successful runtime evaluation `graph.denoteAll`, flattened, is a semantic
+interpretation of the graph in the sense of `SemLocalOK`.
+
+The hypotheses are those of `evalNode_bridge`, required at every node: the parameter stores agree,
+the proof-side inputs are the flattened runtime input, every node kind is bridged, and every
+`linear` node has vector-shaped parents in the runtime table. `htopo` says that parents precede
+their children (the `TopoSorted` condition), which `denoteAll` checks at run time. The id
+discipline and the parent shapes come from the successful run itself. The conclusion is the
+`SemLocalOK` premise of the certificate soundness theorems, so their enclosure results apply to the
+flattened runtime values.
+-/
+theorem denoteAll_semLocalOK
+    (graph : NN.IR.Graph) (payload : NN.IR.Payload ℝ) (ps : ParamStore ℝ)
+    (input : SomeTensor ℝ) (inputs : Std.HashMap Nat Val) (values : Array (SomeTensor ℝ))
+    (hps : PayloadMatches payload ps) (hin : InputsLift graph.nodes input inputs)
+    (htopo : ∀ id, id < graph.nodes.size → ∀ p ∈ (graph.nodes[id]!).parents, p < id)
+    (hkind : ∀ id, id < graph.nodes.size → Bridged (graph.nodes[id]!).kind)
+    (hvec : ∀ id, id < graph.nodes.size → (graph.nodes[id]!).kind = .linear →
+      ∀ p ∈ (graph.nodes[id]!).parents, ∀ r : SomeTensor ℝ, values[p]? = some r → IsVector r)
+    (heval : graph.denoteAll payload input = .ok values) :
+    SemLocalOK graph ps inputs (liftVals values) := by
+  have hfrom := NN.IR.Graph.denoteAll_ok_from heval
+  refine ⟨by simpa [liftVals] using (NN.IR.Graph.denoteAll_shape graph payload input values
+    heval).1, fun id hid => ?_⟩
+  obtain ⟨pre, hpre, hpreFrom, n, t, hn, ht, hout⟩ :=
+    denoteAllFrom_step graph payload input 0 #[] values hfrom rfl id (Nat.zero_le _) hid
+  have hnode : graph.nodes[id]! = n := by
+    rw [getElem!_pos graph.nodes id hid]
+    exact Option.some.inj ((Array.getElem?_eq_getElem hid).symm.trans (NN.IR.Graph.getNode_ok hn))
+  have hprefix := NN.IR.Graph.denoteAllFrom_prefix graph payload input id pre values hpreFrom
+  have hbridge := evalNode_bridge graph.nodes payload ps input inputs pre id n t hps hin hid hnode
+    (NN.IR.Graph.getNode_id_eq hn) (hnode ▸ hkind id hid)
+    ((parentShapesMatch_of_denoteAll graph payload input values n heval).of_denoteAllFrom
+      hpreFrom)
+    (fun hlin p hp r hr => hvec id hid (hnode ▸ hlin) p (hnode ▸ hp) r
+      (by obtain ⟨hp', rfl⟩ := Array.getElem?_eq_some_iff.mp hr; exact hprefix p hp'))
+    ht
+  have hlhs : (liftVals values)[id]! = some (flatOfSome t) := by
+    have h := getVal?_liftVals hout
+    have hid' : id < (liftVals values).size := by
+      simpa [liftVals] using (Array.getElem?_eq_some_iff.mp hout).1
+    unfold getVal? at h
+    rwa [dite_eq_left hid'] at h
+  rw [hlhs, ← hbridge]
+  refine evalNode?_congr graph.nodes ps inputs _ _ id (hkind id hid) fun p hp => ?_
+  have hp' : p < pre.size := hpre ▸ htopo id hid p hp
+  rw [getVal?_liftVals (hprefix p hp'), getVal?_liftVals (Array.getElem?_eq_getElem hp')]
 
 end
 

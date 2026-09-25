@@ -324,7 +324,7 @@ def selectiveScan : KernelCapsule :=
     ("Reverse recurrence differentiates coefficients, inputs, and the initial state; shared " ++
       "coefficient cotangents are accumulated across time.")
 
-/-- LibTorch CUDA primitive capsules; attention also exposes a TorchLean composition. -/
+/-- LibTorch CUDA primitive capsules. Attention capsules live in `NN.Backend.Attention.capsules`. -/
 def capsules : Array KernelCapsule :=
   #[ matmul
   , linear

@@ -27,7 +27,9 @@ and Lyapunov/controller experiments.
    `alphaCrown_cert_encloses_semantics`, `alphaBetaCrown_cert_encloses_semantics'`, and
    `alphaCrown_cert_encloses_evalGraphRec`. `GraphRunibpEndToEnd.lean` connects the proof-side
    IBP pass to the engine's executable `runIBP` (`runIBP_eq_runIBP?`, `runIBP_encloses_evalGraphRec`)
-   and `GraphRuntimeBridge.lean` relates the runtime evaluator to the semantics (`evalNode_bridge`).
+   and `GraphRuntimeBridge.lean` proves per-node agreement between the runtime evaluator and the
+   semantics (`evalNode_bridge`), then composes it over a whole topologically ordered graph
+   (`denoteAll_semLocalOK`).
    `AlphaReLULowerBound.lean` is the shared scalar lower-bound theorem used by both alpha-CROWN and
    alpha/beta-CROWN proofs.
 7. `Runtime/Ops.lean`: the canonical executable ReLU relaxation definitions used by both the graph
@@ -149,8 +151,8 @@ LayerNorm's first and mixed derivative transfers operate on independent normaliz
 the stored scale and positive epsilon. `Graph/Proofs/LayerNormDerivativeEnclosure.lean` proves that
 the actual directed row calculation encloses the first and mixed derivatives of the real
 normalization. It requires enclosed upstream values and derivatives, the scalar operation laws,
-and exact interpretations of the literals zero through four; a corollary specializes to real
-endpoints. A full graph derivative-pass induction remains separate.
+and exact interpretations of the literals two through four (zero and one are laws of
+`LawfulBoundOps`); a corollary specializes to real endpoints. A full graph derivative-pass induction remains separate.
 For values, `Proofs/LayerNormEnclosure.lean` proves the directed row sequence encloses
 `Spec.layerNorm` under the endpoint and nonlinear operation laws, with zero and one interpreted
 exactly. This includes the actual directed sum and count used to compute a mean.
@@ -198,8 +200,28 @@ attention/LayerNorm/MSE example can finish without propagating CROWN coefficient
 A CROWN result need not tighten IBP. The rounded backward soundness theorem in
 `Proofs/DirectedBackwardEvaluation.lean` covers coefficient propagation, interval fallbacks, and
 final affine-bound evaluation. It assumes lawful directed arithmetic, the real graph equations for
-the stored parameters, and enclosing IBP bounds. Relating its result to a separate native execution
-also needs the finite-precision bridge described in `NN/Proofs/RuntimeApprox`.
+the stored parameters, and enclosing IBP bounds.
+
+The rounded forward pass itself is proved sound in `Proofs/DirectedIBPSoundness.lean`.
+`runIBP_encloses` shows that every box `runIBP` returns encloses its node's real value, for any
+backend with `LawfulBoundOps` and `LawfulNonlinearBoundOps`, provided parents precede their
+consumers, the input boxes contain the real inputs, the real point satisfies `NodeEquation`, and
+every node kind passes `ibpForwardSupported`. The supported kinds are inputs, constants, `detach`,
+`reshape`, `flatten`, `add`, `sub`, `mulElem`, `relu`, `linear`, unary `matmul`, `sum`, `exp`,
+`log`, `sqrt`, `inv`, `tanh`, `sigmoid`, `sin`, and `cos`. On such graphs `GraphPoint.ofRunIBP`
+discharges the IBP hypothesis, and `runCROWNBackwardObjective_encloses_runIBP`,
+`directedNodeBounds_encloses_runIBP`, and `backwardObjectiveBox_encloses_runIBP` are end-to-end
+rounded statements.
+
+The rounded forward transfers without a proof are convolution, `concat`, `transpose`, `permute`,
+binary `matmul`, `abs`, `maxElem`, `minElem`, `softplus`, `safeLog`, the pools, `broadcastTo`,
+`reduceSum`, `reduceMean`, `mseLoss`, `batchNormEval`, `layernorm`, `softmax`,
+`hardMaskedSoftmax`, and the random nodes. For these the IBP enclosure is proved only over real
+endpoints (`runIBP_encloses_evalGraphRec`, where covered) or remains a hypothesis. The rounded
+backward sweep does not use per-neuron ReLU slopes: the rounded branch of
+`runCROWNBackwardObjectiveLowerWithReluAlpha` returns `none` when any slope is supplied.
+Relating a rounded result to a separate native execution also needs the finite-precision bridge
+described in `NN/Proofs/RuntimeApprox`.
 
 Use this split when adding operators:
 
@@ -215,15 +237,18 @@ graph claims.
 
 ### Certificate acceptance
 
-For node certificates, the executable α-CROWN and α/β-CROWN commands finish with a pure complete
-replay. `certificateAccepts_eq_true` and `AlphaBetaCROWNNodeCertificate.accepts_eq_true` turn a
-successful binary32 replay into `CrownCertLocalOK`. The result is a theorem about the imported
+Node certificates are checked by the library functions `checkCROWNNodeCertificate` and
+`checkAlphaBetaCROWNNodeCertificate`. `lake exe verify` has no command for them. Both finish with a
+pure complete replay. `certificateAccepts_eq_true` and
+`AlphaBetaCROWNNodeCertificate.accepts_eq_true` turn a successful binary32 replay into
+`CrownCertLocalOK`. The result is a theorem about the imported
 binary32 transcript. Applying a real-semantic enclosure theorem additionally requires the
 appropriate transfer and finite-precision refinement hypotheses.
 
-For nonempty vector linear/ReLU chains, `NN.Verification.Cert.FiniteArtifact.accepts` also
-checks the supplied bounds against exact rational transfers. It rejects inward-rounded affine
-coefficients even when they agree with binary32 replay. `FiniteArtifact.accepts_graph_sound`
+For nonempty vector linear/ReLU chains, `NN.Verification.Cert.FiniteArtifact.accepts` checks
+the supplied bounds against exact rational transfers instead of binary32 replay. It rejects
+inward-rounded affine coefficients even when they agree with binary32 replay, and it accepts
+bounds from any producer that dominate the exact transfers. `FiniteArtifact.accepts_graph_sound`
 then proves that the original graph, interpreted with the exact real values of those binary32
 parameters, satisfies every requested output inequality throughout the input box. The checker
 requires bounds for the whole chain and at least one inequality. Native execution error remains

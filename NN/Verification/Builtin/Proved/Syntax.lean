@@ -294,14 +294,14 @@ def evalNode
   | .log (s := s) x => do
       let tx ← getVal (α := α) (inShape := inShape) (ss := ss) (s := s) vals x
       -- Domain discipline: align the verified execution model with the IR semantics. The raw
-      -- `log` is treated as undefined on nonpositive inputs; use `safe_log` in models that require
-      -- epsilon protection.
+      -- `log` is treated as undefined on nonpositive inputs; use `safe_log` in models whose inputs
+      -- can be nonpositive.
       if Tensor.allSpec (α := α) (s := s) (fun v => decide (0 < v)) tx then
         pure <| Spec.SomeTensor.mk (α := α) s (Tensor.logSpec (α := α) tx)
       else
         throw
           ("IR eval: log: input contains values <= 0 (or NaN); " ++
-            "use `safe_log` if you want epsilon protection")
+            "use `safe_log`, which is log(softplus(x) + eps)")
   | .inv (s := s) x => do
       let tx ← getVal (α := α) (inShape := inShape) (ss := ss) (s := s) vals x
       pure <| Spec.SomeTensor.mk (α := α) s (Tensor.invSpec (α := α) tx)

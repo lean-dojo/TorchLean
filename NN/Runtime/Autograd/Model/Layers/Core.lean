@@ -189,36 +189,20 @@ def batchChannelStats {α : Type} [TorchLean.Storage α] [Context α]
   let xFlat : Tensor α flatShape := reshapeSpec x (by
     simp only [flatShape, spatialSize, Shape.size, Nat.mul_one])
   let sampleCount := batch * spatialSize
+  -- Each `(sample, channel)` row is sliced once, and the sums run over scalars in the same order
+  -- as a fold of scalar tensors.
+  let channelSum (ch : Fin channels) (term : α → α) : α :=
+    (List.finRange batch).foldl (fun accBatch sample =>
+      let row : Tensor α [spatialSize] := get (get xFlat sample) ch
+      (List.finRange spatialSize).foldl (fun accSpatial i =>
+        accSpatial + term (get row i).item) accBatch) 0
   let means : Tensor α [channels] :=
-    Tensor.dim (fun ch =>
-      let total :=
-        (List.finRange batch).foldl (fun accBatch ni =>
-          (List.finRange spatialSize).foldl (fun accSpatial i =>
-            if hN : ni < batch then
-              if hI : i < spatialSize then
-                let channel := get (get xFlat ⟨ni, hN⟩) ch
-                addSpec accSpatial (get channel ⟨i, hI⟩)
-              else accSpatial
-            else accSpatial
-          ) accBatch
-        ) (Tensor.scalar 0)
-      divSpec total (Tensor.scalar (sampleCount : α)))
+    Tensor.dim fun ch => Tensor.scalar (channelSum ch id / (sampleCount : α))
   let vars : Tensor α [channels] :=
-    Tensor.dim (fun ch =>
-      let mean := get means ch
-      let total :=
-        (List.finRange batch).foldl (fun accBatch ni =>
-          (List.finRange spatialSize).foldl (fun accSpatial i =>
-            if hN : ni < batch then
-              if hI : i < spatialSize then
-                let channel := get (get xFlat ⟨ni, hN⟩) ch
-                let d := subSpec (get channel ⟨i, hI⟩) mean
-                addSpec accSpatial (mulSpec d d)
-              else accSpatial
-            else accSpatial
-          ) accBatch
-        ) (Tensor.scalar 0)
-      divSpec total (Tensor.scalar (sampleCount : α)))
+    Tensor.dim fun ch =>
+      let mean := (get means ch).item
+      Tensor.scalar (channelSum ch (fun value => let d := value - mean; d * d) /
+        (sampleCount : α))
   (means, vars)
 
 namespace Layer

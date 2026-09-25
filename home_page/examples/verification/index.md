@@ -305,11 +305,12 @@ lake exe verify -- all
 
 ## External Artifacts
 
-The alpha-beta-CROWN leaf checker is a structural checker for a declared leaf artifact. Vanilla
+The alpha-beta-CROWN leaf checker is a consistency checker for a declared leaf artifact. Vanilla
 alpha-beta-CROWN does not emit TorchLean's JSON schema directly. The current path is: an external
 verifier exposes or dumps terminal leaf data, TorchLean's exporter converts that data to
 `abcrown_leaf_artifact_v0_1`, and Lean checks the represented part of the artifact: box nesting,
-compatible tensor dimensions, and the witness lower-bound test.
+coverage of the root box by the leaves, compatible tensor dimensions, and the witness lower-bound
+test. It does not recompute the lower bounds.
 
 That last sentence is the trust boundary. The Lean checker accepts a specific schema and
 checks the part of the terminal leaf represented in that schema. If the exporter lies about what the
@@ -326,6 +327,12 @@ The CLI entry point defaults to a small bundled artifact:
 ```bash
 lake exe verify -- abcrown-leaf \
   NN/Examples/Verification/AbCrown/sample_abcrown_leaf_artifact_v0_1.json
+```
+
+```text
+[artifact] Checked 1 leaves: ok=1, bad=0
+[artifact] consistent: the leaves cover the root and every leaf clears its threshold.
+[artifact] The lower bounds are the producer's claims; TorchLean did not recompute them.
 ```
 
 To create that schema from a raw terminal-domain dump, use the TorchLean exporter:

@@ -8,6 +8,7 @@ module
 
 public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Semantics
 public import NN.Tensor.Internal.Laws.RowMajor
+public import NN.Proofs.Tensor.Basic.Core
 
 /-!
 # Binary matmul and flat runtime values
@@ -193,13 +194,7 @@ private theorem flatten_read_coordinate {α : Type} [Storage α] [Zero α]
   rw [get_at_or_zero_dim_cons, dite_eq_left hi, get_at_or_zero_scalar_nil]
   change Tensor.getScalar (Tensor.flattenSpec value)
     ⟨(Coord.linearize coordinate).val, hi⟩ = value coordinate
-  rw [Tensor.getScalar_eq_apply]
-  unfold Tensor.flattenSpec
-  rw [Tensor.Internal.Rep.reshape_apply_coordEquiv]
-  apply congrArg value
-  apply Coord.linearize_injective
-  apply Fin.ext
-  rw [Tensor.reshapeCoordEquiv_linearize_val, Tensor.vectorCoordinate_linearize_val]
+  exact Spec.getScalar_flattenSpec_linearize value coordinate
 
 private theorem flatten_read_cast {α : Type} [Storage α] [Zero α]
     {source target : Shape} (value : Tensor α source) (h : source = target) (index : Nat) :

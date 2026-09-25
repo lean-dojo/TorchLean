@@ -56,7 +56,8 @@ namespace Infer
 ## Node-local inference
 
 Most IR ops are “shape transparent” (elementwise, permute, etc.). A few need special handling:
-- `matmul` preserves an arbitrary shared leading shape around its final matrix axes,
+- `matmul` broadcasts the leading batch shapes of its operands and promotes 1D operands as
+  `torch.matmul` does,
 - `concat` needs to merge multiple parents along an axis,
 - pooling and convolution use centralized rank-polymorphic spatial arithmetic from `OpContracts`.
 -/

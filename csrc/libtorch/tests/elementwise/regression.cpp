@@ -1,5 +1,5 @@
 // No CUDA code: this executable calls the production C ABI and upstream ATen.
-// Build and run only in the cluster; see README.md for the Lean reference input.
+// Build against the production backend's SDK; see README.md for the Lean reference input.
 #include "../../torchlean_libtorch.h"
 
 #include <ATen/record_function.h>

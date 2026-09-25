@@ -210,20 +210,4 @@ theorem ibpConv_contains_groupedConv_real (leading : Shape)
       simpa only [ibpConv, ibpConv.mapRows, Tensor.mapLeading, Tensor.unstack_dim] using
         ih ⟨box.lo.unstack head, box.hi.unstack head⟩ (input.unstack head) (h head)
 
-/-- The folded interval transfer also encloses the exact flattened affine representation.
-This equality changes only the theorem's view of the output. -/
-theorem ibpConv_contains_affine_real (leading : Shape)
-    (box : Box ℝ (leading.concat (Shape.ofList (inC :: inSpatial.data.toList))))
-    (input : Tensor ℝ (leading.concat (Shape.ofList (inC :: inSpatial.data.toList))))
-    (h : Box.contains box input) :
-    Box.contains (flattenBox (ibpConv layer dilation paddingAfter groups leading box))
-      (addSpec
-        (matVecMulSpec (convLinearMatrix layer dilation paddingAfter groups leading)
-          (flattenSpec input))
-        (convBiasBroadcast (outSpatial :=
-          convOutSpatialDilated inSpatial kernel stride dilation padding paddingAfter)
-          layer.bias leading)) := by
-  rw [conv_linear_matrix_add_bias_eq_grouped_conv, box_contains_flatten_iff]
-  exact ibpConv_contains_groupedConv_real layer dilation paddingAfter groups leading box input h
-
 end NN.MLTheory.CROWN.ConvProof

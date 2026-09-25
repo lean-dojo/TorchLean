@@ -21,8 +21,6 @@ eligibility, numerical correctness, or the behavior of foreign implementations.
 
 namespace NN.Backend
 
-deriving instance ReflBEq, LawfulBEq for BackendOp
-
 /-- A successful choice is registered, implements the requested operation, and is admissible. -/
 theorem chooseCapsuleFor_sound
     {policy : KernelPolicy} {op : BackendOp} {registry : Array KernelCapsule}

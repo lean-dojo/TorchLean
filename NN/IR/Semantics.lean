@@ -209,6 +209,45 @@ def matmulFlat {α : Type} [TorchLean.Storage α] [Context α]
       acc + getAtOrZero left [dims.leftIndex output.val inner] *
         getAtOrZero right [dims.rightIndex output.val inner]) 0
 
+/--
+`matmulFlat` with the batch offsets computed once per output entry and the contraction run by
+`Nat.fold`. The products are added in the same order, so the results are bit-identical.
+-/
+def matmulFlatFast {α : Type} [TorchLean.Storage α] [Context α]
+    (dims : OpContracts.MatmulDims) {leftDim rightDim : Nat}
+    (left : Tensor α [leftDim]) (right : Tensor α [rightDim]) :
+    Tensor α [dims.outShape.size] :=
+  Tensor.ofFn fun output =>
+    let batch := output.val / (dims.rows * dims.cols)
+    let leftBase :=
+      OpContracts.MatmulDims.batchIndex dims.leftLeading dims.leading batch *
+          (dims.rows * dims.inner) +
+        output.val % (dims.rows * dims.cols) / dims.cols * dims.inner
+    let rightBase :=
+      OpContracts.MatmulDims.batchIndex dims.rightLeading dims.leading batch *
+        (dims.inner * dims.cols)
+    let col := output.val % dims.cols
+    Nat.fold dims.inner (fun inner _ acc =>
+      acc + getAtOrZero left [leftBase + inner] *
+        getAtOrZero right [rightBase + inner * dims.cols + col]) 0
+
+/-- A left fold over `List.range n` is the same computation as `Nat.fold n`. -/
+private theorem foldl_range_eq_fold {β : Type} (f : β → Nat → β) (init : β) :
+    (n : Nat) → (List.range n).foldl f init = Nat.fold n (fun i _ acc => f acc i) init
+  | 0 => by simp
+  | n + 1 => by
+      rw [List.range_succ, List.foldl_append, foldl_range_eq_fold f init n, Nat.fold_succ]
+      simp
+
+/-- Compiled code runs `matmulFlatFast` in place of `matmulFlat`. -/
+@[csimp] theorem matmulFlat_eq_matmulFlatFast : @matmulFlat = @matmulFlatFast := by
+  funext α storage context dims leftDim rightDim left right
+  unfold matmulFlat matmulFlatFast
+  congr 1
+  funext output
+  rw [foldl_range_eq_fold]
+  rfl
+
 /-- Evaluate a checked matmul layout, retaining the typed matrix kernel for equal batch shapes. -/
 @[simp] def matmulWithDims {α : Type} [TorchLean.Storage α] [Context α]
     (dims : OpContracts.MatmulDims)
@@ -469,9 +508,10 @@ def evalConcatLeadingAxisFold {α : Type} [TorchLean.Storage α] [Context α]
 /--
 Evaluate a `concat` node from already evaluated parent values.
 
-The IR concat operation accepts any valid axis.  The tensor primitive concatenates along axis `0`,
-so the evaluator implements the generic case by moving the requested axis to the front, folding
-`Tensor.concatAxisSpec .scalar` over the permuted parents, and moving the result back.
+The IR concat operation accepts any valid axis. `Tensor.concatAxisSpec` takes any leading prefix,
+but this evaluator only uses its axis-`0` form (`leading := .scalar`). For another axis it moves
+that axis to the front, folds `Tensor.concatAxisSpec .scalar` over the permuted parents, and moves
+the result back. The IR execution and CROWN concat proofs are stated against this form.
 -/
 def evalConcat {α : Type} [TorchLean.Storage α] [Context α]
     (i : Nat) (n : Node) (axis : Nat) (parents : Array (Spec.SomeTensor α)) :
@@ -817,14 +857,14 @@ selected branch exactly as before the split.
         let pId ← unaryParentId i n
         let p ← expectShape (α := α) (expected := n.outShape) (← getParent pId)
         -- Domain discipline: raw `log` is undefined on nonpositive inputs. The evaluator
-        -- rejects that case explicitly; use `safeLogSpec`/`safeLogOp` in models that require
-        -- epsilon protection.
+        -- rejects that case explicitly; use `safeLogSpec`/`safeLogOp` in models whose
+        -- inputs can be nonpositive.
         if Tensor.allSpec (α := α) (s := n.outShape) (fun v => decide (0 < v)) p then
           pure (Spec.SomeTensor.mk (α := α) n.outShape (Tensor.logSpec (α := α) p))
         else
           throw
             ("IR eval: log: input contains values <= 0 (or NaN); \
-              use `safe_log` if you want epsilon protection")
+              use `safe_log`, which is log(softplus(x) + eps)")
     | .inv => do
         let pId ← unaryParentId i n
         let p ← expectShape (α := α) (expected := n.outShape) (← getParent pId)

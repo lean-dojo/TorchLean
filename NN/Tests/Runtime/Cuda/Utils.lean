@@ -20,9 +20,8 @@ These tests compare:
 - CPU eager tape results (`Runtime.Autograd.Tape`, `Float`), against
 - CUDA eager tape results (`Runtime.Autograd.Cuda.Tape`, float32 buffers).
 
-Without CUDA (`lake build` default), the extern symbols link to CPU parity stubs. The curated
-runner skips this GPU suite in that configuration; native coverage requires a CUDA build and a
-visible device.
+The curated runner skips this GPU suite in the default build, which does not link LibTorch;
+native coverage requires a CUDA build and a visible device.
 -/
 
 @[expose] public section

@@ -43,7 +43,7 @@ def DirectionBound (dir : BackwardDir) (bound : α) (z : ℝ) : Prop :=
   | .upper => z ≤ value bound
 
 /-- The executable sign-selected box dot product bounds its real objective. -/
-theorem consumeObjectiveFromBox_encloses (hzero : value (0 : α) = 0)
+theorem consumeObjectiveFromBox_encloses
     (dir : BackwardDir) (obj : FlatTensor α) (box : FlatBox α) (x : Nat → ℝ)
     (hx : RowEncloses box obj.n x) {bound : α}
     (hresult : consumeObjectiveFromBox dir obj box = some bound) :
@@ -68,19 +68,20 @@ theorem consumeObjectiveFromBox_encloses (hzero : value (0 : α) = 0)
     simp only [read_fin] at hb
     by_cases ha : (0 : α) < coefficients.getScalar i
     · have hp : 0 ≤ value (coefficients.getScalar i) := by
-        simpa only [hzero] using ((LawfulBoundOps.lt_iff _ _).mp ha).le
+        simpa only [LawfulBoundOps.toReal_zero (α := α)] using
+          ((LawfulBoundOps.lt_iff _ _).mp ha).le
       simp only [product, ha, ↓reduceIte]
       exact ⟨(LawfulBoundOps.mulDown_le _ _).trans
           (mul_le_mul_of_nonneg_left hb.1 hp),
         (mul_le_mul_of_nonneg_left hb.2 hp).trans (LawfulBoundOps.le_mulUp _ _)⟩
     · have hn : value (coefficients.getScalar i) ≤ 0 := by
-        rw [← hzero]
+        rw [← (LawfulBoundOps.toReal_zero (α := α))]
         exact le_of_not_gt (fun h => ha ((LawfulBoundOps.lt_iff _ _).mpr h))
       simp only [product, ha, ↓reduceIte]
       exact ⟨(LawfulBoundOps.mulDown_le _ _).trans
           (mul_le_mul_of_nonpos_left hb.2 hn),
         (mul_le_mul_of_nonpos_left hb.1 hn).trans (LawfulBoundOps.le_mulUp _ _)⟩
-  have hs := sum_encloses hzero (product .lower) (product .upper)
+  have hs := sum_encloses (product .lower) (product .upper)
     (fun i => value (coefficients.getScalar i) * x i.val) hterms
   cases dir <;>
     simp only [consumeObjectiveFromBox, ↓reduceDIte, castDimScalar_self,
@@ -95,13 +96,13 @@ theorem consumeObjectiveFromBox_encloses (hzero : value (0 : α) = 0)
       List.finRange] using hs.2
 
 /-- Constant objective forms have exactly their stored real constant as value. -/
-theorem constantObjectiveAffine_value (hzero : value (0 : α) = 0)
+theorem constantObjectiveAffine_value
     (n : Nat) (c : α) (x : Fin n → ℝ) :
     affineValue (constantObjectiveAffine n c) x = value c := by
-  simp [affineValue, constantObjectiveAffine, Spec.get2_full, hzero]
+  simp [affineValue, constantObjectiveAffine, Spec.get2_full, (LawfulBoundOps.toReal_zero (α := α))]
 
 /-- A successful output-box fallback returns an affine bound in the requested direction. -/
-theorem objectiveFromOutputBox_encloses (hzero : value (0 : α) = 0)
+theorem objectiveFromOutputBox_encloses
     (dir : BackwardDir) (ibp : Array (Option (FlatBox α))) (output n : Nat)
     (obj : FlatTensor α) (y : Nat → ℝ)
     (hbox : ∀ box, ibp[output]! = some box → RowEncloses box obj.n y)
@@ -123,8 +124,8 @@ theorem objectiveFromOutputBox_encloses (hzero : value (0 : α) = 0)
     have hlookup : ibp[output]! = some box := by
       obtain ⟨hindex, hget⟩ := Array.getElem?_eq_some_iff.mp hentry
       simpa only [getElem!_pos (c := ibp) (i := output) hindex] using hget
-    have hs := consumeObjectiveFromBox_encloses hzero dir obj box y (hbox box hlookup) hc
-    cases dir <;> simpa only [constantObjectiveAffine_value hzero, DirectionBound] using hs
+    have hs := consumeObjectiveFromBox_encloses dir obj box y (hbox box hlookup) hc
+    cases dir <;> simpa only [constantObjectiveAffine_value, DirectionBound] using hs
 
 end
 

@@ -24,7 +24,7 @@ import NN.MLTheory.LearningTheory.Stability.RidgeRegression1D.IEEE32Exec
 import NN.Proofs
 import NN.Proofs.Autograd.Overview
 import NN.MLTheory.CROWN.Graph.Engine.Enclosure
-import NN.API.RL.Markov
+import NN.API.RL.Core
 
 /-!
 # Additional Theory Modules

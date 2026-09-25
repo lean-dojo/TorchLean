@@ -524,35 +524,6 @@ def sinhSpec {s : Shape} : Tensor α s → Tensor α s :=
 def clampDerivativeSpec {s : Shape} (x : Tensor α s) (minVal maxVal : α) : Tensor α s :=
   mapSpec (fun v => if v > minVal ∧ v < maxVal then 1 else 0) x
 
-/-- Numeric mask: `1` where `a > b`, else `0`. -/
-def gtMaskSpec {s : Shape} (a b : Tensor α s) : Tensor α s :=
-  map2Spec (fun x y => if x > y then 1 else 0) a b
-
-/-- Numeric mask: `1` where `a < b`, else `0`. -/
-def ltMaskSpec {s : Shape} (a b : Tensor α s) : Tensor α s :=
-  map2Spec (fun x y => if x < y then 1 else 0) a b
-
-/-- Convert a Bool to `α` using `1`/`0`. -/
-def boolToAlphaSpec : Bool → α :=
-  fun b => if b then 1 else 0
-
-/-- Multiply a tensor by a Bool mask (casts the mask to `0/1`). -/
-def mulBoolMaskSpec {s : Shape} (t : Tensor α s) (mask : Tensor Bool s)
-  : Tensor α s :=
-  map2Spec (fun x b => x * boolToAlphaSpec b) t mask
-
-/-- Apply a Huber-style clamp on entries selected by `mask` (leaves others unchanged). -/
-def clampHuberMaskSpec {s : Shape}
-  (t : Tensor α s) (mask : Tensor Bool s) (delta : α) : Tensor α s :=
-  map2Spec (fun x m =>
-    if m then
-      if x > delta then delta
-      else if (-delta > x) then -delta
-      else x
-    else
-      x
-  ) t mask
-
 /-- Update a tensor at a runtime index path.
 
 The index path is interpreted outermost-first. Out-of-bounds indices leave the tensor unchanged.
@@ -567,21 +538,6 @@ def updateTensorSpec {α : Type} [TorchLean.Storage α]
   | some coordinate =>
       TorchLean.Tensor.Internal.Rep.set tensor coordinate newValue
   | none => tensor
-
-/-- Like `updateTensorSpec`, but replaces a subtree with another tensor. -/
-def updateTensorWithTensorSpec {α : Type} [TorchLean.Storage α] :
-    ∀ {s : Shape}, Tensor α s → List Nat → Tensor α s → Tensor α s
-  | .scalar, _, [], newTensor => newTensor
-  | .scalar, tensor, _ :: _, _ => tensor
-  | .dim _ _, tensor, [], _ => tensor
-  | .dim n _, tensor, i :: rest, newTensor =>
-      if h : i < n then
-        .dim (Function.update (Tensor.unstack tensor) ⟨i, h⟩
-          (updateTensorWithTensorSpec
-            (Tensor.unstack tensor ⟨i, h⟩) rest
-            (Tensor.unstack newTensor ⟨i, h⟩)))
-      else
-        tensor
 
 /-- Specialization of `updateTensorSpec` for a top-level vector dimension. -/
 def updateSpec {α : Type} [TorchLean.Storage α]

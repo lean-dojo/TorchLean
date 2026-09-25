@@ -69,30 +69,6 @@ def oneHotSample
     target := oneHotInputs vocabularySize sample.target }
 
 /--
-Build a batched one-hot causal-language-model sample from a token tensor by choosing one
-deterministic `(sequenceLength + 1)` window per batch row.
-
-Use this for GPT-style trainers that keep a tokenized corpus in memory and derive each batch from
-the same `(tokens, seed, step)` rule.
--/
-def oneHotBatch {tokenCount : Nat}
-    {α : Type} [TorchLean.Storage α] [Zero α] [One α]
-    (batchSize sequenceLength vocabularySize : Nat)
-    (tokens : Tensor Nat [tokenCount])
-    (seed step : Nat)
-    (paddingTokenId : Nat := 0) :
-    Except String
-      (Sample.Supervised α
-        [batchSize, sequenceLength, vocabularySize]
-        [batchSize, sequenceLength, vocabularySize]) := do
-  let tokenWindows :=
-    TorchLean.text.Corpus.randomTokenBatch
-      tokens batchSize sequenceLength seed step (paddingTokenId := paddingTokenId)
-  let boundedTokens ← TorchLean.Tensor.checkIndices vocabularySize tokenWindows
-  pure <| oneHotSample
-    (α := α) [batchSize] sequenceLength vocabularySize boundedTokens
-
-/--
 Build an indexed-token causal-language-model batch from a tensor corpus.
 
 The result contains the input and next-token target as separate bounded-index tensors. Validation

@@ -968,6 +968,42 @@ def checkAdadeltaAccumulator : Bool :=
   close result.optimizerState.squaredUpdateAverage.item 0.8 &&
     close result.parameters.item (10.0 - 1.0 / Float.sqrt 5.0)
 
+open TorchLean.Tensor in
+/-- The compiled single-pass adaptive learning rate matches the reference tensor expression bit for
+bit, including the clamp of negative denominators to zero. -/
+def checkAdaptiveLearningRateFastPath : Bool :=
+  let denominator : Tensor Float [6] := [0.0, -4.0, 1e-12, 0.25, 3.0, 1e20]
+  let learningRate : Float := 0.001
+  let epsilon : Float := 1e-8
+  let fast := Optim.adaptiveLearningRate learningRate epsilon denominator
+  let reference :=
+    divSpec (Tensor.full [6] learningRate)
+      (addSpec (sqrtSpec denominator) (Tensor.full [6] epsilon))
+  (List.finRange 6).all fun i =>
+    (fast.getScalar i).toBits == (reference.getScalar i).toBits
+
+open TorchLean.Tensor in
+/-- Adadelta's fused RMS terms match the reference `sqrt (average + epsilon)` expression. -/
+def checkAdadeltaFastPath : Bool :=
+  let parameters : Tensor Float [3] := [1.0, -2.0, 0.5]
+  let gradients : Tensor Float [3] := [0.3, -0.7, 0.0]
+  let initial := Optim.Adadelta.init 1.0 0.9 1e-6 parameters
+  let first := Optim.Adadelta.update initial parameters gradients
+  let state := first.optimizerState
+  let result := Optim.Adadelta.update state first.parameters gradients
+  let epsilon := Tensor.full [3] state.epsilon
+  let nextAverage :=
+    addSpec (scaleSpec state.squaredGradientAverage state.rho)
+      (scaleSpec (squareSpec gradients) (1 - state.rho))
+  let ratio :=
+    divSpec (sqrtSpec (addSpec state.squaredUpdateAverage epsilon))
+      (sqrtSpec (addSpec nextAverage epsilon))
+  let reference :=
+    subSpec first.parameters
+      (scaleSpec (mulSpec ratio gradients) state.learningRate)
+  (List.finRange 3).all fun i =>
+    (result.parameters.getScalar i).toBits == (reference.getScalar i).toBits
+
 /-- Warmup-cosine decay remains at zero after its finite schedule has ended. -/
 def checkWarmupCosineStops : Bool :=
   let base : Optim.Scheduler.WarmupCosine Float :=
@@ -975,6 +1011,13 @@ def checkWarmupCosineStops : Bool :=
   let atEnd := { base with currentStep := 10 }
   let afterEnd := { base with currentStep := 20 }
   atEnd.current == 0.0 && afterEnd.current == 0.0
+
+/-- Native one-cycle ends at `initial_lr / final_div_factor`, PyTorch's `OneCycleLR` endpoint. -/
+def checkOneCycleEndpoints : Bool :=
+  let base : Optim.Scheduler.OneCycle Float :=
+    Optim.Scheduler.OneCycle.create 1.0 10 25.0 0.3 1.0e4
+  let finished := { base with currentStep := 10 }
+  base.current == 1.0 / 25.0 && finished.current == (1.0 / 25.0) / 1.0e4
 
 /-- Public optimizer configurations reject domains that make their updates undefined. -/
 def checkPublicOptimizerValidation : Bool :=
@@ -1009,8 +1052,14 @@ def run : IO Unit := do
   | .ok true => pure ()
   unless checkAdadeltaAccumulator do
     throw <| IO.userError "optimizer numerics (Adadelta accumulator): FAILED"
+  unless checkAdaptiveLearningRateFastPath do
+    throw <| IO.userError "optimizer numerics (adaptive learning-rate fast path): FAILED"
+  unless checkAdadeltaFastPath do
+    throw <| IO.userError "optimizer numerics (Adadelta fast path): FAILED"
   unless checkWarmupCosineStops do
     throw <| IO.userError "optimizer numerics (warmup cosine): FAILED"
+  unless checkOneCycleEndpoints do
+    throw <| IO.userError "optimizer numerics (one-cycle endpoints): FAILED"
   unless checkPublicOptimizerValidation do
     throw <| IO.userError "optimizer configuration validation: FAILED"
   IO.println "optimizer and scheduler edge cases (Float): OK"

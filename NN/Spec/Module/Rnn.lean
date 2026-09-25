@@ -29,6 +29,11 @@ Design choices:
 
 If you think in PyTorch: these are the `nn.RNN`/`nn.LSTM`/`nn.GRU` "return the full output sequence"
 wrappers, with the initial hidden/state fixed to zeros.
+
+The GRU wrappers are the exception to an exact match. They wrap the reset-before `GRUSpec`, while
+PyTorch's `nn.GRU` and `nn.GRUCell` use the reset-after candidate equation. Their `pythonExpr`
+exports the PyTorch module with the same shapes, which is an architectural stand-in; it computes a
+different function for the same weights.
 -/
 
 @[expose] public section
@@ -73,7 +78,9 @@ def lstm {seqLen inputSize hiddenSize : Nat}
 }
 
 -- GRU module specification wrapper
-/-- GRU sequence wrapper with a zero initial hidden state; returns the output sequence. -/
+/-- Reset-before GRU sequence wrapper with a zero initial hidden state; returns the output sequence.
+
+The exported `GRUOnlyOutput` wraps PyTorch's reset-after `nn.GRU`, so it matches shapes only. -/
 def gru {seqLen inputSize hiddenSize : Nat}
   (gru : GRUSpec α inputSize hiddenSize) :
   Spec.Module α
@@ -83,7 +90,7 @@ def gru {seqLen inputSize hiddenSize : Nat}
   forward := fun x =>
     let initialHidden := Tensor.full ([hiddenSize]) 0
     gruSequenceSpec gru x initialHidden,
-  kind := "GRU",
+  kind := "GRUResetBefore",
   pythonExpr := s!"GRUOnlyOutput({inputSize}, {hiddenSize})"
 }
 
@@ -157,7 +164,10 @@ def lstmCell {inputSize hiddenSize : Nat}
 }
 
 -- GRU Cell module (for single timestep processing)
-/-- Wrap `gruCellSpec` as an `Spec.Module` for a single timestep, using input `[x; h]`. -/
+/-- Wrap the reset-before `gruCellSpec` as an `Spec.Module` for a single timestep, using input
+`[x; h]`.
+
+The exported `nn.GRUCell` is PyTorch's reset-after cell, so it matches shapes only. -/
 def gruCell {inputSize hiddenSize : Nat}
   (gru : GRUSpec α inputSize hiddenSize) :
   Spec.Module α
@@ -169,7 +179,7 @@ def gruCell {inputSize hiddenSize : Nat}
       simp)
     let hidden := sliceRangeSpec x inputSize hiddenSize (by simp)
     gruCellSpec gru input hidden,
-  kind := "GRUCell",
+  kind := "GRUResetBeforeCell",
   pythonExpr := s!"nn.GRUCell({inputSize}, {hiddenSize})"
 }
 

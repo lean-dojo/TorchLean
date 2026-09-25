@@ -17,8 +17,8 @@ Low-level coverage for the packed real FFT buffer primitives:
 - `Buffer.rfft1dPacked`: `(batch, n)` real float32 rows to `(batch, n/2+1, 2)`,
 - `Buffer.irfft1dPacked`: packed half-spectrum back to normalized real rows.
 
-The CUDA backend uses cuFFT. The non-CUDA build uses a direct CPU DFT stub. These tests check the
-runtime buffer contract; autograd-facing spectral layers are covered separately.
+The CUDA backend calls LibTorch's `at::fft_rfft` and `at::fft_irfft`. These tests check the runtime
+buffer contract; autograd-facing spectral layers are covered separately.
 -/
 
 @[expose] public section

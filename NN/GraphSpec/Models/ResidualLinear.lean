@@ -19,7 +19,8 @@ The input variable appears in both the linear branch and the skip branch. A `let
 binds the linear result before the addition. Reusing an environment variable does
 not recompute a preceding input expression.
 
-Read this alongside `NN.GraphSpec.DAG.Core` for typed variables and `let1` semantics.
+Read this alongside `NN.GraphSpec.DAG.Syntax` and `NN.GraphSpec.DAG.Semantics` for typed variables
+and `let1` semantics.
 -/
 
 @[expose] public section

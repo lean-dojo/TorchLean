@@ -67,6 +67,16 @@ def actionLogProbability {nActions : Nat} (logits : Tensor α [nActions])
     (action : Fin nActions) (epsilon : α := Context.defaultEpsilon) : α :=
   MathFunctions.log (actionProbability (α := α) logits action epsilon)
 
+/-- Unclamped log-probability `log_softmax(logits)[action]`.
+
+This is the formula the autograd PPO objective uses for the new policy
+(`Autograd.actionLogProbOneHot`), so rollouts that feed it record their old log-probabilities with
+this function. With identical parameters the importance ratio is then exactly 1 on the CPU backend,
+including in the tails where `actionLogProbability` would clamp. -/
+def actionLogSoftmax {nActions : Nat} (logits : Tensor α [nActions])
+    (action : Fin nActions) : α :=
+  Tensor.getScalar (Activation.logSoftmaxVecSpec (α := α) (n := nActions) logits) action
+
 /-- Guarded entropy bonus `-Σ q(a) log q(a)`, where `p = softmax logits` and
 `q = clamp p epsilon (1 - epsilon)`.
 

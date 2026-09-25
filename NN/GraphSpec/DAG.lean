@@ -26,8 +26,8 @@ It imports the typed term language together with the standard primitive families
 - multi-head attention;
 - finite sums of same-shaped graph terms.
 
-For a chain of unary layers, `NN.GraphSpec.Core` provides the lighter sequential notation and can
-lower it into this representation. Use the DAG language directly for residual connections, shared
-subexpressions, caches, attention blocks, and other architectures whose dataflow is not a simple
-chain.
+For a chain of unary layers, `NN.GraphSpec.Chain.Lowering` provides the lighter sequential
+notation, and `NN.GraphSpec.Chain.ToDAG.Model` lowers it into this representation. Use the DAG
+language directly for residual connections, shared subexpressions, caches, attention blocks, and
+other architectures whose dataflow is not a simple chain.
 -/

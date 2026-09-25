@@ -738,6 +738,15 @@ def parsePayload (j : Json) : Except String (Payload Float) := do
               throw s!"PyTorch graph import: {ctx}: convolution kernel extents must be nonzero"
           else
             throw s!"PyTorch graph import: {ctx}: convolution input channels must be nonzero"
+        else if raw.kind = Wire.opTag .const then
+          -- Constants carry their values inline only when the producer wrote them (the ONNX
+          -- adapter does for initializers); otherwise the payload is supplied separately.
+          if (Internal.field? "values" raw.raw).isSome then
+            let some node := captured.graph.nodes[tensorId]?
+              | throw s!"PyTorch graph import: {ctx}: const node is missing from the graph"
+            let n := node.outShape.size
+            constParams := constParams.set! tensorId
+              (some { n := n, v := ← Internal.tensorField ctx "values" [n] raw.raw })
         else if raw.kind = Wire.opTag .layernorm then
           let outShape ←
             match raw.valueShape with

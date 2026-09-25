@@ -124,7 +124,7 @@ A seeded run on both backends prints the same result:
 mean_loss(before) = 0.978569
 mean_loss(after) = 0.010960
 prediction at center=[1.885023, -3.156008]
-Alpha-Beta-CROWN lower=[1.639539, -3.572599] upper=[2.130507, -2.739417] label=0
+Alpha-CROWN (IBP phases) lower=[1.639539, -3.572599] upper=[2.130507, -2.739417] label=0
   margin=4.378956 certified=true
 ```
 
@@ -367,6 +367,21 @@ succeeds and the proof-side pass produced a box at every node (`IBPCovers`).
 `runIBP_encloses_evalGraphRec` then gives enclosure
 for the executable engine directly. Both are stated over `ℝ`; operations outside `EngineCore`
 and every rounded scalar remain outside these two theorems.
+
+Rounded endpoints have their own theorem, `runIBP_encloses` in
+`NN.MLTheory.CROWN.Proofs.DirectedIBPSoundness`. It holds for any scalar type with
+`LawfulBoundOps` and `LawfulNonlinearBoundOps`, such as the rounded-real `FP32` model and the
+reals. Every box the executable `runIBP` returns encloses the real value of its node, provided
+parents precede their consumers, the seed boxes contain the real inputs, the real point satisfies
+the node equations `NodeEquation`, and every node kind passes `ibpForwardSupported`. That check
+accepts inputs, constants, copies, addition, subtraction, elementwise multiplication, ReLU, linear,
+unary matrix multiplication, sum, exp, log, square root, reciprocal, tanh, sigmoid, sine, and
+cosine. The rounded transfers for convolution, concatenation, transpose, permute, binary matrix
+multiplication, absolute value, elementwise max and min, softplus, safe logarithm, pools,
+broadcasts, axis reductions, MSE loss, BatchNorm, LayerNorm, and the softmax kinds are not yet
+proved. On supported graphs `GraphPoint.ofRunIBP` feeds the result to the directed backward CROWN
+theorems, and `backwardObjectiveBox_encloses_runIBP` states the rounded objective workflow with no
+IBP hypothesis left.
 
 ```lean (name := ibpThms)
 -- Locally consistent real boxes enclose the corresponding
@@ -1197,8 +1212,11 @@ It can lose correlations, so finishing a CROWN pass does not guarantee a tighter
 The {src "NN/MLTheory/CROWN/Proofs/DirectedBackwardEvaluation.lean"}[rounded backward theorem]
 covers coefficient propagation, the output-box fallback, and final interval evaluation. Its
 hypotheses require lawful directed arithmetic, the real stored-parameter graph equations, and
-enclosing IBP boxes. Relating these bounds to a separate native execution additionally requires
-a runtime-approximation theorem.
+enclosing IBP boxes. The IBP boxes are assumed: graph-level IBP soundness is proved only over
+`ℝ`, and no theorem yet derives the boxes from a rounded forward pass. ReLU, LayerNorm, and the
+other nonlinear nodes have no coefficient transfer on rounded backends, so they pass through their
+IBP box as well, and a rounded MLP "CROWN" bound is IBP at every ReLU. Relating these bounds to a
+separate native execution additionally requires a runtime-approximation theorem.
 
 The first-derivative interval pass starts with an input direction.
 `runDirectionalDerivative` propagates a point or interval of directions through the graph, using

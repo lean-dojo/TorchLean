@@ -29,13 +29,15 @@ Intended certificate JSON format:
 }
 ```
 
-The array length must equal `g.nodes.size`. Each non-null entry must have `lo` and `hi` arrays of
-length equal to that node's flattened output dimension `g.nodes[i]!.outShape.size`.
+The array length must equal `g.nodes.size`. Every entry must be an object whose `lo` and `hi`
+arrays have length equal to that node's flattened output dimension `g.nodes[i]!.outShape.size`.
+The parser reads `null` as a missing entry, and `checkIBPNode` rejects it.
 
 Trust boundary note:
 - The certificate is untrusted; we accept it only if Lean recomputation matches.
-- A certificate interval must contain the Lean-recomputed interval componentwise. Decimal
-  serialization may widen an endpoint, but it may not move an endpoint inward.
+- A certificate interval must contain the Lean-recomputed interval componentwise. Each decimal
+  endpoint is first rounded outward into binary32 (see `NodeReplay.parseFlatBox?`), so an endpoint
+  inward of Lean's by less than one binary32 ulp is read as Lean's value and accepted.
 -/
 
 @[expose] public section

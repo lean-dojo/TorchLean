@@ -20,6 +20,11 @@ This is *not* an executable backend (it is `noncomputable` in general, because `
 `ℝ`). It exists so proofs can state “sound w.r.t. float32 semantics” without mentioning Lean’s
 builtin `Float`.
 
+`FP32` is an unbounded-exponent binary32 model: it has 24-bit significands and gradual underflow,
+but no overflow, infinities, or NaNs. The nonlinear bounds use `Real.exp` and other real
+functions, so results here hold for this proof model and say nothing about overflow on a real
+binary32 device.
+
 This module is an optional convenience layer and lives under `NN/MLTheory/CROWN/Extras/`.
 -/
 
@@ -76,6 +81,23 @@ dictionary used by sound rounded CROWN statements over `FP32`.
 noncomputable instance : LawfulBoundOps FP32 where
   toReal := TorchLean.Floats.FP32.toReal
   lt_iff _ _ := Iff.rfl
+  toReal_zero := by
+    change Flocq.round (β := binaryRadix) (fexp := TorchLean.Floats.fexp32)
+      TorchLean.Floats.rnd32 0 = 0
+    exact round_preserves_generic _ _ generic_format_zero
+  toReal_one := by
+    change Flocq.round (β := binaryRadix) (fexp := TorchLean.Floats.fexp32)
+      TorchLean.Floats.rnd32 1 = 1
+    have h := generic_format_bpow (β := binaryRadix) (fexp := TorchLean.Floats.fexp32) 0
+      (by decide)
+    simp at h
+    exact round_preserves_generic _ _ h
+  toReal_max a b := by
+    change (max a b).val = max a.val b.val
+    rcases le_total a b with h | h
+    · rw [max_eq_right h, max_eq_right (show a.val ≤ b.val from h)]
+    · rw [max_eq_left h, max_eq_left (show b.val ≤ a.val from h)]
+  toReal_eq_of_beq h := by rw [beq_iff_eq.mp h]
   addDown_le a b := by
     change Flocq.round
         (β := binaryRadix) (fexp := TorchLean.Floats.fexp32)

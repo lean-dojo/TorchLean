@@ -3,6 +3,7 @@ title: Updates
 ---
 
 <nav class="timeline-nav" aria-label="TorchLean update timeline">
+  <a href="#september-2026-libtorch">LibTorch backend</a>
   <a href="#september-2026-floatlib">FloatLib and precision</a>
   <a href="#september-2026-proof-refactor">Proof refactor</a>
   <a href="#august-2026-tensor-overhaul">Tensor overhaul</a>
@@ -19,6 +20,52 @@ title: Updates
 </nav>
 
 <div class="updates-timeline">
+
+<article class="update-card" id="september-2026-libtorch" markdown="1">
+  <div class="update-date">September 2026</div>
+  <div class="update-body" markdown="1">
+
+## Running CUDA Through LibTorch
+
+The CUDA backend now calls ATen through a LibTorch SDK instead of TorchLean's own kernels. The
+Lean side did not change: the same buffer API, the same extern symbols, and the same runtime tape
+that owns differentiation. What changed is the code behind those symbols. About 7,000 lines of
+hand-written CUDA (elementwise, reduction, convolution, pooling, tensor, attention and DGEMM
+kernels) are gone, replaced by six C++ files under `csrc/libtorch/` that call the corresponding
+ATen operations under a no-grad guard. The per-kernel CPU stub files went with them. A build
+without LibTorch now links one file, `unavailable.c`, which exports every symbol and fails each
+call with a message that says how to rebuild.
+
+Select the SDK with `-Klibtorch_home=PATH` or `TORCHLEAN_LIBTORCH_HOME`; a CUDA-enabled pip
+PyTorch installation works as the SDK root. This tree was tested locally against pip torch
+2.13.0+cu130 with CUDA 13.0 on A100, and previously against a PyTorch 2.12 nightly. The attention
+path uses internal ATen entry points, so other SDK versions should be treated as untested until
+the CUDA suite passes on them. The default CPU build needs no SDK or toolkit.
+
+Several native features were removed rather than ported:
+
+| Removed | Use instead |
+| --- | --- |
+| `Buffer.setDeterministicReductions` | `LibTorch.setDeterministic` |
+| `TORCHLEAN_CUDA_CACHE_CAP_BYTES`, `AllocatorStats.cacheBytes` and `cacheCapBytes` | `AllocatorStats.allocatedBytes` and `reservedBytes`, with `LibTorch.setMemoryFraction` and `LibTorch.emptyCache`. The limit is now a fraction of device memory, not a byte cap. |
+| `flashAttentionFwd`/`Bwd`, `broadcastRowToRows`, `gatherVec`, `reduceSumByColumn` | The corresponding ATen operations behind the existing buffer API |
+| The three fused FNO backward externs | One spectral convolution backward call |
+| `matmulCublas`, `matmulCublas32`, `matmulCublas64`, `CublasPrecision` | Ordinary `matmul`; LibTorch chooses the BLAS call |
+| `nn.geluTanh` | `nn.gelu`, which is the same tanh approximation |
+
+The fused LayerNorm and GELU kernels and the transpose-free matrix backward described in the August
+notes below are part of what was removed. ATen supplies its own implementations. We have not
+measured the end-to-end effect on training speed, so this entry makes no performance claim either
+way.
+
+Convolution layers built through GraphSpec now start from different initial weights. They take
+their initialization seed from the layer's position, the same way linear layers do, where they
+used to take twice that value. A model with a convolution therefore trains from a different
+starting point than before, even with the same seed. Linear layers and the zero or one
+initializations of biases and normalization parameters are unchanged.
+
+  </div>
+</article>
 
 <article class="update-card" id="september-2026-floatlib" markdown="1">
   <div class="update-date">September 2026</div>
@@ -297,7 +344,7 @@ implementation is available in
   <div class="update-date">August 2026</div>
   <div class="update-body" markdown="1">
 
-## Exact Tape Derivatives
+## Exact Tape Derivatives and CUDA Cache Limits
 
 The exact autograd proof reaches the lowered tape. For a real algebraic graph, dense reverse
 accumulation returns the graph's full cotangent context, and its input block is the adjoint Fréchet
@@ -319,6 +366,22 @@ import NN.Proofs.Autograd.Runtime.Link.FDeriv
 
 This result concerns the exact tape over `Real`. Native `Float32` and CUDA executions still require
 the numerical-refinement assumptions described in the runtime-approximation chapter.
+
+The CUDA allocator also has an optional byte limit for released buffers retained for reuse:
+
+```bash
+TORCHLEAN_CUDA_CACHE_CAP_BYTES=$((512 * 1024 * 1024)) \
+  lake -K cuda=true exe torchlean gpt2 --device cuda --steps 100
+```
+
+`AllocatorStats.cacheBytes` reports reusable device memory separately from live tensors, while
+`cacheCapBytes` reports the parsed limit. A block that would exceed the limit is synchronized and
+freed. The cap is fixed when the allocator first reads it; `0` or an unset variable means
+unbounded.
+
+The CUDA stress suite runs the allocator in fresh subprocesses and checks a finite limit, an
+explicit unbounded control, malformed input, and integer overflow. Its assertion uses the limit
+reported by the native allocator rather than reproducing the native parser in Lean.
 
   </div>
 </article>
@@ -383,7 +446,7 @@ execution and CUDA Adam serialization.
   </section>
 </div>
 
-The trainer treats `samplesPerStep` as the number
+The trainer treats `samplesPerStep` (called `batchSize` at the time of this note) as the number
 of dataset items per optimizer update. For an ordinary dataset those items are samples. For
 `Data.batch`, each item is already a typed tensor minibatch, so `samplesPerStep := 1` keeps one
 vectorized pass per update. Larger values accumulate
@@ -396,6 +459,21 @@ path may fold those axes together with the attention heads for batched matrix mu
 TorchLean still applies the hard mask and computes the local VJP. A regression compares the
 vectorized forward value, input gradient, and shared weight gradients with repeated single-sample
 execution.
+
+Layer normalization and tanh-approximate GELU follow the same rule: one TorchLean operation,
+one local VJP, and fused CUDA kernels for the numerical work. In a two-step GPT-2-small trace with
+batch 6 and context 1024, local profiling showed fewer kernel launches while leaving the
+matrix-multiplication schedule unchanged. The CUDA parity suite checks forward values and gradients
+against the CPU path; the native kernels remain inside the documented runtime boundary. Timing
+claims belong with a retained benchmark configuration and trace, so this update records the
+implementation and regression coverage rather than presenting one workstation run as a general
+speedup.
+
+Matrix backward no longer materializes transposed copies before calling cuBLAS. The runtime
+passes logical transpose flags to the same batched-matrix primitive used by linear layers,
+projection weights, and ordinary `matmul`. Focused traces confirm that these temporary transpose
+kernels disappear, and parity tests compare the resulting forward values and gradients with the
+existing path.
 
 CUDA Adam and AdamW state can be saved independently of model checkpoints. The binary
 format records optimizer hyperparameters, parameter shapes, mutability flags, moment tensors, and
@@ -642,7 +720,7 @@ linters rather than suppressing them.
 The small examples had hidden an expensive habit: large parameters were first expanded into nested
 Lean values and only then copied into the execution engine. Parameters and gradients are
 materialized directly where they will run. We also stopped generic convolution backward from
-rebuilding the same derivative structure, and taught CUDA attention and FNO training to release
+rebuilding the same derivative structure, and taught CUDA attention and fused FNO paths to release
 temporary buffers as soon as their contribution is consumed.
 
 The most useful failure came from sparse reverse mode. A pure expression allocating a one-element
@@ -662,12 +740,19 @@ Shape-erased CUDA values compare the native buffer length with the recorded tens
 an operation runs. Dense and sparse backward also reject output seeds or initial gradients with the
 wrong length. The stress suite covers each rejected case.
 
+We exercised 21 CPU workflows and 24 CUDA workflows, including dense, convolutional, attention,
+recurrent, operator-learning, generative, and reinforcement-learning models. On the machine used
+for this release, a roughly 100-million-parameter MLP completed ten CUDA optimizer steps in about
+15.2 seconds. The fused Burgers FNO ran for 100 steps with no growth in live buffers; training MSE
+fell from 0.3260 to 0.0172 and test MSE ended at 0.0220. These numbers record what we tested on one
+machine. They are not a general performance promise.
+
 ### Documentation and Validation
 
 The Guide and API reference follow the new module layout. Installation has separate notes for
-Linux, macOS, WSL2, native Windows, and LibTorch CUDA support, and the floating-point and
+Linux, macOS, WSL2, native Windows, CUDA, and optional LibTorch support, and the floating-point and
 backend chapters explain where a theorem ends and a runtime assumption begins. Repository checks
-build `NN` directly.
+build `NN` directly; `NN.Library` no longer exists.
 
 Lyapunov results consume an explicit `LyapunovCert.ValidFor` proof, so a producer's JSON flags
 cannot become a stability theorem by themselves.

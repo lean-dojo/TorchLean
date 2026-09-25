@@ -197,19 +197,6 @@ structure Internal.DirectedBackwardState (α : Type) [TorchLean.Storage α] [Con
 @[expose] def Internal.pointCoeffBox (v : FlatTensor α) : FlatBox α :=
   { dim := v.n, lo := v.v, hi := v.v }
 
-/-- Outward-rounded interval product: all four endpoint products, then the min and the max. -/
-@[expose] def Internal.directedIntervalMul (aLo aHi bLo bHi : α) : α × α :=
-  let p1Lo := BoundOps.mulDown aLo bLo
-  let p2Lo := BoundOps.mulDown aLo bHi
-  let p3Lo := BoundOps.mulDown aHi bLo
-  let p4Lo := BoundOps.mulDown aHi bHi
-  let p1Hi := BoundOps.mulUp aLo bLo
-  let p2Hi := BoundOps.mulUp aLo bHi
-  let p3Hi := BoundOps.mulUp aHi bLo
-  let p4Hi := BoundOps.mulUp aHi bHi
-  (min2 (min2 p1Lo p2Lo) (min2 p3Lo p4Lo),
-    max2 (max2 p1Hi p2Hi) (max2 p3Hi p4Hi))
-
 /-- Accumulate an interval coefficient into node `pid`, adding outwards on both ends. -/
 @[expose] def Internal.addDirectedCoeff
     (st : DirectedBackwardState α) (pid : Nat) (v : FlatBox α) :
@@ -244,7 +231,7 @@ structure Internal.DirectedBackwardState (α : Type) [TorchLean.Storage α] [Con
     let bHi : Tensor α [a.dim] :=
       castDimScalar (α := α) (n := b.dim) (n' := a.dim) h.symm b.hi
     let terms := (List.finRange a.dim).map fun i =>
-      directedIntervalMul (α := α)
+      intervalMul (α := α)
         (getAtOrZero a.lo [i.val]) (getAtOrZero a.hi [i.val])
         (getAtOrZero bLo [i.val]) (getAtOrZero bHi [i.val])
     let lo := terms.foldl (fun acc p => BoundOps.addDown acc p.1) 0
@@ -284,7 +271,7 @@ contributes a two-sided constant.
     let coeffAt (j : Fin n) : α × α :=
       (List.finRange m).foldl (fun acc i =>
         let w := getAtOrZero W [i.val, j.val]
-        let p := directedIntervalMul (α := α)
+        let p := intervalMul (α := α)
           (getAtOrZero aLo [i.val]) (getAtOrZero aHi [i.val]) w w
         (BoundOps.addDown acc.1 p.1, BoundOps.addUp acc.2 p.2))
         (0, 0)
@@ -1342,10 +1329,11 @@ The result is a `FlatBox` of dimension `1`, with `lo[0]` and `hi[0]` bounding
 Backward CROWN objective lower bound with externally provided ReLU alpha slopes.
 
 This is an integration hook for alpha-CROWN style workflows where ReLU slopes are optimized outside
-TorchLean and then imported as a per-node vector in `reluAlpha`. Imported slopes currently refine
-the exact scalar path. Rounded scalar backends use the directed coefficient pass; until imported
-slopes carry their own rounding contract, nonlinear nodes are discharged against directed IBP
-boxes.
+TorchLean and then imported as a per-node vector in `reluAlpha`. Imported slopes are used only on
+the exact scalar path. The directed coefficient pass of a rounded backend has no ReLU relaxation
+(it discharges every ReLU against its IBP box), so on such a backend this returns `none` whenever
+some entry of `reluAlpha` is present, rather than silently computing a bound without the slopes.
+With no slopes it returns the directed lower bound.
 -/
 def runCROWNBackwardObjectiveLowerWithReluAlpha
   (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)
@@ -1356,6 +1344,8 @@ def runCROWNBackwardObjectiveLowerWithReluAlpha
     none
   else if BoundOps.supportsExactAffineReassociation (α := α) then
     runBackwardObjectiveDirWithReluAlpha (α := α) .lower g ps ctx ibp outputId obj reluAlpha
+  else if reluAlpha.any Option.isSome then
+    none
   else
     (runDirectedBackwardObjective (α := α) g ps ctx ibp outputId obj).map (fun bounds => bounds.1)
 

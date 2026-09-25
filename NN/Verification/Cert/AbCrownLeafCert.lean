@@ -23,9 +23,13 @@ external verifier into the checked schema.
 
 The checker does **not** run bound propagation itself. It validates only the finite claims present
 in the artifact:
-- each leaf input box is nested inside the declared root input box, and
+- each leaf input box is nested inside the declared root input box,
+- the leaf boxes together cover the root box, and
 - each leaf contains a witness that refutes the unsafe threshold
   ($\mathrm{lb}[i]>\mathrm{threshold}[i]$ for some $i$).
+
+The lower bounds `lb` are the producer's claims and are not recomputed, so a passing artifact is
+consistent, not verified. The output says so.
 
 This is useful for:
 - regression testing JSON export/import paths, and
@@ -51,6 +55,51 @@ open NN.Verification.Json
 /-- Bundled sample alpha-beta-CROWN-style leaf artifact. -/
 def defaultArtifactPath : String :=
   "NN/Examples/Verification/AbCrown/sample_abcrown_leaf_artifact_v0_1.json"
+
+/-- Sorted distinct values of one coordinate across the root and leaf endpoints. -/
+def breakpoints (xs : Array Float) : Array Float :=
+  (xs.qsort (· < ·)).foldl (init := #[]) fun acc x =>
+    if acc.back? == some x then acc else acc.push x
+
+/--
+Check that the closed leaf boxes cover the closed root box, assuming every leaf is inside the root.
+
+Along each coordinate, the root and leaf endpoints cut the root into a grid of closed cells. Every
+leaf is a union of cells, so the leaves cover the root exactly when each cell lies inside one leaf.
+Coordinates on which every leaf spans the whole root are skipped. The grid is
+refused, with an error, when it has more than `maxCells` cells.
+-/
+def leavesCoverRoot (rootLo rootHi : Array Float) (leaves : Array (Array Float × Array Float))
+    (maxCells : Nat := 1000000) : Except String Bool := do
+  let dim := rootLo.size
+  -- For each split coordinate: its index and the closed intervals between breakpoints.
+  let mut axes : Array (Nat × Array (Float × Float)) := #[]
+  let mut cells := 1
+  for d in [:dim] do
+    let pts := breakpoints <| leaves.foldl (init := #[rootLo[d]!, rootHi[d]!]) fun acc leaf =>
+      (acc.push leaf.1[d]!).push leaf.2[d]!
+    if leaves.all fun leaf => leaf.1[d]! == rootLo[d]! && leaf.2[d]! == rootHi[d]! then
+      continue
+    let intervals :=
+      if pts.size = 1 then #[(pts[0]!, pts[0]!)]
+      else (List.range (pts.size - 1)).toArray.map fun j => (pts[j]!, pts[j + 1]!)
+    cells := cells * intervals.size
+    if cells > maxCells then
+      throw s!"coverage grid exceeds {maxCells} cells; split the artifact or check it elsewhere"
+    axes := axes.push (d, intervals)
+  let inside (cell : Array (Float × Float)) (leaf : Array Float × Array Float) : Bool :=
+    (List.range axes.size).all fun k =>
+      let d := axes[k]!.1
+      leaf.1[d]! ≤ cell[k]!.1 && cell[k]!.2 ≤ leaf.2[d]!
+  for index in [:cells] do
+    let mut rest := index
+    let mut cell : Array (Float × Float) := #[]
+    for (_, intervals) in axes do
+      cell := cell.push intervals[rest % intervals.size]!
+      rest := rest / intervals.size
+    unless leaves.any (inside cell) do
+      return false
+  return true
 
 /--
 Parse and validate a `abcrown_leaf_artifact_v0_1` JSON artifact.
@@ -83,6 +132,7 @@ def checkAbCrownLeafArtifact (path : String) : IO Unit := do
   let mut okCount := 0
   let mut badCount := 0
   let mut leafIdx := 0
+  let mut boxes : Array (Array Float × Array Float) := #[]
   for leaf in leaves do
     let leafObj ← expectObject leaf "leaf"
     let region ← fromExcept <| parseEndpointBoxRegion "leaf" leafObj
@@ -95,6 +145,7 @@ def checkAbCrownLeafArtifact (path : String) : IO Unit := do
       throw <| IO.userError
         s!"leaf lower-bound/threshold length mismatch: lb={lb.size}, threshold={thr.size}"
 
+    boxes := boxes.push (region.lo, region.hi)
     let lo ← NN.Verification.Util.Tensor.requireVecOfArray "leaf.lo" inputDim region.lo
     let hi ← NN.Verification.Util.Tensor.requireVecOfArray "leaf.hi" inputDim region.hi
     let outputDim := lb.size
@@ -150,6 +201,11 @@ def checkAbCrownLeafArtifact (path : String) : IO Unit := do
   IO.println s!"[artifact] Checked {leaves.size} leaves: ok={okCount}, bad={badCount}"
   if badCount > 0 then
     throw <| IO.userError s!"Artifact failed checks for {badCount} leaves"
+  unless ← fromExcept (leavesCoverRoot root.lo root.hi boxes) do
+    throw <| IO.userError "Artifact failed: the leaf boxes do not cover the root box"
+  IO.println "[artifact] consistent: the leaves cover the root and every leaf clears its threshold."
+  IO.println <| "[artifact] The lower bounds are the producer's claims; " ++
+    "TorchLean did not recompute them."
 
 /--
 CLI entry point: `lake exe verify -- abcrown-leaf [artifact.json]`.

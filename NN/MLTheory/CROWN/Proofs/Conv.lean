@@ -69,23 +69,6 @@ private theorem foldlIndices_eq_coord_sum (s : Shape) (init : ℝ) (f : List Nat
   rw [foldlIndices_add, ← (coordMultiIndexEquiv s).sum_comp]
   simp only [coordMultiIndex_toList]
 
-private def coordFinEquiv (s : Shape) : s.Coord ≃ Fin s.size where
-  toFun := Shape.Coord.linearize
-  invFun := Shape.Coord.unlinearize
-  left_inv := Shape.Coord.unlinearize_linearize
-  right_inv := Shape.Coord.linearize_unlinearize
-
-private theorem getScalar_flatten_coord {s : Shape} (x : Tensor ℝ s) (c : s.Coord) :
-    getScalar (flattenSpec x) (Shape.Coord.linearize c) = x c := by
-  rw [getScalar_eq_apply]
-  unfold flattenSpec
-  rw [TorchLean.Tensor.Internal.Rep.reshape_apply_coordEquiv]
-  congr 1
-  apply TorchLean.Tensor.Internal.Coord.linearize_injective
-  apply Fin.ext
-  rw [reshapeCoordEquiv_linearize_val, vectorCoordinate_linearize_val]
-  rfl
-
 private theorem sum_channel_indicator (count start channel : Nat) (value : ℝ) :
     (∑ channelIndex : Fin count, if start + channelIndex.val = channel then value else 0) =
       if start ≤ channel ∧ channel < start + count then value else 0 := by
@@ -392,8 +375,8 @@ private theorem matVec_flatten_apply {s : Shape} {m : Nat}
     (matrix : Tensor ℝ [m, s.size]) (input : Tensor ℝ s) (row : Fin m) :
     getScalar (matVecMulSpec matrix (flattenSpec input)) row =
       ∑ c : s.Coord, get2 matrix row (Shape.Coord.linearize c) * input c := by
-  rw [Proofs.TensorAlgebra.getScalar_mat_vec_mul_spec, ← (coordFinEquiv s).sum_comp]
-  simp only [coordFinEquiv, Equiv.coe_fn_mk, getScalar_flatten_coord]
+  rw [Proofs.TensorAlgebra.getScalar_mat_vec_mul_spec, ← (Shape.Coord.equivFin s).sum_comp]
+  simp only [Shape.Coord.equivFin_apply, Spec.getScalar_flattenSpec_linearize]
 
 /--
 The CROWN convolution matrix and broadcast bias compute the flattened real convolution.
@@ -420,10 +403,10 @@ theorem conv_linear_matrix_add_bias_eq_grouped_conv
   intro row
   let outShape := leading.concat (Shape.ofList (outC ::
     (convOutSpatialDilated inSpatial kernel stride dilation padding paddingAfter).data.toList))
-  obtain ⟨outIndex, rfl⟩ := (coordFinEquiv outShape).surjective row
+  obtain ⟨outIndex, rfl⟩ := (Shape.Coord.equivFin outShape).surjective row
   change getScalar _ (Shape.Coord.linearize outIndex) =
     getScalar _ (Shape.Coord.linearize outIndex)
-  simp only [getScalar_add_spec, matVec_flatten_apply, getScalar_flatten_coord]
+  simp only [getScalar_add_spec, matVec_flatten_apply, Spec.getScalar_flattenSpec_linearize]
   rw [mapLeading_affine _ _ _ (groupedConvSpec_affine layer dilation paddingAfter groups)]
   congr 1
   · apply Finset.sum_congr rfl

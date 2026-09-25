@@ -2,8 +2,8 @@
 """Build the LibTorch C ABI library through the selected SDK's CMake package.
 
 Lake calls this helper even on cache hits, so changes to the SDK, toolchain, flags,
-or source contents cannot reuse an incompatible backend. Compilation belongs on
-the cluster; --resolve-home and --help only inspect paths.
+or source contents cannot reuse an incompatible backend. Compilation needs a
+Linux host with a full LibTorch SDK; --resolve-home and --help only inspect paths.
 """
 
 from __future__ import annotations
@@ -209,7 +209,8 @@ def build(args: argparse.Namespace, package: Path, home: Path) -> str:
             file_record(home / name) for name in ("version.py", "build-version", "build-hash")
             if (home / name).is_file()
         ],
-        "sdk_headers": tree_records(home / "include"),
+        # Header metadata is enough to detect an SDK swap; hashing ~10k headers costs every call.
+        "sdk_headers": tree_records(home / "include", contents=False),
         # SDK DSOs can be several GB each. Replacement metadata, including ctime and
         # resolved symlinks, is tracked without rereading every DSO on every Lake call.
         "sdk_libraries": tree_records(home / "lib", contents=False),
@@ -219,10 +220,6 @@ def build(args: argparse.Namespace, package: Path, home: Path) -> str:
         "configuration": configuration,
         "sources": [file_record(path) for path in sorted(source.iterdir())
                     if path.suffix in (".cpp", ".h", ".hpp")],
-        "common_headers": tree_records(package / "csrc/cuda/common"),
-        "conv_pool_headers": [
-            file_record(path) for path in sorted((package / "csrc/cuda/conv_pool").glob("*.h"))
-        ],
     }
     build_root = Path(args.build_dir).resolve() / "libtorch"
     build_root.mkdir(parents=True, exist_ok=True)

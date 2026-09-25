@@ -83,9 +83,11 @@ def tdResidualInterval
 /--
 Outward-rounded interval enclosure for the PPO clipped surrogate objective from a precomputed ratio.
 
-This is a **conservative hull enclosure**: it encloses both of the candidate products
-`ratio * A` and `clippedRatio * A`, then returns their interval hull. The definition is simple and
-still provides a useful non-finite/divergence detector for the PPO objective.
+The clipping thresholds `1 - clipEps` and `1 + clipEps` are themselves outward-rounded intervals,
+so the clipped ratio is enclosed even when the exact real threshold is not a binary32 value.
+Clipping is monotone in the ratio and in both thresholds, so its range over the threshold
+intervals is exact at the endpoints. The result is the hull of the enclosures of `ratio * A` and
+`clip ratio * A`, which contains the minimum PPO takes. A NaN input yields `whole`.
 
 Reference:
 - Schulman et al., "Proximal Policy Optimization Algorithms" (2017):
@@ -93,21 +95,20 @@ Reference:
 -/
 def ppoClippedObjectiveFromRatioInterval
     (ratio advantage clipEps : Binary 8 23) : Interval (Binary 8 23) :=
-  let one : Binary 8 23 := (1 : Binary 8 23)
-  -- Clipping thresholds are computed as float32 values (round-to-nearest). The main goal of this
-  -- enclosure is to bound the subsequent products.
-  let lo : Binary 8 23 := ExecFloat.sub one clipEps
-  let hi : Binary 8 23 := ExecFloat.add one clipEps
-  let clippedRatio : Binary 8 23 :=
-    min hi
-      (max lo ratio)
+  let one : Interval (Binary 8 23) := Binary.Interval.point (1 : Binary 8 23)
+  let eps : Interval (Binary 8 23) := Binary.Interval.point clipEps
+  let lo : Interval (Binary 8 23) := Binary.Interval.sub one eps
+  let hi : Interval (Binary 8 23) := Binary.Interval.add one eps
+  let clippedRatio : Interval (Binary 8 23) :=
+    Binary.Interval.ofBounds
+      (min hi.lo (max lo.lo ratio))
+      (min hi.hi (max lo.hi ratio))
   let unclipped : Interval (Binary 8 23) :=
     Binary.Interval.mul
       (Binary.Interval.point ratio)
       (Binary.Interval.point advantage)
   let clipped : Interval (Binary 8 23) :=
-    Binary.Interval.mul
-      (Binary.Interval.point clippedRatio)
+    Binary.Interval.mul clippedRatio
       (Binary.Interval.point advantage)
   Binary.Interval.hull unclipped clipped
 

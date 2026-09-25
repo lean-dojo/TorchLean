@@ -285,23 +285,25 @@ instantiate through equal identity-map terms.
 /--
 Native implementation of leading-axis stacking.
 
-Materializing the family first ensures that `components` is evaluated once per
-leading index. Without this cache, constructing each scalar in the output could
-rebuild its entire component tensor.
+Each component is evaluated once, in ascending order, and its buffer is copied into the output
+with one `appendSlice`. The size check always succeeds because every component has
+`Shape.size s` entries; its fallback is the reference definition.
 -/
-@[inline] unsafe def stackFast {α : Type u} [Storage α] {n : Nat} {s : Shape}
+@[inline] unsafe def stackFast {α : Type u} [storage : Storage α] {n : Nat} {s : Shape}
     (components : Fin n → Rep α s) : Rep α (n :: s) :=
   if Shape.size s = 0 then
-    -- An empty output needs no component cache, even when the leading extent is huge.
+    -- An empty output needs no component evaluation, even when the leading extent is huge.
     ofFn fun coordinate => components coordinate.1 coordinate.2
   else
-    let cached : Array (Rep α s) := Array.ofFn components
-    have hCachedSize : cached.size = n := by
-      simp only [cached, Array.size_ofFn]
-    ofFn (s := n :: s) fun coordinate =>
-      let cachedIndex : Fin cached.size :=
-        Fin.cast hCachedSize.symm coordinate.1
-      (cached[cachedIndex.val]'cachedIndex.isLt) coordinate.2
+    let buffer := Fin.foldl n
+      (fun output component =>
+        let tensor := components component
+        storage.appendSlice tensor.buffer 0 (Shape.size s) output)
+      (storage.emptyWithCapacity (n * Shape.size s))
+    if hSize : storage.size buffer = Shape.size (n :: s) then
+      ⟨buffer, hSize⟩
+    else
+      ofFn fun coordinate => components coordinate.1 coordinate.2
 
 /--
 Place a finite family of identically shaped tensors along a new leading axis.
@@ -333,6 +335,79 @@ def unstack {α : Type u} [Storage α] {n : Nat} {s : Shape}
     (coordinate : Coord s) :
     unstack tensor component coordinate = tensor (component, coordinate) := by
   simp only [unstack, get_ofFn]
+
+/-- A tensor read is the corresponding entry of the ordinary array observation. -/
+theorem get_eq_toArray_getElem {α : Type u} [storage : Storage α] {s : Shape}
+    (x : Rep α s) (i : Coord s)
+    (h : (Coord.linearize i).val < (storage.toArray x.buffer).size) :
+    x i = (storage.toArray x.buffer)[(Coord.linearize i).val]'h :=
+  (storage.toArray_get x.buffer _
+    (by simpa only [x.size_eq] using (Coord.linearize i).isLt) h).symm
+
+/-- Component `i` of a leading-axis stack ends inside the buffer. -/
+theorem unstackSlice_end_le {n : Nat} {s : Shape} (component : Fin n) :
+    Shape.size s * component.val + Shape.size s ≤ Shape.size s * n := by
+  have hStep := Nat.mul_le_mul_left (Shape.size s) (Nat.succ_le_of_lt component.isLt)
+  rw [Nat.mul_succ] at hStep
+  exact hStep
+
+/-- The ordinary array observation of a leading-axis tensor has the product length. -/
+theorem toArray_size_cons {α : Type u} [storage : Storage α] {n : Nat} {s : Shape}
+    (tensor : Rep α (n :: s)) :
+    (storage.toArray tensor.buffer).size = Shape.size s * n := by
+  rw [storage.toArray_size, tensor.size_eq]
+  exact Nat.mul_comm _ _
+
+/-- Buffer of `unstackSlice`: the component's contiguous interval, copied into a fresh buffer. -/
+@[inline] def unstackSliceBuffer {α : Type u} [storage : Storage α] {n : Nat} {s : Shape}
+    (tensor : Rep α (n :: s)) (component : Fin n) : storage.Buffer :=
+  storage.appendSlice tensor.buffer (Shape.size s * component.val)
+    (Shape.size s * component.val + Shape.size s)
+    (storage.emptyWithCapacity (Shape.size s))
+
+/-- The copied interval is the matching extract of the source observation. -/
+theorem toArray_unstackSliceBuffer {α : Type u} [storage : Storage α] {n : Nat} {s : Shape}
+    (tensor : Rep α (n :: s)) (component : Fin n) :
+    storage.toArray (unstackSliceBuffer tensor component) =
+      (storage.toArray tensor.buffer).extract (Shape.size s * component.val)
+        (Shape.size s * component.val + Shape.size s) := by
+  rw [unstackSliceBuffer, storage.toArray_appendSlice, storage.toArray_emptyWithCapacity,
+    Array.emptyWithCapacity_eq, Array.empty_append]
+
+/--
+Leading-axis slice that copies the component's contiguous interval with one `appendSlice`.
+
+`unstack` reads each entry through its coordinate, which linearizes the coordinate for every
+scalar. The row-major layout puts component `i` at `[i * size s, (i + 1) * size s)`, so compiled
+code copies that interval directly.
+-/
+def unstackSlice {α : Type u} [storage : Storage α] {n : Nat} {s : Shape}
+    (tensor : Rep α (n :: s)) (component : Fin n) : Rep α s where
+  buffer := unstackSliceBuffer tensor component
+  size_eq := by
+    have hEnd := unstackSlice_end_le (s := s) component
+    rw [← storage.toArray_size, toArray_unstackSliceBuffer, Array.size_extract,
+      toArray_size_cons]
+    omega
+
+/-- The contiguous-copy slice agrees with the coordinate definition of `unstack`. -/
+@[csimp] theorem unstack_eq_unstackSlice : @unstack = @unstackSlice := by
+  funext α storage n s tensor component
+  apply ext
+  intro coordinate
+  have hEnd := unstackSlice_end_le (s := s) component
+  have hFlat := (Coord.linearize coordinate).isLt
+  have hSource := toArray_size_cons tensor
+  have hSlice := toArray_unstackSliceBuffer tensor component
+  rw [unstack_apply,
+    get_eq_toArray_getElem tensor _ (by rw [hSource, Coord.linearize_cons_val]; omega),
+    get_eq_toArray_getElem (unstackSlice tensor component) coordinate
+      (by
+        change _ < (storage.toArray (unstackSliceBuffer tensor component)).size
+        rw [hSlice, Array.size_extract, hSource]
+        omega)]
+  change _ = (storage.toArray (unstackSliceBuffer tensor component))[_]'_
+  simp only [hSlice, Array.getElem_extract, Coord.linearize_cons_val, Nat.add_comm]
 
 /-- Every leading-axis slice of a constant tensor is the same constant tensor. -/
 @[simp, grind =] theorem unstack_const {α : Type u} [Storage α]

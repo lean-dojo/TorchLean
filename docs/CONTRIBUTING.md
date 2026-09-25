@@ -30,8 +30,7 @@ scripts/lake.sh -Kcuda=true build nn_tests_suite
 TORCHLEAN_REQUIRE_CUDA=1 scripts/lake.sh -Kcuda=true test
 ```
 
-The GPU implementation lives in `csrc/libtorch`; `csrc/cuda` retains shared headers and CPU
-stubs. TorchLean owns the tape and calls ATen for forward operations and their VJPs. See
+The GPU implementation lives in `csrc/libtorch`. TorchLean owns the tape and calls ATen for forward operations and their VJPs. See
 [native build instructions](../scripts/README.md#libtorch-cuda-build) for SDK selection and
 compiler requirements. CPU checks do not exercise the GPU backend.
 

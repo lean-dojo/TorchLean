@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Graph.Engine.Enclosure
+public import NN.MLTheory.CROWN.Extras.IntervalLemmas
 public import NN.Proofs.Tensor.Basic.Folds
 
 /-!
@@ -29,6 +30,7 @@ namespace NN.MLTheory.CROWN.Graph.LayerNormDirected
 open Spec TorchLean
 open TorchLean.Tensor
 open NN.MLTheory.CROWN
+open NN.MLTheory.CROWN.IntervalLemmas (value_min2 value_max2)
 open scoped BigOperators
 
 noncomputable section
@@ -37,26 +39,6 @@ variable {α : Type} [TorchLean.Storage α] [Context α] [BoundOps α]
   [LawfulBoundOps α]
 
 local notation "value" => LawfulBoundOps.toReal (α := α)
-
-/-- Endpoint minimum selects the smaller interpreted real value. -/
-theorem value_min2 (a b : α) :
-    value (BoundOps.min2 a b) = min (value a) (value b) := by
-  by_cases h : b < a
-  · have hreal := (LawfulBoundOps.lt_iff b a).mp h
-    simp [BoundOps.min2, h, min_eq_right hreal.le]
-  · have hreal : value a ≤ value b :=
-      le_of_not_gt fun hlt => h ((LawfulBoundOps.lt_iff b a).mpr hlt)
-    simp [BoundOps.min2, h, min_eq_left hreal]
-
-/-- Endpoint maximum selects the larger interpreted real value. -/
-theorem value_max2 (a b : α) :
-    value (BoundOps.max2 a b) = max (value a) (value b) := by
-  by_cases h : b < a
-  · have hreal := (LawfulBoundOps.lt_iff b a).mp h
-    simp [BoundOps.max2, h, max_eq_left hreal.le]
-  · have hreal : value a ≤ value b :=
-      le_of_not_gt fun hlt => h ((LawfulBoundOps.lt_iff b a).mpr hlt)
-    simp [BoundOps.max2, h, max_eq_right hreal]
 
 /-- A scalar square lies below the larger square of any enclosing interval's endpoints. -/
 theorem square_le_max {lo x hi : ℝ} (hlo : lo ≤ x) (hhi : x ≤ hi) :
@@ -74,7 +56,7 @@ The directed square interval used by the LayerNorm variance stage encloses every
 The zero interpretation is stated explicitly because the base directed-arithmetic class
 contains order and operation laws, but does not specify the interpretation of scalar literals.
 -/
-theorem square_encloses (hzero : value (0 : α) = 0)
+theorem square_encloses
     {lo hi : α} {x : ℝ} (hlo : value lo ≤ x) (hhi : x ≤ value hi) :
     value
         (if !(decide (0 < lo)) && !(decide (hi < 0)) then (0 : α)
@@ -84,7 +66,7 @@ theorem square_encloses (hzero : value (0 : α) = 0)
   constructor
   · by_cases hl : (0 : α) < lo
     · have hlreal : 0 < value lo := by
-        simpa only [hzero] using (LawfulBoundOps.lt_iff 0 lo).mp hl
+        simpa only [(LawfulBoundOps.toReal_zero (α := α))] using (LawfulBoundOps.lt_iff 0 lo).mp hl
       have hselect :
           (if !(decide (0 < lo)) && !(decide (hi < 0)) then (0 : α)
            else BoundOps.min2 (BoundOps.mulDown lo lo) (BoundOps.mulDown hi hi)) =
@@ -95,7 +77,8 @@ theorem square_encloses (hzero : value (0 : α) = 0)
         ((LawfulBoundOps.mulDown_le lo lo).trans (mul_self_le_mul_self hlreal.le hlo))
     · by_cases hh : hi < (0 : α)
       · have hhreal : value hi < 0 := by
-          simpa only [hzero] using (LawfulBoundOps.lt_iff hi 0).mp hh
+          simpa only [LawfulBoundOps.toReal_zero (α := α)] using
+            (LawfulBoundOps.lt_iff hi 0).mp hh
         have hselect :
             (if !(decide (0 < lo)) && !(decide (hi < 0)) then (0 : α)
              else BoundOps.min2 (BoundOps.mulDown lo lo) (BoundOps.mulDown hi hi)) =
@@ -106,7 +89,7 @@ theorem square_encloses (hzero : value (0 : α) = 0)
           have h := mul_self_le_mul_self (neg_nonneg.mpr hhreal.le) (neg_le_neg hhi)
           simpa only [neg_mul_neg] using h
         exact (min_le_right _ _).trans ((LawfulBoundOps.mulDown_le hi hi).trans hsquare)
-      · simpa [hl, hh, hzero] using mul_self_nonneg x
+      · simpa [hl, hh, (LawfulBoundOps.toReal_zero (α := α))] using mul_self_nonneg x
   · rw [value_max2]
     exact (square_le_max hlo hhi).trans
       (max_le_max (LawfulBoundOps.le_mulUp lo lo) (LawfulBoundOps.le_mulUp hi hi))

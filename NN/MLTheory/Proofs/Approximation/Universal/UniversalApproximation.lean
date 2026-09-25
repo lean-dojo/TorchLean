@@ -184,7 +184,7 @@ qualitative existence theorem and the theorem with an explicit width. -/
   theorem relu_hinge_approximation_Icc_of_mesh {f : ℝ → ℝ} {a b L ε : ℝ} {N : ℕ}
       (h_ab : a < b) (hL : 0 < L)
       (h_lip : ∀ x ∈ Set.Icc a b, ∀ y ∈ Set.Icc a b, |f x - f y| ≤ L * |x - y|)
-      (hNpos_nat : 0 < N) (hε : 0 < ε)
+      (hNpos_nat : 0 < N)
       (hmesh : 2 * L * ((b - a) / (N : ℝ)) < ε) :
       ∃ (t : Fin N → ℝ) (c : Fin N → ℝ),
         ∀ x ∈ Set.Icc a b, |f x - hingeFun N t c (f a) x| < ε := by
@@ -196,6 +196,7 @@ qualitative existence theorem and the theorem with an explicit width. -/
     have hδpos : 0 < δ := div_pos hba hNpos
     have hδnonneg : 0 ≤ δ := le_of_lt hδpos
     have h2mesh : 2 * L * δ < ε := hmesh
+    have hε : 0 < ε := (mul_pos (mul_pos two_pos hL) hδpos).trans h2mesh
 
     let grid : ℕ → ℝ := fun k => a + (k : ℝ) * δ
     have hgrid0 : grid 0 = a := by simp [grid]
@@ -509,6 +510,45 @@ qualitative existence theorem and the theorem with an explicit width. -/
         exact lt_of_le_of_lt this h2mesh
       simpa [hhinge] using hfx
 
+/-- Explicit hidden width for the 1D Lipschitz ReLU approximation construction. -/
+noncomputable def reluApproximationWidth (L a b ε : ℝ) : ℕ :=
+  Nat.ceil (2 * L * (b - a) / ε) + 1
+
+/-- The explicit ReLU approximation width is always positive. -/
+theorem relu_approximation_width_pos (L a b ε : ℝ) : 0 < reluApproximationWidth L a b ε := by
+  simp [reluApproximationWidth]
+
+/--
+The chosen width makes the mesh-size error term smaller than the target accuracy.
+
+This is the arithmetic heart of the explicit-rate theorem: the ceiling construction ensures
+$N>2L(b-a)/\varepsilon$, hence $2L(b-a)/N<\varepsilon$.
+-/
+theorem two_mul_mul_sub_div_relu_approximation_width_lt {L a b ε : ℝ} (hε : 0 < ε) :
+    (2 * L * (b - a)) / (reluApproximationWidth L a b ε : ℝ) < ε := by
+  classical
+  let N : ℕ := reluApproximationWidth L a b ε
+  have hNpos_nat : 0 < N := relu_approximation_width_pos L a b ε
+  have hNpos : 0 < (N : ℝ) := by exact_mod_cast hNpos_nat
+  have hr_lt : (2 * L * (b - a) / ε : ℝ) < (N : ℝ) := by
+    have hr_le :
+        (2 * L * (b - a) / ε : ℝ) ≤ (Nat.ceil (2 * L * (b - a) / ε) : ℝ) :=
+      Nat.le_ceil _
+    have : (2 * L * (b - a) / ε : ℝ) < (Nat.ceil (2 * L * (b - a) / ε) : ℝ) + 1 := by
+      linarith
+    simpa [N, reluApproximationWidth, Nat.cast_add, Nat.cast_one, add_assoc] using this
+  have hmul : ε * (2 * L * (b - a) / ε) < ε * (N : ℝ) := mul_lt_mul_of_pos_left hr_lt hε
+  have hεne : (ε : ℝ) ≠ 0 := ne_of_gt hε
+  have hleft : ε * (2 * L * (b - a) / ε) = 2 * L * (b - a) := by
+    calc
+      ε * (2 * L * (b - a) / ε) = ε * (2 * L * (b - a)) / ε := by
+        simp [mul_div_assoc']
+      _ = 2 * L * (b - a) := by
+        simpa using (mul_div_cancel_left₀ (2 * L * (b - a)) hεne)
+  have hnum : 2 * L * (b - a) < ε * (N : ℝ) := by
+    simpa [hleft] using hmul
+  exact (div_lt_iff₀ hNpos).2 (by simpa [mul_comm, mul_assoc] using hnum)
+
 /--
 1D Universal Approximation (ReLU, one hidden layer).
 
@@ -523,44 +563,12 @@ $\operatorname{ReLU}(x-t_i)$.
       ∀ ε > 0, ∃ (hidDim : ℕ) (t : Fin hidDim → ℝ) (c : Fin hidDim → ℝ),
         ∀ x ∈ Set.Icc a b, |f x - hingeFun hidDim t c (f a) x| < ε := by
     intro ε hε
-    classical
-    have hba : 0 < b - a := sub_pos.mpr h_ab
-    have hεhalf : 0 < ε / 2 := by nlinarith
-    have hprod : 0 < L * (b - a) := by nlinarith [hL, hba]
-    have hε' : 0 < (ε / 2) / (L * (b - a)) := div_pos hεhalf hprod
-    rcases exists_nat_one_div_lt hε' with ⟨n, hn⟩
-    let N : ℕ := n + 1
-    have hNpos_nat : 0 < N := Nat.succ_pos n
-    let δ : ℝ := (b - a) / (N : ℝ)
-    have hmesh : L * δ < ε / 2 := by
-      have hn' :
-          (L * (b - a)) * (1 / ((n : ℝ) + 1)) <
-            (L * (b - a)) * ((ε / 2) / (L * (b - a))) :=
-        mul_lt_mul_of_pos_left hn hprod
-      have hnonzero : (L * (b - a)) ≠ 0 := ne_of_gt hprod
-      have hright : (L * (b - a)) * ((ε / 2) / (L * (b - a))) = ε / 2 := by
-        calc
-          (L * (b - a)) * ((ε / 2) / (L * (b - a))) =
-              (L * (b - a)) * (ε / 2) / (L * (b - a)) := by
-            simp [mul_div_assoc']
-          _ = ε / 2 := by
-            simpa using (mul_div_cancel_left₀ (ε / 2) hnonzero)
-      have hleft : (L * (b - a)) * (1 / ((n : ℝ) + 1)) = (L * (b - a)) / ((n : ℝ) + 1) := by
-        simpa using (mul_one_div (L * (b - a)) ((n : ℝ) + 1))
-      have hmesh' : L * (b - a) / ((n : ℝ) + 1) < ε / 2 := by
-        calc
-          L * (b - a) / ((n : ℝ) + 1)
-              = L * (b - a) * (1 / ((n : ℝ) + 1)) := by
-                rw [← hleft]
-          _ < L * (b - a) * ((ε / 2) / (L * (b - a))) := hn'
-          _ = ε / 2 := hright
-      have hmesh'' : L * (b - a) / (N : ℝ) < ε / 2 := by
-        simpa [N, Nat.cast_add, Nat.cast_one] using hmesh'
-      simpa [δ, mul_div_assoc'] using hmesh''
-    have h2mesh : 2 * L * δ < ε := by nlinarith [hmesh]
     obtain ⟨t, c, happrox⟩ :=
-      relu_hinge_approximation_Icc_of_mesh h_ab hL h_lip hNpos_nat hε h2mesh
-    exact ⟨N, t, c, happrox⟩
+      relu_hinge_approximation_Icc_of_mesh h_ab hL h_lip
+        (relu_approximation_width_pos L a b ε)
+        (by simpa [mul_div_assoc', mul_assoc] using
+          two_mul_mul_sub_div_relu_approximation_width_lt (L := L) (a := a) (b := b) hε)
+    exact ⟨_, t, c, happrox⟩
 
 /--
 1D Universal Approximation (ReLU, one hidden layer), stated as an existence theorem for a 2-layer

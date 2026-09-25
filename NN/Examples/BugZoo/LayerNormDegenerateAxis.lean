@@ -9,7 +9,8 @@ module
 public import NN.Tensor
 public import NN.Spec.Layers.Normalization
 public import NN.Spec.Core.Scalar
-public import NN.Core.Numeric.Real -- shake: keep
+public import NN.Core.Numeric -- shake: keep
+public import NN.Core.Numeric.Angle.Real -- shake: keep
 
 /-!
 # BugZoo: LayerNorm on a one-feature axis

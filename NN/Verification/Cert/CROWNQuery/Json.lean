@@ -8,6 +8,7 @@ module
 
 public import NN.Verification.Cert.CROWNQuery
 public import NN.Verification.Cert.RationalJson
+public import NN.API.CLI.Parser
 
 /-!
 # JSON acceptance implies output-query safety
@@ -91,5 +92,30 @@ theorem acceptsText_sound (source : String) (h : acceptsText source = true) :
   | ok j =>
       obtain ⟨n, m, q, hd, hs⟩ := acceptsJson_sound j (by simpa [hp] using h)
       exact ⟨j, n, m, q, rfl, hd, hs⟩
+
+/-- Why `acceptsText` rejected a document, for error messages. The verdict is `acceptsText`. -/
+def rejectionReason (source : String) : String :=
+  match Json.parse source with
+  | .error e => s!"invalid JSON: {e}"
+  | .ok j =>
+      match decode j with
+      | .error e => e
+      | .ok _ => "the recomputed bounds do not prove the query"
+
+/-- CLI entry point: `lake exe verify -- crown-query <query.json>`. -/
+def run (args : List String) : IO Unit := do
+  let usage := "Usage:\n  lake exe verify -- crown-query <path/to/query.json>"
+  if TorchLean.CLI.hasHelp args then
+    IO.println usage
+    return
+  let (path, rest) ← IO.ofExcept <| TorchLean.CLI.takePositional? (TorchLean.CLI.dropDashDash args)
+  IO.ofExcept <| TorchLean.CLI.checkNoArgs rest
+  let some path := path
+    | throw <| IO.userError s!"missing query path\n\n{usage}"
+  let source ← IO.FS.readFile path
+  if acceptsText source then
+    IO.println s!"[crown-query] {path}: proved for every real input in the box (acceptsText_sound)"
+  else
+    throw <| IO.userError s!"[crown-query] {path}: not proved: {rejectionReason source}"
 
 end NN.Verification.CROWNQuery

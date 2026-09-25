@@ -283,7 +283,7 @@ def openSession {σ τ : Shape} {α β : Type}
   let cast (sample : Sample.Supervised β σ τ) : Sample.Supervised α σ τ :=
     Sample.map (Tensor.map toRuntime) (Tensor.map toRuntime) sample
   let predict (input : Tensor β σ) : IO (Tensor β τ) := do
-    readTensor (← runner.forward (Tensor.map toRuntime input) (mode := some .eval))
+    readTensor (← runner.forward (Tensor.map toRuntime input) (mode := .eval))
   let readState : IO (nn.State β (nn.stateShapes trainer.model)) := do
     let values ← readStatePack readTensor (nn.State.Internal.toTensorPack (← runner.state))
     pure (nn.State.Internal.fromTensorPack values)
@@ -315,7 +315,7 @@ def openSession {σ τ : Shape} {α β : Type}
     (fun batch => stepper.step (batch := true) (batch.map cast))
     stepper.steps
     (fun sample => do
-      readScalar (← runner.loss (cast sample) (mode := some .eval)))
+      readScalar (← runner.loss (cast sample) (mode := .eval)))
     predict
     readState
     (fun state => runner.setState (state.map (Tensor.map toRuntime)))

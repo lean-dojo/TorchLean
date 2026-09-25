@@ -12,8 +12,8 @@ public import NN.Tests.Runtime.Cuda.Utils
 /-!
 # CUDA kernel coverage: diagonal selective scan
 
-This checks the low-level buffer primitive backing the first Mamba/SSM runtime path. The test runs
-both with real CUDA (`lake test -K cuda=true`) and with the CPU stub backend.
+This checks the low-level buffer primitive backing the first Mamba/SSM runtime path under
+`lake test -K cuda=true`.
 -/
 
 @[expose] public section

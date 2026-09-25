@@ -30,8 +30,8 @@ scripts/docs/build_site.sh
 
 ## CPU checks
 
-The default build provides `pureLean`, `portableCPU`, and CPU buffer implementations, including
-attention in `torchlean_cuda_kernels_stub.c`. It needs no LibTorch SDK or CUDA toolkit.
+The default build provides the `pureLean` and `portableCPU` runtimes. It needs no LibTorch SDK or
+CUDA toolkit, and the GPU buffer symbols fail with a message to rebuild.
 Hosted CI selects `cuda=false` explicitly;
 its results establish CPU behavior and do not establish GPU correctness.
 
@@ -49,8 +49,11 @@ installing the CPU requirements into a GPU SDK environment can replace its CUDA 
 
 ## LibTorch CUDA build
 
-Run all Lean/native compilation and execution for the migration in the cluster. Host checks
-are limited to source inspection, Python checks, and shell syntax.
+The CUDA build needs a Linux host with a CUDA-capable GPU and a full LibTorch SDK. This tree was
+tested locally against pip torch 2.13.0+cu130 with CUDA 13.0 on A100, and previously against a
+PyTorch 2.12 nightly. The backend uses a few internal ATen entry points (the fused attention
+selector and its forward and backward kernels), so other SDK versions may fail to compile or need
+the GPU regressions rerun.
 
 `cuda=true` selects the complete LibTorch backend. The SDK root must contain `include/`,
 `lib/`, and `share/cmake/Torch/TorchConfig.cmake`. A CUDA-enabled Python PyTorch installation can
@@ -72,7 +75,7 @@ TORCHLEAN_REQUIRE_CUDA=1 scripts/lake.sh -Kcuda=true exe libtorch_sdpa_test
 scripts/checks/check.sh --libtorch-home "$TORCHLEAN_LIBTORCH_HOME" --ci-all
 ```
 
-`TORCHLEAN_REQUIRE_CUDA=1` rejects CPU stubs and missing CUDA devices.
+`TORCHLEAN_REQUIRE_CUDA=1` rejects builds without LibTorch and missing CUDA devices.
 `check.sh --cuda`, its SDK/toolkit options, and the sanitizer wrapper enable this mode
 automatically. GPU execution needs a supported visible device; SDK configuration may also probe
 visible devices. TorchLean builds six ordinary C++ translation units and has no independent
@@ -103,7 +106,7 @@ different backends. `--torchlean-build-dir` prints the selected path without bui
 An existing real `.lake/build` directory must be moved aside by its owner before using the
 wrapper; the wrapper will not delete it.
 
-For an early C++ build before the full Lean build, run the helper directly in the cluster:
+For an early C++ build before the full Lean build, run the helper directly:
 
 ```bash
 export TORCHLEAN_LEAN_PREFIX="$(lean --print-prefix)"

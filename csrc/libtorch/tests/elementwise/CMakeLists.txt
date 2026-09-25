@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 project(TorchLeanElementwiseRegression LANGUAGES CXX)
 
-# Configure, compile and run this project only in the cluster.
+# Configure against the same LibTorch SDK and Lean toolchain as the production backend build.
 # Link the production backend so that the tests exercise its actual C ABI and invoke guard.
 foreach(required TORCHLEAN_LIBTORCH_HOME TORCHLEAN_LEAN_PREFIX TORCHLEAN_BACKEND_LIBRARY)
   if(NOT DEFINED ${required})

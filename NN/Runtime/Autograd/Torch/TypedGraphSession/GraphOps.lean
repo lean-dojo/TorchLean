@@ -69,7 +69,7 @@ def commitGraphM {α : Type} [TorchLean.Storage α]
   let st0 ← s.state.get
   let r ← okOrThrow (k (Γ := st0.Γ) (ss := st0.ss) st0.x st0.nat st0.g)
   let (b, st1) := r
-  s.state.set { st1 with leafMetadata := st0.leafMetadata }
+  s.setState { st1 with leafMetadata := st0.leafMetadata }
   pure <| StampRefIdentity.stamp (← s.currentRefIdentity) b
 
 /--

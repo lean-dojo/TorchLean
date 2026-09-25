@@ -8,6 +8,7 @@ module
 
 public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Main.Extraction
 public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.IntervalLemmas
+public import NN.MLTheory.CROWN.Extras.IntervalLemmas
 
 /-!
 # Binary Matrix Product Enclosures
@@ -42,13 +43,6 @@ private theorem enclosed_flat_read {B : FlatBox ℝ} {v : Val}
       castDimScalar_self] using h ⟨index, hi⟩
   · simp [get_at_or_zero_dim_cons, hi]
 
-/-- The four directed endpoint products enclose real multiplication. -/
-theorem intervalMul_encloses {lx ux ly uy x y : ℝ}
-    (hx : lx ≤ x) (hx' : x ≤ ux) (hy : ly ≤ y) (hy' : y ≤ uy) :
-    (intervalMul lx ux ly uy).1 ≤ x * y ∧ x * y ≤ (intervalMul lx ux ly uy).2 := by
-  simpa [intervalMul, min2_eq_min, max2_eq_max, BoundOps.mulDown, BoundOps.mulUp]
-    using interval_mul_bounds hx hx' hy hy'
-
 /-- Simultaneously accumulate lower endpoints, values, and upper endpoints in list order. -/
 private theorem ordered_sum_encloses (indices : List Nat)
     (bounds : Nat → ℝ × ℝ) (value : Nat → ℝ)
@@ -76,7 +70,7 @@ theorem binaryMatmulBox_encloses (dims : NN.IR.OpContracts.MatmulDims)
     Tensor.getScalar_ofFn, BoundOps.addDown, BoundOps.addUp]
   apply ordered_sum_encloses
   · intro inner
-    exact intervalMul_encloses
+    exact NN.MLTheory.CROWN.IntervalLemmas.intervalMul_encloses (α := ℝ)
       (enclosed_flat_read hx (dims.leftIndex output.val inner)).1
       (enclosed_flat_read hx (dims.leftIndex output.val inner)).2
       (enclosed_flat_read hy (dims.rightIndex output.val inner)).1

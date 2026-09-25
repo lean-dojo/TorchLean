@@ -30,7 +30,7 @@ spec-focused and should avoid importing the full public API.
   - `Tensor/Core.lean`: proof-facing operations and laws for the canonical `TorchLean.Tensor`.
   - `TensorOps.lean`, `TensorReductionShape.lean`: elementwise ops, reductions, reshapes,
     broadcasts, concat/slice, and axis manipulation.
-  - `Complex.lean` and `TensorGrad.lean`: FFT/FNO support and gradient helper specs.
+  - `Complex.lean`: complex-number support for FFT/FNO specs.
   - `Random.lean`: deterministic `Spec.Random` key and sampling helpers.
 - `Layers/`: forward and backward specs for common layers: linear, convolution, attention,
   FlashAttention-style fused attention, normalization, pooling, embeddings, recurrent layers,

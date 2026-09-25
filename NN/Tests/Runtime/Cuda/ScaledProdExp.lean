@@ -18,8 +18,6 @@ to float32, then applies two ATen multiplications followed by the exponential.
 This test checks bit-identical results against `exp(((full c) · x) · y)` on finite fixtures.
 Both expressions use the same left association. The comparison checks the scalar conversion
 and composition through the buffer API, without assuming a particular device kernel.
-
-The same assertions run against the CPU stub and the native CUDA backend.
 -/
 
 @[expose] public section

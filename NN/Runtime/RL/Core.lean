@@ -53,7 +53,8 @@ structure Transition (α : Type) [TorchLean.Storage α]
   reward : α
   /-- Next state `s_{t+1}`. -/
   nextState : Tensor α σ
-  /-- Episode termination flag. -/
+  /-- Whether `nextState` is terminal. TD targets drop the bootstrap term when this is set, so
+  set it only for true termination; a time-limit truncation should leave it `false`. -/
   done : Bool
 
 /-- Squared-error helper used by critic / TD objectives. -/

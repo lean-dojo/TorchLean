@@ -577,13 +577,7 @@ theorem encloses_linear_signSplit {m n : Nat}
 
 /-! ## ReLU relaxations used by α-CROWN -/
 
-/-- The graph transfer uses the scalar CROWN upper bound at each coordinate. -/
-theorem relu_relax_scalar_upper_real_runtime
-  (l u x : ℝ)
-  (hlx : l ≤ x) (hxu : x ≤ u) :
-  let rp := NN.MLTheory.CROWN.Runtime.Ops.ReLU.relaxScalar (α:=ℝ) l u
-  Activation.Math.reluSpec (α:=ℝ) x ≤ rp.slope * x + rp.bias := by
-  exact NN.MLTheory.CROWN.Proofs.relu_relax_scalar_upper_real_runtime l u x hlx hxu
+export NN.MLTheory.CROWN.Proofs (relu_relax_scalar_upper_real_runtime)
 
 /-- The upper ReLU relaxation has nonnegative slope, in all three phase branches.
 

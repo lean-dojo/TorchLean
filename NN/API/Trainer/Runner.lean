@@ -32,9 +32,9 @@ namespace Internal
 /--
 A checked model instantiated under one runtime scalar.
 
-This bundles the imperative runtime objective (parameters and buffers stored in refs), reusable
-no-gradient forward and evaluation-loss evaluators over the same live state, and the current mode.
-Training forwards update their buffers; evaluation forwards leave them unchanged.
+This bundles the imperative runtime objective (parameters and buffers stored in refs) and reusable
+no-gradient forward and evaluation-loss evaluators over the same live state. Training forwards
+update their buffers; evaluation forwards leave them unchanged.
 -/
 structure Runner (α : Type) [TorchLean.Storage α] [Context α]
     {σ τ : Spec.Shape} (model : TorchLean.nn.Sequential σ τ) where
@@ -48,11 +48,10 @@ structure Runner (α : Type) [TorchLean.Storage α] [Context α]
   private evaluationLossEvaluator :
     Runtime.Autograd.Model.Module.ObjectiveEvaluator α Unit
       (TorchLean.nn.stateShapes model) [σ, τ]
-  private modeRef : IO.Ref nn.Mode
 
 namespace Runner
 
-/-- Construct a runner from its objective, evaluators, and mode cell. -/
+/-- Construct a runner from its objective and evaluators. -/
 opaque create {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
     (runtimeObjective :
@@ -63,10 +62,9 @@ opaque create {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
       Runtime.Autograd.Model.Module.Evaluator α Unit (TorchLean.nn.stateShapes model) [σ] [] τ)
     (evaluationLossEvaluator :
       Runtime.Autograd.Model.Module.ObjectiveEvaluator α Unit
-        (TorchLean.nn.stateShapes model) [σ, τ])
-    (modeRef : IO.Ref nn.Mode) :
+        (TorchLean.nn.stateShapes model) [σ, τ]) :
     Runner α model :=
-  ⟨runtimeObjective, trainingPredictor, evaluationPredictor, evaluationLossEvaluator, modeRef⟩
+  ⟨runtimeObjective, trainingPredictor, evaluationPredictor, evaluationLossEvaluator⟩
 
 /-- The executable runtime module behind a runner. -/
 opaque objectiveModule {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
@@ -74,7 +72,7 @@ opaque objectiveModule {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ 
     (runner : Runner α model) :
     TorchLean.Module.Objective α Unit (TorchLean.nn.stateShapes model) [σ, τ] :=
   match runner with
-  | ⟨runtimeObjective, _, _, _, _⟩ => runtimeObjective
+  | ⟨runtimeObjective, _, _, _⟩ => runtimeObjective
 
 /-- The reusable no-gradient evaluator for one execution mode. -/
 opaque predictor {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
@@ -82,8 +80,8 @@ opaque predictor {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     (runner : Runner α model) (mode : nn.Mode) :
     Runtime.Autograd.Model.Module.Evaluator α Unit (TorchLean.nn.stateShapes model) [σ] [] τ :=
   match runner, mode with
-  | ⟨_, trainingPredictor, _, _, _⟩, .train => trainingPredictor
-  | ⟨_, _, evaluationPredictor, _, _⟩, .eval => evaluationPredictor
+  | ⟨_, trainingPredictor, _, _⟩, .train => trainingPredictor
+  | ⟨_, _, evaluationPredictor, _⟩, .eval => evaluationPredictor
 
 /-- Reusable evaluator for the evaluation-mode loss. -/
 opaque evaluationEvaluator {σ τ : Spec.Shape}
@@ -93,14 +91,7 @@ opaque evaluationEvaluator {σ τ : Spec.Shape}
     Runtime.Autograd.Model.Module.ObjectiveEvaluator α Unit
       (TorchLean.nn.stateShapes model) [σ, τ] :=
   match runner with
-  | ⟨_, _, _, evaluator, _⟩ => evaluator
-
-/-- The runner's mode cell. -/
-opaque modeCell {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α]
-    (runner : Runner α model) : IO.Ref nn.Mode :=
-  match runner with
-  | ⟨_, _, _, _, modeRef⟩ => modeRef
+  | ⟨_, _, _, evaluator⟩ => evaluator
 
 /-- Runtime configuration used by the runner's objective. -/
 def runtime {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
@@ -129,9 +120,8 @@ def fromRuntimeObjective {σ τ : Spec.Shape}
     Runtime.Autograd.Model.Module.ObjectiveDef.evaluatorWithState
       (objective.definition model (mode := .eval))
       executableObjective.runtime executableObjective.trainer.state
-  let modeRef : IO.Ref nn.Mode ← IO.mkRef .train
   pure (create runtimeObjective trainingPredictor evaluationPredictor
-    evaluationLossEvaluator modeRef)
+    evaluationLossEvaluator)
 
 /--
 Instantiate a model and objective under a runtime scalar.
@@ -166,35 +156,6 @@ def setState {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     IO Unit :=
   TorchLean.Module.Objective.setState (objectiveModule runner) state
 
-/-- Read every tensor of a runtime pack back to host `Float`. -/
-def readFloatPack {α : Type} [TorchLean.Storage α] [Context α]
-    [Runtime.TensorTransfer α] :
-    {shapes : List Shape} →
-    TorchLean.TensorPack α shapes →
-    IO (TorchLean.TensorPack Float shapes)
-  | _, .nil => pure .nil
-  | _, .cons tensor rest => do
-      let floatTensor ← Runtime.readFloatTensor tensor
-      let floatRest ← readFloatPack rest
-      pure (.cons floatTensor floatRest)
-
-/-- Read the state back as host `Float` tensors; exact for binary32 runtime scalars. -/
-def floatState {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α] [Runtime.TensorTransfer α]
-    (runner : Runner α model) :
-    IO (nn.State Float (TorchLean.nn.stateShapes model)) := do
-  let runtimeState ← state runner
-  let tensors ← readFloatPack (nn.State.Internal.toTensorPack runtimeState)
-  pure (nn.State.Internal.fromTensorPack tensors)
-
-/-- Replace the state from host `Float` tensors, casting them into the runtime scalar. -/
-def setFloatState {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α] [Runtime.FromFloat α]
-    (runner : Runner α model) (floatState : nn.State Float (TorchLean.nn.stateShapes model)) :
-    IO Unit :=
-  setState runner <| floatState.map fun tensor =>
-    TorchLean.Tensor.map (Runtime.ofFloat (α := α)) tensor
-
 /-- Initialize the state owned by a runtime optimizer for this runner. -/
 def initOptimizer {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
@@ -203,84 +164,33 @@ def initOptimizer {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     IO optimizer.State :=
   TorchLean.Module.Objective.initOptimizer (objectiveModule runner) optimizer
 
-/-- Read the runner's current mode (`.train` or `.eval`). -/
-def mode {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α]
-    (runner : Runner α model) : IO nn.Mode :=
-  (modeCell runner).get
-
-/-- Set the runner mode (`.train` or `.eval`). -/
-def setMode {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α]
-    (runner : Runner α model) (value : nn.Mode) : IO Unit :=
-  (modeCell runner).set value
-
-/-- Select training behavior for stateful layers. -/
-def train {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α]
-    (runner : Runner α model) : IO Unit :=
-  setMode runner .train
-
-/-- Select evaluation behavior for stateful layers. -/
-def eval {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α]
-    (runner : Runner α model) : IO Unit :=
-  setMode runner .eval
-
-/-- Evaluate one input, optionally overriding the active mode without changing its mode cell. -/
+/-- Evaluate one input in the given mode (training by default). -/
 def forward {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
     (runner : Runner α model)
-    (input : Tensor α σ) (mode : Option nn.Mode := none) : IO (Tensor α τ) := do
-  let selectedMode ← match mode with
-    | some value => pure value
-    | none => runner.mode
-  Runtime.Autograd.Model.Module.Evaluator.run (predictor runner selectedMode)
+    (input : Tensor α σ) (mode : nn.Mode := .train) : IO (Tensor α τ) :=
+  Runtime.Autograd.Model.Module.Evaluator.run (predictor runner mode)
     (TorchLean.TensorPack.singleton input) TorchLean.TensorPack.empty
 
 /--
-Scalar loss in the active mode, with an optional per-call mode override.
+Scalar loss of one sample in the given mode (training by default).
 
-With `batch := true`, evaluate samples in order and return their mean, or zero for an empty
-stream. Training uses the objective's random stream and buffer updates. Evaluation uses a reusable
-no-gradient evaluator over the live parameters without updating running buffers. Neither mode
-override changes the runner's persistent mode.
+Training uses the objective's random stream and buffer updates. Evaluation uses a reusable
+no-gradient evaluator over the live parameters without updating running buffers.
 -/
-def loss {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ} {Input : Type}
+def loss {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
-    (runner : Runner α model) (sample : Input) (batch : Bool := false)
-    (mode : Option nn.Mode := none)
-    [BatchInput (TorchLean.Sample.Supervised α σ τ)
-      (TorchLean.Data.SampleStream (TorchLean.Sample.Supervised α σ τ)) batch Input] : IO α := by
-  have inputType := BatchInput.type_eq (single := TorchLean.Sample.Supervised α σ τ)
-    (many := TorchLean.Data.SampleStream (TorchLean.Sample.Supervised α σ τ)) (batch := batch)
-  subst Input
-  let evaluate (sample : TorchLean.Sample.Supervised α σ τ) : IO α := do
-    let selectedMode ← match mode with
-      | some value => pure value
-      | none => runner.mode
-    let value ← match selectedMode with
-      | .train =>
-        TorchLean.Module.Objective.loss (objectiveModule runner)
-          (TorchLean.Sample.Internal.arguments sample) TorchLean.Arguments.empty
-      | .eval =>
-        Runtime.Autograd.Model.Module.Evaluator.run (evaluationEvaluator runner)
-          (TorchLean.Arguments.Internal.toTensorPack (TorchLean.Sample.Internal.arguments sample))
-          TorchLean.TensorPack.empty
-    pure value.item
-  cases batch with
-  | false => exact evaluate sample
-  | true =>
-      change TorchLean.Data.SampleStream (TorchLean.Sample.Supervised α σ τ) at sample
-      exact do
-        if sample.isEmpty then
-          pure 0
-        else
-          let mut total : α := 0
-          for h : i in [0:sample.size] do
-            have hi : i < sample.size := h.2.1
-            total := total + (← evaluate (sample.get ⟨i, hi⟩))
-          pure (total / (sample.size : α))
+    (runner : Runner α model) (sample : TorchLean.Sample.Supervised α σ τ)
+    (mode : nn.Mode := .train) : IO α := do
+  let value ← match mode with
+    | .train =>
+      TorchLean.Module.Objective.loss (objectiveModule runner)
+        (TorchLean.Sample.Internal.arguments sample) TorchLean.Arguments.empty
+    | .eval =>
+      Runtime.Autograd.Model.Module.Evaluator.run (evaluationEvaluator runner)
+        (TorchLean.Arguments.Internal.toTensorPack (TorchLean.Sample.Internal.arguments sample))
+        TorchLean.TensorPack.empty
+  pure value.item
 
 end Runner
 
@@ -298,14 +208,10 @@ def withBoundOptimizer {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ 
   match config.validateFor (α := α) with
   | .ok () => pure ()
   | .error message => throw <| IO.userError message
-  if (Runner.runtime runner).usesCuda then
-    IO.ofExcept config.validateFloat32
   match scheduler with
   | some schedule => do
       IO.ofExcept <| TorchLean.Trainer.Scheduler.validateWith
         (TorchLean.Runtime.FromFloat.roundForValidation (α := α)) schedule
-      if (Runner.runtime runner).usesCuda then
-        IO.ofExcept <| TorchLean.Trainer.Scheduler.validateFloat32 schedule
   | none => pure ()
   let objective := Runner.objectiveModule runner
   let learningRateAtStep (step : Nat) : Float :=
@@ -325,70 +231,62 @@ def withBoundOptimizer {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ 
           Runtime.Autograd.Model.Optim.StateList.cons
             (transform shapeState) (mapStateList transform remainingStates)
   let shapes := TorchLean.nn.stateShapes model
+  -- Every optimizer state stores its learning rate per shape; `setRate` names that field.
+  let scheduled {State : (α : Type) → [TorchLean.Storage α] → Spec.Shape → Type}
+      (setRate : {s : Spec.Shape} → α → State α s → State α s) (step : Nat) :
+      Runtime.Autograd.Model.Optim.StateList State α shapes →
+      Runtime.Autograd.Model.Optim.StateList State α shapes :=
+    mapStateList (setRate (TorchLean.Runtime.ofFloat (learningRateAtStep step)))
   match TorchLean.optim.Optimizer.Internal.view config with
   | .sgd learningRate momentum =>
       if momentum == 0.0 then
         let optimizer := Runtime.Autograd.Model.Optim.sgd (α := α) (paramShapes := shapes)
           (TorchLean.Runtime.ofFloat learningRate)
         let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-        continuation optimizer state fun step state =>
-          mapStateList (fun shapeState =>
-            { shapeState with
-              learningRate := TorchLean.Runtime.ofFloat (learningRateAtStep step) }) state
+        continuation optimizer state
+          (scheduled fun rate shapeState => { shapeState with learningRate := rate })
       else
         let optimizer := Runtime.Autograd.Model.Optim.momentumSGD
           (α := α) (paramShapes := shapes)
           (TorchLean.Runtime.ofFloat learningRate) (TorchLean.Runtime.ofFloat momentum)
         let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-        continuation optimizer state fun step state =>
-          mapStateList (fun shapeState =>
-            { shapeState with
-              learningRate := TorchLean.Runtime.ofFloat (learningRateAtStep step) }) state
+        continuation optimizer state
+          (scheduled fun rate shapeState => { shapeState with learningRate := rate })
   | .adaGrad learningRate epsilon =>
       let optimizer := Runtime.Autograd.Model.Optim.adagrad (α := α) (paramShapes := shapes)
         (TorchLean.Runtime.ofFloat learningRate) (TorchLean.Runtime.ofFloat epsilon)
       let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-      continuation optimizer state fun step state =>
-        mapStateList (fun shapeState =>
-          { shapeState with
-            learningRate := TorchLean.Runtime.ofFloat (learningRateAtStep step) }) state
+      continuation optimizer state
+        (scheduled fun rate shapeState => { shapeState with learningRate := rate })
   | .rmsProp learningRate decay epsilon =>
       let optimizer := Runtime.Autograd.Model.Optim.rmsprop (α := α) (paramShapes := shapes)
         (TorchLean.Runtime.ofFloat learningRate) (TorchLean.Runtime.ofFloat decay)
         (TorchLean.Runtime.ofFloat epsilon)
       let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-      continuation optimizer state fun step state =>
-        mapStateList (fun shapeState =>
-          { shapeState with
-            learningRate := TorchLean.Runtime.ofFloat (learningRateAtStep step) }) state
+      continuation optimizer state
+        (scheduled fun rate shapeState => { shapeState with learningRate := rate })
   | .adam learningRate beta1 beta2 epsilon =>
       let optimizer := Runtime.Autograd.Model.Optim.adam (α := α) (paramShapes := shapes)
         (TorchLean.Runtime.ofFloat learningRate) (TorchLean.Runtime.ofFloat beta1)
         (TorchLean.Runtime.ofFloat beta2) (TorchLean.Runtime.ofFloat epsilon)
       let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-      continuation optimizer state fun step state =>
-        mapStateList (fun shapeState =>
-          { shapeState with
-            learningRate := TorchLean.Runtime.ofFloat (learningRateAtStep step) }) state
+      continuation optimizer state
+        (scheduled fun rate shapeState => { shapeState with learningRate := rate })
   | .adamW learningRate weightDecay beta1 beta2 epsilon =>
       let optimizer := Runtime.Autograd.Model.Optim.adamw (α := α) (paramShapes := shapes)
         (TorchLean.Runtime.ofFloat learningRate) (TorchLean.Runtime.ofFloat weightDecay)
         (TorchLean.Runtime.ofFloat beta1) (TorchLean.Runtime.ofFloat beta2)
         (TorchLean.Runtime.ofFloat epsilon)
       let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-      continuation optimizer state fun step state =>
-        mapStateList (fun shapeState =>
-          { shapeState with
-            learningRate := TorchLean.Runtime.ofFloat (learningRateAtStep step) }) state
+      continuation optimizer state
+        (scheduled fun rate shapeState => { shapeState with learningRate := rate })
   | .adaDelta learningRate rho epsilon =>
       let optimizer := Runtime.Autograd.Model.Optim.adadelta (α := α) (paramShapes := shapes)
         (TorchLean.Runtime.ofFloat learningRate) (TorchLean.Runtime.ofFloat rho)
         (TorchLean.Runtime.ofFloat epsilon)
       let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-      continuation optimizer state fun step state =>
-        mapStateList (fun shapeState =>
-          { shapeState with
-            learningRate := TorchLean.Runtime.ofFloat (learningRateAtStep step) }) state
+      continuation optimizer state
+        (scheduled fun rate shapeState => { shapeState with learningRate := rate })
 
 /-! ## Gradient accumulation and optimizer updates -/
 
@@ -406,6 +304,40 @@ def scaleGradients {α : Type} [TorchLean.Storage α] [Mul α]
   gradient.map fun tensor => TorchLean.Tensor.scale tensor factor
 
 /--
+Mean parameter gradient and mean loss for a nonempty batch at one parameter point.
+
+With `withLoss := false` the losses are not read back and the second component is `0`.
+-/
+def meanGradAndLoss {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
+    {α : Type} [TorchLean.Storage α] [Context α]
+    (runner : Runner α model)
+    (batch : Array (TorchLean.Sample.Supervised α σ τ)) (withLoss : Bool) :
+    IO (nn.State α (TorchLean.nn.stateShapes model) × α) := do
+  match batch[0]? with
+  | none => throw <| IO.userError "Trainer.meanGrad: empty batch"
+  | some firstSample =>
+      let objective := Runner.objectiveModule runner
+      let sampleGradient (sample : TorchLean.Sample.Supervised α σ τ) :
+          IO (nn.State α (TorchLean.nn.stateShapes model) × α) := do
+        let arguments := TorchLean.Sample.Internal.arguments sample
+        if withLoss then
+          let (gradient, lossValue) ← TorchLean.Module.Objective.grad objective
+            arguments TorchLean.Arguments.empty (value := true)
+          pure (gradient, TorchLean.Tensor.item lossValue)
+        else
+          pure (← TorchLean.Module.Objective.grad objective arguments TorchLean.Arguments.empty,
+            0)
+      let (firstGradient, firstLoss) ← sampleGradient firstSample
+      let mut gradientSum := firstGradient
+      let mut lossSum := firstLoss
+      for sample in batch.drop 1 do
+        let (gradient, lossValue) ← sampleGradient sample
+        lossSum := lossSum + lossValue
+        gradientSum := addGradients gradientSum gradient
+      let reciprocalCount : α := 1 / (batch.size : α)
+      pure (scaleGradients reciprocalCount gradientSum, lossSum * reciprocalCount)
+
+/--
 Compute mean parameter gradients for a nonempty batch at one parameter point.
 
 Set `value := true` to return `(meanGradient, meanLoss)`.
@@ -418,43 +350,8 @@ def meanGrad {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
       | false => nn.State α (TorchLean.nn.stateShapes model)
       | true => nn.State α (TorchLean.nn.stateShapes model) × α) := by
   cases value with
-  | false =>
-      exact do
-        match batch[0]? with
-        | none => throw <| IO.userError "Trainer.meanGrad: empty batch"
-        | some firstSample =>
-            let objective := Runner.objectiveModule runner
-            let mut gradientSum ← TorchLean.Module.Objective.grad objective
-              (TorchLean.Sample.Internal.arguments firstSample) TorchLean.Arguments.empty
-            for sample in batch.drop 1 do
-              let gradient ← TorchLean.Module.Objective.grad objective
-                (TorchLean.Sample.Internal.arguments sample) TorchLean.Arguments.empty
-              gradientSum := addGradients gradientSum gradient
-            let reciprocalCount : α := 1 / (batch.size : α)
-            pure (scaleGradients reciprocalCount gradientSum)
-  | true =>
-      exact do
-        match batch[0]? with
-        | none => throw <| IO.userError "Trainer.meanGrad: empty batch"
-        | some firstSample =>
-            let objective := Runner.objectiveModule runner
-            let (firstGradient, firstLoss) ←
-              TorchLean.Module.Objective.grad objective
-                (TorchLean.Sample.Internal.arguments firstSample) TorchLean.Arguments.empty
-                (value := true)
-            let mut lossSum := TorchLean.Tensor.item firstLoss
-            let mut gradientSum := firstGradient
-            for sample in batch.drop 1 do
-              let (gradient, lossValue) ←
-                TorchLean.Module.Objective.grad objective
-                  (TorchLean.Sample.Internal.arguments sample) TorchLean.Arguments.empty
-                  (value := true)
-              lossSum := lossSum + TorchLean.Tensor.item lossValue
-              gradientSum := addGradients gradientSum gradient
-            let reciprocalCount : α := 1 / (batch.size : α)
-            pure
-              (scaleGradients reciprocalCount gradientSum,
-                lossSum * reciprocalCount)
+  | false => exact Prod.fst <$> meanGradAndLoss runner batch false
+  | true => exact meanGradAndLoss runner batch true
 
 /--
 Apply one optimizer update to a nonempty batch.
@@ -472,52 +369,42 @@ def step {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     IO (match loss with
       | false => optimizer.State
       | true => optimizer.State × α) := by
+  -- Without `withLoss` the loss is never read back and the second component is `0`.
+  let run (withLoss : Bool) : IO (optimizer.State × α) := do
+    if batch.isEmpty then
+      throw <| IO.userError "Trainer.step: empty batch"
+    let objective := Runner.objectiveModule runner
+    if useNative then
+      if hSingleton : batch.size = 1 then
+        let sample := batch[0]'(by simp [hSingleton])
+        let arguments := TorchLean.Sample.Internal.arguments sample
+        if withLoss then
+          let (nextOptimizerState, lossValue) ←
+            TorchLean.Module.Objective.step objective optimizer state
+              arguments TorchLean.Arguments.empty (loss := true)
+          return (nextOptimizerState, TorchLean.Tensor.item lossValue)
+        else
+          return (← TorchLean.Module.Objective.step objective optimizer state
+            arguments TorchLean.Arguments.empty, 0)
+      let arguments := batch.map fun sample =>
+        (TorchLean.Sample.Internal.arguments sample, TorchLean.Arguments.empty)
+      if let some (nextState, lossValue) ←
+          TorchLean.Module.Objective.Internal.tryNativeBatchStep
+            objective optimizer state arguments withLoss then
+        if withLoss then
+          match lossValue with
+          | some lossValue => return (nextState, lossValue.item)
+          | none =>
+            throw <| IO.userError "Trainer.step: native update omitted requested loss"
+        else
+          return (nextState, 0)
+    let (meanGradient, meanLoss) ← meanGradAndLoss runner batch withLoss
+    let nextOptimizerState ←
+      TorchLean.Module.Objective.update objective optimizer state meanGradient
+    pure (nextOptimizerState, meanLoss)
   cases loss with
-  | false =>
-      exact do
-        if batch.isEmpty then
-          throw <| IO.userError "Trainer.step: empty batch"
-        let objective := Runner.objectiveModule runner
-        if useNative then
-          if hSingleton : batch.size = 1 then
-            let sample := batch[0]'(by simp [hSingleton])
-            return ← TorchLean.Module.Objective.step objective optimizer state
-              (TorchLean.Sample.Internal.arguments sample) TorchLean.Arguments.empty
-          let arguments := batch.map fun sample =>
-            (TorchLean.Sample.Internal.arguments sample, TorchLean.Arguments.empty)
-          if let some (nextState, _) ←
-              TorchLean.Module.Objective.Internal.tryNativeBatchStep
-                objective optimizer state arguments false then
-            return nextState
-        let meanGradient ← meanGrad runner batch
-        TorchLean.Module.Objective.update objective optimizer state meanGradient
-  | true =>
-      exact do
-        if batch.isEmpty then
-          throw <| IO.userError "Trainer.step: empty batch"
-        let objective := Runner.objectiveModule runner
-        if useNative then
-          if hSingleton : batch.size = 1 then
-            let sample := batch[0]'(by simp [hSingleton])
-            let (nextOptimizerState, lossValue) ←
-              TorchLean.Module.Objective.step objective optimizer state
-                (TorchLean.Sample.Internal.arguments sample) TorchLean.Arguments.empty
-                (loss := true)
-            return (nextOptimizerState, TorchLean.Tensor.item lossValue)
-          let arguments := batch.map fun sample =>
-            (TorchLean.Sample.Internal.arguments sample, TorchLean.Arguments.empty)
-          if let some (nextState, lossValue) ←
-              TorchLean.Module.Objective.Internal.tryNativeBatchStep
-                objective optimizer state arguments true then
-            match lossValue with
-            | some lossValue => return (nextState, lossValue.item)
-            | none =>
-              throw <| IO.userError "Trainer.step: native update omitted requested loss"
-        let (meanGradient, meanLoss) ←
-          meanGrad runner batch (value := true)
-        let nextOptimizerState ←
-          TorchLean.Module.Objective.update objective optimizer state meanGradient
-        pure (nextOptimizerState, meanLoss)
+  | false => exact Prod.fst <$> run false
+  | true => exact run true
 
 /-! ## Stateful steppers -/
 
@@ -606,7 +493,7 @@ end Stepper
 /--
 Construct a `Stepper` for a runner, optimizer config, and optional scheduler.
 
-Every step switches the runner to training mode, applies the schedule for the current step index,
+Every step trains through the runner's objective, applies the schedule for the current step index,
 and advances the completed-step counter once per batch. A singleton batch uses the runtime's
 native single-sample update.
 -/
@@ -615,13 +502,11 @@ def Runner.stepper {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     (runner : Runner α model) (optimizer : TorchLean.optim.Optimizer)
     (scheduler : Option TorchLean.Trainer.Scheduler.Config := none) :
     IO (Stepper α model) := do
-  Runner.train runner
   let stepRef ← IO.mkRef 0
   withBoundOptimizer runner optimizer scheduler
       fun runtimeOptimizer initialState scheduleState => do
     let stateRef ← IO.mkRef initialState
     let runBatch := fun (batch : Array (TorchLean.Sample.Supervised α σ τ)) => do
-      Runner.train runner
       let stepIndex ← stepRef.get
       let state := scheduleState stepIndex (← stateRef.get)
       let (nextOptimizerState, lossValue) ←
@@ -630,7 +515,6 @@ def Runner.stepper {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
       stepRef.set (stepIndex + 1)
       pure lossValue
     let runBatchSilently := fun (batch : Array (TorchLean.Sample.Supervised α σ τ)) => do
-      Runner.train runner
       let stepIndex ← stepRef.get
       let state := scheduleState stepIndex (← stateRef.get)
       let nextOptimizerState ←

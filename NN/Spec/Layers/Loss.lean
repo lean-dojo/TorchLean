@@ -205,6 +205,10 @@ $$
 where `c` ranges along the selected class dimension and `r` ranges over all remaining dimensions.
 A lone class vector is one distribution and is not divided by its number of classes.
 
+Each predicted probability is clamped to `[epsilon, 1 - epsilon]` before the logarithm. A one-hot
+prediction that exactly matches a one-hot target therefore has loss `-log(1 - epsilon)`, which is
+small but not `0`.
+
 PyTorch's `F.cross_entropy` typically takes logits and does `log_softmax + NLLLoss`; that is a
 different API surface than this "probabilities in, scalar out" spec.
 -/

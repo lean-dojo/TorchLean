@@ -30,7 +30,7 @@ namespace Tape
 namespace Internal
 
 /-- Backend matrix kernel for a single pair of matrices. -/
-def matmul {m n p : Nat} (t : Tape) (aId bId : Nat) : Result (Tape × Nat) := do
+@[inline] def matmul {m n p : Nat} (t : Tape) (aId bId : Nat) : Result (Tape × Nat) := do
   let m32 ← AnyBuffer.natToU32Checked m
   let n32 ← AnyBuffer.natToU32Checked n
   let p32 ← AnyBuffer.natToU32Checked p
@@ -46,6 +46,7 @@ def matmul {m n p : Nat} (t : Tape) (aId bId : Nat) : Result (Tape × Nat) := do
       (dA, dB))
 
 /-- Backend matrix kernel over a flattened leading shape. -/
+@[inline]
 def matmulFlattened {batch m n p : Nat} (t : Tape) (aId bId : Nat) : Result (Tape × Nat) := do
   let b32 ← AnyBuffer.natToU32Checked batch
   let m32 ← AnyBuffer.natToU32Checked m
@@ -78,7 +79,7 @@ The low-level buffer primitive owns the numerical contract and VJP:
 half-spectrum adjoint factors for real FFTs. This tape node records those three parent
 dependencies and checks the runtime shapes before calling the native kernels.
 -/
-def spectralConv1dRfft {grid width modes : Nat}
+@[inline] def spectralConv1dRfft {grid width modes : Nat}
     (t : Tape) (xId wReId wImId : Nat) : Result (Tape × Nat) := do
   if grid = 0 then
     throw "autograd: spectralConv1dRfft: grid must be positive"
@@ -119,7 +120,7 @@ end Internal
 -/
 
 /-- Linear layer: `y = W·x + b` with `W : (outDim,inDim)`, `x : inDim`, `b : outDim`. -/
-def linear {outDim inDim : Nat} (t : Tape) (wId bId xId : Nat) : Result (Tape × Nat) := do
+@[inline] def linear {outDim inDim : Nat} (t : Tape) (wId bId xId : Nat) : Result (Tape × Nat) := do
   let out32 ← AnyBuffer.natToU32Checked outDim
   let in32 ← AnyBuffer.natToU32Checked inDim
   let one32 : UInt32 := 1
@@ -149,7 +150,7 @@ def linear {outDim inDim : Nat} (t : Tape) (wId bId xId : Nat) : Result (Tape ×
   pure (t.addNode node)
 
 /-- Mean-squared-error loss with `"mean"` reduction (single scalar output). -/
-def mseLoss {s : Shape} (t : Tape) (yhatId targetId : Nat) : Result (Tape × Nat) := do
+@[inline] def mseLoss {s : Shape} (t : Tape) (yhatId targetId : Nat) : Result (Tape × Nat) := do
   let yhat ← requireValue (t := t) yhatId s
   let target ← requireValue (t := t) targetId s
   let diff := Buffer.sub yhat target

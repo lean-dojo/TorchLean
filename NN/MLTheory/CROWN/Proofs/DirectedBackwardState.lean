@@ -131,7 +131,7 @@ theorem addConstant_encloses {dims : Nat → Nat} {st : DirectedBackwardState α
     (add_le_add hstate.2.2 hd.2).trans (LawfulBoundOps.le_addUp st.cstHi hi)⟩
 
 /-- Negating a coefficient exchanges the endpoints and encloses its exact additive inverse. -/
-theorem negateCoeff_encloses (hzero : value (0 : α) = 0)
+theorem negateCoeff_encloses
     {box : FlatBox α} {n : Nat} {a : Nat → ℝ} (hbox : RowEncloses box n a) :
     RowEncloses (negateDirectedCoeff box) n (fun i => -a i) := by
   obtain ⟨dim, lo, hi⟩ := box
@@ -145,7 +145,7 @@ theorem negateCoeff_encloses (hzero : value (0 : α) = 0)
   have hb := hbox i
   simp only [read_fin] at hb
   simp only [negateDirectedCoeff, read_fin, Tensor.getScalar_mapSpec]
-  rw [hzero, zero_sub] at hlo hhi
+  rw [(LawfulBoundOps.toReal_zero (α := α)), zero_sub] at hlo hhi
   exact ⟨hlo.trans (neg_le_neg hb.2), (neg_le_neg hb.1).trans hhi⟩
 
 omit [LawfulBoundOps α] in
@@ -178,14 +178,14 @@ theorem addCoeff_failed (st : DirectedBackwardState α) (pid : Nat) (box : FlatB
     · rfl
 
 /-- The initial table encloses the output objective and zero at every other node. -/
-theorem initial_encloses (hzero : value (0 : α) = 0) (dims : Nat → Nat)
+theorem initial_encloses (dims : Nat → Nat)
     (size output : Nat) (obj : FlatTensor α)
     (hdim : obj.n = dims output) :
     StateEncloses dims
       { coeffs := (Array.replicate size none).set! output (some (pointCoeffBox obj))
         cstLo := 0, cstHi := 0 }
       (fun id i => if id = output then value (getAtOrZero obj.v [i]) else 0) 0 := by
-  refine ⟨?_, by simp [hzero]⟩
+  refine ⟨?_, by simp [(LawfulBoundOps.toReal_zero (α := α))]⟩
   intro id hid
   have hid' : id < (Array.replicate size (none : Option (FlatBox α))).size := by
     simpa using hid

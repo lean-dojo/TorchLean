@@ -1,16 +1,12 @@
-# TorchLean CUDA ABI and CPU stubs
+# TorchLean LibTorch backend
 
-This directory contains the shared Lean C ABI headers and portable CPU stubs. The CUDA
-implementation lives in [`../libtorch/`](../libtorch/) and uses the selected LibTorch SDK's ATen
-operations. Lean checks shapes and dispatches through the existing symbols; native memory
-safety, SDK behavior, and floating-point execution remain outside Lean's kernel.
+This directory holds the CUDA backend behind TorchLean's GPU buffer ABI. It calls the selected
+LibTorch SDK's ATen operations. Lean checks shapes and dispatches through the extern symbols;
+native memory safety, SDK behavior, and floating-point execution remain outside Lean's kernel.
 
 ## Layout
 
-- `common/`: shared buffer representation, Lean object/size helpers, and runtime control parsing.
-- `tensor/`, `kernels/`, `conv_pool/`, `blas/`: the CPU implementations of the buffer exports.
-
-The complete CUDA backend is built as one shared library:
+The backend is built as one shared library:
 
 | LibTorch source | Responsibility |
 | --- | --- |
@@ -20,18 +16,20 @@ The complete CUDA backend is built as one shared library:
 | `conv_pool.cpp` | Convolution and pooling forward/backward operations. |
 | `attention.cpp` | Attention forward/backward operations and retained SDK contexts. |
 | `blas.cpp` | Double-precision matrix multiplication bridge. |
+| `torchlean_libtorch.h` | Buffer representation, Lean object and size helpers. |
 
-`TORCHLEAN_LIBTORCH` selects the ATen-backed buffer representation in the shared headers.
-The Lean tape owns differentiation; native calls use a no-grad guard. The
+`unavailable.c` is linked instead when TorchLean is built without LibTorch. It exports the same
+symbols, reports `RuntimeStatus.notLinked`, and fails every buffer operation with a message that
+says how to rebuild. The Lean tape owns differentiation; native calls use a no-grad guard. The
 CPU evaluation dynamic library is loaded for native CPU `#eval` calls. GPU tests run as
 compiled executables.
 
 ## Build selection
 
-`scripts/lake.sh build` selects the default `pureLean`/`portableCPU` build and CPU stubs,
-without an SDK or toolkit. `cuda=true` requires the complete LibTorch CUDA backend.
+`scripts/lake.sh build` selects the default `pureLean`/`portableCPU` build, without an SDK or
+toolkit. `cuda=true` requires the complete LibTorch CUDA backend.
 
-Run migration compilation and execution only in the cluster. A full SDK contains `include/`,
+A full SDK contains `include/`,
 `lib/`, and `share/cmake/Torch/TorchConfig.cmake`; a partial header snapshot is insufficient.
 Use the CUDA-enabled PyTorch package root or an equivalent LibTorch distribution:
 
@@ -48,6 +46,16 @@ headers, and a compatible C++20 compiler. SDK CMake discovers the ABI, any stric
 transitive libraries, and rpath. An executable built in the same project checks compiler/link
 compatibility without running. SDK discovery may require a matching CUDA
 development toolkit, even though TorchLean itself compiles only C++ sources.
+
+## Tested SDK versions
+
+This tree was tested locally against pip torch 2.13.0+cu130 with CUDA 13.0 on A100, and previously
+against a PyTorch 2.12 nightly (revision 0291f960b6). The build reads the SDK's `TORCH_VERSION` and
+warns below 2.12, but it does not stop the build. `attention.cpp` includes the internal header
+`ATen/native/transformers/cuda/sdp_utils.h` and calls private ATen operators such as
+`_fused_sdp_choice` and the `_scaled_dot_product_*_attention` forward and backward kernels. These
+are not a stable API, so another SDK release may fail to compile or change results. Rerun the CUDA
+suite and both C++ harnesses below after changing SDKs.
 
 Optional SDK discovery controls are explicit:
 
@@ -82,8 +90,8 @@ Lean traverses the tape and calls the corresponding gradient operations. Each na
 explicit SDK backward kernels; attention also retains the forward context needed by its
 backward call.
 
-The build selects the implementation behind those buffer symbols. The default build uses the
-portable CPU stubs and needs no LibTorch SDK. A `cuda=true` build links
+The build selects the implementation behind those buffer symbols. The default build links
+`unavailable.c` and needs no LibTorch SDK. A `cuda=true` build links
 `libtorchlean_libtorch.so`, whose ATen calls use the selected SDK's CUDA implementation.
 The eager CUDA tape stores Float32 buffers; the separate DGEMM bridge handles Float64 matrix
 multiplication. Selecting CUDA does not move every scalar format onto the GPU.
@@ -140,9 +148,8 @@ Nsight Compute can be slow on the full suite; use a focused executable for kerne
 ## CUDA Test Matrix
 
 The CUDA regression suite lives in `NN/Tests/Runtime/Cuda`. The tests compare the Lean CPU eager
-tape against the CUDA eager tape on small examples. In the default build those same externs
-route through CPU stubs, which keeps ordinary CI useful without a GPU. With `-Kcuda=true`
-they exercise LibTorch. CPU hosted CI does not validate GPU execution.
+tape against the CUDA eager tape on small examples. They run only with `-Kcuda=true`; the default
+build skips them, so CPU hosted CI does not validate GPU execution.
 
 Run the full Lean test executable through Lake:
 
@@ -180,16 +187,32 @@ Current CUDA coverage:
 | `NN/Tests/Runtime/Cuda/Stress.lean` | RNG determinism, explicit release, duplicate-parent gradient accumulation, large buffers, reductions, and rectangular matmul. |
 | `NN/Tests/Runtime/Cuda/Suite.lean` | The unified entrypoint imported by the repository-level test suite. |
 
-When adding a CUDA symbol, update this matrix and add at least one CPU-stub/real-CUDA parity test.
+When adding a CUDA symbol, add its failing export to `unavailable.c`, update this matrix, and add
+at least one test against the Lean CPU tape.
 If the symbol participates in autograd, test both the forward value and the relevant VJP/gradient
 buffers.  If it uses atomics, also decide whether deterministic mode needs a separate test.
 
-The separate [elementwise C++ harness](../libtorch/tests/elementwise/README.md) links the
+The separate [elementwise C++ harness](tests/elementwise/README.md) links the
 production backend and consumes Lean binary32 cases. Its wrapper is
 `scripts/checks/cuda_float32_parity.sh --libtorch-home PATH --backend-library PATH --lean-prefix PATH`.
 It checks exact finite results and signed zeros, reports NaN encoding differences, and includes
 staged Adam and no-autograd regressions. A different SDK needs its own audit and regression
 results.
+
+The convolution and pooling harness in `tests/` compiles `conv_pool.cpp` directly, without the
+Lean FFI wrappers, and compares its general-rank composition against the SDK's own kernels on CPU
+and CUDA. No wrapper script runs it; configure it with the same SDK and Lean prefix as the
+production build:
+
+```bash
+cmake -S csrc/libtorch/tests -B /tmp/torchlean-conv-pool \
+  -DTORCHLEAN_LIBTORCH_HOME="$TORCHLEAN_LIBTORCH_HOME" \
+  -DTORCHLEAN_LEAN_PREFIX="$(lean --print-prefix)"
+cmake --build /tmp/torchlean-conv-pool
+ctest --test-dir /tmp/torchlean-conv-pool --output-on-failure
+```
+
+`ctest -L cpu` runs only the CPU case; the `cuda` case needs a visible GPU.
 
 ## Review Notes
 
@@ -201,4 +224,4 @@ results.
 - Attention uses SDK operations with retained forward context for backward. The attention tests
   compare this path with composed `bmm -> mask -> softmax -> bmm` operations.
   The focused `libtorch_sdpa_test` target links the entire numerical backend.
-- Run both CPU stub and real GPU checks after changes to native exports, ownership, or numerics.
+- Run the GPU suite after changes to native exports, ownership, or numerics.

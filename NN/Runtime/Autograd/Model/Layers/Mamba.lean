@@ -105,12 +105,8 @@ def mamba (sequenceLength inputWidth hiddenWidth : Nat)
           let rates ← exp (m := m) (α := α) logA
           let empty ← const (m := m) (α := α)
             (Tensor.full [sequenceLength, hiddenWidth] (0 : α))
-          let (_, output) ← (List.finRange sequenceLength).foldlM (init := (initial, empty))
-            fun (state, acc) t => do
-              let token ← select (m := m) (α := α) 0 xs t
-              let (next, value) ← Mamba.Internal.stepWithRates parameters rates state token
-              let written ← Internal.writeLeading (m := m) (α := α) acc value t
-              pure (next, written)
-          pure output }
+          Internal.unrollLeading (m := m) (α := α) empty initial fun t state => do
+            let token ← select (m := m) (α := α) 0 xs t
+            Mamba.Internal.stepWithRates parameters rates state token }
 
 end Runtime.Autograd.Model.Layers

@@ -861,108 +861,183 @@ def backpropVec {ss : List Shape} (g : Graph Γ ss) (xV : CtxVec Γ) (seedV : Ct
       let contribV : CtxVec (Γ ++ ss) := node.vjpVec (Γ := Γ ++ ss) (τ := τ) ctxV seedOutV
       backpropVec (ss := ss) g xV (seedPrevV + contribV)
 
-/-!
-The next theorem is exactly `soundness.lean` rewritten into Euclidean vector form.
-It is the key input to later “`backprop = (fderiv eval)†`” proofs.
--/
+end Graph
 
-/-- Vectorized tape soundness: `⟪jvp, seed⟫ = ⟪dx, backprop seed⟫`. -/
+-- ---------------------------------------------------------------------------
+-- Vectorization transport: `flattenCtx` commutes with the context operations
+-- ---------------------------------------------------------------------------
+
+/-- `flattenCtx` commutes with casting a context along a shape-list equality. -/
+theorem flattenCtx_cast {Γ₁ Γ₂ : List Shape} (h : Γ₁ = Γ₂) (xs : TorchLean.TensorPack ℝ Γ₁) :
+    flattenCtx (Γ := Γ₂) (TorchLean.TensorPack.cast h xs) =
+      castCtxVec (Γ₁ := Γ₁) (Γ₂ := Γ₂) h (flattenCtx xs) := by
+  cases h
+  simp
+
+/-- Vectorization is additive: `tensorToVec` maps `addSpec` to vector addition. -/
+theorem tensorToVec_addSpec {s : Shape} (a b : Tensor ℝ s) :
+    tensorToVec (t := addSpec a b) = tensorToVec (t := a) + tensorToVec (t := b) := by
+  refine ext_inner_right ℝ ?_
+  intro w
+  have hw : w = tensorToVec (t := vecToTensor (s := s) w) :=
+    (tensorToVec_vecToTensor (s := s) w).symm
+  rw [hw, ← dot_eq_inner_tensorToVec, inner_add_left, ← dot_eq_inner_tensorToVec,
+    ← dot_eq_inner_tensorToVec, dot_add_left]
+
+/-- The context inner product is additive in its left argument. -/
+private theorem dotList_add_left' {Γ : List Shape} (u v z : TorchLean.TensorPack ℝ Γ) :
+    TensorPack.dotList (TorchLean.TensorPack.add u v) z =
+      TensorPack.dotList u z + TensorPack.dotList v z := by
+  induction Γ with
+  | nil =>
+    cases u
+    cases v
+    cases z
+    simp [TensorPack.dotList, TorchLean.TensorPack.add]
+  | cons s Γ ih =>
+    cases u with
+    | cons uh ut =>
+      cases v with
+      | cons vh vt =>
+        cases z with
+        | cons zh zt =>
+          show TensorPack.dotList
+              (TorchLean.TensorPack.cons (addSpec uh vh) (TorchLean.TensorPack.add ut vt))
+              (TorchLean.TensorPack.cons zh zt)
+              = _
+          simp only [TensorPack.dotList, dot_add_left, ih]
+          ring
+
+/-- `flattenCtx` maps context addition to vector addition. -/
+theorem flattenCtx_add {Γ : List Shape} (u v : TorchLean.TensorPack ℝ Γ) :
+    flattenCtx (TorchLean.TensorPack.add u v) = flattenCtx u + flattenCtx v := by
+  refine ext_inner_right ℝ ?_
+  intro w
+  have hw : w = flattenCtx (unflattenCtx (Γ := Γ) w) :=
+    (flattenCtx_unflattenCtx (Γ := Γ) w).symm
+  rw [hw, ← dotList_eq_inner_flattenCtx, inner_add_left, ← dotList_eq_inner_flattenCtx,
+    ← dotList_eq_inner_flattenCtx]
+  exact dotList_add_left' u v _
+
+/-- `flattenCtx` maps `TorchLean.TensorPack.snoc` to `snocCtx`. -/
+theorem flattenCtx_snoc {Γ : List Shape} {τ : Shape} (xs : TorchLean.TensorPack ℝ Γ)
+    (y : Tensor ℝ τ) :
+    flattenCtx (Γ := Γ ++ [τ]) (TorchLean.TensorPack.snoc xs y)
+      = snocCtx (Γ := Γ) (τ := τ) (flattenCtx xs) (tensorToVec (t := y)) := by
+  induction Γ with
+  | nil =>
+    cases xs
+    change flattenCtx (TorchLean.TensorPack.cons y TorchLean.TensorPack.nil) = _
+    rw [flattenCtx_cons, flattenCtx_nil]
+    let h : ctxSize [] + τ.size = τ.size + ctxSize [] := by simp [ctxSize]
+    change appendVec (tensorToVec y) 0 = castVec h (appendVec 0 (tensorToVec y))
+    apply PiLp.ext
+    intro i
+    induction i using Fin.addCases with
+    | left i =>
+      rw [appendVec_ofLp_castAdd, castVec_ofLp]
+      have hidx :
+          Fin.cast h.symm (Fin.castAdd (ctxSize []) i) = Fin.natAdd (ctxSize []) i := by
+        apply Fin.ext
+        simpa only [ctxSize, Fin.val_natAdd, Nat.zero_add, Fin.val_castAdd] using
+          Fin.val_cast h.symm (Fin.castAdd (ctxSize []) i)
+      rw [hidx, appendVec_ofLp_natAdd]
+    | right i => exact i.elim0
+  | cons s Γ ih =>
+    cases xs with
+    | cons x xs =>
+      change flattenCtx (TorchLean.TensorPack.cons x (TorchLean.TensorPack.snoc xs y)) = _
+      rw [flattenCtx_cons, ih, flattenCtx_cons, appendVec_snocCtx]
+
+/-- `flattenCtx` maps `TorchLean.TensorPack.unsnoc` to `unsnocCtx`. -/
+theorem unsnocCtx_flattenCtx {Γ : List Shape} {τ : Shape} (w : TorchLean.TensorPack ℝ (Γ ++ [τ])) :
+    unsnocCtx (Γ := Γ) (τ := τ) (flattenCtx w)
+      = (flattenCtx (TorchLean.TensorPack.unsnoc w).1,
+          tensorToVec (t := (TorchLean.TensorPack.unsnoc w).2)) := by
+  conv_lhs => rw [← TorchLean.TensorPack.snoc_unsnoc (α := ℝ) (ss := Γ) (τ := τ) (xs := w)]
+  rw [flattenCtx_snoc, unsnocCtx_snocCtx]
+
+namespace Node
+
+/-- The vectorized forward map, evaluated on a flattened context. -/
+theorem forwardVec_flattenCtx {Γ : List Shape} {τ : Shape} (node : Node Γ τ)
+    (x : TorchLean.TensorPack ℝ Γ) :
+    node.forwardVec (Γ := Γ) (τ := τ) (flattenCtx x) = tensorToVec (t := node.forward x) := by
+  simp [Node.forwardVec]
+
+/-- The vectorized JVP, evaluated on flattened contexts. -/
+theorem jvpVec_flattenCtx {Γ : List Shape} {τ : Shape} (node : Node Γ τ)
+    (x dx : TorchLean.TensorPack ℝ Γ) :
+    node.jvpVec (Γ := Γ) (τ := τ) (flattenCtx x) (flattenCtx dx)
+      = tensorToVec (t := node.jvp x dx) := by
+  simp [Node.jvpVec]
+
+/-- The vectorized VJP, evaluated on a flattened context and a vectorized cotangent. -/
+theorem vjpVec_flattenCtx {Γ : List Shape} {τ : Shape} (node : Node Γ τ)
+    (x : TorchLean.TensorPack ℝ Γ) (δ : Tensor ℝ τ) :
+    node.vjpVec (Γ := Γ) (τ := τ) (flattenCtx x) (tensorToVec (t := δ))
+      = flattenCtx (node.vjp x δ) := by
+  simp [Node.vjpVec]
+
+end Node
+
+namespace Graph
+
+variable {Γ : List Shape}
+
+/-- The Euclidean graph evaluation is the flattening of the `TensorPack` evaluation. -/
+theorem evalVec_flattenCtx {ss : List Shape} (g : Graph Γ ss) (x : TorchLean.TensorPack ℝ Γ) :
+    evalVec (Γ := Γ) (ss := ss) g (flattenCtx x) = flattenCtx (eval (Γ := Γ) (ss := ss) g x) := by
+  induction g with
+  | nil =>
+    simp [evalVec, eval, flattenCtx_cast]
+  | snoc g node ih =>
+    simp [evalVec, eval, flattenCtx_cast, flattenCtx_snoc, ih, Node.forwardVec_flattenCtx]
+
+/-- The Euclidean graph JVP is the flattening of the `TensorPack` JVP. -/
+theorem jvpVec_flattenCtx {ss : List Shape} (g : Graph Γ ss) (x dx : TorchLean.TensorPack ℝ Γ) :
+    jvpVec (Γ := Γ) (ss := ss) g (flattenCtx x) (flattenCtx dx)
+      = flattenCtx (jvpCtx (Γ := Γ) (ss := ss) g x dx) := by
+  induction g with
+  | nil =>
+    simp [jvpVec, jvpCtx, flattenCtx_cast]
+  | snoc g node ih =>
+    simp [jvpVec, jvpCtx, flattenCtx_cast, flattenCtx_snoc, ih, evalVec_flattenCtx,
+      Node.jvpVec_flattenCtx]
+
+/-- The Euclidean reverse pass is the flattening of the `TensorPack` reverse pass. -/
+theorem backpropVec_flattenCtx {ss : List Shape} (g : Graph Γ ss) (x : TorchLean.TensorPack ℝ Γ)
+    (seed : TorchLean.TensorPack ℝ (Γ ++ ss)) :
+    backpropVec (Γ := Γ) (ss := ss) g (flattenCtx x) (flattenCtx seed)
+      = flattenCtx (backpropCtx (Γ := Γ) (ss := ss) g x seed) := by
+  induction g with
+  | nil =>
+    simp [backpropVec, backpropCtx, flattenCtx_cast]
+  | snoc g node ih =>
+    rename_i ss τ
+    simp only [backpropVec, backpropCtx]
+    rw [← flattenCtx_cast, unsnocCtx_flattenCtx, evalVec_flattenCtx,
+      Node.vjpVec_flattenCtx, ← flattenCtx_add, ih]
+
+end Graph
+
+namespace Graph
+
+variable {Γ : List Shape}
+
+/-- Vectorized tape soundness: `⟪jvp, seed⟫ = ⟪dx, backprop seed⟫`. It is `backprop_correct`
+read through `flattenCtx`, a bijection carrying `dotList` to the Euclidean inner product. -/
 theorem backprop_correct_inner {ss : List Shape} (g : Graph Γ ss) :
     ∀ xV dxV seedV,
       inner ℝ (jvpVec (Γ := Γ) (ss := ss) g xV dxV) seedV =
         inner ℝ dxV (backpropVec (Γ := Γ) (ss := ss) g xV seedV) := by
-  classical
-  induction g with
-  | nil =>
-      intro xV dxV seedV
-      -- casts are inverse on inner products
-      have hleft := inner_castCtxVec (Γ₁ := Γ) (Γ₂ := Γ ++ []) (h := (List.append_nil Γ).symm) dxV
-        seedV
-      -- `backpropVec nil` is the inverse cast
-      simpa [Graph.jvpVec, Graph.backpropVec] using hleft
-  | snoc g node ih =>
-      intro xV dxV seedV
-      rename_i ss τ
-      let ctxV : CtxVec (Γ ++ ss) := evalVec (Γ := Γ) (ss := ss) g xV
-      let dctxV : CtxVec (Γ ++ ss) := jvpVec (Γ := Γ) (ss := ss) g xV dxV
-      let dyV : Vec (Spec.Shape.size τ) := node.jvpVec (Γ := Γ ++ ss) (τ := τ) ctxV dctxV
-      let assoc := List.append_assoc Γ ss [τ]
-      let seedV' : CtxVec ((Γ ++ ss) ++ [τ]) :=
-        castCtxVec (Γ₁ := Γ ++ (ss ++ [τ])) (Γ₂ := (Γ ++ ss) ++ [τ]) assoc.symm seedV
-      let seedPrevV : CtxVec (Γ ++ ss) := (unsnocCtx (Γ := (Γ ++ ss)) (τ := τ) seedV').1
-      let seedOutV : Vec (Spec.Shape.size τ) := (unsnocCtx (Γ := (Γ ++ ss)) (τ := τ) seedV').2
-      have hseed : snocCtx (Γ := (Γ ++ ss)) (τ := τ) seedPrevV seedOutV = seedV' := by
-        simpa [seedPrevV, seedOutV] using
-          (snocCtx_unsnocCtx (Γ := (Γ ++ ss)) (τ := τ) seedV')
-
-      -- Move the outer `assoc` cast from the JVP output onto the seed.
-      have hjvp_cast :
-          inner ℝ (jvpVec (Γ := Γ) (ss := ss ++ [τ]) (Graph.snoc g node) xV dxV) seedV
-            =
-          inner ℝ (snocCtx (Γ := (Γ ++ ss)) (τ := τ) dctxV dyV) seedV' := by
-        have hcast := inner_castCtxVec (Γ₁ := (Γ ++ ss) ++ [τ]) (Γ₂ := Γ ++ (ss ++ [τ])) (h :=
-          assoc)
-          (snocCtx (Γ := (Γ ++ ss)) (τ := τ) dctxV dyV) seedV
-        simpa [Graph.jvpVec, ctxV, dctxV, dyV, seedV', assoc] using hcast
-
-      -- Split the inner product across the `snocCtx` append.
-      have hinter :
-          inner ℝ (snocCtx (Γ := (Γ ++ ss)) (τ := τ) dctxV dyV) seedV'
-            =
-          inner ℝ dctxV seedPrevV + inner ℝ dyV seedOutV := by
-        -- Cancel the `snocCtx` casts on both sides and use `inner_append`.
-        have hsnoc :
-            inner ℝ (snocCtx (Γ := (Γ ++ ss)) (τ := τ) dctxV dyV)
-                  (snocCtx (Γ := (Γ ++ ss)) (τ := τ) seedPrevV seedOutV)
-              =
-            inner ℝ dctxV seedPrevV + inner ℝ dyV seedOutV := by
-          -- transport to the `(ctxSize + size)` representation
-          have hcast' :
-              inner ℝ (snocCtx (Γ := (Γ ++ ss)) (τ := τ) dctxV dyV)
-                    (snocCtx (Γ := (Γ ++ ss)) (τ := τ) seedPrevV seedOutV)
-                =
-              inner ℝ (appendVec (m := ctxSize (Γ ++ ss)) (n := Spec.Shape.size τ) dctxV dyV)
-                    (appendVec (m := ctxSize (Γ ++ ss)) (n := Spec.Shape.size τ)
-                      seedPrevV seedOutV) := by
-            simpa [snocCtx] using
-              (inner_castVec_castVec (h := (ctxSize_snoc (Γ ++ ss) τ).symm)
-                (x := appendVec (m := ctxSize (Γ ++ ss)) (n := Spec.Shape.size τ) dctxV dyV)
-                (y := appendVec (m := ctxSize (Γ ++ ss)) (n := Spec.Shape.size τ)
-                  seedPrevV seedOutV))
-          -- apply `inner_append` and simplify
-          simp [hcast', inner_append]
-        simpa [hseed] using hsnoc
-
-      -- Use node-level adjointness to rewrite the output term.
-      have hlocal :
-          inner ℝ dyV seedOutV = inner ℝ dctxV (node.vjpVec (Γ := Γ ++ ss) (τ := τ) ctxV seedOutV)
-            := by
-        simpa [dyV] using (Node.correct_inner (node := node) ctxV dctxV seedOutV)
-
-      -- Combine and apply IH on the previous graph.
-      have hadd :
-          inner ℝ dctxV seedPrevV + inner ℝ dctxV (node.vjpVec (Γ := Γ ++ ss) (τ := τ) ctxV
-            seedOutV)
-            =
-          inner ℝ dctxV (seedPrevV + node.vjpVec (Γ := Γ ++ ss) (τ := τ) ctxV seedOutV) := by
-        simpa using
-          (inner_add_right (x := dctxV) (y := seedPrevV)
-            (z := node.vjpVec (Γ := Γ ++ ss) (τ := τ) ctxV seedOutV)).symm
-
-      calc
-        inner ℝ (jvpVec (Γ := Γ) (ss := ss ++ [τ]) (Graph.snoc g node) xV dxV) seedV
-            = inner ℝ (snocCtx (Γ := (Γ ++ ss)) (τ := τ) dctxV dyV) seedV' := hjvp_cast
-        _ = inner ℝ dctxV seedPrevV + inner ℝ dyV seedOutV := hinter
-        _ = inner ℝ dctxV seedPrevV + inner ℝ dctxV (node.vjpVec (Γ := Γ ++ ss) (τ := τ) ctxV
-          seedOutV) := by
-              simp [hlocal]
-        _ = inner ℝ dctxV (seedPrevV + node.vjpVec (Γ := Γ ++ ss) (τ := τ) ctxV seedOutV) := hadd
-        _ = inner ℝ dxV (backpropVec (Γ := Γ) (ss := ss) g xV (seedPrevV + node.vjpVec (Γ := Γ ++
-          ss) (τ := τ) ctxV seedOutV)) := by
-              simpa [dctxV] using (ih xV dxV (seedPrevV + node.vjpVec (Γ := Γ ++ ss) (τ := τ) ctxV
-                seedOutV))
-        _ = inner ℝ dxV (backpropVec (Γ := Γ) (ss := ss ++ [τ]) (Graph.snoc g node) xV seedV) := by
-              simp [Graph.backpropVec, ctxV, seedV', seedPrevV, seedOutV]
+  intro xV dxV seedV
+  obtain ⟨x, rfl⟩ : ∃ x, flattenCtx x = xV := ⟨_, flattenCtx_unflattenCtx xV⟩
+  obtain ⟨dx, rfl⟩ : ∃ dx, flattenCtx dx = dxV := ⟨_, flattenCtx_unflattenCtx dxV⟩
+  obtain ⟨seed, rfl⟩ : ∃ seed, flattenCtx seed = seedV := ⟨_, flattenCtx_unflattenCtx seedV⟩
+  rw [jvpVec_flattenCtx, backpropVec_flattenCtx, ← dotList_eq_inner_flattenCtx,
+    ← dotList_eq_inner_flattenCtx]
+  exact backprop_correct g x dx seed
 
 end Graph
 

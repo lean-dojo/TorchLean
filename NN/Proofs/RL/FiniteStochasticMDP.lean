@@ -16,7 +16,8 @@ This module proves the key discounted Bellman facts for TorchLean's finite stoch
 
 - monotonicity of Bellman expectation and Bellman optimality,
 - Bellman expectation is a contraction in the sup metric,
-- Bellman optimality is also a contraction in the sup metric.
+- Bellman optimality is also a contraction in the sup metric,
+- both operators have a unique fixed point, and value iteration converges to it geometrically.
 
 The setting is intentionally finite and concrete: a clean, trustworthy formal base that mirrors the
 standard textbook RL theory for discounted MDPs, rather than maximal generality.
@@ -43,16 +44,37 @@ open Spec.RL.FiniteStochastic
 variable {nStates nActions : Nat}
 
 /-!
-The sup metric on finite value tables is shared with the deterministic development rather than
-restated here. `Proofs.RL.MDP` already carries a comment saying the two developments "intentionally
-use the same metric", and until now that sentence was aspirational: both files defined
-`valueSupDist` and proved its two basic facts with byte-identical proofs. The layering is the one
-the specs already chose, since `Spec.RL.FiniteStochasticMDP` imports `Spec.RL.MDP`.
-
-The `open` is fully qualified because `MDP` on its own is ambiguous inside this file: `Spec.RL.MDP`
-is also the name of the transition structure used throughout the theorems below.
+The sup metric and the fixed-point theory come from `Proofs.RL.MDP`, which proves them once for any
+`SupContraction` on finite value tables. This file only proves the one-step bounds for stochastic
+transitions. The `open` is fully qualified because `MDP` on its own is also the name of the
+transition structure used below.
 -/
-open _root_.Proofs.RL.MDP (valueSupDist valueSupDist_nonneg abs_sub_valueAt_le_valueSupDist)
+open _root_.Proofs.RL.MDP (valueSupDist valueSupDist_nonneg valueSupDist_le
+  abs_sub_valueAt_le_valueSupDist SupContraction)
+open Proofs.RL.Core (discountedBackup_mono discountedBackup_abs_sub_le)
+open Filter Topology
+
+/-- Policy evaluation reads back the selected action value. -/
+theorem valueAt_bellmanPolicy
+    (mdp : MDP nStates nActions)
+    (policy : Policy nStates nActions)
+    (values : ValueFunction ℝ nStates)
+    (state : Fin nStates) :
+    valueAt (bellmanPolicy mdp policy values) state =
+      actionValue mdp values state (policy state) := by
+  simp [valueAt, Spec.RL.FiniteStochastic.bellmanPolicy]
+
+/-- Bellman optimality reads back the best action value. -/
+theorem valueAt_bellmanOptimality
+    [Fact (0 < nActions)]
+    (mdp : MDP nStates nActions)
+    (values : ValueFunction ℝ nStates)
+    (state : Fin nStates) :
+    let _ : Nonempty (Fin nActions) := ⟨⟨0, Fact.out⟩⟩
+    valueAt (bellmanOptimality mdp values) state =
+      (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty
+        (actionValue mdp values state) := by
+  simp [valueAt, Spec.RL.FiniteStochastic.bellmanOptimality]
 
 /-- Expected next-state value is monotone in the candidate value function. -/
 theorem expectedNextValue_monotone
@@ -62,12 +84,9 @@ theorem expectedNextValue_monotone
     (hValues : ∀ state, valueAt values₁ state ≤ valueAt values₂ state)
     (state : Fin nStates)
     (action : Fin nActions) :
-    expectedNextValue mdp values₁ state action ≤ expectedNextValue mdp values₂ state action := by
-  unfold expectedNextValue
-  refine Finset.sum_le_sum ?_
-  intro nextState _
-  exact mul_le_mul_of_nonneg_left (hValues nextState)
-    (valid.transition_nonneg state action nextState)
+    expectedNextValue mdp values₁ state action ≤ expectedNextValue mdp values₂ state action :=
+  Finset.sum_le_sum fun nextState _ =>
+    mul_le_mul_of_nonneg_left (hValues nextState) (valid.transition_nonneg state action nextState)
 
 /-- Bellman state-action values are monotone in the candidate value function. -/
 theorem actionValue_monotone
@@ -77,14 +96,9 @@ theorem actionValue_monotone
     (hValues : ∀ state, valueAt values₁ state ≤ valueAt values₂ state)
     (state : Fin nStates)
     (action : Fin nActions) :
-    Spec.RL.FiniteStochastic.actionValue mdp values₁ state action ≤
-      Spec.RL.FiniteStochastic.actionValue mdp values₂ state action := by
-  by_cases hdone : mdp.terminated state action
-  · simp [Spec.RL.FiniteStochastic.actionValue, discountedBackup, continueMask, hdone]
-  · simp [Spec.RL.FiniteStochastic.actionValue, discountedBackup, continueMask, hdone]
-    exact mul_le_mul_of_nonneg_left
-      (expectedNextValue_monotone mdp valid values₁ values₂ hValues state action)
-      valid.discount_nonneg
+    actionValue mdp values₁ state action ≤ actionValue mdp values₂ state action :=
+  discountedBackup_mono _ valid.discount_nonneg
+    (expectedNextValue_monotone mdp valid values₁ values₂ hValues state action)
 
 /-- Bellman expectation operators are pointwise monotone. -/
 theorem bellmanPolicy_monotone
@@ -94,10 +108,9 @@ theorem bellmanPolicy_monotone
     (values₁ values₂ : ValueFunction ℝ nStates)
     (hValues : ∀ state, valueAt values₁ state ≤ valueAt values₂ state)
     (state : Fin nStates) :
-    valueAt (Spec.RL.FiniteStochastic.bellmanPolicy mdp policy values₁) state ≤
-      valueAt (Spec.RL.FiniteStochastic.bellmanPolicy mdp policy values₂) state := by
-  simpa [Spec.RL.FiniteStochastic.bellmanPolicy, valueAt, Spec.get,
-    Spec.get, TorchLean.Tensor.item] using
+    valueAt (bellmanPolicy mdp policy values₁) state ≤
+      valueAt (bellmanPolicy mdp policy values₂) state := by
+  simpa [valueAt_bellmanPolicy] using
     actionValue_monotone mdp valid values₁ values₂ hValues state (policy state)
 
 /-- Optimal Bellman operators are pointwise monotone. -/
@@ -108,22 +121,11 @@ theorem bellmanOptimality_monotone
     (values₁ values₂ : ValueFunction ℝ nStates)
     (hValues : ∀ state, valueAt values₁ state ≤ valueAt values₂ state)
     (state : Fin nStates) :
-    valueAt (Spec.RL.FiniteStochastic.bellmanOptimality mdp values₁) state ≤
-      valueAt (Spec.RL.FiniteStochastic.bellmanOptimality mdp values₂) state := by
-  let _ : Nonempty (Fin nActions) := ⟨⟨0, Fact.out⟩⟩
-  simp only [valueAt, Spec.RL.FiniteStochastic.bellmanOptimality,
-    TorchLean.Tensor.getScalar_ofFn]
-  change
-    (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty
-        (Spec.RL.FiniteStochastic.actionValue mdp values₁ state) ≤
-      (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty
-        (Spec.RL.FiniteStochastic.actionValue mdp values₂ state)
-  refine Finset.sup'_le (s := (Finset.univ : Finset (Fin nActions))) Finset.univ_nonempty
-    (Spec.RL.FiniteStochastic.actionValue mdp values₁ state) ?_
-  intro action _
-  exact (actionValue_monotone mdp valid values₁ values₂ hValues state action).trans
-    (Finset.le_sup' (Spec.RL.FiniteStochastic.actionValue mdp values₂ state)
-      (Finset.mem_univ action))
+    valueAt (bellmanOptimality mdp values₁) state ≤
+      valueAt (bellmanOptimality mdp values₂) state := by
+  simp only [valueAt_bellmanOptimality]
+  exact Finset.sup'_mono_fun fun action _ =>
+    actionValue_monotone mdp valid values₁ values₂ hValues state action
 
 /-- Coordinatewise expectation difference is bounded by the sup distance. -/
 theorem expectedNextValue_abs_sub_le
@@ -135,60 +137,20 @@ theorem expectedNextValue_abs_sub_le
     (action : Fin nActions) :
     |expectedNextValue mdp values₁ state action - expectedNextValue mdp values₂ state action|
       ≤ valueSupDist values₁ values₂ := by
-  let row := mdp.transitionProb state action
-  have hrewrite :
-      Spec.RL.FiniteStochastic.expectedNextValue mdp values₁ state action -
-          Spec.RL.FiniteStochastic.expectedNextValue mdp values₂ state action =
-        (Finset.univ : Finset (Fin nStates)).sum
-          (fun nextState =>
-            row.getScalar nextState *
-              (valueAt values₁ nextState - valueAt values₂ nextState)) := by
-    change
-      (∑ nextState : Fin nStates,
-          (mdp.transitionProb state action).getScalar nextState * valueAt values₁ nextState) -
-        (∑ nextState : Fin nStates,
-          (mdp.transitionProb state action).getScalar nextState * valueAt values₂ nextState) =
-      ∑ nextState : Fin nStates,
-        row.getScalar nextState * (valueAt values₁ nextState - valueAt values₂ nextState)
-    rw [← Finset.sum_sub_distrib]
-    refine Finset.sum_congr rfl ?_
-    intro nextState _
-    simp [row]
-    ring
-  rw [hrewrite]
+  let p := fun nextState => (mdp.transitionProb state action).getScalar nextState
+  have hp := valid.transition_nonneg state action
   calc
-    |∑ nextState : Fin nStates,
-        row.getScalar nextState * (valueAt values₁ nextState - valueAt values₂ nextState)|
-      ≤ ∑ nextState : Fin nStates,
-          |row.getScalar nextState * (valueAt values₁ nextState - valueAt values₂ nextState)| := by
-            simpa using (Finset.abs_sum_le_sum_abs
-              (s := (Finset.univ : Finset (Fin nStates)))
-              (f := fun nextState =>
-                row.getScalar nextState *
-                  (valueAt values₁ nextState - valueAt values₂ nextState)))
-    _ = ∑ nextState : Fin nStates,
-          row.getScalar nextState * |valueAt values₁ nextState - valueAt values₂ nextState| := by
-            refine Finset.sum_congr rfl ?_
-            intro nextState _
-            rw [abs_mul, abs_of_nonneg]
-            simpa [row] using valid.transition_nonneg state action nextState
-    _ ≤ ∑ nextState : Fin nStates,
-          row.getScalar nextState * valueSupDist values₁ values₂ := by
-            refine Finset.sum_le_sum ?_
-            intro nextState _
-            exact mul_le_mul_of_nonneg_left
-              (abs_sub_valueAt_le_valueSupDist values₁ values₂ nextState)
-              (by simpa [row] using valid.transition_nonneg state action nextState)
-    _ = ((Finset.univ : Finset (Fin nStates)).sum
-          (fun nextState => row.getScalar nextState)) * valueSupDist values₁ values₂ := by
-            simpa using
-              (Finset.sum_mul (s := (Finset.univ : Finset (Fin nStates)))
-                (f := fun nextState => row.getScalar nextState)
-                (a := valueSupDist values₁ values₂)).symm
+    |expectedNextValue mdp values₁ state action - expectedNextValue mdp values₂ state action|
+        = |∑ s, p s * (valueAt values₁ s - valueAt values₂ s)| := by
+          simp [expectedNextValue, p, mul_sub, Finset.sum_sub_distrib]
+    _ ≤ ∑ s, p s * |valueAt values₁ s - valueAt values₂ s| :=
+          (Finset.abs_sum_le_sum_abs _ _).trans_eq
+            (Finset.sum_congr rfl fun s _ => by rw [abs_mul, abs_of_nonneg (hp s)])
+    _ ≤ ∑ s, p s * valueSupDist values₁ values₂ :=
+          Finset.sum_le_sum fun s _ =>
+            mul_le_mul_of_nonneg_left (abs_sub_valueAt_le_valueSupDist values₁ values₂ s) (hp s)
     _ = valueSupDist values₁ values₂ := by
-            rw [show (Finset.univ : Finset (Fin nStates)).sum
-                (fun nextState => row.getScalar nextState) = 1 by
-              simpa [row] using valid.transition_sums_to_one state action, one_mul]
+          rw [← Finset.sum_mul, valid.transition_sums_to_one state action, one_mul]
 
 /-- State-action Bellman values are Lipschitz with constant `γ` in the sup metric. -/
 theorem actionValue_abs_sub_le
@@ -198,43 +160,10 @@ theorem actionValue_abs_sub_le
     (values₁ values₂ : ValueFunction ℝ nStates)
     (state : Fin nStates)
     (action : Fin nActions) :
-    |Spec.RL.FiniteStochastic.actionValue mdp values₁ state action -
-        Spec.RL.FiniteStochastic.actionValue mdp values₂ state action|
-      ≤ mdp.discount * valueSupDist values₁ values₂ := by
-  by_cases hdone : mdp.terminated state action
-  · have hnonneg :
-      0 ≤ mdp.discount * valueSupDist values₁ values₂ := by
-        exact mul_nonneg valid.discount_nonneg (valueSupDist_nonneg values₁ values₂)
-    simp [Spec.RL.FiniteStochastic.actionValue, discountedBackup, continueMask, hdone, hnonneg]
-  · have hexp :=
-      expectedNextValue_abs_sub_le mdp valid values₁ values₂ state action
-    have hmul :
-        |mdp.discount * (expectedNextValue mdp values₁ state action -
-            expectedNextValue mdp values₂ state action)|
-          ≤ mdp.discount * valueSupDist values₁ values₂ := by
-      calc
-        |mdp.discount * (expectedNextValue mdp values₁ state action -
-            expectedNextValue mdp values₂ state action)|
-            = |mdp.discount| *
-                |expectedNextValue mdp values₁ state action -
-                  expectedNextValue mdp values₂ state action| := by
-                    rw [abs_mul]
-        _ = mdp.discount *
-              |expectedNextValue mdp values₁ state action -
-                expectedNextValue mdp values₂ state action| := by
-                  rw [abs_of_nonneg valid.discount_nonneg]
-        _ ≤ mdp.discount * valueSupDist values₁ values₂ := by
-              exact mul_le_mul_of_nonneg_left hexp valid.discount_nonneg
-    have hrewrite :
-        Spec.RL.FiniteStochastic.actionValue mdp values₁ state action -
-            Spec.RL.FiniteStochastic.actionValue mdp values₂ state action =
-          mdp.discount *
-            (expectedNextValue mdp values₁ state action -
-              expectedNextValue mdp values₂ state action) := by
-      simp [Spec.RL.FiniteStochastic.actionValue, discountedBackup, continueMask, hdone]
-      ring
-    rw [hrewrite]
-    exact hmul
+    |actionValue mdp values₁ state action - actionValue mdp values₂ state action|
+      ≤ mdp.discount * valueSupDist values₁ values₂ :=
+  discountedBackup_abs_sub_le _ valid.discount_nonneg (valueSupDist_nonneg values₁ values₂)
+    (expectedNextValue_abs_sub_le mdp valid values₁ values₂ state action)
 
 /-- Bellman expectation is a contraction with modulus `γ` in the sup metric:
 
@@ -245,24 +174,11 @@ theorem bellmanPolicy_contraction
     (valid : Valid mdp)
     (policy : Policy nStates nActions)
     (values₁ values₂ : ValueFunction ℝ nStates) :
-    valueSupDist (Spec.RL.FiniteStochastic.bellmanPolicy mdp policy values₁)
-      (Spec.RL.FiniteStochastic.bellmanPolicy mdp policy values₂)
-      ≤ mdp.discount * valueSupDist values₁ values₂ := by
-  let _ : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
-  change
-    (Finset.univ : Finset (Fin nStates)).sup' Finset.univ_nonempty
-        (fun state =>
-          |valueAt (Spec.RL.FiniteStochastic.bellmanPolicy mdp policy values₁) state -
-            valueAt (Spec.RL.FiniteStochastic.bellmanPolicy mdp policy values₂) state|)
-      ≤ mdp.discount * valueSupDist values₁ values₂
-  refine Finset.sup'_le (s := (Finset.univ : Finset (Fin nStates))) Finset.univ_nonempty
-    (f := fun state =>
-      |valueAt (Spec.RL.FiniteStochastic.bellmanPolicy mdp policy values₁) state -
-          valueAt (Spec.RL.FiniteStochastic.bellmanPolicy mdp policy values₂) state|) ?_
-  intro state _
-  simpa only [Spec.RL.FiniteStochastic.bellmanPolicy, valueAt,
-    TorchLean.Tensor.getScalar_ofFn] using
-    actionValue_abs_sub_le mdp valid values₁ values₂ state (policy state)
+    valueSupDist (bellmanPolicy mdp policy values₁) (bellmanPolicy mdp policy values₂)
+      ≤ mdp.discount * valueSupDist values₁ values₂ :=
+  valueSupDist_le fun state => by
+    simpa [valueAt_bellmanPolicy] using
+      actionValue_abs_sub_le mdp valid values₁ values₂ state (policy state)
 
 /-- Every particular action-value is bounded by Bellman optimality. -/
 theorem actionValue_le_bellmanOptimality
@@ -271,17 +187,9 @@ theorem actionValue_le_bellmanOptimality
     (values : ValueFunction ℝ nStates)
     (state : Fin nStates)
     (action : Fin nActions) :
-    Spec.RL.FiniteStochastic.actionValue mdp values state action ≤
-      valueAt (Spec.RL.FiniteStochastic.bellmanOptimality mdp values) state := by
-  let _ : Nonempty (Fin nActions) := ⟨⟨0, Fact.out⟩⟩
-  simp only [valueAt, Spec.RL.FiniteStochastic.bellmanOptimality,
-    TorchLean.Tensor.getScalar_ofFn]
-  change
-    Spec.RL.FiniteStochastic.actionValue mdp values state action ≤
-      (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty
-        (Spec.RL.FiniteStochastic.actionValue mdp values state)
-  exact Finset.le_sup' (Spec.RL.FiniteStochastic.actionValue mdp values state)
-    (Finset.mem_univ action)
+    actionValue mdp values state action ≤ valueAt (bellmanOptimality mdp values) state := by
+  rw [valueAt_bellmanOptimality]
+  exact Finset.le_sup' (actionValue mdp values state) (Finset.mem_univ action)
 
 /-- Bellman optimality dominates Bellman evaluation under any deterministic policy. -/
 theorem bellmanPolicy_le_bellmanOptimality
@@ -290,10 +198,9 @@ theorem bellmanPolicy_le_bellmanOptimality
     (policy : Policy nStates nActions)
     (values : ValueFunction ℝ nStates)
     (state : Fin nStates) :
-    valueAt (Spec.RL.FiniteStochastic.bellmanPolicy mdp policy values) state ≤
-      valueAt (Spec.RL.FiniteStochastic.bellmanOptimality mdp values) state := by
-  simpa [Spec.RL.FiniteStochastic.bellmanPolicy, valueAt, Spec.get,
-    Spec.get, TorchLean.Tensor.item] using
+    valueAt (bellmanPolicy mdp policy values) state ≤
+      valueAt (bellmanOptimality mdp values) state := by
+  simpa [valueAt_bellmanPolicy] using
     actionValue_le_bellmanOptimality mdp values state (policy state)
 
 /-- At a fixed state, Bellman optimality is a contraction with modulus `γ`. -/
@@ -303,39 +210,12 @@ theorem bellmanOptimality_abs_sub_le
     (valid : Valid mdp)
     (values₁ values₂ : ValueFunction ℝ nStates)
     (state : Fin nStates) :
-    |valueAt (Spec.RL.FiniteStochastic.bellmanOptimality mdp values₁) state -
-        valueAt (Spec.RL.FiniteStochastic.bellmanOptimality mdp values₂) state|
+    |valueAt (bellmanOptimality mdp values₁) state -
+        valueAt (bellmanOptimality mdp values₂) state|
       ≤ mdp.discount * valueSupDist values₁ values₂ := by
-  let _ : Nonempty (Fin nActions) := ⟨⟨0, Fact.out⟩⟩
-  let bound := mdp.discount * valueSupDist values₁ values₂
-  let f : Fin nActions → ℝ := Spec.RL.FiniteStochastic.actionValue mdp values₁ state
-  let g : Fin nActions → ℝ := Spec.RL.FiniteStochastic.actionValue mdp values₂ state
-  have hfg : ∀ action ∈ (Finset.univ : Finset (Fin nActions)), f action ≤ g action + bound := by
-    intro action _
-    have habs := actionValue_abs_sub_le mdp valid values₁ values₂ state action
-    linarith [abs_sub_le_iff.mp habs]
-  have hgf : ∀ action ∈ (Finset.univ : Finset (Fin nActions)), g action ≤ f action + bound := by
-    intro action _
-    have habs := actionValue_abs_sub_le mdp valid values₁ values₂ state action
-    linarith [abs_sub_le_iff.mp habs]
-  have hs1 :
-      (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty f
-        ≤ (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty g + bound := by
-    exact Proofs.RL.sup'_le_add_const
-      (Finset.univ : Finset (Fin nActions)) Finset.univ_nonempty f g bound hfg
-  have hs2 :
-      (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty g
-        ≤ (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty f + bound := by
-    exact Proofs.RL.sup'_le_add_const
-      (Finset.univ : Finset (Fin nActions)) Finset.univ_nonempty g f bound hgf
-  have habs :
-      |(Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty f -
-          (Finset.univ : Finset (Fin nActions)).sup' Finset.univ_nonempty g|
-        ≤ bound := by
-    exact abs_sub_le_iff.mpr
-      ⟨sub_le_iff_le_add'.mpr hs1, sub_le_iff_le_add'.mpr hs2⟩
-  simpa [Spec.RL.FiniteStochastic.bellmanOptimality, valueAt, Spec.get,
-    Spec.get, TorchLean.Tensor.item, f, g, bound] using habs
+  simp only [valueAt_bellmanOptimality]
+  exact abs_sup'_sub_sup'_le _ _ _ _ _ fun action _ =>
+    actionValue_abs_sub_le mdp valid values₁ values₂ state action
 
 /-- Bellman optimality is a contraction with modulus `γ` in the sup metric:
 
@@ -345,261 +225,107 @@ theorem bellmanOptimality_contraction
     (mdp : MDP nStates nActions)
     (valid : Valid mdp)
     (values₁ values₂ : ValueFunction ℝ nStates) :
-    valueSupDist (Spec.RL.FiniteStochastic.bellmanOptimality mdp values₁)
-      (Spec.RL.FiniteStochastic.bellmanOptimality mdp values₂)
-      ≤ mdp.discount * valueSupDist values₁ values₂ := by
-  let _ : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
-  unfold valueSupDist
-  refine Finset.sup'_le (s := (Finset.univ : Finset (Fin nStates))) Finset.univ_nonempty
-    (f := fun state =>
-      |valueAt (Spec.RL.FiniteStochastic.bellmanOptimality mdp values₁) state -
-          valueAt (Spec.RL.FiniteStochastic.bellmanOptimality mdp values₂) state|) ?_
-  intro state _
-  exact bellmanOptimality_abs_sub_le mdp valid values₁ values₂ state
+    valueSupDist (bellmanOptimality mdp values₁)
+      (bellmanOptimality mdp values₂)
+      ≤ mdp.discount * valueSupDist values₁ values₂ :=
+  valueSupDist_le (bellmanOptimality_abs_sub_le mdp valid values₁ values₂)
 
 /-!
-## Contraction Iterates and Fixed Points
+## Fixed Points and Value Iteration
 
-The earlier theorems show that (under `0 ≤ γ < 1`) the Bellman operators are `γ`-contractions in the
-sup metric (`valueSupDist`).
-
-The theorems below package the standard consequences used throughout discounted-RL theory:
-
-- iterating a contraction shrinks distances geometrically (`γ^k`),
-- fixed points are unique,
-- the error to a fixed point decays geometrically under iteration.
-
-These statements are the formal backbone behind “value iteration converges” style arguments, and
-they are useful even before we prove existence of a fixed point (existence is typically obtained
-via a completeness argument, or via an explicit linear-system solution in the finite case).
+`Valid` puts the discount in `[0, 1)`, so both operators are `SupContraction`s. The fixed point
+exists by Banach's theorem, is unique, and value iteration converges to it from any start. The
+theorems below name the consequences most often cited.
 -/
 
 section FixedPoints
 
-variable {nStates nActions : Nat}
+variable [Fact (0 < nStates)]
 
-private theorem vectorEquiv_apply_eq_valueAt
-    (values : ValueFunction ℝ nStates) (state : Fin nStates) :
-    (TorchLean.Tensor.vectorEquiv (α := ℝ) nStates values) state = valueAt values state := by
-  rfl
+/-- Policy evaluation is a `SupContraction`. -/
+theorem bellmanPolicy_supContraction
+    (mdp : MDP nStates nActions) (valid : Valid mdp) (policy : Policy nStates nActions) :
+    SupContraction mdp.discount (bellmanPolicy mdp policy) :=
+  ⟨valid.discount_nonneg, valid.discount_lt_one, bellmanPolicy_contraction mdp valid policy⟩
 
-/-- `valueSupDist = 0` iff two finite value functions are equal. -/
-theorem valueSupDist_eq_zero_iff
-    [Fact (0 < nStates)]
-    (values₁ values₂ : ValueFunction ℝ nStates) :
-    valueSupDist values₁ values₂ = 0 ↔ values₁ = values₂ := by
-  constructor
-  · intro h
-    apply (TorchLean.Tensor.vectorEquiv (α := ℝ) nStates).injective
-    funext state
-    have habs :
-        |valueAt values₁ state - valueAt values₂ state| ≤ valueSupDist values₁ values₂ :=
-      abs_sub_valueAt_le_valueSupDist (values₁ := values₁) (values₂ := values₂) state
-    have habs0 : |valueAt values₁ state - valueAt values₂ state| ≤ 0 := by
-      simpa [h] using habs
-    have habseq : |valueAt values₁ state - valueAt values₂ state| = 0 :=
-      le_antisymm habs0 (abs_nonneg _)
-    have hdiff : valueAt values₁ state - valueAt values₂ state = 0 :=
-      abs_eq_zero.mp habseq
-    have hcoord : valueAt values₁ state = valueAt values₂ state :=
-      sub_eq_zero.mp hdiff
-    rw [vectorEquiv_apply_eq_valueAt, vectorEquiv_apply_eq_valueAt]
-    exact hcoord
-  · intro h
-    subst h
-    simp [valueSupDist, valueAt]
+/-- Bellman optimality is a `SupContraction`. -/
+theorem bellmanOptimality_supContraction [Fact (0 < nActions)]
+    (mdp : MDP nStates nActions) (valid : Valid mdp) :
+    SupContraction mdp.discount (bellmanOptimality mdp) :=
+  ⟨valid.discount_nonneg, valid.discount_lt_one, bellmanOptimality_contraction mdp valid⟩
+
+/-- The value of a policy exists and is unique: `T^π` has exactly one fixed point. -/
+theorem bellmanPolicy_existsUnique_fixedPoint
+    (mdp : MDP nStates nActions) (valid : Valid mdp) (policy : Policy nStates nActions) :
+    ∃! values : ValueFunction ℝ nStates, bellmanPolicy mdp policy values = values :=
+  (bellmanPolicy_supContraction mdp valid policy).existsUnique_fixedPoint
+
+/-- The optimal value function exists and is unique: `T*` has exactly one fixed point. -/
+theorem bellmanOptimality_existsUnique_fixedPoint [Fact (0 < nActions)]
+    (mdp : MDP nStates nActions) (valid : Valid mdp) :
+    ∃! values : ValueFunction ℝ nStates, bellmanOptimality mdp values = values :=
+  (bellmanOptimality_supContraction mdp valid).existsUnique_fixedPoint
+
+/-- Value iteration converges to the optimal value function from any starting table. -/
+theorem bellmanOptimality_valueIteration_tendsto [Fact (0 < nActions)]
+    (mdp : MDP nStates nActions) (valid : Valid mdp) (values : ValueFunction ℝ nStates) :
+    Tendsto (fun k => valueSupDist ((bellmanOptimality mdp)^[k] values)
+      (bellmanOptimality_supContraction mdp valid).fixedPoint) atTop (𝓝 0) :=
+  (bellmanOptimality_supContraction mdp valid).tendsto_iterate values
 
 /-- `bellmanPolicy` iterates are geometric contractions in `valueSupDist`. -/
 theorem bellmanPolicy_iterate_contraction
-    [Fact (0 < nStates)]
-    (mdp : MDP nStates nActions)
-    (valid : Valid mdp)
-    (policy : Policy nStates nActions)
-    (k : Nat)
-    (values₁ values₂ : ValueFunction ℝ nStates) :
-    valueSupDist ((Spec.RL.FiniteStochastic.bellmanPolicy mdp policy)^[k] values₁)
-      ((Spec.RL.FiniteStochastic.bellmanPolicy mdp policy)^[k] values₂)
-      ≤ mdp.discount ^ k * valueSupDist values₁ values₂ := by
-  induction k generalizing values₁ values₂ with
-  | zero =>
-      simp
-  | succ k ih =>
-      let f := Spec.RL.FiniteStochastic.bellmanPolicy mdp policy
-      have ih' :
-          valueSupDist (f^[k] (f values₁)) (f^[k] (f values₂))
-            ≤ mdp.discount ^ k * valueSupDist (f values₁) (f values₂) :=
-        ih (values₁ := f values₁) (values₂ := f values₂)
-      have hcon :
-          valueSupDist (f values₁) (f values₂) ≤ mdp.discount * valueSupDist values₁ values₂ := by
-        simpa [f] using
-          bellmanPolicy_contraction (nStates := nStates) (nActions := nActions) mdp valid policy
-            values₁ values₂
-      have hγk : 0 ≤ mdp.discount ^ k := pow_nonneg valid.discount_nonneg k
-      have hmul :
-          mdp.discount ^ k * valueSupDist (f values₁) (f values₂)
-            ≤ mdp.discount ^ k * (mdp.discount * valueSupDist values₁ values₂) :=
-        mul_le_mul_of_nonneg_left hcon hγk
-      -- `f^[k+1] = f^[k] ∘ f`, so the succ case is `f^[k] (f values)`.
-      simpa [Function.iterate_succ_apply, pow_succ, mul_assoc] using
-        (le_trans ih' (le_trans hmul (by
-          -- `γ^k * (γ * d) = γ^(k+1) * d`
-          simp)))
+    (mdp : MDP nStates nActions) (valid : Valid mdp) (policy : Policy nStates nActions)
+    (k : Nat) (values₁ values₂ : ValueFunction ℝ nStates) :
+    valueSupDist ((bellmanPolicy mdp policy)^[k] values₁) ((bellmanPolicy mdp policy)^[k] values₂)
+      ≤ mdp.discount ^ k * valueSupDist values₁ values₂ :=
+  (bellmanPolicy_supContraction mdp valid policy).iterate_le k values₁ values₂
 
-/--
-If a discounted Bellman policy operator has a fixed point, it is unique.
-
-This is the standard “contraction has at most one fixed point” argument.
--/
+/-- A fixed point of the Bellman policy operator is unique. -/
 theorem bellmanPolicy_fixedPoint_unique
-    [Fact (0 < nStates)]
-    (mdp : MDP nStates nActions)
-    (valid : Valid mdp)
-    (policy : Policy nStates nActions)
+    (mdp : MDP nStates nActions) (valid : Valid mdp) (policy : Policy nStates nActions)
     (v w : ValueFunction ℝ nStates)
-    (hv : Spec.RL.FiniteStochastic.bellmanPolicy mdp policy v = v)
-    (hw : Spec.RL.FiniteStochastic.bellmanPolicy mdp policy w = w) :
-    v = w := by
-  have hcon :=
-    bellmanPolicy_contraction (nStates := nStates) (nActions := nActions) mdp valid policy v w
-  have hle : valueSupDist v w ≤ mdp.discount * valueSupDist v w := by
-    simpa [hv, hw] using hcon
-  have hsub : valueSupDist v w - mdp.discount * valueSupDist v w ≤ 0 :=
-    sub_nonpos.mpr hle
-  have hmul : (1 - mdp.discount) * valueSupDist v w ≤ 0 := by
-    have : (1 - mdp.discount) * valueSupDist v w
-        = valueSupDist v w - mdp.discount * valueSupDist v w := by
-      ring
-    simpa [this] using hsub
-  have hmul_nonneg : 0 ≤ (1 - mdp.discount) * valueSupDist v w := by
-    have h1 : 0 ≤ (1 - mdp.discount) :=
-      sub_nonneg.mpr (le_of_lt valid.discount_lt_one)
-    have h2 : 0 ≤ valueSupDist v w := valueSupDist_nonneg (values₁ := v) (values₂ := w)
-    exact mul_nonneg h1 h2
-  have hmul_eq : (1 - mdp.discount) * valueSupDist v w = 0 :=
-    le_antisymm hmul hmul_nonneg
-  have hne : (1 - mdp.discount) ≠ (0 : ℝ) := by
-    intro h0
-    have hEq : mdp.discount = (1 : ℝ) := by
-      have : (1 : ℝ) = mdp.discount := sub_eq_zero.mp h0
-      simpa using this.symm
-    exact (ne_of_lt valid.discount_lt_one) hEq
-  have hd0 : valueSupDist v w = 0 :=
-    (mul_eq_zero.mp hmul_eq).resolve_left hne
-  exact (valueSupDist_eq_zero_iff (nStates := nStates) (values₁ := v) (values₂ := w)).1 hd0
+    (hv : bellmanPolicy mdp policy v = v) (hw : bellmanPolicy mdp policy w = w) :
+    v = w :=
+  let h := bellmanPolicy_supContraction mdp valid policy
+  (h.eq_fixedPoint hv).trans (h.eq_fixedPoint hw).symm
 
-/--
-Error bound to a fixed point: iterating the Bellman policy operator reduces sup-distance
-geometrically (`γ^k`).
--/
+/-- Error bound to a fixed point: iterating the Bellman policy operator reduces sup-distance
+geometrically (`γ^k`). -/
 theorem bellmanPolicy_iterate_error_to_fixedPoint
-    [Fact (0 < nStates)]
-    (mdp : MDP nStates nActions)
-    (valid : Valid mdp)
-    (policy : Policy nStates nActions)
-    (v vStar : ValueFunction ℝ nStates)
-    (hvStar : Spec.RL.FiniteStochastic.bellmanPolicy mdp policy vStar = vStar)
+    (mdp : MDP nStates nActions) (valid : Valid mdp) (policy : Policy nStates nActions)
+    (v vStar : ValueFunction ℝ nStates) (hvStar : bellmanPolicy mdp policy vStar = vStar)
     (k : Nat) :
-    valueSupDist ((Spec.RL.FiniteStochastic.bellmanPolicy mdp policy)^[k] v) vStar
-      ≤ mdp.discount ^ k * valueSupDist v vStar := by
-  -- Contract iterates, and use that a fixed point stays fixed under iteration.
-  have h :=
-    bellmanPolicy_iterate_contraction (nStates := nStates) (nActions := nActions) mdp valid policy
-      k v vStar
-  have hfix : (Spec.RL.FiniteStochastic.bellmanPolicy mdp policy)^[k] vStar = vStar :=
-    Function.iterate_fixed (f := Spec.RL.FiniteStochastic.bellmanPolicy mdp policy) hvStar k
-  simpa [hfix] using h
+    valueSupDist ((bellmanPolicy mdp policy)^[k] v) vStar
+      ≤ mdp.discount ^ k * valueSupDist v vStar :=
+  (bellmanPolicy_supContraction mdp valid policy).iterate_error hvStar k
 
 /-- `bellmanOptimality` iterates are geometric contractions in `valueSupDist`. -/
-theorem bellmanOptimality_iterate_contraction
-    [Fact (0 < nStates)] [Fact (0 < nActions)]
-    (mdp : MDP nStates nActions)
-    (valid : Valid mdp)
-    (k : Nat)
-    (values₁ values₂ : ValueFunction ℝ nStates) :
-    valueSupDist ((Spec.RL.FiniteStochastic.bellmanOptimality mdp)^[k] values₁)
-      ((Spec.RL.FiniteStochastic.bellmanOptimality mdp)^[k] values₂)
-      ≤ mdp.discount ^ k * valueSupDist values₁ values₂ := by
-  induction k generalizing values₁ values₂ with
-  | zero =>
-      simp
-  | succ k ih =>
-      let f := Spec.RL.FiniteStochastic.bellmanOptimality mdp
-      have ih' :
-          valueSupDist (f^[k] (f values₁)) (f^[k] (f values₂))
-            ≤ mdp.discount ^ k * valueSupDist (f values₁) (f values₂) :=
-        ih (values₁ := f values₁) (values₂ := f values₂)
-      have hcon :
-          valueSupDist (f values₁) (f values₂) ≤ mdp.discount * valueSupDist values₁ values₂ := by
-        simpa [f] using
-          bellmanOptimality_contraction (nStates := nStates) (nActions := nActions) mdp valid
-            values₁ values₂
-      have hγk : 0 ≤ mdp.discount ^ k := pow_nonneg valid.discount_nonneg k
-      have hmul :
-          mdp.discount ^ k * valueSupDist (f values₁) (f values₂)
-            ≤ mdp.discount ^ k * (mdp.discount * valueSupDist values₁ values₂) :=
-        mul_le_mul_of_nonneg_left hcon hγk
-      simpa [Function.iterate_succ_apply, pow_succ, mul_assoc] using
-        (le_trans ih' (le_trans hmul (by simp)))
+theorem bellmanOptimality_iterate_contraction [Fact (0 < nActions)]
+    (mdp : MDP nStates nActions) (valid : Valid mdp)
+    (k : Nat) (values₁ values₂ : ValueFunction ℝ nStates) :
+    valueSupDist ((bellmanOptimality mdp)^[k] values₁) ((bellmanOptimality mdp)^[k] values₂)
+      ≤ mdp.discount ^ k * valueSupDist values₁ values₂ :=
+  (bellmanOptimality_supContraction mdp valid).iterate_le k values₁ values₂
 
-/--
-If a discounted Bellman optimality operator has a fixed point, it is unique.
-
-This is the “contraction has at most one fixed point” argument for `T*`.
--/
-theorem bellmanOptimality_fixedPoint_unique
-    [Fact (0 < nStates)] [Fact (0 < nActions)]
-    (mdp : MDP nStates nActions)
-    (valid : Valid mdp)
+/-- A fixed point of the Bellman optimality operator is unique. -/
+theorem bellmanOptimality_fixedPoint_unique [Fact (0 < nActions)]
+    (mdp : MDP nStates nActions) (valid : Valid mdp)
     (v w : ValueFunction ℝ nStates)
-    (hv : Spec.RL.FiniteStochastic.bellmanOptimality mdp v = v)
-    (hw : Spec.RL.FiniteStochastic.bellmanOptimality mdp w = w) :
-    v = w := by
-  have hcon :=
-    bellmanOptimality_contraction (nStates := nStates) (nActions := nActions) mdp valid v w
-  have hle : valueSupDist v w ≤ mdp.discount * valueSupDist v w := by
-    simpa [hv, hw] using hcon
-  have hsub : valueSupDist v w - mdp.discount * valueSupDist v w ≤ 0 :=
-    sub_nonpos.mpr hle
-  have hmul : (1 - mdp.discount) * valueSupDist v w ≤ 0 := by
-    have : (1 - mdp.discount) * valueSupDist v w
-        = valueSupDist v w - mdp.discount * valueSupDist v w := by
-      ring
-    simpa [this] using hsub
-  have hmul_nonneg : 0 ≤ (1 - mdp.discount) * valueSupDist v w := by
-    have h1 : 0 ≤ (1 - mdp.discount) :=
-      sub_nonneg.mpr (le_of_lt valid.discount_lt_one)
-    have h2 : 0 ≤ valueSupDist v w := valueSupDist_nonneg (values₁ := v) (values₂ := w)
-    exact mul_nonneg h1 h2
-  have hmul_eq : (1 - mdp.discount) * valueSupDist v w = 0 :=
-    le_antisymm hmul hmul_nonneg
-  have hne : (1 - mdp.discount) ≠ (0 : ℝ) := by
-    intro h0
-    have hEq : mdp.discount = (1 : ℝ) := by
-      have : (1 : ℝ) = mdp.discount := sub_eq_zero.mp h0
-      simpa using this.symm
-    exact (ne_of_lt valid.discount_lt_one) hEq
-  have hd0 : valueSupDist v w = 0 :=
-    (mul_eq_zero.mp hmul_eq).resolve_left hne
-  exact (valueSupDist_eq_zero_iff (nStates := nStates) (values₁ := v) (values₂ := w)).1 hd0
+    (hv : bellmanOptimality mdp v = v) (hw : bellmanOptimality mdp w = w) :
+    v = w :=
+  let h := bellmanOptimality_supContraction mdp valid
+  (h.eq_fixedPoint hv).trans (h.eq_fixedPoint hw).symm
 
-/--
-Error bound to a fixed point: iterating Bellman optimality reduces sup-distance geometrically.
--/
-theorem bellmanOptimality_iterate_error_to_fixedPoint
-    [Fact (0 < nStates)] [Fact (0 < nActions)]
-    (mdp : MDP nStates nActions)
-    (valid : Valid mdp)
-    (v vStar : ValueFunction ℝ nStates)
-    (hvStar : Spec.RL.FiniteStochastic.bellmanOptimality mdp vStar = vStar)
+/-- Error bound to a fixed point: iterating Bellman optimality shrinks the sup distance
+geometrically. -/
+theorem bellmanOptimality_iterate_error_to_fixedPoint [Fact (0 < nActions)]
+    (mdp : MDP nStates nActions) (valid : Valid mdp)
+    (v vStar : ValueFunction ℝ nStates) (hvStar : bellmanOptimality mdp vStar = vStar)
     (k : Nat) :
-    valueSupDist ((Spec.RL.FiniteStochastic.bellmanOptimality mdp)^[k] v) vStar
-      ≤ mdp.discount ^ k * valueSupDist v vStar := by
-  have h :=
-    bellmanOptimality_iterate_contraction (nStates := nStates) (nActions := nActions) mdp valid
-      k v vStar
-  have hfix : (Spec.RL.FiniteStochastic.bellmanOptimality mdp)^[k] vStar = vStar :=
-    Function.iterate_fixed (f := Spec.RL.FiniteStochastic.bellmanOptimality mdp) hvStar k
-  simpa [hfix] using h
+    valueSupDist ((bellmanOptimality mdp)^[k] v) vStar
+      ≤ mdp.discount ^ k * valueSupDist v vStar :=
+  (bellmanOptimality_supContraction mdp valid).iterate_error hvStar k
 
 end FixedPoints
 

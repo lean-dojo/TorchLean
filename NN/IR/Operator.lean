@@ -132,7 +132,8 @@ inductive OpKind where
   | sum
       -- Sum reduction to scalar (convenience op used by some loss/verification code paths).
   | matmul
-      -- Matrix multiply over the final two axes, preserving a shared leading shape.
+      -- Matrix multiply over the final two axes, broadcasting leading batch axes and promoting
+      -- 1D operands as `torch.matmul` does.
   | linear
       -- Affine layer `y = W x + b`. Parameters live in an external store keyed by node id;
       -- the sole parent is the activation input `x`.

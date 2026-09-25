@@ -22,7 +22,7 @@ The raw ABI uses setting IDs 0–8: TF32 matmul, TF32 cuDNN convolution, strict 
 benchmarking, flash SDP, efficient SDP, math SDP, cuDNN SDP, and cuDNN enablement. Public callers
 use the typed operations below. Setting and memory-fraction reads, like configuration requests,
 return native failures through `IO`. Boolean settings are read back to detect a rejected request.
-CPU stubs return unavailable/zero readbacks and reject configuration requests; raw setting reads
+Without LibTorch linked, reads return zero and configuration requests fail; raw setting reads
 also reject unknown IDs.
 -/
 
@@ -77,11 +77,11 @@ private opaque emptyCacheRaw (token : UInt32) : IO Unit
     throw <| IO.userError
       s!"LibTorch: setting {id} is {observed} after requesting {enabled}"
 
-/-- Native build identification. CPU stubs must identify themselves rather than claim a GPU SDK. -/
+/-- Native build identification; `"unavailable"` when LibTorch is not linked. -/
 @[no_expose] def version : IO String :=
   IO.lazyPure fun _ => versionRaw 0
 
-/-- Number of CUDA devices visible to the linked runtime; zero for CPU-only stubs. -/
+/-- Number of CUDA devices visible to the linked runtime; zero without LibTorch. -/
 @[no_expose] def deviceCount : IO UInt32 :=
   IO.lazyPure fun _ => deviceCountRaw 0
 
@@ -197,7 +197,7 @@ eligible choices causes a native execution error. Configure them before recordin
 Read the selected device's allocator memory fraction.
 
 This is a native allocator limit, not the fraction of memory currently free or a cache-only budget.
-CPU stubs return zero to indicate that no LibTorch CUDA allocator is linked.
+Returns zero when LibTorch is not linked.
 -/
 @[no_expose] def getMemoryFraction : IO Float := do
   let fraction ← getMemoryFractionRaw 0

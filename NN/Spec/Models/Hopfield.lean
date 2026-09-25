@@ -117,13 +117,6 @@ so an energy argument written over `Fin n → Bool` transfers to the executable 
 def actVec {α : Type} [One α] [Neg α] {n : Nat} (s : State n) : Fin n → α :=
   fun i => act (α := α) (s i)
 
-/-- Dot product on vectors indexed by `Fin n`.
-
-This is a `Fin`-indexed sum, independent from any concrete matrix representation.
--/
-def dot {α : Type} [AddCommMonoid α] [Mul α] {n : Nat} (x y : Fin n → α) : α :=
-  ∑ i : Fin n, x i * y i
-
 /-- Matrix-vector product (as a function, not an array-backed matrix). -/
 def mulVec {α : Type} [AddCommMonoid α] [Mul α] {n : Nat} (W : Fin n → Fin n → α) (x : Fin n → α) :
     Fin n → α :=

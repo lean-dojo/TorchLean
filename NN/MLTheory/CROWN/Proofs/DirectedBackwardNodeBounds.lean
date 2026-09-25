@@ -13,7 +13,9 @@ public import NN.Tensor.Internal.Laws.Sequence
 # Nodewise rounded CROWN bounds
 
 Sequencing the coordinate objectives produces a lower and upper affine row for every output.
-If any sweep fails, the returned constant rows retain the output's IBP enclosure.
+If any sweep fails, the returned constant rows retain the output's IBP enclosure. The forward IBP
+boxes enter through `GraphPoint.ibp_encloses`; `directedNodeBounds_encloses_runIBP` discharges it
+for the boxes of `runIBP`.
 -/
 
 @[expose] public section
@@ -33,19 +35,19 @@ variable {α : Type} [Storage α] [Context α] [BoundOps α] [LawfulBoundOps α]
 local notation "value" => LawfulBoundOps.toReal (α := α)
 
 /-- A constant pair of affine maps retains an interval enclosure. -/
-theorem boundsConst_encloses (hzero : value (0 : α) = 0)
+theorem boundsConst_encloses
     (n : Nat) (box : FlatBox α) (x y : Nat → ℝ)
     (hy : RowEncloses box box.dim y) :
     AffineRowsEnclose (boundsConst n box.dim box.lo box.hi) x y := by
   dsimp only [AffineRowsEnclose, boundsConst]
   intro i
-  simpa only [Spec.get2_full, hzero, zero_mul, Finset.sum_const_zero,
-    zero_add, read_fin] using hy.2 i
+  simpa only [Spec.get2_full, LawfulBoundOps.toReal_zero (α := α), zero_mul,
+    Finset.sum_const_zero, zero_add, read_fin] using hy.2 i
 
-/-- The nodewise public API returns real affine enclosures for every coordinate. Both the
-coordinate-sweep branch and the constant IBP fallback are covered. -/
-theorem directedNodeBounds_encloses (hzero : value (0 : α) = 0)
-    (hone : value (1 : α) = 1)
+/-- The nodewise public API returns real affine enclosures for every coordinate, provided the
+forward IBP boxes in `point` are sound. Both the coordinate-sweep branch and the constant IBP
+fallback are covered. -/
+theorem directedNodeBounds_encloses
     {g : Graph} {ps : ParamStore α} {ibp : Array (Option (FlatBox α))}
     {ctx : AffineCtx} {dims : Nat → Nat} {v : Nat → Nat → ℝ}
     (point : GraphPoint g.nodes ps ibp ctx dims v)
@@ -75,10 +77,11 @@ theorem directedNodeBounds_encloses (hzero : value (0 : α) = 0)
         refine ⟨rfl, hdim.symm, ?_⟩
         intro i
         have hr := Tensor.Internal.sequenceFinM_get_of_eq_some hrows i
-        have hs := runDirectedBackwardObjective_encloses hzero point output houtput
+        have hs := runDirectedBackwardObjective_encloses point output houtput
           (objective i) hdim.symm hr
         rw [hdim] at hs
-        simpa [objective, dot, affineValue, read_fin, apply_ite, hzero, hone,
+        simpa [objective, dot, affineValue, read_fin, apply_ite,
+          LawfulBoundOps.toReal_zero (α := α), LawfulBoundOps.toReal_one (α := α),
           Tensor.matrix, Spec.get2] using hs
     | none =>
         simp only [objective] at hrows
@@ -91,7 +94,7 @@ theorem directedNodeBounds_encloses (hzero : value (0 : α) = 0)
           obtain ⟨hindex, hget⟩ := Array.getElem?_eq_some_iff.mp he
           simpa only [getElem!_pos (c := ibp) (i := output) hindex] using hget
         have hy := point.ibp_encloses output houtput box hlookup
-        exact ⟨rfl, hy.1, boundsConst_encloses hzero ctx.inputDim box
+        exact ⟨rfl, hy.1, boundsConst_encloses ctx.inputDim box
           (v ctx.inputId) (v output) (by simpa only [hy.1] using hy)⟩
   · simp [directedNodeBounds?, hsupported] at hresult
 

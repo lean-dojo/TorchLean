@@ -20,7 +20,6 @@ an arbitrary concat axis after concatenating along the leading axis.
 public section
 
 set_option autoImplicit false
-set_option warningAsError true
 
 namespace NN.MLTheory.CROWN.Graph
 

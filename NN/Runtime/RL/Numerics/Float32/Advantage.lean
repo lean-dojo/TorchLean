@@ -162,34 +162,54 @@ theorem tdResidual_eq_ok
 
 /--
 Checked fixed-horizon Generalized Advantage Estimation ($\operatorname{GAE}(\lambda)$), specialized
-to `Binary 8 23`.
+to `Binary 8 23`, with separate episode masks.
 
-This is the checked/finite counterpart to `Runtime.RL.Core.generalizedAdvantageEstimation`.
+`terminated[t]` drops the bootstrap value `nextValues[t]`; `boundaries[t]` stops the advantage
+recursion from reading step `t + 1`. A time-limit truncation sets only `boundaries[t]`, so the step
+still bootstraps from the pre-reset next value without mixing in the next episode's advantages.
+This matches `PPO.Rollout.Internal.generalizedAdvantageEstimationWithBoundaries`.
 
 Reference:
 - Schulman et al., "High-Dimensional Continuous Control Using Generalized Advantage Estimation"
   (2015): https://arxiv.org/abs/1506.02438
 -/
+def generalizedAdvantageEstimationWithBoundariesChecked {n : Nat}
+    (gamma lam : Binary 8 23)
+    (rewards values nextValues : Tensor (Binary 8 23) [n])
+    (terminated boundaries : Tensor Bool [n]) :
+    Except String (Tensor (Binary 8 23) [n]) := do
+  let indices : Tensor (Fin n) [n] := Tensor.ofFn id
+  Tensor.scanrM (fun idx advNext => do
+    let bootstrapMask : Binary 8 23 := continueMask (α := Binary 8 23) terminated[idx]
+    let continuationMask : Binary 8 23 := continueMask (α := Binary 8 23) boundaries[idx]
+    -- delta = r + γ * bootstrapMask * nextValue - value
+    let t1 ← checkedMul "gae/mul(gamma,mask)" gamma bootstrapMask
+    let t2 ← checkedMul "gae/mul(t1,nextValue)" t1 nextValues[idx]
+    let t3 ← checkedAdd "gae/add(reward,t2)" rewards[idx] t2
+    let delta ← checkedSub "gae/sub(t3,value)" t3 values[idx]
+    -- adv = delta + γ * λ * continuationMask * advNext
+    let u1 ← checkedMul "gae/mul(gamma,lam)" gamma lam
+    let u2 ← checkedMul "gae/mul(u1,mask)" u1 continuationMask
+    let u3 ← checkedMul "gae/mul(u2,advNext)" u2 advNext
+    let adv ← checkedAdd "gae/add(delta,u3)" delta u3
+    pure adv) 0 indices
+
+/--
+Checked fixed-horizon GAE with a single `dones` mask, the checked counterpart to
+`Runtime.RL.Core.generalizedAdvantageEstimation`.
+
+Each `dones[t]` both drops the bootstrap value and stops the recursion, so it should mark true
+termination. For rollouts with time-limit truncation use
+`generalizedAdvantageEstimationWithBoundariesChecked`, passing the terminal flags and the
+terminal-or-truncated flags separately.
+-/
 def generalizedAdvantageEstimationChecked {n : Nat}
     (gamma lam : Binary 8 23)
     (rewards values nextValues : Tensor (Binary 8 23) [n])
     (dones : Tensor Bool [n]) :
-    Except String (Tensor (Binary 8 23) [n]) := do
-  let indices : Tensor (Fin n) [n] := Tensor.ofFn id
-  Tensor.scanrM (fun idx advNext => do
-    let done := dones[idx]
-    let mask : Binary 8 23 := continueMask (α := Binary 8 23) done
-    -- delta = r + γ * mask * nextValue - value
-    let t1 ← checkedMul "gae/mul(gamma,mask)" gamma mask
-    let t2 ← checkedMul "gae/mul(t1,nextValue)" t1 nextValues[idx]
-    let t3 ← checkedAdd "gae/add(reward,t2)" rewards[idx] t2
-    let delta ← checkedSub "gae/sub(t3,value)" t3 values[idx]
-    -- adv = delta + γ * λ * mask * advNext
-    let u1 ← checkedMul "gae/mul(gamma,lam)" gamma lam
-    let u2 ← checkedMul "gae/mul(u1,mask)" u1 mask
-    let u3 ← checkedMul "gae/mul(u2,advNext)" u2 advNext
-    let adv ← checkedAdd "gae/add(delta,u3)" delta u3
-    pure adv) 0 indices
+    Except String (Tensor (Binary 8 23) [n]) :=
+  generalizedAdvantageEstimationWithBoundariesChecked gamma lam rewards values nextValues
+    dones dones
 
 /--
 Checked z-score normalization (mean-center then divide by standard deviation), specialized to

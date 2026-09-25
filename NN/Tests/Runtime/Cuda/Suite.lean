@@ -26,6 +26,7 @@ public import NN.Tests.Runtime.Cuda.LinearMseConcatSliceGather
 public import NN.Tests.Runtime.Cuda.ScaledProdExp
 public import NN.Tests.Runtime.Cuda.Stress
 public import NN.Tests.Runtime.Cuda.Trainer
+public import NN.Tests.Runtime.Cuda.PPORatio
 
 /-!
 # Suite
@@ -65,6 +66,7 @@ def run : IO Unit := do
   ScaledProdExp.run
   Stress.run
   Trainer.run
+  PPORatio.run
   IO.println "=== CUDA kernel coverage suite completed ==="
 
 end Cuda

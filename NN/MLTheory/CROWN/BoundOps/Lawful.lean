@@ -50,6 +50,14 @@ class LawfulBoundOps (α : Type) [TorchLean.Storage α] [Context α] [BoundOps �
   toReal : α → ℝ
   /-- Executable endpoint comparisons agree with the mathematical order. -/
   lt_iff (a b : α) : a < b ↔ toReal a < toReal b
+  /-- The endpoint `0` means the real number `0`. -/
+  toReal_zero : toReal 0 = 0
+  /-- The endpoint `1` means the real number `1`. -/
+  toReal_one : toReal 1 = 1
+  /-- The backend maximum is the real maximum. -/
+  toReal_max (a b : α) : toReal (max a b) = max (toReal a) (toReal b)
+  /-- Endpoints that test equal denote the same real number. -/
+  toReal_eq_of_beq {a b : α} : (a == b) = true → toReal a = toReal b
   addDown_le (a b : α) : toReal (BoundOps.addDown a b) ≤ toReal a + toReal b
   le_addUp (a b : α) : toReal a + toReal b ≤ toReal (BoundOps.addUp a b)
   subDown_le (a b : α) : toReal (BoundOps.subDown a b) ≤ toReal a - toReal b
@@ -127,6 +135,10 @@ noncomputable instance instBoundOpsReal : BoundOps ℝ where
 noncomputable instance instLawfulBoundOpsReal : LawfulBoundOps ℝ where
   toReal := id
   lt_iff _ _ := Iff.rfl
+  toReal_zero := rfl
+  toReal_one := rfl
+  toReal_max _ _ := rfl
+  toReal_eq_of_beq h := beq_iff_eq.mp h
   addDown_le _ _ := le_rfl
   le_addUp _ _ := le_rfl
   subDown_le _ _ := le_rfl

@@ -1300,8 +1300,7 @@ Here $`q(x)` is the stored integer code and $`\widehat{x}(q)` is its reconstruct
 Clamping explains why the reconstruction-error theorem needs a no-saturation hypothesis: outside
 the code range, distance to the nearest grid point alone cannot bound the error.
 
-The scalar definition and its arithmetic theorems live in FloatLib and are re-exported by
-`NN.Floats.Quantization`. The separate
+The scalar definition and its arithmetic theorems live in FloatLib. The
 `NN.Spec.Quantization` adapter applies the same equations at every coordinate of a shape-indexed
 tensor. Together they prove code range, monotonicity, and in-range code round trips. The half-step
 reconstruction bound additionally requires nearest rounding and inactive saturation. Later runtime
@@ -1403,7 +1402,7 @@ The tensor arguments live in TorchLean. `NN.Floats.FP32` selects binary32's grad
 grid; `NN.Proofs.RuntimeApprox.FP32` carries its error bounds through tensor operations.
 The reduction-tree modules account for accumulation order. `NN.Spec.Quantization` lifts the
 real-scale quantizer to tensors, while `NN.Spec.Quantization.Rational` uses FloatLib's rational
-quantizer. The external Arb adapter is available through `NN.Floats.Arb`.
+quantizer. The external Arb adapter is `NN.Floats.Arb.Oracle`.
 
 # References
 

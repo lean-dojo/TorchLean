@@ -93,7 +93,7 @@ theorem reverseSweep_preserves {β : Type} (step : β → Nat → β) (P : Nat �
         Fin.val_last, Fin.val_castSucc] using ih (by omega) (step st n) hs
 
 /-- A single output row represents exactly the requested output objective. -/
-theorem initial_represents (hzero : value (0 : α) = 0)
+theorem initial_represents
     (dims : Nat → Nat) (v : Nat → Nat → ℝ) (input size output : Nat)
     (houtput : output < size) (obj : FlatTensor α) (hdim : obj.n = dims output) :
     SweepInvariant dims v input size size
@@ -101,7 +101,7 @@ theorem initial_represents (hzero : value (0 : α) = 0)
       { coeffs := (Array.replicate size none).set! output (some (pointCoeffBox obj))
         cstLo := 0, cstHi := 0 } := by
   right
-  refine ⟨by simp, _, 0, initial_encloses hzero dims size output obj hdim, ?_⟩
+  refine ⟨by simp, _, 0, initial_encloses dims size output obj hdim, ?_⟩
   have hmem : output ∈ pending input size := by simp [pending, houtput]
   have hrow (id : Nat) :
       dot (dims id)
@@ -115,7 +115,7 @@ theorem initial_represents (hzero : value (0 : α) = 0)
   simp only [frontierValue, hrow, Finset.sum_ite_eq', hmem, ↓reduceIte, add_zero]
 
 /-- The dimension-checked affine conversion encloses an arbitrary enclosed input objective. -/
-theorem inputAffines_row_encloses (hzero : value (0 : α) = 0)
+theorem inputAffines_row_encloses
     {n : Nat} {xB aB : FlatBox α} {x a : Nat → ℝ} {c : ℝ} {lo hi : α}
     (hx : RowEncloses xB n x) (ha : RowEncloses aB n a)
     (hc : value lo ≤ c ∧ c ≤ value hi) {lower upper : AffineVec α n 1}
@@ -129,12 +129,12 @@ theorem inputAffines_row_encloses (hzero : value (0 : α) = 0)
   dsimp only at hxDim haDim
   subst xdim
   subst adim
-  exact inputAffines_encloses hzero xlo xhi alo ahi lo hi
+  exact inputAffines_encloses xlo xhi alo ahi lo hi
     (fun i => x i.val) (fun i => a i.val) c
     (by simpa only [read_fin] using hx) (by simpa only [read_fin] using ha) hc hresult
 
 /-- The default zero input row encloses any coefficient represented by an absent array entry. -/
-theorem inputRow_encloses (hzero : value (0 : α) = 0)
+theorem inputRow_encloses
     {dims : Nat → Nat} {st : DirectedBackwardState α} {f : Nat → Nat → ℝ} {c : ℝ}
     (h : StateEncloses dims st f c) (input n : Nat)
     (hinput : input < st.coeffs.size) (hdim : dims input = n) :
@@ -151,7 +151,8 @@ theorem inputRow_encloses (hzero : value (0 : α) = 0)
       simp only [he, Option.getD_none] at hf ⊢
       refine ⟨rfl, ?_⟩
       intro i
-      simp only [read_fin, Tensor.getScalar_full, hzero, hf i, le_refl, and_self]
+      simp only [read_fin, Tensor.getScalar_full, LawfulBoundOps.toReal_zero (α := α), hf i,
+        le_refl, and_self]
   | some box =>
       simpa only [he, Option.getD_some] using hf
 

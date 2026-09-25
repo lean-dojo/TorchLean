@@ -88,18 +88,6 @@ instance (priority := low) {α : Type} [Add α] [Sub α] [Mul α] [Div α] :
 
 namespace QuotientArithmetic
 
-@[inline] def addChecked {α : Type} [ops : QuotientArithmetic α] (x y : α) : α × Bool :=
-  let (value, flags) := ops.addWithFlags x y
-  (value, 0 < flags)
-
-@[inline] def subChecked {α : Type} [ops : QuotientArithmetic α] (x y : α) : α × Bool :=
-  let (value, flags) := ops.subWithFlags x y
-  (value, 0 < flags)
-
-@[inline] def mulChecked {α : Type} [ops : QuotientArithmetic α] (x y : α) : α × Bool :=
-  let (value, flags) := ops.mulWithFlags x y
-  (value, 0 < flags)
-
 @[inline] def divChecked {α : Type} [ops : QuotientArithmetic α] (x y : α) : α × Bool :=
   let (value, flags) := ops.divWithFlags x y
   (value, 0 < flags)
@@ -121,19 +109,21 @@ def finiteRat? (bits : UInt64) : Option Rat :=
   FloatLib.Floats.ExecFloat.Binary.toRat?
     (FloatLib.Floats.ExecFloat.Binary.ofBits64 bits)
 
+/-- Round an exact rational to nearest, ties to even, in `format`. -/
+@[inline] def roundRatNearest (format : FloatLib.Floats.Formats.BinaryInterchange.FloatFormat)
+    (value : Rat) : FloatLib.Floats.Formats.BinaryInterchange.Model format :=
+  FloatLib.Floats.Formats.BinaryInterchange.Model.roundRat format
+    (value.num < 0) value.num.natAbs value.den
+
 def roundFloat (value : Rat) : Float :=
   FloatLib.Floats.ExecFloat.Binary.toFloat <|
     FloatLib.Floats.ExecFloat.Binary.ofModel <|
-      FloatLib.Floats.Formats.BinaryInterchange.Model.roundRat
-        FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary64
-        (value.num < 0) value.num.natAbs value.den
+      roundRatNearest FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary64 value
 
 def roundFloat32 (value : Rat) : Float32 :=
   FloatLib.Floats.ExecFloat.Binary.toFloat32 <|
     FloatLib.Floats.ExecFloat.Binary.ofModel <|
-      FloatLib.Floats.Formats.BinaryInterchange.Model.roundRat
-        FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary32
-        (value.num < 0) value.num.natAbs value.den
+      roundRatNearest FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary32 value
 
 -- Native constants are initialized once, outside all checked operations.
 @[noinline] def zero64 : Float := Float.ofBits 0
@@ -145,7 +135,6 @@ def roundFloat32 (value : Rat) : Float32 :=
 @[noinline] def negMinNormal32 : Float32 := Float32.ofBits 0x80800000
 
 -- The supplied zero predicate is an actual operation and the specialization key.
--- For finite values x - x is zero; infinities and NaNs instead produce NaN.
 -- Excluding zero from the interval (-minNormal, minNormal) leaves the subnormals.
 @[inline] def zeroFlag64 (x : Float) : UInt8 := (x == zero64).toUInt8
 
@@ -338,8 +327,7 @@ instance configured : QuotientArithmetic Value where
     (outcome.1, configuredFlags outcome ||| lostZero.toUInt8)
   encode x := (ExecFloat.Binary.toRat? x).map QuotientCoefficients.scalar
   decode
-    | .scalar x => some <| ExecFloat.Binary.ofModel <|
-        Model.roundRat format (x.num < 0) x.num.natAbs x.den
+    | .scalar x => some <| ExecFloat.Binary.ofModel <| roundRatNearest format x
   copyPrimal x _ := x
 
 end Configured

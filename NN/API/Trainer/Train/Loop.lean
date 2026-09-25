@@ -113,6 +113,10 @@ Predict one input using the trainer's current model and runtime settings.
 Inference before any training call. After training, use the returned trained result's
 `trained.predict` method to predict with the trained parameters.
 
+Each call opens a fresh session, which instantiates the model and binds the optimizer (and on
+CUDA uploads the parameters). For many inputs, open one session with `trainer.open` and call
+`session.predict` in the loop.
+
 Example:
 ```lean
 -- This is inference with the freshly initialized parameters, which is what makes it a useful
@@ -146,7 +150,8 @@ label. `trained.save path` writes the parameters; `trainer.load path data` resto
 A positive step count requires a nonempty materialized dataset.
 
 This is `trainer.open`, a loop of `step`, and `finish`; the reported losses are the evaluation-mode
-mean losses over `data` before and after the loop.
+mean losses over `data` before and after the loop. Set `reportLoss := false` to skip those two
+full passes over the dataset.
 
 Example:
 ```lean
@@ -171,12 +176,17 @@ def train {σ τ : Shape}
   let session ← trainer.open trainOptions.scheduler
   Internal.loadCheckpoint session trainOptions.loadCheckpoint?
   IO.println s!"dataset size = {samples.size}"
-  let before ← session.loss samples (batch := true)
-  IO.println s!"mean_loss(before training) = {before}"
+  let measure (label : String) : IO Float := do
+    if trainOptions.reportLoss then
+      let loss ← session.loss samples (batch := true)
+      IO.println s!"mean_loss({label} training) = {loss}"
+      pure loss
+    else
+      pure (0.0 / 0.0)
+  let before ← measure "before"
   Internal.printProbes session probes "predictions before training"
   Internal.runSteps session trainOptions samples
-  let after ← session.loss samples (batch := true)
-  IO.println s!"mean_loss(after training) = {after}"
+  let after ← measure "after"
   Internal.printProbes session probes "predictions after training"
   Internal.saveCheckpoint session trainOptions.saveCheckpoint?
   let result ← session.finish { before, after }

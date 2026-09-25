@@ -55,7 +55,7 @@ Tensor device_indices(const std::vector<int64_t>& values, const Tensor& like) {
       .to(like.device(), at::kLong, false, true);
 }
 
-// At the SDK's upstream revision 0291f960b6, segment_reduce on a rank-two input
+// At PyTorch revision 0291f960b6 (a 2.12 nightly), segment_reduce on a rank-two input
 // uses a sequential fold within each segment/column on both CPU and CUDA
 // (aten/src/ATen/native/{cuda/SegmentReduce.cu,SegmentReduce.cpp}). Keep the
 // trailing column dimension even for vectors: rank one selects a different

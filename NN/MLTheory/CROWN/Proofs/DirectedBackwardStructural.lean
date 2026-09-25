@@ -75,7 +75,7 @@ theorem represents_addParents {dims : Nat → Nat} {v : Nat → Nat → ℝ}
 
 /-- Subtraction routes a directed negation to the right parent, including repeated-parent
 cancellation without assuming that the rounded coefficient interval is a point. -/
-theorem represents_subParents (hzero : value (0 : α) = 0)
+theorem represents_subParents
     {dims : Nat → Nat} {v : Nat → Nat → ℝ} {input k id p q : Nat}
     {st : DirectedBackwardState α} {z : ℝ}
     (h : Represents dims v input k st z) (hp : p < st.coeffs.size)
@@ -88,7 +88,7 @@ theorem represents_subParents (hzero : value (0 : α) = 0)
       (z + dot (dims id) a (v id)) := by
   have hap : RowEncloses aB (dims p) a := by simpa only [hdp] using ha
   have haq : RowEncloses (negateDirectedCoeff aB) (dims q) (fun i => -a i) := by
-    simpa only [hdq] using negateCoeff_encloses hzero ha
+    simpa only [hdq] using negateCoeff_encloses ha
   have h₁ := represents_add h p hp hplive aB a hap
   have h₂ := represents_add h₁ q (by simpa using hq) hqlive
     (negateDirectedCoeff aB) (fun i => -a i) haq

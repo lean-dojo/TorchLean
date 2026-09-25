@@ -8,6 +8,7 @@ module
 
 public import Mathlib.Basic.Real.Basic
 public import Mathlib.Data.Finset.Lattice.Fold
+import Mathlib.Tactic.Linarith
 
 /-!
 # Finset Suprema Helpers
@@ -43,6 +44,19 @@ theorem sup'_le_add_const
     have hgi : g i ≤ s.sup' hs g := Finset.le_sup' g hi
     exact add_le_add_left hgi c
   exact (hfg i hi).trans hsup
+
+/-- If `f` and `g` differ by at most `c` everywhere on `s`, so do their suprema. -/
+theorem abs_sup'_sub_sup'_le
+    {ι : Type}
+    (s : Finset ι) (hs : s.Nonempty)
+    (f g : ι → ℝ) (c : ℝ)
+    (hfg : ∀ i ∈ s, |f i - g i| ≤ c) :
+    |s.sup' hs f - s.sup' hs g| ≤ c := by
+  refine abs_sub_le_iff.mpr ⟨sub_le_iff_le_add'.mpr ?_, sub_le_iff_le_add'.mpr ?_⟩
+  · refine sup'_le_add_const s hs f g c fun i hi => ?_
+    linarith [(abs_sub_le_iff.mp (hfg i hi)).1]
+  · refine sup'_le_add_const s hs g f c fun i hi => ?_
+    linarith [(abs_sub_le_iff.mp (hfg i hi)).2]
 
 end RL
 end Proofs

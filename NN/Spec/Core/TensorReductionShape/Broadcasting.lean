@@ -229,36 +229,4 @@ theorem broadcastTo_expand {α : Type} [TorchLean.Storage α] {n : Nat} {s t : S
   funext _
   exact broadcastTo_self _ tensor
 
-/-! ## Broadcasted maps -/
-
-/-- Helper: map a scalar on the left over any tensor shape. -/
-def mapScalarLeft {α : Type} [TorchLean.Storage α]
-    (f : α → α → α) (x : α) {s : Shape} (tensor : Tensor α s) :
-    Tensor α s :=
-  Tensor.mapSpec (f x) tensor
-
-/-- Helper: map a scalar on the right over any tensor shape. -/
-def mapScalarRight {α : Type} [TorchLean.Storage α]
-    (f : α → α → α) (y : α) {s : Shape} (tensor : Tensor α s) :
-    Tensor α s :=
-  Tensor.mapSpec (fun x => f x y) tensor
-
-/--
-Binary element-wise operation with broadcasting to an explicit target shape.
-
-This is the helper you typically want in spec code:
-- pick the output shape `t`,
-- broadcast each operand to `t`,
-- then `map2Spec` the pointwise operation.
-
-PyTorch analogy: `f(x, y)` where `x` and/or `y` are broadcastable to a common shape.
-The common shape is explicit rather than discovered at runtime, which makes the result type
-predictable and fixes the intended output shape at the call site.
--/
-def broadcastMapTo {α} [TorchLean.Storage α]
-    (f : α → α → α)
-    {s₁ s₂ t : Shape} (cbx : Shape.CanBroadcastTo s₁ t) (cby : Shape.CanBroadcastTo s₂ t) :
-    Tensor α s₁ → Tensor α s₂ → Tensor α t :=
-  fun x y => map2Spec f (broadcastTo cbx x) (broadcastTo cby y)
-
 end TorchLean.Tensor

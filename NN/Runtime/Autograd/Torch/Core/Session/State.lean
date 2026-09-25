@@ -133,4 +133,63 @@ structure EagerSession (α : Type) [Storage α] where
   refGeneration : IO.Ref Nat
 
 
+namespace EagerSession
+
+/--
+Pair the result of a tape constructor with the tape to store afterwards.
+
+On success this is the extended tape. Tape constructors fail before they append, so on failure
+it is the tape the constructor started from. Call it inside the lambda passed to `recordCpu` or
+`recordCuda`, as `fun t0 => keepTapeOnError t0 (Tape.op (t := t0) ...)`. There the constructor is
+inlined next to the match, the compiler sees that the failure branches are the only other uses of
+`t0`, and the final `Array.push` in `addNode` updates the node array in place.
+-/
+@[inline] def keepTapeOnError {τ : Type} (t : τ)
+    (result : Except String (τ × Nat)) : τ × Except String Nat :=
+  match result with
+  | .ok (t', id) => (t', .ok id)
+  | .error e => (t, .error e)
+
+/--
+Run a CPU tape step on the session tape and return the new node id.
+
+The tape leaves the reference while `op` runs, and `op` returns the tape to store back together
+with the result (see `keepTapeOnError`). The tape is not used after `op`, so it stays unshared even
+when this function is not inlined, which happens when the calling IO action is passed around as a
+value, as in the backend dispatch.
+-/
+@[inline] def recordCpu {α : Type} [Storage α] (s : EagerSession α)
+    (op : Runtime.Autograd.Tape α → Runtime.Autograd.Tape α × Except String Nat) :
+    IO Nat := do
+  let result ← s.tape.modifyGet fun t =>
+    let (t', result) := op t
+    (result, t')
+  Runtime.Autograd.okOrThrow result
+
+/-- `recordCpu` for constructors that cannot fail, such as leaves. -/
+@[inline] def recordCpuPure {α : Type} [Storage α] (s : EagerSession α)
+    (op : Runtime.Autograd.Tape α → Runtime.Autograd.Tape α × Nat) : IO Nat :=
+  s.tape.modifyGet fun t =>
+    let (t', id) := op t
+    (id, t')
+
+/-- `recordCpu` for the CUDA tape. -/
+@[inline] def recordCuda {α : Type} [Storage α] (s : EagerSession α)
+    (op : Runtime.Autograd.Cuda.Tape → Runtime.Autograd.Cuda.Tape × Except String Nat) :
+    IO Nat := do
+  let result ← s.cudaTape.modifyGet fun t =>
+    let (t', result) := op t
+    (result, t')
+  Runtime.Autograd.okOrThrow result
+
+/-- `recordCpuPure` for the CUDA tape. -/
+@[inline] def recordCudaPure {α : Type} [Storage α] (s : EagerSession α)
+    (op : Runtime.Autograd.Cuda.Tape → Runtime.Autograd.Cuda.Tape × Nat) : IO Nat :=
+  s.cudaTape.modifyGet fun t =>
+    let (t', id) := op t
+    (id, t')
+
+end EagerSession
+
+
 end Runtime.Autograd.Torch.Internal

@@ -39,7 +39,12 @@ def mapAccumLoop {State Result : Type} (n : Nat)
         (state, ⟨acc, by grind⟩)
   termination_by i => n - i
 
-/-- Backward loop of `mapAccumRight`: visit `i - 1, ..., 0` and prepend each result. -/
+/--
+Backward loop of `mapAccumRight`: visit `i - 1, ..., 0` and push each result.
+
+The accumulator holds the results in visiting order, so entry `k` belongs to index `n - 1 - k`.
+Pushing keeps the loop linear; prepending would copy the accumulator at every step.
+-/
 def mapAccumRightLoop {State Result : Type} (n : Nat)
     (step : (i : Fin n) → State → State × Result) :
     (i : Nat) → i ≤ n → State → (acc : Array Result) → acc.size + i = n →
@@ -47,8 +52,8 @@ def mapAccumRightLoop {State Result : Type} (n : Nat)
   | 0, _, state, acc, hSize => (state, ⟨acc, by grind⟩)
   | i + 1, hi, state, acc, hSize =>
       let (previous, result) := step ⟨i, hi⟩ state
-      mapAccumRightLoop n step i (Nat.le_of_succ_le hi) previous (#[result] ++ acc)
-        (by rw [Array.size_append, Array.size_singleton]; grind)
+      mapAccumRightLoop n step i (Nat.le_of_succ_le hi) previous (acc.push result)
+        (by rw [Array.size_push]; grind)
 
 end Internal
 
@@ -75,7 +80,8 @@ def mapAccumRight {State Result : Type} [TorchLean.Storage Result]
     State × Tensor Result [n] :=
   let (initial, results) :=
     Internal.mapAccumRightLoop n step n (Nat.le_refl n) state #[] (by simp)
-  (initial, Tensor.ofFn fun i => results.val[i.val]'(by rw [results.property]; exact i.isLt))
+  (initial, Tensor.ofFn fun i =>
+    results.val[n - 1 - i.val]'(by rw [results.property]; have := i.isLt; omega))
 
 end Sequence
 

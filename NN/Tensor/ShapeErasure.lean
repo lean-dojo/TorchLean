@@ -42,6 +42,63 @@ def toIndexedShapeErasedArray : {ss : List Shape} →
       #[(index, Spec.SomeTensor.ofTensor tensor)] ++
         toIndexedShapeErasedArray (ss := ss) tensors (index + 1)
 
+/-- Push the shape-erased tensors of a pack onto `acc`, from the head of the pack onward. -/
+def toShapeErasedArrayAux : {ss : List Shape} →
+    TensorPack α ss → Array (Spec.SomeTensor α) → Array (Spec.SomeTensor α)
+  | [], .nil, acc => acc
+  | _ :: ss, .cons tensor tensors, acc =>
+      toShapeErasedArrayAux (ss := ss) tensors (acc.push (Spec.SomeTensor.ofTensor tensor))
+
+/-- Pushing onto `acc` appends the ordinary shape erasure to it. -/
+theorem toShapeErasedArrayAux_eq : {ss : List Shape} →
+    (tensors : TensorPack α ss) → (acc : Array (Spec.SomeTensor α)) →
+      toShapeErasedArrayAux tensors acc = acc ++ toShapeErasedArray tensors
+  | [], .nil, acc => by simp [toShapeErasedArrayAux, toShapeErasedArray]
+  | _ :: _, .cons tensor tensors, acc => by
+      rw [toShapeErasedArrayAux, toShapeErasedArrayAux_eq tensors, toShapeErasedArray]
+      simp
+
+/-- `toShapeErasedArray` in one pass of pushes, which replaces it in compiled code. -/
+def toShapeErasedArrayFast {ss : List Shape} (tensors : TensorPack α ss) :
+    Array (Spec.SomeTensor α) :=
+  toShapeErasedArrayAux tensors #[]
+
+/-- Compiled code runs `toShapeErasedArrayFast` in place of `toShapeErasedArray`. -/
+@[csimp] theorem toShapeErasedArray_eq_toShapeErasedArrayFast :
+    @toShapeErasedArray = @toShapeErasedArrayFast := by
+  funext α storage ss tensors
+  simp [toShapeErasedArrayFast, toShapeErasedArrayAux_eq]
+
+/-- Push the indexed shape-erased tensors of a pack onto `acc`, numbering from `index`. -/
+def toIndexedShapeErasedArrayAux : {ss : List Shape} →
+    TensorPack α ss → Nat → Array (Nat × Spec.SomeTensor α) → Array (Nat × Spec.SomeTensor α)
+  | [], .nil, _, acc => acc
+  | _ :: ss, .cons tensor tensors, index, acc =>
+      toIndexedShapeErasedArrayAux (ss := ss) tensors (index + 1)
+        (acc.push (index, Spec.SomeTensor.ofTensor tensor))
+
+/-- Pushing onto `acc` appends the ordinary indexed shape erasure to it. -/
+theorem toIndexedShapeErasedArrayAux_eq : {ss : List Shape} →
+    (tensors : TensorPack α ss) → (index : Nat) → (acc : Array (Nat × Spec.SomeTensor α)) →
+      toIndexedShapeErasedArrayAux tensors index acc =
+        acc ++ toIndexedShapeErasedArray tensors index
+  | [], .nil, _, acc => by simp [toIndexedShapeErasedArrayAux, toIndexedShapeErasedArray]
+  | _ :: _, .cons tensor tensors, index, acc => by
+      rw [toIndexedShapeErasedArrayAux, toIndexedShapeErasedArrayAux_eq tensors,
+        toIndexedShapeErasedArray]
+      simp
+
+/-- `toIndexedShapeErasedArray` in one pass of pushes, which replaces it in compiled code. -/
+def toIndexedShapeErasedArrayFast {ss : List Shape} (tensors : TensorPack α ss)
+    (index : Nat) : Array (Nat × Spec.SomeTensor α) :=
+  toIndexedShapeErasedArrayAux tensors index #[]
+
+/-- Compiled code runs `toIndexedShapeErasedArrayFast` in place of the indexed erasure. -/
+@[csimp] theorem toIndexedShapeErasedArray_eq_toIndexedShapeErasedArrayFast :
+    @toIndexedShapeErasedArray = @toIndexedShapeErasedArrayFast := by
+  funext α storage ss tensors index
+  simp [toIndexedShapeErasedArrayFast, toIndexedShapeErasedArrayAux_eq]
+
 /--
 Recover a statically shape-indexed pack from a prefix of a shape-erased runtime array.
 

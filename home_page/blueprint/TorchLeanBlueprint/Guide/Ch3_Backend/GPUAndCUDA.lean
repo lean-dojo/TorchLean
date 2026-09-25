@@ -345,7 +345,7 @@ after planning, grouping, and the contract check accept every obligation. Bindin
 handler identities shown above. Neither step probes the hardware: a profile's `Availability`
 declares which devices and providers planning may consider, while CUDA session creation calls
 `Cuda.Buffer.requireNativeRuntime` to distinguish native CUDA, a native build with no visible GPU,
-and the host-memory parity stubs.
+and a build without LibTorch.
 
 We can inspect profiles and plans on a machine with no GPU. The two maintained profiles are:
 
@@ -422,13 +422,13 @@ change both performance and the execution claim.
 Build without native CUDA and request it:
 
 ```terminal
-# Show that a CPU stub build rejects a requested CUDA
-# session.
+# Show that a build without LibTorch rejects a requested
+# CUDA session.
 scripts/lake.sh build
 scripts/lake.sh exe torchlean quickstart_mlp --device cuda --steps 1
 ```
 
-On a stub build, session initialization rejects the request. The CLI's `Device.cuda` value
+Without LibTorch, session initialization rejects the request. The CLI's `Device.cuda` value
 describes the requested target, while
 `Cuda.Buffer.requireNativeRuntime` probes whether this build can execute it.
 
@@ -848,7 +848,7 @@ when the action runs. Device selection is effectful too: `deviceCount` reports v
 `getDevice` reads the selected index, and `setDevice` selects a device for subsequent bridge work.
 The setter requires all existing buffer wrappers to be finalized, including empty and explicitly
 released wrappers; it does not migrate their tensors. Select the device before allocating model
-state. CPU stubs identify themselves through `version` and reject these CUDA configuration calls.
+state. Without LibTorch, `version` reports `unavailable` and these calls fail.
 
 # Reading CUDA Memory Usage
 
@@ -875,7 +875,7 @@ TorchLean handle. Zero ownership counters therefore need not imply zero allocate
 The corresponding peaks are `peakAllocatedBytes` and `peakReservedBytes`. Reservation includes
 storage retained for reuse, but subtracting allocated bytes does not give a promise of immediately
 reclaimable memory. `deviceFreeBytes` and `deviceTotalBytes` report the driver's view of that
-same device. CPU stubs report zero for these device counters. The fields are read separately, so
+same device. Without LibTorch these device counters are zero. The fields are read separately, so
 concurrent activity can make the report differ from an atomic snapshot.
 
 For example, retiring a temporary tensor can reduce allocated bytes while leaving reserved bytes

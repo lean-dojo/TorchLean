@@ -12,12 +12,9 @@ public import NN.Spec.Core.Tensor.Core
 /-!
 # Algorithmic stability (learning theory)
 
-This file defines the core *notions* of algorithmic stability that commonly appear in the
-learning-theory literature:
-
-- replace-one dataset perturbations,
-- (expected / probabilistic) hypothesis and error stability, and
-- uniform stability-style definitions that quantify over all test points.
+This file defines the vocabulary for algorithmic stability: datasets as tensors, replace-one and
+remove-one perturbations, empirical error, deterministic replace-one uniform stability
+(`UniformStableReplace`), and IID sampling of datasets.
 
 The goal here is to provide a small, reusable vocabulary that downstream developments can reuse.
 The definitions follow the standard event-wise / test-point-wise inequalities from the literature,
@@ -41,22 +38,13 @@ We represent a dataset of size `n` as a **length-`n` spec tensor**
 - Even though the underlying tensor representation is functional (`Fin n → ...`), we treat datasets
   abstractly: what matters for stability is that we can (a) access coordinate `i : Fin n` and (b)
   perform replace-one / remove-one perturbations.
-- The stability notions here are *definitions only* (plus a few helper constructions like IID
-  sampling). Concrete bounds are proved in separate files, e.g.
+- This file holds definitions only. Concrete bounds are proved in separate files, e.g.
   `NN.MLTheory.LearningTheory.Stability.RidgeRegression1D`.
 
 ### Measures and expectations
 
-For the probabilistic notions, we assume `[MeasurableSpace Z]` and phrase expectations using
-mathlib's `ProbabilityMeasure`. In particular:
-
-- `(iid μ n)` is the product distribution on datasets (samples `S : Dataset n Z`),
-- `∫ z, ... ∂μ` and `∫ S, ... ∂(iid μ n)` are Bochner integrals in `ℝ`.
-
-These definitions do not require integrability. Mathlib totalizes nonintegrable Bochner integrals
-to zero, so interpreting the inequalities as finite expected-loss guarantees requires separate
-measurability and integrability hypotheses. The supremum-based definitions additionally record
-boundedness of the loss-change ranges.
+For sampling, we assume `[MeasurableSpace Z]` and use mathlib's `ProbabilityMeasure`:
+`iid μ n` is the product distribution on datasets `S : Dataset n Z`.
 
 ## References
 
@@ -217,8 +205,7 @@ abbrev LearningMap (n : Nat) (Z H : Type) : Type :=
 /--
 A real-valued loss function.
 
-We fix the codomain to `ℝ` to match the standard stability literature and to make integration
-(`trueError`) straightforward.
+We fix the codomain to `ℝ` to match the standard stability literature.
 -/
 abbrev Loss (H Z : Type) : Type :=
   H → Z → ℝ
@@ -234,18 +221,6 @@ At `n = 0`, the totalized real expression is zero.
 def empiricalError {n : Nat} [Fintype (Fin n)] (ℓ : Loss H Z) (h : H) (S : Dataset n Z) : ℝ :=
   (1 / (n : ℝ)) * ∑ i : Fin n, ℓ h (Dataset.get (n := n) (Z := Z) S i)
 
-section Measure
-
-variable [MeasurableSpace Z]
-
-/--
-True (population) error under a data distribution `μ`.
-
-This is the expected loss $\mathbb{E}_{z\sim\mu}[\ell(h,z)]$.
--/
-def trueError (μ : MeasureTheory.ProbabilityMeasure Z) (ℓ : Loss H Z) (h : H) : ℝ :=
-  ∫ z, ℓ h z ∂μ
-
 /-! ## Deterministic replace-one stability -/
 
 /--
@@ -253,9 +228,6 @@ Deterministic **replace-one uniform stability** (a common core notion).
 
 `UniformStableReplace A ℓ β` means that if you replace one example in the training set, then the
 loss on *any* test point changes by at most $\beta$.
-
-This is the most “pointwise” notion in this file; the probabilistic notions below integrate or
-take suprema in various ways.
 -/
 def UniformStableReplace {n : Nat} [DecidableEq (Fin n)]
     (A : LearningMap n Z H) (ℓ : Loss H Z) (β : ℝ) : Prop :=
@@ -263,6 +235,10 @@ def UniformStableReplace {n : Nat} [DecidableEq (Fin n)]
     |ℓ (A S) z - ℓ (A (replaceAt S i z')) z| ≤ β
 
 /-! ## IID sampling helper -/
+
+section Measure
+
+variable [MeasurableSpace Z]
 
 /--
 IID sampling: product distribution on datasets.
@@ -278,150 +254,6 @@ def iid (μ : MeasureTheory.ProbabilityMeasure Z) (n : Nat) : MeasureTheory.Prob
   let ν : MeasureTheory.ProbabilityMeasure (Fin n → Z) :=
     MeasureTheory.ProbabilityMeasure.pi fun _ : Fin n => μ
   ν.map (Dataset.ofFn (n := n) (Z := Z))
-
-/-! ## Expected/probabilistic stability notions -/
-
-/--
-Expected (integrated) hypothesis stability.
-
-This integrates the pointwise loss change over:
-
-1. a random dataset $S\sim\operatorname{iid}(\mu,n)$,
-2. a fresh replacement example $z'\sim\mu$, and
-3. an independent test point $z\sim\mu$.
-
-This corresponds to one of the standard “expected” stability notions in the literature.
--/
-def HypothesisStability {n : Nat} [DecidableEq (Fin n)]
-    (μ : MeasureTheory.ProbabilityMeasure Z) (A : LearningMap n Z H) (ℓ : Loss H Z) (β : ℝ) : Prop
-      :=
-  ∀ i : Fin n,
-    (∫ S, (∫ z', (∫ z, |ℓ (A S) z - ℓ (A (replaceAt S i z')) z| ∂μ) ∂μ) ∂(iid μ n)) ≤ β
-
-/--
-Pointwise hypothesis stability.
-
-This is like `HypothesisStability`, but the “test point” is taken to be the `i`-th training example
-itself (the coordinate being replaced).
--/
-def PointwiseHypothesisStability {n : Nat} [DecidableEq (Fin n)]
-    (μ : MeasureTheory.ProbabilityMeasure Z) (A : LearningMap n Z H) (ℓ : Loss H Z) (β : ℝ) : Prop
-      :=
-  ∀ i : Fin n,
-    (∫ S, (∫ z',
-      |ℓ (A S) (Dataset.get (n := n) (Z := Z) S i) -
-        ℓ (A (replaceAt S i z')) (Dataset.get (n := n) (Z := Z) S i)| ∂μ) ∂(iid μ n)) ≤ β
-
-/--
-Error stability (population error stability).
-
-This measures how much the **true error** `trueError μ ℓ` changes under a replace-one perturbation.
--/
-def ErrorStability {n : Nat} [DecidableEq (Fin n)]
-    (μ : MeasureTheory.ProbabilityMeasure Z) (A : LearningMap n Z H) (ℓ : Loss H Z) (β : ℝ) : Prop
-      :=
-  ∀ i : Fin n,
-    (∫ S, (∫ z',
-      |trueError μ ℓ (A S) - trueError μ ℓ (A (replaceAt S i z'))| ∂μ) ∂(iid μ n)) ≤ β
-
-/--
-Uniform stability (expected supremum over test points).
-
-For each random dataset `S` and random replacement `z'`, we take the supremum over all test points
-`z : Z` of the absolute loss change, then integrate. We make the usual boundedness side condition
-explicit: every range whose supremum appears must be bounded above. This avoids relying on
-`sSup` outside its mathematically meaningful domain.
--/
-def uniformStabilityRange {n : Nat} [DecidableEq (Fin n)]
-    (A : LearningMap n Z H) (ℓ : Loss H Z)
-    (i : Fin n) (S : Dataset n Z) (z' : Z) : Set ℝ :=
-  Set.range fun z : Z => |ℓ (A S) z - ℓ (A (replaceAt S i z')) z|
-
-/--
-Boundedness side condition for uniform-stability suprema.
-
-The standard literature often assumes bounded losses up front. TorchLean keeps this as an explicit
-predicate so downstream theorems can either prove it from a bounded-loss hypothesis or carry it as a
-transparent assumption.
--/
-def UniformStabilityRangeBdd {n : Nat} [DecidableEq (Fin n)]
-    (A : LearningMap n Z H) (ℓ : Loss H Z) : Prop :=
-  ∀ i : Fin n, ∀ S : Dataset n Z, ∀ z' : Z,
-    BddAbove (uniformStabilityRange (n := n) (Z := Z) (H := H) A ℓ i S z')
-
-/-- Supremum term used in `UniformStability` once boundedness is available. -/
-def uniformStabilitySup {n : Nat} [DecidableEq (Fin n)]
-    (A : LearningMap n Z H) (ℓ : Loss H Z)
-    (i : Fin n) (S : Dataset n Z) (z' : Z) : ℝ :=
-  sSup (uniformStabilityRange (n := n) (Z := Z) (H := H) A ℓ i S z')
-
-/--
-Uniform stability (expected supremum over test points).
-
-For each random dataset `S` and random replacement `z'`, we take the supremum over all test points
-`z : Z` of the absolute loss change, then integrate. The first conjunct records the boundedness
-needed for those suprema to be mathematically disciplined.
--/
-def UniformStability {n : Nat} [DecidableEq (Fin n)]
-    (μ : MeasureTheory.ProbabilityMeasure Z) (A : LearningMap n Z H) (ℓ : Loss H Z) (β : ℝ) : Prop
-      :=
-  UniformStabilityRangeBdd (n := n) (Z := Z) (H := H) A ℓ ∧
-  ∀ i : Fin n,
-    (∫ S, (∫ z',
-      uniformStabilitySup (n := n) (Z := Z) (H := H) A ℓ i S z' ∂μ) ∂(iid μ n)) ≤ β
-
-/--
-Probabilistic uniform stability.
-
-This is a “high probability” analogue of `UniformStability`: with probability at least $1-\delta$
-over datasets $S$, the integrated uniform-stability quantity is at most $\beta$. As above,
-boundedness of
-the pointwise ranges is part of the definition rather than an implicit side condition.
--/
-def ProbUniformStability {n : Nat} [DecidableEq (Fin n)]
-    (μ : MeasureTheory.ProbabilityMeasure Z) (A : LearningMap n Z H) (ℓ : Loss H Z) (β : ℝ) (δ :
-      ENNReal) : Prop :=
-  UniformStabilityRangeBdd (n := n) (Z := Z) (H := H) A ℓ ∧
-  ∀ i : Fin n,
-    (MeasureTheory.ProbabilityMeasure.toMeasure (iid μ n) {S |
-      (∫ z', uniformStabilitySup (n := n) (Z := Z) (H := H) A ℓ i S z' ∂μ) ≤ β}) ≥
-        ((1 : ENNReal) - δ)
-
-/-! ## Leave-one-out (CV-LOO) style quantities -/
-
-/--
-Leave-one-out (LOO) estimate, phrased using `removeAt`.
-
-For each index `i`, train on the dataset with the `i`-th example removed, and evaluate loss on the
-held-out example. Then average over `i`.
--/
-def looEstimate {n : Nat} [DecidableEq (Fin (n + 1))] [Fintype (Fin (n + 1))] [Fintype (Fin n)]
-    (A : LearningMap n Z H) (ℓ : Loss H Z) (S : Dataset (n + 1) Z) : ℝ :=
-  (1 / ((n + 1 : Nat) : ℝ)) * ∑ i : Fin (n + 1),
-    ℓ (A (removeAt S i)) (Dataset.get (n := n + 1) (Z := Z) S i)
-
-/--
-Cross-validation leave-one-out stability.
-
-This measures how much the LOO estimate changes when one example is replaced.
--/
-def CVlooStability {n : Nat} [DecidableEq (Fin (n + 1))] [Fintype (Fin (n + 1))] [Fintype (Fin n)]
-    (μ : MeasureTheory.ProbabilityMeasure Z) (A : LearningMap n Z H) (ℓ : Loss H Z) (β : ℝ) : Prop
-      :=
-  ∀ i : Fin (n + 1),
-    (∫ S, (∫ z',
-      |looEstimate A ℓ S - looEstimate A ℓ (replaceAt S i z')| ∂μ) ∂(iid μ (n + 1))) ≤ β
-
-/--
-Expected LOO vs true error stability.
-
-This compares the LOO estimate on a dataset to the true error of (one particular) leave-one-out
-trained hypothesis.
--/
-def ElooErrStability {n : Nat} [DecidableEq (Fin (n + 1))] [Fintype (Fin (n + 1))] [Fintype (Fin n)]
-    (μ : MeasureTheory.ProbabilityMeasure Z) (A : LearningMap n Z H) (ℓ : Loss H Z) (β : ℝ) : Prop
-      :=
-  (∫ S, |looEstimate A ℓ S - trueError μ ℓ (A (removeAt S 0))| ∂(iid μ (n + 1))) ≤ β
 
 end Measure
 

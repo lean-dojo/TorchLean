@@ -47,7 +47,7 @@ theorem enclosesBox_boxAdd {B1 B2 : FlatBox ℝ} {v1 v2 : Val}
   simp only [castDimScalar_self] at hx hy ⊢
   rw [NN.MLTheory.CROWN.Graph.Theorems.box_add_on_eq]
   exact ⟨rfl, NN.MLTheory.CROWN.Graph.Theorems.Semantics.box_add_sound (α := ℝ) n1 lo1 hi1 lo2 hi2
-    add_mono_real x y hx hy⟩
+    add_le_add x y hx hy⟩
 
 /-- `boxSub` encloses the difference of enclosed values with matching dimensions. -/
 theorem enclosesBox_boxSub {B1 B2 : FlatBox ℝ} {v1 v2 : Val}
@@ -65,7 +65,7 @@ theorem enclosesBox_boxSub {B1 B2 : FlatBox ℝ} {v1 v2 : Val}
   simp only [castDimScalar_self] at hx hy ⊢
   rw [NN.MLTheory.CROWN.Graph.Theorems.box_sub_on_eq]
   exact ⟨rfl, NN.MLTheory.CROWN.Graph.Theorems.Semantics.box_sub_sound (α := ℝ) n1 lo1 hi1 lo2 hi2
-    sub_mono_real x y hx hy⟩
+    sub_le_sub x y hx hy⟩
 
 /-- A successful `boxMulElem` encloses the elementwise product of enclosed values. -/
 theorem enclosesBox_boxMulElem {B1 B2 Bm : FlatBox ℝ} {v1 v2 : Val}

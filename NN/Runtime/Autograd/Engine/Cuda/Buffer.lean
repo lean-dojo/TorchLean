@@ -14,8 +14,8 @@ public import NN.Runtime.Autograd.Engine.Cuda.Trusted
 
 Low-level float32 tensor operations for the LibTorch CUDA runtime. TorchLean retains its tape and
 selected local VJPs; native calls do not record a LibTorch autograd graph. CUDA builds use
-`csrc/libtorch/runtime.cpp`; ordinary CPU builds link the parity implementation in
-`csrc/cuda/tensor/torchlean_cuda_tensor_stub.c` so that the same runtime interfaces remain testable.
+`csrc/libtorch/runtime.cpp`. Builds without LibTorch link `csrc/libtorch/unavailable.c`, which
+reports `.notLinked` and fails every buffer operation.
 -/
 
 @[expose] public section
@@ -30,8 +30,8 @@ namespace Buffer
 
 /-- What implementation sits behind the CUDA FFI symbols in the current process. -/
 inductive RuntimeStatus where
-  /-- Default non-CUDA builds provide host-memory parity stubs for low-level tests. -/
-  | cpuStub
+  /-- The default build does not link LibTorch; buffer operations fail. -/
+  | notLinked
   /-- The project was built with LibTorch CUDA and at least one CUDA device is visible. -/
   | nativeAvailable
   /-- The project was built with LibTorch CUDA, but no usable CUDA device is visible. -/
@@ -42,10 +42,10 @@ inductive RuntimeStatus where
 @[never_extract, extern "torchlean_cuda_runtime_status"]
 private opaque runtimeStatusRaw (token : UInt32) : UInt32
 
-/-- Query whether the linked CUDA symbols are native or the CPU parity stubs. -/
+/-- Query whether LibTorch is linked and can see a CUDA device. -/
 @[no_expose] def runtimeStatus (token : UInt32 := 0) : RuntimeStatus :=
   match runtimeStatusRaw token with
-  | 0 => .cpuStub
+  | 0 => .notLinked
   | 1 => .nativeAvailable
   | _ => .nativeUnavailable
 
@@ -53,9 +53,9 @@ private opaque runtimeStatusRaw (token : UInt32) : UInt32
 def requireNativeRuntime : IO Unit :=
   match runtimeStatus with
   | .nativeAvailable => pure ()
-  | .cpuStub =>
+  | .notLinked =>
       throw <| IO.userError
-        "CUDA was requested, but this executable is linked to TorchLean's CPU parity stubs; \
+        "CUDA was requested, but this executable was built without LibTorch; \
           rebuild and run with `-K cuda=true`"
   | .nativeUnavailable =>
       throw <| IO.userError
@@ -122,7 +122,7 @@ private opaque peakReservedBytesRaw (token : UInt32) : UInt64
 /--
 Snapshot of TorchLean ownership counters and the LibTorch CUDA allocator.
 
-`liveBytes`/`peakBytes` count logical device or stub payloads owned by TorchLean handles. They are
+`liveBytes`/`peakBytes` count logical device payloads owned by TorchLean handles. They are
 not physical VRAM usage: shared tensor storage may be counted more than once, and native
 temporaries or saved attention state need not have a separate TorchLean handle. `allocCount` and
 `freeCount` count those payload lifetimes, not native allocation calls.
@@ -135,7 +135,8 @@ owners from storage managed internally by LibTorch.
 allocator's counters for the selected CUDA device. Reserved bytes include storage the allocator
 retains for reuse; the difference from allocated bytes is not a promise of immediately reclaimable
 memory. `deviceFreeBytes` and `deviceTotalBytes` report driver memory for that device. These six
-device counters are zero in CPU stubs. Native allocator peaks follow its own reset lifecycle.
+device counters are zero when LibTorch is not linked. Native allocator peaks follow its own reset
+lifecycle.
 
 LibTorch owns caching policy. `LibTorch.setMemoryFraction` configures its selected-device allocation
 limit.
@@ -254,14 +255,6 @@ available to the caller.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_of_float32_bytes_io"]
 opaque ofFloat32BytesIO (bytes : @& ByteArray) : IO Buffer
-
-/-- Encode a host `FloatArray` as raw float32 bytes. -/
-@[never_extract, extern "torchlean_float_array_to_float32_bytes"]
-opaque floatArrayToFloat32Bytes (values : @& FloatArray) : ByteArray
-
-/-- Decode raw float32 bytes into a host `FloatArray`. -/
-@[never_extract, extern "torchlean_float32_bytes_to_float_array"]
-opaque float32BytesToFloatArray (bytes : @& ByteArray) : FloatArray
 
 /-- Number of float32 elements in the buffer. -/
 @[never_extract, extern "torchlean_cuda_buffer_size"]

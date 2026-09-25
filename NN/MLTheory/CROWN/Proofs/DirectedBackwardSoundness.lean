@@ -12,7 +12,8 @@ public import NN.MLTheory.CROWN.Proofs.DirectedBackwardNode
 # Soundness of the rounded backward objective
 
 The executable reverse sweep encloses its output objective at every real graph point satisfying
-the stored-parameter equations and the input IBP enclosures. The proof includes coefficient
+the stored-parameter equations and enclosed by the forward IBP boxes. Those boxes are assumed, not
+derived from the rounded forward pass. The proof includes coefficient
 rounding, repeated-parent accumulation, bias rounding, node discharge, and the crossing-zero
 correction used when converting the input coefficient intervals to affine bounds.
 -/
@@ -34,9 +35,9 @@ variable {α : Type} [Storage α] [Context α] [BoundOps α] [LawfulBoundOps α]
 local notation "value" => LawfulBoundOps.toReal (α := α)
 
 /-- A successful rounded backward sweep returns affine bounds on the exact real output
-objective. The hypotheses specify real node equations and directed scalar laws, never local
-soundness of the verifier's backward steps. -/
-theorem runDirectedBackwardObjective_encloses (hzero : value (0 : α) = 0)
+objective. The hypotheses specify real node equations, directed scalar laws, and sound forward
+IBP boxes, never local soundness of the verifier's backward steps. -/
+theorem runDirectedBackwardObjective_encloses
     {g : Graph} {ps : ParamStore α} {ibp : Array (Option (FlatBox α))}
     {ctx : AffineCtx} {dims : Nat → Nat} {v : Nat → Nat → ℝ}
     (point : GraphPoint g.nodes ps ibp ctx dims v)
@@ -55,11 +56,11 @@ theorem runDirectedBackwardObjective_encloses (hzero : value (0 : α) = 0)
   let final := (List.finRange g.nodes.size).reverse.foldl
     (fun state i => directedBackwardNode g.nodes ps ibp ctx state i.val) initial
   have hinitial : SweepInvariant dims v ctx.inputId g.nodes.size g.nodes.size z initial :=
-    initial_represents hzero dims v ctx.inputId g.nodes.size output houtput obj hdim
+    initial_represents dims v ctx.inputId g.nodes.size output houtput obj hdim
   have hfinal : SweepInvariant dims v ctx.inputId g.nodes.size 0 z final :=
     reverseSweep_preserves (directedBackwardNode g.nodes ps ibp ctx)
       (fun k state => SweepInvariant dims v ctx.inputId g.nodes.size k z state)
-      g.nodes.size (fun k hk state h => backwardNode_preserves hzero point k hk state z h)
+      g.nodes.size (fun k hk state h => backwardNode_preserves point k hk state z h)
       g.nodes.size le_rfl initial hinitial
   let inputCoefficient := final.coeffs[ctx.inputId]!.getD
     { dim := ctx.inputDim
@@ -85,9 +86,9 @@ theorem runDirectedBackwardObjective_encloses (hzero : value (0 : α) = 0)
   have hx : RowEncloses inputBox ctx.inputDim (v ctx.inputId) := by
     simpa only [point.input_dim] using point.ibp_encloses _ point.input_lt inputBox hlookup
   have ha : RowEncloses inputCoefficient ctx.inputDim (f ctx.inputId) :=
-    inputRow_encloses hzero hs ctx.inputId ctx.inputDim
+    inputRow_encloses hs ctx.inputId ctx.inputDim
       (by simpa only [hsize] using point.input_lt) point.input_dim
-  have hr := inputAffines_row_encloses hzero hx ha hs.2 hresult
+  have hr := inputAffines_row_encloses hx ha hs.2 hresult
   rw [frontier_zero, point.input_dim] at hz
   simpa only [hz] using hr
 

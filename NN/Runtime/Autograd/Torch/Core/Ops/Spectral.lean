@@ -27,15 +27,14 @@ namespace Runtime.Autograd.Torch.Internal.EagerSession
 open Spec TorchLean
 
 /-- Run a native tape constructor only for a CUDA session, preserving its reference identity. -/
-def spectralNative? {α : Type} [Storage α] {shape : Shape} (s : EagerSession α)
+@[inline] def spectralNative? {α : Type} [Storage α] {shape : Shape} (s : EagerSession α)
     (op : NN.Backend.BackendOp) (refs : Array (Option RefIdentity))
     (record : Cuda.Tape → Result (Cuda.Tape × Nat)) : IO (Option (TensorRef α shape)) := do
   if Config.device s.options != .cuda then return none
   let cpu : IO (TensorRef α shape) :=
     throw <| IO.userError "torch: native spectral hook requires a CUDA session"
   let cuda := do
-    let (tape, id) ← okOrThrow (record (← s.cudaTape.get))
-    s.cudaTape.set tape
+    let id ← s.recordCuda fun tape => keepTapeOnError tape (record tape)
     return some { id := id }
   return some (← dispatchCudaOpt s op refs cpu cuda)
 

@@ -34,7 +34,7 @@ namespace Tape
 /-! ## Arbitrary-rank convolution and pooling -/
 
 /-- Rank-polymorphic convolution via the CUDA ConvPool FFI (spatial rank $\le 8$). -/
-def conv
+@[inline] def conv
   {d inC outC : Nat}
   {kernel stride padding : TorchLean.Tensor Nat [d]}
   {inSpatial : TorchLean.Tensor Nat [d]}
@@ -104,7 +104,7 @@ def conv
   pure (t.addNode node)
 
 /-- Rank-polymorphic transpose convolution via the CUDA ConvPool FFI (spatial rank $\le 8$). -/
-def convTranspose
+@[inline] def convTranspose
   {d inC outC : Nat}
   {kernel stride padding : TorchLean.Tensor Nat [d]}
   {inSpatial : TorchLean.Tensor Nat [d]}
@@ -177,7 +177,7 @@ def convTranspose
   pure (t.addNode node)
 
 /-- Rank-polymorphic max pooling via the CUDA ConvPool FFI (spatial rank $\le 8$). -/
-def maxPool
+@[inline] def maxPool
     {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
     (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   if d = 0 then
@@ -234,7 +234,7 @@ Rank-polymorphic smooth max pooling via the CUDA ConvPool FFI (spatial rank at m
 `beta` is checked after conversion to `Float32`, because conversion can underflow a nonzero `Float`
 to zero or overflow a finite one to infinity.
 -/
-def smoothMaxPool
+@[inline] def smoothMaxPool
     {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
     (t : Tape) (xId : Nat) (beta : Float) : Result (Tape × Nat) := do
   let beta32 := Float.toFloat32 beta
@@ -292,7 +292,7 @@ def smoothMaxPool
   pure (t.addNode node)
 
 /-- Rank-polymorphic average pooling via the CUDA ConvPool FFI (spatial rank $\le 8$). -/
-def avgPool
+@[inline] def avgPool
     {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
     (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   if d = 0 then

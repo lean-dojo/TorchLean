@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Models.Mlp
+public import NN.MLTheory.CROWN.Proofs.DirectedIBPSoundness
+public import NN.MLTheory.CROWN.Extras.FP32
 public import NN.Tests.MLTheory.Utils
 public import NN.Tests.Utils
 
@@ -15,7 +17,8 @@ public import NN.Tests.Utils
 
 Check the boundary between valid IR configurations and malformed payloads. Invalid convolution
 geometry and mismatched LayerNorm payload shapes must return no bounds. Valid convolution and
-affine LayerNorm retain their value and derivative bounds.
+affine LayerNorm retain their value and derivative bounds. A rounded backend must reject imported
+ReLU slopes it cannot use, and the rounded IBP soundness theorem must apply to `FP32`.
 -/
 
 @[expose] public section
@@ -228,10 +231,58 @@ def checkUpperAffineSign : IO Unit := do
   unless 0 ≤ getAtOrZero affine.aff.c [0] do
     throw <| IO.userError "upper affine bound excludes -ReLU(0) = 0"
 
+/-- A rounded backend has no ReLU relaxation in its directed pass, so it refuses imported slopes. -/
+def checkRoundedReluAlphaRejected : IO Unit := do
+  let graph : NN.IR.Graph := ⟨#[
+    { id := 0, parents := #[], kind := .input, outShape := [1] },
+    { id := 1, parents := #[0], kind := .relu, outShape := [1] },
+    { id := 2, parents := #[1], kind := .linear, outShape := [1] }]⟩
+  let params : ParamStore Float :=
+    { inputBoxes := ({} : Std.HashMap Nat (FlatBox Float)).insert 0
+        { dim := 1, lo := [-1], hi := [1] }
+      linearWB := ({} : Std.HashMap Nat (LinParams Float)).insert 2
+        { m := 1, n := 1, w := [[1]], b := [0] } }
+  let ctx : AffineCtx := { inputId := 0, inputDim := 1 }
+  let ibp := runIBP graph params
+  let obj : FlatTensor Float := { n := 1, v := [1] }
+  let slopes : Array (Option (FlatTensor Float)) := #[none, some { n := 1, v := [0.5] }, none]
+  if (runCROWNBackwardObjectiveLowerWithReluAlpha graph params ctx ibp 2 obj slopes).isSome then
+    throw <| IO.userError "rounded CROWN accepted ReLU slopes it does not use"
+  if (runCROWNBackwardObjectiveLowerWithReluAlpha graph params ctx ibp 2 obj
+      #[none, none, none]).isNone then
+    throw <| IO.userError "rounded CROWN failed without ReLU slopes"
+
+/-- The linear, ReLU, and sum kinds are covered by the rounded IBP theorem; convolution is not. -/
+def checkIBPForwardSupport : IO Unit := do
+  let covered : Array NN.IR.Node := #[
+    { id := 0, parents := #[], kind := .input, outShape := [2] },
+    { id := 1, parents := #[0], kind := .linear, outShape := [2] },
+    { id := 2, parents := #[1], kind := .relu, outShape := [2] },
+    { id := 3, parents := #[2], kind := .sum, outShape := [1] }]
+  unless DirectedBackward.ibpForwardSupported covered do
+    throw <| IO.userError "rounded IBP support check rejected a linear/ReLU/sum graph"
+  let binaryMatmul : NN.IR.Node := { id := 2, parents := #[0, 1], kind := .matmul, outShape := [1] }
+  if DirectedBackward.ibpForwardSupported (covered.push binaryMatmul) then
+    throw <| IO.userError "rounded IBP support check accepted binary matmul"
+
+/-- The rounded IBP theorem instantiates at the `FP32` model. -/
+example (g : NN.IR.Graph) (ps : ParamStore FP32) (dims : Nat → Nat) (v : Nat → Nat → ℝ)
+    (hparent : ∀ id, id < g.nodes.size → ∀ p ∈ g.nodes[id]!.parents, p < id)
+    (hsupported : DirectedBackward.ibpForwardSupported g.nodes = true)
+    (hinputs : DirectedBackward.InputsInBoxes g.nodes ps dims v)
+    (hequation : ∀ id, id < g.nodes.size →
+      DirectedBackward.NodeEquation g.nodes ps (runIBP g ps) dims v id)
+    (id : Nat) (hid : id < g.nodes.size) (box : FlatBox FP32)
+    (hbox : (runIBP g ps)[id]! = some box) :
+    DirectedBackward.RowEncloses box (dims id) (v id) :=
+  DirectedBackward.runIBP_encloses g ps hparent hsupported hinputs hequation id hid box hbox
+
 def run : IO Unit := do
   checkConvolutionGuards
   checkLayerNormPayloadGuard
   checkAffineCancellation
   checkUpperAffineSign
+  checkRoundedReluAlphaRejected
+  checkIBPForwardSupport
 
 end NN.Tests.MLTheory.CROWNSoundnessGuardrails

@@ -28,7 +28,7 @@ open TorchLean TorchLean.Tensor
 namespace Tape
 
 /-- Elementwise addition. PyTorch: `torch.add` / `+`. -/
-def add {α : Type} [TorchLean.Storage α] [Add α] {s : Shape}
+@[inline] def add {α : Type} [TorchLean.Storage α] [Add α] {s : Shape}
   (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) := do
   let a ← requireValue (α:=α) (t:=t) (s:=s) aId
   let b ← requireValue (α:=α) (t:=t) (s:=s) bId
@@ -47,7 +47,7 @@ def add {α : Type} [TorchLean.Storage α] [Add α] {s : Shape}
   pure (t.addNode node)
 
 /-- Elementwise subtraction. PyTorch: `torch.sub` / `-`. -/
-def sub {α : Type} [TorchLean.Storage α] [Sub α] [Zero α] {s : Shape}
+@[inline] def sub {α : Type} [TorchLean.Storage α] [Sub α] [Zero α] {s : Shape}
   (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) := do
   let a ← requireValue (α:=α) (t:=t) (s:=s) aId
   let b ← requireValue (α:=α) (t:=t) (s:=s) bId
@@ -67,7 +67,7 @@ def sub {α : Type} [TorchLean.Storage α] [Sub α] [Zero α] {s : Shape}
   pure (t.addNode node)
 
 /-- Elementwise multiplication. PyTorch: `torch.mul` / `*`. -/
-def mul {α : Type} [TorchLean.Storage α] [Mul α] {s : Shape}
+@[inline] def mul {α : Type} [TorchLean.Storage α] [Mul α] {s : Shape}
   (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) := do
   let a ← requireValue (α:=α) (t:=t) (s:=s) aId
   let b ← requireValue (α:=α) (t:=t) (s:=s) bId
@@ -98,7 +98,7 @@ totalize or be backend-dependent at `b = 0`, but no real-valued gradient is impl
 
 Requires `[TorchLean.Storage α] [Context α]` like the sibling `abs`/`sqrt`/`exp` nodes (its
 `divSpec` forward rides the carrier's `/`). -/
-def div {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+@[inline] def div {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
   (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) := do
   let a ← requireValue (α:=α) (t:=t) (s:=s) aId
   let b ← requireValue (α:=α) (t:=t) (s:=s) bId
@@ -113,14 +113,16 @@ def div {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s) dLdyAny
         let da : Tensor α s := divSpec dLdy b
-        let dLdyA : Tensor α s := mulSpec dLdy (divSpec a (mulSpec b b))
+        -- `(a / b) / b` rather than `a / (b * b)`: `b * b` overflows or underflows for
+        -- moderate `|b|` in floating point even when `a / b²` is representable.
+        let dLdyA : Tensor α s := mulSpec dLdy (divSpec (divSpec a b) b)
         let db : Tensor α s := subSpec (Tensor.full s (0 : α)) dLdyA
         pure #[(aId, Spec.SomeTensor.ofTensor da), (bId, Spec.SomeTensor.ofTensor db)]
     }
   pure (t.addNode node)
 
 /-- Multiply a tensor by a scalar constant. PyTorch: `x * c` for Python scalar `c`. -/
-def scale {α : Type} [TorchLean.Storage α] [Mul α] {s : Shape}
+@[inline] def scale {α : Type} [TorchLean.Storage α] [Mul α] {s : Shape}
   (t : Tape α) (xId : Nat) (c : α) : Result (Tape α × Nat) := do
   let x ← requireValue (α:=α) (t:=t) (s:=s) xId
   let y := scaleSpec x c
@@ -141,7 +143,8 @@ Elementwise absolute value.
 Backward uses the sign function (`signSpec`) as a subgradient at `0`.
 PyTorch comparison: `torch.abs`.
 -/
-def abs {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+@[inline] def abs {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s)
     "abs" xId
@@ -156,7 +159,8 @@ Elementwise square root.
 Backward uses `1 / (2 * sqrt(x))` for `x > 0` and `0` otherwise (totalized).
 PyTorch comparison: `torch.sqrt`.
 -/
-def sqrt {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+@[inline] def sqrt {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s)
     "sqrt" xId
@@ -176,7 +180,8 @@ Elementwise clamp to `[minVal, maxVal]`.
 Backward multiplies by an indicator of the open interval `(minVal, maxVal)` (zero at boundaries).
 PyTorch comparison: `torch.clamp`.
 -/
-def clamp {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+@[inline] def clamp {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {s : Shape} (t : Tape α) (xId : Nat) (minVal maxVal : α) : Result (Tape α × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s)
     "clamp" xId
@@ -193,7 +198,8 @@ Elementwise maximum.
 Tie-breaking: when `a = b`, the upstream gradient is split evenly (`0.5`) between both inputs.
 PyTorch comparison: `torch.maximum`.
 -/
-def max {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+@[inline] def max {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {s : Shape} (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) := do
   let a ← requireValue (α:=α) (t:=t) (s:=s) aId
   let b ← requireValue (α:=α) (t:=t) (s:=s) bId
@@ -220,7 +226,8 @@ Elementwise minimum.
 Tie-breaking: when `a = b`, the upstream gradient is split evenly (`0.5`) between both inputs.
 PyTorch comparison: `torch.minimum`.
 -/
-def min {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+@[inline] def min {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {s : Shape} (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) := do
   let a ← requireValue (α:=α) (t:=t) (s:=s) aId
   let b ← requireValue (α:=α) (t:=t) (s:=s) bId
@@ -247,14 +254,14 @@ Record elementwise sine with the VJP from `Spec.sinOp`.
 The tape retains the input for `cos(x) * dLdy`, so the backward pass uses the same angle as
 the forward pass even when different angles produce the same sine value.
 -/
-def sin {α : Type} [TorchLean.Storage α] [Context α]
+@[inline] def sin {α : Type} [TorchLean.Storage α] [Context α]
     {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "sin" xId
     (forward := (Spec.sinOp (α := α) (s := s)).forward)
     (backward := (Spec.sinOp (α := α) (s := s)).backward)
 
 /-- Record elementwise cosine with the VJP `-sin(x) * dLdy` from `Spec.cosOp`. -/
-def cos {α : Type} [TorchLean.Storage α] [Context α]
+@[inline] def cos {α : Type} [TorchLean.Storage α] [Context α]
     {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "cos" xId
     (forward := (Spec.cosOp (α := α) (s := s)).forward)
@@ -265,7 +272,7 @@ Elementwise ReLU.
 
 PyTorch comparison: `torch.relu(x)` / `torch.nn.functional.relu(x)`.
 -/
-def relu {α : Type} [TorchLean.Storage α]
+@[inline] def relu {α : Type} [TorchLean.Storage α]
   [Mul α] [Zero α] [Max α] [BEq α] [One α] [LT α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do

@@ -184,7 +184,7 @@ Append a node and return its id.
 
 Invariant: the returned id is `t.size`, the pre-append size of the tape.
 -/
-def addNode (t : Tape) (node : Node) : Tape × Nat :=
+@[inline] def addNode (t : Tape) (node : Node) : Tape × Nat :=
   let id := t.nodes.size
   ({ nodes := t.nodes.push node }, id)
 
@@ -207,7 +207,7 @@ This low-level constructor records `value` without validating its external buffe
 an externally supplied `Buffer` must call `AnyBuffer.validate` first; tape operations validate
 their operands again when they retrieve values.
 -/
-def leaf (t : Tape) (value : AnyBuffer) (name : Option String := none)
+@[inline] def leaf (t : Tape) (value : AnyBuffer) (name : Option String := none)
     (requiresGrad : Bool := true) : Tape × Nat :=
   t.addNode
     { name := name
@@ -257,7 +257,7 @@ You provide:
 Shapes are explicit and checked dynamically. Reverse mode visits the result only when the input
 requires gradients, so constant subexpressions do not execute their backward closures.
 -/
-def unary
+@[inline] def unary
     (t : Tape) (opName : String) (xId : Nat) (σ τ : Shape)
     (forward : Buffer → Buffer)
     (backward : Buffer → Buffer → Buffer)
@@ -287,7 +287,7 @@ You provide:
 
 Shapes are explicit and checked dynamically. The result requires gradients if either input does.
 -/
-def binary
+@[inline] def binary
     (t : Tape) (opName : String) (aId bId : Nat) (σ₁ σ₂ τ : Shape)
     (forward : Buffer → Buffer → Buffer)
     (backward : Buffer → Buffer → Buffer → (Buffer × Buffer)) :

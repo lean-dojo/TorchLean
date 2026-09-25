@@ -252,12 +252,12 @@ def expectCudaSessionMatchesRuntime : IO Unit := do
   | .nativeAvailable =>
       let _ ← Runtime.Autograd.Torch.Internal.EagerSession.new (α := Float) options
       pure ()
-  | .cpuStub =>
+  | .notLinked =>
       try
         let _ ← Runtime.Autograd.Torch.Internal.EagerSession.new (α := Float) options
-        throw <| IO.userError "CPU-stub build unexpectedly admitted a user CUDA session"
+        throw <| IO.userError "build without LibTorch unexpectedly admitted a user CUDA session"
       catch e =>
-        expectContains "CPU-stub CUDA session rejection" "CPU parity stubs" e.toString
+        expectContains "no-LibTorch CUDA session rejection" "built without LibTorch" e.toString
   | .nativeUnavailable =>
       try
         let _ ← Runtime.Autograd.Torch.Internal.EagerSession.new (α := Float) options

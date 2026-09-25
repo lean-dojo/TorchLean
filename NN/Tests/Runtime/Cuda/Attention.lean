@@ -15,8 +15,7 @@ public import NN.Tests.Runtime.Cuda.Utils
 
 Compares CPU eager tape vs CUDA eager tape for `multi_head_attention` (forward + backward).
 
-The case stays small so stub-mode remains lightweight and float64/float32 roundoff differences stay
-limited.
+The case stays small so float64/float32 roundoff differences stay limited.
 -/
 
 @[expose] public section
@@ -98,7 +97,7 @@ def mask : Tensor Bool [n, n] :=
 @[no_expose] def checkDeterministicPolicy
     (output seed : Runtime.Autograd.Cuda.Buffer) : IO Unit := do
   match Runtime.Autograd.Cuda.Buffer.runtimeStatus with
-  | .cpuStub => pure ()
+  | .notLinked => pure ()
   | _ =>
     let deterministic ← Runtime.Autograd.Cuda.LibTorch.getDeterministic
     let benchmark ← Runtime.Autograd.Cuda.LibTorch.getCuDNNBenchmark
@@ -110,7 +109,9 @@ def mask : Tensor Bool [n, n] :=
       Runtime.Autograd.Cuda.LibTorch.setDeterministic deterministic
       Runtime.Autograd.Cuda.LibTorch.setCuDNNBenchmark benchmark
 
-/-- The paired ABI must work in the portable stub as well as the LibTorch build. -/
+/-- The paired attention ABI keeps its forward output usable after the inputs are released, supports
+repeated backward calls, rejects a released forward buffer, and returns empty results for empty
+shapes. -/
 def checkPairedBuffers : IO Unit := do
   let q ← Runtime.Autograd.Cuda.Buffer.zerosIO 2
   let k ← Runtime.Autograd.Cuda.Buffer.ofFloatArrayIO <| FloatArray.mk #[1.0, -1.0]

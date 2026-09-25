@@ -10,8 +10,8 @@ Build:
 
 Notes:
 - APIs operate on `Cuda.Buffer` (opaque float32 device buffer).
-- When built without CUDA (`lake build` default), the stub implementation runs on CPU for
-  portability.
+- When built without LibTorch (`lake build` default), every call fails with an error that says
+  how to rebuild with `-K cuda=true`.
 - Layout conventions are channels-first and row-major within each tensor:
   - input:  (inC, spatial...)
   - kernel: (outC, inC, kernelSpatial...)
@@ -29,9 +29,8 @@ public import NN.Runtime.Autograd.Engine.Cuda.Trusted
 /-!
 # CUDA Conv/Pool FFI
 
-Foreign-function declarations for TorchLean's float32 convolution and pooling kernels. The real
-CUDA implementation lives in `csrc/cuda/conv_pool/`; CPU stubs with the same symbols are used when
-TorchLean is built without `-K cuda=true`.
+Foreign-function declarations for TorchLean's float32 convolution and pooling kernels,
+implemented in `csrc/libtorch/conv_pool.cpp`.
 
 All buffers are contiguous `Cuda.Buffer` values and shape/stride/padding metadata is passed
 explicitly through the FFI boundary.

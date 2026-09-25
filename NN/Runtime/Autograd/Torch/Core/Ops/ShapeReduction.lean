@@ -37,15 +37,12 @@ namespace EagerSession
 def sum {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α] [Zero α]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α Shape.scalar) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.sum (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.sum (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.sum (t := t0) (s := sh) x.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .reduceSum #[x.identity?] cpu cuda
 
@@ -53,15 +50,12 @@ def sum {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α] [Zero 
 def flatten {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Inhabited α] {sh : Shape}
   (x : TensorRef α sh) : IO (TensorRef α [Spec.Shape.size sh]) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.flatten (t := t0) (s := sh) x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.flatten (t := t0) (s := sh) x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.flatten (t := t0) (s := sh) x.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .reshape #[x.identity?] cpu cuda
 
@@ -73,16 +67,12 @@ PyTorch comparison: `torch.reshape` / `view` (when valid).
 def reshape {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Inhabited α] {sh1 sh2 : Shape}
   (x : TensorRef α sh1) (h : Spec.Shape.size sh1 = Spec.Shape.size sh2) : IO (TensorRef α sh2) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ←
-      okOrThrow (Runtime.Autograd.Tape.reshape (t := t0) (s₁ := sh1) (s₂ := sh2) x.id h)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.reshape (t := t0) (s₁ := sh1) (s₂ := sh2) x.id h
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.reshape (t := t0) (s₁ := sh1) (s₂ := sh2) x.id h
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .reshape #[x.identity?] cpu cuda
 
@@ -90,16 +80,12 @@ def reshape {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Inhabited 
 def swapAdjacentAtDepth {α : Type} [TorchLean.Storage α] (s : EagerSession α) {sh : Shape}
   (depth : Nat) (x : TensorRef α sh) : IO (TensorRef α (sh.swapAdjacentAtDepth depth)) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.swapAdjacentAtDepth (t := t0) (s := sh) depth
-      x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.swapAdjacentAtDepth (t := t0) (s := sh) depth x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.swapAdjacentAtDepth (t := t0) (s := sh) depth x.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .permute #[x.identity?] cpu cuda
 
@@ -109,16 +95,12 @@ def broadcastTo {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Inhabi
   {sh1 sh2 : Shape} (cb : Shape.CanBroadcastTo sh1 sh2) (x : TensorRef α sh1) : IO (TensorRef α sh2)
     := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
       (Runtime.Autograd.Tape.broadcastTo (α := α) (t := t0) (s₁ := sh1) (s₂ := sh2) cb x.id)
-    s.tape.set t1
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.broadcastTo (t := t0) (s₁ := sh1) (s₂ := sh2) cb x.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .broadcast #[x.identity?] cpu cuda
 
@@ -128,15 +110,12 @@ def reduceSum {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α] 
   {sh : Shape} (axis : Nat) [valid : Shape.HasNonemptyAxis axis sh] [wf : Shape.WellFormed sh]
   (x : TensorRef α sh) : IO (TensorRef α (shapeAfterSum sh axis)) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.reduceSum (t := t0) (s := sh) axis x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.reduceSum (t := t0) (s := sh) axis x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.reduceSum (s := sh) axis (t := t0) x.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .reduceSum #[x.identity?] cpu cuda
 
@@ -145,15 +124,12 @@ def reduceMean {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context
   {sh : Shape} (axis : Nat) [valid : Shape.HasNonemptyAxis axis sh] [wf : Shape.WellFormed sh]
   (x : TensorRef α sh) : IO (TensorRef α (shapeAfterSum sh axis)) := do
   let cpu := do
-    let t0 ← s.tape.get
-    let (t1, id) ← okOrThrow (Runtime.Autograd.Tape.reduceMean (t := t0) (s := sh) axis x.id)
-    s.tape.set t1
+    let id ← s.recordCpu fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.Tape.reduceMean (t := t0) (s := sh) axis x.id
     pure { id := id }
   let cuda := do
-    let t0 ← s.cudaTape.get
-    let (t1, id) ← okOrThrow <|
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.Cuda.Tape.reduceMean (s := sh) axis (t := t0) x.id
-    s.cudaTape.set t1
     pure (some { id := id })
   dispatchCudaOpt (α := α) s .reduceMean #[x.identity?] cpu cuda
 

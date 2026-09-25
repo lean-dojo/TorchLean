@@ -15,8 +15,8 @@ public import NN.API.Trainer.Constructor
 # Train a Classifier, Then Verify Robustness
 
 This is the complete high-level workflow: build and train a classifier, then verify that its class
-cannot change inside an L-infinity input ball. Graph lowering and Alpha-Beta-CROWN execution remain
-inside the normal `trained.verify` operation.
+cannot change inside an L-infinity input ball. Graph lowering and the bound pass remain inside the
+normal `trained.verify` operation.
 
 Training:
 - build a two-layer ReLU classifier
@@ -24,7 +24,8 @@ Training:
 
 Verification:
 - call `trained.verify` with `norm := .inf`
-- run fixed-relaxation Alpha-Beta-CROWN over the trained parameters
+- run fixed-relaxation α-CROWN with IBP-inferred ReLU phases over the trained parameters (the
+  API calls this algorithm `.alphaBetaCrown`; it has no β multipliers or branch splits)
 - report typed output bounds, the worst-case class margin, and the certification result
 
 Run:

@@ -145,7 +145,7 @@ inductive BackendOp where
   | fftFno
   | selectiveScan
   | scaledDotProductAttention
-  deriving DecidableEq, BEq, Repr
+  deriving DecidableEq, BEq, ReflBEq, LawfulBEq, Repr
 
 namespace BackendOp
 

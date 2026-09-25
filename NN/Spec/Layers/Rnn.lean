@@ -201,65 +201,6 @@ def rnnSequenceSpec {seqLen inputSize hiddenSize : Nat}
     (hidden, hidden)
   Tensor.dim outputs.getScalar
 
-/-- Batched RNN forward pass (maps `rnnSequenceSpec` over the batch dimension). -/
-def rnnBatchedSpec {batchSize seqLen inputSize hiddenSize : Nat}
-  (rnn : RNNSpec α inputSize hiddenSize)
-  (inputs : Tensor α [batchSize, seqLen, inputSize])
-  (initialHidden : Tensor α [batchSize, hiddenSize]) :
-  Tensor α [batchSize, seqLen, hiddenSize] :=
-  Tensor.dim (fun b =>
-    rnnSequenceSpec rnn (Tensor.unstack inputs b) (Tensor.unstack initialHidden b))
-
-/--
-Gradient w.r.t. weights from a full unroll, given per-step preactivation gradients.
-
-This helper is for analyses that already have preactivation gradients. It assumes:
-- the initial hidden state is `0`, and
-- `gradOutputs[t]` is already `dL/dz_t` (preactivation gradient).
-
-For end-to-end BPTT from `dL/dh_t`, prefer `rnnSequenceBackwardSpec`.
--/
-def rnnWeightsDerivSpec {seqLen inputSize hiddenSize : Nat}
-  (inputs : Tensor α [seqLen, inputSize])
-  (hiddens : Tensor α [seqLen, hiddenSize])
-  (gradOutputs : Tensor α [seqLen, hiddenSize]) :
-  Tensor α [hiddenSize, inputSize + hiddenSize] :=
-  -- Assumes initial hidden state is 0 (matches the default module wrappers).
-  -- Assumes `gradOutputs` is the preactivation gradient at each timestep.
-  -- For full BPTT from post-activation gradients, use `rnnSequenceBackwardSpec`.
-  let rec accumulate_grads (t : Nat) (acc : Tensor α [hiddenSize, inputSize + hiddenSize]) :
-      Tensor α [hiddenSize, inputSize + hiddenSize] :=
-    if h : t < seqLen then
-      let inputT := get inputs ⟨t, h⟩
-      let hiddenPrev :=
-        if ht : t > 0 then
-          have h_pred : t - 1 < t := by
-            simpa [Nat.pred_eq_sub_one] using Nat.pred_lt (Nat.ne_of_gt ht)
-          have h_t' : t - 1 < seqLen := lt_trans h_pred h
-          get hiddens ⟨t - 1, h_t'⟩
-        else
-          Tensor.full (.dim hiddenSize .scalar) 0
-      let gradPreactT := get gradOutputs ⟨t, h⟩
-      let concatT := concatAxisSpec .scalar inputT hiddenPrev
-      let gradWT := outerProductSpec gradPreactT concatT
-      accumulate_grads (t + 1) (addSpec acc gradWT)
-    else
-      acc
-  accumulate_grads 0 (Tensor.full (.dim hiddenSize (.dim (inputSize + hiddenSize) .scalar)) 0)
-
-/--
-Gradient w.r.t. bias from per-step preactivation gradients.
-
-This is `sum_t dL/dz_t` over the sequence dimension.
--/
-def rnnBiasDerivSpec {seqLen hiddenSize : Nat}
-  (gradOutputs : Tensor α [seqLen, hiddenSize])
-  (h : seqLen ≠ 0) :
-  Tensor α [hiddenSize] :=
-  -- Assumes `gradOutputs` is already the preactivation gradient.
-  -- For full RNN backprop, prefer `rnnSequenceBackwardSpec`.
-  reduceSum 0 gradOutputs (Shape.hasNonemptyAxisZeroOfNe h).proof
-
 /--
 Full BPTT backward pass through an RNN sequence.
 

@@ -31,7 +31,7 @@ Flatten a tensor `s` into a 1D vector of length `Spec.Shape.size s`.
 
 PyTorch comparison: `torch.flatten(x)` with `start_dim=0`.
 -/
-def flatten {α : Type} [TorchLean.Storage α] [Inhabited α] {s : Shape}
+@[inline] def flatten {α : Type} [TorchLean.Storage α] [Inhabited α] {s : Shape}
   (t : Tape α) (xId : Nat) : Result (Tape α × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := .dim (Spec.Shape.size s) .scalar)
     "flatten" xId
@@ -44,7 +44,7 @@ Reshape a tensor while preserving number of elements.
 The proof argument `h` enforces `Spec.Shape.size s₁ = Spec.Shape.size s₂`.
 PyTorch comparison: `x.reshape(new_shape)` / `x.view(new_shape)` (when valid).
 -/
-def reshape {α : Type} [TorchLean.Storage α] [Inhabited α] {s₁ s₂ : Shape}
+@[inline] def reshape {α : Type} [TorchLean.Storage α] [Inhabited α] {s₁ s₂ : Shape}
   (t : Tape α) (xId : Nat) (h : Spec.Shape.size s₁ = Spec.Shape.size s₂) : Result (Tape α × Nat) :=
   unary (α := α) (t := t) (σ := s₁) (τ := s₂)
     "reshape" xId
@@ -57,7 +57,7 @@ Swap adjacent axes at a given depth inside a general `Shape`.
 
 General permutations and arbitrary-axis transpose are lowered to this operation.
 -/
-def swapAdjacentAtDepth {α : Type} [TorchLean.Storage α] {s : Shape}
+@[inline] def swapAdjacentAtDepth {α : Type} [TorchLean.Storage α] {s : Shape}
   (t : Tape α) (depth : Nat) (xId : Nat) : Result (Tape α × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s.swapAdjacentAtDepth depth)
     "swapAdjacentAtDepth" xId
@@ -71,7 +71,7 @@ Broadcast `x : s₁` to `s₂` using a proof `Shape.CanBroadcastTo s₁ s₂`.
 
 PyTorch comparison: implicit broadcasting / `x.expand(...)`.
 -/
-def broadcastTo {α : Type} [TorchLean.Storage α]
+@[inline] def broadcastTo {α : Type} [TorchLean.Storage α]
     [Inhabited α] [Add α] [Zero α]
   {s₁ s₂ : Shape} (cb : Shape.CanBroadcastTo s₁ s₂) (t : Tape α) (xId : Nat) :
   Result (Tape α × Nat) :=
@@ -85,7 +85,7 @@ Sum-reduce along `axis`.
 
 PyTorch comparison: `torch.sum(x, dim=axis)`.
 -/
-def reduceSum {α : Type} [TorchLean.Storage α]
+@[inline] def reduceSum {α : Type} [TorchLean.Storage α]
     [Add α] [Zero α] [Inhabited α]
   {s : Shape} (axis : Nat) [_valid : Shape.HasNonemptyAxis axis s]
   [_wf : Shape.WellFormed s]
@@ -101,7 +101,7 @@ Mean-reduce along `axis`.
 Backward rule: broadcast the upstream cotangent back to `s` and divide by the reduced dimension.
 PyTorch comparison: `torch.mean(x, dim=axis)`.
 -/
-def reduceMean {α : Type} [TorchLean.Storage α] [Context α]
+@[inline] def reduceMean {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (axis : Nat) [valid : Shape.HasNonemptyAxis axis s] [_wf : Shape.WellFormed s]
   (t : Tape α) (xId : Nat) : Result (Tape α × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := shapeAfterSum s axis)

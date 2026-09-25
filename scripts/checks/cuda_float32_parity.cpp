@@ -1,5 +1,5 @@
 // Actual ATen/C ABI parity against the Lean binary32 reference stream.
-// Compile through cuda_float32_parity.sh, only in the cluster. All GPU arithmetic comes from
+// Compile through cuda_float32_parity.sh on a CUDA host. All GPU arithmetic comes from
 // the selected LibTorch SDK; there are no local CUDA kernels or intrinsics.
 //
 // Input (stdin, or an optional file argument):

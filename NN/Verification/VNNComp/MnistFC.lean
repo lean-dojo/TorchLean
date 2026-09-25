@@ -99,7 +99,8 @@ structure Options where
   - `ibp`: IBP only (fast, loose)
   - `crown`: forward CROWN (still produces just an output box)
   - `crownobj`: backward objective pass for each spec row
-  - `crownobj-alpha`: objective pass with precomputed ReLU slopes (`--alphas`)
+  - `crownobj-alpha`: objective pass with precomputed ReLU slopes (`--alphas`); the directed Float
+    backend rejects imported slopes
   -/
   mode    : Mode := .ibp
   /-- Path to exported alpha slopes JSON (required for `mode = crownobj-alpha`). -/
@@ -430,7 +431,9 @@ def refutesRowByCROWNObjectiveWithReluAlpha
   let ctx : AffineCtx := { inputId := inId, inputDim := inDim }
   let some loAff := runCROWNBackwardObjectiveLowerWithReluAlpha (α := Float) g ps ctx ibp outId obj
     reluAlpha
-    | throw <| IO.userError "CROWN backward objective (alpha) failed"
+    | throw <| IO.userError <|
+        "crownobj-alpha: the Float backend's directed CROWN pass has no ReLU relaxation, so " ++
+        "imported slopes cannot be used; run with --mode=crownobj"
   if hXB : xB.dim = inDim then
     let loBox := loAff.evalOnFlatBox xB hXB
     let lo := getAtOrZero loBox.lo [0]

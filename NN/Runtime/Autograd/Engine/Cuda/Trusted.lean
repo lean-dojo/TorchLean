@@ -40,7 +40,7 @@ and numerical parity tests provide evidence for a particular build and set of in
 
 ## Native source groups
 
-- `csrc/libtorch/torchlean_libtorch.h` and `csrc/cuda/common/torchlean_cuda_buffer.h`
+- `csrc/libtorch/torchlean_libtorch.h`
   Shared boxed-buffer ABI, size checks, device guards, and the no-autograd call boundary.
   Lean modules: `Cuda.Trusted`, `Cuda.Buffer`, and `Cuda.LibTorch`.
 
@@ -57,8 +57,8 @@ and numerical parity tests provide evidence for a particular build and set of in
   and selective scan through ATen operations. Lean modules: `Cuda.Kernels` and `Cuda.Ops`.
 
 - `csrc/libtorch/conv_pool.cpp`
-  Convolution, transpose convolution, pooling, and their local backward operations.
-  `csrc/cuda/conv_pool/torchlean_cuda_conv_pool_common.h` supplies shared shape checks.
+  Convolution, transpose convolution, pooling, their local backward operations, and the
+  output-length checks shared with `Spec`.
 
 - `csrc/libtorch/attention.cpp`
   Attention forward dispatch and matched backward calls using saved forward state.
@@ -68,14 +68,13 @@ and numerical parity tests provide evidence for a particular build and set of in
   The separate binary64 `FloatArray` matrix-multiplication interface, implemented with ATen.
   Lean module: `Cuda.DGemm`. Eager CUDA tape buffers remain binary32.
 
-- `csrc/cuda/{tensor,kernels,conv_pool,blas}/*_stub.c`
-  Portable CPU implementations of the FFI surface for builds without LibTorch. They do not
-  satisfy a request for a native CUDA session. Runtime control setters reject unavailable
-  LibTorch configuration requests.
+- `csrc/libtorch/unavailable.c`
+  The same symbols for builds without LibTorch. The runtime status is `.notLinked`, IO calls
+  return an error, and pure buffer operations abort with a message to rebuild with
+  `-K cuda=true`. User CUDA sessions are rejected before any of them runs.
 
-The deterministic-mode environment parser and the CPU SplitMix64 helper remain under
-`csrc/cuda/common`. The GPU random stream is evaluated with ATen integer operations and checked
-against the same seeded contract.
+The GPU random stream is evaluated with ATen integer operations and checked against the seeded
+contract.
 
 -/
 
@@ -86,12 +85,8 @@ namespace Autograd
 namespace Cuda
 
 /--
-Opaque handle to a contiguous float32 buffer (CUDA device memory when built with `-K cuda=true`,
-otherwise a CPU stub buffer).
-
-Implementation:
-- CUDA: `csrc/libtorch/runtime.cpp`
-- CPU stub (default `lake build`): `csrc/cuda/tensor/torchlean_cuda_tensor_stub.c`
+Opaque handle to a contiguous float32 CUDA buffer, implemented in `csrc/libtorch/runtime.cpp`.
+Builds without `-K cuda=true` cannot create one.
 -/
 opaque BufferImpl : NonemptyType.{0}
 

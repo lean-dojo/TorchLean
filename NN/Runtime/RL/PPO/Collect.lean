@@ -89,7 +89,8 @@ def collectRolloutFromCallbacks {obsShape : Shape} {nActions horizon : Nat} {Ses
         (seed := rngSeed) (counter := counter) logits
     counter := counter'
 
-    let lp : α := PolicyGradient.actionLogProbability (α := α) (nActions := nActions) logits a
+    -- Same formula as the autograd objective's new log-probability, so the ratio starts at 1.
+    let lp : α := PolicyGradient.actionLogSoftmax (α := α) (nActions := nActions) logits a
     let v : α := predictValue obs
 
     let (tr, sess') ← stepChecked sess a

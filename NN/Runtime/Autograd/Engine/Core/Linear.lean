@@ -34,7 +34,7 @@ Fully-connected linear layer `y = W x + b` (matvec).
 Type-level shapes enforce `W : (outDim, inDim)`, `x : (inDim,)`, `b : (outDim,)`.
 PyTorch comparison: `torch.nn.functional.linear`.
 -/
-def linear {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
+@[inline] def linear {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
   {inDim outDim : Nat}
   (t : Tape α) (wId bId xId : Nat) : Result (Tape α × Nat) := do
   let W ← requireValue (α:=α) (t:=t) (s:=.dim outDim (.dim inDim .scalar)) wId
@@ -42,24 +42,29 @@ def linear {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
   let x ← requireValue (α:=α) (t:=t) (s:=.dim inDim .scalar) xId
   let layer : Spec.LinearSpec α inDim outDim := { weights := W, bias := b }
   let y := Spec.linearSpec (α:=α) layer x
+  let weightGrad := (t.getNode? wId).any (·.requiresGrad)
+  let biasGrad := (t.getNode? bId).any (·.requiresGrad)
+  let inputGrad := (t.getNode? xId).any (·.requiresGrad)
   let node : Node α :=
     { name := some "linear"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad :=
-        (t.getNode? wId).any (·.requiresGrad) ||
-        (t.getNode? bId).any (·.requiresGrad) ||
-        (t.getNode? xId).any (·.requiresGrad)
+      requiresGrad := weightGrad || biasGrad || inputGrad
       parents := #[wId, bId, xId]
+      -- Gradient accumulation drops contributions to parents that do not require gradients, so
+      -- those products are skipped here. A frozen weight or a data input costs nothing.
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := .dim outDim .scalar) dLdyAny
-        let dW := Spec.linearWeightsDerivSpec (α:=α) x dLdy
-        let db := Spec.linearBiasDerivSpec (α:=α) (dW) dLdy x
-        let dx := Spec.linearInputDerivSpec (α:=α) W dLdy
-        pure #[
-          (wId, Spec.SomeTensor.ofTensor dW),
-          (bId, Spec.SomeTensor.ofTensor db),
-          (xId, Spec.SomeTensor.ofTensor dx)
-        ]
+        let mut contributions : Array (Nat × Spec.SomeTensor α) := Array.mkEmpty 3
+        if weightGrad then
+          contributions := contributions.push
+            (wId, Spec.SomeTensor.ofTensor (Spec.linearWeightsDerivSpec (α := α) x dLdy))
+        if biasGrad then
+          -- `linearBiasDerivSpec` returns the upstream gradient and ignores its other arguments.
+          contributions := contributions.push (bId, Spec.SomeTensor.ofTensor dLdy)
+        if inputGrad then
+          contributions := contributions.push
+            (xId, Spec.SomeTensor.ofTensor (Spec.linearInputDerivSpec (α := α) W dLdy))
+        pure contributions
     }
   pure (t.addNode node)
 
@@ -70,7 +75,8 @@ Matrix-rank multiplication with explicit batch-prefix broadcasting.
 shape `batch ++ [m, p]`. The empty-prefix defaults preserve ordinary 2D matrix multiplication.
 PyTorch comparison: `torch.matmul(a, b)` for operands of rank at least two.
 -/
-def matmul {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+@[inline] def matmul {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {m n p : Nat} (t : Tape α) (aId bId : Nat)
   (batchA : Shape := .scalar) (batchB : Shape := .scalar) (batch : Shape := .scalar)
   [broadcastA : Shape.BroadcastTo batchA batch]
@@ -98,7 +104,7 @@ Concatenate two tensors along dimension 0.
 
 PyTorch comparison: `torch.cat([a, b], dim=0)`.
 -/
-def concatLeadingAxis {α : Type} [TorchLean.Storage α]
+@[inline] def concatLeadingAxis {α : Type} [TorchLean.Storage α]
   {n m : Nat} {s : Shape} (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) := do
   let a ← requireValue (α := α) (t := t) (s := .dim n s) aId
   let b ← requireValue (α := α) (t := t) (s := .dim m s) bId
@@ -126,7 +132,7 @@ Slice along dimension 0: `x[start : start+len]`.
 The proof argument `h` enforces bounds.
 PyTorch comparison: `x[start:start+len]` on tensors with a leading dimension.
 -/
-def sliceLeadingAxisRange {α : Type} [TorchLean.Storage α] [Zero α]
+@[inline] def sliceLeadingAxisRange {α : Type} [TorchLean.Storage α] [Zero α]
   {n : Nat} {s : Shape} (t : Tape α) (xId : Nat) (start len : Nat) (h : start + len ≤ n) :
   Result (Tape α × Nat) :=
   unary (α := α) (t := t) (σ := .dim n s) (τ := .dim len s)

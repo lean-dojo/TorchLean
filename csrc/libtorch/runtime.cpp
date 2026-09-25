@@ -1,6 +1,5 @@
 #include "torchlean_libtorch.h"
 
-#include "../cuda/common/torchlean_cuda_deterministic_reductions_env.h"
 #include <ATen/Context.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #include <c10/cuda/CUDAFunctions.h>
@@ -207,6 +206,12 @@ uint64_t memory_info(bool total) {
   });
 }
 
+// Initial policy from TORCHLEAN_CUDA_DETERMINISTIC_REDUCTIONS: unset, empty, or "0" means off.
+bool deterministic_reductions_requested() {
+  const char* value = std::getenv("TORCHLEAN_CUDA_DETERMINISTIC_REDUCTIONS");
+  return value != nullptr && *value != '\0' && std::strcmp(value, "0") != 0;
+}
+
 }  // namespace
 
 namespace torchlean {
@@ -222,7 +227,7 @@ void initialize() {
     context.setAllowBF16ReductionCuBLAS(false);
     context.setAllowFP16BF16ReductionMathSDP(false);
     context.setBenchmarkCuDNN(false);
-    const bool deterministic = torchlean_read_deterministic_reductions_env() != 0;
+    const bool deterministic = deterministic_reductions_requested();
     context.setDeterministicAlgorithms(deterministic, false);
     context.setDeterministicCuDNN(deterministic);
     context.lazyInitDevice(c10::kCUDA);
@@ -394,36 +399,6 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float32_bytes_io(b_
   return io([&] { return torchlean::box(upload_bytes(object)); });
 }
 
-extern "C" LEAN_EXPORT lean_obj_res torchlean_float_array_to_float32_bytes(b_lean_obj_arg object) {
-  const size_t n = lean_sarray_size(object);
-  const size_t bytes = checked_bytes_size(n, sizeof(float), "float32 checkpoint size overflow");
-  lean_object* out = lean_alloc_sarray(1, bytes, bytes);
-  const double* source = lean_float_array_cptr(object);
-  auto* destination = reinterpret_cast<uint8_t*>(lean_sarray_cptr(out));
-  for (size_t i = 0; i != n; ++i) write_bits(destination + 4 * i, static_cast<float>(source[i]));
-  return out;
-}
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_float32_bytes_to_float_array(b_lean_obj_arg object) {
-  const size_t bytes = lean_sarray_size(object);
-  torchlean::require(bytes % sizeof(float) == 0,
-                     "float32 checkpoint payload is not a multiple of four bytes");
-  const size_t n = bytes / sizeof(float);
-  lean_object* out = lean_mk_empty_float_array(lean_box(n));
-  lean_sarray_set_size(out, n);
-  const auto* source = reinterpret_cast<const uint8_t*>(lean_sarray_cptr(object));
-  double* destination = lean_float_array_cptr(out);
-  for (size_t i = 0; i != n; ++i) {
-    const uint32_t bits = read_bits(source + 4 * i);
-    float value;
-    std::memcpy(&value, &bits, sizeof(value));
-    destination[i] = value;
-  }
-  return out;
-}
-
-// These controls are process-wide, except for ATen's current device. Applications configure
-// them before concurrent execution; each native call installs the selected device on its thread.
 extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_version(uint32_t) {
   return lean_mk_string(TORCH_VERSION);
 }

@@ -10,6 +10,7 @@ module -- shake: keep-downstream
 
 public import NN.API.Runtime -- shake: keep
 public import NN.Spec.RL.FiniteStochasticMDP -- shake: keep
+public import NN.Spec.RL.MarkovMDP -- shake: keep
 public import NN.Runtime.RL.Algorithms -- shake: keep
 public import NN.Runtime.RL.DQN.Autograd -- shake: keep
 public import NN.Runtime.RL.Eval -- shake: keep
@@ -70,6 +71,16 @@ export Spec.RL.FiniteStochastic
    bellmanPolicy bellmanOptimality)
 end finiteStochastic
 
+/-! The measure-theoretic MDP from `NN.Spec.RL.MarkovMDP`: a general state space whose transitions
+are probability kernels, with the expected next value as a Bochner integral. -/
+namespace markov
+export Spec.RL.Markov
+  (ValueFunction Policy MDP Valid
+   transitionMeasure
+   expectedNextValue actionValue
+   bellmanPolicy bellmanOptimality)
+end markov
+
 namespace bandits
 export Runtime.RL.Bandits
   (ValueState PreferenceState
@@ -100,7 +111,7 @@ export Runtime.RL.ValueLearning
 end value
 
 namespace replay
-export Runtime.RL.Replay (Transition Buffer)
+export Runtime.RL.Replay (Transition Buffer ofObservedTransition)
 export Runtime.RL.Replay.Buffer
   (empty size isEmpty isFull push pushMany getModulo? sampleContiguous sampleRandom)
 end replay
@@ -124,7 +135,7 @@ end dqn
 
 namespace policy
 export Runtime.RL.PolicyGradient
-  (actionPolicy actionProbability actionLogProbability entropyBonus
+  (actionPolicy actionProbability actionLogProbability actionLogSoftmax entropyBonus
    reinforceLoss actorLoss criticLoss actorCriticLoss
    a2cLoss
    importanceRatio categoricalKL categoricalKLFromLogits

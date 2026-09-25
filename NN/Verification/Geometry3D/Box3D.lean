@@ -30,8 +30,8 @@ The checker recomputes the pinhole projection of every 3D corner and checks:
 4. the claimed 2D box encloses all projected corners, up to an explicit tolerance.
 
 Eight points are the default for a cuboid. The contract covers every supplied point; it does not
-assert that those points form a cuboid. With no points, the pointwise conditions are vacuous,
-while the image-size and bounding-box conditions still apply.
+assert that those points form a cuboid. The JSON parser rejects an artifact with no points, since
+the pointwise conditions would then hold vacuously.
 
 Why this shape?
 
@@ -791,16 +791,47 @@ theorem Verified3DBox.projected_corner_in_claimed_bbox {α : Type} [TorchLean.St
 
 /-! ## Float JSON checker for exported artifacts -/
 
-/-- Expected schema string for JSON artifacts accepted by this checker. -/
+/--
+Schema string for eight-point cuboid artifacts. A `v1` artifact carries exactly eight corners;
+`point_count` may be omitted or set to `8`.
+-/
 def formatString : String := "torchlean.camera.box3d.v1"
 
 /--
+Schema string for artifacts with an explicit point count. A `v2` artifact must declare
+`point_count`, which must be positive and match the number of triples in `corners3d`.
+-/
+def formatStringPoints : String := "torchlean.camera.box3d.v2"
+
+/--
 Parse a certificate, rejecting malformed tensor dimensions and non-finite values.
-The optional `point_count` must match the number of triples in `corners3d`; otherwise the count
-is inferred from that array. An incomplete triple is rejected by the matrix-size check.
+
+A `v1` artifact must carry exactly eight corners. A `v2` artifact must declare a positive
+`point_count` with `corners3d.size = 3 * point_count`. An artifact with no points is rejected,
+since every pointwise condition would hold vacuously.
 -/
 def parseJsonCert (j : Lean.Json) : IO (BoxCameraCert Float) := do
-  expectFormat j formatString
+  let fmt ← expectFieldString j "format" "top-level"
+  let declared? ← match ← optionalField? j "point_count" "top-level" with
+    | some count => some <$> expectNat count "top-level.point_count"
+    | none => pure none
+  let pointCount ←
+    if fmt == formatString then
+      match declared? with
+      | none | some 8 => pure 8
+      | some n => throw <| IO.userError <|
+          s!"top-level.point_count: `{formatString}` requires 8 points, got {n}; " ++
+            s!"use `{formatStringPoints}`"
+    else if fmt == formatStringPoints then
+      match declared? with
+      | some n => pure n
+      | none => throw <| IO.userError <|
+          s!"top-level.point_count: required by `{formatStringPoints}`"
+    else
+      throw <| IO.userError <| s!"top-level.format: unsupported format `{fmt}` " ++
+        s!"(expected `{formatString}` or `{formatStringPoints}`)"
+  if pointCount = 0 then
+    throw <| IO.userError "top-level.point_count: a certificate must carry at least one point"
   let width ← expectFiniteFloat (← expectField j "image_width" "top-level") "top-level.image_width"
   let height ←
     expectFiniteFloat (← expectField j "image_height" "top-level") "top-level.image_height"
@@ -810,9 +841,7 @@ def parseJsonCert (j : Lean.Json) : IO (BoxCameraCert Float) := do
   let bboxFlat ← expectFieldFiniteFloatArray j "bbox2d" "top-level"
   let camera : CameraP Float ← NN.Verification.Util.Tensor.requireMatOfFlatArray
     "top-level.camera_P" 3 4 cameraFlat
-  let pointCount ← match ← optionalField? j "point_count" "top-level" with
-    | some count => expectNat count "top-level.point_count"
-    | none => pure (cornersFlat.size / 3)
+  -- `requireMatOfFlatArray` checks `cornersFlat.size = 3 * pointCount`.
   let corners : TorchLean.Tensor Float [pointCount, 3] ←
     NN.Verification.Util.Tensor.requireMatOfFlatArray
       "top-level.corners3d" pointCount 3 cornersFlat

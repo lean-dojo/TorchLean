@@ -35,7 +35,8 @@ N-D convolution for channels-first tensors `(inC, spatial...)` (no batch axis).
 
 The spatial rank and every geometric parameter are encoded by vectors of the same length.
 -/
-def conv {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+@[inline] def conv {α : Type} [TorchLean.Storage α] [Context α]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {d inC outC : Nat}
   {kernel stride padding : TorchLean.Tensor Nat [d]}
   {inSpatial : TorchLean.Tensor Nat [d]}
@@ -78,7 +79,7 @@ Kernel layout matches the spec/PyTorch convention `(inC, outC, kernel[0], ..., k
 PyTorch comparison: `torch.nn.functional.conv_transpose{d}d` specialized to a single sample
 (no batch axis).
 -/
-def convTranspose {α : Type} [TorchLean.Storage α] [Context α]
+@[inline] def convTranspose {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {d inC outC : Nat}
   {kernel stride padding : TorchLean.Tensor Nat [d]}
@@ -122,7 +123,7 @@ N-D max pooling for channels-first tensors `(C, spatial...)` (no batch axis).
 Padding is symmetric per-axis and uses zeros. To model unpadded pooling, pass `padding := 0` on
 every axis.
 -/
-def maxPool {α : Type} [TorchLean.Storage α] [Context α]
+@[inline] def maxPool {α : Type} [TorchLean.Storage α] [Context α]
   {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
   (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
   let x ← requireValue (α:=α) (t:=t)
@@ -155,7 +156,7 @@ N-D average pooling for channels-first tensors `(C, spatial...)` (no batch axis)
 
 Padding is symmetric per-axis and uses zeros; pooling uses `count_include_pad=true` semantics.
 -/
-def avgPool {α : Type} [TorchLean.Storage α] [Context α]
+@[inline] def avgPool {α : Type} [TorchLean.Storage α] [Context α]
   {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
   (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
   let x ← requireValue (α:=α) (t:=t)
@@ -189,7 +190,7 @@ The executable tape requires a finite, nonzero `beta`. Finiteness is checked thr
 arithmetic contract: finite scalar backends satisfy `beta - beta == 0`, whereas IEEE NaN and
 infinity do not. At least one spatial dimension is required, matching the native runtime contract.
 -/
-def smoothMaxPool {α : Type} [TorchLean.Storage α] [Context α] [DecidableEq α]
+@[inline] def smoothMaxPool {α : Type} [TorchLean.Storage α] [Context α] [DecidableEq α]
   {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
   (t : Tape α) (xId : Nat) (beta : α) : Result (Tape α × Nat) := do
   if beta == 0 then

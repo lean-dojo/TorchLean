@@ -239,7 +239,8 @@ def Decoded.check (decoded : Decoded) : Bool :=
     (decoded.artifact.chain.bounds.linear
       decoded.inequalities.weights decoded.inequalities.bias).hi decoded.graph.input
 
-/-- Keep exact binary32 local replay as a consistency check on the very same artifact. -/
+/-- Exact binary32 local replay of the same artifact. This is a diagnostic: it holds only when
+the artifact is bit-identical to Lean's own transcript, and `accepts` does not use it. -/
 def replayAccepts (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
     (cert : CROWNNodeCoreCertificate) : Bool :=
   let ibp := runIBP g ps
@@ -247,11 +248,12 @@ def replayAccepts (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
     (fun replay id => NN.MLTheory.CROWN.Cert.alphaCrownStepNode?
       g.nodes ps ibp cert.alpha replay cert.ctx id) cert.crown
 
-/-- Require replay and exact-real dominance/margin checks for the covered decoded program. -/
+/-- Decode the covered program and run the exact-real dominance and margin checks. Any producer
+whose bounds dominate the exact transfers is accepted, whether or not they match binary32 replay. -/
 def accepts (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
     (cert : CROWNNodeCoreCertificate) (query : OutputQuery) : Bool :=
   match decode g ps cert query with
   | none => false
-  | some decoded => decoded.check && replayAccepts g ps cert
+  | some decoded => decoded.check
 
 end NN.Verification.Cert.FiniteArtifact

@@ -18,6 +18,15 @@ verifier's coefficient arithmetic or its returned bounds.
 Nodes discharged through IBP need only their given value enclosure. Direct affine and structural
 rules use their ordinary real equations. Connecting those equations to a separately scheduled
 floating-point model evaluation additionally requires a rounding-error argument for that runtime.
+
+Every rounded backward theorem takes a `GraphPoint`, and its field `ibp_encloses` states that each
+forward IBP box encloses the real node value. For the boxes of the rounded forward pass `runIBP`
+this field is a theorem: `GraphPoint.ofRunIBP` in `DirectedIBPSoundness` builds the point for any
+backend with `LawfulBoundOps` and `LawfulNonlinearBoundOps`, on graphs whose node kinds pass
+`ibpForwardSupported`. Graphs with other node kinds (convolution, concat, transpose, permute,
+binary `matmul`, `abs`, `maxElem`, `minElem`, `softplus`, pools, broadcasts, axis reductions,
+BatchNorm, LayerNorm, softmax, `mseLoss`, `safeLog`, random nodes) still need the enclosure as a
+hypothesis.
 -/
 
 @[expose] public section
@@ -46,6 +55,16 @@ def LinearEquation (dims : Nat → Nat) (v : Nat → Nat → ℝ) (id pid : Nat)
 def CopyEquation (dims : Nat → Nat) (v : Nat → Nat → ℝ) (id pid : Nat) : Prop :=
   dims pid = dims id ∧ ∀ i : Fin (dims id), v id i.val = v pid i.val
 
+/-- The shape and coordinate equations of a pointwise unary node computing `f`. -/
+def UnaryEquation (dims : Nat → Nat) (v : Nat → Nat → ℝ) (id pid : Nat) (f : ℝ → ℝ) : Prop :=
+  dims pid = dims id ∧ ∀ i : Fin (dims id), v id i.val = f (v pid i.val)
+
+/-- The shape and coordinate equations of a pointwise binary node computing `f`. -/
+def BinaryEquation (dims : Nat → Nat) (v : Nat → Nat → ℝ) (id p q : Nat)
+    (f : ℝ → ℝ → ℝ) : Prop :=
+  dims p = dims id ∧ dims q = dims id ∧
+    ∀ i : Fin (dims id), v id i.val = f (v p i.val) (v q i.val)
+
 /-- The inverse coordinate map identifies every output coordinate with its source coordinate. -/
 def PermutationEquation (dims : Nat → Nat) (v : Nat → Nat → ℝ) (id pid : Nat)
     (outputShape : Shape) (forwardPerm : Array Nat) : Prop :=
@@ -56,7 +75,10 @@ def PermutationEquation (dims : Nat → Nat) (v : Nat → Nat → ℝ) (id pid :
           ∀ i : Fin (dims id), v id (perm i).val = v pid i.val
 
 /-- Real coordinate equations for a node, using the same successful parameter/layout lookups as
-the executable dispatcher. Failed lookups require no equation because they reject the sweep. -/
+the executable dispatcher. Failed lookups require no equation because they reject the sweep.
+Pointwise nonlinear nodes state their real function. Inputs, random nodes, and the operations
+with a layout or reduction semantics not written here (pools, broadcasts, axis reductions,
+BatchNorm, LayerNorm, softmax, `mseLoss`, `safeLog`) get `True`. -/
 def NodeEquation (nodes : Array Node) (ps : ParamStore α)
     (ibp : Array (Option (FlatBox α))) (dims : Nat → Nat) (v : Nat → Nat → ℝ)
     (id : Nat) : Prop :=
@@ -111,10 +133,32 @@ def NodeEquation (nodes : Array Node) (ps : ParamStore α)
             PermutationEquation dims v id p node.outShape perm
   | .permute perm =>
       ∀ p, unaryParent? node.parents = some p → PermutationEquation dims v id p node.outShape perm
+  | .relu => ∀ p, unaryParent? node.parents = some p → UnaryEquation dims v id p (max · 0)
+  | .abs => ∀ p, unaryParent? node.parents = some p → UnaryEquation dims v id p (|·|)
+  | .sqrt => ∀ p, unaryParent? node.parents = some p → UnaryEquation dims v id p Real.sqrt
+  | .inv => ∀ p, unaryParent? node.parents = some p → UnaryEquation dims v id p (·⁻¹)
+  | .exp => ∀ p, unaryParent? node.parents = some p → UnaryEquation dims v id p Real.exp
+  | .log => ∀ p, unaryParent? node.parents = some p → UnaryEquation dims v id p Real.log
+  | .tanh => ∀ p, unaryParent? node.parents = some p → UnaryEquation dims v id p Real.tanh
+  | .sigmoid =>
+      ∀ p, unaryParent? node.parents = some p →
+        UnaryEquation dims v id p (fun x => 1 / (1 + Real.exp (-x)))
+  | .softplus =>
+      ∀ p, unaryParent? node.parents = some p →
+        UnaryEquation dims v id p (fun x => Real.log (1 + Real.exp x))
+  | .sin => ∀ p, unaryParent? node.parents = some p → UnaryEquation dims v id p Real.sin
+  | .cos => ∀ p, unaryParent? node.parents = some p → UnaryEquation dims v id p Real.cos
+  | .mulElem =>
+      ∀ p q, binaryParents? node.parents = some (p, q) → BinaryEquation dims v id p q (· * ·)
+  | .maxElem =>
+      ∀ p q, binaryParents? node.parents = some (p, q) → BinaryEquation dims v id p q max
+  | .minElem =>
+      ∀ p q, binaryParents? node.parents = some (p, q) → BinaryEquation dims v id p q min
   | _ => True
 
 /-- A topologically ordered real graph point with enclosed IBP values. Each direct node rule
-satisfies its ordinary coordinate equation; all other active nodes may use their IBP enclosure. -/
+satisfies its ordinary coordinate equation; all other active nodes may use their IBP enclosure.
+`GraphPoint.ofRunIBP` builds one from a rounded `runIBP` pass on supported graphs. -/
 structure GraphPoint (nodes : Array Node) (ps : ParamStore α)
     (ibp : Array (Option (FlatBox α))) (ctx : AffineCtx)
     (dims : Nat → Nat) (v : Nat → Nat → ℝ) : Prop where

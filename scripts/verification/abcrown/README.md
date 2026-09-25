@@ -1,8 +1,9 @@
-# Alpha-Beta-CROWN Leaf Artifact Export
+# Exporting alpha-beta-CROWN Leaves for TorchLean's Consistency Check
 
 TorchLean's Lean checker consumes `abcrown_leaf_artifact_v0_1` JSON files. The external
 alpha-beta-CROWN project does not natively emit that TorchLean schema, so this folder contains the
-small producer-side bridge.
+small producer-side bridge. The Lean check confirms that the leaves cover the root box and clear
+their thresholds; it does not recompute the lower bounds.
 
 Convert a raw terminal-domain dump:
 

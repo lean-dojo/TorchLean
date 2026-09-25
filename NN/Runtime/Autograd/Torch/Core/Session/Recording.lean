@@ -79,16 +79,14 @@ def input {α : Type} [Storage α] [TensorTransfer α]
   let requiresGrad := s.options.gradEnabled && requiresGrad
   if Config.device s.options == .cuda then
     let buffer ← CudaBridge.toAnyBuffer (α := α) (s := sh) v
-    let tape ← s.cudaTape.get
-    let (nextTape, id) := Runtime.Autograd.Cuda.Tape.leaf (t := tape) (value := buffer)
-      (name := name) (requiresGrad := requiresGrad)
-    s.cudaTape.set nextTape
+    let id ← s.recordCudaPure fun tape =>
+      Runtime.Autograd.Cuda.Tape.leaf (t := tape) (value := buffer)
+        (name := name) (requiresGrad := requiresGrad)
     s.makeTensorRef id
   else
-    let tape ← s.tape.get
-    let (nextTape, id) := Runtime.Autograd.Tape.leaf (t := tape) (s := sh) (value := v)
-      (name := name) (requiresGrad := requiresGrad)
-    s.tape.set nextTape
+    let id ← s.recordCpuPure fun tape =>
+      Runtime.Autograd.Tape.leaf (t := tape) (s := sh) (value := v)
+        (name := name) (requiresGrad := requiresGrad)
     s.makeTensorRef id
 
 /-- Record a constant leaf that never receives gradients. -/
@@ -121,23 +119,20 @@ def detach {α : Type} [Storage α] [Context α] [TensorTransfer α]
           requiresGrad := false
           parents := #[x.id]
           backward := fun _ => .ok #[] }
-      let (nextTape, id) := Runtime.Autograd.Cuda.Tape.addNode tape node
-      s.cudaTape.set nextTape
+      let id ← s.recordCudaPure fun tape => Runtime.Autograd.Cuda.Tape.addNode tape node
       s.makeTensorRef id
     else
       throw <| IO.userError <|
         s!"torch: detach: shape mismatch (expected {Shape.pretty sh}, got {Shape.pretty stored.s})"
   else
     let value ← getValue (α := α) s (sh := sh) x
-    let tape ← s.tape.get
     let node : Runtime.Autograd.Node α :=
       { name := name
         value := Spec.SomeTensor.ofTensor (Tensor.detachSpec value)
         requiresGrad := false
         parents := #[x.id]
         backward := fun _ => .ok #[] }
-    let (nextTape, id) := Runtime.Autograd.Tape.addNode tape node
-    s.tape.set nextTape
+    let id ← s.recordCpuPure fun tape => Runtime.Autograd.Tape.addNode tape node
     s.makeTensorRef id
 
 /--
@@ -155,8 +150,7 @@ def use {α : Type} [Storage α] [TensorTransfer α]
   let id ←
     if Config.device s.options == .cuda then
       let buffer ← getParamCudaValue p
-      let tape ← s.cudaTape.get
-      let (nextTape, id) :=
+      s.recordCudaPure fun tape =>
         tape.addNode
           { name := p.name
             value := buffer
@@ -164,17 +158,12 @@ def use {α : Type} [Storage α] [TensorTransfer α]
             requiresGrad := requiresGrad
             parents := #[]
             backward := fun _ => .ok #[] }
-      s.cudaTape.set nextTape
-      pure id
     else
       syncParamCudaToHost (α := α) (sh := sh) p
       let v ← p.value.get
-      let tape ← s.tape.get
-      let (nextTape, id) :=
+      s.recordCpuPure fun tape =>
         Runtime.Autograd.Tape.leaf (t := tape) (s := sh)
           (value := v) (name := p.name) (requiresGrad := requiresGrad)
-      s.tape.set nextTape
-      pure id
   s.paramsByLeaf.modify (fun m => m.insert id (AnyParam.ofParam p))
   s.parameterStorageByLeaf.modify fun m =>
     m.insert id

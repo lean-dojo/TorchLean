@@ -171,28 +171,23 @@ def newRunner : IO (Runner Float model) :=
   Runner.instantiate model objective { execution := .typedGraph } (α := Float)
 
 /--
-Evaluation helpers select `.eval` for one call without mutating the mode used by subsequent
-training work. Full-probability dropout makes the train/eval distinction deterministic.
+Forward and loss evaluation honor the mode passed on each call. Full-probability dropout makes the
+train/eval distinction deterministic.
 -/
 def checkEvaluationModeIsolation : IO Unit := do
   let runner ← Runner.instantiate dropoutModel .mse
     { execution := .typedGraph } (α := Float)
-  runner.train
   let trainingPrediction ← runner.forward dropoutSample.input
-  let evaluationPrediction ← runner.forward (mode := some .eval) dropoutSample.input
+  let evaluationPrediction ← runner.forward (mode := .eval) dropoutSample.input
   unless close (vector1Value trainingPrediction) 0.0 do
     throw <| IO.userError "training-mode dropout did not zero its input"
   unless close (vector1Value evaluationPrediction) 2.0 do
     throw <| IO.userError "evaluation-mode dropout was not the identity"
-  unless (← runner.mode) == .train do
-    throw <| IO.userError "evaluation prediction changed the runner's training mode"
   let trainingLoss ← runner.loss dropoutSample
-  let evaluationLoss ← runner.loss (mode := some .eval) dropoutSample
+  let evaluationLoss ← runner.loss (mode := .eval) dropoutSample
   unless close trainingLoss 0.0 && close evaluationLoss 4.0 do
     throw <| IO.userError <|
       s!"dropout loss mode mismatch: training={trainingLoss}, evaluation={evaluationLoss}"
-  unless (← runner.mode) == .train do
-    throw <| IO.userError "evaluation loss changed the runner's training mode"
 
 /-- A two-sample batch step applies the closed-form mean gradient once. -/
 def checkClosedFormMeanGradient : IO Unit := do
@@ -301,7 +296,6 @@ def checkNoLossFastPath : IO Unit := do
   let counters ← newProbeCounters
   let opt := probeOptimizer counters
   let state ← runner.initOptimizer opt
-  runner.train
   let state ← step runner opt state true #[sample 1.0 0.0]
   expectNat "native no-loss steps" (← counters.nativeSteps.get) 1
   expectNat "loss-returning steps" (← counters.lossSteps.get) 0
@@ -319,7 +313,6 @@ def checkPartialBatchStateRoute : IO Unit := do
   let counters ← newProbeCounters
   let opt := probeOptimizer counters
   let state ← runner.initOptimizer opt
-  runner.train
   let state ← step runner opt state false #[sample 1.0 0.0, sample 2.0 0.0]
   let _ ← step runner opt state false #[sample 3.0 0.0]
   expectNat "partial-batch native steps" (← counters.nativeSteps.get) 0
@@ -333,7 +326,6 @@ def checkBatchNormBuffers : IO Unit := do
   let batch := #[batchNormSample 2.0, batchNormSample 4.0]
   let runner ← Runner.instantiate batchNormModel .mse
     { execution := .typedGraph } (α := Float)
-  runner.train
   let opt := noOpOptimizer (TorchLean.nn.stateShapes batchNormModel)
   let state ← runner.initOptimizer opt
   let _ ← step runner opt state false batch
@@ -341,7 +333,6 @@ def checkBatchNormBuffers : IO Unit := do
 
   let loggedRunner ← Runner.instantiate batchNormModel .mse
     { execution := .typedGraph } (α := Float)
-  loggedRunner.train
   let loggedState ← loggedRunner.initOptimizer opt
   let _ ← step loggedRunner opt loggedState false batch (loss := true)
   let loggedBuffers := readBatchNormBuffers (← loggedRunner.state)

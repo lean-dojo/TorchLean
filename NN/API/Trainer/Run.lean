@@ -69,20 +69,6 @@ def withDevice (run : RunConfig) (device : Runtime.Device) : Except String RunCo
         s!"device `{device.cliName}` has no maintained runtime profile; " ++
           "provide an explicit backend profile"
 
-/--
-Select a complete backend contract profile.
-
-The profile carries the device, provider preference, assurance policy, VJP ownership, and capsule
-registry together. It can select, for example, LibTorch forward execution with a TorchLean-owned
-backward pass.
--/
-def withBackendProfile (run : RunConfig) (profile : NN.Backend.BackendProfile) : RunConfig :=
-  { run with device := profile.policy.device, backendProfile? := some profile }
-
-/-- Enable or disable first-use backend capsule reporting. -/
-def withBackendReport (run : RunConfig) (enabled : Bool := true) : RunConfig :=
-  { run with showBackend := enabled }
-
 /-- Apply runtime execution settings to a persistent trainer run configuration. -/
 def withRuntime (run : RunConfig) (runtime : Runtime.Config) : RunConfig :=
   { run with
@@ -154,6 +140,12 @@ structure TrainOptions where
   loadCheckpoint? : Option System.FilePath := none
   /-- Optional model-state checkpoint written after training. -/
   saveCheckpoint? : Option System.FilePath := none
+  /--
+  Measure and print the evaluation-mode mean loss over the whole dataset before and after
+  training. Each measurement is a forward pass over every sample, so large streamed datasets may
+  turn it off; the report then records `NaN` for both losses.
+  -/
+  reportLoss : Bool := true
 
 namespace TrainOptions
 

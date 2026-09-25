@@ -8,8 +8,7 @@ module
 
 public import NN.GraphSpec.Chain.Syntax
 public import NN.GraphSpec.DAG.Syntax
--- Re-export DAG semantics and lowering alongside the chain conversion.
-public import NN.GraphSpec.DAG.Core
+public import Mathlib.Algebra.Order.Field.Basic
 
 /-!
 # Structural conversion of sequential GraphSpec chains to DAG terms
@@ -31,8 +30,8 @@ open TorchLean.Tensor
 /-!
 GraphSpec has two surface syntaxes:
 
-- `NN.GraphSpec.Core`: a *sequential* DSL (`Chain` + `>>>`), ideal for pure pipelines.
-- `NN.GraphSpec.DAG.Core`: a *general* SSA/A-normal-form term language, ideal for sharing/skip
+- `NN.GraphSpec.Chain`: a *sequential* DSL (`Chain` + `>>>`), ideal for pure pipelines.
+- `NN.GraphSpec.DAG`: a *general* SSA/A-normal-form term language, ideal for sharing/skip
   connections.
 
 The DAG term language is GraphSpec’s “general graph” core: it is the representation that can
@@ -77,31 +76,6 @@ def castEnvTerm {Γ Γ' : List Shape} {τ : Shape} (h : Γ = Γ') :
   fun x => DAG.Term.castEnv x h
 
 /-! ### `List.get` lemmas (small, self-contained) -/
-
-/-- `List.get` into `as` is unchanged by appending a right list (Nat-index form). -/
-theorem get_append_left_nat {α : Type} :
-    ∀ (as bs : List α) (i : Nat) (hi : i < as.length),
-      (as ++ bs).get ⟨i, by
-        simpa [List.length_append] using Nat.lt_of_lt_of_le hi (Nat.le_add_right _ _)⟩
-      =
-      as.get ⟨i, hi⟩
-  | as, bs, i, hi => by
-      simp [List.get_eq_getElem, List.getElem_append_left, hi]
-
-/--
-`List.get` into the right list after appending, using an explicit offset `as.length + j`
-(Nat-index form).
--/
-theorem get_append_right_offset_nat {α : Type} :
-    ∀ (as bs : List α) (j : Nat) (hj : as.length + j < (as ++ bs).length),
-      (as ++ bs).get ⟨as.length + j, hj⟩
-      =
-      bs.get ⟨j, by
-        have : as.length + j < as.length + bs.length := by
-          simpa [List.length_append] using hj
-        exact Nat.lt_of_add_lt_add_left this⟩
-  | as, bs, j, hj => by
-      simp [List.get_eq_getElem, List.getElem_append_right]
 
 /-- `List.get` of the last element after appending a singleton list. -/
 theorem get_append_last {α : Type} :

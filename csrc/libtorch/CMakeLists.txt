@@ -49,6 +49,13 @@ foreach(include_dir IN LISTS TORCH_INCLUDE_DIRS)
   endif()
 endforeach()
 
+# Warn below the oldest tested release (a 2.12 nightly). attention.cpp uses private ATen entry
+# points that older SDKs may lack. The build still proceeds.
+string(REGEX MATCH "^[0-9]+[.][0-9]+" torch_sdk_major_minor "${torch_sdk_version}")
+if(NOT torch_sdk_major_minor OR torch_sdk_major_minor VERSION_LESS "2.12")
+  message(WARNING "TorchLean was tested with LibTorch 2.12 and 2.13; found '${torch_sdk_version}'.")
+endif()
+
 # Keep the compile/link probe in this project. A try_compile scratch project cannot reliably
 # re-export SDK alias targets (the NVIDIA SDK's torch_cpu_library uses protobuf::libprotobuf).
 # This executable is built as a dependency of the backend and is never run.
@@ -84,8 +91,6 @@ target_compile_options(torchlean_libtorch PRIVATE ${torch_sdk_cxx_flags})
 target_include_directories(torchlean_libtorch PRIVATE
   "${TORCHLEAN_LEAN_INCLUDE}"
   "${CMAKE_CURRENT_SOURCE_DIR}"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../cuda/common"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../cuda/conv_pool"
 )
 target_link_libraries(torchlean_libtorch PRIVATE ${TORCH_LIBRARIES})
 set_target_properties(torchlean_libtorch PROPERTIES

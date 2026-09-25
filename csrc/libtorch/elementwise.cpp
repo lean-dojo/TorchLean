@@ -5,9 +5,6 @@
 #include <algorithm>
 #include <limits>
 
-// Lifetime and telemetry remain in runtime.cpp, including explicit source retirement.
-extern "C" LEAN_EXPORT uint32_t torchlean_cuda_buffer_release(b_lean_obj_arg object);
-
 namespace {
 
 using torchlean::box;
@@ -36,7 +33,7 @@ at::Tensor selected_relu(const at::Tensor& x) {
 }
 
 at::Tensor axpy(const at::Tensor& a, const at::Tensor& b, float c) {
-  // PyTorch 0291f960b6: CUDA DeviceAddCmulCdiv.cuh explicitly calls
+  // PyTorch 0291f960b6 (a 2.12 nightly): CUDA DeviceAddCmulCdiv.cuh explicitly calls
   // std::fma(tensor1, tensor2, input) when addcmul's value is exactly one.
   // Place c in tensor2 (the supported CPU-scalar operand), NOT in value:
   // value != 1 first rounds tensor1*tensor2 before the final FMA.

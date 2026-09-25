@@ -328,6 +328,40 @@ private theorem ibpFoldPrefix_final_lt (nodes : Array Node) (ps : ParamStore α)
   rw [show k + (nodes.size - k) = nodes.size by omega] at h
   rw [getElem!_eq_join, h]
 
+omit [LawfulNonlinearBoundOps α] in
+/-- A sound node transfer lifts to the complete topologically ordered forward pass.
+
+The array read by a transfer is only a prefix. Its parent entries agree with the final pass
+because later iterations do not overwrite earlier nodes. -/
+theorem runIBP_encloses_of_step (g : Graph) (ps : ParamStore α)
+    {dims : Nat → Nat} {v : Nat → Nat → ℝ}
+    (hparent : ∀ id, id < g.nodes.size → ∀ p ∈ g.nodes[id]!.parents, p < id)
+    (htransfer : ∀ id, id < g.nodes.size → ∀ boxes : Array (Option (FlatBox α)),
+      (∀ p ∈ g.nodes[id]!.parents, (boxes[p]?).join = (runIBP g ps)[p]!) →
+      (∀ p ∈ g.nodes[id]!.parents, ∀ box, (runIBP g ps)[p]! = some box →
+        RowEncloses box (dims p) (v p)) →
+      ∀ box, ibpStepNodeAt? g.nodes ps boxes id g.nodes[id]! = some box →
+        RowEncloses box (dims id) (v id)) :
+    ∀ id, id < g.nodes.size → ∀ box, (runIBP g ps)[id]! = some box →
+      RowEncloses box (dims id) (v id) := by
+  cases hguard : crownGraphSemanticsSupported (α := α) g ps with
+  | false =>
+      intro id hid box hbox
+      simp [runIBP, hguard, hid] at hbox
+  | true =>
+      have hrun := runIBP_eq_ibpFoldPrefix g ps hguard
+      rw [hrun] at htransfer ⊢
+      intro id
+      induction id using Nat.strong_induction_on with
+      | _ id ih =>
+          intro hid box hbox
+          rw [ibpFoldPrefix_final_self g.nodes ps hid] at hbox
+          exact htransfer id hid _
+            (fun p hp => ibpFoldPrefix_final_lt g.nodes ps (Nat.le_of_lt hid)
+              (hparent id hid p hp))
+            (fun p hp => ih p (hparent id hid p hp)
+              (lt_trans (hparent id hid p hp) hid)) box hbox
+
 /--
 Soundness of the rounded forward IBP pass. Every box that `runIBP` returns encloses the value of
 its node, when the parents precede their consumers, every node kind is covered by
@@ -344,26 +378,13 @@ theorem runIBP_encloses (g : Graph) (ps : ParamStore α) {dims : Nat → Nat} {v
     (hequation : ∀ id, id < g.nodes.size → NodeEquation g.nodes ps (runIBP g ps) dims v id) :
     ∀ id, id < g.nodes.size → ∀ box, (runIBP g ps)[id]! = some box →
       RowEncloses box (dims id) (v id) := by
-  cases hguard : crownGraphSemanticsSupported (α := α) g ps with
-  | false =>
-      intro id hid box hbox
-      simp [runIBP, hguard, hid] at hbox
-  | true =>
-      have hrun := runIBP_eq_ibpFoldPrefix g ps hguard
-      rw [hrun] at hequation ⊢
-      intro id
-      induction id using Nat.strong_induction_on with
-      | _ id ih =>
-          intro hid box hbox
-          rw [ibpFoldPrefix_final_self g.nodes ps hid] at hbox
-          have hnode : ibpForwardSupportedNode g.nodes[id]! = true := by
-            rw [getElem!_pos g.nodes id hid]
-            exact Array.all_eq_true.mp hsupported id hid
-          exact ibpStepNodeAt?_encloses hnode (hinputs id hid) (hequation id hid)
-            (fun p hp => ibpFoldPrefix_final_lt g.nodes ps (Nat.le_of_lt hid)
-              (hparent id hid p hp))
-            (fun p hp => ih p (hparent id hid p hp)
-              (lt_trans (hparent id hid p hp) hid)) hbox
+  apply runIBP_encloses_of_step g ps hparent
+  intro id hid boxes hagree henc box hstep
+  have hnode : ibpForwardSupportedNode g.nodes[id]! = true := by
+    rw [getElem!_pos g.nodes id hid]
+    exact Array.all_eq_true.mp hsupported id hid
+  exact ibpStepNodeAt?_encloses hnode (hinputs id hid) (hequation id hid)
+    hagree henc hstep
 
 
 /-- The `GraphPoint` of a rounded `runIBP` pass. Its `ibp_encloses` field is `runIBP_encloses`. -/

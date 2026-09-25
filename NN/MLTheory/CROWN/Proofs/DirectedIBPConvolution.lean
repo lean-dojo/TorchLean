@@ -103,6 +103,32 @@ def BinaryMatmulNodeEquation (nodes : Array Node) (dims : Nat → Nat)
             getAtOrZero (NN.IR.Graph.matmulFlat layout
               (pointVector (dims p) (v p)) (pointVector (dims q) (v q))) [i.val]
 
+omit [LawfulBoundOps α] in
+/-- A successful matrix product has either one stored-weight parent or two tensor parents. -/
+theorem ibpStep_matmul_parents [NonlinearBoundOps α]
+    {nodes : Array Node} {ps : ParamStore α} {boxes : Array (Option (FlatBox α))}
+    {id : Nat} {box : FlatBox α}
+    (hkind : nodes[id]!.kind = .matmul)
+    (hstep : ibpStepNodeAt? nodes ps boxes id nodes[id]! = some box) :
+    nodes[id]!.parents.size = 1 ∨ ∃ p q, nodes[id]!.parents = #[p, q] := by
+  rw [ibpStepNodeAt?, hkind] at hstep
+  dsimp only at hstep
+  cases hparents : nodes[id]!.parents with
+  | mk parents =>
+    cases parents with
+    | nil =>
+      rw [hparents] at hstep
+      cases hstep
+    | cons p parents =>
+      cases parents with
+      | nil => exact Or.inl rfl
+      | cons q parents =>
+        cases parents with
+        | nil => exact Or.inr ⟨p, q, rfl⟩
+        | cons r parents =>
+          rw [hparents] at hstep
+          cases hstep
+
 /-- A successful two-parent matrix product encloses its real contraction. -/
 theorem ibpStep_binaryMatmul_encloses [NonlinearBoundOps α]
     {nodes : Array Node} {ps : ParamStore α} {boxes : Array (Option (FlatBox α))}
@@ -291,6 +317,115 @@ theorem ibpConv_contains_groupedConv
       Tensor.unstack_map, Tensor.unstack_dim] using
       ih ⟨box.lo.unstack head, box.hi.unstack head⟩ (input.unstack head) (by
         simpa only [realBox, Tensor.unstack_map] using h head)
+
+/-- Interpreting endpoints commutes with flattening a shaped box. -/
+theorem realBox_flattenBox {s : Shape} (box : Box α s) :
+    realBox (flattenBox box) = flattenBox (realBox box) := by
+  simp only [realBox, flattenBox, Tensor.map, flattenSpec, Tensor.Internal.Rep.map_reshape]
+
+/-- A shaped enclosure gives the corresponding row enclosure after flattening. -/
+theorem rowEncloses_flatten {s : Shape} {box : Box α s} {input : Tensor ℝ s}
+    (h : Box.contains (realBox box) input) :
+    RowEncloses
+      ⟨s.size, flattenSpec box.lo, flattenSpec box.hi⟩ s.size
+      (fun i => getAtOrZero (flattenSpec input) [i]) := by
+  have hf := (ConvProof.box_contains_flatten_iff (realBox box) input).mpr h
+  rw [← realBox_flattenBox] at hf
+  rw [rowEncloses_iff]
+  intro i
+  simpa only [realBox, flattenBox, Box.contains, Tensor.unstack_map, Tensor.getScalar,
+    Spec.get, Tensor.item_map, read_fin] using hf i
+
+/-- A flat graph enclosure gives a shaped enclosure after the checked reshape. -/
+theorem realBox_contains_ibpUnflatten {s : Shape} {box : FlatBox α} {n : Nat}
+    {f : Nat → ℝ} (hdim : box.dim = s.size)
+    (hn : n = s.size) (h : RowEncloses box n f) :
+    Box.contains
+      (realBox
+        ⟨ibpUnflatten box.dim box.lo hdim, ibpUnflatten box.dim box.hi hdim⟩)
+      (unflattenSpec s (pointVector s.size f)) := by
+  rcases box with ⟨d, lo, hi⟩
+  change d = s.size at hdim
+  subst d n
+  apply (ConvProof.box_contains_flatten_iff _ _).mp
+  rw [← realBox_flattenBox]
+  simp only [flattenBox, ibpUnflatten, eq_mp_eq_cast, cast_eq, flattenSpec_unflattenSpec]
+  intro i
+  simp only [realBox, Box.contains, Tensor.unstack_map, Tensor.item_map]
+  change value (lo.getScalar i) ≤ (pointVector s.size f).getScalar i ∧
+    (pointVector s.size f).getScalar i ≤ value (hi.getScalar i)
+  simpa only [pointVector, read_fin, Tensor.getScalar_ofFn] using h.2 i
+
+/-- The real grouped convolution determined by a stored payload. -/
+def convolutionPoint (parameters : ConvParams α) (leading : Shape) (f : Nat → ℝ) :
+    Tensor ℝ [(parameters.output leading).size] :=
+  flattenSpec (Tensor.mapLeading leading
+    (groupedConvSpec (inSpatial := parameters.inputSpatial)
+      (stride := parameters.stride) (dilation := parameters.dilation)
+      (paddingBefore := parameters.padding) (paddingAfter := parameters.paddingAfter)
+      parameters.groups (Tensor.map value parameters.spec.kernel)
+        (Tensor.map value parameters.spec.bias))
+    (unflattenSpec (parameters.input leading) (pointVector (parameters.input leading).size f)))
+
+/-- The graph's convolution equation states its spatial real semantics. -/
+def ConvolutionNodeEquation (nodes : Array Node) (ps : ParamStore α)
+    (dims : Nat → Nat) (v : Nat → Nat → ℝ) (id : Nat) (configuration : ConvConfig) : Prop :=
+  ∀ p, unaryParent? nodes[id]!.parents = some p →
+    ∀ parameters, ps.convCfg[id]? = some parameters →
+      ∀ parent, nodes[p]? = some parent →
+        ∀ leading,
+          planConvTransfer? configuration parameters parent.outShape nodes[id]!.outShape =
+            some leading →
+          dims p = (parameters.input leading).size ∧
+            dims id = (parameters.output leading).size ∧
+            ∀ i : Fin (parameters.output leading).size,
+              v id i.val = getAtOrZero (convolutionPoint parameters leading (v p)) [i.val]
+
+/-- A successful graph convolution encloses the real grouped convolution at that node. -/
+theorem ibpStep_convolution_encloses [NonlinearBoundOps α]
+    {nodes : Array Node} {ps : ParamStore α} {boxes : Array (Option (FlatBox α))}
+    {dims : Nat → Nat} {v : Nat → Nat → ℝ} {id : Nat} {configuration : ConvConfig}
+    (hkind : nodes[id]!.kind = .conv configuration)
+    (heq : ConvolutionNodeEquation nodes ps dims v id configuration)
+    (hget : ∀ p ∈ nodes[id]!.parents, ∀ B, (boxes[p]?).join = some B →
+      RowEncloses B (dims p) (v p))
+    {box : FlatBox α} (hstep : ibpStepNodeAt? nodes ps boxes id nodes[id]! = some box) :
+    RowEncloses box (dims id) (v id) := by
+  rw [ibpStepNodeAt?, hkind] at hstep
+  dsimp only at hstep
+  cases hp : unaryParent? nodes[id]!.parents with
+  | none => simp [hp] at hstep
+  | some p =>
+    cases hparent : nodes[p]? with
+    | none => simp [hp, hparent] at hstep
+    | some parent =>
+      cases hinput : (boxes[p]?).join with
+      | none => simp [hp, hparent, hinput] at hstep
+      | some input =>
+        simp only [hp, hparent, hinput, Option.bind_eq_bind, Option.bind_some,
+          ibpConvNode] at hstep
+        cases hparameters : ps.convCfg[id]? with
+        | none => simp [hparameters] at hstep
+        | some parameters =>
+          simp only [hparameters, Option.bind_some] at hstep
+          cases hplan : planConvTransfer? configuration parameters parent.outShape
+              nodes[id]!.outShape with
+          | none => simp only [hplan, Option.bind_none, reduceCtorEq] at hstep
+          | some leading =>
+            simp only [hplan, Option.bind_some] at hstep
+            split at hstep
+            next hdim =>
+              obtain rfl := Option.some.inj hstep
+              obtain ⟨hinputDim, houtputDim, hv⟩ :=
+                heq p hp parameters hparameters parent hparent leading hplan
+              have hshaped := realBox_contains_ibpUnflatten hdim hinputDim
+                (hget p (mem_of_unaryParent?_eq_some hp) input hinput)
+              have houtput := ibpConv_contains_groupedConv parameters.spec
+                parameters.dilation parameters.paddingAfter parameters.groups leading
+                _ _ hshaped
+              rw [houtputDim]
+              exact (rowEncloses_flatten houtput).congr hv
+            next => cases hstep
 
 end
 

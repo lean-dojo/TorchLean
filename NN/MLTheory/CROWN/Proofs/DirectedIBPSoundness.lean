@@ -22,6 +22,9 @@ The proof covers the node kinds accepted by `ibpForwardSupportedNode`: inputs, c
 `GraphPoint` that the backward theorems take, so their IBP hypothesis is discharged. The
 corollaries `runCROWNBackwardObjective_encloses_runIBP` and `directedNodeBounds_encloses_runIBP`
 state the resulting end-to-end guarantees.
+
+The original core-family interface is retained here. `DirectedIBPFullSoundness` extends the
+forward proof to every graph operation using `RealNodeEquation` and `runIBP_encloses_all`.
 -/
 
 @[expose] public section

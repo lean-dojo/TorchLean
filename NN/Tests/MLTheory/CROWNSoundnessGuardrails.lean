@@ -7,7 +7,9 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Models.Mlp
-public import NN.MLTheory.CROWN.Proofs.DirectedIBPSoundness
+public import NN.MLTheory.CROWN.Proofs.DirectedIBPFullSoundness
+public import NN.MLTheory.CROWN.Proofs.DirectedIBPNormalizationRegression
+public import NN.MLTheory.CROWN.Proofs.DirectedIBPPointwiseRegression
 public import NN.MLTheory.CROWN.Extras.FP32
 public import NN.Tests.MLTheory.Utils
 public import NN.Tests.Utils
@@ -252,7 +254,7 @@ def checkRoundedReluAlphaRejected : IO Unit := do
       #[none, none, none]).isNone then
     throw <| IO.userError "rounded CROWN failed without ReLU slopes"
 
-/-- The linear, ReLU, and sum kinds are covered by the rounded IBP theorem; convolution is not. -/
+/-- The original core-family classifier keeps its meaning alongside the unrestricted theorem. -/
 def checkIBPForwardSupport : IO Unit := do
   let covered : Array NN.IR.Node := #[
     { id := 0, parents := #[], kind := .input, outShape := [2] },
@@ -265,7 +267,7 @@ def checkIBPForwardSupport : IO Unit := do
   if DirectedBackward.ibpForwardSupported (covered.push binaryMatmul) then
     throw <| IO.userError "rounded IBP support check accepted binary matmul"
 
-/-- The rounded IBP theorem instantiates at the `FP32` model. -/
+/-- The original core-family theorem remains available at the `FP32` model. -/
 example (g : NN.IR.Graph) (ps : ParamStore FP32) (dims : Nat → Nat) (v : Nat → Nat → ℝ)
     (hparent : ∀ id, id < g.nodes.size → ∀ p ∈ g.nodes[id]!.parents, p < id)
     (hsupported : DirectedBackward.ibpForwardSupported g.nodes = true)
@@ -276,6 +278,19 @@ example (g : NN.IR.Graph) (ps : ParamStore FP32) (dims : Nat → Nat) (v : Nat �
     (hbox : (runIBP g ps)[id]! = some box) :
     DirectedBackward.RowEncloses box (dims id) (v id) :=
   DirectedBackward.runIBP_encloses g ps hparent hsupported hinputs hequation id hid box hbox
+
+/-- Every operation is covered at FP32 without an intermediate-enclosure hypothesis or a
+restriction to the original core family. The fixed epsilon premise is proved for the format. -/
+example (g : NN.IR.Graph) (ps : ParamStore FP32) (dims : Nat → Nat) (v : Nat → Nat → ℝ)
+    (hparent : ∀ id, id < g.nodes.size → ∀ p ∈ g.nodes[id]!.parents, p < id)
+    (hinputs : DirectedBackward.InputsInBoxes g.nodes ps dims v)
+    (hequation : ∀ id, id < g.nodes.size →
+      DirectedBackward.RealNodeEquation g.nodes ps (runIBP g ps) dims v id)
+    (id : Nat) (hid : id < g.nodes.size) (box : FlatBox FP32)
+    (hbox : (runIBP g ps)[id]! = some box) :
+    DirectedBackward.RowEncloses box (dims id) (v id) :=
+  DirectedBackward.runIBP_encloses_all g ps DirectedBackward.normalizationEpsilon_nonneg_fp32
+    hparent hinputs hequation id hid box hbox
 
 def run : IO Unit := do
   checkConvolutionGuards

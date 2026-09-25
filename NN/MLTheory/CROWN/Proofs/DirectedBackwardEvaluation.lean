@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Proofs.DirectedIBPSoundness
+public import NN.MLTheory.CROWN.Proofs.DirectedIBPFullSoundness
 
 /-!
 # Directed evaluation of backward affine bounds

@@ -23,10 +23,9 @@ Every rounded backward theorem takes a `GraphPoint`, and its field `ibp_encloses
 forward IBP box encloses the real node value. For the boxes of the rounded forward pass `runIBP`
 this field is a theorem: `GraphPoint.ofRunIBP` in `DirectedIBPSoundness` builds the point for any
 backend with `LawfulBoundOps` and `LawfulNonlinearBoundOps`, on graphs whose node kinds pass
-`ibpForwardSupported`. Graphs with other node kinds (convolution, concat, transpose, permute,
-binary `matmul`, `abs`, `maxElem`, `minElem`, `softplus`, pools, broadcasts, axis reductions,
-BatchNorm, LayerNorm, softmax, `mseLoss`, `safeLog`, random nodes) still need the enclosure as a
-hypothesis.
+`ibpForwardSupported`. The complete forward theorem, `runIBP_encloses_all` in
+`DirectedIBPFullSoundness`, covers every graph operation through `RealNodeEquation`, including
+spatial convolution, structural tensor operations, normalization, and random realizations.
 -/
 
 @[expose] public section

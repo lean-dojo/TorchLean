@@ -111,12 +111,13 @@ def run : IO Unit := do
 
   let negativeOne : Binary 8 23 := -1
   let negativeZero : Binary 8 23 := Binary.zero true
-  unless toBits32 (Binary.add one negativeOne .towardNegativeInfinity) ==
+  unless toBits32 (Binary.addWithRounding one negativeOne .towardNegativeInfinity) ==
       toBits32 negativeZero do
     throw <| IO.userError "IEEE32 downward exact cancellation did not return -0"
-  unless toBits32 (Binary.sub one one .towardNegativeInfinity) == toBits32 negativeZero do
+  unless toBits32 (Binary.subWithRounding one one .towardNegativeInfinity) ==
+      toBits32 negativeZero do
     throw <| IO.userError "IEEE32 downward exact subtraction did not return -0"
-  unless toBits32 (Binary.fma one one negativeOne .towardNegativeInfinity) ==
+  unless toBits32 (Binary.fmaWithRounding one one negativeOne .towardNegativeInfinity) ==
       toBits32 negativeZero do
     throw <| IO.userError "IEEE32 downward exact FMA cancellation did not return -0"
   unless (Model.mkBits .binary32 false 256 0).toNat == 0 do

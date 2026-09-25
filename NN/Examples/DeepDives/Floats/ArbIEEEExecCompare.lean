@@ -147,7 +147,8 @@ def runOne (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit := 
       | "tanh" => intervalUnaryEndpoints FloatLib.Floats.ExecFloat.Binary.tanh lo32 hi32
       | "exp"  => intervalUnaryEndpoints FloatLib.Floats.ExecFloat.Binary.exp lo32 hi32
       | "log"  => intervalUnaryEndpoints FloatLib.Floats.ExecFloat.Binary.log lo32 hi32
-      | "sqrt" => intervalUnaryEndpoints (Binary.sqrt (rounding := .nearestEven)) lo32 hi32
+      | "sqrt" =>
+          intervalUnaryEndpoints (Binary.sqrtWithRounding (rounding := .nearestEven)) lo32 hi32
       | _      => ⟨(Binary.canonicalNaN : Binary 8 23), (Binary.canonicalNaN : Binary 8 23)⟩
     IO.println s!"  configured binary32:{showInterval32 I}"
 

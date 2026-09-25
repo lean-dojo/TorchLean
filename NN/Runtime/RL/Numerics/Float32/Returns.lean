@@ -101,7 +101,7 @@ def checkedLog (label : String) (x : Binary 8 23) : Except String (Binary 8 23) 
 
 /-- Checked configured binary32 square root. -/
 def checkedSqrt (label : String) (x : Binary 8 23) : Except String (Binary 8 23) :=
-  let z := (Binary.sqrt (rounding := .nearestEven)) x
+  let z := (Binary.sqrtWithRounding (rounding := .nearestEven)) x
   match requireFinite label z with
   | .ok _ => .ok z
   | .error e => .error e

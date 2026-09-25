@@ -177,10 +177,10 @@ structure NativePrimitiveAgreement (native : NativePrimitiveBits) : Prop where
   add_bits : ∀ x y, AgreeUpToNaN (native.addBits x y) (toNativeBits (ExecFloat.add x y))
   mul_bits : ∀ x y, AgreeUpToNaN (native.mulBits x y) (toNativeBits (ExecFloat.mul x y))
   div_bits : ∀ x y, AgreeUpToNaN (native.divBits x y) (toNativeBits (ExecFloat.div x y))
-  fma_bits : ∀ x y z, AgreeUpToNaN (native.fmaBits x y z) (toNativeBits ((Binary.fma (rounding :=
-    .nearestEven)) x y z))
-  sqrt_bits : ∀ x, AgreeUpToNaN (native.sqrtBits x) (toNativeBits ((Binary.sqrt (rounding :=
-    .nearestEven)) x))
+  fma_bits : ∀ x y z, AgreeUpToNaN (native.fmaBits x y z)
+    (toNativeBits ((Binary.fmaWithRounding (rounding := .nearestEven)) x y z))
+  sqrt_bits : ∀ x, AgreeUpToNaN (native.sqrtBits x)
+    (toNativeBits ((Binary.sqrtWithRounding (rounding := .nearestEven)) x))
 
 /-- Reference scalars are determined by their bits, `NaN` payloads included.
 
@@ -226,14 +226,16 @@ theorem native_div_eq_ieee32_of_isFinite (h : NativePrimitiveAgreement native) (
 holds. -/
 theorem native_fma_eq_ieee32_of_isFinite (h : NativePrimitiveAgreement native) (x y z : RefScalar)
     (hfin : Binary.isFinite (fromNativeBits (native.fmaBits x y z)) = true) :
-    fromNativeBits (native.fmaBits x y z) = (Binary.fma (rounding := .nearestEven)) x y z := by
+    fromNativeBits (native.fmaBits x y z) =
+      (Binary.fmaWithRounding (rounding := .nearestEven)) x y z := by
   apply ref_ext
   simp [fromNativeBits, toNativeBits, (h.fma_bits x y z).eq_of_isFinite hfin]
 
 /-- Native square root is the reference value when its result is finite and the contract holds. -/
 theorem native_sqrt_eq_ieee32_of_isFinite (h : NativePrimitiveAgreement native) (x : RefScalar)
     (hfin : Binary.isFinite (fromNativeBits (native.sqrtBits x)) = true) :
-    fromNativeBits (native.sqrtBits x) = (Binary.sqrt (rounding := .nearestEven)) x := by
+    fromNativeBits (native.sqrtBits x) =
+      (Binary.sqrtWithRounding (rounding := .nearestEven)) x := by
   apply ref_ext
   simp [fromNativeBits, toNativeBits, (h.sqrt_bits x).eq_of_isFinite hfin]
 
@@ -305,7 +307,8 @@ theorem native_fma_abs_error_of_isFinite
         ((toModel (fromNativeBits (native.fmaBits x y z))).toReal -
           ((toModel x).toReal * (toModel y).toReal + (toModel z).toReal)) ≤
       eps32 ((toModel x).toReal * (toModel y).toReal + (toModel z).toReal) := by
-  have hx : fromNativeBits (native.fmaBits x y z) = (Binary.fma (rounding := .nearestEven)) x y z :=
+  have hx : fromNativeBits (native.fmaBits x y z) =
+      (Binary.fmaWithRounding (rounding := .nearestEven)) x y z :=
     native_fma_eq_ieee32_of_isFinite h x y z hfin
   rw [hx] at hfin ⊢
   rw [IEEE32Exec.toReal_fma_eq_fp32Round_of_isFinite x y z hfin]
@@ -323,7 +326,8 @@ theorem native_sqrt_abs_error_of_isFinite
         ((toModel (fromNativeBits (native.sqrtBits x))).toReal -
           Real.sqrt ((toModel x).toReal)) ≤
       eps32 (Real.sqrt ((toModel x).toReal)) := by
-  have hx : fromNativeBits (native.sqrtBits x) = (Binary.sqrt (rounding := .nearestEven)) x :=
+  have hx : fromNativeBits (native.sqrtBits x) =
+      (Binary.sqrtWithRounding (rounding := .nearestEven)) x :=
     native_sqrt_eq_ieee32_of_isFinite h x hfin
   rw [hx] at hfin ⊢
   rw [IEEE32Exec.toReal_sqrt_eq_fp32Round_of_isFinite x hfin]

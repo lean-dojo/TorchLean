@@ -134,7 +134,7 @@ def divSpec {n : Nat} : FlatBuffer n → FlatBuffer n → FlatBuffer n :=
 
 /-- Elementwise square-root reference spec. -/
 def sqrtSpec {n : Nat} : FlatBuffer n → FlatBuffer n :=
-  mapSpec (Binary.sqrt (rounding := .nearestEven))
+  mapSpec (Binary.sqrtWithRounding (rounding := .nearestEven))
 
 /--
 If every native result bit agrees with reference addition, the whole native elementwise-add buffer
@@ -175,7 +175,8 @@ Elementwise square-root version of `fromNativeBitsBuffer_eq_addSpec_of_bits`.
 -/
 theorem fromNativeBitsBuffer_eq_sqrtSpec_of_bits
     {n : Nat} {bits : NativeBitsBuffer n} {x : FlatBuffer n}
-    (hbits : ∀ i, bits i = toNativeBits ((Binary.sqrt (rounding := .nearestEven)) (x i))) :
+    (hbits : ∀ i, bits i =
+      toNativeBits ((Binary.sqrtWithRounding (rounding := .nearestEven)) (x i))) :
     fromNativeBitsBuffer bits = sqrtSpec x := by
   funext i
   apply ref_ext
@@ -186,8 +187,8 @@ private def referenceBits : NativePrimitiveBits where
   addBits x y := toNativeBits (ExecFloat.add x y)
   mulBits x y := toNativeBits (ExecFloat.mul x y)
   divBits x y := toNativeBits (ExecFloat.div x y)
-  fmaBits x y z := toNativeBits ((Binary.fma (rounding := .nearestEven)) x y z)
-  sqrtBits x := toNativeBits ((Binary.sqrt (rounding := .nearestEven)) x)
+  fmaBits x y z := toNativeBits ((Binary.fmaWithRounding (rounding := .nearestEven)) x y z)
+  sqrtBits x := toNativeBits ((Binary.sqrtWithRounding (rounding := .nearestEven)) x)
 
 private theorem referenceAgreement : NativePrimitiveAgreement referenceBits where
   add_bits _ _ := Or.inl rfl
@@ -259,14 +260,16 @@ Pointwise real-error bound inherited by a native elementwise-square-root buffer 
 -/
 theorem native_sqrt_pointwise_abs_error_of_bits
     {n : Nat} {bits : NativeBitsBuffer n} {x : FlatBuffer n}
-    (hbits : ∀ i, bits i = toNativeBits ((Binary.sqrt (rounding := .nearestEven)) (x i)))
+    (hbits : ∀ i, bits i =
+      toNativeBits ((Binary.sqrtWithRounding (rounding := .nearestEven)) (x i)))
     (i : Fin n)
     (hfin : Binary.isFinite (fromNativeBits (bits i)) = true) :
     abs
         ((toModel (fromNativeBits (bits i))).toReal -
           Real.sqrt ((toModel (x i)).toReal)) ≤
       eps32 (Real.sqrt ((toModel (x i)).toReal)) := by
-  have hx : fromNativeBits (bits i) = (Binary.sqrt (rounding := .nearestEven)) (x i) := by
+  have hx : fromNativeBits (bits i) =
+      (Binary.sqrtWithRounding (rounding := .nearestEven)) (x i) := by
     apply ref_ext
     simp [hbits i]
   rw [hx] at hfin ⊢

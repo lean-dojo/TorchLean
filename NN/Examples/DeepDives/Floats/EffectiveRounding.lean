@@ -212,12 +212,12 @@ theorem oneThirdDown_le : oneThirdDown ≤ 1 / 3 := by
 
 /-- A concrete fused multiply-add lower endpoint, computed directly from binary32 inputs. -/
 def fusedLower : Binary 8 23 :=
-  Binary.fma (1 : Binary 8 23) (ofBits32 0x40000000) (ofBits32 0x3e800000)
+  Binary.fmaWithRounding (1 : Binary 8 23) (ofBits32 0x40000000) (ofBits32 0x3e800000)
     .towardNegativeInfinity
 
 /-- The corresponding upper endpoint. -/
 def fusedUpper : Binary 8 23 :=
-  Binary.fma (1 : Binary 8 23) (ofBits32 0x40000000) (ofBits32 0x3e800000)
+  Binary.fmaWithRounding (1 : Binary 8 23) (ofBits32 0x40000000) (ofBits32 0x3e800000)
     .towardPositiveInfinity
 
 /-- The executable directed FMA endpoints enclose the exact single-rounding expression. -/
@@ -246,11 +246,11 @@ theorem fused_enclosure :
 
 /-- Directed binary32 square-root endpoints for the exact input `2`. -/
 def sqrtLower : Binary 8 23 :=
-  (Binary.sqrt (rounding := .towardNegativeInfinity)) (ofBits32 0x40000000)
+  (Binary.sqrtWithRounding (rounding := .towardNegativeInfinity)) (ofBits32 0x40000000)
 
 /-- The upper endpoint, rounded away from zero, so the pair brackets the exact `sqrt 2`. -/
 def sqrtUpper : Binary 8 23 :=
-  (Binary.sqrt (rounding := .towardPositiveInfinity)) (ofBits32 0x40000000)
+  (Binary.sqrtWithRounding (rounding := .towardPositiveInfinity)) (ofBits32 0x40000000)
 
 /-- The executable endpoints enclose the exact real value `sqrt 2`. -/
 theorem sqrt_enclosure :
@@ -258,9 +258,9 @@ theorem sqrt_enclosure :
       (Real.sqrt ((toModel (ofBits32 0x40000000)).toReal) : EReal) ≤
         (toModel sqrtUpper).toEReal := by
   have hlo : toModel sqrtLower = Model.sqrtDown (toModel (ofBits32 0x40000000)) :=
-    Binary.toModel_sqrt (ofBits32 0x40000000) .towardNegativeInfinity
+    Binary.toModel_sqrtWithRounding (ofBits32 0x40000000) .towardNegativeInfinity
   have hhi : toModel sqrtUpper = Model.sqrtUp (toModel (ofBits32 0x40000000)) :=
-    Binary.toModel_sqrt (ofBits32 0x40000000) .towardPositiveInfinity
+    Binary.toModel_sqrtWithRounding (ofBits32 0x40000000) .towardPositiveInfinity
   constructor
   · rw [hlo]
     exact Model.toEReal_sqrtDown_le (toModel (ofBits32 0x40000000))

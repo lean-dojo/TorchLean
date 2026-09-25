@@ -186,23 +186,23 @@ theorem toReal?_mul_eq_ite (x y : ExecFloat.Binary 8 23) :
 
 /-- Optional fused multiply-add result characterized by one real rounding. -/
 theorem toReal?_fma_eq_ite (x y z : ExecFloat.Binary 8 23) :
-    toReal? ((ExecFloat.Binary.fma (rounding := .nearestEven)) x y z) =
-      if isFinite ((ExecFloat.Binary.fma (rounding := .nearestEven)) x y z) then some (fp32Round
-        ((toModel x).toReal * (toModel y).toReal + (toModel z).toReal))
+    toReal? ((ExecFloat.Binary.fmaWithRounding (rounding := .nearestEven)) x y z) =
+      if isFinite ((ExecFloat.Binary.fmaWithRounding (rounding := .nearestEven)) x y z) then
+        some (fp32Round ((toModel x).toReal * (toModel y).toReal + (toModel z).toReal))
       else none := by
   rw [toReal?_eq_ite]
-  by_cases h : isFinite ((ExecFloat.Binary.fma (rounding := .nearestEven)) x y z) = true
+  by_cases h : isFinite ((ExecFloat.Binary.fmaWithRounding (rounding := .nearestEven)) x y z) = true
   · simp only [h, ↓reduceIte]
     exact congrArg some (toReal_fma_eq_fp32Round_of_isFinite x y z h)
   · simp [h]
 
 /-- Optional square-root result characterized by one real rounding. -/
 theorem toReal?_sqrt_eq_ite (x : ExecFloat.Binary 8 23) :
-    toReal? ((ExecFloat.Binary.sqrt (rounding := .nearestEven)) x) =
-      if isFinite ((ExecFloat.Binary.sqrt (rounding := .nearestEven)) x) then some (fp32Round
-        (Real.sqrt ((toModel x).toReal))) else none := by
+    toReal? ((ExecFloat.Binary.sqrtWithRounding (rounding := .nearestEven)) x) =
+      if isFinite ((ExecFloat.Binary.sqrtWithRounding (rounding := .nearestEven)) x) then
+        some (fp32Round (Real.sqrt ((toModel x).toReal))) else none := by
   rw [toReal?_eq_ite]
-  by_cases h : isFinite ((ExecFloat.Binary.sqrt (rounding := .nearestEven)) x) = true
+  by_cases h : isFinite ((ExecFloat.Binary.sqrtWithRounding (rounding := .nearestEven)) x) = true
   · simp only [h, ↓reduceIte]
     exact congrArg some (toReal_sqrt_eq_fp32Round_of_isFinite x h)
   · simp [h]
@@ -326,18 +326,20 @@ theorem toReal_div_abs_error_of_isFinite (x y : ExecFloat.Binary 8 23)
 
 /-- Half-ULP absolute error for a finite single-rounding fused multiply-add result. -/
 theorem toReal_fma_abs_error_of_isFinite (x y z : ExecFloat.Binary 8 23)
-    (hfin : isFinite ((ExecFloat.Binary.fma (rounding := .nearestEven)) x y z) = true) :
-    _root_.abs ((toModel ((ExecFloat.Binary.fma (rounding := .nearestEven)) x y z)).toReal -
-      ((toModel x).toReal * (toModel y).toReal + (toModel z).toReal)) ≤
+    (hfin : isFinite ((ExecFloat.Binary.fmaWithRounding (rounding := .nearestEven)) x y z) = true) :
+    _root_.abs
+      ((toModel ((ExecFloat.Binary.fmaWithRounding (rounding := .nearestEven)) x y z)).toReal -
+        ((toModel x).toReal * (toModel y).toReal + (toModel z).toReal)) ≤
       eps32 ((toModel x).toReal * (toModel y).toReal + (toModel z).toReal) := by
   rw [toReal_fma_eq_fp32Round_of_isFinite x y z hfin]
   exact fp32Round_abs_error _
 
 /-- Half-ULP absolute error for a finite square-root result. -/
 theorem toReal_sqrt_abs_error_of_isFinite (x : ExecFloat.Binary 8 23)
-    (hfin : isFinite ((ExecFloat.Binary.sqrt (rounding := .nearestEven)) x) = true) :
-    _root_.abs ((toModel ((ExecFloat.Binary.sqrt (rounding := .nearestEven)) x)).toReal - Real.sqrt
-      ((toModel x).toReal)) ≤ eps32 (Real.sqrt ((toModel x).toReal)) := by
+    (hfin : isFinite ((ExecFloat.Binary.sqrtWithRounding (rounding := .nearestEven)) x) = true) :
+    _root_.abs
+      ((toModel ((ExecFloat.Binary.sqrtWithRounding (rounding := .nearestEven)) x)).toReal -
+        Real.sqrt ((toModel x).toReal)) ≤ eps32 (Real.sqrt ((toModel x).toReal)) := by
   rw [toReal_sqrt_eq_fp32Round_of_isFinite x hfin]
   exact fp32Round_abs_error _
 

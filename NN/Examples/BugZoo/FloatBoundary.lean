@@ -61,9 +61,9 @@ example (a b : Float32) (ha : a.isFinite = true) (hb : b.isFinite = true) :
 
 -- Configured division refines its model for every encoded pair and the selected rounding mode.
 example (x y : ExecFloat.Binary 8 23) :
-    toModel (ExecFloat.Binary.div x y .nearestEven) =
+    toModel (ExecFloat.Binary.divWithRounding x y .nearestEven) =
       Model.divWithRounding .nearestEven (toModel x) (toModel y) :=
-  ExecFloat.Binary.toModel_div x y .nearestEven
+  ExecFloat.Binary.toModel_divWithRounding x y .nearestEven
 
 -- Square root agreement also covers negative inputs, signed zeros, infinities, and NaNs.
 example (a : Float32) :

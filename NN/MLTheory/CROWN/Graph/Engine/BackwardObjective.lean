@@ -1315,8 +1315,13 @@ The returned `FlatAffineBounds` always has `outDim = 1` (a scalar objective).
 /--
 Run objective-dependent backward CROWN and evaluate the scalar objective bounds on the input box.
 
-The result is a `FlatBox` of dimension `1`, with `lo[0]` and `hi[0]` bounding
-`objᵀ * output` over `xB`.
+The result is a `FlatBox` of dimension `1`. Under the backend and graph soundness hypotheses,
+`lo[0]` and `hi[0]` enclose `objᵀ * output` for evaluations whose designated input lies in
+`xB` and whose node values satisfy the supplied `ibp` boxes.
+
+For a claim over all of `xB`, those boxes must be valid throughout the claimed input region.
+When `ibp` is obtained from `runIBP g ps`, the seeded input boxes in `ps` must cover the input
+valuations in that claim. This function does not check compatibility between `xB` and those seeds.
 -/
 @[expose] def backwardObjectiveBox? (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)
     (ibp : Array (Option (FlatBox α))) (xB : FlatBox α)

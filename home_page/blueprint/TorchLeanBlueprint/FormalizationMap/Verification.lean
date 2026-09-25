@@ -335,8 +335,10 @@ endpoint laws and the scalar enclosure laws.
 
 :::definition "rounded_real_node_equation" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.DirectedBackward.RealNodeEquation")
 `RealNodeEquation` describes the real operation at each graph node. Convolution uses the exact
-spatial operation on the real interpretations of the stored weights. Structural operations use
-their coordinate maps and reductions, and normalization nodes use their real formulas. Random
+spatial operation on the real interpretations of the stored weights. Stored `linear` nodes use
+vector affine equations. A `sum` node sums every coordinate of its real parent, independently of
+whether an IBP row is available. Structural operations use their coordinate maps and reductions,
+and normalization nodes use their real formulas. Random
 nodes use the actual seeded `Spec.Random.uniform` and `Spec.Random.mask` values over `ℝ`.
 Uniform nodes have no parents; masks read one existing scalar parent. Their unit-interval support
 follows from these source equations.
@@ -374,8 +376,9 @@ argument through the executable array construction.
 :::
 
 :::theorem "rounded_real_backward_equation" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.DirectedBackward.RealNodeEquation.nodeEquation")
-With in-bounds parents, {uses "rounded_real_node_equation"}[the actual real node equation] implies
-the equation consumed by the backward sweep. For convolution, the accepted geometry has positive
+With in-bounds parents and dimension agreement between each available parent box and its real
+value, {uses "rounded_real_node_equation"}[the actual real node equation] implies the equation
+consumed by the backward sweep. For convolution, the accepted geometry has positive
 dilation, so each matrix coefficient is a stored weight or zero. Interpreting this matrix therefore
 agrees with the exact real spatial convolution without assuming that ordinary scalar addition is
 exact. Structural operations use the same coordinate maps in both directions.
@@ -383,7 +386,8 @@ exact. Structural operations use the same coordinate maps in both directions.
 
 :::proof "rounded_real_backward_equation"
 The convolution and structural bridges handle their respective operation kinds. The remaining
-cases follow from the corresponding clauses of `RealNodeEquation`.
+cases follow from the corresponding clauses of `RealNodeEquation`. The legacy sum clause also
+records the parent row width; the full forward theorem supplies this dimension agreement.
 :::
 
 :::theorem "directed_crown_rounded_end_to_end" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.DirectedBackward.backwardObjectiveBox_encloses_runIBP_all")

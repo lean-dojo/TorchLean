@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Proofs.DirectedIBPFullSoundness
+public import NN.MLTheory.CROWN.Proofs.DirectedIBPFullBackward
 
 /-!
 # Directed evaluation of backward affine bounds
@@ -82,8 +82,8 @@ theorem evalBackwardObjectiveBox_encloses
 
 /-- The rounded objective workflow returns an interval containing its real output objective,
 including all directed arithmetic in both propagation and final evaluation, provided the forward
-IBP boxes in `point` are sound. `backwardObjectiveBox_encloses_runIBP` discharges that hypothesis
-for the boxes of `runIBP`. -/
+IBP boxes in `point` are sound. `backwardObjectiveBox_encloses_runIBP_all` derives those enclosures
+from the input boxes and the real node equations. -/
 theorem backwardObjectiveBox_encloses
     (hrounded : BoundOps.supportsExactAffineReassociation (α := α) = false)
     {g : Graph} {ps : ParamStore α} {ibp : Array (Option (FlatBox α))}
@@ -128,6 +128,31 @@ theorem backwardObjectiveBox_encloses_runIBP [NonlinearBoundOps α] [LawfulNonli
       (fun _ => dot (dims output) (fun i => value (getAtOrZero obj.v [i])) (v output)) :=
   backwardObjectiveBox_encloses hrounded
     (GraphPoint.ofRunIBP input_lt input_dim input_kind node_id parent_lt hsupported hinputs
+      equation) xB hx output houtput obj hdim hresult
+
+/-- Forward IBP, rounded backward propagation, and final interval evaluation enclose the real
+objective for every graph operation. Intermediate bounds are proved from the input boxes. -/
+theorem backwardObjectiveBox_encloses_runIBP_all
+    [NonlinearBoundOps α] [LawfulNonlinearBoundOps α] [LawfulMinBoundOps α]
+    (hrounded : BoundOps.supportsExactAffineReassociation (α := α) = false)
+    {g : Graph} {ps : ParamStore α} {ctx : AffineCtx} {dims : Nat → Nat} {v : Nat → Nat → ℝ}
+    (input_lt : ctx.inputId < g.nodes.size)
+    (input_dim : dims ctx.inputId = ctx.inputDim)
+    (input_kind : g.nodes[ctx.inputId]!.kind = .input)
+    (node_id : ∀ id, id < g.nodes.size → g.nodes[id]!.id = id)
+    (parent_lt : ∀ id, id < g.nodes.size → ∀ p ∈ g.nodes[id]!.parents, p < id)
+    (hepsilon : 0 ≤ value (TorchLean.normalizationEpsilon : α))
+    (hinputs : InputsInBoxes g.nodes ps dims v)
+    (equation : ∀ id, id < g.nodes.size →
+      RealNodeEquation g.nodes ps (runIBP g ps) dims v id)
+    (xB : FlatBox α) (hx : RowEncloses xB ctx.inputDim (v ctx.inputId))
+    (output : Nat) (houtput : output < g.nodes.size) (obj : FlatTensor α)
+    (hdim : obj.n = dims output) {result : FlatBox α}
+    (hresult : backwardObjectiveBox? g ps ctx (runIBP g ps) xB output obj = .ok result) :
+    RowEncloses result 1
+      (fun _ => dot (dims output) (fun i => value (getAtOrZero obj.v [i])) (v output)) :=
+  backwardObjectiveBox_encloses hrounded
+    (GraphPoint.ofRunIBPAll input_lt input_dim input_kind node_id parent_lt hepsilon hinputs
       equation) xB hx output houtput obj hdim hresult
 
 end

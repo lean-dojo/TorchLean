@@ -7,7 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Models.Mlp
-public import NN.MLTheory.CROWN.Proofs.DirectedIBPFullSoundness
+public import NN.MLTheory.CROWN.Proofs.DirectedBackwardEvaluation
+public import NN.Tests.MLTheory.DirectedConvSemanticsRegression
 public import NN.Tests.MLTheory.DirectedIBPNormalization
 public import NN.Tests.MLTheory.DirectedIBPPointwise
 public import NN.MLTheory.CROWN.Extras.FP32
@@ -291,6 +292,29 @@ example (g : NN.IR.Graph) (ps : ParamStore FP32) (dims : Nat → Nat) (v : Nat �
     DirectedBackward.RowEncloses box (dims id) (v id) :=
   DirectedBackward.runIBP_encloses_all g ps DirectedBackward.normalizationEpsilon_nonneg_fp32
     hparent hinputs hequation id hid box hbox
+
+/-- The complete objective workflow specializes to FP32 with its actual arithmetic instances. -/
+example {g : NN.IR.Graph} {ps : ParamStore FP32} {ctx : AffineCtx}
+    {dims : Nat → Nat} {v : Nat → Nat → ℝ}
+    (input_lt : ctx.inputId < g.nodes.size)
+    (input_dim : dims ctx.inputId = ctx.inputDim)
+    (input_kind : g.nodes[ctx.inputId]!.kind = .input)
+    (node_id : ∀ id, id < g.nodes.size → g.nodes[id]!.id = id)
+    (parent_lt : ∀ id, id < g.nodes.size → ∀ p ∈ g.nodes[id]!.parents, p < id)
+    (hinputs : DirectedBackward.InputsInBoxes g.nodes ps dims v)
+    (equation : ∀ id, id < g.nodes.size →
+      DirectedBackward.RealNodeEquation g.nodes ps (runIBP g ps) dims v id)
+    (xB : FlatBox FP32) (hx : DirectedBackward.RowEncloses xB ctx.inputDim (v ctx.inputId))
+    (output : Nat) (houtput : output < g.nodes.size) (obj : FlatTensor FP32)
+    (hdim : obj.n = dims output) {result : FlatBox FP32}
+    (hresult : backwardObjectiveBox? g ps ctx (runIBP g ps) xB output obj = .ok result) :
+    DirectedBackward.RowEncloses result 1
+      (fun _ => DirectedBackward.dot (dims output)
+        (fun i => LawfulBoundOps.toReal (getAtOrZero obj.v [i])) (v output)) :=
+  DirectedBackward.backwardObjectiveBox_encloses_runIBP_all rfl
+    input_lt input_dim input_kind node_id parent_lt
+    DirectedBackward.normalizationEpsilon_nonneg_fp32 hinputs equation
+    xB hx output houtput obj hdim hresult
 
 def run : IO Unit := do
   checkConvolutionGuards

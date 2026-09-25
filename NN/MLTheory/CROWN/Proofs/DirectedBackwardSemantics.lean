@@ -19,13 +19,13 @@ Nodes discharged through IBP need only their given value enclosure. Direct affin
 rules use their ordinary real equations. Connecting those equations to a separately scheduled
 floating-point model evaluation additionally requires a rounding-error argument for that runtime.
 
-Every rounded backward theorem takes a `GraphPoint`, and its field `ibp_encloses` states that each
-forward IBP box encloses the real node value. For the boxes of the rounded forward pass `runIBP`
-this field is a theorem: `GraphPoint.ofRunIBP` in `DirectedIBPSoundness` builds the point for any
-backend with `LawfulBoundOps` and `LawfulNonlinearBoundOps`, on graphs whose node kinds pass
-`ibpForwardSupported`. The complete forward theorem, `runIBP_encloses_all` in
-`DirectedIBPFullSoundness`, covers every graph operation through `RealNodeEquation`, including
-spatial convolution, structural tensor operations, normalization, and random realizations.
+The core backward theorems take a `GraphPoint`, whose `ibp_encloses` field states that each
+forward box encloses the real node value. `GraphPoint.ofRunIBPAll` in `DirectedIBPFullBackward`
+derives this field from input enclosures and `RealNodeEquation` for every graph operation,
+including spatial convolution, structural tensor operations, normalization, and random
+realizations. It uses the complete forward theorem `runIBP_encloses_all` and the backend's
+directed arithmetic laws. The original `GraphPoint.ofRunIBP` remains available for the core
+operation family selected by `ibpForwardSupported`.
 -/
 
 @[expose] public section

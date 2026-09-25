@@ -201,6 +201,123 @@ private theorem foldlIndices_filter (s : Shape) (init : ℝ)
   simpa only [add_ite, add_zero] using
     foldlIndices_eq_coord_sum s init (fun indices => if p indices then weight indices else 0)
 
+private theorem coord_toList_injective (s : Shape) :
+    Function.Injective (Shape.Coord.toList s) := by
+  induction s with
+  | scalar => intro _ _ _; exact Subsingleton.elim _ _
+  | dim n rest ih =>
+      intro a b h
+      have hcons := List.cons.inj h
+      exact Prod.ext (Fin.ext hcons.1) (ih hcons.2)
+
+/-- Positive dilation makes the spatial input-index relation injective in the kernel index. -/
+theorem mkDilatedInputIdx?_kernel_unique
+    {outIdx left right stride dilation padding inputIdx : List Nat}
+    (hdil : ∀ d ∈ dilation, 0 < d)
+    (hl : mkDilatedInputIdx? outIdx left stride dilation padding = some inputIdx)
+    (hr : mkDilatedInputIdx? outIdx right stride dilation padding = some inputIdx) :
+    left = right := by
+  induction outIdx generalizing left right stride dilation padding inputIdx with
+  | nil =>
+      cases left <;> cases right <;> cases stride <;> cases dilation <;> cases padding <;>
+        simp_all [mkDilatedInputIdx?]
+  | cons o os ih =>
+      cases left with
+      | nil => simp [mkDilatedInputIdx?] at hl
+      | cons l ls =>
+          cases right with
+          | nil => simp [mkDilatedInputIdx?] at hr
+          | cons r rs =>
+              cases stride with
+              | nil => simp [mkDilatedInputIdx?] at hl
+              | cons s ss =>
+                  cases dilation with
+                  | nil => simp [mkDilatedInputIdx?] at hl
+                  | cons d ds =>
+                      cases padding with
+                      | nil => simp [mkDilatedInputIdx?] at hl
+                      | cons p ps =>
+                          simp only [mkDilatedInputIdx?] at hl hr
+                          split at hl
+                          · contradiction
+                          · rename_i hleft
+                            split at hr
+                            · contradiction
+                            · rename_i hright
+                              cases hlt : mkDilatedInputIdx? os ls ss ds ps with
+                              | none => simp [hlt] at hl
+                              | some il =>
+                                  cases hrt : mkDilatedInputIdx? os rs ss ds ps with
+                                  | none => simp [hrt] at hr
+                                  | some ir =>
+                                      simp only [hlt, Option.some.injEq] at hl
+                                      simp only [hrt, Option.some.injEq] at hr
+                                      have hc := List.cons.inj (hl.trans hr.symm)
+                                      have hd : 0 < d := hdil d (by simp)
+                                      have hp : l * d = r * d := by omega
+                                      have hhead := Nat.eq_of_mul_eq_mul_right hd hp
+                                      have htail := ih (fun d hm => hdil d (by simp [hm])) hlt
+                                        (hc.2 ▸ hrt)
+                                      exact congrArg₂ List.cons hhead htail
+
+/-- Direct selection and the zero-dilation fallback both give the real coefficient sum. -/
+theorem convKernelCoefficient_eq_sum
+    (kernel outIdx inputIdx stride dilation padding : List Nat) (weight : List Nat → ℝ) :
+    convKernelCoefficient kernel outIdx inputIdx stride dilation padding weight =
+      ∑ k : (Shape.ofList kernel).Coord,
+        if mkDilatedInputIdx? outIdx (Shape.Coord.toList _ k) stride dilation padding =
+            some inputIdx then
+          weight (Shape.Coord.toList _ k)
+        else 0 := by
+  unfold convKernelCoefficient
+  split
+  · rename_i hdil
+    have hpos : ∀ d ∈ dilation, 0 < d := by simpa using List.all_eq_true.mp hdil
+    dsimp only
+    cases hfind : (List.finRange (Shape.ofList kernel).size).find? (fun k =>
+        decide (mkDilatedInputIdx? outIdx
+          (Shape.Coord.toList _ (Shape.Coord.unlinearize k)) stride dilation padding =
+            some inputIdx)) with
+    | none =>
+        simp only
+        symm
+        apply Finset.sum_eq_zero
+        intro k _
+        have hn := List.find?_eq_none.mp hfind (Shape.Coord.linearize k) (List.mem_finRange _)
+        have hne : mkDilatedInputIdx? outIdx (Shape.Coord.toList _ k) stride dilation padding ≠
+            some inputIdx := by simpa using hn
+        simp [hne]
+    | some found =>
+        simp only
+        have hfound : mkDilatedInputIdx? outIdx
+            (Shape.Coord.toList _ (Shape.Coord.unlinearize found)) stride dilation padding =
+              some inputIdx := by
+          simpa using List.find?_some hfind
+        symm
+        rw [Finset.sum_eq_single (Shape.Coord.unlinearize found)]
+        · simp [hfound]
+        · intro k _ hk
+          have hne : mkDilatedInputIdx? outIdx (Shape.Coord.toList _ k) stride dilation padding ≠
+              some inputIdx := by
+            intro h
+            exact hk (coord_toList_injective _ (mkDilatedInputIdx?_kernel_unique hpos h hfound))
+          simp [hne]
+        · simp
+  · simpa using foldlIndices_filter (Shape.ofList kernel) 0
+      (fun k => mkDilatedInputIdx? outIdx k stride dilation padding = some inputIdx) weight
+
+/-- Selecting a stored coefficient commutes with any scalar map that preserves zero. -/
+theorem convKernelCoefficient_map {α β : Type} [Storage α] [Context α]
+    [Storage β] [Context β] (f : α → β) (hf : f 0 = 0)
+    (kernel outIdx inputIdx stride dilation padding : List Nat) (weight : List Nat → α)
+    (hdil : ∀ d ∈ dilation, 0 < d) :
+    convKernelCoefficient kernel outIdx inputIdx stride dilation padding (fun k => f (weight k)) =
+      f (convKernelCoefficient kernel outIdx inputIdx stride dilation padding weight) := by
+  have hpos : dilation.all (fun d => decide (0 < d)) = true := by
+    simpa using hdil
+  simp only [convKernelCoefficient, hpos, ↓reduceIte]
+  split <;> simp [hf]
+
 private theorem convLinearMatrix_scalar_apply
     {d inC outC : Nat} {kernel stride padding inSpatial : Tensor Nat [d]}
     (layer : ConvSpec d inC outC kernel stride padding ℝ)
@@ -229,7 +346,7 @@ private theorem convLinearMatrix_scalar_apply
     have hUpper : ¬start + inC / groups ≤ inChannel.val := by omega
     dsimp only [start] at hRange hLower hUpper
     simp [convLinearMatrix, get2_eq_apply, Tensor.dim, Shape.Coord.toList, Shape.rank,
-      hLower, hUpper, hRange, foldlIndices_filter]
+      hLower, hUpper, hRange, convKernelCoefficient_eq_sum]
   · have hOutside : inChannel.val < start ∨ start + inC / groups ≤ inChannel.val := by
       omega
     rcases hOutside with hLower | hUpper

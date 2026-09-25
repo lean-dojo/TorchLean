@@ -96,6 +96,29 @@ def ibpConv [BoundOps α]
         ⟨Tensor.dim fun i => (rows i).lo, Tensor.dim fun i => (rows i).hi⟩
   mapRows leading xB
 
+/-- A convolution coefficient for one spatial input/output pair.
+
+With positive dilation at most one kernel coordinate reaches the input coordinate. Reading that
+weight directly preserves its scalar value, including values that are not on a floating-point
+grid. Zero dilation can make several kernel coordinates coincide, so that case retains the sum.
+-/
+def convKernelCoefficient (kernel outIdx inputIdx stride dilation padding : List Nat)
+    (weight : List Nat → α) : α :=
+  if dilation.all (fun d => decide (0 < d)) then
+    let shape := Shape.ofList kernel
+    match (List.finRange shape.size).find? (fun k =>
+        decide (Spec.Conv.Internal.mkDilatedInputIdx? outIdx
+          (Shape.Coord.toList shape (Shape.Coord.unlinearize k)) stride dilation padding =
+            some inputIdx)) with
+    | none => 0
+    | some k => weight (Shape.Coord.toList shape (Shape.Coord.unlinearize k))
+  else
+    Spec.Conv.Internal.foldlIndices kernel 0 (fun acc kernelIdx =>
+      if Spec.Conv.Internal.mkDilatedInputIdx? outIdx kernelIdx stride dilation padding =
+          some inputIdx then
+        acc + weight kernelIdx
+      else acc)
+
 /-- Explicit matrix for grouped convolution, block diagonal over the leading batch shape. -/
 def convLinearMatrix
     {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
@@ -128,13 +151,11 @@ def convLinearMatrix
             decide (groupStart + inC / groups ≤ inChannel) then
           0
         else
-          Spec.Conv.Internal.foldlIndices (Tensor.to kernel (List Nat)) 0 (fun acc kernelIdx =>
-            if Spec.Conv.Internal.mkDilatedInputIdx? outIdx kernelIdx
-                (Tensor.to stride (List Nat)) (Tensor.to dilation (List Nat))
-                (Tensor.to padding (List Nat)) = some inputIdx then
-              acc + getAtOrZero layer.kernel (outChannel :: inChannel :: kernelIdx)
-            else
-              acc)
+          convKernelCoefficient (Tensor.to kernel (List Nat)) outIdx inputIdx
+            (Tensor.to stride (List Nat)) (Tensor.to dilation (List Nat))
+            (Tensor.to padding (List Nat))
+            (fun kernelIdx =>
+              getAtOrZero layer.kernel (outChannel :: inChannel :: kernelIdx))
       Tensor.scalar coefficient))
 
 /-- Flattened broadcast of a convolution bias over spatial and leading batch coordinates. -/

@@ -26,7 +26,7 @@ namespace NN.MLTheory.CROWN.ConvProof
 open Spec TorchLean TorchLean.Tensor Spec.Conv.Internal
 open scoped BigOperators
 
-private theorem contains_iff_apply {s : Shape} (box : Box ℝ s) (input : Tensor ℝ s) :
+theorem contains_iff_apply {s : Shape} (box : Box ℝ s) (input : Tensor ℝ s) :
     Box.contains box input ↔
       ∀ coordinate : s.Coord,
         box.lo coordinate ≤ input coordinate ∧ input coordinate ≤ box.hi coordinate := by
@@ -64,7 +64,7 @@ theorem box_contains_flatten_iff {s : Shape} (box : Box ℝ s) (input : Tensor �
     simpa only [flattenBox, flattenSpec, Internal.Rep.reshape_apply_coordEquiv] using
       h (Internal.Rep.reshapeCoordEquiv (size_toList_flatten s) coordinate)
 
-private theorem contains_iff_multiIndex (dims : List Nat)
+theorem contains_iff_multiIndex (dims : List Nat)
     (box : Box ℝ (Shape.ofList dims)) (input : Tensor ℝ (Shape.ofList dims)) :
     Box.contains box input ↔
       ∀ index : MultiIndex dims,
@@ -87,7 +87,7 @@ private theorem contains_iff_multiIndex (dims : List Nat)
         intro tail
         exact h (head, tail)
 
-private theorem contains_getAtOrZero {dims : List Nat}
+theorem contains_getAtOrZero {dims : List Nat}
     {box : Box ℝ (Shape.ofList dims)} {input : Tensor ℝ (Shape.ofList dims)}
     (h : Box.contains box input) (indices : List Nat) :
     getAtOrZero box.lo indices ≤ getAtOrZero input indices ∧

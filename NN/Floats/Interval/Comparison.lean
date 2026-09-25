@@ -163,20 +163,16 @@ def format (I : RationalInterval) : String :=
 end Rational
 
 /-- Exact rational bounds for a finite binary32 interval; `none` for NaN/Inf. -/
-def interval32ToRat? (I : Interval (Binary 8 23)) : Option RationalInterval := do
-  let lo ← ExecFloat.Binary.toRat? I.lo
-  let hi ← ExecFloat.Binary.toRat? I.hi
-  pure ⟨lo, hi⟩
+def interval32ToRat? (I : Interval (Binary 8 23)) : Option RationalInterval :=
+  (I.decode? ExecFloat.Binary.toRat?).map fun J => ⟨J.lo, J.hi⟩
 
 /-- Exact rational value of a finite runtime `Float32`; `none` for NaN/Inf. -/
 def float32ToRat? (x : Float32) : Option Rat :=
   ExecFloat.Binary.toRat? (ExecFloat.Binary.ofBits32 x.toBits)
 
 /-- Exact rational endpoint interval for a finite runtime-`Float32` interval. -/
-def intervalF32ToRat? (I : Float32Interval.IntervalF32) : Option RationalInterval := do
-  let lo ← float32ToRat? I.lo
-  let hi ← float32ToRat? I.hi
-  pure ⟨lo, hi⟩
+def intervalF32ToRat? (I : Float32Interval.IntervalF32) : Option RationalInterval :=
+  ((⟨I.lo, I.hi⟩ : Interval Float32).decode? float32ToRat?).map fun J => ⟨J.lo, J.hi⟩
 
 /--
 Endpoint-evaluate a unary function over a `Binary 8 23` interval.

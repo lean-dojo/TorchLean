@@ -857,7 +857,7 @@ def ibpLayerNormRange? [NonlinearBoundOps α]
     let radius ← NonlinearBoundOps.layerNormAbsBound (α := α) rowLength
     pure
       { dim := dim
-        lo := Tensor.full (α := α) (.dim dim .scalar) (-radius)
+        lo := Tensor.full (α := α) (.dim dim .scalar) (BoundOps.subDown 0 radius)
         hi := Tensor.full (α := α) (.dim dim .scalar) radius }
 
 /--

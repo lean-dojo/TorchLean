@@ -97,9 +97,8 @@ theorem round_eq_computed (x : ℝ) :
       FloatLib.Floats.Formats.Flocq.toReal (β := binaryRadix) {
         mantissa := nearestEvenMantissa
           (scaledMantissa binaryRadix fexp32 x)
-        exponent := cexp binaryRadix fexp32 x } := by
-  simpa [rnd32] using
-    (round_nearestEven_computed (β := binaryRadix) (fexp := fexp32) x)
+        exponent := cexp binaryRadix fexp32 x } :=
+  round_nearestEven_computed (β := binaryRadix) (fexp := fexp32) x
 
 /--
 The result of FP32 addition has the canonical mantissa/exponent representation computed by the
@@ -110,9 +109,8 @@ theorem add_toReal_eq_computed (a b : FP32) :
       FloatLib.Floats.Formats.Flocq.toReal (β := binaryRadix) {
         mantissa := nearestEvenMantissa
           (scaledMantissa binaryRadix fexp32 (a.val + b.val))
-        exponent := cexp binaryRadix fexp32 (a.val + b.val) } := by
-  change round (β := binaryRadix) (fexp := fexp32) rnd32 (a.val + b.val) = _
-  exact round_eq_computed (a.val + b.val)
+        exponent := cexp binaryRadix fexp32 (a.val + b.val) } :=
+  round_eq_computed (a.val + b.val)
 
 /--
 Convenience constant: the smallest positive normal binary32 number, exactly $2^{-126}$

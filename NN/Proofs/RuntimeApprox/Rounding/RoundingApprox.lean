@@ -56,13 +56,8 @@ def scalarApprox (x xhat eps : ℝ) : Prop :=
 
 /-- Convert the scalar rounding predicate to the shared `ApproxTol.absOnly` predicate. -/
 theorem scalarApprox_to_approxR_absOnly {x xhat eps : ℝ} (h : scalarApprox x xhat eps) :
-    Proofs.RuntimeApprox.approxR x xhat (Proofs.RuntimeApprox.ApproxTol.absOnly eps) := by
-  -- `ApproxTol.absOnly eps` uses `Real.toNNReal eps` (i.e. `max eps 0`) as the budget.
-  have h' : abs (xhat - x) ≤ max eps 0 := le_trans h (le_max_left _ _)
-  have h'' : abs (xhat - x) ≤ (Real.toNNReal eps : ℝ) := by
-    simpa [Real.coe_toNNReal'] using h'
-  simpa [Proofs.RuntimeApprox.approxR, Proofs.RuntimeApprox.approxBound_absOnly, abs_sub_comm] using
-    h''
+    Proofs.RuntimeApprox.approxR x xhat (Proofs.RuntimeApprox.ApproxTol.absOnly eps) :=
+  (RuntimeApprox.approxR_absOnly_iff ((abs_nonneg _).trans h)).2 h
 
 /-- Exact equality is zero-error scalar approximation. -/
 theorem scalarApprox_refl_zero (x : ℝ) : scalarApprox x x 0 := by
@@ -82,8 +77,8 @@ def roundR (x : ℝ) : ℝ :=
 /-- One `Flocq.round` step is within half an ulp of the exact real input. -/
 theorem roundR_abs_error (x : ℝ) :
     abs (roundR (β := β) (fexp := fexp) (rnd := rnd) x - x) ≤
-      ulp β fexp x / 2 := by
-  simpa [roundR] using error_bound_ulp (β := β) (fexp := fexp) (rnd := rnd) x
+      ulp β fexp x / 2 :=
+  error_bound_ulp (β := β) (fexp := fexp) (rnd := rnd) x
 
 /-! ## Compositional Bounds For `+` And `*` -/
 
@@ -104,34 +99,12 @@ theorem scalarApprox_roundedAdd {x y xhat yhat epsx epsy : ℝ}
     (hx : scalarApprox x xhat epsx) (hy : scalarApprox y yhat epsy) :
     scalarApprox (x + y) (roundedAdd (β := β) (fexp := fexp) (rnd := rnd) xhat yhat)
       (epsx + epsy + ulp β fexp (xhat + yhat) / 2) := by
-  -- Triangle inequality: (rounded(x̂+ŷ) - (x+y)) =
-  --   (rounded(x̂+ŷ) - (x̂+ŷ)) + ((x̂+ŷ) - (x+y)).
-  have hround :
-      abs (roundedAdd (β := β) (fexp := fexp) (rnd := rnd) xhat yhat - (xhat + yhat)) ≤
-        ulp β fexp (xhat + yhat) / 2 := by
-    simpa [roundedAdd, roundR] using
-      roundR_abs_error (β := β) (fexp := fexp) (rnd := rnd) (xhat + yhat)
-
-  have hsum :
-      abs ((xhat + yhat) - (x + y)) ≤ epsx + epsy := by
-    -- |(xhat-x) + (yhat-y)| ≤ |xhat-x| + |yhat-y|
-    have hx' : abs (xhat - x) ≤ epsx := hx
-    have hy' : abs (yhat - y) ≤ epsy := hy
-    simpa [sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using
-      (abs_add_le (xhat - x) (yhat - y) |>.trans (add_le_add hx' hy'))
-
-  have :=
-    calc
-      abs (roundedAdd (β := β) (fexp := fexp) (rnd := rnd) xhat yhat - (x + y))
-          ≤ abs (roundedAdd (β := β) (fexp := fexp) (rnd := rnd) xhat yhat - (xhat + yhat))
-              + abs ((xhat + yhat) - (x + y)) := by
-                simpa [sub_eq_add_neg, add_assoc] using
-                  abs_sub_le (roundedAdd (β := β) (fexp := fexp) (rnd := rnd) xhat yhat)
-                    (xhat + yhat) (x + y)
-      _ ≤ ulp β fexp (xhat + yhat) / 2 + (epsx + epsy) := by
-            exact add_le_add hround hsum
-      _ = epsx + epsy + ulp β fexp (xhat + yhat) / 2 := by ring
-  simpa [scalarApprox, roundedAdd, sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using this
+  have hsum : abs ((xhat + yhat) - (x + y)) ≤ epsx + epsy := by
+    rw [add_sub_add_comm]
+    exact (abs_add_le _ _).trans (add_le_add hx hy)
+  exact ((abs_sub_le _ (xhat + yhat) _).trans
+    (add_le_add (roundR_abs_error (β := β) (fexp := fexp) (rnd := rnd) _) hsum)).trans_eq
+      (add_comm _ _)
 
 /--
 Compositional absolute-error bound for rounded multiplication.
@@ -144,92 +117,28 @@ theorem scalarApprox_roundedMul {x y xhat yhat epsx epsy : ℝ}
     scalarApprox (x * y) (roundedMul (β := β) (fexp := fexp) (rnd := rnd) xhat yhat)
       ((abs xhat + epsx) * epsy + (abs yhat + epsy) * epsx +
         ulp β fexp (xhat * yhat) / 2) := by
-  have hx' : abs (xhat - x) ≤ epsx := hx
-  have hy' : abs (yhat - y) ≤ epsy := hy
-  have hepsx : 0 ≤ epsx := le_trans (abs_nonneg (xhat - x)) hx'
-  have hepsy : 0 ≤ epsy := le_trans (abs_nonneg (yhat - y)) hy'
-
-  have hround :
-      abs (roundedMul (β := β) (fexp := fexp) (rnd := rnd) xhat yhat - (xhat * yhat)) ≤
-        ulp β fexp (xhat * yhat) / 2 := by
-    simpa [roundedMul, roundR] using
-      roundR_abs_error (β := β) (fexp := fexp) (rnd := rnd) (xhat * yhat)
-
-  -- Bound |x| and |y| by rounded magnitudes + error.
+  have hepsx : 0 ≤ epsx := (abs_nonneg _).trans hx
+  have hepsy : 0 ≤ epsy := (abs_nonneg _).trans hy
   have hx_abs : abs x ≤ abs xhat + epsx := by
-    -- |x| = |xhat - (xhat - x)| ≤ |xhat| + |xhat - x|
-    have h : abs x ≤ abs xhat + abs (xhat - x) := by
-      have h' : abs x ≤ abs (x - xhat) + abs xhat := by
-        simpa using (abs_sub_le x xhat 0)
-      simpa [abs_sub_comm, add_comm, add_left_comm, add_assoc] using h'
-    -- Add `abs xhat` to the inequality `|xhat - x| ≤ epsx`.
-    have h' : abs xhat + abs (xhat - x) ≤ abs xhat + epsx := by
-      linarith [hx']
-    exact le_trans h h'
-
-  have hy_abs : abs y ≤ abs yhat + epsy := by
-    have h : abs y ≤ abs yhat + abs (yhat - y) := by
-      have h' : abs y ≤ abs (y - yhat) + abs yhat := by
-        simpa using (abs_sub_le y yhat 0)
-      simpa [abs_sub_comm, add_comm, add_left_comm, add_assoc] using h'
-    have h' : abs yhat + abs (yhat - y) ≤ abs yhat + epsy := by
-      linarith [hy']
-    exact le_trans h h'
-
-  -- Product perturbation:
-  -- x̂*ŷ - x*y = (x̂-x)*ŷ + x*(ŷ-y)
-  have hpert :
-      abs (xhat * yhat - x * y) ≤ (abs yhat) * epsx + (abs x) * epsy := by
-    -- Rewrite difference and apply `abs_add`.
-    have :
-        xhat * yhat - x * y = (xhat - x) * yhat + x * (yhat - y) := by
-      ring
+    have htriangle : abs x ≤ abs (xhat - x) + abs xhat := by
+      simpa only [sub_zero, abs_sub_comm] using abs_sub_le x xhat 0
+    exact (htriangle.trans (add_le_add hx le_rfl)).trans_eq (add_comm _ _)
+  -- Split the perturbation before adding FloatLib's local rounding bound.
+  have hpert : abs (xhat * yhat - x * y) ≤ epsx * abs yhat + abs x * epsy := by
     calc
       abs (xhat * yhat - x * y)
-          = abs ((xhat - x) * yhat + x * (yhat - y)) := by
-              simp [this]
+          = abs ((xhat - x) * yhat + x * (yhat - y)) := by congr 1; ring
       _ ≤ abs ((xhat - x) * yhat) + abs (x * (yhat - y)) := abs_add_le _ _
-      _ = abs (xhat - x) * abs yhat + abs x * abs (yhat - y) := by
-            simp [abs_mul]
-      _ ≤ (epsx * abs yhat) + (abs x * epsy) := by
-            exact add_le_add (mul_le_mul_of_nonneg_right hx' (abs_nonneg yhat))
-              (mul_le_mul_of_nonneg_left hy' (abs_nonneg x))
-      _ = abs yhat * epsx + abs x * epsy := by ring
-
-  -- Combine rounding error + perturbation.
-  have :=
-    calc
-      abs (roundedMul (β := β) (fexp := fexp) (rnd := rnd) xhat yhat - x * y)
-          ≤ abs (roundedMul (β := β) (fexp := fexp) (rnd := rnd) xhat yhat - (xhat * yhat))
-              + abs (xhat * yhat - x * y) := by
-                simpa [sub_eq_add_neg, add_assoc] using
-                  abs_sub_le (roundedMul (β := β) (fexp := fexp) (rnd := rnd) xhat yhat)
-                    (xhat * yhat) (x * y)
-      _ ≤ ulp β fexp (xhat * yhat) / 2 + ((abs yhat) * epsx + (abs x) *
-        epsy) := by
-            exact add_le_add hround hpert
-      _ ≤ ulp β fexp (xhat * yhat) / 2 +
-            (abs yhat * epsx + (abs xhat + epsx) * epsy) := by
-            have hx_mul : abs x * epsy ≤ (abs xhat + epsx) * epsy :=
-              mul_le_mul_of_nonneg_right hx_abs hepsy
-            have hpert' :
-                abs yhat * epsx + abs x * epsy ≤ abs yhat * epsx + (abs xhat + epsx) * epsy := by
-              linarith [hx_mul]
-            linarith [hpert']
-      _ ≤ ulp β fexp (xhat * yhat) / 2 +
-            ((abs yhat + epsy) * epsx + (abs xhat + epsx) * epsy) := by
-            have hy_le : abs yhat ≤ abs yhat + epsy := by linarith
-            have hy_mul : abs yhat * epsx ≤ (abs yhat + epsy) * epsx :=
-              mul_le_mul_of_nonneg_right hy_le hepsx
-            have hsum :
-                abs yhat * epsx + (abs xhat + epsx) * epsy ≤
-                  (abs yhat + epsy) * epsx + (abs xhat + epsx) * epsy := by
-              linarith [hy_mul]
-            linarith [hsum]
-      _ = (abs xhat + epsx) * epsy + (abs yhat + epsy) * epsx +
-            ulp β fexp (xhat * yhat) / 2 := by ring
-
-  simpa [scalarApprox, roundedMul, sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using this
+      _ = abs (xhat - x) * abs yhat + abs x * abs (yhat - y) := by rw [abs_mul, abs_mul]
+      _ ≤ epsx * abs yhat + abs x * epsy :=
+        add_le_add (mul_le_mul_of_nonneg_right hx (abs_nonneg _))
+          (mul_le_mul_of_nonneg_left hy (abs_nonneg _))
+  have hbudget : epsx * abs yhat + abs x * epsy ≤
+      (abs xhat + epsx) * epsy + (abs yhat + epsy) * epsx := by
+    nlinarith [mul_le_mul_of_nonneg_right hx_abs hepsy, mul_nonneg hepsx hepsy]
+  exact ((abs_sub_le _ (xhat * yhat) _).trans
+    (add_le_add (roundR_abs_error (β := β) (fexp := fexp) (rnd := rnd) _)
+      (hpert.trans hbudget))).trans_eq (add_comm _ _)
 
 end
 

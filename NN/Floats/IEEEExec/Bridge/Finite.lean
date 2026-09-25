@@ -49,20 +49,13 @@ private abbrev Binary32Model := Model FloatFormat.binary32
 /-- Quieting a binary32 NaN preserves its non-finite classification. -/
 theorem model_isFinite_quietNaN (x : Model FloatFormat.binary32) :
     Model.isFinite (Model.quietNaN x) = Model.isFinite x := by
-  have hexp :
-      Model.expField (Model.ofBits (x.bits ||| FloatFormat.quietBit FloatFormat.binary32)) =
-        Model.expField x := by
-    let bits : BitVec 32 := x.bits
-    change (((bits ||| (0x00400000 : BitVec 32)) >>> 23) &&& 255).toNat =
-      ((bits >>> 23) &&& 255).toNat
-    have hquiet : (0x00400000 : BitVec 32) >>> 23 = 0#32 := by decide
-    rw [BitVec.ushiftRight_or_distrib, hquiet, BitVec.or_zero]
   change Model.IEEE.isFinite
       (if Model.IEEE.isNaN x then
         Model.ofBits (x.bits ||| FloatFormat.quietBit FloatFormat.binary32) else x) =
     Model.IEEE.isFinite x
   split
-  · simp only [Model.IEEE.isFinite, hexp]
+  · exact congrArg (fun e => e != FloatFormat.binary32.expAllOnesNat)
+      (Model.expField_or_quietBit x.bits)
   · rfl
 
 /-- A selected binary32 NaN cannot be finite. -/
@@ -144,17 +137,15 @@ noncomputable abbrev fp32Round (x : ℝ) : ℝ := round32 x
 
 /-- FloatLib's binary32 real rounding is TorchLean's gradual-underflow rounding grid. -/
 theorem roundAt_binary32 (x : ℝ) :
-    Model.roundAt FloatFormat.binary32 x = fp32Round x := by
-  unfold Model.roundAt Model.fexpOf fp32Round round32 fexp32 rnd32
+    Model.roundAt FloatFormat.binary32 x = fp32Round x :=
   rfl
 
 /-- A finite executable sum is one binary32 rounding of the exact real sum. -/
 theorem toReal_add_eq_fp32Round_of_isFinite {x y : ExecFloat.Binary 8 23}
     (hfin : isFinite (ExecFloat.add x y) = true) :
     (toModel (ExecFloat.add x y)).toReal = fp32Round ((toModel x).toReal + (toModel y).toReal) := by
-  have hmodel : Model.isFinite (Model.add (toModel x) (toModel y)) = true := by
-    change Model.isFinite (toModel (ExecFloat.add x y)) = true at hfin
-    simpa only [toModel_add] using hfin
+  have hmodel : Model.isFinite (Model.add (toModel x) (toModel y)) = true :=
+    (congrArg Model.isFinite (toModel_add x y)).symm.trans hfin
   obtain ⟨hx, hy⟩ := model_finite_operands_of_add (toModel x) (toModel y) hmodel
   rw [toModel_add, ← roundAt_binary32]
   exact Model.toReal_add_eq_roundAt (fmt := FloatFormat.binary32)
@@ -164,9 +155,8 @@ theorem toReal_add_eq_fp32Round_of_isFinite {x y : ExecFloat.Binary 8 23}
 theorem toReal_mul_eq_fp32Round_of_isFinite {x y : ExecFloat.Binary 8 23}
     (hfin : isFinite (ExecFloat.mul x y) = true) :
     (toModel (ExecFloat.mul x y)).toReal = fp32Round ((toModel x).toReal * (toModel y).toReal) := by
-  have hmodel : Model.isFinite (Model.mul (toModel x) (toModel y)) = true := by
-    change Model.isFinite (toModel (ExecFloat.mul x y)) = true at hfin
-    simpa only [toModel_mul] using hfin
+  have hmodel : Model.isFinite (Model.mul (toModel x) (toModel y)) = true :=
+    (congrArg Model.isFinite (toModel_mul x y)).symm.trans hfin
   obtain ⟨hx, hy⟩ := model_finite_operands_of_mul (toModel x) (toModel y) hmodel
   rw [toModel_mul, ← roundAt_binary32]
   exact Model.toReal_mul_eq_roundAt (fmt := FloatFormat.binary32)

@@ -13,7 +13,8 @@ public import NN.Runtime.Autograd.Torch.TypedGraphSession.GraphOps
 
 /-!
 Canonical `Float32.toBits` comparisons against the original dense Tape engine. These observations
-distinguish signed zeros but canonicalize NaNs, so they do not test raw NaN sign or payload identity.
+distinguish signed zeros but canonicalize NaNs, so they do not test raw NaN sign or payload
+identity.
 Branch cancellation distinguishes reverse graph order from creation order; the repeated-parent case
 distinguishes adding a complete local VJP from sequentially scattering its two terms. Singular and
 custom VJPs exercise nodes with zero incoming cotangent, and input/intermediate seeds exercise the
@@ -100,7 +101,8 @@ private def checkBranch : IO Unit := do
     (TensorPack.single inputIdx special)
   let intermediate ← okOrThrow
     (GraphM.mkIdx (_α := Float32) (Γ := [[4]]) state.nodeShapes (GraphM.Var.mk (s := [4]) 2))
-  let _ ← checkSeed "intermediate seed" compiled reference.1 (TensorPack.single intermediate special)
+  let _ ← checkSeed "intermediate seed" compiled reference.1
+    (TensorPack.single intermediate special)
 
 private def checkRepeatedParent : IO Unit := do
   let program : GraphM.M Float32 [[4]] (GraphM.Var [4]) := do
@@ -130,7 +132,8 @@ private def checkRepeatedParent : IO Unit := do
   let inputs : TorchLean.TensorPack Float32 [[4]] := .cons input .nil
   let compiled ← okOrThrow (compileChecked state.data inputs ())
   let reference := Graph.lowerGraphDataToTape state.data inputs ()
-  compare "repeated multiply/subtract forward" compiled.context.values reference.2.toShapeErasedArray
+  compare "repeated multiply/subtract forward" compiled.context.values
+    reference.2.toShapeErasedArray
   let idx ← okOrThrow (GraphM.mkIdx (_α := Float32) (Γ := [[4]]) state.nodeShapes output)
   let _ ← checkSeed "repeated multiply/subtract" compiled reference.1
     (TensorPack.single idx (Tensor.full [4] (1.0 : Float32)))
@@ -213,8 +216,8 @@ def run : IO Unit := do
   checkCustomDense
   checkValidation
   checkSession
-  IO.println "TypedGraph scaling regressions passed: canonical FP32 toBits (including signed zeros), \
-    branch order, repeated parents, \
+  IO.println "TypedGraph scaling regressions passed: canonical FP32 toBits \
+    (including signed zeros), branch order, repeated parents, \
     input/intermediate seeds, zero-cotangent singular/custom VJPs, validation, repeated backward, \
     public checked/pure APIs, session frozen leaves"
 

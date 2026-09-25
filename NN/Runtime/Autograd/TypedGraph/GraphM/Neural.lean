@@ -170,7 +170,8 @@ def multiHeadAttention {α : Type} {Δ : Type} [TorchLean.Storage α] [Context �
   let iwo ← liftM (mkIdx (_α := α) (Γ := Γ) ss wo)
   let ix ← liftM (mkIdx (_α := α) (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) (.dim n (.dim dModel .scalar)) :=
-    NodeData.ofLocalCompact (fun lookup => (lookup.read iwq, lookup.read iwk, lookup.read iwv, lookup.read iwo, lookup.read ix))
+    NodeData.ofLocalCompact (fun lookup =>
+      (lookup.read iwq, lookup.read iwk, lookup.read iwv, lookup.read iwo, lookup.read ix))
       (forward := fun ctx _d =>
         let mha : Spec.MultiHeadAttention α numHeads dModel headDim :=
           { queryWeight := ctx.1
@@ -215,18 +216,18 @@ def multiHeadAttention {α : Type} {Δ : Type} [TorchLean.Storage α] [Context �
         let dx := gradients.input
         let z0 :=
           Contributions.add (α := α) (shapes := Γ ++ ss)
-            (Contributions.single (α := α) (Γ := Γ ++ ss) (s := .dim dModel (.dim (numHeads * headDim)
-              .scalar)) iwq dWq)
-            (Contributions.single (α := α) (Γ := Γ ++ ss) (s := .dim dModel (.dim (numHeads * headDim)
-              .scalar)) iwk dWk)
+            (Contributions.single (α := α) (Γ := Γ ++ ss)
+              (s := .dim dModel (.dim (numHeads * headDim) .scalar)) iwq dWq)
+            (Contributions.single (α := α) (Γ := Γ ++ ss)
+              (s := .dim dModel (.dim (numHeads * headDim) .scalar)) iwk dWk)
         let z1 :=
           Contributions.add (α := α) (shapes := Γ ++ ss) z0
-            (Contributions.single (α := α) (Γ := Γ ++ ss) (s := .dim dModel (.dim (numHeads * headDim)
-              .scalar)) iwv dWv)
+            (Contributions.single (α := α) (Γ := Γ ++ ss)
+              (s := .dim dModel (.dim (numHeads * headDim) .scalar)) iwv dWv)
         let z2 :=
           Contributions.add (α := α) (shapes := Γ ++ ss) z1
-            (Contributions.single (α := α) (Γ := Γ ++ ss) (s := .dim (numHeads * headDim) (.dim dModel
-              .scalar)) iwo dWo)
+            (Contributions.single (α := α) (Γ := Γ ++ ss)
+              (s := .dim (numHeads * headDim) (.dim dModel .scalar)) iwo dWo)
         Contributions.add (α := α) (shapes := Γ ++ ss) z2
           (Contributions.single (α := α) (Γ := Γ ++ ss) (s := .dim n (.dim dModel .scalar)) ix dx))
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := (.dim n (.dim dModel .scalar))) g node

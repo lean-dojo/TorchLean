@@ -48,7 +48,8 @@ def repeatStable {β : Type} [DecidableEq β] (step : β → β) : Nat → β �
 
 /-- Fixed-point compression preserves every finite sequence of repeated operations. -/
 theorem repeatStable_eq {β : Type} [DecidableEq β] (step : β → β)
-    (count : Nat) (value : β) : repeatStable step count value = iterateUpdates step count value := by
+    (count : Nat) (value : β) :
+    repeatStable step count value = iterateUpdates step count value := by
   induction count generalizing value with
   | zero => rfl
   | succ count ih =>

@@ -523,7 +523,8 @@ def exp {α : Type} [TorchLean.Storage α] [Context α]
         mulSpec (expSpec (α := α) xval) dx)
       (vjp := fun ctx _d δ =>
         let xval := ctx
-        Contributions.single (α := α) (Γ := Γ ++ ss) (s := s) ix (mulSpec (expSpec (α := α) xval) δ))
+        Contributions.single (α := α) (Γ := Γ ++ ss) (s := s) ix
+          (mulSpec (expSpec (α := α) xval) δ))
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /--
@@ -594,7 +595,8 @@ def log {α : Type} [TorchLean.Storage α] [Context α]
         mulSpec (invSpec (α := α) xval) dx)
       (vjp := fun ctx _d δ =>
         let xval := ctx
-        Contributions.single (α := α) (Γ := Γ ++ ss) (s := s) ix (mulSpec (invSpec (α := α) xval) δ))
+        Contributions.single (α := α) (Γ := Γ ++ ss) (s := s) ix
+          (mulSpec (invSpec (α := α) xval) δ))
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
 /-- Elementwise reciprocal `x ↦ 1/x`. PyTorch comparison: `torch.reciprocal(x)`. -/
@@ -760,7 +762,8 @@ def mseLoss {α : Type} [TorchLean.Storage α]
           xv
         let dx := Spec.linearInputDerivSpec (α := α) (inDim := inDim) (outDim := outDim) W dLdy
         let z0 := Contributions.add (α := α) (shapes := Γ ++ ss)
-          (Contributions.single (α := α) (Γ := Γ ++ ss) (s := .dim outDim (.dim inDim .scalar)) iW dW)
+          (Contributions.single (α := α) (Γ := Γ ++ ss)
+            (s := .dim outDim (.dim inDim .scalar)) iW dW)
           (Contributions.single (α := α) (Γ := Γ ++ ss) (s := .dim outDim .scalar) ib db)
         Contributions.add (α := α) (shapes := Γ ++ ss) z0
           (Contributions.single (α := α) (Γ := Γ ++ ss) (s := .dim inDim .scalar) ix dx))

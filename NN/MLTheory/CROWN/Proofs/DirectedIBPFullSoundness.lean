@@ -17,7 +17,8 @@ public import NN.MLTheory.CROWN.Proofs.DirectedIBPNormalization
 
 `RealNodeEquation` describes the real operation at each node. Tensor operations use their actual
 coordinate maps, reductions, normalization formulas, and interpreted stored parameters. Random
-nodes describe an arbitrary realization in their declared support.
+nodes use the seeded real Spec operations. Full-tensor sum equations hold independently of IBP
+row availability.
 
 `runIBP_encloses_all` proves enclosure for every successful entry of the executable pass. It has
 no operation-family restriction and assumes no enclosure for intermediate nodes. Invalid shapes,
@@ -44,12 +45,16 @@ local notation "value" => LawfulBoundOps.toReal (α := α)
 The spatial convolution and structural equations stand on their own. In particular, they do not
 assume a second affine equation about coefficients computed by the verifier. Unary stored-weight
 and binary tensor matrix multiplication share an operation tag; their parent counts distinguish
-the two equations.
+the two equations. Stored `linear` nodes use vector affine equations; the public IR bridge for
+`linear` requires vector-shaped parents.
 -/
 def RealNodeEquation (nodes : Array Node) (ps : ParamStore α)
     (ibp : Array (Option (FlatBox α))) (dims : Nat → Nat) (v : Nat → Nat → ℝ)
     (id : Nat) : Prop :=
   match nodes[id]!.kind with
+  | .sum =>
+      ∀ p, unaryParent? nodes[id]!.parents = some p →
+        dims id = 1 ∧ v id 0 = ∑ i : Fin (dims p), v p i.val
   | .conv configuration => ConvolutionNodeEquation nodes ps dims v id configuration
   | .matmul =>
       NodeEquation nodes ps ibp dims v id ∧ BinaryMatmulNodeEquation nodes dims v id
@@ -85,6 +90,13 @@ theorem ibpStepNodeAt?_all_encloses
       RowEncloses B (dims p) (v p) := fun p hp B hB =>
     henc p hp B ((hagree p hp).symm.trans hB)
   cases hk : nodes[id]!.kind <;> simp only [RealNodeEquation, hk] at heq
+  case sum =>
+    apply ibpStepNodeAt?_encloses
+      (by simp only [ibpForwardSupportedNode, hk]) hinput ?_ hagree henc hstep
+    simp only [NodeEquation, hk]
+    intro p hp B hB
+    obtain ⟨h1, hv⟩ := heq p hp
+    exact ⟨h1, (henc p (mem_of_unaryParent?_eq_some hp) B hB).1.symm, hv⟩
   case matmul =>
     rcases ibpStep_matmul_parents hk hstep with hunary | ⟨p, q, hparents⟩
     · exact ibpStepNodeAt?_encloses

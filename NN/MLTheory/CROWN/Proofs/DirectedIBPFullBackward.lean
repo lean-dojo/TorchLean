@@ -36,14 +36,23 @@ variable {α : Type} [Storage α] [Context α] [BoundOps α] [LawfulBoundOps α]
 
 local notation "value" => LawfulBoundOps.toReal (α := α)
 
-/-- Real node semantics supplies each equation consumed by the backward sweep. -/
+/-- Real node semantics supplies each equation consumed by the backward sweep.
+
+The legacy sum equation also records parent row widths. `hdims` supplies this shape fact;
+`GraphPoint.ofRunIBPAll` derives it from the completed forward pass. -/
 theorem RealNodeEquation.nodeEquation
     {nodes : Array Node} {ps : ParamStore α} {ibp : Array (Option (FlatBox α))}
     {dims : Nat → Nat} {v : Nat → Nat → ℝ} {id : Nat}
     (heq : RealNodeEquation nodes ps ibp dims v id)
-    (hparents : ∀ p ∈ nodes[id]!.parents, p < nodes.size) :
+    (hparents : ∀ p ∈ nodes[id]!.parents, p < nodes.size)
+    (hdims : ∀ p ∈ nodes[id]!.parents, ∀ box, ibp[p]! = some box → box.dim = dims p) :
     NodeEquation nodes ps ibp dims v id := by
   cases hk : nodes[id]!.kind <;> simp only [RealNodeEquation, hk] at heq
+  case sum =>
+    simp only [NodeEquation, hk]
+    intro p hp box hbox
+    obtain ⟨h1, hv⟩ := heq p hp
+    exact ⟨h1, (hdims p (mem_of_unaryParent?_eq_some hp) box hbox).symm, hv⟩
   case conv configuration => exact heq.nodeEquation hk
   case matmul => exact heq.1
   case concat | transpose | permute | broadcastTo | reduceSum | reduceMean | maxPool | avgPool =>
@@ -76,7 +85,11 @@ theorem GraphPoint.ofRunIBPAll {g : Graph} {ps : ParamStore α} {ctx : AffineCtx
   parent_lt := parent_lt
   ibp_encloses := runIBP_encloses_all g ps hepsilon parent_lt hinputs equation
   equation := fun id hid =>
-    (equation id hid).nodeEquation fun p hp => lt_trans (parent_lt id hid p hp) hid
+    (equation id hid).nodeEquation
+      (fun p hp => lt_trans (parent_lt id hid p hp) hid)
+      (fun p hp box hbox =>
+        (runIBP_encloses_all g ps hepsilon parent_lt hinputs equation p
+          (lt_trans (parent_lt id hid p hp) hid) box hbox).1)
 
 /-- A successful rounded backward objective encloses the real objective after the full IBP pass.
 All intermediate enclosures follow from the input boxes and real node equations. -/

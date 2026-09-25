@@ -36,7 +36,7 @@ open NN.IR
 namespace Internal
 
 /-- A second `.input` node cannot appear after node 0; the lowering loop rejects it. -/
-def lowerInput {α : Type} [TorchLean.Storage α] [Context α]
+@[inline] def lowerInput {α : Type} [TorchLean.Storage α] [Context α]
     {Γ : List Shape} (ctx : NodeLoweringContext α Γ) : NodeLoweringResult ctx :=
   throw s!"IRExec: internal error (handled above)"
 

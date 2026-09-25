@@ -65,8 +65,8 @@ not compare floating-point results with a second semantics or assert numerical e
 
 Each call lowers the graph again. For repeated execution, call `lowerToForwardGraph` once and
 reuse the resulting `ForwardGraph.eval` or `ForwardGraph.denoteAll`. The array execution
-optimization applies to that already-lowered artifact; lowering's shape-list appends can still
-take quadratic time in the number of nodes.
+optimization applies to that already-lowered artifact. Lowering also uses array parent checks
+and shared shape prefixes, with linear context bookkeeping in the number of nodes and edges.
 -/
 def evaluate
     {α : Type} [Storage α] [Context α] {σ : Shape}

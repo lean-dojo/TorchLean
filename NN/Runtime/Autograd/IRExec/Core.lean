@@ -38,9 +38,11 @@ retain their typed-pack semantics, while proved compiler simplification rules ex
 with an array context. Each node appends one value; conversion to a typed pack happens only when
 the caller requests that representation. `ForwardGraph.denoteAll` returns the array directly.
 
-This concerns execution of an already-lowered graph. The convenience `IRExec.evaluate` function
-lowers again on every call. Lowering itself still appends to shape lists and can take quadratic
-time; repeated-execution measurements should construct the `ForwardGraph` before timing.
+Internally, shape prefixes are stored in reverse order, so each node shares its predecessor's
+shape list. The public shape indices and value tables remain in node-id order. The checked lowering
+loop uses an array for parent-shape lookup and materializes the public shape list once at the end.
+The convenience `IRExec.evaluate` function lowers again on every call; repeated execution can reuse
+the resulting `ForwardGraph`.
 -/
 
 @[expose] public section
@@ -90,53 +92,113 @@ structure ForwardNode (α : Type) [TorchLean.Storage α] (Γ : List Shape) (τ :
     (node : ForwardNode α Γ τ) (ctx : TensorPack α Γ) : Tensor α τ :=
   node.run (TensorReader.ofPack ctx)
 
-/--
-A shape-indexed forward SSA graph.
+namespace Internal
 
-Unlike autograd `GraphData`, this representation has no JVP or VJP fields. It is therefore
-impossible to request derivatives from an artifact produced by the forward IR lowering pass.
+/--
+Forward nodes indexed by their reversed output shapes.
+
+The implicit list index is a runtime constructor field. Consing the new shape shares all previous
+prefixes; storing chronological lists here would retain a separate copy of every prefix.
 -/
-inductive ForwardData (α : Type) [TorchLean.Storage α] (Γ : List Shape) : List Shape → Type where
+inductive ReverseData (α : Type) [Storage α] (Γ : List Shape) : List Shape → Type where
   /-- A graph with no computed nodes. -/
-  | nil : ForwardData α Γ []
+  | nil : ReverseData α Γ []
   /-- Append a node that may read the graph input and every preceding result. -/
-  | snoc {ss : List Shape} {τ : Shape} :
-      ForwardData α Γ ss → ForwardNode α (Γ ++ ss) τ → ForwardData α Γ (ss ++ [τ])
+  | snoc {rev : List Shape} {τ : Shape} :
+      ReverseData α Γ rev → ForwardNode α (Γ ++ rev.reverse) τ →
+        ReverseData α Γ (τ :: rev)
+
+namespace ReverseData
+
+/-- Typed chronological evaluation of a graph with shared reversed shape prefixes. -/
+def eval {α : Type} [Storage α] {Γ rev : List Shape}
+    (g : ReverseData α Γ rev) (x : TensorPack α Γ) : TensorPack α (Γ ++ rev.reverse) :=
+  match g with
+  | .nil => TensorPack.cast (List.append_nil Γ).symm x
+  | .snoc g node =>
+      let ctx := eval g x
+      TensorPack.cast (by simp [List.reverse_cons, List.append_assoc])
+        (ctx.snoc (node.eval ctx))
+
+/-- Evaluate with array reads and one append per node, retaining a proof of the context shapes. -/
+def evalArray {α : Type} [Storage α] {Γ rev : List Shape}
+    (g : ReverseData α Γ rev) (x : TensorPack α Γ) : ContextArray α (Γ ++ rev.reverse) :=
+  match g with
+  | .nil => (ContextArray.ofPack x).cast (List.append_nil Γ).symm
+  | .snoc g node =>
+      let ctx := evalArray g x
+      let y := node.run ctx.reader
+      (ctx.push y).cast (by simp [List.reverse_cons, List.append_assoc])
+
+/-- The array evaluator represents exactly the original typed result, for every node closure. -/
+theorem evalArray_eq {α : Type} [Storage α] {Γ rev : List Shape}
+    (g : ReverseData α Γ rev) (x : TensorPack α Γ) :
+    evalArray g x = ContextArray.ofPack (eval g x) := by
+  induction g with
+  | nil => simp [evalArray, eval]
+  | snoc g node ih => simp [evalArray, eval, ih]
+
+end ReverseData
+end Internal
+
+/--
+A shape-indexed forward SSA graph with output shapes `ss` in node-id order.
+
+The executable nodes share reversed shape prefixes internally. `nil`, `snoc`, and `eval` retain
+the chronological typed interface. Unlike autograd `GraphData`, this representation has no JVP
+or VJP fields.
+-/
+structure ForwardData (α : Type) [Storage α] (Γ ss : List Shape) where
+  /-- Output shapes in reverse node-id order, shared with the final node. -/
+  revShapes : List Shape
+  /-- Forward closures indexed by the shared reversed prefixes. -/
+  body : Internal.ReverseData α Γ revShapes
+  /-- The internal order represents the public chronological shape index. -/
+  shape_eq : revShapes.reverse = ss
 
 namespace ForwardData
 
+variable {α : Type} [Storage α] {Γ ss : List Shape}
+
+/-- A graph with no computed nodes. -/
+def nil : ForwardData α Γ [] := ⟨[], .nil, rfl⟩
+
+/-- Append a node while sharing the existing graph and its reversed shape prefix. -/
+def snoc {τ : Shape} (g : ForwardData α Γ ss) (node : ForwardNode α (Γ ++ ss) τ) :
+    ForwardData α Γ (ss ++ [τ]) :=
+  ⟨τ :: g.revShapes, .snoc g.body (g.shape_eq.symm ▸ node), by simp [g.shape_eq]⟩
+
 /-- Evaluate every node and return the input followed by all intermediate values. -/
-def eval {α : Type} [TorchLean.Storage α] {Γ ss : List Shape}
-    (g : ForwardData α Γ ss) (x : TorchLean.TensorPack α Γ) : TorchLean.TensorPack α (Γ ++ ss) :=
-  match g with
-  | .nil => TorchLean.TensorPack.cast (α := α) (h := (List.append_nil Γ).symm) x
-  | .snoc (ss := ss) (τ := τ) g node =>
-      let ctx := eval g x
-      let y := node.eval ctx
-      TorchLean.TensorPack.cast (α := α) (h := List.append_assoc Γ ss [τ])
-        (TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ss) (τ := τ) ctx y)
+def eval (g : ForwardData α Γ ss) (x : TensorPack α Γ) : TensorPack α (Γ ++ ss) :=
+  TensorPack.cast (congrArg (Γ ++ ·) g.shape_eq) (g.body.eval x)
+
+/-- The empty graph returns the input context. -/
+@[simp] theorem eval_nil (x : TensorPack α Γ) :
+    eval (nil : ForwardData α Γ []) x = TensorPack.cast (List.append_nil Γ).symm x := rfl
+
+/-- Appending a node preserves the original chronological typed evaluation equation. -/
+@[simp] theorem eval_snoc {τ : Shape} (g : ForwardData α Γ ss)
+    (node : ForwardNode α (Γ ++ ss) τ) (x : TensorPack α Γ) :
+    eval (snoc g node) x = TensorPack.cast (List.append_assoc Γ ss [τ])
+      ((eval g x).snoc (node.eval (eval g x))) := by
+  rcases g with ⟨rev, body, rfl⟩
+  simp only [snoc, eval, Internal.ReverseData.eval, TensorPack.cast_rfl]
+  exact TensorPack.cast_cast _ _ _
 
 end ForwardData
 
 namespace Internal
 
-/-- Evaluate with array reads and one append per node, retaining a proof of the context shapes. -/
+/-- Evaluate a public forward graph using the array implementation of its shared internal data. -/
 def evalArray {α : Type} [Storage α] {Γ ss : List Shape}
     (g : ForwardData α Γ ss) (x : TensorPack α Γ) : ContextArray α (Γ ++ ss) :=
-  match g with
-  | .nil => (ContextArray.ofPack x).cast (List.append_nil Γ).symm
-  | .snoc (ss := ss) g node =>
-      let ctx := evalArray g x
-      let y := node.run ctx.reader
-      (ctx.push y).cast (List.append_assoc Γ ss _)
+  (g.body.evalArray x).cast (congrArg (Γ ++ ·) g.shape_eq)
 
-/-- The array evaluator represents exactly the original typed result, for every node closure. -/
+/-- Public array evaluation agrees with the typed semantics for every forward graph. -/
 theorem evalArray_eq {α : Type} [Storage α] {Γ ss : List Shape}
     (g : ForwardData α Γ ss) (x : TensorPack α Γ) :
     evalArray g x = ContextArray.ofPack (ForwardData.eval g x) := by
-  induction g with
-  | nil => simp [evalArray, ForwardData.eval]
-  | snoc g node ih => simp [evalArray, ForwardData.eval, ih]
+  simp [evalArray, ReverseData.evalArray_eq, ForwardData.eval]
 
 /-- Recover a typed pack only after all node executions have finished. -/
 def evalWithArray {α : Type} [Storage α] {Γ ss : List Shape}

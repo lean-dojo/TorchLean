@@ -465,12 +465,7 @@ theorem denoteAllState_snoc {α : Type} [TorchLean.Storage α] [Context α]
       (denoteAllState (α := α) inShape st x).push
         (Spec.SomeTensor.mk (α := α) τ
           (nodeData.eval (ForwardData.eval (ss := ss) gd (.cons x .nil)))) := by
-  -- Expand `st`/`st'`.
-  simp only
-  -- Reduce both sides to `packedTensorsOfContext` of `ForwardData.eval`.
   simp [denoteAllState, execOfState, ForwardGraph.denoteAll, ForwardGraph.eval]
-  -- Now unfold `ForwardData.eval` for the snoc graph.
-  simp [ForwardData.eval]
 
 /--
 Build a typed runtime index (`Idx`) for a numeric IR parent id.

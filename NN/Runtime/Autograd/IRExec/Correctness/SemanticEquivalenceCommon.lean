@@ -60,8 +60,7 @@ theorem denoteAllState_nil {α : Type} [TorchLean.Storage α] [Context α]
     denoteAllState (α := α) inShape (st := (⟨[], .nil⟩ : State α inShape)) x =
       #[Spec.SomeTensor.ofTensor x] := by
   simp [denoteAllState, execOfState, ForwardGraph.denoteAll, ForwardGraph.eval,
-    packedTensorsOfContext, Spec.SomeTensor.ofTensor, ForwardData.eval,
-    TorchLean.TensorPack.toShapeErasedArray]
+    packedTensorsOfContext, Spec.SomeTensor.ofTensor, TorchLean.TensorPack.toShapeErasedArray]
 
 attribute [grind =] denoteAllState_nil
 

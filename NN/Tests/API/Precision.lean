@@ -146,7 +146,7 @@ def checkNormalizationEpsilon : IO Unit := do
     (native64.toBits == (1 / ((100000 : Nat) : Float)).toBits)
 
 /-- A mixed quotient coefficient survives even when a constituent product rounds to zero. -/
-def checkNestedQuotient : IO Unit := do
+def checkNestedQuotientUnderflow : IO Unit := do
   expect "binary128/checked quotient support"
     (Numeric.QuotientArithmetic.supported (α := Binary128))
   let a : Binary128 := Rat.cast (1 / (2 ^ 9000 : Nat) : Rat)
@@ -162,6 +162,9 @@ def checkNestedQuotient : IO Unit := do
   expect "binary128/large finite derivative"
     (ExecFloat.Binary.toRat? quotient.du.re ==
       some (-((2 ^ 6000 : Nat) : Rat)))
+
+/-- Every nested-dual coefficient retains the configured wide significand. -/
+def checkNestedQuotientPrecision : IO Unit := do
   let high : Binary256 := Rat.cast (1 + 1 / (2 ^ 140 : Nat) : Rat)
   let numerator : Dual (Dual Binary256) := ⟨⟨high, high⟩, ⟨high, high⟩⟩
   let denominator : Dual (Dual Binary256) := ⟨⟨2, 0⟩, ⟨0, 0⟩⟩
@@ -170,6 +173,10 @@ def checkNestedQuotient : IO Unit := do
   expect "binary256/nested precision"
     ((#[result.re.re, result.re.du, result.du.re, result.du.du]).map
       ExecFloat.Binary.toRat? == #[some expected, some expected, some expected, some expected])
+
+def checkNestedQuotient : IO Unit := do
+  checkNestedQuotientUnderflow
+  checkNestedQuotientPrecision
 
 def checkInputBoundaries : IO Unit := do
   let literal : Binary128 :=

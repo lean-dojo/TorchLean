@@ -186,7 +186,7 @@ def checkErrorReductions : IO Unit := do
   let integral : Tensor Int [2] := [-3, 2]
   expect "ordered tensor fold" (Tensor.foldl (fun acc x => 10 * acc + x) 0 integral == -28)
 
-def run : IO Unit := do
+def checkConstruction : IO Unit := do
   checkErrorReductions
   expect "empty einsum output" emptyEinsumOutput.data.isEmpty
   expect "symbolic empty einsum output" (symbolicEmptyEinsumOutput (2^40)).data.isEmpty
@@ -197,6 +197,7 @@ def run : IO Unit := do
   expect "integer literals construct scalar exact tensors"
     (rationalScalarLiteral.item == 3)
 
+def checkNativeArithmetic : IO Unit := do
   let positiveZero := Float.ofBits 0x0000000000000000
   let negativeZero := Float.ofBits 0x8000000000000000
   let positiveInfinity := Float.ofBits 0x7ff0000000000000
@@ -267,6 +268,7 @@ def run : IO Unit := do
   expect "native Float + UInt8 preserves promoted scalar IEEE bit behavior"
     (actualFloatByteBits == expectedFloatByteBits)
 
+def checkIndexingAndWindows : IO Unit := do
   let firstRow : Tensor Float [2] := floatMatrix[0]
   expect "natural-number tensor indexing selects the outer slice"
     (firstRow.to (Array Float) == #[1.0, 2.0])
@@ -327,6 +329,7 @@ def run : IO Unit := do
     (complexWindow.to (Array (Complex Float)) ==
       #[{ re := 3.0, im := 4.0 }, complexPad, complexPad])
 
+def checkPackedTransposes : IO Unit := do
   let transposed : Tensor Float [2, 2] :=
     rearrange floatMatrix "row column -> column row"
   expect "rearrange materializes row-major transpose"
@@ -377,6 +380,7 @@ def run : IO Unit := do
     ((binary32Transposed.to (Array Float32)).map (Float32.toFloat ·) ==
       #[1.0, 4.0, 2.0, 5.0, 3.0, 6.0])
 
+def checkReferenceTranspose : IO Unit := do
   let ieee32Matrix : Tensor (Binary 8 23) [2, 3] :=
     Tensor.generateFlat [2, 3] fun index =>
       (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat (Float.ofNat (index + 1)))))
@@ -388,6 +392,7 @@ def run : IO Unit := do
       ((fun x => Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel x)))) ·) ==
         #[1.0, 4.0, 2.0, 5.0, 3.0, 6.0])
 
+def checkBoxedTransposes : IO Unit := do
   let rationalMatrix : Tensor Rat [2, 3] :=
     [[1, 2, 3], [4, 5, 6]]
   let rationalTranspose : Tensor Rat [3, 2] :=
@@ -439,6 +444,7 @@ def run : IO Unit := do
       Array.ofFn (n := 16 * 16) fun index =>
         Rat.ofInt (Int.ofNat (index % 31) - 15))
 
+def checkReductionsAndRepeat : IO Unit := do
   let rowSums : Tensor Float [2] :=
     reduce floatMatrix "row column -> row" by sum
   expect "sum reduction"
@@ -486,6 +492,7 @@ def run : IO Unit := do
 
   checkOrderedContraction
 
+def checkMixedPacking : IO Unit := do
   let bytes : Tensor UInt8 [2] := [1, 2]
   let offsets : Tensor Float [2] := [0.5, 1.5]
   let mixedOuter : Tensor Float [2, 2] :=
@@ -518,6 +525,7 @@ def run : IO Unit := do
     (parse_shape floatMatrix "row column" ==
       [("row", 2), ("column", 2)])
 
+def checkExactOperations : IO Unit := do
   let rationals : Tensor Rat [2, 2] := [[1, 2], [3, 4]]
   let repeatedRationals : Tensor Rat [2, 2] :=
     expand ([1, 2] : Tensor Rat [2])
@@ -537,6 +545,7 @@ def run : IO Unit := do
     (complexProduct.to (Array (Complex Float)) ==
       complexMatrix.to (Array (Complex Float)))
 
+def checkModelOperations : IO Unit := do
   let floatPredicted : Tensor Float [2] := [1.0, 3.0]
   let floatTarget : Tensor Float [2] := [0.0, 1.0]
   expect "public Float mean-squared error"
@@ -569,6 +578,17 @@ def run : IO Unit := do
   expect "public empty mean is totalized with denominator one"
     (emptyMean == 0.0)
 
+def run : IO Unit := do
+  checkConstruction
+  checkNativeArithmetic
+  checkIndexingAndWindows
+  checkPackedTransposes
+  checkReferenceTranspose
+  checkBoxedTransposes
+  checkReductionsAndRepeat
+  checkMixedPacking
+  checkExactOperations
+  checkModelOperations
   IO.println "  public tensor operations: passed"
 
 end NN.Tests.Tensor.Operations

@@ -126,6 +126,92 @@ theorem lowerToTapeChecked_eq {α Δ : Type} [TorchLean.Storage α]
           subst result
           simp only [Graph.lowerGraphDataToTape, ← same]
 
+/-- Record a prepared node, reusing the primal tensor computed after validation. -/
+def lowerPreparedNode {α : Type} [TorchLean.Storage α] {Γ : List Shape} {τ : Shape}
+    (prepared : PreparedNode α Γ τ) (value : Tensor α τ) : Runtime.Autograd.Node α :=
+  { name := some "typed-graph"
+    value := Spec.SomeTensor.ofTensor value
+    requiresGrad := true
+    parents := #[]
+    backward := fun upstream =>
+      if h : upstream.shape = τ then
+        .ok (TorchLean.TensorPack.toIndexedShapeErasedArray
+          (prepared.vjp (upstream.cast h)) 0)
+      else
+        .error "autograd: upstream gradient shape mismatch" }
+
+@[simp] theorem lowerPreparedNode_ofPack {α Δ : Type} [TorchLean.Storage α]
+    {Γ : List Shape} {τ : Shape} (node : NodeData α Δ Γ τ)
+    (context : TorchLean.TensorPack α Γ) (data : Δ) :
+    lowerPreparedNode (node.prepare (TensorContext.ofPack context) data)
+      (node.forward context data) = Graph.lowerNode (some "typed-graph") node context data := by
+  simp only [lowerPreparedNode, Graph.lowerNode, NodeData.prepare_vjp_ofPack]
+
+/-- Execute checked lowering with one array context and local saved-input closures. -/
+def lowerToArrayChecked {α Δ : Type} [TorchLean.Storage α]
+    {Γ ss : List Shape} (graph : Proofs.Autograd.Algebra.GraphData α Δ Γ ss)
+    (inputs : TorchLean.TensorPack α Γ) (data : Δ) :
+    Runtime.Autograd.Result (Runtime.Autograd.Tape α × TensorContext α (Γ ++ ss)) :=
+  match graph with
+  | .nil =>
+      pure (Graph.addLeaves Runtime.Autograd.Tape.empty inputs,
+        TensorContext.cast (List.append_nil Γ).symm (TensorContext.ofPack inputs))
+  | .snoc (ss := previousShapes) (τ := outputShape) previous node => do
+      let (tape, context) ← lowerToArrayChecked previous inputs data
+      let prepared := node.prepare context data
+      prepared.validate ()
+      let value := prepared.value ()
+      let (nextTape, _) := tape.addNode (lowerPreparedNode prepared value)
+      pure (nextTape,
+        TensorContext.cast (List.append_assoc Γ previousShapes [outputShape])
+          (context.push value))
+
+/-- Array execution preserves errors and the complete public runtime tape. -/
+theorem lowerToArrayChecked_eq {α Δ : Type} [TorchLean.Storage α]
+    {Γ ss : List Shape} (graph : Proofs.Autograd.Algebra.GraphData α Δ Γ ss)
+    (inputs : TorchLean.TensorPack α Γ) (data : Δ) :
+    lowerToArrayChecked graph inputs data =
+      (lowerToTapeChecked graph inputs data).map
+        (fun result => (result.1, TensorContext.ofPack result.2)) := by
+  induction graph with
+  | nil =>
+      simp only [lowerToArrayChecked, lowerToTapeChecked, TensorContext.cast_ofPack]
+      rfl
+  | snoc previous node ih =>
+      simp only [lowerToArrayChecked, lowerToTapeChecked, ih]
+      cases h : lowerToTapeChecked previous inputs data with
+      | error message => rfl
+      | ok result =>
+          obtain ⟨tape, context⟩ := result
+          simp only [Except.map, Bind.bind, Except.bind, NodeData.prepare_validate_ofPack,
+            NodeData.prepare_value_ofPack]
+          cases validation : node.validate context data with
+          | error message => rfl
+          | ok done =>
+              cases done
+              simp only [Pure.pure, Except.pure,
+                TensorContext.push_ofPack, TensorContext.cast_ofPack,
+                lowerPreparedNode_ofPack]
+
+/-- Convert the complete typed result only once, at the public execution boundary. -/
+def lowerToTapeCheckedArray {α Δ : Type} [TorchLean.Storage α]
+    {Γ ss : List Shape} (graph : Proofs.Autograd.Algebra.GraphData α Δ Γ ss)
+    (inputs : TorchLean.TensorPack α Γ) (data : Δ) :
+    Runtime.Autograd.Result
+      (Runtime.Autograd.Tape α × TorchLean.TensorPack α (Γ ++ ss)) :=
+  (lowerToArrayChecked graph inputs data).map (fun result => (result.1, result.2.toPack))
+
+/-- The compiler may replace checked pack lowering by its proved array implementation. -/
+@[csimp] theorem lowerToTapeChecked_eq_array :
+    @lowerToTapeChecked = @lowerToTapeCheckedArray := by
+  funext α Δ storage Γ ss graph inputs data
+  simp only [lowerToTapeCheckedArray, lowerToArrayChecked_eq]
+  cases lowerToTapeChecked graph inputs data with
+  | error message => rfl
+  | ok result =>
+      obtain ⟨tape, context⟩ := result
+      simp only [Except.map, TensorContext.toPack_ofPack]
+
 /-- Validate runtime domains while evaluating the primal and tangent contexts together. -/
 def jvpChecked {α Δ : Type} [TorchLean.Storage α]
     {Γ ss : List Shape} (graph : Proofs.Autograd.Algebra.GraphData α Δ Γ ss)

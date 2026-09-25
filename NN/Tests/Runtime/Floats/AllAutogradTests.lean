@@ -12,6 +12,7 @@ public import NN.API.Optim
 public import NN.Runtime.Autograd.Train
 public import NN.Spec.Models.Mlp
 public import NN.Tests.Utils
+public import NN.Tests.Runtime.TypedGraphScalingRegression
 
 /-!
 # Consolidated Float Runtime Autograd Tests
@@ -1082,6 +1083,7 @@ def runAllAutogradTests : IO Unit := do
   TypedGraphOutputReference.run
   TypedGraphSmoothMaxDomain.run
   DisconnectedDenseGradient.run
+  TypedGraphScalingRegression.run
   OptimizerNumerics.run
   IO.println "=== Autograd test suite completed ==="
 

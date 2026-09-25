@@ -90,6 +90,8 @@ def Node.toReal {Δ : Type} {Γ : List Shape} {τ : Shape}
   forward x := node.forward x d
   jvp x dx := node.jvp x dx d
   vjp x δ := node.vjp x d δ
+  prepare? := node.prepare?.map fun implementation =>
+    ⟨fun lookup => implementation.val lookup d, fun ctx => implementation.property ctx d⟩
   correct x dx δ := by
     simpa [dot_eq_tensorAlgebra_dot, TensorPack.dotList_eq_algebra_dotList] using
       node.correct x dx d δ
@@ -104,7 +106,10 @@ def Graph.toReal {Δ : Type} {Γ : List Shape} :
 /-- The round trip through the algebraic model is the identity on analytic nodes. -/
 @[simp] theorem Node.toAlgebra_toReal {Γ : List Shape} {τ : Shape}
     (node : Proofs.Autograd.Node Γ τ) (d : Unit) :
-    Node.toReal (node.toAlgebra) d = node := rfl
+    Node.toReal (node.toAlgebra) d = node := by
+  cases node with
+  | mk forward jvp vjp correct validate prepare =>
+      cases prepare <;> rfl
 
 /-- Specializing an algebraic node with a trivial environment and embedding it back is the
 identity. -/
@@ -112,7 +117,13 @@ identity. -/
     (node : Node (α := ℝ) (Δ := Unit) (Γ := Γ) τ) :
     Proofs.Autograd.Node.toAlgebra (Node.toReal node ()) = node := by
   cases node
-  rfl
+  rename_i data correct
+  cases data with
+  | mk forward jvp vjp validate prepare =>
+      cases prepare with
+      | none => rfl
+      | some implementation =>
+          congr 1
 
 /-- The round trip through the algebraic model is the identity on analytic graphs. -/
 @[simp] theorem Graph.toAlgebra_toReal {Γ : List Shape} :

@@ -94,6 +94,11 @@ structure Node (Γ : List Shape) (τ : Shape) where
   correct : ∀ x dx δ, dot (jvp x dx) δ = TensorPack.dotList dx (vjp x δ)
   /-- Runtime precondition metadata, preserved by the algebraic bridge; pure semantics ignore it. -/
   validate : TorchLean.TensorPack ℝ Γ → Except String Unit := fun _ => .ok ()
+  /-- Certified local preparation, retained by both directions of the algebraic bridge. -/
+  prepare? : Option {prepare : Algebra.TensorLookup ℝ Γ → Algebra.PreparedNode ℝ Γ τ //
+    ∀ ctx, (prepare (Algebra.TensorLookup.ofPack ctx)).toPreparedPrograms =
+      { value := fun _ => forward ctx, vjp := vjp ctx,
+        validate := fun _ => validate ctx }} := none
 
 /-- A tape/SSA graph: nodes are appended in topological order and may reference any previous value.
   -/
@@ -162,6 +167,8 @@ def Node.toAlgebra {Γ : List Shape} {τ : Shape} (node : Node Γ τ) :
   forward x _ := node.forward x
   jvp x dx _ := node.jvp x dx
   vjp x _ δ := node.vjp x δ
+  prepare? := node.prepare?.map fun implementation =>
+    ⟨fun lookup _ => implementation.val lookup, fun ctx _ => implementation.property ctx⟩
   correct x dx _ δ := by
     simpa [dot_eq_tensorAlgebra_dot, TensorPack.dotList_eq_algebra_dotList] using
       node.correct x dx δ

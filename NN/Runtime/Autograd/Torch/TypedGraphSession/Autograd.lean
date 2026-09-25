@@ -25,7 +25,7 @@ namespace Internal
 
 namespace TypedGraphSession
 
-/-! ## Backward + SGD over the lowered runtime tape -/
+/-! ## Saved backward execution and explicit raw Tape compatibility -/
 
 /-- Apply the names and gradient mask recorded for typed-graph leaves to a lowered tape. -/
 def applyLeafMetadata {α : Type} [TorchLean.Storage α] (metadata : Array LeafMetadata)
@@ -37,6 +37,9 @@ def applyLeafMetadata {α : Type} [TorchLean.Storage α] (metadata : Array LeafM
 
 /--
 Lower the recorded executable graph into a runtime tape and restore its leaf metadata.
+
+This is an explicit compatibility adapter. Normal session backward uses saved programs;
+the raw Tape engine still materializes a dense contribution for each node.
 
 The shape-indexed graph deliberately contains only mathematical leaf values. Names and
 `requiresGrad` are runtime concerns, so the session stores them alongside the graph and attaches
@@ -62,9 +65,22 @@ def backwardDenseAll {α : Type} [TorchLean.Storage α] (s : TypedGraphSession �
   s.validateTensorRef out
   let st0 ← s.state.get
   let output ← okOrThrow (mkIdxOrThrow (_α := α) (Γ := st0.Γ) (ss := st0.ss) out.id sh)
-  let t ← okOrThrow (lowerTape (α := α) (st := st0))
-  okOrThrow (Runtime.Autograd.TypedGraph.backwardDenseAllFrom
-    (α := α) (Γ := st0.Γ) (ss := st0.ss) t output seed)
+  if st0.leafMetadata.size != st0.Γ.length then
+    throw <| IO.userError
+      "typed graph session: leaf metadata is not aligned with the typed leaf context"
+  let compiled ← okOrThrow <|
+    Runtime.Autograd.TypedGraph.compileChecked st0.g st0.x st0.nat
+  let gradients := compiled.backwardDenseAllFrom output seed
+  -- Frozen leaves have no outgoing reverse program. Suppressing their incoming contributions
+  -- therefore changes only their final gradient. The engine retains an explicit seed even on
+  -- a frozen leaf, so restore that seed rather than unconditionally replacing it with zero.
+  pure <| gradients.mapIdx fun id gradient =>
+    match st0.leafMetadata[id]? with
+    | some leaf =>
+        if leaf.requiresGrad then gradient
+        else if id == output.i.val then Spec.SomeTensor.ofTensor seed
+        else Spec.SomeTensor.ofTensor (Tensor.zeros gradient.shape)
+    | none => gradient
 
 /--
 Run backward from a scalar loss with seed `1`.

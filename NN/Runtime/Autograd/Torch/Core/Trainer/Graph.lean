@@ -14,8 +14,8 @@ public import NN.Runtime.Autograd.Torch.Core.TypedGraph
 /-!
 # Graph Trainer
 
-Build the graph once, then run it with the current parameters on each call. Each backward
-pass uses a fresh tape because its closures retain that forward pass.
+Build the graph once, then compile it with the current parameters on each call. Each backward
+pass uses the local programs saved by that forward execution.
 -/
 
 public section
@@ -56,7 +56,6 @@ def Internal.graphScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
   let nodeShapes : List Shape := graph.nodeShapes
   let graphData : Proofs.Autograd.Algebra.GraphData α dataInputPack argumentShapes nodeShapes :=
     graph.data
-  let lossNodeId : Nat := graph.output.i.val
   let rec collectParameters : {ss : List Shape} → ParamList α ss → Array (AnyParam α) →
       Array (AnyParam α)
     | [], .nil, result => result
@@ -64,27 +63,20 @@ def Internal.graphScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
         collectParameters rest (result.push (AnyParam.ofParam parameter))
   let parameterSlots := collectParameters parameters #[]
 
-  let getScalarFromTape (tape : Runtime.Autograd.Tape α) : IO (Tensor α []) := do
-    let outputValue ← match tape.getValue? lossNodeId with
-      | some value => pure value
-      | none => throw <| IO.userError "typed graph execution: missing output value in tape"
-    if shapeIsScalar : outputValue.shape = ([] : Shape) then
-      pure (outputValue.cast shapeIsScalar)
-    else
-      throw <| IO.userError <|
-        s!"typed graph execution: output shape mismatch "
-          ++ s!"(expected [], got {Shape.pretty outputValue.shape})"
+  let getScalar (compiled : Runtime.Autograd.TypedGraph.Compiled α argumentShapes nodeShapes) :
+      Tensor α [] :=
+    compiled.context.lookup.read graph.output
 
-  let runTape (inputs : TorchLean.TensorPack α inputShapes) (dataInputs : dataInputPack) :
-      IO (Runtime.Autograd.Tape α) := do
+  let runCompiled (inputs : TorchLean.TensorPack α inputShapes) (dataInputs : dataInputPack) :
+      IO (Runtime.Autograd.TypedGraph.Compiled α argumentShapes nodeShapes) := do
     validateDataInputsIO dataInputs
     let parameterValues ← ParamList.values (α := α) parameters
     let arguments := TorchLean.TensorPack.append (α := α) (ss₁ := paramShapes)
       (ss₂ := inputShapes) parameterValues inputs
-    let (tape, _) ← okOrThrow <|
-      Runtime.Autograd.TypedGraph.lowerToTapeChecked graphData arguments dataInputs
+    let compiled ← okOrThrow <|
+      Runtime.Autograd.TypedGraph.compileChecked graphData arguments dataInputs
     let getValue {s : Shape} (id : Nat) : IO (Tensor α s) := do
-      let some value := tape.getValue? id
+      let some value := compiled.context.values[id]?
         | throw <| IO.userError "typed graph buffer update: missing recorded value"
       if h : value.shape = s then
         pure (value.cast h)
@@ -105,14 +97,12 @@ def Internal.graphScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
         let parameter ← getParameter id
         unless parameter.requiresGrad do
           parameter.set value
-    pure tape
+    pure compiled
   -- Parameters are the first graph arguments, so their gradients form the leading pack.
-  let parameterGradients (tape : Runtime.Autograd.Tape α) :
+  let parameterGradients
+      (compiled : Runtime.Autograd.TypedGraph.Compiled α argumentShapes nodeShapes) :
       IO (TorchLean.TensorPack α paramShapes) := do
-    let gradients ← okOrThrow
-      (Runtime.Autograd.TypedGraph.backwardDenseAllFrom
-        (α := α) (Γ := argumentShapes) (ss := nodeShapes) tape graph.output
-        (Tensor.scalar (1 : α)))
+    let gradients := compiled.backwardDenseAllFrom graph.output (Tensor.scalar (1 : α))
     let values ← okOrThrow (TorchLean.TensorPack.ofShapeErasedArray
       (α := α) gradients (shapes := paramShapes))
     let rec retainTrainable : {shapes : List Shape} → ParamList α shapes →
@@ -129,7 +119,7 @@ def Internal.graphScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
       (β := Curried.Fn δ dataInputShapes (IO (Tensor α []))) (fun inputs =>
         Curried.curry (α := δ) (ss := dataInputShapes)
           (β := IO (Tensor α [])) (fun dataInputs =>
-            runTape inputs dataInputs >>= getScalarFromTape))
+            getScalar <$> runCompiled inputs dataInputs))
   let diff :
       Curried.Fn α inputShapes (Curried.Fn δ dataInputShapes
         (IO (Tensor α [] × TorchLean.TensorPack α paramShapes))) :=
@@ -138,9 +128,9 @@ def Internal.graphScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
         (IO (Tensor α [] × TorchLean.TensorPack α paramShapes))) (fun inputs =>
         Curried.curry (α := δ) (ss := dataInputShapes)
           (β := IO (Tensor α [] × TorchLean.TensorPack α paramShapes)) (fun dataInputs => do
-            let tape ← runTape inputs dataInputs
-            let lossValue ← getScalarFromTape tape
-            let gradients ← parameterGradients tape
+            let compiled ← runCompiled inputs dataInputs
+            let lossValue := getScalar compiled
+            let gradients ← parameterGradients compiled
             pure (lossValue, gradients)))
   let grad :
       Curried.Fn α inputShapes
@@ -149,8 +139,8 @@ def Internal.graphScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
       (β := Curried.Fn δ dataInputShapes (IO (TorchLean.TensorPack α paramShapes))) (fun inputs =>
         Curried.curry (α := δ) (ss := dataInputShapes)
           (β := IO (TorchLean.TensorPack α paramShapes)) (fun dataInputs => do
-            let tape ← runTape inputs dataInputs
-            parameterGradients tape))
+            let compiled ← runCompiled inputs dataInputs
+            parameterGradients compiled))
   let stepWithLoss (learningRate : α) :
       Curried.Fn α inputShapes
         (Curried.Fn δ dataInputShapes (IO (Tensor α []))) :=

@@ -1,0 +1,808 @@
+TorchLean TypedGraph scaling: raw measurement and validation logs
+Date: 2026-09-25
+Baseline: 0f845313599795032960d487708c309e1fb2f40e
+Changed source: the commit containing this file
+All paths below refer to the isolated tmpfs checkout/work directory.
+Primary and secondary measurements are individual process samples, not medians.
+
+===== before-1000.log =====
+phase=construct n=1000 ns=10043556 VmHWM:	   91344 kB VmRSS:	   91344 kB
+phase=lower n=1000 ns=30329792 VmHWM:	  132404 kB VmRSS:	  132404 kB
+phase=backward n=1000 ns=224300877 VmHWM:	  132404 kB VmRSS:	  132404 kB
+n=1000 values=18300553107339986344 gradients=13835234076802139560 tensors=1001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/baseline 1000"
+	User time (seconds): 0.31
+	System time (seconds): 0.01
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.32
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 131732
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2197
+	Voluntary context switches: 4
+	Involuntary context switches: 2
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== before-2000.log =====
+phase=construct n=2000 ns=40417426 VmHWM:	  137392 kB VmRSS:	  137392 kB
+phase=lower n=2000 ns=118322762 VmHWM:	  295292 kB VmRSS:	  295292 kB
+phase=backward n=2000 ns=910058099 VmHWM:	  297148 kB VmRSS:	  297148 kB
+n=2000 values=2930834670921170080 gradients=5004742299325283488 tensors=2001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/baseline 2000"
+	User time (seconds): 1.08
+	System time (seconds): 0.04
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:01.12
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 296232
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2402
+	Voluntary context switches: 4
+	Involuntary context switches: 3
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== before-4000.log =====
+phase=construct n=4000 ns=164549390 VmHWM:	  326616 kB VmRSS:	  326616 kB
+phase=lower n=4000 ns=479345921 VmHWM:	  953756 kB VmRSS:	  953756 kB
+phase=backward n=4000 ns=3954980945 VmHWM:	  955400 kB VmRSS:	  955376 kB
+n=4000 values=13280056868529673168 gradients=12719358714922046416 tensors=4001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/baseline 4000"
+	User time (seconds): 4.44
+	System time (seconds): 0.20
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:04.65
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 955400
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 3165
+	Voluntary context switches: 4
+	Involuntary context switches: 13
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== before-8000.log =====
+phase=construct n=8000 ns=669575989 VmHWM:	 1077792 kB VmRSS:	 1077792 kB
+phase=lower n=8000 ns=1936552500 VmHWM:	 3587652 kB VmRSS:	 3587652 kB
+phase=backward n=8000 ns=19369611563 VmHWM:	 3591088 kB VmRSS:	 1439936 kB
+n=8000 values=3448001696160945712 gradients=378798550107952688 tensors=8001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/baseline 8000"
+	User time (seconds): 21.36
+	System time (seconds): 0.66
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:22.05
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 3591088
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 8310
+	Voluntary context switches: 4
+	Involuntary context switches: 123
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== before-16000.log =====
+phase=construct n=16000 ns=3545388965 VmHWM:	 4088464 kB VmRSS:	 4088464 kB
+phase=lower n=16000 ns=32312109159 VmHWM:	14118204 kB VmRSS:	14118204 kB
+phase=backward n=16000 ns=124642421964 VmHWM:	14123256 kB VmRSS:	 4434532 kB
+n=16000 values=1788165612113097456 gradients=13819532016633377520 tensors=16001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/baseline 16000"
+	User time (seconds): 151.69
+	System time (seconds): 8.07
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:40.61
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 14123256
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 49323
+	Voluntary context switches: 4
+	Involuntary context switches: 5000
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== final-compiled-1000.log =====
+phase=construct n=1000 ns=9390398 VmHWM:	   90932 kB VmRSS:	   90932 kB
+phase=lower n=1000 ns=613797 VmHWM:	   93100 kB VmRSS:	   93100 kB
+phase=backward n=1000 ns=1685374 VmHWM:	   93100 kB VmRSS:	   93100 kB
+n=1000 values=18300553107339986344 gradients=13835234076802139560 tensors=1001
+phase=backward_release n=1000 ns=4942242 VmHWM:	   93100 kB VmRSS:	   93100 kB
+n=1000 repeated_gradients=13835234076802139560 tensors=1001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 1000"
+	User time (seconds): 0.06
+	System time (seconds): 0.01
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.07
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 91936
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2169
+	Voluntary context switches: 4
+	Involuntary context switches: 0
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== final-compiled-2000.log =====
+phase=construct n=2000 ns=39276248 VmHWM:	  140184 kB VmRSS:	  140184 kB
+phase=lower n=2000 ns=1473070 VmHWM:	  140400 kB VmRSS:	  140400 kB
+phase=backward n=2000 ns=3841422 VmHWM:	  142448 kB VmRSS:	  142448 kB
+n=2000 values=2930834670921170080 gradients=5004742299325283488 tensors=2001
+phase=backward_release n=2000 ns=16640618 VmHWM:	  142448 kB VmRSS:	  142448 kB
+n=2000 repeated_gradients=5004742299325283488 tensors=2001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 2000"
+	User time (seconds): 0.08
+	System time (seconds): 0.02
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.11
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 142044
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2223
+	Voluntary context switches: 4
+	Involuntary context switches: 2
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== final-compiled-4000.log =====
+phase=construct n=4000 ns=155808249 VmHWM:	  328844 kB VmRSS:	  328844 kB
+phase=lower n=4000 ns=3901007 VmHWM:	  331332 kB VmRSS:	  331332 kB
+phase=backward n=4000 ns=7452662 VmHWM:	  333384 kB VmRSS:	  333384 kB
+n=4000 values=13280056868529673168 gradients=12719358714922046416 tensors=4001
+phase=backward_release n=4000 ns=59266603 VmHWM:	  333384 kB VmRSS:	  333384 kB
+n=4000 repeated_gradients=12719358714922046416 tensors=4001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 4000"
+	User time (seconds): 0.20
+	System time (seconds): 0.08
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.28
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 332784
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2382
+	Voluntary context switches: 4
+	Involuntary context switches: 4
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== final-compiled-8000.log =====
+phase=construct n=8000 ns=628881912 VmHWM:	 1079748 kB VmRSS:	 1079748 kB
+phase=lower n=8000 ns=7374222 VmHWM:	 1082672 kB VmRSS:	 1082672 kB
+phase=backward n=8000 ns=14134490 VmHWM:	 1084720 kB VmRSS:	 1084720 kB
+n=8000 values=3448001696160945712 gradients=378798550107952688 tensors=8001
+phase=backward_release n=8000 ns=255631505 VmHWM:	 1084720 kB VmRSS:	 1084720 kB
+n=8000 repeated_gradients=378798550107952688 tensors=8001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 8000"
+	User time (seconds): 0.76
+	System time (seconds): 0.20
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.97
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1084204
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2870
+	Voluntary context switches: 4
+	Involuntary context switches: 1
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== final-compiled-16000.log =====
+phase=construct n=16000 ns=3013469184 VmHWM:	 4093532 kB VmRSS:	 4093532 kB
+phase=lower n=16000 ns=25333841 VmHWM:	 4099384 kB VmRSS:	 4099384 kB
+phase=backward n=16000 ns=44414793 VmHWM:	 4104832 kB VmRSS:	 4104832 kB
+n=16000 values=1788165612113097456 gradients=13819532016633377520 tensors=16001
+phase=backward_release n=16000 ns=953066587 VmHWM:	 4104864 kB VmRSS:	 4104864 kB
+n=16000 repeated_gradients=13819532016633377520 tensors=16001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 16000"
+	User time (seconds): 2.96
+	System time (seconds): 1.13
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:04.10
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 4103840
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 5217
+	Voluntary context switches: 4
+	Involuntary context switches: 16
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== final-public-1000.log =====
+phase=construct n=1000 ns=9315088 VmHWM:	   90392 kB VmRSS:	   90392 kB
+phase=checked_vjp n=1000 ns=2218272 VmHWM:	   92580 kB VmRSS:	   92580 kB
+phase=checked_vjp_release n=1000 ns=5238545 VmHWM:	   92580 kB VmRSS:	   92580 kB
+n=1000 input_gradients=1969328185725612400 output=12796664432432117
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 1000 public"
+	User time (seconds): 0.05
+	System time (seconds): 0.02
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.07
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 91904
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2162
+	Voluntary context switches: 4
+	Involuntary context switches: 1
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== final-public-2000.log =====
+phase=construct n=2000 ns=38897455 VmHWM:	  139448 kB VmRSS:	  139448 kB
+phase=checked_vjp n=2000 ns=5194345 VmHWM:	  141752 kB VmRSS:	  141752 kB
+phase=checked_vjp_release n=2000 ns=17421769 VmHWM:	  141752 kB VmRSS:	  141752 kB
+n=2000 input_gradients=1969328185725612400 output=12796664432432117
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 2000 public"
+	User time (seconds): 0.11
+	System time (seconds): 0.00
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.11
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 140604
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2213
+	Voluntary context switches: 4
+	Involuntary context switches: 0
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== final-public-4000.log =====
+phase=construct n=4000 ns=158230204 VmHWM:	  328064 kB VmRSS:	  328064 kB
+phase=checked_vjp n=4000 ns=11851129 VmHWM:	  332600 kB VmRSS:	  332600 kB
+phase=checked_vjp_release n=4000 ns=64935775 VmHWM:	  332600 kB VmRSS:	  332600 kB
+n=4000 input_gradients=1969328185725612400 output=12796664432432117
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 4000 public"
+	User time (seconds): 0.24
+	System time (seconds): 0.04
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.28
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 332084
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2368
+	Voluntary context switches: 4
+	Involuntary context switches: 2
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== final-public-8000.log =====
+phase=construct n=8000 ns=619410540 VmHWM:	 1080332 kB VmRSS:	 1080332 kB
+phase=checked_vjp n=8000 ns=23632738 VmHWM:	 1091456 kB VmRSS:	 1091456 kB
+phase=checked_vjp_release n=8000 ns=226757326 VmHWM:	 1091456 kB VmRSS:	 1091456 kB
+n=8000 input_gradients=1969328185725612400 output=12796664432432117
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 8000 public"
+	User time (seconds): 0.72
+	System time (seconds): 0.20
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.92
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1091052
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2883
+	Voluntary context switches: 4
+	Involuntary context switches: 4
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== final-public-16000.log =====
+phase=construct n=16000 ns=2514902914 VmHWM:	 4092568 kB VmRSS:	 4092568 kB
+phase=checked_vjp n=16000 ns=46070237 VmHWM:	 4110744 kB VmRSS:	 4110744 kB
+phase=checked_vjp_release n=16000 ns=889081684 VmHWM:	 4111648 kB VmRSS:	 3249496 kB
+n=16000 input_gradients=1969328185725612400 output=12796664432432117
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 16000 public"
+	User time (seconds): 2.75
+	System time (seconds): 0.75
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.51
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 4111648
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 5038
+	Voluntary context switches: 4
+	Involuntary context switches: 5
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== measured-compiled-1000.log =====
+phase=construct n=1000 ns=9690629 VmHWM:	   91168 kB VmRSS:	   91168 kB
+phase=lower n=1000 ns=707495 VmHWM:	   93324 kB VmRSS:	   93324 kB
+phase=backward n=1000 ns=1808399 VmHWM:	   93324 kB VmRSS:	   93324 kB
+n=1000 values=18300553107339986344 gradients=13835234076802139560 tensors=1001
+phase=backward_release n=1000 ns=5342553 VmHWM:	   93324 kB VmRSS:	   93324 kB
+n=1000 repeated_gradients=13835234076802139560 tensors=1001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 1000"
+	User time (seconds): 0.06
+	System time (seconds): 0.00
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.07
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 92680
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2174
+	Voluntary context switches: 4
+	Involuntary context switches: 0
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== measured-compiled-2000.log =====
+phase=construct n=2000 ns=41637046 VmHWM:	  139624 kB VmRSS:	  139624 kB
+phase=lower n=2000 ns=1572660 VmHWM:	  139868 kB VmRSS:	  139868 kB
+phase=backward n=2000 ns=4117563 VmHWM:	  141916 kB VmRSS:	  141916 kB
+n=2000 values=2930834670921170080 gradients=5004742299325283488 tensors=2001
+phase=backward_release n=2000 ns=17231362 VmHWM:	  141916 kB VmRSS:	  141916 kB
+n=2000 repeated_gradients=5004742299325283488 tensors=2001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 2000"
+	User time (seconds): 0.10
+	System time (seconds): 0.02
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.12
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 141356
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2215
+	Voluntary context switches: 4
+	Involuntary context switches: 2
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== measured-compiled-4000.log =====
+phase=construct n=4000 ns=212007835 VmHWM:	  328556 kB VmRSS:	  328556 kB
+phase=lower n=4000 ns=6841011 VmHWM:	  331056 kB VmRSS:	  331056 kB
+phase=backward n=4000 ns=14169953 VmHWM:	  333108 kB VmRSS:	  333108 kB
+n=4000 values=13280056868529673168 gradients=12719358714922046416 tensors=4001
+phase=backward_release n=4000 ns=112381506 VmHWM:	  333108 kB VmRSS:	  333108 kB
+n=4000 repeated_gradients=12719358714922046416 tensors=4001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 4000"
+	User time (seconds): 0.29
+	System time (seconds): 0.10
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.40
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 331980
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 2379
+	Voluntary context switches: 4
+	Involuntary context switches: 6
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== measured-compiled-8000.log =====
+phase=construct n=8000 ns=1185811060 VmHWM:	 1080204 kB VmRSS:	 1080204 kB
+phase=lower n=8000 ns=8894044 VmHWM:	 1083140 kB VmRSS:	 1083140 kB
+phase=backward n=8000 ns=16028603 VmHWM:	 1085192 kB VmRSS:	 1085192 kB
+n=8000 values=3448001696160945712 gradients=378798550107952688 tensors=8001
+phase=backward_release n=8000 ns=281831849 VmHWM:	 1085192 kB VmRSS:	 1085192 kB
+n=8000 repeated_gradients=378798550107952688 tensors=8001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 8000"
+	User time (seconds): 0.83
+	System time (seconds): 0.71
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:01.55
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1084132
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 3005
+	Voluntary context switches: 4
+	Involuntary context switches: 3
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== measured-compiled-16000.log =====
+phase=construct n=16000 ns=4016254705 VmHWM:	 4092832 kB VmRSS:	 4092832 kB
+phase=lower n=16000 ns=33329931 VmHWM:	 4098700 kB VmRSS:	 4098700 kB
+phase=backward n=16000 ns=48366218 VmHWM:	 4104848 kB VmRSS:	 4104848 kB
+n=16000 values=1788165612113097456 gradients=13819532016633377520 tensors=16001
+phase=backward_release n=16000 ns=1230313982 VmHWM:	 4104244 kB VmRSS:	 2242448 kB
+n=16000 repeated_gradients=13819532016633377520 tensors=16001
+	Command being timed: "/dev/shm/torchlean-finish-20260925-150455/typedgraph-work/after 16000"
+	User time (seconds): 3.53
+	System time (seconds): 1.87
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:05.40
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 4104244
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 8948
+	Voluntary context switches: 4
+	Involuntary context switches: 18
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+===== regression-interpreted.log =====
+TypedGraph scaling regressions passed: FP32 bits, branch order, repeated parents, input/intermediate seeds, zero-cotangent singular/custom VJPs, validation, repeated backward, public checked/pure APIs, session frozen leaves
+
+===== regression-native.log =====
+TypedGraph scaling regressions passed: FP32 bits, branch order, repeated parents, input/intermediate seeds, zero-cotangent singular/custom VJPs, validation, repeated backward, public checked/pure APIs, session frozen leaves
+
+===== axioms.log =====
+'Runtime.Autograd.TypedGraph.lowerToTapeChecked_eq_array' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Runtime.Autograd.TypedGraph.compileChecked_asLegacy' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Runtime.Autograd.TypedGraph.compileChecked_backwardDenseFrom_eq_tape' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+'Proofs.Autograd.Algebra.GraphData.backpropCtx_eq_saved' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Runtime.Autograd.Torch.TypedGraphWithData.vjpChecked_eq_compiled' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+'Proofs.Autograd.Algebra.Node.toReal_toAlgebra' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Proofs.Autograd.Algebra.Node.toAlgebra_toReal' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+===== suite-native.log =====
+[ODE] FAIL super inequality failed on [1.000000,1.000000]: duU∈(-0.000000, 0.000000), f(t,uU)∈(2.000000, 2.000000); no representable interior time split remains
+== TorchLean: curated tests ==
+  complex real-loss gradients, SGD, and exact checkpoints: passed
+  NPY metadata and prefix IO: passed
+  data API: passed
+  diffusion API: passed
+  neural field derivatives and residual parameter gradients: passed
+  multidimensional FFT/FNO values and gradients (NN.Backend.Device.cpu): passed
+  GPT-2 cached corpus windows: passed
+  typed trainer exact values and snapshots (Runtime.Autograd.Torch.ExecutionMode.eager): passed
+  typed trainer exact values and snapshots (Runtime.Autograd.Torch.ExecutionMode.typedGraph): passed
+  typed trainer precision, frozen snapshots, and checkpoint rejection: passed
+  public application surface: passed
+  RL singleton critics: passed
+  text API: passed
+dataset size = 4
+mean_loss(before training) = 1.064659
+mean_loss(after training) = 0.800438
+dataset size = 4
+mean_loss(before training) = 1.064659
+mean_loss(after training) = 0.800438
+  trainer checkpoint API: passed
+  frozen and live CPU profile rejection (mismatched.relu): passed
+  frozen and live CPU profile rejection (trusted_value.relu): passed
+dataset size = 2
+mean_loss(before training) = 2.209489
+mean_loss(after training) = 2.209489
+dataset size = 2
+mean_loss(before training) = 2.209489
+mean_loss(after training) = 2.209489
+dataset size = 2
+mean_loss(before training) = 2.209489
+mean_loss(after training) = 2.080467
+dataset size = 2
+mean_loss(before training) = 2.209489
+mean_loss(after training) = 2.080467
+dataset size = 2
+mean_loss(before training) = 0.051513
+mean_loss(after training) = 0.051513
+  wrote checkpoint: /tmp/torchlean-trainer-report-custom-state.json
+dataset size = 2
+mean_loss(before training) = 0.051513
+mean_loss(after training) = 0.051513
+  trainer report API: passed
+  trainer run configuration: passed
+[ODE] initial OK at t0=100000000000000001097906362944045541740492309677311846336810682903157585404911491537163328978494688899061249669721172515611590283743140088328307009198146046031271664502933027185697489699588559043338384466165001178426897626212945177628091195786707458122783970171784415105291802893207873272974885715430223118336.000000
+[ODE] verification succeeded.
+[ODE] initial OK at t0=-169999999999999993883079578865998174333346074304075874502773119193537729178160565864330091787584707988572262467983188919169916105593357174268369962062473635296474636515660464935663040684957844303524367815028553272712298986386310828644513212353921123253311675499856875650512437415429217994623324794855339589632.000000
+[ODE] verification succeeded.
+[ODE] initial OK at t0=-169999999999999993883079578865998174333346074304075874502773119193537729178160565864330091787584707988572262467983188919169916105593357174268369962062473635296474636515660464935663040684957844303524367815028553272712298986386310828644513212353921123253311675499856875650512437415429217994623324794855339589632.000000
+[ODE] verification succeeded.
+[ODE] initial OK at t0=1.000000
+== Workflow 2: linear -> mse_loss (scalar) ==
+lowered IR nodes: 8
+[IBP] loss lo = [0.234125]
+[IBP] loss hi = [0.345425]
+[CROWN] loss lo = [0.234125]
+[CROWN] loss hi = [0.345425]
+[CROWN-backward] loss lo = [0.234125]
+[CROWN-backward] loss hi = [0.345425]
+lowered IR nodes: 42
+[IBP] loss lo: [-0.000000]
+[IBP] loss hi: [111812.968750]
+[CROWN] skipped for the default runtime-check path; pass --with-crown to also compute CROWN output and objective bounds
+== Workflow 2: linear -> mse_loss (scalar) ==
+lowered IR nodes: 8
+[IBP] loss lo = [7855929 * 2^-25]
+[IBP] loss hi = [5795271 * 2^-24]
+[CROWN] loss lo = [7855929 * 2^-25]
+[CROWN] loss hi = [5795271 * 2^-24]
+[CROWN-backward] loss lo = [7855929 * 2^-25]
+[CROWN-backward] loss hi = [5795271 * 2^-24]
+lowered IR nodes: 42
+[IBP] loss lo: [0]
+[IBP] loss hi: [111812.5703125]
+[CROWN] skipped for the default runtime-check path; pass --with-crown to also compute CROWN output and objective bounds
+  verification API: passed
+  public tensor initialization: passed
+  public model contracts: passed
+  Model boundary regressions: passed
+  backend profiles: ok
+Mismatch between Python and Lean IBP bounds.
+Lean lo: [-0.000000]
+Py   lo: [-0.010000]
+Lea[IBPNodeCert] inward or mismatched bound at node 0 (NN.IR.OpKind.input)
+  cert: dim=2, lo=[0, 0], hi=[16777199 * 2^-24, 16777199 * 2^-24]
+  lean: dim=2, lo=[0, 0], hi=[1, 1]
+n hi: [2.000000]
+Py   hi: [1.010000]
+coordinate 0 binary64 bits: Lean lo=9223372036854775810, Py lo=13800290266158863483, Lean hi=4611686018427387909, Py hi=4607227454796291113
+IBP certificate verified: serialized bounds enclose Lean recomputation.
+IBP refinement: containment, tightening, and failure checks passed
+binary matmul: shapes, values, enclosures, and broadcast coefficients passed
+LayerNorm derivative: exact constant rows, row separation and IR differences passed
+CROWN transfer: rounding, failure, shape and independent-input checks passed
+  directed average pooling: passed
+  directed reductions and input regions: passed
+  directed BatchNorm bounds: passed
+  camera certificate point counts: passed
+  Certificate parsing: outward rounding, radius, and leaf-cover tests passed
+digits CROWN verdict: ok
+  Finite binary32 artifact: dominance, margins, coverage, and rejection tests passed
+  Exact CROWN query: 20 acceptance/rejection tests passed
+  Exact monotonicity: 13 acceptance/rejection tests passed
+softmax derivatives: independent rows, axes, directions, and HVP passed
+dynamic einsum values, VJPs, and allocation bounds (NN.Backend.Device.cpu): passed
+  runtime fast paths: ok
+== Tensor: einops lexer Unicode policy ==
+  einops lexer Unicode policy checks passed
+  public tensor linear algebra: passed
+  public tensor operations: passed
+  tensor storage and mixed-element promotion: passed
+PARAMETER_ALIAS_CPU_PASSED
+=== Runtime autograd test suite (Float) ===
+autograd_engine_test (Float): OK
+autograd_linear_regression_test (Float): OK
+autograd_train_test (Float): OK
+autograd_layernorm_test (Float): OK
+autograd_conv_test (Float): OK
+typed_graph_log_softmax_jvp_test (Float): OK
+typed_graph_output_reference_test (Float): OK
+typed_graph_smooth_max_domain_test (Float): OK
+disconnected_dense_gradient_test (Float): OK
+TypedGraph scaling regressions passed: FP32 bits, branch order, repeated parents, input/intermediate seeds, zero-cotangent singular/custom VJPs, validation, repeated backward, public checked/pure APIs, session frozen leaves
+optimizer and scheduler edge cases (Float): OK
+=== Autograd test suite completed ===
+certificate_preconditions: begin
+certificate_preconditions: ok
+cifar_crop: begin
+cifar_crop: ok
+ir_batchnorm: begin
+ir_batchnorm: ok
+onnx_bridge: begin
+onnx_bridge: 13 ONNX parity cases ok
+onnx_bridge: ok
+pytorch_roundtrip_parity: begin
+pytorch_roundtrip_parity: ok
+Probability model contract checks passed
+rank_polymorphic_layer_ops: ok
+CPU eager requiresGrad propagation: OK
+rl_check: begin
+DQN semi-gradient Huber checks passed (Float, Float32).
+rl_check: ok
+Lean encloses every derivative-residual interval in the certificate.
+torchlean_ops_check: begin
+torchlean_ops_check: ok
+torchlean_index_shape_check: begin
+torchlean_index_shape_check: ok
+torchlean_spec_mlp_equiv_check: begin
+torchlean_spec_mlp_equiv_check: ok
+torchlean_ir_exec_equiv_check: begin
+torchlean_ir_exec_equiv_check: ok
+autograd_engine_test (Rat): OK
+elementwise_div_test (Rat): OK
+weighted_mse_test (Rat): OK
+  CUDA kernels: skipped (LibTorch not linked)
+== TorchLean: all curated tests passed ==
+
+===== native-rebuild.log (final 10 lines; full log retained in typedgraph-work) =====
+✔ [5903/5912] Built NN.Tests.API.Gpt2Corpus (3.0s)
+✔ [5905/5912] Built NN.Tests.API.BufferUpdates:c.o (7.0s)
+✔ [5906/5912] Built NN.Verification.Builtin.TransformerIBPWorkflow:c.o (8.5s)
+✔ [5907/5912] Built NN.Tests.API.Precision (14s)
+✔ [5908/5912] Built NN.Verification.Builtin.CrownOpsWorkflow:c.o (9.4s)
+✔ [5909/5912] Built NN.Tests.API.PublicSurface:c.o (6.9s)
+✔ [5910/5912] Built NN.Tests.API.Verification:c.o (10s)
+✔ [5911/5912] Built NN.Tests.Runtime.Floats.TorchLeanOpsCheck:c.o (15s)
+✔ [5912/5912] Built NN.Tests.API.Precision:c.o (16s)
+Build completed successfully (5912 jobs).
+
+===== public-root-native.log (final 10 lines; full log retained in typedgraph-work) =====
+✔ [2374/2374] Built NN.Runtime.Autograd.TypedGraph:c.o (135ms)
+Build completed successfully (2374 jobs).
+
+===== final-proof-build.log (final 10 lines; full log retained in typedgraph-work) =====
+✔ [3039/3043] Built NN.Proofs.Autograd.Training.StepAlgebra (1.8s)
+✔ [3040/3043] Built NN.Proofs.RuntimeApprox.Core.SpecApprox (2.0s)
+✔ [3041/3043] Built NN.Tests.Runtime.TypedGraphScalingRegressionMain (2.3s)
+✔ [3042/3043] Built NN.Tests.Runtime.TypedGraphScaling (2.6s)
+✔ [3043/3043] Built NN.Proofs.RuntimeApprox.Graph.ForwardApprox (2.7s)
+Build completed successfully (3043 jobs).

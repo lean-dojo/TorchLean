@@ -7,14 +7,14 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Torch.Core.Session
-public import NN.Runtime.Autograd.TypedGraph.Core
+public import NN.Runtime.Autograd.TypedGraph.Compiled
 
 /-!
 # Typed graph sessions
 
-This session records shape-indexed `GraphData` as operations are called. A backward pass lowers
-the recorded graph and its current leaf values to a runtime tape, then runs the tape's reverse
-loop. `TorchLean.Session` selects this implementation when `options.execution := .typedGraph`;
+This session records shape-indexed `GraphData` as operations are called. A backward pass compiles
+the recorded graph at its current leaf values, then executes its saved reverse programs.
+`TorchLean.Session` selects this implementation when `options.execution := .typedGraph`;
 `Runtime.Autograd.Model.Session` provides the shared eager and typed graph interface.
 
 Create all parameter and input leaves before recording the first operation. A training step
@@ -328,9 +328,9 @@ def mkIdxOrThrow {_α : Type} {Γ ss : List Shape} (id : Nat) (s : Shape) :
 /--
 Evaluate the recorded graph and return the value of a `TensorRef`.
 
-The first read after a change to the session evaluates the graph with `lowerToTapeChecked` at the
-recorded leaf values and nat-environment, keeps the resulting context values, and discards the
-tape. Later reads of the same snapshot use those values. It does not run backward.
+The first read after a change to the session compiles the graph at the recorded leaf values and
+nat-environment and keeps the indexed context values. Later reads of the same snapshot use those
+values. It does not run backward.
 -/
 def getValue {α : Type} [TorchLean.Storage α]
     (s : TypedGraphSession α) {sh : Shape}
@@ -353,9 +353,9 @@ where
   /-- Validate and evaluate the recorded graph, retaining only its value context. -/
   evaluate (st0 : TypedGraphSessionState α) (version : Nat) :
       IO (Array (Spec.SomeTensor α)) := do
-    let (_, ctx) ← okOrThrow <|
-      Runtime.Autograd.TypedGraph.lowerToTapeChecked st0.g st0.x st0.nat
-    let values := ctx.toShapeErasedArray
+    let compiled ← okOrThrow <|
+      Runtime.Autograd.TypedGraph.compileChecked st0.g st0.x st0.nat
+    let values := compiled.context.values
     s.valueCache.set (some (version, values))
     pure values
 

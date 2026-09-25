@@ -300,6 +300,14 @@ class Storage (α : Type u) where
     toArray (ofArray values) = values
   /-- The ordinary array observation uniquely determines physical storage. -/
   toArray_injective : Function.Injective toArray
+  /--
+  Optional propositional equality for checked runtime optimizations.
+
+  This is separate from numerical `BEq`: floating-point equality here distinguishes signed
+  zeros and preserves the carrier's representation. Backends without a decision procedure use
+  the uncompressed implementation of operations that need one.
+  -/
+  decEq? : Option (DecidableEq α) := none
 
 namespace Storage
 
@@ -543,6 +551,10 @@ instance (priority := low) instArrayStorage (α : Type u) :
   toArray_foldl := by intros; rfl
   toArray_ofArray := by intros; rfl
   toArray_injective := Function.injective_id
+
+/-- Float32 retains ordinary array storage and exposes its exact carrier equality. -/
+instance instFloat32Storage : Storage Float32 :=
+  { instArrayStorage Float32 with decEq? := some inferInstance }
 
 namespace Storage.Internal
 
@@ -816,6 +828,7 @@ end Storage.Internal
 
 /-- `UInt8` tensors use Lean's packed native byte-array representation. -/
 instance instUInt8Storage : Storage UInt8 where
+  decEq? := some inferInstance
   Buffer := ByteArray
   emptyWithCapacity := Storage.Internal.byteBufferEmptyWithCapacity
   push := Storage.Internal.byteBufferPush
@@ -851,6 +864,7 @@ instance instUInt8Storage : Storage UInt8 where
 
 /-- `Float` tensors use Lean's unboxed native scalar-array representation. -/
 instance instFloatStorage : Storage Float where
+  decEq? := some inferInstance
   Buffer := FloatArray
   emptyWithCapacity := Storage.Internal.floatBufferEmptyWithCapacity
   push := Storage.Internal.floatBufferPush

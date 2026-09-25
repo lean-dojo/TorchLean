@@ -527,10 +527,12 @@ node, including gradient-only calls. The failure is catchable:
 ```
 
 ```leanOutput sfmLogBad (whitespace := lax)
-at -1.000000: autograd: log: input contains values <= 0 (or NaN);
-use `safe_log` if you want epsilon protection
-at 0.000000: autograd: log: input contains values <= 0 (or NaN);
-use `safe_log` if you want epsilon protection
+at -1.000000: autograd: log: input contains values <= 0
+(or NaN); `safe_log` computes log(softplus(x) + eps)
+and accepts every input
+at 0.000000: autograd: log: input contains values <= 0
+(or NaN); `safe_log` computes log(softplus(x) + eps)
+and accepts every input
 ```
 
 PyTorch instead applies the registered $`1/x` backward formula even on these invalid forward inputs:

@@ -565,8 +565,8 @@ Feed in a negative coordinate and they part company:
 
 ```leanOutput psLogNeg (whitespace := lax)
 Except.error "IR eval: log: input contains values <= 0
-  (or NaN); use `safe_log` if you want epsilon
-  protection"
+  (or NaN); use `safe_log`, which is
+  log(softplus(x) + eps)"
 ```
 
 ```leanOutput psLogNeg

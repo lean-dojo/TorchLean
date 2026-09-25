@@ -11,7 +11,8 @@ import NN.Runtime.Autograd.Torch.Core.TypedGraph
 Dedicated increasing-size TypedGraph benchmark. Run each size in a separate process so the
 process high-water memory includes only that graph. Timings separate construction, checked
 lowering, retained dense backward, and the final backward that releases the saved graph.
-The `public` mode exercises the ordinary checked VJP API. Output hashes observe all tensor bits.
+The `public` mode exercises the ordinary checked VJP API. Output hashes fold the `Float.toBits`
+observations of every tensor element. This fixture contains no NaNs.
 -/
 
 open Spec TorchLean Runtime.Autograd
@@ -86,7 +87,7 @@ def run (count : Nat) (mode : String := "compiled") : IO Unit := do
     let afterRelease ← IO.monoNanosNow
     IO.println s!"phase=checked_vjp_release n={count} ns={afterRelease - beforeRelease} {← memory}"
     unless gradientsHash == hashValues repeated.1.toShapeErasedArray do
-      throw <| IO.userError "repeated public VJP changed gradient bits"
+      throw <| IO.userError "repeated public VJP changed the gradient Float.toBits hash"
     IO.println s!"n={count} input_gradients={gradientsHash} \
       output={hashTensor (Spec.SomeTensor.ofTensor repeated.2)}"
   else

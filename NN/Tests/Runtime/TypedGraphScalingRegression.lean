@@ -12,10 +12,12 @@ public import NN.Runtime.Autograd.Torch.TypedGraphSession.Autograd
 public import NN.Runtime.Autograd.Torch.TypedGraphSession.GraphOps
 
 /-!
-Bitwise FP32 comparisons against the original dense Tape engine. Branch cancellation distinguishes
-reverse graph order from creation order; the repeated-parent case distinguishes adding a complete
-local VJP from sequentially scattering its two terms. Singular and custom VJPs exercise nodes with
-zero incoming cotangent, and input/intermediate seeds exercise the full dense interface.
+Canonical `Float32.toBits` comparisons against the original dense Tape engine. These observations
+distinguish signed zeros but canonicalize NaNs, so they do not test raw NaN sign or payload identity.
+Branch cancellation distinguishes reverse graph order from creation order; the repeated-parent case
+distinguishes adding a complete local VJP from sequentially scattering its two terms. Singular and
+custom VJPs exercise nodes with zero incoming cotangent, and input/intermediate seeds exercise the
+full dense interface.
 -/
 
 public section
@@ -32,6 +34,7 @@ private instance : Inhabited (Spec.SomeTensor Float32) :=
 private def expect (label : String) (condition : Bool) : IO Unit := do
   unless condition do throw <| IO.userError label
 
+/-- Observe each scalar through `Float32.toBits`, which canonicalizes NaNs. -/
 private def bits (value : Spec.SomeTensor Float32) : Array UInt32 :=
   (Storage.toArray value.tensor.buffer).map Float32.toBits
 
@@ -200,7 +203,7 @@ private def checkSession : IO Unit := do
   let expected ← okOrThrow (backwardDenseAllFrom reference frozenIdx frozenSeed)
   let actual ← session.backwardDenseAll frozen frozenSeed
   compare "explicit frozen leaf seed" actual expected
-  expect "the frozen leaf retains all seed bits"
+  expect "the frozen leaf retains the seed's Float32.toBits observations"
     (bits actual[frozen.id]! == (Storage.toArray frozenSeed.buffer).map Float32.toBits)
 
 def run : IO Unit := do
@@ -210,7 +213,8 @@ def run : IO Unit := do
   checkCustomDense
   checkValidation
   checkSession
-  IO.println "TypedGraph scaling regressions passed: FP32 bits, branch order, repeated parents, \
+  IO.println "TypedGraph scaling regressions passed: canonical FP32 toBits (including signed zeros), \
+    branch order, repeated parents, \
     input/intermediate seeds, zero-cotangent singular/custom VJPs, validation, repeated backward, \
     public checked/pure APIs, session frozen leaves"
 

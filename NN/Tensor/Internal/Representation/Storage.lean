@@ -301,11 +301,12 @@ class Storage (α : Type u) where
   /-- The ordinary array observation uniquely determines physical storage. -/
   toArray_injective : Function.Injective toArray
   /--
-  Optional propositional equality for checked runtime optimizations.
+  Optional decidable propositional equality on Lean's carrier for checked runtime optimizations.
 
-  This is separate from numerical `BEq`: floating-point equality here distinguishes signed
-  zeros and preserves the carrier's representation. Backends without a decision procedure use
-  the uncompressed implementation of operations that need one.
+  This is separate from numerical `BEq`. Lean's floating-point carrier equality distinguishes
+  signed zeros but does not require identity of raw IEEE NaN signs or payloads. Optimizations
+  preserve this carrier equality. Backends without a decision procedure use the uncompressed
+  implementation of operations that need one.
   -/
   decEq? : Option (DecidableEq α) := none
 
@@ -552,7 +553,7 @@ instance (priority := low) instArrayStorage (α : Type u) :
   toArray_ofArray := by intros; rfl
   toArray_injective := Function.injective_id
 
-/-- Float32 retains ordinary array storage and exposes its exact carrier equality. -/
+/-- Float32 retains ordinary array storage and exposes Lean's propositional carrier equality. -/
 instance instFloat32Storage : Storage Float32 :=
   { instArrayStorage Float32 with decEq? := some inferInstance }
 

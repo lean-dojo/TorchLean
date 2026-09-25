@@ -1,9 +1,12 @@
 TorchLean TypedGraph scaling: raw measurement and validation logs
 Date: 2026-09-25
 Baseline: 0f845313599795032960d487708c309e1fb2f40e
-Changed source: the commit containing this file
+Measured implementation: 8d9d99eba875ad034eb0a727da00e4a4cb8729fe
 All paths below refer to the isolated tmpfs checkout/work directory.
 Primary and secondary measurements are individual process samples, not medians.
+Historical "FP32 bits" log labels mean canonical Float32.toBits observations, including signed
+zeros. Float32.toBits canonicalizes NaNs; these logs do not establish raw NaN sign/payload identity.
+The binary64 benchmark fixture contains no NaNs. Historical log contents are preserved below.
 
 ===== before-1000.log =====
 phase=construct n=1000 ns=10043556 VmHWM:	   91344 kB VmRSS:	   91344 kB

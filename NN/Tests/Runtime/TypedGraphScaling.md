@@ -13,7 +13,8 @@ The raw Tape backward interface still materializes full prefix contributions.
 
 Measurements below were taken on 2026-09-25 with native CPU executables, Lean
 `leanprover/lean4:v4.34.0`, and an Intel Xeon Platinum 8275CL at 3.00 GHz. The baseline is
-`0f845313599795032960d487708c309e1fb2f40e`; the changed source is the commit containing this report.
+`0f845313599795032960d487708c309e1fb2f40e`; the measured implementation is
+`8d9d99eba875ad034eb0a727da00e4a4cb8729fe`.
 Both use the unchanged dependency cache at
 `/mnt/build/torchlean-cleanup-review-20260925/.lake/packages`. Project builds are private to
 `/dev/shm/torchlean-finish-20260925-150455/typedgraph`; binaries and working logs are in the sibling
@@ -21,9 +22,10 @@ Both use the unchanged dependency cache at
 
 The fixture is a chain of `Float` (binary64) `relu [4]` nodes with input
 `[-2.0, -0.0, 0.5, 3.0]` and an all-ones output seed. Each size runs in a separate process.
-Construction, checked forward/lowering, and backward are timed separately; output hashes force
-observation of every primal and gradient tensor. The first changed backward retains the compiled
-handle for reuse. A second backward consumes its final owner and therefore includes disposal.
+Construction, checked forward/lowering, and backward are timed separately; output hashes fold
+the `Float.toBits` observation of every primal and gradient element in this fixture, which contains
+no NaNs. The first changed backward retains the compiled handle for reuse. A second backward
+consumes its final owner and therefore includes disposal.
 These are individual measurements on a shared host, not medians or a formal complexity result.
 The primary compiled series partially overlapped the CPU test suite. A second compiled series,
 also retained in `TypedGraphScalingResults.txt`, measured 33.33 ms lowering and 48.37 ms retained
@@ -60,10 +62,12 @@ slightly from GNU `time`. Releasing the last graph owner must reclaim this metad
 the measured reusable execution improves markedly, but the whole graph lifecycle and its peak
 memory are not linear.
 
-The compression boundary is explicit. `Storage.decEq?` supplies a certified equality test for
-native `Float`, `Float32`, and `UInt8`; other storage instances default to `none` and use exact
-dense backward. Even with equality, varying or otherwise noncompressible uniform histories can
-require quadratic replay. Custom nodes without certified local preparation or compact
+The compression boundary is explicit. `Storage.decEq?` supplies a certified propositional equality
+test on Lean's carrier for native `Float`, `Float32`, and `UInt8`. Floating-point carrier equality
+distinguishes signed zeros but does not require raw IEEE NaN sign or payload identity. Other storage
+instances default to `none` and use exact dense backward. Even with equality, varying or otherwise
+noncompressible uniform histories can require quadratic replay. Custom nodes without certified
+local preparation or compact
 contributions retain materializing adapters. There is no size cutoff, zero-VJP assumption,
 reassociation, or general linear-time guarantee for custom graphs. JVP scaling is not covered.
 
@@ -86,9 +90,11 @@ backward calls:
 | 8,000 | 3448001696160945712 | 378798550107952688 |
 | 16,000 | 1788165612113097456 | 13819532016633377520 |
 
-`TypedGraphScalingRegression` additionally compares FP32 tensor bits directly against the raw
-Tape engine. Cases cover reverse-order branch cancellation, repeated parents, input and
-intermediate seeds, signed zero, subnormals, NaNs, a disconnected singular inverse with zero
+`TypedGraphScalingRegression` additionally compares canonical `Float32.toBits` observations
+directly against the raw Tape engine. These comparisons distinguish signed zeros; `Float32.toBits`
+canonicalizes NaNs, so the tests do not establish raw NaN sign or payload identity. Cases cover
+reverse-order branch cancellation, repeated parents, input and intermediate seeds, signed zero,
+subnormals, NaNs, a disconnected singular inverse with zero
 cotangent, a custom nonzero VJP at zero seed, validation failures, repeated backward, public
 checked/pure VJPs, and frozen session leaves. The branch test distinguishes reverse accumulation
 from creation order; the repeated-parent test distinguishes adding the complete local sum from

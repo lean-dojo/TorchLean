@@ -368,20 +368,48 @@ succeeds and the proof-side pass produced a box at every node (`IBPCovers`).
 for the executable engine directly. Both are stated over `ℝ`; operations outside `EngineCore`
 and every rounded scalar remain outside these two theorems.
 
-Rounded endpoints have their own theorem, `runIBP_encloses` in
-`NN.MLTheory.CROWN.Proofs.DirectedIBPSoundness`. It holds for any scalar type with
-`LawfulBoundOps` and `LawfulNonlinearBoundOps`, such as the rounded-real `FP32` model and the
-reals. Every box the executable `runIBP` returns encloses the real value of its node, provided
-parents precede their consumers, the seed boxes contain the real inputs, the real point satisfies
-the node equations `NodeEquation`, and every node kind passes `ibpForwardSupported`. That check
-accepts inputs, constants, copies, addition, subtraction, elementwise multiplication, ReLU, linear,
-unary matrix multiplication, sum, exp, log, square root, reciprocal, tanh, sigmoid, sine, and
-cosine. The rounded transfers for convolution, concatenation, transpose, permute, binary matrix
-multiplication, absolute value, elementwise max and min, softplus, safe logarithm, pools,
-broadcasts, axis reductions, MSE loss, BatchNorm, LayerNorm, and the softmax kinds are not yet
-proved. On supported graphs `GraphPoint.ofRunIBP` feeds the result to the directed backward CROWN
-theorems, and `backwardObjectiveBox_encloses_runIBP` states the rounded objective workflow with no
-IBP hypothesis left.
+Rounded endpoints have the full forward theorem `runIBP_encloses_all` in
+{src "NN/MLTheory/CROWN/Proofs/DirectedIBPFullSoundness.lean"}[`DirectedIBPFullSoundness`].
+It requires `LawfulBoundOps`, `LawfulNonlinearBoundOps`, and `LawfulMinBoundOps`, together with
+a nonnegative real interpretation of the backend's fixed `normalizationEpsilon`. The reals and
+the rounded-real `FP32` model satisfy these scalar requirements.
+
+Every box the executable `runIBP` returns encloses the real value of its node, provided parents
+precede their consumers, the seed boxes contain the real inputs, and the real point satisfies
+`RealNodeEquation` at each node. These equations use the actual coordinate maps, reductions,
+normalization formulas, and real interpretations of stored parameters; convolution uses the
+exact spatial operation. The theorem covers every operation kind, including convolution, binary
+matrix multiplication, structural operations, and normalization. It derives all intermediate
+enclosures by induction.
+Invalid shapes, missing parameters, and unavailable arithmetic transfers can still leave an entry
+as `none`; the theorem establishes enclosure whenever a box is returned.
+
+Random nodes use the actual real `Spec.Random.uniform` and `Spec.Random.mask` values at
+`Spec.Random.keyOf seed id` and the node's row-major coordinate. Uniform nodes have no parents;
+a mask has one existing scalar parent supplying its keep probability.
+The lemmas in {src "NN/Proofs/Probability/RandomSupport.lean"}[`RandomSupport`] prove that each
+uniform value lies in $`[0,1)` and each mask value is zero or one, with keep probabilities zero and
+one giving the corresponding constant masks. Support follows from these seeded source equations.
+Agreement with a separate rounded or native random implementation remains a numerical
+correspondence question.
+
+`GraphPoint.ofRunIBPAll` feeds these bounds to the backward proof and derives its node equations
+from `RealNodeEquation`. For checked convolution, positive dilation makes each affine coefficient
+a stored weight or zero, so interpreting that coefficient agrees with the real spatial operation.
+This step does not assume that ordinary rounded addition is exact. Structural operations use the
+same coordinate maps in both directions.
+
+The public theorem `backwardObjectiveBox_encloses_runIBP_all` in
+{src "NN/MLTheory/CROWN/Proofs/DirectedBackwardEvaluation.lean"}[`DirectedBackwardEvaluation`]
+then covers forward IBP, directed backward propagation, and final interval evaluation for every
+operation kind. It requires exact affine reassociation to be disabled, as it is for `FP32`,
+consistent node identifiers, valid input and output dimensions, an objective of the output
+dimension, and an enclosing input box. Every successful `.ok` query contains the real objective.
+No intermediate enclosure or additional backward node equation is assumed.
+
+The older `runIBP_encloses`, `GraphPoint.ofRunIBP`, and
+`backwardObjectiveBox_encloses_runIBP` retain the `ibpForwardSupported` core and `NodeEquation`
+for compatibility.
 
 ```lean (name := ibpThms)
 -- Locally consistent real boxes enclose the corresponding
@@ -1194,15 +1222,23 @@ rounding. These executable transfers live in
 their availability does not enlarge the `EngineCore` theorem fragment stated above.
 
 `ℝ` and `FP32` have lawful nonlinear instances. The `FP32` proofs use its exact-real floor and
-ceiling rounding theorems. FloatLib binary32 instead states finite-path soundness in its IEEE
-semantics
-modules, where overflow, infinities, and NaNs can be handled explicitly. Its directed binary32
-division and square root are proved, but executable exponential is not yet proved to enclose real
-exponentiation. An IBP node using exponential therefore remains unresolved under that instance. Host
-`Float` widens basic binary64 arithmetic by one adjacent representable value, but it has no global
-`LawfulBoundOps` instance and makes no enclosure claim for the host transcendental library.
-Sigmoid, tanh, sine, and cosine can still use their global codomain bounds when a sharper transfer
-is unavailable.
+ceiling rounding theorems. The FloatLib binary32
+{src "NN/MLTheory/CROWN/Extras/BoundOpsIEEE32Exec.lean"}[executable interval adapter] instead
+checks finite, ordered endpoints and uses certified rational interval kernels followed by outward
+binary32 rounding. Its eight `IEEE32ExecBounds.*Bounds_containsReal` theorems cover division,
+exponential, logarithm, square root, sigmoid, tanh, sine, and cosine. Each theorem starts from a
+successful transfer and exact finite endpoint decoding, then encloses every real member of the
+input interval. These include irrational inputs and trigonometric extrema inside the interval.
+
+Exponential and logarithm now return finite enclosures when their checks succeed. Invalid domains,
+exceptional endpoints, reversed intervals, and overflow can return `none`. Square root clamps the
+negative part of an interval crossing zero, matching `Real.sqrt`; sigmoid and tanh retain their
+global codomain fallbacks. `layerNormAbsBound` still returns `none`, and
+`supportsIdealCoupledDerivatives` is false. These finite containment theorems do not supply a
+global `LawfulBoundOps` instance for the IEEE carrier, which includes infinities and NaNs, or an
+error bound for a native transcendental implementation. Host `Float` widens basic binary64
+arithmetic by one adjacent representable value, but it likewise has no global `LawfulBoundOps`
+instance and makes no enclosure claim for the host transcendental library.
 
 The CROWN output query uses a forward affine sweep when the scalar backend permits exact
 reassociation. Rounded backends request directed backward bounds for each output coordinate.
@@ -1210,13 +1246,15 @@ Where a node has an IBP box but no coefficient transfer, that box bounds the act
 without sending coefficients to the node's parents. Binary matmul and MSE loss use this fallback.
 It can lose correlations, so finishing a CROWN pass does not guarantee a tighter result than IBP.
 The {src "NN/MLTheory/CROWN/Proofs/DirectedBackwardEvaluation.lean"}[rounded backward theorem]
-covers coefficient propagation, the output-box fallback, and final interval evaluation. Its
-hypotheses require lawful directed arithmetic, the real stored-parameter graph equations, and
-enclosing IBP boxes. The IBP boxes are assumed: graph-level IBP soundness is proved only over
-`ℝ`, and no theorem yet derives the boxes from a rounded forward pass. ReLU, LayerNorm, and the
-other nonlinear nodes have no coefficient transfer on rounded backends, so they pass through their
-IBP box as well, and a rounded MLP "CROWN" bound is IBP at every ReLU. Relating these bounds to a
-separate native execution additionally requires a runtime-approximation theorem.
+covers coefficient propagation, the output-box fallback, and final interval evaluation.
+`backwardObjectiveBox_encloses_runIBP_all` uses `GraphPoint.ofRunIBPAll` to derive the
+intermediate enclosures and backward node equations from the input boxes and `RealNodeEquation`.
+Its scalar laws, nonnegative default epsilon, graph-order and dimension premises, and successful
+result hypothesis are the ones described above; every operation kind is covered.
+ReLU, LayerNorm, and the other nonlinear nodes have no coefficient transfer on rounded backends,
+so they pass through their IBP box as well, and a rounded MLP "CROWN" bound is IBP at every ReLU.
+Relating these bounds to a separate native execution additionally requires a runtime-approximation
+theorem.
 
 The first-derivative interval pass starts with an input direction.
 `runDirectionalDerivative` propagates a point or interval of directions through the graph, using
@@ -1389,6 +1427,16 @@ A verification report should make the following boundary visible:
   * `runIBP_encloses_evalGraphRec`
   * the executable real engine encloses the semantics on `EngineCore` graphs with full coverage
   * transcendental node kinds, rounded scalars, or the JSON checkers
+*
+  * `runIBP_encloses_all`
+  * every returned box encloses its `RealNodeEquation` value under the scalar laws, node order,
+    enclosed inputs, and nonnegative default normalization epsilon
+  * that every node returns a box, or that a native execution satisfies those real equations
+*
+  * `backwardObjectiveBox_encloses_runIBP_all`
+  * a successful rounded objective query encloses its real value through forward IBP, backward
+    propagation, and final interval evaluation, under the scalar, graph, and input hypotheses
+  * total success, improved tightness over IBP, or native runtime equivalence
 *
   * `alphaCrown_cert_encloses_evalGraphRec`
   * α-CROWN enclosure with the IBP hypothesis discharged

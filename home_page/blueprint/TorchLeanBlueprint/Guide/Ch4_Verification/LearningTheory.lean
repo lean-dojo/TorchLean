@@ -1025,7 +1025,7 @@ open IEEE32Exec.RidgeIEEEBridge in
       IEEE32Exec.ExampleIEEE32._proof_4)
   (S : Dataset (n + 1) IEEE32Exec.ExampleIEEE32) {d : FloatLib.Numerics.Dyadic},
   Floats.IEEE754.IEEE32Exec.FiniteEval (fun x => 0) (ridgeExpr lam S) d →
-    (ExecFloat.Binary.toModel (ridgeFit1DExecExpr lam S)).toReal = ridgeFit1DFp32Spec lam S
+    (ridgeFit1DExecExpr lam S).toModel.toReal = ridgeFit1DFp32Spec lam S
 ```
 
 This theorem concerns `ridgeFit1DExecExpr`, whose expression tree has its own association. The

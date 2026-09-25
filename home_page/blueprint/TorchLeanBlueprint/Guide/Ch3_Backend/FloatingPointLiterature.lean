@@ -373,7 +373,7 @@ IEEE32Exec.sumTreeResult_enclosure : ∀
           ∃ t,
             t.leaves.toList.Perm xs.toList ∧
               IEEE32Exec.evalIEEE t = r ∧
-                |(ExecFloat.Binary.toModel r).toReal - IEEE32Exec.exactSumIEEE t| ≤
+                |r.toModel.toReal - IEEE32Exec.exactSumIEEE t| ≤
                   (ReductionBound.growth u t.leafCount - 1) * IEEE32Exec.sumAbsIEEE t
 ```
 

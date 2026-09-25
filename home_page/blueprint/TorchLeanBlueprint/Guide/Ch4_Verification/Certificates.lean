@@ -686,11 +686,21 @@ premise must be established throughout that region.
 
 With those hypotheses, each available engine box encloses the corresponding semantic value.
 The statement is over $`ℝ`. The demonstration above used `Float`; applying the real theorem to a
-rounded pass requires an arithmetic bridge. Backends with `LawfulBoundOps` and
-`LawfulNonlinearBoundOps`, such as `FP32`, instead have the rounded theorem `runIBP_encloses` on
-the node kinds that pass `ibpForwardSupported`. Host `Float` has no such instance. Using FloatLib
-binary32 in the node checkers fixes the reference binary32 operations for replay, but does not by
-itself provide that bridge. The
+rounded pass requires an arithmetic bridge. Backends with `LawfulBoundOps`,
+`LawfulNonlinearBoundOps`, and `LawfulMinBoundOps`, together with a nonnegative real interpretation
+of the fixed `normalizationEpsilon`, have the full forward theorem `runIBP_encloses_all`.
+The rounded-real `FP32` model satisfies these scalar requirements. The theorem covers every
+operation kind under `RealNodeEquation`, ordered parents, and enclosed inputs, and establishes
+enclosure for every returned box without assuming intermediate enclosures.
+With exact affine reassociation disabled, consistent node identifiers, and valid input, output,
+and objective dimensions,
+`backwardObjectiveBox_encloses_runIBP_all` carries these enclosures through the backward sweep and
+final interval evaluation. It derives the backward node equations from the same real semantics.
+Its successful result encloses the real objective; neither theorem promises a result for every
+graph or a particular bound tightness.
+
+Host `Float` has no such lawful arithmetic instance. Using FloatLib binary32 in the node checkers
+fixes the reference binary32 operations for replay, but does not by itself provide that bridge. The
 {ref "fp32-soundness"}[floating-point soundness chapter] develops the relevant distinction.
 
 The {ref "certificates"}[leaf artifact described here] carries no graph or transfer evidence, so

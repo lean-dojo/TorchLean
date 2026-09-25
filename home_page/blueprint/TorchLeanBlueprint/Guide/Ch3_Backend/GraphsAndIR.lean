@@ -825,8 +825,8 @@ some (-1.000000, 1.000000)
 
 The executable instance in
 {src "NN/MLTheory/CROWN/Extras/BoundOpsIEEE32Exec.lean"}[the binary32 bound operations] returns the
-global codomain of `tanh` and ignores its arguments. The specialized proof-oriented instances do
-not: over `ℝ`
+global codomain of `tanh` after checking that its input endpoints are finite and ordered. It then
+discards their range. The specialized proof-oriented instances use that range: over `ℝ`
 the rule is `some (Real.tanh lo, Real.tanh hi)`, and over `FP32` it is the same with the endpoints
 rounded outward. Since `tanh` is increasing, the real endpoints are tight for that scalar interval
 and the FP32
@@ -846,8 +846,10 @@ size; this next evaluation is not a directed-rounding enclosure:
 For the displayed node-4 interval, the real endpoint image has width about `0.0149`; the executable
 codomain fallback has width `2.0`. A full rerun with another scalar type also changes the rounding
 of the preceding nodes, so this calculation compares the final transfer on fixed endpoints.
-The endpoint-sensitive bound is much more informative here. Relating the executable enclosure to
-real semantics still requires its backend soundness hypotheses.
+The endpoint-sensitive bound is much more informative here.
+`IEEE32ExecBounds.tanhBounds_containsReal` proves that the executable fallback contains ideal real
+`tanh` whenever the finite transfer succeeds. Agreement with a separately rounded native `tanh`
+evaluation requires a further backend theorem.
 
 The generic real interval construction is defined in `FloatLib.Floats.Interval.Quantized`.
 Its `RInterval.tanh` is noncomputable: it applies `Real.tanh` to each endpoint and rounds outward.
@@ -860,10 +862,14 @@ therefore needs an error bound or a directed-rounding implementation for the tra
 ({Informal.citep boldo2015}[]). The global enclosure avoids that endpoint calculation, at the cost
 of discarding the input interval.
 
-`sigmoid`, `sin`, and `cos` also use global codomain bounds in that
-instance; `exp`, `log`, and `layerNormAbsBound` return no bound at all rather than a
-trivial one. When an executable IBP result looks uselessly wide, check which nonlinearity the
-graph ends with before suspecting the propagation.
+`sigmoid` also uses its global codomain, `[0, 1]`, for finite ordered inputs. The `exp`, `log`,
+`sqrt`, `sin`, and `cos` transfers use FloatLib's certified rational interval kernels followed by
+checked outward binary32 rounding. Their theorems enclose every real input in the interval;
+sine and cosine include interior extrema. Domain checks and finite-output checks can still
+return `none`. Square root preserves intervals crossing zero by using the real convention
+`Real.sqrt x = 0` for negative `x`. `layerNormAbsBound` remains unavailable, and
+`supportsIdealCoupledDerivatives` remains false. When an executable IBP result looks uselessly
+wide, check which nonlinearity the graph ends with before suspecting the propagation.
 
 For a property that needs to distinguish this small positive output from zero, `[-1, 1]` is
 too wide. The missing information comes from the final transfer rule, even though the preceding
@@ -944,8 +950,11 @@ The operation restriction matters for our example. `EngineCore` admits inputs, c
 addition, subtraction, elementwise multiplication, ReLU, linear layers, matrix multiplication,
 concatenation, convolution, softplus, and safe log.
 It excludes both `sum` and `tanh`, which occur at nodes 4 and 5. Consequently this theorem does not
-cover the six-node graph as written, even after changing its scalar type to `ℝ`. Extending the
-enclosure proof to those operations is a separate requirement from changing the scalar semantics.
+cover the six-node graph as written, even after changing its scalar type to `ℝ`.
+The separate `runIBP_encloses_all` theorem covers these operations and every other operation kind
+under `RealNodeEquation` and the lawful arithmetic requirements described in
+{ref "verification"}[Verification And Certificates]. The reals and rounded-real `FP32` satisfy
+its scalar requirements; that result does not supply a global law for the FloatLib IEEE carrier.
 
 The scalar in the theorem is `ParamStore ℝ`, whereas the command above uses FloatLib binary32.
 Relating that rounded propagation to real arithmetic requires another argument, developed in
@@ -1055,6 +1064,27 @@ the consumer needs evidence about the particular code it receives
 The proof-bearing source lowering under `NN.Verification.Builtin.Proved` relates its first-order
 source evaluator to IR denotation, and its theorem is likewise not a wildcard over every
 `TorchLean.Program` or every `OpKind` the broad executable lowering accepts.
+
+The compiled IRExec lowering loop stores shape prefixes in reverse order, sharing the previous
+prefix at each step, and checks parent references through a shape array. It constructs the
+chronological shape list once when lowering finishes.
+`Internal.buildFrom_eq_buildFromWithArray` in
+{src "NN/Runtime/Autograd/IRExec/Lowering.lean"}[`Lowering.lean`] is the kernel-checked equality
+used by compiler simplification to select this implementation. It preserves both successful
+lowerings and errors; it does not change operation closures or their summation order.
+
+The {src "docs/benchmarks/irexec-scaling-20260925.md"}[2026-09-25 scaling measurements] compare
+this implementation with `0f845313` on native ReLU chains with one `[4]` input, using Lean 4.34.0
+on Linux `x86_64`. Across three fresh processes per case, median lowering time at 16,000 ReLUs
+fell from 2,352.590 ms to 4.180 ms, while whole-process peak memory fell from 3,987.46 MiB to
+77.20 MiB. Lowering 1,024,000 ReLUs took 247.650 ms; that larger experiment measured construction
+and disposal without tensor evaluation.
+
+These measurements concern lowering cost. Evaluation of the 16,000-node small-tensor chain took
+7.925 ms after the change versus 4.323 ms before, with matching result bits. Native evaluation
+still uses recursion and depends on stack capacity. The retained timings and growth guard give
+empirical scaling evidence; the equality theorem proves semantic preservation, not an asymptotic
+complexity bound.
 
 # Axis Operations And Lowering Coverage
 

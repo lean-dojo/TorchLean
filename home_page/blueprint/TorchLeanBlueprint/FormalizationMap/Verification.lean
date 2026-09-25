@@ -18,6 +18,7 @@ import NN.Verification.Builtin.Proved.Correctness
 import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Main
 import NN.MLTheory.CROWN.Proofs.GraphRunibpEndToEnd
 import NN.MLTheory.CROWN.Proofs.DirectedBackwardEvaluation
+import NN.MLTheory.CROWN.Proofs.DirectedIBPFullSoundness
 import NN.MLTheory.CROWN.Proofs.GraphRuntimeBridge
 import NN.MLTheory.CROWN.Proofs.GraphCrownCertSoundness
 import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Alpha
@@ -308,7 +309,8 @@ compute the same box once their parents agree.
 Under `TopoSorted`, `EngineCore`, `IBPCovers`, and `InputsEnclosed`, every box produced by the
 executable `runIBP` over `ℝ` encloses the matching value of `evalGraphRec`. The theorem covers the
 executable IBP engine at the real scalar. Transcendental node kinds outside `EngineCore` are
-not covered; {uses "ibp_rounded_engine_sound"}[the rounded theorem] handles directed endpoints.
+not covered; {uses "ibp_rounded_all_engine_sound"}[the full rounded forward theorem] handles
+directed endpoints.
 :::
 
 :::proof "ibp_executable_engine_sound"
@@ -317,15 +319,12 @@ not covered; {uses "ibp_rounded_engine_sound"}[the rounded theorem] handles dire
 :::
 
 :::theorem "ibp_rounded_engine_sound" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.DirectedBackward.runIBP_encloses")
-For any endpoint type with `LawfulBoundOps` and `LawfulNonlinearBoundOps`, every box produced by
-the executable `runIBP` encloses the real value of its node. The hypotheses are that parents
-precede their consumers, the input boxes contain the real inputs, the real point satisfies the
-node equations `NodeEquation`, and every node kind passes `ibpForwardSupported`: inputs,
-constants, copies, `add`, `sub`, `mulElem`, `relu`, `linear`, unary `matmul`, `sum`, `exp`,
-`log`, `sqrt`, `inv`, `tanh`, `sigmoid`, `sin`, and `cos`. The rounded transfers for convolution,
-`concat`, `transpose`, `permute`, binary `matmul`, `abs`, `maxElem`, `minElem`, `softplus`,
-`safeLog`, pools, broadcasts, axis reductions, `mseLoss`, BatchNorm, LayerNorm, and the softmax
-kinds have no such proof yet.
+This compatibility theorem covers the legacy `ibpForwardSupported` core: inputs, constants,
+copies, `add`, `sub`, `mulElem`, `relu`, `linear`, unary `matmul`, `sum`, `exp`, `log`, `sqrt`,
+`inv`, `tanh`, `sigmoid`, `sin`, and `cos`. With `LawfulBoundOps` and
+`LawfulNonlinearBoundOps`, every box produced by the executable `runIBP` encloses the real value
+of its node. Parents must precede their consumers, inputs must lie in their seed boxes, and the
+real point must satisfy `NodeEquation` at every node.
 :::
 
 :::proof "ibp_rounded_engine_sound"
@@ -334,17 +333,78 @@ from the prefix before it, and each supported transfer is proved sound from the 
 endpoint laws and the scalar enclosure laws.
 :::
 
-:::theorem "directed_crown_rounded_end_to_end" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.DirectedBackward.backwardObjectiveBox_encloses_runIBP")
-On the same supported graphs, the rounded CROWN objective workflow run on the boxes of `runIBP`
-returns an interval containing the real output objective. Forward IBP, the directed backward
-sweep, the interval fallbacks, and the final affine-bound evaluation are all covered, so no IBP
-enclosure hypothesis remains.
+:::definition "rounded_real_node_equation" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.DirectedBackward.RealNodeEquation")
+`RealNodeEquation` describes the real operation at each graph node. Convolution uses the exact
+spatial operation on the real interpretations of the stored weights. Structural operations use
+their coordinate maps and reductions, and normalization nodes use their real formulas. Random
+nodes use the actual seeded `Spec.Random.uniform` and `Spec.Random.mask` values over `ℝ`.
+Uniform nodes have no parents; masks read one existing scalar parent. Their unit-interval support
+follows from these source equations.
+:::
+
+:::theorem "ibp_rounded_all_step_sound" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.DirectedBackward.ibpStepNodeAt?_all_encloses")
+With `LawfulBoundOps`, `LawfulNonlinearBoundOps`, and `LawfulMinBoundOps`, and a nonnegative real
+interpretation of the backend's fixed `normalizationEpsilon`, every successful
+`ibpStepNodeAt?` transfer encloses the node's real value. Its parent boxes must agree with the
+reference IBP array and enclose their values, inputs must lie in their seed boxes, and the node
+must obey {uses "rounded_real_node_equation"}[its real equation]. Every operation kind is covered.
+:::
+
+:::proof "ibp_rounded_all_step_sound"
+Case analysis applies the core, convolution, pointwise, structural, and normalization transfer
+proofs. Unary stored-weight and binary tensor matrix multiplication are distinguished by their
+parent counts.
+:::
+
+:::theorem "ibp_rounded_all_engine_sound" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.DirectedBackward.runIBP_encloses_all")
+Under the same arithmetic assumptions, every box returned by the executable `runIBP` encloses
+its node's real value. Parents precede their consumers, inputs lie in their seed boxes, and every
+node satisfies {uses "rounded_real_node_equation"}[`RealNodeEquation`]. There is no operation-kind
+restriction or intermediate enclosure hypothesis. The reals and the rounded-real `FP32` model
+have the required scalar instances and nonnegative default epsilon.
+
+The theorem constrains successful entries. Invalid shapes, missing parameters, and unavailable
+arithmetic transfers can still return `none`.
+:::
+
+:::proof "ibp_rounded_all_engine_sound"
+Induction along the node order supplies each parent's enclosure before applying
+{uses "ibp_rounded_all_step_sound"}[the transfer theorem]. `runIBP_encloses_of_step` carries this
+argument through the executable array construction.
+:::
+
+:::theorem "rounded_real_backward_equation" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.DirectedBackward.RealNodeEquation.nodeEquation")
+With in-bounds parents, {uses "rounded_real_node_equation"}[the actual real node equation] implies
+the equation consumed by the backward sweep. For convolution, the accepted geometry has positive
+dilation, so each matrix coefficient is a stored weight or zero. Interpreting this matrix therefore
+agrees with the exact real spatial convolution without assuming that ordinary scalar addition is
+exact. Structural operations use the same coordinate maps in both directions.
+:::
+
+:::proof "rounded_real_backward_equation"
+The convolution and structural bridges handle their respective operation kinds. The remaining
+cases follow from the corresponding clauses of `RealNodeEquation`.
+:::
+
+:::theorem "directed_crown_rounded_end_to_end" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.DirectedBackward.backwardObjectiveBox_encloses_runIBP_all")
+Under the arithmetic and real-node hypotheses of
+{uses "ibp_rounded_all_engine_sound"}[the full forward theorem], with exact affine reassociation
+disabled, a successful rounded CROWN objective query returns an interval containing its real
+output objective. The graph must have consistent node identifiers, ordered parents, and valid
+input, output, and objective dimensions; the supplied input box must enclose the real input.
+The rounded-real `FP32` instance satisfies the scalar requirements.
+
+Forward IBP, directed backward propagation, interval fallbacks, and final affine-bound evaluation
+are covered for every operation kind. There is no intermediate enclosure hypothesis or second
+node equation to assume. The theorem concerns a successful `.ok` result; it does not guarantee
+that every query succeeds or yields a tighter bound than IBP.
 :::
 
 :::proof "directed_crown_rounded_end_to_end"
-`GraphPoint.ofRunIBP` builds the graph point from
-{uses "ibp_rounded_engine_sound"}[the rounded IBP theorem], and the directed backward soundness
-theorem consumes it.
+`GraphPoint.ofRunIBPAll` derives the intermediate enclosures from
+{uses "ibp_rounded_all_engine_sound"}[the full forward theorem] and the backward equations from
+{uses "rounded_real_backward_equation"}[the semantic bridge]. Directed backward soundness and
+the outward-rounded affine evaluator then enclose the objective.
 :::
 
 :::theorem "ir_crown_node_bridge" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.CertSoundness.evalNode_bridge")

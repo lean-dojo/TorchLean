@@ -632,36 +632,36 @@ arithmetic:
     ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
       embed._proof_1
       embed._proof_2 embed._proof_3 embed._proof_4),
-  (∀ (i : Fin hidDim), ExecFloat.Binary.isFinite (t i) = true) →
-    (∀ (i : Fin hidDim), ExecFloat.Binary.isFinite (c i) = true) →
+  (∀ (i : Fin hidDim), (t i).isFinite = true) →
+    (∀ (i : Fin hidDim), (c i).isFinite = true) →
       ∀ (εApprox εQ : ℝ),
         (∀
             (x :
               ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias
                 8) embed._proof_1
                 embed._proof_2 embed._proof_3 embed._proof_4),
-            ExecFloat.Binary.isFinite x = true →
-              (ExecFloat.Binary.toModel x).toReal ∈ Set.Icc a b →
+            x.isFinite = true →
+              x.toModel.toReal ∈ Set.Icc a b →
                 HingeSumFinite t c x 0 (List.finRange hidDim) ∧
-                  ExecFloat.Binary.isFinite (hingeFunIeee t c b0 x) = true) →
+                  (hingeFunIeee t c b0 x).isFinite = true) →
           (∀
               (x :
                 ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee
                   (FloatFormat.Encoding.ieee.defaultBias 8) embed._proof_1
                   embed._proof_2 embed._proof_3 embed._proof_4),
-              ExecFloat.Binary.isFinite x = true →
-                (ExecFloat.Binary.toModel x).toReal ∈ Set.Icc a b →
-                  |f (ExecFloat.Binary.toModel x).toReal -
-                        hingeFun hidDim tR cR (f a) (ExecFloat.Binary.toModel x).toReal| <
+              x.isFinite = true →
+                x.toModel.toReal ∈ Set.Icc a b →
+                  |f x.toModel.toReal -
+                        hingeFun hidDim tR cR (f a) x.toModel.toReal| <
                     εApprox) →
             (∀
                 (x :
                   ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee
                     (FloatFormat.Encoding.ieee.defaultBias 8)
                     embed._proof_1 embed._proof_2 embed._proof_3 embed._proof_4),
-                ExecFloat.Binary.isFinite x = true →
-                  (ExecFloat.Binary.toModel x).toReal ∈ Set.Icc a b →
-                    |hingeFun hidDim tR cR (f a) (ExecFloat.Binary.toModel x).toReal -
+                x.isFinite = true →
+                  x.toModel.toReal ∈ Set.Icc a b →
+                    |hingeFun hidDim tR cR (f a) x.toModel.toReal -
                           hingeFunReal (embedVec t) (embedVec c) (embed b0) (embed x)| ≤
                       εQ) →
               ∀
@@ -669,10 +669,10 @@ arithmetic:
                   ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee
                     (FloatFormat.Encoding.ieee.defaultBias 8)
                     embed._proof_1 embed._proof_2 embed._proof_3 embed._proof_4),
-                ExecFloat.Binary.isFinite x = true →
-                  (ExecFloat.Binary.toModel x).toReal ∈ Set.Icc a b →
-                    |f (ExecFloat.Binary.toModel x).toReal -
-                          (ExecFloat.Binary.toModel (hingeFunIeee t c b0 x)).toReal| <
+                x.isFinite = true →
+                  x.toModel.toReal ∈ Set.Icc a b →
+                    |f x.toModel.toReal -
+                          (hingeFunIeee t c b0 x).toModel.toReal| <
                       εApprox + εQ + hingeFunErrorBound (embedVec t) (embedVec c) (embed b0) (embed
                         x)
 ```

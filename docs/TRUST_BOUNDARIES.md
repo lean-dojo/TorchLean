@@ -270,7 +270,7 @@ selected local reverse rule, not that LibTorch owns differentiation.
 
 - FloatLib supplies the executable floating-point formats, software arithmetic, rounding theory,
   and interval semantics. `lakefile.lean` tracks its `main` branch; `lake-manifest.json` locks the
-  checked-out revision, currently `c9a051f08f948ce473036b815b0669fafb61f601`, with Lean and mathlib 4.34.0.
+  checked-out revision, currently `5ef396e35a856a19e24befde631d0bb1ec0a237b`, with Lean and mathlib 4.34.0.
   TorchLean's runtime and certificate interfaces use `ExecFloat.Binary 8 23` directly.
   The typed tensor/model API supports FloatLib's configured binary family, including custom
   precision with valid widths, bias, and storage plans. This does not supply tensor `Context`

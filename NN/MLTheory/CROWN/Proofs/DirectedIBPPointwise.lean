@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Proofs.DirectedIBPBasic
+public import NN.Proofs.Probability.RandomSupport
 import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Softplus
 import NN.MLTheory.CROWN.Proofs.LayerNormEnclosure
 
@@ -291,8 +292,10 @@ def ibpPointwiseSupportedNode (node : Node) : Bool :=
 
 SafeLog is `log (log (1 + exp x) + epsilon)` with one scalar epsilon parent. MSE is the exact
 mean of squared differences; a zero-length mean cannot yield a successful IBP transfer.
-Random realizations have the declared output shape and lie in `[0, 1]`. Other kinds use `True`
-here and retain their existing `NodeEquation`.
+Random values are the actual seeded real Spec tensors. Uniform nodes have no parents. A mask
+has one existing scalar parent whose value is the keep probability. These requirements are
+explicit because the coarse random IBP transfer does not reject malformed parent lists.
+Other kinds use `True` here and retain their existing `NodeEquation`.
 -/
 def PointwiseRealNodeEquation (nodes : Array Node) (dims : Nat → Nat)
     (v : Nat → Nat → ℝ) (id : Nat) : Prop :=
@@ -307,16 +310,26 @@ def PointwiseRealNodeEquation (nodes : Array Node) (dims : Nat → Nat)
       ∀ p q, binaryParents? node.parents = some (p, q) →
         dims p = dims q ∧ dims id = 1 ∧
           v id 0 = (∑ i : Fin (dims p), (v p i.val - v q i.val) ^ 2) / dims p
-  | .randUniform _ | .bernoulliMask _ =>
-      dims id = node.outShape.size ∧
-        ∀ i : Fin node.outShape.size, 0 ≤ v id i.val ∧ v id i.val ≤ 1
+  | .randUniform seed =>
+      node.parents = #[] ∧ dims id = node.outShape.size ∧
+        ∀ i : Fin node.outShape.size,
+          v id i.val =
+            Spec.Random.uniform (α := ℝ) (Spec.Random.keyOf seed id)
+              (Shape.Coord.unlinearize i)
+  | .bernoulliMask seed =>
+      ∃ p, unaryParent? node.parents = some p ∧ p < nodes.size ∧
+        nodes[p]!.outShape = .scalar ∧ dims p = 1 ∧ dims id = node.outShape.size ∧
+          ∀ i : Fin node.outShape.size,
+            v id i.val =
+              Spec.Random.mask (Spec.Random.keyOf seed id) (v p 0)
+                (Shape.Coord.unlinearize i)
   | _ => True
 
 /-- A successful pointwise IBP step encloses the node's real value.
 
 Parent boxes use the same agreement and enclosure interface as the basic step theorem. The
-existing `NodeEquation` supplies abs, min, max, and softplus semantics; only safeLog, MSE, and
-random support need the supplemental real equations.
+existing `NodeEquation` supplies abs, min, max, and softplus semantics; safeLog, MSE, and seeded
+random operations use the supplemental real equations. Random support follows from the source.
 -/
 theorem ibpStepNodeAt?_pointwise_encloses
     [NonlinearBoundOps α] [LawfulNonlinearBoundOps α] [LawfulMinBoundOps α]
@@ -400,13 +413,24 @@ theorem ibpStepNodeAt?_pointwise_encloses
       rw [h1]
       exact boxMean?_encloses (boxSquare_encloses (boxSub_encloses hY' hT')) hv hbox
     · simp at hbox
-  case randUniform | bernoulliMask =>
+  case randUniform seed =>
     obtain rfl := Option.some.inj hstep
-    obtain ⟨hd, hv⟩ := hpointwise
+    obtain ⟨_, hd, hv⟩ := hpointwise
     rw [hd, rowEncloses_iff]
     intro i
+    have hsupport :=
+      Spec.Random.uniform_mem_Ico (Spec.Random.keyOf seed id) (Shape.Coord.unlinearize i)
     simpa only [getScalar_full, (LawfulBoundOps.toReal_zero (α := α)),
-      (LawfulBoundOps.toReal_one (α := α))] using hv i
+      (LawfulBoundOps.toReal_one (α := α)), hv i] using ⟨hsupport.1, hsupport.2.le⟩
+  case bernoulliMask seed =>
+    obtain rfl := Option.some.inj hstep
+    obtain ⟨p, _, _, _, _, hd, hv⟩ := hpointwise
+    rw [hd, rowEncloses_iff]
+    intro i
+    have hsupport := Spec.Random.mask_mem_Icc (Spec.Random.keyOf seed id) (v p 0)
+      (Shape.Coord.unlinearize i)
+    simpa only [getScalar_full, (LawfulBoundOps.toReal_zero (α := α)),
+      (LawfulBoundOps.toReal_one (α := α)), hv i, Set.mem_Icc] using hsupport
 
 end
 

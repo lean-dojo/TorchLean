@@ -209,12 +209,12 @@ def asciiAllowed (c : Char) : Bool :=
   c = '\n' || (32 ≤ c.toNat && c.toNat ≤ 126)
 
 /-- Fitted predictor for a runtime-sized character GPT model. -/
-abbrev Predictor (α : Type) (batchSize contextLength vocabularySize : Nat) :=
+abbrev Predictor (α : Type) [Storage α] (batchSize contextLength vocabularySize : Nat) :=
   Tensor (Fin vocabularySize) [batchSize, contextLength] →
     IO (Tensor α [batchSize, contextLength, vocabularySize])
 
 /-- Autoregressively extend character token ids using a trained CharGPT model. -/
-def generateSampledFromIds {α : Type} {promptLength : Nat}
+def generateSampledFromIds {α : Type} [Storage α] {promptLength : Nat}
     (toFloat : α → Float)
     (batchSize contextLength vocabularySize : Nat) [NeZero vocabularySize]
     (predict : Predictor α batchSize contextLength vocabularySize)

@@ -465,8 +465,9 @@ values. It does not mean caching the prediction from the first training step. In
 graph trainer, each checked execution builds an indexed primal context and saves local VJP
 programs with that call's values. The matching loss sequence below establishes agreement for this
 workload; it does not measure allocations or a speedup over eager execution.
-{ref "runtime-autograd"}[The runtime chapter] gives the separate scaling measurements, the dense fallback
-for generic storage and custom nodes, and the remaining graph construction and disposal costs.
+{ref "runtime-autograd"}[The runtime chapter] gives the separate scaling measurements,
+the dense fallback for generic storage and custom nodes, and the remaining graph construction
+and disposal costs.
 
 # Eager And Typed Graph Training Comparison
 

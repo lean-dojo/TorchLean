@@ -45,7 +45,10 @@ add_executable(torchlean_elementwise_regression
 target_compile_definitions(torchlean_elementwise_regression PRIVATE TORCHLEAN_LIBTORCH)
 target_include_directories(torchlean_elementwise_regression PRIVATE
   "${TORCHLEAN_LEAN_PREFIX}/include")
+# Lean's shared runtime also exports _Unwind_* symbols. Select the host unwinder
+# first so SDK exceptions, including the invalid-setting regression, reach C++ catches.
 target_link_libraries(torchlean_elementwise_regression PRIVATE
+  "-Wl,--push-state,--no-as-needed" gcc_s "-Wl,--pop-state"
   "${TORCHLEAN_BACKEND_LIBRARY}" ${TORCH_LIBRARIES} "${LEAN_RUNTIME}")
 separate_arguments(torch_sdk_cxx_flags NATIVE_COMMAND "${TORCH_CXX_FLAGS}")
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

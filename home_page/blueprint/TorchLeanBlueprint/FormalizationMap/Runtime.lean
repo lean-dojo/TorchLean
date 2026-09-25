@@ -48,19 +48,48 @@ values.
 :::
 
 :::theorem "typed_graph_backward_agreement" (parent := "autograd_execution") (lean := "Proofs.Autograd.Algebra.Graph.backwardDenseFrom_lowerGraphDataToTape_eq_backpropAllCtx")
-For executable typed graph data over a commutative semiring, dense reverse accumulation on the
+For executable typed graph data with `Storage` and `Add`, dense reverse accumulation on the
 {uses "runtime_autograd_tape"}[lowered tape] equals proof-level graph backpropagation after both
 contexts are converted to the tape's value array.
 
 This is agreement with the graph's stored executable backward rules. It shows that lowering and
 accumulation preserve those rules; it does not establish their derivative formulas. Local derivative
-laws are a separate obligation. The commutative-semiring hypotheses also matter: they support the
-algebra used to combine contributions and cannot be assumed for arbitrary rounded arithmetic.
+laws are a separate obligation. This operational equality retains scalar addition order and needs
+no commutative-semiring laws, so it does not assume exact real arithmetic for rounded carriers.
 :::
 
 :::proof "typed_graph_backward_agreement"
 Induction over the typed graph keeps the forward context and tape indices aligned while the reverse
 loop accumulates each node's contribution.
+:::
+
+:::definition "runtime_typed_graph_compiled" (parent := "autograd_execution") (lean := "Runtime.Autograd.TypedGraph.compileChecked")
+Checked execution validates and evaluates each node while retaining an indexed primal context and
+certified local reverse programs in `Compiled`. Checked and pure VJP calls use this saved execution
+through proved compiler simplifications; sessions and the typed trainer use it directly.
+:::
+
+:::theorem "typed_graph_compiled_forward_agreement" (parent := "autograd_execution") (lean := "Runtime.Autograd.TypedGraph.compileChecked_asLegacy")
+Mapping a {uses "runtime_typed_graph_compiled"}[compiled execution] through `Compiled.asLegacy`
+gives the complete result of `lowerToTapeChecked`, including the same failures, runtime tape, and
+full primal context.
+:::
+
+:::proof "typed_graph_compiled_forward_agreement"
+Each prepared node preserves its forward, validation, and dense VJP programs. The checked lowering
+induction keeps these programs and the indexed context aligned with the original pack interface.
+:::
+
+:::theorem "typed_graph_compiled_backward_agreement" (parent := "autograd_execution") (lean := "Runtime.Autograd.TypedGraph.compileChecked_backwardDenseFrom_eq_tape")
+After successful checked compilation, `Compiled.backwardDenseFrom` agrees with dense backward on
+the original lowered tape for every seed pack and every gradient entry. The hypotheses require
+`Storage` and `Add`, preserving the chosen carrier's scalar addition order.
+:::
+
+:::proof "typed_graph_compiled_backward_agreement"
+Saved backward agrees with graph backpropagation for the complete seed context. Composing this with
+{uses "typed_graph_backward_agreement"}[the dense tape agreement] gives the result. Neither equality
+supplies a real derivative law for unrestricted IEEE arithmetic or a GPU kernel theorem.
 :::
 
 :::theorem "typed_graph_output_backward_agreement" (parent := "autograd_execution") (lean := "Runtime.Autograd.TypedGraph.backwardDenseAllFrom_lowerToTape_eq_backpropAllCtx")

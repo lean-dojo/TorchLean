@@ -548,11 +548,13 @@ forward and reverse execution read and seed that exact reference.
 
 The graph's indices enforce shape agreement between node references, but do not establish
 derivative correctness. The executable node payload holds three functions, `forward`, `jvp`
-and `vjp`, and no proof field. The proof-carrying node in
+and `vjp`, with runtime validation and optional certified preparation. The preparation certificate
+preserves the forward, validation, and dense VJP programs; it supplies no derivative-correctness
+law. The proof-carrying node in
 {src "NN/Proofs/Autograd/Tape/Algebra/Soundness.lean"}[`Tape/Algebra/Soundness.lean`] adds the local
 adjointness law relating its `jvp` and `vjp`, and the proof-carrying graph composes those local laws
-into a graph theorem. Two representations exist because execution must not require a proof and
-verification must not accept a graph without one; the erasure runs one way only.
+into a graph theorem. Execution can proceed without this adjointness certificate; the graph
+verification theorem requires it.
 {ref "autograd-proofs"}[Proving Autograd Correct] follows that ladder up.
 
 The public model-level name specializes the context of this same graph type:
@@ -568,6 +570,39 @@ example {α : Type} [Storage α]
 
 `nn.TypedGraphModel` is an abbreviation whose context is model state followed by one input tensor.
 It introduces no additional runtime representation; the equality unfolds to `rfl`.
+
+{src "NN/Runtime/Autograd/TypedGraph/Compiled.lean"}[`Runtime.Autograd.TypedGraph.compileChecked`]
+returns a `Compiled` execution containing an indexed primal context and saved local VJP programs.
+`Compiled.backwardDenseFrom` accepts a seed pack for the complete context. The ordinary checked and
+pure TypedGraph VJP APIs use this path through proved compiler simplifications; sessions and the
+trainer use it directly. `Compiled.toTape` and `lowerToTapeChecked` retain the raw Tape interface.
+The accompanying theorems identify the complete checked error/result and every dense gradient
+under `Storage` and `Add`, without assuming associative addition. They preserve the stored
+executable rules; mathematical derivative correctness and agreement with GPU kernels remain
+separate obligations.
+
+Saved backward shares uniform contribution histories while preserving each dense scalar addition,
+including the complete local contribution of a node with repeated parents. Compression uses the
+certified carrier equality in `Storage.decEq?`: native `Float`, `Float32`, and `UInt8` provide it;
+other storage instances default to dense backward. This equality distinguishes signed zeros but
+does not require raw NaN sign or payload identity. Custom nodes without certified local preparation
+or compact contributions retain materializing adapters, and noncompressible histories can require
+quadratic replay. The raw Tape adapter also retains full prefix contributions.
+
+The {src "NN/Tests/Runtime/TypedGraphScaling.md"}[2026-09-25 scaling report] compares baseline
+`0f845313` with implementation `8d9d99eb`, using Lean 4.34.0 and the original dependency cache on
+an Intel Xeon Platinum 8275CL CPU. For 16,000 native binary64 `Float` ReLU nodes of shape `[4]`,
+checked lowering fell from `32,312.11` to `25.33` ms and retained backward from `124,642.42` to
+`44.41` ms. A public checked VJP, including fresh forward evaluation, took `46.07` ms.
+These are individual measurements on a shared host, not medians. Full-context primal and gradient
+`Float.toBits` hashes matched the baseline across the 1,000–16,000-node fixtures, which contain no
+NaNs. JVP scaling was not measured.
+
+Construction and final disposal remain quadratic because the graph representation retains full
+shape-prefix lists. At 16,000 nodes, changed construction took `3,013.47` ms, and the final backward
+including disposal took `953.07` ms. Whole-process peak memory, including construction, fell from
+`13,792.24` to `4,007.66` MiB. The faster reusable execution therefore does not imply a linear
+graph lifecycle or a general complexity theorem.
 
 The typed graph trainer currently supports CPU execution. A non-CPU request is rejected, so a
 successful run's execution label continues to identify the path being measured. Recording and
@@ -871,10 +906,11 @@ trained(heldout) = [0.019031]
 Replacing `--execution eager` with `--execution typed-graph` prints the same nine lines, digit for
 digit. For this model, changing the execution mode changes whether the loss is recorded once and
 reused or rebuilt each step. The architecture, seed, data, and arithmetic remain fixed. The
-matching transcript checks the displayed results of this run. The graph trainer still constructs
-a tape for each evaluation of its stored graph, so this comparison does not establish a timing or
-allocation improvement. {ref "execution-modes"}[Execution Modes] explains that reuse and compares
-mode and arithmetic choices through their displayed results.
+matching transcript checks the displayed results of this run. The graph trainer constructs
+locally saved programs for the current parameters and inputs on each checked execution. This
+comparison does not measure their timing or allocations; the scaling report above measures a
+separate ReLU-chain workload. {ref "execution-modes"}[Execution Modes] explains that reuse and
+compares mode and arithmetic choices through their displayed results.
 
 The two-step log reports a dataset mean falling from `0.495227` to `0.392821`. Its `step 0` line
 is a single update loss, and the held-out value `0.019031` is a prediction with target `0.2`.

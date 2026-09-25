@@ -451,9 +451,10 @@ Graph reuse has a narrower scope than compilation or derivative verification:
 - It does not prove the derivative rules correct. The graph stores executable derivative rules;
   selecting `.typedGraph` runs them. A derivative theorem needs the corresponding proof-carrying
   nodes from the autograd proof layer. TorchLean does prove that lowering `GraphData` to a runtime
-  tape preserves the stored backpropagation program, and that implementation theorem is a different
-  statement from mathematical derivative correctness.
-- It does not optimize, fuse, schedule, or generate native code. It records.
+  tape and using the compiled saved execution preserve the stored backpropagation program. These
+  implementation equalities are separate from mathematical derivative correctness.
+- The indexed execution path reduces context storage and reverse-accumulation work. Operator
+  fusion, kernel scheduling, and model-specific code generation are separate mechanisms.
 - It does not consume an `AcceptedGraphKernelPlan` and it is not CUDA Graph capture.
 
 The current typed graph trainer is CPU only, and a CUDA request fails explicitly rather than falling
@@ -461,10 +462,11 @@ back.
 
 Reusing a typed graph means reusing the program's structure while supplying the current parameter
 values. It does not mean caching the prediction from the first training step. In the maintained
-graph trainer, the stored graph is lowered to a fresh tape for a call, so the operation closures
-capture the values for that call. This is a concrete form of structural reuse with a remaining
-execution cost. The matching loss sequence below establishes agreement for this workload; it
-does not measure allocations, graph-lowering overhead, or a speedup over eager execution.
+graph trainer, each checked execution builds an indexed primal context and saves local VJP
+programs with that call's values. The matching loss sequence below establishes agreement for this
+workload; it does not measure allocations or a speedup over eager execution.
+{ref "runtime-autograd"}[The runtime chapter] gives the separate scaling measurements, the dense fallback
+for generic storage and custom nodes, and the remaining graph construction and disposal costs.
 
 # Eager And Typed Graph Training Comparison
 

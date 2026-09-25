@@ -210,7 +210,7 @@ def referenceParams {α : Type} [TorchLean.Storage α] [Context α] (inputDim : 
       { m := 1, n := 16, w := outputWeight, b := outputBias } }
 
 /-- Seed an $\ell_\infty$ input box centered at a typed input tensor. -/
-def seedInput {α : Type} [TorchLean.Storage α] [Context α] {inputDim : Nat}
+def seedInput {α : Type} [TorchLean.Storage α] [Context α] [BoundOps α] {inputDim : Nat}
     (ps : ParamStore α) (center : Tensor α [inputDim]) (eps : α) : ParamStore α :=
   ps.seedLInfBall 0 center eps
 

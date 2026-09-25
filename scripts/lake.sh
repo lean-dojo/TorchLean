@@ -10,8 +10,7 @@ lake_bin="${TORCHLEAN_LAKE:-lake}"
 lean_bin="${TORCHLEAN_LEAN:-lean}"
 
 cuda=false
-libtorch=false
-cuda_home="/usr/local/cuda"
+libtorch_home=""
 print_build_dir=false
 declare -a forwarded=()
 declare -a arguments=("$@")
@@ -30,17 +29,11 @@ set_config_flag() {
         *) cuda=false ;;
       esac
       ;;
-    cuda_home)
-      # Match Lake's whitespace normalization, including an explicitly empty override.
+    libtorch_home)
+      # Match Lake's whitespace normalization; an empty override uses the environment/default.
       value="${value#"${value%%[![:space:]]*}"}"
       value="${value%"${value##*[![:space:]]}"}"
-      cuda_home="${value:-/usr/local/cuda}"
-      ;;
-    libtorch)
-      case "$value" in
-        true|1) libtorch=true ;;
-        *) libtorch=false ;;
-      esac
+      libtorch_home="$value"
       ;;
   esac
 }
@@ -87,12 +80,8 @@ done
 
 if [[ -n "${TORCHLEAN_BUILD_PROFILE:-}" ]]; then
   profile="$TORCHLEAN_BUILD_PROFILE"
-elif [[ "$cuda" == true && "$libtorch" == true ]]; then
-  profile="cuda-libtorch"
 elif [[ "$cuda" == true ]]; then
-  profile="cuda"
-elif [[ "$libtorch" == true ]]; then
-  profile="cpu-libtorch"
+  profile="cuda-libtorch"
 else
   profile="cpu"
 fi
@@ -147,13 +136,14 @@ if ! command -v "$lean_bin" >/dev/null 2>&1; then
   exit 127
 fi
 if [[ "$cuda" == true ]]; then
-  if [[ ! -x "$cuda_home/bin/nvcc" ]]; then
-    echo "error: CUDA compiler not found: $cuda_home/bin/nvcc" >&2
-    echo "hint: pass the toolkit root with -K cuda_home=/path/to/cuda" >&2
-    exit 127
+  # CMake owns CUDA SDK discovery. TorchLean builds only C++ sources; there is no independent
+  # nvcc prerequisite here. The selected LibTorch package may itself require a CUDA toolkit.
+  declare -a sdk_args=(--package-dir "$repo_root" --resolve-home)
+  if [[ -n "$libtorch_home" ]]; then
+    sdk_args+=("--libtorch-home=$libtorch_home")
   fi
-  export PATH="$cuda_home/bin:$PATH"
-  export LD_LIBRARY_PATH="$cuda_home/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  TORCHLEAN_LIBTORCH_HOME="$(python3 "$default_repo_root/scripts/libtorch_build.py" "${sdk_args[@]}")"
+  export TORCHLEAN_LIBTORCH_HOME
 fi
 
 mkdir -p "$repo_root/.lake" "$default_repo_root/.lake"

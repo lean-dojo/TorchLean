@@ -68,14 +68,19 @@ def mkIdx
 
 /-- Package a typed forward closure as one node of the executable IR graph. -/
 def mkForwardNode {α : Type} [TorchLean.Storage α] {Γ : List Shape} {τ : Shape}
-    (forward : TorchLean.TensorPack α Γ → Tensor α τ) : ForwardNode α Γ τ :=
+    (forward : TensorReader α Γ → Tensor α τ) : ForwardNode α Γ τ :=
   ⟨forward⟩
+
+/-- Running a constructed forward node applies its reader closure. -/
+@[simp] theorem mkForwardNode_run {α : Type} [TorchLean.Storage α] {Γ : List Shape} {τ : Shape}
+    (f : TensorReader α Γ → Tensor α τ) (ctx : TensorReader α Γ) :
+    (mkForwardNode f).run ctx = f ctx := rfl
 
 /--
 Evaluation projection for `mkForwardNode`.
 -/
 @[simp] theorem mkForwardNode_eval {α : Type} [TorchLean.Storage α] {Γ : List Shape} {τ : Shape}
-    (f : TorchLean.TensorPack α Γ → Tensor α τ) (ctx : TorchLean.TensorPack α Γ) :
+    (f : TensorReader α Γ → Tensor α τ) (ctx : TorchLean.TensorPack α Γ) :
     (mkForwardNode (α := α) (Γ := Γ) (τ := τ) f).eval ctx = f ctx := by
   rfl
 
@@ -107,7 +112,7 @@ extent from the runtime context. Inputs for a nonzero concat axis permute the pa
 returning it, so the closure is the common shape for every concat branch.
 -/
 abbrev ConcatInput (α : Type) [TorchLean.Storage α] (Γ : List Shape) (rest : Shape) : Type :=
-  Sigma fun nP => TorchLean.TensorPack α Γ → Tensor α (.dim nP rest)
+  Sigma fun nP => TensorReader α Γ → Tensor α (.dim nP rest)
 
 /--
 Concatenate typed tensors along their leading axis, folding from the first tensor.
@@ -151,7 +156,7 @@ theorem concatLeadingAxisList_fst {α : Type} [TorchLean.Storage α] [Context α
 /-- Concatenate the tensors produced by concat inputs along their leading axis. -/
 def concatLeadingAxisFromInputs
     {α : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape} {rest : Shape}
-    (ctx : TorchLean.TensorPack α Γ) (inputs : Array (ConcatInput α Γ rest)) :
+    (ctx : TensorReader α Γ) (inputs : Array (ConcatInput α Γ rest)) :
     Sigma fun nSum => Tensor α (.dim nSum rest) :=
   concatLeadingAxisList (inputs.toList.map fun input => ⟨input.1, input.2 ctx⟩)
 
@@ -162,7 +167,7 @@ This theorem justifies the output-shape cast in the concat lowering branches.
 -/
 theorem concatLeadingAxisFromInputs_size_eq_sum
     {α : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape} {rest : Shape}
-    (ctx : TorchLean.TensorPack α Γ) (inputs : Array (ConcatInput α Γ rest)) :
+    (ctx : TensorReader α Γ) (inputs : Array (ConcatInput α Γ rest)) :
     (concatLeadingAxisFromInputs (α := α) (Γ := Γ) (rest := rest) ctx inputs).1 =
       inputs.foldl (fun acc input => acc + input.1) 0 := by
   rw [← Array.foldl_toList]

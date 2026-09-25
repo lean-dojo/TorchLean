@@ -9,6 +9,7 @@ module
 public import NN.Spec.Layers.Dropout
 public import NN.Spec.Module.Linear
 public import NN.Spec.Module.Rnn
+public import NN.Spec.Module.RecurrentStack
 
 /-!
 # Gated Recurrent Models
@@ -91,20 +92,15 @@ def classifier
     |>.append lastOutput
     |>.append classifierModule
 
-/-- A 2-layer GRU stack (sequence-to-sequence), followed by a per-timestep linear head. -/
+/-- A recurrent stack of arbitrary depth and widths, followed by a per-timestep linear head. -/
 def stacked
   [DecidableRel ((· > ·) : α → α → Prop)]
   {seqLen inputSize hiddenSize outputSize : Nat}
-  (firstSpec : GRUSpec α inputSize hiddenSize)
-  (secondSpec : GRUSpec α hiddenSize hiddenSize)
+  (layers : RecurrentStack (GRUSpec α) inputSize hiddenSize)
   (linearSpec : LinearSpec α hiddenSize outputSize) :
-  Spec.Module.Chain α ([seqLen, inputSize]) ([seqLen, outputSize]) :=
-  let firstModule := Spec.Module.gru firstSpec
-  let secondModule := Spec.Module.gru secondSpec
-  let linearModule := Spec.Module.liftLeading (Spec.Module.linear linearSpec)
-  Spec.Module.Chain.single firstModule
-    |>.append secondModule
-    |>.append linearModule
+  Spec.Module.Chain α [seqLen, inputSize] [seqLen, outputSize] :=
+  layers.toChain (fun cell => Spec.Module.gru cell)
+    (Spec.Module.liftLeading (Spec.Module.linear linearSpec))
 
 /-- A simple GRU language-model style pipeline:
 
@@ -176,21 +172,36 @@ structure Grads (α : Type) [TorchLean.Storage α] (inputSize hiddenSize outputS
   outputBias : Tensor α [outputSize]
 
 -- Multi-layer GRU model
-/--
-Bundle of parameters for a multi-layer GRU model.
+/-- Recurrent cells with independently chosen widths and a linear output head.
 
-The first layer consumes `inputSize`, and all subsequent layers consume `hiddenSize`.
+The endpoint `hiddenSize` is the width of the last cell.
+An empty stack has `hiddenSize = inputSize`.
 -/
 structure StackedModel (α : Type) [TorchLean.Storage α]
-    (inputSize hiddenSize outputSize numLayers : Nat) where
-  /-- First recurrent layer, whose input may differ from the hidden width. -/
-  firstLayer : GRUSpec α inputSize hiddenSize
-  /-- Remaining recurrent layers. -/
-  hiddenLayers : Fin (numLayers - 1) → GRUSpec α hiddenSize hiddenSize
+    (inputSize hiddenSize outputSize : Nat) where
+  /-- Layer dimensions determine the type of every intermediate hidden stream and state. -/
+  layers : RecurrentStack (GRUSpec α) inputSize hiddenSize
   /-- Linear output projection. -/
   outputLayer : LinearSpec α hiddenSize outputSize
 
--- GRU model for classification (many-to-one)
+/-- Run every layer with its own initial state, then project the final hidden stream.
+
+The result retains all final states. Empty sequences leave each initial state unchanged, and an
+empty stack applies the head directly to the input sequence.
+-/
+def StackedModel.forward {seqLen inputSize hiddenSize outputSize : Nat}
+    (model : StackedModel α inputSize hiddenSize outputSize)
+    (inputs : Tensor α [seqLen, inputSize])
+    (initialHiddens : model.layers.States (fun width => Tensor α [width])) :
+    Tensor α [seqLen, outputSize] × model.layers.States (fun width => Tensor α [width]) :=
+  let (hidden, finalStates) := model.layers.run
+    (fun cell input state =>
+      let outputs := gruSequenceSpec cell input state
+      let finalState := if h : seqLen = 0 then state else
+        get outputs ⟨seqLen - 1, Nat.sub_one_lt h⟩
+      (outputs, finalState)) inputs initialHiddens
+  (Tensor.mapLeading [seqLen] (linearSpec model.outputLayer) hidden, finalStates)
+
 /--
 Bundle of parameters for a many-to-one GRU classifier.
 
@@ -283,22 +294,19 @@ def Model.forward {inputSize hiddenSize outputSize : Nat}
 
 /-- Sequence forward for `Gru.Model` (time-major).
 
-Returns `(outputs, final_hidden)`.
+Returns `(outputs, final_hidden)`. Empty sequences preserve the initial hidden state.
 
 PyTorch analogy: run `nn.GRU` over the sequence, then apply `nn.linear` at each timestep.
 -/
 def Model.forwardSequence {seqLen inputSize hiddenSize outputSize : Nat}
   (model : Model α inputSize hiddenSize outputSize)
   (inputs : Tensor α [seqLen, inputSize])
-  (initialHidden : Tensor α [hiddenSize]) (h : 0 < seqLen) :
+  (initialHidden : Tensor α [hiddenSize]) :
   (Tensor α [seqLen, outputSize] × Tensor α [hiddenSize]) :=
-  let hiddenStates := gruSequenceSpec model.gru inputs initialHidden
-  let outputs := Tensor.mapLeading ([seqLen])
-    (linearSpec model.outputLayer) hiddenStates
-  have hLast : seqLen - 1 < seqLen := by
-    simpa [Nat.pred_eq_sub_one] using Nat.pred_lt (Nat.ne_of_gt h)
-  let finalHidden := get hiddenStates ⟨seqLen - 1, hLast⟩
-  (outputs, finalHidden)
+  let stack : StackedModel α inputSize hiddenSize outputSize :=
+    { layers := .cons model.gru .nil, outputLayer := model.outputLayer }
+  let (outputs, finalStates) := stack.forward inputs (initialHidden, ())
+  (outputs, finalStates.1)
 
 -- Forward pass for GRU classifier (many-to-one)
 /--
@@ -360,55 +368,6 @@ def BidirectionalModel.forward {seqLen inputSize hiddenSize outputSize : Nat}
     ([(hiddenSize + hiddenSize)])
     (Tensor.concatAxisSpec .scalar) forwardStates backwardStates
   Tensor.mapLeading ([seqLen]) (linearSpec model.outputLayer) combinedStates
-
--- Multi-layer GRU forward pass (stack multiple GRU layers)
-/--
-Forward pass for a `Gru.StackedModel`.
-
-This runs the first layer on the input sequence, then threads the resulting hidden stream through
-each additional hidden layer, and finally applies the output head per timestep.
--/
-def StackedModel.forward {seqLen inputSize hiddenSize outputSize numLayers : Nat}
-  (model : StackedModel α inputSize hiddenSize outputSize numLayers)
-  (inputs : Tensor α [seqLen, inputSize])
-  (initialHiddens : Fin numLayers → Tensor α [hiddenSize])
-  (hLayers : 0 < numLayers) (hSeq : 0 < seqLen) :
-  (Tensor α [seqLen, outputSize] × (Fin numLayers → Tensor α [hiddenSize])) :=
-  let rec processHiddenLayers (layer : Nat)
-    (layerInput : Tensor α [seqLen, hiddenSize])
-    (hiddens : Fin numLayers → Tensor α [hiddenSize]) :
-    (Tensor α [seqLen, hiddenSize] × (Fin numLayers → Tensor α [hiddenSize])) :=
-    if hLayer : layer < numLayers - 1 then
-      let layerIndex : Fin (numLayers - 1) := ⟨layer, hLayer⟩
-      have hState : layer + 1 < numLayers := by
-        have hState' : layer + 1 ≤ numLayers - 1 := Nat.succ_le_of_lt hLayer
-        exact lt_of_le_of_lt hState' (Nat.sub_one_lt (Nat.ne_of_gt hLayers))
-      let stateIndex : Fin numLayers := ⟨layer + 1, hState⟩
-      let layerHidden := hiddens stateIndex
-      let layerOutput :=
-        gruSequenceSpec (model.hiddenLayers layerIndex) layerInput layerHidden
-      have hLast : seqLen - 1 < seqLen := by
-        simpa [Nat.pred_eq_sub_one] using Nat.pred_lt (Nat.ne_of_gt hSeq)
-      let finalLayerHidden := get layerOutput ⟨seqLen - 1, hLast⟩
-      let updatedHiddens := Function.update hiddens stateIndex finalLayerHidden
-      processHiddenLayers (layer + 1) layerOutput updatedHiddens
-    else
-      (layerInput, hiddens)
-
-  let firstLayerIndex : Fin numLayers := ⟨0, hLayers⟩
-  let firstHidden := initialHiddens firstLayerIndex
-  let firstOutput := gruSequenceSpec model.firstLayer inputs firstHidden
-  have hLast : seqLen - 1 < seqLen := by
-    simpa [Nat.pred_eq_sub_one] using Nat.pred_lt (Nat.ne_of_gt hSeq)
-  let firstFinalHidden := get firstOutput ⟨seqLen - 1, hLast⟩
-  let updatedInitialHiddens :=
-    Function.update initialHiddens firstLayerIndex firstFinalHidden
-
-  let (finalHiddenStates, finalHiddens) :=
-    processHiddenLayers 0 firstOutput updatedInitialHiddens
-  let outputs := Tensor.mapLeading ([seqLen])
-    (linearSpec model.outputLayer) finalHiddenStates
-  (outputs, finalHiddens)
 
 -- GRU Language Model forward pass
 /--
@@ -569,12 +528,12 @@ The Python expression records the intended runtime analogue; `forward` remains t
 meaning of the module.
 -/
 def Model.toModule {seqLen inputSize hiddenSize outputSize : Nat}
-  (model : Model α inputSize hiddenSize outputSize) (h : 0 < seqLen) :
+  (model : Model α inputSize hiddenSize outputSize) :
   Spec.Module α ([seqLen, inputSize]) ([seqLen, outputSize]) :=
 {
   forward := fun inputs =>
     let initialHidden := Tensor.full ([hiddenSize]) 0
-    (model.forwardSequence inputs initialHidden h).1,
+    (model.forwardSequence inputs initialHidden).1,
   kind := "SimpleGRU",
   pythonExpr :=
     s!"SimpleGRU(input_size={inputSize}, hidden_size={hiddenSize}, " ++

@@ -83,7 +83,7 @@ theorem buildFrom_denoteAllFrom_abs
               simp [hp, hIdx] at hBuild
               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                 mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                  Tensor.absSpec (α := α) (getIdx (α := α) (xs := ctx) ip))
+                  Tensor.absSpec (α := α) (readTensor (α := α) (xs := ctx) ip))
               let st1 : State α inShape :=
                 ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
               have hRec :
@@ -151,7 +151,7 @@ theorem buildFrom_denoteAllFrom_sqrt
               simp [hp, hIdx] at hBuild
               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                 mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                  Tensor.sqrtSpec (α := α) (getIdx (α := α) (xs := ctx) ip))
+                  Tensor.sqrtSpec (α := α) (readTensor (α := α) (xs := ctx) ip))
               let st1 : State α inShape :=
                 ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
               have hRec :
@@ -219,7 +219,7 @@ theorem buildFrom_denoteAllFrom_inv
               simp [hp, hIdx] at hBuild
               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                 mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                  Tensor.invSpec (α := α) (getIdx (α := α) (xs := ctx) ip))
+                  Tensor.invSpec (α := α) (readTensor (α := α) (xs := ctx) ip))
               let st1 : State α inShape :=
                 ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
               have hRec :

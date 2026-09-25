@@ -67,6 +67,15 @@ The semantics is defined as a *safe* `Option` evaluator:
 def getVal? (vals : Array (Option Val)) (pid : Nat) : Option Val :=
   if _h : pid < vals.size then vals[pid]! else none
 
+/-- Binary matmul uses the runtime's broadcast layout and ordered scalar contraction. -/
+def evalBinaryMatmul? (leftShape rightShape : Shape) (left right : Val) : Option Val :=
+  match (NN.IR.OpContracts.matmulDims leftShape rightShape).toOption with
+  | none => none
+  | some dims =>
+      if left.n = leftShape.size ∧ right.n = rightShape.size then
+        some ⟨dims.outShape.size, NN.IR.Graph.matmulFlat dims left.v right.v⟩
+      else none
+
 /-- Reconstruct a shaped value, run a generic unary tensor operation, and flatten its result. -/
 def evalSomeTensorUnary? (shape : Shape)
     (op : SomeTensor ℝ → Except String (SomeTensor ℝ)) (x : Val) : Option Val :=
@@ -81,6 +90,21 @@ def evalSomeTensorUnary? (shape : Shape)
     | .error _ => none
   else
     none
+
+/-- Value evaluation of the same checked grouped convolution used by the interval transfer. -/
+def evalConvNode? (configuration : NN.IR.ConvConfig) (parentShape outShape : Shape)
+    (id : Nat) (ps : ParamStore ℝ) (input : Val) : Option Val := do
+  let parameters ← ps.convCfg[id]?
+  let leading ← planConvTransfer? configuration parameters parentShape outShape
+  if hdim : input.n = (parameters.input leading).size then
+    let shaped := ibpUnflatten input.n input.v hdim
+    some ⟨(parameters.output leading).size,
+      flattenSpec (Tensor.mapLeading leading
+        (groupedConvSpec (inSpatial := parameters.inputSpatial)
+          (stride := parameters.stride) (dilation := parameters.dilation)
+          (paddingBefore := parameters.padding) (paddingAfter := parameters.paddingAfter)
+          parameters.groups parameters.spec.kernel parameters.spec.bias) shaped)⟩
+  else none
 
 /-- Value semantics for a single node in the supported dialect (over `ℝ`). -/
 def evalNode? (nodes : Array Node) (ps : ParamStore ℝ) (inputs : Std.HashMap Nat Val)
@@ -236,7 +260,14 @@ def evalNode? (nodes : Array Node) (ps : ParamStore ℝ) (inputs : Std.HashMap N
               else
                 none
           | _, _ => none
-      | _ => none
+      | none =>
+          match NN.IR.binaryParents? node.parents with
+          | some (p1, p2) =>
+              match getVal? vals p1, getVal? vals p2 with
+              | some left, some right =>
+                  evalBinaryMatmul? nodes[p1]!.outShape nodes[p2]!.outShape left right
+              | _, _ => none
+          | none => none
   | .sum =>
       match NN.IR.unaryParent? node.parents with
       | some p1 =>
@@ -261,18 +292,15 @@ def evalNode? (nodes : Array Node) (ps : ParamStore ℝ) (inputs : Std.HashMap N
                 none
           | none => none
       | _ => none
-  | .concat _ =>
-      match NN.IR.binaryParents? node.parents with
-      | some (p1, p2) =>
-          match getVal? vals p1, getVal? vals p2 with
-          | some x, some y =>
-              let outDim := x.n + y.n
-              let z : Tensor ℝ [outDim] :=
-                Tensor.dim fun i =>
-                  Fin.addCases (fun i1 => x.v.unstack i1) (fun i2 => y.v.unstack i2) i
-              some { n := outDim, v := z }
-          | _, _ => none
-      | _ => none
+  | .conv configuration => do
+      let parent ← NN.IR.unaryParent? node.parents
+      let parentNode ← nodes[parent]?
+      let input ← getVal? vals parent
+      evalConvNode? configuration parentNode.outShape node.outShape id ps input
+  | .concat axis => do
+      let layout ← concatNodeLayout? nodes node axis
+      let parents ← node.parents.mapM fun parent => getVal? vals parent
+      concatFlatValues? layout parents
   | _ =>
       none
 

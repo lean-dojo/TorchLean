@@ -32,7 +32,7 @@ The dispatch tables are ordinary Lean definitions:
 - {src "NN/Examples/Runner.lean"}[`NN/Examples/Runner.lean`] routes the `torchlean` subcommands;
 - {src "NN/Verification/CLI.lean"}[`NN/Verification/CLI.lean`] routes the `verify` tools.
 
-The transcripts illustrate these workflows. Help from your executable remains authoritative for
+The commands below expose these workflows. Help from your executable remains authoritative for
 command names and flags; numerical output and backend reports can change with the build.
 
 # Discovering Commands
@@ -183,7 +183,7 @@ def main (args : List String) : IO Unit := do
 
   let trainer := Trainer.new model
     { flags.runtime with
-        objective := .meanSquaredError
+        objective := .mse
         optimizer := optim.adam { learningRate := 0.03 }
         seed := flags.seed }
   ...
@@ -599,18 +599,19 @@ lake build
 lake exe torchlean quickstart_mlp --device cpu --steps 20
 ```
 
-Real CUDA execution must be compiled with the Lake option:
+CUDA execution requires a CUDA-enabled LibTorch SDK and the Lake option:
 
 ```terminal
-# Link the CUDA configuration before selecting CUDA at
-# runtime.
+# Set this to the installed SDK before linking the CUDA configuration.
+export TORCHLEAN_LIBTORCH_HOME=/path/to/libtorch
 lake -R -K cuda=true build
 lake -R -K cuda=true exe torchlean chargpt --device cuda \
   --tiny-shakespeare --preset smoke
 ```
 
 Keep `-R` when changing a Lake configuration so affected native archives are rebuilt. Without
-`cuda=true`, TorchLean links portable CUDA stubs.
+`cuda=true`, TorchLean links portable CUDA stubs. The SDK, CUDA toolkit, and compiler must be
+compatible; {ref "gpu-and-cuda"}[GPU And CUDA] describes the native build.
 
 Add `--show-backend` to inspect what was selected:
 
@@ -662,22 +663,14 @@ workflows also accept `--arithmetic ieee`, which selects FloatLib's executable b
 ```terminal
 # Keep the model configuration fixed while changing the
 # arithmetic implementation.
-lake exe torchlean quickstart_mlp --steps 1
-lake exe torchlean quickstart_mlp --steps 1 --arithmetic ieee
+lake exe torchlean quickstart_mlp --device cpu --steps 1 --seed 2026
+lake exe torchlean quickstart_mlp --device cpu --steps 1 --seed 2026 --arithmetic ieee
 ```
 
-The following transcript predates the FloatLib migration and retains its recorded scalar labels
-and numerical results. Current `.ieee` execution uses FloatLib binary32.
-
-```
-steps=1 arithmetic=native scalar=Float32 loss=1.159370 -> 1.100337
-steps=1 arithmetic=ieee scalar=IEEE32Exec loss=1.159370 -> 1.100337
-```
-
-The two implementations agree to six printed decimals on this update. Native arithmetic executes
-hardware floating-point operations; FloatLib binary32 computes binary32 operations with rounding
-defined in Lean. Running both can expose a disagreement between the executable reference and
-the runtime, although this transcript neither compares every bit nor covers other inputs.
+Native arithmetic executes hardware floating-point operations; `--arithmetic ieee` selects
+`ExecFloat.Binary 8 23`, with binary32 rounding defined in FloatLib. Compare the reported losses
+and held-out prediction. Running both can expose a disagreement between the executable reference
+and the runtime, but matching decimal output alone does not compare every bit or cover other inputs.
 The proof statements
 and their assumptions are in {ref "fp32-soundness"}[Float32 Soundness];
 {ref "floats"}[Floating-Point Semantics] describes the scalar types {Informal.citep flocq2011}[].
@@ -712,8 +705,8 @@ complex GPU training benchmark.
 
 Device, arithmetic, and execution mode describe three choices: where tensor operations run,
 how scalar arithmetic is implemented, and how the program is evaluated. They are useful to
-record separately even when only some combinations are implemented. The two loss lines above
-come from a deliberately small comparison with the same training arguments. Reading a numerical
+record separately even when only some combinations are implemented. The two commands above
+make a deliberately small comparison with the same training arguments. Reading a numerical
 difference as an arithmetic effect requires keeping the initialization, data, optimizer settings,
 and number of updates fixed as well. A completed command establishes that its selected path ran;
 the printed loss describes that run's objective.
@@ -721,18 +714,17 @@ the printed loss describes that run's objective.
 # Execution Modes
 
 `--execution typed-graph` selects the shape-indexed graph host path for commands that implement it.
-The recorded MLP quickstart comparison used the same arguments for both paths:
+Compare it with eager execution using the same MLP quickstart arguments:
 
 ```terminal
 # Keep the training arguments fixed while comparing the two
 # execution modes.
-lake exe torchlean quickstart_mlp --steps 1 --execution eager
-lake exe torchlean quickstart_mlp --steps 1 --execution typed-graph
+lake exe torchlean quickstart_mlp --device cpu --steps 1 --seed 2026 --execution eager
+lake exe torchlean quickstart_mlp --device cpu --steps 1 --seed 2026 --execution typed-graph
 ```
 
-Both runs printed `loss=1.159370 -> 1.100337` and the same held-out prediction. This is one
-numerical comparison of the eager and typed-graph paths. The flag selects a shape-indexed
-host execution
+The initial loss, final loss, and held-out prediction let you compare the two paths on one update.
+The flag selects a shape-indexed host execution
 path; it does not request CUDA graph capture, compiler optimization, or a derivative proof.
 Some specialized CUDA applications require eager execution.
 {ref "execution-modes"}[Execution Modes] compares the paths.
@@ -1221,7 +1213,7 @@ still makes sense with them.
 3. Run one command twice with `--seed 1` and `--seed 2`, then twice with the same seed, and confirm
    which pairs agree exactly.
 4. Run `quickstart_mlp --steps 1` with `--arithmetic native` and `--arithmetic ieee` and diff the
-   two transcripts. Then try `--steps 200` and see whether the agreement survives.
+   two outputs. Then try `--steps 200` and compare the losses and predictions again.
 5. Redirect `--show-backend` output to a file and count the distinct `provider=` values.
 6. Run `lake exe verify -- all`, then run each `torchlean-*` tool by hand, and note how much of the
    registry a green `all` left untouched.

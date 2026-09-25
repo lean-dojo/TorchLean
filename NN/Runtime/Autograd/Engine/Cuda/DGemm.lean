@@ -3,11 +3,11 @@ Copyright (c) 2026 TorchLean
 Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 
-CUDA/cuBLAS FFI: host `FloatArray` DGEMM (FP64 / Lean `Float`).
-Implementation: `csrc/cuda/blas/torchlean_dgemm_cuda.cu` (`cublasDgemm`).
+LibTorch FFI: host `FloatArray` DGEMM (FP64 / Lean `Float`).
+Implementation: `csrc/libtorch/blas.cpp` (ATen `matmul`).
 
 The FP32 matmul path lives in `Engine.Cuda.Kernels` as `Buffer.bmm`, which uses CUDA buffers and
-cuBLAS SGEMM.
+ATen matrix multiplication.
 -/
 
 module
@@ -15,17 +15,16 @@ module
 /-!
 # CUDA DGEMM FFI
 
-Foreign-function declaration for the host `FloatArray` FP64 matrix multiply path backed by
-`cublasDgemm` when CUDA is enabled and by a CPU stub otherwise. The float32 buffer matmul path lives
-in `NN.Runtime.Autograd.Engine.Cuda.Kernels`.
+Foreign-function declaration for host `FloatArray` FP64 matrix multiplication. The CUDA build
+uploads the arrays to the selected device, calls ATen `matmul`, and downloads the result.
+The CPU build uses a stub implementation. The float32 buffer matmul path lives in
+`NN.Runtime.Autograd.Engine.Cuda.Kernels`.
 
 This lives in its own small module instead of `Cuda.Kernels`:
 
 - `Cuda.Kernels` is the float32 `Cuda.Buffer` surface used by the CUDA eager tape.
 - `DGemm` is a host `FloatArray → FloatArray` bridge for Lean `Float` tensors and the
   `FastKernels` CPU-tape acceleration path.
-- It links through a separate native archive (`torchlean_dgemm_cuda`) because the implementation
-  is a cuBLAS-DGEMM wrapper rather than a tensor-buffer kernel.
 
 -/
 
@@ -35,10 +34,11 @@ namespace Runtime
 namespace Autograd
 namespace Cuda
 
-/-- cuBLAS `dgemm` on row-major host arrays: `A` is `m × n`, `B` is `n × p`, result is `m × p`.
+/-- FP64 matrix multiplication on row-major host arrays: `A` is `m × n`, `B` is `n × p`,
+and the result is `m × p`.
 
-Double precision, so unlike the float32 kernels there is no widening step to reason about; the
-reference semantics is plain `Matrix.mul` over Lean `Float`. -/
+Inputs and outputs use binary64, as does Lean `Float`. ATen determines the native accumulation
+order; the interface does not promise bitwise equality with a Lean reduction. -/
 @[extern "torchlean_dgemm_cuda"]
 opaque torchleanDgemmCuda (A : @& FloatArray) (B : @& FloatArray)
                           (m n p : UInt32) : FloatArray

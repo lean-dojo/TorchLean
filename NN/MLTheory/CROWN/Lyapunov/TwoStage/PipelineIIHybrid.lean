@@ -265,7 +265,7 @@ def run (width : Nat) (args : List String) : IO Unit := do
       let (seed', x0) := sampleStateTensor seed rad
       seed := seed'
       let lossBeforePgd := (←
-        Runtime.Autograd.Torch.ScalarTrainer.runLoss tr
+        Runtime.Autograd.Torch.ScalarTrainer.loss tr
           (TorchLean.TensorPack.singleton x0) .nil).item
       let params := TorchLean.nn.State.Internal.fromTensorPack (← tr.getState)
       let mut x := x0
@@ -274,10 +274,10 @@ def run (width : Nat) (args : List String) : IO Unit := do
           width cLoss params x pgdStepSize rad
       let xs := TorchLean.TensorPack.singleton x
       let lossFound := (←
-        Runtime.Autograd.Torch.ScalarTrainer.runLoss tr xs .nil).item
+        Runtime.Autograd.Torch.ScalarTrainer.loss tr xs .nil).item
       if (0 : Scalar) < lossFound then
         foundViolations := foundViolations + 1
-      Runtime.Autograd.Torch.ScalarTrainer.runStep tr lr xs .nil
+      Runtime.Autograd.Torch.ScalarTrainer.step tr lr xs .nil
       IO.println s!"[stage2] round {round}: lossBefore={lossBeforePgd} lossAfterPGD={lossFound}"
 
   let params := TorchLean.nn.State.Internal.fromTensorPack (← tr.getState)

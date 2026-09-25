@@ -1,58 +1,92 @@
-# TorchLean CUDA Runtime Sources
+# TorchLean CUDA ABI and CPU stubs
 
-This directory contains TorchLean's trusted native runtime boundary for CUDA and CPU stub builds.
-Lean checks shapes and dispatches to these symbols, but memory safety, kernel launch behavior, and
-float32 arithmetic are outside Lean's kernel.
-
-The public website includes a generated source browser for this directory. Regenerate it with:
-
-```bash
-lake build cudaDocs
-```
-
-That target writes `home_page/cuda/`, links native files to Lean FFI modules under
-`NN/Runtime/Autograd/Engine/Cuda`, and complements `lake build NN:docs`.
+This directory contains the shared Lean C ABI headers and portable CPU stubs. The CUDA
+implementation lives in [`../libtorch/`](../libtorch/) and uses the selected LibTorch SDK's ATen
+operations. Lean checks shapes and dispatches through the existing symbols; native memory
+safety, SDK behavior, and floating-point execution remain outside Lean's kernel.
 
 ## Layout
 
-- `common/`: shared Lean runtime helpers, CUDA error checking, cuBLAS helpers, RNG helpers, and
-  environment parsing for deterministic reductions.
-- `tensor/`: `Cuda.Buffer` allocation, finalization, host/device copies, scalar elementwise kernels,
-  reductions, and seeded RNG buffers.
-- `kernels/`: tensor views, broadcast/reduce, gather/scatter, matmul/bmm, and indexing kernels.
-- `conv_pool/`: convolution, transposed convolution, max, average, and smooth max pooling, plus
-  their backward passes. The 2D specializations live beside the N dimensional kernels for the common
-  fast path.
-- `blas/`: double-precision GEMM bridge backed by cuBLAS, plus its portable CPU stub.
+- `common/`: shared buffer representation, Lean object/size helpers, and runtime control parsing.
+- `tensor/`, `kernels/`, `conv_pool/`, `blas/`: the CPU implementations of the buffer exports.
 
-Each CUDA implementation has a matching `_stub.c` file with the same exported symbols. The stubs are
-used by default so `lake build` works without a CUDA toolkit. Real CUDA builds are selected with:
+The complete CUDA backend is built as one shared library:
+
+| LibTorch source | Responsibility |
+| --- | --- |
+| `runtime.cpp` | Buffer ownership, allocation, transfers, RNG, and runtime controls. |
+| `elementwise.cpp` | Elementwise arithmetic, activations, and optimizer buffer operations. |
+| `kernels.cpp` | Views, indexing, reductions, normalization, matrix operations, and FFT. |
+| `conv_pool.cpp` | Convolution and pooling forward/backward operations. |
+| `attention.cpp` | Attention forward/backward operations and retained SDK contexts. |
+| `blas.cpp` | Double-precision matrix multiplication bridge. |
+
+`TORCHLEAN_LIBTORCH` selects the ATen-backed buffer representation in the shared headers.
+The Lean tape owns differentiation; native calls use a no-grad guard. The
+CPU evaluation dynamic library is loaded for native CPU `#eval` calls. GPU tests run as
+compiled executables.
+
+## Build selection
+
+`scripts/lake.sh build` selects the default `pureLean`/`portableCPU` build and CPU stubs,
+without an SDK or toolkit. `cuda=true` requires the complete LibTorch CUDA backend.
+
+Run migration compilation and execution only in the cluster. A full SDK contains `include/`,
+`lib/`, and `share/cmake/Torch/TorchConfig.cmake`; a partial header snapshot is insufficient.
+Use the CUDA-enabled PyTorch package root or an equivalent LibTorch distribution:
 
 ```bash
-lake build -R -K cuda=true -K cuda_home=/usr/local/cuda
+export TORCHLEAN_LIBTORCH_HOME=/path/to/torch
+scripts/lake.sh -Kcuda=true build NN NNCI NNExamples NNTests nn_tests_suite
+TORCHLEAN_REQUIRE_CUDA=1 scripts/lake.sh -Kcuda=true test
+scripts/checks/check.sh --libtorch-home "$TORCHLEAN_LIBTORCH_HOME" --ci-all
 ```
 
-The default `cuda_arch=all-major` asks the selected `nvcc` to include code for its supported major
-GPU architectures. For a known deployment target, select it explicitly. For example, an A100 build
-can use:
+`-Klibtorch_home=PATH` overrides `TORCHLEAN_LIBTORCH_HOME`; otherwise the default is `libtorch/`
+under the package root. The build requires Linux, CMake 3.22 or newer, Make, the pinned Lean
+headers, and a compatible C++20 compiler. SDK CMake discovers the ABI, any stricter C++ standard,
+transitive libraries, and rpath. An executable built in the same project checks compiler/link
+compatibility without running. SDK discovery may require a matching CUDA
+development toolkit, even though TorchLean itself compiles only C++ sources.
+
+Optional SDK discovery controls are explicit:
 
 ```bash
-scripts/lake.sh -R -K cuda=true -K cuda_home=/usr/local/cuda \
-  -K cuda_arch=sm_80 build
+TORCH_CUDA_ARCH_LIST=8.0 scripts/lake.sh -Kcuda=true -Kcuda_home=/usr/local/cuda build
 ```
 
-The build machine needs the toolkit but need not have a visible GPU. `native` is rejected because
-its target depends on the builder's visible devices. Keep the same `cuda_home` and `cuda_arch`
-options on subsequent build, `exe`, and `env` commands.
+TorchLean sets no architecture override. The SDK's `TORCH_CUDA_ARCH_LIST` controls configure
+probes; it does not rebuild the SDK's packaged GPU kernels.
+Keep the same SDK/toolkit configuration on later build, `exe`, and `env` commands.
 
-Lake includes the architecture and compiler identity in the native object build trace. It records
-the selected `nvcc`, host compiler, toolkit components, and `NVCC_PREPEND_FLAGS` /
-`NVCC_APPEND_FLAGS`. Select a different host compiler with `NVCC_CCBIN`. The two flag variables
-cannot override architecture or host-compiler selection, or introduce option files; use
-`cuda_arch` and `NVCC_CCBIN` for those choices. This keeps a cached object tied to the configuration
-that compiled it.
+The helper tracks SDK headers/version/ABI, compiler identity, flags, source contents, and
+discovered dependencies; replaced SDK libraries are tracked by file metadata. It records the
+manifest in `libtorch/build.json` and SDK settings in `libtorch/cmake/sdk.txt` under the selected
+build directory. Lake links `libtorch/libtorchlean_libtorch.so` by its resolved absolute path,
+so retain that artifact and the selected SDK for execution.
+See [`scripts/README.md`](../../scripts/README.md) for compiler controls, cache selection, and
+the direct six-unit C++ build command.
 
-## CUDA Graph Status
+## Execution and memory
+
+LibTorch supplies PyTorch's C++ libraries; ATen is the tensor operation layer used by this
+backend. A CUDA buffer reaches C++ as a Lean external object owning an `at::Tensor`. The bridge
+unwraps that tensor, calls ATen, and returns another owned buffer through the Lean C ABI.
+These tensor calls run without a Python interpreter. An installed CUDA-enabled PyTorch package
+can supply the SDK at build and execution time.
+
+For a linear layer, Lean sends matrix multiplication and bias addition to the buffer API,
+then records the result, parents, and backward rule on its runtime tape. During backward,
+Lean traverses the tape and calls the corresponding gradient operations. Each native call runs under
+`at::NoGradGuard`, so LibTorch does not record another autograd graph. Some operations use
+explicit SDK backward kernels; attention also retains the forward context needed by its
+backward call.
+
+The build selects the implementation behind those buffer symbols. The default build uses the
+portable CPU stubs and needs no LibTorch SDK. A `cuda=true` build links
+`libtorchlean_libtorch.so`, whose ATen calls use the selected SDK's CUDA implementation.
+The eager CUDA tape stores Float32 buffers; the separate DGEMM bridge handles Float64 matrix
+multiplication. Selecting CUDA does not move every scalar format onto the GPU.
 
 TorchLean's current CUDA path is eager: each autograd step records a Lean runtime tape and dispatches
 individual CUDA buffer ops. This already moves the expensive math to the GPU, but it is not CUDA
@@ -67,43 +101,27 @@ Current memory policy:
 - overwritten dense-gradient buffers are explicitly released during accumulation,
 - the native allocator exposes a collection hook used after large eager CUDA training steps.
 
-This reduces accidental lifetime extension from Lean external object finalizers, but it does not
-turn eager execution into a static CUDA graph. A real CUDA Graph backend should be added as a
-separate runtime layer with:
-
-- persistent device buffers for parameters, activations, and gradients,
-- no `cudaMalloc`/host shape decisions inside the captured region,
-- graph specialization keyed by static model and input shapes,
-- explicit invalidation when shapes, masks, or parameter layouts change,
-- regression tests comparing captured replay against the eager CUDA tape for every supported op.
-
-Until that layer exists, `--execution typed-graph` should be read as TorchLean's proof/SSA graph backend,
-not as CUDA Graph execution.
-
-For a CUDA training check:
-
-```bash
-lake exe torchlean gpt_adder --steps 500 --log-every 100
-```
+This reduces accidental lifetime extension from Lean external object finalizers. Execution
+remains eager. `--execution typed-graph` selects TorchLean's proof/SSA graph backend; CUDA Graph
+capture/replay is not implemented.
 
 ## Sanitizer Harness
 
-The CUDA sources are a trusted native boundary: Lean checks shapes and proof contracts, but it
-cannot prove that a `.cu` kernel avoids every invalid access or race. To test that boundary, run the
-Lean driven CUDA suite under NVIDIA Compute Sanitizer:
+Run the compiled Lean CUDA suite under NVIDIA Compute Sanitizer with the selected SDK and
+a visible GPU:
 
 ```bash
-scripts/checks/cuda_sanitize_tests.sh
-scripts/checks/cuda_sanitize_tests.sh --all-tools
+scripts/checks/cuda_sanitize_tests.sh --libtorch-home "$TORCHLEAN_LIBTORCH_HOME"
+scripts/checks/cuda_sanitize_tests.sh --libtorch-home "$TORCHLEAN_LIBTORCH_HOME" --all-tools
 scripts/checks/cuda_sanitize_tests.sh --cuda-home /usr/local/cuda --tool memcheck
-scripts/checks/cuda_sanitize_tests.sh --cuda-arch sm_80 --all-tools
 ```
 
 The default tool is `memcheck`. `--all-tools` additionally runs `racecheck`, `initcheck`, and
-`synccheck`. This is separate from ordinary `lake test` because sanitizer runs are much slower and
-require a real CUDA installation.
-`--cuda-arch` is forwarded to both the build and the Lake environment that runs the sanitizer.
-With `--skip-build`, supply the architecture and toolkit used to build the existing executable.
+`synccheck`. Findings fail the command with exit code 99. The wrapper enables
+`TORCHLEAN_REQUIRE_CUDA=1`, forwards SDK/toolkit settings to both build and execution, and
+defaults to `--target-processes application-only` for the suite's intentional self-reexec probe.
+With `--skip-build`, select the same profile and SDK as the existing executable. These checks
+exercise the native boundary and SDK on tested paths; a pass is not a proof of memory safety.
 
 For performance work, pair the correctness suite with NVIDIA Nsight Systems for end-to-end runtime
 traces and Nsight Compute for individual kernel profiles. Those tools are not pass/fail tests, so
@@ -121,16 +139,16 @@ Nsight Compute can be slow on the full suite; use a focused executable for kerne
 
 ## CUDA Test Matrix
 
-The CUDA regression suite lives in `NN/Tests/Runtime/Cuda`.  The tests compare the Lean CPU eager
-tape against the CUDA eager tape on small deterministic examples.  In the default build those same
-externs route through CPU stubs, which keeps ordinary CI useful without a GPU.  With `-K cuda=true`
-they exercise the real CUDA/cuBLAS/cuFFT implementations.
+The CUDA regression suite lives in `NN/Tests/Runtime/Cuda`. The tests compare the Lean CPU eager
+tape against the CUDA eager tape on small examples. In the default build those same externs
+route through CPU stubs, which keeps ordinary CI useful without a GPU. With `-Kcuda=true`
+they exercise LibTorch. CPU hosted CI does not validate GPU execution.
 
 Run the full Lean test executable through Lake:
 
 ```bash
-lake build nn_tests_suite && lake exe nn_tests_suite
-lake build -R -K cuda=true nn_tests_suite && .lake/build/bin/nn_tests_suite
+scripts/lake.sh -Kcuda=false test
+TORCHLEAN_REQUIRE_CUDA=1 scripts/lake.sh -Kcuda=true test
 scripts/checks/check.sh --cuda
 ```
 
@@ -152,30 +170,35 @@ Current CUDA coverage:
 | `NN/Tests/Runtime/Cuda/ConvPool.lean` | 2D and N-D convolution, max pool, average pool, smooth max pool, padded max-pool edge cases. |
 | `NN/Tests/Runtime/Cuda/ConvTranspose.lean` | 2D and 3D transposed convolution forward and backward. |
 | `NN/Tests/Runtime/Cuda/GatherScatter.lean` | Rank-one and row gather/scatter-add behavior, including gradients. |
-| `NN/Tests/Runtime/Cuda/DeterministicReductions.lean` | Exact repeatability when deterministic reduction mode replaces atomic accumulation paths. |
+| `NN/Tests/Runtime/Cuda/DeterministicReductions.lean` | Repeatability under the deterministic reduction control. |
 | `NN/Tests/Runtime/Cuda/SelectiveScan.lean` | Diagonal selective-scan buffer primitives used by the Mamba/SSM runtime path. |
 | `NN/Tests/Runtime/Cuda/PositionalEncoding.lean` | Sinusoidal positional encodings and RoPE/rotary embedding kernels. |
-| `NN/Tests/Runtime/Cuda/MatmulBmm.lean` | `matmul`, `bmm`, and explicit fp32/fp64 fast-kernel dispatch. |
+| `NN/Tests/Runtime/Cuda/MatmulBmm.lean` | `matmul`, `bmm`, and explicit fp32/fp64 dispatch. |
 | `NN/Tests/Runtime/Cuda/Fft.lean` | Packed real FFT, inverse FFT, spectral convolution, and finite-difference gradient checks. |
 | `NN/Tests/Runtime/Cuda/ViewsBroadcastReduce.lean` | Reshape, transpose, rank-3 permutations, broadcast, reduce-sum/mean, and empty-axis behavior. |
 | `NN/Tests/Runtime/Cuda/LinearMseConcatSliceGather.lean` | Linear layer, MSE loss, vector concat/slice, scalar gather, row gather, and gradients. |
-| `NN/Tests/Runtime/Cuda/Stress.lean` | RNG determinism, explicit buffer release, duplicate-parent gradient accumulation, large buffers, reductions, and cuBLAS rectangular matmul. |
+| `NN/Tests/Runtime/Cuda/Stress.lean` | RNG determinism, explicit release, duplicate-parent gradient accumulation, large buffers, reductions, and rectangular matmul. |
 | `NN/Tests/Runtime/Cuda/Suite.lean` | The unified entrypoint imported by the repository-level test suite. |
 
 When adding a CUDA symbol, update this matrix and add at least one CPU-stub/real-CUDA parity test.
 If the symbol participates in autograd, test both the forward value and the relevant VJP/gradient
 buffers.  If it uses atomics, also decide whether deterministic mode needs a separate test.
 
+The separate [elementwise C++ harness](../libtorch/tests/elementwise/README.md) links the
+production backend and consumes Lean binary32 cases. Its wrapper is
+`scripts/checks/cuda_float32_parity.sh --libtorch-home PATH --backend-library PATH --lean-prefix PATH`.
+It checks exact finite results and signed zeros, reports NaN encoding differences, and includes
+staged Adam and no-autograd regressions. A different SDK needs its own audit and regression
+results.
+
 ## Review Notes
 
-- Padded max pooling follows the TorchLean spec and PyTorch convention: cells outside the input are
-  ignored (equivalently `-inf`), with row major argmax tie breaking.
-- Some accumulation paths use `atomicAdd`; enable deterministic reductions when exact repeatability
-  is more important than speed.
-- The native FlashAttention symbols in `kernels/` are correctness focused fused forward/VJP kernels
-  over split heads. They refine the contract in `NN/Spec/Layers/FlashAttention.lean`; they are not
-  the IO tiled Dao AILab kernel.
-  `NN/Tests/Runtime/Cuda/Attention.lean` compares the fused path against the composed
-  `bmm -> mask -> softmax -> bmm` path.
-- Keep broad mechanical file moves separate from semantic kernel changes when possible, then run both
-  CPU stub and real CUDA test paths.
+- SDK upgrades can change numerical behavior. Compiler/link compatibility does not establish
+  agreement with TorchLean's floating-point contracts; retain the exact SDK/build manifest with
+  test results.
+- Deterministic controls request supported deterministic SDK algorithms. Repeatability on the
+  tested SDK/device does not imply bitwise agreement across releases, devices, or algorithms.
+- Attention uses SDK operations with retained forward context for backward. The attention tests
+  compare this path with composed `bmm -> mask -> softmax -> bmm` operations.
+  The focused `libtorch_sdpa_test` target links the entire numerical backend.
+- Run both CPU stub and real GPU checks after changes to native exports, ownership, or numerics.

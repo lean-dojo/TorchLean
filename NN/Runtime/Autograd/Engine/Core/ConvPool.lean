@@ -54,7 +54,10 @@ def conv {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·
   let node : Node α :=
     { name := some name
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad :=
+        (t.getNode? kernelId).any (·.requiresGrad) ||
+        (t.getNode? biasId).any (·.requiresGrad) ||
+        (t.getNode? inputId).any (·.requiresGrad)
       parents := #[kernelId, biasId, inputId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := outSh) dLdyAny
@@ -97,7 +100,10 @@ def convTranspose {α : Type} [TorchLean.Storage α] [Context α]
   let node : Node α :=
     { name := some name
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad :=
+        (t.getNode? kernelId).any (·.requiresGrad) ||
+        (t.getNode? biasId).any (·.requiresGrad) ||
+        (t.getNode? inputId).any (·.requiresGrad)
       parents := #[kernelId, biasId, inputId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := outSh) dLdyAny
@@ -130,7 +136,7 @@ def maxPool {α : Type} [TorchLean.Storage α] [Context α]
       let node : Node α :=
         { name := some "max_pool"
           value := Spec.SomeTensor.ofTensor y
-          requiresGrad := true
+          requiresGrad := (t.getNode? xId).any (·.requiresGrad)
           parents := #[xId]
           backward := fun dLdyAny => do
             let dLdy ← requireGrad (α := α) (τ := outSh) dLdyAny
@@ -163,7 +169,7 @@ def avgPool {α : Type} [TorchLean.Storage α] [Context α]
       let node : Node α :=
         { name := some "avg_pool"
           value := Spec.SomeTensor.ofTensor y
-          requiresGrad := true
+          requiresGrad := (t.getNode? xId).any (·.requiresGrad)
           parents := #[xId]
           backward := fun dLdyAny => do
             let dLdy ← requireGrad (α := α) (τ := outSh) dLdyAny
@@ -204,7 +210,7 @@ def smoothMaxPool {α : Type} [TorchLean.Storage α] [Context α] [DecidableEq �
         let node : Node α :=
           { name := some "smooth_max_pool"
             value := Spec.SomeTensor.ofTensor y
-            requiresGrad := true
+            requiresGrad := (t.getNode? xId).any (·.requiresGrad)
             parents := #[xId]
             backward := fun dLdyAny => do
               let dLdy ← requireGrad (α := α) (τ := outSh) dLdyAny

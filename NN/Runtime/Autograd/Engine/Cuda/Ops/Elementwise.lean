@@ -177,31 +177,31 @@ def safeLog {s : Shape} (t : Tape) (xId : Nat) (ε : Float) : Result (Tape × Na
       let epsBuf := Buffer.full n ε
       let sp := softplusBuf x n
       let denom := Buffer.add sp epsBuf
-      let sig := sigmoidBuf x n
+      let sig := Buffer.sigmoid x
       let dlog := Buffer.div sig denom
       Buffer.releaseThen epsBuf <| Buffer.releaseThen sp <| Buffer.releaseThen denom <|
         Buffer.releaseThen sig <| Buffer.releaseThen dlog <| Buffer.mul dLdy dlog)
 
-/-- Elementwise sigmoid (logistic). -/
+/-- Direct sigmoid values with TorchLean's VJP `dLdy * (y * (1 - y))`. -/
 def sigmoid {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   let n ← AnyBuffer.numelU32 s
   unary (t := t) "sigmoid" xId s s
-    (forward := fun x => sigmoidBuf x n)
+    (forward := Buffer.sigmoid)
     (backward := fun x dLdy =>
-      let y := sigmoidBuf x n
+      let y := Buffer.sigmoid x
       let ones := Buffer.full n 1.0
       let oneMinusY := Buffer.sub ones y
       let dy := Buffer.mul y oneMinusY
       Buffer.releaseThen y <| Buffer.releaseThen ones <| Buffer.releaseThen oneMinusY <|
         Buffer.releaseThen dy <| Buffer.mul dLdy dy)
 
-/-- Pointwise hyperbolic tangent node. -/
+/-- Direct hyperbolic tangent values with TorchLean's VJP `dLdy * (1 - y * y)`. -/
 def tanh {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   let n ← AnyBuffer.numelU32 s
   unary (t := t) "tanh" xId s s
-    (forward := fun x => tanhBuf x n)
+    (forward := Buffer.tanh)
     (backward := fun x dLdy =>
-      let y := tanhBuf x n
+      let y := Buffer.tanh x
       let ones := Buffer.full n 1.0
       let y2 := Buffer.mul y y
       let dy := Buffer.sub ones y2
@@ -225,7 +225,7 @@ def softplus {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   unary (t := t) "softplus" xId s s
     (forward := fun x => softplusBuf x n)
     (backward := fun x dLdy =>
-      let dy := sigmoidBuf x n
+      let dy := Buffer.sigmoid x
       Buffer.releaseThen dy <| Buffer.mul dLdy dy)
 end Tape
 

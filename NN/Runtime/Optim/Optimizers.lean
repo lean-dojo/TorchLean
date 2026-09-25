@@ -104,6 +104,37 @@ def scalarPowNat {α : Type} [One α] [Mul α] (x : α) : Nat → α
   | 0 => 1
   | n + 1 => scalarPowNat x n * x
 
+/--
+Adam bias-correction powers with their coefficients and step count in the type.
+
+The certificates preserve the left-associated multiplication order of `scalarPowNat`, including
+for rounded scalars without associative multiplication. Changing a coefficient or counter requires
+a cache for the new indices; scalar Boolean equality is never used to validate a cache.
+-/
+structure AdamPowers {α : Type} [One α] [Mul α] (beta1 beta2 : α) (stepCount : Nat) where
+  /-- First moment bias-correction power. -/
+  first : α
+  /-- Second moment bias-correction power. -/
+  second : α
+  /-- The first power follows the canonical scalar recurrence. -/
+  first_eq : first = scalarPowNat beta1 stepCount
+  /-- The second power follows the canonical scalar recurrence. -/
+  second_eq : second = scalarPowNat beta2 stepCount
+
+attribute [simp] AdamPowers.first_eq AdamPowers.second_eq
+
+/-- Reconstruct bias-correction powers, for initialization or a restored counter. -/
+def AdamPowers.compute {α : Type} [One α] [Mul α] (beta1 beta2 : α)
+    (stepCount : Nat) : AdamPowers beta1 beta2 stepCount :=
+  ⟨scalarPowNat beta1 stepCount, scalarPowNat beta2 stepCount, rfl, rfl⟩
+
+/-- Advance both powers with exactly one multiplication per coefficient. -/
+def AdamPowers.advance {α : Type} [One α] [Mul α] {beta1 beta2 : α}
+    {stepCount : Nat} (powers : AdamPowers beta1 beta2 stepCount) :
+    AdamPowers beta1 beta2 (stepCount + 1) :=
+  ⟨powers.first * beta1, powers.second * beta2,
+    by rw [powers.first_eq]; rfl, by rw [powers.second_eq]; rfl⟩
+
 /-! ## Shared equations -/
 
 /-- Next momentum buffer $\mu b+g$. -/
@@ -274,9 +305,12 @@ def RMSProp.update {α : Type} [TorchLean.Storage α] [Context α]
 /--
 Adam state (per parameter tensor).
 
-We store first and second moment averages and a step counter used for bias correction.
+We store first and second moment averages, a step counter, and certified bias-correction powers.
+The default powers reconstruct the original recurrence when creating a state at a nonzero step.
+When updating either beta or the counter in an existing record, also set `powers` to
+`AdamPowers.compute` at the new values. Updates to other fields preserve the cache.
 -/
-structure Adam.State (α : Type) [TorchLean.Storage α] (s : Shape) where
+structure Adam.State (α : Type) [TorchLean.Storage α] [One α] [Mul α] (s : Shape) where
   /-- Learning rate. -/
   learningRate : α
   /-- First moment decay $\beta_1$. -/
@@ -291,6 +325,8 @@ structure Adam.State (α : Type) [TorchLean.Storage α] (s : Shape) where
   secondMoment : Tensor α s
   /-- Step counter (used for bias correction). -/
   stepCount : Nat
+  /-- Cached powers for these coefficients and this counter. -/
+  powers : AdamPowers beta1 beta2 stepCount := AdamPowers.compute beta1 beta2 stepCount
 
 /-- Initialize Adam with zero moments and a zero step count. -/
 def Adam.init {α : Type} [TorchLean.Storage α] [Context α]
@@ -324,6 +360,7 @@ def Adam.update {α : Type} [TorchLean.Storage α] [Context α]
     (state : Adam.State α s) (parameters gradients : Tensor α s) :
     Step α s (Adam.State α s) :=
   let nextStepCount := state.stepCount + 1
+  let nextPowers := state.powers.advance
   let nextFirstMoment :=
     addSpec (scaleSpec state.firstMoment state.beta1)
       (scaleSpec gradients (1 - state.beta1))
@@ -331,16 +368,17 @@ def Adam.update {α : Type} [TorchLean.Storage α] [Context α]
     addSpec (scaleSpec state.secondMoment state.beta2)
       (scaleSpec (squareSpec gradients) (1 - state.beta2))
   let correctedFirstMoment :=
-    scaleSpec nextFirstMoment (1 / (1 - scalarPowNat state.beta1 nextStepCount))
+    scaleSpec nextFirstMoment (1 / (1 - nextPowers.first))
   let correctedSecondMoment :=
-    scaleSpec nextSecondMoment (1 / (1 - scalarPowNat state.beta2 nextStepCount))
+    scaleSpec nextSecondMoment (1 / (1 - nextPowers.second))
   let effectiveLearningRate :=
     adaptiveLearningRate state.learningRate state.epsilon correctedSecondMoment
   { optimizerState :=
       { state with
         firstMoment := nextFirstMoment
         secondMoment := nextSecondMoment
-        stepCount := nextStepCount }
+        stepCount := nextStepCount
+        powers := nextPowers }
     parameters :=
       subSpec parameters (mulSpec effectiveLearningRate correctedFirstMoment) }
 
@@ -359,8 +397,10 @@ AdamW state (per parameter tensor).
 
 AdamW is “Adam + decoupled weight decay”. Weight decay is applied as a
 separate parameter decay term rather than being folded into the gradient that feeds the moments.
+Its certified powers follow `Adam.State`: replacing either beta or the counter also requires
+`powers := AdamPowers.compute` at the new values.
 -/
-structure AdamW.State (α : Type) [TorchLean.Storage α] (s : Shape) where
+structure AdamW.State (α : Type) [TorchLean.Storage α] [One α] [Mul α] (s : Shape) where
   /-- Learning rate. -/
   learningRate : α
   /-- First moment decay $\beta_1$. -/
@@ -377,6 +417,8 @@ structure AdamW.State (α : Type) [TorchLean.Storage α] (s : Shape) where
   secondMoment : Tensor α s
   /-- Step counter (used for bias correction). -/
   stepCount : Nat
+  /-- Cached powers for these coefficients and this counter. -/
+  powers : AdamPowers beta1 beta2 stepCount := AdamPowers.compute beta1 beta2 stepCount
 
 /-- Initialize AdamW state for a parameter tensor (moments start at `0`). -/
 def AdamW.init {α : Type} [TorchLean.Storage α] [Context α]
@@ -408,6 +450,7 @@ def AdamW.update {α : Type} [TorchLean.Storage α] [Context α]
     (state : AdamW.State α s) (parameters gradients : Tensor α s) :
     Step α s (AdamW.State α s) :=
   let nextStepCount := state.stepCount + 1
+  let nextPowers := state.powers.advance
   let nextFirstMoment :=
     addSpec (scaleSpec state.firstMoment state.beta1)
       (scaleSpec gradients (1 - state.beta1))
@@ -415,9 +458,9 @@ def AdamW.update {α : Type} [TorchLean.Storage α] [Context α]
     addSpec (scaleSpec state.secondMoment state.beta2)
       (scaleSpec (squareSpec gradients) (1 - state.beta2))
   let correctedFirstMoment :=
-    scaleSpec nextFirstMoment (1 / (1 - scalarPowNat state.beta1 nextStepCount))
+    scaleSpec nextFirstMoment (1 / (1 - nextPowers.first))
   let correctedSecondMoment :=
-    scaleSpec nextSecondMoment (1 / (1 - scalarPowNat state.beta2 nextStepCount))
+    scaleSpec nextSecondMoment (1 / (1 - nextPowers.second))
   let effectiveLearningRate :=
     adaptiveLearningRate state.learningRate state.epsilon correctedSecondMoment
   let decayedParameters :=
@@ -427,7 +470,8 @@ def AdamW.update {α : Type} [TorchLean.Storage α] [Context α]
       { state with
         firstMoment := nextFirstMoment
         secondMoment := nextSecondMoment
-        stepCount := nextStepCount }
+        stepCount := nextStepCount
+        powers := nextPowers }
     parameters :=
       subSpec decayedParameters (mulSpec effectiveLearningRate correctedFirstMoment) }
 

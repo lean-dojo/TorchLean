@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Semantics
+public import NN.MLTheory.CROWN.Proofs.GraphConcatPermutationBridge
+public import NN.MLTheory.CROWN.Proofs.BinaryMatmulRuntimeBridge
+public import NN.MLTheory.CROWN.Proofs.GraphConvBridge
 
 /-!
 # Bridge from the runtime graph evaluator to the proof-side semantics
@@ -20,22 +22,25 @@ runtime values are flattened.
 ## What is bridged
 
 The per-node theorem `evalNode_bridge` covers the node kinds `input`, `const`, `detach`, `add`,
-`sub`, `mulElem`, `relu`, and `linear`. For `linear` the parent value must be a vector: the
+`sub`, `mulElem`, `relu`, `linear`, binary `matmul`, `conv`, and `concat` of arbitrary arity and
+valid axis. Binary `matmul` includes vector promotion and arbitrary batch broadcasting. Convolution
+uses the runtime's grouped, dilated, asymmetrically padded geometry. For `linear`
+the parent value must be a vector: the
 runtime applies the affine map independently along every leading axis, whereas the flat semantics
 treats the whole flattened parent as one vector, so the two only agree without leading axes.
 
-Not bridged here: `matmul` (the runtime `matmul` is binary and shape-driven, the proof-side
-`matmul` is a payload-backed unary map), the transcendental ops (`tanh`, `sigmoid`, `sin`, `cos`,
+Not yet included in this per-node theorem: the transcendental ops
+(`tanh`, `sigmoid`, `sin`, `cos`,
 whose runtime versions go through `MathFunctions ℝ` rather than the `Real` functions used by
-`evalNode?`), and the pooling, reshape, and concatenation ops.
+`evalNode?`), pooling, and reshape.
 
 ## Parameter and input correspondence
 
 The runtime reads parameters from a `Payload ℝ` keyed by `Node.id`, the proof-side from a
 `ParamStore ℝ` keyed by array index. `PayloadMatches` requires the two stores to agree on constants
-and linear layers; `InputsLift` requires the proof-side input table to hold the flattened runtime
-input at every `input` node. Both are stated for the id discipline `nodes[i].id = i` that
-`Graph.denoteAll` enforces.
+and linear and convolution layers; `InputsLift` requires the proof-side input table to hold the
+flattened runtime input at every `input` node. Both are stated for the id discipline
+`nodes[i].id = i` that `Graph.denoteAll` enforces.
 -/
 
 @[expose] public section
@@ -60,11 +65,12 @@ def flatOfSome (t : SomeTensor ℝ) : Val :=
 def liftVals (rvals : Array (SomeTensor ℝ)) : Array (Option Val) :=
   rvals.map fun t => some (flatOfSome t)
 
-/-- The `ParamStore` mirrors the runtime payload on constants and linear layers. -/
+/-- The `ParamStore` mirrors the runtime payload on constants, linear layers and convolution. -/
 def PayloadMatches (payload : NN.IR.Payload ℝ) (ps : ParamStore ℝ) : Prop :=
   (∀ id : Nat, ps.constVals[id]? = (payload.const? id).map fun c => { n := c.n, v := c.v }) ∧
   (∀ id : Nat, ps.linearWB[id]? =
-    (payload.linear? id).map fun p => { m := p.outDim, n := p.inDim, w := p.W, b := p.b })
+    (payload.linear? id).map fun p => { m := p.outDim, n := p.inDim, w := p.W, b := p.b }) ∧
+  (∀ id : Nat, ps.convCfg[id]? = payload.conv? id)
 
 /-- The proof-side input table holds the flattened runtime input at every `input` node. -/
 def InputsLift (nodes : Array Node) (input : SomeTensor ℝ) (inputs : Std.HashMap Nat Val) :
@@ -74,12 +80,53 @@ def InputsLift (nodes : Array Node) (input : SomeTensor ℝ) (inputs : Std.HashM
 /-- Node kinds covered by `evalNode_bridge`. -/
 def Bridged (kind : NN.IR.OpKind) : Prop :=
   match kind with
-  | .input | .const _ | .detach | .add | .sub | .mulElem | .relu | .linear => True
+  | .input | .const _ | .detach | .add | .sub | .mulElem | .relu | .linear | .matmul
+  | .conv _ | .concat _ => True
   | _ => False
 
 /-- A runtime value whose stored shape is a vector. -/
 def IsVector (t : SomeTensor ℝ) : Prop :=
   ∃ k : Nat, t.shape = Shape.dim k Shape.scalar
+
+/-- Present runtime parents have the shapes declared by their graph nodes. -/
+def ParentShapesMatch (nodes : Array Node) (node : Node)
+    (rvals : Array (SomeTensor ℝ)) : Prop :=
+  ∀ p ∈ node.parents, ∀ value, rvals[p]? = some value →
+    ∃ parent, nodes[p]? = some parent ∧ value.shape = parent.outShape
+
+/-- Successful graph execution supplies the parent-shape invariant for every node. -/
+theorem parentShapesMatch_of_denoteAll
+    (graph : NN.IR.Graph) (payload : NN.IR.Payload ℝ) (input : SomeTensor ℝ)
+    (values : Array (SomeTensor ℝ)) (node : Node)
+    (heval : graph.denoteAll payload input = .ok values) :
+    ParentShapesMatch graph.nodes node values := by
+  obtain ⟨hsize, hshapes⟩ := NN.IR.Graph.denoteAll_shape graph payload input values heval
+  intro parent _ value hvalue
+  obtain ⟨hp, rfl⟩ := Array.getElem?_eq_some_iff.mp hvalue
+  have hnode : parent < graph.nodes.size := by simpa [hsize] using hp
+  exact ⟨graph.nodes[parent], Array.getElem?_eq_getElem hnode, hshapes parent hnode hp⟩
+
+/-- Restricting the value table preserves agreement at every parent that remains present. -/
+theorem ParentShapesMatch.of_reads
+    {nodes : Array Node} {node : Node} {values initial : Array (SomeTensor ℝ)}
+    (hshapes : ParentShapesMatch nodes node values)
+    (hreads : ∀ (parent : Nat) (value : SomeTensor ℝ),
+      initial[parent]? = some value → values[parent]? = some value) :
+    ParentShapesMatch nodes node initial := by
+  intro parent hparent value hvalue
+  exact hshapes parent hparent value (hreads parent value hvalue)
+
+/-- Actual evaluator prefixes inherit the shape invariant from the completed execution. -/
+theorem ParentShapesMatch.of_denoteAllFrom
+    {graph : NN.IR.Graph} {payload : NN.IR.Payload ℝ} {input : SomeTensor ℝ}
+    {node : Node} {initial values : Array (SomeTensor ℝ)} {start : Nat}
+    (hshapes : ParentShapesMatch graph.nodes node values)
+    (heval : graph.denoteAllFrom payload input start initial = .ok values) :
+    ParentShapesMatch graph.nodes node initial := by
+  apply ParentShapesMatch.of_reads hshapes
+  intro parent value hvalue
+  obtain ⟨hp, rfl⟩ := Array.getElem?_eq_some_iff.mp hvalue
+  exact NN.IR.Graph.denoteAllFrom_prefix graph payload input start initial values heval parent hp
 
 /-! ## Tensor-level helper lemmas -/
 
@@ -173,6 +220,74 @@ private theorem getParentValue_ok {rvals : Array (SomeTensor ℝ)} {i p : Nat} {
     rw [hr']
     exact congrArg some (pure_eq_ok h)
   · cases h
+
+/-- Successful runtime traversal transports pointwise read correspondence to the output array. -/
+private theorem array_mapM_option_of_except {α β γ : Type} (xs : Array α)
+    (f : α → Except String β) (g : α → Option γ) (convert : β → γ)
+    (hread : ∀ x ∈ xs, ∀ y, f x = .ok y → g x = some (convert y))
+    {ys : Array β} (h : xs.mapM f = .ok ys) :
+    xs.mapM g = some (ys.map convert) := by
+  have hlist : ∀ (entries : List α) (results : List β),
+      (∀ x ∈ entries, ∀ y, f x = .ok y → g x = some (convert y)) →
+      entries.mapM f = .ok results →
+      entries.mapM g = some (results.map convert) := by
+    intro entries
+    induction entries with
+    | nil =>
+        intro results _ heval
+        have : results = [] := by simpa [Pure.pure, Except.pure] using heval.symm
+        subst results
+        rfl
+    | cons x entries ih =>
+        intro results hread heval
+        rw [List.mapM_cons] at heval
+        obtain ⟨y, hy, hcontinue⟩ := bind_eq_ok (x := f x) heval
+        obtain ⟨tail, htraverse, hresult⟩ := bind_eq_ok (x := entries.mapM f) hcontinue
+        have hresult := pure_eq_ok hresult
+        subst results
+        have hg := hread x (by simp) y hy
+        have hrest := ih tail (fun z hz => hread z (by simp [hz])) htraverse
+        simp [List.mapM_cons, hg, hrest]
+  rw [Array.mapM_eq_mapM_toList] at h ⊢
+  cases hvalues : xs.toList.mapM f with
+  | error error => simp [hvalues] at h
+  | ok values =>
+      have hys : values.toArray = ys := by simpa [hvalues] using h
+      subst ys
+      rw [hlist xs.toList values
+        (fun x hx => hread x (Array.mem_toList_iff.mp hx)) hvalues]
+      simp
+
+/-- Under parent-shape consistency, graph concat layout checks use the runtime parent shapes. -/
+theorem concatNodeLayout?_runtime_parents
+    (nodes : Array Node) (rvals parents : Array (SomeTensor ℝ)) (i : Nat)
+    (node : Node) (axis : Nat) (hshapes : ParentShapesMatch nodes node rvals)
+    (hparents : node.parents.mapM
+      (NN.IR.Graph.getParentValue (α := ℝ) rvals i node) = .ok parents) :
+    concatNodeLayout? nodes node axis =
+      concatLayout? axis (parents.map (·.shape)) node.outShape := by
+  have hread := array_mapM_option_of_except node.parents
+    (NN.IR.Graph.getParentValue (α := ℝ) rvals i node)
+    (fun p => (nodes[p]?).map (·.outShape)) (·.shape) (fun p hp value hvalue => by
+      obtain ⟨parent, hnode, hshape⟩ := hshapes p hp value (getParentValue_ok hvalue)
+      simp [hnode, hshape]) hparents
+  simp only [concatNodeLayout?, hread, Bind.bind, Option.bind]
+
+/-- The flat graph evaluator reproduces the shaped concat family at every declared layout. -/
+theorem evalNode?_concat_flattened_family
+    (nodes : Array Node) (ps : ParamStore ℝ) (inputs : Std.HashMap Nat Val)
+    (rvals : Array (SomeTensor ℝ)) (i axis : Nat) (layout : ConcatLayout)
+    (values : (parent : Fin layout.lengths.length) → Tensor ℝ (layout.parentShape parent))
+    (hkind : (nodes[i]!).kind = .concat axis)
+    (hlayout : concatNodeLayout? nodes nodes[i]! axis = some layout)
+    (hparents : (nodes[i]!).parents.mapM (getVal? (liftVals rvals)) =
+      some (Array.ofFn fun parent => flatOfSome ⟨layout.parentShape parent, values parent⟩)) :
+    evalNode? nodes ps inputs (liftVals rvals) i =
+      some (flatOfSome ⟨layout.outputShape,
+        Tensor.Internal.Rep.concatenateAxes layout.leading layout.trailing layout.lengths
+          values⟩) := by
+  simp only [evalNode?, hkind, hlayout, Bind.bind, Option.bind, hparents]
+  exact concatFlatValues?_flatten layout values
 
 /-- A successful unary parent decode is a successful `unaryParent?`. -/
 private theorem unaryParentId_ok {i : Nat} {n : Node} {p : Nat}
@@ -505,7 +620,7 @@ private theorem bridge_linear
   subst hkp
   subst hOut
   rw [flatOfSome_of_normalize hnorm]
-  simp only [evalNode?, hn, hpar, getVal?_liftVals hr', hps.2 i, hpay, Option.map_some]
+  simp only [evalNode?, hn, hpar, getVal?_liftVals hr', hps.2.1 i, hpay, Option.map_some]
   have hnn : (flatOfSome ⟨Shape.dim p.inDim Shape.scalar, xr⟩).n = p.inDim :=
     Nat.mul_one p.inDim
   rw [dite_eq_left hnn]
@@ -518,7 +633,118 @@ private theorem bridge_linear
   simp only [flattenSpec_vector]
   rfl
 
+/-- Successful runtime matmul has binary arity and the same checked flat contraction. -/
+private theorem bridge_matmul
+    (nodes : Array Node) (ps : ParamStore ℝ) (input : SomeTensor ℝ)
+    (inputs : Std.HashMap Nat Val) (payload : NN.IR.Payload ℝ)
+    (rvals : Array (SomeTensor ℝ)) (i : Nat) (node : Node) (t : SomeTensor ℝ)
+    (hn : nodes[i]! = node) (hkind : node.kind = .matmul)
+    (hshapes : ParentShapesMatch nodes node rvals)
+    (heval : NN.IR.Graph.evalNode payload input rvals i node = .ok t) :
+    evalNode? nodes ps inputs (liftVals rvals) i = some (flatOfSome t) := by
+  simp only [NN.IR.Graph.evalNode, NN.IR.Graph.evalNodeRaw, hkind] at heval
+  obtain ⟨raw, hraw, hnorm⟩ := bind_eq_ok heval
+  obtain ⟨⟨p, q⟩, hpq, hraw⟩ := bind_eq_ok hraw
+  obtain ⟨left, hleft, hraw⟩ := bind_eq_ok hraw
+  obtain ⟨right, hright, hraw⟩ := bind_eq_ok hraw
+  have hparents := binaryParentIds_ok hpq
+  have hunary : NN.IR.unaryParent? node.parents = none := by
+    unfold NN.IR.binaryParents? at hparents
+    split at hparents
+    next hsize => simp [NN.IR.unaryParent?, hsize]
+    next => cases hparents
+  cases hDims : NN.IR.OpContracts.matmulDims left.shape right.shape with
+  | error message =>
+      simp only [hDims] at hraw
+      cases hraw
+  | ok dims =>
+      rw [hDims] at hraw
+      obtain ⟨a, ha, hraw⟩ := bind_eq_ok hraw
+      obtain ⟨b, hb, hraw⟩ := bind_eq_ok hraw
+      obtain ⟨hsa, rfl⟩ := expectShape_ok ha
+      obtain ⟨hsb, rfl⟩ := expectShape_ok hb
+      obtain ⟨sa, a⟩ := left
+      obtain ⟨sb, b⟩ := right
+      simp only at hsa hsb
+      subst sa
+      subst sb
+      have hleftRead := getParentValue_ok hleft
+      have hrightRead := getParentValue_ok hright
+      obtain ⟨leftNode, hleftNode, hleftShape⟩ := hshapes p
+        (NN.IR.fst_mem_of_binaryParents?_eq_some hparents) _ hleftRead
+      obtain ⟨rightNode, hrightNode, hrightShape⟩ := hshapes q
+        (NN.IR.snd_mem_of_binaryParents?_eq_some hparents) _ hrightRead
+      have nodeRead {p : Nat} {parent : Node} (h : nodes[p]? = some parent) :
+          nodes[p]! = parent := by
+        obtain ⟨hp, rfl⟩ := Array.getElem?_eq_some_iff.mp h
+        simp only [getElem!_pos nodes p hp]
+      have hresult := pure_eq_ok hraw
+      rw [flatOfSome_of_normalize hnorm, ← hresult]
+      simp only [evalNode?, hn, hkind, hunary, hparents,
+        getVal?_liftVals hleftRead, getVal?_liftVals hrightRead,
+        nodeRead hleftNode, nodeRead hrightNode]
+      rw [← hleftShape, ← hrightShape]
+      exact evalBinaryMatmul?_matmulWithDims hDims a b
+
+/-- Runtime convolution supplies the same validated geometry and shaped input as the flat rule. -/
+private theorem bridge_conv
+    (nodes : Array Node) (ps : ParamStore ℝ) (input : SomeTensor ℝ)
+    (inputs : Std.HashMap Nat Val) (payload : NN.IR.Payload ℝ)
+    (rvals : Array (SomeTensor ℝ)) (i : Nat) (node : Node) (t : SomeTensor ℝ)
+    (configuration : NN.IR.ConvConfig)
+    (hps : PayloadMatches payload ps) (hn : nodes[i]! = node) (hid : node.id = i)
+    (hkind : node.kind = .conv configuration)
+    (hshapes : ParentShapesMatch nodes node rvals)
+    (heval : NN.IR.Graph.evalNode payload input rvals i node = .ok t) :
+    evalNode? nodes ps inputs (liftVals rvals) i = some (flatOfSome t) := by
+  simp only [NN.IR.Graph.evalNode, NN.IR.Graph.evalNodeRaw, hkind] at heval
+  obtain ⟨raw, hraw, hnorm⟩ := bind_eq_ok heval
+  obtain ⟨p, hp, hraw⟩ := bind_eq_ok hraw
+  obtain ⟨parent, hread, hraw⟩ := bind_eq_ok hraw
+  obtain ⟨output, hconv, hraw⟩ := bind_eq_ok hraw
+  split at hraw
+  next => cases hraw
+  next =>
+    have hresult : output = raw := Except.ok.inj hraw
+    subst raw
+    have hparents := unaryParentId_ok hp
+    have hparentRead := getParentValue_ok hread
+    obtain ⟨parentNode, hparentNode, hparentShape⟩ := hshapes p
+      (NN.IR.mem_of_unaryParent?_eq_some hparents) parent hparentRead
+    have houtputShape := (normalizeNodeOutput_ok hnorm).1
+    rw [flatOfSome_of_normalize hnorm]
+    simp only [evalNode?, hn, hkind, hparents, hparentNode,
+      getVal?_liftVals hparentRead, Bind.bind, Option.bind]
+    rw [hid] at hconv
+    exact evalConvNode?_of_evalConv (hps.2.2 i) hparentShape houtputShape hconv
+
 /-! ## The bridge theorem -/
+
+private theorem bridge_concat
+    (nodes : Array Node) (ps : ParamStore ℝ) (input : SomeTensor ℝ)
+    (inputs : Std.HashMap Nat Val) (payload : NN.IR.Payload ℝ)
+    (rvals : Array (SomeTensor ℝ)) (i : Nat) (node : Node) (t : SomeTensor ℝ)
+    (axis : Nat) (hn : nodes[i]! = node) (hkind : node.kind = .concat axis)
+    (hshapes : ParentShapesMatch nodes node rvals)
+    (heval : NN.IR.Graph.evalNode payload input rvals i node = .ok t) :
+    evalNode? nodes ps inputs (liftVals rvals) i = some (flatOfSome t) := by
+  simp only [NN.IR.Graph.evalNode, NN.IR.Graph.evalNodeRaw, hkind] at heval
+  obtain ⟨raw, hraw, hnorm⟩ := bind_eq_ok heval
+  obtain ⟨parents, hparents, hconcat⟩ := bind_eq_ok hraw
+  obtain ⟨layout, values, hlayout, hvalues, hresult⟩ :=
+    evalConcat_family_of_ok i node axis parents raw hconcat
+  have hchecked : concatNodeLayout? nodes nodes[i]! axis = some layout := by
+    rw [hn, concatNodeLayout?_runtime_parents nodes rvals parents i node axis hshapes hparents]
+    exact hlayout
+  have hflat := array_mapM_option_of_except node.parents
+    (NN.IR.Graph.getParentValue (α := ℝ) rvals i node)
+    (getVal? (liftVals rvals)) flatOfSome
+    (fun _ _ _ hread => getVal?_liftVals (getParentValue_ok hread)) hparents
+  rw [hvalues, Array.map_ofFn] at hflat
+  rw [flatOfSome_of_normalize hnorm, hresult]
+  exact evalNode?_concat_flattened_family nodes ps inputs rvals i axis layout values
+    (by rw [hn, hkind]) hchecked
+    (by simpa only [hn, Function.comp_def, SomeTensor.ofTensor] using hflat)
 
 /--
 A successful runtime evaluation of a bridged node is reproduced by the proof-side semantics on the
@@ -526,8 +752,9 @@ flattened value table.
 
 Hypotheses: the node record `n` sits at index `i` with `n.id = i` (the id discipline that
 `Graph.denoteAll` checks), the parameter stores agree (`PayloadMatches`), the proof-side inputs are
-the flattened runtime input (`InputsLift`), the node kind is bridged, and a `linear` node has a
-vector-shaped parent. The conclusion is exact equality of flat values, so this theorem can be used
+the flattened runtime input (`InputsLift`), present parents have their declared shapes
+(`ParentShapesMatch`), the node kind is bridged, and a `linear` node has a vector-shaped parent.
+The conclusion is exact equality of flat values, so this theorem can be used
 to establish `SemLocalOK` for the flattened runtime trace.
 -/
 theorem evalNode_bridge
@@ -537,6 +764,7 @@ theorem evalNode_bridge
     (hps : PayloadMatches payload ps) (hin : InputsLift nodes input inputs)
     (hi : i < nodes.size) (hn : nodes[i]! = n) (hid : n.id = i)
     (hkind : Bridged n.kind)
+    (hshapes : ParentShapesMatch nodes n rvals)
     (hvec : n.kind = .linear →
       ∀ p ∈ n.parents, ∀ r : SomeTensor ℝ, rvals[p]? = some r → IsVector r)
     (heval : NN.IR.Graph.evalNode (α := ℝ) payload input rvals i n = .ok t) :
@@ -564,6 +792,18 @@ theorem evalNode_bridge
   | linear =>
       exact bridge_linear nodes ps input inputs payload rvals nid parents outShape t hps hn
         (hvec rfl) heval
+  | matmul =>
+      exact bridge_matmul nodes ps input inputs payload rvals nid
+        { id := nid, parents := parents, kind := .matmul, outShape := outShape } t hn rfl
+        hshapes heval
+  | conv configuration =>
+      exact bridge_conv nodes ps input inputs payload rvals nid
+        { id := nid, parents := parents, kind := .conv configuration, outShape := outShape }
+        t configuration hps hn rfl rfl hshapes heval
+  | concat axis =>
+      exact bridge_concat nodes ps input inputs payload rvals nid
+        { id := nid, parents := parents, kind := .concat axis, outShape := outShape } t axis hn rfl
+        hshapes heval
   | _ => simp [Bridged] at hkind
 
 end

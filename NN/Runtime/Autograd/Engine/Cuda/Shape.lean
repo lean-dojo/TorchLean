@@ -10,7 +10,7 @@ In particular, CUDA broadcast kernels operate on explicit runtime arrays:
 - `outDims : Array Nat` (outermost-first)
 - `axisMap : Array Nat` of length `outDims.size`
 
-The `axisMap` encoding matches `csrc/cuda/kernels/torchlean_cuda_kernels.cu`:
+The `axisMap` encoding matches `csrc/libtorch/kernels.cpp`:
 - `axisMap[j] = 0` means output axis `j` is an inserted/broadcast axis (input coordinate is `0`)
 - `axisMap[j] = inAxis+1` maps output axis `j` to input axis `inAxis` (0-based), with the `+1`
   sentinel so `0` can be reserved for inserted axes.

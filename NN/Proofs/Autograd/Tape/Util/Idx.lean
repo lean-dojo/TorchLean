@@ -16,11 +16,9 @@ A tape-style graph names its inputs and intermediates by position, so every node
 is that name: a position in the context `Γ` bundled with a proof that the entry sitting there has
 shape `s`.
 
-The type carries no element type, which is why it lives here rather than beside any one soundness
-development. The real-valued tape proofs, the `CommSemiring`-generic ones, and the
-runtime-approximation graphs all index contexts the same way, and they used to do it through three
-byte-identical copies of this structure. One definition means a lemma about indices proved in one
-of those developments is usable in the others.
+The type is independent of tensor elements. The real-valued tape proofs, the
+`CommSemiring`-generic ones, and the runtime-approximation graphs share this context indexing
+and its lemmas.
 
 Alongside the structure are the two operations every graph construction needs:
 

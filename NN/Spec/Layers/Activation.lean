@@ -55,9 +55,6 @@ inductive Kind where
   | sigmoid
 deriving Repr, DecidableEq
 
-/-- Explicit spelling of the existing tanh GELU activation; `.gelu` remains compatible. -/
-abbrev Kind.geluTanh : Kind := .gelu
-
 namespace Math
 
 variable {α : Type} [TorchLean.Storage α] [Context α]

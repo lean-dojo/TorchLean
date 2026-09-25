@@ -15,7 +15,7 @@ producers, and artifact-checking conventions.
 | Lean theorem | graph semantics, IR shape soundness, executed backward sweep | checked by Lean |
 | Executable checker | certificate parser, backend contract check | checked by code/tests |
 | Prop-valued contract | agreement between two independent semantics | hypothesis from the caller |
-| FFI/native runtime | CUDA kernels, cuBLAS, cuFFT | external implementation path |
+| FFI/native runtime | LibTorch ATen, CUDA libraries, host tensor kernels | external implementation path |
 | External producer | Python, Julia, Arb, alpha-beta-CROWN | produces artifacts Lean may check |
 
 Two theorem families anchor the first row. `NN/IR/ShapeSoundness.lean` proves that the IR shape
@@ -49,16 +49,25 @@ planner selects a capsule only when its device, provider preference, VJP mode, a
 the profile and each descriptor states the claim its field advertises. The contract check
 (`checkContracts` in `NN/Backend/ContractCheck.lean`, returning a `ContractCheck`) then confirms
 that no selected descriptor rests on a trusted boundary unless the profile's assurance policy allows
-external providers. Capsule modules may extend a backend profile, but every contributed capsule
+trusted-boundary evidence. Capsule modules may extend a backend profile, but every contributed capsule
 passes through the same selection and contract check.
 
 The eager runtime binds a selected capsule to a typed handler only when operation, provider, and
 device agree. This prevents a backend report from naming one provider while its dispatch branch
 runs another. The binding proves only that identity agreement; it does not prove the handler's
 arithmetic, FFI code, compiler output, driver, or hardware. Those obligations retain the evidence
-and trust level stated by the capsule. Among the maintained eager operations, only CUDA attention
-reads the selected capsule beyond that identity check: its provider and VJP mode choose between the
-composed TorchLean path, the direct native kernel, and the LibTorch forward bridge.
+and trust level stated by the capsule. CUDA primitives are registered under `Provider.libTorch`,
+with names such as `libtorch.matmul`. Attention also exposes `torchlean.composed_attention`, where
+Lean composes LibTorch primitives, and `libtorch.direct_attention`, where the native bridge evaluates
+forward and the selected local VJP. Both keep the global tape in TorchLean.
+
+The maintained `checkedCuda` profile prefers LibTorch, including direct attention, and retains
+TorchLean's global tape. An explicit `.prefer .torchLean` provider preference selects composed
+attention for comparison. The profile requires runtime guards and named regression evidence. Its
+`checked` classification does not mean that LibTorch is inside Lean's proof kernel. Likewise,
+`KernelPlanAudit.hasTrustedExternal = false` means no capsule has the `trustedExternal`
+classification; it does not mean that no foreign code runs. A descriptor naming a regression suite
+records the required validation, not a proof or a stored result from a particular test run.
 
 ## Lean Axioms and Hidden Implementations
 
@@ -188,108 +197,74 @@ or a complete concurrency proof of mimalloc, its compiler output, or operating-s
   would return `get!`'s fallback for an out-of-bounds index; its safety claim therefore belongs to
   the caller's control flow.
 
-## CUDA Runtime
+## LibTorch CUDA Runtime
 
-- Files under `csrc/cuda/` are trusted FFI code. Lean checks shape metadata around calls, but kernel
-  memory safety, launch behavior, and numerical behavior are outside Lean's proof kernel.
-- Shape-erased tape inputs must match their native buffer length, and dimensions, indices, and
-  output element counts must fit the CUDA `UInt32` ABI before FFI calls. Native geometry checks
-  repeat critical guards; these are executable checks, not proofs of the kernels.
-- `csrc/cuda/tensor/torchlean_cuda_tensor.cu` stores CUDA buffers as float32 and converts Lean
-  `Float` values to/from float32 at the buffer boundary.
-- CUDA externs borrow Lean buffers, arrays, and float arrays passed as inputs. Their Lean
-  declarations use `@&` for that calling convention; the native functions must neither retain nor
-  decrement those borrowed objects. The CUDA stress suite creates thousands of short-lived
-  wrappers and checks that every wrapper created in the loop is finalized.
-- Native buffer operations are marked `@[never_extract]`. This prevents Lean's compiler from
-  commoning or deleting calls that look pure in source but allocate, observe, or mutate native
-  resources. Explicit destruction is exposed through `releaseIO`; ownership-sensitive paths
-  sequence it in `IO` instead of pretending that release is a pure function. Effectful
-  constructors such as `zerosIO` and `randUniformIO` guarantee a fresh allocation. `Buffer`
-  remains a copyable Lean reference, not a linear capability: releasing one alias invalidates all
-  raw aliases, and correct lifetime discipline is enforced by callers rather than by Lean's type
-  system.
-- Parameter CUDA caches use an `IO.Ref` swap to remove the cached alias before releasing its native
-  allocation. This prevents another cache reader from obtaining that released handle after the
-  swap; it does not make independently copied raw `Buffer` aliases safe.
-- CUDA buffer finalizers free device memory through `cudaFree`. This is safe for TorchLean's current
-  default-stream runtime, where launches and host copies are ordered through the default stream. If
-  future backends introduce user streams or asynchronous graph replay, finalizer/free ordering must
-  be revisited explicitly.
-- Sparse backward consumes some native gradient buffers. Seeds entering that path therefore come
-  from effectful constructors, which guarantee a fresh allocation, and ownership transfers use
-  copy-and-release operations. Repeated-backward tests check that seeds remain usable and that live
-  allocation stays flat; NVIDIA Compute Sanitizer checks the exercised path for native memory
-  errors. These checks can catch bad lifetime handling, but Lean does not prove `cudaMalloc`,
-  `cudaMemcpy`, or `cudaFree`.
-- GPU matmul supports two explicit precision paths:
-  - FP32: `NN/Runtime/Autograd/Engine/Cuda/Kernels.lean` uses `Cuda.Buffer.bmm`, backed by
-    `cublasSgemmStridedBatched` in `csrc/cuda/kernels/torchlean_cuda_kernels.cu`.
-  - FP64: `NN/Runtime/Autograd/Engine/Cuda/DGemm.lean` uses `torchleanDgemmCuda`, backed by
-    `cublasDgemm` in `csrc/cuda/blas/torchlean_dgemm_cuda.cu`.
-- The fast-kernel Float dispatcher makes this choice explicit via `CublasPrecision`.
-- Several CUDA backward/reduction paths use `atomicAdd`. These are mathematically standard for
-  accumulation but are not bit-deterministic across schedules because float32 addition is not
-  associative.
-- TorchLean provides an opt-in deterministic reductions mode that replaces the `atomicAdd`-based
-  accumulation paths with fixed-order algorithms (slower, but bit-stable across runs on the same
-  GPU). You can enable it either:
-  - from Lean (recommended): call `Runtime.Autograd.Cuda.Buffer.setDeterministicReductions true`,
-    which is `IO Unit`. The action calls the checked native setter, consumes its returned flag,
-    and throws if that flag differs from the request. Read the current setting with
-    `Runtime.Autograd.Cuda.Buffer.getDeterministicReductions : IO Bool`; each call observes
-    the native flag at that point in the `IO` sequence.
+All CUDA primitive numerical work crosses the LibTorch ATen bridge. TorchLean retains graph
+recording, tape traversal, gradient accumulation policy, and the selection of local VJPs. Native
+forward and backward calls execute with gradient recording disabled; they do not create a second
+local or global LibTorch autograd graph. `VJPMode.backendVJP` means a bridge routine evaluates the
+selected local reverse rule, not that LibTorch owns differentiation.
 
-    ```lean
-    Runtime.Autograd.Cuda.Buffer.setDeterministicReductions true
-    ```
-  - via env var: `TORCHLEAN_CUDA_DETERMINISTIC_REDUCTIONS=1`
-  Coverage includes:
-  - reductions: `Buffer.reduceSum`, `Buffer.reduceMean`, `reduceFromBroadcastTo`, `reduceSumAxis`
-  - gather/scatter backprop: `scatterAdd`, `scatterAddRows`
-  - pooling backward: `max_pool*`, `avg_pool*`, `smooth_max_pool*` (2D and N-D entrypoints)
-  Does not cover:
-  - nondeterminism from RNG (use seeded RNG ops, or manage seeds/counters explicitly)
-  - numerically different results across GPU architectures, CUDA toolkit versions, or driver
-    versions
-  - kernels that are not on the deterministic-reductions allowlist (only the atomic-accumulation
-    paths above)
-- CUDA max-pooling follows the TorchLean spec, which models PyTorch-style negative-infinity padding
-  by ignoring padded cells outside the domain when selecting the max. Backward tie-breaking is
-  TorchLean-spec row-major deterministic when deterministic reductions are enabled, while external
-  runtimes may choose different tie-breaking policies.
-- FlashAttention has a fused-operator denotation for proofs in
-  `NN/Spec/Layers/FlashAttention.lean`: over the spec semantics it denotes the same masked scaled
-  dot-product attention as the standard `QKᵀ -> mask -> softmax -> PV` graph. The checked CUDA
-  profile uses the composed TorchLean path: cuBLAS evaluates the matrix products, TorchLean applies
-  hard-masked softmax, and the TorchLean tape evaluates the local backward rule. A separate direct
-  native implementation is exposed through
-  `NN/Runtime/Autograd/Engine/Cuda/Kernels.lean` and implemented in
-  `csrc/cuda/kernels/torchlean_cuda_kernels.cu`. It computes forward and VJP values over
-  already-split heads, but it is not a production clone of Dao-AILab's IO-tiled algorithm and is
-  retained for parity checks and small inputs. The Lean equalities cover the denotational target;
-  cuBLAS execution, native CUDA memory behavior, and float32 arithmetic remain runtime boundaries.
-  TorchLean regression-tests the direct and composed paths, and theorem claims should cite the spec
-  denotation rather than CUDA machine code. References: FlashAttention
-  (arXiv:2205.14135), FlashAttention-2 (arXiv:2307.08691), FlashAttention-3 (arXiv:2407.08608),
-  and the Dao-AILab `flash-attention` implementation.
-- Batched attention has the denotation of a leading-axis map of the single-sample attention
-  operation. Typed graph execution and verifier lowering retain those single-sample nodes. The
-  eager CUDA implementation folds the batch and head axes for batched matrix multiplication and
-  records one TorchLean tape node whose VJP sums shared projection-weight gradients over the batch.
-  This is a scheduling refinement backed by regression tests, not a proof of the cuBLAS machine
-  execution.
-- Boolean attention masks use hard masking throughout the spec semantics: blocked entries
-  contribute zero softmax numerator, matching true `-inf` masking at the denotational level. The
-  CUDA attention kernels implement that same hard-mask convention, and
-  `hardMaskedSoftmaxSpec_allTrueMask` in `NN/Proofs/Models/Attention/HardMask.lean` confirms that
-  an all-true mask reduces to ordinary softmax. Separate finite additive-bias attention theorems
-  still exist for models that intentionally add a fixed score bias, but those theorems are not the
-  semantics of boolean causal masks.
-- Kernel launch synchronization is an implementation detail of the native runtime. Tensor/view
-  kernels usually rely on default-stream ordering and later host copies to synchronize; conv/pool
-  kernels explicitly synchronize after exported operations for clearer error attribution around
-  heavier kernels. Both policies are outside Lean's kernel and should not be used as proof evidence.
+- `csrc/libtorch/` contains the native tensor operations. The Lean boundary remains under
+  `NN/Runtime/Autograd/Engine/Cuda/`; its CUDA names identify the execution device and FFI ABI.
+  LibTorch, its CUDA dependencies, the compiler, and the driver remain outside Lean's proof kernel.
+- Shape-erased tape values must match their native tensor element counts. Dimensions, indices, and
+  output sizes must fit the `UInt32` FFI ABI. Native guards must also check dtype, device, and
+  layout. A typed capsule/handler binding proves agreement of operation, provider, and device;
+  it does not prove those native guards or arithmetic correct.
+- Eager CUDA buffers hold contiguous row-major LibTorch float32 tensors. Native handles and views
+  follow LibTorch ownership; Lean finalizers release their tensor owners rather than specifying
+  direct `cudaFree` behavior. Borrowed Lean arguments still use `@&`, and native calls must respect
+  that calling convention. Dtype-specific interfaces remain separate from FloatLib's configured
+  software formats.
+- Native buffer operations remain marked `@[never_extract]` where resource behavior prevents
+  commoning or deletion. Effectful constructors and explicit release sequence allocation and
+  destruction. A `Buffer` is still a copyable reference, not a linear capability: explicit release
+  can invalidate raw aliases. LibTorch tensor ownership does not prove TorchLean's handle lifetimes.
+- Sparse backward and optimizer paths retain their ownership obligations for seeds, saved values,
+  gradient buffers, and parameter mirrors. Lifetime and numerical regressions must exercise the
+  linked LibTorch implementation under the settings used by the application.
+- The bridge must preserve TorchLean's selected local VJP conventions. These include a zero clamp
+  derivative at the endpoints, a totalized square root with zero VJP on nonpositive inputs,
+  equal splitting at eager elementwise min/max ties, and the smooth logarithm surrogate
+  `log(softplus(x) + epsilon)`. Delegating arithmetic does not authorize replacing those rules
+  with the derivative chosen by a similarly named library operation. Piecewise differentiability
+  theorems retain their domain and no-tie hypotheses.
+- Max pooling skips padded cells and sends each output cotangent to the first row-major winner,
+  including at ties (`NN/Spec/Layers/Pooling/Spatial.lean`). Average pooling counts padded cells as
+  zero in the whole-window denominator. Implementation-defined accumulation order does not permit
+  changing these selection or padding conventions.
+- Seeded random operations must preserve the documented seeded-runtime contract or reject an
+  unsupported request. Using a library RNG is not itself evidence of agreement with TorchLean's
+  seed-to-value mapping.
+- ATen chooses the implementations of matrix products, convolutions, reductions, FFT/FNO, scans,
+  and pooling. Their capsules advertise `implementationDefined` numerical ordering. Deterministic
+  execution settings are runtime requests; they do not establish the reference left fold, a
+  particular multiply-add contraction schedule, or FloatLib bit agreement. Unsupported requests
+  must be reported rather than silently treated as fulfilled.
+- Runtime numerical evidence must identify the LibTorch/CUDA build, device, dtype, and relevant
+  precision and determinism settings. Capsule reduction metadata alone does not record those
+  choices. Bit-level agreement requires evidence for the executed operations and their rounding
+  sequence.
+- Runtime setting and allocator memory-fraction getters return checked `IO` results across the
+  native boundary, as do configuration requests. Unknown setting IDs return errors. The bridge
+  maps caught native out-of-memory and allocation exceptions to `IO.Error.resourceExhausted`;
+  other caught standard exceptions become IO errors. Successful readback records runtime state,
+  not proof of numerical agreement. CPU stubs return zero for known settings and memory fraction,
+  reject unknown setting IDs, and reject configuration requests.
+- Attention retains its proof-facing denotation in `NN/Spec/Layers/FlashAttention.lean`. The
+  composed route evaluates matrix products and hard-masked softmax through LibTorch primitives;
+  the direct bridge returns forward values and local `dQ`, `dK`, and `dV`. Neither capsule promises
+  a particular FlashAttention algorithm. Boolean masks retain zero contributions at blocked
+  coordinates and zero fully blocked rows. Finite additive attention biases remain a separate
+  semantic operation.
+- Batched attention still folds batch and head axes for execution and sums shared parameter
+  cotangents over the batch. Its specification and typed-graph proofs describe the mathematical
+  operation. Applying those results to the LibTorch execution requires the backend agreement
+  boundary and numerical evidence.
+- Stream ordering, asynchronous errors, synchronization, and allocator behavior belong to the
+  native bridge and LibTorch runtime. They require runtime validation; neither capsule selection
+  nor the Lean tape theorem establishes them.
 
 ## Executable Floating Point
 
@@ -302,7 +277,7 @@ or a complete concurrency proof of mimalloc, its compiler output, or operating-s
   instances for FloatLib's posit, fixed-point, or decimal families.
   Higher-precision training uses typed state, graphs, and `nn.sgdStep` on CPU. The supervised
   trainer's input/report/checkpoint boundary remains `Float`; `.arithmetic := .ieee` selects
-  binary32. Native CUDA providers support binary32 and binary64.
+  binary32. Native GPU dtype support does not provide execution of arbitrary FloatLib formats.
 - Lean defines ordinary `Float32` addition, subtraction, multiplication, division, negation,
   absolute value, square root, bit conversion, comparison, and classification through the
   canonical `Float32.Model` visible to the kernel. FloatLib's public
@@ -313,9 +288,8 @@ or a complete concurrency proof of mimalloc, its compiler output, or operating-s
     both operands to be finite, including signed zeros and subnormals. Their results may overflow.
   - `ExecFloat.Binary.toFloat32_sqrt` covers every configured input through native export,
     which canonicalizes NaNs. It does not preserve arbitrary NaN payloads.
-  The corresponding binary64 interfaces use `ofFloat` and `toFloat`. The old local native bridge
-  files and unused total exports have been removed; the finite-input theorems do not stand in for
-  the retired total arithmetic claims. Configured division has its own all-input software-model
+  The corresponding binary64 interfaces use `ofFloat` and `toFloat`. Configured division has its
+  own all-input software-model
   refinement, which does not prove agreement with arbitrary native `Float32` division.
   The `@[extern]` implementations used by compiled programs are still native code and remain a
   deployment boundary. Lean's transcendental `Float32` functions are opaque and are not covered by
@@ -324,7 +298,10 @@ or a complete concurrency proof of mimalloc, its compiler output, or operating-s
   traces against the canonical `NN.IR.Graph`. It rebuilds ranges rather than trusting claimed
   endpoints, rejects non-finite replay values, and re-runs backend planning before accepting the
   embedded execution audit. A `RegistryCheckedCertificate` stores the exact graph checked, and
-  `executeIEEE32` can replay only that stored graph.
+  `executeIEEE32` can replay only that stored graph. This is FloatLib reference execution, not a
+  replay of the selected LibTorch kernels. Changing provider/capsule identities changes the audit;
+  certificates containing old identities must be regenerated and checked. The audit is planning
+  data, not proof of which implementation produced an imported tensor.
 - Transcendental functions such as `exp`, `log`, and `tanh` are deterministic approximations unless
   a file states a stronger theorem for a specific operation.
 
@@ -358,11 +335,12 @@ proof evidence, and it has exactly one consumer: `requireFixedLeftReduction` in
 precondition and rejects any node whose capsule does not advertise `fixedLeft`. Rounding mode,
 subnormal handling, and multiply-add contraction are not recorded; a certificate that depends on
 them must state the assumption itself. Portable reference accumulations advertise the fixed left
-fold. Native CUDA and LibTorch matrix products, convolutions, normalizations, pooling operations,
+fold. LibTorch matrix products, convolutions, normalizations, pooling operations,
 FFT/FNO paths, scans, and attention advertise implementation-dependent reductions. Consequently,
 the fixed-left graph certificate refuses to reuse its transfer for those accelerated paths. A
-theorem about such a path needs either a backend-specific schedule or the order-independent
-enclosure from `NN/Proofs/RuntimeApprox/Reductions/IEEE32.lean`.
+theorem about such a path needs a backend-specific schedule or an applicable order-independent
+enclosure from `NN/Proofs/RuntimeApprox/Reductions/IEEE32.lean`. The latter still requires its
+operation, finiteness, and local-error hypotheses; it does not cover an arbitrary ATen algorithm.
 
 For a checked replay, interval validity proves that each endpoint is finite and ordered. The replay
 also checks every computed entry for finiteness, and `executeIEEE32` returns a
@@ -408,11 +386,6 @@ Use the float layers as follows:
 
 ## External Numeric Oracles
 
-- LibTorch may be used as an external forward-kernel provider for selected runtime paths. The
-  maintained LibTorch-forward attention capsule returns the forward value, records the ordinary
-  TorchLean tape node, and uses TorchLean's local VJP. The forward value is still trusted under the
-  capsule's runtime agreement assumption. TorchLean does not maintain a LibTorch-autograd profile;
-  tape ownership, gradient extraction, and optimizer handoff remain in the TorchLean runtime.
 - CROWN/Lyapunov certificate generation is an external evidence producer. Generated Lean modules
   prove their numeric sign margins, while the final stability theorem requires an explicit
   `LyapunovCert.ValidFor` proof connecting those numbers to the named Lean functions. A checked

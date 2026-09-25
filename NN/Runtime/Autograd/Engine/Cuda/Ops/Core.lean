@@ -56,32 +56,6 @@ def broadcastScalarToShape (g : Buffer) (outShape : Shape) : Buffer :=
   let axisMap := Array.replicate outDims.size 0
   Buffer.broadcastTo g #[] outDims axisMap
 
-/-- Logistic sigmoid implemented from primitive CUDA elementwise ops. -/
-def sigmoidBuf (x : Buffer) (n : UInt32) : Buffer :=
-  let ones := Buffer.full n 1.0
-  let negx := Buffer.scale x (-1.0)
-  let ex := Buffer.exp negx
-  let denom := Buffer.add ones ex
-  let y := Buffer.div ones denom
-  Buffer.releaseThen ones <| Buffer.releaseThen negx <|
-    Buffer.releaseThen ex <| Buffer.releaseThen denom y
-
-/--
-Hyperbolic tangent implemented as `2 * sigmoid(2x) - 1`.
-
-Unlike `(exp(2x)-1)/(exp(2x)+1)`, this form does not produce `∞/∞` and hence `NaN` for a
-large positive finite input. It also saturates to `±1` in both tails using the existing CUDA
-primitive-buffer operations.
--/
-def tanhBuf (x : Buffer) (n : UInt32) : Buffer :=
-  let twoX := Buffer.scale x 2.0
-  let sigmoidTwoX := sigmoidBuf twoX n
-  let twiceSigmoid := Buffer.scale sigmoidTwoX 2.0
-  let ones := Buffer.full n 1.0
-  let y := Buffer.sub twiceSigmoid ones
-  Buffer.releaseThen twoX <| Buffer.releaseThen sigmoidTwoX <|
-    Buffer.releaseThen twiceSigmoid <| Buffer.releaseThen ones y
-
 /-- Numerically stable softplus: `max(x,0) + log(1 + exp(-abs(x)))`. -/
 def softplusBuf (x : Buffer) (n : UInt32) : Buffer :=
   let zeros := Buffer.full n 0.0
@@ -100,8 +74,9 @@ def softplusBuf (x : Buffer) (n : UInt32) : Buffer :=
 /--
 Row-wise stable softmax.
 
-The returned `WithWorkspace` records the buffers used to compute the stable formula. The tape keeps
-those buffers only as long as the node may need them for backprop, then releases them explicitly.
+The returned `WithWorkspace` owns the buffers used to compute the stable formula. Backward needs
+only the output, so callers can release the workspace as soon as they have consumed the forward
+result.
 -/
 def rowSoftmaxForward (x : Buffer) (rows cols : UInt32) : Buffer.WithWorkspace :=
   let rowMax := Buffer.reduceMaxByRow x rows cols
@@ -136,8 +111,8 @@ def rowSoftmaxBwd (y dLdy : Buffer) (rows cols : UInt32) : Buffer :=
 Row-wise stable log-softmax.
 
 This computes `x - rowMax - log(sum(exp(x-rowMax)))` directly, avoiding the less stable
-`log(softmax(x))` route. As with softmax, the returned workspace buffers belong to the tape node
-until the backward pass has finished.
+`log(softmax(x))` route. As with softmax, backward needs only the output; callers can release the
+returned workspace after the forward result has been consumed.
 -/
 def rowLogSoftmaxForward (x : Buffer) (rows cols : UInt32) : Buffer.WithWorkspace :=
   let rowMax := Buffer.reduceMaxByRow x rows cols

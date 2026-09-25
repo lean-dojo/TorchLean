@@ -16,7 +16,7 @@ This umbrella re-exports the non-core GraphSpec primitive packs.
 GraphSpec primitives are **operation adapters**, not models:
 
 - a primitive wraps one reusable operation, such as convolution or pooling;
-- a model composes primitives into an architecture, such as `twoConvCnn` or `residualLinear`.
+- a model composes primitives into an architecture, such as `cnn` or `residualLinear`.
 
 The small always-available primitives (`linear`, `relu`, `softmax`) live in
 `NN.GraphSpec.Core` because they are part of the minimal sequential DSL examples and lowering

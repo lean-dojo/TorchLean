@@ -67,7 +67,7 @@ def data := Data.fromTensors inputs targets
 
 def trainer :=
   Trainer.new model
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := 2026 }
 

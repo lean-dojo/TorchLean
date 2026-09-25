@@ -10,7 +10,6 @@ public import NN.API.Autograd.Complex
 public import NN.API.Checkpoint
 public import NN.API.Neural.Training
 public import NN.API.Seeded
-public import NN.Spec.Core.FloatInstances.Angle
 
 /-!
 # Real-coordinate complex gradients and exact checkpoints

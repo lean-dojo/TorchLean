@@ -13,9 +13,8 @@ public import NN.Runtime.RL.Numerics.Float32.Returns
 
 PPO is usually run with ordinary host floats, but these helpers make the scalar objective pieces
 executable under the explicit `ExecFloat.Binary 8 23` model and reject non-finite intermediates.
-They are
-useful for regression tests, debugging numerically fragile runs, and connecting runtime checks to
-proof layer finite hypotheses.
+They are useful for regression tests, debugging numerically fragile runs, and connecting runtime
+checks to proof layer finite hypotheses.
 
 Reference: Schulman et al., "Proximal Policy Optimization Algorithms" (2017).
 -/
@@ -30,17 +29,16 @@ namespace Float32
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
 open Spec.RL
+open FloatLib.Floats (ExecFloat)
 
-open TorchLean.Floats
-open TorchLean.Floats.IEEE754
 
 /--
 Checked importance ratio `exp(newLogProb - oldLogProb)`, specialized to `ExecFloat.Binary 8 23`.
 
 This is the float32-semantics variant of `Runtime.RL.PolicyGradient.importanceRatio`.
 -/
-def importanceRatioChecked (newLogProb oldLogProb : Float32Exec) :
-    Except String Float32Exec := do
+def importanceRatioChecked (newLogProb oldLogProb : ExecFloat.Binary 8 23) :
+    Except String (ExecFloat.Binary 8 23) := do
   let diff ← checkedSub "importanceRatio/sub(newLogProb,oldLogProb)" newLogProb oldLogProb
   checkedExp "importanceRatio/exp(diff)" diff
 
@@ -56,9 +54,9 @@ Reference:
   https://arxiv.org/abs/1707.06347
 -/
 def ppoClippedObjectiveFromRatioChecked
-    (ratio advantage clipEps : Float32Exec) :
-    Except String Float32Exec := do
-  let one : Float32Exec := (1 : Float32Exec)
+    (ratio advantage clipEps : ExecFloat.Binary 8 23) :
+    Except String (ExecFloat.Binary 8 23) := do
+  let one : ExecFloat.Binary 8 23 := (1 : ExecFloat.Binary 8 23)
   let lo ← checkedSub "ppoClip/sub(1,eps)" one clipEps
   let hi ← checkedAdd "ppoClip/add(1,eps)" one clipEps
   let clippedLo ← checkedMax "ppoClip/max(lo,ratio)" lo ratio

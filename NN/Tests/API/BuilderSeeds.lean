@@ -111,28 +111,33 @@ def generativeConfig : nn.models.Generative.Config :=
   { dataWidth := 4, hiddenWidth := 3, latentWidth := 2 }
 
 def mambaConfig : nn.models.Mamba.Config :=
-  { vocabularySize := 4, modelWidth := 2 }
+  { vocabularySize := 4, modelWidths := [2] }
 
 def recurrentConfig : nn.models.Recurrent.Config :=
   { sequenceLength := 3
     inputWidth := 4
-    hiddenWidth := 2
+    hiddenWidths := [2]
     outputWidth := 5 }
 
 def cnnConfig : nn.models.CNN.Config 1 :=
   { inputChannels := 1
     spatial := [4]
-    convolution :=
-      { outChannels := 2
-        kernelSize := [1] }
-    pooling :=
-      { kernelSize := [1] }
+    stages :=
+      [{ block :=
+           { convolution :=
+               { outChannels := 2
+                 kernelSize := [1] } }
+         pooling :=
+           { kernelSize := [1] } }]
     classCount := 3 }
 
 def resnetConfig : nn.models.ResNet.Config 1 :=
+  let convolution : nn.Convolution.Config 1 :=
+    { outChannels := 2, kernelSize := [3], padding := [1] }
   { inputChannels := 1
     spatial := [4]
-    hiddenChannels := 2
+    stem := convolution
+    stages := List.replicate 2 { first := convolution, second := convolution }
     classCount := 3 }
 
 def diffusionConfig : nn.models.Diffusion.NoisePredictor.Config 1 :=
@@ -194,7 +199,72 @@ def transformerConfig : nn.TransformerEncoder.Stack.Config :=
         feedForwardWidth := 7
         dropout? := some 0.1 } }
 
+/-- Whole-model validation precedes every seed, including failures in a later stage. -/
+def checkGeneralizedModels : IO Unit := do
+  let badStage : nn.ConvPoolBlock.Config 1 :=
+    { block := { convolution := { outChannels := 0, kernelSize := [1] } }
+      pooling := { kernelSize := [1] } }
+  let badCnn := { cnnConfig with stages := cnnConfig.stages ++ [badStage] }
+  expectCounter "invalid later CNN stage consumes no keys" 0 <|
+    counterAfter (nn.models.cnn badCnn) 11
+  expectError "invalid later CNN stage is validated"
+    "CNN: output channel count must be positive" badCnn.validate
+  expectCounter "head-only CNN seeds only the classifier weight" 1 <|
+    counterAfter (nn.models.cnn { cnnConfig with stages := [] }) 11
+  let badRecurrent := { recurrentConfig with hiddenWidths := [3, 0] }
+  let headOnly := { recurrentConfig with sequenceLength := 0, hiddenWidths := [] }
+  for (kind, builder) in [
+      ("RNN", nn.models.rnn badRecurrent), ("GRU", nn.models.gru badRecurrent),
+      ("LSTM", nn.models.lstm badRecurrent)] do
+    expectCounter s!"invalid later {kind} layer consumes no keys" 0 (counterAfter builder 11)
+    expectError s!"invalid later {kind} layer is validated"
+      s!"{kind}: hidden width must be positive" (nn.validate (nn.build 11 builder))
+  for (kind, builder) in [
+      ("RNN", nn.models.rnn headOnly), ("GRU", nn.models.gru headOnly),
+      ("LSTM", nn.models.lstm headOnly)] do
+    expectCounter s!"empty head-only {kind} seeds only its head" 1 (counterAfter builder 11)
+    expectCounter s!"empty head-only {kind} has only weight and bias" 2
+      (nn.stateShapes (nn.build 11 builder)).length
+    unless (nn.validate (nn.build 11 builder)).isOk do
+      throw <| IO.userError s!"head-only {kind} rejected an empty sequence"
+  expectError "head-only recurrent still validates input width"
+    "RNN: input width must be positive" <|
+      nn.validate (nn.build 11 (nn.models.rnn { headOnly with inputWidth := 0 }))
+  expectError "head-only recurrent still validates output width"
+    "LSTM: output width must be positive" <|
+      nn.validate (nn.build 11 (nn.models.lstm { headOnly with outputWidth := 0 }))
+  let mambaHead : nn.models.Mamba.Config :=
+    { vocabularySize := 2, expansion := 0, stateWidth := 0, kernelWidth := 0 }
+  expectCounter "empty head-only Mamba ignores unused core settings" 1 <|
+    counterAfter (nn.models.Mamba.languageModel mambaHead 0) 11
+  unless (mambaHead.validate 0).isOk do
+    throw <| IO.userError "head-only Mamba validated unused core settings"
+  expectCounter "invalid later Mamba width consumes no keys" 0 <|
+    counterAfter
+      (nn.models.Mamba.languageModel { mambaConfig with modelWidths := [3, 0] } 2) 11
+  expectError "head-only Mamba still validates its vocabulary"
+    "Mamba: vocabulary size must be positive" <|
+      ({ mambaHead with vocabularySize := 0 } : nn.models.Mamba.Config).validate 0
+  let downsample : nn.Convolution.Config 1 :=
+    { outChannels := 3, kernelSize := [1], stride := [2] }
+  let preserve : nn.Convolution.Config 1 := { outChannels := 3, kernelSize := [1] }
+  let badIdentity :=
+    { resnetConfig with stages := [{ first := downsample, second := preserve }] }
+  expectCounter "mismatched ResNet identity consumes no keys" 0 <|
+    counterAfter (nn.models.resnet badIdentity) 11
+  expectError "ResNet identity checks the entire feature shape"
+    "ResNet: identity shortcut must preserve the branch input shape" badIdentity.validate
+  let badProjection :=
+    { resnetConfig with
+      stages :=
+        [{ first := downsample, second := preserve, shortcut := .projection preserve }] }
+  expectCounter "mismatched ResNet projection consumes no keys" 0 <|
+    counterAfter (nn.models.resnet badProjection) 11
+  expectError "ResNet projection checks its spatial grid"
+    "ResNet: projection shortcut must match the branch output shape" badProjection.validate
+
 def run : IO Unit := do
+  checkGeneralizedModels
   expectCounter "classification head seeds only its random weight" 1 <|
     counterAfter
       (nn.heads.classifier (featureShape := [2, 3]) 4)
@@ -346,12 +416,12 @@ def run : IO Unit := do
   expectError "LSTM validation names the public constructor"
     "LSTM: hidden width must be positive" <|
       nn.validate <| nn.build 11 <|
-        nn.models.lstm { recurrentConfig with hiddenWidth := 0 }
+        nn.models.lstm { recurrentConfig with hiddenWidths := [0] }
   expectCounter "Mamba language model seeds its core and output projection" 4 <|
     counterAfter (nn.models.Mamba.languageModel mambaConfig 3) 11
   expectCounter "zero-width Mamba configuration consumes no keys" 0 <|
     counterAfter
-      (nn.models.Mamba.languageModel { mambaConfig with modelWidth := 0 } 3)
+      (nn.models.Mamba.languageModel { mambaConfig with modelWidths := [0] } 3)
       11
   expectCounter "zero-vocabulary Mamba configuration consumes no keys" 0 <|
     counterAfter
@@ -364,7 +434,7 @@ def run : IO Unit := do
       nn.models.Mamba.Config.validate { mambaConfig with vocabularySize := 0 } 3
   expectError "Mamba width validation names the public field"
     "Mamba: model width must be positive" <|
-      nn.models.Mamba.Config.validate { mambaConfig with modelWidth := 0 } 3
+      nn.models.Mamba.Config.validate { mambaConfig with modelWidths := [0] } 3
   expectCounter "MLP seeds one weight per affine layer" 3 <|
     counterAfter
       (nn.mlp 2 5
@@ -382,7 +452,9 @@ def run : IO Unit := do
   expectError "CNN validation does not leak the convolution layer"
     "CNN: output channel count must be positive" <|
       nn.models.CNN.Config.validate
-        { cnnConfig with convolution := { cnnConfig.convolution with outChannels := 0 } }
+        { cnnConfig with
+          stages := [{ block := { convolution := { outChannels := 0, kernelSize := [1] } }
+                       pooling := { kernelSize := [1] } }] }
   expectCounter "invalid ResNet configuration consumes no keys" 0 <|
     counterAfter
       (nn.models.resnet { resnetConfig with classCount := 0 })

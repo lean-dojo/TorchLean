@@ -32,12 +32,12 @@ TorchLean provides a small GRU specification that is:
 ## Notes on parameterization
 
 The GRU equations are often written with separate matrices $W_\bullet$ for the input and
-$U_\bullet$ for the hidden state. The legacy spec uses a single matrix per gate applied to a
+$U_\bullet$ for the hidden state. `GRUSpec` uses a single matrix per gate applied to a
 concatenated vector $[x_t;h_{t-1}]$ (or $[x_t;r_t\odot h_{t-1}]$ for the candidate). This is the
 same idea, just packaged in a way that reuses the tensor building blocks already present in the
 spec layer.
 
-The legacy `GRUSpec` applies the reset before the hidden-state linear map, as in Cho et al.
+`GRUSpec` applies the reset before the hidden-state linear map, as in Cho et al.
 `GRUResetAfterSpec` applies it to the recurrent affine output and retains both bias vectors.
 Use that second specification for PyTorch parameters; the two candidate equations are different
 functions for general recurrent matrices, so changing tensor layout cannot convert between them.

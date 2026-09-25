@@ -6,9 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Backend.NativeCUDA
-public import NN.Backend.Reference
+public import NN.Backend.Attention
 public import NN.Backend.LibTorch
+public import NN.Backend.Reference
 
 /-!
 # Backend Registry
@@ -17,8 +17,8 @@ Registry of backend capsules known to TorchLean's planner.
 
 Capsules are contributed by operation or provider modules and flattened into one planner catalog.
 Model architectures never appear here: they lower to backend operations, and the planner chooses a
-capsule for each operation. Optional external modules such as LibTorch are included only when the
-caller enables them and chooses an assurance policy that admits them.
+capsule for each operation. Build availability filters the maintained LibTorch CUDA capsules from
+CPU-only profiles. Caller-supplied modules still pass the same availability and assurance checks.
 -/
 
 @[expose] public section
@@ -69,15 +69,9 @@ def validateModules (modules : Array CapsuleModule) : Except String Unit := do
 primitive implementation or provider does. -/
 def maintainedModules : Array CapsuleModule :=
   #[ { name := "attention", capsules := Attention.capsules }
-  , { name := "native-cuda", capsules := NativeCUDA.capsules }
+  , { name := "libtorch", capsules := LibTorch.capsules }
   , { name := "reference", capsules := Reference.capsules }
   ]
-
-/-- LibTorch's independently maintained provider module. Profiles opt into it by adding this module
-to their catalog; provider preference is handled by the kernel policy, so module order
-does not encode backend selection. -/
-def libTorchModule : CapsuleModule :=
-  { name := "libtorch", capsules := LibTorch.capsules }
 
 end Registry
 end Backend

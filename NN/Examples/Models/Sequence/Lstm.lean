@@ -72,7 +72,7 @@ def hiddenWidth : Nat := 4
 abbrev modelConfig : nn.models.Recurrent.Config :=
   { sequenceLength := contextLength
     inputWidth := vocabularySize
-    hiddenWidth := hiddenWidth
+    hiddenWidths := [hiddenWidth]
     outputWidth := vocabularySize }
 
 /-- Input shape: one token vector per timestep. -/

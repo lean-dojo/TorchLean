@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Trainer.Core
+public import NN.API.Trainer.BatchInput
 public import NN.API.Trainer.Scheduler
 public import NN.Data.SampleStream
 
@@ -17,8 +18,9 @@ Scalar-generic implementation of the trainer: an instantiated model with reusabl
 evaluators (`Runner`), gradient accumulation and optimizer updates, and the stateful `Stepper` that
 applies a configured optimizer and schedule.
 
-Everything here is indexed by the runtime scalar `α`. The public API (`Trainer.Session`,
-`Trainer.train`, `Trainer.predict`) wraps it and exposes `Float` only.
+Everything here is indexed by the runtime scalar `α`. `Trainer.openTyped` preserves that scalar at
+the session boundary; the runtime-selected `Trainer.open`, `Trainer.train`, and `Trainer.predict`
+paths expose `Float`.
 -/
 
 @[expose] public section
@@ -131,17 +133,23 @@ def fromRuntimeObjective {σ τ : Spec.Shape}
   pure (create runtimeObjective trainingPredictor evaluationPredictor
     evaluationLossEvaluator modeRef)
 
-/-- Instantiate a model and objective under a runtime scalar, injecting literals with `ofFloat`. -/
+/--
+Instantiate a model and objective under a runtime scalar.
+
+Explicit state is retained in `α`; otherwise stored Float initializers are cast with `ofFloat`.
+-/
 def instantiate {σ τ : Spec.Shape} (model : TorchLean.nn.Sequential σ τ)
     (objective : Trainer.Objective τ)
     (options : Runtime.Autograd.Torch.Config := {})
     (α : Type := Float32)
     [TorchLean.Storage α] [Context α]
     [TorchLean.Runtime.FromFloat α]
-    [Runtime.TensorTransfer α] :
+    [Runtime.TensorTransfer α]
+    (initialState? : Option (nn.State α (TorchLean.nn.stateShapes model)) := none) :
     IO (Runner α model) := do
   let runtimeObjective ←
     TorchLean.Module.instantiate (α := α) (objective.definition model) options
+      (initialState? := initialState?)
   fromRuntimeObjective model objective runtimeObjective
 
 /-- Read the complete parameter-and-buffer state. -/
@@ -219,68 +227,60 @@ def eval {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     (runner : Runner α model) : IO Unit :=
   setMode runner .eval
 
-/-- Evaluate one input tensor in an explicit mode without changing the runner's mode cell. -/
-def forwardWithMode {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α]
-    (runner : Runner α model)
-    (selectedMode : nn.Mode) (input : Tensor α σ) : IO (Tensor α τ) := do
-  Runtime.Autograd.Model.Module.Evaluator.run (predictor runner selectedMode)
-    (TorchLean.TensorPack.singleton input) TorchLean.TensorPack.empty
-
-/-- Evaluate one input tensor using the active mode (`.train` or `.eval`). -/
+/-- Evaluate one input, optionally overriding the active mode without changing its mode cell. -/
 def forward {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
     (runner : Runner α model)
-    (input : Tensor α σ) : IO (Tensor α τ) := do
-  forwardWithMode runner (← mode runner) input
-
-/-- Run evaluation-mode prediction without changing the runner's persistent mode. -/
-def predict {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α]
-    (runner : Runner α model)
-    (input : Tensor α σ) : IO (Tensor α τ) :=
-  forwardWithMode runner .eval input
+    (input : Tensor α σ) (mode : Option nn.Mode := none) : IO (Tensor α τ) := do
+  let selectedMode ← match mode with
+    | some value => pure value
+    | none => runner.mode
+  Runtime.Autograd.Model.Module.Evaluator.run (predictor runner selectedMode)
+    (TorchLean.TensorPack.singleton input) TorchLean.TensorPack.empty
 
 /--
-Scalar loss of one supervised sample in an explicit mode without changing the runner's mode cell.
+Scalar loss in the active mode, with an optional per-call mode override.
 
-Training uses the instantiated objective, including its random stream and buffer updates.
-Evaluation uses a reusable no-gradient evaluator over the same live parameter objects and does
-not update running buffers.
+With `batch := true`, evaluate samples in order and return their mean, or zero for an empty
+stream. Training uses the objective's random stream and buffer updates. Evaluation uses a reusable
+no-gradient evaluator over the live parameters without updating running buffers. Neither mode
+override changes the runner's persistent mode.
 -/
-def sampleLossWithMode {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
+def loss {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ} {Input : Type}
     {α : Type} [TorchLean.Storage α] [Context α]
-    (runner : Runner α model) (selectedMode : nn.Mode)
-    (sample : TorchLean.Sample.Supervised α σ τ) : IO α := do
-  let loss ← match selectedMode with
-    | .train =>
-      TorchLean.Module.Objective.loss (objectiveModule runner)
-        (TorchLean.Sample.Internal.arguments sample) TorchLean.Arguments.empty
-    | .eval =>
-      Runtime.Autograd.Model.Module.Evaluator.run (evaluationEvaluator runner)
-        (TorchLean.Arguments.Internal.toTensorPack (TorchLean.Sample.Internal.arguments sample))
-        TorchLean.TensorPack.empty
-  pure loss.item
-
-/-- Scalar loss of one supervised sample using the active mode. -/
-def sampleLoss {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α]
-    (runner : Runner α model) (sample : TorchLean.Sample.Supervised α σ τ) : IO α := do
-  sampleLossWithMode runner (← mode runner) sample
-
-/-- Mean scalar loss over a finite sample stream in the active mode; `0` for an empty stream. -/
-def meanLoss {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α]
-    (runner : Runner α model)
-    (samples : TorchLean.Data.SampleStream (TorchLean.Sample.Supervised α σ τ)) : IO α := do
-  if samples.isEmpty then
-    pure 0
-  else
-    let mut total : α := 0
-    for h : i in [0:samples.size] do
-      have hi : i < samples.size := h.2.1
-      total := total + (← sampleLoss runner (samples.get ⟨i, hi⟩))
-    pure (total / (samples.size : α))
+    (runner : Runner α model) (sample : Input) (batch : Bool := false)
+    (mode : Option nn.Mode := none)
+    [BatchInput (TorchLean.Sample.Supervised α σ τ)
+      (TorchLean.Data.SampleStream (TorchLean.Sample.Supervised α σ τ)) batch Input] : IO α := by
+  have inputType := BatchInput.type_eq (single := TorchLean.Sample.Supervised α σ τ)
+    (many := TorchLean.Data.SampleStream (TorchLean.Sample.Supervised α σ τ)) (batch := batch)
+  subst Input
+  let evaluate (sample : TorchLean.Sample.Supervised α σ τ) : IO α := do
+    let selectedMode ← match mode with
+      | some value => pure value
+      | none => runner.mode
+    let value ← match selectedMode with
+      | .train =>
+        TorchLean.Module.Objective.loss (objectiveModule runner)
+          (TorchLean.Sample.Internal.arguments sample) TorchLean.Arguments.empty
+      | .eval =>
+        Runtime.Autograd.Model.Module.Evaluator.run (evaluationEvaluator runner)
+          (TorchLean.Arguments.Internal.toTensorPack (TorchLean.Sample.Internal.arguments sample))
+          TorchLean.TensorPack.empty
+    pure value.item
+  cases batch with
+  | false => exact evaluate sample
+  | true =>
+      change TorchLean.Data.SampleStream (TorchLean.Sample.Supervised α σ τ) at sample
+      exact do
+        if sample.isEmpty then
+          pure 0
+        else
+          let mut total : α := 0
+          for h : i in [0:sample.size] do
+            have hi : i < sample.size := h.2.1
+            total := total + (← evaluate (sample.get ⟨i, hi⟩))
+          pure (total / (sample.size : α))
 
 end Runner
 
@@ -301,10 +301,11 @@ def withBoundOptimizer {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ 
   if (Runner.runtime runner).usesCuda then
     IO.ofExcept config.validateFloat32
   match scheduler with
-  | some schedule =>
-      match TorchLean.Trainer.Scheduler.validate schedule with
-      | .ok () => pure ()
-      | .error message => throw <| IO.userError message
+  | some schedule => do
+      IO.ofExcept <| TorchLean.Trainer.Scheduler.validateWith
+        (TorchLean.Runtime.FromFloat.roundForValidation (α := α)) schedule
+      if (Runner.runtime runner).usesCuda then
+        IO.ofExcept <| TorchLean.Trainer.Scheduler.validateFloat32 schedule
   | none => pure ()
   let objective := Runner.objectiveModule runner
   let learningRateAtStep (step : Nat) : Float :=
@@ -462,7 +463,7 @@ When `useNative` is set, supported CUDA optimizers accumulate gradients on devic
 same moment state for every batch size. Other optimizers average explicit per-sample gradients.
 Set `loss := true` to return `(nextOptimizerState, meanLoss)`.
 -/
-def stepBatch {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
+def step {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
     (runner : Runner α model)
     (optimizer : Runtime.Autograd.Model.Optim.Optimizer α (TorchLean.nn.stateShapes model))
@@ -475,7 +476,7 @@ def stepBatch {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
   | false =>
       exact do
         if batch.isEmpty then
-          throw <| IO.userError "Trainer.stepBatch: empty batch"
+          throw <| IO.userError "Trainer.step: empty batch"
         let objective := Runner.objectiveModule runner
         if useNative then
           if hSingleton : batch.size = 1 then
@@ -493,7 +494,7 @@ def stepBatch {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
   | true =>
       exact do
         if batch.isEmpty then
-          throw <| IO.userError "Trainer.stepBatch: empty batch"
+          throw <| IO.userError "Trainer.step: empty batch"
         let objective := Runner.objectiveModule runner
         if useNative then
           if hSingleton : batch.size = 1 then
@@ -511,7 +512,7 @@ def stepBatch {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
             match lossValue with
             | some lossValue => return (nextState, lossValue.item)
             | none =>
-              throw <| IO.userError "Trainer.stepBatch: native update omitted requested loss"
+              throw <| IO.userError "Trainer.step: native update omitted requested loss"
         let (meanGradient, meanLoss) ←
           meanGrad runner batch (value := true)
         let nextOptimizerState ←
@@ -561,35 +562,38 @@ opaque counter {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
   match stepper with
   | ⟨_, _, stepRef⟩ => stepRef
 
-/-- Run one optimizer step and return its scalar loss. -/
-def step {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α]
-    (stepper : Stepper α model)
-    (sample : TorchLean.Sample.Supervised α σ τ) : IO α :=
-  action stepper #[sample]
-
 /--
-Run one averaged-gradient optimizer step over a nonempty batch and return its mean scalar loss.
+Apply one optimizer update, optionally returning its scalar loss.
 
-Every sample is differentiated at the same parameter point. The completed-step counter advances
-once for the whole batch.
+`batch := true` takes a nonempty array and averages gradients at the same parameter point. The
+counter advances once for the whole batch. `loss := false` avoids reading the loss back.
 -/
-def stepBatch {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
+def step {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ} {Input : Type}
     {α : Type} [TorchLean.Storage α] [Context α]
-    (stepper : Stepper α model)
-    (batch : Array (TorchLean.Sample.Supervised α σ τ)) : IO α := do
-  if batch.isEmpty then
-    throw <| IO.userError "Stepper.stepBatch: batch must be nonempty"
-  action stepper batch
-
-/-- Run one optimizer step over a nonempty batch without reading the loss back. -/
-def update {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
-    {α : Type} [TorchLean.Storage α] [Context α]
-    (stepper : Stepper α model)
-    (batch : Array (TorchLean.Sample.Supervised α σ τ)) : IO Unit := do
-  if batch.isEmpty then
-    throw <| IO.userError "Stepper.update: batch must be nonempty"
-  silentAction stepper batch
+    (stepper : Stepper α model) (sample : Input) (batch : Bool := false) (loss : Bool := false)
+    [BatchInput (TorchLean.Sample.Supervised α σ τ)
+      (Array (TorchLean.Sample.Supervised α σ τ)) batch Input] :
+    IO (match loss with | false => Unit | true => α) := by
+  have inputType := BatchInput.type_eq (single := TorchLean.Sample.Supervised α σ τ)
+    (many := Array (TorchLean.Sample.Supervised α σ τ)) (batch := batch)
+  subst Input
+  let samples : Array (TorchLean.Sample.Supervised α σ τ) := by
+    cases batch with
+    | false => exact #[sample]
+    | true => exact sample
+  cases loss with
+  | false =>
+      change IO Unit
+      exact do
+        if samples.isEmpty then
+          throw <| IO.userError "Stepper.step: batch must be nonempty"
+        silentAction stepper samples
+  | true =>
+      change IO α
+      exact do
+        if samples.isEmpty then
+          throw <| IO.userError "Stepper.step: batch must be nonempty"
+        action stepper samples
 
 /-- Read the number of completed optimizer steps. -/
 def steps {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
@@ -621,7 +625,7 @@ def Runner.stepper {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
       let stepIndex ← stepRef.get
       let state := scheduleState stepIndex (← stateRef.get)
       let (nextOptimizerState, lossValue) ←
-        stepBatch runner runtimeOptimizer state true batch (loss := true)
+        step runner runtimeOptimizer state true batch (loss := true)
       stateRef.set nextOptimizerState
       stepRef.set (stepIndex + 1)
       pure lossValue
@@ -630,7 +634,7 @@ def Runner.stepper {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
       let stepIndex ← stepRef.get
       let state := scheduleState stepIndex (← stateRef.get)
       let nextOptimizerState ←
-        stepBatch runner runtimeOptimizer state true batch
+        step runner runtimeOptimizer state true batch
       stateRef.set nextOptimizerState
       stepRef.set (stepIndex + 1)
     pure (Stepper.create runBatch runBatchSilently stepRef)

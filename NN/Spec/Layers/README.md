@@ -39,5 +39,5 @@ Files:
 
 The underlying tensor primitives (maps, matmul, reshape, broadcasting) live under `NN/Spec/Core/*`.
 
-This folder defines meanings, not runtime performance. A typed graph node, fused CUDA kernel, or
-ATen provider should be documented against the spec operation it implements or approximates.
+This folder defines each operation's meaning. Typed graph nodes and ATen implementations should
+document which spec operation they implement or approximate.

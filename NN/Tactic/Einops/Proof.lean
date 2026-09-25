@@ -54,11 +54,7 @@ open Lean Elab Tactic Meta
 Inline only the outer `let` chain of a generated term, exposing its lowering
 head without unfolding the lowering itself.
 
-Not private, even though everything else in this section is: the `einops?` report decoders in
-`Tactic/Report/` need the same traversal, and they used to get it from a byte-identical copy of
-these four lines in `NN/Tactic/Einops/Report/Analysis/Common.lean`. `Report.Impl` is
-nested in this namespace, so the uses over there resolve to this definition without any
-qualification.
+The lowering proof helpers and the `einops?` report decoders use this traversal.
 -/
 partial def instantiateOuterLets : Expr → Expr
   | .letE _ _ value body _ =>
@@ -161,15 +157,7 @@ private partial def rearrangePullProgram? (expression : Expr) :
   else
     return none
 
-/-!
-`checkedTransformShapes` is not redefined here. `Elab.Transform.View` exports it, and this file now
-imports that module, which costs nothing: `View`'s entire import closure was already inside this
-file's. The private copy that used to live here matched the original line for line, docstring
-included.
-
-The `open` is needed because this file sits in `TorchLean.Tensor.Internal` while the elaborator
-helpers live one level down in `Elab.Impl`, so the name does not resolve on its own.
--/
+-- Reuse the elaborator's checked input and output shape view.
 open Elab.Impl (checkedTransformShapes)
 
 /-- Recover the scalar type of a native tensor expression. -/

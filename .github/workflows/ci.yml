@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       lean: ${{ steps.select.outputs.lean }}
       citation: ${{ steps.select.outputs.citation }}
@@ -64,9 +64,14 @@ jobs:
           PY
 
   build_and_test:
+    name: CPU build and checks
     needs: changes
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      TORCHLEAN_REQUIRE_INTEROP: "1"
+      TORCHLEAN_REQUIRE_CUDA: "0"
+      TORCHLEAN_BUILD_PROFILE: cpu
     # A metadata-only push must not cancel a source build that is still running.
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}-${{ needs.changes.outputs.lean }}
@@ -84,8 +89,23 @@ jobs:
       - name: Repo lint (TorchLean policies)
         run: python3 scripts/checks/repo_lint.py --fail-on-warn
 
+      - name: Check build script syntax
+        run: |
+          bash -n scripts/lake.sh scripts/checks/check.sh scripts/checks/cuda_sanitize_tests.sh
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+          source = Path('scripts/libtorch_build.py')
+          ast.parse(source.read_text(), filename=str(source))
+          PY
+
       - name: Test leaf artifact exporter
         run: python3 -B -m unittest discover -s scripts/verification/abcrown -p 'test_*.py'
+
+      - name: Test documentation links and dependency checks
+        run: |
+          python3 -B -m unittest discover -s scripts/docs -p 'test_*.py'
+          python3 -B -m unittest discover -s scripts/checks -p 'test_*.py'
 
       - name: Validate citation metadata
         if: needs.changes.outputs.citation == 'true'
@@ -100,23 +120,64 @@ jobs:
           curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
+      - name: Set up interop Python
+        if: needs.changes.outputs.lean == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/checks/requirements-interop.txt
+
+      - name: Install and check interop dependencies
+        if: needs.changes.outputs.lean == 'true'
+        run: |
+          python3 -m pip install -r scripts/checks/requirements-interop.txt
+          python3 scripts/checks/check_interop_dependencies.py
+
+      - name: Identify native build configuration
+        if: needs.changes.outputs.lean == 'true'
+        id: native
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import subprocess
+
+          # Native dependency objects are valid only for the same compiler and CPU profile.
+          configuration = b'cpu;cuda=false;libtorch-sdk=unused\n'
+          for compiler in ['cc', 'c++']:
+              configuration += subprocess.check_output([compiler, '--version'])
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('configuration=' + hashlib.sha256(configuration).hexdigest() + '\n')
+          PY
+
+      - name: Restore compiled dependencies
+        if: needs.changes.outputs.lean == 'true'
+        uses: actions/cache@v4
+        with:
+          # Package sources and their native/Lean outputs travel together. TorchLean's own
+          # profile caches live outside the checkout and are intentionally rebuilt.
+          path: .lake/packages
+          key: lean-deps-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.native.outputs.configuration }}-${{ hashFiles('lean-toolchain', 'lake-manifest.json', 'lakefile.lean', 'scripts/lake.sh') }}
+
       - name: Get Mathlib cache
         if: needs.changes.outputs.lean == 'true'
-        run: scripts/lake.sh exe cache get || true
+        run: scripts/lake.sh -Kcuda=false exe cache get || true
 
-      - name: Build library, CI, examples, tests, and native commands
+      - name: Build CPU library, CI, examples, tests, and native commands
         if: needs.changes.outputs.lean == 'true'
         run: |
-          scripts/lake.sh build NN NNCI NNExamples NNTests \
+          scripts/lake.sh -Kcuda=false build NN NNCI NNExamples NNTests \
             torchlean verify native_float32_parity pytorch_export_check
 
-      - name: Run curated test suite
+      - name: Run curated CPU test suite
         if: needs.changes.outputs.lean == 'true'
-        run: scripts/lake.sh test
+        run: scripts/lake.sh -Kcuda=false test
 
-      - name: Check native commands
+      - name: Check CPU native commands
         if: needs.changes.outputs.lean == 'true'
         run: |
-          scripts/lake.sh exe torchlean quickstart_tensors
-          scripts/lake.sh exe verify -- list
-          scripts/lake.sh exe native_float32_parity
+          scripts/lake.sh -Kcuda=false exe torchlean quickstart_tensors
+          scripts/lake.sh -Kcuda=false exe verify -- all
+          scripts/lake.sh -Kcuda=false exe native_float32_parity
+          scripts/lake.sh -Kcuda=false exe pytorch_export_check

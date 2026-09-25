@@ -728,9 +728,14 @@ That path retains the selected type through parameters, forward values, and JVPs
 `nn.sgdStep` also accepts a learning rate and state gradient in that type, allowing an explicit
 SGD loop for models without buffer-update hooks. Frozen state remains unchanged; a model that
 needs running-statistics updates, such as BatchNorm, is rejected by this entrypoint.
-The tensor chapter constructs typed state directly. This preserves precision at initialization as
-well as during execution; the supervised trainer's data and reporting interface passes through
-native `Float`.
+The tensor chapter constructs typed state directly. A supervised loop can use the same state with
+`trainer.openTyped (α := α) (initialState? := some state)`. That CPU session retains `α` through
+samples, predictions, losses, and exact model-state checkpoints. Its finished result captures a
+snapshot independent of later session updates. The
+{ref "training-from-scratch"}[training chapter] checks one such update against an exact rational.
+Seeded initialization still begins with stored `Float` values when no typed state is supplied;
+optimizer and scheduler settings also begin as `Float`. Use `nn.sgdStep` when the update coefficient
+itself needs the selected precision.
 
 # Encodings And Exceptional Values
 
@@ -1117,7 +1122,7 @@ exact real expression
   -> FP32 finite specialization
   -> FloatLib configured bit-level operation
   <-> Lean Float32.Model
-  -> Lean CPU runtime, native CUDA, or external provider
+  -> Lean CPU runtime or LibTorch CUDA execution
 ```
 
 The mathematical layers and both bit-level models are Lean definitions. The last arrow is supplied
@@ -1389,9 +1394,10 @@ To follow one of these calculations into the source, start with the operation it
   `ExecFloat.Binary.Interval` adds configured binary operations for arbitrary formats, storage
   plans, and codecs. Decimal and posit endpoints use the corresponding `OutwardRounding` adapters.
 
-TorchLean's numerical graph certificates keep their binary32 endpoint contract. Their `Interval32`
-type specializes `FloatLib.Numerics.Interval` to those endpoints; a generic scalar interval does
-not by itself supply a graph certificate for another format.
+TorchLean's numerical graph certificates use
+`FloatLib.Numerics.Interval (ExecFloat.Binary 8 23)` directly. Their endpoint contract remains
+binary32; choosing another format for a scalar interval does not by itself supply a graph
+certificate for that format.
 
 The tensor arguments live in TorchLean. `NN.Floats.FP32` selects binary32's gradual-underflow
 grid; `NN.Proofs.RuntimeApprox.FP32` carries its error bounds through tensor operations.

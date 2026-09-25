@@ -250,7 +250,7 @@ def Training.run
       Trainer.RunConfig.forObjective
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := config.training.learningRate } })
-        .meanSquaredError
+        .mse
         (seed := runtime.seed)
   trainer.printSummary
   let curveEvery : Nat := Nat.max 1 (config.training.steps / 50)

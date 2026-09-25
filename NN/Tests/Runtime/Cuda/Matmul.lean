@@ -168,8 +168,8 @@ def runFastMatmulPrecision : IO Unit := do
     ]).reshape [n, p] (by dsimp; decide)
 
   let yCpu := FastKernels.matmulReference (α := Float) (m := m) (n := n) (p := p) a b
-  let yFp32 ← IO.ofExcept (FastKernels.Cuda.matmulCublas .fp32 (m := m) (n := n) (p := p) a b)
-  let yFp64 ← IO.ofExcept (FastKernels.Cuda.matmulCublas .fp64 (m := m) (n := n) (p := p) a b)
+  let yFp32 ← IO.ofExcept (FastKernels.Cuda.matmulLibTorch .fp32 (m := m) (n := n) (p := p) a b)
+  let yFp64 ← IO.ofExcept (FastKernels.Cuda.matmulLibTorch .fp64 (m := m) (n := n) (p := p) a b)
 
   Utils.assertTensorApprox (s := sY) "fast matmul fp32" yFp32 yCpu (tol := 5e-3)
   Utils.assertTensorApprox (s := sY) "fast matmul fp64" yFp64 yCpu (tol := 1e-9)

@@ -2,7 +2,7 @@
 """Export a deterministic interval-bound certificate for a small CNN."""
 from typing import Any
 
-from common import affine_interval, write_json
+from common import affine_interval, centered_box, write_json
 
 # CNN graph (mirrors the Lean CNN certificate workflow):
 # input (1x4x4) -> conv2d (1x3x3, stride=1,pad=0) -> ReLU -> flatten -> linear head (2)
@@ -32,9 +32,15 @@ def seed_conv_params() -> tuple[list[list[list[list[float]]]], list[float]]:
 
 def seed_input_box(eps: float = 0.1) -> tuple[list[list[list[float]]], list[list[list[float]]]]:
     """Return a small input image interval box centered at all ones."""
-    # center ones
-    lo = [[[1.0 - eps for _ in range(inW)] for _ in range(inH)] for _ in range(inC)]
-    hi = [[[1.0 + eps for _ in range(inW)] for _ in range(inH)] for _ in range(inC)]
+    flat_lo, flat_hi = centered_box([1.0] * nIn, eps)
+    lo = [
+        [[flat_lo[(c * inH + i) * inW + j] for j in range(inW)] for i in range(inH)]
+        for c in range(inC)
+    ]
+    hi = [
+        [[flat_hi[(c * inH + i) * inW + j] for j in range(inW)] for i in range(inH)]
+        for c in range(inC)
+    ]
     return lo, hi
 
 

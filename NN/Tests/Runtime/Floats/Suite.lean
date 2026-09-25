@@ -17,6 +17,7 @@ public import NN.Tests.Runtime.Floats.PINNDerivResidual
 public import NN.Tests.Runtime.Floats.ProbabilityContracts
 public import NN.Tests.Runtime.Floats.PyTorchRoundtripParity
 public import NN.Tests.Runtime.Floats.RankPolymorphicLayerOps
+public import NN.Tests.Runtime.Floats.RequiresGrad
 public import NN.Tests.Runtime.Floats.RLCheck
 public import NN.Tests.Runtime.Floats.SessionRefIdentity
 public import NN.Tests.Runtime.Floats.StandaloneImport
@@ -53,6 +54,7 @@ def run : IO Unit := do
   Tests.Floats.PyTorchRoundtripParity.run
   Tests.Floats.ProbabilityContracts.run
   Tests.Floats.RankPolymorphicLayerOps.run
+  Tests.Floats.RequiresGrad.run
   Tests.Floats.RLCheck.run
   Tests.Floats.SessionRefIdentity.run
   Tests.Floats.StandaloneImport.run

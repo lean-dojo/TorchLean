@@ -316,7 +316,9 @@ def dropoutRefSeeded {α : Type} [TorchLean.Storage α] [Context α]
       broadcastTo (m := m) (α := α) (s₁ := Shape.scalar) (s₂ := s)
         (Shape.CanBroadcastTo.scalarTo s) p
     let retainedProbability ← mul (m := m) (α := α) (s := s) probability mask
-    let ones ← const (m := m) (α := α) (s := s) (Tensor.full s (1 : α))
+    let ones ←
+      broadcastTo (m := m) (α := α) (s₁ := Shape.scalar) (s₂ := s)
+        (Shape.CanBroadcastTo.scalarTo s) one
     let denominator ← sub (m := m) (α := α) (s := s) ones retainedProbability
     let inverse ← inv (m := m) (α := α) (s := s) denominator
     mul (m := m) (α := α) (s := s) masked inverse

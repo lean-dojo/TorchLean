@@ -22,9 +22,8 @@ examples reach training and imported graphs, those calculations give us somethin
 compare with the command output.
 
 Every Lean block on this page is elaborated when the site is built, and its output is checked
-against the accompanying transcript. Shell and Python transcripts are
-illustrative captures checked separately from the site build;
-rerun them when changing the executable, backend, or external dependency.
+against the accompanying expected output. Shell and Python commands let you compare the
+calculations with your executable and external dependencies.
 
 # Tensor Shapes And Scalar Types
 
@@ -282,7 +281,7 @@ def exModel : nn.Sequential [2] [1] :=
   let input : Tensor Float [2] := [0.5, -1.0]
   let target : Tensor Float [1] := [0.25]
   let (g, loss) ← autograd.model.grad exModel
-    autograd.model.Loss.meanSquaredError state input target
+    autograd.model.Loss.mse state input target
     (value := true)
   IO.println s!"loss     = {loss}"
   IO.println s!"gradient = {reprStr g}"
@@ -316,7 +315,7 @@ gradient; the following calculation uses the negative sign from this example's b
   let input : Tensor Float [2] := [0.5, -1.0]
   let target : Tensor Float [1] := [0.25]
   let (_, loss) ← autograd.model.grad exModel
-    autograd.model.Loss.meanSquaredError state input target
+    autograd.model.Loss.mse state input target
     (value := true)
   let residual := Float.sqrt (Tensor.at loss ())
   IO.println s!"|y - t|   = {residual}"
@@ -446,29 +445,16 @@ lake exe torchlean quickstart_mlp \
   --device cpu --steps 20 --seed 2026
 ```
 
-```terminal +output
-== Quickstart: simple MLP training (seed=2026, steps=20) ==
-target(heldout)    = [0.200000]
-untrained(heldout) = [-0.088261]
-dataset size = 25
-mean_loss(before training) = 0.495227
-step 0: loss=0.250488
-mean_loss(after training) = 0.401184
-steps=20 arithmetic=native scalar=Float32 loss=0.495227 -> 0.401184
-trained(heldout) = [0.365380]
-```
+The command reports two statistics that measure different things. The step loss concerns
+the current streamed sample; `mean_loss` covers all 25. A per-sample loss can be far below the
+dataset mean simply because that sample was easy, which is why both are labelled rather than
+reported as one number called "loss".
 
-Two statistics appear here and they measure different things. `step 0: loss=0.250488` is the loss on
-the first streamed sample; `mean_loss` covers all 25. A per-sample loss can be far below the dataset
-mean simply because that sample was easy, which is why both are labelled rather than reported as one
-number called "loss".
+Compare the held-out prediction before and after training with its target, $`0.2`. This shows
+the direction and size of the change at one point. It does not establish whether the optimizer
+has converged.
 
-At the held-out point, the untrained model predicts `-0.088261`; after twenty updates it predicts
-`0.365380`, above the target `0.200000`. This one prediction shows the direction and size of the
-change at that point. It does not establish whether the optimizer has converged.
-
-At 200 updates with the same seed, the mean loss falls by more than two
-orders of magnitude:
+To examine a larger update budget, keep the seed and increase the step count:
 
 ```terminal
 # Change only the update budget to compare with the
@@ -477,59 +463,29 @@ lake exe torchlean quickstart_mlp \
   --device cpu --steps 200 --seed 2026
 ```
 
-```terminal +output
-mean_loss(before training) = 0.495227
-step 0: loss=0.250488
-step 25: loss=0.586318
-step 50: loss=0.847444
-step 75: loss=0.003933
-step 100: loss=0.023397
-step 125: loss=0.069799
-step 150: loss=0.000061
-step 175: loss=0.029500
-mean_loss(after training) = 0.002402
-steps=200 arithmetic=native scalar=Float32 loss=0.495227 -> 0.002402
-trained(heldout) = [0.228325]
-```
-
-The unchanged banner lines are omitted here. The per-sample losses vary from update to update:
-`0.250`, `0.847`, `0.003`, `0.069`, `0.000061`, and `0.029`. Each is measured on the sample used
-at that step, so this column does not track a fixed objective on a fixed input.
-The two `mean_loss` values evaluate the whole dataset. Even that average is not
-guaranteed to decrease in expectation, without assumptions on the objective, sampling,
-and step size. The held-out prediction has come back from `0.365380` to `0.228325`
-against a target of `0.200000`. This is evidence of improvement at one held-out point; it supplies
-neither a convergence theorem nor a generalization bound.
+Each step loss is measured on the sample used at that step, so this column does not track a fixed
+objective on a fixed input. The before-and-after `mean_loss` values evaluate the whole dataset.
+Even that average is not guaranteed to decrease without assumptions on the objective, sampling,
+and step size. A lower mean loss would show improvement on this grid; a prediction closer to
+$`0.2` would show improvement at the held-out point. Neither observation supplies a convergence
+theorem or a generalization bound.
 
 ## Training With Executable Binary32
 
 The quickstart is arithmetic-polymorphic, so the same code runs on the executable binary32 model:
 
 ```terminal
-# Use the executable binary32 reference for the same
-# two-update workload.
+# Compare native and configured binary32 on the same two-update workload.
+lake exe torchlean quickstart_mlp \
+  --device cpu --arithmetic native --steps 2 --seed 2026
 lake exe torchlean quickstart_mlp \
   --device cpu --arithmetic ieee --steps 2 --seed 2026
 ```
 
-The following transcript predates the FloatLib migration and retains its recorded scalar labels
-and numerical results. Current `.ieee` execution uses FloatLib binary32.
-
-```terminal +output
-mean_loss(before training) = 0.495227
-step 0: loss=0.250488
-mean_loss(after training) = 0.392821
-steps=2 arithmetic=ieee scalar=IEEE32Exec loss=0.495227 -> 0.392821
-trained(heldout) = [0.019031]
-```
-
-In the recorded comparison, the same two steps with `--arithmetic native` gave identical printed
-numbers, down to the last digit of `0.392821` and `[0.019031]`. FloatLib binary32 is a
-bit-level model of binary32 written in Lean, and the native path is hardware binary32, so equality
-of these six-decimal displays alone does not establish bitwise agreement. The maintained scalar
-conformance tests compare bits where that stronger claim is needed. The
-{ref "floats"}[floating-point chapter] explains why that is expected for this operation mix
-and where it stops being expected.
+The second command selects FloatLib's `ExecFloat.Binary 8 23` for the forward pass, gradient
+calculation, and optimizer update. Compare the initial loss, final loss, and held-out prediction
+with the native run. Equality of decimal displays alone does not establish bitwise agreement.
+The {ref "floats"}[floating-point chapter] follows the rounding steps behind these comparisons.
 
 Not every command is arithmetic-polymorphic. Command-specific validation rejects an unsupported
 combination with an error, preserving the arithmetic requested by the caller.
@@ -556,21 +512,8 @@ python3 scripts/datasets/download_example_data.py --cifar10
 lake exe torchlean cnn --device cpu --n-total 1 --steps 1 --seed 2026
 ```
 
-```terminal +output
-[TorchLean] arithmetic: native binary32
-[TorchLean] execution: eager
-[TorchLean] device: cpu
-cnn: CNN training (device=cpu)
-dataset size = 1
-mean_loss(before training) = 2.348696
-mean_loss(after training) = 2.343749
-  wrote TrainLog JSON: data/examples/cnn_trainlog.json
-steps=1 arithmetic=native scalar=Float32 loss=2.348696 -> 2.343749
-cnn: ok
-```
-
-The starting loss can be compared with a reference value. Cross-entropy on ten classes with an
-uninformative model should be about $`\ln 10`:
+The starting loss can be compared with a reference value. A uniform prediction on ten classes
+has cross-entropy $`\ln 10`:
 
 ```lean (name := exLn10)
 -- A uniform prediction assigns probability one tenth to the
@@ -581,8 +524,8 @@ uninformative model should be about $`\ln 10`:
 2.302585
 ```
 
-`2.348696` is close to $`\ln 10`, the loss of a uniform ten-class prediction. One sample's loss
-does not establish that the full prediction vector is near uniform. Very small or large losses are
+A loss close to $`\ln 10` on one sample does not establish that the full prediction vector is near
+uniform. Very small or large losses are
 reasons to inspect the logits, labels, and objective, rather than proof of a particular bug.
 
 `dataset size = 1` counts the training dataset's minibatches. The current CNN command fixes the
@@ -594,8 +537,8 @@ run. The input contract is `[1, 3, 8, 8]`, and the output `[1, 10]` contains one
 The command defines one public `nn.models.CNN.Config`, derives the checked input and output shapes
 from that value, and passes it to `nn.models.cnn`. It then uses the shared NPY data boundary and
 `Trainer.new` with `trainer.train`. `--n-total 1` keeps this a check of that training path; it does
-not establish useful CIFAR
-accuracy. The reported change of about `0.005` records the effect of this particular update.
+not establish useful CIFAR accuracy. Compare the reported loss before and after the update to
+check its effect on this sample.
 
 Source:
 {src "NN/Examples/Models/Vision/Cnn.lean"}[`Cnn.lean`].
@@ -603,9 +546,8 @@ Source:
 Convolution changes the parameter-sharing pattern from the regression MLP. A small kernel is
 reused at spatial positions within each image, so nearby patches are processed by the same learned
 weights. The cropped input is chosen to exercise this spatial path and its gradients with a small
-workload. The one-step decrease establishes that this configured training path produced a changed
-loss; image classification quality would need held-out images and an accuracy evaluation, neither
-of which appears in this transcript.
+workload. Image classification quality would need held-out images and an accuracy evaluation
+beyond this one-step training check.
 
 # Model Lowering And Interval Bounds
 
@@ -724,16 +666,8 @@ could change within the box and that midpoint argument would need to be reconsid
 lake exe verify -- torchlean-ibp
 ```
 
-```terminal +output
-=== TorchLean → IR → IBP (small MLP) workflow ===
-[TorchLean] arithmetic: native binary32
-lowered IR nodes: 18
-output box lo: [1.904000]
-output box hi: [2.256001]
-```
-
-The printed lower bound agrees with the hand computation. The upper bound is slightly larger:
-`2.256001` against `2.256000`. The workflow uses outward rounding to retain an enclosure.
+Compare the reported endpoints with the hand calculation. The workflow uses outward rounding,
+so a wider result can reflect the numerical enclosure policy.
 
 A lower endpoint rounded upward or an upper endpoint rounded downward can exclude the exact
 result. Interval operations must account for that error. The native path uses
@@ -757,21 +691,13 @@ one ulp   = 238.418579 nano
 four ulps = 953.674316 nano
 ```
 
-Four ulps at this magnitude are just under one millionth, the scale of the printed difference.
-The reference arithmetic gives:
+Four ulps at this magnitude are just under one millionth. To compare a different rounding
+implementation, select FloatLib arithmetic for the same model and box:
 
 ```terminal
 # Select directed reference arithmetic for the same lowered
 # model and box.
 lake exe verify -- torchlean-ibp --arithmetic ieee
-```
-
-```terminal +output
-=== TorchLean → IR → IBP (small MLP) workflow ===
-[TorchLean] arithmetic: IEEE-754 binary32 reference
-lowered IR nodes: 18
-output box lo: [1.904000]
-output box hi: [2.256000]
 ```
 
 FloatLib exposes directed addition and multiplication through `ExecFloat.Binary.add` and
@@ -830,7 +756,7 @@ We can also record intermediate ranges in a numerical certificate and replay it 
 
 First, evaluate the same small MLP at the center of its input box and compare its native and
 reference gradients. We already have the weights and interval calculation needed to interpret
-the result. This comparison was recorded before the FloatLib migration:
+the result:
 
 ```terminal
 # Compare the fixed MLP’s native and reference outputs and
@@ -838,37 +764,10 @@ the result. This comparison was recorded before the FloatLib migration:
 lake exe torchlean float32_semantics
 ```
 
-```terminal +output
-== Float32 semantics tutorial ==
-Note: rounded-real binary32 is proof-only and is selected directly
-in theorem statements.
-[TorchLean] FP32: finite rounded-real proof model
-[TorchLean] IEEE32Exec: bit-level binary32 reference
-== Float32 (native runtime) ==
-y   = [2.080000]
-hiddenWeightGrad = [[0.350000, 0.560000], [0.400000, 0.640000],
-  [0.450000, 0.720000]]
-hiddenBiasGrad = [0.700000, 0.800000, 0.900000]
-outputWeightGrad = [[0.310000, 0.670000, 1.030000]]
-outputBiasGrad = [1.000000]
-inputGrad  = [0.760000, 1.000000]
-== IEEE32Exec ==
-y   = [2.080000]
-hiddenWeightGrad = [[0.350000, 0.560000], [0.400000, 0.640000],
-  [0.450000, 0.720000]]
-hiddenBiasGrad = [0.700000, 0.800000, 0.900000]
-outputWeightGrad = [[0.310000, 0.670000, 1.030000]]
-outputBiasGrad = [1.000000]
-inputGrad  = [0.760000, 1.000000]
-max_abs_diff(Float32 vs IEEE32Exec) = 0
-```
-
-Two lines of that transcript were rewrapped to fit this page; the runtime prints each gradient on
-one line.
-
-`y = 2.080000` is the midpoint of lab five's box, because the same parameters are evaluated at the
-center of the same input region. Every gradient in the table is also checkable by hand. The loss
-here is the output itself, so the cotangent is one, and the reverse pass reduces to three products:
+Over the exact reals, $`y=2.08` is the midpoint of the interval calculated above, because the same
+parameters are evaluated at the center of the same input region. The gradients are also checkable
+by hand. The scalar being differentiated is the output itself, so the cotangent is one, and the
+reverse pass reduces to three products:
 
 $$`\frac{\partial y}{\partial W_2}=h,
 \qquad
@@ -901,15 +800,17 @@ W2     = [0.700000, 0.800000, 0.900000]
 W2 W1  = [0.760000, 1.000000]
 ```
 
-Those three lines are the `outputWeightGrad`, `hiddenBiasGrad`, and `inputGrad` rows of the
-transcript, to every digit. The remaining row, `hiddenWeightGrad`, is the outer product
-$`W_2^{\top}x^{\top}`, and its first entry $`0.7\times0.5=0.35` is right there in the table. An
-autodiff implementation that gets all four of these right on a model this small is not proved
-correct, but it has passed the test that catches transposed matrices and dropped chain-rule factors.
+These three calculations correspond to `outputWeightGrad`, `hiddenBiasGrad`, and `inputGrad`
+in the command's output. The `hiddenWeightGrad` row is the outer product $`W_2^{\top}x^{\top}`,
+whose first entry is $`0.7\times0.5=0.35`. Comparing these factors with the computed gradients
+can catch transposed matrices and dropped chain-rule factors; the checked calculation here uses
+`Float`, so it does not prescribe every bit of a binary32 result.
 
-The final maximum-difference line says the hardware and the Lean bit-level
-model returned matching finite values for the outputs and gradients compared in this example.
-It does not inspect every intermediate rounding decision or distinguish the signs of zero.
+The command reports the maximum absolute difference across the output and five gradient tensors,
+after converting both implementations' results to `Float`. Inspect that number: completion alone
+does not assert that the difference is zero. For finite values, zero would establish numerical
+agreement on these tensors, without distinguishing the signs of zero or inspecting intermediate
+rounding decisions.
 The command also contrasts the proof-only rounded-real model, which is selected in theorem
 statements and never executed, with those two executable paths; the distinction is developed in
 {ref "floats"}[the floating-point chapter] and has the same shape as the separation between
@@ -930,20 +831,10 @@ gradient would not bound a region crossing an activation change.
 lake exe torchlean numerical_certificate
 ```
 
-```terminal +output
-TorchLean numerical runtime certificate
-  ok  base certificate
-  ok  base IEEE replay
-  ok  tampered range rejected
-  ok  two-layer MLP certificate
-  ok  two-layer MLP IEEE replay
-All numerical certificate checks passed.
-```
-
-The first two rows generate and replay a small scalar graph. The tampered-range row confirms
-that replay rejects an altered addition interval. The final two rows use the same machinery for a
-ten-node MLP. These checks exercise artifact generation and execution; they do not supply a proof
-of enclosure for every real input.
+The command generates and replays a small scalar graph, checks that certificate validation rejects
+an altered addition interval, and applies the same machinery to a ten-node MLP. A failed check
+returns a nonzero exit code. These checks exercise artifact generation and execution; they do not
+supply a proof of enclosure for every real input.
 
 The checker and its proof layer are:
 
@@ -952,16 +843,15 @@ The checker and its proof layer are:
 - {src "NN/Proofs/RuntimeApprox/Graph/NumericalCertificate.lean"}[
   `NN.Proofs.RuntimeApprox.Graph.NumericalCertificate`].
 
-Certificate ranges are outward-rounded FloatLib binary32, and concrete inputs can be replayed in the
-bit-level interpreter, which is what the two `IEEE replay` lines do. A native runtime is a separate
-provider; the `max_abs_diff = 0` above is evidence that it agreed on one trajectory, not a proof
-that it always will.
+Certificate ranges are outward-rounded FloatLib binary32, and concrete inputs are replayed in the
+bit-level interpreter. A native runtime is a separate provider. Comparing its outputs and
+gradients with FloatLib on one trajectory does not prove agreement on every execution.
 
 Replaying a certificate also separates the producer's work from the checker's decision. The
 producer can supply proposed intermediate ranges, but acceptance depends on checking them against
 the graph and numerical operations. Altering a range is therefore a useful negative probe: the
 checker must reject an artifact that no longer satisfies its conditions even if its format still
-parses. The printed rejection concerns that altered artifact; the proof layer states the general
+parses. The rejection check concerns that altered artifact; the proof layer states the general
 conditions under which the checker can justify a numerical claim.
 
 # PyTorch Graph Import
@@ -1043,7 +933,7 @@ routine command and API refactors use temporary checks rather than a permanent a
 Optional ALE/Pong and documentation rendering require their own external environment.
 
 Runnable examples use public executable APIs such as `Tensor.qr`, `Tensor.cholesky`, `nn.linear`,
-and `Trainer.run`. `Spec.*` references remain only where an example is explicitly demonstrating a
+and `Trainer.train`. `Spec.*` references remain only where an example is explicitly demonstrating a
 mathematical specification or theorem; no runtime example fabricates a result by evaluating a
 placeholder in place of the public execution path. Many `Spec` definitions are executable reference
 functions, but running them does not test the selected backend implementation.

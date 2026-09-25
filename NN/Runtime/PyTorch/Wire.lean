@@ -36,9 +36,6 @@ def tupleGetItem : String := "tuple_getitem"
 /-- Container-valued `nn.MultiheadAttention` call kept in the value graph. -/
 def mhaTuple : String := "multihead_attention"
 
-/-- Legacy marker for a tuple producer without a lowering rule; the importer reports its limits. -/
-def pyTuple : String := "py_tuple"
-
 /-- Fixed constructor spelling in the `torchlean.ir.v1` artifact. -/
 def opTag : OpTag → String
   | .input => "input"

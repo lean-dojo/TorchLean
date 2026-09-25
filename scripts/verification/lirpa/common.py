@@ -50,9 +50,9 @@ def mul_up(x: float, y: float) -> float:
 
 
 def centered_box(center: list[float], eps: float) -> tuple[list[float], list[float]]:
-    """Return the interval box `[center - eps, center + eps]` coordinatewise."""
+    """Enclose `center ± eps` with the directed endpoints used by Lean's `lInfBall`."""
 
-    return [x - eps for x in center], [x + eps for x in center]
+    return [round_down(x - eps) for x in center], [add_up(x, eps) for x in center]
 
 
 def affine_interval(

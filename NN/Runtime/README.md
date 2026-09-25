@@ -62,7 +62,7 @@ strategy, arithmetic semantics, and device:
 ```lean
 let trainer :=
   Trainer.new model
-    { objective := .meanSquaredError
+    { objective := .mse
       execution := .typedGraph
       arithmetic := .ieee
       optimizer := optim.adam { learningRate := 0.001 } }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the native CUDA test suite under NVIDIA sanitizers.
+# Run the LibTorch CUDA test suite under NVIDIA sanitizers.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -9,21 +9,21 @@ usage() {
   cat <<'EOF'
 Usage: scripts/checks/cuda_sanitize_tests.sh [options]
 
-Build TorchLean with native CUDA externs and run the curated CUDA/Lean test suite under
-NVIDIA Compute Sanitizer.
+Build TorchLean's LibTorch CUDA backend and run the curated CUDA/Lean test suite under
+NVIDIA Compute Sanitizer. A CUDA-enabled SDK and a visible GPU are required.
 
 Default:
   scripts/lake.sh -R -K cuda=true build nn_tests_suite
   scripts/lake.sh -R -K cuda=true env compute-sanitizer --tool memcheck \
-    --target-processes application-only .lake/build/bin/nn_tests_suite
+    --target-processes application-only --error-exitcode 99 .lake/build/bin/nn_tests_suite
 
 Options:
   --tool TOOL           Sanitizer tool to run. May be repeated.
                         Common tools: memcheck, racecheck, initcheck, synccheck.
                         Default: memcheck.
   --all-tools          Run memcheck, racecheck, initcheck, and synccheck.
-  --cuda-home PATH     CUDA toolkit root; passes -K cuda_home=PATH and prepends PATH/lib64.
-  --cuda-arch ARCH     CUDA target passed to Lake (default: all-major).
+  --libtorch-home PATH LibTorch SDK root; passes -K libtorch_home=PATH.
+  --cuda-home PATH     CUDA development toolkit for SDK discovery and sanitizer lookup.
   --target PATH        Executable to run after building.
                         Default: .lake/build/bin/nn_tests_suite.
   --target-processes MODE
@@ -37,23 +37,37 @@ Options:
 
 Environment:
   LAKE                 Lake command to use (default: scripts/lake.sh).
+  TORCHLEAN_LIBTORCH_HOME
+                       SDK root when --libtorch-home is omitted (otherwise libtorch/).
+                       See scripts/README.md for C++ compiler and CMake controls.
 
 Examples:
   scripts/checks/cuda_sanitize_tests.sh
   scripts/checks/cuda_sanitize_tests.sh --all-tools
   scripts/checks/cuda_sanitize_tests.sh --cuda-home /usr/local/cuda --tool memcheck
-  scripts/checks/cuda_sanitize_tests.sh --cuda-arch sm_80 --all-tools
+  scripts/checks/cuda_sanitize_tests.sh --libtorch-home /opt/libtorch --all-tools
 EOF
 }
 
 sanitizer=""
 target=".lake/build/bin/nn_tests_suite"
 target_processes="application-only"
+libtorch_home=""
 cuda_home=""
-cuda_arch=""
 skip_build=false
 declare -a tools=()
 declare -a exe_args=()
+
+path_argument() {
+  local value="${2:-}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  if [[ -z "$value" || "$value" == -* ]]; then
+    echo "error: $1 requires a directory path" >&2
+    exit 2
+  fi
+  printf '%s\n' "$value"
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -69,20 +83,12 @@ while [[ $# -gt 0 ]]; do
       tools=(memcheck racecheck initcheck synccheck)
       shift
       ;;
-    --cuda-home)
-      if [[ $# -lt 2 ]]; then
-        echo "error: --cuda-home requires a path" >&2
-        exit 2
-      fi
-      cuda_home="$2"
+    --libtorch-home)
+      libtorch_home="$(path_argument "$1" "${2:-}")"
       shift 2
       ;;
-    --cuda-arch)
-      if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
-        echo "error: --cuda-arch requires a target such as all-major or sm_80" >&2
-        exit 2
-      fi
-      cuda_arch="$2"
+    --cuda-home)
+      cuda_home="$(path_argument "$1" "${2:-}")"
       shift 2
       ;;
     --target)
@@ -139,16 +145,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 cd "$repo_root"
+export TORCHLEAN_REQUIRE_CUDA=1
 
 if [[ ${#tools[@]} -eq 0 ]]; then
   tools=(memcheck)
 fi
 
 if [[ -n "$cuda_home" ]]; then
-  # Tool binaries and runtime libraries must come from the same selected
-  # toolkit when several CUDA installations are present.
+  if [[ "$cuda_home" != /* ]]; then
+    cuda_home="$repo_root/$cuda_home"
+  fi
+  # Select the sanitizer from this toolkit. The backend's SDK-derived RPATH owns library lookup.
   export PATH="$cuda_home/bin:$PATH"
-  export LD_LIBRARY_PATH="$cuda_home/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
 if [[ -z "$sanitizer" ]]; then
@@ -171,11 +179,11 @@ if [[ -z "$sanitizer" || ! -x "$(command -v "$sanitizer" 2>/dev/null)" ]]; then
 fi
 
 lake_flags=(-R -K cuda=true)
+if [[ -n "$libtorch_home" ]]; then
+  lake_flags+=(-K "libtorch_home=$libtorch_home")
+fi
 if [[ -n "$cuda_home" ]]; then
   lake_flags+=(-K "cuda_home=$cuda_home")
-fi
-if [[ -n "$cuda_arch" ]]; then
-  lake_flags+=(-K "cuda_arch=$cuda_arch")
 fi
 
 run() {
@@ -192,21 +200,26 @@ if [[ "$skip_build" == false ]]; then
   run "$LAKE" "${lake_flags[@]}" build nn_tests_suite
 fi
 
-if [[ ! -x "$target" ]]; then
-  echo "error: test executable is missing or not executable: $target" >&2
-  echo "hint: run without --skip-build first" >&2
-  exit 1
-fi
-
 for tool in "${tools[@]}"; do
   # `--error-exitcode` converts sanitizer findings into a nonzero process exit,
   # which lets CI fail even when the test binary itself exits successfully.
   # Repeat the profile flags because scripts/lake.sh selects `.lake/build`
   # atomically on every invocation. Root-only instrumentation also lets the
   # suite's intentional self-reexec cache probe complete normally.
-  run "$LAKE" "${lake_flags[@]}" env \
+  # Check the executable only after Lake has selected the requested profile. With --skip-build,
+  # .lake/build can still point at the CPU cache when this script starts.
+  run "$LAKE" "${lake_flags[@]}" env bash -c '
+    target="$1"
+    shift
+    if [[ ! -x "$target" ]]; then
+      echo "error: test executable is missing or not executable: $target" >&2
+      echo "hint: run without --skip-build first" >&2
+      exit 1
+    fi
+    exec "$@"
+  ' torchlean-sanitizer "$target" \
     "$sanitizer" --tool "$tool" --target-processes "$target_processes" \
     --error-exitcode 99 "$target" "${exe_args[@]}"
 done
 
-printf '\nTorchLean CUDA sanitizer pass completed.\n'
+printf '\nTorchLean LibTorch CUDA sanitizer pass completed.\n'

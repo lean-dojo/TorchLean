@@ -81,11 +81,18 @@ runtime layer code without learning a second vocabulary.
 export Runtime.Autograd.Model.Layers.Seq
   (stateShapes requiresGrad validate runtimeInit? hasBufferUpdates updateBuffers)
 
-/-- Semantic initial values for every parameter and persistent buffer in a sequential model. -/
-def initialState {σ τ : Spec.Shape} (model : Sequential σ τ) :
-    State Float (stateShapes model) :=
-  State.Internal.fromTensorPack
-    (Runtime.Autograd.Model.Layers.Seq.initState model)
+/--
+Initial parameters and buffers in the requested scalar type, defaulting to `Float`.
+
+Model builders store their seeded initial values in `Float`; this conversion preserves that source
+and does not generate additional random precision. For exact wider initial values, construct
+`State α` directly and pass it as `initialState?` when instantiating the model or opening a trainer.
+-/
+def initialState {σ τ : Spec.Shape} (model : Sequential σ τ) (α : Type := Float)
+    [TorchLean.Storage α] [Runtime.FromFloat α] : State α (stateShapes model) :=
+  (State.Internal.fromTensorPack
+    (Runtime.Autograd.Model.Layers.Seq.initState model)).map
+      (fun tensor => TorchLean.Tensor.map (Runtime.ofFloat (α := α)) tensor)
 
 /-! Constructors that pair an immutable model with a scalar training loss. -/
 namespace Objective
@@ -104,11 +111,11 @@ def fromLoss {σ τ : Spec.Shape} (model : Sequential σ τ)
   Runtime.Autograd.Model.Layers.Seq.Objective.fromLoss model loss mode
 
 /-- Pair an immutable sequential model with mean-squared error. -/
-def meanSquaredError {σ τ : Spec.Shape} (model : Sequential σ τ)
+def mse {σ τ : Spec.Shape} (model : Sequential σ τ)
     (reduction : TorchLean.Loss.Reduction := .mean)
     (mode : Mode := .train) :
     TorchLean.Module.ObjectiveDefinition Unit (stateShapes model) [σ, τ] :=
-  Runtime.Autograd.Model.Layers.Seq.Objective.meanSquaredError model reduction mode
+  Runtime.Autograd.Model.Layers.Seq.Objective.mse model reduction mode
 
 /-- Pair an immutable sequential model with one-hot cross entropy. -/
 def oneHotCrossEntropy {σ τ : Spec.Shape} (model : Sequential σ τ)

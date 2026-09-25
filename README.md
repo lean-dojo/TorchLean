@@ -5,9 +5,10 @@
 
 TorchLean brings neural-network programming and formal reasoning into one Lean project. Tensor
 shapes are part of the types, models are executable Lean programs, and the same definitions can be
-used by training code, graph transformations, certificate checkers, and proofs. CPU and CUDA
-backends handle numerical work; the Lean library records the mathematical meaning and assumptions
-attached to each path.
+used by training code, graph transformations, certificate checkers, and proofs. TorchLean owns
+automatic differentiation; its CUDA backend uses LibTorch's ATen operations to compute tensor
+values and local gradients. The Lean library records the mathematical meaning and assumptions
+attached to each execution path.
 
 ## Installation
 
@@ -18,7 +19,7 @@ lake exe cache get
 lake build
 ```
 
-For Linux, macOS, Windows/WSL, CUDA, optional LibTorch support, and an explanation of
+For Linux, macOS, Windows/WSL, CUDA with LibTorch, and an explanation of
 TorchLean's backend architecture, see the [Installation guide](https://lean-dojo.github.io/TorchLean/installation/).
 
 ## Quickstart
@@ -27,7 +28,8 @@ TorchLean's backend architecture, see the [Installation guide](https://lean-dojo
 lake exe torchlean quickstart_mlp --device cpu --steps 10 --arithmetic ieee --execution eager
 lake exe torchlean quickstart_mlp --device cpu --steps 10 --execution eager
 
-# Optional CUDA run, if the CUDA toolkit and an NVIDIA GPU are available:
+# Optional GPU run with a CUDA-enabled LibTorch SDK, matching toolkit, and NVIDIA GPU:
+export TORCHLEAN_LIBTORCH_HOME=/absolute/path/to/libtorch
 lake -R -K cuda=true build
 lake -R -K cuda=true exe torchlean quickstart_mlp --device cuda --steps 10 --execution eager
 ```
@@ -36,7 +38,8 @@ The first quickstart uses [FloatLib](https://github.com/lean-dojo/FloatLib)'s bi
 The second uses Lean's native `Float32`.
 For more precision, choose a FloatLib binary format directly in typed tensors and models, as shown
 below.
-The CUDA command selects the native GPU runtime and reports an error when CUDA is unavailable.
+The CUDA command selects LibTorch's GPU runtime and reports an error when CUDA is unavailable.
+TorchLean retains its own tape and backward traversal; the bridge disables LibTorch autograd.
 
 Application code writes concrete tensor types as `Tensor α [dims...]`, with the element type first.
 For example, `Tensor Float [4, 2]` is a four-by-two tensor of `Float` values:
@@ -68,13 +71,13 @@ def trainOnce : IO Unit := do
   -- Select the loss and train through a typed graph with FloatLib binary32 arithmetic.
   let trainer :=
     Trainer.new model
-      { objective := .meanSquaredError
+      { objective := .mse
         optimizer := optim.sgd { learningRate := 0.05 }
         execution := .typedGraph
         device := .cpu
         arithmetic := .ieee }
   -- Inspect the initialized model before any parameter updates.
-  let initialPrediction ← trainer.predict ([0.5, -0.25])
+  let initialPrediction ← trainer.predict ([0.5, -0.25] : Tensor Float [2])
   IO.println s!"initial={reprStr initialPrediction}"
   -- Each step averages 16 sample gradients at one parameter point, then updates once.
   -- Training returns a result that retains the updated parameters and run report.
@@ -169,8 +172,9 @@ including exceptional values. Real error bounds add the relevant finiteness and 
 FloatLib also supplies other binary widths, decimal formats, posits, fixed-point arithmetic, and
 intervals. Its scalar import does not depend on TorchLean's tensors, models, or CUDA runtime.
 Configured binary formats support CPU tensor and typed-model execution at the selected precision.
-The native CUDA providers support binary32 and binary64; selecting another FloatLib binary format
-does not create a GPU provider for it. TorchLean's tensor quantization and runtime-approximation
+The eager CUDA runtime uses binary32 buffers; a separate matrix-multiplication interface supports
+binary64. Selecting another FloatLib binary format does not create a GPU provider for it.
+TorchLean's tensor quantization and runtime-approximation
 connections remain separate from the scalar library.
 
 For tensors and models at a chosen precision, `NN.API` includes `NN.API.Precision`. A
@@ -216,8 +220,12 @@ The final prediction is $9a/8$. Returning an exact rational observation preserve
 that would disappear in a conversion to binary64. The same typed interfaces accept other valid
 configured binary formats; their rounding can change the arithmetic result.
 
-The supervised trainer's dataset, reporting, and checkpoint boundaries use `Float`; changing its
-arithmetic option does not turn that interface into a general-precision data path. The
+For a supervised loop at the selected precision, open
+`trainer.openTyped (α := Scalar) (initialState? := some state)` and supply typed samples.
+Inputs, losses, predictions, state, and model-state checkpoints retain `Scalar`; `finish` keeps
+an independent snapshot. This path supports eager and graph execution on CPU. Seeded initialization
+and optimizer settings still start from `Float` unless explicitly supplied through typed interfaces.
+The
 [tensor guide](https://lean-dojo.github.io/TorchLean/blueprint/Building-Models/Tensors-That-Remember-Their-Shapes/)
 works through a typed binary128 model and checks its output and derivatives against exact rationals.
 

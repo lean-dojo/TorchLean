@@ -78,7 +78,7 @@ theorem buildFrom_denoteAllFrom_relu
               simp (config := { failIfUnchanged := false }) [hp, hIdx] at hBuild
               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                 mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                  Activation.reluSpec (α := α) (getIdx (α := α) (xs := ctx) ip))
+                  Activation.reluSpec (α := α) (readTensor (α := α) (xs := ctx) ip))
               let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
               have hRec :
                   buildFrom (α := α) (g := g) (payload := payload) (inShape := inShape)
@@ -149,7 +149,7 @@ theorem buildFrom_denoteAllFrom_tanh
               simp [hp, hIdx] at hBuild
               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                 mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                  Activation.tanhSpec (α := α) (getIdx (α := α) (xs := ctx) ip))
+                  Activation.tanhSpec (α := α) (readTensor (α := α) (xs := ctx) ip))
               let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
               have hRec :
                   buildFrom (α := α) (g := g) (payload := payload) (inShape := inShape)
@@ -217,7 +217,7 @@ theorem buildFrom_denoteAllFrom_sigmoid
               simp [hp, hIdx] at hBuild
               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                 mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                  Activation.sigmoidSpec (α := α) (getIdx (α := α) (xs := ctx) ip))
+                  Activation.sigmoidSpec (α := α) (readTensor (α := α) (xs := ctx) ip))
               let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
               have hRec :
                   buildFrom (α := α) (g := g) (payload := payload) (inShape := inShape)
@@ -285,7 +285,7 @@ theorem buildFrom_denoteAllFrom_softplus
               simp [hp, hIdx] at hBuild
               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                 mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                  Activation.softplusSpec (α := α) (getIdx (α := α) (xs := ctx) ip))
+                  Activation.softplusSpec (α := α) (readTensor (α := α) (xs := ctx) ip))
               let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
               have hRec :
                   buildFrom (α := α) (g := g) (payload := payload) (inShape := inShape)
@@ -353,7 +353,7 @@ theorem buildFrom_denoteAllFrom_exp
               simp [hp, hIdx] at hBuild
               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                 mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                  Tensor.expSpec (α := α) (getIdx (α := α) (xs := ctx) ip))
+                  Tensor.expSpec (α := α) (readTensor (α := α) (xs := ctx) ip))
               let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
               have hRec :
                   buildFrom (α := α) (g := g) (payload := payload) (inShape := inShape)
@@ -422,7 +422,7 @@ theorem buildFrom_denoteAllFrom_sin
               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                 mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
                   Tensor.mapSpec (α := α) (s := n.outShape) (fun x => MathFunctions.sin x)
-                    (getIdx (α := α) (xs := ctx) ip))
+                    (readTensor (α := α) (xs := ctx) ip))
               let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
               have hRec :
                   buildFrom (α := α) (g := g) (payload := payload) (inShape := inShape)
@@ -491,7 +491,7 @@ theorem buildFrom_denoteAllFrom_cos
               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                 mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
                   Tensor.mapSpec (α := α) (s := n.outShape) (fun x => MathFunctions.cos x)
-                    (getIdx (α := α) (xs := ctx) ip))
+                    (readTensor (α := α) (xs := ctx) ip))
               let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
               have hRec :
                   buildFrom (α := α) (g := g) (payload := payload) (inShape := inShape)
@@ -572,7 +572,7 @@ theorem buildFrom_denoteAllFrom_softmax
                   let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                     mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
                       @Activation.softmaxSpec α _ _ n.outShape axis h.down
-                        (getIdx (α := α) (xs := ctx) ip))
+                        (readTensor (α := α) (xs := ctx) ip))
                   let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                   have hRec :
                       buildFrom (α := α) (g := g) (payload := payload) (inShape := inShape)
@@ -652,7 +652,7 @@ theorem buildFrom_denoteAllFrom_hardMaskedSoftmax
                   let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                     mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
                       Spec.hardMaskedSoftmaxSpec
-                        (getIdx (α := α) (xs := ctx) ip) allowed)
+                        (readTensor (α := α) (xs := ctx) ip) allowed)
                   let st1 : State α inShape :=
                     ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                   have hRec :

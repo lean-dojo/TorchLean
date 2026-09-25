@@ -13,7 +13,7 @@ public import NN.Tests.Runtime.Cuda.Utils
 /-!
 # CUDA Kernel Coverage: Elementwise Ops
 
-One small composite forward/backward test that exercises the full elementwise surface
+Focused activation value/VJP regressions and a composite forward/backward test cover
 (`add/sub/mul/scale/abs/sqrt/clamp/max/min/relu/sigmoid/tanh/gelu/softplus/exp/log/inv/safe_log`)
 plus `sum`.
 -/
@@ -28,8 +28,139 @@ open Spec TorchLean
 open TorchLean TorchLean.Tensor
 open Runtime.Autograd
 
+def assertActivationValue (label : String) (got expected : Float)
+    (rtol : Float := 3e-6) : IO Unit := do
+  if expected.isNaN then
+    unless got.isNaN do
+      throw <| IO.userError s!"{label}: expected NaN, got {got}"
+  else if expected == 0.0 || expected.isInf then
+    unless got.toBits == expected.toBits do
+      throw <| IO.userError
+        s!"{label}: expected bits {expected.toBits}, got {got.toBits}"
+  else
+    -- No absolute floor: replacing a tiny representable result with zero must fail.
+    unless !got.isNaN && !got.isInf && (got - expected).abs ≤ rtol * expected.abs do
+      throw <| IO.userError s!"{label}: got {got}, expected {expected} (rtol {rtol})"
+
+def assertActivationArray (label : String) (got expected : FloatArray)
+    (rtol : Float := 3e-6) : IO Unit := do
+  unless got.size == expected.size do
+    throw <| IO.userError s!"{label}: size {got.size}, expected {expected.size}"
+  for i in [:expected.size] do
+    assertActivationValue s!"{label}[{i}]" (got.get! i) (expected.get! i) rtol
+
+def checkActivation
+    (label : String)
+    (forward : Runtime.Autograd.Cuda.Buffer → Runtime.Autograd.Cuda.Buffer)
+    (record : (s : Shape) → Runtime.Autograd.Cuda.Tape → Nat →
+      Result (Runtime.Autograd.Cuda.Tape × Nat))
+    (derivative : Float32 → Float32)
+    (inputs expected seeds : Array Float) : IO Unit := do
+  unless inputs.size == expected.size && inputs.size == seeds.size do
+    throw <| IO.userError s!"{label}: inconsistent test data"
+  let s : Shape := [inputs.size]
+  let input ← Runtime.Autograd.Cuda.Buffer.ofFloatArrayIO (FloatArray.mk inputs)
+  let original ← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO input
+  let direct ← IO.lazyPure fun _ => forward input
+  assertActivationArray s!"{label} buffer"
+    (← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO direct) (FloatArray.mk expected)
+  discard <| Runtime.Autograd.Cuda.Buffer.releaseIO direct
+  assertActivationArray s!"{label} borrowed input"
+    (← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO input) original
+
+  let (t1, xId) := Runtime.Autograd.Cuda.Tape.leaf
+    Runtime.Autograd.Cuda.Tape.empty { s := s, buf := input }
+  let result ← IO.lazyPure fun _ => record s t1 xId
+  let (t2, yId) ← Utils.okOrThrow result
+  let some node := t2.getNode? yId
+    | throw <| IO.userError s!"{label}: missing activation node"
+  unless t2.nodes.size == 2 && node.parents == #[xId] &&
+      node.requiresGrad && node.ownsValue do
+    throw <| IO.userError s!"{label}: expected one owned, differentiable unary node"
+  assertActivationArray s!"{label} tape"
+    (← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO node.value.buf) (FloatArray.mk expected)
+  let expectedGrad := FloatArray.mk <| expected.mapIdx fun i y =>
+    (seeds[i]!.toFloat32 * derivative y.toFloat32).toFloat
+  let retained ← Runtime.Autograd.Cuda.Buffer.allocatorStats
+  for pass in [:2] do
+    let seed ← Runtime.Autograd.Cuda.Buffer.ofFloatArrayIO (FloatArray.mk seeds)
+    -- Exercise the recorded closure before accumulation, including signed-zero cotangents.
+    let localResult ← IO.lazyPure fun _ => node.backward { s := s, buf := seed }
+    let contributions ← Utils.okOrThrow localResult
+    let some (parentId, contribution) := contributions[0]?
+      | throw <| IO.userError s!"{label}: missing VJP contribution"
+    unless contributions.size == 1 && parentId == xId && contribution.s == s do
+      throw <| IO.userError s!"{label}: malformed VJP contribution"
+    assertActivationArray s!"{label} local VJP, pass {pass}"
+      (← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO contribution.buf) expectedGrad (rtol := 3e-5)
+    discard <| Runtime.Autograd.Cuda.Buffer.releaseIO contribution.buf
+    assertActivationArray s!"{label} borrowed cotangent"
+      (← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO seed) (FloatArray.mk seeds)
+    let grads ← Runtime.Autograd.Cuda.Tape.backwardSparse t2 yId
+      { s := s, buf := seed } (fun id => id == xId)
+    let some grad := grads.get? xId
+      | throw <| IO.userError s!"{label}: missing tape gradient"
+    assertActivationArray s!"{label} tape VJP, pass {pass}"
+      (← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO grad.buf) expectedGrad (rtol := 3e-5)
+    Runtime.Autograd.Cuda.Tape.releaseSparseGrads grads
+    assertActivationArray s!"{label} input after backward"
+      (← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO input) original
+    assertActivationArray s!"{label} output after backward"
+      (← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO node.value.buf) (FloatArray.mk expected)
+    let after ← Runtime.Autograd.Cuda.Buffer.allocatorStats
+    unless after.liveBytes == retained.liveBytes do
+      throw <| IO.userError s!"{label}: backward retained temporary payloads on pass {pass}"
+  discard <| Runtime.Autograd.Cuda.Buffer.releaseIO node.value.buf
+  discard <| Runtime.Autograd.Cuda.Buffer.releaseIO input
+
+/-- Direct activations retain tiny values, selected nonfinite behavior, and TorchLean's VJPs. -/
+def runActivationNumerics : IO Unit := do
+  IO.println "== direct tanh/sigmoid numerical regressions =="
+  let inf := Float.ofBits 0x7ff0000000000000
+  let nan := Float.ofBits 0x7ff8000000000000
+  let tiny : Array Float :=
+    #[1e-30, -1e-30, 1e-12, -1e-12, 1e-8, -1e-8, 1e-5, -1e-5]
+  let central : Array Float := #[-3.0, -1.0, -0.5, 0.5, 1.0, 3.0]
+  let inputs := (tiny ++ #[0.0, -0.0] ++ central ++ #[-100.0, 100.0, -inf, inf, nan]).map
+    (fun (x : Float) => x.toFloat32.toFloat)
+  let seedPattern : Array Float := #[2.0, -0.5, 1.5, -3.0, 0.25]
+  let seeds := inputs.mapIdx fun i _ => seedPattern[i % seedPattern.size]!
+  let tanhValues := inputs.map fun x => (MathFunctions.tanh x).toFloat32.toFloat
+  let tanhNode := fun s t id => Runtime.Autograd.Cuda.Tape.tanh (s := s) t id
+  let sigmoidNode := fun s t id => Runtime.Autograd.Cuda.Tape.sigmoid (s := s) t id
+  let tanhDerivative := fun (y : Float32) => 1 - y * y
+  let sigmoidDerivative := fun (y : Float32) => y * (1 - y)
+  checkActivation "tanh tiny/center/tails" Runtime.Autograd.Cuda.Buffer.tanh tanhNode
+    tanhDerivative inputs tanhValues seeds
+
+  -- Test normal negative-tail values separately from ATen's saturated float32 tail.
+  let sigmoidInputs := inputs ++ #[-80.0, -20.0, 20.0, 80.0]
+  let sigmoidValues := sigmoidInputs.map fun x =>
+    if x == -100.0 then 0.0 else (Activation.Math.sigmoidSpec x).toFloat32.toFloat
+  let sigmoidSeeds := sigmoidInputs.mapIdx fun i _ => seedPattern[i % seedPattern.size]!
+  checkActivation "sigmoid tiny/center/tails" Runtime.Autograd.Cuda.Buffer.sigmoid sigmoidNode
+    sigmoidDerivative sigmoidInputs sigmoidValues sigmoidSeeds
+
+  -- Infinite cotangents at saturated outputs still multiply by zero and produce NaN.
+  let specialInputs : Array Float :=
+    #[0.0, -0.0, 1.0, -1.0, 100.0, -100.0, inf, -inf, nan, 0.5, -100.0]
+  let specialSeeds : Array Float :=
+    #[-0.0, 0.0, inf, -inf, inf, -inf, -0.0, -2.0, 0.0, nan, nan]
+  checkActivation "tanh nonfinite VJP" Runtime.Autograd.Cuda.Buffer.tanh tanhNode tanhDerivative
+    specialInputs (specialInputs.map fun x => (MathFunctions.tanh x).toFloat32.toFloat)
+    specialSeeds
+  checkActivation "sigmoid nonfinite VJP" Runtime.Autograd.Cuda.Buffer.sigmoid sigmoidNode
+    sigmoidDerivative specialInputs
+    (specialInputs.map fun x =>
+      if x == -100.0 then 0.0 else (Activation.Math.sigmoidSpec x).toFloat32.toFloat)
+    specialSeeds
+  checkActivation "tanh empty" Runtime.Autograd.Cuda.Buffer.tanh tanhNode tanhDerivative #[] #[] #[]
+  checkActivation "sigmoid empty" Runtime.Autograd.Cuda.Buffer.sigmoid sigmoidNode
+    sigmoidDerivative #[] #[] #[]
+
 def run : IO Unit := do
   IO.println "=== CUDA kernel coverage: elementwise ==="
+  runActivationNumerics
 
   let s : Shape := [5]
   let a : Tensor Float s :=

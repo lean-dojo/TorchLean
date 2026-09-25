@@ -50,7 +50,6 @@ open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 open Spec TorchLean
 open TorchLean.Tensor
-open TorchLean.Floats.IEEE754
 
 namespace NN.Examples.DeepDives.Floats.Float32Semantics
 

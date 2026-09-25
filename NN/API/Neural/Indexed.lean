@@ -287,7 +287,7 @@ def fromLoss {β : Type} [TorchLean.Storage β] {σ τ υ : Spec.Shape}
                       (.cons prediction (.cons target .nil)))) }
 
 /-- Pair an indexed-input model with mean-squared error. -/
-def meanSquaredError {β : Type} [TorchLean.Storage β]
+def mse {β : Type} [TorchLean.Storage β]
     {σ τ : Spec.Shape} (model : IndexedModel σ τ β)
     (reduction : TorchLean.Loss.Reduction := .mean)
     (mode : Mode := .train) :

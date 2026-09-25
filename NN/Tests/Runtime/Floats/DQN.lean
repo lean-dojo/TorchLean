@@ -39,7 +39,7 @@ def actionLoss :
     ∀ {β : Type}, [TorchLean.Storage β] → [Context β] →
       Program β [Shape.ofList [2, 3], Shape.ofList [2, 3], Shape.ofList [2]] [] :=
   fun {β} _ _ => fun {m} _ _ => fun prediction actions target =>
-    Runtime.RL.DQN.Autograd.actionHuberLossBatch (m := m) (α := β)
+    Runtime.RL.DQN.Autograd.actionHuberLoss (m := m) (α := β)
       prediction actions target
 
 def checkVector {α : Type} [TorchLean.Storage α] [Context α] : IO Unit := do

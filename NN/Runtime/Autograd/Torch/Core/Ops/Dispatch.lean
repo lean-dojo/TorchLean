@@ -75,13 +75,13 @@ def dispatchCudaCapsuleOpt {α : Type} [TorchLean.Storage α] {sh : Shape} (s : 
   pure { result with identity? := some (← s.currentRefIdentity) }
 
 /--
-Dispatch an eager operation implemented by the reference CPU and TorchLean native CUDA runtimes.
+Dispatch an eager operation implemented by the reference CPU and LibTorch CUDA runtimes.
 -/
 def dispatchCudaOpt {α : Type} [TorchLean.Storage α] {sh : Shape} (s : EagerSession α)
     (op : NN.Backend.BackendOp)
     (refs : Array (Option RefIdentity)) (cpu : IO (TensorRef α sh))
     (cuda : IO (Option (TensorRef α sh))) : IO (TensorRef α sh) :=
-  dispatchCudaCapsuleOpt s op refs #[.nativeCuda] cpu (fun _ => cuda)
+  dispatchCudaCapsuleOpt s op refs #[.libTorch] cpu (fun _ => cuda)
 
 end EagerSession
 

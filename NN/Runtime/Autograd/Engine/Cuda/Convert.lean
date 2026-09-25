@@ -7,7 +7,7 @@ CUDA helpers: row-major conversions between spec tensors and `FloatArray`.
 
 Motivation:
 - CUDA buffers (`Runtime.Autograd.Cuda.Buffer`) are contiguous float32 arrays.
-- Many CUDA kernels interpret buffers in row-major order for a given `Spec.Shape`.
+- The LibTorch bridge interprets buffers in row-major order for a given `Spec.Shape`.
 - `TorchLean.Tensor` is a functional/nested representation that does not commit to a layout.
 
 This module fixes a single layout convention for CUDA interop:

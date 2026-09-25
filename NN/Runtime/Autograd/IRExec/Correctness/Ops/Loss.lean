@@ -141,8 +141,8 @@ theorem buildFrom_denoteAllFrom_mse_loss
                           let nodeData : ForwardNode α ([inShape] ++ ss) nOutShape :=
                             mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := nOutShape) (fun
                               ctx =>
-                              let yhat := getIdx (α := α) (xs := ctx) iy
-                              let target := getIdx (α := α) (xs := ctx) it
+                              let yhat := readTensor (α := α) (xs := ctx) iy
+                              let target := readTensor (α := α) (xs := ctx) it
                               let diff := Tensor.subSpec (α := α) yhat target
                               let sq := Tensor.mulSpec (α := α) diff diff
                               let total : α := Tensor.sumSpec (α := α) sq

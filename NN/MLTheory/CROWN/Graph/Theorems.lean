@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Graph.Engine -- shake: keep
+import NN.Tensor.Internal.Laws.PackIndex
 
 /-!
 # CROWN Graph Theorems
@@ -30,6 +31,104 @@ variable {α : Type} [TorchLean.Storage α] [Context α]
 variable [BoundOps α]
 
 open BoundOps
+
+namespace ConcatLayout
+
+omit [Context α] [BoundOps α] in
+/-- Concatenation preserves the scalar at each embedded parent coordinate. -/
+@[simp] theorem concat_get (layout : ConcatLayout)
+    (values : (parent : Fin layout.lengths.length) →
+      Tensor α [(layout.parentShape parent).size])
+    (parent : Fin layout.lengths.length) (index : Fin (layout.parentShape parent).size) :
+    Tensor.getScalar (layout.concat values) (layout.flatEquiv ⟨parent, index⟩) =
+      Tensor.getScalar (values parent) index := by
+  simp only [concat, Tensor.getScalar_ofFn]
+  exact congrArg (fun source => Tensor.getScalar (values source.1) source.2)
+    (layout.flatEquiv.symm_apply_apply ⟨parent, index⟩)
+
+omit [Context α] [BoundOps α] in
+/-- Splitting recovers each occurrence, including repeated parents and zero-length segments. -/
+@[simp] theorem split_concat (layout : ConcatLayout)
+    (values : (parent : Fin layout.lengths.length) →
+      Tensor α [(layout.parentShape parent).size])
+    (parent : Fin layout.lengths.length) :
+    layout.split (layout.concat values) parent = values parent := by
+  apply Tensor.ext_vector
+  intro index
+  simp only [split, Tensor.getScalar_ofFn, concat_get]
+
+omit [Context α] [BoundOps α] in
+/-- Concatenating all coordinate slices recovers the original objective. -/
+@[simp] theorem concat_split (layout : ConcatLayout)
+    (value : Tensor α [layout.outputShape.size]) :
+    layout.concat (layout.split value) = value := by
+  apply Tensor.ext_vector
+  intro index
+  simp only [concat, split, Tensor.getScalar_ofFn]
+  exact congrArg (Tensor.getScalar value) (layout.flatEquiv.apply_symm_apply index)
+
+omit [BoundOps α] in
+/-- Parent interval enclosure is preserved by concat without any scalar arithmetic. -/
+theorem concat_encloses (layout : ConcatLayout)
+    (lower upper values : (parent : Fin layout.lengths.length) →
+      Tensor α [(layout.parentShape parent).size])
+    (h : ∀ parent index,
+      Tensor.getScalar (lower parent) index ≤ Tensor.getScalar (values parent) index ∧
+      Tensor.getScalar (values parent) index ≤ Tensor.getScalar (upper parent) index) :
+    ∀ index,
+      Tensor.getScalar (layout.concat lower) index ≤
+          Tensor.getScalar (layout.concat values) index ∧
+        Tensor.getScalar (layout.concat values) index ≤
+          Tensor.getScalar (layout.concat upper) index := by
+  intro index
+  simpa only [concat, Tensor.getScalar_ofFn] using
+    h (layout.flatEquiv.symm index).1 (layout.flatEquiv.symm index).2
+
+/--
+The selected axis lies between the shared leading and trailing coordinates in row-major order.
+No positivity assumption is needed: a zero-sized parent has no scalar coordinate.
+-/
+theorem flatEquiv_val (layout : ConcatLayout) (parent : Fin layout.lengths.length)
+    (index : Fin (layout.parentShape parent).size) :
+    let coordinate :=
+      ((Tensor.Internal.Coord.equivFin (layout.parentShape parent)).trans
+        (finCongr (Shape.internalSize_eq (layout.parentShape parent)))).symm index
+    let separated := Tensor.Internal.Coord.appendEquiv layout.leading
+      (layout.lengths.get parent :: layout.trailing) coordinate
+    (layout.flatEquiv ⟨parent, index⟩).val =
+      (Tensor.Internal.Coord.linearize separated.2.2).val +
+        Tensor.Internal.Shape.size layout.trailing *
+          ((∑ previous : Fin parent,
+              layout.lengths.get (Fin.castLE parent.isLt.le previous)) +
+            separated.2.1.val +
+            layout.lengths.sum * (Tensor.Internal.Coord.linearize separated.1).val) := by
+  exact Tensor.Internal.concatenateAxesCoordinateEquiv_linearize_val
+    layout.leading layout.trailing layout.lengths parent
+    (((Tensor.Internal.Coord.equivFin (layout.parentShape parent)).trans
+      (finCongr (Shape.internalSize_eq (layout.parentShape parent)))).symm index)
+
+omit [BoundOps α] in
+/--
+An objective on concatenated values is the sum of its pulled-back objectives on parent occurrences.
+Repeated graph ids are accumulated after this identity; occurrences are never discarded.
+-/
+theorem objective_concat [AddCommMonoid α] (layout : ConcatLayout)
+    (objective : Tensor α [layout.outputShape.size])
+    (values : (parent : Fin layout.lengths.length) →
+      Tensor α [(layout.parentShape parent).size]) :
+    (∑ index, Tensor.getScalar objective index *
+      Tensor.getScalar (layout.concat values) index) =
+      ∑ parent, ∑ index,
+        Tensor.getScalar (layout.split objective parent) index *
+          Tensor.getScalar (values parent) index := by
+  symm
+  rw [← Fintype.sum_sigma']
+  apply Fintype.sum_equiv layout.flatEquiv
+  intro source
+  rcases source with ⟨parent, index⟩
+  simp only [split, Tensor.getScalar_ofFn, concat_get]
+
+end ConcatLayout
 
 namespace Theorems
 
@@ -68,7 +167,6 @@ omit [BoundOps α] in
 theorem box_relu_dim (B : FlatBox α) : (boxRelu (α:=α) B).dim = B.dim := by
   simp [boxRelu]
 
-omit [BoundOps α] in
 /-- `boxSquare` preserves `dim`. -/
 theorem box_square_dim (B : FlatBox α) : (boxSquare (α:=α) B).dim = B.dim := by
   cases B; simp [boxSquare]
@@ -181,8 +279,8 @@ theorem box_relu_sound (n : Nat)
 Squaring is not monotone, so the sign matters here: an interval straddling zero attains `0`, and
 otherwise the minimum sits at the endpoint nearer the origin. -/
 def sqLower (l u : α) : α :=
-  let l2 := l * l
-  let u2 := u * u
+  let l2 := BoundOps.mulDown l l
+  let u2 := BoundOps.mulDown u u
   if l < 0 then
     if 0 < u then 0 else (if l2 < u2 then l2 else u2)
   else (if l2 < u2 then l2 else u2)
@@ -192,11 +290,10 @@ def sqLower (l u : α) : α :=
 Unlike `sqLower` there is no case split on the sign, because squaring is maximized at whichever
 endpoint is farther from the origin whether or not the interval straddles zero. -/
 def sqUpper (l u : α) : α :=
-  let l2 := l * l
-  let u2 := u * u
+  let l2 := BoundOps.mulUp l l
+  let u2 := BoundOps.mulUp u u
   if l2 > u2 then l2 else u2
 
-omit [BoundOps α] in
 /-- Coordinatewise squaring of a box encloses the elementwise product of an enclosed tensor.
 
 The scalar bound is taken as a hypothesis rather than proved here, since it is the one step that

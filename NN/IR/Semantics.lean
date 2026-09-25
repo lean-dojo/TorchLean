@@ -199,6 +199,31 @@ def matmulLeading {α : Type} [TorchLean.Storage α] [Context α] (leading : Sha
     Tensor α (leading.concat [m, p]) :=
   Tensor.zipEach leading [m, p] Spec.matMulSpec left right
 
+/-- Row-major matrix contraction using the shared broadcast and vector-promotion layout. -/
+def matmulFlat {α : Type} [TorchLean.Storage α] [Context α]
+    (dims : OpContracts.MatmulDims) {leftDim rightDim : Nat}
+    (left : Tensor α [leftDim]) (right : Tensor α [rightDim]) :
+    Tensor α [dims.outShape.size] :=
+  Tensor.ofFn fun output =>
+    (List.range dims.inner).foldl (fun acc inner =>
+      acc + getAtOrZero left [dims.leftIndex output.val inner] *
+        getAtOrZero right [dims.rightIndex output.val inner]) 0
+
+/-- Evaluate a checked matmul layout, retaining the typed matrix kernel for equal batch shapes. -/
+@[simp] def matmulWithDims {α : Type} [TorchLean.Storage α] [Context α]
+    (dims : OpContracts.MatmulDims)
+    (left : Tensor α dims.leftShape) (right : Tensor α dims.rightShape) :
+    Tensor α dims.outShape :=
+  if h : dims.leftShape = dims.leading.concat [dims.rows, dims.inner] ∧
+      dims.rightShape = dims.leading.concat [dims.inner, dims.cols] ∧
+      dims.outShape = dims.leading.concat [dims.rows, dims.cols] then
+    Tensor.castShape
+      (matmulLeading dims.leading (Tensor.castShape left h.1)
+        (Tensor.castShape right h.2.1)) h.2.2.symm
+  else
+    Tensor.unflattenSpec dims.outShape
+      (matmulFlat dims (Tensor.flattenSpec left) (Tensor.flattenSpec right))
+
 /--
 Evaluate a `const` node from the external payload.
 
@@ -324,22 +349,29 @@ def evalBatchNorm {α : Type} [TorchLean.Storage α] [Context α]
           s!"IR eval: batch_norm_eval {id}: payload input shape {repr inputShape} \
             does not match parent shape {repr x.shape}"
 
-/-- Layer normalization of a matrix with explicit scale, bias, and epsilon. -/
+/-- Normalize every present row; an empty batch has no coordinates to change. -/
+def layerNormMatrixValue {α : Type} [TorchLean.Storage α] [Context α]
+    (seqLen embedDim : Nat) (x : Tensor α [seqLen, embedDim])
+    (gamma beta : Tensor α [embedDim]) (epsilon : α) (hEmb : embedDim > 0) :
+    Tensor α [seqLen, embedDim] :=
+  if hSeq : seqLen > 0 then
+    Spec.layerNorm (α := α) (seqLen := seqLen) (embedDim := embedDim)
+      (x := x) (gamma := gamma) (beta := beta) (h_seq_pos := hSeq) (h_embed_pos := hEmb)
+      (epsilon := epsilon)
+  else
+    x
+
+/-- Layer normalization with a nonempty normalized dimension and explicit affine parameters. -/
 def layerNormMatrix {α : Type} [TorchLean.Storage α] [Context α]
     (seqLen embedDim : Nat) (x : Tensor α [seqLen, embedDim])
     (gamma beta : Tensor α [embedDim]) (epsilon : α) :
     Except String (Tensor α [seqLen, embedDim]) := do
-  if hSeq : seqLen > 0 then
-    if hEmb : embedDim > 0 then
-      pure (Spec.layerNorm (α := α) (seqLen := seqLen) (embedDim := embedDim)
-        (x := x) (gamma := gamma) (beta := beta) (h_seq_pos := hSeq) (h_embed_pos := hEmb)
-        (epsilon := epsilon))
-    else
-      throw s!"layernorm: embedDim must be > 0 (got {embedDim})"
+  if hEmb : embedDim > 0 then
+    pure (layerNormMatrixValue seqLen embedDim x gamma beta epsilon hEmb)
   else
-    throw s!"layernorm: seqLen must be > 0 (got {seqLen})"
+    throw s!"layernorm: embedDim must be > 0 (got {embedDim})"
 
-/-- Layer normalization with the historical unit affine transform and default epsilon. -/
+/-- Layer normalization with unit scale, zero bias, and default epsilon. -/
 def layerNormWithoutAffine {α : Type} [TorchLean.Storage α] [Context α]
     (seqLen embedDim : Nat) (x : Tensor α [seqLen, embedDim]) :
     Except String (Tensor α [seqLen, embedDim]) :=
@@ -721,7 +753,7 @@ selected branch exactly as before the split.
         | .ok dims =>
             let aT ← expectShape (α := α) (expected := dims.leftShape) aV
             let bT ← expectShape (α := α) (expected := dims.rightShape) bV
-            let y : Tensor α dims.outShape := matmulLeading dims.leading aT bT
+            let y : Tensor α dims.outShape := matmulWithDims dims aT bT
             pure (Spec.SomeTensor.ofTensor y : Spec.SomeTensor α)
     | .linear => do
         let pId ← unaryParentId i n

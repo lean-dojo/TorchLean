@@ -23,7 +23,7 @@ The main training interface:
 
 ```lean
 let trainer := Trainer.new model
-  { objective := .meanSquaredError
+  { objective := .mse
     optimizer := optim.adam { learningRate := 0.03 } }
 let y0 ← trainer.predict x
 let trained ← trainer.train data { steps := 200, samplesPerStep := 16, logEvery := 25 }
@@ -40,7 +40,7 @@ Programs that own the optimizer loop open the same trainer as a session:
 ```lean
 let session ← trainer.open
 for step in [0:steps] do
-  let loss ← session.step (sampleAt step)
+  let loss ← session.step (sampleAt step) (loss := true)
 let trained ← session.finish { before, after }
 ```
 

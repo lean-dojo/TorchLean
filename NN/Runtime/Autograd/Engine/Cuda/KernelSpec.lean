@@ -13,15 +13,17 @@ public import NN.Runtime.Autograd.Engine.Cuda.Float32Contract
 
 This file is the proof layer companion to `NN.Runtime.Autograd.Engine.Cuda.*`.
 
-The native CUDA backend is an FFI boundary, so Lean cannot prove facts about the compiled `.cu`
-binary directly. What we can do well is factor the interface into three layers:
+The LibTorch CUDA backend is an FFI boundary. These theorems describe explicit Lean functions;
+applying them to a compiled native operation requires a refinement contract. The interface has
+three layers:
 
 1. **Pure Lean kernel specs** in this file: row-major indexing, elementwise maps, fixed-order
    reductions, gather/scatter, and batched matmul are ordinary Lean functions over finite indices.
 2. **Scalar float32 facts** from `Float32Contract`: if native result bits match `ExecFloat.Binary 8
 23`, then
    the existing `configured binary32 → FP32-on-ℝ` theorems apply.
-3. **Native validation / trust boundary**: CUDA C, libdevice, cuBLAS, compiler flags, GPU hardware,
+3. **Native validation / trust boundary**: LibTorch, its CUDA dependencies, compiler flags,
+   GPU hardware,
    and driver behavior are validated by tests and documented assumptions, not proved by Lean.
 
 This split is deliberate. It lets us prove the algorithm/indexing contracts that TorchLean owns,
@@ -33,9 +35,8 @@ External references for the assumptions named here:
   https://standards.ieee.org/ieee/754/6210/
 - NVIDIA CUDA C Programming Guide documents the CUDA execution/memory model:
   https://docs.nvidia.com/cuda/cuda-c-programming-guide/
-- cuBLAS documents GEMM's column-major API contract; TorchLean's CUDA BMM uses a row-major
-  interpretation around that API:
-  https://docs.nvidia.com/cuda/cublas/
+- ATen supplies batched matrix multiplication and selects its native implementation:
+  https://docs.pytorch.org/docs/stable/generated/torch.bmm.html
 - PyTorch's tensor docs are a useful user-facing analogue for row-major/strided tensor operations:
   https://pytorch.org/docs/stable/tensors.html
 -/
@@ -342,7 +343,7 @@ def bmmDecodeC (m p : Nat) (q : Nat) : Nat × Nat × Nat :=
 Pure row-major batched matrix multiplication spec.
 
 For each output element `C[b,i,j]`, this folds over `k = 0..n-1` using `ExecFloat.mul` followed by
-`ExecFloat.add`. This fixes a *specific* accumulation order. cuBLAS may use a different
+`ExecFloat.add`. This fixes a *specific* accumulation order. LibTorch may use a different
 tree/FMA strategy, so bit-for-bit agreement with this spec is an explicit native contract, not a
 free theorem.
 -/
@@ -365,10 +366,9 @@ The scalar result bits must match `bmmSpec` at every output element. This is str
 than "numerically close": it is the bitwise contract needed to reuse exact `ExecFloat.Binary 8 23`
 proofs.
 
-For cuBLAS-backed kernels this assumption includes:
-- row-major TorchLean buffers are interpreted consistently around cuBLAS's column-major GEMM API;
-- the accumulation tree/FMA behavior is compatible with the selected reference spec, or the spec is
-  adjusted to the documented cuBLAS/toolchain behavior;
+For a LibTorch implementation this assumption includes:
+- row-major TorchLean buffers are interpreted with the intended tensor dimensions;
+- the accumulation tree/FMA behavior agrees with the selected reference spec;
 - input and output strides match `(batch,m,n)`, `(batch,n,p)`, and `(batch,m,p)` row-major layout.
 -/
 structure NativeBmmAgreement

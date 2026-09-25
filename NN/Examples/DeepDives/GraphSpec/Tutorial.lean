@@ -96,13 +96,18 @@ linear head. The ugly-looking type is the point: the parameter shapes and interm
 arithmetic are checked before the model can be used.
 -/
 def cnn :=
-  NN.GraphSpec.Models.twoConvCnn
-    (inChannels := 1) (firstChannels := 2) (secondChannels := 3) (outputSize := 4)
-    [8, 8] [3, 3] [1, 1] [1, 1] [1, 1] [1, 1]
-    [2, 2] [2, 2] [0, 0] [2, 2] [0, 0]
-    (hPoolKernel := by intro i; fin_cases i <;> decide)
-    (hPoolStride₁ := by intro i; fin_cases i <;> decide)
-    (hPoolStride₂ := by intro i; fin_cases i <;> decide)
+  let features :=
+    NN.GraphSpec.Chain.conv 1 2 [3, 3] [1, 1] [1, 1] [8, 8] >>>
+    NN.GraphSpec.Chain.relu [2, 8, 8] >>>
+    NN.GraphSpec.Chain.maxPool 2 [2, 2] [2, 2] [0, 0] [8, 8]
+      (hKernel := by intro i; fin_cases i <;> decide)
+      (hStride := by intro i; fin_cases i <;> decide) >>>
+    NN.GraphSpec.Chain.conv 2 3 [3, 3] [1, 1] [1, 1] [4, 4] >>>
+    NN.GraphSpec.Chain.relu [3, 4, 4] >>>
+    NN.GraphSpec.Chain.maxPool 3 [2, 2] [2, 2] [0, 0] [4, 4]
+      (hKernel := by intro i; fin_cases i <;> decide)
+      (hStride := by intro i; fin_cases i <;> decide)
+  NN.GraphSpec.Models.cnn features 4
 
 /--
 The minimal DAG-native skip-connection example:
@@ -162,7 +167,7 @@ def runMlpTrainingPath (args : List String) : IO Unit := do
         { optimizer := optim.sgd { learningRate := 0.1 } }
       let trainer :=
         Trainer.new network <|
-        Trainer.RunConfig.forObjective runConfig .meanSquaredError
+        Trainer.RunConfig.forObjective runConfig .mse
       trainer.printSummary
       let trained ←
         trainer.train dataset { steps := 3, logTitle := "GraphSpec tutorial" }

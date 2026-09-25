@@ -13,6 +13,7 @@ public import NN.Verification.Cert.CROWNNodeCert
 public import NN.Verification.Cert.CROWNQuery.Json
 public import NN.Verification.Cert.CROWNNodeCertAlphaBeta
 public import NN.Verification.Cert.AbCrownLeafCert
+public import NN.Verification.Cert.FiniteArtifact
 
 /-!
 # Certificate Verification

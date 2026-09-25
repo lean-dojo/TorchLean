@@ -81,7 +81,9 @@ def seedParamsFloat : ParamStore Float :=
   let inputSpatial : TorchLean.Tensor Nat [2] :=
     Tensor.from #[inH, inW]
   let inShape := Shape.ofList (inC :: Tensor.to inputSpatial (List Nat))
-  let outSpatial := Spec.convOutSpatial inputSpatial kernelShape strides paddings
+  let outSpatial :=
+    Spec.convOutSpatialDilated inputSpatial kernelShape strides (Tensor.full [2] 1)
+      paddings paddings
   let outShape := Shape.ofList (outC :: Tensor.to outSpatial (List Nat))
   let nIn := inShape.size
   let nConv := outShape.size
@@ -101,12 +103,10 @@ def seedParamsFloat : ParamStore Float :=
   -- Seed input box (center ones, eps)
   let inputCenter : Tensor Float inShape := Tensor.full inShape 1.0
   let eps : Float := 0.1
-  let rad := Tensor.full (α := Float) inShape eps
-  let xB : Box Float inShape :=
-    { lo := Tensor.subSpec inputCenter rad, hi := Tensor.addSpec inputCenter rad }
+  let inFlat := FlatBox.lInfBall inputCenter eps
   let convWeight : Tensor Float [nConv, nIn] :=
     NN.MLTheory.CROWN.convLinearMatrix (α := Float)
-    (inSpatial := inputSpatial) conv
+      (inSpatial := inputSpatial) conv (Tensor.full [2] 1) paddings 1 .scalar
   let convBias : Tensor Float [nConv] :=
     NN.MLTheory.CROWN.convBiasBroadcast (α := Float) (outSpatial := outSpatial) conv.bias
   -- Linear head 4→2
@@ -120,8 +120,6 @@ def seedParamsFloat : ParamStore Float :=
       | _ => 0.0
   let emptyStore : ParamStore Float := {}
   -- set input box
-  let inFlat : FlatBox Float :=
-    { dim := nIn, lo := Tensor.flattenSpec xB.lo, hi := Tensor.flattenSpec xB.hi }
   let withInputBox := emptyStore.seedInputBox 0 inFlat
   -- Store the exact flattened convolution as a linear node.
   let withConvAffine :=

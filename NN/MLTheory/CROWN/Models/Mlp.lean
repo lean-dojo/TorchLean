@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Operators.Activations
+public import NN.MLTheory.CROWN.Proofs.ReLUUpperBound
 public import NN.MLTheory.CROWN.Graph.Engine.BackwardObjective
 public import NN.Spec.Layers.Linear
 import NN.Proofs.Tensor.Algebra
@@ -311,7 +312,7 @@ open NN.MLTheory.CROWN
 /--
 Scalar ReLU relaxation soundness over `ℝ` (upper bound).
 
-If `x ∈ [l, u]` and `rp := ReLU.relax_scalar l u`, then:
+If `x ∈ [l, u]` and `rp := ReLU.relaxScalar l u`, then:
 `relu(x) <= rp.slope * x + rp.bias`.
 
 This is the standard CROWN/DeepPoly upper chord construction (arXiv:1811.00866).
@@ -321,62 +322,7 @@ theorem relu_relax_scalar_upper_real
   (hlx : l ≤ x) (hxu : x ≤ u) :
   let rp := ReLU.relaxScalar (α:=ℝ) l u
   Activation.Math.reluSpec (α:=ℝ) x ≤ rp.slope * x + rp.bias := by
-  -- Work by cases on signs of l,u (standard CROWN cases)
-  unfold ReLU.relaxScalar
-  by_cases hu : u > 0
-  · by_cases hlpos : l > 0
-    · -- both positive: rp.slope = 1, rp.bias = 0, relu(x)=x
-      have hxpos : 0 < x := lt_of_lt_of_le hlpos hlx
-      have hxnonneg : 0 ≤ x := le_of_lt hxpos
-      simp [hu, hlpos, Activation.Math.reluSpec_eq_max, max_eq_left hxnonneg]
-    · -- crossing: l ≤ 0 < u, rp.slope = u/(u-l), rp.bias = -(u/(u-l)*l)
-      have hle0 : l ≤ 0 := le_of_not_gt hlpos
-      have hden : 0 < (u - l) := by linarith
-      have hne : (u - l) ≠ 0 := ne_of_gt hden
-      simp only [hu, hlpos, ite_true, ite_false]
-      -- two subcases depending on x sign
-      by_cases hxpos : 0 < x
-      · -- 0 < x ≤ u: relu x = x. Show x ≤ (u/(u-l))*x - (u/(u-l))*l
-        have hxnonneg : 0 ≤ x := le_of_lt hxpos
-        simp [Activation.Math.reluSpec_eq_max, max_eq_left hxnonneg]
-        -- It suffices to prove: x ≤ (u/(u-l)) * (x - l)
-        have hx_to_goal : x ≤ u / (u - l) * (x - l) := by
-          -- Show (u - l) * x ≤ u * (x - l), then cancel (u - l) > 0
-          have hrewrite : (u - l) * x - u * (x - l) = l * (u - x) := by
-            ring
-          have hxux : 0 ≤ u - x := sub_nonneg.mpr hxu
-          have hxmul_le : l * (u - x) ≤ 0 := mul_nonpos_of_nonpos_of_nonneg hle0 hxux
-          have hmul_goal : (u - l) * x ≤ u * (x - l) := by
-            have : (u - l) * x - u * (x - l) ≤ 0 := by
-              simpa [hrewrite] using hxmul_le
-            exact sub_nonpos.mp this
-          -- Divide both sides by (u - l) > 0 using le_div_iff₀ (group-with-zero variant)
-          have hx_to_goal' : x ≤ (u * (x - l)) / (u - l) := by
-            -- turn (u - l) * x ≤ u * (x - l) into x * (u - l) ≤ u * (x - l)
-            have : x * (u - l) ≤ u * (x - l) := by simpa [mul_comm] using hmul_goal
-            exact (le_div_iff₀ (G₀ := ℝ) hden).mpr this
-          simpa [div_eq_mul_inv, mul_comm, mul_left_comm, mul_assoc]
-            using hx_to_goal'
-        -- Turn the RHS back into the original affine form
-        have h2 : u / (u - l) * (x - l) = u / (u - l) * x + -(u / (u - l)) * l := by
-          ring
-        simpa [h2]
-          using hx_to_goal
-      · -- x ≤ 0: relu x = 0 and RHS = u/(u-l) * x + (-(u/(u-l) * l))
-        have hxle : x ≤ 0 := le_of_not_gt hxpos
-        -- ReLU x = 0 in this branch
-        have h1 : u / (u - l) * x + -(u / (u - l) * l) = u / (u - l) * (x - l) := by
-          ring
-        have : 0 ≤ u / (u - l) * (x - l) := by
-          apply mul_nonneg
-          · exact div_nonneg (le_of_lt hu) (le_of_lt hden)
-          · linarith
-        simpa [Activation.Math.reluSpec_eq_max, max_eq_right hxle, h1]
-          using this
-  · -- u ≤ 0: relu x = 0 and rp.slope = 0, rp.bias = 0
-    have hule : u ≤ 0 := le_of_not_gt hu
-    have hxle0 : x ≤ 0 := le_trans hxu hule
-    simp [hu, Activation.Math.reluSpec_eq_max, hxle0]
+  exact NN.MLTheory.CROWN.Proofs.relu_relax_scalar_upper_real_runtime l u x hlx hxu
 
 /--
 Vectorized ReLU relaxation (pointwise upper bound) over `ℝ`.

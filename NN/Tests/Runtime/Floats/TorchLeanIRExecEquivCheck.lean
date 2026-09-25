@@ -33,6 +33,78 @@ namespace Tests
 namespace Floats
 namespace TorchLeanIRExecEquivCheck
 
+private def checkValues (label : String) (actual expected : Array (Spec.SomeTensor Float)) :
+    IO Unit := do
+  unless actual.size == expected.size do
+    throw <| IO.userError s!"{label}: value-table lengths differ"
+  for i in [:expected.size] do
+    match actual[i]?, expected[i]? with
+    | some a, some b =>
+        unless a.shape == b.shape do
+          throw <| IO.userError s!"{label}: shape mismatch at node {i}"
+        let av := a.tensor.data
+        let bv := b.tensor.data
+        unless av.size == bv.size do
+          throw <| IO.userError s!"{label}: tensor lengths differ at node {i}"
+        for j in [:bv.size] do
+          unless (av[j]!.isNaN && bv[j]!.isNaN) || av[j]!.toBits == bv[j]!.toBits do
+            throw <| IO.userError s!"{label}: value mismatch at node {i}, entry {j}"
+    | _, _ => throw <| IO.userError s!"{label}: missing node {i}"
+
+/-- Array execution keeps every intermediate shape and value, including shared and older parents. -/
+@[no_expose] def checkForwardContextValues : IO Unit := do
+  let vector : Shape := [2]
+  let graph : NN.IR.Graph :=
+    { nodes := #[
+        { id := 0, parents := #[], kind := .input, outShape := vector },
+        { id := 1, parents := #[0], kind := .relu, outShape := vector },
+        { id := 2, parents := #[1], kind := .sum, outShape := .scalar },
+        { id := 3, parents := #[2], kind := .broadcastTo .scalar vector, outShape := vector },
+        { id := 4, parents := #[0, 3], kind := .add, outShape := vector },
+        { id := 5, parents := #[4], kind := .sum, outShape := .scalar },
+        { id := 6, parents := #[2, 5], kind := .add, outShape := .scalar },
+        { id := 7, parents := #[0], kind := .detach, outShape := vector }
+      ] }
+  let x : Tensor Float vector := [-3.0, 2.0]
+  let expected ←
+    match NN.IR.Graph.denoteAll graph {} (Spec.SomeTensor.ofTensor x) with
+    | .ok values => pure values
+    | .error error => throw <| IO.userError error
+  let exec ←
+    match Runtime.Autograd.IRExec.lowerToForwardGraph (α := Float) graph {} with
+    | .ok exec => pure exec
+    | .error error => throw <| IO.userError error
+  if h : vector = exec.inShape then
+    let input := Tensor.castShape x h
+    checkValues "mixed forward contexts" (exec.denoteAll input) expected
+    checkValues "typed forward contexts" (exec.eval input).toShapeErasedArray expected
+  else
+    throw <| IO.userError "mixed forward contexts: wrong input shape"
+
+/-- The executable raw logarithm stays total; only the dynamic IR evaluator rejects its domain. -/
+@[no_expose] def checkRawLogExecutionBoundary : IO Unit := do
+  let graph : NN.IR.Graph :=
+    { nodes := #[
+        { id := 0, parents := #[], kind := .input, outShape := .scalar },
+        { id := 1, parents := #[0], kind := .log, outShape := .scalar }
+      ] }
+  let exec ←
+    match Runtime.Autograd.IRExec.lowerToForwardGraph (α := Float) graph {} with
+    | .ok exec => pure exec
+    | .error error => throw <| IO.userError error
+  if h : Shape.scalar = exec.inShape then
+    for value in [-1.0, 0.0, 1.0, 2.0] do
+      let x := Tensor.scalar value
+      let expected := #[Spec.SomeTensor.ofTensor x,
+        Spec.SomeTensor.ofTensor (Tensor.logSpec x)]
+      checkValues "raw log context" (exec.denoteAll (Tensor.castShape x h)) expected
+      if value ≤ 0.0 then
+        match NN.IR.Graph.denoteAll graph {} (Spec.SomeTensor.ofTensor x) with
+        | .error _ => pure ()
+        | .ok _ => throw <| IO.userError "raw log IR unexpectedly accepted a nonpositive input"
+  else
+    throw <| IO.userError "raw log contexts: wrong input shape"
+
 /-- Hard-mask IBP keeps blocked entries exact and avoids uncertified transcendental rounding. -/
 def checkHardMaskedSoftmaxIbpBoundary : IO Unit := do
   let logitsLo : Tensor Float [3] := [-2.0, 0.0, 1.0]
@@ -263,6 +335,8 @@ def checkBatchedAttentionLowering : IO Unit := do
 
 def run : IO Unit := do
   IO.println "torchlean_ir_exec_equiv_check: begin"
+  checkForwardContextValues
+  checkRawLogExecutionBoundary
   checkHardMaskedSoftmaxIbpBoundary
   checkSoftmaxDerivativeShapeGuard
   checkNonlinearBoundCapabilities

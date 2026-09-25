@@ -79,6 +79,13 @@ for elementwise, shape, reduction, permutation, linear-algebra, softmax, payload
 facts. The imported theorems, rather than a separate coverage declaration, are the current record
 of proved evaluator support.
 
+The CROWN engine's executable transfer coverage is a separate boundary from these lowering
+theorems. Its matrix products promote vector operands and broadcast compatible leading batch
+axes. Convolution validates its groups, dilation and both padding sides, and LayerNorm uses the
+full trailing normalized shape. See
+[the CROWN geometry contracts](../MLTheory/CROWN/README.md#tensor-geometry) for the operator limits
+and their relation to the graph soundness theorems.
+
 ## Public Imports
 
 - `NN.Verification`: reusable verification APIs and public handles to proof-backed
@@ -135,7 +142,7 @@ total. These theorems require no producer-soundness, local-transfer, or graph-co
 `NN.Tests.MLTheory.CROWNQuery` includes a concrete kernel-checked safety theorem and runtime
 acceptance/rejection tests in `nn_tests_suite`.
 
-This new format is separate from the binary32 node-replay JSON format. It does not certify ONNX
+This format is separate from the binary32 node-replay JSON format. It does not certify ONNX
 translation, floating-point deployment, β dual variables, cuts, or branch-tree coverage. A model
 producer still has to establish that the decoded network is the model it intends to verify.
 
@@ -239,6 +246,12 @@ Run a 3D projection certificate check:
 ```bash
 lake exe verify -- camera-box3d-cert
 ```
+
+`BoxCameraCert.pointCount` fixes the number of supplied points; its tensor has shape
+`[pointCount, 3]`. The JSON parser infers the count from complete triples in `corners3d`, or
+checks it against an explicit `point_count`. The default count in the Lean record is eight.
+Acceptance checks projection, positive depth, and image/box containment for each supplied point.
+It does not establish that those points form a cuboid or correspond to an object in an image.
 
 Run the spline certificate checker:
 

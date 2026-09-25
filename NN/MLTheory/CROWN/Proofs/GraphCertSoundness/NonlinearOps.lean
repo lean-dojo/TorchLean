@@ -31,6 +31,34 @@ namespace CertSoundness
 
 noncomputable section
 
+/-- Lift a scalar enclosure through a shape-preserving elementwise map. -/
+private theorem mapBounds_sound_real {s : Shape}
+    (f : ℝ → ℝ) (lower upper : ℝ → ℝ → ℝ)
+    (hscalar : ∀ l u v, l ≤ v ∧ v ≤ u → lower l u ≤ f v ∧ f v ≤ upper l u)
+    (xB : Box ℝ s) (x : Tensor ℝ s) (hx : Box.contains xB x) :
+    Box.contains
+      ⟨Tensor.map2Spec lower xB.lo xB.hi, Tensor.map2Spec upper xB.lo xB.hi⟩
+      (Tensor.mapSpec f x) := by
+  induction s with
+  | scalar =>
+      simpa only [Box.contains, Tensor.toScalar_map2Spec, Tensor.toScalar_mapSpec]
+        using hscalar xB.lo.item xB.hi.item x.item hx
+  | dim n inner ih =>
+      intro i
+      change Box.contains
+        ⟨(Tensor.map2Spec lower xB.lo xB.hi).unstack i,
+          (Tensor.map2Spec upper xB.lo xB.hi).unstack i⟩
+        ((Tensor.mapSpec f x).unstack i)
+      rw [show (Tensor.map2Spec lower xB.lo xB.hi).unstack i =
+          Tensor.map2Spec lower (xB.lo.unstack i) (xB.hi.unstack i) from
+            (TorchLean.Tensor.Internal.Rep.zipWith_unstack lower xB.lo xB.hi i).symm,
+        show (Tensor.map2Spec upper xB.lo xB.hi).unstack i =
+          Tensor.map2Spec upper (xB.lo.unstack i) (xB.hi.unstack i) from
+            (TorchLean.Tensor.Internal.Rep.zipWith_unstack upper xB.lo xB.hi i).symm,
+        show (Tensor.mapSpec f x).unstack i = Tensor.mapSpec f (x.unstack i) from
+          (TorchLean.Tensor.Internal.Rep.map_unstack f x i).symm]
+      exact ih ⟨xB.lo.unstack i, xB.hi.unstack i⟩ (x.unstack i) (hx i)
+
 /-!
 ### Soundness of `Runtime.Ops.IBP.mapMinmax` for monotone scalar functions
 
@@ -38,24 +66,16 @@ noncomputable section
 If the activation is monotone, then the min/max of the endpoints is a correct enclosure.
 -/
 
-theorem map_minmax_sound_real {n : Nat} (f : ℝ → ℝ) (hf : Monotone f)
-    (xB : Box ℝ (.dim n .scalar)) (x : Tensor ℝ [n])
+theorem map_minmax_sound_real {s : Shape} (f : ℝ → ℝ) (hf : Monotone f)
+    (xB : Box ℝ s) (x : Tensor ℝ s)
     (hx : Box.contains (α := ℝ) xB x) :
-    Box.contains (α := ℝ) (NN.MLTheory.CROWN.Runtime.Ops.IBP.mapMinmax (α := ℝ) (n := n) f xB)
-      (Tensor.mapSpec (α := ℝ) (s := .dim n .scalar) f x) := by
-  intro i
-  let l := xB.lo.getScalar i
-  let u := xB.hi.getScalar i
-  let v := x.getScalar i
-  have hv : l ≤ v ∧ v ≤ u := hx i
+    Box.contains (α := ℝ) (Runtime.Ops.IBP.mapMinmax f xB)
+      (Tensor.mapSpec f x) := by
+  refine mapBounds_sound_real f _ _ ?_ xB x hx
+  intro l u v hv
   have hflfu : f l ≤ f u := hf (le_trans hv.1 hv.2)
   have hnot : ¬f l > f u := not_lt_of_ge hflfu
-  have hMap : ((Tensor.mapSpec f x).unstack i).item = f v := by
-    change (Tensor.mapSpec f x).getScalar i = f v
-    simp [v]
-  simpa [NN.MLTheory.CROWN.Box.contains,
-    NN.MLTheory.CROWN.Runtime.Ops.IBP.mapMinmax, l, u, v, hnot, hMap]
-    using And.intro (hf hv.1) (hf hv.2)
+  simpa only [ite_eq_right hnot] using And.intro (hf hv.1) (hf hv.2)
 
 /-!
 ### Soundness of the 1-Lipschitz `sin`/`cos` enclosures
@@ -135,18 +155,14 @@ theorem cos_lipschitz_real (x y : ℝ) : |Real.cos x - Real.cos y| ≤ |x - y| :
 
 /-- Interval bound propagation through `sin` is sound over `ℝ`.
 
-The implementation checks whether the interval is short enough to contain no critical point and uses
-the monotone endpoints if so, falling back to `[-1, 1]` otherwise; both branches are covered here.
+Each component uses the midpoint Lipschitz enclosure, intersected with `[-1, 1]`.
 -/
-theorem ibp_sin_sound_real {n : Nat} (xB : Box ℝ (.dim n .scalar)) (x : Tensor ℝ [n])
+theorem ibp_sin_sound_real {s : Shape} (xB : Box ℝ s) (x : Tensor ℝ s)
     (hx : Box.contains (α := ℝ) xB x) :
-    Box.contains (α := ℝ) (NN.MLTheory.CROWN.Runtime.Ops.IBP.sin (α := ℝ) (n := n) xB)
-      (Tensor.mapSpec (α := ℝ) (s := .dim n .scalar) Real.sin x) := by
-  intro i
-  let l := xB.lo.getScalar i
-  let u := xB.hi.getScalar i
-  let v := x.getScalar i
-  have hv : l ≤ v ∧ v ≤ u := hx i
+    Box.contains (α := ℝ) (Runtime.Ops.IBP.sin xB)
+      (Tensor.mapSpec Real.sin x) := by
+  refine mapBounds_sound_real Real.sin _ _ ?_ xB x hx
+  intro l u v hv
   let m : ℝ := (l + u) / 2
   let r : ℝ := (u - l) / 2
   have hxm : |v - m| ≤ r := by
@@ -165,26 +181,15 @@ theorem ibp_sin_sound_real {n : Nat} (xB : Box ℝ (.dim n .scalar)) (x : Tensor
         Real.sin v ≤ min (1 : ℝ) (Real.sin m + r) :=
     ⟨max_le_iff.2 ⟨hsinRange.1, hmidLo⟩,
       le_min_iff.2 ⟨hsinRange.2, hmidHi⟩⟩
-  have hMap : ((Tensor.mapSpec Real.sin x).unstack i).item = Real.sin v := by
-    change (Tensor.mapSpec Real.sin x).getScalar i = Real.sin v
-    simp [v]
-  have hOne : (1 : ℝ) = 1 := by
-    rfl
-  simpa [NN.MLTheory.CROWN.Box.contains,
-    NN.MLTheory.CROWN.Runtime.Ops.IBP.sin,
-    MathFunctions.sin, One.one, l, u, v, m, r, hMap, hOne]
-    using hBounds
+  simpa only [MathFunctions.sin, m, r] using hBounds
 
 /-- Interval bound propagation through `cos` is sound over `ℝ`, by the same argument. -/
-theorem ibp_cos_sound_real {n : Nat} (xB : Box ℝ (.dim n .scalar)) (x : Tensor ℝ [n])
+theorem ibp_cos_sound_real {s : Shape} (xB : Box ℝ s) (x : Tensor ℝ s)
     (hx : Box.contains (α := ℝ) xB x) :
-    Box.contains (α := ℝ) (NN.MLTheory.CROWN.Runtime.Ops.IBP.cos (α := ℝ) (n := n) xB)
-      (Tensor.mapSpec (α := ℝ) (s := .dim n .scalar) Real.cos x) := by
-  intro i
-  let l := xB.lo.getScalar i
-  let u := xB.hi.getScalar i
-  let v := x.getScalar i
-  have hv : l ≤ v ∧ v ≤ u := hx i
+    Box.contains (α := ℝ) (Runtime.Ops.IBP.cos xB)
+      (Tensor.mapSpec Real.cos x) := by
+  refine mapBounds_sound_real Real.cos _ _ ?_ xB x hx
+  intro l u v hv
   let m : ℝ := (l + u) / 2
   let r : ℝ := (u - l) / 2
   have hxm : |v - m| ≤ r := by
@@ -203,15 +208,7 @@ theorem ibp_cos_sound_real {n : Nat} (xB : Box ℝ (.dim n .scalar)) (x : Tensor
         Real.cos v ≤ min (1 : ℝ) (Real.cos m + r) :=
     ⟨max_le_iff.2 ⟨hcosRange.1, hmidLo⟩,
       le_min_iff.2 ⟨hcosRange.2, hmidHi⟩⟩
-  have hMap : ((Tensor.mapSpec Real.cos x).unstack i).item = Real.cos v := by
-    change (Tensor.mapSpec Real.cos x).getScalar i = Real.cos v
-    simp [v]
-  have hOne : (1 : ℝ) = 1 := by
-    rfl
-  simpa [NN.MLTheory.CROWN.Box.contains,
-    NN.MLTheory.CROWN.Runtime.Ops.IBP.cos,
-    MathFunctions.cos, One.one, l, u, v, m, r, hMap, hOne]
-    using hBounds
+  simpa only [MathFunctions.cos, m, r] using hBounds
 
 end
 

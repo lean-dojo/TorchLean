@@ -612,7 +612,7 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_maxpool_bwd(
   checkBufSize(gradOutput, outElems, "torchlean_cuda_maxpool_bwd_stub: gradOutput.size mismatch");
 
   torchlean_cuda_buffer* dInput = torchlean_cuda_buffer_alloc(inElems);
-  const int det = torchlean_cuda_get_deterministic_reductions();
+  const int det = torchlean_cpu_deterministic_reductions();
   if (det) {
     // Deterministic algorithm: compute each dInput element exactly once.
     uint32_t inCoord[K_MAX_RANK];
@@ -910,7 +910,7 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_avgpool_bwd(
 
   torchlean_cuda_buffer* dInput = torchlean_cuda_buffer_alloc(inElems);
   const float denom = (float)kSpatialSize;
-  const int det = torchlean_cuda_get_deterministic_reductions();
+  const int det = torchlean_cpu_deterministic_reductions();
   if (det) {
     // Deterministic algorithm: compute each dInput element exactly once.
     uint32_t inCoord[K_MAX_RANK];
@@ -1173,7 +1173,7 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_smooth_maxpool_bwd(
   torchlean_cuda_buffer* dInput = torchlean_cuda_buffer_alloc(inElems);
   const float betaF =
       checked_smoothmax_beta(beta, "torchlean_cuda_smooth_maxpool_bwd_stub: beta must be finite and nonzero");
-  const int det = torchlean_cuda_get_deterministic_reductions();
+  const int det = torchlean_cpu_deterministic_reductions();
   if (det) {
     // Deterministic algorithm: compute each dInput element exactly once.
     uint32_t inCoord[K_MAX_RANK];

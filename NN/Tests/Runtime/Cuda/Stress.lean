@@ -20,11 +20,12 @@ Low-level stress coverage that goes beyond the small eager-tape tests:
 - reference/deterministic RNG behavior for `randUniform`, `randNormal`, and `bernoulliMask`,
 - explicit `Buffer.releaseIO` lifecycle semantics,
 - finalization of short-lived external buffer wrappers,
+- LibTorch allocation accounting, saved attention context lifetime, and recoverable OOM,
 - large-buffer elementwise/reduction checks on direct `Cuda.Buffer` ops,
-- extra cuBLAS matmul parity checks on rectangular inputs.
+- extra ATen matmul reference parity checks on rectangular inputs.
 
-These still run without a GPU because the CUDA externs fall back to the CPU stub under the default
-build. With `-K cuda=true`, the same tests hit the real CUDA runtime paths.
+CPU parity builds still run the backend-independent checks. Native memory/accounting/OOM probes
+explicitly skip CPU parity builds; only the LibTorch CUDA build exercises those contracts.
 -/
 
 @[expose] public section
@@ -292,6 +293,86 @@ def runDisconnectedDenseGradientStress : IO Unit := do
     throw <| IO.userError
       s!"disconnected CUDA reciprocal output: expected finite zero, got {invGrad}"
 
+/--
+Constant dropout probabilities must not trigger scalar broadcast reductions in backward.
+Trainable probabilities retain their local derivative with the sampled mask held fixed.
+-/
+def runConstantBranchGradientStress : IO Unit := do
+  IO.println "== constant branches and trainable dropout probability =="
+  let vector : Shape := [4]
+  let scalar : Shape := .scalar
+  let key : UInt64 := 0x25114ed53327345a
+  for probability in #[0.0, 0.5, 1.0] do
+    for trainable in #[false, true] do
+      let x ← Buffer.ofFloatArrayIO (FloatArray.mk #[1.0, 2.0, 3.0, 4.0])
+      let p ← Buffer.fullIO 1 probability
+      let mask ← Buffer.bernoulliMaskIO 4 (1.0 - probability) key
+      let ones ← Buffer.fullIO 4 1.0
+      let (t1, xId) := Cuda.Tape.empty.leaf { s := vector, buf := x }
+      let (t2, pId) := t1.leaf { s := scalar, buf := p } (requiresGrad := trainable)
+      let (t3, maskId) := t2.leaf { s := vector, buf := mask } (requiresGrad := false)
+      let (t4, onesId) := t3.leaf { s := vector, buf := ones } (requiresGrad := false)
+      let (t5, broadcastId) ← Utils.okOrThrow <|
+        t4.broadcastTo (Shape.CanBroadcastTo.scalarTo vector) pId
+      let (t6, retainedId) ← Utils.okOrThrow <| t5.mul (s := vector) broadcastId maskId
+      let (t7, denominatorId) ← Utils.okOrThrow <| t6.sub (s := vector) onesId retainedId
+      let (t8, inverseId) ← Utils.okOrThrow <| t7.inv (s := vector) denominatorId
+      for id in #[broadcastId, retainedId, denominatorId, inverseId] do
+        unless (t8.getNode? id).any (fun node => node.requiresGrad == trainable) do
+          throw <| IO.userError "dropout probability gradient flag was not propagated"
+      -- A failing closure detects accidental traversal independently of the numerical assertions.
+      let t8 : Cuda.Tape := if trainable then t8 else
+        { nodes := t8.nodes.mapIdx fun id node =>
+            if id == broadcastId then
+              { node with backward := fun _ => .error "constant probability was differentiated" }
+            else node }
+      let (t9, maskedId) ← Utils.okOrThrow <| t8.mul (s := vector) xId maskId
+      let (t10, yId) ← Utils.okOrThrow <| t9.mul (s := vector) maskedId inverseId
+      let (tape, outId) ← Utils.okOrThrow <| t10.sum (s := vector) yId
+      let expectedValue := if probability == 0.0 then 10.0 else
+        if probability == 0.5 then 6.0 else 0.0
+      let expectedInput := FloatArray.mk <| if probability == 0.0 then #[1.0, 1.0, 1.0, 1.0]
+        else if probability == 0.5 then #[0.0, 0.0, 2.0, 0.0] else #[0.0, 0.0, 0.0, 0.0]
+      let expectedProbability := if probability == 0.0 then 10.0 else
+        if probability == 0.5 then 12.0 else 0.0
+      let output ← Utils.okOrThrow <| tape.requireValue outId scalar
+      assertFloatArrayEq "dropout forward value"
+        (← Buffer.toFloatArrayIO output) (FloatArray.mk #[expectedValue])
+      let denseSeed : Cuda.AnyBuffer := { s := scalar, buf := ← Buffer.fullIO 1 1.0 }
+      let dense ← Utils.okOrThrow <| tape.backwardDenseAll outId denseSeed
+      let inputGradient ← Utils.cudaGrad (s := vector) dense xId
+      assertFloatArrayEq "dropout dense input gradient"
+        (Runtime.Autograd.Cuda.Convert.flattenFloat inputGradient) expectedInput
+      let probabilityGradient ← Utils.cudaGrad (s := scalar) dense pId
+      unless probabilityGradient.item == (if trainable then expectedProbability else 0.0) do
+        throw <| IO.userError "dropout dense probability gradient mismatch"
+      for gradient in dense do
+        discard <| Buffer.releaseIO gradient.buf
+      let sparseSeed : Cuda.AnyBuffer := { s := scalar, buf := ← Buffer.fullIO 1 1.0 }
+      let sparse ← tape.backwardSparse outId sparseSeed (fun id => id == xId || id == pId)
+      try
+        let inputGradient ← match sparse.get? xId with
+          | some gradient => pure gradient
+          | none => throw <| IO.userError "dropout sparse input gradient missing"
+        assertFloatArrayEq "dropout sparse input gradient"
+          (← Buffer.toFloatArrayIO inputGradient.buf) expectedInput
+        match sparse.get? pId with
+        | some gradient =>
+            unless trainable do
+              throw <| IO.userError "dropout sparse backward retained a constant gradient"
+            assertFloatArrayEq "dropout sparse probability gradient"
+              (← Buffer.toFloatArrayIO gradient.buf) (FloatArray.mk #[expectedProbability])
+        | none =>
+            if trainable then
+              throw <| IO.userError "dropout sparse probability gradient missing"
+      finally
+        Cuda.Tape.releaseSparseGrads sparse
+        for node in tape.nodes do
+          if node.ownsValue then
+            discard <| Buffer.releaseIO node.value.buf
+          for buffer in node.cleanup do
+            discard <| Buffer.releaseIO buffer
+
 def runSparseLifetimeStress : IO Unit := do
   IO.println "== repeated sparse-backward ownership =="
 
@@ -324,7 +405,7 @@ def runSparseLifetimeStress : IO Unit := do
     throw <| IO.userError
       s!"sparse backward ownership: live bytes grew from {before.liveBytes} to {after.liveBytes}"
 
-def runLargeBufferStress : IO Unit := do
+def runLargeBufferStressBody : IO Unit := do
   IO.println "== large buffer elementwise/reduction stress =="
 
   let n : Nat := 200003
@@ -353,22 +434,31 @@ def runLargeBufferStress : IO Unit := do
     if y > 0.0 then y else 0.0)
   assertFloatArrayApprox "large buffer pointwise pipeline" got expected (tol := 2e-5)
 
-  let prevDet ← Buffer.getDeterministicReductions
-  -- Force the fixed-order path while comparing against a host accumulation. The fast atomic path is
-  -- valid but may differ by normal floating-point associativity noise.
-  Buffer.setDeterministicReductions true
+  let previousSettings : Option (Bool × Bool) ←
+    match Buffer.runtimeStatus with
+    | .nativeAvailable =>
+        pure (some (← LibTorch.getDeterministic, ← LibTorch.getCuDNNBenchmark))
+    | .cpuStub => pure none
+    | .nativeUnavailable =>
+        throw <| IO.userError "large buffer stress requires a usable CUDA device"
+  -- CPU startup policy is checked by the subprocess runner. Native strict determinism is
+  -- requested through LibTorch; the accuracy assertions retain their explicit tolerances.
+  try
+    if previousSettings.isSome then
+      LibTorch.setDeterministic true
+    let sumGot := (Buffer.toFloatArray (Buffer.reduceSum relued)).get! 0
+    let meanGot := (Buffer.toFloatArray (Buffer.reduceMean relued)).get! 0
+    let mut sumExpected : Float := 0.0
+    for i in [0:n] do
+      sumExpected := sumExpected + expected.get! i
+    let meanExpected : Float := sumExpected / (n : Float)
 
-  let sumGot := (Buffer.toFloatArray (Buffer.reduceSum relued)).get! 0
-  let meanGot := (Buffer.toFloatArray (Buffer.reduceMean relued)).get! 0
-  let mut sumExpected : Float := 0.0
-  for i in [0:n] do
-    sumExpected := sumExpected + expected.get! i
-  let meanExpected : Float := sumExpected / (n : Float)
-
-  Utils.assertApprox "large buffer reduceSum" sumGot sumExpected (tol := 0.5)
-  Utils.assertApprox "large buffer reduceMean" meanGot meanExpected (tol := 5e-4)
-
-  Buffer.setDeterministicReductions prevDet
+    Utils.assertApprox "large buffer reduceSum" sumGot sumExpected (tol := 0.5)
+    Utils.assertApprox "large buffer reduceMean" meanGot meanExpected (tol := 5e-4)
+  finally
+    if let some (deterministic, benchmark) := previousSettings then
+      LibTorch.setDeterministic deterministic
+      LibTorch.setCuDNNBenchmark benchmark
 
   -- The runtime contract for an empty mean is `NaN`; keep that edge case explicit.
   let emptyMean := Buffer.toFloatArray (Buffer.reduceMean (← Buffer.zerosIO 0))
@@ -376,8 +466,42 @@ def runLargeBufferStress : IO Unit := do
     throw <| IO.userError s!"reduceMean empty size: expected 1, got {emptyMean.size}"
   assertFloatIsNaN "reduceMean empty result" (emptyMean.get! 0)
 
+/--
+CPU parity exercises its deterministic reduction path in a fresh process with an explicit startup
+policy. Native execution uses LibTorch controls; CPU stubs do not claim to support those controls.
+-/
+def runLargeBufferStress : IO Unit := do
+  match Buffer.runtimeStatus with
+  | .cpuStub =>
+      if (← IO.getEnv "TORCHLEAN_CPU_REDUCTION_PROBE") == some "1" then
+        -- Float32 left-to-right accumulation loses the middle 1; the CPU deterministic
+        -- accumulator retains it. This checks the active path rather than just the environment.
+        let input ← Buffer.ofFloatArrayIO (FloatArray.mk #[100000000.0, 1.0, -100000000.0])
+        let result := Buffer.reduceSum input
+        assertFloatArrayEq "CPU deterministic reduction discriminator"
+          (← Buffer.toFloatArrayIO result) (FloatArray.mk #[1.0])
+        discard <| Buffer.releaseIO result
+        discard <| Buffer.releaseIO input
+        IO.println "  CPU deterministic reduction coverage; LibTorch controls unavailable"
+        runLargeBufferStressBody
+      else
+        let self ← IO.appPath
+        let result ← IO.Process.output {
+          cmd := self.toString
+          args := #[]
+          env := #[("TORCHLEAN_CPU_REDUCTION_PROBE", some "1"),
+            ("TORCHLEAN_CUDA_DETERMINISTIC_REDUCTIONS", some "1")]
+        }
+        if result.exitCode != 0 then
+          throw <| IO.userError
+            s!"CPU deterministic reduction probe failed (exit {result.exitCode}):\n\
+              {result.stdout}\n{result.stderr}"
+        IO.print result.stdout
+  | .nativeAvailable => runLargeBufferStressBody
+  | .nativeUnavailable => Buffer.requireNativeRuntime
+
 def runMatmulStress : IO Unit := do
-  IO.println "== cuBLAS matmul parity stress =="
+  IO.println "== ATen matmul reference parity stress =="
 
   -- Rectangular case: catches row-major/column-major leading-dimension mistakes that square
   -- matrices can accidentally hide.
@@ -398,8 +522,8 @@ def runMatmulStress : IO Unit := do
       -0.05, 0.15, -0.25, 0.35, -0.45
     ]).reshape [4, 5] (by dsimp; decide)
   let yRef1 := FastKernels.matmulReference (α := Float) (m := 3) (n := 4) (p := 5) a1 b1
-  let yFp321 ← IO.ofExcept (FastKernels.Cuda.matmulCublas .fp32 (m := 3) (n := 4) (p := 5) a1 b1)
-  let yFp641 ← IO.ofExcept (FastKernels.Cuda.matmulCublas .fp64 (m := 3) (n := 4) (p := 5) a1 b1)
+  let yFp321 ← IO.ofExcept (FastKernels.Cuda.matmulLibTorch .fp32 (m := 3) (n := 4) (p := 5) a1 b1)
+  let yFp641 ← IO.ofExcept (FastKernels.Cuda.matmulLibTorch .fp64 (m := 3) (n := 4) (p := 5) a1 b1)
   Utils.assertTensorApprox (s := sY1) "matmul stress case1 fp32" yFp321 yRef1 (tol := 7e-3)
   Utils.assertTensorApprox (s := sY1) "matmul stress case1 fp64" yFp641 yRef1 (tol := 1e-9)
 
@@ -413,164 +537,287 @@ def runMatmulStress : IO Unit := do
   let b2 : Tensor Float sB2 :=
     (Tensor.from #[0.10, 0.20, -0.30, 0.40, -0.50, 0.60, -0.70]).reshape [7, 1] (by dsimp; decide)
   let yRef2 := FastKernels.matmulReference (α := Float) (m := 1) (n := 7) (p := 1) a2 b2
-  let yFp322 ← IO.ofExcept (FastKernels.Cuda.matmulCublas .fp32 (m := 1) (n := 7) (p := 1) a2 b2)
-  let yFp642 ← IO.ofExcept (FastKernels.Cuda.matmulCublas .fp64 (m := 1) (n := 7) (p := 1) a2 b2)
+  let yFp322 ← IO.ofExcept (FastKernels.Cuda.matmulLibTorch .fp32 (m := 1) (n := 7) (p := 1) a2 b2)
+  let yFp642 ← IO.ofExcept (FastKernels.Cuda.matmulLibTorch .fp64 (m := 1) (n := 7) (p := 1) a2 b2)
   Utils.assertTensorApprox (s := sY2) "matmul stress case2 fp32" yFp322 yRef2 (tol := 7e-3)
   Utils.assertTensorApprox (s := sY2) "matmul stress case2 fp64" yFp642 yRef2 (tol := 1e-9)
 
-/--
-Build `k` freshly-allocated device buffers of length `n`, returned together with the total element
-count touched. Reading the sizes back forces the allocations so Lean cannot drop them as dead code;
-`salt` varies the fill value between callers so repeated blocks are distinguishable. -/
-def buildCacheScratch (n : UInt32) (k : Nat) (salt : Nat) : Array Buffer × Nat :=
-  Id.run do
-    let mut held : Array Buffer := Array.mkEmpty k
-    for i in [0:k] do
-      held := held.push (Buffer.full n (1.0 + Float.ofNat (salt * k + i)))
-    let mut touched : Nat := 0
-    for b in held do
-      touched := touched + (Buffer.size b).toNat
-    return (held, touched)
+/-- Check a real device readback, including its length and every uploaded/fill value. -/
+def assertMemoryReadback (label : String) (buffer : Buffer) (n : Nat) (value : Float) :
+    IO Unit := do
+  let actual ← Buffer.toFloatArrayIO buffer
+  if actual.size != n then
+    throw <| IO.userError s!"{label}: expected {n} elements, got {actual.size}"
+  for i in [0:n] do
+    Utils.assertApprox s!"{label}[{i}]" (actual.get! i) value (tol := 1e-5)
+
+/-- These inequalities concern native accounting, not a particular cache block size or policy. -/
+def assertNativeAccounting (label : String) (stats : Buffer.AllocatorStats) : IO Unit := do
+  if stats.allocatedBytes > stats.reservedBytes then
+    throw <| IO.userError s!"{label}: allocated bytes exceed reserved bytes"
+  if stats.peakAllocatedBytes < stats.allocatedBytes ||
+      stats.peakReservedBytes < stats.reservedBytes then
+    throw <| IO.userError s!"{label}: native peak is below current usage"
+  if stats.peakBytes < stats.liveBytes then
+    throw <| IO.userError s!"{label}: logical peak is below live ownership"
+
+/-- Synchronize the selected device before taking a native allocator snapshot. -/
+def synchronizedStats : IO Buffer.AllocatorStats := do
+  LibTorch.synchronize
+  Buffer.allocatorStats
+
+/-- Warm initialization outside the measured ownership interval. -/
+@[noinline] def warmMemoryProbe : IO Unit := do
+  let buffer ← Buffer.fullIO 4 2.0
+  assertMemoryReadback "memory probe warmup" buffer 4 2.0
+  discard <| Buffer.releaseIO buffer
+  LibTorch.synchronize
+  LibTorch.emptyCache
+
+/-- Live allocations survive emptyCache; released payloads leave allocated accounting. -/
+def runMemoryAccountingProbe : IO Unit := do
+  Buffer.requireNativeRuntime
+  IO.println "== LibTorch native memory accounting =="
+  warmMemoryProbe
+  let before ← synchronizedStats
+  let n : UInt32 := 262144 -- 1 MiB of float32 payload per independent handle.
+  let count : Nat := 8
+  let bytes := UInt64.ofNat (n.toNat * count * 4)
+  let mut held : Array Buffer := #[]
+  for i in [0:count] do
+    let buffer ← Buffer.fullIO n (Float.ofNat (i + 1))
+    assertMemoryReadback "held allocation" buffer n.toNat (Float.ofNat (i + 1))
+    held := held.push buffer
+  let live ← synchronizedStats
+  assertNativeAccounting "live" live
+  if live.liveBytes != before.liveBytes + bytes then
+    throw <| IO.userError "logical payload accounting does not match held handles"
+  if live.allocatedBytes < before.allocatedBytes + bytes then
+    throw <| IO.userError "native allocated bytes did not include materialized device payloads"
+
+  LibTorch.emptyCache
+  let retained ← synchronizedStats
+  assertNativeAccounting "live after emptyCache" retained
+  if retained.liveBytes != live.liveBytes || retained.allocatedBytes != live.allocatedBytes then
+    throw <| IO.userError "emptyCache changed live ownership or native allocated storage"
+  if retained.reservedBytes > live.reservedBytes then
+    throw <| IO.userError "emptyCache increased native reservation in an idle process"
+  for i in [0:held.size] do
+    let some buffer := held[i]? |
+      throw <| IO.userError "memory accounting: held buffer index is out of bounds"
+    assertMemoryReadback "live after emptyCache" buffer n.toNat (Float.ofNat (i + 1))
+
+  for buffer in held do
+    if (← Buffer.releaseIO buffer) != 1 then
+      throw <| IO.userError "memory accounting: first release did not retire the payload"
+  let released ← synchronizedStats
+  assertNativeAccounting "released" released
+  if released.liveBytes != before.liveBytes || released.allocatedBytes != before.allocatedBytes then
+    throw <| IO.userError "released payloads remain live in logical/native allocated accounting"
+  -- Keep the empty wrappers alive across the snapshot: wrapper ownership is not VRAM usage.
+  for buffer in held do
+    if (← Buffer.sizeIO buffer) != 0 || (← Buffer.releaseIO buffer) != 0 then
+      throw <| IO.userError "released wrapper is nonempty or release is not idempotent"
+  LibTorch.emptyCache
+  let emptied ← synchronizedStats
+  assertNativeAccounting "released after emptyCache" emptied
+  if emptied.allocatedBytes != before.allocatedBytes ||
+      emptied.reservedBytes > released.reservedBytes then
+    throw <| IO.userError "emptyCache violated native allocation/reservation accounting"
+  if emptied.peakAllocatedBytes < live.peakAllocatedBytes ||
+      emptied.peakReservedBytes < live.peakReservedBytes then
+    throw <| IO.userError "emptyCache reset the allocator peaks"
+  -- Driver free bytes can change because of other processes; report rather than assert equality.
+  IO.println s!"  before: {before.format}"
+  IO.println s!"  held: {live.format}"
+  IO.println s!"  released/cache emptied: {emptied.format}"
 
 /--
-Block-cache byte-cap probe, the subject of `runCacheCapTest`. Runs in a forked child so the cap
-(`TORCHLEAN_CUDA_CACHE_CAP_BYTES`, read once natively) is fixed before the first cache operation.
+The forward context must retain Q/K/V after their Lean payload handles are explicitly released.
+Readback and backward use that retained storage; both explicit release and finalization of the
+output must eventually release the context. Native probabilities/auxiliaries have no Lean handle.
+-/
+@[noinline] def runAttentionContextIteration (releaseOutput : Bool) : IO Unit := do
+  let before ← synchronizedStats
+  let n : UInt32 := 64
+  let d : UInt32 := 32
+  let elements : UInt32 := n * d
+  let bytes := UInt64.ofNat (elements.toNat * 4)
+  let query ← Buffer.zerosIO elements
+  let key ← Buffer.zerosIO elements
+  let value ← Buffer.fullIO elements 2.0
+  let mask ← Buffer.zerosIO 0
+  let outResult ← IO.lazyPure fun _ =>
+    Buffer.libTorchAttentionFwd query key value mask 0 1 n d 1.0
+  let out ← Utils.okOrThrow outResult
+  assertMemoryReadback "attention forward" out elements.toNat 2.0
+  for buffer in #[query, key, value, mask] do
+    discard <| Buffer.releaseIO buffer
+  let retained ← synchronizedStats
+  assertNativeAccounting "attention retained context" retained
+  if retained.liveBytes != before.liveBytes + bytes then
+    throw <| IO.userError "attention input payload handles were not retired"
+  if retained.allocatedBytes < before.allocatedBytes + 4 * bytes then
+    throw <| IO.userError "attention context did not retain native Q/K/V/output storage"
+  LibTorch.emptyCache
+  let afterEmpty ← synchronizedStats
+  if afterEmpty.allocatedBytes != retained.allocatedBytes then
+    throw <| IO.userError "emptyCache released live attention context storage"
+  assertMemoryReadback "attention after input release/cache empty" out elements.toNat 2.0
 
-The child first checks that the native allocator reports the expected parsed cap. It then allocates
-`k` same-size blocks and returns them through `Buffer.releaseIO`. The total returned (8 MiB here)
-exceeds the 1 MiB test cap and fits inside the 1 GiB default. A finite cache retains the smaller of
-the workload and the budget, rounded down to whole blocks. The unbounded control retains every
-returned block.
-
-Selected in a forked child by `TORCHLEAN_CUDA_CACHE_PROBE=cache-cap` (see `NN.Tests.run`). -/
-def runCacheCapProbe : IO Unit := do
-  IO.println "== cuda block-cache byte-cap probe =="
-  let expectedCapBytes ←
-    match (← IO.getEnv "TORCHLEAN_CUDA_CACHE_EXPECTED_CAP_BYTES").bind (·.toNat?) with
-    | some n => pure (UInt64.ofNat n)
-    | none => throw <| IO.userError "cache-cap probe: missing expected native cap"
-  let n : UInt32 := 65536                              -- 256 KiB per block (float32)
-  let blockBytes : UInt64 := UInt64.ofNat (n.toNat * 4)
-  let k : Nat := 32                                    -- 8 MiB of returns, far past a 1 MiB cap
-  let totalBytes : UInt64 := UInt64.ofNat (n.toNat * 4 * k)
-  let pre ← Buffer.allocatorStats
-  -- `deviceTotalBytes` comes from `cudaMemGetInfo`: nonzero on the CUDA build, 0 on the CPU stub.
-  let onCuda : Bool := pre.deviceTotalBytes != 0
-  if !onCuda then
-    if pre.cacheBytes != 0 || pre.cacheCapBytes != 0 then
-      throw <| IO.userError "cache-cap probe: CPU stub reported CUDA cache state"
-    IO.println "  skipped: the CPU stub has no device reuse cache"
-    return
-  if pre.cacheCapBytes != expectedCapBytes then
-    throw <| IO.userError
-      s!"cache-cap probe: native cap is {pre.cacheCapBytes}, expected {expectedCapBytes}"
-  let capBytes := pre.cacheCapBytes
-  -- Fresh child: the cache starts empty, so every block is a real device alloc, not a cache reuse.
-  let (held, touched) := buildCacheScratch n k 1
-  if touched != k * n.toNat then
-    throw <| IO.userError "cache-cap probe: scratch build under-allocated"
-  -- Return every block to the cache. Under the cap, returns past the cap free instead of caching.
-  let mut freed : Nat := 0
-  for b in held do
-    freed := freed + (← Buffer.releaseIO b).toNat
-  if freed != k then
-    throw <| IO.userError s!"cache-cap probe: expected {k} releases, got {freed}"
-  let post ← Buffer.allocatorStats
-  if post.cacheCapBytes != capBytes then
-    throw <| IO.userError "cache-cap probe: native cap changed during the process"
-  IO.println s!"  cap={capBytes} returned={totalBytes} cacheBytes={post.cacheBytes}"
-  if capBytes == 0 then
-    -- Control: no cap, so every returned block stays cached, which is the growth the cap bounds.
-    if post.cacheBytes != totalBytes then
-      throw <| IO.userError
-        s!"cache-cap probe (control): uncapped cache held {post.cacheBytes}, expected {totalBytes}"
+  let upstream ← Buffer.fullIO elements 1.0
+  let gradResult ← IO.lazyPure fun _ => Buffer.libTorchAttentionBwd out upstream
+  let (dq, dk, dv) ← Utils.okOrThrow gradResult
+  -- Uniform attention, constant V, and unit output cotangent give dQ=dK=0, dV=1.
+  assertMemoryReadback "attention retained dQ" dq elements.toNat 0.0
+  assertMemoryReadback "attention retained dK" dk elements.toNat 0.0
+  assertMemoryReadback "attention retained dV" dv elements.toNat 1.0
+  for buffer in #[upstream, dq, dk, dv] do
+    discard <| Buffer.releaseIO buffer
+  if releaseOutput then
+    if (← Buffer.releaseIO out) != 1 then
+      throw <| IO.userError "attention output release did not retire its payload/context"
   else
-    let retainedBytes := min totalBytes capBytes / blockBytes * blockBytes
-    if post.cacheBytes != retainedBytes then
+    -- Final use keeps out alive until here. The noinline IO scope then finalizes its wrapper.
+    if (← Buffer.sizeIO out) != elements then
+      throw <| IO.userError "attention output disappeared before finalization"
+
+/-- Saved native attention state is accounted and reclaimed independently of logical handles. -/
+def runAttentionMemoryProbe : IO Unit := do
+  Buffer.requireNativeRuntime
+  IO.println "== LibTorch saved attention context lifetime =="
+  -- Select an always-supported float32 provider; do not depend on GPU-specific flash eligibility.
+  LibTorch.setSDPEnabled .math true
+  LibTorch.setSDPEnabled .flash false
+  LibTorch.setSDPEnabled .efficient false
+  LibTorch.setSDPEnabled .cuDNN false
+  runAttentionContextIteration true
+  LibTorch.synchronize
+  LibTorch.emptyCache
+  let before ← synchronizedStats
+  for releaseOutput in [true, false] do
+    runAttentionContextIteration releaseOutput
+    let after ← synchronizedStats
+    assertNativeAccounting "attention context retired" after
+    if after.liveBytes != before.liveBytes || after.allocatedBytes != before.allocatedBytes then
       throw <| IO.userError
-        s!"cache-cap probe: cache held {post.cacheBytes}, expected {retainedBytes} \
-          from {totalBytes} returned bytes and a {capBytes}-byte cap"
-  IO.println "  block-cache byte cap enforced ✓"
+        s!"attention context leaked after releaseOutput={releaseOutput}: {after.format}"
+    LibTorch.emptyCache
+    let emptied ← synchronizedStats
+    if emptied.allocatedBytes != before.allocatedBytes ||
+        emptied.reservedBytes > after.reservedBytes then
+      throw <| IO.userError "attention retirement/cache-empty accounting mismatch"
+  IO.println "  explicit release and finalization both reclaimed saved context"
+
+/-- A failed native allocation must report the recoverable IO error class, not abort the process. -/
+def expectAllocationOOM (label : String) (allocate : IO Buffer) : IO Unit := do
+  let exhausted ←
+    try
+      let unexpected ← allocate
+      discard <| Buffer.releaseIO unexpected
+      pure false
+    catch error =>
+      match error with
+      | .resourceExhausted .. => pure true
+      | _ => throw <| IO.userError s!"{label}: wrong allocation error: {error}"
+  unless exhausted do
+    throw <| IO.userError s!"{label}: oversized allocation unexpectedly succeeded"
+
+/-- Isolated allocator limit causes a bounded OOM, then smaller allocations recover in-process. -/
+def runMemoryOOMProbe : IO Unit := do
+  Buffer.requireNativeRuntime
+  IO.println "== LibTorch controlled OOM and recovery =="
+  warmMemoryProbe
+  let survivor ← Buffer.fullIO 1024 3.25
+  assertMemoryReadback "OOM survivor before" survivor 1024 3.25
+  LibTorch.emptyCache
+  let before ← synchronizedStats
+  let oldFraction ← LibTorch.getMemoryFraction
+  -- This is an allocation limit, not an attempt to exhaust physical VRAM or set a cache budget.
+  let limitBytes := before.reservedBytes.toNat + 32 * 1024 * 1024
+  if before.deviceTotalBytes.toNat <= 2 * limitBytes then
+    throw <| IO.userError "controlled OOM probe needs room for a 32 MiB allocator limit"
+  let fraction := Float.ofNat limitBytes / Float.ofNat before.deviceTotalBytes.toNat
+  let largeElements := 2 * limitBytes / 4
+  if largeElements >= UInt32.size then
+    throw <| IO.userError "controlled OOM request exceeds the buffer ABI"
+  let n := UInt32.ofNat largeElements
+  try
+    LibTorch.setMemoryFraction fraction
+    let observed ← LibTorch.getMemoryFraction
+    Utils.assertApprox "allocator memory fraction readback" observed fraction (tol := 1e-9)
+    expectAllocationOOM "zerosIO OOM" (Buffer.zerosIO n)
+    expectAllocationOOM "fullIO OOM" (Buffer.fullIO n 1.0)
+    -- Upload uses another IO allocation entrypoint and must preserve the same error class.
+    let host := FloatArray.mk (Array.replicate largeElements 2.0)
+    expectAllocationOOM "ofFloatArrayIO OOM" (Buffer.ofFloatArrayIO host)
+    let failed ← synchronizedStats
+    if failed.liveBytes != before.liveBytes || failed.allocatedBytes != before.allocatedBytes then
+      throw <| IO.userError "failed allocation leaked logical/native allocated storage"
+    assertMemoryReadback "OOM survivor after failures" survivor 1024 3.25
+    LibTorch.emptyCache
+    let recovered ← Buffer.fullIO 1024 7.0
+    assertMemoryReadback "smaller allocation after OOM" recovered 1024 7.0
+    discard <| Buffer.releaseIO recovered
+    let after ← synchronizedStats
+    if after.liveBytes != before.liveBytes || after.allocatedBytes != before.allocatedBytes then
+      throw <| IO.userError "smaller recovery allocation did not retire cleanly"
+  finally
+    LibTorch.setMemoryFraction oldFraction
+    discard <| Buffer.releaseIO survivor
+    LibTorch.synchronize
+    LibTorch.emptyCache
+  Utils.assertApprox "memory fraction restored" (← LibTorch.getMemoryFraction) oldFraction
+    (tol := 1e-9)
+  let finalBuffer ← Buffer.fullIO 4096 9.0
+  assertMemoryReadback "allocation after restoring limit" finalBuffer 4096 9.0
+  discard <| Buffer.releaseIO finalBuffer
+  IO.println "  OOM returned resourceExhausted; live inputs and subsequent allocations survived"
 
 /--
-Regression test for the device block-cache byte cap. The cap is read once natively, so it must be
-fixed before the process's first cache operation; the test therefore forks the suite binary
-(`/proc/self/exe`) per configuration (see `runCacheCapProbe`):
-
-* **capped**: `TORCHLEAN_CUDA_CACHE_CAP_BYTES=1048576` bounds an 8 MiB return workload to a 1 MiB
-  cache;
-* **control**: `TORCHLEAN_CUDA_CACHE_CAP_BYTES=0` (explicitly unbounded), so the same workload
-  caches the full 8 MiB (the unbounded growth the cap fixes);
-* **malformed**: `TORCHLEAN_CUDA_CACHE_CAP_BYTES=1MiB` is rejected by the strict native parser,
-  so the cache uses the 1 GiB default and retains the full 8 MiB workload. This pins the rejection:
-  a prefix-parsing reader would instead take the leading `1` as a one-byte cap and cache nothing;
-* **overflow**: a value past the native word size is likewise rejected rather than truncated or
-  saturated, so the cache again uses the 1 GiB default.
-
-All four children pass the cap explicitly, so none inherits a stray
-`TORCHLEAN_CUDA_CACHE_CAP_BYTES` from the parent environment. In particular, the control child is
-pinned to `0` rather than inheriting a cap that would mask the uncapped growth it is meant to
-observe.
-
-Each child asserts internally and exits non-zero on failure. The test is CUDA- and Linux-only; the
-CPU stub has no reuse cache, and the subprocess launch uses `/proc/self/exe`. -/
-def runCacheCapTest : IO Unit := do
-  IO.println "== cuda block-cache byte-cap (fork test) =="
-  let stats ← Buffer.allocatorStats
-  if stats.deviceTotalBytes == 0 then
-    IO.println "  skipped: the CPU stub has no device reuse cache"
-    return
+Fork fresh processes so accounting excludes earlier suite work and allocator limits cannot affect
+other tests. No assertion depends on an exact cached block size or amount returned to the driver.
+-/
+def runMemoryTests : IO Unit := do
+  IO.println "== LibTorch memory accounting and OOM (isolated processes) =="
+  match Buffer.runtimeStatus with
+  | .cpuStub =>
+      let stats ← Buffer.allocatorStats
+      if stats.allocatedBytes != 0 || stats.reservedBytes != 0 ||
+          stats.peakAllocatedBytes != 0 || stats.peakReservedBytes != 0 ||
+          stats.deviceFreeBytes != 0 || stats.deviceTotalBytes != 0 then
+        throw <| IO.userError "CPU parity build reported native CUDA memory accounting"
+      IO.println "  skipped: CPU parity build has no ATen CUDA memory/accounting/OOM coverage"
+      return
+  | .nativeUnavailable =>
+      throw <| IO.userError "LibTorch memory tests require a usable CUDA device"
+  | .nativeAvailable => pure ()
   let self : System.FilePath := "/proc/self/exe"
   if !(← self.pathExists) then
-    IO.println "  skipped: no /proc/self/exe (fork test is Linux-only)"
+    IO.println "  skipped: isolated memory tests require Linux /proc/self/exe"
     return
-  -- Always set the cap explicitly in the child's environment so it never inherits the parent's
-  -- `TORCHLEAN_CUDA_CACHE_CAP_BYTES`; the control run pins it to "0" (unbounded) rather than unset.
-  let fork (cap : String) (expectedCap : UInt64) : IO IO.Process.Output := do
-    let env := #[
-      ("TORCHLEAN_CUDA_CACHE_PROBE", some "cache-cap"),
-      ("TORCHLEAN_CUDA_CACHE_CAP_BYTES", some cap),
-      ("TORCHLEAN_CUDA_CACHE_EXPECTED_CAP_BYTES", some (toString expectedCap))
-    ]
-    IO.Process.output { cmd := self.toString, args := #[], env := env }
-  -- capped: a 1 MiB cap bounds 8 MiB of returns.
-  let capped ← fork "1048576" 1048576
-  if capped.exitCode != 0 then
-    throw <| IO.userError
-      s!"block-cache cap: capped child failed (exit {capped.exitCode}); stderr:\n{capped.stderr}"
-  IO.println "  capped: 8 MiB of returns bounded to a 1 MiB cache ✓"
-  -- control: cap explicitly 0 (unbounded), so the same returns all stay cached, the behaviour the
-  -- cap exists to bound; the explicit 0 keeps a parent-set cap from masking it.
-  let control ← fork "0" 0
-  if control.exitCode != 0 then
-    throw <| IO.userError
-      s!"block-cache cap: control child failed (exit {control.exitCode}); stderr:\n{control.stderr}"
-  IO.println "  control: with no cap the full workload is cached, as designed ✓"
-  -- Invalid values select the default budget. This workload fits in that budget, but the child
-  -- checks the reported cap as well as retained bytes, distinguishing it from unbounded caching.
-  let malformed ← fork "1MiB" 1073741824
-  if malformed.exitCode != 0 then
-    throw <| IO.userError
-      (s!"block-cache cap: malformed-value child failed (exit {malformed.exitCode}); "
-        ++ s!"stderr:\n{malformed.stderr}")
-  IO.println "  malformed: non-numeric cap rejected, using the 1 GiB default ✓"
-  -- overflow: past the native word, rejected rather than truncated or saturated.
-  let overflow ← fork "99999999999999999999999999" 1073741824
-  if overflow.exitCode != 0 then
-    throw <| IO.userError
-      (s!"block-cache cap: overflow-value child failed (exit {overflow.exitCode}); "
-        ++ s!"stderr:\n{overflow.stderr}")
-  IO.println "  overflow: oversized cap rejected, using the 1 GiB default ✓"
+  for probe in ["accounting", "attention-context", "oom-recovery"] do
+    let result ← IO.Process.output {
+      cmd := self.toString
+      args := #[]
+      env := #[("TORCHLEAN_LIBTORCH_MEMORY_PROBE", some probe),
+        ("TORCHLEAN_REQUIRE_CUDA", some "1")]
+    }
+    if result.exitCode != 0 then
+      throw <| IO.userError
+        s!"LibTorch {probe} failed (exit {result.exitCode}):\n{result.stdout}\n{result.stderr}"
+    IO.print result.stdout
 
 def run : IO Unit := do
   IO.println "=== CUDA runtime stress suite ==="
   runRngStress
   runReleaseStress
   runWrapperLifetimeStress
-  runCacheCapTest
+  runMemoryTests
   runGradientAliasingStress
   runMalformedBufferValidationStress
   runDisconnectedDenseGradientStress
+  runConstantBranchGradientStress
   runSparseLifetimeStress
   runLargeBufferStress
   runMatmulStress

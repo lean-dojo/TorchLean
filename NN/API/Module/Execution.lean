@@ -251,18 +251,23 @@ def instantiate
     [Runtime.TensorTransfer α]
     {stateShapes inputShapes dataInputShapes : List Spec.Shape}
     (definition : ObjectiveDefinition β stateShapes inputShapes dataInputShapes)
-    (cast : Float → α) (runtime : Runtime.Config := {}) :
+    (cast : Float → α) (runtime : Runtime.Config := {})
+    (initialState? : Option (nn.State α stateShapes) := none) :
     IO (Objective α β stateShapes inputShapes dataInputShapes) := do
   let objective ←
     Runtime.Autograd.Model.Module.ObjectiveDef.instantiateWith
       (α := α) (β := β) (stateShapes := stateShapes) (inputShapes := inputShapes)
       (dataInputShapes := dataInputShapes) definition cast runtime
+      (initialState?.map nn.State.Internal.toTensorPack)
   pure (Objective.Internal.fromRuntime objective)
 
 end Internal
 
 /--
-Instantiate an executable objective using the runtime arithmetic's standard `Float` conversion.
+Instantiate an executable objective, optionally starting from exact typed state.
+
+`initialState?` bypasses the model's stored Float initializers. Without it, initialization uses the
+runtime arithmetic's standard `Float` conversion.
 
 This is the low-level constructor for custom losses and multi-input programs. The higher-level
 `nn.Module` and `Trainer` APIs should be preferred for ordinary sequential models.
@@ -276,12 +281,13 @@ def instantiate
     [TorchLean.Storage α]
     [Context α] [Runtime.FromFloat α]
     [Runtime.TensorTransfer α]
+    (initialState? : Option (nn.State α stateShapes) := none)
     : IO (Objective α β stateShapes inputShapes dataInputShapes) :=
   Internal.instantiate
     (α := α) (β := β)
     (stateShapes := stateShapes) (inputShapes := inputShapes)
     (dataInputShapes := dataInputShapes)
-    definition (Runtime.ofFloat (α := α)) runtime
+    definition (Runtime.ofFloat (α := α)) runtime initialState?
 
 end Module
 end TorchLean

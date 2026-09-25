@@ -23,10 +23,9 @@ node in the lowered `ForwardData`. Concretely, it shows that:
 then the value appended by the IR evaluator at step `i` is the same tensor as the value produced by
 the forward-graph node's `forward`.
 
-The lowering and the IR semantics accept the same matmul shapes: both parents share an arbitrary
-leading shape and end in the matrix axes `[m, n]` and `[n, p]`. Plain matrix multiplication,
-batched multiplication with one batch axis, and multiplication over several batch axes are all
-instances of one statement, since both sides compute `NN.IR.Graph.matmulLeading`.
+The lowering and the IR semantics use `OpContracts.matmulDims` to check batch broadcasting and
+vector promotion. Both compute `NN.IR.Graph.matmulWithDims`, so the statement covers vector dot
+products, matrix/vector products, and arbitrarily many broadcast batch axes.
 
 This module is about semantic correctness. Performance backends (external BLAS libraries, kernel
 fusion, and so on) are a separate lowering layer and are not involved here.
@@ -44,8 +43,8 @@ The shape rule matches the public PyTorch matrix multiplication API:
 
 - The proof follows the lowering pass's shape checks, so each branch records the same preconditions
   that the lowering code enforces.
-- The leading shape is recovered from the reversed dimension lists exactly as in the lowering, so
-  the typed operands line up with `evalAt_matmul_leading_ok` without further shape rewriting.
+- A successful contract preserves the two original operand shapes, which identifies the layout
+  recovered from runtime values with the layout used by the lowered closure.
 
 ## Tags
 
@@ -69,8 +68,8 @@ open Proofs (Idx getIdx)
 /--
 Correctness lemma for the `.matmul` lowering step once the typed operands are known.
 
-The parents share the leading shape `Shape.ofList leadingRev.reverse`, and this gives the exact
-equality needed to hand off to the tail-induction hypothesis.
+The shared contract supplies the operand and output shapes. Both evaluators apply that layout,
+giving the equality needed to hand off to the tail-induction hypothesis.
 -/
 theorem buildFrom_denoteAllFrom_matmul_success
     {α : Type} [TorchLean.Storage α] [Context α]
@@ -86,23 +85,22 @@ theorem buildFrom_denoteAllFrom_matmul_success
           (input := Spec.SomeTensor.mk (α := α) inShape x)
           (i := i + 1) (vals := denoteAllState (α := α) inShape st1 x) =
           .ok (denoteAllState (α := α) inShape st' x))
-    (aId bId : Nat) (leadingRev : List Nat) (rows inner cols : Nat)
+    (aId bId : Nat) (dims : OpContracts.MatmulDims)
     (hp : binaryParents? n.parents = some (aId, bId))
-    (ia : Idx ([inShape] ++ ss) ((Shape.ofList leadingRev.reverse).concat [rows, inner]))
-    (hIa : mkIdx (inShape := inShape) (ss := ss) aId
-      ((Shape.ofList leadingRev.reverse).concat [rows, inner]) = .ok ia)
-    (ib : Idx ([inShape] ++ ss) ((Shape.ofList leadingRev.reverse).concat [inner, cols]))
-    (hIb : mkIdx (inShape := inShape) (ss := ss) bId
-      ((Shape.ofList leadingRev.reverse).concat [inner, cols]) = .ok ib)
-    (hOut : (Shape.ofList leadingRev.reverse).concat [rows, cols] = n.outShape)
+    (hDims : OpContracts.matmulDims dims.leftShape dims.rightShape = .ok dims)
+    (ia : Idx ([inShape] ++ ss) dims.leftShape)
+    (hIa : mkIdx (inShape := inShape) (ss := ss) aId dims.leftShape = .ok ia)
+    (ib : Idx ([inShape] ++ ss) dims.rightShape)
+    (hIb : mkIdx (inShape := inShape) (ss := ss) bId dims.rightShape = .ok ib)
+    (hOut : dims.outShape = n.outShape)
     (hBuildNext :
       buildFrom (α := α) (g := g) (payload := payload)
         (inShape := inShape) (i := i + 1)
         (st := (⟨ss ++ [n.outShape],
           .snoc (ss := ss) gd
             (mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-              hOut ▸ NN.IR.Graph.matmulLeading (α := α) (Shape.ofList leadingRev.reverse)
-                (getIdx (α := α) (xs := ctx) ia) (getIdx (α := α) (xs := ctx) ib)))⟩ :
+              hOut ▸ NN.IR.Graph.matmulWithDims (α := α) dims
+                (readTensor (α := α) (xs := ctx) ia) (readTensor (α := α) (xs := ctx) ib)))⟩ :
           State α inShape)) = .ok st') :
     NN.IR.Graph.denoteAllFrom (α := α) (g := g) (payload := payload)
       (input := Spec.SomeTensor.mk (α := α) inShape x)
@@ -113,45 +111,44 @@ theorem buildFrom_denoteAllFrom_matmul_success
   let ctx : TorchLean.TensorPack α ([inShape] ++ ss) :=
     ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil)
   let input : Spec.SomeTensor α := Spec.SomeTensor.mk (α := α) inShape x
-  let leading : Shape := Shape.ofList leadingRev.reverse
   let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
     mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-      hOut ▸ NN.IR.Graph.matmulLeading (α := α) leading
-        (getIdx (α := α) (xs := ctx) ia) (getIdx (α := α) (xs := ctx) ib))
+      hOut ▸ NN.IR.Graph.matmulWithDims (α := α) dims
+        (readTensor (α := α) (xs := ctx) ia) (readTensor (α := α) (xs := ctx) ib))
   have hRec :
       buildFrom (α := α) (g := g) (payload := payload)
         (inShape := inShape) (i := i + 1)
         (st := (⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩ : State α inShape)) =
           .ok st' := by
-    simpa [leading, nodeData] using hBuildNext
+    exact hBuildNext
   have hGetA :
       vals0[aId]? = some
-        (Spec.SomeTensor.mk (α := α) (leading.concat [rows, inner])
+        (Spec.SomeTensor.mk (α := α) dims.leftShape
           (getIdx (α := α) (xs := ctx) ia)) := by
-    simpa [vals0, ctx, leading] using
+    simpa only [vals0, ctx] using
       (denoteAllState_get_mkIdx? (inShape := inShape) (ss := ss)
         (gd := gd) (x := x) (pid := aId)
-        (s := leading.concat [rows, inner]) (idx := ia) hIa)
+        (s := dims.leftShape) (idx := ia) hIa)
   have hGetB :
       vals0[bId]? = some
-        (Spec.SomeTensor.mk (α := α) (leading.concat [inner, cols])
+        (Spec.SomeTensor.mk (α := α) dims.rightShape
           (getIdx (α := α) (xs := ctx) ib)) := by
-    simpa [vals0, ctx, leading] using
+    simpa only [vals0, ctx] using
       (denoteAllState_get_mkIdx? (inShape := inShape) (ss := ss)
         (gd := gd) (x := x) (pid := bId)
-        (s := leading.concat [inner, cols]) (idx := ib) hIb)
+        (s := dims.rightShape) (idx := ib) hIb)
   have hEval :
       NN.IR.Graph.evalAt (α := α) (g := g) (payload := payload)
         (input := input) (vals := vals0) (i := i) =
         .ok (Spec.SomeTensor.mk (α := α) n.outShape (nodeData.eval ctx)) := by
-    simpa [nodeData, leading, mkForwardNode] using
-      (evalAt_matmul_leading_ok (α := α)
+    simpa only [nodeData, mkForwardNode_eval, readTensor_ofPack] using
+      (evalAt_matmul_dims_ok (α := α)
         (g := g) (payload := payload) (input := input) (vals := vals0)
         (i := i) (n := n) (aId := aId) (bId := bId)
-        (leadingRev := leadingRev) (rows := rows) (inner := inner) (cols := cols)
+        (dims := dims)
         (aT := getIdx (α := α) (xs := ctx) ia)
         (bT := getIdx (α := α) (xs := ctx) ib)
-        hN hk hp hGetA hGetB hOut)
+        hN hk hp hDims hGetA hGetB hOut)
   have hStep :
       denoteAllState (α := α) inShape
         (st := (⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩ : State α inShape)) x =
@@ -171,8 +168,8 @@ theorem buildFrom_denoteAllFrom_matmul_success
 /--
 Correctness lemma for the `.matmul` node lowering pass.
 
-The proof mirrors `lowerMatmul`: it reads both parent shapes as reversed dimension lists, follows
-the contract and typed-shape checks, and hands the typed operands to
+The proof mirrors `lowerMatmul`: it follows the shared contract and typed-shape checks, then
+hands the typed operands to
 `buildFrom_denoteAllFrom_matmul_success`.
 -/
 theorem buildFrom_denoteAllFrom_matmul
@@ -197,8 +194,10 @@ theorem buildFrom_denoteAllFrom_matmul
       (i := i) (vals := denoteAllState (α := α) inShape (st := (⟨ss, gd⟩ : State α inShape)) x) =
       .ok (denoteAllState (α := α) inShape st' x) := by
   unfold buildFrom at hBuild
-  simp [hi, hN] at hBuild
-  simp (config := { failIfUnchanged := false }) [hk, lowerMatmul] at hBuild
+  simp [hi, hN, -OpContracts.MatmulDims.outShape] at hBuild
+  simp (config := { failIfUnchanged := false })
+    [hk, lowerMatmul, -OpContracts.matmulDims, -OpContracts.MatmulDims.outShape,
+      -NN.IR.Graph.matmulWithDims] at hBuild
   cases hp : binaryParents? n.parents with
   | none =>
       simp [hp] at hBuild
@@ -211,58 +210,34 @@ theorem buildFrom_denoteAllFrom_matmul
   cases hB : g.getNode bId with
   | error msg => simp [hp, hA, hB] at hBuild
   | ok bNode =>
-  cases hExpected : OpContracts.inferMatmulOutShape aNode.outShape bNode.outShape with
-  | error msg => simp [hp, hA, hB, hExpected] at hBuild
-  | ok expected =>
-  simp (config := { failIfUnchanged := false }) [hp, hA, hB, hExpected] at hBuild
-  -- Decompose both parent shapes as the lowering does.
-  cases hAS : aNode.outShape.toList.reverse with
-  | nil => exact False.elim <| throw_bind_ne_ok (by simpa [hAS] using hBuild)
-  | cons inner aTail =>
-  cases aTail with
-  | nil => exact False.elim <| throw_bind_ne_ok (by simpa [hAS] using hBuild)
-  | cons rows leadingRev =>
-  cases hBS : bNode.outShape.toList.reverse with
-  | nil => exact False.elim <| throw_bind_ne_ok (by simpa [hAS, hBS] using hBuild)
-  | cons cols bTail =>
-  cases bTail with
-  | nil => exact False.elim <| throw_bind_ne_ok (by simpa [hAS, hBS] using hBuild)
-  | cons inner' leadingRev' =>
-  simp (config := { failIfUnchanged := false }) [hAS, hBS] at hBuild
-  by_cases hLeading : leadingRev = leadingRev'
-  · by_cases hInner : inner = inner'
-    · subst hLeading
-      subst hInner
-      simp (config := { failIfUnchanged := false }) at hBuild
-      cases hIa :
-          mkIdx (inShape := inShape) (ss := ss) aId
-            ((Shape.ofList leadingRev.reverse).concat [rows, inner]) with
-      | error msg => simp [hIa] at hBuild
-      | ok ia =>
-      cases hIb :
-          mkIdx (inShape := inShape) (ss := ss) bId
-            ((Shape.ofList leadingRev.reverse).concat [inner, cols]) with
-      | error msg => simp [hIa, hIb] at hBuild
-      | ok ib =>
-      by_cases hExpectedEq : (Shape.ofList leadingRev.reverse).concat [rows, cols] = expected
-      · by_cases hOut : expected = n.outShape
-        · have hOut' : (Shape.ofList leadingRev.reverse).concat [rows, cols] = n.outShape :=
-            hExpectedEq.trans hOut
-          have hBuildNext := by
-            simpa [hIa, hIb, hExpectedEq, hOut, Tensor.eqRec_eq_cast_shape] using hBuild
-          exact buildFrom_denoteAllFrom_matmul_success (α := α)
-            (g := g) (payload := payload) (gd := gd) (i := i) (st' := st')
-            (x := x) (n := n) hN hk hi ih
-            (aId := aId) (bId := bId) (leadingRev := leadingRev)
-            (rows := rows) (inner := inner) (cols := cols)
-            hp (ia := ia) hIa (ib := ib) hIb hOut'
-            (by simpa [Tensor.eqRec_eq_cast_shape] using hBuildNext)
-        · exact False.elim <|
-            throw_bind_ne_ok (by simpa [hIa, hIb, hExpectedEq, hOut] using hBuild)
-      · exact False.elim <|
-          throw_bind_ne_ok (by simpa [hIa, hIb, hExpectedEq] using hBuild)
-    · exact False.elim <| throw_bind_ne_ok (by simpa [hLeading, hInner] using hBuild)
-  · exact False.elim <| throw_bind_ne_ok (by simpa [hLeading] using hBuild)
+  cases hDims : OpContracts.matmulDims aNode.outShape bNode.outShape with
+  | error msg => simp [hp, hA, hB, hDims, -OpContracts.matmulDims] at hBuild
+  | ok dims =>
+  simp (config := { failIfUnchanged := false })
+    [hp, hA, hB, hDims, -OpContracts.matmulDims, -OpContracts.MatmulDims.outShape,
+      -NN.IR.Graph.matmulWithDims] at hBuild
+  cases hIa : mkIdx (inShape := inShape) (ss := ss) aId dims.leftShape with
+  | error msg => simp [hIa] at hBuild
+  | ok ia =>
+  cases hIb : mkIdx (inShape := inShape) (ss := ss) bId dims.rightShape with
+  | error msg => simp [hIa, hIb] at hBuild
+  | ok ib =>
+  by_cases hOut : dims.outShape = n.outShape
+  · obtain ⟨hLeft, hRight⟩ := OpContracts.matmulDims_shapes hDims
+    have hLayout : OpContracts.matmulDims dims.leftShape dims.rightShape = .ok dims := by
+      rw [← hLeft, ← hRight]
+      exact hDims
+    apply buildFrom_denoteAllFrom_matmul_success (α := α)
+      (g := g) (payload := payload) (gd := gd) (i := i) (st' := st')
+      (x := x) (n := n) hN hk hi ih
+      (aId := aId) (bId := bId) (dims := dims) hp hLayout
+      (ia := ia) hIa (ib := ib) hIb hOut
+    simpa [hIa, hIb, hOut, Tensor.eqRec_eq_cast_shape,
+      -OpContracts.MatmulDims.outShape, -NN.IR.Graph.matmulWithDims] using hBuild
+  · exact False.elim <|
+      throw_bind_ne_ok (by
+        simpa [hIa, hIb, hOut, -OpContracts.MatmulDims.outShape,
+          -NN.IR.Graph.matmulWithDims] using hBuild)
 
 end IRExec
 end Autograd

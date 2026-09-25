@@ -23,7 +23,7 @@ The split is intentional:
 - `Torch.TypedGraphSession` is the recorder used to implement imperative typed graph
   execution. Its backpropagation agrees with the runtime tape obtained from the recorded graph.
 - `Torch.Initialization` defines deterministic parameter initializers.
-- `Torch.ScalarTrainer` provides packed adapters and small SGD loops for scalar objectives.
+- `Torch.ScalarTrainer` provides packed loss, gradient, and SGD update operations.
 
 `NN.Runtime.Autograd.Model` builds the model runtime on top of this layer. Application entrypoints
 live under `NN.API`.

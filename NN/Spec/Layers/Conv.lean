@@ -706,11 +706,8 @@ def convInputDerivSpec
 
 /-- Named reverse-mode result of a convolution.
 
-The three gradients used to travel as a bare triple. Every caller then opened it with a positional
-`let (dK, dB, dX) := ...`, and the adjoint theorem had to project the components out by position,
-which made a three-term equation hard to check against the sentence describing it. Affine
-normalization already returns a named `NormalizationGradients`; this is the same idea one layer
-over. -/
+The kernel, bias, and input gradients retain their respective tensor shapes. Named fields identify
+the three contributions in the backward pass and its adjoint theorem. -/
 structure ConvGradients (α : Type) [TorchLean.Storage α]
     (kernelShape biasShape inputShape : Shape) where
   /-- Gradient with respect to the kernel weights. -/

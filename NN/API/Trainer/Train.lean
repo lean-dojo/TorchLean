@@ -12,7 +12,7 @@ public import NN.API.Trainer.Train.Loop
 # Training
 
 Import aggregator for the training entry points. The implementation lives in
-`NN.API.Trainer.Train.Loop`: `Trainer.train`, `predict`, `predictMany`, `load`, `trainStream`,
+`NN.API.Trainer.Train.Loop`: `Trainer.train`, `predict`, `load`, `trainStream`,
 and `trainAlternating`, all written over `Trainer.Session`.
 -/
 

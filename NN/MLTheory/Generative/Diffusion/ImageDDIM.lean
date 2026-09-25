@@ -49,19 +49,24 @@ theorem float_sub_eq_subSpec (left right : Tensor Float s) :
   rfl
 
 /--
-The public reverse update is the image DDIM formula with denominator floor `1e-12`.
+The public reverse update is the image DDIM formula for every denominator floor and
+shape-preserving reconstruction postprocessor.
 
-The equality preserves clipping before remixing and reuse of the supplied epsilon. It applies
-to the actual Float expression, with its original multiplication and addition order.
+The equality preserves postprocessing before remixing and reuse of the supplied epsilon. It
+applies to the actual Float expression, including non-finite values and the original
+multiplication and addition order. The defaults retain clipping and the floor `1e-12`.
 -/
 theorem ddimPrev_eq_stepFromEps (previousAlpha alpha : Float)
-    (sample epsilon : Tensor Float s) :
-    TorchLean.diffusion.ddimPrev previousAlpha alpha sample epsilon =
-      stepFromEps 1e-12 previousAlpha alpha sample epsilon := by
+    (sample epsilon : Tensor Float s)
+    (postprocess : Tensor Float s → Tensor Float s :=
+      fun reconstruction => Tensor.clamp reconstruction (-1) 1)
+    (denominatorFloor : Float := 1e-12) :
+    TorchLean.diffusion.ddimPrev previousAlpha alpha sample epsilon postprocess denominatorFloor =
+      stepFromEps denominatorFloor previousAlpha alpha sample epsilon postprocess := by
   -- Both sides now select the same scalar operations. The remaining bridge is between
   -- specialized Float tensor addition/subtraction and their coordinate specifications.
   simp only [TorchLean.diffusion.ddimPrev, stepFromEps, sqrtNonneg,
-    Tensor.scale, Tensor.clamp, float_sub_eq_subSpec, float_add_eq_addSpec]
+    Tensor.scale, float_sub_eq_subSpec, float_add_eq_addSpec]
   rfl
 
 /-- Cycling a public training step selects noisy state `index + 1` in the spec view. -/

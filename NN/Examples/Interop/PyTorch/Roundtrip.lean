@@ -17,8 +17,6 @@ import NN.API.Data.Sources
 import NN.API.Json
 import NN.API.Precision
 import NN.API.RL.Runtime
-import NN.API.Trainer.Reporting
-import NN.Runtime.Autograd.Model
 
 /-!
 # PyTorch Round-Trip Driver
@@ -359,7 +357,7 @@ public def cnnOutput : IO (Tensor Float [2]) := do
       |>.push stateDictionary.secondConvolutionBias
       |>.push stateDictionary.classifierWeight
       |>.push stateDictionary.classifierBias
-  module.predict input
+  module.forward (mode := some .eval) input
 
 private def importCNN : IO Unit := do
   let y ← cnnOutput
@@ -391,7 +389,7 @@ public def transformerOutput : IO (Tensor Float [1, 2]) := do
       |>.push stateDictionary.feedForwardOutputBias
       |>.push stateDictionary.norm2Scale
       |>.push stateDictionary.norm2Bias
-  module.predict input
+  module.forward (mode := some .eval) input
 
 private def importTransformer : IO Unit := do
   let y ← transformerOutput

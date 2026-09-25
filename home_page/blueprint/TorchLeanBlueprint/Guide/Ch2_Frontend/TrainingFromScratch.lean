@@ -43,14 +43,14 @@ target(heldout)    = [0.200000]
 untrained(heldout) = [-0.088261]
 dataset size = 25
 mean_loss(before training) = 0.495227
-step 0: loss=0.250488
-step 25: loss=0.586318
-step 50: loss=0.847444
-step 75: loss=0.003933
-step 100: loss=0.023397
-step 125: loss=0.069799
-step 150: loss=0.000061
-step 175: loss=0.029500
+step 25: loss=0.889409
+step 50: loss=0.355236
+step 75: loss=0.074408
+step 100: loss=0.044280
+step 125: loss=0.047286
+step 150: loss=0.000000
+step 175: loss=0.000022
+step 200: loss=0.001224
 mean_loss(after training) = 0.002402
 steps=200 arithmetic=native scalar=Float32 loss=0.495227 -> 0.002402
 trained(heldout) = [0.228325]
@@ -78,11 +78,12 @@ these entries:
   comes from.
 - `mean_loss(before training)` and `mean_loss(after training)` are the only two full-dataset
   measurements in the run. The trainer takes them once each, at the boundaries.
-- The `step k: loss=...` lines are single-sample losses, measured on the tape that produced that
-  step's gradient. That is why they are not monotone: `0.586318` at step 25 and `0.847444` at step
-  50 use different samples at different parameter points, so their increase alone does not establish
-  that training diverged. The
-  full-dataset mean fell from `0.495227` to `0.002402` while those numbers bounced around.
+- The `step k: loss=...` lines count completed updates and report the single-sample loss
+  measured on the tape *before* update `k`. With this deterministic 25-sample dataset, logging
+  every 25 updates measures the same final sample on successive passes, at different parameter
+  points. Its loss rises from `0.044280` at step 100 to `0.047286` at step 125, so even this
+  same-sample sequence is not monotone. That increase alone does not establish that training
+  diverged: the full-dataset mean fell from `0.495227` to `0.002402`.
 - `arithmetic=native scalar=Float32` records which of TorchLean's executable semantics ran. A loss
   curve without that label is ambiguous, and we say why below.
 - `untrained(heldout)` and `trained(heldout)` are the same held-out input `(0.25, -0.75)` before and
@@ -130,7 +131,7 @@ rewriting its forward computation or changing what counts as a well-shaped input
 -- seed to one reusable trainer.
 def tfTrainer (seed : Nat) : Trainer [2] [1] :=
   Trainer.new tfModel
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       arithmetic := .native
       execution := .eager
@@ -169,7 +170,7 @@ L(\theta;x,y)
 \left(F_\theta(x)_i-y_i\right)^2.
 `
 
-Changing `.meanSquaredError` to `.oneHotCrossEntropy axis` changes the objective and target
+Changing `.mse` to `.oneHotCrossEntropy axis` changes the objective and target
 convention without changing the architecture. The zero-based `axis` may name any output dimension;
 Lean rejects an axis outside the output shape. A custom objective supplies a checked scalar loss
 program.
@@ -375,10 +376,10 @@ held-out input used by the command-line program:
 ```leanOutput tfFullRun
 dataset size = 25
 mean_loss(before training) = 0.495227
-step 0: loss=0.250488
-step 50: loss=0.847444
-step 100: loss=0.023397
-step 150: loss=0.000061
+step 50: loss=0.355236
+step 100: loss=0.044280
+step 150: loss=0.000000
+step 200: loss=0.001224
 mean_loss(after training) = 0.002402
 steps=200 arithmetic=native scalar=Float32 loss=0.495227 -> 0.002402
 trained(heldout) = [0.228325]
@@ -401,10 +402,10 @@ once so that the restored report carries the mean loss of the restored parameter
 copied number.
 
 `trained.report.loss.before` and `trained.report.loss.after` are ordinary host `Float` values. The
-model still executes with the arithmetic selected by the trainer, including `.ieee` ;
-`Session.meanLoss` converts per-item losses to host `Float` before averaging; the result stores
-those before/after means. Callers can therefore compare,
-serialize, or plot losses directly without parsing printed backend values.
+model still executes with the arithmetic selected by the trainer, including `.ieee`.
+`session.loss stream (batch := true)` converts per-item losses to host `Float` before averaging;
+the result stores those before/after means. Callers can therefore compare, serialize, or plot
+losses directly without parsing printed backend values.
 
 Prediction accepts Float tensors and performs conversion into the arithmetic representation selected
 by the trainer. It does not rebuild or reinitialize the model.
@@ -483,8 +484,9 @@ because both are stored in the same pack. The optimizer can traverse correspondi
 corresponding scalar coordinates. That alignment is what allows the same update implementation to
 work for this MLP and for a model with a different number of layers or tensor ranks.
 
-You can watch a single update in isolation. `Session.step` returns the loss it measured *before*
-applying the update, so feeding it the same sample twice shows the effect of exactly one step:
+You can watch a single update in isolation. With `(loss := true)`, `Session.step` returns the loss
+it measured *before* applying the update, so feeding it the same sample twice shows the effect of
+exactly one step. Without that flag it returns `Unit` and avoids reading the loss back to the host:
 
 ```lean (name := tfOneStep)
 -- Repeating the same sample makes the second pre-update
@@ -494,8 +496,8 @@ applying the update, so feeding it the same sample twice shows the effect of exa
   let stream ← tfData.materialize (α := Float)
   match stream.get? 0 with
   | some sample =>
-      let first ← session.step sample
-      let second ← session.step sample
+      let first ← session.step sample (loss := true)
+      let second ← session.step sample (loss := true)
       IO.println s!"loss before update 1 = {first}"
       IO.println s!"loss before update 2 = {second}"
   | none => IO.println "empty dataset"
@@ -507,7 +509,8 @@ loss before update 2 = 0.110670
 ```
 
 One Adam step on the corner sample cut its loss from `0.250488` to `0.110670`. The first value
-matches step 0 of the longer run because the seed, sample, and arithmetic match. The second call
+matches the loss used for the first update of the longer run because the seed, sample, and
+arithmetic match; that update falls before its first log at 25 completed updates. The second call
 measures the effect of the first update before applying another update of its own. These two
 values concern the corner sample; a step that helps it can increase losses on other samples.
 Dataset loss must be measured separately. For the stochastic approximation setting, see
@@ -759,7 +762,7 @@ Training it is the same call, and the summary tells us that the batch axis cost 
 -- batched training run starts.
 #eval show IO Unit from do
   let trainer := Trainer.new tfBatchedModel
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := 2026 }
   trainer.printSummary "batched model"
@@ -917,18 +920,11 @@ The common executable selections are:
 --arithmetic ieee
 ```
 
-Native arithmetic uses Lean's builtin `Float32` operations; `.ieee` now uses FloatLib binary32,
-including its finite and exceptional cases. These recorded results predate that migration and
-retain their original labels. On that run the two agree to the last printed digit:
-
-```
-steps=20 arithmetic=native scalar=Float32 loss=0.495227 -> 0.401184
-steps=20 arithmetic=ieee scalar=IEEE32Exec loss=0.495227 -> 0.401184
-```
-
-The two implementations agree at the printed precision on this workload. Comparing their bits
-would require more than these decimal loss values. Proof-level `Real` and rounded-real
-`FP32` are not executable trainer choices.
+Native CPU arithmetic uses Lean's builtin `Float32` operations; `.ieee` uses FloatLib binary32,
+including its finite and exceptional cases. The checked comparisons in
+{ref "execution-modes"}[the execution chapter] run the same training problem through both
+implementations. Agreement in displayed losses alone would not establish agreement in their bits.
+Proof-level `Real` and rounded-real `FP32` are not executable trainer choices.
 `FP32` has binary32 precision and gradual-underflow parameters, but no upper exponent bound, NaN,
 infinity, or signed zero; bridge theorems therefore require finite and no-overflow hypotheses when
 relating it to FloatLib binary32. {ref "floats"}[The floating-point chapter] is where those
@@ -936,8 +932,8 @@ boundaries
 are drawn.
 
 A loss curve without its arithmetic semantics is incomplete. The same architecture and seed may
-round differently in native binary32, the bit-level reference, a fused CUDA kernel, or an external
-provider.
+round differently in native binary32, the bit-level reference, or a LibTorch operation with a
+different reduction order.
 
 # Model And Optimizer Checkpoints
 
@@ -1047,7 +1043,7 @@ as a session and own the loop in the calling program:
   for step in [0:6] do
     match stream.get? step with
     | some sample =>
-        let loss ← session.step sample
+        let loss ← session.step sample (loss := true)
         IO.println s!"step {step}: loss = {loss}"
     | none => pure ()
   let after ← session.eval tfData
@@ -1076,7 +1072,6 @@ call `eval`.
 -- State and measurements can be queried between updates
 -- before finish freezes a result.
 Session.step
-Session.stepBatch
 Session.steps
 Session.predict
 Session.loss
@@ -1089,7 +1084,10 @@ Session.finish
 
 Use it when the program needs a custom accumulation policy, multiple losses, generated batches,
 reinforcement-learning interaction, or detailed instrumentation. Generated batches simply become
-the samples passed to `step`; PINN collocation points and simulator batches fit this directly.
+the nonempty sample arrays passed to `step` with `(batch := true)`; PINN collocation points and
+simulator batches fit this directly. Add `(loss := true)` when the loop needs the mean pre-update
+loss as a host `Float`. Evaluation over a `Data.SampleStream` uses
+`session.loss stream (batch := true)` and returns zero for an empty stream.
 
 `trainer.train` itself opens a session, loops over `step`, and calls `finish`. Writing that loop
 gives us access to the live parameters between updates, with the same model and autograd semantics.
@@ -1101,6 +1099,65 @@ and completed-step counter. This is useful only when those retained values are i
 moments will affect the next update of the loaded parameters. Open a fresh session when the desired
 experiment is a fresh optimizer run from saved weights. Saving and loading model state alone does
 not decide that policy for the caller.
+
+## Keeping the selected precision through training
+
+The session above accepts `Float` samples and runs in binary32. To keep a configured FloatLib
+scalar through the whole loop, open a typed session and supply its initial state directly.
+I'll use $`a = 1 + 2^{-100}` and the model $`x \mapsto ax+a`: converting its parameters through
+binary64 would erase the increment before training began.
+
+For input two and target zero, mean squared error is $`(2w+b)^2`. At $`w=b=a`, its parameter
+gradients are $`12a` and $`6a`. A step of size $`1/16` therefore leaves
+$`w=a/4` and $`b=5a/8`, giving prediction $`9a/8`. These parameters, gradients, and the final
+prediction fit in binary128:
+
+```lean (name := tfWideSession)
+abbrev TrainingScalar :=
+  FloatLib.Floats.ExecFloat.Binary
+    (exponentBits := 15) (fractionBits := 112)
+
+def tfWideStep : IO (Option Rat) := do
+  let model := nn.build 0 (nn.linear 1 1)
+  let trainer := Trainer.new model
+    { objective := .mse
+      optimizer := optim.sgd { learningRate := 0.0625 } }
+  let a : TrainingScalar :=
+    Rat.cast (1 + 1 / (2 ^ 100 : Nat) : Rat)
+  let state : nn.State TrainingScalar
+      (nn.stateShapes model) := nn.State.full a
+  let session ← trainer.openTyped
+    (α := TrainingScalar) (initialState? := some state)
+  let input : Tensor TrainingScalar [1] := [2]
+  let sample : Sample.Supervised TrainingScalar [1] [1] :=
+    { input, target := Tensor.zeros [1] }
+  session.step sample
+  let prediction : Tensor TrainingScalar [1] ←
+    session.predict input
+  return FloatLib.Floats.ExecFloat.Binary.toRat?
+    (prediction.getScalar ⟨0, by decide⟩)
+
+#eval do
+  let prediction ← tfWideStep
+  pure (prediction == some
+    ((9 / 8 : Rat) * (1 + 1 / (2 ^ 100 : Nat))))
+```
+
+```leanOutput tfWideSession
+true
+```
+
+The exact rational comparison observes the small increment that a printed `Float` would lose.
+`session.finish` preserves the typed losses and freezes the current parameters; later updates to
+the session leave that result unchanged. `session.save`, `session.load`, and the finished result's
+`save` use the selected scalar's exact checkpoint encoding.
+
+Typed sessions support eager and graph execution on CPU. Their optimizer and scheduler coefficients
+are configured as `Float` and converted into the selected scalar; the rate above is exactly
+representable in both. For a coefficient that itself needs extra precision, use `nn.sgdStep` with
+typed parameters and gradients as in the {ref "tensors-shapes"}[tensor chapter].
+Without the explicit initial state, seeded initialization still starts with the model's stored
+`Float` values. The typed session does not supply a verifier or a CUDA provider.
 
 ## Learning-rate schedules
 
@@ -1130,9 +1187,9 @@ same ten numbers on the same box:
 
 The matching sequences check the schedule's indexing as well as its decay factor. The counter is
 zero-indexed, which is why the first
-decay occurs at index three. A step schedule with `stepSize := 0` deliberately stays at its base
-rate instead of dividing by zero. The schedule is indexed by completed optimizer updates, so
-`samplesPerStep` does not change its meaning.
+decay occurs at index three. Attaching a step schedule requires a positive `stepSize`; validation
+rejects zero before it reaches the optimizer. The schedule is indexed by completed
+optimizer updates, so `samplesPerStep` does not change its meaning.
 
 Consequently, the rate at index three is used after three optimizer updates, whether each update
 consumed one sample, four accumulated samples, or one tensor minibatch. It is not indexed by epochs
@@ -1336,7 +1393,7 @@ Keep the model, seed, dataset, and step count fixed and change only the optimize
 -- same number of updates.
 def tfSgdTrainer : Trainer [2] [1] :=
   Trainer.new tfModel
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.sgd { learningRate := 0.03 }
       seed := 2026 }
 

@@ -46,15 +46,15 @@ def lowerAdd {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match binaryParents? n.parents with
   | some (aId, bId) =>
       let ia ← parentIdx aId τ
       let ib ← parentIdx bId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Tensor.addSpec (α := α) (getIdx (α := α) (xs := ctx) ia) (getIdx (α := α) (xs :=
+      let forward := fun ctx : TensorReader α Γ =>
+        Tensor.addSpec (α := α) (readTensor (α := α) (xs := ctx) ia) (readTensor (α := α) (xs :=
           ctx) ib)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: add expects 2 parents ({n.summary})"
@@ -66,15 +66,15 @@ def lowerSub {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match binaryParents? n.parents with
   | some (aId, bId) =>
       let ia ← parentIdx aId τ
       let ib ← parentIdx bId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Tensor.subSpec (α := α) (getIdx (α := α) (xs := ctx) ia) (getIdx (α := α) (xs :=
+      let forward := fun ctx : TensorReader α Γ =>
+        Tensor.subSpec (α := α) (readTensor (α := α) (xs := ctx) ia) (readTensor (α := α) (xs :=
           ctx) ib)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: sub expects 2 parents ({n.summary})"
@@ -86,15 +86,15 @@ def lowerMulElem {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match binaryParents? n.parents with
   | some (aId, bId) =>
       let ia ← parentIdx aId τ
       let ib ← parentIdx bId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Tensor.mulSpec (α := α) (getIdx (α := α) (xs := ctx) ia) (getIdx (α := α) (xs :=
+      let forward := fun ctx : TensorReader α Γ =>
+        Tensor.mulSpec (α := α) (readTensor (α := α) (xs := ctx) ia) (readTensor (α := α) (xs :=
           ctx) ib)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: mul_elem expects 2 parents ({n.summary})"
@@ -106,14 +106,14 @@ def lowerAbs {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Tensor.absSpec (α := α) (getIdx (α := α) (xs := ctx) ip)
+      let forward := fun ctx : TensorReader α Γ =>
+        Tensor.absSpec (α := α) (readTensor (α := α) (xs := ctx) ip)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: abs expects 1 parent ({n.summary})"
 
@@ -124,14 +124,14 @@ def lowerSqrt {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Tensor.sqrtSpec (α := α) (getIdx (α := α) (xs := ctx) ip)
+      let forward := fun ctx : TensorReader α Γ =>
+        Tensor.sqrtSpec (α := α) (readTensor (α := α) (xs := ctx) ip)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: sqrt expects 1 parent ({n.summary})"
 
@@ -142,14 +142,14 @@ def lowerInv {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Tensor.invSpec (α := α) (getIdx (α := α) (xs := ctx) ip)
+      let forward := fun ctx : TensorReader α Γ =>
+        Tensor.invSpec (α := α) (readTensor (α := α) (xs := ctx) ip)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: inv expects 1 parent ({n.summary})"
 
@@ -160,15 +160,15 @@ def lowerMaxElem {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match binaryParents? n.parents with
   | some (aId, bId) =>
       let ia ← parentIdx aId τ
       let ib ← parentIdx bId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Tensor.maxSpec (α := α) (getIdx (α := α) (xs := ctx) ia) (getIdx (α := α) (xs :=
+      let forward := fun ctx : TensorReader α Γ =>
+        Tensor.maxSpec (α := α) (readTensor (α := α) (xs := ctx) ia) (readTensor (α := α) (xs :=
           ctx) ib)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: max_elem expects 2 parents ({n.summary})"
@@ -180,15 +180,15 @@ def lowerMinElem {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match binaryParents? n.parents with
   | some (aId, bId) =>
       let ia ← parentIdx aId τ
       let ib ← parentIdx bId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Tensor.minSpec (α := α) (getIdx (α := α) (xs := ctx) ia) (getIdx (α := α) (xs :=
+      let forward := fun ctx : TensorReader α Γ =>
+        Tensor.minSpec (α := α) (readTensor (α := α) (xs := ctx) ia) (readTensor (α := α) (xs :=
           ctx) ib)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: min_elem expects 2 parents ({n.summary})"
@@ -200,14 +200,14 @@ def lowerRelu {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Activation.reluSpec (α := α) (getIdx (α := α) (xs := ctx) ip)
+      let forward := fun ctx : TensorReader α Γ =>
+        Activation.reluSpec (α := α) (readTensor (α := α) (xs := ctx) ip)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: relu expects 1 parent ({n.summary})"
 
@@ -218,14 +218,14 @@ def lowerTanh {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Activation.tanhSpec (α := α) (getIdx (α := α) (xs := ctx) ip)
+      let forward := fun ctx : TensorReader α Γ =>
+        Activation.tanhSpec (α := α) (readTensor (α := α) (xs := ctx) ip)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: tanh expects 1 parent ({n.summary})"
 
@@ -236,14 +236,14 @@ def lowerSigmoid {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Activation.sigmoidSpec (α := α) (getIdx (α := α) (xs := ctx) ip)
+      let forward := fun ctx : TensorReader α Γ =>
+        Activation.sigmoidSpec (α := α) (readTensor (α := α) (xs := ctx) ip)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: sigmoid expects 1 parent ({n.summary})"
 
@@ -257,14 +257,14 @@ def lowerSoftplus {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Activation.softplusSpec (α := α) (getIdx (α := α) (xs := ctx) ip)
+      let forward := fun ctx : TensorReader α Γ =>
+        Activation.softplusSpec (α := α) (readTensor (α := α) (xs := ctx) ip)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: softplus expects 1 parent ({n.summary})"
 
@@ -275,16 +275,16 @@ def lowerSafeLog {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match binaryParents? n.parents with
   | some (aId, bId) =>
       let ia ← parentIdx aId τ
       let ib ← parentIdx bId .scalar
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Activation.safeLogSpec (α := α) (getIdx (α := α) (xs := ctx) ia) (getIdx (α := α) (xs :=
-          ctx) ib).item
+      let forward := fun ctx : TensorReader α Γ =>
+        Activation.safeLogSpec (α := α)
+          (readTensor (α := α) (xs := ctx) ia) (readTensor (α := α) (xs := ctx) ib).item
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: safe_log expects 2 parents ({n.summary})"
 
@@ -295,14 +295,14 @@ def lowerExp {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Tensor.expSpec (α := α) (getIdx (α := α) (xs := ctx) ip)
+      let forward := fun ctx : TensorReader α Γ =>
+        Tensor.expSpec (α := α) (readTensor (α := α) (xs := ctx) ip)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: exp expects 1 parent ({n.summary})"
 
@@ -320,14 +320,14 @@ def lowerLog {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Tensor.logSpec (α := α) (getIdx (α := α) (xs := ctx) ip)
+      let forward := fun ctx : TensorReader α Γ =>
+        Tensor.logSpec (α := α) (readTensor (α := α) (xs := ctx) ip)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: log expects 1 parent ({n.summary})"
 
@@ -338,14 +338,14 @@ def lowerSin {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Tensor.mapSpec (α := α) (s := τ) (fun x => MathFunctions.sin x) (getIdx (α := α)
+      let forward := fun ctx : TensorReader α Γ =>
+        Tensor.mapSpec (α := α) (s := τ) (fun x => MathFunctions.sin x) (readTensor (α := α)
           (xs := ctx) ip)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: sin expects 1 parent ({n.summary})"
@@ -357,14 +357,14 @@ def lowerCos {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId τ
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        Tensor.mapSpec (α := α) (s := τ) (fun x => MathFunctions.cos x) (getIdx (α := α)
+      let forward := fun ctx : TensorReader α Γ =>
+        Tensor.mapSpec (α := α) (s := τ) (fun x => MathFunctions.cos x) (readTensor (α := α)
           (xs := ctx) ip)
       pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: cos expects 1 parent ({n.summary})"
@@ -376,7 +376,7 @@ def lowerSoftmax {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
@@ -386,9 +386,9 @@ def lowerSoftmax {α : Type} [TorchLean.Storage α] [Context α]
           throw s!"softmax: invalid axis {axis} for rank {Spec.Shape.rank τ}"
       | some h =>
           parentIdx pId τ >>= fun ip =>
-            let forward := fun ctx : TorchLean.TensorPack α Γ =>
+            let forward := fun ctx : TensorReader α Γ =>
               @Activation.softmaxSpec α _ _ τ axis h.down
-                (getIdx (α := α) (xs := ctx) ip)
+                (readTensor (α := α) (xs := ctx) ip)
             pure <| fwd forward
   | _ => throw s!"IRExec: node {i}: softmax expects 1 parent ({n.summary})"
 
@@ -400,7 +400,7 @@ def lowerHardMaskedSoftmax {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
@@ -411,9 +411,9 @@ def lowerHardMaskedSoftmax {α : Type} [TorchLean.Storage α] [Context α]
         | .ok value => pure value
         | .error msg =>
             throw s!"IRExec: node {i}: hard_masked_softmax: {msg} ({n.summary})"
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
+      let forward := fun ctx : TensorReader α Γ =>
         Spec.hardMaskedSoftmaxSpec
-          (getIdx (α := α) (xs := ctx) ip) allowed
+          (readTensor (α := α) (xs := ctx) ip) allowed
       pure <| fwd forward
   | _ =>
       throw s!"IRExec: node {i}: hard_masked_softmax expects 1 parent ({n.summary})"

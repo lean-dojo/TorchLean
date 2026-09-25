@@ -18,7 +18,7 @@ The operators in this file all share the same lowering pass shape:
 
 - two parent ids,
 - both parents typed at the declared output shape,
-- one lowered `ForwardNode` whose `eval` closure calls the corresponding tensor specification.
+- one lowered `ForwardNode` whose `run` closure calls the corresponding tensor specification.
 
 Factoring these cases out keeps the recursive semantic-equivalence theorem focused on graph
 traversal rather than on repeating parent-list and typed-index boilerplate for every elementwise op.
@@ -91,8 +91,8 @@ theorem buildFrom_denoteAllFrom_add
                       let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                         mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
                           Tensor.addSpec (α := α)
-                            (getIdx (α := α) (xs := ctx) ia)
-                            (getIdx (α := α) (xs := ctx) ib))
+                            (readTensor (α := α) (xs := ctx) ia)
+                            (readTensor (α := α) (xs := ctx) ib))
                       let st1 : State α inShape :=
                         ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                       have hRec :
@@ -177,8 +177,8 @@ theorem buildFrom_denoteAllFrom_safeLog
                       let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                         mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
                           Activation.safeLogSpec (α := α)
-                            (getIdx (α := α) (xs := ctx) ia)
-                            (getIdx (α := α) (xs := ctx) ib).item)
+                            (readTensor (α := α) (xs := ctx) ia)
+                            (readTensor (α := α) (xs := ctx) ib).item)
                       let st1 : State α inShape :=
                         ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                       have hRec :
@@ -263,8 +263,8 @@ theorem buildFrom_denoteAllFrom_sub
                       let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                         mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
                           Tensor.subSpec (α := α)
-                            (getIdx (α := α) (xs := ctx) ia)
-                            (getIdx (α := α) (xs := ctx) ib))
+                            (readTensor (α := α) (xs := ctx) ia)
+                            (readTensor (α := α) (xs := ctx) ib))
                       let st1 : State α inShape :=
                         ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                       have hRec :
@@ -349,8 +349,8 @@ theorem buildFrom_denoteAllFrom_mulElem
                       let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                         mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
                           Tensor.mulSpec (α := α)
-                            (getIdx (α := α) (xs := ctx) ia)
-                            (getIdx (α := α) (xs := ctx) ib))
+                            (readTensor (α := α) (xs := ctx) ia)
+                            (readTensor (α := α) (xs := ctx) ib))
                       let st1 : State α inShape :=
                         ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                       have hRec :
@@ -435,8 +435,8 @@ theorem buildFrom_denoteAllFrom_max_elem
                       let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                         mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
                           Tensor.maxSpec (α := α)
-                            (getIdx (α := α) (xs := ctx) ia)
-                            (getIdx (α := α) (xs := ctx) ib))
+                            (readTensor (α := α) (xs := ctx) ia)
+                            (readTensor (α := α) (xs := ctx) ib))
                       let st1 : State α inShape :=
                         ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                       have hRec :
@@ -521,8 +521,8 @@ theorem buildFrom_denoteAllFrom_min_elem
                       let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                         mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
                           Tensor.minSpec (α := α)
-                            (getIdx (α := α) (xs := ctx) ia)
-                            (getIdx (α := α) (xs := ctx) ib))
+                            (readTensor (α := α) (xs := ctx) ia)
+                            (readTensor (α := α) (xs := ctx) ib))
                       let st1 : State α inShape :=
                         ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                       have hRec :

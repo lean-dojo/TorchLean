@@ -46,7 +46,10 @@ def layerNorm {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((·
   let node : Node α :=
     { name := some "layer_norm"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad :=
+        (t.getNode? xId).any (·.requiresGrad) ||
+        (t.getNode? gammaId).any (·.requiresGrad) ||
+        (t.getNode? betaId).any (·.requiresGrad)
       parents := #[xId, gammaId, betaId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := .dim seqLen (.dim embedDim .scalar)) dLdyAny
@@ -77,7 +80,10 @@ def batchNorm {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((·
   let node : Node α :=
     { name := some "batch_norm"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad :=
+        (t.getNode? xId).any (·.requiresGrad) ||
+        (t.getNode? gammaId).any (·.requiresGrad) ||
+        (t.getNode? betaId).any (·.requiresGrad)
       parents := #[xId, gammaId, betaId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := .dim channels sSpatial) dLdyAny
@@ -121,7 +127,12 @@ def multiHeadAttention {α : Type} [TorchLean.Storage α] [Context α]
   let node : Node α :=
     { name := some "multi_head_attention"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad :=
+        (t.getNode? wqId).any (·.requiresGrad) ||
+        (t.getNode? wkId).any (·.requiresGrad) ||
+        (t.getNode? wvId).any (·.requiresGrad) ||
+        (t.getNode? woId).any (·.requiresGrad) ||
+        (t.getNode? xId).any (·.requiresGrad)
       parents := #[wqId, wkId, wvId, woId, xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := .dim n (.dim dModel .scalar)) dLdyAny

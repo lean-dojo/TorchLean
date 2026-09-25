@@ -918,7 +918,7 @@ the end. Bounding such precision differences requires the operation hypotheses a
 {ref "fp32-soundness"}[the FP32 soundness chapter].
 
 This bit equality is a result for one run. Even a three-term dot product can be sensitive to
-cancellation, and a reference Lean loop, a NumPy BLAS call, and a fused CUDA kernel may accumulate
+cancellation, and a reference Lean loop, a NumPy BLAS call, and a LibTorch operation may accumulate
 in different orders. {ref "spec-layer"}[The specification chapter] shows four numbers whose
 sum already depends on that choice. The importer checks names and shapes and parses decimal numbers.
 Bit preservation, finite-range

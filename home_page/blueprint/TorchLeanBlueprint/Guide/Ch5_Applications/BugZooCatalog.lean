@@ -49,11 +49,10 @@ Each entry isolates a contract such as “strict-future attention weight is zero
 incident explains where the condition can fail, and the Lean declaration states the inputs and
 hypotheses under which it holds.
 
-The examples below pair TorchLean reference computations with captured PyTorch runs
-{Informal.citep pytorch2019}[]. The `leanOutput` blocks record elaborator output; the PyTorch
-transcripts were captured before the FloatLib migration with torch 2.13.0 on the machine that
-produced the manual. Their version and device matter when comparing numerical residuals or
-framework behavior. These historical captures do not validate the migrated TorchLean executable.
+The `leanOutput` blocks below are checked when the guide builds. Each computation sits beside
+its general contract, so we can inspect both a concrete value and the conditions behind a theorem.
+For native normalization, a separate runnable probe records the framework version and device
+alongside its numerical residuals.
 
 I choose small inputs that let us isolate a cause. Repeated attention scores make the mask the only
 reason rows differ; a one-feature normalization axis makes its centered activation exactly zero;
@@ -186,18 +185,11 @@ def bzMat : Tensor Float [2, 3] :=
 [5.000000, 7.000000, 9.000000]
 ```
 
-The result has shape `[3]`, which the catalog names `RowShape`. In PyTorch, adding it back to the
-matrix is legal and produces a two by three tensor:
-
-```terminal +output
-== 11. reduce then add, silently broadcast ==
-rows: [5.0, 7.0, 9.0]
-m + rows shape: (2, 3)
-m + rows: [[6.0, 9.0, 12.0], [9.0, 12.0, 15.0]]
-```
-
-This expression is legal whether the broadcast was intended or introduced by a mistaken reduction.
-TorchLean's `addSpec` requires the two operand shapes to agree, so it rejects this version:
+The result has shape `[3]`, which the catalog names `RowShape`. Broadcasting this row back across
+the matrix would produce `[[6, 9, 12], [9, 12, 15]]`. The shape alone cannot tell us whether that
+broadcast was intended. TorchLean's `addSpec` requires the two operand shapes to agree, so it
+rejects
+an implicit broadcast:
 
 ```lean (name := bzBadAdd) +error
 /--
@@ -313,14 +305,6 @@ Computing the probabilities first loses that information before the logarithm ru
 [-inf, -inf, 0.000000]
 ```
 
-The captured PyTorch run shows the same finite and infinite results:
-
-```terminal +output
-== 3. softmax then log vs log_softmax ==
-log(softmax): [[-inf, -inf, 0.0]]
-log_softmax : [[-800.0, -1600.0, 0.0]]
-```
-
 For finite real logits, the two formulas define the same function. In this computation, however,
 the probability path has already rounded two entries to zero. Applying `log` gives $`-\infty`;
 multiplying such an entry by a zero target can then produce NaN. The logits-loss contract fixes the
@@ -365,13 +349,8 @@ individual log-probability remained correct.
 {src "NN/Examples/BugZoo/IgnoredLabelLoss.lean"}[NN.Examples.BugZoo.IgnoredLabelLoss source]
 examines a mean loss when no labels remain active.
 [PyTorch issue #75181](https://github.com/pytorch/pytorch/issues/75181) reported an `ignore_index`
-case where every label was ignored and the result was `nan`. The captured run below has that
-behavior:
-
-```terminal +output
-== 1. all labels ignored ==
-cross_entropy: nan
-```
+case where every label was ignored and the result was `nan`. A mean over no active labels needs
+an explicit convention: dividing a zero loss sum by a zero active count does not supply one.
 
 TorchLean defines each label's contribution using an explicit active flag:
 
@@ -476,14 +455,8 @@ safely and then masking. Evaluate both at a masked-out element whose denominator
 ```
 
 The unsafe form already produces `NaN` in the forward direction here, because the mask multiplies
-zero by an infinity. In PyTorch the forward value can look fine and the gradient is what carries
-the damage:
-
-```terminal +output
-== 5. divide then mask in autograd ==
-grad after divide-then-mask: [nan]
-grad after safe-divide     : [0.0]
-```
+zero by an infinity. A derivative of the division also depends on that zero denominator. Masking
+the final value does not remove the division from the computation being differentiated.
 
 The unfolding lemma pins down where the epsilon belongs in the reference expression. A fused
 kernel needs separate conformance evidence that it preserves this formula:
@@ -519,9 +492,9 @@ Masking is particularly subtle in differentiation because the graph records how 
 computed. A zero at the final output does not remove an earlier division node or its local
 derivative. The reference examples deliberately keep the unsafe operation visible, rather than
 checking only whether the selected forward entries look finite. For a gradient comparison, the
-relevant observations are the numerator and denominator cotangents as well as the loss. The
-captured PyTorch probe supplies one such numerical observation; the local unfolding theorem
-specifies the guarded forward formula that a derivative argument would have to follow.
+relevant observations are the numerator and denominator cotangents as well as the loss. The local
+unfolding theorem specifies the guarded forward formula that a derivative argument would have
+to follow.
 
 ## Attention Mask
 
@@ -563,31 +536,12 @@ def bzScores : Tensor Float [3, 3] :=
  [0.090031, 0.244728, 0.665241]]
 ```
 
-PyTorch, given the same scores and the same mask through `masked_fill` and `softmax`:
-
-```terminal +output
-== 4. causal mask polarity ==
-causal weights:
-tensor([[1.0000, 0.0000, 0.0000],
-        [0.2689, 0.7311, 0.0000],
-        [0.0900, 0.2447, 0.6652]])
-```
-
-The visible weights agree at the printed precision. Flipping the mask polarity fully blocks the
-last row in this PyTorch computation:
-
-```
-flipped polarity weights:
-tensor([[0.0000, 0.2689, 0.7311],
-        [0.0000, 0.0000, 1.0000],
-        [   nan,    nan,    nan]])
-```
-
-The last row contains only negative infinities after `masked_fill`. Direct exponentiation gives a
-zero numerator and normalizer; max-subtraction also encounters the undefined difference
-$`-\infty-(-\infty)`. This `softmax` call produces NaNs. The captured
-`scaled_dot_product_attention` probe instead returns zeros for a fully masked row, so the two API
-paths have different behavior in this build.
+The displayed weights are zero at every strict-future position. Reversing the mask would fully
+block the last row. A direct softmax over only negative infinities encounters a zero normalizer;
+max-subtraction also encounters the undefined difference $`-\infty-(-\infty)`.
+TorchLean's hard-mask contract gives blocked positions an explicit zero weight, including fully
+blocked rows. Native attention must preserve that choice in both forward evaluation and its local
+VJP.
 
 The checked claim quantifies over every strict-future position, at every sequence length:
 
@@ -716,15 +670,9 @@ def bzBits (a b : Float32) : UInt32 × UInt32 :=
 (1050253722, 1050253722)
 ```
 
-Identical bit patterns, and the same pattern PyTorch reports for its own float32 addition:
-
-```terminal +output
-== 7. float32 0.1 + 0.2 bit pattern ==
-sum: 0.30000001192092896 bits: 1050253722
-```
-
-The bit pattern identifies the rounded result even when a decimal printer hides low-order bits.
-This one addition is a runtime comparison. The following proofs state the general relation for
+The identical bit patterns identify the rounded result even when a decimal printer hides
+low-order bits. This one addition is a checked example. The following proofs state the general
+relation for
 addition and subtraction, including the finite-input hypotheses:
 
 ```lean (name := bzAddThm)
@@ -795,18 +743,9 @@ def bzEpsOutside (x mean variance gamma beta eps : Float) :
 200000.000000
 ```
 
-The second result is about 316 times the first. The captured PyTorch `batch_norm` result follows
-the inside-root convention, while the hand-written outside-root expression gives 200000:
-
-```terminal +output
-== 6. batchnorm epsilon placement, zero variance ==
-eps inside sqrt: [632.45556640625, ...]
-eps outside sqrt: [200000.0, ...]
-```
-
-The Lean result uses binary64 and the PyTorch result uses float32. Their displayed values,
-632.455532 and 632.45556640625, are close but unequal; the transcript does not establish bitwise
-agreement across scalar types.
+The second result is about 316 times the first. Both computations use Lean's binary64 `Float`,
+so the difference comes from the placement of epsilon. Comparing this reference with a native
+binary32 implementation also requires accounting for the change in scalar precision.
 
 The spec-side contract states the placement as an equation over the reals, where there is no
 rounding to argue about:
@@ -936,30 +875,14 @@ python3 scripts/verification/normalization_contract_probe.py --device cpu
 
 The probe requires PyTorch and prints its version along with the forward and backward residuals.
 It also covers constant slices for LayerNorm, GroupNorm, InstanceNorm, and training-mode BatchNorm.
-The transcript below is the historical run described at the start of this chapter; a different
-PyTorch build or device can give different residuals.
+The mathematical targets stay fixed throughout the sweep: the forward value is three, and the
+scale and input gradients are zero. Any measured departure from those targets is a residual of
+the tested native computation.
 
-```
-torch.float32    x=         1  y=3          dw=0              dx=0.0
-torch.float32    x=      1000  y=3          dw=0.00195312     dx=0.0
-torch.float32    x=     1e+06  y=3          dw=7.20312        dx=0.0
-torch.float32    x=     1e+07  y=3          dw=-55.9688       dx=0.0
-torch.float64    x=         1  y=3          dw=0              dx=0.0
-torch.float64    x=      1000  y=3          dw=-3.63798e-12   dx=0.0
-torch.float64    x=     1e+06  y=3          dw=9.40054e-09    dx=0.0
-torch.float64    x=     1e+07  y=3          dw=2.13215e-07    dx=0.0
-```
-
-The forward value is 3 everywhere, exactly as the contract says. The weight gradient is not zero. At
-float32 and $`x=10^6` it is 7.2, and at $`10^7` it is negative 56, on a quantity the mathematics
-pins to exactly zero. These residuals expose numerical error in the native backward path, even
-though the displayed forward output agrees with the reference. The much smaller float64 residuals
-are consistent with cancellation amplified by the reciprocal standard deviation; identifying the
-exact instruction sequence requires inspecting the selected kernel, which this probe does not do.
-
-The magnitude sweep matters here: a small input can produce a small residual even when the same
-backward path has a large error at $`10^6`. The theorem identifies the exact target value, while
-the probe measures deviations for the tested builds, devices, and magnitudes.
+The magnitude sweep matters because cancellation can depend on the input even when the exact
+answer does not. Compare the residuals for binary32 and binary64, and retain the printed version
+and device with the result. The probe measures an implementation; it does not identify its exact
+instruction sequence or prove an error bound.
 
 The three Lean outputs separate the forward value, scale gradient, and input gradient so that
 agreement in one cannot hide disagreement in another. Bias three survives normalization, whereas
@@ -1056,31 +979,16 @@ open TorchLean.Tensor in
   (mapLeading [batch] f xs).unstack i = f (xs.unstack i)
 ```
 
-In the captured PyTorch probe, applying a 256 by 256 linear layer to one row alone and to that row
-inside a batch of 64 gives different bit patterns:
-
-```terminal +output
-== 9. batch invariance of a linear layer ==
-bit identical: False
-max abs diff: 5.960464477539062e-07
-== 10. same, batch 1 vs batch 2 of a matmul ==
-bit identical: False max abs diff: 3.4332275390625e-05
-```
-
-The probe runs in inference mode without dropout. At width 512 the reported maximum discrepancy
-is about $`3\cdot 10^{-5}`. Changes in kernel selection or reduction order can cause such
-differences, but this comparison does not identify the instruction sequence responsible. A
-perturbation can change an argmax when the leading scores are sufficiently close. Applying the
-reference batch-invariance theorem to this runtime would require a separate conformance result or
-an explicitly bounded numerical discrepancy.
-
 Batch independence is a property of the chosen reference computation. The function passed to
 `mapLeading` receives one row, so it cannot inspect neighboring requests through that input. An
 operation that intentionally computes statistics across the batch has a different interface and
-should not satisfy this rowwise equation. This distinction helps diagnose the captured linear
-layer comparison: the intended operation is rowwise, while the runtime result varies with batch
-composition. The measured maximum difference describes that implementation and input; it is not
-a bound for every batch size or every matrix.
+should not satisfy this rowwise equation.
+
+A native implementation introduces another question: does evaluating a row alone produce the same
+bits as evaluating it inside a larger batch? Different matrix shapes can select different reduction
+orders. To test the native path, compare the same row and weights at both batch sizes with dropout
+disabled. Applying the reference theorem to that execution requires a conformance result or an
+explicit numerical error bound; a small observed discrepancy supplies neither by itself.
 
 ## KV Cache
 
@@ -1258,16 +1166,15 @@ open NN.Verification.Geometry3D.Box3D in
 def bzCamera : CameraP ℚ :=
   [[100, 0, 50, 0], [0, 100, 50, 0], [0, 0, 1, 0]]
 
-open NN.Verification.Geometry3D.Box3D in
 /-- Eight cube corners, four to six units away. -/
-def bzCorners : BoxCorners ℚ :=
+def bzCorners : Tensor ℚ [8, 3] :=
   [[-1, -1, 4], [1, -1, 4], [1, 1, 4], [-1, 1, 4],
    [-1, -1, 6], [1, -1, 6], [1, 1, 6], [-1, 1, 6]]
 
 #check bzCorners
 ```
 ```leanOutput bzCam (whitespace := lax)
-bzCorners : NN.Verification.Geometry3D.Box3D.BoxCorners ℚ
+bzCorners : Tensor ℚ [8, 3]
 ```
 
 At the near face, depth is 4, so the corners project to $`100\cdot(\pm 1)/4+50`, giving 25 and
@@ -1337,6 +1244,13 @@ intervals for the homogeneous numerators and a depth interval bounded away from 
 that result to a float executor requires showing that its intervals enclose both the geometric
 uncertainty and rounding error.
 
+The certificate carries its own `pointCount`; eight is the default used by this cuboid example.
+Its point tensor has shape `[pointCount, 3]`, and the depth and containment conditions quantify
+over those supplied points. A different count describes the same projection problem for another
+finite point set. With zero points, the pointwise conditions are vacuous, while the image and box
+checks still apply. Acceptance does not establish that the points are the corners of a cuboid or
+that a detector found the right object.
+
 # Contract Review
 
 For the causal-attention optimization in the opening, the strict-future-zero theorem supplies a
@@ -1364,11 +1278,9 @@ lake env lean NN/Examples/BugZoo/All.lean
 
 # Verification Scope
 
-The theorems describe TorchLean reference objects. The captured framework runs measure separate
-implementations: a weight gradient of 7.2 where the real-valued expression gives zero, a batch
-discrepancy of about $`3\cdot 10^{-5}`, and different fully masked-row behavior in two attention
-API paths. Establishing a deployment guarantee requires connecting the chosen reference object to
-the particular runtime.
+The theorems describe TorchLean reference objects. A numerical comparison measures a particular
+implementation under its selected dtype, device, and execution policy. Establishing a deployment
+guarantee requires connecting that runtime to the reference object and the theorem's hypotheses.
 
 Remaining obligations and scope distinctions:
 

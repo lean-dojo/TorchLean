@@ -93,8 +93,9 @@ blocks = 1
 ```
 
 The run is enough to exercise the actual operator-learning path while keeping the tensors, modes,
-and artifacts readable. CPU execution uses the dense multidimensional real-split DFT. CUDA uses a
-fused real-FFT FNO primitive backed by cuFFT.
+and artifacts readable. CPU execution uses the dense multidimensional real-split DFT. CUDA
+evaluates real FFTs and spectral products through LibTorch, with backward traversal owned by
+TorchLean.
 
 ## What TorchLean Owns
 
@@ -116,7 +117,7 @@ TorchLean owns the pieces that should be typed, inspectable, or connected to ver
   <a href="{{ '/blueprint/Floating-Point-and-Native-Boundaries/From-A-Tensor-Operation-To-A-GPU-Kernel/' | relative_url }}">
     <span>03</span>
     <strong>Runtime boundary</strong>
-    <em>The CUDA path is fast, but its role is named: a fused real-FFT kernel implements the TorchLean FNO step.</em>
+    <em>LibTorch evaluates the FFTs, spectral products, and local gradients; TorchLean owns the differentiation tape.</em>
   </a>
   <a href="{{ '/examples/verification/' | relative_url }}">
     <span>04</span>
@@ -267,7 +268,7 @@ precise, checkable artifacts instead of relying on a plot or checkpoint alone.
 ## Related Sources
 
 - [`NN.Examples.Models.Operators.Fno1dBurgers`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Models/Operators/Fno1dBurgers.lean)
-- [`NN.Runtime.Autograd.Engine.Cuda.Fno1dRfftFused`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Runtime/Autograd/Engine/Cuda/Fno1dRfftFused.lean)
+- [`NN.Runtime.Autograd.Engine.Cuda.Fno1dRfft`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Runtime/Autograd/Engine/Cuda/Fno1dRfft.lean)
 - [`NN.Verification.PINN`](https://github.com/lean-dojo/TorchLean/tree/main/NN/Verification/PINN)
 - [`NN.Verification.PINN.DatasetCheck`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Verification/PINN/DatasetCheck.lean)
 - [`NN.Examples.Verification.PINN assets`](https://github.com/lean-dojo/TorchLean/tree/main/NN/Examples/Verification/PINN)

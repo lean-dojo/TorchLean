@@ -220,7 +220,7 @@ def usage (exeName : String) : String :=
     , "      cpu and cuda are implemented by the current eager runtime;"
     , "      other names are planning targets and fail until a runtime is registered."
     , "  --arithmetic native|ieee|complex"
-    , "      native is the default; ieee runs TorchLean's bit-level binary32 reference."
+    , "      native is the default; ieee uses FloatLib's executable binary32 format."
     , "  --execution eager|typed-graph"
     , "      eager executes immediately; typed-graph records and reuses a shape-indexed SSA graph."
     , "  --seed N"

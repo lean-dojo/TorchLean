@@ -8,6 +8,7 @@ import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness
 import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.EndToEnd
 import NN.Verification.Cert.CROWNNodeCert
 import NN.Verification.Cert.CROWNNodeCertAlphaBeta
+import NN.Verification.Cert.FiniteArtifactSemantics
 import NN.IR.ShapeSoundness
 -- The worked two-layer example below writes its input corners as tensor literals.
 import NN.Tensor.Internal.Elab.TensorLiteral
@@ -350,21 +351,22 @@ The generic real soundness theorem is `cert_encloses_semantics`. It requires:
 
 It concludes that each available certificate box encloses the matching semantic value. The current
 `Supported` predicate contains input, constant, detach, addition, subtraction, elementwise
-multiplication, ReLU, linear, matrix multiplication, tanh, sigmoid, softplus, safe logarithm,
-sine, and cosine nodes.
+multiplication, ReLU, linear, matrix multiplication, concatenation, convolution, tanh, sigmoid,
+softplus, safe logarithm, sine, and cosine nodes.
 
 The proof-side real evaluator has the stronger end-to-end theorem
 `runIBP?_encloses_evalGraphRec`. It proves that the particular real `runIBP?` construction encloses
 `evalGraphRec`, under topological order, supported operations, and enclosed inputs.
 
-The executable engine is now covered as well, on a named core. `runIBP_eq_runIBP?` proves that the
+The executable engine has a separate theorem on a named core. `runIBP_eq_runIBP?` proves that the
 engine's `runIBP` computes exactly the proof-side pass on graphs whose nodes are all in
 `EngineCore` (input, constant, detach, addition, subtraction, elementwise multiplication, ReLU,
-linear, matrix multiplication, softplus, and safe logarithm), provided the semantic-support guard
+linear, matrix multiplication, concatenation, convolution, softplus, and safe logarithm),
+provided the semantic-support guard
 succeeds and the proof-side pass produced a box at every node (`IBPCovers`).
 `runIBP_encloses_evalGraphRec` then gives enclosure
-for the executable engine directly. Both are stated over `ℝ`; the transcendental node kinds outside
-`EngineCore` and every rounded scalar remain outside these two theorems.
+for the executable engine directly. Both are stated over `ℝ`; operations outside `EngineCore`
+and every rounded scalar remain outside these two theorems.
 
 ```lean (name := ibpThms)
 -- Locally consistent real boxes enclose the corresponding
@@ -583,6 +585,120 @@ containment, and a sound bound that is too wide reports "cannot verify" on a net
 fact robust. Tighter bounds may cost more computation; input subdivision lets us explore that
 tradeoff while keeping the local interval rules fixed.
 
+## Tensor Geometry In A Bound Pass
+
+The box representation stores one interval per scalar. The graph still records the shape that
+tells us how those scalars interact. A matrix product multiplies the matrices on the final two
+axes, broadcasting the leading axes. Vectors participate without a separate reshape:
+
+```lean (name := boundMatmulShapes)
+example :
+    NN.IR.OpContracts.inferMatmulOutShape
+      [2, 3, 4, 5] [2, 3, 5, 6] =
+        .ok [2, 3, 4, 6] := by decide
+
+example :
+    NN.IR.OpContracts.inferMatmulOutShape
+      [1, 4, 5] [2, 5, 6] = .ok [2, 4, 6] := by decide
+
+example :
+    NN.IR.OpContracts.inferMatmulOutShape
+      [5] [2, 5, 6] = .ok [2, 6] := by decide
+
+example :
+    NN.IR.OpContracts.inferMatmulOutShape
+      [5] [5] = .ok [] := by decide
+```
+
+The first example has six independent $`4\times5` by $`5\times6` products. In the second,
+one left matrix is reused across two right matrices. The third multiplies one vector by each
+right matrix, and the fourth is a dot product with a scalar result. The runtime, interval pass,
+and backward pass use the same shape contract and coordinate maps. When an operand is reused
+by broadcasting, its gradient accumulates contributions from every use.
+The {src "NN/MLTheory/CROWN/Proofs/BinaryMatmulRuntimeBridge.lean"}[runtime proof] shows that
+flattening the checked IR product gives the certificate evaluator's product for these shapes.
+
+For rounded endpoints, the directed backward pass bounds a binary product's objective using
+its output IBP box. It does not propagate that objective's coefficients through both operands.
+This interval fallback can lose correlations that an affine transfer would retain.
+
+Concatenation follows the selected axis, with at least two parents and equal dimensions on every
+other axis. A parent can have an empty axis:
+
+```lean (name := boundConcatShape)
+example :
+    NN.IR.OpContracts.inferConcatOutShape 1
+      #[[2, 1, 3], [2, 0, 3], [2, 2, 3]] =
+        .ok [2, 3, 3] := by decide
+```
+
+Here each of the two leading coordinates gets one slice from the first parent and two from the
+third; the middle parent contributes no entries. Appending whole flat buffers would mix those
+leading coordinates. The value, interval, and affine transfers instead share the same coordinate
+map, and the backward pass uses it to split output coefficients among parent occurrences.
+If $`y=\operatorname{concat}(x,x)` has coefficient slices $`u` and $`v`, both slices reach the
+same input, giving coefficient $`u+v`. Repeated parent ids therefore require accumulation.
+
+The proof-side certificate evaluator uses this layout too. Both its `Supported` predicate and
+the executable `EngineCore` theorem include concatenation. The
+{src "NN/MLTheory/CROWN/Proofs/GraphRuntimeBridge.lean"}[runtime bridge] also proves that the IR
+evaluator produces these coordinates along every valid axis. The evaluator moves the selected
+axis to the front, concatenates the parents, and applies the inverse permutation. The proof
+follows those actual permutations, including when a dimension is empty.
+
+For LayerNorm on `[2, 2, 2]`, choosing axis one means normalizing the suffix `[2, 2]`.
+There are two independent rows of four coordinates. If the first row contains $`0,1,2,3`
+and the second contains $`4,5,6,7`, their means are $`1.5` and $`5.5`. Flattening all eight
+coordinates into one normalization would give mean $`3.5` and change both outputs. The
+scale and bias therefore carry the exact suffix shape `[2, 2]`; `[4]` has the same number
+of entries but fails the payload shape check.
+An empty leading batch, such as `[0, 2, 2]`, has no rows to normalize and produces an empty
+output. The normalized suffix itself must remain nonempty.
+
+Softmax value bounds also follow the selected axis. On `[2, 3, 1]`, axes zero and one use
+the conservative range $`[0,1]` for each coordinate. Axis two has one entry per softmax row,
+so its range is $`[1,1]`. These value rules do not require a directed implementation of
+exponential. First and mixed derivative transfers also follow the selected axis, keeping
+independent rows separate, for backends that enable the ideal softmax derivative rules.
+The native `Float` and `Float32` interval backends return no softmax derivative bound;
+their value bounds remain available. LayerNorm derivative transfers normalize the whole configured
+suffix and require positive epsilon. Their formulas and numerical proof obligations are explained
+in the derivative section below.
+
+Convolution transfers share the IR's validation of channels, groups, stride, dilation, and
+asymmetric padding. Any leading batch shape is retained, and each batch coordinate is evaluated
+independently. The payload stores the full input-channel axis and selects the channels belonging
+to each group. In affine propagation, convolution is represented by a dense matrix over flat
+input and output coordinates. That representation can be much larger than the kernel tensor,
+even though most coefficients are zero.
+
+For real tensors, this representation satisfies
+
+$$`\operatorname{vec}(C(x))=A\,\operatorname{vec}(x)+b_{\mathrm{broadcast}}.`
+
+The theorem `ConvProof.conv_linear_matrix_add_bias_eq_grouped_conv` in
+{src "NN/MLTheory/CROWN/Proofs/Conv.lean"}[the convolution proof] establishes this equality for
+grouped channels, dilation, asymmetric padding, and any leading batch shape. The interval pass
+itself sums the kernel contributions with directed products and additions; it does not need to
+construct this matrix. Its real enclosure theorem is in
+{src "NN/MLTheory/CROWN/Proofs/ConvEnclosure.lean"}[the directed convolution proof].
+For a fixed kernel and bias, the input derivative is the same convolution with zero bias.
+{src "NN/MLTheory/CROWN/Proofs/ConvDerivatives.lean"}[The derivative proof] establishes this
+identity and its adjoint for the same geometry. Graph execution still checks the configuration.
+The checked graph enclosure in
+{src "NN/MLTheory/CROWN/Proofs/ConvGraphEnclosure.lean"}[the graph transfer proof] connects those
+checks to the operator theorem. Convolution is included in the real certificate induction and
+the executable `EngineCore` theorem.
+{src "NN/MLTheory/CROWN/Proofs/GraphConvBridge.lean"}[The IR correspondence proof] derives the
+same checked geometry from a successful IR convolution and proves equality with the certificate
+evaluator. A claim about rounded execution still needs its numerical correspondence.
+
+The elementwise interval maps in `CROWN.Runtime.Ops.IBP` preserve arbitrary tensor shapes,
+including scalars and empty tensors. This extends where the same scalar formulas can be applied.
+It does not change their arithmetic hypotheses or extend `EngineCore` to LayerNorm or softmax.
+For a theorem about a complete graph, the executable operator contract and the theorem's supported
+fragment both have to match the graph we are using.
+
 ## Input Subdivision
 
 Another general option is to partition an input box and evaluate the same graph on every piece.
@@ -609,9 +725,10 @@ The default is unchanged. This is a graph-level option, separate from the high-l
 
 ## Trainer Verification API
 
-`trainer.train` retains the live trained parameters in its ordinary result. Its one generic
-`verify` operation accepts a tensor center and named choices such as `radius`, `norm`, `property`,
-and `algorithm`. Nothing about the function name changes when the norm or goal changes.
+`trainer.train` returns a snapshot of the trained parameters. Its `verify` operation uses that
+snapshot and accepts a tensor center and named choices such as `radius`, `norm`, `property`,
+and `algorithm`. A result obtained from `session.finish` uses the same snapshot semantics:
+further training or loading a checkpoint into the session does not change the model it verifies.
 
 ```
 -- This import exposes verification on the ordinary
@@ -632,6 +749,11 @@ let report ← trained.verify center
 The default method is fixed-relaxation Alpha-Beta-CROWN; `.ibp` and `.crown` are available for
 comparison. To inspect graph nodes and intermediate bounds, import
 `NN.API.Verification.Lowering`.
+
+This high-level verifier belongs to the ordinary binary32 training path. A session opened with
+`trainer.openTyped` preserves its chosen scalar in training and prediction, but supplies no
+verifier; calling `verify` on its result reports that verification is unavailable. Choosing a
+wider training format does not by itself supply bound arithmetic or soundness proofs for it.
 
 ## Bound Propagation With `auto_LiRPA`
 
@@ -992,6 +1114,42 @@ output. Checking every node is useful because of that argument. The number of en
 does not replace it, and the printed `#check` signatures identify the argument rather than
 performing it for the displayed classifier.
 
+## Checking The Supplied Binary32 Bounds Against Real Arithmetic
+
+There is a stronger decision for a vector input followed by a chain of linear and ReLU layers:
+`NN.Verification.Cert.FiniteArtifact.accepts`. It reads the same binary32 graph parameters,
+input box, affine entries, and requested output inequalities. Each finite word has an exact
+rational value. We can therefore check whether the supplied coefficients enclose a real
+computation without first replacing them with a different certificate.
+
+Here is the rounding issue that this check catches. Put two scalar linear layers in sequence,
+each with weight $`a=1+2^{-23}` and zero bias. Their exact composed weight is
+
+$$`a^2=1+2^{-22}+2^{-46}.`
+
+Binary32 rounds that product to $`1+2^{-22}`. An affine upper bound using the rounded coefficient
+can agree perfectly with binary32 replay while falling below the real output at a positive input.
+The regression in `NN.Tests.Verification.FiniteArtifact` constructs this case: replay accepts its
+table, and the stronger decision rejects it.
+
+The extra check follows the graph from its input. At each layer, it computes an exact rational
+transfer from the already checked parent bounds. The supplied lower affine form must lie below
+that transfer throughout the input box, and the supplied upper form must lie above it. The
+decision then checks every requested output inequality using those supplied bounds. Strict and
+non-strict inequalities are separate choices, so a zero margin cannot satisfy a strict request.
+
+`FiniteArtifact.accepts_graph_sound` connects this decision to the original graph's `denote`
+function, using the exact real values of its decoded binary32 parameters. For every real input
+inside the decoded box, the graph evaluates successfully and all requested inequalities hold.
+The statement includes the actual artifact entry at the designated output. Missing bounds,
+nonfinite values, empty input or output dimensions, an empty collection of inequalities, and an
+output id that does not cover the whole chain are rejected.
+
+This decision covers nonempty vector linear/ReLU chains. The general JSON replay decisions above
+retain their local-consistency conclusions. The real computation in the stronger theorem also
+differs from a native floating-point run: relating a LibTorch result to that real value still
+requires an execution-error bound.
+
 # Directed Arithmetic In The Executable Pass
 
 The graph engine does not assume that every scalar type can safely evaluate every interval rule.
@@ -1005,6 +1163,21 @@ and layer normalization. A successful computation is not itself a theorem. The s
 operation; sound entrypoints must require this class. A transfer returns `none` when the scalar
 backend has no finite implementation for that operation.
 
+A point interval already shows why the distinction matters. Both entries of
+$`x=(1,2^{-25})` are exactly representable in binary32, but their real sum
+$`1+2^{-25}` rounds to $`1` under nearest rounding. Using that same rounded value as both
+endpoints would return $`[1,1]` and exclude the sum. The engine's reductions accumulate a lower
+sum downward and an upper sum upward. A mean also encloses the coordinate count before division,
+since a large count need not be exactly representable in the chosen format.
+
+Average pooling uses the same directed mean for each window, including padded zeros in its count.
+Input regions round the center-minus-radius downward and center-plus-radius upward. Eval-mode
+BatchNorm encloses the stabilized variance, square root, division, scale, and bias separately.
+Its running statistics are fixed, but computing a normalization coefficient still involves
+rounding. These executable transfers live in
+{src "NN/MLTheory/CROWN/Graph/Engine/Base.lean"}[the interval engine];
+their availability does not enlarge the `EngineCore` theorem fragment stated above.
+
 `ℝ` and `FP32` have lawful nonlinear instances. The `FP32` proofs use its exact-real floor and
 ceiling rounding theorems. FloatLib binary32 instead states finite-path soundness in its IEEE
 semantics
@@ -1016,23 +1189,64 @@ exponentiation. An IBP node using exponential therefore remains unresolved under
 Sigmoid, tanh, sine, and cosine can still use their global codomain bounds when a sharper transfer
 is unavailable.
 
-When the IBP pass has a valid nonlinear box but no directed affine relaxation, forward CROWN keeps
-the box as a constant affine bound. Objective-dependent backward CROWN carries affine coefficients
-through algebraic rewrites. Over the reals those rewrites are exact; over rounded execution they
-need a separate runtime-approximation theorem. A printed floating-point backward-CROWN result is
-therefore computational evidence until that bridge is supplied.
+The CROWN output query uses a forward affine sweep when the scalar backend permits exact
+reassociation. Rounded backends request directed backward bounds for each output coordinate.
+Where a node has an IBP box but no coefficient transfer, that box bounds the active objective
+without sending coefficients to the node's parents. Binary matmul and MSE loss use this fallback.
+It can lose correlations, so finishing a CROWN pass does not guarantee a tighter result than IBP.
+The {src "NN/MLTheory/CROWN/Proofs/DirectedBackwardEvaluation.lean"}[rounded backward theorem]
+covers coefficient propagation, the output-box fallback, and final interval evaluation. Its
+hypotheses require lawful directed arithmetic, the real stored-parameter graph equations, and
+enclosing IBP boxes. Relating these bounds to a separate native execution additionally requires
+a runtime-approximation theorem.
 
-The first-derivative interval pass is seeded. `runDirectionalDerivative` propagates a point or
-interval of input directions, so coordinate vectors give partial-derivative bounds without a
-second operator traversal. `runScalarDerivative` is the scalar-input specialization and rejects a
-non-scalar input box. Both entrypoints use the same local transfer function; their supported
-operators cannot drift apart. The current second-derivative pass remains one-dimensional.
+The first-derivative interval pass starts with an input direction.
+`runDirectionalDerivative` propagates a point or interval of directions through the graph, using
+the value boxes from IBP. A coordinate vector selects a partial derivative.
+`runScalarDerivative` supplies the direction `1` for a scalar input and rejects a larger input
+box. Both entrypoints use the same local transfer rules.
 
-LayerNorm currently leaves its derivative box unresolved. Its real derivative and a rowwise bound
-are proved separately, but the interval pass still needs a transfer that uses each row's stored
-scale and epsilon. Flattening several rows into one normalization, or enlarging a denominator
-before taking its reciprocal, can underestimate the derivative. Certificate consumers report the
-missing box; the separate forward evaluation and value bounds remain available.
+For two directions $`u` and $`v`, `runMixedSecondDerivative` propagates an enclosure of
+$`D^2f(x)[u,v]`. At a composed node $`f=h\circ z`, the rule must retain both terms:
+
+$$`D^2f(x)[u,v]
+= Dh(z(x))\,D^2z(x)[u,v]
++ D^2h(z(x))[Dz(x)u,Dz(x)v].`
+
+The two directions can differ, and the input can have any number of coordinates.
+`runSecondDirectionalDerivative` uses the same direction twice.
+For a scalar output, `runHessianVectorProduct` pairs each coordinate direction $`e_i` with a
+fixed $`v`: its $`i`th result encloses $`D^2f(x)[e_i,v]=(H_f(x)v)_i`.
+These entrypoints share the mixed-derivative pass, so an unavailable operator transfer leaves the
+corresponding result unresolved in each API.
+
+LayerNorm applies this rule independently to each normalized row. Its fixed scale multiplies the
+derivative; its fixed bias contributes zero. For example, take a constant row $`(5,5)`, scale
+$`(2,3)`, epsilon $`1`, and direction $`(1,0)`. Centering the direction gives
+$`(1/2,-1/2)`, so the output derivative is $`(1,-3/2)`, whatever the fixed bias.
+A direction in another row does not enter this calculation.
+
+Positive epsilon gives a useful bound even when the input row is constant:
+
+$$`(\operatorname{Var}(x)+\varepsilon)^{-1/2}\le\varepsilon^{-1/2}.`
+
+The interval transfer uses this bound together with centered input and direction bounds.
+The mixed rule includes the change in variance and the upstream mixed derivative. It supports
+the complete normalized suffix: shape $`[2,2,2]` at axis one gives two rows of four coordinates.
+Nonpositive epsilon, nonfinite endpoints, and inconsistent affine shapes leave the transfer
+unresolved.
+
+The theorem `layerNormDerivativeRow?_encloses_fderiv` in
+{src "NN/MLTheory/CROWN/Graph/Proofs/LayerNormDerivativeEnclosure.lean"}[the row enclosure proof]
+follows the executed calculation: means, centered radii, the reciprocal standard deviation, and
+both terms of the mixed rule. If the incoming boxes enclose the values and derivatives, a successful
+row calculation encloses the actual real first and mixed derivatives. The theorem requires the
+scalar operation laws and exact interpretations of the literals zero through four; its real-endpoint
+corollary discharges those arithmetic assumptions.
+
+This supplies the local LayerNorm step. A derivative certificate for a complete floating-point
+graph also needs an induction through its other operations and the corresponding scalar
+backend's numerical laws.
 
 # Robustness Margins From Output Bounds
 

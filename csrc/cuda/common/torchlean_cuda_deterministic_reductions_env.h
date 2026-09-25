@@ -3,14 +3,10 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// Env-var default for deterministic reductions mode.
-//
-// CUDA and CPU stubs share this parser so the user-facing toggle has the same meaning in both
-// builds. The runtime setter can override the env default after startup; the env parser only answers
-// the initial policy.
-//
-// - `TORCHLEAN_CUDA_DETERMINISTIC_REDUCTIONS=1`
-static inline uint32_t torchlean_read_deterministic_reductions_env() {
+// Initial policy from TORCHLEAN_CUDA_DETERMINISTIC_REDUCTIONS.
+// The native backend requests strict ATen determinism and supports LibTorch runtime controls.
+// CPU stubs capture this policy on first use to select their deterministic accumulation paths.
+static inline uint32_t torchlean_read_deterministic_reductions_env(void) {
   const char* v = getenv("TORCHLEAN_CUDA_DETERMINISTIC_REDUCTIONS");
   if (!v || !*v) {
     return 0u;

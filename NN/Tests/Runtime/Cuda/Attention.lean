@@ -82,8 +82,83 @@ def mask : Tensor Bool [n, n] :=
     false, true
   ]).reshape [n, n] (by dsimp; decide)
 
+/-- Evaluate a checked native call at this point in a test's ownership/configuration sequence. -/
+@[no_expose] def checked {α : Type} (action : Unit → Except String α) : IO α := do
+  let result ← IO.lazyPure action
+  Utils.okOrThrow result
+
+@[no_expose] def rejectsPairedBackward
+    (output seed : Runtime.Autograd.Cuda.Buffer) : IO Bool := do
+  try
+    discard <| checked fun _ => Runtime.Autograd.Cuda.Buffer.libTorchAttentionBwd output seed
+    pure false
+  catch _ =>
+    pure true
+
+@[no_expose] def checkDeterministicPolicy
+    (output seed : Runtime.Autograd.Cuda.Buffer) : IO Unit := do
+  match Runtime.Autograd.Cuda.Buffer.runtimeStatus with
+  | .cpuStub => pure ()
+  | _ =>
+    let deterministic ← Runtime.Autograd.Cuda.LibTorch.getDeterministic
+    let benchmark ← Runtime.Autograd.Cuda.LibTorch.getCuDNNBenchmark
+    try
+      Runtime.Autograd.Cuda.LibTorch.setDeterministic (!deterministic)
+      unless ← rejectsPairedBackward output seed do
+        throw <| IO.userError "paired attention accepted a changed deterministic policy"
+    finally
+      Runtime.Autograd.Cuda.LibTorch.setDeterministic deterministic
+      Runtime.Autograd.Cuda.LibTorch.setCuDNNBenchmark benchmark
+
+/-- The paired ABI must work in the portable stub as well as the LibTorch build. -/
+def checkPairedBuffers : IO Unit := do
+  let q ← Runtime.Autograd.Cuda.Buffer.zerosIO 2
+  let k ← Runtime.Autograd.Cuda.Buffer.ofFloatArrayIO <| FloatArray.mk #[1.0, -1.0]
+  let v ← Runtime.Autograd.Cuda.Buffer.ofFloatArrayIO <| FloatArray.mk #[2.0, 4.0]
+  let allowed ← Runtime.Autograd.Cuda.Buffer.ofFloatArrayIO <|
+    FloatArray.mk #[1.0, 1.0, 0.0, 0.0]
+  let seed ← Runtime.Autograd.Cuda.Buffer.ofFloatArrayIO <| FloatArray.mk #[1.0, 7.0]
+  let output ← checked fun _ =>
+    Runtime.Autograd.Cuda.Buffer.libTorchAttentionFwd q k v allowed 1 1 2 1 1.0
+  for input in #[q, k, v, allowed] do
+    discard <| Runtime.Autograd.Cuda.Buffer.releaseIO input
+  let ys ← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO output
+  Utils.assertFloatArrayApprox "paired attention forward after input release"
+    ys (FloatArray.mk #[3.0, 0.0]) 1e-5
+  for _ in [:2] do
+    let (dq, dk, dv) ← checked fun _ =>
+      Runtime.Autograd.Cuda.Buffer.libTorchAttentionBwd output seed
+    Utils.assertFloatArrayApprox "paired attention dQ"
+      (← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO dq) (FloatArray.mk #[-1.0, 0.0]) 1e-5
+    Utils.assertFloatArrayApprox "paired attention dK"
+      (← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO dk) (FloatArray.mk #[0.0, 0.0]) 1e-5
+    Utils.assertFloatArrayApprox "paired attention dV ignores blocked cotangent"
+      (← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO dv) (FloatArray.mk #[0.5, 0.5]) 1e-5
+    for gradient in #[dq, dk, dv] do
+      discard <| Runtime.Autograd.Cuda.Buffer.releaseIO gradient
+  checkDeterministicPolicy output seed
+  discard <| Runtime.Autograd.Cuda.Buffer.releaseIO output
+  unless ← rejectsPairedBackward output seed do
+    throw <| IO.userError "paired attention accepted a released forward buffer"
+  discard <| Runtime.Autograd.Cuda.Buffer.releaseIO seed
+  let empty ← Runtime.Autograd.Cuda.Buffer.zerosIO 0
+  for shape in (#[(0, 2, 1), (1, 0, 1), (1, 2, 0)] :
+      Array (UInt32 × UInt32 × UInt32)) do
+    let (batch, rows, cols) := shape
+    let emptyOutput ← checked fun _ =>
+      Runtime.Autograd.Cuda.Buffer.libTorchAttentionFwd
+        empty empty empty empty 0 batch rows cols 1.0
+    let (dq, dk, dv) ← checked fun _ =>
+      Runtime.Autograd.Cuda.Buffer.libTorchAttentionBwd emptyOutput empty
+    for result in #[emptyOutput, dq, dk, dv] do
+      unless Runtime.Autograd.Cuda.Buffer.size result == 0 do
+        throw <| IO.userError "paired attention returned a nonempty result for an empty shape"
+      discard <| Runtime.Autograd.Cuda.Buffer.releaseIO result
+  discard <| Runtime.Autograd.Cuda.Buffer.releaseIO empty
+
 def run : IO Unit := do
   IO.println "=== CUDA kernel coverage: multi_head_attention ==="
+  checkPairedBuffers
 
   let layoutInput : Tensor Float [2, 4] :=
     (Tensor.from (#[0, 1, 2, 3, 4, 5, 6, 7] : Array Float)).reshape [2, 4] (by dsimp; decide)
@@ -154,10 +229,10 @@ def run : IO Unit := do
     (name := some "wo")
   let (t5c, xIdc) := Runtime.Autograd.Cuda.Tape.leaf (t := t4c) (Utils.tensorToAnyBuffer x)
     (name := some "x")
-  let fusedResult ← Runtime.Autograd.Cuda.Tape.multiHeadAttention (t := t5c)
+  let directResult ← Runtime.Autograd.Cuda.Tape.multiHeadAttention (t := t5c)
       (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
       (h1 := n_ne_zero) wqIdc wkIdc wvIdc woIdc xIdc (mask := some mask)
-  let (t6c, yIdc) ← Utils.okOrThrow fusedResult
+  let (t6c, yIdc) ← Utils.okOrThrow directResult
   let yCuda ← Utils.cudaValue (s := outShape) t6c yIdc
   let seedCuda : Runtime.Autograd.Cuda.AnyBuffer :=
     { s := outShape,
@@ -170,8 +245,8 @@ def run : IO Unit := do
   let dWvCuda ← Utils.cudaGrad (s := [dModel, projDim]) gradsCuda wvIdc
   let dWoCuda ← Utils.cudaGrad (s := [projDim, dModel]) gradsCuda woIdc
 
-  -- CUDA composed reference path: batched matmul, masking, softmax, and batched matmul.
-  -- Keeping this in the test makes the fused native FlashAttention kernels regression-safe.
+  -- Composition is selected explicitly for comparison with the default paired ATen path
+  -- and the independent CPU tape.
   let t0s : Runtime.Autograd.Cuda.Tape := Runtime.Autograd.Cuda.Tape.empty
   let (t1s, wqIds) := Runtime.Autograd.Cuda.Tape.leaf (t := t0s) (Utils.tensorToAnyBuffer wq)
     (name := some "wq")
@@ -250,7 +325,7 @@ def run : IO Unit := do
   let dWvBatch ← Utils.cudaGrad (s := [dModel, projDim]) batchGrads bwv
   let dWoBatch ← Utils.cudaGrad (s := [projDim, dModel]) batchGrads bwo
 
-  -- The direct native kernel is an independent implementation of the same batched operation.
+  -- The default direct ATen pair implements the same batched operation.
   -- Comparing distinct samples catches layout mistakes in the composed BMM path and its VJP.
   let tn0 : Runtime.Autograd.Cuda.Tape := Runtime.Autograd.Cuda.Tape.empty
   let (tn1, nwq) :=
@@ -262,42 +337,41 @@ def run : IO Unit := do
   let (tn4, nwo) :=
     Runtime.Autograd.Cuda.Tape.leaf (t := tn3) (Utils.tensorToAnyBuffer batchIdentity)
   let (tn5, nx) := Runtime.Autograd.Cuda.Tape.leaf (t := tn4) (Utils.tensorToAnyBuffer xBatch)
-  let nativeBatchResult ← Runtime.Autograd.Cuda.Tape.batchedMultiHeadAttention (t := tn5)
+  let directBatchResult ← Runtime.Autograd.Cuda.Tape.batchedMultiHeadAttention (t := tn5)
     (batch := 2) (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
     (by decide) n_ne_zero nwq nwk nwv nwo nx (mask := some mask)
-    (attentionCapsule := NN.Backend.Attention.nativeDirectAttention)
-  let (tn6, nyId) ← Utils.okOrThrow nativeBatchResult
-  let yBatchNative ← Utils.cudaValue (s := batchShape) tn6 nyId
-  let nativeBatchSeed : Runtime.Autograd.Cuda.AnyBuffer :=
+  let (tn6, nyId) ← Utils.okOrThrow directBatchResult
+  let yBatchDirect ← Utils.cudaValue (s := batchShape) tn6 nyId
+  let directBatchSeed : Runtime.Autograd.Cuda.AnyBuffer :=
     { s := batchShape,
       buf := Runtime.Autograd.Cuda.Buffer.full
         (UInt32.ofNat (Spec.Shape.size batchShape)) 1.0 }
-  let nativeBatchGrads ← Utils.okOrThrow
-    (Runtime.Autograd.Cuda.Tape.backwardDenseAll (t := tn6) nyId nativeBatchSeed)
-  let dxBatchNative ← Utils.cudaGrad (s := batchShape) nativeBatchGrads nx
-  let dWqBatchNative ← Utils.cudaGrad (s := [dModel, projDim]) nativeBatchGrads nwq
-  let dWkBatchNative ← Utils.cudaGrad (s := [dModel, projDim]) nativeBatchGrads nwk
-  let dWvBatchNative ← Utils.cudaGrad (s := [dModel, projDim]) nativeBatchGrads nwv
-  let dWoBatchNative ← Utils.cudaGrad (s := [projDim, dModel]) nativeBatchGrads nwo
-  Utils.assertTensorApprox "batched mha forward" yBatch yBatchNative (tol := 1e-4)
-  Utils.assertTensorApprox "batched mha dx" dxBatch dxBatchNative (tol := 1e-4)
-  Utils.assertTensorApprox "batched mha dWq" dWqBatch dWqBatchNative (tol := 1e-4)
-  Utils.assertTensorApprox "batched mha dWk" dWkBatch dWkBatchNative (tol := 1e-4)
-  Utils.assertTensorApprox "batched mha dWv" dWvBatch dWvBatchNative (tol := 1e-4)
-  Utils.assertTensorApprox "batched mha dWo" dWoBatch dWoBatchNative (tol := 1e-4)
+  let directBatchGrads ← Utils.okOrThrow
+    (Runtime.Autograd.Cuda.Tape.backwardDenseAll (t := tn6) nyId directBatchSeed)
+  let dxBatchDirect ← Utils.cudaGrad (s := batchShape) directBatchGrads nx
+  let dWqBatchDirect ← Utils.cudaGrad (s := [dModel, projDim]) directBatchGrads nwq
+  let dWkBatchDirect ← Utils.cudaGrad (s := [dModel, projDim]) directBatchGrads nwk
+  let dWvBatchDirect ← Utils.cudaGrad (s := [dModel, projDim]) directBatchGrads nwv
+  let dWoBatchDirect ← Utils.cudaGrad (s := [projDim, dModel]) directBatchGrads nwo
+  Utils.assertTensorApprox "batched mha forward" yBatch yBatchDirect (tol := 1e-4)
+  Utils.assertTensorApprox "batched mha dx" dxBatch dxBatchDirect (tol := 1e-4)
+  Utils.assertTensorApprox "batched mha dWq" dWqBatch dWqBatchDirect (tol := 1e-4)
+  Utils.assertTensorApprox "batched mha dWk" dWkBatch dWkBatchDirect (tol := 1e-4)
+  Utils.assertTensorApprox "batched mha dWv" dWvBatch dWvBatchDirect (tol := 1e-4)
+  Utils.assertTensorApprox "batched mha dWo" dWoBatch dWoBatchDirect (tol := 1e-4)
 
   -- Attention is numerically "busy" (exp/softmax + multiple matmuls). Use a slightly looser tol.
-  Utils.assertTensorApprox (s := outShape) "flash vs composed mha forward" yCuda yCudaComposed
+  Utils.assertTensorApprox (s := outShape) "direct vs composed mha forward" yCuda yCudaComposed
     (tol := 2e-2)
-  Utils.assertTensorApprox (s := outShape) "flash vs composed mha dx" dxCuda dxCudaComposed
+  Utils.assertTensorApprox (s := outShape) "direct vs composed mha dx" dxCuda dxCudaComposed
     (tol := 2e-2)
-  Utils.assertTensorApprox (s := [dModel, projDim]) "flash vs composed mha dWq"
+  Utils.assertTensorApprox (s := [dModel, projDim]) "direct vs composed mha dWq"
     dWqCuda dWqCudaComposed (tol := 2e-2)
-  Utils.assertTensorApprox (s := [dModel, projDim]) "flash vs composed mha dWk"
+  Utils.assertTensorApprox (s := [dModel, projDim]) "direct vs composed mha dWk"
     dWkCuda dWkCudaComposed (tol := 2e-2)
-  Utils.assertTensorApprox (s := [dModel, projDim]) "flash vs composed mha dWv"
+  Utils.assertTensorApprox (s := [dModel, projDim]) "direct vs composed mha dWv"
     dWvCuda dWvCudaComposed (tol := 2e-2)
-  Utils.assertTensorApprox (s := [projDim, dModel]) "flash vs composed mha dWo"
+  Utils.assertTensorApprox (s := [projDim, dModel]) "direct vs composed mha dWo"
     dWoCuda dWoCudaComposed (tol := 2e-2)
 
   Utils.assertTensorApprox (s := outShape) "mha forward" yCuda yCpu (tol := 2e-2)

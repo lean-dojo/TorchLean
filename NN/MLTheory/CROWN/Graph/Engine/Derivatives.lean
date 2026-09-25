@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Graph.Engine.IBP -- shake: keep
+public import NN.MLTheory.CROWN.Graph.Engine.DerivativeRules
+public import NN.MLTheory.CROWN.Graph.Engine.LayerNormDerivatives
 
 /-!
 # Derivative Interval Passes
@@ -17,9 +19,9 @@ intermediate enclosure.
 
 Linear operations, pointwise arithmetic, supported activations, and selected structural operations
 have explicit rules. Coupled softmax derivatives are evaluated only when the scalar instance
-declares their algebra exact. LayerNorm derivatives remain unresolved: the rowwise rule with
-stored affine parameters and epsilon has not yet been connected to this interval pass. A missing
-box is reported as a propagation failure by the certificate consumers.
+declares their algebra exact. LayerNorm uses independent rows, its stored affine parameters,
+and a positive epsilon to bound first and mixed derivatives. A missing box is reported as a
+propagation failure by the certificate consumers.
 -/
 
 public section
@@ -61,6 +63,102 @@ private def sigmoidSecondDerivBox (dim : Nat) : FlatBox α :=
   { dim := dim
     lo := Tensor.full (α := α) (.dim dim .scalar) (-1)
     hi := Tensor.full (α := α) (.dim dim .scalar) 1 }
+
+/-- Bounds for `δᵢⱼ - yⱼ` within one softmax normalization row. -/
+private def softmaxRowDeltaMinus {n : Nat} (y : Fin n → α × α)
+    (i j : Fin n) : α × α :=
+  let delta : α := if i = j then 1 else 0
+  (subDown delta (y j).2, subUp delta (y j).1)
+
+/-- One row's Jacobian entry `yᵢ (δᵢⱼ - yⱼ)`. -/
+private def softmaxRowJacobian {n : Nat} (y : Fin n → α × α)
+    (i j : Fin n) : α × α :=
+  let delta := softmaxRowDeltaMinus y i j
+  intervalMul (y i).1 (y i).2 delta.1 delta.2
+
+/-- Contract one softmax row's Jacobian with a direction enclosure. -/
+private def softmaxRowFirstDerivative {n : Nat}
+    (y dz : Fin n → α × α) (i : Fin n) : α × α :=
+  (List.finRange n).foldl (fun acc j =>
+    let jacobian := softmaxRowJacobian y i j
+    let term := intervalMul jacobian.1 jacobian.2 (dz j).1 (dz j).2
+    (addDown acc.1 term.1, addUp acc.2 term.2)) (0, 0)
+
+/-- One row's Hessian entry `Jᵢⱼ (δᵢₖ - yₖ) - yᵢ Jⱼₖ`. -/
+private def softmaxRowHessian {n : Nat} (y : Fin n → α × α)
+    (i j k : Fin n) : α × α :=
+  let jacobian := softmaxRowJacobian y i j
+  let delta := softmaxRowDeltaMinus y i k
+  let first := intervalMul jacobian.1 jacobian.2 delta.1 delta.2
+  let innerJacobian := softmaxRowJacobian y j k
+  let second := intervalMul (y i).1 (y i).2 innerJacobian.1 innerJacobian.2
+  (subDown first.1 second.2, subUp first.2 second.1)
+
+/-- The mixed chain rule `J D²z[u,v] + H[Dz[u], Dz[v]]` for one softmax row. -/
+private def softmaxRowMixedSecondDerivative {n : Nat}
+    (y dzLeft dzRight d2z : Fin n → α × α) (i : Fin n) : α × α :=
+  let linear := softmaxRowFirstDerivative y d2z i
+  let bilinear := (List.finRange n).foldl (fun acc j =>
+    (List.finRange n).foldl (fun acc k =>
+      let hessian := softmaxRowHessian y i j k
+      let directions := intervalMul (dzLeft j).1 (dzLeft j).2 (dzRight k).1 (dzRight k).2
+      let term := intervalMul hessian.1 hessian.2 directions.1 directions.2
+      (addDown acc.1 term.1, addUp acc.2 term.2)) acc) (0, 0)
+  (addDown linear.1 bilinear.1, addUp linear.2 bilinear.2)
+
+/-- Read flat endpoints only after checking the tensor's declared element count. -/
+private def softmaxFlatEndpoints? (s : Shape) (box : FlatBox α) :
+    Option (Fin s.size → α × α) :=
+  if h : box.dim = s.size then
+    let lo := castDimScalar (h := h) box.lo
+    let hi := castDimScalar (h := h) box.hi
+    some fun i => (lo.getScalar i, hi.getScalar i)
+  else
+    none
+
+/--
+Gather the normalization row containing each output coordinate, then scatter its result back.
+
+Only the selected coordinate changes while gathering a row. Outer and interior axes therefore
+use the same row formulas as the final axis, without coupling independent rows. Empty tensors
+have no coordinates to gather; invalid axes and inconsistent coordinates return no enclosure.
+-/
+private def softmaxMapRows? (s : Shape) (axis : Nat)
+    (rowRule : (n : Nat) → (Fin n → Fin s.size) → Fin n → α × α) :
+    Option (FlatBox α) := do
+  let ⟨hAxis⟩ ← Shape.axisInBounds? axis s
+  let n := s.axisSize axis (h := hAxis)
+  let endpoints ← Internal.traverseFin fun i : Fin s.size => do
+    let coordinates := Shape.Coord.toList s (Shape.Coord.unlinearize i)
+    let column ← coordinates[axis]?
+    if hColumn : column < n then
+      let row ← Internal.traverseFin fun j : Fin n =>
+        (Shape.Coord.ofList? s (coordinates.set axis j.val)).map Shape.Coord.linearize
+      pure (rowRule n row ⟨column, hColumn⟩)
+    else
+      none
+  return { dim := s.size
+           lo := Tensor.ofFn fun i => (endpoints i).1
+           hi := Tensor.ofFn fun i => (endpoints i).2 }
+
+/-- Shape-checked first derivative for independent softmax rows along any valid axis. -/
+private def softmaxFirstDerivativeBox? (s : Shape) (axis : Nat)
+    (y dz : FlatBox α) : Option (FlatBox α) := do
+  let yEndpoints ← softmaxFlatEndpoints? s y
+  let dzEndpoints ← softmaxFlatEndpoints? s dz
+  softmaxMapRows? s axis fun _ row =>
+    softmaxRowFirstDerivative (yEndpoints ∘ row) (dzEndpoints ∘ row)
+
+/-- Shape-checked mixed second derivative for independent softmax normalization rows. -/
+private def softmaxMixedSecondDerivativeBox? (s : Shape) (axis : Nat)
+    (y dzLeft dzRight d2z : FlatBox α) : Option (FlatBox α) := do
+  let yEndpoints ← softmaxFlatEndpoints? s y
+  let leftEndpoints ← softmaxFlatEndpoints? s dzLeft
+  let rightEndpoints ← softmaxFlatEndpoints? s dzRight
+  let secondEndpoints ← softmaxFlatEndpoints? s d2z
+  softmaxMapRows? s axis fun _ row =>
+    softmaxRowMixedSecondDerivative (yEndpoints ∘ row) (leftEndpoints ∘ row)
+      (rightEndpoints ∘ row) (secondEndpoints ∘ row)
 
 /--
 Apply an axis permutation to both endpoints of a derivative box.
@@ -113,20 +211,19 @@ private def runFirstDerivativeWithSeed
       -- Not supported by the derivative-bound passes (used by PINN tooling).
       drs
     | .hardMaskedSoftmax _ =>
-      -- The current derivative pass treats softmax as one flat vector. A masked attention tensor
-      -- is row structured, so propagating that rule here would mix independent rows.
+      -- Hard-masked normalization still needs a derivative rule that handles the mask.
       drs
     | .sum =>
       match node.parents with
       | #[p1] =>
-        match drs[p1]! with
+        match (drs[p1]?).join with
         | some dXin => drs.set! id (some (boxSum (α := α) dXin))
         | none => drs
       | _ => drs
     | .linear =>
       match node.parents with
       | #[p1] =>
-        match drs[p1]!, ps.linearWB[id]? with
+        match (drs[p1]?).join, ps.linearWB[id]? with
         | some dXin, some p =>
           if h : dXin.dim = p.n then
             let xB : Box α (.dim p.n .scalar) := castBoxDim (α:=α) (h:=h) { lo := dXin.lo, hi :=
@@ -141,8 +238,20 @@ private def runFirstDerivativeWithSeed
       | _ => drs
     | .matmul =>
       match node.parents with
+      | #[p1, p2] =>
+        let result := do
+          let leftNode ← g.nodes[p1]?
+          let rightNode ← g.nodes[p2]?
+          let left ← (ibp[p1]?).join
+          let right ← (ibp[p2]?).join
+          let dLeft ← (drs[p1]?).join
+          let dRight ← (drs[p2]?).join
+          let first ← ibpBinaryMatmul? leftNode.outShape rightNode.outShape dLeft right
+          let second ← ibpBinaryMatmul? leftNode.outShape rightNode.outShape left dRight
+          pure (boxAdd first second)
+        drs.set! id result
       | #[p1] =>
-        match drs[p1]!, ps.matmulW[id]? with
+        match (drs[p1]?).join, ps.matmulW[id]? with
         | some dXin, some p =>
           if h : dXin.dim = p.n then
             let xB : Box α (.dim p.n .scalar) := castBoxDim (α:=α) (h:=h) { lo := dXin.lo, hi :=
@@ -158,7 +267,7 @@ private def runFirstDerivativeWithSeed
     | .relu =>
       match node.parents with
       | #[p1] =>
-        match drs[p1]! with
+        match (drs[p1]?).join with
         | some dIn =>
           let z := Tensor.full (α:=α) (.dim dIn.dim .scalar) 0
           let o := Tensor.full (α:=α) (.dim dIn.dim .scalar) 1
@@ -171,7 +280,7 @@ private def runFirstDerivativeWithSeed
     | .tanh =>
       match node.parents with
       | #[p1] =>
-        match drs[p1]! with
+        match (drs[p1]?).join with
         | some dZ =>
           match boxMulElem (α := α) dZ (tanhDerivBox (α := α) dZ.dim) with
           | some prod => drs.set! id (some prod)
@@ -181,96 +290,25 @@ private def runFirstDerivativeWithSeed
     | .sigmoid =>
       match node.parents with
       | #[p1] =>
-        match drs[p1]! with
+        match (drs[p1]?).join with
         | some dZ =>
           match boxMulElem (α := α) dZ (sigmoidDerivBox (α := α) dZ.dim) with
           | some prod => drs.set! id (some prod)
           | none => drs
         | none => drs
       | _ => drs
-    | .softmax _ =>
+    | .softmax axis =>
       if !NonlinearBoundOps.supportsIdealCoupledDerivatives (α := α) then drs else
-      match node.parents with
-      | #[p1] =>
-        match drs[p1]!, ibp[id]! with
-        | some dZ, some yB =>
-          -- The formulas below construct one dense softmax Jacobian. They are sound only when
-          -- the node itself is a vector, not when several last-axis rows share one flat box.
-          if h : dZ.dim = yB.dim ∧ node.outShape = .dim yB.dim .scalar then
-            let n := yB.dim
-            -- Cast derivative tensors to dimension n for Fin alignment
-            let dLo := castDimScalar (α:=α) (n:=dZ.dim) (n':=n) (h:=h.1) dZ.lo
-            let dHi := castDimScalar (α:=α) (n:=dZ.dim) (n':=n) (h:=h.1) dZ.hi
-            let fyLo := getDimScalarFn (α:=α) yB.lo
-            let fyHi := getDimScalarFn (α:=α) yB.hi
-            let fdLo := getDimScalarFn (α:=α) dLo
-            let fdHi := getDimScalarFn (α:=α) dHi
-            let mulI (aLo aHi bLo bHi : α) : α × α :=
-              let p1 := aLo * bLo; let p2 := aLo * bHi
-              let p3 := aHi * bLo; let p4 := aHi * bHi
-              let lo1 := if p1 < p2 then p1 else p2
-              let lo2 := if p3 < p4 then p3 else p4
-              let lo  := if lo1 < lo2 then lo1 else lo2
-              let hi1 := if p1 > p2 then p1 else p2
-              let hi2 := if p3 > p4 then p3 else p4
-              let hi  := if hi1 > hi2 then hi1 else hi2
-              (lo, hi)
-            let dlo :=
-              Tensor.dim (fun i =>
-                let yiLo := (fyLo i).item
-                let yiHi := (fyHi i).item
-                let (sumLo, _sumHi) :=
-                  (List.finRange n).foldl (fun (acc : α × α) (k : Fin n) =>
-                    let (accLo, accHi) := acc
-                    let ykLo := (fyLo k).item
-                    let ykHi := (fyHi k).item
-                    let (jikLo, jikHi) :=
-                      if decide (i.val = k.val) then
-                        let oneMinusLo := 1 - yiHi
-                        let oneMinusHi := 1 - yiLo
-                        mulI yiLo yiHi oneMinusLo oneMinusHi
-                      else
-                        let negLo := (-ykHi)
-                        let negHi := (-ykLo)
-                        mulI yiLo yiHi negLo negHi
-                    let dxLo := (fdLo k).item
-                    let dxHi := (fdHi k).item
-                    let (termLo, termHi) := mulI jikLo jikHi dxLo dxHi
-                    (accLo + termLo, accHi + termHi)
-                  ) (0, 0)
-                Tensor.scalar sumLo)
-            let dhi :=
-              Tensor.dim (fun i =>
-                let yiLo := (fyLo i).item
-                let yiHi := (fyHi i).item
-                let (_sumLo, sumHi) :=
-                  (List.finRange n).foldl (fun (acc : α × α) (k : Fin n) =>
-                    let (accLo, accHi) := acc
-                    let ykLo := (fyLo k).item
-                    let ykHi := (fyHi k).item
-                    let (jikLo, jikHi) :=
-                      if decide (i.val = k.val) then
-                        let oneMinusLo := 1 - yiHi
-                        let oneMinusHi := 1 - yiLo
-                        mulI yiLo yiHi oneMinusLo oneMinusHi
-                      else
-                        let negLo := (-ykHi)
-                        let negHi := (-ykLo)
-                        mulI yiLo yiHi negLo negHi
-                    let dxLo := (fdLo k).item
-                    let dxHi := (fdHi k).item
-                    let (termLo, termHi) := mulI jikLo jikHi dxLo dxHi
-                    (accLo + termLo, accHi + termHi)
-                  ) (0, 0)
-                Tensor.scalar sumHi)
-            drs.set! id (some { dim := n, lo := dlo, hi := dhi })
-          else drs
-        | _, _ => drs
-      | _ => drs
+      let result := do
+        let parent ← unaryParent? node.parents
+        let dz ← (drs[parent]?).join
+        let y ← (ibp[id]?).join
+        softmaxFirstDerivativeBox? node.outShape axis y dz
+      drs.set! id result
     | .sin =>
       match node.parents with
       | #[p1] =>
-        match drs[p1]!, ibp[p1]! with
+        match (drs[p1]?).join, (ibp[p1]?).join with
         | some dZ, some zB =>
           match boxUnaryEnclosure? (α := α) NonlinearBoundOps.cosBounds zB with
           | some dF =>
@@ -283,7 +321,7 @@ private def runFirstDerivativeWithSeed
     | .cos =>
       match node.parents with
       | #[p1] =>
-        match drs[p1]!, ibp[p1]! with
+        match (drs[p1]?).join, (ibp[p1]?).join with
         | some dZ, some zB =>
           match boxUnaryEnclosure? (α := α) NonlinearBoundOps.sinBounds zB with
           | some sB =>
@@ -296,7 +334,7 @@ private def runFirstDerivativeWithSeed
     | .exp =>
       match node.parents with
       | #[p1] =>
-        match drs[p1]!, ibp[p1]! with
+        match (drs[p1]?).join, (ibp[p1]?).join with
         | some dZ, some zB =>
           match derivBoxExp? (α := α) zB with
           | some dF =>
@@ -309,7 +347,7 @@ private def runFirstDerivativeWithSeed
     | .log =>
       match node.parents with
       | #[p1] =>
-        match drs[p1]!, ibp[p1]! with
+        match (drs[p1]?).join, (ibp[p1]?).join with
         | some dZ, some zB =>
           match derivBoxLog? (α := α) zB with
           | some dF =>
@@ -322,54 +360,54 @@ private def runFirstDerivativeWithSeed
     | .add =>
       match node.parents with
       | #[p1, p2] =>
-        match drs[p1]!, drs[p2]! with
+        match (drs[p1]?).join, (drs[p2]?).join with
         | some d1, some d2 => some (boxAdd (α:=α) d1 d2) |> fun r => drs.set! id r
         | _, _ => drs
       | _ => drs
     | .sub =>
       match node.parents with
       | #[p1, p2] =>
-        match drs[p1]!, drs[p2]! with
+        match (drs[p1]?).join, (drs[p2]?).join with
         | some d1, some d2 => some (boxSub (α:=α) d1 d2) |> fun r => drs.set! id r
         | _, _ => drs
       | _ => drs
     | .mulElem =>
       match node.parents with
       | #[p1, p2] =>
-        match drs[p1]!, drs[p2]!, ibp[p1]!, ibp[p2]! with
+        match (drs[p1]?).join, (drs[p2]?).join, (ibp[p1]?).join, (ibp[p2]?).join with
         | some dx, some dy, some xB, some yB =>
           match boxMulElem (α:=α) dx yB, boxMulElem (α:=α) xB dy with
           | some t1, some t2 => drs.set! id (some (boxAdd (α:=α) t1 t2))
           | _, _ => drs
         | _, _, _, _ => drs
       | _ => drs
-    | .layernorm _ =>
-      -- LayerNorm couples coordinates within each normalization row. Its derivative also
-      -- depends on the stored scale and epsilon, so a flattened whole-tensor rule does not
-      -- describe the operation. In particular, the variance contribution contains
-      -- (variance + epsilon)^(-3/2); bounding it requires a positive denominator lower bound
-      -- without increasing that lower bound before taking its reciprocal.
-      --
-      -- The real rowwise derivative bound is proved separately in LayerNormBounds. Until
-      -- that bound is connected to a directed transfer with the actual payload, leave this
-      -- node unresolved for every scalar backend. Callers then report a missing derivative
-      -- box instead of accepting an enclosure from an unsupported formula.
-      drs.set! id none
+    | .layernorm axis =>
+      let result := do
+        let parent ← unaryParent? node.parents
+        let input ← (ibp[parent]?).join
+        let direction ← (drs[parent]?).join
+        let zero : FlatBox α :=
+          { dim := input.dim, lo := Tensor.full [input.dim] 0, hi := Tensor.full [input.dim] 0 }
+        let bounds ← layerNormDerivativeBoxes? node.outShape axis ps.layerNorm[id]?
+          input direction zero zero
+        pure bounds.1
+      drs.set! id result
     | .reshape _ _ | .flatten _ =>
       -- Reshape and flatten retain the order of the scalar coordinates.
       match node.parents with
-      | #[p1] => drs.set! id (drs[p1]!)
+      | #[p1] => drs.set! id ((drs[p1]?).join)
       | _ => drs
     | .transpose .. | .permute _ =>
       drs.set! id (permuteDerivativeBox? (α := α) g.nodes drs node)
-    | .concat _ =>
-      -- Concatenation needs derivative boxes from every parent.
-      drs
+    | .concat axis =>
+      drs.set! id (concatNodeBoxes? (α := α) g.nodes drs node axis)
     | .abs | .sqrt | .inv | .maxElem | .minElem | .broadcastTo .. | .reduceSum .. | .reduceMean
       .. =>
       drs
     | .mseLoss => drs
-    | .conv .. | .batchNormEval .. => drs
+    | .conv configuration =>
+      drs.set! id (convDerivativeBox? g.nodes ps drs id node configuration)
+    | .batchNormEval .. => drs
   if crownGraphSemanticsSupported (α := α) g ps then
     (List.finRange g.nodes.size).foldl propagate init
   else
@@ -448,7 +486,7 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
     | .linear =>
       match node.parents with
       | #[p1] =>
-        match d2s[p1]!, ps.linearWB[id]? with
+        match (d2s[p1]?).join, ps.linearWB[id]? with
         | some d2Xin, some p =>
           if h : d2Xin.dim = p.n then
             let xB : Box α (.dim p.n .scalar) := castBoxDim (α:=α) (h:=h) { lo := d2Xin.lo, hi :=
@@ -463,8 +501,26 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
       | _ => d2s
     | .matmul =>
       match node.parents with
+      | #[p1, p2] =>
+        let result := do
+          let leftNode ← g.nodes[p1]?
+          let rightNode ← g.nodes[p2]?
+          let left ← (ibp[p1]?).join
+          let right ← (ibp[p2]?).join
+          let duLeft ← (dLeft[p1]?).join
+          let duRight ← (dLeft[p2]?).join
+          let dvLeft ← (dRight[p1]?).join
+          let dvRight ← (dRight[p2]?).join
+          let d2Left ← (d2s[p1]?).join
+          let d2Right ← (d2s[p2]?).join
+          let term1 ← ibpBinaryMatmul? leftNode.outShape rightNode.outShape d2Left right
+          let term2 ← ibpBinaryMatmul? leftNode.outShape rightNode.outShape duLeft dvRight
+          let term3 ← ibpBinaryMatmul? leftNode.outShape rightNode.outShape dvLeft duRight
+          let term4 ← ibpBinaryMatmul? leftNode.outShape rightNode.outShape left d2Right
+          pure (boxAdd (boxAdd (boxAdd term1 term2) term3) term4)
+        d2s.set! id result
       | #[p1] =>
-        match d2s[p1]!, ps.matmulW[id]? with
+        match (d2s[p1]?).join, ps.matmulW[id]? with
         | some d2Xin, some p =>
           if h : d2Xin.dim = p.n then
             let xB : Box α (.dim p.n .scalar) := castBoxDim (α:=α) (h:=h) { lo := d2Xin.lo, hi :=
@@ -480,22 +536,22 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
     | .add =>
       match node.parents with
       | #[p1, p2] =>
-        match d2s[p1]!, d2s[p2]! with
+        match (d2s[p1]?).join, (d2s[p2]?).join with
         | some a, some b => d2s.set! id (some (boxAdd (α:=α) a b))
         | _, _ => d2s
       | _ => d2s
     | .sub =>
       match node.parents with
       | #[p1, p2] =>
-        match d2s[p1]!, d2s[p2]! with
+        match (d2s[p1]?).join, (d2s[p2]?).join with
         | some a, some b => d2s.set! id (some (boxSub (α:=α) a b))
         | _, _ => d2s
       | _ => d2s
     | .mulElem =>
       match node.parents with
       | #[p1, p2] =>
-        match ibp[p1]!, ibp[p2]!, dLeft[p1]!, dRight[p1]!, dLeft[p2]!, dRight[p2]!,
-            d2s[p1]!, d2s[p2]! with
+        match (ibp[p1]?).join, (ibp[p2]?).join, (dLeft[p1]?).join, (dRight[p1]?).join,
+            (dLeft[p2]?).join, (dRight[p2]?).join, (d2s[p1]?).join, (d2s[p2]?).join with
         | some xB, some yB, some dxLeft, some dxRight, some dyLeft, some dyRight,
             some d2x, some d2y =>
           -- D²(xy)[u,v] = D²x[u,v]y + Dx[u]Dy[v] + Dx[v]Dy[u] + xD²y[u,v].
@@ -512,7 +568,7 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
     | .relu =>
       match node.parents with
       | #[p1] =>
-        match ibp[p1]! with
+        match (ibp[p1]?).join with
         | some zB =>
           let z := Tensor.full (α:=α) (.dim zB.dim .scalar) 0
           d2s.set! id (some { dim := zB.dim, lo := z, hi := z })
@@ -521,7 +577,7 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
     | .tanh =>
       match node.parents with
       | #[p1] =>
-        match dLeft[p1]!, dRight[p1]!, d2s[p1]! with
+        match (dLeft[p1]?).join, (dRight[p1]?).join, (d2s[p1]?).join with
         | some dzLeft, some dzRight, some d2z =>
           match boxMulElem (α := α) dzLeft dzRight with
           | none => d2s
@@ -536,7 +592,7 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
     | .sin =>
       match node.parents with
       | #[p1] =>
-        match ibp[p1]!, dLeft[p1]!, dRight[p1]!, d2s[p1]! with
+        match (ibp[p1]?).join, (dLeft[p1]?).join, (dRight[p1]?).join, (d2s[p1]?).join with
         | some zB, some dzLeft, some dzRight, some d2z =>
           -- D²sin(z)[u,v] = -sin(z) Dz[u] Dz[v] + cos(z) D²z[u,v].
           match boxUnaryEnclosure? (α := α) NonlinearBoundOps.sinBounds zB,
@@ -555,7 +611,7 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
     | .cos =>
       match node.parents with
       | #[p1] =>
-        match ibp[p1]!, dLeft[p1]!, dRight[p1]!, d2s[p1]! with
+        match (ibp[p1]?).join, (dLeft[p1]?).join, (dRight[p1]?).join, (d2s[p1]?).join with
         | some zB, some dzLeft, some dzRight, some d2z =>
           -- D²cos(z)[u,v] = -cos(z) Dz[u] Dz[v] - sin(z) D²z[u,v].
           match boxUnaryEnclosure? (α := α) NonlinearBoundOps.sinBounds zB,
@@ -574,7 +630,7 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
     | .sigmoid =>
       match node.parents with
       | #[p1] =>
-        match dLeft[p1]!, dRight[p1]!, d2s[p1]! with
+        match (dLeft[p1]?).join, (dRight[p1]?).join, (d2s[p1]?).join with
         | some dzLeft, some dzRight, some d2z =>
           match boxMulElem (α := α) dzLeft dzRight with
           | none => d2s
@@ -589,7 +645,7 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
     | .exp =>
       match node.parents with
       | #[p1] =>
-        match ibp[p1]!, dLeft[p1]!, dRight[p1]!, d2s[p1]! with
+        match (ibp[p1]?).join, (dLeft[p1]?).join, (dRight[p1]?).join, (d2s[p1]?).join with
         | some zB, some dzLeft, some dzRight, some d2z =>
           match derivBoxExp? (α := α) zB with
           | some derivative =>
@@ -606,7 +662,7 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
     | .log =>
       match node.parents with
       | #[p1] =>
-        match ibp[p1]!, dLeft[p1]!, dRight[p1]!, d2s[p1]! with
+        match (ibp[p1]?).join, (dLeft[p1]?).join, (dRight[p1]?).join, (d2s[p1]?).join with
         | some zB, some dzLeft, some dzRight, some d2z =>
           match derivBoxLog? (α := α) zB, secondDerivBoxLog? (α := α) zB with
           | some firstDerivative, some secondDerivative =>
@@ -623,194 +679,47 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
     | .sum =>
       match node.parents with
       | #[p1] =>
-        match d2s[p1]! with
+        match (d2s[p1]?).join with
         | some d2Xin => d2s.set! id (some (boxSum (α := α) d2Xin))
         | none => d2s
       | _ => d2s
     | .reshape _ _ | .flatten _ =>
       match node.parents with
-      | #[p1] => d2s.set! id (d2s[p1]!)
+      | #[p1] => d2s.set! id ((d2s[p1]?).join)
       | _ => d2s
     | .transpose .. | .permute _ =>
       d2s.set! id (permuteDerivativeBox? (α := α) g.nodes d2s node)
-    | .concat _ => d2s
+    | .concat axis =>
+      d2s.set! id (concatNodeBoxes? (α := α) g.nodes d2s node axis)
     | .mseLoss => d2s
-    | .softmax _ =>
-      -- D²y_i[u,v] = Σ_k J_ik D²z_k[u,v] + Σ_{j,k} H_ijk Dz_j[u] Dz_k[v], with
-      -- J = diag(y) - y yᵀ and H derived from ∂J/∂z (bounded via y-bounds).
+    | .softmax axis =>
+      -- The ideal coupled formula remains unavailable to finite-precision backends.
       if !NonlinearBoundOps.supportsIdealCoupledDerivatives (α := α) then d2s else
-      match node.parents with
-      | #[p1] =>
-        match ibp[id]!, dLeft[p1]!, dRight[p1]!, d2s[p1]! with
-        | some yB, some dzLeft, some dzRight, some d2z =>
-          -- The Hessian below is for one vector-valued softmax row.
-          if hLeft : dzLeft.dim = yB.dim ∧ node.outShape = .dim yB.dim .scalar then
-            if hRight : dzRight.dim = yB.dim then
-              if h2 : d2z.dim = yB.dim then
-              let n := yB.dim
-              -- Cast derivative tensors to dimension n for Fin alignment
-              let dLeftLo := castDimScalar (α:=α) (n:=dzLeft.dim) (n':=n)
-                (h:=hLeft.1) dzLeft.lo
-              let dLeftHi := castDimScalar (α:=α) (n:=dzLeft.dim) (n':=n)
-                (h:=hLeft.1) dzLeft.hi
-              let dRightLo := castDimScalar (α:=α) (n:=dzRight.dim) (n':=n)
-                (h:=hRight) dzRight.lo
-              let dRightHi := castDimScalar (α:=α) (n:=dzRight.dim) (n':=n)
-                (h:=hRight) dzRight.hi
-              let d2Lo := castDimScalar (α:=α) (n:=d2z.dim) (n':=n) (h:=h2) d2z.lo
-              let d2Hi := castDimScalar (α:=α) (n:=d2z.dim) (n':=n) (h:=h2) d2z.hi
-              let fyLo := getDimScalarFn (α:=α) yB.lo
-              let fyHi := getDimScalarFn (α:=α) yB.hi
-              let fdLeftLo := getDimScalarFn (α:=α) dLeftLo
-              let fdLeftHi := getDimScalarFn (α:=α) dLeftHi
-              let fdRightLo := getDimScalarFn (α:=α) dRightLo
-              let fdRightHi := getDimScalarFn (α:=α) dRightHi
-              let fd2Lo := getDimScalarFn (α:=α) d2Lo
-              let fd2Hi := getDimScalarFn (α:=α) d2Hi
-              let mulI (aLo aHi bLo bHi : α) : α × α :=
-                let p1 := aLo * bLo; let p2 := aLo * bHi
-                let p3 := aHi * bLo; let p4 := aHi * bHi
-                let lo1 := if p1 < p2 then p1 else p2
-                let lo2 := if p3 < p4 then p3 else p4
-                let lo  := if lo1 < lo2 then lo1 else lo2
-                let hi1 := if p1 > p2 then p1 else p2
-                let hi2 := if p3 > p4 then p3 else p4
-                let hi  := if hi1 > hi2 then hi1 else hi2
-                (lo, hi)
-              -- Bounds for (δ_ik - y_k)
-              let deltaMinus (i k : Fin n) : α × α :=
-                if decide (i.val = k.val) then
-                  let ykLo := (fyLo k).item
-                  let ykHi := (fyHi k).item
-                  (1 - ykHi, 1 - ykLo)
-                else
-                  let ykLo := (fyLo k).item
-                  let ykHi := (fyHi k).item
-                  ((-ykHi), (-ykLo))
-              -- J*d2z term per i
-              let part1_lo :=
-                Tensor.dim (fun i =>
-                  let yiLo := (fyLo i).item
-                  let yiHi := (fyHi i).item
-                  let (sumLo, _sumHi) :=
-                    (List.finRange n).foldl (fun (acc : α × α) (k : Fin n) =>
-                      let (accLo, accHi) := acc
-                      let (dmkLo, dmkHi) := deltaMinus i k
-                      let d2kLo := (fd2Lo k).item
-                      let d2kHi := (fd2Hi k).item
-                      let (jikLo, jikHi) := mulI yiLo yiHi dmkLo dmkHi
-                      let (termLo, termHi) := mulI jikLo jikHi d2kLo d2kHi
-                      (accLo + termLo, accHi + termHi)
-                    ) (0, 0)
-                  Tensor.scalar sumLo)
-              let part1_hi :=
-                Tensor.dim (fun i =>
-                  let yiLo := (fyLo i).item
-                  let yiHi := (fyHi i).item
-                  let (_sumLo, sumHi) :=
-                    (List.finRange n).foldl (fun (acc : α × α) (k : Fin n) =>
-                      let (accLo, accHi) := acc
-                      let (dmkLo, dmkHi) := deltaMinus i k
-                      let d2kLo := (fd2Lo k).item
-                      let d2kHi := (fd2Hi k).item
-                      let (jikLo, jikHi) := mulI yiLo yiHi dmkLo dmkHi
-                      let (termLo, termHi) := mulI jikLo jikHi d2kLo d2kHi
-                      (accLo + termLo, accHi + termHi)
-                    ) (0, 0)
-                  Tensor.scalar sumHi)
-              -- Quadratic term Σ_{j,k} H_ijk dz_j dz_k, use interval-bounded H from y-bounds
-              let part2_lo :=
-                Tensor.dim (fun i =>
-                  let yiLo := (fyLo i).item
-                  let yiHi := (fyHi i).item
-                  let (sumLo, _sumHi) :=
-                    (List.finRange n).foldl (fun (acc : α × α) (j : Fin n) =>
-                      let (accLo, accHi) := acc
-                      let yjLo := (fyLo j).item
-                      let yjHi := (fyHi j).item
-                      let (dijLo, dijHi) : α × α := if decide (i.val = j.val) then (1 -
-                        yjHi, 1 - yjLo) else ((-yjHi), (-yjLo))
-                      (List.finRange n).foldl (fun (acc2 : α × α) (k : Fin n) =>
-                        let (acc2Lo, acc2Hi) := acc2
-                        let ykLo := (fyLo k).item
-                        let ykHi := (fyHi k).item
-                        let (dikLo, dikHi) : α × α := if decide (i.val = k.val) then (1 -
-                          ykHi, 1 - ykLo) else ((-ykHi), (-ykLo))
-                        -- H_ijk = y_i (dij)(dik) - y_i y_j (δ_jk - y_k)
-                        let (t1Lo, t1Hi) :=
-                          let (aLo, aHi) := mulI yiLo yiHi dijLo dijHi
-                          mulI aLo aHi dikLo dikHi
-                        let (delta_jk_Lo, delta_jk_Hi) : α × α := if decide (j.val = k.val) then
-                          (1 - ykHi, 1 - ykLo) else ((-ykHi), (-ykLo))
-                        let (t2Lo, t2Hi) :=
-                          let (aLo, aHi) := mulI yiLo yiHi yjLo yjHi
-                          mulI aLo aHi delta_jk_Lo delta_jk_Hi
-                        -- H interval = t1 - t2
-                        let hLo := t1Lo - t2Hi
-                        let hHi := t1Hi - t2Lo
-                        let dzjLo := (fdLeftLo j).item
-                        let dzjHi := (fdLeftHi j).item
-                        let dzkLo := (fdRightLo k).item
-                        let dzkHi := (fdRightHi k).item
-                        let (prodLo, prodHi) := mulI dzjLo dzjHi dzkLo dzkHi
-                        let (termLo, termHi) := mulI hLo hHi prodLo prodHi
-                        (acc2Lo + termLo, acc2Hi + termHi)
-                      ) (accLo, accHi)
-                    ) (0, 0)
-                  Tensor.scalar sumLo)
-              let part2_hi :=
-                Tensor.dim (fun i =>
-                  let yiLo := (fyLo i).item
-                  let yiHi := (fyHi i).item
-                  let (_sumLo, sumHi) :=
-                    (List.finRange n).foldl (fun (acc : α × α) (j : Fin n) =>
-                      let (accLo, accHi) := acc
-                      let yjLo := (fyLo j).item
-                      let yjHi := (fyHi j).item
-                      let (dijLo, dijHi) : α × α := if decide (i.val = j.val) then (1 -
-                        yjHi, 1 - yjLo) else ((-yjHi), (-yjLo))
-                      (List.finRange n).foldl (fun (acc2 : α × α) (k : Fin n) =>
-                        let (acc2Lo, acc2Hi) := acc2
-                        let ykLo := (fyLo k).item
-                        let ykHi := (fyHi k).item
-                        let (dikLo, dikHi) : α × α := if decide (i.val = k.val) then (1 -
-                          ykHi, 1 - ykLo) else ((-ykHi), (-ykLo))
-                        let (t1Lo, t1Hi) :=
-                          let (aLo, aHi) := mulI yiLo yiHi dijLo dijHi
-                          mulI aLo aHi dikLo dikHi
-                        let (delta_jk_Lo, delta_jk_Hi) : α × α := if decide (j.val = k.val) then
-                          (1 - ykHi, 1 - ykLo) else ((-ykHi), (-ykLo))
-                        let (t2Lo, t2Hi) :=
-                          let (aLo, aHi) := mulI yiLo yiHi yjLo yjHi
-                          mulI aLo aHi delta_jk_Lo delta_jk_Hi
-                        let hLo := t1Lo - t2Hi
-                        let hHi := t1Hi - t2Lo
-                        let dzjLo := (fdLeftLo j).item
-                        let dzjHi := (fdLeftHi j).item
-                        let dzkLo := (fdRightLo k).item
-                        let dzkHi := (fdRightHi k).item
-                        let (prodLo, prodHi) := mulI dzjLo dzjHi dzkLo dzkHi
-                        let (termLo, termHi) := mulI hLo hHi prodLo prodHi
-                        (acc2Lo + termLo, acc2Hi + termHi)
-                      ) (accLo, accHi)
-                    ) (0, 0)
-                  Tensor.scalar sumHi)
-              let lo := Tensor.addSpec part1_lo part2_lo
-              let hi := Tensor.addSpec part1_hi part2_hi
-              d2s.set! id (some { dim := n, lo := lo, hi := hi })
-              else d2s
-            else d2s
-          else d2s
-        | _, _, _, _ => d2s
-      | _ => d2s
-    | .layernorm _ =>
-      -- The existing diagonal second-order formula does not establish the mixed bilinear term.
-      -- Leave the node unresolved until a row-wise LayerNorm Hessian enclosure is available.
-      d2s
+      let result := do
+        let parent ← unaryParent? node.parents
+        let y ← (ibp[id]?).join
+        let dzLeft ← (dLeft[parent]?).join
+        let dzRight ← (dRight[parent]?).join
+        let d2z ← (d2s[parent]?).join
+        softmaxMixedSecondDerivativeBox? node.outShape axis y dzLeft dzRight d2z
+      d2s.set! id result
+    | .layernorm axis =>
+      let result := do
+        let parent ← unaryParent? node.parents
+        let input ← (ibp[parent]?).join
+        let left ← (dLeft[parent]?).join
+        let right ← (dRight[parent]?).join
+        let mixed ← (d2s[parent]?).join
+        let bounds ← layerNormDerivativeBoxes? node.outShape axis ps.layerNorm[id]?
+          input left right mixed
+        pure bounds.2
+      d2s.set! id result
     | .abs | .sqrt | .inv | .maxElem | .minElem | .broadcastTo .. | .reduceSum .. | .reduceMean
       .. =>
       d2s
-    | .conv .. | .batchNormEval .. => d2s
+    | .conv configuration =>
+      d2s.set! id (convDerivativeBox? g.nodes ps d2s id node configuration)
+    | .batchNormEval .. => d2s
   if crownGraphSemanticsSupported (α := α) g ps then
     (List.finRange g.nodes.size).foldl propagate init
   else

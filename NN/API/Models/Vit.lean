@@ -53,7 +53,7 @@ structure ViT.EncoderConfig (d : Nat) where
   attentionDropout? : Option Float := none
   /-- Drop activated FFN hidden units before their output projection. -/
   feedForwardDropout? : Option Float := none
-  /-- Enable trainable query, key, and value biases while preserving the legacy default layout. -/
+  /-- Enable trainable query, key, and value biases. -/
   attentionInputBias : Bool := false
   /-- Classifier readout; `.cls` also prepends a learned class token. -/
   pooling : ViT.Pooling := .mean

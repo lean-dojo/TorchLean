@@ -110,6 +110,8 @@ structure Node (α : Type) [TorchLean.Storage α] where
   Whether reverse-mode propagation should visit this node.
 
   If `false`, reverse-mode traversal skips this node and does not accumulate gradients into it.
+  Eager operations inherit the disjunction of their differentiable parents' flags; leaves retain
+  the caller's explicit flag.
   -/
   requiresGrad : Bool := true
   /-- Parent node ids (dependencies) in the tape. -/
@@ -236,8 +238,8 @@ You provide:
 - `forward : Tensor α σ → Tensor α τ`
 - `backward : Tensor α σ → Tensor α τ → Tensor α σ` (a VJP rule; note it may depend on the input)
 
-The returned node stores the forward value and a backward closure that checks the upstream
-gradient's shape and returns the parent contribution.
+The returned node inherits the parent's gradient flag and stores the forward value and a backward
+closure that checks the upstream gradient's shape and returns the parent contribution.
 -/
 def unary {α : Type} [TorchLean.Storage α] {σ τ : Shape}
   (t : Tape α) (opName : String) (xId : Nat)
@@ -249,7 +251,7 @@ def unary {α : Type} [TorchLean.Storage α] {σ τ : Shape}
   let node : Node α :=
     { name := some opName
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := τ) dLdyAny

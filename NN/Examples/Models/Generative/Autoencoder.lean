@@ -80,7 +80,7 @@ def train (runtime : Runtime.Config) (flags : RealData.CifarModelTrainFlags) :
       Trainer.RunConfig.forObjective
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := flags.training.learningRate } })
-        .meanSquaredError
+        .mse
         (seed := flags.data.seed)
   trainer.train
     (data flags)

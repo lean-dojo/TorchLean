@@ -282,11 +282,11 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
       none
   pure
     { state := parameters
-      loss := lossFn
-      diff := diff
-      grad := grad
-      stepWithLoss := stepWithLoss
-      step := step
+      lossFn := lossFn
+      diffFn := diff
+      gradFn := grad
+      stepWithLossFn := stepWithLoss
+      stepFn := step
       adamStep? := adamStep?
       adamStepWithLoss? := adamStepWithLoss?
       adamWStep? := adamWStep?

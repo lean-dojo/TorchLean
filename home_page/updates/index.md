@@ -38,7 +38,8 @@ constructs that parameter directly from a rational, keeps it through a typed aff
 and compares its forward value, input derivatives and `nn.sgdStep` update with an elementary
 calculation. This uses software arithmetic on the typed CPU path. The supervised trainer retains
 `Float` data, report and checkpoint boundaries; its `.ieee` option remains fixed to binary32.
-CUDA kernels support binary32 and binary64, not the configured arbitrary-precision CPU path.
+The eager LibTorch CUDA backend uses binary32 buffers; the separate matrix-product interface uses
+binary64. Configurable FloatLib precision runs on the typed CPU path.
 
 The numerical proofs distinguish rounded trees from exact accumulation followed by one final
 rounding. Their intermediate values can differ, so an error theorem for one does not justify the
@@ -296,7 +297,7 @@ implementation is available in
   <div class="update-date">August 2026</div>
   <div class="update-body" markdown="1">
 
-## Exact Tape Derivatives and CUDA Cache Limits
+## Exact Tape Derivatives
 
 The exact autograd proof reaches the lowered tape. For a real algebraic graph, dense reverse
 accumulation returns the graph's full cotangent context, and its input block is the adjoint Fréchet
@@ -318,22 +319,6 @@ import NN.Proofs.Autograd.Runtime.Link.FDeriv
 
 This result concerns the exact tape over `Real`. Native `Float32` and CUDA executions still require
 the numerical-refinement assumptions described in the runtime-approximation chapter.
-
-The CUDA allocator also has an optional byte limit for released buffers retained for reuse:
-
-```bash
-TORCHLEAN_CUDA_CACHE_CAP_BYTES=$((512 * 1024 * 1024)) \
-  lake -K cuda=true exe torchlean gpt2 --device cuda --steps 100
-```
-
-`AllocatorStats.cacheBytes` reports reusable device memory separately from live tensors, while
-`cacheCapBytes` reports the parsed limit. A block that would exceed the limit is synchronized and
-freed. The cap is fixed when the allocator first reads it; `0` or an unset variable means
-unbounded.
-
-The CUDA stress suite runs the allocator in fresh subprocesses and checks a finite limit, an
-explicit unbounded control, malformed input, and integer overflow. Its assertion uses the limit
-reported by the native allocator rather than reproducing the native parser in Lean.
 
   </div>
 </article>
@@ -398,7 +383,7 @@ execution and CUDA Adam serialization.
   </section>
 </div>
 
-The trainer treats `samplesPerStep` (called `batchSize` at the time of this note) as the number
+The trainer treats `samplesPerStep` as the number
 of dataset items per optimizer update. For an ordinary dataset those items are samples. For
 `Data.batch`, each item is already a typed tensor minibatch, so `samplesPerStep := 1` keeps one
 vectorized pass per update. Larger values accumulate
@@ -411,21 +396,6 @@ path may fold those axes together with the attention heads for batched matrix mu
 TorchLean still applies the hard mask and computes the local VJP. A regression compares the
 vectorized forward value, input gradient, and shared weight gradients with repeated single-sample
 execution.
-
-Layer normalization and tanh-approximate GELU follow the same rule: one TorchLean operation,
-one local VJP, and fused CUDA kernels for the numerical work. In a two-step GPT-2-small trace with
-batch 6 and context 1024, local profiling showed fewer kernel launches while leaving the
-matrix-multiplication schedule unchanged. The CUDA parity suite checks forward values and gradients
-against the CPU path; the native kernels remain inside the documented runtime boundary. Timing
-claims belong with a retained benchmark configuration and trace, so this update records the
-implementation and regression coverage rather than presenting one workstation run as a general
-speedup.
-
-Matrix backward no longer materializes transposed copies before calling cuBLAS. The runtime
-passes logical transpose flags to the same batched-matrix primitive used by linear layers,
-projection weights, and ordinary `matmul`. Focused traces confirm that these temporary transpose
-kernels disappear, and parity tests compare the resulting forward values and gradients with the
-existing path.
 
 CUDA Adam and AdamW state can be saved independently of model checkpoints. The binary
 format records optimizer hyperparameters, parameter shapes, mutability flags, moment tensors, and
@@ -672,7 +642,7 @@ linters rather than suppressing them.
 The small examples had hidden an expensive habit: large parameters were first expanded into nested
 Lean values and only then copied into the execution engine. Parameters and gradients are
 materialized directly where they will run. We also stopped generic convolution backward from
-rebuilding the same derivative structure, and taught CUDA attention and fused FNO paths to release
+rebuilding the same derivative structure, and taught CUDA attention and FNO training to release
 temporary buffers as soon as their contribution is consumed.
 
 The most useful failure came from sparse reverse mode. A pure expression allocating a one-element
@@ -692,19 +662,12 @@ Shape-erased CUDA values compare the native buffer length with the recorded tens
 an operation runs. Dense and sparse backward also reject output seeds or initial gradients with the
 wrong length. The stress suite covers each rejected case.
 
-We exercised 21 CPU workflows and 24 CUDA workflows, including dense, convolutional, attention,
-recurrent, operator-learning, generative, and reinforcement-learning models. On the machine used
-for this release, a roughly 100-million-parameter MLP completed ten CUDA optimizer steps in about
-15.2 seconds. The fused Burgers FNO ran for 100 steps with no growth in live buffers; training MSE
-fell from 0.3260 to 0.0172 and test MSE ended at 0.0220. These numbers record what we tested on one
-machine. They are not a general performance promise.
-
 ### Documentation and Validation
 
 The Guide and API reference follow the new module layout. Installation has separate notes for
-Linux, macOS, WSL2, native Windows, CUDA, and optional LibTorch support, and the floating-point and
+Linux, macOS, WSL2, native Windows, and LibTorch CUDA support, and the floating-point and
 backend chapters explain where a theorem ends and a runtime assumption begins. Repository checks
-build `NN` directly; `NN.Library` no longer exists.
+build `NN` directly.
 
 Lyapunov results consume an explicit `LyapunovCert.ValidFor` proof, so a producer's JSON flags
 cannot become a stability theorem by themselves.

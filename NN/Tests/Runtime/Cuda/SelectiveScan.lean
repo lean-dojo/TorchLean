@@ -24,13 +24,7 @@ namespace SelectiveScan
 
 open Runtime.Autograd.Cuda
 
-/-!
-The float-buffer assertions and the `floatArray` literal wrapper come from `Cuda.Utils`, where the
-rest of this directory already gets them. This file used to define its own `assertFloatArrayApprox`
-that open-coded the absolute difference. The shared one goes through `Utils.assertApprox`, so these
-checks now also reject `NaN` and infinities: with `d := NaN` the old `d > tol` test was false, which
-means a kernel returning `NaN` used to pass this suite silently.
--/
+-- Shared buffer assertions check tolerances and reject nonfinite values.
 open Tests.Cuda.Utils (floatArray assertFloatArrayApprox)
 
 def run : IO Unit := do

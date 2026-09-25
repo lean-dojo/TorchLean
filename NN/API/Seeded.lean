@@ -173,18 +173,9 @@ def relu {shape : Shape} : Builder (Sequential shape shape) :=
 def silu {shape : Shape} : Builder (Sequential shape shape) :=
   pure (activation (s := shape) .silu)
 
-/--
-Build tanh-approximate GELU without consuming an initialization seed.
-
-This retains the historical `nn.gelu` behavior. `geluTanh` names the same formula explicitly.
-Erf-based GELU is not supported by the scalar operation interface.
--/
+/-- Build GELU's cubic tanh approximation without consuming an initialization seed. -/
 def gelu {shape : Shape} : Builder (Sequential shape shape) :=
   pure (activation (s := shape) .gelu)
-
-/-- Explicit constructor for GELU's cubic tanh approximation. -/
-def geluTanh {shape : Shape} : Builder (Sequential shape shape) :=
-  gelu
 
 /-- Build an elementwise sigmoid layer without consuming an initialization seed. -/
 def sigmoid {shape : Shape} : Builder (Sequential shape shape) :=

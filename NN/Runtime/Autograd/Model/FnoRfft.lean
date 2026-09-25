@@ -12,7 +12,7 @@ public import NN.Runtime.Autograd.Model.Functional.Spectral
 /-!
 # One-dimensional real-FFT FNO blocks
 
-The dense reference and native cuFFT paths share every parameter. Each block stores real and
+The dense reference and ATen real-FFT paths share every parameter. Each block stores real and
 imaginary spectral weights, a pointwise skip matrix, and a bias, in that order. The spectral
 weights have shape `[modes, width, width]`; unlike the full-DFT model, they do not store separate
 negative-frequency parameters.
@@ -27,7 +27,7 @@ open Spec TorchLean
 /--
 One-sided spectral block followed by a pointwise skip connection and an activation.
 
-The default ReLU and parameter order agree with `Cuda.Fno1dRfftFused`. Comparisons must still
+The default ReLU and parameter order agree with `Cuda.Fno1dRfft`. Comparisons must still
 load the same parameter tensors: independently seeded builders need not draw the same values.
 Changing only `path` preserves the function and the checkpoint layout.
 -/

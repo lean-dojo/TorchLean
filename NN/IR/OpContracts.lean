@@ -120,14 +120,13 @@ spec primitive (`Spec.layerNorm`), we flatten the input shape `s` into a matrix:
 * the column count is the product of dimensions from `axis` onward (`dims.drop axis`).
 
 LayerNorm then runs over each row and the result is reshaped to `s`. This construction works for
-every nonempty tensor rank; the matrix is an evaluation view, not a restriction on the input shape.
+every nonempty tensor rank. The normalized suffix must be nonempty; the leading batch may be empty.
 -/
 def layerNormMatrixDims (axis : Nat) (s : Shape) : Except String (Nat × Nat) := do
   checkAxisValid axis s
   let dims := Shape.toList s
   let seqLen : Nat := (dims.take axis).foldl (fun acc d => acc * d) 1
   let embedDim : Nat := (dims.drop axis).foldl (fun acc d => acc * d) 1
-  checkPositive "layernorm" "seqLen" seqLen
   checkPositive "layernorm" "embedDim" embedDim
   pure (seqLen, embedDim)
 
@@ -179,16 +178,14 @@ def permMoveAxisToFront (axis : Nat) (s : Shape) : Except String (Array Nat) := 
   pure <| #[axis] ++ (Array.range r).filter (· != axis)
 
 /--
-Decomposition of a pair of `matmul` operand shapes into a shared leading shape and the three
-matrix extents.
+Geometry of a matrix product after broadcasting batch axes and promoting vectors.
 
-The left operand has shape `leading ++ [rows, inner]` and the right operand has shape
-`leading ++ [inner, cols]`. Shape inference reads the output shape from this record and the
-reference semantics uses the same record to recover the typed operands, so there is one matmul
-shape rule.
+A left vector is viewed as a one-row matrix and a right vector as a one-column matrix.
+Their inserted axes are removed from the output; the original operand shapes are retained for
+validation and flat indexing.
 -/
 structure MatmulDims where
-  /-- Batch axes shared by both operands. -/
+  /-- Broadcast batch shape of the output. -/
   leading : Shape
   /-- Row count of the left operand. -/
   rows : Nat
@@ -196,43 +193,111 @@ structure MatmulDims where
   inner : Nat
   /-- Column count of the right operand. -/
   cols : Nat
+  /-- Original left operand shape. -/
+  leftShape : Shape
+  /-- Original right operand shape. -/
+  rightShape : Shape
+  /-- Batch axes of the left operand, before broadcasting. -/
+  leftLeading : Shape := leading
+  /-- Batch axes of the right operand, before broadcasting. -/
+  rightLeading : Shape := leading
+  /-- Whether the left operand was promoted from a vector. -/
+  leftVector : Bool := false
+  /-- Whether the right operand was promoted from a vector. -/
+  rightVector : Bool := false
 
 namespace MatmulDims
 
-/-- Shape of the left `matmul` operand. -/
-@[simp] def leftShape (dims : MatmulDims) : Shape :=
-  dims.leading.concat [dims.rows, dims.inner]
-
-/-- Shape of the right `matmul` operand. -/
-@[simp] def rightShape (dims : MatmulDims) : Shape :=
-  dims.leading.concat [dims.inner, dims.cols]
-
 /-- Shape of the `matmul` result. -/
 @[simp] def outShape (dims : MatmulDims) : Shape :=
-  dims.leading.concat [dims.rows, dims.cols]
+  dims.leading.concat
+    (Shape.ofList ((if dims.leftVector then [] else [dims.rows]) ++
+      (if dims.rightVector then [] else [dims.cols])))
+
+/-- Project a flat output batch coordinate to one operand's unbroadcast batch coordinate. -/
+def batchIndex (source target : Shape) (index : Nat) : Nat :=
+  let sourceRev := source.toList.reverse
+  let targetRev := target.toList.reverse
+  ((List.range sourceRev.length).foldl (fun (state : Nat × Nat × Nat) axis =>
+    let sourceExtent := sourceRev.getD axis 1
+    let targetExtent := targetRev.getD axis 1
+    let coordinate := if sourceExtent = 1 then 0 else state.1 % targetExtent
+    (state.1 / targetExtent, state.2.1 + coordinate * state.2.2,
+      state.2.2 * sourceExtent))
+    (index, 0, 1)).2.1
+
+/-- Left scalar used by one output coordinate and one contraction coordinate. -/
+def leftIndex (dims : MatmulDims) (output inner : Nat) : Nat :=
+  let batch := output / (dims.rows * dims.cols)
+  let row := output % (dims.rows * dims.cols) / dims.cols
+  batchIndex dims.leftLeading dims.leading batch * (dims.rows * dims.inner) +
+    row * dims.inner + inner
+
+/-- Right scalar used by one output coordinate and one contraction coordinate. -/
+def rightIndex (dims : MatmulDims) (output inner : Nat) : Nat :=
+  let batch := output / (dims.rows * dims.cols)
+  let col := output % dims.cols
+  batchIndex dims.rightLeading dims.leading batch * (dims.inner * dims.cols) +
+    inner * dims.cols + col
 
 end MatmulDims
 
-/--
-Decompose two `matmul` operand shapes.
+/-- Broadcast reversed batch dimensions, aligning from the trailing axis.
+Singleton axes also broadcast to zero; using `max` here would incorrectly turn zero into one. -/
+def broadcastMatmulBatches : List Nat → List Nat → Except String (List Nat)
+  | [], bs => pure bs
+  | as, [] => pure as
+  | a :: as, b :: bs => do
+      let rest ← broadcastMatmulBatches as bs
+      if a = b then pure (a :: rest)
+      else if a = 1 then pure (b :: rest)
+      else if b = 1 then pure (a :: rest)
+      else throw s!"matmul: incompatible batch dimensions {a} and {b}"
 
-Both inputs must have rank at least two and exactly the same leading shape. The final two axes
-follow the usual matrix rule: `(...×m×n) · (...×n×p) → (...×m×p)`.
-
-This is a `simp` definition so that proofs about concrete operand shapes reduce the match.
--/
+/-- Infer vector promotion and trailing-axis batch broadcasting for non-scalar operands. -/
 @[simp] def matmulDims (a b : Shape) : Except String MatmulDims :=
   match a.toList.reverse, b.toList.reverse with
   | n :: m :: leadingRev, p :: n' :: leadingRev' =>
       if _hLeading : leadingRev = leadingRev' then
         if _hInner : n = n' then
-          pure { leading := Shape.ofList leadingRev.reverse, rows := m, inner := n, cols := p }
+          pure
+            { leading := Shape.ofList leadingRev.reverse
+              rows := m, inner := n, cols := p
+              leftShape := a, rightShape := b }
         else
           throw s!"matmul: inner dims mismatch: {n} vs {n'}"
+      else if n = n' then do
+        let batch ← broadcastMatmulBatches leadingRev leadingRev'
+        pure
+          { leading := Shape.ofList batch.reverse
+            rows := m, inner := n, cols := p
+            leftShape := a, rightShape := b
+            leftLeading := Shape.ofList leadingRev.reverse
+            rightLeading := Shape.ofList leadingRev'.reverse }
       else
-        throw s!"matmul: leading dimensions mismatch: {repr a} vs {repr b}"
+        throw s!"matmul: inner dims mismatch: {n} vs {n'}"
+  | [n], p :: n' :: leadingRev =>
+      if n = n' then
+        pure
+          { leading := Shape.ofList leadingRev.reverse
+            rows := 1, inner := n, cols := p
+            leftShape := a, rightShape := b, leftLeading := .scalar, leftVector := true }
+      else throw s!"matmul: inner dims mismatch: {n} vs {n'}"
+  | n :: m :: leadingRev, [n'] =>
+      if n = n' then
+        pure
+          { leading := Shape.ofList leadingRev.reverse
+            rows := m, inner := n, cols := 1
+            leftShape := a, rightShape := b, rightLeading := .scalar, rightVector := true }
+      else throw s!"matmul: inner dims mismatch: {n} vs {n'}"
+  | [n], [n'] =>
+      if n = n' then
+        pure
+          { leading := .scalar, rows := 1, inner := n, cols := 1
+            leftShape := a, rightShape := b, leftVector := true, rightVector := true }
+      else throw s!"matmul: inner dims mismatch: {n} vs {n'}"
   | _, _ =>
-      throw s!"matmul: expected rank≥2 inputs, got {repr a} and {repr b}"
+      throw s!"matmul: expected non-scalar inputs, got {repr a} and {repr b}"
 
 /-- Infer the output shape for `matmul` from the two parent shapes (see `matmulDims`). -/
 def inferMatmulOutShape (a b : Shape) : Except String Shape :=
@@ -241,25 +306,49 @@ def inferMatmulOutShape (a b : Shape) : Except String Shape :=
 /-- A successful decomposition determines the operand shapes it was computed from. -/
 theorem matmulDims_shapes {a b : Shape} {dims : MatmulDims} (h : matmulDims a b = .ok dims) :
     a = dims.leftShape ∧ b = dims.rightShape := by
-  unfold matmulDims at h
-  split at h
-  · rename_i n m leadingRev p n' leadingRev' ha hb
-    split at h
-    · split at h
-      · rename_i hLeading hInner
-        have hDims :
-            dims =
-              { leading := Shape.ofList leadingRev.reverse, rows := m, inner := n, cols := p } :=
-          (Except.ok.inj h).symm
-        subst hDims hLeading hInner
-        refine ⟨?_, ?_⟩
-        · have := congrArg (fun l => Shape.ofList l.reverse) ha
-          simpa [List.reverse_cons, Shape.concat_eq_append] using this
-        · have := congrArg (fun l => Shape.ofList l.reverse) hb
-          simpa [List.reverse_cons, Shape.concat_eq_append] using this
-      · exact absurd h (by simp)
-    · exact absurd h (by simp)
-  · exact absurd h (by simp)
+  cases ha : a.toList.reverse with
+  | nil => simp [matmulDims, ha] at h
+  | cons n leftTail =>
+    cases hb : b.toList.reverse with
+    | nil => simp [matmulDims, hb] at h
+    | cons p rightTail =>
+      cases leftTail with
+      | nil =>
+        cases rightTail with
+        | nil =>
+          by_cases hInner : n = p <;>
+            simp [matmulDims, ha, hb, hInner] at h
+          cases h
+          exact ⟨rfl, rfl⟩
+        | cons n' rightLeading =>
+          by_cases hInner : n = n' <;>
+            simp [matmulDims, ha, hb, hInner] at h
+          cases h
+          exact ⟨rfl, rfl⟩
+      | cons m leftLeading =>
+        cases rightTail with
+        | nil =>
+          by_cases hInner : n = p <;>
+            simp [matmulDims, ha, hb, hInner] at h
+          cases h
+          exact ⟨rfl, rfl⟩
+        | cons n' rightLeading =>
+          by_cases hLeading : leftLeading = rightLeading
+          · by_cases hInner : n = n' <;>
+              simp [matmulDims, ha, hb, hLeading, hInner] at h
+            cases h
+            exact ⟨rfl, rfl⟩
+          · by_cases hInner : n = n'
+            · cases hBatch : broadcastMatmulBatches leftLeading rightLeading with
+              | error message =>
+                simp [matmulDims, ha, hb, hLeading, hInner, hBatch,
+                  Bind.bind, Except.bind] at h
+              | ok batch =>
+                simp [matmulDims, ha, hb, hLeading, hInner, hBatch,
+                  Pure.pure, Except.pure, Bind.bind, Except.bind] at h
+                cases h
+                exact ⟨rfl, rfl⟩
+            · simp [matmulDims, ha, hb, hLeading, hInner] at h
 
 /-- Merge one concat input into the accumulated dimensions. -/
 def mergeConcatDims (axis : Nat) : Nat → List Nat → List Nat → Except String (List Nat)

@@ -7,9 +7,9 @@
 
 // CPU fallback for `torchlean_dgemm_cuda`.
 //
-// This file exports the same symbol as the CUDA/cuBLAS implementation so ordinary `lake build`
-// works on machines without a CUDA toolkit. Keep size checks and row-major semantics aligned with
-// `torchlean_dgemm_cuda.cu`; tests should be able to compare CUDA and stub behavior on small cases.
+// This file exports the same symbol as the LibTorch implementation so ordinary `lake build`
+// works without LibTorch or a CUDA toolkit. Keep size checks and row-major semantics aligned with
+// `csrc/libtorch/blas.cpp`; accumulation order can differ between ATen and this CPU loop.
 LEAN_EXPORT lean_obj_res torchlean_dgemm_cuda(b_lean_obj_arg AObj, b_lean_obj_arg BObj,
                                              uint32_t m, uint32_t n, uint32_t p) {
   size_t M = (size_t)m, N = (size_t)n, P = (size_t)p;

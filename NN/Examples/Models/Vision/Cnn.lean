@@ -64,14 +64,13 @@ def classCount : Nat := RealData.cifarClasses
 abbrev modelConfig : nn.models.CNN.Config 2 :=
   { inputChannels := inputChannels
     spatial := [cropHeight, cropWidth]
-    convolution :=
-      { outChannels := 4
-        kernelSize := [3, 3]
-        stride := [2, 2]
-        padding := [1, 1] }
-    pooling :=
-      { kernelSize := [2, 2]
-        stride := [2, 2] }
+    stages :=
+      [{ block := { convolution :=
+           { outChannels := 4
+             kernelSize := [3, 3]
+             stride := [2, 2]
+             padding := [1, 1] } }
+         pooling := { kernelSize := [2, 2], stride := [2, 2] } }]
     classCount := classCount }
 
 /-- Input shape: a minibatch of CIFAR images in channel-first layout. -/

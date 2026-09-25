@@ -85,18 +85,11 @@ def tpBroken :
   ]
 ```
 ```leanOutput tpWidth (whitespace := lax)
-Application type mismatch: The argument
-  bc✝
-has type
-  nn.Sequential (Shape.appendDim [] 7) (Shape.appendDim [] 2)
-but is expected to have type
-  ?m.67 a✝ __r✝¹ bc✝ __r✝ (Shape.appendDim [] 8) [2]
-in the application
-  nn.compose a✝ bc✝
+nn.Sequential!: layer 2 expects input shape [7], but layer 1 outputs [8].
+Change layer 2's input shape or insert a layer that converts [8] to [7].
 ```
 
 The message identifies a layer expecting width `7` where composition requires width `8`.
-`Shape.appendDim` constructs the displayed shape; the shape chapters explain its definition.
 Lean rejects this model before execution.
 
 A related PyTorch mismatch occurs when the valid four-input model receives a width-three input:
@@ -144,7 +137,7 @@ def tpInit : nn.Sequential [4] [2] :=
 #check nn.initialState tpInit
 ```
 ```leanOutput tpInitDef (whitespace := lax)
-nn.initialState tpInit : nn.State Float
+nn.initialState tpInit Float : nn.State Float
   (Runtime.Autograd.Model.Layers.Seq.stateShapes tpInit)
 ```
 
@@ -230,7 +223,10 @@ saved tensors and derivative rules propagate vector-Jacobian products to leaves 
 dispatcher and autograd machinery
 ({Informal.citep pytorch2019 baydin2018}[]).
 
-TorchLean's eager runtime also records a tape. To reason about a backward step, its proofs refer
+TorchLean's eager runtime records its own tape, including when its CUDA backend calls LibTorch.
+The native bridge disables LibTorch autograd recording. ATen computes values and local gradients;
+TorchLean decides which local rule to invoke and accumulates its results while traversing the tape.
+To reason about a backward step, its proofs refer
 to an ideal derivative or VJP definition. For covered operations, correctness theorems show that
 this rule is the mathematical derivative; numerical results relate it to the rule evaluated with
 the runtime node's saved values.
@@ -332,7 +328,7 @@ Now the runtime:
 -- same forward/backward run.
 #eval do
   let (grads, loss) ← autograd.model.grad tpNet
-    autograd.model.Loss.meanSquaredError
+    autograd.model.Loss.mse
     tpState tpX tpY (value := true)
   IO.println s!"loss  = {loss}"
   IO.println s!"grads = {reprStr grads}"
@@ -412,7 +408,7 @@ def tpFlat {α : Type} [Storage α] [Context α]
 -- their exact stored words.
 #eval do
   let g ← autograd.model.grad (α := Float32) tpNet
-    autograd.model.Loss.meanSquaredError
+    autograd.model.Loss.mse
     (tpStateIn Float32)
     (Tensor.map Runtime.ofFloat tpX)
     (Tensor.map Runtime.ofFloat tpY)
@@ -706,7 +702,7 @@ fail instead of becoming an unreported CPU run. This keeps the model, parameter 
 tape stable while selected operations cross a native boundary.
 
 {ref "backend-selection"}[Backend Selection]
-explains capsules, provider preference, LibTorch forward ownership, and assurance policies in full.
+explains capsules, provider preference, local VJP ownership, and assurance policies in full.
 {ref "gpu-and-cuda"}[GPU and CUDA] then follows
 the native CUDA boundary.
 
@@ -774,18 +770,18 @@ checked_cpu: 6 capsules
   reference.add
   reference.relu
 checked_cuda: 6 capsules
-  native_cuda.reshape
-  native_cuda.permute
-  native_cuda.matmul
-  native_cuda.broadcast
-  native_cuda.add
-  native_cuda.relu
+  libtorch.reshape
+  libtorch.permute
+  libtorch.matmul
+  libtorch.broadcast
+  libtorch.add
+  libtorch.relu
 cuda_request_cpu_build: rejected
   no admissible kernel capsule for op reshape on device cuda
 ```
 
 The three profiles describe different plans for the same eighteen-node graph. The CPU profile
-selects six reference capsules; the CUDA profile selects native CUDA capsules for those operations.
+selects six reference capsules; the CUDA profile selects LibTorch capsules for those operations.
 The third request asks for CUDA while declaring only CPU availability. Planning rejects it and
 names the unsupported operation before any allocation or launch.
 
@@ -948,7 +944,7 @@ TorchLean names several numerical meanings so that a statement can pick one:
 - `FP32`, a rounded-real specialization with binary32 precision and gradual underflow, but without
   an upper exponent bound or IEEE special values;
 - FloatLib binary32, an executable bit-level binary32 model;
-- runtime CPU, CUDA, and LibTorch representations.
+- runtime CPU representations and LibTorch CUDA tensors.
 
 For batching, the library states a property of the reference semantics. If a batched run is
 defined by applying the same function independently to each row, then

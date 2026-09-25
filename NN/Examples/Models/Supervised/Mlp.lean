@@ -89,7 +89,7 @@ def train (runtime : Runtime.Config) (flags : Support.CsvTrainFlags) :
       Trainer.RunConfig.forObjective
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := flags.training.learningRate } })
-        .meanSquaredError
+        .mse
         (seed := flags.seed)
   trainer.train
     (data flags.csvPath flags.seed)

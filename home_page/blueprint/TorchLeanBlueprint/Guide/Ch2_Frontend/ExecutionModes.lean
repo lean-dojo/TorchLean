@@ -20,7 +20,8 @@ one-component output, with parameters $`\theta`:
 $$`F_\theta:[2]\to[1]`
 
 Its type stays `[2] → [1]` whether it runs eagerly on the CPU, through a typed graph, or with
-native CUDA kernels. Holding the architecture, seed, and data fixed lets us compare these execution
+LibTorch's CUDA operations. Holding the architecture, seed, and data fixed lets us compare these
+execution
 paths on the same training problem. The transcripts below record the binary's output on the
 machine used for this guide; the embedded Lean comparisons also run when the page is built.
 
@@ -499,7 +500,7 @@ def emRun (arithmetic : Runtime.Arithmetic)
     (execution : Runtime.ExecutionMode)
     (device : Runtime.Device) : Trainer [2] [1] :=
   Trainer.new emModel
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       arithmetic := arithmetic
       execution := execution
@@ -562,9 +563,10 @@ function therefore vanish, leaving its constant `0.2`. The common prediction `0.
 `0.028325` above that target. The small final dataset loss and this remaining prediction error
 answer different questions, even though both came from the same trained parameters.
 
-# Native CUDA Execution
+# CUDA Execution Through LibTorch
 
-CUDA support is a build-time choice, so the command grows a `-K`:
+CUDA support is a build-time choice. Set `TORCHLEAN_LIBTORCH_HOME` to a CUDA-enabled SDK as
+described in the installation guide, then select it with `-K cuda=true`:
 
 ```terminal
 # Select the CUDA build profile before requesting a CUDA
@@ -588,93 +590,56 @@ The report now names a different provider for every operation. Comparing it agai
 *
   * `reshape`
   * `reference.reshape`
-  * `native_cuda.reshape`
+  * `libtorch.reshape`
   * `n/a`
 *
   * `permute`
   * `reference.permute`
-  * `native_cuda.permute`
+  * `libtorch.permute`
   * `n/a`
 *
   * `matmul`
   * `reference.matmul`
-  * `native_cuda.matmul`
+  * `libtorch.matmul`
   * `implementation-defined`
 *
   * `broadcast`
   * `reference.broadcast`
-  * `native_cuda.broadcast`
+  * `libtorch.broadcast`
   * `n/a`
 *
   * `add`
   * `reference.add`
-  * `native_cuda.add`
+  * `libtorch.add`
   * `n/a`
 *
   * `relu`
   * `reference.relu`
-  * `native_cuda.relu`
+  * `libtorch.relu`
   * `n/a`
 *
   * `mse_loss`
   * `reference.mse_loss`
-  * `native_cuda.mse_loss`
+  * `libtorch.mse_loss`
   * `implementation-defined`
 :::
 
-The provider label changes from `reference` to `native-cuda`, the VJP owner changes from
+The provider label changes from `reference` to `libtorch`, the VJP label changes from
 `torchlean-tape` to `backend-vjp`, the test suite named in the evidence lines changes from
 `NN.Tests.Runtime.Floats.Suite` to `NN.Tests.Runtime.Cuda.Suite`, and the guard for shapes changes
 from portable runtime checks to CUDA FFI size and rank checks at the Lean and native boundary. Trust
-stays `checked` throughout. For numerical comparison, the last column is especially relevant:
+stays `checked` throughout. `backend-vjp` means that an ATen operation evaluates the local
+gradient; TorchLean still records and traverses the tape. LibTorch autograd recording is disabled.
+For numerical comparison, the last column is especially relevant:
 the two
 reducing operations move from `fixed-left` to `implementation-defined`.
 
-The following comparison uses two hundred steps and the same seed, changing only the device:
-
-:::table +header
-*
-  * Line
-  * `--device cpu`
-  * `--device cuda`
-*
-  * `step 0`
-  * `0.250488`
-  * `0.250488`
-*
-  * `step 25`
-  * `0.586318`
-  * `0.586317`
-*
-  * `step 50`
-  * `0.847444`
-  * `0.847440`
-*
-  * `step 75`
-  * `0.003933`
-  * `0.003933`
-*
-  * `step 100` to `step 175`
-  * identical
-  * identical
-*
-  * `mean_loss(after training)`
-  * `0.002402`
-  * `0.002402`
-*
-  * `trained(heldout)`
-  * `[0.228325]`
-  * `[0.228325]`
-:::
-
-Two lines in this recorded comparison differ in the sixth decimal. A provider with
-`reduction=implementation-defined` may use a different summation order, and floating point addition
-is not associative {Informal.citep goldberg1991}[]. That is a possible source of such differences;
-the printed transcript alone does not identify which kernel introduced them. Agreement to six
-decimals also does not establish equal parameter bits or equal behavior on other inputs.
-
-Compare the artifact relevant to the experiment, such as predictions or parameter buffers, and
-record its dtype, provider, and comparison tolerance.
+To compare the two devices, hold the model, dataset, seed, optimizer, and step count fixed.
+A provider with `reduction=implementation-defined` may use a different summation order, and
+floating point addition is not associative {Informal.citep goldberg1991}[]. Compare the artifact
+relevant to the experiment, such as predictions or parameter buffers, and record its dtype,
+provider, and comparison tolerance. Agreement in printed decimal output does not establish equal
+parameter bits or equal behavior on other inputs.
 
 The module and CUDA buffer both use binary32 values, but upload is not conversion-free. The current
 bridge widens host `Float32` elements to `Float` staging values before packing them into a CUDA
@@ -685,11 +650,10 @@ A build without CUDA support rejects the request. CPU parity stubs allow the rep
 and test without a GPU, but do not satisfy a request for CUDA execution.
 
 A common seed fixes initialization and the example sequence; it does not fix the order in which
-a backend adds partial sums. The small CPU/CUDA differences in the displayed losses are therefore
-compatible with the same intended program. Updates can carry such differences into later steps,
-and a ReLU can change its active branch near zero. To investigate a larger discrepancy, compare
-the inputs and outputs of the first differing operation before attributing the entire final loss
-difference to the optimizer. These logs alone do not identify its first numerical cause.
+a backend adds partial sums. Updates can carry numerical differences into later steps, and a ReLU
+can change its active branch near zero. To investigate a discrepancy, compare the inputs and
+outputs of the first differing operation before attributing the final loss difference to the
+optimizer.
 
 # Executable Binary32 Arithmetic
 
@@ -704,20 +668,7 @@ lake exe torchlean quickstart_mlp \
   --seed 2026
 ```
 
-```terminal +output
-== Quickstart: simple MLP training (seed=2026, steps=2) ==
-target(heldout)    = [0.200000]
-untrained(heldout) = [-0.088261]
-dataset size = 25
-mean_loss(before training) = 0.495227
-step 0: loss=0.250488
-mean_loss(after training) = 0.392821
-steps=2 arithmetic=ieee scalar=IEEE32Exec loss=0.495227 -> 0.392821
-trained(heldout) = [0.019031]
-```
-
-This recorded run predates the FloatLib migration, so it retains the old scalar label. The current
-`.ieee` path evaluates addition and multiplication with FloatLib binary32. Comparing the two
+The `.ieee` path evaluates addition and multiplication with FloatLib binary32. Comparing the two
 implementations can expose errors
 in rounding or exceptional-value handling that a comparison of decimal output alone may miss.
 Formal floating-point models make these rules explicit
@@ -727,25 +678,8 @@ arithmetic a compiler actually emits {Informal.citep boldo2015}[]. FloatLib supp
 format and arithmetic used here. For higher precision, select a valid FloatLib binary format in
 typed CPU tensors and graphs; the trainer flag shown above remains fixed to binary32.
 
-At two thousand steps, with the same seed, the runner's complete printed outputs differ only in
-the arithmetic label:
-
-```terminal +output
-$ # Hold training fixed and inspect which log lines change
-$ # with arithmetic selection.
-$ lake exe torchlean quickstart_mlp --arithmetic native --steps 2000 --seed 2026 > native.txt
-$ lake exe torchlean quickstart_mlp --arithmetic ieee   --steps 2000 --seed 2026 > ieee.txt
-$ diff native.txt ieee.txt
-87c87
-< steps=2000 arithmetic=native scalar=Float32 loss=0.495227 -> 0.003391
----
-> steps=2000 arithmetic=ieee scalar=IEEE32Exec loss=0.495227 -> 0.003391
-```
-
-Eighty-seven lines, and the single difference is the label the runner prints to say which arithmetic
-it used. Two thousand Adam updates, eighty logged losses, and the held-out prediction
-`[0.209078]` all agree at the printed precision. An embedded comparison runs two hundred steps
-and also checks prediction equality:
+The following embedded comparison runs two hundred steps with each arithmetic choice, holding
+the seed and dataset fixed. It also checks prediction equality:
 
 ```lean (name := emNativeVsIeee)
 -- Keep device and execution fixed to compare the two
@@ -795,10 +729,8 @@ workload and hardware of interest, separating process startup from repeated exec
 commands, software versions, thread settings, and the actual provider alongside timings so that
 others can reproduce the comparison.
 
-The two-step IEEE run ends at dataset loss `0.392821` and held-out prediction `0.019031`.
-Those values describe a much shorter training horizon than the 200-step comparison, so they are
-not evidence that one arithmetic choice learned a different target. The longer paired example
-holds that horizon fixed.
+Keep the training horizon fixed when comparing arithmetic choices. A two-step demonstration and
+a two-hundred-step run answer different questions about the same model.
 
 There is also an interface boundary in these examples: the trainer accepts and reports public
 `Float` values while its selected implementation works with a binary32 scalar representation.
@@ -828,7 +760,7 @@ def emEagerCuda : Trainer.RunConfig :=
 def emTrainerFromRun (run : Trainer.RunConfig) :
     Trainer [2] [1] :=
   Trainer.new emModel
-    (run.forObjective .meanSquaredError 2026)
+    (run.forObjective .mse 2026)
 
 #eval do
   let runs := [emEagerCpu, emTypedGraphCpu, emEagerCuda]
@@ -982,7 +914,7 @@ also provide explicit mode setters:
   * `session.step sample`
   * training
 *
-  * `session.stepBatch batch`
+  * `session.step batch (batch := true)`
   * training
 *
   * `session.predict input`
@@ -1000,6 +932,10 @@ reports, for the summary prediction, and for later calls to `Trainer.Result.pred
 independent of device and execution choice: a CUDA session switches mode without changing the model
 architecture or the provider profile.
 
+`step` returns `Unit` by default, so an update does not read the loss back to the host. Add
+`(loss := true)` when the caller needs the loss from that update. The `batch` flag selects a
+nonempty array of samples; it does not change training mode.
+
 Dropout {Informal.citep dropout2014}[] makes the effect of mode visible. During training it samples
 a mask; during evaluation it applies its deterministic inference behavior. The next block inserts
 dropout between the MLP's hidden activation and output layer, then evaluates the same dataset
@@ -1016,7 +952,7 @@ def emDropoutModel (p : Float) :
 
 def emDropoutTrainer (p : Float) : Trainer [2] [1] :=
   Trainer.new (emDropoutModel p)
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := 2026 }
 
@@ -1025,7 +961,8 @@ def emDropoutTrainer (p : Float) : Trainer [2] [1] :=
   for p in [0.0, 0.5] do
     let session ← (emDropoutTrainer p).open
     let evaluation ← session.eval emData
-    let training ← session.stepBatch batch
+    let training ← session.step batch
+      (batch := true) (loss := true)
     IO.println s!"p = {p}"
     IO.println s!"  evaluation mode {evaluation}"
     IO.println s!"  training mode   {training}"
@@ -1046,9 +983,9 @@ p = 0.500000
 
 Read the gaps, not the printed losses. At `p = 0.0` the layer is the identity in both modes and the
 two numbers print the same to six decimals, yet the gap is `-2.9e-8` rather than zero.
-`eval` converts per-sample losses to `Float` and averages them there; `stepBatch` uses the runtime
-scalar for its batch reduction. This comparison changes both reduction structure and the precision
-of the final average, so it does not isolate summation order alone.
+`eval` converts per-sample losses to `Float` and averages them there; `step` with `(batch := true)`
+uses the runtime scalar for its batch reduction. This comparison changes both reduction structure
+and the precision of the final average, so it does not isolate summation order alone.
 
 At `p = 0.5` the much larger gap illustrates the effect of training-mode dropout in this example.
 The `p = 0` result is a useful control, not a universal bound on floating point discrepancies.
@@ -1287,10 +1224,10 @@ a requested device is not mistaken for evidence of where an operation ran.
   * eager
   * CPU
 *
-  * use external attention forward
+  * use native attention forward and its matched backward
   * native `Float32`
   * eager
-  * LibTorch-enabled CUDA
+  * CUDA through LibTorch
 *
   * verify or export an operation graph
   * semantic context
@@ -1317,10 +1254,9 @@ checkpoint and code revision
 ```
 
 Without those, two loss curves may be incomparable even when both are labelled "TorchLean float32".
-The recorded device comparison differs in the sixth decimal, while the batching comparison has a
-nonzero gap that a six-decimal summary hides. Provider and reduction-policy metadata help
-investigate such differences; exact buffer comparisons and controlled experiments are needed to
-explain them.
+The batching comparison has a nonzero gap that a six-decimal summary hides. Provider and
+reduction-policy metadata help investigate such differences; exact buffer comparisons and
+controlled experiments are needed to explain them.
 
 Sources:
 

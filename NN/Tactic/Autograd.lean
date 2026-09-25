@@ -128,36 +128,35 @@ add_aesop_rules safe tactic (rule_sets := [Autograd]) (by
       Runtime.Autograd.Model.Dual.jet_id, Runtime.Autograd.Model.Dual.jet_linear,
       Runtime.Autograd.Model.Dual.jet_const])
 
-add_aesop_rules safe tactic (rule_sets := [Autograd]) (by
-  rw [← Runtime.Autograd.Model.DualTensor.tangent_jet_at _
-      (by fun_prop (disch :=
-        first | solve_by_elim |
-          (simp only [TorchLean.Tensor.Internal.Rep.pull_apply]; solve_by_elim)))]
-  apply congrArg Runtime.Autograd.Model.Dual.Nested.tangentTensor
-  try simp (disch := fun_prop (disch :=
-    first | solve_by_elim |
-      (simp only [TorchLean.Tensor.Internal.Rep.pull_apply]; solve_by_elim))) only
-    [autograd_simps, Runtime.Autograd.Model.DualTensor.jet_matMulSpec_at,
-      Runtime.Autograd.Model.DualTensor.jet_mul_at,
-      Runtime.Autograd.Model.DualTensor.jet_id,
-      Runtime.Autograd.Model.DualTensor.jet_const]
-  all_goals
-    apply TorchLean.Tensor.Internal.Rep.ext
-    intro i
-    simp only [TorchLean.Tensor.map, TorchLean.Tensor.Internal.Rep.map_apply,
-      TorchLean.Tensor.map2Spec_apply,
-      TorchLean.Tensor.Internal.Rep.pull_apply,
-      Runtime.Autograd.Model.DualTensor.jet_apply])
-
--- Argument equality can be stronger than output equality, so keep this step backtrackable.
-add_aesop_rules unsafe 50% tactic (rule_sets := [Autograd]) (by
-  congr! (sameFun := true)
-  all_goals
+-- Expand the shared steps at registration so `autograd?` prints replayable tactics.
+set_option hygiene false in
+run_cmd do
+  let normalizeTensorCoordinates ← `(tactic| (
     apply TorchLean.Tensor.Internal.Rep.ext
     intro i
     simp only [TorchLean.Tensor.map, TorchLean.Tensor.Internal.Rep.map_apply,
       TorchLean.Tensor.map2Spec_apply, TorchLean.Tensor.Internal.Rep.pull_apply,
-      Runtime.Autograd.Model.DualTensor.jet_apply])
+      Runtime.Autograd.Model.DualTensor.jet_apply]))
+  Lean.Elab.Command.elabCommand (← `(command|
+    add_aesop_rules safe tactic (rule_sets := [$(Lean.mkIdent `Autograd):ident]) (by
+      rw [← Runtime.Autograd.Model.DualTensor.tangent_jet_at _
+          (by fun_prop (disch :=
+            first | solve_by_elim |
+              (simp only [TorchLean.Tensor.Internal.Rep.pull_apply]; solve_by_elim)))]
+      apply congrArg Runtime.Autograd.Model.Dual.Nested.tangentTensor
+      try simp (disch := fun_prop (disch :=
+        first | solve_by_elim |
+          (simp only [TorchLean.Tensor.Internal.Rep.pull_apply]; solve_by_elim))) only
+        [autograd_simps, Runtime.Autograd.Model.DualTensor.jet_matMulSpec_at,
+          Runtime.Autograd.Model.DualTensor.jet_mul_at,
+          Runtime.Autograd.Model.DualTensor.jet_id,
+          Runtime.Autograd.Model.DualTensor.jet_const]
+      all_goals $normalizeTensorCoordinates:tactic)))
+  -- Argument equality can be stronger than output equality, so keep this step backtrackable.
+  Lean.Elab.Command.elabCommand (← `(command|
+    add_aesop_rules unsafe 50% tactic (rule_sets := [$(Lean.mkIdent `Autograd):ident]) (by
+      congr! (sameFun := true)
+      all_goals $normalizeTensorCoordinates:tactic)))
 
 add_aesop_rules safe tactic (rule_sets := [Autograd]) (by
   first

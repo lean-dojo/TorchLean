@@ -17,7 +17,7 @@ This module joins three existing parts of TorchLean without introducing another 
 floating-point representation:
 
 * `NN.IR.Graph` remains the program being analysed;
-* `IEEE32Exec.Interval32` supplies executable, outward-rounded binary32 intervals;
+* FloatLib supplies executable, outward-rounded binary32 intervals;
 * `NN.Backend.KernelPlanAudit` records the selected kernel capsules.
 
 A raw certificate is proof-free data that an application may construct or decode using its own
@@ -30,7 +30,7 @@ executable check does not by itself prove enclosure of the exact-real graph deno
 evidence is the separate `ProvedRealEnclosure` value used by `RangeCheckedExecution.error_trace`.
 
 The range trace deliberately starts with operations whose enclosure is already provided by the
-sound `Interval32` core. Unsupported operations fail with the node id and operation name. They are
+sound interval core. Unsupported operations fail with the node id and operation name. They are
 not assigned `[-inf,+inf]`, because that would turn a missing numerical theorem into an apparently
 successful certificate.
 

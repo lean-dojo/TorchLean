@@ -325,46 +325,22 @@ takes that structure apart.
 `graphspec` and `one_semantic_universe` then show why lowering matters: the same operation graph can
 be evaluated for values or interpreted for bounds.
 
-The following transcript predates the FloatLib migration and retains its recorded scalar labels
-and numerical results. Current `.ieee` execution uses FloatLib binary32.
+Run the graph and arithmetic examples directly:
 
-```terminal +output
-== One semantic universe tutorial ==
-graph nodes = 6
-[eval IEEE32Exec] y(x0) = 0.027713
-[IBP IEEE endpoints] lo = -1.000000
-[IBP IEEE endpoints] hi = 1.000000
-consistency: 50/50 samples satisfied evalIEEE(x) ∈ IBP(B)
-checker theorem:
-  `NN.MLTheory.CROWN.Box.containsDecBool_sound`
+```terminal
+lake exe torchlean one_semantic_universe
+lake exe torchlean float32_semantics
 ```
 
-The transcript reports one value, an interval, and 50 sampled membership checks, then names the
-checker soundness theorem. The interval $`[-1,1]` is already a general range bound for the final
-$`\tanh` activation; it gives no tighter information about this input box. The sampled checks do
-not establish that every input in the box is enclosed, and printing the theorem's name does not
-supply an acceptance proof.
+The first evaluates a graph and checks sampled values against an interval. A final $`\tanh`
+activation has the general range bound $`[-1,1]`; a useful input-specific enclosure may be tighter.
+Sampled membership checks do not establish enclosure for every input, and printing a soundness
+theorem's name does not supply an acceptance proof.
 
-In the same pre-migration record, `float32_semantics` compares host arithmetic with executable
-binary32 semantics. The two agree exactly on its example:
-
-```terminal +output
-== Float32 (native runtime) ==
-y   = [2.080000]
-...
-inputGrad  = [0.760000, 1.000000]
-== IEEE32Exec ==
-y   = [2.080000]
-...
-inputGrad  = [0.760000, 1.000000]
-max_abs_diff(Float32 vs IEEE32Exec) = 0
-```
-
-Here `y` is the forward value, while `inputGrad` describes sensitivity to the two input coordinates.
-Checking both exercises the forward and backward calculations. The complete executable also
-compares the parameter gradients elided here. Its zero difference concerns this graph, these
-inputs, and this host; {ref "fp32-soundness"}[the FP32 soundness chapter] develops the additional
-argument needed to relate native operations to the reference.
+The second compares native `Float32` with FloatLib binary32, including forward values, parameter
+gradients, and input gradients. Those checks reach both sides of the autograd calculation. Their
+scope is the graph and inputs they run; {ref "fp32-soundness"}[the FP32 soundness chapter] develops
+the additional argument needed to relate native operations to the reference.
 
 `numerical_certificate` exercises a graph-level checker and negative cases containing malformed
 evidence. Its output records which cases accepted or rejected; the associated soundness statement
@@ -380,9 +356,11 @@ validation command that reaches the relevant boundary:
 lake build nn_tests_suite
 lake exe nn_tests_suite
 
-# Compile the native CUDA implementation, then execute it on a device.
-lake -R -K cuda=true -K cuda_home=/usr/local/cuda build nn_tests_suite
-CUDA_VISIBLE_DEVICES=0 lake env ./.lake/build/bin/nn_tests_suite
+# Build with the CUDA-enabled LibTorch SDK, then execute on a device.
+export TORCHLEAN_LIBTORCH_HOME=/path/to/libtorch
+scripts/lake.sh -R -K cuda=true build nn_tests_suite
+CUDA_VISIBLE_DEVICES=0 TORCHLEAN_REQUIRE_CUDA=1 \
+  scripts/lake.sh -K cuda=true env ./.lake/build/bin/nn_tests_suite
 
 # Check native kernels for memory, race, and synchronization defects.
 scripts/checks/cuda_sanitize_tests.sh \
@@ -668,7 +646,6 @@ binary32 semantics, and report the difference in units of $`10^{-9}`:
 ```lean (name := ccSem)
 -- Compare the whole binary64 path with input conversion and
 -- evaluation in binary32.
-open Floats.IEEE754 in
 /-- The readout at binary64, at binary32, and the gap. -/
 def ccSemantics (x : Float) : Float × Float × Float :=
   let binary64 := ccScalar x
@@ -696,26 +673,9 @@ Both displayed values are `1.200000`, but their difference is about $`4.768\time
 roughly four tenths of a binary32 ULP near $`1.2`. The six-decimal display has rounded away the
 difference {Informal.citep goldberg1991}[]; comparing these strings would miss it.
 
-The PyTorch computations captured before the FloatLib migration give the corresponding binary32
-and binary64 values:
-
-```terminal +output
-python3 - <<'PY'
-import torch
-for dtype in (torch.float32, torch.float64):
-    x = torch.tensor([1.1], dtype=dtype)
-    y = (2 * torch.clamp(x - 1, min=0) + 1).item()
-    print(dtype, y.hex(), y)
-PY
-torch.float32 0x1.3333340000000p+0 1.2000000476837158
-torch.float64 0x1.3333333333334p+0 1.2000000000000002
-```
-
-The binary32 result, converted exactly to binary64 for display, is `0x1.3333340000000p+0`;
-the binary64 computation gives `0x1.3333333333334p+0`. These match the two TorchLean evaluations
-on this input in that recorded comparison. This transcript is not a validation run of the migrated
-runtime. FloatLib binary32 makes the representation and operations explicit
-{Informal.citep boldo2015}[]; the comparison remains evidence for the tested expression and input.
+FloatLib makes the representation and each arithmetic operation explicit
+{Informal.citep boldo2015}[]. The checked example above therefore identifies a particular numerical
+computation, whose relation to a native implementation still needs to be established.
 
 Let $`f` be the target function, $`F_{\mathbb R}` the ideal real-valued network, and
 $`F_{\mathrm{runtime}}` its runtime implementation. Interpreting both outputs in a common real

@@ -53,7 +53,7 @@ The generating byte models (`gpt2`, `text_gpt2`, and `mamba`) retain all 256 UTF
 The BPE path reads explicit `vocab.json` and `merges.txt` files, then uses the shared
 `text.VocabularyProjection` to retain the first observed ids in its 512-entry output vocabulary.
 Local id zero is the unknown-token slot. Saved parameters are shape checked before sampling;
-checkpoints from the former smaller byte vocabulary require retraining.
+their tensor dimensions must agree with the model's vocabulary and configuration.
 
 `chargpt` uses `CausalTransformer.Indexed`. Its batches contain
 bounded `Tensor (Fin vocab) [batch, seqLen]` token IDs. Tokenizers may first produce
@@ -77,6 +77,11 @@ its alphabet from the corpus. Generating examples use the same tensor sampling l
 cropping, padding, repetition penalties, and token selection; tokenizer arrays occur only at the
 text serialization boundary. Corpus schedules are indexed streams, so training does not allocate
 one-hot tensors for every future update in advance.
+
+`Gpt2.samplesFromCorpus` encodes the corpus once and retains its token tensor in the sample
+stream. Each request selects a window from that tensor and constructs its one-hot input and
+shifted target. The stream reuses tokenization; window selection, padding, and target construction
+still happen for the requested sample. Token reuse lasts for that sample stream.
 
 Useful commands:
 

@@ -47,7 +47,7 @@ def lowerConst {α : Type} [TorchLean.Storage α] [Context α]
   let i := ctx.index
   let n := ctx.node
   let τ : Shape := n.outShape
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   let t ← NN.IR.Graph.evalConst (α := α) (payload := payload) (id := n.id) (s := s)
@@ -64,7 +64,7 @@ def lowerDetach {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
@@ -73,8 +73,8 @@ def lowerDetach {α : Type} [TorchLean.Storage α] [Context α]
       let s := pNode.outShape
       let ip ← parentIdx pId s
       if hOut : s = τ then
-        let forward := fun ctx : TorchLean.TensorPack α Γ =>
-          hOut ▸ Tensor.detachSpec (getIdx (α := α) (xs := ctx) ip)
+        let forward := fun ctx : TensorReader α Γ =>
+          hOut ▸ Tensor.detachSpec (readTensor (α := α) (xs := ctx) ip)
         pure <| fwd forward
       else
         throw s!"IRExec: node {i}: detach expects outShape=parent.outShape ({n.summary})"
@@ -86,7 +86,7 @@ def lowerRandUniform {α : Type} [TorchLean.Storage α] [Context α]
   let i := ctx.index
   let n := ctx.node
   let τ : Shape := n.outShape
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match n.parents.isEmpty with
@@ -103,15 +103,15 @@ def lowerBernoulliMask {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId Shape.scalar
       let key := Spec.Random.keyOf seed i
-      let forward := fun ctx : TorchLean.TensorPack α Γ =>
-        let kpT := getIdx (α := α) (xs := ctx) ip
+      let forward := fun ctx : TensorReader α Γ =>
+        let kpT := readTensor (α := α) (xs := ctx) ip
         let kp : α := kpT.item
         Spec.Random.mask (α := α) key kp (s := τ)
       pure <| fwd forward

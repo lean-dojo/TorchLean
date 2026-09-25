@@ -72,9 +72,10 @@ corresponding check for groups derived from its stored graph plan.
 :::
 
 :::definition "cuda_native_boundary" (parent := "backend_selection") (lean := "Runtime.Autograd.Cuda.Buffer")
-`Cuda.Buffer` is an opaque handle to a contiguous float32 buffer. A CUDA build stores device
-memory behind the handle; the default stub keeps parity storage on the host. Lean code cannot
-inspect either representation directly.
+`Cuda.Buffer` is an opaque handle to a contiguous float32 buffer. A CUDA build stores an ATen tensor
+behind the handle; the default stub keeps parity storage on the host. Lean code cannot inspect
+either representation directly. TorchLean owns the differentiation tape, and calls ATen with
+LibTorch autograd recording disabled.
 
 A typed shape supplies a logical element count; runtime validation compares it with the handle's
 reported length. This checks an observable interface condition without exposing the storage as a
@@ -89,8 +90,8 @@ planning registry. Capsule modules are validated for duplicate names when a grap
 
 :::definition "backend_provider_catalog" (parent := "backend_selection") (lean := "NN.Backend.Registry.maintainedModules")
 The maintained registry collects {uses "backend_capsule_contracts"}[contract capsules] contributed
-by the attention, native CUDA, and reference modules. It contains planning metadata, not executable
-handlers. Profiles add the separate LibTorch module when requested.
+by the attention, LibTorch, and reference modules. It contains planning metadata, not executable
+handlers. Build availability filters CUDA entries from CPU-only profiles.
 :::
 
 :::definition "checked_cpu_backend_profile" (parent := "backend_selection") (lean := "NN.Backend.BackendProfile.checkedCpu")
@@ -168,9 +169,10 @@ make that tensor an optimization variable.
 :::
 
 :::definition "supervised_training_state" (parent := "training_runtime") (lean := "TorchLean.Trainer.Session")
-`Session` owns a supervised update action and step counter behind the public `step`, `stepBatch`,
-and `steps` operations, together with evaluation-mode prediction and loss and the `finish`
-operation that packages the live state as a trained result.
+`Session` owns a supervised update action and step counter. `step` updates from one sample;
+`step samples (batch := true)` averages a nonempty array's gradients before one update. Both return
+`Unit` unless `(loss := true)` requests the pre-update loss. `steps` reads the counter, prediction
+and loss use evaluation mode, and `finish` packages the live state as a trained result.
 
 A batch update and an evaluation may use the same parameters with different mode-dependent
 behavior, such as dropout. The step counter tracks updates; it is not a count of every forward

@@ -33,9 +33,9 @@ Nodewise affine bounds and output-box evaluation for CROWN.
 Compute nodewise CROWN affine bounds from previously computed node intervals.
 
 Nodes without a justified affine transfer retain their IBP enclosure as a constant affine bound.
-Exact backends use a forward sweep. Rounded backends use the directed backward engine for
-each coordinate objective, retaining coefficient-rounding errors rather than reassociating
-ordinary floating-point arithmetic.
+The sweep uses nodewise transfers. On rounded backends, arithmetic nodes request directed backward
+coordinate bounds, retaining coefficient-rounding errors rather than reassociating ordinary
+floating-point arithmetic.
 -/
 def runCROWN (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)
     (ibp : Array (Option (FlatBox α))) : Array (Option (FlatAffineBounds α)) :=
@@ -66,8 +66,9 @@ def evalCROWNOutputBox? (bounds : Array (Option (FlatAffineBounds α))) (xB : Fl
 /--
 Run IBP, compute CROWN output bounds, and evaluate them on the selected input box.
 
-This is the common "forward CROWN output box" workflow. It keeps callers from open-coding the same
-output-array lookup and input-dimension proof checks around `runCROWN`.
+Exact-reassociation backends use `runCROWN`. Rounded backends request directed backward bounds only
+for the output coordinates via `directedNodeBounds?`. Either path may retain an IBP enclosure when
+no affine transfer is available. Missing output bounds and input-dimension mismatches return errors.
 -/
 @[noinline, nospecialize]
 def outputBoxCROWN? (g : Graph) (ps : ParamStore α) (xB : FlatBox α)

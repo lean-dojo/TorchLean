@@ -13,10 +13,9 @@ public import NN.Tests.Utils
 /-!
 # CROWN Soundness Guardrails
 
-Check the boundary between supported IR configurations and missing transfer rules. Unsupported
-convolution geometry and mismatched LayerNorm payload shapes must return no bounds. Dense
-convolution and last-axis affine LayerNorm retain their value bounds; LayerNorm payload
-derivatives remain unresolved.
+Check the boundary between valid IR configurations and malformed payloads. Invalid convolution
+geometry and mismatched LayerNorm payload shapes must return no bounds. Valid convolution and
+affine LayerNorm retain their value and derivative bounds.
 -/
 
 @[expose] public section
@@ -37,7 +36,7 @@ def checkConvolutionGuards : IO Unit := do
   let stride : Tensor Nat [1] := [1]
   let padding : Tensor Nat [1] := [1]
   let dilationOne : Tensor Nat [1] := [1]
-  let dilationTwo : Tensor Nat [1] := [2]
+  let dilationZero : Tensor Nat [1] := [0]
   let paddingAfterZero : Tensor Nat [1] := [0]
   let weights : Tensor Float [2, 2, 2] := Tensor.full (α := Float) [2, 2, 2] 1
   let bias : Tensor Float [2] := Tensor.full (α := Float) [2] 0
@@ -90,36 +89,36 @@ def checkConvolutionGuards : IO Unit := do
   assertBoundAt "supported dense convolution"
     (runIBP supportedGraph supportedStore) 1
 
-  let groupedParams := { base with groups := 2 }
-  let groupedConfig := { baseConfig with groups := 2 }
+  let groupedParams := { base with groups := 0 }
+  let groupedConfig := { baseConfig with groups := 0 }
   let groupedGraph := graphFor groupedConfig [2, 5]
   let groupedStore := storeFor groupedParams
   unless !crownGraphSemanticsSupported groupedGraph groupedStore do
-    throw <| IO.userError "grouped convolution was accepted"
-  assertNoBoundAt "grouped convolution" (runIBP groupedGraph groupedStore) 1
+    throw <| IO.userError "convolution with zero groups was accepted"
+  assertNoBoundAt "convolution with zero groups" (runIBP groupedGraph groupedStore) 1
 
-  let dilatedParams := { base with dilation := dilationTwo }
-  let dilatedConfig := { baseConfig with dilation := dilationTwo }
-  let dilatedGraph := graphFor dilatedConfig [2, 4]
+  let dilatedParams := { base with dilation := dilationZero }
+  let dilatedConfig := { baseConfig with dilation := dilationZero }
+  let dilatedGraph := graphFor dilatedConfig [2, 6]
   let dilatedStore := storeFor dilatedParams
   unless !crownGraphSemanticsSupported dilatedGraph dilatedStore do
-    throw <| IO.userError "dilated convolution was accepted"
-  assertNoBoundAt "dilated convolution" (runIBP dilatedGraph dilatedStore) 1
+    throw <| IO.userError "convolution with zero dilation was accepted"
+  assertNoBoundAt "convolution with zero dilation" (runIBP dilatedGraph dilatedStore) 1
 
   let asymmetricParams := { base with paddingAfter := paddingAfterZero }
   let asymmetricConfig := { baseConfig with paddingAfter := paddingAfterZero }
-  let asymmetricGraph := graphFor asymmetricConfig [2, 4]
+  let asymmetricGraph := graphFor asymmetricConfig [2, 5]
   let asymmetricStore := storeFor asymmetricParams
   unless !crownGraphSemanticsSupported asymmetricGraph asymmetricStore do
-    throw <| IO.userError "asymmetrically padded convolution was accepted"
+    throw <| IO.userError "asymmetric convolution with a mismatched output shape was accepted"
   let ibp := runIBP asymmetricGraph asymmetricStore
-  assertNoBoundAt "asymmetrically padded convolution" ibp 1
+  assertNoBoundAt "asymmetric convolution output shape" ibp 1
   let ctx : AffineCtx := { inputId := 0, inputDim := 8 }
-  assertNoBoundAt "asymmetric convolution CROWN"
+  assertNoBoundAt "asymmetric convolution output shape CROWN"
     (runCROWN asymmetricGraph asymmetricStore ctx ibp) 1
 
 /--
-Keep affine LayerNorm value bounds separate from unsupported shapes and derivative rules.
+Check affine LayerNorm values and derivatives while rejecting inconsistent payload shapes.
 
 For the constant input, each normalized row is zero and the bias makes every output three.
 The backward objective sums all four entries, so its bounds must contain twelve. A payload with
@@ -156,8 +155,8 @@ def checkLayerNormPayloadGuard : IO Unit := do
     throw <| IO.userError "affine LayerNorm objective bounds omitted the bias"
   let derivatives := runDirectionalDerivative graph store ibp (pointFlatBox input)
   assertBoundAt "LayerNorm input derivative seed" derivatives 0
-  assertNoBoundAt "LayerNorm payload first derivative" derivatives 1
-  assertNoBoundAt "LayerNorm payload second derivative"
+  assertBoundAt "LayerNorm payload first derivative" derivatives 1
+  assertBoundAt "LayerNorm payload second derivative"
     (runMixedSecondDerivative graph store ibp derivatives derivatives) 1
 
   let wrongShape : LayerNormParams Float :=

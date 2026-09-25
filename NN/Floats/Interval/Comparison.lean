@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Floats.Interval.IEEEExec32
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured
+public import FloatLib.Floats.Formats.IEEE754.Native
 public import FloatLib.Numerics.Enclosure.Rational.Runtime
 
 /-!
@@ -16,29 +17,27 @@ This module contains small, reusable baselines for numerical-audit examples:
 
 - `Float32Interval.IntervalF32`: a deliberately naive runtime-`Float32` interval model;
 - FloatLib's `RationalInterval`: exact rational endpoints for small reference checks;
-- conversions from finite `ExecFloat.Binary 8 23` / runtime `Float32` endpoints into rational
+- conversions from finite `Binary 8 23` / runtime `Float32` endpoints into rational
 intervals.
 
-The important design point is separation: examples should print comparisons, not quietly define a
-second interval library. The primary TorchLean interval implementation is
-`IEEE32Exec.Interval32`; this module provides baselines that make examples and regression tests
-easier to read.
+FloatLib supplies the interval arithmetic and its proofs. This module provides baselines that
+make examples and regression tests easier to read.
 -/
 
 @[expose] public section
 
 open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Numerics (Interval)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 open FloatLib.Numerics (RationalInterval)
 
 
 namespace TorchLean.Floats.Interval.Comparison
 
-open TorchLean.Floats.IEEE754
-open TorchLean.Floats.IEEE754.IEEE32Exec
 
-/-- Pretty-print an executable `IEEE32Exec.Interval32`, including endpoint bits. -/
-def showInterval32 (I : Interval32) : String :=
+/-- Pretty-print an executable binary32 interval, including endpoint bits. -/
+def showInterval32 (I : Interval (Binary 8 23)) : String :=
   let lo := ExecFloat.Binary.toFloat <| ExecFloat.Binary.ofModel <|
     Model.cast FloatFormat.binary32 FloatFormat.binary64 (ExecFloat.Binary.toModel I.lo)
   let hi := ExecFloat.Binary.toFloat <| ExecFloat.Binary.ofModel <|
@@ -56,7 +55,7 @@ namespace Float32Interval
 Closed interval with runtime `Float32` endpoints.
 
 This baseline uses ordinary runtime `Float32` arithmetic and provides no outward-rounding
-guarantee. Examples compare it with the verified `IEEE32Exec.Interval32` implementation.
+guarantee. Examples compare it with FloatLib's proved directed interval arithmetic.
 -/
 structure IntervalF32 where
   /-- Lower endpoint. -/
@@ -125,7 +124,7 @@ def containsZero (I : IntervalF32) : Bool :=
 Naive four-corner division when the denominator does not contain zero.
 
 If the denominator straddles zero, return `whole`, mirroring the shape of
-`IEEE32Exec.Interval32.div` but without directed rounding.
+`Binary.Interval.div` but without directed rounding.
 -/
 def div (A B : IntervalF32) : IntervalF32 :=
   if containsZero B then
@@ -165,8 +164,8 @@ def format (I : RationalInterval) : String :=
 
 end Rational
 
-/-- Exact rational endpoint interval for a finite `IEEE32Exec.Interval32`; `none` for NaN/Inf. -/
-def interval32ToRat? (I : Interval32) : Option RationalInterval := do
+/-- Exact rational bounds for a finite binary32 interval; `none` for NaN/Inf. -/
+def interval32ToRat? (I : Interval (Binary 8 23)) : Option RationalInterval := do
   let lo ← ExecFloat.Binary.toRat? I.lo
   let hi ← ExecFloat.Binary.toRat? I.hi
   pure ⟨lo, hi⟩
@@ -182,13 +181,13 @@ def intervalF32ToRat? (I : Float32Interval.IntervalF32) : Option RationalInterva
   pure ⟨lo, hi⟩
 
 /--
-Endpoint-evaluate a unary function over an `ExecFloat.Binary 8 23` interval.
+Endpoint-evaluate a unary function over an `Binary 8 23` interval.
 
 This is not a sound transcendental interval rule in general; it is a comparison
 baseline for examples.
 -/
-def intervalUnaryEndpoints (f : ExecFloat.Binary 8 23 → (ExecFloat.Binary 8 23)) (lo hi :
-  ExecFloat.Binary 8 23) : Interval32 :=
+def intervalUnaryEndpoints (f : Binary 8 23 → (Binary 8 23)) (lo hi :
+  Binary 8 23) : Interval (Binary 8 23) :=
   let a := f lo
   let b := f hi
   ⟨min a b, max a b⟩

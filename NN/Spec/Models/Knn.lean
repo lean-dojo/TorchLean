@@ -267,21 +267,6 @@ def KNN.fromData (α β : Type) (n : ℕ) (k : Nat)
     (data : Array (Tensor α [n] × β)) : KNN α β n :=
   { k := k, dataset := data }
 
-/-- Batch regression: map `predict` over an array of inputs. -/
-def batchPredict (α : Type) (n : ℕ)
-  [TorchLean.Storage α] [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)]
-  (knn : KNN α α n) (inputs : Array (Tensor α [n])) : Array α :=
-  inputs.map (predict α n knn)
-
-/-- Batch classification: map `classify` over an array of inputs. -/
-def batchClassify (α β : Type) (n : ℕ)
-  [TorchLean.Storage α] [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)]
-  [Hashable β] [Inhabited β] [BEq β]
-  (knn : KNN α β n) (inputs : Array (Tensor α [n])) : Array β :=
-  inputs.map (classify α β n knn)
-
 /-- Classify with an explicit distance function and the same vote tie rule as `classify`. -/
 def classifyWithDistance (α β : Type) (n : ℕ)
   [TorchLean.Storage α] [Context α]

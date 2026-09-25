@@ -86,7 +86,9 @@ def conv
   let node : Node :=
     { name := some "conv"
       value := output
-      requiresGrad := true
+      requiresGrad := (t.getNode? kernelId).any (·.requiresGrad) ||
+        (t.getNode? biasId).any (·.requiresGrad) ||
+        (t.getNode? inputId).any (·.requiresGrad)
       parents := #[kernelId, biasId, inputId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny outShape
@@ -157,7 +159,9 @@ def convTranspose
   let node : Node :=
     { name := some "conv_transpose"
       value := output
-      requiresGrad := true
+      requiresGrad := (t.getNode? kernelId).any (·.requiresGrad) ||
+        (t.getNode? biasId).any (·.requiresGrad) ||
+        (t.getNode? inputId).any (·.requiresGrad)
       parents := #[kernelId, biasId, inputId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny outShape
@@ -214,7 +218,7 @@ def maxPool
   let node : Node :=
     { name := some "max_pool"
       value := output
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny outShape
@@ -276,7 +280,7 @@ def smoothMaxPool
   let node : Node :=
     { name := some "smooth_max_pool"
       value := output
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny outShape
@@ -331,7 +335,7 @@ def avgPool
   let node : Node :=
     { name := some "avg_pool"
       value := output
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny outShape

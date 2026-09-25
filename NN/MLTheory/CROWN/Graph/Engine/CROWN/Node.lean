@@ -50,9 +50,16 @@ def propagateCROWNNode
     let getB (pid : Nat) := (bounds[pid]!)
     match node.kind with
     | .input =>
-      if node.id = ctx.inputId then
-        bounds.set! id (some (boundsIdentity (α:=α) ctx.inputDim))
-      else bounds
+      match (ibp[id]?).join with
+      | some box =>
+        if box.dim != node.outShape.size then bounds.set! id none
+        else if id = ctx.inputId then
+          if box.dim = ctx.inputDim then
+            bounds.set! id (some (boundsIdentity (α:=α) ctx.inputDim))
+          else bounds.set! id none
+        else
+          bounds.set! id (some (boundsConst (α:=α) ctx.inputDim box.dim box.lo box.hi))
+      | none => bounds.set! id none
     | .const _ =>
       match ps.constVals[id]? with
       | some v =>
@@ -223,55 +230,11 @@ def propagateCROWNNode
         | none => bounds
       | _ => bounds
     | .concat axis =>
-      if axis != 0 then
-        bounds
-      else
-        -- Leading-axis concatenation is contiguous in row-major flattened storage.
-        match node.parents with
-        | #[p1, p2] =>
-          match getB p1, getB p2 with
-          | some b1, some b2 =>
-            if hin : b1.inDim = b2.inDim then
-              let b2Lo : AffineVec α b1.inDim b2.outDim :=
-                castAffineIn (α := α) (n := b2.inDim) (n' := b1.inDim) (m := b2.outDim) hin.symm
-                  b2.loAff
-              let b2Hi : AffineVec α b1.inDim b2.outDim :=
-                castAffineIn (α := α) (n := b2.inDim) (n' := b1.inDim) (m := b2.outDim) hin.symm
-                  b2.hiAff
-              let outDim := b1.outDim + b2.outDim
-              let ALo : Tensor α [outDim, b1.inDim] :=
-                Tensor.matrix fun i j =>
-                  Fin.addCases
-                    (fun i1 => Spec.get2 b1.loAff.A i1 j)
-                    (fun i2 => Spec.get2 b2Lo.A i2 j)
-                    i
-              let AHi : Tensor α [outDim, b1.inDim] :=
-                Tensor.matrix fun i j =>
-                  Fin.addCases
-                    (fun i1 => Spec.get2 b1.hiAff.A i1 j)
-                    (fun i2 => Spec.get2 b2Hi.A i2 j)
-                    i
-              let cLo : Tensor α [outDim] :=
-                Tensor.ofFn fun i =>
-                  Fin.addCases
-                    (fun i1 => Tensor.getScalar b1.loAff.c i1)
-                    (fun i2 => Tensor.getScalar b2Lo.c i2)
-                    i
-              let cHi : Tensor α [outDim] :=
-                Tensor.ofFn fun i =>
-                  Fin.addCases
-                    (fun i1 => Tensor.getScalar b1.hiAff.c i1)
-                    (fun i2 => Tensor.getScalar b2Hi.c i2)
-                    i
-              bounds.set! id
-                (some
-                  { inDim := b1.inDim
-                    outDim := outDim
-                    loAff := { A := ALo, c := cLo }
-                    hiAff := { A := AHi, c := cHi } })
-            else bounds
-          | _, _ => bounds
-        | _ => bounds
+      let result := do
+        let layout ← concatNodeLayout? nodes node axis
+        let parents ← node.parents.mapM fun parent => (bounds[parent]?).join
+        concatFlatAffineBounds? (α := α) layout parents
+      bounds.set! id result
     | .transpose axis₁ axis₂ =>
       match node.parents with
       | #[p1] =>
@@ -309,14 +272,17 @@ def propagateCROWNNode
         | some B => bounds.set! id (some (boundsConst (α:=α) ctx.inputDim B.dim B.lo B.hi))
         | none => bounds
     | .softmax _ =>
-      match ibp[id]! with
-      | some B => bounds.set! id (some (boundsConst (α:=α) ctx.inputDim B.dim B.lo B.hi))
-      | none => bounds
+      if !crownNodeSemanticsSupported (α := α) nodes ps id then
+        bounds
+      else
+        match ibp[id]! with
+        | some B => bounds.set! id (some (boundsConst (α:=α) ctx.inputDim B.dim B.lo B.hi))
+        | none => bounds
     | .mseLoss =>
       match ibp[id]! with
       | some B => bounds.set! id (some (boundsConst (α := α) ctx.inputDim B.dim B.lo B.hi))
       | none => bounds
-    | .conv .. =>
+    | .conv configuration =>
       if !crownNodeSemanticsSupported (α := α) nodes ps id then
         bounds
       else
@@ -324,20 +290,18 @@ def propagateCROWNNode
         | #[p1] =>
           match getB p1 with
           | some xin =>
-            match ps.convCfg[id]? with
-            | some config =>
-              let inShape :=
-                Shape.ofList (config.inChannels :: Tensor.to config.inputSpatial (List Nat))
-              let outSpatial :=
-                Spec.convOutSpatial config.inputSpatial config.kernel config.stride config.padding
-              let outShape := Shape.ofList (config.outChannels :: Tensor.to outSpatial (List Nat))
-              if hout : xin.outDim = inShape.size then
-                let convAff := affOfConv (α:=α) config
-                let out := propagateLinearBounds (α:=α) (n:=inShape.size) (m:=outShape.size)
-                  convAff.A convAff.c xin hout
-                bounds.set! id (some out)
-              else bounds
-            | none => bounds
+            match ps.convCfg[id]?, nodes[p1]? with
+            | some config, some parent =>
+              match planConvTransfer? configuration config parent.outShape node.outShape with
+              | some leading =>
+                if hout : xin.outDim = (config.input leading).size then
+                  let convAff := affOfConv (α:=α) config leading
+                  let out := propagateLinearBounds (α:=α)
+                    convAff.A convAff.c xin hout
+                  bounds.set! id (some out)
+                else bounds
+              | none => bounds
+            | _, _ => bounds
           | none => bounds
         | _ => bounds
     | .batchNormEval channelAxis _ =>

@@ -67,13 +67,13 @@ def trainOnce : IO Unit := do
   -- Select the loss and train through a typed graph with FloatLib binary32 arithmetic.
   let trainer :=
     Trainer.new model
-      { objective := .meanSquaredError
+      { objective := .mse
         optimizer := optim.sgd { learningRate := 0.05 }
         execution := .typedGraph
         device := .cpu
         arithmetic := .ieee }
   -- Inspect the initialized model before any parameter updates.
-  let initialPrediction ← trainer.predict ([0.5, -0.25])
+  let initialPrediction ← trainer.predict ([0.5, -0.25] : Tensor Float [2])
   IO.println s!"initial={reprStr initialPrediction}"
   -- Each step averages 16 sample gradients at one parameter point, then updates once.
   -- Training returns a result that retains the updated parameters and run report.
@@ -122,8 +122,8 @@ to keep that scalar through parameters, activations, and derivatives on the type
 [tensor guide]({{ '/blueprint/Building-Models/Tensors-That-Remember-Their-Shapes/' | relative_url }})
 works through an affine model with exact output and derivative checks. The supervised trainer
 above still has `Float` dataset, reporting, and checkpoint boundaries. Custom precision runs on the
-typed CPU
-path; the native CUDA providers support binary32 and binary64.
+typed CPU path. The eager CUDA runtime uses LibTorch binary32 buffers; its separate
+matrix-multiplication interface also supports binary64.
 
 For an explicit training loop, take the parameter gradients returned by
 `nn.TypedGraphModel.vjp` and pass them to `nn.sgdStep model learningRate state gradient`.
@@ -136,7 +136,7 @@ running-statistics updates or extend the trainer's checkpoint interface.
 ## Where To Go Next
 
 1. [Installation]({{ '/installation/' | relative_url }}) covers Linux, macOS, Windows/WSL, CUDA,
-   optional LibTorch integration, and backend capsules.
+   the LibTorch GPU backend, and backend capsules.
 2. [Building Models]({{ '/blueprint/Building-Models/' | relative_url }}) introduces typed tensors,
    layers, parameter packs, datasets, losses, optimizers, and the trainer.
 3. [Runtime and Interop]({{ '/blueprint/Runtime___-Autograd___-and-Interop/' | relative_url }})

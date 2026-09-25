@@ -185,9 +185,15 @@ def getScalarBox (B : FlatBox α) {m : Nat} (h : B.dim = m) : Box α (.dim m .sc
 
 end FlatBox
 
-/-! We primarily target vector inputs/outputs for CROWN in this initial
-integration. To avoid over-generalizing shapes, we use a specialized
-variant for 1D (flat) vectors. -/
+/-!
+CROWN affine bounds use one matrix row per output scalar and one column per input scalar.
+A tensor of shape `s` contributes `s.size` coordinates to this flat representation. Graph nodes
+retain their tensor shapes, and each transfer checks its operator's shape contract.
+
+The graph `matmul` contract requires rank at least two and exactly the same leading shape on both
+operands: `(...×m×n) · (...×n×p) → (...×m×p)`. The leading shape can contain any number of axes;
+implicit broadcasting and vector operands are not supported.
+-/
 
 /--
 Affine form `y = A*x + c` over flat vectors.

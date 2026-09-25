@@ -24,10 +24,9 @@ namespace F
 # Dynamic einsum
 
 `einsum?` interprets a PyTorch-style subscript string at run time and lowers it to the verified op
-set: reorder, reshape, broadcast, multiply, sum. It is one large monadic definition and by far the
-most expensive thing to elaborate in this corner of the tree, so it lives on its own rather than in
-`Functional.Einsum`. Everything that only needs the typed contractions or the label bookkeeping
-imports that module and does not pay for this one.
+set: matmul, reorder, reshape, broadcast, multiply, sum. The dynamic lowering lives in its own
+module so users of the typed contractions and label bookkeeping can import `Functional.Einsum`
+without elaborating it.
 -/
 
 open Einsum
@@ -44,8 +43,8 @@ Currently unsupported (returns `none`):
 - non-broadcastable size mismatches.
 - any case that would require gather/scatter-style indexing (not in the verifier-friendly op set).
 
-This is implemented purely by reordering, reshaping, broadcasting, elementwise multiplication,
-and summing contracted axes.
+Matrix contractions use batch-broadcast matmul after label normalization. Other equations use
+reordering, reshaping, broadcasting, elementwise multiplication, and summing contracted axes.
 -/
 def einsum? {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
@@ -69,176 +68,6 @@ def einsum? {α : Type} [TorchLean.Storage α] [Context α]
         | .ell _ => none
       (List.range ellipsisRank).map Label.ell ++
         (chars.mergeSort (fun a b => a.toNat ≤ b.toNat)).map Label.chr
-
-    -- Fast paths for common contractions.
-    --
-    -- The generic lowering below broadcasts all operands to a common label shape, multiplies,
-    -- then sums contracted axes. This is verifier-friendly but can allocate extremely large
-    -- intermediate tensors for common patterns like matmul/bmm/attention.
-    --
-    -- These fast paths dispatch to existing primitives (`matmul`/`bmm` plus small reshapes/
-    -- transposes), preserving semantics while avoiding the huge broadcasted intermediate.
-    let attemptFast : OptionT m (Σ s : Shape, RefTy (m := m) (α := α) s) := do
-      if parsed.inputs.length != 2 then
-        failure
-      if xs.length != 2 then
-        failure
-      let some sub0 := parsed.inputs[0]? | failure
-      let some sub1 := parsed.inputs[1]? | failure
-      let some x0 := xs[0]? | failure
-      let some x1 := xs[1]? | failure
-      let out? := parsed.output?
-
-      -- Require "simple" subscripts for fast paths: no ellipsis and no post-ellipsis labels.
-      if sub0.hasEll || sub1.hasEll then
-        failure
-      match sub0.post, sub1.post with
-      | .nil, .nil => pure ()
-      | _, _ => failure
-
-      -- Primitive axis roles must name distinct labels. Aliases require diagonal extraction
-      -- or embedding, which the generic lowering handles below.
-      let requireDistinct (labels : List Char) : OptionT m Unit := do
-        if Einsum.hasDupLabels (labels.map Label.chr) then failure
-
-      let expectOut (expected : List Char) : OptionT m Unit := do
-        match out? with
-        | some o =>
-            if o.hasEll then failure
-            match o.post with
-            | .nil =>
-                if o.pre = expected then pure () else failure
-            | _ => failure
-        | none =>
-            -- Match the generic implicit output. Shared batch/head labels are contracted
-            -- unless explicitly retained, so batched primitives cannot keep them here.
-            let inferred :=
-              implicitOutputLabels [sub0.pre.map Label.chr, sub1.pre.map Label.chr] 0
-            if inferred = expected.map Label.chr then pure () else failure
-
-      -- Case dispatch is primarily driven by shapes.
-      match x0 with
-      -- Matmul: `[i,j] × [j,k] → [i,k]` and subscripts `ij,jk->ik` (or implicit output).
-      | ⟨.dim iDim (.dim jDim .scalar), a⟩ =>
-          match x1 with
-          | ⟨.dim jDim2 (.dim kDim .scalar), b⟩ =>
-              if hJ : jDim = jDim2 then
-                let b' : RefTy (m := m) (α := α) (.dim jDim (.dim kDim .scalar)) := by
-                  simpa [hJ] using b
-                -- Extract labels (must be length-2 on both operands).
-                let some li0 := sub0.pre[0]? | failure
-                let some lj0 := sub0.pre[1]? | failure
-                if sub0.pre.length != 2 then failure
-                let some lj1 := sub1.pre[0]? | failure
-                let some lk1 := sub1.pre[1]? | failure
-                if sub1.pre.length != 2 then failure
-                if lj0 != lj1 then failure
-                requireDistinct [li0, lj0, lk1]
-                expectOut [li0, lk1]
-                let out ← OptionT.lift <|
-                  einsumIjJkIk (m := m) (α := α)
-                    (iDim := iDim) (jDim := jDim) (kDim := kDim) a b'
-                pure ⟨.dim iDim (.dim kDim .scalar), out⟩
-              else
-                failure
-          | _ => failure
-      -- BMM: `[b,i,j] × [b,j,k] → [b,i,k]` and subscripts `bij,bjk->bik`.
-      | ⟨.dim batch (.dim iDim (.dim jDim .scalar)), a⟩ =>
-          match x1 with
-          | ⟨.dim batch2 (.dim jDim2 (.dim kDim .scalar)), b⟩ =>
-              if hB : batch = batch2 then
-                if hJ : jDim = jDim2 then
-                  let b' : RefTy (m := m) (α := α)
-                      (.dim batch (.dim jDim (.dim kDim .scalar))) := by
-                    simpa [hB, hJ] using b
-                  let some lb0 := sub0.pre[0]? | failure
-                  let some li0 := sub0.pre[1]? | failure
-                  let some lj0 := sub0.pre[2]? | failure
-                  if sub0.pre.length != 3 then failure
-                  let some lb1 := sub1.pre[0]? | failure
-                  let some lj1 := sub1.pre[1]? | failure
-                  let some lk1 := sub1.pre[2]? | failure
-                  if sub1.pre.length != 3 then failure
-                  if lb0 != lb1 then failure
-                  if lj0 != lj1 then failure
-                  requireDistinct [lb0, li0, lj0, lk1]
-                  expectOut [lb0, li0, lk1]
-                  let out ← OptionT.lift <|
-                    einsumBijBjkBik (m := m) (α := α)
-                      (batch := batch) (iDim := iDim) (jDim := jDim) (kDim := kDim) a b'
-                  pure ⟨.dim batch (.dim iDim (.dim kDim .scalar)), out⟩
-                else
-                  failure
-              else
-                failure
-          | _ => failure
-      -- 4D attention-like contractions (Q·Kᵀ or Attn·V), selected by label patterns.
-      | ⟨.dim batch (.dim heads (.dim iDim (.dim tDim .scalar))), x0Ref⟩ =>
-          match x1 with
-          | ⟨.dim batch2 (.dim heads2 (.dim jDim (.dim dDim .scalar))), x1Ref⟩ =>
-              if hB : batch = batch2 then
-                if hH : heads = heads2 then
-                  let x1Ref' : RefTy (m := m) (α := α)
-                      (.dim batch (.dim heads (.dim jDim (.dim dDim .scalar)))) := by
-                    simpa [hB, hH] using x1Ref
-                  let some lb0 := sub0.pre[0]? | failure
-                  let some lh0 := sub0.pre[1]? | failure
-                  let some l2_0 := sub0.pre[2]? | failure
-                  let some l3_0 := sub0.pre[3]? | failure
-                  if sub0.pre.length != 4 then failure
-                  let some lb1 := sub1.pre[0]? | failure
-                  let some lh1 := sub1.pre[1]? | failure
-                  let some l2_1 := sub1.pre[2]? | failure
-                  let some l3_1 := sub1.pre[3]? | failure
-                  if sub1.pre.length != 4 then failure
-                  if lb0 != lb1 then failure
-                  if lh0 != lh1 then failure
-                  -- Two attention-like cases:
-                  -- 1) Q·Kᵀ: `bhid,bhjd -> bhij`  (shared last label across inputs).
-                  -- 2) Attn·V: `bhij,bhjd -> bhid` (contract sub0 last label with sub1
-                  -- third label).
-                  if l3_0 = l3_1 then
-                    -- Q·Kᵀ: sub0 = [b,h,i,d], sub1 = [b,h,j,d], and shapes must agree on `d`.
-                    if hD : dDim = tDim then
-                      let x0Ref' : RefTy (m := m) (α := α)
-                          (.dim batch (.dim heads (.dim iDim (.dim dDim .scalar)))) := by
-                        simpa [hD] using x0Ref
-                      requireDistinct [lb0, lh0, l2_0, l2_1, l3_0]
-                      expectOut [lb0, lh0, l2_0, l2_1]
-                      let out ← OptionT.lift <|
-                        einsumBhidBhjdBhij (m := m) (α := α)
-                          (batch := batch) (heads := heads) (iDim := iDim) (jDim := jDim)
-                          (dDim := dDim) x0Ref' x1Ref'
-                      pure ⟨.dim batch (.dim heads (.dim iDim (.dim jDim .scalar))), out⟩
-                    else
-                      failure
-                  else if l3_0 = l2_1 then
-                    -- Attn·V: sub0 = [b,h,i,j], sub1 = [b,h,j,d], and shapes must agree on `j`.
-                    if hJ : jDim = tDim then
-                      let x0Ref' : RefTy (m := m) (α := α)
-                          (.dim batch (.dim heads (.dim iDim (.dim jDim .scalar)))) := by
-                        simpa [hJ] using x0Ref
-                      requireDistinct [lb0, lh0, l2_0, l3_0, l3_1]
-                      expectOut [lb0, lh0, l2_0, l3_1]
-                      let out ← OptionT.lift <|
-                        einsumBhijBhjdBhid (m := m) (α := α)
-                          (batch := batch) (heads := heads) (iDim := iDim) (jDim := jDim)
-                          (dDim := dDim) x0Ref' x1Ref'
-                      pure ⟨.dim batch (.dim heads (.dim iDim (.dim dDim .scalar))), out⟩
-                    else
-                      failure
-                  else
-                    failure
-                else
-                  failure
-              else
-                failure
-          | _ => failure
-      | _ => failure
-
-    let fastRes? ← OptionT.lift attemptFast.run
-    if let some r := fastRes? then
-      return r
 
     let shapes0 : List Shape := xs.map Sigma.fst
     let ranks : List Nat := shapes0.map Spec.Shape.rank
@@ -359,6 +188,84 @@ def einsum? {α : Type} [TorchLean.Storage α] [Context α]
       match Einsum.labelDimMap inLabels shapes with
       | .ok mp => pure mp
       | .error _ => failure
+
+    -- Recognize axis roles after ellipsis expansion and output inference. A single shared
+    -- contraction axis and two operand-exclusive output axes form a matrix product; all other
+    -- output axes are batch axes. Their positions and the number of batch axes are unrestricted.
+    let attemptFast : OptionT m (Σ s : Shape, RefTy (m := m) (α := α) s) := do
+      let [a, b] := processed | failure
+      let [labelsA, labelsB] := inLabels | failure
+      let [contract] := contracted | failure
+      -- Diagonal extraction/embedding retains the generic lowering's semantics.
+      if inLabelsRaw.any Einsum.hasDupLabels || Einsum.hasDupLabels outLabelsRaw then
+        failure
+      if !(labelsA.contains contract) || !(labelsB.contains contract) then
+        failure
+      let matrixAxis (other : List Label) (label : Label) : Bool :=
+        match label with
+        | .chr _ => outLabels.contains label && !(other.contains label)
+        | .ell _ => false
+      let some row := labelsA.reverse.find? (matrixAxis labelsB) | failure
+      let some col := labelsB.reverse.find? (matrixAxis labelsA) | failure
+      let batchLabels := outLabels.filter (fun label => label != row && label != col)
+      let operandDim (labels : List Label) (shape : Shape) (label : Label) : Option Nat := do
+        let index ← labels.findIdx? (· == label)
+        (Shape.toList shape)[index]?
+      let some mDim := operandDim labelsA a.fst row | failure
+      let some nDim := operandDim labelsA a.fst contract | failure
+      let some nDimB := operandDim labelsB b.fst contract | failure
+      let some pDim := operandDim labelsB b.fst col | failure
+      -- Matmul does not broadcast its contracted dimension. Singleton contraction sizes
+      -- still use the generic elementwise lowering.
+      if nDim != nDimB then failure
+      let batchDims (labels : List Label) (shape : Shape) : Option (List Nat) :=
+        batchLabels.mapM fun label =>
+          if labels.contains label then operandDim labels shape label else some 1
+      let some dimsA := batchDims labelsA a.fst | failure
+      let some dimsB := batchDims labelsB b.fst | failure
+      let some dims := batchLabels.mapM (Einsum.dimFind? dimMap) | failure
+      let batchA := Shape.ofList dimsA
+      let batchB := Shape.ofList dimsB
+      let batch := Shape.ofList dims
+      let some ⟨broadcastA⟩ := Shape.canBroadcastTo? batchA batch | failure
+      let some ⟨broadcastB⟩ := Shape.canBroadcastTo? batchB batch | failure
+      let inputSwaps (labels axes : List Label) : Option (List Nat) := do
+        let order := batchLabels.filter (fun label => labels.contains label) ++ axes
+        let perm ← order.mapM fun label => labels.findIdx? (· == label)
+        Einsum.swapDepthsForPerm? perm labels.length
+      let some swapsA := inputSwaps labelsA [row, contract] | failure
+      let some swapsB := inputSwaps labelsB [contract, col] | failure
+      let some outputPerm :=
+        Einsum.permForDuplicateLabels? (batchLabels ++ [row, col]) outLabels | failure
+      let some outputSwaps :=
+        Einsum.swapDepthsForPerm? outputPerm outLabels.length | failure
+      -- Insert only missing batch axes. The matmul primitive owns batch broadcasting and
+      -- its adjoint; neither operand is expanded across the other matrix's free axis.
+      let align (x : Σ s : Shape, RefTy (m := m) (α := α) s)
+          (swaps : List Nat) (target : Shape) :
+          OptionT m (RefTy (m := m) (α := α) target) := do
+        let ⟨shape, ref⟩ ← OptionT.lift <|
+          Einsum.permuteBySwaps (α := α) (m := m) x swaps
+        if h : shape = target then
+          pure (h ▸ ref)
+        else if hSize : shape.size = target.size then
+          OptionT.lift <| reshape (m := m) (α := α) ref hSize
+        else
+          failure
+      let a' ← align a swapsA (batchA.concat [mDim, nDim])
+      let b' ← align b swapsB (batchB.concat [nDim, pDim])
+      let output ← OptionT.lift <|
+        letI : Shape.BroadcastTo batchA batch := ⟨broadcastA⟩
+        letI : Shape.BroadcastTo batchB batch := ⟨broadcastB⟩
+        Runtime.Autograd.Torch.matmul (m := m) (α := α)
+          (batchA := batchA) (batchB := batchB) (batch := batch)
+          (mDim := mDim) (nDim := nDim) (pDim := pDim) a' b'
+      OptionT.lift <| Einsum.permuteBySwaps (α := α) (m := m)
+        ⟨batch.concat [mDim, pDim], output⟩ outputSwaps
+
+    let fastRes? ← OptionT.lift attemptFast.run
+    if let some result := fastRes? then
+      return result
 
     let fullDims : List Nat ← fullLabels.mapM fun label =>
       match Einsum.dimFind? dimMap label with

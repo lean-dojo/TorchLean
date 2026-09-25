@@ -28,7 +28,7 @@ like PyTorch.
 
 For training scripts and tests, see `NN.Runtime.Autograd.Train`, which provides dataset and
 optimizer helpers, and `NN.Runtime.Autograd.Torch.ScalarTrainer`, which provides packed adapters
-for common patterns (reading scalar losses, extracting typed grads, simple SGD loops).
+for reading scalar losses, extracting typed gradients, and applying SGD updates.
 
 ## Main declarations
 

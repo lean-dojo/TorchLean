@@ -159,7 +159,7 @@ def multiHeadAttention {α : Type} [TorchLean.Storage α] (s : EagerSession α) 
     pure (some { id := id })
   dispatchCudaCapsuleOpt (α := α) s .scaledDotProductAttention
     #[wq.identity?, wk.identity?, wv.identity?, wo.identity?, x.identity?]
-    #[.nativeCuda, .torchLean, .libTorch] cpu cuda
+    #[.torchLean, .libTorch] cpu cuda
 
 end EagerSession
 

@@ -66,7 +66,7 @@ end Internal
 namespace Internal
 
 /--
-Fused real-FFT spectral convolution used by the CUDA FNO1D path.
+Real-FFT spectral convolution used by the CUDA FNO1D path.
 
 Shapes:
 - `x : (grid, width)`,
@@ -98,13 +98,14 @@ def spectralConv1dRfft {grid width modes : Nat}
   let node : Node :=
     { name := some "spectralConv1dRfft"
       value := { s := xShape, buf := y }
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad) ||
+        (t.getNode? wReId).any (·.requiresGrad) ||
+        (t.getNode? wImId).any (·.requiresGrad)
       parents := #[xId, wReId, wImId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny xShape
-        let dx := Buffer.spectralConv1dRfftBwdX x wRe wIm dLdy.buf grid32 width32 modes32
-        let dWRe := Buffer.spectralConv1dRfftBwdWRe x wRe wIm dLdy.buf grid32 width32 modes32
-        let dWIm := Buffer.spectralConv1dRfftBwdWIm x wRe wIm dLdy.buf grid32 width32 modes32
+        let (dx, dWRe, dWIm) :=
+          Buffer.spectralConv1dRfftBwd x wRe wIm dLdy.buf grid32 width32 modes32
         pure #[
             (xId, { s := xShape, buf := dx })
           , (wReId, { s := wShape, buf := dWRe })
@@ -130,7 +131,9 @@ def linear {outDim inDim : Nat} (t : Tape) (wId bId xId : Nat) : Result (Tape ×
   let node : Node :=
     { name := some "linear"
       value := { s := .dim outDim .scalar, buf := yBuf }
-      requiresGrad := true
+      requiresGrad := (t.getNode? wId).any (·.requiresGrad) ||
+        (t.getNode? bId).any (·.requiresGrad) ||
+        (t.getNode? xId).any (·.requiresGrad)
       parents := #[wId, bId, xId]
       cleanup := #[wx]
       backward := fun dLdyAny => do
@@ -157,7 +160,8 @@ def mseLoss {s : Shape} (t : Tape) (yhatId targetId : Nat) : Result (Tape × Nat
   let node : Node :=
     { name := some "mse_loss"
       value := { s := Shape.scalar, buf := mean }
-      requiresGrad := true
+      requiresGrad := (t.getNode? yhatId).any (·.requiresGrad) ||
+        (t.getNode? targetId).any (·.requiresGrad)
       parents := #[yhatId, targetId]
       cleanup := #[diff, squared, sum]
       backward := fun dLdyAny => do

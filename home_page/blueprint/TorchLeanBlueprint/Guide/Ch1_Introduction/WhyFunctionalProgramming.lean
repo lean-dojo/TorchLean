@@ -170,7 +170,7 @@ The order is part of the forward program's type rather than a convention to reme
 #check nn.initialState wfInit
 ```
 ```leanOutput wfPayload (whitespace := lax)
-nn.initialState wfInit : nn.State Float
+nn.initialState wfInit Float : nn.State Float
   (Runtime.Autograd.Model.Layers.Seq.stateShapes wfInit)
 ```
 
@@ -208,7 +208,7 @@ example : nn.State Float
 ```
 ```leanOutput wfPayloadClash (whitespace := lax)
 Type mismatch
-  nn.initialState wfWide
+  nn.initialState wfWide Float
 has type
   nn.State Float
     (Runtime.Autograd.Model.Layers.Seq.stateShapes wfWide)
@@ -245,14 +245,8 @@ def wfBroken : nn.Builder (nn.Sequential [2] [1]) :=
   ]
 ```
 ```leanOutput wfWidthClash (whitespace := lax)
-Application type mismatch: The argument
-  bc✝
-has type
-  nn.Sequential (Shape.appendDim [] 6) (Shape.appendDim [] 1)
-but is expected to have type
-  ?m.67 a✝ __r✝¹ bc✝ __r✝ (Shape.appendDim [] 4) [1]
-in the application
-  nn.compose a✝ bc✝
+nn.Sequential!: layer 2 expects input shape [6], but layer 1 outputs [4].
+Change layer 2's input shape or insert a layer that converts [4] to [6].
 ```
 
 The ReLU hands on a length-four vector and the final layer demands length six, so composition has
@@ -425,20 +419,16 @@ initialized. Compare these two calls:
 -- model that is already initialized.
 def wfFromBuilder :=
   Trainer.new wfMlp
-    { objective := .meanSquaredError, seed := 2026 }
+    { objective := .mse, seed := 2026 }
 
 def wfFromValue :=
   Trainer.new wfInit
-    { objective := .meanSquaredError, seed := 999 }
+    { objective := .mse, seed := 999 }
 
-#check wfFromBuilder.predict
-#check wfFromValue.predict
-```
-```leanOutput wfTrainers
-wfFromBuilder.predict : Tensor Float [2] → IO (Tensor Float [1])
-```
-```leanOutput wfTrainers
-wfFromValue.predict : Tensor Float [2] → IO (Tensor Float [1])
+example : Tensor Float [2] → IO (Tensor Float [1]) :=
+  wfFromBuilder.predict
+example : Tensor Float [2] → IO (Tensor Float [1]) :=
+  wfFromValue.predict
 ```
 
 Both prediction methods take a length-two Float tensor and return an `IO` action producing
@@ -870,9 +860,9 @@ uses explicitly mutable runtime objects and foreign buffers wherever the workloa
 {ref "backend-selection"}[Backend Selection] is where that machinery lives.
 
 The source-level interface controls dependencies. Storage ownership and mutation belong to the
-execution strategy. That is also what lets several backends implement one model: a CPU evaluator, a
-native CUDA kernel, and an external provider all receive the same explicit inputs, so changing
-device does not mean rewriting the model around a different collection of hidden fields.
+execution strategy. That is also what lets the CPU evaluator and LibTorch CUDA backend implement
+one model: both receive the same explicit inputs, so changing device does not mean rewriting the
+model around a different collection of hidden fields.
 
 # Function Inputs, State, And Effects
 

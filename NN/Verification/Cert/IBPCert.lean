@@ -117,6 +117,14 @@ def check (g : Graph) (ps : ParamStore Float) (outId : Nat) (path : String)
     IO.println s!"Py   lo: [{pyLoStr}]"
     IO.println s!"Lean hi: {Spec.pretty outB.hi}"
     IO.println s!"Py   hi: [{pyHiStr}]"
+    for i in List.finRange n do
+      let leanLo := outB.lo.getScalar i
+      let leanHi := outB.hi.getScalar i
+      unless loVec i ≤ leanLo && leanHi ≤ hiVec i do
+        -- Decimal pretty-printing can hide the adjacent binary64 values that failed containment.
+        IO.println (s!"coordinate {i.val} binary64 bits: " ++
+          s!"Lean lo={leanLo.toBits}, Py lo={(loVec i).toBits}, " ++
+          s!"Lean hi={leanHi.toBits}, Py hi={(hiVec i).toBits}")
     pure false
 
 /--

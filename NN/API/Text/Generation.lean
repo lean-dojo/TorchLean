@@ -275,10 +275,7 @@ def chooseNextToken {vocabularySize recentCount : Nat} (scores : Tensor Float [v
     (options : GenerationOptions) (counter : Nat) (recentTokens : Tensor Nat [recentCount])
     (allowToken : Fin vocabularySize → Bool := fun _ => true) :
     Except String (Fin vocabularySize) := do
-  unless options.repeatPenalty.isFinite && 0.0 <= options.repeatPenalty do
-    throw "generation repeat penalty must be finite and nonnegative"
-  unless options.topK = 1 || (options.temperature.isFinite && 0.0 < options.temperature) do
-    throw "generation temperature must be finite and positive"
+  options.validate
   let scores := Internal.penalizeRepeats scores recentTokens options.repeatPenalty
   let selected? :=
     if options.topK = 1 then

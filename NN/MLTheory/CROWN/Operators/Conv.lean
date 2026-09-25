@@ -37,85 +37,116 @@ variable {α : Type} [TorchLean.Storage α] [Context α]
 def flattenBox {s : Shape} (B : Box α s) : Box α (.dim (Spec.Shape.size s) .scalar) :=
   { lo := Tensor.flattenSpec B.lo, hi := Tensor.flattenSpec B.hi }
 
-/-- Decode a row-major flat index into one coordinate per dimension. -/
-def decodeFlatIndex : List Nat → Nat → List Nat
-  | [], _ => []
-  | n :: ns, idx =>
-      let stride := ns.prod
-      let coordinate := if stride = 0 then 0 else (idx / stride) % n
-      coordinate :: decodeFlatIndex ns (if stride = 0 then 0 else idx % stride)
+/-- Interval propagation for grouped convolution with independent leading batches.
 
-/-- Interval propagation for an arbitrary-dimensional convolution. -/
-def ibpConv
+Products, accumulation and the final bias addition round outwards. Each row follows the
+channel/kernel fold order of the convolution specification.
+-/
+def ibpConv [BoundOps α]
     {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
     (layer : Spec.ConvSpec d inC outC kernel stride padding α)
-    (xB : Box α (Shape.ofList (inC :: Tensor.to inSpatial (List Nat)))) :
-    Box α (Shape.ofList (outC ::
-      Tensor.to (Spec.convOutSpatial inSpatial kernel stride padding) (List Nat))) :=
-  let outSpatial := Spec.convOutSpatial inSpatial kernel stride padding
-  let endpoint := fun (lower : Bool) =>
-    Tensor.dim (fun outChannel =>
-      TorchLean.Tensor.generate (Tensor.to outSpatial (List Nat)) (fun outIdx =>
-        let total :=
-          (List.finRange inC).foldl (fun acc inChannel =>
-            Spec.Conv.Internal.foldlIndices (Tensor.to kernel (List Nat)) acc
-              (fun acc kernelIdx =>
-              match Spec.Conv.Internal.mkInputIdx? outIdx kernelIdx
-                  (Tensor.to stride (List Nat)) (Tensor.to padding (List Nat)) with
-              | none => acc
-              | some inputIdx =>
-                  let lo := getAtOrZero xB.lo (inChannel.val :: inputIdx)
-                  let hi := getAtOrZero xB.hi (inChannel.val :: inputIdx)
-                  let weight := getAtOrZero layer.kernel
-                    (outChannel.val :: inChannel.val :: kernelIdx)
-                  let pLo := weight * lo
-                  let pHi := weight * hi
-                  let bound :=
-                    if lower then
-                      if pLo > pHi then pHi else pLo
-                    else if pLo > pHi then pLo else pHi
-                  acc + bound)) 0
-        total + getAtOrZero layer.bias [outChannel.val]))
-  { lo := endpoint true, hi := endpoint false }
+    (dilation paddingAfter : TorchLean.Tensor Nat [d]) (groups : Nat)
+    (leading : Shape)
+    (xB : Box α (leading.concat (Shape.ofList (inC :: Tensor.to inSpatial (List Nat))))) :
+    Box α (leading.concat (Shape.ofList (outC ::
+      Tensor.to (Spec.convOutSpatialDilated inSpatial kernel stride dilation padding paddingAfter)
+        (List Nat)))) :=
+  let outSpatial :=
+    Spec.convOutSpatialDilated inSpatial kernel stride dilation padding paddingAfter
+  let row := fun (input : Box α (Shape.ofList (inC :: Tensor.to inSpatial (List Nat)))) =>
+    let endpoint := fun (lower : Bool) =>
+      Tensor.dim (fun outChannel =>
+        TorchLean.Tensor.generate (Tensor.to outSpatial (List Nat)) (fun outIdx =>
+          let total :=
+            (List.finRange (inC / groups)).foldl (fun acc localChannel =>
+              let inChannel := (outChannel.val / (outC / groups)) * (inC / groups) +
+                localChannel.val
+              Spec.Conv.Internal.foldlIndices (Tensor.to kernel (List Nat)) acc
+                (fun acc kernelIdx =>
+                  match Spec.Conv.Internal.mkDilatedInputIdx? outIdx kernelIdx
+                      (Tensor.to stride (List Nat)) (Tensor.to dilation (List Nat))
+                      (Tensor.to padding (List Nat)) with
+                  | none => acc
+                  | some inputIdx =>
+                      let lo := getAtOrZero input.lo (inChannel :: inputIdx)
+                      let hi := getAtOrZero input.hi (inChannel :: inputIdx)
+                      let weight := getAtOrZero layer.kernel
+                        (outChannel.val :: inChannel :: kernelIdx)
+                      let multiply :=
+                        if lower then BoundOps.mulDown else BoundOps.mulUp
+                      let pLo := multiply weight lo
+                      let pHi := multiply weight hi
+                      let bound :=
+                        if lower then
+                          if pLo > pHi then pHi else pLo
+                        else if pLo > pHi then pLo else pHi
+                      if lower then BoundOps.addDown acc bound
+                      else BoundOps.addUp acc bound)) 0
+          if lower then BoundOps.addDown total (getAtOrZero layer.bias [outChannel.val])
+          else BoundOps.addUp total (getAtOrZero layer.bias [outChannel.val])))
+    { lo := endpoint true, hi := endpoint false : Box α
+        (Shape.ofList (outC :: Tensor.to outSpatial (List Nat))) }
+  let rec mapRows : (batch : Shape) →
+      Box α (batch.concat (Shape.ofList (inC :: Tensor.to inSpatial (List Nat)))) →
+      Box α (batch.concat (Shape.ofList (outC :: Tensor.to outSpatial (List Nat))))
+    | .scalar, input => row input
+    | .dim n rest, input =>
+        let rows := fun i : Fin n =>
+          mapRows rest ⟨input.lo.unstack i, input.hi.unstack i⟩
+        ⟨Tensor.dim fun i => (rows i).lo, Tensor.dim fun i => (rows i).hi⟩
+  mapRows leading xB
 
-/-- Explicit flattened linear operator for an arbitrary-dimensional convolution. -/
+/-- Explicit matrix for grouped convolution, block diagonal over the leading batch shape. -/
 def convLinearMatrix
     {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
-    (layer : Spec.ConvSpec d inC outC kernel stride padding α) :
-    let inShape := Shape.ofList (inC :: Tensor.to inSpatial (List Nat))
-    let outShape := Shape.ofList (outC ::
-      Tensor.to (Spec.convOutSpatial inSpatial kernel stride padding) (List Nat))
+    (layer : Spec.ConvSpec d inC outC kernel stride padding α)
+    (dilation paddingAfter : TorchLean.Tensor Nat [d]) (groups : Nat) (leading : Shape) :
+    let inShape := leading.concat (Shape.ofList (inC :: Tensor.to inSpatial (List Nat)))
+    let outShape := leading.concat (Shape.ofList (outC ::
+      Tensor.to (Spec.convOutSpatialDilated inSpatial kernel stride dilation padding paddingAfter)
+        (List Nat)))
     Tensor α [outShape.size, inShape.size] :=
-  let inDims := inC :: Tensor.to inSpatial (List Nat)
-  let outSpatial := Spec.convOutSpatial inSpatial kernel stride padding
-  let outDims := outC :: Tensor.to outSpatial (List Nat)
+  let inShape := leading.concat (Shape.ofList (inC :: Tensor.to inSpatial (List Nat)))
+  let outSpatial :=
+    Spec.convOutSpatialDilated inSpatial kernel stride dilation padding paddingAfter
+  let outShape := leading.concat (Shape.ofList (outC :: Tensor.to outSpatial (List Nat)))
   Tensor.dim (fun row =>
-    let outCoordinates := decodeFlatIndex outDims row.val
-    let outChannel := outCoordinates.headD 0
-    let outIdx := outCoordinates.drop 1
+    let outCoordinates := Shape.Coord.toList outShape (Shape.Coord.unlinearize row)
+    let outBatch := outCoordinates.take leading.rank
+    let outSample := outCoordinates.drop leading.rank
+    let outChannel := outSample.headD 0
+    let outIdx := outSample.drop 1
+    let groupStart := (outChannel / (outC / groups)) * (inC / groups)
     Tensor.dim (fun column =>
-      let inCoordinates := decodeFlatIndex inDims column.val
-      let inChannel := inCoordinates.headD 0
-      let inputIdx := inCoordinates.drop 1
+      let inCoordinates := Shape.Coord.toList inShape (Shape.Coord.unlinearize column)
+      let inBatch := inCoordinates.take leading.rank
+      let inSample := inCoordinates.drop leading.rank
+      let inChannel := inSample.headD 0
+      let inputIdx := inSample.drop 1
       let coefficient :=
-        Spec.Conv.Internal.foldlIndices (Tensor.to kernel (List Nat)) 0 (fun acc kernelIdx =>
-          if Spec.Conv.Internal.matchesInputPos outIdx kernelIdx
-              (Tensor.to stride (List Nat)) (Tensor.to padding (List Nat))
-              inputIdx then
-            acc + getAtOrZero layer.kernel (outChannel :: inChannel :: kernelIdx)
-          else
-            acc)
+        if outBatch != inBatch || decide (inChannel < groupStart) ||
+            decide (groupStart + inC / groups ≤ inChannel) then
+          0
+        else
+          Spec.Conv.Internal.foldlIndices (Tensor.to kernel (List Nat)) 0 (fun acc kernelIdx =>
+            if Spec.Conv.Internal.mkDilatedInputIdx? outIdx kernelIdx
+                (Tensor.to stride (List Nat)) (Tensor.to dilation (List Nat))
+                (Tensor.to padding (List Nat)) = some inputIdx then
+              acc + getAtOrZero layer.kernel (outChannel :: inChannel :: kernelIdx)
+            else
+              acc)
       Tensor.scalar coefficient))
 
-/-- Flattened broadcast of a convolution bias over every output spatial position. -/
+/-- Flattened broadcast of a convolution bias over spatial and leading batch coordinates. -/
 def convBiasBroadcast
     {d outC : Nat} {outSpatial : TorchLean.Tensor Nat [d]}
-    (bias : Tensor α [outC]) :
-    let outShape := Shape.ofList (outC :: Tensor.to outSpatial (List Nat))
+    (bias : Tensor α [outC]) (leading : Shape := .scalar) :
+    let outShape := leading.concat (Shape.ofList (outC :: Tensor.to outSpatial (List Nat)))
     Tensor α [outShape.size] :=
-  let outDims := outC :: Tensor.to outSpatial (List Nat)
+  let outShape := leading.concat (Shape.ofList (outC :: Tensor.to outSpatial (List Nat)))
   Tensor.dim (fun row =>
-    let outChannel := (decodeFlatIndex outDims row.val).headD 0
+    let coordinates := Shape.Coord.toList outShape (Shape.Coord.unlinearize row)
+    let outChannel := (coordinates.drop leading.rank).headD 0
     Tensor.scalar (getAtOrZero bias [outChannel]))
 
 end NN.MLTheory.CROWN

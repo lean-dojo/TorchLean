@@ -11,6 +11,7 @@ public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Main.ArithOps
 public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Main.UnaryOps
 public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Main.Softplus
 public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Main.AffineOps
+public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.Main.Conv
 
 /-!
 # Graph IBP Certificate Soundness
@@ -52,7 +53,7 @@ def Supported (g : Graph) : Prop :=
     match (g.nodes[id]!).kind with
     | .input | .const _ | .detach
     | .add | .sub | .mulElem | .relu
-    | .linear | .matmul
+    | .linear | .matmul | .concat _ | .conv _
     | .tanh | .sigmoid | .softplus | .safeLog | .sin | .cos => True
     | _ => False
 
@@ -111,6 +112,8 @@ theorem node_encloses_of_parents
   case cos => exact cos_node_encloses hkKind hcertStep hvalStep hpe
   case linear => exact linear_node_encloses hkKind hcertStep hvalStep hpe
   case matmul => exact matmul_node_encloses hkKind hcertStep hvalStep hpe
+  case concat axis => exact concat_node_encloses hkKind hcertStep hvalStep hpe
+  case conv configuration => exact conv_node_encloses hkKind hcertStep hvalStep hpe
 
 /-!
 ### The enclosure theorem

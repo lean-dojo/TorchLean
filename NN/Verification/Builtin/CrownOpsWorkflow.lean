@@ -16,12 +16,15 @@ Running CROWN end-to-end on small TorchLean graphs.
 
 We lower TorchLean programs to the verifier IR (`NN.IR.Graph`), then run:
 - IBP (`runIBP`)
-- basic CROWN forward bounds (`runCROWN`)
-- objective-dependent backward/dual CROWN (`runCROWNBackwardObjective`)
+- CROWN output bounds (`outputBoxCROWN?`)
+- objective-dependent backward CROWN (`backwardObjectiveBox?`)
 
-The workflow gives compact, fast coverage for nonlinear ops added to CROWN:
+The workflow gives compact runtime checks for:
 - `softmax` (vector)
 - `mse_loss` (vector → scalar)
+
+On the CLI's rounded backends, both CROWN queries use directed backward propagation and may fall
+back to coarse IBP bounds. A successful run does not establish tighter bounds or a model theorem.
 
 For attention + `layer_norm`, see
   `NN/Verification/Builtin/TransformerIBPWorkflow.lean`.
@@ -64,13 +67,12 @@ def softmaxModel : nn.Sequential [softmaxInDim] [softmaxOutDim] :=
 /-- Parameter shapes for `softmaxModel`. -/
 def softmaxParamShapes : List Spec.Shape := nn.stateShapes softmaxModel
 
-/-- Example margin functional on softmax outputs
-($\mathrm{lo}_0-\mathrm{hi}_1$). -/
-def softmaxMargin {α : Type} [TorchLean.Storage α] [Context α]
+/-- Directed lower bound on the softmax margin $p_0 - p_1$. -/
+def softmaxMargin {α : Type} [TorchLean.Storage α] [Context α] [BoundOps α]
     (lo hi : TorchLean.Tensor α softmaxYShape) : α :=
   let lo0 := _root_.TorchLean.Tensor.getScalar lo ⟨0, by decide⟩
   let hi1 := _root_.TorchLean.Tensor.getScalar hi ⟨1, by decide⟩
-  lo0 - hi1
+  BoundOps.subDown lo0 hi1
 
 /--
 Run the softmax workflow under a chosen scalar backend `α`.
@@ -119,37 +121,37 @@ def runSoftmax {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString 
     IO.println s!"[IBP] p hi = {pretty hiY}"
     IO.println s!"[IBP] margin(p0 - p1) = {softmaxMargin (α := α) loY hiY}"
   else
-    IO.println s!"[IBP] unexpected output dim {outB.dim} (expected {softmaxOutDim})"
+    throw <| IO.userError s!"[IBP] unexpected output dim {outB.dim} (expected {softmaxOutDim})"
 
-  -- CROWN (forward, affine lower+upper)
-  match lowered.outputBoxCROWN? ps xB with
-  | .ok outC =>
-      if hOut : outC.dim = softmaxOutDim then
-          let loY : TorchLean.Tensor α softmaxYShape := by
-            simpa [softmaxYShape] using outC.loAsDim hOut
-          let hiY : TorchLean.Tensor α softmaxYShape := by
-            simpa [softmaxYShape] using outC.hiAsDim hOut
-          IO.println s!"[CROWN] p lo = {pretty loY}"
-          IO.println s!"[CROWN] p hi = {pretty hiY}"
-          IO.println s!"[CROWN] margin(p0 - p1) = {softmaxMargin (α := α) loY hiY}"
-      else
-        IO.println s!"[CROWN] unexpected output dim {outC.dim} (expected {softmaxOutDim})"
-  | .error msg =>
-      IO.println s!"[CROWN] {msg}"
+  -- CROWN output bounds.
+  let outC ← lowered.outputBoxCROWNOrThrow ps xB
+  if hOut : outC.dim = softmaxOutDim then
+    let loY : TorchLean.Tensor α softmaxYShape := by
+      simpa [softmaxYShape] using outC.loAsDim hOut
+    let hiY : TorchLean.Tensor α softmaxYShape := by
+      simpa [softmaxYShape] using outC.hiAsDim hOut
+    IO.println s!"[CROWN] p lo = {pretty loY}"
+    IO.println s!"[CROWN] p hi = {pretty hiY}"
+    IO.println s!"[CROWN] margin(p0 - p1) = {softmaxMargin (α := α) loY hiY}"
+  else
+    throw <| IO.userError s!"[CROWN] unexpected output dim {outC.dim} (expected {softmaxOutDim})"
 
   -- Backward/dual CROWN for the margin objective: p0 - p1.
   let objV : TorchLean.Tensor α [softmaxOutDim] :=
     TorchLean.Tensor.map cast
       ((Tensor.from (#[1.0, -1.0, 0.0] : Array Float)).reshape [3] (by dsimp; decide))
   let obj : FlatTensor α := { n := softmaxOutDim, v := objV }
-  match lowered.backwardObjectiveBox? ps ibp xB obj with
-  | .ok outC =>
-      let loM : α := getAtOrZero outC.lo [0]
-      let hiM : α := getAtOrZero outC.hi [0]
-      IO.println s!"[CROWN-backward] margin lo = {loM}"
-      IO.println s!"[CROWN-backward] margin hi = {hiM}"
-  | .error msg =>
-      IO.println s!"[CROWN-backward] {msg}"
+  let outObjective ←
+    match lowered.backwardObjectiveBox? ps ibp xB obj with
+    | .ok result => pure result
+    | .error msg => throw <| IO.userError s!"[CROWN-backward] {msg}"
+  if outObjective.dim != 1 then
+    throw <| IO.userError
+      s!"[CROWN-backward] unexpected output dim {outObjective.dim} (expected 1)"
+  let loM : α := getAtOrZero outObjective.lo [0]
+  let hiM : α := getAtOrZero outObjective.hi [0]
+  IO.println s!"[CROWN-backward] margin lo = {loM}"
+  IO.println s!"[CROWN-backward] margin hi = {hiM}"
 
 /-- Input dimension for the MSE-loss workflow model. -/
 def mseInDim : Nat := 2
@@ -225,28 +227,29 @@ def runMSE {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α]
   -- IBP
   let ibp := lowered.runIBP ps
   let outB ← lowered.outputBoxOrThrow ibp
+  if outB.dim != 1 then
+    throw <| IO.userError s!"[IBP] unexpected output dim {outB.dim} (expected 1)"
   IO.println s!"[IBP] loss lo = {pretty outB.lo}"
   IO.println s!"[IBP] loss hi = {pretty outB.hi}"
 
-  -- CROWN forward bounds on the scalar loss.
-  match lowered.outputBoxCROWN? ps xB with
-  | .ok outC =>
-      if hOut : outC.dim = 1 then
-          IO.println s!"[CROWN] loss lo = {pretty outC.lo}"
-          IO.println s!"[CROWN] loss hi = {pretty outC.hi}"
-      else
-        IO.println s!"[CROWN] unexpected output dim {outC.dim} (expected 1)"
-  | .error msg =>
-      IO.println s!"[CROWN] {msg}"
+  -- CROWN output bounds on the scalar loss.
+  let outC ← lowered.outputBoxCROWNOrThrow ps xB
+  if outC.dim != 1 then
+    throw <| IO.userError s!"[CROWN] unexpected output dim {outC.dim} (expected 1)"
+  IO.println s!"[CROWN] loss lo = {pretty outC.lo}"
+  IO.println s!"[CROWN] loss hi = {pretty outC.hi}"
 
   -- Backward/dual CROWN for the loss objective itself (obj = 1).
   let obj : FlatTensor α := { n := 1, v := Tensor.full [1] 1 }
-  match lowered.backwardObjectiveBox? ps ibp xB obj with
-  | .ok outC =>
-      IO.println s!"[CROWN-backward] loss lo = {pretty outC.lo}"
-      IO.println s!"[CROWN-backward] loss hi = {pretty outC.hi}"
-  | .error msg =>
-      IO.println s!"[CROWN-backward] {msg}"
+  let outObjective ←
+    match lowered.backwardObjectiveBox? ps ibp xB obj with
+    | .ok result => pure result
+    | .error msg => throw <| IO.userError s!"[CROWN-backward] {msg}"
+  if outObjective.dim != 1 then
+    throw <| IO.userError
+      s!"[CROWN-backward] unexpected output dim {outObjective.dim} (expected 1)"
+  IO.println s!"[CROWN-backward] loss lo = {pretty outObjective.lo}"
+  IO.println s!"[CROWN-backward] loss hi = {pretty outObjective.hi}"
 
 /-- Run all CROWN-ops workflows (softmax + mse_loss) under a chosen scalar backend `α`. -/
 def runOnce {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α] [Runtime.FromFloat α]
@@ -259,6 +262,7 @@ def runOnce {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α]
 CLI entry point for the CROWN-ops workflow.
 
 This is wired into `lake exe verify -- torchlean-crown-ops`.
+Missing bounds or unexpected output dimensions fail the command.
 -/
 def main (args : List String) : IO Unit :=
   NN.Verification.Builtin.runWithBoundArithmetic

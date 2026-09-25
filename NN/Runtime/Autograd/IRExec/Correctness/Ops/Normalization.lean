@@ -118,116 +118,110 @@ theorem buildFrom_denoteAllFrom_layernorm
               let view2d : Shape := .dim seqLen (.dim embedDim .scalar)
 
               by_cases hNumel : Spec.Shape.size n.outShape = Spec.Shape.size view2d
-              · by_cases hSeq : seqLen > 0
-                · by_cases hEmb : embedDim > 0
-                  · cases hIdx : mkIdx (inShape := inShape) (ss := ss) pId n.outShape with
-                    | error msg =>
-                        have hFalse : False := by
-                          simp [hp, hParams, view2d, hNumel, hSeq, hEmb, hIdx] at hBuild
-                        cases hFalse
-                    | ok ip =>
-                        have hAffineOk : ∃ affine,
-                            NN.IR.Graph.resolveLayerNormAffine payload i axis n.outShape embedDim =
-                              .ok affine := by
-                          cases hResult : NN.IR.Graph.resolveLayerNormAffine
-                              payload i axis n.outShape embedDim with
-                          | error msg =>
-                              have hFalse : False := by
-                                simp [hp, hParams, view2d, hNumel, hSeq, hEmb, hIdx,
-                                  hResult] at hBuild
-                              exact False.elim hFalse
-                          | ok affine => exact ⟨affine, rfl⟩
-                        rcases hAffineOk with ⟨affine, hAffine⟩
-                        have hNodeId : n.id = i := NN.IR.Graph.getNode_id_eq hN
-                        -- Reduce `hBuild` to the recursive lowering call.
-                        simp [hp, hParams, view2d, hNumel, hSeq, hEmb, hIdx, hAffine] at hBuild
+              · by_cases hEmb : embedDim > 0
+                · cases hIdx : mkIdx (inShape := inShape) (ss := ss) pId n.outShape with
+                  | error msg =>
+                      have hFalse : False := by
+                        simp [hp, hParams, view2d, hNumel, hEmb, hIdx] at hBuild
+                      cases hFalse
+                  | ok ip =>
+                      have hAffineOk : ∃ affine,
+                          NN.IR.Graph.resolveLayerNormAffine payload i axis n.outShape embedDim =
+                            .ok affine := by
+                        cases hResult : NN.IR.Graph.resolveLayerNormAffine
+                            payload i axis n.outShape embedDim with
+                        | error msg =>
+                            have hFalse : False := by
+                              simp [hp, hParams, view2d, hNumel, hEmb, hIdx,
+                                hResult] at hBuild
+                            exact False.elim hFalse
+                        | ok affine => exact ⟨affine, rfl⟩
+                      rcases hAffineOk with ⟨affine, hAffine⟩
+                      have hNodeId : n.id = i := NN.IR.Graph.getNode_id_eq hN
+                      -- Reduce `hBuild` to the recursive lowering call.
+                      simp [hp, hParams, view2d, hNumel, hEmb, hIdx, hAffine] at hBuild
 
-                        let gamma : Tensor α [embedDim] := affine.gamma
-                        let beta : Tensor α [embedDim] := affine.beta
-                        let epsilon : α := affine.epsilon
-                        let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
-                          mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
-                            (fun ctx =>
-                            let x : Tensor α n.outShape := getIdx (α := α) (xs := ctx) ip
-                            let x2d : Tensor α view2d :=
-                              Tensor.reshapeSpec (α := α) (source := n.outShape)
-                                (target := view2d) x hNumel
-                            let y2d : Tensor α view2d :=
-                              Spec.layerNorm (α := α) (seqLen := seqLen) (embedDim := embedDim)
-                                (x := x2d) (gamma := gamma) (beta := beta)
-                                (h_seq_pos := hSeq) (h_embed_pos := hEmb) (epsilon := epsilon)
-                            Tensor.reshapeSpec (α := α) (source := view2d)
-                              (target := n.outShape) y2d hNumel.symm)
-                        let st1 : State α inShape :=
-                          ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
+                      let gamma : Tensor α [embedDim] := affine.gamma
+                      let beta : Tensor α [embedDim] := affine.beta
+                      let epsilon : α := affine.epsilon
+                      let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
+                        mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
+                          (fun ctx =>
+                          let x : Tensor α n.outShape := readTensor (α := α) (xs := ctx) ip
+                          let x2d : Tensor α view2d :=
+                            Tensor.reshapeSpec (α := α) (source := n.outShape)
+                              (target := view2d) x hNumel
+                          let y2d : Tensor α view2d :=
+                            NN.IR.Graph.layerNormMatrixValue seqLen embedDim x2d
+                              gamma beta epsilon hEmb
+                          Tensor.reshapeSpec (α := α) (source := view2d)
+                            (target := n.outShape) y2d hNumel.symm)
+                      let st1 : State α inShape :=
+                        ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
 
-                        have hRec :
-                            buildFrom (α := α) (g := g) (payload := payload) (inShape := inShape)
-                                (i := i + 1) st1 = .ok st' := by
-                          simpa [st1, nodeData, gamma, beta, epsilon] using hBuild
+                      have hRec :
+                          buildFrom (α := α) (g := g) (payload := payload) (inShape := inShape)
+                              (i := i + 1) st1 = .ok st' := by
+                        simpa [st1, nodeData, gamma, beta, epsilon] using hBuild
 
-                        have hGet :
-                            vals0[pId]? = some (Spec.SomeTensor.mk (α := α) n.outShape
-                                (getIdx (α := α) (xs := ctx) ip)) := by
-                          simpa [vals0, ctx] using
-                            (denoteAllState_get_mkIdx? (inShape := inShape) (ss := ss)
-                              (gd := gd) (x := x) (pid := pId) (s := n.outShape) (idx := ip) hIdx)
+                      have hGet :
+                          vals0[pId]? = some (Spec.SomeTensor.mk (α := α) n.outShape
+                              (getIdx (α := α) (xs := ctx) ip)) := by
+                        simpa [vals0, ctx] using
+                          (denoteAllState_get_mkIdx? (inShape := inShape) (ss := ss)
+                            (gd := gd) (x := x) (pid := pId) (s := n.outShape) (idx := ip) hIdx)
 
-                        have hLN :
-                            NN.IR.Graph.layerNormMatrix (α := α) seqLen embedDim
+                      have hLN :
+                          NN.IR.Graph.layerNormMatrix (α := α) seqLen embedDim
+                              (Tensor.reshapeSpec (α := α) (source := n.outShape)
+                                (target := view2d) (getIdx (α := α) (xs := ctx) ip) hNumel)
+                              gamma beta epsilon =
+                            .ok
+                              (NN.IR.Graph.layerNormMatrixValue seqLen embedDim
                                 (Tensor.reshapeSpec (α := α) (source := n.outShape)
-                                  (target := view2d) (getIdx (α := α) (xs := ctx) ip) hNumel)
-                                gamma beta epsilon =
-                              .ok
-                                (Spec.layerNorm (α := α) (seqLen := seqLen) (embedDim := embedDim)
-                                  (x := Tensor.reshapeSpec (α := α) (source := n.outShape)
-                                    (target := view2d)
-                                    (getIdx (α := α) (xs := ctx) ip) hNumel)
-                                  (gamma := gamma) (beta := beta)
-                                  (h_seq_pos := hSeq) (h_embed_pos := hEmb)
-                                  (epsilon := epsilon)) := by
-                          simp [NN.IR.Graph.layerNormMatrix, hSeq, hEmb]
-                          rfl
+                                  (target := view2d)
+                                  (getIdx (α := α) (xs := ctx) ip) hNumel)
+                                gamma beta epsilon hEmb) := by
+                        simp [NN.IR.Graph.layerNormMatrix, hEmb]
+                        rfl
 
-                        have hEval :
-                            NN.IR.Graph.evalAt (α := α) (g := g) (payload := payload)
-                                (input := input) (vals := vals0) (i := i) =
-                              .ok (Spec.SomeTensor.mk (α := α) n.outShape (nodeData.eval ctx)) :=
-                                by
-                          -- Focused simplification of the `.layernorm` branch of the evaluator.
-                          simp (config := { failIfUnchanged := false })
-                            [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode,
-                              NN.IR.Graph.normalizeNodeOutput, hN, hk, hp, hGet, hParams,
-                              view2d, hNumel, hNodeId, hAffine,
-                              throw_eq_error,
-                              nodeData, mkForwardNode, gamma, beta, epsilon]
-                          simpa using
-                            congrArg
-                              (fun e =>
-                                (fun a : Tensor α view2d =>
-                                  Spec.SomeTensor.mk (α := α) n.outShape
-                                    (Tensor.reshapeSpec (α := α) (source := view2d)
-                                      (target := n.outShape) a hNumel.symm)) <$> e)
-                              hLN
+                      have hEval :
+                          NN.IR.Graph.evalAt (α := α) (g := g) (payload := payload)
+                              (input := input) (vals := vals0) (i := i) =
+                            .ok (Spec.SomeTensor.mk (α := α) n.outShape (nodeData.eval ctx)) :=
+                              by
+                        -- Focused simplification of the `.layernorm` branch of the evaluator.
+                        simp (config := { failIfUnchanged := false })
+                          [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode,
+                            NN.IR.Graph.normalizeNodeOutput, hN, hk, hp, hGet, hParams,
+                            view2d, hNumel, hNodeId, hAffine,
+                            throw_eq_error,
+                            nodeData, mkForwardNode, gamma, beta, epsilon]
+                        simpa using
+                          congrArg
+                            (fun e =>
+                              (fun a : Tensor α view2d =>
+                                Spec.SomeTensor.mk (α := α) n.outShape
+                                  (Tensor.reshapeSpec (α := α) (source := view2d)
+                                    (target := n.outShape) a hNumel.symm)) <$> e)
+                            hLN
 
-                        have hStep :
-                            denoteAllState (α := α) inShape st1 x =
-                              vals0.push
-                                (Spec.SomeTensor.mk (α := α) n.outShape (nodeData.eval ctx)) := by
-                          simpa [vals0, st1, nodeData, ctx] using
-                            (denoteAllState_snoc (α := α) (inShape := inShape) (ss := ss)
-                              (τ := n.outShape) (gd := gd) (nodeData := nodeData) (x := x))
+                      have hStep :
+                          denoteAllState (α := α) inShape st1 x =
+                            vals0.push
+                              (Spec.SomeTensor.mk (α := α) n.outShape (nodeData.eval ctx)) := by
+                        simpa [vals0, st1, nodeData, ctx] using
+                          (denoteAllState_snoc (α := α) (inShape := inShape) (ss := ss)
+                            (τ := n.outShape) (gd := gd) (nodeData := nodeData) (x := x))
 
-                        have hTail := ih st1 hRec
-                        exact buildFrom_denoteAllFrom_finish (α := α) (g := g) (payload := payload)
-                          (i := i) (x := x) (hi := hi) (τ := n.outShape)
-                          (nodeData := nodeData) (st1 := st1) (st' := st')
-                          (ctx := ctx) (vals0 := vals0) (input := input) hTail hEval hStep
-                  · exact False.elim <|
-                      throw_bind_ne_ok (by simpa [hp, hParams, view2d, hNumel, hSeq, hEmb] using
-                        hBuild)
+                      have hTail := ih st1 hRec
+                      exact buildFrom_denoteAllFrom_finish (α := α) (g := g) (payload := payload)
+                        (i := i) (x := x) (hi := hi) (τ := n.outShape)
+                        (nodeData := nodeData) (st1 := st1) (st' := st')
+                        (ctx := ctx) (vals0 := vals0) (input := input) hTail hEval hStep
                 · exact False.elim <|
-                    throw_bind_ne_ok (by simpa [hp, hParams, view2d, hNumel, hSeq] using hBuild)
+                    throw_bind_ne_ok (by simpa [hp, hParams, view2d, hNumel, hEmb] using
+                      hBuild)
               · exact False.elim <|
                   throw_bind_ne_ok (by simpa [hp, hParams, view2d, hNumel] using hBuild)
 
@@ -309,7 +303,7 @@ theorem buildFrom_denoteAllFrom_batchNormEval
                                   mkForwardNode (α := α) (Γ := [inShape] ++ ss)
                                     (τ := n.outShape) (fun ctx =>
                                       let input : Tensor α payloadShape :=
-                                        Tensor.castShape (getIdx (α := α) (xs := ctx) ip) hInput
+                                        Tensor.castShape (readTensor (α := α) (xs := ctx) ip) hInput
                                       let output : Tensor α payloadShape :=
                                         Tensor.mapLeading leading
                                           (fun sample => Spec.batchNormInference sample

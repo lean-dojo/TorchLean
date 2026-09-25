@@ -9,6 +9,7 @@ module
 public import NN.Core.ExternalProcess
 public import NN.Runtime.PyTorch.Export.ONNX
 public import NN.Runtime.PyTorch.Import.TorchExport
+public import NN.Tests.Utils
 
 /-!
 # ONNX Bridge Generator Checks
@@ -44,8 +45,10 @@ def assertContains (label haystack needle : String) : IO Unit := do
   unless haystack.contains needle do
     throw (IO.userError s!"onnx_bridge: missing {label}: {needle}")
 
+/-- Check ONNX availability, failing when required interop checks are enabled. -/
 def pythonHasONNX : IO Bool := do
-  TorchLean.External.Process.pythonCanImport #["onnx", "numpy"]
+  Tests.Utils.checkInteropDependency "onnx, numpy"
+    (← TorchLean.External.Process.pythonCanImport #["onnx", "numpy"])
 
 def sampleModelScript : String :=
   String.intercalate "\n"

@@ -130,8 +130,7 @@ class NonlinearBoundOps (α : Type) [TorchLean.Storage α] [Context α] where
   cosBounds : α → α → Option (α × α)
   /-- Uniform absolute bound for one last-axis layer-normalization row. -/
   layerNormAbsBound : Nat → Option α
-  /-- Whether coupled softmax/layer-normalization derivative formulas use exact scalar
-  arithmetic. -/
+  /-- Whether the coupled softmax formulas agree with the backend's normalization semantics. -/
   supportsIdealCoupledDerivatives : Bool
 
 namespace NonlinearBoundOps

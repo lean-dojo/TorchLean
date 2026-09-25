@@ -22,9 +22,10 @@ Runtime commands may choose native binary32, reference IEEE binary32, or complex
 `Arithmetic` records that semantic choice. `FromFloat` supplies conversion from Lean binary64
 `Float` literals and scalar-specific rounding for parameter validation.
 
-The generic runtime dispatcher supports all three modes. The public supervised trainer accepts the
-two real modes. Explicit complex training uses `autograd.complex.grad` for a real objective and
-`nn.sgdStep` on complex state; its predictions and `Checkpoint.State` retain both components.
+The generic runtime dispatcher supports all three modes. The runtime-selected `trainer.open` and
+`trainer.train` paths accept the two real modes; `trainer.openTyped` chooses its scalar directly on
+CPU. Explicit complex training uses `autograd.complex.grad` for a real objective and `nn.sgdStep` on
+complex state; its predictions and `Checkpoint.State` retain both components.
 
 Model definitions remain polymorphic over the existing `Context α` interface. The arithmetic choice
 does not replace that mathematical interface; it selects a concrete executable element
@@ -39,6 +40,7 @@ namespace TorchLean
 namespace Runtime
 
 open FloatLib.Floats
+open FloatLib.Floats.Formats.BinaryInterchange
 
 /--
 Conversion from Lean `Float` constants into a selected runtime arithmetic representation.
@@ -72,6 +74,25 @@ instance : FromFloat Float32 where
 instance : FromFloat (ExecFloat.Binary (exponentBits := 8) (fractionBits := 23)) where
   ofFloat x := ExecFloat.Binary.ofFloat32 x.toFloat32
   roundForValidation x := x.toFloat32.toFloat
+
+/--
+Round the exact binary64 source value once into any configured binary format.
+
+The binary32 specialization above retains its native conversion path. Validation converts the
+rounded destination value back to binary64, exposing overflow, underflow, and domain changes.
+Explicit scalar-valued tensors and state do not use this conversion.
+-/
+instance (priority := 100) configuredBinaryFromFloat
+    {format : FloatFormat} {plan : Configured.StoragePlan format} {code : Type}
+    [ExecFloat.ModelCodec plan (Model format) code] :
+    FromFloat (ExecFloat (Configured.Family format code plan)) :=
+  let convert : Float → ExecFloat (Configured.Family format code plan) := fun value =>
+    ExecFloat.Binary.ofModel
+      (Model.cast _ format (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat value)))
+  { ofFloat := convert
+    roundForValidation value :=
+      ExecFloat.Binary.toFloat (ExecFloat.Binary.ofModel
+        (Model.cast format _ (ExecFloat.Binary.toModel (convert value)))) }
 
 /--
 Inject binary64 literals into the dual-number backend used by the runtime autograd engine.

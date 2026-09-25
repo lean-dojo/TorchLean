@@ -19,6 +19,7 @@ Small compile-and-run runtime checks for TorchLean's RL helper surface.
 @[expose] public section
 
 open FloatLib.Floats (ExecFloat)
+open FloatLib.Numerics (Interval)
 open FloatLib.Floats.ExecFloat (Binary)
 open FloatLib.Floats.ExecFloat.Binary (ofModel toModel)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
@@ -39,6 +40,8 @@ def assertBool (msg : String) (b : Bool) : IO Unit := do
 
 /-- Check discounted returns in host, executable float32, and interval semantics. -/
 def checkReturns : IO Unit := do
+  let toHostFloat (value : Binary 8 23) : Float :=
+    Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel value)))
   let rewards : Tensor Float [3] := [1.0, 2.0, 3.0]
   let checkTensorReturns (tensorReturns : Tensor Float [3]) : IO Unit := do
     assertApprox "discountedReturns[0]"
@@ -49,34 +52,31 @@ def checkReturns : IO Unit := do
       (Tensor.getScalar tensorReturns ⟨2, by decide⟩) 3.0 1e-6
   checkTensorReturns <| Runtime.RL.Core.discountedReturns (α := Float) 0.5 rewards
 
-  -- Run the same return recursion in executable float32 semantics (`ExecFloat.Binary 8 23`), with:
+  -- Run the same return recursion in executable float32 semantics (`Binary 8 23`), with:
   -- 1) a checked Float→float32 cast (catches binary64→binary32 overflow), and
-  -- 2) a simple interval enclosure (`Interval32`) as a diagnostic.
-  let gamma32 : Runtime.RL.Numerics.Float32.Float32Exec ←
+  -- 2) a FloatLib interval enclosure as a diagnostic.
+  let gamma32 : Binary 8 23 ←
     match Runtime.RL.Numerics.Float32.ofFloatChecked 0.5 with
     | .ok g => pure g
     | .error e => throw <| IO.userError e
-  let rewards32 : Tensor Runtime.RL.Numerics.Float32.Float32Exec [3] ←
+  let rewards32 : Tensor (Binary 8 23) [3] ←
     match Runtime.RL.Numerics.Float32.castTensorChecked (s := [3]) rewards with
     | .ok t => pure t
     | .error e => throw <| IO.userError e
-  let returns32 : Tensor Runtime.RL.Numerics.Float32.Float32Exec [3] ←
+  let returns32 : Tensor (Binary 8 23) [3] ←
     match Runtime.RL.Numerics.Float32.discountedReturnsChecked (n := 3) gamma32 rewards32 with
     | .ok t => pure t
     | .error e => throw <| IO.userError e
   assertApprox "discountedReturns configured binary32[0]"
-    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar returns32
-      ⟨0, by decide⟩)))))
+    (toHostFloat (Tensor.getScalar returns32 ⟨0, by decide⟩))
     2.75 1e-5
   assertApprox "discountedReturns configured binary32[1]"
-    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar returns32
-      ⟨1, by decide⟩)))))
+    (toHostFloat (Tensor.getScalar returns32 ⟨1, by decide⟩))
     3.5 1e-5
   assertApprox "discountedReturns configured binary32[2]"
-    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar returns32
-      ⟨2, by decide⟩)))))
+    (toHostFloat (Tensor.getScalar returns32 ⟨2, by decide⟩))
     3.0 1e-5
-  let intervals32 : Tensor Runtime.RL.Numerics.Float32.Interval32 [3] :=
+  let intervals32 : Tensor (Interval (Binary 8 23)) [3] :=
     Runtime.RL.Numerics.Float32.discountedReturnsIntervals (n := 3) gamma32 rewards32
   assertBool "interval enclosure should contain configured binary32 returns"
     (Runtime.RL.Numerics.Float32.returnsWithinIntervals (n := 3) returns32 intervals32)
@@ -90,23 +90,23 @@ def checkReturns : IO Unit := do
 open Runtime.RL.Numerics.Float32 in
 /-- Checked scans preserve empty horizons, termination resets, and failure order. -/
 def checkCheckedScans : IO Unit := do
-  let emptyRewards : Tensor Float32Exec [0] := []
+  let emptyRewards : Tensor (Binary 8 23) [0] := []
   match discountedReturnsChecked (1 / 2) emptyRewards with
   | .ok _ => pure ()
   | .error error => throw (IO.userError s!"empty checked returns: {error}")
-  let rewards : Tensor Float32Exec [3] := [1, 2, 3]
-  let baseline : Tensor Float32Exec [3] := [0, 0, 0]
+  let rewards : Tensor (Binary 8 23) [3] := [1, 2, 3]
+  let baseline : Tensor (Binary 8 23) [3] := [0, 0, 0]
   let dones : Tensor Bool [3] := [false, true, false]
   let advantages ← match generalizedAdvantageEstimationChecked
       (1 / 2) 1 rewards baseline baseline dones with
     | .ok values => pure values
     | .error error => throw (IO.userError error)
-  let expected : Tensor Float32Exec [3] := [2, 2, 3]
+  let expected : Tensor (Binary 8 23) [3] := [2, 2, 3]
   assertBool "terminal GAE step resets the future advantage" (advantages == expected)
   let intervals := generalizedAdvantageEstimationIntervals
     (1 / 2) 1 rewards baseline baseline dones
   assertBool "terminal GAE interval enclosure" (returnsWithinIntervals advantages intervals)
-  let invalid : Tensor Float32Exec [2] :=
+  let invalid : Tensor (Binary 8 23) [2] :=
     [(Binary.infinity false : Binary 8 23),
      (Binary.maxFinite false : Binary 8 23)]
   match discountedReturnsChecked 2 invalid
@@ -118,6 +118,8 @@ def checkCheckedScans : IO Unit := do
 
 /-- Check the numerical transforms used by PPO advantage estimation. -/
 def checkAdvantages : IO Unit := do
+  let toHostFloat (value : Binary 8 23) : Float :=
+    Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel value)))
   let rewards : Tensor Float [3] := [1.0, 2.0, 3.0]
   let gaeRewards : Tensor Float [3] := [1.0, 1.0, 1.0]
   let gaeValues : Tensor Float [3] := Tensor.full [3] (0 : Float)
@@ -125,88 +127,58 @@ def checkAdvantages : IO Unit := do
   let gaeDones : Tensor Bool [3] :=
     [false, false, false]
 
-  let gamma32 : Runtime.RL.Numerics.Float32.Float32Exec ←
-    match Runtime.RL.Numerics.Float32.ofFloatChecked 0.5 with
-    | .ok g => pure g
-    | .error e => throw <| IO.userError e
+  let gamma32 ←
+    IO.ofExcept <| Runtime.RL.Numerics.Float32.ofFloatChecked 0.5
 
   -- Run PPO-relevant transforms (TD residual, GAE, z-score normalization, PPO clip objective).
-  let one32 : Runtime.RL.Numerics.Float32.Float32Exec ←
-    match Runtime.RL.Numerics.Float32.ofFloatChecked 1.0 with
-    | .ok x => pure x
-    | .error e => throw <| IO.userError e
-  let lam32 : Runtime.RL.Numerics.Float32.Float32Exec ←
-    match Runtime.RL.Numerics.Float32.ofFloatChecked 1.0 with
-    | .ok x => pure x
-    | .error e => throw <| IO.userError e
-  let tdRes32 : Runtime.RL.Numerics.Float32.Float32Exec ←
-    match Runtime.RL.Numerics.Float32.tdResidualChecked (value := 0) (reward := one32)
-        (gamma := gamma32) (nextValue := 0) (done := false) with
-    | .ok x => pure x
-    | .error e => throw <| IO.userError e
+  let one32 ←
+    IO.ofExcept <| Runtime.RL.Numerics.Float32.ofFloatChecked 1.0
+  let lam32 ←
+    IO.ofExcept <| Runtime.RL.Numerics.Float32.ofFloatChecked 1.0
+  let tdRes32 ←
+    IO.ofExcept <| Runtime.RL.Numerics.Float32.tdResidualChecked
+      (value := 0) (reward := one32) (gamma := gamma32) (nextValue := 0) (done := false)
   assertApprox "tdResidual configured binary32"
-    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel tdRes32)))) 1.0 1e-5
+    (toHostFloat tdRes32) 1.0 1e-5
 
-  let gaeRewards32 : Tensor Runtime.RL.Numerics.Float32.Float32Exec [3] ←
-    match Runtime.RL.Numerics.Float32.castTensorChecked (s := [3]) gaeRewards with
-    | .ok t => pure t
-    | .error e => throw <| IO.userError e
-  let gaeValues32 : Tensor Runtime.RL.Numerics.Float32.Float32Exec [3] ←
-    match Runtime.RL.Numerics.Float32.castTensorChecked (s := [3]) gaeValues with
-    | .ok t => pure t
-    | .error e => throw <| IO.userError e
-  let gaeNext32 : Tensor Runtime.RL.Numerics.Float32.Float32Exec [3] ←
-    match Runtime.RL.Numerics.Float32.castTensorChecked (s := [3]) gaeNext with
-    | .ok t => pure t
-    | .error e => throw <| IO.userError e
+  let gaeRewards32 ←
+    IO.ofExcept <| Runtime.RL.Numerics.Float32.castTensorChecked (s := [3]) gaeRewards
+  let gaeValues32 ←
+    IO.ofExcept <| Runtime.RL.Numerics.Float32.castTensorChecked (s := [3]) gaeValues
+  let gaeNext32 ←
+    IO.ofExcept <| Runtime.RL.Numerics.Float32.castTensorChecked (s := [3]) gaeNext
 
-  let advantages32 : Tensor Runtime.RL.Numerics.Float32.Float32Exec [3] ←
-    match Runtime.RL.Numerics.Float32.generalizedAdvantageEstimationChecked (n := 3)
-        (gamma := gamma32) (lam := lam32) gaeRewards32 gaeValues32 gaeNext32 gaeDones with
-    | .ok t => pure t
-    | .error e => throw <| IO.userError e
+  let advantages32 ←
+    IO.ofExcept <| Runtime.RL.Numerics.Float32.generalizedAdvantageEstimationChecked (n := 3)
+      (gamma := gamma32) (lam := lam32) gaeRewards32 gaeValues32 gaeNext32 gaeDones
   assertApprox "gaeTensor configured binary32[0]"
-    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar advantages32
-      ⟨0, by decide⟩)))))
+    (toHostFloat (Tensor.getScalar advantages32 ⟨0, by decide⟩))
     1.75 1e-4
   assertApprox "gaeTensor configured binary32[1]"
-    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar advantages32
-      ⟨1, by decide⟩)))))
+    (toHostFloat (Tensor.getScalar advantages32 ⟨1, by decide⟩))
     1.5 1e-4
   assertApprox "gaeTensor configured binary32[2]"
-    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar advantages32
-      ⟨2, by decide⟩)))))
+    (toHostFloat (Tensor.getScalar advantages32 ⟨2, by decide⟩))
     1.0 1e-4
 
-  let normIn32 : Tensor Runtime.RL.Numerics.Float32.Float32Exec [3] ←
-    match Runtime.RL.Numerics.Float32.castTensorChecked (s := [3]) rewards with
-    | .ok t => pure t
-    | .error e => throw <| IO.userError e
-  let normed32 : Tensor Runtime.RL.Numerics.Float32.Float32Exec [3] ←
-    match Runtime.RL.Numerics.Float32.normalizeZScoreChecked (n := 3) normIn32 with
-    | .ok t => pure t
-    | .error e => throw <| IO.userError e
+  let normIn32 ←
+    IO.ofExcept <| Runtime.RL.Numerics.Float32.castTensorChecked (s := [3]) rewards
+  let normed32 ←
+    IO.ofExcept <| Runtime.RL.Numerics.Float32.normalizeZScoreChecked (n := 3) normIn32
   -- Mean-centered input has a 0 entry; after z-score it should remain 0 (finite).
   assertApprox "zscore configured binary32[1]"
-    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel (Tensor.getScalar normed32 ⟨1,
-      by decide⟩)))))
+    (toHostFloat (Tensor.getScalar normed32 ⟨1, by decide⟩))
     0.0 1e-6
 
-  let ratio32 : Runtime.RL.Numerics.Float32.Float32Exec ←
-    match Runtime.RL.Numerics.Float32.ofFloatChecked 1.5 with
-    | .ok x => pure x
-    | .error e => throw <| IO.userError e
-  let clipEps32 : Runtime.RL.Numerics.Float32.Float32Exec ←
-    match Runtime.RL.Numerics.Float32.ofFloatChecked 0.2 with
-    | .ok x => pure x
-    | .error e => throw <| IO.userError e
-  let ppoObj32 : Runtime.RL.Numerics.Float32.Float32Exec ←
-    match Runtime.RL.Numerics.Float32.ppoClippedObjectiveFromRatioChecked
-        ratio32 one32 clipEps32 with
-    | .ok x => pure x
-    | .error e => throw <| IO.userError e
+  let ratio32 ←
+    IO.ofExcept <| Runtime.RL.Numerics.Float32.ofFloatChecked 1.5
+  let clipEps32 ←
+    IO.ofExcept <| Runtime.RL.Numerics.Float32.ofFloatChecked 0.2
+  let ppoObj32 ←
+    IO.ofExcept <| Runtime.RL.Numerics.Float32.ppoClippedObjectiveFromRatioChecked
+      ratio32 one32 clipEps32
   assertApprox "ppoClipFromRatio configured binary32"
-    (Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel ppoObj32)))) 1.2 1e-5
+    (toHostFloat ppoObj32) 1.2 1e-5
 
   let advantages :=
     Runtime.RL.Core.generalizedAdvantageEstimation (α := Float)

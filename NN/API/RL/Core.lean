@@ -118,7 +118,7 @@ Differentiable DQN losses over TorchLean backend references.
 These helpers build scalar semi-gradient losses for eager or typed graph autograd. Targets and
 action indicators are detached; the selected online Q values receive the loss gradient.
 -/
-export Runtime.RL.DQN.Autograd (huberTDLoss actionHuberLossBatch)
+export Runtime.RL.DQN.Autograd (huberTDLoss actionHuberLoss)
 end autograd
 end dqn
 
@@ -142,10 +142,10 @@ counterpart: they build scalar losses from backend refs, so the same formulas ca
 or typed graph autograd.
 -/
 export Runtime.RL.PolicyGradient.Autograd
-  (actionLogProbOneHotBatch
+  (actionLogProbOneHot
    entropyMean
-   ppoClippedObjectiveBatch
-   ppoLossBatch)
+   ppoClippedObjective
+   ppoLoss)
 end autograd
 end policy
 

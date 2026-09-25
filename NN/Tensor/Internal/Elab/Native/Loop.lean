@@ -58,13 +58,6 @@ theorem dite_eq_of_branch_eq {α : Type u} (condition : Prop)
   · simpa [h] using hThen h
   · simpa [h] using hElse h
 
-/-!
-`fin_foldl_push_eq_array_ofFn` is not restated here. It is proved once in
-`NN.Tensor.Internal.Representation.Storage`, which this file imports, and it used to have an exact
-second copy at this spot. The uses below spell out the `Storage.` prefix rather than opening the
-namespace, so a reader can see at a glance that the lemma comes from the storage layer.
--/
-
 /--
 Fill one array in increasing native-index order.
 

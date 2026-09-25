@@ -872,10 +872,13 @@ rejects models with buffer-update hooks, including BatchNorm, whose running stat
 separate update.
 
 This workflow runs through typed CPU operations. The `NN.API.Precision` import, included in
-`NN.API`, supplies the configured scalar instances. A wider element type does not supply a CUDA
-kernel or widen the supervised trainer's `Float` datasets, initializer, checkpoints, and reports.
-For a computation that needs the extra digits throughout, construct its inputs and state in the
-chosen type and keep that type through the result boundary. The
+`NN.API`, supplies the configured scalar instances. A supervised loop can open
+`trainer.openTyped (α := TensorBinary128) (initialState? := some state)` to preserve typed samples,
+losses, predictions, and exact model-state checkpoints on CPU. The
+{ref "training-from-scratch"}[training chapter] checks that session interface on an affine model.
+Construct inputs and initial state in the chosen type: widening a stored `Float` cannot recover
+discarded digits, and seeded initialization still starts from `Float` when no state is supplied.
+A wider element type also does not supply a CUDA provider. The
 {ref "floats"}[floating-point chapter] explains exact input conversion, format limits, and which
 arithmetic operations have refinement or error theorems.
 

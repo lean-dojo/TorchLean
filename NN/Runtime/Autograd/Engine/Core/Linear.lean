@@ -45,7 +45,10 @@ def linear {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
   let node : Node α :=
     { name := some "linear"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad :=
+        (t.getNode? wId).any (·.requiresGrad) ||
+        (t.getNode? bId).any (·.requiresGrad) ||
+        (t.getNode? xId).any (·.requiresGrad)
       parents := #[wId, bId, xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := .dim outDim .scalar) dLdyAny
@@ -78,7 +81,9 @@ def matmul {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > 
   let node : Node α :=
     { name := some "matmul"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad :=
+        (t.getNode? aId).any (·.requiresGrad) ||
+        (t.getNode? bId).any (·.requiresGrad)
       parents := #[aId, bId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := batch.concat [m, p]) dLdyAny
@@ -101,7 +106,9 @@ def concatLeadingAxis {α : Type} [TorchLean.Storage α]
   let node : Node α :=
     { name := some "concat_leading_axis"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad :=
+        (t.getNode? aId).any (·.requiresGrad) ||
+        (t.getNode? bId).any (·.requiresGrad)
       parents := #[aId, bId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := .dim (n + m) s) dLdyAny

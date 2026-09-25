@@ -111,7 +111,7 @@ theorem buildFrom_denoteAllFrom_detach
                   · simp [hOut] at hBuild
                     let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                       mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                        hOut ▸ Tensor.detachSpec (getIdx (α := α) (xs := ctx) ip))
+                        hOut ▸ Tensor.detachSpec (readTensor (α := α) (xs := ctx) ip))
                     let st1 : State α inShape :=
                       ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                     have hRec :

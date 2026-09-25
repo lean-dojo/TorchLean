@@ -17,7 +17,7 @@ open FloatLib.Floats.Formats.Flocq
 open TorchLean
 open Proofs
 open Proofs.RuntimeApprox
--- Open the namespace containing the retained reduction theorems.
+-- Open the namespace containing the reduction theorems.
 open TorchLean.Floats.IEEE754
 
 -- Verso checks `leanOutput` blocks against the real compiler message. The graph
@@ -64,48 +64,25 @@ It evaluates
 $$`y=W_2\operatorname{ReLU}(W_1x+b_1)+b_2`
 
 twice. The first run uses Lean's native `Float32`; the second uses the independent bit-level
-FloatLib binary32 reference. Both runs then compute
-the parameter and input VJPs. The following recorded run predates the FloatLib migration; it shows
-the comparison's outputs and parameter ordering. It is not validation of the migrated executable:
+FloatLib binary32 reference, `ExecFloat.Binary 8 23`. Both runs evaluate the typed graph and then
+compute the parameter and input VJPs through `autograd.model.vjp`.
 
-```terminal +output
-== Float32 semantics tutorial ==
-Note: rounded-real binary32 is proof-only and is selected directly in theorem statements.
-[TorchLean] FP32: finite rounded-real proof model
-[TorchLean] IEEE32Exec: bit-level binary32 reference
-== Float32 (native runtime) ==
-y   = [2.080000]
-hiddenWeightGrad = [[0.350000, 0.560000], [0.400000, 0.640000], [0.450000, 0.720000]]
-hiddenBiasGrad = [0.700000, 0.800000, 0.900000]
-outputWeightGrad = [[0.310000, 0.670000, 1.030000]]
-outputBiasGrad = [1.000000]
-inputGrad  = [0.760000, 1.000000]
-== IEEE32Exec ==
-y   = [2.080000]
-hiddenWeightGrad = [[0.350000, 0.560000], [0.400000, 0.640000], [0.450000, 0.720000]]
-hiddenBiasGrad = [0.700000, 0.800000, 0.900000]
-outputWeightGrad = [[0.310000, 0.670000, 1.030000]]
-outputBiasGrad = [1.000000]
-inputGrad  = [0.760000, 1.000000]
-max_abs_diff(Float32 vs IEEE32Exec) = 0
-```
+Read the six named tensors in each report: the output, both weight gradients, both bias gradients,
+and the input gradient. The final line reports their maximum absolute difference after converting
+the entries to `Float`. Inspect that value: the command reports differences without requiring
+them to be zero. For finite values, a zero difference establishes more than agreement of the
+printed decimals, but it does not distinguish signed zeros or inspect intermediate rounding steps.
 
-The forward result is `2.080000`. The following rows compare the cotangents for both weight
-matrices, both biases, and the input. The final line checks the values themselves and reports zero
-maximum absolute difference, so agreement is stronger than matching the displayed decimals.
-
-This run compares native execution with an independent integer-arithmetic implementation in
-Lean. It is a useful regression check for this input and parameter pack. The approximation
-theorems below address quantified claims and state the assumptions needed to connect rounded
-calculations to real-valued ones.
+The comparison holds the input and parameter pack fixed while changing the scalar implementation.
+The approximation theorems below address quantified claims and state the assumptions needed to
+connect rounded calculations to real-valued ones.
 
 The gradient comparison exercises a different part of the computation from the forward comparison.
 A scalar output seeded with one asks how that output changes with each parameter, so the printed
 weight and bias entries must follow the model's parameter order. Matching only the final output
 would miss, for example, a reverse rule that sends the right numbers to the wrong parameter tensor.
-The reported zero differences say that these particular executions agree under the example's
-comparison; the approximation theorems below explain how to make a statement with explicit input
-and arithmetic hypotheses.
+Inspecting every gradient tensor checks that correspondence on this example; the approximation
+theorems below explain how to make a statement with explicit input and arithmetic hypotheses.
 
 # The Approximation Relation
 
@@ -781,22 +758,11 @@ input [1,2]
 ```
 
 It generates outward-rounded binary32 ranges for every node, binds them to the selected backend
-profile, and replays a concrete FloatLib binary32 execution. The recorded report is:
-
-```terminal +output
-TorchLean numerical runtime certificate
-  ok  base certificate
-  ok  base IEEE replay
-  ok  tampered range rejected
-  ok  two-layer MLP certificate
-  ok  two-layer MLP IEEE replay
-All numerical certificate checks passed.
-```
-
-The `tampered range rejected` row replaces the addition range with `[0,0]` and checks that the
-regenerated trace disagrees. The other four rows generate and replay the scalar example and the
-MLP. Backend-policy checks are part of the certificate machinery, but these five rows do not
-exercise every policy or failure mode.
+profile, and replays a concrete FloatLib binary32 execution. It also generates and replays a
+scalar graph, then replaces an addition range with `[0,0]` and checks that certificate validation
+rejects it. A failed check returns a nonzero exit code. Backend-policy checks are part of the
+certificate machinery,
+but these examples do not exercise every policy or failure mode.
 
 Open
 {src "NN/Examples/DeepDives/Floats/GraphNumericalCertificate.lean"}[
@@ -804,9 +770,9 @@ Open
 and `mlpReplay`. Change one weight source interval so that it no longer contains the payload value,
 then rerun the command. Replay will identify the node whose value escaped the claimed enclosure.
 
-The five success lines describe artifact checks and concrete replay. In particular, rejecting the
-changed interval shows that replay uses the reconstructed ranges rather than accepting the
-submitted numbers unchecked. The eventual error-width argument has another premise: the exact
+These are artifact checks and concrete replay. Rejecting the changed interval checks that validation
+uses the reconstructed ranges when deciding acceptance. The eventual error-width argument has
+another premise: the exact
 real execution must lie in those same ranges. Once both values are enclosed, their separation is
 at most the interval width. A narrow interval is therefore useful for both enclosure and error,
 but successful replay alone supplies only the rounded side of this argument.

@@ -14,8 +14,8 @@ public import NN.Backend.Registry
 
 Named backend profiles bundle the choices that should move together: build availability,
 kernel-selection policy, and the ordered capsule modules. This gives downstream APIs one object to
-pass around instead of separately threading flags such as "CUDA", "LibTorch enabled", and "trusted
-external allowed".
+pass around instead of separately threading device availability, provider preference, and
+permission to accept trusted-boundary evidence.
 -/
 
 @[expose] public section
@@ -83,32 +83,24 @@ def checkedCpu : BackendProfile :=
     availability := Availability.cpu
     capsuleModules := Registry.maintainedModules }
 
-/-- Checked native CUDA profile. External trusted providers are not admitted. -/
+/--
+Maintained LibTorch CUDA profile with TorchLean tape traversal and selected local VJPs.
+
+LibTorch is preferred for every operation, including the direct attention bridge. Callers can
+select the composed attention path for comparison by setting `provider := .prefer .torchLean`.
+
+`checked` means runtime guards and regression evidence. Capsules supported only by explicit
+trusted-boundary evidence are not admitted, and no LibTorch autograd graph is recorded.
+-/
 def checkedCuda : BackendProfile :=
   { name := "checked_cuda"
     policy :=
       { device := .cuda
-        provider := .prefer .torchLean
+        provider := .prefer .libTorch
         assurance := .checked
         vjpMode := .torchLeanTape }
     availability := Availability.cuda
     capsuleModules := Registry.maintainedModules }
-
-/--
-LibTorch forward scaling profile.
-
-LibTorch is allowed to provide selected forward values, but TorchLean still records the graph/tape
-boundary and does not hand local backward ownership to LibTorch autograd.
--/
-def libTorchForwardCuda : BackendProfile :=
-  { name := "libtorch_forward_cuda"
-    policy :=
-      { device := .cuda
-        provider := .prefer .libTorch
-        assurance := .external
-        vjpMode := .torchLeanTape }
-    availability := Availability.cuda (withLibTorch := true)
-    capsuleModules := Registry.maintainedModules ++ [Registry.libTorchModule] }
 
 /--
 Maintained execution profile for a device, when TorchLean currently provides one.

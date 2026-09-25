@@ -27,7 +27,7 @@ namespace Tests
 namespace Floats
 namespace RankPolymorphicLayerOps
 
-open Tests.Utils (assertApprox assertBoundAt assertNoBoundAt)
+open Tests.Utils (assertApprox assertBoundAt)
 open NN.Tests.MLTheory.Utils (pointFlatBox)
 
 /-- Check grouped, dilated convolution with asymmetric padding. -/
@@ -90,29 +90,42 @@ def checkGroupedDilatedConvolution : IO Unit := do
     | .ok value => pure value
     | .error message => throw <| IO.userError message
   let expected : Array Float := #[3, 5, 7, 22, 42, 62, 203, 403, 603, 2004, 4004, 6004]
-  for (value, target) in (Tensor.to result.tensor (Array Float)).zip expected do
+  let values := Tensor.to result.tensor (Array Float)
+  unless values.size == expected.size do
+    throw <| IO.userError "grouped/dilated/asymmetric convolution output has the wrong shape"
+  for (value, target) in values.zip expected do
     assertApprox "grouped/dilated/asymmetric convolution" value target (tol := 1e-6)
   let verifierParams : NN.MLTheory.CROWN.Graph.ParamStore Float :=
     { inputBoxes := Std.HashMap.emptyWithCapacity.insert 0 (pointFlatBox input)
       convCfg := Std.HashMap.emptyWithCapacity.insert 1 params }
-  unless !NN.MLTheory.CROWN.Graph.crownGraphSemanticsSupported graph verifierParams do
-    throw <| IO.userError "grouped and dilated convolution was unexpectedly accepted by CROWN"
+  unless NN.MLTheory.CROWN.Graph.crownGraphSemanticsSupported graph verifierParams do
+    throw <| IO.userError "grouped and dilated convolution was rejected by CROWN"
   let ibp := NN.MLTheory.CROWN.Graph.runIBP graph verifierParams
-  assertNoBoundAt "grouped and dilated convolution IBP rejection" ibp 1
+  let some bounds := ibp[1]?.join
+    | throw <| IO.userError "grouped and dilated convolution has no IBP bound"
+  let lower := Tensor.to bounds.lo (Array Float)
+  let upper := Tensor.to bounds.hi (Array Float)
+  unless lower.size == expected.size && upper.size == expected.size do
+    throw <| IO.userError "grouped and dilated convolution bound has the wrong shape"
+  for i in [:expected.size] do
+    unless lower[i]! <= expected[i]! && expected[i]! <= upper[i]! do
+      throw <| IO.userError s!"grouped and dilated convolution escaped its bound at {i}"
   let ctx : NN.MLTheory.CROWN.Graph.AffineCtx := { inputId := 0, inputDim := 16 }
   let affine := NN.MLTheory.CROWN.Graph.runAffine graph verifierParams ctx ibp
-  assertNoBoundAt "grouped and dilated convolution affine rejection" affine 1
+  assertBoundAt "grouped and dilated convolution affine bounds" affine 1
   let crown := NN.MLTheory.CROWN.Graph.runCROWN graph verifierParams ctx ibp
-  assertNoBoundAt "grouped and dilated convolution CROWN rejection" crown 1
-  let forgedIbp :=
-    #[some (pointFlatBox input), some (pointFlatBox result.tensor)]
+  assertBoundAt "grouped and dilated convolution CROWN bounds" crown 1
   let objective : NN.MLTheory.CROWN.Graph.FlatTensor Float :=
     { n := 12, v := Tensor.full (α := Float) [12] 1 }
-  match NN.MLTheory.CROWN.Graph.runCROWNBackwardObjective graph verifierParams ctx forgedIbp 1
-      objective with
-  | none => pure ()
-  | some _ =>
-      throw <| IO.userError "grouped and dilated convolution backward CROWN was not rejected"
+  let .ok objectiveBox := NN.MLTheory.CROWN.Graph.backwardObjectiveBox? graph verifierParams
+      ctx ibp (pointFlatBox input) 1 objective
+    | throw <| IO.userError "grouped and dilated convolution backward objective was rejected"
+  let objectiveLo := Tensor.to objectiveBox.lo (Array Float)
+  let objectiveHi := Tensor.to objectiveBox.hi (Array Float)
+  let expectedSum := expected.foldl (· + ·) 0
+  unless objectiveLo.size == 1 && objectiveHi.size == 1 &&
+      objectiveLo[0]! <= expectedSum && expectedSum <= objectiveHi[0]! do
+    throw <| IO.userError "grouped and dilated convolution sum escaped its backward bound"
   let denseParams : NN.IR.ConvParams Float :=
     { params with
       dilation := [1]
@@ -146,31 +159,35 @@ def checkGroupedDilatedConvolution : IO Unit := do
 /--
 Evaluate affine LayerNorm with a non-default epsilon and check its value bounds.
 
-Both rows have mean-centered values `[-1, 1]` and variance one. The expected entries therefore
-come from `gamma * [-1, 1] / sqrt(1.25) + beta`. IBP must contain the evaluated entries, and the
-backward objective must contain their sum.
+Each trailing matrix has mean-centered values `[[-1, 1], [-1, 1]]` and variance one. The expected
+entries therefore come from `gamma * centered / sqrt(1.25) + beta`. IBP must contain the evaluated
+entries, and the backward objective must contain their sum.
 -/
 def checkAffineLayerNormPayload : IO Unit := do
-  let shape : Shape := [2, 2]
+  let shape : Shape := [2, 2, 2]
   let graph : NN.IR.Graph :=
     { nodes :=
         #[ { id := 0, parents := #[], kind := .input, outShape := shape }
          , { id := 1, parents := #[0], kind := .layernorm 1, outShape := shape } ] }
   let params : NN.IR.LayerNormParams Float :=
-    { normalizedShape := [2]
-      gamma := (Tensor.from #[2.0, 3.0] : Tensor Float [2])
-      beta := (Tensor.from #[1.0, -1.0] : Tensor Float [2])
+    { normalizedShape := [2, 2]
+      gamma := [[2, 3], [2, 3]]
+      beta := [[1, -1], [1, -1]]
       eps := 0.25 }
   let payload : NN.IR.Payload Float :=
     { layerNorm? := fun id => if id = 1 then some params else none }
-  let input : Tensor Float [2, 2] := [[1, 3], [2, 4]]
+  let input : Tensor Float [2, 2, 2] := [[[1, 3], [1, 3]], [[2, 4], [2, 4]]]
   let result ←
     match NN.IR.Graph.denote (α := Float) graph payload (Spec.SomeTensor.ofTensor input) 1 with
     | .ok value => pure value
     | .error message => throw <| IO.userError message
   let expected : Array Float := #[-0.7888543819998317, 1.6832815729997477,
+    -0.7888543819998317, 1.6832815729997477,
+    -0.7888543819998317, 1.6832815729997477,
     -0.7888543819998317, 1.6832815729997477]
   let values := Tensor.to result.tensor (Array Float)
+  unless values.size == expected.size do
+    throw <| IO.userError "affine LayerNorm output has the wrong shape"
   for (value, target) in values.zip expected do
     assertApprox "affine LayerNorm payload epsilon" value target (tol := 1e-6)
   let verifierParams : NN.MLTheory.CROWN.Graph.ParamStore Float :=
@@ -188,13 +205,13 @@ def checkAffineLayerNormPayload : IO Unit := do
   for i in [:values.size] do
     unless lower[i]! <= values[i]! && values[i]! <= upper[i]! do
       throw <| IO.userError s!"affine LayerNorm escaped its IBP bound at coordinate {i}"
-  let ctx : NN.MLTheory.CROWN.Graph.AffineCtx := { inputId := 0, inputDim := 4 }
+  let ctx : NN.MLTheory.CROWN.Graph.AffineCtx := { inputId := 0, inputDim := 8 }
   let affine := NN.MLTheory.CROWN.Graph.runAffine graph verifierParams ctx ibp
   assertBoundAt "affine LayerNorm affine bounds" affine 1
   let crown := NN.MLTheory.CROWN.Graph.runCROWN graph verifierParams ctx ibp
   assertBoundAt "affine LayerNorm CROWN" crown 1
   let objective : NN.MLTheory.CROWN.Graph.FlatTensor Float :=
-    { n := 4, v := Tensor.full (α := Float) [4] 1 }
+    { n := 8, v := Tensor.full (α := Float) [8] 1 }
   let .ok objectiveBox := NN.MLTheory.CROWN.Graph.backwardObjectiveBox? graph verifierParams
       ctx ibp (pointFlatBox input) 1 objective
     | throw <| IO.userError "affine LayerNorm backward objective was rejected"
@@ -205,44 +222,79 @@ def checkAffineLayerNormPayload : IO Unit := do
       objectiveLo[0]! <= expectedSum && expectedSum <= objectiveHi[0]! do
     throw <| IO.userError "affine LayerNorm sum escaped its backward objective bound"
 
-/-- Show the non-leading-axis row-major concat ordering and reject it in every CROWN pass. -/
-def checkNonLeadingConcatRejected : IO Unit := do
+/-- Check row-major concatenation of a repeated input and a fixed tensor. -/
+def checkNonLeadingConcat : IO Unit := do
   let shape : Shape := [2, 2]
-  let outShape : Shape := [2, 4]
+  let outShape : Shape := [2, 6]
   let graph : NN.IR.Graph :=
     { nodes :=
         #[ { id := 0, parents := #[], kind := .input, outShape := shape }
-         , { id := 1, parents := #[], kind := .input, outShape := shape }
-         , { id := 2, parents := #[0, 1], kind := .concat 1, outShape := outShape } ] }
+         , { id := 1, parents := #[], kind := .const shape, outShape := shape }
+         , { id := 2, parents := #[0, 1, 0], kind := .concat 1, outShape := outShape } ] }
   let input : Tensor Float [2, 2] := [[1, 2], [3, 4]]
+  let payload : NN.IR.Payload Float :=
+    { const? := fun id =>
+        if id = 1 then some { n := 4, v := Tensor.flattenSpec input } else none }
   let result ←
-    match NN.IR.Graph.denote (α := Float) graph {} (Spec.SomeTensor.ofTensor input) 2 with
+    match NN.IR.Graph.denote (α := Float) graph payload (Spec.SomeTensor.ofTensor input) 2 with
     | .ok value => pure value
     | .error message => throw <| IO.userError message
-  let expected : Array Float := #[1, 2, 1, 2, 3, 4, 3, 4]
-  for (value, target) in (Tensor.to result.tensor (Array Float)).zip expected do
+  let expected : Array Float := #[1, 2, 1, 2, 1, 2, 3, 4, 3, 4, 3, 4]
+  let values := Tensor.to result.tensor (Array Float)
+  unless values.size == expected.size do
+    throw <| IO.userError "axis-1 concat output has the wrong shape"
+  for (value, target) in values.zip expected do
     assertApprox "axis-1 concat row-major ordering" value target (tol := 1e-6)
   let inputBox := pointFlatBox input
   let verifierParams : NN.MLTheory.CROWN.Graph.ParamStore Float :=
-    { inputBoxes :=
-        (Std.HashMap.emptyWithCapacity.insert 0 inputBox).insert 1 inputBox }
-  unless !NN.MLTheory.CROWN.Graph.crownGraphSemanticsSupported graph verifierParams do
-    throw <| IO.userError "axis-1 concat was unexpectedly accepted by CROWN"
+    { inputBoxes := Std.HashMap.emptyWithCapacity.insert 0 inputBox
+      constVals := Std.HashMap.emptyWithCapacity.insert 1
+        { n := 4, v := Tensor.flattenSpec input } }
+  unless NN.MLTheory.CROWN.Graph.crownGraphSemanticsSupported graph verifierParams do
+    throw <| IO.userError "axis-1 concat was rejected by CROWN"
   let ibp := NN.MLTheory.CROWN.Graph.runIBP graph verifierParams
-  assertNoBoundAt "axis-1 concat IBP rejection" ibp 2
+  let some bounds := ibp[2]?.join
+    | throw <| IO.userError "axis-1 concat has no IBP bound"
+  let lower := Tensor.to bounds.lo (Array Float)
+  let upper := Tensor.to bounds.hi (Array Float)
+  unless lower.size == expected.size && upper.size == expected.size do
+    throw <| IO.userError "axis-1 concat bound has the wrong shape"
+  for i in [:expected.size] do
+    unless lower[i]! <= expected[i]! && expected[i]! <= upper[i]! do
+      throw <| IO.userError s!"axis-1 concat escaped its bound at {i}"
   let ctx : NN.MLTheory.CROWN.Graph.AffineCtx := { inputId := 0, inputDim := 4 }
   let affine := NN.MLTheory.CROWN.Graph.runAffine graph verifierParams ctx ibp
-  assertNoBoundAt "axis-1 concat affine rejection" affine 2
+  assertBoundAt "axis-1 concat affine bounds" affine 2
   let crown := NN.MLTheory.CROWN.Graph.runCROWN graph verifierParams ctx ibp
-  assertNoBoundAt "axis-1 concat CROWN rejection" crown 2
-  let forgedIbp :=
-    #[some inputBox, some inputBox, some (pointFlatBox result.tensor)]
+  assertBoundAt "axis-1 concat CROWN bounds" crown 2
+  let objectiveValues := (Array.range 12).map fun i => ((i + 1 : Nat) : Float)
   let objective : NN.MLTheory.CROWN.Graph.FlatTensor Float :=
-    { n := 8, v := Tensor.full (α := Float) [8] 1 }
-  match NN.MLTheory.CROWN.Graph.runCROWNBackwardObjective graph verifierParams ctx forgedIbp 2
-      objective with
-  | none => pure ()
-  | some _ => throw <| IO.userError "axis-1 concat backward CROWN was not rejected"
+    { n := 12, v := Tensor.ofFn fun i => ((i.val + 1 : Nat) : Float) }
+  let some objectiveBounds :=
+      NN.MLTheory.CROWN.Graph.runCROWNBackwardObjective graph verifierParams ctx ibp 2 objective
+    | throw <| IO.userError "axis-1 concat backward coefficients were rejected"
+  let coefficientLo := Tensor.to objectiveBounds.loAff.A (Array Float)
+  let coefficientHi := Tensor.to objectiveBounds.hiAff.A (Array Float)
+  let expectedCoefficients : Array Float := #[6, 8, 18, 20]
+  unless coefficientLo.size == 4 && coefficientHi.size == 4 do
+    throw <| IO.userError "axis-1 concat backward coefficients have the wrong shape"
+  -- Directed accumulation brackets the exact coefficient of each repeated input coordinate.
+  for i in [:expectedCoefficients.size] do
+    let expected := expectedCoefficients[i]!
+    unless coefficientLo[i]! <= expected && expected <= coefficientHi[i]! do
+      throw <| IO.userError s!"axis-1 concat coefficient {i} was not rounded outward"
+    assertApprox "axis-1 concat lower coefficient" coefficientLo[i]! expected (tol := 1e-12)
+    assertApprox "axis-1 concat upper coefficient" coefficientHi[i]! expected (tol := 1e-12)
+  let .ok objectiveBox := NN.MLTheory.CROWN.Graph.backwardObjectiveBox? graph verifierParams
+      ctx ibp inputBox 2 objective
+    | throw <| IO.userError "axis-1 concat backward objective was rejected"
+  let objectiveLo := Tensor.to objectiveBox.lo (Array Float)
+  let objectiveHi := Tensor.to objectiveBox.hi (Array Float)
+  let expectedSum := (expected.zip objectiveValues).foldl
+    (fun sum (value, coefficient) => sum + value * coefficient) 0
+  unless objectiveLo.size == 1 && objectiveHi.size == 1 &&
+      objectiveLo[0]! <= expectedSum && expectedSum <= objectiveHi[0]! do
+    throw <| IO.userError "axis-1 concat sum escaped its backward bound"
 
 /-- Parse and execute the affine LayerNorm payload emitted by the PyTorch graph bridge. -/
 def checkImportedAffineLayerNorm : IO Unit := do
@@ -302,7 +354,7 @@ def checkAffineBatchNormPayload : IO Unit := do
 def run : IO Unit := do
   checkGroupedDilatedConvolution
   checkAffineLayerNormPayload
-  checkNonLeadingConcatRejected
+  checkNonLeadingConcat
   checkImportedAffineLayerNorm
   checkAffineBatchNormPayload
   let running : Tensor Float [2, 2] :=

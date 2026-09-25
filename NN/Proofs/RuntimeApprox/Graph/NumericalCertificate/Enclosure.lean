@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Analysis.Softmax
-public import NN.Floats.Interval.IEEEExec32
 public import NN.Backend.Profile -- shake: keep
 public import NN.IR.Semantics -- shake: keep
 public import NN.Spec.Core.FloatInstances -- shake: keep
@@ -23,6 +22,8 @@ pointwise error traces for graph numerical certificates. Most users should impor
 @[expose] public section
 
 open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Numerics (Interval)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 
@@ -34,7 +35,6 @@ open NN
 open NN.Backend
 open NN.IR
 open Spec TorchLean
-open TorchLean.Floats.IEEE754
 open FloatLib.Floats.Formats.BinaryInterchange
 
 /-! ## Raw and checked source assumptions -/
@@ -42,12 +42,12 @@ open FloatLib.Floats.Formats.BinaryInterchange
 /-- A binary32 range supplied for an input, constant, or explicit random source node. -/
 structure SourceRange where
   nodeId : Nat
-  enclosure : IEEE32Exec.Interval32
+  enclosure : Interval (Binary 8 23)
   deriving Repr
 
 /-- A source range after the checker has established finite, ordered endpoints. -/
 structure CheckedSourceRange extends SourceRange where
-  valid : enclosure.Valid
+  valid : Binary.Interval.Valid enclosure
 
 instance : Repr CheckedSourceRange where
   reprPrec r _ := repr r.toSourceRange
@@ -55,20 +55,20 @@ instance : Repr CheckedSourceRange where
 /-- Bitwise equality for executable binary32 intervals.
 
 Bitwise equality is intentional: it distinguishes signed zero and preserves the exact endpoints
-written in a certificate. NaNs are rejected separately by `Interval32.Valid`.
+written in a certificate. NaNs are rejected separately by `Binary.Interval.Valid`.
 -/
-def sameIntervalBits (a b : IEEE32Exec.Interval32) : Bool :=
+def sameIntervalBits (a b : Interval (Binary 8 23)) : Bool :=
   ExecFloat.Binary.toBits32 a.lo == ExecFloat.Binary.toBits32 b.lo &&
     ExecFloat.Binary.toBits32 a.hi == ExecFloat.Binary.toBits32 b.hi
 
-/-- Executable counterpart of `Interval32.Valid`. -/
-def validInterval (interval : IEEE32Exec.Interval32) : Bool :=
+/-- Executable counterpart of `Binary.Interval.Valid`. -/
+def validInterval (interval : Interval (Binary 8 23)) : Bool :=
   ExecFloat.Binary.isFinite interval.lo &&
-    (ExecFloat.Binary.isFinite interval.hi && IEEE32Exec.Interval32.leB interval.lo interval.hi)
+    (ExecFloat.Binary.isFinite interval.hi && Binary.Interval.leB interval.lo interval.hi)
 
-/-- `Interval32.leB` decides the proposition-level IEEE non-strict order. -/
-theorem leB_eq_true_iff (x y : ExecFloat.Binary 8 23) :
-    IEEE32Exec.Interval32.leB x y = true <-> LE.le x y := by
+/-- `Binary.Interval.leB` decides the proposition-level IEEE non-strict order. -/
+theorem leB_eq_true_iff (x y : Binary 8 23) :
+    Binary.Interval.leB x y = true <-> LE.le x y := by
   exact (Model.Interval.le_iff_leB_eq_true
     (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel y)).symm.trans
     FloatLib.Floats.ExecFloat.Binary.le_iff_le_toModel.symm
@@ -76,7 +76,7 @@ theorem leB_eq_true_iff (x y : ExecFloat.Binary 8 23) :
 /-- IEEE comparison between finite values implies the corresponding order on their real
 interpretations. This lemma is intentionally finite: IEEE comparisons involving NaN are unordered,
 and `toReal` is not the semantic interface for infinities. -/
-theorem toReal_le_toReal_of_le {x y : ExecFloat.Binary 8 23}
+theorem toReal_le_toReal_of_le {x y : Binary 8 23}
     (hx : ExecFloat.Binary.isFinite x = true) (hy : ExecFloat.Binary.isFinite y = true)
     (hxy : LE.le x y) : (ExecFloat.Binary.toModel x).toReal <= (ExecFloat.Binary.toModel y).toReal
       := by
@@ -84,21 +84,21 @@ theorem toReal_le_toReal_of_le {x y : ExecFloat.Binary 8 23}
     (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel y) hx hy).mp
     (FloatLib.Floats.ExecFloat.Binary.le_iff_le_toModel.mp hxy)
 
-private theorem toModel_neg (x : ExecFloat.Binary 8 23) :
+private theorem toModel_neg (x : Binary 8 23) :
     ExecFloat.Binary.toModel (Neg.neg x) = Model.neg (ExecFloat.Binary.toModel x) := by
   change ExecFloat.Binary.toModel (ExecFloat.Binary.ofModel (Model.neg (ExecFloat.Binary.toModel
     x))) = _
   exact ExecFloat.Binary.toModel_ofModel _
 
 /-- Negation of a finite executable binary32 value decodes to real negation. -/
-theorem toReal_neg_of_isFinite {x : ExecFloat.Binary 8 23} (hx : ExecFloat.Binary.isFinite x = true)
+theorem toReal_neg_of_isFinite {x : Binary 8 23} (hx : ExecFloat.Binary.isFinite x = true)
   :
     (ExecFloat.Binary.toModel (Neg.neg x)).toReal = -(ExecFloat.Binary.toModel x).toReal := by
   rw [toModel_neg]
   exact Model.toReal_neg (ExecFloat.Binary.toModel x) hx
 
 /-- Flipping the sign bit preserves finiteness. -/
-theorem isFinite_neg_of_isFinite {x : ExecFloat.Binary 8 23} (hx : ExecFloat.Binary.isFinite x =
+theorem isFinite_neg_of_isFinite {x : Binary 8 23} (hx : ExecFloat.Binary.isFinite x =
   true) :
     ExecFloat.Binary.isFinite (Neg.neg x) = true := by
   change Model.isFinite (ExecFloat.Binary.toModel (Neg.neg x)) = true
@@ -106,8 +106,8 @@ theorem isFinite_neg_of_isFinite {x : ExecFloat.Binary 8 23} (hx : ExecFloat.Bin
   exact hx
 
 /-- The executable validity test accepts exactly finite, ordered intervals. -/
-theorem validInterval_eq_true_iff (interval : IEEE32Exec.Interval32) :
-    validInterval interval = true <-> interval.Valid := by
+theorem validInterval_eq_true_iff (interval : Interval (Binary 8 23)) :
+    validInterval interval = true <-> (Binary.Interval.Valid interval) := by
   change (Model.isFinite (ExecFloat.Binary.toModel interval.lo) &&
     (Model.isFinite (ExecFloat.Binary.toModel interval.hi) &&
       Model.Interval.leB (ExecFloat.Binary.toModel interval.lo)
@@ -127,91 +127,98 @@ error theorem.
 -/
 
 /-- A real scalar lies between the real interpretations of an executable interval's endpoints. -/
-def RealEncloses (interval : IEEE32Exec.Interval32) (value : Real) : Prop :=
+def RealEncloses (interval : Interval (Binary 8 23)) (value : Real) : Prop :=
   value ∈ Set.Icc ((ExecFloat.Binary.toModel interval.lo).toReal) ((ExecFloat.Binary.toModel
     interval.hi).toReal)
 
 /-- Convert the extended-real endpoint form used by the interval soundness library into an
 ordinary real interval when the output endpoints are finite. -/
-theorem realEncloses_of_eReal_bounds {interval : IEEE32Exec.Interval32} {value : Real}
-    (valid : interval.Valid)
+theorem realEncloses_of_eReal_bounds {interval : Interval (Binary 8 23)} {value : Real}
+    (valid : Binary.Interval.Valid interval)
     (bounds : (ExecFloat.Binary.toModel interval.lo).toEReal <= (value : EReal) ∧
       (value : EReal) <= (ExecFloat.Binary.toModel interval.hi).toEReal) :
     RealEncloses interval value := by
   exact (Model.Interval.eRealMem_coe_iff_of_valid valid value).mp bounds
 
 /-- Sound real enclosure for the canonical addition transfer. -/
-theorem add_realEncloses {a b : IEEE32Exec.Interval32} {x y : Real}
-    (ha : a.Valid) (hb : b.Valid) (hout : (a.add b).Valid)
+theorem add_realEncloses {a b : Interval (Binary 8 23)} {x y : Real}
+    (ha : Binary.Interval.Valid a) (hb : Binary.Interval.Valid b)
+    (hout : Binary.Interval.Valid (Binary.Interval.add a b))
     (hx : RealEncloses a x) (hy : RealEncloses b y) :
-    RealEncloses (a.add b) (x + y) := by
+    RealEncloses (Binary.Interval.add a b) (x + y) := by
   apply realEncloses_of_eReal_bounds hout
-  change Model.Interval.ERealMem (a.add b).toModel ((x + y : Real) : EReal)
-  simp only [IEEE32Exec.Interval32.toModel, IEEE32Exec.Interval32.add,
-    ExecFloat.Binary.Interval.toModel_add]
-  exact Model.Interval.add_sound a.toModel b.toModel (by decide) ha hb hx hy
+  change Model.Interval.ERealMem (Binary.Interval.toModel (Binary.Interval.add a b))
+    ((x + y : Real) : EReal)
+  simp only [Binary.Interval.toModel_add]
+  exact Model.Interval.add_sound
+    (Binary.Interval.toModel a) (Binary.Interval.toModel b) (by decide) ha hb hx hy
 
 /-- Sound real enclosure for the canonical subtraction transfer. -/
-theorem sub_realEncloses {a b : IEEE32Exec.Interval32} {x y : Real}
-    (ha : a.Valid) (hb : b.Valid) (hout : (a.sub b).Valid)
+theorem sub_realEncloses {a b : Interval (Binary 8 23)} {x y : Real}
+    (ha : Binary.Interval.Valid a) (hb : Binary.Interval.Valid b)
+    (hout : Binary.Interval.Valid (Binary.Interval.sub a b))
     (hx : RealEncloses a x) (hy : RealEncloses b y) :
-    RealEncloses (a.sub b) (x - y) := by
+    RealEncloses (Binary.Interval.sub a b) (x - y) := by
   apply realEncloses_of_eReal_bounds hout
-  change Model.Interval.ERealMem (a.sub b).toModel ((x - y : Real) : EReal)
-  simp only [IEEE32Exec.Interval32.toModel, IEEE32Exec.Interval32.sub,
-    ExecFloat.Binary.Interval.toModel_sub]
-  exact Model.Interval.sub_sound a.toModel b.toModel (by decide) ha hb hx hy
+  change Model.Interval.ERealMem (Binary.Interval.toModel (Binary.Interval.sub a b))
+    ((x - y : Real) : EReal)
+  simp only [Binary.Interval.toModel_sub]
+  exact Model.Interval.sub_sound
+    (Binary.Interval.toModel a) (Binary.Interval.toModel b) (by decide) ha hb hx hy
 
 /-- Sound real enclosure for the canonical multiplication transfer. -/
-theorem mul_realEncloses {a b : IEEE32Exec.Interval32} {x y : Real}
-    (ha : a.Valid) (hb : b.Valid) (hout : (a.mul b).Valid)
+theorem mul_realEncloses {a b : Interval (Binary 8 23)} {x y : Real}
+    (ha : Binary.Interval.Valid a) (hb : Binary.Interval.Valid b)
+    (hout : Binary.Interval.Valid (Binary.Interval.mul a b))
     (hx : RealEncloses a x) (hy : RealEncloses b y) :
-    RealEncloses (a.mul b) (x * y) := by
+    RealEncloses (Binary.Interval.mul a b) (x * y) := by
   apply realEncloses_of_eReal_bounds hout
-  change Model.Interval.ERealMem (a.mul b).toModel ((x * y : Real) : EReal)
-  simp only [IEEE32Exec.Interval32.toModel, IEEE32Exec.Interval32.mul,
-    ExecFloat.Binary.Interval.toModel_mul]
-  exact Model.Interval.mul_sound a.toModel b.toModel (by decide) ha hb hx hy
+  change Model.Interval.ERealMem (Binary.Interval.toModel (Binary.Interval.mul a b))
+    ((x * y : Real) : EReal)
+  simp only [Binary.Interval.toModel_mul]
+  exact Model.Interval.mul_sound
+    (Binary.Interval.toModel a) (Binary.Interval.toModel b) (by decide) ha hb hx hy
 
 /-- Sound real enclosure for the canonical reciprocal transfer. -/
-theorem inv_realEncloses {a : IEEE32Exec.Interval32} {x : Real}
-    (ha : a.Valid) (hout : a.inv.Valid) (hx : RealEncloses a x) :
-    RealEncloses a.inv x⁻¹ := by
+theorem inv_realEncloses {a : Interval (Binary 8 23)} {x : Real}
+    (ha : Binary.Interval.Valid a) (hout : Binary.Interval.Valid (Binary.Interval.inv a))
+    (hx : RealEncloses a x) :
+    RealEncloses (Binary.Interval.inv a) x⁻¹ := by
   apply realEncloses_of_eReal_bounds hout
-  change Model.Interval.ERealMem a.inv.toModel ((x⁻¹ : Real) : EReal)
-  simp only [IEEE32Exec.Interval32.toModel, IEEE32Exec.Interval32.inv,
-    ExecFloat.Binary.Interval.toModel_inv]
-  simpa only [one_div] using Model.Interval.inv_sound a.toModel (by decide) ha hx
+  change Model.Interval.ERealMem (Binary.Interval.toModel (Binary.Interval.inv a))
+    ((x⁻¹ : Real) : EReal)
+  simp only [Binary.Interval.toModel_inv]
+  simpa only [one_div] using Model.Interval.inv_sound (Binary.Interval.toModel a) (by decide) ha hx
 
 /-- Every scalar entry of a shape-indexed real tensor lies in one interval. -/
-def TensorEnclosed (interval : IEEE32Exec.Interval32) :
+def TensorEnclosed (interval : Interval (Binary 8 23)) :
     {shape : Shape} -> Tensor Real shape -> Prop
   | .scalar, tensor => RealEncloses interval tensor.item
   | .dim _ _, tensor => ∀ i, TensorEnclosed interval (tensor.unstack i)
 
 /-- The exact executable interval `[0,1]`. -/
-def unitInterval : IEEE32Exec.Interval32 :=
-  { lo := (ExecFloat.Binary.zero false : ExecFloat.Binary 8 23), hi := (1 : ExecFloat.Binary 8 23) }
+def unitInterval : Interval (Binary 8 23) :=
+  { lo := (ExecFloat.Binary.zero false : Binary 8 23), hi := (1 : Binary 8 23) }
 
 /-- The exact executable interval `[-1,1]`. -/
-def signedUnitInterval : IEEE32Exec.Interval32 :=
-  { lo := (-1 : ExecFloat.Binary 8 23), hi := (1 : ExecFloat.Binary 8 23) }
+def signedUnitInterval : Interval (Binary 8 23) :=
+  { lo := (-1 : Binary 8 23), hi := (1 : Binary 8 23) }
 
 /-- Executable test for a finite endpoint's nonnegative IEEE sign. Both signed zeros are accepted;
 all other accepted values have a clear sign bit. Finiteness is supplied by interval validity. -/
-def nonnegativeEndpoint (x : ExecFloat.Binary 8 23) : Bool :=
+def nonnegativeEndpoint (x : Binary 8 23) : Bool :=
   ExecFloat.Binary.isZero x || !ExecFloat.Binary.signBit x
 
 private theorem toReal_posZero : (ExecFloat.Binary.toModel (ExecFloat.Binary.zero false :
-  ExecFloat.Binary 8 23)).toReal = 0 := by
+  Binary 8 23)).toReal = 0 := by
   have hmodel : ExecFloat.Binary.toModel (ExecFloat.Binary.zero false :
-      ExecFloat.Binary 8 23) = Model.zero FloatFormat.binary32 false :=
+      Binary 8 23) = Model.zero FloatFormat.binary32 false :=
     ExecFloat.Binary.toModel_ofModel _
   exact (congrArg Model.toReal hmodel).trans (Model.toReal_zero _ _)
 
-private theorem toReal_posOne : (ExecFloat.Binary.toModel (1 : ExecFloat.Binary 8 23)).toReal = 1 :=
+private theorem toReal_posOne : (ExecFloat.Binary.toModel (1 : Binary 8 23)).toReal = 1 :=
   by
-  have hmodel : ExecFloat.Binary.toModel (1 : ExecFloat.Binary 8 23) =
+  have hmodel : ExecFloat.Binary.toModel (1 : Binary 8 23) =
       Model.roundRatQ FloatFormat.binary32 1 :=
     ExecFloat.Binary.toModel_ofModel _
   have hone : Model.roundRatQ FloatFormat.binary32 1 = Model.posOne FloatFormat.binary32 := by
@@ -228,39 +235,38 @@ theorem softmaxVec_tensor_enclosed {n : Nat}
     toReal_posZero, toReal_posOne] using h
 
 /-- Sound real enclosure for the canonical ReLU interval transfer. -/
-theorem relu_realEncloses {a : IEEE32Exec.Interval32} {x : Real}
-    (ha : a.Valid) (hx : RealEncloses a x) :
-    RealEncloses a.relu (max x 0) := by
-  change Model.Interval.RealMem a.relu.toModel (max x 0)
-  simp only [IEEE32Exec.Interval32.toModel, IEEE32Exec.Interval32.relu,
-    ExecFloat.Binary.Interval.toModel_relu]
-  change Model.toReal (Model.maximum a.toModel.lo (Model.zero _ false)) ≤ max x 0 ∧
-    max x 0 ≤ Model.toReal (Model.maximum a.toModel.hi (Model.zero _ false))
+theorem relu_realEncloses {a : Interval (Binary 8 23)} {x : Real}
+    (ha : Binary.Interval.Valid a) (hx : RealEncloses a x) :
+    RealEncloses (Binary.Interval.relu a) (max x 0) := by
+  change Model.Interval.RealMem (Binary.Interval.toModel (Binary.Interval.relu a)) (max x 0)
+  simp only [Binary.Interval.toModel_relu]
+  change
+    Model.toReal (Model.maximum (Binary.Interval.toModel a).lo (Model.zero _ false)) ≤ max x 0 ∧
+    max x 0 ≤ Model.toReal (Model.maximum (Binary.Interval.toModel a).hi (Model.zero _ false))
   rw [Model.toReal_maximum_eq_max_of_isFinite _ _ ha.1 (by decide),
     Model.toReal_maximum_eq_max_of_isFinite _ _ ha.2.1 (by decide), Model.toReal_zero]
   exact ⟨max_le_max hx.1 le_rfl, max_le_max hx.2 le_rfl⟩
 
 /-- Sound real enclosure for the canonical absolute-value interval transfer. -/
-theorem abs_realEncloses {a : IEEE32Exec.Interval32} {x : Real}
-    (ha : a.Valid) (hx : RealEncloses a x) :
-    RealEncloses a.abs |x| := by
-  change Model.Interval.RealMem a.abs.toModel |x|
-  simp only [IEEE32Exec.Interval32.toModel, IEEE32Exec.Interval32.abs,
-    ExecFloat.Binary.Interval.toModel_abs]
-  change Model.Interval.RealMem a.toModel x at hx
-  by_cases hneg : Model.Interval.leB a.toModel.hi (Model.zero _ true) = true
-  · have hhiNonpos : Model.toReal a.toModel.hi ≤ 0 := by
+theorem abs_realEncloses {a : Interval (Binary 8 23)} {x : Real}
+    (ha : Binary.Interval.Valid a) (hx : RealEncloses a x) :
+    RealEncloses (Binary.Interval.abs a) |x| := by
+  change Model.Interval.RealMem (Binary.Interval.toModel (Binary.Interval.abs a)) |x|
+  simp only [Binary.Interval.toModel_abs]
+  change Model.Interval.RealMem (Binary.Interval.toModel a) x at hx
+  by_cases hneg : Model.Interval.leB (Binary.Interval.toModel a).hi (Model.zero _ true) = true
+  · have hhiNonpos : Model.toReal (Binary.Interval.toModel a).hi ≤ 0 := by
       simpa only [Model.toReal_zero] using
         (Model.Interval.leB_eq_true_iff_toReal_le_of_isFinite
           _ _ ha.2.1 (by decide)).mp hneg
     have hxNonpos : x <= 0 := hx.2.trans hhiNonpos
     rw [Model.Interval.abs, ite_eq_left hneg, abs_of_nonpos hxNonpos]
-    change Model.toReal (Model.neg a.toModel.hi) ≤ -x ∧
-      -x ≤ Model.toReal (Model.neg a.toModel.lo)
+    change Model.toReal (Model.neg (Binary.Interval.toModel a).hi) ≤ -x ∧
+      -x ≤ Model.toReal (Model.neg (Binary.Interval.toModel a).lo)
     rw [Model.toReal_neg _ ha.2.1, Model.toReal_neg _ ha.1]
     exact ⟨neg_le_neg hx.2, neg_le_neg hx.1⟩
-  · by_cases hpos : Model.Interval.leB (Model.zero _ false) a.toModel.lo = true
-    · have hloNonneg : 0 ≤ Model.toReal a.toModel.lo := by
+  · by_cases hpos : Model.Interval.leB (Model.zero _ false) (Binary.Interval.toModel a).lo = true
+    · have hloNonneg : 0 ≤ Model.toReal (Binary.Interval.toModel a).lo := by
         simpa only [Model.toReal_zero] using
           (Model.Interval.leB_eq_true_iff_toReal_le_of_isFinite
             _ _ (by decide) ha.1).mp hpos
@@ -269,15 +275,17 @@ theorem abs_realEncloses {a : IEEE32Exec.Interval32} {x : Real}
       exact hx
     · rw [Model.Interval.abs, ite_eq_right hneg, ite_eq_right hpos]
       change Model.toReal (Model.zero _ false) ≤ |x| ∧
-        |x| ≤ Model.toReal (Model.maximum (Model.neg a.toModel.lo) a.toModel.hi)
+        |x| ≤ Model.toReal (Model.maximum
+          (Model.neg (Binary.Interval.toModel a).lo) (Binary.Interval.toModel a).hi)
       rw [Model.toReal_zero, Model.toReal_maximum_eq_max_of_isFinite _ _
         (by simpa only [Model.isFinite_neg] using ha.1) ha.2.1,
         Model.toReal_neg _ ha.1]
       refine ⟨abs_nonneg x, (abs_le).2 ⟨?_, hx.2.trans (le_max_right _ _)⟩⟩
-      have := le_max_left (-Model.toReal a.toModel.lo) (Model.toReal a.toModel.hi)
+      have := le_max_left
+        (-Model.toReal (Binary.Interval.toModel a).lo) (Model.toReal (Binary.Interval.toModel a).hi)
       linarith [hx.1]
 
-private theorem nonnegativeEndpoint_toReal_nonneg {x : ExecFloat.Binary 8 23}
+private theorem nonnegativeEndpoint_toReal_nonneg {x : Binary 8 23}
     (hfin : ExecFloat.Binary.isFinite x = true) (hdomain : nonnegativeEndpoint x = true) :
     0 ≤ (ExecFloat.Binary.toModel x).toReal := by
   by_cases hzero : ExecFloat.Binary.isZero x = true
@@ -287,19 +295,19 @@ private theorem nonnegativeEndpoint_toReal_nonneg {x : ExecFloat.Binary 8 23}
     exact Model.toReal_nonneg_of_isFinite_of_signBit_eq_false
       (ExecFloat.Binary.toModel x) hfin hsign
 
-private theorem toModel_sqrtDown (x : ExecFloat.Binary 8 23) :
+private theorem toModel_sqrtDown (x : Binary 8 23) :
     ExecFloat.Binary.toModel ((ExecFloat.Binary.sqrt (rounding := .towardNegativeInfinity)) x) =
       Model.sqrtDown (ExecFloat.Binary.toModel x) := by
   exact FloatLib.Floats.ExecFloat.Binary.toModel_sqrt x .towardNegativeInfinity
 
-private theorem toModel_sqrtUp (x : ExecFloat.Binary 8 23) :
+private theorem toModel_sqrtUp (x : Binary 8 23) :
     ExecFloat.Binary.toModel ((ExecFloat.Binary.sqrt (rounding := .towardPositiveInfinity)) x) =
       Model.sqrtUp (ExecFloat.Binary.toModel x) := by
   exact FloatLib.Floats.ExecFloat.Binary.toModel_sqrt x .towardPositiveInfinity
 
 /-- A directed lower square-root endpoint lies below the exact real square root. FloatLib's
 nonnegative-input theorem includes both signed zeros. -/
-theorem toReal_sqrtDown_le {x : ExecFloat.Binary 8 23}
+theorem toReal_sqrtDown_le {x : Binary 8 23}
     (hfin : ExecFloat.Binary.isFinite x = true) (hdomain : nonnegativeEndpoint x = true)
     (hout : ExecFloat.Binary.isFinite ((ExecFloat.Binary.sqrt (rounding := .towardNegativeInfinity))
       x) = true) :
@@ -313,7 +321,7 @@ theorem toReal_sqrtDown_le {x : ExecFloat.Binary 8 23}
   exact EReal.coe_le_coe_iff.mp h
 
 /-- Upper counterpart of `toReal_sqrtDown_le`. -/
-theorem toReal_sqrtUp_ge {x : ExecFloat.Binary 8 23}
+theorem toReal_sqrtUp_ge {x : Binary 8 23}
     (hfin : ExecFloat.Binary.isFinite x = true) (hdomain : nonnegativeEndpoint x = true)
     (hout : ExecFloat.Binary.isFinite ((ExecFloat.Binary.sqrt (rounding := .towardPositiveInfinity))
       x) = true) :
@@ -327,18 +335,20 @@ theorem toReal_sqrtUp_ge {x : ExecFloat.Binary 8 23}
   exact EReal.coe_le_coe_iff.mp h
 
 /-- Sound real enclosure for directed interval square root. -/
-theorem sqrt_realEncloses {a : IEEE32Exec.Interval32} {x : Real}
-    (ha : a.Valid) (hlo : nonnegativeEndpoint a.lo = true)
-    (hhi : nonnegativeEndpoint a.hi = true) (hout : a.sqrt.Valid)
-    (hx : RealEncloses a x) : RealEncloses a.sqrt (Real.sqrt x) := by
-  have hlow : a.sqrt.lo = (ExecFloat.Binary.sqrt (rounding := .towardNegativeInfinity)) a.lo := by
+theorem sqrt_realEncloses {a : Interval (Binary 8 23)} {x : Real}
+    (ha : Binary.Interval.Valid a) (hlo : nonnegativeEndpoint a.lo = true)
+    (hhi : nonnegativeEndpoint a.hi = true) (hout : Binary.Interval.Valid (Binary.Interval.sqrt a))
+    (hx : RealEncloses a x) : RealEncloses (Binary.Interval.sqrt a) (Real.sqrt x) := by
+  have hlow : (Binary.Interval.sqrt a).lo =
+      (ExecFloat.Binary.sqrt (rounding := .towardNegativeInfinity)) a.lo := by
     apply FloatLib.Floats.ExecFloat.Binary.toModel_inj.mp
     change ExecFloat.Binary.toModel (ExecFloat.Binary.ofModel
       (Model.sqrtDown (ExecFloat.Binary.toModel a.lo))) =
         ExecFloat.Binary.toModel ((ExecFloat.Binary.sqrt (rounding := .towardNegativeInfinity))
           a.lo)
     rw [ExecFloat.Binary.toModel_ofModel, toModel_sqrtDown]
-  have hhigh : a.sqrt.hi = (ExecFloat.Binary.sqrt (rounding := .towardPositiveInfinity)) a.hi := by
+  have hhigh : (Binary.Interval.sqrt a).hi =
+      (ExecFloat.Binary.sqrt (rounding := .towardPositiveInfinity)) a.hi := by
     apply FloatLib.Floats.ExecFloat.Binary.toModel_inj.mp
     change ExecFloat.Binary.toModel (ExecFloat.Binary.ofModel
       (Model.sqrtUp (ExecFloat.Binary.toModel a.hi))) =
@@ -346,20 +356,20 @@ theorem sqrt_realEncloses {a : IEEE32Exec.Interval32} {x : Real}
           a.hi)
     rw [ExecFloat.Binary.toModel_ofModel, toModel_sqrtUp]
   constructor
-  · change (ExecFloat.Binary.toModel a.sqrt.lo).toReal ≤ Real.sqrt x
+  · change (ExecFloat.Binary.toModel (Binary.Interval.sqrt a).lo).toReal ≤ Real.sqrt x
     rw [hlow]
-    have hlowFinite : ExecFloat.Binary.isFinite a.sqrt.lo = true := hout.1
+    have hlowFinite : ExecFloat.Binary.isFinite (Binary.Interval.sqrt a).lo = true := hout.1
     exact (toReal_sqrtDown_le ha.1 hlo (by simpa only [hlow] using hlowFinite)).trans
       (Real.sqrt_le_sqrt hx.1)
-  · change Real.sqrt x ≤ (ExecFloat.Binary.toModel a.sqrt.hi).toReal
+  · change Real.sqrt x ≤ (ExecFloat.Binary.toModel (Binary.Interval.sqrt a).hi).toReal
     rw [hhigh]
-    have hhighFinite : ExecFloat.Binary.isFinite a.sqrt.hi = true := hout.2.1
+    have hhighFinite : ExecFloat.Binary.isFinite (Binary.Interval.sqrt a).hi = true := hout.2.1
     exact (Real.sqrt_le_sqrt hx.2).trans
       (toReal_sqrtUp_ge ha.2.1 hhi (by simpa only [hhigh] using hhighFinite))
 
 /-- Lift a sound unary scalar transfer to tensors of arbitrary rank. -/
 theorem tensor_map_enclosed
-    (op : Real -> Real) (input output : IEEE32Exec.Interval32)
+    (op : Real -> Real) (input output : Interval (Binary 8 23))
     (sound : ∀ {x}, RealEncloses input x -> RealEncloses output (op x)) :
     ∀ {shape : Shape} {x : Tensor Real shape},
       TensorEnclosed input x -> TensorEnclosed output (Tensor.mapSpec op x) := by
@@ -376,29 +386,29 @@ theorem tensor_map_enclosed
 
 /-- Tensor-level soundness of the ReLU interval transfer. -/
 theorem tensor_relu_enclosed {shape : Shape} {x : Tensor Real shape}
-    {a : IEEE32Exec.Interval32} (ha : a.Valid) (hx : TensorEnclosed a x) :
-    TensorEnclosed a.relu (Tensor.mapSpec (fun value => max value 0) x) :=
-  tensor_map_enclosed (fun value => max value 0) a a.relu
+    {a : Interval (Binary 8 23)} (ha : Binary.Interval.Valid a) (hx : TensorEnclosed a x) :
+    TensorEnclosed (Binary.Interval.relu a) (Tensor.mapSpec (fun value => max value 0) x) :=
+  tensor_map_enclosed (fun value => max value 0) a (Binary.Interval.relu a)
     (fun hx' => relu_realEncloses ha hx') hx
 
 /-- Tensor-level soundness of the absolute-value interval transfer. -/
 theorem tensor_abs_enclosed {shape : Shape} {x : Tensor Real shape}
-    {a : IEEE32Exec.Interval32} (ha : a.Valid) (hx : TensorEnclosed a x) :
-    TensorEnclosed a.abs (Tensor.mapSpec abs x) :=
-  tensor_map_enclosed abs a a.abs (fun hx' => abs_realEncloses ha hx') hx
+    {a : Interval (Binary 8 23)} (ha : Binary.Interval.Valid a) (hx : TensorEnclosed a x) :
+    TensorEnclosed (Binary.Interval.abs a) (Tensor.mapSpec abs x) :=
+  tensor_map_enclosed abs a (Binary.Interval.abs a) (fun hx' => abs_realEncloses ha hx') hx
 
 /-- Tensor-level soundness of directed interval square root. -/
 theorem tensor_sqrt_enclosed {shape : Shape} {x : Tensor Real shape}
-    {a : IEEE32Exec.Interval32} (ha : a.Valid)
+    {a : Interval (Binary 8 23)} (ha : Binary.Interval.Valid a)
     (hlo : nonnegativeEndpoint a.lo = true) (hhi : nonnegativeEndpoint a.hi = true)
-    (hout : a.sqrt.Valid) (hx : TensorEnclosed a x) :
-    TensorEnclosed a.sqrt (Tensor.mapSpec Real.sqrt x) :=
-  tensor_map_enclosed Real.sqrt a a.sqrt
+    (hout : Binary.Interval.Valid (Binary.Interval.sqrt a)) (hx : TensorEnclosed a x) :
+    TensorEnclosed (Binary.Interval.sqrt a) (Tensor.mapSpec Real.sqrt x) :=
+  tensor_map_enclosed Real.sqrt a (Binary.Interval.sqrt a)
     (fun hx' => sqrt_realEncloses ha hlo hhi hout hx') hx
 
 /-- Lift a sound binary scalar transfer to tensors of arbitrary rank. -/
 theorem tensor_map2_enclosed
-    (op : Real -> Real -> Real) (a b out : IEEE32Exec.Interval32)
+    (op : Real -> Real -> Real) (a b out : Interval (Binary 8 23))
     (sound : ∀ {x y}, RealEncloses a x -> RealEncloses b y -> RealEncloses out (op x y)) :
     ∀ {shape : Shape} {x y : Tensor Real shape},
       TensorEnclosed a x -> TensorEnclosed b y ->
@@ -417,54 +427,57 @@ theorem tensor_map2_enclosed
 
 /-- Tensor-level soundness of outward-rounded interval addition. -/
 theorem tensor_add_enclosed {shape : Shape} {x y : Tensor Real shape}
-    {a b : IEEE32Exec.Interval32}
-    (ha : a.Valid) (hb : b.Valid) (hout : (a.add b).Valid)
+    {a b : Interval (Binary 8 23)}
+    (ha : Binary.Interval.Valid a) (hb : Binary.Interval.Valid b)
+    (hout : Binary.Interval.Valid (Binary.Interval.add a b))
     (hx : TensorEnclosed a x) (hy : TensorEnclosed b y) :
-    TensorEnclosed (a.add b) (Tensor.addSpec x y) :=
-  tensor_map2_enclosed (fun u v => u + v) a b (a.add b)
+    TensorEnclosed (Binary.Interval.add a b) (Tensor.addSpec x y) :=
+  tensor_map2_enclosed (fun u v => u + v) a b (Binary.Interval.add a b)
     (fun hx' hy' => add_realEncloses ha hb hout hx' hy') hx hy
 
 /-- Tensor-level soundness of outward-rounded interval subtraction. -/
 theorem tensor_sub_enclosed {shape : Shape} {x y : Tensor Real shape}
-    {a b : IEEE32Exec.Interval32}
-    (ha : a.Valid) (hb : b.Valid) (hout : (a.sub b).Valid)
+    {a b : Interval (Binary 8 23)}
+    (ha : Binary.Interval.Valid a) (hb : Binary.Interval.Valid b)
+    (hout : Binary.Interval.Valid (Binary.Interval.sub a b))
     (hx : TensorEnclosed a x) (hy : TensorEnclosed b y) :
-    TensorEnclosed (a.sub b) (Tensor.subSpec x y) :=
-  tensor_map2_enclosed (fun u v => u - v) a b (a.sub b)
+    TensorEnclosed (Binary.Interval.sub a b) (Tensor.subSpec x y) :=
+  tensor_map2_enclosed (fun u v => u - v) a b (Binary.Interval.sub a b)
     (fun hx' hy' => sub_realEncloses ha hb hout hx' hy') hx hy
 
 /-- Tensor-level soundness of outward-rounded interval multiplication. -/
 theorem tensor_mul_enclosed {shape : Shape} {x y : Tensor Real shape}
-    {a b : IEEE32Exec.Interval32}
-    (ha : a.Valid) (hb : b.Valid) (hout : (a.mul b).Valid)
+    {a b : Interval (Binary 8 23)}
+    (ha : Binary.Interval.Valid a) (hb : Binary.Interval.Valid b)
+    (hout : Binary.Interval.Valid (Binary.Interval.mul a b))
     (hx : TensorEnclosed a x) (hy : TensorEnclosed b y) :
-    TensorEnclosed (a.mul b) (Tensor.mulSpec x y) :=
-  tensor_map2_enclosed (fun u v => u * v) a b (a.mul b)
+    TensorEnclosed (Binary.Interval.mul a b) (Tensor.mulSpec x y) :=
+  tensor_map2_enclosed (fun u v => u * v) a b (Binary.Interval.mul a b)
     (fun hx' hy' => mul_realEncloses ha hb hout hx' hy') hx hy
 
 /-! ## Replay against bit-level graph execution -/
 
 /-- Executable check that every binary32 tensor entry lies in an interval. -/
-def tensorWithinRange (interval : IEEE32Exec.Interval32) :
-    {shape : Shape} -> Tensor (ExecFloat.Binary 8 23) shape -> Bool
+def tensorWithinRange (interval : Interval (Binary 8 23)) :
+    {shape : Shape} -> Tensor (Binary 8 23) shape -> Bool
   | .scalar, tensor =>
       ExecFloat.Binary.isFinite tensor.item &&
-        (IEEE32Exec.Interval32.leB interval.lo tensor.item &&
-          IEEE32Exec.Interval32.leB tensor.item interval.hi)
+        (Binary.Interval.leB interval.lo tensor.item &&
+          Binary.Interval.leB tensor.item interval.hi)
   | .dim n _, tensor =>
       (List.finRange n).all (fun i => tensorWithinRange interval (tensor.unstack i))
 
 /-- Proposition expressed by `tensorWithinRange`. -/
-def IEEETensorEnclosed (interval : IEEE32Exec.Interval32) :
-    {shape : Shape} -> Tensor (ExecFloat.Binary 8 23) shape -> Prop
+def IEEETensorEnclosed (interval : Interval (Binary 8 23)) :
+    {shape : Shape} -> Tensor (Binary 8 23) shape -> Prop
   | .scalar, tensor =>
       ExecFloat.Binary.isFinite tensor.item = true ∧
         LE.le interval.lo tensor.item ∧ LE.le tensor.item interval.hi
   | .dim _ _, tensor => ∀ i, IEEETensorEnclosed interval (tensor.unstack i)
 
 /-- The executable tensor range check is exact for the IEEE comparison semantics. -/
-theorem tensorWithinRange_eq_true_iff (interval : IEEE32Exec.Interval32)
-    {shape : Shape} (tensor : Tensor (ExecFloat.Binary 8 23) shape) :
+theorem tensorWithinRange_eq_true_iff (interval : Interval (Binary 8 23))
+    {shape : Shape} (tensor : Tensor (Binary 8 23) shape) :
     tensorWithinRange interval tensor = true <-> IEEETensorEnclosed interval tensor := by
   induction shape with
   | scalar =>
@@ -477,16 +490,16 @@ theorem tensorWithinRange_eq_true_iff (interval : IEEE32Exec.Interval32)
 /-- Decode an executable tensor entrywise and state that the resulting real tensor lies in an
 interval. Unlike `IEEETensorEnclosed`, this predicate talks directly about the real values used by
 the approximation layer. -/
-def DecodedTensorEnclosed (interval : IEEE32Exec.Interval32) :
-    {shape : Shape} -> Tensor (ExecFloat.Binary 8 23) shape -> Prop
+def DecodedTensorEnclosed (interval : Interval (Binary 8 23)) :
+    {shape : Shape} -> Tensor (Binary 8 23) shape -> Prop
   | .scalar, tensor => RealEncloses interval ((ExecFloat.Binary.toModel tensor.item).toReal)
   | .dim _ _, tensor => ∀ i, DecodedTensorEnclosed interval (tensor.unstack i)
 
 /-- A successful IEEE range check decodes to an ordinary real enclosure. Finiteness is an explicit
 part of `IEEETensorEnclosed`, so this theorem never assigns a real meaning to NaN or infinity. -/
-theorem decodedTensorEnclosed_of_ieee {interval : IEEE32Exec.Interval32}
-    (valid : interval.Valid) :
-    ∀ {shape : Shape} {tensor : Tensor (ExecFloat.Binary 8 23) shape},
+theorem decodedTensorEnclosed_of_ieee {interval : Interval (Binary 8 23)}
+    (valid : Binary.Interval.Valid interval) :
+    ∀ {shape : Shape} {tensor : Tensor (Binary 8 23) shape},
       IEEETensorEnclosed interval tensor -> DecodedTensorEnclosed interval tensor := by
   intro shape
   induction shape with
@@ -501,20 +514,22 @@ theorem decodedTensorEnclosed_of_ieee {interval : IEEE32Exec.Interval32}
 /-- Pointwise absolute error between a real specification tensor and an executable binary32
 tensor. The shape index is shared, so no runtime shape cast is hidden in the relation. -/
 def TensorErrorLe (eps : Real) :
-    {shape : Shape} -> Tensor Real shape -> Tensor (ExecFloat.Binary 8 23) shape -> Prop
+    {shape : Shape} -> Tensor Real shape -> Tensor (Binary 8 23) shape -> Prop
   | .scalar, exact, computed =>
       |(ExecFloat.Binary.toModel computed.item).toReal - exact.item| <= eps
   | .dim _ _, exact, computed =>
       ∀ i, TensorErrorLe eps (exact.unstack i) (computed.unstack i)
 
 /-- Width of a finite executable interval, interpreted in the reals. -/
-noncomputable def intervalWidth (interval : IEEE32Exec.Interval32) : Real :=
+noncomputable def intervalWidth (interval : Interval (Binary 8 23)) : Real :=
   (ExecFloat.Binary.toModel interval.hi).toReal - (ExecFloat.Binary.toModel interval.lo).toReal
 
 /-- A valid interval has nonnegative real width. -/
-theorem intervalWidth_nonneg {interval : IEEE32Exec.Interval32} (valid : interval.Valid) :
+theorem intervalWidth_nonneg {interval : Interval (Binary 8 23)}
+    (valid : Binary.Interval.Valid interval) :
     0 <= intervalWidth interval := by
-  change 0 ≤ Model.toReal interval.toModel.hi - Model.toReal interval.toModel.lo
+  change 0 ≤ Model.toReal (Binary.Interval.toModel interval).hi -
+    Model.toReal (Binary.Interval.toModel interval).lo
   exact sub_nonneg.mpr (Model.Interval.Valid.toReal_ordered valid)
 
 /-- Two tensors enclosed by the same interval differ entrywise by at most its width.
@@ -522,8 +537,8 @@ theorem intervalWidth_nonneg {interval : IEEE32Exec.Interval32} (valid : interva
 This is the elementary bridge from range analysis to approximation analysis. It is deliberately
 pointwise; a later norm theorem can package the same statement as an `L∞` bound without changing
 the checker or its certificate format. -/
-theorem tensor_error_le_width_of_enclosed {interval : IEEE32Exec.Interval32} :
-    ∀ {shape : Shape} {exact : Tensor Real shape} {computed : Tensor (ExecFloat.Binary 8 23) shape},
+theorem tensor_error_le_width_of_enclosed {interval : Interval (Binary 8 23)} :
+    ∀ {shape : Shape} {exact : Tensor Real shape} {computed : Tensor (Binary 8 23) shape},
       TensorEnclosed interval exact ->
       DecodedTensorEnclosed interval computed ->
       TensorErrorLe (intervalWidth interval) exact computed := by
@@ -540,9 +555,9 @@ theorem tensor_error_le_width_of_enclosed {interval : IEEE32Exec.Interval32} :
 
 /-- A successful executable range check and a real enclosure proof yield a concrete pointwise
 error bound. This theorem is the tensor-level core used by graph-wide numerical certificates. -/
-theorem tensor_error_le_width_of_check {interval : IEEE32Exec.Interval32}
-    (valid : interval.Valid) {shape : Shape} {exact : Tensor Real shape}
-    {computed : Tensor (ExecFloat.Binary 8 23) shape}
+theorem tensor_error_le_width_of_check {interval : Interval (Binary 8 23)}
+    (valid : Binary.Interval.Valid interval) {shape : Shape} {exact : Tensor Real shape}
+    {computed : Tensor (Binary 8 23) shape}
     (hexact : TensorEnclosed interval exact)
     (hcheck : tensorWithinRange interval computed = true) :
     TensorErrorLe (intervalWidth interval) exact computed :=

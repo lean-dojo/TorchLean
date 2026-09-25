@@ -145,9 +145,72 @@ def checkSampling : IO Unit := do
     (text.chooseNextToken values { options with topK := 0, temperature := nan } 0
       (Tensor.full [0] 0)).isOk
 
+/-- Parsing and token selection share greedy and sampling validation rules. -/
+def checkGenerationOptions : IO Unit := do
+  let defaults : text.GenerationOptions :=
+    { prompt := "", newTokenCount := 1, temperature := 1, topK := 1,
+      repeatPenalty := 0, repeatWindow := 0, seed := 0, asciiOnly := true }
+  let (unchanged, _) ← IO.ofExcept (text.GenerationOptions.parse "text" [] defaults)
+  expectEqual "omitted ASCII flag preserves default" true unchanged.asciiOnly
+  for arguments in [["--ascii-only=false"], ["--ascii-only", "false"]] do
+    let (overridden, remaining) ←
+      IO.ofExcept (text.GenerationOptions.parse "text" arguments defaults)
+    expectEqual "explicit false overrides ASCII default" false overridden.asciiOnly
+    expectEqual "ASCII flag is consumed" [] remaining
+
+  let scores : Tensor Float [3] := Tensor.from #[1.0, 3.0, 2.0]
+  for arguments in
+      [["--top-k", "1", "--temperature", "0", "--other"],
+       ["--temperature=-1", "--top-k=1", "--other"]] do
+    let (options, remaining) ← IO.ofExcept
+      (text.GenerationOptions.parse "text" arguments { defaults with topK := 0 })
+    expectEqual "explicit greedy policy overrides sampling defaults" 1 options.topK
+    expectEqual "generation parsing preserves unrelated arguments" ["--other"] remaining
+    expectEqual "parsed greedy policy ignores nonpositive temperature"
+      (Except.ok 1 : Except String Nat)
+      ((text.chooseNextToken scores options 0 (Tensor.full [0] 0)).map Fin.val)
+
+  let (sampling, _) ← IO.ofExcept
+    (text.GenerationOptions.parse "text" ["--temperature=0.5", "--top-k=2"]
+      { defaults with temperature := 0 })
+  expectEqual "explicit sampling policy overrides greedy defaults" 2 sampling.topK
+  expectEqual "sampling temperature flag overrides an invalid default" 0.5 sampling.temperature
+  expectEqual "parsed sampling policy generates a token" true
+    (text.chooseNextToken scores sampling 0 (Tensor.full [0] 0)).isOk
+
+  let nan : Float := 0.0 / 0.0
+  let inf : Float := 1.0 / 0.0
+  for temperature in [0.0, -1.0, nan, inf, -inf] do
+    let greedyDefaults := { defaults with temperature := temperature }
+    let (options, _) ←
+      IO.ofExcept (text.GenerationOptions.parse "text" [] greedyDefaults)
+    expectEqual "greedy defaults preserve unused temperature semantics"
+      (Except.ok 1 : Except String Nat)
+      ((text.chooseNextToken scores options 0 (Tensor.full [0] 0)).map Fin.val)
+    for topK in [0, 2] do
+      let sampling := { greedyDefaults with topK := topK }
+      expectEqual "parser rejects invalid sampling temperature defaults" false
+        (text.GenerationOptions.parse "text" [] sampling).isOk
+      expectEqual "generation rejects invalid sampling temperature defaults" false
+        (text.chooseNextToken scores sampling 0 (Tensor.full [0] 0)).isOk
+
+  for arguments in
+      [["--temperature=invalid", "--top-k=1"],
+       ["--temperature=0", "--top-k=0"],
+       ["--temperature=-1", "--top-k=2"],
+       ["--repeat-penalty=-1"],
+       ["--repeat-penalty=invalid"]] do
+    expectEqual "parser rejects malformed numbers and invalid generation policies" false
+      (text.GenerationOptions.parse "text" arguments defaults).isOk
+  for repeatPenalty in [-1.0, nan, inf, -inf] do
+    expectEqual "greedy policy still validates repetition penalty defaults" false
+      (text.GenerationOptions.parse "text" []
+        { defaults with temperature := 0, repeatPenalty := repeatPenalty }).isOk
+
 def run : IO Unit := do
   checkSelection
   checkSampling
+  checkGenerationOptions
   let alphabet := text.Tokenizer.fromAlphabet #['a', 'b', 'a', '😀'] ⟨1, by decide⟩
   expectEqual "alphabet lookup keeps first duplicate, Unicode, and unknown ids"
     #[0, 3, 1, 1] (alphabet.encode "a😀?b")
@@ -197,17 +260,6 @@ def run : IO Unit := do
   let hashTokenizer := text.GPT2BPE.Internal.buildTokenizer hashVocabulary hashMerges
   expectEqual "hash-prefixed BPE pairs are merges, not comments"
     #[2] (← IO.ofExcept (text.GPT2BPE.Internal.encodeFragment hashTokenizer "####"))
-
-  let defaults : text.GenerationOptions :=
-    { prompt := "", newTokenCount := 1, temperature := 1, topK := 1,
-      repeatPenalty := 0, repeatWindow := 0, seed := 0, asciiOnly := true }
-  let (unchanged, _) ← IO.ofExcept (text.GenerationOptions.parse "text" [] defaults)
-  expectEqual "omitted ASCII flag preserves default" true unchanged.asciiOnly
-  for arguments in [["--ascii-only=false"], ["--ascii-only", "false"]] do
-    let (overridden, remaining) ←
-      IO.ofExcept (text.GenerationOptions.parse "text" arguments defaults)
-    expectEqual "explicit false overrides ASCII default" false overridden.asciiOnly
-    expectEqual "ASCII flag is consumed" [] remaining
 
   expectEqual "short corpus remains total"
     1 (text.Corpus.usableTokenStarts 3 4)

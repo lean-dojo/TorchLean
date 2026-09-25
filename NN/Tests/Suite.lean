@@ -14,11 +14,14 @@ public import NN.Tests.API.Complex
 public import NN.Tests.API.Data
 public import NN.Tests.API.Diffusion
 public import NN.Tests.API.Differential
-public import NN.Tests.API.Fourier
+public import NN.Tests.API.Gpt2Corpus
+public import NN.Tests.API.Macros
 public import NN.Tests.API.Optim
 public import NN.Tests.API.Precision
+public import NN.Tests.API.PrecisionTrainer
 public import NN.Tests.API.TypedTraining
 public import NN.Tests.API.PublicSurface
+public import NN.Tests.API.RLCritic
 public import NN.Tests.API.SelfSupervised.BlockMask
 public import NN.Tests.API.Text
 public import NN.Tests.API.TrainerCheckpoint
@@ -28,16 +31,26 @@ public import NN.Tests.API.Verification
 public import NN.Tests.API.GradientAccumulation
 public import NN.Tests.API.Init
 public import NN.Tests.API.ModelContracts
+public import NN.Tests.API.ModelEdgeCases
 public import NN.Tests.API.Models
 public import NN.Tests.Backend.Profile
 public import NN.Tests.IR.ShapeContracts
 public import NN.Tests.MLTheory.IBPRefinement
+public import NN.Tests.MLTheory.BinaryMatmul
+public import NN.Tests.MLTheory.CROWNLayerNormDerivatives
 public import NN.Tests.MLTheory.CROWNOperators
 public import NN.Tests.MLTheory.CROWNSoundnessGuardrails
+public import NN.Tests.MLTheory.CROWNTransferFailures
 public import NN.Tests.MLTheory.Diagnostics
+public import NN.Tests.MLTheory.DirectedReductions
+public import NN.Tests.MLTheory.BatchNormBounds
+public import NN.Tests.Verification.CameraCertificates
+public import NN.Tests.Verification.FiniteArtifact
 public import NN.Tests.Verification.GraphNumericalCertificate
 public import NN.Tests.MLTheory.CROWNQuery
 public import NN.Tests.MLTheory.Monotonicity
+public import NN.Tests.MLTheory.SoftmaxDerivatives
+public import NN.Tests.Runtime.EinsumDynamic
 public import NN.Tests.Runtime.Floats.Suite
 public import NN.Tests.Runtime.Rationals.Suite
 public import NN.Tests.Runtime.Cuda.Suite
@@ -77,12 +90,19 @@ def usage : String :=
     ]
 
 def run : IO Unit := do
-  -- Fork-child mode for the block-cache byte cap. A child launched by
-  -- `Tests.Cuda.Stress.runCacheCapTest` re-enters here with the cap fixed in its environment and
-  -- runs only the cache probe, then exits, so the parent can inspect the outcome.
-  match ← IO.getEnv "TORCHLEAN_CUDA_CACHE_PROBE" with
-  | some "cache-cap" => Tests.Cuda.Stress.runCacheCapProbe
-  | _ =>
+  if (← IO.getEnv "TORCHLEAN_REQUIRE_CUDA") == some "1" then
+    Runtime.Autograd.Cuda.Buffer.requireNativeRuntime
+  if (← IO.getEnv "TORCHLEAN_CPU_REDUCTION_PROBE") == some "1" then
+    Tests.Cuda.Stress.runLargeBufferStress
+    return
+  -- Fresh subprocesses isolate native memory accounting and restore allocator limits on exit.
+  -- These probes are selected before the ordinary suite to avoid unrelated live GPU owners.
+  match ← IO.getEnv "TORCHLEAN_LIBTORCH_MEMORY_PROBE" with
+  | some "accounting" => Tests.Cuda.Stress.runMemoryAccountingProbe
+  | some "attention-context" => Tests.Cuda.Stress.runAttentionMemoryProbe
+  | some "oom-recovery" => Tests.Cuda.Stress.runMemoryOOMProbe
+  | some other => throw <| IO.userError s!"unknown LibTorch memory probe: {other}"
+  | none =>
     IO.println "== TorchLean: curated tests =="
     NN.Tests.API.BufferUpdates.run
     NN.Tests.API.BuilderSeeds.run
@@ -93,10 +113,13 @@ def run : IO Unit := do
     NN.Tests.API.Diffusion.run
     NN.Tests.API.Differential.run
     NN.Tests.API.Fourier.run
+    NN.Tests.API.Gpt2Corpus.run
     NN.Tests.API.Optim.run
     NN.Tests.API.Precision.run
+    NN.Tests.API.PrecisionTrainer.run
     NN.Tests.API.TypedTraining.run
     NN.Tests.API.PublicSurface.run
+    NN.Tests.API.RLCritic.run
     NN.Tests.API.SelfSupervised.BlockMask.run
     NN.Tests.API.Text.run
     NN.Tests.API.TrainerCheckpoint.run
@@ -106,15 +129,25 @@ def run : IO Unit := do
     NN.Tests.API.GradientAccumulation.run
     NN.Tests.API.Init.run
     NN.Tests.API.ModelContracts.run
+    NN.Tests.API.ModelEdgeCases.run
     NN.Tests.API.Models.run
     NN.Tests.Backend.Profile.run
     NN.Tests.MLTheory.IBPRefinement.run
+    NN.Tests.MLTheory.BinaryMatmul.run
+    NN.Tests.MLTheory.CROWNLayerNormDerivatives.run
     NN.Tests.MLTheory.CROWNOperators.run
     NN.Tests.MLTheory.CROWNSoundnessGuardrails.run
+    NN.Tests.MLTheory.CROWNTransferFailures.run
     NN.Tests.MLTheory.Diagnostics.run
+    NN.Tests.MLTheory.DirectedReductions.run
+    NN.Tests.MLTheory.BatchNormBounds.run
+    NN.Tests.Verification.CameraCertificates.run
+    NN.Tests.Verification.FiniteArtifact.run
     NN.Tests.Verification.GraphNumericalCertificate.run
     NN.Tests.MLTheory.CROWNQuery.run
     NN.Tests.MLTheory.Monotonicity.run
+    NN.Tests.MLTheory.SoftmaxDerivatives.run
+    NN.Tests.Runtime.EinsumDynamic.run
     NN.Tests.Tensor.Lexer.run
     NN.Tests.Tensor.LinearAlgebra.run
     NN.Tests.Tensor.Operations.run
@@ -124,9 +157,12 @@ def run : IO Unit := do
     match Runtime.Autograd.Cuda.Buffer.runtimeStatus with
     | .cpuStub =>
         Tests.Cuda.ConvPool.runWideGeometryChecks
+        Tests.Cuda.Stress.runLargeBufferStress
+        Tests.Cuda.Stress.runMemoryTests
         IO.println "  CUDA kernels: skipped (CPU build)"
     | .nativeAvailable =>
         NN.Tests.API.BufferUpdates.checkStochasticBuffers (device := .cuda)
+        NN.Tests.Runtime.EinsumDynamic.run .cuda
         Tests.Cuda.run
     | .nativeUnavailable =>
         throw <| IO.userError

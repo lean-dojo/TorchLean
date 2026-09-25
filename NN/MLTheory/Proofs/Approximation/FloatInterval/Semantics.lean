@@ -8,7 +8,6 @@ module
 
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured
 public import FloatLib.Floats.Formats.IEEE754.Native
-public import FloatLib.Floats.Formats.BinaryInterchange.IntervalSemantics.Order
 
 /-!
 # Floating-Point Interval Semantics

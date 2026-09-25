@@ -16,8 +16,12 @@ Small end-to-end workflow:
 
 TorchLean (MHA + LayerNorm + MSE) → lower to `NN.IR.Graph` → run:
 - IBP (`runIBP`)
-- basic CROWN forward bounds (`runCROWN`)
-- objective-dependent backward/dual CROWN (`runCROWNBackwardObjective`)
+- optional CROWN output bounds (`outputBoxCROWN?`)
+- optional objective-dependent backward CROWN (`backwardObjectiveBox?`)
+
+The example has one batch, two tokens, two features, and one attention head. On the CLI's rounded
+backends, both CROWN queries use directed backward propagation and may fall back to IBP bounds.
+This is a runtime integration check, not a checked model certificate.
 
 Run:
   `lake exe verify -- torchlean-transformer-ibp`
@@ -123,35 +127,34 @@ def runMain {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α]
 
   let boxes := lowered.runIBP ps
   let outB ← lowered.outputBoxOrThrow boxes
+  if outB.dim != 1 then
+    throw <| IO.userError s!"[IBP] unexpected output dim {outB.dim} (expected 1)"
   IO.println s!"[IBP] loss lo: {pretty outB.lo}"
   IO.println s!"[IBP] loss hi: {pretty outB.hi}"
 
   if !withCrown then
     IO.println ("[CROWN] skipped for the default runtime-check path; " ++
-      "pass --with-crown for the heavier transformer CROWN run")
+      "pass --with-crown to also compute CROWN output and objective bounds")
     return ()
 
-  IO.println ("[CROWN] running transformer-scale forward CROWN; " ++
-    "this experimental path can take minutes")
-  let inputDim := Spec.Shape.size xShape
-  match lowered.outputBoxCROWN? ps xB with
-  | .ok outC =>
-      if hOut : outC.dim = 1 then
-          IO.println s!"[CROWN] loss lo: {pretty outC.lo}"
-          IO.println s!"[CROWN] loss hi: {pretty outC.hi}"
-      else
-        IO.println s!"[CROWN] unexpected output dim {outC.dim} (expected 1)"
-  | .error msg =>
-      IO.println s!"[CROWN] {msg}"
+  IO.println "[CROWN] computing output bounds for the attention/LayerNorm loss"
+  let outC ← lowered.outputBoxCROWNOrThrow ps xB
+  if outC.dim != 1 then
+    throw <| IO.userError s!"[CROWN] unexpected output dim {outC.dim} (expected 1)"
+  IO.println s!"[CROWN] loss lo: {pretty outC.lo}"
+  IO.println s!"[CROWN] loss hi: {pretty outC.hi}"
 
   IO.println "[CROWN-backward] running objective-dependent backward CROWN"
   let obj : FlatTensor α := { n := 1, v := Tensor.full [1] 1 }
-  match lowered.backwardObjectiveBox? ps boxes xB obj with
-  | .ok outC =>
-      IO.println s!"[CROWN-backward] loss lo: {pretty outC.lo}"
-      IO.println s!"[CROWN-backward] loss hi: {pretty outC.hi}"
-  | .error msg =>
-      IO.println s!"[CROWN-backward] {msg}"
+  let outObjective ←
+    match lowered.backwardObjectiveBox? ps boxes xB obj with
+    | .ok result => pure result
+    | .error msg => throw <| IO.userError s!"[CROWN-backward] {msg}"
+  if outObjective.dim != 1 then
+    throw <| IO.userError
+      s!"[CROWN-backward] unexpected output dim {outObjective.dim} (expected 1)"
+  IO.println s!"[CROWN-backward] loss lo: {pretty outObjective.lo}"
+  IO.println s!"[CROWN-backward] loss hi: {pretty outObjective.hi}"
 
 /-- Runtime-selected typed runner for the default IBP-only path. -/
 def runMainDefault {α : Type} [TorchLean.Storage α]
@@ -159,7 +162,7 @@ def runMainDefault {α : Type} [TorchLean.Storage α]
     [Runtime.FromFloat α] [BoundOps α] [NonlinearBoundOps α] : IO Unit :=
   runMain (α := α) false
 
-/-- Runtime-selected typed runner for the heavier IBP+CROWN path. -/
+/-- Runtime-selected typed runner for the optional IBP+CROWN path. -/
 def runMainWithCrown {α : Type} [TorchLean.Storage α]
     [_root_.Context α] [ToString α]
     [Runtime.FromFloat α] [BoundOps α] [NonlinearBoundOps α] : IO Unit :=
@@ -170,11 +173,10 @@ CLI entry point for the transformer-IBP workflow.
 
 This is wired into `lake exe verify -- torchlean-transformer-ibp`.
 
-By default this command is a fast validation check: lower the TorchLean transformer fragment to the
-verification IR and run IBP on the scalar loss. Pass `--with-crown` to also run the experimental
-transformer-scale CROWN passes. The separate `torchlean-crown-ops` command keeps CROWN itself in the
-standard check suite on compact graphs, while this file focuses on the heavier attention/layer-norm
-front-end path.
+By default this command lowers the small attention/LayerNorm example to the verification IR and
+runs IBP on its scalar loss. Pass `--with-crown` to also request CROWN output and objective bounds.
+The separate `torchlean-crown-ops` command exercises linear/softmax and linear/MSE examples.
+Missing bounds or unexpected output dimensions fail the command.
 -/
 def main (args : List String) : IO Unit := do
   let parsedWithCrown : Bool × List String ←
@@ -185,7 +187,7 @@ def main (args : List String) : IO Unit := do
   let restArgs : List String := parsedWithCrown.2
   if withCrown then
     NN.Verification.Builtin.runWithBoundArithmetic
-      "TorchLean (MHA+LayerNorm+MSE) → IR → IBP" restArgs
+      "TorchLean (MHA+LayerNorm+MSE) → IR → IBP + CROWN" restArgs
       (@runMainWithCrown)
   else
     NN.Verification.Builtin.runWithBoundArithmetic

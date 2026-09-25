@@ -179,10 +179,8 @@ Gate-wise parameter gradients for an LSTM cell.
 
 `LSTMSpec` keeps one weight matrix per gate, each applied to the concatenation `[x_t; h_{t-1}]`, so
 every weight gradient has shape `[hiddenSize, inputSize + hiddenSize]` and every bias gradient has
-shape `[hiddenSize]`. That uniformity is the reason for this record: the eight tensors used to
-travel as a positional tuple, where four identically shaped weight/bias pairs meant a swapped gate
-was invisible to the type checker, and the BPTT loop below had to thread them through a
-nine-element accumulator. Names cost nothing and catch that class of mistake at the call site.
+shape `[hiddenSize]`. Named fields distinguish the four gate gradients despite their identical
+shapes.
 
 PyTorch analogue: the `.grad` fields of `nn.LSTMCell.weight_ih`, `weight_hh` and their biases, with
 the input and hidden blocks kept in one matrix here rather than two.

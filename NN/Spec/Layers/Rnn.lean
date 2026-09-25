@@ -101,9 +101,7 @@ def rnnCellSpec {inputSize hiddenSize : Nat}
 Parameter gradients for an `RNNSpec` cell.
 
 The cell holds a single weight matrix applied to `[x_t; h_{t-1}]` plus a bias, so this pair is the
-whole parameter gradient. The seq2seq baseline in `NN/Spec/Models/Seq2seq.lean` used to declare its
-own identical copy of this record; sharing one means an encoder gradient and a decoder gradient have
-the same type.
+whole parameter gradient. Encoder and decoder cells use the same record.
 
 PyTorch analogue: `(cell.weight_ih.grad, cell.weight_hh.grad)` fused into one matrix, plus the bias
 gradient.

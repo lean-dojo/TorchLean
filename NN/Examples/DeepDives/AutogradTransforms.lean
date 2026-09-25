@@ -75,7 +75,7 @@ def runDemo : IO Unit := do
   let target : Tensor Float [3] := [0.7, 0.1, -0.5]
   let direction : autograd.model.State model Float :=
     autograd.model.fullState model 0.1
-  let mse : autograd.model.Loss [3] [3] := autograd.model.Loss.meanSquaredError
+  let mse : autograd.model.Loss [3] [3] := autograd.model.Loss.mse
 
   let directionalDerivative ←
     autograd.model.jvp model mse state x target direction

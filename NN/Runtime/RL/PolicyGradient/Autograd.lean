@@ -70,7 +70,7 @@ Output shape:
 
 Implementation note: this uses `logSoftmax` and a reduce-sum over the action axis.
 -/
-def actionLogProbOneHotBatch
+def actionLogProbOneHot
     {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     {batch nActions : Nat} [NeZero batch] [NeZero nActions]
     (logits :
@@ -121,7 +121,7 @@ PPO clipped surrogate objective (the thing to maximize), computed per sample:
 
 where `r_i = exp(logπ_new(a_i|s_i) - logπ_old(a_i|s_i))`.
 -/
-def ppoClippedObjectiveBatch
+def ppoClippedObjective
     {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     {batch nActions : Nat} [NeZero batch] [NeZero nActions]
     (newLogits :
@@ -134,7 +134,7 @@ def ppoClippedObjectiveBatch
     m (Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch .scalar)) := do
   let sVec : Shape := .dim batch .scalar
   let newLogProb ←
-    actionLogProbOneHotBatch (m := m) (α := α) (batch := batch) (nActions := nActions)
+    actionLogProbOneHot (m := m) (α := α) (batch := batch) (nActions := nActions)
       newLogits actionOneHot
   let diff ← sub (m := m) (α := α) (s := sVec) newLogProb oldLogProb
   let ratio ← exp (m := m) (α := α) (s := sVec) diff
@@ -151,7 +151,7 @@ PPO scalar loss to *minimize* (mean over batch):
 
 This is the standard discrete-action PPO loss used in many reference implementations.
 -/
-def ppoLossBatch
+def ppoLoss
     {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     {batch nActions : Nat} [NeZero batch] [NeZero nActions]
     (newLogits :
@@ -167,7 +167,7 @@ def ppoLossBatch
     (entropyCoef : α := (1 : α) / ((100 : Nat) : α)) :
     m (Runtime.Autograd.Model.RefTy (m := m) (α := α) Shape.scalar) := do
   let obj ←
-    ppoClippedObjectiveBatch (m := m) (α := α) (batch := batch) (nActions := nActions)
+    ppoClippedObjective (m := m) (α := α) (batch := batch) (nActions := nActions)
       newLogits actionOneHot oldLogProb advantage (clipEps := clipEps)
   let objMean ← Runtime.Autograd.Model.F.mean (m := m) (α := α) (s := .dim batch .scalar) obj
   let policyLoss ← scale (m := m) (α := α) (s := Shape.scalar) objMean (-1)
@@ -245,7 +245,7 @@ def ppoActorCriticObjectiveDef
               let values ←
                 Runtime.Autograd.Model.Layers.Seq.forwardState
                   (model := critic) (α := α) (m := m) .train psCritic states
-              ppoLossBatch (m := m) (α := α) (batch := batch) (nActions := nActions)
+              ppoLoss (m := m) (α := α) (batch := batch) (nActions := nActions)
                 logits actionsOneHot oldLogProb advantages values valueTarget))
   }
 

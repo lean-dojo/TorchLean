@@ -54,8 +54,8 @@ def batchedMultiHeadAttentionCpuFallback {α : Type} [TorchLean.Storage α]
 /--
 Batch-aware eager attention with a TorchLean-owned local VJP.
 
-The CUDA executor folds `(batch, head)` into one BMM batch axis. Provider selection remains
-explicit, and the checked default uses TorchLean's hard-masked softmax and backward rule.
+The CUDA executor folds `(batch, head)` into one batch axis. Provider selection remains
+explicit, and TorchLean's tape calls the matching ATen attention forward and local VJP.
 -/
 def batchedMultiHeadAttention {α : Type} [TorchLean.Storage α] (s : EagerSession α)
     [Context α] [TensorTransfer α]
@@ -79,6 +79,6 @@ def batchedMultiHeadAttention {α : Type} [TorchLean.Storage α] (s : EagerSessi
     pure (some { id := id })
   dispatchCudaCapsuleOpt (α := α) s .scaledDotProductAttention
     #[wq.identity?, wk.identity?, wv.identity?, wo.identity?, x.identity?]
-    #[.nativeCuda, .torchLean, .libTorch] cpu cuda
+    #[.torchLean, .libTorch] cpu cuda
 
 end Runtime.Autograd.Torch.Internal.EagerSession

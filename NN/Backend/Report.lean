@@ -27,7 +27,6 @@ namespace Provider
 def label : Provider → String
   | .reference => "reference"
   | .torchLean => "torchlean"
-  | .nativeCuda => "native-cuda"
   | .libTorch => "libtorch"
   | .aten => "aten"
   | .mps => "mps"
@@ -184,14 +183,17 @@ def summary (p : BackendProfile) : String :=
   s!"profile={p.name} device={p.policy.device.cliName} assurance={p.policy.assurance.label} " ++
   s!"vjp={p.policy.vjpMode.label}"
 
-/-- Plan a list of backend ops and format the selected capsules. -/
+/-- Plan a list of backend ops and report their declared evidence classifications.
+
+The `trustedExternal` list does not enumerate every foreign implementation boundary: maintained
+LibTorch capsules are classified as `checked` and still execute native code. -/
 def planReport (p : BackendProfile) (ops : Array BackendOp) : Except String String := do
   let plan ← p.planOps ops
   let boundary :=
     if plan.hasTrustedExternal then
-      "trusted external boundary: " ++ String.intercalate ", " plan.trustedExternalOps.toList
+      "trusted-external capsules: " ++ String.intercalate ", " plan.trustedExternalOps.toList
     else
-      "trusted external boundary: none"
+      "trusted-external capsules: none"
   pure <| String.intercalate "\n" <|
     (#[p.summary, boundary] ++ plan.detailedReportLines).toList
 

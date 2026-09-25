@@ -64,7 +64,7 @@ def initialState {σ τ : Shape}
 namespace Loss
 
 /-- Mean-squared error between a model output and its target. -/
-def meanSquaredError {τ : Shape}
+def mse {τ : Shape}
     (reduction : TorchLean.Loss.Reduction := .mean) :
     model.Loss τ τ :=
   { forward := fun {α} _ _ => fun {m} _ _ output target =>

@@ -7,8 +7,8 @@ Authors: TorchLean Team
 -- This facade exposes the upstream scalar and the existing typed model operations to consumers.
 module -- shake: keep-downstream
 
-public import NN.API.Seeded -- shake: keep
 public import NN.API.Neural.Training -- shake: keep
+public import NN.API.Trainer.Session -- shake: keep
 
 /-!
 # Selecting precision for tensors and models
@@ -25,6 +25,10 @@ This import supplies `Context` and the public typed tensor/model operations:
 
 * Construct `Tensor α shape` and `nn.State α shapes` directly in the selected scalar type.
   Literals, rational casts, and `ExecFloat.Binary.parse` avoid a binary64 intermediate.
+* Open `trainer.openTyped (α := α) (initialState? := some state)` to train on CPU with typed
+  samples. Session inputs, predictions, state, losses, and `Result.report.loss` retain `α`.
+  `Session.save`, `Session.load`, and `Result.save` reuse `Checkpoint.Encoding α` and preserve
+  exact bits. A finished result keeps its own state snapshot while the session continues training.
 * Call `nn.lowerToTypedGraph model (α := α)` once, then `nn.TypedGraphModel.forward`,
   `nn.TypedGraphModel.jvp`, or `nn.TypedGraphModel.vjp` with typed state and inputs.
   Parameters, outputs, and derivatives retain `α`.
@@ -36,10 +40,21 @@ This import supplies `Context` and the public typed tensor/model operations:
 * Inspect finite results with `ExecFloat.Binary.toRat?`, or preserve the entire encoding with
   `ExecFloat.Binary.toNatBits`. Converting through `Float` can discard additional precision.
 
-This path executes through CPU typed graphs. It does not select arbitrary-precision CUDA kernels.
-The supervised trainer's input/report/checkpoint boundary and the default model initializers use
-`Float`; use explicit typed state when additional input precision matters. FloatLib's elementary
-approximations do not gain a general error theorem merely by selecting a wider format.
+Typed sessions use the maintained CPU runtime, in eager or graph mode. They reject CUDA, other
+devices, and custom backend profiles explicitly. The ordinary `trainer.open` and `trainer.train`
+paths retain their runtime-selected binary32 execution and `Float` boundary. Typed results do not
+provide a verifier; calling `Result.verify` fails explicitly.
+
+`nn.initialState model (α := α)` converts the model's stored seeded `Float` values. It does not
+generate extra random precision; supply `initialState?` to preserve exact wider parameters.
+The same typed override is available in `Module.instantiate`, `nn.Module.instantiate`, and
+`nn.IndexedModule.instantiate`. Trainer optimizer and scheduler coefficients remain configured in
+`Float` and are validated after conversion into `α`; use `nn.sgdStep` when the coefficient itself
+must be specified in `α`. Dataset constructors backed by Float observations
+also retain that source precision; typed samples supplied to a session avoid this boundary.
+Structured typed reports preserve their losses; the existing `Report.toTrainLog` renderer accepts
+`Float` reports. FloatLib's elementary approximations do not gain a general error theorem merely by
+selecting a wider format.
 
 `Context.defaultEpsilon` rounds the exact rational `1/1000000` once. If it becomes zero, the
 adapter uses the smallest positive subnormal. This can be large in a tiny format (for widths

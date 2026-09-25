@@ -19,7 +19,7 @@ Create a trainer from a checked model, choose its loss and optimizer, then train
 
 ```lean
 let trainer := Trainer.new model
-  { objective := .meanSquaredError
+  { objective := .mse
     optimizer := optim.adam { learningRate := 0.03 } }
 let y0 ← trainer.predict x
 let trained ← trainer.train data { steps := 200, samplesPerStep := 16, logEvery := 25 }
@@ -27,12 +27,14 @@ trained.printSummary
 trained.save "model.state"
 ```
 
-Inputs, targets, and predictions cross the API as `Tensor Float`. Training itself never runs in
-binary64: `.native` arithmetic uses `Float32` and `.ieee` uses `ExecFloat.Binary 8 23`, both
-binary32. The
-`Float` values are converted at the boundary, and `Result.report` records which scalar ran.
+`trainer.train` and `trainer.open` accept `Tensor Float` values and execute in the selected
+binary32 scalar: `Float32` for `.native` or FloatLib's `ExecFloat.Binary 8 23` for `.ieee`.
+Results record that selection and read the binary32 values back to `Float`.
 
-`trainer.open` returns a `Trainer.Session` for programs that drive the optimizer loop themselves.
+For a different scalar, `trainer.openTyped (α := α)` keeps inputs, parameters, predictions, and
+losses in `α` throughout a CPU session. Supply `initialState?` with typed state when initialization
+must preserve digits beyond the model's stored seeded `Float` values. Both opening paths return
+a `Trainer.Session` for programs that drive the optimizer loop themselves.
 -/
 
 @[expose] public section
@@ -64,12 +66,11 @@ structure RunConfig where
   /-- Optimizer used unless a training call supplies another run configuration. -/
   optimizer : optim.Optimizer := optim.sgd { learningRate := 0.01 }
   /--
-  Arithmetic semantics used for the run.
+  Arithmetic semantics selected by `trainer.open` and the managed training methods.
 
-  `.native` trains in Lean's `Float32` and `.ieee` in the bit-level `ExecFloat.Binary 8 23`
-  reference. Both
-  are binary32; the `Tensor Float` values in the public signatures are converted at the boundary.
-  Supervised training rejects `.complex`.
+  `.native` trains in Lean's `Float32` and `.ieee` in FloatLib's `ExecFloat.Binary 8 23`.
+  Both are binary32; `Tensor Float` values are converted at the boundary. These methods reject
+  `.complex`. `trainer.openTyped` instead uses its explicit scalar parameter.
   -/
   arithmetic : Runtime.Arithmetic := .native
   /-- Immediate tape execution or reusable typed-graph execution. -/
@@ -90,7 +91,7 @@ becomes a scalar objective; it does not need a separate input-shape index.
 Example:
 ```lean
 -- Regression scores a prediction against a target tensor.
-def regression : Trainer.Objective [1] := .meanSquaredError
+def regression : Trainer.Objective [1] := .mse
 
 -- Classification needs the axis the logits live on, here the only axis of a ten-class output.
 def classification : Trainer.Objective [10] := .oneHotCrossEntropy 0
@@ -98,7 +99,7 @@ def classification : Trainer.Objective [10] := .oneHotCrossEntropy 0
 -/
 inductive Objective (output : Shape) where
   /-- Mean-squared-error supervised regression. -/
-  | meanSquaredError (reduction : Loss.Reduction := .mean)
+  | mse (reduction : Loss.Reduction := .mean)
   /-- One-hot cross entropy over a class or structured logit tensor. -/
   | oneHotCrossEntropy (axis : Nat)
       (reduction : Loss.Reduction := .mean)
@@ -120,8 +121,8 @@ def definition {σ τ : Shape} (objective : Objective τ)
     (model : TorchLean.nn.Sequential σ τ) (mode : nn.Mode := .train) :
     TorchLean.Module.ObjectiveDefinition Unit (TorchLean.nn.stateShapes model) [σ, τ] :=
   match objective with
-  | .meanSquaredError reduction =>
-      Runtime.Autograd.Model.Layers.Seq.Objective.meanSquaredError
+  | .mse reduction =>
+      Runtime.Autograd.Model.Layers.Seq.Objective.mse
         (model := model) (reduction := reduction) (mode := mode)
   | .oneHotCrossEntropy axis reduction =>
       Runtime.Autograd.Model.Layers.Seq.Objective.oneHotCrossEntropy
@@ -134,14 +135,13 @@ end Objective
 /--
 Model-independent options accepted by `Trainer.new`.
 
-The `RunConfig` fields select the optimizer and runtime. Although the trainer's public signatures
-use `Tensor Float`, training runs in the binary32 scalar chosen by `arithmetic`: `Float32` for
-`.native` and `ExecFloat.Binary 8 23` for `.ieee`. Trained parameters are read back to `Float`
-exactly.
+The `RunConfig` fields select the optimizer and runtime. Managed training uses the binary32 scalar
+chosen by `arithmetic`, with `Float` data and result boundaries. `trainer.openTyped` uses an
+explicit scalar and preserves it in the session and its finished result.
 -/
 structure Config (input output : Shape) extends RunConfig where
   /-- Training objective attached to this trainer. -/
-  objective : Objective output := .meanSquaredError
+  objective : Objective output := .mse
   /-- Seed used when the model is still a seedable `TorchLean.nn.Builder` builder. -/
   seed : Nat := 0
 

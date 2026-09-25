@@ -34,7 +34,7 @@ includes both the broad spec catalog and the graph-authored coverage ladder.
 The current set is intentionally a coverage ladder, not an exhaustive catalog:
 
 1. `mlp`: smallest sequential typed parameter ABI.
-2. `twoConvCnn`: sequential vision pipeline with convolution/pooling shape arithmetic.
+2. `cnn`: a typed feature chain followed by a linear classifier.
 3. `residualLinear`: minimal DAG model with a real skip connection.
 
 The examples intentionally mix two authoring styles, but they have one conceptual endpoint:
@@ -47,11 +47,11 @@ The examples intentionally mix two authoring styles, but they have one conceptua
 which GraphSpec surface syntax they were authored in.
 
 Included examples:
-- `NN.GraphSpec.Models.mlp` (minimal sequential MLP) and
-  `NN.GraphSpec.Models.mlpDAGModelZeroInit` (the same chain lowered to DAG),
-- `NN.GraphSpec.Models.twoConvCnn` (sequential chain) and
-  `NN.GraphSpec.Models.twoConvCnnDAGModelZeroInit` (the same model, lowered to DAG),
+- `NN.GraphSpec.Models.mlp` (minimal sequential MLP),
+- `NN.GraphSpec.Models.cnn` (classifier over a feature chain),
 - the DAG-native `NN.GraphSpec.Models.residualLinear` model.
+
+Use `LowerToDAG.Chain.toDAGModelZeroInit` to lower any sequential model to a zero-initialized DAG.
 
 See also:
 - `NN.GraphSpec/README.md` for the overall layout and motivation.
@@ -61,7 +61,7 @@ See also:
 If you are new to this directory, a good order is:
 
 1. `Models.mlp`,
-2. `Models.twoConvCnn`,
+2. `Models.cnn`,
 3. `Models.residualLinear` as the minimal DAG/skip-connection example,
 -/
 

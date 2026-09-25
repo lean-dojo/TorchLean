@@ -112,7 +112,7 @@ theorem buildFrom_denoteAllFrom_permute
                               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                                 mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
                                   (fun ctx =>
-                                    let x := getIdx (α := α) (xs := ctx) ip
+                                    let x := readTensor (α := α) (xs := ctx) ip
                                     let y : Tensor α sFinal :=
                                       applySwapsTensor (α := α) (s := pNode.outShape)
                                         (swaps := swaps) x
@@ -303,7 +303,7 @@ theorem buildFrom_denoteAllFrom_transpose
                                   let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                                     mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
                                       (fun ctx =>
-                                        let x := getIdx (α := α) (xs := ctx) ip
+                                        let x := readTensor (α := α) (xs := ctx) ip
                                         let y : Tensor α sFinal :=
                                           applySwapsTensor (α := α) (s := pNode.outShape)
                                             (swaps := swaps) x

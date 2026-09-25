@@ -25,7 +25,6 @@ open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 open Proofs.RuntimeApprox.NumericalCertificate
 open Spec TorchLean
-open TorchLean.Floats.IEEE754
 open NN.Examples.DeepDives.Floats.GraphNumericalCertificate
 
 namespace NN.Tests.Verification.GraphNumericalCertificate

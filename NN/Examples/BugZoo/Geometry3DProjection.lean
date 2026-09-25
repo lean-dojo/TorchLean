@@ -18,7 +18,7 @@ small glue mistakes can silently invalidate the claim:
 - OpenCV / PyTorch3D / KITTI camera convention mismatches;
 - negative-depth or opposite-facing camera coordinate systems;
 - row/column or `xyxy`/`yxyx` box-layout swaps;
-- malformed `8 x 3` corner tensors or `3 x 4` camera matrices; and
+- malformed `pointCount x 3` point tensors or `3 x 4` camera matrices; and
 - projected 3D corners that are not actually enclosed by the claimed 2D detector box.
 
 Real reports motivating this example include PyTorch3D camera-conversion/projection issues
@@ -28,9 +28,9 @@ Omni3D/Cube R-CNN conversion issue `#60`; and BlenderProc projected-3D-bbox issu
 TorchLean's checked boundary is not "the neural detector is correct."  The detector is an
 untrusted producer.  The checked contract is:
 
-> Given exported tensors `P : Tensor α [3, 4]` and `corners : Tensor α [8, 3]`, plus a claimed
-> 2D box, Lean recomputes the projection, checks positive depth, image bounds, bbox enclosure, and
-> optional interval robustness.
+> Given exported tensors `P : Tensor α [3, 4]` and `corners : Tensor α [pointCount, 3]`,
+> plus a claimed 2D box, Lean recomputes the projection, checks positive depth, image bounds,
+> bbox enclosure, and optional interval robustness.
 
 The visual companion script
 `scripts/verification/geometry3d/render_box3d_cert_overlay.py` renders the same contract for humans:
@@ -47,7 +47,7 @@ open NN.Verification.Geometry3D.Box3D
 The core 3D glue contract used by this BugZoo example.
 
 If a certificate passes `checkCert`, then it satisfies the `Verified3DBox` predicate:
-positive image dimensions, ordered in-frame bbox, positive depth for all eight tensor corners,
+positive image dimensions, ordered in-frame bbox, positive depth for all supplied tensor points,
 projected corners inside the image, and projected corners enclosed by the claimed 2D box.
 -/
 theorem accepted_camera_box_certificate_is_verified

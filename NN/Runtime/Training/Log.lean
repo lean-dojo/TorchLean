@@ -388,7 +388,7 @@ namespace JsonCodec
 /-! ### Primitive arrays -/
 
 /-- Encode finite metric values without losing precision to the default six-decimal formatter.
-Non-finite values use Lean's string sentinels; both signed zeros retain the historical JSON `0`.
+Non-finite values use Lean's string sentinels; both signed zeros serialize as JSON `0`.
 -/
 def floatToJson (x : Float) : Json :=
   match JsonNumber.fromFloat? x with

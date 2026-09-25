@@ -11,14 +11,23 @@ public import Std
 /-!
 # Shared Test Support
 
-Finite floating-point assertions, optional-bound checks, and parameter identifiers shared by the
-runtime suites. This module depends only on `Std` so each suite can import it independently.
+Finite floating-point assertions, optional-bound checks, interop dependency policy, and parameter
+identifiers shared by the runtime suites. This module depends only on `Std` so each suite can import
+it independently.
 -/
 
 @[expose] public section
 
 namespace Tests
 namespace Utils
+
+/-- Fail on a missing Python dependency when CI requests `TORCHLEAN_REQUIRE_INTEROP=1`. -/
+def checkInteropDependency (name : String) (available : Bool) : IO Bool := do
+  if !available && (← IO.getEnv "TORCHLEAN_REQUIRE_INTEROP") == some "1" then
+    throw <| IO.userError <|
+      s!"required interop dependency {name} is unavailable in python3; " ++
+      "install scripts/checks/requirements-interop.txt in the active Python environment"
+  pure available
 
 /-- Reject `NaN` and infinities. -/
 def assertFinite (msg : String) (x : Float) : IO Unit := do

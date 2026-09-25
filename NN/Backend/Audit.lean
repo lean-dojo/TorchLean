@@ -15,8 +15,10 @@ Inspection data for contract-carrying kernel plans.
 
 The planner chooses capsules. The audit layer records what that choice means for trust boundaries:
 which provider was selected, which device it targets, how its shape, layout, value, and VJP
-obligations are supported, and whether the plan crosses a trusted-external boundary. Audits are
-stored inside numerical certificates and compared on replay, so they must have decidable equality.
+obligations are supported, and whether a capsule has the `trustedExternal` classification. A
+`checked` LibTorch capsule still executes foreign code. These classifications distinguish the
+declared evidence, not whether Lean has proved the implementation. Audits are stored inside
+numerical certificates and compared on replay, so they must have decidable equality.
 -/
 
 @[expose] public section
@@ -26,7 +28,7 @@ namespace Backend
 
 namespace KernelCapsule
 
-/-- Whether this capsule crosses a trusted external boundary. -/
+/-- Whether this capsule is classified as `trustedExternal`, rather than maintained and checked. -/
 def isTrustedExternal (c : KernelCapsule) : Bool :=
   c.trustLevel == .trustedExternal
 
@@ -63,7 +65,7 @@ def ofPlannedKernel (k : PlannedKernel) : KernelAudit :=
     vjpContract := k.capsule.vjpContract
     numericalPolicy := k.capsule.numericalPolicy }
 
-/-- Whether this selected kernel crosses a trusted external boundary. -/
+/-- Whether this selected kernel has the `trustedExternal` evidence classification. -/
 def isTrustedExternal (a : KernelAudit) : Bool :=
   a.trustLevel == .trustedExternal
 
@@ -89,7 +91,7 @@ def capsuleNames (a : KernelPlanAudit) : Array String :=
 def trustedExternalOps (a : KernelPlanAudit) : Array String :=
   (a.kernels.filter KernelAudit.isTrustedExternal).map (·.op.name)
 
-/-- Whether the plan crosses any trusted external boundary. -/
+/-- Whether any selected capsule has the `trustedExternal` evidence classification. -/
 def hasTrustedExternal (a : KernelPlanAudit) : Bool :=
   a.kernels.any KernelAudit.isTrustedExternal
 
@@ -101,7 +103,7 @@ namespace KernelPlan
 def audit (p : KernelPlan) : KernelPlanAudit :=
   { kernels := p.kernels.map KernelAudit.ofPlannedKernel }
 
-/-- Whether a selected kernel plan crosses any trusted external boundary. -/
+/-- Whether any selected capsule has the `trustedExternal` evidence classification. -/
 def hasTrustedExternal (p : KernelPlan) : Bool :=
   p.audit.hasTrustedExternal
 

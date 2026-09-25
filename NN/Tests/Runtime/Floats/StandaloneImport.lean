@@ -26,7 +26,6 @@ open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 namespace Tests.Floats.StandaloneImport
 
 open TorchLean.Floats
-open TorchLean.Floats.IEEE754
 open FloatLib.Numerics.Quantization
 open FloatLib.Numerics
 open FloatLib.Floats.Formats.Flocq

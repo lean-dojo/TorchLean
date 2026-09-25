@@ -1014,11 +1014,9 @@ makes the sequence reproducible, so a disagreement can be investigated using the
   sqrt: 19839/19839 bit-exact
 ```
 
-That is the interpreter, running inside the elaborator that built this page. A recorded compiled
-run before the FloatLib migration made two million draws in about six and a half seconds and
-reported 1,984,327 pairs bit-exact for all four primitives. That timing does not characterize the
-migrated implementation. The gap between 20,000 and 19,839, and between two million and 1,984,327,
-is draws whose operands were `NaN`, which the sweep skips.
+That is the interpreter, running inside the elaborator that built this page. The gap between
+20,000 draws and 19,839 tested pairs consists of draws whose operands were `NaN`, which the sweep
+skips.
 
 This bit-exact sweep deliberately skips NaN operands. Lean's `Float32` cannot serve as an oracle for
 `NaN` payloads at all,
@@ -1038,94 +1036,45 @@ NaN 0x7fac6de8: Float32 keeps 0x7fc00000, configured binary32 keeps 0x7fac6de8
 The disagreement occurs during conversion, before arithmetic. It therefore cannot establish a
 mismatch in addition or division; a payload-sensitive arithmetic test must preserve the input bits.
 
-The second half runs on the GPU. `scripts/checks/cuda_float32_parity.sh` asks the example for
-reference bits with `--emit-cases`, then hands them to a CUDA program that evaluates every case
-twice: once with the host C library, and once on the device with the round-to-nearest intrinsics
-`__fadd_rn`, `__fmul_rn`, `__fdiv_rn`, `__fsqrt_rn` and `__fmaf_rn`. The intrinsics are deliberate.
-Writing `x * y + z` in CUDA lets the compiler contract the pair into a fused instruction, which is
-one of the ways this assumption fails, so the check asks for the operation it means. This also
-brings `fma` into scope, which is outside this four-operation Lean comparison. The CUDA harness
-evaluates a separate
-fused multiply-add primitive. This recorded A100 run also predates the FloatLib migration; the
-same comparison must be rerun for a claim about a new source and binary:
+The GPU check uses the same Lean reference stream and the production LibTorch backend.
+`scripts/checks/cuda_float32_parity.sh` generates reference bits with `--emit-cases`, builds a C++
+regression against the selected SDK and TorchLean library, and checks addition, multiplication,
+division, square root, and fused multiply-add:
 
-```terminal +output
-$ TMPDIR=/mnt/build scripts/checks/cuda_float32_parity.sh --sweep 100000
-reference cases: 494175
-== CUDA binary32 parity against IEEE32Exec ==
-device: NVIDIA A100-SXM4-80GB, compute capability 8.0
-cases: 494175
-  payload div(0x80000000, 0x00000000): model 0x7fc00000 host 0xffc00000 device 0x7fffffff
-  payload div(0x7f800000, 0x7f800000): model 0x7fc00000 host 0xffc00000 device 0x7fffffff
-  payload sqrt(0xbf800000): model 0x7fc00000 host 0xffc00000 device 0x7fffffff
-  payload sqrt(0xadd02374): model 0x7fc00000 host 0xffc00000 device 0x7fffffff
-  add  contract host 98834/98834 device 98834/98834  strict host 98834/98834 device 98834/98834
-  mul  contract host 98834/98834 device 98834/98834  strict host 98834/98834 device 98834/98834
-  div  contract host 98834/98834 device 98834/98834  strict host 98832/98834 device 98832/98834
-  sqrt contract host 98834/98834 device 98834/98834  strict host 49523/98834 device 49523/98834
-  fma  contract host 98839/98839 device 98839/98839  strict host 98839/98839 device 98839/98839
-distinct NaN encodings produced:
-  model   0x7fc00000
-  host    0xffc00000
-  device  0x7fffffff
-all five contract fields hold on this device and this compiler
-98626 of them only up to the NaN payload, which is what AgreeUpToNaN allows
+```terminal
+# Use the same SDK and shared library as the CUDA build.
+export TORCHLEAN_LIBTORCH_HOME=/path/to/libtorch
+export TORCHLEAN_BACKEND_LIBRARY=/path/to/libtorchlean_libtorch.so
+scripts/checks/cuda_float32_parity.sh --sweep 200000
 ```
 
-The `strict` columns count exact bit matches. For `add`,
-`mul` and `fma` they are perfect. For `div` two of 98,834 cases differ. For `sqrt` almost exactly
-half differ, which is the giveaway: half of a uniformly random 32-bit pattern is negative, and the
-square root of a negative number is an invalid operation. Every one of those differences is a `NaN`
-payload, and the three encodings are printed at the bottom: FloatLib binary32 produces the canonical
-`0x7fc00000`, this x86-64 host produces `0xffc00000` with the sign bit set, and the A100 produces
-`0x7fffffff`.
+Every finite result and signed zero must match the reference bits. When both results are NaNs,
+`AgreeUpToNaN` permits different signs and payloads; the harness reports those encoding differences
+separately. A zero result in place of a nonzero subnormal is a failure, as is a NaN in place of a
+finite quotient. Ignoring NaN payloads does not relax those finite-value requirements.
 
-All three are quiet `NaN`s. IEEE 754-2019 leaves the sign and the payload of a `NaN` produced by an
-invalid operation to the implementation, so this is not a bug in any of the three; it is three
-implementations exercising the same permission differently. What it does mean is that
-requiring plain bit equality in all five fields would fail for both providers on this machine.
-The `AgreeUpToNaN` fields allow these payload differences, so
-the `contract` columns, which are the ones the exit status watches, read perfectly here across
-988,350 comparisons.
+The test reaches the operations TorchLean actually uses. Addition, multiplication, division, and
+scalar AXPY pass through the production buffer interface. AXPY evaluates a fused multiply-add
+through ATen `addcmul` with its scalar multiplier set to one. Square root has two checks: the raw
+IEEE operation and `Buffer.sqrt`, whose selected activation returns zero for nonpositive inputs.
+The latter is a different function and needs a different expected result.
 
-The same script also tests a `--fast-math` build, which disagrees on a finite quotient:
+Fusing a multiply and an add changes rounding. For binary32 inputs
+$`x=1+2^{-23}`, $`y=1+2^{-23}`, and $`z=-(1+2^{-22})`, a fused operation retains $`2^{-46}`;
+rounding the product first loses that residual. A second fixture distinguishes a true binary32
+FMA from computing in binary64 and then rounding. These cases check the production AXPY path and
+the staged Adam update, so passing a standalone arithmetic instruction would not be sufficient.
 
-```terminal +output
-$ TMPDIR=/mnt/build scripts/checks/cuda_float32_parity.sh --sweep 200000 --fast-math
-== second pass: --use_fast_math ==
-  broken  add(0x00000001, 0x00000001): model 0x00000002 host 0x00000002 device 0x00000000
-  broken  div(0x00000001, 0x00000001): model 0x3f800000 host 0x3f800000 device 0x7fffffff
-  broken  sqrt(0x00000001): model 0x1a3504f3 host 0x1a3504f3 device 0x00000000
-  broken  mul(0x00800000, 0x3f000000): model 0x00400000 host 0x00400000 device 0x00000000
-  add  contract host 197626/197626 device 197474/197626
-  mul  contract host 197626/197626 device 188345/197626
-  div  contract host 197626/197626 device 188360/197626
-  sqrt contract host 197626/197626 device 196887/197626
-  fma  contract host 197631/197631 device 197251/197631
-19818 comparisons disagree: NativePrimitiveAgreement is false here
-```
+The regression also observes ATen calls with the caller's autograd mode both enabled and disabled.
+TorchLean's native boundary must disable recording during the operation, return tensors without
+LibTorch gradient history, and restore the caller's mode. TorchLean's own tape remains responsible
+for recording dependencies and traversing local VJPs.
 
-`--use_fast_math` enables denormal flushing for affected device operations. Here the smallest
-subnormal divided by itself behaves as `0/0` , rather than producing the exact quotient `1` . The
-host column is untouched, since
-only the device compilation changed. Nothing about the Lean proofs is wrong in this run; the
-hypothesis they are conditioned on is simply not satisfied by the binary that ran. This is what the
-assumption is for, and it is why a build flag belongs in the audit trail next to the driver version.
-
-These results have two limits. The test covers one GPU, one driver and one compiler, on inputs
-drawn from a specific stream, so it is evidence about a configuration rather than a proof about a
-class of machines; changing any of the three means running it again. And a kernel does more than
-call primitives, so a reduction whose atomics land in a different order is still free to disagree
-with the reference model even though every individual operation in it satisfies the contract. That
-is a separate question, and the determinism controls in *GPU Execution And CUDA* are where it is
-addressed.
-
-The fast-math report contains disagreements that the NaN allowance cannot repair. Adding two
-minimum subnormals produces zero instead of the reference's nonzero subnormal, and the
-subnormal quotient produces NaN instead of one. Those are changes of finite value or result
-classification, unlike the invalid-operation payload differences in the preceding report.
-Keeping both reports makes the contract's boundary concrete: ignoring NaN payloads preserves
-the finite consequences, while ignoring these additional differences would destroy them.
+Passing this sweep is evidence about its inputs, the linked SDK, and the tested device. It does not
+construct `NativePrimitiveAgreement` for every possible input. Retain the SDK version, source and
+binary hashes, device, and precision settings with the result. A reduction also needs an
+expression-level argument: primitive agreement does not determine the order in which its partial
+sums are added.
 
 # Remaining Deployment Proof Obligations
 
@@ -1141,11 +1090,10 @@ composed theorems; other architectures need their own composition and any missin
 The transcendental bridge is missing. `tanh` and `log` have rounded-real bounds and executable
 implementations, and no theorem relating the two, so tanh networks stop at the proof model.
 
-Native agreement remains an assumption. The recorded run exercised just under a million
-comparisons on one configuration; the tested fast-math configuration falsifies it.
-Contraction and reduction schedules need
-additional expression-level policies. Native conformance remains supported by tests and the
-declared toolchain boundary.
+Native agreement remains an assumption. The production parity sweep tests concrete inputs and
+rejects finite-bit disagreements. Contraction and reduction schedules need additional
+expression-level policies. Native conformance remains supported by tests and the declared
+toolchain boundary.
 
 # References
 

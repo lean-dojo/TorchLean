@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
+public import NN.MLTheory.CROWN.Proofs.DirectedBackwardEvaluation
 public import NN.Proofs.Verification.ODE
+public import NN.Verification.Cert.FiniteArtifactSemantics
 
 /-!
 # Verification Proofs
@@ -19,4 +21,3 @@ where the accepted hypotheses are connected to real-analysis or model-level soun
 -/
 
 @[expose] public section
-

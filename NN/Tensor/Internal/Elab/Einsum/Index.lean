@@ -250,28 +250,6 @@ def coordinateAxisExpr : Nat → Expr → MetaM Expr
         ← mkAppM ``Prod.snd #[coordinate]
 
 /--
-Expand row-major unlinearization into bounded quotient/remainder components.
-
-Binding these components before constructing the temporary proof-level
-coordinate lets native code decode each output axis once without allocating
-the nested `Prod` representation of `Coord`.
--/
-def coordinateComponentsFromFlatIndex :
-    List Expr → Expr → MetaM (List Expr)
-  | [], _ => pure []
-  | dimension :: dimensions, flatIndex => withTransparency .all do
-      let tailSize ← shapeSizeExpr dimensions
-      let headCoordinate ←
-        mkAppOptM ``Fin.divNat #[
-          some dimension, some tailSize, some flatIndex]
-      let tailFlatIndex ←
-        mkAppOptM ``Fin.modNat #[
-          some dimension, some tailSize, some flatIndex]
-      let tailCoordinates ←
-        coordinateComponentsFromFlatIndex dimensions tailFlatIndex
-      pure (headCoordinate :: tailCoordinates)
-
-/--
 Construct the operand index produced by repeatedly unfolding `Fin.foldl`.
 
 The first operand is `0`; each later operand is one more `Fin.succ` around

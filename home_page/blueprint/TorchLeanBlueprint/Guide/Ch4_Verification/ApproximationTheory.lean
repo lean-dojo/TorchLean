@@ -771,7 +771,7 @@ concrete image and taking its hull. For addition, the central theorem is:
 ```
 
 ```leanOutput addSound (whitespace := lax)
-OpsExact.add_sound : ∀ (A B : FloatIntervalApprox.I) {x y : F},
+OpsExact.add_sound : ∀ (A B : I) {x y : F},
   x ∈ A → y ∈ B → ExecFloat.add x y ∈ OpsExact.addSharp A B
 ```
 

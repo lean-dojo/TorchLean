@@ -140,8 +140,10 @@ The same constructor with fifteen exponent bits and 112 fraction bits selects bi
 Custom widths use that API too, subject to its width and bias constraints.
 {ref "tensors-shapes"}[Tensors And Shapes] carries a binary128 value through a typed model's
 parameters, output, and derivatives. That CPU path also supports `nn.sgdStep` in the selected
-type. The supervised trainer's data, reporting, and checkpoint boundary remains `Float`;
-its `.ieee` arithmetic setting selects binary32. It is not a width parameter.
+type. `trainer.openTyped` preserves the selected scalar through supervised samples, reports, and
+model-state checkpoints on CPU. Supply typed initial state to retain the extra digits from the
+start. The ordinary trainer's `.ieee` arithmetic setting still selects binary32; it is not a width
+parameter.
 
 There is also `Tensor ℝ`, used in specifications and proofs. Mathlib constructs real numbers from
 Cauchy sequences; its general real arithmetic and order are noncomputable. Although particular
@@ -836,7 +838,7 @@ dataset.
 -- before any optimizer step.
 def atTrainer : Trainer [2] [1] :=
   Trainer.new atSmall
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := 2026 }
 

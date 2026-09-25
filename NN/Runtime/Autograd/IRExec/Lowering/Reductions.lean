@@ -42,7 +42,7 @@ def lowerBroadcastTo {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
@@ -50,8 +50,8 @@ def lowerBroadcastTo {α : Type} [TorchLean.Storage α] [Context α]
       let ip ← parentIdx pId s₁
       if hCan : Spec.Shape.CanBroadcastTo s₁ s₂ then
         if hOut : s₂ = τ then
-          let forward := fun ctx : TorchLean.TensorPack α Γ =>
-            let x := getIdx (α := α) (xs := ctx) ip
+          let forward := fun ctx : TensorReader α Γ =>
+            let x := readTensor (α := α) (xs := ctx) ip
             hOut ▸ Tensor.broadcastTo (α := α) (s₁ := s₁) (s₂ := s₂) hCan x
           pure <| fwd forward
         else
@@ -70,7 +70,7 @@ def lowerReduceSum {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
@@ -85,8 +85,8 @@ def lowerReduceSum {α : Type} [TorchLean.Storage α] [Context α]
           let hRed := hAxis.down
           let expected : Shape := TorchLean.Tensor.shapeAfterSum s axis
           if hOut : expected = τ then
-            let forward := fun ctx : TorchLean.TensorPack α Γ =>
-              let x := getIdx (α := α) (xs := ctx) ip
+            let forward := fun ctx : TensorReader α Γ =>
+              let x := readTensor (α := α) (xs := ctx) ip
               let y : Tensor α expected := Tensor.reduceSum (α := α) (s := s) axis x hRed
               hOut ▸ y
             pure <| fwd forward
@@ -104,7 +104,7 @@ def lowerReduceMean {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
@@ -119,8 +119,8 @@ def lowerReduceMean {α : Type} [TorchLean.Storage α] [Context α]
           let hRed := hAxis.down
           let expected : Shape := TorchLean.Tensor.shapeAfterSum s axis
           if hOut : expected = τ then
-            let forward := fun ctx : TorchLean.TensorPack α Γ =>
-              let x := getIdx (α := α) (xs := ctx) ip
+            let forward := fun ctx : TensorReader α Γ =>
+              let x := readTensor (α := α) (xs := ctx) ip
               let y : Tensor α expected := Tensor.reduceMean (α := α) (s := s) axis x hRed
               hOut ▸ y
             pure <| fwd forward
@@ -138,7 +138,7 @@ def lowerSum {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
@@ -147,8 +147,8 @@ def lowerSum {α : Type} [TorchLean.Storage α] [Context α]
       let s := pNode.outShape
       let ip ← parentIdx pId s
       if hOut : Shape.scalar = τ then
-        let forward := fun ctx : TorchLean.TensorPack α Γ =>
-          let x := getIdx (α := α) (xs := ctx) ip
+        let forward := fun ctx : TensorReader α Γ =>
+          let x := readTensor (α := α) (xs := ctx) ip
           hOut ▸ Tensor.scalar (Tensor.sumSpec (α := α) x)
         pure <| fwd forward
       else
@@ -163,7 +163,7 @@ def lowerMseLoss {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match binaryParents? n.parents with
@@ -175,9 +175,9 @@ def lowerMseLoss {α : Type} [TorchLean.Storage α] [Context α]
           let s := yNode.outShape
           let iy ← parentIdx yId s
           let it ← parentIdx tId s
-          let forward := fun ctx : TorchLean.TensorPack α Γ =>
-            let yhat := getIdx (α := α) (xs := ctx) iy
-            let target := getIdx (α := α) (xs := ctx) it
+          let forward := fun ctx : TensorReader α Γ =>
+            let yhat := readTensor (α := α) (xs := ctx) iy
+            let target := readTensor (α := α) (xs := ctx) it
             let diff := Tensor.subSpec (α := α) yhat target
             let sq := Tensor.mulSpec (α := α) diff diff
             let total : α := Tensor.sumSpec (α := α) sq

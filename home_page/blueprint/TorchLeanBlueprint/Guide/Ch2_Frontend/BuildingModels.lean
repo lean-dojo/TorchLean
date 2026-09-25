@@ -186,14 +186,15 @@ Manual runtime code can instantiate that definition as a live module:
 -- evaluation mode through the module.
 nn.withModel model fun checked => do
   let module ← nn.Module.instantiate checked { device := .cpu }
-  let trainingOutput ← module.run input
+  let trainingOutput ← module.forward input
   module.eval
-  let evaluationOutput ← module.run input
+  let evaluationOutput ← module.forward input
 ```
 
 The module owns parameters, persistent buffers, and its train/eval mode. It begins in training
-mode. `run` executes without a backward tape and respects the current mode, whereas `predict`
-temporarily selects eval mode. Instantiation uses native `Float32` by default; code that needs
+mode. `forward` executes without a backward tape and respects the current mode. Passing
+`(mode := some .eval)` selects evaluation for one call without changing the stored mode.
+Instantiation uses native `Float32` by default; code that needs
 another executable or proof-facing representation selects it directly with `(α := ...)`. The
 immutable `checked` value is still the object passed to `nn.lowerToTypedGraph` or a proof-facing
 interpretation.
@@ -271,7 +272,7 @@ let table := nn.build 2026 <| nn.embedding vocab embedDim
 let tokenShape := [batch, seqLen]
 let tokenIds ← Tensor.checkIndices vocab rawTokenIds
 let module ← nn.IndexedModule.instantiate (table.model tokenShape) { device := .cpu }
-let vectors ← module.predict tokenIds
+let vectors ← module.forward tokenIds (mode := some .eval)
 ```
 
 Repeated identifiers select the same row and therefore accumulate into the same weight gradient.
@@ -416,18 +417,12 @@ def bmMiddle :
   ]
 ```
 ```leanOutput bmMiddle (whitespace := lax)
-Application type mismatch: The argument
-  bc✝
-has type
-  nn.Sequential (Shape.appendDim [] 9) (Shape.appendDim [] 1)
-but is expected to have type
-  ?m.92 a✝ __r✝¹ bc✝ __r✝ (Shape.appendDim [] 8) [1]
-in the application
-  nn.compose a✝ bc✝
+nn.Sequential!: layer 2 expects input shape [9], but layer 1 outputs [8].
+Change layer 2's input shape or insert a layer that converts [8] to [9].
 ```
 
-The message names the tail of the chain that starts at the wrong width, `9` where `8` was produced,
-and it appears at the definition. No data, parameters, or device are needed to expose it. The
+The message names the incompatible entries: layer 2 expects width `9`, while layer 1 produces `8`.
+It appears at the definition. No data, parameters, or device are needed to expose it. The
 {ref "torchlean-api"}[API chapter] shows the same failure at the last layer instead of the middle.
 
 A shape-compatible insertion has a different consequence. This additional `8 → 8` layer is
@@ -514,7 +509,7 @@ The trainer takes the same seed through its configuration:
 -- reuse one architecture declaration.
 def trainer (seed : Nat) :=
   Trainer.new model
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := seed }
 ```
@@ -596,19 +591,26 @@ $$`
 The public layer surface uses `nn.conv`, `nn.convTranspose`, `nn.maxPool`, `nn.avgPool`,
 `nn.globalAvgPool`, and the rank-polymorphic channel-normalization constructors. The length of each
 spatial tensor determines the rank. `nn.models.CNN.Config` records the input channels, spatial
-sizes, convolution, pooling, and class count once:
+sizes, an ordered list of feature stages, and the class count. Each stage chooses its own
+convolution, activation, optional dropout, and pooling. Start with one stage so that we can
+account for every parameter:
 
 ```lean (name := bmCnn)
 -- The convolution and pooling geometries determine the
 -- classifier input width.
-/-- Three channels, 8 by 8, four filters, ten classes. -/
+/-- Four filters followed by two-by-two pooling. -/
+def bmCnnStage : nn.ConvPoolBlock.Config 2 :=
+  { block :=
+      { convolution :=
+          { outChannels := 4, kernelSize := [3, 3] } }
+    pooling :=
+      { kernelSize := [2, 2], stride := [2, 2] } }
+
+/-- Three channels, 8 by 8, one stage, ten classes. -/
 def bmCnnConfig : nn.models.CNN.Config 2 :=
   { inputChannels := 3
     spatial := [8, 8]
-    convolution :=
-      { outChannels := 4, kernelSize := [3, 3] }
-    pooling :=
-      { kernelSize := [2, 2], stride := [2, 2] }
+    stages := [bmCnnStage]
     classCount := 10 }
 
 #eval nn.printSummary
@@ -626,7 +628,7 @@ Sequential: [1, 3, 8, 8] -> [1, 10], layers=5, params=482, state=482
     params=370, state=370 [[10, 36], [10]]
 ```
 
-Every number in that summary is derived from the five configuration fields. The kernel is
+Every number in that summary is derived from the configuration. The kernel is
 $`4\times3\times3\times3` because the layer has four filters over three input channels and a
 $`3\times3` window, plus one bias per filter, so $`108+4=112`. The spatial geometry shrinks twice,
 and both steps are computable on their own:
@@ -634,7 +636,7 @@ and both steps are computable on their own:
 ```lean (name := bmGeom)
 -- Compute the spatial dimensions after convolution before
 -- flattening any activations.
-#eval bmCnnConfig.convolution.outputSpatial
+#eval bmCnnStage.block.convolution.outputSpatial
   bmCnnConfig.spatial
 ```
 ```leanOutput bmGeom (whitespace := lax)
@@ -644,8 +646,8 @@ and both steps are computable on their own:
 ```lean (name := bmGeom2)
 -- Pooling consumes the convolution output dimensions, not
 -- the original image dimensions.
-#eval bmCnnConfig.pooling.outputSpatial
-  (bmCnnConfig.convolution.outputSpatial
+#eval bmCnnStage.pooling.outputSpatial
+  (bmCnnStage.block.convolution.outputSpatial
     bmCnnConfig.spatial)
 ```
 ```leanOutput bmGeom2 (whitespace := lax)
@@ -666,6 +668,12 @@ cnn out shape   : [1, 10]
 Identical count and identical output shape, which is the check worth running whenever a layer's
 convention is in doubt.
 
+With several stages, each consumes the channels and spatial grid produced by the previous one.
+The stages can have different widths, kernels, strides, and pooling choices; the linear head
+always consumes the final feature map. An empty `stages` list flattens the input directly and
+attaches that head; input channels, spatial extents, and class count must still be positive.
+Parameters follow stage order, then the head's weight and bias.
+
 ## Validating Spatial Geometry
 
 A convolution can have composable layer types and still request an empty spatial grid. Its
@@ -685,9 +693,13 @@ Except.ok ()
 -- A nine-by-nine kernel cannot fit this image under the
 -- configured convolution geometry.
 #eval { bmCnnConfig with
-        convolution :=
-          { outChannels := 4
-            kernelSize := [9, 9] } }.validate
+        stages :=
+          [{ bmCnnStage with
+             block :=
+               { convolution :=
+                   { outChannels := 4
+                     kernelSize := [9, 9] } } }]
+      }.validate
 ```
 ```leanOutput bmValidBad (whitespace := lax)
 Except.error "CNN: geometry produced an empty spatial grid"
@@ -731,24 +743,8 @@ lake -R -K cuda=false exe torchlean cnn \
   --device cpu --n-total 1 --steps 1 --seed 2026
 ```
 
-One step on one image prints:
-
-```terminal +output
-[TorchLean] arithmetic: native binary32
-[TorchLean] execution: eager
-[TorchLean] device: cpu
-cnn: CNN training (device=cpu)
-dataset size = 1
-mean_loss(before training) = 2.348696
-mean_loss(after training) = 2.343749
-  wrote TrainLog JSON: data/examples/cnn_trainlog.json
-steps=1 arithmetic=native scalar=Float32 loss=2.348696 -> 2.343749
-cnn: ok
-```
-
 Uniform ten-class probabilities give loss $`\ln 10 \approx 2.303`; an arbitrary untrained
-classifier need not be uniform. In this recorded run,
-one optimizer step moved it by `0.005`. The leading dimension of the input is an ordinary tensor
+classifier need not be uniform. The leading dimension of the input is an ordinary tensor
 prefix preserved by the layers, not a separate image or batch container.
 
 This one-image run exercises data loading, loss evaluation, and one parameter update. The
@@ -1154,7 +1150,7 @@ TorchLean therefore writes:
 ```
 -- The objective interprets model outputs and targets; it
 -- does not alter the layer architecture.
-Trainer.new model { objective := .meanSquaredError }
+Trainer.new model { objective := .mse }
 Trainer.new model { objective := .oneHotCrossEntropy 0 }
 Trainer.new model { objective := .custom lossProgram }
 ```

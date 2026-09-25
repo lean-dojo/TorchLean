@@ -59,7 +59,7 @@ def runDemo : IO Unit := do
   let target : Tensor Float [1] := [0.25]
   let (gradient, loss) ←
     autograd.model.grad
-      model autograd.model.Loss.meanSquaredError state input target (value := true)
+      model autograd.model.Loss.mse state input target (value := true)
   IO.println s!"loss     = {loss}"
   IO.println s!"gradient = {reprStr gradient}"
 

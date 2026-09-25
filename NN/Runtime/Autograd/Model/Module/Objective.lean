@@ -130,7 +130,7 @@ def loss {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
     (xs : TorchLean.TensorPack α inputShapes)
     (dataInputs : TorchLean.TensorPack β dataInputShapes) :
     IO (Tensor α .scalar) :=
-  Torch.ScalarTrainer.runLoss (α := α) (paramShapes := stateShapes) (inputShapes := inputShapes)
+  Torch.ScalarTrainer.loss (α := α) (paramShapes := stateShapes) (inputShapes := inputShapes)
     m.trainer xs dataInputs
 
 /--
@@ -146,19 +146,8 @@ def grad {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
     (dataInputs : TorchLean.TensorPack β dataInputShapes) (value : Bool := false) :
     IO (match value with
       | false => TorchLean.TensorPack α stateShapes
-      | true => TorchLean.TensorPack α stateShapes × Tensor α []) := by
-  cases value with
-  | false =>
-      exact
-        Torch.ScalarTrainer.runGrad (α := α) (paramShapes := stateShapes)
-          (inputShapes := inputShapes) m.trainer xs dataInputs
-  | true =>
-      exact do
-        let (objectiveValue, gradient) ←
-          Torch.ScalarTrainer.runDiff
-            (α := α) (paramShapes := stateShapes) (inputShapes := inputShapes)
-            m.trainer xs dataInputs
-        pure (gradient, objectiveValue)
+      | true => TorchLean.TensorPack α stateShapes × Tensor α []) :=
+  Torch.ScalarTrainer.grad m.trainer xs dataInputs (value := value)
 
 /--
 Start a fresh optimizer history from this module's current state.
@@ -183,7 +172,7 @@ def initOptimizer {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
 Run one optimizer step using an explicit optimizer and state.
 
 This mirrors a PyTorch training step:
-1. compute the explicit state gradient (`ScalarTrainer.runGrad`)
+1. compute the explicit state gradient (`ScalarTrainer.grad`)
 2. update parameters via `opt.step` and return the new optimizer state
 
 Set `loss := true` to return `(nextOptimizerState, lossValue)` from the same training tape.
@@ -208,7 +197,7 @@ def step {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
             pure st'
         | none =>
             m.trainer.useOptimizerPath .generic
-            let grads ← Torch.ScalarTrainer.runGrad (α := α)
+            let grads ← Torch.ScalarTrainer.grad (α := α)
               (paramShapes := stateShapes) (inputShapes := inputShapes)
               m.trainer xs dataInputs
             -- The generic optimizer below reads host tensors. Synchronize any device-resident
@@ -222,9 +211,9 @@ def step {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
             pure (result.optimizerState, result.loss)
         | none =>
             m.trainer.useOptimizerPath .generic
-            let (lossValue, grads) ← Torch.ScalarTrainer.runDiff (α := α)
+            let (grads, lossValue) ← Torch.ScalarTrainer.grad (α := α)
               (paramShapes := stateShapes) (inputShapes := inputShapes)
-              m.trainer xs dataInputs
+              m.trainer xs dataInputs (value := true)
             -- See the no-loss fallback above: generic updates operate on current host values.
             let _ ← m.trainer.getState
             let nextState ← opt.step st m.trainer.state grads

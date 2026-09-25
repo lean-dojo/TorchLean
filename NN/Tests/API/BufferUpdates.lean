@@ -92,7 +92,7 @@ def checkLiveForward : IO Unit := do
   let module ← nn.Module.instantiate dropout (α := Float)
   let input : Tensor Float [1, 64] := Tensor.ones [1, 64]
   let first ← module.forward input
-  let _ ← module.predict input
+  let _ ← module.forward (mode := some .eval) input
   let second ← module.forward input
   expect "live dropout advances" false (first.to (Array Float) == second.to (Array Float))
   let fresh ← nn.Module.instantiate dropout (α := Float)
@@ -106,10 +106,10 @@ def checkLiveForward : IO Unit := do
   let state ← module.state
   expectClose "nested BatchNorm updates once" 2.5
     ((state.get ⟨2, by decide⟩).to (Array Float))[0]!
-  let _ ← module.predict (Tensor.full [1, 64] 9.0)
+  let _ ← module.forward (mode := some .eval) (Tensor.full [1, 64] 9.0)
   expectClose "prediction preserves running mean" 2.5
     (((← module.state).get ⟨2, by decide⟩).to (Array Float))[0]!
-  let runner ← Trainer.Internal.Runner.instantiate dropout .meanSquaredError (α := Float)
+  let runner ← Trainer.Internal.Runner.instantiate dropout .mse (α := Float)
   let first ← runner.forward (Tensor.ones [1, 64])
   let second ← runner.forward (Tensor.ones [1, 64])
   expect "runner dropout advances" false (first.to (Array Float) == second.to (Array Float))
@@ -122,14 +122,14 @@ def checkStochasticBuffers (device : NN.Backend.Device := .cpu) : IO Unit := do
       [Runtime.ExecutionMode.eager, .typedGraph]
     else [Runtime.ExecutionMode.eager]
   for execution in executions do
-    let reference ← Trainer.Internal.Runner.instantiate dropout .meanSquaredError
+    let reference ← Trainer.Internal.Runner.instantiate dropout .mse
       { execution, device } (α := Float)
-    let runner ← Trainer.Internal.Runner.instantiate combined .meanSquaredError
+    let runner ← Trainer.Internal.Runner.instantiate combined .mse
       { execution, device } (α := Float)
     let referenceStep ← reference.stepper (optim.sgd { learningRate := 0 })
     let step ← runner.stepper (optim.sgd { learningRate := 0 })
     for _ in [:4] do
-      let loss ← referenceStep.step sample
+      let loss ← referenceStep.step sample (loss := true)
       let _ ← step.step sample
       let state ← runner.state
       -- The dropout output is 0 or 2, so its squared mean is twice its mean.
@@ -138,23 +138,23 @@ def checkStochasticBuffers (device : NN.Backend.Device := .cpu) : IO Unit := do
 
 def checkLossModes : IO Unit := do
   for execution in [Runtime.ExecutionMode.eager, .typedGraph] do
-    let runner ← Trainer.Internal.Runner.instantiate (normalization 0.5) .meanSquaredError
+    let runner ← Trainer.Internal.Runner.instantiate (normalization 0.5) .mse
       { execution } (α := Float)
     let sample (value : Float) : Sample.Supervised Float [1, 64] [1, 64] :=
       { input := Tensor.full [1, 64] value, target := Tensor.zeros [1, 64] }
-    let _ ← runner.sampleLossWithMode .train (sample 5.0)
+    let _ ← runner.loss (mode := some .train) (sample 5.0)
     expectClose "training loss updates running mean" 2.5
       (((← runner.state).get ⟨2, by decide⟩).to (Array Float))[0]!
-    let _ ← runner.sampleLossWithMode .eval (sample 9.0)
+    let _ ← runner.loss (mode := some .eval) (sample 9.0)
     expectClose "evaluation loss preserves running mean" 2.5
       (((← runner.state).get ⟨2, by decide⟩).to (Array Float))[0]!
 
 def checkMappedBuffers : IO Unit := do
   let model := nn.mapLeading [2] (nn.residual (normalization 0.5))
   for execution in [Runtime.ExecutionMode.eager, .typedGraph] do
-    let runner ← Trainer.Internal.Runner.instantiate model .meanSquaredError
+    let runner ← Trainer.Internal.Runner.instantiate model .mse
       { execution } (α := Float)
-    let _ ← runner.sampleLossWithMode .train
+    let _ ← runner.loss (mode := some .train)
       { input := Tensor.full [2, 1, 64] 5.0, target := Tensor.zeros [2, 1, 64] }
     let state ← runner.state
     if h : 2 < (nn.stateShapes model).length then

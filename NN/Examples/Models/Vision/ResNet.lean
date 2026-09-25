@@ -51,15 +51,17 @@ def hiddenChannels : Nat := 4
 /--
 Complete residual-classifier architecture.
 
-`spatial := [8, 8]` fixes the checked input grid, while `kernelRadius := [1, 1]` selects a `3 x 3`
-same-padding kernel. The model constructor derives all intermediate and output tensor types from
-this one value.
+`spatial := [8, 8]` fixes the checked input grid. The stem and both residual stages use `3 x 3`
+same-padding convolutions. Each stage has an identity shortcut, so its branch preserves the grid
+and channel width. The constructor derives the intermediate and output types from this geometry.
 -/
 abbrev modelConfig : nn.models.ResNet.Config 2 :=
+  let convolution : nn.Convolution.Config 2 :=
+    { outChannels := hiddenChannels, kernelSize := [3, 3], padding := [1, 1] }
   { inputChannels := inputChannels
     spatial := [cropHeight, cropWidth]
-    hiddenChannels := hiddenChannels
-    kernelRadius := [1, 1]
+    stem := convolution
+    stages := List.replicate 2 { first := convolution, second := convolution }
     classCount := RealData.cifarClasses }
 
 /-- Batched channel-first input type derived from `modelConfig`. -/

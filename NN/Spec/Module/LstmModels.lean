@@ -10,6 +10,7 @@ public import NN.Spec.Layers.Dropout
 public import NN.Spec.Layers.Loss
 public import NN.Spec.Module.Linear
 public import NN.Spec.Module.Rnn
+public import NN.Spec.Module.RecurrentStack
 
 /-!
 # Long Short-Term Memory Models
@@ -117,24 +118,15 @@ def classifier
     |>.append lastOutput
     |>.append classifierModule
 
-/--
-Two-layer LSTM stack (sequence-to-sequence), followed by a per-timestep linear head.
-
-The second LSTM consumes the hidden stream produced by the first.
--/
+/-- A recurrent stack of arbitrary depth and widths, followed by a per-timestep linear head. -/
 def stacked
-  {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
+  [DecidableRel ((· > ·) : α → α → Prop)]
   {seqLen inputSize hiddenSize outputSize : Nat}
-  (firstSpec : LSTMSpec α inputSize hiddenSize)
-  (secondSpec : LSTMSpec α hiddenSize hiddenSize)
+  (layers : RecurrentStack (LSTMSpec α) inputSize hiddenSize)
   (linearSpec : LinearSpec α hiddenSize outputSize) :
-  Spec.Module.Chain α ([seqLen, inputSize]) ([seqLen, outputSize]) :=
-  let firstModule := Spec.Module.lstm firstSpec
-  let secondModule := Spec.Module.lstm secondSpec
-  let linearModule := Spec.Module.liftLeading (Spec.Module.linear linearSpec)
-  Spec.Module.Chain.single firstModule
-    |>.append secondModule
-    |>.append linearModule
+  Spec.Module.Chain α [seqLen, inputSize] [seqLen, outputSize] :=
+  layers.toChain (fun cell => Spec.Module.lstm cell)
+    (Spec.Module.liftLeading (Spec.Module.linear linearSpec))
 
 /--
 Simple LSTM language-model pipeline as a `Spec.Module.Chain`: embedding, LSTM core, and output
@@ -183,21 +175,18 @@ structure Model (α : Type) [TorchLean.Storage α] (inputSize hiddenSize outputS
   outputLayer : LinearSpec α hiddenSize outputSize
 
 -- Multi-layer LSTM model
-/--
-Bundle of parameters for a multi-layer LSTM model with a linear output head.
+/-- Recurrent cells with independently chosen widths and a linear output head.
 
-The first layer consumes `inputSize`, and all subsequent layers consume `hiddenSize`.
+The endpoint `hiddenSize` is the width of the last cell.
+An empty stack has `hiddenSize = inputSize`.
 -/
 structure StackedModel (α : Type) [TorchLean.Storage α]
-    (inputSize hiddenSize outputSize numLayers : Nat) where
-  /-- First recurrent layer, whose input may differ from the hidden width. -/
-  firstLayer : LSTMSpec α inputSize hiddenSize
-  /-- Remaining recurrent layers. -/
-  hiddenLayers : Fin (numLayers - 1) → LSTMSpec α hiddenSize hiddenSize
+    (inputSize hiddenSize outputSize : Nat) where
+  /-- Layer dimensions determine the type of every intermediate hidden stream and state. -/
+  layers : RecurrentStack (LSTMSpec α) inputSize hiddenSize
   /-- Linear output projection. -/
   outputLayer : LinearSpec α hiddenSize outputSize
 
--- LSTM model for classification (many-to-one)
 /--
 Bundle of parameters for a many-to-one LSTM classifier.
 
@@ -378,7 +367,8 @@ that is zero everywhere except the last timestep.
 Backward pass for an `Lstm.Classifier` (many-to-one).
 
 This backprops through the classifier head, then runs an LSTM sequence backward pass where the
-hidden-state gradient is zero at all timesteps except the last.
+hidden-state gradient is zero at all timesteps except the last. For an empty sequence, the head
+acts directly on the initial hidden state; its gradient flows there without visiting a cell.
 -/
 def Classifier.backward
   {seqLen inputSize hiddenSize numClasses : Nat}
@@ -388,25 +378,19 @@ def Classifier.backward
   (logitGrad : Tensor α [numClasses]) :
   (ClassifierGrads α inputSize hiddenSize numClasses ×
     Tensor α [seqLen, inputSize] × LSTMState α hiddenSize) :=
-  let (hiddens, _) := lstmSequenceSpec model.lstm inputs initialState
-  let finalHidden :=
-    if h0 : seqLen = 0 then
-      Tensor.full ([hiddenSize]) 0
-    else
-      get hiddens ⟨seqLen - 1, by
-        have : seqLen - 1 < seqLen := Nat.sub_lt (Nat.pos_of_ne_zero h0) (by decide : 0 < 1)
-        simpa using this⟩
-  let classifierGrads := linearBackwardSpec model.classifier finalHidden logitGrad
-  let finalHiddenGrad := classifierGrads.inputGradient
-  let hiddenGrad :=
-    if h0 : seqLen = 0 then
-      Tensor.full ([seqLen, hiddenSize]) 0
-    else
+  let (_, finalState) := lstmSequenceSpec model.lstm inputs initialState
+  let classifierGrads := linearBackwardSpec model.classifier finalState.hidden logitGrad
+  if seqLen = 0 then
+    ({ cell := LSTMGateGradients.zero, classifier := classifierGrads.parameters },
+      Tensor.full [seqLen, inputSize] 0,
+      ⟨classifierGrads.inputGradient, Tensor.full [hiddenSize] 0⟩)
+  else
+    let hiddenGrad : Tensor α [seqLen, hiddenSize] :=
       Tensor.dim (fun i =>
-        if _ : i.val = seqLen - 1 then finalHiddenGrad else Tensor.full ([hiddenSize]) 0)
-  let sequenceGrads := lstmSequenceBackwardSpec model.lstm inputs initialState hiddenGrad
-  ({ cell := sequenceGrads.gates, classifier := classifierGrads.parameters },
-    sequenceGrads.inputs, sequenceGrads.initialState)
+        if i.val = seqLen - 1 then classifierGrads.inputGradient else Tensor.full [hiddenSize] 0)
+    let sequenceGrads := lstmSequenceBackwardSpec model.lstm inputs initialState hiddenGrad
+    ({ cell := sequenceGrads.gates, classifier := classifierGrads.parameters },
+      sequenceGrads.inputs, sequenceGrads.initialState)
 
 -- Forward pass for LSTM generator (many-to-many)
 /--
@@ -450,43 +434,19 @@ def BidirectionalModel.forward {seqLen inputSize hiddenSize outputSize : Nat}
   Tensor.mapLeading ([seqLen]) (linearSpec model.outputLayer) combinedStates
 
 -- Multi-layer LSTM forward pass (stack multiple LSTM layers)
-/--
-Forward pass for a `Lstm.StackedModel`.
+/-- Run every layer with its own initial state, then project the final hidden stream.
 
-This runs the first layer on the input sequence, then threads the resulting hidden stream through
-each additional hidden layer, and finally applies the output head per timestep.
+The result retains all final states. Empty sequences leave each initial state unchanged, and an
+empty stack applies the head directly to the input sequence.
 -/
-def StackedModel.forward {seqLen inputSize hiddenSize outputSize numLayers : Nat}
-  (model : StackedModel α inputSize hiddenSize outputSize numLayers)
-  (inputs : Tensor α [seqLen, inputSize])
-  (initialStates : Fin numLayers → LSTMState α hiddenSize) (hLayers : 0 < numLayers) :
-  (Tensor α [seqLen, outputSize] × (Fin numLayers → LSTMState α hiddenSize)) :=
-  let rec processHiddenLayers (layer : Nat)
-    (layerInput : Tensor α [seqLen, hiddenSize])
-    (states : Fin numLayers → LSTMState α hiddenSize) :
-    (Tensor α [seqLen, hiddenSize] × (Fin numLayers → LSTMState α hiddenSize)) :=
-    if hLayer : layer < numLayers - 1 then
-      let layerIndex : Fin (numLayers - 1) := ⟨layer, hLayer⟩
-      have hState : layer + 1 < numLayers := by
-        have hState' : layer + 1 ≤ numLayers - 1 := Nat.succ_le_of_lt hLayer
-        exact lt_of_le_of_lt hState' (Nat.sub_one_lt (Nat.ne_of_gt hLayers))
-      let stateIndex : Fin numLayers := ⟨layer + 1, hState⟩
-      let (layerOutput, nextState) :=
-        lstmSequenceSpec (model.hiddenLayers layerIndex) layerInput (states stateIndex)
-      let updatedStates := Function.update states stateIndex nextState
-      processHiddenLayers (layer + 1) layerOutput updatedStates
-    else
-      (layerInput, states)
-
-  let firstLayerIndex : Fin numLayers := ⟨0, hLayers⟩
-  let (firstOutput, firstState) :=
-    lstmSequenceSpec model.firstLayer inputs (initialStates firstLayerIndex)
-  let updatedInitialStates := Function.update initialStates firstLayerIndex firstState
-
-  let (finalHidden, finalStates) := processHiddenLayers 0 firstOutput updatedInitialStates
-  let outputs := Tensor.mapLeading ([seqLen])
-    (linearSpec model.outputLayer) finalHidden
-  (outputs, finalStates)
+def StackedModel.forward {seqLen inputSize hiddenSize outputSize : Nat}
+    (model : StackedModel α inputSize hiddenSize outputSize)
+    (inputs : Tensor α [seqLen, inputSize])
+    (initialStates : model.layers.States (LSTMState α)) :
+    Tensor α [seqLen, outputSize] × model.layers.States (LSTMState α) :=
+  let (hidden, finalStates) := model.layers.run
+    (fun cell input state => lstmSequenceSpec cell input state) inputs initialStates
+  (Tensor.mapLeading [seqLen] (linearSpec model.outputLayer) hidden, finalStates)
 
 -- LSTM Language Model forward pass with teacher forcing
 /--

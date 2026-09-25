@@ -12,9 +12,9 @@ public import NN.Proofs.RuntimeApprox.IEEE32.Arithmetic
 /-!
 # CUDA float32 contract
 
-TorchLean's eager CUDA runtime stores native `float` values in an opaque FFI buffer. Lean cannot
-look inside CUDA kernels, C casts, libdevice calls, or cuBLAS, so the native backend is
-necessarily a trusted/validated implementation boundary.
+TorchLean's eager CUDA runtime stores binary32 values in opaque LibTorch tensors. The Lean
+proofs do not inspect compiled ATen operations, their library dependencies, or the device.
+The native backend therefore remains an explicit implementation boundary.
 
 This module keeps that boundary precise:
 
@@ -41,8 +41,10 @@ What is *not* proved here:
 
 Those are runtime/toolchain assumptions, and the CUDA stress tests are intended to validate them
 against this reference contract. The primitive-level part of that validation is
-`scripts/checks/cuda_float32_parity.sh`, which compares the five fields of
-`NativePrimitiveAgreement` against this machine's host compiler and GPU, bit for bit.
+`scripts/checks/cuda_float32_parity.sh`, which compares cases for the five fields of
+`NativePrimitiveAgreement` against compiled host arithmetic and ATen GPU operations, bit for bit.
+A passing case is evidence for that input and build, not the universally quantified agreement
+hypothesis. Operator policy settings alone do not supply that hypothesis.
 -/
 
 @[expose] public section
@@ -140,15 +142,12 @@ structure NativePrimitiveBits where
 Agreement between a native result and the reference result, in the sense the theorems below need:
 either the two bit patterns are equal, or both encode `NaN`.
 
-Plain bit equality would be the obvious contract, and it is the wrong one, which we know because we
-ran it. The invalid operations `(-0)/(+0)`, `∞/∞` and `√(-1)` return the quiet `NaN` `0x7fc00000` in
-`ExecFloat.Binary 8 23`, `0xffc00000` on an x86-64 host, and `0x7fffffff` on an A100; the transcript
-is in the
-*Float32 Soundness* chapter and the check is `scripts/checks/cuda_float32_parity.sh`. All three are
-quiet `NaN`s, and IEEE 754-2019 leaves the payload of a `NaN` produced by an invalid operation to
-the implementation, so a contract demanding one payload is a contract no provider satisfies. Nothing
-is lost: every bound below already needs a finite result, and finiteness rules out the second
-disjunct.
+The relation permits different NaN encodings while requiring identical bits for every non-NaN
+result, including signed zeros. `scripts/checks/cuda_float32_parity.sh` tests this relation against
+the linked native backend and counts NaN encoding differences separately.
+
+Every error bound below requires a finite result. That hypothesis rules out the second disjunct,
+so allowing different NaN encodings does not weaken those finite-result bounds.
 -/
 def AgreeUpToNaN (native reference : UInt32) : Prop :=
   native = reference ∨

@@ -15,7 +15,7 @@ Native TorchLean 1D FNO on the Burgers operator:
 module
 
 public import NN.Examples.Models.Common.Train
-public import NN.Runtime.Autograd.Engine.Cuda.Fno1dRfftFused
+public import NN.Runtime.Autograd.Engine.Cuda.Fno1dRfft
 
 /-!
 # Native TorchLean FNO1D Burgers
@@ -61,7 +61,7 @@ def width : Nat := 8
 /--
 Spectral mode budget.
 
-The portable full-DFT path uses this as the width of each end band. The fused real-FFT path uses it
+The portable full-DFT path uses this as the width of each end band. The real-FFT path uses it
 as the number of stored nonnegative-frequency bins.
 -/
 def modes : Nat := 8
@@ -155,7 +155,7 @@ def parse (args : List String) :
 def memoryCadence (config : Options) (runtime : Runtime.Config) : Nat :=
   Trainer.Memory.cadence runtime config.training.steps config.training.cudaMemorySampleEvery
 
-/-- TrainLog note fields for the fused CUDA execution path. -/
+/-- TrainLog note fields for the CUDA real-FFT execution path. -/
 def logNotes (config : Options) (spectralPath : String) (device : String) : Array String :=
   #[
     s!"model=fno",
@@ -275,23 +275,23 @@ def record
   IO.println s!"  {tag}: train_mse={trainLoss} test_mse={testLoss}"
   pure <| history.push step #[trainLoss, testLoss]
 
-namespace FusedCuda
+namespace CudaRfft
 
-/-- Fused CUDA parameter packet for the real-FFT FNO kernel. -/
-abbrev Param := Runtime.Autograd.Cuda.Fno1dRfftFused.Param
+/-- CUDA parameter packet for the real-FFT FNO model. -/
+abbrev Param := Runtime.Autograd.Cuda.Fno1dRfft.Param
 
-/-- Mean MSE over a finite evaluation prefix using the fused CUDA FNO implementation. -/
+/-- Mean MSE over a finite evaluation prefix using the CUDA real-FFT FNO implementation. -/
 def meanLoss
     (parameters : Array Param)
     (samples : Data.SampleStream (Tensor Float input × Tensor Float output)) :
     IO Float := do
   let result ←
-    Runtime.Autograd.Cuda.Fno1dRfftFused.meanLoss
+    Runtime.Autograd.Cuda.Fno1dRfft.meanLoss
       (grid := gridSize) (width := width)
       (modes := modes) (blocks := blocks) parameters samples
   Runtime.Autograd.okOrThrow result
 
-/-- Train/test MSE pair for the current fused CUDA parameters. -/
+/-- Train/test MSE pair for the current CUDA parameters. -/
 def losses
     (trainEval testEval :
       Data.SampleStream (Tensor Float input × Tensor Float output))
@@ -300,7 +300,7 @@ def losses
   let testLoss ← meanLoss parameters testEval
   pure (trainLoss, testLoss)
 
-/-- Append one fused-CUDA evaluation point to the metric history. -/
+/-- Append one CUDA evaluation point to the metric history. -/
 def record
     (trainEval testEval :
       Data.SampleStream (Tensor Float input × Tensor Float output))
@@ -309,15 +309,15 @@ def record
   let (trainLoss, testLoss) ← losses trainEval testEval parameters
   Fno1dBurgers.record history step tag trainLoss testLoss
 
-/-- Run the fused cuFFT/RFFT training path and emit its training and prediction artifacts. -/
+/-- Run the ATen real-FFT training path and emit its training and prediction artifacts. -/
 def run (config : Options) : IO Unit := do
   let data ← load config
   let eval := ← prepare config data
   let mut parameters :=
-    Runtime.Autograd.Cuda.Fno1dRfftFused.initParams
+    Runtime.Autograd.Cuda.Fno1dRfft.initParams
       (width := width)
       (modes := modes) (blocks := blocks) config.seed
-  let mut adamState : Runtime.Autograd.Cuda.Fno1dRfftFused.AdamState := {}
+  let mut adamState : Runtime.Autograd.Cuda.Fno1dRfft.AdamState := {}
   let mut history ←
     record eval.train eval.test metrics 0 parameters "before"
   let cudaOpts : Runtime.Autograd.Torch.Config :=
@@ -329,7 +329,7 @@ def run (config : Options) : IO Unit := do
   for step in [0:config.training.steps] do
     let current := eval.next (config.seed + step)
     let (updatedParameters, updatedAdamState) ←
-      Runtime.Autograd.okOrThrow (← Runtime.Autograd.Cuda.Fno1dRfftFused.trainStep
+      Runtime.Autograd.okOrThrow (← Runtime.Autograd.Cuda.Fno1dRfft.trainStep
         gridSize width modes blocks parameters current.input current.target
         config.training.learningRate adamState)
     parameters := updatedParameters
@@ -346,17 +346,17 @@ def run (config : Options) : IO Unit := do
       config.training.steps parameters "after"
   let (input, target) := eval.probe
   let prediction ← Runtime.Autograd.okOrThrow (←
-    Runtime.Autograd.Cuda.Fno1dRfftFused.predict gridSize width modes blocks parameters input)
+    Runtime.Autograd.Cuda.Fno1dRfft.predict gridSize width modes blocks parameters input)
   writePrediction config.artifacts.plotCsv input target prediction
   writeLog
-    config.training.logDestination history config "fused cuFFT RFFT autograd op" "cuda"
+    config.training.logDestination history config "ATen RFFT tape op" "cuda"
 
-end FusedCuda
+end CudaRfft
 
 /--
 Train and evaluate using the portable full-spectrum model.
 
-The transforms have a dense per-axis fallback on CPU. The fused cuFFT path above uses a different
+The transforms have a dense per-axis fallback on CPU. The ATen real-FFT path above uses a different
 one-sided parameter layout; both models can be trained on the same data with the same seed.
 -/
 def runPortable
@@ -371,7 +371,7 @@ def runPortable
       Trainer.RunConfig.forObjective
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := config.training.learningRate } })
-        .meanSquaredError
+        .mse
         (seed := config.seed)
   trainer.printSummary
   let histRef ← IO.mkRef metrics
@@ -431,7 +431,7 @@ def printHeader (runtime : Runtime.Config) (config : Options) : IO Unit := do
   IO.println s!"  log  ={config.training.logDestination}"
 
 /--
-Entry point; dispatches to the fused CUDA path when the device supports it and to `runPortable`
+Entry point; dispatches to the CUDA real-FFT path when the device supports it and to `runPortable`
 otherwise.
 -/
 def main (args : List String) : IO UInt32 := do
@@ -458,9 +458,9 @@ def main (args : List String) : IO UInt32 := do
       if runtime.usesCuda then
         if runtime.execution != .eager then
           throw <| IO.userError
-            "fno1d_burgers: fused CUDA execution currently requires --execution eager"
-        IO.println "  spectral path=fused cuFFT RFFT autograd op"
-        FusedCuda.run config
+            "fno1d_burgers: CUDA real-FFT execution requires --execution eager"
+        IO.println "  spectral path=ATen RFFT tape op"
+        CudaRfft.run config
       else
         IO.println "  spectral path=portable per-axis Fourier transforms"
         runPortable runtime config)

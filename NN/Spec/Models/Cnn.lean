@@ -20,12 +20,10 @@ Its spatial parameters are vectors, so the same model definition applies to sequ
 image, volume, and higher-rank data. Both the compositional module description and the explicit
 reverse-mode specification use the generic convolution and pooling operations.
 
-## Implementation status
-
-`nn.models.cnn` (`NN/API/Models/Cnn.lean`) builds a one-block classifier
-`convolution -> activation -> max pool -> flatten -> linear`, whereas this file specifies a
-two-block network; no theorem relates them. This specification is imported by
-`NN/Runtime/PyTorch/Export/CNN.lean`.
+The executable `nn.models.cnn` accepts a list of independently configured convolution/pooling
+stages. This module's two-block specification supplies the pure forward and backward functions
+used by `NN/Runtime/PyTorch/Export/CNN.lean`;
+it does not prove equivalence to the executable builder.
 -/
 
 @[expose] public section

@@ -4,34 +4,32 @@
 #include "torchlean_size_common.h"
 
 #include <math.h>
+#include <float.h>
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 
 // CPU version of the general tensor-kernel FFI symbols.
-// Keep its shape checks and edge cases aligned with `torchlean_cuda_kernels.cu`.
+// Keep its shape checks and edge cases aligned with the LibTorch backend.
 
 static const float kTorchLeanPiF = 3.14159265358979323846f;
 
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_sum_by_column(b_lean_obj_arg BObj, uint32_t rows,
-                                                               uint32_t cols) {
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_sigmoid(b_lean_obj_arg BObj) {
   torchlean_cuda_buffer* b = torchlean_cuda_buffer_unbox(BObj);
-  const size_t R = (size_t)rows;
-  const size_t C = (size_t)cols;
-  const size_t total =
-      checked_mul_size(R, C, "torchlean_cuda_buffer_reduce_sum_by_column_stub: R*C overflow");
-  if (b->size != total) {
-    lean_internal_panic("torchlean_cuda_buffer_reduce_sum_by_column_stub: size mismatch");
+  torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(b->size);
+  for (size_t i = 0; i < b->size; ++i) {
+    // Match ATen's float32 sigmoid, including saturation when expf overflows.
+    out->data[i] = 1.0f / (1.0f + expf(-b->data[i]));
   }
+  return torchlean_cuda_buffer_box(out);
+}
 
-  torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(C);
-  for (size_t j = 0; j < C; ++j) {
-    float acc = 0.0f;
-    for (size_t i = 0; i < R; ++i) {
-      acc += b->data[i * C + j];
-    }
-    out->data[j] = acc;
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_tanh(b_lean_obj_arg BObj) {
+  torchlean_cuda_buffer* b = torchlean_cuda_buffer_unbox(BObj);
+  torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(b->size);
+  for (size_t i = 0; i < b->size; ++i) {
+    out->data[i] = tanhf(b->data[i]);
   }
   return torchlean_cuda_buffer_box(out);
 }
@@ -191,26 +189,6 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_slice1d(b_lean_obj_arg BObj, uint
 
   torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(L);
   for (size_t i = 0; i < L; ++i) out->data[i] = b->data[S + i];
-  return torchlean_cuda_buffer_box(out);
-}
-
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_broadcast_vec_to_rows(b_lean_obj_arg VObj,
-                                                                    uint32_t rows, uint32_t cols) {
-  torchlean_cuda_buffer* v = torchlean_cuda_buffer_unbox(VObj);
-  const size_t R = (size_t)rows;
-  const size_t C = (size_t)cols;
-  if (v->size != C) {
-    lean_internal_panic("torchlean_cuda_buffer_broadcast_vec_to_rows_stub: vec.size mismatch");
-  }
-
-  const size_t total =
-      checked_mul_size(R, C, "torchlean_cuda_buffer_broadcast_vec_to_rows_stub: R*C overflow");
-  torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(total);
-  for (size_t i = 0; i < R; ++i) {
-    for (size_t j = 0; j < C; ++j) {
-      out->data[i * C + j] = v->data[j];
-    }
-  }
   return torchlean_cuda_buffer_box(out);
 }
 
@@ -606,7 +584,7 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_fwd(
   return torchlean_cuda_buffer_box(out);
 }
 
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_bwd_x(
+LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_bwd(
     b_lean_obj_arg XObj, b_lean_obj_arg WReObj, b_lean_obj_arg WImObj, b_lean_obj_arg DYObj,
     uint32_t grid, uint32_t width, uint32_t modes) {
   torchlean_cuda_buffer* x = torchlean_cuda_buffer_unbox(XObj);
@@ -616,15 +594,20 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_bwd_x(
   size_t xSz = 0, wSz = 0, Freq = 0;
   validate_spectral_conv1d_stub(x, wRe, wIm, dY, grid, width, modes, &xSz, &wSz, &Freq);
   torchlean_cuda_buffer* dx = torchlean_cuda_buffer_alloc(xSz);
+  torchlean_cuda_buffer* dWRe = torchlean_cuda_buffer_alloc(wSz);
+  torchlean_cuda_buffer* dWIm = torchlean_cuda_buffer_alloc(wSz);
   if (modes == 0) {
     for (size_t i = 0; i < xSz; ++i) dx->data[i] = 0.0f;
-    return torchlean_cuda_buffer_box(dx);
+    return torchlean_cuda_box_three_buffers(dx, dWRe, dWIm);
   }
+  float* xRe = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
+  float* xIm = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
   float* dzRe = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
   float* dzIm = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
   float* dXRe = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
   float* dXIm = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
-  if (!dzRe || !dzIm || !dXRe || !dXIm) lean_internal_panic_out_of_memory();
+  if (!xRe || !xIm || !dzRe || !dzIm || !dXRe || !dXIm) lean_internal_panic_out_of_memory();
+  spectral_conv1d_rfft_ref(x->data, xRe, xIm, (size_t)grid, (size_t)width, (size_t)modes);
   spectral_conv1d_dz_from_dy_ref(dY->data, dzRe, dzIm, (size_t)grid, (size_t)width, (size_t)modes);
   for (size_t k = 0; k < (size_t)modes; ++k) {
     for (size_t c = 0; c < (size_t)width; ++c) {
@@ -633,6 +616,9 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_bwd_x(
       for (size_t o = 0; o < (size_t)width; ++o) {
         const size_t zIdx = k * (size_t)width + o;
         const size_t wIdx = (k * (size_t)width + c) * (size_t)width + o;
+        const size_t xIdx = k * (size_t)width + c;
+        dWRe->data[wIdx] = xRe[xIdx] * dzRe[zIdx] + xIm[xIdx] * dzIm[zIdx];
+        dWIm->data[wIdx] = xRe[xIdx] * dzIm[zIdx] - xIm[xIdx] * dzRe[zIdx];
         xr += dzRe[zIdx] * wRe->data[wIdx] + dzIm[zIdx] * wIm->data[wIdx];
         xi += dzIm[zIdx] * wRe->data[wIdx] - dzRe[zIdx] * wIm->data[wIdx];
       }
@@ -652,56 +638,8 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_bwd_x(
       dx->data[t * (size_t)width + c] = acc;
     }
   }
-  free(dzRe); free(dzIm); free(dXRe); free(dXIm);
-  return torchlean_cuda_buffer_box(dx);
-}
-
-static lean_obj_res spectral_conv1d_bwd_w_stub_common(
-    b_lean_obj_arg XObj, b_lean_obj_arg WReObj, b_lean_obj_arg WImObj, b_lean_obj_arg DYObj,
-    uint32_t grid, uint32_t width, uint32_t modes, int imag) {
-  torchlean_cuda_buffer* x = torchlean_cuda_buffer_unbox(XObj);
-  torchlean_cuda_buffer* wRe = torchlean_cuda_buffer_unbox(WReObj);
-  torchlean_cuda_buffer* wIm = torchlean_cuda_buffer_unbox(WImObj);
-  torchlean_cuda_buffer* dY = torchlean_cuda_buffer_unbox(DYObj);
-  size_t xSz = 0, wSz = 0, Freq = 0;
-  validate_spectral_conv1d_stub(x, wRe, wIm, dY, grid, width, modes, &xSz, &wSz, &Freq);
-  torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(wSz);
-  if (modes == 0) {
-    return torchlean_cuda_buffer_box(out);
-  }
-  float* xRe = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
-  float* xIm = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
-  float* dzRe = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
-  float* dzIm = (float*)calloc((size_t)modes * (size_t)width, sizeof(float));
-  if (!xRe || !xIm || !dzRe || !dzIm) lean_internal_panic_out_of_memory();
-  spectral_conv1d_rfft_ref(x->data, xRe, xIm, (size_t)grid, (size_t)width, (size_t)modes);
-  spectral_conv1d_dz_from_dy_ref(dY->data, dzRe, dzIm, (size_t)grid, (size_t)width, (size_t)modes);
-  for (size_t k = 0; k < (size_t)modes; ++k) {
-    for (size_t c = 0; c < (size_t)width; ++c) {
-      for (size_t o = 0; o < (size_t)width; ++o) {
-        const size_t xIdx = k * (size_t)width + c;
-        const size_t zIdx = k * (size_t)width + o;
-        const size_t wIdx = (k * (size_t)width + c) * (size_t)width + o;
-        out->data[wIdx] = imag
-            ? (xRe[xIdx] * dzIm[zIdx] - xIm[xIdx] * dzRe[zIdx])
-            : (xRe[xIdx] * dzRe[zIdx] + xIm[xIdx] * dzIm[zIdx]);
-      }
-    }
-  }
-  free(xRe); free(xIm); free(dzRe); free(dzIm);
-  return torchlean_cuda_buffer_box(out);
-}
-
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_bwd_wre(
-    b_lean_obj_arg XObj, b_lean_obj_arg WReObj, b_lean_obj_arg WImObj, b_lean_obj_arg DYObj,
-    uint32_t grid, uint32_t width, uint32_t modes) {
-  return spectral_conv1d_bwd_w_stub_common(XObj, WReObj, WImObj, DYObj, grid, width, modes, 0);
-}
-
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_spectral_conv1d_rfft_bwd_wim(
-    b_lean_obj_arg XObj, b_lean_obj_arg WReObj, b_lean_obj_arg WImObj, b_lean_obj_arg DYObj,
-    uint32_t grid, uint32_t width, uint32_t modes) {
-  return spectral_conv1d_bwd_w_stub_common(XObj, WReObj, WImObj, DYObj, grid, width, modes, 1);
+  free(xRe); free(xIm); free(dzRe); free(dzIm); free(dXRe); free(dXIm);
+  return torchlean_cuda_box_three_buffers(dx, dWRe, dWIm);
 }
 
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_selective_scan_diag_fwd(
@@ -879,16 +817,15 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_selective_scan_diag_var_bwd(
   return torchlean_cuda_box_four_buffers(dA, dB, dX, dH0);
 }
 
-static inline int flash_attention_allowed_stub(const torchlean_cuda_buffer* mask, uint32_t hasMask,
+static inline int attention_allowed_stub(const torchlean_cuda_buffer* mask, uint32_t hasMask,
                                                size_t batchIdx, size_t i, size_t j, size_t n) {
   if (hasMask == 0) return 1;
   return mask->data[(batchIdx * n + i) * n + j] != 0.0f;
 }
 
-static inline float flash_attention_score_stub(const torchlean_cuda_buffer* Q,
+static inline float attention_score_stub(const torchlean_cuda_buffer* Q,
                                                const torchlean_cuda_buffer* K,
-                                               const torchlean_cuda_buffer* mask,
-                                               uint32_t hasMask, size_t batchIdx, size_t i,
+                                               size_t batchIdx, size_t i,
                                                size_t j, size_t n, size_t d, float scale) {
   float dot = 0.0f;
   const size_t qBase = (batchIdx * n + i) * d;
@@ -897,7 +834,7 @@ static inline float flash_attention_score_stub(const torchlean_cuda_buffer* Q,
   return dot * scale;
 }
 
-static inline void flash_attention_row_stats_stub(const torchlean_cuda_buffer* Q,
+static inline void attention_row_stats_stub(const torchlean_cuda_buffer* Q,
                                                   const torchlean_cuda_buffer* K,
                                                   const torchlean_cuda_buffer* mask,
                                                   uint32_t hasMask, size_t batchIdx, size_t i,
@@ -905,34 +842,34 @@ static inline void flash_attention_row_stats_stub(const torchlean_cuda_buffer* Q
                                                   float* rowMax, float* denom) {
   float m = -INFINITY;
   for (size_t j = 0; j < n; ++j) {
-    if (!flash_attention_allowed_stub(mask, hasMask, batchIdx, i, j, n)) continue;
-    float s = flash_attention_score_stub(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
+    if (!attention_allowed_stub(mask, hasMask, batchIdx, i, j, n)) continue;
+    float s = attention_score_stub(Q, K, batchIdx, i, j, n, d, scale);
     if (s > m) m = s;
   }
   float z = 0.0f;
   for (size_t j = 0; j < n; ++j) {
-    if (!flash_attention_allowed_stub(mask, hasMask, batchIdx, i, j, n)) continue;
-    float s = flash_attention_score_stub(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
+    if (!attention_allowed_stub(mask, hasMask, batchIdx, i, j, n)) continue;
+    float s = attention_score_stub(Q, K, batchIdx, i, j, n, d, scale);
     z += expf(s - m);
   }
   *rowMax = m;
   *denom = z;
 }
 
-static inline float flash_attention_prob_stub(const torchlean_cuda_buffer* Q,
+static inline float attention_prob_stub(const torchlean_cuda_buffer* Q,
                                               const torchlean_cuda_buffer* K,
                                               const torchlean_cuda_buffer* mask,
                                               uint32_t hasMask, size_t batchIdx, size_t i,
                                               size_t j, size_t n, size_t d, float scale,
                                               float rowMax, float denom) {
-  if (!flash_attention_allowed_stub(mask, hasMask, batchIdx, i, j, n) || denom == 0.0f) {
+  if (!attention_allowed_stub(mask, hasMask, batchIdx, i, j, n) || denom == 0.0f) {
     return 0.0f;
   }
-  float s = flash_attention_score_stub(Q, K, mask, hasMask, batchIdx, i, j, n, d, scale);
+  float s = attention_score_stub(Q, K, batchIdx, i, j, n, d, scale);
   return expf(s - rowMax) / denom;
 }
 
-static inline float flash_attention_d_attn_stub(const torchlean_cuda_buffer* V,
+static inline float attention_d_attn_stub(const torchlean_cuda_buffer* V,
                                                 const torchlean_cuda_buffer* dOut,
                                                 size_t batchIdx, size_t i, size_t j,
                                                 size_t n, size_t d) {
@@ -943,52 +880,129 @@ static inline float flash_attention_d_attn_stub(const torchlean_cuda_buffer* V,
   return acc;
 }
 
-static void flash_attention_check_stub(const char* label, const torchlean_cuda_buffer* Q,
-                                       const torchlean_cuda_buffer* K,
-                                       const torchlean_cuda_buffer* V,
-                                       const torchlean_cuda_buffer* mask,
-                                       const torchlean_cuda_buffer* dOut, uint32_t hasMask,
-                                       uint32_t batch, uint32_t n, uint32_t d) {
-  const size_t qkvSz =
-      checked_mul3_size((size_t)batch, (size_t)n, (size_t)d,
-                        "torchlean_cuda_buffer_flash_attention_stub: Q/K/V size overflow");
-  const size_t maskSz =
-      checked_mul3_size((size_t)batch, (size_t)n, (size_t)n,
-                        "torchlean_cuda_buffer_flash_attention_stub: mask size overflow");
-  if (Q->size != qkvSz || K->size != qkvSz || V->size != qkvSz) {
-    lean_internal_panic(label);
-  }
-  if (dOut && dOut->size != qkvSz) {
-    lean_internal_panic(label);
-  }
-  if (hasMask != 0 && mask->size != maskSz) {
-    lean_internal_panic(label);
-  }
+typedef struct {
+  torchlean_cuda_buffer* q;
+  torchlean_cuda_buffer* k;
+  torchlean_cuda_buffer* v;
+  torchlean_cuda_buffer* probabilities;
+  uint32_t batch, n, d;
+  uint32_t deterministic;
+  float scale;
+} attention_context_stub;
+
+static void attention_delete_context_stub(void* ptr) {
+  attention_context_stub* context = (attention_context_stub*)ptr;
+  torchlean_cuda_buffer_drop_unboxed(context->q);
+  torchlean_cuda_buffer_drop_unboxed(context->k);
+  torchlean_cuda_buffer_drop_unboxed(context->v);
+  torchlean_cuda_buffer_drop_unboxed(context->probabilities);
+  free(context);
 }
 
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_flash_attention_fwd(
+static int attention_buffer_matches_stub(const torchlean_cuda_buffer* buffer, size_t size) {
+  return buffer->size == size && (size == 0 || buffer->data);
+}
+
+static int attention_elements_stub(uint32_t batch, uint32_t rows, uint32_t cols, size_t* size) {
+  uint64_t count = batch;
+  if (rows && count > (uint64_t)INT64_MAX / rows) return 0;
+  count *= rows;
+  if (cols && count > (uint64_t)INT64_MAX / cols) return 0;
+  count *= cols;
+  if (count > SIZE_MAX / sizeof(float)) return 0;
+  *size = (size_t)count;
+  return 1;
+}
+
+static const char* attention_forward_error_stub(
+    const torchlean_cuda_buffer* q, const torchlean_cuda_buffer* k,
+    const torchlean_cuda_buffer* v, const torchlean_cuda_buffer* mask,
+    uint32_t has_mask, uint32_t batch, uint32_t n, uint32_t d, double scale,
+    size_t* qkv_size, size_t* probability_size) {
+  if (has_mask > 1 || !isfinite(scale)) {
+    return "torchlean_attention_stub: invalid hasMask or non-finite scale";
+  }
+  if (fabs(scale) > FLT_MAX) {
+    return "torchlean_attention_stub: scale exceeds the float32 range";
+  }
+  if (!attention_elements_stub(batch, n, d, qkv_size) ||
+      !attention_elements_stub(batch, n, n, probability_size)) {
+    return "torchlean_attention_stub: attention shape overflow";
+  }
+  if (!attention_buffer_matches_stub(q, *qkv_size) ||
+      !attention_buffer_matches_stub(k, *qkv_size) ||
+      !attention_buffer_matches_stub(v, *qkv_size)) {
+    return "torchlean_attention_stub: Q/K/V size mismatch or released buffer";
+  }
+  if (has_mask && !attention_buffer_matches_stub(mask, *probability_size)) {
+    return "torchlean_attention_stub: mask size mismatch or released buffer";
+  }
+  return NULL;
+}
+
+static const char* attention_backward_error_stub(
+    const torchlean_cuda_buffer* out, const torchlean_cuda_buffer* d_out) {
+  if (!out->context || out->delete_context != attention_delete_context_stub) {
+    return "torchlean_attention_stub: backward requires the original forward buffer";
+  }
+  const attention_context_stub* context = (const attention_context_stub*)out->context;
+  if (context->deterministic != torchlean_cpu_deterministic_reductions()) {
+    return "torchlean_attention_stub: deterministic policy changed after forward";
+  }
+  if (!attention_buffer_matches_stub(out, context->q->size) ||
+      !attention_buffer_matches_stub(d_out, context->q->size)) {
+    return "torchlean_attention_stub: output/dOut size mismatch or released buffer";
+  }
+  return NULL;
+}
+
+// The saved copies survive input release. Only the forward output owns this context.
+static lean_obj_res attention_forward_stub(
     b_lean_obj_arg QObj, b_lean_obj_arg KObj, b_lean_obj_arg VObj, b_lean_obj_arg MaskObj,
     uint32_t hasMask, uint32_t batch, uint32_t n, uint32_t d, double scaleHost) {
   torchlean_cuda_buffer* Q = torchlean_cuda_buffer_unbox(QObj);
   torchlean_cuda_buffer* K = torchlean_cuda_buffer_unbox(KObj);
   torchlean_cuda_buffer* V = torchlean_cuda_buffer_unbox(VObj);
   torchlean_cuda_buffer* mask = torchlean_cuda_buffer_unbox(MaskObj);
-  flash_attention_check_stub("torchlean_cuda_buffer_flash_attention_fwd_stub: size mismatch",
-                             Q, K, V, mask, NULL, hasMask, batch, n, d);
-  const size_t qkvSz =
-      checked_mul3_size((size_t)batch, (size_t)n, (size_t)d,
-                        "torchlean_cuda_buffer_flash_attention_fwd_stub: output size overflow");
+  size_t qkvSz, probabilitySz;
+  const char* error = attention_forward_error_stub(
+      Q, K, V, mask, hasMask, batch, n, d, scaleHost, &qkvSz, &probabilitySz);
+  if (error) lean_internal_panic(error);
+
+  attention_context_stub* context = (attention_context_stub*)malloc(sizeof(attention_context_stub));
+  if (!context) lean_internal_panic_out_of_memory();
+  context->batch = batch;
+  context->n = n;
+  context->d = d;
+  context->scale = (float)scaleHost;
+  context->deterministic = torchlean_cpu_deterministic_reductions();
+  context->q = torchlean_cuda_buffer_alloc(qkvSz);
+  context->k = torchlean_cuda_buffer_alloc(qkvSz);
+  context->v = torchlean_cuda_buffer_alloc(qkvSz);
+  context->probabilities = torchlean_cuda_buffer_alloc(qkvSz == 0 ? 0 : probabilitySz);
+  for (size_t i = 0; i < qkvSz; ++i) {
+    context->q->data[i] = Q->data[i];
+    context->k->data[i] = K->data[i];
+    context->v->data[i] = V->data[i];
+  }
   torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(qkvSz);
-  const float scale = (float)scaleHost;
+  out->context = context;
+  out->delete_context = attention_delete_context_stub;
+  if (qkvSz == 0) return torchlean_cuda_buffer_box(out);
+  const float scale = context->scale;
   for (size_t b = 0; b < batch; ++b) {
     for (size_t i = 0; i < n; ++i) {
       float rowMax = 0.0f, denom = 0.0f;
-      flash_attention_row_stats_stub(Q, K, mask, hasMask, b, i, n, d, scale, &rowMax, &denom);
+      attention_row_stats_stub(Q, K, mask, hasMask, b, i, n, d, scale, &rowMax, &denom);
+      for (size_t j = 0; j < n; ++j) {
+        context->probabilities->data[(b * n + i) * n + j] =
+            attention_prob_stub(Q, K, mask, hasMask, b, i, j, n, d, scale, rowMax, denom);
+      }
       for (size_t dv = 0; dv < d; ++dv) {
         float acc = 0.0f;
         for (size_t j = 0; j < n; ++j) {
-          float p = flash_attention_prob_stub(Q, K, mask, hasMask, b, i, j, n, d, scale,
-                                              rowMax, denom);
+          const float p = context->probabilities->data[(b * n + i) * n + j];
+          if (p == 0.0f) continue;
           acc += p * V->data[(b * n + j) * d + dv];
         }
         out->data[(b * n + i) * d + dv] = acc;
@@ -998,133 +1012,80 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_flash_attention_fwd(
   return torchlean_cuda_buffer_box(out);
 }
 
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_flash_attention_bwd(
-    b_lean_obj_arg QObj, b_lean_obj_arg KObj, b_lean_obj_arg VObj, b_lean_obj_arg MaskObj,
-    b_lean_obj_arg DOutObj, uint32_t hasMask, uint32_t batch, uint32_t n, uint32_t d,
-    double scaleHost) {
-  torchlean_cuda_buffer* Q = torchlean_cuda_buffer_unbox(QObj);
-  torchlean_cuda_buffer* K = torchlean_cuda_buffer_unbox(KObj);
-  torchlean_cuda_buffer* V = torchlean_cuda_buffer_unbox(VObj);
-  torchlean_cuda_buffer* mask = torchlean_cuda_buffer_unbox(MaskObj);
+static lean_obj_res attention_backward_stub(
+    b_lean_obj_arg OutObj, b_lean_obj_arg DOutObj) {
+  torchlean_cuda_buffer* out = torchlean_cuda_buffer_unbox(OutObj);
   torchlean_cuda_buffer* dOut = torchlean_cuda_buffer_unbox(DOutObj);
-  flash_attention_check_stub("torchlean_cuda_buffer_flash_attention_bwd_stub: size mismatch",
-                             Q, K, V, mask, dOut, hasMask, batch, n, d);
-  const size_t qkvSz =
-      checked_mul3_size((size_t)batch, (size_t)n, (size_t)d,
-                        "torchlean_cuda_buffer_flash_attention_bwd_stub: output size overflow");
+  const char* error = attention_backward_error_stub(out, dOut);
+  if (error) lean_internal_panic(error);
+  const attention_context_stub* context = (const attention_context_stub*)out->context;
+  const size_t qkvSz = context->q->size;
   torchlean_cuda_buffer* dQ = torchlean_cuda_buffer_alloc(qkvSz);
   torchlean_cuda_buffer* dK = torchlean_cuda_buffer_alloc(qkvSz);
   torchlean_cuda_buffer* dV = torchlean_cuda_buffer_alloc(qkvSz);
-  const float scale = (float)scaleHost;
-  for (size_t b = 0; b < batch; ++b) {
+  for (size_t i = 0; i < qkvSz; ++i) {
+    dQ->data[i] = 0.0f;
+    dK->data[i] = 0.0f;
+    dV->data[i] = 0.0f;
+  }
+  if (qkvSz == 0) return torchlean_cuda_box_three_buffers(dQ, dK, dV);
+  const size_t n = context->n, d = context->d;
+  const float scale = context->scale;
+  for (size_t b = 0; b < context->batch; ++b) {
     for (size_t i = 0; i < n; ++i) {
-      float rowMax = 0.0f, denom = 0.0f;
-      flash_attention_row_stats_stub(Q, K, mask, hasMask, b, i, n, d, scale, &rowMax, &denom);
       float rowDot = 0.0f;
       for (size_t j = 0; j < n; ++j) {
-        float p = flash_attention_prob_stub(Q, K, mask, hasMask, b, i, j, n, d, scale,
-                                            rowMax, denom);
-        rowDot += p * flash_attention_d_attn_stub(V, dOut, b, i, j, n, d);
+        const float p = context->probabilities->data[(b * n + i) * n + j];
+        if (p == 0.0f) continue;
+        rowDot += p * attention_d_attn_stub(context->v, dOut, b, i, j, n, d);
       }
-      for (size_t k = 0; k < d; ++k) {
-        float acc = 0.0f;
-        for (size_t j = 0; j < n; ++j) {
-          if (!flash_attention_allowed_stub(mask, hasMask, b, i, j, n)) continue;
-          float p = flash_attention_prob_stub(Q, K, mask, hasMask, b, i, j, n, d, scale,
-                                              rowMax, denom);
-          float dAttn = flash_attention_d_attn_stub(V, dOut, b, i, j, n, d);
-          acc += p * (dAttn - rowDot) * scale * K->data[(b * n + j) * d + k];
+      for (size_t j = 0; j < n; ++j) {
+        const float p = context->probabilities->data[(b * n + i) * n + j];
+        if (p == 0.0f) continue;
+        const float dAttn = attention_d_attn_stub(context->v, dOut, b, i, j, n, d);
+        const float dScore = p * (dAttn - rowDot) * scale;
+        const size_t qBase = (b * n + i) * d;
+        const size_t kvBase = (b * n + j) * d;
+        for (size_t c = 0; c < d; ++c) {
+          dQ->data[qBase + c] += dScore * context->k->data[kvBase + c];
+          dK->data[kvBase + c] += dScore * context->q->data[qBase + c];
+          dV->data[kvBase + c] += p * dOut->data[qBase + c];
         }
-        dQ->data[(b * n + i) * d + k] = acc;
-      }
-    }
-  }
-  for (size_t b = 0; b < batch; ++b) {
-    for (size_t j = 0; j < n; ++j) {
-      for (size_t k = 0; k < d; ++k) {
-        float acc = 0.0f;
-        for (size_t i = 0; i < n; ++i) {
-          float rowMax = 0.0f, denom = 0.0f;
-          flash_attention_row_stats_stub(Q, K, mask, hasMask, b, i, n, d, scale, &rowMax, &denom);
-          float rowDot = 0.0f;
-          for (size_t t = 0; t < n; ++t) {
-            float p = flash_attention_prob_stub(Q, K, mask, hasMask, b, i, t, n, d, scale,
-                                                rowMax, denom);
-            rowDot += p * flash_attention_d_attn_stub(V, dOut, b, i, t, n, d);
-          }
-          if (!flash_attention_allowed_stub(mask, hasMask, b, i, j, n)) continue;
-          float p = flash_attention_prob_stub(Q, K, mask, hasMask, b, i, j, n, d, scale,
-                                              rowMax, denom);
-          float dAttn = flash_attention_d_attn_stub(V, dOut, b, i, j, n, d);
-          acc += p * (dAttn - rowDot) * scale * Q->data[(b * n + i) * d + k];
-        }
-        dK->data[(b * n + j) * d + k] = acc;
-      }
-    }
-  }
-  for (size_t b = 0; b < batch; ++b) {
-    for (size_t j = 0; j < n; ++j) {
-      for (size_t dv = 0; dv < d; ++dv) {
-        float acc = 0.0f;
-        for (size_t i = 0; i < n; ++i) {
-          float rowMax = 0.0f, denom = 0.0f;
-          flash_attention_row_stats_stub(Q, K, mask, hasMask, b, i, n, d, scale, &rowMax, &denom);
-          float p = flash_attention_prob_stub(Q, K, mask, hasMask, b, i, j, n, d, scale,
-                                              rowMax, denom);
-          acc += p * dOut->data[(b * n + i) * d + dv];
-        }
-        dV->data[(b * n + j) * d + dv] = acc;
       }
     }
   }
   return torchlean_cuda_box_three_buffers(dQ, dK, dV);
 }
 
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_transpose2d(b_lean_obj_arg BObj, uint32_t rows,
-                                                          uint32_t cols) {
-  torchlean_cuda_buffer* b = torchlean_cuda_buffer_unbox(BObj);
-  const size_t R = (size_t)rows;
-  const size_t C = (size_t)cols;
-  const size_t total =
-      checked_mul_size(R, C, "torchlean_cuda_buffer_transpose2d_stub: R*C overflow");
-  if (b->size != total) {
-    lean_internal_panic("torchlean_cuda_buffer_transpose2d_stub: size mismatch");
-  }
-
-  torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(total);
-  for (size_t i = 0; i < R; ++i) {
-    for (size_t j = 0; j < C; ++j) {
-      out->data[j * R + i] = b->data[i * C + j];
-    }
-  }
-  return torchlean_cuda_buffer_box(out);
+static lean_obj_res attention_result_stub(unsigned tag, lean_obj_arg value) {
+  lean_object* result = lean_alloc_ctor(tag, 1, 0);
+  lean_ctor_set(result, 0, value);
+  return result;
 }
 
-LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_gather_vec(b_lean_obj_arg VObj, uint32_t n,
-                                                         b_lean_obj_arg IdxObj, uint32_t k) {
-  torchlean_cuda_buffer* v = torchlean_cuda_buffer_unbox(VObj);
-  const size_t N = (size_t)n;
-  const size_t K = (size_t)k;
-  if (v->size != N) {
-    lean_internal_panic("torchlean_cuda_buffer_gather_vec_stub: vec.size mismatch");
+LEAN_EXPORT lean_obj_res torchlean_libtorch_attention_fwd(
+    b_lean_obj_arg QObj, b_lean_obj_arg KObj, b_lean_obj_arg VObj, b_lean_obj_arg MaskObj,
+    uint32_t hasMask, uint32_t batch, uint32_t n, uint32_t d, double scaleHost) {
+  size_t qkv_size, probability_size;
+  const char* error = attention_forward_error_stub(
+      torchlean_cuda_buffer_unbox(QObj), torchlean_cuda_buffer_unbox(KObj),
+      torchlean_cuda_buffer_unbox(VObj), torchlean_cuda_buffer_unbox(MaskObj),
+      hasMask, batch, n, d, scaleHost, &qkv_size, &probability_size);
+  if (error) {
+    return attention_result_stub(0, lean_mk_string(error));
   }
-  if (!lean_is_array((lean_object*)IdxObj)) {
-    lean_internal_panic("torchlean_cuda_buffer_gather_vec_stub: expected Array Nat indices");
-  }
-  if (lean_array_size(IdxObj) != K) {
-    lean_internal_panic("torchlean_cuda_buffer_gather_vec_stub: indices.size mismatch");
-  }
+  return attention_result_stub(1, attention_forward_stub(
+      QObj, KObj, VObj, MaskObj, hasMask, batch, n, d, scaleHost));
+}
 
-  torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(K);
-  for (size_t j = 0; j < K; ++j) {
-    b_lean_obj_res idxNat = lean_array_get_core(IdxObj, j);
-    // The checked conversion accepts the full UInt32 domain, including UINT32_MAX, and rejects
-    // larger boxed naturals instead of confusing the maximum value with an error sentinel.
-    uint32_t i =
-        nat_to_u32_or_panic(idxNat, "torchlean_cuda_buffer_gather_vec_stub: bad index Nat");
-    out->data[j] = (i < n) ? v->data[(size_t)i] : 0.0f;
+LEAN_EXPORT lean_obj_res torchlean_libtorch_attention_bwd(
+    b_lean_obj_arg OutObj, b_lean_obj_arg DOutObj) {
+  const char* error = attention_backward_error_stub(
+      torchlean_cuda_buffer_unbox(OutObj), torchlean_cuda_buffer_unbox(DOutObj));
+  if (error) {
+    return attention_result_stub(0, lean_mk_string(error));
   }
-  return torchlean_cuda_buffer_box(out);
+  return attention_result_stub(1, attention_backward_stub(OutObj, DOutObj));
 }
 
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_scatter_add(b_lean_obj_arg XObj,

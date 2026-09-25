@@ -254,7 +254,8 @@ You provide:
 - `forward : Buffer → Buffer`
 - `backward : Buffer → Buffer → Buffer` (VJP; given input `x` and upstream `dLdy`, return `dLdx`)
 
-Shapes are explicit and checked dynamically.
+Shapes are explicit and checked dynamically. Reverse mode visits the result only when the input
+requires gradients, so constant subexpressions do not execute their backward closures.
 -/
 def unary
     (t : Tape) (opName : String) (xId : Nat) (σ τ : Shape)
@@ -268,7 +269,7 @@ def unary
     { name := some opName
       value := { s := τ, buf := y }
       ownsValue := ownsValue
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny τ
@@ -284,7 +285,7 @@ You provide:
 - `backward : Buffer → Buffer → Buffer → (Buffer × Buffer)` (VJP; given inputs `a`, `b`, and
   upstream `dLdy`, return `(dLda, dLdb)`)
 
-Shapes are explicit and checked dynamically.
+Shapes are explicit and checked dynamically. The result requires gradients if either input does.
 -/
 def binary
     (t : Tape) (opName : String) (aId bId : Nat) (σ₁ σ₂ τ : Shape)
@@ -297,7 +298,8 @@ def binary
   let node : Node :=
     { name := some opName
       value := { s := τ, buf := y }
-      requiresGrad := true
+      requiresGrad :=
+        (t.getNode? aId).any (·.requiresGrad) || (t.getNode? bId).any (·.requiresGrad)
       parents := #[aId, bId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny τ

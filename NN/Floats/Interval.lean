@@ -8,7 +8,8 @@ module -- shake: keep-all
 
 public import FloatLib.Floats.Interval
 public import NN.Floats.Interval.FP32
-public import NN.Floats.Interval.IEEEExec32
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured
+public import FloatLib.Floats.Formats.IEEE754.Native
 import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
 
 /-!

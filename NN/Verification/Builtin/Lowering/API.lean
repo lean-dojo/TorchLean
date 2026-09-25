@@ -58,24 +58,28 @@ def LoweredIR.seedInputBox {α : Type} [TorchLean.Storage α] [Context α]
   lowered.ps.seedInputBox lowered.inputId xB
 
 /-- Flatten a shaped center/radius pair into the verifier input-box representation. -/
-def lInfBox {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+def lInfBox {α : Type} [TorchLean.Storage α] [Context α]
+    [NN.MLTheory.CROWN.BoundOps α] {s : Shape}
     (center radius : Tensor α s) : NN.MLTheory.CROWN.FlatBox α :=
   NN.MLTheory.CROWN.FlatBox.lInfBox (α := α) center radius
 
 /-- Uniform $\ell^\infty$ box around a shaped TorchLean input tensor. -/
-def lInfBall {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+def lInfBall {α : Type} [TorchLean.Storage α] [Context α]
+    [NN.MLTheory.CROWN.BoundOps α] {s : Shape}
     (center : Tensor α s) (eps : α) : NN.MLTheory.CROWN.FlatBox α :=
   NN.MLTheory.CROWN.FlatBox.lInfBall (α := α) center eps
 
 /-- Flattening an $\ell^\infty$ ball preserves the number of tensor entries as its dimension. -/
-@[simp] theorem lInfBall_dim {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+@[simp] theorem lInfBall_dim {α : Type} [TorchLean.Storage α] [Context α]
+    [NN.MLTheory.CROWN.BoundOps α] {s : Shape}
     (center : Tensor α s) (eps : α) :
     (lInfBall center eps).dim = s.size := by
   simp [lInfBall, NN.MLTheory.CROWN.FlatBox.lInfBall,
     NN.MLTheory.CROWN.FlatBox.lInfBox]
 
 /-- Seed the distinguished verifier input with a uniform $\ell^\infty$ ball. -/
-def LoweredIR.seedLInfBall {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+def LoweredIR.seedLInfBall {α : Type} [TorchLean.Storage α] [Context α]
+    [NN.MLTheory.CROWN.BoundOps α] {s : Shape}
     (lowered : LoweredIR α) (center : Tensor α s) (eps : α) :
     NN.MLTheory.CROWN.Graph.ParamStore α :=
   lowered.ps.seedLInfBall lowered.inputId center eps
@@ -135,7 +139,10 @@ def LoweredIR.outputAffine? {α : Type} [TorchLean.Storage α] [Context α]
       throw (s!"verification output node {lowered.outputId} is out of bounds " ++
         s!"for {affs.size} affine entries")
 
-/-- Run forward CROWN and evaluate the lowered verifier output on a selected input box. -/
+/--
+Compute CROWN output bounds on a selected input box. Exact-reassociation backends use a forward
+affine sweep; rounded backends request directed backward bounds for the output coordinates.
+-/
 def LoweredIR.outputBoxCROWN? {α : Type} [TorchLean.Storage α] [Context α]
     [NN.MLTheory.CROWN.BoundOps α] [NN.MLTheory.CROWN.NonlinearBoundOps α]
     (lowered : LoweredIR α) (ps : NN.MLTheory.CROWN.Graph.ParamStore α)
@@ -145,7 +152,7 @@ def LoweredIR.outputBoxCROWN? {α : Type} [TorchLean.Storage α] [Context α]
   NN.MLTheory.CROWN.Graph.outputBoxCROWN? (α := α) lowered.graph ps xB
     lowered.inputId lowered.outputId inputDim
 
-/-- Run forward CROWN for a lowered verifier graph, throwing an `IO.userError` on failure. -/
+/-- Compute CROWN output bounds for a lowered graph, throwing an `IO.userError` on failure. -/
 def LoweredIR.outputBoxCROWNOrThrow {α : Type} [TorchLean.Storage α] [Context α]
     [NN.MLTheory.CROWN.BoundOps α] [NN.MLTheory.CROWN.NonlinearBoundOps α]
     (lowered : LoweredIR α) (ps : NN.MLTheory.CROWN.Graph.ParamStore α)

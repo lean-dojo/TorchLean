@@ -1,6 +1,7 @@
 import VersoManual
 import NN.API
 import NN.Spec.Layers.Attention
+import NN.Spec.Module.RnnModels
 import NN.Proofs.Models.Attention.CausalMask
 import NN.MLTheory.Proofs.StateSpace.MambaCausality
 import TorchLeanBlueprint.Bib
@@ -236,49 +237,75 @@ In {src "NN/API/Models/ResNet.lean"}[`NN.API.Models.ResNet`] the configuration i
 number $`d` of spatial axes:
 
 ```
--- Spatial rank controls the length of the grid and
--- kernel-radius vectors.
+-- Each stage determines its own width and spatial geometry.
 structure ResNet.Config (d : Nat) where
-  inputChannels  : Nat
-  spatial        : Tensor Nat [d]
-  hiddenChannels : Nat
-  kernelRadius   : Tensor Nat [d] := Tensor.ones [d]
-  classCount     : Nat
+  inputChannels : Nat
+  spatial : Tensor Nat [d]
+  stem : Convolution.Config d
+  stages : List (ResNet.Stage.Config d) := []
+  classCount : Nat
 ```
 
 Grid extents are ordinary values such as `[32, 32]`; no separate nonzero proof is exposed in the
-configuration, and model validation rejects a zero extent before execution. The configuration
-derives the three shapes a caller cares about, for any leading shape $`L`:
+configuration, and model validation rejects a zero extent before execution. Each stage contains
+`first` and `second` convolutions and a `shortcut`. Its main branch applies the first convolution,
+ReLU, and the second convolution; it then adds the shortcut and applies ReLU. For any leading
+shape $`L`, the model boundary is:
 
 $$`\operatorname{input}
-=L\mathbin{+\!+}(C_{\mathrm{in}},n_1,\ldots,n_d),\qquad
-\operatorname{hidden}
-=L\mathbin{+\!+}(C_{\mathrm{hidden}},n_1,\ldots,n_d),`
+=L\mathbin{+\!+}(C_{\mathrm{in}},n_1,\ldots,n_d),`
 
 $$`\operatorname{output}=L\mathbin{+\!+}(C_{\mathrm{class}}).`
 
-For CIFAR-shaped inputs with a batch of eight:
+Inside the model, stage $`i` has its own channel count $`C_i` and spatial grid.
+Here a stem produces sixteen channels, and a residual stage doubles the channels while halving
+both spatial extents:
 
 ```lean (name := mmResNetShapes)
--- Preserve the image grid while replacing RGB channels with
--- learned features.
+/-- Downsample the branch and shortcut to the same shape. -/
+abbrev mmDownsample : nn.models.ResNet.Stage.Config 2 :=
+  { first :=
+      { outChannels := 32, kernelSize := [3, 3]
+        stride := [2, 2], padding := [1, 1] }
+    second :=
+      { outChannels := 32, kernelSize := [3, 3]
+        padding := [1, 1] }
+    shortcut := .projection
+      { outChannels := 32, kernelSize := [1, 1]
+        stride := [2, 2] } }
+
+/-- A stem, one downsampling stage, and ten class scores. -/
 abbrev mmResNet : nn.models.ResNet.Config 2 :=
   { inputChannels := 3
     spatial := [32, 32]
-    hiddenChannels := 16
-    kernelRadius := [1, 1]
+    stem :=
+      { outChannels := 16, kernelSize := [3, 3]
+        padding := [1, 1] }
+    stages := [mmDownsample]
     classCount := 10 }
 
-#eval (mmResNet.inputShape [8], mmResNet.hiddenShape [8],
+#eval (mmResNet.inputShape [8],
+  mmDownsample.outputShape [32, 32] [8],
   mmResNet.outputShape [8])
 ```
 ```leanOutput mmResNetShapes (whitespace := lax)
-([8, 3, 32, 32], [8, 16, 32, 32], [8, 10])
+([8, 3, 32, 32], [8, 32, 16, 16], [8, 10])
 ```
 
-The hidden shape keeps the input grid. A `kernelRadius` of `[1, 1]` selects a same-padding
-$`3\times3` convolution, and the
-geometry helper comes with the preservation theorem the constructor uses internally:
+```lean (name := mmResNetValidation)
+#eval mmResNet.validate
+```
+```leanOutput mmResNetValidation
+Except.ok ()
+```
+
+An identity shortcut is valid only when the branch preserves its complete feature shape. This
+stage changes both width and grid, so its shortcut is an explicit projection convolution.
+Validation checks that the branch and shortcut produce the same channels and spatial extents
+before allocating parameters.
+
+For stages that should preserve the grid, `Convolution.Geometry.samePadding [1, 1]` supplies
+a unit-stride $`3\times3` kernel with padding one. The geometry helper has a preservation theorem:
 
 ```lean (name := mmSamePadding)
 -- The equality quantifies over every input grid and kernel
@@ -293,10 +320,9 @@ geometry helper comes with the preservation theorem the constructor uses interna
       input
 ```
 
-That theorem is what lets the residual trunk typecheck without a hand-written shape proof at every
-block, because `geometry.outputSpatial config.spatial` and `config.spatial` are provably the same
-spatial grid.
-The PyTorch example obtains the same three shapes by executing the layers:
+The theorem states equality of the spatial grids for every input and radius. Channel agreement
+is a separate requirement of an identity shortcut. The following PyTorch example isolates the
+stem, global pooling, and head, so we can see which axes pooling removes:
 
 ```
 # Pool spatial positions only; the channel dimension becomes
@@ -313,23 +339,24 @@ print(tuple(pooled.shape), tuple(nn.Linear(16, 10)(pooled).shape))
 (8, 16) (8, 10)
 ```
 
-The constructor uses a convolutional stem, two residual blocks, global average pooling over all
-$`d` spatial axes, and a linear classifier. The CIFAR example instantiates $`d=2` and $`L=(B)`; the
-model API itself is not tied to images, to two dimensions, or to one batch axis.
+The constructor uses a convolutional stem, the configured list of residual stages, global
+average pooling over all $`d` spatial axes, and a linear classifier. An empty stage list pools
+the stem output directly; stem geometry and a positive class count are still validated. The model
+API is not tied to images, to two dimensions, or to one batch axis.
 
 The pooling step explains why the final shape has no spatial axes. Each hidden channel is
-averaged across the image, producing sixteen features per sample, and the final affine map turns
-those features into ten class scores. Same-padding preserves coordinates inside the trunk;
-pooling deliberately discards their locations at the classifier boundary. These are different
-operations with different purposes, even though both are summarized by a short shape expression.
+averaged across the image. The isolated stem above produces sixteen pooled features; the Lean
+model's residual stage produces thirty-two. In each case the final affine map consumes that
+last channel count and produces ten class scores. Same-padding preserves the grid, a strided
+stage changes it, and pooling discards spatial locations at the classifier boundary.
 
 ## Residual Branch Shapes
 
 Open {src "NN/Examples/Models/Vision/ResNet.lean"}[`NN/Examples/Models/Vision/ResNet.lean`] and
-inspect `config`. The command uses an $`8\times8` crop and four hidden channels. Changing the hidden
-width changes both residual branches and the classifier input at once, because all three come from
-the same configuration. When constructing branches separately, we must preserve that agreement:
-the `mmClash` block above fails to elaborate because its two output widths differ.
+inspect `modelConfig`. Each stage's second convolution determines the next stage's input channels,
+and the last stage determines the classifier input width. A width change also requires a
+matching shortcut in that stage. When constructing branches separately, we must preserve that
+agreement: the `mmClash` block above fails to elaborate because its two output widths differ.
 
 # Vision Transformers
 
@@ -524,10 +551,55 @@ $`\tilde c_t`. The output gate $`o_t` controls how much of the transformed cell 
 $`h_t`. These elementwise products require each gate to have the same width as the state it acts
 on.
 
-The hidden and cell states are explicit tensors whose dimensions have to stay stable across the
-unrolled sequence. The runnable `rnn`, `lstm`, and `lstm_regression` commands use that typed state
-path. There is currently no GRU training subcommand: the LiRPA verifier has a GRU-gate certificate
-fixture, but that is a different artifact and should not be presented as a trainable GRU model.
+The hidden and cell states have stable dimensions across time within each layer. Different
+layers can have different widths. `nn.models.Recurrent.Config.hiddenWidths` lists those widths
+in execution order, and the `rnn`, `gru`, and `lstm` constructors append a linear head at every
+time step:
+
+```lean (name := mmRecurrent)
+/-- Three recurrent layers with independent widths. -/
+abbrev mmRecurrent : nn.models.Recurrent.Config :=
+  { sequenceLength := 8
+    inputWidth := 2
+    hiddenWidths := [5, 3, 4]
+    outputWidth := 1 }
+
+example : nn.Builder (nn.Sequential [8, 2] [8, 1]) :=
+  nn.models.gru mmRecurrent
+
+example :
+    { mmRecurrent with
+      sequenceLength := 0
+      hiddenWidths := [] }.validate = .ok () := by decide
+```
+
+The intermediate feature widths are $`2\to5\to3\to4\to1`; the time axis stays eight throughout.
+With `hiddenWidths := []`, only the time-distributed linear head remains. It accepts an empty
+sequence because there is no recurrent core to unroll. Input and output widths must remain
+positive. A nonempty stack also requires a positive sequence length and positive hidden widths.
+
+These trainable constructors start every call from zero state and return the projected sequence.
+They do not carry hidden state between calls. For explicit state, the reference models use
+`Spec.RecurrentStack`: `.cons` adds a cell whose output width matches the next cell's input,
+and `.nil` preserves the input with no recurrent state. `States` contains one state per layer,
+with each state indexed by that layer's width; LSTM layers carry both hidden and cell tensors.
+
+For two reference cells with widths $`2\to3\to1`, the states have widths three and one:
+
+```lean (name := mmReferenceStates)
+example (first : Spec.RNNSpec Float 2 3)
+    (second : Spec.RNNSpec Float 3 1)
+    (h₃ : Tensor Float [3]) (h₁ : Tensor Float [1]) :
+    (Spec.RecurrentStack.cons first
+      (.cons second .nil)).States
+        (fun width => Tensor Float [width]) :=
+  (h₃, (h₁, ()))
+```
+
+`Spec.Rnn.stacked`, `Spec.Gru.stacked`, and `Spec.Lstm.stacked` turn such a stack and a linear
+head into a reference `Module.Chain`. Each family's `StackedModel.forward` instead accepts the
+explicit states and returns both the projected sequence and the final states. An empty stack
+uses `()` for its state; an empty sequence preserves every supplied layer state.
 
 An explicit state gives a recurrent model a streaming interface: a caller can supply the state
 left by a previous chunk and continue the computation. Restarting from zero instead describes a
@@ -829,11 +901,11 @@ y_t=C_t h_t+D_t x_t.`
 
 {src "NN/API/Models/Mamba.lean"}[`NN.API.Models.Mamba`] holds the trainable side of this:
 
-- `Mamba.Config`, which records the vocabulary size and the model width, and whose `validate`
-  rejects a zero-length sequence before any tensor is allocated;
-- `Mamba.languageModel`, a trainable selective state-space core followed by a linear
-  projection back to vocabulary logits at every time step. The core is built from autograd-covered
-  operations, so `--device cuda` trains the same parameters on the CUDA backend.
+- `Mamba.Config`, which records the vocabulary size and an ordered list of `modelWidths`,
+  together with the expansion, state width, and convolution kernel width used by its layers;
+- `Mamba.languageModel`, a stack of trainable selective state-space layers followed by a linear
+  projection back to vocabulary logits at every time step. The layers use operations covered
+  by TorchLean's autograd tape, with LibTorch providing CUDA execution.
 
 Validation is an explicit function on the configuration and sequence length. Calling it before
 model construction rejects invalid extents before allocating model tensors:
@@ -842,7 +914,7 @@ model construction rejects invalid extents before allocating model tensors:
 -- Compare model validation with shape calculation for a
 -- positive sequence length.
 abbrev mmMamba : nn.models.Mamba.Config :=
-  { vocabularySize := 256, modelWidth := 32 }
+  { vocabularySize := 256, modelWidths := [32, 16] }
 
 #eval mmMamba.validate 0
 #eval mmMamba.validate 8
@@ -858,10 +930,22 @@ Except.ok ()
 ([8, 256], [8, 256])
 ```
 
-`[0, 256]` is a valid tensor shape, but this model requires a positive sequence length.
+`[0, 256]` is a valid tensor shape, but a nonempty Mamba stack requires a positive sequence length.
 `validate` checks that additional requirement and returns an `Except.error` before a scan runs.
 The successful call with length eight separates this configuration check from the input and output
 shape calculation printed below it.
+
+An empty `modelWidths` list builds only the vocabulary-to-vocabulary linear head. It accepts a
+zero-length sequence and does not validate the unused scan configuration. The vocabulary size
+must remain positive; nonempty layers also require positive model widths:
+
+```lean (name := mmMambaHead)
+example :
+    ({ vocabularySize := 256, modelWidths := []
+       expansion := 0, stateWidth := 0, kernelWidth := 0 }
+      : nn.models.Mamba.Config).validate 0 = .ok () := by
+  decide
+```
 
 Input and output shapes coincide here because the model predicts a distribution over the same
 vocabulary at every position, which is what makes next-token training a matter of shifting the
@@ -870,8 +954,8 @@ target by one rather than of reshaping anything.
 Here the input rows are one-hot vocabulary features and the output rows are logits. Equal shapes
 do not mean equal representations: the input selects a token category, while a logit row scores
 all possible next categories. A loss or sampling rule interprets those scores. The hidden
-`modelWidth` can therefore be thirty-two even though the public input and output width is 256;
-the vocabulary projection restores the external width after the recurrent computation.
+widths can therefore be thirty-two and then sixteen even though the public input and output width
+is 256; the vocabulary projection restores the external width after the recurrent computation.
 
 The trainable core computes $`\Delta`, $`B_t` and $`C_t` from the current token features.
 The specification describes the corresponding input-dependent recurrence as
@@ -982,10 +1066,10 @@ The theorem application proves the equality tested by the preceding `#eval`. It 
 calculation for these five tokens because the runner theorem already covers arbitrary sequence
 lengths.
 
-The trainable path uses TorchLean autograd operations on CPU or CUDA. The repository also has a
-selective-scan CUDA operation for supported float execution. That runtime kernel is not thereby
-proved equivalent to every equation in the high-level Mamba specification; the kernel boundary is
-reported separately, and {ref "gpu-and-cuda"}[GPU And CUDA] describes what that boundary covers.
+The trainable path uses TorchLean autograd operations on CPU or CUDA. CUDA selective scan is an
+ATen composition with a TorchLean-selected backward rule. That implementation is not thereby
+proved equivalent to every equation in the high-level Mamba specification;
+{ref "gpu-and-cuda"}[GPU And CUDA] describes the runtime boundary.
 
 # Neural Operators
 
@@ -1064,14 +1148,14 @@ asking for six indices at each end of an eight-point axis keeps everything: the 
 the axis. This is set membership, so their overlap does not multiply a coefficient twice.
 
 The public constructor transforms each spatial axis separately. With
-`spectralPath := .automatic`, eager CUDA execution uses cuFFT and other interpreters use dense
-per-axis operations. Setting `spectralPath := .denseReference` selects full-grid DFT matrices
+`spectralPath := .automatic`, eager CUDA execution uses LibTorch FFTs and other interpreters use
+dense per-axis operations. Setting `spectralPath := .denseReference` selects full-grid DFT matrices
 without changing the weights or checkpoint layout. Both paths compute the same full-spectrum
 model, up to floating-point differences in their transform algorithms.
 
 The CUDA Burgers command deliberately selects a separate one-dimensional real-FFT parameterization
-backed by cuFFT. It has the same typed field-to-field boundary, but its one-sided weights are not
-interchangeable with the full-spectrum model's weights. The spectral-block chapter in
+evaluated through LibTorch. It has the same typed field-to-field boundary, but its one-sided weights
+are not interchangeable with the full-spectrum model's weights. The spectral-block chapter in
 {ref "scientific-forward-models"}[Scientific Forward Models] says which parts are shared.
 
 The field shape $`[8,64]` records eight independent sampled fields, each with sixty-four spatial

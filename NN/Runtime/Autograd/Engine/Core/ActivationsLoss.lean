@@ -45,7 +45,7 @@ def sigmoid {α : Type} [TorchLean.Storage α] [Context α]
   let node : Node α :=
     { name := some "sigmoid"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s) dLdyAny
@@ -70,7 +70,7 @@ def tanh {α : Type} [TorchLean.Storage α] [Context α]
   let node : Node α :=
     { name := some "tanh"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s) dLdyAny
@@ -93,7 +93,7 @@ def gelu {α : Type} [TorchLean.Storage α] [Context α]
   let node : Node α :=
     { name := some "gelu"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s) dLdyAny
@@ -118,7 +118,7 @@ def softmaxLast {α : Type} [TorchLean.Storage α] [Context α]
   let node : Node α :=
     { name := some "softmax"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s) dLdyAny
@@ -141,7 +141,7 @@ def logSoftmaxLast {α : Type} [TorchLean.Storage α] [Context α]
   let node : Node α :=
     { name := some "log_softmax"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s) dLdyAny
@@ -166,7 +166,7 @@ def softplus {α : Type} [TorchLean.Storage α] [Context α]
   let node : Node α :=
     { name := some "softplus"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s) dLdyAny
@@ -190,7 +190,7 @@ def exp {α : Type} [TorchLean.Storage α] [Context α]
   let node : Node α :=
     { name := some "exp"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s) dLdyAny
@@ -220,7 +220,7 @@ def log {α : Type} [TorchLean.Storage α] [Context α]
   let node : Node α :=
     { name := some "log"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s) dLdyAny
@@ -243,7 +243,7 @@ def inv {α : Type} [TorchLean.Storage α] [Context α]
   let node : Node α :=
     { name := some "inv"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s) dLdyAny
@@ -273,7 +273,7 @@ def safeLog {α : Type} [TorchLean.Storage α] [Context α]
   let node : Node α :=
     { name := some "safe_log"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s) dLdyAny
@@ -298,7 +298,7 @@ def sum {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
   let node : Node α :=
     { name := some "sum"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := Shape.scalar) dLdyAny
@@ -324,7 +324,9 @@ def mseLoss {α : Type} [TorchLean.Storage α]
   let node : Node α :=
     { name := some "mse_loss"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad :=
+        (t.getNode? yhatId).any (·.requiresGrad) ||
+        (t.getNode? targetId).any (·.requiresGrad)
       parents := #[yhatId, targetId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := Shape.scalar) dLdyAny

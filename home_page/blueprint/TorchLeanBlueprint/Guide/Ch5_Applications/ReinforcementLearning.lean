@@ -436,6 +436,27 @@ share the same observation width and hidden-width configuration. The `[64, 1]` c
 must eventually align with one scalar target per collected step; the singleton axis is a model
 interface choice, not sixty-four additional value predictions.
 
+For a single observation, `rl.ppo.criticValue` accepts any output shape with exactly one
+element. The default critic returns `[1]`, but a scalar `[]` or a tensor `[1, 1]` expresses the
+same number of predictions. The adapter reshapes that one element to a scalar and reads it:
+
+```lean (name := rlSingletonCritic)
+#eval show IO Unit from do
+  let model : nn.Sequential [1, 1] [1, 1] := .id [1, 1]
+  let graph ← nn.lowerToTypedGraph model (α := Float)
+  let value := rl.ppo.criticValue
+    graph model model nn.State.empty
+  IO.println (value ([[2.5]] : Tensor Float [1, 1]))
+```
+
+```leanOutput rlSingletonCritic (whitespace := lax)
+2.500000
+```
+
+Here the identity model isolates scalar extraction from any learned computation. The adapter
+requires `valueShape.size = 1`; a `[64, 1]` batch has 64 elements and cannot satisfy that
+condition. Batch training still needs one target per prediction, with matching shapes.
+
 # Rollout Data
 
 For a discrete action space of size $`A`, one PPO step stores
@@ -448,8 +469,8 @@ The Lean structure in
 holds one observation tensor, one `Fin nActions` action, four scalars, and two Boolean markers
 per step. `done` marks either termination or truncation and stops advantage continuation.
 `terminated` suppresses the next-state value bootstrap. When constructing a step manually,
-omitting `terminated` defaults it to `done`, preserving the earlier single-mask behavior.
-The rollout container also fixes the number of steps:
+omitting `terminated` defaults it to `done`. A truncated step that should bootstrap needs
+`done := true` and `terminated := false`. The rollout container also fixes the number of steps:
 
 ```
 structure Rollout (α : Type) [TorchLean.Storage α]
@@ -986,20 +1007,26 @@ needed by refinement theorems:
 
 ```lean (name := rlBackupBridge)
 -- Successful execution gives both the spec equality and
--- finite intermediate products.
-open Runtime.RL.Numerics.Float32 Floats.IEEE754 Spec.RL in
-#check @discountedBackup_eq_ok
-```
-
-```leanOutput rlBackupBridge (whitespace := lax)
-discountedBackup_eq_ok : ∀ (reward gamma bootstrap : Float32Exec) (done : Bool) (out : Float32Exec),
-  discountedBackupChecked reward gamma bootstrap done = Except.ok out →
-    ExecFloat.Binary.isFinite (ExecFloat.mul gamma (continueMask done)) = true ∧
-      ExecFloat.Binary.isFinite ((ExecFloat.mul gamma (continueMask done)).mul bootstrap) = true ∧
-        ExecFloat.Binary.isFinite (ExecFloat.add reward ((ExecFloat.mul gamma (continueMask
-          done)).mul bootstrap)) =
-            true ∧
-          out = discountedBackup reward gamma bootstrap done
+-- finite intermediate values.
+open Runtime.RL.Numerics.Float32 Spec.RL in
+example
+    (reward gamma bootstrap out : ExecFloat.Binary 8 23)
+    (done : Bool)
+    (h : discountedBackupChecked
+      reward gamma bootstrap done = .ok out) :
+    ExecFloat.Binary.isFinite
+      (ExecFloat.mul gamma (continueMask done)) = true ∧
+    ExecFloat.Binary.isFinite
+      (ExecFloat.mul
+        (ExecFloat.mul gamma (continueMask done))
+        bootstrap) = true ∧
+    ExecFloat.Binary.isFinite
+      (ExecFloat.add reward
+        (ExecFloat.mul
+          (ExecFloat.mul gamma (continueMask done))
+          bootstrap)) = true ∧
+    out = discountedBackup reward gamma bootstrap done :=
+  discountedBackup_eq_ok reward gamma bootstrap done out h
 ```
 
 Read the conclusion right to left. The last conjunct says the checked routine agrees with the

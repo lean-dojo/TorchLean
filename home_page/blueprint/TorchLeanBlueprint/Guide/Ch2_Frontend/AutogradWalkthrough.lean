@@ -561,7 +561,7 @@ $`(-0.446\overline6,\,-0.046\overline6,\,0.353\overline3)`:
 def agTarget : Tensor Float [3] := [0.7, 0.1, -0.5]
 
 def agMse : autograd.model.Loss [3] [3] :=
-  autograd.model.Loss.meanSquaredError
+  autograd.model.Loss.mse
 
 #eval show IO Unit from do
   let (gradient, lossValue) ←

@@ -318,7 +318,7 @@ def fromLoss {σ τ : Shape} (model : Seq σ τ)
   }
 
 /-- Pair a model with mean-squared error. -/
-def meanSquaredError {σ τ : Shape} (model : Seq σ τ)
+def mse {σ τ : Shape} (model : Seq σ τ)
     (reduction : TorchLean.Loss.Reduction :=
   .mean) (mode : Mode := .train) :
     Runtime.Autograd.Model.Module.ObjectiveDef Unit (stateShapes model) [σ, τ] :=

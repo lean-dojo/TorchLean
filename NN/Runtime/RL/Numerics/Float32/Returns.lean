@@ -34,15 +34,13 @@ open Spec TorchLean
 open TorchLean TorchLean.Tensor
 open Spec.RL
 
-open TorchLean.Floats
-open TorchLean.Floats.IEEE754
 
 /-!
 ## Checked RL core transforms (configured binary32)
 -/
 
-/-- Require that an `ExecFloat.Binary 8 23` value is finite, producing a tagged error on failure. -/
-def requireFinite (label : String) (x : Float32Exec) : Except String Unit :=
+/-- Require that an `Binary 8 23` value is finite, producing a tagged error on failure. -/
+def requireFinite (label : String) (x : Binary 8 23) : Except String Unit :=
   if Binary.isFinite x = true then
     .ok ()
   else
@@ -60,63 +58,63 @@ reject nonfinite results; they do not certify correct rounding or a real-error b
 -/
 
 /-- Checked configured binary32 addition. -/
-def checkedAdd (label : String) (x y : Float32Exec) : Except String Float32Exec :=
+def checkedAdd (label : String) (x y : Binary 8 23) : Except String (Binary 8 23) :=
   let z := ExecFloat.add x y
   match requireFinite label z with
   | .ok _ => .ok z
   | .error e => .error e
 
 /-- Checked configured binary32 subtraction. -/
-def checkedSub (label : String) (x y : Float32Exec) : Except String Float32Exec :=
+def checkedSub (label : String) (x y : Binary 8 23) : Except String (Binary 8 23) :=
   let z := ExecFloat.sub x y
   match requireFinite label z with
   | .ok _ => .ok z
   | .error e => .error e
 
 /-- Checked configured binary32 multiplication. -/
-def checkedMul (label : String) (x y : Float32Exec) : Except String Float32Exec :=
+def checkedMul (label : String) (x y : Binary 8 23) : Except String (Binary 8 23) :=
   let z := ExecFloat.mul x y
   match requireFinite label z with
   | .ok _ => .ok z
   | .error e => .error e
 
 /-- Checked configured binary32 division. -/
-def checkedDiv (label : String) (x y : Float32Exec) : Except String Float32Exec :=
+def checkedDiv (label : String) (x y : Binary 8 23) : Except String (Binary 8 23) :=
   let z := ExecFloat.div x y
   match requireFinite label z with
   | .ok _ => .ok z
   | .error e => .error e
 
 /-- Approximate `eˣ` in binary32 and reject a nonfinite result. -/
-def checkedExp (label : String) (x : Float32Exec) : Except String Float32Exec :=
+def checkedExp (label : String) (x : Binary 8 23) : Except String (Binary 8 23) :=
   let z := FloatLib.Floats.ExecFloat.Binary.exp x
   match requireFinite label z with
   | .ok _ => .ok z
   | .error e => .error e
 
 /-- Approximate the natural logarithm in binary32 and reject a nonfinite result. -/
-def checkedLog (label : String) (x : Float32Exec) : Except String Float32Exec :=
+def checkedLog (label : String) (x : Binary 8 23) : Except String (Binary 8 23) :=
   let z := FloatLib.Floats.ExecFloat.Binary.log x
   match requireFinite label z with
   | .ok _ => .ok z
   | .error e => .error e
 
 /-- Checked configured binary32 square root. -/
-def checkedSqrt (label : String) (x : Float32Exec) : Except String Float32Exec :=
+def checkedSqrt (label : String) (x : Binary 8 23) : Except String (Binary 8 23) :=
   let z := (Binary.sqrt (rounding := .nearestEven)) x
   match requireFinite label z with
   | .ok _ => .ok z
   | .error e => .error e
 
 /-- Checked configured binary32 `min` using IEEE-754 `minimum`. -/
-def checkedMin (label : String) (x y : Float32Exec) : Except String Float32Exec :=
+def checkedMin (label : String) (x y : Binary 8 23) : Except String (Binary 8 23) :=
   let z := min x y
   match requireFinite label z with
   | .ok _ => .ok z
   | .error e => .error e
 
 /-- Checked configured binary32 `max` using IEEE-754 `maximum`. -/
-def checkedMax (label : String) (x y : Float32Exec) : Except String Float32Exec :=
+def checkedMax (label : String) (x y : Binary 8 23) : Except String (Binary 8 23) :=
   let z := max x y
   match requireFinite label z with
   | .ok _ => .ok z
@@ -127,7 +125,7 @@ Checked version of the one-step discounted backup
 
 `reward + γ * (1-done) * bootstrap`
 
-specialized to `ExecFloat.Binary 8 23`.
+specialized to `Binary 8 23`.
 
 The runtime return type is `Except String …` so training code can choose to:
 - fail fast, or
@@ -135,9 +133,9 @@ The runtime return type is `Except String …` so training code can choose to:
 - log and skip a bad sample.
 -/
 def discountedBackupChecked
-    (reward gamma bootstrap : Float32Exec) (done : Bool) :
-    Except String Float32Exec :=
-  let mask : Float32Exec := Spec.RL.continueMask (α := Float32Exec) done
+    (reward gamma bootstrap : Binary 8 23) (done : Bool) :
+    Except String (Binary 8 23) :=
+  let mask : Binary 8 23 := Spec.RL.continueMask (α := Binary 8 23) done
   match checkedMul "discountedBackup/mul(gamma,mask)" gamma mask with
   | .error e => .error e
   | .ok t1 =>
@@ -148,7 +146,7 @@ def discountedBackupChecked
 /-!
 ## Checked preconditions → proof hypotheses
 
-The `NN/Proofs/RL/Floats/*` bridge theorems for `ExecFloat.Binary 8 23` are usually stated with
+The `NN/Proofs/RL/Floats/*` bridge theorems for `Binary 8 23` are usually stated with
 explicit
 `isFinite … = true` hypotheses for each intermediate.
 
@@ -165,29 +163,29 @@ If `discountedBackupChecked` returns `.ok out`, then:
 - `out` agrees with the spec-layer `discountedBackup` formula.
 -/
 theorem discountedBackup_eq_ok
-    (reward gamma bootstrap : Float32Exec) (done : Bool) (out : Float32Exec)
+    (reward gamma bootstrap : Binary 8 23) (done : Bool) (out : Binary 8 23)
     (h : discountedBackupChecked reward gamma bootstrap done = .ok out) :
     Binary.isFinite
-        (ExecFloat.mul gamma (continueMask (α := Float32Exec) done)) =
+        (ExecFloat.mul gamma (continueMask (α := Binary 8 23) done)) =
       true ∧
       Binary.isFinite
           (ExecFloat.mul
-            (ExecFloat.mul gamma (continueMask (α := Float32Exec) done))
+            (ExecFloat.mul gamma (continueMask (α := Binary 8 23) done))
             bootstrap) =
         true ∧
         Binary.isFinite
             (ExecFloat.add reward
               (ExecFloat.mul
                 (ExecFloat.mul gamma
-                  (continueMask (α := Float32Exec) done))
+                  (continueMask (α := Binary 8 23) done))
                 bootstrap)) =
           true ∧
-          out = discountedBackup (α := Float32Exec) reward gamma bootstrap done := by
+          out = discountedBackup (α := Binary 8 23) reward gamma bootstrap done := by
   -- Abbreviate the intermediate values so we can reason by contradiction on each check.
-  set mask : Float32Exec := continueMask (α := Float32Exec) done
-  set t1 : Float32Exec := ExecFloat.mul gamma mask
-  set t2 : Float32Exec := ExecFloat.mul t1 bootstrap
-  set out0 : Float32Exec := ExecFloat.add reward t2
+  set mask : Binary 8 23 := continueMask (α := Binary 8 23) done
+  set t1 : Binary 8 23 := ExecFloat.mul gamma mask
+  set t2 : Binary 8 23 := ExecFloat.mul t1 bootstrap
+  set out0 : Binary 8 23 := ExecFloat.add reward t2
 
   have ht1 : Binary.isFinite t1 = true := by
     cases hft1 : Binary.isFinite t1 with
@@ -228,7 +226,7 @@ theorem discountedBackup_eq_ok
       simp [discountedBackupChecked, checkedMul, checkedAdd, requireFinite, mask, t1, t2, out0,
         ht1, ht2, hout0]
     -- Both `h` and `this` identify the return value; compare them by constructor injection.
-    have hok : (Except.ok out : Except String Float32Exec) = Except.ok out0 := by
+    have hok : (Except.ok out : Except String (Binary 8 23)) = Except.ok out0 := by
       exact h.symm.trans this
     have : out = out0 := by
       injection hok
@@ -243,20 +241,20 @@ theorem discountedBackup_eq_ok
     simpa [out0, t2, t1, mask] using hout0
   · -- Result equality.
     -- `out0` is definitionally the spec-layer discounted backup.
-    have : out0 = discountedBackup (α := Float32Exec) reward gamma bootstrap done := by
+    have : out0 = discountedBackup (α := Binary 8 23) reward gamma bootstrap done := by
       -- After unfolding the local abbreviations, this is definitional.
       rfl
     simp [hout, this]
 
 /--
-Checked fixed-horizon discounted returns (no `done` flags), specialized to `ExecFloat.Binary 8 23`.
+Checked fixed-horizon discounted returns (no `done` flags), specialized to `Binary 8 23`.
 
 This is the checked/finite counterpart to `Runtime.RL.Core.discountedReturnsFrom`.
 -/
 def discountedReturnsChecked {n : Nat}
-    (gamma : Float32Exec) (rewards : Tensor Float32Exec [n])
-    (bootstrap : Float32Exec := (0 : Float32Exec)) :
-    Except String (Tensor Float32Exec [n]) := do
+    (gamma : Binary 8 23) (rewards : Tensor (Binary 8 23) [n])
+    (bootstrap : Binary 8 23 := (0 : Binary 8 23)) :
+    Except String (Tensor (Binary 8 23) [n]) := do
   Tensor.scanrM
     (fun reward future => discountedBackupChecked reward gamma future false)
     bootstrap rewards

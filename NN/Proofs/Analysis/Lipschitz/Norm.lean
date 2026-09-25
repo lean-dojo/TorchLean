@@ -21,7 +21,7 @@ their algebraic properties. Neural-network Lipschitz bounds build on these facts
 - Everything here is **spec-level** and **real-valued** (`ℝ`), so we can freely use Mathlib's
   analysis and order theory.
 - `Tensor ℝ s` is an `InnerProductSpace ℝ` (see `NN.Proofs.Tensor.Euclidean`). The bridge lemmas
-  `tensorL2Norm_eq_norm`, `tensorL2Dist_eq_dist`, and `dot_eq_inner` identify the historical
+  `tensorL2Norm_eq_norm`, `tensorL2Dist_eq_dist`, and `dot_eq_inner` identify
   `tensorL2Norm`, `tensorL2Dist`, and `Spec.dot` with `‖·‖`, `dist`, and `⟪·, ·⟫_ℝ`; every norm
   inequality below is then a direct instance of the Mathlib theorem.
 - `NN.MLTheory.Robustness.Spec` also has scalar-polymorphic norm definitions for runtime and

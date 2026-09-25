@@ -42,7 +42,7 @@ Read them in the order of the table.
 
 ```lean
 let trainer := Trainer.new model
-  { objective := .meanSquaredError
+  { objective := .mse
     optimizer := optim.adam { learningRate := 0.03 }
     seed := 0 }
 let trained ← trainer.train data { steps := 200, logEvery := 25 }

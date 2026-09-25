@@ -8,8 +8,6 @@ module
 
 public import NN.API.Models.FNO
 public import NN.API.Autograd.Model
-public import NN.Runtime.Autograd.Torch.Core.Trainer.EagerOps
-public import NN.Runtime.Autograd.Torch.Core.BackwardOptim
 
 /-!
 # Multidimensional Fourier and FNO regressions

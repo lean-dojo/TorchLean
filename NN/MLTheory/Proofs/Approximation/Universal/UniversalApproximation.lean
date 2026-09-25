@@ -178,59 +178,24 @@ theorem mlp_eval_scalar_hinge (n : ℕ) (t : Fin n → ℝ) (c : Fin n → ℝ) 
   -- `Fin 1` has a unique element, so `fin_cases` reduces the extracted component.
   simp [hy, Tensor.item, add_comm]
 
-/--
-1D Universal Approximation (ReLU, one hidden layer).
-
-This is the classic constructive proof:
-Lipschitz continuity on $[a,b]$, a uniform partition, and piecewise-linear interpolation,
-then represent the interpolant as a finite linear combination of hinges
-$\operatorname{ReLU}(x-t_i)$.
--/
-  theorem relu_universal_approximation_Icc_hinge {f : ℝ → ℝ} {a b L : ℝ}
+/-- A uniform mesh with `N` cells gives a width-`N` hinge approximation whenever
+`2 * L * ((b - a) / N)` is below the requested error. The same interpolant serves both the
+qualitative existence theorem and the theorem with an explicit width. -/
+  theorem relu_hinge_approximation_Icc_of_mesh {f : ℝ → ℝ} {a b L ε : ℝ} {N : ℕ}
       (h_ab : a < b) (hL : 0 < L)
-      (h_lip : ∀ x ∈ Set.Icc a b, ∀ y ∈ Set.Icc a b, |f x - f y| ≤ L * |x - y|) :
-      ∀ ε > 0, ∃ (hidDim : ℕ) (t : Fin hidDim → ℝ) (c : Fin hidDim → ℝ),
-        ∀ x ∈ Set.Icc a b, |f x - hingeFun hidDim t c (f a) x| < ε := by
-    intro ε hε
+      (h_lip : ∀ x ∈ Set.Icc a b, ∀ y ∈ Set.Icc a b, |f x - f y| ≤ L * |x - y|)
+      (hNpos_nat : 0 < N) (hε : 0 < ε)
+      (hmesh : 2 * L * ((b - a) / (N : ℝ)) < ε) :
+      ∃ (t : Fin N → ℝ) (c : Fin N → ℝ),
+        ∀ x ∈ Set.Icc a b, |f x - hingeFun N t c (f a) x| < ε := by
     classical
     have hba : 0 < b - a := sub_pos.mpr h_ab
-    have hεhalf : 0 < ε / 2 := by nlinarith
-    have hprod : 0 < L * (b - a) := by nlinarith [hL, hba]
-    have hε' : 0 < (ε / 2) / (L * (b - a)) := div_pos hεhalf hprod
-    rcases exists_nat_one_div_lt hε' with ⟨n, hn⟩
-    let N : ℕ := n + 1
-    have hNpos_nat : 0 < N := Nat.succ_pos n
     have hNpos : 0 < (N : ℝ) := by exact_mod_cast hNpos_nat
     have hNne : (N : ℝ) ≠ 0 := ne_of_gt hNpos
     let δ : ℝ := (b - a) / (N : ℝ)
     have hδpos : 0 < δ := div_pos hba hNpos
     have hδnonneg : 0 ≤ δ := le_of_lt hδpos
-    have hmesh : L * δ < ε / 2 := by
-      have hn' :
-          (L * (b - a)) * (1 / ((n : ℝ) + 1)) <
-            (L * (b - a)) * ((ε / 2) / (L * (b - a))) :=
-        mul_lt_mul_of_pos_left hn hprod
-      have hnonzero : (L * (b - a)) ≠ 0 := ne_of_gt hprod
-      have hright : (L * (b - a)) * ((ε / 2) / (L * (b - a))) = ε / 2 := by
-        calc
-          (L * (b - a)) * ((ε / 2) / (L * (b - a))) =
-              (L * (b - a)) * (ε / 2) / (L * (b - a)) := by
-            simp [mul_div_assoc']
-          _ = ε / 2 := by
-            simpa using (mul_div_cancel_left₀ (ε / 2) hnonzero)
-      have hleft : (L * (b - a)) * (1 / ((n : ℝ) + 1)) = (L * (b - a)) / ((n : ℝ) + 1) := by
-        simpa using (mul_one_div (L * (b - a)) ((n : ℝ) + 1))
-      have hmesh' : L * (b - a) / ((n : ℝ) + 1) < ε / 2 := by
-        calc
-          L * (b - a) / ((n : ℝ) + 1)
-              = L * (b - a) * (1 / ((n : ℝ) + 1)) := by
-                rw [← hleft]
-          _ < L * (b - a) * ((ε / 2) / (L * (b - a))) := hn'
-          _ = ε / 2 := hright
-      have hmesh'' : L * (b - a) / (N : ℝ) < ε / 2 := by
-        simpa [N, Nat.cast_add, Nat.cast_one] using hmesh'
-      simpa [δ, mul_div_assoc'] using hmesh''
-    have h2mesh : 2 * L * δ < ε := by nlinarith [hmesh]
+    have h2mesh : 2 * L * δ < ε := hmesh
 
     let grid : ℕ → ℝ := fun k => a + (k : ℝ) * δ
     have hgrid0 : grid 0 = a := by simp [grid]
@@ -409,7 +374,7 @@ $\operatorname{ReLU}(x-t_i)$.
     -- Build the network corresponding to the polygonal interpolant.
     let t : Fin N → ℝ := fun i => grid i.1
     let c : Fin N → ℝ := fun i => cNat i.1
-    refine ⟨N, t, c, ?_⟩
+    refine ⟨t, c, ?_⟩
     intro x hx
     have hhinge : hingeFun N t c (f a) x = g x := by
       -- hinge_fun sums over `Fin N`; use `Fin.sum_univ_eq_sum_range` to convert to `Finset.range
@@ -543,6 +508,59 @@ $\operatorname{ReLU}(x-t_i)$.
           exact le_trans htri (by simpa [hsum'] using hsum)
         exact lt_of_le_of_lt this h2mesh
       simpa [hhinge] using hfx
+
+/--
+1D Universal Approximation (ReLU, one hidden layer).
+
+This is the classic constructive proof:
+Lipschitz continuity on $[a,b]$, a uniform partition, and piecewise-linear interpolation,
+then represent the interpolant as a finite linear combination of hinges
+$\operatorname{ReLU}(x-t_i)$.
+-/
+  theorem relu_universal_approximation_Icc_hinge {f : ℝ → ℝ} {a b L : ℝ}
+      (h_ab : a < b) (hL : 0 < L)
+      (h_lip : ∀ x ∈ Set.Icc a b, ∀ y ∈ Set.Icc a b, |f x - f y| ≤ L * |x - y|) :
+      ∀ ε > 0, ∃ (hidDim : ℕ) (t : Fin hidDim → ℝ) (c : Fin hidDim → ℝ),
+        ∀ x ∈ Set.Icc a b, |f x - hingeFun hidDim t c (f a) x| < ε := by
+    intro ε hε
+    classical
+    have hba : 0 < b - a := sub_pos.mpr h_ab
+    have hεhalf : 0 < ε / 2 := by nlinarith
+    have hprod : 0 < L * (b - a) := by nlinarith [hL, hba]
+    have hε' : 0 < (ε / 2) / (L * (b - a)) := div_pos hεhalf hprod
+    rcases exists_nat_one_div_lt hε' with ⟨n, hn⟩
+    let N : ℕ := n + 1
+    have hNpos_nat : 0 < N := Nat.succ_pos n
+    let δ : ℝ := (b - a) / (N : ℝ)
+    have hmesh : L * δ < ε / 2 := by
+      have hn' :
+          (L * (b - a)) * (1 / ((n : ℝ) + 1)) <
+            (L * (b - a)) * ((ε / 2) / (L * (b - a))) :=
+        mul_lt_mul_of_pos_left hn hprod
+      have hnonzero : (L * (b - a)) ≠ 0 := ne_of_gt hprod
+      have hright : (L * (b - a)) * ((ε / 2) / (L * (b - a))) = ε / 2 := by
+        calc
+          (L * (b - a)) * ((ε / 2) / (L * (b - a))) =
+              (L * (b - a)) * (ε / 2) / (L * (b - a)) := by
+            simp [mul_div_assoc']
+          _ = ε / 2 := by
+            simpa using (mul_div_cancel_left₀ (ε / 2) hnonzero)
+      have hleft : (L * (b - a)) * (1 / ((n : ℝ) + 1)) = (L * (b - a)) / ((n : ℝ) + 1) := by
+        simpa using (mul_one_div (L * (b - a)) ((n : ℝ) + 1))
+      have hmesh' : L * (b - a) / ((n : ℝ) + 1) < ε / 2 := by
+        calc
+          L * (b - a) / ((n : ℝ) + 1)
+              = L * (b - a) * (1 / ((n : ℝ) + 1)) := by
+                rw [← hleft]
+          _ < L * (b - a) * ((ε / 2) / (L * (b - a))) := hn'
+          _ = ε / 2 := hright
+      have hmesh'' : L * (b - a) / (N : ℝ) < ε / 2 := by
+        simpa [N, Nat.cast_add, Nat.cast_one] using hmesh'
+      simpa [δ, mul_div_assoc'] using hmesh''
+    have h2mesh : 2 * L * δ < ε := by nlinarith [hmesh]
+    obtain ⟨t, c, happrox⟩ :=
+      relu_hinge_approximation_Icc_of_mesh h_ab hL h_lip hNpos_nat hε h2mesh
+    exact ⟨N, t, c, happrox⟩
 
 /--
 1D Universal Approximation (ReLU, one hidden layer), stated as an existence theorem for a 2-layer

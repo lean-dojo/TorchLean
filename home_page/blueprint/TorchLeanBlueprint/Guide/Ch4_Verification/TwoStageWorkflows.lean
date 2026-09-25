@@ -128,13 +128,8 @@ python3 scripts/verification/abcrown/export_leaf_artifact.py \
   --check
 ```
 
-```terminal +output
-Wrote TorchLean alpha-beta-CROWN-style leaf artifact to /tmp/torchlean-abcrown-artifact.json
-[artifact] Checked 1 leaves: ok=1, bad=0
-```
-
-The second line comes from Lean: `--check` shells out to
-`lake exe verify -- abcrown-leaf` on the file it just wrote. The exported artifact is
+The `--check` option runs `lake exe verify -- abcrown-leaf` on the file it just wrote.
+The exported artifact is
 
 ```
 {
@@ -197,13 +192,12 @@ bound sits below its threshold:
 }
 ```
 
-```terminal +output
-$ python3 scripts/verification/abcrown/export_leaf_artifact.py \
-    --input /tmp/torchlean-raw-nowitness.json \
-    --out /tmp/torchlean-nowitness.json
-error: leaf: no verified witness found; expected some coordinate with lb > threshold
-$ echo $?
-2
+Save that input as `/tmp/torchlean-raw-nowitness.json`, then run:
+
+```terminal
+python3 scripts/verification/abcrown/export_leaf_artifact.py \
+  --input /tmp/torchlean-raw-nowitness.json \
+  --out /tmp/torchlean-nowitness.json
 ```
 
 The export fails before writing the requested artifact. This format represents leaves with
@@ -249,12 +243,12 @@ Here is a two-leaf dump that splits the unit square down the middle, with no roo
 }
 ```
 
-```terminal +output
-$ python3 scripts/verification/abcrown/export_leaf_artifact.py \
-    --input /tmp/torchlean-raw-2leaf.json \
-    --out /tmp/torchlean-2leaf.json --check
-Wrote TorchLean alpha-beta-CROWN-style leaf artifact to /tmp/torchlean-2leaf.json
-[artifact] Checked 2 leaves: ok=2, bad=0
+Save it as `/tmp/torchlean-raw-2leaf.json`:
+
+```terminal
+python3 scripts/verification/abcrown/export_leaf_artifact.py \
+  --input /tmp/torchlean-raw-2leaf.json \
+  --out /tmp/torchlean-2leaf.json --check
 ```
 
 The adapter derives the following root from the leaves:
@@ -269,13 +263,11 @@ record must retain the original root if the claim is about that region.
 
 Now supply a root twice as large as the region the leaves actually cover:
 
-```terminal +output
-$ python3 scripts/verification/abcrown/export_leaf_artifact.py \
-    --input /tmp/torchlean-raw-2leaf.json \
-    --out /tmp/torchlean-2leaf-wide.json \
-    --root-lo=-2,-2 --root-hi=2,2 --check
-Wrote TorchLean alpha-beta-CROWN-style leaf artifact to /tmp/torchlean-2leaf-wide.json
-[artifact] Checked 2 leaves: ok=2, bad=0
+```terminal
+python3 scripts/verification/abcrown/export_leaf_artifact.py \
+  --input /tmp/torchlean-raw-2leaf.json \
+  --out /tmp/torchlean-2leaf-wide.json \
+  --root-lo=-2,-2 --root-hi=2,2 --check
 ```
 
 The leaves cover $`[-1,1]^2`. The declared property region is $`[-2,2]^2`. The checker accepts, and
@@ -315,12 +307,12 @@ kind of gap a lost branch-and-bound subtree could leave.
 }
 ```
 
-```terminal +output
-$ python3 scripts/verification/abcrown/export_leaf_artifact.py \
-    --input /tmp/torchlean-raw-hole.json \
-    --out /tmp/torchlean-hole.json --check
-Wrote TorchLean alpha-beta-CROWN-style leaf artifact to /tmp/torchlean-hole.json
-[artifact] Checked 2 leaves: ok=2, bad=0
+Save the dump as `/tmp/torchlean-raw-hole.json`:
+
+```terminal
+python3 scripts/verification/abcrown/export_leaf_artifact.py \
+  --input /tmp/torchlean-raw-hole.json \
+  --out /tmp/torchlean-hole.json --check
 ```
 
 Both leaves pass, yet neither covers a point whose first coordinate lies strictly between `0.0`
@@ -371,7 +363,7 @@ def inBox (lo hi p : TorchLean.Tensor Float [2]) : Bool :=
 
 Both leaves pass both checks, and `(0.25, 0.0)` is inside the root and inside no leaf. The checker
 has checked containment and the witness comparisons, but the artifact contains no partition
-evidence. The result `ok=2, bad=0` therefore leaves the property on $`[-1,1]^2` unresolved, even
+evidence. Passing these local checks leaves the property on $`[-1,1]^2` unresolved, even
 if we grant the claimed bound on each leaf.
 
 Root coverage requires a separate union-of-boxes check or evidence of a complete partition.
@@ -465,42 +457,28 @@ coverage evidence is checked by the current leaf workflow.
 # Artifact Rejection Tests
 
 The {ref "certificates"}[certificate chapter] evaluates the checker's predicates one at a time
-inside Lean. Here we do the coarser thing a continuous-integration job does: run the process and
-read its exit status. Start from the good artifact above and change one field.
+inside Lean. To exercise the command-line path as well, start from the good artifact above,
+change one field in a separate copy, and check that the process rejects it.
 
-Push a leaf coordinate outside the root, `hi[1] = 2.0`:
+Push a leaf coordinate outside the root, `hi[1] = 2.0`, and save the copy as
+`/tmp/torchlean-escaped.json`:
 
-```terminal +output
-$ lake exe verify -- abcrown-leaf /tmp/torchlean-escaped.json
-[artifact] leaf 0 rejected: box escapes the root region
-[artifact] Checked 1 leaves: ok=0, bad=1
-error: Artifact failed checks for 1 leaves
-$ echo $?
-1
+```terminal
+lake exe verify -- abcrown-leaf /tmp/torchlean-escaped.json
 ```
 
 Leave the arithmetic alone and inflate only the bookkeeping field, `witness_margin = 5.0` where the
-real margin is `1.0`:
+real margin is `1.0`. Save this copy as `/tmp/torchlean-margin.json`:
 
-```terminal +output
-$ lake exe verify -- abcrown-leaf /tmp/torchlean-margin.json
-[artifact] leaf 0 rejected: witness_margin 5.000000 disagrees with lb - threshold = 1.000000
-[artifact] Checked 1 leaves: ok=0, bad=1
-error: Artifact failed checks for 1 leaves
-$ echo $?
-1
+```terminal
+lake exe verify -- abcrown-leaf /tmp/torchlean-margin.json
 ```
 
-Point the witness past the end of the bound vector, `witness_idx = 3` in a one-element `lb`:
+Point the witness past the end of the bound vector, `witness_idx = 3` in a one-element `lb`.
+Save this copy as `/tmp/torchlean-idx.json`:
 
-```terminal +output
-$ lake exe verify -- abcrown-leaf /tmp/torchlean-idx.json
-[artifact] leaf 0 rejected: witness index 3 does not satisfy lb > threshold; witness_margin
-  1.000000 names no witness index in range
-[artifact] Checked 1 leaves: ok=0, bad=1
-error: Artifact failed checks for 1 leaves
-$ echo $?
-1
+```terminal
+lake exe verify -- abcrown-leaf /tmp/torchlean-idx.json
 ```
 
 The diagnostics distinguish containment, prune, and margin failures. An out-of-range index also
@@ -512,12 +490,10 @@ The margin-only edit illustrates why a redundant field can be useful. The lower 
 exceeds its threshold, but the recorded subtraction disagrees with those arrays. That detects an
 inconsistent artifact without asserting that the underlying network is unsafe.
 
-The exit statuses distinguish process completion from acceptance. A caller using these examples
-in a script should read the nonzero status as failure of the requested artifact check, then use
-the diagnostic to identify the field. Status `1` here comes from the Lean checker rejecting
-the edited artifact; status `2` in the earlier example comes from the exporter finding no
-positive witness. Neither status is a counterexample to the underlying network property.
-They identify failures at different points in this data path.
+A caller using these examples in a script should treat a nonzero status as failure of the
+requested artifact check, then use the diagnostic to identify the field. Rejection by the
+exporter or checker identifies inconsistent or insufficient artifact data. It does not provide
+a counterexample to the underlying network property.
 
 # Neural Controllers
 
@@ -545,7 +521,7 @@ part.
   transferring those signs to the Lyapunov functions still assumes `LyapunovCert.ValidFor`, because
   this path does not
   replay the external verifier. Running it needs a `.pth` checkpoint and the producer's Python
-  environment, so it is the one runner this chapter does not execute.
+  environment.
 - {src "NN/MLTheory/CROWN/Lyapunov/TwoStage/PipelineIIHybrid.lean"}[`twostage-hybrid-van-stage2`]
   treats PyTorch as an untrusted initializer. Stage one trains in float32 and exports the
   parameters as raw bit patterns; stage two loads those bits into FloatLib binary32, refines, and
@@ -555,62 +531,35 @@ part.
   `twostage-torchlean-cegis-van`] does initialization, sampled training, PGD-style candidate
   search, refinement, and the final bound check in Lean, with no external stage one at all.
 
-These runner transcripts predate the FloatLib migration; their source and toolchain identities
-are recorded below. The all-in-Lean runner takes no arguments:
+Run the all-in-Lean workflow with its default settings:
 
-```terminal +output
-$ lake exe verify -- twostage-torchlean-cegis-van
-== TwoStage TorchLean CEGIS workflow (IEEE32Exec) ==
-width=100 stage1Steps=1 stage2Rounds=1 pgdSteps=1
-[stage1] step 0: loss=0.020687
-[stage2] round 0: loss=0.144132
-Stage 2 check: IBP + CROWN on the scalar loss over a small box
-lowered IR nodes: 67
-[IBP] scalar loss box dim=1
-[CROWN] loss lo = [-0.000000]
-[CROWN] loss hi = [241.477783]
+```terminal
+lake exe verify -- twostage-torchlean-cegis-van
 ```
 
 The hybrid runner re-exports its stage-one weights when asked:
 
-```terminal +output
-$ lake exe verify -- twostage-hybrid-van-stage2 --stage1
-[stage1] running PyTorch exporter (width=500 steps=10) → _external/van_stage1_w500_bits.json
-[stage1] step=0 loss=0.102408
-[stage1] step=5 loss=0.490164
-Wrote _external/van_stage1_w500_bits.json (width=500)
-== TwoStage Hybrid workflow: Stage1=PyTorch (bits), Stage2=TorchLean (IEEE32Exec) ==
-weights=_external/van_stage1_w500_bits.json width=500 stage2Rounds=1 candidates=1 pgdSteps=1
-[stage2] round 0: lossBefore=0.009320 lossAfterPGD=0.009654
-[stage2] PGD counterexample candidates=1 (positive-loss=1)
-Stage 2 check: IBP + CROWN on the scalar loss over a small box
-lowered IR nodes: 67
-[IBP] scalar loss box dim=1
-[CROWN] loss lo = [-0.000000]
-[CROWN] loss hi = [1017.059021]
+```terminal
+lake exe verify -- twostage-hybrid-van-stage2 --stage1
 ```
 
-Both commands exit successfully, meaning their workflows completed. Their reported bounds do
-not certify the requested Lyapunov conditions.
+Completing either workflow does not by itself establish the requested Lyapunov conditions.
+The conclusion depends on what the computed bounds prove about the penalty.
 
 The objective adds two ReLU hinge penalties: one for the lower bound on the Lyapunov value,
 and one for its required decrease along the dynamics. Each penalty is the positive part of a
 constraint violation. In the exact real interpretation, their nonnegative sum is zero precisely
 when both encoded inequalities hold at that point. To establish those conditions throughout a box,
-one needs a sound upper bound of zero on the real penalty. A rounded zero alone would need an
-arithmetic argument as well. The printed lower bounds near zero do not establish this, and the
-upper bounds of about 241 and 1017 leave the question unresolved.
+one needs a sound upper bound of zero on the real penalty. A rounded zero alone needs an
+arithmetic argument as well. A lower endpoint near zero cannot establish the condition: the
+useful bound must control the upper endpoint throughout the region.
 
-Read the transcript in that order. The stage-one and stage-two losses are sampled training or
-search measurements. `lowered IR nodes: 67` identifies the size of the resulting operation
-graph, not the number of scalar weights. `scalar loss box dim=1` says the verifier is bounding
-one penalty value. The final interval then bounds that penalty according to the selected pass.
-A lower endpoint near zero is unsurprising for a sum of nonnegative hinges; the useful
-certificate would need control of the upper endpoint throughout the region.
-
-These runs demonstrate lowering and in-repository IBP and CROWN bound computation
-{Informal.citep gowal2018}[]{Informal.citep crown2018}[]. An upper bound above zero does not by
-itself provide a violating point or a stability certificate.
+The reports distinguish sampled training and search losses from bounds on the whole box.
+The lowered IR node count describes the operation graph; tensor shapes determine how many
+scalar weights those operations use. The final IBP and CROWN intervals concern the scalar
+penalty over the selected box {Informal.citep gowal2018}[]{Informal.citep crown2018}[].
+An upper bound above zero leaves the encoded condition unresolved. It does not by itself
+provide a violating point.
 
 The hybrid log's “counterexample candidates” are search outputs to inspect. A candidate becomes
 evidence of a violated condition only after evaluating the intended property with the required
@@ -618,43 +567,19 @@ semantics and confirming the violation. The positive-loss count reports the sele
 penalty at the sampled candidates. It does not explain the upper bound on all other states,
 and it is not a proof about trajectories of the dynamical system.
 
-The short stage counts in these transcripts also belong to their interpretation. They exercise
-the workflow with the printed initialization and refinement settings. The outputs do not claim
-that training converged or that a longer run would obtain a useful bound. The remaining question
-is concrete: can the selected model and verifier produce an upper bound small enough to establish
-the encoded condition, together with the semantic and arithmetic evidence needed to trust it?
-
-The two transcripts also record different model widths:
-
-:::table +header
-*
-  * runner
-  * hidden width
-  * IR nodes
-  * CROWN loss upper bound
-*
-  * `twostage-torchlean-cegis-van`
-  * 100
-  * 67
-  * 241.48
-*
-  * `twostage-hybrid-van-stage2`
-  * 500
-  * 67
-  * 1017.06
-:::
-
-The runs differ in weights, initialization, training, and width, so their upper bounds do not
-isolate the effect of any one change. Without a matching lower estimate of the true maximum, the
-numbers alone also do not tell us how loose the bounds are. Branching and refined relaxations, as
-in α,β-CROWN {Informal.citep betacrown2021}[], can improve inconclusive bounds; `auto_LiRPA`
-{Informal.citep autolirpa2020}[] supplies bound propagation across more general graphs. A semantic
-claim still requires the checker-to-model theorem and its arithmetic assumptions.
+To compare verifier bounds, hold the model, parameters, input region, and scalar semantics fixed.
+Changing the network changes the function whose maximum is being bounded. Even for a fixed
+function, an upper bound alone does not reveal its own looseness; a matching lower estimate of
+the maximum helps measure that gap. Branching and refined relaxations, as in α,β-CROWN
+{Informal.citep betacrown2021}[], can improve inconclusive bounds; `auto_LiRPA`
+{Informal.citep autolirpa2020}[] supplies bound propagation across more general graphs. A
+semantic claim still requires the checker-to-model theorem and its arithmetic assumptions.
 
 ## Float32 Parameter Bit Patterns
 
 To check the parameters produced by stage one, stage two must load the same values. The export
-records float32 bit patterns as decimal-encoded `uint32` values:
+records float32 bit patterns as decimal-encoded `uint32` values. For example, two entries of a
+parameter array can be represented as:
 
 ```
 {
@@ -666,15 +591,13 @@ records float32 bit patterns as decimal-encoded `uint32` values:
 }
 ```
 
-In Python those two integers decode with `struct`:
+Python can decode those two integers with `struct`:
 
 ```
->>> # Reinterpret each stored 32-bit pattern as a float,
->>> # preserving its encoding.
->>> import struct
->>> [struct.unpack('<f', struct.pack('<I', b))[0]
-...  for b in (3156207770, 1061300877)]
-[-0.009760046377778053, 0.7584617733955383]
+# Reinterpret each stored 32-bit pattern as a float.
+import struct
+[struct.unpack('<f', struct.pack('<I', b))[0]
+ for b in (3156207770, 1061300877)]
 ```
 
 The Lean side consumes the same integers through `ExecFloat.Binary.ofBits32`. This preserves the
@@ -697,30 +620,19 @@ stored encoding without parsing a decimal approximation:
 0.758462
 ```
 
-The displayed decimals agree to the shown precision, and `ofBits` preserves the supplied 32-bit
-encoding without a decimal-to-float conversion. This establishes how parameter data enter stage
-two. Finiteness, model identity, and the arithmetic used after loading remain separate obligations.
+The Lean examples display six decimal places; `ofBits32` loads the supplied bit patterns without
+parsing those display strings. This establishes how parameter data enter stage two. Finiteness,
+model identity, and the arithmetic used after loading remain separate obligations.
 A decimal export could also be exact if it used a round-trip representation; the raw-bit format
 makes that representation choice explicit. The {ref "fp32-soundness"}[float32 soundness chapter]
 explains the further connection between the bit-level and rounded-real models.
 
 # Coordinate Selection In Verifier Lowering
 
-An earlier lowering path rejected the coordinate selection needed by both runners. Its error
-was:
-
-```terminal +output
-Stage 2 check: IBP + CROWN on the scalar loss over a small box
-error: TorchLean→IR: select is outside the verifier IR fragment
-```
-
 The stage-two loss reads coordinates out of the state vector, `x₁` and `x₂` for the van der Pol
 dynamics, with `Model.select`. The lowering in
-{src "NN/Verification/Builtin/Lowering/Builder.lean"}[`Lowering/Builder.lean`] refused it, grouped
-with `indexSelect` and `scatterAdd` under the heading of gather and scatter operations that the
-verifier fragment does not accept.
-
-The current builder handles `select` on the leading axis by reading the supplied `Fin` index
+{src "NN/Verification/Builtin/Lowering/Builder.lean"}[`Lowering/Builder.lean`]
+handles `select` on the leading axis by reading the supplied `Fin` index
 while constructing the graph. The index is fixed for that graph; having type `Fin` alone does not
 mean a value must be known at elaboration time. Selecting one coordinate becomes a constant one-hot
 projection: take a leading slice of length one, then reshape to remove that axis.
@@ -898,50 +810,24 @@ terms rather than credited by association with the name of an external solver.
 
 # Recording A Run
 
-A useful run record pins down everything the numbers depend on. The transcripts above were
-recorded before the FloatLib migration, with the following identities. Their recorded toolchain
-remains 4.33.0; the current checkout requires 4.34.0 and pinned FloatLib. Rebuilding the current
-examples is a separate validation from preserving this record:
+A useful run record lets another person recover the claim and repeat the check. Keep the raw
+producer dump, the normalized artifact, the exact commands and their outputs, and the source and
+dependency revisions used for that run. The bundled dump above exercises the exporter and
+checker; evaluating an external solver additionally requires its repository revision, Python and
+solver environment, model checkpoint hash, and property file.
 
-:::table +header
-*
-  * field
-  * value
-*
-  * TorchLean commit
-  * `12f5c65`
-*
-  * Lean toolchain
-  * `leanprover/lean4:v4.33.0`
-*
-  * producer
-  * bundled raw dump, no external solver invoked
-*
-  * raw dump
-  * `NN/Examples/Verification/AbCrown/example_raw_leaf_dump.json`
-*
-  * artifact
-  * `/tmp/torchlean-abcrown-artifact.json`
-*
-  * checker
-  * `lake exe verify -- abcrown-leaf <artifact>`
-*
-  * output
-  * `[artifact] Checked 1 leaves: ok=1, bad=0`
-:::
-
-For a real α,β-CROWN run the same table would also carry the verifier repository and commit, the
-Python and solver versions, the model checkpoint hash, the property file, and the dtype, device, and
-numerical flags. A lower-bound vector has no stable meaning once
-the model, the property, or the output-margin convention has changed, and none of those changes are
-visible in the artifact.
+Record the dtype, device, numerical settings, original input region, and meaning of each
+output margin alongside those files. A lower-bound vector changes meaning when the model,
+property, or margin convention changes. The leaf format does not identify all of those inputs,
+so a record outside the artifact must supply them. Reproducing the numbers still leaves the
+semantic proof obligations described below.
 
 # Workflow Limits And Proof Obligations
 
 The leaf workflow checks that exported data satisfy its structural contract. Its current limits
 are concrete:
 
-- *No coverage.* Leaves need not exhaust the root, as the wide-root run above shows.
+- *No coverage.* Leaves need not exhaust the root, as the wide-root example above shows.
 - *No replay.* The lower bounds are read, not recomputed against the network.
 - *No soundness lemma for the predicates.* `boxWithin`, `refutesThreshold`, and
   `refutesThresholdAt` in {src "NN/Verification/Util/Tensor.lean"}[`Util/Tensor.lean`] are `Bool`
@@ -951,6 +837,6 @@ are concrete:
   will not find one yet.
 
 The Lyapunov runners additionally compute bounds on a graph lowered from the trained TorchLean
-program. The reported upper bounds do not settle the penalty condition. A completed controller
-argument needs useful bounds, coverage of the intended region, and proofs connecting the selected
-checker and arithmetic to the Lyapunov hypotheses.
+program. A completed controller argument needs an upper bound establishing the penalty condition,
+coverage of the intended region, and proofs connecting the selected checker and arithmetic to the
+Lyapunov hypotheses.

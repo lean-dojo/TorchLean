@@ -12,7 +12,7 @@ module
 Small vocabulary for backend selection and trust boundaries.
 
 TorchLean owns the spec, graph, and proof-facing contracts. Backends are execution providers for
-parts of that graph: a Lean reference path, the TorchLean runtime, native CUDA kernels, or LibTorch.
+parts of that graph: a Lean reference path, a TorchLean composition, or LibTorch ATen operations.
 This file deliberately contains only data. It should stay cheap to import from specs, runtime
 wrappers, docs generators, and tests.
 -/
@@ -77,7 +77,7 @@ end Device
 inductive Provider where
   | reference
   | torchLean
-  | nativeCuda
+  /-- LibTorch ATen execution; this provider does not imply LibTorch autograd ownership. -/
   | libTorch
   | aten
   | mps
@@ -216,8 +216,9 @@ end BackendOp
 /--
 How much TorchLean knows about an implementation.
 
-`trustedExternal` is allowed, but it is intentionally loud: the contract names the boundary instead
-of silently treating an industrial kernel as though Lean had verified its source.
+`checked` records maintained runtime guards and regression evidence, including for wrappers around
+LibTorch. It is not a proof of an implementation. `trustedExternal` records a boundary accepted
+without that maintained evidence; the assurance policy must explicitly admit it.
 -/
 inductive TrustLevel where
   | checked
@@ -241,16 +242,17 @@ namespace AssurancePolicy
 /--
 Maintained TorchLean runtime policy.
 
-Checked implementations backed by runtime guards and regression evidence are accepted; trusted
-external implementations are not.
+Implementations backed by maintained runtime guards and regression evidence are accepted. This
+includes TorchLean's LibTorch wrappers; it does not verify LibTorch, the FFI, or compiled code.
+Capsules classified as `trustedExternal` and named trusted-boundary evidence are not admitted.
 -/
 def checked : AssurancePolicy := {}
 
 /--
 Explicit external-provider policy.
 
-This is the policy used when a caller deliberately delegates a numerical kernel to LibTorch or
-another external implementation. The selected boundary remains visible in the execution audit.
+This policy also admits capsules and contract descriptors supported by an explicit external
+agreement assumption. The selected boundary remains visible in the execution audit.
 -/
 def external : AssurancePolicy :=
   { allowTrustedExternal := true }
@@ -262,10 +264,13 @@ def acceptsTrust (policy : AssurancePolicy) : TrustLevel → Bool
 
 end AssurancePolicy
 
-/-- How a backend capsule treats gradients. -/
+/-- How a backend capsule supplies a local reverse rule to the TorchLean tape. -/
 inductive VJPMode where
+  /-- No reverse rule is supplied. -/
   | none
+  /-- TorchLean composes the local VJP from runtime operations. -/
   | torchLeanTape
+  /-- The native bridge supplies the selected local VJP, without recording an autograd graph. -/
   | backendVJP
   deriving DecidableEq, Repr
 

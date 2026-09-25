@@ -272,12 +272,12 @@ def sgd {α : Type} [TorchLean.Storage α] [Context α]
     trainerStep? := fun {_β} _ {_inputShapes _dataInputShapes} tr st xs dataInputs => do
       let currentLearningRate :=
         Internal.firstStateValue learningRate (fun state => state.learningRate) st
-      Torch.ScalarTrainer.runStep tr currentLearningRate xs dataInputs
+      Torch.ScalarTrainer.step tr currentLearningRate xs dataInputs
       pure (some st)
     trainerStepWithLoss? := fun {_β} _ {_inputShapes _dataInputShapes} tr st xs dataInputs => do
       let currentLearningRate :=
         Internal.firstStateValue learningRate (fun state => state.learningRate) st
-      let loss ← Torch.ScalarTrainer.runStepWithLoss tr currentLearningRate xs dataInputs
+      let loss ← Torch.ScalarTrainer.step tr currentLearningRate xs dataInputs (loss := true)
       pure (some { optimizerState := st, loss := loss })
     trainerBatchStep? := fun tr st batch readLoss =>
       Internal.nativeBatchStep
@@ -354,14 +354,14 @@ PyTorch analogy: `torch.optim.Adam(lr=lr, betas=(beta1,beta2), eps=epsilon)`.
 def adam {α : Type} [TorchLean.Storage α] [Context α]
     (learningRate beta1 beta2 epsilon : α)
     {paramShapes : List Shape} : Optimizer α paramShapes :=
-  { State := StateList Optim.Adam.State α paramShapes
+  { State := StateList (fun _ _ => Optim.Adam.State α) α paramShapes
     init := fun ps =>
-      Internal.initStateList (α := α) (State := Optim.Adam.State)
+      Internal.initStateList (α := α) (State := fun _ _ => Optim.Adam.State α)
         (initOne := fun {s} t =>
           Optim.Adam.init
             (α := α) (s := s) learningRate beta1 beta2 epsilon t) ps
     step := fun st ps grads =>
-      Internal.stepStateList (α := α) (State := Optim.Adam.State)
+      Internal.stepStateList (α := α) (State := fun _ _ => Optim.Adam.State α)
         (updateOne := fun {s} stOne params g => Optim.Adam.update (α := α) (s := s) stOne
           params g)
         ps st grads
@@ -406,14 +406,14 @@ PyTorch analogy: `torch.optim.AdamW(lr=lr, weight_decay=weightDecay, betas=(beta
 def adamw {α : Type} [TorchLean.Storage α] [Context α]
     (learningRate weightDecay beta1 beta2 epsilon : α)
     {paramShapes : List Shape} : Optimizer α paramShapes :=
-  { State := StateList Optim.AdamW.State α paramShapes
+  { State := StateList (fun _ _ => Optim.AdamW.State α) α paramShapes
     init := fun ps =>
-      Internal.initStateList (α := α) (State := Optim.AdamW.State)
+      Internal.initStateList (α := α) (State := fun _ _ => Optim.AdamW.State α)
         (initOne := fun {s} t =>
           Optim.AdamW.init
             (α := α) (s := s) learningRate weightDecay beta1 beta2 epsilon t) ps
     step := fun st ps grads =>
-      Internal.stepStateList (α := α) (State := Optim.AdamW.State)
+      Internal.stepStateList (α := α) (State := fun _ _ => Optim.AdamW.State α)
         (updateOne := fun {s} stOne params g => Optim.AdamW.update (α := α) (s := s) stOne
           params g)
         ps st grads

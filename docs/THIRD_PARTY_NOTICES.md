@@ -27,8 +27,9 @@ After `lake update`, their license files are available under `.lake/packages/` a
 | doc-gen4 | Generates the API documentation built with `lake build NN:docs`. | Source project: `leanprover/doc-gen4`, Apache-2.0 licensed. |
 | Verso, VersoBlueprint, SubVerso, Illuminate | Build the TorchLean guide/blueprint documentation. | Upstream Lean documentation tooling. |
 | Lean4Checker | Optional kernel-level checking infrastructure used by verification workflows. | Upstream Lean project pinned in the Lake manifests. |
-| CUDA toolkit, cuBLAS, cuFFT | Optional external NVIDIA libraries used when building with `lake build -K cuda=true`. | Users provide their own CUDA installation. |
-| PyTorch, ATen, libtorch, ONNX tooling | Optional runtime/import/export providers for checkpoints, graph capture, IR exchange, and fast forward kernels. | PyTorch/ATen/libtorch and ONNX remain external systems; TorchLean checks imported JSON/IR artifacts and documents runtime trust boundaries separately. |
+| CUDA toolkit and NVIDIA runtime libraries | Dependencies of the selected CUDA-enabled LibTorch SDK when building with `scripts/lake.sh -Kcuda=true build`. | Users provide a compatible SDK and toolkit installation. |
+| LibTorch and ATen | CUDA tensor evaluation and local gradient operations, called by TorchLean's differentiation tape. | External C++ SDK; its bundled dependencies and license notices accompany the selected distribution. |
+| PyTorch and ONNX tooling | Checkpoint exchange, graph capture, and IR import/export. | External systems; TorchLean checks imported JSON/IR artifacts and documents their trust boundaries separately. |
 | Jekyll and Ruby gems | Website build tooling for `home_page/`. | Used to build the public site. |
 
 ## Local Data Policy

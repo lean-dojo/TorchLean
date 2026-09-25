@@ -425,10 +425,10 @@ instance search, not a separate code path.
 # Naming And Dot Syntax
 
 Dot syntax is used when the value before the dot is the natural subject of the operation:
-`tensor.reshape`, `module.run`, `trainer.train`, `trained.predict`, and
+`tensor.reshape`, `module.forward`, `trainer.train`, `trained.predict`, and
 `result.printSummary`. The reshape above was written `apiV1.reshape [3, 1]` for exactly that
 reason. A leading dot is used for a choice whose expected type is already known, such as `.native`,
-`.eager`, or `.meanSquaredError`; the type checker knows which enumeration is meant, so repeating
+`.eager`, or `.mse`; the type checker knows which enumeration is meant, so repeating
 its name would be noise.
 
 Ordinary application code does not construct shapes through recursive representation constructors;
@@ -471,7 +471,7 @@ def apiData := Data.fromTensors apiXs apiYs
 
 def apiTrainer :=
   Trainer.new apiModel
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       arithmetic := .native
       execution := .eager
@@ -642,19 +642,13 @@ def apiTypo :
   ]
 ```
 ```leanOutput apiTypo (whitespace := lax)
-Application type mismatch: The argument
-  bc✝
-has type
-  nn.Sequential (Shape.appendDim [] 7) (Shape.appendDim [] 1)
-but is expected to have type
-  ?m.67 a✝ __r✝¹ bc✝ __r✝ (Shape.appendDim [] 8) [1]
-in the application
-  nn.compose a✝ bc✝
+nn.Sequential!: layer 2 expects input shape [7], but layer 1 outputs [8].
+Change layer 2's input shape or insert a layer that converts [8] to [7].
 ```
 
-The error identifies the failed composition: the final layer expects width `7`, while the
-preceding layer produces width `8`. Lean finds this mismatch from the model definition alone,
-before a forward pass, data loading, or parameter initialization.
+The final layer fixes ReLU's shape at `[7]`, which cannot follow the first layer's `[8]` output.
+The error therefore points to layer 2, the ReLU. Lean finds this mismatch from the model
+definition alone, before a forward pass, data loading, or parameter initialization.
 
 The layer constructor's signature explains the shapes in the error:
 
@@ -738,7 +732,7 @@ def typedGraphCpu : Trainer.RunConfig :=
 def configuredTrainer :=
   Trainer.new model
     (Trainer.RunConfig.forObjective
-      typedGraphCpu .meanSquaredError
+      typedGraphCpu .mse
       (seed := 2026))
 ```
 
@@ -800,10 +794,11 @@ binary64 type. The dataset builder converts those values once the trainer select
 semantics. This is an input boundary, not a claim that training itself uses binary64.
 
 For a different precision, choose a FloatLib binary format directly in typed tensors, state and
-graphs. The CPU path supports binary128 and custom valid binary widths through the same
-`nn.sgdStep` interface. The supervised trainer still exchanges `Float` data, reports and
-checkpoints;
-its `.ieee` setting does not select an arbitrary width.
+graphs. The CPU path supports binary128 and custom valid binary widths through `nn.sgdStep`
+or a supervised `trainer.openTyped (α := α)` session. Typed sessions preserve samples, state,
+losses, predictions, and checkpoint encodings. Supply typed `initialState?` when the parameters
+need digits beyond the model's stored seeded `Float` values. The ordinary trainer's `.ieee`
+setting selects binary32; it does not select an arbitrary width.
 
 Proofs choose `ℝ` or `TorchLean.Floats.FP32` directly. They are not runtime modes because
 they are noncomputable. The high-level trainer accepts the real runtime modes. For a real loss on
@@ -1081,7 +1076,7 @@ The exported families deliberately expose different amounts of fitting and infer
   * Current boundary
 *
   * kNN
-  * nearest neighbors, classification, regression, confidence, and batch mapping
+  * nearest neighbors, classification, regression, and confidence
   * lazy stored-data model; no learned index or metric
 *
   * random forest

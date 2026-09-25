@@ -61,21 +61,9 @@ export Runtime.Autograd.Torch
 -- `TorchLean.Session` is defined in `NN.Runtime.Autograd.Model.Session` and is available
 -- automatically via the import above.
 
-/-! ## Training helpers -/
-
-export Runtime.Autograd.Torch
-  (trainCycleSGD meanLoss)
-
 namespace Init
 export Runtime.Autograd.Torch.Init (Scheme tensor xavierUniform kaimingUniform)
 end Init
-
-namespace ScalarTrainer
-
-export Runtime.Autograd.Torch.ScalarTrainer
-  (runLoss runDiff runGrad runStep)
-
-end ScalarTrainer
 
 /-! ## Optimizers -/
 export Runtime.Autograd.Model.Optim (StateList Optimizer)

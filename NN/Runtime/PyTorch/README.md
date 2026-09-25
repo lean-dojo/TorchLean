@@ -58,7 +58,7 @@ theorem Wire.parse_op_kind (kind : OpKind) (h : kind.opTag.hasAttributes = false
 
 Operators with axes, shapes, or convolution geometry parse their tag first and then read those
 attributes. Tensor parameters, including the weights of `.linear`, come from the payload store.
-Value-graph markers (`tuple_getitem`, `multihead_attention`, the legacy `py_tuple`) and the format
+Value-graph markers (`tuple_getitem`, `multihead_attention`) and the format
 marker also live in `Wire`.
 
 The PyTorch adapter matches complete ATen overload names and explicit FX callables or methods.

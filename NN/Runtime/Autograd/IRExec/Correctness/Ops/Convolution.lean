@@ -122,7 +122,7 @@ theorem buildFrom_denoteAllFrom_conv
           let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
             mkForwardNode (fun context =>
               let input : Tensor α payloadShape :=
-                Tensor.castShape (getIdx (α := α) (xs := context) parentIdx) hInput
+                Tensor.castShape (readTensor (α := α) (xs := context) parentIdx) hInput
               let output : Tensor α (params.output leading) :=
                 Tensor.mapLeading leading
                   (Spec.groupedConvSpec (α := α) (stride := params.stride)

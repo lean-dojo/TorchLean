@@ -11,16 +11,16 @@ Usage: scripts/checks/check.sh [options]
 
 Run TorchLean's local verification gate.
 
-Default:
-  scripts/lake.sh build
-  scripts/lake.sh test
-  scripts/lake.sh lint
+Default (CPU profile):
+  scripts/lake.sh -R -K cuda=false build
+  scripts/lake.sh -R -K cuda=false test
+  scripts/lake.sh -R -K cuda=false lint
 
 Options:
   --ci-all              Also build NN.CI.All, the broad developer/CI import umbrella.
-  --cuda                Build and test with real CUDA externs (-R -K cuda=true).
-  --cuda-home PATH      CUDA toolkit root; implies --cuda.
-  --cuda-arch ARCH      CUDA target (default: all-major); implies --cuda.
+  --cuda                Build and test the LibTorch CUDA backend; require a visible GPU.
+  --libtorch-home PATH   LibTorch SDK root (-K libtorch_home=PATH); implies --cuda.
+  --cuda-home PATH       CUDA development toolkit for SDK CMake discovery; implies --cuda.
   --no-build            Skip lake build.
   --no-test             Skip lake test.
   --no-lint             Skip lake lint.
@@ -28,12 +28,15 @@ Options:
 
 Environment:
   LAKE                  Lake command to use (default: scripts/lake.sh).
+  TORCHLEAN_LIBTORCH_HOME
+                        SDK root when --libtorch-home is omitted (otherwise libtorch/).
+                        See scripts/README.md for C++ compiler and CMake controls.
 
 Examples:
   scripts/checks/check.sh
   scripts/checks/check.sh --ci-all
+  scripts/checks/check.sh --libtorch-home /opt/libtorch
   scripts/checks/check.sh --cuda --cuda-home /usr/local/cuda
-  scripts/checks/check.sh --cuda-arch sm_80
   LAKE=~/.elan/bin/lake scripts/checks/check.sh --ci-all
 EOF
 }
@@ -43,8 +46,19 @@ run_test=true
 run_lint=true
 run_ci_all=false
 cuda=false
+libtorch_home=""
 cuda_home=""
-cuda_arch=""
+
+path_argument() {
+  local value="${2:-}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  if [[ -z "$value" || "$value" == -* ]]; then
+    echo "error: $1 requires a directory path" >&2
+    exit 2
+  fi
+  printf '%s\n' "$value"
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -56,22 +70,14 @@ while [[ $# -gt 0 ]]; do
       cuda=true
       shift
       ;;
-    --cuda-home)
-      if [[ $# -lt 2 ]]; then
-        echo "error: --cuda-home requires a path" >&2
-        exit 2
-      fi
+    --libtorch-home)
+      libtorch_home="$(path_argument "$1" "${2:-}")"
       cuda=true
-      cuda_home="$2"
       shift 2
       ;;
-    --cuda-arch)
-      if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
-        echo "error: --cuda-arch requires a target such as all-major or sm_80" >&2
-        exit 2
-      fi
+    --cuda-home)
+      cuda_home="$(path_argument "$1" "${2:-}")"
       cuda=true
-      cuda_arch="$2"
       shift 2
       ;;
     --no-build)
@@ -99,18 +105,19 @@ while [[ $# -gt 0 ]]; do
 done
 
 cd "$repo_root"
-lake_flags=()
+lake_flags=(-R -K cuda=false)
 
-# CUDA builds need both Lake's reconfiguration flag (`-R`) and the TorchLean package
-# option selecting native CUDA externs. Keep toolkit and architecture options
-# together for every invocation; Lake validates the target and tracks the compiler.
+# Repeat the backend and SDK options for every invocation, including custom LAKE commands
+# that do not provide scripts/lake.sh's automatic reconfiguration and profile selection.
 if [[ "$cuda" == true ]]; then
-  lake_flags+=("-R" "-K" "cuda=true")
+  # A requested GPU check must also reject an accidentally linked CPU-stub executable.
+  export TORCHLEAN_REQUIRE_CUDA=1
+  lake_flags=(-R -K cuda=true)
+  if [[ -n "$libtorch_home" ]]; then
+    lake_flags+=("-K" "libtorch_home=$libtorch_home")
+  fi
   if [[ -n "$cuda_home" ]]; then
     lake_flags+=("-K" "cuda_home=$cuda_home")
-  fi
-  if [[ -n "$cuda_arch" ]]; then
-    lake_flags+=("-K" "cuda_arch=$cuda_arch")
   fi
 fi
 
@@ -127,19 +134,19 @@ run() {
 }
 
 if [[ "$run_build" == true ]]; then
-  run "build" "$LAKE" build "${lake_flags[@]}"
+  run "build" "$LAKE" "${lake_flags[@]}" build
 fi
 
 if [[ "$run_ci_all" == true ]]; then
-  run "ci-all" "$LAKE" build "${lake_flags[@]}" NN.CI.All
+  run "ci-all" "$LAKE" "${lake_flags[@]}" build NN.CI.All
 fi
 
 if [[ "$run_test" == true ]]; then
-  run "test" "$LAKE" test "${lake_flags[@]}"
+  run "test" "$LAKE" "${lake_flags[@]}" test
 fi
 
 if [[ "$run_lint" == true ]]; then
-  run "lint" "$LAKE" lint "${lake_flags[@]}"
+  run "lint" "$LAKE" "${lake_flags[@]}" lint
 fi
 
 printf '\nTorchLean local check passed.\n'

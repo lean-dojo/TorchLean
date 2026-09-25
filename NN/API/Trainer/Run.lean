@@ -105,7 +105,7 @@ def executionSettings (run : RunConfig) : Runtime.Config :=
 /-- Attach a training objective and initialization seed to these run settings. -/
 def forObjective {σ τ : Shape}
     (run : RunConfig)
-    (objective : Objective τ := .meanSquaredError)
+    (objective : Objective τ := .mse)
     (seed : Nat := 0) :
     Config σ τ :=
   { run with objective := objective, seed := seed }

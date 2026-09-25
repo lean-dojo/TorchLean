@@ -36,7 +36,7 @@ def select {α : Type} [TorchLean.Storage α] [Zero α]
   let node : Node α :=
     { name := some s!"select(axis={axis}, index={index.val})"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s.eraseAxis axis) dLdyAny
@@ -53,7 +53,7 @@ def indexSelect {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
   let node : Node α :=
     { name := some s!"index_select(axis={axis})"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s.replaceAxis axis count) dLdyAny
@@ -73,7 +73,9 @@ def scatterAdd {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
   let node : Node α :=
     { name := some s!"scatter_add(axis={axis})"
       value := Spec.SomeTensor.ofTensor y
-      requiresGrad := true
+      requiresGrad :=
+        (t.getNode? baseId).any (·.requiresGrad) ||
+        (t.getNode? sourceId).any (·.requiresGrad)
       parents := #[baseId, sourceId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s) dLdyAny

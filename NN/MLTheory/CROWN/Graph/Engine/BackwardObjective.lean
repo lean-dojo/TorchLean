@@ -17,10 +17,11 @@ local relaxations from the sign of the downstream coefficients.
 
 For exact scalar backends, the coefficient transformations are ordinary algebraic identities. For
 rounded scalar backends, TorchLean carries intervals for the coefficients and evaluates every
-coefficient product and sum outwards through `BoundOps`. This is the executable enclosure
-algorithm; its regression tests compare the result with directed IBP. An end-to-end theorem for the
-rounded backward pass remains separate work, as does any claim relating a host runtime's evaluation
-order to the reassociated backward expression.
+coefficient product and sum outwards through `BoundOps`. The `DirectedBackward` proof modules
+establish enclosure for the reverse sweep, its public fallback, and final interval evaluation,
+under lawful directed arithmetic, real stored-parameter graph equations, and enclosing IBP boxes.
+Relating a separate host runtime's evaluation order to this real graph requires an additional
+runtime-approximation theorem.
 -/
 
 public section
@@ -36,6 +37,7 @@ variable {α : Type} [TorchLean.Storage α] [Context α]
 variable [BoundOps α]
 
 open BoundOps
+open NN.MLTheory.CROWN.Graph.Internal
 
 /-!
 The backward pass covers the same verifier dialect as `runCROWN` where objective-dependent
@@ -48,7 +50,7 @@ Which end of the objective enclosure a backward sweep is computing.
 Every relaxation choice below branches on this, because a lower bound wants the pessimistic
 endpoint of each local relaxation and an upper bound the optimistic one.
 -/
-private inductive BackwardDir where
+inductive Internal.BackwardDir where
   /-- Compute a lower bound on the objective. -/
   | lower
   /-- Compute an upper bound on the objective. -/
@@ -103,7 +105,8 @@ Coordinatewise, the endpoint of the box that extremizes `aY i * y i` is selected
 the coefficient, and the products are accumulated with directed rounding. The result is therefore
 sound even though the objective is not pushed any further back.
 -/
-private def consumeObjectiveFromBox (dir : BackwardDir) (aY : FlatTensor α) (B : FlatBox α) :
+@[expose] def Internal.consumeObjectiveFromBox
+    (dir : BackwardDir) (aY : FlatTensor α) (B : FlatBox α) :
     Option α :=
   if h : aY.n = B.dim then
     let aYv : Tensor α [B.dim] :=
@@ -144,12 +147,13 @@ private def addConstant (dir : BackwardDir) (st : BackwardState α) (c : α) : B
       | .upper => BoundOps.addUp st.cst c }
 
 /-- Regard a scalar objective enclosure as an affine form with zero input coefficients. -/
-private def constantObjectiveAffine (inputDim : Nat) (c : α) : AffineVec α inputDim 1 :=
+@[expose] def Internal.constantObjectiveAffine
+    (inputDim : Nat) (c : α) : AffineVec α inputDim 1 :=
   { A := Tensor.full (α := α) (.dim 1 (.dim inputDim .scalar)) 0
     c := Tensor.dim (fun _ => Tensor.scalar c) }
 
 /-- Bound an objective directly from the output box, without affine reassociation. -/
-private def objectiveFromOutputBox
+@[expose] def Internal.objectiveFromOutputBox
     (dir : BackwardDir) (ibp : Array (Option (FlatBox α)))
     (outputId inputDim : Nat) (obj : FlatTensor α) : Option (AffineVec α inputDim 1) := do
   let some outputBox := ibp[outputId]?
@@ -174,7 +178,7 @@ correction accounts for the coefficient endpoint that was not selected.
 /--
 Accumulator for the directed sweep: an interval coefficient per node and a two-sided constant.
 -/
-private structure DirectedBackwardState (α : Type) [TorchLean.Storage α] [Context α] where
+structure Internal.DirectedBackwardState (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Interval coefficients per node; `none` for nodes the objective has not reached yet. -/
   coeffs : Array (Option (FlatBox α))
   /-- Lower end of the accumulated constant term. -/
@@ -185,16 +189,16 @@ private structure DirectedBackwardState (α : Type) [TorchLean.Storage α] [Cont
   failed : Bool := false
 
 /-- Mark the directed sweep as failed. -/
-private def DirectedBackwardState.fail
+@[expose] def Internal.DirectedBackwardState.fail
     (st : DirectedBackwardState α) : DirectedBackwardState α :=
   { st with failed := true }
 
 /-- View an exact coefficient vector as a degenerate interval coefficient. -/
-private def pointCoeffBox (v : FlatTensor α) : FlatBox α :=
+@[expose] def Internal.pointCoeffBox (v : FlatTensor α) : FlatBox α :=
   { dim := v.n, lo := v.v, hi := v.v }
 
 /-- Outward-rounded interval product: all four endpoint products, then the min and the max. -/
-private def directedIntervalMul (aLo aHi bLo bHi : α) : α × α :=
+@[expose] def Internal.directedIntervalMul (aLo aHi bLo bHi : α) : α × α :=
   let p1Lo := BoundOps.mulDown aLo bLo
   let p2Lo := BoundOps.mulDown aLo bHi
   let p3Lo := BoundOps.mulDown aHi bLo
@@ -207,7 +211,7 @@ private def directedIntervalMul (aLo aHi bLo bHi : α) : α × α :=
     max2 (max2 p1Hi p2Hi) (max2 p3Hi p4Hi))
 
 /-- Accumulate an interval coefficient into node `pid`, adding outwards on both ends. -/
-private def addDirectedCoeff
+@[expose] def Internal.addDirectedCoeff
     (st : DirectedBackwardState α) (pid : Nat) (v : FlatBox α) :
     DirectedBackwardState α :=
   match st.coeffs[pid]! with
@@ -227,13 +231,13 @@ private def addDirectedCoeff
         st.fail
 
 /-- Negate an interval coefficient, which swaps its two endpoints. -/
-private def negateDirectedCoeff (v : FlatBox α) : FlatBox α :=
+@[expose] def Internal.negateDirectedCoeff (v : FlatBox α) : FlatBox α :=
   { dim := v.dim
     lo := Tensor.mapSpec (fun x => BoundOps.subDown 0 x) v.hi
     hi := Tensor.mapSpec (fun x => BoundOps.subUp 0 x) v.lo }
 
 /-- Outward-rounded interval inner product, or `none` on a length mismatch. -/
-private def directedDotBox (a b : FlatBox α) : Option (α × α) :=
+@[expose] def Internal.directedDotBox (a b : FlatBox α) : Option (α × α) :=
   if h : a.dim = b.dim then
     let bLo : Tensor α [a.dim] :=
       castDimScalar (α := α) (n := b.dim) (n' := a.dim) h.symm b.lo
@@ -250,14 +254,14 @@ private def directedDotBox (a b : FlatBox α) : Option (α × α) :=
     none
 
 /-- Accumulate a two-sided constant contribution, rounding each end outwards. -/
-private def addDirectedConstant
+@[expose] def Internal.addDirectedConstant
     (st : DirectedBackwardState α) (cLo cHi : α) : DirectedBackwardState α :=
   { st with
     cstLo := BoundOps.addDown st.cstLo cLo
     cstHi := BoundOps.addUp st.cstHi cHi }
 
 /-- Discharge an active interval objective against a node's directed IBP box. -/
-private def consumeDirectedObjective
+@[expose] def Internal.consumeDirectedObjective
     (st : DirectedBackwardState α) (aY By : FlatBox α) : DirectedBackwardState α :=
   match directedDotBox (α := α) aY By with
   | some (lo, hi) => addDirectedConstant (α := α) st lo hi
@@ -269,7 +273,7 @@ Push an interval objective back through `y = W x + b`.
 The coefficient for input `j` is the interval sum of the products `aY i * W i j`, and the bias
 contributes a two-sided constant.
 -/
-private def directedBackwardLinear {m n : Nat}
+@[expose] def Internal.directedBackwardLinear {m n : Nat}
     (aY : FlatBox α) (W : Tensor α [m, n])
     (b : Tensor α [m]) : Option (FlatBox α × (α × α)) :=
   if h : aY.dim = m then
@@ -293,23 +297,16 @@ private def directedBackwardLinear {m n : Nat}
   else
     none
 
-/-- Split an interval coefficient of length `n1 + n2` at the concatenation boundary. -/
-private def splitDirectedCoeff
-    (aY : FlatBox α) (n1 n2 : Nat) : Option (FlatBox α × FlatBox α) :=
-  if h : aY.dim = n1 + n2 then
-    let lo : Tensor α [n1 + n2] :=
-      castDimScalar (α := α) (n := aY.dim) (n' := n1 + n2) h aY.lo
-    let hi : Tensor α [n1 + n2] :=
-      castDimScalar (α := α) (n := aY.dim) (n' := n1 + n2) h aY.hi
-    let first : FlatBox α :=
-      { dim := n1
-        lo := Tensor.dim (fun i => Tensor.scalar (getAtOrZero lo [i.val]))
-        hi := Tensor.dim (fun i => Tensor.scalar (getAtOrZero hi [i.val])) }
-    let second : FlatBox α :=
-      { dim := n2
-        lo := Tensor.dim (fun i => Tensor.scalar (getAtOrZero lo [n1 + i.val]))
-        hi := Tensor.dim (fun i => Tensor.scalar (getAtOrZero hi [n1 + i.val])) }
-    some (first, second)
+/-- Split interval coefficients into parent occurrences using the concat coordinate map. -/
+@[expose] def Internal.splitDirectedCoeff (layout : ConcatLayout) (aY : FlatBox α) :
+    Option (Array (FlatBox α)) :=
+  if h : aY.dim = layout.outputShape.size then
+    let lo := castDimScalar h aY.lo
+    let hi := castDimScalar h aY.hi
+    some <| (Array.finRange layout.lengths.length).map fun parent =>
+      { dim := (layout.parentShape parent).size
+        lo := layout.split lo parent
+        hi := layout.split hi parent }
   else
     none
 
@@ -422,34 +419,35 @@ private def backwardLinear {m n : Nat}
   else
     none
 
-/-- Addition hands the objective to both parents unchanged. -/
-private def backwardAdd (aY : FlatTensor α) : FlatTensor α := aY
-
-/-- The left operand of a subtraction receives the objective unchanged. -/
-private def backwardSubLeft (aY : FlatTensor α) : FlatTensor α := aY
-
 /-- The right operand of a subtraction receives the negated objective. -/
 private def backwardSubRight (aY : FlatTensor α) : FlatTensor α :=
   flatTensorScale (α:=α) (k := (-1)) aY
 
-/-- Split an objective of length `n1 + n2` back into the two concatenated parents. -/
-private def backwardConcatSplit
-  (aY : FlatTensor α) (n1 n2 : Nat) : Option (FlatTensor α × FlatTensor α) :=
-  if h : aY.n = n1 + n2 then
-    let aYv : Tensor α [n1 + n2] :=
-      castDimScalar (α := α) (n := aY.n) (n' := n1 + n2) h aY.v
-    let a1 : Tensor α [n1] :=
-      Tensor.dim (fun i =>
-        Tensor.scalar (getAtOrZero aYv [i.val]))
-    let a2 : Tensor α [n2] :=
-      Tensor.dim (fun i =>
-        Tensor.scalar (getAtOrZero aYv [n1 + i.val]))
-    some ({ n := n1, v := a1 }, { n := n2, v := a2 })
+/-- Split an objective into parent occurrences using the concat coordinate map. -/
+private def backwardConcatSplit (layout : ConcatLayout) (aY : FlatTensor α) :
+    Option (Array (FlatTensor α)) :=
+  if h : aY.n = layout.outputShape.size then
+    let value := castDimScalar h aY.v
+    some <| (Array.finRange layout.lengths.length).map fun parent =>
+      { n := (layout.parentShape parent).size, v := layout.split value parent }
   else
     none
 
+/-- Check parent boxes as well as graph geometry before routing a concat objective. -/
+@[expose] def Internal.concatBackwardLayout? (nodes : Array Node) (ibp : Array (Option (FlatBox α)))
+    (node : Node) (axis : Nat) : Option ConcatLayout := do
+  let layout ← concatNodeLayout? nodes node axis
+  unless node.parents.size == layout.lengths.length do failure
+  let parents : Fin layout.lengths.length → FlatBox α ←
+    Tensor.Internal.sequenceFinM fun parent => do
+      let id ← node.parents[parent.val]?
+      (ibp[id]?).join
+  unless (Array.finRange layout.lengths.length).all
+      (fun parent => (parents parent).dim == (layout.parentShape parent).size) do failure
+  pure layout
+
 /-- Reindex a flat vector by a permutation of its coordinates. -/
-private def backwardPermuteVec {n : Nat} (perm : Fin n → Fin n) (v : Tensor α [n]) :
+@[expose] def Internal.backwardPermuteVec {n : Nat} (perm : Fin n → Fin n) (v : Tensor α [n]) :
   Tensor α [n] :=
   Tensor.ofFn fun i => Tensor.getScalar v (perm i)
 
@@ -464,7 +462,7 @@ private def backwardAxisPermutation? (outputShape : Shape) (forwardPerm : Array 
     pure { n := aY.n, v := backwardPermuteVec (α := α) flatPerm aY.v }
 
 /-- Pull interval coefficients back through a permutation without scalar arithmetic. -/
-private def directedAxisPermutation? (outputShape : Shape) (forwardPerm : Array Nat)
+@[expose] def Internal.directedAxisPermutation? (outputShape : Shape) (forwardPerm : Array Nat)
     (aY : FlatBox α) : Option (FlatBox α) := do
   if aY.dim = 0 then
     pure aY
@@ -487,49 +485,22 @@ private def backwardMatmul
   (aZ : FlatTensor α) (Bx By : FlatBox α)
   (sA sB : Shape) :
   Option ((FlatTensor α) × (FlatTensor α) × α) :=
-  let dims? : Option (Nat × Nat × Nat × Nat) :=
-    match sA, sB with
-    | .dim m (.dim k .scalar), .dim k' (.dim n .scalar) =>
-      if k = k' then
-        some (1, m, k, n)
-      else
-        none
-    | .dim b (.dim m (.dim k .scalar)), .dim b' (.dim k' (.dim n .scalar)) =>
-      if hb : b = b' then
-        match hb with
-        | rfl =>
-          if k = k' then
-            some (b, m, k, n)
-          else
-            none
-      else
-        none
-    | _, _ => none
-  match dims? with
+  match (OpContracts.matmulDims sA sB).toOption with
   | none => none
-  | some (batch, m, k, n) =>
-    let dimA := batch * m * k
-    let dimB := batch * k * n
-    let outDim := batch * m * n
+  | some dims =>
+    let dimA := sA.size
+    let dimB := sB.size
+    let outDim := dims.outShape.size
     if aZ.n = outDim ∧ Bx.dim = dimA ∧ By.dim = dimB then
       let (aArr, bArr, cst) : Array α × Array α × α := Id.run do
         let mut aArr : Array α := Array.replicate dimA 0
         let mut bArr : Array α := Array.replicate dimB 0
         let mut cst : α := 0
-        let block : Nat := m * n
-        let strideA : Nat := m * k
-        let strideB : Nat := k * n
         for outIdx in List.range outDim do
           let az : α := getAtOrZero aZ.v [outIdx]
-          let bi := outIdx / block
-          let rem := outIdx % block
-          let i := rem / n
-          let j := rem % n
-          let baseA := bi * strideA
-          let baseB := bi * strideB
-          for kk in List.range k do
-            let aIdx := baseA + i * k + kk
-            let bIdx := baseB + kk * n + j
+          for kk in List.range dims.inner do
+            let aIdx := dims.leftIndex outIdx kk
+            let bIdx := dims.rightIndex outIdx kk
             let lx := getAtOrZero Bx.lo [aIdx]
             let ux := getAtOrZero Bx.hi [aIdx]
             let ly := getAtOrZero By.lo [bIdx]
@@ -766,13 +737,13 @@ private def backwardNode (dir : BackwardDir)
     | .add =>
       match node.parents with
       | #[p1, p2] =>
-        let st1 := addCoeff (α:=α) st p1 (backwardAdd (α:=α) aY)
-        addCoeff (α:=α) st1 p2 (backwardAdd (α:=α) aY)
+        let st1 := addCoeff (α:=α) st p1 aY
+        addCoeff (α:=α) st1 p2 aY
       | _ => st.fail
     | .sub =>
       match node.parents with
       | #[p1, p2] =>
-        let st1 := addCoeff (α:=α) st p1 (backwardSubLeft (α:=α) aY)
+        let st1 := addCoeff (α:=α) st p1 aY
         addCoeff (α:=α) st1 p2 (backwardSubRight (α:=α) aY)
       | _ => st.fail
     | .randUniform _ | .bernoulliMask _ | .abs | .sqrt | .sin | .cos | .maxElem |
@@ -835,28 +806,22 @@ private def backwardNode (dir : BackwardDir)
           | none => st.fail
         | none => st.fail
       | _ => st.fail
-    | .conv .. =>
-      if !crownNodeSemanticsSupported (α := α) nodes ps id then
-        st.fail
-      else
-        match node.parents with
-        | #[p1] =>
-          match ps.convCfg[id]? with
-          | some config =>
-            let inShape :=
-              Shape.ofList (config.inChannels :: Tensor.to config.inputSpatial (List Nat))
-            let outSpatial :=
-              Spec.convOutSpatial config.inputSpatial config.kernel config.stride config.padding
-            let outShape := Shape.ofList (config.outChannels :: Tensor.to outSpatial (List Nat))
-            let convAff := affOfConv (α:=α) config
-            match backwardLinear (α:=α) (m:=outShape.size) (n:=inShape.size) aY convAff.A
-              convAff.c with
+    | .conv configuration =>
+      match node.parents with
+      | #[p1] =>
+        match ps.convCfg[id]?, nodes[p1]? with
+        | some config, some parent =>
+          match planConvTransfer? configuration config parent.outShape node.outShape with
+          | some leading =>
+            let convAff := affOfConv (α := α) config leading
+            match backwardLinear (α := α) aY convAff.A convAff.c with
             | some (aX, cadd) =>
-              let st' := addCoeff (α:=α) st p1 aX
+              let st' := addCoeff (α := α) st p1 aX
               addConstant (α := α) dir st' cadd
             | none => st.fail
           | none => st.fail
-        | _ => st.fail
+        | _, _ => st.fail
+      | _ => st.fail
     | .layernorm _ =>
       if !crownNodeSemanticsSupported (α := α) nodes ps id then
         st.fail
@@ -908,20 +873,15 @@ private def backwardNode (dir : BackwardDir)
       | #[p1] => addCoeff (α:=α) st p1 aY
       | _ => st.fail
     | .concat axis =>
-      if axis != 0 then
-        st.fail
-      else
-        match node.parents with
-        | #[p1, p2] =>
-          match ibp[p1]!, ibp[p2]! with
-          | some B1, some B2 =>
-            match backwardConcatSplit (α:=α) aY B1.dim B2.dim with
-            | some (a1, a2) =>
-              let st1 := addCoeff (α:=α) st p1 a1
-              addCoeff (α:=α) st1 p2 a2
-            | none => st.fail
-          | _, _ => st.fail
-        | _ => st.fail
+      let contributions := do
+        let layout ← concatBackwardLayout? (α := α) nodes ibp node axis
+        let coefficients ← backwardConcatSplit (α := α) layout aY
+        pure (node.parents.zip coefficients)
+      match contributions with
+      | some parents =>
+        parents.foldl (fun state (parent, coefficient) =>
+          addCoeff (α := α) state parent coefficient) st
+      | none => st.fail
     | .transpose axis₁ axis₂ =>
       match node.parents with
       | #[p1] =>
@@ -997,7 +957,7 @@ private def backwardNodeWithReluAlpha (dir : BackwardDir)
 Run a complete backward sweep in one direction and return the objective as an affine form in the
 graph input, or `none` when some node along the way could not be handled.
 -/
-private def runBackwardObjectiveDir
+def Internal.runBackwardObjectiveDir
   (dir : BackwardDir) (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)
   (ibp : Array (Option (FlatBox α))) (outputId : Nat) (obj : FlatTensor α) :
   Option (AffineVec α ctx.inputDim 1) :=
@@ -1061,10 +1021,11 @@ private def runBackwardObjectiveDirWithReluAlpha
     none
 
 /-- One step of the directed sweep, carrying interval coefficients instead of exact ones. -/
-private def directedBackwardNode
+@[expose] def Internal.directedBackwardNode
     (nodes : Array Node) (ps : ParamStore α) (ibp : Array (Option (FlatBox α)))
     (ctx : AffineCtx) (st : DirectedBackwardState α) (id : Nat) :
     DirectedBackwardState α :=
+  if st.failed then st else
   match st.coeffs[id]! with
   | none => st
   | some aY =>
@@ -1084,24 +1045,24 @@ private def directedBackwardNode
           | some v => consumeDirectedObjective (α := α) st aY (pointCoeffBox (α := α) v)
           | none => st.fail
       | .detach =>
-          match node.parents with
-          | #[p] => addDirectedCoeff (α := α) st p aY
-          | _ => st.fail
+          match unaryParent? node.parents with
+          | some p => addDirectedCoeff (α := α) st p aY
+          | none => st.fail
       | .add =>
-          match node.parents with
-          | #[p1, p2] =>
+          match binaryParents? node.parents with
+          | some (p1, p2) =>
               let st := addDirectedCoeff (α := α) st p1 aY
               addDirectedCoeff (α := α) st p2 aY
-          | _ => st.fail
+          | none => st.fail
       | .sub =>
-          match node.parents with
-          | #[p1, p2] =>
+          match binaryParents? node.parents with
+          | some (p1, p2) =>
               let st := addDirectedCoeff (α := α) st p1 aY
               addDirectedCoeff (α := α) st p2 (negateDirectedCoeff (α := α) aY)
-          | _ => st.fail
+          | none => st.fail
       | .linear =>
-          match node.parents with
-          | #[p] =>
+          match unaryParent? node.parents with
+          | some p =>
               match ps.linearWB[id]? with
               | some config =>
                   match directedBackwardLinear (α := α) aY config.w config.b with
@@ -1110,10 +1071,10 @@ private def directedBackwardNode
                       addDirectedConstant (α := α) st c.1 c.2
                   | none => st.fail
               | none => st.fail
-          | _ => st.fail
+          | none => st.fail
       | .matmul =>
-          match node.parents with
-          | #[p] =>
+          match unaryParent? node.parents with
+          | some p =>
               match ps.matmulW[id]? with
               | some config =>
                   let zeroBias := Tensor.full (α := α) (.dim config.m .scalar) 0
@@ -1123,34 +1084,26 @@ private def directedBackwardNode
                       addDirectedConstant (α := α) st c.1 c.2
                   | none => st.fail
               | none => st.fail
-          | _ => consumeCurrent
-      | .conv .. =>
-          if !crownNodeSemanticsSupported (α := α) nodes ps id then
-            st.fail
-          else
-            match node.parents with
-            | #[p] =>
-                match ps.convCfg[id]? with
-                | some config =>
-                    let inShape :=
-                      Shape.ofList (config.inChannels :: Tensor.to config.inputSpatial (List Nat))
-                    let outSpatial :=
-                      Spec.convOutSpatial config.inputSpatial config.kernel config.stride
-                        config.padding
-                    let outShape :=
-                      Shape.ofList (config.outChannels :: Tensor.to outSpatial (List Nat))
-                    let aff := affOfConv (α := α) config
-                    match directedBackwardLinear (α := α)
-                        (m := outShape.size) (n := inShape.size) aY aff.A aff.c with
-                    | some (aX, c) =>
-                        let st := addDirectedCoeff (α := α) st p aX
-                        addDirectedConstant (α := α) st c.1 c.2
-                    | none => st.fail
-                | none => st.fail
-            | _ => st.fail
+          | none => consumeCurrent
+      | .conv configuration =>
+          match unaryParent? node.parents with
+          | some p =>
+              match ps.convCfg[id]?, nodes[p]? with
+              | some config, some parent =>
+                  match planConvTransfer? configuration config parent.outShape node.outShape with
+                  | some leading =>
+                      let aff := affOfConv (α := α) config leading
+                      match directedBackwardLinear (α := α) aY aff.A aff.c with
+                      | some (aX, c) =>
+                          let st := addDirectedCoeff (α := α) st p aX
+                          addDirectedConstant (α := α) st c.1 c.2
+                      | none => st.fail
+                  | none => st.fail
+              | _, _ => st.fail
+          | none => st.fail
       | .sum =>
-          match node.parents with
-          | #[p] =>
+          match unaryParent? node.parents with
+          | some p =>
               match ibp[p]! with
               | some Bx =>
                   if h : aY.dim = 1 then
@@ -1166,44 +1119,52 @@ private def directedBackwardNode
                   else
                     st.fail
               | none => st.fail
-          | _ => st.fail
+          | none => st.fail
       | .reshape _ _ | .flatten _ =>
-          match node.parents with
-          | #[p] => addDirectedCoeff (α := α) st p aY
-          | _ => st.fail
+          match unaryParent? node.parents with
+          | some p => addDirectedCoeff (α := α) st p aY
+          | none => st.fail
       | .concat axis =>
-          if axis != 0 then
-            st.fail
-          else
-            match node.parents with
-            | #[p1, p2] =>
-                match ibp[p1]!, ibp[p2]! with
-                | some B1, some B2 =>
-                    match splitDirectedCoeff (α := α) aY B1.dim B2.dim with
-                    | some (a1, a2) =>
-                        let st := addDirectedCoeff (α := α) st p1 a1
-                        addDirectedCoeff (α := α) st p2 a2
-                    | none => st.fail
-                | _, _ => st.fail
-            | _ => st.fail
+          let contributions := do
+            let layout ← concatBackwardLayout? (α := α) nodes ibp node axis
+            let coefficients ← splitDirectedCoeff (α := α) layout aY
+            pure (node.parents.zip coefficients)
+          match contributions with
+          | some parents =>
+              parents.foldl (fun state (parent, coefficient) =>
+                addDirectedCoeff (α := α) state parent coefficient) st
+          | none => st.fail
       | .transpose axis₁ axis₂ =>
-          match node.parents with
-          | #[p] =>
+          match unaryParent? node.parents with
+          | some p =>
               match (OpContracts.transposePerm nodes[p]!.outShape.rank axis₁ axis₂).toOption
                   >>= fun perm => directedAxisPermutation? node.outShape perm aY with
               | some aX => addDirectedCoeff st p aX
               | none => st.fail
-          | _ => st.fail
+          | none => st.fail
       | .permute perm =>
-          match node.parents with
-          | #[p] =>
+          match unaryParent? node.parents with
+          | some p =>
               match directedAxisPermutation? node.outShape perm aY with
               | some aX => addDirectedCoeff st p aX
               | none => st.fail
-          | _ => st.fail
+          | none => st.fail
       | .layernorm _ =>
           if !crownNodeSemanticsSupported (α := α) nodes ps id then st.fail else consumeCurrent
       | _ => consumeCurrent
+
+/-- Select affine endpoints for one interval coefficient, including the crossing-zero correction. -/
+@[expose] def Internal.directedCoeffAffine (l u al au : α) : (α × α) × (α × α) :=
+  if decide (¬ l < 0) then
+    ((al, 0), (au, 0))
+  else if decide (¬ 0 < u) then
+    ((au, 0), (al, 0))
+  else
+    let lowerCorrection :=
+      BoundOps.mulDown (BoundOps.subUp au al) l
+    let upperCorrection :=
+      BoundOps.mulUp (BoundOps.subDown al au) l
+    ((al, lowerCorrection), (au, upperCorrection))
 
 /--
 Turn the interval coefficients that reached the input into a lower and an upper affine form.
@@ -1212,7 +1173,7 @@ Each coefficient endpoint is selected from the sign of the corresponding input i
 interval straddles zero, no single endpoint is valid throughout, and the one that was not selected
 becomes a directed constant correction.
 -/
-private def directedInputAffines
+@[expose] def Internal.directedInputAffines
     (inputDim : Nat) (xB aIn : FlatBox α) (cLo cHi : α) :
     Option (AffineVec α inputDim 1 × AffineVec α inputDim 1) :=
   if hx : xB.dim = inputDim then
@@ -1230,16 +1191,7 @@ private def directedInputAffines
         let u := getAtOrZero xHi [i.val]
         let al := getAtOrZero aLo [i.val]
         let au := getAtOrZero aHi [i.val]
-        if decide (¬ l < 0) then
-          ((al, 0), (au, 0))
-        else if decide (¬ 0 < u) then
-          ((au, 0), (al, 0))
-        else
-          let lowerCorrection :=
-            BoundOps.mulDown (BoundOps.subUp au al) l
-          let upperCorrection :=
-            BoundOps.mulUp (BoundOps.subDown al au) l
-          ((al, lowerCorrection), (au, upperCorrection))
+        directedCoeffAffine l u al au
       let lowerRow : Tensor α [inputDim] :=
         Tensor.dim (fun i => Tensor.scalar (selected i).1.1)
       let upperRow : Tensor α [inputDim] :=
@@ -1265,7 +1217,7 @@ private def directedInputAffines
 /--
 Run the directed backward sweep and return the lower and upper affine forms of the objective.
 -/
-private def runDirectedBackwardObjective
+@[expose] def Internal.runDirectedBackwardObjective
     (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)
     (ibp : Array (Option (FlatBox α))) (outputId : Nat) (obj : FlatTensor α) :
     Option (AffineVec α ctx.inputDim 1 × AffineVec α ctx.inputDim 1) := do
@@ -1275,7 +1227,7 @@ private def runDirectedBackwardObjective
     let init : DirectedBackwardState α :=
       { coeffs := initCoeffs, cstLo := 0, cstHi := 0 }
     let st := (List.finRange g.nodes.size).reverse.foldl
-      (fun acc i => directedBackwardNode (α := α) g.nodes ps ibp ctx acc i) init
+      (fun acc i => directedBackwardNode (α := α) g.nodes ps ibp ctx acc i.val) init
     if st.failed then
       none
     else
@@ -1300,7 +1252,7 @@ These bounds target the real-arithmetic graph described by the stored parameters
 backend's directed-arithmetic contract. They do not establish an error bound for a separate
 floating-point execution schedule.
 -/
-def directedNodeBounds? (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)
+@[expose] def directedNodeBounds? (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)
     (ibp : Array (Option (FlatBox α))) (outputId : Nat) :
     Option (FlatAffineBounds α) := do
   unless crownGraphSemanticsSupported g ps do failure
@@ -1336,7 +1288,7 @@ affine bounds on the objective with respect to `ctx.inputId`.
 
 The returned `FlatAffineBounds` always has `outDim = 1` (a scalar objective).
 -/
-def runCROWNBackwardObjective
+@[expose] def runCROWNBackwardObjective
   (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)
   (ibp : Array (Option (FlatBox α))) (outputId : Nat) (obj : FlatTensor α) :
   Option (FlatAffineBounds α) :=
@@ -1359,7 +1311,7 @@ def runCROWNBackwardObjective
     none
 
 /-- Evaluate already-computed backward-CROWN objective bounds on an input box. -/
-def evalBackwardObjectiveBox? (bounds : FlatAffineBounds α) (xB : FlatBox α)
+@[expose] def evalBackwardObjectiveBox? (bounds : FlatAffineBounds α) (xB : FlatBox α)
     (inputDim : Nat) : Except String (FlatBox α) := do
   if hIn : bounds.inDim = inputDim then
     if hXB : xB.dim = inputDim then
@@ -1379,7 +1331,7 @@ Run objective-dependent backward CROWN and evaluate the scalar objective bounds 
 The result is a `FlatBox` of dimension `1`, with `lo[0]` and `hi[0]` bounding
 `objᵀ * output` over `xB`.
 -/
-def backwardObjectiveBox? (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)
+@[expose] def backwardObjectiveBox? (g : Graph) (ps : ParamStore α) (ctx : AffineCtx)
     (ibp : Array (Option (FlatBox α))) (xB : FlatBox α)
     (outputId : Nat) (obj : FlatTensor α) : Except String (FlatBox α) := do
   let some bounds := runCROWNBackwardObjective (α := α) g ps ctx ibp outputId obj

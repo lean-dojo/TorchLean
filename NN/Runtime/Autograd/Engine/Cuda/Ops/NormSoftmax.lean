@@ -31,9 +31,9 @@ namespace Tape
 /--
 LayerNorm over the last dimension for `(seqLen, embedDim)` buffers.
 
-The tape records one normalization operation and keeps TorchLean's usual VJP. A fused buffer
-primitive evaluates the forward formula and that VJP without materializing each reduction,
-broadcast, and pointwise intermediate as a separate device buffer.
+The tape records one normalization operation and keeps TorchLean's usual VJP. The native
+primitive evaluates the forward formula and that VJP with LibTorch tensor operations; intermediate
+tensors remain internal to the primitive.
 
 `epsilon` is added to the variance before taking the square root. Backward reuses the normalized
 input and inverse standard deviation saved by forward, so both passes use the caller's value.
@@ -55,7 +55,9 @@ def layerNorm {seqLen embedDim : Nat} (h_seq_pos : seqLen > 0) (h_embed_pos : em
   let node : Node :=
     { name := some "layer_norm"
       value := { s := outShape, buf := y }
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad) ||
+        (t.getNode? gammaId).any (·.requiresGrad) ||
+        (t.getNode? betaId).any (·.requiresGrad)
       parents := #[xId, gammaId, betaId]
       cleanup := #[xHat, invStd]
       backward := fun dLdyAny => do
@@ -107,15 +109,17 @@ def batchNorm {channels : Nat} {spatial : Shape}
   let gammaB := Buffer.broadcastVecToCols gamma rows32 cols32
   let betaB := Buffer.broadcastVecToCols beta rows32 cols32
   let xHatGamma := Buffer.mul xHat gammaB
-  let y := Buffer.add xHatGamma betaB
+  let y := Buffer.releaseManyThen
+    #[sum1, mean, meanB, centered, centered2, varSum, var, epsVec, varEps,
+      stdB, betaB, xHatGamma] (Buffer.add xHatGamma betaB)
   let node : Node :=
     { name := some "batch_norm"
       value := { s := xShape, buf := y }
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad) ||
+        (t.getNode? gammaId).any (·.requiresGrad) ||
+        (t.getNode? betaId).any (·.requiresGrad)
       parents := #[xId, gammaId, betaId]
-      cleanup :=
-        #[ sum1, mean, meanB, centered, centered2, varSum, var, epsVec, varEps
-        , std, stdB, xHat, gammaB, betaB, xHatGamma ]
+      cleanup := #[std, xHat, gammaB]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny xShape
         -- dBeta / dGamma sum over spatial dimension (axis=1 of the folded matrix).
@@ -175,7 +179,7 @@ def softmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
       let node : Node :=
         { name := some "softmax"
           value := { s := Shape.scalar, buf := one }
-          requiresGrad := true
+          requiresGrad := (t.getNode? xId).any (·.requiresGrad)
           parents := #[xId]
           backward := fun dLdyAny => do
             let _ ← requireGrad dLdyAny Shape.scalar
@@ -186,15 +190,15 @@ def softmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
       let (rows32, cols32) ← foldRowsColsLastAxis s
       let x ← requireValue (t := t) xId s
       let yOwned := rowSoftmaxForward x rows32 cols32
+      let y := yOwned.releaseWorkspaceThen yOwned.value
       let node : Node :=
         { name := some "softmax"
-          value := { s := s, buf := yOwned.value }
-          requiresGrad := true
+          value := { s := s, buf := y }
+          requiresGrad := (t.getNode? xId).any (·.requiresGrad)
           parents := #[xId]
-          cleanup := yOwned.workspace
           backward := fun dLdyAny => do
             let dLdy ← requireGrad dLdyAny s
-            let dx := rowSoftmaxBwd yOwned.value dLdy.buf rows32 cols32
+            let dx := rowSoftmaxBwd y dLdy.buf rows32 cols32
             pure #[(xId, { s := s, buf := dx })] }
       pure (t.addNode node)
 
@@ -210,7 +214,7 @@ def logSoftmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := 
       let node : Node :=
         { name := some "log_softmax"
           value := { s := Shape.scalar, buf := zero }
-          requiresGrad := true
+          requiresGrad := (t.getNode? xId).any (·.requiresGrad)
           parents := #[xId]
           backward := fun dLdyAny => do
             let _ ← requireGrad dLdyAny Shape.scalar
@@ -221,15 +225,15 @@ def logSoftmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := 
       let (rows32, cols32) ← foldRowsColsLastAxis s
       let x ← requireValue (t := t) xId s
       let yOwned := rowLogSoftmaxForward x rows32 cols32
+      let y := yOwned.releaseWorkspaceThen yOwned.value
       let node : Node :=
         { name := some "log_softmax"
-          value := { s := s, buf := yOwned.value }
-          requiresGrad := true
+          value := { s := s, buf := y }
+          requiresGrad := (t.getNode? xId).any (·.requiresGrad)
           parents := #[xId]
-          cleanup := yOwned.workspace
           backward := fun dLdyAny => do
             let dLdy ← requireGrad dLdyAny s
-            let dx := rowLogSoftmaxBwd yOwned.value dLdy.buf rows32 cols32
+            let dx := rowLogSoftmaxBwd y dLdy.buf rows32 cols32
             pure #[(xId, { s := s, buf := dx })] }
       pure (t.addNode node)
 end Tape

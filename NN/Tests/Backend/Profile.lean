@@ -147,14 +147,14 @@ def acceptedGraphOrThrow (tag : String) (profile : BackendProfile) (g : NN.IR.Gr
   | .error msg =>
       throw <| IO.userError s!"{tag}: graph planning failed: {msg}"
 
-def expectNativeCudaBindingAccepts (tag : String)
+def expectLibTorchBindingAccepts (tag : String)
     (options : Runtime.Autograd.Torch.Config) (op : BackendOp) : IO Unit := do
   let base ← Runtime.Autograd.Torch.Internal.EagerSession.new (α := Float)
   let s := { base with options := options }
   let result ← s.executeSelected op
-    #[({ name := "profile-test native CUDA handler"
+    #[({ name := "profile-test LibTorch CUDA handler"
          op
-         provider := .nativeCuda
+         provider := .libTorch
          device := .cuda
          execute := fun _ => pure true } : KernelHandler Bool)]
   expect tag result
@@ -270,8 +270,8 @@ def run : IO Unit := do
   checkHandlerIdentity
   expect "reference scatter-add records accumulation order"
     (Reference.scatterAdd.numericalPolicy.reduction == .fixedLeft)
-  expect "CUDA scatter-add records implementation-defined accumulation order"
-    (NativeCUDA.scatterAdd.numericalPolicy.reduction == .implementationDefined)
+  expect "LibTorch scatter-add records implementation-defined accumulation order"
+    (LibTorch.scatterAdd.numericalPolicy.reduction == .implementationDefined)
   let typedGraphCpuOpts : Runtime.Autograd.Torch.Config :=
     { execution := .typedGraph
       device := .cpu }
@@ -282,12 +282,15 @@ def run : IO Unit := do
     (typedGraphCpuProfile.policy.device == .cpu)
   expect "default registry contract fields are aligned"
     ((Registry.flatten Registry.maintainedModules).all KernelCapsule.contractsAligned)
-  expect "LibTorch registry contract fields are aligned"
-    ((Registry.flatten (#[Registry.libTorchModule] ++ Registry.maintainedModules)).all
-      KernelCapsule.contractsAligned)
+  expect "CPU availability excludes every LibTorch CUDA primitive"
+    ((Availability.cpu.filterCapsules LibTorch.capsules).isEmpty)
+  expect "CUDA availability admits every maintained LibTorch primitive"
+    ((Availability.cuda.filterCapsules LibTorch.capsules).size == LibTorch.capsules.size)
+  let duplicateModule : Registry.CapsuleModule :=
+    { name := "duplicate", capsules := #[Reference.relu] }
   let duplicateModuleProfile : BackendProfile :=
     { BackendProfile.checkedCpu with
-      capsuleModules := #[Registry.libTorchModule, Registry.libTorchModule] }
+      capsuleModules := #[duplicateModule, duplicateModule] }
   expectPlanningFails "duplicate capsule module names are rejected"
     duplicateModuleProfile #[.relu]
   let replacementModule : Registry.CapsuleModule :=
@@ -455,12 +458,6 @@ def run : IO Unit := do
   expect "different numerical policies retain separate audit groups"
     (changedReduction.toCoalescedGroups.groups.size == 2)
 
-  -- Operations without a LibTorch capsule use the native provider under the hybrid profile.
-  let softmaxFallback ← planOrThrow "hybrid native softmax fallback"
-    BackendProfile.libTorchForwardCuda #[.softmax]
-  expectCapsules "hybrid profile falls back to native softmax"
-    softmaxFallback.capsuleNames #["native_cuda.softmax"]
-
   let exactOps :=
     #[ BackendOp.matmul, .linear, .mseLoss, .add, .sub, .mul, .scale, .abs, .sqrt
     , .clamp, .max, .min, .relu, .gelu, .sigmoid, .tanh
@@ -470,8 +467,9 @@ def run : IO Unit := do
     , .concat, .slice, .gather, .scatterAdd, .layerNorm, .batchNorm, .conv
     , .convTranspose, .maxPool, .smoothMaxPool, .avgPool ]
 
+  let cudaExactOps := exactOps ++ #[.fftFno, .selectiveScan]
   let exactReferenceCapsules := exactOps.map fun op => s!"reference.{op.name}"
-  let exactNativeCudaCapsules := exactOps.map fun op => s!"native_cuda.{op.name}"
+  let exactLibTorchCapsules := cudaExactOps.map fun op => s!"libtorch.{op.name}"
   let profileOps :=
     #[ BackendOp.matmul, .relu, .softmax, .hardMaskedSoftmax, .layerNorm, .batchNorm
     , .conv, .convTranspose, .maxPool, .smoothMaxPool, .avgPool, .mseLoss
@@ -521,63 +519,104 @@ def run : IO Unit := do
 
   let cuda ← planOrThrow "checked cuda" BackendProfile.checkedCuda profileOps
   expectCapsules "checked cuda capsule order" cuda.capsuleNames
-    #[ "native_cuda.matmul"
-    , "native_cuda.relu"
-    , "native_cuda.softmax"
-    , "native_cuda.hard_masked_softmax"
-    , "native_cuda.layer_norm"
-    , "native_cuda.batch_norm"
-    , "native_cuda.conv"
-    , "native_cuda.conv_transpose"
-    , "native_cuda.max_pool"
-    , "native_cuda.smooth_max_pool"
-    , "native_cuda.avg_pool"
-    , "native_cuda.mse_loss"
-    , "torchlean.composed_attention"
+    #[ "libtorch.matmul"
+    , "libtorch.relu"
+    , "libtorch.softmax"
+    , "libtorch.hard_masked_softmax"
+    , "libtorch.layer_norm"
+    , "libtorch.batch_norm"
+    , "libtorch.conv"
+    , "libtorch.conv_transpose"
+    , "libtorch.max_pool"
+    , "libtorch.smooth_max_pool"
+    , "libtorch.avg_pool"
+    , "libtorch.mse_loss"
+    , "libtorch.direct_attention"
     ]
-  expect "checked cuda has no trusted external" (!cuda.hasTrustedExternal)
+  expect "checked CUDA capsules retain the maintained evidence classification"
+    (!cuda.hasTrustedExternal)
+  expect "checked CUDA contracts are accepted without trusted-boundary evidence"
+    (isAccepted (cuda.checkContracts AssurancePolicy.checked))
+  expect "checked CUDA retains global TorchLean tape ownership"
+    (BackendProfile.checkedCuda.policy.vjpMode == .torchLeanTape)
 
-  let cudaExact ← planOrThrow "checked cuda exact ops" BackendProfile.checkedCuda exactOps
-  expectCapsules "checked cuda exact capsules" cudaExact.capsuleNames exactNativeCudaCapsules
-  match BackendProfile.checkedCuda.planReport reportOps with
+  let cudaExact ← planOrThrow "checked cuda exact ops" BackendProfile.checkedCuda cudaExactOps
+  expectCapsules "checked cuda exact capsules" cudaExact.capsuleNames exactLibTorchCapsules
+  expect "every CUDA primitive is dispatched through LibTorch"
+    (cudaExact.kernels.all fun kernel => kernel.capsule.provider == .libTorch)
+  expect "every CUDA primitive advertises LibTorch tensor storage"
+    (cudaExact.kernels.all fun kernel =>
+      kernel.capsule.layoutContract.claim ==
+        .layoutCompatibility kernel.op .libTorchCudaView)
+  match BackendProfile.checkedCuda.planReport (cudaExactOps ++ #[.scaledDotProductAttention]) with
   | .ok report =>
-      expectContains "checked cuda report names exact add" "add: native_cuda.add" report
+      expectContains "checked cuda report names exact add" "add: libtorch.add" report
       expectContains "checked cuda report names exact max pool"
-        "max_pool: native_cuda.max_pool" report
+        "max_pool: libtorch.max_pool" report
       expectContains "checked cuda report names exact batchnorm"
-        "batch_norm: native_cuda.batch_norm" report
+        "batch_norm: libtorch.batch_norm" report
       expectContains "checked cuda report names exact smooth max pool"
-        "smooth_max_pool: native_cuda.smooth_max_pool" report
+        "smooth_max_pool: libtorch.smooth_max_pool" report
       expectContains "checked cuda report names exact attention"
-        "scaled_dot_product_attention: torchlean.composed_attention" report
+        "scaled_dot_product_attention: libtorch.direct_attention" report
+      expectContains "report names the classification rather than denying foreign execution"
+        "trusted-external capsules: none" report
   | .error msg =>
       throw <| IO.userError s!"checked cuda report failed: {msg}"
 
-  let libtorchForward ← planOrThrow "libtorch forward cuda" BackendProfile.libTorchForwardCuda
+  let directAttention ← planOrThrow "default LibTorch direct attention" BackendProfile.checkedCuda
     #[.scaledDotProductAttention]
-  expectCapsules "preferred LibTorch provider wins without registry-order dependence"
-    libtorchForward.capsuleNames
-    #["libtorch.sdpa_forward"]
-  expect "libtorch forward records external boundary" libtorchForward.hasTrustedExternal
-  expectCapsules "libtorch forward external op" libtorchForward.trustedExternalOps
-    #["scaled_dot_product_attention"]
-  expect "checked policy rejects the trusted LibTorch forward contract"
-    (!isAccepted (libtorchForward.checkContracts AssurancePolicy.checked))
-  expect "external policy accepts the trusted LibTorch forward contract"
-    (isAccepted (libtorchForward.checkContracts AssurancePolicy.external))
-  let hybridForward ← planOrThrow "hybrid libtorch forward cuda"
-    BackendProfile.libTorchForwardCuda #[.add, .scaledDotProductAttention, .relu]
-  expectCapsules "hybrid profile uses native fallback around LibTorch attention"
-    hybridForward.capsuleNames
-    #["native_cuda.add", "libtorch.sdpa_forward", "native_cuda.relu"]
-  match BackendProfile.libTorchForwardCuda.planReport #[.scaledDotProductAttention] with
+  expectCapsules "checked CUDA selects the LibTorch forward and local VJP bridge"
+    directAttention.capsuleNames #["libtorch.direct_attention"]
+  expect "LibTorch attention supplies its local VJP to the TorchLean tape"
+    (directAttention.kernels.all fun kernel => kernel.capsule.vjpMode == .backendVJP)
+  expect "backend local VJP satisfies the existing TorchLean tape policy"
+    (Attention.libTorchDirectAttention.matchesVJP BackendProfile.checkedCuda.policy)
+  expect "LibTorch direct attention has aligned checked contracts"
+    (isAccepted (directAttention.checkContracts AssurancePolicy.checked))
+  expect "LibTorch direct attention retains the maintained evidence classification"
+    (!directAttention.hasTrustedExternal)
+  let reorderedLibTorch :=
+    { BackendProfile.checkedCuda with
+      capsuleModules := BackendProfile.checkedCuda.capsuleModules.reverse.map fun entry =>
+        { entry with capsules := entry.capsules.reverse } }
+  let reorderedAttention ← planOrThrow "reordered LibTorch registry" reorderedLibTorch
+    #[.scaledDotProductAttention]
+  expectCapsules "LibTorch preference survives reversed module and capsule order"
+    reorderedAttention.capsuleNames directAttention.capsuleNames
+  let libTorchOnly : BackendProfile :=
+    { BackendProfile.checkedCuda with
+      name := "profile_test_libtorch"
+      policy := { BackendProfile.checkedCuda.policy with provider := .only .libTorch } }
+  let directOps ← planOrThrow "LibTorch attention with surrounding primitives" libTorchOnly
+    #[.add, .scaledDotProductAttention, .relu]
+  expectCapsules "LibTorch supplies attention and its surrounding primitives"
+    directOps.capsuleNames #["libtorch.add", "libtorch.direct_attention", "libtorch.relu"]
+  let composedPreferred : BackendProfile :=
+    { BackendProfile.checkedCuda with
+      name := "profile_test_composed_attention"
+      policy := { BackendProfile.checkedCuda.policy with provider := .prefer .torchLean } }
+  let composedOps ← planOrThrow "explicit composed attention" composedPreferred
+    #[.add, .scaledDotProductAttention, .relu]
+  expectCapsules "explicit composition keeps LibTorch surrounding primitives"
+    composedOps.capsuleNames #["libtorch.add", "torchlean.composed_attention", "libtorch.relu"]
+  expect "explicit composition retains aligned checked contracts"
+    (isAccepted (composedOps.checkContracts AssurancePolicy.checked))
+  let composedOnly : BackendProfile :=
+    { BackendProfile.checkedCuda with
+      policy := { BackendProfile.checkedCuda.policy with provider := .only .torchLean } }
+  expectPlanningFails "a composed-only provider cannot impersonate a LibTorch primitive"
+    composedOnly #[.add]
+  match BackendProfile.checkedCuda.planReport #[.scaledDotProductAttention] with
   | .ok report =>
-      expectContains "libtorch forward report names TorchLean tape"
+      expectContains "LibTorch profile retains TorchLean tape ownership"
         "vjp=torchlean-tape" report
-      expectContains "libtorch forward report names capsule"
-        "scaled_dot_product_attention: libtorch.sdpa_forward" report
+      expectContains "LibTorch attention report names the selected local VJP"
+        "vjp=backend-vjp" report
+      expectContains "LibTorch attention report names its capsule"
+        "scaled_dot_product_attention: libtorch.direct_attention" report
   | .error msg =>
-      throw <| IO.userError s!"libtorch forward report failed: {msg}"
+      throw <| IO.userError s!"LibTorch direct attention report failed: {msg}"
 
   for (tag, device) in
       [ ("runtime rejects named-but-unimplemented metal", NN.Backend.Device.metal)
@@ -610,8 +649,9 @@ def run : IO Unit := do
       , .maxPool
       , .avgPool
       , .smoothMaxPool
+      , .scaledDotProductAttention
       ] do
-    expectNativeCudaBindingAccepts s!"checked cuda runtime binding accepts `{op.name}`"
+    expectLibTorchBindingAccepts s!"checked cuda runtime binding accepts `{op.name}`"
       checkedCudaOpts op
 
   IO.println "  backend profiles: ok"

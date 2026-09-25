@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.GraphSpec.Models.Mlp
+public import NN.GraphSpec.Chain.ToDAG.Model
 
 /-!
 # MLP Deterministic Initialization

@@ -74,7 +74,7 @@ def paddingByte : Nat := 32
 /-- Mamba text-model configuration shared by shapes and the constructor. -/
 abbrev modelConfig : nn.models.Mamba.Config :=
   { vocabularySize := vocabularySize
-    modelWidth := modelWidth }
+    modelWidths := [modelWidth] }
 
 local instance : NeZero vocabularySize := ⟨by decide⟩
 

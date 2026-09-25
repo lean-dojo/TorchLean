@@ -52,7 +52,7 @@ def randUniform {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfer 
     let key ← nextRandomKey s seed
     let v : Tensor α sh := Spec.Random.uniform (α := α) key (s := sh)
     const (α := α) s (sh := sh) v (name := name)
-  s.executeReferenceOrNativeCuda .randUniform cpu cuda
+  s.executeReferenceOrLibTorch .randUniform cpu cuda
 
 /-- Deterministic `{0,1}` mask generator (seeded) with a scalar keep-probability input. -/
 def bernoulliMask {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfer α]
@@ -78,7 +78,7 @@ def bernoulliMask {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfe
     let key ← nextRandomKey s seed
     let v : Tensor α sh := Spec.Random.mask (α := α) key probability (s := sh)
     const (α := α) s (sh := sh) v (name := name)
-  s.executeReferenceOrNativeCuda .bernoulliMask cpu cuda
+  s.executeReferenceOrLibTorch .bernoulliMask cpu cuda
 
 end EagerSession
 

@@ -12,10 +12,10 @@ from __future__ import annotations
 import argparse
 import html
 import json
-import posixpath
 import re
 from pathlib import Path
 from html.parser import HTMLParser
+from urllib.parse import unquote, urlsplit
 
 
 TORCHLEAN_CSS = """
@@ -1617,112 +1617,79 @@ def rewrite_repository_links(root: Path) -> None:
             path.write_text(rewritten)
 
 
-class _GuideHtmlRefs(HTMLParser):
-    """Small parser for generated guide ids, links, and base hrefs."""
+class _GuideHtmlIds(HTMLParser):
+    """Collect existing fragment targets in a generated guide page."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.base: str | None = None
         self.ids: set[str] = set()
-        self.hrefs: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         data = {k: v for k, v in attrs if v is not None}
-        if tag == "base" and data.get("href"):
-            self.base = data["href"]
         if data.get("id"):
             self.ids.add(data["id"])
         if data.get("name"):
             self.ids.add(data["name"])
-        if data.get("href"):
-            self.hrefs.append(data["href"])
 
 
 def add_fragment_aliases(root: Path) -> None:
-    """Add hidden anchor aliases for generated local links whose fragments lack ids.
+    """Add only the page-title anchors identified by Verso's cross-reference data.
 
-    Verso's TOC and local navigation sometimes point at page-level or tag-level
-    fragments that are meaningful in the manual data but are not emitted as DOM
-    ids on the standalone page. Adding zero-size aliases keeps those internal
-    links stable without changing visible content.
+    Document, chapter, and page titles may lack DOM ids on their standalone pages.
+    Their aliases belong at the start of the page. Deeper headings must have real
+    anchors; inventing targets from incoming links would hide broken fragments
+    from the site link checker.
     """
 
-    pages = [path for path in root.rglob("*.html") if "/-verso-" not in path.as_posix()]
-    parsed: dict[Path, _GuideHtmlRefs] = {}
+    root = root.resolve()
+    xref_path = root / "xref.json"
+    if not xref_path.exists():
+        return
+    xref = json.loads(xref_path.read_text())
+    sections = xref.get("Verso.Genre.Manual.section", {}).get("contents", {})
+    parsed: dict[Path, _GuideHtmlIds] = {}
 
-    def parse(path: Path) -> _GuideHtmlRefs:
+    def parse(path: Path) -> _GuideHtmlIds:
         if path not in parsed:
-            p = _GuideHtmlRefs()
+            p = _GuideHtmlIds()
             p.feed(path.read_text(errors="ignore"))
             parsed[path] = p
         return parsed[path]
 
-    def resolve(path: Path, href: str) -> tuple[Path | None, str | None]:
-        if href.startswith(("#", "mailto:", "tel:", "javascript:")):
-            if href.startswith("#") and len(href) > 1:
-                return path, href[1:]
-            return None, None
-        if "://" in href:
-            return None, None
-        page = parse(path)
-        doc_url = "/" + path.relative_to(root).as_posix()
-        base_url = posixpath.normpath(posixpath.join(posixpath.dirname(doc_url), page.base or ""))
-        href_path, sep, frag = href.partition("#")
-        if not sep or not frag:
-            return None, None
-        target_url = posixpath.normpath(posixpath.join(base_url, href_path))
-        if target_url.startswith("../"):
-            return None, None
-        target = root / target_url.lstrip("/")
-        if target.is_dir():
-            target = target / "index.html"
-        elif not target.exists() and not target.suffix and (target / "index.html").exists():
-            target = target / "index.html"
-        if target.exists() and target.is_relative_to(root):
-            return target, frag
-        return None, None
-
     aliases: dict[Path, set[str]] = {}
-    for path in pages:
-        page = parse(path)
-        for href in page.hrefs:
-            target, frag = resolve(path, href)
-            if target is None or frag is None:
+    for entries in sections.values():
+        for entry in entries:
+            # Context contains book, chapter, page, then headings within the page.
+            if len(entry["data"]["context"]) > 3:
                 continue
-            target_page = parse(target)
-            if frag not in target_page.ids:
+            address = urlsplit(entry["address"])
+            if address.scheme or address.netloc:
+                continue
+            target = (root / unquote(address.path).lstrip("/")).resolve()
+            if not target.is_relative_to(root):
+                continue
+            if target.is_dir():
+                target = (target / "index.html").resolve()
+            if not target.is_relative_to(root) or target.suffix != ".html" or not target.is_file():
+                continue
+            frag = entry["id"]
+            if frag and frag not in parse(target).ids:
                 aliases.setdefault(target, set()).add(frag)
 
-    # The root title may have no static incoming link. Search and cross-reference
-    # data still expose its fragment, as they do for chapter and page titles.
-    xref_path = root / "xref.json"
-    if xref_path.exists():
-        xref = json.loads(xref_path.read_text())
-        sections = xref.get("Verso.Genre.Manual.section", {}).get("contents", {})
-        for entries in sections.values():
-            for entry in entries:
-                if len(entry["data"]["context"]) > 3:
-                    continue
-                target, frag = resolve(root / "index.html", entry["address"] + "#" + entry["id"])
-                if target is not None and frag is not None and frag not in parse(target).ids:
-                    aliases.setdefault(target, set()).add(frag)
-
     for path, ids in aliases.items():
-        if not ids:
-            continue
-        page = parse(path)
-        missing = [frag for frag in sorted(ids) if frag not in page.ids]
-        if not missing:
-            continue
         html_text = path.read_text()
         alias_html = "".join(
             f'<span id="{html.escape(frag, quote=True)}" class="tl-anchor-alias" aria-hidden="true"></span>'
-            for frag in missing
+            for frag in sorted(ids)
         )
         if "<main" in html_text:
-            html_text = re.sub(r"(<main\b[^>]*>)", r"\1" + alias_html, html_text, count=1)
+            html_text = re.sub(
+                r"(<main\b[^>]*>)", lambda m: m[1] + alias_html, html_text, count=1
+            )
         elif "<body" in html_text:
-            html_text = re.sub(r"(<body\b[^>]*>)", r"\1" + alias_html, html_text, count=1)
+            html_text = re.sub(
+                r"(<body\b[^>]*>)", lambda m: m[1] + alias_html, html_text, count=1
+            )
         else:
             html_text = alias_html + html_text
         path.write_text(html_text)

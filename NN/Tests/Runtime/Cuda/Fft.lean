@@ -124,33 +124,41 @@ def runSpectralConvIdentity : IO Unit := do
         4 2 3)
   assertFloatArrayApprox "spectralConv1dRfft identity" got x (tol := 3e-4)
 
-def runSpectralConvFiniteDiff : IO Unit := do
-  IO.println "== spectralConv1dRfft backward finite differences =="
-
+def checkSpectralConvFiniteDiff (grid width modes : UInt32)
+    (x wRe wIm dY : Array Float) : IO Unit := do
   -- This validates the explicit VJP kernels against the scalar pairing
   --   L(x,w) = sum(spectralConv1dRfft(x,w) * dY).
   -- The half-spectrum adjoint has subtle `2/n` factors for interior frequencies, so this test
   -- checks the numeric VJP directly instead of relying only on shape-level tape coverage.
-  let grid : UInt32 := 4
-  let width : UInt32 := 1
-  let modes : UInt32 := 3
-  let x : Array Float := #[0.20, -0.40, 0.70, 1.10]
-  let wRe : Array Float := #[0.75, -0.30, 0.20]
-  let wIm : Array Float := #[0.00, 0.45, 0.00]
-  let dY : Array Float := #[1.00, -0.50, 0.25, 0.75]
   let eps := 1e-2
   let tol := 2e-2
 
-  let xBuf := Buffer.ofFloatArray (floatArray x)
-  let wReBuf := Buffer.ofFloatArray (floatArray wRe)
-  let wImBuf := Buffer.ofFloatArray (floatArray wIm)
-  let dYBuf := Buffer.ofFloatArray (floatArray dY)
-  let dX :=
-    Buffer.toFloatArray (Buffer.spectralConv1dRfftBwdX xBuf wReBuf wImBuf dYBuf grid width modes)
-  let dWRe :=
-    Buffer.toFloatArray (Buffer.spectralConv1dRfftBwdWRe xBuf wReBuf wImBuf dYBuf grid width modes)
-  let dWIm :=
-    Buffer.toFloatArray (Buffer.spectralConv1dRfftBwdWIm xBuf wReBuf wImBuf dYBuf grid width modes)
+  let xBuf ← Buffer.ofFloatArrayIO (floatArray x)
+  let wReBuf ← Buffer.ofFloatArrayIO (floatArray wRe)
+  let wImBuf ← Buffer.ofFloatArrayIO (floatArray wIm)
+  let dYBuf ← Buffer.ofFloatArrayIO (floatArray dY)
+  let before ← Buffer.allocatorStats
+  let (dXBuf, dWReBuf, dWImBuf) ← IO.lazyPure fun _ =>
+    Buffer.spectralConv1dRfftBwd xBuf wReBuf wImBuf dYBuf grid width modes
+  let after ← Buffer.allocatorStats
+  let expectedAllocations : UInt64 := if modes == 0 then 1 else 3
+  unless after.allocCount - before.allocCount == expectedAllocations do
+    throw <| IO.userError "spectral backward allocated discarded gradient payloads"
+  let expectedBytes := 4 * (x.size + wRe.size + wIm.size)
+  unless after.liveBytes.toNat == before.liveBytes.toNat + expectedBytes do
+    throw <| IO.userError "spectral backward retained temporary tensor payloads"
+  let dX ← Buffer.toFloatArrayIO dXBuf
+  let dWRe ← Buffer.toFloatArrayIO dWReBuf
+  let dWIm ← Buffer.toFloatArrayIO dWImBuf
+  unless dX.size == x.size && dWRe.size == wRe.size && dWIm.size == wIm.size do
+    throw <| IO.userError "spectral backward returned incorrect gradient sizes"
+  for buffer in #[dXBuf, dWReBuf, dWImBuf] do
+    discard <| Buffer.releaseIO buffer
+  let retired ← Buffer.allocatorStats
+  unless retired.liveBytes == before.liveBytes do
+    throw <| IO.userError "spectral backward did not retire its result payloads"
+  for buffer in #[xBuf, wReBuf, wImBuf, dYBuf] do
+    discard <| Buffer.releaseIO buffer
 
   for i in [:x.size] do
     let lp := spectralConvLoss (perturbArray x i eps) wRe wIm dY grid width modes
@@ -166,6 +174,33 @@ def runSpectralConvFiniteDiff : IO Unit := do
     let lp := spectralConvLoss x wRe (perturbArray wIm i eps) dY grid width modes
     let lm := spectralConvLoss x wRe (perturbArray wIm i (-eps)) dY grid width modes
     assertFiniteDiff "spectralConv1dRfft dWIm" dWIm i ((lp - lm) / (2.0 * eps)) tol
+
+def runSpectralConvFiniteDiff : IO Unit := do
+  IO.println "== spectralConv1dRfft backward finite differences and payload lifetime =="
+  checkSpectralConvFiniteDiff 4 1 3
+    #[0.20, -0.40, 0.70, 1.10] #[0.75, -0.30, 0.20]
+    #[0.00, 0.45, 0.00] #[1.00, -0.50, 0.25, 0.75]
+  -- Width two detects channel transposition; odd grids distinguish the final bin from Nyquist.
+  for (grid, modes) in #[(1, 1), (4, 0), (4, 2), (4, 3), (5, 0), (5, 2), (5, 3)] do
+    let values := fun (count phase : Nat) =>
+      (Array.range count).map fun i => Float.ofNat ((i * 7 + phase) % 17) / 10.0 - 0.8
+    IO.println s!"  grid={grid}, width=2, modes={modes}"
+    checkSpectralConvFiniteDiff (UInt32.ofNat grid) 2 (UInt32.ofNat modes)
+      (values (grid * 2) 1) (values (modes * 4) 3) (values (modes * 4) 5)
+      (values (grid * 2) 9)
+
+def runSpectralConvValidation : IO Unit := do
+  let before ← Buffer.allocatorStats
+  for (grid, width) in #[(0, 2), (4, 0)] do
+    match Tape.Internal.spectralConv1dRfft
+        (grid := grid) (width := width) (modes := 0) (t := Tape.empty) 0 0 0 with
+    | .error message =>
+        unless message.contains "must be positive" do
+          throw <| IO.userError s!"spectral dimension validation: {message}"
+    | .ok _ => throw <| IO.userError "spectral convolution accepted an empty grid or width"
+  let after ← Buffer.allocatorStats
+  unless after.allocCount == before.allocCount do
+    throw <| IO.userError "spectral dimension validation allocated tensor payloads"
 
 def runSpectralConvTapeNode : IO Unit := do
   IO.println "== spectralConv1dRfft CUDA tape node =="
@@ -200,17 +235,18 @@ def runSpectralConvTapeNode : IO Unit := do
   let dX ← Utils.cudaGrad (s := xShape) grads xId
   let dWRe ← Utils.cudaGrad (s := wShape) grads wReId
   let dWIm ← Utils.cudaGrad (s := wShape) grads wImId
+  let (directDX, directDWRe, directDWIm) := Buffer.spectralConv1dRfftBwd xB wReB wImB dYB 4 1 3
   assertFloatArrayApprox "spectralConv1dRfft tape dX"
     (Runtime.Autograd.Cuda.Convert.flattenFloat (s := xShape) dX)
-    (Buffer.toFloatArray (Buffer.spectralConv1dRfftBwdX xB wReB wImB dYB 4 1 3))
+    (Buffer.toFloatArray directDX)
     (tol := 2e-4)
   assertFloatArrayApprox "spectralConv1dRfft tape dWRe"
     (Runtime.Autograd.Cuda.Convert.flattenFloat (s := wShape) dWRe)
-    (Buffer.toFloatArray (Buffer.spectralConv1dRfftBwdWRe xB wReB wImB dYB 4 1 3))
+    (Buffer.toFloatArray directDWRe)
     (tol := 2e-4)
   assertFloatArrayApprox "spectralConv1dRfft tape dWIm"
     (Runtime.Autograd.Cuda.Convert.flattenFloat (s := wShape) dWIm)
-    (Buffer.toFloatArray (Buffer.spectralConv1dRfftBwdWIm xB wReB wImB dYB 4 1 3))
+    (Buffer.toFloatArray directDWIm)
     (tol := 2e-4)
 
 def run : IO Unit := do
@@ -219,6 +255,7 @@ def run : IO Unit := do
   runRoundtripEvenOdd
   runSpectralConvIdentity
   runSpectralConvFiniteDiff
+  runSpectralConvValidation
   runSpectralConvTapeNode
 
 end Fft

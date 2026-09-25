@@ -42,12 +42,16 @@ deriving Repr
 
 namespace Internal
 
-/-- Validate shared dense-model widths while naming the public constructor being built. -/
-def validateConfig (kind : String) (config : Config) : Except String Unit := do
+/-- Validate the data and hidden widths used by every dense generative model. -/
+def validateSharedWidths (kind : String) (config : Config) : Except String Unit := do
   if config.dataWidth = 0 then
     throw s!"{kind}: data width must be positive"
   if config.hiddenWidth = 0 then
     throw s!"{kind}: hidden width must be positive"
+
+/-- Validate all widths while naming the public constructor being built. -/
+def validateConfig (kind : String) (config : Config) : Except String Unit := do
+  validateSharedWidths kind config
   if config.latentWidth = 0 then
     throw s!"{kind}: latent width must be positive"
 
@@ -125,11 +129,12 @@ Discriminator `x -> logits`.
 
 Returning logits keeps the model compatible with numerically stable objectives such as
 `TorchLean.Loss.bceWithLogits`. Append `nn.sigmoid` only when probabilities are required.
+Only the data and hidden widths are used; the latent width does not affect this model.
 -/
 def discriminator (config : Config)
     (batchShape : Shape := []) :
     nn.Builder (nn.Sequential (config.dataShape batchShape) (config.scoreShape batchShape)) :=
-  match Internal.validateConfig "Discriminator" config with
+  match Internal.validateSharedWidths "Discriminator" config with
   | .error message =>
       pure <| nn.Internal.invalidConfiguration
         (config.dataShape batchShape) (config.scoreShape batchShape) "Discriminator" message

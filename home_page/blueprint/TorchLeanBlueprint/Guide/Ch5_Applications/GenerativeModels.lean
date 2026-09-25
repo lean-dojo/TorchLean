@@ -4,6 +4,7 @@ import NN.Spec.Generative.Diffusion.Schedule
 import NN.Spec.Generative.Diffusion.ForwardProcess
 import NN.Spec.Generative.Diffusion.ReverseDDIM
 import NN.Spec.Generative.Diffusion.Loss
+import NN.MLTheory.Generative.Diffusion.ImageDDIM
 import NN.Spec.Models.Vae
 import NN.Spec.Models.VqVae
 import NN.MLTheory.Generative.Latent.VAE
@@ -329,15 +330,26 @@ proof connecting that law to the generator's output bits.
 
 Deterministic DDIM sampling reads the forward formula backwards
 {Informal.citep ddim2021}[]. From $`x_t` and a predicted noise $`\widehat\epsilon_t`, estimate the
-clean image and remix it at the previous timestep:
+clean image, apply a postprocessor $`P`, and remix it at the previous timestep. For coefficients
+in $`[0,1]`, the public step uses
+
+$$`d_t=\begin{cases}
+\sqrt{\bar\alpha_t}&\text{if }\sqrt{\bar\alpha_t}>\delta,\\
+\delta&\text{otherwise},
+\end{cases}`
 
 $$`\widehat x_0
 =\frac{x_t-\sqrt{1-\bar\alpha_t}\,\widehat\epsilon_t}
-       {\sqrt{\bar\alpha_t}},`
+       {d_t},`
 
 $$`x_{t-1}
-=\sqrt{\bar\alpha_{t-1}}\,\operatorname{clip}(\widehat x_0,-1,1)
+=\sqrt{\bar\alpha_{t-1}}\,P(\widehat x_0)
 +\sqrt{1-\bar\alpha_{t-1}}\,\widehat\epsilon_t.`
+
+The defaults are $`\delta=10^{-12}` and $`P(x)=\operatorname{clip}(x,-1,1)`. A custom
+postprocessor must return the same tensor shape. It changes the reconstructed image before
+remixing; the noise prediction in the second term stays the one supplied by the caller.
+`reverseDdimFrom` and `reverseDdim` pass the chosen postprocessor and floor to every step.
 
 To test this formula, supply the noise that was used. Over real arithmetic, with a positive signal
 coefficient and an inactive denominator floor, $`\widehat x_0` is exactly $`x_0`. If clipping also
@@ -379,13 +391,37 @@ the same estimate would be mixed with a nonzero amount of predicted noise. This 
 one-step reconstruction and a full reverse trajectory answer different questions: the latter
 feeds each resulting sample back into a denoiser at another noise level.
 
-The exact operation-level correspondence is recorded by
-`Generative.Diffusion.ImageDDIM.ddimPrev_eq_stepFromEps` in
-{src "NN/MLTheory/Generative/Diffusion/ImageDDIM.lean"}[the image-DDIM bridge]. It equates the
-public `Float` operation with the spec using the same floor, clipping interval, and order of
-operations. The companion forward-noising theorem identifies the appended time channel when
-the coefficient tables agree. These are links to the functions used here, not an assertion that
-floating-point cancellation exactly recovers every clean image.
+For an image representation with a different range, we can supply another postprocessor. With
+identity postprocessing, a clean estimate of two remains two:
+
+```lean (name := genDdimPostprocess)
+#eval diffusion.ddimPrev 1.0 1.0
+  ([2.0] : Tensor Float [1]) ([0.0] : Tensor Float [1])
+  (postprocess := id) (denominatorFloor := 1e-8)
+```
+```leanOutput genDdimPostprocess
+[2.000000]
+```
+
+The exact operation-level correspondence is recorded in
+{src "NN/MLTheory/Generative/Diffusion/ImageDDIM.lean"}[the image-DDIM bridge]. Its theorem
+accepts the same postprocessor and denominator floor:
+
+```lean (name := genDdimBridge)
+example {s : Shape} (aPrev a floor : Float)
+    (sample eps : Tensor Float s)
+    (post : Tensor Float s → Tensor Float s) :
+    diffusion.ddimPrev aPrev a sample eps post floor =
+      ImageDDIM.stepFromEps floor aPrev a sample eps post :=
+  ImageDDIM.ddimPrev_eq_stepFromEps
+    aPrev a sample eps post floor
+```
+
+The equality preserves the actual `Float` operations and their order. It places no positivity
+condition on the floor: choosing zero or a negative value does not acquire a safe-division
+guarantee from the theorem. The companion forward-noising theorem identifies the appended time
+channel when the coefficient tables agree. Neither result asserts that floating-point
+cancellation exactly recovers every clean image.
 
 ## The Spec Layer's Division Guard
 
@@ -425,8 +461,9 @@ not quite exact: the first coordinate is `0.499997` rather than `0.5`. This disc
 a division guard in the step definition.
 
 The spec layer divides by $`\sqrt{\bar\alpha_t}` through `safeDiv`, which computes
-$`x/(y+\varepsilon)` with $`\varepsilon=10^{-6}`, while the runnable `ddimPrev` instead replaces a
-square root below $`10^{-12}` by that threshold. For $`s=\sqrt{\bar\alpha_t}>0`, adding the guard
+$`x/(y+\varepsilon)` with $`\varepsilon=10^{-6}`, while the default `ddimPrev` instead replaces a
+square root at or below $`10^{-12}` by that threshold. For $`s=\sqrt{\bar\alpha_t}>0`, adding
+the guard
 multiplies the unguarded estimate by $`s/(s+\varepsilon)`. The relative shrinkage is therefore
 $`\varepsilon/(s+\varepsilon)`, approximately $`\varepsilon/s` when $`\varepsilon` is small
 compared with $`s`. In this perfect-denoiser run, the four factors accumulate multiplicatively.
@@ -1381,7 +1418,7 @@ The source of each result determines its scope:
 The examples expose three missing connections:
 
 - The image-DDIM bridge relates the cyclic API index, the clean-state coefficient, the time
-  channel, and the clipped reverse step. Comparing independently constructed schedules still
+  channel, and the reverse step with its chosen postprocessor and floor. Comparing schedules still
   requires matching their coefficient tables. The additive-guard sampler above is a different
   map from the image sampler, so its bounds do not transfer merely by shifting an index.
 - The executable `klLoss` returns the mean of the per-coordinate KL, while the theory defines and

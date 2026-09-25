@@ -35,7 +35,7 @@ def sum {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
   let node : Node :=
     { name := some "sum"
       value := { s := Shape.scalar, buf := y }
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny Shape.scalar

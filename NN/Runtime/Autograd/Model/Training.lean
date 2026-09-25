@@ -11,8 +11,8 @@ public import NN.Runtime.Autograd.Model.Optim
 /-!
 # TorchLean training-loop helpers
 
-Training loops over the runtime optimizer interface. The simpler SGD loop lives in
-`Runtime.Autograd.Torch.ScalarTrainer`, where it only needs the trainer's own update operation.
+Training loops over the runtime optimizer interface, with packed scalar-trainer gradients and
+backend-native updates where the optimizer supports them.
 -/
 
 @[expose] public section
@@ -52,10 +52,10 @@ def trainCycleOptim
               pure result
           | none => do
               tr.useOptimizerPath .generic
-              let (lossTensor, grads) ←
-                Runtime.Autograd.Torch.ScalarTrainer.runDiff
+              let (grads, lossTensor) ←
+                Runtime.Autograd.Torch.ScalarTrainer.grad
                   (α := α) (paramShapes := paramShapes) (inputShapes := inputShapes) tr xs
-                  .nil
+                  .nil (value := true)
               let _ ← tr.getState
               let st' ← opt.step st tr.state grads
               pure { optimizerState := st', loss := lossTensor }

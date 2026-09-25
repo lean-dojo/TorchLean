@@ -62,6 +62,11 @@ def lowerToForwardGraph
 Structural, declared-shape, payload, and lowering errors are returned to the caller. The input
 shape is checked against node zero before execution. This evaluates the forward graph; it does
 not compare floating-point results with a second semantics or assert numerical equivalence.
+
+Each call lowers the graph again. For repeated execution, call `lowerToForwardGraph` once and
+reuse the resulting `ForwardGraph.eval` or `ForwardGraph.denoteAll`. The array execution
+optimization applies to that already-lowered artifact; lowering's shape-list appends can still
+take quadratic time in the number of nodes.
 -/
 def evaluate
     {α : Type} [Storage α] [Context α] {σ : Shape}

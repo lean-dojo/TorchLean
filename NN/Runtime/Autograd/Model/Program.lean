@@ -53,7 +53,7 @@ export Runtime.Autograd.Torch
    relu silu gelu sigmoid tanh softmaxLast softplus
    exp sin cos log inv detach safeLog logSoftmaxLast
    sum flatten
-   mseLoss batchNorm batchedMultiHeadAttention
+    mseLoss batchNorm
    randUniform bernoulliMask)
 
 /-! ## Operation-reference notation -/
@@ -63,21 +63,6 @@ abbrev RefTy (m : Type → Type) (α : Type)
     [TorchLean.Storage α] [Context α] [Ops (m := m) (α := α)]
     (s : Shape) : Type :=
   Runtime.Autograd.Torch.Ops.Ref (m := m) (α := α) s
-
-namespace LeadingAxis
-namespace Internal
-
-/-- Apply a single-sample operation independently along a leading axis. -/
-def mapOuterAxis {α : Type} [TorchLean.Storage α] [Context α]
-    {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
-    {batch : Nat} {s t : Shape}
-    (x : RefTy (m := m) (α := α) (s.prependDim batch))
-    (f : RefTy (m := m) (α := α) s → m (RefTy (m := m) (α := α) t)) :
-    m (RefTy (m := m) (α := α) (t.prependDim batch)) :=
-  Runtime.Autograd.Torch.mapOuterAxis (m := m) (α := α) f x
-
-end Internal
-end LeadingAxis
 
 /-! ## Prefix-polymorphic derived operations -/
 
@@ -91,7 +76,7 @@ def mapLeading {α : Type} [TorchLean.Storage α] [Context α]
   let xFlat ← Runtime.Autograd.Torch.reshape (m := m) (α := α)
     (s₁ := leadingShape.concat s) (s₂ := s.prependDim leadingShape.size) x (by
       simp [Shape.size_concat, Shape.size])
-  let yFlat ← LeadingAxis.Internal.mapOuterAxis (m := m) (α := α) xFlat f
+  let yFlat ← Runtime.Autograd.Torch.mapOuterAxis (m := m) (α := α) f xFlat
   Runtime.Autograd.Torch.reshape (m := m) (α := α)
     (s₁ := t.prependDim leadingShape.size) (s₂ := leadingShape.concat t) yFlat (by
       simp [Shape.size_concat, Shape.size])

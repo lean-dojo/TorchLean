@@ -10,15 +10,16 @@ public import NN.Runtime.Autograd.Engine.Cuda.Buffer
 public import Std
 
 /-!
-# CUDA Kernel Coverage: scaledProdExp (fused scaled product exponential)
+# Scaled Product Exponential Composition Parity
 
-`Buffer.scaledProdExp x y c` computes `exp((c · x) · y)` in a single fused device kernel. This test
-pins its defining property: element for element it must be **bit-identical** to the composed form
-built from the elementwise `full` / `mul` / `exp` kernels, `exp(((full c) · x) · y)`, the same
-left-association and the same `expf`. A silent divergence (a fast-math `__expf`, a reassociated
-product, a lost float32 cast) is a regression this catches.
+`Buffer.scaledProdExp x y c` computes `exp((c · x) · y)`. Its native implementation casts `c`
+to float32, then applies two ATen multiplications followed by the exponential.
 
-Like the rest of this suite it runs on the CPU stub (`lake build`) and on the GPU (`-K cuda`) alike.
+This test checks bit-identical results against `exp(((full c) · x) · y)` on finite fixtures.
+Both expressions use the same left association. The comparison checks the scalar conversion
+and composition through the buffer API, without assuming a particular device kernel.
+
+The same assertions run against the CPU stub and the native CUDA backend.
 -/
 
 @[expose] public section
@@ -30,7 +31,7 @@ namespace ScaledProdExp
 open Runtime.Autograd.Cuda
 
 def run : IO Unit := do
-  IO.println "=== CUDA kernel coverage: scaledProdExp (fused vs composed) ==="
+  IO.println "=== scaledProdExp composition parity ==="
   -- Varied, signed, finite fixtures, kept in a range where `exp` stays finite.
   let xs : FloatArray := FloatArray.mk
     #[0.10, -0.20, 0.35, -0.50, 0.75, -0.90, 0.00, 1.00, -1.00, 0.42]
@@ -41,9 +42,9 @@ def run : IO Unit := do
   let y := Buffer.ofFloatArray ys
   -- Scalars spanning sign and magnitude, including the identity `c = 0`.
   for c in (#[-2.0, 0.5, 3.25, -0.125, 1.0, 0.0] : Array Float) do
-    let fused    := Buffer.scaledProdExp x y c
+    let actual := Buffer.scaledProdExp x y c
     let composed := Buffer.exp (Buffer.mul (Buffer.mul (Buffer.full n c) x) y)
-    let af := Buffer.toFloatArray fused
+    let af := Buffer.toFloatArray actual
     let ac := Buffer.toFloatArray composed
     if af.size != ac.size then
       throw <| IO.userError s!"scaledProdExp c={c}: size mismatch ({af.size} vs {ac.size})"
@@ -60,7 +61,7 @@ def run : IO Unit := do
       throw <| IO.userError <|
         s!"scaledProdExp c={c}: {mism}/{af.size} elements differ from composed exp((c·x)·y) " ++
           s!"(max |Δ|={maxDiff})"
-  IO.println "  fused scaledProdExp bit-identical to composed exp((c·x)·y) over all fixtures ✓"
+  IO.println "  scaledProdExp bit-identical to composed exp((c·x)·y) over all fixtures ✓"
 
 end ScaledProdExp
 end Cuda

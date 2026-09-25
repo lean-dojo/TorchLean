@@ -871,7 +871,8 @@ PUBLIC_EXAMPLE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
     (
         re.compile(r"\bfit\.fit\.predict(Batch)?\b"),
-        "public stream examples should use `trained.predict` / `trained.predictMany`; do not expose internal training state.",
+        "public stream examples should use `trained.predict`, with `(batch := true)` for batches; "
+        "do not expose internal training state.",
     ),
     (
         re.compile(r"\bfit\.curve\.values\b"),
@@ -2997,11 +2998,8 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                 )
             for m in re.finditer(r"\bList\s+Nat\b", masked):
                 line_start = masked.rfind("\n", 0, m.start()) + 1
-                line_end = masked.find("\n", m.end())
-                if line_end < 0:
-                    line_end = len(masked)
-                source_line = masked[line_start:line_end]
-                if "hiddenWidths" in source_line:
+                binder = masked[line_start:m.start()]
+                if re.search(r"\b(?:hiddenWidths|modelWidths)\s*:\s*$", binder):
                     continue
                 line, col = _line_col(text, m.start())
                 findings.append(
@@ -3013,7 +3011,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                         "public tensor and model geometry must use `Spec.Shape` for static "
                         "shape indices or `Tensor Nat [d]` for computed geometry, not `List Nat`; "
                         "ordinary lists are reserved for explicitly named recursive architecture "
-                        "plans such as `hiddenWidths`.",
+                        "plans named `hiddenWidths` or `modelWidths`.",
                     )
                 )
             for declaration in PUBLIC_DECL_RE.finditer(masked):

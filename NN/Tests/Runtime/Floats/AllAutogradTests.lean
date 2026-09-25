@@ -824,7 +824,122 @@ def checkSparseAdamSteps : Runtime.Autograd.Result Bool := do
       secondStep.optimizerState.parameterStepCount? 0 == some 1 &&
       secondStep.optimizerState.parameterStepCount? 1 == some 1 &&
       restored.parameterStepCount? 0 == some 1 &&
-      restored.parameterStepCount? 1 == some 1
+      restored.parameterStepCount? 1 == some 1 &&
+      restored.parameterGroups.any (fun group =>
+        (group.adamPowers.get? 0).map (·.1) == some 1 &&
+          (group.adamPowers.get? 1).map (·.1) == some 1)
+
+/-- Cached powers retain the native Float recurrence's bits across a long sequence of updates. -/
+def checkAdamPowerRecurrence : Bool := Id.run do
+  let beta1 : Float := 0.9999
+  let beta2 : Float := 0.99999
+  let mut powers : Σ stepCount, Optim.AdamPowers beta1 beta2 stepCount :=
+    ⟨0, Optim.AdamPowers.compute beta1 beta2 0⟩
+  for step in [:20000] do
+    powers := ⟨powers.1 + 1, powers.2.advance⟩
+    if step == 0 || step == 15 || step == 127 || step == 1023 || step == 19999 then
+      if powers.2.first.toBits != (Optim.scalarPowNat beta1 powers.1).toBits ||
+          powers.2.second.toBits != (Optim.scalarPowNat beta2 powers.1).toBits then
+        return false
+  return true
+
+/-- Changing only a beta's dual tangent must rebuild its bias-correction powers. -/
+def checkAdamDualCoefficientChange : Bool :=
+  let beta : Model.Dual Float := ⟨0.9, 0.0⟩
+  let betaWithTangent : Model.Dual Float := ⟨0.9, 1.0⟩
+  let group : Train.ParameterGroup (Model.Dual Float) :=
+    { parameterIds := #[0], learningRate := ⟨0.01, 0.0⟩, beta1 := beta }
+  let cachedPowers :=
+    group.adamPowers.insert 0 ⟨5, Optim.AdamPowers.compute group.beta1 group.beta2 5⟩
+  let cached := { group with adamPowers := cachedPowers }
+  let changed := { cached with beta1 := betaWithTangent, adamPowers := ∅ }
+  let powers := Train.Optimizer.Internal.adamPowers changed 0 5
+  let expected := Optim.scalarPowNat betaWithTangent 5
+  beta == betaWithTangent &&
+    powers.first.re.toBits == expected.re.toBits &&
+    powers.first.du.toBits == expected.du.toBits &&
+    powers.first.du != 0.0
+
+/-- Compare Adam moments and counters without relying on scalar Boolean equality. -/
+def sameAdamBuffers (first second : Train.OptimizerState Float) (id : Nat) : Bool :=
+  match first.parameterStates.get? id, second.parameterStates.get? id with
+  | none, none => true
+  | some ⟨s₁, .adam t₁ m₁ v₁⟩, some ⟨s₂, .adam t₂ m₂ v₂⟩ =>
+      if h₁ : s₁ = .scalar then
+        if h₂ : s₂ = .scalar then
+          t₁ == t₂ &&
+            (Tensor.castShape m₁ h₁).item.toBits == (Tensor.castShape m₂ h₂).item.toBits &&
+            (Tensor.castShape v₁ h₁).item.toBits == (Tensor.castShape v₂ h₂).item.toBits
+        else false
+      else false
+  | _, _ => false
+
+/--
+Cached Adam/AdamW agree bit for bit with reconstructed powers after sparse updates, snapshots,
+coefficient changes, and a restored parameter-local counter.
+-/
+def checkAdamCacheLifecycle (algorithm : Train.OptimizerAlgorithm) :
+    Runtime.Autograd.Result Bool := do
+  let mut optimizerState : Train.OptimizerState Float :=
+    { algorithm := algorithm
+      parameterGroups :=
+        #[{ parameterIds := #[0, 1]
+            learningRate := 0.01
+            weightDecay := 0.02
+            beta1 := 0.9
+            beta2 := 0.999
+            epsilon := 1e-8 }] }
+  let mut parameters : Train.ParameterTable Float :=
+    #[scalarParameter 0 1.0, scalarParameter 1 (-0.5)]
+  for step in [:64] do
+    if step == 8 then
+      let some group := optimizerState.parameterGroups[0]?
+        | return false
+      let nextGroup := { group with learningRate := 0.005 }
+      if group.adamPowers.size == 0 || nextGroup.adamPowers.size != group.adamPowers.size then
+        return false
+      optimizerState := { optimizerState with parameterGroups := #[nextGroup] }
+    if step == 16 then
+      optimizerState := Train.OptimizerState.restore optimizerState.snapshot
+    if step == 24 then
+      optimizerState := { optimizerState with
+        parameterGroups := optimizerState.parameterGroups.map fun group =>
+          { group with beta1 := 0.8, beta2 := 0.99, adamPowers := ∅ } }
+    if step == 32 || step == 40 then
+      if let some ⟨shape, .adam _ firstMoment secondMoment⟩ :=
+          optimizerState.parameterStates.get? 0 then
+        optimizerState := { optimizerState with
+          parameterStates := optimizerState.parameterStates.insert 0
+            ⟨shape, .adam (if step == 32 then 7 else 53) firstMoment secondMoment⟩ }
+    if step == 48 then
+      let some group := optimizerState.parameterGroups[0]?
+        | return false
+      optimizerState := { optimizerState with parameterGroups :=
+        #[{ group with parameterIds := #[1] },
+          { group with parameterIds := #[0], beta1 := 0.7, adamPowers := ∅ }] }
+    let gradient := scalarGradient (step % 2) (if step % 3 == 0 then -0.25 else 0.5)
+    let referenceState := { optimizerState with
+      parameterGroups := optimizerState.parameterGroups.map fun group =>
+        { group with adamPowers := ∅ } }
+    let reference ← Train.Optimizer.step referenceState parameters gradient
+    let cached ← Train.Optimizer.step optimizerState parameters gradient
+    let updatedId := step % 2
+    let some group := cached.optimizerState.parameterGroups.find?
+        (fun group => group.parameterIds.contains updatedId)
+      | return false
+    let some ⟨cachedStep, _⟩ := group.adamPowers.get? updatedId
+      | return false
+    if cached.optimizerState.parameterStepCount? updatedId != some cachedStep then
+      return false
+    for id in [:2] do
+      let expected ← scalarParameterValue "Adam reconstructed powers" reference.parameters id
+      let actual ← scalarParameterValue "Adam cached powers" cached.parameters id
+      if actual.toBits != expected.toBits ||
+          !sameAdamBuffers cached.optimizerState reference.optimizerState id then
+        return false
+    optimizerState := cached.optimizerState
+    parameters := cached.parameters
+  pure true
 
 /-- Momentum dampening does not scale the first buffer, matching the standard SGD convention. -/
 def checkMomentumInitialization : Runtime.Autograd.Result Bool := do
@@ -879,6 +994,15 @@ def run : IO Unit := do
   | .error msg => throw <| IO.userError s!"optimizer numerics (sparse Adam): {msg}"
   | .ok false => throw <| IO.userError "optimizer numerics (sparse Adam): FAILED"
   | .ok true => pure ()
+  unless checkAdamPowerRecurrence do
+    throw <| IO.userError "optimizer numerics (Adam power recurrence): FAILED"
+  unless checkAdamDualCoefficientChange do
+    throw <| IO.userError "optimizer numerics (Adam dual coefficient change): FAILED"
+  for algorithm in [Train.OptimizerAlgorithm.adam, .adamw] do
+    match checkAdamCacheLifecycle algorithm with
+    | .error msg => throw <| IO.userError s!"optimizer numerics (Adam power cache): {msg}"
+    | .ok false => throw <| IO.userError "optimizer numerics (Adam power cache): FAILED"
+    | .ok true => pure ()
   match checkMomentumInitialization with
   | .error msg => throw <| IO.userError s!"optimizer numerics (momentum): {msg}"
   | .ok false => throw <| IO.userError "optimizer numerics (momentum): FAILED"

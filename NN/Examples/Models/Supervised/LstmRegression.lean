@@ -78,7 +78,7 @@ feature is the next power-consumption prediction at each time step.
 abbrev modelConfig : nn.models.Recurrent.Config :=
   { sequenceLength := sequenceLength
     inputWidth := featureCount
-    hiddenWidth := hiddenWidth
+    hiddenWidths := [hiddenWidth]
     outputWidth := outputWidth }
 
 /-- Input shape: one scalar observation at each timestep. -/
@@ -180,7 +180,7 @@ def trainForecast (runtime : Runtime.Config) (flags : RealData.HouseholdPowerMod
       Trainer.RunConfig.forObjective
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := flags.training.learningRate } })
-        .meanSquaredError
+        .mse
         (seed := flags.data.seed)
   trainer.train
     (Data.fromSamples samples)

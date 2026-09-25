@@ -11,7 +11,7 @@ public import NN.Runtime.RL.Numerics.Float32.Types
 /-!
 # Float32 Interval Diagnostics for RL
 
-This module contains outward-rounded `Interval32` enclosures for the same return, GAE, TD-residual,
+This module uses FloatLib's outward-rounded binary32 intervals for return, GAE, TD-residual,
 and PPO scalar formulas used by the checked binary32 runtime. These intervals are executable
 diagnostics: they do not replace the exact RL specs, but they flag overflow, invalid endpoints, and
 unstable recurrences in examples and regression tests.
@@ -23,6 +23,8 @@ recurrences; Schulman et al. for GAE and PPO.
 @[expose] public section
 
 open FloatLib.Floats (ExecFloat)
+open FloatLib.Floats.ExecFloat (Binary)
+open FloatLib.Numerics (Interval)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 namespace Runtime
@@ -34,8 +36,6 @@ open Spec TorchLean
 open TorchLean TorchLean.Tensor
 open Spec.RL
 
-open TorchLean.Floats
-open TorchLean.Floats.IEEE754
 
 /-!
 ## Interval Enclosures (configured binary32 endpoint intervals)
@@ -53,16 +53,16 @@ Reference:
 - Sutton and Barto, *Reinforcement Learning: An Introduction* (discounted backups / returns).
 -/
 def discountedBackupInterval
-    (reward gamma bootstrap : Float32Exec) (done : Bool) : Interval32 :=
+    (reward gamma bootstrap : Binary 8 23) (done : Bool) : Interval (Binary 8 23) :=
   if done then
-    TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point reward
+    Binary.Interval.point reward
   else
-    let r : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point reward
-    let prod : Interval32 :=
-      TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul
-        (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point gamma)
-        (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point bootstrap)
-    TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.add r prod
+    let r : Interval (Binary 8 23) := Binary.Interval.point reward
+    let prod : Interval (Binary 8 23) :=
+      Binary.Interval.mul
+        (Binary.Interval.point gamma)
+        (Binary.Interval.point bootstrap)
+    Binary.Interval.add r prod
 
 /--
 Outward-rounded interval enclosure for the TD residual:
@@ -75,10 +75,10 @@ Reference:
 - Sutton and Barto, *Reinforcement Learning: An Introduction* (TD error / Bellman error).
 -/
 def tdResidualInterval
-    (value reward gamma nextValue : Float32Exec) (done : Bool) : Interval32 :=
-  let target : Interval32 := discountedBackupInterval reward gamma nextValue done
-  TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.sub target
-    (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point value)
+    (value reward gamma nextValue : Binary 8 23) (done : Bool) : Interval (Binary 8 23) :=
+  let target : Interval (Binary 8 23) := discountedBackupInterval reward gamma nextValue done
+  Binary.Interval.sub target
+    (Binary.Interval.point value)
 
 /--
 Outward-rounded interval enclosure for the PPO clipped surrogate objective from a precomputed ratio.
@@ -92,29 +92,29 @@ Reference:
   https://arxiv.org/abs/1707.06347
 -/
 def ppoClippedObjectiveFromRatioInterval
-    (ratio advantage clipEps : Float32Exec) : Interval32 :=
-  let one : Float32Exec := (1 : Float32Exec)
+    (ratio advantage clipEps : Binary 8 23) : Interval (Binary 8 23) :=
+  let one : Binary 8 23 := (1 : Binary 8 23)
   -- Clipping thresholds are computed as float32 values (round-to-nearest). The main goal of this
   -- enclosure is to bound the subsequent products.
-  let lo : Float32Exec := ExecFloat.sub one clipEps
-  let hi : Float32Exec := ExecFloat.add one clipEps
-  let clippedRatio : Float32Exec :=
+  let lo : Binary 8 23 := ExecFloat.sub one clipEps
+  let hi : Binary 8 23 := ExecFloat.add one clipEps
+  let clippedRatio : Binary 8 23 :=
     min hi
       (max lo ratio)
-  let unclipped : Interval32 :=
-    TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul
-      (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point ratio)
-      (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point advantage)
-  let clipped : Interval32 :=
-    TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul
-      (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point clippedRatio)
-      (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point advantage)
-  TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.hull unclipped clipped
+  let unclipped : Interval (Binary 8 23) :=
+    Binary.Interval.mul
+      (Binary.Interval.point ratio)
+      (Binary.Interval.point advantage)
+  let clipped : Interval (Binary 8 23) :=
+    Binary.Interval.mul
+      (Binary.Interval.point clippedRatio)
+      (Binary.Interval.point advantage)
+  Binary.Interval.hull unclipped clipped
 
 /--
 Outward-rounded interval enclosure for fixed-horizon discounted returns.
 
-If you pass point intervals at the leaves (`Interval32.point`), the output is a conservative
+If you pass point intervals at the leaves (`Binary.Interval.point`), the output is a conservative
 enclosure for the exact real return recursion (interpreting leaves via `Model.toReal` after
 decoding).
 
@@ -125,15 +125,15 @@ Reference:
 - Sutton and Barto, *Reinforcement Learning: An Introduction* (returns / bootstrapping).
 -/
 def discountedReturnsIntervals {n : Nat}
-    (gamma : Float32Exec) (rewards : Tensor Float32Exec [n])
-    (bootstrap : Float32Exec := (0 : Float32Exec)) :
-    Tensor Interval32 [n] :=
-  let gammaInterval := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point gamma
+    (gamma : Binary 8 23) (rewards : Tensor (Binary 8 23) [n])
+    (bootstrap : Binary 8 23 := (0 : Binary 8 23)) :
+    Tensor (Interval (Binary 8 23)) [n] :=
+  let gammaInterval := Binary.Interval.point gamma
   Tensor.scanr (fun reward future =>
-    TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.add
-      (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point reward)
-      (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul gammaInterval future))
-    (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point bootstrap) rewards
+    Binary.Interval.add
+      (Binary.Interval.point reward)
+      (Binary.Interval.mul gammaInterval future))
+    (Binary.Interval.point bootstrap) rewards
 
 /--
 Outward-rounded interval enclosure for fixed-horizon $\operatorname{GAE}(\lambda)$.
@@ -146,33 +146,33 @@ Reference:
   (2015): https://arxiv.org/abs/1506.02438
 -/
 def generalizedAdvantageEstimationIntervals {n : Nat}
-    (gamma lam : Float32Exec)
-    (rewards values nextValues : Tensor Float32Exec [n])
+    (gamma lam : Binary 8 23)
+    (rewards values nextValues : Tensor (Binary 8 23) [n])
     (dones : Tensor Bool [n]) :
-    Tensor Interval32 [n] :=
+    Tensor (Interval (Binary 8 23)) [n] :=
   let indices : Tensor (Fin n) [n] := Tensor.ofFn id
-  let γ := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point gamma
-  let lamI := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point lam
+  let γ := Binary.Interval.point gamma
+  let lamI := Binary.Interval.point lam
   Tensor.scanr (fun idx advNext =>
     let done := dones[idx]
-    let mask : Interval32 :=
-      TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point
-        (continueMask (α := Float32Exec) done)
-    let r : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point rewards[idx]
-    let v : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point values[idx]
-    let nv : Interval32 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point nextValues[idx]
+    let mask : Interval (Binary 8 23) :=
+      Binary.Interval.point
+        (continueMask (α := Binary 8 23) done)
+    let r : Interval (Binary 8 23) := Binary.Interval.point rewards[idx]
+    let v : Interval (Binary 8 23) := Binary.Interval.point values[idx]
+    let nv : Interval (Binary 8 23) := Binary.Interval.point nextValues[idx]
 
     -- delta = r + γ*mask*nv - v
-    let t1 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul γ mask
-    let t2 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul t1 nv
-    let t3 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.add r t2
-    let delta := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.sub t3 v
+    let t1 := Binary.Interval.mul γ mask
+    let t2 := Binary.Interval.mul t1 nv
+    let t3 := Binary.Interval.add r t2
+    let delta := Binary.Interval.sub t3 v
     -- adv = delta + γ*λ*mask*advNext
-    let u1 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul γ lamI
-    let u2 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul u1 mask
-    let u3 := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.mul u2 advNext
-    let adv := TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.add delta u3
-    adv) (TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.point 0) indices
+    let u1 := Binary.Interval.mul γ lamI
+    let u2 := Binary.Interval.mul u1 mask
+    let u3 := Binary.Interval.mul u2 advNext
+    let adv := Binary.Interval.add delta u3
+    adv) (Binary.Interval.point 0) indices
 
 /--
 Executable check: every `returns[i]` lies inside `intervals[i]` in the configured scalar order.
@@ -181,13 +181,13 @@ This is an executable regression check for examples and tests; formal enclosure 
 `NN/Floats/Interval/*`.
 -/
 def returnsWithinIntervals {n : Nat}
-    (returns : Tensor Float32Exec [n])
-    (intervals : Tensor Interval32 [n]) : Bool :=
+    (returns : Tensor (Binary 8 23) [n])
+    (intervals : Tensor (Interval (Binary 8 23)) [n]) : Bool :=
   (List.finRange n).all fun i =>
-    let x : Float32Exec := Tensor.item (get returns i)
-    let I : Interval32 := Tensor.item (get intervals i)
-    TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.leB I.lo x &&
-      TorchLean.Floats.IEEE754.IEEE32Exec.Interval32.leB x I.hi
+    let x : Binary 8 23 := Tensor.item (get returns i)
+    let I : Interval (Binary 8 23) := Tensor.item (get intervals i)
+    Binary.Interval.leB I.lo x &&
+      Binary.Interval.leB x I.hi
 
 end Float32
 end Numerics

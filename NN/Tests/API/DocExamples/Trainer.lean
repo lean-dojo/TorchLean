@@ -40,7 +40,7 @@ def model : nn.Builder (nn.Sequential [2] [1]) :=
 
 def trainer : TorchLean.Trainer [2] [1] :=
   Trainer.new model
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := 7 }
 
@@ -67,7 +67,7 @@ end RunSettings
 namespace Objectives
 
 -- Regression scores a prediction against a target tensor.
-def regression : Trainer.Objective [1] := .meanSquaredError
+def regression : Trainer.Objective [1] := .mse
 
 -- Classification needs the axis the logits live on, here the only axis of a ten-class output.
 def classification : Trainer.Objective [10] := .oneHotCrossEntropy 0
@@ -103,7 +103,7 @@ def run (trainer : TorchLean.Trainer [2] [1])
     (data : Trainer.Dataset [2] [1]) : IO Unit := do
   let trained ← trainer.train data { steps := 200, logEvery := 25 }
   trained.printSummary
-  let prediction ← trained.predict [0.25, -0.75]
+  let prediction ← trained.predict ([0.25, -0.75] : Tensor Float [2])
   IO.println s!"trained(heldout) = {reprStr prediction}"
 
 end Train
@@ -114,7 +114,7 @@ namespace Predict
 -- This is inference with the freshly initialized parameters, which is what makes it a useful
 -- baseline to print before training starts.
 def baseline (trainer : TorchLean.Trainer [2] [1]) : IO (Tensor Float [1]) :=
-  trainer.predict [0.25, -0.75]
+  trainer.predict ([0.25, -0.75] : Tensor Float [2])
 
 end Predict
 
@@ -154,21 +154,20 @@ namespace Open
 -- call, a loop of `step`, and a `finish`, so opening a session is how you take that loop over.
 def stepOnce (trainer : TorchLean.Trainer [2] [1]) : IO Float := do
   let session ← trainer.open
-  session.step { input := [1.0, 0.0], target := [1.0] }
+  session.step { input := [1.0, 0.0], target := [1.0] } (loss := true)
 
 end Open
 
 -- doc-example: NN/API/Trainer/Session.lean :: opaque step
 namespace Step
 
--- One update per call, returning that sample's loss. Batching several samples into a single
--- update is `stepBatch`, not repeated `step` calls.
+-- One update per call. Set `batch := true` to average several samples in one update.
 def descend (trainer : TorchLean.Trainer [2] [1]) : IO (Trainer.Result [2] [1]) := do
   let session ← trainer.open
   let sample : Sample.Supervised Float [2] [1] := { input := [1.0, 0.0], target := [1.0] }
   let before ← session.loss sample
   for _ in List.range 100 do
-    let _ ← session.step sample
+    session.step sample
   let after ← session.loss sample
   session.finish { before := before, after := after }
 

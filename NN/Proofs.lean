@@ -43,8 +43,10 @@ public import NN.Proofs.Autograd.Tape.Ops.Embedding.GatherRows
 public import NN.Proofs.Autograd.Tape.Ops.Norm.BatchNorm
 public import NN.Proofs.Autograd.Tape.Ops.Norm.LayerNorm
 public import NN.Proofs.Autograd.Tape.Ops.Norm.LayerNormBounds
+public import NN.Proofs.Autograd.Tape.Ops.Norm.LayerNormSecondBounds
 public import NN.Proofs.Autograd.Tape.Ops.Norm.LayerNormRuntime
 public import NN.Proofs.Autograd.Training.StepAlgebra
+public import NN.Proofs.Backend
 public import NN.Proofs.Gradients.Activation
 public import NN.Proofs.Gradients.Linear
 public import NN.Proofs.Models
@@ -78,13 +80,14 @@ Proof landmarks:
 - real-analysis and numerics helper theorems: `NN.Proofs.Analysis`,
 - analytic autograd correctness fragments: `NN.Proofs.Autograd.FDeriv.*`,
 - tape/DAG reverse-mode correctness fragments: `NN.Proofs.Autograd.Tape.*`,
+- backend selection and lossless contract grouping: `NN.Proofs.Backend`,
 - model-level invariants: `NN.Proofs.Models`,
 - probability-kernel facts: `NN.Proofs.Probability`,
 - runtime-approximation bounds: `NN.Proofs.RuntimeApprox.*`,
 - verification envelopes: `NN.Proofs.Verification`.
 
-Backend contract data lives under `NN.Backend`. It is not re-exported here until the proof layer has
-semantic/refinement theorems rather than planner metadata.
+Backend proofs establish properties of the production Lean planner and its declared contracts.
+They do not prove native implementation refinements.
 
 References:
 - PyTorch autograd background:

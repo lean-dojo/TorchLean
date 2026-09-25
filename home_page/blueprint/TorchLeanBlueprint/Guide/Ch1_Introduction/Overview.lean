@@ -84,7 +84,7 @@ or ask the trainer to initialize and execute it:
 -- training step.
 def trainer :=
   Trainer.new model
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.adam
         { learningRate := 0.03 }
       seed := 2026 }
@@ -103,7 +103,7 @@ untrained prediction is a value we can reproduce with the same initialization an
 ```lean (name := untrainedPrediction)
 -- Observe the seeded model at one input before fitting any
 -- data.
-#eval trainer.predict [0.25, -0.75]
+#eval trainer.predict ([0.25, -0.75] : Tensor Float [2])
 ```
 ```leanOutput untrainedPrediction
 [-0.088261]
@@ -111,8 +111,9 @@ untrained prediction is a value we can reproduce with the same initialization an
 
 # Core Objects
 
-The declarations above let us inspect several stages of the model's lifecycle. `#check` prints the
-builder, initialized model, parameter state, prediction function, and lowering result types:
+The declarations above let us inspect several stages of the model's lifecycle. We print the
+builder, initialized model, parameter state, and lowering result types, and check the prediction
+function's single-input type:
 
 ```lean (name := ovSix)
 -- Inspect the types at each transition: builder, model,
@@ -120,7 +121,8 @@ builder, initialized model, parameter state, prediction function, and lowering r
 #check model
 #check initialized
 #check nn.initialState initialized
-#check trainer.predict
+example : Tensor Float [2] → IO (Tensor Float [1]) :=
+  trainer.predict
 #check Verification.lowerForwardToIR (α := Float)
   initialized (nn.initialState initialized)
 ```
@@ -131,15 +133,12 @@ model : nn.Builder (nn.Sequential [2] [1])
 initialized : nn.Sequential [2] [1]
 ```
 ```leanOutput ovSix (whitespace := lax)
-nn.initialState initialized : nn.State Float
+nn.initialState initialized Float : nn.State Float
   (Runtime.Autograd.Model.Layers.Seq.stateShapes initialized)
-```
-```leanOutput ovSix
-trainer.predict : Tensor Float [2] → IO (Tensor Float [1])
 ```
 ```leanOutput ovSix (whitespace := lax)
 Verification.lowerForwardToIR initialized
-  (nn.initialState initialized) : Except String (NN.Verification.Builtin.LoweredIR Float)
+  (nn.initialState initialized Float) : Except String (NN.Verification.Builtin.LoweredIR Float)
 ```
 
 `model` and `initialized` have different types. A builder is a recipe; a `nn.Sequential [2] [1]` is
@@ -822,8 +821,8 @@ property we actually care about.
 The numerical work can still use established native kernels. PyTorch provides operator coverage,
 distributed training, compilers, and pretrained models that a project may already depend on.
 
-TorchLean can call native CUDA or LibTorch for expensive operations while the source model,
-parameter layout, and graph remain TorchLean objects.
+TorchLean calls LibTorch's ATen operators for CUDA computation while retaining its own model,
+parameter layout, tape, and backward traversal.
 {ref "backend-selection"}[Backend Selection]
 explains how each operation acquires an implementation and a contract stating the assumptions
 that connect it to graph semantics.

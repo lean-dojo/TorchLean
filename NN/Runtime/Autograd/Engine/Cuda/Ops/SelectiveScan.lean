@@ -42,6 +42,10 @@ def diagonalScan (variableCoefficients : Bool) {seqLen state : Nat}
   let node : Node :=
     { name := some (if variableCoefficients then "selectiveScanDiagVar" else "selectiveScanDiag")
       value := { s := sequenceShape, buf := output }
+      requiresGrad := (t.getNode? aId).any (·.requiresGrad) ||
+        (t.getNode? bId).any (·.requiresGrad) ||
+        (t.getNode? xId).any (·.requiresGrad) ||
+        (t.getNode? initialId).any (·.requiresGrad)
       parents := #[aId, bId, xId, initialId]
       backward := fun gradient => do
         let checked ← requireGrad gradient sequenceShape

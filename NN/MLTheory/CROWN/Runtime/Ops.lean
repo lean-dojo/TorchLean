@@ -122,23 +122,23 @@ end ReLU
 namespace IBP
 
 /-- Generic elementwise bound propagation for monotone activations (min/max of endpoints). -/
-def mapMinmax {n : Nat} (f : α → α) (xB : Box α (.dim n .scalar)) : Box α (.dim n .scalar) :=
-  let outLo := Tensor.dim (fun i =>
-    let fl := f (xB.lo.getScalar i)
-    let fu := f (xB.hi.getScalar i)
-    Tensor.scalar (if fl > fu then fu else fl))
-  let outHi := Tensor.dim (fun i =>
-    let fl := f (xB.lo.getScalar i)
-    let fu := f (xB.hi.getScalar i)
-    Tensor.scalar (if fl > fu then fl else fu))
+def mapMinmax {s : Shape} (f : α → α) (xB : Box α s) : Box α s :=
+  let outLo := Tensor.map2Spec (fun l u =>
+    let fl := f l
+    let fu := f u
+    if fl > fu then fu else fl) xB.lo xB.hi
+  let outHi := Tensor.map2Spec (fun l u =>
+    let fl := f l
+    let fu := f u
+    if fl > fu then fl else fu) xB.lo xB.hi
   { lo := outLo, hi := outHi }
 
 /-- Interval bound propagation for `sigmoid` (monotone, so min/max of endpoints). -/
-def sigmoid {n : Nat} (xB : Box α (.dim n .scalar)) : Box α (.dim n .scalar) :=
+def sigmoid {s : Shape} (xB : Box α s) : Box α s :=
   mapMinmax Activation.Math.sigmoidSpec xB
 
 /-- Interval bound propagation for `tanh` (monotone, so min/max of endpoints). -/
-def tanh {n : Nat} (xB : Box α (.dim n .scalar)) : Box α (.dim n .scalar) :=
+def tanh {s : Shape} (xB : Box α s) : Box α s :=
   mapMinmax Activation.Math.tanhSpec xB
 
 /--
@@ -151,39 +151,31 @@ $$
 
 This avoids periodic case splits (no `floor/ceil` in `Context α`) while remaining sound.
 -/
-def sin {n : Nat} (xB : Box α (.dim n .scalar)) : Box α (.dim n .scalar) :=
-  let outLo := Tensor.dim (fun i =>
-    let l := xB.lo.getScalar i
-    let u := xB.hi.getScalar i
+def sin {s : Shape} (xB : Box α s) : Box α s :=
+  let outLo := Tensor.map2Spec (fun l u =>
     let m := (l + u) / 2
     let r := (u - l) / 2
     let base := MathFunctions.sin m
-    Tensor.scalar (max (-1) (base - r)))
-  let outHi := Tensor.dim (fun i =>
-    let l := xB.lo.getScalar i
-    let u := xB.hi.getScalar i
+    max (-1) (base - r)) xB.lo xB.hi
+  let outHi := Tensor.map2Spec (fun l u =>
     let m := (l + u) / 2
     let r := (u - l) / 2
     let base := MathFunctions.sin m
-    Tensor.scalar (min 1 (base + r)))
+    min 1 (base + r)) xB.lo xB.hi
   { lo := outLo, hi := outHi }
 
 /-- Same 1-Lipschitz enclosure as `IBP.sin`, but for `cos`. -/
-def cos {n : Nat} (xB : Box α (.dim n .scalar)) : Box α (.dim n .scalar) :=
-  let outLo := Tensor.dim (fun i =>
-    let l := xB.lo.getScalar i
-    let u := xB.hi.getScalar i
+def cos {s : Shape} (xB : Box α s) : Box α s :=
+  let outLo := Tensor.map2Spec (fun l u =>
     let m := (l + u) / 2
     let r := (u - l) / 2
     let base := MathFunctions.cos m
-    Tensor.scalar (max (-1) (base - r)))
-  let outHi := Tensor.dim (fun i =>
-    let l := xB.lo.getScalar i
-    let u := xB.hi.getScalar i
+    max (-1) (base - r)) xB.lo xB.hi
+  let outHi := Tensor.map2Spec (fun l u =>
     let m := (l + u) / 2
     let r := (u - l) / 2
     let base := MathFunctions.cos m
-    Tensor.scalar (min 1 (base + r)))
+    min 1 (base + r)) xB.lo xB.hi
   { lo := outLo, hi := outHi }
 
 end IBP

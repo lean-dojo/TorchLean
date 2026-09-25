@@ -2,9 +2,10 @@
 title: 3D Vision Projection Certificates
 ---
 
-A 3D detector can act as an artifact producer. The detector/exporter emits a camera matrix, eight
-3D box corners, image dimensions, and a claimed 2D box. TorchLean reloads that JSON, recomputes the
-projection in Lean, and checks whether the claimed box really encloses the projected corners.
+A 3D detector can act as an artifact producer. The detector/exporter emits a camera matrix, 3D
+points, image dimensions, and a claimed 2D box. TorchLean reloads that JSON, recomputes the
+projection in Lean, and checks whether the claimed box encloses the projected points. A cuboid
+uses eight corners; the certificate also accepts other point counts.
 
 The result is a small certificate for this exported scene: the checker establishes that
 the claimed 2D box follows from the camera and corner tensors in the artifact. The detector remains
@@ -19,7 +20,7 @@ the producer; TorchLean checks the geometric claim it exported.
 The checked claim is geometric:
 
 - `camera_P` is a $3 \times 4$ projection matrix;
-- `corners3d` is an $8 \times 3$ matrix of cuboid corners;
+- `corners3d` is a $\mathtt{pointCount} \times 3$ matrix of supplied points;
 - `bbox2d` stores $[x_{\min}, y_{\min}, x_{\max}, y_{\max}]$.
 
 For each corner $(x,y,z)$, the checker forms the homogeneous point $[x,y,z,1]$, multiplies by
@@ -28,19 +29,23 @@ resulting pixel $(u,v)$ with both the image bounds and the claimed 2D box. The d
 a point behind the camera is rejected before its divided coordinates can be treated as an image
 point.
 
-Lean checks that image dimensions are positive, the box is ordered and inside the image, all eight
-corners have positive projected depth, every projected corner is inside the image, and every
-projected corner is enclosed by the claimed 2D box.
+Lean checks that image dimensions are positive, the box is ordered and inside the image, all
+supplied points have positive projected depth, every projected point is inside the image, and
+every projected point is enclosed by the claimed 2D box. These checks do not establish that the
+points form a cuboid or that a detector found the right object. For an empty point set, the
+pointwise conditions are vacuous; the image and box checks still apply.
 
 The core artifact type is a tensor-shaped camera certificate:
 
 ```lean
-structure BoxCameraCert (α : Type) where
+structure BoxCameraCert (α : Type)
+    [TorchLean.Storage α] where
+  pointCount : Nat := 8
   width : α
   height : α
   tol : α
   camera : CameraP α
-  corners : BoxCorners α
+  corners : Tensor α [pointCount, 3]
   bbox : Box2D α
 ```
 
@@ -107,7 +112,9 @@ claim because projected 3D corners fall outside that box.
 ## What A JSON Artifact Looks Like
 
 The concrete JSON is kept plain so the same checker can read artifacts from WildDet3D, Omni3D,
-or another detector/exporter that emits the camera and box fields.
+or another detector/exporter that emits the camera and box fields. The optional `point_count`
+must match the number of triples in `corners3d`. When omitted, the parser infers that count and
+rejects an incomplete triple.
 
 ```json
 {
@@ -115,6 +122,7 @@ or another detector/exporter that emits the camera and box fields.
   "image_width": 640.0,
   "image_height": 480.0,
   "tol": 1.0,
+  "point_count": 8,
   "camera_P": [1.0, 0.0, 320.0, 0.0, 0.0, 1.0, 240.0, 0.0, 0.0, 0.0, 1.0, 0.0],
   "corners3d": [0.0, 0.0, 8.0, 1.0, 0.0, 8.0, 1.0, 1.0, 8.0, 0.0, 1.0, 8.0,
                 0.0, 0.0, 10.0, 1.0, 0.0, 10.0, 1.0, 1.0, 10.0, 0.0, 1.0, 10.0],

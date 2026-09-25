@@ -22,6 +22,8 @@ namespace Cuda
 namespace Trainer
 
 open TorchLean
+open Runtime.Autograd.Torch.Internal
+open Runtime.Autograd.Torch.Internal.EagerSession
 
 def dropoutModel : nn.Builder (nn.Sequential [1] [1]) :=
   nn.dropout (shape := [1]) 1.0
@@ -50,7 +52,7 @@ def checkEvaluationMode : IO Unit := do
   unless close evaluationLoss 4.0 do
     throw <| IO.userError
       s!"CUDA trainer evaluation loss: got {evaluationLoss}, expected 4"
-  let trainingLoss ← session.step sample
+  let trainingLoss ← session.step sample (loss := true)
   unless close trainingLoss 0.0 do
     throw <| IO.userError
       s!"CUDA trainer training loss after evaluation: got {trainingLoss}, expected 0"
@@ -113,17 +115,18 @@ def checkMixedBatchOptimizer (optimizer : optim.Optimizer) : IO Unit := do
     let x := (i % 3).toFloat - 1.0
     let y := if i % 2 == 0 then 2.0 else -3.0
     let current : Sample.Supervised Float [1] [1] := { input := [x], target := [y] }
-    let expectedLoss ← reference.step current
+    let expectedLoss ← reference.step current (loss := true)
     let batch := Array.replicate (if i % 3 == 0 then 1 else 3) current
     if i % 2 == 0 then
-      let actualLoss ← mixed.stepBatch batch
+      let actualLoss ← mixed.step (batch := true) (loss := true) batch
       unless Float.abs (actualLoss - expectedLoss) ≤ 1e-4 do
         throw <| IO.userError s!"CUDA mixed batch loss diverged at update {i}"
     else
-      mixed.updateBatch batch
+      mixed.step (batch := true) batch
     for probe in #[-1.0, 0.0, 2.0] do
-      let expected ← reference.predict [probe]
-      let actual ← mixed.predict [probe]
+      let input : Tensor Float [1] := [probe]
+      let expected ← reference.predict input
+      let actual ← mixed.predict input
       unless Float.abs (actual[0] - expected[0]) ≤ 1e-4 do
         throw <| IO.userError
           s!"CUDA mixed batch optimizer diverged at update {i}: \
@@ -201,6 +204,107 @@ def checkOptimizerReset : IO Unit := do
   let _ ← objective.step optimizer resetState .empty .empty
   pure ()
 
+/-- Reject epsilon underflow/overflow before a native update changes parameters or moments. -/
+def checkAdamEpsilon : IO Unit := do
+  -- The smallest positive float32 subnormal is valid; only values rounding to zero are rejected.
+  for (kind, acceptedEpsilon) in (#[
+      (.adam, 1e-8), (.adam, 1e-45), (.adamW, 1e-8), (.adamW, 1e-45)] :
+      Array (CudaAdamKind × Float)) do
+    let parameter ← Runtime.Autograd.Torch.Param.Internal.create (Tensor.scalar (2.0 : Float))
+    let session ← EagerSession.new (α := Float) { device := .cuda, execution := .eager }
+    let config ← IO.mkRef (none : Option CudaAdamConfig)
+    let state ← IO.mkRef (Std.HashMap.emptyWithCapacity : CudaAdamState)
+    discard <| session.use parameter
+    let zero ← Runtime.Autograd.Cuda.Buffer.zerosIO 1
+    let gradients := (Std.HashMap.emptyWithCapacity : CudaGradMap)
+      |>.insert 0 { s := [], buf := zero }
+    let step := fun (epsilon : Float) =>
+      match kind with
+      | .adam => session.adamStepAllCudaMap config state 0.1 0.9 0.999 epsilon gradients
+      | .adamW => session.adamWStepAllCudaMap config state 0.1 0.0 0.9 0.999 epsilon gradients
+    try
+      for epsilon in #[1e-50, 1e50] do
+        let before ← Runtime.Autograd.Cuda.Buffer.allocatorStats
+        let rejected ← try
+          step epsilon
+          pure false
+        catch error => pure (error.toString.contains "float32")
+        let after ← Runtime.Autograd.Cuda.Buffer.allocatorStats
+        unless rejected && (← config.get).isNone && (← state.get).size == 0 &&
+            after.allocCount == before.allocCount do
+          throw <| IO.userError "CUDA Adam accepted epsilon outside the float32 denominator range"
+        syncParamCudaToHost parameter
+        unless (← parameter.value.get).item.toBits == (2.0 : Float).toBits do
+          throw <| IO.userError "rejected CUDA Adam epsilon changed the parameter"
+      step acceptedEpsilon
+      syncParamCudaToHost parameter
+      unless (← parameter.value.get).item.toBits == (2.0 : Float).toBits do
+        throw <| IO.userError "CUDA Adam zero-gradient update changed the parameter"
+      let some entry := (← state.get).get? 0
+        | throw <| IO.userError "valid CUDA Adam epsilon did not initialize moments"
+      unless entry.t == 1 do
+        throw <| IO.userError "valid CUDA Adam epsilon produced an incorrect step count"
+      for buffer in #[entry.m, entry.v] do
+        let values ← Runtime.Autograd.Cuda.Buffer.toFloatArrayIO buffer
+        unless values.size == 1 && values.get! 0 == 0.0 do
+          throw <| IO.userError "CUDA Adam zero-gradient update produced invalid moments"
+    finally
+      session.resetTape
+      releaseCudaGradMap gradients
+      releaseCudaAdamState (← state.get)
+
+/-- Checkpoint decoding applies the same effective-epsilon check before allocating replacements. -/
+def checkAdamCheckpointEpsilon : IO Unit := do
+  IO.FS.withTempDir fun directory => do
+    let schema : OptimizerCheckpoint.ParameterSchema :=
+      { shapes := #[[]], requiresGrad := #[true] }
+    for kind in #[CudaAdamKind.adam, CudaAdamKind.adamW] do
+      let config ← IO.mkRef (none : Option CudaAdamConfig)
+      let m ← Runtime.Autograd.Cuda.Buffer.fullIO 1 1.25
+      let v ← Runtime.Autograd.Cuda.Buffer.fullIO 1 2.5
+      let state ← IO.mkRef <| (Std.HashMap.emptyWithCapacity : CudaAdamState)
+        |>.insert 0 { m, v, t := 7 }
+      let mBytes ← Runtime.Autograd.Cuda.Buffer.toFloat32BytesIO m
+      let vBytes ← Runtime.Autograd.Cuda.Buffer.toFloat32BytesIO v
+      try
+        for epsilon in #[1e-50, 1e50, 1e-8] do
+          let candidate : CudaAdamConfig :=
+            { kind, beta1 := 0.9, beta2 := 0.999, epsilon, weightDecay := 0.0 }
+          let path := directory / "epsilon.bin"
+          -- Write the wire format directly so invalid metadata reaches the decoder.
+          IO.FS.withFile path .write fun handle => do
+            CheckpointIO.writeFormat cudaAdamCheckpointFormat handle
+            writeConfig handle candidate
+            schema.write cudaAdamCheckpointFormat handle
+            for value in #[1, 0, 7, 1] do
+              CheckpointIO.writeNat64 checkpointName handle value
+            handle.write mBytes
+            handle.write vBytes
+          let before ← Runtime.Autograd.Cuda.Buffer.allocatorStats
+          let rejected ← try
+            readCudaAdamStateFloat32 path schema config state
+            pure false
+          catch error =>
+            unless error.toString.contains "float32" do throw error
+            pure true
+          let after ← Runtime.Autograd.Cuda.Buffer.allocatorStats
+          if epsilon == 1e-8 then
+            let some restored := ← config.get
+              | throw <| IO.userError "valid CUDA Adam checkpoint omitted its configuration"
+            unless !rejected && restored.sameBits candidate do
+              throw <| IO.userError "valid CUDA Adam checkpoint epsilon failed to round-trip"
+          else
+            unless rejected && (← config.get).isNone && after.allocCount == before.allocCount do
+              throw <| IO.userError "invalid CUDA Adam checkpoint allocated replacement moments"
+          let some entry := (← state.get).get? 0
+            | throw <| IO.userError "CUDA Adam checkpoint discarded live moments"
+          unless entry.t == 7 &&
+              (← Runtime.Autograd.Cuda.Buffer.toFloat32BytesIO entry.m) == mBytes &&
+              (← Runtime.Autograd.Cuda.Buffer.toFloat32BytesIO entry.v) == vBytes do
+            throw <| IO.userError "CUDA Adam checkpoint changed retained moment values"
+      finally
+        releaseCudaAdamState (← state.get)
+
 /-- A CUDA result owns its parameter snapshot after the live trainer moves on. -/
 def checkSnapshot : IO Unit := do
   let trainer := TorchLean.Trainer.new (nn.linear 1 1)
@@ -209,12 +313,12 @@ def checkSnapshot : IO Unit := do
   let session ← trainer.open
   let sample : Sample.Supervised Float [1] [1] := { input := [1.0], target := [4.0] }
   let before ← session.loss sample
-  session.update sample
+  session.step sample
   let after ← session.loss sample
   let result ← session.finish { before, after }
   let savedPrediction ← result.predict sample.input
   for _ in [0:4] do
-    session.updateBatch #[sample, sample]
+    session.step (batch := true) #[sample, sample]
   let livePrediction ← session.predict sample.input
   let repeatedPrediction ← result.predict sample.input
   unless close savedPrediction[0] repeatedPrediction[0] do
@@ -234,6 +338,8 @@ def run : IO Unit := do
   checkMixedBatchOptimizer (optim.adamW { learningRate := 0.03, weightDecay := 0.1 })
   checkLargeBatchMean
   checkOptimizerReset
+  checkAdamEpsilon
+  checkAdamCheckpointEpsilon
   checkSnapshot
 
 end Trainer

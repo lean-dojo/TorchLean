@@ -25,7 +25,7 @@ us do more than watch the loss fall: we can write down weights that represent it
 them with the weights Adam finds. We can also perturb individual weights to check the backward pass
 and enlarge the input region to see how the output bounds change. The source
 is {src "NN/Examples/Quickstart/SimpleMlpTrain.lean"}[`NN/Examples/Quickstart/SimpleMlpTrain.lean`],
-and the chapter uses its definitions and records the outputs for the configurations shown below.
+and the chapter uses its definitions alongside commands for comparing training configurations.
 
 The task is to learn the piecewise-linear function
 
@@ -73,19 +73,13 @@ def reBadModel : nn.Builder (nn.Sequential [2] [1]) :=
 ```
 
 ```leanOutput reBad (whitespace := lax)
-Application type mismatch: The argument
-  bc✝
-has type
-  nn.Sequential (Shape.appendDim [] 7) (Shape.appendDim [] 1)
-but is expected to have type
-  ?m.67 a✝ __r✝¹ bc✝ __r✝ (Shape.appendDim [] 8) [1]
-in the application
-  nn.compose a✝ bc✝
+nn.Sequential!: layer 2 expects input shape [7], but layer 1 outputs [8].
+Change layer 2's input shape or insert a layer that converts [8] to [7].
 ```
 
-The generated names come from the `nn.Sequential!` macro's binders. The dimensions locate the
-error: `Shape.appendDim [] 7` appears where `Shape.appendDim [] 8` was required. Lean rejects
-the composition before a forward pass runs.
+The final layer constrains ReLU's shape to `[7]`, so the diagnostic points to layer 2: that ReLU
+cannot consume the first layer's `[8]` output. Lean rejects the composition before a forward
+pass runs.
 
 The model returns a one-element tensor rather than a scalar because the shape-indexed layer API
 treats the output feature dimension uniformly. A dataset target must therefore have shape `[1]`, not
@@ -128,7 +122,7 @@ parameters. The initial values themselves live in a payload of exactly that shap
 ```
 
 ```leanOutput reState (whitespace := lax)
-nn.initialState reInit : nn.State Float
+nn.initialState reInit Float : nn.State Float
   (Runtime.Autograd.Model.Layers.Seq.stateShapes reInit)
 ```
 
@@ -259,7 +253,7 @@ The trainer combines the model, objective, optimizer, seed, and runtime choices:
 -- the training objective and optimizer.
 def trainer := Trainer.new model
   { flags.runtime with
-      objective := .meanSquaredError
+      objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := flags.seed }
 ```
@@ -275,32 +269,13 @@ lake exe torchlean quickstart_mlp \
   --seed 2026
 ```
 
-On the current implementation, this deterministic run reports:
+The command reports the dataset size, mean loss before and after training, periodic step losses,
+and a prediction at the held-out input. Read the two loss reports separately: `mean_loss` evaluates
+all 25 examples, while a step loss measures the single example used for that update. A low step
+loss can therefore coexist with a much larger dataset mean.
 
-```terminal +output
-== Quickstart: simple MLP training (seed=2026, steps=200) ==
-target(heldout)    = [0.200000]
-untrained(heldout) = [-0.088261]
-dataset size = 25
-mean_loss(before training) = 0.495227
-step 0: loss=0.250488
-step 25: loss=0.586318
-step 50: loss=0.847444
-step 75: loss=0.003933
-step 100: loss=0.023397
-step 125: loss=0.069799
-step 150: loss=0.000061
-step 175: loss=0.029500
-mean_loss(after training) = 0.002402
-steps=200 arithmetic=native scalar=Float32 loss=0.495227 -> 0.002402
-trained(heldout) = [0.228325]
-```
-
-The mean loss over the dataset falls from `0.495227` to `0.002402`, a factor of roughly two
-hundred. The per-step losses fluctuate much more: `0.847444` at step 50 and `0.000061` at step 150.
-Each of those values measures the single example drawn at that step, so they do not trace the
-dataset's mean loss. After 200 such updates, the held-out prediction is `0.228325` against a
-target of `0.2`. The run has reduced the error substantially while leaving a measurable gap.
+Compare `trained(heldout)` with the target `0.2` as well. That prediction tests one point between
+grid locations; it answers a different question from the average error on the training grid.
 
 Whenever we return to `quickstart_mlp`, we keep this seed and configuration fixed; later chapters
 also introduce smaller purpose-built variants.
@@ -310,77 +285,59 @@ also introduce smaller purpose-built variants.
 The same command accepts `--arithmetic ieee`, which selects FloatLib's executable binary32
 arithmetic in place of the host's native operations:
 
-The following transcript predates the FloatLib migration and retains its recorded scalar labels
-and numerical results. Current `.ieee` execution uses FloatLib binary32.
-
-```terminal +output
-$ lake exe torchlean quickstart_mlp --device cpu --steps 200 \
-    --seed 2026 --arithmetic ieee
-...
-mean_loss(after training) = 0.002402
-steps=200 arithmetic=ieee scalar=IEEE32Exec loss=0.495227 -> 0.002402
-trained(heldout) = [0.228325]
+```terminal
+lake exe torchlean quickstart_mlp --device cpu --steps 200 \
+  --seed 2026 --arithmetic ieee
 ```
 
-Every printed digit agrees with the native run: the same starting loss, the same final loss, the
-same held-out prediction. Two hundred training steps of forward, backward, and Adam update, carried
-out once by the hardware and once by a bit-level model of binary32 written in Lean, agree at the
-displayed precision. This tests the two implementations on one run; it does not establish bitwise
-equality or platform independence of the native backend. The
-{ref "floats"}[floating-point chapter] explains why the agreement is not guaranteed in general, and
+The model, seed, samples, and Adam settings match the native command above. The selected scalar
+changes to FloatLib's `ExecFloat.Binary 8 23`, so forward evaluation, the backward pass, and the
+optimizer all use the reference arithmetic. Compare the starting loss, final loss, and held-out
+prediction. Matching printed decimals would establish agreement only at that display precision,
+for these runs. The
+{ref "floats"}[floating-point chapter] explains how rounding can separate the results, and
 {ref "motivation"}[the motivation chapter] shows a bound-propagation example where the two do
 disagree.
 
 ## PyTorch Training Comparison
 
-The following PyTorch run uses the same architecture, 25-point grid, target, mean squared error,
+The following PyTorch program uses the same architecture, 25-point grid, target, mean squared error,
 and Adam learning rate. Its loop uses a full batch at each step; that difference matters when
 comparing the results.
 
-```
+```terminal
+python3 - <<'PY'
 # Compare a full-batch PyTorch run; its initial weights and
 # update schedule differ.
+import torch
+from torch import nn
+
 torch.manual_seed(2026)
 model = nn.Sequential(nn.Linear(2, 8), nn.ReLU(), nn.Linear(8, 1))
+axis = torch.linspace(-1, 1, 5)
+grid = torch.cartesian_prod(axis, axis)
+ys = (0.8 * torch.relu(grid[:, 0] + grid[:, 1])
+      - 0.4 * torch.relu(grid[:, 1] - grid[:, 0]) + 0.2).unsqueeze(1)
+heldout = torch.tensor([0.25, -0.75])
 opt = torch.optim.Adam(model.parameters(), lr=0.03)
+with torch.no_grad():
+    print("mean_loss(before) =", nn.MSELoss()(model(grid), ys).item())
 for step in range(200):
     opt.zero_grad()
     loss = nn.MSELoss()(model(grid), ys)
     loss.backward()
     opt.step()
+with torch.no_grad():
+    print("mean_loss(after) =", nn.MSELoss()(model(grid), ys).item())
+    print("trained(heldout) =", model(heldout).item())
+PY
 ```
 
-```terminal +output
-target(heldout)    = 0.20000000298023224
-untrained(heldout) = -0.185332
-mean_loss(before)  = 0.510072
-mean_loss(after)   = 1.7e-05
-trained(heldout)   = 0.199078
-```
-
-:::table +header
-*
-  * quantity
-  * TorchLean
-  * PyTorch
-*
-  * mean loss before
-  * `0.495227`
-  * `0.510072`
-*
-  * mean loss after
-  * `0.002402`
-  * `0.000017`
-*
-  * held-out prediction
-  * `0.228325`
-  * `0.199078`
-:::
-
-The PyTorch run reaches a lower loss, but it also evaluates 25 examples per update: 5000 example
-gradients across 200 steps, compared with 200 in the Lean run. The initializations differ because
-the libraries use different generators. Both runs learn an approximation to the target; the table
-does not isolate the effect of either library from the training procedure and initialization.
+This loop evaluates 25 examples per update: 5000 example gradients across 200 steps, compared with
+200 in the Lean command. The libraries also use different initialization generators. Comparing
+their final losses therefore compares two training procedures; it does not isolate the arithmetic
+implementation. To make that comparison, supply the same parameter tensors and use the same samples
+in the same update order.
 
 # Training Step
 
@@ -426,11 +383,13 @@ def rePred : Tensor Float [1] :=
 [-0.088261]
 ```
 
-The pattern match reads the four tensors from the initial state. Its prediction agrees with
-`untrained(heldout) = [-0.088261]` in the training log at every printed digit. Both paths receive
-the same parameters; only the eager runtime records a tape. If they disagreed, this small forward
-calculation would help separate an error in the MLP equations from an error in loading or executing
-the state. It also gives proofs a computation to refer to without including tape management.
+The pattern match reads the four tensors from the initial state. Compare this result with
+`untrained(heldout)` from the command above: both start from the seed-2026 payload, but this
+calculation uses host `Float` while the trainer selects its configured arithmetic. If they disagree,
+this small forward calculation helps separate an error in the MLP equations from an error in
+loading or executing
+the state, or a difference in rounding. It also gives proofs a computation to refer to without
+including tape management.
 The comparison checks one input; equality for all inputs requires a theorem. The derivative and
 interval examples below continue to use this initial payload.
 
@@ -446,7 +405,7 @@ momentum, or AdamW updates {Informal.citep adamw2019}[].
 
 # Exact Representation Of The Target
 
-The remaining training error does not come from an inability to represent the target. Its
+The target does not require all eight hidden units. Its
 definition supplies parameters for a two-unit network directly.
 The term $`0.8\operatorname{ReLU}(x_1+x_2)` is one hidden unit with
 incoming row $`(1,1)` and outgoing weight $`0.8`; $`-0.4\operatorname{ReLU}(x_2-x_1)` is a second
@@ -505,8 +464,8 @@ held-out prediction is `0.2`.
 
 Over the reals, the construction represents the target by definition. The floating-point test
 covers this finite grid; it does not establish equality for every input, including overflow and
-non-finite cases. Still, insufficient width cannot explain the training log's remaining error:
-two hundred single-example Adam steps did not find a function that the architecture can represent.
+non-finite cases. If a training run leaves a nonzero error, insufficient width alone cannot explain
+it: the architecture can contain this two-unit construction.
 That distinction separates {ref "approximation-theory"}[approximation theory] from
 {ref "optimization-theory"}[optimization theory]. Even a zero-loss run need not recover these
 particular weights, as the following symmetries show.
@@ -662,7 +621,7 @@ def reAnalyticW1 : Tensor Float [8, 2] :=
 ```
 
 The first printed value is the squared error of the initial network at one input; it is not the
-mean training loss from the earlier log. The matrix that follows has exactly the shape of `W1`,
+mean training loss reported by the command. The matrix that follows has exactly the shape of `W1`,
 so each entry answers how changing that weight locally changes this scalar loss. The upstream
 cotangent `2 * (y - t)` already includes differentiation of the loss. Supplying one instead would
 ask for the derivative of the prediction. This distinction is easy to miss when calling a backward
@@ -875,8 +834,8 @@ Verification starts from an initialized model and a concrete parameter payload:
 ```
 
 ```leanOutput reLower (whitespace := lax)
-Verification.lowerForwardToIR reInit (nn.initialState reInit) :
-  Except String (NN.Verification.Builtin.LoweredIR Float)
+Verification.lowerForwardToIR reInit
+  (nn.initialState reInit Float) : Except String (NN.Verification.Builtin.LoweredIR Float)
 ```
 
 On success, `LoweredIR Float` pairs an `NN.IR.Graph` with its parameter payload store and the
@@ -1044,11 +1003,10 @@ below `-0.06`.
 
 # Verification Parameters
 
-The training log ended with a held-out prediction of `0.228325`, while the last interval calculation
-enclosed negative outputs. Both used the same architecture and input point. The difference is in
-the parameter payload: training updated the weights, but `reBox` still lowers
-`nn.initialState reInit`.
-The negative interval therefore describes the initial network.
+The interval calculation encloses negative outputs because `reBox` lowers `nn.initialState reInit`.
+Training updates a separate parameter payload. A changed held-out prediction from the trainer
+therefore cannot be compared with this box as though the two described the same fitted function.
+The architecture and input point agree; the weights need not.
 
 To bound the trained network, we need its current parameter values, then we must repeat lowering
 and bound propagation with that payload. A saved verification result must identify those values

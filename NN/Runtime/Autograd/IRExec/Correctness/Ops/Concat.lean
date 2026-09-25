@@ -719,7 +719,7 @@ theorem buildFrom_denoteAllFrom_concat_pos
             (by simpa using hSwapsBack)]
           simp only [Graph.expectShape_mk_of_eq hOutBackFinal, Functor.map, Except.map,
             Except.ok_bind, NN.IR.Graph.normalizeNodeOutput_nodeShape, nodeData,
-            mkForwardNode_eval]
+            mkForwardNode_run]
           have hX :=
             (foldl_extract_one_eq_concatLeadingAxisList_proj (α := α) (rest := restFront) _
               hSigsSize).trans hIR

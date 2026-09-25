@@ -314,7 +314,31 @@ theorem evalAt_matmul_leading_ok
         (hOut ▸ NN.IR.Graph.matmulLeading (α := α) (Shape.ofList leadingRev.reverse) aT bT)) := by
   simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, NN.IR.Graph.normalizeNodeOutput,
     hN, hk, binaryParentIds_eq_ok_of_binaryParents_eq_some i aId bId n hp,
-    hGetA, hGetB, hOut, throw_eq_error, Pure.pure, Except.pure, Shape.concat_eq_append]
+    NN.IR.Graph.expectShape, hGetA, hGetB, hOut, throw_eq_error, Pure.pure, Except.pure,
+    Shape.concat_eq_append, Tensor.eqRec_eq_cast_shape]
+
+/-- Reference evaluation uses the checked matmul layout, including broadcast and vector cases. -/
+theorem evalAt_matmul_dims_ok
+    {α : Type} [TorchLean.Storage α] [Context α]
+    (g : NN.IR.Graph) (payload : Payload α) (input : Spec.SomeTensor α)
+    (vals : Array (Spec.SomeTensor α))
+    (i : Nat) (n : NN.IR.Node) (aId bId : Nat) (dims : OpContracts.MatmulDims)
+    (aT : Tensor α dims.leftShape) (bT : Tensor α dims.rightShape)
+    (hN : g.getNode i = .ok n) (hk : n.kind = .matmul)
+    (hp : binaryParents? n.parents = some (aId, bId))
+    (hDims : OpContracts.matmulDims dims.leftShape dims.rightShape = .ok dims)
+    (hGetA : vals[aId]? = some (Spec.SomeTensor.mk (α := α) dims.leftShape aT))
+    (hGetB : vals[bId]? = some (Spec.SomeTensor.mk (α := α) dims.rightShape bT))
+    (hOut : dims.outShape = n.outShape) :
+    NN.IR.Graph.evalAt (α := α) g payload input vals i =
+      .ok (Spec.SomeTensor.mk (α := α) n.outShape
+        (hOut ▸ NN.IR.Graph.matmulWithDims dims aT bT)) := by
+  simp only [NN.IR.Graph.evalAt, hN, NN.IR.Graph.evalNode, NN.IR.Graph.evalNodeRaw,
+    hk, binaryParentIds_eq_ok_of_binaryParents_eq_some i aId bId n hp,
+    NN.IR.Graph.getParentValue, hGetA, hGetB, hDims, Graph.expectShape_mk,
+    Spec.SomeTensor.ofTensor,
+    NN.IR.Graph.normalizeNodeOutput, hOut, dite_true, Pure.pure, Except.pure,
+    Bind.bind, Except.bind]
 
 /-- The two axis reductions supported by lowered IR semantic equivalence. -/
 inductive AxisReductionKind where

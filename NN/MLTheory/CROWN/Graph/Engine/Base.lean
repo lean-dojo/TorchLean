@@ -45,6 +45,119 @@ structure FlatTensor (α : Type) [TorchLean.Storage α] [Context α] where
   /-- Rank-one tensor payload (shape `.dim n .scalar`). -/
   v : Tensor α [n]
 
+/-- Geometry shared by all concat transfers, preserving parent occurrences in list order. -/
+structure ConcatLayout where
+  /-- Dimensions before the selected axis. -/
+  leading : Shape
+  /-- Dimensions after the selected axis. -/
+  trailing : Shape
+  /-- Selected-axis length of each parent occurrence, including zero lengths. -/
+  lengths : List Nat
+
+namespace ConcatLayout
+
+/-- Shape of one parent occurrence. -/
+@[expose]
+def parentShape (layout : ConcatLayout) (parent : Fin layout.lengths.length) : Shape :=
+  layout.leading ++ layout.lengths.get parent :: layout.trailing
+
+/-- Shape of the concatenated output. -/
+@[expose]
+def outputShape (layout : ConcatLayout) : Shape :=
+  layout.leading ++ layout.lengths.sum :: layout.trailing
+
+/-- Bijection between parent scalar coordinates and concatenated scalar coordinates. -/
+@[expose]
+def flatEquiv (layout : ConcatLayout) :
+    ((parent : Fin layout.lengths.length) × Fin (layout.parentShape parent).size) ≃
+      Fin layout.outputShape.size :=
+  (Equiv.sigmaCongrRight fun parent =>
+    ((Tensor.Internal.Coord.equivFin (layout.parentShape parent)).trans
+      (finCongr (Shape.internalSize_eq (layout.parentShape parent)))).symm).trans <|
+    (Tensor.Internal.Rep.concatenateAxesCoordinateEquiv
+      layout.leading layout.trailing layout.lengths).trans <|
+      (Tensor.Internal.Coord.equivFin layout.outputShape).trans
+        (finCongr (Shape.internalSize_eq layout.outputShape))
+
+/-- Read every output from its unique parent coordinate, without scalar arithmetic. -/
+@[expose]
+def concat (layout : ConcatLayout)
+    (values : (parent : Fin layout.lengths.length) →
+      Tensor α [(layout.parentShape parent).size]) :
+    Tensor α [layout.outputShape.size] :=
+  Tensor.ofFn fun i =>
+    let source := layout.flatEquiv.symm i
+    Tensor.getScalar (values source.1) source.2
+
+/-- Pull output coefficients back to one parent occurrence using the same coordinate bijection. -/
+@[expose]
+def split (layout : ConcatLayout) (value : Tensor α [layout.outputShape.size])
+    (parent : Fin layout.lengths.length) : Tensor α [(layout.parentShape parent).size] :=
+  Tensor.ofFn fun i => Tensor.getScalar value (layout.flatEquiv ⟨parent, i⟩)
+
+end ConcatLayout
+
+/-- Validate concat geometry against the IR contract and its declared output shape. -/
+@[expose]
+def concatLayout? (axis : Nat) (parentShapes : Array Shape) (outputShape : Shape) :
+    Option ConcatLayout := do
+  let expected ← (OpContracts.inferConcatOutShape axis parentShapes).toOption
+  unless expected == outputShape do failure
+  let first ← parentShapes[0]?
+  let lengths := parentShapes.toList.map fun shape => shape.toList.getD axis 0
+  let layout : ConcatLayout :=
+    { leading := first.toList.take axis
+      trailing := first.toList.drop (axis + 1)
+      lengths := lengths }
+  unless layout.outputShape == outputShape do failure
+  unless parentShapes.toList ==
+      (List.finRange layout.lengths.length).map layout.parentShape do failure
+  pure layout
+
+/-- Validate and collect every concat parent; missing ids are rejected before reading payloads. -/
+@[expose]
+def concatNodeLayout? (nodes : Array Node) (node : Node) (axis : Nat) :
+    Option ConcatLayout := do
+  let shapes ← node.parents.mapM fun parent => (nodes[parent]?).map (·.outShape)
+  concatLayout? axis shapes node.outShape
+
+/-- Concatenate flat values after checking every parent payload length. -/
+@[expose]
+def concatFlatValues? (layout : ConcatLayout) (values : Array (FlatTensor α)) :
+    Option (FlatTensor α) := do
+  unless values.size == layout.lengths.length do failure
+  let inputs : Fin layout.lengths.length → FlatTensor α ←
+    Tensor.Internal.sequenceFinM fun parent => values[parent.val]?
+  if h : ∀ parent, (inputs parent).n = (layout.parentShape parent).size then
+    let tensors := fun parent => h parent ▸ (inputs parent).v
+    pure { n := layout.outputShape.size, v := layout.concat tensors }
+  else
+    none
+
+/-- Concatenate interval endpoints through the value coordinate map, without rounding. -/
+@[expose]
+def concatFlatBoxes? (layout : ConcatLayout) (boxes : Array (FlatBox α)) :
+    Option (FlatBox α) := do
+  unless boxes.size == layout.lengths.length do failure
+  let inputs : Fin layout.lengths.length → FlatBox α ←
+    Tensor.Internal.sequenceFinM fun parent => boxes[parent.val]?
+  if h : ∀ parent, (inputs parent).dim = (layout.parentShape parent).size then
+    pure
+      { dim := layout.outputShape.size
+        lo := layout.concat fun parent => h parent ▸ (inputs parent).lo
+        hi := layout.concat fun parent => h parent ▸ (inputs parent).hi }
+  else
+    none
+
+/-- Shared concat rule for value, first-derivative and mixed-second-derivative interval passes. -/
+@[expose]
+def concatNodeBoxes? (nodes : Array Node) (boxes : Array (Option (FlatBox α)))
+    (node : Node) (axis : Nat) : Option (FlatBox α) := do
+  let layout ← concatNodeLayout? nodes node axis
+  let inputs ← node.parents.mapM fun parent => (boxes[parent]?).join
+  concatFlatBoxes? layout inputs
+
+
 -- The flat-tensor engine is the canonical executable path for the current graph verifier.
 
 /--
@@ -139,9 +252,9 @@ structure ParamStore (α : Type) [TorchLean.Storage α] [Context α] where
     Std.HashMap.emptyWithCapacity
   /-- Affine LayerNorm parameters keyed by node id.
 
-  Last-axis value bounds use the stored scale, bias, and epsilon. An absent payload selects
-  unit scale, zero bias, and default epsilon. Payload derivative bounds remain
-  unresolved until a rule accounts for all three parameters. -/
+  Trailing-shape value bounds use the stored scale, bias, and epsilon. An absent payload selects
+  unit scale, zero bias, and default epsilon. The derivative transfers use the same stored
+  parameters and reject incompatible payload shapes. -/
   layerNorm : Std.HashMap Nat (NN.IR.LayerNormParams α) := Std.HashMap.emptyWithCapacity
 
 namespace ParamStore
@@ -152,40 +265,35 @@ def seedInputBox {α : Type} [TorchLean.Storage α] [Context α]
   { ps with inputBoxes := ps.inputBoxes.insert inputId xB }
 
 /-- Seed a graph input with a uniform `ℓ∞` box around a shaped tensor. -/
-def seedLInfBall {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+def seedLInfBall {α : Type} [TorchLean.Storage α] [Context α] [BoundOps α] {s : Shape}
     (ps : ParamStore α) (inputId : Nat) (center : Tensor α s) (eps : α) : ParamStore α :=
   ps.seedInputBox inputId <| FlatBox.lInfBall (α := α) center eps
 
 end ParamStore
 
 /--
-Whether the current dense convolution transfer exactly matches the corresponding IR semantics.
+Validate convolution geometry and return its leading batch shape.
 
-The flattened CROWN rule implements channel-first convolution without leading batch axes, channel
-groups, dilation, or asymmetric padding. The payload must also agree with the configuration stored
-in the graph node; otherwise executable IR evaluation and bound propagation would denote different
-operators.
+The canonical IR contract checks channels, groups, dilation, stride, padding and spatial rank.
+The payload and declared output must agree with the same geometry before any CROWN transfer runs.
 -/
-def convTransferSupported
+@[expose] def planConvTransfer?
     (configuration : NN.IR.ConvConfig) (parameters : NN.IR.ConvParams α)
-    (parentShape outShape : Shape) : Bool :=
-  parameters.matchesConfig configuration &&
-    configuration.channelAxis == 0 &&
-    configuration.groups == 1 &&
-    Tensor.to configuration.dilation (List Nat) ==
-      List.replicate configuration.spatialRank 1 &&
-    Tensor.to configuration.paddingAfter (List Nat) ==
-      Tensor.to configuration.padding (List Nat) &&
-    parentShape == parameters.input .scalar &&
-    outShape == parameters.output .scalar
+    (parentShape outShape : Shape) : Option Shape := do
+  let inferred ← (OpContracts.inferConvConfigOutShape "conv" configuration parentShape).toOption
+  if inferred != outShape || !parameters.matchesConfig configuration then none else do
+    let leading := Shape.ofList (parentShape.toList.take configuration.channelAxis)
+    if parentShape == parameters.input leading && outShape == parameters.output leading then
+      some leading
+    else
+      none
 
 /--
 Check the graph-level semantic restrictions imposed by the current CROWN engine.
 
-Unsupported convolutions, non-leading-axis concatenation, and LayerNorm over more than the last
-axis are left without bounds. LayerNorm payloads must match that axis's shape exactly. This
-predicate checks the common shape contract; individual transfers also check their arithmetic and
-derivative requirements.
+Convolution payloads must match the declared geometry; LayerNorm payloads must match the entire
+normalized suffix. This predicate checks the common shape contract; individual transfers also
+check their arithmetic and derivative requirements.
 -/
 def crownNodeSemanticsSupported (nodes : Array Node) (ps : ParamStore α) (id : Nat) : Bool :=
   match nodes[id]? with
@@ -197,39 +305,52 @@ def crownNodeSemanticsSupported (nodes : Array Node) (ps : ParamStore α) (id : 
           | #[parentId] =>
               match nodes[parentId]?, ps.convCfg[id]? with
               | some parent, some parameters =>
-                  convTransferSupported
-                    (α := α) configuration parameters parent.outShape node.outShape
+                  (planConvTransfer?
+                    (α := α) configuration parameters parent.outShape node.outShape).isSome
               | _, _ => false
           | _ => false
       | .concat axis =>
-          if axis != 0 then
-            false
-          else
-            match node.parents with
-            | #[leftId, rightId] =>
-                match nodes[leftId]?, nodes[rightId]? with
-                | some left, some right =>
-                    match OpContracts.inferConcatOutShape axis #[left.outShape, right.outShape] with
-                    | .ok expected => expected == node.outShape
-                    | .error _ => false
-                | _, _ => false
-            | _ => false
+          (concatNodeLayout? nodes node axis).isSome
+      | .matmul =>
+          match node.parents with
+          | #[leftId, rightId] =>
+              match nodes[leftId]?, nodes[rightId]? with
+              | some left, some right =>
+                  match OpContracts.inferMatmulOutShape left.outShape right.outShape with
+                  | .ok expected => expected == node.outShape
+                  | .error _ => false
+              | _, _ => false
+          | #[parentId] =>
+              match nodes[parentId]?, ps.matmulW[id]? with
+              | some parent, some parameters =>
+                  parameters.n == parent.outShape.size && parameters.m == node.outShape.size
+              | _, _ => false
+          | _ => false
       | .layernorm axis =>
           match node.parents with
           | #[parentId] =>
               match nodes[parentId]? with
               | some parent =>
-                  if axis != node.outShape.rank - 1 || parent.outShape != node.outShape then
+                  if parent.outShape != node.outShape then
                     false
                   else
-                    match ps.layerNorm[id]? with
-                    | none => true
-                    | some parameters =>
-                        match OpContracts.layerNormMatrixDims axis node.outShape with
-                        | .error _ => false
-                        | .ok _ =>
+                    match OpContracts.layerNormMatrixDims axis node.outShape with
+                    | .error _ => false
+                    | .ok _ =>
+                        match ps.layerNorm[id]? with
+                        | none => true
+                        | some parameters =>
                             parameters.normalizedShape ==
                               Shape.ofList (node.outShape.toList.drop axis)
+              | none => false
+          | _ => false
+      | .softmax axis =>
+          match node.parents with
+          | #[parentId] =>
+              match nodes[parentId]? with
+              | some parent =>
+                  parent.outShape == node.outShape &&
+                    (OpContracts.checkAxisValid axis node.outShape).isOk
               | none => false
           | _ => false
       | _ => true
@@ -349,19 +470,6 @@ def boxSum (B : FlatBox α) : FlatBox α :=
     lo := Tensor.full (α := α) (.dim 1 .scalar) lo
     hi := Tensor.full (α := α) (.dim 1 .scalar) hi }
 
-/-- Average all coordinates of a nonempty flat box with directed division. -/
-def boxMean? [NonlinearBoundOps α] (B : FlatBox α) : Option (FlatBox α) := do
-  if B.dim = 0 then
-    none
-  else
-    let (lo, hi) := boxSumEndpoints (α := α) B
-    let n : α := B.dim
-    let (meanLo, meanHi) ← NonlinearBoundOps.divBounds lo hi n n
-    pure
-      { dim := 1
-        lo := Tensor.full (α := α) (.dim 1 .scalar) meanLo
-        hi := Tensor.full (α := α) (.dim 1 .scalar) meanHi }
-
 /-- Apply ReLU to both endpoints of a `FlatBox` (monotone activation, so endpoints suffice). -/
 @[expose]
 public def boxRelu (B : FlatBox α) : FlatBox α :=
@@ -387,10 +495,7 @@ def boxAbs (B : FlatBox α) : FlatBox α :=
   { dim := B.dim, lo := lo', hi := hi' }
 
 /-!
-`traverseFin` is plumbing, so it lives in `Internal` like the rest of the codebase's plumbing. This
-namespace used to be called `boxUnaryEnclosure`, after the function below that is its only caller,
-which was misleading twice over: that caller is actually spelled `boxUnaryEnclosure?`, and
-`traverseFin` knows nothing about boxes or enclosures.
+Finite traversals collect coordinatewise results while retaining typed indices.
 -/
 namespace Internal
 
@@ -575,8 +680,8 @@ def boxMinElem (B1 B2 : FlatBox α) : FlatBox α :=
         { dim := n1, lo := lo1, hi := hi1 }
 
 /--
-Componentwise square of an interval box: for each component `[l,u]` produce `[min (l^2,u^2), max
-  (l^2,u^2)]`, with `0` as the minimum when the interval crosses `0`.
+Componentwise square of an interval box, with downward-rounded lower endpoint squares and
+upward-rounded upper endpoint squares. The minimum is `0` when the interval crosses `0`.
 
 The body is exposed because the proof layer theorem module unfolds this executable rule when
 proving dimension preservation and pointwise enclosure.
@@ -586,42 +691,54 @@ proving dimension preservation and pointwise enclosure.
     Tensor.ofFn fun i =>
       let l := B.lo.getScalar i
       let u := B.hi.getScalar i
-      let l2 := l * l
-      let u2 := u * u
+      let l2 := mulDown l l
+      let u2 := mulDown u u
       if l < 0 then
         if 0 < u then 0 else (if l2 < u2 then l2 else u2)
       else
         if l2 < u2 then l2 else u2
   let hi' :=
     Tensor.ofFn fun i =>
-      let l2 := B.lo.getScalar i * B.lo.getScalar i
-      let u2 := B.hi.getScalar i * B.hi.getScalar i
+      let l2 := mulUp (B.lo.getScalar i) (B.lo.getScalar i)
+      let u2 := mulUp (B.hi.getScalar i) (B.hi.getScalar i)
       if l2 > u2 then l2 else u2
   { dim := B.dim, lo := lo', hi := hi' }
 
 /-- Interval multiplication for scalar endpoints: given `[aLo,aHi]` and `[bLo,bHi]`, return bounds
   on the product. -/
-def intervalMul (aLo aHi bLo bHi : α) : α × α :=
-  let p1 := aLo * bLo
-  let p2 := aLo * bHi
-  let p3 := aHi * bLo
-  let p4 := aHi * bHi
-  let lo1 := if p1 < p2 then p1 else p2
-  let lo2 := if p3 < p4 then p3 else p4
-  let lo  := if lo1 < lo2 then lo1 else lo2
-  let hi1 := if p1 > p2 then p1 else p2
-  let hi2 := if p3 > p4 then p3 else p4
-  let hi  := if hi1 > hi2 then hi1 else hi2
-  (lo, hi)
+@[expose] def intervalMul (aLo aHi bLo bHi : α) : α × α :=
+  (min2 (min2 (mulDown aLo bLo) (mulDown aLo bHi))
+      (min2 (mulDown aHi bLo) (mulDown aHi bHi)),
+    max2 (max2 (mulUp aLo bLo) (mulUp aLo bHi))
+      (max2 (mulUp aHi bLo) (mulUp aHi bHi)))
 
-/-- Length of the last axis of a shape; scalars are treated as length one. -/
-def lastDimLen : Shape → Nat
-  | .scalar => 1
-  | .dim n .scalar => n
-  | .dim _ rest => lastDimLen rest
+/-- Directed contraction with the same scalar indexing and sum order as `Graph.matmulFlat`. -/
+@[expose] def binaryMatmulBox (dims : OpContracts.MatmulDims) (left right : FlatBox α) :
+    FlatBox α :=
+  let endpoints (index : Fin dims.outShape.size) : α × α :=
+    (List.range dims.inner).foldl (fun acc inner =>
+      let leftIndex := dims.leftIndex index.val inner
+      let rightIndex := dims.rightIndex index.val inner
+      let product := intervalMul (α := α)
+        (getAtOrZero left.lo [leftIndex]) (getAtOrZero left.hi [leftIndex])
+        (getAtOrZero right.lo [rightIndex]) (getAtOrZero right.hi [rightIndex])
+      (addDown acc.1 product.1, addUp acc.2 product.2)) (0, 0)
+  { dim := dims.outShape.size
+    lo := Tensor.ofFn fun index => (endpoints index).1
+    hi := Tensor.ofFn fun index => (endpoints index).2 }
+
+/-- Binary matmul with batch broadcasting, vector promotion, and directed endpoint arithmetic. -/
+@[expose] def ibpBinaryMatmul? (leftShape rightShape : Shape) (left right : FlatBox α) :
+    Option (FlatBox α) :=
+  match (OpContracts.matmulDims leftShape rightShape).toOption with
+  | none => none
+  | some dims =>
+      if left.dim = leftShape.size ∧ right.dim = rightShape.size then
+        some (binaryMatmulBox dims left right)
+      else none
 
 /-- Reinterpret a flattened tensor as shape `s` when the element counts agree. -/
-def ibpUnflatten {s : Shape} (dim : Nat) (t : Tensor α [dim]) (h : dim =
+@[expose] def ibpUnflatten {s : Shape} (dim : Nat) (t : Tensor α [dim]) (h : dim =
   Spec.Shape.size s) :
     Tensor α s :=
   let t' : Tensor α [Spec.Shape.size s] := by
@@ -644,35 +761,16 @@ def ibpBroadcastTo (s₁ s₂ : Shape) (Xin : FlatBox α) : Option (FlatBox α) 
   else
     none
 
-/-- IBP rule for reducing a shaped box by summing along one axis. -/
+/-- Sum one axis with downward lower accumulation and upward upper accumulation. -/
 def ibpReduceSumAxis (axis : Nat) (Xin : FlatBox α) (s : Shape) : Option (FlatBox α) :=
   if h : Xin.dim = Spec.Shape.size s then
     match Spec.Shape.nonemptyAxis? (axis := axis) s with
     | none => none
-    | some hAxis =>
-        let hRed := hAxis.down
+    | some _ =>
         let xLo : Tensor α s := ibpUnflatten (α := α) (s := s) Xin.dim Xin.lo h
         let xHi : Tensor α s := ibpUnflatten (α := α) (s := s) Xin.dim Xin.hi h
-        let yLo := Tensor.reduceSum (α := α) (s := s) axis xLo hRed
-        let yHi := Tensor.reduceSum (α := α) (s := s) axis xHi hRed
-        let outS := Tensor.shapeAfterSum s axis
-        let flatLo := Tensor.flattenSpec (α := α) yLo
-        let flatHi := Tensor.flattenSpec (α := α) yHi
-        some { dim := Spec.Shape.size outS, lo := flatLo, hi := flatHi }
-  else
-    none
-
-/-- IBP rule for reducing a shaped box by averaging along one axis. -/
-def ibpReduceMeanAxis (axis : Nat) (Xin : FlatBox α) (s : Shape) : Option (FlatBox α) :=
-  if h : Xin.dim = Spec.Shape.size s then
-    match Spec.Shape.nonemptyAxis? (axis := axis) s with
-    | none => none
-    | some hAxis =>
-        let hRed := hAxis.down
-        let xLo : Tensor α s := ibpUnflatten (α := α) (s := s) Xin.dim Xin.lo h
-        let xHi : Tensor α s := ibpUnflatten (α := α) (s := s) Xin.dim Xin.hi h
-        let yLo := Tensor.reduceMean (α := α) (s := s) axis xLo hRed
-        let yHi := Tensor.reduceMean (α := α) (s := s) axis xHi hRed
+        let yLo := Tensor.reduceDim (fun row => Tensor.foldlSpec addDown 0 row) axis xLo
+        let yHi := Tensor.reduceDim (fun row => Tensor.foldlSpec addUp 0 row) axis xHi
         let outS := Tensor.shapeAfterSum s axis
         let flatLo := Tensor.flattenSpec (α := α) yLo
         let flatHi := Tensor.flattenSpec (α := α) yHi
@@ -687,8 +785,8 @@ A singleton row is exactly one. Every coordinate of a longer row lies in `[0,1]`
 forgoes the tighter exponential formula above so executable checking does not assume a directed
 transcendental implementation that its scalar backend has not supplied.
 -/
-def ibpSoftmaxRange (s : Shape) (dim : Nat) : FlatBox α :=
-  let rowLength := lastDimLen s
+def ibpSoftmaxRange (s : Shape) (axis dim : Nat) : FlatBox α :=
+  let rowLength := s.toList[axis]?.getD 0
   if rowLength = 1 then
     let ones := Tensor.full (α := α) (.dim dim .scalar) 1
     { dim := dim, lo := ones, hi := ones }
@@ -735,137 +833,14 @@ def ibpHardMaskedSoftmaxLastTensor : {s : Shape} →
       (lower, upper)
 
 /-!
-## LayerNorm IBP (last axis)
+## LayerNorm interval propagation
 
-Layer normalization (Ba et al.) computes, per vector, something like:
-
-`y = (x - mean(x)) / sqrt(var(x) + eps)`.
-
-We implement a conservative enclosure by:
-1. Bounding mean using sums of endpoints.
-2. Bounding variance using a max-deviation upper bound.
-3. Bounding the per-component ratio by checking endpoint combinations against a positive denominator
-   interval.
-
-This is intended as a simple checker-side transfer rule. It is conservative and is not an
-optimized relaxation.
-
-References:
-- Ba, Kiros, Hinton, "Layer Normalization", 2016: https://arxiv.org/abs/1607.06450
-- Bound propagation context: Xu et al., 2020 (auto_LiRPA): https://arxiv.org/abs/2002.12920
+Normalization acts independently on each row of the configured trailing shape. Its directed
+transfer bounds the mean, variance, stabilized denominator, and affine scale and bias.
 -/
 
 /--
-Ideal-arithmetic upper bound on the variance term used by analytic LayerNorm rules.
-
-Given endpoint bounds for a vector and bounds on its mean, each coordinate is at most
-`max |x_i - μ|` away from the bounded mean interval. Squaring and summing those coordinate radii
-gives a conservative variance upper bound. The implementation uses ordinary scalar arithmetic and
-is called only from exact-arithmetic branches; executable endpoint propagation uses
-`ibpLayerNormRange?` instead.
--/
-def idealLayerNormVarianceUpper {n : Nat}
-    (lo hi : Tensor α [n]) (muLo muHi : α) : α :=
-  if _h : n > 0 then
-    let sumAbsSq : α := (List.finRange n).foldl (fun acc (i : Fin n) =>
-      let dl := MathFunctions.abs (lo.getScalar i - muHi)
-      let du := MathFunctions.abs (hi.getScalar i - muLo)
-      let a := if dl > du then dl else du
-      acc + (a * a)) 0
-    sumAbsSq / (n : Nat)
-  else
-    0
-
-/-- Ideal-arithmetic mean bounds for a nonempty vector with bounded coordinates.
-
-For `n = 0`, the mathematical mean is undefined; this total helper returns `(0,0)` so callers do
-not accidentally divide by zero while they reject or totalize the empty case.
--/
-def idealLayerNormMeanBounds {n : Nat}
-    (lo hi : Tensor α [n]) : α × α :=
-  if _h : n > 0 then
-    let nA : α := (n : Nat)
-    (TorchLean.Tensor.sumSpec lo / nA, TorchLean.Tensor.sumSpec hi / nA)
-  else
-    (0, 0)
-
-/--
-Ideal-arithmetic bounds for `x - μ` when `x` and `μ` are bounded by intervals.
-
-LayerNorm transfer rules repeatedly need this centered interval for the input, first derivative,
-and second derivative streams. Keeping it here avoids duplicating the same endpoint arithmetic in
-IBP and derivative propagation.
--/
-def idealLayerNormCenteredBounds {n : Nat}
-    (lo hi : Tensor α [n]) (muLo muHi : α) :
-    Tensor α [n] × Tensor α [n] :=
-  let loOut :=
-    Tensor.ofFn fun i =>
-      let dl := lo.getScalar i - muHi
-      let du := hi.getScalar i - muLo
-      if dl < du then dl else du
-  let hiOut :=
-    Tensor.ofFn fun i =>
-      let dl := lo.getScalar i - muHi
-      let du := hi.getScalar i - muLo
-      if dl > du then dl else du
-  (loOut, hiOut)
-
-/-- Ideal-arithmetic reciprocal-denominator bounds from an upper variance bound. -/
-def idealLayerNormInvStdBounds (varHi : α) : α × α :=
-  let sLo := MathFunctions.sqrt Context.defaultEpsilon
-  let sHi := MathFunctions.sqrt (varHi + Context.defaultEpsilon)
-  (1 / (if sHi > Context.defaultEpsilon then sHi else Context.defaultEpsilon),
-   1 / (if sLo > Context.defaultEpsilon then sLo else Context.defaultEpsilon))
-
-/-- Analytic real-arithmetic LayerNorm bounds on the last axis, lifted over leading dimensions. -/
-def idealLayerNormLastTensor : {s : Shape} → Tensor α s → Tensor α s → (Tensor α s × Tensor α s)
-  | .scalar, lo, hi => (lo, hi)
-  | .dim n .scalar, lo, hi =>
-      if n > 0 then
-        let nA : α := (n : Nat)
-        let sum_lo := TorchLean.Tensor.sumSpec lo
-        let sum_hi := TorchLean.Tensor.sumSpec hi
-        let mu_lo := sum_lo / nA
-        let mu_hi := sum_hi / nA
-        let var_hi := idealLayerNormVarianceUpper (α := α) lo hi mu_lo mu_hi
-        let den_lo := MathFunctions.sqrt Context.defaultEpsilon
-        let den_hi := MathFunctions.sqrt (var_hi + Context.defaultEpsilon)
-        let outLo :=
-          Tensor.ofFn fun i =>
-            let dl := lo.getScalar i - mu_hi
-            let du := hi.getScalar i - mu_lo
-            let c1 := dl / den_lo
-            let c2 := dl / den_hi
-            let c3 := du / den_lo
-            let c4 := du / den_hi
-            let mn12 := if c1 < c2 then c1 else c2
-            let mn34 := if c3 < c4 then c3 else c4
-            if mn12 < mn34 then mn12 else mn34
-        let outHi :=
-          Tensor.ofFn fun i =>
-            let dl := lo.getScalar i - mu_hi
-            let du := hi.getScalar i - mu_lo
-            let c1 := dl / den_lo
-            let c2 := dl / den_hi
-            let c3 := du / den_lo
-            let c4 := du / den_hi
-            let mx12 := if c1 > c2 then c1 else c2
-            let mx34 := if c3 > c4 then c3 else c4
-            if mx12 > mx34 then mx12 else mx34
-        (outLo, outHi)
-      else
-        -- Degenerate n=0: pass through
-        (lo, hi)
-  | .dim n inner, lo, hi =>
-      let outLo := Tensor.dim (fun i : Fin n =>
-        (idealLayerNormLastTensor (s := inner) (lo.unstack i) (hi.unstack i)).1)
-      let outHi := Tensor.dim (fun i : Fin n =>
-        (idealLayerNormLastTensor (s := inner) (lo.unstack i) (hi.unstack i)).2)
-      (outLo, outHi)
-
-/--
-Uniform finite enclosure for last-axis layer normalization.
+Uniform finite enclosure for normalization over a trailing shape.
 
 For a row of length `n`, exact LayerNorm without affine scale or bias satisfies
 `|yᵢ| ≤ sqrt n`; a singleton row is identically zero. Backends provide the outward-rounded bound
@@ -873,8 +848,8 @@ through `NonlinearBoundOps.layerNormAbsBound`. Returning `none` is preferable to
 normalization with unqualified host division and square root.
 -/
 def ibpLayerNormRange? [NonlinearBoundOps α]
-    (s : Shape) (dim : Nat) : Option (FlatBox α) :=
-  let rowLength := lastDimLen s
+    (s : Shape) (dim : Nat) (axis : Nat := s.rank - 1) : Option (FlatBox α) :=
+  let rowLength := (s.toList.drop axis).prod
   if rowLength = 0 then
     some
       { dim := dim
@@ -896,21 +871,93 @@ def ibpLayerNormRange? [NonlinearBoundOps α]
 Validate an interval before using it in a nonlinear transfer. Self-subtraction rejects infinite
 and NaN IEEE endpoints; finite exact-real endpoints satisfy these checks as well.
 -/
-private def checkedLayerNormBounds (bounds : α × α) : Option (α × α) :=
+@[expose] def checkedFiniteBounds? (bounds : α × α) : Option (α × α) :=
   if !(decide (bounds.2 < bounds.1)) && bounds.1 - bounds.1 == 0 &&
       bounds.2 - bounds.2 == 0 then
     some bounds
   else
     none
 
-/-- Directed mean bounds for one nonempty normalization row. -/
-private def layerNormMeanBounds? [NonlinearBoundOps α] {n : Nat}
-    (lo hi : Tensor α [n]) : Option (α × α) := do
+/--
+Enclose eval-mode BatchNorm without treating rounded normalization coefficients as exact.
+
+The running statistics are fixed, but their stabilized square root and division still need
+directed bounds. Coordinates use the denominator interval for their channel.
+-/
+def ibpBatchNormEval? [NonlinearBoundOps α] (parentShape : Shape) (channelAxis : Nat)
+    (config : NN.IR.BatchNormEvalParams α) (input : FlatBox α) : Option (FlatBox α) := do
+  let channels ← parentShape.toList[channelAxis]?
+  if config.c = 0 || channels != config.c || input.dim != parentShape.size then none else do
+    let _ ← checkedFiniteBounds? (config.eps, config.eps)
+    let parameters ← Internal.traverseFin fun ci : Fin config.c => do
+      let mean := config.mean.getScalar ci
+      let scale := config.gamma.getScalar ci
+      let bias := config.beta.getScalar ci
+      let variance := config.var.getScalar ci
+      let _ ← checkedFiniteBounds? (mean, mean)
+      let _ ← checkedFiniteBounds? (scale, scale)
+      let _ ← checkedFiniteBounds? (bias, bias)
+      let _ ← checkedFiniteBounds? (variance, variance)
+      let (stabilizedLo, stabilizedHi) ← checkedFiniteBounds?
+        (addDown (max variance 0) config.eps, addUp (max variance 0) config.eps)
+      let (denominatorLo, denominatorHi) ←
+        NonlinearBoundOps.sqrtBounds stabilizedLo stabilizedHi >>= checkedFiniteBounds?
+      if !(denominatorLo > 0) then none else
+        pure (mean, scale, bias, denominatorLo, denominatorHi)
+    let bounds ← Internal.traverseFin fun i : Fin input.dim => do
+      let channel := axisCoordinateOfFlat parentShape channelAxis i.val % config.c
+      if hchannel : channel < config.c then do
+        let (mean, scale, bias, denominatorLo, denominatorHi) := parameters ⟨channel, hchannel⟩
+        let _ ← checkedFiniteBounds? (input.lo.getScalar i, input.hi.getScalar i)
+        let (centeredLo, centeredHi) ← checkedFiniteBounds?
+          (subDown (input.lo.getScalar i) mean, subUp (input.hi.getScalar i) mean)
+        let (normalizedLo, normalizedHi) ←
+          NonlinearBoundOps.divBounds centeredLo centeredHi denominatorLo denominatorHi >>=
+            checkedFiniteBounds?
+        let (scaledLo, scaledHi) ← checkedFiniteBounds?
+          (intervalMul normalizedLo normalizedHi scale scale)
+        checkedFiniteBounds? (addDown scaledLo bias, addUp scaledHi bias)
+      else none
+    pure
+      { dim := input.dim
+        lo := Tensor.ofFn fun i => (bounds i).1
+        hi := Tensor.ofFn fun i => (bounds i).2 }
+
+/-- Directed mean bounds for one nonempty row. The denominator encloses the exact row
+length, including lengths that cannot be represented exactly by the scalar format. -/
+@[expose] def directedRowMean? [NonlinearBoundOps α] {n : Nat}
+    (bounds : Fin n → α × α) : Option (α × α) := do
   if n = 0 then none else do
-    let (sumLo, sumHi) := boxSumEndpoints (α := α) { dim := n, lo, hi }
-    let count : α := n
-    let bounds ← NonlinearBoundOps.divBounds sumLo sumHi count count
-    checkedLayerNormBounds bounds
+    let (sumLo, sumHi, countLo, countHi) :=
+      (List.finRange n).foldl (fun (lo, hi, countLo, countHi) i =>
+        (addDown lo (bounds i).1, addUp hi (bounds i).2,
+         addDown countLo 1, addUp countHi 1)) (0, 0, 0, 0)
+    let _ ← checkedFiniteBounds? (sumLo, sumHi)
+    let _ ← checkedFiniteBounds? (countLo, countHi)
+    let result ← NonlinearBoundOps.divBounds sumLo sumHi countLo countHi
+    checkedFiniteBounds? result
+
+/-- Average a nonempty flat box, enclosing both the sum and the exact coordinate count. -/
+def boxMean? [NonlinearBoundOps α] (B : FlatBox α) : Option (FlatBox α) := do
+  let (lo, hi) ← directedRowMean? fun i => (B.lo.getScalar i, B.hi.getScalar i)
+  pure { dim := 1, lo := Tensor.full [1] lo, hi := Tensor.full [1] hi }
+
+/--
+Average one axis using directed sums and division. The denominator encloses the exact axis
+length, so a rounded natural-number conversion cannot silently narrow the result.
+-/
+def ibpReduceMeanAxis [NonlinearBoundOps α]
+    (axis : Nat) (Xin : FlatBox α) (s : Shape) : Option (FlatBox α) := do
+  let summed ← ibpReduceSumAxis axis Xin s
+  let length := s.toList[axis]?.getD 0
+  let (countLo, countHi) :=
+    (List.range length).foldl
+      (fun (lo, hi) _ => (addDown lo 1, addUp hi 1)) (0, 0)
+  let _ ← checkedFiniteBounds? (countLo, countHi)
+  boxUnaryEnclosure? (fun lo hi => do
+    let _ ← checkedFiniteBounds? (lo, hi)
+    let result ← NonlinearBoundOps.divBounds lo hi countLo countHi
+    checkedFiniteBounds? result) summed
 
 /--
 Directed bounds for one LayerNorm row with explicit affine parameters.
@@ -922,30 +969,31 @@ negative gamma reverses the interval endpoints.
 
 Epsilon must be finite and positive, and the row and affine parameters must be finite. Division
 and square root use the selected nonlinear backend. Invalid or non-finite intermediate intervals
-return `none`. An end-to-end soundness theorem for this sequence and a proof of agreement with
-native arithmetic remain open obligations.
+return `none`. `Proofs.LayerNormEnclosure` proves enclosure of the real row under the backend's
+arithmetic laws. Agreement with native arithmetic requires its own numerical correspondence.
 -/
-def directedLayerNormRow? [NonlinearBoundOps α] {n : Nat}
+@[expose] def directedLayerNormRow? [NonlinearBoundOps α] {n : Nat}
     (lo hi gamma beta : Tensor α [n]) (epsilon : α) :
     Option (Tensor α [n] × Tensor α [n]) := do
-  let _ ← checkedLayerNormBounds (epsilon, epsilon)
+  let _ ← checkedFiniteBounds? (epsilon, epsilon)
   if !(epsilon > 0) then none else do
     let _ ← Internal.traverseFin fun i : Fin n => do
-      let _ ← checkedLayerNormBounds (lo.getScalar i, hi.getScalar i)
-      let _ ← checkedLayerNormBounds (gamma.getScalar i, gamma.getScalar i)
-      checkedLayerNormBounds (beta.getScalar i, beta.getScalar i)
-    let (meanLo, meanHi) ← layerNormMeanBounds? lo hi
+      let _ ← checkedFiniteBounds? (lo.getScalar i, hi.getScalar i)
+      let _ ← checkedFiniteBounds? (gamma.getScalar i, gamma.getScalar i)
+      checkedFiniteBounds? (beta.getScalar i, beta.getScalar i)
+    let (meanLo, meanHi) ← directedRowMean? fun i => (lo.getScalar i, hi.getScalar i)
     let centeredLo := Tensor.ofFn fun i => BoundOps.subDown (lo.getScalar i) meanHi
     let centeredHi := Tensor.ofFn fun i => BoundOps.subUp (hi.getScalar i) meanLo
     let _ ← Internal.traverseFin fun i : Fin n =>
-      checkedLayerNormBounds (centeredLo.getScalar i, centeredHi.getScalar i)
-    let (centerMeanLo, centerMeanHi) ← layerNormMeanBounds? centeredLo centeredHi
+      checkedFiniteBounds? (centeredLo.getScalar i, centeredHi.getScalar i)
+    let (centerMeanLo, centerMeanHi) ← directedRowMean? fun i =>
+      (centeredLo.getScalar i, centeredHi.getScalar i)
     let recenteredLo :=
       Tensor.ofFn fun i => BoundOps.subDown (centeredLo.getScalar i) centerMeanHi
     let recenteredHi :=
       Tensor.ofFn fun i => BoundOps.subUp (centeredHi.getScalar i) centerMeanLo
     let _ ← Internal.traverseFin fun i : Fin n =>
-      checkedLayerNormBounds (recenteredLo.getScalar i, recenteredHi.getScalar i)
+      checkedFiniteBounds? (recenteredLo.getScalar i, recenteredHi.getScalar i)
     let squaredLo := Tensor.ofFn fun i =>
       let l := recenteredLo.getScalar i
       let u := recenteredHi.getScalar i
@@ -955,65 +1003,30 @@ def directedLayerNormRow? [NonlinearBoundOps α] {n : Nat}
       let l := recenteredLo.getScalar i
       let u := recenteredHi.getScalar i
       max2 (BoundOps.mulUp l l) (BoundOps.mulUp u u)
-    let (varianceLo, varianceHi) ← layerNormMeanBounds? squaredLo squaredHi
-    let (stabilizedLo, stabilizedHi) ← checkedLayerNormBounds
+    let (varianceLo, varianceHi) ← directedRowMean? fun i =>
+      (squaredLo.getScalar i, squaredHi.getScalar i)
+    let (stabilizedLo, stabilizedHi) ← checkedFiniteBounds?
       (BoundOps.addDown (max2 varianceLo 0) epsilon,
        BoundOps.addUp (max2 varianceHi 0) epsilon)
     let (denominatorLo, denominatorHi) ←
       NonlinearBoundOps.sqrtBounds (max2 stabilizedLo 0) (max2 stabilizedHi 0) >>=
-        checkedLayerNormBounds
+        checkedFiniteBounds?
     if !(denominatorLo > 0) then none else do
       let bounds ← Internal.traverseFin fun i : Fin n => do
         let (lower, upper) ←
           NonlinearBoundOps.divBounds (centeredLo.getScalar i) (centeredHi.getScalar i)
-            denominatorLo denominatorHi >>= checkedLayerNormBounds
+            denominatorLo denominatorHi >>= checkedFiniteBounds?
         let scale := gamma.getScalar i
-        let (scaledLo, scaledHi) ← checkedLayerNormBounds
+        let (scaledLo, scaledHi) ← checkedFiniteBounds?
           (min2 (BoundOps.mulDown lower scale) (BoundOps.mulDown upper scale),
            max2 (BoundOps.mulUp lower scale) (BoundOps.mulUp upper scale))
-        checkedLayerNormBounds
+        checkedFiniteBounds?
           (BoundOps.addDown scaledLo (beta.getScalar i),
            BoundOps.addUp scaledHi (beta.getScalar i))
       pure (Tensor.ofFn fun i => (bounds i).1, Tensor.ofFn fun i => (bounds i).2)
 
 /--
-Input-dependent last-axis LayerNorm enclosure with unit scale, zero bias, and the default epsilon.
-
-Each row uses `directedLayerNormRow?`, including the second centering and direct division in the
-specification. Leading dimensions select independent rows.
--/
-def directedLayerNormLastTensor? [NonlinearBoundOps α] :
-    {s : Shape} → Tensor α s → Tensor α s → Option (Tensor α s × Tensor α s)
-  | .scalar, _, _ => none
-  | .dim n .scalar, lo, hi =>
-      directedLayerNormRow? lo hi (Tensor.full [n] 1) (Tensor.full [n] 0)
-        TorchLean.normalizationEpsilon
-  | .dim n (.dim m rest), lo, hi => do
-      let rows ← Internal.traverseFin fun i : Fin n =>
-        directedLayerNormLastTensor? (s := .dim m rest) (lo.unstack i) (hi.unstack i)
-      pure (Tensor.dim fun i => (rows i).1, Tensor.dim fun i => (rows i).2)
-
-/--
-Use the backend's uniform LayerNorm range when available; otherwise propagate the supplied input
-box through the directed normalization sequence.
--/
-def ibpLayerNormBox? [NonlinearBoundOps α]
-    (s : Shape) (input : FlatBox α) : Option (FlatBox α) := do
-  if h : input.dim = s.size then
-    let _ ← Internal.traverseFin fun i : Fin input.dim =>
-      checkedLayerNormBounds (input.lo.getScalar i, input.hi.getScalar i)
-    match ibpLayerNormRange? (α := α) s input.dim with
-    | some result => pure result
-    | none =>
-        let (lo, hi) ← directedLayerNormLastTensor?
-          (ibpUnflatten (s := s) input.dim input.lo h)
-          (ibpUnflatten (s := s) input.dim input.hi h)
-        pure { dim := s.size, lo := Tensor.flattenSpec lo, hi := Tensor.flattenSpec hi }
-  else
-    none
-
-/--
-Enclose a last-axis LayerNorm payload using its full epsilon, gamma, and beta.
+Enclose a LayerNorm payload over the trailing shape starting at `axis`.
 
 The matrix view and affine suffix are checked by the same helpers used in IR evaluation. Bounds
 are propagated separately for each row, then flattened back into the graph's storage order.
@@ -1023,27 +1036,55 @@ sequence with its stored affine parameters and epsilon.
 def ibpLayerNormPayloadBox? [NonlinearBoundOps α]
     (s : Shape) (axis : Nat) (parameters : NN.IR.LayerNormParams α)
     (input : FlatBox α) : Option (FlatBox α) := do
-  if axis != s.rank - 1 then none else do
-    let (rows, width) ← (OpContracts.layerNormMatrixDims axis s).toOption
-    let payload : NN.IR.Payload α := { layerNorm? := fun _ => some parameters }
-    let affine ←
-      (NN.IR.Graph.resolveLayerNormAffine payload 0 axis s width).toOption
-    let matrixShape : Shape := .dim rows (.dim width .scalar)
-    if hInput : input.dim = s.size then
-      if hMatrix : s.size = matrixShape.size then
-        let lo := ibpUnflatten (s := matrixShape) input.dim input.lo (hInput.trans hMatrix)
-        let hi := ibpUnflatten (s := matrixShape) input.dim input.hi (hInput.trans hMatrix)
-        let bounds ← Internal.traverseFin fun i : Fin rows =>
-          directedLayerNormRow? (lo.unstack i) (hi.unstack i)
-            affine.gamma affine.beta affine.epsilon
-        let outputLo : Tensor α matrixShape := Tensor.dim fun i => (bounds i).1
-        let outputHi : Tensor α matrixShape := Tensor.dim fun i => (bounds i).2
-        pure
-          { dim := matrixShape.size
-            lo := Tensor.flattenSpec outputLo
-            hi := Tensor.flattenSpec outputHi }
-      else none
+  let (rows, width) ← (OpContracts.layerNormMatrixDims axis s).toOption
+  let payload : NN.IR.Payload α := { layerNorm? := fun _ => some parameters }
+  let affine ←
+    (NN.IR.Graph.resolveLayerNormAffine payload 0 axis s width).toOption
+  let _ ← checkedFiniteBounds? (affine.epsilon, affine.epsilon)
+  let _ ← if affine.epsilon > 0 then some () else none
+  let _ ← Internal.traverseFin fun i : Fin width => do
+    let _ ← checkedFiniteBounds? (affine.gamma.getScalar i, affine.gamma.getScalar i)
+    checkedFiniteBounds? (affine.beta.getScalar i, affine.beta.getScalar i)
+  let matrixShape : Shape := .dim rows (.dim width .scalar)
+  if hInput : input.dim = s.size then
+    if hMatrix : s.size = matrixShape.size then
+      let lo := ibpUnflatten (s := matrixShape) input.dim input.lo (hInput.trans hMatrix)
+      let hi := ibpUnflatten (s := matrixShape) input.dim input.hi (hInput.trans hMatrix)
+      let bounds ← Internal.traverseFin fun i : Fin rows =>
+        directedLayerNormRow? (lo.unstack i) (hi.unstack i)
+          affine.gamma affine.beta affine.epsilon
+      let outputLo : Tensor α matrixShape := Tensor.dim fun i => (bounds i).1
+      let outputHi : Tensor α matrixShape := Tensor.dim fun i => (bounds i).2
+      pure
+        { dim := matrixShape.size
+          lo := Tensor.flattenSpec outputLo
+          hi := Tensor.flattenSpec outputHi }
     else none
+  else none
+
+/--
+Use the backend's uniform LayerNorm range when available; otherwise propagate the supplied input
+box through the directed normalization sequence over the suffix beginning at `axis`.
+Omitting `axis` selects the final axis.
+-/
+def ibpLayerNormBox? [NonlinearBoundOps α]
+    (s : Shape) (input : FlatBox α) (axis : Nat := s.rank - 1) : Option (FlatBox α) := do
+  let _ ← (OpContracts.layerNormMatrixDims axis s).toOption
+  if input.dim = s.size then
+    let _ ← Internal.traverseFin fun i : Fin input.dim =>
+      checkedFiniteBounds? (input.lo.getScalar i, input.hi.getScalar i)
+    match ibpLayerNormRange? (α := α) s input.dim axis with
+    | some result => pure result
+    | none =>
+        let normalizedShape := Shape.ofList (s.toList.drop axis)
+        ibpLayerNormPayloadBox? s axis
+          { normalizedShape
+            gamma := Tensor.full normalizedShape 1
+            beta := Tensor.full normalizedShape 0
+            eps := TorchLean.normalizationEpsilon }
+          input
+  else
+    none
 
 /-- For tensors known to have shape `.dim n .scalar`, extract the underlying function. -/
 @[expose] public def getDimScalarFn {n : Nat} (t : Tensor α [n]) : Fin n → Tensor α .scalar :=
@@ -1126,35 +1167,22 @@ public def ibpMatmul (id : Nat) (ps : ParamStore α) (Xin : FlatBox α) : Option
 /--
 IBP transfer for a supported convolution node whose parameters are stored in `ParamStore.convCfg`.
 -/
-def ibpConvNode (configuration : NN.IR.ConvConfig) (parentShape outShape : Shape)
-    (id : Nat) (ps : ParamStore α) (Xin : FlatBox α) : Option (FlatBox α) :=
-  match ps.convCfg[id]? with
-  | none => none
-  | some parameters =>
-    if !convTransferSupported (α := α) configuration parameters parentShape outShape then
-      none
-    else
-      let expected := parameters.inChannels *
-        (Tensor.to parameters.inputSpatial (List Nat)).prod
-      if hdim : Xin.dim = expected then
-        let sFlat := Shape.dim Xin.dim Shape.scalar
-        let sIn := Shape.ofList
-          (parameters.inChannels :: Tensor.to parameters.inputSpatial (List Nat))
-        have hsize : sFlat.size = sIn.size := by
-          simp [Spec.Shape.size, sFlat, sIn, hdim, expected, Spec.Shape.size_eq_prod]
-        let xLo := Tensor.reshapeSpec (α:=α) (source:=sFlat) (target:=sIn) Xin.lo hsize
-        let xHi := Tensor.reshapeSpec (α:=α) (source:=sFlat) (target:=sIn) Xin.hi hsize
-        let xBox : Box α sIn := { lo := xLo, hi := xHi }
-        let yBox := NN.MLTheory.CROWN.ibpConv
-          (α := α) (layer := parameters.spec) (xB := xBox)
-        let outSpatial := Spec.convOutSpatial parameters.inputSpatial parameters.kernel
-          parameters.stride parameters.padding
-        let flatOutShape := Shape.ofList
-          (parameters.outChannels :: Tensor.to outSpatial (List Nat))
-        let flatLo := Tensor.flattenSpec (α:=α) yBox.lo
-        let flatHi := Tensor.flattenSpec (α:=α) yBox.hi
-        some { dim := flatOutShape.size, lo := flatLo, hi := flatHi }
-      else none
+@[expose] def ibpConvNode (configuration : NN.IR.ConvConfig) (parentShape outShape : Shape)
+    (id : Nat) (ps : ParamStore α) (Xin : FlatBox α) : Option (FlatBox α) := do
+  let parameters ← ps.convCfg[id]?
+  let leading ← planConvTransfer? configuration parameters parentShape outShape
+  let sIn := parameters.input leading
+  if hdim : Xin.dim = sIn.size then
+    let xBox : Box α sIn :=
+      { lo := ibpUnflatten Xin.dim Xin.lo hdim
+        hi := ibpUnflatten Xin.dim Xin.hi hdim }
+    let yBox := NN.MLTheory.CROWN.ibpConv parameters.spec parameters.dilation
+      parameters.paddingAfter parameters.groups leading xBox
+    some
+      { dim := (parameters.output leading).size
+        lo := Tensor.flattenSpec yBox.lo
+        hi := Tensor.flattenSpec yBox.hi }
+  else none
 
 /-- Apply a monotone `SomeTensor` operation independently to both interval endpoints. -/
 def ibpMonotoneSomeTensor?
@@ -1187,6 +1215,58 @@ def ibpMonotoneSomeTensor?
     | _, _ => none
   else
     none
+
+private def directedAvgPoolTensor? [NonlinearBoundOps α]
+    (config : WindowConfig) (spatial : Tensor Nat [config.spatialRank]) (leading : Shape)
+    (lo hi : Tensor α (leading.concat (Shape.ofList spatial.data.toList))) :
+    Option (Box α (leading.concat (Shape.ofList
+      (poolOutSpatialPad spatial config.kernel config.stride config.padding).data.toList))) :=
+  match leading with
+  | .scalar => do
+      let outDims :=
+        (poolOutSpatialPad spatial config.kernel config.stride config.padding).data.toList
+      let kernelDims := config.kernel.data.toList
+      let bounds ← Internal.traverseFin fun i : Fin (Shape.ofList outDims).size =>
+        let outIndices := (flatCoordinates outDims.toArray i.val).toList
+        directedRowMean? (n := (Shape.ofList kernelDims).size) fun j =>
+          let windowIndices := (flatCoordinates kernelDims.toArray j.val).toList
+          (Pooling.Internal.getPaddedAverageInputVal lo outIndices windowIndices
+              config.stride.data.toList config.padding.data.toList,
+           Pooling.Internal.getPaddedAverageInputVal hi outIndices windowIndices
+              config.stride.data.toList config.padding.data.toList)
+      pure
+        { lo := Tensor.unflattenSpec (Shape.ofList outDims)
+            (Tensor.ofFn fun i => (bounds i).1)
+          hi := Tensor.unflattenSpec (Shape.ofList outDims)
+            (Tensor.ofFn fun i => (bounds i).2) }
+  | .dim n rest => do
+      let bounds ← Internal.traverseFin fun i : Fin n =>
+        directedAvgPoolTensor? config spatial rest (lo.unstack i) (hi.unstack i)
+      pure
+        { lo := Tensor.dim fun i => (bounds i).lo
+          hi := Tensor.dim fun i => (bounds i).hi }
+
+/--
+Average-pool bounds with directed window sums, counts, and division.
+
+The shared pooling plan validates the spatial suffix and preserves every leading axis. Windows
+follow the spec's row-major coordinates and padded-cell lookup; padded zeros still contribute to
+the denominator. Unavailable or nonfinite arithmetic and inconsistent declared shapes return `none`.
+-/
+def ibpAvgPool? [NonlinearBoundOps α] (config : WindowConfig)
+    (parentShape outShape : Shape) (input : FlatBox α) : Option (FlatBox α) := do
+  let plan ← (OpContracts.planPool "avg_pool" config parentShape).toOption
+  if plan.outShape != outShape then none else
+    if hdim : input.dim = parentShape.size then
+      let lo : Tensor α parentShape := ibpUnflatten input.dim input.lo hdim
+      let hi : Tensor α parentShape := ibpUnflatten input.dim input.hi hdim
+      let bounds ← directedAvgPoolTensor? config plan.spatial plan.leading
+        (plan.concat_eq.symm ▸ lo) (plan.concat_eq.symm ▸ hi)
+      pure
+        { dim := plan.outShape.size
+          lo := Tensor.flattenSpec bounds.lo
+          hi := Tensor.flattenSpec bounds.hi }
+    else none
 
 
 end NN.MLTheory.CROWN.Graph

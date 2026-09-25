@@ -7,6 +7,7 @@
 #include "torchlean_size_common.h"
 
 #include <math.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -17,10 +18,8 @@
 // Host-memory version of the buffer runtime symbols.
 // This keeps default builds CUDA-free while preserving the same edge-case behavior.
 
-// Keep the deterministic-reductions flag for API parity, and initialize it lazily from the
-// environment.
-static uint32_t g_torchlean_deterministic_reductions = 0u;
-static uint32_t g_torchlean_deterministic_reductions_inited = 0u;
+// One immutable startup policy is shared by every CPU stub. The sentinel means unread.
+static atomic_uint g_torchlean_cpu_reduction_policy = ATOMIC_VAR_INIT(2u);
 static uint64_t g_torchlean_cuda_live_bytes = 0u;
 static uint64_t g_torchlean_cuda_peak_bytes = 0u;
 static uint64_t g_torchlean_cuda_alloc_count = 0u;
@@ -34,6 +33,74 @@ static uint64_t g_torchlean_cuda_wrapper_finalize_count = 0u;
 LEAN_EXPORT uint32_t torchlean_cuda_runtime_status(uint32_t token) {
   (void)token;
   return 0u;
+}
+
+// LibTorch controls are unavailable in the portable C backend.
+LEAN_EXPORT lean_obj_res torchlean_libtorch_version(uint32_t token) {
+  (void)token;
+  return lean_mk_string("unavailable");
+}
+
+#define TORCHLEAN_UNAVAILABLE_U32(NAME) \
+  LEAN_EXPORT uint32_t torchlean_libtorch_##NAME(uint32_t token) { \
+    (void)token; return 0u; \
+  }
+TORCHLEAN_UNAVAILABLE_U32(device_count)
+TORCHLEAN_UNAVAILABLE_U32(get_device)
+#undef TORCHLEAN_UNAVAILABLE_U32
+
+#define TORCHLEAN_UNAVAILABLE_U64(NAME) \
+  LEAN_EXPORT uint64_t torchlean_libtorch_##NAME(uint32_t token) { \
+    (void)token; return 0u; \
+  }
+TORCHLEAN_UNAVAILABLE_U64(allocated_bytes)
+TORCHLEAN_UNAVAILABLE_U64(reserved_bytes)
+TORCHLEAN_UNAVAILABLE_U64(peak_allocated_bytes)
+TORCHLEAN_UNAVAILABLE_U64(peak_reserved_bytes)
+#undef TORCHLEAN_UNAVAILABLE_U64
+
+static lean_obj_res torchlean_libtorch_unavailable(void) {
+  return lean_io_result_mk_error(lean_mk_io_error_other_error(
+      0, lean_mk_string("LibTorch controls require a cuda=true LibTorch build")));
+}
+
+LEAN_EXPORT lean_obj_res torchlean_libtorch_set_device(uint32_t index) {
+  (void)index;
+  return torchlean_libtorch_unavailable();
+}
+
+LEAN_EXPORT lean_obj_res torchlean_libtorch_get_setting(uint32_t setting) {
+  if (setting > 8u) {
+    return lean_io_result_mk_error(lean_mk_io_error_other_error(
+        0, lean_mk_string("LibTorch: unknown runtime setting")));
+  }
+  return lean_io_result_mk_ok(lean_box_uint32(0u));
+}
+
+LEAN_EXPORT lean_obj_res torchlean_libtorch_set_setting(uint32_t setting, uint32_t enabled) {
+  (void)setting;
+  (void)enabled;
+  return torchlean_libtorch_unavailable();
+}
+
+LEAN_EXPORT lean_obj_res torchlean_libtorch_get_memory_fraction(uint32_t token) {
+  (void)token;
+  return lean_io_result_mk_ok(lean_box_float(0.0));
+}
+
+LEAN_EXPORT lean_obj_res torchlean_libtorch_set_memory_fraction(double fraction) {
+  (void)fraction;
+  return torchlean_libtorch_unavailable();
+}
+
+LEAN_EXPORT lean_obj_res torchlean_libtorch_synchronize(uint32_t token) {
+  (void)token;
+  return torchlean_libtorch_unavailable();
+}
+
+LEAN_EXPORT lean_obj_res torchlean_libtorch_empty_cache(uint32_t token) {
+  (void)token;
+  return torchlean_libtorch_unavailable();
 }
 
 static void torchlean_cuda_note_alloc(size_t n) {
@@ -52,32 +119,32 @@ static void torchlean_cuda_note_free(size_t n) {
       g_torchlean_cuda_live_bytes > bytes ? g_torchlean_cuda_live_bytes - bytes : 0u;
 }
 
-LEAN_EXPORT void torchlean_cuda_set_deterministic_reductions(uint32_t on) {
-  g_torchlean_deterministic_reductions = on ? 1u : 0u;
-  g_torchlean_deterministic_reductions_inited = 1u;
-}
-
-LEAN_EXPORT uint32_t torchlean_cuda_get_deterministic_reductions() {
-  if (!g_torchlean_deterministic_reductions_inited) {
-    g_torchlean_deterministic_reductions = torchlean_read_deterministic_reductions_env();
-    g_torchlean_deterministic_reductions_inited = 1u;
+uint32_t torchlean_cpu_deterministic_reductions(void) {
+  unsigned int policy =
+      atomic_load_explicit(&g_torchlean_cpu_reduction_policy, memory_order_relaxed);
+  if (policy == 2u) {
+    const unsigned int initial = torchlean_read_deterministic_reductions_env();
+    if (atomic_compare_exchange_strong_explicit(
+            &g_torchlean_cpu_reduction_policy, &policy, initial,
+            memory_order_relaxed, memory_order_relaxed)) {
+      policy = initial;
+    }
   }
-  return g_torchlean_deterministic_reductions;
-}
-
-LEAN_EXPORT uint32_t torchlean_cuda_get_deterministic_reductions_u(uint32_t u) {
-  (void)u;
-  return torchlean_cuda_get_deterministic_reductions();
-}
-
-LEAN_EXPORT uint32_t torchlean_cuda_set_deterministic_reductions_checked(uint32_t on) {
-  torchlean_cuda_set_deterministic_reductions(on);
-  return torchlean_cuda_get_deterministic_reductions();
+  return (uint32_t)policy;
 }
 
 static bool torchlean_cuda_buffer_release_data(torchlean_cuda_buffer* b) {
-  if (!b || !b->data) {
+  if (!b) {
     return false;
+  }
+  const bool had_context = b->context != NULL;
+  if (had_context) {
+    b->delete_context(b->context);
+    b->context = NULL;
+    b->delete_context = NULL;
+  }
+  if (!b->data) {
+    return had_context;
   }
   free(b->data);
   torchlean_cuda_note_free(b->size);
@@ -148,6 +215,8 @@ torchlean_cuda_buffer* torchlean_cuda_buffer_alloc(size_t n) {
   }
   b->size = n;
   b->data = NULL;
+  b->context = NULL;
+  b->delete_context = NULL;
   if (n > 0) {
     const size_t bytes =
         checked_bytes_size(n, sizeof(float), "torchlean_cuda_buffer_alloc_stub: byte size overflow");
@@ -211,18 +280,6 @@ LEAN_EXPORT uint64_t torchlean_cuda_allocator_device_total_bytes(uint32_t u) {
   return 0u;
 }
 
-// The CPU stub frees dropped buffers immediately and keeps no reuse cache, so there is nothing to
-// cap and no cached bytes to report.
-LEAN_EXPORT uint64_t torchlean_cuda_allocator_cache_bytes(uint32_t u) {
-  (void)u;
-  return 0u;
-}
-
-LEAN_EXPORT uint64_t torchlean_cuda_allocator_cache_cap_bytes(uint32_t u) {
-  (void)u;
-  return 0u;
-}
-
 LEAN_EXPORT uint32_t torchlean_cuda_buffer_size(b_lean_obj_arg BObj) {
   torchlean_cuda_buffer* b = torchlean_cuda_buffer_unbox(BObj);
   if (b->size > 0xFFFFFFFFULL) {
@@ -257,9 +314,9 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_release_then(
   return (lean_object*)keepObj;
 }
 
-LEAN_EXPORT uint32_t torchlean_runtime_collect_allocator(uint32_t force) {
-  const bool force_collect = force != 0;
-  mi_collect(force_collect);
+LEAN_EXPORT uint32_t torchlean_runtime_collect_allocator(uint32_t token) {
+  (void)token;
+  mi_collect(false);
   return 1;
 }
 
@@ -855,7 +912,7 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_scaled_prod_exp(b_lean_obj_arg AO
 LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_sum(b_lean_obj_arg BObj) {
   torchlean_cuda_buffer* b = torchlean_cuda_buffer_unbox(BObj);
   torchlean_cuda_buffer* out = torchlean_cuda_buffer_alloc(1);
-  if (torchlean_cuda_get_deterministic_reductions()) {
+  if (torchlean_cpu_deterministic_reductions()) {
     double acc = 0.0;
     for (size_t i = 0; i < b->size; ++i) {
       acc += (double)b->data[i];
@@ -878,7 +935,7 @@ LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_mean(b_lean_obj_arg BObj) 
     out->data[0] = NAN;
     return torchlean_cuda_buffer_box(out);
   }
-  if (torchlean_cuda_get_deterministic_reductions()) {
+  if (torchlean_cpu_deterministic_reductions()) {
     double acc = 0.0;
     for (size_t i = 0; i < b->size; ++i) {
       acc += (double)b->data[i];

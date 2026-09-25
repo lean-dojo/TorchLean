@@ -14,8 +14,8 @@ public import NN.Backend.Capsule
 Build-dependent availability for backend capsules.
 
 `KernelPolicy` says which capsules selection may use. `Availability` says which devices and
-providers a build declares. CPU-only, CUDA, and optional LibTorch builds therefore share one
-semantic registry while exposing different capsule subsets to the planner. An availability
+providers a build declares. CPU-only and LibTorch CUDA builds share one semantic registry while
+exposing different capsule subsets to the planner. An availability
 declaration is not runtime discovery; executable paths still probe the linked runtime before
 launching work.
 -/
@@ -44,11 +44,10 @@ def filterCapsules (a : Availability) (capsules : Array KernelCapsule) : Array K
 /-- CPU/reference-only availability. -/
 def cpu : Availability := {}
 
-/-- CUDA availability with the native provider and, optionally, LibTorch. -/
-def cuda (withLibTorch : Bool := false) : Availability :=
+/-- CUDA availability with LibTorch primitives and TorchLean compositions of those primitives. -/
+def cuda : Availability :=
   { devices := #[.cpu, .cuda]
-    providers :=
-      #[.reference, .torchLean, .nativeCuda] ++ (if withLibTorch then #[.libTorch] else #[]) }
+    providers := #[.reference, .torchLean, .libTorch] }
 
 end Availability
 

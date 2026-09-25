@@ -397,14 +397,21 @@ One deterministic DDIM reverse update ($\eta=0$).
 Given $x_t$, predicted epsilon, and adjacent schedule values, this estimates $x_0$ and remixes it to
 the previous timestep.
 
-We clamp the intermediate $x_0$ estimate to the training image range $[-1,1]$.  This is the standard
-"clipped denoised" stabilizer used by many DDPM/DDIM samplers: without it, a compact model can
-drive one color channel far outside the data range and the final PPM exporter merely clips the
-damage into saturated color blobs.
+The default postprocessor clamps the intermediate $x_0$ estimate to the training image range
+$[-1,1]$. This stabilizes compact image models whose reconstruction can drift outside the data
+range. Supply `postprocess := id` for an unclipped reconstruction, or a shape-preserving transform
+for another data domain. Postprocessing happens before remixing and does not recompute epsilon.
+
+The reconstruction denominator uses the explicit `sqrtAb > denominatorFloor` branch, with the
+floor in the else branch. The default is `1e-12`. For finite schedule coefficients, a positive
+finite floor keeps the denominator finite and nonzero.
 -/
 def ddimPrev {shape : Shape}
     (abPrev ab : Float)
-    (x_t epsHat : Tensor Float shape) : Tensor Float shape :=
+    (x_t epsHat : Tensor Float shape)
+    (postprocess : Tensor Float shape → Tensor Float shape :=
+      fun reconstruction => Tensor.clamp reconstruction (-1) 1)
+    (denominatorFloor : Float := 1e-12) : Tensor Float shape :=
   -- Obtain constants and branch operations from the spec's scalar dictionary. In particular,
   -- retain max(alpha, zero) and the strict root > floor test with the floor in the else branch.
   -- Their operand order matters for Float zeros and non-finite inputs.
@@ -420,11 +427,10 @@ def ddimPrev {shape : Shape}
   let x0Hat : Tensor Float shape :=
     TorchLean.Tensor.scale
       (TorchLean.Tensor.sub x_t (TorchLean.Tensor.scale epsHat sqrtOneMinusAb))
-      (one / (if sqrtAb > 1e-12 then sqrtAb else 1e-12))
-  let x0Clipped : Tensor Float shape :=
-    TorchLean.Tensor.clamp x0Hat (-one) one
+      (one / (if sqrtAb > denominatorFloor then sqrtAb else denominatorFloor))
+  let x0Processed := postprocess x0Hat
   TorchLean.Tensor.add
-    (TorchLean.Tensor.scale x0Clipped sqrtAbPrev)
+    (TorchLean.Tensor.scale x0Processed sqrtAbPrev)
     (TorchLean.Tensor.scale epsHat sqrtOneMinusAbPrev)
 
 end diffusion

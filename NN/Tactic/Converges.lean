@@ -9,7 +9,7 @@ module
 public import NN.Tactic.Init
 public import NN.MLTheory.Optimization.StronglyConvexGD
 public import Mathlib.Topology.MetricSpace.Contracting
-import Mathlib.Tactic.Positivity
+import Mathlib.Tactic.Positivity.Finset
 
 /-!
 # Convergence from proved bounds

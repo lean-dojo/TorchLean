@@ -76,7 +76,11 @@ def batchSampleFromTokenIds (idsByBatch : Tensor Nat [batchSize, contextLength +
 ```
 
 The tutorial keeps the dataloader convention visible: a supervised example is a pair of typed
-tensors.
+tensors. `Gpt2.samplesFromCorpus` byte-encodes the corpus once and retains the token tensor in the
+sample stream's closure. Each requested sample takes windows from that tensor, then constructs
+the one-hot inputs and shifted targets. The stream does not re-encode the complete text for
+every sample. Its window offsets and space-byte padding still determine which tokens each
+sample contains.
 
 <a id="gpt-2"></a>
 
@@ -174,7 +178,7 @@ The Mamba example has the same tutorial shape:
 ```lean
 abbrev modelConfig : nn.models.Mamba.Config :=
   { vocabularySize := vocabularySize
-    modelWidth := stateWidth }
+    modelWidths := [stateWidth] }
 
 abbrev input : Shape := modelConfig.inputShape contextLength
 abbrev output : Shape := modelConfig.outputShape contextLength

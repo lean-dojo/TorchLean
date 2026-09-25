@@ -65,21 +65,6 @@ The pointwise `AddCommGroup` and `Module` instances on `Tensor α s` live in
 
 /-! ## 1D helpers -/
 
-/-- Mapping a scalar tensor and then extracting it is the same as mapping its scalar value. -/
-@[simp] theorem toScalar_mapTensor {α β : Type}
-    [TorchLean.Storage α] [TorchLean.Storage β]
-    (f : α -> β) (x : Tensor α .scalar) :
-    Tensor.item (TorchLean.Tensor.map f x) = f (Tensor.item x) := by
-  simp [Tensor.map, Tensor.item]
-
-/-- Coordinate extraction commutes with a tensor map on vectors. -/
-@[simp] theorem getScalar_mapTensor {α β : Type}
-    [TorchLean.Storage α] [TorchLean.Storage β] {n : Nat}
-    (f : α -> β) (x : Tensor α [n]) (i : Fin n) :
-    TorchLean.Tensor.getScalar (TorchLean.Tensor.map f x) i =
-      f (TorchLean.Tensor.getScalar x i) := by
-  exact TorchLean.Tensor.getScalar_map f x i
-
 /-- `getScalar` distributes over pointwise addition (`addSpec`). -/
 theorem getScalar_add_spec {n : Nat} (x y : Tensor ℝ [n]) :
     getScalar (addSpec x y) = fun i => getScalar x i + getScalar y i := by

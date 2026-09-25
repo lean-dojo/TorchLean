@@ -18,9 +18,9 @@ noisy state, while `VPSchedule` reserves state zero for the clean sample. Readin
 table directly preserves loaded schedules, including a zero coefficient; no division is needed
 to recover per-step beta values.
 
-Image sampling also makes two numerical choices: floor the reconstruction denominator, then
-clip the reconstructed sample to `[-1, 1]`. These operations belong to this sampler's formula.
-The separate `ddimStep` specification retains its additive epsilon and unclipped reconstruction.
+Image sampling floors the reconstruction denominator, then applies a shape-preserving
+postprocessor. The default clips the reconstructed sample to `[-1, 1]`. The separate `ddimStep`
+specification retains its additive epsilon and unclipped reconstruction.
 -/
 
 @[expose] public section
@@ -86,36 +86,43 @@ def timeOfIndex (index : Fin T) : α :=
 /--
 One image DDIM update from an already evaluated epsilon prediction.
 
-First reconstruct with `1 / max(sqrt(alphaBar), denominatorFloor)`, using the explicit comparison
-below to match the executable branch. Clamp that reconstruction to `[-1, 1]`, then remix it with
-the same epsilon prediction at the previous coefficient. The caller chooses a positive floor;
-the image API uses `1e-12`. Clipping does not recompute epsilon.
+First reconstruct with the explicitly branched denominator below, then apply `postprocess`
+before remixing with the same epsilon prediction at the previous coefficient. The default
+postprocessor clamps to `[-1, 1]`; it never recomputes epsilon. The image API defaults to the
+floor `1e-12`. The formula itself makes no positivity or finiteness assumption on the floor.
 -/
 def stepFromEps (denominatorFloor previousAlpha alpha : α)
-    (sample epsilon : Tensor α s) : Tensor α s :=
+    (sample epsilon : Tensor α s)
+    (postprocess : Tensor α s → Tensor α s :=
+      fun reconstruction => Tensor.clampSpec reconstruction (-1) 1) : Tensor α s :=
   let sqrtAlpha := sqrtNonneg alpha
   let denominator := if sqrtAlpha > denominatorFloor then sqrtAlpha else denominatorFloor
   let reconstruction := Tensor.scaleSpec
     (Tensor.subSpec sample (Tensor.scaleSpec epsilon (sqrtNonneg (1 - alpha))))
     (1 / denominator)
-  let clipped := Tensor.clampSpec reconstruction (-1) 1
+  let processed := postprocess reconstruction
   Tensor.addSpec
-    (Tensor.scaleSpec clipped (sqrtNonneg previousAlpha))
+    (Tensor.scaleSpec processed (sqrtNonneg previousAlpha))
     (Tensor.scaleSpec epsilon (sqrtNonneg (1 - previousAlpha)))
 
 /-- Evaluate epsilon once at the noisy-state index, then move to the preceding state. -/
 def step (denominatorFloor : α) (coefficients : Tensor α [T])
     (predict : Fin T → Tensor α s → Tensor α s) (index : Fin T)
-    (sample : Tensor α s) : Tensor α s :=
+    (sample : Tensor α s)
+    (postprocess : Tensor α s → Tensor α s :=
+      fun reconstruction => Tensor.clampSpec reconstruction (-1) 1) : Tensor α s :=
   let epsilon := predict index sample
   stepFromEps denominatorFloor
     (alphaBar coefficients (Fin.castSucc index)) (alphaBar coefficients index.succ)
-    sample epsilon
+    sample epsilon postprocess
 
 /-- Reverse every noisy state, ending at the clean coefficient one. -/
 def sample (denominatorFloor : α) (coefficients : Tensor α [T])
-    (predict : Fin T → Tensor α s → Tensor α s) (initial : Tensor α s) : Tensor α s :=
-  (List.finRange T).foldr (fun index x => step denominatorFloor coefficients predict index x)
+    (predict : Fin T → Tensor α s → Tensor α s) (initial : Tensor α s)
+    (postprocess : Tensor α s → Tensor α s :=
+      fun reconstruction => Tensor.clampSpec reconstruction (-1) 1) : Tensor α s :=
+  (List.finRange T).foldr
+    (fun index x => step denominatorFloor coefficients predict index x postprocess)
     initial
 
 end ImageDDIM

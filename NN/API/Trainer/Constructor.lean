@@ -59,7 +59,7 @@ def model : nn.Builder (nn.Sequential [2] [1]) :=
 
 def trainer : TorchLean.Trainer [2] [1] :=
   Trainer.new model
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := 7 }
 

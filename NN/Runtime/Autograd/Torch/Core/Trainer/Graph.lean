@@ -184,11 +184,11 @@ def Internal.graphScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
             ParamList.sgdStep (α := α) (ss := paramShapes) parameters learningRate gradients))
   pure
     { state := parameters
-      loss := lossFn
-      diff := diff
-      grad := grad
-      stepWithLoss := stepWithLoss
-      step := step
+      lossFn := lossFn
+      diffFn := diff
+      gradFn := grad
+      stepWithLossFn := stepWithLoss
+      stepFn := step
       adamStep? := none
       adamStepWithLoss? := none
       adamWStep? := none

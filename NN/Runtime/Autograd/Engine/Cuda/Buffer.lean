@@ -6,13 +6,15 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Runtime.Autograd.Engine.Cuda.LibTorch
 public import NN.Runtime.Autograd.Engine.Cuda.Trusted
 
 /-!
 # CUDA Float32 Buffers
 
-Low-level buffer operations for the native CUDA autograd runtime. CUDA builds use
-`csrc/cuda/tensor/torchlean_cuda_tensor.cu`; ordinary CPU builds link the parity implementation in
+Low-level float32 tensor operations for the LibTorch CUDA runtime. TorchLean retains its tape and
+selected local VJPs; native calls do not record a LibTorch autograd graph. CUDA builds use
+`csrc/libtorch/runtime.cpp`; ordinary CPU builds link the parity implementation in
 `csrc/cuda/tensor/torchlean_cuda_tensor_stub.c` so that the same runtime interfaces remain testable.
 -/
 
@@ -30,9 +32,9 @@ namespace Buffer
 inductive RuntimeStatus where
   /-- Default non-CUDA builds provide host-memory parity stubs for low-level tests. -/
   | cpuStub
-  /-- The project was built with CUDA and at least one CUDA device is visible. -/
+  /-- The project was built with LibTorch CUDA and at least one CUDA device is visible. -/
   | nativeAvailable
-  /-- The project was built with CUDA, but no usable CUDA device is visible. -/
+  /-- The project was built with LibTorch CUDA, but no usable CUDA device is visible. -/
   | nativeUnavailable
   deriving DecidableEq, Repr
 
@@ -59,54 +61,9 @@ def requireNativeRuntime : IO Unit :=
       throw <| IO.userError
         "CUDA was requested and this is a CUDA build, but no usable CUDA device is visible"
 
-/-!
-### Deterministic Reductions Mode
-
-TorchLean's CUDA runtime uses `atomicAdd` in a few kernels to accumulate float32 results. This is
-fast, but floating-point addition is non-associative, and CUDA does not fix a global order for the
-interleaving of atomic updates. As a result, some kernels can be bit-nondeterministic across runs.
-
-TorchLean therefore exposes an opt-in deterministic mode that replaces those atomic accumulation
-paths with fixed-order reductions. This trades performance for reproducibility.
-
-This flag is a *runtime* setting affecting only the CUDA/stub backends; it has no effect on the
-pure Lean Spec.
--/
-
-/-- Read the deterministic-reductions flag. The argument only forces a call. -/
-@[never_extract, extern "torchlean_cuda_get_deterministic_reductions_u"]
-private opaque getDeterministicReductionsRaw (u : UInt32) : UInt32
-
-/-- Set the flag and return what the runtime observed, so the call has a used result. -/
-@[never_extract, extern "torchlean_cuda_set_deterministic_reductions_checked"]
-private opaque setDeterministicReductionsCheckedRaw (on : UInt32) : UInt32
-
-/--
-Enable/disable deterministic reductions mode as an `IO` action.
-
-The native setter runs at this point in `IO` and reports the resulting setting. Checking that value
-both verifies the request and keeps the native effect attached to the action. Throws if the runtime
-reports a different setting.
--/
-@[no_expose] def setDeterministicReductions (on : Bool) : IO Unit := do
-  let observed ← IO.lazyPure fun _ =>
-    setDeterministicReductionsCheckedRaw (if on then 1 else 0) != 0
-  unless observed == on do
-    throw <| IO.userError
-      s!"cuda: deterministic reductions flag is {observed} after requesting {on}"
-
-/--
-Query whether deterministic reductions mode is enabled.
-
-The read runs inside `IO`, so each call observes the current setting. A pure definition could retain
-the value read during module initialization even after `setDeterministicReductions` changes it.
--/
-@[no_expose] def getDeterministicReductions : IO Bool :=
-  IO.lazyPure fun _ => getDeterministicReductionsRaw 0 != 0
-
 /-! ### Allocator Telemetry -/
 
-/-- Bytes currently handed out by the CUDA allocator. -/
+/-- Logical payload bytes currently owned by TorchLean buffer handles. -/
 @[never_extract, extern "torchlean_cuda_allocator_live_bytes"]
 private opaque allocatorLiveBytesRaw (u : UInt32) : UInt64
 
@@ -114,11 +71,11 @@ private opaque allocatorLiveBytesRaw (u : UInt32) : UInt64
 @[never_extract, extern "torchlean_cuda_allocator_peak_bytes"]
 private opaque allocatorPeakBytesRaw (u : UInt32) : UInt64
 
-/-- Nonempty buffer payloads handed out, including blocks reused from the cache. -/
+/-- Nonempty buffer payload owners created, independently of native allocator reuse. -/
 @[never_extract, extern "torchlean_cuda_allocator_alloc_count"]
 private opaque allocatorAllocCountRaw (u : UInt32) : UInt64
 
-/-- Buffer payloads returned by their owners, including blocks retained for reuse. -/
+/-- Nonempty buffer payload owners retired, independently of native allocator reuse. -/
 @[never_extract, extern "torchlean_cuda_allocator_free_count"]
 private opaque allocatorFreeCountRaw (u : UInt32) : UInt64
 
@@ -146,31 +103,42 @@ private opaque allocatorDeviceFreeBytesRaw (u : UInt32) : UInt64
 @[never_extract, extern "torchlean_cuda_allocator_device_total_bytes"]
 private opaque allocatorDeviceTotalBytesRaw (u : UInt32) : UInt64
 
-/-- Reclaimable bytes shared by the tensor-buffer and kernel-workspace caches. -/
-@[never_extract, extern "torchlean_cuda_allocator_cache_bytes"]
-private opaque allocatorCacheBytesRaw (u : UInt32) : UInt64
+/-- Selected-device bytes currently allocated by the LibTorch CUDA allocator. -/
+@[never_extract, extern "torchlean_libtorch_allocated_bytes"]
+private opaque allocatedBytesRaw (token : UInt32) : UInt64
 
-/-- Configured ceiling on that cache, zero when uncapped. -/
-@[never_extract, extern "torchlean_cuda_allocator_cache_cap_bytes"]
-private opaque allocatorCacheCapBytesRaw (u : UInt32) : UInt64
+/-- Selected-device bytes currently reserved by the LibTorch CUDA allocator. -/
+@[never_extract, extern "torchlean_libtorch_reserved_bytes"]
+private opaque reservedBytesRaw (token : UInt32) : UInt64
+
+/-- Peak selected-device allocation since the native allocator's last peak reset. -/
+@[never_extract, extern "torchlean_libtorch_peak_allocated_bytes"]
+private opaque peakAllocatedBytesRaw (token : UInt32) : UInt64
+
+/-- Peak selected-device reservation since the native allocator's last peak reset. -/
+@[never_extract, extern "torchlean_libtorch_peak_reserved_bytes"]
+private opaque peakReservedBytesRaw (token : UInt32) : UInt64
 
 /--
-Snapshot of the CUDA buffer allocator.
+Snapshot of TorchLean ownership counters and the LibTorch CUDA allocator.
 
-`liveBytes`/`peakBytes` count device or stub payloads allocated by this runtime layer. The wrapper
-counters track Lean external buffer objects, including empty wrappers and wrappers whose payloads
-were explicitly released. In a steady workload, `wrapperAllocCount - wrapperFinalizeCount` should
-remain bounded. `deviceFreeBytes` and `deviceTotalBytes` come from `cudaMemGetInfo` in the CUDA
-build and are `0` in the CPU stub. Together these fields distinguish payload leaks, wrapper-lifetime
-leaks, and broader CUDA memory pressure or fragmentation.
+`liveBytes`/`peakBytes` count logical device or stub payloads owned by TorchLean handles. They are
+not physical VRAM usage: shared tensor storage may be counted more than once, and native
+temporaries or saved attention state need not have a separate TorchLean handle. `allocCount` and
+`freeCount` count those payload lifetimes, not native allocation calls.
 
-`allocCount` and `freeCount` count buffer payload lifetimes, including reuse. They do not count
-calls to `cudaMalloc` and `cudaFree`. Live kernel workspace is outside these payload counters.
+The wrapper counters track Lean external buffer objects, including empty and explicitly released
+wrappers. All these ownership counters are process-wide. They help distinguish retained Lean
+owners from storage managed internally by LibTorch.
 
-`cacheBytes` counts unused tensor buffers and kernel workspaces retained for reuse. Their combined
-budget is `cacheCapBytes`, which defaults to 1 GiB. `TORCHLEAN_CUDA_CACHE_CAP_BYTES` can override
-that budget; an explicit `0` selects unbounded caching, and invalid values use the default. Both
-cache fields are `0` in the CPU stub, which keeps no cache.
+`allocatedBytes`, `reservedBytes`, `peakAllocatedBytes`, and `peakReservedBytes` are the native
+allocator's counters for the selected CUDA device. Reserved bytes include storage the allocator
+retains for reuse; the difference from allocated bytes is not a promise of immediately reclaimable
+memory. `deviceFreeBytes` and `deviceTotalBytes` report driver memory for that device. These six
+device counters are zero in CPU stubs. Native allocator peaks follow its own reset lifecycle.
+
+LibTorch owns caching policy. `LibTorch.setMemoryFraction` configures its selected-device allocation
+limit.
 
 The fields are read separately. A snapshot can include concurrent allocator activity and should
 not be treated as an atomic account of every allocation in the process.
@@ -186,8 +154,10 @@ structure AllocatorStats where
   wrapperFinalizeCount : UInt64
   deviceFreeBytes : UInt64
   deviceTotalBytes : UInt64
-  cacheBytes : UInt64
-  cacheCapBytes : UInt64
+  allocatedBytes : UInt64
+  reservedBytes : UInt64
+  peakAllocatedBytes : UInt64
+  peakReservedBytes : UInt64
 deriving Repr
 
 /--
@@ -209,23 +179,20 @@ call. Applications do not need a step counter or another changing argument to ob
       wrapperFinalizeCount := wrapperFinalizeCountRaw 0
       deviceFreeBytes := allocatorDeviceFreeBytesRaw 0
       deviceTotalBytes := allocatorDeviceTotalBytesRaw 0
-      cacheBytes := allocatorCacheBytesRaw 0
-      cacheCapBytes := allocatorCacheCapBytesRaw 0 }
+      allocatedBytes := allocatedBytesRaw 0
+      reservedBytes := reservedBytesRaw 0
+      peakAllocatedBytes := peakAllocatedBytesRaw 0
+      peakReservedBytes := peakReservedBytesRaw 0 }
 
 /-- Format a byte count as MiB for allocator progress messages. -/
 @[no_expose] private def mibString (bytes : UInt64) : String :=
   let mib := (Float.ofNat bytes.toNat) / (1024.0 * 1024.0)
   toString mib ++ " MiB"
 
-/--
-One-line allocator report for progress logs.
-
-A zero cache cap is printed as `0`: it means unbounded caching in a CUDA build and no cache in the
-CPU stub.
--/
+/-- One-line allocator report distinguishing logical payloads from native storage. -/
 @[no_expose] def AllocatorStats.format (s : AllocatorStats) : String :=
-  "live=" ++ mibString s.liveBytes ++
-  " peak=" ++ mibString s.peakBytes ++
+  "payload=" ++ mibString s.liveBytes ++
+  " payload_peak=" ++ mibString s.peakBytes ++
   " allocs=" ++ toString s.allocCount ++
   " frees=" ++ toString s.freeCount ++
   " wrappers_live=" ++ toString s.wrapperLiveCount ++
@@ -234,8 +201,10 @@ CPU stub.
   " wrappers_finalized=" ++ toString s.wrapperFinalizeCount ++
   " cuda_free=" ++ mibString s.deviceFreeBytes ++
   " cuda_total=" ++ mibString s.deviceTotalBytes ++
-  " cache=" ++ mibString s.cacheBytes ++
-  " cache_cap=" ++ (if s.cacheCapBytes == 0 then "0" else mibString s.cacheCapBytes)
+  " allocated=" ++ mibString s.allocatedBytes ++
+  " reserved=" ++ mibString s.reservedBytes ++
+  " peak_allocated=" ++ mibString s.peakAllocatedBytes ++
+  " peak_reserved=" ++ mibString s.peakReservedBytes
 
 /--
 Create a device buffer by copying from a host `FloatArray` (casts each element to float32).
@@ -251,9 +220,9 @@ opaque ofFloatArray (a : @& FloatArray) : Buffer
 Copy a host `FloatArray` into a fresh device buffer, rounding each element to float32.
 
 The upload runs at this point in the IO sequence. Repeated calls with the same host array allocate
-distinct buffers, so releasing one does not invalidate another. If device allocation fails, the
-allocator releases unused cached blocks and retries; a second OOM throws
-`IO.Error.resourceExhausted`. The host array and existing device buffers remain owned by the caller.
+distinct buffers, so releasing one does not invalidate another. Native allocation failures return
+`IO.Error.resourceExhausted`; LibTorch owns the device allocator's retry policy. The host array and
+existing device buffers remain owned by the caller.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_of_float_array_io"]
 opaque ofFloatArrayIO (a : @& FloatArray) : IO Buffer
@@ -279,9 +248,9 @@ opaque toFloat32BytesIO (b : @& Buffer) : IO ByteArray
 /--
 Upload a raw float32 byte payload to a fresh device buffer.
 
-Checkpoint values retain their float32 representation. Device allocation uses the same cache
-reclamation and retry as `zerosIO`; ordinary device exhaustion throws `IO.Error.resourceExhausted`
-before a buffer is returned. The borrowed byte payload remains available to the caller.
+Checkpoint values retain their float32 representation. Native allocation failures return
+`IO.Error.resourceExhausted` before a buffer is returned. The borrowed byte payload remains
+available to the caller.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_of_float32_bytes_io"]
 opaque ofFloat32BytesIO (bytes : @& ByteArray) : IO Buffer
@@ -369,37 +338,21 @@ def releaseAllThen (r : WithWorkspace) (keep : @& Buffer) : Buffer :=
 
 end WithWorkspace
 
-/-- Native collection mode: zero keeps reusable CUDA blocks; one drains all unused caches. -/
+/-- Host allocator collection at an explicit token, retaining reusable storage. -/
 @[never_extract, extern "torchlean_runtime_collect_allocator"]
-private opaque collectAllocatorRaw (force : UInt32) : UInt32
+private opaque collectAllocatorRaw (token : UInt32) : UInt32
 
 /--
 Collect unused host allocator pages while retaining CUDA buffers for reuse.
 
 Training and evaluation call this after retiring a completed tape and its temporary gradients.
-The native cache budget bounds retained device memory, so ordinary callers do not need to flush
-the cache between updates. Live parameters and optimizer state remain owned by their sessions.
+LibTorch retains its reusable device cache. Live parameters and optimizer state remain owned
+by their sessions.
 -/
 @[no_expose] def collectGarbage : IO Unit := do
   let collected ← IO.lazyPure fun _ => collectAllocatorRaw 0
   if collected == 0 then
     throw <| IO.userError "CUDA allocator collection failed"
-
-/--
-Return all unused tensor buffers and kernel workspaces to the CUDA driver.
-
-This explicit operation waits for cached blocks to become safe to free and also asks the host
-allocator to release unused pages. It does not release live tensors, parameter mirrors, or optimizer
-state. Normal training retains a bounded cache automatically; use this when returning unused memory
-to another workload matters more than keeping it for the next operation.
-
-Every invocation performs a fresh collection, including calls after an earlier flush. The raw call
-stays inside the `IO` action so repeated requests cannot share a previously computed result.
--/
-@[no_expose] def emptyCache : IO Unit := do
-  let collected ← IO.lazyPure fun _ => collectAllocatorRaw 1
-  if collected == 0 then
-    throw <| IO.userError "CUDA cache collection failed"
 
 /-- Allocate a length-`n` buffer filled with zeros. -/
 @[never_extract, extern "torchlean_cuda_buffer_zeros"]
@@ -408,15 +361,13 @@ opaque zeros (n : UInt32) : Buffer
 /--
 Allocate a fresh zero-filled buffer inside `IO` code.
 
-The allocation runs at this point in the IO sequence. If device memory is exhausted, the native
-allocator first releases unused cached blocks and retries. A second device OOM throws
-`IO.Error.resourceExhausted`, so a caller can release its own temporary buffers and try a smaller
-allocation. Existing live buffers remain owned by their callers, and a failed allocation adds no
-live buffer to the counters.
+The allocation runs at this point in the IO sequence. Native allocation failures return
+`IO.Error.resourceExhausted`, so a caller can release its temporary buffers and try a smaller
+allocation. LibTorch owns the device allocator's retry policy. Existing live buffers remain owned
+by their callers, and a failed allocation adds no live buffer to the counters.
 
-The allocating IO constructors share this recovery behavior. Pure allocation and kernel primitives
-retain their native failure policy. Host allocation failure and errors encountered while flushing
-an invalid CUDA context are outside this recovery path.
+The allocating IO constructors share this error boundary. Pure allocation and kernel primitives
+have their own native failure policy.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_zeros_io"]
 opaque zerosIO (n : UInt32) : IO Buffer
@@ -428,8 +379,8 @@ opaque full (n : UInt32) (v : Float) : Buffer
 /--
 Allocate a fresh length-`n` buffer filled with `v`, rounded to float32.
 
-Each call owns a distinct buffer. Device allocation follows the cache reclamation and retry used
-by `zerosIO`, and ordinary device exhaustion throws `IO.Error.resourceExhausted`.
+Each call owns a distinct buffer. Native allocation failures return `IO.Error.resourceExhausted`,
+as in `zerosIO`.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_full_io"]
 opaque fullIO (n : UInt32) (v : Float) : IO Buffer
@@ -451,8 +402,8 @@ opaque randUniform (n : UInt32) (key : UInt64) : Buffer
 /--
 Generate the deterministic values of `randUniform` in a fresh buffer.
 
-The key determines the values; repeated calls still allocate distinct buffers. Device allocation
-uses the recovery behavior of `zerosIO`, including `IO.Error.resourceExhausted` on ordinary OOM.
+The key determines the values; repeated calls still allocate distinct buffers. Native allocation
+failures return `IO.Error.resourceExhausted`, as in `zerosIO`.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_rand_uniform_io"]
 opaque randUniformIO (n : UInt32) (key : UInt64) : IO Buffer
@@ -469,7 +420,7 @@ opaque bernoulliMask (n : UInt32) (keepProb : Float) (key : UInt64) : Buffer
 Generate the deterministic mask of `bernoulliMask` in a fresh buffer.
 
 The probability and key retain the pure primitive's meaning. Each call allocates independently,
-using the cache reclamation, retry, and ordinary device-OOM error of `zerosIO`.
+with the allocation error boundary of `zerosIO`.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_bernoulli_mask_io"]
 opaque bernoulliMaskIO (n : UInt32) (keepProb : Float) (key : UInt64) : IO Buffer
@@ -504,7 +455,7 @@ opaque exp (b : @& Buffer) : Buffer
 /--
 Elementwise sine of angles in radians, returning a new float32 buffer.
 
-The native implementation applies `sinf` to each entry. The input is borrowed, so the tape can
+The native implementation uses `at::sin`. The input is borrowed, so the tape can
 retain it for the cosine factor in the backward pass.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_sin"]
@@ -572,6 +523,24 @@ opaque relu (b : @& Buffer) : Buffer
 @[never_extract, extern "torchlean_cuda_buffer_relu_bwd"]
 opaque reluBwd (x dLdy : @& Buffer) : Buffer
 
+/--
+Elementwise logistic sigmoid through `at::sigmoid`, returning a new float32 buffer.
+
+The input is borrowed; TorchLean's tape owns the `y * (1 - y)` derivative. Values follow ATen's
+float32 rounding and saturation, including zero when the negative-tail exponential overflows.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_sigmoid"]
+opaque sigmoid (x : @& Buffer) : Buffer
+
+/--
+Elementwise hyperbolic tangent through `at::tanh`, returning a new float32 buffer.
+
+Direct evaluation avoids cancellation near zero and preserves signed zero. The input is borrowed;
+TorchLean's tape owns the `1 - y * y` derivative.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_tanh"]
+opaque tanh (x : @& Buffer) : Buffer
+
 /-- Tanh-approximate GELU evaluated by one pointwise CUDA kernel. -/
 @[never_extract, extern "torchlean_cuda_buffer_gelu"]
 opaque gelu (x : @& Buffer) : Buffer
@@ -622,16 +591,18 @@ This is the classic BLAS-style `axpy` primitive and is useful for optimizers and
 opaque axpy (a b : @& Buffer) (c : Float) : Buffer
 
 /--
-Perform one Adam-family update in a single CUDA pass.
+Perform one Adam-family update through LibTorch tensor operations.
 
 The result is `(parameters, firstMoment, secondMoment)`. Passing `decay = 0` gives Adam; passing
 `decay = -(learningRate * weightDecay)` gives AdamW's decoupled parameter decay. The caller
 computes the two bias-correction scales from the step counter, exactly as in `Optim.Adam.update`
 and `Optim.AdamW.update`.
 
-This primitive changes only the execution plan. TorchLean's optimizer definitions remain the
-semantic reference, while this native boundary avoids materializing every intermediate tensor in
-the pointwise update.
+The caller must validate that `epsilon` remains finite and positive after conversion to float32.
+The native eager optimizer and its checkpoint reader share that validation.
+
+TorchLean's optimizer definitions specify the update. The native bridge evaluates the pointwise
+expressions and returns the updated parameter and moment buffers.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_adam_step"]
 opaque adamStep
@@ -642,15 +613,10 @@ opaque adamStep
     Buffer × Buffer × Buffer
 
 /--
-Scaled product exponential: `exp((c * x) * y)`, a single fused device kernel with one launch and
-one result buffer instead of the four elementwise ops (`full c`, two `mul`s, `exp`) of the
-composed form, and bit-identical to it (same left-association, same fp32 rounding). `c` is a host
-`Float` (cast to float32); `x` and `y` are equal-length buffers.
+Scaled product exponential: `exp((c * x) * y)`.
 
-Domain-neutral: a *scaled product exponential* recurs across the sciences: a Beer–Lambert /
-propagation two-way extinction `exp(-2 * κ * ℓ)` in computational electromagnetism and radar/optical
-remote sensing, or a Boltzmann-type weight `exp(-β * E * s)`. Fusing the exponential with its scaled
-product is the hot inner form in those forward models.
+LibTorch evaluates the two multiplications followed by the exponential. `c` is a host `Float`
+cast to float32; `x` and `y` are equal-length buffers.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_scaled_prod_exp"]
 opaque scaledProdExp (x y : @& Buffer) (c : Float) : Buffer

@@ -17,21 +17,16 @@ tag := "model-examples-deep-dive"
 file := "Three-End-to-End-Case-Studies"
 %%%
 
-The small CharGPT run below ends with a validation loss of `4.178707` and a continuation with no
-sustained words. To interpret that result, we need a scale for the loss, the model's parameter
-layout, and the distinction between predicting held-out tokens and feeding sampled tokens back
-into the model.
+A training loss becomes easier to interpret when we know what the model predicts, how its
+parameters are arranged, and which data enter the evaluation. CharGPT predicts the next character;
+the vision models classify images; the Burgers neural operator predicts an entire field.
+Each task gives its reported numbers a different meaning.
 
-I use the same approach for the vision models and the Burgers neural operator: read a reported
-number alongside the computation that produced it. The Lean blocks derive shapes and parameter
-counts from model definitions; the shell transcripts record separate runs. PyTorch module counts
-provide another comparison for three architectures. A count can expose a missing bias, a different
-width, or accidental weight sharing, though it cannot establish equality of forward computations.
-
-The displayed losses come from runs with the stated seeds and row counts; reproducing them also
-requires matching data, arithmetic, and backend behavior. They are not performance benchmarks.
-They make the data path, model shape, runtime selection, and generated
-artifacts concrete.
+I use the same approach for all three: inspect the typed computation before interpreting the
+training result. The Lean blocks derive shapes and parameter counts from the model definitions.
+The commands produce checkpoints, logs, and predictions to inspect in a particular run. A count
+can expose a missing bias, a different width, or accidental weight sharing, though it cannot
+establish equality of forward computations.
 
 # Uniform Predictions As A Loss Baseline
 
@@ -63,10 +58,10 @@ Equal logits produce that uniform distribution. The corresponding PyTorch calcul
 ```
 # Equal logits make the target label irrelevant to this
 # uniform baseline.
->>> F.cross_entropy(torch.zeros(1, 10), torch.tensor([3])).item()
-2.302585
->>> F.cross_entropy(torch.zeros(1, 65), torch.tensor([21])).item()
-4.174387
+import torch
+import torch.nn.functional as F
+F.cross_entropy(torch.zeros(1, 10), torch.tensor([3])).item()
+F.cross_entropy(torch.zeros(1, 65), torch.tensor([21])).item()
 ```
 
 The ten-class and 65-character examples below can be compared with 2.302585 and 4.174387.
@@ -104,44 +99,18 @@ lake -R -K cuda=true exe torchlean chargpt --device cuda \
   --log /tmp/chargpt-trainlog.json
 ```
 
-The recorded run reports:
-
-```terminal +output
-[TorchLean] arithmetic: native binary32
-[TorchLean] execution: eager
-[TorchLean] device: cuda
-chargpt: char-level GPT training
-  trainable_parameters=30017
-  step 0: val loss=4.209518
-  step 1: val loss=4.194244
-  step 2: val loss=4.178707
-  wrote checkpoint: /tmp/chargpt.state.json
-  vocabularySize=65 (unique chars)
-  architecture=modelWidth 32, attentionHeads 4,
-    transformerLayers 2, dropoutProbability 0.000000
-  sampled="First Citizen:K\nB,dc!GPhaMobL?qE.fHWX&TOUjINky"
-  wrote TrainLog JSON: /tmp/chargpt-trainlog.json
-chargpt: ok
-```
-
-The `architecture=` line is one line in the terminal and was wrapped here.
-
-The generated continuation contains no sustained words. The prompt `First Citizen:` is echoed
-before the sampled characters. The validation losses move from 4.209518 to 4.194244 to 4.178707,
-approaching the uniform-prediction baseline of $`\log 65=4.174387` from above. This evaluation
-uses a disjoint ten-percent suffix of the corpus.
-
-The run exercises two optimizer updates on 30,017 trainable scalars and writes a checkpoint and
-training log. The change in validation loss shows that the updates affect predictions on the
-held-out windows. Its proximity to the uniform baseline neither identifies what was learned nor
-establishes that the predicted distributions are uniform.
+The smoke preset performs two optimizer updates and writes a checkpoint and training log.
+Validation uses a disjoint ten-percent suffix of the corpus. Compare its cross entropy with
+$`\log 65` when the corpus has 65 distinct characters, while remembering that proximity to the
+uniform baseline does not establish that the predicted distributions are uniform.
 
 Character-level prediction keeps tokenization visible. Each distinct corpus character is a
-category, and training asks for the next category at every position of a short window. This lets
-the run connect discrete input indices, continuous embedding vectors, and categorical logits
-without a separate subword tokenizer artifact. The sampled continuation tests another path:
-predicted categories are fed back as inputs. Its incoherence is consistent with a two-update
-wiring run; the validation trace and the generated string expose different aspects of that run.
+category, and training asks for the next category at every position of a short window. This
+connects discrete input indices, continuous embedding vectors, and categorical logits without a
+separate subword tokenizer artifact. During generation, sampled categories become later inputs.
+The validation trace measures prediction on held-out windows; the continuation shows what happens
+when the model has to continue from its own sampled choices. Two updates exercise these paths
+without providing evidence of language-model quality.
 
 ## Parameter Layout
 
@@ -253,24 +222,17 @@ projection has a bias, giving 4,128 scalars rather than 4,224. This is the local
 parameterization; the count does not establish GPT-2 checkpoint compatibility
 {Informal.citep transformer2017}[].
 
-The same architecture assembled from PyTorch modules gives the same number
+The parameter groups also give a recipe for assembling corresponding PyTorch modules
 {Informal.citep pytorch2019}[]:
 
 ```
-# Architectural sketch and recorded counts for the
-# corresponding PyTorch modules.
+# Architectural sketch of the corresponding modules.
 tok = nn.Embedding(65, 32);  pos = nn.Embedding(16, 32)
 block: LayerNorm(32); Linear(32,32,bias=False) x 3;
        Linear(32,32); LayerNorm(32);
        Linear(32,128); Linear(128,32)
 lnf = nn.LayerNorm(32);  head = nn.Linear(32, 65)
 
-chargpt torch total  = 30017
-  tok embedding      = 2080
-  pos embedding      = 512
-  one block          = 12608
-  final layer norm   = 64
-  vocabulary head    = 2145
 ```
 
 Matching parameter counts can reveal a missing bias or unintended weight sharing. They cannot
@@ -425,10 +387,9 @@ one allowed entry:
 ```
 # Block the three future keys and leave the first position
 # available.
->>> scores = torch.tensor([[0.5, 1.5, -0.5, 2.0]])
->>> mask = torch.tensor([[False, True, True, True]])
->>> torch.softmax(scores.masked_fill(mask, float('-inf')), dim=-1)
-tensor([[1., 0., 0., 0.]])
+scores = torch.tensor([[0.5, 1.5, -0.5, 2.0]])
+mask = torch.tensor([[False, True, True, True]])
+torch.softmax(scores.masked_fill(mask, float('-inf')), dim=-1)
 ```
 
 Position zero can attend only to itself, so its attention row is $`(1,0,0,0)` exactly, and the three
@@ -489,8 +450,9 @@ rounding. A test that compared only these rendered rows would miss the differenc
 Increasing a finite penalty reduces the leak and may eventually cause floating-point underflow.
 The hard mask instead encodes zero weight directly. This also affects the backward pass:
 `softmaxBackwardFromWeightsSpec` computes
-`dScores = weights ⊙ (dWeights - Σⱼ dWeightsⱼ * weightsⱼ)`. When the remaining arithmetic is
-finite, a zero forward weight gives zero gradient into that logit. A small positive weight can
+`dScores = weights ⊙ (dWeights - Σⱼ dWeightsⱼ * weightsⱼ)`.
+When the remaining arithmetic is finite, a zero forward weight gives zero gradient into that logit.
+A small positive weight can
 carry a nonzero gradient, whose magnitude also depends on the upstream cotangent and weighted sum.
 
 I use a row with one visible key because its expected answer does not depend on any score.
@@ -522,11 +484,6 @@ The parser and the attention computation impose different constraints on these s
 # model allocation.
 lake -R -K cuda=true exe torchlean chargpt --device cuda \
   --tiny-shakespeare --preset smoke --width 30 --heads 4
-```
-
-```terminal +output
-chargpt: char-level GPT training
-error: chargpt: --heads must divide --width
 ```
 
 The parser rejects this configuration before tokenizing the corpus or allocating parameters.
@@ -579,31 +536,9 @@ lake exe torchlean vit --device cpu --n-total 1 --steps 1 \
   --log /tmp/vit-trainlog.json
 ```
 
-Observed summaries:
-
-```terminal +output
-resnet: ResNet CIFAR training (device=cpu)
-dataset size = 1
-mean_loss(before training) = 2.214894
-mean_loss(after training) = 2.201253
-steps=1 arithmetic=native scalar=Float32
-  loss=2.214894 -> 2.201253
-resnet: ok
-```
-
-```terminal +output
-vit: ViT CIFAR training (device=cpu)
-dataset size = 1
-mean_loss(before training) = 2.906798
-mean_loss(after training) = 2.791703
-steps=1 arithmetic=native scalar=Float32
-  loss=2.906798 -> 2.791703
-vit: ok
-```
-
-The `steps=` summary is one line in the terminal. `dataset size = 1` counts minibatches, not images:
-both commands use batches of one image, so `--n-total 1` yields one batch. Raising it supplies
-more one-image batches; `--steps` continues to control the number of optimizer updates.
+Both examples use batches of one image, so `--n-total 1` supplies one batch. Increasing
+`--n-total` supplies more one-image batches; `--steps` controls the number of optimizer updates.
+The log records the selected run's losses and configuration.
 
 Both are ten-class models, but they organize computation differently.
 
@@ -633,13 +568,13 @@ shapes  = [[4, 3, 3, 3], [4], [4, 4, 3, 3]]
 
 Twelve tensors: a `3 -> 4` stem convolution with bias, then four `4 -> 4` convolutions with bias,
 which is two convolutions in each of the two residual blocks, then the `[10, 4]` classifier and its
-bias. The equivalent PyTorch modules agree:
+bias. The same parameter arithmetic can be written by module:
 
 ```
 stem  Conv2d(3, 4, 3, padding=1)   -> 112
 mid   Conv2d(4, 4, 3, padding=1) x 4 -> 592
 head  Linear(4, 10)                -> 50
-resnet torch total = 754
+total = 112 + 592 + 50 = 754
 ```
 
 At every residual join, both branches have shape
@@ -690,14 +625,13 @@ cls, pos = [[1, 4], [5, 4]]
 ```
 
 The positional table is `[5, 4]`: five positions of width four, which is four image patches plus one
-class token. PyTorch reaches the same grid from the other direction:
+class token. The corresponding PyTorch patch projection is:
 
 ```
 # A stride-two patch projection produces four spatial patch
 # positions.
->>> conv = nn.Conv2d(3, 4, kernel_size=2, stride=2)
->>> conv(torch.zeros(1, 3, 4, 4)).shape
-torch.Size([1, 4, 2, 2])
+conv = nn.Conv2d(3, 4, kernel_size=2, stride=2)
+conv(torch.zeros(1, 3, 4, 4)).shape
 ```
 
 The convolution produces a two-by-two grid of width-four vectors. Flattening the two spatial
@@ -720,10 +654,10 @@ convolution shape and subsequent token interpretation disambiguate them.
 
 ## Initial Cross-Entropy Loss
 
-The one-sample losses, 2.214894 and 2.906798, lie on either side of $`\log 10=2.302585`.
-Each depends on the probability the initialized model assigns to that sample's label. Neither
-value alone indicates a bug. Averaging over more examples gives a broader measurement, although a
-nonuniform head need not have expected loss $`\log 10`. With eight samples and ten updates:
+A ten-class model's initial loss depends on the probability it assigns to each selected label.
+A value above or below $`\log 10=2.302585` alone does not indicate a bug. Averaging over more
+examples gives a broader measurement, although a nonuniform head need not have expected loss
+$`\log 10`. To use eight samples and ten updates:
 
 ```terminal
 # Increase the selected dataset rows independently of the
@@ -732,26 +666,15 @@ lake exe torchlean resnet --device cpu --n-total 8 --steps 10
 lake exe torchlean vit --device cpu --n-total 8 --steps 10
 ```
 
-```terminal +output
-resnet: dataset size = 8
-mean_loss(before training) = 2.352421
-mean_loss(after training) = 2.339670
-
-vit: dataset size = 8
-mean_loss(before training) = 2.431449
-mean_loss(after training) = 2.363078
-```
-
-Both starting values are now within 0.13 of 2.302585, and ten updates on eight samples move each
-model by a modest amount. A ten-class loss of 4.6 means the
-true label receives low probability; it does not mean the head predicts a hundred classes. Inspect
-logits and labels before diagnosing the cause.
+Cross entropy measures assigned probabilities, not the number of classes inferred from a loss
+value. A ten-class loss of 4.6 indicates low target probability; it does not mean the head predicts
+a hundred classes. Inspect logits, labels, and the selected examples before diagnosing the cause.
 
 ## Model Comparison
 
-These runs differ in crop size, parameter count, and computation, so their final losses cannot
-isolate the effect of architecture. The useful comparisons concern the actual objects each run
-builds:
+The examples differ in crop size, parameter count, and computation. A comparison intended to
+isolate architecture needs a common data and evaluation protocol. These examples instead let us
+inspect the objects each model builds:
 
 - model summaries and parameter shapes, as printed above;
 - the residual join, where both branches must have identical shape, against the spatial-to-token
@@ -759,22 +682,11 @@ builds:
 - the backend capsules printed by adding `--show-backend`;
 - the JSON metadata written by `--log`.
 
-Read the capsule output alongside the loss: each operation the run touched reports its
-provider and the evidence for its shape, value, and derivative claims:
-
-```terminal +output
-[TorchLean] backend capsules used:
-  conv: reference.conv provider=reference trust=checked
-    vjp=torchlean-tape reduction=fixed-left
-    shape: shape safety for conv; guarded at runtime by
-      portable runtime shape checks
-    value: conv forward refines its TorchLean semantics;
-      covered by test suite NN.Tests.Runtime.Floats.Suite
-```
-
-Both models select `provider=reference` for every operation in these CPU runs. Their different
-architectures arrange the same portable operation implementations in different ways. The capsule
-identifies the runtime evidence supporting each operation.
+Add `--show-backend` to inspect the selected capsules alongside the loss. Each capsule records
+its provider and the evidence attached to its shape, value, and derivative claims. The portable
+CPU profile selects reference operations; CUDA numerical operations use LibTorch. The capsule
+records the selected implementation and its contract, while the loss measures the model on the
+chosen examples.
 
 # Burgers Neural Operator
 
@@ -800,28 +712,13 @@ python3 NN/Examples/Data/prepare_fno1d_burgers.py \
 A one-update CUDA run over four training fields and two held-out fields is:
 
 ```terminal
-# Use the fused spectral path and retain held-out
+# Use the ATen real-FFT path and retain held-out
 # predictions for inspection.
 lake -R -K cuda=true exe torchlean fno1d_burgers --device cuda \
   --steps 1 --lr 0.003 \
   --train-rows 4 --test-rows 2 --eval-rows 2 \
   --log /tmp/fno-trainlog.json \
   --plot-csv /tmp/fno-predictions.csv
-```
-
-The recorded output identifies the numerical path before reporting the loss:
-
-```terminal +output
-fno1d_burgers: native real-split FNO1D Burgers
-  device=cuda execution=eager
-  grid=32 width=8 modes=8 blocks=1
-  rows train=4 test=2 eval_prefix=2
-  cuda_mem_watch=0
-  spectral path=fused cuFFT RFFT autograd op
-  before: train_mse=0.482112 test_mse=0.486926
-  after: train_mse=0.481942 test_mse=0.486749
-  wrote prediction CSV: /tmp/fno-predictions.csv
-fno1d_burgers: ok
 ```
 
 Plot the prediction artifact with:
@@ -866,8 +763,7 @@ it does not change the number of spatial values required by the input and output
 
 ## Portable Model Architecture
 
-Running the same configuration on CPU prints the whole model, because the portable path goes through
-the generic trainer:
+The CPU command uses the full-spectrum parameterization through the generic trainer:
 
 ```terminal
 # Run the portable parameterization with the same row
@@ -876,28 +772,9 @@ lake exe torchlean fno1d_burgers --device cpu \
   --steps 1 --train-rows 4 --test-rows 2 --eval-rows 2
 ```
 
-```
-  spectral path=portable per-axis Fourier transforms
-model:
-Sequential: [32] -> [32], layers=9, params=4193, state=4193
-  [0] AddScalarChannel: [32] -> [32, 1] params=0
-  [1] ReshapeSpatial: [32, 1] -> [32, 1] params=0
-  [2] PointwiseLinear(1, 8): [32, 1] -> [32, 8] params=16
-  [3] RestoreSpatial: [32, 8] -> [32, 8] params=0
-  [4] FNOBlock: [32, 8] -> [32, 8] params=4168
-  [5] ReshapeSpatial: [32, 8] -> [32, 8] params=0
-  [6] PointwiseLinear(8, 1): [32, 8] -> [32, 1] params=9
-  [7] RestoreSpatial: [32, 1] -> [32, 1] params=0
-  [8] RemoveScalarChannel: [32, 1] -> [32] params=0
-  before training: train_mse=0.482214 test_mse=0.487028
-  after training: train_mse=0.481362 test_mse=0.486188
-```
-
-The `state` column and the shape lists were trimmed from each layer line. Reading the stack from the
-outside in: a scalar field on 32 points gains a channel axis, is lifted to eight channels by a
-pointwise linear map, passes through one FNO block, and is projected back to one channel and then to
-a bare field. The reshape layers around the pointwise maps are explicit rather than implied,
-which is the same choice the ViT patch conversion makes.
+A scalar field on 32 points gains a channel axis, is lifted to eight channels by a pointwise
+linear map, passes through one FNO block, and is projected back to one channel and then to a bare
+field. The reshape layers around the pointwise maps are explicit, as in the ViT patch conversion.
 
 We can recover the parameter count directly from the model's state shapes:
 
@@ -917,15 +794,16 @@ shapes  = [[1, 8], [8], [32, 8, 8], [32, 8, 8], [8, 8], [8],
 ```
 
 The two `[32, 8, 8]` tensors are the real and imaginary parts of $`R_\theta`: one $`8\times8`
-channel map for each of the 32 frequencies. That is where the banner word *real-split* comes from.
-This execution path stores real and imaginary components separately, so a complex multiply is
+channel map for each of the 32 frequencies. This execution path stores real and imaginary
+components separately, so a complex multiply is
 assembled from four real matrix products,
 
 $$`(a+bi)(c+di)=(ac-bd)+(ad+bc)i,`
 
 and the inverse transform recombines them. This layer expresses complex arithmetic through real
 tensor operations. Its default `spectralPath := .automatic` transforms each spatial axis in turn:
-eager CUDA execution uses cuFFT, while CPU and typed-graph execution use dense per-axis operations.
+eager CUDA execution uses LibTorch FFT operations, while CPU and typed-graph execution use
+dense per-axis operations.
 Choosing `spectralPath := .denseReference` instead constructs the full-grid cosine and sine
 matrices. The two choices use exactly the same state shapes and learned weights.
 
@@ -966,10 +844,9 @@ the second half:
 
 ```
 # Translate array positions into signed Fourier frequencies.
->>> (np.fft.fftfreq(32) * 32).astype(int)[:10]
-[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
->>> (np.fft.fftfreq(32) * 32).astype(int)[-10:]
-[-10, -9, -8, -7, -6, -5, -4, -3, -2, -1]
+import numpy as np
+(np.fft.fftfreq(32) * 32).astype(int)[:10]
+(np.fft.fftfreq(32) * 32).astype(int)[-10:]
 ```
 
 Bins 24 through 31 are frequencies $`-8` through $`-1`, so the retained set is exactly the
@@ -997,10 +874,11 @@ of the portable path's 4,193 stored numbers have zero data-loss gradient on fini
 An optimizer with weight decay or existing momentum can still change them; zero loss gradient is
 not the same as immutable state.
 
-The fused CUDA path allocates weights for the retained real-FFT bins and has a smaller parameter
-vector. Its checkpoint layout therefore differs from the full-spectrum model. The full-spectrum
-construction supports any number of spatial axes with a uniform representation, at the cost of
-unused weight slices. For $`N=\prod_a n_a` spatial points, its full-grid dense reference takes
+The CUDA `Fno1dRfft` path allocates weights for the retained real-FFT bins and has a smaller
+parameter vector. Its checkpoint layout therefore differs from the full-spectrum model.
+The full-spectrum construction supports any number of spatial axes with a uniform representation,
+at the cost of unused weight slices. For $`N=\prod_a n_a` spatial points, its full-grid dense
+reference takes
 $`O(N^2)` transform work per channel. The automatic path takes
 $`O(N\sum_a n_a)` with dense per-axis transforms, or $`O(N\sum_a\log n_a)` with native FFTs.
 These costs describe the transforms, not the learned channel maps or the whole training step.
@@ -1012,48 +890,45 @@ ninety-seven scalars belong to the lifting, pointwise branch, and projection. Th
 explains why a smaller retained-bin representation can change checkpoint size substantially
 without changing the external `[32] → [32]` contract.
 
-## Comparing The CPU And CUDA Runs
+## CPU And CUDA Parameterizations
 
-Setting the two runs side by side:
+The Burgers application chooses between two representations behind the same typed input and
+output:
 
 :::table +header
 *
-  * Line
+  * Property
   * `--device cpu`
   * `--device cuda`
 *
-  * spectral path
-  * portable per-axis Fourier transforms
-  * fused cuFFT RFFT autograd op
+  * spectral representation
+  * full spectrum, with an end-band mask
+  * retained real-FFT bins
 *
-  * training loop
-  * generic trainer, prints the model
-  * fused loop, prints `before` and `after`
-*
-  * train MSE, one update
-  * 0.482214 to 0.481362
-  * 0.482112 to 0.481942
+  * execution
+  * generic trainer and portable per-axis transforms
+  * `Cuda.Fno1dRfft` tape runner and LibTorch operations
 :::
 
-The typed input/output contract and dataset remain the same, but the spectral parameterization
-and numerical provider change. These loss differences are not an isolated comparison of rounding
-error between equivalent implementations. Backend capsules help identify the provider, reduction
-policy, layout, and evidence behind each run, even when the input and output types agree.
+The CUDA runner is
+{src "NN/Runtime/Autograd/Engine/Cuda/Fno1dRfft.lean"}[`Fno1dRfft`]. TorchLean builds the tape,
+retains the operands needed for backward, and applies its explicit gradient rules. The spectral
+buffer operation calls LibTorch's real FFT, complex matrix multiplication, and inverse real FFT;
+its backward operation also uses ATen computations. These calls do not construct a LibTorch
+autograd graph. The application reports this choice as `spectral path=ATen RFFT tape op`.
 
-Keep `spectral path=fused cuFFT RFFT autograd op` with the reported loss: it identifies the external
-numerical provider that produced the transform. It does not turn cuFFT
-into a Lean-proved implementation. The reusable
-{src "NN/API/Models/FNO.lean"}[`FNO constructor`] states the grid and mode constraints independently
+The spectral parameterization and numerical provider both affect a comparison. Equal input and
+output types do not identify the learned weights or retained frequency set. The reusable
+{src "NN/API/Models/FNO.lean"}[`FNO constructor`] states grid and mode constraints independently
 of the backend, and the
-{src "NN/Examples/Models/Operators/Fno1dBurgers.lean"}[`Burgers application`] chooses between the
-two parameterizations behind the same typed input and output.
+{src "NN/Examples/Models/Operators/Fno1dBurgers.lean"}[`Burgers application`] selects its runner.
+The native numerical behavior remains part of the LibTorch execution boundary.
 
-A controlled CPU/CUDA numerical comparison would require a correspondence between the two
-spectral parameter sets, aligned retained frequencies, the same initial field, and matching
-optimizer state. The two one-update transcripts do not provide those conditions. They do show
-that each selected path trains and evaluates its own model and writes the requested artifacts.
-Reading the spectral-path line alongside the loss prevents a backend choice from being mistaken
-for an otherwise identical repeat of the experiment.
+A controlled numerical comparison needs a correspondence between spectral parameter sets,
+aligned retained frequencies, the same initial field, and matching optimizer state. A speed
+comparison additionally needs matched workloads and measurements on the target device. The
+commands above provide entry points for those experiments; choosing CUDA alone establishes
+neither numerical agreement nor a speedup.
 
 # Application Coverage
 
@@ -1068,7 +943,7 @@ The artifact to retain depends on what we want to inspect from each run:
 *
   * CharGPT
   * causal windows, heads, depth, token IDs
-  * CUDA kernels and corpus file
+  * LibTorch execution and corpus file
   * checkpoint, validation log, generated text
 *
   * ResNet / ViT
@@ -1078,7 +953,7 @@ The artifact to retain depends on what we want to inspect from each run:
 *
   * FNO
   * field shape, retained Fourier modes
-  * dataset preparation and cuFFT on CUDA
+  * dataset preparation and LibTorch FFT operations
   * train/test loss and prediction CSV
 :::
 
@@ -1086,7 +961,7 @@ For generative models, the schedule and sampler also determine what happens afte
 For reinforcement learning, the environment and recorded rollout determine which observations
 the learner receives. A model configuration alone cannot describe either complete experiment.
 
-Checkpoint and dataset files in these runs are runtime artifacts, not proof objects. Loading one
-checks its declared schema and dimensions where the command implements those checks; it does not
-establish provenance, reproduce the optimizer history, or prove that two files with the same shape
-encode the same model or dataset.
+Checkpoint and dataset files produced by these commands are runtime artifacts, not proof objects.
+Loading one checks its declared schema and dimensions where the command implements those checks.
+It does not establish provenance, reproduce the optimizer history, or prove that two files with
+the same shape encode the same model or dataset.

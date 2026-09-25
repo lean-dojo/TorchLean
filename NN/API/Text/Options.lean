@@ -153,10 +153,21 @@ end Internal
 namespace GenerationOptions
 
 /--
+Require a finite nonnegative repetition penalty and, for sampling, a finite positive temperature.
+Greedy decoding (`topK = 1`) ignores temperature.
+-/
+def validate (options : GenerationOptions) : Except String Unit := do
+  unless options.repeatPenalty.isFinite && 0.0 <= options.repeatPenalty do
+    throw "generation repeat penalty must be finite and nonnegative"
+  unless options.topK = 1 || (options.temperature.isFinite && 0.0 < options.temperature) do
+    throw "generation temperature must be finite and positive"
+
+/--
 Parse the generation flags shared by GPT-style examples.
 
 The model command supplies its concrete default prompt and sampling policy. This parser owns only
-the stable generation flags and returns arguments belonging to the caller.
+the stable generation flags and returns arguments belonging to the caller. Validation uses the
+selected policy, so greedy decoding ignores any numerically parsed temperature.
 -/
 def parse
     (exeName : String)
@@ -168,27 +179,26 @@ def parse
   let (newTokenCount, arguments) ←
     TorchLean.CLI.takeNatFlag arguments "generate" (default := defaults.newTokenCount)
   let (temperature, arguments) ←
-    TorchLean.CLI.takePositiveFloatFlag
-      arguments exeName "temperature" (default := defaults.temperature)
+    TorchLean.CLI.takeFloatFlag arguments "temperature" (default := defaults.temperature)
   let (topK, arguments) ← TorchLean.CLI.takeNatFlag arguments "top-k" (default := defaults.topK)
   let (repeatPenalty, arguments) ←
-    TorchLean.CLI.takeNonnegativeFloatFlag
-      arguments exeName "repeat-penalty" (default := defaults.repeatPenalty)
+    TorchLean.CLI.takeFloatFlag arguments "repeat-penalty" (default := defaults.repeatPenalty)
   let (repeatWindow, arguments) ←
     TorchLean.CLI.takeNatFlag arguments "repeat-window" (default := defaults.repeatWindow)
   let (seed, arguments) ←
     TorchLean.CLI.takeNatFlag arguments "sample-seed" (default := defaults.seed)
   let (asciiOnly, arguments) ← Internal.parseAsciiOnlyFlag exeName arguments defaults.asciiOnly
-  pure
-    ({ prompt
-       newTokenCount
-       temperature
-       topK
-       repeatPenalty
-       repeatWindow
-       seed
-       asciiOnly },
-     arguments)
+  let options : GenerationOptions :=
+    { prompt
+      newTokenCount
+      temperature
+      topK
+      repeatPenalty
+      repeatWindow
+      seed
+      asciiOnly }
+  options.validate.mapError (fun message => s!"{exeName}: {message}")
+  pure (options, arguments)
 
 end GenerationOptions
 

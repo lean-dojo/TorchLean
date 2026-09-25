@@ -16,6 +16,9 @@ public import NN.API.Models.Unet
 public import NN.API.Autograd.Model
 public import NN.API.Neural.Execution
 public import NN.API.Trainer.Core
+public import NN.Spec.Module.RnnModels
+public import NN.Spec.Module.GruModels
+public import NN.Spec.Module.LstmModels
 
 /-!
 # Public Model Contract Tests
@@ -79,12 +82,14 @@ def paddedEmptyVit :=
 def emptyInputCnnConfig : nn.models.CNN.Config 1 :=
   { inputChannels := 1
     spatial := [0]
-    convolution :=
-      { outChannels := 2
-        kernelSize := [1]
-        padding := [1] }
-    pooling :=
-      { kernelSize := [1] }
+    stages :=
+      [{ block :=
+           { convolution :=
+               { outChannels := 2
+                 kernelSize := [1]
+                 padding := [1] } }
+         pooling :=
+           { kernelSize := [1] } }]
     classCount := 2 }
 
 def emptyInputCnn :=
@@ -93,11 +98,13 @@ def emptyInputCnn :=
 def emptyAfterConvCnnConfig : nn.models.CNN.Config 1 :=
   { inputChannels := 1
     spatial := [1]
-    convolution :=
-      { outChannels := 2
-        kernelSize := [3] }
-    pooling :=
-      { kernelSize := [1] }
+    stages :=
+      [{ block :=
+           { convolution :=
+               { outChannels := 2
+                 kernelSize := [3] } }
+         pooling :=
+           { kernelSize := [1] } }]
     classCount := 2 }
 
 def emptyAfterConvCnn :=
@@ -106,11 +113,13 @@ def emptyAfterConvCnn :=
 def emptyAfterPoolCnnConfig : nn.models.CNN.Config 1 :=
   { inputChannels := 1
     spatial := [2]
-    convolution :=
-      { outChannels := 2
-        kernelSize := [1] }
-    pooling :=
-      { kernelSize := [3] }
+    stages :=
+      [{ block :=
+           { convolution :=
+               { outChannels := 2
+                 kernelSize := [1] } }
+         pooling :=
+           { kernelSize := [3] } }]
     classCount := 2 }
 
 def emptyAfterPoolCnn :=
@@ -152,9 +161,12 @@ def emptyOutputAvgPool :=
       { kernelSize := [3] })
 
 def emptyInputResNetConfig : nn.models.ResNet.Config 1 :=
+  let convolution : nn.Convolution.Config 1 :=
+    { outChannels := 2, kernelSize := [3], padding := [1] }
   { inputChannels := 1
     spatial := [0]
-    hiddenChannels := 2
+    stem := convolution
+    stages := List.replicate 2 { first := convolution, second := convolution }
     classCount := 2 }
 
 def emptyInputResNet :=
@@ -541,14 +553,187 @@ def checkHigherDerivatives : IO Unit := do
   let model := nn.build 0 (nn.linear 1 1)
   let state : autograd.model.State model Float := autograd.model.initialState model
   let direction : autograd.model.State model Float := autograd.model.fullState model 1.0
-  let curvature ← autograd.model.hvp model autograd.model.Loss.meanSquaredError
+  let curvature ← autograd.model.hvp model autograd.model.Loss.mse
     state ([2.0] : Tensor Float [1]) ([0.0] : Tensor Float [1]) direction
   let weight := curvature.get ⟨0, by decide⟩
   let bias := curvature.get ⟨1, by decide⟩
   expect "parameter Hessian weight direction" (Tensor.to weight (Array Float) == #[12.0])
   expect "parameter Hessian bias direction" (Tensor.to bias (Array Float) == #[6.0])
 
+/-- Deterministic, nonconstant reference parameters and states. -/
+def referenceTensor (shape : Shape) (offset : Float) : Tensor Float shape :=
+  Tensor.generateFlat shape fun index => offset + (index % 7).toFloat / 31
+
+def referenceRnn (input hidden : Nat) : Spec.RNNSpec Float input hidden :=
+  { weights := referenceTensor _ 0.03, bias := referenceTensor _ (-0.02) }
+
+def referenceGru (input hidden : Nat) : Spec.GRUSpec Float input hidden :=
+  { resetWeight := referenceTensor _ 0.01, resetBias := referenceTensor _ 0.02
+    updateWeight := referenceTensor _ (-0.03), updateBias := referenceTensor _ 0.04
+    candidateWeight := referenceTensor _ 0.05, candidateBias := referenceTensor _ (-0.06) }
+
+def referenceLstm (input hidden : Nat) : Spec.LSTMSpec Float input hidden :=
+  { forgetWeight := referenceTensor _ 0.01, forgetBias := referenceTensor _ 0.02
+    inputWeight := referenceTensor _ (-0.03), inputBias := referenceTensor _ 0.04
+    candidateWeight := referenceTensor _ 0.05, candidateBias := referenceTensor _ (-0.06)
+    outputWeight := referenceTensor _ 0.07, outputBias := referenceTensor _ 0.08 }
+
+def referenceHead : Spec.LinearSpec Float 2 1 :=
+  { weights := [[1.0, -0.25]], bias := [0.2] }
+
+def expectTensor {shape : Shape} (label : String) (actual expected : Tensor Float shape) :
+    IO Unit := do
+  let actual := actual.to (Array Float)
+  let expected := expected.to (Array Float)
+  expect s!"{label}: finite values" (actual.all Float.isFinite && expected.all Float.isFinite)
+  expect s!"{label}: identical bits" (actual.map Float.toBits == expected.map Float.toBits)
+
+/-- Compare typed RNN stacks against explicit cell composition and state selection. -/
+def checkRnnReferenceStack : IO Unit := do
+  let first := referenceRnn 2 3
+  let second := referenceRnn 3 1
+  let third := referenceRnn 1 2
+  let model : Spec.Rnn.StackedModel Float 2 2 1 :=
+    { layers := .cons first (.cons second (.cons third .nil)), outputLayer := referenceHead }
+  let input := referenceTensor [2, 2] 0.2
+  let h₁ := referenceTensor [3] 0.1
+  let h₂ := referenceTensor [1] (-0.2)
+  let h₃ := referenceTensor [2] 0.3
+  let firstOutput := Spec.rnnSequenceSpec first input h₁
+  let secondOutput := Spec.rnnSequenceSpec second firstOutput h₂
+  let thirdOutput := Spec.rnnSequenceSpec third secondOutput h₃
+  let (output, finalStates) := model.forward input (h₁, (h₂, (h₃, ())))
+  expectTensor "RNN independent widths: complete output" output <|
+    Tensor.mapLeading [2] (Spec.linearSpec referenceHead) thirdOutput
+  expectTensor "RNN first final state" finalStates.1 (Tensor.get firstOutput 1)
+  expectTensor "RNN second final state" finalStates.2.1 (Tensor.get secondOutput 1)
+  expectTensor "RNN third final state" finalStates.2.2.1 (Tensor.get thirdOutput 1)
+  let (emptyOutput, emptyStates) :=
+    model.forward (Tensor.zeros [0, 2]) (h₁, (h₂, (h₃, ())))
+  expectTensor "RNN empty output" emptyOutput (Tensor.zeros [0, 1])
+  expectTensor "RNN empty first state" emptyStates.1 h₁
+  expectTensor "RNN empty second state" emptyStates.2.1 h₂
+  expectTensor "RNN empty third state" emptyStates.2.2.1 h₃
+  expectTensor "RNN chain uses the same zero-state stack"
+    ((Spec.Rnn.stacked model.layers referenceHead).forward input)
+    (model.forward input (Tensor.zeros _, (Tensor.zeros _, (Tensor.zeros _, ())))).1
+  let oldCell := referenceRnn 2 2
+  let oldChain : Spec.Module.Chain Float [2, 2] [2, 1] :=
+    .comp (.single (Spec.Module.rnn oldCell))
+      (.comp (.single (Spec.Module.rnn oldCell))
+        (.single (Spec.Module.liftLeading (Spec.Module.linear referenceHead))))
+  expectTensor "RNN two-layer chain preserves existing output"
+    ((Spec.Rnn.stacked (.cons oldCell (.cons oldCell .nil)) referenceHead).forward input)
+    (oldChain.forward input)
+  let headOnly : Spec.Rnn.StackedModel Float 2 2 1 :=
+    { layers := .nil, outputLayer := referenceHead }
+  for sequenceLength in [0, 2] do
+    let input := referenceTensor [sequenceLength, 2] 0.2
+    expectTensor "RNN head-only reference" (headOnly.forward input ()).1 <|
+      Tensor.mapLeading [sequenceLength] (Spec.linearSpec referenceHead) input
+
+/-- GRU stacks preserve nonzero initial states at every independently sized layer. -/
+def checkGruReferenceStack : IO Unit := do
+  let first := referenceGru 2 3
+  let second := referenceGru 3 1
+  let third := referenceGru 1 2
+  let model : Spec.Gru.StackedModel Float 2 2 1 :=
+    { layers := .cons first (.cons second (.cons third .nil)), outputLayer := referenceHead }
+  let input := referenceTensor [2, 2] 0.2
+  let h₁ := referenceTensor [3] 0.1
+  let h₂ := referenceTensor [1] (-0.2)
+  let h₃ := referenceTensor [2] 0.3
+  let firstOutput := Spec.gruSequenceSpec first input h₁
+  let secondOutput := Spec.gruSequenceSpec second firstOutput h₂
+  let thirdOutput := Spec.gruSequenceSpec third secondOutput h₃
+  let (output, finalStates) := model.forward input (h₁, (h₂, (h₃, ())))
+  expectTensor "GRU independent widths: complete output" output <|
+    Tensor.mapLeading [2] (Spec.linearSpec referenceHead) thirdOutput
+  expectTensor "GRU first final state" finalStates.1 (Tensor.get firstOutput 1)
+  expectTensor "GRU second final state" finalStates.2.1 (Tensor.get secondOutput 1)
+  expectTensor "GRU third final state" finalStates.2.2.1 (Tensor.get thirdOutput 1)
+  let (emptyOutput, emptyStates) :=
+    model.forward (Tensor.zeros [0, 2]) (h₁, (h₂, (h₃, ())))
+  expectTensor "GRU empty output" emptyOutput (Tensor.zeros [0, 1])
+  expectTensor "GRU empty first state" emptyStates.1 h₁
+  expectTensor "GRU empty second state" emptyStates.2.1 h₂
+  expectTensor "GRU empty third state" emptyStates.2.2.1 h₃
+  expectTensor "GRU chain uses the same zero-state stack"
+    ((Spec.Gru.stacked model.layers referenceHead).forward input)
+    (model.forward input (Tensor.zeros _, (Tensor.zeros _, (Tensor.zeros _, ())))).1
+  let oldCell := referenceGru 2 2
+  let oldChain : Spec.Module.Chain Float [2, 2] [2, 1] :=
+    .comp (.single (Spec.Module.gru oldCell))
+      (.comp (.single (Spec.Module.gru oldCell))
+        (.single (Spec.Module.liftLeading (Spec.Module.linear referenceHead))))
+  expectTensor "GRU two-layer chain preserves existing output"
+    ((Spec.Gru.stacked (.cons oldCell (.cons oldCell .nil)) referenceHead).forward input)
+    (oldChain.forward input)
+  let headOnly : Spec.Gru.StackedModel Float 2 2 1 :=
+    { layers := .nil, outputLayer := referenceHead }
+  for sequenceLength in [0, 2] do
+    let input := referenceTensor [sequenceLength, 2] 0.2
+    expectTensor "GRU head-only reference" (headOnly.forward input ()).1 <|
+      Tensor.mapLeading [sequenceLength] (Spec.linearSpec referenceHead) input
+
+def expectLstmState {width : Nat} (label : String)
+    (actual expected : Spec.LSTMState Float width) : IO Unit := do
+  expectTensor s!"{label}: hidden" actual.hidden expected.hidden
+  expectTensor s!"{label}: cell" actual.cell expected.cell
+
+/-- LSTM stacks retain both state components, including through empty sequences. -/
+def checkLstmReferenceStack : IO Unit := do
+  let first := referenceLstm 2 3
+  let second := referenceLstm 3 1
+  let third := referenceLstm 1 2
+  let model : Spec.Lstm.StackedModel Float 2 2 1 :=
+    { layers := .cons first (.cons second (.cons third .nil)), outputLayer := referenceHead }
+  let input := referenceTensor [2, 2] 0.2
+  let h₁ : Spec.LSTMState Float 3 :=
+    { hidden := referenceTensor _ 0.1, cell := referenceTensor _ (-0.1) }
+  let h₂ : Spec.LSTMState Float 1 :=
+    { hidden := referenceTensor _ (-0.2), cell := referenceTensor _ 0.2 }
+  let h₃ : Spec.LSTMState Float 2 :=
+    { hidden := referenceTensor _ 0.3, cell := referenceTensor _ (-0.3) }
+  let (firstOutput, firstState) := Spec.lstmSequenceSpec first input h₁
+  let (secondOutput, secondState) := Spec.lstmSequenceSpec second firstOutput h₂
+  let (thirdOutput, thirdState) := Spec.lstmSequenceSpec third secondOutput h₃
+  let (output, finalStates) := model.forward input (h₁, (h₂, (h₃, ())))
+  expectTensor "LSTM independent widths: complete output" output <|
+    Tensor.mapLeading [2] (Spec.linearSpec referenceHead) thirdOutput
+  expectLstmState "LSTM first final state" finalStates.1 firstState
+  expectLstmState "LSTM second final state" finalStates.2.1 secondState
+  expectLstmState "LSTM third final state" finalStates.2.2.1 thirdState
+  let (emptyOutput, emptyStates) :=
+    model.forward (Tensor.zeros [0, 2]) (h₁, (h₂, (h₃, ())))
+  expectTensor "LSTM empty output" emptyOutput (Tensor.zeros [0, 1])
+  expectLstmState "LSTM empty first state" emptyStates.1 h₁
+  expectLstmState "LSTM empty second state" emptyStates.2.1 h₂
+  expectLstmState "LSTM empty third state" emptyStates.2.2.1 h₃
+  let zeroState (width : Nat) : Spec.LSTMState Float width :=
+    { hidden := Tensor.zeros _, cell := Tensor.zeros _ }
+  expectTensor "LSTM chain uses the same zero-state stack"
+    ((Spec.Lstm.stacked model.layers referenceHead).forward input)
+    (model.forward input (zeroState 3, (zeroState 1, (zeroState 2, ())))).1
+  let oldCell := referenceLstm 2 2
+  let oldChain : Spec.Module.Chain Float [2, 2] [2, 1] :=
+    .comp (.single (Spec.Module.lstm oldCell))
+      (.comp (.single (Spec.Module.lstm oldCell))
+        (.single (Spec.Module.liftLeading (Spec.Module.linear referenceHead))))
+  expectTensor "LSTM two-layer chain preserves existing output"
+    ((Spec.Lstm.stacked (.cons oldCell (.cons oldCell .nil)) referenceHead).forward input)
+    (oldChain.forward input)
+  let headOnly : Spec.Lstm.StackedModel Float 2 2 1 :=
+    { layers := .nil, outputLayer := referenceHead }
+  for sequenceLength in [0, 2] do
+    let input := referenceTensor [sequenceLength, 2] 0.2
+    expectTensor "LSTM head-only reference" (headOnly.forward input ()).1 <|
+      Tensor.mapLeading [sequenceLength] (Spec.linearSpec referenceHead) input
+
 def run : IO Unit := do
+  checkRnnReferenceStack
+  checkGruReferenceStack
+  checkLstmReferenceStack
   checkHigherDerivatives
   checkInvalidAutograd
   let meanVitSummary ←
@@ -772,7 +957,7 @@ def run : IO Unit := do
 
   let objectiveRejected ←
     try
-      let definition := nn.Objective.meanSquaredError negativeDropout
+      let definition := nn.Objective.mse negativeDropout
       let _ ← Module.instantiate definition (α := Float)
       pure false
     catch _ =>
@@ -782,7 +967,7 @@ def run : IO Unit := do
   let objectiveMaskRejected ←
     try
       let definition :=
-        { nn.Objective.meanSquaredError zeroDropout with requiresGrad := #[] }
+        { nn.Objective.mse zeroDropout with requiresGrad := #[] }
       let _ ← Module.instantiate definition (α := Float)
       pure false
     catch _ =>

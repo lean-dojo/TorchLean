@@ -41,7 +41,7 @@ def sliceBuffer {n start len : Nat} (t : Tape) (xId : Nat) : Result (Tape × Nat
     let node : Node :=
       { name := some s!"slice_vector_buffer[{start}:{start+len}]"
         value := { s := outShape, buf := y }
-        requiresGrad := true
+        requiresGrad := (t.getNode? xId).any (·.requiresGrad)
         parents := #[xId]
         backward := fun dLdyAny => do
           let dLdy ← requireGrad dLdyAny outShape
@@ -168,7 +168,7 @@ def select {s : Shape} (t : Tape) (xId : Nat) (axis : Nat)
   let node : Node :=
     { name := some s!"select(axis={axis}, index={index.val})"
       value := { s := outShape, buf := y }
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny outShape
@@ -204,7 +204,7 @@ def indexSelect {s : Shape} (t : Tape) (xId : Nat) (axis count : Nat)
   let node : Node :=
     { name := some s!"index_select(axis={axis})"
       value := { s := outShape, buf := y }
-      requiresGrad := true
+      requiresGrad := (t.getNode? xId).any (·.requiresGrad)
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny outShape
@@ -245,7 +245,8 @@ def scatterAdd {s : Shape} (t : Tape) (baseId sourceId : Nat) (axis count : Nat)
   let node : Node :=
     { name := some s!"scatter_add(axis={axis})"
       value := { s := s, buf := y }
-      requiresGrad := true
+      requiresGrad := (t.getNode? baseId).any (·.requiresGrad) ||
+        (t.getNode? sourceId).any (·.requiresGrad)
       parents := #[baseId, sourceId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny s

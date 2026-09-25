@@ -48,7 +48,7 @@ inductive TensorLayout where
   | canonicalTensor
   /-- Contiguous flat storage with the last axis varying fastest. -/
   | flatRowMajor
-  /-- A contiguous CUDA tensor view owned by LibTorch. -/
+  /-- Contiguous CUDA tensor storage managed by LibTorch. -/
   | libTorchCudaView
   deriving DecidableEq, Repr
 
@@ -163,7 +163,7 @@ end ReductionPolicy
 
 /-- Floating-point choices attached to one kernel capsule that numerical certificates consume. -/
 structure NumericalPolicy where
-  /-- The order a reduction may use, which fixes whether summation is reproducible. -/
+  /-- The permitted reduction order; this does not specify every source of numerical variation. -/
   reduction : ReductionPolicy
   deriving DecidableEq, Repr
 
@@ -325,8 +325,9 @@ Whether the capsule's gradient boundary is compatible with the requested kernel 
 
 `none` is inference mode, so any forward-capable capsule is suitable even when it also advertises a
 VJP. In `torchLeanTape` mode TorchLean owns the global tape and backward traversal. A capsule may
-still implement its local VJP either as TorchLean operations or as a named backend kernel;
-`backendVJP` requests the latter specifically.
+still implement its local VJP either as TorchLean operations or as a named backend routine;
+`backendVJP` requests the latter specifically. The maintained LibTorch routines execute under
+disabled gradient recording: neither mode delegates a local or global graph to LibTorch autograd.
 -/
 def matchesVJP (policy : KernelPolicy) (c : KernelCapsule) : Bool :=
   if policy.vjpMode == .none || !c.op.requiresVJP then

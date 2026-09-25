@@ -126,9 +126,17 @@ def conv
           requiresGrad := #[true, true]
           validateConfig := do
             if inC = 0 then
-              throw "Conv: in_channels must be positive"
+              throw "Conv: input channel count must be positive"
             if outC = 0 then
-              throw "Conv: out_channels must be positive"
+              throw "Conv: output channel count must be positive"
+            if spatial.prod = 0 then
+              throw "Conv: input spatial dimensions must be positive"
+            if !decide (∀ axis : Fin d, kernel.getScalar axis ≠ 0) then
+              throw "Conv: kernel size entries must be positive"
+            if !decide (∀ axis : Fin d, stride.getScalar axis ≠ 0) then
+              throw "Conv: stride entries must be positive"
+            if (Spec.convOutSpatial spatial kernel stride padding).prod = 0 then
+              throw "Conv: geometry produced an empty spatial grid"
           forward := fun _ {α} _ _ =>
             fun {m} _ _ => fun k b x =>
               _root_.Runtime.Autograd.Torch.conv (m := m) (α := α)

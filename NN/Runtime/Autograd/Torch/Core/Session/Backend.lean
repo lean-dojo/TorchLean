@@ -80,12 +80,11 @@ def executeSelected {α β : Type} [Storage α]
           throw <| IO.userError s!"torch: invalid executable backend binding: {msg}"
 
 /--
-Execute an operation implemented by the reference CPU and native CUDA runtimes.
+Execute an operation implemented by the reference CPU and LibTorch CUDA runtimes.
 
-This is the common two-provider case. Operations with additional providers, such as LibTorch
-attention, pass their complete handler list directly to `executeSelected`.
+The selected handler computes tensor values. TorchLean retains tape ownership in either case.
 -/
-def executeReferenceOrNativeCuda {α β : Type} [Storage α] (s : EagerSession α)
+def executeReferenceOrLibTorch {α β : Type} [Storage α] (s : EagerSession α)
     (op : NN.Backend.BackendOp) (cpu cuda : IO β) : IO β :=
   s.executeSelected op
     #[({ name := "TorchLean reference CPU"
@@ -93,9 +92,9 @@ def executeReferenceOrNativeCuda {α β : Type} [Storage α] (s : EagerSession �
          provider := .reference
          device := .cpu
          execute := fun _ => cpu } : NN.Backend.KernelHandler β),
-      ({ name := "TorchLean native CUDA"
+      ({ name := "LibTorch CUDA"
          op
-         provider := .nativeCuda
+         provider := .libTorch
          device := .cuda
          execute := fun _ => cuda } : NN.Backend.KernelHandler β)]
 

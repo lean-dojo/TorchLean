@@ -13,7 +13,7 @@ public import NN.API.Seeded
 
 Configuration and a language-model constructor for selective Mamba-1 sequence models.
 
-The recurrent core uses causal depthwise convolution, input-dependent time steps and B/C vectors,
+Each recurrent layer uses causal depthwise convolution, input-dependent time steps and B/C vectors,
 learned negative state rates, and a gated readout. It is built from generic differentiable
 operations shared by CPU and CUDA execution.
 -/
@@ -33,8 +33,8 @@ namespace Mamba
 structure Config where
   /-- Number of token categories accepted and predicted at each sequence position. -/
   vocabularySize : Nat
-  /-- Output feature width of the Mamba block, before the vocabulary projection. -/
-  modelWidth : Nat
+  /-- Feature widths of the Mamba layers. An empty list builds only the vocabulary projection. -/
+  modelWidths : List Nat := []
   /-- Expanded channels per model feature in the convolution and recurrent path. -/
   expansion : Nat := 2
   /-- Diagonal recurrent states per expanded channel. -/
@@ -53,13 +53,15 @@ def options (config : Config) : Runtime.Autograd.Model.Mamba.Options :=
 
 /-- Validate model dimensions before allocating recurrent or projection parameters. -/
 def validate (config : Config) (sequenceLength : Nat) : Except String Unit := do
-  if sequenceLength = 0 then
+  if !config.modelWidths.isEmpty && sequenceLength = 0 then
     throw "Mamba: sequence length must be positive"
   if config.vocabularySize = 0 then
     throw "Mamba: vocabulary size must be positive"
-  if config.modelWidth = 0 then
-    throw "Mamba: model width must be positive"
-  config.options.validate
+  for modelWidth in config.modelWidths do
+    if modelWidth = 0 then
+      throw "Mamba: model width must be positive"
+  unless config.modelWidths.isEmpty do
+    config.options.validate
 
 /-- One-hot input shape `batchShape × sequenceLength × vocabularySize`. -/
 abbrev inputShape (config : Config) (sequenceLength : Nat)
@@ -76,10 +78,12 @@ end Config
 /--
 Trainable selective Mamba-1 language model over one-hot token inputs.
 
-The block maps each `vocabularySize`-wide token to `modelWidth` features, and a final affine map
-produces vocabulary logits at every position. Its internal width is `expansion * modelWidth`.
+The layers map each `vocabularySize`-wide token through `modelWidths` in order, and a final affine
+map produces vocabulary logits at every position. Each layer's internal width is
+`expansion * modelWidth`.
 Every sequence starts with zero hidden state and empty convolution history; each batch element has
-its own recurrence while sharing the eleven Mamba tensors and vocabulary projection.
+its own recurrence while sharing the eleven tensors per Mamba layer and the vocabulary projection.
+With no Mamba layers, the projection accepts empty sequences and ignores the unused core options.
 
 The time-step projection is a dense matrix, matching `Models.SelectiveMambaBlockSpec`. The usual
 low-rank Mamba checkpoint stores two factors instead; their product matches a forward map here, but
@@ -98,16 +102,23 @@ def languageModel (config : Config) (sequenceLength : Nat) (batchShape : Shape :
         (config.outputShape sequenceLength batchShape)
         "Mamba.languageModel" message
   | .ok () =>
-      have model := do
-        let recurrent ←
-          nn.mamba sequenceLength config.vocabularySize config.modelWidth
-            (batchShape := batchShape)
-            (options := config.options)
-        let outputProjection ← linear config.modelWidth config.vocabularySize
-          (batchShape := batchShape.appendDim sequenceLength)
-        pure (recurrent >>> outputProjection)
-      simpa only [Config.inputShape, Config.outputShape,
-        Shape.appendDim_appendDim_eq_concat] using model
+      let rec buildLayers (inputWidth : Nat) (modelWidths : List Nat) :
+          Builder (Sequential (batchShape.concat [sequenceLength, inputWidth])
+            (config.outputShape sequenceLength batchShape)) :=
+        match modelWidths with
+        | [] => by
+            simpa only [Config.outputShape, Shape.appendDim_appendDim_eq_concat] using
+              (linear inputWidth config.vocabularySize
+                (batchShape := batchShape.appendDim sequenceLength))
+        | modelWidth :: rest => do
+            let layer : Sequential (batchShape.concat [sequenceLength, inputWidth])
+                (batchShape.concat [sequenceLength, modelWidth]) ← by
+              simpa only [Shape.appendDim_appendDim_eq_concat] using
+                (nn.mamba sequenceLength inputWidth modelWidth
+                  (batchShape := batchShape) (options := config.options))
+            let remaining ← buildLayers modelWidth rest
+            pure (layer >>> remaining)
+      exact buildLayers config.vocabularySize config.modelWidths
 
 end Mamba
 end models

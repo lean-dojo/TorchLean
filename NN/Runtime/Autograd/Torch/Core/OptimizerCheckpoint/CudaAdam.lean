@@ -66,14 +66,20 @@ def sameBits (left right : CudaAdamConfig) : Bool :=
     left.epsilon.toBits == right.epsilon.toBits &&
     left.weightDecay.toBits == right.weightDecay.toBits
 
-/-- Reject non-finite or mathematically invalid Adam-family hyperparameters. -/
+/--
+Reject invalid Adam-family hyperparameters before updating or restoring device state.
+
+The denominator uses float32 arithmetic, so epsilon must remain finite and positive after the
+same conversion performed by the native kernel.
+-/
 def validate (config : CudaAdamConfig) : Except String Unit := do
   unless config.beta1.isFinite && 0.0 ≤ config.beta1 && config.beta1 < 1.0 do
     throw s!"{checkpointName}: `beta1` must be finite and lie in [0, 1)"
   unless config.beta2.isFinite && 0.0 ≤ config.beta2 && config.beta2 < 1.0 do
     throw s!"{checkpointName}: `beta2` must be finite and lie in [0, 1)"
-  unless config.epsilon.isFinite && 0.0 < config.epsilon do
-    throw s!"{checkpointName}: `epsilon` must be finite and positive"
+  let effectiveEpsilon := config.epsilon.toFloat32.toFloat
+  unless effectiveEpsilon.isFinite && 0.0 < effectiveEpsilon do
+    throw s!"{checkpointName}: `epsilon` must remain finite and positive in float32"
   match config.kind with
   | .adam =>
       unless config.weightDecay == 0.0 do

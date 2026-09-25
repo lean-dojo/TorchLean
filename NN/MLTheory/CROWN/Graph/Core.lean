@@ -60,15 +60,15 @@ abbrev Graph := NN.IR.Graph
 
 namespace FlatBox
 
-/-- Flatten a shaped center/radius pair into the graph-level interval-box representation. -/
-def lInfBox {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+/-- Flatten a center/radius pair, rounding both interval endpoints outward. -/
+def lInfBox {α : Type} [TorchLean.Storage α] [Context α] [BoundOps α] {s : Shape}
     (center radius : Tensor α s) : FlatBox α :=
   { dim := Spec.Shape.size s
-    lo := Tensor.flattenSpec (α := α) <| Tensor.subSpec center radius
-    hi := Tensor.flattenSpec (α := α) <| Tensor.addSpec center radius }
+    lo := Tensor.flattenSpec (α := α) <| Tensor.map2Spec BoundOps.subDown center radius
+    hi := Tensor.flattenSpec (α := α) <| Tensor.map2Spec BoundOps.addUp center radius }
 
 /-- Uniform `ℓ∞` box around a shaped tensor. -/
-def lInfBall {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+def lInfBall {α : Type} [TorchLean.Storage α] [Context α] [BoundOps α] {s : Shape}
     (center : Tensor α s) (eps : α) : FlatBox α :=
   lInfBox (α := α) center (Tensor.full (α := α) s eps)
 

@@ -82,12 +82,6 @@ private def tensorAllLE {s : Shape} (bound : ℝ) (tensor : Tensor ℝ s) : Prop
 private noncomputable def tensorMax {s : Shape} (tensor : Tensor ℝ s) : ℝ :=
   ∑ coordinate : s.Coord, |tensor coordinate|
 
-private theorem tensorAllLE_mono {s : Shape} {lower upper : ℝ}
-    (tensor : Tensor ℝ s) (hTensor : tensorAllLE lower tensor) (hBounds : lower ≤ upper) :
-    tensorAllLE upper tensor := by
-  intro coordinate
-  exact (hTensor coordinate).trans hBounds
-
 private theorem tensorAllLE_tensorMax {s : Shape} (tensor : Tensor ℝ s) :
     tensorAllLE (tensorMax tensor) tensor := by
   intro coordinate

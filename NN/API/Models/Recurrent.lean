@@ -11,7 +11,8 @@ public import NN.API.Seeded
 /-!
 # Recurrent Models
 
-RNN, GRU, and LSTM sequence models with a linear projection at every time step.
+RNN, GRU, and LSTM stacks with independently chosen hidden widths and a linear projection at
+every time step. An empty stack is a time-distributed linear model and accepts empty sequences.
 -/
 
 @[expose] public section
@@ -35,8 +36,8 @@ structure Recurrent.Config where
   sequenceLength : Nat
   /-- Number of features presented at each time step. -/
   inputWidth : Nat
-  /-- Width of the recurrent state. -/
-  hiddenWidth : Nat
+  /-- Recurrent widths in execution order. An empty list builds only the output head. -/
+  hiddenWidths : List Nat := []
   /-- Number of features produced at each time step. -/
   outputWidth : Nat
 deriving Repr
@@ -51,8 +52,15 @@ for rather than this helper. Keeping the checks here is why `Recurrent.Config.va
 sequence-to-sequence variants cannot drift into reporting different messages for the same mistake.
 -/
 def validateConfig (kind : String) (config : Recurrent.Config) : Except String Unit := do
-  Runtime.Autograd.Model.Layers.Internal.validateRecurrentDimensions
-    kind config.sequenceLength config.inputWidth config.hiddenWidth
+  match config.hiddenWidths with
+  | [] =>
+      Runtime.Autograd.Model.Layers.Internal.requirePositive kind "input width" config.inputWidth
+  | _ :: _ =>
+      let mut inputWidth := config.inputWidth
+      for hiddenWidth in config.hiddenWidths do
+        Runtime.Autograd.Model.Layers.Internal.validateRecurrentDimensions
+          kind config.sequenceLength inputWidth hiddenWidth
+        inputWidth := hiddenWidth
   if config.outputWidth = 0 then
     throw s!"{kind}: output width must be positive"
 
@@ -76,10 +84,32 @@ abbrev Recurrent.Config.outputShape (config : Recurrent.Config)
     (batchShape : Shape := []) : Shape :=
   batchShape.concat [config.sequenceLength, config.outputWidth]
 
-/--
-Vanilla RNN core plus time-distributed linear head:
+namespace Recurrent.Internal
 
-`rnn(sequenceLength, inputWidth, hiddenWidth) → linear(hiddenWidth, outputWidth)`.
+/-- Compose the recurrent layers in order, then apply the same linear head at every time step. -/
+def build (config : Recurrent.Config) (batchShape : Shape)
+    (core : (inputWidth hiddenWidth : Nat) →
+      Builder (Sequential (batchShape.concat [config.sequenceLength, inputWidth])
+        (batchShape.concat [config.sequenceLength, hiddenWidth]))) :
+    Builder (Sequential (config.inputShape batchShape) (config.outputShape batchShape)) :=
+  let rec buildLayers (inputWidth : Nat) (hiddenWidths : List Nat) :
+      Builder (Sequential (batchShape.concat [config.sequenceLength, inputWidth])
+        (config.outputShape batchShape)) :=
+    match hiddenWidths with
+    | [] => by
+        simpa only [Recurrent.Config.outputShape, Shape.appendDim_appendDim_eq_concat] using
+          (linear inputWidth config.outputWidth
+            (batchShape := batchShape.appendDim config.sequenceLength))
+    | hiddenWidth :: rest => do
+        let layer ← core inputWidth hiddenWidth
+        let remaining ← buildLayers hiddenWidth rest
+        pure (layer >>> remaining)
+  buildLayers config.inputWidth config.hiddenWidths
+
+end Recurrent.Internal
+
+/--
+Vanilla RNN layers followed by a time-distributed linear head.
 -/
 def rnn (config : Recurrent.Config) (batchShape : Shape := []) :
     nn.Builder (nn.Sequential (config.inputShape batchShape) (config.outputShape batchShape)) := by
@@ -88,22 +118,14 @@ def rnn (config : Recurrent.Config) (batchShape : Shape := []) :
       exact pure <| nn.Internal.invalidConfiguration
         (config.inputShape batchShape) (config.outputShape batchShape) "RNN" message
   | .ok () =>
-      have model := do
-        let recurrent ←
-          nn.rnn config.sequenceLength config.inputWidth config.hiddenWidth
-            (batchShape := batchShape)
-        let outputProjection ← linear config.hiddenWidth config.outputWidth
-          (batchShape := batchShape.appendDim config.sequenceLength)
-        pure (recurrent >>> outputProjection)
-      simpa only [Recurrent.Config.inputShape, Recurrent.Config.outputShape,
-        Shape.appendDim_appendDim_eq_concat] using model
+      exact Recurrent.Internal.build config batchShape fun inputWidth hiddenWidth => by
+        simpa only [Shape.appendDim_appendDim_eq_concat] using
+          (nn.rnn config.sequenceLength inputWidth hiddenWidth (batchShape := batchShape))
 
 /--
-Gated recurrent unit plus time-distributed linear head:
+Gated recurrent layers followed by a time-distributed linear head.
 
-`gru(sequenceLength, inputWidth, hiddenWidth) → linear(hiddenWidth, outputWidth)`.
-
-By default the core uses the Cho-style reset-before convention. With reset gate $r_t$, update
+By default each core uses the Cho-style reset-before convention. With reset gate $r_t$, update
 gate $z_t$ and previous hidden state $h_{t-1}$, its candidate and update are
 
 $$
@@ -144,20 +166,13 @@ def gru (config : Recurrent.Config) (batchShape : Shape := [])
       exact pure <| nn.Internal.invalidConfiguration
         (config.inputShape batchShape) (config.outputShape batchShape) "GRU" message
   | .ok () =>
-      have model := do
-        let recurrent ←
-          nn.gru config.sequenceLength config.inputWidth config.hiddenWidth
-            (batchShape := batchShape) (convention := convention)
-        let outputProjection ← linear config.hiddenWidth config.outputWidth
-          (batchShape := batchShape.appendDim config.sequenceLength)
-        pure (recurrent >>> outputProjection)
-      simpa only [Recurrent.Config.inputShape, Recurrent.Config.outputShape,
-        Shape.appendDim_appendDim_eq_concat] using model
+      exact Recurrent.Internal.build config batchShape fun inputWidth hiddenWidth => by
+        simpa only [Shape.appendDim_appendDim_eq_concat] using
+          (nn.gru config.sequenceLength inputWidth hiddenWidth
+            (batchShape := batchShape) (convention := convention))
 
 /--
-LSTM core plus time-distributed linear head:
-
-`lstm(sequenceLength, inputWidth, hiddenWidth) → linear(hiddenWidth, outputWidth)`.
+LSTM layers followed by a time-distributed linear head.
 -/
 def lstm (config : Recurrent.Config) (batchShape : Shape := []) :
     nn.Builder (nn.Sequential (config.inputShape batchShape) (config.outputShape batchShape)) := by
@@ -166,15 +181,9 @@ def lstm (config : Recurrent.Config) (batchShape : Shape := []) :
       exact pure <| nn.Internal.invalidConfiguration
         (config.inputShape batchShape) (config.outputShape batchShape) "LSTM" message
   | .ok () =>
-      have model := do
-        let recurrent ←
-          nn.lstm config.sequenceLength config.inputWidth config.hiddenWidth
-            (batchShape := batchShape)
-        let outputProjection ← linear config.hiddenWidth config.outputWidth
-          (batchShape := batchShape.appendDim config.sequenceLength)
-        pure (recurrent >>> outputProjection)
-      simpa only [Recurrent.Config.inputShape, Recurrent.Config.outputShape,
-        Shape.appendDim_appendDim_eq_concat] using model
+      exact Recurrent.Internal.build config batchShape fun inputWidth hiddenWidth => by
+        simpa only [Shape.appendDim_appendDim_eq_concat] using
+          (nn.lstm config.sequenceLength inputWidth hiddenWidth (batchShape := batchShape))
 
 end models
 end nn

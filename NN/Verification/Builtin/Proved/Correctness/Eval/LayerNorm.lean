@@ -43,7 +43,7 @@ theorem layerNormWithoutAffine_eq_spec
           (gamma := Tensor.full (α := α) (.dim embedDim .scalar) 1)
           (beta := Tensor.full (α := α) (.dim embedDim .scalar) 0)
           (h_seq_pos := hSeq) (h_embed_pos := hEmb)) := by
-  simp [Graph.layerNormWithoutAffine, Graph.layerNormMatrix, hSeq, hEmb]
+  simp [Graph.layerNormWithoutAffine, Graph.layerNormMatrix, Graph.layerNormMatrixValue, hSeq, hEmb]
   rfl
 
 /--

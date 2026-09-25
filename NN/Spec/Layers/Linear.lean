@@ -96,11 +96,8 @@ def linearInputDerivSpec {inDim outDim : Nat}
 /--
 Gradients for the parameters of a linear layer `y = W x + b`.
 
-`LinearSpec` stores `weights` and `bias`, so this bundle names its fields the same way with a
-`Gradient` suffix. The LSTM output head in `NN/Spec/Module/LstmModels.lean` and the seq2seq decoder
-projection in `NN/Spec/Models/Seq2seq.lean` each used to declare a private copy of exactly this
-record, which meant a gradient produced by one model could not be read by code written against the
-other. One shared record fixes that.
+The weight and bias gradients retain their parameter shapes. This shared record also describes
+gradients for linear output heads and decoder projections.
 
 PyTorch analogue: `(layer.weight.grad, layer.bias.grad)` for `torch.nn.Linear`.
 -/

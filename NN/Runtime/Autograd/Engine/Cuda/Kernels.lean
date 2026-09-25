@@ -3,14 +3,16 @@ Copyright (c) 2026 TorchLean
 Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 
-CUDA FFI: additional kernels over `Cuda.Buffer` (float32) to support composite ops.
+LibTorch FFI: additional ATen operations over `Cuda.Buffer` (float32).
 
 Notes:
 - `Cuda.Buffer` is an opaque contiguous float32 buffer (device memory when built with
   `-K cuda=true`, otherwise a CPU stub buffer).
-- These kernels keep their shape APIs explicit: dimensions are passed as `UInt32`.
-- Build with `lake -R -K cuda=true build` to use real CUDA kernels at runtime; otherwise the stub
-  implementation runs on CPU for portability.
+- These operations keep their shape APIs explicit: dimensions are passed as `UInt32`.
+- Build with `lake -R -K cuda=true build` and a LibTorch SDK to dispatch upstream ATen CUDA
+  operations at runtime; otherwise the portable C implementation runs on CPU.
+- TorchLean owns the differentiation tape. The LibTorch bridge disables graph recording and
+  calls ATen forward/backward operators directly.
 -/
 
 module
@@ -20,9 +22,10 @@ public import NN.Runtime.Autograd.Engine.Cuda.Trusted
 /-!
 # CUDA Buffer Kernels FFI
 
-Foreign-function declarations for TorchLean's float32 `Cuda.Buffer` kernels: reductions, indexing,
-matmul/BMM, attention, broadcast/view helpers, and related tensor operations. The declarations here
-are the Lean side of the explicit CUDA trust boundary documented in `docs/TRUST_BOUNDARIES.md`.
+Foreign-function declarations for ATen operations on TorchLean's float32 `Cuda.Buffer`: reductions,
+indexing, matmul/BMM, attention, broadcast/view helpers, and related tensor operations. The
+declarations here are the Lean side of the LibTorch CUDA trust boundary documented in
+`docs/TRUST_BOUNDARIES.md`.
 -/
 
 @[expose] public section
@@ -32,15 +35,6 @@ namespace Autograd
 namespace Cuda
 
 namespace Buffer
-
-/--
-Sum down the rows of a 2D row-major buffer.
-
-Input `b` has shape `(rows, cols)` and is stored as length `rows*cols`.
-Output is length `cols` (sum down the rows for each column).
--/
-@[never_extract, extern "torchlean_cuda_buffer_reduce_sum_by_column"]
-opaque reduceSumByColumn (b : @& Buffer) (rows cols : UInt32) : Buffer
 
 /--
 Sum across the columns of a 2D row-major buffer.
@@ -91,14 +85,6 @@ Requires `start + len ≤ n`.
 opaque sliceBuffer (b : @& Buffer) (n start len : UInt32) : Buffer
 
 /--
-Broadcast a rank-one row tensor of length `cols` to a `(rows, cols)` matrix.
-
-Output is row-major of length `rows*cols`, with `out[i, j] = vec[j]`.
--/
-@[never_extract, extern "torchlean_cuda_buffer_broadcast_vec_to_rows"]
-opaque broadcastRowToRows (vec : @& Buffer) (rows cols : UInt32) : Buffer
-
-/--
 Broadcast a column-vector (length `rows`) to a `(rows, cols)` matrix.
 
 Output is row-major of length `rows*cols`, with `out[i, j] = vec[i]`.
@@ -120,7 +106,7 @@ opaque layerNormFwd
     Buffer × Buffer × Buffer
 
 /--
-TorchLean's layer-normalization VJP evaluated by a fused buffer kernel.
+TorchLean's layer-normalization VJP evaluated by LibTorch tensor operations.
 
 Given the upstream derivative, cached normalized values and inverse standard deviations, and
 `gamma`, returns `(dX, dGamma, dBeta)`. The formula and parent association remain part of the
@@ -138,7 +124,7 @@ The logical multiplication always has shape `(batch, m, n) × (batch, n, p)`. Wh
 `transposeA = 1`, the stored shape of `A` is `(batch, n, m)`; when `transposeB = 1`, the stored
 shape of `B` is `(batch, p, n)`. Other flag values are rejected by the native boundary.
 
-cuBLAS consumes these layouts directly. In particular, backward rules can request `Aᵀ B` or
+LibTorch accepts these views. In particular, backward rules can request `Aᵀ B` or
 `A Bᵀ` without first allocating a transposed buffer.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_bmm_with_transpose"]
@@ -176,7 +162,7 @@ Output:
 - length `batch*(n/2+1)*2`, interpreted as shape `(batch, n/2+1, 2)`;
 - the last channel stores `[real, imag]` for each nonredundant frequency bin.
 
-CUDA uses cuFFT `R2C` under the hood. The CPU stub uses a direct reference DFT, so this primitive
+CUDA calls LibTorch's real FFT. The CPU stub uses a direct reference DFT, so this primitive
 remains available in non-CUDA builds for tests and portability. This is a low-level runtime
 primitive; differentiable tensor/autograd wrappers should spell out their backward convention
 separately because half-spectrum packing has normalization and conjugate-symmetry edge cases.
@@ -193,14 +179,14 @@ Input:
 Output:
 - length `batch*n`, interpreted as `(batch, n)`.
 
-The CUDA implementation uses cuFFT `C2R` and explicitly scales by `1/n`, matching the CPU reference
-and the usual normalized inverse FFT convention used by high-level ML APIs.
+The CUDA implementation calls LibTorch's inverse real FFT with `1/n` normalization, matching
+the CPU reference.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_irfft1d_packed"]
 opaque irfft1dPacked (spec : @& Buffer) (batch n : UInt32) : Buffer
 
 /--
-Fused real-FFT spectral convolution for one FNO1D block.
+Real-FFT spectral convolution for one FNO1D block.
 
 Input:
 - `x`: length `grid*width`, row-major shape `(grid, width)`;
@@ -213,27 +199,22 @@ Semantics:
 4. zero all other bins,
 5. apply the normalized inverse real FFT.
 
-This is the CUDA/cuFFT-backed runtime primitive intended to replace dense DFT matrix multiplies in
-float32 FNO examples. The three backward primitives below are its explicit VJP components.
+LibTorch evaluates the FFTs and spectral products in CUDA float32.
+`spectralConv1dRfftBwd` evaluates the three VJP components together.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_spectral_conv1d_rfft_fwd"]
 opaque spectralConv1dRfftFwd
     (x wRe wIm : @& Buffer) (grid width modes : UInt32) : Buffer
 
-/-- VJP component `∂L/∂x` for `spectralConv1dRfftFwd`. -/
-@[never_extract, extern "torchlean_cuda_buffer_spectral_conv1d_rfft_bwd_x"]
-opaque spectralConv1dRfftBwdX
-    (x wRe wIm dY : @& Buffer) (grid width modes : UInt32) : Buffer
+/--
+Return `(∂L/∂x, ∂L/∂wRe, ∂L/∂wIm)` for `spectralConv1dRfftFwd`.
 
-/-- VJP component `∂L/∂wRe` for `spectralConv1dRfftFwd`. -/
-@[never_extract, extern "torchlean_cuda_buffer_spectral_conv1d_rfft_bwd_wre"]
-opaque spectralConv1dRfftBwdWRe
-    (x wRe wIm dY : @& Buffer) (grid width modes : UInt32) : Buffer
-
-/-- VJP component `∂L/∂wIm` for `spectralConv1dRfftFwd`. -/
-@[never_extract, extern "torchlean_cuda_buffer_spectral_conv1d_rfft_bwd_wim"]
-opaque spectralConv1dRfftBwdWIm
-    (x wRe wIm dY : @& Buffer) (grid width modes : UInt32) : Buffer
+The three gradients share the input and cotangent FFTs. All spectral workspace is released before
+returning; the caller owns the three result buffers.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_spectral_conv1d_rfft_bwd"]
+opaque spectralConv1dRfftBwd
+    (x wRe wIm dY : @& Buffer) (grid width modes : UInt32) : Buffer × Buffer × Buffer
 
 /--
 Diagonal selective-scan forward kernel for state-space models.
@@ -292,51 +273,28 @@ opaque selectiveScanDiagVarBwd (A B X h0 out dY : @& Buffer) (seqLen state : UIn
     Buffer × Buffer × Buffer × Buffer
 
 /--
-Native fused scaled dot-product attention forward over split attention heads.
+LibTorch scaled dot-product attention over split heads, without a LibTorch autograd graph.
 
-Inputs are row-major buffers with shapes:
-- `Q`, `K`, `V`: `(batch, n, d)`, where `batch` is usually the number of heads,
-- `mask`: `(batch, n, n)` encoded as `0.0/1.0` when `hasMask != 0`; otherwise ignored.
+`Q`, `K`, and `V` have shape `(batch, n, d)`, with sample and head axes folded into `batch`.
+The optional `(batch, n, n)` mask encodes allowed entries as `1.0` and blocked entries as `0.0`.
+Fully blocked rows produce zero output and contribute zero input gradients. Dropout is zero.
 
-Output has shape `(batch, n, d)`.
-
-Both the native CUDA and optional LibTorch providers use hard-mask semantics: blocked mask entries
-contribute zero softmax numerator. The LibTorch provider has separate extern names because it is an
-external implementation and, for its backward entry point, an external autograd boundary.
+The result has shape `(batch, n, d)`. Its native context retains the selected ATen provider,
+forward inputs, scale, and backward auxiliaries until this buffer is released. Backend selection
+depends on the installed SDK, dtype, shapes, mask, and enabled ATen providers.
+Invalid requests return errors. Scale must be finite and within the float32 range.
 -/
-@[never_extract, extern "torchlean_cuda_buffer_flash_attention_fwd"]
-opaque flashAttentionFwd
-    (Q K V mask : @& Buffer) (hasMask batch n d : UInt32) (scale : Float) : Buffer
-
-/-- Fused VJP `(dQ, dK, dV)` for `flashAttentionFwd`. -/
-@[never_extract, extern "torchlean_cuda_buffer_flash_attention_bwd"]
-opaque flashAttentionBwd
-    (Q K V mask dOut : @& Buffer) (hasMask batch n d : UInt32) (scale : Float) :
-    Buffer × Buffer × Buffer
-
-/-- Optional LibTorch SDPA forward provider. Built only with `-K cuda=true -K libtorch=true`. -/
-@[never_extract, extern "torchlean_libtorch_sdpa_fwd"]
-opaque libTorchSDPAFwd
-    (Q K V mask : @& Buffer) (hasMask batch n d : UInt32) (scale : Float) : IO Buffer
-
-/-- Optional LibTorch SDPA VJP provider. Built only with `-K cuda=true -K libtorch=true`. -/
-@[never_extract, extern "torchlean_libtorch_sdpa_bwd"]
-opaque libTorchSDPABwd
-    (Q K V mask dOut : @& Buffer) (hasMask batch n d : UInt32) (scale : Float) :
-    IO (Buffer × Buffer × Buffer)
+@[never_extract, extern "torchlean_libtorch_attention_fwd"]
+opaque libTorchAttentionFwd
+    (Q K V mask : @& Buffer) (hasMask batch n d : UInt32) (scale : Float) : Except String Buffer
 
 /--
-Gather `k` scalars from a 1D vector using host indices.
-
-Input:
-- `vec`: length `n`
-- `indices`: `Array Nat` of length `k`
-
-Indices that fit in `UInt32` but are out of bounds are totalized to `0`.
-Large `Nat` values outside the FFI index range are rejected by the runtime.
+Paired ATen VJP `(dQ, dK, dV)` using the original `libTorchAttentionFwd` output's saved context.
+Keep that buffer alive and the ATen deterministic policy unchanged until backward completes.
+TorchLean owns the global tape; this call neither records a graph nor recomputes the forward.
 -/
-@[never_extract, extern "torchlean_cuda_buffer_gather_vec"]
-opaque gatherVec (vec : @& Buffer) (n : UInt32) (indices : @& Array Nat) (k : UInt32) : Buffer
+@[never_extract, extern "torchlean_libtorch_attention_bwd"]
+opaque libTorchAttentionBwd (out dOut : @& Buffer) : Except String (Buffer × Buffer × Buffer)
 
 /--
 Scatter-add into a 1D vector using host indices.

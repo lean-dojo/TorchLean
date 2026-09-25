@@ -10,15 +10,10 @@ public import NN.MLTheory.CROWN.Graph.Engine
 public import NN.Tensor
 /-!
 # Shared CROWN Test Helpers
-One helper, shared by the two suites that drive the flattened CROWN graph engine:
-`NN/Tests/MLTheory/CROWNSoundnessGuardrails.lean` and
-`NN/Tests/Runtime/Floats/RankPolymorphicLayerOps.lean`.
-It lived in both of them, once as `pointBox` and once as `pointFlatBox`, with the same body. Two
-names for one function is the version of duplication that is hardest to notice, because grepping for
-either name finds exactly one definition and looks reassuring.
-The generic bound-array matchers those two suites also shared are in `NN/Tests/Utils.lean` instead,
-which imports nothing from the library. Only this helper needs `FlatBox`, and dragging the CROWN
-import closure into the lightweight assertions module would put it in front of every runtime suite.
+
+Point boxes for the flattened CROWN graph engine. Generic bound-array assertions live in
+`NN/Tests/Utils.lean`; keeping the CROWN-specific construction here lets other runtime suites use
+those assertions without importing the verifier.
 -/
 
 @[expose] public section

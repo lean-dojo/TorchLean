@@ -7,6 +7,11 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#ifdef TORCHLEAN_LIBTORCH
+#include <ATen/ATen.h>
+#include <memory>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -17,8 +22,8 @@ extern "C" {
 // The exported functions deliberately keep a tiny ABI:
 // - Lean owns an external object that points at `torchlean_cuda_buffer`;
 // - `size` is always the number of float32 elements, not bytes;
-// - `data` points to device memory in the CUDA build and host memory in the CPU-stub build;
-// - all native callers must validate shape/size metadata before touching `data`.
+// - the CUDA build owns an ATen tensor; the CPU stub owns a host `data` allocation;
+// - all native callers must validate shape/size metadata before accessing storage.
 //
 // This is a trusted boundary. The Lean layer can prove shape-level contracts around these calls, but
 // it cannot inspect C pointer lifetimes or CUDA runtime behavior.
@@ -47,10 +52,19 @@ static inline uint32_t nat_to_u32_or_panic(b_lean_obj_arg o, const char* msg) {
 
 typedef struct {
   size_t size;  // number of float32 elements
-  float* data;  // device/host pointer (depending on build)
+#ifdef TORCHLEAN_LIBTORCH
+  at::Tensor tensor;
+  // Operator-specific forward state, retained until the owning tape node is released.
+  std::shared_ptr<void> context;
+#else
+  float* data;  // CPU stub storage
+  // CPU attention stubs retain their forward state with the same buffer lifetime.
+  void* context;
+  void (*delete_context)(void*);
+#endif
 } torchlean_cuda_buffer;
 
-// Helpers implemented by `torchlean_cuda_tensor.cu` / `torchlean_cuda_tensor_stub.c`.
+// Helpers implemented by LibTorch runtime.cpp / torchlean_cuda_tensor_stub.c.
 torchlean_cuda_buffer* torchlean_cuda_buffer_unbox(b_lean_obj_arg obj);
 lean_obj_res torchlean_cuda_buffer_box(torchlean_cuda_buffer* b);
 torchlean_cuda_buffer* torchlean_cuda_buffer_alloc(size_t n);
@@ -142,20 +156,15 @@ static inline void torchlean_cuda_require_broadcast_map(
   }
 }
 
-// Deterministic reductions toggle.
-//
-// Some kernels use `atomicAdd`, which is fast but can be non-deterministic. When enabled, TorchLean
-// uses fixed-order reductions for reproducibility (slower).
-LEAN_EXPORT void torchlean_cuda_set_deterministic_reductions(uint32_t on);
-LEAN_EXPORT uint32_t torchlean_cuda_get_deterministic_reductions();
-LEAN_EXPORT uint32_t torchlean_cuda_get_deterministic_reductions_u(uint32_t u);
-
-// Wrapper used by the Lean binding: sets the flag and returns the observed value.
-LEAN_EXPORT uint32_t torchlean_cuda_set_deterministic_reductions_checked(uint32_t on);
+#ifndef TORCHLEAN_LIBTORCH
+// Internal CPU policy, captured from the environment on first use and immutable thereafter.
+// This helper does not expose a runtime setting through Lean or emulate LibTorch controls.
+uint32_t torchlean_cpu_deterministic_reductions(void);
+#endif
 
 // Allocator telemetry. These counters are diagnostic only. The allocator counters track payloads
-// created through `torchlean_cuda_buffer_alloc`; the wrapper counters track Lean external objects
-// from boxing through finalization.
+// owned by TorchLean buffers; the wrapper counters track Lean external objects from boxing through
+// finalization. LibTorch allocated/reserved storage is reported separately.
 LEAN_EXPORT uint64_t torchlean_cuda_allocator_live_bytes(uint32_t u);
 LEAN_EXPORT uint64_t torchlean_cuda_allocator_peak_bytes(uint32_t u);
 LEAN_EXPORT uint64_t torchlean_cuda_allocator_alloc_count(uint32_t u);

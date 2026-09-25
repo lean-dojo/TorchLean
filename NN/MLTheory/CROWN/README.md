@@ -46,6 +46,11 @@ that currently have Lean support, while executable workflows and JSON checkers c
 as diagnostics or artifact checks. When writing a claim, cite the strongest available support:
 runtime report, checked certificate, transfer-rule assumption, or theorem.
 
+Support depends on the IR operation, tensor geometry, parameter payload, and scalar backend.
+Successful model construction or lowering does not guarantee that a bound pass can handle it.
+The [verification guide](../../../home_page/blueprint/TorchLeanBlueprint/Guide/Ch4_Verification/Verification.lean)
+states the theorem fragments and their premises; runtime support is broader.
+
 ## Claim Shapes
 
 The same graph can support several levels of claim, and the wording should identify which one is
@@ -57,7 +62,10 @@ being used.
 | A JSON artifact was accepted | the checker module, schema name, artifact path, and recomputed predicate |
 | A graph certificate is sound | the theorem in `Proofs/`, the graph semantics, and the hypotheses discharged by the checker |
 | An external verifier found the leaf | the external producer/provenance plus the Lean-checked leaf artifact |
-| A finite-precision bound is being used | the `FP32`, `IEEE32Exec`, or runtime bridge assumptions named by the caller |
+| A finite-precision bound is being used | the scalar format and numerical correspondence required by the caller |
+
+For the checked exact-real result on finite binary32 artifacts, see
+[certificate acceptance](#certificate-acceptance) below.
 
 For example, an alpha-beta-CROWN leaf artifact represents one exported terminal leaf: boxes, lower
 bounds, thresholds, labels, and the witness comparison represented by the schema. A full producer
@@ -69,6 +77,90 @@ The graph engine works over `NN.IR.Graph` node ids and payload stores. A typical
 imports a graph, attaches an input box, computes per-node IBP boxes, and then propagates affine
 forms for a selected output or objective. Operator files provide the transfer rules; proof files say
 which rules have soundness statements or which assumptions remain.
+
+### Tensor geometry
+
+The graph stores tensor shapes even though its boxes and affine coefficients use flat coordinates.
+The shape determines which coordinates participate in each operation:
+
+| Operation | Executable transfer contract |
+| --- | --- |
+| Concatenation | Any valid axis; at least two parents; matching dimensions off that axis. |
+| Binary matmul | Broadcastable leading axes, vector promotion, and matching inner dimensions. |
+| Convolution | Checked groups, dilation, stride, asymmetric padding, and leading batch axes. |
+| Axis sum/mean | A nonempty reduced axis; other axes, including empty leading axes, are preserved. |
+| Average pooling | Positive per-axis kernels and strides over any spatial suffix; padded zeros count in the divisor. |
+| Eval BatchNorm | A valid channel axis with matching parameter lengths; the input shape is preserved. |
+| LayerNorm | `axis` begins the complete normalized suffix; payload shape equals that suffix. |
+| Softmax value range | Any valid axis; extent one gives `[1,1]`, other extents give `[0,1]`. |
+| Elementwise interval maps | Preserve arbitrary shapes, including scalar and empty shapes. |
+
+Axis sums use directed accumulation; means and average pooling also enclose the count before
+division. Eval BatchNorm propagates intervals through stabilization, square root, normalization,
+scale, and bias. It returns no bound when required finite arithmetic or a positive denominator
+cannot be established. These executable transfers do not extend the `EngineCore` theorem fragment
+described below.
+
+Concatenation preserves parent order, including empty dimensions and repeated parent ids.
+Values, interval endpoints, and affine rows follow the same coordinate map. Backward propagation
+splits the output coefficients along that map and accumulates every occurrence of a repeated
+parent. For `concat(x, x)`, the two coefficient slices both contribute to `x`.
+The proof-side certificate evaluator also uses this layout. Both `Supported` and the executable
+`EngineCore` theorem include concatenation. `GraphRuntimeBridge` proves agreement with the IR
+evaluator along every valid axis: moving that axis to the front, concatenating, and undoing the
+permutation gives the same coordinates used by the certificate.
+
+For matrix multiplication, the leading axes broadcast before the final two axes contract.
+For example, `[1,4,5]` times `[2,5,6]` produces `[2,4,6]`. A vector is promoted for the
+contraction and its introduced axis is removed afterward: `[5]` times `[2,5,6]` produces
+`[2,6]`, while `[5]` times `[5]` produces a scalar.
+The directed backward path bounds a binary product's active objective against its output IBP box.
+It does not propagate coefficients through both operands, so this fallback can lose correlations.
+
+A LayerNorm on `[2,2,2]` beginning at axis one normalizes two rows of four coordinates;
+a payload shaped `[4]` is rejected because the normalized suffix is `[2,2]`. A leading batch
+may be empty, but the normalized suffix must contain at least one coordinate. The elementwise
+maps in `Runtime.Ops.IBP` (`mapMinmax`, `sigmoid`, `tanh`, `sin`, and `cos`) apply the same
+scalar formula at every coordinate while preserving the input shape.
+
+Convolution payloads store a dense input-channel axis and select the channels belonging to each
+group. They do not use a packed `inChannels / groups` weight axis. Affine convolution transfers
+construct a matrix with one row per output scalar and one column per input scalar, including
+leading batch coordinates. This dense representation can be expensive even when the convolution
+it represents is sparse; general shape support is not a memory or speed guarantee.
+
+In `Proofs/Conv.lean`, `ConvProof.conv_linear_matrix_add_bias_eq_grouped_conv` proves that this
+matrix applied to the flattened input, plus the broadcast bias, equals the flattened grouped
+convolution over real tensors. It covers dilation, asymmetric padding, and leading batches.
+Graph execution additionally validates the configuration; rounded execution needs its own
+numerical correspondence.
+
+`Proofs/ConvDerivatives.lean` differentiates the actual grouped convolution over arbitrary leading
+batch dimensions and proves its input adjoint. The derivative pass evaluates the same geometry
+with zero bias, including when an upstream nonlinear operation supplies a nonzero mixed derivative.
+`Proofs/ConvEnclosure.lean` proves enclosure for the directed convolution's channel and kernel
+folds over real endpoints, and relates their result to the same grouped convolution.
+The checked graph transfer uses that result in `Proofs/ConvGraphEnclosure.lean`; convolution
+is included in the real certificate induction and the executable `EngineCore` theorem.
+`Proofs/GraphConvBridge.lean` also proves that successful IR convolution agrees with the flat
+certificate evaluator, deriving the checked geometry from the actual execution.
+
+LayerNorm's first and mixed derivative transfers operate on independent normalization rows, with
+the stored scale and positive epsilon. `Graph/Proofs/LayerNormDerivativeEnclosure.lean` proves that
+the actual directed row calculation encloses the first and mixed derivatives of the real
+normalization. It requires enclosed upstream values and derivatives, the scalar operation laws,
+and exact interpretations of the literals zero through four; a corollary specializes to real
+endpoints. A full graph derivative-pass induction remains separate.
+For values, `Proofs/LayerNormEnclosure.lean` proves the directed row sequence encloses
+`Spec.layerNorm` under the endpoint and nonlinear operation laws, with zero and one interpreted
+exactly. This includes the actual directed sum and count used to compute a mean.
+Softmax derivative transfers also use independent rows along any valid axis. They require the
+scalar backend's ideal coupled-derivative contract; finite backends that do not satisfy it still
+leave the derivative unresolved.
+The `EngineCore` end-to-end IBP theorem does not cover LayerNorm, softmax, or MSE loss.
+The proof-side payload-backed unary matrix map also has a different interface from binary graph
+matrix multiplication. Read the theorem's graph fragment and hypotheses before applying it to
+one of these computations.
 
 Endpoint arithmetic is organized by four interfaces in `BoundOps.lean`. `BoundOps` contains the
 executable lower and upper operations. `LawfulBoundOps` interprets their endpoints as real numbers
@@ -86,17 +178,28 @@ The current instances make the numerical boundary visible:
 - real endpoints use exact arithmetic and satisfy `LawfulBoundOps` definitionally;
 - `FP32` rounds exact-real endpoints outward to the binary32 grid and has a proved
   `LawfulBoundOps` instance;
-- `IEEE32Exec` uses proved directed binary32 division and square root, while exponential and
+- FloatLib binary32 uses proved directed division and square root, while exponential and
   logarithmic transfers remain unavailable. Finite-path soundness is stated in the IEEE semantics
   modules rather than as a global ordered instance over NaNs and infinities;
-- host `Float` widens basic binary64 operations by one adjacent value and does not claim directed
+- host `Float` and `Float32` widen basic operations by one adjacent value and do not claim directed
   transcendental-library results or provide a global `LawfulBoundOps` instance.
 
-Forward affine CROWN uses a constant affine form when only an IBP enclosure is justified. This is
-less precise than an analytic relaxation but preserves the checked interval. Objective-dependent
-backward CROWN performs algebraic coefficient propagation; a result over an executable floating
-type is not, by itself, a theorem about rounded runtime execution. Such a claim still needs the
-finite-precision bridge described in `NN/Proofs/RuntimeApprox`.
+`runIBP` records an unavailable transfer as `none`; the output query fails if its requested box is
+missing. For example, direct `exp` and `log` bounds are unavailable on both CLI backends
+(`native`/`ieee`), while softmax can use the coarse coordinate ranges above. Backend support also
+differs: native `Float32` leaves sigmoid and tanh unresolved, whereas FloatLib binary32 supplies
+their global codomain bounds.
+
+`outputBoxCROWN?` uses a forward affine sweep on exact-reassociation backends. Rounded backends
+instead request directed backward bounds for the output coordinates. When a node has only an IBP
+enclosure, the directed pass can bound its active objective against that box without propagating
+coefficients to its parents. Binary matmul and MSE loss take this fallback, so the optional
+attention/LayerNorm/MSE example can finish without propagating CROWN coefficients through attention.
+A CROWN result need not tighten IBP. The rounded backward soundness theorem in
+`Proofs/DirectedBackwardEvaluation.lean` covers coefficient propagation, interval fallbacks, and
+final affine-bound evaluation. It assumes lawful directed arithmetic, the real graph equations for
+the stored parameters, and enclosing IBP bounds. Relating its result to a separate native execution
+also needs the finite-precision bridge described in `NN/Proofs/RuntimeApprox`.
 
 Use this split when adding operators:
 
@@ -110,11 +213,21 @@ That keeps runtime diagnostics, accepted certificates, and theorem-backed graph 
 while preserving the distinction between execution evidence, checker acceptance, and theorem-backed
 graph claims.
 
+### Certificate acceptance
+
 For node certificates, the executable α-CROWN and α/β-CROWN commands finish with a pure complete
 replay. `certificateAccepts_eq_true` and `AlphaBetaCROWNNodeCertificate.accepts_eq_true` turn a
 successful binary32 replay into `CrownCertLocalOK`. The result is a theorem about the imported
-`IEEE32Exec` transcript. Applying a real-semantic enclosure theorem additionally requires the
+binary32 transcript. Applying a real-semantic enclosure theorem additionally requires the
 appropriate transfer and finite-precision refinement hypotheses.
+
+For nonempty vector linear/ReLU chains, `NN.Verification.Cert.FiniteArtifact.accepts` also
+checks the supplied bounds against exact rational transfers. It rejects inward-rounded affine
+coefficients even when they agree with binary32 replay. `FiniteArtifact.accepts_graph_sound`
+then proves that the original graph, interpreted with the exact real values of those binary32
+parameters, satisfies every requested output inequality throughout the input box. The checker
+requires bounds for the whole chain and at least one inequality. Native execution error remains
+a separate obligation.
 
 ## Subfolders
 
@@ -160,7 +273,7 @@ are rejected before they can become graph output certificates.
 
 The artifact checker accepts the same option:
 `NN.Verification.IBPCert.check g ps outId path (refinement := some (inputId, splitBudget))`.
-Its default remains the original single pass. A split budget is an explicit runtime/precision
+Its default performs a single pass. A split budget is an explicit runtime/precision
 tradeoff, rather than a hidden cost added to every verification request.
 
 In `NN.MLTheory.CROWN.Proofs.GraphRefinement`, `Graph.Refinement.splitAt_covers` proves that every real input in a parent box belongs to at least

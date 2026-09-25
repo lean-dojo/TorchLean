@@ -27,7 +27,7 @@ def model :=
 
 def trainer :=
   Trainer.new model
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       device := .cpu
       execution := .eager
@@ -58,6 +58,9 @@ The values have distinct roles:
 Use `trainer.predict` before training and `trained.predict` after training. Training never mutates
 the immutable model definition.
 
+Give inline prediction literals their tensor type, for example
+`trained.predict ([0.25, -0.75] : Tensor Float [2])`. Tensor variables already carry their shape.
+
 The completed run is readable without positional tuples or implementation terms:
 
 ```lean
@@ -69,13 +72,25 @@ trained.report.arithmetic
 
 ## Precision
 
-The supervised `Trainer` uses `Tensor Float` at its data and result boundaries and trains in
-binary32. `arithmetic` selects Lean's `Float32` for `.native` or FloatLib's configured
+`trainer.train` and `trainer.open` use `Tensor Float` at their data and result boundaries and train
+in binary32. `arithmetic` selects Lean's `Float32` for `.native` or FloatLib's configured
 `ExecFloat.Binary` with 8 exponent bits and 23 fraction bits for `.ieee`.
 Inputs are converted into that scalar when a dataset is
 materialized; predictions, losses, and `trained.state` are read back to `Float`, which is exact for
 binary32 values. `trained.summary` prints `arithmetic=... scalar=...` so a log always shows what
 ran.
+
+For a configured FloatLib scalar `α`, use
+`trainer.openTyped (α := α) (initialState? := some state)`. Inputs, predictions, losses, parameters,
+and the finished `Trainer.Result input output α` retain that scalar. Sessions support eager and
+graph CPU execution; CUDA and custom backend profiles are rejected. `session.save`, `session.load`,
+and `trained.save` preserve the scalar's exact checkpoint encoding. `finish` captures a state
+snapshot, so later session updates do not change the result.
+
+Construct typed state and samples directly from literals or rationals when extra precision matters.
+Without `initialState?`, seeded model initialization still starts from stored `Float` values.
+Optimizer and scheduler settings also start as `Float`; `nn.sgdStep` accepts a coefficient in `α`
+when that precision is needed. Typed results do not provide a verifier.
 
 ## Steps And Samples Per Step
 
@@ -116,7 +131,7 @@ history and completed-step count. Open a new session before loading to start a f
 
 `Trainer.Config.objective` determines how predictions and targets become a scalar loss:
 
-- `.meanSquaredError` uses mean squared error;
+- `.mse` uses mean squared error;
 - `.oneHotCrossEntropy axis` uses one-hot targets along a statically valid class axis;
 - `.custom loss` accepts a checked scalar loss program.
 
@@ -146,7 +161,7 @@ trainer as a session:
 ```lean
 let session ← trainer.open (scheduler := some decay)
 for step in [0:steps] do
-  let loss ← session.step (sampleAt step)
+  let loss ← session.step (sampleAt step) (loss := true)
   if step % 100 = 0 then IO.println s!"step {step}: loss={loss}"
 let after ← session.eval data
 let trained ← session.finish { before, after }
@@ -156,16 +171,20 @@ trained.save "model.state"
 | Method | Meaning |
 | --- | --- |
 | `trainer.open (scheduler := none)` | Instantiate the model and bind the trainer's optimizer. |
-| `session.step sample`, `session.stepBatch batch` | One optimizer update; returns the loss. |
-| `session.update sample`, `session.updateBatch batch` | One update without loss readback. |
+| `trainer.openTyped (α := α) (initialState? := some state)` | Open a CPU session with typed data and exact supplied state. |
+| `session.step sample` | One optimizer update without loss readback. |
+| `session.step samples (batch := true) (loss := true)` | One mean-gradient update from a nonempty array, returning its mean loss. |
 | `session.steps` | Updates applied so far. |
-| `session.predict input`, `session.predictMany inputs` | Evaluation-mode predictions. |
-| `session.loss sample`, `session.meanLoss samples` | Evaluation-mode losses. |
+| `session.predict input` | Evaluation-mode prediction. |
+| `session.predict inputs (batch := true) (batchSize := n)` | Evaluation-mode predictions along a leading axis of length `n`. |
+| `session.loss sample` | Evaluation-mode loss. |
+| `session.loss samples (batch := true)` | Ordered mean over a lazy `Data.SampleStream`, or zero when empty. |
 | `session.eval data` | Evaluation-mode mean loss over a `Dataset`. |
 | `session.state`, `session.save path`, `session.load path` | Read, write, or replace parameters. |
 | `session.finish { before, after }` | Snapshot the current state as a `Trainer.Result`. |
 
-Every value crosses the boundary as `Float`; the session runs in the trainer's binary32 scalar.
+With `open`, values cross the boundary as `Float` and execution uses the trainer's binary32 scalar.
+With `openTyped`, these same methods retain `α`.
 Mode handling is implicit: updates run stateful layers in training mode, predictions and losses in
 evaluation mode. `trainer.train`, `trainer.load`, `trainer.trainStream`, and
 `trainer.trainAlternating` are all written as `open`, a loop, and `finish`.

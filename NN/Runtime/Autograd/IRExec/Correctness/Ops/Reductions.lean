@@ -94,7 +94,7 @@ theorem buildFrom_denoteAllFrom_broadcastTo
                     let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                       mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
                         (fun ctx =>
-                          let x := getIdx (α := α) (xs := ctx) ip
+                          let x := readTensor (α := α) (xs := ctx) ip
                           hOut ▸ Tensor.broadcastTo (α := α) (s₁ := s₁) (s₂ := s₂) hCan x)
                     let st1 : State α inShape :=
                       ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
@@ -200,7 +200,7 @@ theorem buildFrom_denoteAllFrom_reduceSum
                         let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                           mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
                             (fun ctx =>
-                              let x := getIdx (α := α) (xs := ctx) ip
+                              let x := readTensor (α := α) (xs := ctx) ip
                               let y : Tensor α expected :=
                                 Tensor.reduceSum (α := α) (s := s) axis x hRed
                               hOut ▸ y)
@@ -314,7 +314,7 @@ theorem buildFrom_denoteAllFrom_reduceMean
                         let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                           mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
                             (fun ctx =>
-                              let x := getIdx (α := α) (xs := ctx) ip
+                              let x := readTensor (α := α) (xs := ctx) ip
                               let y : Tensor α expected :=
                                 Tensor.reduceMean (α := α) (s := s) axis x hRed
                               hOut ▸ y)
@@ -416,7 +416,7 @@ theorem buildFrom_denoteAllFrom_sum
                     let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                       mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
                         (fun ctx =>
-                          let x := getIdx (α := α) (xs := ctx) ip
+                          let x := readTensor (α := α) (xs := ctx) ip
                           hOut ▸ Tensor.scalar (Tensor.sumSpec (α := α) x))
                     let st1 : State α inShape :=
                       ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩

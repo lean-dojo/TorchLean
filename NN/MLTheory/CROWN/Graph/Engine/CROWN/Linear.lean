@@ -69,22 +69,19 @@ The CROWN pass uses this when a convolution is linear in the selected input. Kee
 here lets convolution share the same affine machinery as linear and matmul nodes.
 
 -/
-def affOfConv (config : NN.IR.ConvParams α) :
-    let inShape := Shape.ofList (config.inChannels :: Tensor.to config.inputSpatial (List Nat))
-    let outSpatial :=
-      Spec.convOutSpatial config.inputSpatial config.kernel config.stride config.padding
-    let outShape := Shape.ofList (config.outChannels :: Tensor.to outSpatial (List Nat))
-    AffineVec α inShape.size outShape.size :=
-  let inShape := Shape.ofList (config.inChannels :: Tensor.to config.inputSpatial (List Nat))
+def affOfConv (config : NN.IR.ConvParams α) (leading : Shape) :
+    AffineVec α (config.input leading).size (config.output leading).size :=
   let outSpatial :=
-    Spec.convOutSpatial config.inputSpatial config.kernel config.stride config.padding
-  let outShape := Shape.ofList (config.outChannels :: Tensor.to outSpatial (List Nat))
+    Spec.convOutSpatialDilated config.inputSpatial config.kernel config.stride config.dilation
+      config.padding config.paddingAfter
   let W :=
-    NN.MLTheory.CROWN.convLinearMatrix (α := α) (inSpatial := config.inputSpatial) config.spec
-  let b := NN.MLTheory.CROWN.convBiasBroadcast (α := α) (outSpatial := outSpatial) config.spec.bias
+    NN.MLTheory.CROWN.convLinearMatrix (α := α) (inSpatial := config.inputSpatial)
+      config.spec config.dilation config.paddingAfter config.groups leading
+  let b := NN.MLTheory.CROWN.convBiasBroadcast (α := α) (outSpatial := outSpatial)
+    config.spec.bias leading
   AffineVec.ofLinear (α:=α)
-    (inDim := inShape.size)
-    (outDim := outShape.size)
+    (inDim := (config.input leading).size)
+    (outDim := (config.output leading).size)
     W b
 
 /-!
@@ -95,7 +92,7 @@ CROWN/DeepPoly ingredients:
 - Linear layers use sign-splitting (`W⁺/W⁻`) to combine parent bounds.
 - ReLU uses the standard triangle upper bound and a simple evidence-based lower choice (0 vs x).
 - Exp/log use secant/tangent bounds (convex/concave).
-- Softmax and LayerNorm use conservative last-axis relaxations.
+- Softmax and LayerNorm use conservative value enclosures for the selected axis or suffix.
 
 Unsupported axes or shape mismatches fall back to constant affine bounds derived from the IBP box.
 -/

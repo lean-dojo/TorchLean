@@ -143,7 +143,7 @@ def main (args : List String) : IO Unit := do
   let run ← TorchLean.CLI.Trainer.parseCommandLine exeName args
     { optimizer := optim.adam { learningRate := 0.05 } }
   let trainer := Trainer.new network <|
-    Trainer.RunConfig.forObjective run .meanSquaredError (seed := seed)
+    Trainer.RunConfig.forObjective run .mse (seed := seed)
 
   IO.println "== NPY loader training tutorial =="
   trainer.printSummary

@@ -114,15 +114,26 @@ def validate : Config → Except String Unit
       unless minimumLearningRate <= peakLearningRate do
         throw "scheduler: minimum learning rate must not exceed peak learning rate"
 
-/-- Also check that the largest scheduled rate remains finite in binary32 training. -/
-def validateFloat32 (config : Config) : Except String Unit := do
+/--
+Also check the largest scheduled rate after conversion to the runtime scalar.
+
+The conversion reports its rounded value in binary64 for validation. Schedule arithmetic remains
+binary64; each resulting rate is converted when the optimizer state is updated.
+-/
+def validateWith (roundForValidation : Float → Float) (config : Config) :
+    Except String Unit := do
   validate config
   let maximumRate := match config with
     | .constant rate => rate
     | .step rate _ _ => rate
     | .exponential rate _ => rate
     | .warmupCosine peak _ _ _ => peak
-  Internal.requireRate "learning rate after conversion to binary32" maximumRate.toFloat32.toFloat
+  Internal.requireRate "learning rate after conversion to the runtime scalar"
+    (roundForValidation maximumRate)
+
+/-- Also check that the largest scheduled rate remains finite in binary32 training. -/
+def validateFloat32 (config : Config) : Except String Unit :=
+  validateWith (fun value => value.toFloat32.toFloat) config
 
 /-- Learning rate at a given step or epoch index. -/
 def learningRateAt : Config → Nat → Float

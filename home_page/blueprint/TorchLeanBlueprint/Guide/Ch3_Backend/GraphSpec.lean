@@ -1044,40 +1044,44 @@ adds spatial-rank-polymorphic convolution and max pooling, flattening, and Batch
 explicit channel axis. Rank-polymorphic means the same definition applies to signals, images, and
 volumes: the spatial extents are a `Tensor Nat [d]` rather than a fixed pair.
 
-The intermediate spatial arithmetic is part of the type. For
-the CNN in the tutorial ladder, an `8x8` single-channel input, `3x3` kernels with stride 1 and
-padding 1, and `2x2` pooling with stride 2, the feature map that reaches the linear head is:
+The intermediate spatial arithmetic is part of the type. `Models.cnn` accepts a feature chain
+and attaches flattening and a linear head. The chain determines its own depth and spatial
+operations. Here are the tutorial's two stages, with their different channel widths:
 
-```lean (name := gsCnnShape)
--- Compute the feature shape produced by the two spatial
--- stages.
-#eval Models.twoConvFeatureShape (channels := 3)
-  [8, 8] [3, 3] [1, 1] [1, 1] [1, 1] [1, 1]
-  [2, 2] [2, 2] [0, 0] [2, 2] [0, 0]
-```
+```lean (name := gsCnnFeatures)
+/-- Two spatial stages ending in three 2-by-2 maps. -/
+def gsCnnFeatures :
+    Chain [[2, 1, 3, 3], [2], [3, 2, 3, 3], [3]]
+      [1, 8, 8] [3, 2, 2] :=
+  Chain.conv 1 2 [3, 3] [1, 1] [1, 1] [8, 8] >>>
+  Chain.relu [2, 8, 8] >>>
+  Chain.maxPool 2 [2, 2] [2, 2] [0, 0] [8, 8]
+    (hKernel := by intro i; fin_cases i <;> decide)
+    (hStride := by intro i; fin_cases i <;> decide) >>>
+  Chain.conv 2 3 [3, 3] [1, 1] [1, 1] [4, 4] >>>
+  Chain.relu [3, 4, 4] >>>
+  Chain.maxPool 3 [2, 2] [2, 2] [0, 0] [4, 4]
+    (hKernel := by intro i; fin_cases i <;> decide)
+    (hStride := by intro i; fin_cases i <;> decide)
 
-```leanOutput gsCnnShape (whitespace := lax)
-[3, 2, 2]
-```
-
-```lean (name := gsCnnSize)
--- Flattening that shape determines the linear head’s input
--- width.
-#eval Models.twoConvFeatureSize (channels := 3)
-  [8, 8] [3, 3] [1, 1] [1, 1] [1, 1] [1, 1]
-  [2, 2] [2, 2] [0, 0] [2, 2] [0, 0]
-```
-
-```leanOutput gsCnnSize (whitespace := lax)
-12
+example :
+    Chain
+      ([[2, 1, 3, 3], [2], [3, 2, 3, 3], [3]] ++
+        [[4, 12], [4]])
+      [1, 8, 8] [4] :=
+  Models.cnn gsCnnFeatures 4
 ```
 
 Padding 1 with a `3x3` kernel preserves the extent, so the two pooling stages halve `8` to `4` and
-`4` to `2`. Three channels of `2x2` give twelve features. This is the
-value of `twoConvFeatureSize` applied to the same arguments the convolutions were given, and it
-appears inside the type of the linear head, so editing the input size or the pooling stride changes
-the head's weight shape automatically. Get one of them wrong and the mismatch is a compile error of
-the same kind as the width typo earlier in this chapter.
+`4` to `2`. Three channels of `2x2` give twelve features. The feature chain's output shape
+determines the head's weight shape `[4, 12]`; its parameters follow the four feature tensors.
+Changing the chain changes that inferred head width. The explicit type above asks Lean to check
+the complete parameter list and output shape, so an inconsistent annotation gives the same kind
+of compile error as the width typo earlier in this chapter.
+
+The feature chain can contain any composable sequence supported by its chosen interpretation.
+An identity chain gives a classifier on the flattened input. The general chain-to-DAG conversion
+applies to the resulting model; it does not require a separate CNN conversion.
 
 # Checkpoint Import And Parameter Mapping
 
@@ -1137,8 +1141,8 @@ semantic preservation using the same architectures.
 4. Run the tutorial with `--arithmetic ieee` and compare the two losses against the transcript
    above. A difference here is a floating-point story, and {ref "floats"}[the floating-point
    chapter] is where that story is told.
-5. Change the pooling stride in the CNN arguments from `[2, 2]` to `[3, 3]` and re-evaluate
-   `twoConvFeatureSize`. The head's weight shape follows the arithmetic without being edited.
+5. Change a pooling stride in `gsCnnFeatures` from `[2, 2]` to `[3, 3]` and update the following
+   spatial annotations. Inspect the head's inferred weight shape before annotating the classifier.
 6. Apply `LowerToDAG.Chain.eval_toDAGTerm` to a chain containing your own primitive. Inspect why
    it needs no premise about that primitive's `program`, then state the additional agreement
    needed to transfer the pure equality to execution.

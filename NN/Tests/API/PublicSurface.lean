@@ -76,9 +76,44 @@ def model : nn.Builder (nn.Sequential [2] [1]) :=
 
 def trainer : Trainer [2] [1] :=
   Trainer.new model
-    { objective := .meanSquaredError
+    { objective := .mse
       optimizer := optim.adam { learningRate := 0.01 }
       seed := 7 }
+
+-- Optional batching must preserve positional inputs and expected types for sample literals.
+example {trainer : Trainer [2] [1]} (session : Trainer.Session trainer)
+    (sample : Sample.Supervised Float [2] [1]) : IO Unit :=
+  session.step sample
+
+example {trainer : Trainer [2] [1]} (session : Trainer.Session trainer) : IO Float :=
+  session.step { input := [1.0, 0.0], target := [1.0] } (loss := true)
+
+example {trainer : Trainer [2] [1]} (session : Trainer.Session trainer)
+    (samples : Array (Sample.Supervised Float [2] [1])) : IO Unit :=
+  session.step samples (batch := true)
+
+example {trainer : Trainer [2] [1]} (session : Trainer.Session trainer)
+    (samples : Data.SampleStream (Sample.Supervised Float [2] [1])) : IO Float :=
+  session.loss samples (batch := true)
+
+example {trainer : Trainer [2] [1]} (session : Trainer.Session trainer) : IO Float :=
+  session.loss { input := [1.0, 0.0], target := [1.0] }
+
+example {trainer : Trainer [2] [1]} (session : Trainer.Session trainer) :
+    IO (Tensor Float [1]) :=
+  session.predict ([1.0, 0.0] : Tensor Float [2])
+
+example {trainer : Trainer [2] [1]} (session : Trainer.Session trainer) :
+    Tensor Float [2] → IO (Tensor Float [1]) :=
+  session.predict
+
+example {trainer : Trainer [2] [1]} (session : Trainer.Session trainer)
+    {count : Nat} (inputs : Tensor Float [count, 2]) : IO (Tensor Float [count, 1]) :=
+  session.predict inputs (batch := true) (batchSize := count)
+
+example {trainer : Trainer [2] [1]} (session : Trainer.Session trainer)
+    (inputs : Tensor Float [0, 2]) : IO (Tensor Float [0, 1]) :=
+  session.predict inputs (batch := true) (batchSize := 0)
 
 def tokens : Tensor Nat [8] :=
   text.Tokenizer.byte.encodeFixed 8 "torchlean"
@@ -138,7 +173,8 @@ def float32OptimizerCheckpoint
 #check Data.batch
 #check Data.randomSplit
 #check Trainer.Session.step
-#check Trainer.Session.stepBatch
+#check Trainer.Session.loss
+#check Trainer.Session.predict
 #check Checkpoint.State.save
 #check autograd.grad
 #check autograd.vjp

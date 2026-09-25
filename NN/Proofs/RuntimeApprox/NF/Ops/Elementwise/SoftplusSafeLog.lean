@@ -88,11 +88,6 @@ def softplusR (xR : R) : R :=
   let yR : R := (1 : R) + Numerics.MathFunctions.exp xR
   safeLogR (β := β) (fexp := fexp) (rnd := rnd) (ε := (1 : ℝ)) yR
 
-/-!
-`softplus_spec_eq_log_one_add_exp` lives in `Proofs.Gradients.Activation`, which this file imports.
-This namespace is nested inside `Proofs`, so the uses below resolve to it without qualification and
-without an `open`. The private copy that used to sit here proved the same statement.
--/
 /--
 Forward approximation bound for `softplus` in `NF`.
 

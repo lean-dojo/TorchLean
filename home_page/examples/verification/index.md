@@ -182,6 +182,41 @@ context, so the caller does not rebuild that context by hand.
 
 The model, graph, bounds, and certificate checks all refer to the same node ids and tensor shapes.
 
+## Which Tensor Shapes Does The Bound Pass Accept?
+
+Flattening a tensor into a box does not discard its graph shape. Matrix products promote vector
+operands and broadcast compatible leading batch axes: `[2]` times `[2,3]` gives `[3]`, while
+`[2,1,2,2]` times `[1,3,2,2]` gives `[2,3,2,2]`. The contraction dimensions must match.
+IR evaluation, IBP, and CROWN share this shape contract. The directed backward pass bounds a
+binary product's objective using its output IBP box; that fallback can lose correlations even
+when the shape is supported.
+
+Concatenation accepts any valid axis and at least two parents, including empty dimensions and
+repeated parent ids. Dimensions off the selected axis must match. The backward pass splits
+coefficients by parent occurrence and adds the contributions when a parent appears more than once.
+
+Convolution transfers accept groups, dilation, asymmetric padding, and arbitrary leading batch
+dimensions, with the configuration and payload checked together. The payload stores the full
+input-channel axis and selects each output channel's group; it is not a packed group-weight
+tensor. Its affine representation is a dense matrix over flattened input and output coordinates,
+which can use much more memory than evaluating the convolution itself.
+
+LayerNorm normalizes the whole suffix beginning at its chosen axis. On `[2,2,2]`, axis one
+means two independent rows with normalized shape `[2,2]`; flattening all eight entries into
+one row would compute a different function. The scale and bias must have that exact suffix
+shape. Softmax value bounds likewise use the selected axis: an extent of one gives `[1,1]`,
+while other extents use `[0,1]`.
+
+The derivative engine also computes first and mixed-second LayerNorm interval transfers over
+the normalized suffix, using the stored scale and a positive epsilon. Invalid shapes or failed finite
+arithmetic yield no bound. Softmax derivative transfers work along any valid axis when the scalar
+backend enables `supportsIdealCoupledDerivatives`; native `Float` and `Float32` leave that
+capability disabled.
+
+These rules describe executable bound propagation. The end-to-end real IBP theorem covers its
+named `EngineCore` fragment. Broader operator support does not discharge the local-transfer or
+rounded-execution assumptions in a certificate theorem.
+
 ## What Each Command Shows
 
 Run the small TorchLean-native examples first:
@@ -210,8 +245,8 @@ loads them and runs bound and margin checks in Lean. `margin-report` checks the 
 of an exported logit-bound report; it does not establish the provenance of those bounds.
 `vnncomp-mnistfc` exercises a compact
 VNN-COMP-style fully connected MNIST network/property pair. `camera-box3d-cert` checks a camera
-projection certificate for a 3D box artifact by recomputing the projected corners and the claimed
-2D envelope.
+projection certificate for a supplied finite point set by recomputing its projections and the
+claimed 2D envelope. Eight cuboid corners are one choice of point set.
 
 The MNIST runner labels its result `numerically_refuted`, not `safe`. It uses outward-widened host
 `Float` operations to refute the unsafe output region, but that executable result is not itself a

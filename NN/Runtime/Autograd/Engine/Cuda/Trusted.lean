@@ -7,7 +7,7 @@ Trusted boundary for CUDA FFI.
 
 Why this file exists:
 - TorchLean’s repo policy forbids axioms in general library code.
-- The CUDA runtime types are produced by external C/CUDA code, so we need a small trusted bridge
+- The CUDA runtime types are produced by external C/C++ code, so we need a small trusted bridge
   to make them usable in compiled Lean code.
 
 Everything in this module should be treated as part of the "FFI trust base".
@@ -29,75 +29,54 @@ is the trust boundary, rather than in a separate source browser.
 
 ## Trust boundary
 
-The CUDA backend is a validated implementation of TorchLean's float32 eager runtime. Lean does not
-prove the compiled CUDA binary correct. The trusted pieces include:
+The CUDA backend crosses a C++/LibTorch FFI boundary. Lean does not prove the compiled native
+implementation correct. The trusted pieces include LibTorch and ATen, their CUDA libraries,
+compiler and runtime, GPU hardware, and Lean's external-object ABI and finalizers.
 
-- the CUDA compiler and runtime;
-- GPU hardware, cuBLAS, cuFFT, and libdevice;
-- the C/CUDA FFI boundary and Lean external-object finalizers;
-- platform behavior such as atomics, floating-point contraction, and library math.
-
-TorchLean's proof layer CUDA contract therefore lives one level up: Lean states pure kernel specs,
-float32 agreement assumptions, and graph-level semantics; tests validate that the native backend
-agrees with CPU stubs and reference cases on the supported path.
+TorchLean retains its own tape and selected local VJPs. ATen computes tensor values and local
+backward operations with autograd recording disabled. Proof-facing kernel specifications,
+float32 agreement hypotheses, and graph semantics remain Lean definitions. Runtime regression
+and numerical parity tests provide evidence for a particular build and set of inputs.
 
 ## Native source groups
 
-- `csrc/cuda/common/torchlean_cuda_buffer.h`
-  Shared boxed-buffer ABI, size guards, deterministic-reduction toggles, and helper declarations.
-  Lean side modules: `NN.Runtime.Autograd.Engine.Cuda.Trusted`,
-  `NN.Runtime.Autograd.Engine.Cuda.Buffer`.
+- `csrc/libtorch/torchlean_libtorch.h` and `csrc/cuda/common/torchlean_cuda_buffer.h`
+  Shared boxed-buffer ABI, size checks, device guards, and the no-autograd call boundary.
+  Lean modules: `Cuda.Trusted`, `Cuda.Buffer`, and `Cuda.LibTorch`.
 
-- `csrc/cuda/common/torchlean_cuda_common.h`
-  CUDA error checking helpers. Failures cross the FFI boundary as Lean internal panics.
+- `csrc/libtorch/runtime.cpp`
+  ATen storage ownership, allocation and copies, checkpoint bytes, seeded random values,
+  runtime configuration, and allocation telemetry. LibTorch owns the CUDA allocator; logical
+  TorchLean payload counters are separate from its allocated and reserved byte counters.
 
-- `csrc/cuda/common/torchlean_cublas_common.h`
-  Thread-local cuBLAS handle management and cuBLAS error checking for matrix kernels.
-  Lean side modules: `NN.Runtime.Autograd.Engine.Cuda.Kernels`,
-  `NN.Runtime.Autograd.Engine.Cuda.DGemm`.
+- `csrc/libtorch/elementwise.cpp`
+  Pointwise operations, selected local gradients, reductions, losses, and optimizer arithmetic.
 
-- `csrc/cuda/common/torchlean_cuda_deterministic_reductions_env.h`
-  Environment-variable parser for deterministic CUDA reduction mode.
+- `csrc/libtorch/kernels.cpp`
+  Shape operations, indexing, normalization, batched matrix products, FFT, spectral convolution,
+  and selective scan through ATen operations. Lean modules: `Cuda.Kernels` and `Cuda.Ops`.
 
-- `csrc/cuda/common/torchlean_cuda_rng_common.h`
-  Shared SplitMix64 stream used by CUDA kernels and CPU stubs. The contract fixes the
-  low 32 bits of `splitmix64(key + i)` so seeded CPU-stub and CUDA runs match.
+- `csrc/libtorch/conv_pool.cpp`
+  Convolution, transpose convolution, pooling, and their local backward operations.
+  `csrc/cuda/conv_pool/torchlean_cuda_conv_pool_common.h` supplies shared shape checks.
 
-- `csrc/cuda/tensor/torchlean_cuda_tensor.cu`
-  Device allocation, host/device copies, scalar elementwise kernels, reductions, seeded RNG, and
-  buffer release hooks.
-  Lean side module: `NN.Runtime.Autograd.Engine.Cuda.Buffer`.
+- `csrc/libtorch/attention.cpp`
+  Attention forward dispatch and matched backward calls using saved forward state.
+  TorchLean's tape owns the output buffer that retains this state.
 
-- `csrc/cuda/tensor/torchlean_cuda_tensor_stub.c`
-  Portable CPU implementation of the tensor-buffer FFI symbols used when TorchLean is built without
-  CUDA.
+- `csrc/libtorch/blas.cpp`
+  The separate binary64 `FloatArray` matrix-multiplication interface, implemented with ATen.
+  Lean module: `Cuda.DGemm`. Eager CUDA tape buffers remain binary32.
 
-- `csrc/cuda/kernels/torchlean_cuda_kernels.cu`
-  Broadcasting, reductions over axes, gather/scatter, transpose, batched matmul, selective scan,
-  attention helpers, FFT, and fused spectral convolution kernels.
-  Lean side modules: `NN.Runtime.Autograd.Engine.Cuda.Kernels`,
-  `NN.Runtime.Autograd.Engine.Cuda.Ops`, `NN.Runtime.Autograd.Engine.Cuda.Tape`.
+- `csrc/cuda/{tensor,kernels,conv_pool,blas}/*_stub.c`
+  Portable CPU implementations of the FFI surface for builds without LibTorch. They do not
+  satisfy a request for a native CUDA session. Runtime control setters reject unavailable
+  LibTorch configuration requests.
 
-- `csrc/cuda/kernels/torchlean_cuda_kernels_stub.c`
-  Portable CPU mirror of the general tensor-kernel FFI surface.
+The deterministic-mode environment parser and the CPU SplitMix64 helper remain under
+`csrc/cuda/common`. The GPU random stream is evaluated with ATen integer operations and checked
+against the same seeded contract.
 
-- `csrc/cuda/conv_pool/torchlean_cuda_conv_pool_common.h`
-  Shared convolution/pooling shape arithmetic and rank limits.
-
-- `csrc/cuda/conv_pool/torchlean_cuda_conv_pool.cu`
-  2D and N-D convolution, transposed convolution, max/average/smooth-max pooling, and backward
-  kernels.
-  Lean side module: `NN.Runtime.Autograd.Engine.Cuda.ConvPool`.
-
-- `csrc/cuda/conv_pool/torchlean_cuda_conv_pool_stub.c`
-  Portable CPU mirror of the convolution and pooling FFI surface.
-
-- `csrc/cuda/blas/torchlean_dgemm_cuda.cu`
-  Double-precision Lean `FloatArray` matrix multiplication through cuBLAS.
-  Lean side module: `NN.Runtime.Autograd.Engine.Cuda.DGemm`.
-
-- `csrc/cuda/blas/torchlean_dgemm_cuda_stub.c`
-  Portable CPU mirror of the DGEMM FFI symbol.
 -/
 
 @[expose] public section
@@ -111,7 +90,7 @@ Opaque handle to a contiguous float32 buffer (CUDA device memory when built with
 otherwise a CPU stub buffer).
 
 Implementation:
-- CUDA: `csrc/cuda/tensor/torchlean_cuda_tensor.cu`
+- CUDA: `csrc/libtorch/runtime.cpp`
 - CPU stub (default `lake build`): `csrc/cuda/tensor/torchlean_cuda_tensor_stub.c`
 -/
 opaque BufferImpl : NonemptyType.{0}

@@ -82,6 +82,38 @@ theorem dite_eq_some_elim {p : Prop} [Decidable p] {β : Type} {f : p → Option
   · exact ⟨_, h⟩
   · cases h
 
+/-- A successful optional traversal preserves the lookup at each list position. -/
+private theorem list_mapM_getElem?_of_eq_some {α β : Type} {f : α → Option β}
+    {xs : List α} {ys : List β} (h : xs.mapM f = some ys) (i : Nat) :
+    ys[i]? = (xs[i]?).bind f := by
+  induction xs generalizing ys i with
+  | nil =>
+      have hy : ys = [] := by simpa using h.symm
+      subst ys
+      simp
+  | cons x xs ih =>
+      cases hx : f x with
+      | none => simp [List.mapM_cons, hx] at h
+      | some y =>
+          cases hxs : xs.mapM f with
+          | none => simp [List.mapM_cons, hx, hxs] at h
+          | some tail =>
+              have hy : y :: tail = ys := by simpa [List.mapM_cons, hx, hxs] using h
+              subst ys
+              cases i with
+              | zero => simpa using hx.symm
+              | succ i => simpa using ih hxs i
+
+/-- A successful optional array traversal preserves each occurrence, even for repeated entries. -/
+theorem array_mapM_getElem?_of_eq_some {α β : Type} {f : α → Option β}
+    {xs : Array α} {ys : Array β} (h : xs.mapM f = some ys) (i : Nat) :
+    ys[i]? = (xs[i]?).bind f := by
+  have hlist : xs.toList.mapM f = some ys.toList := by
+    calc
+      xs.toList.mapM f = Array.toList <$> xs.mapM f := Array.toList_mapM.symm
+      _ = some ys.toList := by rw [h]; rfl
+  simpa using list_mapM_getElem?_of_eq_some hlist i
+
 end
 
 end CertSoundness

@@ -287,16 +287,15 @@ The pass is shown to produce the local certificates required by
 
 :::theorem "ibp_engine_matches_proof_pass" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.CertSoundness.runIBP_eq_runIBP?")
 On graphs whose nodes are all in `EngineCore` (input, constant, detach, addition, subtraction,
-elementwise multiplication, ReLU, linear, matrix multiplication, softplus, and safe logarithm),
-when the semantic guard accepts the graph and the proof-side pass produced a box at every node
-(`IBPCovers`), the
-executable engine's `runIBP` computes exactly the proof-side `runIBP?`. Coverage rules out the
-engine's default-box path at a missing parent.
+elementwise multiplication, ReLU, linear, matrix multiplication, convolution, concatenation,
+softplus, and safe logarithm), when the semantic guard accepts the graph and the proof-side pass
+produced a box at every node (`IBPCovers`), the executable engine's `runIBP` computes exactly the
+proof-side `runIBP?`.
 
 The `Option` entries matter here. `some box` supplies an enclosure candidate, while `none` records
-an absent result. A fallback value in an executable array access is not evidence that the missing
-parent was enclosed. `IBPCovers` ensures that the engine reads boxes actually produced by the
-proved pass at every node needed by this correspondence.
+an absent result. Both passes propagate missing parents as `none`, so a failed transfer cannot
+supply a fabricated box to a later node. `IBPCovers` ensures that every node has the box required
+by this correspondence and the enclosure theorem.
 :::
 
 :::proof "ibp_engine_matches_proof_pass"
@@ -320,8 +319,11 @@ floating-point rounding require separate results.
 For the bridged node kinds, when the IR payload matches the CROWN parameter store and the IR input
 is lifted to the CROWN input map, a successful step of {uses "ir_denotation"}[the IR node
 evaluator] equals the CROWN node evaluator on the lifted value table. Linear nodes additionally
-require vector-shaped parents. This is the per-node link between the shared IR semantics and the
-graph semantics that the bound theorems above are stated against.
+require vector-shaped parents. Present parents must have their declared shapes; successful
+`Graph.denoteAll` execution supplies this invariant, including at intermediate prefixes.
+The bridge covers vector and broadcast matmul, grouped convolution, and concatenation along any
+valid axis. This is the per-node link between the shared IR semantics and the graph semantics
+that the bound theorems above are stated against.
 :::
 
 :::proof "ir_crown_node_bridge"

@@ -12,7 +12,6 @@ public import NN.Backend.Availability
 public import NN.Backend.Planner
 public import NN.Backend.Audit
 public import NN.Backend.Attention
-public import NN.Backend.NativeCUDA
 public import NN.Backend.Reference
 public import NN.Backend.LibTorch
 public import NN.Backend.Registry
@@ -27,8 +26,8 @@ public import NN.Backend.Report
 
 Contract-carrying backend vocabulary for TorchLean runtimes.
 
-The semantic graph and specs stay in Lean. Providers such as native CUDA or LibTorch enter through
-named capsules that record shape, layout, value, and VJP contracts, a reduction-order policy, and an
+The semantic graph and specs stay in Lean. LibTorch and reference operations enter through named
+capsules that record shape, layout, value, and VJP contracts, a reduction-order policy, and an
 explicit trust level. The planner consumes these capsules under a `KernelPolicy`, the contract check
 confirms that every selected contract rests on evidence the policy accepts, and the eager runtime
 binds the selected capsule to a handler with the same operation, provider, and device.

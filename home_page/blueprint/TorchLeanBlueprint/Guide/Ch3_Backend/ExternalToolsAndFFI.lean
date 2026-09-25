@@ -554,11 +554,12 @@ because its input, activation, and sum require no stored parameters.
 # ONNX Import
 
 `NN.Runtime.PyTorch.Export.ONNX` emits a Python adapter for a conservative static-shape ONNX
-fragment. The producer handles elementwise operations, rank-two and limited batched matmul,
-reductions, softmax, reshape and flatten, concat, selected transposes, `Gemm`, inference BatchNorm,
-and ungrouped, undilated convolution with the layouts represented by the current IR. It writes the
-same `torchlean.ir.v1` document consumed by `parseGraph`, so both producers use the same Lean
-parser and structural checks.
+fragment. The producer handles elementwise operations, vector and broadcast matmul, reductions,
+softmax, reshape and flatten, concat, transposes, `Gemm`, and inference BatchNorm. Convolution
+records groups, dilation, stride, and explicit asymmetric padding. Its importer accepts a
+channels-first sample or a batch of one; larger batches still need producer support even though
+the IR convolution contract can represent them. It writes the same `torchlean.ir.v1` document
+consumed by `parseGraph`, so both producers use the same Lean parser and structural checks.
 
 ONNX protobuf parsing and shape inference therefore remain outside Lean. Lean checks the smaller IR
 artifact it receives. Graph initializers and payload-backed nodes still need a matching payload

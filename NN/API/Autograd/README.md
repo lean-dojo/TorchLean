@@ -71,7 +71,7 @@ def model : nn.Sequential [2] [1] := nn.build 0 (nn.linear 2 1)
   let input : Tensor Float [2] := [0.5, -1.0]
   let target : Tensor Float [1] := [0.25]
   let (gradient, lossValue) ← autograd.model.grad model
-    autograd.model.Loss.meanSquaredError state input target (value := true)
+    autograd.model.Loss.mse state input target (value := true)
   IO.println s!"loss = {lossValue}, gradient = {reprStr gradient}"
 ```
 

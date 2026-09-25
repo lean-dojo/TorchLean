@@ -34,14 +34,6 @@ open Spec.Hopfield
 
 variable {n : Nat}
 
-private theorem pluses_le_dim (s : State n) : pluses (n := n) s ≤ n := by
-  classical
-  -- `pluses` is the cardinality of a filtered subset of `Finset.univ`.
-  unfold Spec.Hopfield.pluses
-  simpa using
-    (le_trans (Finset.card_filter_le (s := (Finset.univ : Finset (Fin n)))
-      (p := fun i : Fin n => s i = true)) (by simp))
-
 section
 
 variable (p : Params ℝ n)

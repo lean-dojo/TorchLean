@@ -164,12 +164,8 @@ Derivative propagation for `sin` using the global enclosure `cos(x) ∈ [-1, 1]`
 This deliberately avoids endpoint-only trigonometric bounds, which are unsound whenever an interval
 contains an interior extremum.
 
-A note on why this shares its body with `derivCos`, since the two look copy-pasted and are not.
-The chain rule multiplies the incoming derivative by `f'(x)`. For `f = sin` that factor is `cos`,
-for `f = cos` it is `-sin`, and at this precision both are enclosed by exactly `[-1, 1]`, so the two
-rules compute the same interval. They used to say so through two identical copies of the loop, which
-meant any future tightening had to be remembered twice. Both names survive because they pair with
-`ibpSin` and `ibpCos` and because a caller bounding `sin` should not have to know this coincidence.
+The chain-rule factors `cos(x)` and `-sin(x)` both lie in `[-1, 1]`. Consequently, `derivSin` and
+`derivCos` share the interval multiplication implemented by `unitFactorDeriv`.
 -/
 def derivSin {n : Nat} (_xB : Box α (.dim n .scalar))
     (dB : Box α (.dim n .scalar)) : Box α (.dim n .scalar) :=

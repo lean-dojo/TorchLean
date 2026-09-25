@@ -49,21 +49,21 @@ lake exe torchlean --help
 lake exe verify --help
 ```
 
-That CPU build is the common starting point on every platform. From there, TorchLean can build
-its native CUDA runtime or link an external provider without changing the Lean model being run.
+That CPU build is the common starting point on every platform. From there, TorchLean can link
+its LibTorch CUDA backend without changing the Lean model being run.
 The table below separates paths that work today from platforms that still need platform-specific
 runtime work.
 
 | Platform | CPU | NVIDIA GPU | LibTorch provider | Current status |
 | --- | --- | --- | --- | --- |
-| Linux | &#10003; | &#10003; Native CUDA | SDPA forward with TorchLean backward | Supported |
+| Linux | &#10003; | &#10003; Through LibTorch | Tensor operations and local gradients | Supported |
 | macOS, Intel or Apple silicon | &#10003; | Not applicable | Not yet | CPU supported; Metal is planned |
 | Windows with WSL2 | &#10003; Linux path | &#10003; CUDA on WSL2 | Linux path | Recommended Windows setup |
 | Native Windows | Not yet | Not validated | Not wired | Native toolchain work remains; use WSL2 |
 
-Here, "LibTorch provider" means the current scaled-dot-product-attention bridge, not a requirement
-for ordinary TorchLean models and not a claim that every operation is delegated to PyTorch. The
-CPU, native CUDA, and LibTorch sections below give the corresponding build commands.
+The GPU backend uses ATen, LibTorch's tensor library. TorchLean retains its own tape, backward
+traversal, and optimizer state. Native operations compute tensor values and local gradients with
+LibTorch autograd recording disabled. The CPU build remains independent of LibTorch.
 
 ## Linux
 
@@ -91,23 +91,28 @@ describes the repair and its remaining assumptions.
 
 Install a supported NVIDIA driver and CUDA toolkit using NVIDIA's
 [CUDA Installation Guide for Linux](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/).
-TorchLean needs `nvcc`, cuBLAS, and cuFFT. Check the machine before rebuilding:
+Download a CUDA-enabled SDK from the
+[LibTorch installation page](https://docs.pytorch.org/cppdocs/installing.html), using its supported
+C++ compiler and matching CUDA toolkit. The SDK must contain `include/`, `lib/`, and
+`share/cmake/Torch/TorchConfig.cmake`. The bridge needs CMake 3.22 or later, Make, and Python 3.
+Check the machine before rebuilding:
 
 ```bash
 nvidia-smi
 nvcc --version
 ```
 
-Build and run the CUDA configuration:
+Build and run the CUDA configuration, pointing to the extracted SDK:
 
 ```bash
+export TORCHLEAN_LIBTORCH_HOME=/absolute/path/to/libtorch
 lake -R -K cuda=true build
 lake -R -K cuda=true exe torchlean quickstart_mlp \
   --device cuda --steps 10 --show-backend
 ```
 
-The two CUDA choices happen at different times. `-K cuda=true` tells Lake to compile and link the
-native CUDA implementation. `--device cuda` asks the executable to use it. A CPU-linked executable
+The two CUDA choices happen at different times. `-K cuda=true` tells Lake to compile the C++
+adapters and link LibTorch. `--device cuda` asks the executable to use it. A CPU-linked executable
 rejects `--device cuda` instead of silently moving the run back to the CPU.
 
 Use `-R` whenever you switch between CPU and CUDA configurations; it forces Lake to recompute the
@@ -120,23 +125,20 @@ lake -R -K cuda=true exe nn_tests_suite
 The [CUDA guide]({{ '/cuda/' | relative_url }}) covers deterministic reductions, parity checks,
 sanitizers, and the remaining native-code trust boundary.
 
-### Optional LibTorch Attention
-
-The normal CPU and CUDA builds do not need LibTorch. TorchLean currently uses LibTorch only through
-an optional scaled-dot-product-attention bridge. Download a matching GPU-enabled distribution from
-the [official LibTorch installation page](https://docs.pytorch.org/cppdocs/installing.html) and
-extract it somewhere outside the repository.
-
-The extracted directory must contain `include/` and `lib/`. Pass its absolute path to Lake:
+The SDK's CMake configuration supplies its compiler ABI flags and library dependencies. TorchLean
+compiles C++ adapters; the SDK supplies GPU kernels and their supported architectures. You can
+also pass the SDK path directly to Lake:
 
 ```bash
-lake -R -K cuda=true -K libtorch=true \
+lake -R -K cuda=true \
   -K libtorch_home=/absolute/path/to/libtorch build
-lake -R -K cuda=true -K libtorch=true \
+lake -R -K cuda=true \
   -K libtorch_home=/absolute/path/to/libtorch exe libtorch_sdpa_test
 ```
 
-This enables the `libtorch_forward_cuda` profile for scaled-dot-product attention. The
+The maintained CUDA profile uses paired ATen attention forward and backward operations. ATen
+selects an eligible implementation for the inputs and configured policy; TorchLean's tape keeps
+the saved forward state needed by that implementation's backward operation. The
 [backend chapter]({{ '/blueprint/Runtime___-Autograd___-and-Interop/Inside-The-Backend-Planner/' | relative_url }})
 explains its per-operation selection and backward boundary.
 
@@ -272,11 +274,11 @@ operation, provider, and device before running it. Unavailable providers fail at
 of quietly changing the request. `--show-backend` prints each selected capsule the first time a
 session uses it.
 
-The attention provider is the one place where the profile changes which implementation runs.
-`checked_cuda` prefers TorchLean's composed attention (CUDA batched matrix multiplication with
-TorchLean's hard-masked softmax). `libtorch_forward_cuda` prefers the LibTorch SDPA forward
-capsule. Both keep `vjpMode := .torchLeanTape`, so TorchLean records the tape node and owns the
-backward pass in either case.
+`checked_cuda` selects LibTorch operations, including paired attention forward and backward.
+Its `backend-vjp` label describes who evaluates the local gradient operation. TorchLean still
+records the node, invokes that operation during backward, and accumulates its returned gradients.
+A profile can explicitly prefer TorchLean's composed attention for comparison; that expression
+uses ATen matrix products and TorchLean's hard-mask convention through the same native bridge.
 
 Read [Inside the Backend Planner]({{ '/blueprint/Runtime___-Autograd___-and-Interop/Inside-The-Backend-Planner/' | relative_url }})
 for capsules, provider preference, VJP ownership, assurance policies, and backend reports. Read

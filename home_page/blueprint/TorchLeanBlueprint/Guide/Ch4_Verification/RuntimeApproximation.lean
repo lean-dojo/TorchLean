@@ -494,7 +494,7 @@ therefore at most the upper endpoint minus the lower endpoint. This argument req
 both values. Checking the rounded replay alone leaves the real half of the argument unproved.
 
 Reduction order is read from the selected capsule. The portable reference capsules advertise the
-fixed left fold used by the canonical tensor semantics. Native CUDA and LibTorch accumulations are
+fixed left fold used by the canonical tensor semantics. LibTorch CUDA accumulations are
 marked implementation-defined, so a fixed-left certificate cannot accidentally certify a cuBLAS,
 cuDNN, fused-attention, or parallel-reduction schedule. Those paths require the order-independent
 reduction bounds described in the floating-point chapter or a stronger backend-specific contract.
@@ -543,31 +543,19 @@ input [1,2]
   -> add bias [1,1]
 ```
 
-The report captured before the FloatLib migration shows generation, replay, and one deliberately
-corrupted artifact. It is a record of that run, not a validation of the migrated executable:
-
-```terminal +output
-TorchLean numerical runtime certificate
-  ok  base certificate
-  ok  base IEEE replay
-  ok  tampered range rejected
-  ok  two-layer MLP certificate
-  ok  two-layer MLP IEEE replay
-All numerical certificate checks passed.
-```
-
-The tampered-range check replaces the addition interval with `[0,0]`. The checker regenerates
-the range trace and rejects the mismatch. This establishes that this corrupted artifact is refused;
-it does not establish soundness of every registered transfer.
+The command generates and replays two certificates: a scalar example and this MLP. It also
+checks rejection of a deliberately corrupted scalar certificate, in which the addition interval
+is replaced with `[0,0]`. The checker regenerates the range trace and compares it with the stored
+one. The runner returns a nonzero exit status if generation or replay fails, or if the corrupted
+artifact is accepted.
 
 `mlpCertificate` checks that all ten graph nodes have a registered numerical rule. It derives every
 range, selects the CPU capsules, and stores the graph, registry identity, source assumptions,
 ranges, and backend audit in one artifact. `mlpReplay` then supplies concrete weights, biases, and
 input values, executes the stored graph with FloatLib binary32, and checks every intermediate
-tensor.
-The same file demonstrates rejection of a tampered range. These Boolean and `Except` checks are
-useful regression evidence; the example does not construct a `ProvedRealEnclosure`, so it is not
-by itself a proof that the MLP's exact real execution is enclosed.
+tensor. These Boolean and `Except` checks exercise range reconstruction, concrete replay, and
+tamper rejection separately. The example does not construct a `ProvedRealEnclosure`, so it is
+not by itself a proof that the MLP's exact real execution is enclosed.
 
 There is no MLP-specific branch in this process. The checker sees input, constant, matrix
 multiplication, addition, and ReLU nodes. Other architectures can use the same walk when their
@@ -578,17 +566,10 @@ contract's derived interval to the operation's real semantics.
 The
 [complete numerical-runtime
 walkthrough](https://lean-dojo.github.io/TorchLean/examples/numerical-runtime/) shows the model
-definitions, the five replay stages, the backend-capsule audit, and the handoff to backward and
+definitions, the five checks, the backend-capsule audit, and the handoff to backward and
 optimizer bounds. It also states the current lowering boundary explicitly: canonical IR has checked
 forward replay, while backward and optimizer composition currently begins from a proof-bearing
 `RevGraph`.
-
-Read the five successful lines as checks of two concrete artifacts and one rejection case.
-The base and MLP generation lines concern reconstruction of their ranges and execution plans;
-their replay lines concern the supplied values at every intermediate node. The tampering line
-confirms that changing a stored range is detected. These observations exercise different parts
-of the checker, which is why the example keeps them separate. None of the lines supplies the
-real denotation and enclosure fields required by the proof-bearing record above.
 
 # NF Operations: Rounded Real Arithmetic
 
@@ -672,7 +653,7 @@ sample. The squared reciprocal in the denominator-error term makes this loss of 
 especially costly.
 
 The remaining names in `nfOps` specialize this reasoning in different ways. The reciprocal
-sigmoid budget theorem bounds the old evaluation sequence under its stated small-error
+sigmoid budget theorem bounds evaluation of `1 / (1 + exp(-x))` under its stated small-error
 conditions. The stable sigmoid theorem instead follows the branch of the public implementation,
 including the exponential used as a numerator in the negative branch. The exact-count mean
 lemma removes uncertainty about representing the divisor; it still accounts for the rounded
@@ -1374,8 +1355,8 @@ bounds, compose them over forward and backward graphs, and finally connect the r
 # Runtime Agreement
 
 For supported graph and operator fragments, runtime approximation proves that a runtime or rounded
-computation stays within a stated tolerance of a spec computation. CUDA kernels, vendor library
-paths, compiler rewrites, and PyTorch-exported graphs need their own agreement statements when a
+computation stays within a stated tolerance of a spec computation. LibTorch execution,
+compiler rewrites, and PyTorch-exported graphs need their own agreement statements when a
 claim is about those paths.
 
 For a deployment claim, identify the graph, scalar interpretation, execution path, and input

@@ -258,10 +258,14 @@ def generateSampled
   generateSampledFromIds predict (Tensor.from init) steps temperature topK seed
     repeatWindow repeatPenalty asciiOnly
 
-/-- Build a finite training set from approximately evenly spaced corpus windows. -/
+/--
+Tokenize the corpus once and build a finite training set from approximately evenly spaced windows.
+The sample stream retains the token tensor across batch requests.
+-/
 def samplesFromCorpus (corpus : String) (windows : Nat) :
     Data.SampleStream (Sample.Supervised Float input output) :=
   let toks := text.Tokenizer.byte.encode corpus
+  let tokens := Tensor.from toks
   let offs := text.Corpus.evenlySpacedOffsets toks.size contextLength windows
   Data.SampleStream.fromFunction windows (fun index =>
     let off := offs[index]
@@ -270,8 +274,7 @@ def samplesFromCorpus (corpus : String) (windows : Nat) :
         let off' :=
           (off + i.val * (contextLength / 2 + 1)) %
             text.Corpus.usableTokenStarts toks.size contextLength
-        text.tokenWindow text.Tokenizer.byte (contextLength + 1) corpus
-          (offset := off') (paddingTokenId := 32)
+        Tensor.window tokens (contextLength + 1) off' 32
     batchSampleFromTokenIds idsByBatch)
 
 /--

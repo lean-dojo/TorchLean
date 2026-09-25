@@ -90,8 +90,7 @@ end boundary
 namespace numerics
 namespace float32
 export Runtime.RL.Numerics.Float32
-  (Float32Exec Interval32
-   ofFloatChecked castTensorChecked castTransitionChecked
+  (ofFloatChecked castTensorChecked castTransitionChecked
    discountedBackupChecked discountedReturnsChecked
    tdResidualChecked
    generalizedAdvantageEstimationChecked
@@ -258,23 +257,25 @@ def actorPolicy
 Build a single-observation critic function from the state of a rollout-shaped actor-critic module.
 
 The result is scalar because the typed critic graph has a checked one-element output shape.
+Scalar tensors and any number of singleton axes are accepted.
 -/
 def criticValue
-    {obsShape rolloutStateShape rolloutLogitsShape rolloutValueShape : Spec.Shape}
+    {obsShape valueShape rolloutStateShape rolloutLogitsShape rolloutValueShape : Spec.Shape}
     {criticStateShapes : List Spec.Shape}
     {α : Type} [TorchLean.Storage α] [Context α]
-    (criticGraph : nn.TypedGraphModel criticStateShapes obsShape [1] α)
+    (criticGraph : nn.TypedGraphModel criticStateShapes obsShape valueShape α)
     (actorRollout : nn.Sequential rolloutStateShape rolloutLogitsShape)
     (criticRollout : nn.Sequential rolloutStateShape rolloutValueShape)
     (state : nn.State α
       (nn.stateShapes actorRollout ++ nn.stateShapes criticRollout))
-    (sameCriticState : nn.stateShapes criticRollout = criticStateShapes := by rfl) :
+    (sameCriticState : nn.stateShapes criticRollout = criticStateShapes := by rfl)
+    (oneValue : valueShape.size = 1 := by decide) :
     Tensor α obsShape → α :=
   let criticState := (splitState actorRollout criticRollout state).critic
   let criticState : nn.State α criticStateShapes :=
     criticState.cast sameCriticState
   fun obs =>
-    (criticGraph.forward criticState obs)[0]
+    Tensor.item (Tensor.reshape (criticGraph.forward criticState obs) [] oneValue)
 
 end ppo
 

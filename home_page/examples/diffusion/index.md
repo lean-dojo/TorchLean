@@ -198,10 +198,10 @@ schedule coefficient.
 
 ## Sampling: DDIM Replay In Lean
 
-The example uses deterministic DDIM because it is easy to audit and stable at small scale.
+The example uses deterministic DDIM: the starting noise and denoiser determine the reverse path.
 
-The reverse update used by the runnable example is `TorchLean.diffusion.ddimPrev`. It does the usual
-“predict x0, clip, remix” step:
+The reverse update used by the runnable example is `TorchLean.diffusion.ddimPrev`. Its default
+step is:
 
 - estimate $\hat{x}_0$ from $x_t$ and $\hat{\varepsilon}$,
 - clamp it to $[-1,1]$,
@@ -213,6 +213,24 @@ The public helper takes the current sample, predicted noise, and adjacent schedu
 let previous := diffusion.ddimPrev abPrev ab x_t epsHat
 ```
 
+The optional `postprocess` argument changes the operation applied to the estimated clean image
+before remixing; it must preserve the tensor shape. For an unclipped reconstruction:
+
+```lean
+let previous := diffusion.ddimPrev abPrev ab x_t epsHat
+  (postprocess := fun reconstructed => reconstructed)
+  (denominatorFloor := 1e-12)
+```
+
+The denominator uses $\sqrt{\bar\alpha_t}$ when that value is strictly greater than
+`denominatorFloor`, and the floor otherwise. Its default is `1e-12`. `reverseDdimFrom` and
+`reverseDdim` pass both choices through each step. A different postprocessor or floor changes
+the sampler's function, even when the model and schedule are unchanged.
+
+`Generative.Diffusion.ImageDDIM.ddimPrev_eq_stepFromEps` relates this API update to
+the image-DDIM specification with the same postprocessor and floor. It preserves the written
+floating-point expression order; it is not a claim about denoiser accuracy or sample quality.
+
 The sampler also produces the “three pictures” view:
 
 - a reference image (the real $x_0$),
@@ -223,7 +241,7 @@ The sampler also produces the “three pictures” view:
 
 Diffusion runs are easy to misread from terminal loss alone, so the example pushes you toward
 artifacts: images on disk and a JSON curve log. Those files give you something concrete to compare across
-CPU/CUDA, fast-kernel switches, schedule tweaks, or model width changes.
+CPU/CUDA, sampling choices, schedule tweaks, or model width changes.
 
 For interactive inspection, open `NN.Examples.Models.Generative.Diffusion` in VS Code with the Lean
 Infoview enabled. The widgets can display tensor summaries, graph and shape views, and saved JSON

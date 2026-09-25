@@ -14,11 +14,10 @@ public import NN.Runtime.Autograd.IRExec.Lowering.Common
 
 Checked lowering for matrix multiplication and payload-backed linear layers.
 
-Both operations accept the same shapes as the IR semantics: any shared leading shape followed by
-the matrix axes. `lowerMatmul` obtains the output shape from `OpContracts.inferMatmulOutShape`, the
-contract shared with shape inference and evaluation, and only decomposes the parent shapes itself
-to build typed indices. The closures apply `NN.IR.Graph.matmulLeading` and
-`NN.IR.Graph.linearLeading`, the same typed operators the IR evaluator uses.
+Both operations accept the same shapes as the IR semantics. `lowerMatmul` uses the checked
+`OpContracts.matmulDims` layout for vector promotion and batch broadcasting, then applies
+`NN.IR.Graph.matmulWithDims`. Linear layers preserve their leading shape and apply
+`NN.IR.Graph.linearLeading`.
 
 Each operation has its own small `lower*` definition. `lowerLinearAlgebra` only dispatches on the
 operation kind, and the `lowerLinearAlgebra_*` equation lemmas let correctness proofs reduce a
@@ -42,11 +41,10 @@ open NN.IR
 namespace Internal
 
 /--
-Checked lowering for `.matmul` over any shared leading shape.
+Checked lowering for `.matmul` with vector promotion and batch broadcasting.
 
-The final two axes follow the matrix rule `(... × m × n) · (... × n × p) → (... × m × p)`. The
-output shape is taken from `OpContracts.inferMatmulOutShape`; the typed decomposition below is
-checked against it so the contract remains the single source of truth.
+The shape contract supplies both typed operand shapes and the output shape. The closure calls
+the same evaluator as reference IR execution, including its equal-batch typed matrix kernel.
 -/
 def lowerMatmul {α : Type} [TorchLean.Storage α] [Context α]
     {Γ : List Shape} (ctx : NodeLoweringContext α Γ) : NodeLoweringResult ctx := do
@@ -55,50 +53,27 @@ def lowerMatmul {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match binaryParents? n.parents with
   | some (aId, bId) =>
       let aNode ← g.getNode aId
       let bNode ← g.getNode bId
-      let expected ← OpContracts.inferMatmulOutShape aNode.outShape bNode.outShape
-      match aNode.outShape.toList.reverse, bNode.outShape.toList.reverse with
-      | inner :: rows :: leadingRev, cols :: inner' :: leadingRev' =>
-          if _hLeading : leadingRev = leadingRev' then
-            if _hInner : inner = inner' then
-              let leading : Shape := Shape.ofList leadingRev.reverse
-              let ia ← parentIdx aId (leading.concat [rows, inner])
-              let ib ← parentIdx bId (leading.concat [inner, cols])
-              -- Both guards compare fully spelled out shapes. A shape bound by a local `let` can
-              -- leave instance search for `Decidable (s = t)` stuck, and the correctness proofs
-              -- case on the `dite` terms these produce.
-              if hExpected : leading.concat [rows, cols] = expected then
-                if hOut : expected = n.outShape then
-                  let forward := fun ctx : TorchLean.TensorPack α Γ =>
-                    let aT := getIdx (α := α) (xs := ctx) ia
-                    let bT := getIdx (α := α) (xs := ctx) ib
-                    Tensor.castShape (NN.IR.Graph.matmulLeading leading aT bT)
-                      (hExpected.trans hOut)
-                  pure <| fwd forward
-                else
-                  throw <|
-                    s!"IRExec: node {i}: matmul outShape mismatch: " ++
-                      s!"expected={repr expected}, declared={repr τ} ({n.summary})"
-              else
-                throw <|
-                  s!"IRExec: node {i}: matmul internal error: contract shape {repr expected} " ++
-                    s!"differs from typed shape {repr (leading.concat [rows, cols])} ({n.summary})"
-            else
-              throw s!"IRExec: node {i}: matmul inner dims mismatch: {inner} vs {inner'}"
-          else
-            throw <|
-              s!"IRExec: node {i}: matmul leading dimensions mismatch: " ++
-                s!"{repr aNode.outShape} vs {repr bNode.outShape}"
-      | _, _ =>
+      let dims ← OpContracts.matmulDims aNode.outShape bNode.outShape
+      let ia ← parentIdx aId dims.leftShape
+      let ib ← parentIdx bId dims.rightShape
+      if hOut : dims.outShape = n.outShape then
+        let forward := fun ctx : TensorReader α Γ =>
+          Tensor.castShape
+            (NN.IR.Graph.matmulWithDims dims
+              (readTensor (α := α) (xs := ctx) ia)
+              (readTensor (α := α) (xs := ctx) ib)) hOut
+        pure <| fwd forward
+      else
           throw <|
-            s!"IRExec: node {i}: matmul expects rank≥2 inputs, got {repr aNode.outShape} " ++
-              s!"and {repr bNode.outShape}"
+            s!"IRExec: node {i}: matmul outShape mismatch: " ++
+              s!"expected={repr dims.outShape}, declared={repr τ} ({n.summary})"
   | _ => throw s!"IRExec: node {i}: matmul expects 2 parents ({n.summary})"
 
 /--
@@ -115,7 +90,7 @@ def lowerLinear {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TorchLean.TensorPack α Γ → Tensor α τ) :
+  let fwd (forward : TensorReader α Γ → Tensor α τ) :
       ForwardNode α Γ τ :=
     mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
@@ -134,9 +109,9 @@ def lowerLinear {α : Type} [TorchLean.Storage α] [Context α]
           -- on the `dite` terms these produce.
           if hIn : xNode.outShape = leading.concat [p.inDim] then
             if hOut : leading.concat [p.outDim] = n.outShape then
-              let forward := fun ctx : TorchLean.TensorPack α Γ =>
+              let forward := fun ctx : TensorReader α Γ =>
                 let xIn : Tensor α expectedIn :=
-                  Tensor.castShape (getIdx (α := α) (xs := ctx) ix) hIn
+                  Tensor.castShape (readTensor (α := α) (xs := ctx) ix) hIn
                 let y : Tensor α expectedOut := NN.IR.Graph.linearLeading leading p.W p.b xIn
                 Tensor.castShape y hOut
               pure <| fwd forward

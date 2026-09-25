@@ -119,7 +119,7 @@ theorem buildFrom_denoteAllFrom_linear
       let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
         mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
           let xIn : Tensor α expectedIn :=
-            Tensor.castShape (getIdx (α := α) (xs := ctx) ix) hIn
+            Tensor.castShape (readTensor (α := α) (xs := ctx) ix) hIn
           let y : Tensor α expectedOut := NN.IR.Graph.linearLeading leading p.W p.b xIn
           Tensor.castShape y hOut)
       let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
@@ -216,7 +216,7 @@ theorem buildFrom_denoteAllFrom_reshape
                   simp [hOut] at hBuild
                   let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                     mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                      let x := getIdx (α := α) (xs := ctx) ip
+                      let x := readTensor (α := α) (xs := ctx) ip
                       hOut ▸ Tensor.reshapeSpec (α := α) (source := inS) (target := outS) x
                         hNumel)
                   let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
@@ -309,7 +309,7 @@ theorem buildFrom_denoteAllFrom_flatten
                 simp [expected, hOut] at hBuild
                 let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                   mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                    let x := getIdx (α := α) (xs := ctx) ip
+                    let x := readTensor (α := α) (xs := ctx) ip
                     let y : Tensor α expected := Tensor.flattenSpec (α := α) (shape := s) x
                     hOut ▸ y)
                 let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩

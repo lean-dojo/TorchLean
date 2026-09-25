@@ -7,8 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.GraphSpec.Chain.Primitives
-public import NN.GraphSpec.Chain.ToDAG.Model
-public import NN.Runtime.Autograd.Model.Layers.Seq
 
 /-!
 # GraphSpec MLP Example
@@ -25,9 +23,8 @@ The point here is narrower and proof-oriented:
 - make the parameter ABI visible in the type;
 - provide a stable target for GraphSpec equivalence and deterministic-init proofs.
 
-Because this is a pure sequential chain, it is authored with `Chain` and `>>>`. The companion
-`mlpDAGModelZeroInit` lowers the same chain to the general DAG model representation so DAG-only
-tooling can consume it.
+Because this is a pure sequential chain, it is authored with `Chain` and `>>>`. The general
+`LowerToDAG.Chain.toDAGModelZeroInit` conversion also makes it available to DAG tooling.
 -/
 
 @[expose] public section
@@ -60,23 +57,6 @@ def mlp (inputWidth hiddenWidth outputWidth : Nat) :
   Chain.linear inputWidth hiddenWidth >>>
   Chain.relu [hiddenWidth] >>>
   Chain.linear hiddenWidth outputWidth
-
-/--
-The same 2-layer MLP, but exposed as a DAG `Model` via the structural lowering
-`LowerToDAG.Chain.toDAGModelZeroInit`.
-
-This is mainly for GraphSpec example ergonomics: downstream tooling that expects DAG terms can
-consume this even though it was authored using the sequential `>>>` syntax.
-
-Initialization: all-zero parameters (see `LowerToDAG.Chain.toDAGModelZeroInit`).
--/
-def mlpDAGModelZeroInit (inputWidth hiddenWidth outputWidth : Nat) :
-    DAG.Model
-      [[hiddenWidth, inputWidth], [hiddenWidth], [outputWidth, hiddenWidth], [outputWidth]]
-      [[inputWidth]]
-      [outputWidth] :=
-  LowerToDAG.Chain.toDAGModelZeroInit
-    (mlp (inputWidth := inputWidth) (hiddenWidth := hiddenWidth) (outputWidth := outputWidth))
 
 /-!
 ## Example Usage

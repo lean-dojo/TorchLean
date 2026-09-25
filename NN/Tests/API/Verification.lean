@@ -63,7 +63,9 @@ def checkLayerNorm {α : Type} [Storage α] [Context α]
     [NN.MLTheory.CROWN.NonlinearBoundOps α] : IO Unit := do
   let row (a b : Float) : Tensor α [2] :=
     Tensor.ofFn fun i => Runtime.ofFloat (if i.val = 0 then a else b)
-  let enclose := NN.MLTheory.CROWN.Graph.directedLayerNormLastTensor? (α := α)
+  let enclose (lo hi : Tensor α [2]) :=
+    NN.MLTheory.CROWN.Graph.directedLayerNormRow? lo hi
+      (Tensor.full [2] 1) (Tensor.full [2] 0) TorchLean.normalizationEpsilon
   for (a, b, radius) in [(-2.0, -1.0, 0.1), (1.0, 3.0, 0.2),
       (-1.0, 1.0, 0.1), (2.0, 2.0, 0.0), (1.0, 1.000001, 0.0000001)] do
     let some (lo, hi) := enclose (row (a - radius) (b - radius))
@@ -88,7 +90,8 @@ def checkLayerNorm {α : Type} [Storage α] [Context α]
         { dim := 1, lo := singleton, hi := singleton }).isNone do
       fail "LayerNorm singleton shortcut accepted a non-finite endpoint"
   let empty : Tensor α [0] := Tensor.ofFn Fin.elim0
-  unless (NN.MLTheory.CROWN.Graph.directedLayerNormLastTensor? empty empty).isNone do
+  unless (NN.MLTheory.CROWN.Graph.directedLayerNormRow? empty empty
+      (Tensor.full [0] 1) (Tensor.full [0] 0) TorchLean.normalizationEpsilon).isNone do
     fail "LayerNorm accepted an empty normalization row"
 
 /--
@@ -140,7 +143,7 @@ def checkAffineLayerNorm {α : Type} [Storage α] [Context α]
   unless (payloadBox [1, 2] 1 parameters inputBox).isSome do
     fail "LayerNorm rejected a matching last-axis payload"
   unless (payloadBox [1, 2] 0 parameters inputBox).isNone do
-    fail "LayerNorm accepted an unsupported normalization axis"
+    fail "LayerNorm accepted an axis inconsistent with the payload's normalized shape"
   let wrongShape : NN.IR.LayerNormParams α :=
     { normalizedShape := [1, 2]
       gamma := Tensor.dim fun _ => gamma

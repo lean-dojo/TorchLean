@@ -24,40 +24,47 @@ namespace Trainer
 /--
 Backend-independent training report.
 
-Executable scalar backends are read back once at the result boundary, so callers receive ordinary
-host `Float` losses without parsing rendered values.
+The default trainer API reads binary32 losses back to `Float` exactly. Typed sessions retain their
+selected scalar in the structured loss values.
 -/
-structure Report where
-  /-- Number of optimizer steps requested by the configuration. -/
+structure Report (α : Type := Float) where
+  /-- Number of optimizer updates applied by the session. -/
   steps : Nat
-  /-- Host-readable loss measured before and after training. -/
-  loss : Training.LossProgress Float
-  /-- Arithmetic the run executed under; it fixes the binary32 scalar named by `runtimeScalar`. -/
+  /-- Scalar-valued loss measured before and after training. -/
+  loss : Training.LossProgress α
+  /-- Runtime selector used by `open`; an explicit scalar in `openTyped` takes precedence. -/
   arithmetic : Runtime.Arithmetic
+  /-- Exact encoding descriptor when a typed session explicitly selects its scalar. -/
+  scalarFormat? : Option String := none
 deriving Repr
 
 namespace Report
 
 /-- Name of the runtime scalar type that produced this report. -/
-def runtimeScalar (report : Report) : String :=
-  match report.arithmetic with
-  | .native => "Float32"
-  | .ieee => "ExecFloat.Binary 8 23"
-  | .complex => "Complex (ExecFloat.Binary 8 23)"
+def runtimeScalar {α : Type} (report : Report α) : String :=
+  match report.scalarFormat? with
+  | some format => format
+  | none =>
+      match report.arithmetic with
+      | .native => "Float32"
+      | .ieee => "ExecFloat.Binary 8 23"
+      | .complex => "Complex (ExecFloat.Binary 8 23)"
 
 /-- One-line summary suitable for quickstarts and scripts. -/
-def summary (report : Report) : String :=
-  s!"steps={report.steps} arithmetic={report.arithmetic} scalar={report.runtimeScalar} " ++
+def summary {α : Type} [ToString α] (report : Report α) : String :=
+  let arithmetic :=
+    if report.scalarFormat?.isSome then "" else s!"arithmetic={report.arithmetic} "
+  s!"steps={report.steps} {arithmetic}scalar={report.runtimeScalar} " ++
     s!"loss={report.loss.before} -> {report.loss.after}"
 
 /-- Print the one-line training summary. -/
-def printSummary (report : Report) : IO Unit :=
+def printSummary {α : Type} [ToString α] (report : Report α) : IO Unit :=
   IO.println (summary report)
 
-instance : ToString Report where
+instance {α : Type} [ToString α] : ToString (Report α) where
   toString := summary
 
-/-- Convert the report into the standard two-point training log. -/
+/-- Convert a `Float` report into the standard two-point training log. -/
 def toTrainLog (title : String) (notes : Array String) (report : Report) :
     Training.TrainLog :=
   Runtime.Training.TrainLog.lossComparison

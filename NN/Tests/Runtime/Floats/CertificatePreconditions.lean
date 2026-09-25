@@ -343,8 +343,17 @@ def run : IO Unit := do
   let positiveRun := runIBP logGraph (emptyStore.seedInputBox 0 positive)
   expect "IBP evaluated raw log across its nonpositive domain boundary"
     (nonPositiveRun[1]!.isNone)
-  expect "configured binary32 log was accepted without a directed transcendental implementation"
-    (positiveRun[1]!.isNone)
+  match positiveRun[1]! with
+  | none =>
+      throw <| IO.userError "IBP rejected certified binary32 log on a positive interval"
+  | some box =>
+      expect "certified log changed the output dimension" (box.dim == 2)
+      for endpoint in box.lo.to (Array (Binary 8 23)) do
+        expect "certified log lower endpoint is not a finite bound near log(0.1)"
+          ((Binary.toRat? endpoint).any fun q => decide (-3 < q ∧ q < -2))
+      for endpoint in box.hi.to (Array (Binary 8 23)) do
+        expect "certified log upper endpoint is not a finite bound near log(2)"
+          ((Binary.toRat? endpoint).any fun q => decide (1 / 2 < q ∧ q < 1))
 
   let inputGraph : NN.IR.Graph := { nodes := #[inputNode 0 2] }
   let authoritative := flatBox (fun _ => 0.0) (fun _ => 1.0)

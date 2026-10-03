@@ -17,7 +17,8 @@ examples use:
 - NumPy format versions 1 and 2;
 - little-endian `float32` and `float64` payloads (`<f4`, `<f8`);
 - C-order arrays directly, and Fortran-order arrays converted to C-order at load time;
-- deterministic conversion to a flat `Array Float` in C order.
+- deterministic conversion to a flat `FloatArray` in C order, or to one `FloatArray` per index
+  along the leading axis.
 
 The loader stays narrow. It is a runtime bridge for trusted experiment artifacts, not
 a general NumPy parser and not part of the formal tensor semantics. Tensor construction happens in
@@ -50,13 +51,32 @@ structure NpyData where
   shape : Array Nat
   /-- Whether the returned flat payload is still Fortran-ordered. This loader returns `false`. -/
   fortran : Bool
-  /-- Flattened numeric payload, converted to Lean `Float` values. -/
-  values : Array Float
+  /-- Flattened numeric payload, converted to Lean `Float` values.
+
+  This is a `FloatArray` rather than an `Array Float` because the payload is bulk numeric data:
+  `FloatArray` stores the doubles unboxed, so a large file costs one machine word per element
+  instead of one word plus one heap cell, and `Tensor.from` wraps it without copying. -/
+  values : FloatArray
+
+/--
+A `.npy` payload decoded as one `FloatArray` per index along the leading axis.
+
+`blocks.size` is the leading dimension and every block holds the product of the trailing
+dimensions, so `shape = #[d₀] ++ tail` gives `blocks.size = d₀` and
+`blocks[i]!.size = tail.foldl (· * ·) 1`.
+-/
+structure NpyBlocks where
+  /-- Dtype string as stored in the header, for example `"<f4"` or `"<f8"`. -/
+  dtype : String
+  /-- Logical array shape as stored in the header. -/
+  shape : Array Nat
+  /-- One decoded block per index along the leading axis, in order. -/
+  blocks : Array FloatArray
 
 /--
 Validated NPY metadata, without reading or allocating the numeric payload.
 
-Dimensions and the element count fit an addressable `Array Float`. Payload availability is checked
+Dimensions and the element count fit an addressable payload. Payload availability is checked
 separately by full or prefix readers; a valid header alone does not certify a complete file.
 -/
 structure NpyHeader where
@@ -72,6 +92,16 @@ structure NpyHeader where
   elementBytes : Nat
   /-- Product of the validated dimensions; scalar arrays contain one element. -/
   elementCount : Nat
+
+/-- How a leading-axis block decode is spread across tasks. -/
+inductive Parallelism where
+  /-- Decode every block on the calling thread. -/
+  | sequential
+  /-- Spread the blocks across at most `n` tasks. -/
+  | tasks (n : Nat)
+  /-- Spread the blocks across the platform's hardware concurrency. -/
+  | auto
+  deriving Repr, BEq
 
 namespace Internal
 
@@ -108,19 +138,26 @@ def idxFortranOfCIdx (shape : Array Nat) (idxC : Nat) : Nat := Id.run do
     idx := idx / dim
   return result
 
-/-- Reorder a Fortran-ordered flat array into C-order, rejecting an inconsistent payload. -/
+/--
+Reorder a Fortran-ordered flat payload into C-order, rejecting an inconsistent payload.
+
+The output stays unboxed, and an out-of-range index is an error rather than a `0.0` fill, so a
+malformed file is reported instead of silently reshaped.
+-/
 def reorderFortranToC
-    (tag : String) (shape : Array Nat) (raw : Array Float) : Except String (Array Float) := do
+    (tag : String) (shape : Array Nat) (raw : FloatArray) : Except String FloatArray := do
   let count := shape.foldl (fun acc n => acc * n) 1
   unless raw.size = count do
     throw <| formatError tag s!"shape requires {count} elements, got {raw.size}"
-  let values ← (Array.range count).mapM fun i =>
+  let mut out := FloatArray.emptyWithCapacity count
+  for i in [0:count] do
     let idxF := idxFortranOfCIdx shape i
-    match raw[idxF]? with
-    | some value => pure value
-    | none => throw <| formatError tag <|
+    if idxF < raw.size then
+      out := out.push (raw[idxF]!)
+    else
+      throw <| formatError tag <|
         s!"Fortran-order index {idxF} is outside the {raw.size}-element payload"
-  pure values
+  pure out
 
 /-- Safe `ByteArray` indexing. -/
 def byteAt? (bs : ByteArray) (i : Nat) : Option UInt8 :=
@@ -218,7 +255,7 @@ def npyElementBytes (tag descr : String) : Except String Nat :=
   else
     .error (formatError tag s!"unsupported dtype: {descr}")
 
-/-- Bound each dimension and the shape product before allocating a decoded `Array Float`. -/
+/-- Bound each dimension and the shape product before allocating a decoded payload. -/
 def npyElementCount (tag : String) (shape : Array Nat) : Except String Nat := do
   let limit := (USize.size - 1) / 8
   for dim in shape do
@@ -246,18 +283,90 @@ def parseNpyHeaderMeta (tag : String) (bs : ByteArray) : Except String NpyHeader
   let elementCount ← npyElementCount tag shape
   return { dtype, fortran, shape, dataStart := headerEnd, elementBytes, elementCount }
 
-/-- Read one supported numeric element from an NPY payload. -/
-def readNpyElement (tag descr : String) (bs : ByteArray) (off : Nat) : Except String Float :=
-  if descr = "<f8" then
-    match readLittleEndian bs off 8 with
-    | some w => .ok (Float.ofBits (UInt64.ofNat w))
-    | none => .error (formatError tag "invalid float64 data")
-  else if descr = "<f4" then
-    match readLittleEndian bs off 4 with
-    | some w => .ok (Float32.toFloat (Float32.ofBits (UInt32.ofNat w)))
-    | none => .error (formatError tag "invalid float32 data")
+/-!
+### Payload decoding
+
+`byteAt?` and `readLittleEndian` are the right shape at the file boundary, where a malformed
+header has to be reported rather than guessed at. Inside a payload loop they are the wrong shape:
+an `Option` per byte and an `Except` per element each cost a heap cell, so decoding an array that
+way pays about ten allocations per element and runs an order of magnitude below the rate at which
+the same loop can fill a `FloatArray`.
+
+The functions below decode a payload whose byte range and dtype the caller has already checked.
+The dtype is matched once per file rather than once per element, the bytes are read without an
+intermediate `Option`, and the result is unboxed.
+-/
+
+/-- Little-endian `UInt64` at byte offset `o`. Out-of-range bytes read as `0`; callers check
+the payload length first, so that fallback is unreachable for accepted files. -/
+@[inline] def uint64LE (bs : ByteArray) (o : Nat) : UInt64 :=
+  (bs.get! o).toUInt64
+    ||| ((bs.get! (o + 1)).toUInt64 <<< 8)
+    ||| ((bs.get! (o + 2)).toUInt64 <<< 16)
+    ||| ((bs.get! (o + 3)).toUInt64 <<< 24)
+    ||| ((bs.get! (o + 4)).toUInt64 <<< 32)
+    ||| ((bs.get! (o + 5)).toUInt64 <<< 40)
+    ||| ((bs.get! (o + 6)).toUInt64 <<< 48)
+    ||| ((bs.get! (o + 7)).toUInt64 <<< 56)
+
+/-- Little-endian `UInt32` at byte offset `o`, with the same precondition as `uint64LE`. -/
+@[inline] def uint32LE (bs : ByteArray) (o : Nat) : UInt32 :=
+  (bs.get! o).toUInt32
+    ||| ((bs.get! (o + 1)).toUInt32 <<< 8)
+    ||| ((bs.get! (o + 2)).toUInt32 <<< 16)
+    ||| ((bs.get! (o + 3)).toUInt32 <<< 24)
+
+/-- Decode the half-open element range `[lo, hi)` of a `<f8` payload. -/
+def decodeRangeF8 (bs : ByteArray) (dataStart lo hi : Nat) : FloatArray := Id.run do
+  let mut out := FloatArray.emptyWithCapacity (hi - lo)
+  for i in [lo:hi] do
+    out := out.push (Float.ofBits (uint64LE bs (dataStart + i * 8)))
+  pure out
+
+/-- Decode the half-open element range `[lo, hi)` of a `<f4` payload, widening to `Float`. -/
+def decodeRangeF4 (bs : ByteArray) (dataStart lo hi : Nat) : FloatArray := Id.run do
+  let mut out := FloatArray.emptyWithCapacity (hi - lo)
+  for i in [lo:hi] do
+    out := out.push (Float32.toFloat (Float32.ofBits (uint32LE bs (dataStart + i * 4))))
+  pure out
+
+/-- The range decoder for a supported dtype, selected once per file.
+
+Returning the decoder rather than the decoded payload is what keeps the dtype test out of
+the element loop, and it lets one selection serve many ranges. -/
+def rangeDecoder (tag dtype : String) (bs : ByteArray) (dataStart : Nat) :
+    Except String (Nat → Nat → FloatArray) :=
+  if dtype = "<f8" then
+    .ok (decodeRangeF8 bs dataStart)
+  else if dtype = "<f4" then
+    .ok (decodeRangeF4 bs dataStart)
   else
-    .error (formatError tag s!"unsupported dtype: {descr}")
+    .error (formatError tag s!"unsupported dtype: {dtype}")
+
+/-- Element count below which spreading a decode across tasks does not pay.
+
+A task costs a scheduling round trip that only a reasonably large slice earns back, so this
+bounds the task count from above by `totalElements / minElementsPerTask`. -/
+def minElementsPerTask : Nat := 1 <<< 16
+
+/-- Resolve a `Parallelism` request against a payload into an actual task count.
+
+Three bounds apply, and the smallest wins:
+
+- the caller's request, or the platform's hardware concurrency for `auto`;
+- the number of blocks. A block is the smallest piece this can hand back whole, so raising
+  the task count past `nBlocks` would mean cutting a block in half and copying the halves
+  back together afterwards, and that copy costs more than the extra task saves. The
+  leading dimension is therefore a hard ceiling on this decode's parallelism;
+- `totalElements / minElementsPerTask`, so small payloads stay on one thread.
+-/
+def resolveTaskCount (p : Parallelism) (nBlocks totalElements : Nat) : Nat :=
+  let requested :=
+    match p with
+    | .sequential => 1
+    | .tasks n => n
+    | .auto => (System.Platform.Internal.getHardwareConcurrency ()).toNat
+  max 1 (min (min (max 1 requested) nBlocks) (totalElements / minElementsPerTask))
 
 /-- Validate a C-order leading prefix and retain only its requested shape and element count. -/
 def npyPrefixHeader (tag : String) (hdr : NpyHeader) (expectedShape : Array Nat) :
@@ -281,17 +390,74 @@ def npyPrefixHeader (tag : String) (hdr : NpyHeader) (expectedShape : Array Nat)
   | _, _ =>
       throw <| formatError tag s!"shape mismatch: expected {expectedShape}, got {hdr.shape}"
 
+/--
+Validate that a header describes C-order leading-axis blocks, returning the block count and the
+element count per block.
+
+Fortran-order and scalar arrays are rejected here, before any payload is read: a Fortran-order
+file interleaves every leading-axis block across the payload, so neither the contiguity nor the
+independence of the blocks holds, and a scalar has no leading axis to cut along.
+-/
+def npyBlocksLayout (tag : String) (hdr : NpyHeader) : Except String (Nat × Nat) := do
+  if hdr.fortran then
+    throw <| formatError tag "leading-axis block loading requires C-order NPY arrays"
+  match hdr.shape[0]? with
+  | some d0 =>
+      let tail := hdr.shape.extract 1 hdr.shape.size
+      return (d0, tail.foldl (fun acc n => acc * n) 1)
+  | none =>
+      throw <| formatError tag
+        "leading-axis block loading requires a leading axis; scalar arrays have none"
+
 /-- Decode a validated full or prefix payload, checking its byte range before reserving values. -/
 def decodeNpyPayload (tag : String) (hdr : NpyHeader) (bs : ByteArray) :
     Except String NpyData := do
   if hdr.dataStart + hdr.elementCount * hdr.elementBytes > bs.size then
     throw <| formatError tag "NPY data truncated"
-  let mut raw : Array Float := Array.mkEmpty hdr.elementCount
-  for i in [0:hdr.elementCount] do
-    let value ← readNpyElement tag hdr.dtype bs (hdr.dataStart + i * hdr.elementBytes)
-    raw := raw.push value
+  let decode ← rangeDecoder tag hdr.dtype bs hdr.dataStart
+  let raw := decode 0 hdr.elementCount
   let values ← if hdr.fortran then reorderFortranToC tag hdr.shape raw else pure raw
   return { dtype := hdr.dtype, shape := hdr.shape, fortran := false, values }
+
+/--
+Decode a validated C-order payload as one block per leading-axis index, checking its byte range
+before reserving values.
+
+For a C-order array of shape `(d₀, d₁, …, dₖ)` each leading-axis block is physically contiguous,
+so the `d₀` blocks are independent and therefore support either sequential or concurrent decoding.
+`parallelism` chooses how many tasks that uses; see `resolveTaskCount` for the bounds that apply
+to the request. `d₀` is a ceiling on it, so a file with a small leading axis is decoded with at
+most that many tasks however many cores are free.
+-/
+def decodeNpyBlocks (tag : String) (hdr : NpyHeader) (bs : ByteArray)
+    (parallelism : Parallelism) : Except String NpyBlocks := do
+  let (d0, blockSize) ← npyBlocksLayout tag hdr
+  if hdr.dataStart + hdr.elementCount * hdr.elementBytes > bs.size then
+    throw <| formatError tag "NPY data truncated"
+  let decode ← rangeDecoder tag hdr.dtype bs hdr.dataStart
+  let block : Nat → FloatArray := fun b => decode (b * blockSize) ((b + 1) * blockSize)
+  let nTasks := resolveTaskCount parallelism d0 hdr.elementCount
+  let blocks :=
+    if nTasks ≤ 1 then
+      (Array.range d0).map block
+    else
+      -- Blocks are grouped, not handed out one per task: the task count follows the machine and
+      -- the block count follows the file, and those are independent.
+      --
+      -- `Task.spawn` takes the work as a `Unit → α` closure, which is what keeps the decode
+      -- inside the task body. Handing a pure expression to an `IO`-level spawn instead lets it
+      -- be floated out onto the spawning thread, and the fan-out then runs sequentially at
+      -- exactly the single-threaded rate.
+      let perTask := (d0 + nTasks - 1) / nTasks
+      let groups : Array (Task (Array FloatArray)) :=
+        (Array.range nTasks).map fun t =>
+          let lo := t * perTask
+          let hi := min d0 (lo + perTask)
+          Task.spawn (fun _ => (Array.range (hi - lo)).map (fun k => block (lo + k)))
+      -- Regrouping moves one pointer per block, not one double per element, so it carries none
+      -- of the cost that joining decoded payloads would.
+      groups.foldl (fun acc g => acc ++ g.get) (Array.emptyWithCapacity d0)
+  return { dtype := hdr.dtype, shape := hdr.shape, blocks }
 
 /--
 Read exactly the requested bytes using bounded allocations, rejecting an early end of file.
@@ -349,7 +515,7 @@ This supports large exported tensors kept on disk while a run uses only the firs
 and trailing dimensions must match exactly; only the leading axis may be larger than requested.
 
 The implementation shares header and dtype parsing with `parseNpy`, then decodes only the requested
-prefix. This avoids building a full `Array Float` when a command asks for a small leading slice of a
+prefix. This avoids building a full payload when a command asks for a small leading slice of a
 real image or sequence dataset. Only the requested range must be present; unused trailing rows are
 not checked for truncation.
 
@@ -364,6 +530,27 @@ def parseNpyLeadingAxisPrefix
   let hdr ← parseNpyHeaderMeta tag bs
   let selected ← npyPrefixHeader tag hdr expectedShape
   decodeNpyPayload tag selected bs
+
+/--
+Parse a C-order `.npy` file into one `FloatArray` per index along the leading axis.
+
+Use this when the consumer wants the blocks apart anyway: one channel, one band, one batch
+element at a time. The blocks are decoded concurrently under the bounds `resolveTaskCount`
+describes, and the result does not depend on the task count.
+
+Use `parseNpy` when the consumer wants a single flat payload instead. That path decodes on
+one thread by design. Decoding it concurrently would mean filling several separate arrays
+and then copying all of them into one contiguous result, and that final copy walks every
+element a second time: it costs several times the concurrent decode it was supposed to
+speed up, and it holds the pieces and the result in memory simultaneously. Splitting the
+work is only worth it when the pieces are what the caller wanted.
+
+Fortran-order and scalar arrays are rejected, as `npyBlocksLayout` explains.
+-/
+def parseNpyLeadingAxisBlocks (tag : String) (bs : ByteArray)
+    (parallelism : Parallelism := .auto) : Except String NpyBlocks := do
+  let hdr ← parseNpyHeaderMeta tag bs
+  decodeNpyBlocks tag hdr bs parallelism
 
 /--
 Read validated metadata without reading the payload.
@@ -393,6 +580,21 @@ def readNpyLeadingAxisPrefix
     let hdr ← ExceptT.mk (readNpyHeaderFromHandle handle)
     let selected ← npyPrefixHeader "npy" hdr expectedShape
     ExceptT.mk (readNpyPayload handle selected)
+
+/--
+Read a C-order `.npy` file as one `FloatArray` per index along the leading axis.
+
+The header is validated for block loading before the payload is read, so a Fortran-order or scalar
+file is rejected without reading its payload. The payload itself is read with the same bounded
+chunks as `readNpy`, and truncation is rejected.
+-/
+def readNpyLeadingAxisBlocks (path : System.FilePath)
+    (parallelism : Parallelism := .auto) : IO (Except String NpyBlocks) := do
+  _root_.IO.FS.withFile path .read fun handle => ExceptT.run do
+    let hdr ← ExceptT.mk (readNpyHeaderFromHandle handle)
+    let _ ← npyBlocksLayout "npy" hdr
+    let bytes ← ExceptT.mk (readNpyBytes handle (hdr.elementCount * hdr.elementBytes))
+    return ← decodeNpyBlocks "npy" { hdr with dataStart := 0 } bytes parallelism
 
 end IO
 end Data

@@ -81,7 +81,7 @@ def runNpy (fixtureDirectory : System.FilePath) : IO Unit := do
       IO.FS.writeBinFile path bytes
       let full ← requireData (← TorchLean.Data.IO.readNpy path)
       expect "NPY full reads should support both header versions and float widths"
-        (full.shape == #[3, 2] && full.values == #[1, 2, 3, 4, 5, 6] && !full.fortran)
+        (full.shape == #[3, 2] && full.values.data == #[1, 2, 3, 4, 5, 6] && !full.fortran)
       let distinctBytes :=
         if wide then Float.ofBits 0x0123456789abcdef
         else (Float32.ofBits 0x01020304).toFloat
@@ -91,10 +91,10 @@ def runNpy (fixtureDirectory : System.FilePath) : IO Unit := do
         TorchLean.Data.IO.parseNpy "test"
           (encode version dtype "False" "(4,)" (payload wide bitValues))
       expect "NPY decoding should preserve byte order, subnormals, signed zero, and infinity"
-        (decoded.values.map Float.toBits == bitValues.map Float.toBits)
+        (decoded.values.data.map Float.toBits == bitValues.map Float.toBits)
       let selected ← requireData (← TorchLean.Data.IO.readNpyLeadingAxisPrefix path #[2, 2])
       expect "NPY prefixes should preserve row boundaries"
-        (selected.shape == #[2, 2] && selected.values == #[1, 2, 3, 4])
+        (selected.shape == #[2, 2] && selected.values.data == #[1, 2, 3, 4])
       expect "NPY row counting should validate trailing dimensions"
         ((← TorchLean.Data.availableNpyRows path [2] "(N, 2)") == 3)
       for shape in #[#[4, 2], #[1, 3], #[1, 1, 2], #[]] do
@@ -106,7 +106,7 @@ def runNpy (fixtureDirectory : System.FilePath) : IO Unit := do
       let parsed ← requireData <|
         TorchLean.Data.IO.parseNpyLeadingAxisPrefix "test" #[1, 2] missingTail
       expect "NPY prefixes should require only the requested bytes"
-        (selected.values == #[7, 8] && parsed.values == selected.values)
+        (selected.values.data == #[7, 8] && parsed.values.data == selected.values.data)
       expect "full NPY reads should still reject a missing tail"
         (rejected (← TorchLean.Data.IO.readNpy path) &&
           rejected (TorchLean.Data.IO.parseNpy "test" missingTail))
@@ -124,12 +124,13 @@ def runNpy (fixtureDirectory : System.FilePath) : IO Unit := do
         (encode version dtype "True" "(2, 3)" (payload wide #[1, 4, 2, 5, 3, 6]))
       let ordered ← requireData (← TorchLean.Data.IO.readNpy path)
       expect "full Fortran-order loads should retain C-order conversion"
-        (ordered.values == #[1, 2, 3, 4, 5, 6] && !ordered.fortran)
+        (ordered.values.data == #[1, 2, 3, 4, 5, 6] && !ordered.fortran)
       expect "Fortran-order prefixes should remain unsupported"
         (rejected (← TorchLean.Data.IO.readNpyLeadingAxisPrefix path #[1, 3]))
       IO.FS.writeBinFile path (encode version dtype "False" "()" (payload wide #[9]))
       let scalar ← requireData (← TorchLean.Data.IO.readNpy path)
-      expect "full NPY loads should support scalars" (scalar.shape.isEmpty && scalar.values == #[9])
+      expect "full NPY loads should support scalars"
+        (scalar.shape.isEmpty && scalar.values.data == #[9])
       expect "NPY scalar prefixes should be rejected"
         (rejected (← TorchLean.Data.IO.readNpyLeadingAxisPrefix path #[]))
       IO.FS.writeBinFile path (encode version dtype "False" "(2, 0)" ByteArray.empty)
@@ -140,7 +141,7 @@ def runNpy (fixtureDirectory : System.FilePath) : IO Unit := do
   IO.FS.writeBinFile path (encode 2 "<f4" "False" longShape (payload false #[11]))
   let largeHeader ← requireData (← TorchLean.Data.IO.readNpyLeadingAxisPrefix path #[1])
   expect "version-2 headers should support lengths beyond the version-1 limit"
-    (largeHeader.shape == #[1] && largeHeader.values == #[11])
+    (largeHeader.shape == #[1] && largeHeader.values.data == #[11])
   let malformed := #[
     encode 3 "<f4" "False" "(1,)" ByteArray.empty,
     encode 1 "<i4" "False" "(1,)" ByteArray.empty,

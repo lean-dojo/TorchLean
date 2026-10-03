@@ -35,6 +35,7 @@ public import NN.Tests.API.ModelContracts
 public import NN.Tests.API.ModelEdgeCases
 public import NN.Tests.API.Models
 public import NN.Tests.Backend.Profile
+public import NN.Tests.Data.IO.Npy
 public import NN.Tests.IR.ShapeContracts
 public import NN.Tests.MLTheory.IBPRefinement
 public import NN.Tests.MLTheory.BinaryMatmul
@@ -137,6 +138,7 @@ def run : IO Unit := do
     NN.Tests.API.ModelEdgeCases.run
     NN.Tests.API.Models.run
     NN.Tests.Backend.Profile.run
+    NN.Tests.Data.IO.Npy.run
     NN.Tests.MLTheory.IBPRefinement.run
     NN.Tests.MLTheory.BinaryMatmul.run
     NN.Tests.MLTheory.CROWNLayerNormDerivatives.run

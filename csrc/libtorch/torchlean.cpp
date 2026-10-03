@@ -4,6 +4,7 @@
 // Buffer ownership and runtime controls
 
 #include <ATen/Context.h>
+#include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #include <c10/cuda/CUDAFunctions.h>
 #include <lean/mimalloc.h>
@@ -423,6 +424,76 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_set_device(uint32_t index
                 "LibTorch: select the device before creating tensor buffers");
     selected_device.store(static_cast<int>(index));
     return lean_box(0);
+  });
+}
+
+// Device identity. Every query takes an explicit index and reads the SDK's per-device cached
+// properties, so the answer never depends on the selected device and a multi-GPU host never
+// combines fields from two cards in one record.
+namespace {
+
+const cudaDeviceProp& device_properties(uint32_t index) {
+  TORCH_CHECK(index < static_cast<uint32_t>(c10::cuda::device_count()),
+              "LibTorch: CUDA device index is outside the visible count");
+  return *at::cuda::getDeviceProperties(static_cast<c10::DeviceIndex>(index));
+}
+
+// Clocks and bus width come from `cudaDeviceGetAttribute`: CUDA 13 removed `clockRate` and
+// `memoryClockRate` from `cudaDeviceProp`, and the attribute enums exist in 12.x and 13.x.
+uint32_t device_attribute(uint32_t index, cudaDeviceAttr attribute) {
+  device_properties(index);
+  int value = 0;
+  C10_CUDA_CHECK(cudaDeviceGetAttribute(&value, attribute, static_cast<int>(index)));
+  return static_cast<uint32_t>(value);
+}
+
+}  // namespace
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_device_name(uint32_t index) {
+  return io([&] { return lean_mk_string(device_properties(index).name); });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_device_capability(uint32_t index) {
+  return io([&] {
+    const auto& properties = device_properties(index);
+    return lean_box_uint32(static_cast<uint32_t>(properties.major * 10 + properties.minor));
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_device_sm_count(uint32_t index) {
+  return io([&] {
+    return lean_box_uint32(static_cast<uint32_t>(device_properties(index).multiProcessorCount));
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_device_total_bytes(uint32_t index) {
+  return io([&] {
+    return lean_box_uint64(static_cast<uint64_t>(device_properties(index).totalGlobalMem));
+  });
+}
+
+#define TORCHLEAN_DEVICE_ATTRIBUTE(NAME, ATTRIBUTE)                                      \
+  extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_device_##NAME(uint32_t index) { \
+    return io([&] { return lean_box_uint32(device_attribute(index, ATTRIBUTE)); });      \
+  }
+TORCHLEAN_DEVICE_ATTRIBUTE(clock_khz, cudaDevAttrClockRate)
+TORCHLEAN_DEVICE_ATTRIBUTE(mem_clock_khz, cudaDevAttrMemoryClockRate)
+TORCHLEAN_DEVICE_ATTRIBUTE(mem_bus_width, cudaDevAttrGlobalMemoryBusWidth)
+#undef TORCHLEAN_DEVICE_ATTRIBUTE
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_driver_version(uint32_t) {
+  return io([] {
+    int version = 0;
+    C10_CUDA_CHECK(cudaDriverGetVersion(&version));
+    return lean_box_uint32(static_cast<uint32_t>(version));
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_runtime_version(uint32_t) {
+  return io([] {
+    int version = 0;
+    C10_CUDA_CHECK(cudaRuntimeGetVersion(&version));
+    return lean_box_uint32(static_cast<uint32_t>(version));
   });
 }
 

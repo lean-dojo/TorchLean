@@ -190,6 +190,7 @@ Current CUDA coverage:
 | `NN/Tests/Runtime/Cuda/ConvTranspose.lean` | 2D and 3D transposed convolution forward and backward. |
 | `NN/Tests/Runtime/Cuda/GatherScatter.lean` | Rank-one and row gather/scatter-add behavior, including gradients. |
 | `NN/Tests/Runtime/Cuda/DeterministicReductions.lean` | Repeatability under the deterministic reduction control. |
+| `NN/Tests/Runtime/Cuda/DeviceInfo.lean` | Per-index device identity readback, current-device agreement, index rejection, and a device-switching probe in a fresh process. |
 | `NN/Tests/Runtime/Cuda/SelectiveScan.lean` | Diagonal selective-scan buffer primitives used by the Mamba/SSM runtime path. |
 | `NN/Tests/Runtime/Cuda/PositionalEncoding.lean` | Sinusoidal positional encodings and RoPE/rotary embedding kernels. |
 | `NN/Tests/Runtime/Cuda/Matmul.lean` | `matmul`, `bmm`, and explicit fp32/fp64 dispatch. |

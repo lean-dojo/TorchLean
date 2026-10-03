@@ -8,6 +8,7 @@ module
 
 public import NN.Tests.Runtime.Rationals.AutogradEngineTest
 public import NN.Tests.Runtime.Rationals.ElementwiseDivTest
+public import NN.Tests.Runtime.Rationals.TapeBuilderTest
 public import NN.Tests.Runtime.Rationals.WeightedMseTest
 
 /-!
@@ -31,6 +32,7 @@ namespace Suite
 def run : IO Unit := do
   Tests.Rationals.AutogradEngine.run
   Tests.Rationals.ElementwiseDiv.run
+  Tests.Rationals.TapeBuilder.run
   Tests.Rationals.WeightedMse.run
 
 end Suite

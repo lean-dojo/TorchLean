@@ -261,6 +261,38 @@ end Indexing
           (sourceId, { s := sourceShape, buf := dSource })] }
   pure (t.addNode node)
 
+/-!
+## Device-resident positions
+-/
+
+/--
+Gather entries of a rank-one table at positions held in another tape value.
+
+The positions are float32 values computed on device and addressed as `Buffer.gatherAt` documents.
+The result takes the positions' shape. The table receives the scatter-add VJP; the positions are
+selectors rather than differentiable inputs, so no gradient flows to them.
+-/
+@[inline] def gatherAt {size : Nat} {s : Shape} (t : Tape) (tableId positionsId : Nat) :
+    Result (Tape × Nat) := do
+  if size = 0 then
+    throw "autograd: gather_at: the table is empty"
+  let tableShape : Shape := .dim size .scalar
+  let table ← requireValue (t := t) tableId tableShape
+  let positions ← requireValue (t := t) positionsId s
+  let size32 ← AnyBuffer.natToU32Checked size
+  let count32 ← AnyBuffer.numelU32 s
+  let y := Buffer.gatherAt table size32 positions count32
+  let node : Node :=
+    { name := some "gather_at"
+      value := { s := s, buf := y }
+      requiresGrad := (t.getNode? tableId).any (·.requiresGrad)
+      parents := #[tableId, positionsId]
+      backward := fun dLdyAny => do
+        let dLdy ← requireGrad dLdyAny s
+        let dTable := Buffer.scatterAddAt size32 positions dLdy.buf count32
+        pure #[(tableId, { s := tableShape, buf := dTable })] }
+  pure (t.addNode node)
+
 end Tape
 
 end LibTorch

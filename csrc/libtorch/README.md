@@ -189,6 +189,7 @@ Current CUDA coverage:
 | `NN/Tests/Runtime/Cuda/ConvPool.lean` | 2D and 3D convolution, max pool, average pool, smooth max pool, padded max-pool edge cases. |
 | `NN/Tests/Runtime/Cuda/ConvTranspose.lean` | 2D and 3D transposed convolution forward and backward. |
 | `NN/Tests/Runtime/Cuda/GatherScatter.lean` | Rank-one and row gather/scatter-add behavior, including gradients. |
+| `NN/Tests/Runtime/Cuda/TableLookup.lean` | `floor`, gather at device-resident positions, and piecewise-linear table lookup: bit-exact forward against the float32 reference, forward and gradients against the CPU tape. |
 | `NN/Tests/Runtime/Cuda/DeterministicReductions.lean` | Repeatability under the deterministic reduction control. |
 | `NN/Tests/Runtime/Cuda/SelectiveScan.lean` | Diagonal selective-scan buffer primitives used by the Mamba/SSM runtime path. |
 | `NN/Tests/Runtime/Cuda/PositionalEncoding.lean` | Sinusoidal positional encodings and RoPE/rotary embedding kernels. |

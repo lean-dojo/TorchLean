@@ -53,6 +53,20 @@ def runScatterAddTwice : IO Unit := do
   assertFloatArrayEq "scatterAdd deterministic run1 vs run2"
     (Buffer.toFloatArray y1) (Buffer.toFloatArray y2)
 
+/-- The same worst-case accumulation through device-resident positions. -/
+def runScatterAddAtTwice : IO Unit := do
+  IO.println "== deterministic scatter_add_at: exact repeatability =="
+  let k : UInt32 := 4096
+  let one : UInt32 := 1
+  let big := Buffer.full one 1.0e8
+  let ones := Buffer.full (k - one) 1.0
+  let values := Buffer.concatBuffers big ones one (k - one)
+  let positions := Buffer.zeros k
+  let y1 := Buffer.scatterAddAt one positions values k
+  let y2 := Buffer.scatterAddAt one positions values k
+  assertFloatArrayEq "scatterAddAt deterministic run1 vs run2"
+    (Buffer.toFloatArray y1) (Buffer.toFloatArray y2)
+
 /-- Check cancellation against the base value and preservation of untouched signed zero. -/
 def runScatterAddBaseOrder : IO Unit := do
   let base := Buffer.ofFloatArray (FloatArray.mk #[1.0e8, -0.0])
@@ -104,6 +118,7 @@ def run : IO Unit := do
     if previousSettings.isSome then
       Runtime.Autograd.LibTorch.setDeterministic true
     runScatterAddTwice
+    runScatterAddAtTwice
     runScatterAddBaseOrder
     runAvgPoolBwdTwice
   finally

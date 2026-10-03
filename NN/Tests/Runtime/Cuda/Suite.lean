@@ -15,6 +15,7 @@ public import NN.Tests.Runtime.Cuda.Attention
 public import NN.Tests.Runtime.Cuda.ConvPool
 public import NN.Tests.Runtime.Cuda.ConvTranspose
 public import NN.Tests.Runtime.Cuda.GatherScatter
+public import NN.Tests.Runtime.Cuda.TableLookup
 public import NN.Tests.Runtime.Cuda.DeterministicReductions
 public import NN.Tests.Runtime.Cuda.SelectiveScan
 public import NN.Tests.Runtime.Cuda.PositionalEncoding
@@ -55,6 +56,7 @@ def run : IO Unit := do
   ConvPool.run
   ConvTranspose.run
   GatherScatter.run
+  TableLookup.run
   DeterministicReductions.run
   SelectiveScan.run
   PositionalEncoding.run

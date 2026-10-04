@@ -779,6 +779,9 @@ def runMemoryTests : IO Unit := do
   | .nativeUnavailable =>
       throw <| IO.userError "LibTorch memory tests require a usable CUDA device"
   | .nativeAvailable => pure ()
+  if (← Runtime.Autograd.LibTorch.deviceKind) == .host then
+    IO.println "  skipped: the host device has no native allocator accounting"
+    return
   let self : System.FilePath := "/proc/self/exe"
   if !(← self.pathExists) then
     IO.println "  skipped: isolated memory tests require Linux /proc/self/exe"

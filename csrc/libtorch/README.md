@@ -1,8 +1,10 @@
 # TorchLean LibTorch backend
 
-This directory holds the CUDA backend behind TorchLean's GPU buffer ABI. It calls the selected
-LibTorch SDK's ATen operations. Lean checks shapes and dispatches through the extern symbols;
-native memory safety, SDK behavior, and floating-point execution remain outside Lean's kernel.
+This directory holds the LibTorch backend behind TorchLean's device buffer ABI. It calls the
+selected LibTorch SDK's ATen operations on a CUDA device, or on the host when the SDK is CPU-only
+or `TORCHLEAN_LIBTORCH_DEVICE=cpu` says so. Lean checks shapes and dispatches through the extern
+symbols; native memory safety, SDK behavior, and floating-point execution remain outside Lean's
+kernel.
 
 ## Layout
 
@@ -23,7 +25,7 @@ compiled executables.
 ## Build selection
 
 `scripts/lake.sh build` selects the default `pureLean`/`portableCPU` build, without an SDK or
-toolkit. `cuda=true` requires the complete LibTorch CUDA backend.
+toolkit. `cuda=true` links the LibTorch backend; the SDK it is built against decides the device.
 
 A full SDK contains `include/`,
 `lib/`, and `share/cmake/Torch/TorchConfig.cmake`; a partial header snapshot is insufficient.
@@ -40,8 +42,35 @@ scripts/checks/check.sh --libtorch-home "$TORCHLEAN_LIBTORCH_HOME" --ci-all
 under the package root. The build requires Linux, CMake 3.22 or newer, Make, the pinned Lean
 headers, and a compatible C++20 compiler. SDK CMake discovers the ABI, any stricter C++ standard,
 transitive libraries, and rpath. An executable built in the same project checks compiler/link
-compatibility without running. SDK discovery may require a matching CUDA
+compatibility without running. A CUDA-enabled SDK's discovery may require a matching CUDA
 development toolkit, even though TorchLean itself compiles only C++ sources.
+
+### Host device
+
+A CPU-only SDK builds the same backend without CUDA support (CMake sees no `torch_cuda` target
+and compiles with `TORCHLEAN_LIBTORCH_CUDA=0`), and the bridge then runs every operation on the
+host through ATen's CPU kernels. No CUDA toolkit or GPU is involved, so the curated suite
+exercises the real buffer ABI on a hosted runner:
+
+```bash
+python3 -m venv venv-cpu
+venv-cpu/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.11.0
+export TORCHLEAN_LIBTORCH_HOME="$PWD/venv-cpu/lib/python3.12/site-packages/torch"
+scripts/lake.sh -Kcuda=true build NN NNCI NNExamples NNTests nn_tests_suite
+scripts/lake.sh -Kcuda=true test
+```
+
+The device is selected once, at the bridge's first call, and `Runtime.Autograd.LibTorch.deviceKind`
+reports it. With a CUDA-enabled SDK, `TORCHLEAN_LIBTORCH_DEVICE=cpu` selects the host on a machine
+that also has a GPU (the suite then runs on the host), and `TORCHLEAN_LIBTORCH_DEVICE=cuda` insists
+on a CUDA device. A CUDA-enabled SDK without a visible device reports `RuntimeStatus.nativeUnavailable`
+rather than falling back to the host. On the host, the native allocator counters and driver memory
+read zero, `synchronize` and `emptyCache` return at once, `setMemoryFraction` and `setDevice` are
+rejected, and the memory accounting probes of the suite are skipped. Results are bit-identical
+across the two devices only for programs made of the IEEE basic operations, gathers and lookups:
+ATen's CPU and CUDA transcendental functions (`exp`, `log`, `tanh`, ...) come from different
+libraries and differ at the ulp level, and reductions differ in order. The suite's tolerances
+hold on both.
 
 ## Tested SDK versions
 

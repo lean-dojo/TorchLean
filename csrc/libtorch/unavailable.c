@@ -18,10 +18,17 @@ static lean_obj_res unavailable_io(void) {
       lean_mk_io_user_error(lean_mk_string(TORCHLEAN_UNAVAILABLE_MESSAGE)));
 }
 
-// 0 = built without LibTorch, 1 = LibTorch with a visible device, 2 = LibTorch without one.
+// 0 = built without LibTorch, 1 = LibTorch with a selected device (CUDA, or the host),
+// 2 = LibTorch without one.
 LEAN_EXPORT uint32_t torchlean_cuda_runtime_status(uint32_t token) {
   (void)token;
   return 0u;
+}
+
+// The device kind (0 = host, 1 = CUDA) means nothing without LibTorch; `runtimeStatus` says so.
+LEAN_EXPORT uint32_t torchlean_libtorch_device_kind(uint32_t token) {
+  (void)token;
+  return 1u;
 }
 
 LEAN_EXPORT lean_obj_res torchlean_libtorch_version(uint32_t token) {

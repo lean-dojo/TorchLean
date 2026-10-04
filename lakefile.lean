@@ -9,7 +9,8 @@ import Lake.Util.Proc
 open Lake DSL
 open System
 
-/-- Whether Lake should link the LibTorch CUDA backend instead of the unavailable-backend shim. -/
+/-- Whether Lake should link the LibTorch backend instead of the unavailable-backend shim. The
+SDK decides the device: CUDA-enabled SDKs run on a CUDA device, CPU-only SDKs on the host. -/
 private def cudaEnabled : Bool :=
   let value := (get_config? cuda).getD "false"
   value == "true" || value == "1"
@@ -51,9 +52,10 @@ package TorchLean where
 ## Native backend libraries
 
 `-K cuda=true` builds one LibTorch C++ library containing the numerical C ABI exports. CMake obtains
-the ABI, language standard, libraries, and runtime paths from the selected SDK. The default build
-needs neither LibTorch nor a CUDA toolkit: it links a small C file that reports the backend as not
-linked and fails every GPU call with an explanation.
+the ABI, language standard, libraries, and runtime paths from the selected SDK; a CPU-only SDK
+yields a backend that runs on the host, a CUDA-enabled one a backend that runs on a CUDA device.
+The default build needs neither LibTorch nor a CUDA toolkit: it links a small C file that reports
+the backend as not linked and fails every GPU call with an explanation.
 -/
 
 /--
@@ -86,7 +88,8 @@ private def nativeCompilerJob (name : String) : SpawnM (Job FilePath) := Job.asy
   traceNativeTool compiler
   return compiler
 
-/-- Numerical CUDA primitives built and linked with the selected LibTorch SDK. -/
+/-- Numerical primitives built and linked with the selected LibTorch SDK, CUDA-enabled or
+CPU-only. -/
 target torchlean_libtorch pkg : FilePath := do
   let lean ← getLeanInstall
   let scriptJob ← inputFile (pkg.dir / "scripts/libtorch_build.py") false

@@ -28,7 +28,8 @@ TorchLean's backend architecture, see the [Installation guide](https://lean-dojo
 scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 10 --arithmetic ieee --execution eager
 scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 10 --execution eager
 
-# Optional GPU run with a CUDA-enabled LibTorch SDK, matching toolkit, and NVIDIA GPU:
+# Optional GPU run with a CUDA-enabled LibTorch SDK, matching toolkit, and NVIDIA GPU
+# (a CPU-only LibTorch SDK runs the same backend on the host; see csrc/libtorch/README.md):
 export TORCHLEAN_LIBTORCH_HOME=/absolute/path/to/libtorch
 scripts/lake.sh -Kcuda=true build
 scripts/lake.sh -Kcuda=true exe torchlean quickstart_mlp --device cuda --steps 10 --execution eager

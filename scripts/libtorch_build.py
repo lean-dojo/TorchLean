@@ -297,9 +297,9 @@ def main() -> int:
         print(home if args.resolve_home else build(args, package, home))
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         print(f"error: LibTorch build: {error}", file=sys.stderr)
-        print("cuda=true requires a compatible LibTorch CUDA SDK. "
-              "SDK CMake discovery may require a matching CUDA development toolkit.",
-              file=sys.stderr)
+        print("cuda=true requires a compatible LibTorch SDK: CUDA-enabled, or CPU-only for the "
+              "host device. A CUDA-enabled SDK's CMake discovery may require a matching CUDA "
+              "development toolkit.", file=sys.stderr)
         return 1
     return 0
 

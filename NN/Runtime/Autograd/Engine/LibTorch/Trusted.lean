@@ -74,8 +74,8 @@ namespace Autograd
 namespace LibTorch
 
 /--
-Opaque handle to a contiguous float32 CUDA buffer, implemented in `csrc/libtorch/torchlean.cpp`.
-Builds without `-K cuda=true` cannot create one.
+Opaque handle to a contiguous float32 buffer on the bridge's device (a CUDA device, or the host),
+implemented in `csrc/libtorch/torchlean.cpp`. Builds without `-K cuda=true` cannot create one.
 -/
 opaque BufferImpl : NonemptyType.{0}
 

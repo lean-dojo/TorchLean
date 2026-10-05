@@ -427,6 +427,10 @@ opaque abs (b : @& Buffer) : Buffer
 @[never_extract, extern "torchlean_cuda_buffer_abs_bwd"]
 opaque absBwd (x dLdy : @& Buffer) : Buffer
 
+/-- Elementwise floor: the largest integral value not above each element, as `Float32.floor`. -/
+@[never_extract, extern "torchlean_cuda_buffer_floor"]
+opaque floor (b : @& Buffer) : Buffer
+
 /-- Elementwise `sqrt (max x 0)`, matching `Tensor.sqrtSpec`.
 
 Negative inputs and either signed zero return positive zero. NaN inputs remain NaN; the clamp

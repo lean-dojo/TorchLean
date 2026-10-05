@@ -66,6 +66,12 @@ returned buffers are owned by the tape/gradient accumulator; workspace buffers a
     (forward := Buffer.abs)
     (backward := fun x dLdy => Buffer.absBwd x dLdy)
 
+/-- Pointwise floor node. The function is piecewise constant, so its backward is zero. -/
+@[inline] def floor {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) :=
+  unary (t := t) "floor" xId s s
+    (forward := Buffer.floor)
+    (backward := fun _x dLdy => Buffer.zeros (Buffer.size dLdy))
+
 /-- Pointwise square-root node using the CUDA buffer derivative convention. -/
 @[inline] def sqrt {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) :=
   unary (t := t) "sqrt" xId s s

@@ -2,6 +2,7 @@
 // Intentionally included more than once, with the signature macros defined by the caller.
 
 TORCHLEAN_UNARY_EXPORT(abs, at::abs(x))
+TORCHLEAN_UNARY_EXPORT(floor, at::floor(x))
 TORCHLEAN_UNARY_EXPORT(sqrt, selected_sqrt(x))
 TORCHLEAN_UNARY_EXPORT(exp, at::exp(x))
 TORCHLEAN_UNARY_EXPORT(sin, at::sin(x))

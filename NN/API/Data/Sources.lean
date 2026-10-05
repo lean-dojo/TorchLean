@@ -103,6 +103,25 @@ def Internal.tensorFromFlat
   else
     .error s!"{tag}: expected {dims.size} values for shape {dims}, got {values.size}"
 
+/--
+Validate an unboxed flat payload's length before crossing into total tensor code.
+
+`Tensor.from` on a `FloatArray` wraps the buffer in place, so a payload the NPY loader
+decoded unboxed becomes a tensor without a copy or a boxed intermediate.
+-/
+def Internal.tensorFromFloatArray
+    (tag : String) (dims : Shape) (values : FloatArray) :
+    Except String (Tensor Float dims) :=
+  -- The length is read through the storage instance, which is how the tensor states its shape.
+  if h : @TorchLean.Storage.size Float TorchLean.instFloatStorage values = dims.size then
+    .ok <| (Tensor.from values).reshape dims (by
+      show Spec.Shape.size [@TorchLean.Storage.size Float TorchLean.instFloatStorage values]
+        = dims.size
+      simpa [Spec.Shape.size] using h)
+  else
+    .error s!"{tag}: expected {dims.size} values for shape {dims}, got \
+      {@TorchLean.Storage.size Float TorchLean.instFloatStorage values}"
+
 namespace Internal
 
 /-- How a file's physical shape is matched against the requested tensor shape. -/
@@ -134,12 +153,12 @@ def Internal.readNpyTensor (path : System.FilePath) (dims : Shape)
           if data.shape.toList != dims.toList then
             pure (.error s!"npy: shape mismatch, expected {dims}, got {data.shape}")
           else
-            pure <| Internal.tensorFromFlat "npy" dims data.values
+            pure <| Internal.tensorFromFloatArray "npy" dims data.values
   | .leadingPrefix =>
       let res ← readNpyLeadingAxisPrefix path dims.toArray
       match res with
       | .error e => pure (.error e)
-      | .ok data => pure <| Internal.tensorFromFlat "npy" dims data.values
+      | .ok data => pure <| Internal.tensorFromFloatArray "npy" dims data.values
 
 /-- Parse a float-encoded class label as a `Nat` in `[0, classes)`. -/
 private def finLabelOfFloat (tag : String) (classes : Nat) (x : Float) :

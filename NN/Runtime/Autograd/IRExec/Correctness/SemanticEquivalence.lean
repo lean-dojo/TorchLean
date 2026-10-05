@@ -131,6 +131,8 @@ private theorem buildFrom_preserves_denotation
               (inShape := inShape) (i := i + 1) (st := st1) (st' := st') hNoRawLog hRec x)
         -- Mirror the node step, then recurse.
         cases hk : n.kind with
+          | custom name shapes output =>
+              simp [hk] at hBuild
           | input =>
               exact buildFrom_denoteAllFrom_input_impossible (α := α) (g := g) (payload := payload)
                 (gd := gd) (i := i) (st' := st') (x := x) (n := n) hN hk hi h
@@ -311,7 +313,8 @@ One side condition remains. `NoRawLog` excludes raw `.log`: the IR evaluator rej
 inputs while the lowered closure applies `Tensor.logSpec` to every input, so the two can only be
 compared under a positivity precondition the theorem does not carry.
 
-Every other operation kind is covered, including `.mseLoss` and `.concat` along any axis. The
+Every successfully lowered operation kind is covered, including `.mseLoss` and `.concat` along
+any axis. Custom computations are rejected by this total forward-only lowering. The
 lowering accepts exactly the shapes the IR semantics accepts for `.matmul` and `.linear` (any shared
 leading shape, so rank at least four matmul and batched linear are covered); shapes rejected by the
 lowering never reach this theorem because `lowerToForwardGraph` returns an error for them.

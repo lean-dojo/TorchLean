@@ -34,13 +34,21 @@ smallest `NN.IR.*` dependency they need.
   including arbitrary-leading linear and matrix multiplication, checked arbitrary-axis concat, and
   the scoped `IR` notation for graph denotation. `Graph.evalNodeRaw` is the operator dispatch and
   `Graph.evalNode` adds the declared-shape normalization.
-- `Payload.lean`: external constants, weights, and normalization parameters keyed by node id.
+- `Payload.lean`: external constants, weights, normalization parameters, and checked custom
+  computation bodies keyed by node id.
 - `HardMask.lean`: conversions between typed Boolean tensors and the row-major masks stored in
   `OpKind`, shared by graph builders, evaluators, and verifier passes.
 - `ShapeSoundness.lean`: the theorems relating `Infer` and `Semantics` (see below).
 - `Pretty.lean`: readable text and GraphViz renderers for debugging.
 
 ## One Shape Rule Per Operation
+
+Custom operations declare their input shapes in operand order and their output shape. Their
+`NN.Kernel.Program` bodies live in the payload, not in a display name or an opaque source string.
+Shape inference checks the declared signature; evaluation checks the actual parent tensors and
+runs the body with bounded reads. The body's source-correspondence proof also covers failed reads.
+This does not imply a derivative rule, a range rule, or an export translation. Those consumers must
+report unsupported custom operations until the corresponding implementation is supplied.
 
 `Infer.nodeOutShape` and `Graph.evalNodeRaw` are both matches over `OpKind`, but they do not
 contain two copies of the shape arithmetic. Every operation whose output shape is not simply a

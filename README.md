@@ -50,6 +50,7 @@ For example, `Tensor Float [4, 2]` is a four-by-two tensor of `Float` values:
 ```lean
 import NN.API
 open TorchLean
+open Trainer.Objective (mse)
 
 /-- A two-layer regression model. The dimensions are checked when the layers are composed. -/
 def model :=
@@ -74,11 +75,11 @@ def trainOnce : IO Unit := do
   -- Select the loss and train through a typed graph with FloatLib binary32 arithmetic.
   let trainer :=
     Trainer.new model
-      { objective := .mse
+      { objective := mse
         optimizer := optim.sgd { learningRate := 0.05 }
-        execution := .typedGraph
-        device := .cpu
-        arithmetic := .ieee }
+        execution := typedGraph
+        device := cpu
+        arithmetic := ieee }
   -- Inspect the initialized model before any parameter updates.
   let initialPrediction ← trainer.predict ([0.5, -0.25] : Tensor Float [2])
   IO.println s!"initial={reprStr initialPrediction}"
@@ -121,7 +122,7 @@ lake build
 Use `import NN.API` for model, data, and training code. It provides `TorchLean.nn`,
 `TorchLean.Data`, `TorchLean.Trainer`, and `TorchLean.optim` without exposing the full proof and
 backend trees. Use `NN.API.Verification` to call
-`trained.verify center (radius := r) (norm := .inf)` after ordinary training. Explicit verifier
+`trained.verify center (radius := r)` after ordinary training. Explicit verifier
 graph lowering has the focused import `NN.API.Verification.Lowering`. Use `import NN` when the
 same file also needs proofs or backend infrastructure; focused imports such as `NN.GraphSpec`,
 `NN.Runtime`, or `NN.Proofs` are available for subsystem work.
@@ -132,6 +133,38 @@ Downstream model and training files should start from:
 import NN.API
 open TorchLean
 ```
+
+### Custom tensor computations (in development)
+
+We can write a scalar calculation as an ordinary Lean function, apply it to a tensor, and choose
+the execution device at the call site:
+
+```lean
+import NN.Kernel
+open TorchLean
+
+def square := fun (x : Float32) => x * x
+
+def input : Tensor Float32 [3] := Tensor.ofFn fun i => Float32.ofNat (i.val + 1)
+def onCpu : IO (Tensor Float32 [3]) := square.run input (device := cpu)
+def onGpu : IO (Tensor Float32 [3]) := square.run input (device := gpu)
+
+#eval square.run input (device := cpu)
+-- [1.000000, 4.000000, 9.000000]
+```
+
+CPU runs the Lean function and is the default. GPU supports FP32/FP64 arithmetic, conditionals and
+local bindings; unsupported source or an unavailable GPU returns an error without a CPU fallback.
+For indexed reads and bounded accumulations, `Program.of` constructs an explicit checked program.
+GPU execution generates CUDA and uses NVRTC; established tensor operations still use LibTorch.
+The lowering proofs preserve read failures and the specified arithmetic order, without assuming
+associativity.
+
+This is not an arbitrary Lean-to-GPU compiler or a custom-gradient implementation. The source
+correspondence proof covers the emitted signature, statements, output guard and final write under
+explicit arithmetic and input-buffer contracts. NVIDIA compilation and device execution remain
+external trust boundaries. See the [custom-operation guide](NN/Kernel/README.md) for tensor
+and mixed-graph execution, current limitations and the design references.
 
 For scalar arithmetic and numerical proofs, import FloatLib together with `NN.API.Precision`.
 The precision API supplies TorchLean's `Context` instances and rational casts. Use FloatLib's
@@ -206,7 +239,7 @@ def trainOnce : IO (Option Rat) := do
   let a : Scalar := Rat.cast (1 + 1 / (2 ^ 100 : Nat) : Rat)
   let state : nn.State Scalar (nn.stateShapes affine) := nn.State.full a
   let input : Tensor Scalar [1] := Tensor.full [1] 2
-  let graph ← nn.lowerToTypedGraph affine (α := Scalar) (mode := .train)
+  let graph ← nn.lowerToTypedGraph affine (α := Scalar) (mode := nn.Mode.train)
   let prediction := nn.TypedGraphModel.forward graph state input
   -- For target zero, the prediction itself is the loss derivative.
   let (gradient, _) := nn.TypedGraphModel.vjp graph state input prediction

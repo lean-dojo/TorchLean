@@ -104,9 +104,10 @@ argument is the differentiation input.
 ## Neural Fields and PDE Residuals
 
 `autograd.model.derivative model state input directions` takes input-directional derivatives
-while holding the parameter state fixed. An empty list evaluates the model, `[dx]` computes
-one derivative, and `[dx, dy]` computes a mixed derivative. Directions have the model's input
-shape: they need not be coordinate basis vectors, and neither dimension nor derivative order is
+while holding the parameter state fixed. Directions are a tensor whose leading axis selects the
+derivative order: an empty leading axis evaluates the model, `[dx]` computes one derivative,
+and `[dx, dy]` computes a mixed derivative. Each row has the model's input shape: directions
+need not be coordinate basis vectors, and neither dimension nor derivative order is
 fixed by the API. Evaluation uses nested dual scalars rather than finite differences.
 
 To train on a derivative, use `autograd.model.derivativeVjp` with the same arguments and an
@@ -244,7 +245,7 @@ that every smooth function is analytic. The separate calculus theorem applies to
 Hilbert spaces; derivative interchange without adjoints also covers complex normed spaces.
 
 `NN.Proofs.Autograd.Model` connects the public `model.derivative` IO call to `iteratedFDeriv`.
-It includes fixed state, the supplied direction list, and the returned graph. You must prove that
+It includes fixed state, the supplied direction tensor, and the returned graph. You must prove that
 lowering returns that graph and that its operations preserve jets.
 
 `model.derivativeVjp_eq` in `NN.Proofs.Autograd.Model.Reverse` covers the public reverse call,
@@ -252,8 +253,9 @@ including validation, execution, and the returned state/input pair. It proves th
 parameter seeds and the supplied input directions are the correct full-context jet. Parameter
 directions are zero for the input derivatives, but the final pullback still differentiates with
 respect to parameters and inputs. The theorem requires successful lowering and checked execution,
-the two graph certificates, and `n + 1` continuous derivatives. It works for every direction-list
-length, including zero, and can be applied by `autograd`.
+the two graph certificates, and `n + 1` continuous derivatives. Directions have a leading axis
+of length `n`, followed by the input shape. It works for every finite order, including an empty
+leading axis for order zero, and can be applied by `autograd`.
 
 General automatic certification of model recording and `hessian` still need their full
 connections, as do the remaining nonlinear scalar rules.

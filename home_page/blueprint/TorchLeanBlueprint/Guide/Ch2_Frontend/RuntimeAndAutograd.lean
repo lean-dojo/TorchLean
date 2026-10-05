@@ -44,11 +44,11 @@ A standalone `autograd.grad` call constructs its own computation:
   * What is built
   * Typical use
 *
-  * `Trainer` with `execution := .eager`
+  * `Trainer` with `execution := eager`
   * an eager tape per step
   * ordinary training
 *
-  * `Trainer` with `execution := .typedGraph`
+  * `Trainer` with `execution := typedGraph`
   * one typed graph, reused
   * ordinary training, fewer rebuilds
 *

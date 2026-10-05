@@ -16,6 +16,7 @@ set(Torch_DIR "${TORCHLEAN_LIBTORCH_HOME}/share/cmake/Torch")
 set(Caffe2_DIR "${TORCHLEAN_LIBTORCH_HOME}/share/cmake/Caffe2")
 list(PREPEND CMAKE_PREFIX_PATH "${TORCHLEAN_LIBTORCH_HOME}")
 find_package(Torch REQUIRED CONFIG PATHS "${Torch_DIR}" NO_DEFAULT_PATH)
+find_package(CUDAToolkit REQUIRED)
 if(NOT TARGET torch_cuda)
   message(FATAL_ERROR "cuda=true requires a CUDA-enabled LibTorch SDK (torch_cuda is missing).")
 endif()
@@ -80,7 +81,8 @@ target_include_directories(torchlean_libtorch PRIVATE
   "${TORCHLEAN_LEAN_INCLUDE}"
   "${CMAKE_CURRENT_SOURCE_DIR}"
 )
-target_link_libraries(torchlean_libtorch PRIVATE ${TORCH_LIBRARIES})
+target_link_libraries(torchlean_libtorch PRIVATE ${TORCH_LIBRARIES}
+  CUDA::nvrtc CUDA::cuda_driver)
 set_target_properties(torchlean_libtorch PROPERTIES
   POSITION_INDEPENDENT_CODE ON
   LIBRARY_OUTPUT_DIRECTORY "${TORCHLEAN_OUTPUT_DIR}"

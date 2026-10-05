@@ -88,6 +88,9 @@ def nodeOutShape (n : Node) (parentShapes : Array Shape) : Except String Shape :
       pure n.outShape
   | .const valueShape =>
       pure valueShape
+  | .custom name inputs output =>
+      if parentShapes.toList = inputs then pure output
+      else throw s!"custom {name}: expected input shapes {repr inputs}, got {repr parentShapes}"
   | .permute perm =>
       let s ← expectUnaryParent "permute" parentShapes
       match Spec.Shape.permute? s perm.toList with

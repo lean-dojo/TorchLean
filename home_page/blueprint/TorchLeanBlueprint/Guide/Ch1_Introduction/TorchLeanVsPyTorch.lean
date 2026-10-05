@@ -190,7 +190,7 @@ The initial tensors are part of the initialized description. Execution instantia
 -- from the initialized weights.
 #eval do
   let module ← nn.Module.instantiate tpInit
-    { device := .cpu }
+    { device := cpu }
   module.eval
   let output ← module.forward [0.1, 0.2, 0.3, 0.4]
   IO.println s!"{output}"

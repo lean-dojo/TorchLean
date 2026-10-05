@@ -113,7 +113,7 @@ use the constants and options declared in the linked example source:
 ```lean
 let run := Trainer.RunConfig.fromRuntime runtime
   { optimizer := optim.adam { learningRate := options.training.learningRate } }
-let objective : Trainer.Objective output := .oneHotCrossEntropy 2
+let objective : Trainer.Objective output := Trainer.Objective.oneHotCrossEntropy 2
 let trainer := Trainer.new model <|
   Trainer.RunConfig.forObjective run objective (seed := runtime.seed)
 let trained ← trainer.train (Data.fromStream samples)

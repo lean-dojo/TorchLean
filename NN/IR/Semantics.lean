@@ -8,6 +8,8 @@ module
 
 public import NN.IR.HardMask
 public import NN.IR.Payload
+public import NN.Kernel.Tensor
+public import NN.Tensor.ShapeErasure
 public import NN.Spec.Core.Random
 public import NN.Spec.Core.Sequence
 public import NN.Spec.Core.Tensor.SomeTensor
@@ -32,9 +34,10 @@ This file defines an evaluator for the current IR fragment:
 The evaluator returns `Except String`. It fails on malformed graphs (`Graph.checkWellFormed`),
 on nodes whose parents or declared `outShape` violate the shape rules, on missing or mismatched
 payloads (`const` flat length, `linear` dimensions, `conv` geometry, `batchNormEval` channels,
-`layernorm` normalized suffix), and on exactly one data-dependent condition: `.log` rejects an input
-tensor containing an entry `<= 0` (or NaN), because the spec logarithm is undefined there. Every
-other operation is total on well-shaped inputs; `reduceMean` and `layernorm` divide by extents that
+`layernorm` normalized suffix). `.log` rejects an input tensor containing an entry `<= 0` (or NaN),
+because the spec logarithm is undefined there. A custom computation can also reject a missing
+operand, an out-of-bounds read, or an output count beyond its index range. The remaining
+operations are total on well-shaped inputs; `reduceMean` and `layernorm` divide by extents that
 the shape rules already require to be positive, and `mseLoss` divides by the totalized
 `TorchLean.Tensor.meanDenominator` rather than by the raw element count.
 
@@ -644,6 +647,18 @@ selected branch exactly as before the split.
     | .const s =>
         let t ← evalConst (α := α) (payload := payload) (id := n.id) (s := s)
         pure (Spec.SomeTensor.mk (α := α) s t)
+    | .custom name shapes output => do
+        unless n.parents.size = shapes.length do
+          throw s!"IR eval: custom {name}: expected {shapes.length} parents"
+        unless output = n.outShape do
+          throw s!"IR eval: custom {name}: output shape disagrees with node {n.id}"
+        let some program := payload.custom? n.id |
+          throw s!"IR eval: custom {name}: missing checked body for node {n.id}"
+        let parents ← n.parents.mapM getParent
+        let inputs ← TensorPack.ofShapeErasedArray parents (shapes := shapes)
+        let result ← (program.eval inputs n.outShape).mapError fun error =>
+          s!"IR eval: custom {name}: {repr error}"
+        pure (Spec.SomeTensor.ofTensor result)
     | .permute perm => do
         let pId ← unaryParentId i n
         let vOut ← permuteSomeTensor (α := α) (v := ← getParent pId) perm
@@ -967,7 +982,7 @@ exception-producing `Graph.checkWellFormed` so callers get a readable error mess
 The evaluator always returns either:
 - `.ok vals` (all nodes evaluated successfully), or
 - `.error msg` describing the first failure (malformed IR, missing payload, a local shape error, or
-  a `.log` of a nonpositive entry).
+  a `.log` of a nonpositive entry, or a failed custom-computation read).
 
 `Graph.checkShapes` is not run here: the per-node checks reject the same ill-shaped graphs, and the
 existing lowering-correctness proofs unfold `denoteAll` with only the structural check in place.

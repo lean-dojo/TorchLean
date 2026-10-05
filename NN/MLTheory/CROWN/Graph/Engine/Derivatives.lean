@@ -224,7 +224,7 @@ private def runFirstDerivativeWithSeed
       let d := node.outShape.size
       let z := Tensor.full (α:=α) (.dim d .scalar) 0
       drs.set! id (some { dim := d, lo := z, hi := z })
-    | .maxPool .. | .avgPool .. | .softplus | .safeLog =>
+    | .custom .. | .maxPool .. | .avgPool .. | .softplus | .safeLog =>
       -- Not supported by the derivative-bound passes (used by PINN tooling).
       drs
     | .hardMaskedSoftmax _ =>
@@ -481,7 +481,7 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
       let d := node.outShape.size
       let z := Tensor.full (α:=α) (.dim d .scalar) 0
       d2s.set! id (some { dim := d, lo := z, hi := z })
-    | .maxPool .. | .avgPool .. | .softplus | .safeLog =>
+    | .custom .. | .maxPool .. | .avgPool .. | .softplus | .safeLog =>
       -- Not supported by the second-derivative bound pass.
       d2s
     | .hardMaskedSoftmax _ =>

@@ -188,7 +188,7 @@ Manual runtime code can instantiate that definition as a live module:
 -- The same parameters can run in training mode and then
 -- evaluation mode through the module.
 nn.withModel model fun checked => do
-  let module ← nn.Module.instantiate checked { device := .cpu }
+  let module ← nn.Module.instantiate checked { device := cpu }
   let trainingOutput ← module.forward input
   module.eval
   let evaluationOutput ← module.forward input
@@ -274,7 +274,7 @@ comment. In runtime code the pieces fit together as:
 let table := nn.build 2026 <| nn.embedding vocab embedDim
 let tokenShape := [batch, seqLen]
 let tokenIds ← Tensor.checkIndices vocab rawTokenIds
-let module ← nn.IndexedModule.instantiate (table.model tokenShape) { device := .cpu }
+let module ← nn.IndexedModule.instantiate (table.model tokenShape) { device := cpu }
 let vectors ← module.forward tokenIds (mode := some .eval)
 ```
 

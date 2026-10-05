@@ -53,13 +53,13 @@ Runtime, device, arithmetic, and optimizer settings for a trainer or one trainin
 
 Example:
 ```lean
--- The defaults train on the CPU in Lean's `Float32`. `.ieee` swaps in the bit-level reference
+-- The defaults train on the CPU in Lean's `Float32`. `ieee` swaps in the bit-level reference
 -- semantics, which is the setting to reach for when a result looks like a rounding artifact.
 def settings : Trainer.RunConfig :=
   { optimizer := optim.sgd { learningRate := 0.01, momentum := 0.9 }
-    arithmetic := .native
-    execution := .eager
-    device := .cpu }
+    arithmetic := native
+    execution := eager
+    device := cpu }
 ```
 -/
 structure RunConfig where

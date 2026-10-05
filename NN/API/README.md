@@ -5,6 +5,7 @@ Most programs need:
 ```lean
 import NN.API
 open TorchLean
+open Trainer.Objective (mse)
 ```
 
 Import `NN` only when the same file also uses specification, proof, verification, or backend
@@ -67,7 +68,7 @@ def data := Data.fromTensors inputs targets
 
 def trainer :=
   Trainer.new model
-    { objective := .mse
+    { objective := mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := 2026 }
 
@@ -87,7 +88,7 @@ The model definition is immutable. `Trainer.new` attaches the objective and runt
 `steps` is required. `samplesPerStep` accumulates gradients from that many dataset items per
 update; vectorized minibatches come from `Data.batch` and a model with an explicit batch axis.
 The supervised `Trainer` accepts `Tensor Float` at its boundary and runs training in binary32:
-`Float32` under `.native` arithmetic and FloatLib's configured `ExecFloat.Binary` under `.ieee`
+`Float32` under `native` arithmetic and FloatLib's configured `ExecFloat.Binary` under `ieee`
 (8 exponent bits and 23 fraction bits). The result's summary names the scalar that ran.
 
 ## Tensors
@@ -99,9 +100,10 @@ def vector : Tensor Float [3] := [1, 2, 3]
 def matrix : Tensor Float [2, 2] := [[1, 2], [3, 4]]
 ```
 
-Use `Array α` while a length is known only at runtime. Convert or reshape only after validating the
-boundary. Ordinary application code always receives `Tensor`; it does not choose among internal
-tensor representations.
+Numerical application inputs and outputs use tensors, including tensors whose dimensions are
+computed at runtime. Arrays and lists can still occur at file-decoding and interoperability
+boundaries; convert them there and validate the required shape. Application code does not choose
+among internal tensor representations.
 
 `TensorPack α shapes` is reserved for a statically heterogeneous collection of tensor shapes, such
 as model parameters and buffers. `Spec.SomeTensor α` is a runtime shape-erased value used by
@@ -127,8 +129,10 @@ The public API uses names that describe the boundary being crossed:
 Recursive representation constructors such as tensor shape nodes and tensor-pack cons cells belong
 to implementation code. Application examples use literals, records, and named operations instead,
 and tuple results are immediately bound to descriptive local names.
-Type-directed choices such as `.relu`, `.train`, `.cuda`, and `.mean` remain concise because their
-expected type already determines what the case means.
+`open TorchLean` exposes device and execution choices such as `cpu`, `gpu`, `eager`, `typedGraph`,
+`native`, and `ieee` without leading dots. For other choices, open their namespace explicitly,
+as with `open Trainer.Objective (mse)` above. A method call such as `trainer.train` is different:
+the dot selects an operation on a value rather than an enum case.
 
 When updating older model code, add the `Shape` suffix to configuration shape accessors.
 For causal transformers, use `tokenShape`, `vocabularyShape`, and `embeddingShape` for the

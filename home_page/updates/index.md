@@ -3,6 +3,7 @@ title: Updates
 ---
 
 <nav class="timeline-nav" aria-label="TorchLean update timeline">
+  <a href="#october-2026-custom-computations">Custom computations</a>
   <a href="#september-2026-libtorch">LibTorch backend</a>
   <a href="#september-2026-floatlib">FloatLib and precision</a>
   <a href="#september-2026-proof-refactor">Proof refactor</a>
@@ -20,6 +21,52 @@ title: Updates
 </nav>
 
 <div class="updates-timeline">
+
+<article class="update-card" id="october-2026-custom-computations" markdown="1">
+  <div class="update-date">October 2026</div>
+  <div class="update-body" markdown="1">
+
+## Running Our Own Tensor Calculations
+
+We wanted to make a small custom calculation as easy to try as a built-in tensor operation.
+Write the function in Lean, give it a tensor, and choose the device when you run it:
+
+```lean
+import NN.Kernel
+open TorchLean
+
+def square := fun (x : Float32) => x * x
+def input : Tensor Float32 [3] := [1, 2, 3]
+
+#eval square.run input
+-- [1.000000, 4.000000, 9.000000]
+
+def onGpu := square.run input (device := gpu)
+```
+
+CPU is the default and evaluates the original Lean function. GPU supports FP32 and FP64 scalar
+arithmetic, comparisons, local bindings and conditionals. For calculations that read several
+tensors or sum entries in a particular order, `Program.of` supports indexed reads and bounded
+folds. Unsupported GPU calculations return an error; we don't silently run them on CPU.
+
+The frontend produces a typed expression with a Lean proof that it agrees with our function.
+We also prove correspondence through lowering and the generated source grammar, under explicit
+arithmetic and buffer contracts. NVRTC compilation and GPU execution still depend on NVIDIA's
+toolchain and hardware. Standard model operations continue to use LibTorch, and custom backward
+rules need their own implementation and proof.
+
+We shortened the settings users write too: `open TorchLean` exposes `cpu`, `gpu`, `native`,
+`ieee`, `eager` and `typedGraph`. Input directions for higher derivatives now form one tensor,
+with a leading axis for the derivative order. The PINN example uses tensors for its collocation
+points and boundary data as well.
+
+Try the [custom computations example]({{ '/examples/custom-computations/' | relative_url }})
+for a square, a conditional activation and a row sum. The
+[guide chapter]({{ '/blueprint/Runtime___-Autograd___-and-Interop/Custom-Tensor-Computations/' | relative_url }})
+also explains the precision choices and proofs.
+
+  </div>
+</article>
 
 <article class="update-card" id="september-2026-libtorch" markdown="1">
   <div class="update-date">September 2026</div>
@@ -322,8 +369,8 @@ autograd derivative proofs, graph evaluation, CROWN certificates, and the docume
 The execution API now separates execution mode from device selection:
 
 ```lean
-{ execution := .typedGraph
-  device := .cpu }
+{ execution := typedGraph
+  device := cpu }
 ```
 
 Eager execution runs each operation immediately and builds a dynamic tape. Typed graph execution

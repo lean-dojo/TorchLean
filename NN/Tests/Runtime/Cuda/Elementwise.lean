@@ -9,13 +9,15 @@ module
 public import NN.Runtime.Autograd.Engine.LibTorch.Ops
 public import NN.Tensor
 public import NN.Tests.Runtime.Cuda.Utils
+import NN.Kernel
 
 /-!
 # CUDA Kernel Coverage: Elementwise Ops
 
 Focused activation value/VJP regressions and a composite forward/backward test cover
 (`add/sub/mul/scale/abs/sqrt/clamp/max/min/relu/sigmoid/tanh/gelu/softplus/exp/log/inv/safe_log`)
-plus `sum`.
+plus `sum`. Generated custom computations also exercise NVRTC, scalar precision, lazy branches,
+sequential accumulation, empty tensors and checked native reads.
 -/
 
 @[expose] public section
@@ -27,6 +29,7 @@ namespace Elementwise
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
 open Runtime.Autograd
+open scoped NN.Kernel
 
 def assertActivationValue (label : String) (got expected : Float)
     (rtol : Float := 3e-6) : IO Unit := do
@@ -160,9 +163,53 @@ def runActivationNumerics : IO Unit := do
   checkActivation "sigmoid empty" Runtime.Autograd.LibTorch.Buffer.sigmoid sigmoidNode
     sigmoidDerivative #[] #[] #[]
 
-def run : IO Unit := do
+private def square := fun (x : Float32) => x * x
+private def positiveSquare := fun (x : Float32) => if x < 0 then 0 else x * x
+private def squareWide := fun (x : Float) => x * x
+
+/-- Native execution checks complement source-equivalence proofs at the NVRTC/FFI boundary. -/
+private def checkCustomComputations : IO Unit := do
+  let input : Tensor Float32 [513] := Tensor.ofFn fun i => Float32.ofNat (i.val % 17) - 8
+  let squared ← square.run input (device := gpu)
+  let activated ← positiveSquare.run input (device := gpu)
+  for i in List.finRange 513 do
+    unless squared[i].toBits == (square input[i]).toBits &&
+        activated[i].toBits == (positiveSquare input[i]).toBits do
+      throw <| IO.userError s!"custom binary32: incorrect result at {i}"
+  let wide : Tensor Float [2] := [1.0000000000000002, -3.5]
+  let squaredWide ← squareWide.run wide (device := gpu)
+  for i in List.finRange 2 do
+    unless squaredWide[i].toBits == (squareWide wide[i]).toBits do
+      throw <| IO.userError s!"custom binary64: incorrect result at {i}"
+  let _ ← square.run (Tensor.zeros [0]) (device := gpu)
+  let rows : Tensor Float32 [2, 3] := [[16777216, 1, -16777216], [1, 2, 3]]
+  let rowSum := Program.of
+    (fun (read : NN.Kernel.Reader Float32) (row : UInt64) =>
+      NN.Kernel.iterate (fun column acc => do
+        let x ← read 0 (row * 3 + column)
+        pure (acc + x)) 3 0 0)
+  let sums ← rowSum.run (TensorPack.singleton rows) [2] (device := gpu)
+  unless sums[0] == 0 && sums[1] == 6 do
+    throw <| IO.userError "custom fold: changed sequential addition order"
+  let guarded := Program.of
+    (fun (read : NN.Kernel.Reader Float32) (i : UInt64) =>
+      if i == 0 then pure 7 else read 0 i)
+  let noInput : Tensor Float32 [0] := Tensor.zeros [0]
+  let guardedOutput ← guarded.run (TensorPack.singleton noInput) [1] (device := gpu)
+  unless guardedOutput[0] == 7 do
+    throw <| IO.userError "custom conditional: incorrect branch"
+  let rejected ← try
+    let _ ← guarded.run (TensorPack.singleton noInput) [2] (device := gpu)
+    pure false
+  catch _ => pure true
+  unless rejected do
+    throw <| IO.userError "custom read: accepted an out-of-bounds native access"
+  IO.println "  custom computations: binary32/binary64, branches, folds and bounds passed"
+
+@[no_expose] def run : IO Unit := do
   IO.println "=== CUDA kernel coverage: elementwise ==="
   runActivationNumerics
+  checkCustomComputations
 
   let s : Shape := [5]
   let a : Tensor Float s :=

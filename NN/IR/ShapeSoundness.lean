@@ -717,6 +717,9 @@ theorem evalNodeRaw_shape_of_infer
   cases hk : n.kind with
   | input => exact hDecl ▸ evalNodeRaw_shape_source (Or.inl hk) hInfer hEval
   | const s => exact hDecl ▸ evalNodeRaw_shape_source (Or.inr (Or.inl ⟨s, hk⟩)) hInfer hEval
+  | custom name shapes output =>
+      simp only [evalNodeRaw, hk] at hEval
+      exact (show OkShape n.outShape _ from by ok_shape) v hEval
   | permute perm => exact evalNodeRaw_shape_declared (Or.inl ⟨perm, hk⟩) hEval
   | transpose a₁ a₂ => exact evalNodeRaw_shape_declared (Or.inr (Or.inl ⟨a₁, a₂, hk⟩)) hEval
   | detach => exact hDecl ▸ evalNodeRaw_shape_unary_elementwise (by simp [hk]) hParents hInfer hEval

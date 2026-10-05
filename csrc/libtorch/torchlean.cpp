@@ -4,17 +4,23 @@
 // Buffer ownership and runtime controls
 
 #include <ATen/Context.h>
+#include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #include <c10/cuda/CUDAFunctions.h>
+#include <c10/cuda/CUDAStream.h>
 #include <lean/mimalloc.h>
 #include <torch/version.h>
+#include <cuda.h>
+#include <nvrtc.h>
 
 #include <atomic>
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <list>
 #include <mutex>
 #include <new>
+#include <string>
 
 namespace {
 
@@ -155,6 +161,128 @@ lean_obj_res download(b_lean_obj_arg object) {
     std::memcpy(lean_float_array_cptr(out), host.const_data_ptr<double>(),
                 checked_bytes_size(buffer->size, sizeof(double), "FloatArray size overflow"));
   return out;
+}
+
+void check_driver(CUresult result) {
+  if (result == CUDA_SUCCESS) return;
+  const char* message = nullptr;
+  cuGetErrorString(result, &message);
+  TORCH_CHECK(false, "kernel CUDA driver: ", message ? message : "unknown error");
+}
+
+void check_nvrtc(nvrtcResult result) {
+  TORCH_CHECK(result == NVRTC_SUCCESS, "kernel NVRTC: ", nvrtcGetErrorString(result));
+}
+
+struct CompiledKernel {
+  CUcontext context = nullptr;
+  CUmodule module = nullptr;
+  CUfunction function = nullptr;
+
+  ~CompiledKernel() {
+    // Eviction can occur on a different host thread or after its device guard has changed.
+    // If CUDA has already torn down this context, it has also reclaimed the module.
+    if (module && cuCtxPushCurrent(context) == CUDA_SUCCESS) {
+      cuModuleUnload(module);
+      CUcontext previous = nullptr;
+      cuCtxPopCurrent(&previous);
+    }
+  }
+};
+
+std::shared_ptr<CompiledKernel> compile_kernel(const std::string& source) {
+  TORCH_CHECK(source.size() <= 16 * 1024 * 1024, "kernel: generated source exceeds 16 MiB");
+  C10_CUDA_CHECK(cudaFree(nullptr));  // Establish the selected device's primary context.
+  CUcontext context = nullptr;
+  check_driver(cuCtxGetCurrent(&context));
+  TORCH_CHECK(context, "kernel: no current CUDA context");
+  using Entry = std::pair<std::pair<CUcontext, std::string>, std::shared_ptr<CompiledKernel>>;
+  static std::mutex lock;
+  static std::list<Entry> cache;
+  std::lock_guard<std::mutex> guard(lock);
+  for (auto it = cache.begin(); it != cache.end(); ++it) {
+    if (it->first.first == context && it->first.second == source) {
+      auto result = it->second;
+      cache.splice(cache.begin(), cache, it);
+      return result;
+    }
+  }
+
+  nvrtcProgram program = nullptr;
+  check_nvrtc(nvrtcCreateProgram(&program, source.c_str(), "torchlean_kernel.cu", 0,
+                               nullptr, nullptr));
+  struct ProgramGuard {
+    nvrtcProgram* program;
+    ~ProgramGuard() { nvrtcDestroyProgram(program); }
+  } program_guard{&program};
+  const auto* properties = at::cuda::getCurrentDeviceProperties();
+  const std::string architecture = "--gpu-architecture=compute_" +
+      std::to_string(properties->major) + std::to_string(properties->minor);
+  const char* options[] = {architecture.c_str(), "--std=c++17", "--fmad=false",
+                          "--ftz=false", "--prec-div=true", "--prec-sqrt=true"};
+  const auto status = nvrtcCompileProgram(program, 6, options);
+  size_t log_size = 0;
+  check_nvrtc(nvrtcGetProgramLogSize(program, &log_size));
+  std::string log(log_size, '\0');
+  if (log_size) check_nvrtc(nvrtcGetProgramLog(program, log.data()));
+  TORCH_CHECK(status == NVRTC_SUCCESS, "kernel NVRTC compilation failed: ",
+              nvrtcGetErrorString(status), "\n", log);
+  size_t ptx_size = 0;
+  check_nvrtc(nvrtcGetPTXSize(program, &ptx_size));
+  std::string ptx(ptx_size, '\0');
+  check_nvrtc(nvrtcGetPTX(program, ptx.data()));
+  auto result = std::make_shared<CompiledKernel>();
+  result->context = context;
+  check_driver(cuModuleLoadData(&result->module, ptx.c_str()));
+  check_driver(cuModuleGetFunction(&result->function, result->module, "torchlean_kernel"));
+  cache.push_front({{context, source}, result});
+  // Shared ownership retains evicted modules until any launch using them has finished.
+  if (cache.size() > 16) cache.pop_back();
+  return result;
+}
+
+at::Tensor run_kernel(b_lean_obj_arg source, const std::vector<at::Tensor>& inputs,
+                      at::ScalarType scalar, uint64_t count) {
+  TORCH_CHECK(count <= INT64_MAX, "kernel: output size exceeds signed tensor size range");
+  TORCH_CHECK(count <= SIZE_MAX / c10::elementSize(scalar), "kernel: output byte size overflow");
+  const auto kernel = compile_kernel(lean_string_cstr(source));
+  auto output = at::empty({static_cast<int64_t>(count)}, torchlean::options().dtype(scalar));
+  auto error = at::zeros({4}, torchlean::options().dtype(at::kLong));
+  if (count == 0) return output;
+  constexpr uint64_t threads = 256;
+  const uint64_t blocks = (count + threads - 1) / threads;
+  const auto* properties = at::cuda::getCurrentDeviceProperties();
+  TORCH_CHECK(blocks <= static_cast<uint64_t>(properties->maxGridSize[0]),
+              "kernel: output exceeds CUDA grid extent");
+  std::vector<CUdeviceptr> addresses(inputs.size());
+  std::vector<uint64_t> sizes(inputs.size());
+  std::vector<void*> arguments;
+  arguments.reserve(inputs.size() * 2 + 3);
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    const auto& input = inputs[i];
+    TORCH_CHECK(input.device() == output.device() && input.scalar_type() == scalar &&
+                input.is_contiguous(), "kernel: input device, dtype or layout mismatch");
+    addresses[i] = reinterpret_cast<CUdeviceptr>(input.const_data_ptr());
+    sizes[i] = static_cast<uint64_t>(input.numel());
+    arguments.push_back(&addresses[i]);
+    arguments.push_back(&sizes[i]);
+  }
+  CUdeviceptr destination = reinterpret_cast<CUdeviceptr>(output.data_ptr());
+  CUdeviceptr error_address = reinterpret_cast<CUdeviceptr>(error.data_ptr());
+  arguments.push_back(&destination);
+  arguments.push_back(&error_address);
+  arguments.push_back(&count);
+  const auto stream = c10::cuda::getCurrentCUDAStream(output.device().index());
+  check_driver(cuLaunchKernel(kernel->function, static_cast<unsigned int>(blocks), 1, 1,
+                             threads, 1, 1, 0, stream.stream(), arguments.data(), nullptr));
+  // Keep inputs and the module alive until execution and error reporting have completed.
+  // The blocking copy also sequences ATen's error initialization on the same stream.
+  auto host_error = error.to(at::kCPU).contiguous();
+  const auto* record = host_error.const_data_ptr<int64_t>();
+  TORCH_CHECK(record[0] == 0, "kernel: input ", static_cast<uint64_t>(record[1]),
+              " index ", static_cast<uint64_t>(record[2]), " is outside size ",
+              static_cast<uint64_t>(record[3]));
+  return output;
 }
 
 uint32_t read_bits(const uint8_t* source) {
@@ -393,6 +521,48 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_to_float_array(b_lean_
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_to_float_array_io(b_lean_obj_arg object) {
   return io([&] { return download(object); });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_kernel_run_buffer(
+    b_lean_obj_arg source, b_lean_obj_arg objects, uint64_t count) {
+  return io([&] {
+    std::vector<at::Tensor> inputs;
+    inputs.reserve(lean_array_size(objects));
+    for (size_t i = 0; i < lean_array_size(objects); ++i)
+      inputs.push_back(torchlean::tensor(lean_array_uget(objects, i)));
+    return torchlean::box(run_kernel(source, inputs, at::kFloat, count));
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_kernel_run_host(
+    b_lean_obj_arg source, uint32_t format, b_lean_obj_arg arrays, uint64_t count) {
+  return io([&] {
+    TORCH_CHECK(format <= 1, "kernel: unsupported scalar format");
+    TORCH_CHECK(count <= SIZE_MAX / sizeof(double), "kernel: host output byte size overflow");
+    const auto scalar = format == 0 ? at::kFloat : at::kDouble;
+    std::vector<at::Tensor> inputs;
+    inputs.reserve(lean_array_size(arrays));
+    for (size_t i = 0; i < lean_array_size(arrays); ++i) {
+      const auto object = lean_array_uget(arrays, i);
+      const size_t n = lean_sarray_size(object);
+      TORCH_CHECK(n <= INT64_MAX, "kernel: input size exceeds signed tensor size range");
+      if (n == 0) {
+        inputs.push_back(at::empty({0}, torchlean::options().dtype(scalar)));
+      } else {
+        const auto host = at::from_blob(lean_float_array_cptr(object),
+            {static_cast<int64_t>(n)}, at::TensorOptions().dtype(at::kDouble).device(at::kCPU));
+        inputs.push_back(host.to(torchlean::options().dtype(scalar), false, true));
+      }
+    }
+    const auto result = run_kernel(source, inputs, scalar, count);
+    const auto host = result.to(at::TensorOptions().device(at::kCPU).dtype(at::kDouble))
+                            .contiguous();
+    auto output = lean_mk_empty_float_array(lean_box(static_cast<size_t>(count)));
+    lean_sarray_set_size(output, static_cast<size_t>(count));
+    if (count) std::memcpy(lean_float_array_cptr(output), host.const_data_ptr<double>(),
+                          static_cast<size_t>(count) * sizeof(double));
+    return output;
+  });
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_to_float32_bytes_io(b_lean_obj_arg object) {
@@ -853,7 +1023,6 @@ namespace {
 using namespace torchlean;
 using at::Tensor;
 
-constexpr int64_t kMaxRank = 8;
 constexpr double kNegativeInfinity = -std::numeric_limits<double>::infinity();
 
 int64_t element_count(at::IntArrayRef shape) {
@@ -877,7 +1046,6 @@ std::vector<int64_t> shape_array(b_lean_obj_arg object) {
   require(lean_is_array(const_cast<lean_object*>(object)),
           "LibTorch kernels: expected Array Nat");
   auto shape = dimensions(object, "LibTorch kernels: dimension exceeds UInt32");
-  require(shape.size() <= kMaxRank, "LibTorch kernels: rank exceeds eight");
   element_count(shape);
   return shape;
 }
@@ -1671,9 +1839,23 @@ static Gradients convolution_backward(
 }
 
 struct PoolArguments {
-  Shape kernel, stride, padding, dilation;
-  explicit PoolArguments(const Geometry& g)
+  Shape kernel, stride, padding, dilation, explicit_padding;
+  explicit PoolArguments(const Geometry& g, bool average = false)
       : kernel(g.kernel), stride(g.stride), padding(g.padding), dilation(g.input.size(), 1) {
+    // avg_pool3d rejects a small unpadded input even when its padded windows are valid.
+    // Materializing those zeros keeps the full-window divisor and uses the same ATen operator.
+    if (average && kernel.size() == 3) {
+      bool small = false;
+      for (size_t axis = 0; axis < kernel.size(); ++axis)
+        small = small || g.input[axis] < kernel[axis];
+      if (small) {
+        for (size_t axis = kernel.size(); axis-- > 0;) {
+          explicit_padding.push_back(padding[axis]);
+          explicit_padding.push_back(padding[axis]);
+        }
+        padding.assign(kernel.size(), 0);
+      }
+    }
     // ATen exposes 1-D pooling backward through its 2-D operators.
     if (kernel.size() == 1) {
       kernel.insert(kernel.begin(), 1);
@@ -1728,8 +1910,10 @@ static at::Tensor max_pool_backward(
 static at::Tensor avg_pool_forward(const at::Tensor& input, const Geometry& g, int64_t channels) {
   if (channels == 0 || g.output_volume == 0) return at::empty({0}, input.options());
   const auto x = input.reshape(with_channels(channels, g.input));
-  const PoolArguments args(g);
-  const auto source = args.batched(x, g);
+  const PoolArguments args(g, true);
+  auto source = args.batched(x, g);
+  if (!args.explicit_padding.empty())
+    source = at::constant_pad_nd(source, args.explicit_padding, 0);
   const auto result = g.input.size() == 3
       ? at::avg_pool3d(source, args.kernel, args.stride, args.padding, false, true, std::nullopt)
       : at::avg_pool2d(source, args.kernel, args.stride, args.padding, false, true, std::nullopt);
@@ -1741,15 +1925,22 @@ static at::Tensor avg_pool_backward(
   const auto count = volume(with_channels(channels, g.input));
   if (gradient.numel() == 0) return at::zeros({count}, gradient.options());
   const auto grad = gradient.reshape(with_channels(channels, g.output));
-  const PoolArguments args(g);
+  const PoolArguments args(g, true);
   // The upstream backward needs the input's shape, but never its values.
-  const auto source = args.batched(at::empty(with_channels(channels, g.input), grad.options()), g);
+  auto input_shape = with_channels(channels, g.input);
+  if (!args.explicit_padding.empty())
+    for (size_t axis = 0; axis < g.input.size(); ++axis)
+      input_shape[axis + 1] += 2 * g.padding[axis];
+  const auto source = args.batched(at::empty(input_shape, grad.options()), g);
   const auto dy = args.batched(grad, g);
-  const auto result = g.input.size() == 3
+  auto result = g.input.size() == 3
       ? at::avg_pool3d_backward(
             dy, source, args.kernel, args.stride, args.padding, false, true, std::nullopt)
       : at::avg_pool2d_backward(
             dy, source, args.kernel, args.stride, args.padding, false, true, std::nullopt);
+  if (!args.explicit_padding.empty())
+    for (size_t axis = 0; axis < g.input.size(); ++axis)
+      result = result.narrow(axis + 2, g.padding[axis], g.input[axis]);
   return args.unbatched(result, g);
 }
 
@@ -1869,6 +2060,123 @@ static lean_obj_res pooling_ffi(
 }
 
 }  // namespace torchlean::conv_pool
+
+namespace {
+
+// The pure ABI's dimension helpers panic. IO operations must reject malformed metadata by
+// throwing instead, so `io` can return an ordinary Lean error without terminating the process.
+std::vector<int64_t> io_dimensions(b_lean_obj_arg object) {
+  TORCH_CHECK(lean_is_array(object), "LibTorch: expected dimension array");
+  std::vector<int64_t> result;
+  result.reserve(lean_array_size(object));
+  for (size_t i = 0; i < lean_array_size(object); ++i) {
+    const auto dim = lean_array_uget(object, i);
+    TORCH_CHECK(lean_is_scalar(dim) && lean_unbox(dim) <= UINT32_MAX,
+                "LibTorch: dimension exceeds UInt32 ABI");
+    result.push_back(static_cast<int64_t>(lean_unbox(dim)));
+  }
+  return result;
+}
+
+int64_t io_volume(const std::vector<int64_t>& shape) {
+  if (std::find(shape.begin(), shape.end(), 0) != shape.end()) return 0;
+  int64_t result = 1;
+  for (const auto dim : shape) {
+    TORCH_CHECK(dim > 0 && result <= INT64_MAX / dim, "LibTorch: dimension product overflow");
+    result *= dim;
+  }
+  return result;
+}
+
+const at::Tensor& io_tensor(b_lean_obj_arg object, const std::vector<int64_t>& shape) {
+  const auto& value = torchlean::tensor(object);
+  TORCH_CHECK(value.numel() == io_volume(shape), "LibTorch: buffer size mismatch");
+  return value;
+}
+
+}  // namespace
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_softmax_io(
+    b_lean_obj_arg input, b_lean_obj_arg dims, uint32_t axis) {
+  return io([&] {
+    const auto shape = io_dimensions(dims);
+    TORCH_CHECK(axis < shape.size(), "LibTorch softmax: axis out of range");
+    return torchlean::box(at::softmax(io_tensor(input, shape).reshape(shape), axis, at::kFloat));
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_conv_io(
+    b_lean_obj_arg input, b_lean_obj_arg kernel, b_lean_obj_arg bias,
+    b_lean_obj_arg input_dims, b_lean_obj_arg kernel_dims, b_lean_obj_arg strides,
+    b_lean_obj_arg padding_before, b_lean_obj_arg padding_after, b_lean_obj_arg dilations,
+    uint32_t groups) {
+  return io([&] {
+    using namespace torchlean;
+    using namespace torchlean::conv_pool;
+    const auto read = io_dimensions;
+    const auto shape = read(input_dims), weight_shape = read(kernel_dims);
+    const auto stride = read(strides), before = read(padding_before);
+    const auto after = read(padding_after), dilation = read(dilations);
+    const size_t rank = stride.size();
+    TORCH_CHECK(rank >= 1 && rank <= kMaxSpatialRank,
+                "LibTorch conv: spatial rank must be one, two, or three");
+    TORCH_CHECK(shape.size() >= rank + 1 && weight_shape.size() == rank + 2 &&
+                before.size() == rank && after.size() == rank && dilation.size() == rank,
+                "LibTorch conv: rank mismatch");
+    const size_t channel_axis = shape.size() - rank - 1;
+    const int64_t in_channels = shape[channel_axis], out_channels = weight_shape[0];
+    TORCH_CHECK(groups > 0 && in_channels > 0 && out_channels > 0 &&
+                in_channels % groups == 0 && out_channels % groups == 0 &&
+                weight_shape[1] == in_channels, "LibTorch conv: invalid channel groups");
+    const int64_t batch = io_volume(Shape(shape.begin(), shape.begin() + channel_axis));
+    TORCH_CHECK(batch <= UINT32_MAX, "LibTorch conv: batch exceeds ABI");
+    Shape output{batch, out_channels}, packed_shape = weight_shape;
+    packed_shape[1] = in_channels / groups;
+    Shape input_shape{batch};
+    input_shape.insert(input_shape.end(), shape.begin() + channel_axis, shape.end());
+    Shape pads;
+    for (size_t axis = 0; axis < rank; ++axis) {
+      const auto k = weight_shape[axis + 2];
+      TORCH_CHECK(k > 0 && stride[axis] > 0 && dilation[axis] > 0,
+                  "LibTorch conv: kernel, stride and dilation must be positive");
+      const uint64_t effective = static_cast<uint64_t>(k - 1) * dilation[axis] + 1;
+      const uint64_t padded = static_cast<uint64_t>(shape[channel_axis + 1 + axis]) +
+                              before[axis] + after[axis];
+      const uint64_t extent = padded < effective ? 0 : (padded - effective) / stride[axis] + 1;
+      TORCH_CHECK(extent <= UINT32_MAX, "LibTorch conv: output dimension exceeds ABI");
+      output.push_back(static_cast<int64_t>(extent));
+    }
+    TORCH_CHECK(io_volume(output) <= UINT32_MAX, "LibTorch conv: output exceeds ABI");
+    const auto& x_flat = io_tensor(input, shape);
+    const auto& w_flat = io_tensor(kernel, weight_shape);
+    const auto& b = io_tensor(bias, Shape{out_channels});
+    if (io_volume(output) == 0) return box(at::empty({0}, x_flat.options()));
+    if (x_flat.numel() == 0) {
+      Shape singleton(output.size(), 1);
+      singleton[1] = out_channels;
+      return box(b.reshape(singleton).expand(output).clone());
+    }
+    auto w = w_flat.reshape(weight_shape);
+    if (groups != 1) {
+      std::vector<at::Tensor> blocks;
+      const int64_t in_group = in_channels / groups, out_group = out_channels / groups;
+      blocks.reserve(groups);
+      for (uint32_t group = 0; group < groups; ++group)
+        blocks.push_back(w.slice(0, group * out_group, (group + 1) * out_group)
+                          .slice(1, group * in_group, (group + 1) * in_group));
+      w = at::cat(blocks, 0).reshape(packed_shape);
+    }
+    for (size_t axis = rank; axis-- > 0;) {
+      pads.push_back(before[axis]);
+      pads.push_back(after[axis]);
+    }
+    const auto x = at::constant_pad_nd(x_flat.reshape(input_shape), pads, 0);
+    const Shape zeros(rank, 0);
+    const auto result = at::convolution(x, w, b, stride, zeros, dilation, false, zeros, groups);
+    TORCH_CHECK(result.sizes().vec() == output, "LibTorch conv: unexpected output geometry");
+    return box(result);
+  });
+}
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_conv_fwd(
     b_lean_obj_arg input, b_lean_obj_arg kernel, b_lean_obj_arg bias,

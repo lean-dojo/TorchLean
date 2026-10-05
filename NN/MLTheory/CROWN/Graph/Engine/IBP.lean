@@ -37,6 +37,7 @@ open BoundOps
   let get (pid : Nat) := (boxes[pid]?).join
   match node.kind with
   | .input => ps.inputBoxes[id]?
+  | .custom .. => none
   | .const _ => do
     let v ← ps.constVals[id]?
     some { dim := v.n, lo := v.v, hi := v.v }

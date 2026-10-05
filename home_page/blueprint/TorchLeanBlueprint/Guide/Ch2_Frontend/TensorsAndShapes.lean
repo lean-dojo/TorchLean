@@ -127,7 +127,7 @@ dtype. Lean obtains the element type from `Tensor`'s first argument, or infers i
 the right-hand side when the annotation is omitted.
 
 The trainer's arithmetic choice selects the instantiated executable element type and its arithmetic
-semantics. For example, `arithmetic := .native` instantiates the model at Lean 4.34's native
+semantics. For example, `arithmetic := native` instantiates the model at Lean 4.34's native
 `Float32`; it does not
 reinterpret an already constructed `Tensor Float [4, 2]`. Device storage is a further backend
 contract: TorchLean's CUDA path stores native `Float32` model values as contiguous binary32 data.

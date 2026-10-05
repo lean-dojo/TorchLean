@@ -93,8 +93,8 @@ loss. These distinctions matter when several derivative objects appear in one lo
 The last two calls differentiate model inputs, not parameters. The model applies $`\tanh` to
 each coordinate independently, so its mixed derivative in the two coordinate directions is zero.
 Repeating the first direction three times gives $`\tanh'''(0)=-2` in the first output and zero
-in the second. `autograd.model.derivative` takes the directions as a list; its length chooses
-the derivative order.
+in the second. `autograd.model.derivative` takes one tensor of directions; its leading axis chooses
+the derivative order. Two directions of shape `[2]` therefore form a tensor of shape `[2, 2]`.
 
 The affine model's initial state is seeded, whereas `agState` below replaces that state with
 constants. This explains why its directional derivative is `0.011629` and the later fixed-state

@@ -133,8 +133,8 @@ def tfTrainer (seed : Nat) : Trainer [2] [1] :=
   Trainer.new tfModel
     { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
-      arithmetic := .native
-      execution := .eager
+      arithmetic := native
+      execution := eager
       seed := seed }
 ```
 
@@ -852,7 +852,7 @@ mean_loss(after training) = 0.401184
 trained(heldout) = [0.365380]
 ```
 
-The trainer method remains `train`; `execution := .typedGraph` changes how that method runs without
+The trainer method remains `train`; `execution := typedGraph` changes how that method runs without
 changing the model's `forward` definition. {ref "execution-modes"}[The execution chapter] develops
 the graph reuse and proof boundaries in detail.
 

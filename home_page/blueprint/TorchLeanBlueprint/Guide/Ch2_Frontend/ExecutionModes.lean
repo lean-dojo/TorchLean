@@ -750,13 +750,13 @@ Matching the public input type alone does not establish matching internal arithm
 -- Record updates isolate runtime changes while retaining
 -- the optimizer settings.
 def emEagerCpu : Trainer.RunConfig :=
-  { arithmetic := .native
-    execution := .eager
-    device := .cpu
+  { arithmetic := native
+    execution := eager
+    device := cpu
     optimizer := optim.adam { learningRate := 0.03 } }
 
 def emTypedGraphCpu : Trainer.RunConfig :=
-  { emEagerCpu with execution := .typedGraph }
+  { emEagerCpu with execution := typedGraph }
 
 def emEagerCuda : Trainer.RunConfig :=
   { emEagerCpu with device := .cuda }

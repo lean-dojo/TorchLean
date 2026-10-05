@@ -12,6 +12,15 @@ The cards illustrate each workflow. Their numerical values and “verified” ba
 the linked pages state the actual artifacts, checker predicates, and theorem assumptions.
 
 <div class="showcase-grid showcase-grid-featured">
+  <a class="showcase-card showcase-image-card" href="{{ '/examples/custom-computations/' | relative_url }}">
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/custom-computations.svg' | relative_url }}" alt="A Lean square function applied to a tensor on CPU or GPU, mapping 1, 2, 3 to 1, 4, 9"/>
+    <span class="showcase-body">
+      <span class="showcase-title">Custom Tensor Computations</span>
+      <span class="showcase-text">Let's square a tensor with an ordinary Lean function, then choose CPU or GPU when we run it. Try the CPU example directly in Lean's Infoview.</span>
+      <span class="showcase-link">Open the example</span>
+    </span>
+  </a>
+
   <a class="showcase-card showcase-image-card" href="{{ '/blueprint/Semantics-and-Graphs/The-Canonical-Graph-IR/' | relative_url }}">
     <img class="showcase-media" src="{{ '/assets/media/examples/showcase/graph-ir-bounds-new.png' | relative_url }}" alt="TorchLean graph IR to interval bounds example"/>
     <span class="showcase-body">

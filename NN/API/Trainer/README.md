@@ -13,6 +13,7 @@ Application code imports:
 ```lean
 import NN.API
 open TorchLean
+open Trainer.Objective (mse)
 ```
 
 ## Normal Lifecycle
@@ -27,10 +28,10 @@ def model :=
 
 def trainer :=
   Trainer.new model
-    { objective := .mse
+    { objective := mse
       optimizer := optim.adam { learningRate := 0.03 }
-      device := .cpu
-      execution := .eager
+      device := cpu
+      execution := eager
       seed := 2026 }
 
 def data := Data.fromTensors inputs targets
@@ -73,8 +74,8 @@ trained.report.arithmetic
 ## Precision
 
 `trainer.train` and `trainer.open` use `Tensor Float` at their data and result boundaries and train
-in binary32. `arithmetic` selects Lean's `Float32` for `.native` or FloatLib's configured
-`ExecFloat.Binary` with 8 exponent bits and 23 fraction bits for `.ieee`.
+in binary32. `arithmetic` selects Lean's `Float32` for `native` or FloatLib's configured
+`ExecFloat.Binary` with 8 exponent bits and 23 fraction bits for `ieee`.
 Inputs are converted into that scalar as each sample is used;
 predictions, losses, and `trained.state` are read back to `Float`, which is exact for
 binary32 values. `trained.summary` prints `arithmetic=... scalar=...` so a log always shows what
@@ -131,9 +132,11 @@ history and completed-step count. Open a new session before loading to start a f
 
 `Trainer.Config.objective` determines how predictions and targets become a scalar loss:
 
-- `.mse` uses mean squared error;
-- `.oneHotCrossEntropy axis` uses one-hot targets along the chosen class axis;
-- `.custom loss` accepts a checked scalar loss program.
+- `Trainer.Objective.mse` uses mean squared error;
+- `Trainer.Objective.oneHotCrossEntropy axis` uses one-hot targets along the chosen class axis;
+- `Trainer.Objective.custom loss` accepts a checked scalar loss program.
+
+Open the constructors you need, for example `open Trainer.Objective (mse)`, to use the shorter name.
 
 The model output shape and dataset target shape must agree. Indexed class labels should be checked
 and converted at the data boundary rather than passed to the one-hot objective accidentally.

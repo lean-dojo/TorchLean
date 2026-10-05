@@ -270,6 +270,8 @@ def parseOpKind (ctx : String) (outShape : Shape) (o : StateDict) : Except Strin
   let some tag := Wire.parseOpTag? tagString
     | throw s!"PyTorch graph import: {ctx}: unsupported TorchLean IR op kind `{tagString}`"
   match tag with
+  | .custom =>
+      throw s!"PyTorch graph import: {ctx}: custom computations need a checked Lean body"
   | .const =>
       let valueShape ←
         match o.get? "value_shape" with

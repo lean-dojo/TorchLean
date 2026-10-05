@@ -203,4 +203,8 @@ def withRuntime
 end Arithmetic
 
 end Runtime
+
+-- Export the existing constructors so application settings need no leading dot.
+export Runtime.Arithmetic (native ieee)
+
 end TorchLean

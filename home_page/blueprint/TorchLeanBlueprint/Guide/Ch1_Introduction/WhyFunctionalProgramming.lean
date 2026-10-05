@@ -774,7 +774,7 @@ def wfDrop : nn.Sequential [4] [4] :=
   nn.build 2026 (nn.dropout 0.5)
 
 #eval do
-  let m ← nn.Module.instantiate wfDrop { device := .cpu }
+  let m ← nn.Module.instantiate wfDrop { device := cpu }
   m.eval
   let a ← m.forward [1.0, 1.0, 1.0, 1.0]
   m.train

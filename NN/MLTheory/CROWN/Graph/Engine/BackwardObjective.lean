@@ -581,6 +581,7 @@ private def backwardNode (dir : BackwardDir)
       .minElem | .hardMaskedSoftmax _
     | .maxPool .. | .avgPool ..
     | .broadcastTo .. | .reduceSum .. | .reduceMean .. => consumeCurrent
+    | .custom .. => st.fail
     | .batchNormEval channelAxis _ =>
       match node.parents with
       | #[p1] =>
@@ -827,6 +828,7 @@ private def runBackwardObjectiveDirWithReluAlpha
         | some By => consumeDirectedObjective (α := α) st aY By
         | none => st.fail
       match node.kind with
+      | .custom .. => st.fail
       | .input =>
           if node.id = ctx.inputId then
             st

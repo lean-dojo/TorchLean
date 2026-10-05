@@ -314,6 +314,8 @@ private def emitForwardBody (g : NN.IR.Graph) (ps : ParamStore Float) (bindings 
     match n.kind with
     | .input =>
         lines := lines ++ #[indentFour s!"v{id} = x"]
+    | .custom name .. =>
+        throw s!"PyTorch export: custom {name} at node {id} has no Python body translation"
     | .const _ =>
         let e ← constExpr bindings id
         lines := lines ++ #[indentFour s!"v{id} = {e}"]

@@ -45,8 +45,10 @@ for the bias. The wrapper must put the right values in those buffers, select a k
 the operands its backward rule will need.
 
 TorchLean records the shape, layout, forward, and backward obligations in a kernel capsule.
-LibTorch is the standard CUDA backend; TorchLean no longer supplies its own CUDA kernels.
-Execution goes through ATen, the tensor library distributed with LibTorch. TorchLean
+LibTorch is the standard CUDA backend for model operations. Those operations go through ATen,
+the tensor library distributed with LibTorch. For custom scalar functions,
+{ref "custom-computations"}[Custom Tensor Computations] generates CUDA through a separate
+checked frontend and executes it with NVRTC. TorchLean
 still owns the differentiation tape: it records each operation, retains its operands, selects its
 local vector-Jacobian product (VJP), and accumulates the resulting gradients. Calling an ATen
 backward operator does not create a second autograd graph.
@@ -76,7 +78,8 @@ Run this command from the repository root. Replace the path with the SDK directo
 `TORCHLEAN_LIBTORCH_HOME`; without either setting it looks for `libtorch/` in the repository.
 
 The build compiles TorchLean's C++ adapter and uses the selected SDK's CMake package for compiler
-flags, C++ ABI, and library dependencies. ATen supplies the GPU kernels. Keep the same SDK
+flags, C++ ABI, and library dependencies. ATen supplies the model-operation kernels; custom
+computations also need the CUDA toolkit's NVRTC and driver libraries. Keep the same SDK
 selection on later `build`, `exe`, and `env` commands. The build helper records SDK and compiler
 inputs so that a changed native configuration cannot silently reuse an incompatible adapter.
 
@@ -282,7 +285,7 @@ handler for the same operation:
     { name := "reference_cpu.matmul"
       op := .matmul
       provider := .reference
-      device := .cpu
+      device := cpu
       execute := fun _ => pure () }
   let capDev := cap.device.cliName
   let cpuDev := cpu.device.cliName
@@ -471,7 +474,8 @@ entrypoints report the unsupported selection.
 
 # ATen And The CUDA Libraries
 
-The CUDA provider is LibTorch throughout. The adapter calls ATen operations, and ATen dispatches
+For the maintained model operations, the CUDA provider is LibTorch. The adapter calls ATen,
+and ATen dispatches
 their implementations using the tensor shapes, dtype, device, and runtime settings. Vendor
 libraries such as cuBLAS, cuDNN, and cuFFT sit below that interface.
 

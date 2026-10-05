@@ -79,6 +79,7 @@ def opTag : OpTag → String
   | .flatten => "flatten"
   | .concat => "concat"
   | .mseLoss => "mse_loss"
+  | .custom => "custom"
 
 /-- Parse a v1 constructor spelling into its semantic identity. -/
 def parseOpTag? (s : String) : Option OpTag :=

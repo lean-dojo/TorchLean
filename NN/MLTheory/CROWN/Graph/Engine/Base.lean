@@ -290,14 +290,16 @@ The payload and declared output must agree with the same geometry before any CRO
 Check the graph-level semantic restrictions imposed by the current CROWN engine.
 
 Convolution payloads must match the declared geometry; LayerNorm payloads must match the entire
-normalized suffix. This predicate checks the common shape contract; individual transfers also
-check their arithmetic and derivative requirements.
+normalized suffix. Custom computations are unsupported without verification transfer rules.
+This predicate checks the common shape contract; individual transfers also check their arithmetic
+and derivative requirements.
 -/
 def crownNodeSemanticsSupported (nodes : Array Node) (ps : ParamStore α) (id : Nat) : Bool :=
   match nodes[id]? with
   | none => false
   | some node =>
       match node.kind with
+      | .custom .. => false
       | .conv configuration =>
           match node.parents with
           | #[parentId] =>

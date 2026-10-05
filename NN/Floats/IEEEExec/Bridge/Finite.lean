@@ -10,6 +10,7 @@ public import NN.Floats.FP32
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured
 public import FloatLib.Floats.Formats.IEEE754.Native
 public import FloatLib.Floats.ExecFloat.Proof.Arithmetic
+import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Proof
 
 /-!
 # Finite configured arithmetic for reduction proofs

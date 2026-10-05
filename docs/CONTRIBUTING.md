@@ -34,6 +34,10 @@ The GPU implementation lives in `csrc/libtorch`. TorchLean owns the tape and cal
 [native build instructions](../scripts/README.md#libtorch-cuda-build) for SDK selection and
 compiler requirements. CPU checks do not exercise the GPU backend.
 
+Custom scalar computations use the checked `NN.Kernel` frontend and NVRTC rather than ATen's
+operator catalogue. Its [guide](../NN/Kernel/README.md) describes source correspondence, supported
+precision, and the separate native execution boundary.
+
 Set `TORCHLEAN_BUILD_ROOT` to choose the cache location, or use `--torchlean-build-dir` to print
 the selected path. `TORCHLEAN_BUILD_PROFILE` overrides the profile name; use distinct names for
 different backend configurations. If `.lake/build` is an existing directory, move it aside once
@@ -58,6 +62,12 @@ by the proofs or existing tests. Prefer extending an existing focused check over
 test module. Useful teaching examples belong in `NN/Examples`, not duplicated in a test catalogue.
 
 ## Library and Examples
+
+Application examples use `open TorchLean` and named device, execution and arithmetic choices:
+`device := gpu`, `execution := eager`, and `arithmetic := ieee`. These names re-export the existing
+constructors; they do not define different settings. For names shared by several APIs, open the
+specific namespace locally, such as `open Trainer.Objective (mse)`, or qualify the value.
+Do not remove dots from field access, method calls or constructor patterns mechanically.
 
 Reusable validation, execution, data processing, and training belong in the library. Examples
 construct inputs and models, call library operations, and explain results. Local formatting is

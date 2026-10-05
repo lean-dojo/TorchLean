@@ -581,7 +581,7 @@ input confirms the output shape and measures the initial prediction:
 -- complete denoiser.
 #eval do
   let m ← nn.Module.instantiate (nn.build 7 genDenoiser)
-    { device := .cpu }
+    { device := cpu }
   m.eval
   let out ← m.forward (Tensor.full genIn 0.25)
   IO.println s!"{out}"
@@ -1148,9 +1148,9 @@ def genD : nn.Builder (nn.Sequential genData genScore) :=
 
 #eval do
   let g ← nn.Module.instantiate (nn.build 1 genG)
-    { device := .cpu }
+    { device := cpu }
   let d ← nn.Module.instantiate (nn.build 2 genD)
-    { device := .cpu }
+    { device := cpu }
   g.eval
   d.eval
   let z : Tensor Float32 [1, 2] := [[0.5, -0.5]]

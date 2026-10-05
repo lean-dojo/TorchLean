@@ -43,6 +43,7 @@ is a four-by-two tensor of `Float` values. `nn.Sequential!` is scoped syntax, so
 ```lean
 import NN.API
 open TorchLean
+open Trainer.Objective (mse)
 
 /-- A two-layer regression model. The dimensions are checked when the layers are composed. -/
 def model :=
@@ -67,11 +68,11 @@ def trainOnce : IO Unit := do
   -- Select the loss and train through a typed graph with FloatLib binary32 arithmetic.
   let trainer :=
     Trainer.new model
-      { objective := .mse
+      { objective := mse
         optimizer := optim.sgd { learningRate := 0.05 }
-        execution := .typedGraph
-        device := .cpu
-        arithmetic := .ieee }
+        execution := typedGraph
+        device := cpu
+        arithmetic := ieee }
   -- Inspect the initialized model before any parameter updates.
   let initialPrediction ← trainer.predict ([0.5, -0.25] : Tensor Float [2])
   IO.println s!"initial={reprStr initialPrediction}"

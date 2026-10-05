@@ -979,8 +979,8 @@ Hessian is consequently a coordinate Hessian, not the Hessian of a training obje
 
 For that training step, `autograd.model.derivative` evaluates repeated input-directional
 derivatives of a sequential model, and `autograd.model.derivativeVjp` pulls a residual cotangent
-back to the model parameters. A list `[dx, dx]` selects the second derivative in direction `dx`;
-`[dx, dt]` selects a mixed derivative. The directions can be any tensors of the input shape.
+back to the model parameters. A direction tensor with rows `[dx, dx]` selects the second
+derivative in direction `dx`; `[dx, dt]` selects a mixed derivative. Each row has the input shape.
 The implementation nests dual scalars around the existing evaluator and reverse pass, keeping
 the directions and supplied cotangent constant.
 

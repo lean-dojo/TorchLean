@@ -11,6 +11,7 @@ public import NN.Backend
 public import NN.Floats
 public import NN.GraphSpec
 public import NN.IR
+public import NN.Kernel
 public import NN.MLTheory
 public import NN.Proofs
 public import NN.Runtime

@@ -6,6 +6,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LAKE="${LAKE:-$ROOT/scripts/lake.sh}"
 cd "$ROOT"
 
+# Keep generated-document paths tied to this build profile even if another invocation switches
+# the checkout's `.lake/build` symlink between CPU and GPU checks.
+build_dir="$("$LAKE" --torchlean-build-dir)"
+
 echo "==> Building Lean modules"
 "$LAKE" build
 
@@ -17,13 +21,13 @@ echo "==> Building DocGen API reference"
 # Lake does not include DISABLE_EQUATIONS in the docInfo trace, so remove the cached DocGen DB/data
 # before rebuilding. Otherwise Lake may replay old noisy docInfo artifacts.
 if [ "${SKIP_DOCGEN:-0}" = "1" ]; then
-  if [ ! -d .lake/build/doc ]; then
+  if [ ! -d "$build_dir/doc" ]; then
     echo "error: SKIP_DOCGEN=1 requires an existing .lake/build/doc directory" >&2
     exit 1
   fi
   echo "    Reusing .lake/build/doc"
 else
-  rm -rf .lake/build/doc .lake/build/doc-data .lake/build/api-docs.db
+  rm -rf "$build_dir/doc" "$build_dir/doc-data" "$build_dir/api-docs.db"
   DISABLE_EQUATIONS=1 "$LAKE" -Kenv=dev build TorchLeanDocs:docs
 fi
 
@@ -31,7 +35,7 @@ echo "==> Copying DocGen output"
 # The public site serves DocGen from `home_page/docs`. Strip trace/hash files so
 # the checked-in preview tree contains browser assets rather than Lake internals.
 rm -rf home_page/docs
-cp -r .lake/build/doc home_page/docs
+cp -r "$build_dir/doc" home_page/docs
 find home_page/docs -name "*.trace" -delete
 find home_page/docs -name "*.hash" -delete
 python3 scripts/docs/polish_docgen.py --docs home_page/docs

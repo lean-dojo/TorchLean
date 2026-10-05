@@ -34,6 +34,7 @@ boundary instead of silently using a broader bucket.
 def op? : NN.IR.OpKind → Option BackendOp
   | .input => none
   | .const .. => none
+  | .custom .. => some .custom
   | .detach => none
   | .randUniform .. => some .randUniform
   | .bernoulliMask .. => some .bernoulliMask

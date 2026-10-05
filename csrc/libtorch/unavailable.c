@@ -18,6 +18,18 @@ static lean_obj_res unavailable_io(void) {
       lean_mk_io_user_error(lean_mk_string(TORCHLEAN_UNAVAILABLE_MESSAGE)));
 }
 
+LEAN_EXPORT lean_obj_res torchlean_kernel_run_buffer(
+    b_lean_obj_arg source, b_lean_obj_arg inputs, uint64_t count) {
+  (void)source; (void)inputs; (void)count;
+  return unavailable_io();
+}
+
+LEAN_EXPORT lean_obj_res torchlean_kernel_run_host(
+    b_lean_obj_arg source, uint32_t format, b_lean_obj_arg inputs, uint64_t count) {
+  (void)source; (void)format; (void)inputs; (void)count;
+  return unavailable_io();
+}
+
 // 0 = built without LibTorch, 1 = LibTorch with a visible device, 2 = LibTorch without one.
 LEAN_EXPORT uint32_t torchlean_cuda_runtime_status(uint32_t token) {
   (void)token;
@@ -87,6 +99,13 @@ UNAVAILABLE_IO(torchlean_cuda_buffer_of_float_array_io, b_lean_obj_arg AObj)
 UNAVAILABLE_IO(torchlean_cuda_buffer_to_float_array_io, b_lean_obj_arg BObj)
 UNAVAILABLE_IO(torchlean_cuda_buffer_to_float32_bytes_io, b_lean_obj_arg BObj)
 UNAVAILABLE_IO(torchlean_cuda_buffer_of_float32_bytes_io, b_lean_obj_arg BytesObj)
+UNAVAILABLE_IO(torchlean_cuda_buffer_softmax_io,
+    b_lean_obj_arg input, b_lean_obj_arg dims, uint32_t axis)
+UNAVAILABLE_IO(torchlean_cuda_buffer_conv_io,
+    b_lean_obj_arg input, b_lean_obj_arg kernel, b_lean_obj_arg bias,
+    b_lean_obj_arg input_dims, b_lean_obj_arg kernel_dims, b_lean_obj_arg stride,
+    b_lean_obj_arg padding_before, b_lean_obj_arg padding_after, b_lean_obj_arg dilation,
+    uint32_t groups)
 #undef UNAVAILABLE_IO
 
 // Reached only through a buffer, and no buffer exists in this build.

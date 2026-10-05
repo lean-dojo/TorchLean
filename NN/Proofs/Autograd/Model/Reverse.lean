@@ -62,38 +62,39 @@ The context includes state and input entries. Directions have zero state compone
 final adjoint differentiates with respect to all entries, giving both parameter and input
 gradients. The output cotangent and directions are fixed, including when directions repeat.
 -/
-@[autograd] theorem derivativeVjp_eq {σ τ : Shape} (model : nn.Sequential σ τ)
-    (state : State model ℝ) (input : Tensor ℝ σ) (directions : List (Tensor ℝ σ))
+@[autograd] theorem derivativeVjp_eq {σ τ : Shape} {order : Nat} (model : nn.Sequential σ τ)
+    (state : State model ℝ) (input : Tensor ℝ σ)
+    (directions : Tensor ℝ (σ.prependDim order))
     (seed : Tensor ℝ τ)
     (real : nn.TypedGraphModel (nn.stateShapes model) σ τ ℝ)
     (nested : nn.TypedGraphModel (nn.stateShapes model) σ τ
-      (Dual.Nested ℝ directions.length))
+      (Dual.Nested ℝ order))
     (valid : nn.validate model = .ok ())
-    (lowered : nn.lowerToTypedGraph model (α := Dual.Nested ℝ directions.length) = pure nested)
+    (lowered : nn.lowerToTypedGraph model (α := Dual.Nested ℝ order) = pure nested)
     (sameShapes : nested.nodeShapes = real.nodeShapes)
     (hgraph : Algebra.GraphData.PreservesPullbackJet
-      (CtxVec (nn.stateShapes model ++ [σ])) directions.length
+      (CtxVec (nn.stateShapes model ++ [σ])) order
       real.data (sameShapes ▸ nested.data))
     (sameOutput : sameShapes ▸ nested.output = real.output)
     (proofGraph : Algebra.Graph (α := ℝ) Unit (nn.stateShapes model ++ [σ]) real.nodeShapes)
     (same : proofGraph.toData = real.data)
     (correct : ∀ y, GraphFDerivCorrectAt (Algebra.Graph.toReal proofGraph ()) y)
-    (smooth : ContDiff ℝ (directions.length + 1)
+    (smooth : ContDiff ℝ (order + 1)
       (fun z => tensorToVec (TypedGraphWithData.forward real (unflattenCtx z) ())))
-    (result : TensorPack (Dual.Nested ℝ directions.length) (nn.stateShapes model ++ [σ]) ×
-      Tensor (Dual.Nested ℝ directions.length) τ)
+    (result : TensorPack (Dual.Nested ℝ order) (nn.stateShapes model ++ [σ]) ×
+      Tensor (Dual.Nested ℝ order) τ)
     (checked : nested.vjpChecked
       (((nn.State.Internal.toTensorPack state).map (Tensor.map (Dual.Nested.ofPrimal
-        directions.length))).append (TensorPack.singleton
-          (Dual.Nested.seedTensor (fun i : Fin directions.length => directions[i]) input))) ()
-      (Tensor.map (Dual.Nested.ofPrimal directions.length) seed) = .ok result) :
-    let ds := fun i : Fin directions.length => flattenCtx
+        order))).append (TensorPack.singleton
+          (Dual.Nested.seedTensor (fun i : Fin order => directions[i]) input))) ()
+      (Tensor.map (Dual.Nested.ofPrimal order) seed) = .ok result) :
+    let ds := fun i : Fin order => flattenCtx
       ((TensorPack.zero (ss := nn.stateShapes model)).append
         (TensorPack.singleton directions[i]))
     let x := flattenCtx ((nn.State.Internal.toTensorPack state).append
       (TensorPack.singleton input))
     let gradient := unflattenCtx
-      ((fderiv ℝ (fun y => iteratedFDeriv ℝ directions.length
+      ((fderiv ℝ (fun y => iteratedFDeriv ℝ order
         (fun z => tensorToVec (TypedGraphWithData.forward real (unflattenCtx z) ()))
         y ds) x).adjoint
           (tensorToVec seed))
@@ -109,7 +110,7 @@ gradients. The output cotangent and directions are fixed, including when directi
     exact Runtime.Autograd.Torch.TypedGraphWithData.tangent_vjpChecked_iteratedFDeriv
       real nested sameShapes hgraph sameOutput proofGraph same _ _ _ () correct
       (TensorPack.JetRelated.const_append_seed (nn.State.Internal.toTensorPack state)
-        input (fun i : Fin directions.length => directions[i])) smooth seed result checked index
+        input (fun i : Fin order => directions[i])) smooth seed result checked index
   rw [← hpack]
   unfold derivativeVjp
   dsimp only

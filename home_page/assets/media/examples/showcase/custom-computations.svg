@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480" role="img" aria-labelledby="title desc">
+  <title id="title">Custom Tensor Computations</title>
+  <desc id="desc">The Lean function x times x maps the tensor 1, 2, 3 to 1, 4, 9. Select CPU or GPU at the call site.</desc>
+  <rect width="640" height="480" fill="#fff"/>
+  <rect x="32" y="64" width="576" height="352" rx="18" fill="#f8fafc" stroke="#dce3eb"/>
+  <g font-family="ui-monospace, monospace" font-size="22" fill="#183448">
+    <text x="64" y="124">def square := fun x =&gt; x * x</text>
+    <text x="64" y="186">square.run input (device := cpu)</text>
+    <text x="64" y="222">square.run input (device := gpu)</text>
+  </g>
+  <rect x="64" y="284" width="194" height="72" rx="12" fill="#e0f2f1" stroke="#9ccfce"/>
+  <rect x="382" y="284" width="194" height="72" rx="12" fill="#e8e5f5" stroke="#c2b9e4"/>
+  <g font-family="ui-monospace, monospace" font-size="26" text-anchor="middle" fill="#183448">
+    <text x="161" y="329">[1, 2, 3]</text>
+    <text x="479" y="329">[1, 4, 9]</text>
+  </g>
+  <path d="M278 320h80m-12-10 12 10-12 10" fill="none" stroke="#157878" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -103,7 +103,7 @@ been learned.
 -- sharing from input variation.
 #eval do
   let model := nn.build 1 mmBatched
-  let m ← nn.Module.instantiate model { device := .cpu }
+  let m ← nn.Module.instantiate model { device := cpu }
   m.eval
   let out ← m.forward (Tensor.full [8, 3] 1.0)
   IO.println s!"{out}"
@@ -204,7 +204,7 @@ def mmRes : nn.Builder (nn.Sequential [2] [2]) := do
 
 #eval do
   let m ← nn.Module.instantiate (nn.build 0 mmRes)
-    { device := .cpu }
+    { device := cpu }
   m.eval
   let out ← m.forward [-1.0, 2.0]
   IO.println s!"x + relu x = {out}"

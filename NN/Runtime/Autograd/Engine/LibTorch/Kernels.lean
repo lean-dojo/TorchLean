@@ -36,6 +36,26 @@ namespace LibTorch
 
 namespace Buffer
 
+/-- Stable softmax along a selected axis of a contiguous tensor, including empty tensors.
+
+The native boundary checks the supplied dimensions against the buffer and delegates to ATen.
+It does not record an autograd graph. Invalid dimensions, axes and device failures are IO errors.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_softmax_io"]
+opaque softmax (input : @& Buffer) (dims : @& Array Nat) (axis : UInt32) : IO Buffer
+
+/-- Grouped convolution over a spatial suffix, with dilation and asymmetric zero padding.
+
+Axes before the channel axis are folded into a batch. `kernelDims` describes the dense
+`(outChannels, inChannels, spatial...)` layout used by the canonical IR; the bridge selects its
+group-diagonal blocks before calling ATen. LibTorch supports one to three spatial dimensions.
+Input lengths and all geometry are checked again at the foreign boundary. No gradient is recorded.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_conv_io"]
+opaque conv (input kernel bias : @& Buffer)
+    (inputDims kernelDims stride paddingBefore paddingAfter dilation : @& Array Nat)
+    (groups : UInt32) : IO Buffer
+
 /--
 Sum across the columns of a 2D row-major buffer.
 

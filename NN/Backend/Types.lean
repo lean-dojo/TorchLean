@@ -150,6 +150,7 @@ inductive BackendOp where
   | fftFno
   | selectiveScan
   | attention
+  | custom
   deriving DecidableEq, BEq, ReflBEq, LawfulBEq, Repr
 
 namespace BackendOp
@@ -203,6 +204,7 @@ def name : BackendOp → String
   | .fftFno => "fft_fno"
   | .selectiveScan => "selective_scan"
   | .attention => "attention"
+  | .custom => "custom"
 
 instance : ToString BackendOp where
   toString op := op.name
@@ -296,3 +298,10 @@ structure KernelPolicy where
 
 end Backend
 end NN
+
+namespace TorchLean
+
+-- Keep application device selection short without introducing a second device type.
+export NN.Backend.Device (cpu gpu)
+
+end TorchLean

@@ -127,5 +127,7 @@ end BackendContracts
 
 end Runtime
 
+-- Execution choices share the application namespace with device selection.
+export Runtime.ExecutionMode (eager typedGraph)
 
 end TorchLean

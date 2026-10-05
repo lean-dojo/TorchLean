@@ -40,27 +40,28 @@ namespace TorchLean.autograd.model
 
 /-- Successful certified lowering makes `model.derivative` compute the iterated Fréchet derivative.
 
-State is fixed, directions can repeat, and the list length is the derivative order. `real` supplies
+State is fixed, directions can repeat, and the leading axis is the derivative order. `real` supplies
 the reference function, while the jet certificate relates every recorded operation to the nested
 graph actually returned by the IO lowering call. No assumption identifies native floats with reals.
 -/
-@[autograd] theorem derivative_eq {σ τ : Shape} (model : nn.Sequential σ τ)
-    (state : State model ℝ) (input : Tensor ℝ σ) (directions : List (Tensor ℝ σ))
+@[autograd] theorem derivative_eq {σ τ : Shape} {order : Nat} (model : nn.Sequential σ τ)
+    (state : State model ℝ) (input : Tensor ℝ σ)
+    (directions : Tensor ℝ (σ.prependDim order))
     (real : nn.TypedGraphModel (nn.stateShapes model) σ τ ℝ)
     (nested : nn.TypedGraphModel (nn.stateShapes model) σ τ
-      (Dual.Nested ℝ directions.length))
-    (lowered : nn.lowerToTypedGraph model (α := Dual.Nested ℝ directions.length) = pure nested)
+      (Dual.Nested ℝ order))
+    (lowered : nn.lowerToTypedGraph model (α := Dual.Nested ℝ order) = pure nested)
     (sameShapes : nested.nodeShapes = real.nodeShapes)
-    (hgraph : Algebra.GraphData.PreservesJet (Tensor ℝ σ) directions.length
+    (hgraph : Algebra.GraphData.PreservesJet (Tensor ℝ σ) order
       real.data (sameShapes ▸ nested.data))
     (sameOutput : sameShapes ▸ nested.output = real.output) :
     derivative model state input directions =
-      pure (iteratedFDeriv ℝ directions.length
+      pure (iteratedFDeriv ℝ order
         (fun y => nn.TypedGraphModel.forward real state y) input
-        (fun i : Fin directions.length => directions[i])) := by
+        (fun i : Fin order => directions[i])) := by
   simp only [derivative, lowered, pure_bind]
   congr 1
-  let ds := fun i : Fin directions.length => directions[i]
+  let ds := fun i : Fin order => directions[i]
   have hinputs := TensorPack.JetRelated.append
     (TensorPack.JetRelated.const ds input (nn.State.Internal.toTensorPack state))
     (TensorPack.JetRelated.singleton_seed ds input)

@@ -471,8 +471,8 @@ def apiTrainer :=
   Trainer.new apiModel
     { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
-      arithmetic := .native
-      execution := .eager
+      arithmetic := native
+      execution := eager
       seed := 2026 }
 
 #check apiData
@@ -719,13 +719,13 @@ Persistent choices can be expressed as `Trainer.RunConfig`:
 -- execution mode or device profile.
 def eagerCpu : Trainer.RunConfig :=
   { optimizer := optim.adam { learningRate := 0.03 }
-    arithmetic := .native
-    execution := .eager }
+    arithmetic := native
+    execution := eager }
 
 def typedGraphCpu : Trainer.RunConfig :=
   { eagerCpu with
-    execution := .typedGraph
-    device := .cpu }
+    execution := typedGraph
+    device := cpu }
 
 def configuredTrainer :=
   Trainer.new model

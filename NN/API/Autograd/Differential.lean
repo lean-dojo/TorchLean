@@ -34,16 +34,15 @@ open Runtime.Autograd.Model
 /--
 Evaluate an iterated input-directional derivative of a model in evaluation mode.
 
-An empty direction list evaluates the model itself. For `[v, w]`, the result is
+An empty leading axis evaluates the model itself. For two rows `[v, w]`, the result is
 `D_w D_v model(state, input)`. State is held fixed, and all directions are constant vectors.
 Every direction has the entire input shape, so the operation also covers vector-valued fields,
 multiple spatial coordinates, and batched input layouts.
 -/
-def derivative {σ τ : Shape} (model : nn.Sequential σ τ)
+def derivative {σ τ : Shape} {order : Nat} (model : nn.Sequential σ τ)
     {α : Type} [Storage α] [Context α]
     (state : State model α) (input : Tensor α σ)
-    (directions : List (Tensor α σ)) : IO (Tensor α τ) := do
-  let order := directions.length
+    (directions : Tensor α (σ.prependDim order)) : IO (Tensor α τ) := do
   let graph ← nn.lowerToTypedGraph model (α := Dual.Nested α order)
   let state := state.map (Tensor.map (Dual.Nested.ofPrimal order))
   let input := Dual.Nested.seedTensor (fun i : Fin order => directions[i]) input
@@ -55,15 +54,14 @@ Pull an output cotangent through an iterated input derivative of a model.
 Returns `(stateGradient, inputGradient)` for the scalar pairing of `outputGradient` with
 `derivative model state input directions`. Use the state gradient to train on PDE residuals;
 the input gradient differentiates the same pairing with respect to collocation coordinates.
-An empty direction list is the ordinary model VJP. The cotangent and directions are constants,
+An empty leading axis gives the ordinary model VJP. The cotangent and directions are constants,
 even when the caller computed them from the current residual or coordinates.
 -/
-def derivativeVjp {σ τ : Shape} (model : nn.Sequential σ τ)
+def derivativeVjp {σ τ : Shape} {order : Nat} (model : nn.Sequential σ τ)
     {α : Type} [Storage α] [Context α]
     (state : State model α) (input : Tensor α σ)
-    (directions : List (Tensor α σ)) (outputGradient : Tensor α τ) :
+    (directions : Tensor α (σ.prependDim order)) (outputGradient : Tensor α τ) :
     IO (State model α × Tensor α σ) := do
-  let order := directions.length
   let state := state.map (Tensor.map (Dual.Nested.ofPrimal order))
   let input := Dual.Nested.seedTensor (fun i : Fin order => directions[i]) input
   let outputGradient := Tensor.map (Dual.Nested.ofPrimal order) outputGradient

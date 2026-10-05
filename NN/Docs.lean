@@ -10,6 +10,7 @@ public import NN
 public import NN.API.Trainer.FixedSample
 public import NN.Examples
 public import NN.Examples.Runner
+public import NN.Kernel.Cuda.Source
 public import NN.Verification.CLI
 public import NN.CI.SlowProofs
 public import NN.MLTheory.CROWN.Proofs.GraphRefinement

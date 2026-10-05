@@ -684,11 +684,10 @@ def bsTrainer (execution : Runtime.ExecutionMode) :=
       optimizer := optim.adam { learningRate := 0.01 }
       execution := execution }
 
-#check bsTrainer .eager
+#check bsTrainer eager
 ```
 ```leanOutput bsRuntime (whitespace := lax)
-bsTrainer Runtime.Autograd.Torch.ExecutionMode.eager :
-  Trainer [4] [1]
+bsTrainer eager : Trainer [4] [1]
 ```
 
 The trainer's type is `Trainer [4] [1]` either way: the execution mode is not part of the model's
@@ -698,7 +697,7 @@ the same configuration record:
 ```lean (name := bsConfig)
 -- Projecting a configuration field performs no runtime
 -- compatibility check.
-#eval ({ execution := .typedGraph, device := .cuda :
+#eval ({ execution := typedGraph, device := .cuda :
   Runtime.Config }).device.cliName
 ```
 ```leanOutput bsConfig

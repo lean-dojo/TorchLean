@@ -198,7 +198,7 @@ or a complete concurrency proof of mimalloc, its compiler output, or operating-s
 
 ## LibTorch CUDA Runtime
 
-All CUDA primitive numerical work crosses the LibTorch ATen bridge. TorchLean retains graph
+Established CUDA model primitives cross the LibTorch ATen bridge. TorchLean retains graph
 recording, tape traversal, gradient accumulation policy, and the selection of local VJPs. Native
 forward and backward calls execute with gradient recording disabled; they do not create a second
 local or global LibTorch autograd graph. `VJPMode.backendVJP` means a bridge routine evaluates the
@@ -270,6 +270,22 @@ the existing numerical primitives.
 - Stream ordering, asynchronous errors, synchronization, and allocator behavior belong to the
   native bridge and LibTorch runtime. They require runtime validation; neither capsule selection
   nor the Lean tape theorem establishes them.
+
+## Custom Tensor Computations
+
+`NN.Kernel` applies scalar functions to tensors on CPU or compiles supported FP32/FP64 functions
+to CUDA. `Program.correct`, `Program.lower_correct` and `Program.named_correct` prove source
+correspondence through the expression and statement representations. `Cuda.source_denotes`
+connects emitted source semantics under explicit arithmetic and reader contracts. These theorems
+do not verify NVRTC, the CUDA driver, hardware arithmetic, concurrent error recording or foreign
+memory. The native bridge checks reads, retains input owners until completion, and bounds its
+compiled-module cache; those checks remain native implementation obligations.
+
+CPU evaluates the original scalar function; GPU rejects unsupported source without a CPU fallback.
+Canonical IR stores a custom node's checked body separately from its shape signature. A source
+proof supplies neither a real-enclosure rule nor a derivative: IBP/CROWN, forward-only lowering
+and PyTorch export reject unsupported custom paths. See the
+[custom-computation guide](../NN/Kernel/README.md) for the supported frontend and precision limits.
 
 ## Executable Floating Point
 

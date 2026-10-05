@@ -10,7 +10,7 @@ The backend is built as one shared library:
 
 | LibTorch source | Responsibility |
 | --- | --- |
-| `torchlean.cpp` | All runtime, tensor-operation, and backward adapters to ATen. |
+| `torchlean.cpp` | Runtime, ATen operation adapters, and generated-operation compilation/launch. |
 | `operations.h` | Shared list generating common operation exports for both build configurations. |
 | `torchlean_libtorch.h` | Buffer representation, Lean object and size helpers. |
 
@@ -19,6 +19,12 @@ symbols, reports `RuntimeStatus.notLinked`, and fails every buffer operation wit
 says how to rebuild. The Lean tape owns differentiation; native calls use a no-grad guard. The
 CPU evaluation dynamic library is loaded for native CPU `#eval` calls. GPU tests run as
 compiled executables.
+
+The canonical mixed-graph runner uses IO primitives for axis-aware softmax and grouped convolution.
+Convolution folds leading axes into a batch, packs the dense group-diagonal IR weights into ATen's
+layout, and supports dilation and independent zero padding on each side. Both interfaces validate
+their geometry and buffer lengths before calling ATen; invalid metadata returns an IO error. They
+do not record gradients. LayerNorm continues to use the existing normalization primitive.
 
 ## Build selection
 
@@ -42,6 +48,8 @@ headers, and a compatible C++20 compiler. SDK CMake discovers the ABI, any stric
 transitive libraries, and rpath. An executable built in the same project checks compiler/link
 compatibility without running. SDK discovery may require a matching CUDA
 development toolkit, even though TorchLean itself compiles only C++ sources.
+Generated custom operations also link the toolkit's NVRTC and CUDA driver interfaces. They compile
+CUDA source at runtime; users do not maintain separate handwritten kernels for those operations.
 
 ## Tested SDK versions
 
@@ -72,6 +80,24 @@ build directory. Lake links `libtorch/libtorchlean_libtorch.so` by its resolved 
 so retain that artifact and the selected SDK for execution.
 See [`scripts/README.md`](../../scripts/README.md) for compiler controls, cache selection, and
 the direct C++ build command.
+
+## Generated custom operations
+
+`NN.Kernel.Runtime` generates CUDA from typed kernel expressions and calls this shared bridge.
+NVRTC uses the current device's compute capability, disables multiply-add contraction and
+flush-to-zero, and retains precise division. No fast-math setting is inherited from a caller.
+LibTorch's existing operations are unchanged.
+
+The process keeps at most sixteen compiled modules, keyed by source and CUDA context. Eviction
+does not retire a module while a call still owns it. Operations launch on LibTorch's current stream
+with immutable inputs and a fresh output. Before returning, the bridge checks the device bounds
+record; a failed read becomes an IO error rather than exposing partially computed output.
+Compilation errors include NVRTC's diagnostic log. Empty outputs still validate compilation.
+
+Resident buffers use the existing binary32 ABI. The host-array interface also supports binary64,
+uploading and downloading through ATen. The ordinary-Lean frontend and canonical graph integration
+are still under development; this is not a compiler for arbitrary Lean functions. The NVRTC,
+driver, memory and execution boundary remains external to Lean's proofs.
 
 ## Execution and memory
 

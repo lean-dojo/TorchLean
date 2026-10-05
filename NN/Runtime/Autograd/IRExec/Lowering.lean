@@ -54,6 +54,8 @@ materializing a chronological shape prefix.
   match lowering.node.kind with
   | .input => lowerInput lowering
   | .const s => lowerConst lowering s
+  | .custom name .. =>
+      .error s!"IR lowering: custom {name} requires checked execution; no total forward lowering"
   | .detach => lowerDetach lowering
   | .randUniform seed => lowerRandUniform lowering seed
   | .bernoulliMask seed => lowerBernoulliMask lowering seed

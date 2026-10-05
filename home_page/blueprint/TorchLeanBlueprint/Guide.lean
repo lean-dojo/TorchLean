@@ -16,6 +16,7 @@ import TorchLeanBlueprint.Guide.Ch2_Frontend.DataAndLoaders
 import TorchLeanBlueprint.Guide.Ch2_Frontend.TrainingFromScratch
 import TorchLeanBlueprint.Guide.Ch2_Frontend.TorchLeanAPI
 import TorchLeanBlueprint.Guide.Ch2_Frontend.ExecutionModes
+import TorchLeanBlueprint.Guide.Ch2_Frontend.CustomComputations
 import TorchLeanBlueprint.Guide.Ch2_Frontend.BackendSelection
 import TorchLeanBlueprint.Guide.Ch2_Frontend.AutogradWalkthrough
 import TorchLeanBlueprint.Guide.Ch2_Frontend.ScientificForwardModels
@@ -206,6 +207,8 @@ weights, layouts, and operation conventions describe the same model. Following o
 and backward calculation through these interfaces makes their roles easier to distinguish.
 
 {include 2 TorchLeanBlueprint.Guide.Ch2_Frontend.ExecutionModes}
+
+{include 2 TorchLeanBlueprint.Guide.Ch2_Frontend.CustomComputations}
 
 {include 2 TorchLeanBlueprint.Guide.Ch2_Frontend.BackendSelection}
 

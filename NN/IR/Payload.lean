@@ -8,6 +8,7 @@ module
 
 public import NN.Spec.Layers.Conv
 public import NN.IR.Graph
+public import NN.Kernel.Program
 public import NN.Tensor.Conversion
 
 /-!
@@ -150,6 +151,8 @@ This is focused on denotational IR evaluation. Runtime backends may store tensor
 their proof layer semantics pass through this shape-indexed boundary.
 -/
 structure Payload (α : Type) [TorchLean.Storage α] where
+  /-- Checked custom-operation bodies keyed by their node ids, not by their display names. -/
+  custom? : Nat → Option (NN.Kernel.Program α) := fun _ => none
   /-- Flat constants keyed by the `const` node id. -/
   const?  : Nat → Option (ConstFlat α) := fun _ => none
   /-- Linear weights and bias keyed by the `linear` node id. -/

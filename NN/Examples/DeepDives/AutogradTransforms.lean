@@ -276,17 +276,17 @@ private theorem squareProgram_eval {α : Type} [Storage α] [Context α] {shape 
 /-- The public IO transform returns the exact mixed derivative, for every shape and order.
 
 There is no assumed lowering result: the proof checks model validation, graph recording, and
-execution before applying `autograd` to the arithmetic. The empty direction list is included.
+execution before applying `autograd` to the arithmetic. The empty direction axis is included.
 -/
-theorem squareModel_derivative {shape : Spec.Shape} (x : Tensor ℝ shape)
-    (directions : List (Tensor ℝ shape)) :
+theorem squareModel_derivative {shape : Spec.Shape} {order : Nat} (x : Tensor ℝ shape)
+    (directions : Tensor ℝ (shape.prependDim order)) :
     autograd.model.derivative (squareModel shape) nn.State.empty x directions =
-      pure (iteratedFDeriv ℝ directions.length (fun y => Tensor.mulSpec y y) x
-        (fun i : Fin directions.length => directions[i])) := by
+      pure (iteratedFDeriv ℝ order (fun y => Tensor.mulSpec y y) x
+        (fun i : Fin order => directions[i])) := by
   simp only [autograd.model.derivative, squareModel_lower]
   have heval := squareProgram_eval (Dual.Nested.seedTensor
-    (fun i : Fin directions.length => directions[i]) x)
-  cases h : lowerToTypedGraph (squareProgram (α := Dual.Nested ℝ directions.length) shape) with
+    (fun i : Fin order => directions[i]) x)
+  cases h : lowerToTypedGraph (squareProgram (α := Dual.Nested ℝ order) shape) with
   | error err => simp [h, Except.map] at heval
   | ok graph =>
       simp only [h, Except.map, Except.ok.injEq] at heval
@@ -297,7 +297,7 @@ theorem squareModel_derivative {shape : Spec.Shape} (x : Tensor ℝ shape)
       change (do
         let g ← (pure graph : IO _)
         pure (Dual.Nested.tangentTensor (g.forward (TensorPack.singleton
-          (Dual.Nested.seedTensor (fun i : Fin directions.length => directions[i]) x))))) = _
+          (Dual.Nested.seedTensor (fun i : Fin order => directions[i]) x))))) = _
       simp only [pure_bind]
       congr 1
       rw [heval]
